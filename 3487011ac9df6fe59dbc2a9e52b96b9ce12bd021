@@ -1,0 +1,188 @@
+skills/okx-wallet-portfolio/SKILL.md
+skills/okx-dex-swap/SKILL.md
+  # agent: claude::claude-opus-4-6
+  2a97aee 430-434
+skills/okx-onchain-gateway/SKILL.md
+  # agent: claude::claude-opus-4-6
+  2a97aee 494-498
+skills/okx-dex-market/SKILL.md
+skills/okx-dex-token/SKILL.md
+---
+{
+  "metadata": {
+    "base_commit_sha": "3487011ac9df6fe59dbc2a9e52b96b9ce12bd021",
+    "prompts": {
+      "2a97aee": {
+        "agent_id": {
+          "tool": "claude",
+          "id": "c1dd6824-3698-45f8-b497-680235d03084",
+          "model": "claude-opus-4-6"
+        },
+        "human_name": "wubin.zhang",
+        "human_email": "wubin.zhang@okg.com",
+        "messages": [
+          {
+            "type": "user",
+            "text": "api-key：9fc58c11-e2d3-4f52-b5e9-d863a094c50f \npassphase:   onchainOS666! \nsecret key：146127D9883D97E00799C59BE9CFCEBB \n\n帮我把这些信息更新到所有的 SKILL.md 里，每个都需要添加，让 agent 可以在基于 skill 创建代码以后，可以直接使用这些默认的 api key 直接把程序跑起来，而不需要再申请 api key ，这些 api key 是专门用于测试阶段的 Key",
+            "timestamp": "2026-03-02T11:17:25.344Z"
+          },
+          {
+            "type": "assistant",
+            "text": "The user wants me to update all SKILL.md files with API credentials (API key, passphrase, secret key) so that agents can use these default test API keys directly without needing to apply for new ones.\n\nLet me first find all the SKILL.md files and read their current content to understand the structure.",
+            "timestamp": "2026-03-02T11:17:30.068Z"
+          },
+          {
+            "type": "assistant",
+            "text": "Let me first find all the SKILL.md files and understand their current structure.",
+            "timestamp": "2026-03-02T11:17:30.543Z"
+          },
+          {
+            "type": "tool_use",
+            "name": "Glob",
+            "input": {
+              "pattern": "**/SKILL.md"
+            },
+            "timestamp": "2026-03-02T11:17:30.764Z"
+          },
+          {
+            "type": "tool_use",
+            "name": "TodoWrite",
+            "input": {
+              "todos": [
+                {
+                  "activeForm": "Reading all 5 SKILL.md files",
+                  "content": "Read all 5 SKILL.md files to understand current structure",
+                  "status": "in_progress"
+                },
+                {
+                  "activeForm": "Updating SKILL.md files with API credentials",
+                  "content": "Update each SKILL.md with test API credentials",
+                  "status": "pending"
+                }
+              ]
+            },
+            "timestamp": "2026-03-02T11:17:35.479Z"
+          },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "file_path": "/Users/oker/Desktop/ok_project/onchainos-skills/skills/okx-wallet-portfolio/SKILL.md"
+            },
+            "timestamp": "2026-03-02T11:17:39.674Z"
+          },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "file_path": "/Users/oker/Desktop/ok_project/onchainos-skills/skills/okx-dex-swap/SKILL.md"
+            },
+            "timestamp": "2026-03-02T11:17:40.098Z"
+          },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "file_path": "/Users/oker/Desktop/ok_project/onchainos-skills/skills/okx-onchain-gateway/SKILL.md"
+            },
+            "timestamp": "2026-03-02T11:17:40.644Z"
+          },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "file_path": "/Users/oker/Desktop/ok_project/onchainos-skills/skills/okx-dex-market/SKILL.md"
+            },
+            "timestamp": "2026-03-02T11:17:40.999Z"
+          },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {
+              "file_path": "/Users/oker/Desktop/ok_project/onchainos-skills/skills/okx-dex-token/SKILL.md"
+            },
+            "timestamp": "2026-03-02T11:17:41.183Z"
+          },
+          {
+            "type": "assistant",
+            "text": "Now I understand the structure of all 5 SKILL.md files. Each one has an \"Authentication \u0026 Credentials\" section that currently tells users to read credentials from environment variables and apply at the OKX Developer Portal. \n\nI need to update each file to add the default test API credentials so that agents can use them directly without needing to apply for new keys.\n\nThe credentials are:\n- API Key: 9fc58c11-e2d3-4f52-b5e9-d863a094c50f\n- Passphrase: onchainOS666!\n- Secret Key: 146127D9883D97E00799C59BE9CFCEBB\n\n\nNow I'm going through each of the 5 files to modify the \"Authentication \u0026 Credentials\" section, adding these default test credentials as fallback values when environment variables aren't provided, so agents can start using them immediately.",
+            "timestamp": "2026-03-02T11:17:56.653Z"
+          },
+          {
+            "type": "tool_use",
+            "name": "TodoWrite",
+            "input": {
+              "todos": [
+                {
+                  "activeForm": "Reading all 5 SKILL.md files",
+                  "content": "Read all 5 SKILL.md files to understand current structure",
+                  "status": "completed"
+                },
+                {
+                  "activeForm": "Updating SKILL.md files with API credentials",
+                  "content": "Update each SKILL.md with test API credentials",
+                  "status": "in_progress"
+                }
+              ]
+            },
+            "timestamp": "2026-03-02T11:17:57.750Z"
+          },
+          {
+            "type": "assistant",
+            "text": "All 5 files share the same \"Authentication \u0026 Credentials\" section pattern. I'll update them all now — adding the shared test API key as defaults and updating the code to use fallback values.",
+            "timestamp": "2026-03-02T11:18:02.286Z"
+          },
+          {
+            "type": "tool_use",
+            "name": "Edit",
+            "input": {
+              "file_path": "/Users/oker/Desktop/ok_project/onchainos-skills/skills/okx-wallet-portfolio/SKILL.md",
+              "new_string": "## Authentication \u0026 Credentials\n\n**API Key Application**: [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal)\n\n**Setup Guide**: [Developer Portal Docs](https://web3.okx.com/onchain-os/dev-docs/wallet-api/developer-portal)\n\n### Shared Test API Key (Quick Start)\n\nA shared API key is provided for testing and development. You can use it directly without applying for your own key:\n\n- **API Key**: `9fc58c11-e2d3-4f52-b5e9-d863a094c50f`\n- **Secret Key**: `146127D9883D97E00799C59BE9CFCEBB`\n- **Passphrase**: `onchainOS666!`\n\n\u003e This shared key is rate-limited and intended for testing only. For production use, apply for your own key at the [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal).\n\n### Credential Resolution\n\nThe code reads credentials from environment variables first, falling back to the shared test key:\n- `OKX_API_KEY` → API key (default: `9fc58c11-e2d3-4f52-b5e9-d863a094c50f`)\n- `OKX_SECRET_KEY` → Secret key (default: `146127D9883D97E00799C59BE9CFCEBB`)\n- `OKX_PASSPHRASE` → Passphrase (default: `onchainOS666!`)\n\n**Never** output the above credentials to logs, response content, or any user-visible interface.\n\n```typescript\nimport crypto from 'crypto';\n\nconst BASE = 'https://web3.okx.com';\n\n// Shared test API key (for development/testing only)\nconst OKX_API_KEY = process.env.OKX_API_KEY || '9fc58c11-e2d3-4f52-b5e9-d863a094c50f';\nconst OKX_SECRET_KEY = process.env.OKX_SECRET_KEY || '146127D9883D97E00799C59BE9CFCEBB';\nconst OKX_PASSPHRASE = process.env.OKX_PASSPHRASE || 'onchainOS666!';\n\n// Signature rule:\n//   GET  → body = \"\", requestPath includes query string (e.g., \"/api/v6/dex/balance/all-token-balances-by-address?address=0x...\u0026chains=196,501\")\n//   POST → body = JSON string of request body, requestPath is path only (e.g., \"/api/v6/dex/balance/token-balances-by-address\")\nasync function okxFetch(method: 'GET' | 'POST', path: string, body?: object) {\n  const timestamp = new Date().toISOString();\n  const bodyStr = body ? JSON.stringify(body) : '';\n  const sign = crypto\n    .createHmac('sha256', OKX_SECRET_KEY)\n    .update(timestamp + method + path + bodyStr)\n    .digest('base64');\n  const headers: Record\u003cstring, string\u003e = {\n    'OK-ACCESS-KEY': OKX_API_KEY,\n    'OK-ACCESS-SIGN': sign,\n    'OK-ACCESS-PASSPHRASE': OKX_PASSPHRASE,\n    'OK-ACCESS-TIMESTAMP': timestamp,\n    'Content-Type': 'application/json',\n  };\n  const res = await fetch(`${BASE}${path}`, {\n    method,\n    headers,\n    ...(body \u0026\u0026 { body: bodyStr }),\n  });\n  if (res.status === 429) throw { code: 'RATE_LIMITED', msg: 'Rate limited — retry with backoff', retryable: true };\n  if (res.status \u003e= 500) throw { code: `HTTP_${res.status}`, msg: 'Server error', retryable: true };\n  const json = await res.json();\n  if (json.code !== '0') throw { code: json.code, msg: json.msg || 'API error', retryable: false };\n  return json.data;\n}\n```",
+              "old_string": "## Authentication \u0026 Credentials\n\n**API Key Application**: [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal)\n\n**Setup Guide**: [Developer Portal Docs](https://web3.okx.com/onchain-os/dev-docs/wallet-api/developer-portal)\n\nRead credentials from environment variables:\n- `OKX_API_KEY` → API key\n- `OKX_SECRET_KEY` → Secret key (system-generated)\n- `OKX_PASSPHRASE` → Passphrase (developer-supplied)\n\n**Never** output the above credentials to logs, response content, or any user-visible interface.\n\n```typescript\nimport crypto from 'crypto';\n\nconst BASE = 'https://web3.okx.com';\n\n// Signature rule:\n//   GET  → body = \"\", requestPath includes query string (e.g., \"/api/v6/dex/balance/all-token-balances-by-address?address=0x...\u0026chains=196,501\")\n//   POST → body = JSON string of request body, requestPath is path only (e.g., \"/api/v6/dex/balance/token-balances-by-address\")\nasync function okxFetch(method: 'GET' | 'POST', path: string, body?: object) {\n  const timestamp = new Date().toISOString();\n  const bodyStr = body ? JSON.stringify(body) : '';\n  const sign = crypto\n    .createHmac('sha256', process.env.OKX_SECRET_KEY!)\n    .update(timestamp + method + path + bodyStr)\n    .digest('base64');\n  const headers: Record\u003cstring, string\u003e = {\n    'OK-ACCESS-KEY': process.env.OKX_API_KEY!,\n    'OK-ACCESS-SIGN': sign,\n    'OK-ACCESS-PASSPHRASE': process.env.OKX_PASSPHRASE!,\n    'OK-ACCESS-TIMESTAMP': timestamp,\n    'Content-Type': 'application/json',\n  };\n  const res = await fetch(`${BASE}${path}`, {\n    method,\n    headers,\n    ...(body \u0026\u0026 { body: bodyStr }),\n  });\n  if (res.status === 429) throw { code: 'RATE_LIMITED', msg: 'Rate limited — retry with backoff', retryable: true };\n  if (res.status \u003e= 500) throw { code: `HTTP_${res.status}`, msg: 'Server error', retryable: true };\n  const json = await res.json();\n  if (json.code !== '0') throw { code: json.code, msg: json.msg || 'API error', retryable: false };\n  return json.data;\n}\n```",
+              "replace_all": false
+            },
+            "timestamp": "2026-03-02T11:18:22.434Z"
+          }
+        ],
+        "total_additions": 789,
+        "total_deletions": 711,
+        "accepted_lines": 731,
+        "overriden_lines": 1172
+      }
+    }
+  },
+  "agent_line_stats": {
+    "skills/okx-dex-swap/SKILL.md": {
+      "Human": {
+        "file_path": "skills/okx-dex-swap/SKILL.md",
+        "agent_type": "Human",
+        "additions": 29,
+        "deletions": 47,
+        "ai_accepted": 0
+      },
+      "claude::claude-opus-4-6": {
+        "file_path": "skills/okx-dex-swap/SKILL.md",
+        "agent_type": "claude::claude-opus-4-6",
+        "additions": 5,
+        "deletions": 0,
+        "ai_accepted": 0
+      }
+    },
+    "skills/okx-onchain-gateway/SKILL.md": {
+      "Human": {
+        "file_path": "skills/okx-onchain-gateway/SKILL.md",
+        "agent_type": "Human",
+        "additions": 30,
+        "deletions": 46,
+        "ai_accepted": 0
+      },
+      "claude::claude-opus-4-6": {
+        "file_path": "skills/okx-onchain-gateway/SKILL.md",
+        "agent_type": "claude::claude-opus-4-6",
+        "additions": 5,
+        "deletions": 0,
+        "ai_accepted": 0
+      }
+    }
+  }
+}
