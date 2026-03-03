@@ -1,0 +1,21 @@
+{
+  "name": "onchainos-skills",
+  "version": "1.0.0",
+  "skills": [
+    "./skills/"
+  ],
+  "keywords": [
+    "skills",
+    "okx",
+    "dex",
+    "web3",
+    "defi",
+    "swap",
+    "token",
+    "blockchain",
+    "onchainos",
+    "gas",
+    "broadcast",
+    "transaction"
+  ]
+}

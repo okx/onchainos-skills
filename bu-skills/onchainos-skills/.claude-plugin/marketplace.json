@@ -1,0 +1,51 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "onchainos-skills",
+  "description": "onchainos skills for AI coding assistants — token search, market data, wallet balance, swap execution, and transaction broadcasting across 20+ chains",
+  "owner": {
+    "name": "OKX"
+  },
+  "metadata": {
+    "description": "onchainos skills for token discovery, market analysis, balance queries, swap execution, and transaction broadcasting"
+  },
+  "plugins": [
+    {
+      "name": "onchainos-skills",
+      "source": "./",
+      "description": "5 onchainos skills — token search, market data (prices/charts/trades), wallet balance, DEX swap aggregation, and transaction broadcasting across 20+ chains with 500+ liquidity sources",
+      "version": "1.0.0",
+      "author": {
+        "name": "OKX"
+      },
+      "homepage": "https://web3.okx.com",
+      "license": "Apache-2.0",
+      "keywords": [
+        "skills",
+        "okx",
+        "dex",
+        "web3",
+        "defi",
+        "swap",
+        "token",
+        "blockchain",
+        "onchainos",
+        "gas",
+        "broadcast",
+        "transaction"
+      ],
+      "category": "web3",
+      "tags": [
+        "skills",
+        "dex",
+        "swap",
+        "defi",
+        "token",
+        "blockchain",
+        "gas",
+        "broadcast",
+        "transaction"
+      ],
+      "strict": false
+    }
+  ]
+}
