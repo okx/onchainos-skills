@@ -1,0 +1,47 @@
+{
+  "name": "onchainos-skills",
+  "version": "1.0.0",
+  "description": "onchainos skills for AI coding assistants — token search, market data, wallet balance, swap execution, and transaction broadcasting across 20+ chains",
+  "keywords": [
+    "claude-code",
+    "skills",
+    "okx",
+    "dex",
+    "web3",
+    "defi",
+    "swap",
+    "token",
+    "blockchain",
+    "onchainos",
+    "gas",
+    "broadcast",
+    "transaction",
+    "cursor",
+    "codex",
+    "opencode",
+    "onchain"
+  ],
+  "author": {
+    "name": "OKX",
+    "url": "https://web3.okx.com"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/okx/onchainos-skills.git"
+  },
+  "homepage": "https://web3.okx.com",
+  "files": [
+    "skills/",
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".claude-plugin/",
+    ".cursor-plugin/"
+  ],
+  "scripts": {
+    "postinstall": "echo '\\n  onchainos-skills installed!\\n  Skills: okx-wallet-portfolio, okx-dex-market, okx-dex-swap, okx-dex-token, okx-onchain-gateway\\n  Docs: https://web3.okx.com\\n'"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

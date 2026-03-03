@@ -1,0 +1,7 @@
+{
+  "name": "onchainos-skills",
+  "private": true,
+  "workspaces": [
+    "bu-*/*"
+  ]
+}
