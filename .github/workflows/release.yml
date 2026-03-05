@@ -1,0 +1,162 @@
+# ──────────────────────────────────────────────────────────────
+# Automated release pipeline
+# Trigger: push to main or manual dispatch
+# Flow: read version → build 10 platforms → publish Release → update Homebrew
+# Artifacts: raw binaries (not tar.gz), with checksums.txt
+# ──────────────────────────────────────────────────────────────
+name: Release
+
+on:
+  push:
+    branches: ["*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Step 1: Extract version from Cargo.toml ────────────────────
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+      tag: ${{ steps.tag.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version from Cargo.toml
+        id: version
+        run: |
+          VER=$(grep '^version' ${{ env.CARGO_DIR }}/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "value=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: "Generate release tag (format: v{version}-build.{run_number})"
+        id: tag
+        run: echo "value=v${{ steps.version.outputs.value }}-build.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+  # ── Step 2: Build raw binaries for 10 platforms in parallel ──────────
+  build:
+    needs: meta
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── macOS (Apple Silicon + Intel) ──
+          - { target: aarch64-apple-darwin,          os: macos-latest  }
+          - { target: x86_64-apple-darwin,           os: macos-latest  }
+          # ── Linux (x64 native, others via cross-compilation) ──
+          - { target: x86_64-unknown-linux-gnu,      os: ubuntu-latest }
+          - { target: i686-unknown-linux-gnu,        os: ubuntu-latest, cross: true }
+          - { target: aarch64-unknown-linux-gnu,     os: ubuntu-latest, cross: true }
+          - { target: armv7-unknown-linux-gnueabihf, os: ubuntu-latest, cross: true }
+          # ── Windows (x64 / x86 / ARM64) ──
+          - { target: x86_64-pc-windows-msvc,        os: windows-latest }
+          - { target: i686-pc-windows-msvc,          os: windows-latest }
+          - { target: aarch64-pc-windows-msvc,       os: windows-latest }
+
+    name: Build ${{ matrix.target }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.CARGO_DIR }}
+          key: ${{ matrix.target }}
+
+      - name: "Install cross (Linux cross-compilation tool)"
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build release binary
+        working-directory: ${{ env.CARGO_DIR }}
+        shell: bash
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+
+      - name: "Prepare artifact (Unix: strip symbols + rename)"
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          src="${{ env.CARGO_DIR }}/target/${{ matrix.target }}/release/${{ env.BIN_NAME }}"
+          # For non-cross builds, strip debug symbols to reduce size by 30-50%
+          if [ "${{ matrix.cross }}" != "true" ]; then
+            strip "$src" 2>/dev/null || true
+          fi
+          cp "$src" "${{ env.BIN_NAME }}-${{ matrix.target }}"
+          chmod +x "${{ env.BIN_NAME }}-${{ matrix.target }}"
+
+      - name: "Prepare artifact (Windows: rename .exe)"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item "${{ env.CARGO_DIR }}\target\${{ matrix.target }}\release\${{ env.BIN_NAME }}.exe" `
+                    "${{ env.BIN_NAME }}-${{ matrix.target }}.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BIN_NAME }}-${{ matrix.target }}
+          path: ${{ env.BIN_NAME }}-${{ matrix.target }}*
+
+  # ── Step 3: Create GitHub Release ──────────────────────────────
+  release:
+    needs: [meta, build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Generate SHA256 checksum file
+        run: sha256sum ${{ env.BIN_NAME }}-* > checksums.txt
+
+      - name: List all release artifacts
+        run: ls -lh && echo "---" && cat checksums.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.meta.outputs.tag }}
+          name: "${{ needs.meta.outputs.tag }} (${{ github.ref_name }})"
+          target_commitish: ${{ github.sha }}
+          # Non-main branch releases are marked as prerelease; install.sh/brew won't pick them up
+          prerelease: ${{ github.ref_name != 'main' }}
+          generate_release_notes: true
+          files: |
+            ${{ env.BIN_NAME }}-*
+            checksums.txt
+
+  # ── Step 4: Update Homebrew Formula (main branch only) ─────────
+  update-homebrew:
+    needs: [meta, release]
+    runs-on: ubuntu-latest
+    if: github.ref_name == 'main'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Fetch checksums from Release and update Formula
+        run: |
+          chmod +x scripts/update-formula.sh
+          scripts/update-formula.sh "${{ needs.meta.outputs.tag }}" "${{ github.repository }}"
+
+      - name: Commit updated Formula to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/onchainos.rb
+          git diff --cached --quiet && echo "Nothing to commit" || {
+            git commit -m "release: update Homebrew formula to ${{ needs.meta.outputs.tag }}"
+            git push
+          }

@@ -1,0 +1,43 @@
+# ──────────────────────────────────────────────────────────────
+# Continuous integration pipeline
+# Trigger: push to any branch / pull requests
+# Checks: formatting + Clippy static analysis + unit tests
+# Cross-platform: Ubuntu / macOS / Windows
+# ──────────────────────────────────────────────────────────────
+name: CI
+
+on:
+  push:
+    branches: ["*"]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.CARGO_DIR }}
+
+      - name: Check formatting
+        working-directory: ${{ env.CARGO_DIR }}
+        run: cargo fmt --check
+
+      - name: Clippy lint
+        working-directory: ${{ env.CARGO_DIR }}
+        run: cargo clippy -- -D warnings
+
+      - name: Run tests
+        working-directory: ${{ env.CARGO_DIR }}
+        run: cargo test
