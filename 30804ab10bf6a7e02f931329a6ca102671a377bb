@@ -1,0 +1,11 @@
+skills/okx-dex-market/SKILL.md
+skills/okx-dex-token/SKILL.md
+skills/okx-onchain-gateway/SKILL.md
+skills/okx-wallet-portfolio/SKILL.md
+---
+{
+  "metadata": {
+    "base_commit_sha": "30804ab10bf6a7e02f931329a6ca102671a377bb",
+    "prompts": {}
+  }
+}
