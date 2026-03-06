@@ -1,6 +1,6 @@
 ---
 name: okx-dex-market
-description: "This skill should be used when the user asks 'what\\'s the price of OKB', 'check token price', 'how much is OKB', 'show me the price chart', 'get candlestick data', 'show K-line chart', 'view trade history', 'recent trades for SOL', 'price trend', 'index price', or mentions checking a token\\'s current price, viewing price charts, candlestick data, trade history, or historical price trends. Covers real-time on-chain prices, K-line/candlestick charts, trade logs, and index prices across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. For token search, market cap, liquidity analysis, trending tokens, or holder distribution, use okx-dex-token instead."
+description: "This skill should be used when the user asks 'what\\'s the price of OKB', 'check token price', 'how much is OKB', 'show me the price chart', 'get candlestick data', 'show K-line chart', 'view trade history', 'recent trades for SOL', 'price trend', 'index price', 'what are smart money wallets buying', 'show me whale signals', 'KOL token signals', 'what tokens are smart money buying', 'show me the signal list', 'which chains support signals', or mentions checking a token\\'s current price, viewing price charts, candlestick data, trade history, historical price trends, smart money / whale / KOL on-chain trading signals, or signal-supported chains. Covers real-time on-chain prices, K-line/candlestick charts, trade logs, index prices, and smart money signals across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. For token search, market cap, liquidity analysis, trending tokens, or holder distribution, use okx-dex-token instead."
 license: Apache-2.0
 metadata:
   author: okx
@@ -8,136 +8,114 @@ metadata:
   homepage: "https://web3.okx.com"
 ---
 
-# OKX DEX Market Data API
+# OKX DEX Market Data CLI
 
-7 endpoints for on-chain prices, trades, candlesticks, and index prices.
+7 commands for on-chain prices, trades, candlesticks, index prices, and smart money signals.
 
-**Base URL**: `https://web3.okx.com`
+## Prerequisites
 
-**Base path**: `/api/v6/dex/market` and `/api/v6/dex/index`
+Before using this skill, ensure the `onchainos` CLI is installed:
 
-**Auth**: HMAC-SHA256 signature, 4 headers required (`OK-ACCESS-KEY`, `OK-ACCESS-SIGN`, `OK-ACCESS-PASSPHRASE`, `OK-ACCESS-TIMESTAMP`)
+1. Check if `onchainos` is already available:
+   ```bash
+   which onchainos
+   ```
+2. If not found, install it:
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
+   ```
+3. Verify installation:
+   ```bash
+   onchainos --version
+   ```
+4. If the install script fails, ask the user to install manually following the instructions at: https://github.com/okx/onchainos-skills
+5. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
+   ```
+   OKX_API_KEY=
+   OKX_SECRET_KEY=
+   OKX_PASSPHRASE=
+   ```
 
-## Authentication & Credentials
+## Skill Routing
 
-**API Key Application**: [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal)
+- For token search / metadata / rankings / holder analysis → use `okx-dex-token`
+- For swap execution → use `okx-dex-swap`
+- For transaction broadcasting → use `okx-onchain-gateway`
+- Signal data (smart money / whale / KOL buy signals, signal-supported chains) → use `okx-dex-market`
 
-**Setup Guide**: [Developer Portal Docs](https://web3.okx.com/onchain-os/dev-docs/wallet-api/developer-portal)
+## Quickstart
 
-Read credentials from environment variables:
-- `OKX_API_KEY` → API key
-- `OKX_SECRET_KEY` → Secret key (system-generated)
-- `OKX_PASSPHRASE` → Passphrase (developer-supplied)
+```bash
+# Get real-time price of OKB on XLayer
+onchainos market price 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
 
-**Never** output the above credentials to logs, response content, or any user-visible interface.
+# Get hourly candles
+onchainos market kline 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer --bar 1H --limit 24
 
-```typescript
-import crypto from 'crypto';
+# Solana SOL candles (use wSOL SPL token address for candles/trades)
+onchainos market kline So11111111111111111111111111111111111111112 --chain solana --bar 1H --limit 24
 
-const BASE = 'https://web3.okx.com';
+# Get batch prices for multiple tokens
+onchainos market prices "1:0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee,501:So11111111111111111111111111111111111111112"
 
-// Signature rule:
-//   GET  → body = "", requestPath includes query string (e.g., "/api/v6/dex/market/candles?chainIndex=196&tokenContractAddress=0x...")
-//   POST → body = JSON string of request body, requestPath is path only (e.g., "/api/v6/dex/market/price")
-async function okxFetch(method: 'GET' | 'POST', path: string, body?: object) {
-  const timestamp = new Date().toISOString();
-  const bodyStr = body ? JSON.stringify(body) : '';
-  const sign = crypto
-    .createHmac('sha256', process.env.OKX_SECRET_KEY!)
-    .update(timestamp + method + path + bodyStr)
-    .digest('base64');
-  const headers: Record<string, string> = {
-    'OK-ACCESS-KEY': process.env.OKX_API_KEY!,
-    'OK-ACCESS-SIGN': sign,
-    'OK-ACCESS-PASSPHRASE': process.env.OKX_PASSPHRASE!,
-    'OK-ACCESS-TIMESTAMP': timestamp,
-    'Content-Type': 'application/json',
-  };
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers,
-    ...(body && { body: bodyStr }),
-  });
-  if (res.status === 429) throw { code: 'RATE_LIMITED', msg: 'Rate limited — retry with backoff', retryable: true };
-  if (res.status >= 500) throw { code: `HTTP_${res.status}`, msg: 'Server error', retryable: true };
-  const json = await res.json();
-  if (json.code !== '0') throw { code: json.code, msg: json.msg || 'API error', retryable: false };
-  return json.data;
-}
+# Get smart money signals on Solana
+onchainos market signal-list solana --wallet-type "1,2,3" --min-amount-usd 1000
 ```
 
-Response envelope: `{ "code": "0", "data": [...], "msg": "" }`. `code` = `"0"` means success.
+## Chain Name Support
 
-## Developer Quickstart
+The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`) and resolves them automatically. You can also use `--chain` with numeric chain indices (e.g., `1`, `501`, `196`).
 
-```typescript
-// Get real-time price (POST — body is JSON array)
-const prices = await okxFetch('POST', '/api/v6/dex/market/price', [
-  { chainIndex: '196', tokenContractAddress: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' },
-]);
-// → prices[].price (USD string)
+| Chain | Name | chainIndex |
+|---|---|---|
+| XLayer | `xlayer` | `196` |
+| Solana | `solana` | `501` |
+| Ethereum | `ethereum` | `1` |
+| Base | `base` | `8453` |
+| BSC | `bsc` | `56` |
+| Arbitrum | `arbitrum` | `42161` |
 
-// Get hourly candles (GET)
-const candles = await okxFetch('GET', '/api/v6/dex/market/candles?' + new URLSearchParams({
-  chainIndex: '196', tokenContractAddress: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
-  bar: '1H', limit: '24',
-}));
-// → candles[]: [ts, open, high, low, close, vol, volUsd, confirm]
+## Command Index
 
-// Solana SOL — candles and trades endpoints require the wSOL SPL token address,
-// while /market/price accepts both wSOL and the system program address.
-const solCandles = await okxFetch('GET', '/api/v6/dex/market/candles?' + new URLSearchParams({
-  chainIndex: '501', tokenContractAddress: 'So11111111111111111111111111111111111111112',
-  bar: '1H', limit: '24',
-}));
-```
+### Market Price Commands
 
-## Common Chain IDs
+| # | Command | Description |
+|---|---|---|
+| 1 | `onchainos market price <address>` | Get single token price |
+| 2 | `onchainos market prices <tokens>` | Batch price query |
+| 3 | `onchainos market trades <address>` | Get recent trades |
+| 4 | `onchainos market kline <address>` | Get K-line / candlestick data |
 
-| Chain | chainIndex | Chain | chainIndex |
-|---|---|---|---|
-| XLayer | `196` | Base | `8453` |
-| Solana | `501` | BSC | `56` |
-| Ethereum | `1` | Arbitrum | `42161` |
+### Index Price Commands
 
-## Endpoint Index
+| # | Command | Description |
+|---|---|---|
+| 5 | `onchainos market index <address>` | Get index price (aggregated from multiple sources) |
 
-### Market Price API
+### Signal Commands
 
-| # | Method | Path | Docs |
-|---|---|---|---|
-| 1 | GET | `/api/v6/dex/market/supported/chain` | [market-price-chains](https://web3.okx.com/onchain-os/dev-docs/market/market-price-chains) |
-| 2 | POST | `/api/v6/dex/market/price` | [market-price](https://web3.okx.com/onchain-os/dev-docs/market/market-price) |
-| 3 | GET | `/api/v6/dex/market/trades` | [market-trades](https://web3.okx.com/onchain-os/dev-docs/market/market-trades) |
-| 4 | GET | `/api/v6/dex/market/candles` | [market-candlesticks](https://web3.okx.com/onchain-os/dev-docs/market/market-candlesticks) |
-| 5 | GET | `/api/v6/dex/market/historical-candles` | [market-candlesticks-history](https://web3.okx.com/onchain-os/dev-docs/market/market-candlesticks-history) |
-
-Error Codes: [Market Price Error Codes](https://web3.okx.com/onchain-os/dev-docs/market/market-price-error-code)
-
-### Index Price API
-
-| # | Method | Path | Docs |
-|---|---|---|---|
-| 6 | POST | `/api/v6/dex/index/current-price` | [current-price](https://web3.okx.com/onchain-os/dev-docs/market/index-price) |
-| 7 | GET | `/api/v6/dex/index/historical-price` | [historical-price](https://web3.okx.com/onchain-os/dev-docs/market/historical-index-price) |
-
-Error Codes: [Index Price Error Codes](https://web3.okx.com/onchain-os/dev-docs/market/index-price-error-code)
+| # | Command | Description |
+|---|---|---|
+| 6 | `onchainos market signal-chains` | Get supported chains for market signals |
+| 7 | `onchainos market signal-list <chain>` | Get latest signal list (smart money / KOL / whale activity) |
 
 ## Boundary: market vs token skill
 
 | Need | Use this skill (`okx-dex-market`) | Use `okx-dex-token` instead |
 |---|---|---|
-| Real-time price (single value) | `POST /market/price` | - |
-| Price + market cap + liquidity + 24h change | - | `POST /market/price-info` |
-| K-line / candlestick chart | `GET /market/candles` | - |
-| Trade history (buy/sell log) | `GET /market/trades` | - |
-| Index price (multi-source aggregate) | `POST /index/current-price` | - |
-| Token search by name/symbol | - | `GET /market/token/search` |
-| Token metadata (decimals, logo) | - | `POST /market/token/basic-info` |
-| Token ranking (trending) | - | `GET /market/token/toplist` |
-| Holder distribution | - | `GET /market/token/holder` |
+| Real-time price (single value) | `onchainos market price` | - |
+| Price + market cap + liquidity + 24h change | - | `onchainos token price-info` |
+| K-line / candlestick chart | `onchainos market kline` | - |
+| Trade history (buy/sell log) | `onchainos market trades` | - |
+| Index price (multi-source aggregate) | `onchainos market index` | - |
+| Token search by name/symbol | - | `onchainos token search` |
+| Token metadata (decimals, logo) | - | `onchainos token info` |
+| Token ranking (trending) | - | `onchainos token trending` |
+| Holder distribution | - | `onchainos token holders` |
+| Smart money / whale / KOL signals | `onchainos market signal-list` | - |
+| Signal-supported chains | `onchainos market signal-chains` | - |
 
-**Rule of thumb**: `okx-dex-market` = raw price feeds & charts. `okx-dex-token` = token discovery & enriched analytics.
+**Rule of thumb**: `okx-dex-market` = raw price feeds, charts & smart money signals. `okx-dex-token` = token discovery & enriched analytics.
 
 ## Cross-Skill Workflows
 
@@ -146,51 +124,72 @@ Error Codes: [Index Price Error Codes](https://web3.okx.com/onchain-os/dev-docs/
 > User: "Tell me about BONK, show me the chart, then buy if it looks good"
 
 ```
-1. okx-dex-token   /market/token/search?search=BONK                      → get tokenContractAddress + chainIndex
-2. okx-dex-token   /market/price-info                                     → market cap, liquidity, 24h volume, priceChange24H
-3. okx-dex-token   /market/token/holder                                   → check holder distribution
-4. okx-dex-market  /market/candles                                        → K-line chart for visual trend
+1. okx-dex-token    onchainos token search BONK --chains solana            → get tokenContractAddress + chain
+2. okx-dex-token    onchainos token price-info <address> --chain solana    → market cap, liquidity, 24h volume
+3. okx-dex-token    onchainos token holders <address> --chain solana       → check holder distribution
+4. okx-dex-market   onchainos market kline <address> --chain solana        → K-line chart for visual trend
        ↓ user decides to buy
-5. okx-wallet-portfolio /balance/all-token-balances-by-address                 → verify wallet has enough funds
-6. okx-dex-swap    /aggregator/quote → /aggregator/swap → execute
+5. okx-dex-swap     onchainos swap quote --from ... --to ... --amount ... --chain solana
+6. okx-dex-swap     onchainos swap swap --from ... --to ... --amount ... --chain solana --wallet <addr>
 ```
 
-**Data handoff**: `tokenContractAddress` + `chainIndex` from step 1 are reused in steps 2-6.
+**Data handoff**: `tokenContractAddress` from step 1 is reused as `<address>` in steps 2-6.
 
 ### Workflow B: Price Monitoring / Alerts
 
 ```
-1. okx-dex-token   /market/token/toplist                                  → find trending tokens by volume
+1. okx-dex-token    onchainos token trending --chains solana --sort-by 5   → find trending tokens by volume
        ↓ select tokens of interest
-2. okx-dex-market  /market/price                                          → get current price for each
-3. okx-dex-market  /market/candles?bar=1H                                 → hourly chart
-4. okx-dex-market  /index/current-price                                   → compare on-chain vs index price
+2. okx-dex-market   onchainos market price <address> --chain solana        → get current price for each
+3. okx-dex-market   onchainos market kline <address> --chain solana --bar 1H  → hourly chart
+4. okx-dex-market   onchainos market index <address> --chain solana        → compare on-chain vs index price
 ```
 
-### Workflow C: Historical Analysis
+### Workflow C: Signal-Driven Token Research & Buy
+
+> User: "Show me what smart money is buying on Solana and buy if it looks good"
 
 ```
-1. okx-dex-market  /market/historical-candles?bar=1D                → daily candles for long-term view
-2. okx-dex-market  /index/historical-price?period=1d                → historical index price comparison
+1. okx-dex-market   onchainos market signal-chains                         → confirm Solana supports signals
+2. okx-dex-market   onchainos market signal-list solana --wallet-type "1,2,3"
+                                                                          → get latest smart money / whale / KOL buy signals
+                                                                          → extracts token address, price, walletType, triggerWalletCount
+       ↓ user picks a token from signal list
+3. okx-dex-token    onchainos token price-info <address> --chain solana    → enrich: market cap, liquidity, 24h volume
+4. okx-dex-token    onchainos token holders <address> --chain solana       → check holder concentration risk
+5. okx-dex-market   onchainos market kline <address> --chain solana        → K-line chart to confirm momentum
+       ↓ user decides to buy
+6. okx-dex-swap     onchainos swap quote --from ... --to <address> --amount ... --chain solana
+7. okx-dex-swap     onchainos swap swap --from ... --to <address> --amount ... --chain solana --wallet <addr>
+```
+
+**Data handoff**: `token.tokenAddress` from step 2 feeds directly into steps 3–7.
+
+> User: "Filter signals to only show whale buys above $10k"
+
+```
+1. okx-dex-market   onchainos market signal-list ethereum --wallet-type 3 --min-amount-usd 10000
+                                                                          → whale-only signals on Ethereum, min $10k
+2. okx-dex-market   onchainos market kline <address> --chain ethereum      → chart for chosen token
 ```
 
 ## Operation Flow
 
 ### Step 1: Identify Intent
 
-- Real-time price (single token) -> `POST /market/price`
-- Trade history -> `GET /market/trades`
-- K-line chart (recent) -> `GET /market/candles`
-- K-line chart (historical) -> `GET /market/historical-candles`
-- Supported chains for market price -> `GET /market/supported/chain`
-- Index price (current) -> `POST /index/current-price`
-- Index price (historical) -> `GET /index/historical-price`
+- Real-time price (single token) → `onchainos market price`
+- Trade history → `onchainos market trades`
+- K-line chart → `onchainos market kline`
+- Index price (current) → `onchainos market index`
+- Smart money / whale / KOL buy signals → `onchainos market signal-list`
+- Chains supporting signals → `onchainos market signal-chains`
 
 ### Step 2: Collect Parameters
 
-- Missing `chainIndex` -> recommend XLayer (chainIndex `196`, low gas, fast confirmation) as the default, then ask which chain the user prefers
-- Missing token address -> use `okx-dex-token` `/market/token/search` first to resolve
-- K-line requests -> confirm bar size and time range with user
+- Missing chain → recommend XLayer (`--chain xlayer`, low gas, fast confirmation) as the default, then ask which chain the user prefers; for signal queries, first call `onchainos market signal-chains` to confirm the chain is supported
+- Missing token address → use `okx-dex-token` `onchainos token search` first to resolve; for signal queries, `--token-address` is optional (omit to get all signals on the chain)
+- K-line requests → confirm bar size and time range with user
+- Signal filter params (`--wallet-type`, `--min-amount-usd`, etc.) → ask user for preferences if not specified; default to no filter (returns all signal types)
 
 ### Step 3: Call and Display
 
@@ -200,170 +199,244 @@ Error Codes: [Index Price Error Codes](https://web3.okx.com/onchain-os/dev-docs/
 
 ### Step 4: Suggest Next Steps
 
-After displaying results, suggest 2-3 relevant follow-up actions based on the endpoint just called:
+After displaying results, suggest 2-3 relevant follow-up actions based on the command just executed:
 
 | Just called | Suggest |
 |---|---|
-| `/market/price` | 1. View K-line chart → `/market/candles` (this skill) 2. Deeper analytics (market cap, liquidity, 24h volume) → `okx-dex-token` 3. Buy/swap this token → `okx-dex-swap` |
-| `/market/candles` or `/market/historical-candles` | 1. Check recent trades → `/market/trades` (this skill) 2. Buy/swap based on the chart → `okx-dex-swap` 3. Check wallet balance of this token → `okx-wallet-portfolio` |
-| `/market/trades` | 1. View price chart for context → `/market/candles` (this skill) 2. Execute a trade → `okx-dex-swap` |
-| `/index/current-price` or `/index/historical-price` | 1. Compare with on-chain DEX price → `/market/price` (this skill) 2. View full price chart → `/market/candles` (this skill) |
+| `market price` | 1. View K-line chart → `onchainos market kline` (this skill) 2. Deeper analytics (market cap, liquidity, 24h volume) → `okx-dex-token` 3. Buy/swap this token → `okx-dex-swap` |
+| `market kline` | 1. Check recent trades → `onchainos market trades` (this skill) 2. Buy/swap based on the chart → `okx-dex-swap` |
+| `market trades` | 1. View price chart for context → `onchainos market kline` (this skill) 2. Execute a trade → `okx-dex-swap` |
+| `market index` | 1. Compare with on-chain DEX price → `onchainos market price` (this skill) 2. View full price chart → `onchainos market kline` (this skill) |
+| `market signal-list` | 1. View price chart for a signal token → `onchainos market kline` (this skill) 2. Deep token analytics (market cap, liquidity) → `okx-dex-token` 3. Buy the token → `okx-dex-swap` |
+| `market signal-chains` | 1. Fetch signals on a supported chain → `onchainos market signal-list` (this skill) |
 
 Present conversationally, e.g.: "Would you like to see the K-line chart, or buy this token?" — never expose skill names or endpoint paths to the user.
 
-## API Reference
+## CLI Command Reference
 
-### 1. GET /market/supported/chain
+### 1. onchainos market price
 
-| Param | Type | Required | Description |
-|---|---|---|---|
-| `chainIndex` | String | No | Filter to a specific chain (e.g., `"196"`) |
+Get single token price.
 
-**Response:**
-
-| Field | Type | Description |
-|---|---|---|
-| `data[].chainName` | String | Chain name (e.g., "XLayer") |
-| `data[].chainLogoUrl` | String | Chain logo URL |
-| `data[].chainSymbol` | String | Chain symbol (e.g., "OKB") |
-| `data[].chainIndex` | String | Chain unique identifier (e.g., "196") |
-
-### 2. POST /market/price
-
-Request body is a JSON array of objects.
-
-| Param | Type | Required | Description |
-|---|---|---|---|
-| `chainIndex` | String | Yes | Chain ID (e.g., `"196"`) |
-| `tokenContractAddress` | String | Yes | Token address (all lowercase for EVM) |
-
-**Response:**
-
-| Field | Type | Description |
-|---|---|---|
-| `data[].chainIndex` | String | Chain ID |
-| `data[].tokenContractAddress` | String | Token address |
-| `data[].time` | String | Unix timestamp in milliseconds |
-| `data[].price` | String | Latest token price in USD |
-
-```json
-{
-  "code": "0",
-  "data": [{ "chainIndex": "196", "tokenContractAddress": "0x...", "time": "1716892020000", "price": "26.458" }],
-  "msg": ""
-}
+```bash
+onchainos market price <address> [--chain <chain>]
 ```
 
-### 3. GET /market/trades
-
-| Param | Type | Required | Description |
+| Param | Required | Default | Description |
 |---|---|---|---|
-| `chainIndex` | String | Yes | Chain ID |
-| `tokenContractAddress` | String | Yes | Token address (all lowercase for EVM) |
+| `<address>` | Yes | - | Token contract address (positional) |
+| `--chain` | No | `ethereum` | Chain name (e.g., `ethereum`, `solana`, `xlayer`) |
 
-Optional params: `after` (pagination id), `limit` (max 500, default 100).
-
-**Response key fields**: `id`, `chainIndex`, `tokenContractAddress`, `type` (`buy`/`sell`), `price`, `volume` (USD), `time`, `dexName`, `txHashUrl`, `userAddress`, `changedTokenInfo[]` (each has `amount`, `tokenSymbol`), `poolLogoUrl`, `isFiltered`. Full fields: see [docs](https://web3.okx.com/onchain-os/dev-docs/market/market-trades).
-
-### 4. GET /market/candles
-
-| Param | Type | Required | Description |
-|---|---|---|---|
-| `chainIndex` | String | Yes | Chain ID |
-| `tokenContractAddress` | String | Yes | Token address (all lowercase for EVM) |
-
-Optional params: `bar` (default `1m`; values: `1s`, `1m`, `3m`, `5m`, `15m`, `30m`, `1H`, `2H`, `4H`, `6H`, `12H`, `1D`, `1W`, `1M`, `3M`; UTC variants: `6Hutc`, `12Hutc`, `1Dutc`, `1Wutc`, `1Mutc`, `3Mutc`), `after`, `before`, `limit` (max 299, default 100).
-
-**Response:** Each element in `data` is an array (positional fields):
-
-| Position | Field | Description |
-|---|---|---|
-| 0 | `ts` | Opening time, Unix ms |
-| 1 | `o` | Open price |
-| 2 | `h` | High price |
-| 3 | `l` | Low price |
-| 4 | `c` | Close price |
-| 5 | `vol` | Volume (base currency) |
-| 6 | `volUsd` | Volume (USD) |
-| 7 | `confirm` | `0`=uncompleted, `1`=completed |
-
-```json
-{ "code": "0", "data": [["1597026383085","3.721","3.743","3.677","3.708","22698348","226348","1"]], "msg": "" }
-```
-
-### 5. GET /market/historical-candles
-
-Same parameters and response schema as endpoint #4 (`/market/candles`). Use this for older historical data.
-
-### 6. POST /index/current-price
-
-Request body is a JSON array. Max 100 tokens per request.
-
-| Param | Type | Required | Description |
-|---|---|---|---|
-| `chainIndex` | String | Yes | Chain ID |
-| `tokenContractAddress` | String | Yes | Token address (`""` for native token) |
-
-**Response:**
+**Return fields**:
 
 | Field | Type | Description |
 |---|---|---|
-| `data[].chainIndex` | String | Chain ID |
-| `data[].tokenContractAddress` | String | Token address |
-| `data[].price` | String | Index price (aggregated from multiple sources) |
-| `data[].time` | String | Unix timestamp in milliseconds |
+| `chainIndex` | String | Chain identifier |
+| `tokenContractAddress` | String | Token contract address |
+| `time` | String | Timestamp (Unix milliseconds) |
+| `price` | String | Current price in USD |
 
-### 7. GET /index/historical-price
+### 2. onchainos market prices
 
-| Param | Type | Required | Description |
+Batch price query for multiple tokens.
+
+```bash
+onchainos market prices <tokens> [--chain <chain>]
+```
+
+| Param | Required | Default | Description |
 |---|---|---|---|
-| `chainIndex` | String | Yes | Chain ID |
-| `tokenContractAddress` | String | No | Token address (`""` for native token) |
+| `<tokens>` | Yes | - | Comma-separated tokens. Format: `chainIndex:address` pairs (e.g., `"1:0xeee...,501:So111..."`) or plain addresses with `--chain` |
+| `--chain` | No | `ethereum` | Default chain for tokens without explicit chainIndex prefix |
 
-Optional params: `period` (`1m`, `5m`, `30m`, `1h`, `1d` default), `limit` (max 200, default 50), `cursor`, `begin`/`end` (Unix ms).
-
-**Response:**
+**Return fields** (per token):
 
 | Field | Type | Description |
 |---|---|---|
-| `data[].cursor` | String | Pagination cursor |
-| `data[].prices[].time` | String | Timestamp (whole minute) |
-| `data[].prices[].price` | String | Price (18 decimal precision) |
+| `chainIndex` | String | Chain identifier |
+| `tokenContractAddress` | String | Token contract address |
+| `time` | String | Timestamp (Unix milliseconds) |
+| `price` | String | Current price in USD |
 
-```json
-{
-  "code": "0",
-  "data": [{ "cursor": "31", "prices": [{ "time": "1700040600000", "price": "1994.430000000000000000" }] }],
-  "msg": "success"
-}
+### 3. onchainos market kline
+
+Get K-line / candlestick data.
+
+```bash
+onchainos market kline <address> [--bar <bar>] [--limit <n>] [--chain <chain>]
 ```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<address>` | Yes | - | Token contract address |
+| `--bar` | No | `1H` | Bar size: `1s`, `1m`, `5m`, `15m`, `30m`, `1H`, `4H`, `1D`, `1W`, etc. |
+| `--limit` | No | `100` | Number of data points (max 299) |
+| `--chain` | No | `ethereum` | Chain name |
+
+**Return fields**: Each data point is an array with the following elements:
+
+| Index | Field | Type | Description |
+|---|---|---|---|
+| 0 | `ts` | String | Timestamp (Unix milliseconds) |
+| 1 | `open` | String | Opening price |
+| 2 | `high` | String | Highest price |
+| 3 | `low` | String | Lowest price |
+| 4 | `close` | String | Closing price |
+| 5 | `vol` | String | Trading volume (token units) |
+| 6 | `volUsd` | String | Trading volume (USD) |
+| 7 | `confirm` | String | `"0"` = uncompleted candle, `"1"` = completed candle |
+
+### 4. onchainos market trades
+
+Get recent trades.
+
+```bash
+onchainos market trades <address> [--chain <chain>] [--limit <n>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<address>` | Yes | - | Token contract address |
+| `--chain` | No | `ethereum` | Chain name |
+| `--limit` | No | `100` | Number of trades (max 500) |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | String | Trade ID |
+| `type` | String | Trade direction: `buy` or `sell` |
+| `price` | String | Trade price in USD |
+| `volume` | String | Trade volume in USD |
+| `time` | String | Trade timestamp (Unix milliseconds) |
+| `dexName` | String | DEX name where trade occurred |
+| `txHashUrl` | String | Transaction hash explorer URL |
+| `userAddress` | String | Wallet address of the trader |
+| `changedTokenInfo[]` | Array | Token change details for the trade |
+| `changedTokenInfo[].tokenSymbol` | String | Token symbol |
+| `changedTokenInfo[].tokenContractAddress` | String | Token contract address |
+| `changedTokenInfo[].tokenAmount` | String | Token amount changed |
+
+### 5. onchainos market index
+
+Get index price (aggregated from multiple sources).
+
+```bash
+onchainos market index <address> [--chain <chain>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<address>` | Yes | - | Token contract address (empty string `""` for native token) |
+| `--chain` | No | `ethereum` | Chain name |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `chainIndex` | String | Chain identifier |
+| `tokenContractAddress` | String | Token contract address |
+| `price` | String | Index price (aggregated from multiple sources) |
+| `time` | String | Timestamp (Unix milliseconds) |
+
+### 6. onchainos market signal-chains
+
+Get supported chains for market signals. No parameters required.
+
+```bash
+onchainos market signal-chains
+```
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `chainIndex` | String | Chain identifier (e.g., `"1"`, `"501"`) |
+| `chainName` | String | Human-readable chain name (e.g., `"Ethereum"`, `"Solana"`) |
+| `chainLogo` | String | Chain logo image URL |
+
+> Call this first when a user wants signal data and you need to confirm chain support before calling `onchainos market signal-list`.
+
+### 7. onchainos market signal-list
+
+Get latest buy-direction token signals sorted descending by time.
+
+```bash
+onchainos market signal-list <chain> [options]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<chain>` | Yes | - | Chain name (e.g., `ethereum`, `solana`, `base`) (positional) |
+| `--wallet-type` | No | all types | Wallet classification, comma-separated: `1`=Smart Money, `2`=KOL/Influencer, `3`=Whale (e.g., `"1,2"`) |
+| `--min-amount-usd` | No | - | Minimum transaction amount in USD |
+| `--max-amount-usd` | No | - | Maximum transaction amount in USD |
+| `--min-address-count` | No | - | Minimum triggering wallet address count |
+| `--max-address-count` | No | - | Maximum triggering wallet address count |
+| `--token-address` | No | - | Token contract address (filter signals for a specific token) |
+| `--min-market-cap-usd` | No | - | Minimum token market cap in USD |
+| `--max-market-cap-usd` | No | - | Maximum token market cap in USD |
+| `--min-liquidity-usd` | No | - | Minimum token liquidity in USD |
+| `--max-liquidity-usd` | No | - | Maximum token liquidity in USD |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `timestamp` | String | Signal timestamp (Unix milliseconds) |
+| `chainIndex` | String | Chain identifier |
+| `price` | String | Token price at signal time (USD) |
+| `walletType` | String | Wallet classification: `SMART_MONEY`, `WHALE`, or `INFLUENCER` |
+| `triggerWalletCount` | String | Number of wallets that triggered this signal |
+| `triggerWalletAddress` | String | Comma-separated wallet addresses that triggered the signal |
+| `amountUsd` | String | Total transaction amount in USD |
+| `soldRatioPercent` | String | Percentage of tokens sold (lower = still holding) |
+| `token.tokenAddress` | String | Token contract address |
+| `token.symbol` | String | Token symbol |
+| `token.name` | String | Token name |
+| `token.logo` | String | Token logo URL |
+| `token.marketCapUsd` | String | Token market cap in USD |
+| `token.holders` | String | Number of token holders |
+| `token.top10HolderPercent` | String | Percentage of supply held by top 10 holders |
 
 ## Input / Output Examples
 
 **User says:** "Check the current price of OKB on XLayer"
 
-```
-POST /api/v6/dex/market/price
-Body: [{ "chainIndex": "196", "tokenContractAddress": "0xeeee...eeee" }]
--> Display: OKB current price $XX.XX
+```bash
+onchainos market price 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
+# → Display: OKB current price $XX.XX
 ```
 
 **User says:** "Show me hourly candles for USDC on XLayer"
 
+```bash
+onchainos market kline 0x74b7f16337b8972027f6196a17a631ac6de26d22 --chain xlayer --bar 1H
+# → Display candlestick data (open/high/low/close/volume)
 ```
-GET /api/v6/dex/market/candles?chainIndex=196&tokenContractAddress=0x74b7...&bar=1H
--> Display candlestick data (open/high/low/close/volume)
+
+**User says:** "What are smart money wallets buying on Solana?"
+
+```bash
+onchainos market signal-list solana --wallet-type 1
+# → Display smart money buy signals with token info
+```
+
+**User says:** "Show me whale buys above $10k on Ethereum"
+
+```bash
+onchainos market signal-list ethereum --wallet-type 3 --min-amount-usd 10000
+# → Display whale-only signals, min $10k
 ```
 
 ## Edge Cases
 
-- **Invalid token address**: returns empty data or error — prompt user to verify, or use `okx-dex-token /market/token/search` to resolve
-- **Unsupported chain**: call `/market/supported/chain` first to confirm
+- **Invalid token address**: returns empty data or error — prompt user to verify, or use `onchainos token search` to resolve
+- **Unsupported chain**: the CLI will report an error — try a different chain name
 - **No candle data**: may be a new token or low liquidity — inform user
-- **429 rate limit**: exponential backoff with jitter. See [Rate Limit & Fee Docs](https://web3.okx.com/onchain-os/dev-docs/home/api-fee) for tier-specific RPS limits (Trial: 1 RPS, Start-up: 2-50 RPS, Enterprise: custom).
-- **Cross-skill pipeline rate limit**: when chaining calls across multiple skills (e.g., token search → candles), add 300-500ms delay between requests to avoid triggering rate limit (error code `50011`).
+- **Unsupported chain for signals**: not all chains support signals — always verify with `onchainos market signal-chains` first
+- **Empty signal list**: no signals on this chain for the given filters — suggest relaxing `--wallet-type`, `--min-amount-usd`, or `--min-address-count`, or try a different chain
 - **Network error**: retry once, then prompt user to try again later
-- **Request timeout**: all API calls must set a **10-second** timeout limit
 
 ## Amount Display Rules
 
@@ -374,10 +447,6 @@ GET /api/v6/dex/market/candles?chainIndex=196&tokenContractAddress=0x74b7...&bar
 ## Global Notes
 
 - EVM contract addresses must be **all lowercase**
-- `chainIndex` is a **string**
-- POST endpoints (`/market/price`, `/index/current-price`) use JSON body
-- GET endpoints use query params
-- For token search / metadata / rankings / holder analysis -> use `okx-dex-token`
-- For balance queries -> use `okx-wallet-portfolio`
-- For swap execution -> use `okx-dex-swap`
-- For transaction broadcasting -> use `okx-onchain-gateway`
+- The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
+- All output is JSON format by default; use `-o table` for table format
+- The CLI handles authentication internally via environment variables — see Prerequisites step 5 for default values

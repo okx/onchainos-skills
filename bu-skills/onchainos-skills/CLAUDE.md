@@ -10,9 +10,9 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 
 The project contains skills:
 
-- **skills/** — 5 onchainos API skill definitions
+- **skills/** — 5 onchainos CLI skill definitions
 
-Each skill is a Markdown file (`SKILL.md`) with YAML frontmatter defining the skill name, description, and metadata, followed by detailed API documentation.
+Each skill is a Markdown file (`SKILL.md`) with YAML frontmatter defining the skill name, description, and metadata, followed by detailed CLI command reference.
 
 ## Available Skills
 

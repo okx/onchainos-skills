@@ -35,12 +35,10 @@ OKX_PASSPHRASE="your-passphrase"
 Want to try the skills right away? Use the shared API key below:
 
 ```bash
-OKX_API_KEY="9fc58c11-e2d3-4f52-b5e9-d863a094c50f"
-OKX_SECRET_KEY="146127D9883D97E00799C59BE9CFCEBB"
-OKX_PASSPHRASE="onchainOS666!"
+OKX_API_KEY="03f0b376-251c-4618-862e-ae92929e0416"
+OKX_SECRET_KEY="652ECE8FF13210065B0851FFDA9191F7"
+OKX_PASSPHRASE="onchainOS#666"
 ```
-
-> **Note**: This shared key has rate limits. For higher usage or production, apply for your own key.
 
 ## Installation
 
@@ -64,7 +62,7 @@ Works with Claude Code, Cursor, Codex CLI, and OpenCode. Auto-detects your envir
 
 Tell Codex:
 
-```
+```plain
 Fetch and follow instructions from https://raw.githubusercontent.com/okx/onchainos-skills/refs/heads/main/.codex/INSTALL.md
 ```
 
@@ -72,7 +70,7 @@ Fetch and follow instructions from https://raw.githubusercontent.com/okx/onchain
 
 Tell OpenCode:
 
-```
+```plain
 Fetch and follow instructions from https://raw.githubusercontent.com/okx/onchainos-skills/refs/heads/main/.opencode/INSTALL.md
 ```
 
@@ -91,6 +89,23 @@ The skills work together in typical DeFi flows:
 **Pre-flight Check**: `okx-onchain-gateway` (estimate gas) -> `okx-onchain-gateway` (simulate tx) -> `okx-onchain-gateway` (broadcast) -> `okx-onchain-gateway` (track order)
 
 **Full Trading Flow**: `okx-dex-token` (search) -> `okx-dex-market` (price/chart) -> `okx-wallet-portfolio` (check balance) -> `okx-dex-swap` (get tx) -> `okx-onchain-gateway` (simulate + broadcast + track)
+
+## API Key Security Notice & Disclaimer
+
+**Built-in Sandbox API Keys (Default)** This integration includes built-in sandbox API keys for testing purposes only. By using these keys, you acknowledge and accept the following:
+
+* These keys are shared and may be subject to rate limiting, quota exhaustion, or unexpected behavior at any time without prior notice.
+* Any Agent execution errors, failures, financial losses, or data inaccuracies arising from the use of built-in keys are solely your responsibility.
+* We expressly disclaim all liability for any direct, indirect, incidental, or consequential damages resulting from the use of built-in sandbox keys in production or quasi-production environments.
+* Built-in keys are strictly intended for local testing and evaluation only. Do not use them in production environments or with real assets.
+
+**Production Usage (Recommended)** For stable and reliable production usage, you must provide your own API credentials by setting the following environment variables:
+
+* `OKX_API_KEY`
+* `OKX_SECRET_KEY`
+* `OKX_PASSPHRASE`
+
+You are solely responsible for the security, confidentiality, and proper management of your own API keys. We shall not be liable for any unauthorized access, asset loss, or damages resulting from improper key management on your part.
 
 ## License
 

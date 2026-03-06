@@ -1,8 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
 
 # Environment variables
 .env
@@ -24,6 +21,10 @@ Thumbs.db
 dist/
 build/
 out/
+target/
+
+# onchainOS local config
+.onchainos/
 
 # Logs
 *.log
@@ -33,3 +34,13 @@ yarn-error.log*
 
 # Claude Code
 **/settings.local.json
+
+# AI Assistant directories (auto-generated)
+.cursor
+.ai-mat
+.cursorrules
+.cursorignore
+.claude
+
+
+.zigbuild-cache/
