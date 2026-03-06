@@ -59,16 +59,16 @@ onchainos portfolio all-balances --address 0xYourWallet --chains "xlayer,solana,
 onchainos portfolio token-balances --address 0xYourWallet --tokens "196:,196:0x74b7f16337b8972027f6196a17a631ac6de26d22"
 
 # Portfolio PnL overview for the last 7 days
-OKX_BASE_URL=https://web3pre.okex.org onchainos portfolio overview --address 0xYourWallet --chain ethereum --time-frame 7d
+onchainos portfolio overview --address 0xYourWallet --chain ethereum --time-frame 7d
 
 # DEX transaction history
-OKX_BASE_URL=https://web3pre.okex.org onchainos portfolio dex-history --address 0xYourWallet --chain ethereum --limit 20
+onchainos portfolio dex-history --address 0xYourWallet --chain ethereum --limit 20
 
 # Recent PnL by token
-OKX_BASE_URL=https://web3pre.okex.org onchainos portfolio recent-pnl --address 0xYourWallet --chain ethereum
+onchainos portfolio recent-pnl --address 0xYourWallet --chain ethereum
 
 # Latest PnL for a specific token
-OKX_BASE_URL=https://web3pre.okex.org onchainos portfolio token-pnl --address 0xYourWallet --chain ethereum --token 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+onchainos portfolio token-pnl --address 0xYourWallet --chain ethereum --token 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
 ```
 
 ## Chain Name Support
@@ -330,7 +330,7 @@ onchainos portfolio token-balances --address <address> --tokens <tokens> [--excl
 
 ### 5. onchainos portfolio overview
 
-Get wallet-level PnL summary and trading behaviour metrics. *(Requires `OKX_BASE_URL=https://web3pre.okex.org`)*
+Get wallet-level PnL summary and trading behaviour metrics.
 
 ```bash
 onchainos portfolio overview --address <address> --chain <chain> [--time-frame <frame>]
@@ -358,7 +358,7 @@ onchainos portfolio overview --address <address> --chain <chain> [--time-frame <
 
 ### 6. onchainos portfolio dex-history
 
-Get wallet DEX transaction history with cursor pagination. *(Requires `OKX_BASE_URL=https://web3pre.okex.org`)*
+Get wallet DEX transaction history with cursor pagination.
 
 ```bash
 onchainos portfolio dex-history --address <address> --chain <chain> [--limit <n>] [--cursor <cursor>] [--token <address>] [--tx-type <types>]
@@ -385,7 +385,7 @@ onchainos portfolio dex-history --address <address> --chain <chain> [--limit <n>
 
 ### 7. onchainos portfolio recent-pnl
 
-Get paginated list of recent per-token PnL records. *(Requires `OKX_BASE_URL=https://web3pre.okex.org`)*
+Get paginated list of recent per-token PnL records.
 
 ```bash
 onchainos portfolio recent-pnl --address <address> --chain <chain> [--limit <n>] [--cursor <cursor>]
@@ -416,7 +416,7 @@ onchainos portfolio recent-pnl --address <address> --chain <chain> [--limit <n>]
 
 ### 8. onchainos portfolio token-pnl
 
-Get latest PnL snapshot for a specific token in a wallet. *(Requires `OKX_BASE_URL=https://web3pre.okex.org`)*
+Get latest PnL snapshot for a specific token in a wallet.
 
 ```bash
 onchainos portfolio token-pnl --address <address> --chain <chain> --token <token>
@@ -475,21 +475,21 @@ onchainos portfolio token-balances --address 0xYourWallet --tokens "196:,196:0x7
 **User says:** "Show my PnL on Ethereum for the last month"
 
 ```bash
-OKX_BASE_URL=https://web3pre.okex.org onchainos portfolio overview --address 0xYourWallet --chain ethereum --time-frame 1m
+onchainos portfolio overview --address 0xYourWallet --chain ethereum --time-frame 1m
 # → Display: Total PnL $+1,234.56 | Win rate: 65% | Buys: 42 | Sells: 28
 ```
 
 **User says:** "What tokens did I buy on Ethereum recently?"
 
 ```bash
-OKX_BASE_URL=https://web3pre.okex.org onchainos portfolio dex-history --address 0xYourWallet --chain ethereum --tx-type 1 --limit 20
+onchainos portfolio dex-history --address 0xYourWallet --chain ethereum --tx-type 1 --limit 20
 # → Display: list of buy transactions with token, amount, timestamp
 ```
 
 **User says:** "How much profit have I made on USDC on Ethereum?"
 
 ```bash
-OKX_BASE_URL=https://web3pre.okex.org onchainos portfolio token-pnl \
+onchainos portfolio token-pnl \
   --address 0xYourWallet \
   --chain ethereum \
   --token 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48
@@ -504,8 +504,6 @@ OKX_BASE_URL=https://web3pre.okex.org onchainos portfolio token-pnl \
 - **`--exclude-risk` not working**: only supported on ETH/BSC/SOL/BASE
 - **DeFi positions**: use `--asset-type 2` to query DeFi holdings separately
 - **Address format mismatch**: EVM address on Solana chain will return empty data — do NOT mix
-- **Commands 5–8 returning "Not Found"**: these endpoints require `OKX_BASE_URL=https://web3pre.okex.org`
-- **`Invalid Authority` on pre-production**: the API key does not have access to `web3pre.okex.org` — use your own credentials
 - **`tokenBalanceAmount = "0"`** in `token-pnl`: position is fully closed (sold)
 - **Empty `cursor`** in `dex-history` / `recent-pnl`: no more pages — stop pagination
 - **Network error**: retry once, then prompt user to try again later
