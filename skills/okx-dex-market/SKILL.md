@@ -1,6 +1,6 @@
 ---
 name: okx-dex-market
-description: "This skill should be used when the user asks 'what\\'s the price of OKB', 'check token price', 'how much is OKB', 'show me the price chart', 'get candlestick data', 'show K-line chart', 'view trade history', 'recent trades for SOL', 'price trend', 'index price', 'what are smart money wallets buying', 'show me whale signals', 'KOL token signals', 'what tokens are smart money buying', 'show me the signal list', 'which chains support signals', or mentions checking a token\\'s current price, viewing price charts, candlestick data, trade history, historical price trends, smart money / whale / KOL on-chain trading signals, or signal-supported chains. Covers real-time on-chain prices, K-line/candlestick charts, trade logs, index prices, and smart money signals across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. For token search, market cap, liquidity analysis, trending tokens, or holder distribution, use okx-dex-token instead."
+description: "Use this skill when users want live on-chain market data: token prices, price charts (K-line, OHLC), trade history, swap activity. Also, it covers on-chain signals — smart money, whale, and KOL wallet activity, large trades, and signal-supported chains. For meme tokens: scanning new launches, checking dev wallets, developer reputation, rug pull detection, rug pull history, tokens by same creator, detecting bundles or snipers, bonding curves %, flagging suspicious launches, and meme token safety checks. For token search, market cap, liquidity, trending tokens, or holder distribution, use okx-dex-token instead."
 license: Apache-2.0
 metadata:
   author: okx
@@ -10,7 +10,7 @@ metadata:
 
 # OKX DEX Market Data CLI
 
-7 commands for on-chain prices, trades, candlesticks, index prices, and smart money signals.
+14 commands for on-chain prices, trades, candlesticks, index prices, smart money signals, and meme pump token scanning.
 
 ## Prerequisites
 
@@ -42,6 +42,8 @@ Before using this skill, ensure the `onchainos` CLI is installed:
 - For swap execution → use `okx-dex-swap`
 - For transaction broadcasting → use `okx-onchain-gateway`
 - Signal data (smart money / whale / KOL buy signals, signal-supported chains) → use `okx-dex-market`
+- Meme pump scanning (token lists, dev info, bundle detection, aped wallets) → use `okx-dex-market`
+- Meme token safety (rug pull check, dev reputation, bundler/sniper analysis, similar tokens by same dev) → use `okx-dex-market`
 
 ## Quickstart
 
@@ -60,6 +62,18 @@ onchainos market prices "1:0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee,501:So1111
 
 # Get smart money signals on Solana
 onchainos market signal-list solana --wallet-type "1,2,3" --min-amount-usd 1000
+
+# Get supported chains and protocols for meme pump
+onchainos market memepump-chains
+
+# List new meme pump tokens on Solana
+onchainos market memepump-tokens solana --stage NEW
+
+# Get meme pump token details
+onchainos market memepump-token-details <address> --chain solana
+
+# Check developer reputation for a meme token
+onchainos market memepump-token-dev-info <address> --chain solana
 ```
 
 ## Chain Name Support
@@ -99,6 +113,18 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | 6 | `onchainos market signal-chains` | Get supported chains for market signals |
 | 7 | `onchainos market signal-list <chain>` | Get latest signal list (smart money / KOL / whale activity) |
 
+### Meme Pump Commands
+
+| # | Command | Description |
+|---|---|---|
+| 8 | `onchainos market memepump-chains` | Get supported chains and protocols for meme pump |
+| 9 | `onchainos market memepump-tokens <chain>` | List meme pump tokens with advanced filtering |
+| 10 | `onchainos market memepump-token-details <address>` | Get detailed info for a single meme pump token |
+| 11 | `onchainos market memepump-token-dev-info <address>` | Get developer analysis and holding info |
+| 12 | `onchainos market memepump-similar-tokens <address>` | Find similar tokens by same creator |
+| 13 | `onchainos market memepump-token-bundle-info <address>` | Get bundle/sniper analysis |
+| 14 | `onchainos market memepump-aped-wallet <address>` | Get aped (same-car) wallet list |
+
 ## Boundary: market vs token skill
 
 | Need | Use this skill (`okx-dex-market`) | Use `okx-dex-token` instead |
@@ -114,8 +140,14 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Holder distribution | - | `onchainos token holders` |
 | Smart money / whale / KOL signals | `onchainos market signal-list` | - |
 | Signal-supported chains | `onchainos market signal-chains` | - |
+| Browse meme pump tokens by stage | `onchainos market memepump-tokens` | - |
+| Meme token audit (top10, dev, insiders) | `onchainos market memepump-token-details` | - |
+| Developer reputation / rug pull history | `onchainos market memepump-token-dev-info` | - |
+| Similar tokens by same creator | `onchainos market memepump-similar-tokens` | - |
+| Bundle/sniper detection | `onchainos market memepump-token-bundle-info` | - |
+| Aped (same-car) wallet analysis | `onchainos market memepump-aped-wallet` | - |
 
-**Rule of thumb**: `okx-dex-market` = raw price feeds, charts & smart money signals. `okx-dex-token` = token discovery & enriched analytics.
+**Rule of thumb**: `okx-dex-market` = raw price feeds, charts, smart money signals & meme pump scanning (including dev reputation, rug pull checks, bundler analysis). `okx-dex-token` = token discovery & enriched analytics (search, trending, holders, market cap).
 
 ## Cross-Skill Workflows
 
@@ -165,6 +197,37 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 
 **Data handoff**: `token.tokenAddress` from step 2 feeds directly into steps 3–7.
 
+### Workflow D: Meme Token Discovery & Analysis
+
+> User: "Show me new meme tokens on Solana and check if any look safe"
+
+```
+1. okx-dex-market   onchainos market memepump-chains                          → discover supported chains & protocols
+2. okx-dex-market   onchainos market memepump-tokens solana --stage NEW       → browse new tokens
+       ↓ pick an interesting token
+3. okx-dex-market   onchainos market memepump-token-details <address> --chain solana  → full token detail + audit tags
+4. okx-dex-market   onchainos market memepump-token-dev-info <address> --chain solana → check dev reputation (rug pulls, migrations)
+5. okx-dex-market   onchainos market memepump-token-bundle-info <address> --chain solana → check for bundlers/snipers
+6. okx-dex-market   onchainos market kline <address> --chain solana           → view price chart
+       ↓ user decides to buy
+7. okx-dex-swap     onchainos swap quote --from ... --to <address> --amount ... --chain solana
+8. okx-dex-swap     onchainos swap swap --from ... --to <address> --amount ... --chain solana --wallet <addr>
+```
+
+**Data handoff**: `tokenAddress` from step 2 is reused as `<address>` in steps 3–8.
+
+### Workflow E: Meme Token Due Diligence
+
+> User: "Check if this meme token is safe before I buy"
+
+```
+1. okx-dex-market   onchainos market memepump-token-details <address> --chain solana   → basic info + audit tags
+2. okx-dex-market   onchainos market memepump-token-dev-info <address> --chain solana  → dev history + holding
+3. okx-dex-market   onchainos market memepump-similar-tokens <address> --chain solana  → other tokens by same dev
+4. okx-dex-market   onchainos market memepump-token-bundle-info <address> --chain solana → bundler analysis
+5. okx-dex-market   onchainos market memepump-aped-wallet <address> --chain solana     → who else is holding
+```
+
 > User: "Filter signals to only show whale buys above $10k"
 
 ```
@@ -183,11 +246,19 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 - Index price (current) → `onchainos market index`
 - Smart money / whale / KOL buy signals → `onchainos market signal-list`
 - Chains supporting signals → `onchainos market signal-chains`
+- Discover meme pump supported chains/protocols → `onchainos market memepump-chains`
+- Browse/filter meme tokens by stage → `onchainos market memepump-tokens`
+- Deep-dive into a specific meme token → `onchainos market memepump-token-details`
+- Check meme token developer reputation → `onchainos market memepump-token-dev-info`
+- Find similar tokens by same creator → `onchainos market memepump-similar-tokens`
+- Analyze bundler/sniper activity → `onchainos market memepump-token-bundle-info`
+- View aped (same-car) wallet holdings → `onchainos market memepump-aped-wallet`
 
 ### Step 2: Collect Parameters
 
-- Missing chain → recommend XLayer (`--chain xlayer`, low gas, fast confirmation) as the default, then ask which chain the user prefers; for signal queries, first call `onchainos market signal-chains` to confirm the chain is supported
-- Missing token address → use `okx-dex-token` `onchainos token search` first to resolve; for signal queries, `--token-address` is optional (omit to get all signals on the chain)
+- Missing chain → recommend XLayer (`--chain xlayer`, low gas, fast confirmation) as the default, then ask which chain the user prefers; for signal queries, first call `onchainos market signal-chains` to confirm the chain is supported; for meme pump queries, default to Solana (`--chain solana`)
+- Missing token address → use `okx-dex-token` `onchainos token search` first to resolve; for signal queries, `--token-address` is optional (omit to get all signals on the chain); for meme pump, use `onchainos market memepump-tokens` first to discover tokens
+- Missing `--stage` for memepump-tokens → ask user which stage (NEW / MIGRATING / MIGRATED)
 - K-line requests → confirm bar size and time range with user
 - Signal filter params (`--wallet-type`, `--min-amount-usd`, etc.) → ask user for preferences if not specified; default to no filter (returns all signal types)
 
@@ -209,6 +280,13 @@ After displaying results, suggest 2-3 relevant follow-up actions based on the co
 | `market index` | 1. Compare with on-chain DEX price → `onchainos market price` (this skill) 2. View full price chart → `onchainos market kline` (this skill) |
 | `market signal-list` | 1. View price chart for a signal token → `onchainos market kline` (this skill) 2. Deep token analytics (market cap, liquidity) → `okx-dex-token` 3. Buy the token → `okx-dex-swap` |
 | `market signal-chains` | 1. Fetch signals on a supported chain → `onchainos market signal-list` (this skill) |
+| `market memepump-chains` | 1. Browse tokens → `onchainos market memepump-tokens` (this skill) |
+| `market memepump-tokens` | 1. Pick a token for details → `onchainos market memepump-token-details` (this skill) 2. Check dev → `onchainos market memepump-token-dev-info` (this skill) |
+| `market memepump-token-details` | 1. Dev analysis → `onchainos market memepump-token-dev-info` (this skill) 2. Similar tokens → `onchainos market memepump-similar-tokens` (this skill) 3. Bundle check → `onchainos market memepump-token-bundle-info` (this skill) |
+| `market memepump-token-dev-info` | 1. Check bundle activity → `onchainos market memepump-token-bundle-info` (this skill) 2. View price chart → `onchainos market kline` (this skill) |
+| `market memepump-similar-tokens` | 1. Compare with details → `onchainos market memepump-token-details` (this skill) |
+| `market memepump-token-bundle-info` | 1. Check aped wallets → `onchainos market memepump-aped-wallet` (this skill) |
+| `market memepump-aped-wallet` | 1. View price chart → `onchainos market kline` (this skill) 2. Buy the token → `okx-dex-swap` |
 
 Present conversationally, e.g.: "Would you like to see the K-line chart, or buy this token?" — never expose skill names or endpoint paths to the user.
 
@@ -399,6 +477,201 @@ onchainos market signal-list <chain> [options]
 | `token.holders` | String | Number of token holders |
 | `token.top10HolderPercent` | String | Percentage of supply held by top 10 holders |
 
+### 8. onchainos market memepump-chains
+
+Get supported chains and protocols for meme pump. No parameters required.
+
+```bash
+onchainos market memepump-chains
+```
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `data[].chainIndex` | String | Chain identifier (e.g., `"501"` for Solana, `"56"` for BSC) |
+| `data[].chainName` | String | Human-readable chain name |
+| `data[].protocolList[].protocolId` | String | Protocol unique ID |
+| `data[].protocolList[].protocolName` | String | Protocol display name (e.g., `pumpfun`, `fourmeme`) |
+
+> Currently supports: Solana (501), BSC (56), X Layer (196), TRON (195).
+
+### 9. onchainos market memepump-tokens
+
+List meme pump tokens with advanced filtering. Returns up to 30 tokens per request.
+
+```bash
+onchainos market memepump-tokens <chain> --stage <stage> [options]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<chain>` | Yes | - | Chain name (e.g., `solana`, `bsc`) (positional) |
+| `--stage` | Yes | - | Token stage: `NEW`, `MIGRATING`, or `MIGRATED` |
+| `--protocol-id` | No | - | Filter by protocol ID (get IDs from `memepump-chains`) |
+| `--sort-by` | No | - | Sort field: `marketCap`, `volume1h`, `txCount1h`, `createdTimestamp`, `bondingPercent` |
+| `--sort-order` | No | - | Sort direction: `asc` or `desc` |
+| `--min-age` | No | - | Minimum token age in minutes |
+| `--max-age` | No | - | Maximum token age in minutes |
+| `--min-market-cap` | No | - | Minimum market cap in USD |
+| `--max-market-cap` | No | - | Maximum market cap in USD |
+| `--min-volume` | No | - | Minimum 1h volume in USD |
+| `--max-volume` | No | - | Maximum 1h volume in USD |
+| `--min-tx-count` | No | - | Minimum 1h transaction count |
+| `--max-tx-count` | No | - | Maximum 1h transaction count |
+
+**Return fields**: Array of token objects (same structure as `memepump-token-details` response).
+
+### 10. onchainos market memepump-token-details
+
+Get detailed information for a specific meme pump token.
+
+```bash
+onchainos market memepump-token-details <address> [--chain <chain>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<address>` | Yes | - | Token contract address (positional) |
+| `--chain` | No | `solana` | Chain name |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `chainIndex` | String | Chain identifier |
+| `protocolId` | String | Protocol numeric ID (e.g., `"120596"` for pumpfun) |
+| `quoteTokenAddress` | String | Quote token contract address |
+| `tokenAddress` | String | Token contract address |
+| `symbol` | String | Token symbol |
+| `name` | String | Token name |
+| `logoUrl` | String | Token logo URL |
+| `creatorAddress` | String | Token creator wallet address |
+| `createdTimestamp` | String | Creation timestamp (Unix ms) |
+| `migratedBeginTimestamp` | String | Migration start timestamp (Unix ms, empty if not migrating) |
+| `migratedEndTimestamp` | String | Migration end timestamp (Unix ms, empty if not migrated) |
+| `market.marketCapUsd` | String | Market cap in USD |
+| `market.volumeUsd1h` | String | 1-hour volume in USD |
+| `market.txCount1h` | String | 1-hour transaction count |
+| `market.buyTxCount1h` | String | 1-hour buy transaction count |
+| `market.sellTxCount1h` | String | 1-hour sell transaction count |
+| `bondingPercent` | String | Bonding curve progress (0-100) |
+| `tags.top10HoldingsPercent` | String | Top 10 holders percentage (0-100) |
+| `tags.devHoldingsPercent` | String | Dev holdings percentage (0-100) |
+| `tags.insidersPercent` | String | Insiders percentage (0-100) |
+| `tags.bundlersPercent` | String | Bundlers percentage (0-100) |
+| `tags.snipersPercent` | String | Snipers percentage (0-100) |
+| `tags.freshWalletsPercent` | String | Fresh wallets percentage (0-100) |
+| `tags.suspectedPhishingWalletPercent` | String | Phishing wallet percentage (0-100) |
+| `tags.totalHolders` | String | Total holder count |
+| `social.x` | String | X (Twitter) URL |
+| `social.telegram` | String | Telegram URL |
+| `social.website` | String | Website URL |
+| `social.dexScreenerPaid` | Boolean | Paid on DexScreener |
+| `social.communityTakeover` | Boolean | Community takeover flag |
+| `social.liveOnPumpFun` | Boolean | Currently live on Pump.fun |
+| `bagsFeeClaimed` | Boolean | Bags fee claimed |
+| `aped` | String | Same-car wallet count |
+
+### 11. onchainos market memepump-token-dev-info
+
+Get developer analysis including rug pull history, migration stats, and holding info.
+
+```bash
+onchainos market memepump-token-dev-info <address> [--chain <chain>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<address>` | Yes | - | Token contract address (positional) |
+| `--chain` | No | `solana` | Chain name |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `devLaunchedInfo.totalTokens` | String | Total tokens created by this dev |
+| `devLaunchedInfo.rugPullCount` | String | Number of rug pulls |
+| `devLaunchedInfo.migratedCount` | String | Number of successfully migrated tokens |
+| `devLaunchedInfo.goldenGemCount` | String | Number of golden gem tokens |
+| `devHoldingInfo.devHoldingPercent` | String | Dev holding percentage (0-100) |
+| `devHoldingInfo.devAddress` | String | Developer wallet address |
+| `devHoldingInfo.fundingAddress` | String | Funding source address |
+| `devHoldingInfo.devBalance` | String | Dev's current balance |
+| `devHoldingInfo.lastFundedTimestamp` | String | Last funded timestamp (Unix ms) |
+
+> **Note**: `devHoldingInfo` may be `null` if the creator address is unavailable.
+
+### 12. onchainos market memepump-similar-tokens
+
+Find similar tokens created by the same developer. Returns at most 2 results.
+
+```bash
+onchainos market memepump-similar-tokens <address> [--chain <chain>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<address>` | Yes | - | Token contract address (positional) |
+| `--chain` | No | `solana` | Chain name |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `data[].tokenAddress` | String | Similar token contract address |
+| `data[].tokenSymbol` | String | Token symbol |
+| `data[].tokenLogo` | String | Token logo URL |
+| `data[].marketCapUsd` | String | Market cap in USD |
+| `data[].lastTxTimestamp` | String | Last transaction timestamp (Unix ms) |
+| `data[].createdTimestamp` | String | Creation timestamp (Unix ms) |
+
+### 13. onchainos market memepump-token-bundle-info
+
+Get bundle/sniper analysis for a token.
+
+```bash
+onchainos market memepump-token-bundle-info <address> [--chain <chain>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<address>` | Yes | - | Token contract address (positional) |
+| `--chain` | No | `solana` | Chain name |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `bundlerAthPercent` | String | Bundler all-time-high percentage (0-100) |
+| `totalBundlers` | String | Total number of bundlers |
+| `bundledValueNative` | String | Total bundled value in native token |
+| `bundledTokenAmount` | String | Total bundled token amount |
+
+### 14. onchainos market memepump-aped-wallet
+
+Get the aped (same-car) wallet list for a token.
+
+```bash
+onchainos market memepump-aped-wallet <address> [--chain <chain>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<address>` | Yes | - | Token contract address (positional) |
+| `--chain` | No | `solana` | Chain name |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `data[].walletAddress` | String | Wallet address |
+| `data[].walletType` | String | Wallet type label (e.g., Smart Money, KOL, Whale) |
+| `data[].holdingUsd` | String | Holding value in USD |
+| `data[].holdingPercent` | String | Holding percentage (0-100) |
+| `data[].totalPnl` | String | Total PnL in USD |
+| `data[].pnlPercent` | String | PnL percentage |
+
 ## Input / Output Examples
 
 **User says:** "Check the current price of OKB on XLayer"
@@ -429,13 +702,62 @@ onchainos market signal-list ethereum --wallet-type 3 --min-amount-usd 10000
 # → Display whale-only signals, min $10k
 ```
 
+**User says:** "Show me new meme tokens on Solana"
+
+```bash
+onchainos market memepump-tokens solana --stage NEW
+# → Display list of new meme pump tokens with market data and audit tags
+```
+
+**User says:** "Is this meme token safe? Check the developer"
+
+```bash
+onchainos market memepump-token-dev-info <address> --chain solana
+# → Display dev rug pull count, migration count, golden gems, dev holding info
+```
+
+**User says:** "Check if this token has bundler activity"
+
+```bash
+onchainos market memepump-token-bundle-info <address> --chain solana
+# → Display bundler count, bundled value, bundled token amount
+```
+
+## Region Restrictions (IP Blocking)
+
+Some services are geo-restricted. When a command fails with error code `50125` or `80001`, return a friendly message without exposing the raw error code:
+
+| Service | Restricted Regions | Blocking Method |
+|---|---|---|
+| DEX | United Kingdom | API key auth |
+| DeFi | Hong Kong | API key auth + backend |
+| Wallet | None | None |
+| Global | Sanctioned countries | Gateway (403) |
+
+**Error handling**: When the CLI returns error `50125` or `80001`, display:
+
+> {service_name} is not available in your region. Please switch to a supported region and try again.
+
+Examples:
+- "DEX is not available in your region. Please switch to a supported region and try again."
+- "DeFi is not available in your region. Please switch to a supported region and try again."
+
+Do not expose raw error codes or internal error messages to the user.
+
 ## Edge Cases
 
+- **Region-restricted error (50125 / 80001)**: display the friendly region message above — do not retry or expose the error code
 - **Invalid token address**: returns empty data or error — prompt user to verify, or use `onchainos token search` to resolve
 - **Unsupported chain**: the CLI will report an error — try a different chain name
 - **No candle data**: may be a new token or low liquidity — inform user
 - **Unsupported chain for signals**: not all chains support signals — always verify with `onchainos market signal-chains` first
 - **Empty signal list**: no signals on this chain for the given filters — suggest relaxing `--wallet-type`, `--min-amount-usd`, or `--min-address-count`, or try a different chain
+- **Unsupported chain for meme pump**: only Solana (501), BSC (56), X Layer (196), TRON (195) are supported — verify with `onchainos market memepump-chains` first
+- **Invalid stage**: must be exactly `NEW`, `MIGRATING`, or `MIGRATED`
+- **Token not found in meme pump**: `memepump-token-details` returns null data if the token doesn't exist in meme pump ranking data — it may be on a standard DEX
+- **No dev holding info**: `memepump-token-dev-info` returns `devHoldingInfo` as `null` if the creator address is unavailable
+- **Empty similar tokens**: `memepump-similar-tokens` may return empty array if no similar tokens are found
+- **Empty aped wallets**: `memepump-aped-wallet` returns empty array if no co-holders found
 - **Network error**: retry once, then prompt user to try again later
 
 ## Amount Display Rules
