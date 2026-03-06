@@ -1,6 +1,6 @@
 pub mod gateway;
 pub mod market;
-pub mod predict;
+pub mod portfolio;
 pub mod swap;
 pub mod token;
 
