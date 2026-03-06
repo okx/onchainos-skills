@@ -20,7 +20,7 @@ set -e
 
 REPO="okx/onchainos-skills"
 BINARY="onchainos"
-INSTALL_DIR="/usr/local/bin"
+INSTALL_DIR="$HOME/.local/bin"
 CACHE_DIR="$HOME/.onchainos"
 CACHE_FILE="$CACHE_DIR/last_check"
 CACHE_TTL=43200  # 12 hours in seconds
@@ -66,8 +66,8 @@ write_cache() {
 }
 
 get_local_version() {
-  if command -v "$BINARY" >/dev/null 2>&1; then
-    "$BINARY" --version 2>/dev/null | awk '{print $2}'
+  if [ -x "$INSTALL_DIR/$BINARY" ]; then
+    "$INSTALL_DIR/$BINARY" --version 2>/dev/null | awk '{print $2}'
   fi
 }
 
@@ -116,16 +116,57 @@ install_binary() {
 
   echo "Checksum verified."
 
-  if [ -w "$INSTALL_DIR" ]; then
-    mv "$tmpdir/$binary_name" "$INSTALL_DIR/$BINARY"
-    chmod +x "$INSTALL_DIR/$BINARY"
-  else
-    sudo mv "$tmpdir/$binary_name" "$INSTALL_DIR/$BINARY"
-    sudo chmod +x "$INSTALL_DIR/$BINARY"
-  fi
+  mkdir -p "$INSTALL_DIR"
+  mv "$tmpdir/$binary_name" "$INSTALL_DIR/$BINARY"
+  chmod +x "$INSTALL_DIR/$BINARY"
 
 
   echo "Installed ${BINARY} ${tag} to ${INSTALL_DIR}/${BINARY}"
+}
+
+ensure_in_path() {
+  # Check if INSTALL_DIR is already in PATH
+  case ":$PATH:" in
+    *":$INSTALL_DIR:"*) return 0 ;;
+  esac
+
+  EXPORT_LINE="export PATH=\"\$HOME/.local/bin:\$PATH\""
+
+  # Detect shell and pick profile file
+  shell_name=$(basename "$SHELL" 2>/dev/null || echo "sh")
+  case "$shell_name" in
+    zsh)  profile="$HOME/.zshrc" ;;
+    bash)
+      if [ -f "$HOME/.bash_profile" ]; then
+        profile="$HOME/.bash_profile"
+      elif [ -f "$HOME/.bashrc" ]; then
+        profile="$HOME/.bashrc"
+      else
+        profile="$HOME/.profile"
+      fi
+      ;;
+    *)    profile="$HOME/.profile" ;;
+  esac
+
+  # Skip if already present in profile
+  if [ -f "$profile" ] && grep -qF '$HOME/.local/bin' "$profile" 2>/dev/null; then
+    return 0
+  fi
+
+  echo "" >> "$profile"
+  echo "# Added by onchainos installer" >> "$profile"
+  echo "$EXPORT_LINE" >> "$profile"
+
+  # Make it available in the current script process
+  export PATH="$INSTALL_DIR:$PATH"
+
+  echo ""
+  echo "Added $INSTALL_DIR to PATH in $profile"
+  echo "To start using '${BINARY}' now, run:"
+  echo ""
+  echo "  source $profile"
+  echo ""
+  echo "Or simply open a new terminal window."
 }
 
 main() {
@@ -158,7 +199,7 @@ main() {
 
   install_binary "$tag"
   write_cache
-  echo "Installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
+  ensure_in_path
   echo "Run '${BINARY} --help' to get started."
 }
 
