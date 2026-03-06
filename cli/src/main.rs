@@ -59,10 +59,10 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::gateway::GatewayCommand,
     },
-    /// Prediction market (coming soon)
-    Predict {
+    /// Wallet portfolio and balances
+    Portfolio {
         #[command(subcommand)]
-        command: commands::predict::PredictCommand,
+        command: commands::portfolio::PortfolioCommand,
     },
 }
 
@@ -78,7 +78,7 @@ async fn main() {
         Commands::Token { command } => commands::token::execute(&ctx, command).await,
         Commands::Swap { command } => commands::swap::execute(&ctx, command).await,
         Commands::Gateway { command } => commands::gateway::execute(&ctx, command).await,
-        Commands::Predict { command } => commands::predict::execute(&ctx, command).await,
+        Commands::Portfolio { command } => commands::portfolio::execute(&ctx, command).await,
     };
 
     if let Err(e) = result {

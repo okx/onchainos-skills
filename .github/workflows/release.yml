@@ -16,7 +16,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_DIR: bu-skills/onchainos-skills/cli
+  CARGO_DIR: cli
   BIN_NAME: onchainos
 
 jobs:
