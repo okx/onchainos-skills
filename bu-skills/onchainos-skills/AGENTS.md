@@ -17,8 +17,8 @@ This is an **onchainos skill collection** providing 5 skills for on-chain operat
 Skills are in the `skills/` directory. Each skill contains a `SKILL.md` with:
 
 - YAML frontmatter (name, description, metadata)
-- Full API reference with endpoints, parameters, and response schemas
-- Code examples (TypeScript)
+- Full CLI command reference with parameters and response schemas
+- Usage examples (bash)
 - Cross-skill workflow documentation
 - Edge cases and error handling
 
