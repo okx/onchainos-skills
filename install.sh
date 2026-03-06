@@ -2,26 +2,28 @@
 set -e
 
 # ──────────────────────────────────────────────────────────────
-# onchainos one-line installer (macOS / Linux)
+# onchainos installer / updater (macOS / Linux)
 #
 # Usage:
 #   curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
 #
-# Steps:
-#   1. Detect OS and CPU architecture
-#   2. Download the matching binary from GitHub Releases
-#   3. Verify SHA256 checksum
-#   4. Install to /usr/local/bin
+# Behavior:
+#   - Fresh install: detect platform, download latest binary, verify, install.
+#   - Already installed: skip if the same version was verified within the
+#     last 12 hours (cache at ~/.onchainos/last_check). Otherwise, compare the
+#     local version with the latest GitHub release and upgrade if needed.
 #
 # Supported platforms:
 #   macOS  : x86_64 (Intel), arm64 (Apple Silicon)
 #   Linux  : x86_64, i686, aarch64, armv7l
-# For Windows, use install.ps1
 # ──────────────────────────────────────────────────────────────
 
 REPO="okx/onchainos-skills"
 BINARY="onchainos"
-INSTALL_DIR="/usr/local/bin"
+INSTALL_DIR="$HOME/.local/bin"
+CACHE_DIR="$HOME/.onchainos"
+CACHE_FILE="$CACHE_DIR/last_check"
+CACHE_TTL=43200  # 12 hours in seconds
 
 # Detect OS and CPU architecture, return matching Rust target triple
 get_target() {
@@ -45,21 +47,38 @@ get_target() {
         *) echo "Unsupported architecture: $arch" >&2; exit 1 ;;
       esac
       ;;
-    *) echo "Unsupported OS: $os (use install.ps1 for Windows)" >&2; exit 1 ;;
+    *) echo "Unsupported OS" >&2; exit 1 ;;
   esac
 }
 
-main() {
-  target=$(get_target)
+is_cache_fresh() {
+  [ -f "$CACHE_FILE" ] || return 1
+  cached_ts=$(cat "$CACHE_FILE" 2>/dev/null | head -1)
+  [ -z "$cached_ts" ] && return 1
+  now=$(date +%s)
+  elapsed=$((now - cached_ts))
+  [ "$elapsed" -lt "$CACHE_TTL" ]
+}
 
-  # Fetch latest stable release tag from GitHub API (skip prerelease)
-  tag=$(curl -sSf "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
-  if [ -z "$tag" ]; then
-    echo "Error: could not determine latest release" >&2
-    exit 1
+write_cache() {
+  mkdir -p "$CACHE_DIR"
+  date +%s > "$CACHE_FILE"
+}
+
+get_local_version() {
+  if [ -x "$INSTALL_DIR/$BINARY" ]; then
+    "$INSTALL_DIR/$BINARY" --version 2>/dev/null | awk '{print $2}'
   fi
+}
 
-  # Download raw binary + checksum file
+normalize_tag() {
+  echo "$1" | sed 's/^v//'
+}
+
+install_binary() {
+  target=$(get_target)
+  tag="$1"
+
   binary_name="${BINARY}-${target}"
   url="https://github.com/${REPO}/releases/download/${tag}/${binary_name}"
   checksums_url="https://github.com/${REPO}/releases/download/${tag}/checksums.txt"
@@ -72,7 +91,6 @@ main() {
   curl -sSfL "$url" -o "$tmpdir/$binary_name"
   curl -sSfL "$checksums_url" -o "$tmpdir/checksums.txt"
 
-  # SHA256 verification: ensure downloaded file has not been tampered with
   expected_hash=$(grep "$binary_name" "$tmpdir/checksums.txt" | awk '{print $1}')
   if [ -z "$expected_hash" ]; then
     echo "Error: no checksum found for $binary_name" >&2
@@ -98,16 +116,90 @@ main() {
 
   echo "Checksum verified."
 
-  # Install to target directory (auto sudo if no write permission)
-  if [ -w "$INSTALL_DIR" ]; then
-    mv "$tmpdir/$binary_name" "$INSTALL_DIR/$BINARY"
-  else
-    sudo mv "$tmpdir/$binary_name" "$INSTALL_DIR/$BINARY"
-  fi
-
+  mkdir -p "$INSTALL_DIR"
+  mv "$tmpdir/$binary_name" "$INSTALL_DIR/$BINARY"
   chmod +x "$INSTALL_DIR/$BINARY"
 
-  echo "Installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
+
+  echo "Installed ${BINARY} ${tag} to ${INSTALL_DIR}/${BINARY}"
+}
+
+ensure_in_path() {
+  # Check if INSTALL_DIR is already in PATH
+  case ":$PATH:" in
+    *":$INSTALL_DIR:"*) return 0 ;;
+  esac
+
+  EXPORT_LINE="export PATH=\"\$HOME/.local/bin:\$PATH\""
+
+  # Detect shell and pick profile file
+  shell_name=$(basename "$SHELL" 2>/dev/null || echo "sh")
+  case "$shell_name" in
+    zsh)  profile="$HOME/.zshrc" ;;
+    bash)
+      if [ -f "$HOME/.bash_profile" ]; then
+        profile="$HOME/.bash_profile"
+      elif [ -f "$HOME/.bashrc" ]; then
+        profile="$HOME/.bashrc"
+      else
+        profile="$HOME/.profile"
+      fi
+      ;;
+    *)    profile="$HOME/.profile" ;;
+  esac
+
+  # Skip if already present in profile
+  if [ -f "$profile" ] && grep -qF '$HOME/.local/bin' "$profile" 2>/dev/null; then
+    return 0
+  fi
+
+  echo "" >> "$profile"
+  echo "# Added by onchainos installer" >> "$profile"
+  echo "$EXPORT_LINE" >> "$profile"
+
+  # Make it available in the current script process
+  export PATH="$INSTALL_DIR:$PATH"
+
+  echo ""
+  echo "Added $INSTALL_DIR to PATH in $profile"
+  echo "To start using '${BINARY}' now, run:"
+  echo ""
+  echo "  source $profile"
+  echo ""
+  echo "Or simply open a new terminal window."
+}
+
+main() {
+  local_ver=$(get_local_version)
+
+  # Fast path: already installed and checked within the last hour
+  if [ -n "$local_ver" ] && is_cache_fresh; then
+    echo "${BINARY} ${local_ver} is already installed (update check skipped, checked recently)."
+    return 0
+  fi
+
+  # Fetch latest release tag from GitHub API
+  tag=$(curl -sSf "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
+  if [ -z "$tag" ]; then
+    echo "Error: could not determine latest release" >&2
+    exit 1
+  fi
+
+  latest_ver=$(normalize_tag "$tag")
+
+  if [ -n "$local_ver" ] && [ "$local_ver" = "$latest_ver" ]; then
+    echo "${BINARY} ${local_ver} is already up to date."
+    write_cache
+    return 0
+  fi
+
+  if [ -n "$local_ver" ]; then
+    echo "Upgrading ${BINARY} from ${local_ver} to ${latest_ver}..."
+  fi
+
+  install_binary "$tag"
+  write_cache
+  ensure_in_path
   echo "Run '${BINARY} --help' to get started."
 }
 

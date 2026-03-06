@@ -62,6 +62,7 @@ impl ApiClient {
             .header("OK-ACCESS-PASSPHRASE", &self.passphrase)
             .header("OK-ACCESS-TIMESTAMP", timestamp)
             .header("Content-Type", "application/json")
+            .header("ok-client-type", "cli")
     }
 
     /// GET request. `path` should be the API path without query string (e.g. "/api/v6/dex/market/candles").

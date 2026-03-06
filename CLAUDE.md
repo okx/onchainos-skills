@@ -8,11 +8,12 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 
 ## Architecture
 
-The project contains skills:
-
-- **skills/** — 5 onchainos CLI skill definitions
-
-Each skill is a Markdown file (`SKILL.md`) with YAML frontmatter defining the skill name, description, and metadata, followed by detailed CLI command reference.
+- **skills/** — 5 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
+- **Formula/** — Homebrew formula template (`onchainos.rb`), auto-updated on release by `scripts/update-formula.sh`
+- **scripts/** — Release automation scripts (e.g. `update-formula.sh` rewrites Formula SHA256 from GitHub Release checksums)
+- **.github/workflows/** — CI/CD pipeline (`release.yml`: tag-triggered build for 9 platforms → GitHub Release → Homebrew update)
+- **install.sh** — One-line installer for macOS / Linux (`curl | sh`)
 
 ## Available Skills
 
