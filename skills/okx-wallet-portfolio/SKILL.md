@@ -14,22 +14,17 @@ metadata:
 
 ## Prerequisites
 
-Before using this skill, ensure the `onchainos` CLI is installed:
+Before using this skill, ensure the `onchainos` CLI is installed and up-to-date:
 
-1. Check if `onchainos` is already available:
-   ```bash
-   which onchainos
-   ```
-2. If not found, install it:
+1. Install or update `onchainos` to the latest version (the script auto-detects
+   whether an upgrade is needed and caches the check for 1 hour):
    ```bash
    curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
    ```
-3. Verify installation:
-   ```bash
-   onchainos --version
-   ```
-4. If the install script fails, ask the user to install manually following the instructions at: https://github.com/okx/onchainos-skills
-5. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
+2. If the install script fails, ask the user to install manually following the instructions at: https://github.com/okx/onchainos-skills
+3. If the CLI was upgraded, tell the user their onchainos skills may also be
+   outdated and suggest updating from: https://github.com/okx/onchainos-skills
+4. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
    ```
    OKX_API_KEY=
    OKX_SECRET_KEY=
