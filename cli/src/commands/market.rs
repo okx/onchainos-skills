@@ -47,6 +47,12 @@ pub enum MarketCommand {
         /// Number of trades (max 500)
         #[arg(long, default_value = "100")]
         limit: u32,
+        /// Tag filter: 1=KOL, 2=Developer, 6=Insider
+        #[arg(long)]
+        tag_filter: Option<String>,
+        /// Wallet address filter, comma-separated (max 10 addresses)
+        #[arg(long)]
+        wallet_filter: Option<String>,
     },
     /// Get index price (aggregated from multiple sources)
     Index {
@@ -192,7 +198,9 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
             address,
             chain,
             limit,
-        } => trades(ctx, &address, chain, limit).await,
+            tag_filter,
+            wallet_filter,
+        } => trades(ctx, &address, chain, limit, tag_filter, wallet_filter).await,
         MarketCommand::Index { address, chain } => index(ctx, &address, chain).await,
         MarketCommand::MemepumpChains => memepump_chains(ctx).await,
         MarketCommand::MemepumpTokens {
@@ -360,11 +368,20 @@ async fn kline(
 }
 
 /// GET /api/v6/dex/market/trades
-async fn trades(ctx: &Context, address: &str, chain: Option<String>, limit: u32) -> Result<()> {
+async fn trades(
+    ctx: &Context,
+    address: &str,
+    chain: Option<String>,
+    limit: u32,
+    tag_filter: Option<String>,
+    wallet_filter: Option<String>,
+) -> Result<()> {
     let chain_index = chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
     let limit_str = limit.to_string();
+    let tag_filter = tag_filter.unwrap_or_default();
+    let wallet_filter = wallet_filter.unwrap_or_default();
     let client = ctx.client()?;
     let data = client
         .get(
@@ -373,6 +390,8 @@ async fn trades(ctx: &Context, address: &str, chain: Option<String>, limit: u32)
                 ("chainIndex", chain_index.as_str()),
                 ("tokenContractAddress", address),
                 ("limit", &limit_str),
+                ("tagFilter", tag_filter.as_str()),
+                ("walletAddressFilter", wallet_filter.as_str()),
             ],
         )
         .await?;
