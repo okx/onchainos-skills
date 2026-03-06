@@ -12,28 +12,27 @@ metadata:
 
 4 commands for supported chains, wallet total value, all token balances, and specific token balances.
 
-## Prerequisites
+## Pre-flight Checks
 
-Before using this skill, ensure the `onchainos` CLI is installed and up-to-date:
+Every time before running any `onchainos` command, always follow these steps in order. Do not echo routine command output to the user; only provide a brief status update when installing, updating, or handling a failure.
 
-1. Check whether `onchainos` exists in your PATH:
-   ```bash
-   which onchainos
-   ```
-   If no path is returned, install it:
+1. **Confirm installed**: Run `which onchainos`. If not found, install it:
    ```bash
    curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
    ```
    If the install script fails, ask the user to install manually following the instructions at: https://github.com/okx/onchainos-skills
-2. Check whether the cache file `~/.onchainos/last_check` exists and was
-   written less than 12 hours ago. If so, skip the update check. Otherwise,
-   run the installer to check for updates:
+
+2. **Check for updates**: Read `~/.onchainos/last_check` and compare it with the current timestamp:
    ```bash
-   curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
+   cached_ts=$(cat ~/.onchainos/last_check 2>/dev/null || true)
+   now=$(date +%s)
    ```
-   If a newer version is available, tell the user a new version has been
-   installed and suggest updating their onchainos skills from
-   https://github.com/okx/onchainos-skills to get the latest features.
+   - If `cached_ts` is non-empty and `(now - cached_ts) < 43200` (12 hours), skip the update and proceed.
+   - Otherwise (file missing or older than 12 hours), run the installer to check for updates:
+     ```bash
+     curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
+     ```
+     If a newer version is installed, tell the user and suggest updating their onchainos skills from https://github.com/okx/onchainos-skills to get the latest features.
 3. If any `onchainos` command fails with an unexpected error during this
    session, try reinstalling before giving up:
    ```bash
