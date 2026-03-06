@@ -49,6 +49,66 @@ pub enum PortfolioCommand {
         #[arg(long)]
         exclude_risk: Option<String>,
     },
+    /// Get wallet portfolio overview: realized/unrealized PnL, win rate, trading stats
+    Overview {
+        /// Wallet address
+        #[arg(long)]
+        address: String,
+        /// Chain name or ID (e.g. ethereum, solana, xlayer)
+        #[arg(long)]
+        chain: String,
+        /// Time frame: 1d, 3d, 7d, 1m, 3m
+        #[arg(long, default_value = "7d")]
+        time_frame: String,
+    },
+    /// Get wallet DEX transaction history (paginated)
+    DexHistory {
+        /// Wallet address
+        #[arg(long)]
+        address: String,
+        /// Chain name or ID (e.g. ethereum, solana, xlayer)
+        #[arg(long)]
+        chain: String,
+        /// Page size (1-100, default 20)
+        #[arg(long)]
+        limit: Option<String>,
+        /// Pagination cursor from previous response
+        #[arg(long)]
+        cursor: Option<String>,
+        /// Filter by token contract address
+        #[arg(long)]
+        token: Option<String>,
+        /// Transaction type: 1=buy, 2=sell, 3=transfer-in, 4=transfer-out, 0=all (comma-separated)
+        #[arg(long = "tx-type")]
+        tx_type: Option<String>,
+    },
+    /// Get recent token PnL records for a wallet (paginated)
+    RecentPnl {
+        /// Wallet address
+        #[arg(long)]
+        address: String,
+        /// Chain name or ID (e.g. ethereum, solana, xlayer)
+        #[arg(long)]
+        chain: String,
+        /// Page size (1-100, default 20)
+        #[arg(long)]
+        limit: Option<String>,
+        /// Pagination cursor from previous response
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+    /// Get latest PnL snapshot for a specific token in a wallet
+    TokenPnl {
+        /// Wallet address
+        #[arg(long)]
+        address: String,
+        /// Chain name or ID (e.g. ethereum, solana, xlayer)
+        #[arg(long)]
+        chain: String,
+        /// Token contract address
+        #[arg(long)]
+        token: String,
+    },
 }
 
 pub async fn execute(ctx: &Context, cmd: PortfolioCommand) -> Result<()> {
@@ -70,6 +130,41 @@ pub async fn execute(ctx: &Context, cmd: PortfolioCommand) -> Result<()> {
             tokens,
             exclude_risk,
         } => token_balances(ctx, &address, &tokens, exclude_risk.as_deref()).await,
+        PortfolioCommand::Overview {
+            address,
+            chain,
+            time_frame,
+        } => overview(ctx, &address, &chain, &time_frame).await,
+        PortfolioCommand::DexHistory {
+            address,
+            chain,
+            limit,
+            cursor,
+            token,
+            tx_type,
+        } => {
+            dex_history(
+                ctx,
+                &address,
+                &chain,
+                limit.as_deref(),
+                cursor.as_deref(),
+                token.as_deref(),
+                tx_type.as_deref(),
+            )
+            .await
+        }
+        PortfolioCommand::RecentPnl {
+            address,
+            chain,
+            limit,
+            cursor,
+        } => recent_pnl(ctx, &address, &chain, limit.as_deref(), cursor.as_deref()).await,
+        PortfolioCommand::TokenPnl {
+            address,
+            chain,
+            token,
+        } => token_pnl(ctx, &address, &chain, &token).await,
     }
 }
 
@@ -133,6 +228,110 @@ async fn all_balances(
             "/api/v6/dex/balance/all-token-balances-by-address",
             &query_refs,
         )
+        .await?;
+    output::success(data);
+    Ok(())
+}
+
+/// GET /api/v6/dex/market/portfolio/overview
+async fn overview(
+    ctx: &Context,
+    address: &str,
+    chain: &str,
+    time_frame: &str,
+) -> Result<()> {
+    let chain_index = crate::chains::resolve_chain(chain);
+    let client = ctx.client()?;
+    let query: Vec<(&str, &str)> = vec![
+        ("chainIndex", chain_index.as_str()),
+        ("walletAddress", address),
+        ("timeFrame", time_frame),
+    ];
+    let data = client
+        .get("/api/v6/dex/market/portfolio/overview", &query)
+        .await?;
+    output::success(data);
+    Ok(())
+}
+
+/// GET /api/v6/dex/market/portfolio/dex-history
+async fn dex_history(
+    ctx: &Context,
+    address: &str,
+    chain: &str,
+    limit: Option<&str>,
+    cursor: Option<&str>,
+    token: Option<&str>,
+    tx_type: Option<&str>,
+) -> Result<()> {
+    let chain_index = crate::chains::resolve_chain(chain);
+    let client = ctx.client()?;
+    let mut query: Vec<(&str, &str)> = vec![
+        ("chainIndex", chain_index.as_str()),
+        ("walletAddress", address),
+    ];
+    if let Some(l) = limit {
+        query.push(("limit", l));
+    }
+    if let Some(c) = cursor {
+        query.push(("cursor", c));
+    }
+    if let Some(t) = token {
+        query.push(("tokenContractAddress", t));
+    }
+    if let Some(ty) = tx_type {
+        query.push(("type", ty));
+    }
+    let data = client
+        .get("/api/v6/dex/market/portfolio/dex-history", &query)
+        .await?;
+    output::success(data);
+    Ok(())
+}
+
+/// GET /api/v6/dex/market/portfolio/recent-pnl
+async fn recent_pnl(
+    ctx: &Context,
+    address: &str,
+    chain: &str,
+    limit: Option<&str>,
+    cursor: Option<&str>,
+) -> Result<()> {
+    let chain_index = crate::chains::resolve_chain(chain);
+    let client = ctx.client()?;
+    let mut query: Vec<(&str, &str)> = vec![
+        ("chainIndex", chain_index.as_str()),
+        ("walletAddress", address),
+    ];
+    if let Some(l) = limit {
+        query.push(("limit", l));
+    }
+    if let Some(c) = cursor {
+        query.push(("cursor", c));
+    }
+    let data = client
+        .get("/api/v6/dex/market/portfolio/recent-pnl", &query)
+        .await?;
+    output::success(data);
+    Ok(())
+}
+
+/// GET /api/v6/dex/market/portfolio/token/latest-pnl
+async fn token_pnl(
+    ctx: &Context,
+    address: &str,
+    chain: &str,
+    token: &str,
+) -> Result<()> {
+    let chain_index = crate::chains::resolve_chain(chain);
+    let client = ctx.client()?;
+    let query: Vec<(&str, &str)> = vec![
+        ("chainIndex", chain_index.as_str()),
+        ("walletAddress", address),
+        ("tokenContractAddress", token),
+    ];
+    let data = client
+        .get("/api/v6/dex/market/portfolio/token/latest-pnl", &query)
         .await?;
     output::success(data);
     Ok(())
