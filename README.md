@@ -7,7 +7,7 @@ onchainos skills for AI coding assistants. Provides token search, market data, w
 | Skill | Description |
 |-------|-------------|
 | `okx-wallet-portfolio` | Wallet balance, token holdings, portfolio value |
-| `okx-dex-market` | Real-time prices, K-line charts, trade history, index prices |
+| `okx-dex-market` | Real-time prices, K-line charts, trade history, index prices, smart money signals, meme pump scanning |
 | `okx-dex-swap` | Token swap via DEX aggregation (500+ liquidity sources) |
 | `okx-dex-token` | Token search, metadata, market cap, rankings, holder analysis |
 | `okx-onchain-gateway` | Gas estimation, transaction simulation, broadcasting, order tracking |
