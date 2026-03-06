@@ -781,4 +781,4 @@ Do not expose raw error codes or internal error messages to the user.
 
 - EVM contract addresses must be **all lowercase**
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
-- The CLI handles authentication internally via environment variables — see Prerequisites step 6 for default values
+- The CLI handles authentication internally via environment variables — see Prerequisites step 4 for default values

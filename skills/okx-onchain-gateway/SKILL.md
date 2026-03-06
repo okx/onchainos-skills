@@ -391,4 +391,4 @@ onchainos gateway orders --address 0xYourWallet --chain xlayer --order-id 123456
 - Gas price fields: use `eip1559Protocol.suggestBaseFee` + `proposePriorityFee` for EIP-1559 chains, `normal` for legacy
 - EVM contract addresses must be **all lowercase**
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
-- The CLI handles authentication internally via environment variables — see Prerequisites step 6 for default values
+- The CLI handles authentication internally via environment variables — see Prerequisites step 4 for default values

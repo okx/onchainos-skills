@@ -309,4 +309,4 @@ onchainos portfolio token-balances --address 0xYourWallet --tokens "196:,196:0x7
 - `--exclude-risk` only works on ETH(`1`)/BSC(`56`)/SOL(`501`)/BASE(`8453`)
 - `token-balances` supports max **20** token entries
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
-- The CLI handles authentication internally via environment variables — see Prerequisites step 6 for default values
+- The CLI handles authentication internally via environment variables — see Prerequisites step 4 for default values

@@ -403,4 +403,4 @@ onchainos token holders 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlaye
 - `communityRecognized = true` means listed on Top 10 CEX or community verified
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
 - EVM addresses must be **all lowercase**
-- The CLI handles authentication internally via environment variables — see Prerequisites step 6 for default values
+- The CLI handles authentication internally via environment variables — see Prerequisites step 4 for default values

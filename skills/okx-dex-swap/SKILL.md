@@ -434,4 +434,4 @@ onchainos swap liquidity --chain xlayer
 - Check `isHoneyPot` and `taxRate` — surface safety info to users
 - EVM contract addresses must be **all lowercase**
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
-- The CLI handles authentication internally via environment variables — see Prerequisites step 6 for default values
+- The CLI handles authentication internally via environment variables — see Prerequisites step 4 for default values
