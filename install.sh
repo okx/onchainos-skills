@@ -16,7 +16,6 @@ set -e
 # Supported platforms:
 #   macOS  : x86_64 (Intel), arm64 (Apple Silicon)
 #   Linux  : x86_64, i686, aarch64, armv7l
-# For Windows, use install.ps1
 # ──────────────────────────────────────────────────────────────
 
 REPO="okx/onchainos-skills"
@@ -45,7 +44,7 @@ get_target() {
         *) echo "Unsupported architecture: $arch" >&2; exit 1 ;;
       esac
       ;;
-    *) echo "Unsupported OS: $os (use install.ps1 for Windows)" >&2; exit 1 ;;
+    *) echo "Unsupported OS" >&2; exit 1 ;;
   esac
 }
 
@@ -101,11 +100,11 @@ main() {
   # Install to target directory (auto sudo if no write permission)
   if [ -w "$INSTALL_DIR" ]; then
     mv "$tmpdir/$binary_name" "$INSTALL_DIR/$BINARY"
+    chmod +x "$INSTALL_DIR/$BINARY"
   else
     sudo mv "$tmpdir/$binary_name" "$INSTALL_DIR/$BINARY"
+    sudo chmod +x "$INSTALL_DIR/$BINARY"
   fi
-
-  chmod +x "$INSTALL_DIR/$BINARY"
 
   echo "Installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
   echo "Run '${BINARY} --help' to get started."

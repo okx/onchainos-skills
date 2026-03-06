@@ -29,7 +29,8 @@ Before using this skill, ensure the `onchainos` CLI is installed:
    onchainos --version
    ```
 4. If the install script fails, ask the user to install manually following the instructions at: https://github.com/okx/onchainos-skills
-5. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
+5. If a command is not recognized or a subcommand is missing at runtime, the CLI may be outdated. Re-run the install script (step 2) to upgrade.
+6. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
    ```
    OKX_API_KEY=
    OKX_SECRET_KEY=
@@ -41,6 +42,7 @@ Before using this skill, ensure the `onchainos` CLI is installed:
 - For token search / metadata / rankings / holder analysis → use `okx-dex-token`
 - For swap execution → use `okx-dex-swap`
 - For transaction broadcasting → use `okx-onchain-gateway`
+- For wallet balances / portfolio → use `okx-wallet-portfolio`
 - Signal data (smart money / whale / KOL buy signals, signal-supported chains) → use `okx-dex-market`
 
 ## Quickstart
@@ -437,6 +439,7 @@ onchainos market signal-list ethereum --wallet-type 3 --min-amount-usd 10000
 - **Unsupported chain for signals**: not all chains support signals — always verify with `onchainos market signal-chains` first
 - **Empty signal list**: no signals on this chain for the given filters — suggest relaxing `--wallet-type`, `--min-amount-usd`, or `--min-address-count`, or try a different chain
 - **Network error**: retry once, then prompt user to try again later
+- **Region restriction (error code 50125 or 8001)**: do NOT show the raw error code to the user. Instead, display a friendly message: `⚠️ Service is not available in your region. Please switch to a supported region and try again.`
 
 ## Amount Display Rules
 
@@ -448,5 +451,4 @@ onchainos market signal-list ethereum --wallet-type 3 --min-amount-usd 10000
 
 - EVM contract addresses must be **all lowercase**
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
-- All output is JSON format by default; use `-o table` for table format
-- The CLI handles authentication internally via environment variables — see Prerequisites step 5 for default values
+- The CLI handles authentication internally via environment variables — see Prerequisites step 6 for default values

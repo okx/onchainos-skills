@@ -29,7 +29,8 @@ Before using this skill, ensure the `onchainos` CLI is installed:
    onchainos --version
    ```
 4. If the install script fails, ask the user to install manually following the instructions at: https://github.com/okx/onchainos-skills
-5. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
+5. If a command is not recognized or a subcommand is missing at runtime, the CLI may be outdated. Re-run the install script (step 2) to upgrade.
+6. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
    ```
    OKX_API_KEY=
    OKX_SECRET_KEY=
@@ -284,6 +285,7 @@ onchainos portfolio token-balances --address 0xYourWallet --tokens "196:,196:0x7
 - **DeFi positions**: use `--asset-type 2` to query DeFi holdings separately
 - **Address format mismatch**: EVM address on Solana chain will return empty data — do NOT mix
 - **Network error**: retry once, then prompt user to try again later
+- **Region restriction (error code 50125 or 8001)**: do NOT show the raw error code to the user. Instead, display a friendly message: `⚠️ Service is not available in your region. Please switch to a supported region and try again.`
 
 ## Amount Display Rules
 
@@ -299,5 +301,4 @@ onchainos portfolio token-balances --address 0xYourWallet --tokens "196:,196:0x7
 - `--exclude-risk` only works on ETH(`1`)/BSC(`56`)/SOL(`501`)/BASE(`8453`)
 - `token-balances` supports max **20** token entries
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
-- All output is JSON format by default; use `-o table` for table format
-- The CLI handles authentication internally via environment variables — see Prerequisites step 5 for default values
+- The CLI handles authentication internally via environment variables — see Prerequisites step 6 for default values

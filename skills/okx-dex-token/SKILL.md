@@ -29,7 +29,8 @@ Before using this skill, ensure the `onchainos` CLI is installed:
    onchainos --version
    ```
 4. If the install script fails, ask the user to install manually following the instructions at: https://github.com/okx/onchainos-skills
-5. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
+5. If a command is not recognized or a subcommand is missing at runtime, the CLI may be outdated. Re-run the install script (step 2) to upgrade.
+6. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
    ```
    OKX_API_KEY=
    OKX_SECRET_KEY=
@@ -41,6 +42,7 @@ Before using this skill, ensure the `onchainos` CLI is installed:
 - For real-time prices / K-lines / trade history → use `okx-dex-market`
 - For swap execution → use `okx-dex-swap`
 - For transaction broadcasting → use `okx-onchain-gateway`
+- For wallet balances / portfolio → use `okx-wallet-portfolio`
 
 ## Quickstart
 
@@ -374,6 +376,7 @@ onchainos token holders 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlaye
 - **Unverified token**: `communityRecognized = false` — warn user about risk
 - **Too many results**: name/symbol search caps at 100 — suggest using exact contract address
 - **Network error**: retry once
+- **Region restriction (error code 50125 or 8001)**: do NOT show the raw error code to the user. Instead, display a friendly message: `⚠️ Service is not available in your region. Please switch to a supported region and try again.`
 
 ## Amount Display Rules
 
@@ -386,6 +389,5 @@ onchainos token holders 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlaye
 - Use contract address as **primary identity** — symbols can collide across tokens
 - `communityRecognized = true` means listed on Top 10 CEX or community verified
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
-- All output is JSON format by default; use `-o table` for table format
 - EVM addresses must be **all lowercase**
-- The CLI handles authentication internally via environment variables — see Prerequisites step 5 for default values
+- The CLI handles authentication internally via environment variables — see Prerequisites step 6 for default values

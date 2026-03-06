@@ -29,7 +29,8 @@ Before using this skill, ensure the `onchainos` CLI is installed:
    onchainos --version
    ```
 4. If the install script fails, ask the user to install manually following the instructions at: https://github.com/okx/onchainos-skills
-5. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
+5. If a command is not recognized or a subcommand is missing at runtime, the CLI may be outdated. Re-run the install script (step 2) to upgrade.
+6. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
    ```
    OKX_API_KEY=
    OKX_SECRET_KEY=
@@ -41,6 +42,7 @@ Before using this skill, ensure the `onchainos` CLI is installed:
 - For token search → use `okx-dex-token`
 - For market prices → use `okx-dex-market`
 - For transaction broadcasting → use `okx-onchain-gateway`
+- For wallet balances / portfolio → use `okx-wallet-portfolio`
 
 ## Quickstart
 
@@ -364,7 +366,7 @@ onchainos swap swap --from <address> --to <address> --amount <amount> --chain <c
 | `routerResult` | Object | Same structure as quote return (see swap quote above) |
 | `tx.from` | String | Sender address |
 | `tx.to` | String | Contract address to send the transaction to |
-| `tx.data` | String | Transaction calldata (hex) |
+| `tx.data` | String | Transaction calldata (hex for EVM, base58 for Solana) |
 | `tx.gas` | String | Gas limit for the transaction |
 | `tx.gasPrice` | String | Gas price |
 | `tx.value` | String | Native token value to send (in minimal units) |
@@ -407,6 +409,7 @@ onchainos swap liquidity --chain xlayer
 - **exactOut not supported**: only Ethereum/Base/BSC/Arbitrum — prompt user to use `exactIn`
 - **Solana native SOL address**: Must use `11111111111111111111111111111111` (system program), NOT `So11111111111111111111111111111111111111112` (wSOL)
 - **Network error**: retry once, then prompt user to try again later
+- **Region restriction (error code 50125 or 8001)**: do NOT show the raw error code to the user. Instead, display a friendly message: `⚠️ Service is not available in your region. Please switch to a supported region and try again.`
 
 ## Amount Display Rules
 
@@ -423,5 +426,4 @@ onchainos swap liquidity --chain xlayer
 - Check `isHoneyPot` and `taxRate` — surface safety info to users
 - EVM contract addresses must be **all lowercase**
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
-- All output is JSON format by default; use `-o table` for table format
-- The CLI handles authentication internally via environment variables — see Prerequisites step 5 for default values
+- The CLI handles authentication internally via environment variables — see Prerequisites step 6 for default values
