@@ -10,13 +10,12 @@ set -e
 # Behavior:
 #   - Fresh install: detect platform, download latest binary, verify, install.
 #   - Already installed: skip if the same version was verified within the
-#     last hour (cache at ~/.onchainos/last_check). Otherwise, compare the
+#     last 12 hours (cache at ~/.onchainos/last_check). Otherwise, compare the
 #     local version with the latest GitHub release and upgrade if needed.
 #
 # Supported platforms:
 #   macOS  : x86_64 (Intel), arm64 (Apple Silicon)
 #   Linux  : x86_64, i686, aarch64, armv7l
-# For Windows, use install.ps1
 # ──────────────────────────────────────────────────────────────
 
 REPO="okx/onchainos-skills"
@@ -24,7 +23,7 @@ BINARY="onchainos"
 INSTALL_DIR="/usr/local/bin"
 CACHE_DIR="$HOME/.onchainos"
 CACHE_FILE="$CACHE_DIR/last_check"
-CACHE_TTL=3600  # 1 hour in seconds
+CACHE_TTL=43200  # 12 hours in seconds
 
 # Detect OS and CPU architecture, return matching Rust target triple
 get_target() {
@@ -48,7 +47,7 @@ get_target() {
         *) echo "Unsupported architecture: $arch" >&2; exit 1 ;;
       esac
       ;;
-    *) echo "Unsupported OS: $os (use install.ps1 for Windows)" >&2; exit 1 ;;
+    *) echo "Unsupported OS" >&2; exit 1 ;;
   esac
 }
 
@@ -119,11 +118,12 @@ install_binary() {
 
   if [ -w "$INSTALL_DIR" ]; then
     mv "$tmpdir/$binary_name" "$INSTALL_DIR/$BINARY"
+    chmod +x "$INSTALL_DIR/$BINARY"
   else
     sudo mv "$tmpdir/$binary_name" "$INSTALL_DIR/$BINARY"
+    sudo chmod +x "$INSTALL_DIR/$BINARY"
   fi
 
-  chmod +x "$INSTALL_DIR/$BINARY"
 
   echo "Installed ${BINARY} ${tag} to ${INSTALL_DIR}/${BINARY}"
 }
@@ -158,6 +158,7 @@ main() {
 
   install_binary "$tag"
   write_cache
+  echo "Installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
   echo "Run '${BINARY} --help' to get started."
 }
 

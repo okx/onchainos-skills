@@ -16,14 +16,25 @@ metadata:
 
 Before using this skill, ensure the `onchainos` CLI is installed and up-to-date:
 
-1. Install or update `onchainos` to the latest version (the script auto-detects
-   whether an upgrade is needed and caches the check for 1 hour):
+1. If `onchainos` is not installed, install it:
    ```bash
    curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
    ```
-2. If the install script fails, ask the user to install manually following the instructions at: https://github.com/okx/onchainos-skills
-3. If the CLI was upgraded, tell the user their onchainos skills may also be
-   outdated and suggest updating from: https://github.com/okx/onchainos-skills
+   If the install script fails, ask the user to install manually following the instructions at: https://github.com/okx/onchainos-skills
+2. Check whether the cache file `~/.onchainos/last_check` exists and was
+   written less than 12 hours ago. If so, skip the update check. Otherwise,
+   run the installer to check for updates:
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
+   ```
+   If a newer version is available, tell the user a new version has been
+   installed and suggest updating their onchainos skills from
+   https://github.com/okx/onchainos-skills to get the latest features.
+3. If any `onchainos` command fails with an unexpected error during this
+   session, try reinstalling before giving up:
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
+   ```
 4. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
    ```
    OKX_API_KEY=
@@ -36,6 +47,7 @@ Before using this skill, ensure the `onchainos` CLI is installed and up-to-date:
 - For token search → use `okx-dex-token`
 - For market prices → use `okx-dex-market`
 - For transaction broadcasting → use `okx-onchain-gateway`
+- For wallet balances / portfolio → use `okx-wallet-portfolio`
 
 ## Quickstart
 
@@ -359,7 +371,7 @@ onchainos swap swap --from <address> --to <address> --amount <amount> --chain <c
 | `routerResult` | Object | Same structure as quote return (see swap quote above) |
 | `tx.from` | String | Sender address |
 | `tx.to` | String | Contract address to send the transaction to |
-| `tx.data` | String | Transaction calldata (hex) |
+| `tx.data` | String | Transaction calldata (hex for EVM, base58 for Solana) |
 | `tx.gas` | String | Gas limit for the transaction |
 | `tx.gasPrice` | String | Gas price |
 | `tx.value` | String | Native token value to send (in minimal units) |
@@ -402,6 +414,7 @@ onchainos swap liquidity --chain xlayer
 - **exactOut not supported**: only Ethereum/Base/BSC/Arbitrum — prompt user to use `exactIn`
 - **Solana native SOL address**: Must use `11111111111111111111111111111111` (system program), NOT `So11111111111111111111111111111111111111112` (wSOL)
 - **Network error**: retry once, then prompt user to try again later
+- **Region restriction (error code 50125 or 8001)**: do NOT show the raw error code to the user. Instead, display a friendly message: `⚠️ Service is not available in your region. Please switch to a supported region and try again.`
 
 ## Amount Display Rules
 
@@ -418,5 +431,4 @@ onchainos swap liquidity --chain xlayer
 - Check `isHoneyPot` and `taxRate` — surface safety info to users
 - EVM contract addresses must be **all lowercase**
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
-- All output is JSON format by default; use `-o table` for table format
-- The CLI handles authentication internally via environment variables — see Prerequisites step 5 for default values
+- The CLI handles authentication internally via environment variables — see Prerequisites step 6 for default values
