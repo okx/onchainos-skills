@@ -16,7 +16,11 @@ metadata:
 
 Before using this skill, ensure the `onchainos` CLI is installed and up-to-date:
 
-1. If `onchainos` is not installed, install it:
+1. Check whether `onchainos` exists in your PATH:
+   ```bash
+   which onchainos
+   ```
+   If no path is returned, install it:
    ```bash
    curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
    ```
