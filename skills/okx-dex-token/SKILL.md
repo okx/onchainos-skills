@@ -1,6 +1,6 @@
 ---
 name: okx-dex-token
-description: "This skill should be used when the user asks to 'find a token', 'search for a token', 'look up PEPE', 'what\\'s trending', 'top tokens', 'trending tokens on Solana', 'token rankings', 'who holds this token', 'holder distribution', 'token market cap', 'token liquidity', 'research a token', 'tell me about this token', 'token info', or mentions searching for tokens by name or address, discovering trending tokens, viewing token rankings, checking holder distribution, or analyzing token market cap and liquidity. Covers token search, metadata, market cap, liquidity, volume, trending token rankings, and holder analysis across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. Do NOT use when the user says only a single generic word like 'tokens' or 'crypto' without specifying a token name, action, or question. For simple current price checks, price charts, candlestick data, or trade history, use okx-dex-market instead. For meme token safety analysis, developer reputation, rug pull checks, bundle/sniper detection, or finding tokens by same creator, use okx-dex-market instead."
+description: "This skill should be used when the user asks to 'find a token', 'search for a token', 'look up PEPE', 'what\'s trending', 'top tokens', 'trending tokens on Solana', 'token rankings', 'who holds this token', 'holder distribution', 'token market cap', 'token liquidity', 'liquidity pools for this token', 'which pool has the most liquidity', 'hot tokens', 'what tokens are hot right now', 'trending by social score', 'X mentioned tokens', 'Twitter trending tokens', 'tokens with high social score', 'research a token', 'tell me about this token', 'token info', or mentions searching for tokens by name or address, discovering trending or hot tokens, viewing token rankings, checking holder distribution, analyzing token market cap and liquidity, finding top liquidity pools for a token, or getting social-score-based hot token rankings. Covers token search, metadata, market cap, liquidity pools, volume, trending/hot token rankings, holder analysis, and X-mentioned token discovery across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. Do NOT use when the user says only a single generic word like 'tokens' or 'crypto' without specifying a token name, action, or question. For simple current price checks, price charts, candlestick data, or trade history, use okx-dex-market instead. For meme token safety analysis, developer reputation, rug pull checks, bundle/sniper detection, or finding tokens by same creator, use okx-dex-market instead."
 license: Apache-2.0
 metadata:
   author: okx
@@ -10,7 +10,7 @@ metadata:
 
 # OKX DEX Token Info CLI
 
-5 commands for token search, metadata, detailed pricing, rankings, and holder distribution.
+7 commands for token search, metadata, detailed pricing, rankings, holder distribution, liquidity pools, and hot token discovery.
 
 ## Prerequisites
 
@@ -50,6 +50,15 @@ Before using this skill, ensure the `onchainos` CLI is installed:
 # Search token
 onchainos token search xETH --chains "ethereum,solana"
 
+# Get top 5 liquidity pools for a token
+onchainos token liquidity 0x1f16e03c1a5908818f47f6ee7bb16690b40d0671 --chain base
+
+# Get hot tokens (trending by score, all chains)
+onchainos token hot-tokens --ranking-type 4
+
+# Get X-mentioned hot tokens on Solana
+onchainos token hot-tokens --ranking-type 5 --chain solana
+
 # Get detailed price info
 onchainos token price-info 0xe7b000003a45145decf8a28fc755ad5ec5ea025a --chain xlayer
 
@@ -82,6 +91,8 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | 3 | `onchainos token price-info <address>` | Get detailed price info (price, market cap, liquidity, volume, 24h change) |
 | 4 | `onchainos token trending` | Get trending / top tokens |
 | 5 | `onchainos token holders <address>` | Get token holder distribution (top 20) |
+| 6 | `onchainos token liquidity <address>` | Get top 5 liquidity pools for a token |
+| 7 | `onchainos token hot-tokens` | Get hot token list ranked by trending score or X mentions (max 200) |
 
 ## Boundary: token vs market skill
 
@@ -92,6 +103,8 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Price + market cap + liquidity + multi-timeframe change | `onchainos token price-info` | - |
 | Token ranking (trending) | `onchainos token trending` | - |
 | Holder distribution | `onchainos token holders` | - |
+| Top 5 liquidity pools for a token | `onchainos token liquidity` | - |
+| Hot tokens by trending score or X mentions | `onchainos token hot-tokens` | - |
 | Raw real-time price (single value) | - | `onchainos market price` |
 | K-line / candlestick chart | - | `onchainos market kline` |
 | Trade history (buy/sell log) | - | `onchainos market trades` |
@@ -170,6 +183,8 @@ Before swapping an unknown token, always verify:
 
 - Missing chain → recommend XLayer (`--chain xlayer`, low gas, fast confirmation) as the default, then ask which chain the user prefers
 - Only have token name, no address → use `onchainos token search` first
+- For hot-tokens, `--ranking-type` defaults to `4` (Trending); use `5` for X-mentioned rankings
+- For hot-tokens without chain → defaults to all chains; specify `--chain` to narrow
 - For search, `--chains` defaults to `"1,501"` (Ethereum + Solana)
 - For trending, `--sort-by` defaults to `5` (volume), `--time-frame` defaults to `4` (24h)
 
@@ -190,6 +205,8 @@ After displaying results, suggest 2-3 relevant follow-up actions based on the co
 | `token price-info` | 1. View K-line chart → `okx-dex-market` 2. Check holder distribution → `onchainos token holders` (this skill) 3. Buy/swap this token → `okx-dex-swap` |
 | `token trending` | 1. View details for a specific token → `onchainos token price-info` (this skill) 2. View price chart → `okx-dex-market` 3. Buy a trending token → `okx-dex-swap` |
 | `token holders` | 1. View price trend → `okx-dex-market` 2. Buy/swap this token → `okx-dex-swap` |
+| `token liquidity` | 1. View price chart → `okx-dex-market` 2. Swap this token → `okx-dex-swap` |
+| `token hot-tokens` | 1. View details for a token → `onchainos token price-info` (this skill) 2. Check liquidity pools → `onchainos token liquidity` (this skill) 3. Buy a hot token → `okx-dex-swap` |
 
 Present conversationally, e.g.: "Would you like to see the price chart or check the holder distribution?" — never expose skill names or endpoint paths to the user.
 
@@ -371,6 +388,94 @@ onchainos token trending --chains solana --sort-by 5 --time-frame 4
 onchainos token holders 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
 # → Display top 20 holders with amounts and addresses
 ```
+
+### 6. onchainos token liquidity
+
+Get top 5 liquidity pools for a token, sorted by liquidity value.
+
+```bash
+onchainos token liquidity <address> [--chain <chain>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<address>` | Yes | - | Token contract address (positional) |
+| `--chain` | No | `ethereum` | Chain name (e.g., `ethereum`, `base`, `bsc`) |
+
+**Return fields** (up to 5 pools):
+
+| Field | Type | Description |
+|---|---|---|
+| `pool` | String | Pool pair name (e.g., `RECALL/USDC`) |
+| `protocolName` | String | Protocol name (e.g., `Aerodrome`, `Uniswap V4`) |
+| `liquidityValue` | String | Pool liquidity value in USD |
+| `liquidityAmount` | String | Liquidity amount in token units (e.g., `4.2M RECALL\n147K USDC`) |
+| `liquidityProviderFeePercent` | String | LP fee percentage |
+| `poolAddress` | String | Pool contract address |
+| `poolCreator` | String | Pool creator wallet address |
+
+### 7. onchainos token hot-tokens
+
+Get hot token list ranked by trending score or X (Twitter) mentions. Returns up to 200 results.
+
+```bash
+onchainos token hot-tokens [--ranking-type <type>] [--chain <chain>] [--rank-by <field>] [--time-frame <frame>] [options]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--ranking-type` | No | `4` | `4`=Trending (token score), `5`=Xmentioned (Twitter mentions) |
+| `--chain` | No | all chains | Chain name (e.g., `ethereum`, `solana`) |
+| `--rank-by` | No | `12` (Trending) / `11` (Xmentioned) | Sort field: `1`=price, `2`=price change, `3`=txs, `4`=unique traders, `5`=volume, `6`=market cap, `7`=liquidity, `8`=created time, `9`=OKX search count, `10`=holders, `11`=mention count, `12`=social score, `14`=net inflow, `15`=token score |
+| `--time-frame` | No | `2` (1h) | `1`=5min, `2`=1h, `3`=4h, `4`=24h |
+| `--risk-filter` | No | `true` | Hide risky tokens (`true`/`false`) |
+| `--stable-token-filter` | No | `true` | Filter stable coins (`true`/`false`) |
+| `--project-id` | No | - | Protocol ID filter, comma-separated (e.g., `120596` for Pump.fun) |
+| `--price-change-min/max` | No | - | Price change percent range |
+| `--volume-min/max` | No | - | Volume (USD) range |
+| `--market-cap-min/max` | No | - | Market cap (USD) range |
+| `--liquidity-min/max` | No | - | Liquidity (USD) range |
+| `--transaction-min/max` | No | - | Transaction count range |
+| `--unique-trader-min/max` | No | - | Unique trader count range |
+| `--holders-min/max` | No | - | Holder count range |
+| `--inflow-min/max` | No | - | Net inflow (USD) range |
+| `--fdv-min/max` | No | - | FDV (USD) range |
+| `--mentioned-count-min/max` | No | - | Mention count range (for Xmentioned) |
+| `--social-score-min/max` | No | - | Social score range |
+| `--top10-hold-percent-min/max` | No | - | Top-10 holder percent range |
+| `--dev-hold-percent-min/max` | No | - | Dev hold percent range |
+| `--bundle-hold-percent-min/max` | No | - | Bundle hold percent range |
+| `--suspicious-hold-percent-min/max` | No | - | Suspicious hold percent range |
+| `--is-lp-burnt` | No | `true` | LP burned filter (`true`/`false`) |
+| `--is-mint` | No | `true` | Mintable filter (`true`/`false`) |
+| `--is-freeze` | No | `true` | Freeze filter (`true`/`false`) |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `tokenSymbol` | String | Token symbol |
+| `tokenContractAddress` | String | Token contract address |
+| `tokenLogoUrl` | String | Token logo URL |
+| `chainIndex` | String | Chain identifier |
+| `price` | String | Current price in USD |
+| `change` | String | Price change percentage |
+| `marketCap` | String | Market capitalization in USD |
+| `volume` | String | Trading volume in USD |
+| `liquidity` | String | Liquidity value in USD |
+| `holders` | String | Number of token holders |
+| `uniqueTraders` | String | Unique traders in the time frame |
+| `txs` | String | Total transactions in the time frame |
+| `txsBuy` | String | Buy transactions in the time frame |
+| `txsSell` | String | Sell transactions in the time frame |
+| `inflow` | String | Net inflow in USD |
+| `firstTradeTime` | String | First trade timestamp (Unix ms) |
+| `riskLevelControl` | String | Risk level: `0`=undefined, `1`=low, `2`=medium, `3`=medium-high, `4`=high, `5`=high (manual) |
+| `devHoldPercent` | String | Developer holding percentage |
+| `top10HoldPercent` | String | Top-10 holder percentage |
+| `bundleHoldPercent` | String | Bundle holder percentage |
+| `vibeScore` | String | Vibe/hot score |
+| `mentionsCount` | String | Social mention count (Xmentioned ranking) |
 
 ## Edge Cases
 

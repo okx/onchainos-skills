@@ -1,6 +1,6 @@
 ---
 name: okx-dex-market
-description: "Use this skill when users want live on-chain market data: token prices, price charts (K-line, OHLC), trade history, swap activity. Also, it covers on-chain signals — smart money, whale, and KOL wallet activity, large trades, and signal-supported chains. For meme tokens: scanning new launches, checking dev wallets, developer reputation, rug pull detection, rug pull history, tokens by same creator, detecting bundles or snipers, bonding curves %, flagging suspicious launches, and meme token safety checks. For token search, market cap, liquidity, trending tokens, or holder distribution, use okx-dex-token instead."
+description: "Use this skill when users want live on-chain market data: token prices, price charts (K-line, OHLC), trade history, swap activity. Also covers filtering trades by wallet type — KOL trades, developer trades, insider trades, show me what KOLs are buying, show trades from a specific wallet address, filter trades by influencer. Also covers on-chain signals — smart money, whale, and KOL wallet activity, large trades, and signal-supported chains. For meme tokens: scanning new launches, checking dev wallets, developer reputation, rug pull detection, rug pull history, tokens by same creator, detecting bundles or snipers, bonding curves %, flagging suspicious launches, and meme token safety checks. For token search, market cap, liquidity pools, hot tokens, trending tokens, or holder distribution, use okx-dex-token instead."
 license: Apache-2.0
 metadata:
   author: okx
@@ -97,7 +97,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 |---|---|---|
 | 1 | `onchainos market price <address>` | Get single token price |
 | 2 | `onchainos market prices <tokens>` | Batch price query |
-| 3 | `onchainos market trades <address>` | Get recent trades |
+| 3 | `onchainos market trades <address>` | Get recent trades (with optional KOL/dev/insider and wallet filters) |
 | 4 | `onchainos market kline <address>` | Get K-line / candlestick data |
 
 ### Index Price Commands
@@ -276,7 +276,7 @@ After displaying results, suggest 2-3 relevant follow-up actions based on the co
 |---|---|
 | `market price` | 1. View K-line chart → `onchainos market kline` (this skill) 2. Deeper analytics (market cap, liquidity, 24h volume) → `okx-dex-token` 3. Buy/swap this token → `okx-dex-swap` |
 | `market kline` | 1. Check recent trades → `onchainos market trades` (this skill) 2. Buy/swap based on the chart → `okx-dex-swap` |
-| `market trades` | 1. View price chart for context → `onchainos market kline` (this skill) 2. Execute a trade → `okx-dex-swap` |
+| `market trades` | 1. View price chart for context → `onchainos market kline` (this skill) 2. Execute a trade → `okx-dex-swap` 3. Filter by KOL wallets → rerun with `--tag-filter 1` |
 | `market index` | 1. Compare with on-chain DEX price → `onchainos market price` (this skill) 2. View full price chart → `onchainos market kline` (this skill) |
 | `market signal-list` | 1. View price chart for a signal token → `onchainos market kline` (this skill) 2. Deep token analytics (market cap, liquidity) → `okx-dex-token` 3. Buy the token → `okx-dex-swap` |
 | `market signal-chains` | 1. Fetch signals on a supported chain → `onchainos market signal-list` (this skill) |
@@ -366,10 +366,10 @@ onchainos market kline <address> [--bar <bar>] [--limit <n>] [--chain <chain>]
 
 ### 4. onchainos market trades
 
-Get recent trades.
+Get recent DEX trades for a token, with optional filtering by wallet tag or specific addresses.
 
 ```bash
-onchainos market trades <address> [--chain <chain>] [--limit <n>]
+onchainos market trades <address> [--chain <chain>] [--limit <n>] [--tag-filter <tag>] [--wallet-filter <addresses>]
 ```
 
 | Param | Required | Default | Description |
@@ -377,6 +377,8 @@ onchainos market trades <address> [--chain <chain>] [--limit <n>]
 | `<address>` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name |
 | `--limit` | No | `100` | Number of trades (max 500) |
+| `--tag-filter` | No | - | Filter by wallet tag: `1`=KOL, `2`=Developer, `6`=Insider |
+| `--wallet-filter` | No | - | Filter by wallet addresses, comma-separated (max 10) |
 
 **Return fields**:
 
@@ -388,12 +390,14 @@ onchainos market trades <address> [--chain <chain>] [--limit <n>]
 | `volume` | String | Trade volume in USD |
 | `time` | String | Trade timestamp (Unix milliseconds) |
 | `dexName` | String | DEX name where trade occurred |
-| `txHashUrl` | String | Transaction hash explorer URL |
+| `txHashUrl` | String | Transaction hash (or explorer URL on EVM chains) |
 | `userAddress` | String | Wallet address of the trader |
+| `isFiltered` | String | Whether this trade was filtered |
+| `poolLogoUrl` | String | Pool logo URL |
 | `changedTokenInfo[]` | Array | Token change details for the trade |
 | `changedTokenInfo[].tokenSymbol` | String | Token symbol |
-| `changedTokenInfo[].tokenContractAddress` | String | Token contract address |
-| `changedTokenInfo[].tokenAmount` | String | Token amount changed |
+| `changedTokenInfo[].tokenAddress` | String | Token contract address |
+| `changedTokenInfo[].amount` | String | Token amount changed |
 
 ### 5. onchainos market index
 
@@ -686,6 +690,13 @@ onchainos market price 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
 ```bash
 onchainos market kline 0x74b7f16337b8972027f6196a17a631ac6de26d22 --chain xlayer --bar 1H
 # → Display candlestick data (open/high/low/close/volume)
+```
+
+**User says:** "Show me KOL trades for this Solana token"
+
+```bash
+onchainos market trades 6p6xgHyF7AeE6TZkSmFsko444wqoP15icUSqi2jfGiPN --chain solana --tag-filter 1 --limit 10
+# → Display only trades made by KOL wallets
 ```
 
 **User says:** "What are smart money wallets buying on Solana?"
