@@ -1,0 +1,253 @@
+# OKX DEX Token — CLI Command Reference
+
+Detailed parameter tables, return field schemas, and usage examples for all 7 token commands.
+
+## 1. onchainos token search
+
+Search for tokens by name, symbol, or contract address.
+
+```bash
+onchainos token search <query> [--chains <chains>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<query>` | Yes | - | Keyword: token name, symbol, or contract address (positional) |
+| `--chains` | No | `"1,501"` | Chain names or IDs, comma-separated (e.g., `"ethereum,solana"` or `"196,501"`) |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `tokenContractAddress` | String | Token contract address |
+| `tokenSymbol` | String | Token symbol (e.g., `"ETH"`) |
+| `tokenName` | String | Token full name |
+| `tokenLogoUrl` | String | Token logo image URL |
+| `chainIndex` | String | Chain identifier |
+| `decimal` | String | Token decimals (e.g., `"18"`) |
+| `price` | String | Current price in USD |
+| `change` | String | 24-hour price change percentage |
+| `marketCap` | String | Market capitalization in USD |
+| `liquidity` | String | Liquidity in USD |
+| `holders` | String | Number of token holders |
+| `explorerUrl` | String | Block explorer URL for the token |
+| `tagList.communityRecognized` | Boolean | `true` = listed on Top 10 CEX or community verified |
+
+## 2. onchainos token info
+
+Get token basic info (name, symbol, decimals, logo).
+
+```bash
+onchainos token info <address> [--chain <chain>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<address>` | Yes | - | Token contract address (positional) |
+| `--chain` | No | `ethereum` | Chain name |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `tokenName` | String | Token full name |
+| `tokenSymbol` | String | Token symbol (e.g., `"ETH"`) |
+| `tokenLogoUrl` | String | Token logo image URL |
+| `decimal` | String | Token decimals (e.g., `"18"`) |
+| `tokenContractAddress` | String | Token contract address |
+| `tagList.communityRecognized` | Boolean | `true` = listed on Top 10 CEX or community verified |
+
+## 3. onchainos token price-info
+
+Get detailed price info including market cap, liquidity, volume, and multi-timeframe price changes.
+
+```bash
+onchainos token price-info <address> [--chain <chain>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<address>` | Yes | - | Token contract address (positional) |
+| `--chain` | No | `ethereum` | Chain name |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `price` | String | Current price in USD |
+| `time` | String | Timestamp (Unix milliseconds) |
+| `marketCap` | String | Market capitalization in USD |
+| `liquidity` | String | Total liquidity in USD |
+| `circSupply` | String | Circulating supply |
+| `holders` | String | Number of token holders |
+| `tradeNum` | String | 24-hour trade count |
+| `priceChange5M` | String | Price change percentage — last 5 minutes |
+| `priceChange1H` | String | Price change percentage — last 1 hour |
+| `priceChange4H` | String | Price change percentage — last 4 hours |
+| `priceChange24H` | String | Price change percentage — last 24 hours |
+| `volume5M` | String | Trading volume (USD) — last 5 minutes |
+| `volume1H` | String | Trading volume (USD) — last 1 hour |
+| `volume4H` | String | Trading volume (USD) — last 4 hours |
+| `volume24H` | String | Trading volume (USD) — last 24 hours |
+| `txs5M` | String | Transaction count — last 5 minutes |
+| `txs1H` | String | Transaction count — last 1 hour |
+| `txs4H` | String | Transaction count — last 4 hours |
+| `txs24H` | String | Transaction count — last 24 hours |
+| `maxPrice` | String | 24-hour highest price |
+| `minPrice` | String | 24-hour lowest price |
+
+## 4. onchainos token trending
+
+Get trending / top tokens by various criteria.
+
+```bash
+onchainos token trending [--chains <chains>] [--sort-by <sort>] [--time-frame <frame>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--chains` | No | `"1,501"` | Chain names or IDs, comma-separated |
+| `--sort-by` | No | `"5"` | Sort: `2`=price change, `5`=volume, `6`=market cap |
+| `--time-frame` | No | `"4"` | Window: `1`=5min, `2`=1h, `3`=4h, `4`=24h |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `tokenSymbol` | String | Token symbol |
+| `tokenContractAddress` | String | Token contract address |
+| `tokenLogoUrl` | String | Token logo image URL |
+| `chainIndex` | String | Chain identifier |
+| `price` | String | Current price in USD |
+| `change` | String | Price change percentage (for selected time frame) |
+| `volume` | String | Trading volume in USD (for selected time frame) |
+| `marketCap` | String | Market capitalization in USD |
+| `liquidity` | String | Total liquidity in USD |
+| `holders` | String | Number of token holders |
+| `uniqueTraders` | String | Number of unique traders (for selected time frame) |
+| `txsBuy` | String | Buy transaction count (for selected time frame) |
+| `txsSell` | String | Sell transaction count (for selected time frame) |
+| `txs` | String | Total transaction count (for selected time frame) |
+| `firstTradeTime` | String | First trade timestamp (Unix milliseconds) |
+
+## 5. onchainos token holders
+
+Get token holder distribution (top 20), with optional tag filter.
+
+```bash
+onchainos token holders <address> [--chain <chain>] [--tag-filter <n>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<address>` | Yes | - | Token contract address (positional) |
+| `--chain` | No | `ethereum` | Chain name |
+| `--tag-filter` | No | - | Filter by holder tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler |
+
+**Return fields** (top 20 holders):
+
+| Field | Type | Description |
+|---|---|---|
+| `data[].holderWalletAddress` | String | Holder wallet address |
+| `data[].holdAmount` | String | Token amount held |
+| `data[].holdPercent` | String | Percentage of total supply held |
+| `data[].avgBuyPrice` | String | Average buy price (USD) |
+| `data[].avgSellPrice` | String | Average sell price (USD) |
+| `data[].totalPNL` | String | Total profit and loss (USD) |
+
+## 6. onchainos token advanced-info
+
+Get advanced token info including risk level, creator details, dev stats, and holder concentration.
+
+```bash
+onchainos token advanced-info <address> [--chain <chain>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<address>` | Yes | - | Token contract address (positional) |
+| `--chain` | No | `ethereum` | Chain name |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `riskControlLevel` | String | Risk control level |
+| `totalFee` | String | Total fee collected |
+| `lpBurnedPercent` | String | Percentage of LP tokens burned |
+| `isInternal` | Boolean | Whether the token is internal |
+| `protocolId` | String | Protocol identifier |
+| `progress` | String | Token progress (e.g., bonding curve %) |
+| `tokenTags` | Array | Tags associated with the token |
+| `createTime` | String | Token creation timestamp |
+| `creatorAddress` | String | Creator wallet address |
+| `devRugPullTokenCount` | String | Number of tokens by dev that were rug pulls |
+| `devCreateTokenCount` | String | Total tokens created by dev |
+| `devLaunchedTokenCount` | String | Number of tokens by dev that launched |
+| `top10HoldPercent` | String | Top 10 holders combined percentage |
+| `devHoldingPercent` | String | Developer holding percentage |
+| `bundleHoldingPercent` | String | Bundle holding percentage |
+| `suspiciousHoldingPercent` | String | Suspicious holding percentage |
+| `sniperHoldingPercent` | String | Sniper holding percentage |
+| `snipersClearAddressCount` | String | Number of sniper addresses that cleared |
+| `snipersTotal` | String | Total sniper count |
+
+## 7. onchainos token top-trader
+
+Get top traders (profit addresses) for a token.
+
+```bash
+onchainos token top-trader <address> [--chain <chain>] [--tag-filter <n>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<address>` | Yes | - | Token contract address (positional) |
+| `--chain` | No | `ethereum` | Chain name |
+| `--tag-filter` | No | - | Filter by trader tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `holderWalletAddress` | String | Trader wallet address |
+| `holdAmount` | String | Token amount held |
+| `holdPercent` | String | Percentage of total supply held |
+| `nativeTokenBalance` | String | Native token balance |
+| `boughtAmount` | String | Total amount bought |
+| `avgBuyPrice` | String | Average buy price (USD) |
+| `soldAmount` | String | Total amount sold |
+| `avgSellPrice` | String | Average sell price (USD) |
+| `totalPnlUsd` | String | Total PnL (USD) |
+| `realizedPnlUsd` | String | Realized PnL (USD) |
+| `unrealizedPnlUsd` | String | Unrealized PnL (USD) |
+| `fundingSource` | String | Funding source of the wallet |
+
+## Input / Output Examples
+
+**User says:** "Search for xETH token on XLayer"
+
+```bash
+onchainos token search xETH --chains xlayer
+# -> Display:
+#   xETH (0xe7b0...) - XLayer
+#   Price: $X,XXX.XX | 24h: +X% | Market Cap: $XXM | Liquidity: $XXM
+#   Community Recognized: Yes
+```
+
+**User says:** "What's trending on Solana by volume?"
+
+```bash
+onchainos token trending --chains solana --sort-by 5 --time-frame 4
+# -> Display top tokens sorted by 24h volume:
+#   #1 SOL  - Vol: $1.2B | Change: +3.5% | MC: $80B
+#   #2 BONK - Vol: $450M | Change: +12.8% | MC: $1.5B
+#   ...
+```
+
+**User says:** "Who are the top holders of this token?"
+
+```bash
+onchainos token holders 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
+# -> Display top 20 holders with amounts and addresses
+```
