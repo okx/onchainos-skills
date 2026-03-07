@@ -4,7 +4,7 @@ description: "Use this skill when users want live on-chain market data: token pr
 license: Apache-2.0
 metadata:
   author: okx
-  version: "1.0.0"
+  version: "1.0.1"
   homepage: "https://web3.okx.com"
 ---
 
@@ -756,7 +756,6 @@ Do not expose raw error codes or internal error messages to the user.
 
 ## Edge Cases
 
-- **Region-restricted error (50125 / 80001)**: display the friendly region message above — do not retry or expose the error code
 - **Invalid token address**: returns empty data or error — prompt user to verify, or use `onchainos token search` to resolve
 - **Unsupported chain**: the CLI will report an error — try a different chain name
 - **No candle data**: may be a new token or low liquidity — inform user
@@ -769,7 +768,7 @@ Do not expose raw error codes or internal error messages to the user.
 - **Empty similar tokens**: `memepump-similar-tokens` may return empty array if no similar tokens are found
 - **Empty aped wallets**: `memepump-aped-wallet` returns empty array if no co-holders found
 - **Network error**: retry once, then prompt user to try again later
-- **Region restriction (error code 50125 or 8001)**: do NOT show the raw error code to the user. Instead, display a friendly message: `⚠️ Service is not available in your region. Please switch to a supported region and try again.`
+- **Region restriction (error code 50125 or 80001)**: do NOT show the raw error code to the user. Instead, display a friendly message: `⚠️ Service is not available in your region. Please switch to a supported region and try again.`
 
 ## Amount Display Rules
 

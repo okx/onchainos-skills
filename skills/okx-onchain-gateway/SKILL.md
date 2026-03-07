@@ -4,7 +4,7 @@ description: "This skill should be used when the user asks to 'broadcast transac
 license: Apache-2.0
 metadata:
   author: okx
-  version: "1.0.0"
+  version: "1.0.1"
   homepage: "https://web3.okx.com"
 ---
 
@@ -374,7 +374,7 @@ onchainos gateway orders --address 0xYourWallet --chain xlayer --order-id 123456
 - **Node return failed**: the underlying blockchain node rejected the transaction. Common causes: insufficient gas, nonce too low, contract revert. Retry with corrected parameters.
 - **Wallet type mismatch**: the address format does not match the chain (e.g., EVM address on Solana chain).
 - **Network error**: retry once, then prompt user to try again later
-- **Region restriction (error code 50125 or 8001)**: do NOT show the raw error code to the user. Instead, display a friendly message: `⚠️ Service is not available in your region. Please switch to a supported region and try again.`
+- **Region restriction (error code 50125 or 80001)**: do NOT show the raw error code to the user. Instead, display a friendly message: `⚠️ Service is not available in your region. Please switch to a supported region and try again.`
 - **Transaction already broadcast**: if the same `--signed-tx` is broadcast twice, the API may return an error or the same `txHash` — handle idempotently.
 
 ## Amount Display Rules

@@ -94,7 +94,7 @@ The skills work together in typical DeFi flows:
 
 ### Shell Script (macOS / Linux)
 
-Auto-detects your platform, downloads the matching binary, verifies SHA256 checksum, and installs to `/usr/local/bin`:
+Auto-detects your platform, downloads the matching binary, verifies SHA256 checksum, and installs to `~/.local/bin`:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh

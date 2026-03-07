@@ -1,7 +1,7 @@
 # ──────────────────────────────────────────────────────────────
 # Automated release pipeline
 # Trigger: push a version tag (e.g. v0.1.0)
-# Flow: validate tag → build 9 platforms → publish Release → update Homebrew
+# Flow: validate tag → build 9 platforms → publish Release
 # Artifacts: raw binaries (not tar.gz), with checksums.txt
 # ──────────────────────────────────────────────────────────────
 name: Release
