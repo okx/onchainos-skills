@@ -16,9 +16,7 @@ This is an **onchainos skill collection** providing 5 skills for on-chain operat
 
 - **skills/** — 5 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
-- **Formula/** — Homebrew formula template (`onchainos.rb`), auto-updated on release by `scripts/update-formula.sh`
-- **scripts/** — Release automation scripts (e.g. `update-formula.sh` rewrites Formula SHA256 from GitHub Release checksums)
-- **.github/workflows/** — CI/CD pipeline (`release.yml`: tag-triggered build for 9 platforms → GitHub Release → Homebrew update)
+- **.github/workflows/** — CI/CD pipeline (`release.yml`: tag-triggered build for 9 platforms → GitHub Release)
 - **install.sh** — One-line installer for macOS / Linux (`curl | sh`)
 
 ## Skill Discovery

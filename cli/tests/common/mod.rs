@@ -54,10 +54,7 @@ pub fn run_with_retry(args: &[&str]) -> std::process::Output {
         if attempt > 0 {
             std::thread::sleep(std::time::Duration::from_secs(attempt));
         }
-        let output = onchainos()
-            .args(args)
-            .output()
-            .expect("failed to execute");
+        let output = onchainos().args(args).output().expect("failed to execute");
 
         if output.status.success() {
             return output;
@@ -67,8 +64,5 @@ pub fn run_with_retry(args: &[&str]) -> std::process::Output {
             return output;
         }
     }
-    onchainos()
-        .args(args)
-        .output()
-        .expect("failed to execute")
+    onchainos().args(args).output().expect("failed to execute")
 }

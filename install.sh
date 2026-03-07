@@ -77,6 +77,9 @@ normalize_tag() {
 
 install_binary() {
   target=$(get_target)
+  if [ -z "$target" ]; then
+    exit 1
+  fi
   tag="$1"
 
   binary_name="${BINARY}-${target}"
@@ -172,7 +175,7 @@ ensure_in_path() {
 main() {
   local_ver=$(get_local_version)
 
-  # Fast path: already installed and checked within the last hour
+  # Fast path: already installed and checked within the last 12 hours
   if [ -n "$local_ver" ] && is_cache_fresh; then
     echo "${BINARY} ${local_ver} is already installed (update check skipped, checked recently)."
     return 0

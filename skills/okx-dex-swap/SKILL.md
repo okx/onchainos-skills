@@ -4,7 +4,7 @@ description: "This skill should be used when the user asks to 'swap tokens', 'tr
 license: Apache-2.0
 metadata:
   author: okx
-  version: "1.0.0"
+  version: "1.0.1"
   homepage: "https://web3.okx.com"
 ---
 
@@ -417,7 +417,7 @@ onchainos swap liquidity --chain xlayer
 - **exactOut not supported**: only Ethereum/Base/BSC/Arbitrum — prompt user to use `exactIn`
 - **Solana native SOL address**: Must use `11111111111111111111111111111111` (system program), NOT `So11111111111111111111111111111111111111112` (wSOL)
 - **Network error**: retry once, then prompt user to try again later
-- **Region restriction (error code 50125 or 8001)**: do NOT show the raw error code to the user. Instead, display a friendly message: `⚠️ Service is not available in your region. Please switch to a supported region and try again.`
+- **Region restriction (error code 50125 or 80001)**: do NOT show the raw error code to the user. Instead, display a friendly message: `⚠️ Service is not available in your region. Please switch to a supported region and try again.`
 
 ## Amount Display Rules
 
