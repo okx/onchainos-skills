@@ -30,6 +30,9 @@ pub enum TokenCommand {
         /// Chain
         #[arg(long)]
         chain: Option<String>,
+        /// Filter by holder tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler
+        #[arg(long)]
+        tag_filter: Option<u8>,
     },
     /// Get trending / top tokens
     Trending {
@@ -184,13 +187,36 @@ pub enum TokenCommand {
         #[arg(long)]
         is_freeze: Option<String>,
     },
+    /// Get advanced token info (risk, creator, dev stats, holder concentration)
+    AdvancedInfo {
+        /// Token contract address
+        address: String,
+        /// Chain
+        #[arg(long)]
+        chain: Option<String>,
+    },
+    /// Get top traders (profit addresses) for a token
+    TopTrader {
+        /// Token contract address
+        address: String,
+        /// Chain
+        #[arg(long)]
+        chain: Option<String>,
+        /// Filter by trader tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler
+        #[arg(long)]
+        tag_filter: Option<u8>,
+    },
 }
 
 pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
     match cmd {
         TokenCommand::Search { query, chains } => search(ctx, &query, &chains).await,
         TokenCommand::Info { address, chain } => info(ctx, &address, chain).await,
-        TokenCommand::Holders { address, chain } => holders(ctx, &address, chain).await,
+        TokenCommand::Holders {
+            address,
+            chain,
+            tag_filter,
+        } => holders(ctx, &address, chain, tag_filter).await,
         TokenCommand::Trending {
             chains,
             sort_by,
@@ -287,6 +313,12 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             )
             .await
         }
+        TokenCommand::AdvancedInfo { address, chain } => advanced_info(ctx, &address, chain).await,
+        TokenCommand::TopTrader {
+            address,
+            chain,
+            tag_filter,
+        } => top_trader(ctx, &address, chain, tag_filter).await,
     }
 }
 
@@ -322,10 +354,16 @@ async fn info(ctx: &Context, address: &str, chain: Option<String>) -> Result<()>
 }
 
 /// GET /api/v6/dex/market/token/holder
-async fn holders(ctx: &Context, address: &str, chain: Option<String>) -> Result<()> {
+async fn holders(
+    ctx: &Context,
+    address: &str,
+    chain: Option<String>,
+    tag_filter: Option<u8>,
+) -> Result<()> {
     let chain_index = chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+    let tag_str = tag_filter.map(|t| t.to_string()).unwrap_or_default();
     let client = ctx.client()?;
     let data = client
         .get(
@@ -333,6 +371,7 @@ async fn holders(ctx: &Context, address: &str, chain: Option<String>) -> Result<
             &[
                 ("chainIndex", chain_index.as_str()),
                 ("tokenContractAddress", address),
+                ("tagFilter", tag_str.as_str()),
             ],
         )
         .await?;
@@ -521,11 +560,62 @@ async fn hot_tokens(ctx: &Context, params: HotTokensParams) -> Result<()> {
                 ("devHoldPercentMax", dev_hold_percent_max.as_str()),
                 ("bundleHoldPercentMin", bundle_hold_percent_min.as_str()),
                 ("bundleHoldPercentMax", bundle_hold_percent_max.as_str()),
-                ("suspiciousHoldPercentMin", suspicious_hold_percent_min.as_str()),
-                ("suspiciousHoldPercentMax", suspicious_hold_percent_max.as_str()),
+                (
+                    "suspiciousHoldPercentMin",
+                    suspicious_hold_percent_min.as_str(),
+                ),
+                (
+                    "suspiciousHoldPercentMax",
+                    suspicious_hold_percent_max.as_str(),
+                ),
                 ("isLpBurnt", is_lp_burnt.as_str()),
                 ("isMint", is_mint.as_str()),
                 ("isFreeze", is_freeze.as_str()),
+            ],
+        )
+        .await?;
+    output::success(data);
+    Ok(())
+}
+
+/// GET /api/v6/dex/market/token/advanced-info
+async fn advanced_info(ctx: &Context, address: &str, chain: Option<String>) -> Result<()> {
+    let chain_index = chain
+        .map(|c| crate::chains::resolve_chain(&c).to_string())
+        .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+    let client = ctx.client()?;
+    let data = client
+        .get(
+            "/api/v6/dex/market/token/advanced-info",
+            &[
+                ("chainIndex", chain_index.as_str()),
+                ("tokenContractAddress", address),
+            ],
+        )
+        .await?;
+    output::success(data);
+    Ok(())
+}
+
+/// GET /api/v6/dex/market/token/top-trader
+async fn top_trader(
+    ctx: &Context,
+    address: &str,
+    chain: Option<String>,
+    tag_filter: Option<u8>,
+) -> Result<()> {
+    let chain_index = chain
+        .map(|c| crate::chains::resolve_chain(&c).to_string())
+        .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+    let tag_str = tag_filter.map(|t| t.to_string()).unwrap_or_default();
+    let client = ctx.client()?;
+    let data = client
+        .get(
+            "/api/v6/dex/market/token/top-trader",
+            &[
+                ("chainIndex", chain_index.as_str()),
+                ("tokenContractAddress", address),
+                ("tagFilter", tag_str.as_str()),
             ],
         )
         .await?;

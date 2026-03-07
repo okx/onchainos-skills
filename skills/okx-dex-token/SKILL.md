@@ -1,6 +1,6 @@
 ---
 name: okx-dex-token
-description: "This skill should be used when the user asks to 'find a token', 'search for a token', 'look up PEPE', 'what\'s trending', 'top tokens', 'trending tokens on Solana', 'token rankings', 'who holds this token', 'holder distribution', 'token market cap', 'token liquidity', 'liquidity pools for this token', 'which pool has the most liquidity', 'hot tokens', 'what tokens are hot right now', 'trending by social score', 'X mentioned tokens', 'Twitter trending tokens', 'tokens with high social score', 'research a token', 'tell me about this token', 'token info', or mentions searching for tokens by name or address, discovering trending or hot tokens, viewing token rankings, checking holder distribution, analyzing token market cap and liquidity, finding top liquidity pools for a token, or getting social-score-based hot token rankings. Covers token search, metadata, market cap, liquidity pools, volume, trending/hot token rankings, holder analysis, and X-mentioned token discovery across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. Do NOT use when the user says only a single generic word like 'tokens' or 'crypto' without specifying a token name, action, or question. For simple current price checks, price charts, candlestick data, or trade history, use okx-dex-market instead. For meme token safety analysis, developer reputation, rug pull checks, bundle/sniper detection, or finding tokens by same creator, use okx-dex-market instead."
+description: "This skill should be used when the user asks to 'find a token', 'search for BONK', 'look up PEPE', 'what is trending', 'top tokens on Solana', 'who holds this token', 'show whale holders', 'filter holders by smart money', 'is this token risky', 'show advanced info', 'show top traders', 'profit addresses for this token', 'show hot tokens', 'what tokens are trending on Twitter', 'show liquidity pools', 'top pools for this token', or mentions token search, discovery, trending rankings, hot token lists (trending score or X/Twitter mentions), liquidity pool analysis, holder distribution, holder filtering by tag (whale, smart money, KOL, sniper), advanced token info (risk level, creator, dev stats, holder concentration), or top trader/profit address analysis. Covers search, metadata, market cap, liquidity pools, volume, trending, hot tokens, holders, advanced info, and top traders across 20+ chains. Do NOT use for a single generic word like 'tokens' without context. For price charts, candlestick data, or trade history, use okx-dex-market. For memepump safety analysis, use okx-dex-market."
 license: Apache-2.0
 metadata:
   author: okx
@@ -10,7 +10,7 @@ metadata:
 
 # OKX DEX Token Info CLI
 
-7 commands for token search, metadata, detailed pricing, rankings, holder distribution, liquidity pools, and hot token discovery.
+9 commands for token search, metadata, detailed pricing, rankings, liquidity pools, hot token lists, holder distribution, advanced token info, and top trader analysis.
 
 ## Prerequisites
 
@@ -41,8 +41,10 @@ Before using this skill, ensure the `onchainos` CLI is installed:
 - For real-time prices / K-lines / trade history → use `okx-dex-market`
 - For swap execution → use `okx-dex-swap`
 - For transaction broadcasting → use `okx-onchain-gateway`
-- For meme token safety (dev reputation, rug pull, bundlers, similar tokens by same dev) → use `okx-dex-market`
-- For smart money / whale / KOL signals → use `okx-dex-market`
+- For meme token safety via memepump (dev reputation, rug pull history, bundlers, similar tokens by same dev) → use `okx-dex-market`
+- For market-wide smart money / whale / KOL signal alerts → use `okx-dex-market`
+- For per-token holder filtering by tag (whale, smart money, KOL, sniper) → use this skill (`holders --tag-filter`)
+- For per-token risk analysis (dev rug pull count, holder concentration, creator info) → use this skill (`advanced-info`)
 
 ## Quickstart
 
@@ -67,6 +69,18 @@ onchainos token trending --chains solana --sort-by 5 --time-frame 4
 
 # Check holder distribution
 onchainos token holders 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
+
+# Filter holders by smart money
+onchainos token holders 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer --tag-filter 3
+
+# Get advanced token info (risk, creator, dev stats)
+onchainos token advanced-info EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana
+
+# Get top traders / profit addresses
+onchainos token top-trader EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana
+
+# Top KOL traders
+onchainos token top-trader EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana --tag-filter 1
 ```
 
 ## Chain Name Support
@@ -90,9 +104,11 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | 2 | `onchainos token info <address>` | Get token basic info (name, symbol, decimals, logo) |
 | 3 | `onchainos token price-info <address>` | Get detailed price info (price, market cap, liquidity, volume, 24h change) |
 | 4 | `onchainos token trending` | Get trending / top tokens |
-| 5 | `onchainos token holders <address>` | Get token holder distribution (top 20) |
+| 5 | `onchainos token holders <address>` | Get token holder distribution (top 20, with optional tag filter) |
 | 6 | `onchainos token liquidity <address>` | Get top 5 liquidity pools for a token |
 | 7 | `onchainos token hot-tokens` | Get hot token list ranked by trending score or X mentions (max 200) |
+| 8 | `onchainos token advanced-info <address>` | Get advanced token info (risk level, creator, dev stats, holder concentration) |
+| 9 | `onchainos token top-trader <address>` | Get top traders / profit addresses for a token |
 
 ## Boundary: token vs market skill
 
@@ -103,17 +119,22 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Price + market cap + liquidity + multi-timeframe change | `onchainos token price-info` | - |
 | Token ranking (trending) | `onchainos token trending` | - |
 | Holder distribution | `onchainos token holders` | - |
+| Holders filtered by tag (KOL, whale, smart money) | `onchainos token holders --tag-filter` | - |
 | Top 5 liquidity pools for a token | `onchainos token liquidity` | - |
 | Hot tokens by trending score or X mentions | `onchainos token hot-tokens` | - |
+| Advanced token info (risk, creator, dev stats) | `onchainos token advanced-info` | - |
+| Top traders / profit addresses | `onchainos token top-trader` | - |
 | Raw real-time price (single value) | - | `onchainos market price` |
 | K-line / candlestick chart | - | `onchainos market kline` |
 | Trade history (buy/sell log) | - | `onchainos market trades` |
 | Index price (multi-source aggregate) | - | `onchainos market index` |
-| Meme token dev reputation / rug pull | - | `onchainos market memepump-token-dev-info` |
+| Token risk analysis (dev rug pull count, holder %) | `onchainos token advanced-info` | - |
+| Meme token dev reputation / rug pull history | - | `onchainos market memepump-token-dev-info` |
 | Bundle/sniper detection | - | `onchainos market memepump-token-bundle-info` |
 | Similar tokens by same creator | - | `onchainos market memepump-similar-tokens` |
+| Market-wide smart money / whale / KOL alerts | - | `onchainos market signal-list` |
 
-**Rule of thumb**: `okx-dex-token` = token discovery & enriched analytics (search, trending, holders, market cap). `okx-dex-market` = raw price feeds, charts, smart money signals & meme pump scanning (including dev reputation, rug pull checks, bundler analysis).
+**Rule of thumb**: `okx-dex-token` = token discovery & enriched analytics (search, trending, holders, holder filtering, market cap, advanced info, top traders, token risk). `okx-dex-market` = raw price feeds, charts, market-wide smart money signal alerts & meme pump scanning (including dev reputation, rug pull history, bundler analysis).
 
 ## Cross-Skill Workflows
 
@@ -178,6 +199,9 @@ Before swapping an unknown token, always verify:
 - Get price + market cap + liquidity → `onchainos token price-info`
 - View rankings → `onchainos token trending`
 - View holder distribution → `onchainos token holders`
+- Filter holders by tag (KOL, whale, smart money) → `onchainos token holders --tag-filter`
+- Get advanced token info (risk, creator, dev stats) → `onchainos token advanced-info`
+- View top traders / profit addresses → `onchainos token top-trader`
 
 ### Step 2: Collect Parameters
 
@@ -204,9 +228,11 @@ After displaying results, suggest 2-3 relevant follow-up actions based on the co
 | `token info` | 1. View price and market data → `onchainos token price-info` (this skill) 2. Check holder distribution → `onchainos token holders` (this skill) |
 | `token price-info` | 1. View K-line chart → `okx-dex-market` 2. Check holder distribution → `onchainos token holders` (this skill) 3. Buy/swap this token → `okx-dex-swap` |
 | `token trending` | 1. View details for a specific token → `onchainos token price-info` (this skill) 2. View price chart → `okx-dex-market` 3. Buy a trending token → `okx-dex-swap` |
-| `token holders` | 1. View price trend → `okx-dex-market` 2. Buy/swap this token → `okx-dex-swap` |
-| `token liquidity` | 1. View price chart → `okx-dex-market` 2. Swap this token → `okx-dex-swap` |
-| `token hot-tokens` | 1. View details for a token → `onchainos token price-info` (this skill) 2. Check liquidity pools → `onchainos token liquidity` (this skill) 3. Buy a hot token → `okx-dex-swap` |
+| `token holders` | 1. View price trend → `okx-dex-market` 2. Buy/swap this token → `okx-dex-swap` 3. Check advanced info → `onchainos token advanced-info` (this skill) |
+| `token liquidity` | 1. View price chart → `okx-dex-market` 2. Buy/swap this token → `okx-dex-swap` 3. Check holders → `onchainos token holders` (this skill) |
+| `token hot-tokens` | 1. View details for a hot token → `onchainos token price-info` (this skill) 2. Check liquidity pools → `onchainos token liquidity` (this skill) 3. Buy a hot token → `okx-dex-swap` |
+| `token advanced-info` | 1. View holders → `onchainos token holders` (this skill) 2. View top traders → `onchainos token top-trader` (this skill) 3. Buy/swap this token → `okx-dex-swap` |
+| `token top-trader` | 1. View advanced info → `onchainos token advanced-info` (this skill) 2. View holder distribution → `onchainos token holders` (this skill) 3. Buy/swap this token → `okx-dex-swap` |
 
 Present conversationally, e.g.: "Would you like to see the price chart or check the holder distribution?" — never expose skill names or endpoint paths to the user.
 
@@ -342,10 +368,35 @@ onchainos token trending [--chains <chains>] [--sort-by <sort>] [--time-frame <f
 
 ### 5. onchainos token holders
 
-Get token holder distribution (top 20).
+Get token holder distribution (top 20), with optional tag filter.
 
 ```bash
-onchainos token holders <address> [--chain <chain>]
+onchainos token holders <address> [--chain <chain>] [--tag-filter <n>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<address>` | Yes | - | Token contract address (positional) |
+| `--chain` | No | `ethereum` | Chain name |
+| `--tag-filter` | No | - | Filter by holder tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler |
+
+**Return fields** (top 20 holders):
+
+| Field | Type | Description |
+|---|---|---|
+| `data[].holderWalletAddress` | String | Holder wallet address |
+| `data[].holdAmount` | String | Token amount held |
+| `data[].holdPercent` | String | Percentage of total supply held |
+| `data[].avgBuyPrice` | String | Average buy price (USD) |
+| `data[].avgSellPrice` | String | Average sell price (USD) |
+| `data[].totalPNL` | String | Total profit and loss (USD) |
+
+### 6. onchainos token advanced-info
+
+Get advanced token info including risk level, creator details, dev stats, and holder concentration.
+
+```bash
+onchainos token advanced-info <address> [--chain <chain>]
 ```
 
 | Param | Required | Default | Description |
@@ -353,12 +404,60 @@ onchainos token holders <address> [--chain <chain>]
 | `<address>` | Yes | - | Token contract address (positional) |
 | `--chain` | No | `ethereum` | Chain name |
 
-**Return fields** (top 20 holders):
+**Return fields**:
 
 | Field | Type | Description |
 |---|---|---|
-| `data[].holdAmount` | String | Token amount held |
-| `data[].holderWalletAddress` | String | Holder wallet address |
+| `riskControlLevel` | String | Risk control level |
+| `totalFee` | String | Total fee collected |
+| `lpBurnedPercent` | String | Percentage of LP tokens burned |
+| `isInternal` | Boolean | Whether the token is internal |
+| `protocolId` | String | Protocol identifier |
+| `progress` | String | Token progress (e.g., bonding curve %) |
+| `tokenTags` | Array | Tags associated with the token |
+| `createTime` | String | Token creation timestamp |
+| `creatorAddress` | String | Creator wallet address |
+| `devRugPullTokenCount` | String | Number of tokens by dev that were rug pulls |
+| `devCreateTokenCount` | String | Total tokens created by dev |
+| `devLaunchedTokenCount` | String | Number of tokens by dev that launched |
+| `top10HoldPercent` | String | Top 10 holders combined percentage |
+| `devHoldingPercent` | String | Developer holding percentage |
+| `bundleHoldingPercent` | String | Bundle holding percentage |
+| `suspiciousHoldingPercent` | String | Suspicious holding percentage |
+| `sniperHoldingPercent` | String | Sniper holding percentage |
+| `snipersClearAddressCount` | String | Number of sniper addresses that cleared |
+| `snipersTotal` | String | Total sniper count |
+
+### 7. onchainos token top-trader
+
+Get top traders (profit addresses) for a token.
+
+```bash
+onchainos token top-trader <address> [--chain <chain>] [--tag-filter <n>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<address>` | Yes | - | Token contract address (positional) |
+| `--chain` | No | `ethereum` | Chain name |
+| `--tag-filter` | No | - | Filter by trader tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `holderWalletAddress` | String | Trader wallet address |
+| `holdAmount` | String | Token amount held |
+| `holdPercent` | String | Percentage of total supply held |
+| `nativeTokenBalance` | String | Native token balance |
+| `boughtAmount` | String | Total amount bought |
+| `avgBuyPrice` | String | Average buy price (USD) |
+| `soldAmount` | String | Total amount sold |
+| `avgSellPrice` | String | Average sell price (USD) |
+| `totalPnlUsd` | String | Total PnL (USD) |
+| `realizedPnlUsd` | String | Realized PnL (USD) |
+| `unrealizedPnlUsd` | String | Unrealized PnL (USD) |
+| `fundingSource` | String | Funding source of the wallet |
 
 ## Input / Output Examples
 

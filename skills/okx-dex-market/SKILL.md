@@ -1,6 +1,6 @@
 ---
 name: okx-dex-market
-description: "Use this skill when users want live on-chain market data: token prices, price charts (K-line, OHLC), trade history, swap activity. Also covers filtering trades by wallet type — KOL trades, developer trades, insider trades, show me what KOLs are buying, show trades from a specific wallet address, filter trades by influencer. Also covers on-chain signals — smart money, whale, and KOL wallet activity, large trades, and signal-supported chains. For meme tokens: scanning new launches, checking dev wallets, developer reputation, rug pull detection, rug pull history, tokens by same creator, detecting bundles or snipers, bonding curves %, flagging suspicious launches, and meme token safety checks. For token search, market cap, liquidity pools, hot tokens, trending tokens, or holder distribution, use okx-dex-token instead."
+description: "Use this skill when users want live on-chain market data: token prices, price charts (K-line, OHLC), trade history, swap activity. Also covers filtering trades by wallet type — KOL trades, developer trades, insider trades, show me what KOLs are buying, show trades from a specific wallet address, filter trades by influencer. Also covers on-chain signal alerts — market-wide smart money, whale, and KOL wallet activity monitoring (buy/sell alerts across the market, large trade notifications, signal-supported chains). For meme tokens: scanning new launches, checking dev wallets, developer reputation, rug pull detection, rug pull history, tokens by same creator, detecting bundles or snipers, bonding curves %, flagging suspicious launches, and meme token safety checks. For token search, market cap, liquidity pools, hot tokens, trending tokens, advanced token info, token risk analysis, holder distribution, filtering holders by tag (whale, smart money, KOL), top traders of a specific token, profit addresses for a token, or any per-token holder/trader analysis, use okx-dex-token instead."
 license: Apache-2.0
 metadata:
   author: okx
@@ -38,12 +38,14 @@ Before using this skill, ensure the `onchainos` CLI is installed:
 
 ## Skill Routing
 
-- For token search / metadata / rankings / holder analysis → use `okx-dex-token`
+- For token search / metadata / rankings / holder analysis / advanced token info / top traders → use `okx-dex-token`
+- For per-token holder filtering by tag (whale, smart money, KOL, sniper) → use `okx-dex-token`
+- For per-token risk analysis (holder concentration, dev rug pull count, creator info) → use `okx-dex-token`
 - For swap execution → use `okx-dex-swap`
 - For transaction broadcasting → use `okx-onchain-gateway`
-- Signal data (smart money / whale / KOL buy signals, signal-supported chains) → use `okx-dex-market`
+- Market-wide signal alerts (smart money / whale / KOL buy signals, signal-supported chains) → use `okx-dex-market`
 - Meme pump scanning (token lists, dev info, bundle detection, aped wallets) → use `okx-dex-market`
-- Meme token safety (rug pull check, dev reputation, bundler/sniper analysis, similar tokens by same dev) → use `okx-dex-market`
+- Meme token safety via memepump (rug pull history, dev reputation, bundler/sniper analysis, similar tokens by same dev) → use `okx-dex-market`
 
 ## Quickstart
 

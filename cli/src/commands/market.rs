@@ -239,16 +239,31 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
             .await
         }
         MarketCommand::MemepumpTokenDetails { address, chain } => {
-            memepump_by_address(ctx, "/api/v6/dex/market/memepump/tokenDetails", &address, chain)
-                .await
+            memepump_by_address(
+                ctx,
+                "/api/v6/dex/market/memepump/tokenDetails",
+                &address,
+                chain,
+            )
+            .await
         }
         MarketCommand::MemepumpTokenDevInfo { address, chain } => {
-            memepump_by_address(ctx, "/api/v6/dex/market/memepump/tokenDevInfo", &address, chain)
-                .await
+            memepump_by_address(
+                ctx,
+                "/api/v6/dex/market/memepump/tokenDevInfo",
+                &address,
+                chain,
+            )
+            .await
         }
         MarketCommand::MemepumpSimilarTokens { address, chain } => {
-            memepump_by_address(ctx, "/api/v6/dex/market/memepump/similarToken", &address, chain)
-                .await
+            memepump_by_address(
+                ctx,
+                "/api/v6/dex/market/memepump/similarToken",
+                &address,
+                chain,
+            )
+            .await
         }
         MarketCommand::MemepumpTokenBundleInfo { address, chain } => {
             memepump_by_address(
@@ -260,8 +275,13 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
             .await
         }
         MarketCommand::MemepumpApedWallet { address, chain } => {
-            memepump_by_address(ctx, "/api/v6/dex/market/memepump/apedWallet", &address, chain)
-                .await
+            memepump_by_address(
+                ctx,
+                "/api/v6/dex/market/memepump/apedWallet",
+                &address,
+                chain,
+            )
+            .await
         }
         MarketCommand::SignalChains => signal_chains(ctx).await,
         MarketCommand::SignalList {

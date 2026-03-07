@@ -15,13 +15,7 @@ use serde_json::Value;
 
 #[test]
 fn market_price_eth_native() {
-    let output = run_with_retry(&[
-        "market",
-        "price",
-        tokens::EVM_NATIVE,
-        "--chain",
-        "ethereum",
-    ]);
+    let output = run_with_retry(&["market", "price", tokens::EVM_NATIVE, "--chain", "ethereum"]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.is_array(), "expected array of price entries: {data}");
     let arr = data.as_array().unwrap();
@@ -124,13 +118,7 @@ fn market_trades_returns_recent_trades() {
 
 #[test]
 fn market_index_price() {
-    let output = run_with_retry(&[
-        "market",
-        "index",
-        tokens::EVM_NATIVE,
-        "--chain",
-        "ethereum",
-    ]);
+    let output = run_with_retry(&["market", "index", tokens::EVM_NATIVE, "--chain", "ethereum"]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.is_array(), "expected array: {data}");
     let arr = data.as_array().unwrap();
@@ -289,7 +277,10 @@ fn fetch_first_memepump_token_address(chain: &str) -> Option<String> {
 
     tokens
         .and_then(|arr| arr.first())
-        .and_then(|t| t.get("tokenAddress").or_else(|| t.get("tokenContractAddress")))
+        .and_then(|t| {
+            t.get("tokenAddress")
+                .or_else(|| t.get("tokenContractAddress"))
+        })
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
 }
