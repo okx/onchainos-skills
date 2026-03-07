@@ -84,11 +84,11 @@ pub enum TokenCommand {
         /// Protocol ID filter, comma-separated (e.g. 120596 for Pump.fun)
         #[arg(long)]
         project_id: Option<String>,
-        /// Min price change percent
-        #[arg(long)]
+        /// Min price change percent (can be negative, e.g. -5)
+        #[arg(long, allow_hyphen_values = true)]
         price_change_min: Option<String>,
-        /// Max price change percent
-        #[arg(long)]
+        /// Max price change percent (can be negative, e.g. -5 for losers)
+        #[arg(long, allow_hyphen_values = true)]
         price_change_max: Option<String>,
         /// Min volume (USD)
         #[arg(long)]
@@ -494,7 +494,7 @@ async fn hot_tokens(ctx: &Context, params: HotTokensParams) -> Result<()> {
                 ("stableTokenFilter", stable_token_filter.as_str()),
                 ("projectid", project_id.as_str()),
                 ("priceChangePercentMin", price_change_min.as_str()),
-                ("pricechangePercentMax", price_change_max.as_str()),
+                ("priceChangePercentMax", price_change_max.as_str()),
                 ("volumeMin", volume_min.as_str()),
                 ("volumeMax", volume_max.as_str()),
                 ("tradeAmountMin", transaction_min.as_str()),
