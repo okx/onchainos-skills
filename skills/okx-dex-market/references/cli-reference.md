@@ -79,7 +79,7 @@ onchainos market kline <address> [--bar <bar>] [--limit <n>] [--chain <chain>]
 Get recent trades.
 
 ```bash
-onchainos market trades <address> [--chain <chain>] [--limit <n>]
+onchainos market trades <address> [--chain <chain>] [--limit <n>] [--tag-filter <n>] [--wallet-filter <addrs>]
 ```
 
 | Param | Required | Default | Description |
@@ -87,6 +87,8 @@ onchainos market trades <address> [--chain <chain>] [--limit <n>]
 | `<address>` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name |
 | `--limit` | No | `100` | Number of trades (max 500) |
+| `--tag-filter` | No | - | Filter by trader tag: `1`=KOL, `2`=Developer, `6`=Insider |
+| `--wallet-filter` | No | - | Wallet address filter, comma-separated (max 10 addresses) |
 
 **Return fields**:
 
@@ -100,6 +102,8 @@ onchainos market trades <address> [--chain <chain>] [--limit <n>]
 | `dexName` | String | DEX name where trade occurred |
 | `txHashUrl` | String | Transaction hash explorer URL |
 | `userAddress` | String | Wallet address of the trader |
+| `isFiltered` | Boolean | `true` if this trade matched the tag/wallet filter |
+| `poolLogoUrl` | String | Pool logo URL |
 | `changedTokenInfo[]` | Array | Token change details for the trade |
 | `changedTokenInfo[].tokenSymbol` | String | Token symbol |
 | `changedTokenInfo[].tokenContractAddress` | String | Token contract address |

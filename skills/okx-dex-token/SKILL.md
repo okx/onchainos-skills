@@ -200,6 +200,8 @@ Before swapping an unknown token, always verify:
 - View rankings → `onchainos token trending`
 - View holder distribution → `onchainos token holders`
 - Filter holders by tag (KOL, whale, smart money) → `onchainos token holders --tag-filter`
+- View top liquidity pools → `onchainos token liquidity`
+- View hot/trending tokens (by score or X mentions) → `onchainos token hot-tokens`
 - Get advanced token info (risk, creator, dev stats) → `onchainos token advanced-info`
 - View top traders / profit addresses → `onchainos token top-trader`
 

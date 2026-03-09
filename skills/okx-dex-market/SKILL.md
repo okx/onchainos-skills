@@ -99,8 +99,8 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 |---|---|---|
 | 1 | `onchainos market price <address>` | Get single token price |
 | 2 | `onchainos market prices <tokens>` | Batch price query |
-| 3 | `onchainos market trades <address>` | Get recent trades (with optional KOL/dev/insider and wallet filters) |
-| 4 | `onchainos market kline <address>` | Get K-line / candlestick data |
+| 3 | `onchainos market kline <address>` | Get K-line / candlestick data |
+| 4 | `onchainos market trades <address>` | Get recent trades (with optional KOL/dev/insider and wallet filters) |
 
 ### Index Price Commands
 

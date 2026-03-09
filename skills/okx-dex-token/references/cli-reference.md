@@ -1,6 +1,6 @@
 # OKX DEX Token — CLI Command Reference
 
-Detailed parameter tables, return field schemas, and usage examples for all 7 token commands.
+Detailed parameter tables, return field schemas, and usage examples for all 9 token commands.
 
 ## 1. onchainos token search
 
@@ -155,7 +155,94 @@ onchainos token holders <address> [--chain <chain>] [--tag-filter <n>]
 | `data[].avgSellPrice` | String | Average sell price (USD) |
 | `data[].totalPNL` | String | Total profit and loss (USD) |
 
-## 6. onchainos token advanced-info
+## 6. onchainos token liquidity
+
+Get top 5 liquidity pools for a token.
+
+```bash
+onchainos token liquidity <address> [--chain <chain>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<address>` | Yes | - | Token contract address (positional) |
+| `--chain` | No | `ethereum` | Chain name (e.g., `ethereum`, `base`, `bsc`) |
+
+**Return fields** (array of pool objects):
+
+| Field | Type | Description |
+|---|---|---|
+| `pairAddress` | String | Pool/pair contract address |
+| `dexName` | String | DEX name (e.g., `"Uniswap V3"`) |
+| `quoteTokenAddress` | String | Quote token contract address |
+| `quoteTokenSymbol` | String | Quote token symbol |
+| `liquidityUsd` | String | Total liquidity in USD |
+| `volumeUsd24h` | String | 24-hour trading volume in USD |
+| `fee` | String | Pool fee tier |
+| `createdTime` | String | Pool creation timestamp (Unix ms) |
+
+## 7. onchainos token hot-tokens
+
+Get hot token list ranked by trending score or X/Twitter mentions (max 200 results).
+
+```bash
+onchainos token hot-tokens [--ranking-type <type>] [--chain <chain>] [--rank-by <field>] [--time-frame <frame>] [options]
+```
+
+**Core parameters**:
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--ranking-type` | No | `"4"` | `4`=Trending (token score), `5`=Xmentioned (Twitter mentions) |
+| `--chain` | No | all chains | Chain name (e.g., `solana`, `ethereum`). Omit for all chains |
+| `--rank-by` | No | - | Sort field: `1`=price, `2`=price change, `3`=txs, `4`=unique traders, `5`=volume, `6`=market cap, `7`=liquidity, `8`=created time, `9`=OKX search count, `10`=holders, `11`=mention count, `12`=social score, `14`=net inflow, `15`=token score |
+| `--time-frame` | No | - | Window: `1`=5min, `2`=1h, `3`=4h, `4`=24h |
+
+**Filter parameters** (all optional):
+
+| Param | Description |
+|---|---|
+| `--risk-filter` | Hide risky tokens (`true`/`false`, default: `true`) |
+| `--stable-token-filter` | Filter stable coins (`true`/`false`, default: `true`) |
+| `--project-id` | Protocol ID filter, comma-separated (e.g., `120596` for Pump.fun) |
+| `--price-change-min` / `--price-change-max` | Price change % range (supports negative values, e.g., `--price-change-min -5`) |
+| `--volume-min` / `--volume-max` | Volume range in USD |
+| `--market-cap-min` / `--market-cap-max` | Market cap range in USD |
+| `--liquidity-min` / `--liquidity-max` | Liquidity range in USD |
+| `--transaction-min` / `--transaction-max` | Transaction count range |
+| `--unique-trader-min` / `--unique-trader-max` | Unique trader count range |
+| `--holders-min` / `--holders-max` | Holder count range |
+| `--inflow-min` / `--inflow-max` | Net inflow range in USD |
+| `--fdv-min` / `--fdv-max` | Fully diluted valuation range in USD |
+| `--mentioned-count-min` / `--mentioned-count-max` | Mention count range (for Xmentioned ranking) |
+| `--social-score-min` / `--social-score-max` | Social score range |
+| `--top10-hold-percent-min` / `--top10-hold-percent-max` | Top-10 holder % range |
+| `--dev-hold-percent-min` / `--dev-hold-percent-max` | Dev holding % range |
+| `--bundle-hold-percent-min` / `--bundle-hold-percent-max` | Bundle holding % range |
+| `--suspicious-hold-percent-min` / `--suspicious-hold-percent-max` | Suspicious holding % range |
+| `--is-lp-burnt` | LP burned filter (`true`/`false`) |
+| `--is-mint` | Mintable filter (`true`/`false`) |
+| `--is-freeze` | Freeze filter (`true`/`false`) |
+
+**Return fields** (array of token objects):
+
+| Field | Type | Description |
+|---|---|---|
+| `tokenContractAddress` | String | Token contract address |
+| `tokenSymbol` | String | Token symbol |
+| `tokenName` | String | Token full name |
+| `tokenLogoUrl` | String | Token logo image URL |
+| `chainIndex` | String | Chain identifier |
+| `price` | String | Current price in USD |
+| `change` | String | Price change percentage (for selected time frame) |
+| `volume` | String | Trading volume in USD |
+| `marketCap` | String | Market capitalization in USD |
+| `liquidity` | String | Total liquidity in USD |
+| `holders` | String | Number of token holders |
+| `trendingScore` | String | Trending score (for ranking type 4) |
+| `mentionedCount` | String | X/Twitter mention count (for ranking type 5) |
+
+## 8. onchainos token advanced-info
 
 Get advanced token info including risk level, creator details, dev stats, and holder concentration.
 
@@ -192,7 +279,7 @@ onchainos token advanced-info <address> [--chain <chain>]
 | `snipersClearAddressCount` | String | Number of sniper addresses that cleared |
 | `snipersTotal` | String | Total sniper count |
 
-## 7. onchainos token top-trader
+## 9. onchainos token top-trader
 
 Get top traders (profit addresses) for a token.
 
