@@ -14,6 +14,22 @@ const TEST_WALLET: &str = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
 // USDC on Ethereum
 const TEST_TOKEN_USDC: &str = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
 
+// ─── supported-chains ────────────────────────────────────────────────
+
+#[test]
+fn portfolio_supported_chains_returns_list() {
+    let output = run_with_retry(&["portfolio", "supported-chains"]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(data.is_array(), "expected array of chains: {data}");
+    let arr = data.as_array().unwrap();
+    assert!(!arr.is_empty(), "expected at least one chain");
+    assert!(
+        arr[0].get("chainIndex").is_some(),
+        "chain entry missing 'chainIndex': {}",
+        arr[0]
+    );
+}
+
 // ─── chains ─────────────────────────────────────────────────────────
 
 #[test]

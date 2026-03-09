@@ -9,6 +9,8 @@ use crate::output;
 pub enum PortfolioCommand {
     /// Get supported chains for balance queries
     Chains,
+    /// Get supported chains for portfolio PnL endpoints
+    SupportedChains,
     /// Get total asset value for a wallet address
     TotalValue {
         /// Wallet address
@@ -114,6 +116,7 @@ pub enum PortfolioCommand {
 pub async fn execute(ctx: &Context, cmd: PortfolioCommand) -> Result<()> {
     match cmd {
         PortfolioCommand::Chains => chains(ctx).await,
+        PortfolioCommand::SupportedChains => supported_chains(ctx).await,
         PortfolioCommand::TotalValue {
             address,
             chains,
@@ -166,6 +169,16 @@ pub async fn execute(ctx: &Context, cmd: PortfolioCommand) -> Result<()> {
             token,
         } => token_pnl(ctx, &address, &chain, &token).await,
     }
+}
+
+/// GET /api/v6/dex/market/portfolio/supported/chain
+async fn supported_chains(ctx: &Context) -> Result<()> {
+    let client = ctx.client()?;
+    let data = client
+        .get("/api/v6/dex/market/portfolio/supported/chain", &[])
+        .await?;
+    output::success(data);
+    Ok(())
 }
 
 /// GET /api/v6/dex/balance/supported/chain

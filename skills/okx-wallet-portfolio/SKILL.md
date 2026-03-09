@@ -10,7 +10,7 @@ metadata:
 
 # OKX Wallet Portfolio CLI
 
-8 commands for supported chains, wallet total value, all token balances, specific token balances, portfolio PnL overview, DEX transaction history, recent PnL list, and per-token PnL snapshot.
+9 commands for supported chains, wallet total value, all token balances, specific token balances, portfolio PnL overview, DEX transaction history, recent PnL list, and per-token PnL snapshot.
 
 ## Prerequisites
 
@@ -48,6 +48,9 @@ Before using this skill, ensure the `onchainos` CLI is installed:
 ```bash
 # Get supported chains for balance queries
 onchainos portfolio chains
+
+# Get supported chains for portfolio PnL endpoints
+onchainos portfolio supported-chains
 
 # Get total asset value on XLayer and Solana
 onchainos portfolio total-value --address 0xYourWallet --chains "xlayer,solana"
@@ -91,13 +94,14 @@ The CLI accepts human-readable chain names and resolves them automatically.
 | # | Command | Description |
 |---|---|---|
 | 1 | `onchainos portfolio chains` | Get supported chains for balance queries |
-| 2 | `onchainos portfolio total-value --address ... --chains ...` | Get total asset value for a wallet |
-| 3 | `onchainos portfolio all-balances --address ... --chains ...` | Get all token balances for a wallet |
-| 4 | `onchainos portfolio token-balances --address ... --tokens ...` | Get specific token balances |
-| 5 | `onchainos portfolio overview --address ... --chain ... --time-frame ...` | Get wallet PnL summary, win rate, trading stats |
-| 6 | `onchainos portfolio dex-history --address ... --chain ...` | Get DEX transaction history with pagination |
-| 7 | `onchainos portfolio recent-pnl --address ... --chain ...` | Get recent token PnL list with pagination |
-| 8 | `onchainos portfolio token-pnl --address ... --chain ... --token ...` | Get latest PnL snapshot for a specific token |
+| 2 | `onchainos portfolio supported-chains` | Get supported chains for portfolio PnL endpoints |
+| 3 | `onchainos portfolio total-value --address ... --chains ...` | Get total asset value for a wallet |
+| 4 | `onchainos portfolio all-balances --address ... --chains ...` | Get all token balances for a wallet |
+| 5 | `onchainos portfolio token-balances --address ... --tokens ...` | Get specific token balances |
+| 6 | `onchainos portfolio overview --address ... --chain ... --time-frame ...` | Get wallet PnL summary, win rate, trading stats |
+| 7 | `onchainos portfolio dex-history --address ... --chain ...` | Get DEX transaction history with pagination |
+| 8 | `onchainos portfolio recent-pnl --address ... --chain ...` | Get recent token PnL list with pagination |
+| 9 | `onchainos portfolio token-pnl --address ... --chain ... --token ...` | Get latest PnL snapshot for a specific token |
 
 ## Cross-Skill Workflows
 
@@ -212,7 +216,8 @@ This skill is often used **before swap** (to verify sufficient balance) or **as 
 - Check total assets → `onchainos portfolio total-value`
 - View all token holdings → `onchainos portfolio all-balances`
 - Check specific token balance → `onchainos portfolio token-balances`
-- Unsure which chains are supported → `onchainos portfolio chains` first
+- Unsure which chains are supported for balance queries → `onchainos portfolio chains` first
+- Unsure which chains are supported for PnL endpoints → `onchainos portfolio supported-chains` first
 - Get PnL summary / win rate / trading stats → `onchainos portfolio overview`
 - View DEX trade + transfer history → `onchainos portfolio dex-history`
 - See recent PnL by token (all tokens) → `onchainos portfolio recent-pnl`
@@ -265,7 +270,24 @@ onchainos portfolio chains
 | `shortName` | String | Chain short name (e.g., `"OKB"`) |
 | `chainIndex` | String | Chain unique identifier (e.g., `"196"`) |
 
-### 2. onchainos portfolio total-value
+### 2. onchainos portfolio supported-chains
+
+Get supported chains for portfolio PnL endpoints. No parameters required.
+
+```bash
+onchainos portfolio supported-chains
+```
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | String | Chain name (e.g., `"Ethereum"`) |
+| `logoUrl` | String | Chain logo URL |
+| `shortName` | String | Chain short name |
+| `chainIndex` | String | Chain unique identifier (e.g., `"1"`) |
+
+### 4. onchainos portfolio total-value
 
 Get total asset value for a wallet address.
 
@@ -286,7 +308,7 @@ onchainos portfolio total-value --address <address> --chains <chains> [--asset-t
 |---|---|---|
 | `totalValue` | String | Total asset value in USD |
 
-### 3. onchainos portfolio all-balances
+### 5. onchainos portfolio all-balances
 
 Get all token balances for a wallet address.
 
@@ -312,7 +334,7 @@ onchainos portfolio all-balances --address <address> --chains <chains> [--exclud
 | `tokenPrice` | String | Token price in USD |
 | `isRiskToken` | Boolean | `true` if flagged as risky |
 
-### 4. onchainos portfolio token-balances
+### 6. onchainos portfolio token-balances
 
 Get specific token balances for a wallet address.
 
@@ -328,7 +350,7 @@ onchainos portfolio token-balances --address <address> --tokens <tokens> [--excl
 
 **Return fields**: Same schema as `all-balances` (`tokenAssets[]`).
 
-### 5. onchainos portfolio overview
+### 7. onchainos portfolio overview
 
 Get wallet-level PnL summary and trading behaviour metrics.
 
@@ -356,7 +378,7 @@ onchainos portfolio overview --address <address> --chain <chain> [--time-frame <
 | `preferredMarketCap` | String | Most-traded market cap bucket (`1`–`5`, small→large) |
 | `topPnlTokenList[]` | Array | Top performing tokens in the period |
 
-### 6. onchainos portfolio dex-history
+### 8. onchainos portfolio dex-history
 
 Get wallet DEX transaction history with cursor pagination.
 
@@ -383,7 +405,7 @@ onchainos portfolio dex-history --address <address> --chain <chain> [--limit <n>
 | `historyList[].timestamp` | String | Transaction time (Unix ms) |
 | `historyList[].tokenContractAddress` | String | Token involved |
 
-### 7. onchainos portfolio recent-pnl
+### 9. onchainos portfolio recent-pnl
 
 Get paginated list of recent per-token PnL records.
 
@@ -414,7 +436,7 @@ onchainos portfolio recent-pnl --address <address> --chain <chain> [--limit <n>]
 | `pnlList[].tokenBalanceAmount` | String | Current token amount held |
 | `pnlList[].lastActiveTimestamp` | String | Last activity timestamp (Unix ms) |
 
-### 8. onchainos portfolio token-pnl
+### 10. onchainos portfolio token-pnl
 
 Get latest PnL snapshot for a specific token in a wallet.
 
