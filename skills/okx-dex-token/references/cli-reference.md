@@ -200,7 +200,7 @@ onchainos token hot-tokens [--ranking-type <type>] [--chain <chain>] [--rank-by 
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `--ranking-type` | No | `"4"` | `4`=Trending (token score), `5`=Xmentioned (Twitter mentions) |
+| `--ranking-type` | Yes | `"4"` | `4`=Trending (token score), `5`=Xmentioned (Twitter mentions) |
 | `--chain` | No | all chains | Chain name (e.g., `solana`, `ethereum`). Omit for all chains |
 | `--rank-by` | No | - | Sort field: `1`=price, `2`=price change, `3`=txs, `4`=unique traders, `5`=volume, `6`=market cap, `7`=liquidity, `8`=created time, `9`=OKX search count, `10`=holders, `11`=mention count, `12`=social score, `14`=net inflow, `15`=token score |
 | `--time-frame` | No | - | Window: `1`=5min, `2`=1h, `3`=4h, `4`=24h |
