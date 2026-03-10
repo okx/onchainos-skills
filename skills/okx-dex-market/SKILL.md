@@ -1,10 +1,10 @@
 ---
 name: okx-dex-market
-description: "Use this skill when users want live on-chain market data: token prices, price charts (K-line, OHLC), trade history, swap activity. Also covers filtering trades by wallet type — KOL trades, developer trades, insider trades, show me what KOLs are buying, show trades from a specific wallet address, filter trades by influencer. Also covers on-chain signal alerts — market-wide smart money, whale, and KOL wallet activity monitoring (buy/sell alerts across the market, large trade notifications, signal-supported chains). For meme tokens: scanning new launches, checking dev wallets, developer reputation, rug pull detection, rug pull history, tokens by same creator, detecting bundles or snipers, bonding curves %, flagging suspicious launches, and meme token safety checks. For token search, market cap, liquidity pools, hot tokens, trending tokens, advanced token info, token risk analysis, holder distribution, filtering holders by tag (whale, smart money, KOL), top traders of a specific token, profit addresses for a token, or any per-token holder/trader analysis, use okx-dex-token instead."
+description: "This skill should be used when the user asks about live on-chain market data: token prices, price charts (K-line, OHLC), trade history, or swap activity. Also covers on-chain signals — smart money, whale, and KOL wallet activity, large trades, and signal-supported chains. For meme tokens: scanning new launches (扫链/trenches，golden dog, alpha, pump fun), checking dev wallets, developer reputation, rug pull detection, tokens by same creator, bundle/sniper detection, bonding curves, and meme token safety checks. For token search, market cap, liquidity, trending tokens, or holder distribution, use okx-dex-token instead."
 license: Apache-2.0
 metadata:
   author: okx
-  version: "1.0.0"
+  version: "1.0.2"
   homepage: "https://web3.okx.com"
 ---
 
@@ -12,26 +12,35 @@ metadata:
 
 14 commands for on-chain prices, trades, candlesticks, index prices, smart money signals, and meme pump token scanning.
 
-## Prerequisites
+## Pre-flight Checks
 
-Before using this skill, ensure the `onchainos` CLI is installed:
+Every time before running any `onchainos` command, always follow these steps in order. Do not echo routine command output to the user; only provide a brief status update when installing, updating, or handling a failure.
 
-1. Check if `onchainos` is already available:
-   ```bash
-   which onchainos
-   ```
-2. If not found, install it:
+1. **Confirm installed**: Run `which onchainos`. If not found, install it:
    ```bash
    curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
    ```
-3. Verify installation:
+   If the install script fails, ask the user to install manually following the instructions at: https://github.com/okx/onchainos-skills
+
+2. **Check for updates**: Read `~/.onchainos/last_check` and compare it with the current timestamp:
    ```bash
-   onchainos --version
+   cached_ts=$(cat ~/.onchainos/last_check 2>/dev/null || true)
+   now=$(date +%s)
    ```
-4. If the install script fails, ask the user to install manually following the instructions at: https://github.com/okx/onchainos-skills
-5. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
+   - If `cached_ts` is non-empty and `(now - cached_ts) < 43200` (12 hours), skip the update and proceed.
+   - Otherwise (file missing or older than 12 hours), run the installer to check for updates:
+     ```bash
+     curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
+     ```
+     If a newer version is installed, tell the user and suggest updating their onchainos skills from https://github.com/okx/onchainos-skills to get the latest features.
+3. If any `onchainos` command fails with an unexpected error during this
+   session, try reinstalling before giving up:
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
    ```
-   OKX_API_KEY=
+4. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
+   ```
+   OKX_API_KEY=          # or OKX_ACCESS_KEY
    OKX_SECRET_KEY=
    OKX_PASSPHRASE=
    ```
@@ -43,9 +52,32 @@ Before using this skill, ensure the `onchainos` CLI is installed:
 - For per-token risk analysis (holder concentration, dev rug pull count, creator info) → use `okx-dex-token`
 - For swap execution → use `okx-dex-swap`
 - For transaction broadcasting → use `okx-onchain-gateway`
-- Market-wide signal alerts (smart money / whale / KOL buy signals, signal-supported chains) → use `okx-dex-market`
+- For wallet balances / portfolio → use `okx-wallet-portfolio`
+- Signal data (smart money / whale / KOL buy signals, signal-supported chains) → use `okx-dex-market`
 - Meme pump scanning (token lists, dev info, bundle detection, aped wallets) → use `okx-dex-market`
-- Meme token safety via memepump (rug pull history, dev reputation, bundler/sniper analysis, similar tokens by same dev) → use `okx-dex-market`
+- Meme token safety (rug pull check, dev reputation, bundler/sniper analysis, similar tokens by same dev) → use `okx-dex-market`
+- **"Trenches" / "扫链"** (scanning for new meme tokens) → use `okx-dex-market` memepump commands (NOT signal commands)
+
+## Keyword Glossary
+
+Users may use Chinese crypto slang, English equivalents, or platform-specific terms. Map them to the correct commands:
+
+| Chinese | English / Platform Terms | Maps To |
+|---|---|---|
+| 扫链 | trenches, memerush, 战壕, 打狗 | `memepump-tokens` |
+| 同车 | aped, same-car, co-invested | `memepump-aped-wallet` |
+| 牛人榜 | leaderboard, top traders, smart money ranking | `signal-list` (filter by `--wallet-type`) |
+| 开发者信息 | dev info, developer reputation, rug check | `memepump-token-dev-info` |
+| 捆绑/狙击 | bundler, sniper, bundle analysis | `memepump-token-bundle-info` |
+| 行情 | market data, price, chart | `price`, `kline`, `trades` |
+| 持仓分析 | holding analysis, holder distribution | `memepump-token-details` (tags fields) |
+| 社媒筛选 | social filter | `memepump-tokens --has-x`, `--has-telegram`, etc. |
+| 新盘 / 迁移中 / 已迁移 | NEW / MIGRATING / MIGRATED | `memepump-tokens --stage` |
+| pumpfun / bonkers / bonk / believe / bags / mayhem | protocol names (launch platforms) | `memepump-tokens --protocol-id-list <id>` |
+
+**Protocol names are NOT token names.** When a user mentions pumpfun, bonkers, bonk, etc., look up their IDs via `onchainos market memepump-chains`, then pass to `--protocol-id-list`. Multiple protocols: comma-separate the IDs (e.g. `--protocol-id-list <bonkers_id>,<bonk_id>`).
+
+When presenting `memepump-token-details` or `memepump-token-dev-info` responses, translate JSON field names (e.g., `top10HoldingsPercent` → "top-10 holder concentration", `rugPullCount` → "rug pull count / 跑路次数", `bondingPercent` → "bonding curve progress") into human-readable language. Never dump raw field names to the user.
 
 ## Quickstart
 
@@ -254,7 +286,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 - Smart money / whale / KOL buy signals → `onchainos market signal-list`
 - Chains supporting signals → `onchainos market signal-chains`
 - Discover meme pump supported chains/protocols → `onchainos market memepump-chains`
-- Browse/filter meme tokens by stage → `onchainos market memepump-tokens`
+- **Trenches / 扫链** / browse/filter meme tokens by stage → `onchainos market memepump-tokens`
 - Deep-dive into a specific meme token → `onchainos market memepump-token-details`
 - Check meme token developer reputation → `onchainos market memepump-token-dev-info`
 - Find similar tokens by same creator → `onchainos market memepump-similar-tokens`
@@ -266,6 +298,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 - Missing chain → recommend XLayer (`--chain xlayer`, low gas, fast confirmation) as the default, then ask which chain the user prefers; for signal queries, first call `onchainos market signal-chains` to confirm the chain is supported; for meme pump queries, default to Solana (`--chain solana`)
 - Missing token address → use `okx-dex-token` `onchainos token search` first to resolve; for signal queries, `--token-address` is optional (omit to get all signals on the chain); for meme pump, use `onchainos market memepump-tokens` first to discover tokens
 - Missing `--stage` for memepump-tokens → ask user which stage (NEW / MIGRATING / MIGRATED)
+- User mentions a protocol name (pumpfun, bonkers, bonk, believe, bags, mayhem, fourmeme, etc.) → first call `onchainos market memepump-chains` to get the protocol ID, then pass `--protocol-id-list <id>` to `memepump-tokens`. Do NOT use `okx-dex-token` to search for protocol names as tokens.
 - K-line requests → confirm bar size and time range with user
 - Signal filter params (`--wallet-type`, `--min-amount-usd`, etc.) → ask user for preferences if not specified; default to no filter (returns all signal types)
 
@@ -274,6 +307,8 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 - Call directly, return formatted results
 - Use appropriate precision: 2 decimals for high-value tokens, significant digits for low-value
 - Show USD value alongside
+- Translate field names per the Keyword Glossary — never dump raw JSON keys. For `memepump-token-dev-info`, present as a developer reputation report. For `memepump-token-details`, present as a token safety summary highlighting red/green flags.
+- When listing tokens from `memepump-tokens`, never merge or deduplicate entries that share the same symbol. Different tokens can have identical symbols but different contract addresses — each is a distinct token and must be shown separately. Always include the contract address to distinguish them.
 
 ### Step 4: Suggest Next Steps
 
@@ -327,7 +362,6 @@ Do not expose raw error codes or internal error messages to the user.
 
 ## Edge Cases
 
-- **Region-restricted error (50125 / 80001)**: display the friendly region message above — do not retry or expose the error code
 - **Invalid token address**: returns empty data or error — prompt user to verify, or use `onchainos token search` to resolve
 - **Unsupported chain**: the CLI will report an error — try a different chain name
 - **No candle data**: may be a new token or low liquidity — inform user
@@ -340,6 +374,7 @@ Do not expose raw error codes or internal error messages to the user.
 - **Empty similar tokens**: `memepump-similar-tokens` may return empty array if no similar tokens are found
 - **Empty aped wallets**: `memepump-aped-wallet` returns empty array if no co-holders found
 - **Network error**: retry once, then prompt user to try again later
+- **Region restriction (error code 50125 or 80001)**: do NOT show the raw error code to the user. Instead, display a friendly message: `⚠️ Service is not available in your region. Please switch to a supported region and try again.`
 
 ## Amount Display Rules
 
@@ -351,5 +386,4 @@ Do not expose raw error codes or internal error messages to the user.
 
 - EVM contract addresses must be **all lowercase**
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
-- All output is JSON format by default; use `-o table` for table format
-- The CLI handles authentication internally via environment variables — see Prerequisites step 5 for default values
+- The CLI handles authentication internally via environment variables — see Prerequisites step 4 for default values

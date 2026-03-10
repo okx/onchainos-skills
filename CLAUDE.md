@@ -8,11 +8,10 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 
 ## Architecture
 
-The project contains skills:
-
-- **skills/** — 5 onchainos CLI skill definitions
-
-Each skill is a Markdown file (`SKILL.md`) with YAML frontmatter defining the skill name, description, and metadata, followed by detailed CLI command reference.
+- **skills/** — 5 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
+- **.github/workflows/** — CI/CD pipeline (`release.yml`: tag-triggered build for 9 platforms → GitHub Release)
+- **install.sh** — One-line installer for macOS / Linux (`curl | sh`)
 
 ## Available Skills
 
@@ -23,4 +22,3 @@ Each skill is a Markdown file (`SKILL.md`) with YAML frontmatter defining the sk
 | okx-dex-swap | DEX swap execution | User wants to swap/trade/buy/sell tokens |
 | okx-dex-token | Token search and analytics | User searches for tokens, wants rankings, holder info |
 | okx-onchain-gateway | Transaction broadcasting and tracking | User wants to broadcast tx, estimate gas, simulate tx, check tx status |
-

@@ -1,10 +1,11 @@
 ---
 name: okx-dex-token
 description: "This skill should be used when the user asks to 'find a token', 'search for BONK', 'look up PEPE', 'what is trending', 'top tokens on Solana', 'who holds this token', 'show whale holders', 'filter holders by smart money', 'is this token risky', 'show advanced info', 'show top traders', 'profit addresses for this token', 'show hot tokens', 'what tokens are trending on Twitter', 'show liquidity pools', 'top pools for this token', or mentions token search, discovery, trending rankings, hot token lists (trending score or X/Twitter mentions), liquidity pool analysis, holder distribution, holder filtering by tag (whale, smart money, KOL, sniper), advanced token info (risk level, creator, dev stats, holder concentration), or top trader/profit address analysis. Covers search, metadata, market cap, liquidity pools, volume, trending, hot tokens, holders, advanced info, and top traders across 20+ chains. Do NOT use for a single generic word like 'tokens' without context. For price charts, candlestick data, or trade history, use okx-dex-market. For memepump safety analysis, use okx-dex-market."
+
 license: Apache-2.0
 metadata:
   author: okx
-  version: "1.0.0"
+  version: "1.0.2"
   homepage: "https://web3.okx.com"
 ---
 
@@ -12,26 +13,35 @@ metadata:
 
 9 commands for token search, metadata, detailed pricing, rankings, liquidity pools, hot token lists, holder distribution, advanced token info, and top trader analysis.
 
-## Prerequisites
+## Pre-flight Checks
 
-Before using this skill, ensure the `onchainos` CLI is installed:
+Every time before running any `onchainos` command, always follow these steps in order. Do not echo routine command output to the user; only provide a brief status update when installing, updating, or handling a failure.
 
-1. Check if `onchainos` is already available:
-   ```bash
-   which onchainos
-   ```
-2. If not found, install it:
+1. **Confirm installed**: Run `which onchainos`. If not found, install it:
    ```bash
    curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
    ```
-3. Verify installation:
+   If the install script fails, ask the user to install manually following the instructions at: https://github.com/okx/onchainos-skills
+
+2. **Check for updates**: Read `~/.onchainos/last_check` and compare it with the current timestamp:
    ```bash
-   onchainos --version
+   cached_ts=$(cat ~/.onchainos/last_check 2>/dev/null || true)
+   now=$(date +%s)
    ```
-4. If the install script fails, ask the user to install manually following the instructions at: https://github.com/okx/onchainos-skills
-5. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
+   - If `cached_ts` is non-empty and `(now - cached_ts) < 43200` (12 hours), skip the update and proceed.
+   - Otherwise (file missing or older than 12 hours), run the installer to check for updates:
+     ```bash
+     curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
+     ```
+     If a newer version is installed, tell the user and suggest updating their onchainos skills from https://github.com/okx/onchainos-skills to get the latest features.
+3. If any `onchainos` command fails with an unexpected error during this
+   session, try reinstalling before giving up:
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
    ```
-   OKX_API_KEY=
+4. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
+   ```
+   OKX_API_KEY=          # or OKX_ACCESS_KEY
    OKX_SECRET_KEY=
    OKX_PASSPHRASE=
    ```
@@ -45,6 +55,7 @@ Before using this skill, ensure the `onchainos` CLI is installed:
 - For market-wide smart money / whale / KOL signal alerts → use `okx-dex-market`
 - For per-token holder filtering by tag (whale, smart money, KOL, sniper) → use this skill (`holders --tag-filter`)
 - For per-token risk analysis (dev rug pull count, holder concentration, creator info) → use this skill (`advanced-info`)
+
 
 ## Quickstart
 
@@ -252,6 +263,7 @@ To search for specific command details: `grep -n "onchainos token <command>" ref
 - **Unverified token**: `communityRecognized = false` — warn user about risk
 - **Too many results**: name/symbol search caps at 100 — suggest using exact contract address
 - **Network error**: retry once
+- **Region restriction (error code 50125 or 80001)**: do NOT show the raw error code to the user. Instead, display a friendly message: `⚠️ Service is not available in your region. Please switch to a supported region and try again.`
 
 ## Amount Display Rules
 
@@ -264,6 +276,5 @@ To search for specific command details: `grep -n "onchainos token <command>" ref
 - Use contract address as **primary identity** — symbols can collide across tokens
 - `communityRecognized = true` means listed on Top 10 CEX or community verified
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
-- All output is JSON format by default; use `-o table` for table format
 - EVM addresses must be **all lowercase**
-- The CLI handles authentication internally via environment variables — see Prerequisites step 5 for default values
+- The CLI handles authentication internally via environment variables — see Prerequisites step 4 for default values

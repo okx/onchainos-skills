@@ -12,14 +12,19 @@ This is an **onchainos skill collection** providing 5 skills for on-chain operat
 | okx-dex-token | Token search, metadata, rankings | User searches for tokens by name/symbol/address, wants trending rankings, holder distribution, market cap, or token security info; user asks "find the contract address for PEPE", "show me trending tokens on Base", "who holds the most of this token", "is this token a honeypot", "what's the total supply" |
 | okx-onchain-gateway | Gas estimation, tx simulation, broadcasting | User wants to broadcast a signed tx, estimate gas fees, simulate a transaction before sending, or track a tx by hash; user asks "how much gas will this cost", "simulate this tx before I send it", "broadcast my signed transaction", "is my tx confirmed", "what's the status of this hash" |
 
+## Architecture
+
+- **skills/** — 5 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
+- **.github/workflows/** — CI/CD pipeline (`release.yml`: tag-triggered build for 9 platforms → GitHub Release)
+- **install.sh** — One-line installer for macOS / Linux (`curl | sh`)
+
 ## Skill Discovery
 
-Skills are in the `skills/` directory. Each skill contains a `SKILL.md` with:
+Each skill in `skills/` contains a `SKILL.md` with:
 
 - YAML frontmatter (name, description, metadata)
 - Full CLI command reference with parameters and response schemas
 - Usage examples (bash)
 - Cross-skill workflow documentation
 - Edge cases and error handling
-
-

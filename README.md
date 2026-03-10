@@ -90,6 +90,16 @@ The skills work together in typical DeFi flows:
 
 **Full Trading Flow**: `okx-dex-token` (search) -> `okx-dex-market` (price/chart) -> `okx-wallet-portfolio` (check balance) -> `okx-dex-swap` (get tx) -> `okx-onchain-gateway` (simulate + broadcast + track)
 
+## Install CLI
+
+### Shell Script (macOS / Linux)
+
+Auto-detects your platform, downloads the matching binary, verifies SHA256 checksum, and installs to `~/.local/bin`:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
+```
+
 ## API Key Security Notice & Disclaimer
 
 **Built-in Sandbox API Keys (Default)** This integration includes built-in sandbox API keys for testing purposes only. By using these keys, you acknowledge and accept the following:
