@@ -16,34 +16,33 @@ metadata:
 
 Every time before running any `onchainos` command, always follow these steps in order. Do not echo routine command output to the user; only provide a brief status update when installing, updating, or handling a failure.
 
-1. **Confirm installed**: Run `which onchainos`. If not found, install it:
-   ```bash
-   curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
-   ```
-   If the install script fails, ask the user to install manually following the instructions at: https://github.com/okx/onchainos-skills
+1. **Install**: If `onchainos` is not found, download the installer to a temp
+   file, verify its SHA256 against **Installer Checksums** (bottom of this
+   document), then execute.
+   - **macOS/Linux**: `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/v1.0.2/install.sh -o /tmp/onchainos-install.sh`
+     — verify with `shasum -a 256 /tmp/onchainos-install.sh`, then `sh /tmp/onchainos-install.sh`
+   - **Windows**: `Invoke-WebRequest -Uri https://raw.githubusercontent.com/okx/onchainos-skills/v1.0.2/install.ps1 -OutFile "$env:TEMP\onchainos-install.ps1"`
+     — verify with `(Get-FileHash "$env:TEMP\onchainos-install.ps1" -Algorithm SHA256).Hash.ToLower()`, then `& "$env:TEMP\onchainos-install.ps1"`
+   - On checksum mismatch, **stop** and warn the user — the installer may have
+     been tampered with. On other failures, point to https://github.com/okx/onchainos-skills.
 
-2. **Check for updates**: Read `~/.onchainos/last_check` and compare it with the current timestamp:
-   ```bash
-   cached_ts=$(cat ~/.onchainos/last_check 2>/dev/null || true)
-   now=$(date +%s)
-   ```
-   - If `cached_ts` is non-empty and `(now - cached_ts) < 43200` (12 hours), skip the update and proceed.
-   - Otherwise (file missing or older than 12 hours), run the installer to check for updates:
-     ```bash
-     curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
-     ```
-     If a newer version is installed, tell the user and suggest updating their onchainos skills from https://github.com/okx/onchainos-skills to get the latest features.
-3. If any `onchainos` command fails with an unexpected error during this
-   session, try reinstalling before giving up:
-   ```bash
-   curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
-   ```
-4. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
-   ```
-   OKX_API_KEY=          # or OKX_ACCESS_KEY
-   OKX_SECRET_KEY=
-   OKX_PASSPHRASE=
-   ```
+2. **Check for updates**: Cache at `~/.onchainos/last_check` (`$env:USERPROFILE\.onchainos\last_check` on Windows).
+   If the cached timestamp is <12 hours old, skip to step 3. Otherwise re-run
+   the install flow (step 1) to ensure the correct version.
+
+3. **Verify binary integrity** (once per session): Look up the platform target
+   and compare the installed binary's SHA256 against **Binary Checksums** below.
+   On mismatch, reinstall (step 1) and re-verify. If still mismatched, **stop**
+   and warn — the binary may have been tampered with.
+   - Platform targets — macOS: `arm64`→`aarch64-apple-darwin`, `x86_64`→`x86_64-apple-darwin`; Linux: `x86_64`→`x86_64-unknown-linux-gnu`, `aarch64`→`aarch64-unknown-linux-gnu`, `i686`→`i686-unknown-linux-gnu`, `armv7l`→`armv7-unknown-linux-gnueabihf`; Windows: `AMD64`→`x86_64-pc-windows-msvc`, `x86`→`i686-pc-windows-msvc`, `ARM64`→`aarch64-pc-windows-msvc`
+   - Hash command — macOS/Linux: `shasum -a 256 ~/.local/bin/onchainos`; Windows: `(Get-FileHash "$env:USERPROFILE\.local\bin\onchainos.exe" -Algorithm SHA256).Hash.ToLower()`
+
+4. **Do NOT auto-reinstall on command failures.** Report errors and suggest
+   `onchainos --version` or manual reinstall from https://github.com/okx/onchainos-skills.
+5. **Rate limit errors.** If a command hits rate limits, the shared API key may
+   be throttled. Suggest creating a personal key at the
+   [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal). If the
+   user creates a `.env` file, remind them to add `.env` to `.gitignore`.
 
 ## Skill Routing
 
@@ -310,3 +309,20 @@ onchainos portfolio token-balances --address 0xYourWallet --tokens "196:,196:0x7
 - `token-balances` supports max **20** token entries
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
 - The CLI handles authentication internally via environment variables — see Prerequisites step 4 for default values
+
+
+## Installer Checksums
+
+<!-- BEGIN_INSTALLER_CHECKSUMS (auto-updated by release workflow — do not edit) -->
+```
+PLACEHOLDER
+```
+<!-- END_INSTALLER_CHECKSUMS -->
+
+## Binary Checksums
+
+<!-- BEGIN_CHECKSUMS (auto-updated by release workflow — do not edit) -->
+```
+PLACEHOLDER
+```
+<!-- END_CHECKSUMS -->
