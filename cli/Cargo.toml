@@ -51,6 +51,10 @@ alloy-network = "1"
 hex = "0.4"
 uuid = { version = "1", features = ["v4"] }
 
+# MCP Server
+rmcp = { version = "1.1.1", features = ["transport-io"] }
+schemars = "1"
+
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"

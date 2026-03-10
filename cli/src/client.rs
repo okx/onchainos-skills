@@ -10,6 +10,7 @@ const DEFAULT_API_KEY: &str = "03f0b376-251c-4618-862e-ae92929e0416";
 const DEFAULT_SECRET_KEY: &str = "652ECE8FF13210065B0851FFDA9191F7";
 const DEFAULT_PASSPHRASE: &str = "onchainOS#666";
 
+#[derive(Clone)]
 pub struct ApiClient {
     http: Client,
     base_url: String,
