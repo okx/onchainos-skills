@@ -52,7 +52,7 @@ pub fn assert_ok_and_extract_data(output: &std::process::Output) -> Value {
 pub fn run_with_retry(args: &[&str]) -> std::process::Output {
     for attempt in 0..3 {
         if attempt > 0 {
-            std::thread::sleep(std::time::Duration::from_secs(attempt));
+            std::thread::sleep(std::time::Duration::from_secs(attempt * 5));
         }
         let output = onchainos().args(args).output().expect("failed to execute");
 
