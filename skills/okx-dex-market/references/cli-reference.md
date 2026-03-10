@@ -409,14 +409,14 @@ No parameters required.
 Get wallet portfolio PnL overview: realized/unrealized PnL, win rate, Top 3 tokens, buy/sell stats.
 
 ```bash
-onchainos market portfolio-overview --address <address> --chain <chain> [--time-frame <n>]
+onchainos market portfolio-overview --address <address> --chain <chain> --time-frame <n>
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--address` | Yes | - | Wallet address |
 | `--chain` | Yes | - | Chain name or ID (e.g. `ethereum`, `solana`) |
-| `--time-frame` | No | `3` | Statistical range: `1`=1D, `2`=3D, `3`=7D, `4`=1M, `5`=3M |
+| `--time-frame` | Yes | - | Statistical range: `1`=1D, `2`=3D, `3`=7D, `4`=1M, `5`=3M |
 
 **Return fields**:
 

@@ -119,7 +119,7 @@ onchainos market memepump-token-details <address> --chain solana
 onchainos market memepump-token-dev-info <address> --chain solana
 
 # Get wallet PnL overview (7D)
-onchainos market portfolio-overview --address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain ethereum
+onchainos market portfolio-overview --address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain ethereum --time-frame 3
 
 # Get wallet DEX transaction history
 onchainos market portfolio-dex-history --address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain ethereum \

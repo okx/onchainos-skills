@@ -868,6 +868,8 @@ fn market_portfolio_overview_ethereum() {
         PORTFOLIO_TEST_WALLET,
         "--chain",
         "ethereum",
+        "--time-frame",
+        "3",
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
@@ -898,7 +900,14 @@ fn market_portfolio_overview_with_timeframe() {
 #[test]
 fn market_portfolio_overview_missing_address_fails() {
     onchainos()
-        .args(["market", "portfolio-overview", "--chain", "ethereum"])
+        .args([
+            "market",
+            "portfolio-overview",
+            "--chain",
+            "ethereum",
+            "--time-frame",
+            "3",
+        ])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
@@ -912,6 +921,24 @@ fn market_portfolio_overview_missing_chain_fails() {
             "portfolio-overview",
             "--address",
             PORTFOLIO_TEST_WALLET,
+            "--time-frame",
+            "3",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+}
+
+#[test]
+fn market_portfolio_overview_missing_time_frame_fails() {
+    onchainos()
+        .args([
+            "market",
+            "portfolio-overview",
+            "--address",
+            PORTFOLIO_TEST_WALLET,
+            "--chain",
+            "ethereum",
         ])
         .assert()
         .failure()

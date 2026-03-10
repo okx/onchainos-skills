@@ -296,7 +296,7 @@ pub enum MarketCommand {
         #[arg(long)]
         chain: String,
         /// Time frame: 1=1D, 2=3D, 3=7D, 4=1M, 5=3M
-        #[arg(long, default_value = "3")]
+        #[arg(long)]
         time_frame: String,
     },
     /// Get wallet DEX transaction history (paginated)
