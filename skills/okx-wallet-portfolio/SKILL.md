@@ -4,7 +4,7 @@ description: "This skill should be used when the user asks to 'check my wallet b
 license: Apache-2.0
 metadata:
   author: okx
-  version: "1.1.0"
+  version: "1.0.3"
 
   homepage: "https://web3.okx.com"
 ---
