@@ -1,6 +1,6 @@
 ---
 name: okx-dex-market
-description: "This skill should be used when the user asks about live on-chain market data: token prices, price charts (K-line, OHLC), trade history, or swap activity. Also covers on-chain signals — smart money, whale, and KOL wallet activity, large trades, and signal-supported chains. For meme tokens: scanning new launches (扫链/trenches，golden dog, alpha, pump fun), checking dev wallets, developer reputation, rug pull detection, tokens by same creator, bundle/sniper detection, bonding curves, and meme token safety checks. For token search, market cap, liquidity, trending tokens, or holder distribution, use okx-dex-token instead."
+description: "This skill should be used when the user asks about live on-chain market data: token prices, price charts (K-line, OHLC), trade history, or swap activity. Also covers on-chain signals — smart money, whale, and KOL wallet activity, large trades, and signal-supported chains. For meme tokens: scanning new launches (扫链/trenches，golden dog, alpha, pump fun), checking dev wallets, developer reputation, rug pull detection, tokens by same creator, bundle/sniper detection, bonding curves, and meme token safety checks. For wallet PnL analysis: portfolio overview, DEX transaction history, recent PnL by token, and per-token latest PnL (realized/unrealized). For token search, market cap, liquidity, trending tokens, or holder distribution, use okx-dex-token instead."
 license: Apache-2.0
 metadata:
   author: okx
@@ -10,7 +10,7 @@ metadata:
 
 # OKX DEX Market Data CLI
 
-14 commands for on-chain prices, trades, candlesticks, index prices, smart money signals, and meme pump token scanning.
+19 commands for on-chain prices, trades, candlesticks, index prices, smart money signals, meme pump token scanning, and wallet PnL analysis.
 
 ## Pre-flight Checks
 
@@ -52,7 +52,8 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For per-token risk analysis (holder concentration, dev rug pull count, creator info) → use `okx-dex-token`
 - For swap execution → use `okx-dex-swap`
 - For transaction broadcasting → use `okx-onchain-gateway`
-- For wallet balances / portfolio → use `okx-wallet-portfolio`
+- For wallet balances / token holdings → use `okx-wallet-portfolio`
+- For wallet PnL analysis (realized/unrealized PnL, DEX history, recent PnL, per-token PnL) → use `okx-dex-market` portfolio commands
 - Signal data (smart money / whale / KOL buy signals, signal-supported chains) → use `okx-dex-market`
 - Meme pump scanning (token lists, dev info, bundle detection, aped wallets) → use `okx-dex-market`
 - Meme token safety (rug pull check, dev reputation, bundler/sniper analysis, similar tokens by same dev) → use `okx-dex-market`
@@ -74,6 +75,14 @@ Users may use Chinese crypto slang, English equivalents, or platform-specific te
 | 社媒筛选 | social filter | `memepump-tokens --has-x`, `--has-telegram`, etc. |
 | 新盘 / 迁移中 / 已迁移 | NEW / MIGRATING / MIGRATED | `memepump-tokens --stage` |
 | pumpfun / bonkers / bonk / believe / bags / mayhem | protocol names (launch platforms) | `memepump-tokens --protocol-id-list <id>` |
+| 盈亏 / 收益 / PnL | PnL, profit and loss, realized/unrealized | `portfolio-overview`, `portfolio-recent-pnl`, `portfolio-token-pnl` |
+| 已实现盈亏 | realized PnL, realized profit | `portfolio-token-pnl` (realizedPnlUsd) |
+| 未实现盈亏 | unrealized PnL, paper profit, holding gain | `portfolio-token-pnl` (unrealizedPnlUsd) |
+| 胜率 | win rate, success rate | `portfolio-overview` (winRate) |
+| 历史交易 / 交易记录 | DEX transaction history, trade log | `portfolio-dex-history` |
+| 清仓 | sold all, liquidated, sell off | `portfolio-recent-pnl` (unrealizedPnlUsd = "SELL_ALL") |
+| 画像 / 钱包画像 / 持仓分析 | wallet profile, portfolio analysis | `portfolio-overview` |
+| 近期收益 | recent PnL, latest earnings by token | `portfolio-recent-pnl` |
 
 **Protocol names are NOT token names.** When a user mentions pumpfun, bonkers, bonk, etc., look up their IDs via `onchainos market memepump-chains`, then pass to `--protocol-id-list`. Multiple protocols: comma-separate the IDs (e.g. `--protocol-id-list <bonkers_id>,<bonk_id>`).
 
@@ -108,6 +117,20 @@ onchainos market memepump-token-details <address> --chain solana
 
 # Check developer reputation for a meme token
 onchainos market memepump-token-dev-info <address> --chain solana
+
+# Get wallet PnL overview (7D)
+onchainos market portfolio-overview --address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain ethereum
+
+# Get wallet DEX transaction history
+onchainos market portfolio-dex-history --address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain ethereum \
+  --begin 1700000000000 --end 1710000000000
+
+# Get recent PnL by token
+onchainos market portfolio-recent-pnl --address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain ethereum
+
+# Get per-token PnL snapshot
+onchainos market portfolio-token-pnl --address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain ethereum \
+  --token 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48
 ```
 
 ## Chain Name Support
@@ -159,6 +182,16 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | 13 | `onchainos market memepump-token-bundle-info <address>` | Get bundle/sniper analysis |
 | 14 | `onchainos market memepump-aped-wallet <address>` | Get aped (same-car) wallet list |
 
+### Portfolio PnL Commands
+
+| # | Command | Description |
+|---|---|---|
+| 15 | `onchainos market portfolio-supported-chains` | Get chains supported by portfolio PnL endpoints |
+| 16 | `onchainos market portfolio-overview` | Get wallet PnL overview (realized/unrealized PnL, win rate, Top 3 tokens) |
+| 17 | `onchainos market portfolio-dex-history` | Get DEX transaction history for a wallet (paginated, up to 1000 records) |
+| 18 | `onchainos market portfolio-recent-pnl` | Get recent PnL list by token for a wallet (paginated, up to 1000 records) |
+| 19 | `onchainos market portfolio-token-pnl` | Get latest PnL snapshot for a specific token in a wallet |
+
 ## Boundary: market vs token skill
 
 | Need | Use this skill (`okx-dex-market`) | Use `okx-dex-token` instead |
@@ -185,8 +218,13 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Similar tokens by same creator | `onchainos market memepump-similar-tokens` | - |
 | Bundle/sniper detection | `onchainos market memepump-token-bundle-info` | - |
 | Aped (same-car) wallet analysis | `onchainos market memepump-aped-wallet` | - |
+| Wallet PnL overview (win rate, realized PnL, top tokens) | `onchainos market portfolio-overview` | - |
+| Wallet DEX transaction history | `onchainos market portfolio-dex-history` | - |
+| Recent PnL list by token | `onchainos market portfolio-recent-pnl` | - |
+| Per-token latest PnL (realized/unrealized) | `onchainos market portfolio-token-pnl` | - |
+| PnL-supported chain list | `onchainos market portfolio-supported-chains` | - |
 
-**Rule of thumb**: `okx-dex-market` = raw price feeds, charts, smart money signals & meme pump scanning (including dev reputation, rug pull checks, bundler analysis). `okx-dex-token` = token discovery & enriched analytics (search, trending, holders, holder filtering, hot tokens, liquidity pools, market cap, advanced info, top traders, token risk).
+**Rule of thumb**: `okx-dex-market` = raw price feeds, charts, smart money signals, meme pump scanning (dev reputation, rug pull checks, bundler analysis), and wallet PnL analysis. `okx-dex-token` = token discovery & enriched analytics (search, trending, holders, holder filtering, hot tokens, liquidity pools, market cap, advanced info, top traders, token risk).
 
 ## Cross-Skill Workflows
 
@@ -267,6 +305,44 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 5. okx-dex-market   onchainos market memepump-aped-wallet <address> --chain solana     → who else is holding
 ```
 
+### Workflow F: Wallet PnL Analysis
+
+> User: "How is my wallet performing on Ethereum? Show me my PnL"
+
+```
+1. okx-dex-market   onchainos market portfolio-supported-chains                        → verify Ethereum is supported
+2. okx-dex-market   onchainos market portfolio-overview --address <wallet> --chain ethereum --time-frame 3
+                                                                                       → 7D PnL overview: realized PnL, win rate, top 3 tokens
+       ↓ user wants to drill into a specific token
+3. okx-dex-market   onchainos market portfolio-recent-pnl --address <wallet> --chain ethereum
+                                                                                       → list recent PnL by token
+       ↓ user picks a token
+4. okx-dex-market   onchainos market portfolio-token-pnl --address <wallet> --chain ethereum --token <address>
+                                                                                       → latest realized/unrealized PnL for that token
+5. okx-dex-token    onchainos token price-info <address> --chain ethereum              → current market context
+```
+
+**Data handoff**: `--address` (wallet) is reused across all portfolio steps; `--token` from step 3 feeds into step 4.
+
+### Workflow G: Wallet Trade History Review
+
+> User: "Show me my recent DEX trades on Ethereum"
+
+```
+1. okx-dex-market   onchainos market portfolio-dex-history --address <wallet> --chain ethereum
+                    --begin <start_ms> --end <end_ms>
+                                                                                       → paginated DEX tx list (buy/sell/transfer)
+       ↓ filter by specific token
+2. okx-dex-market   onchainos market portfolio-dex-history --address <wallet> --chain ethereum
+                    --begin <start_ms> --end <end_ms> --token <address> --tx-type 1,2
+                                                                                       → buy+sell history for one token
+       ↓ check PnL for that token
+3. okx-dex-market   onchainos market portfolio-token-pnl --address <wallet> --chain ethereum --token <address>
+                                                                                       → realized/unrealized PnL snapshot
+```
+
+**Note**: `--begin` and `--end` are required Unix millisecond timestamps. For "last 30 days", compute: `end = now * 1000`, `begin = (now - 2592000) * 1000`.
+
 > User: "Filter signals to only show whale buys above $10k"
 
 ```
@@ -292,10 +368,15 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 - Find similar tokens by same creator → `onchainos market memepump-similar-tokens`
 - Analyze bundler/sniper activity → `onchainos market memepump-token-bundle-info`
 - View aped (same-car) wallet holdings → `onchainos market memepump-aped-wallet`
+- Wallet PnL overview (win rate, realized PnL, top 3 tokens) → `onchainos market portfolio-overview`
+- Wallet DEX transaction history → `onchainos market portfolio-dex-history`
+- Recent token PnL list for a wallet → `onchainos market portfolio-recent-pnl`
+- Per-token latest PnL (realized/unrealized) → `onchainos market portfolio-token-pnl`
+- Chains supported for PnL → `onchainos market portfolio-supported-chains`
 
 ### Step 2: Collect Parameters
 
-- Missing chain → recommend XLayer (`--chain xlayer`, low gas, fast confirmation) as the default, then ask which chain the user prefers; for signal queries, first call `onchainos market signal-chains` to confirm the chain is supported; for meme pump queries, default to Solana (`--chain solana`)
+- Missing chain → recommend XLayer (`--chain xlayer`, low gas, fast confirmation) as the default, then ask which chain the user prefers; for signal queries, first call `onchainos market signal-chains` to confirm the chain is supported; for meme pump queries, default to Solana (`--chain solana`); for portfolio PnL queries, first call `onchainos market portfolio-supported-chains` to confirm the chain is supported
 - Missing token address → use `okx-dex-token` `onchainos token search` first to resolve; for signal queries, `--token-address` is optional (omit to get all signals on the chain); for meme pump, use `onchainos market memepump-tokens` first to discover tokens
 - Missing `--stage` for memepump-tokens → ask user which stage (NEW / MIGRATING / MIGRATED)
 - User mentions a protocol name (pumpfun, bonkers, bonk, believe, bags, mayhem, fourmeme, etc.) → first call `onchainos market memepump-chains` to get the protocol ID, then pass `--protocol-id-list <id>` to `memepump-tokens`. Do NOT use `okx-dex-token` to search for protocol names as tokens.
@@ -329,12 +410,17 @@ After displaying results, suggest 2-3 relevant follow-up actions based on the co
 | `market memepump-similar-tokens` | 1. Compare with details → `onchainos market memepump-token-details` (this skill) |
 | `market memepump-token-bundle-info` | 1. Check aped wallets → `onchainos market memepump-aped-wallet` (this skill) |
 | `market memepump-aped-wallet` | 1. View price chart → `onchainos market kline` (this skill) 2. Buy the token → `okx-dex-swap` |
+| `market portfolio-supported-chains` | 1. Get PnL overview → `onchainos market portfolio-overview` (this skill) |
+| `market portfolio-overview` | 1. Drill into trade history → `onchainos market portfolio-dex-history` (this skill) 2. Check recent PnL by token → `onchainos market portfolio-recent-pnl` (this skill) 3. Buy/sell a top-PnL token → `okx-dex-swap` |
+| `market portfolio-dex-history` | 1. Check PnL for a specific traded token → `onchainos market portfolio-token-pnl` (this skill) 2. View token price chart → `onchainos market kline` (this skill) |
+| `market portfolio-recent-pnl` | 1. Get detailed PnL for a specific token → `onchainos market portfolio-token-pnl` (this skill) 2. View token analytics → `okx-dex-token` |
+| `market portfolio-token-pnl` | 1. View full trade history for this token → `onchainos market portfolio-dex-history` (this skill) 2. View token price chart → `onchainos market kline` (this skill) |
 
 Present conversationally, e.g.: "Would you like to see the K-line chart, or buy this token?" — never expose skill names or endpoint paths to the user.
 
 ## Additional Resources
 
-For detailed parameter tables, return field schemas, and usage examples for all 14 commands, consult:
+For detailed parameter tables, return field schemas, and usage examples for all 19 commands, consult:
 - **`references/cli-reference.md`** — Full CLI command reference with params, return fields, and examples
 
 To search for specific command details: `grep -n "onchainos market <command>" references/cli-reference.md`
@@ -373,6 +459,10 @@ Do not expose raw error codes or internal error messages to the user.
 - **No dev holding info**: `memepump-token-dev-info` returns `devHoldingInfo` as `null` if the creator address is unavailable
 - **Empty similar tokens**: `memepump-similar-tokens` may return empty array if no similar tokens are found
 - **Empty aped wallets**: `memepump-aped-wallet` returns empty array if no co-holders found
+- **Unsupported chain for portfolio PnL**: not all chains support PnL — always verify with `onchainos market portfolio-supported-chains` first
+- **`portfolio-dex-history` requires `--begin` and `--end`**: both timestamps (Unix milliseconds) are mandatory; if the user says "last 30 days" compute them before calling
+- **`portfolio-recent-pnl` `unrealizedPnlUsd` returns `SELL_ALL`**: this means the address has sold all its holdings of that token
+- **`portfolio-token-pnl` `isPnlSupported = false`**: PnL calculation is not supported for this token/chain combination
 - **Network error**: retry once, then prompt user to try again later
 - **Region restriction (error code 50125 or 80001)**: do NOT show the raw error code to the user. Instead, display a friendly message: `⚠️ Service is not available in your region. Please switch to a supported region and try again.`
 

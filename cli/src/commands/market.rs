@@ -295,8 +295,8 @@ pub enum MarketCommand {
         /// Chain name or ID (e.g. ethereum, solana, xlayer)
         #[arg(long)]
         chain: String,
-        /// Time frame: 1d, 3d, 7d, 1m, 3m
-        #[arg(long, default_value = "7d")]
+        /// Time frame: 1=1D, 2=3D, 3=7D, 4=1M, 5=3M
+        #[arg(long, default_value = "3")]
         time_frame: String,
     },
     /// Get wallet DEX transaction history (paginated)
@@ -307,6 +307,12 @@ pub enum MarketCommand {
         /// Chain name or ID (e.g. ethereum, solana, xlayer)
         #[arg(long)]
         chain: String,
+        /// Start timestamp (milliseconds)
+        #[arg(long)]
+        begin: String,
+        /// End timestamp (milliseconds)
+        #[arg(long)]
+        end: String,
         /// Page size (1-100, default 20)
         #[arg(long)]
         limit: Option<String>,
@@ -316,7 +322,7 @@ pub enum MarketCommand {
         /// Filter by token contract address
         #[arg(long)]
         token: Option<String>,
-        /// Transaction type: 1=buy, 2=sell, 3=transfer-in, 4=transfer-out, 0=all (comma-separated)
+        /// Transaction type: 1=BUY, 2=SELL, 3=Transfer In, 4=Transfer Out (comma-separated)
         #[arg(long = "tx-type")]
         tx_type: Option<String>,
     },
@@ -568,6 +574,8 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
         MarketCommand::PortfolioDexHistory {
             address,
             chain,
+            begin,
+            end,
             limit,
             cursor,
             token,
@@ -577,6 +585,8 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
                 ctx,
                 &address,
                 &chain,
+                &begin,
+                &end,
                 limit.as_deref(),
                 cursor.as_deref(),
                 token.as_deref(),
@@ -1123,6 +1133,8 @@ async fn portfolio_dex_history(
     ctx: &Context,
     address: &str,
     chain: &str,
+    begin: &str,
+    end: &str,
     limit: Option<&str>,
     cursor: Option<&str>,
     token: Option<&str>,
@@ -1133,6 +1145,8 @@ async fn portfolio_dex_history(
     let mut query: Vec<(&str, &str)> = vec![
         ("chainIndex", chain_index.as_str()),
         ("walletAddress", address),
+        ("begin", begin),
+        ("end", end),
     ];
     if let Some(l) = limit {
         query.push(("limit", l));

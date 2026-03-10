@@ -1,4 +1,5 @@
-//! Integration tests for `onchainos token` commands (search, info, price-info, trending, holders, advanced-info, top-trader).
+//! Integration tests for `onchainos token` commands:
+//! search, info, price-info, trending, holders, liquidity, hot-tokens, advanced-info, top-trader.
 
 mod common;
 
@@ -198,6 +199,441 @@ fn token_holders_missing_address_fails() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
+}
+
+// ─── liquidity ──────────────────────────────────────────────────────
+
+#[test]
+fn token_liquidity_usdc_on_ethereum() {
+    let output = run_with_retry(&["token", "liquidity", tokens::ETH_USDC, "--chain", "ethereum"]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected liquidity pool data: {data}"
+    );
+}
+
+#[test]
+fn token_liquidity_wsol_on_solana() {
+    let output = run_with_retry(&["token", "liquidity", tokens::SOL_WSOL, "--chain", "solana"]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected liquidity pool data: {data}"
+    );
+}
+
+#[test]
+fn token_liquidity_default_chain() {
+    // No --chain specified; API falls back to default
+    let output = run_with_retry(&["token", "liquidity", tokens::ETH_USDC]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected liquidity pool data: {data}"
+    );
+}
+
+#[test]
+fn token_liquidity_missing_address_fails() {
+    onchainos()
+        .args(["token", "liquidity"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+}
+
+// ─── hot-tokens ─────────────────────────────────────────────────────
+
+#[test]
+fn token_hot_tokens_default() {
+    let output = run_with_retry(&["token", "hot-tokens"]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
+}
+
+#[test]
+fn token_hot_tokens_solana_trending() {
+    let output = run_with_retry(&["token", "hot-tokens", "--chain", "solana"]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
+}
+
+#[test]
+fn token_hot_tokens_xmentioned_ranking() {
+    let output = run_with_retry(&["token", "hot-tokens", "--ranking-type", "5"]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
+}
+
+#[test]
+fn token_hot_tokens_with_sort_and_timeframe() {
+    let output = run_with_retry(&[
+        "token",
+        "hot-tokens",
+        "--chain",
+        "solana",
+        "--rank-by",
+        "5",
+        "--time-frame",
+        "4",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
+}
+
+#[test]
+fn token_hot_tokens_with_price_change_filters() {
+    let output = run_with_retry(&[
+        "token",
+        "hot-tokens",
+        "--chain",
+        "solana",
+        "--price-change-min",
+        "0",
+        "--price-change-max",
+        "1000",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
+}
+
+#[test]
+fn token_hot_tokens_with_negative_price_change_min() {
+    let output = run_with_retry(&[
+        "token",
+        "hot-tokens",
+        "--price-change-min",
+        "-100",
+        "--price-change-max",
+        "-5",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
+}
+
+#[test]
+fn token_hot_tokens_with_volume_filters() {
+    let output = run_with_retry(&[
+        "token",
+        "hot-tokens",
+        "--volume-min",
+        "10000",
+        "--volume-max",
+        "1000000000",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
+}
+
+#[test]
+fn token_hot_tokens_with_market_cap_filters() {
+    let output = run_with_retry(&[
+        "token",
+        "hot-tokens",
+        "--market-cap-min",
+        "100000",
+        "--market-cap-max",
+        "1000000000",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
+}
+
+#[test]
+fn token_hot_tokens_with_liquidity_filters() {
+    let output = run_with_retry(&[
+        "token",
+        "hot-tokens",
+        "--liquidity-min",
+        "5000",
+        "--liquidity-max",
+        "1000000000",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
+}
+
+#[test]
+fn token_hot_tokens_with_txs_filters() {
+    let output = run_with_retry(&[
+        "token",
+        "hot-tokens",
+        "--txs-min",
+        "10",
+        "--txs-max",
+        "1000000",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
+}
+
+#[test]
+fn token_hot_tokens_with_unique_trader_filters() {
+    let output = run_with_retry(&[
+        "token",
+        "hot-tokens",
+        "--unique-trader-min",
+        "5",
+        "--unique-trader-max",
+        "1000000",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
+}
+
+#[test]
+fn token_hot_tokens_with_holder_filters() {
+    let output = run_with_retry(&[
+        "token",
+        "hot-tokens",
+        "--holders-min",
+        "100",
+        "--holders-max",
+        "10000000",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
+}
+
+#[test]
+fn token_hot_tokens_with_inflow_filters() {
+    let output = run_with_retry(&[
+        "token",
+        "hot-tokens",
+        "--inflow-min",
+        "0",
+        "--inflow-max",
+        "1000000000",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
+}
+
+#[test]
+fn token_hot_tokens_with_fdv_filters() {
+    let output = run_with_retry(&[
+        "token",
+        "hot-tokens",
+        "--fdv-min",
+        "100000",
+        "--fdv-max",
+        "1000000000000",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
+}
+
+#[test]
+fn token_hot_tokens_with_holder_percent_filters() {
+    let output = run_with_retry(&[
+        "token",
+        "hot-tokens",
+        "--top10-hold-percent-min",
+        "0",
+        "--top10-hold-percent-max",
+        "100",
+        "--dev-hold-percent-min",
+        "0",
+        "--dev-hold-percent-max",
+        "50",
+        "--bundle-hold-percent-min",
+        "0",
+        "--bundle-hold-percent-max",
+        "50",
+        "--suspicious-hold-percent-min",
+        "0",
+        "--suspicious-hold-percent-max",
+        "50",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
+}
+
+#[test]
+fn token_hot_tokens_with_boolean_filters() {
+    let output = run_with_retry(&[
+        "token",
+        "hot-tokens",
+        "--chain",
+        "solana",
+        "--is-lp-burnt",
+        "true",
+        "--risk-filter",
+        "true",
+        "--stable-token-filter",
+        "true",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
+}
+
+#[test]
+fn token_hot_tokens_with_xmentioned_filters() {
+    let output = run_with_retry(&[
+        "token",
+        "hot-tokens",
+        "--ranking-type",
+        "5",
+        "--mentioned-count-min",
+        "1",
+        "--mentioned-count-max",
+        "100000",
+        "--social-score-min",
+        "0",
+        "--social-score-max",
+        "1000",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
+}
+
+#[test]
+fn token_hot_tokens_with_protocol_filter() {
+    // 120596 = Pump.fun
+    let output = run_with_retry(&[
+        "token",
+        "hot-tokens",
+        "--chain",
+        "solana",
+        "--project-id",
+        "120596",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
+}
+
+#[test]
+fn token_hot_tokens_with_all_filters() {
+    let output = run_with_retry(&[
+        "token",
+        "hot-tokens",
+        "--ranking-type",
+        "4",
+        "--chain",
+        "solana",
+        "--rank-by",
+        "5",
+        "--time-frame",
+        "4",
+        "--risk-filter",
+        "true",
+        "--stable-token-filter",
+        "true",
+        "--project-id",
+        "120596",
+        "--price-change-min",
+        "0",
+        "--price-change-max",
+        "10000",
+        "--volume-min",
+        "1000",
+        "--volume-max",
+        "1000000000",
+        "--market-cap-min",
+        "10000",
+        "--market-cap-max",
+        "1000000000000",
+        "--liquidity-min",
+        "1000",
+        "--liquidity-max",
+        "1000000000",
+        "--txs-min",
+        "1",
+        "--txs-max",
+        "10000000",
+        "--unique-trader-min",
+        "1",
+        "--unique-trader-max",
+        "1000000",
+        "--holders-min",
+        "10",
+        "--holders-max",
+        "100000000",
+        "--inflow-min",
+        "0",
+        "--inflow-max",
+        "1000000000",
+        "--fdv-min",
+        "10000",
+        "--fdv-max",
+        "1000000000000",
+        "--top10-hold-percent-min",
+        "0",
+        "--top10-hold-percent-max",
+        "100",
+        "--dev-hold-percent-min",
+        "0",
+        "--dev-hold-percent-max",
+        "100",
+        "--bundle-hold-percent-min",
+        "0",
+        "--bundle-hold-percent-max",
+        "100",
+        "--suspicious-hold-percent-min",
+        "0",
+        "--suspicious-hold-percent-max",
+        "100",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected hot tokens data: {data}"
+    );
 }
 
 // ─── advanced-info ─────────────────────────────────────────────────

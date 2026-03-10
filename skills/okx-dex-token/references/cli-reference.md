@@ -132,7 +132,7 @@ onchainos token trending [--chains <chains>] [--sort-by <sort>] [--time-frame <f
 
 ## 5. onchainos token holders
 
-Get token holder distribution (top 20), with optional tag filter.
+Get token holder distribution (top 100), with optional tag filter.
 
 ```bash
 onchainos token holders <address> [--chain <chain>] [--tag-filter <n>]
@@ -144,16 +144,22 @@ onchainos token holders <address> [--chain <chain>] [--tag-filter <n>]
 | `--chain` | No | `ethereum` | Chain name |
 | `--tag-filter` | No | - | Filter by holder tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler |
 
-**Return fields** (top 20 holders):
+**Return fields** (top 100 holders):
 
 | Field | Type | Description |
 |---|---|---|
-| `data[].holderWalletAddress` | String | Holder wallet address |
-| `data[].holdAmount` | String | Token amount held |
-| `data[].holdPercent` | String | Percentage of total supply held |
-| `data[].avgBuyPrice` | String | Average buy price (USD) |
-| `data[].avgSellPrice` | String | Average sell price (USD) |
-| `data[].totalPNL` | String | Total profit and loss (USD) |
+| `holderWalletAddress` | String | Holder wallet address |
+| `holdAmount` | String | Token amount held |
+| `holdPercent` | String | Percentage of total supply held |
+| `nativeTokenBalance` | String | Native token (mainnet) balance |
+| `boughtAmount` | String | Total buy quantity |
+| `avgBuyPrice` | String | Average buy price (USD) |
+| `totalSellAmount` | String | Total sell quantity |
+| `avgSellPrice` | String | Average sell price (USD) |
+| `totalPnlUsd` | String | Total PnL (USD) |
+| `realizedPnlUsd` | String | Realized PnL (USD) |
+| `unrealizedPnlUsd` | String | Unrealized PnL (USD) |
+| `fundingSource` | String | Source of funding for the wallet |
 
 ## 6. onchainos token liquidity
 

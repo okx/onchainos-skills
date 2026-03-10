@@ -57,6 +57,34 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For per-token risk analysis (dev rug pull count, holder concentration, creator info) → use this skill (`advanced-info`)
 
 
+## Keyword Glossary
+
+Users may use Chinese crypto slang or platform-specific terms. Map them to the correct commands:
+
+| Chinese | English / Platform Terms | Maps To |
+|---|---|---|
+| 热门代币 / 热榜 | hot tokens, trending tokens | `token hot-tokens` |
+| Trending榜 / 代币分排名 | trending score ranking | `token hot-tokens --ranking-type 4` |
+| Xmentioned榜 / 推特提及 / 社媒热度 | Twitter mentions ranking, social mentions | `token hot-tokens --ranking-type 5` |
+| 流动性池 / 资金池 | liquidity pools, top pools | `token liquidity` |
+| 烧池子 / LP已销毁 | LP burned, burned liquidity | filter via `token hot-tokens --is-lp-burnt true` |
+| 代币高级信息 / 风控 / 风险等级 | token risk, advanced info, risk level | `token advanced-info` |
+| 貔貅盘 | honeypot | `token advanced-info` (tokenTags: "honeypot") |
+| 内盘 / 内盘代币 | internal token, launch platform token | `token advanced-info` (isInternal) |
+| 开发者跑路 / Rug Pull | rug pull, dev rug | `token advanced-info` (devRugPullTokenCount) |
+| 盈利地址 / 顶级交易员 | top traders, profit addresses | `token top-trader` |
+| 聪明钱 | smart money | `token top-trader --tag-filter 3` or `token holders --tag-filter 3` |
+| 巨鲸 | whale | `token top-trader --tag-filter 4` or `token holders --tag-filter 4` |
+| KOL | KOL / influencer | `token top-trader --tag-filter 1` or `token holders --tag-filter 1` |
+| 狙击手 | sniper | `token top-trader --tag-filter 7` or `token holders --tag-filter 7` |
+| 老鼠仓 / 可疑地址 | suspicious, insider trading | `token top-trader --tag-filter 6` or `token holders --tag-filter 6` |
+| 捆绑交易者 | bundle traders, bundlers | `token top-trader --tag-filter 9` or `token holders --tag-filter 9` |
+| 持币分布 / 持仓分布 | holder distribution | `token holders` |
+| 前十持仓 / Top10集中度 | top 10 holder concentration | `token hot-tokens --top10-hold-percent-min/max` or `token advanced-info` (top10HoldPercent) |
+| 开发者持仓 | dev holding percent | `token hot-tokens --dev-hold-percent-min/max` or `token advanced-info` (devHoldingPercent) |
+| 净流入 | net inflow | `token hot-tokens --inflow-min/max` |
+| 社区认可 | community recognized, verified | `token search` (communityRecognized field) |
+
 ## Quickstart
 
 ```bash
@@ -273,6 +301,8 @@ To search for specific command details: `grep -n "onchainos token <command>" ref
 
 ## Global Notes
 
+- When presenting `advanced-info`, translate `tokenTags` values into human-readable language: `honeypot`→貔貅盘, `lowLiquidity`→低流动性, `devHoldingStatusSellAll`→开发者已全部卖出, `smartMoneyBuy`→聪明钱买入, `communityRecognized`→社区认可, `dexBoost`→Boost活动, `devBurnToken`→开发者燃烧代币, `devAddLiquidity`→开发者添加流动性. Never dump raw tag strings to the user.
+- `riskControlLevel` values: `0`=未定义, `1`=低风险, `2`=中风险, `3`=中高风险, `4`=高风险, `5`=高风险(手动配置)
 - Use contract address as **primary identity** — symbols can collide across tokens
 - `communityRecognized = true` means listed on Top 10 CEX or community verified
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
