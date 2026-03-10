@@ -1,6 +1,6 @@
 # OKX DEX Market — CLI Command Reference
 
-Detailed parameter tables, return field schemas, and usage examples for all 19 market commands.
+Detailed parameter tables, return field schemas, and usage examples for all 18 market commands.
 
 ## 1. onchainos market price
 
@@ -74,40 +74,7 @@ onchainos market kline <address> [--bar <bar>] [--limit <n>] [--chain <chain>]
 | 6 | `volUsd` | String | Trading volume (USD) |
 | 7 | `confirm` | String | `"0"` = uncompleted candle, `"1"` = completed candle |
 
-## 4. onchainos market trades
-
-Get recent raw trades (no tag/wallet filter). For filtered trade history, use `onchainos token trades`.
-
-```bash
-onchainos market trades <address> [--chain <chain>] [--limit <n>]
-```
-
-| Param | Required | Default | Description |
-|---|---|---|---|
-| `<address>` | Yes | - | Token contract address |
-| `--chain` | No | `ethereum` | Chain name |
-| `--limit` | No | `100` | Number of trades (max 500) |
-
-**Return fields**:
-
-| Field | Type | Description |
-|---|---|---|
-| `id` | String | Trade ID |
-| `type` | String | Trade direction: `buy` or `sell` |
-| `price` | String | Trade price in USD |
-| `volume` | String | Trade volume in USD |
-| `time` | String | Trade timestamp (Unix milliseconds) |
-| `dexName` | String | DEX name where trade occurred |
-| `txHashUrl` | String | Transaction hash explorer URL |
-| `userAddress` | String | Wallet address of the trader |
-| `isFiltered` | Boolean | `true` if this trade matched the tag/wallet filter |
-| `poolLogoUrl` | String | Pool logo URL |
-| `changedTokenInfo[]` | Array | Token change details for the trade |
-| `changedTokenInfo[].tokenSymbol` | String | Token symbol |
-| `changedTokenInfo[].tokenContractAddress` | String | Token contract address |
-| `changedTokenInfo[].tokenAmount` | String | Token amount changed |
-
-## 5. onchainos market index
+## 4. onchainos market index
 
 Get index price (aggregated from multiple sources).
 
@@ -129,7 +96,7 @@ onchainos market index <address> [--chain <chain>]
 | `price` | String | Index price (aggregated from multiple sources) |
 | `time` | String | Timestamp (Unix milliseconds) |
 
-## 6. onchainos market signal-chains
+## 5. onchainos market signal-chains
 
 Get supported chains for market signals. No parameters required.
 
@@ -147,7 +114,7 @@ onchainos market signal-chains
 
 > Call this first when signal data is needed — confirm chain support before calling `onchainos market signal-list`.
 
-## 7. onchainos market signal-list
+## 6. onchainos market signal-list
 
 Get latest buy-direction token signals sorted descending by time.
 
@@ -189,7 +156,7 @@ onchainos market signal-list <chain> [options]
 | `token.holders` | String | Number of token holders |
 | `token.top10HolderPercent` | String | Percentage of supply held by top 10 holders |
 
-## 8. onchainos market memepump-chains
+## 7. onchainos market memepump-chains
 
 Get supported chains and protocols for meme pump. No parameters required.
 
@@ -208,7 +175,7 @@ onchainos market memepump-chains
 
 > Currently supports: Solana (501), BSC (56), X Layer (196), TRON (195).
 
-## 9. onchainos market memepump-tokens
+## 8. onchainos market memepump-tokens
 
 List meme pump tokens with advanced filtering. Returns up to 30 tokens per request.
 
@@ -234,7 +201,7 @@ onchainos market memepump-tokens <chain> --stage <stage> [options]
 
 **Return fields**: Array of token objects (same structure as `memepump-token-details` response).
 
-## 10. onchainos market memepump-token-details
+## 9. onchainos market memepump-token-details
 
 Get detailed information for a specific meme pump token.
 
@@ -285,7 +252,7 @@ onchainos market memepump-token-details <address> [--chain <chain>]
 | `bagsFeeClaimed` | Boolean | Bags fee claimed |
 | `aped` | String | Same-car wallet count |
 
-## 11. onchainos market memepump-token-dev-info
+## 10. onchainos market memepump-token-dev-info
 
 Get developer analysis including rug pull history, migration stats, and holding info.
 
@@ -314,7 +281,7 @@ onchainos market memepump-token-dev-info <address> [--chain <chain>]
 
 > **Note**: `devHoldingInfo` may be `null` if the creator address is unavailable.
 
-## 12. onchainos market memepump-similar-tokens
+## 11. onchainos market memepump-similar-tokens
 
 Find similar tokens created by the same developer. Returns at most 2 results.
 
@@ -338,7 +305,7 @@ onchainos market memepump-similar-tokens <address> [--chain <chain>]
 | `data[].lastTxTimestamp` | String | Last transaction timestamp (Unix ms) |
 | `data[].createdTimestamp` | String | Creation timestamp (Unix ms) |
 
-## 13. onchainos market memepump-token-bundle-info
+## 12. onchainos market memepump-token-bundle-info
 
 Get bundle/sniper analysis for a token.
 
@@ -360,7 +327,7 @@ onchainos market memepump-token-bundle-info <address> [--chain <chain>]
 | `bundledValueNative` | String | Total bundled value in native token |
 | `bundledTokenAmount` | String | Total bundled token amount |
 
-## 14. onchainos market memepump-aped-wallet
+## 13. onchainos market memepump-aped-wallet
 
 Get the aped (same-car) wallet list for a token.
 
@@ -384,7 +351,7 @@ onchainos market memepump-aped-wallet <address> [--chain <chain>]
 | `data[].totalPnl` | String | Total PnL in USD |
 | `data[].pnlPercent` | String | PnL percentage |
 
-## 15. onchainos market portfolio-supported-chains
+## 14. onchainos market portfolio-supported-chains
 
 Get the list of chains supported by the portfolio PnL endpoints.
 
@@ -402,7 +369,7 @@ No parameters required.
 | `chainName` | String | Chain name |
 | `chainLogo` | String | Chain logo URL |
 
-## 16. onchainos market portfolio-overview
+## 15. onchainos market portfolio-overview
 
 Get wallet portfolio PnL overview: realized/unrealized PnL, win rate, Top 3 tokens, buy/sell stats.
 
@@ -444,7 +411,7 @@ onchainos market portfolio-overview --address <address> --chain <chain> --time-f
 | `buysByMarketCap[].marketCapRange` | String | Market cap range label |
 | `buysByMarketCap[].buyCount` | String | Buy count in that range |
 
-## 17. onchainos market portfolio-dex-history
+## 16. onchainos market portfolio-dex-history
 
 Get DEX transaction history for a wallet in reverse chronological order (up to 1000 records, 100 per request).
 
@@ -480,7 +447,7 @@ onchainos market portfolio-dex-history --address <address> --chain <chain> --beg
 | `transactionList[].time` | String | Transaction timestamp (milliseconds) |
 | `cursor` | String | Pagination cursor for next page |
 
-## 18. onchainos market portfolio-recent-pnl
+## 17. onchainos market portfolio-recent-pnl
 
 Get recent PnL list for a wallet in reverse chronological order (up to 1000 records, 100 per request).
 
@@ -522,7 +489,7 @@ onchainos market portfolio-recent-pnl --address <address> --chain <chain> [optio
 | `pnlList[].sellTxVolume` | String | Sell transaction volume |
 | `pnlList[].sellAvgPrice` | String | Average sell price |
 
-## 19. onchainos market portfolio-token-pnl
+## 18. onchainos market portfolio-token-pnl
 
 Get the latest PnL snapshot for a specific token in a wallet.
 

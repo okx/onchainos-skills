@@ -10,7 +10,7 @@ metadata:
 
 # OKX DEX Market Data CLI
 
-19 commands for on-chain prices, trades, candlesticks, index prices, smart money signals, meme pump token scanning, and wallet PnL analysis.
+18 commands for on-chain prices, candlesticks, index prices, smart money signals, meme pump token scanning, and wallet PnL analysis.
 
 ## Pre-flight Checks
 
@@ -155,42 +155,41 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | 1 | `onchainos market price <address>` | Get single token price |
 | 2 | `onchainos market prices <tokens>` | Batch price query |
 | 3 | `onchainos market kline <address>` | Get K-line / candlestick data |
-| 4 | `onchainos market trades <address>` | Get recent raw trades |
 
 ### Index Price Commands
 
 | # | Command | Description |
 |---|---|---|
-| 5 | `onchainos market index <address>` | Get index price (aggregated from multiple sources) |
+| 4 | `onchainos market index <address>` | Get index price (aggregated from multiple sources) |
 
 ### Signal Commands
 
 | # | Command | Description |
 |---|---|---|
-| 6 | `onchainos market signal-chains` | Get supported chains for market signals |
-| 7 | `onchainos market signal-list <chain>` | Get latest signal list (smart money / KOL / whale activity) |
+| 5 | `onchainos market signal-chains` | Get supported chains for market signals |
+| 6 | `onchainos market signal-list <chain>` | Get latest signal list (smart money / KOL / whale activity) |
 
 ### Meme Pump Commands
 
 | # | Command | Description |
 |---|---|---|
-| 8 | `onchainos market memepump-chains` | Get supported chains and protocols for meme pump |
-| 9 | `onchainos market memepump-tokens <chain>` | List meme pump tokens with advanced filtering |
-| 10 | `onchainos market memepump-token-details <address>` | Get detailed info for a single meme pump token |
-| 11 | `onchainos market memepump-token-dev-info <address>` | Get developer analysis and holding info |
-| 12 | `onchainos market memepump-similar-tokens <address>` | Find similar tokens by same creator |
-| 13 | `onchainos market memepump-token-bundle-info <address>` | Get bundle/sniper analysis |
-| 14 | `onchainos market memepump-aped-wallet <address>` | Get aped (same-car) wallet list |
+| 7 | `onchainos market memepump-chains` | Get supported chains and protocols for meme pump |
+| 8 | `onchainos market memepump-tokens <chain>` | List meme pump tokens with advanced filtering |
+| 9 | `onchainos market memepump-token-details <address>` | Get detailed info for a single meme pump token |
+| 10 | `onchainos market memepump-token-dev-info <address>` | Get developer analysis and holding info |
+| 11 | `onchainos market memepump-similar-tokens <address>` | Find similar tokens by same creator |
+| 12 | `onchainos market memepump-token-bundle-info <address>` | Get bundle/sniper analysis |
+| 13 | `onchainos market memepump-aped-wallet <address>` | Get aped (same-car) wallet list |
 
 ### Portfolio PnL Commands
 
 | # | Command | Description |
 |---|---|---|
-| 15 | `onchainos market portfolio-supported-chains` | Get chains supported by portfolio PnL endpoints |
-| 16 | `onchainos market portfolio-overview` | Get wallet PnL overview (realized/unrealized PnL, win rate, Top 3 tokens) |
-| 17 | `onchainos market portfolio-dex-history` | Get DEX transaction history for a wallet (paginated, up to 1000 records) |
-| 18 | `onchainos market portfolio-recent-pnl` | Get recent PnL list by token for a wallet (paginated, up to 1000 records) |
-| 19 | `onchainos market portfolio-token-pnl` | Get latest PnL snapshot for a specific token in a wallet |
+| 14 | `onchainos market portfolio-supported-chains` | Get chains supported by portfolio PnL endpoints |
+| 15 | `onchainos market portfolio-overview` | Get wallet PnL overview (realized/unrealized PnL, win rate, Top 3 tokens) |
+| 16 | `onchainos market portfolio-dex-history` | Get DEX transaction history for a wallet (paginated, up to 1000 records) |
+| 17 | `onchainos market portfolio-recent-pnl` | Get recent PnL list by token for a wallet (paginated, up to 1000 records) |
+| 18 | `onchainos market portfolio-token-pnl` | Get latest PnL snapshot for a specific token in a wallet |
 
 ## Boundary: market vs token skill
 
@@ -420,7 +419,7 @@ Present conversationally, e.g.: "Would you like to see the K-line chart, or buy 
 
 ## Additional Resources
 
-For detailed parameter tables, return field schemas, and usage examples for all 19 commands, consult:
+For detailed parameter tables, return field schemas, and usage examples for all 18 commands, consult:
 - **`references/cli-reference.md`** — Full CLI command reference with params, return fields, and examples
 
 To search for specific command details: `grep -n "onchainos market <command>" references/cli-reference.md`

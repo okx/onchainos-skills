@@ -1,5 +1,5 @@
 //! Integration tests for all `onchainos market` commands:
-//! price, prices, kline, trades, index, signals, memepump, and portfolio-*.
+//! price, prices, kline, index, signals, memepump, and portfolio-*.
 //!
 //! These tests run the compiled binary against the live OKX API,
 //! so they require network access and valid API credentials.
@@ -99,26 +99,6 @@ fn market_kline_missing_address_fails() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
-}
-
-// ─── trades ─────────────────────────────────────────────────────────
-
-#[test]
-fn market_trades_returns_recent_trades() {
-    let output = run_with_retry(&[
-        "market",
-        "trades",
-        tokens::SOL_WSOL,
-        "--chain",
-        "solana",
-        "--limit",
-        "5",
-    ]);
-    let data = assert_ok_and_extract_data(&output);
-    assert!(
-        data.is_array() || data.is_object(),
-        "trades data should be array or object: {data}"
-    );
 }
 
 // ─── index ──────────────────────────────────────────────────────────

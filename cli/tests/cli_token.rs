@@ -1,5 +1,5 @@
 //! Integration tests for `onchainos token` commands:
-//! search, info, price-info, trending, holders, liquidity, hot-tokens, advanced-info, top-trader.
+//! search, info, price-info, trending, holders, liquidity, hot-tokens, advanced-info, top-trader, trades.
 
 mod common;
 
@@ -688,6 +688,55 @@ fn token_top_trader_with_tag_filter() {
 fn token_top_trader_missing_address_fails() {
     onchainos()
         .args(["token", "top-trader"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+}
+
+// ─── trades ──────────────────────────────────────────────────────────
+
+#[test]
+fn token_trades_returns_data() {
+    let output = run_with_retry(&[
+        "token",
+        "trades",
+        tokens::SOL_WSOL,
+        "--chain",
+        "solana",
+        "--limit",
+        "5",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "trades data should be array or object: {data}"
+    );
+}
+
+#[test]
+fn token_trades_with_tag_filter() {
+    let output = run_with_retry(&[
+        "token",
+        "trades",
+        tokens::SOL_WSOL,
+        "--chain",
+        "solana",
+        "--limit",
+        "5",
+        "--tag-filter",
+        "1",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "trades data should be array or object: {data}"
+    );
+}
+
+#[test]
+fn token_trades_missing_address_fails() {
+    onchainos()
+        .args(["token", "trades"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));

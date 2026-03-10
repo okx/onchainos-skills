@@ -361,6 +361,7 @@ onchainos token trades <address> [--chain <chain>] [--limit <n>] [--tag-filter <
 | `changedTokenInfo` | Array | Token change details for the trade |
 | `changedTokenInfo[].tokenSymbol` | String | Token symbol |
 | `changedTokenInfo[].tokenAddress` | String | Token contract address |
+| `changedTokenInfo[].tokenLogoUrl` | String | Token logo URL |
 | `changedTokenInfo[].amount` | String | Token amount changed |
 
 ## Input / Output Examples
