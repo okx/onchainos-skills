@@ -275,6 +275,7 @@ After displaying results, suggest 2-3 relevant follow-up actions based on the co
 | `token hot-tokens` | 1. View details for a hot token → `onchainos token price-info` (this skill) 2. Check liquidity pools → `onchainos token liquidity` (this skill) 3. Buy a hot token → `okx-dex-swap` |
 | `token advanced-info` | 1. View holders → `onchainos token holders` (this skill) 2. View top traders → `onchainos token top-trader` (this skill) 3. Buy/swap this token → `okx-dex-swap` |
 | `token top-trader` | 1. View advanced info → `onchainos token advanced-info` (this skill) 2. View holder distribution → `onchainos token holders` (this skill) 3. Buy/swap this token → `okx-dex-swap` |
+| `token trades` | 1. View top traders → `onchainos token top-trader` (this skill) 2. View price chart → `okx-dex-market` 3. Buy/swap this token → `okx-dex-swap` |
 
 Present conversationally, e.g.: "Would you like to see the price chart or check the holder distribution?" — never expose skill names or endpoint paths to the user.
 

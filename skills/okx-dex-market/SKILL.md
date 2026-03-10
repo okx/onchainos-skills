@@ -198,7 +198,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Real-time price (single value) | `onchainos market price` | - |
 | Price + market cap + liquidity + 24h change | - | `onchainos token price-info` |
 | K-line / candlestick chart | `onchainos market kline` | - |
-| Trade history (buy/sell log) | `onchainos market trades` | - |
+| Trade history with tag/wallet filter | - | `onchainos token trades` |
 | Index price (multi-source aggregate) | `onchainos market index` | - |
 | Token search by name/symbol | - | `onchainos token search` |
 | Token metadata (decimals, logo) | - | `onchainos token info` |
