@@ -166,7 +166,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Token trade history with tag/wallet filter | `onchainos token trades` | - |
 | Raw real-time price (single value) | - | `onchainos market price` |
 | K-line / candlestick chart | - | `onchainos market kline` |
-| Raw trade feed (no tag/wallet filter) | - | `onchainos market trades` |
+| Wallet PnL overview / DEX transaction history | - | `onchainos market portfolio-*` |
 | Index price (multi-source aggregate) | - | `onchainos market index` |
 | Token risk analysis (dev rug pull count, holder %) | `onchainos token advanced-info` | - |
 | Meme token dev reputation / rug pull history | - | `onchainos market memepump-token-dev-info` |
