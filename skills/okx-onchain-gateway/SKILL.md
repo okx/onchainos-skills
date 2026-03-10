@@ -1,10 +1,10 @@
 ---
 name: okx-onchain-gateway
-description: "This skill should be used when the user asks to 'broadcast transaction', 'send tx', 'estimate gas', 'simulate transaction', 'check tx status', 'track my transaction', 'get gas price', 'gas limit', 'broadcast signed tx', or mentions broadcasting transactions, sending transactions on-chain, gas estimation, transaction simulation, tracking broadcast orders, or checking transaction status. Covers gas price, gas limit estimation, transaction simulation, transaction broadcasting, and order tracking across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. Do NOT use for swap quote or execution — use okx-dex-swap instead. Do NOT use for general programming questions about transaction handling."
+description: "This skill should be used when the user asks to 'broadcast transaction', 'send tx', 'estimate gas', 'simulate transaction', 'check tx status', 'track my transaction', 'get gas price', 'gas limit', 'broadcast signed tx', or mentions broadcasting transactions, sending transactions on-chain, gas estimation, transaction simulation, tracking broadcast orders, or checking transaction status. Covers gas price, gas limit estimation, transaction simulation, transaction broadcasting, and order tracking across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. Do NOT use for swap quote or execution - use okx-dex-swap instead. Do NOT use for general programming questions about transaction handling."
 license: Apache-2.0
 metadata:
   author: okx
-  version: "1.0.1"
+  version: "1.0.2"
   homepage: "https://web3.okx.com"
 ---
 
@@ -40,7 +40,7 @@ Every time before running any `onchainos` command, always follow these steps in 
    ```
 4. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
    ```
-   OKX_API_KEY=
+   OKX_API_KEY=          # or OKX_ACCESS_KEY
    OKX_SECRET_KEY=
    OKX_PASSPHRASE=
    ```

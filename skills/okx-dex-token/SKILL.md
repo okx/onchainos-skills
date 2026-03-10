@@ -1,10 +1,10 @@
 ---
 name: okx-dex-token
-description: "This skill should be used when the user asks to 'find a token', 'search for a token', 'look up PEPE', 'what\\'s trending', 'top tokens', 'trending tokens on Solana', 'token rankings', 'who holds this token', 'holder distribution', 'token market cap', 'token liquidity', 'research a token', 'tell me about this token', 'token info', or mentions searching for tokens by name or address, discovering trending tokens, viewing token rankings, checking holder distribution, or analyzing token market cap and liquidity. Covers token search, metadata, market cap, liquidity, volume, trending token rankings, and holder analysis across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. Do NOT use when the user says only a single generic word like 'tokens' or 'crypto' without specifying a token name, action, or question. For simple current price checks, price charts, candlestick data, or trade history, use okx-dex-market instead. For meme token safety analysis, developer reputation, rug pull checks, bundle/sniper detection, or finding tokens by same creator, use okx-dex-market instead."
+description: "This skill should be used when the user asks to 'find a token', 'search for a token', 'look up PEPE', 'what's trending', 'top tokens', 'trending tokens on Solana', 'token rankings', 'who holds this token', 'holder distribution', 'token market cap', 'token liquidity', 'research a token', 'tell me about this token', 'token info', or mentions searching for tokens, discovering trending tokens, viewing rankings, checking holder distribution, or analyzing market cap and liquidity. Covers token search, metadata, market cap, liquidity, volume, trending rankings, and holder analysis across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. Do NOT use when the user says only a generic word like 'tokens' without a specific token name or action. For price charts, K-line, trades, or signals use okx-dex-market. For meme token safety, dev reputation, rug pulls, or bundle/sniper detection use okx-dex-market."
 license: Apache-2.0
 metadata:
   author: okx
-  version: "1.0.1"
+  version: "1.0.2"
   homepage: "https://web3.okx.com"
 ---
 
@@ -40,7 +40,7 @@ Every time before running any `onchainos` command, always follow these steps in 
    ```
 4. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
    ```
-   OKX_API_KEY=
+   OKX_API_KEY=          # or OKX_ACCESS_KEY
    OKX_SECRET_KEY=
    OKX_PASSPHRASE=
    ```

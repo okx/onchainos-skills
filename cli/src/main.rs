@@ -38,6 +38,7 @@ pub enum OutputFormat {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum Commands {
     /// Market data
     Market {

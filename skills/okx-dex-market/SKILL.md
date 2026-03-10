@@ -1,10 +1,10 @@
 ---
 name: okx-dex-market
-description: "Use this skill when users want live on-chain market data: token prices, price charts (K-line, OHLC), trade history, swap activity. Also, it covers on-chain signals — smart money, whale, and KOL wallet activity, large trades, and signal-supported chains. For meme tokens: scanning new launches, checking dev wallets, developer reputation, rug pull detection, rug pull history, tokens by same creator, detecting bundles or snipers, bonding curves %, flagging suspicious launches, and meme token safety checks. For token search, market cap, liquidity, trending tokens, or holder distribution, use okx-dex-token instead."
+description: "This skill should be used when the user asks about live on-chain market data: token prices, price charts (K-line, OHLC), trade history, or swap activity. Also covers on-chain signals — smart money, whale, and KOL wallet activity, large trades, and signal-supported chains. For meme tokens: scanning new launches (扫链/trenches，golden dog, alpha, pump fun), checking dev wallets, developer reputation, rug pull detection, tokens by same creator, bundle/sniper detection, bonding curves, and meme token safety checks. For token search, market cap, liquidity, trending tokens, or holder distribution, use okx-dex-token instead."
 license: Apache-2.0
 metadata:
   author: okx
-  version: "1.0.1"
+  version: "1.0.2"
   homepage: "https://web3.okx.com"
 ---
 
@@ -40,7 +40,7 @@ Every time before running any `onchainos` command, always follow these steps in 
    ```
 4. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
    ```
-   OKX_API_KEY=
+   OKX_API_KEY=          # or OKX_ACCESS_KEY
    OKX_SECRET_KEY=
    OKX_PASSPHRASE=
    ```
@@ -54,6 +54,28 @@ Every time before running any `onchainos` command, always follow these steps in 
 - Signal data (smart money / whale / KOL buy signals, signal-supported chains) → use `okx-dex-market`
 - Meme pump scanning (token lists, dev info, bundle detection, aped wallets) → use `okx-dex-market`
 - Meme token safety (rug pull check, dev reputation, bundler/sniper analysis, similar tokens by same dev) → use `okx-dex-market`
+- **"Trenches" / "扫链"** (scanning for new meme tokens) → use `okx-dex-market` memepump commands (NOT signal commands)
+
+## Keyword Glossary
+
+Users may use Chinese crypto slang, English equivalents, or platform-specific terms. Map them to the correct commands:
+
+| Chinese | English / Platform Terms | Maps To |
+|---|---|---|
+| 扫链 | trenches, memerush, 战壕, 打狗 | `memepump-tokens` |
+| 同车 | aped, same-car, co-invested | `memepump-aped-wallet` |
+| 牛人榜 | leaderboard, top traders, smart money ranking | `signal-list` (filter by `--wallet-type`) |
+| 开发者信息 | dev info, developer reputation, rug check | `memepump-token-dev-info` |
+| 捆绑/狙击 | bundler, sniper, bundle analysis | `memepump-token-bundle-info` |
+| 行情 | market data, price, chart | `price`, `kline`, `trades` |
+| 持仓分析 | holding analysis, holder distribution | `memepump-token-details` (tags fields) |
+| 社媒筛选 | social filter | `memepump-tokens --has-x`, `--has-telegram`, etc. |
+| 新盘 / 迁移中 / 已迁移 | NEW / MIGRATING / MIGRATED | `memepump-tokens --stage` |
+| pumpfun / bonkers / bonk / believe / bags / mayhem | protocol names (launch platforms) | `memepump-tokens --protocol-id-list <id>` |
+
+**Protocol names are NOT token names.** When a user mentions pumpfun, bonkers, bonk, etc., look up their IDs via `onchainos market memepump-chains`, then pass to `--protocol-id-list`. Multiple protocols: comma-separate the IDs (e.g. `--protocol-id-list <bonkers_id>,<bonk_id>`).
+
+When presenting `memepump-token-details` or `memepump-token-dev-info` responses, translate JSON field names (e.g., `top10HoldingsPercent` → "top-10 holder concentration", `rugPullCount` → "rug pull count / 跑路次数", `bondingPercent` → "bonding curve progress") into human-readable language. Never dump raw field names to the user.
 
 ## Quickstart
 
@@ -257,7 +279,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 - Smart money / whale / KOL buy signals → `onchainos market signal-list`
 - Chains supporting signals → `onchainos market signal-chains`
 - Discover meme pump supported chains/protocols → `onchainos market memepump-chains`
-- Browse/filter meme tokens by stage → `onchainos market memepump-tokens`
+- **Trenches / 扫链** / browse/filter meme tokens by stage → `onchainos market memepump-tokens`
 - Deep-dive into a specific meme token → `onchainos market memepump-token-details`
 - Check meme token developer reputation → `onchainos market memepump-token-dev-info`
 - Find similar tokens by same creator → `onchainos market memepump-similar-tokens`
@@ -269,6 +291,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 - Missing chain → recommend XLayer (`--chain xlayer`, low gas, fast confirmation) as the default, then ask which chain the user prefers; for signal queries, first call `onchainos market signal-chains` to confirm the chain is supported; for meme pump queries, default to Solana (`--chain solana`)
 - Missing token address → use `okx-dex-token` `onchainos token search` first to resolve; for signal queries, `--token-address` is optional (omit to get all signals on the chain); for meme pump, use `onchainos market memepump-tokens` first to discover tokens
 - Missing `--stage` for memepump-tokens → ask user which stage (NEW / MIGRATING / MIGRATED)
+- User mentions a protocol name (pumpfun, bonkers, bonk, believe, bags, mayhem, fourmeme, etc.) → first call `onchainos market memepump-chains` to get the protocol ID, then pass `--protocol-id-list <id>` to `memepump-tokens`. Do NOT use `okx-dex-token` to search for protocol names as tokens.
 - K-line requests → confirm bar size and time range with user
 - Signal filter params (`--wallet-type`, `--min-amount-usd`, etc.) → ask user for preferences if not specified; default to no filter (returns all signal types)
 
@@ -277,6 +300,8 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 - Call directly, return formatted results
 - Use appropriate precision: 2 decimals for high-value tokens, significant digits for low-value
 - Show USD value alongside
+- Translate field names per the Keyword Glossary — never dump raw JSON keys. For `memepump-token-dev-info`, present as a developer reputation report. For `memepump-token-details`, present as a token safety summary highlighting red/green flags.
+- When listing tokens from `memepump-tokens`, never merge or deduplicate entries that share the same symbol. Different tokens can have identical symbols but different contract addresses — each is a distinct token and must be shown separately. Always include the contract address to distinguish them.
 
 ### Step 4: Suggest Next Steps
 
@@ -518,17 +543,60 @@ onchainos market memepump-tokens <chain> --stage <stage> [options]
 |---|---|---|---|
 | `<chain>` | Yes | - | Chain name (e.g., `solana`, `bsc`) (positional) |
 | `--stage` | Yes | - | Token stage: `NEW`, `MIGRATING`, or `MIGRATED` |
-| `--protocol-id` | No | - | Filter by protocol ID (get IDs from `memepump-chains`) |
-| `--sort-by` | No | - | Sort field: `marketCap`, `volume1h`, `txCount1h`, `createdTimestamp`, `bondingPercent` |
-| `--sort-order` | No | - | Sort direction: `asc` or `desc` |
-| `--min-age` | No | - | Minimum token age in minutes |
-| `--max-age` | No | - | Maximum token age in minutes |
+| `--wallet-address` | No | - | Wallet address for position-specific data |
+| `--protocol-id-list` | No | - | Comma-separated protocol IDs to filter (get IDs from `memepump-chains`) |
+| `--quote-token-address-list` | No | - | Comma-separated quote token addresses |
+| `--min-top10-holdings-percent` | No | - | Min top 10 holders percentage (0-100) |
+| `--max-top10-holdings-percent` | No | - | Max top 10 holders percentage (0-100) |
+| `--min-dev-holdings-percent` | No | - | Min developer holdings percentage |
+| `--max-dev-holdings-percent` | No | - | Max developer holdings percentage |
+| `--min-insiders-percent` | No | - | Min insider wallet percentage |
+| `--max-insiders-percent` | No | - | Max insider wallet percentage |
+| `--min-bundlers-percent` | No | - | Min bundler wallet percentage |
+| `--max-bundlers-percent` | No | - | Max bundler wallet percentage |
+| `--min-snipers-percent` | No | - | Min sniper wallet percentage |
+| `--max-snipers-percent` | No | - | Max sniper wallet percentage |
+| `--min-fresh-wallets-percent` | No | - | Min newly-created wallet percentage |
+| `--max-fresh-wallets-percent` | No | - | Max newly-created wallet percentage |
+| `--min-suspected-phishing-wallet-percent` | No | - | Min phishing wallet percentage |
+| `--max-suspected-phishing-wallet-percent` | No | - | Max phishing wallet percentage |
+| `--min-bot-traders` | No | - | Min bot trader wallet count |
+| `--max-bot-traders` | No | - | Max bot trader wallet count |
+| `--min-dev-migrated` | No | - | Min tokens migrated by developer |
+| `--max-dev-migrated` | No | - | Max tokens migrated by developer |
 | `--min-market-cap` | No | - | Minimum market cap in USD |
 | `--max-market-cap` | No | - | Maximum market cap in USD |
-| `--min-volume` | No | - | Minimum 1h volume in USD |
-| `--max-volume` | No | - | Maximum 1h volume in USD |
-| `--min-tx-count` | No | - | Minimum 1h transaction count |
-| `--max-tx-count` | No | - | Maximum 1h transaction count |
+| `--min-volume` | No | - | Minimum 24h volume in USD |
+| `--max-volume` | No | - | Maximum 24h volume in USD |
+| `--min-tx-count` | No | - | Minimum transaction count |
+| `--max-tx-count` | No | - | Maximum transaction count |
+| `--min-bonding-percent` | No | - | Min bonding curve completion (0-100) |
+| `--max-bonding-percent` | No | - | Max bonding curve completion (0-100) |
+| `--min-holders` | No | - | Minimum unique holder count |
+| `--max-holders` | No | - | Maximum unique holder count |
+| `--min-token-age` | No | - | Minimum token age in minutes |
+| `--max-token-age` | No | - | Maximum token age in minutes. When stage=MIGRATED, age counts from migration time |
+| `--min-buy-tx-count` | No | - | Min buy transactions (last 1 hour) |
+| `--max-buy-tx-count` | No | - | Max buy transactions (last 1 hour) |
+| `--min-sell-tx-count` | No | - | Min sell transactions (last 1 hour) |
+| `--max-sell-tx-count` | No | - | Max sell transactions (last 1 hour) |
+| `--min-token-symbol-length` | No | - | Min ticker symbol length |
+| `--max-token-symbol-length` | No | - | Max ticker symbol length |
+| `--has-at-least-one-social-link` | No | - | Require at least one social link (true/false) |
+| `--has-x` | No | - | Require X (Twitter) link (true/false) |
+| `--has-telegram` | No | - | Require Telegram link (true/false) |
+| `--has-website` | No | - | Require website link (true/false) |
+| `--website-type-list` | No | - | Website types: 0=official, 1=YouTube, 2=Twitch, etc. |
+| `--dex-screener-paid` | No | - | Filter by DexScreener promotion status (true/false) |
+| `--live-on-pump-fun` | No | - | Filter by PumpFun live stream status (true/false) |
+| `--dev-sell-all` | No | - | Filter by developer liquidation status (true/false) |
+| `--dev-still-holding` | No | - | Filter by developer holding status (true/false) |
+| `--community-takeover` | No | - | Filter by community takeover status (true/false) |
+| `--bags-fee-claimed` | No | - | Filter by fee claim status (true/false) |
+| `--min-fees-native` | No | - | Minimum fees in native currency |
+| `--max-fees-native` | No | - | Maximum fees in native currency |
+| `--keywords-include` | No | - | Include tokens matching keyword (case-insensitive) |
+| `--keywords-exclude` | No | - | Exclude tokens matching keyword (case-insensitive) |
 
 **Return fields**: Array of token objects (same structure as `memepump-token-details` response).
 
@@ -537,13 +605,14 @@ onchainos market memepump-tokens <chain> --stage <stage> [options]
 Get detailed information for a specific meme pump token.
 
 ```bash
-onchainos market memepump-token-details <address> [--chain <chain>]
+onchainos market memepump-token-details <address> [--chain <chain>] [--wallet <wallet>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `<address>` | Yes | - | Token contract address (positional) |
 | `--chain` | No | `solana` | Chain name |
+| `--wallet` | No | - | User wallet address (for position and P&L data) |
 
 **Return fields**:
 
@@ -581,6 +650,7 @@ onchainos market memepump-token-details <address> [--chain <chain>]
 | `social.communityTakeover` | Boolean | Community takeover flag |
 | `social.liveOnPumpFun` | Boolean | Currently live on Pump.fun |
 | `bagsFeeClaimed` | Boolean | Bags fee claimed |
+| `mayhemModeTimeRemaining` | String | Pump.fun Mayhem Mode time remaining (seconds, empty if inactive) |
 | `aped` | String | Same-car wallet count |
 
 ### 11. onchainos market memepump-token-dev-info
@@ -663,13 +733,14 @@ onchainos market memepump-token-bundle-info <address> [--chain <chain>]
 Get the aped (same-car) wallet list for a token.
 
 ```bash
-onchainos market memepump-aped-wallet <address> [--chain <chain>]
+onchainos market memepump-aped-wallet <address> [--chain <chain>] [--wallet <wallet>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `<address>` | Yes | - | Token contract address (positional) |
 | `--chain` | No | `solana` | Chain name |
+| `--wallet` | No | - | User wallet address (to highlight if present in aped wallets) |
 
 **Return fields**:
 
@@ -717,6 +788,13 @@ onchainos market signal-list ethereum --wallet-type 3 --min-amount-usd 10000
 ```bash
 onchainos market memepump-tokens solana --stage NEW
 # → Display list of new meme pump tokens with market data and audit tags
+```
+
+**User says:** "Find Solana meme tokens matching a phrase and exclude another keyword"
+
+```bash
+onchainos market memepump-tokens solana --stage NEW --keywords-include "dog wif" --keywords-exclude "cat"
+# → Filter meme pump tokens by case-insensitive keyword phrases
 ```
 
 **User says:** "Is this meme token safe? Check the developer"
