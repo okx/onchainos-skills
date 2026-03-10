@@ -111,12 +111,18 @@ pub enum TokenCommand {
         /// Max liquidity (USD)
         #[arg(long)]
         liquidity_max: Option<String>,
-        /// Min transaction count
+        /// Min transaction count (tradeAmount)
         #[arg(long)]
         transaction_min: Option<String>,
-        /// Max transaction count
+        /// Max transaction count (tradeAmount)
         #[arg(long)]
         transaction_max: Option<String>,
+        /// Min txs count
+        #[arg(long)]
+        txs_min: Option<String>,
+        /// Max txs count
+        #[arg(long)]
+        txs_max: Option<String>,
         /// Min unique traders
         #[arg(long)]
         unique_trader_min: Option<String>,
@@ -129,10 +135,10 @@ pub enum TokenCommand {
         /// Max holders
         #[arg(long)]
         holders_max: Option<String>,
-        /// Min net inflow (USD)
+        /// Min net inflow USD
         #[arg(long)]
         inflow_min: Option<String>,
-        /// Max net inflow (USD)
+        /// Max net inflow USD
         #[arg(long)]
         inflow_max: Option<String>,
         /// Min FDV (USD)
@@ -242,6 +248,8 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             liquidity_max,
             transaction_min,
             transaction_max,
+            txs_min,
+            txs_max,
             unique_trader_min,
             unique_trader_max,
             holders_min,
@@ -286,6 +294,8 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
                     liquidity_max,
                     transaction_min,
                     transaction_max,
+                    txs_min,
+                    txs_max,
                     unique_trader_min,
                     unique_trader_max,
                     holders_min,
@@ -449,6 +459,8 @@ struct HotTokensParams {
     liquidity_max: Option<String>,
     transaction_min: Option<String>,
     transaction_max: Option<String>,
+    txs_min: Option<String>,
+    txs_max: Option<String>,
     unique_trader_min: Option<String>,
     unique_trader_max: Option<String>,
     holders_min: Option<String>,
@@ -496,6 +508,8 @@ async fn hot_tokens(ctx: &Context, params: HotTokensParams) -> Result<()> {
     let liquidity_max = params.liquidity_max.unwrap_or_default();
     let transaction_min = params.transaction_min.unwrap_or_default();
     let transaction_max = params.transaction_max.unwrap_or_default();
+    let txs_min = params.txs_min.unwrap_or_default();
+    let txs_max = params.txs_max.unwrap_or_default();
     let unique_trader_min = params.unique_trader_min.unwrap_or_default();
     let unique_trader_max = params.unique_trader_max.unwrap_or_default();
     let holders_min = params.holders_min.unwrap_or_default();
@@ -531,13 +545,15 @@ async fn hot_tokens(ctx: &Context, params: HotTokensParams) -> Result<()> {
                 ("rankingTimeFrame", time_frame.as_str()),
                 ("riskFilter", risk_filter.as_str()),
                 ("stableTokenFilter", stable_token_filter.as_str()),
-                ("projectid", project_id.as_str()),
+                ("protocolId", project_id.as_str()),
                 ("priceChangePercentMin", price_change_min.as_str()),
                 ("priceChangePercentMax", price_change_max.as_str()),
                 ("volumeMin", volume_min.as_str()),
                 ("volumeMax", volume_max.as_str()),
                 ("tradeAmountMin", transaction_min.as_str()),
                 ("tradeAmountMax", transaction_max.as_str()),
+                ("txsMin", txs_min.as_str()),
+                ("txsMax", txs_max.as_str()),
                 ("uniqueTraderMin", unique_trader_min.as_str()),
                 ("uniqueTraderMax", unique_trader_max.as_str()),
                 ("marketCapMin", market_cap_min.as_str()),
@@ -546,8 +562,8 @@ async fn hot_tokens(ctx: &Context, params: HotTokensParams) -> Result<()> {
                 ("liquidityMax", liquidity_max.as_str()),
                 ("holdersMin", holders_min.as_str()),
                 ("holdersMax", holders_max.as_str()),
-                ("inflowMin", inflow_min.as_str()),
-                ("inflowMax", inflow_max.as_str()),
+                ("inflowUsdMin", inflow_min.as_str()),
+                ("inflowUsdMax", inflow_max.as_str()),
                 ("fdvMin", fdv_min.as_str()),
                 ("fdvMax", fdv_max.as_str()),
                 ("mentionedCountMin", mentioned_count_min.as_str()),

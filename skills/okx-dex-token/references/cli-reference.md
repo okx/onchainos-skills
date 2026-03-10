@@ -172,14 +172,15 @@ onchainos token liquidity <address> [--chain <chain>]
 
 | Field | Type | Description |
 |---|---|---|
-| `pairAddress` | String | Pool/pair contract address |
-| `dexName` | String | DEX name (e.g., `"Uniswap V3"`) |
-| `quoteTokenAddress` | String | Quote token contract address |
-| `quoteTokenSymbol` | String | Quote token symbol |
-| `liquidityUsd` | String | Total liquidity in USD |
-| `volumeUsd24h` | String | 24-hour trading volume in USD |
-| `fee` | String | Pool fee tier |
-| `createdTime` | String | Pool creation timestamp (Unix ms) |
+| `pool` | String | Pool name (e.g., `"Punch/SOL"`) |
+| `protocolName` | String | Protocol name |
+| `liquidityUsd` | String | Liquidity value in USD |
+| `liquidityAmount` | Array | Liquidity amounts |
+| `liquidityAmount[].tokenAmount` | String | Token amount in the liquidity pool |
+| `liquidityAmount[].tokenSymbol` | String | Token symbol in the liquidity pool |
+| `liquidityProviderFeePercent` | String | Liquidity provider fee percentage |
+| `poolAddress` | String | Pool contract address |
+| `poolCreator` | String | Pool creator address |
 
 ## 7. onchainos token hot-tokens
 
@@ -209,10 +210,11 @@ onchainos token hot-tokens [--ranking-type <type>] [--chain <chain>] [--rank-by 
 | `--volume-min` / `--volume-max` | Volume range in USD |
 | `--market-cap-min` / `--market-cap-max` | Market cap range in USD |
 | `--liquidity-min` / `--liquidity-max` | Liquidity range in USD |
-| `--transaction-min` / `--transaction-max` | Transaction count range |
+| `--transaction-min` / `--transaction-max` | Trade amount (tradeAmount) range |
+| `--txs-min` / `--txs-max` | Transaction count (txs) range |
 | `--unique-trader-min` / `--unique-trader-max` | Unique trader count range |
 | `--holders-min` / `--holders-max` | Holder count range |
-| `--inflow-min` / `--inflow-max` | Net inflow range in USD |
+| `--inflow-min` / `--inflow-max` | Net inflow USD range |
 | `--fdv-min` / `--fdv-max` | Fully diluted valuation range in USD |
 | `--mentioned-count-min` / `--mentioned-count-max` | Mention count range (for Xmentioned ranking) |
 | `--social-score-min` / `--social-score-max` | Social score range |
@@ -228,19 +230,29 @@ onchainos token hot-tokens [--ranking-type <type>] [--chain <chain>] [--rank-by 
 
 | Field | Type | Description |
 |---|---|---|
-| `tokenContractAddress` | String | Token contract address |
-| `tokenSymbol` | String | Token symbol |
-| `tokenName` | String | Token full name |
-| `tokenLogoUrl` | String | Token logo image URL |
 | `chainIndex` | String | Chain identifier |
-| `price` | String | Current price in USD |
-| `change` | String | Price change percentage (for selected time frame) |
-| `volume` | String | Trading volume in USD |
+| `tokenSymbol` | String | Token symbol |
+| `tokenLogoUrl` | String | Token logo image URL |
+| `tokenContractAddress` | String | Token contract address |
 | `marketCap` | String | Market capitalization in USD |
+| `volume` | String | Trading volume in USD |
+| `firstTradeTime` | String | First trade timestamp (Unix ms) |
+| `change` | String | Price change percentage (for selected time frame) |
 | `liquidity` | String | Total liquidity in USD |
+| `price` | String | Current price in USD |
 | `holders` | String | Number of token holders |
-| `trendingScore` | String | Trending score (for ranking type 4) |
-| `mentionedCount` | String | X/Twitter mention count (for ranking type 5) |
+| `uniqueTraders` | String | Number of unique traders |
+| `txsBuy` | String | Buy transaction count |
+| `txsSell` | String | Sell transaction count |
+| `txs` | String | Total transaction count |
+| `inflowUsd` | String | Net inflow in USD |
+| `riskLevelControl` | String | Risk control level |
+| `devHoldPercent` | String | Developer holding percentage |
+| `top10HoldPercent` | String | Top-10 holders combined percentage |
+| `insiderHoldPercent` | String | Insider holding percentage |
+| `bundleHoldPercent` | String | Bundle holding percentage |
+| `vibeScore` | String | Vibe score |
+| `mentionsCount` | String | X/Twitter mention count |
 
 ## 8. onchainos token advanced-info
 
@@ -265,7 +277,7 @@ onchainos token advanced-info <address> [--chain <chain>]
 | `isInternal` | Boolean | Whether the token is internal |
 | `protocolId` | String | Protocol identifier |
 | `progress` | String | Token progress (e.g., bonding curve %) |
-| `tokenTags` | Array | Tags associated with the token |
+| `tokenTags` | Array\<String\> | Active tag labels for the token. Possible values: `honeypot`, `dexBoost`, `lowLiquidity`, `communityRecognized`, `devHoldingStatusSell`, `devHoldingStatusSellAll`, `devHoldingStatusBuy`, `initialHighLiquidity`, `smartMoneyBuy`, `devAddLiquidity`, `devBurnToken`, `volumeChangeRateHoldersPlunge`, `holdersChangeRateHoldersSurge`, `dexScreenerTokenCommunityTakeOver`, `dexScreenerPaid` |
 | `createTime` | String | Token creation timestamp |
 | `creatorAddress` | String | Creator wallet address |
 | `devRugPullTokenCount` | String | Number of tokens by dev that were rug pulls |
