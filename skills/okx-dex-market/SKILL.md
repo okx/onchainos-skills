@@ -70,7 +70,7 @@ Users may use Chinese crypto slang, English equivalents, or platform-specific te
 | 牛人榜 | leaderboard, top traders, smart money ranking | `signal-list` (filter by `--wallet-type`) |
 | 开发者信息 | dev info, developer reputation, rug check | `memepump-token-dev-info` |
 | 捆绑/狙击 | bundler, sniper, bundle analysis | `memepump-token-bundle-info` |
-| 行情 | market data, price, chart | `price`, `kline`, `trades` |
+| 行情 | market data, price, chart | `price`, `kline` |
 | 持仓分析 | holding analysis, holder distribution | `memepump-token-details` (tags fields) |
 | 社媒筛选 | social filter | `memepump-tokens --has-x`, `--has-telegram`, etc. |
 | 新盘 / 迁移中 / 已迁移 | NEW / MIGRATING / MIGRATED | `memepump-tokens --stage` |
