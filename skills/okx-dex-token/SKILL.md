@@ -1,6 +1,6 @@
 ---
 name: okx-dex-token
-description: "This skill should be used when the user asks to 'find a token', 'search for BONK', 'look up PEPE', 'what is trending', 'top tokens on Solana', 'who holds this token', 'show whale holders', 'filter holders by smart money', 'is this token risky', 'show advanced info', 'show top traders', 'profit addresses for this token', 'show hot tokens', 'what tokens are trending on Twitter', 'show liquidity pools', 'top pools for this token', or mentions token search, discovery, trending rankings, hot token lists (trending score or X/Twitter mentions), liquidity pool analysis, holder distribution, holder filtering by tag (whale, smart money, KOL, sniper), advanced token info (risk level, creator, dev stats, holder concentration), or top trader/profit address analysis. Covers search, metadata, market cap, liquidity pools, volume, trending, hot tokens, holders, advanced info, and top traders across 20+ chains. Do NOT use for a single generic word like 'tokens' without context. For price charts, candlestick data, or trade history, use okx-dex-market. For memepump safety analysis, use okx-dex-market."
+description: "This skill should be used when the user asks to 'find a token', 'search for BONK', 'look up PEPE', 'what is trending', 'top tokens on Solana', 'who holds this token', 'show whale holders', 'filter holders by smart money', 'is this token risky', 'show advanced info', 'show top traders', 'profit addresses for this token', 'show hot tokens', 'what tokens are trending on Twitter', 'show liquidity pools', 'top pools for this token', 'show token trade history', 'show KOL trades for this token', or mentions token search, discovery, trending rankings, hot token lists (trending score or X/Twitter mentions), liquidity pool analysis, holder distribution, holder filtering by tag (whale, smart money, KOL, sniper), advanced token info (risk level, creator, dev stats, holder concentration), top trader/profit address analysis, or token trade history with tag/wallet filters. Covers search, metadata, market cap, liquidity pools, volume, trending, hot tokens, holders, advanced info, top traders, and filtered trade history across 20+ chains. Do NOT use for a single generic word like 'tokens' without context. For price charts, candlestick data, or raw trade feed, use okx-dex-market. For memepump safety analysis, use okx-dex-market."
 
 license: Apache-2.0
 metadata:
@@ -11,7 +11,7 @@ metadata:
 
 # OKX DEX Token Info CLI
 
-9 commands for token search, metadata, detailed pricing, rankings, liquidity pools, hot token lists, holder distribution, advanced token info, and top trader analysis.
+10 commands for token search, metadata, detailed pricing, rankings, liquidity pools, hot token lists, holder distribution, advanced token info, top trader analysis, and filtered trade history.
 
 ## Pre-flight Checks
 
@@ -148,6 +148,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | 7 | `onchainos token hot-tokens` | Get hot token list ranked by trending score or X mentions (max 100) |
 | 8 | `onchainos token advanced-info <address>` | Get advanced token info (risk level, creator, dev stats, holder concentration) |
 | 9 | `onchainos token top-trader <address>` | Get top traders / profit addresses for a token |
+| 10 | `onchainos token trades <address>` | Get token DEX trade history with optional tag/wallet filters |
 
 ## Boundary: token vs market skill
 
@@ -163,9 +164,10 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Hot tokens by trending score or X mentions | `onchainos token hot-tokens` | - |
 | Advanced token info (risk, creator, dev stats) | `onchainos token advanced-info` | - |
 | Top traders / profit addresses | `onchainos token top-trader` | - |
+| Token trade history with tag/wallet filter | `onchainos token trades` | - |
 | Raw real-time price (single value) | - | `onchainos market price` |
 | K-line / candlestick chart | - | `onchainos market kline` |
-| Trade history (buy/sell log) | - | `onchainos market trades` |
+| Raw trade feed (no tag/wallet filter) | - | `onchainos market trades` |
 | Index price (multi-source aggregate) | - | `onchainos market index` |
 | Token risk analysis (dev rug pull count, holder %) | `onchainos token advanced-info` | - |
 | Meme token dev reputation / rug pull history | - | `onchainos market memepump-token-dev-info` |
@@ -173,7 +175,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Similar tokens by same creator | - | `onchainos market memepump-similar-tokens` |
 | Market-wide smart money / whale / KOL alerts | - | `onchainos market signal-list` |
 
-**Rule of thumb**: `okx-dex-token` = token discovery & enriched analytics (search, trending, holders, holder filtering, market cap, advanced info, top traders, token risk). `okx-dex-market` = raw price feeds, charts, market-wide smart money signal alerts & meme pump scanning (including dev reputation, rug pull history, bundler analysis).
+**Rule of thumb**: `okx-dex-token` = token discovery & enriched analytics (search, trending, holders, holder filtering, market cap, advanced info, top traders, token risk, filtered trade history). `okx-dex-market` = raw price feeds, charts, market-wide smart money signal alerts & meme pump scanning (including dev reputation, rug pull history, bundler analysis).
 
 ## Cross-Skill Workflows
 

@@ -76,10 +76,10 @@ onchainos market kline <address> [--bar <bar>] [--limit <n>] [--chain <chain>]
 
 ## 4. onchainos market trades
 
-Get recent trades.
+Get recent raw trades (no tag/wallet filter). For filtered trade history, use `onchainos token trades`.
 
 ```bash
-onchainos market trades <address> [--chain <chain>] [--limit <n>] [--tag-filter <n>] [--wallet-filter <addrs>]
+onchainos market trades <address> [--chain <chain>] [--limit <n>]
 ```
 
 | Param | Required | Default | Description |
@@ -87,8 +87,6 @@ onchainos market trades <address> [--chain <chain>] [--limit <n>] [--tag-filter 
 | `<address>` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name |
 | `--limit` | No | `100` | Number of trades (max 500) |
-| `--tag-filter` | No | - | Filter by trader tag: `1`=KOL, `2`=Developer, `6`=Insider |
-| `--wallet-filter` | No | - | Wallet address filter, comma-separated (max 10 addresses) |
 
 **Return fields**:
 

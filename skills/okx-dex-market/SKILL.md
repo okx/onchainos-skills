@@ -155,7 +155,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | 1 | `onchainos market price <address>` | Get single token price |
 | 2 | `onchainos market prices <tokens>` | Batch price query |
 | 3 | `onchainos market kline <address>` | Get K-line / candlestick data |
-| 4 | `onchainos market trades <address>` | Get recent trades (with optional KOL/dev/insider and wallet filters) |
+| 4 | `onchainos market trades <address>` | Get recent raw trades |
 
 ### Index Price Commands
 
@@ -399,7 +399,7 @@ After displaying results, suggest 2-3 relevant follow-up actions based on the co
 |---|---|
 | `market price` | 1. View K-line chart → `onchainos market kline` (this skill) 2. Deeper analytics (market cap, liquidity, 24h volume) → `okx-dex-token` 3. Buy/swap this token → `okx-dex-swap` |
 | `market kline` | 1. Check recent trades → `onchainos market trades` (this skill) 2. Buy/swap based on the chart → `okx-dex-swap` |
-| `market trades` | 1. View price chart for context → `onchainos market kline` (this skill) 2. Execute a trade → `okx-dex-swap` 3. Filter by KOL wallets → rerun with `--tag-filter 1` |
+| `market trades` | 1. View price chart for context → `onchainos market kline` (this skill) 2. Execute a trade → `okx-dex-swap` 3. Filter by KOL/whale wallets → use `onchainos token trades --tag-filter 1` (okx-dex-token) |
 | `market index` | 1. Compare with on-chain DEX price → `onchainos market price` (this skill) 2. View full price chart → `onchainos market kline` (this skill) |
 | `market signal-list` | 1. View price chart for a signal token → `onchainos market kline` (this skill) 2. Deep token analytics (market cap, liquidity) → `okx-dex-token` 3. Buy the token → `okx-dex-swap` |
 | `market signal-chains` | 1. Fetch signals on a supported chain → `onchainos market signal-list` (this skill) |

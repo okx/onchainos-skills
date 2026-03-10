@@ -1,6 +1,6 @@
 # OKX DEX Token — CLI Command Reference
 
-Detailed parameter tables, return field schemas, and usage examples for all 9 token commands.
+Detailed parameter tables, return field schemas, and usage examples for all 10 token commands.
 
 ## 1. onchainos token search
 
@@ -327,6 +327,41 @@ onchainos token top-trader <address> [--chain <chain>] [--tag-filter <n>]
 | `realizedPnlUsd` | String | Realized PnL (USD) |
 | `unrealizedPnlUsd` | String | Unrealized PnL (USD) |
 | `fundingSource` | String | Funding source of the wallet |
+
+## 10. onchainos token trades
+
+Get token DEX trade history with optional tag and wallet address filters.
+
+```bash
+onchainos token trades <address> [--chain <chain>] [--limit <n>] [--tag-filter <n>] [--wallet-filter <addrs>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `<address>` | Yes | - | Token contract address |
+| `--chain` | No | `ethereum` | Chain name |
+| `--limit` | No | `100` | Number of trades (max 500) |
+| `--tag-filter` | No | - | Filter by trader tag: `1`=KOL, `2`=Developer, `3`=Smart Money, `4`=Whale, `5`=Fresh Wallet, `6`=Insider, `7`=Sniper, `8`=Suspicious Phishing, `9`=Bundler |
+| `--wallet-filter` | No | - | Wallet address filter, comma-separated (max 10 addresses) |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | String | Trade ID |
+| `type` | String | Trade direction: `buy` or `sell` |
+| `price` | String | Trade price in USD |
+| `volume` | String | Trade volume in USD |
+| `time` | String | Trade timestamp (Unix milliseconds) |
+| `dexName` | String | DEX name where trade occurred |
+| `txHashUrl` | String | Transaction hash explorer URL |
+| `userAddress` | String | Wallet address of the trader |
+| `isFiltered` | String | `"1"` if this trade matched the tag/wallet filter, `"0"` otherwise |
+| `poolLogoUrl` | String | Pool logo URL |
+| `changedTokenInfo` | Array | Token change details for the trade |
+| `changedTokenInfo[].tokenSymbol` | String | Token symbol |
+| `changedTokenInfo[].tokenAddress` | String | Token contract address |
+| `changedTokenInfo[].amount` | String | Token amount changed |
 
 ## Input / Output Examples
 
