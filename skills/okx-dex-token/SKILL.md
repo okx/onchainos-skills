@@ -143,9 +143,9 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | 2 | `onchainos token info <address>` | Get token basic info (name, symbol, decimals, logo) |
 | 3 | `onchainos token price-info <address>` | Get detailed price info (price, market cap, liquidity, volume, 24h change) |
 | 4 | `onchainos token trending` | Get trending / top tokens |
-| 5 | `onchainos token holders <address>` | Get token holder distribution (top 20, with optional tag filter) |
+| 5 | `onchainos token holders <address>` | Get token holder distribution (top 100, with optional tag filter) |
 | 6 | `onchainos token liquidity <address>` | Get top 5 liquidity pools for a token |
-| 7 | `onchainos token hot-tokens` | Get hot token list ranked by trending score or X mentions (max 200) |
+| 7 | `onchainos token hot-tokens` | Get hot token list ranked by trending score or X mentions (max 100) |
 | 8 | `onchainos token advanced-info <address>` | Get advanced token info (risk level, creator, dev stats, holder concentration) |
 | 9 | `onchainos token top-trader <address>` | Get top traders / profit addresses for a token |
 
@@ -187,7 +187,7 @@ This skill is the typical **entry point** — users often start by searching/dis
 1. okx-dex-token    onchainos token search BONK --chains solana              → get tokenContractAddress, chain, price
        ↓ tokenContractAddress
 2. okx-dex-token    onchainos token price-info <address> --chain solana      → market cap, liquidity, volume24H, priceChange24H
-3. okx-dex-token    onchainos token holders <address> --chain solana         → top 20 holders distribution
+3. okx-dex-token    onchainos token holders <address> --chain solana         → top 100 holders distribution
 4. okx-dex-market   onchainos market kline <address> --chain solana --bar 1H → hourly price chart
        ↓ user decides to buy
 5. okx-dex-swap     onchainos swap quote --from ... --to <address> --amount ... --chain solana

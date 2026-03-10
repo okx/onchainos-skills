@@ -190,7 +190,7 @@ onchainos token liquidity <address> [--chain <chain>]
 
 ## 7. onchainos token hot-tokens
 
-Get hot token list ranked by trending score or X/Twitter mentions (max 200 results).
+Get hot token list ranked by trending score or X/Twitter mentions (max 100 results).
 
 ```bash
 onchainos token hot-tokens [--ranking-type <type>] [--chain <chain>] [--rank-by <field>] [--time-frame <frame>] [options]
@@ -354,5 +354,5 @@ onchainos token trending --chains solana --sort-by 5 --time-frame 4
 
 ```bash
 onchainos token holders 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
-# -> Display top 20 holders with amounts and addresses
+# -> Display top 100 holders with amounts and addresses
 ```

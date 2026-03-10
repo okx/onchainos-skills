@@ -62,7 +62,7 @@ pub enum TokenCommand {
         #[arg(long)]
         chain: Option<String>,
     },
-    /// Get hot token list ranked by trending score or X mentions (max 200 results)
+    /// Get hot token list ranked by trending score or X mentions (max 100 results)
     HotTokens {
         /// Ranking type: 4=Trending (token score), 5=Xmentioned (Twitter mentions)
         #[arg(long, default_value = "4")]
