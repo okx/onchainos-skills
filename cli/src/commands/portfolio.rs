@@ -247,12 +247,7 @@ async fn all_balances(
 }
 
 /// GET /api/v6/dex/market/portfolio/overview
-async fn overview(
-    ctx: &Context,
-    address: &str,
-    chain: &str,
-    time_frame: &str,
-) -> Result<()> {
+async fn overview(ctx: &Context, address: &str, chain: &str, time_frame: &str) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain);
     let client = ctx.client()?;
     let query: Vec<(&str, &str)> = vec![
@@ -330,12 +325,7 @@ async fn recent_pnl(
 }
 
 /// GET /api/v6/dex/market/portfolio/token/latest-pnl
-async fn token_pnl(
-    ctx: &Context,
-    address: &str,
-    chain: &str,
-    token: &str,
-) -> Result<()> {
+async fn token_pnl(ctx: &Context, address: &str, chain: &str, token: &str) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain);
     let client = ctx.client()?;
     let query: Vec<(&str, &str)> = vec![

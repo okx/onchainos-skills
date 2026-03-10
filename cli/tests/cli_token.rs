@@ -1,4 +1,4 @@
-//! Integration tests for `onchainos token` commands (search, info, price-info, trending, holders).
+//! Integration tests for `onchainos token` commands (search, info, price-info, trending, holders, advanced-info, top-trader).
 
 mod common;
 
@@ -141,9 +141,84 @@ fn token_holders_usdc_on_ethereum() {
 }
 
 #[test]
+fn token_holders_with_tag_filter() {
+    let output = run_with_retry(&[
+        "token",
+        "holders",
+        tokens::ETH_USDC,
+        "--chain",
+        "ethereum",
+        "--tag-filter",
+        "4",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected holder data: {data}"
+    );
+}
+
+#[test]
 fn token_holders_missing_address_fails() {
     onchainos()
         .args(["token", "holders"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+}
+
+// ─── advanced-info ─────────────────────────────────────────────────
+
+#[test]
+fn token_advanced_info_on_solana() {
+    let output = run_with_retry(&[
+        "token",
+        "advanced-info",
+        tokens::SOL_WSOL,
+        "--chain",
+        "solana",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(data.is_object(), "expected object: {data}");
+}
+
+#[test]
+fn token_advanced_info_missing_address_fails() {
+    onchainos()
+        .args(["token", "advanced-info"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+}
+
+// ─── top-trader ────────────────────────────────────────────────────
+
+#[test]
+fn token_top_trader_on_solana() {
+    let output = run_with_retry(&["token", "top-trader", tokens::SOL_WSOL, "--chain", "solana"]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(data.is_array() || data.is_object(), "expected data: {data}");
+}
+
+#[test]
+fn token_top_trader_with_tag_filter() {
+    let output = run_with_retry(&[
+        "token",
+        "top-trader",
+        tokens::SOL_WSOL,
+        "--chain",
+        "solana",
+        "--tag-filter",
+        "3",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(data.is_array() || data.is_object(), "expected data: {data}");
+}
+
+#[test]
+fn token_top_trader_missing_address_fails() {
+    onchainos()
+        .args(["token", "top-trader"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
