@@ -23,7 +23,7 @@ pub enum TokenCommand {
         #[arg(long)]
         chain: Option<String>,
     },
-    /// Get token holder distribution (top 20)
+    /// Get token holder distribution (top 100)
     Holders {
         /// Token contract address
         address: String,
