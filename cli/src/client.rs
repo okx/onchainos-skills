@@ -20,7 +20,9 @@ pub struct ApiClient {
 
 impl ApiClient {
     pub fn new(base_url_override: Option<&str>) -> Result<Self> {
-        let api_key = std::env::var("OKX_API_KEY").unwrap_or_else(|_| DEFAULT_API_KEY.to_string());
+        let api_key = std::env::var("OKX_API_KEY")
+            .or_else(|_| std::env::var("OKX_ACCESS_KEY"))
+            .unwrap_or_else(|_| DEFAULT_API_KEY.to_string());
         let secret_key =
             std::env::var("OKX_SECRET_KEY").unwrap_or_else(|_| DEFAULT_SECRET_KEY.to_string());
         let passphrase =
@@ -65,31 +67,40 @@ impl ApiClient {
             .header("ok-client-type", "cli")
     }
 
-    /// GET request. `path` should be the API path without query string (e.g. "/api/v6/dex/market/candles").
-    /// Query params are appended and included in the signature.
-    pub async fn get(&self, path: &str, query: &[(&str, &str)]) -> Result<Value> {
+    fn build_get_url_and_request_path(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+    ) -> Result<(reqwest::Url, String)> {
         let filtered: Vec<(&str, &str)> = query
             .iter()
             .filter(|(_, v)| !v.is_empty())
             .copied()
             .collect();
 
-        let query_string = if filtered.is_empty() {
-            String::new()
-        } else {
-            let pairs: Vec<String> = filtered
-                .iter()
-                .map(|(k, v)| format!("{}={}", k, v))
-                .collect();
-            format!("?{}", pairs.join("&"))
-        };
+        let mut url =
+            reqwest::Url::parse(&format!("{}{}", self.base_url.trim_end_matches('/'), path))?;
 
+        if !filtered.is_empty() {
+            url.query_pairs_mut().extend_pairs(filtered.iter().copied());
+        }
+
+        let query_string = url
+            .query()
+            .map(|query| format!("?{}", query))
+            .unwrap_or_default();
         let request_path = format!("{}{}", path, query_string);
+
+        Ok((url, request_path))
+    }
+
+    /// GET request. `path` should be the API path without query string (e.g. "/api/v6/dex/market/candles").
+    /// Query params are appended and included in the signature.
+    pub async fn get(&self, path: &str, query: &[(&str, &str)]) -> Result<Value> {
+        let (url, request_path) = self.build_get_url_and_request_path(path, query)?;
         let timestamp = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let sign = self.sign(&timestamp, "GET", &request_path, "");
-
-        let url = format!("{}{}", self.base_url.trim_end_matches('/'), request_path);
-        let req = self.http.get(&url);
+        let req = self.http.get(url);
         let req = self.apply_auth(req, &timestamp, &sign);
 
         let resp = req.send().await.context("request failed")?;
@@ -129,5 +140,31 @@ impl ApiClient {
         }
 
         Ok(body["data"].clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ApiClient;
+
+    #[test]
+    fn build_get_request_path_percent_encodes_query_values() {
+        let client = ApiClient::new(None).expect("client");
+        let (_, request_path) = client
+            .build_get_url_and_request_path(
+                "/api/v6/dex/market/memepump/tokenList",
+                &[
+                    ("chainIndex", "501"),
+                    ("keywordsInclude", "dog wif"),
+                    ("keywordsExclude", "狗"),
+                    ("empty", ""),
+                ],
+            )
+            .expect("request path");
+
+        assert_eq!(
+            request_path,
+            "/api/v6/dex/market/memepump/tokenList?chainIndex=501&keywordsInclude=dog+wif&keywordsExclude=%E7%8B%97"
+        );
     }
 }

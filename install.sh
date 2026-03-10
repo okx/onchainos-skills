@@ -91,8 +91,8 @@ install_binary() {
   tmpdir=$(mktemp -d)
   trap 'rm -rf "$tmpdir"' EXIT
 
-  curl -sSfL "$url" -o "$tmpdir/$binary_name"
-  curl -sSfL "$checksums_url" -o "$tmpdir/checksums.txt"
+  curl -sSL "$url" -o "$tmpdir/$binary_name"
+  curl -sSL "$checksums_url" -o "$tmpdir/checksums.txt"
 
   expected_hash=$(grep "$binary_name" "$tmpdir/checksums.txt" | awk '{print $1}')
   if [ -z "$expected_hash" ]; then
@@ -182,7 +182,7 @@ main() {
   fi
 
   # Fetch latest release tag from GitHub API
-  tag=$(curl -sSf "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
+  tag=$(curl -sS "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
   if [ -z "$tag" ]; then
     echo "Error: could not determine latest release" >&2
     exit 1

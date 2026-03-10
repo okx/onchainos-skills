@@ -4,7 +4,7 @@ description: "This skill should be used when the user asks to 'swap tokens', 'tr
 license: Apache-2.0
 metadata:
   author: okx
-  version: "1.0.1"
+  version: "1.0.2"
   homepage: "https://web3.okx.com"
 ---
 
@@ -40,7 +40,7 @@ Every time before running any `onchainos` command, always follow these steps in 
    ```
 4. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
    ```
-   OKX_API_KEY=
+   OKX_API_KEY=          # or OKX_ACCESS_KEY
    OKX_SECRET_KEY=
    OKX_PASSPHRASE=
    ```
