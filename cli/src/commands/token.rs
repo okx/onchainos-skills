@@ -431,7 +431,7 @@ async fn trending(ctx: &Context, chains: &str, sort_by: &str, time_frame: &str) 
     Ok(())
 }
 
-/// GET /api/v6/dex/market/token/liquidity — top 5 liquidity pools for a token
+/// GET /api/v6/dex/market/token/top-liquidity — top 5 liquidity pools for a token
 async fn liquidity(ctx: &Context, address: &str, chain: Option<String>) -> Result<()> {
     let chain_index = chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
@@ -439,7 +439,7 @@ async fn liquidity(ctx: &Context, address: &str, chain: Option<String>) -> Resul
     let client = ctx.client()?;
     let data = client
         .get(
-            "/api/v6/dex/market/token/liquidity",
+            "/api/v6/dex/market/token/top-liquidity",
             &[
                 ("chainIndex", chain_index.as_str()),
                 ("tokenContractAddress", address),
