@@ -10,6 +10,7 @@ pub enum TokenCommand {
     /// Search for tokens by name, symbol, or address
     Search {
         /// Search keyword (name, symbol, or contract address)
+        #[arg(long)]
         query: String,
         /// Chains to search (comma-separated, e.g. "ethereum,solana")
         #[arg(long, default_value = "1,501")]
@@ -18,6 +19,7 @@ pub enum TokenCommand {
     /// Get token basic info (name, symbol, decimals, logo)
     Info {
         /// Token contract address
+        #[arg(long)]
         address: String,
         /// Chain
         #[arg(long)]
@@ -26,6 +28,7 @@ pub enum TokenCommand {
     /// Get token holder distribution (top 100)
     Holders {
         /// Token contract address
+        #[arg(long)]
         address: String,
         /// Chain
         #[arg(long)]
@@ -49,6 +52,7 @@ pub enum TokenCommand {
     /// Get detailed price info (price, market cap, liquidity, volume, 24h change)
     PriceInfo {
         /// Token contract address
+        #[arg(long)]
         address: String,
         /// Chain
         #[arg(long)]
@@ -57,6 +61,7 @@ pub enum TokenCommand {
     /// Get top 5 liquidity pools for a token
     Liquidity {
         /// Token contract address
+        #[arg(long)]
         address: String,
         /// Chain (e.g. ethereum, base, bsc)
         #[arg(long)]
@@ -196,6 +201,7 @@ pub enum TokenCommand {
     /// Get advanced token info (risk, creator, dev stats, holder concentration)
     AdvancedInfo {
         /// Token contract address
+        #[arg(long)]
         address: String,
         /// Chain
         #[arg(long)]
@@ -204,6 +210,7 @@ pub enum TokenCommand {
     /// Get top traders (profit addresses) for a token
     TopTrader {
         /// Token contract address
+        #[arg(long)]
         address: String,
         /// Chain
         #[arg(long)]
@@ -215,6 +222,7 @@ pub enum TokenCommand {
     /// Get token trade history on DEX, with optional tag and wallet filters
     Trades {
         /// Token contract address
+        #[arg(long)]
         address: String,
         /// Chain
         #[arg(long)]

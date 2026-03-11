@@ -102,7 +102,7 @@ This skill is often used **before swap** (to verify sufficient balance) or **as 
 > User: "Swap 1 SOL for BONK"
 
 ```
-1. okx-dex-token    onchainos token search BONK --chains solana               → get tokenContractAddress
+1. okx-dex-token    onchainos token search --query BONK --chains solana               → get tokenContractAddress
        ↓ tokenContractAddress
 2. okx-wallet-portfolio  onchainos portfolio all-balances --address <addr> --chains solana
        → verify SOL balance >= 1
@@ -126,8 +126,8 @@ This skill is often used **before swap** (to verify sufficient balance) or **as 
 2. okx-wallet-portfolio  onchainos portfolio all-balances --address <addr> --chains "xlayer,solana,ethereum"
        → per-token breakdown
        ↓ top holdings by USD value
-3. okx-dex-token    onchainos token price-info <address> --chain <chain>  → enrich with 24h change, market cap
-4. okx-dex-market   onchainos market kline <address> --chain <chain>      → price charts for tokens of interest
+3. okx-dex-token    onchainos token price-info --address <address> --chain <chain>  → enrich with 24h change, market cap
+4. okx-dex-market   onchainos market kline --address <address> --chain <chain>      → price charts for tokens of interest
 ```
 
 ### Workflow C: Sell Underperforming Tokens
@@ -136,7 +136,7 @@ This skill is often used **before swap** (to verify sufficient balance) or **as 
 1. okx-wallet-portfolio  onchainos portfolio all-balances --address <addr> --chains "xlayer,solana,ethereum"
        → list all holdings
        ↓ tokenContractAddress + chainIndex for each
-2. okx-dex-token    onchainos token price-info <address> --chain <chain>  → get priceChange24H per token
+2. okx-dex-token    onchainos token price-info --address <address> --chain <chain>  → get priceChange24H per token
 3. Filter by negative change → user confirms which to sell
 4. okx-dex-swap     onchainos swap quote → onchainos swap swap → execute sell
 ```

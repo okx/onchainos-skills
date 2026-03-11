@@ -11,6 +11,7 @@ pub enum MarketCommand {
     /// Get token price (by contract address)
     Price {
         /// Token contract address
+        #[arg(long)]
         address: String,
         /// Chain (e.g. ethereum, solana, xlayer)
         #[arg(long)]
@@ -19,6 +20,7 @@ pub enum MarketCommand {
     /// Get prices for multiple tokens (POST, batch query)
     Prices {
         /// Comma-separated chainIndex:address pairs (e.g. "1:0xeee...,501:1111...")
+        #[arg(long)]
         tokens: String,
         /// Default chain if not specified per token
         #[arg(long)]
@@ -27,6 +29,7 @@ pub enum MarketCommand {
     /// Get K-line / candlestick data
     Kline {
         /// Token contract address
+        #[arg(long)]
         address: String,
         /// Bar size: 1s, 1m, 5m, 15m, 30m, 1H, 4H, 1D, 1W, etc.
         #[arg(long, default_value = "1H")]
@@ -41,6 +44,7 @@ pub enum MarketCommand {
     /// Get index price (aggregated from multiple sources)
     Index {
         /// Token contract address (empty string for native token)
+        #[arg(long)]
         address: String,
         /// Chain
         #[arg(long)]
@@ -53,6 +57,7 @@ pub enum MarketCommand {
     /// Get Meme Pump token list (filtered)
     MemepumpTokens {
         /// Chain (e.g. solana, bsc). Required.
+        #[arg(long)]
         chain: String,
         /// Token stage: NEW, MIGRATING, or MIGRATED (required by API)
         #[arg(long)]
@@ -231,6 +236,7 @@ pub enum MarketCommand {
     /// Get Meme Pump token details
     MemepumpTokenDetails {
         /// Token contract address
+        #[arg(long)]
         address: String,
         /// Chain (e.g. solana, bsc)
         #[arg(long)]
@@ -242,6 +248,7 @@ pub enum MarketCommand {
     /// Get Meme Pump token developer info
     MemepumpTokenDevInfo {
         /// Token contract address
+        #[arg(long)]
         address: String,
         /// Chain (e.g. solana, bsc)
         #[arg(long)]
@@ -250,6 +257,7 @@ pub enum MarketCommand {
     /// Get similar tokens for a Meme Pump token
     MemepumpSimilarTokens {
         /// Token contract address
+        #[arg(long)]
         address: String,
         /// Chain (e.g. solana, bsc)
         #[arg(long)]
@@ -258,6 +266,7 @@ pub enum MarketCommand {
     /// Get Meme Pump token bundle (bundler/sniper) info
     MemepumpTokenBundleInfo {
         /// Token contract address
+        #[arg(long)]
         address: String,
         /// Chain (e.g. solana, bsc)
         #[arg(long)]
@@ -266,6 +275,7 @@ pub enum MarketCommand {
     /// Get Meme Pump aped (co-invested) wallet data
     MemepumpApedWallet {
         /// Token contract address
+        #[arg(long)]
         address: String,
         /// Chain (e.g. solana, bsc)
         #[arg(long)]
@@ -345,6 +355,7 @@ pub enum MarketCommand {
     /// Get latest signal list (smart money / KOL / whale activity)
     SignalList {
         /// Chain (e.g. ethereum, solana, base). Required.
+        #[arg(long)]
         chain: String,
         /// Wallet type filter: 1=Smart Money, 2=KOL/Influencer, 3=Whales (comma-separated for multiple, e.g. "1,2")
         #[arg(long)]

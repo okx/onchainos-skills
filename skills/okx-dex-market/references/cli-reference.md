@@ -7,12 +7,12 @@ Detailed parameter tables, return field schemas, and usage examples for all 18 m
 Get single token price.
 
 ```bash
-onchainos market price <address> [--chain <chain>]
+onchainos market price --address <address> [--chain <chain>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<address>` | Yes | - | Token contract address (positional) |
+| `--address` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name (e.g., `ethereum`, `solana`, `xlayer`) |
 
 **Return fields**:
@@ -29,12 +29,12 @@ onchainos market price <address> [--chain <chain>]
 Batch price query for multiple tokens.
 
 ```bash
-onchainos market prices <tokens> [--chain <chain>]
+onchainos market prices --tokens <tokens> [--chain <chain>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<tokens>` | Yes | - | Comma-separated tokens. Format: `chainIndex:address` pairs (e.g., `"1:0xeee...,501:So111..."`) or plain addresses with `--chain` |
+| `--tokens` | Yes | - | Comma-separated tokens. Format: `chainIndex:address` pairs (e.g., `"1:0xeee...,501:So111..."`) or plain addresses with `--chain` |
 | `--chain` | No | `ethereum` | Default chain for tokens without explicit chainIndex prefix |
 
 **Return fields** (per token):
@@ -51,12 +51,12 @@ onchainos market prices <tokens> [--chain <chain>]
 Get K-line / candlestick data.
 
 ```bash
-onchainos market kline <address> [--bar <bar>] [--limit <n>] [--chain <chain>]
+onchainos market kline --address <address> [--bar <bar>] [--limit <n>] [--chain <chain>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<address>` | Yes | - | Token contract address |
+| `--address` | Yes | - | Token contract address |
 | `--bar` | No | `1H` | Bar size: `1s`, `1m`, `5m`, `15m`, `30m`, `1H`, `4H`, `1D`, `1W`, etc. |
 | `--limit` | No | `100` | Number of data points (max 299) |
 | `--chain` | No | `ethereum` | Chain name |
@@ -79,12 +79,12 @@ onchainos market kline <address> [--bar <bar>] [--limit <n>] [--chain <chain>]
 Get index price (aggregated from multiple sources).
 
 ```bash
-onchainos market index <address> [--chain <chain>]
+onchainos market index --address <address> [--chain <chain>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<address>` | Yes | - | Token contract address (empty string `""` for native token) |
+| `--address` | Yes | - | Token contract address (empty string `""` for native token) |
 | `--chain` | No | `ethereum` | Chain name |
 
 **Return fields**:
@@ -119,12 +119,12 @@ onchainos market signal-chains
 Get latest buy-direction token signals sorted descending by time.
 
 ```bash
-onchainos market signal-list <chain> [options]
+onchainos market signal-list --chain <chain> [options]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<chain>` | Yes | - | Chain name (e.g., `ethereum`, `solana`, `base`) (positional) |
+| `--chain` | Yes | - | Chain name (e.g., `ethereum`, `solana`, `base`) |
 | `--wallet-type` | No | all types | Wallet classification, comma-separated: `1`=Smart Money, `2`=KOL/Influencer, `3`=Whale (e.g., `"1,2"`) |
 | `--min-amount-usd` | No | - | Minimum transaction amount in USD |
 | `--max-amount-usd` | No | - | Maximum transaction amount in USD |
@@ -180,12 +180,12 @@ onchainos market memepump-chains
 List meme pump tokens with advanced filtering. Returns up to 30 tokens per request.
 
 ```bash
-onchainos market memepump-tokens <chain> --stage <stage> [options]
+onchainos market memepump-tokens --chain <chain> --stage <stage> [options]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<chain>` | Yes | - | Chain name (e.g., `solana`, `bsc`) (positional) |
+| `--chain` | Yes | - | Chain name (e.g., `solana`, `bsc`) |
 | `--stage` | Yes | - | Token stage: `NEW`, `MIGRATING`, or `MIGRATED` |
 | `--protocol-id` | No | - | Filter by protocol ID (get IDs from `memepump-chains`) |
 | `--sort-by` | No | - | Sort field: `marketCap`, `volume1h`, `txCount1h`, `createdTimestamp`, `bondingPercent` |
@@ -206,12 +206,12 @@ onchainos market memepump-tokens <chain> --stage <stage> [options]
 Get detailed information for a specific meme pump token.
 
 ```bash
-onchainos market memepump-token-details <address> [--chain <chain>]
+onchainos market memepump-token-details --address <address> [--chain <chain>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<address>` | Yes | - | Token contract address (positional) |
+| `--address` | Yes | - | Token contract address |
 | `--chain` | No | `solana` | Chain name |
 
 **Return fields**:
@@ -257,12 +257,12 @@ onchainos market memepump-token-details <address> [--chain <chain>]
 Get developer analysis including rug pull history, migration stats, and holding info.
 
 ```bash
-onchainos market memepump-token-dev-info <address> [--chain <chain>]
+onchainos market memepump-token-dev-info --address <address> [--chain <chain>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<address>` | Yes | - | Token contract address (positional) |
+| `--address` | Yes | - | Token contract address |
 | `--chain` | No | `solana` | Chain name |
 
 **Return fields**:
@@ -286,12 +286,12 @@ onchainos market memepump-token-dev-info <address> [--chain <chain>]
 Find similar tokens created by the same developer. Returns at most 2 results.
 
 ```bash
-onchainos market memepump-similar-tokens <address> [--chain <chain>]
+onchainos market memepump-similar-tokens --address <address> [--chain <chain>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<address>` | Yes | - | Token contract address (positional) |
+| `--address` | Yes | - | Token contract address |
 | `--chain` | No | `solana` | Chain name |
 
 **Return fields**:
@@ -310,12 +310,12 @@ onchainos market memepump-similar-tokens <address> [--chain <chain>]
 Get bundle/sniper analysis for a token.
 
 ```bash
-onchainos market memepump-token-bundle-info <address> [--chain <chain>]
+onchainos market memepump-token-bundle-info --address <address> [--chain <chain>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<address>` | Yes | - | Token contract address (positional) |
+| `--address` | Yes | - | Token contract address |
 | `--chain` | No | `solana` | Chain name |
 
 **Return fields**:
@@ -332,12 +332,12 @@ onchainos market memepump-token-bundle-info <address> [--chain <chain>]
 Get the aped (same-car) wallet list for a token.
 
 ```bash
-onchainos market memepump-aped-wallet <address> [--chain <chain>]
+onchainos market memepump-aped-wallet --address <address> [--chain <chain>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<address>` | Yes | - | Token contract address (positional) |
+| `--address` | Yes | - | Token contract address |
 | `--chain` | No | `solana` | Chain name |
 
 **Return fields**:
@@ -520,48 +520,48 @@ onchainos market portfolio-token-pnl --address <address> --chain <chain> --token
 **User says:** "Check the current price of OKB on XLayer"
 
 ```bash
-onchainos market price 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
+onchainos market price --address 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
 # -> Display: OKB current price $XX.XX
 ```
 
 **User says:** "Show me hourly candles for USDC on XLayer"
 
 ```bash
-onchainos market kline 0x74b7f16337b8972027f6196a17a631ac6de26d22 --chain xlayer --bar 1H
+onchainos market kline --address 0x74b7f16337b8972027f6196a17a631ac6de26d22 --chain xlayer --bar 1H
 # -> Display candlestick data (open/high/low/close/volume)
 ```
 
 **User says:** "What are smart money wallets buying on Solana?"
 
 ```bash
-onchainos market signal-list solana --wallet-type 1
+onchainos market signal-list --chain solana --wallet-type 1
 # -> Display smart money buy signals with token info
 ```
 
 **User says:** "Show me whale buys above $10k on Ethereum"
 
 ```bash
-onchainos market signal-list ethereum --wallet-type 3 --min-amount-usd 10000
+onchainos market signal-list --chain ethereum --wallet-type 3 --min-amount-usd 10000
 # -> Display whale-only signals, min $10k
 ```
 
 **User says:** "Show me new meme tokens on Solana"
 
 ```bash
-onchainos market memepump-tokens solana --stage NEW
+onchainos market memepump-tokens --chain solana --stage NEW
 # -> Display list of new meme pump tokens with market data and audit tags
 ```
 
 **User says:** "Is this meme token safe? Check the developer"
 
 ```bash
-onchainos market memepump-token-dev-info <address> --chain solana
+onchainos market memepump-token-dev-info --address <address> --chain solana
 # -> Display dev rug pull count, migration count, golden gems, dev holding info
 ```
 
 **User says:** "Check if this token has bundler activity"
 
 ```bash
-onchainos market memepump-token-bundle-info <address> --chain solana
+onchainos market memepump-token-bundle-info --address <address> --chain solana
 # -> Display bundler count, bundled value, bundled token amount
 ```

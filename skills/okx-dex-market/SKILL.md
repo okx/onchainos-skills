@@ -92,31 +92,31 @@ When presenting `memepump-token-details` or `memepump-token-dev-info` responses,
 
 ```bash
 # Get real-time price of OKB on XLayer
-onchainos market price 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
+onchainos market price --address 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
 
 # Get hourly candles
-onchainos market kline 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer --bar 1H --limit 24
+onchainos market kline --address 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer --bar 1H --limit 24
 
 # Solana SOL candles (use wSOL SPL token address for candles/trades)
-onchainos market kline So11111111111111111111111111111111111111112 --chain solana --bar 1H --limit 24
+onchainos market kline --address So11111111111111111111111111111111111111112 --chain solana --bar 1H --limit 24
 
 # Get batch prices for multiple tokens
-onchainos market prices "1:0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee,501:So11111111111111111111111111111111111111112"
+onchainos market prices --tokens "1:0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee,501:So11111111111111111111111111111111111111112"
 
 # Get smart money signals on Solana
-onchainos market signal-list solana --wallet-type "1,2,3" --min-amount-usd 1000
+onchainos market signal-list --chain solana --wallet-type "1,2,3" --min-amount-usd 1000
 
 # Get supported chains and protocols for meme pump
 onchainos market memepump-chains
 
 # List new meme pump tokens on Solana
-onchainos market memepump-tokens solana --stage NEW
+onchainos market memepump-tokens --chain solana --stage NEW
 
 # Get meme pump token details
-onchainos market memepump-token-details <address> --chain solana
+onchainos market memepump-token-details --address <address> --chain solana
 
 # Check developer reputation for a meme token
-onchainos market memepump-token-dev-info <address> --chain solana
+onchainos market memepump-token-dev-info --address <address> --chain solana
 
 # Get wallet PnL overview (7D)
 onchainos market portfolio-overview --address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain ethereum --time-frame 3
@@ -152,34 +152,34 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 
 | # | Command | Description |
 |---|---|---|
-| 1 | `onchainos market price <address>` | Get single token price |
-| 2 | `onchainos market prices <tokens>` | Batch price query |
-| 3 | `onchainos market kline <address>` | Get K-line / candlestick data |
+| 1 | `onchainos market price --address <address>` | Get single token price |
+| 2 | `onchainos market prices --tokens <tokens>` | Batch price query |
+| 3 | `onchainos market kline --address <address>` | Get K-line / candlestick data |
 
 ### Index Price Commands
 
 | # | Command | Description |
 |---|---|---|
-| 4 | `onchainos market index <address>` | Get index price (aggregated from multiple sources) |
+| 4 | `onchainos market index --address <address>` | Get index price (aggregated from multiple sources) |
 
 ### Signal Commands
 
 | # | Command | Description |
 |---|---|---|
 | 5 | `onchainos market signal-chains` | Get supported chains for market signals |
-| 6 | `onchainos market signal-list <chain>` | Get latest signal list (smart money / KOL / whale activity) |
+| 6 | `onchainos market signal-list --chain <chain>` | Get latest signal list (smart money / KOL / whale activity) |
 
 ### Meme Pump Commands
 
 | # | Command | Description |
 |---|---|---|
 | 7 | `onchainos market memepump-chains` | Get supported chains and protocols for meme pump |
-| 8 | `onchainos market memepump-tokens <chain>` | List meme pump tokens with advanced filtering |
-| 9 | `onchainos market memepump-token-details <address>` | Get detailed info for a single meme pump token |
-| 10 | `onchainos market memepump-token-dev-info <address>` | Get developer analysis and holding info |
-| 11 | `onchainos market memepump-similar-tokens <address>` | Find similar tokens by same creator |
-| 12 | `onchainos market memepump-token-bundle-info <address>` | Get bundle/sniper analysis |
-| 13 | `onchainos market memepump-aped-wallet <address>` | Get aped (same-car) wallet list |
+| 8 | `onchainos market memepump-tokens --chain <chain>` | List meme pump tokens with advanced filtering |
+| 9 | `onchainos market memepump-token-details --address <address>` | Get detailed info for a single meme pump token |
+| 10 | `onchainos market memepump-token-dev-info --address <address>` | Get developer analysis and holding info |
+| 11 | `onchainos market memepump-similar-tokens --address <address>` | Find similar tokens by same creator |
+| 12 | `onchainos market memepump-token-bundle-info --address <address>` | Get bundle/sniper analysis |
+| 13 | `onchainos market memepump-aped-wallet --address <address>` | Get aped (same-car) wallet list |
 
 ### Portfolio PnL Commands
 
@@ -232,10 +232,10 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 > User: "Tell me about BONK, show me the chart, then buy if it looks good"
 
 ```
-1. okx-dex-token    onchainos token search BONK --chains solana            → get tokenContractAddress + chain
-2. okx-dex-token    onchainos token price-info <address> --chain solana    → market cap, liquidity, 24h volume
-3. okx-dex-token    onchainos token holders <address> --chain solana       → check holder distribution
-4. okx-dex-market   onchainos market kline <address> --chain solana        → K-line chart for visual trend
+1. okx-dex-token    onchainos token search --query BONK --chains solana            → get tokenContractAddress + chain
+2. okx-dex-token    onchainos token price-info --address <address> --chain solana    → market cap, liquidity, 24h volume
+3. okx-dex-token    onchainos token holders --address <address> --chain solana       → check holder distribution
+4. okx-dex-market   onchainos market kline --address <address> --chain solana        → K-line chart for visual trend
        ↓ user decides to buy
 5. okx-dex-swap     onchainos swap quote --from ... --to ... --amount ... --chain solana
 6. okx-dex-swap     onchainos swap swap --from ... --to ... --amount ... --chain solana --wallet <addr>
@@ -248,9 +248,9 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 ```
 1. okx-dex-token    onchainos token trending --chains solana --sort-by 5   → find trending tokens by volume
        ↓ select tokens of interest
-2. okx-dex-market   onchainos market price <address> --chain solana        → get current price for each
-3. okx-dex-market   onchainos market kline <address> --chain solana --bar 1H  → hourly chart
-4. okx-dex-market   onchainos market index <address> --chain solana        → compare on-chain vs index price
+2. okx-dex-market   onchainos market price --address <address> --chain solana        → get current price for each
+3. okx-dex-market   onchainos market kline --address <address> --chain solana --bar 1H  → hourly chart
+4. okx-dex-market   onchainos market index --address <address> --chain solana        → compare on-chain vs index price
 ```
 
 ### Workflow C: Signal-Driven Token Research & Buy
@@ -259,13 +259,13 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 
 ```
 1. okx-dex-market   onchainos market signal-chains                         → confirm Solana supports signals
-2. okx-dex-market   onchainos market signal-list solana --wallet-type "1,2,3"
+2. okx-dex-market   onchainos market signal-list --chain solana --wallet-type "1,2,3"
                                                                           → get latest smart money / whale / KOL buy signals
                                                                           → extracts token address, price, walletType, triggerWalletCount
        ↓ user picks a token from signal list
-3. okx-dex-token    onchainos token price-info <address> --chain solana    → enrich: market cap, liquidity, 24h volume
-4. okx-dex-token    onchainos token holders <address> --chain solana       → check holder concentration risk
-5. okx-dex-market   onchainos market kline <address> --chain solana        → K-line chart to confirm momentum
+3. okx-dex-token    onchainos token price-info --address <address> --chain solana    → enrich: market cap, liquidity, 24h volume
+4. okx-dex-token    onchainos token holders --address <address> --chain solana       → check holder concentration risk
+5. okx-dex-market   onchainos market kline --address <address> --chain solana  → K-line chart to confirm momentum
        ↓ user decides to buy
 6. okx-dex-swap     onchainos swap quote --from ... --to <address> --amount ... --chain solana
 7. okx-dex-swap     onchainos swap swap --from ... --to <address> --amount ... --chain solana --wallet <addr>
@@ -279,12 +279,12 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 
 ```
 1. okx-dex-market   onchainos market memepump-chains                          → discover supported chains & protocols
-2. okx-dex-market   onchainos market memepump-tokens solana --stage NEW       → browse new tokens
+2. okx-dex-market   onchainos market memepump-tokens --chain solana --stage NEW       → browse new tokens
        ↓ pick an interesting token
-3. okx-dex-market   onchainos market memepump-token-details <address> --chain solana  → full token detail + audit tags
-4. okx-dex-market   onchainos market memepump-token-dev-info <address> --chain solana → check dev reputation (rug pulls, migrations)
-5. okx-dex-market   onchainos market memepump-token-bundle-info <address> --chain solana → check for bundlers/snipers
-6. okx-dex-market   onchainos market kline <address> --chain solana           → view price chart
+3. okx-dex-market   onchainos market memepump-token-details --address <address> --chain solana  → full token detail + audit tags
+4. okx-dex-market   onchainos market memepump-token-dev-info --address <address> --chain solana → check dev reputation (rug pulls, migrations)
+5. okx-dex-market   onchainos market memepump-token-bundle-info --address <address> --chain solana → check for bundlers/snipers
+6. okx-dex-market   onchainos market kline --address <address> --chain solana           → view price chart
        ↓ user decides to buy
 7. okx-dex-swap     onchainos swap quote --from ... --to <address> --amount ... --chain solana
 8. okx-dex-swap     onchainos swap swap --from ... --to <address> --amount ... --chain solana --wallet <addr>
@@ -297,11 +297,11 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 > User: "Check if this meme token is safe before I buy"
 
 ```
-1. okx-dex-market   onchainos market memepump-token-details <address> --chain solana   → basic info + audit tags
-2. okx-dex-market   onchainos market memepump-token-dev-info <address> --chain solana  → dev history + holding
-3. okx-dex-market   onchainos market memepump-similar-tokens <address> --chain solana  → other tokens by same dev
-4. okx-dex-market   onchainos market memepump-token-bundle-info <address> --chain solana → bundler analysis
-5. okx-dex-market   onchainos market memepump-aped-wallet <address> --chain solana     → who else is holding
+1. okx-dex-market   onchainos market memepump-token-details --address <address> --chain solana   → basic info + audit tags
+2. okx-dex-market   onchainos market memepump-token-dev-info --address <address> --chain solana  → dev history + holding
+3. okx-dex-market   onchainos market memepump-similar-tokens --address <address> --chain solana  → other tokens by same dev
+4. okx-dex-market   onchainos market memepump-token-bundle-info --address <address> --chain solana → bundler analysis
+5. okx-dex-market   onchainos market memepump-aped-wallet --address <address> --chain solana     → who else is holding
 ```
 
 ### Workflow F: Wallet PnL Analysis
@@ -318,7 +318,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
        ↓ user picks a token
 4. okx-dex-market   onchainos market portfolio-token-pnl --address <wallet> --chain ethereum --token <address>
                                                                                        → latest realized/unrealized PnL for that token
-5. okx-dex-token    onchainos token price-info <address> --chain ethereum              → current market context
+5. okx-dex-token    onchainos token price-info --address <address> --chain ethereum              → current market context
 ```
 
 **Data handoff**: `--address` (wallet) is reused across all portfolio steps; `--token` from step 3 feeds into step 4.
@@ -345,9 +345,9 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 > User: "Filter signals to only show whale buys above $10k"
 
 ```
-1. okx-dex-market   onchainos market signal-list ethereum --wallet-type 3 --min-amount-usd 10000
+1. okx-dex-market   onchainos market signal-list --chain ethereum --wallet-type 3 --min-amount-usd 10000
                                                                           → whale-only signals on Ethereum, min $10k
-2. okx-dex-market   onchainos market kline <address> --chain ethereum      → chart for chosen token
+2. okx-dex-market   onchainos market kline --address <address> --chain ethereum      → chart for chosen token
 ```
 
 ## Operation Flow

@@ -7,12 +7,12 @@ Detailed parameter tables, return field schemas, and usage examples for all 10 t
 Search for tokens by name, symbol, or contract address.
 
 ```bash
-onchainos token search <query> [--chains <chains>]
+onchainos token search --query <query> [--chains <chains>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<query>` | Yes | - | Keyword: token name, symbol, or contract address (positional) |
+| `--query` | Yes | - | Keyword: token name, symbol, or contract address |
 | `--chains` | No | `"1,501"` | Chain names or IDs, comma-separated (e.g., `"ethereum,solana"` or `"196,501"`) |
 
 **Return fields**:
@@ -38,12 +38,12 @@ onchainos token search <query> [--chains <chains>]
 Get token basic info (name, symbol, decimals, logo).
 
 ```bash
-onchainos token info <address> [--chain <chain>]
+onchainos token info --address <address> [--chain <chain>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<address>` | Yes | - | Token contract address (positional) |
+| `--address` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name |
 
 **Return fields**:
@@ -62,12 +62,12 @@ onchainos token info <address> [--chain <chain>]
 Get detailed price info including market cap, liquidity, volume, and multi-timeframe price changes.
 
 ```bash
-onchainos token price-info <address> [--chain <chain>]
+onchainos token price-info --address <address> [--chain <chain>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<address>` | Yes | - | Token contract address (positional) |
+| `--address` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name |
 
 **Return fields**:
@@ -135,12 +135,12 @@ onchainos token trending [--chains <chains>] [--sort-by <sort>] [--time-frame <f
 Get token holder distribution (top 100), with optional tag filter.
 
 ```bash
-onchainos token holders <address> [--chain <chain>] [--tag-filter <n>]
+onchainos token holders --address <address> [--chain <chain>] [--tag-filter <n>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<address>` | Yes | - | Token contract address (positional) |
+| `--address` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name |
 | `--tag-filter` | No | - | Filter by holder tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler |
 
@@ -166,12 +166,12 @@ onchainos token holders <address> [--chain <chain>] [--tag-filter <n>]
 Get top 5 liquidity pools for a token.
 
 ```bash
-onchainos token liquidity <address> [--chain <chain>]
+onchainos token liquidity --address <address> [--chain <chain>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<address>` | Yes | - | Token contract address (positional) |
+| `--address` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name (e.g., `ethereum`, `base`, `bsc`) |
 
 **Return fields** (array of pool objects):
@@ -265,12 +265,12 @@ onchainos token hot-tokens [--ranking-type <type>] [--chain <chain>] [--rank-by 
 Get advanced token info including risk level, creator details, dev stats, and holder concentration.
 
 ```bash
-onchainos token advanced-info <address> [--chain <chain>]
+onchainos token advanced-info --address <address> [--chain <chain>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<address>` | Yes | - | Token contract address (positional) |
+| `--address` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name |
 
 **Return fields**:
@@ -302,12 +302,12 @@ onchainos token advanced-info <address> [--chain <chain>]
 Get top traders (profit addresses) for a token.
 
 ```bash
-onchainos token top-trader <address> [--chain <chain>] [--tag-filter <n>]
+onchainos token top-trader --address <address> [--chain <chain>] [--tag-filter <n>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<address>` | Yes | - | Token contract address (positional) |
+| `--address` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name |
 | `--tag-filter` | No | - | Filter by trader tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler |
 
@@ -333,12 +333,12 @@ onchainos token top-trader <address> [--chain <chain>] [--tag-filter <n>]
 Get token DEX trade history with optional tag and wallet address filters.
 
 ```bash
-onchainos token trades <address> [--chain <chain>] [--limit <n>] [--tag-filter <n>] [--wallet-filter <addrs>]
+onchainos token trades --address <address> [--chain <chain>] [--limit <n>] [--tag-filter <n>] [--wallet-filter <addrs>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `<address>` | Yes | - | Token contract address |
+| `--address` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name |
 | `--limit` | No | `100` | Number of trades (max 500) |
 | `--tag-filter` | No | - | Filter by trader tag: `1`=KOL, `2`=Developer, `3`=Smart Money, `4`=Whale, `5`=Fresh Wallet, `6`=Insider, `7`=Sniper, `8`=Suspicious Phishing, `9`=Bundler |
@@ -369,7 +369,7 @@ onchainos token trades <address> [--chain <chain>] [--limit <n>] [--tag-filter <
 **User says:** "Search for xETH token on XLayer"
 
 ```bash
-onchainos token search xETH --chains xlayer
+onchainos token search --query xETH --chains xlayer
 # -> Display:
 #   xETH (0xe7b0...) - XLayer
 #   Price: $X,XXX.XX | 24h: +X% | Market Cap: $XXM | Liquidity: $XXM
@@ -389,6 +389,6 @@ onchainos token trending --chains solana --sort-by 5 --time-frame 4
 **User says:** "Who are the top holders of this token?"
 
 ```bash
-onchainos token holders 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
+onchainos token holders --address 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
 # -> Display top 100 holders with amounts and addresses
 ```

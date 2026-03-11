@@ -88,10 +88,10 @@ Users may use Chinese crypto slang or platform-specific terms. Map them to the c
 
 ```bash
 # Search token
-onchainos token search xETH --chains "ethereum,solana"
+onchainos token search --query xETH --chains "ethereum,solana"
 
 # Get top 5 liquidity pools for a token
-onchainos token liquidity 0x1f16e03c1a5908818f47f6ee7bb16690b40d0671 --chain base
+onchainos token liquidity --address 0x1f16e03c1a5908818f47f6ee7bb16690b40d0671 --chain base
 
 # Get hot tokens (trending by score, all chains)
 onchainos token hot-tokens --ranking-type 4
@@ -100,25 +100,25 @@ onchainos token hot-tokens --ranking-type 4
 onchainos token hot-tokens --ranking-type 5 --chain solana
 
 # Get detailed price info
-onchainos token price-info 0xe7b000003a45145decf8a28fc755ad5ec5ea025a --chain xlayer
+onchainos token price-info --address 0xe7b000003a45145decf8a28fc755ad5ec5ea025a --chain xlayer
 
 # What's trending on Solana by volume?
 onchainos token trending --chains solana --sort-by 5 --time-frame 4
 
 # Check holder distribution
-onchainos token holders 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
+onchainos token holders --address 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
 
 # Filter holders by smart money
-onchainos token holders 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer --tag-filter 3
+onchainos token holders --address 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer --tag-filter 3
 
 # Get advanced token info (risk, creator, dev stats)
-onchainos token advanced-info EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana
+onchainos token advanced-info --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana
 
 # Get top traders / profit addresses
-onchainos token top-trader EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana
+onchainos token top-trader --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana
 
 # Top KOL traders
-onchainos token top-trader EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana --tag-filter 1
+onchainos token top-trader --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana --tag-filter 1
 ```
 
 ## Chain Name Support
@@ -138,16 +138,16 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 
 | # | Command | Description |
 |---|---|---|
-| 1 | `onchainos token search <query>` | Search for tokens by name, symbol, or address |
-| 2 | `onchainos token info <address>` | Get token basic info (name, symbol, decimals, logo) |
-| 3 | `onchainos token price-info <address>` | Get detailed price info (price, market cap, liquidity, volume, 24h change) |
+| 1 | `onchainos token search --query <query>` | Search for tokens by name, symbol, or address |
+| 2 | `onchainos token info --address <address>` | Get token basic info (name, symbol, decimals, logo) |
+| 3 | `onchainos token price-info --address <address>` | Get detailed price info (price, market cap, liquidity, volume, 24h change) |
 | 4 | `onchainos token trending` | Get trending / top tokens |
-| 5 | `onchainos token holders <address>` | Get token holder distribution (top 100, with optional tag filter) |
-| 6 | `onchainos token liquidity <address>` | Get top 5 liquidity pools for a token |
+| 5 | `onchainos token holders --address <address>` | Get token holder distribution (top 100, with optional tag filter) |
+| 6 | `onchainos token liquidity --address <address>` | Get top 5 liquidity pools for a token |
 | 7 | `onchainos token hot-tokens` | Get hot token list ranked by trending score or X mentions (max 100) |
-| 8 | `onchainos token advanced-info <address>` | Get advanced token info (risk level, creator, dev stats, holder concentration) |
-| 9 | `onchainos token top-trader <address>` | Get top traders / profit addresses for a token |
-| 10 | `onchainos token trades <address>` | Get token DEX trade history with optional tag/wallet filters |
+| 8 | `onchainos token advanced-info --address <address>` | Get advanced token info (risk level, creator, dev stats, holder concentration) |
+| 9 | `onchainos token top-trader --address <address>` | Get top traders / profit addresses for a token |
+| 10 | `onchainos token trades --address <address>` | Get token DEX trade history with optional tag/wallet filters |
 
 ## Boundary: token vs market skill
 
@@ -185,11 +185,11 @@ This skill is the typical **entry point** — users often start by searching/dis
 > User: "Find BONK token, analyze it, then buy some"
 
 ```
-1. okx-dex-token    onchainos token search BONK --chains solana              → get tokenContractAddress, chain, price
+1. okx-dex-token    onchainos token search --query BONK --chains solana              → get tokenContractAddress, chain, price
        ↓ tokenContractAddress
-2. okx-dex-token    onchainos token price-info <address> --chain solana      → market cap, liquidity, volume24H, priceChange24H
-3. okx-dex-token    onchainos token holders <address> --chain solana         → top 100 holders distribution
-4. okx-dex-market   onchainos market kline <address> --chain solana --bar 1H → hourly price chart
+2. okx-dex-token    onchainos token price-info --address <address> --chain solana      → market cap, liquidity, volume24H, priceChange24H
+3. okx-dex-token    onchainos token holders --address <address> --chain solana         → top 100 holders distribution
+4. okx-dex-market   onchainos market kline --address <address> --chain solana --bar 1H → hourly price chart
        ↓ user decides to buy
 5. okx-dex-swap     onchainos swap quote --from ... --to <address> --amount ... --chain solana
 6. okx-dex-swap     onchainos swap swap --from ... --to <address> --amount ... --chain solana --wallet <addr>
@@ -207,9 +207,9 @@ This skill is the typical **entry point** — users often start by searching/dis
 ```
 1. okx-dex-token    onchainos token trending --chains solana --sort-by 5 --time-frame 4  → top tokens by 24h volume
        ↓ user picks a token
-2. okx-dex-token    onchainos token price-info <address> --chain solana                   → detailed analytics
-3. okx-dex-token    onchainos token holders <address> --chain solana                      → check if whale-dominated
-4. okx-dex-market   onchainos market kline <address> --chain solana                       → K-line for visual trend
+2. okx-dex-token    onchainos token price-info --address <address> --chain solana                   → detailed analytics
+3. okx-dex-token    onchainos token holders --address <address> --chain solana                      → check if whale-dominated
+4. okx-dex-market   onchainos market kline --address <address> --chain solana               → K-line for visual trend
        ↓ user decides to trade
 5. okx-dex-swap     onchainos swap swap --from ... --to ... --amount ... --chain solana --wallet <addr>
 ```
@@ -219,11 +219,11 @@ This skill is the typical **entry point** — users often start by searching/dis
 Before swapping an unknown token, always verify:
 
 ```
-1. okx-dex-token    onchainos token search <name>                            → find token
+1. okx-dex-token    onchainos token search --query <name>                            → find token
 2. Check communityRecognized:
    - true → proceed with normal caution
    - false → warn user about risk
-3. okx-dex-token    onchainos token price-info <address> → check liquidity:
+3. okx-dex-token    onchainos token price-info --address <address> → check liquidity:
    - liquidity < $10K → warn about high slippage risk
    - liquidity < $1K → strongly discourage trade
 4. okx-dex-swap     onchainos swap quote ... → check isHoneyPot and taxRate

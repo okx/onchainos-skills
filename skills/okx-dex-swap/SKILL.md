@@ -142,7 +142,7 @@ This skill is the **execution endpoint** of most user trading flows. It almost a
 > User: "Swap 1 SOL for BONK on Solana"
 
 ```
-1. okx-dex-token    onchainos token search BONK --chains solana               → get BONK tokenContractAddress
+1. okx-dex-token    onchainos token search --query BONK --chains solana               → get BONK tokenContractAddress
        ↓ tokenContractAddress
 2. okx-dex-swap     onchainos swap quote \
                       --from 11111111111111111111111111111111 \
@@ -166,7 +166,7 @@ This skill is the **execution endpoint** of most user trading flows. It almost a
 > User: "Swap 100 USDC for OKB on XLayer"
 
 ```
-1. okx-dex-token    onchainos token search USDC --chains xlayer               → get USDC address
+1. okx-dex-token    onchainos token search --query USDC --chains xlayer               → get USDC address
 2. okx-dex-swap     onchainos swap quote --from <USDC> --to 0xeeee...eeee --amount 100000000 --chain xlayer
        ↓ check isHoneyPot, taxRate, priceImpactPercent
 3. okx-dex-swap     onchainos swap approve --token <USDC> --amount 100000000 --chain xlayer
