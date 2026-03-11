@@ -1,11 +1,10 @@
 ---
 name: okx-wallet-portfolio
-description: "This skill should be used when the user asks to 'check my wallet balance', 'show my token holdings', 'how much OKB do I have', 'what tokens do I have', 'check my portfolio value', 'view my assets', 'how much is my portfolio worth', 'what\\'s in my wallet', or mentions checking wallet balance, total assets, token holdings, portfolio value, remaining funds, DeFi positions, or multi-chain balance lookup. Supports XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. Do NOT use for PnL analysis, DEX transaction history, win rate, or realized/unrealized profit — use okx-dex-market instead. Do NOT use for general programming questions about balance variables or API documentation. Do NOT use when the user is asking how to build or integrate a balance feature into code."
+description: "Use this skill to 'check my wallet balance', 'show my token holdings', 'how much OKB do I have', 'what tokens do I have', 'check my portfolio value', 'view my assets', 'how much is my portfolio worth', 'what\\'s in my wallet', or mentions checking wallet balance, total assets, token holdings, portfolio value, remaining funds, DeFi positions, or multi-chain balance lookup. Supports XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. Do NOT use for PnL analysis, DEX transaction history, win rate, or realized/unrealized profit — use okx-dex-market instead. Do NOT use for general programming questions about balance variables or API documentation. Do NOT use when the user is asking how to build or integrate a balance feature into code."
 license: Apache-2.0
 metadata:
   author: okx
   version: "1.0.3"
-
   homepage: "https://web3.okx.com"
 ---
 
@@ -163,8 +162,10 @@ This skill is often used **before swap** (to verify sufficient balance) or **as 
 ### Step 3: Call and Display
 
 - Total value: display USD amount
-- Token balances: show token name, amount (UI units), USD value
+- Token balances: show token symbol, amount (UI units), USD value, **and abbreviated contract address** (e.g. `0x1234...abcd` — use `tokenContractAddress` from the response). Always include the contract address so the user can verify the token identity.
 - Sort by USD value descending
+- **Data quality warning**: Wrapped and bridged tokens (e.g. tokens prefixed with `x`, `w`, `st`, `r`, `m`) may have incorrect symbol or price metadata from the balance API. After displaying balances, add a note:
+  > ⚠️ Token metadata (symbol and price) is sourced from the OKX balance API and may be inaccurate for wrapped or bridged tokens. Always verify the contract address and cross-check prices for high-value holdings.
 
 ### Step 4: Suggest Next Steps
 
@@ -204,6 +205,8 @@ To search for specific command details: `grep -n "onchainos portfolio <command>"
 - USD values with 2 decimal places
 - Large amounts in shorthand (`$1.2M`)
 - Sort by USD value descending
+- **Always show abbreviated contract address** alongside token symbol (format: `0x1234...abcd`). For native tokens with empty `tokenContractAddress`, display `(native)`.
+- **Flag suspicious prices**: if a token symbol starts with `x`, `w`, `st`, `r`, or `m` (common wrapped/bridged prefixes) or if the token name contains "BTC" / "ETH" but the reported price is far below BTC/ETH market price, add an inline `⚠️ price unverified` flag next to the USD value and suggest running `onchainos token price-info` for that token.
 
 ## Global Notes
 

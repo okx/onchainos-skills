@@ -1,6 +1,6 @@
 ---
 name: okx-onchain-gateway
-description: "This skill should be used when the user asks to 'broadcast transaction', 'send tx', 'estimate gas', 'simulate transaction', 'check tx status', 'track my transaction', 'get gas price', 'gas limit', 'broadcast signed tx', or mentions broadcasting transactions, sending transactions on-chain, gas estimation, transaction simulation, tracking broadcast orders, or checking transaction status. Covers gas price, gas limit estimation, transaction simulation, transaction broadcasting, and order tracking across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. Do NOT use for swap quote or execution - use okx-dex-swap instead. Do NOT use for general programming questions about transaction handling."
+description: "Use this skill to 'broadcast transaction', 'send tx', 'estimate gas', 'simulate transaction', 'check tx status', 'track my transaction', 'get gas price', 'gas limit', 'broadcast signed tx', 'transaction hash confirmed on-chain', '交易哈希是否上链', '是否确认', or mentions broadcasting transactions, sending transactions on-chain, gas estimation, transaction simulation, tracking broadcast orders, or checking transaction status. Covers gas price, gas limit estimation, transaction simulation, transaction broadcasting, and order tracking across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. Do NOT use for swap quote or execution - use okx-dex-swap instead. Do NOT use for general programming questions about transaction handling."
 license: Apache-2.0
 metadata:
   author: okx
@@ -52,6 +52,20 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For token search → use `okx-dex-token`
 - For wallet balances / portfolio → use `okx-wallet-portfolio`
 - For transaction broadcasting → use this skill (`okx-onchain-gateway`)
+
+## Keyword Glossary
+
+Users may use Chinese or informal terms. Map them to the correct commands:
+
+| Chinese / Slang | English | Maps To |
+|---|---|---|
+| 预估 gas / 估 gas / gas 费多少 | estimate gas, gas cost | `gateway gas` or `gateway gas-limit` |
+| 广播交易 / 发送交易 / 发链上 | broadcast transaction, send tx on-chain | `gateway broadcast` |
+| 模拟交易 / 干跑 | simulate transaction, dry-run | `gateway simulate` |
+| 交易哈希是否上链 / 是否确认 / 确认状态 / 交易状态 | tx hash confirmed, check tx status | `gateway orders` |
+| 已签名交易 | signed transaction | `--signed-tx` param for `gateway broadcast` |
+| gas 价格 / 当前 gas | current gas price | `gateway gas` |
+| 支持哪些链 | supported chains for broadcasting | `gateway chains` |
 
 ## Quickstart
 

@@ -1,6 +1,6 @@
 ---
 name: okx-dex-market
-description: "This skill should be used when the user asks about live on-chain market data: token prices, price charts (K-line, OHLC), swap activity and wallet PnL analysis. Also covers on-chain signals — smart money, whale, and KOL wallet activity, large trades, and signal-supported chains. For meme tokens: scanning new launches (扫链/trenches，golden dog, alpha, pump fun), checking dev wallets, developer reputation, rug pull detection, tokens by same creator, bundle/sniper detection, bonding curves, and meme token safety checks. For wallet PnL analysis: portfolio overview, check wallet address across different DEX transaction history, recent PnL by token, and per-token latest PnL (realized/unrealized). For token search, market cap, liquidity, trending tokens, or holder distribution, use okx-dex-token instead."
+description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, and wallet PnL/盈亏分析 (win rate, my DEX trade history, realized/unrealized PnL per token). Covers smart-money/whale/KOL/大户 signal/信号 tracking — monitoring what notable wallets are buying/selling across the market. For meme/打狗 token research: scanning new pump.fun launches, developer reputation/开发者信息 and past launch history, bundle/sniper detection, bonding curve status, tokens by the same dev, similar tokens, and wallets that co-invested or aped into a token. Do NOT use for token search, holder distribution of a specific token, liquidity pools, or honeypot checks — use okx-dex-token."
 license: Apache-2.0
 metadata:
   author: okx

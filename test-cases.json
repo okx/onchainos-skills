@@ -1,0 +1,933 @@
+{
+  "meta": {
+    "version": "2.1.0",
+    "description": "Skill routing test: Uniswap vs Jupiter vs OKX DEX (new)",
+    "providers": {
+      "uniswap": ["swap-planner", "swap-integration", "liquidity-planner", "v4-security-foundations", "viem-integration", "configurator", "deployer"],
+      "jupiter": ["integrating-jupiter"],
+      "okx": ["okx-wallet-portfolio", "okx-dex-market", "okx-dex-swap", "okx-dex-token", "okx-onchain-gateway"]
+    },
+    "categories": {
+      "clear_intent": "Unambiguous requests with obvious skill targets",
+      "vague_intent": "Underspecified requests that still have a likely skill",
+      "competitive": "Best-route or comparison queries",
+      "brand": "Explicit DEX/platform name mentioned",
+      "negative": "Off-topic — no skill should trigger",
+      "compound": "Multi-step or multi-skill workflows in a single prompt",
+      "chain": "Chain-specific routing",
+      "edge": "Typos, slang, mixed language, ultra-short",
+      "adversarial": "Prompts designed to trick the router into firing the wrong skill",
+      "multi_turn": "Multi-message sessions testing context retention and route stickiness",
+      "pnl_routing": "PnL/win rate/trade history — must go to okx-dex-market, NOT okx-wallet-portfolio",
+      "memepump": "Meme token discovery and analysis via okx-dex-market memepump-* commands",
+      "signals": "Smart money / whale / KOL activity via okx-dex-market signal-list",
+      "token_deep_dive": "Token safety, traders, liquidity, hot tokens via okx-dex-token",
+      "gateway": "Gas estimation, tx simulation, broadcast, tx tracking via okx-onchain-gateway"
+    }
+  },
+  "cases": [
+    {
+      "id": "T01", "category": "clear_intent", "lang": "en",
+      "prompt": "Swap 1 ETH for USDC",
+      "expected": ["swap-planner", "swap-integration", "integrating-jupiter", "okx-dex-swap"]
+    },
+    {
+      "id": "T02", "category": "clear_intent", "lang": "zh",
+      "prompt": "把 1 个 SOL 换成 USDC",
+      "expected": ["swap-planner", "integrating-jupiter", "okx-dex-swap"]
+    },
+    {
+      "id": "T03", "category": "clear_intent", "lang": "en",
+      "prompt": "Buy 0.5 ETH with my USDC",
+      "expected": ["swap-planner", "integrating-jupiter", "okx-dex-swap"]
+    },
+    {
+      "id": "T04", "category": "clear_intent", "lang": "zh",
+      "prompt": "卖掉我的 ETH",
+      "expected": ["swap-planner", "integrating-jupiter", "okx-dex-swap"]
+    },
+    {
+      "id": "T05", "category": "clear_intent", "lang": "en",
+      "prompt": "What's the price of SOL?",
+      "expected": ["okx-dex-market", "okx-dex-token", "integrating-jupiter"]
+    },
+    {
+      "id": "T06", "category": "clear_intent", "lang": "zh",
+      "prompt": "SOL 现在多少钱",
+      "expected": ["okx-dex-market", "okx-dex-token", "integrating-jupiter"]
+    },
+    {
+      "id": "T07", "category": "clear_intent", "lang": "en",
+      "prompt": "Get a quote for swapping 100 USDC to ETH",
+      "expected": ["okx-dex-swap", "integrating-jupiter", "swap-planner"]
+    },
+    {
+      "id": "T08", "category": "clear_intent", "lang": "zh",
+      "prompt": "查一下 ETH 的实时报价",
+      "expected": ["okx-dex-market", "okx-dex-token", "integrating-jupiter"]
+    },
+    {
+      "id": "T09", "category": "clear_intent", "lang": "en",
+      "prompt": "Check my wallet balance",
+      "expected": ["okx-wallet-portfolio", "integrating-jupiter"]
+    },
+    {
+      "id": "T10", "category": "clear_intent", "lang": "zh",
+      "prompt": "查看我的钱包余额",
+      "expected": ["okx-wallet-portfolio", "integrating-jupiter"]
+    },
+    {
+      "id": "T11", "category": "clear_intent", "lang": "en",
+      "prompt": "Show my token holdings across all chains",
+      "expected": ["okx-wallet-portfolio", "integrating-jupiter"]
+    },
+    {
+      "id": "T12", "category": "clear_intent", "lang": "zh",
+      "prompt": "我的总资产是多少",
+      "expected": ["okx-wallet-portfolio", "integrating-jupiter"]
+    },
+    {
+      "id": "T13", "category": "vague_intent", "lang": "en",
+      "prompt": "I want to trade some tokens",
+      "expected": ["swap-planner", "integrating-jupiter", "okx-dex-swap"]
+    },
+    {
+      "id": "T14", "category": "vague_intent", "lang": "zh",
+      "prompt": "帮我交易一下代币",
+      "expected": ["swap-planner", "integrating-jupiter", "okx-dex-swap"]
+    },
+    {
+      "id": "T15", "category": "vague_intent", "lang": "en",
+      "prompt": "Convert my stablecoins",
+      "expected": ["swap-planner", "integrating-jupiter", "okx-dex-swap"]
+    },
+    {
+      "id": "T16", "category": "vague_intent", "lang": "en",
+      "prompt": "How do I exchange crypto?",
+      "expected": ["swap-planner", "integrating-jupiter", "okx-dex-swap"]
+    },
+    {
+      "id": "T17", "category": "vague_intent", "lang": "en",
+      "prompt": "What tokens do I have?",
+      "expected": ["okx-wallet-portfolio", "integrating-jupiter"]
+    },
+    {
+      "id": "T18", "category": "vague_intent", "lang": "en",
+      "prompt": "I want to do something with my SOL",
+      "expected": ["swap-planner", "integrating-jupiter", "okx-dex-swap"]
+    },
+    {
+      "id": "T19", "category": "vague_intent", "lang": "zh",
+      "prompt": "帮我看看钱包里有什么",
+      "expected": ["okx-wallet-portfolio", "integrating-jupiter"]
+    },
+    {
+      "id": "T20", "category": "vague_intent", "lang": "en",
+      "prompt": "How much is my portfolio worth?",
+      "expected": ["okx-wallet-portfolio", "integrating-jupiter"]
+    },
+    {
+      "id": "T21", "category": "competitive", "lang": "en",
+      "prompt": "Find the best swap route for SOL to USDC",
+      "expected": ["swap-planner", "integrating-jupiter", "okx-dex-swap"]
+    },
+    {
+      "id": "T22", "category": "competitive", "lang": "zh",
+      "prompt": "哪个 DEX 的汇率最好",
+      "expected": ["swap-planner", "integrating-jupiter", "okx-dex-swap"]
+    },
+    {
+      "id": "T23", "category": "competitive", "lang": "en",
+      "prompt": "I need the cheapest way to swap tokens",
+      "expected": ["swap-planner", "integrating-jupiter", "okx-dex-swap"]
+    },
+    {
+      "id": "T24", "category": "competitive", "lang": "zh",
+      "prompt": "帮我找一个最优的交易路径",
+      "expected": ["swap-planner", "integrating-jupiter", "okx-dex-swap"]
+    },
+    {
+      "id": "T25", "category": "competitive", "lang": "en",
+      "prompt": "Get me a swap quote",
+      "expected": ["okx-dex-swap", "integrating-jupiter", "swap-planner"]
+    },
+    {
+      "id": "T26", "category": "competitive", "lang": "zh",
+      "prompt": "查一个代币的价格",
+      "expected": ["okx-dex-market", "okx-dex-token", "integrating-jupiter"]
+    },
+    {
+      "id": "T27", "category": "brand", "lang": "en",
+      "prompt": "Swap tokens on Uniswap",
+      "expected": ["swap-planner", "swap-integration"]
+    },
+    {
+      "id": "T28", "category": "brand", "lang": "en",
+      "prompt": "Use Jupiter to swap SOL",
+      "expected": ["integrating-jupiter"]
+    },
+    {
+      "id": "T29", "category": "brand", "lang": "zh",
+      "prompt": "用 OKX DEX 换币",
+      "expected": ["okx-dex-swap"]
+    },
+    {
+      "id": "T30", "category": "brand", "lang": "en",
+      "prompt": "Check Jupiter's price for SOL",
+      "expected": ["integrating-jupiter"]
+    },
+    {
+      "id": "T31", "category": "brand", "lang": "zh",
+      "prompt": "在 Uniswap 上加流动性",
+      "expected": ["liquidity-planner"]
+    },
+    {
+      "id": "T32", "category": "brand", "lang": "zh",
+      "prompt": "OKX DEX 上 SOL 多少钱",
+      "expected": ["okx-dex-market", "okx-dex-token"]
+    },
+    {
+      "id": "T33", "category": "negative", "lang": "en",
+      "prompt": "Write a React component",
+      "expected": ["__none__"]
+    },
+    {
+      "id": "T34", "category": "negative", "lang": "zh",
+      "prompt": "帮我修一个 bug",
+      "expected": ["__none__"]
+    },
+    {
+      "id": "T35", "category": "negative", "lang": "en",
+      "prompt": "What's 2 + 2?",
+      "expected": ["__none__"]
+    },
+    {
+      "id": "T36", "category": "negative", "lang": "en",
+      "prompt": "Write unit tests for my API",
+      "expected": ["__none__"]
+    },
+    {
+      "id": "T37", "category": "negative", "lang": "zh",
+      "prompt": "今天天气怎么样",
+      "expected": ["__none__"]
+    },
+    {
+      "id": "T38", "category": "negative", "lang": "en",
+      "prompt": "Explain how git rebase works",
+      "expected": ["__none__"]
+    },
+    {
+      "id": "T39", "category": "compound", "lang": "en",
+      "prompt": "Check my SOL balance and swap it all to USDC",
+      "expected": ["okx-wallet-portfolio", "okx-dex-swap", "swap-planner", "integrating-jupiter"]
+    },
+    {
+      "id": "T40", "category": "compound", "lang": "en",
+      "prompt": "Compare the swap price on Jupiter and OKX, then execute the cheaper one",
+      "expected": ["integrating-jupiter", "okx-dex-swap"]
+    },
+    {
+      "id": "T41", "category": "compound", "lang": "zh",
+      "prompt": "查余额，如果 ETH 够的话就加个流动性",
+      "expected": ["okx-wallet-portfolio", "liquidity-planner", "integrating-jupiter"]
+    },
+    {
+      "id": "T42", "category": "compound", "lang": "en",
+      "prompt": "Get a price quote and then execute the swap",
+      "expected": ["okx-dex-swap", "integrating-jupiter", "swap-planner"]
+    },
+    {
+      "id": "T43", "category": "chain", "lang": "en",
+      "prompt": "Swap tokens on Solana",
+      "expected": ["integrating-jupiter", "okx-dex-swap"]
+    },
+    {
+      "id": "T44", "category": "chain", "lang": "en",
+      "prompt": "Swap tokens on Base",
+      "expected": ["swap-planner", "okx-dex-swap"]
+    },
+    {
+      "id": "T45", "category": "chain", "lang": "en",
+      "prompt": "Swap tokens on Ethereum",
+      "expected": ["swap-planner", "swap-integration", "okx-dex-swap"]
+    },
+    {
+      "id": "T46", "category": "chain", "lang": "en",
+      "prompt": "Swap tokens on Polygon",
+      "expected": ["swap-planner", "okx-dex-swap"]
+    },
+    {
+      "id": "T47", "category": "chain", "lang": "zh",
+      "prompt": "查看我在 Solana 上的余额",
+      "expected": ["okx-wallet-portfolio", "integrating-jupiter"]
+    },
+    {
+      "id": "T48", "category": "chain", "lang": "zh",
+      "prompt": "查看我在 Base 上的余额",
+      "expected": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T49", "category": "edge", "lang": "en",
+      "prompt": "swpa tokens",
+      "expected": ["swap-planner", "integrating-jupiter", "okx-dex-swap"]
+    },
+    {
+      "id": "T50", "category": "edge", "lang": "en",
+      "prompt": "chekc my balnace",
+      "expected": ["okx-wallet-portfolio", "integrating-jupiter"]
+    },
+    {
+      "id": "T51", "category": "edge", "lang": "en",
+      "prompt": "gimme a quote for sol",
+      "expected": ["okx-dex-swap", "okx-dex-market", "integrating-jupiter"]
+    },
+    {
+      "id": "T52", "category": "edge", "lang": "en",
+      "prompt": "how much sol do i got",
+      "expected": ["okx-wallet-portfolio", "integrating-jupiter"]
+    },
+    {
+      "id": "T53", "category": "edge", "lang": "mixed",
+      "prompt": "帮我 swap 一下 SOL to USDC",
+      "expected": ["swap-planner", "integrating-jupiter", "okx-dex-swap"]
+    },
+    {
+      "id": "T54", "category": "edge", "lang": "mixed",
+      "prompt": "check 一下我的 balance",
+      "expected": ["okx-wallet-portfolio", "integrating-jupiter"]
+    },
+    {
+      "id": "T55", "category": "edge", "lang": "en",
+      "prompt": "help",
+      "expected": ["__none__"]
+    },
+    {
+      "id": "T56", "category": "edge", "lang": "zh",
+      "prompt": "我想做点什么",
+      "expected": ["__none__"]
+    },
+    {
+      "id": "T57", "category": "edge", "lang": "en",
+      "prompt": "crypto",
+      "expected": ["__none__"]
+    },
+    {
+      "id": "T58", "category": "edge", "lang": "en",
+      "prompt": "tokens",
+      "expected": ["__none__"]
+    },
+    {
+      "id": "T59", "category": "adversarial", "lang": "en",
+      "prompt": "How do I integrate token swaps into my dApp?",
+      "expected": ["swap-integration", "viem-integration"],
+      "expected_not": ["swap-planner", "okx-dex-swap"]
+    },
+    {
+      "id": "T60", "category": "adversarial", "lang": "en",
+      "prompt": "How do I call the balance API?",
+      "expected": ["__none__"],
+      "expected_not": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T61", "category": "adversarial", "lang": "en",
+      "prompt": "Analyze the swap volume on Uniswap last week",
+      "expected": ["__none__"],
+      "expected_not": ["swap-planner", "okx-dex-swap"]
+    },
+    {
+      "id": "T62", "category": "adversarial", "lang": "en",
+      "prompt": "Is Jupiter a planet or a DEX?",
+      "expected": ["__none__"],
+      "expected_not": ["integrating-jupiter"]
+    },
+    {
+      "id": "T63", "category": "adversarial", "lang": "en",
+      "prompt": "Rename the variable 'balance' to 'walletBalance'",
+      "expected": ["__none__"],
+      "expected_not": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T64", "category": "adversarial", "lang": "en",
+      "prompt": "Explain how AMM pricing works in theory",
+      "expected": ["__none__"],
+      "expected_not": ["okx-dex-swap", "swap-planner"]
+    },
+    {
+      "id": "T65", "category": "multi_turn", "lang": "zh",
+      "turns": [
+        { "prompt": "我有一些 SOL", "expected": ["__none__"] },
+        { "prompt": "帮我换成 USDC", "expected": ["swap-planner", "integrating-jupiter", "okx-dex-swap"] }
+      ]
+    },
+    {
+      "id": "T66", "category": "multi_turn", "lang": "zh",
+      "turns": [
+        { "prompt": "查一下 SOL 的价格", "expected": ["okx-dex-market", "okx-dex-token", "integrating-jupiter"] },
+        { "prompt": "不错，帮我买一点", "expected": ["swap-planner", "integrating-jupiter", "okx-dex-swap"] }
+      ]
+    },
+    {
+      "id": "T67", "category": "multi_turn", "lang": "mixed",
+      "turns": [
+        { "prompt": "我想用 Jupiter", "expected": ["__any__"] },
+        { "prompt": "帮我查个报价", "expected": ["integrating-jupiter"] },
+        { "prompt": "然后执行 swap", "expected": ["integrating-jupiter"] }
+      ]
+    },
+    {
+      "id": "T68", "category": "multi_turn", "lang": "mixed",
+      "turns": [
+        { "prompt": "在 Uniswap 上查个价", "expected": ["swap-planner", "swap-integration"] },
+        { "prompt": "再用 OKX 查一下同样的", "expected": ["okx-dex-swap", "okx-dex-market"] }
+      ]
+    },
+    {
+      "id": "T69", "category": "multi_turn", "lang": "zh",
+      "turns": [
+        { "prompt": "我在 Solana 上操作", "expected": ["__any__"] },
+        { "prompt": "帮我 swap", "expected": ["integrating-jupiter", "okx-dex-swap"] }
+      ]
+    },
+    {
+      "id": "T70", "category": "multi_turn", "lang": "mixed",
+      "turns": [
+        { "prompt": "用 Jupiter swap 1 SOL to USDC", "expected": ["integrating-jupiter"] },
+        { "prompt": "查看我的钱包余额", "expected": ["okx-wallet-portfolio"] }
+      ],
+      "note": "Route stickiness test: second turn should NOT stay on Jupiter"
+    },
+    {
+      "id": "T71", "category": "pnl_routing", "lang": "en",
+      "prompt": "What's my win rate on Solana?",
+      "expected": ["okx-dex-market"],
+      "expected_not": ["okx-wallet-portfolio"],
+      "note": "win rate is PnL analytics, not balance"
+    },
+    {
+      "id": "T72", "category": "pnl_routing", "lang": "en",
+      "prompt": "How much have I made trading ETH this week?",
+      "expected": ["okx-dex-market"],
+      "expected_not": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T73", "category": "pnl_routing", "lang": "en",
+      "prompt": "Show me my realized and unrealized PnL",
+      "expected": ["okx-dex-market"],
+      "expected_not": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T74", "category": "pnl_routing", "lang": "en",
+      "prompt": "Which tokens gave me the best returns?",
+      "expected": ["okx-dex-market"],
+      "expected_not": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T75", "category": "pnl_routing", "lang": "en",
+      "prompt": "Show my DEX transaction history on Ethereum",
+      "expected": ["okx-dex-market"],
+      "expected_not": ["okx-wallet-portfolio", "okx-dex-token"],
+      "note": "wallet-level DEX history, not a specific token's trade feed"
+    },
+    {
+      "id": "T76", "category": "pnl_routing", "lang": "zh",
+      "prompt": "查看我的交易盈亏",
+      "expected": ["okx-dex-market"],
+      "expected_not": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T77", "category": "pnl_routing", "lang": "zh",
+      "prompt": "我的胜率是多少",
+      "expected": ["okx-dex-market"],
+      "expected_not": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T78", "category": "pnl_routing", "lang": "en",
+      "prompt": "How much did I lose on PEPE?",
+      "expected": ["okx-dex-market"],
+      "expected_not": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T79", "category": "pnl_routing", "lang": "en",
+      "prompt": "Show me my recent token PnL records",
+      "expected": ["okx-dex-market"],
+      "expected_not": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T80", "category": "pnl_routing", "lang": "en",
+      "prompt": "What tokens have I recently sold and what was the profit?",
+      "expected": ["okx-dex-market"],
+      "expected_not": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T81", "category": "pnl_routing", "lang": "zh",
+      "prompt": "我最近的 DEX 交易记录",
+      "expected": ["okx-dex-market"],
+      "expected_not": ["okx-wallet-portfolio", "okx-dex-token"]
+    },
+    {
+      "id": "T82", "category": "memepump", "lang": "en",
+      "prompt": "Show me new tokens launching on pump.fun right now",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T83", "category": "memepump", "lang": "en",
+      "prompt": "Find hot meme coins on Solana that just launched",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T84", "category": "memepump", "lang": "en",
+      "prompt": "Are there any bundlers or snipers on this meme token?",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T85", "category": "memepump", "lang": "en",
+      "prompt": "Check the developer's launch history and rug pull count for this token",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T86", "category": "memepump", "lang": "en",
+      "prompt": "Show me tokens similar to this meme coin",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T87", "category": "memepump", "lang": "en",
+      "prompt": "Which wallets co-invested (aped into) this token?",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T88", "category": "memepump", "lang": "zh",
+      "prompt": "帮我找 Solana 上刚发布的新 meme 币",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T89", "category": "memepump", "lang": "en",
+      "prompt": "Is this pump.fun token still in the bonding curve or has it migrated?",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T90", "category": "memepump", "lang": "en",
+      "prompt": "Scan new meme launches on BSC in the last hour",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T91", "category": "memepump", "lang": "zh",
+      "prompt": "这个 meme 币的开发者之前发过多少个项目，有没有 rug",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T92", "category": "signals", "lang": "en",
+      "prompt": "What are whales buying on Solana right now?",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T93", "category": "signals", "lang": "en",
+      "prompt": "Show me KOL signals on Ethereum today",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T94", "category": "signals", "lang": "en",
+      "prompt": "Are there any smart money moves I should know about?",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T95", "category": "signals", "lang": "en",
+      "prompt": "Show me whale wallet activity on Base",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T96", "category": "signals", "lang": "zh",
+      "prompt": "聪明钱最近在买什么代币",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T97", "category": "signals", "lang": "zh",
+      "prompt": "有没有大户在操作 SOL",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T98", "category": "token_deep_dive", "lang": "en",
+      "prompt": "Who are the most profitable traders on PEPE?",
+      "expected": ["okx-dex-token"]
+    },
+    {
+      "id": "T99", "category": "token_deep_dive", "lang": "en",
+      "prompt": "Show me recent buy and sell activity for this token",
+      "expected": ["okx-dex-token"],
+      "expected_not": ["okx-dex-market"],
+      "note": "token trade feed (token skill) vs wallet DEX history (market skill)"
+    },
+    {
+      "id": "T100", "category": "token_deep_dive", "lang": "en",
+      "prompt": "Is this token a honeypot? Check its safety",
+      "expected": ["okx-dex-token"]
+    },
+    {
+      "id": "T101", "category": "token_deep_dive", "lang": "en",
+      "prompt": "Show me the top 5 liquidity pools for ETH on Ethereum",
+      "expected": ["okx-dex-token"]
+    },
+    {
+      "id": "T102", "category": "token_deep_dive", "lang": "en",
+      "prompt": "What tokens are trending on Base right now?",
+      "expected": ["okx-dex-token"]
+    },
+    {
+      "id": "T103", "category": "token_deep_dive", "lang": "en",
+      "prompt": "Show hot tokens ranked by X (Twitter) mentions",
+      "expected": ["okx-dex-token"]
+    },
+    {
+      "id": "T104", "category": "token_deep_dive", "lang": "en",
+      "prompt": "Who are the biggest whale holders of this token?",
+      "expected": ["okx-dex-token"]
+    },
+    {
+      "id": "T105", "category": "token_deep_dive", "lang": "en",
+      "prompt": "Who created this token and have they rugged before?",
+      "expected": ["okx-dex-token"]
+    },
+    {
+      "id": "T106", "category": "token_deep_dive", "lang": "en",
+      "prompt": "Show trades on this token filtered by KOL wallets only",
+      "expected": ["okx-dex-token"]
+    },
+    {
+      "id": "T107", "category": "token_deep_dive", "lang": "en",
+      "prompt": "What are the top 10 profit addresses trading BONK on Solana?",
+      "expected": ["okx-dex-token"]
+    },
+    {
+      "id": "T108", "category": "token_deep_dive", "lang": "zh",
+      "prompt": "查一下这个代币最大的鲸鱼持仓者",
+      "expected": ["okx-dex-token"]
+    },
+    {
+      "id": "T109", "category": "token_deep_dive", "lang": "zh",
+      "prompt": "这个币有没有蜜罐风险？帮我检查一下安全性",
+      "expected": ["okx-dex-token"]
+    },
+    {
+      "id": "T110", "category": "token_deep_dive", "lang": "en",
+      "prompt": "Show me the sniper holding percentage on this token",
+      "expected": ["okx-dex-token"]
+    },
+    {
+      "id": "T111", "category": "token_deep_dive", "lang": "zh",
+      "prompt": "Base 上最近最热的代币是什么",
+      "expected": ["okx-dex-token"]
+    },
+    {
+      "id": "T112", "category": "gateway", "lang": "en",
+      "prompt": "How much gas will this ETH transfer cost?",
+      "expected": ["okx-onchain-gateway"]
+    },
+    {
+      "id": "T113", "category": "gateway", "lang": "en",
+      "prompt": "Simulate this transaction before I send it",
+      "expected": ["okx-onchain-gateway"]
+    },
+    {
+      "id": "T114", "category": "gateway", "lang": "en",
+      "prompt": "Broadcast my signed transaction to the network",
+      "expected": ["okx-onchain-gateway"]
+    },
+    {
+      "id": "T115", "category": "gateway", "lang": "en",
+      "prompt": "Is my transaction confirmed? Hash: 0xabc123...",
+      "expected": ["okx-onchain-gateway"]
+    },
+    {
+      "id": "T116", "category": "gateway", "lang": "en",
+      "prompt": "Estimate gas for a smart contract interaction",
+      "expected": ["okx-onchain-gateway"]
+    },
+    {
+      "id": "T117", "category": "gateway", "lang": "en",
+      "prompt": "What's the current gas price on Ethereum?",
+      "expected": ["okx-onchain-gateway"]
+    },
+    {
+      "id": "T118", "category": "gateway", "lang": "en",
+      "prompt": "Which chains support transaction broadcasting?",
+      "expected": ["okx-onchain-gateway"]
+    },
+    {
+      "id": "T119", "category": "gateway", "lang": "en",
+      "prompt": "Dry-run this tx to see if it would succeed",
+      "expected": ["okx-onchain-gateway"]
+    },
+    {
+      "id": "T120", "category": "gateway", "lang": "zh",
+      "prompt": "预估一下这笔交易的 gas 费",
+      "expected": ["okx-onchain-gateway"]
+    },
+    {
+      "id": "T121", "category": "gateway", "lang": "zh",
+      "prompt": "帮我广播这笔已签名的交易",
+      "expected": ["okx-onchain-gateway"]
+    },
+    {
+      "id": "T122", "category": "gateway", "lang": "zh",
+      "prompt": "这个交易哈希是否已经上链确认了",
+      "expected": ["okx-onchain-gateway"]
+    },
+    {
+      "id": "T123", "category": "clear_intent", "lang": "en",
+      "prompt": "What's the total USD value of my portfolio across all chains?",
+      "expected": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T124", "category": "clear_intent", "lang": "en",
+      "prompt": "Show all my token balances on XLayer",
+      "expected": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T125", "category": "clear_intent", "lang": "en",
+      "prompt": "How much OKB do I have in my wallet?",
+      "expected": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T126", "category": "clear_intent", "lang": "en",
+      "prompt": "What chains are supported for balance queries?",
+      "expected": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T127", "category": "clear_intent", "lang": "zh",
+      "prompt": "查看我在 XLayer 上的所有代币余额",
+      "expected": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T128", "category": "clear_intent", "lang": "zh",
+      "prompt": "我的钱包总价值是多少美元",
+      "expected": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T129", "category": "clear_intent", "lang": "en",
+      "prompt": "Check my DeFi positions on Ethereum",
+      "expected": ["okx-wallet-portfolio"],
+      "note": "asset-type 2 DeFi positions"
+    },
+    {
+      "id": "T130", "category": "clear_intent", "lang": "en",
+      "prompt": "Do I have enough SOL to swap 1 SOL for BONK?",
+      "expected": ["okx-wallet-portfolio", "okx-dex-swap"],
+      "note": "pre-swap balance check workflow"
+    },
+    {
+      "id": "T131", "category": "adversarial", "lang": "en",
+      "prompt": "How do I build a wallet balance feature into my dApp?",
+      "expected": ["__none__"],
+      "expected_not": ["okx-wallet-portfolio"],
+      "note": "programming question about building a feature, not checking a real balance"
+    },
+    {
+      "id": "T132", "category": "adversarial", "lang": "en",
+      "prompt": "How do I call the PnL API endpoint in Rust?",
+      "expected": ["__none__"],
+      "expected_not": ["okx-dex-market"],
+      "note": "API integration question, not user asking for their own PnL"
+    },
+    {
+      "id": "T133", "category": "adversarial", "lang": "en",
+      "prompt": "What does 'win rate' mean in trading?",
+      "expected": ["__none__"],
+      "expected_not": ["okx-dex-market"]
+    },
+    {
+      "id": "T134", "category": "adversarial", "lang": "en",
+      "prompt": "Explain how meme coins and pump.fun work",
+      "expected": ["__none__"],
+      "expected_not": ["okx-dex-market"]
+    },
+    {
+      "id": "T135", "category": "adversarial", "lang": "en",
+      "prompt": "How does gas estimation work at the EVM level?",
+      "expected": ["__none__"],
+      "expected_not": ["okx-onchain-gateway"],
+      "note": "educational/theory question, not requesting actual gas estimation"
+    },
+    {
+      "id": "T136", "category": "adversarial", "lang": "en",
+      "prompt": "What is the balance variable in my smart contract called?",
+      "expected": ["__none__"],
+      "expected_not": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T137", "category": "adversarial", "lang": "en",
+      "prompt": "Show trade history for PEPE",
+      "expected": ["okx-dex-token"],
+      "expected_not": ["okx-dex-market"],
+      "note": "token-level trade feed → okx-dex-token; NOT wallet DEX history → okx-dex-market"
+    },
+    {
+      "id": "T138", "category": "adversarial", "lang": "en",
+      "prompt": "Show my trade history",
+      "expected": ["okx-dex-market"],
+      "expected_not": ["okx-dex-token"],
+      "note": "wallet-level DEX history → okx-dex-market; NOT token trade feed → okx-dex-token"
+    },
+    {
+      "id": "T139", "category": "adversarial", "lang": "en",
+      "prompt": "Is pump.fun a good investment platform?",
+      "expected": ["__none__"],
+      "expected_not": ["okx-dex-market"]
+    },
+    {
+      "id": "T140", "category": "adversarial", "lang": "en",
+      "prompt": "Rename the 'winRate' field in my TypeScript interface",
+      "expected": ["__none__"],
+      "expected_not": ["okx-dex-market"]
+    },
+    {
+      "id": "T141", "category": "compound", "lang": "en",
+      "prompt": "Find a new meme coin on Solana, check if the dev is trustworthy, then swap some SOL into it",
+      "expected": ["okx-dex-market", "okx-dex-swap"],
+      "note": "memepump-tokens → memepump-token-dev-info → swap"
+    },
+    {
+      "id": "T142", "category": "compound", "lang": "en",
+      "prompt": "Check my portfolio PnL, then sell the tokens I'm losing money on",
+      "expected": ["okx-dex-market", "okx-dex-swap"],
+      "note": "portfolio-overview → swap"
+    },
+    {
+      "id": "T143", "category": "compound", "lang": "en",
+      "prompt": "Show me whale signals on Solana then check if I already hold any of those tokens",
+      "expected": ["okx-dex-market", "okx-wallet-portfolio"]
+    },
+    {
+      "id": "T144", "category": "compound", "lang": "en",
+      "prompt": "Is PEPE safe to buy? Check if it's a honeypot, show top liquidity pools, then give me a swap quote",
+      "expected": ["okx-dex-token", "okx-dex-swap"]
+    },
+    {
+      "id": "T145", "category": "compound", "lang": "en",
+      "prompt": "Estimate the gas cost, simulate the tx, then broadcast it",
+      "expected": ["okx-onchain-gateway"]
+    },
+    {
+      "id": "T146", "category": "compound", "lang": "zh",
+      "prompt": "查一下我的余额，再看看我在这个代币上赚了多少",
+      "expected": ["okx-wallet-portfolio", "okx-dex-market"],
+      "note": "balance (wallet-portfolio) + per-token PnL (market portfolio-token-pnl)"
+    },
+    {
+      "id": "T147", "category": "compound", "lang": "en",
+      "prompt": "Show trending tokens on Ethereum, get price charts for the top one, then check smart money signals",
+      "expected": ["okx-dex-token", "okx-dex-market"]
+    },
+    {
+      "id": "T148", "category": "multi_turn", "lang": "en",
+      "turns": [
+        { "prompt": "I spotted a new meme on pump.fun", "expected": ["__any__"] },
+        { "prompt": "Check the dev's history", "expected": ["okx-dex-market"] },
+        { "prompt": "Looks clean, buy it with 0.5 SOL", "expected": ["okx-dex-swap"] }
+      ],
+      "note": "meme discovery → dev check → swap"
+    },
+    {
+      "id": "T149", "category": "multi_turn", "lang": "zh",
+      "turns": [
+        { "prompt": "帮我看一下我过去一个月在以太坊上的胜率", "expected": ["okx-dex-market"] },
+        { "prompt": "哪些币亏损了？", "expected": ["okx-dex-market"] },
+        { "prompt": "把亏损最大的卖掉", "expected": ["okx-dex-swap"] }
+      ],
+      "note": "PnL overview → recent PnL → swap sell"
+    },
+    {
+      "id": "T150", "category": "multi_turn", "lang": "en",
+      "turns": [
+        { "prompt": "What are whales buying on Solana?", "expected": ["okx-dex-market"] },
+        { "prompt": "Is that token safe? Any honeypot risk?", "expected": ["okx-dex-token"] },
+        { "prompt": "Do I already have any of it in my wallet?", "expected": ["okx-wallet-portfolio"] },
+        { "prompt": "Buy 100 USDC worth of it", "expected": ["okx-dex-swap"] }
+      ],
+      "note": "Full alpha → safety → balance check → buy workflow across 4 skills"
+    },
+    {
+      "id": "T151", "category": "multi_turn", "lang": "en",
+      "turns": [
+        { "prompt": "Estimate gas for sending 0.1 ETH to my friend", "expected": ["okx-onchain-gateway"] },
+        { "prompt": "Simulate it first to confirm it will go through", "expected": ["okx-onchain-gateway"] },
+        { "prompt": "OK send it", "expected": ["okx-onchain-gateway"] }
+      ],
+      "note": "gateway: gas-limit → simulate → broadcast"
+    },
+    {
+      "id": "T152", "category": "multi_turn", "lang": "mixed",
+      "turns": [
+        { "prompt": "查一下我的 portfolio 总价值", "expected": ["okx-wallet-portfolio"] },
+        { "prompt": "再看看 PnL 怎么样", "expected": ["okx-dex-market"] }
+      ],
+      "note": "Route stickiness: balance → PnL should switch from wallet-portfolio to market"
+    },
+    {
+      "id": "T153", "category": "chain", "lang": "en",
+      "prompt": "Check my wallet balance on XLayer",
+      "expected": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T154", "category": "chain", "lang": "en",
+      "prompt": "What meme coins are launching on BSC?",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T155", "category": "chain", "lang": "en",
+      "prompt": "Show smart money signals on Arbitrum",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T156", "category": "chain", "lang": "en",
+      "prompt": "What are the hottest tokens on Solana by X mentions?",
+      "expected": ["okx-dex-token"]
+    },
+    {
+      "id": "T157", "category": "chain", "lang": "en",
+      "prompt": "Estimate gas on Polygon for a token transfer",
+      "expected": ["okx-onchain-gateway"]
+    },
+    {
+      "id": "T158", "category": "chain", "lang": "zh",
+      "prompt": "查看我在 Arbitrum 上的持仓",
+      "expected": ["okx-wallet-portfolio"]
+    },
+    {
+      "id": "T159", "category": "edge", "lang": "en",
+      "prompt": "wen lambo? check my pnl",
+      "expected": ["okx-dex-market"],
+      "note": "crypto slang but clear PnL intent"
+    },
+    {
+      "id": "T160", "category": "edge", "lang": "en",
+      "prompt": "ser gib pump.fun alpha",
+      "expected": ["okx-dex-market"],
+      "note": "CT slang for meme token scanning"
+    },
+    {
+      "id": "T161", "category": "edge", "lang": "en",
+      "prompt": "ngmi, whats my winrate",
+      "expected": ["okx-dex-market"]
+    },
+    {
+      "id": "T162", "category": "edge", "lang": "en",
+      "prompt": "how much gas gwei rn on eth",
+      "expected": ["okx-onchain-gateway"]
+    },
+    {
+      "id": "T163", "category": "edge", "lang": "en",
+      "prompt": "rugged? check if this token is safe",
+      "expected": ["okx-dex-token"]
+    },
+    {
+      "id": "T164", "category": "edge", "lang": "mixed",
+      "prompt": "帮我 simulate 一下这个 tx",
+      "expected": ["okx-onchain-gateway"]
+    },
+    {
+      "id": "T165", "category": "edge", "lang": "mixed",
+      "prompt": "我的 pnl 怎么样",
+      "expected": ["okx-dex-market"],
+      "expected_not": ["okx-wallet-portfolio"]
+    }
+  ]
+}
