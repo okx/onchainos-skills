@@ -3,6 +3,7 @@ use clap::Subcommand;
 use serde_json::{json, Value};
 
 use super::Context;
+use crate::client::ApiClient;
 use crate::output;
 
 #[derive(Subcommand)]
@@ -323,22 +324,41 @@ pub enum MarketCommand {
 }
 
 pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
+    let client = ctx.client()?;
     match cmd {
-        MarketCommand::Price { address, chain } => price(ctx, &address, chain).await,
-        MarketCommand::Prices { tokens, chain } => prices(ctx, &tokens, chain).await,
-        MarketCommand::Kline {
-            address,
-            bar,
-            limit,
-            chain,
-        } => kline(ctx, &address, &bar, limit, chain).await,
-        MarketCommand::Trades {
-            address,
-            chain,
-            limit,
-        } => trades(ctx, &address, chain, limit).await,
-        MarketCommand::Index { address, chain } => index(ctx, &address, chain).await,
-        MarketCommand::MemepumpChains => memepump_chains(ctx).await,
+        MarketCommand::Price { address, chain } => {
+            let chain_index = chain
+                .map(|c| crate::chains::resolve_chain(&c).to_string())
+                .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+            output::success(fetch_price(&client, &address, &chain_index).await?);
+        }
+        MarketCommand::Prices { tokens, chain } => {
+            let default_chain = chain
+                .map(|c| crate::chains::resolve_chain(&c).to_string())
+                .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+            output::success(fetch_prices(&client, &tokens, &default_chain).await?);
+        }
+        MarketCommand::Kline { address, bar, limit, chain } => {
+            let chain_index = chain
+                .map(|c| crate::chains::resolve_chain(&c).to_string())
+                .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+            output::success(fetch_kline(&client, &address, &chain_index, &bar, limit).await?);
+        }
+        MarketCommand::Trades { address, chain, limit } => {
+            let chain_index = chain
+                .map(|c| crate::chains::resolve_chain(&c).to_string())
+                .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+            output::success(fetch_trades(&client, &address, &chain_index, limit).await?);
+        }
+        MarketCommand::Index { address, chain } => {
+            let chain_index = chain
+                .map(|c| crate::chains::resolve_chain(&c).to_string())
+                .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+            output::success(fetch_index(&client, &address, &chain_index).await?);
+        }
+        MarketCommand::MemepumpChains => {
+            output::success(fetch_memepump_chains(&client).await?);
+        }
         MarketCommand::MemepumpTokens {
             chain,
             stage,
@@ -397,107 +417,136 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
             keywords_include,
             keywords_exclude,
         } => {
-            memepump_token_list(
-                ctx,
-                MemepumpTokenListParams {
-                    chain,
-                    stage,
-                    wallet_address,
-                    protocol_id_list,
-                    quote_token_address_list,
-                    min_top10_holdings_percent,
-                    max_top10_holdings_percent,
-                    min_dev_holdings_percent,
-                    max_dev_holdings_percent,
-                    min_insiders_percent,
-                    max_insiders_percent,
-                    min_bundlers_percent,
-                    max_bundlers_percent,
-                    min_snipers_percent,
-                    max_snipers_percent,
-                    min_fresh_wallets_percent,
-                    max_fresh_wallets_percent,
-                    min_suspected_phishing_wallet_percent,
-                    max_suspected_phishing_wallet_percent,
-                    min_bot_traders,
-                    max_bot_traders,
-                    min_dev_migrated,
-                    max_dev_migrated,
-                    min_market_cap,
-                    max_market_cap,
-                    min_volume,
-                    max_volume,
-                    min_tx_count,
-                    max_tx_count,
-                    min_bonding_percent,
-                    max_bonding_percent,
-                    min_holders,
-                    max_holders,
-                    min_token_age,
-                    max_token_age,
-                    min_buy_tx_count,
-                    max_buy_tx_count,
-                    min_sell_tx_count,
-                    max_sell_tx_count,
-                    min_token_symbol_length,
-                    max_token_symbol_length,
-                    has_at_least_one_social_link,
-                    has_x,
-                    has_telegram,
-                    has_website,
-                    website_type_list,
-                    dex_screener_paid,
-                    live_on_pump_fun,
-                    dev_sell_all,
-                    dev_still_holding,
-                    community_takeover,
-                    bags_fee_claimed,
-                    min_fees_native,
-                    max_fees_native,
-                    keywords_include,
-                    keywords_exclude,
-                },
-            )
-            .await
+            output::success(
+                fetch_memepump_token_list(
+                    &client,
+                    MemepumpTokenListParams {
+                        chain,
+                        stage,
+                        wallet_address,
+                        protocol_id_list,
+                        quote_token_address_list,
+                        min_top10_holdings_percent,
+                        max_top10_holdings_percent,
+                        min_dev_holdings_percent,
+                        max_dev_holdings_percent,
+                        min_insiders_percent,
+                        max_insiders_percent,
+                        min_bundlers_percent,
+                        max_bundlers_percent,
+                        min_snipers_percent,
+                        max_snipers_percent,
+                        min_fresh_wallets_percent,
+                        max_fresh_wallets_percent,
+                        min_suspected_phishing_wallet_percent,
+                        max_suspected_phishing_wallet_percent,
+                        min_bot_traders,
+                        max_bot_traders,
+                        min_dev_migrated,
+                        max_dev_migrated,
+                        min_market_cap,
+                        max_market_cap,
+                        min_volume,
+                        max_volume,
+                        min_tx_count,
+                        max_tx_count,
+                        min_bonding_percent,
+                        max_bonding_percent,
+                        min_holders,
+                        max_holders,
+                        min_token_age,
+                        max_token_age,
+                        min_buy_tx_count,
+                        max_buy_tx_count,
+                        min_sell_tx_count,
+                        max_sell_tx_count,
+                        min_token_symbol_length,
+                        max_token_symbol_length,
+                        has_at_least_one_social_link,
+                        has_x,
+                        has_telegram,
+                        has_website,
+                        website_type_list,
+                        dex_screener_paid,
+                        live_on_pump_fun,
+                        dev_sell_all,
+                        dev_still_holding,
+                        community_takeover,
+                        bags_fee_claimed,
+                        min_fees_native,
+                        max_fees_native,
+                        keywords_include,
+                        keywords_exclude,
+                    },
+                )
+                .await?,
+            );
         }
-        MarketCommand::MemepumpTokenDetails {
-            address,
-            chain,
-            wallet,
-        } => memepump_token_details(ctx, &address, chain, wallet).await,
+        MarketCommand::MemepumpTokenDetails { address, chain, wallet } => {
+            let chain_index = chain
+                .map(|c| crate::chains::resolve_chain(&c).to_string())
+                .unwrap_or_else(|| ctx.chain_index_or("solana"));
+            let wallet_address = wallet.unwrap_or_default();
+            output::success(
+                fetch_memepump_token_details(&client, &address, &chain_index, &wallet_address)
+                    .await?,
+            );
+        }
         MarketCommand::MemepumpTokenDevInfo { address, chain } => {
-            memepump_by_address(
-                ctx,
-                "/api/v6/dex/market/memepump/tokenDevInfo",
-                &address,
-                chain,
-            )
-            .await
+            let chain_index = chain
+                .map(|c| crate::chains::resolve_chain(&c).to_string())
+                .unwrap_or_else(|| ctx.chain_index_or("solana"));
+            output::success(
+                fetch_memepump_by_address(
+                    &client,
+                    "/api/v6/dex/market/memepump/tokenDevInfo",
+                    &address,
+                    &chain_index,
+                )
+                .await?,
+            );
         }
         MarketCommand::MemepumpSimilarTokens { address, chain } => {
-            memepump_by_address(
-                ctx,
-                "/api/v6/dex/market/memepump/similarToken",
-                &address,
-                chain,
-            )
-            .await
+            let chain_index = chain
+                .map(|c| crate::chains::resolve_chain(&c).to_string())
+                .unwrap_or_else(|| ctx.chain_index_or("solana"));
+            output::success(
+                fetch_memepump_by_address(
+                    &client,
+                    "/api/v6/dex/market/memepump/similarToken",
+                    &address,
+                    &chain_index,
+                )
+                .await?,
+            );
         }
         MarketCommand::MemepumpTokenBundleInfo { address, chain } => {
-            memepump_by_address(
-                ctx,
-                "/api/v6/dex/market/memepump/tokenBundleInfo",
-                &address,
-                chain,
-            )
-            .await
+            let chain_index = chain
+                .map(|c| crate::chains::resolve_chain(&c).to_string())
+                .unwrap_or_else(|| ctx.chain_index_or("solana"));
+            output::success(
+                fetch_memepump_by_address(
+                    &client,
+                    "/api/v6/dex/market/memepump/tokenBundleInfo",
+                    &address,
+                    &chain_index,
+                )
+                .await?,
+            );
         }
-        MarketCommand::MemepumpApedWallet {
-            address,
-            chain,
-            wallet,
-        } => memepump_aped_wallet(ctx, &address, chain, wallet).await,
-        MarketCommand::SignalChains => signal_chains(ctx).await,
+        MarketCommand::MemepumpApedWallet { address, chain, wallet } => {
+            let chain_index = chain
+                .map(|c| crate::chains::resolve_chain(&c).to_string())
+                .unwrap_or_else(|| ctx.chain_index_or("solana"));
+            let wallet_address = wallet.unwrap_or_default();
+            output::success(
+                fetch_memepump_aped_wallet(&client, &address, &chain_index, &wallet_address)
+                    .await?,
+            );
+        }
+        MarketCommand::SignalChains => {
+            output::success(fetch_signal_chains(&client).await?);
+        }
         MarketCommand::SignalList {
             chain,
             wallet_type,
@@ -511,216 +560,190 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
             min_liquidity_usd,
             max_liquidity_usd,
         } => {
-            signal_list(
-                ctx,
-                &chain,
-                wallet_type,
-                min_amount_usd,
-                max_amount_usd,
-                min_address_count,
-                max_address_count,
-                token_address,
-                min_market_cap_usd,
-                max_market_cap_usd,
-                min_liquidity_usd,
-                max_liquidity_usd,
-            )
-            .await
+            let chain_index = crate::chains::resolve_chain(&chain).to_string();
+            output::success(
+                fetch_signal_list(
+                    &client,
+                    &chain_index,
+                    wallet_type,
+                    min_amount_usd,
+                    max_amount_usd,
+                    min_address_count,
+                    max_address_count,
+                    token_address,
+                    min_market_cap_usd,
+                    max_market_cap_usd,
+                    min_liquidity_usd,
+                    max_liquidity_usd,
+                )
+                .await?,
+            );
         }
     }
+    Ok(())
 }
 
 /// POST /api/v6/dex/market/price — body is JSON array
-async fn price(ctx: &Context, address: &str, chain: Option<String>) -> Result<()> {
-    let chain_index = chain
-        .map(|c| crate::chains::resolve_chain(&c).to_string())
-        .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-    let client = ctx.client()?;
-    let body = json!([{
-        "chainIndex": chain_index,
-        "tokenContractAddress": address
-    }]);
-    let data = client.post("/api/v6/dex/market/price", &body).await?;
-    output::success(data);
-    Ok(())
+pub async fn fetch_price(client: &ApiClient, address: &str, chain_index: &str) -> Result<Value> {
+    let body = json!([{"chainIndex": chain_index, "tokenContractAddress": address}]);
+    client.post("/api/v6/dex/market/price", &body).await
 }
 
 /// POST /api/v6/dex/market/price — batch query
-async fn prices(ctx: &Context, tokens: &str, chain: Option<String>) -> Result<()> {
-    let default_chain = chain
-        .map(|c| crate::chains::resolve_chain(&c).to_string())
-        .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-    let mut items: Vec<Value> = Vec::new();
-    for pair in tokens.split(',') {
-        let pair = pair.trim();
-        if let Some((chain_part, addr)) = pair.split_once(':') {
-            items.push(json!({
-                "chainIndex": crate::chains::resolve_chain(chain_part),
-                "tokenContractAddress": addr
-            }));
-        } else {
-            items.push(json!({
-                "chainIndex": &default_chain,
-                "tokenContractAddress": pair
-            }));
-        }
-    }
-    let client = ctx.client()?;
-    let data = client
-        .post("/api/v6/dex/market/price", &Value::Array(items))
-        .await?;
-    output::success(data);
-    Ok(())
+pub async fn fetch_prices(
+    client: &ApiClient,
+    tokens: &str,
+    default_chain_index: &str,
+) -> Result<Value> {
+    let items: Vec<Value> = tokens
+        .split(',')
+        .map(|pair| {
+            let pair = pair.trim();
+            if let Some((chain_part, addr)) = pair.split_once(':') {
+                json!({
+                    "chainIndex": crate::chains::resolve_chain(chain_part),
+                    "tokenContractAddress": addr
+                })
+            } else {
+                json!({
+                    "chainIndex": default_chain_index,
+                    "tokenContractAddress": pair
+                })
+            }
+        })
+        .collect();
+    client.post("/api/v6/dex/market/price", &Value::Array(items)).await
 }
 
 /// GET /api/v6/dex/market/candles
-async fn kline(
-    ctx: &Context,
+pub async fn fetch_kline(
+    client: &ApiClient,
     address: &str,
+    chain_index: &str,
     bar: &str,
     limit: u32,
-    chain: Option<String>,
-) -> Result<()> {
-    let chain_index = chain
-        .map(|c| crate::chains::resolve_chain(&c).to_string())
-        .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+) -> Result<Value> {
     let limit_str = limit.to_string();
-    let client = ctx.client()?;
-    let data = client
+    client
         .get(
             "/api/v6/dex/market/candles",
             &[
-                ("chainIndex", chain_index.as_str()),
+                ("chainIndex", chain_index),
                 ("tokenContractAddress", address),
                 ("bar", bar),
                 ("limit", &limit_str),
             ],
         )
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }
 
 /// GET /api/v6/dex/market/trades
-async fn trades(ctx: &Context, address: &str, chain: Option<String>, limit: u32) -> Result<()> {
-    let chain_index = chain
-        .map(|c| crate::chains::resolve_chain(&c).to_string())
-        .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+pub async fn fetch_trades(
+    client: &ApiClient,
+    address: &str,
+    chain_index: &str,
+    limit: u32,
+) -> Result<Value> {
     let limit_str = limit.to_string();
-    let client = ctx.client()?;
-    let data = client
+    client
         .get(
             "/api/v6/dex/market/trades",
             &[
-                ("chainIndex", chain_index.as_str()),
+                ("chainIndex", chain_index),
                 ("tokenContractAddress", address),
                 ("limit", &limit_str),
             ],
         )
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }
 
 /// POST /api/v6/dex/index/current-price — body is JSON array
-async fn index(ctx: &Context, address: &str, chain: Option<String>) -> Result<()> {
-    let chain_index = chain
-        .map(|c| crate::chains::resolve_chain(&c).to_string())
-        .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-    let client = ctx.client()?;
-    let body = json!([{
-        "chainIndex": chain_index,
-        "tokenContractAddress": address
-    }]);
-    let data = client
-        .post("/api/v6/dex/index/current-price", &body)
-        .await?;
-    output::success(data);
-    Ok(())
+pub async fn fetch_index(client: &ApiClient, address: &str, chain_index: &str) -> Result<Value> {
+    let body = json!([{"chainIndex": chain_index, "tokenContractAddress": address}]);
+    client.post("/api/v6/dex/index/current-price", &body).await
 }
 
 /// GET /api/v6/dex/market/memepump/supported/chainsProtocol — no parameters
-async fn memepump_chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client()?;
-    let data = client
+pub async fn fetch_memepump_chains(client: &ApiClient) -> Result<Value> {
+    client
         .get("/api/v6/dex/market/memepump/supported/chainsProtocol", &[])
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }
 
 /// Parameters for the memepump token list query.
-struct MemepumpTokenListParams {
-    chain: String,
-    stage: String,
-    wallet_address: Option<String>,
-    protocol_id_list: Option<String>,
-    quote_token_address_list: Option<String>,
+pub struct MemepumpTokenListParams {
+    pub chain: String,
+    pub stage: String,
+    pub wallet_address: Option<String>,
+    pub protocol_id_list: Option<String>,
+    pub quote_token_address_list: Option<String>,
     // Holder analysis
-    min_top10_holdings_percent: Option<String>,
-    max_top10_holdings_percent: Option<String>,
-    min_dev_holdings_percent: Option<String>,
-    max_dev_holdings_percent: Option<String>,
-    min_insiders_percent: Option<String>,
-    max_insiders_percent: Option<String>,
-    min_bundlers_percent: Option<String>,
-    max_bundlers_percent: Option<String>,
-    min_snipers_percent: Option<String>,
-    max_snipers_percent: Option<String>,
+    pub min_top10_holdings_percent: Option<String>,
+    pub max_top10_holdings_percent: Option<String>,
+    pub min_dev_holdings_percent: Option<String>,
+    pub max_dev_holdings_percent: Option<String>,
+    pub min_insiders_percent: Option<String>,
+    pub max_insiders_percent: Option<String>,
+    pub min_bundlers_percent: Option<String>,
+    pub max_bundlers_percent: Option<String>,
+    pub min_snipers_percent: Option<String>,
+    pub max_snipers_percent: Option<String>,
     // Wallet analysis
-    min_fresh_wallets_percent: Option<String>,
-    max_fresh_wallets_percent: Option<String>,
-    min_suspected_phishing_wallet_percent: Option<String>,
-    max_suspected_phishing_wallet_percent: Option<String>,
-    min_bot_traders: Option<String>,
-    max_bot_traders: Option<String>,
+    pub min_fresh_wallets_percent: Option<String>,
+    pub max_fresh_wallets_percent: Option<String>,
+    pub min_suspected_phishing_wallet_percent: Option<String>,
+    pub max_suspected_phishing_wallet_percent: Option<String>,
+    pub min_bot_traders: Option<String>,
+    pub max_bot_traders: Option<String>,
     // Dev history
-    min_dev_migrated: Option<String>,
-    max_dev_migrated: Option<String>,
+    pub min_dev_migrated: Option<String>,
+    pub max_dev_migrated: Option<String>,
     // Market data
-    min_market_cap: Option<String>,
-    max_market_cap: Option<String>,
-    min_volume: Option<String>,
-    max_volume: Option<String>,
-    min_tx_count: Option<String>,
-    max_tx_count: Option<String>,
-    min_bonding_percent: Option<String>,
-    max_bonding_percent: Option<String>,
-    min_holders: Option<String>,
-    max_holders: Option<String>,
-    min_token_age: Option<String>,
-    max_token_age: Option<String>,
-    min_buy_tx_count: Option<String>,
-    max_buy_tx_count: Option<String>,
-    min_sell_tx_count: Option<String>,
-    max_sell_tx_count: Option<String>,
+    pub min_market_cap: Option<String>,
+    pub max_market_cap: Option<String>,
+    pub min_volume: Option<String>,
+    pub max_volume: Option<String>,
+    pub min_tx_count: Option<String>,
+    pub max_tx_count: Option<String>,
+    pub min_bonding_percent: Option<String>,
+    pub max_bonding_percent: Option<String>,
+    pub min_holders: Option<String>,
+    pub max_holders: Option<String>,
+    pub min_token_age: Option<String>,
+    pub max_token_age: Option<String>,
+    pub min_buy_tx_count: Option<String>,
+    pub max_buy_tx_count: Option<String>,
+    pub min_sell_tx_count: Option<String>,
+    pub max_sell_tx_count: Option<String>,
     // Token metadata
-    min_token_symbol_length: Option<String>,
-    max_token_symbol_length: Option<String>,
+    pub min_token_symbol_length: Option<String>,
+    pub max_token_symbol_length: Option<String>,
     // Social filters
-    has_at_least_one_social_link: Option<String>,
-    has_x: Option<String>,
-    has_telegram: Option<String>,
-    has_website: Option<String>,
-    website_type_list: Option<String>,
-    dex_screener_paid: Option<String>,
-    live_on_pump_fun: Option<String>,
+    pub has_at_least_one_social_link: Option<String>,
+    pub has_x: Option<String>,
+    pub has_telegram: Option<String>,
+    pub has_website: Option<String>,
+    pub website_type_list: Option<String>,
+    pub dex_screener_paid: Option<String>,
+    pub live_on_pump_fun: Option<String>,
     // Dev status
-    dev_sell_all: Option<String>,
-    dev_still_holding: Option<String>,
+    pub dev_sell_all: Option<String>,
+    pub dev_still_holding: Option<String>,
     // Other
-    community_takeover: Option<String>,
-    bags_fee_claimed: Option<String>,
-    min_fees_native: Option<String>,
-    max_fees_native: Option<String>,
-    keywords_include: Option<String>,
-    keywords_exclude: Option<String>,
+    pub community_takeover: Option<String>,
+    pub bags_fee_claimed: Option<String>,
+    pub min_fees_native: Option<String>,
+    pub max_fees_native: Option<String>,
+    pub keywords_include: Option<String>,
+    pub keywords_exclude: Option<String>,
 }
 
 /// GET /api/v6/dex/market/memepump/tokenList — filtered token list
-async fn memepump_token_list(ctx: &Context, p: MemepumpTokenListParams) -> Result<()> {
+pub async fn fetch_memepump_token_list(
+    client: &ApiClient,
+    p: MemepumpTokenListParams,
+) -> Result<Value> {
     let chain_index = crate::chains::resolve_chain(&p.chain).to_string();
-    let client = ctx.client()?;
 
     let wallet_address = p.wallet_address.unwrap_or_default();
     let protocol_id_list = p.protocol_id_list.unwrap_or_default();
@@ -777,7 +800,7 @@ async fn memepump_token_list(ctx: &Context, p: MemepumpTokenListParams) -> Resul
     let kw_include = p.keywords_include.unwrap_or_default();
     let kw_exclude = p.keywords_exclude.unwrap_or_default();
 
-    let data = client
+    client
         .get(
             "/api/v6/dex/market/memepump/tokenList",
             &[
@@ -839,102 +862,77 @@ async fn memepump_token_list(ctx: &Context, p: MemepumpTokenListParams) -> Resul
                 ("keywordsExclude", &kw_exclude),
             ],
         )
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }
 
 /// GET /api/v6/dex/market/memepump/tokenDetails — requires walletAddress
-async fn memepump_token_details(
-    ctx: &Context,
+pub async fn fetch_memepump_token_details(
+    client: &ApiClient,
     address: &str,
-    chain: Option<String>,
-    wallet: Option<String>,
-) -> Result<()> {
-    let chain_index = chain
-        .map(|c| crate::chains::resolve_chain(&c).to_string())
-        .unwrap_or_else(|| ctx.chain_index_or("solana"));
-    let wallet_address = wallet.unwrap_or_default();
-    let client = ctx.client()?;
-    let data = client
+    chain_index: &str,
+    wallet_address: &str,
+) -> Result<Value> {
+    client
         .get(
             "/api/v6/dex/market/memepump/tokenDetails",
             &[
-                ("chainIndex", chain_index.as_str()),
+                ("chainIndex", chain_index),
                 ("tokenContractAddress", address),
-                ("walletAddress", &wallet_address),
+                ("walletAddress", wallet_address),
             ],
         )
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }
 
 /// GET /api/v6/dex/market/memepump/apedWallet — optional walletAddress
-async fn memepump_aped_wallet(
-    ctx: &Context,
+pub async fn fetch_memepump_aped_wallet(
+    client: &ApiClient,
     address: &str,
-    chain: Option<String>,
-    wallet: Option<String>,
-) -> Result<()> {
-    let chain_index = chain
-        .map(|c| crate::chains::resolve_chain(&c).to_string())
-        .unwrap_or_else(|| ctx.chain_index_or("solana"));
-    let wallet_address = wallet.unwrap_or_default();
-    let client = ctx.client()?;
-    let data = client
+    chain_index: &str,
+    wallet_address: &str,
+) -> Result<Value> {
+    client
         .get(
             "/api/v6/dex/market/memepump/apedWallet",
             &[
-                ("chainIndex", chain_index.as_str()),
+                ("chainIndex", chain_index),
                 ("tokenContractAddress", address),
-                ("walletAddress", &wallet_address),
+                ("walletAddress", wallet_address),
             ],
         )
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }
 
 /// Shared helper for memepump endpoints that take (chainIndex, tokenContractAddress).
-async fn memepump_by_address(
-    ctx: &Context,
+pub async fn fetch_memepump_by_address(
+    client: &ApiClient,
     path: &str,
     address: &str,
-    chain: Option<String>,
-) -> Result<()> {
-    let chain_index = chain
-        .map(|c| crate::chains::resolve_chain(&c).to_string())
-        .unwrap_or_else(|| ctx.chain_index_or("solana"));
-    let client = ctx.client()?;
-    let data = client
+    chain_index: &str,
+) -> Result<Value> {
+    client
         .get(
             path,
             &[
-                ("chainIndex", chain_index.as_str()),
+                ("chainIndex", chain_index),
                 ("tokenContractAddress", address),
             ],
         )
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }
 
 /// GET /api/v6/dex/market/signal/supported/chain — no parameters
-async fn signal_chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client()?;
-    let data = client
+pub async fn fetch_signal_chains(client: &ApiClient) -> Result<Value> {
+    client
         .get("/api/v6/dex/market/signal/supported/chain", &[])
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }
 
 /// POST /api/v6/dex/market/signal/list — smart money / KOL / whale signals
 #[allow(clippy::too_many_arguments)]
-async fn signal_list(
-    ctx: &Context,
-    chain: &str,
+pub async fn fetch_signal_list(
+    client: &ApiClient,
+    chain_index: &str,
     wallet_type: Option<String>,
     min_amount_usd: Option<String>,
     max_amount_usd: Option<String>,
@@ -945,13 +943,8 @@ async fn signal_list(
     max_market_cap_usd: Option<String>,
     min_liquidity_usd: Option<String>,
     max_liquidity_usd: Option<String>,
-) -> Result<()> {
-    let chain_index = crate::chains::resolve_chain(chain).to_string();
-    let client = ctx.client()?;
-
-    let mut body = json!({
-        "chainIndex": chain_index
-    });
+) -> Result<Value> {
+    let mut body = json!({"chainIndex": chain_index});
     let obj = body.as_object_mut().unwrap();
     if let Some(v) = wallet_type {
         obj.insert("walletType".into(), Value::String(v));
@@ -983,8 +976,5 @@ async fn signal_list(
     if let Some(v) = max_liquidity_usd {
         obj.insert("maxLiquidityUsd".into(), Value::String(v));
     }
-
-    let data = client.post("/api/v6/dex/market/signal/list", &body).await?;
-    output::success(data);
-    Ok(())
+    client.post("/api/v6/dex/market/signal/list", &body).await
 }

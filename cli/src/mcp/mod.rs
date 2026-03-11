@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::client::ApiClient;
+use crate::commands::{gateway, market, portfolio, swap, token};
 
 // ── Token ──────────────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
@@ -289,18 +290,22 @@ impl ServerHandler for McpServer {
     }
 }
 
+fn ok(data: Value) -> String {
+    serde_json::to_string_pretty(&data).unwrap_or_default()
+}
+
+fn err(e: anyhow::Error) -> String {
+    format!("Error: {e:#}")
+}
+
 #[tool_router]
 impl McpServer {
     #[tool(name = "token_search", description = "Search tokens by name/symbol/address across chains")]
     async fn token_search(&self, Parameters(p): Parameters<TokenSearchParams>) -> String {
-        let chains = p.chains.as_deref().map(crate::chains::resolve_chains)
-            .unwrap_or_else(|| "1,501".to_string());
-        match self.client.get(
-            "/api/v6/dex/market/token/search",
-            &[("chains", chains.as_str()), ("search", p.query.as_str())],
-        ).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        let chains = p.chains.as_deref().unwrap_or("1,501");
+        match token::fetch_search(&self.client, &p.query, chains).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
@@ -309,10 +314,9 @@ impl McpServer {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
-        let body = serde_json::json!([{"chainIndex": chain_index, "tokenContractAddress": p.address}]);
-        match self.client.post("/api/v6/dex/market/token/basic-info", &body).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match token::fetch_info(&self.client, &p.address, &chain_index).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
@@ -321,27 +325,20 @@ impl McpServer {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
-        match self.client.get(
-            "/api/v6/dex/market/token/holder",
-            &[("chainIndex", chain_index.as_str()), ("tokenContractAddress", p.address.as_str())],
-        ).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match token::fetch_holders(&self.client, &p.address, &chain_index).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
     #[tool(name = "token_trending", description = "Get trending token rankings")]
     async fn token_trending(&self, Parameters(p): Parameters<TokenTrendingParams>) -> String {
-        let chains = p.chains.as_deref().map(crate::chains::resolve_chains)
-            .unwrap_or_else(|| "1,501".to_string());
+        let chains = p.chains.as_deref().unwrap_or("1,501");
         let sort_by = p.sort_by.as_deref().unwrap_or("5");
         let time_frame = p.time_frame.as_deref().unwrap_or("4");
-        match self.client.get(
-            "/api/v6/dex/market/token/toplist",
-            &[("chains", chains.as_str()), ("sortBy", sort_by), ("timeFrame", time_frame)],
-        ).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match token::fetch_trending(&self.client, chains, sort_by, time_frame).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
@@ -350,10 +347,9 @@ impl McpServer {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
-        let body = serde_json::json!([{"chainIndex": chain_index, "tokenContractAddress": p.address}]);
-        match self.client.post("/api/v6/dex/market/price-info", &body).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match token::fetch_price_info(&self.client, &p.address, &chain_index).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
@@ -362,10 +358,9 @@ impl McpServer {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
-        let body = serde_json::json!([{"chainIndex": chain_index, "tokenContractAddress": p.address}]);
-        match self.client.post("/api/v6/dex/market/price", &body).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match market::fetch_price(&self.client, &p.address, &chain_index).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
@@ -374,23 +369,9 @@ impl McpServer {
         let default_chain = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
-        let items: Vec<Value> = p.tokens.split(',').map(|pair| {
-            let pair = pair.trim();
-            if let Some((chain_part, addr)) = pair.split_once(':') {
-                serde_json::json!({
-                    "chainIndex": crate::chains::resolve_chain(chain_part),
-                    "tokenContractAddress": addr
-                })
-            } else {
-                serde_json::json!({
-                    "chainIndex": &default_chain,
-                    "tokenContractAddress": pair
-                })
-            }
-        }).collect();
-        match self.client.post("/api/v6/dex/market/price", &Value::Array(items)).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match market::fetch_prices(&self.client, &p.tokens, &default_chain).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
@@ -399,19 +380,11 @@ impl McpServer {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
-        let bar = p.bar.as_deref().unwrap_or("1H").to_string();
-        let limit = p.limit.unwrap_or(100).to_string();
-        match self.client.get(
-            "/api/v6/dex/market/candles",
-            &[
-                ("chainIndex", chain_index.as_str()),
-                ("tokenContractAddress", p.address.as_str()),
-                ("bar", bar.as_str()),
-                ("limit", limit.as_str()),
-            ],
-        ).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        let bar = p.bar.as_deref().unwrap_or("1H");
+        let limit = p.limit.unwrap_or(100);
+        match market::fetch_kline(&self.client, &p.address, &chain_index, bar, limit).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
@@ -420,17 +393,10 @@ impl McpServer {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
-        let limit = p.limit.unwrap_or(100).to_string();
-        match self.client.get(
-            "/api/v6/dex/market/trades",
-            &[
-                ("chainIndex", chain_index.as_str()),
-                ("tokenContractAddress", p.address.as_str()),
-                ("limit", limit.as_str()),
-            ],
-        ).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        let limit = p.limit.unwrap_or(100);
+        match market::fetch_trades(&self.client, &p.address, &chain_index, limit).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
@@ -439,55 +405,55 @@ impl McpServer {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
-        let body = serde_json::json!([{"chainIndex": chain_index, "tokenContractAddress": p.address}]);
-        match self.client.post("/api/v6/dex/index/current-price", &body).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match market::fetch_index(&self.client, &p.address, &chain_index).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
     #[tool(name = "market_signal_chains", description = "Get chains supported for smart money / KOL / whale signals")]
     async fn market_signal_chains(&self) -> String {
-        match self.client.get("/api/v6/dex/market/signal/supported/chain", &[]).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match market::fetch_signal_chains(&self.client).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
     #[tool(name = "market_signal_list", description = "Get smart money / KOL / whale signal list for a chain")]
     async fn market_signal_list(&self, Parameters(p): Parameters<MarketSignalListParams>) -> String {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        let mut body = serde_json::json!({"chainIndex": chain_index});
-        let obj = body.as_object_mut().unwrap();
-        macro_rules! insert_opt {
-            ($field:expr, $key:expr) => {
-                if let Some(v) = $field { obj.insert($key.into(), Value::String(v)); }
-            };
-        }
-        insert_opt!(p.wallet_type, "walletType");
-        insert_opt!(p.min_amount_usd, "minAmountUsd");
-        insert_opt!(p.max_amount_usd, "maxAmountUsd");
-        insert_opt!(p.min_address_count, "minAddressCount");
-        insert_opt!(p.max_address_count, "maxAddressCount");
-        insert_opt!(p.token_address, "tokenAddress");
-        insert_opt!(p.min_market_cap_usd, "minMarketCapUsd");
-        insert_opt!(p.max_market_cap_usd, "maxMarketCapUsd");
-        insert_opt!(p.min_liquidity_usd, "minLiquidityUsd");
-        insert_opt!(p.max_liquidity_usd, "maxLiquidityUsd");
-        match self.client.post("/api/v6/dex/market/signal/list", &body).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match market::fetch_signal_list(
+            &self.client,
+            &chain_index,
+            p.wallet_type,
+            p.min_amount_usd,
+            p.max_amount_usd,
+            p.min_address_count,
+            p.max_address_count,
+            p.token_address,
+            p.min_market_cap_usd,
+            p.max_market_cap_usd,
+            p.min_liquidity_usd,
+            p.max_liquidity_usd,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
     #[tool(name = "market_memepump_chains", description = "Get supported chains and protocols for Meme Pump")]
     async fn market_memepump_chains(&self) -> String {
-        match self.client.get("/api/v6/dex/market/memepump/supported/chainsProtocol", &[]).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match market::fetch_memepump_chains(&self.client).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
+    // Note: market_memepump_tokens uses different API query params from the CLI's full filter set
+    // (protocolId vs protocolIdList, sortField/sortOrder, minAge/maxAge vs minTokenAge/maxTokenAge).
+    // Kept as a standalone implementation with its own simplified parameter surface.
     #[tool(name = "market_memepump_tokens", description = "Get filtered Meme Pump token list")]
     async fn market_memepump_tokens(&self, Parameters(p): Parameters<MarketMemepumpTokensParams>) -> String {
         let chain_index = crate::chains::resolve_chain(&p.chain);
@@ -520,8 +486,8 @@ impl McpServer {
                 ("maxTxCount", &max_tx),
             ],
         ).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
@@ -530,12 +496,9 @@ impl McpServer {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
-        match self.client.get(
-            "/api/v6/dex/market/memepump/tokenDetails",
-            &[("chainIndex", chain_index.as_str()), ("tokenContractAddress", p.address.as_str())],
-        ).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match market::fetch_memepump_token_details(&self.client, &p.address, &chain_index, "").await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
@@ -544,12 +507,16 @@ impl McpServer {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
-        match self.client.get(
+        match market::fetch_memepump_by_address(
+            &self.client,
             "/api/v6/dex/market/memepump/tokenDevInfo",
-            &[("chainIndex", chain_index.as_str()), ("tokenContractAddress", p.address.as_str())],
-        ).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+            &p.address,
+            &chain_index,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
@@ -558,12 +525,16 @@ impl McpServer {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
-        match self.client.get(
+        match market::fetch_memepump_by_address(
+            &self.client,
             "/api/v6/dex/market/memepump/similarToken",
-            &[("chainIndex", chain_index.as_str()), ("tokenContractAddress", p.address.as_str())],
-        ).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+            &p.address,
+            &chain_index,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
@@ -572,12 +543,16 @@ impl McpServer {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
-        match self.client.get(
+        match market::fetch_memepump_by_address(
+            &self.client,
             "/api/v6/dex/market/memepump/tokenBundleInfo",
-            &[("chainIndex", chain_index.as_str()), ("tokenContractAddress", p.address.as_str())],
-        ).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+            &p.address,
+            &chain_index,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
@@ -586,20 +561,17 @@ impl McpServer {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
-        match self.client.get(
-            "/api/v6/dex/market/memepump/apedWallet",
-            &[("chainIndex", chain_index.as_str()), ("tokenContractAddress", p.address.as_str())],
-        ).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match market::fetch_memepump_aped_wallet(&self.client, &p.address, &chain_index, "").await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
     #[tool(name = "swap_chains", description = "Get supported chains for DEX aggregator swaps")]
     async fn swap_chains(&self) -> String {
-        match self.client.get("/api/v6/dex/aggregator/supported/chain", &[]).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match swap::fetch_chains(&self.client).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
@@ -607,18 +579,9 @@ impl McpServer {
     async fn swap_quote(&self, Parameters(p): Parameters<SwapQuoteParams>) -> String {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let swap_mode = p.swap_mode.as_deref().unwrap_or("exactIn");
-        match self.client.get(
-            "/api/v6/dex/aggregator/quote",
-            &[
-                ("chainIndex", chain_index.as_str()),
-                ("fromTokenAddress", p.from.as_str()),
-                ("toTokenAddress", p.to.as_str()),
-                ("amount", p.amount.as_str()),
-                ("swapMode", swap_mode),
-            ],
-        ).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match swap::fetch_quote(&self.client, &chain_index, &p.from, &p.to, &p.amount, swap_mode).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
@@ -627,127 +590,109 @@ impl McpServer {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let slippage = p.slippage.as_deref().unwrap_or("1");
         let swap_mode = p.swap_mode.as_deref().unwrap_or("exactIn");
-        match self.client.get(
-            "/api/v6/dex/aggregator/swap",
-            &[
-                ("chainIndex", chain_index.as_str()),
-                ("fromTokenAddress", p.from.as_str()),
-                ("toTokenAddress", p.to.as_str()),
-                ("amount", p.amount.as_str()),
-                ("slippagePercent", slippage),
-                ("userWalletAddress", p.wallet.as_str()),
-                ("swapMode", swap_mode),
-            ],
-        ).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match swap::fetch_swap(
+            &self.client,
+            &chain_index,
+            &p.from,
+            &p.to,
+            &p.amount,
+            slippage,
+            &p.wallet,
+            swap_mode,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
     #[tool(name = "swap_approve", description = "Get ERC-20 approval transaction data")]
     async fn swap_approve(&self, Parameters(p): Parameters<SwapApproveParams>) -> String {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match self.client.get(
-            "/api/v6/dex/aggregator/approve-transaction",
-            &[
-                ("chainIndex", chain_index.as_str()),
-                ("tokenContractAddress", p.token.as_str()),
-                ("approveAmount", p.amount.as_str()),
-            ],
-        ).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match swap::fetch_approve(&self.client, &chain_index, &p.token, &p.amount).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
     #[tool(name = "swap_liquidity", description = "Get available liquidity sources on a chain")]
     async fn swap_liquidity(&self, Parameters(p): Parameters<ChainParam>) -> String {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match self.client.get(
-            "/api/v6/dex/aggregator/get-liquidity",
-            &[("chainIndex", chain_index.as_str())],
-        ).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match swap::fetch_liquidity(&self.client, &chain_index).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
     #[tool(name = "portfolio_chains", description = "Get supported chains for wallet balance queries")]
     async fn portfolio_chains(&self) -> String {
-        match self.client.get("/api/v6/dex/balance/supported/chain", &[]).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match portfolio::fetch_chains(&self.client).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
     #[tool(name = "portfolio_total_value", description = "Get total portfolio value for a wallet address")]
     async fn portfolio_total_value(&self, Parameters(p): Parameters<PortfolioTotalValueParams>) -> String {
-        let chain_indices = crate::chains::resolve_chains(&p.chains);
-        let mut query: Vec<(&str, String)> = vec![
-            ("address", p.address.clone()),
-            ("chains", chain_indices),
-        ];
-        if let Some(at) = p.asset_type { query.push(("assetType", at)); }
-        if let Some(er) = p.exclude_risk { query.push(("excludeRiskToken", er)); }
-        let query_refs: Vec<(&str, &str)> = query.iter().map(|(k, v)| (*k, v.as_str())).collect();
-        match self.client.get("/api/v6/dex/balance/total-value-by-address", &query_refs).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match portfolio::fetch_total_value(
+            &self.client,
+            &p.address,
+            &p.chains,
+            p.asset_type.as_deref(),
+            p.exclude_risk.as_deref(),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
     #[tool(name = "portfolio_all_balances", description = "Get all token balances for a wallet address")]
     async fn portfolio_all_balances(&self, Parameters(p): Parameters<PortfolioAllBalancesParams>) -> String {
-        let chain_indices = crate::chains::resolve_chains(&p.chains);
-        let mut query: Vec<(&str, String)> = vec![
-            ("address", p.address.clone()),
-            ("chains", chain_indices),
-        ];
-        if let Some(er) = p.exclude_risk { query.push(("excludeRiskToken", er)); }
-        let query_refs: Vec<(&str, &str)> = query.iter().map(|(k, v)| (*k, v.as_str())).collect();
-        match self.client.get("/api/v6/dex/balance/all-token-balances-by-address", &query_refs).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match portfolio::fetch_all_balances(
+            &self.client,
+            &p.address,
+            &p.chains,
+            p.exclude_risk.as_deref(),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
     #[tool(name = "portfolio_token_balances", description = "Get specific token balances for a wallet address")]
     async fn portfolio_token_balances(&self, Parameters(p): Parameters<PortfolioTokenBalancesParams>) -> String {
-        let token_list: Vec<Value> = p.tokens.split(',').map(|pair| {
-            let parts: Vec<&str> = pair.trim().splitn(2, ':').collect();
-            let chain_index = if parts.is_empty() { "" } else { parts[0] };
-            let token_address = if parts.len() > 1 { parts[1] } else { "" };
-            let resolved = crate::chains::resolve_chain(chain_index);
-            serde_json::json!({"chainIndex": resolved, "tokenContractAddress": token_address})
-        }).collect();
-        let mut body = serde_json::json!({
-            "address": p.address,
-            "tokenContractAddresses": token_list,
-        });
-        if let Some(er) = p.exclude_risk { body["excludeRiskToken"] = Value::String(er); }
-        match self.client.post("/api/v6/dex/balance/token-balances-by-address", &body).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match portfolio::fetch_token_balances(
+            &self.client,
+            &p.address,
+            &p.tokens,
+            p.exclude_risk.as_deref(),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
     #[tool(name = "gateway_chains", description = "Get supported chains for the on-chain gateway")]
     async fn gateway_chains(&self) -> String {
-        match self.client.get("/api/v6/dex/pre-transaction/supported/chain", &[]).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match gateway::fetch_chains(&self.client).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
     #[tool(name = "gateway_gas", description = "Get current gas prices for a chain")]
     async fn gateway_gas(&self, Parameters(p): Parameters<ChainParam>) -> String {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match self.client.get(
-            "/api/v6/dex/pre-transaction/gas-price",
-            &[("chainIndex", chain_index.as_str())],
-        ).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match gateway::fetch_gas(&self.client, &chain_index).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
@@ -755,18 +700,18 @@ impl McpServer {
     async fn gateway_gas_limit(&self, Parameters(p): Parameters<GatewayGasLimitParams>) -> String {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let amount = p.amount.as_deref().unwrap_or("0");
-        let mut body = serde_json::json!({
-            "chainIndex": chain_index,
-            "fromAddress": p.from,
-            "toAddress": p.to,
-            "txAmount": amount,
-        });
-        if let Some(input_data) = p.data {
-            body["extJson"] = serde_json::json!({"inputData": input_data});
-        }
-        match self.client.post("/api/v6/dex/pre-transaction/gas-limit", &body).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match gateway::fetch_gas_limit(
+            &self.client,
+            &chain_index,
+            &p.from,
+            &p.to,
+            amount,
+            p.data.as_deref(),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
@@ -774,45 +719,28 @@ impl McpServer {
     async fn gateway_simulate(&self, Parameters(p): Parameters<GatewaySimulateParams>) -> String {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let amount = p.amount.as_deref().unwrap_or("0");
-        let body = serde_json::json!({
-            "chainIndex": chain_index,
-            "fromAddress": p.from,
-            "toAddress": p.to,
-            "txAmount": amount,
-            "extJson": {"inputData": p.data},
-        });
-        match self.client.post("/api/v6/dex/pre-transaction/simulate", &body).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match gateway::fetch_simulate(&self.client, &chain_index, &p.from, &p.to, amount, &p.data).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
     #[tool(name = "gateway_broadcast", description = "Broadcast a signed transaction on-chain")]
     async fn gateway_broadcast(&self, Parameters(p): Parameters<GatewayBroadcastParams>) -> String {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        let body = serde_json::json!({
-            "signedTx": p.signed_tx,
-            "chainIndex": chain_index,
-            "address": p.address,
-        });
-        match self.client.post("/api/v6/dex/pre-transaction/broadcast-transaction", &body).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        match gateway::fetch_broadcast(&self.client, &chain_index, &p.signed_tx, &p.address).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 
     #[tool(name = "gateway_orders", description = "Track broadcast order status")]
     async fn gateway_orders(&self, Parameters(p): Parameters<GatewayOrdersParams>) -> String {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        let mut query: Vec<(&str, String)> = vec![
-            ("address", p.address.clone()),
-            ("chainIndex", chain_index),
-        ];
-        if let Some(oid) = p.order_id { query.push(("orderId", oid)); }
-        let query_refs: Vec<(&str, &str)> = query.iter().map(|(k, v)| (*k, v.as_str())).collect();
-        match self.client.get("/api/v6/dex/post-transaction/orders", &query_refs).await {
-            Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-            Err(e) => format!("Error: {e:#}"),
+        let oid = p.order_id.as_deref();
+        match gateway::fetch_orders(&self.client, &chain_index, &p.address, oid).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
         }
     }
 }
