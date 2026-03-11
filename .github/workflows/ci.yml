@@ -45,6 +45,10 @@ jobs:
       - name: Run tests
         working-directory: ${{ env.CARGO_DIR }}
         run: cargo test
+        env:
+          OKX_API_KEY: ${{ secrets.OKX_API_KEY }}
+          OKX_SECRET_KEY: ${{ secrets.OKX_SECRET_KEY }}
+          OKX_PASSPHRASE: ${{ secrets.OKX_PASSPHRASE }}
 
   # ── Dependency vulnerability audit (runs once, not per-platform) ──
   audit:
