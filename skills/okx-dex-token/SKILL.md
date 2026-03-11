@@ -1,6 +1,6 @@
 ---
 name: okx-dex-token
-description: "Use this skill for token-level data: search and discover tokens, browse trending/hot tokens (热门, 代币榜单, by trending score or Twitter/X mentions), get liquidity pool info, view holder distribution by tag (whale/鲸鱼, smart money, KOL, sniper), check token safety and honeypot risk (蜜罐, 'is this token a honeypot', 'can I sell this'), see who created a token and their history, view recent buy/sell trade activity for a token, find top profit addresses, or filter trade history by wallet type. This skill can be invoked on user intent; the specific token address can be provided after. Do NOT use for cross-market whale/signal tracking, personal DEX trade history, price charts, or meme launch scanning — use okx-dex-market."
+description: "Use this skill for token-level data: search and discover tokens, browse trending/hot tokens (热门, 代币榜单, by trending score or Twitter/X mentions), get liquidity pool info, view holder distribution by tag (whale/巨鲸, smart money, KOL, sniper), check token safety and honeypot risk (貔貅盘, 'is this token a honeypot', 'can I sell this'), see who created a token and their history, view recent buy/sell trade activity for a token, find top profit addresses, or filter trade history by wallet type. This skill can be invoked on user intent; the specific token address can be provided after. Do NOT use for cross-market whale/signal tracking, personal DEX trade history, price charts, or meme launch scanning — use okx-dex-market."
 license: Apache-2.0
 metadata:
   author: okx
