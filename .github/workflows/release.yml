@@ -52,17 +52,25 @@ jobs:
       matrix:
         include:
           # ── macOS (Apple Silicon + Intel) ──
-          - { target: aarch64-apple-darwin,          os: macos-latest  }
-          - { target: x86_64-apple-darwin,           os: macos-latest  }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-apple-darwin, os: macos-latest }
           # ── Linux (x64 native, others via cross-compilation) ──
-          - { target: x86_64-unknown-linux-gnu,      os: ubuntu-latest }
-          - { target: i686-unknown-linux-gnu,        os: ubuntu-latest, cross: true }
-          - { target: aarch64-unknown-linux-gnu,     os: ubuntu-latest, cross: true }
-          - { target: armv7-unknown-linux-gnueabihf, os: ubuntu-latest, cross: true }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: i686-unknown-linux-gnu, os: ubuntu-latest, cross: true }
+          - {
+              target: aarch64-unknown-linux-gnu,
+              os: ubuntu-latest,
+              cross: true,
+            }
+          - {
+              target: armv7-unknown-linux-gnueabihf,
+              os: ubuntu-latest,
+              cross: true,
+            }
           # ── Windows (x64 / x86 / ARM64) ──
-          - { target: x86_64-pc-windows-msvc,        os: windows-latest }
-          - { target: i686-pc-windows-msvc,          os: windows-latest }
-          - { target: aarch64-pc-windows-msvc,       os: windows-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: i686-pc-windows-msvc, os: windows-latest }
+          - { target: aarch64-pc-windows-msvc, os: windows-latest }
 
     name: Build ${{ matrix.target }}
 
@@ -110,57 +118,30 @@ jobs:
           Copy-Item "${{ env.CARGO_DIR }}\target\${{ matrix.target }}\release\${{ env.BIN_NAME }}.exe" `
                     "${{ env.BIN_NAME }}-${{ matrix.target }}.exe"
 
-      - name: "Sign Windows binary (DigiCert KeyLocker)"
-        if: runner.os == 'Windows'
+      - name: "Setup DigiCert certificate"
+        if: runner.os == 'Windows' && env.SM_API_KEY != ''
         env:
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
           SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
-          SM_KEYPAIR_ALIAS: ${{ secrets.SM_KEYPAIR_ALIAS }}
         shell: pwsh
         run: |
-          # Skip if secrets not configured (fork/PR builds)
-          if (-not $env:SM_API_KEY) {
-            Write-Warning "Skipping Windows signing - secrets not configured"
-            exit 0
-          }
-
-          $artifact = "${{ env.BIN_NAME }}-${{ matrix.target }}.exe"
-
-          # 1. Install DigiCert smtools
-          $url = "https://one.digicert.com/signingmanager/api-ui/v1/releases/smtools-windows-x64.msi/download"
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\smtools.msi"
-          Start-Process msiexec.exe -ArgumentList "/i `"$env:RUNNER_TEMP\smtools.msi`" /quiet /qn" -Wait
-          $env:PATH += ";C:\Program Files\DigiCert\DigiCert Signing Manager Tools"
-
-          # 2. Restore certificate to temp file
-          $certPath = "$env:RUNNER_TEMP\cert.p12"
+          $certPath = "$env:RUNNER_TEMP\Certificate_pkcs12.p12"
           [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:SM_CLIENT_CERT_FILE_B64))
-          [System.Environment]::SetEnvironmentVariable("SM_CLIENT_CERT_FILE", $certPath, "Process")
+          Write-Host "Certificate file size: $((Get-Item $certPath).Length) bytes"
 
-          # 3. Configure credentials
-          smctl credentials save $env:SM_API_KEY $env:SM_CLIENT_CERT_PASSWORD
-
-          # 4. Verify KeyLocker connection
-          smctl keypair list
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "DigiCert KeyLocker authentication failed"
-            exit 1
-          }
-
-          # 5. Sign the binary
-          smctl sign --keypair-alias $env:SM_KEYPAIR_ALIAS --input $artifact
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Signing failed for $artifact"
-            exit 1
-          }
-
-          # 6. Verify signature
-          smctl sign verify --input $artifact
-
-          # 7. Cleanup certificate
-          Remove-Item $certPath -Force
-          Write-Host "Signed successfully: $artifact"
+      - name: "Sign Windows binary (DigiCert KeyLocker)"
+        if: runner.os == 'Windows' && env.SM_API_KEY != ''
+        uses: digicert/code-signing-software-trust-action@v1
+        with:
+          input: ${{ env.BIN_NAME }}-${{ matrix.target }}.exe
+          keypair-alias: ${{ secrets.SM_KEYPAIR_ALIAS }}
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_HOST: https://one.digicert.com
+          SM_CLIENT_CERT_FILE: ${{ runner.temp }}\Certificate_pkcs12.p12
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
 
       - uses: actions/upload-artifact@v4
         with:

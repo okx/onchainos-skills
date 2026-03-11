@@ -291,7 +291,7 @@ onchainos portfolio token-balances --address 0xYourWallet --tokens "196:,196:0x7
 - **chains exceeds 50**: split into batches, max 50 per request
 - **`--exclude-risk` not working**: only supported on ETH/BSC/SOL/BASE
 - **DeFi positions**: use `--asset-type 2` to query DeFi holdings separately
-- **Address format mismatch**: EVM address on Solana chain will return empty data — do NOT mix
+- **Address format mismatch**: EVM (`0x…`) and Solana/UTXO addresses have incompatible formats. Passing an EVM address with a Solana chain (or vice versa) causes the **entire request to fail** with an API error — no partial results are returned. Always make **separate requests**: one call for EVM chains using the EVM address, a separate call for Solana using the Solana address
 - **Network error**: retry once, then prompt user to try again later
 - **Region restriction (error code 50125 or 80001)**: do NOT show the raw error code to the user. Instead, display a friendly message: `⚠️ Service is not available in your region. Please switch to a supported region and try again.`
 
