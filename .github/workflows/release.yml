@@ -110,6 +110,58 @@ jobs:
           Copy-Item "${{ env.CARGO_DIR }}\target\${{ matrix.target }}\release\${{ env.BIN_NAME }}.exe" `
                     "${{ env.BIN_NAME }}-${{ matrix.target }}.exe"
 
+      - name: "Sign Windows binary (DigiCert KeyLocker)"
+        if: runner.os == 'Windows'
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_KEYPAIR_ALIAS: ${{ secrets.SM_KEYPAIR_ALIAS }}
+        shell: pwsh
+        run: |
+          # Skip if secrets not configured (fork/PR builds)
+          if (-not $env:SM_API_KEY) {
+            Write-Warning "Skipping Windows signing - secrets not configured"
+            exit 0
+          }
+
+          $artifact = "${{ env.BIN_NAME }}-${{ matrix.target }}.exe"
+
+          # 1. Install DigiCert smtools
+          $url = "https://one.digicert.com/signingmanager/api-ui/v1/releases/smtools-windows-x64.msi/download"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\smtools.msi"
+          Start-Process msiexec.exe -ArgumentList "/i `"$env:RUNNER_TEMP\smtools.msi`" /quiet /qn" -Wait
+          $env:PATH += ";C:\Program Files\DigiCert\DigiCert Signing Manager Tools"
+
+          # 2. Restore certificate to temp file
+          $certPath = "$env:RUNNER_TEMP\cert.p12"
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:SM_CLIENT_CERT_FILE_B64))
+          [System.Environment]::SetEnvironmentVariable("SM_CLIENT_CERT_FILE", $certPath, "Process")
+
+          # 3. Configure credentials
+          smctl credentials save $env:SM_API_KEY $env:SM_CLIENT_CERT_PASSWORD
+
+          # 4. Verify KeyLocker connection
+          smctl keypair list
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "DigiCert KeyLocker authentication failed"
+            exit 1
+          }
+
+          # 5. Sign the binary
+          smctl sign --keypair-alias $env:SM_KEYPAIR_ALIAS --input $artifact
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Signing failed for $artifact"
+            exit 1
+          }
+
+          # 6. Verify signature
+          smctl sign verify --input $artifact
+
+          # 7. Cleanup certificate
+          Remove-Item $certPath -Force
+          Write-Host "Signed successfully: $artifact"
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.BIN_NAME }}-${{ matrix.target }}
