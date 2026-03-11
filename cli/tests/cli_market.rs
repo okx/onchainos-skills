@@ -22,7 +22,7 @@ struct LiveMemepumpToken {
 
 #[test]
 fn market_price_eth_native() {
-    let output = run_with_retry(&["market", "price", tokens::EVM_NATIVE, "--chain", "ethereum"]);
+    let output = run_with_retry(&["market", "price", "--address", tokens::EVM_NATIVE, "--chain", "ethereum"]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.is_array(), "expected array of price entries: {data}");
     let arr = data.as_array().unwrap();
@@ -36,7 +36,7 @@ fn market_price_eth_native() {
 
 #[test]
 fn market_price_solana_wsol() {
-    let output = run_with_retry(&["market", "price", tokens::SOL_WSOL, "--chain", "solana"]);
+    let output = run_with_retry(&["market", "price", "--address", tokens::SOL_WSOL, "--chain", "solana"]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.is_array(), "expected array: {data}");
 }
@@ -55,7 +55,7 @@ fn market_price_missing_address_fails() {
 #[test]
 fn market_prices_batch_query() {
     let tokens_arg = format!("1:{},501:{}", tokens::EVM_NATIVE, tokens::SOL_WSOL);
-    let output = run_with_retry(&["market", "prices", &tokens_arg]);
+    let output = run_with_retry(&["market", "prices", "--tokens", &tokens_arg]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.is_array(), "expected array: {data}");
     let arr = data.as_array().unwrap();
@@ -73,6 +73,7 @@ fn market_kline_returns_candles() {
     let output = run_with_retry(&[
         "market",
         "kline",
+        "--address",
         tokens::SOL_WSOL,
         "--chain",
         "solana",
@@ -105,7 +106,7 @@ fn market_kline_missing_address_fails() {
 
 #[test]
 fn market_index_price() {
-    let output = run_with_retry(&["market", "index", tokens::EVM_NATIVE, "--chain", "ethereum"]);
+    let output = run_with_retry(&["market", "index", "--address", tokens::EVM_NATIVE, "--chain", "ethereum"]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.is_array(), "expected array: {data}");
     let arr = data.as_array().unwrap();
@@ -132,7 +133,7 @@ fn market_signal_chains_returns_list() {
 
 #[test]
 fn market_signal_list_ethereum() {
-    let output = run_with_retry(&["market", "signal-list", "ethereum"]);
+    let output = run_with_retry(&["market", "signal-list", "--chain", "ethereum"]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
         data.is_array() || data.is_object(),
@@ -142,7 +143,7 @@ fn market_signal_list_ethereum() {
 
 #[test]
 fn market_signal_list_with_wallet_type_filter() {
-    let output = run_with_retry(&["market", "signal-list", "solana", "--wallet-type", "1"]);
+    let output = run_with_retry(&["market", "signal-list", "--chain", "solana", "--wallet-type", "1"]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
         data.is_array() || data.is_object(),
@@ -155,6 +156,7 @@ fn market_signal_list_with_all_filters() {
     let output = run_with_retry(&[
         "market",
         "signal-list",
+        "--chain",
         "solana",
         "--wallet-type",
         "1,2,3",
@@ -215,7 +217,7 @@ fn memepump_chains_returns_supported_chains() {
 
 #[test]
 fn memepump_tokens_returns_list_for_solana() {
-    let output = run_with_retry(&["market", "memepump-tokens", "solana", "--stage", "NEW"]);
+    let output = run_with_retry(&["market", "memepump-tokens", "--chain", "solana", "--stage", "NEW"]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
         data.is_array() || data.is_object(),
@@ -228,6 +230,7 @@ fn memepump_tokens_with_protocol_filter() {
     let output = run_with_retry(&[
         "market",
         "memepump-tokens",
+        "--chain",
         "solana",
         "--stage",
         "NEW",
@@ -246,6 +249,7 @@ fn memepump_tokens_with_age_filter() {
     let output = run_with_retry(&[
         "market",
         "memepump-tokens",
+        "--chain",
         "solana",
         "--stage",
         "NEW",
@@ -266,6 +270,7 @@ fn memepump_tokens_with_social_filters() {
     let output = run_with_retry(&[
         "market",
         "memepump-tokens",
+        "--chain",
         "solana",
         "--stage",
         "MIGRATED",
@@ -284,6 +289,7 @@ fn memepump_tokens_with_holder_filters() {
     let output = run_with_retry(&[
         "market",
         "memepump-tokens",
+        "--chain",
         "solana",
         "--stage",
         "MIGRATED",
@@ -302,6 +308,7 @@ fn memepump_tokens_live_on_pump_fun() {
     let output = run_with_retry(&[
         "market",
         "memepump-tokens",
+        "--chain",
         "solana",
         "--stage",
         "NEW",
@@ -320,6 +327,7 @@ fn memepump_tokens_migrating_defaults_to_bonding_desc_order() {
     let output = run_with_retry(&[
         "market",
         "memepump-tokens",
+        "--chain",
         "solana",
         "--stage",
         "MIGRATING",
@@ -380,7 +388,7 @@ fn memepump_tokens_missing_chain_arg_fails() {
 #[test]
 fn memepump_tokens_missing_stage_arg_fails() {
     onchainos()
-        .args(["market", "memepump-tokens", "solana"])
+        .args(["market", "memepump-tokens", "--chain", "solana"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
@@ -390,7 +398,7 @@ fn memepump_tokens_missing_stage_arg_fails() {
 
 fn fetch_first_memepump_token(chain: &str) -> Option<LiveMemepumpToken> {
     let output = assert_cmd::Command::from(cargo_bin_cmd!("onchainos"))
-        .args(["market", "memepump-tokens", chain, "--stage", "MIGRATED"])
+        .args(["market", "memepump-tokens", "--chain", chain, "--stage", "MIGRATED"])
         .output()
         .ok()?;
 
@@ -451,6 +459,7 @@ fn memepump_token_details_with_real_token() {
     let output = run_with_retry(&[
         "market",
         "memepump-token-details",
+        "--address",
         &token.token_address,
         "--chain",
         "solana",
@@ -483,6 +492,7 @@ fn memepump_token_details_with_wallet() {
     let output = run_with_retry(&[
         "market",
         "memepump-token-details",
+        "--address",
         &token.token_address,
         "--chain",
         "solana",
@@ -520,6 +530,7 @@ fn memepump_token_dev_info_with_real_token() {
     let output = run_with_retry(&[
         "market",
         "memepump-token-dev-info",
+        "--address",
         &token.token_address,
         "--chain",
         "solana",
@@ -555,6 +566,7 @@ fn memepump_similar_tokens_with_real_token() {
     let output = run_with_retry(&[
         "market",
         "memepump-similar-tokens",
+        "--address",
         &token.token_address,
         "--chain",
         "solana",
@@ -590,6 +602,7 @@ fn memepump_token_bundle_info_with_real_token() {
     let output = run_with_retry(&[
         "market",
         "memepump-token-bundle-info",
+        "--address",
         &token.token_address,
         "--chain",
         "solana",
@@ -625,6 +638,7 @@ fn memepump_aped_wallet_with_real_token() {
     let output = run_with_retry(&[
         "market",
         "memepump-aped-wallet",
+        "--address",
         &token.token_address,
         "--chain",
         "solana",
@@ -657,6 +671,7 @@ fn memepump_aped_wallet_with_wallet() {
     let output = run_with_retry(&[
         "market",
         "memepump-aped-wallet",
+        "--address",
         &token.token_address,
         "--chain",
         "solana",
@@ -690,6 +705,7 @@ fn memepump_tokens_with_all_optional_filters() {
     let output = run_with_retry(&[
         "market",
         "memepump-tokens",
+        "--chain",
         "solana",
         "--stage",
         "MIGRATED",
