@@ -11,12 +11,10 @@ use crate::Cli;
 use anyhow::Result;
 
 /// Shared execution context for all commands.
-#[allow(dead_code)]
 pub struct Context {
     pub config: AppConfig,
     pub base_url_override: Option<String>,
     pub chain_override: Option<String>,
-    pub output_format: crate::OutputFormat,
 }
 
 impl Context {
@@ -26,7 +24,6 @@ impl Context {
             config,
             base_url_override: cli.base_url.clone(),
             chain_override: cli.chain.clone(),
-            output_format: cli.output,
         }
     }
 
