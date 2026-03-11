@@ -44,3 +44,7 @@ yarn-error.log*
 
 
 .zigbuild-cache/
+
+# Test results (local only)
+results/
+onchainos_bin
