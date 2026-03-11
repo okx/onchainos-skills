@@ -280,7 +280,7 @@ Present conversationally, e.g.: "Would you like to see the price chart or check 
 
 ## Additional Resources
 
-For detailed parameter tables, return field schemas, and usage examples for all 9 commands, consult:
+For detailed parameter tables, return field schemas, and usage examples for all 10 commands, consult:
 - **`references/cli-reference.md`** — Full CLI command reference with params, return fields, and examples
 
 To search for specific command details: `grep -n "onchainos token <command>" references/cli-reference.md`
