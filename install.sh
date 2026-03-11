@@ -26,7 +26,7 @@ INSTALL_DIR="$HOME/.local/bin"
 CACHE_DIR="$HOME/.onchainos"
 CACHE_FILE="$CACHE_DIR/last_check"
 CACHE_TTL=43200  # 12 hours in seconds
-REQUIRED_VERSION="1.0.3"  # Managed by release workflow — do not edit manually
+REQUIRED_VERSION="1.0.4"  # Managed by release workflow — do not edit manually
 
 # Detect OS and CPU architecture, return matching Rust target triple
 get_target() {
