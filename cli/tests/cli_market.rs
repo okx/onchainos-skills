@@ -117,7 +117,7 @@ fn market_index_price() {
 
 #[test]
 fn market_signal_chains_returns_list() {
-    let output = run_with_retry(&["market", "signal-chains"]);
+    let output = run_with_retry(&["signal", "chains"]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.is_array(), "expected array of chains: {data}");
     let arr = data.as_array().unwrap();
@@ -133,7 +133,7 @@ fn market_signal_chains_returns_list() {
 
 #[test]
 fn market_signal_list_ethereum() {
-    let output = run_with_retry(&["market", "signal-list", "--chain", "ethereum"]);
+    let output = run_with_retry(&["signal", "list", "--chain", "ethereum"]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
         data.is_array() || data.is_object(),
@@ -143,7 +143,7 @@ fn market_signal_list_ethereum() {
 
 #[test]
 fn market_signal_list_with_wallet_type_filter() {
-    let output = run_with_retry(&["market", "signal-list", "--chain", "solana", "--wallet-type", "1"]);
+    let output = run_with_retry(&["signal", "list", "--chain", "solana", "--wallet-type", "1"]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
         data.is_array() || data.is_object(),
@@ -154,8 +154,8 @@ fn market_signal_list_with_wallet_type_filter() {
 #[test]
 fn market_signal_list_with_all_filters() {
     let output = run_with_retry(&[
-        "market",
-        "signal-list",
+        "signal",
+        "list",
         "--chain",
         "solana",
         "--wallet-type",
@@ -189,7 +189,7 @@ fn market_signal_list_with_all_filters() {
 #[test]
 fn market_signal_list_missing_chain_fails() {
     onchainos()
-        .args(["market", "signal-list"])
+        .args(["signal", "list"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
@@ -199,7 +199,7 @@ fn market_signal_list_missing_chain_fails() {
 
 #[test]
 fn memepump_chains_returns_supported_chains() {
-    let output = run_with_retry(&["market", "memepump-chains"]);
+    let output = run_with_retry(&["memepump", "chains"]);
     let data = assert_ok_and_extract_data(&output);
 
     assert!(data.is_array(), "data should be an array");
@@ -217,7 +217,7 @@ fn memepump_chains_returns_supported_chains() {
 
 #[test]
 fn memepump_tokens_returns_list_for_solana() {
-    let output = run_with_retry(&["market", "memepump-tokens", "--chain", "solana", "--stage", "NEW"]);
+    let output = run_with_retry(&["memepump", "tokens", "--chain", "solana", "--stage", "NEW"]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
         data.is_array() || data.is_object(),
@@ -228,8 +228,8 @@ fn memepump_tokens_returns_list_for_solana() {
 #[test]
 fn memepump_tokens_with_protocol_filter() {
     let output = run_with_retry(&[
-        "market",
-        "memepump-tokens",
+        "memepump",
+        "tokens",
         "--chain",
         "solana",
         "--stage",
@@ -247,8 +247,8 @@ fn memepump_tokens_with_protocol_filter() {
 #[test]
 fn memepump_tokens_with_age_filter() {
     let output = run_with_retry(&[
-        "market",
-        "memepump-tokens",
+        "memepump",
+        "tokens",
         "--chain",
         "solana",
         "--stage",
@@ -268,8 +268,8 @@ fn memepump_tokens_with_age_filter() {
 #[test]
 fn memepump_tokens_with_social_filters() {
     let output = run_with_retry(&[
-        "market",
-        "memepump-tokens",
+        "memepump",
+        "tokens",
         "--chain",
         "solana",
         "--stage",
@@ -287,8 +287,8 @@ fn memepump_tokens_with_social_filters() {
 #[test]
 fn memepump_tokens_with_holder_filters() {
     let output = run_with_retry(&[
-        "market",
-        "memepump-tokens",
+        "memepump",
+        "tokens",
         "--chain",
         "solana",
         "--stage",
@@ -306,8 +306,8 @@ fn memepump_tokens_with_holder_filters() {
 #[test]
 fn memepump_tokens_live_on_pump_fun() {
     let output = run_with_retry(&[
-        "market",
-        "memepump-tokens",
+        "memepump",
+        "tokens",
         "--chain",
         "solana",
         "--stage",
@@ -325,8 +325,8 @@ fn memepump_tokens_live_on_pump_fun() {
 #[test]
 fn memepump_tokens_migrating_defaults_to_bonding_desc_order() {
     let output = run_with_retry(&[
-        "market",
-        "memepump-tokens",
+        "memepump",
+        "tokens",
         "--chain",
         "solana",
         "--stage",
@@ -379,7 +379,7 @@ fn memepump_tokens_migrating_defaults_to_bonding_desc_order() {
 #[test]
 fn memepump_tokens_missing_chain_arg_fails() {
     onchainos()
-        .args(["market", "memepump-tokens"])
+        .args(["memepump", "tokens"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
@@ -388,7 +388,7 @@ fn memepump_tokens_missing_chain_arg_fails() {
 #[test]
 fn memepump_tokens_missing_stage_arg_fails() {
     onchainos()
-        .args(["market", "memepump-tokens", "--chain", "solana"])
+        .args(["memepump", "tokens", "--chain", "solana"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
@@ -398,7 +398,7 @@ fn memepump_tokens_missing_stage_arg_fails() {
 
 fn fetch_first_memepump_token(chain: &str) -> Option<LiveMemepumpToken> {
     let output = assert_cmd::Command::from(cargo_bin_cmd!("onchainos"))
-        .args(["market", "memepump-tokens", "--chain", chain, "--stage", "MIGRATED"])
+        .args(["memepump", "tokens", "--chain", chain, "--stage", "MIGRATED"])
         .output()
         .ok()?;
 
@@ -457,8 +457,8 @@ fn memepump_token_details_with_real_token() {
     };
 
     let output = run_with_retry(&[
-        "market",
-        "memepump-token-details",
+        "memepump",
+        "token-details",
         "--address",
         &token.token_address,
         "--chain",
@@ -490,8 +490,8 @@ fn memepump_token_details_with_wallet() {
     };
 
     let output = run_with_retry(&[
-        "market",
-        "memepump-token-details",
+        "memepump",
+        "token-details",
         "--address",
         &token.token_address,
         "--chain",
@@ -509,7 +509,7 @@ fn memepump_token_details_with_wallet() {
 #[test]
 fn memepump_token_details_missing_address_fails() {
     onchainos()
-        .args(["market", "memepump-token-details"])
+        .args(["memepump", "token-details"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
@@ -528,8 +528,8 @@ fn memepump_token_dev_info_with_real_token() {
     };
 
     let output = run_with_retry(&[
-        "market",
-        "memepump-token-dev-info",
+        "memepump",
+        "token-dev-info",
         "--address",
         &token.token_address,
         "--chain",
@@ -545,7 +545,7 @@ fn memepump_token_dev_info_with_real_token() {
 #[test]
 fn memepump_token_dev_info_missing_address_fails() {
     onchainos()
-        .args(["market", "memepump-token-dev-info"])
+        .args(["memepump", "token-dev-info"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
@@ -564,8 +564,8 @@ fn memepump_similar_tokens_with_real_token() {
     };
 
     let output = run_with_retry(&[
-        "market",
-        "memepump-similar-tokens",
+        "memepump",
+        "similar-tokens",
         "--address",
         &token.token_address,
         "--chain",
@@ -581,7 +581,7 @@ fn memepump_similar_tokens_with_real_token() {
 #[test]
 fn memepump_similar_tokens_missing_address_fails() {
     onchainos()
-        .args(["market", "memepump-similar-tokens"])
+        .args(["memepump", "similar-tokens"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
@@ -600,8 +600,8 @@ fn memepump_token_bundle_info_with_real_token() {
     };
 
     let output = run_with_retry(&[
-        "market",
-        "memepump-token-bundle-info",
+        "memepump",
+        "token-bundle-info",
         "--address",
         &token.token_address,
         "--chain",
@@ -617,7 +617,7 @@ fn memepump_token_bundle_info_with_real_token() {
 #[test]
 fn memepump_token_bundle_info_missing_address_fails() {
     onchainos()
-        .args(["market", "memepump-token-bundle-info"])
+        .args(["memepump", "token-bundle-info"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
@@ -636,8 +636,8 @@ fn memepump_aped_wallet_with_real_token() {
     };
 
     let output = run_with_retry(&[
-        "market",
-        "memepump-aped-wallet",
+        "memepump",
+        "aped-wallet",
         "--address",
         &token.token_address,
         "--chain",
@@ -669,8 +669,8 @@ fn memepump_aped_wallet_with_wallet() {
     };
 
     let output = run_with_retry(&[
-        "market",
-        "memepump-aped-wallet",
+        "memepump",
+        "aped-wallet",
         "--address",
         &token.token_address,
         "--chain",
@@ -703,8 +703,8 @@ fn memepump_tokens_with_all_optional_filters() {
         .unwrap_or(tokens::SOL_WSOL);
 
     let output = run_with_retry(&[
-        "market",
-        "memepump-tokens",
+        "memepump",
+        "tokens",
         "--chain",
         "solana",
         "--stage",
@@ -828,7 +828,7 @@ fn memepump_tokens_with_all_optional_filters() {
 #[test]
 fn memepump_aped_wallet_missing_address_fails() {
     onchainos()
-        .args(["market", "memepump-aped-wallet"])
+        .args(["memepump", "aped-wallet"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));

@@ -157,14 +157,14 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Advanced token info (risk, creator, dev stats) | - | `okx-dex-token` → `onchainos token advanced-info` |
 | Top traders / profit addresses | - | `okx-dex-token` → `onchainos token top-trader` |
 | Trade history with tag/wallet filter | - | `okx-dex-token` → `onchainos token trades` |
-| Smart money / whale / KOL signals | - | `okx-dex-signal` → `onchainos market signal-list` |
-| Signal-supported chains | - | `okx-dex-signal` → `onchainos market signal-chains` |
-| Browse meme pump tokens by stage | - | `okx-dex-memepump` → `onchainos market memepump-tokens` |
-| Meme token audit (top10, dev, insiders) | - | `okx-dex-memepump` → `onchainos market memepump-token-details` |
-| Developer reputation / rug pull history | - | `okx-dex-memepump` → `onchainos market memepump-token-dev-info` |
-| Similar tokens by same creator | - | `okx-dex-memepump` → `onchainos market memepump-similar-tokens` |
-| Bundle/sniper detection | - | `okx-dex-memepump` → `onchainos market memepump-token-bundle-info` |
-| Aped (same-car) wallet analysis | - | `okx-dex-memepump` → `onchainos market memepump-aped-wallet` |
+| Smart money / whale / KOL signals | - | `okx-dex-signal` → `onchainos signal list` |
+| Signal-supported chains | - | `okx-dex-signal` → `onchainos signal chains` |
+| Browse meme pump tokens by stage | - | `okx-dex-memepump` → `onchainos memepump tokens` |
+| Meme token audit (top10, dev, insiders) | - | `okx-dex-memepump` → `onchainos memepump token-details` |
+| Developer reputation / rug pull history | - | `okx-dex-memepump` → `onchainos memepump token-dev-info` |
+| Similar tokens by same creator | - | `okx-dex-memepump` → `onchainos memepump similar-tokens` |
+| Bundle/sniper detection | - | `okx-dex-memepump` → `onchainos memepump token-bundle-info` |
+| Aped (same-car) wallet analysis | - | `okx-dex-memepump` → `onchainos memepump aped-wallet` |
 | Wallet PnL overview (win rate, realized PnL, top tokens) | `onchainos market portfolio-overview` | - |
 | Wallet DEX transaction history | `onchainos market portfolio-dex-history` | - |
 | Recent PnL list by token | `onchainos market portfolio-recent-pnl` | - |

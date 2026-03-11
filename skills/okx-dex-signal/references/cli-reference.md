@@ -2,12 +2,12 @@
 
 Detailed parameter tables, return field schemas, and usage examples for the 2 signal commands.
 
-## 1. onchainos market signal-chains
+## 1. onchainos signal chains
 
 Get supported chains for market signals. No parameters required.
 
 ```bash
-onchainos market signal-chains
+onchainos signal chains
 ```
 
 **Return fields**:
@@ -18,14 +18,14 @@ onchainos market signal-chains
 | `chainName` | String | Human-readable chain name (e.g., `"Ethereum"`, `"Solana"`) |
 | `chainLogo` | String | Chain logo image URL |
 
-> Call this first when signal data is needed — confirm chain support before calling `onchainos market signal-list`.
+> Call this first when signal data is needed — confirm chain support before calling `onchainos signal list`.
 
-## 2. onchainos market signal-list
+## 2. onchainos signal list
 
 Get latest buy-direction token signals sorted descending by time.
 
 ```bash
-onchainos market signal-list --chain <chain> [options]
+onchainos signal list --chain <chain> [options]
 ```
 
 | Param | Required | Default | Description |
@@ -67,21 +67,21 @@ onchainos market signal-list --chain <chain> [options]
 **User says:** "What are smart money wallets buying on Solana?"
 
 ```bash
-onchainos market signal-chains   # confirm Solana is supported
-onchainos market signal-list --chain solana --wallet-type 1
+onchainos signal chains   # confirm Solana is supported
+onchainos signal list --chain solana --wallet-type 1
 # -> Display smart money buy signals with token info
 ```
 
 **User says:** "Show me whale buys above $10k on Ethereum"
 
 ```bash
-onchainos market signal-list --chain ethereum --wallet-type 3 --min-amount-usd 10000
+onchainos signal list --chain ethereum --wallet-type 3 --min-amount-usd 10000
 # -> Display whale-only signals, min $10k
 ```
 
 **User says:** "Filter signals to only show whale buys above $10k"
 
 ```bash
-onchainos market signal-list --chain ethereum --wallet-type 3 --min-amount-usd 10000
+onchainos signal list --chain ethereum --wallet-type 3 --min-amount-usd 10000
 # -> whale-only signals on Ethereum, min $10k
 ```

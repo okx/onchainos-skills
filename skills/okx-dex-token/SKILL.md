@@ -169,10 +169,10 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Wallet PnL overview / DEX transaction history | - | `onchainos market portfolio-*` |
 | Index price (multi-source aggregate) | - | `onchainos market index` |
 | Token risk analysis (dev rug pull count, holder %) | `onchainos token advanced-info` | - |
-| Meme token dev reputation / rug pull history | - | `okx-dex-memepump` → `onchainos market memepump-token-dev-info` |
-| Bundle/sniper detection | - | `okx-dex-memepump` → `onchainos market memepump-token-bundle-info` |
-| Similar tokens by same creator | - | `okx-dex-memepump` → `onchainos market memepump-similar-tokens` |
-| Market-wide smart money / whale / KOL alerts | - | `okx-dex-signal` → `onchainos market signal-list` |
+| Meme token dev reputation / rug pull history | - | `okx-dex-memepump` → `onchainos memepump token-dev-info` |
+| Bundle/sniper detection | - | `okx-dex-memepump` → `onchainos memepump token-bundle-info` |
+| Similar tokens by same creator | - | `okx-dex-memepump` → `onchainos memepump similar-tokens` |
+| Market-wide smart money / whale / KOL alerts | - | `okx-dex-signal` → `onchainos signal list` |
 
 **Rule of thumb**: `okx-dex-token` = token discovery & enriched analytics (search, trending, holders, holder filtering, market cap, advanced info, top traders, token risk, filtered trade history). `okx-dex-market` = raw price feeds, charts, wallet PnL. `okx-dex-signal` = market-wide smart money / whale / KOL signal tracking. `okx-dex-memepump` = meme pump scanning (dev reputation, rug pull history, bundler analysis, new launches).
 

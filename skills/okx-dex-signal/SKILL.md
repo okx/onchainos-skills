@@ -70,35 +70,35 @@ Every time before running any `onchainos` command, always follow these steps in 
 
 ```bash
 # Check which chains support signals
-onchainos market signal-chains
+onchainos signal chains
 
 # Get smart money buy signals on Solana
-onchainos market signal-list --chain solana --wallet-type 1
+onchainos signal list --chain solana --wallet-type 1
 
 # Get whale buy signals above $10k on Ethereum
-onchainos market signal-list --chain ethereum --wallet-type 3 --min-amount-usd 10000
+onchainos signal list --chain ethereum --wallet-type 3 --min-amount-usd 10000
 
 # Get all signal types on Base
-onchainos market signal-list --chain base
+onchainos signal list --chain base
 ```
 
 ## Command Index
 
 | # | Command | Description |
 |---|---|---|
-| 1 | `onchainos market signal-chains` | Get supported chains for signals |
-| 2 | `onchainos market signal-list --chain <chain>` | Get latest buy-direction signals (smart money / KOL / whale) |
+| 1 | `onchainos signal chains` | Get supported chains for signals |
+| 2 | `onchainos signal list --chain <chain>` | Get latest buy-direction signals (smart money / KOL / whale) |
 
 ## Operation Flow
 
 ### Step 1: Identify Intent
 
-- Supported chains for signals → `onchainos market signal-chains`
-- Smart money / whale / KOL buy signals → `onchainos market signal-list`
+- Supported chains for signals → `onchainos signal chains`
+- Smart money / whale / KOL buy signals → `onchainos signal list`
 
 ### Step 2: Collect Parameters
 
-- Missing chain → always call `onchainos market signal-chains` first to confirm the chain is supported
+- Missing chain → always call `onchainos signal chains` first to confirm the chain is supported
 - Signal filter params (`--wallet-type`, `--min-amount-usd`, etc.) → ask user for preferences if not specified; default to no filter (returns all signal types)
 - `--token-address` is optional — omit to get all signals on the chain; include to filter for a specific token
 
@@ -112,7 +112,7 @@ onchainos market signal-list --chain base
 
 | Just called | Suggest |
 |---|---|
-| `signal-chains` | 1. Fetch signals on a supported chain → `onchainos market signal-list` (this skill) |
+| `signal-chains` | 1. Fetch signals on a supported chain → `onchainos signal list` (this skill) |
 | `signal-list` | 1. View price chart for a signal token → `okx-dex-market` (`onchainos market kline`) 2. Deep token analytics (market cap, liquidity, holders) → `okx-dex-token` 3. Buy the token → `okx-dex-swap` |
 
 Present conversationally — never expose skill names or endpoint paths to the user.
@@ -122,8 +122,8 @@ Present conversationally — never expose skill names or endpoint paths to the u
 > User: "Show me what smart money is buying on Solana and buy if it looks good"
 
 ```
-1. okx-dex-signal   onchainos market signal-chains                         → confirm Solana supports signals
-2. okx-dex-signal   onchainos market signal-list --chain solana --wallet-type "1,2,3"
+1. okx-dex-signal   onchainos signal chains                         → confirm Solana supports signals
+2. okx-dex-signal   onchainos signal list --chain solana --wallet-type "1,2,3"
                                                                           → get latest smart money / whale / KOL buy signals
                                                                           → extracts token address, price, walletType, triggerWalletCount
        ↓ user picks a token from signal list
@@ -144,7 +144,7 @@ For detailed parameter tables and return field schemas, consult:
 
 ## Edge Cases
 
-- **Unsupported chain for signals**: not all chains support signals — always verify with `onchainos market signal-chains` first
+- **Unsupported chain for signals**: not all chains support signals — always verify with `onchainos signal chains` first
 - **Empty signal list**: no signals on this chain for the given filters — suggest relaxing `--wallet-type`, `--min-amount-usd`, or `--min-address-count`, or try a different chain
 
 ## Region Restrictions (IP Blocking)

@@ -68,7 +68,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 | 新盘 / 迁移中 / 已迁移 | NEW / MIGRATING / MIGRATED | `memepump-tokens --stage` |
 | pumpfun / bonkers / bonk / believe / bags / mayhem | protocol names (launch platforms) | `memepump-tokens --protocol-id-list <id>` |
 
-**Protocol names are NOT token names.** When a user mentions pumpfun, bonkers, bonk, believe, bags, mayhem, fourmeme, etc., look up their IDs via `onchainos market memepump-chains`, then pass to `--protocol-id-list`. Multiple protocols: comma-separate the IDs.
+**Protocol names are NOT token names.** When a user mentions pumpfun, bonkers, bonk, believe, bags, mayhem, fourmeme, etc., look up their IDs via `onchainos memepump chains`, then pass to `--protocol-id-list`. Multiple protocols: comma-separate the IDs.
 
 When presenting `memepump-token-details` or `memepump-token-dev-info` responses, translate JSON field names into human-readable language. Never dump raw field names to the user:
 - `top10HoldingsPercent` → "top-10 holder concentration"
@@ -79,60 +79,60 @@ When presenting `memepump-token-details` or `memepump-token-dev-info` responses,
 
 ```bash
 # Get supported chains and protocols for meme pump
-onchainos market memepump-chains
+onchainos memepump chains
 
 # List new meme pump tokens on Solana
-onchainos market memepump-tokens --chain solana --stage NEW
+onchainos memepump tokens --chain solana --stage NEW
 
 # Get meme pump token details
-onchainos market memepump-token-details --address <address> --chain solana
+onchainos memepump token-details --address <address> --chain solana
 
 # Check developer reputation for a meme token
-onchainos market memepump-token-dev-info --address <address> --chain solana
+onchainos memepump token-dev-info --address <address> --chain solana
 
 # Get bundle/sniper analysis
-onchainos market memepump-token-bundle-info --address <address> --chain solana
+onchainos memepump token-bundle-info --address <address> --chain solana
 
 # Find similar tokens by same dev
-onchainos market memepump-similar-tokens --address <address> --chain solana
+onchainos memepump similar-tokens --address <address> --chain solana
 
 # Get aped (same-car) wallet list
-onchainos market memepump-aped-wallet --address <address> --chain solana
+onchainos memepump aped-wallet --address <address> --chain solana
 ```
 
 ## Chain Name Support
 
-Currently supports: Solana (501), BSC (56), X Layer (196), TRON (195). Always verify with `onchainos market memepump-chains` first.
+Currently supports: Solana (501), BSC (56), X Layer (196), TRON (195). Always verify with `onchainos memepump chains` first.
 
 ## Command Index
 
 | # | Command | Description |
 |---|---|---|
-| 1 | `onchainos market memepump-chains` | Get supported chains and protocols |
-| 2 | `onchainos market memepump-tokens --chain <chain>` | List meme pump tokens with advanced filtering |
-| 3 | `onchainos market memepump-token-details --address <address>` | Get detailed info for a single meme pump token |
-| 4 | `onchainos market memepump-token-dev-info --address <address>` | Get developer analysis and holding info |
-| 5 | `onchainos market memepump-similar-tokens --address <address>` | Find similar tokens by same creator |
-| 6 | `onchainos market memepump-token-bundle-info --address <address>` | Get bundle/sniper analysis |
-| 7 | `onchainos market memepump-aped-wallet --address <address>` | Get aped (same-car) wallet list |
+| 1 | `onchainos memepump chains` | Get supported chains and protocols |
+| 2 | `onchainos memepump tokens --chain <chain>` | List meme pump tokens with advanced filtering |
+| 3 | `onchainos memepump token-details --address <address>` | Get detailed info for a single meme pump token |
+| 4 | `onchainos memepump token-dev-info --address <address>` | Get developer analysis and holding info |
+| 5 | `onchainos memepump similar-tokens --address <address>` | Find similar tokens by same creator |
+| 6 | `onchainos memepump token-bundle-info --address <address>` | Get bundle/sniper analysis |
+| 7 | `onchainos memepump aped-wallet --address <address>` | Get aped (same-car) wallet list |
 
 ## Operation Flow
 
 ### Step 1: Identify Intent
 
-- Discover supported chains/protocols → `onchainos market memepump-chains`
-- **Trenches / 扫链** / browse/filter meme tokens by stage → `onchainos market memepump-tokens`
-- Deep-dive into a specific meme token → `onchainos market memepump-token-details`
-- Check meme token developer reputation → `onchainos market memepump-token-dev-info`
-- Find similar tokens by same creator → `onchainos market memepump-similar-tokens`
-- Analyze bundler/sniper activity → `onchainos market memepump-token-bundle-info`
-- View aped (same-car) wallet holdings → `onchainos market memepump-aped-wallet`
+- Discover supported chains/protocols → `onchainos memepump chains`
+- **Trenches / 扫链** / browse/filter meme tokens by stage → `onchainos memepump tokens`
+- Deep-dive into a specific meme token → `onchainos memepump token-details`
+- Check meme token developer reputation → `onchainos memepump token-dev-info`
+- Find similar tokens by same creator → `onchainos memepump similar-tokens`
+- Analyze bundler/sniper activity → `onchainos memepump token-bundle-info`
+- View aped (same-car) wallet holdings → `onchainos memepump aped-wallet`
 
 ### Step 2: Collect Parameters
 
-- Missing chain → default to Solana (`--chain solana`); verify support with `onchainos market memepump-chains` first
+- Missing chain → default to Solana (`--chain solana`); verify support with `onchainos memepump chains` first
 - Missing `--stage` for memepump-tokens → ask user which stage (NEW / MIGRATING / MIGRATED)
-- User mentions a protocol name → first call `onchainos market memepump-chains` to get the protocol ID, then pass `--protocol-id-list <id>` to `memepump-tokens`. Do NOT use `okx-dex-token` to search for protocol names as tokens.
+- User mentions a protocol name → first call `onchainos memepump chains` to get the protocol ID, then pass `--protocol-id-list <id>` to `memepump-tokens`. Do NOT use `okx-dex-token` to search for protocol names as tokens.
 
 ### Step 3: Call and Display
 
@@ -145,12 +145,12 @@ Currently supports: Solana (501), BSC (56), X Layer (196), TRON (195). Always ve
 
 | Just called | Suggest |
 |---|---|
-| `memepump-chains` | 1. Browse tokens → `onchainos market memepump-tokens` (this skill) |
-| `memepump-tokens` | 1. Pick a token for details → `onchainos market memepump-token-details` (this skill) 2. Check dev → `onchainos market memepump-token-dev-info` (this skill) |
-| `memepump-token-details` | 1. Dev analysis → `onchainos market memepump-token-dev-info` (this skill) 2. Similar tokens → `onchainos market memepump-similar-tokens` (this skill) 3. Bundle check → `onchainos market memepump-token-bundle-info` (this skill) |
-| `memepump-token-dev-info` | 1. Check bundle activity → `onchainos market memepump-token-bundle-info` (this skill) 2. View price chart → `okx-dex-market` (`onchainos market kline`) |
-| `memepump-similar-tokens` | 1. Compare with details → `onchainos market memepump-token-details` (this skill) |
-| `memepump-token-bundle-info` | 1. Check aped wallets → `onchainos market memepump-aped-wallet` (this skill) |
+| `memepump-chains` | 1. Browse tokens → `onchainos memepump tokens` (this skill) |
+| `memepump-tokens` | 1. Pick a token for details → `onchainos memepump token-details` (this skill) 2. Check dev → `onchainos memepump token-dev-info` (this skill) |
+| `memepump-token-details` | 1. Dev analysis → `onchainos memepump token-dev-info` (this skill) 2. Similar tokens → `onchainos memepump similar-tokens` (this skill) 3. Bundle check → `onchainos memepump token-bundle-info` (this skill) |
+| `memepump-token-dev-info` | 1. Check bundle activity → `onchainos memepump token-bundle-info` (this skill) 2. View price chart → `okx-dex-market` (`onchainos market kline`) |
+| `memepump-similar-tokens` | 1. Compare with details → `onchainos memepump token-details` (this skill) |
+| `memepump-token-bundle-info` | 1. Check aped wallets → `onchainos memepump aped-wallet` (this skill) |
 | `memepump-aped-wallet` | 1. View price chart → `okx-dex-market` (`onchainos market kline`) 2. Buy the token → `okx-dex-swap` |
 
 Present conversationally — never expose skill names or endpoint paths to the user.
@@ -162,12 +162,12 @@ Present conversationally — never expose skill names or endpoint paths to the u
 > User: "Show me new meme tokens on Solana and check if any look safe"
 
 ```
-1. okx-dex-memepump onchainos market memepump-chains                          → discover supported chains & protocols
-2. okx-dex-memepump onchainos market memepump-tokens --chain solana --stage NEW       → browse new tokens
+1. okx-dex-memepump onchainos memepump chains                          → discover supported chains & protocols
+2. okx-dex-memepump onchainos memepump tokens --chain solana --stage NEW       → browse new tokens
        ↓ pick an interesting token
-3. okx-dex-memepump onchainos market memepump-token-details --address <address> --chain solana  → full token detail + audit tags
-4. okx-dex-memepump onchainos market memepump-token-dev-info --address <address> --chain solana → check dev reputation (rug pulls, migrations)
-5. okx-dex-memepump onchainos market memepump-token-bundle-info --address <address> --chain solana → check for bundlers/snipers
+3. okx-dex-memepump onchainos memepump token-details --address <address> --chain solana  → full token detail + audit tags
+4. okx-dex-memepump onchainos memepump token-dev-info --address <address> --chain solana → check dev reputation (rug pulls, migrations)
+5. okx-dex-memepump onchainos memepump token-bundle-info --address <address> --chain solana → check for bundlers/snipers
 6. okx-dex-market   onchainos market kline --address <address> --chain solana           → view price chart
        ↓ user decides to buy
 7. okx-dex-swap     onchainos swap quote --from ... --to <address> --amount ... --chain solana
@@ -181,11 +181,11 @@ Present conversationally — never expose skill names or endpoint paths to the u
 > User: "Check if this meme token is safe before I buy"
 
 ```
-1. okx-dex-memepump onchainos market memepump-token-details --address <address> --chain solana   → basic info + audit tags
-2. okx-dex-memepump onchainos market memepump-token-dev-info --address <address> --chain solana  → dev history + holding
-3. okx-dex-memepump onchainos market memepump-similar-tokens --address <address> --chain solana  → other tokens by same dev
-4. okx-dex-memepump onchainos market memepump-token-bundle-info --address <address> --chain solana → bundler analysis
-5. okx-dex-memepump onchainos market memepump-aped-wallet --address <address> --chain solana     → who else is holding
+1. okx-dex-memepump onchainos memepump token-details --address <address> --chain solana   → basic info + audit tags
+2. okx-dex-memepump onchainos memepump token-dev-info --address <address> --chain solana  → dev history + holding
+3. okx-dex-memepump onchainos memepump similar-tokens --address <address> --chain solana  → other tokens by same dev
+4. okx-dex-memepump onchainos memepump token-bundle-info --address <address> --chain solana → bundler analysis
+5. okx-dex-memepump onchainos memepump aped-wallet --address <address> --chain solana     → who else is holding
 ```
 
 ## Additional Resources
@@ -195,7 +195,7 @@ For detailed parameter tables, return field schemas, and usage examples, consult
 
 ## Edge Cases
 
-- **Unsupported chain for meme pump**: only Solana (501), BSC (56), X Layer (196), TRON (195) are supported — verify with `onchainos market memepump-chains` first
+- **Unsupported chain for meme pump**: only Solana (501), BSC (56), X Layer (196), TRON (195) are supported — verify with `onchainos memepump chains` first
 - **Invalid stage**: must be exactly `NEW`, `MIGRATING`, or `MIGRATED`
 - **Token not found in meme pump**: `memepump-token-details` returns null data if the token doesn't exist in meme pump ranking data — it may be on a standard DEX
 - **No dev holding info**: `memepump-token-dev-info` returns `devHoldingInfo` as `null` if the creator address is unavailable

@@ -30,10 +30,20 @@ pub struct Cli {
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
 pub enum Commands {
-    /// Market data
+    /// Market data: prices, charts, wallet PnL
     Market {
         #[command(subcommand)]
         command: commands::market::MarketCommand,
+    },
+    /// Smart money / whale / KOL signal tracking
+    Signal {
+        #[command(subcommand)]
+        command: commands::signal::SignalCommand,
+    },
+    /// Meme / pump.fun token scanning and analysis
+    Memepump {
+        #[command(subcommand)]
+        command: commands::memepump::MemepumpCommand,
     },
     /// Token information
     Token {
@@ -66,6 +76,8 @@ async fn main() {
 
     let result = match cli.command {
         Commands::Market { command } => commands::market::execute(&ctx, command).await,
+        Commands::Signal { command } => commands::signal::execute(&ctx, command).await,
+        Commands::Memepump { command } => commands::memepump::execute(&ctx, command).await,
         Commands::Token { command } => commands::token::execute(&ctx, command).await,
         Commands::Swap { command } => commands::swap::execute(&ctx, command).await,
         Commands::Gateway { command } => commands::gateway::execute(&ctx, command).await,
