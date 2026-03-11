@@ -223,6 +223,7 @@ jobs:
         with:
           # Use RELEASE_PAT if branch protection is enabled, otherwise GITHUB_TOKEN
           token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
+          ref: ${{ github.ref_name }}
 
       - uses: actions/download-artifact@v4
         with:
