@@ -129,7 +129,7 @@ jobs:
 
           # 1. Install DigiCert smtools
           $url = "https://one.digicert.com/signingmanager/api-ui/v1/releases/smtools-windows-x64.msi/download"
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\smtools.msi"
+          Invoke-WebRequest -Uri $url -Headers @{ "x-api-key" = $env:SM_API_KEY } -OutFile "$env:RUNNER_TEMP\smtools.msi"
           Start-Process msiexec.exe -ArgumentList "/i `"$env:RUNNER_TEMP\smtools.msi`" /quiet /qn" -Wait
           $env:PATH += ";C:\Program Files\DigiCert\DigiCert Signing Manager Tools"
 
