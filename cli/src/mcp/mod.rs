@@ -77,35 +77,6 @@ struct MarketTradesParams {
     limit: Option<u32>,
 }
 
-#[derive(Deserialize, JsonSchema)]
-struct MarketMemepumpTokensParams {
-    /// Chain name, e.g. "solana", "bsc" (required)
-    chain: String,
-    /// Token stage: NEW, MIGRATING, or MIGRATED (required)
-    stage: String,
-    /// Protocol ID filter (optional)
-    protocol_id: Option<String>,
-    /// Sort field: marketCap, volume1h, txCount1h, createdTimestamp, bondingPercent (optional)
-    sort_by: Option<String>,
-    /// Sort direction: asc or desc (optional)
-    sort_order: Option<String>,
-    /// Min token age in minutes (optional)
-    min_age: Option<String>,
-    /// Max token age in minutes (optional)
-    max_age: Option<String>,
-    /// Min market cap in USD (optional)
-    min_market_cap: Option<String>,
-    /// Max market cap in USD (optional)
-    max_market_cap: Option<String>,
-    /// Min 1h volume in USD (optional)
-    min_volume: Option<String>,
-    /// Max 1h volume in USD (optional)
-    max_volume: Option<String>,
-    /// Min 1h transaction count (optional)
-    min_tx_count: Option<String>,
-    /// Max 1h transaction count (optional)
-    max_tx_count: Option<String>,
-}
 
 #[derive(Deserialize, JsonSchema)]
 struct MarketSignalListParams {
@@ -191,7 +162,7 @@ struct PortfolioTotalValueParams {
     chains: String,
     /// Asset type: 0=all (default), 1=tokens only, 2=DeFi only
     asset_type: Option<String>,
-    /// Exclude risky tokens: 0=filter out (default), 1=include
+    /// Exclude risky tokens: "true"=exclude (default), "false"=include. Only ETH/BSC/SOL/BASE
     exclude_risk: Option<String>,
 }
 
@@ -451,41 +422,9 @@ impl McpServer {
         }
     }
 
-    // Note: market_memepump_tokens uses different API query params from the CLI's full filter set
-    // (protocolId vs protocolIdList, sortField/sortOrder, minAge/maxAge vs minTokenAge/maxTokenAge).
-    // Kept as a standalone implementation with its own simplified parameter surface.
     #[tool(name = "market_memepump_tokens", description = "Get filtered Meme Pump token list")]
-    async fn market_memepump_tokens(&self, Parameters(p): Parameters<MarketMemepumpTokensParams>) -> String {
-        let chain_index = crate::chains::resolve_chain(&p.chain);
-        let protocol_id = p.protocol_id.unwrap_or_default();
-        let sort_by = p.sort_by.unwrap_or_default();
-        let sort_order = p.sort_order.unwrap_or_default();
-        let min_age = p.min_age.unwrap_or_default();
-        let max_age = p.max_age.unwrap_or_default();
-        let min_mc = p.min_market_cap.unwrap_or_default();
-        let max_mc = p.max_market_cap.unwrap_or_default();
-        let min_vol = p.min_volume.unwrap_or_default();
-        let max_vol = p.max_volume.unwrap_or_default();
-        let min_tx = p.min_tx_count.unwrap_or_default();
-        let max_tx = p.max_tx_count.unwrap_or_default();
-        match self.client.get(
-            "/api/v6/dex/market/memepump/tokenList",
-            &[
-                ("chainIndex", chain_index.as_str()),
-                ("protocolId", &protocol_id),
-                ("stage", &p.stage),
-                ("sortField", &sort_by),
-                ("sortOrder", &sort_order),
-                ("minAge", &min_age),
-                ("maxAge", &max_age),
-                ("minMarketCapUsd", &min_mc),
-                ("maxMarketCapUsd", &max_mc),
-                ("minVolumeUsd", &min_vol),
-                ("maxVolumeUsd", &max_vol),
-                ("minTxCount", &min_tx),
-                ("maxTxCount", &max_tx),
-            ],
-        ).await {
+    async fn market_memepump_tokens(&self, Parameters(p): Parameters<market::MemepumpTokenListParams>) -> String {
+        match market::fetch_memepump_token_list(&self.client, p).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }

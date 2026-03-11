@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "onchainos-cli": {
-      "command": "/Users/oker/.cargo/bin/onchainos",
+      "command": "onchainos",
       "args": ["mcp"]
     }
   }

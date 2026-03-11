@@ -37,6 +37,7 @@ yarn-error.log*
 
 # Claude Code
 **/settings.local.json
+.mcp.json
 
 # AI Assistant directories (auto-generated)
 .cursor

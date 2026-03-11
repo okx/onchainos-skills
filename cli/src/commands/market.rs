@@ -671,6 +671,7 @@ pub async fn fetch_memepump_chains(client: &ApiClient) -> Result<Value> {
 }
 
 /// Parameters for the memepump token list query.
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 pub struct MemepumpTokenListParams {
     pub chain: String,
     pub stage: String,
