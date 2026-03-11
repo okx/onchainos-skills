@@ -44,3 +44,9 @@ yarn-error.log*
 
 
 .zigbuild-cache/
+
+# Test artifacts (local only)
+results/
+onchainos_bin
+run.sh
+test-cases.json

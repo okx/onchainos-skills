@@ -1,7 +1,7 @@
 # ──────────────────────────────────────────────────────────────
 # Continuous integration pipeline
 # Trigger: push to any branch / pull requests
-# Checks: formatting + Clippy static analysis + unit tests
+# Checks: formatting + Clippy static analysis + unit tests + cargo audit
 # Cross-platform: Ubuntu / macOS / Windows
 # ──────────────────────────────────────────────────────────────
 name: CI
@@ -49,3 +49,18 @@ jobs:
           OKX_API_KEY: ${{ secrets.OKX_API_KEY }}
           OKX_SECRET_KEY: ${{ secrets.OKX_SECRET_KEY }}
           OKX_PASSPHRASE: ${{ secrets.OKX_PASSPHRASE }}
+
+  # ── Dependency vulnerability audit (runs once, not per-platform) ──
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Audit dependencies for known vulnerabilities
+        working-directory: ${{ env.CARGO_DIR }}
+        run: cargo audit

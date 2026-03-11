@@ -1,10 +1,10 @@
 ---
 name: okx-dex-swap
-description: "This skill should be used when the user asks to 'swap tokens', 'trade OKB for USDC', 'buy tokens', 'sell tokens', 'exchange crypto', 'convert tokens', 'swap SOL for USDC', 'get a swap quote', 'execute a trade', 'find the best swap route', 'cheapest way to swap', 'optimal swap', 'compare swap rates', or mentions swapping, trading, buying, selling, or exchanging tokens on XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, or any of 20+ supported chains. Aggregates liquidity from 500+ DEX sources for optimal routing and price. Supports slippage control, price impact protection, and cross-DEX route optimization. Do NOT use for general programming questions about swap code, or for analytical questions about historical swap volume."
+description: "Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens', 'sell tokens', 'exchange crypto', 'convert tokens', 'swap SOL for USDC', 'get a swap quote', 'execute a trade', 'find the best swap route', 'cheapest way to swap', 'optimal swap', 'compare swap rates', or mentions swapping, trading, buying, selling, or exchanging tokens on XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, or any of 20+ supported chains. Aggregates liquidity from 500+ DEX sources for optimal routing and price. Supports slippage control, price impact protection, and cross-DEX route optimization. Do NOT use for questions about HOW TO implement, code, or integrate swaps into an application — only for actually executing swap operations. Do NOT use for analytical questions about historical swap volume."
 license: Apache-2.0
 metadata:
   author: okx
-  version: "1.0.2"
+  version: "1.0.3"
   homepage: "https://web3.okx.com"
 ---
 
@@ -16,34 +16,33 @@ metadata:
 
 Every time before running any `onchainos` command, always follow these steps in order. Do not echo routine command output to the user; only provide a brief status update when installing, updating, or handling a failure.
 
-1. **Confirm installed**: Run `which onchainos`. If not found, install it:
-   ```bash
-   curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
-   ```
-   If the install script fails, ask the user to install manually following the instructions at: https://github.com/okx/onchainos-skills
+1. **Install**: If `onchainos` is not found, download the installer to a temp
+   file, verify its SHA256 against **Installer Checksums** (bottom of this
+   document), then execute.
+   - **macOS/Linux**: `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/v1.0.3/install.sh -o /tmp/onchainos-install.sh`
+     — verify with `shasum -a 256 /tmp/onchainos-install.sh`, then `sh /tmp/onchainos-install.sh`
+   - **Windows**: `Invoke-WebRequest -Uri https://raw.githubusercontent.com/okx/onchainos-skills/v1.0.3/install.ps1 -OutFile "$env:TEMP\onchainos-install.ps1"`
+     — verify with `(Get-FileHash "$env:TEMP\onchainos-install.ps1" -Algorithm SHA256).Hash.ToLower()`, then `& "$env:TEMP\onchainos-install.ps1"`
+   - On checksum mismatch, **stop** and warn the user — the installer may have
+     been tampered with. On other failures, point to https://github.com/okx/onchainos-skills.
 
-2. **Check for updates**: Read `~/.onchainos/last_check` and compare it with the current timestamp:
-   ```bash
-   cached_ts=$(cat ~/.onchainos/last_check 2>/dev/null || true)
-   now=$(date +%s)
-   ```
-   - If `cached_ts` is non-empty and `(now - cached_ts) < 43200` (12 hours), skip the update and proceed.
-   - Otherwise (file missing or older than 12 hours), run the installer to check for updates:
-     ```bash
-     curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
-     ```
-     If a newer version is installed, tell the user and suggest updating their onchainos skills from https://github.com/okx/onchainos-skills to get the latest features.
-3. If any `onchainos` command fails with an unexpected error during this
-   session, try reinstalling before giving up:
-   ```bash
-   curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
-   ```
-4. Create a `.env` file in the project root to override the default API credentials (optional — skip this for quick start):
-   ```
-   OKX_API_KEY=          # or OKX_ACCESS_KEY
-   OKX_SECRET_KEY=
-   OKX_PASSPHRASE=
-   ```
+2. **Check for updates**: Cache at `~/.onchainos/last_check` (`$env:USERPROFILE\.onchainos\last_check` on Windows).
+   If the cached timestamp is <12 hours old, skip to step 3. Otherwise re-run
+   the install flow (step 1) to ensure the correct version.
+
+3. **Verify binary integrity** (once per session): Look up the platform target
+   and compare the installed binary's SHA256 against **Binary Checksums** below.
+   On mismatch, reinstall (step 1) and re-verify. If still mismatched, **stop**
+   and warn — the binary may have been tampered with.
+   - Platform targets — macOS: `arm64`→`aarch64-apple-darwin`, `x86_64`→`x86_64-apple-darwin`; Linux: `x86_64`→`x86_64-unknown-linux-gnu`, `aarch64`→`aarch64-unknown-linux-gnu`, `i686`→`i686-unknown-linux-gnu`, `armv7l`→`armv7-unknown-linux-gnueabihf`; Windows: `AMD64`→`x86_64-pc-windows-msvc`, `x86`→`i686-pc-windows-msvc`, `ARM64`→`aarch64-pc-windows-msvc`
+   - Hash command — macOS/Linux: `shasum -a 256 ~/.local/bin/onchainos`; Windows: `(Get-FileHash "$env:USERPROFILE\.local\bin\onchainos.exe" -Algorithm SHA256).Hash.ToLower()`
+
+4. **Do NOT auto-reinstall on command failures.** Report errors and suggest
+   `onchainos --version` or manual reinstall from https://github.com/okx/onchainos-skills.
+5. **Rate limit errors.** If a command hits rate limits, the shared API key may
+   be throttled. Suggest creating a personal key at the
+   [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal). If the
+   user creates a `.env` file, remind them to add `.env` to `.gitignore`.
 
 ## Skill Routing
 
@@ -142,7 +141,7 @@ This skill is the **execution endpoint** of most user trading flows. It almost a
 > User: "Swap 1 SOL for BONK on Solana"
 
 ```
-1. okx-dex-token    onchainos token search BONK --chains solana               → get BONK tokenContractAddress
+1. okx-dex-token    onchainos token search --query BONK --chains solana               → get BONK tokenContractAddress
        ↓ tokenContractAddress
 2. okx-dex-swap     onchainos swap quote \
                       --from 11111111111111111111111111111111 \
@@ -166,7 +165,7 @@ This skill is the **execution endpoint** of most user trading flows. It almost a
 > User: "Swap 100 USDC for OKB on XLayer"
 
 ```
-1. okx-dex-token    onchainos token search USDC --chains xlayer               → get USDC address
+1. okx-dex-token    onchainos token search --query USDC --chains xlayer               → get USDC address
 2. okx-dex-swap     onchainos swap quote --from <USDC> --to 0xeeee...eeee --amount 100000000 --chain xlayer
        ↓ check isHoneyPot, taxRate, priceImpactPercent
 3. okx-dex-swap     onchainos swap approve --token <USDC> --amount 100000000 --chain xlayer
@@ -250,162 +249,26 @@ After displaying results, suggest 2-3 relevant follow-up actions:
 
 Present conversationally, e.g.: "Swap complete! Would you like to check your updated balance?" — never expose skill names or endpoint paths to the user.
 
-## CLI Command Reference
+## Additional Resources
 
-### 1. onchainos swap chains
+For detailed parameter tables, return field schemas, and usage examples for all 5 commands, consult:
+- **`references/cli-reference.md`** — Full CLI command reference with params, return fields, and examples
 
-Get supported chains for DEX aggregator. No parameters required.
+To search for specific command details: `grep -n "onchainos swap <command>" references/cli-reference.md`
 
-```bash
-onchainos swap chains
-```
 
-**Return fields**:
+## Security Rules
 
-| Field | Type | Description |
-|---|---|---|
-| `chainIndex` | String | Chain identifier (e.g., `"1"`, `"501"`) |
-| `chainName` | String | Human-readable chain name |
-| `dexTokenApproveAddress` | String | DEX router address for token approvals on this chain |
+> **These rules are mandatory. Do NOT skip or bypass them.**
 
-### 2. onchainos swap liquidity
-
-Get available liquidity sources on a chain.
-
-```bash
-onchainos swap liquidity --chain <chain>
-```
-
-| Param | Required | Default | Description |
-|---|---|---|---|
-| `--chain` | Yes | - | Chain name (e.g., `ethereum`, `solana`, `xlayer`) |
-
-**Return fields**:
-
-| Field | Type | Description |
-|---|---|---|
-| `id` | String | Liquidity source ID |
-| `name` | String | Liquidity source name (e.g., `"Uniswap V3"`, `"CurveNG"`) |
-| `logo` | String | Liquidity source logo URL |
-
-### 3. onchainos swap approve
-
-Get ERC-20 approval transaction data.
-
-```bash
-onchainos swap approve --token <address> --amount <amount> --chain <chain>
-```
-
-| Param | Required | Default | Description |
-|---|---|---|---|
-| `--token` | Yes | - | Token contract address to approve |
-| `--amount` | Yes | - | Amount in minimal units |
-| `--chain` | Yes | - | Chain name |
-
-**Return fields**:
-
-| Field | Type | Description |
-|---|---|---|
-| `data` | String | Approval calldata (hex) — use as tx `data` field |
-| `dexContractAddress` | String | Spender address (already encoded in `data`). **NOT** the tx `to` — send tx to the token contract |
-| `gasLimit` | String | Estimated gas limit for the approval tx |
-| `gasPrice` | String | Recommended gas price |
-
-### 4. onchainos swap quote
-
-Get swap quote (read-only price estimate).
-
-```bash
-onchainos swap quote --from <address> --to <address> --amount <amount> --chain <chain> [--swap-mode <mode>]
-```
-
-| Param | Required | Default | Description |
-|---|---|---|---|
-| `--from` | Yes | - | Source token contract address |
-| `--to` | Yes | - | Destination token contract address |
-| `--amount` | Yes | - | Amount in minimal units (sell amount if exactIn, buy amount if exactOut) |
-| `--chain` | Yes | - | Chain name |
-| `--swap-mode` | No | `exactIn` | `exactIn` or `exactOut` |
-
-**Return fields**:
-
-| Field | Type | Description |
-|---|---|---|
-| `toTokenAmount` | String | Expected output amount in minimal units |
-| `fromTokenAmount` | String | Input amount in minimal units |
-| `estimateGasFee` | String | Estimated gas fee (native token units) |
-| `tradeFee` | String | Trade fee estimate in USD |
-| `priceImpactPercent` | String | Price impact as percentage (e.g., `"0.05"`) |
-| `router` | String | Router type used |
-| `dexRouterList[]` | Array | DEX routing path details |
-| `dexRouterList[].dexName` | String | DEX name in the route |
-| `dexRouterList[].percentage` | String | Percentage of amount routed through this DEX |
-| `fromToken.isHoneyPot` | Boolean | `true` = source token is a honeypot (cannot sell) |
-| `fromToken.taxRate` | String | Source token buy/sell tax rate |
-| `fromToken.decimal` | String | Source token decimals |
-| `fromToken.tokenUnitPrice` | String | Source token unit price in USD |
-| `toToken.isHoneyPot` | Boolean | `true` = destination token is a honeypot (cannot sell) |
-| `toToken.taxRate` | String | Destination token buy/sell tax rate |
-| `toToken.decimal` | String | Destination token decimals |
-| `toToken.tokenUnitPrice` | String | Destination token unit price in USD |
-
-### 5. onchainos swap swap
-
-Get swap transaction data (quote → sign → broadcast).
-
-```bash
-onchainos swap swap --from <address> --to <address> --amount <amount> --chain <chain> --wallet <address> [--slippage <pct>] [--swap-mode <mode>]
-```
-
-| Param | Required | Default | Description |
-|---|---|---|---|
-| `--from` | Yes | - | Source token contract address |
-| `--to` | Yes | - | Destination token contract address |
-| `--amount` | Yes | - | Amount in minimal units |
-| `--chain` | Yes | - | Chain name |
-| `--wallet` | Yes | - | User's wallet address |
-| `--slippage` | No | `"1"` | Slippage tolerance in percent (e.g., `"1"` for 1%) |
-| `--swap-mode` | No | `"exactIn"` | `exactIn` or `exactOut` |
-
-**Return fields**:
-
-| Field | Type | Description |
-|---|---|---|
-| `routerResult` | Object | Same structure as quote return (see swap quote above) |
-| `tx.from` | String | Sender address |
-| `tx.to` | String | Contract address to send the transaction to |
-| `tx.data` | String | Transaction calldata (hex for EVM, base58 for Solana) |
-| `tx.gas` | String | Gas limit for the transaction |
-| `tx.gasPrice` | String | Gas price |
-| `tx.value` | String | Native token value to send (in minimal units) |
-| `tx.minReceiveAmount` | String | Minimum receive amount after slippage (minimal units) |
-| `tx.maxSpendAmount` | String | Maximum spend amount (for exactOut mode) |
-| `tx.slippagePercent` | String | Applied slippage tolerance percentage |
-
-## Input / Output Examples
-
-**User says:** "Swap 100 USDC for OKB on XLayer"
-
-```bash
-# 1. Quote
-onchainos swap quote --from 0x74b7f16337b8972027f6196a17a631ac6de26d22 --to 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --amount 100000000 --chain xlayer
-# → Expected output: 3.2 OKB, Gas fee: ~$0.001, Price impact: 0.05%
-
-# 2. Approve (ERC-20 token needs approval)
-onchainos swap approve --token 0x74b7f16337b8972027f6196a17a631ac6de26d22 --amount 100000000 --chain xlayer
-# → Returns approval calldata → user signs → broadcast
-
-# 3. Swap
-onchainos swap swap --from 0x74b7f16337b8972027f6196a17a631ac6de26d22 --to 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --amount 100000000 --chain xlayer --wallet 0xYourWallet --slippage 1
-# → Returns tx data → user signs → broadcast
-```
-
-**User says:** "What DEXes are available on XLayer?"
-
-```bash
-onchainos swap liquidity --chain xlayer
-# → Display: CurveNG, XLayer DEX, ... (DEX sources on XLayer)
-```
+1. **User confirmation required before every transaction.** Never execute an approval or swap without displaying the full details (token, amount, estimated output, gas, price impact) and receiving explicit user confirmation.
+2. **Scoped approvals by default.** The `--amount` passed to `onchainos swap approve` should be the exact amount needed for the swap. If the user explicitly requests a larger or unlimited approval, warn them about the risks (approvals can be exploited if the contract is compromised) and proceed only after they confirm.
+3. **Honeypot warning.** If `isHoneyPot = true` for either token, display a prominent warning explaining the token may not be sellable. Ask the user to explicitly confirm they want to proceed despite the risk.
+4. **Price impact gates:**
+   - \>5%: display a prominent warning and ask the user to confirm they accept the impact.
+   - \>10%: strongly warn the user. Suggest reducing the amount or splitting into smaller trades. Proceed only if the user explicitly confirms.
+5. **Tax token disclosure.** If `taxRate` is non-zero, display the tax rate to the user before confirmation (e.g., "This token has a 5% sell tax").
+6. **No silent retries on transaction failures.** If a swap or approval call fails, report the error to the user. Do not automatically retry transaction-related commands.
 
 ## Edge Cases
 
@@ -436,3 +299,20 @@ onchainos swap liquidity --chain xlayer
 - EVM contract addresses must be **all lowercase**
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
 - The CLI handles authentication internally via environment variables — see Prerequisites step 4 for default values
+
+
+## Installer Checksums
+
+<!-- BEGIN_INSTALLER_CHECKSUMS (auto-updated by release workflow — do not edit) -->
+```
+PLACEHOLDER
+```
+<!-- END_INSTALLER_CHECKSUMS -->
+
+## Binary Checksums
+
+<!-- BEGIN_CHECKSUMS (auto-updated by release workflow — do not edit) -->
+```
+PLACEHOLDER
+```
+<!-- END_CHECKSUMS -->
