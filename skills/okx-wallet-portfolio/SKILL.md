@@ -193,7 +193,7 @@ To search for specific command details: `grep -n "onchainos portfolio <command>"
 - **chains exceeds 50**: split into batches, max 50 per request
 - **`--exclude-risk` not working**: only supported on ETH/BSC/SOL/BASE
 - **DeFi positions**: use `--asset-type 2` to query DeFi holdings separately
-- **Address format mismatch**: EVM address on Solana chain will return empty data — do NOT mix
+- **Address format mismatch**: EVM (`0x…`) and Solana/UTXO addresses have incompatible formats. Passing an EVM address with a Solana chain (or vice versa) causes the **entire request to fail** with an API error — no partial results are returned. Always make **separate requests**: one call for EVM chains using the EVM address, a separate call for Solana using the Solana address
 - **`tokenBalanceAmount = "0"`** in `token-pnl`: position is fully closed (sold)
 - **Empty `cursor`** in `dex-history` / `recent-pnl`: no more pages — stop pagination
 - **Network error**: retry once, then prompt user to try again later
