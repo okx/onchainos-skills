@@ -1,6 +1,6 @@
 ---
 name: okx-dex-signal
-description: "Use this skill for smart-money/whale/KOL/大户 signal/信号 tracking — monitoring what notable wallets are buying across the market. Covers: real-time buy signals from smart money, KOL/influencers, and whales; filtering by wallet type, trade size, market cap, liquidity; listing supported chains for signals. Use when the user asks 'what are smart money/whales/KOLs buying', '大户在买什么', '牛人榜', 'show me whale signals', 'smart money alerts', or wants to follow notable wallet activity. Do NOT use for meme/pump.fun token scanning — use okx-dex-memepump. Do NOT use for individual token holder distribution — use okx-dex-token."
+description: "Use this skill for smart-money/whale/KOL/大户 signal/信号 tracking — monitoring what notable wallets are buying across the market. Covers: real-time buy signals from smart money, KOL/influencers, and whales; filtering by wallet type, trade size, market cap, liquidity; listing supported chains for signals. Use when the user asks 'what are smart money/whales/KOLs buying', '大户在买什么', 'show me whale signals', 'smart money alerts', or wants to follow notable wallet activity. Do NOT use for meme/pump.fun token scanning — use okx-dex-memepump. Do NOT use for individual token holder distribution — use okx-dex-token."
 license: Apache-2.0
 metadata:
   author: okx
@@ -58,7 +58,6 @@ Every time before running any `onchainos` command, always follow these steps in 
 
 | Chinese | English / Platform Terms | Maps To |
 |---|---|---|
-| 牛人榜 | leaderboard, top traders, smart money ranking | `signal-list` (filter by `--wallet-type`) |
 | 大户 / 巨鲸 | whale, big player | `signal-list --wallet-type 3` |
 | 聪明钱 / 聪明资金 | smart money | `signal-list --wallet-type 1` |
 | KOL / 网红 | influencer, KOL | `signal-list --wallet-type 2` |
