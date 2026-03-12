@@ -250,6 +250,27 @@ Before swapping an unknown token, always verify:
 5. If all checks pass → proceed to swap
 ```
 
+### Workflow D: Follow Smart Money → Cluster Check → Trade
+
+> User: "What is smart money buying? Check if it's safe and buy"
+
+```
+1. okx-dex-tracker  onchainos tracker trades --tracker-type smart_money --trade-type buy
+                                                                          → get baseTokenContractAddress + baseTokenChainIndex
+       ↓ pick a token
+2. okx-dex-token    onchainos token price-info --address <address> --chain <chain>    → market cap, liquidity, 24h volume
+3. okx-dex-token    onchainos token cluster-overview --address <address> --chain <chain>
+                                                                          → cluster concentration, rug pull %, new address %
+4. okx-dex-token    onchainos token cluster-top-holders --address <address> --chain <chain> --ranks 100
+                                                                          → top 100 avg PnL, cost, trend direction
+5. okx-dex-market   onchainos market kline --address <address> --chain <chain>        → price chart
+       ↓ user decides to buy
+6. okx-dex-swap     onchainos swap quote --from ... --to <address> --amount ... --chain <chain>
+7. okx-dex-swap     onchainos swap swap --from ... --to <address> --amount ... --chain <chain> --wallet <addr>
+```
+
+**Data handoff**: `baseTokenContractAddress` + `baseTokenChainIndex` from step 1 feed into all subsequent steps.
+
 ## Operation Flow
 
 ### Step 1: Identify Intent

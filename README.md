@@ -1,6 +1,6 @@
 # onchainos Skills
 
-onchainos skills for AI coding assistants. Provides token search, market data, wallet balance queries, swap execution, and transaction broadcasting across 20+ blockchains.
+onchainos skills for AI coding assistants. Provides token search, market data, wallet balance queries, swap execution, transaction broadcasting, leaderboard rankings, address tracker activity, and token cluster analysis across 20+ blockchains.
 
 ## Available Skills
 
@@ -9,8 +9,10 @@ onchainos skills for AI coding assistants. Provides token search, market data, w
 | `okx-wallet-portfolio` | Wallet balance, token holdings, portfolio value |
 | `okx-dex-market` | Real-time prices, K-line charts, index prices, smart money signals, meme pump scanning, wallet PnL analysis |
 | `okx-dex-swap` | Token swap via DEX aggregation (500+ liquidity sources) |
-| `okx-dex-token` | Token search, metadata, market cap, rankings, liquidity pools, hot tokens, advanced info, holder analysis, top traders, trade history |
+| `okx-dex-token` | Token search, metadata, market cap, rankings, liquidity pools, hot tokens, advanced info, holder analysis, top traders, trade history, holder cluster analysis |
 | `okx-onchain-gateway` | Gas estimation, transaction simulation, broadcasting, order tracking |
+| `okx-dex-leaderboard` | Smart money leaderboard (牛人榜) — top traders ranked by PnL, win rate, volume, or ROI |
+| `okx-dex-tracker` | Address tracker — KOL / smart money / custom group on-chain trading activity feed |
 
 ## Supported Chains
 
@@ -89,6 +91,10 @@ The skills work together in typical DeFi flows:
 **Pre-flight Check**: `okx-onchain-gateway` (estimate gas) -> `okx-onchain-gateway` (simulate tx) -> `okx-onchain-gateway` (broadcast) -> `okx-onchain-gateway` (track order)
 
 **Full Trading Flow**: `okx-dex-token` (search) -> `okx-dex-market` (price/chart) -> `okx-wallet-portfolio` (check balance) -> `okx-dex-swap` (get tx) -> `okx-onchain-gateway` (simulate + broadcast + track)
+
+**Leaderboard → Research → Trade**: `okx-dex-leaderboard` (top traders by PnL/win rate) -> `okx-dex-tracker` (see what they're buying) -> `okx-dex-token` (token analytics) -> `okx-dex-swap` (execute trade)
+
+**Follow Smart Money**: `okx-dex-tracker` (KOL/smart money buys) -> `okx-dex-token` (token details + holder cluster) -> `okx-dex-market` (price chart) -> `okx-dex-swap` (trade)
 
 ## Install CLI
 

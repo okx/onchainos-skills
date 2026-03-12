@@ -8,7 +8,7 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 
 ## Architecture
 
-- **skills/** — 5 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **skills/** — 8 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **.github/workflows/** — CI/CD pipeline (`release.yml`: tag-triggered build for 9 platforms → GitHub Release)
 - **install.sh** — One-line installer for macOS / Linux (`curl | sh`)
@@ -20,5 +20,7 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 | okx-wallet-portfolio | Wallet balance and portfolio | User asks about wallet holdings, token balances, portfolio value |
 | okx-dex-market | Prices, charts, signals, meme pump, wallet PnL | User asks for token prices, K-line data, smart money signals, meme token scanning, or wallet PnL analysis |
 | okx-dex-swap | DEX swap execution | User wants to swap/trade/buy/sell tokens |
-| okx-dex-token | Token search, liquidity, hot tokens, advanced info, holders, top traders, trade history | User searches for tokens, wants rankings, liquidity pools, holder info, top traders, or filtered trade history |
+| okx-dex-token | Token search, liquidity, hot tokens, advanced info, holders, top traders, trade history, holder cluster analysis | User searches for tokens, wants rankings, liquidity pools, holder info, top traders, filtered trade history, or holder cluster concentration |
 | okx-onchain-gateway | Transaction broadcasting and tracking | User wants to broadcast tx, estimate gas, simulate tx, check tx status |
+| okx-dex-leaderboard | Smart money leaderboard / 牛人榜 | User asks for top traders ranked by PnL, win rate, volume, or ROI |
+| okx-dex-tracker | Address tracker trading activity | User wants to see what KOL / smart money / custom group addresses are buying or selling |
