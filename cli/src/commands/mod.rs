@@ -1,6 +1,8 @@
 pub mod gateway;
 pub mod market;
+pub mod memepump;
 pub mod portfolio;
+pub mod signal;
 pub mod swap;
 pub mod token;
 
