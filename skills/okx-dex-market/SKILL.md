@@ -54,6 +54,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For wallet balances / token holdings → use `okx-wallet-portfolio`
 - For wallet PnL analysis (realized/unrealized PnL, DEX history, recent PnL, per-token PnL) → use `okx-dex-market` portfolio commands
 - Signal data (smart money / whale / KOL buy signals, signal-supported chains) → use `okx-dex-market`
+- Address tracker trading activity feed (KOL / smart money / custom group recent trades) → use `okx-dex-tracker`
 - Meme pump scanning (token lists, dev info, bundle detection, aped wallets) → use `okx-dex-market`
 - Meme token safety (rug pull check, dev reputation, bundler/sniper analysis, similar tokens by same dev) → use `okx-dex-market`
 - **"Trenches" / "扫链"** (scanning for new meme tokens) → use `okx-dex-market` memepump commands (NOT signal commands)
@@ -66,7 +67,8 @@ Users may use Chinese crypto slang, English equivalents, or platform-specific te
 |---|---|---|
 | 扫链 | trenches, memerush, 战壕, 打狗 | `memepump-tokens` |
 | 同车 | aped, same-car, co-invested | `memepump-aped-wallet` |
-| 牛人榜 | leaderboard, top traders, smart money ranking | `signal-list` (filter by `--wallet-type`) |
+| 牛人榜 | leaderboard, top traders, smart money ranking | use `okx-dex-leaderboard` |
+| KOL动态 / 聪明钱动态 | KOL trades feed, smart money activity | use `okx-dex-tracker` |
 | 开发者信息 | dev info, developer reputation, rug check | `memepump-token-dev-info` |
 | 捆绑/狙击 | bundler, sniper, bundle analysis | `memepump-token-bundle-info` |
 | 行情 | market data, price, chart | `price`, `kline` |

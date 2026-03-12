@@ -48,6 +48,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 
 - For real-time token price / K-line chart / index price → use `okx-dex-market`
 - For smart money buy signals (signal-list) → use `okx-dex-market`
+- For KOL / smart money / custom group trading activity feed → use `okx-dex-tracker`
 - For wallet PnL analysis (realized/unrealized PnL, win rate for a specific wallet) → use `okx-dex-market`
 - For meme pump token scanning → use `okx-dex-market`
 - For token search / metadata / holders / top traders for a specific token → use `okx-dex-token`
@@ -135,7 +136,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`) or numer
 | Just called | Suggest |
 |---|---|
 | `leaderboard supported-chains` | 1. Fetch the leaderboard → `onchainos leaderboard list` |
-| `leaderboard list` | 1. Drill into a wallet's PnL → `okx-dex-market portfolio-overview` 2. Check a wallet's holdings → `okx-wallet-portfolio` 3. View price chart for a token they hold → `okx-dex-market kline` |
+| `leaderboard list` | 1. See recent trades by these traders → `okx-dex-tracker trades` 2. Drill into a wallet's PnL → `okx-dex-market portfolio-overview` 3. Check a wallet's holdings → `okx-wallet-portfolio` |
 
 Present conversationally — never expose skill names or endpoint paths to the user.
 

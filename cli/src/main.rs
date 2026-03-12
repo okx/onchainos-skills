@@ -40,6 +40,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::leaderboard::LeaderboardCommand,
     },
+    /// Address tracker (KOL / smart money / custom group trading activity)
+    Tracker {
+        #[command(subcommand)]
+        command: commands::tracker::TrackerCommand,
+    },
     /// Token information
     Token {
         #[command(subcommand)]
@@ -72,6 +77,7 @@ async fn main() {
     let result = match cli.command {
         Commands::Market { command } => commands::market::execute(&ctx, command).await,
         Commands::Leaderboard { command } => commands::leaderboard::execute(&ctx, command).await,
+        Commands::Tracker { command } => commands::tracker::execute(&ctx, command).await,
         Commands::Token { command } => commands::token::execute(&ctx, command).await,
         Commands::Swap { command } => commands::swap::execute(&ctx, command).await,
         Commands::Gateway { command } => commands::gateway::execute(&ctx, command).await,

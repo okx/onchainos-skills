@@ -1,6 +1,7 @@
 pub mod gateway;
 pub mod leaderboard;
 pub mod market;
+pub mod tracker;
 pub mod portfolio;
 pub mod swap;
 pub mod token;
