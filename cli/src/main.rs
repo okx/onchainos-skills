@@ -28,17 +28,26 @@ pub struct Cli {
 }
 
 #[derive(Subcommand)]
-#[allow(clippy::large_enum_variant)]
 pub enum Commands {
-    /// Market data
+    /// Market data: prices, charts, wallet PnL
     Market {
         #[command(subcommand)]
-        command: commands::market::MarketCommand,
+        command: Box<commands::market::MarketCommand>,
+    },
+    /// Smart money / whale / KOL signal tracking
+    Signal {
+        #[command(subcommand)]
+        command: commands::signal::SignalCommand,
+    },
+    /// Meme / pump.fun token scanning and analysis
+    Memepump {
+        #[command(subcommand)]
+        command: Box<commands::memepump::MemepumpCommand>,
     },
     /// Token information
     Token {
         #[command(subcommand)]
-        command: commands::token::TokenCommand,
+        command: Box<commands::token::TokenCommand>,
     },
     /// DEX swap
     Swap {
@@ -57,16 +66,30 @@ pub enum Commands {
     },
 }
 
+fn main() {
+    // Clap's recursive command-tree builder uses ~900+ KB of stack in debug
+    // builds. Windows default is 1 MB — not enough headroom. Spawn with 8 MB
+    // to match macOS/Linux defaults.
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(run)
+        .expect("failed to spawn main thread")
+        .join()
+        .expect("main thread panicked");
+}
+
 #[tokio::main]
-async fn main() {
+async fn run() {
     dotenvy::dotenv().ok();
 
     let cli = Cli::parse();
     let ctx = commands::Context::new(&cli);
 
     let result = match cli.command {
-        Commands::Market { command } => commands::market::execute(&ctx, command).await,
-        Commands::Token { command } => commands::token::execute(&ctx, command).await,
+        Commands::Market { command } => commands::market::execute(&ctx, *command).await,
+        Commands::Signal { command } => commands::signal::execute(&ctx, command).await,
+        Commands::Memepump { command } => commands::memepump::execute(&ctx, *command).await,
+        Commands::Token { command } => commands::token::execute(&ctx, *command).await,
         Commands::Swap { command } => commands::swap::execute(&ctx, command).await,
         Commands::Gateway { command } => commands::gateway::execute(&ctx, command).await,
         Commands::Portfolio { command } => commands::portfolio::execute(&ctx, command).await,
