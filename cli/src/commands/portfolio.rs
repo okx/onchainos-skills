@@ -58,19 +58,38 @@ pub async fn execute(ctx: &Context, cmd: PortfolioCommand) -> Result<()> {
         PortfolioCommand::Chains => {
             output::success(fetch_chains(&client).await?);
         }
-        PortfolioCommand::TotalValue { address, chains, asset_type, exclude_risk } => {
+        PortfolioCommand::TotalValue {
+            address,
+            chains,
+            asset_type,
+            exclude_risk,
+        } => {
             let er = exclude_risk.map(|b| b.to_string());
             output::success(
-                fetch_total_value(&client, &address, &chains, asset_type.as_deref(), er.as_deref())
-                    .await?,
+                fetch_total_value(
+                    &client,
+                    &address,
+                    &chains,
+                    asset_type.as_deref(),
+                    er.as_deref(),
+                )
+                .await?,
             );
         }
-        PortfolioCommand::AllBalances { address, chains, exclude_risk } => {
+        PortfolioCommand::AllBalances {
+            address,
+            chains,
+            exclude_risk,
+        } => {
             output::success(
                 fetch_all_balances(&client, &address, &chains, exclude_risk.as_deref()).await?,
             );
         }
-        PortfolioCommand::TokenBalances { address, tokens, exclude_risk } => {
+        PortfolioCommand::TokenBalances {
+            address,
+            tokens,
+            exclude_risk,
+        } => {
             output::success(
                 fetch_token_balances(&client, &address, &tokens, exclude_risk.as_deref()).await?,
             );
@@ -93,10 +112,8 @@ pub async fn fetch_total_value(
     exclude_risk: Option<&str>,
 ) -> Result<Value> {
     let chain_indices = crate::chains::resolve_chains(chains);
-    let mut query: Vec<(&str, String)> = vec![
-        ("address", address.to_string()),
-        ("chains", chain_indices),
-    ];
+    let mut query: Vec<(&str, String)> =
+        vec![("address", address.to_string()), ("chains", chain_indices)];
     if let Some(at) = asset_type {
         query.push(("assetType", at.to_string()));
     }
@@ -117,16 +134,17 @@ pub async fn fetch_all_balances(
     exclude_risk: Option<&str>,
 ) -> Result<Value> {
     let chain_indices = crate::chains::resolve_chains(chains);
-    let mut query: Vec<(&str, String)> = vec![
-        ("address", address.to_string()),
-        ("chains", chain_indices),
-    ];
+    let mut query: Vec<(&str, String)> =
+        vec![("address", address.to_string()), ("chains", chain_indices)];
     if let Some(er) = exclude_risk {
         query.push(("excludeRiskToken", er.to_string()));
     }
     let query_refs: Vec<(&str, &str)> = query.iter().map(|(k, v)| (*k, v.as_str())).collect();
     client
-        .get("/api/v6/dex/balance/all-token-balances-by-address", &query_refs)
+        .get(
+            "/api/v6/dex/balance/all-token-balances-by-address",
+            &query_refs,
+        )
         .await
 }
 

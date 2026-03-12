@@ -169,19 +169,22 @@ async fn signal_list(
 ) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain).to_string();
     let client = ctx.client()?;
-    output::success(fetch_list(
-        &client,
-        &chain_index,
-        wallet_type,
-        min_amount_usd,
-        max_amount_usd,
-        min_address_count,
-        max_address_count,
-        token_address,
-        min_market_cap_usd,
-        max_market_cap_usd,
-        min_liquidity_usd,
-        max_liquidity_usd,
-    ).await?);
+    output::success(
+        fetch_list(
+            &client,
+            &chain_index,
+            wallet_type,
+            min_amount_usd,
+            max_amount_usd,
+            min_address_count,
+            max_address_count,
+            token_address,
+            min_market_cap_usd,
+            max_market_cap_usd,
+            min_liquidity_usd,
+            max_liquidity_usd,
+        )
+        .await?,
+    );
     Ok(())
 }

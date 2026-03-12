@@ -253,13 +253,21 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
             output::success(fetch_info(&client, &address, &chain_index).await?);
         }
-        TokenCommand::Holders { address, chain, tag_filter } => {
+        TokenCommand::Holders {
+            address,
+            chain,
+            tag_filter,
+        } => {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
             output::success(fetch_holders(&client, &address, &chain_index, tag_filter).await?);
         }
-        TokenCommand::Trending { chains, sort_by, time_frame } => {
+        TokenCommand::Trending {
+            chains,
+            sort_by,
+            time_frame,
+        } => {
             output::success(fetch_trending(&client, &chains, &sort_by, &time_frame).await?);
         }
         TokenCommand::PriceInfo { address, chain } => {
@@ -318,53 +326,56 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             is_mint,
             is_freeze,
         } => {
-            output::success(fetch_hot_tokens(
-                &client,
-                HotTokensParams {
-                    ranking_type,
-                    chain,
-                    rank_by,
-                    time_frame,
-                    risk_filter,
-                    stable_token_filter,
-                    project_id,
-                    price_change_min,
-                    price_change_max,
-                    volume_min,
-                    volume_max,
-                    market_cap_min,
-                    market_cap_max,
-                    liquidity_min,
-                    liquidity_max,
-                    transaction_min,
-                    transaction_max,
-                    txs_min,
-                    txs_max,
-                    unique_trader_min,
-                    unique_trader_max,
-                    holders_min,
-                    holders_max,
-                    inflow_min,
-                    inflow_max,
-                    fdv_min,
-                    fdv_max,
-                    mentioned_count_min,
-                    mentioned_count_max,
-                    social_score_min,
-                    social_score_max,
-                    top10_hold_percent_min,
-                    top10_hold_percent_max,
-                    dev_hold_percent_min,
-                    dev_hold_percent_max,
-                    bundle_hold_percent_min,
-                    bundle_hold_percent_max,
-                    suspicious_hold_percent_min,
-                    suspicious_hold_percent_max,
-                    is_lp_burnt,
-                    is_mint,
-                    is_freeze,
-                },
-            ).await?);
+            output::success(
+                fetch_hot_tokens(
+                    &client,
+                    HotTokensParams {
+                        ranking_type,
+                        chain,
+                        rank_by,
+                        time_frame,
+                        risk_filter,
+                        stable_token_filter,
+                        project_id,
+                        price_change_min,
+                        price_change_max,
+                        volume_min,
+                        volume_max,
+                        market_cap_min,
+                        market_cap_max,
+                        liquidity_min,
+                        liquidity_max,
+                        transaction_min,
+                        transaction_max,
+                        txs_min,
+                        txs_max,
+                        unique_trader_min,
+                        unique_trader_max,
+                        holders_min,
+                        holders_max,
+                        inflow_min,
+                        inflow_max,
+                        fdv_min,
+                        fdv_max,
+                        mentioned_count_min,
+                        mentioned_count_max,
+                        social_score_min,
+                        social_score_max,
+                        top10_hold_percent_min,
+                        top10_hold_percent_max,
+                        dev_hold_percent_min,
+                        dev_hold_percent_max,
+                        bundle_hold_percent_min,
+                        bundle_hold_percent_max,
+                        suspicious_hold_percent_min,
+                        suspicious_hold_percent_max,
+                        is_lp_burnt,
+                        is_mint,
+                        is_freeze,
+                    },
+                )
+                .await?,
+            );
         }
         TokenCommand::AdvancedInfo { address, chain } => {
             let chain_index = chain
@@ -392,7 +403,17 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_token_trades(&client, &address, &chain_index, limit, tag_filter.as_deref(), wallet_filter.as_deref()).await?);
+            output::success(
+                fetch_token_trades(
+                    &client,
+                    &address,
+                    &chain_index,
+                    limit,
+                    tag_filter.as_deref(),
+                    wallet_filter.as_deref(),
+                )
+                .await?,
+            );
         }
     }
     Ok(())
@@ -412,7 +433,9 @@ pub async fn fetch_search(client: &ApiClient, query: &str, chains: &str) -> Resu
 /// POST /api/v6/dex/market/token/basic-info — body is JSON array
 pub async fn fetch_info(client: &ApiClient, address: &str, chain_index: &str) -> Result<Value> {
     let body = json!([{"chainIndex": chain_index, "tokenContractAddress": address}]);
-    client.post("/api/v6/dex/market/token/basic-info", &body).await
+    client
+        .post("/api/v6/dex/market/token/basic-info", &body)
+        .await
 }
 
 /// GET /api/v6/dex/market/token/holder
@@ -740,4 +763,3 @@ pub async fn fetch_token_trades(
         )
         .await
 }
-

@@ -136,7 +136,12 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
             output::success(fetch_prices(&client, &tokens, &default_chain).await?);
         }
-        MarketCommand::Kline { address, bar, limit, chain } => {
+        MarketCommand::Kline {
+            address,
+            bar,
+            limit,
+            chain,
+        } => {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
@@ -187,7 +192,8 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
             limit,
             cursor,
         } => {
-            portfolio_recent_pnl(ctx, &address, &chain, limit.as_deref(), cursor.as_deref()).await?;
+            portfolio_recent_pnl(ctx, &address, &chain, limit.as_deref(), cursor.as_deref())
+                .await?;
         }
         MarketCommand::PortfolioTokenPnl {
             address,
@@ -229,7 +235,9 @@ pub async fn fetch_prices(
             }
         })
         .collect();
-    client.post("/api/v6/dex/market/price", &Value::Array(items)).await
+    client
+        .post("/api/v6/dex/market/price", &Value::Array(items))
+        .await
 }
 
 /// GET /api/v6/dex/market/candles
@@ -355,7 +363,18 @@ async fn portfolio_dex_history(
     let chain_index = crate::chains::resolve_chain(chain);
     let client = ctx.client()?;
     output::success(
-        fetch_portfolio_dex_history(&client, &chain_index, address, begin, end, limit, cursor, token, tx_type).await?,
+        fetch_portfolio_dex_history(
+            &client,
+            &chain_index,
+            address,
+            begin,
+            end,
+            limit,
+            cursor,
+            token,
+            tx_type,
+        )
+        .await?,
     );
     Ok(())
 }
@@ -368,10 +387,8 @@ pub async fn fetch_portfolio_recent_pnl(
     limit: Option<&str>,
     cursor: Option<&str>,
 ) -> Result<Value> {
-    let mut query: Vec<(&str, &str)> = vec![
-        ("chainIndex", chain_index),
-        ("walletAddress", address),
-    ];
+    let mut query: Vec<(&str, &str)> =
+        vec![("chainIndex", chain_index), ("walletAddress", address)];
     if let Some(l) = limit {
         query.push(("limit", l));
     }
@@ -392,7 +409,9 @@ async fn portfolio_recent_pnl(
 ) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain);
     let client = ctx.client()?;
-    output::success(fetch_portfolio_recent_pnl(&client, &chain_index, address, limit, cursor).await?);
+    output::success(
+        fetch_portfolio_recent_pnl(&client, &chain_index, address, limit, cursor).await?,
+    );
     Ok(())
 }
 

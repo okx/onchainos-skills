@@ -76,17 +76,47 @@ pub enum SwapCommand {
 pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
     let client = ctx.client()?;
     match cmd {
-        SwapCommand::Quote { from, to, amount, chain, swap_mode } => {
-            let chain_index = crate::chains::resolve_chain(&chain);
-            output::success(fetch_quote(&client, &chain_index, &from, &to, &amount, &swap_mode).await?);
-        }
-        SwapCommand::Swap { from, to, amount, chain, slippage, wallet, swap_mode } => {
+        SwapCommand::Quote {
+            from,
+            to,
+            amount,
+            chain,
+            swap_mode,
+        } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(
-                fetch_swap(&client, &chain_index, &from, &to, &amount, &slippage, &wallet, &swap_mode).await?,
+                fetch_quote(&client, &chain_index, &from, &to, &amount, &swap_mode).await?,
             );
         }
-        SwapCommand::Approve { token, amount, chain } => {
+        SwapCommand::Swap {
+            from,
+            to,
+            amount,
+            chain,
+            slippage,
+            wallet,
+            swap_mode,
+        } => {
+            let chain_index = crate::chains::resolve_chain(&chain);
+            output::success(
+                fetch_swap(
+                    &client,
+                    &chain_index,
+                    &from,
+                    &to,
+                    &amount,
+                    &slippage,
+                    &wallet,
+                    &swap_mode,
+                )
+                .await?,
+            );
+        }
+        SwapCommand::Approve {
+            token,
+            amount,
+            chain,
+        } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(fetch_approve(&client, &chain_index, &token, &amount).await?);
         }

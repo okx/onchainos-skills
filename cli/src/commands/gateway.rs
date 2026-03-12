@@ -85,23 +85,44 @@ pub async fn execute(ctx: &Context, cmd: GatewayCommand) -> Result<()> {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(fetch_gas(&client, &chain_index).await?);
         }
-        GatewayCommand::GasLimit { from, to, amount, data, chain } => {
+        GatewayCommand::GasLimit {
+            from,
+            to,
+            amount,
+            data,
+            chain,
+        } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(
-                fetch_gas_limit(&client, &chain_index, &from, &to, &amount, data.as_deref()).await?,
+                fetch_gas_limit(&client, &chain_index, &from, &to, &amount, data.as_deref())
+                    .await?,
             );
         }
-        GatewayCommand::Simulate { from, to, amount, data, chain } => {
+        GatewayCommand::Simulate {
+            from,
+            to,
+            amount,
+            data,
+            chain,
+        } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(
                 fetch_simulate(&client, &chain_index, &from, &to, &amount, &data).await?,
             );
         }
-        GatewayCommand::Broadcast { signed_tx, address, chain } => {
+        GatewayCommand::Broadcast {
+            signed_tx,
+            address,
+            chain,
+        } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(fetch_broadcast(&client, &chain_index, &signed_tx, &address).await?);
         }
-        GatewayCommand::Orders { address, chain, order_id } => {
+        GatewayCommand::Orders {
+            address,
+            chain,
+            order_id,
+        } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(
                 fetch_orders(&client, &chain_index, &address, order_id.as_deref()).await?,
@@ -142,7 +163,9 @@ pub async fn fetch_gas_limit(
     if let Some(input_data) = data {
         body["extJson"] = json!({ "inputData": input_data });
     }
-    client.post("/api/v6/dex/pre-transaction/gas-limit", &body).await
+    client
+        .post("/api/v6/dex/pre-transaction/gas-limit", &body)
+        .await
 }
 
 /// POST /api/v6/dex/pre-transaction/simulate
@@ -161,7 +184,9 @@ pub async fn fetch_simulate(
         "txAmount": amount,
         "extJson": { "inputData": data },
     });
-    client.post("/api/v6/dex/pre-transaction/simulate", &body).await
+    client
+        .post("/api/v6/dex/pre-transaction/simulate", &body)
+        .await
 }
 
 /// POST /api/v6/dex/pre-transaction/broadcast-transaction
@@ -192,7 +217,9 @@ pub async fn fetch_orders(
     if let Some(oid) = order_id {
         query.push(("orderId", oid));
     }
-    client.get("/api/v6/dex/post-transaction/orders", &query).await
+    client
+        .get("/api/v6/dex/post-transaction/orders", &query)
+        .await
 }
 
 /// GET /api/v6/dex/pre-transaction/supported/chain
