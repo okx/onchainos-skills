@@ -343,19 +343,19 @@ impl ServerHandler for McpServer {
     }
 }
 
-fn ok(data: Value) -> String {
-    serde_json::to_string_pretty(&data)
-        .unwrap_or_else(|e| format!("Error: failed to serialize response: {e}"))
+fn ok(data: Value) -> Result<String, String> {
+    Ok(serde_json::to_string_pretty(&data)
+        .unwrap_or_else(|e| format!("failed to serialize response: {e}")))
 }
 
-fn err(e: anyhow::Error) -> String {
-    format!("Error: {e:#}")
+fn err(e: anyhow::Error) -> Result<String, String> {
+    Err(format!("{e:#}"))
 }
 
 #[tool_router]
 impl McpServer {
     #[tool(name = "token_search", description = "Search tokens by name/symbol/address across chains")]
-    async fn token_search(&self, Parameters(p): Parameters<TokenSearchParams>) -> String {
+    async fn token_search(&self, Parameters(p): Parameters<TokenSearchParams>) -> Result<String, String> {
         let chains = p.chains.as_deref().unwrap_or("1,501");
         match token::fetch_search(&self.client, &p.query, chains).await {
             Ok(data) => ok(data),
@@ -364,7 +364,7 @@ impl McpServer {
     }
 
     #[tool(name = "token_info", description = "Get token metadata: name, symbol, decimals, logo")]
-    async fn token_info(&self, Parameters(p): Parameters<TokenAddressParams>) -> String {
+    async fn token_info(&self, Parameters(p): Parameters<TokenAddressParams>) -> Result<String, String> {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
@@ -375,7 +375,7 @@ impl McpServer {
     }
 
     #[tool(name = "token_holders", description = "Get token holder distribution (top 20)")]
-    async fn token_holders(&self, Parameters(p): Parameters<TokenTagAddressParams>) -> String {
+    async fn token_holders(&self, Parameters(p): Parameters<TokenTagAddressParams>) -> Result<String, String> {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
@@ -386,7 +386,7 @@ impl McpServer {
     }
 
     #[tool(name = "token_trending", description = "Get trending token rankings")]
-    async fn token_trending(&self, Parameters(p): Parameters<TokenTrendingParams>) -> String {
+    async fn token_trending(&self, Parameters(p): Parameters<TokenTrendingParams>) -> Result<String, String> {
         let chains = p.chains.as_deref().unwrap_or("1,501");
         let sort_by = p.sort_by.as_deref().unwrap_or("5");
         let time_frame = p.time_frame.as_deref().unwrap_or("4");
@@ -397,7 +397,7 @@ impl McpServer {
     }
 
     #[tool(name = "token_price_info", description = "Get token price info: market cap, liquidity, 24h change, volume")]
-    async fn token_price_info(&self, Parameters(p): Parameters<TokenAddressParams>) -> String {
+    async fn token_price_info(&self, Parameters(p): Parameters<TokenAddressParams>) -> Result<String, String> {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
@@ -408,7 +408,7 @@ impl McpServer {
     }
 
     #[tool(name = "market_price", description = "Get current price for a token by contract address")]
-    async fn market_price(&self, Parameters(p): Parameters<MarketTokenParams>) -> String {
+    async fn market_price(&self, Parameters(p): Parameters<MarketTokenParams>) -> Result<String, String> {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
@@ -419,7 +419,7 @@ impl McpServer {
     }
 
     #[tool(name = "market_prices", description = "Batch price query for multiple tokens")]
-    async fn market_prices(&self, Parameters(p): Parameters<MarketPricesParams>) -> String {
+    async fn market_prices(&self, Parameters(p): Parameters<MarketPricesParams>) -> Result<String, String> {
         let default_chain = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
@@ -430,7 +430,7 @@ impl McpServer {
     }
 
     #[tool(name = "market_kline", description = "Get candlestick / K-line data for a token")]
-    async fn market_kline(&self, Parameters(p): Parameters<MarketKlineParams>) -> String {
+    async fn market_kline(&self, Parameters(p): Parameters<MarketKlineParams>) -> Result<String, String> {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
@@ -443,7 +443,7 @@ impl McpServer {
     }
 
     #[tool(name = "token_trades", description = "Get token trade history on DEX, with optional tag and wallet filters")]
-    async fn token_trades(&self, Parameters(p): Parameters<TokenTradesParams>) -> String {
+    async fn token_trades(&self, Parameters(p): Parameters<TokenTradesParams>) -> Result<String, String> {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
@@ -455,7 +455,7 @@ impl McpServer {
     }
 
     #[tool(name = "market_index", description = "Get aggregated index price for a token")]
-    async fn market_index(&self, Parameters(p): Parameters<MarketTokenParams>) -> String {
+    async fn market_index(&self, Parameters(p): Parameters<MarketTokenParams>) -> Result<String, String> {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
@@ -466,7 +466,7 @@ impl McpServer {
     }
 
     #[tool(name = "signal_chains", description = "Get chains supported for smart money / KOL / whale signals")]
-    async fn signal_chains(&self) -> String {
+    async fn signal_chains(&self) -> Result<String, String> {
         match signal::fetch_chains(&self.client).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -474,7 +474,7 @@ impl McpServer {
     }
 
     #[tool(name = "signal_list", description = "Get smart money / KOL / whale signal list for a chain")]
-    async fn signal_list(&self, Parameters(p): Parameters<MarketSignalListParams>) -> String {
+    async fn signal_list(&self, Parameters(p): Parameters<MarketSignalListParams>) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         match signal::fetch_list(
             &self.client,
@@ -498,7 +498,7 @@ impl McpServer {
     }
 
     #[tool(name = "memepump_chains", description = "Get supported chains and protocols for Meme Pump")]
-    async fn memepump_chains(&self) -> String {
+    async fn memepump_chains(&self) -> Result<String, String> {
         match memepump::fetch_chains(&self.client).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -506,7 +506,7 @@ impl McpServer {
     }
 
     #[tool(name = "memepump_tokens", description = "Get filtered Meme Pump token list")]
-    async fn memepump_tokens(&self, Parameters(p): Parameters<memepump::MemepumpTokenListParams>) -> String {
+    async fn memepump_tokens(&self, Parameters(p): Parameters<memepump::MemepumpTokenListParams>) -> Result<String, String> {
         match memepump::fetch_token_list(&self.client, p).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -514,7 +514,7 @@ impl McpServer {
     }
 
     #[tool(name = "memepump_token_details", description = "Get Meme Pump token details")]
-    async fn memepump_token_details(&self, Parameters(p): Parameters<MemepumpWalletParams>) -> String {
+    async fn memepump_token_details(&self, Parameters(p): Parameters<MemepumpWalletParams>) -> Result<String, String> {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
@@ -525,7 +525,7 @@ impl McpServer {
     }
 
     #[tool(name = "memepump_token_dev_info", description = "Get Meme Pump token developer info and reputation")]
-    async fn memepump_token_dev_info(&self, Parameters(p): Parameters<MarketTokenParams>) -> String {
+    async fn memepump_token_dev_info(&self, Parameters(p): Parameters<MarketTokenParams>) -> Result<String, String> {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
@@ -543,7 +543,7 @@ impl McpServer {
     }
 
     #[tool(name = "memepump_similar_tokens", description = "Get similar tokens for a Meme Pump token")]
-    async fn memepump_similar_tokens(&self, Parameters(p): Parameters<MarketTokenParams>) -> String {
+    async fn memepump_similar_tokens(&self, Parameters(p): Parameters<MarketTokenParams>) -> Result<String, String> {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
@@ -561,7 +561,7 @@ impl McpServer {
     }
 
     #[tool(name = "memepump_token_bundle_info", description = "Get Meme Pump token bundle/sniper info for rug detection")]
-    async fn memepump_token_bundle_info(&self, Parameters(p): Parameters<MarketTokenParams>) -> String {
+    async fn memepump_token_bundle_info(&self, Parameters(p): Parameters<MarketTokenParams>) -> Result<String, String> {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
@@ -579,7 +579,7 @@ impl McpServer {
     }
 
     #[tool(name = "memepump_aped_wallet", description = "Get co-invested wallet data for a Meme Pump token")]
-    async fn memepump_aped_wallet(&self, Parameters(p): Parameters<MemepumpWalletParams>) -> String {
+    async fn memepump_aped_wallet(&self, Parameters(p): Parameters<MemepumpWalletParams>) -> Result<String, String> {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
@@ -590,7 +590,7 @@ impl McpServer {
     }
 
     #[tool(name = "swap_chains", description = "Get supported chains for DEX aggregator swaps")]
-    async fn swap_chains(&self) -> String {
+    async fn swap_chains(&self) -> Result<String, String> {
         match swap::fetch_chains(&self.client).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -598,7 +598,7 @@ impl McpServer {
     }
 
     #[tool(name = "swap_quote", description = "Get swap quote (price estimate, no transaction)")]
-    async fn swap_quote(&self, Parameters(p): Parameters<SwapQuoteParams>) -> String {
+    async fn swap_quote(&self, Parameters(p): Parameters<SwapQuoteParams>) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let swap_mode = p.swap_mode.as_deref().unwrap_or("exactIn");
         match swap::fetch_quote(&self.client, &chain_index, &p.from, &p.to, &p.amount, swap_mode).await {
@@ -608,7 +608,7 @@ impl McpServer {
     }
 
     #[tool(name = "swap_swap", description = "Get swap transaction data (unsigned tx for signing + broadcasting)")]
-    async fn swap_swap(&self, Parameters(p): Parameters<SwapSwapParams>) -> String {
+    async fn swap_swap(&self, Parameters(p): Parameters<SwapSwapParams>) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let slippage = p.slippage.as_deref().unwrap_or("1");
         let swap_mode = p.swap_mode.as_deref().unwrap_or("exactIn");
@@ -630,7 +630,7 @@ impl McpServer {
     }
 
     #[tool(name = "swap_approve", description = "Get ERC-20 approval transaction data")]
-    async fn swap_approve(&self, Parameters(p): Parameters<SwapApproveParams>) -> String {
+    async fn swap_approve(&self, Parameters(p): Parameters<SwapApproveParams>) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         match swap::fetch_approve(&self.client, &chain_index, &p.token, &p.amount).await {
             Ok(data) => ok(data),
@@ -639,7 +639,7 @@ impl McpServer {
     }
 
     #[tool(name = "swap_liquidity", description = "Get available liquidity sources on a chain")]
-    async fn swap_liquidity(&self, Parameters(p): Parameters<ChainParam>) -> String {
+    async fn swap_liquidity(&self, Parameters(p): Parameters<ChainParam>) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         match swap::fetch_liquidity(&self.client, &chain_index).await {
             Ok(data) => ok(data),
@@ -648,7 +648,7 @@ impl McpServer {
     }
 
     #[tool(name = "portfolio_chains", description = "Get supported chains for wallet balance queries")]
-    async fn portfolio_chains(&self) -> String {
+    async fn portfolio_chains(&self) -> Result<String, String> {
         match portfolio::fetch_chains(&self.client).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -656,7 +656,7 @@ impl McpServer {
     }
 
     #[tool(name = "portfolio_total_value", description = "Get total portfolio value for a wallet address")]
-    async fn portfolio_total_value(&self, Parameters(p): Parameters<PortfolioTotalValueParams>) -> String {
+    async fn portfolio_total_value(&self, Parameters(p): Parameters<PortfolioTotalValueParams>) -> Result<String, String> {
         match portfolio::fetch_total_value(
             &self.client,
             &p.address,
@@ -672,7 +672,7 @@ impl McpServer {
     }
 
     #[tool(name = "portfolio_all_balances", description = "Get all token balances for a wallet address")]
-    async fn portfolio_all_balances(&self, Parameters(p): Parameters<PortfolioAllBalancesParams>) -> String {
+    async fn portfolio_all_balances(&self, Parameters(p): Parameters<PortfolioAllBalancesParams>) -> Result<String, String> {
         match portfolio::fetch_all_balances(
             &self.client,
             &p.address,
@@ -687,7 +687,7 @@ impl McpServer {
     }
 
     #[tool(name = "portfolio_token_balances", description = "Get specific token balances for a wallet address")]
-    async fn portfolio_token_balances(&self, Parameters(p): Parameters<PortfolioTokenBalancesParams>) -> String {
+    async fn portfolio_token_balances(&self, Parameters(p): Parameters<PortfolioTokenBalancesParams>) -> Result<String, String> {
         match portfolio::fetch_token_balances(
             &self.client,
             &p.address,
@@ -702,7 +702,7 @@ impl McpServer {
     }
 
     #[tool(name = "gateway_chains", description = "Get supported chains for the on-chain gateway")]
-    async fn gateway_chains(&self) -> String {
+    async fn gateway_chains(&self) -> Result<String, String> {
         match gateway::fetch_chains(&self.client).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -710,7 +710,7 @@ impl McpServer {
     }
 
     #[tool(name = "gateway_gas", description = "Get current gas prices for a chain")]
-    async fn gateway_gas(&self, Parameters(p): Parameters<ChainParam>) -> String {
+    async fn gateway_gas(&self, Parameters(p): Parameters<ChainParam>) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         match gateway::fetch_gas(&self.client, &chain_index).await {
             Ok(data) => ok(data),
@@ -719,7 +719,7 @@ impl McpServer {
     }
 
     #[tool(name = "gateway_gas_limit", description = "Estimate gas limit for a transaction")]
-    async fn gateway_gas_limit(&self, Parameters(p): Parameters<GatewayGasLimitParams>) -> String {
+    async fn gateway_gas_limit(&self, Parameters(p): Parameters<GatewayGasLimitParams>) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let amount = p.amount.as_deref().unwrap_or("0");
         match gateway::fetch_gas_limit(
@@ -738,7 +738,7 @@ impl McpServer {
     }
 
     #[tool(name = "gateway_simulate", description = "Simulate a transaction (dry-run, no state change)")]
-    async fn gateway_simulate(&self, Parameters(p): Parameters<GatewaySimulateParams>) -> String {
+    async fn gateway_simulate(&self, Parameters(p): Parameters<GatewaySimulateParams>) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let amount = p.amount.as_deref().unwrap_or("0");
         match gateway::fetch_simulate(&self.client, &chain_index, &p.from, &p.to, amount, &p.data).await {
@@ -748,7 +748,7 @@ impl McpServer {
     }
 
     #[tool(name = "gateway_broadcast", description = "Broadcast a signed transaction on-chain")]
-    async fn gateway_broadcast(&self, Parameters(p): Parameters<GatewayBroadcastParams>) -> String {
+    async fn gateway_broadcast(&self, Parameters(p): Parameters<GatewayBroadcastParams>) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         match gateway::fetch_broadcast(&self.client, &chain_index, &p.signed_tx, &p.address).await {
             Ok(data) => ok(data),
@@ -757,7 +757,7 @@ impl McpServer {
     }
 
     #[tool(name = "gateway_orders", description = "Track broadcast order status")]
-    async fn gateway_orders(&self, Parameters(p): Parameters<GatewayOrdersParams>) -> String {
+    async fn gateway_orders(&self, Parameters(p): Parameters<GatewayOrdersParams>) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let oid = p.order_id.as_deref();
         match gateway::fetch_orders(&self.client, &chain_index, &p.address, oid).await {
@@ -769,7 +769,7 @@ impl McpServer {
     // ── Token: new tools ──────────────────────────────────────────────
 
     #[tool(name = "token_liquidity", description = "Get top 5 liquidity pools for a token")]
-    async fn token_liquidity(&self, Parameters(p): Parameters<TokenAddressParams>) -> String {
+    async fn token_liquidity(&self, Parameters(p): Parameters<TokenAddressParams>) -> Result<String, String> {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
@@ -780,7 +780,7 @@ impl McpServer {
     }
 
     #[tool(name = "token_hot_tokens", description = "Get hot token list ranked by trending score or X mentions, with extensive filtering")]
-    async fn token_hot_tokens(&self, Parameters(p): Parameters<token::HotTokensParams>) -> String {
+    async fn token_hot_tokens(&self, Parameters(p): Parameters<token::HotTokensParams>) -> Result<String, String> {
         match token::fetch_hot_tokens(&self.client, p).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -788,7 +788,7 @@ impl McpServer {
     }
 
     #[tool(name = "token_advanced_info", description = "Get advanced token info: risk level, creator, dev stats, holder concentration")]
-    async fn token_advanced_info(&self, Parameters(p): Parameters<TokenAddressParams>) -> String {
+    async fn token_advanced_info(&self, Parameters(p): Parameters<TokenAddressParams>) -> Result<String, String> {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
@@ -799,7 +799,7 @@ impl McpServer {
     }
 
     #[tool(name = "token_top_trader", description = "Get top traders (profit addresses) for a token")]
-    async fn token_top_trader(&self, Parameters(p): Parameters<TokenTagAddressParams>) -> String {
+    async fn token_top_trader(&self, Parameters(p): Parameters<TokenTagAddressParams>) -> Result<String, String> {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
@@ -812,7 +812,7 @@ impl McpServer {
     // ── Portfolio PnL: new tools ──────────────────────────────────────
 
     #[tool(name = "market_portfolio_supported_chains", description = "Get supported chains for wallet portfolio PnL analysis")]
-    async fn market_portfolio_supported_chains(&self) -> String {
+    async fn market_portfolio_supported_chains(&self) -> Result<String, String> {
         match market::fetch_portfolio_supported_chains(&self.client).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -820,7 +820,7 @@ impl McpServer {
     }
 
     #[tool(name = "market_portfolio_overview", description = "Get wallet portfolio overview: realized/unrealized PnL, win rate, trading stats")]
-    async fn market_portfolio_overview(&self, Parameters(p): Parameters<PortfolioPnlOverviewParams>) -> String {
+    async fn market_portfolio_overview(&self, Parameters(p): Parameters<PortfolioPnlOverviewParams>) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         match market::fetch_portfolio_overview(&self.client, &chain_index, &p.address, &p.time_frame).await {
             Ok(data) => ok(data),
@@ -829,7 +829,7 @@ impl McpServer {
     }
 
     #[tool(name = "market_portfolio_dex_history", description = "Get wallet DEX transaction history (paginated)")]
-    async fn market_portfolio_dex_history(&self, Parameters(p): Parameters<PortfolioPnlDexHistoryParams>) -> String {
+    async fn market_portfolio_dex_history(&self, Parameters(p): Parameters<PortfolioPnlDexHistoryParams>) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         match market::fetch_portfolio_dex_history(
             &self.client,
@@ -850,7 +850,7 @@ impl McpServer {
     }
 
     #[tool(name = "market_portfolio_recent_pnl", description = "Get recent token PnL records for a wallet (paginated)")]
-    async fn market_portfolio_recent_pnl(&self, Parameters(p): Parameters<PortfolioPnlRecentPnlParams>) -> String {
+    async fn market_portfolio_recent_pnl(&self, Parameters(p): Parameters<PortfolioPnlRecentPnlParams>) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         match market::fetch_portfolio_recent_pnl(
             &self.client,
@@ -867,7 +867,7 @@ impl McpServer {
     }
 
     #[tool(name = "market_portfolio_token_pnl", description = "Get latest PnL snapshot for a specific token in a wallet")]
-    async fn market_portfolio_token_pnl(&self, Parameters(p): Parameters<PortfolioPnlTokenPnlParams>) -> String {
+    async fn market_portfolio_token_pnl(&self, Parameters(p): Parameters<PortfolioPnlTokenPnlParams>) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         match market::fetch_portfolio_token_pnl(&self.client, &chain_index, &p.address, &p.token).await {
             Ok(data) => ok(data),
