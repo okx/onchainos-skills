@@ -1,6 +1,6 @@
 ---
 name: okx-dex-trenches
-description: "Use this skill for meme/打狗/alpha token research on pump.fun and similar launchpads: scanning new token launches, checking developer reputation/开发者信息 and past rug pull history, bundle/sniper detection/捆绑狙击, bonding curve status, finding similar tokens by the same dev, and wallets that co-invested (同车/aped) into a token. Use when the user asks about 'new meme coins', 'pump.fun launches', 'scan trenches/扫链', 'check dev reputation', 'bundler analysis', 'who else bought this token', '打狗', '新盘', or '开发者信息'. Do NOT use for market-wide whale/smart-money signals — use okx-dex-signal. Do NOT use for per-token holder distribution or honeypot checks — use okx-dex-token."
+description: "Use this skill for meme/打狗/alpha token research on pump.fun and similar launchpads: scanning new token launches, checking developer reputation/开发者信息 and past rug pull history, bundle/sniper detection/捆绑狙击, bonding curve status, finding similar tokens by the same dev, and wallets that co-invested (同车/aped) into a token. Use when the user asks about 'new meme coins', 'pump.fun launches', 'trenches', 'trench', 'scan trenches/扫链', 'check dev reputation', 'bundler analysis', 'who else bought this token', '打狗', '新盘', or '开发者信息'. Do NOT use for market-wide whale/smart-money signals — use okx-dex-signal. Do NOT use for per-token holder distribution or honeypot checks — use okx-dex-token."
 license: Apache-2.0
 metadata:
   author: okx
