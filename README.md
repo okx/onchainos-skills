@@ -90,6 +90,16 @@ The skills work together in typical DeFi flows:
 
 **Full Trading Flow**: `okx-dex-token` (search) -> `okx-dex-market` (price/chart) -> `okx-wallet-portfolio` (check balance) -> `okx-dex-swap` (get tx) -> `okx-onchain-gateway` (simulate + broadcast + track)
 
+## Install CLI
+
+### Shell Script (macOS / Linux)
+
+Auto-detects your platform, downloads the matching binary, verifies SHA256 checksum, and installs to `~/.local/bin`:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
+```
+
 ## MCP Server
 
 The `onchainos` CLI doubles as a native MCP server, exposing 34 tools to any MCP-compatible client.
@@ -124,16 +134,6 @@ Or create `.mcp.json` manually:
 | Swap | `swap_chains`, `swap_quote`, `swap_swap`, `swap_approve`, `swap_liquidity` |
 | Portfolio | `portfolio_chains`, `portfolio_total_value`, `portfolio_all_balances`, `portfolio_token_balances` |
 | Gateway | `gateway_chains`, `gateway_gas`, `gateway_gas_limit`, `gateway_simulate`, `gateway_broadcast`, `gateway_orders` |
-
-## Install CLI
-
-### Shell Script (macOS / Linux)
-
-Auto-detects your platform, downloads the matching binary, verifies SHA256 checksum, and installs to `~/.local/bin`:
-
-```bash
-curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
-```
 
 ## API Key Security Notice & Disclaimer
 
