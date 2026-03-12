@@ -90,6 +90,41 @@ The skills work together in typical DeFi flows:
 
 **Full Trading Flow**: `okx-dex-token` (search) -> `okx-dex-market` (price/chart) -> `okx-wallet-portfolio` (check balance) -> `okx-dex-swap` (get tx) -> `okx-onchain-gateway` (simulate + broadcast + track)
 
+## MCP Server
+
+The `onchainos` CLI doubles as a native MCP server, exposing 34 tools to any MCP-compatible client.
+
+### Claude Code
+
+Copy the included template:
+
+```bash
+cp .mcp.json.example .mcp.json
+```
+
+Or create `.mcp.json` manually:
+
+```json
+{
+  "mcpServers": {
+    "onchainos-cli": {
+      "command": "onchainos",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### Available MCP Tools (34 total)
+
+| Category | Tools |
+|----------|-------|
+| Token | `token_search`, `token_info`, `token_holders`, `token_trending`, `token_price_info` |
+| Market | `market_price`, `market_prices`, `market_kline`, `market_trades`, `market_index`, `market_signal_chains`, `market_signal_list` + 7 meme pump tools |
+| Swap | `swap_chains`, `swap_quote`, `swap_swap`, `swap_approve`, `swap_liquidity` |
+| Portfolio | `portfolio_chains`, `portfolio_total_value`, `portfolio_all_balances`, `portfolio_token_balances` |
+| Gateway | `gateway_chains`, `gateway_gas`, `gateway_gas_limit`, `gateway_simulate`, `gateway_broadcast`, `gateway_orders` |
+
 ## Install CLI
 
 ### Shell Script (macOS / Linux)

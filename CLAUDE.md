@@ -4,12 +4,14 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-This is a **Claude Code plugin** — a collection of onchainos skills for on-chain operations. The project provides skills for token search, market data, wallet balance queries, swap execution, and transaction broadcasting across 20+ blockchains.
+This is a **Claude Code plugin** — a collection of onchainos skills for on-chain operations. The project provides skills for token search, market data, wallet balance queries, swap execution, and transaction broadcasting across 20+ blockchains. The `onchainos` CLI also works as a native MCP server exposing 34 tools.
 
 ## Architecture
 
 - **skills/** — 5 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
+- **cli/src/mcp/mod.rs** — MCP server implementation (34 tools, rmcp v1.1.1)
+- **.mcp.json.example** — MCP server configuration template for Claude Code
 - **.github/workflows/** — CI/CD pipeline (`release.yml`: tag-triggered build for 9 platforms → GitHub Release)
 - **install.sh** — One-line installer for macOS / Linux (`curl | sh`)
 
