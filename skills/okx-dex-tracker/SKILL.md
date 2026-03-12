@@ -109,6 +109,93 @@ The CLI accepts human-readable chain names or `all` (default). Supported chains 
 |---|---|---|
 | 1 | `onchainos tracker trades` | Get on-chain trading activity of tracked addresses (KOL / smart money / custom group) |
 
+## Cross-Skill Workflows
+
+### Workflow A: KOL Buys → Token Safety Check → Buy
+
+> User: "What are KOLs buying on Solana right now? Show me if it's safe to follow"
+
+```
+1. okx-dex-tracker      onchainos tracker trades --tracker-type kol --trade-type buy --chain solana
+                                                   → recent KOL buys; get baseTokenContractAddress
+       ↓ pick a token appearing multiple times (multiple KOLs buying)
+2. okx-dex-token        onchainos token cluster-overview --address <address> --chain solana
+                                                   → holder concentration, rug pull %, new address %
+3. okx-dex-token        onchainos token advanced-info --address <address> --chain solana
+                                                   → risk level, dev history, honeypot check
+       ↓ green flags → check price momentum
+4. okx-dex-market       onchainos market kline --address <address> --chain solana         → price chart
+       ↓ user decides to buy
+5. okx-dex-swap         onchainos swap quote --from <usdc> --to <address> --amount ... --chain solana
+6. okx-dex-swap         onchainos swap swap  --from <usdc> --to <address> --amount ... --chain solana --wallet <addr>
+```
+
+**Data handoff**: `baseTokenContractAddress` from step 1 feeds into steps 2–6.
+
+### Workflow B: Smart Money Sells → Decide Whether to Exit
+
+> User: "What are smart money wallets selling? Should I exit my position?"
+
+```
+1. okx-dex-tracker      onchainos tracker trades --tracker-type smart_money --trade-type sell
+                                                   → recent smart money sells; note tokens being dumped
+       ↓ pick a token you hold that appears in the sell list
+2. okx-dex-market       onchainos market kline --address <token> --chain <chain>
+                                                   → price chart to see if downtrend has started
+3. okx-dex-market       onchainos market portfolio-overview --address <your-wallet> --chain <chain>
+                                                   → your current PnL on this token
+       ↓ decide based on unrealized PnL + price trend
+4. okx-wallet-portfolio onchainos portfolio balances --address <your-wallet> --chain <chain>
+                                                   → confirm token balance before selling
+       ↓ user decides to exit
+5. okx-dex-swap         onchainos swap quote --from <token> --to <usdc> --amount ... --chain <chain>
+6. okx-dex-swap         onchainos swap swap  --from <token> --to <usdc> --amount ... --chain <chain> --wallet <addr>
+```
+
+**Data handoff**: token address from step 1 used in steps 2–6; your wallet's PnL from step 3 informs exit decision.
+
+### Workflow C: High-Volume Tracker → Cross-Reference Leaderboard → Follow
+
+> User: "Show me what smart money is buying with high volume and cross-check with top traders"
+
+```
+1. okx-dex-tracker      onchainos tracker trades --tracker-type smart_money --trade-type buy --min-volume 50000
+                                                   → high-volume smart money buys; get wallet addresses + tokens
+       ↓ note top wallet addresses appearing in the feed
+2. okx-dex-leaderboard  onchainos leaderboard list --chain solana --time-frame 3 --sort-by 1
+                                                   → top traders by 7D PnL; check if same wallets appear
+       ↓ overlap between tracker wallets and leaderboard → stronger conviction
+3. okx-dex-token        onchainos token price-info --address <token> --chain solana
+                                                   → market cap, liquidity, 24h volume
+4. okx-dex-market       onchainos market kline --address <token> --chain solana
+                                                   → price momentum / entry zone
+       ↓ user decides to follow
+5. okx-dex-swap         onchainos swap quote/swap ...
+```
+
+**Data handoff**: wallet addresses from step 1 cross-referenced in step 2; token from step 1 used in steps 3–5.
+
+### Workflow D: Custom Group Large Trade → Investigate → React
+
+> User: "One of my tracked wallets just made a big trade — what did they buy and should I follow?"
+
+```
+1. okx-dex-tracker      onchainos tracker trades --tracker-type group --group-name "my-whales" --min-volume 100000
+                                                   → large trades by your custom group; get token + wallet
+       ↓ pick the token from the large trade
+2. okx-dex-token        onchainos token advanced-info --address <token> --chain <chain>
+                                                   → risk level, honeypot check, dev history
+3. okx-dex-token        onchainos token cluster-overview --address <token> --chain <chain>
+                                                   → is the supply too concentrated? rug pull risk?
+4. okx-dex-market       onchainos market portfolio-overview --address <tracked-wallet> --chain <chain>
+                                                   → this wallet's past PnL and win rate
+       ↓ high win-rate wallet + safe token → proceed
+5. okx-dex-market       onchainos market kline --address <token> --chain <chain>          → price chart
+6. okx-dex-swap         onchainos swap quote/swap ...
+```
+
+**Data handoff**: token address from step 1 used in steps 2–5; tracked wallet address from step 1 used in step 4.
+
 ## Operation Flow
 
 ### Step 1: Identify Intent
