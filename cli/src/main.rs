@@ -7,7 +7,7 @@ mod config;
 mod mcp;
 mod output;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
@@ -16,10 +16,6 @@ use clap::{Parser, Subcommand, ValueEnum};
     about = "onchainOS CLI - interact with OKX Web3 backend"
 )]
 pub struct Cli {
-    /// Output format
-    #[arg(short, long, global = true, default_value = "json")]
-    pub output: OutputFormat,
-
     /// Backend service URL (overrides config)
     #[arg(long, global = true)]
     pub base_url: Option<String>,
@@ -30,12 +26,6 @@ pub struct Cli {
 
     #[command(subcommand)]
     pub command: Commands,
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-pub enum OutputFormat {
-    Json,
-    Table,
 }
 
 #[derive(Subcommand)]

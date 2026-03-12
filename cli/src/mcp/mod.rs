@@ -296,7 +296,7 @@ impl McpServer {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
-        match token::fetch_holders(&self.client, &p.address, &chain_index).await {
+        match token::fetch_holders(&self.client, &p.address, &chain_index, None).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -365,7 +365,7 @@ impl McpServer {
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
         let limit = p.limit.unwrap_or(100);
-        match market::fetch_trades(&self.client, &p.address, &chain_index, limit).await {
+        match token::fetch_token_trades(&self.client, &p.address, &chain_index, limit, None, None).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }

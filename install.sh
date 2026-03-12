@@ -8,14 +8,16 @@ set -e
 #   curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
 #
 # Behavior:
-#   - Fresh install: detect platform, download latest binary, verify, install.
-#   - Already installed: skip if the same version was verified within the
-#     last 12 hours (cache at ~/.onchainos/last_check). Otherwise, compare the
-#     local version with the latest GitHub release and upgrade if needed.
+#   - Fresh install: detect platform, download the pinned version, verify
+#     SHA256 checksum, install.
+#   - Already installed: skip if the correct version was verified within the
+#     last 12 hours (cache at ~/.onchainos/last_check). Otherwise, confirm the
+#     installed version matches REQUIRED_VERSION and reinstall if needed.
 #
 # Supported platforms:
 #   macOS  : x86_64 (Intel), arm64 (Apple Silicon)
 #   Linux  : x86_64, i686, aarch64, armv7l
+#   Windows: see install.ps1 (PowerShell)
 # ──────────────────────────────────────────────────────────────
 
 REPO="okx/onchainos-skills"
@@ -24,6 +26,7 @@ INSTALL_DIR="$HOME/.local/bin"
 CACHE_DIR="$HOME/.onchainos"
 CACHE_FILE="$CACHE_DIR/last_check"
 CACHE_TTL=43200  # 12 hours in seconds
+REQUIRED_VERSION="1.0.3"  # Managed by release workflow — do not edit manually
 
 # Detect OS and CPU architecture, return matching Rust target triple
 get_target() {
@@ -69,10 +72,6 @@ get_local_version() {
   if [ -x "$INSTALL_DIR/$BINARY" ]; then
     "$INSTALL_DIR/$BINARY" --version 2>/dev/null | awk '{print $2}'
   fi
-}
-
-normalize_tag() {
-  echo "$1" | sed 's/^v//'
 }
 
 install_binary() {
@@ -174,36 +173,26 @@ ensure_in_path() {
 
 main() {
   local_ver=$(get_local_version)
+  tag="v${REQUIRED_VERSION}"
 
-  # Fast path: already installed and checked within the last 12 hours
-  if [ -n "$local_ver" ] && is_cache_fresh; then
-    echo "${BINARY} ${local_ver} is already installed (update check skipped, checked recently)."
+  # Fast path: correct version already installed and verified recently
+  if [ "$local_ver" = "$REQUIRED_VERSION" ] && is_cache_fresh; then
     return 0
   fi
 
-  # Fetch latest release tag from GitHub API
-  tag=$(curl -sS "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
-  if [ -z "$tag" ]; then
-    echo "Error: could not determine latest release" >&2
-    exit 1
-  fi
-
-  latest_ver=$(normalize_tag "$tag")
-
-  if [ -n "$local_ver" ] && [ "$local_ver" = "$latest_ver" ]; then
-    echo "${BINARY} ${local_ver} is already up to date."
+  # Correct version installed but cache expired — refresh cache
+  if [ "$local_ver" = "$REQUIRED_VERSION" ]; then
     write_cache
     return 0
   fi
 
   if [ -n "$local_ver" ]; then
-    echo "Upgrading ${BINARY} from ${local_ver} to ${latest_ver}..."
+    echo "Updating ${BINARY} from ${local_ver} to ${REQUIRED_VERSION}..."
   fi
 
   install_binary "$tag"
   write_cache
   ensure_in_path
-  echo "Run '${BINARY} --help' to get started."
 }
 
 main
