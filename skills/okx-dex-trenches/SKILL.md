@@ -58,14 +58,14 @@ Every time before running any `onchainos` command, always follow these steps in 
 
 | Chinese | English / Platform Terms | Maps To |
 |---|---|---|
-| 扫链 | trenches, memerush, 战壕, 打狗 | `memepump-tokens` |
-| 同车 | aped, same-car, co-invested | `memepump-aped-wallet` |
-| 开发者信息 | dev info, developer reputation, rug check | `memepump-token-dev-info` |
-| 捆绑/狙击 | bundler, sniper, bundle analysis | `memepump-token-bundle-info` |
-| 持仓分析 | holding analysis (meme context) | `memepump-token-details` (tags fields) |
-| 社媒筛选 | social filter | `memepump-tokens --has-x`, `--has-telegram`, etc. |
-| 新盘 / 迁移中 / 已迁移 | NEW / MIGRATING / MIGRATED | `memepump-tokens --stage` |
-| pumpfun / bonkers / bonk / believe / bags / mayhem | protocol names (launch platforms) | `memepump-tokens --protocol-id-list <id>` |
+| 扫链 | trenches, memerush, 战壕, 打狗 | `onchainos memepump tokens` |
+| 同车 | aped, same-car, co-invested | `onchainos memepump aped-wallet` |
+| 开发者信息 | dev info, developer reputation, rug check | `onchainos memepump token-dev-info` |
+| 捆绑/狙击 | bundler, sniper, bundle analysis | `onchainos memepump token-bundle-info` |
+| 持仓分析 | holding analysis (meme context) | `onchainos memepump token-details` (tags fields) |
+| 社媒筛选 | social filter | `onchainos memepump tokens --has-x`, `--has-telegram`, etc. |
+| 新盘 / 迁移中 / 已迁移 | NEW / MIGRATING / MIGRATED | `onchainos memepump tokens --stage` |
+| pumpfun / bonkers / bonk / believe / bags / mayhem | protocol names (launch platforms) | `onchainos memepump tokens --protocol-id-list <id>` |
 
 **Protocol names are NOT token names.** When a user mentions pumpfun, bonkers, bonk, believe, bags, mayhem, fourmeme, etc., look up their IDs via `onchainos memepump chains`, then pass to `--protocol-id-list`. Multiple protocols: comma-separate the IDs.
 

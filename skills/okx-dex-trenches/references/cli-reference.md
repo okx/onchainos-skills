@@ -33,17 +33,68 @@ onchainos memepump tokens --chain <chain> --stage <stage> [options]
 |---|---|---|---|
 | `--chain` | Yes | - | Chain name (e.g., `solana`, `bsc`) |
 | `--stage` | Yes | - | Token stage: `NEW`, `MIGRATING`, or `MIGRATED` |
-| `--protocol-id` | No | - | Filter by protocol ID (get IDs from `memepump-chains`) |
-| `--sort-by` | No | - | Sort field: `marketCap`, `volume1h`, `txCount1h`, `createdTimestamp`, `bondingPercent` |
-| `--sort-order` | No | - | Sort direction: `asc` or `desc` |
-| `--min-age` | No | - | Minimum token age in minutes |
-| `--max-age` | No | - | Maximum token age in minutes |
-| `--min-market-cap` | No | - | Minimum market cap in USD |
-| `--max-market-cap` | No | - | Maximum market cap in USD |
-| `--min-volume` | No | - | Minimum 1h volume in USD |
-| `--max-volume` | No | - | Maximum 1h volume in USD |
-| `--min-tx-count` | No | - | Minimum 1h transaction count |
-| `--max-tx-count` | No | - | Maximum 1h transaction count |
+| `--wallet-address` | No | - | Wallet address for position-specific data |
+| `--protocol-id-list` | No | - | Comma-separated protocol IDs (get IDs from `memepump chains`) |
+| `--quote-token-address-list` | No | - | Comma-separated quote token addresses |
+| **Holder analysis** | | | |
+| `--min-top10-holdings-percent` | No | - | Min top-10 holder concentration (0–100) |
+| `--max-top10-holdings-percent` | No | - | Max top-10 holder concentration (0–100) |
+| `--min-dev-holdings-percent` | No | - | Min dev holdings % |
+| `--max-dev-holdings-percent` | No | - | Max dev holdings % |
+| `--min-insiders-percent` | No | - | Min insider wallet % |
+| `--max-insiders-percent` | No | - | Max insider wallet % |
+| `--min-bundlers-percent` | No | - | Min bundler wallet % |
+| `--max-bundlers-percent` | No | - | Max bundler wallet % |
+| `--min-snipers-percent` | No | - | Min sniper wallet % |
+| `--max-snipers-percent` | No | - | Max sniper wallet % |
+| **Wallet analysis** | | | |
+| `--min-fresh-wallets-percent` | No | - | Min newly-created wallet % |
+| `--max-fresh-wallets-percent` | No | - | Max newly-created wallet % |
+| `--min-suspected-phishing-wallet-percent` | No | - | Min phishing wallet % |
+| `--max-suspected-phishing-wallet-percent` | No | - | Max phishing wallet % |
+| `--min-bot-traders` | No | - | Min bot trader wallet count |
+| `--max-bot-traders` | No | - | Max bot trader wallet count |
+| **Dev history** | | | |
+| `--min-dev-migrated` | No | - | Min tokens migrated by developer |
+| `--max-dev-migrated` | No | - | Max tokens migrated by developer |
+| **Market data** | | | |
+| `--min-market-cap` | No | - | Min market cap in USD |
+| `--max-market-cap` | No | - | Max market cap in USD |
+| `--min-volume` | No | - | Min 24h volume in USD |
+| `--max-volume` | No | - | Max 24h volume in USD |
+| `--min-tx-count` | No | - | Min transaction count |
+| `--max-tx-count` | No | - | Max transaction count |
+| `--min-bonding-percent` | No | - | Min bonding curve completion (0–100) |
+| `--max-bonding-percent` | No | - | Max bonding curve completion (0–100) |
+| `--min-holders` | No | - | Min unique holder count |
+| `--max-holders` | No | - | Max unique holder count |
+| `--min-token-age` | No | - | Min token age in minutes |
+| `--max-token-age` | No | - | Max token age in minutes |
+| `--min-buy-tx-count` | No | - | Min buy transactions (last 1h) |
+| `--max-buy-tx-count` | No | - | Max buy transactions (last 1h) |
+| `--min-sell-tx-count` | No | - | Min sell transactions (last 1h) |
+| `--max-sell-tx-count` | No | - | Max sell transactions (last 1h) |
+| **Token metadata** | | | |
+| `--min-token-symbol-length` | No | - | Min ticker symbol length |
+| `--max-token-symbol-length` | No | - | Max ticker symbol length |
+| `--keywords-include` | No | - | Include tokens matching keyword (case-insensitive) |
+| `--keywords-exclude` | No | - | Exclude tokens matching keyword (case-insensitive) |
+| **Social filters** | | | |
+| `--has-at-least-one-social-link` | No | - | Require at least one social link (`true`/`false`) |
+| `--has-x` | No | - | Require X (Twitter) link (`true`/`false`) |
+| `--has-telegram` | No | - | Require Telegram link (`true`/`false`) |
+| `--has-website` | No | - | Require website link (`true`/`false`) |
+| `--website-type-list` | No | - | Website types: `0`=official, `1`=YouTube, `2`=Twitch |
+| `--dex-screener-paid` | No | - | Filter by DexScreener promotion status (`true`/`false`) |
+| `--live-on-pump-fun` | No | - | Filter by PumpFun live stream status (`true`/`false`) |
+| **Dev status** | | | |
+| `--dev-sell-all` | No | - | Developer liquidated all holdings (`true`/`false`) |
+| `--dev-still-holding` | No | - | Developer still holding (`true`/`false`) |
+| **Other** | | | |
+| `--community-takeover` | No | - | Community takeover status (`true`/`false`) |
+| `--bags-fee-claimed` | No | - | Bags fee claimed (`true`/`false`) |
+| `--min-fees-native` | No | - | Min fees in native currency |
+| `--max-fees-native` | No | - | Max fees in native currency |
 
 **Return fields**: Array of token objects (same structure as `memepump-token-details` response).
 
@@ -59,6 +110,7 @@ onchainos memepump token-details --address <address> [--chain <chain>]
 |---|---|---|---|
 | `--address` | Yes | - | Token contract address |
 | `--chain` | No | `solana` | Chain name |
+| `--wallet` | No | - | User wallet address (for position and P&L data) |
 
 **Return fields**:
 
@@ -185,6 +237,7 @@ onchainos memepump aped-wallet --address <address> [--chain <chain>]
 |---|---|---|---|
 | `--address` | Yes | - | Token contract address |
 | `--chain` | No | `solana` | Chain name |
+| `--wallet` | No | - | User wallet address (highlights your wallet if present in the aped list) |
 
 **Return fields**:
 
