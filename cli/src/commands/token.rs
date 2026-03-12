@@ -237,6 +237,36 @@ pub enum TokenCommand {
         #[arg(long)]
         wallet_filter: Option<String>,
     },
+    /// Get token holder cluster concentration overview (cluster level, rug pull %, new address %)
+    ClusterOverview {
+        /// Token contract address
+        #[arg(long)]
+        address: String,
+        /// Chain
+        #[arg(long)]
+        chain: Option<String>,
+    },
+    /// Get top 10/50/100 holder overview (holding %, trend, avg PnL, avg cost, avg sell)
+    ClusterTopHolders {
+        /// Token contract address
+        #[arg(long)]
+        address: String,
+        /// Chain
+        #[arg(long)]
+        chain: Option<String>,
+        /// Holder rank tier: 10, 50, or 100
+        #[arg(long)]
+        ranks: String,
+    },
+    /// Get holder cluster list (clusters of top 300 holders with address details)
+    ClusterList {
+        /// Token contract address
+        #[arg(long)]
+        address: String,
+        /// Chain
+        #[arg(long)]
+        chain: Option<String>,
+    },
 }
 
 pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
@@ -361,6 +391,18 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             tag_filter,
             wallet_filter,
         } => token_trades(ctx, &address, chain, limit, tag_filter, wallet_filter).await,
+        TokenCommand::ClusterOverview { address, chain } => {
+            cluster_by_address(ctx, "/api/v6/dex/market/token/cluster/overview", &address, chain)
+                .await
+        }
+        TokenCommand::ClusterTopHolders {
+            address,
+            chain,
+            ranks,
+        } => cluster_top_holders(ctx, &address, chain, &ranks).await,
+        TokenCommand::ClusterList { address, chain } => {
+            cluster_by_address(ctx, "/api/v6/dex/market/token/cluster/list", &address, chain).await
+        }
     }
 }
 
@@ -697,6 +739,55 @@ async fn token_trades(
                 ("limit", &limit_str),
                 ("tagFilter", tag_str.as_str()),
                 ("walletAddressFilter", wallet_str.as_str()),
+            ],
+        )
+        .await?;
+    output::success(data);
+    Ok(())
+}
+
+/// Shared helper for cluster endpoints that take (chainIndex, tokenContractAddress) only.
+async fn cluster_by_address(
+    ctx: &Context,
+    path: &str,
+    address: &str,
+    chain: Option<String>,
+) -> Result<()> {
+    let chain_index = chain
+        .map(|c| crate::chains::resolve_chain(&c).to_string())
+        .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+    let client = ctx.client()?;
+    let data = client
+        .get(
+            path,
+            &[
+                ("chainIndex", chain_index.as_str()),
+                ("tokenContractAddress", address),
+            ],
+        )
+        .await?;
+    output::success(data);
+    Ok(())
+}
+
+/// GET /api/v6/dex/market/token/cluster/top-holders
+async fn cluster_top_holders(
+    ctx: &Context,
+    address: &str,
+    chain: Option<String>,
+    ranks: &str,
+) -> Result<()> {
+    let chain_index = chain
+        .map(|c| crate::chains::resolve_chain(&c).to_string())
+        .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+    let client = ctx.client()?;
+    let data = client
+        .get(
+            "/api/v6/dex/market/token/cluster/top-holders",
+            &[
+                ("chainIndex", chain_index.as_str()),
+                ("tokenContractAddress", address),
+                ("ranks", ranks),
             ],
         )
         .await?;

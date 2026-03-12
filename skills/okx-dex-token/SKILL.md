@@ -1,6 +1,6 @@
 ---
 name: okx-dex-token
-description: "Use this skill for token-level data: search and discover tokens, browse trending/hot tokens (热门, 代币榜单, by trending score or Twitter/X mentions), get liquidity pool info, view holder distribution by tag (whale/巨鲸, smart money, KOL, sniper), check token safety and honeypot risk (貔貅盘, 'is this token a honeypot', 'can I sell this'), see who created a token and their history, view recent buy/sell trade activity for a token, find top profit addresses, or filter trade history by wallet type. This skill can be invoked on user intent; the specific token address can be provided after. Do NOT use for cross-market whale/signal tracking, personal DEX trade history, price charts, or meme launch scanning — use okx-dex-market."
+description: "Use this skill for token-level data: search and discover tokens, browse trending/hot tokens (热门, 代币榜单, by trending score or Twitter/X mentions), get liquidity pool info, view holder distribution by tag (whale/巨鲸, smart money, KOL, sniper), check token safety and honeypot risk (貔貅盘, 'is this token a honeypot', 'can I sell this'), see who created a token and their history, view recent buy/sell trade activity for a token, find top profit addresses, filter trade history by wallet type, or analyze holder cluster concentration (持仓集中度, rug pull risk, top-holder behavior, cluster groups). This skill can be invoked on user intent; the specific token address can be provided after. Do NOT use for cross-market whale/signal tracking, personal DEX trade history, price charts, or meme launch scanning — use okx-dex-market."
 license: Apache-2.0
 metadata:
   author: okx
@@ -10,7 +10,7 @@ metadata:
 
 # OKX DEX Token Info CLI
 
-10 commands for token search, metadata, detailed pricing, rankings, liquidity pools, hot token lists, holder distribution, advanced token info, top trader analysis, and filtered trade history.
+13 commands for token search, metadata, detailed pricing, rankings, liquidity pools, hot token lists, holder distribution, advanced token info, top trader analysis, filtered trade history, and holder cluster analysis.
 
 ## Pre-flight Checks
 
@@ -82,6 +82,12 @@ Users may use Chinese crypto slang or platform-specific terms. Map them to the c
 | 开发者持仓 | dev holding percent | `token hot-tokens --dev-hold-percent-min/max` or `token advanced-info` (devHoldingPercent) |
 | 净流入 | net inflow | `token hot-tokens --inflow-min/max` |
 | 社区认可 | community recognized, verified | `token search` (communityRecognized field) |
+| 持仓集中度 / 聚类分析 | holder cluster concentration, cluster analysis | `token cluster-overview` |
+| 前100持仓概览 / Top100 | top 100 holder overview, top 100 behavior | `token cluster-top-holders --ranks 100` |
+| 持仓集群 / 集群列表 | holder cluster list, cluster groups | `token cluster-list` |
+| Rug Pull可能性 | rug pull probability, rug pull risk | `token cluster-overview` (rugPullPercent) |
+| 新地址占比 | new address ratio, fresh wallet ratio | `token cluster-overview` (newAddressPercent) |
+| 同资金来源 | same funding source | `token cluster-overview` (sameFundSourcePercent) |
 
 ## Quickstart
 
@@ -118,6 +124,15 @@ onchainos token top-trader --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1
 
 # Top KOL traders
 onchainos token top-trader --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana --tag-filter 1
+
+# Holder cluster concentration overview (rug pull %, new addresses %)
+onchainos token cluster-overview --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana
+
+# Top 100 holder behavior (avg PnL, avg cost, trend)
+onchainos token cluster-top-holders --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana --ranks 100
+
+# Holder cluster list (groups of top 300 holders)
+onchainos token cluster-list --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana
 ```
 
 ## Chain Name Support
@@ -147,6 +162,9 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | 8 | `onchainos token advanced-info --address <address>` | Get advanced token info (risk level, creator, dev stats, holder concentration) |
 | 9 | `onchainos token top-trader --address <address>` | Get top traders / profit addresses for a token |
 | 10 | `onchainos token trades --address <address>` | Get token DEX trade history with optional tag/wallet filters |
+| 11 | `onchainos token cluster-overview --address <address>` | Get holder cluster concentration overview (cluster level, rug pull %, new address %) |
+| 12 | `onchainos token cluster-top-holders --address <address> --ranks <10\|50\|100>` | Get top 10/50/100 holder overview (avg PnL, avg cost, trend type) |
+| 13 | `onchainos token cluster-list --address <address>` | Get holder cluster list (clusters of top 300 holders with address details) |
 
 ## Boundary: token vs market skill
 
@@ -163,6 +181,9 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Advanced token info (risk, creator, dev stats) | `onchainos token advanced-info` | - |
 | Top traders / profit addresses | `onchainos token top-trader` | - |
 | Token trade history with tag/wallet filter | `onchainos token trades` | - |
+| Holder cluster concentration (LOW/MEDIUM/HIGH, rug pull %, new address %) | `onchainos token cluster-overview` | - |
+| Top 10/50/100 holder behavior (avg PnL, avg cost, trend) | `onchainos token cluster-top-holders` | - |
+| Holder cluster groups (top 300, with address details) | `onchainos token cluster-list` | - |
 | Raw real-time price (single value) | - | `onchainos market price` |
 | K-line / candlestick chart | - | `onchainos market kline` |
 | Wallet PnL overview / DEX transaction history | - | `onchainos market portfolio-*` |
@@ -243,6 +264,9 @@ Before swapping an unknown token, always verify:
 - View hot/trending tokens (by score or X mentions) → `onchainos token hot-tokens`
 - Get advanced token info (risk, creator, dev stats) → `onchainos token advanced-info`
 - View top traders / profit addresses → `onchainos token top-trader`
+- Holder cluster concentration (rug pull risk, new address %, cluster level) → `onchainos token cluster-overview`
+- Top 10/50/100 holder behavior (avg PnL, cost, sell, trend) → `onchainos token cluster-top-holders`
+- Holder cluster groups (who is grouped together, per-cluster holding stats) → `onchainos token cluster-list`
 
 ### Step 2: Collect Parameters
 
@@ -275,12 +299,15 @@ After displaying results, suggest 2-3 relevant follow-up actions based on the co
 | `token advanced-info` | 1. View holders → `onchainos token holders` (this skill) 2. View top traders → `onchainos token top-trader` (this skill) 3. Buy/swap this token → `okx-dex-swap` |
 | `token top-trader` | 1. View advanced info → `onchainos token advanced-info` (this skill) 2. View holder distribution → `onchainos token holders` (this skill) 3. Buy/swap this token → `okx-dex-swap` |
 | `token trades` | 1. View top traders → `onchainos token top-trader` (this skill) 2. View price chart → `okx-dex-market` 3. Buy/swap this token → `okx-dex-swap` |
+| `token cluster-overview` | 1. Drill into top holder behavior → `onchainos token cluster-top-holders` (this skill) 2. View cluster groups → `onchainos token cluster-list` (this skill) 3. Check advanced info → `onchainos token advanced-info` (this skill) |
+| `token cluster-top-holders` | 1. View cluster group details → `onchainos token cluster-list` (this skill) 2. View holder distribution → `onchainos token holders` (this skill) |
+| `token cluster-list` | 1. View price chart → `okx-dex-market` 2. Check top traders → `onchainos token top-trader` (this skill) |
 
 Present conversationally, e.g.: "Would you like to see the price chart or check the holder distribution?" — never expose skill names or endpoint paths to the user.
 
 ## Additional Resources
 
-For detailed parameter tables, return field schemas, and usage examples for all 10 commands, consult:
+For detailed parameter tables, return field schemas, and usage examples for all 13 commands, consult:
 - **`references/cli-reference.md`** — Full CLI command reference with params, return fields, and examples
 
 To search for specific command details: `grep -n "onchainos token <command>" references/cli-reference.md`

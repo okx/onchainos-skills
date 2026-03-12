@@ -35,6 +35,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::market::MarketCommand,
     },
+    /// Leaderboard (top traders ranked by PnL, win rate, or volume)
+    Leaderboard {
+        #[command(subcommand)]
+        command: commands::leaderboard::LeaderboardCommand,
+    },
     /// Token information
     Token {
         #[command(subcommand)]
@@ -66,6 +71,7 @@ async fn main() {
 
     let result = match cli.command {
         Commands::Market { command } => commands::market::execute(&ctx, command).await,
+        Commands::Leaderboard { command } => commands::leaderboard::execute(&ctx, command).await,
         Commands::Token { command } => commands::token::execute(&ctx, command).await,
         Commands::Swap { command } => commands::swap::execute(&ctx, command).await,
         Commands::Gateway { command } => commands::gateway::execute(&ctx, command).await,
