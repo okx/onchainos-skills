@@ -66,6 +66,8 @@ jobs:
   build:
     needs: validate
     runs-on: ${{ matrix.os }}
+    env:
+      SM_API_KEY: ${{ secrets.SM_API_KEY }}
     strategy:
       fail-fast: false
       matrix:
@@ -145,30 +147,48 @@ jobs:
           Copy-Item "${env:CARGO_DIR}\target\${env:TARGET}\release\${env:BIN_NAME}.exe" `
                     "${env:BIN_NAME}-${env:TARGET}.exe"
 
+      # ── Windows code signing with jsign + DigiCert ONE ──
       - name: "Setup DigiCert certificate"
         if: runner.os == 'Windows' && env.SM_API_KEY != ''
         env:
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
           SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
-          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
         shell: pwsh
         run: |
-          $certPath = "$env:RUNNER_TEMP\Certificate_pkcs12.p12"
+          $certPath = "${{ runner.temp }}\Certificate_pkcs12.p12"
           [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:SM_CLIENT_CERT_FILE_B64))
           Write-Host "Certificate file size: $((Get-Item $certPath).Length) bytes"
+          "SM_CLIENT_CERT_FILE=$certPath" >> $env:GITHUB_ENV
 
-      - name: "Sign Windows binary (DigiCert KeyLocker)"
+      - name: "Download jsign"
         if: runner.os == 'Windows' && env.SM_API_KEY != ''
-        uses: digicert/code-signing-software-trust-action@v1
-        with:
-          input: ${{ env.BIN_NAME }}-${{ matrix.target }}.exe
-          keypair-alias: ${{ secrets.SM_KEYPAIR_ALIAS }}
-        env:
-          SM_API_KEY: ${{ secrets.SM_API_KEY }}
-          SM_HOST: https://one.digicert.com
-          SM_CLIENT_CERT_FILE: ${{ runner.temp }}\Certificate_pkcs12.p12
-          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
-          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/ebourg/jsign/releases/download/7.0/jsign-7.0.jar" `
+            -OutFile "${{ runner.temp }}\jsign.jar"
+
+      - name: "Sign Windows binary (DigiCert ONE via jsign)"
+        if: runner.os == 'Windows' && env.SM_API_KEY != ''
+        shell: pwsh
+        run: |
+          $storepass = "${{ secrets.SM_API_KEY }}|${{ env.SM_CLIENT_CERT_FILE }}|${{ secrets.SM_CLIENT_CERT_PASSWORD }}"
+          java -jar "${{ runner.temp }}\jsign.jar" `
+            --storetype DIGICERTONE `
+            --storepass $storepass `
+            --alias "${{ secrets.SM_CERTIFICATE_ID }}" `
+            --tsaurl "http://timestamp.digicert.com" `
+            "${{ env.BIN_NAME }}-${{ matrix.target }}.exe"
+
+      - name: "Verify Windows binary signature"
+        if: runner.os == 'Windows' && env.SM_API_KEY != ''
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature "${{ env.BIN_NAME }}-${{ matrix.target }}.exe"
+          Write-Host "Signature status: $($sig.Status)"
+          Write-Host "Signer: $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') {
+            Write-Host "::warning::Code signing verification failed with status: $($sig.Status)"
+          }
 
       - uses: actions/upload-artifact@v4
         with:
