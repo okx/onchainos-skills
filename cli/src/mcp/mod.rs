@@ -68,13 +68,80 @@ struct MarketKlineParams {
 }
 
 #[derive(Deserialize, JsonSchema)]
-struct MarketTradesParams {
+struct TokenTradesParams {
     /// Token contract address
     address: String,
     /// Chain name (optional)
     chain: Option<String>,
     /// Number of trades, max 500 (default 100)
     limit: Option<u32>,
+    /// Filter by trader tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler
+    tag_filter: Option<String>,
+    /// Filter by wallet address (comma-separated, max 10)
+    wallet_filter: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct TokenTagAddressParams {
+    /// Token contract address
+    address: String,
+    /// Chain name (optional, defaults to ethereum)
+    chain: Option<String>,
+    /// Filter by tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler
+    tag_filter: Option<u8>,
+}
+
+// ── Portfolio PnL ─────────────────────────────────────────────────────
+#[derive(Deserialize, JsonSchema)]
+struct PortfolioPnlOverviewParams {
+    /// Wallet address
+    address: String,
+    /// Chain name (e.g. ethereum, solana)
+    chain: String,
+    /// Time frame: 1=1D, 2=3D, 3=7D, 4=1M, 5=3M
+    time_frame: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct PortfolioPnlDexHistoryParams {
+    /// Wallet address
+    address: String,
+    /// Chain name (e.g. ethereum, solana)
+    chain: String,
+    /// Start timestamp (milliseconds)
+    begin: String,
+    /// End timestamp (milliseconds)
+    end: String,
+    /// Page size (1-100, default 20)
+    limit: Option<String>,
+    /// Pagination cursor from previous response
+    cursor: Option<String>,
+    /// Filter by token contract address
+    token: Option<String>,
+    /// Transaction type: 1=BUY, 2=SELL, 3=Transfer In, 4=Transfer Out (comma-separated)
+    tx_type: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct PortfolioPnlRecentPnlParams {
+    /// Wallet address
+    address: String,
+    /// Chain name (e.g. ethereum, solana)
+    chain: String,
+    /// Page size (1-100, default 20)
+    limit: Option<String>,
+    /// Pagination cursor from previous response
+    cursor: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct PortfolioPnlTokenPnlParams {
+    /// Wallet address
+    address: String,
+    /// Chain name (e.g. ethereum, solana)
+    chain: String,
+    /// Token contract address
+    token: String,
 }
 
 
@@ -359,13 +426,13 @@ impl McpServer {
         }
     }
 
-    #[tool(name = "market_trades", description = "Get recent on-chain trades for a token")]
-    async fn market_trades(&self, Parameters(p): Parameters<MarketTradesParams>) -> String {
+    #[tool(name = "token_trades", description = "Get token trade history on DEX, with optional tag and wallet filters")]
+    async fn token_trades(&self, Parameters(p): Parameters<TokenTradesParams>) -> String {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
         let limit = p.limit.unwrap_or(100);
-        match token::fetch_token_trades(&self.client, &p.address, &chain_index, limit, None, None).await {
+        match token::fetch_token_trades(&self.client, &p.address, &chain_index, limit, p.tag_filter.as_deref(), p.wallet_filter.as_deref()).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -678,6 +745,115 @@ impl McpServer {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let oid = p.order_id.as_deref();
         match gateway::fetch_orders(&self.client, &chain_index, &p.address, oid).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    // ── Token: new tools ──────────────────────────────────────────────
+
+    #[tool(name = "token_liquidity", description = "Get top 5 liquidity pools for a token")]
+    async fn token_liquidity(&self, Parameters(p): Parameters<TokenAddressParams>) -> String {
+        let chain_index = p.chain.as_deref()
+            .map(crate::chains::resolve_chain)
+            .unwrap_or_else(|| "1".to_string());
+        match token::fetch_liquidity(&self.client, &p.address, &chain_index).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(name = "token_hot_tokens", description = "Get hot token list ranked by trending score or X mentions, with extensive filtering")]
+    async fn token_hot_tokens(&self, Parameters(p): Parameters<token::HotTokensParams>) -> String {
+        match token::fetch_hot_tokens(&self.client, p).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(name = "token_advanced_info", description = "Get advanced token info: risk level, creator, dev stats, holder concentration")]
+    async fn token_advanced_info(&self, Parameters(p): Parameters<TokenAddressParams>) -> String {
+        let chain_index = p.chain.as_deref()
+            .map(crate::chains::resolve_chain)
+            .unwrap_or_else(|| "1".to_string());
+        match token::fetch_advanced_info(&self.client, &p.address, &chain_index).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(name = "token_top_trader", description = "Get top traders (profit addresses) for a token")]
+    async fn token_top_trader(&self, Parameters(p): Parameters<TokenTagAddressParams>) -> String {
+        let chain_index = p.chain.as_deref()
+            .map(crate::chains::resolve_chain)
+            .unwrap_or_else(|| "1".to_string());
+        match token::fetch_top_trader(&self.client, &p.address, &chain_index, p.tag_filter).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    // ── Portfolio PnL: new tools ──────────────────────────────────────
+
+    #[tool(name = "market_portfolio_supported_chains", description = "Get supported chains for wallet portfolio PnL analysis")]
+    async fn market_portfolio_supported_chains(&self) -> String {
+        match market::fetch_portfolio_supported_chains(&self.client).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(name = "market_portfolio_overview", description = "Get wallet portfolio overview: realized/unrealized PnL, win rate, trading stats")]
+    async fn market_portfolio_overview(&self, Parameters(p): Parameters<PortfolioPnlOverviewParams>) -> String {
+        let chain_index = crate::chains::resolve_chain(&p.chain);
+        match market::fetch_portfolio_overview(&self.client, &chain_index, &p.address, &p.time_frame).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(name = "market_portfolio_dex_history", description = "Get wallet DEX transaction history (paginated)")]
+    async fn market_portfolio_dex_history(&self, Parameters(p): Parameters<PortfolioPnlDexHistoryParams>) -> String {
+        let chain_index = crate::chains::resolve_chain(&p.chain);
+        match market::fetch_portfolio_dex_history(
+            &self.client,
+            &chain_index,
+            &p.address,
+            &p.begin,
+            &p.end,
+            p.limit.as_deref(),
+            p.cursor.as_deref(),
+            p.token.as_deref(),
+            p.tx_type.as_deref(),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(name = "market_portfolio_recent_pnl", description = "Get recent token PnL records for a wallet (paginated)")]
+    async fn market_portfolio_recent_pnl(&self, Parameters(p): Parameters<PortfolioPnlRecentPnlParams>) -> String {
+        let chain_index = crate::chains::resolve_chain(&p.chain);
+        match market::fetch_portfolio_recent_pnl(
+            &self.client,
+            &chain_index,
+            &p.address,
+            p.limit.as_deref(),
+            p.cursor.as_deref(),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(name = "market_portfolio_token_pnl", description = "Get latest PnL snapshot for a specific token in a wallet")]
+    async fn market_portfolio_token_pnl(&self, Parameters(p): Parameters<PortfolioPnlTokenPnlParams>) -> String {
+        let chain_index = crate::chains::resolve_chain(&p.chain);
+        match market::fetch_portfolio_token_pnl(&self.client, &chain_index, &p.address, &p.token).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }

@@ -102,7 +102,7 @@ curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh
 
 ## MCP Server
 
-The `onchainos` CLI doubles as a native MCP server, exposing 34 tools to any MCP-compatible client.
+The `onchainos` CLI doubles as a native MCP server exposing tools to any MCP-compatible client.
 
 ### Claude Code
 
@@ -110,12 +110,13 @@ The `onchainos` CLI doubles as a native MCP server, exposing 34 tools to any MCP
 claude mcp add --scope user onchainos-cli onchainos mcp
 ```
 
-### Available MCP Tools (34 total)
+### Available MCP Tools
 
 | Category | Tools |
 |----------|-------|
-| Token | `token_search`, `token_info`, `token_holders`, `token_trending`, `token_price_info` |
-| Market | `market_price`, `market_prices`, `market_kline`, `market_trades`, `market_index`, `market_signal_chains`, `market_signal_list` + 7 meme pump tools |
+| Token | `token_search`, `token_info`, `token_holders`, `token_trending`, `token_price_info`, `token_liquidity`, `token_hot_tokens`, `token_advanced_info`, `token_top_trader`, `token_trades` |
+| Market | `market_price`, `market_prices`, `market_kline`, `market_index`, `market_signal_chains`, `market_signal_list` + 7 meme pump tools |
+| Market Portfolio | `market_portfolio_supported_chains`, `market_portfolio_overview`, `market_portfolio_dex_history`, `market_portfolio_recent_pnl`, `market_portfolio_token_pnl` |
 | Swap | `swap_chains`, `swap_quote`, `swap_swap`, `swap_approve`, `swap_liquidity` |
 | Portfolio | `portfolio_chains`, `portfolio_total_value`, `portfolio_all_balances`, `portfolio_token_balances` |
 | Gateway | `gateway_chains`, `gateway_gas`, `gateway_gas_limit`, `gateway_simulate`, `gateway_broadcast`, `gateway_orders` |
