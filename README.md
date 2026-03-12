@@ -106,23 +106,8 @@ The `onchainos` CLI doubles as a native MCP server, exposing 34 tools to any MCP
 
 ### Claude Code
 
-Copy the included template:
-
 ```bash
-cp .mcp.json.example .mcp.json
-```
-
-Or create `.mcp.json` manually:
-
-```json
-{
-  "mcpServers": {
-    "onchainos-cli": {
-      "command": "onchainos",
-      "args": ["mcp"]
-    }
-  }
-}
+claude mcp add --scope user onchainos-cli onchainos mcp
 ```
 
 ### Available MCP Tools (34 total)
