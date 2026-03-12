@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::client::ApiClient;
-use crate::commands::{gateway, market, portfolio, swap, token};
+use crate::commands::{gateway, market, memepump, portfolio, signal, swap, token};
 
 // ── Token ──────────────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
@@ -359,11 +359,11 @@ impl McpServer {
     }
 
     #[tool(name = "token_holders", description = "Get token holder distribution (top 20)")]
-    async fn token_holders(&self, Parameters(p): Parameters<TokenAddressParams>) -> String {
+    async fn token_holders(&self, Parameters(p): Parameters<TokenTagAddressParams>) -> String {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
-        match token::fetch_holders(&self.client, &p.address, &chain_index, None).await {
+        match token::fetch_holders(&self.client, &p.address, &chain_index, p.tag_filter).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -449,18 +449,18 @@ impl McpServer {
         }
     }
 
-    #[tool(name = "market_signal_chains", description = "Get chains supported for smart money / KOL / whale signals")]
-    async fn market_signal_chains(&self) -> String {
-        match market::fetch_signal_chains(&self.client).await {
+    #[tool(name = "signal_chains", description = "Get chains supported for smart money / KOL / whale signals")]
+    async fn signal_chains(&self) -> String {
+        match signal::fetch_chains(&self.client).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
     }
 
-    #[tool(name = "market_signal_list", description = "Get smart money / KOL / whale signal list for a chain")]
-    async fn market_signal_list(&self, Parameters(p): Parameters<MarketSignalListParams>) -> String {
+    #[tool(name = "signal_list", description = "Get smart money / KOL / whale signal list for a chain")]
+    async fn signal_list(&self, Parameters(p): Parameters<MarketSignalListParams>) -> String {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match market::fetch_signal_list(
+        match signal::fetch_list(
             &self.client,
             &chain_index,
             p.wallet_type,
@@ -481,39 +481,39 @@ impl McpServer {
         }
     }
 
-    #[tool(name = "market_memepump_chains", description = "Get supported chains and protocols for Meme Pump")]
-    async fn market_memepump_chains(&self) -> String {
-        match market::fetch_memepump_chains(&self.client).await {
+    #[tool(name = "memepump_chains", description = "Get supported chains and protocols for Meme Pump")]
+    async fn memepump_chains(&self) -> String {
+        match memepump::fetch_chains(&self.client).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
     }
 
-    #[tool(name = "market_memepump_tokens", description = "Get filtered Meme Pump token list")]
-    async fn market_memepump_tokens(&self, Parameters(p): Parameters<market::MemepumpTokenListParams>) -> String {
-        match market::fetch_memepump_token_list(&self.client, p).await {
+    #[tool(name = "memepump_tokens", description = "Get filtered Meme Pump token list")]
+    async fn memepump_tokens(&self, Parameters(p): Parameters<memepump::MemepumpTokenListParams>) -> String {
+        match memepump::fetch_token_list(&self.client, p).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
     }
 
-    #[tool(name = "market_memepump_token_details", description = "Get Meme Pump token details")]
-    async fn market_memepump_token_details(&self, Parameters(p): Parameters<MarketTokenParams>) -> String {
+    #[tool(name = "memepump_token_details", description = "Get Meme Pump token details")]
+    async fn memepump_token_details(&self, Parameters(p): Parameters<MarketTokenParams>) -> String {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
-        match market::fetch_memepump_token_details(&self.client, &p.address, &chain_index, "").await {
+        match memepump::fetch_token_details(&self.client, &p.address, &chain_index, "").await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
     }
 
-    #[tool(name = "market_memepump_token_dev_info", description = "Get Meme Pump token developer info and reputation")]
-    async fn market_memepump_token_dev_info(&self, Parameters(p): Parameters<MarketTokenParams>) -> String {
+    #[tool(name = "memepump_token_dev_info", description = "Get Meme Pump token developer info and reputation")]
+    async fn memepump_token_dev_info(&self, Parameters(p): Parameters<MarketTokenParams>) -> String {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
-        match market::fetch_memepump_by_address(
+        match memepump::fetch_by_address(
             &self.client,
             "/api/v6/dex/market/memepump/tokenDevInfo",
             &p.address,
@@ -526,12 +526,12 @@ impl McpServer {
         }
     }
 
-    #[tool(name = "market_memepump_similar_tokens", description = "Get similar tokens for a Meme Pump token")]
-    async fn market_memepump_similar_tokens(&self, Parameters(p): Parameters<MarketTokenParams>) -> String {
+    #[tool(name = "memepump_similar_tokens", description = "Get similar tokens for a Meme Pump token")]
+    async fn memepump_similar_tokens(&self, Parameters(p): Parameters<MarketTokenParams>) -> String {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
-        match market::fetch_memepump_by_address(
+        match memepump::fetch_by_address(
             &self.client,
             "/api/v6/dex/market/memepump/similarToken",
             &p.address,
@@ -544,12 +544,12 @@ impl McpServer {
         }
     }
 
-    #[tool(name = "market_memepump_token_bundle_info", description = "Get Meme Pump token bundle/sniper info for rug detection")]
-    async fn market_memepump_token_bundle_info(&self, Parameters(p): Parameters<MarketTokenParams>) -> String {
+    #[tool(name = "memepump_token_bundle_info", description = "Get Meme Pump token bundle/sniper info for rug detection")]
+    async fn memepump_token_bundle_info(&self, Parameters(p): Parameters<MarketTokenParams>) -> String {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
-        match market::fetch_memepump_by_address(
+        match memepump::fetch_by_address(
             &self.client,
             "/api/v6/dex/market/memepump/tokenBundleInfo",
             &p.address,
@@ -562,12 +562,12 @@ impl McpServer {
         }
     }
 
-    #[tool(name = "market_memepump_aped_wallet", description = "Get co-invested wallet data for a Meme Pump token")]
-    async fn market_memepump_aped_wallet(&self, Parameters(p): Parameters<MarketTokenParams>) -> String {
+    #[tool(name = "memepump_aped_wallet", description = "Get co-invested wallet data for a Meme Pump token")]
+    async fn memepump_aped_wallet(&self, Parameters(p): Parameters<MarketTokenParams>) -> String {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
-        match market::fetch_memepump_aped_wallet(&self.client, &p.address, &chain_index, "").await {
+        match memepump::fetch_aped_wallet(&self.client, &p.address, &chain_index, "").await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
