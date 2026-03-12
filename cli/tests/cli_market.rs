@@ -289,14 +289,7 @@ fn memepump_tokens_with_age_filter() {
 #[test]
 fn memepump_tokens_with_social_filters() {
     let output = run_with_retry(&[
-        "memepump",
-        "tokens",
-        "--chain",
-        "solana",
-        "--stage",
-        "MIGRATED",
-        "--has-x",
-        "true",
+        "memepump", "tokens", "--chain", "solana", "--stage", "MIGRATED", "--has-x", "true",
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
@@ -419,7 +412,9 @@ fn memepump_tokens_missing_stage_arg_fails() {
 
 fn fetch_first_memepump_token(chain: &str) -> Option<LiveMemepumpToken> {
     let output = assert_cmd::Command::from(cargo_bin_cmd!("onchainos"))
-        .args(["memepump", "tokens", "--chain", chain, "--stage", "MIGRATED"])
+        .args([
+            "memepump", "tokens", "--chain", chain, "--stage", "MIGRATED",
+        ])
         .output()
         .ok()?;
 
