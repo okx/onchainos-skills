@@ -188,6 +188,27 @@ This skill is the **execution endpoint** of most user trading flows. It almost a
 5. User confirms → proceed to approve (if EVM) → swap
 ```
 
+### Workflow D: Signal-Driven Buy with Balance Check
+
+> User: "Smart money is buying something — check my balance and buy it safely"
+
+```
+1. okx-dex-market   onchainos market signal-list --chain solana --wallet-type "1,2,3" --min-amount-usd 5000
+                                                   → get smart money / KOL signals; pick a token address
+       ↓ token address from signal
+2. okx-dex-token    onchainos token cluster-overview --address <token> --chain solana
+                                                   → check holder concentration, rug pull %, new address %
+3. okx-wallet-portfolio  onchainos portfolio all-balances --address <wallet> --chains solana
+                                                   → confirm available SOL balance before quoting
+       ↓ balance in UI units → convert to minimal units (× 10^decimal)
+4. okx-dex-swap     onchainos swap quote --from 11111111111111111111111111111111 --to <token> --amount <amount> --chain solana
+                                                   → check isHoneyPot, taxRate, priceImpactPercent
+       ↓ all checks pass → user confirms
+5. okx-dex-swap     onchainos swap swap  --from 11111111111111111111111111111111 --to <token> --amount <amount> --chain solana --wallet <wallet>
+```
+
+**Data handoff**: `token.tokenAddress` from step 1 → `<token>` in steps 2, 4, 5; `balance × 10^decimal` from step 3 → `--amount` in steps 4–5.
+
 ## Swap Flow
 
 ### EVM Chains (XLayer, Ethereum, BSC, Base, etc.)

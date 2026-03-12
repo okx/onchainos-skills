@@ -351,6 +351,31 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 2. okx-dex-market   onchainos market kline --address <address> --chain ethereum      → chart for chosen token
 ```
 
+### Workflow H: PnL-Driven Portfolio Rebalance
+
+> User: "My portfolio is underperforming. What should I cut and what should I buy?"
+
+```
+1. okx-dex-market   onchainos market portfolio-overview --address <wallet> --chain ethereum --time-frame 4
+                                                   → 1M realized PnL, win rate, top 3 profitable tokens
+2. okx-dex-market   onchainos market portfolio-recent-pnl --address <wallet> --chain ethereum
+                                                   → per-token PnL list; identify largest losers
+       ↓ pick worst-performing token to exit
+3. okx-dex-market   onchainos market kline --address <losing-token> --chain ethereum --bar 1H --limit 48
+                                                   → confirm downtrend before selling
+4. okx-dex-swap     onchainos swap quote --from <losing-token> --to 0xeeee...eeee --amount <amount> --chain ethereum
+                                                   → exit quote with price impact check
+       ↓ pick a replacement — what is smart money buying now?
+5. okx-dex-market   onchainos market signal-list --chain ethereum --wallet-type "1,2,3" --min-amount-usd 10000
+                                                   → fresh smart money signals; pick a new entry candidate
+6. okx-dex-token    onchainos token price-info --address <new-token> --chain ethereum
+                                                   → validate liquidity, market cap before entering
+7. okx-dex-swap     onchainos swap quote --from 0xeeee...eeee --to <new-token> --amount <amount> --chain ethereum
+8. okx-dex-swap     onchainos swap swap  --from 0xeeee...eeee --to <new-token> --amount <amount> --chain ethereum --wallet <wallet>
+```
+
+**Data handoff**: losing token address from step 2 used in steps 3–4; proceeds (ETH) from exit in step 4 → `--amount` for new entry in steps 7–8; `token.tokenAddress` from step 5 → `<new-token>` in steps 6–8.
+
 ## Operation Flow
 
 ### Step 1: Identify Intent

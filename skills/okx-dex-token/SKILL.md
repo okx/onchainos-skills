@@ -271,6 +271,32 @@ Before swapping an unknown token, always verify:
 
 **Data handoff**: `baseTokenContractAddress` + `baseTokenChainIndex` from step 1 feed into all subsequent steps.
 
+### Workflow E: Hot Token Discovery → Cluster Safety Check → Buy
+
+> User: "Show me the hottest tokens and check if any are safe to buy"
+
+```
+1. okx-dex-token    onchainos token hot-tokens --ranking-type 4 --chain solana
+                                                   → top tokens by trending score; pick an interesting one
+       ↓ tokenContractAddress + chainIndex
+2. okx-dex-token    onchainos token price-info --address <address> --chain solana
+                                                   → market cap, liquidity, 24h volume, price change
+3. okx-dex-token    onchainos token advanced-info --address <address> --chain solana
+                                                   → risk level, honeypot check, dev rug pull history
+4. okx-dex-token    onchainos token cluster-overview --address <address> --chain solana
+                                                   → concentration level, rug pull %, new address %, same-funding %
+5. okx-dex-token    onchainos token cluster-top-holders --address <address> --chain solana --ranks 100
+                                                   → top 100 holder avg PnL, avg cost, hold/sell trend
+       ↓ green flags → confirm price momentum
+6. okx-dex-market   onchainos market kline --address <address> --chain solana --bar 15m --limit 48
+                                                   → recent price action
+       ↓ user decides to buy
+7. okx-dex-swap     onchainos swap quote --from 11111111111111111111111111111111 --to <address> --amount <amount> --chain solana
+8. okx-dex-swap     onchainos swap swap  --from 11111111111111111111111111111111 --to <address> --amount <amount> --chain solana --wallet <addr>
+```
+
+**Data handoff**: `tokenContractAddress` from step 1 reused as `<address>` in steps 2–8; if `riskControlLevel >= 3` in step 3 or `clusterLevel = HIGH` in step 4 → warn user and stop before swap.
+
 ## Operation Flow
 
 ### Step 1: Identify Intent

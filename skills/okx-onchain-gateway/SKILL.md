@@ -152,6 +152,27 @@ This skill is the **final mile** — it takes a signed transaction and sends it 
 4. onchainos gateway orders --address <addr> --chain ethereum --order-id <orderId>
 ```
 
+### Workflow D: Full Pre-flight Pipeline
+
+> User: "I want to be absolutely sure this transaction is safe before sending it"
+
+```
+1. okx-onchain-gateway  onchainos gateway gas --chain ethereum
+                                                   → check current gas price (Gwei); decide if it's acceptable
+2. okx-onchain-gateway  onchainos gateway gas-limit --from <wallet> --to <contract> --data <calldata> --chain ethereum
+                                                   → estimate gas units needed for this exact tx
+       ↓ gas price × gas limit = estimated fee in ETH
+3. okx-onchain-gateway  onchainos gateway simulate --from <wallet> --to <contract> --data <calldata> --chain ethereum
+                                                   → dry-run; confirm no revert before spending gas
+       ↓ simulation passes → user signs the transaction locally
+4. okx-onchain-gateway  onchainos gateway broadcast --signed-tx <signed_hex> --address <wallet> --chain ethereum
+                                                   → broadcast; get orderId
+5. okx-onchain-gateway  onchainos gateway orders --address <wallet> --chain ethereum --order-id <orderId>
+                                                   → poll for confirmation status
+```
+
+**Data handoff**: `--data` calldata (e.g., from `okx-dex-swap swap`) reused across steps 2–3; `orderId` from step 4 → `--order-id` in step 5.
+
 ## Operation Flow
 
 ### Step 1: Identify Intent
