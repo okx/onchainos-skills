@@ -2,9 +2,6 @@
 
 Detailed parameter tables, return field schemas, and usage examples for all 9 market commands.
 
-> Signal commands (signal-chains, signal-list) → see `okx-dex-signal/references/cli-reference.md`
-> Memepump commands (memepump-*) → see `okx-dex-trenches/references/cli-reference.md`
-
 ## 1. onchainos market price
 
 Get single token price.
