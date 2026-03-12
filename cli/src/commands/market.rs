@@ -294,6 +294,7 @@ async fn portfolio_overview(
 }
 
 /// GET /api/v6/dex/market/portfolio/dex-history
+#[allow(clippy::too_many_arguments)]
 async fn portfolio_dex_history(
     ctx: &Context,
     address: &str,
