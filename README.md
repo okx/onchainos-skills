@@ -112,7 +112,6 @@ The `onchainos` CLI doubles as a native MCP server exposing tools to any MCP-com
 claude mcp add --scope user onchainos-cli onchainos mcp
 ```
 
-
 ## API Key Security Notice & Disclaimer
 
 **Built-in Sandbox API Keys (Default)** This integration includes built-in sandbox API keys for testing purposes only. By using these keys, you acknowledge and accept the following:

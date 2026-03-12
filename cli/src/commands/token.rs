@@ -269,7 +269,10 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             output::success(fetch_price_info(&client, &address, &chain_index).await?);
         }
         TokenCommand::Liquidity { address, chain } => {
-            liquidity(ctx, &address, chain).await?;
+            let chain_index = chain
+                .map(|c| crate::chains::resolve_chain(&c).to_string())
+                .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+            output::success(fetch_liquidity(&client, &address, &chain_index).await?);
         }
         TokenCommand::HotTokens {
             ranking_type,
@@ -315,7 +318,6 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             is_mint,
             is_freeze,
         } => {
-            let client = ctx.client()?;
             output::success(fetch_hot_tokens(
                 &client,
                 HotTokensParams {
@@ -365,14 +367,20 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             ).await?);
         }
         TokenCommand::AdvancedInfo { address, chain } => {
-            advanced_info(ctx, &address, chain).await?;
+            let chain_index = chain
+                .map(|c| crate::chains::resolve_chain(&c).to_string())
+                .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+            output::success(fetch_advanced_info(&client, &address, &chain_index).await?);
         }
         TokenCommand::TopTrader {
             address,
             chain,
             tag_filter,
         } => {
-            top_trader(ctx, &address, chain, tag_filter).await?;
+            let chain_index = chain
+                .map(|c| crate::chains::resolve_chain(&c).to_string())
+                .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+            output::success(fetch_top_trader(&client, &address, &chain_index, tag_filter).await?);
         }
         TokenCommand::Trades {
             address,
@@ -381,7 +389,10 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             tag_filter,
             wallet_filter,
         } => {
-            token_trades(ctx, &address, chain, limit, tag_filter, wallet_filter).await?;
+            let chain_index = chain
+                .map(|c| crate::chains::resolve_chain(&c).to_string())
+                .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+            output::success(fetch_token_trades(&client, &address, &chain_index, limit, tag_filter.as_deref(), wallet_filter.as_deref()).await?);
         }
     }
     Ok(())
@@ -459,15 +470,6 @@ pub async fn fetch_liquidity(
             ],
         )
         .await
-}
-
-async fn liquidity(ctx: &Context, address: &str, chain: Option<String>) -> Result<()> {
-    let chain_index = chain
-        .map(|c| crate::chains::resolve_chain(&c).to_string())
-        .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-    let client = ctx.client()?;
-    output::success(fetch_liquidity(&client, address, &chain_index).await?);
-    Ok(())
 }
 
 /// POST /api/v6/dex/market/price-info — body is JSON array
@@ -693,15 +695,6 @@ pub async fn fetch_advanced_info(
         .await
 }
 
-async fn advanced_info(ctx: &Context, address: &str, chain: Option<String>) -> Result<()> {
-    let chain_index = chain
-        .map(|c| crate::chains::resolve_chain(&c).to_string())
-        .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-    let client = ctx.client()?;
-    output::success(fetch_advanced_info(&client, address, &chain_index).await?);
-    Ok(())
-}
-
 /// GET /api/v6/dex/market/token/top-trader
 pub async fn fetch_top_trader(
     client: &ApiClient,
@@ -720,20 +713,6 @@ pub async fn fetch_top_trader(
             ],
         )
         .await
-}
-
-async fn top_trader(
-    ctx: &Context,
-    address: &str,
-    chain: Option<String>,
-    tag_filter: Option<u8>,
-) -> Result<()> {
-    let chain_index = chain
-        .map(|c| crate::chains::resolve_chain(&c).to_string())
-        .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-    let client = ctx.client()?;
-    output::success(fetch_top_trader(&client, address, &chain_index, tag_filter).await?);
-    Ok(())
 }
 
 /// GET /api/v6/dex/market/trades — token trade history
@@ -762,34 +741,3 @@ pub async fn fetch_token_trades(
         .await
 }
 
-/// CLI wrapper for token trades with optional tag/wallet filters
-async fn token_trades(
-    ctx: &Context,
-    address: &str,
-    chain: Option<String>,
-    limit: u32,
-    tag_filter: Option<String>,
-    wallet_filter: Option<String>,
-) -> Result<()> {
-    let chain_index = chain
-        .map(|c| crate::chains::resolve_chain(&c).to_string())
-        .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-    let limit_str = limit.to_string();
-    let tag_str = tag_filter.unwrap_or_default();
-    let wallet_str = wallet_filter.unwrap_or_default();
-    let client = ctx.client()?;
-    let data = client
-        .get(
-            "/api/v6/dex/market/trades",
-            &[
-                ("chainIndex", chain_index.as_str()),
-                ("tokenContractAddress", address),
-                ("limit", &limit_str),
-                ("tagFilter", tag_str.as_str()),
-                ("walletAddressFilter", wallet_str.as_str()),
-            ],
-        )
-        .await?;
-    output::success(data);
-    Ok(())
-}

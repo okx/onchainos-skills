@@ -91,6 +91,17 @@ struct TokenTagAddressParams {
     tag_filter: Option<u8>,
 }
 
+// ── Memepump ──────────────────────────────────────────────────────────
+#[derive(Deserialize, JsonSchema)]
+struct MemepumpWalletParams {
+    /// Token contract address
+    address: String,
+    /// Chain name (optional, defaults to solana)
+    chain: Option<String>,
+    /// Wallet address for position data (optional)
+    wallet_address: Option<String>,
+}
+
 // ── Portfolio PnL ─────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
 struct PortfolioPnlOverviewParams {
@@ -325,11 +336,16 @@ impl ServerHandler for McpServer {
             .enable_tools()
             .build();
         ServerInfo::new(caps)
+            .with_server_info(rmcp::model::Implementation::new(
+                "onchainos",
+                env!("CARGO_PKG_VERSION"),
+            ))
     }
 }
 
 fn ok(data: Value) -> String {
-    serde_json::to_string_pretty(&data).unwrap_or_default()
+    serde_json::to_string_pretty(&data)
+        .unwrap_or_else(|e| format!("Error: failed to serialize response: {e}"))
 }
 
 fn err(e: anyhow::Error) -> String {
@@ -498,11 +514,11 @@ impl McpServer {
     }
 
     #[tool(name = "memepump_token_details", description = "Get Meme Pump token details")]
-    async fn memepump_token_details(&self, Parameters(p): Parameters<MarketTokenParams>) -> String {
+    async fn memepump_token_details(&self, Parameters(p): Parameters<MemepumpWalletParams>) -> String {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
-        match memepump::fetch_token_details(&self.client, &p.address, &chain_index, "").await {
+        match memepump::fetch_token_details(&self.client, &p.address, &chain_index, p.wallet_address.as_deref().unwrap_or("")).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -563,11 +579,11 @@ impl McpServer {
     }
 
     #[tool(name = "memepump_aped_wallet", description = "Get co-invested wallet data for a Meme Pump token")]
-    async fn memepump_aped_wallet(&self, Parameters(p): Parameters<MarketTokenParams>) -> String {
+    async fn memepump_aped_wallet(&self, Parameters(p): Parameters<MemepumpWalletParams>) -> String {
         let chain_index = p.chain.as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
-        match memepump::fetch_aped_wallet(&self.client, &p.address, &chain_index, "").await {
+        match memepump::fetch_aped_wallet(&self.client, &p.address, &chain_index, p.wallet_address.as_deref().unwrap_or("")).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
