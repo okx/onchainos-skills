@@ -1,6 +1,6 @@
 ---
 name: okx-dex-token
-description: "Use this skill for token-level data: search and discover tokens, browse trending/hot tokens (热门, 代币榜单, by trending score or Twitter/X mentions), get liquidity pool info, view holder distribution by tag (whale/巨鲸, smart money, KOL, sniper), check token safety and honeypot risk (貔貅盘, 'is this token a honeypot', 'can I sell this'), see who created a token and their history, view recent buy/sell trade activity for a token, find top profit addresses, or filter trade history by wallet type. This skill can be invoked on user intent; the specific token address can be provided after. Do NOT use for cross-market whale/signal tracking — use okx-dex-signal. Do NOT use for meme/pump.fun launch scanning, dev reputation, or bundle detection — use okx-dex-memepump. Do NOT use for personal DEX trade history or price charts — use okx-dex-market."
+description: "Use this skill for token-level data: search and discover tokens, browse trending/hot tokens (热门, 代币榜单, by trending score or Twitter/X mentions), get liquidity pool info, view holder distribution by tag (whale/巨鲸, smart money, KOL, sniper), check token safety and honeypot risk (貔貅盘, 'is this token a honeypot', 'can I sell this'), see who created a token and their history, view recent buy/sell trade activity for a token, find top profit addresses, or filter trade history by wallet type. This skill can be invoked on user intent; the specific token address can be provided after. Do NOT use for cross-market whale/signal tracking — use okx-dex-signal. Do NOT use for meme/pump.fun launch scanning, dev reputation, or bundle detection — use okx-dex-trenches. Do NOT use for personal DEX trade history or price charts — use okx-dex-market."
 license: Apache-2.0
 metadata:
   author: okx
@@ -50,7 +50,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For wallet PnL / personal DEX trade history → use `okx-dex-market`
 - For swap execution → use `okx-dex-swap`
 - For transaction broadcasting → use `okx-onchain-gateway`
-- For meme token scanning (dev reputation, rug pull history, bundlers, new launches, similar tokens by same dev) → use `okx-dex-memepump`
+- For meme token scanning (dev reputation, rug pull history, bundlers, new launches, similar tokens by same dev) → use `okx-dex-trenches`
 - For market-wide smart money / whale / KOL signal alerts → use `okx-dex-signal`
 - For per-token holder filtering by tag (whale, smart money, KOL, sniper) → use this skill (`holders --tag-filter`)
 - For per-token risk analysis (dev rug pull count, holder concentration, creator info) → use this skill (`advanced-info`)
@@ -169,12 +169,12 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Wallet PnL overview / DEX transaction history | - | `onchainos market portfolio-*` |
 | Index price (multi-source aggregate) | - | `onchainos market index` |
 | Token risk analysis (dev rug pull count, holder %) | `onchainos token advanced-info` | - |
-| Meme token dev reputation / rug pull history | - | `okx-dex-memepump` → `onchainos memepump token-dev-info` |
-| Bundle/sniper detection | - | `okx-dex-memepump` → `onchainos memepump token-bundle-info` |
-| Similar tokens by same creator | - | `okx-dex-memepump` → `onchainos memepump similar-tokens` |
+| Meme token dev reputation / rug pull history | - | `okx-dex-trenches` → `onchainos memepump token-dev-info` |
+| Bundle/sniper detection | - | `okx-dex-trenches` → `onchainos memepump token-bundle-info` |
+| Similar tokens by same creator | - | `okx-dex-trenches` → `onchainos memepump similar-tokens` |
 | Market-wide smart money / whale / KOL alerts | - | `okx-dex-signal` → `onchainos signal list` |
 
-**Rule of thumb**: `okx-dex-token` = token discovery & enriched analytics (search, trending, holders, holder filtering, market cap, advanced info, top traders, token risk, filtered trade history). `okx-dex-market` = raw price feeds, charts, wallet PnL. `okx-dex-signal` = market-wide smart money / whale / KOL signal tracking. `okx-dex-memepump` = meme pump scanning (dev reputation, rug pull history, bundler analysis, new launches).
+**Rule of thumb**: `okx-dex-token` = token discovery & enriched analytics (search, trending, holders, holder filtering, market cap, advanced info, top traders, token risk, filtered trade history). `okx-dex-market` = raw price feeds, charts, wallet PnL. `okx-dex-signal` = market-wide smart money / whale / KOL signal tracking. `okx-dex-trenches` = meme pump scanning (dev reputation, rug pull history, bundler analysis, new launches).
 
 ## Cross-Skill Workflows
 

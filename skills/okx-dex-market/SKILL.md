@@ -1,6 +1,6 @@
 ---
 name: okx-dex-market
-description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, and wallet PnL/盈亏分析 (win rate, my DEX trade history, realized/unrealized PnL per token). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my DEX history', 'realized profit', or 'unrealized profit'. Do NOT use for smart-money/whale/KOL signal tracking — use okx-dex-signal. Do NOT use for meme/pump.fun token scanning — use okx-dex-memepump. Do NOT use for token search, holder distribution, liquidity pools, or honeypot checks — use okx-dex-token."
+description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, and wallet PnL/盈亏分析 (win rate, my DEX trade history, realized/unrealized PnL per token). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my DEX history', 'realized profit', or 'unrealized profit'. Do NOT use for smart-money/whale/KOL signal tracking — use okx-dex-signal. Do NOT use for meme/pump.fun token scanning — use okx-dex-trenches. Do NOT use for token search, holder distribution, liquidity pools, or honeypot checks — use okx-dex-token."
 license: Apache-2.0
 metadata:
   author: okx
@@ -54,7 +54,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For wallet balances / token holdings → use `okx-wallet-portfolio`
 - For wallet PnL analysis (realized/unrealized PnL, DEX history, recent PnL, per-token PnL) → use `okx-dex-market` portfolio commands (this skill)
 - For smart money / whale / KOL signal tracking → use `okx-dex-signal`
-- For meme pump scanning (new launches, dev reputation, bundle detection, aped wallets) → use `okx-dex-memepump`
+- For meme pump scanning (new launches, dev reputation, bundle detection, aped wallets) → use `okx-dex-trenches`
 
 ## Keyword Glossary
 
@@ -159,19 +159,19 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Trade history with tag/wallet filter | - | `okx-dex-token` → `onchainos token trades` |
 | Smart money / whale / KOL signals | - | `okx-dex-signal` → `onchainos signal list` |
 | Signal-supported chains | - | `okx-dex-signal` → `onchainos signal chains` |
-| Browse meme pump tokens by stage | - | `okx-dex-memepump` → `onchainos memepump tokens` |
-| Meme token audit (top10, dev, insiders) | - | `okx-dex-memepump` → `onchainos memepump token-details` |
-| Developer reputation / rug pull history | - | `okx-dex-memepump` → `onchainos memepump token-dev-info` |
-| Similar tokens by same creator | - | `okx-dex-memepump` → `onchainos memepump similar-tokens` |
-| Bundle/sniper detection | - | `okx-dex-memepump` → `onchainos memepump token-bundle-info` |
-| Aped (same-car) wallet analysis | - | `okx-dex-memepump` → `onchainos memepump aped-wallet` |
+| Browse meme pump tokens by stage | - | `okx-dex-trenches` → `onchainos memepump tokens` |
+| Meme token audit (top10, dev, insiders) | - | `okx-dex-trenches` → `onchainos memepump token-details` |
+| Developer reputation / rug pull history | - | `okx-dex-trenches` → `onchainos memepump token-dev-info` |
+| Similar tokens by same creator | - | `okx-dex-trenches` → `onchainos memepump similar-tokens` |
+| Bundle/sniper detection | - | `okx-dex-trenches` → `onchainos memepump token-bundle-info` |
+| Aped (same-car) wallet analysis | - | `okx-dex-trenches` → `onchainos memepump aped-wallet` |
 | Wallet PnL overview (win rate, realized PnL, top tokens) | `onchainos market portfolio-overview` | - |
 | Wallet DEX transaction history | `onchainos market portfolio-dex-history` | - |
 | Recent PnL list by token | `onchainos market portfolio-recent-pnl` | - |
 | Per-token latest PnL (realized/unrealized) | `onchainos market portfolio-token-pnl` | - |
 | PnL-supported chain list | `onchainos market portfolio-supported-chains` | - |
 
-**Rule of thumb**: `okx-dex-market` = raw price feeds, charts, and wallet PnL analysis. Use `okx-dex-signal` for signal tracking, `okx-dex-memepump` for meme token research, `okx-dex-token` for token discovery & analytics.
+**Rule of thumb**: `okx-dex-market` = raw price feeds, charts, and wallet PnL analysis. Use `okx-dex-signal` for signal tracking, `okx-dex-trenches` for meme token research, `okx-dex-token` for token discovery & analytics.
 
 ## Cross-Skill Workflows
 

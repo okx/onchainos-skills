@@ -1,5 +1,5 @@
 ---
-name: okx-dex-memepump
+name: okx-dex-trenches
 description: "Use this skill for meme/打狗/alpha token research on pump.fun and similar launchpads: scanning new token launches, checking developer reputation/开发者信息 and past rug pull history, bundle/sniper detection/捆绑狙击, bonding curve status, finding similar tokens by the same dev, and wallets that co-invested (同车/aped) into a token. Use when the user asks about 'new meme coins', 'pump.fun launches', 'scan trenches/扫链', 'check dev reputation', 'bundler analysis', 'who else bought this token', '打狗', '新盘', or '开发者信息'. Do NOT use for market-wide whale/smart-money signals — use okx-dex-signal. Do NOT use for per-token holder distribution or honeypot checks — use okx-dex-token."
 license: Apache-2.0
 metadata:
@@ -162,12 +162,12 @@ Present conversationally — never expose skill names or endpoint paths to the u
 > User: "Show me new meme tokens on Solana and check if any look safe"
 
 ```
-1. okx-dex-memepump onchainos memepump chains                          → discover supported chains & protocols
-2. okx-dex-memepump onchainos memepump tokens --chain solana --stage NEW       → browse new tokens
+1. okx-dex-trenches onchainos memepump chains                          → discover supported chains & protocols
+2. okx-dex-trenches onchainos memepump tokens --chain solana --stage NEW       → browse new tokens
        ↓ pick an interesting token
-3. okx-dex-memepump onchainos memepump token-details --address <address> --chain solana  → full token detail + audit tags
-4. okx-dex-memepump onchainos memepump token-dev-info --address <address> --chain solana → check dev reputation (rug pulls, migrations)
-5. okx-dex-memepump onchainos memepump token-bundle-info --address <address> --chain solana → check for bundlers/snipers
+3. okx-dex-trenches onchainos memepump token-details --address <address> --chain solana  → full token detail + audit tags
+4. okx-dex-trenches onchainos memepump token-dev-info --address <address> --chain solana → check dev reputation (rug pulls, migrations)
+5. okx-dex-trenches onchainos memepump token-bundle-info --address <address> --chain solana → check for bundlers/snipers
 6. okx-dex-market   onchainos market kline --address <address> --chain solana           → view price chart
        ↓ user decides to buy
 7. okx-dex-swap     onchainos swap quote --from ... --to <address> --amount ... --chain solana
@@ -181,11 +181,11 @@ Present conversationally — never expose skill names or endpoint paths to the u
 > User: "Check if this meme token is safe before I buy"
 
 ```
-1. okx-dex-memepump onchainos memepump token-details --address <address> --chain solana   → basic info + audit tags
-2. okx-dex-memepump onchainos memepump token-dev-info --address <address> --chain solana  → dev history + holding
-3. okx-dex-memepump onchainos memepump similar-tokens --address <address> --chain solana  → other tokens by same dev
-4. okx-dex-memepump onchainos memepump token-bundle-info --address <address> --chain solana → bundler analysis
-5. okx-dex-memepump onchainos memepump aped-wallet --address <address> --chain solana     → who else is holding
+1. okx-dex-trenches onchainos memepump token-details --address <address> --chain solana   → basic info + audit tags
+2. okx-dex-trenches onchainos memepump token-dev-info --address <address> --chain solana  → dev history + holding
+3. okx-dex-trenches onchainos memepump similar-tokens --address <address> --chain solana  → other tokens by same dev
+4. okx-dex-trenches onchainos memepump token-bundle-info --address <address> --chain solana → bundler analysis
+5. okx-dex-trenches onchainos memepump aped-wallet --address <address> --chain solana     → who else is holding
 ```
 
 ### Workflow C: Signal-to-Meme Deep Dive
@@ -195,9 +195,9 @@ Present conversationally — never expose skill names or endpoint paths to the u
 ```
 1. okx-dex-signal   onchainos signal list --chain solana --wallet-type 3           → identify the signaled token address
        ↓ token looks like a meme/pump.fun launch
-2. okx-dex-memepump onchainos memepump token-details --address <address> --chain solana  → confirm it's a meme token, check audit tags
-3. okx-dex-memepump onchainos memepump token-dev-info --address <address> --chain solana → check dev rug pull history
-4. okx-dex-memepump onchainos memepump token-bundle-info --address <address> --chain solana → verify the whale signal isn't a bundler
+2. okx-dex-trenches onchainos memepump token-details --address <address> --chain solana  → confirm it's a meme token, check audit tags
+3. okx-dex-trenches onchainos memepump token-dev-info --address <address> --chain solana → check dev rug pull history
+4. okx-dex-trenches onchainos memepump token-bundle-info --address <address> --chain solana → verify the whale signal isn't a bundler
        ↓ checks pass
 5. okx-dex-market   onchainos market kline --address <address> --chain solana            → confirm price momentum
 6. okx-dex-swap     onchainos swap quote --from ... --to <address> --amount ... --chain solana
