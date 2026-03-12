@@ -6,6 +6,7 @@ use super::Context;
 use crate::output;
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum TokenCommand {
     /// Search for tokens by name, symbol, or address
     Search {
@@ -646,7 +647,6 @@ async fn advanced_info(ctx: &Context, address: &str, chain: Option<String>) -> R
 }
 
 /// GET /api/v6/dex/market/token/top-trader
-
 async fn top_trader(
     ctx: &Context,
     address: &str,
