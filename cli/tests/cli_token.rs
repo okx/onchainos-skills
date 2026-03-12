@@ -19,21 +19,37 @@ fn token_search_by_symbol() {
 
 #[test]
 fn token_search_by_address() {
-    let output = run_with_retry(&["token", "search", "--query", tokens::ETH_USDC, "--chains", "ethereum"]);
+    let output = run_with_retry(&[
+        "token",
+        "search",
+        "--query",
+        tokens::ETH_USDC,
+        "--chains",
+        "ethereum",
+    ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.is_array(), "expected array: {data}");
 }
 
 #[test]
 fn token_search_cross_chain() {
-    let output = run_with_retry(&["token", "search", "--query", "SOL", "--chains", "solana,ethereum"]);
+    let output = run_with_retry(&[
+        "token",
+        "search",
+        "--query",
+        "SOL",
+        "--chains",
+        "solana,ethereum",
+    ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.is_array(), "expected array: {data}");
 }
 
 #[test]
 fn token_search_phrase_query() {
-    let output = run_with_retry(&["token", "search", "--query", "dog wif", "--chains", "solana"]);
+    let output = run_with_retry(&[
+        "token", "search", "--query", "dog wif", "--chains", "solana",
+    ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.is_array(), "expected array of search results: {data}");
 }
@@ -58,7 +74,14 @@ fn token_search_missing_query_fails() {
 
 #[test]
 fn token_info_usdc_on_ethereum() {
-    let output = run_with_retry(&["token", "info", "--address", tokens::ETH_USDC, "--chain", "ethereum"]);
+    let output = run_with_retry(&[
+        "token",
+        "info",
+        "--address",
+        tokens::ETH_USDC,
+        "--chain",
+        "ethereum",
+    ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.is_array(), "expected array: {data}");
     let arr = data.as_array().unwrap();
@@ -72,7 +95,14 @@ fn token_info_usdc_on_ethereum() {
 
 #[test]
 fn token_info_wsol_on_solana() {
-    let output = run_with_retry(&["token", "info", "--address", tokens::SOL_WSOL, "--chain", "solana"]);
+    let output = run_with_retry(&[
+        "token",
+        "info",
+        "--address",
+        tokens::SOL_WSOL,
+        "--chain",
+        "solana",
+    ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.is_array(), "expected array: {data}");
 }
@@ -167,7 +197,14 @@ fn token_trending_with_all_params() {
 
 #[test]
 fn token_holders_usdc_on_ethereum() {
-    let output = run_with_retry(&["token", "holders", "--address", tokens::ETH_USDC, "--chain", "ethereum"]);
+    let output = run_with_retry(&[
+        "token",
+        "holders",
+        "--address",
+        tokens::ETH_USDC,
+        "--chain",
+        "ethereum",
+    ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
         data.is_array() || data.is_object(),
@@ -207,7 +244,14 @@ fn token_holders_missing_address_fails() {
 
 #[test]
 fn token_liquidity_usdc_on_ethereum() {
-    let output = run_with_retry(&["token", "liquidity", "--address", tokens::ETH_USDC, "--chain", "ethereum"]);
+    let output = run_with_retry(&[
+        "token",
+        "liquidity",
+        "--address",
+        tokens::ETH_USDC,
+        "--chain",
+        "ethereum",
+    ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
         data.is_array() || data.is_object(),
@@ -217,7 +261,14 @@ fn token_liquidity_usdc_on_ethereum() {
 
 #[test]
 fn token_liquidity_wsol_on_solana() {
-    let output = run_with_retry(&["token", "liquidity", "--address", tokens::SOL_WSOL, "--chain", "solana"]);
+    let output = run_with_retry(&[
+        "token",
+        "liquidity",
+        "--address",
+        tokens::SOL_WSOL,
+        "--chain",
+        "solana",
+    ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
         data.is_array() || data.is_object(),
@@ -667,7 +718,14 @@ fn token_advanced_info_missing_address_fails() {
 
 #[test]
 fn token_top_trader_on_solana() {
-    let output = run_with_retry(&["token", "top-trader", "--address", tokens::SOL_WSOL, "--chain", "solana"]);
+    let output = run_with_retry(&[
+        "token",
+        "top-trader",
+        "--address",
+        tokens::SOL_WSOL,
+        "--chain",
+        "solana",
+    ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.is_array() || data.is_object(), "expected data: {data}");
 }

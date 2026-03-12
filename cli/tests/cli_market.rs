@@ -22,7 +22,14 @@ struct LiveMemepumpToken {
 
 #[test]
 fn market_price_eth_native() {
-    let output = run_with_retry(&["market", "price", "--address", tokens::EVM_NATIVE, "--chain", "ethereum"]);
+    let output = run_with_retry(&[
+        "market",
+        "price",
+        "--address",
+        tokens::EVM_NATIVE,
+        "--chain",
+        "ethereum",
+    ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.is_array(), "expected array of price entries: {data}");
     let arr = data.as_array().unwrap();
@@ -36,7 +43,14 @@ fn market_price_eth_native() {
 
 #[test]
 fn market_price_solana_wsol() {
-    let output = run_with_retry(&["market", "price", "--address", tokens::SOL_WSOL, "--chain", "solana"]);
+    let output = run_with_retry(&[
+        "market",
+        "price",
+        "--address",
+        tokens::SOL_WSOL,
+        "--chain",
+        "solana",
+    ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.is_array(), "expected array: {data}");
 }
@@ -106,7 +120,14 @@ fn market_kline_missing_address_fails() {
 
 #[test]
 fn market_index_price() {
-    let output = run_with_retry(&["market", "index", "--address", tokens::EVM_NATIVE, "--chain", "ethereum"]);
+    let output = run_with_retry(&[
+        "market",
+        "index",
+        "--address",
+        tokens::EVM_NATIVE,
+        "--chain",
+        "ethereum",
+    ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.is_array(), "expected array: {data}");
     let arr = data.as_array().unwrap();
@@ -143,7 +164,14 @@ fn market_signal_list_ethereum() {
 
 #[test]
 fn market_signal_list_with_wallet_type_filter() {
-    let output = run_with_retry(&["market", "signal-list", "--chain", "solana", "--wallet-type", "1"]);
+    let output = run_with_retry(&[
+        "market",
+        "signal-list",
+        "--chain",
+        "solana",
+        "--wallet-type",
+        "1",
+    ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
         data.is_array() || data.is_object(),
@@ -217,7 +245,14 @@ fn memepump_chains_returns_supported_chains() {
 
 #[test]
 fn memepump_tokens_returns_list_for_solana() {
-    let output = run_with_retry(&["market", "memepump-tokens", "--chain", "solana", "--stage", "NEW"]);
+    let output = run_with_retry(&[
+        "market",
+        "memepump-tokens",
+        "--chain",
+        "solana",
+        "--stage",
+        "NEW",
+    ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
         data.is_array() || data.is_object(),
@@ -398,7 +433,14 @@ fn memepump_tokens_missing_stage_arg_fails() {
 
 fn fetch_first_memepump_token(chain: &str) -> Option<LiveMemepumpToken> {
     let output = assert_cmd::Command::from(cargo_bin_cmd!("onchainos"))
-        .args(["market", "memepump-tokens", "--chain", chain, "--stage", "MIGRATED"])
+        .args([
+            "market",
+            "memepump-tokens",
+            "--chain",
+            chain,
+            "--stage",
+            "MIGRATED",
+        ])
         .output()
         .ok()?;
 

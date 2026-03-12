@@ -1169,12 +1169,7 @@ async fn portfolio_recent_pnl(
 }
 
 /// GET /api/v6/dex/market/portfolio/token/latest-pnl
-async fn portfolio_token_pnl(
-    ctx: &Context,
-    address: &str,
-    chain: &str,
-    token: &str,
-) -> Result<()> {
+async fn portfolio_token_pnl(ctx: &Context, address: &str, chain: &str, token: &str) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain);
     let client = ctx.client()?;
     let query: Vec<(&str, &str)> = vec![
