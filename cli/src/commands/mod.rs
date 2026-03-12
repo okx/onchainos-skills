@@ -1,10 +1,12 @@
 pub mod gateway;
 pub mod leaderboard;
 pub mod market;
-pub mod tracker;
+pub mod memepump;
 pub mod portfolio;
+pub mod signal;
 pub mod swap;
 pub mod token;
+pub mod tracker;
 
 use crate::chains;
 use crate::client::ApiClient;

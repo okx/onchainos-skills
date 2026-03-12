@@ -6,6 +6,7 @@ use super::Context;
 use crate::output;
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum TokenCommand {
     /// Search for tokens by name, symbol, or address
     Search {
@@ -392,8 +393,13 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             wallet_filter,
         } => token_trades(ctx, &address, chain, limit, tag_filter, wallet_filter).await,
         TokenCommand::ClusterOverview { address, chain } => {
-            cluster_by_address(ctx, "/api/v6/dex/market/token/cluster/overview", &address, chain)
-                .await
+            cluster_by_address(
+                ctx,
+                "/api/v6/dex/market/token/cluster/overview",
+                &address,
+                chain,
+            )
+            .await
         }
         TokenCommand::ClusterTopHolders {
             address,
@@ -401,7 +407,13 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             ranks,
         } => cluster_top_holders(ctx, &address, chain, &ranks).await,
         TokenCommand::ClusterList { address, chain } => {
-            cluster_by_address(ctx, "/api/v6/dex/market/token/cluster/list", &address, chain).await
+            cluster_by_address(
+                ctx,
+                "/api/v6/dex/market/token/cluster/list",
+                &address,
+                chain,
+            )
+            .await
         }
     }
 }
@@ -688,7 +700,6 @@ async fn advanced_info(ctx: &Context, address: &str, chain: Option<String>) -> R
 }
 
 /// GET /api/v6/dex/market/token/top-trader
-
 async fn top_trader(
     ctx: &Context,
     address: &str,

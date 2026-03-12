@@ -41,7 +41,10 @@ fn leaderboard_list_ethereum_pnl_7d() {
         "1",
     ]);
     let data = assert_ok_and_extract_data(&output);
-    assert!(data.is_array(), "expected array of leaderboard entries: {data}");
+    assert!(
+        data.is_array(),
+        "expected array of leaderboard entries: {data}"
+    );
 }
 
 #[test]
@@ -57,7 +60,10 @@ fn leaderboard_list_solana_win_rate_1d() {
         "2",
     ]);
     let data = assert_ok_and_extract_data(&output);
-    assert!(data.is_array(), "expected array of leaderboard entries: {data}");
+    assert!(
+        data.is_array(),
+        "expected array of leaderboard entries: {data}"
+    );
 }
 
 #[test]
@@ -108,7 +114,14 @@ fn leaderboard_list_missing_chain_fails() {
 #[test]
 fn leaderboard_list_missing_time_frame_fails() {
     onchainos()
-        .args(["leaderboard", "list", "--chain", "ethereum", "--sort-by", "1"])
+        .args([
+            "leaderboard",
+            "list",
+            "--chain",
+            "ethereum",
+            "--sort-by",
+            "1",
+        ])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
@@ -117,7 +130,14 @@ fn leaderboard_list_missing_time_frame_fails() {
 #[test]
 fn leaderboard_list_missing_sort_by_fails() {
     onchainos()
-        .args(["leaderboard", "list", "--chain", "ethereum", "--time-frame", "3"])
+        .args([
+            "leaderboard",
+            "list",
+            "--chain",
+            "ethereum",
+            "--time-frame",
+            "3",
+        ])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
