@@ -61,7 +61,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 | 交易动态 / 动态追踪 | trading activity, trade feed | `tracker trades` |
 | KOL动态 / 平台KOL | platform KOL activity, top 100 KOL | `tracker trades --tracker-type kol` |
 | 聪明钱动态 | smart money activity | `tracker trades --tracker-type smart_money` |
-| 自定义分组 | custom group | `tracker trades --tracker-type group --group-name <name>` |
+| 自定义地址 / 多地址追踪 | multi-address tracking | `tracker trades --tracker-type multi_address --wallet-address <addr>` |
 | 买入动态 | buy activity, buys | `tracker trades --trade-type buy` |
 | 卖出动态 | sell activity, sells | `tracker trades --trade-type sell` |
 | 成交额筛选 | filter by volume | `--min-volume` / `--max-volume` |
@@ -80,14 +80,11 @@ onchainos tracker trades --tracker-type smart_money --trade-type buy --chain sol
 # Get KOL activity on Ethereum, min $10k volume
 onchainos tracker trades --tracker-type kol --chain ethereum --min-volume 10000
 
-# Get custom group trades
-onchainos tracker trades --tracker-type group --group-name "my-whales"
+# Track specific wallet addresses (ad-hoc multi-address)
+onchainos tracker trades --tracker-type multi_address --wallet-address "0xabc...,0xdef..."
 
 # Filter by market cap and liquidity
 onchainos tracker trades --min-market-cap 1000000 --max-market-cap 100000000 --min-liquidity 50000
-
-# Get up to 50 results
-onchainos tracker trades --limit 50
 ```
 
 ## Chain Name Support
@@ -204,7 +201,7 @@ The CLI accepts human-readable chain names or `all` (default). Supported chains 
 
 ### Step 2: Collect Parameters
 
-- **`--tracker-type`**: default `kol`. If user mentions smart money → `smart_money`; custom group → `group` (and ask for `--group-name`)
+- **`--tracker-type`**: default `kol`. If user mentions smart money → `smart_money`; specific addresses → `multi_address` (and ask for `--wallet-address`)
 - **`--trade-type`**: default `all`. If user specifies buy/sell, set accordingly
 - **`--chain`**: default all chains. If user mentions a specific chain, set it
 - **Filters**: ask user for volume, market cap, or liquidity ranges if they want to narrow results
@@ -232,7 +229,7 @@ For detailed parameter tables, return field schemas, and usage examples, consult
 
 ## Edge Cases
 
-- **`--tracker-type group` without `--group-name`**: the API requires `groupName` when `trackerType=group` — prompt user to provide the group name
+- **`--tracker-type multi_address` without `--wallet-address`**: the CLI will return an error — prompt user to provide wallet address(es), comma-separated, max 20
 - **Empty result**: no recent trades match the filter — suggest relaxing filters or trying a different chain
 - **Max 50 results per request**: inform user if they need more
 - **Network error**: retry once, then prompt user to try again later
