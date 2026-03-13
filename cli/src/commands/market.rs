@@ -51,7 +51,7 @@ pub enum MarketCommand {
         chain: Option<String>,
     },
     /// Get supported chains for portfolio PnL endpoints
-    PortfolioSupportedChains,
+    PortfolioChains,
     /// Get wallet portfolio overview: realized/unrealized PnL, win rate, trading stats
     PortfolioOverview {
         /// Wallet address
@@ -131,7 +131,7 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
             chain,
         } => kline(ctx, &address, &bar, limit, chain).await,
         MarketCommand::Index { address, chain } => index(ctx, &address, chain).await,
-        MarketCommand::PortfolioSupportedChains => portfolio_supported_chains(ctx).await,
+        MarketCommand::PortfolioChains => portfolio_chains(ctx).await,
         MarketCommand::PortfolioOverview {
             address,
             chain,
@@ -263,7 +263,7 @@ async fn index(ctx: &Context, address: &str, chain: Option<String>) -> Result<()
 }
 
 /// GET /api/v6/dex/market/portfolio/supported/chain
-async fn portfolio_supported_chains(ctx: &Context) -> Result<()> {
+async fn portfolio_chains(ctx: &Context) -> Result<()> {
     let client = ctx.client()?;
     let data = client
         .get("/api/v6/dex/market/portfolio/supported/chain", &[])

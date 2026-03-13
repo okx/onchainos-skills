@@ -96,12 +96,12 @@ onchainos market index --address <address> [--chain <chain>]
 | `price` | String | Index price (aggregated from multiple sources) |
 | `time` | String | Timestamp (Unix milliseconds) |
 
-## 5. onchainos market portfolio-supported-chains
+## 5. onchainos market portfolio-chains
 
 Get the list of chains supported by the portfolio PnL endpoints.
 
 ```bash
-onchainos market portfolio-supported-chains
+onchainos market portfolio-chains
 ```
 
 No parameters required.
@@ -279,7 +279,7 @@ onchainos market kline --address 0x74b7f16337b8972027f6196a17a631ac6de26d22 --ch
 **User says:** "How is my Ethereum wallet performing this week?"
 
 ```bash
-onchainos market portfolio-supported-chains   # confirm Ethereum supported
+onchainos market portfolio-chains   # confirm Ethereum supported
 onchainos market portfolio-overview --address <wallet> --chain ethereum --time-frame 3
 # -> Display 7D PnL overview: realized PnL, win rate, top 3 tokens
 ```

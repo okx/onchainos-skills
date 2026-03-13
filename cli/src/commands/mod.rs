@@ -6,7 +6,6 @@ pub mod portfolio;
 pub mod signal;
 pub mod swap;
 pub mod token;
-pub mod tracker;
 
 use crate::chains;
 use crate::client::ApiClient;
