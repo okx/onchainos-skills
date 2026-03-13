@@ -97,6 +97,20 @@ async fn supported_chains(ctx: &Context) -> Result<()> {
     Ok(())
 }
 
+/// Map human-readable wallet type names to the integer codes expected by the API.
+/// Accepts either the string name (e.g. "smartMoney") or the integer directly ("1").
+fn resolve_leaderboard_wallet_type(wallet_type: String) -> String {
+    match wallet_type.as_str() {
+        "smartMoney" => "1".to_string(),
+        "influencer" => "2".to_string(),
+        "sniper" => "3".to_string(),
+        "dev" => "4".to_string(),
+        "fresh" => "5".to_string(),
+        "pump" => "6".to_string(),
+        _ => wallet_type,
+    }
+}
+
 /// GET /api/v6/dex/market/leaderboard/list — top trader leaderboard with optional filters
 #[allow(clippy::too_many_arguments)]
 async fn leaderboard_list(
@@ -117,7 +131,7 @@ async fn leaderboard_list(
     let chain_index = crate::chains::resolve_chain(chain).to_string();
     let client = ctx.client()?;
 
-    let wallet_type = wallet_type.unwrap_or_default();
+    let wallet_type = resolve_leaderboard_wallet_type(wallet_type.unwrap_or_default());
     let min_realized_pnl = min_realized_pnl_usd.unwrap_or_default();
     let max_realized_pnl = max_realized_pnl_usd.unwrap_or_default();
     let min_win_rate = min_win_rate_percent.unwrap_or_default();

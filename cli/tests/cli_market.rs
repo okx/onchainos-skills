@@ -850,14 +850,14 @@ fn memepump_aped_wallet_missing_address_fails() {
         .stderr(predicate::str::contains("required"));
 }
 
-// ─── portfolio-supported-chains ─────────────────────────────────────
+// ─── portfolio-chains ─────────────────────────────────────
 
 // Well-known Ethereum wallet (vitalik.eth) used for portfolio PnL tests
 const PORTFOLIO_TEST_WALLET: &str = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
 
 #[test]
 fn market_portfolio_supported_chains_returns_list() {
-    let output = run_with_retry(&["market", "portfolio-supported-chains"]);
+    let output = run_with_retry(&["market", "portfolio-chains"]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.is_array(), "expected array of chains: {data}");
     let arr = data.as_array().unwrap();
