@@ -268,6 +268,8 @@ pub enum TokenCommand {
         #[arg(long)]
         chain: Option<String>,
     },
+    /// Get supported chains for holder cluster analysis
+    ClusterSupportedChains,
 }
 
 pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
@@ -415,6 +417,7 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             )
             .await
         }
+        TokenCommand::ClusterSupportedChains => cluster_supported_chains(ctx).await,
     }
 }
 
@@ -776,6 +779,16 @@ async fn cluster_by_address(
                 ("tokenContractAddress", address),
             ],
         )
+        .await?;
+    output::success(data);
+    Ok(())
+}
+
+/// GET /api/v6/dex/market/token/cluster/supported/chain — no parameters
+async fn cluster_supported_chains(ctx: &Context) -> Result<()> {
+    let client = ctx.client()?;
+    let data = client
+        .get("/api/v6/dex/market/token/cluster/supported/chain", &[])
         .await?;
     output::success(data);
     Ok(())

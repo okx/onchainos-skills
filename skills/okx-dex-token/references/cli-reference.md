@@ -1,6 +1,6 @@
 # OKX DEX Token — CLI Command Reference
 
-Detailed parameter tables, return field schemas, and usage examples for all 13 token commands.
+Detailed parameter tables, return field schemas, and usage examples for all 14 token commands.
 
 ## 1. onchainos token search
 
@@ -521,4 +521,30 @@ onchainos token cluster-list --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTD
 
 # EVM token cluster list
 onchainos token cluster-list --address 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48 --chain ethereum
+```
+
+---
+
+## 14. onchainos token cluster-supported-chains
+
+**Description**: Get the list of chains that support holder cluster analysis.
+
+```bash
+onchainos token cluster-supported-chains
+```
+
+**Parameters**: None
+
+**Return fields** (array of chain objects):
+
+| Field | Type | Description |
+|---|---|---|
+| `chainIndex` | String | Chain identifier (e.g. `"1"` for Ethereum, `"501"` for Solana) |
+| `chainName` | String | Chain display name (e.g. `"Ethereum"`, `"Solana"`) |
+
+**Examples**:
+
+```bash
+# Get all chains that support holder cluster analysis
+onchainos token cluster-supported-chains
 ```

@@ -959,3 +959,23 @@ fn token_cluster_list_missing_address_fails() {
         .failure()
         .stderr(predicate::str::contains("required"));
 }
+
+// ─── cluster-supported-chains ────────────────────────────────────────
+
+#[test]
+fn token_cluster_supported_chains_returns_list() {
+    let output = run_with_retry(&["token", "cluster-supported-chains"]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(data.is_array(), "expected array of chains: {data}");
+    let arr = data.as_array().unwrap();
+    assert!(!arr.is_empty(), "expected at least one supported chain");
+    let first = &arr[0];
+    assert!(
+        first.get("chainIndex").is_some(),
+        "chain entry missing 'chainIndex': {first}"
+    );
+    assert!(
+        first.get("chainName").is_some(),
+        "chain entry missing 'chainName': {first}"
+    );
+}
