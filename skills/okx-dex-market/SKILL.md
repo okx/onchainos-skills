@@ -134,7 +134,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 
 | # | Command | Description |
 |---|---|---|
-| 5 | `onchainos market portfolio-supported-chains` | Get chains supported by portfolio PnL endpoints |
+| 5 | `onchainos market portfolio-chains` | Get chains supported by portfolio PnL endpoints |
 | 6 | `onchainos market portfolio-overview` | Get wallet PnL overview (realized/unrealized PnL, win rate, Top 3 tokens) |
 | 7 | `onchainos market portfolio-dex-history` | Get DEX transaction history for a wallet (paginated, up to 1000 records) |
 | 8 | `onchainos market portfolio-recent-pnl` | Get recent PnL list by token for a wallet (paginated, up to 1000 records) |
@@ -170,7 +170,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Wallet DEX transaction history | `onchainos market portfolio-dex-history` | - |
 | Recent PnL list by token | `onchainos market portfolio-recent-pnl` | - |
 | Per-token latest PnL (realized/unrealized) | `onchainos market portfolio-token-pnl` | - |
-| PnL-supported chain list | `onchainos market portfolio-supported-chains` | - |
+| PnL-supported chain list | `onchainos market portfolio-chains` | - |
 
 **Rule of thumb**: `okx-dex-market` = raw price feeds, charts, and wallet PnL analysis. Use `okx-dex-signal` for signal tracking, `okx-dex-trenches` for meme token research, `okx-dex-token` for token discovery & analytics.
 
@@ -207,7 +207,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 > User: "How is my wallet performing on Ethereum? Show me my PnL"
 
 ```
-1. okx-dex-market   onchainos market portfolio-supported-chains                        → verify Ethereum is supported
+1. okx-dex-market   onchainos market portfolio-chains                        → verify Ethereum is supported
 2. okx-dex-market   onchainos market portfolio-overview --address <wallet> --chain ethereum --time-frame 3
                                                                                        → 7D PnL overview: realized PnL, win rate, top 3 tokens
        ↓ user wants to drill into a specific token
@@ -252,11 +252,11 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 - Wallet DEX transaction history → `onchainos market portfolio-dex-history`
 - Recent token PnL list for a wallet → `onchainos market portfolio-recent-pnl`
 - Per-token latest PnL (realized/unrealized) → `onchainos market portfolio-token-pnl`
-- Chains supported for PnL → `onchainos market portfolio-supported-chains`
+- Chains supported for PnL → `onchainos market portfolio-chains`
 
 ### Step 2: Collect Parameters
 
-- Missing chain → recommend XLayer (`--chain xlayer`, low gas, fast confirmation) as the default, then ask which chain the user prefers; for portfolio PnL queries, first call `onchainos market portfolio-supported-chains` to confirm the chain is supported
+- Missing chain → recommend XLayer (`--chain xlayer`, low gas, fast confirmation) as the default, then ask which chain the user prefers; for portfolio PnL queries, first call `onchainos market portfolio-chains` to confirm the chain is supported
 - Missing token address → use `okx-dex-token` `onchainos token search` first to resolve
 - K-line requests → confirm bar size and time range with user
 
@@ -274,7 +274,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | `market price` | 1. View K-line chart → `onchainos market kline` (this skill) 2. Deeper analytics (market cap, liquidity, 24h volume) → `okx-dex-token` 3. Buy/swap this token → `okx-dex-swap` |
 | `market kline` | 1. Check filtered trade history → `onchainos token trades` (okx-dex-token) 2. Buy/swap based on the chart → `okx-dex-swap` |
 | `market index` | 1. Compare with on-chain DEX price → `onchainos market price` (this skill) 2. View full price chart → `onchainos market kline` (this skill) |
-| `market portfolio-supported-chains` | 1. Get PnL overview → `onchainos market portfolio-overview` (this skill) |
+| `market portfolio-chains` | 1. Get PnL overview → `onchainos market portfolio-overview` (this skill) |
 | `market portfolio-overview` | 1. Drill into trade history → `onchainos market portfolio-dex-history` (this skill) 2. Check recent PnL by token → `onchainos market portfolio-recent-pnl` (this skill) 3. Buy/sell a top-PnL token → `okx-dex-swap` |
 | `market portfolio-dex-history` | 1. Check PnL for a specific traded token → `onchainos market portfolio-token-pnl` (this skill) 2. View token price chart → `onchainos market kline` (this skill) |
 | `market portfolio-recent-pnl` | 1. Get detailed PnL for a specific token → `onchainos market portfolio-token-pnl` (this skill) 2. View token analytics → `okx-dex-token` |
@@ -315,7 +315,7 @@ Do not expose raw error codes or internal error messages to the user.
 - **Invalid token address**: returns empty data or error — prompt user to verify, or use `onchainos token search` to resolve
 - **Unsupported chain**: the CLI will report an error — try a different chain name
 - **No candle data**: may be a new token or low liquidity — inform user
-- **Unsupported chain for portfolio PnL**: not all chains support PnL — always verify with `onchainos market portfolio-supported-chains` first
+- **Unsupported chain for portfolio PnL**: not all chains support PnL — always verify with `onchainos market portfolio-chains` first
 - **`portfolio-dex-history` requires `--begin` and `--end`**: both timestamps (Unix milliseconds) are mandatory; if the user says "last 30 days" compute them before calling
 - **`portfolio-recent-pnl` `unrealizedPnlUsd` returns `SELL_ALL`**: this means the address has sold all its holdings of that token
 - **`portfolio-token-pnl` `isPnlSupported = false`**: PnL calculation is not supported for this token/chain combination

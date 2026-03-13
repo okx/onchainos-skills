@@ -19,12 +19,12 @@ onchainos portfolio chains
 | `shortName` | String | Chain short name (e.g., `"OKB"`) |
 | `chainIndex` | String | Chain unique identifier (e.g., `"196"`) |
 
-## 2. onchainos portfolio supported-chains
+## 2. onchainos portfolio chains
 
 Get supported chains for portfolio PnL endpoints. No parameters required.
 
 ```bash
-onchainos portfolio supported-chains
+onchainos portfolio chains
 ```
 
 **Return fields**:

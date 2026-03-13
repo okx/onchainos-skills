@@ -91,7 +91,7 @@ onchainos signal list --chain ethereum --wallet-type 3 --min-amount-usd 10000
 onchainos signal list --chain base
 
 # Get supported chains for leaderboard
-onchainos leaderboard supported-chains
+onchainos leaderboard chains
 
 # Top traders on Solana by PnL over last 7D
 onchainos leaderboard list --chain solana --time-frame 3 --sort-by 1
@@ -109,7 +109,7 @@ onchainos leaderboard list --chain bsc --time-frame 1 --sort-by 4 --wallet-type 
 |---|---|---|
 | 1 | `onchainos signal chains` | Get supported chains for signals |
 | 2 | `onchainos signal list --chain <chain>` | Get latest buy-direction signals (smart money / KOL / whale) |
-| 3 | `onchainos leaderboard supported-chains` | Get chains supported by the leaderboard |
+| 3 | `onchainos leaderboard chains` | Get chains supported by the leaderboard |
 | 4 | `onchainos leaderboard list --chain <chain> --time-frame <tf> --sort-by <sort>` | Get top trader leaderboard (max 20 per request) |
 
 ## Operation Flow
@@ -119,7 +119,7 @@ onchainos leaderboard list --chain bsc --time-frame 1 --sort-by 4 --wallet-type 
 - Supported chains for signals → `onchainos signal chains`
 - Smart money / whale / KOL buy signals → `onchainos signal list`
 - Leaderboard / 牛人榜 / top traders ranking → `onchainos leaderboard list`
-- Supported chains for leaderboard → `onchainos leaderboard supported-chains`
+- Supported chains for leaderboard → `onchainos leaderboard chains`
 
 ### Step 2: Collect Parameters
 
@@ -129,7 +129,7 @@ onchainos leaderboard list --chain bsc --time-frame 1 --sort-by 4 --wallet-type 
 - `--token-address` is optional — omit to get all signals on the chain; include to filter for a specific token
 
 **Leaderboard:**
-- Missing chain → call `onchainos leaderboard supported-chains` to confirm support; default to `solana` if user doesn't specify
+- Missing chain → call `onchainos leaderboard chains` to confirm support; default to `solana` if user doesn't specify
 - Missing `--time-frame` → map "today/1D" → `1`, "3 days/3D" → `2`, "7 days/1W/7D" → `3`, "1 month/30D" → `4`, "3 months/3M" → `5`
 - Missing `--sort-by` → map "PnL/盈亏" → `1`, "win rate/胜率" → `2`, "tx count/交易笔数" → `3`, "volume/交易量" → `4`, "ROI/收益率" → `5`
 - `--wallet-type` is optional single-select; if omitted, all types are returned
@@ -153,7 +153,7 @@ onchainos leaderboard list --chain bsc --time-frame 1 --sort-by 4 --wallet-type 
 |---|---|
 | `signal chains` | 1. Fetch signals on a supported chain → `onchainos signal list` (this skill) |
 | `signal list` | 1. View price chart for a signal token → `okx-dex-market` (`onchainos market kline`) 2. Deep token analytics (market cap, liquidity, holders) → `okx-dex-token` 3. Buy the token → `okx-dex-swap` |
-| `leaderboard supported-chains` | 1. Fetch the leaderboard → `onchainos leaderboard list` (this skill) |
+| `leaderboard chains` | 1. Fetch the leaderboard → `onchainos leaderboard list` (this skill) |
 | `leaderboard list` | 1. Drill into a wallet's PnL → `okx-dex-market portfolio-overview` 2. Check a wallet's holdings → `okx-wallet-portfolio` 3. View signals from these traders → `onchainos signal list` (this skill) |
 
 Present conversationally — never expose skill names or endpoint paths to the user.
@@ -195,7 +195,7 @@ Present as a readable table. Highlight `soldRatioPercent` — lower means wallet
 > User: "Show me 牛人榜 / top traders on Solana this week"
 
 ```
-1. okx-dex-signal   onchainos leaderboard supported-chains              → confirm Solana is supported
+1. okx-dex-signal   onchainos leaderboard chains              → confirm Solana is supported
 2. okx-dex-signal   onchainos leaderboard list --chain solana --time-frame 3 --sort-by 1
                                                                           → top traders by PnL over 7D
    ↓ user picks a trader address
@@ -214,7 +214,7 @@ For detailed parameter tables and return field schemas, consult:
 
 - **Unsupported chain for signals**: not all chains support signals — always verify with `onchainos signal chains` first
 - **Empty signal list**: no signals on this chain for the given filters — suggest relaxing `--wallet-type`, `--min-amount-usd`, or `--min-address-count`, or try a different chain
-- **Unsupported chain for leaderboard**: always verify with `onchainos leaderboard supported-chains` first
+- **Unsupported chain for leaderboard**: always verify with `onchainos leaderboard chains` first
 - **Empty leaderboard**: no traders match the filter combination — suggest relaxing `--wallet-type`, PnL range, or win rate filters
 - **Max 20 leaderboard results per request**: inform user if they need more
 - **`--wallet-type` is single select for leaderboard**: only one wallet type can be passed at a time; if omitted, all types are returned
