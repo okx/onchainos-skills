@@ -32,8 +32,12 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Git worktrees
+.worktrees/
+
 # Claude Code
 **/settings.local.json
+.mcp.json
 
 # AI Assistant directories (auto-generated)
 .cursor

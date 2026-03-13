@@ -1,7 +1,9 @@
 use anyhow::Result;
 use clap::Subcommand;
+use serde_json::Value;
 
 use super::Context;
+use crate::client::ApiClient;
 use crate::output;
 
 #[derive(Subcommand)]
@@ -88,18 +90,21 @@ pub async fn execute(ctx: &Context, cmd: LeaderboardCommand) -> Result<()> {
 }
 
 /// GET /api/v6/dex/market/leaderboard/supported/chain — no parameters
+pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
+    client
+        .get("/api/v6/dex/market/leaderboard/supported/chain", &[])
+        .await
+}
+
 async fn supported_chains(ctx: &Context) -> Result<()> {
     let client = ctx.client()?;
-    let data = client
-        .get("/api/v6/dex/market/leaderboard/supported/chain", &[])
-        .await?;
-    output::success(data);
+    output::success(fetch_chains(&client).await?);
     Ok(())
 }
 
 /// Map human-readable wallet type names to the integer codes expected by the API.
 /// Accepts either the string name (e.g. "smartMoney") or the integer directly ("1").
-fn resolve_leaderboard_wallet_type(wallet_type: String) -> String {
+pub fn resolve_leaderboard_wallet_type(wallet_type: String) -> String {
     match wallet_type.as_str() {
         "smartMoney" => "1".to_string(),
         "influencer" => "2".to_string(),
@@ -112,6 +117,43 @@ fn resolve_leaderboard_wallet_type(wallet_type: String) -> String {
 }
 
 /// GET /api/v6/dex/market/leaderboard/list — top trader leaderboard with optional filters
+#[allow(clippy::too_many_arguments)]
+pub async fn fetch_list(
+    client: &ApiClient,
+    chain_index: &str,
+    time_frame: &str,
+    sort_by: &str,
+    wallet_type: &str,
+    min_realized_pnl: &str,
+    max_realized_pnl: &str,
+    min_win_rate: &str,
+    max_win_rate: &str,
+    min_txs: &str,
+    max_txs: &str,
+    min_tx_volume: &str,
+    max_tx_volume: &str,
+) -> Result<Value> {
+    client
+        .get(
+            "/api/v6/dex/market/leaderboard/list",
+            &[
+                ("chainIndex", chain_index),
+                ("timeFrame", time_frame),
+                ("sortBy", sort_by),
+                ("walletType", wallet_type),
+                ("minRealizedPnlUsd", min_realized_pnl),
+                ("maxRealizedPnlUsd", max_realized_pnl),
+                ("minWinRatePercent", min_win_rate),
+                ("maxWinRatePercent", max_win_rate),
+                ("minTxs", min_txs),
+                ("maxTxs", max_txs),
+                ("minTxVolume", min_tx_volume),
+                ("maxTxVolume", max_tx_volume),
+            ],
+        )
+        .await
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn leaderboard_list(
     ctx: &Context,
@@ -141,25 +183,23 @@ async fn leaderboard_list(
     let min_tx_volume = min_tx_volume.unwrap_or_default();
     let max_tx_volume = max_tx_volume.unwrap_or_default();
 
-    let data = client
-        .get(
-            "/api/v6/dex/market/leaderboard/list",
-            &[
-                ("chainIndex", chain_index.as_str()),
-                ("timeFrame", time_frame),
-                ("sortBy", sort_by),
-                ("walletType", &wallet_type),
-                ("minRealizedPnlUsd", &min_realized_pnl),
-                ("maxRealizedPnlUsd", &max_realized_pnl),
-                ("minWinRatePercent", &min_win_rate),
-                ("maxWinRatePercent", &max_win_rate),
-                ("minTxs", &min_txs),
-                ("maxTxs", &max_txs),
-                ("minTxVolume", &min_tx_volume),
-                ("maxTxVolume", &max_tx_volume),
-            ],
+    output::success(
+        fetch_list(
+            &client,
+            &chain_index,
+            time_frame,
+            sort_by,
+            &wallet_type,
+            &min_realized_pnl,
+            &max_realized_pnl,
+            &min_win_rate,
+            &max_win_rate,
+            &min_txs,
+            &max_txs,
+            &min_tx_volume,
+            &max_tx_volume,
         )
-        .await?;
-    output::success(data);
+        .await?,
+    );
     Ok(())
 }

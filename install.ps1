@@ -23,7 +23,7 @@ $INSTALL_DIR = Join-Path $env:USERPROFILE ".local\bin"
 $CACHE_DIR = Join-Path $env:USERPROFILE ".onchainos"
 $CACHE_FILE = Join-Path $CACHE_DIR "last_check"
 $CACHE_TTL = 43200  # 12 hours in seconds
-$REQUIRED_VERSION = "1.0.3"  # Managed by release workflow — do not edit manually
+$REQUIRED_VERSION = "1.0.4"  # Managed by release workflow — do not edit manually
 
 function Get-Target {
     $arch = $env:PROCESSOR_ARCHITECTURE
