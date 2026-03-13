@@ -411,7 +411,7 @@ fn memepump_tokens_missing_stage_arg_fails() {
 // ─── Helper: fetch a real memepump token address ────────────────────
 
 fn fetch_first_memepump_token(chain: &str) -> Option<LiveMemepumpToken> {
-    let output = assert_cmd::Command::from(cargo_bin_cmd!("onchainos"))
+    let output = cargo_bin_cmd!("onchainos")
         .args([
             "memepump", "tokens", "--chain", chain, "--stage", "MIGRATED",
         ])

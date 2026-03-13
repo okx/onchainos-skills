@@ -1,8 +1,9 @@
 use anyhow::Result;
 use clap::Subcommand;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use super::Context;
+use crate::client::ApiClient;
 use crate::output;
 
 #[derive(Subcommand)]
@@ -78,61 +79,81 @@ pub enum GatewayCommand {
 }
 
 pub async fn execute(ctx: &Context, cmd: GatewayCommand) -> Result<()> {
+    let client = ctx.client()?;
     match cmd {
-        GatewayCommand::Gas { chain } => gas(ctx, &chain).await,
+        GatewayCommand::Gas { chain } => {
+            let chain_index = crate::chains::resolve_chain(&chain);
+            output::success(fetch_gas(&client, &chain_index).await?);
+        }
         GatewayCommand::GasLimit {
             from,
             to,
             amount,
             data,
             chain,
-        } => gas_limit(ctx, &from, &to, &amount, data.as_deref(), &chain).await,
+        } => {
+            let chain_index = crate::chains::resolve_chain(&chain);
+            output::success(
+                fetch_gas_limit(&client, &chain_index, &from, &to, &amount, data.as_deref())
+                    .await?,
+            );
+        }
         GatewayCommand::Simulate {
             from,
             to,
             amount,
             data,
             chain,
-        } => simulate(ctx, &from, &to, &amount, &data, &chain).await,
+        } => {
+            let chain_index = crate::chains::resolve_chain(&chain);
+            output::success(
+                fetch_simulate(&client, &chain_index, &from, &to, &amount, &data).await?,
+            );
+        }
         GatewayCommand::Broadcast {
             signed_tx,
             address,
             chain,
-        } => broadcast(ctx, &signed_tx, &address, &chain).await,
+        } => {
+            let chain_index = crate::chains::resolve_chain(&chain);
+            output::success(fetch_broadcast(&client, &chain_index, &signed_tx, &address).await?);
+        }
         GatewayCommand::Orders {
             address,
             chain,
             order_id,
-        } => orders(ctx, &address, &chain, order_id.as_deref()).await,
-        GatewayCommand::Chains => chains(ctx).await,
+        } => {
+            let chain_index = crate::chains::resolve_chain(&chain);
+            output::success(
+                fetch_orders(&client, &chain_index, &address, order_id.as_deref()).await?,
+            );
+        }
+        GatewayCommand::Chains => {
+            output::success(fetch_chains(&client).await?);
+        }
     }
-}
-
-/// GET /api/v6/dex/pre-transaction/gas-price
-async fn gas(ctx: &Context, chain: &str) -> Result<()> {
-    let chain_index = crate::chains::resolve_chain(chain);
-    let client = ctx.client()?;
-    let data = client
-        .get(
-            "/api/v6/dex/pre-transaction/gas-price",
-            &[("chainIndex", chain_index.as_str())],
-        )
-        .await?;
-    output::success(data);
     Ok(())
 }
 
+/// GET /api/v6/dex/pre-transaction/gas-price
+pub async fn fetch_gas(client: &ApiClient, chain_index: &str) -> Result<Value> {
+    client
+        .get(
+            "/api/v6/dex/pre-transaction/gas-price",
+            &[("chainIndex", chain_index)],
+        )
+        .await
+}
+
 /// POST /api/v6/dex/pre-transaction/gas-limit
-async fn gas_limit(
-    ctx: &Context,
+pub async fn fetch_gas_limit(
+    client: &ApiClient,
+    chain_index: &str,
     from: &str,
     to: &str,
     amount: &str,
     data: Option<&str>,
-    chain: &str,
-) -> Result<()> {
-    let chain_index = crate::chains::resolve_chain(chain);
-    let client = ctx.client()?;
+) -> Result<Value> {
     let mut body = json!({
         "chainIndex": chain_index,
         "fromAddress": from,
@@ -142,24 +163,20 @@ async fn gas_limit(
     if let Some(input_data) = data {
         body["extJson"] = json!({ "inputData": input_data });
     }
-    let result = client
+    client
         .post("/api/v6/dex/pre-transaction/gas-limit", &body)
-        .await?;
-    output::success(result);
-    Ok(())
+        .await
 }
 
 /// POST /api/v6/dex/pre-transaction/simulate
-async fn simulate(
-    ctx: &Context,
+pub async fn fetch_simulate(
+    client: &ApiClient,
+    chain_index: &str,
     from: &str,
     to: &str,
     amount: &str,
     data: &str,
-    chain: &str,
-) -> Result<()> {
-    let chain_index = crate::chains::resolve_chain(chain);
-    let client = ctx.client()?;
+) -> Result<Value> {
     let body = json!({
         "chainIndex": chain_index,
         "fromAddress": from,
@@ -167,51 +184,47 @@ async fn simulate(
         "txAmount": amount,
         "extJson": { "inputData": data },
     });
-    let result = client
+    client
         .post("/api/v6/dex/pre-transaction/simulate", &body)
-        .await?;
-    output::success(result);
-    Ok(())
+        .await
 }
 
 /// POST /api/v6/dex/pre-transaction/broadcast-transaction
-async fn broadcast(ctx: &Context, signed_tx: &str, address: &str, chain: &str) -> Result<()> {
-    let chain_index = crate::chains::resolve_chain(chain);
-    let client = ctx.client()?;
+pub async fn fetch_broadcast(
+    client: &ApiClient,
+    chain_index: &str,
+    signed_tx: &str,
+    address: &str,
+) -> Result<Value> {
     let body = json!({
         "signedTx": signed_tx,
         "chainIndex": chain_index,
         "address": address,
     });
-    let result = client
+    client
         .post("/api/v6/dex/pre-transaction/broadcast-transaction", &body)
-        .await?;
-    output::success(result);
-    Ok(())
+        .await
 }
 
 /// GET /api/v6/dex/post-transaction/orders
-async fn orders(ctx: &Context, address: &str, chain: &str, order_id: Option<&str>) -> Result<()> {
-    let chain_index = crate::chains::resolve_chain(chain);
-    let client = ctx.client()?;
-    let mut query: Vec<(&str, &str)> =
-        vec![("address", address), ("chainIndex", chain_index.as_str())];
+pub async fn fetch_orders(
+    client: &ApiClient,
+    chain_index: &str,
+    address: &str,
+    order_id: Option<&str>,
+) -> Result<Value> {
+    let mut query: Vec<(&str, &str)> = vec![("address", address), ("chainIndex", chain_index)];
     if let Some(oid) = order_id {
         query.push(("orderId", oid));
     }
-    let data = client
+    client
         .get("/api/v6/dex/post-transaction/orders", &query)
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }
 
 /// GET /api/v6/dex/pre-transaction/supported/chain
-async fn chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client()?;
-    let data = client
+pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
+    client
         .get("/api/v6/dex/pre-transaction/supported/chain", &[])
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }

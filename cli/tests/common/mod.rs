@@ -1,9 +1,10 @@
 //! Shared test helpers for onchainos CLI integration tests.
 
+#![allow(dead_code)]
+
 use assert_cmd::cargo::cargo_bin_cmd;
 use serde_json::Value;
 
-#[allow(dead_code)]
 pub mod tokens {
     // EVM native token placeholder used by OKX APIs
     pub const EVM_NATIVE: &str = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
@@ -17,7 +18,7 @@ pub mod tokens {
 
 /// Build a `Command` for the `onchainos` binary.
 pub fn onchainos() -> assert_cmd::Command {
-    assert_cmd::Command::from(cargo_bin_cmd!("onchainos"))
+    cargo_bin_cmd!("onchainos")
 }
 
 /// Parse stdout as JSON, assert `ok: true`, and return the `data` field.

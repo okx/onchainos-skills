@@ -7,7 +7,9 @@ onchainos skills for AI coding assistants. Provides token search, market data, w
 | Skill | Description |
 |-------|-------------|
 | `okx-wallet-portfolio` | Wallet balance, token holdings, portfolio value |
-| `okx-dex-market` | Real-time prices, K-line charts, index prices, smart money signals, meme pump scanning, wallet PnL analysis |
+| `okx-dex-market` | Real-time prices, K-line charts, index prices, wallet PnL analysis |
+| `okx-dex-signal` | Smart money / whale / KOL signal tracking |
+| `okx-dex-trenches` | Meme pump/trenches token scanning, dev reputation, bundle detection, aped wallets |
 | `okx-dex-swap` | Token swap via DEX aggregation (500+ liquidity sources) |
 | `okx-dex-token` | Token search, metadata, market cap, rankings, liquidity pools, hot tokens, advanced info, holder analysis, top traders, trade history |
 | `okx-onchain-gateway` | Gas estimation, transaction simulation, broadcasting, order tracking |
@@ -98,6 +100,16 @@ Auto-detects your platform, downloads the matching binary, verifies SHA256 check
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
+```
+
+## MCP Server
+
+The `onchainos` CLI doubles as a native MCP server exposing tools to any MCP-compatible client.
+
+### Claude Code
+
+```bash
+claude mcp add --scope user onchainos-cli onchainos mcp
 ```
 
 ## API Key Security Notice & Disclaimer

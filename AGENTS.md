@@ -16,6 +16,8 @@ This is an **onchainos skill collection** providing 5 skills for on-chain operat
 
 - **skills/** — 5 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
+- **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
+- **.mcp.json.example** — MCP server configuration template
 - **.github/workflows/** — CI/CD pipeline (`release.yml`: tag-triggered build for 9 platforms → GitHub Release)
 - **install.sh** — One-line installer for macOS / Linux (`curl | sh`)
 

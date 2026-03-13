@@ -4,6 +4,7 @@ pub mod chains;
 mod client;
 mod commands;
 mod config;
+mod mcp;
 mod output;
 
 use clap::{Parser, Subcommand};
@@ -64,6 +65,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::portfolio::PortfolioCommand,
     },
+    /// Start as MCP server (JSON-RPC 2.0 over stdio)
+    Mcp {
+        /// Backend service URL override
+        #[arg(long)]
+        base_url: Option<String>,
+    },
 }
 
 fn main() {
@@ -93,6 +100,7 @@ async fn run() {
         Commands::Swap { command } => commands::swap::execute(&ctx, command).await,
         Commands::Gateway { command } => commands::gateway::execute(&ctx, command).await,
         Commands::Portfolio { command } => commands::portfolio::execute(&ctx, command).await,
+        Commands::Mcp { base_url } => mcp::serve(base_url.as_deref()).await,
     };
 
     if let Err(e) = result {

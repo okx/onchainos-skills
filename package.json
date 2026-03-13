@@ -19,7 +19,9 @@
     "cursor",
     "codex",
     "opencode",
-    "onchain"
+    "onchain",
+    "mcp",
+    "mcp-server"
   ],
   "author": {
     "name": "OKX",
@@ -36,10 +38,11 @@
     "AGENTS.md",
     "CLAUDE.md",
     ".claude-plugin/",
-    ".cursor-plugin/"
+    ".cursor-plugin/",
+    ".mcp.json.example"
   ],
   "scripts": {
-    "postinstall": "echo '\\n  onchainos-skills installed!\\n  Skills: okx-wallet-portfolio, okx-dex-market, okx-dex-swap, okx-dex-token, okx-onchain-gateway\\n  Docs: https://web3.okx.com\\n'"
+    "postinstall": "echo '\\n  onchainos-skills installed!\\n  Skills: okx-wallet-portfolio, okx-dex-market, okx-dex-signal, okx-dex-trenches, okx-dex-swap, okx-dex-token, okx-onchain-gateway\\n  Docs: https://web3.okx.com\\n'"
   },
   "engines": {
     "node": ">=18"

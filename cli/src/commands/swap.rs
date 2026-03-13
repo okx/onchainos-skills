@@ -1,7 +1,9 @@
 use anyhow::Result;
 use clap::Subcommand;
+use serde_json::Value;
 
 use super::Context;
+use crate::client::ApiClient;
 use crate::output;
 
 /// All aggregator endpoints are GET requests.
@@ -72,6 +74,7 @@ pub enum SwapCommand {
 }
 
 pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
+    let client = ctx.client()?;
     match cmd {
         SwapCommand::Quote {
             from,
@@ -79,7 +82,12 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             amount,
             chain,
             swap_mode,
-        } => quote(ctx, &from, &to, &amount, &chain, &swap_mode).await,
+        } => {
+            let chain_index = crate::chains::resolve_chain(&chain);
+            output::success(
+                fetch_quote(&client, &chain_index, &from, &to, &amount, &swap_mode).await?,
+            );
+        }
         SwapCommand::Swap {
             from,
             to,
@@ -89,67 +97,80 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             wallet,
             swap_mode,
         } => {
-            swap(
-                ctx, &from, &to, &amount, &chain, &slippage, &wallet, &swap_mode,
-            )
-            .await
+            let chain_index = crate::chains::resolve_chain(&chain);
+            output::success(
+                fetch_swap(
+                    &client,
+                    &chain_index,
+                    &from,
+                    &to,
+                    &amount,
+                    &slippage,
+                    &wallet,
+                    &swap_mode,
+                )
+                .await?,
+            );
         }
         SwapCommand::Approve {
             token,
             amount,
             chain,
-        } => approve(ctx, &token, &amount, &chain).await,
-        SwapCommand::Chains => chains(ctx).await,
-        SwapCommand::Liquidity { chain } => liquidity(ctx, &chain).await,
+        } => {
+            let chain_index = crate::chains::resolve_chain(&chain);
+            output::success(fetch_approve(&client, &chain_index, &token, &amount).await?);
+        }
+        SwapCommand::Chains => {
+            output::success(fetch_chains(&client).await?);
+        }
+        SwapCommand::Liquidity { chain } => {
+            let chain_index = crate::chains::resolve_chain(&chain);
+            output::success(fetch_liquidity(&client, &chain_index).await?);
+        }
     }
+    Ok(())
 }
 
 /// GET /api/v6/dex/aggregator/quote
-async fn quote(
-    ctx: &Context,
+pub async fn fetch_quote(
+    client: &ApiClient,
+    chain_index: &str,
     from: &str,
     to: &str,
     amount: &str,
-    chain: &str,
     swap_mode: &str,
-) -> Result<()> {
-    let chain_index = crate::chains::resolve_chain(chain);
-    let client = ctx.client()?;
-    let data = client
+) -> Result<Value> {
+    client
         .get(
             "/api/v6/dex/aggregator/quote",
             &[
-                ("chainIndex", chain_index.as_str()),
+                ("chainIndex", chain_index),
                 ("fromTokenAddress", from),
                 ("toTokenAddress", to),
                 ("amount", amount),
                 ("swapMode", swap_mode),
             ],
         )
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }
 
 /// GET /api/v6/dex/aggregator/swap
 #[allow(clippy::too_many_arguments)]
-async fn swap(
-    ctx: &Context,
+pub async fn fetch_swap(
+    client: &ApiClient,
+    chain_index: &str,
     from: &str,
     to: &str,
     amount: &str,
-    chain: &str,
     slippage: &str,
     wallet: &str,
     swap_mode: &str,
-) -> Result<()> {
-    let chain_index = crate::chains::resolve_chain(chain);
-    let client = ctx.client()?;
-    let data = client
+) -> Result<Value> {
+    client
         .get(
             "/api/v6/dex/aggregator/swap",
             &[
-                ("chainIndex", chain_index.as_str()),
+                ("chainIndex", chain_index),
                 ("fromTokenAddress", from),
                 ("toTokenAddress", to),
                 ("amount", amount),
@@ -158,49 +179,41 @@ async fn swap(
                 ("swapMode", swap_mode),
             ],
         )
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }
 
 /// GET /api/v6/dex/aggregator/approve-transaction
-async fn approve(ctx: &Context, token: &str, amount: &str, chain: &str) -> Result<()> {
-    let chain_index = crate::chains::resolve_chain(chain);
-    let client = ctx.client()?;
-    let data = client
+pub async fn fetch_approve(
+    client: &ApiClient,
+    chain_index: &str,
+    token: &str,
+    amount: &str,
+) -> Result<Value> {
+    client
         .get(
             "/api/v6/dex/aggregator/approve-transaction",
             &[
-                ("chainIndex", chain_index.as_str()),
+                ("chainIndex", chain_index),
                 ("tokenContractAddress", token),
                 ("approveAmount", amount),
             ],
         )
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }
 
 /// GET /api/v6/dex/aggregator/supported/chain
-async fn chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client()?;
-    let data = client
+pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
+    client
         .get("/api/v6/dex/aggregator/supported/chain", &[])
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }
 
 /// GET /api/v6/dex/aggregator/get-liquidity
-async fn liquidity(ctx: &Context, chain: &str) -> Result<()> {
-    let chain_index = crate::chains::resolve_chain(chain);
-    let client = ctx.client()?;
-    let data = client
+pub async fn fetch_liquidity(client: &ApiClient, chain_index: &str) -> Result<Value> {
+    client
         .get(
             "/api/v6/dex/aggregator/get-liquidity",
-            &[("chainIndex", chain_index.as_str())],
+            &[("chainIndex", chain_index)],
         )
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }

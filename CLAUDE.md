@@ -4,12 +4,14 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-This is a **Claude Code plugin** — a collection of onchainos skills for on-chain operations. The project provides skills for token search, market data, wallet balance queries, swap execution, and transaction broadcasting across 20+ blockchains.
+This is a **Claude Code plugin** — a collection of onchainos skills for on-chain operations. The project provides skills for token search, market data, wallet balance queries, swap execution, and transaction broadcasting across 20+ blockchains. The `onchainos` CLI also works as a native MCP server.
 
 ## Architecture
 
 - **skills/** — 7 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
+- **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
+- **.mcp.json.example** — MCP server configuration template for Claude Code
 - **.github/workflows/** — CI/CD pipeline (`release.yml`: tag-triggered build for 9 platforms → GitHub Release)
 - **install.sh** — One-line installer for macOS / Linux (`curl | sh`)
 
@@ -19,7 +21,7 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 |-------|---------|-------------|
 | okx-wallet-portfolio | Wallet balance and portfolio | User asks about wallet holdings, token balances, portfolio value |
 | okx-dex-market | Prices, charts, wallet PnL | User asks for token prices, K-line data, or wallet PnL analysis (win rate, DEX history, realized/unrealized PnL) |
-| okx-dex-signal | Smart money / whale / KOL signals | User asks what smart money/whales/KOLs are buying, signal alerts, 大户信号, 牛人榜 |
+| okx-dex-signal | Smart money / whale / KOL signals | User asks what smart money/whales/KOLs are buying, signal alerts, 大户信号 |
 | okx-dex-trenches | Meme/pump.fun token scanning | User asks about new meme launches, dev reputation, bundle detection, 打狗/扫链/新盘, or mentions trench/trenches |
 | okx-dex-swap | DEX swap execution | User wants to swap/trade/buy/sell tokens |
 | okx-dex-token | Token search, liquidity, hot tokens, advanced info, holders, top traders, trade history | User searches for tokens, wants rankings, liquidity pools, holder info, top traders, or filtered trade history |
