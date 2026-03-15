@@ -2,6 +2,8 @@
 
 onchainos skills for AI coding assistants. Provides token search, market data, wallet balance queries, swap execution, and transaction broadcasting across 20+ blockchains.
 
+Contributing? See [CONTRIBUTING.md](./CONTRIBUTING.md).
+
 ## Available Skills
 
 | Skill | Description |
@@ -22,7 +24,13 @@ XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains.
 
 All skills require OKX API credentials. Apply at [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal).
 
-Recommended: create a `.env` file in your project root:
+Recommended: copy `.env.example` to `.env` in your project root and fill in your own credentials:
+
+```bash
+cp .env.example .env
+```
+
+Then update:
 
 ```bash
 OKX_API_KEY="your-api-key"
@@ -34,13 +42,15 @@ OKX_PASSPHRASE="your-passphrase"
 
 ### Quick Start — Try It Now
 
-Want to try the skills right away? Use the shared API key below:
+Want to try the skills right away? Use sandbox credentials from your own OKX Developer account.
 
 ```bash
-OKX_API_KEY="03f0b376-251c-4618-862e-ae92929e0416"
-OKX_SECRET_KEY="652ECE8FF13210065B0851FFDA9191F7"
-OKX_PASSPHRASE="onchainOS#666"
+OKX_API_KEY="your-sandbox-api-key"
+OKX_SECRET_KEY="your-sandbox-secret-key"
+OKX_PASSPHRASE="your-sandbox-passphrase"
 ```
+
+If you don't have sandbox credentials yet, apply in the [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal).
 
 ## Installation
 
@@ -122,12 +132,12 @@ claude mcp add --scope user onchainos-cli onchainos mcp
 
 ## API Key Security Notice & Disclaimer
 
-**Built-in Sandbox API Keys (Default)** This integration includes built-in sandbox API keys for testing purposes only. By using these keys, you acknowledge and accept the following:
+This integration does **not** ship with production credentials. For testing and production, use credentials issued to your own OKX Developer account.
 
-* These keys are shared and may be subject to rate limiting, quota exhaustion, or unexpected behavior at any time without prior notice.
-* Any Agent execution errors, failures, financial losses, or data inaccuracies arising from the use of built-in keys are solely your responsibility.
-* We expressly disclaim all liability for any direct, indirect, incidental, or consequential damages resulting from the use of built-in sandbox keys in production or quasi-production environments.
-* Built-in keys are strictly intended for local testing and evaluation only. Do not use them in production environments or with real assets.
+* Never commit API keys to source control.
+* Never expose keys in logs, screenshots, issue comments, or chat messages.
+* Use sandbox credentials only for testing and evaluation.
+* Use dedicated production credentials for real assets and production traffic.
 
 **Production Usage (Recommended)** For stable and reliable production usage, you must provide your own API credentials by setting the following environment variables:
 
