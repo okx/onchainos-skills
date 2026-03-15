@@ -16,30 +16,45 @@ metadata:
 
 Every time before running any `onchainos` command, always follow these steps in order. Do not echo routine command output to the user; only provide a brief status update when installing, updating, or handling a failure.
 
-1. **Install**: If `onchainos` is not found, download the installer to a temp
-   file, verify its SHA256 against **Installer Checksums** (bottom of this
-   document), then execute.
-   - **macOS/Linux**: `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/v1.0.4/install.sh -o /tmp/onchainos-install.sh`
-     — verify with `shasum -a 256 /tmp/onchainos-install.sh`, then `sh /tmp/onchainos-install.sh`
-   - **Windows**: `Invoke-WebRequest -Uri https://raw.githubusercontent.com/okx/onchainos-skills/v1.0.4/install.ps1 -OutFile "$env:TEMP\onchainos-install.ps1"`
-     — verify with `(Get-FileHash "$env:TEMP\onchainos-install.ps1" -Algorithm SHA256).Hash.ToLower()`, then `& "$env:TEMP\onchainos-install.ps1"`
-   - On checksum mismatch, **stop** and warn the user — the installer may have
-     been tampered with. On other failures, point to https://github.com/okx/onchainos-skills.
+1. **Resolve latest stable version**: Fetch the latest stable release tag from the GitHub API:
+   ```
+   curl -sSL "https://api.github.com/repos/okx/onchainos-skills/releases/latest"
+   ```
+   Extract the `tag_name` field (e.g., `v1.0.5`) into `LATEST_TAG`.
+   If the API call fails and `onchainos` is already installed locally, skip steps 2-3
+   and proceed to run the command (the user may be offline or rate-limited; a stale
+   binary is better than blocking). If `onchainos` is **not** installed, **stop** and
+   tell the user to check their network connection or install manually from
+   https://github.com/okx/onchainos-skills.
 
-2. **Check for updates**: Cache at `~/.onchainos/last_check` (`$env:USERPROFILE\.onchainos\last_check` on Windows).
-   If the cached timestamp is <12 hours old, skip to step 3. Otherwise re-run
-   the install flow (step 1) to ensure the correct version.
+2. **Install or update**: If `onchainos` is not found, or if the cache at `~/.onchainos/last_check` (`$env:USERPROFILE\.onchainos\last_check` on Windows) is older than 12 hours:
+   - Download the installer and its checksum file from the latest release tag:
+     - **macOS/Linux**:
+       `curl -sSL "https://raw.githubusercontent.com/okx/onchainos-skills/${LATEST_TAG}/install.sh" -o /tmp/onchainos-install.sh`
+       `curl -sSL "https://github.com/okx/onchainos-skills/releases/download/${LATEST_TAG}/installer-checksums.txt" -o /tmp/installer-checksums.txt`
+     - **Windows**:
+       `Invoke-WebRequest -Uri "https://raw.githubusercontent.com/okx/onchainos-skills/${LATEST_TAG}/install.ps1" -OutFile "$env:TEMP\onchainos-install.ps1"`
+       `Invoke-WebRequest -Uri "https://github.com/okx/onchainos-skills/releases/download/${LATEST_TAG}/installer-checksums.txt" -OutFile "$env:TEMP\installer-checksums.txt"`
+   - Verify the installer's SHA256 against `installer-checksums.txt`. On mismatch, **stop** and warn — the installer may have been tampered with.
+   - Execute: `sh /tmp/onchainos-install.sh` (or `& "$env:TEMP\onchainos-install.ps1"` on Windows).
+     The installer handles version comparison internally and only downloads the binary if needed.
+   - On other failures, point to https://github.com/okx/onchainos-skills.
 
-3. **Verify binary integrity** (once per session): Look up the platform target
-   and compare the installed binary's SHA256 against **Binary Checksums** below.
-   On mismatch, reinstall (step 1) and re-verify. If still mismatched, **stop**
-   and warn — the binary may have been tampered with.
-   - Platform targets — macOS: `arm64`→`aarch64-apple-darwin`, `x86_64`→`x86_64-apple-darwin`; Linux: `x86_64`→`x86_64-unknown-linux-gnu`, `aarch64`→`aarch64-unknown-linux-gnu`, `i686`→`i686-unknown-linux-gnu`, `armv7l`→`armv7-unknown-linux-gnueabihf`; Windows: `AMD64`→`x86_64-pc-windows-msvc`, `x86`→`i686-pc-windows-msvc`, `ARM64`→`aarch64-pc-windows-msvc`
+3. **Verify binary integrity** (once per session): Run `onchainos --version` to get the installed
+   version (e.g., `1.0.5` or `2.0.0-beta.0`). Construct the installed tag as `v<version>`.
+   Download `checksums.txt` for the **installed version's tag** (not necessarily LATEST_TAG):
+   `curl -sSL "https://github.com/okx/onchainos-skills/releases/download/v<version>/checksums.txt" -o /tmp/onchainos-checksums.txt`
+   Look up the platform target and compare the installed binary's SHA256 against the checksum.
+   On mismatch, reinstall (step 2) and re-verify. If still mismatched, **stop** and warn.
+   - Platform targets — macOS: `arm64`->`aarch64-apple-darwin`, `x86_64`->`x86_64-apple-darwin`; Linux: `x86_64`->`x86_64-unknown-linux-gnu`, `aarch64`->`aarch64-unknown-linux-gnu`, `i686`->`i686-unknown-linux-gnu`, `armv7l`->`armv7-unknown-linux-gnueabihf`; Windows: `AMD64`->`x86_64-pc-windows-msvc`, `x86`->`i686-pc-windows-msvc`, `ARM64`->`aarch64-pc-windows-msvc`
    - Hash command — macOS/Linux: `shasum -a 256 ~/.local/bin/onchainos`; Windows: `(Get-FileHash "$env:USERPROFILE\.local\bin\onchainos.exe" -Algorithm SHA256).Hash.ToLower()`
 
-4. **Do NOT auto-reinstall on command failures.** Report errors and suggest
+4. **Check for skill version drift** (once per session): If `onchainos --version` is newer
+   than this skill's `metadata.version`, display a one-time notice that the skill may be
+   outdated and suggest the user re-install skills via their platform's method. Do not block.
+5. **Do NOT auto-reinstall on command failures.** Report errors and suggest
    `onchainos --version` or manual reinstall from https://github.com/okx/onchainos-skills.
-5. **Rate limit errors.** If a command hits rate limits, the shared API key may
+6. **Rate limit errors.** If a command hits rate limits, the shared API key may
    be throttled. Suggest creating a personal key at the
    [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal). If the
    user creates a `.env` file, remind them to add `.env` to `.gitignore`.
@@ -332,29 +347,3 @@ Do not expose raw error codes or internal error messages to the user.
 - EVM contract addresses must be **all lowercase**
 - The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
 - The CLI handles authentication internally via environment variables — see Prerequisites step 4 for default values
-
-
-## Installer Checksums
-
-<!-- BEGIN_INSTALLER_CHECKSUMS (auto-updated by release workflow — do not edit) -->
-```
-2b9080f47c536be71dc3d04c9f459423148d2b4f6067c328dfc8d2e342af8020  install.sh
-a678b92593dcccb4d07379c5ab0c1672da5b0d18d916515513d31ff78851b96c  install.ps1
-```
-<!-- END_INSTALLER_CHECKSUMS -->
-
-## Binary Checksums
-
-<!-- BEGIN_CHECKSUMS (auto-updated by release workflow — do not edit) -->
-```
-11144db6f15fbbb7099b722073de1573f2734740411754c6ca9b612b8c4ba78b  onchainos-aarch64-apple-darwin
-ddea6a6e84e1f13ac4ff57bdddf3d7a66f4bba182059104bd0df80ece48b4499  onchainos-aarch64-pc-windows-msvc.exe
-3f70e4a992d594096ddc7f37e3c15ba56841f4264c906f79b698a007a2d8e221  onchainos-aarch64-unknown-linux-gnu
-2cf52ef47a21da9b4ab5e3d31d17a07bd091a76ba719a2a611fe166db9345a3e  onchainos-armv7-unknown-linux-gnueabihf
-460d192621a91dbc98a6566d40cd044bbbca399e1a024f44a43a8e4491eff2d4  onchainos-i686-pc-windows-msvc.exe
-83b79f87e4449cd3ba7e8a8f0e1b4c7e436e68b74fdc13f1c2ffc29e12fd9266  onchainos-i686-unknown-linux-gnu
-c012bb297a9dc67c08c3006252e7f734e9ce0c89665493b63c3e6e4b63b4468a  onchainos-x86_64-apple-darwin
-a5b0e14fa3c628df75d3624799f8a269be7a32f964f985fb4c4d7fdccf33ac0c  onchainos-x86_64-pc-windows-msvc.exe
-b07126a6ea651ccda398df080f0ad8140ae941351d1e54e25b5218174086d5f1  onchainos-x86_64-unknown-linux-gnu
-```
-<!-- END_CHECKSUMS -->

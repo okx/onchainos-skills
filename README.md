@@ -96,11 +96,19 @@ The skills work together in typical DeFi flows:
 
 ### Shell Script (macOS / Linux)
 
-Auto-detects your platform, downloads the matching binary, verifies SHA256 checksum, and installs to `~/.local/bin`:
+Auto-detects your platform, downloads the latest **stable** release, verifies SHA256 checksum, and installs to `~/.local/bin`:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
 ```
+
+To install the latest **beta** version (includes pre-releases):
+
+```bash
+curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh -s -- --beta
+```
+
+> **Note:** Beta versions (e.g., `v2.0.0-beta.0`) are opt-in only. The default installer and all skill auto-updates always use the latest stable release. Running without `--beta` will never downgrade a beta installation whose base version is ahead of the latest stable.
 
 ## MCP Server
 
