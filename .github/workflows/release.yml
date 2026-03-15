@@ -2,8 +2,14 @@
 # Automated release pipeline
 # Trigger: workflow_dispatch with version input
 # Flow: validate → build 9 platforms → generate checksums →
-#        commit checksums to skill folders → tag → publish Release
+#        commit version update → tag → publish Release
 # Artifacts: raw binaries (not tar.gz), with checksums.txt
+#
+# Beta releases:
+#   Use version format "2.0.0-beta.0" — the workflow auto-detects
+#   the "-beta" suffix and marks the GitHub Release as a pre-release.
+#   Pre-releases are excluded from the /releases/latest API endpoint,
+#   so stable auto-update is unaffected.
 # ──────────────────────────────────────────────────────────────
 name: Release
 
@@ -11,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g. 1.0.3) — must match Cargo.toml"
+        description: "Version to release (e.g. 1.0.5 or 2.0.0-beta.0) — must match Cargo.toml"
         required: true
         type: string
 
@@ -34,8 +40,22 @@ jobs:
     outputs:
       version: ${{ inputs.version }}
       tag: v${{ inputs.version }}
+      is_beta: ${{ steps.detect_beta.outputs.is_beta }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Detect beta release
+        id: detect_beta
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if echo "$INPUT_VERSION" | grep -q '\-beta'; then
+            echo "is_beta=true" >> "$GITHUB_OUTPUT"
+            echo "Detected beta release: v${INPUT_VERSION}"
+          else
+            echo "is_beta=false" >> "$GITHUB_OUTPUT"
+            echo "Detected stable release: v${INPUT_VERSION}"
+          fi
 
       - name: Read version from Cargo.toml
         id: cargo_ver
@@ -215,7 +235,7 @@ jobs:
           name: checksums
           path: checksums.txt
 
-  # ── Step 4: Commit checksums to repo and create tag ─────────
+  # ── Step 4: Commit version update and create tag ────────────
   commit-and-tag:
     needs: [validate, checksums]
     runs-on: ubuntu-latest
@@ -226,74 +246,29 @@ jobs:
           token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
           ref: ${{ github.ref_name }}
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: checksums
-          path: /tmp/checksums
-
-      - name: Embed checksums into SKILL.md files and update installers
+      - name: Update skill metadata version (stable releases only)
         env:
           VERSION: ${{ needs.validate.outputs.version }}
+          IS_BETA: ${{ needs.validate.outputs.is_beta }}
         run: |
-          CHECKSUMS_FILE="/tmp/checksums/checksums.txt"
-
-          # Inject checksums into the Binary Checksums section of each SKILL.md
-          # Uses python3 (available on all ubuntu runners) because awk -v
-          # cannot handle multi-line strings from sha256sum output
-          for skill_md in skills/*/SKILL.md; do
-            python3 -c "
-          import re, sys
-          checksums = open('$CHECKSUMS_FILE').read().strip()
-          content = open('$skill_md').read()
-          pattern = r'(<!-- BEGIN_CHECKSUMS[^>]*-->)\n.*?\n(<!-- END_CHECKSUMS -->)'
-          replacement = r'\1\n\`\`\`\n' + checksums + r'\n\`\`\`\n\2'
-          result = re.sub(pattern, replacement, content, flags=re.DOTALL)
-          open('$skill_md', 'w').write(result)
-          "
-          done
-
-          # Update REQUIRED_VERSION in install.sh (macOS/Linux)
-          sed -i "s/^REQUIRED_VERSION=.*/REQUIRED_VERSION=\"${VERSION}\"/" install.sh
-
-          # Update REQUIRED_VERSION in install.ps1 (Windows)
-          sed -i "s/^\\\$REQUIRED_VERSION = .*/\$REQUIRED_VERSION = \"${VERSION}\"/" install.ps1
-
-          # Compute installer checksums (after version update, before SKILL.md injection)
-          sha256sum install.sh install.ps1 > /tmp/installer-checksums.txt
-          echo "Installer checksums:"
-          cat /tmp/installer-checksums.txt
-
-          # Inject installer checksums into the Installer Checksums section of each SKILL.md
-          INSTALLER_CHECKSUMS="/tmp/installer-checksums.txt"
-          for skill_md in skills/*/SKILL.md; do
-            python3 -c "
-          import re
-          checksums = open('$INSTALLER_CHECKSUMS').read().strip()
-          content = open('$skill_md').read()
-          pattern = r'(<!-- BEGIN_INSTALLER_CHECKSUMS[^>]*-->)\n.*?\n(<!-- END_INSTALLER_CHECKSUMS -->)'
-          replacement = r'\1\n\`\`\`\n' + checksums + r'\n\`\`\`\n\2'
-          result = re.sub(pattern, replacement, content, flags=re.DOTALL)
-          open('$skill_md', 'w').write(result)
-          "
-          done
-
-          # Update tagged version in SKILL.md install URLs
-          sed -i "s|/onchainos-skills/v[0-9.]*\/install|/onchainos-skills/v${VERSION}/install|g" skills/*/SKILL.md
-
-          # Fail the release if any template placeholders remain after injection
-          if grep -R -n 'PLACEHOLDER' skills install.sh install.ps1; then
-            echo "::error::Release artifacts still contain PLACEHOLDER values after checksum injection."
-            exit 1
+          if [ "$IS_BETA" != "true" ]; then
+            for skill_md in skills/*/SKILL.md; do
+              sed -i "s/^  version: .*/  version: \"${VERSION}\"/" "$skill_md"
+            done
           fi
 
       - name: Commit and tag
         env:
           VERSION: ${{ needs.validate.outputs.version }}
+          IS_BETA: ${{ needs.validate.outputs.is_beta }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add skills/*/SKILL.md install.sh install.ps1
-          git commit -m "release: v${VERSION} — embed checksums and pin version"
+          if [ "$IS_BETA" != "true" ]; then
+            git add skills/*/SKILL.md
+          fi
+          git diff --cached --quiet && echo "No changes to commit" || \
+            git commit -m "release: v${VERSION} — update skill metadata"
           git tag -a "v${VERSION}" -m "Release v${VERSION}"
           git push origin HEAD --follow-tags
 
@@ -302,18 +277,27 @@ jobs:
     needs: [validate, commit-and-tag, checksums]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.validate.outputs.version }}
+
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
 
+      - name: Generate installer checksums
+        run: sha256sum install.sh install.ps1 > installer-checksums.txt
+
       - name: List all release artifacts
-        run: ls -lh && echo "---" && cat checksums.txt
+        run: ls -lh && echo "---" && cat checksums.txt && echo "---" && cat installer-checksums.txt
 
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.validate.outputs.version }}
           name: v${{ needs.validate.outputs.version }}
+          prerelease: ${{ needs.validate.outputs.is_beta == 'true' }}
           generate_release_notes: true
           files: |
             ${{ env.BIN_NAME }}-*
             checksums.txt
+            installer-checksums.txt
