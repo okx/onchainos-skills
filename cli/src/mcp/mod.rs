@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::client::ApiClient;
-use crate::commands::{gateway, market, memepump, portfolio, signal, swap, token};
+use crate::commands::{gateway, market, memepump, portfolio, signal, swap, token, tracker};
 
 // ── Token ──────────────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
@@ -262,6 +262,33 @@ struct PortfolioTokenBalancesParams {
     tokens: String,
     /// Exclude risky tokens: 0=filter out (default), 1=include
     exclude_risk: Option<String>,
+}
+
+// ── Tracker ────────────────────────────────────────────────────────────
+#[derive(Deserialize, JsonSchema)]
+struct TrackerTradesParams {
+    /// Tracker type: kol (default), smart_money/sm, multi_address/custom. Also accepts 1/2/3.
+    tracker_type: Option<String>,
+    /// Wallet address(es) — required when tracker_type is multi_address/custom/3. Comma-separated, max 20.
+    wallet_address: Option<String>,
+    /// Trade type: all (default), buy, sell. Also accepts 0/1/2.
+    trade_type: Option<String>,
+    /// Chain name, e.g. "ethereum", "solana". Empty or "all" for all chains.
+    chain: Option<String>,
+    /// Minimum trade volume in USD
+    min_volume: Option<String>,
+    /// Maximum trade volume in USD
+    max_volume: Option<String>,
+    /// Minimum holder count of the traded token
+    min_holders: Option<String>,
+    /// Minimum market cap in USD
+    min_market_cap: Option<String>,
+    /// Maximum market cap in USD
+    max_market_cap: Option<String>,
+    /// Minimum liquidity in USD
+    min_liquidity: Option<String>,
+    /// Maximum liquidity in USD
+    max_liquidity: Option<String>,
 }
 
 // ── Gateway ────────────────────────────────────────────────────────────
@@ -1170,6 +1197,37 @@ impl McpServer {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         match market::fetch_portfolio_token_pnl(&self.client, &chain_index, &p.address, &p.token)
             .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    // ── Tracker ────────────────────────────────────────────────────────
+
+    #[tool(
+        name = "tracker_trades",
+        description = "Get on-chain trading activity of tracked addresses (KOL / smart money / custom multi-address group). Returns recent buy/sell trades with token info, volume, and wallet details."
+    )]
+    async fn tracker_trades(
+        &self,
+        Parameters(p): Parameters<TrackerTradesParams>,
+    ) -> Result<String, String> {
+        match tracker::fetch_tracker_trades(
+            &self.client,
+            p.tracker_type.as_deref(),
+            p.wallet_address.as_deref(),
+            p.trade_type.as_deref(),
+            p.chain.as_deref(),
+            p.min_volume.as_deref(),
+            p.max_volume.as_deref(),
+            p.min_holders.as_deref(),
+            p.min_market_cap.as_deref(),
+            p.max_market_cap.as_deref(),
+            p.min_liquidity.as_deref(),
+            p.max_liquidity.as_deref(),
+        )
+        .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),
