@@ -179,7 +179,12 @@ mod tests {
         let request = builder.build().expect("build request");
 
         assert_eq!(
-            request.headers().get("ok-client-version").expect("header missing").to_str().unwrap(),
+            request
+                .headers()
+                .get("ok-client-version")
+                .expect("header missing")
+                .to_str()
+                .unwrap(),
             env!("CARGO_PKG_VERSION"),
         );
     }
