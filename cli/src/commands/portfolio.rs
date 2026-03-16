@@ -1,8 +1,9 @@
 use anyhow::Result;
 use clap::Subcommand;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use super::Context;
+use crate::client::ApiClient;
 use crate::output;
 
 #[derive(Subcommand)]
@@ -52,51 +53,67 @@ pub enum PortfolioCommand {
 }
 
 pub async fn execute(ctx: &Context, cmd: PortfolioCommand) -> Result<()> {
+    let client = ctx.client()?;
     match cmd {
-        PortfolioCommand::Chains => chains(ctx).await,
+        PortfolioCommand::Chains => {
+            output::success(fetch_chains(&client).await?);
+        }
         PortfolioCommand::TotalValue {
             address,
             chains,
             asset_type,
             exclude_risk,
-        } => total_value(ctx, &address, &chains, asset_type.as_deref(), exclude_risk).await,
+        } => {
+            let er = exclude_risk.map(|b| b.to_string());
+            output::success(
+                fetch_total_value(
+                    &client,
+                    &address,
+                    &chains,
+                    asset_type.as_deref(),
+                    er.as_deref(),
+                )
+                .await?,
+            );
+        }
         PortfolioCommand::AllBalances {
             address,
             chains,
             exclude_risk,
-        } => all_balances(ctx, &address, &chains, exclude_risk.as_deref()).await,
+        } => {
+            output::success(
+                fetch_all_balances(&client, &address, &chains, exclude_risk.as_deref()).await?,
+            );
+        }
         PortfolioCommand::TokenBalances {
             address,
             tokens,
             exclude_risk,
-        } => token_balances(ctx, &address, &tokens, exclude_risk.as_deref()).await,
+        } => {
+            output::success(
+                fetch_token_balances(&client, &address, &tokens, exclude_risk.as_deref()).await?,
+            );
+        }
     }
-}
-
-/// GET /api/v6/dex/balance/supported/chain
-async fn chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client()?;
-    let data = client
-        .get("/api/v6/dex/balance/supported/chain", &[])
-        .await?;
-    output::success(data);
     Ok(())
 }
 
+/// GET /api/v6/dex/balance/supported/chain
+pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
+    client.get("/api/v6/dex/balance/supported/chain", &[]).await
+}
+
 /// GET /api/v6/dex/balance/total-value-by-address
-async fn total_value(
-    ctx: &Context,
+pub async fn fetch_total_value(
+    client: &ApiClient,
     address: &str,
     chains: &str,
     asset_type: Option<&str>,
-    exclude_risk: Option<bool>,
-) -> Result<()> {
+    exclude_risk: Option<&str>,
+) -> Result<Value> {
     let chain_indices = crate::chains::resolve_chains(chains);
-    let client = ctx.client()?;
-    let mut query: Vec<(&str, String)> = vec![
-        ("address", address.to_string()),
-        ("chains", chain_indices.clone()),
-    ];
+    let mut query: Vec<(&str, String)> =
+        vec![("address", address.to_string()), ("chains", chain_indices)];
     if let Some(at) = asset_type {
         query.push(("assetType", at.to_string()));
     }
@@ -104,57 +121,46 @@ async fn total_value(
         query.push(("excludeRiskToken", er.to_string()));
     }
     let query_refs: Vec<(&str, &str)> = query.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let data = client
+    client
         .get("/api/v6/dex/balance/total-value-by-address", &query_refs)
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }
 
 /// GET /api/v6/dex/balance/all-token-balances-by-address
-async fn all_balances(
-    ctx: &Context,
+pub async fn fetch_all_balances(
+    client: &ApiClient,
     address: &str,
     chains: &str,
     exclude_risk: Option<&str>,
-) -> Result<()> {
+) -> Result<Value> {
     let chain_indices = crate::chains::resolve_chains(chains);
-    let client = ctx.client()?;
-    let mut query: Vec<(&str, String)> = vec![
-        ("address", address.to_string()),
-        ("chains", chain_indices.clone()),
-    ];
+    let mut query: Vec<(&str, String)> =
+        vec![("address", address.to_string()), ("chains", chain_indices)];
     if let Some(er) = exclude_risk {
         query.push(("excludeRiskToken", er.to_string()));
     }
     let query_refs: Vec<(&str, &str)> = query.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let data = client
+    client
         .get(
             "/api/v6/dex/balance/all-token-balances-by-address",
             &query_refs,
         )
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }
 
 /// POST /api/v6/dex/balance/token-balances-by-address
-async fn token_balances(
-    ctx: &Context,
+pub async fn fetch_token_balances(
+    client: &ApiClient,
     address: &str,
     tokens: &str,
     exclude_risk: Option<&str>,
-) -> Result<()> {
-    let client = ctx.client()?;
-
-    // Parse "chainIndex:tokenAddress" pairs
-    let token_list: Vec<serde_json::Value> = tokens
+) -> Result<Value> {
+    let token_list: Vec<Value> = tokens
         .split(',')
         .map(|pair| {
             let parts: Vec<&str> = pair.splitn(2, ':').collect();
             let chain_index = if parts.is_empty() { "" } else { parts[0] };
             let token_address = if parts.len() > 1 { parts[1] } else { "" };
-            // Resolve chain name to index if not numeric
             let resolved_chain = crate::chains::resolve_chain(chain_index);
             json!({
                 "chainIndex": resolved_chain,
@@ -171,9 +177,7 @@ async fn token_balances(
         body["excludeRiskToken"] = json!(er);
     }
 
-    let data = client
+    client
         .post("/api/v6/dex/balance/token-balances-by-address", &body)
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }
