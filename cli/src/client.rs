@@ -10,6 +10,7 @@ const DEFAULT_API_KEY: &str = "03f0b376-251c-4618-862e-ae92929e0416";
 const DEFAULT_SECRET_KEY: &str = "652ECE8FF13210065B0851FFDA9191F7";
 const DEFAULT_PASSPHRASE: &str = "onchainOS#666";
 
+#[derive(Clone)]
 pub struct ApiClient {
     http: Client,
     base_url: String,
@@ -65,6 +66,7 @@ impl ApiClient {
             .header("OK-ACCESS-TIMESTAMP", timestamp)
             .header("Content-Type", "application/json")
             .header("ok-client-type", "cli")
+            .header("ok-client-version", env!("CARGO_PKG_VERSION"))
     }
 
     fn build_get_url_and_request_path(
@@ -165,6 +167,20 @@ mod tests {
         assert_eq!(
             request_path,
             "/api/v6/dex/market/memepump/tokenList?chainIndex=501&keywordsInclude=dog+wif&keywordsExclude=%E7%8B%97"
+        );
+    }
+
+    #[test]
+    fn apply_auth_includes_agent_cli_version_header() {
+        let client = ApiClient::new(None).expect("client");
+        let http = reqwest::Client::new();
+        let builder = http.get("https://example.com");
+        let builder = client.apply_auth(builder, "2024-01-01T00:00:00.000Z", "fakesign");
+        let request = builder.build().expect("build request");
+
+        assert_eq!(
+            request.headers().get("ok-client-version").expect("header missing").to_str().unwrap(),
+            env!("CARGO_PKG_VERSION"),
         );
     }
 }

@@ -1,7 +1,9 @@
 use anyhow::Result;
 use clap::Subcommand;
+use serde_json::Value;
 
 use super::Context;
+use crate::client::ApiClient;
 use crate::output;
 
 #[derive(Subcommand)]
@@ -302,68 +304,72 @@ pub async fn execute(ctx: &Context, cmd: MemepumpCommand) -> Result<()> {
             keywords_include,
             keywords_exclude,
         } => {
-            memepump_token_list(
-                ctx,
-                MemepumpTokenListParams {
-                    chain,
-                    stage,
-                    wallet_address,
-                    protocol_id_list,
-                    quote_token_address_list,
-                    min_top10_holdings_percent,
-                    max_top10_holdings_percent,
-                    min_dev_holdings_percent,
-                    max_dev_holdings_percent,
-                    min_insiders_percent,
-                    max_insiders_percent,
-                    min_bundlers_percent,
-                    max_bundlers_percent,
-                    min_snipers_percent,
-                    max_snipers_percent,
-                    min_fresh_wallets_percent,
-                    max_fresh_wallets_percent,
-                    min_suspected_phishing_wallet_percent,
-                    max_suspected_phishing_wallet_percent,
-                    min_bot_traders,
-                    max_bot_traders,
-                    min_dev_migrated,
-                    max_dev_migrated,
-                    min_market_cap,
-                    max_market_cap,
-                    min_volume,
-                    max_volume,
-                    min_tx_count,
-                    max_tx_count,
-                    min_bonding_percent,
-                    max_bonding_percent,
-                    min_holders,
-                    max_holders,
-                    min_token_age,
-                    max_token_age,
-                    min_buy_tx_count,
-                    max_buy_tx_count,
-                    min_sell_tx_count,
-                    max_sell_tx_count,
-                    min_token_symbol_length,
-                    max_token_symbol_length,
-                    has_at_least_one_social_link,
-                    has_x,
-                    has_telegram,
-                    has_website,
-                    website_type_list,
-                    dex_screener_paid,
-                    live_on_pump_fun,
-                    dev_sell_all,
-                    dev_still_holding,
-                    community_takeover,
-                    bags_fee_claimed,
-                    min_fees_native,
-                    max_fees_native,
-                    keywords_include,
-                    keywords_exclude,
-                },
-            )
-            .await
+            let client = ctx.client()?;
+            output::success(
+                fetch_token_list(
+                    &client,
+                    MemepumpTokenListParams {
+                        chain,
+                        stage,
+                        wallet_address,
+                        protocol_id_list,
+                        quote_token_address_list,
+                        min_top10_holdings_percent,
+                        max_top10_holdings_percent,
+                        min_dev_holdings_percent,
+                        max_dev_holdings_percent,
+                        min_insiders_percent,
+                        max_insiders_percent,
+                        min_bundlers_percent,
+                        max_bundlers_percent,
+                        min_snipers_percent,
+                        max_snipers_percent,
+                        min_fresh_wallets_percent,
+                        max_fresh_wallets_percent,
+                        min_suspected_phishing_wallet_percent,
+                        max_suspected_phishing_wallet_percent,
+                        min_bot_traders,
+                        max_bot_traders,
+                        min_dev_migrated,
+                        max_dev_migrated,
+                        min_market_cap,
+                        max_market_cap,
+                        min_volume,
+                        max_volume,
+                        min_tx_count,
+                        max_tx_count,
+                        min_bonding_percent,
+                        max_bonding_percent,
+                        min_holders,
+                        max_holders,
+                        min_token_age,
+                        max_token_age,
+                        min_buy_tx_count,
+                        max_buy_tx_count,
+                        min_sell_tx_count,
+                        max_sell_tx_count,
+                        min_token_symbol_length,
+                        max_token_symbol_length,
+                        has_at_least_one_social_link,
+                        has_x,
+                        has_telegram,
+                        has_website,
+                        website_type_list,
+                        dex_screener_paid,
+                        live_on_pump_fun,
+                        dev_sell_all,
+                        dev_still_holding,
+                        community_takeover,
+                        bags_fee_claimed,
+                        min_fees_native,
+                        max_fees_native,
+                        keywords_include,
+                        keywords_exclude,
+                    },
+                )
+                .await?,
+            );
+            Ok(())
         }
         MemepumpCommand::TokenDetails {
             address,
@@ -405,80 +411,79 @@ pub async fn execute(ctx: &Context, cmd: MemepumpCommand) -> Result<()> {
     }
 }
 
-/// GET /api/v6/dex/market/memepump/supported/chainsProtocol — no parameters
-async fn memepump_chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client()?;
-    let data = client
-        .get("/api/v6/dex/market/memepump/supported/chainsProtocol", &[])
-        .await?;
-    output::success(data);
-    Ok(())
-}
+// ── Public fetch functions (used by both CLI and MCP) ────────────────
 
 /// Parameters for the memepump token list query.
-struct MemepumpTokenListParams {
-    chain: String,
-    stage: String,
-    wallet_address: Option<String>,
-    protocol_id_list: Option<String>,
-    quote_token_address_list: Option<String>,
-    min_top10_holdings_percent: Option<String>,
-    max_top10_holdings_percent: Option<String>,
-    min_dev_holdings_percent: Option<String>,
-    max_dev_holdings_percent: Option<String>,
-    min_insiders_percent: Option<String>,
-    max_insiders_percent: Option<String>,
-    min_bundlers_percent: Option<String>,
-    max_bundlers_percent: Option<String>,
-    min_snipers_percent: Option<String>,
-    max_snipers_percent: Option<String>,
-    min_fresh_wallets_percent: Option<String>,
-    max_fresh_wallets_percent: Option<String>,
-    min_suspected_phishing_wallet_percent: Option<String>,
-    max_suspected_phishing_wallet_percent: Option<String>,
-    min_bot_traders: Option<String>,
-    max_bot_traders: Option<String>,
-    min_dev_migrated: Option<String>,
-    max_dev_migrated: Option<String>,
-    min_market_cap: Option<String>,
-    max_market_cap: Option<String>,
-    min_volume: Option<String>,
-    max_volume: Option<String>,
-    min_tx_count: Option<String>,
-    max_tx_count: Option<String>,
-    min_bonding_percent: Option<String>,
-    max_bonding_percent: Option<String>,
-    min_holders: Option<String>,
-    max_holders: Option<String>,
-    min_token_age: Option<String>,
-    max_token_age: Option<String>,
-    min_buy_tx_count: Option<String>,
-    max_buy_tx_count: Option<String>,
-    min_sell_tx_count: Option<String>,
-    max_sell_tx_count: Option<String>,
-    min_token_symbol_length: Option<String>,
-    max_token_symbol_length: Option<String>,
-    has_at_least_one_social_link: Option<String>,
-    has_x: Option<String>,
-    has_telegram: Option<String>,
-    has_website: Option<String>,
-    website_type_list: Option<String>,
-    dex_screener_paid: Option<String>,
-    live_on_pump_fun: Option<String>,
-    dev_sell_all: Option<String>,
-    dev_still_holding: Option<String>,
-    community_takeover: Option<String>,
-    bags_fee_claimed: Option<String>,
-    min_fees_native: Option<String>,
-    max_fees_native: Option<String>,
-    keywords_include: Option<String>,
-    keywords_exclude: Option<String>,
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+pub struct MemepumpTokenListParams {
+    pub chain: String,
+    pub stage: String,
+    pub wallet_address: Option<String>,
+    pub protocol_id_list: Option<String>,
+    pub quote_token_address_list: Option<String>,
+    pub min_top10_holdings_percent: Option<String>,
+    pub max_top10_holdings_percent: Option<String>,
+    pub min_dev_holdings_percent: Option<String>,
+    pub max_dev_holdings_percent: Option<String>,
+    pub min_insiders_percent: Option<String>,
+    pub max_insiders_percent: Option<String>,
+    pub min_bundlers_percent: Option<String>,
+    pub max_bundlers_percent: Option<String>,
+    pub min_snipers_percent: Option<String>,
+    pub max_snipers_percent: Option<String>,
+    pub min_fresh_wallets_percent: Option<String>,
+    pub max_fresh_wallets_percent: Option<String>,
+    pub min_suspected_phishing_wallet_percent: Option<String>,
+    pub max_suspected_phishing_wallet_percent: Option<String>,
+    pub min_bot_traders: Option<String>,
+    pub max_bot_traders: Option<String>,
+    pub min_dev_migrated: Option<String>,
+    pub max_dev_migrated: Option<String>,
+    pub min_market_cap: Option<String>,
+    pub max_market_cap: Option<String>,
+    pub min_volume: Option<String>,
+    pub max_volume: Option<String>,
+    pub min_tx_count: Option<String>,
+    pub max_tx_count: Option<String>,
+    pub min_bonding_percent: Option<String>,
+    pub max_bonding_percent: Option<String>,
+    pub min_holders: Option<String>,
+    pub max_holders: Option<String>,
+    pub min_token_age: Option<String>,
+    pub max_token_age: Option<String>,
+    pub min_buy_tx_count: Option<String>,
+    pub max_buy_tx_count: Option<String>,
+    pub min_sell_tx_count: Option<String>,
+    pub max_sell_tx_count: Option<String>,
+    pub min_token_symbol_length: Option<String>,
+    pub max_token_symbol_length: Option<String>,
+    pub has_at_least_one_social_link: Option<String>,
+    pub has_x: Option<String>,
+    pub has_telegram: Option<String>,
+    pub has_website: Option<String>,
+    pub website_type_list: Option<String>,
+    pub dex_screener_paid: Option<String>,
+    pub live_on_pump_fun: Option<String>,
+    pub dev_sell_all: Option<String>,
+    pub dev_still_holding: Option<String>,
+    pub community_takeover: Option<String>,
+    pub bags_fee_claimed: Option<String>,
+    pub min_fees_native: Option<String>,
+    pub max_fees_native: Option<String>,
+    pub keywords_include: Option<String>,
+    pub keywords_exclude: Option<String>,
 }
 
-/// GET /api/v6/dex/market/memepump/tokenList — filtered token list
-async fn memepump_token_list(ctx: &Context, p: MemepumpTokenListParams) -> Result<()> {
+/// GET /api/v6/dex/market/memepump/supported/chainsProtocol
+pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
+    client
+        .get("/api/v6/dex/market/memepump/supported/chainsProtocol", &[])
+        .await
+}
+
+/// GET /api/v6/dex/market/memepump/tokenList
+pub async fn fetch_token_list(client: &ApiClient, p: MemepumpTokenListParams) -> Result<Value> {
     let chain_index = crate::chains::resolve_chain(&p.chain).to_string();
-    let client = ctx.client()?;
 
     let wallet_address = p.wallet_address.unwrap_or_default();
     let protocol_id_list = p.protocol_id_list.unwrap_or_default();
@@ -535,7 +540,7 @@ async fn memepump_token_list(ctx: &Context, p: MemepumpTokenListParams) -> Resul
     let kw_include = p.keywords_include.unwrap_or_default();
     let kw_exclude = p.keywords_exclude.unwrap_or_default();
 
-    let data = client
+    client
         .get(
             "/api/v6/dex/market/memepump/tokenList",
             &[
@@ -597,12 +602,73 @@ async fn memepump_token_list(ctx: &Context, p: MemepumpTokenListParams) -> Resul
                 ("keywordsExclude", &kw_exclude),
             ],
         )
-        .await?;
-    output::success(data);
-    Ok(())
+        .await
 }
 
 /// GET /api/v6/dex/market/memepump/tokenDetails
+pub async fn fetch_token_details(
+    client: &ApiClient,
+    address: &str,
+    chain_index: &str,
+    wallet_address: &str,
+) -> Result<Value> {
+    client
+        .get(
+            "/api/v6/dex/market/memepump/tokenDetails",
+            &[
+                ("chainIndex", chain_index),
+                ("tokenContractAddress", address),
+                ("walletAddress", wallet_address),
+            ],
+        )
+        .await
+}
+
+/// GET /api/v6/dex/market/memepump/apedWallet
+pub async fn fetch_aped_wallet(
+    client: &ApiClient,
+    address: &str,
+    chain_index: &str,
+    wallet_address: &str,
+) -> Result<Value> {
+    client
+        .get(
+            "/api/v6/dex/market/memepump/apedWallet",
+            &[
+                ("chainIndex", chain_index),
+                ("tokenContractAddress", address),
+                ("walletAddress", wallet_address),
+            ],
+        )
+        .await
+}
+
+/// Shared helper for memepump endpoints that take (chainIndex, tokenContractAddress).
+pub async fn fetch_by_address(
+    client: &ApiClient,
+    path: &str,
+    address: &str,
+    chain_index: &str,
+) -> Result<Value> {
+    client
+        .get(
+            path,
+            &[
+                ("chainIndex", chain_index),
+                ("tokenContractAddress", address),
+            ],
+        )
+        .await
+}
+
+// ── CLI wrappers ─────────────────────────────────────────────────────
+
+async fn memepump_chains(ctx: &Context) -> Result<()> {
+    let client = ctx.client()?;
+    output::success(fetch_chains(&client).await?);
+    Ok(())
+}
+
 async fn memepump_token_details(
     ctx: &Context,
     address: &str,
@@ -614,21 +680,10 @@ async fn memepump_token_details(
         .unwrap_or_else(|| ctx.chain_index_or("solana"));
     let wallet_address = wallet.unwrap_or_default();
     let client = ctx.client()?;
-    let data = client
-        .get(
-            "/api/v6/dex/market/memepump/tokenDetails",
-            &[
-                ("chainIndex", chain_index.as_str()),
-                ("tokenContractAddress", address),
-                ("walletAddress", &wallet_address),
-            ],
-        )
-        .await?;
-    output::success(data);
+    output::success(fetch_token_details(&client, address, &chain_index, &wallet_address).await?);
     Ok(())
 }
 
-/// GET /api/v6/dex/market/memepump/apedWallet
 async fn memepump_aped_wallet(
     ctx: &Context,
     address: &str,
@@ -640,21 +695,10 @@ async fn memepump_aped_wallet(
         .unwrap_or_else(|| ctx.chain_index_or("solana"));
     let wallet_address = wallet.unwrap_or_default();
     let client = ctx.client()?;
-    let data = client
-        .get(
-            "/api/v6/dex/market/memepump/apedWallet",
-            &[
-                ("chainIndex", chain_index.as_str()),
-                ("tokenContractAddress", address),
-                ("walletAddress", &wallet_address),
-            ],
-        )
-        .await?;
-    output::success(data);
+    output::success(fetch_aped_wallet(&client, address, &chain_index, &wallet_address).await?);
     Ok(())
 }
 
-/// Shared helper for memepump endpoints that take (chainIndex, tokenContractAddress).
 async fn memepump_by_address(
     ctx: &Context,
     path: &str,
@@ -665,15 +709,6 @@ async fn memepump_by_address(
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("solana"));
     let client = ctx.client()?;
-    let data = client
-        .get(
-            path,
-            &[
-                ("chainIndex", chain_index.as_str()),
-                ("tokenContractAddress", address),
-            ],
-        )
-        .await?;
-    output::success(data);
+    output::success(fetch_by_address(&client, path, address, &chain_index).await?);
     Ok(())
 }
