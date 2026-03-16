@@ -54,3 +54,5 @@ results/
 onchainos_bin
 run.sh
 test-cases.json
+
+evals/
