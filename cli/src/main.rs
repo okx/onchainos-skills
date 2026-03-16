@@ -5,6 +5,7 @@ mod client;
 mod commands;
 mod config;
 mod output;
+mod watch;
 
 use clap::{Parser, Subcommand};
 

@@ -1,11 +1,13 @@
 use anyhow::{bail, Result};
 use clap::Subcommand;
+use serde_json::json;
 
 use super::Context;
 use crate::output;
+use crate::watch::store::{self, now_ms};
+use crate::watch::types::{DaemonState, WatchConfig, WatchEnv, ALL_CHANNELS};
 
 /// Resolve tracker type alias to API integer string.
-/// Accepts human-readable names, abbreviations, and raw numeric values.
 fn resolve_tracker_type(s: &str) -> &str {
     match s.to_lowercase().as_str() {
         "smart_money" | "smartmoney" | "smart-money" | "sm" | "1" => "1",
@@ -16,7 +18,6 @@ fn resolve_tracker_type(s: &str) -> &str {
 }
 
 /// Resolve trade type alias to API integer string.
-/// Accepts human-readable names and raw numeric values.
 fn resolve_trade_type(s: &str) -> &str {
     match s.to_lowercase().as_str() {
         "all" | "0" => "0",
@@ -65,6 +66,80 @@ pub enum TrackerCommand {
         #[arg(long)]
         max_liquidity: Option<String>,
     },
+
+    /// Real-time WebSocket watch for tracker events
+    Watch {
+        #[command(subcommand)]
+        command: WatchCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum WatchCommand {
+    /// Start a background WebSocket watch session and return its ID
+    Start {
+        /// Channel(s) to subscribe, e.g. --channel address-tracker-trade-public.
+        /// Can be specified multiple times. Defaults to all known channels.
+        #[arg(long)]
+        channel: Vec<String>,
+        /// Environment: prod (default) or pre
+        #[arg(long, default_value = "prod")]
+        env: String,
+    },
+
+    /// Poll incremental events from a running watch session
+    Poll {
+        /// Watch session ID returned by watch start
+        #[arg(long)]
+        id: String,
+        /// Channel to poll (e.g. address-tracker-trade-public). Defaults to the session's subscribed channel.
+        #[arg(long)]
+        channel: Option<String>,
+        /// Maximum number of events to return (default: 20)
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Filter: only return events where quoteTokenAmount >= this value
+        #[arg(long)]
+        min_quote_amount: Option<f64>,
+        /// Filter: only return events where marketCap >= this value (USD)
+        #[arg(long)]
+        min_market_cap: Option<f64>,
+        /// Filter: only return events where realizedPnlUsd >= this value (set 0 for profit-only)
+        #[arg(long)]
+        min_pnl: Option<f64>,
+        /// Filter: only return events from this traderAddress (exact or prefix match)
+        #[arg(long)]
+        trader: Option<String>,
+        /// Filter: only return events matching tag type — smart_money (1) or kol (2)
+        #[arg(long)]
+        tag: Option<String>,
+        /// Filter: only return events with tradeTime >= this ms timestamp (for catching up history)
+        #[arg(long)]
+        since: Option<u64>,
+        /// Filter: buy or sell
+        #[arg(long)]
+        trade_type: Option<String>,
+    },
+
+    /// Stop a running watch session and clean up its resources
+    Stop {
+        /// Watch session ID to stop
+        #[arg(long)]
+        id: String,
+        /// Return any unread events before stopping
+        #[arg(long)]
+        flush: bool,
+    },
+
+    /// List all watch sessions
+    List,
+
+    /// Internal: run daemon event loop (not for direct use)
+    #[command(hide = true)]
+    RunDaemon {
+        #[arg(long)]
+        id: String,
+    },
 }
 
 pub async fn execute(ctx: &Context, cmd: TrackerCommand) -> Result<()> {
@@ -98,10 +173,363 @@ pub async fn execute(ctx: &Context, cmd: TrackerCommand) -> Result<()> {
             )
             .await
         }
+        TrackerCommand::Watch { command } => execute_watch(command).await,
     }
 }
 
-/// GET /api/v6/dex/market/address-tracker/trades
+async fn execute_watch(cmd: WatchCommand) -> Result<()> {
+    match cmd {
+        WatchCommand::Start { channel, env } => watch_start(channel, &env).await,
+        WatchCommand::Poll {
+            id,
+            channel,
+            limit,
+            min_quote_amount,
+            min_market_cap,
+            min_pnl,
+            trader,
+            tag,
+            since,
+            trade_type,
+        } => watch_poll(&id, channel, limit, min_quote_amount, min_market_cap, min_pnl, trader, tag, since, trade_type),
+        WatchCommand::Stop { id, flush } => watch_stop(&id, flush),
+        WatchCommand::List => watch_list(),
+        WatchCommand::RunDaemon { id } => run_daemon_entry(&id).await,
+    }
+}
+
+// ── watch start ───────────────────────────────────────────────────────────────
+
+async fn watch_start(channels: Vec<String>, env: &str) -> Result<()> {
+    let watch_env = match env {
+        "pre" => WatchEnv::Pre,
+        "prod" => WatchEnv::Prod,
+        other => bail!("unknown --env '{}'; use pre or prod", other),
+    };
+
+    // Default to all known channels when none specified
+    let mut channels = channels;
+    if channels.is_empty() {
+        channels = ALL_CHANNELS.iter().map(|c| c.name.to_string()).collect();
+    }
+    channels.sort();
+    channels.dedup();
+
+    // Return existing session if same channel set + env is already running
+    let existing = store::list_watches()?;
+    for w in &existing {
+        if let Some(cfg) = &w.config {
+            let mut existing_channels = cfg.channels.clone();
+            existing_channels.sort();
+            if existing_channels == channels
+                && cfg.env == watch_env
+                && matches!(w.state, DaemonState::Running | DaemonState::Reconnecting)
+            {
+                output::success(json!({
+                    "id": w.id,
+                    "status": "already_running",
+                    "channels": channels,
+                    "env": env
+                }));
+                return Ok(());
+            }
+        }
+    }
+
+    // Generate watch ID
+    let id = format!("watch_{}", &uuid::Uuid::new_v4().to_string()[..6]);
+
+    let config = WatchConfig {
+        channels: channels.clone(),
+        env: watch_env,
+        created_at: now_ms(),
+    };
+    let dir = store::init_watch_dir(&id, &config)?;
+
+    // Spawn daemon as detached child process
+    let exe = std::env::current_exe()?;
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.args(["tracker", "watch", "run-daemon", "--id", &id]);
+
+    // Redirect stdio so daemon doesn't inherit the terminal
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::null());
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x00000008); // DETACHED_PROCESS
+    }
+
+    let child = cmd.spawn()?;
+    let pid = child.id();
+
+    // Write PID immediately (daemon will overwrite with same value on start)
+    store::write_pid(&dir, pid)?;
+
+    // Drop child handle — parent exits, daemon is reparented to init on Unix
+    drop(child);
+
+    output::success(json!({
+        "id": id,
+        "status": "starting",
+        "pid": pid,
+        "channels": channels,
+        "env": env,
+        "dir": dir.to_string_lossy()
+    }));
+    Ok(())
+}
+
+// ── watch poll ────────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_arguments)]
+fn watch_poll(
+    id: &str,
+    channel: Option<String>,
+    limit: usize,
+    min_quote_amount: Option<f64>,
+    min_market_cap: Option<f64>,
+    min_pnl: Option<f64>,
+    trader: Option<String>,
+    tag: Option<String>,
+    since: Option<u64>,
+    trade_type: Option<String>,
+) -> Result<()> {
+    let dir = store::watch_dir(id)?;
+    if !dir.exists() {
+        bail!("watch session '{}' not found", id);
+    }
+
+    let daemon_state = store::read_daemon_state(id)?;
+
+    // Resolve channel: use --channel arg, or fall back to first channel in session config
+    let poll_channel = match channel {
+        Some(c) => c,
+        None => {
+            let config = store::read_config(id)?;
+            config.channels.into_iter().next()
+                .ok_or_else(|| anyhow::anyhow!("session has no channels configured"))?
+        }
+    };
+
+    // Read events from cursor
+    let result = store::read_events_from_cursor(&dir, &poll_channel, limit * 4)?; // over-fetch before filter
+
+    // Resolve tag filter
+    let tag_filter: Option<u8> = match tag.as_deref() {
+        Some("smart_money") | Some("sm") | Some("1") => Some(1),
+        Some("kol") | Some("2") => Some(2),
+        Some(other) => bail!("unknown --tag value '{}'; use smart_money or kol", other),
+        None => None,
+    };
+
+    let trade_type_filter = trade_type.as_deref().map(resolve_trade_type).map(str::to_string);
+
+    // Apply client-side filters
+    let filtered: Vec<_> = result
+        .events
+        .into_iter()
+        .filter(|e| {
+            if let Some(min) = min_quote_amount {
+                if e.quote_token_amount.parse::<f64>().unwrap_or(0.0) < min {
+                    return false;
+                }
+            }
+            if let Some(min) = min_market_cap {
+                if e.market_cap.parse::<f64>().unwrap_or(0.0) < min {
+                    return false;
+                }
+            }
+            if let Some(min) = min_pnl {
+                if e.realized_pnl_usd.parse::<f64>().unwrap_or(f64::NEG_INFINITY) < min {
+                    return false;
+                }
+            }
+            if let Some(ref t) = trader {
+                if !e.trader_address.starts_with(t.as_str()) {
+                    return false;
+                }
+            }
+            if let Some(tag) = tag_filter {
+                let has_tag = e
+                    .tag_type_list
+                    .as_ref()
+                    .map(|list| list.contains(&tag))
+                    .unwrap_or(false);
+                if !has_tag {
+                    return false;
+                }
+            }
+            if let Some(ts) = since {
+                if e.trade_time.parse::<u64>().unwrap_or(0) < ts {
+                    return false;
+                }
+            }
+            if let Some(ref tt) = trade_type_filter {
+                if !tt.is_empty() && tt != "0" {
+                    let expected = if tt == "1" { "buy" } else { "sell" };
+                    if e.trade_type != expected {
+                        return false;
+                    }
+                }
+            }
+            true
+        })
+        .take(limit)
+        .collect();
+
+    let last_trade_time = filtered.last().map(|e| e.trade_time.as_str()).unwrap_or("").to_string();
+    let new_count = filtered.len();
+
+    // Persist updated cursor
+    store::write_cursor(&dir, &poll_channel, result.new_cursor.file_no, result.new_cursor.offset)?;
+
+    let status_str = match &daemon_state {
+        DaemonState::Disconnected(reason) => format!("disconnected:{}", reason),
+        other => other.as_str().to_string(),
+    };
+
+    output::success(json!({
+        "daemon_status": status_str,
+        "new_count": new_count,
+        "last_trade_time": last_trade_time,
+        "trades": filtered
+    }));
+    Ok(())
+}
+
+// ── watch stop ────────────────────────────────────────────────────────────────
+
+fn watch_stop(id: &str, flush: bool) -> Result<()> {
+    let dir = store::watch_dir(id)?;
+    if !dir.exists() {
+        bail!("watch session '{}' not found", id);
+    }
+
+    // Optionally flush remaining events before stopping (all channels)
+    let flushed_trades = if flush {
+        let config = store::read_config(id)?;
+        let mut all_events = Vec::new();
+        for ch in &config.channels {
+            let result = store::read_events_from_cursor(&dir, ch, 1000)?;
+            store::write_cursor(&dir, ch, result.new_cursor.file_no, result.new_cursor.offset)?;
+            all_events.extend(result.events);
+        }
+        all_events
+    } else {
+        vec![]
+    };
+
+    // Kill the daemon
+    let kill_result = kill_daemon(id);
+
+    // Mark stopped and clean up
+    let _ = store::write_status(&dir, "stopped", None);
+    store::remove_watch_dir(id)?;
+
+    match kill_result {
+        Ok(_) | Err(_) => {} // best-effort; directory already cleaned up
+    }
+
+    output::success(json!({
+        "id": id,
+        "status": "stopped",
+        "flushed_count": flushed_trades.len(),
+        "trades": flushed_trades
+    }));
+    Ok(())
+}
+
+fn kill_daemon(id: &str) -> Result<()> {
+    let pid = store::read_pid(id)?;
+
+    #[cfg(unix)]
+    {
+        use std::time::Duration;
+        unsafe { libc_kill(pid, 15) }; // SIGTERM
+        // Give it up to 3s for graceful shutdown
+        for _ in 0..30 {
+            std::thread::sleep(Duration::from_millis(100));
+            if unsafe { libc_kill(pid, 0) } != 0 {
+                return Ok(()); // process gone
+            }
+        }
+        unsafe { libc_kill(pid, 9) }; // SIGKILL
+    }
+
+    #[cfg(windows)]
+    {
+        // On Windows use taskkill
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .output();
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+unsafe fn libc_kill(pid: u32, sig: i32) -> i32 {
+    extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    kill(pid as i32, sig)
+}
+
+// ── watch list ────────────────────────────────────────────────────────────────
+
+fn watch_list() -> Result<()> {
+    let watches = store::list_watches()?;
+    let entries: Vec<_> = watches
+        .iter()
+        .map(|w| {
+            let channels = w
+                .config
+                .as_ref()
+                .map(|c| c.channels.clone())
+                .unwrap_or_default();
+            let env = w
+                .config
+                .as_ref()
+                .map(|c| format!("{:?}", c.env).to_lowercase())
+                .unwrap_or_default();
+            let created_at = w
+                .config
+                .as_ref()
+                .map(|c| c.created_at.to_string())
+                .unwrap_or_default();
+            let status_str = match &w.state {
+                DaemonState::Disconnected(r) => format!("disconnected:{}", r),
+                other => other.as_str().to_string(),
+            };
+            json!({
+                "id": w.id,
+                "status": status_str,
+                "pid": w.pid,
+                "channels": channels,
+                "env": env,
+                "created_at": created_at
+            })
+        })
+        .collect();
+    output::success(json!(entries));
+    Ok(())
+}
+
+// ── daemon entry ──────────────────────────────────────────────────────────────
+
+async fn run_daemon_entry(id: &str) -> Result<()> {
+    let dir = store::watch_dir(id)?;
+    if !dir.exists() {
+        bail!("watch dir for '{}' does not exist", id);
+    }
+    crate::watch::daemon::run_daemon(id, &dir).await
+}
+
+// ── tracker trades ────────────────────────────────────────────────────────────
+
 #[allow(clippy::too_many_arguments)]
 async fn tracker_trades(
     ctx: &Context,
