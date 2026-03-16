@@ -1,7 +1,9 @@
 use anyhow::{bail, Result};
 use clap::Subcommand;
+use serde_json::Value;
 
 use super::Context;
+use crate::client::ApiClient;
 use crate::output;
 
 /// Resolve tracker type alias to API integer string.
@@ -99,6 +101,64 @@ pub async fn execute(ctx: &Context, cmd: TrackerCommand) -> Result<()> {
             .await
         }
     }
+}
+
+/// GET /api/v6/dex/market/address-tracker/trades (MCP-callable)
+#[allow(clippy::too_many_arguments)]
+pub async fn fetch_tracker_trades(
+    client: &ApiClient,
+    tracker_type: Option<&str>,
+    wallet_address: Option<&str>,
+    trade_type: Option<&str>,
+    chain: Option<&str>,
+    min_volume: Option<&str>,
+    max_volume: Option<&str>,
+    min_holders: Option<&str>,
+    min_market_cap: Option<&str>,
+    max_market_cap: Option<&str>,
+    min_liquidity: Option<&str>,
+    max_liquidity: Option<&str>,
+) -> Result<Value> {
+    let tracker_type_resolved = resolve_tracker_type(tracker_type.unwrap_or("kol"));
+
+    if tracker_type_resolved == "3" && wallet_address.is_none() {
+        bail!("wallet_address is required when tracker_type is multi_address/custom/3");
+    }
+
+    let chain_index = match chain {
+        None => String::new(),
+        Some(c) if c.eq_ignore_ascii_case("all") => String::new(),
+        Some(c) => crate::chains::resolve_chain(c),
+    };
+
+    let wallet_address = wallet_address.unwrap_or_default();
+    let trade_type = trade_type.map(resolve_trade_type).unwrap_or_default();
+    let min_volume = min_volume.unwrap_or_default();
+    let max_volume = max_volume.unwrap_or_default();
+    let min_holders = min_holders.unwrap_or_default();
+    let min_market_cap = min_market_cap.unwrap_or_default();
+    let max_market_cap = max_market_cap.unwrap_or_default();
+    let min_liquidity = min_liquidity.unwrap_or_default();
+    let max_liquidity = max_liquidity.unwrap_or_default();
+
+    client
+        .get(
+            "/api/v6/dex/market/address-tracker/trades",
+            &[
+                ("trackerType", tracker_type_resolved),
+                ("walletAddress", wallet_address),
+                ("tradeType", trade_type),
+                ("chainIndex", chain_index.as_str()),
+                ("minVolume", min_volume),
+                ("maxVolume", max_volume),
+                ("minHolders", min_holders),
+                ("minMarketCap", min_market_cap),
+                ("maxMarketCap", max_market_cap),
+                ("minLiquidity", min_liquidity),
+                ("maxLiquidity", max_liquidity),
+            ],
+        )
+        .await
 }
 
 /// GET /api/v6/dex/market/address-tracker/trades
