@@ -170,3 +170,128 @@ fn parse_eip155_chain_id(network: &str) -> Option<u64> {
     network.strip_prefix("eip155:")?.parse().ok()
 }
 
+// ── Tests ─────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    // ── parse_eip155_chain_id ─────────────────────────────────────────
+
+    #[test]
+    fn parse_eip155_base() {
+        assert_eq!(parse_eip155_chain_id("eip155:8453"), Some(8453));
+    }
+
+    #[test]
+    fn parse_eip155_ethereum() {
+        assert_eq!(parse_eip155_chain_id("eip155:1"), Some(1));
+    }
+
+    #[test]
+    fn parse_eip155_xlayer() {
+        assert_eq!(parse_eip155_chain_id("eip155:196"), Some(196));
+    }
+
+    #[test]
+    fn parse_eip155_missing_prefix() {
+        assert_eq!(parse_eip155_chain_id("8453"), None);
+    }
+
+    #[test]
+    fn parse_eip155_wrong_prefix() {
+        assert_eq!(parse_eip155_chain_id("solana:101"), None);
+    }
+
+    #[test]
+    fn parse_eip155_empty() {
+        assert_eq!(parse_eip155_chain_id(""), None);
+    }
+
+    #[test]
+    fn parse_eip155_non_numeric() {
+        assert_eq!(parse_eip155_chain_id("eip155:abc"), None);
+    }
+
+    #[test]
+    fn parse_eip155_negative() {
+        assert_eq!(parse_eip155_chain_id("eip155:-1"), None);
+    }
+
+    // ── CLI argument parsing ──────────────────────────────────────────
+
+    /// Wrapper so clap can parse PaymentCommand as a top-level subcommand.
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(subcommand)]
+        command: PaymentCommand,
+    }
+
+    #[test]
+    fn cli_x402_pay_all_args() {
+        let cli = TestCli::parse_from([
+            "test",
+            "x402-pay",
+            "--network", "eip155:8453",
+            "--amount", "1000000",
+            "--pay-to", "0xRecipient",
+            "--asset", "0xUSDC",
+            "--from", "0xPayer",
+            "--max-timeout-seconds", "600",
+        ]);
+        match cli.command {
+            PaymentCommand::X402Pay {
+                network,
+                amount,
+                pay_to,
+                asset,
+                from,
+                max_timeout_seconds,
+            } => {
+                assert_eq!(network, "eip155:8453");
+                assert_eq!(amount, "1000000");
+                assert_eq!(pay_to, "0xRecipient");
+                assert_eq!(asset, "0xUSDC");
+                assert_eq!(from.as_deref(), Some("0xPayer"));
+                assert_eq!(max_timeout_seconds, 600);
+            }
+        }
+    }
+
+    #[test]
+    fn cli_x402_pay_defaults() {
+        let cli = TestCli::parse_from([
+            "test",
+            "x402-pay",
+            "--network", "eip155:1",
+            "--amount", "500",
+            "--pay-to", "0xRecipient",
+            "--asset", "0xToken",
+        ]);
+        match cli.command {
+            PaymentCommand::X402Pay {
+                from,
+                max_timeout_seconds,
+                ..
+            } => {
+                assert_eq!(from, None);
+                assert_eq!(max_timeout_seconds, 300);
+            }
+        }
+    }
+
+    #[test]
+    fn cli_x402_pay_missing_required() {
+        // --asset is missing, should fail
+        let result = TestCli::try_parse_from([
+            "test",
+            "x402-pay",
+            "--network", "eip155:8453",
+            "--amount", "1000000",
+            "--pay-to", "0xRecipient",
+        ]);
+        assert!(result.is_err());
+    }
+}
+
