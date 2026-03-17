@@ -1,4 +1,4 @@
-# OKX DEX Token — CLI Command Reference
+# Onchain OS DEX Token — CLI Command Reference
 
 Detailed parameter tables, return field schemas, and usage examples for all 10 token commands.
 

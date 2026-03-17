@@ -4,8 +4,13 @@ pub mod chains;
 mod client;
 mod commands;
 mod config;
+pub mod crypto;
+mod home;
+mod keyring_store;
 mod mcp;
 mod output;
+mod wallet_api;
+mod wallet_store;
 
 use clap::{Parser, Subcommand};
 
@@ -71,6 +76,16 @@ pub enum Commands {
         #[arg(long)]
         base_url: Option<String>,
     },
+    /// Agentic wallet: login, verify, create, switch, status, logout, balance
+    Wallet {
+        #[command(subcommand)]
+        command: commands::agentic_wallet::wallet::WalletCommand,
+    },
+    /// Security scanning (tx-scan, token-scan, dapp-scan, sig-scan)
+    Security {
+        #[command(subcommand)]
+        command: commands::security::SecurityCommand,
+    },
 }
 
 fn main() {
@@ -101,6 +116,8 @@ async fn run() {
         Commands::Gateway { command } => commands::gateway::execute(&ctx, command).await,
         Commands::Portfolio { command } => commands::portfolio::execute(&ctx, command).await,
         Commands::Mcp { base_url } => mcp::serve(base_url.as_deref()).await,
+        Commands::Wallet { command } => commands::agentic_wallet::wallet::execute(command).await,
+        Commands::Security { command } => commands::security::execute(&ctx, command).await,
     };
 
     if let Err(e) = result {

@@ -27,7 +27,7 @@
     "name": "OKX",
     "url": "https://web3.okx.com"
   },
-  "license": "Apache-2.0",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/okx/onchainos-skills.git"

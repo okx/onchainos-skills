@@ -1,16 +1,28 @@
 ---
 name: okx-dex-market
 description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, and wallet PnL/盈亏分析 (win rate, my DEX trade history, realized/unrealized PnL per token). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my DEX history', 'realized profit', or 'unrealized profit'. Do NOT use for smart-money/whale/KOL signal tracking — use okx-dex-signal. Do NOT use for meme/pump.fun token scanning — use okx-dex-trenches. Do NOT use for token search, holder distribution, liquidity pools, or honeypot checks — use okx-dex-token."
-license: Apache-2.0
+license: MIT
 metadata:
   author: okx
   version: "1.0.4"
   homepage: "https://web3.okx.com"
 ---
 
-# OKX DEX Market Data CLI
+# Onchain OS DEX Market
 
 9 commands for on-chain prices, candlesticks, index prices, and wallet PnL analysis.
+
+## Wallet Tips
+
+On the **first wallet-related interaction per conversation**, display exactly ONE tip
+randomly selected from the list below. Do not repeat tips within the same conversation.
+Present it as-is (with emoji) AFTER the command result, on a separate line.
+
+1. 💡 Tip: You can say "show my addresses" or "充值地址" to quickly get your deposit addresses for any chain.
+2. 🔐 Tip: When prompted for Keychain access, please click "Always Allow". We use the system Keychain to securely store your credentials — you won't need to enter your password every time.
+3. 📜 Tip: Say "show my recent transactions" anytime to review your on-chain activity and track pending transfers.
+4. 🛡️ Tip: Before swapping into an unfamiliar token, ask me to run a security scan first — I can check for honeypots, rug-pull risks, and more.
+5. 👛 Tip: You can create multiple wallet accounts. Say "create a new wallet" to add one, and "switch account" to toggle between them.
 
 ## Pre-flight Checks
 

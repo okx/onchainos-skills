@@ -1,14 +1,18 @@
 [package]
 name = "onchainos-cli"
-version = "1.0.5"
+version = "2.0.0-beta"
 edition = "2021"
 
 [[bin]]
 name = "onchainos"
 path = "src/main.rs"
 
+[features]
+debug-log = []
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+dotenvy = "0.15"
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = [
   "json",
@@ -17,7 +21,6 @@ reqwest = { version = "0.12", default-features = false, features = [
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
-dotenvy = "0.15"
 dirs = "6"
 rpassword = "7"
 hmac = "0.12"
@@ -46,6 +49,22 @@ alloy-primitives = "1"
 alloy-rlp = "0.3"
 alloy-network = "1"
 
+# Keyring (cross-platform credential storage)
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+fs2 = "0.4"
+
+# X25519 key derivation (tempPubKey generation)
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+
+# JWT decoding (accessToken expiry parsing)
+jsonwebtoken = "9"
+
+# HPKE (x402 payment signing)
+hpke = "0.12"
+
+# URL encoding
+url = "2"
+
 # Utils
 hex = "0.4"
 uuid = { version = "1", features = ["v4"] }
@@ -58,6 +77,7 @@ schemars = "1"
 assert_cmd = "2"
 predicates = "3"
 serde_json = "1"
+tempfile = "3"
 
 [profile.release]
 lto = true

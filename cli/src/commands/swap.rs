@@ -41,15 +41,24 @@ pub enum SwapCommand {
         /// Chain
         #[arg(long)]
         chain: String,
-        /// Slippage tolerance in percent (e.g. "1" for 1%)
-        #[arg(long, default_value = "1")]
-        slippage: String,
+        /// Slippage tolerance in percent (e.g. "1" for 1%). Omit to use autoSlippage.
+        #[arg(long)]
+        slippage: Option<String>,
         /// User wallet address
         #[arg(long)]
         wallet: String,
+        /// Gas priority: slow, average, fast (default: average)
+        #[arg(long, default_value = "average")]
+        gas_level: String,
         /// Swap mode: exactIn or exactOut
         #[arg(long, default_value = "exactIn")]
         swap_mode: String,
+        /// Jito tips in SOL for Solana MEV protection (range: 0.0000000001–2). Response includes signatureData for jitoCalldata.
+        #[arg(long)]
+        tips: Option<String>,
+        /// Max auto slippage percent cap when autoSlippage is enabled (e.g. "0.5" for 0.5%)
+        #[arg(long)]
+        max_auto_slippage: Option<String>,
     },
     /// Get ERC-20 approval transaction data
     Approve {
@@ -85,7 +94,15 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(
-                fetch_quote(&client, &chain_index, &from, &to, &amount, &swap_mode).await?,
+                fetch_quote(
+                    &client,
+                    &chain_index,
+                    &from,
+                    &to,
+                    &amount,
+                    &swap_mode,
+                )
+                .await?,
             );
         }
         SwapCommand::Swap {
@@ -95,7 +112,10 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             chain,
             slippage,
             wallet,
+            gas_level,
             swap_mode,
+            tips,
+            max_auto_slippage,
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(
@@ -105,9 +125,12 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
                     &from,
                     &to,
                     &amount,
-                    &slippage,
+                    slippage.as_deref(),
                     &wallet,
                     &swap_mode,
+                    &gas_level,
+                    tips.as_deref(),
+                    max_auto_slippage.as_deref(),
                 )
                 .await?,
             );
@@ -140,18 +163,14 @@ pub async fn fetch_quote(
     amount: &str,
     swap_mode: &str,
 ) -> Result<Value> {
-    client
-        .get(
-            "/api/v6/dex/aggregator/quote",
-            &[
-                ("chainIndex", chain_index),
-                ("fromTokenAddress", from),
-                ("toTokenAddress", to),
-                ("amount", amount),
-                ("swapMode", swap_mode),
-            ],
-        )
-        .await
+    let params = vec![
+        ("chainIndex", chain_index),
+        ("fromTokenAddress", from),
+        ("toTokenAddress", to),
+        ("amount", amount),
+        ("swapMode", swap_mode),
+    ];
+    client.get("/api/v6/dex/aggregator/quote", &params).await
 }
 
 /// GET /api/v6/dex/aggregator/swap
@@ -162,24 +181,37 @@ pub async fn fetch_swap(
     from: &str,
     to: &str,
     amount: &str,
-    slippage: &str,
+    slippage: Option<&str>,
     wallet: &str,
     swap_mode: &str,
+    gas_level: &str,
+    tips: Option<&str>,
+    max_auto_slippage: Option<&str>,
 ) -> Result<Value> {
-    client
-        .get(
-            "/api/v6/dex/aggregator/swap",
-            &[
-                ("chainIndex", chain_index),
-                ("fromTokenAddress", from),
-                ("toTokenAddress", to),
-                ("amount", amount),
-                ("slippagePercent", slippage),
-                ("userWalletAddress", wallet),
-                ("swapMode", swap_mode),
-            ],
-        )
-        .await
+    let mut params = vec![
+        ("chainIndex", chain_index),
+        ("fromTokenAddress", from),
+        ("toTokenAddress", to),
+        ("amount", amount),
+        ("userWalletAddress", wallet),
+        ("swapMode", swap_mode),
+        ("gasLevel", gas_level),
+    ];
+    if let Some(s) = slippage {
+        params.push(("slippagePercent", s));
+    } else {
+        params.push(("autoSlippage", "true"));
+        params.push(("slippagePercent", "0.5"));
+    }
+    if let Some(t) = tips {
+        params.push(("tips", t));
+        // Jito tips and computeUnitPrice are mutually exclusive
+        params.push(("computeUnitPrice", "0"));
+    }
+    if let Some(m) = max_auto_slippage {
+        params.push(("maxAutoSlippagePercent", m));
+    }
+    client.get("/api/v6/dex/aggregator/swap", &params).await
 }
 
 /// GET /api/v6/dex/aggregator/approve-transaction

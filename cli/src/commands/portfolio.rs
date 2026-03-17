@@ -36,6 +36,10 @@ pub enum PortfolioCommand {
         /// Exclude risky tokens: 0=filter out (default), 1=include. Only ETH/BSC/SOL/BASE
         #[arg(long)]
         exclude_risk: Option<String>,
+        /// Token filter level: 0=default (filters risk/custom/passive tokens), 1=return all tokens
+        /// Use 1 when you need the full token list including risk tokens (e.g. for security scanning)
+        #[arg(long)]
+        filter: Option<String>,
     },
     /// Get specific token balances for a wallet address
     TokenBalances {
@@ -80,9 +84,17 @@ pub async fn execute(ctx: &Context, cmd: PortfolioCommand) -> Result<()> {
             address,
             chains,
             exclude_risk,
+            filter,
         } => {
             output::success(
-                fetch_all_balances(&client, &address, &chains, exclude_risk.as_deref()).await?,
+                fetch_all_balances(
+                    &client,
+                    &address,
+                    &chains,
+                    exclude_risk.as_deref(),
+                    filter.as_deref(),
+                )
+                .await?,
             );
         }
         PortfolioCommand::TokenBalances {
@@ -132,12 +144,16 @@ pub async fn fetch_all_balances(
     address: &str,
     chains: &str,
     exclude_risk: Option<&str>,
+    filter: Option<&str>,
 ) -> Result<Value> {
     let chain_indices = crate::chains::resolve_chains(chains);
     let mut query: Vec<(&str, String)> =
         vec![("address", address.to_string()), ("chains", chain_indices)];
     if let Some(er) = exclude_risk {
         query.push(("excludeRiskToken", er.to_string()));
+    }
+    if let Some(f) = filter {
+        query.push(("filter", f.to_string()));
     }
     let query_refs: Vec<(&str, &str)> = query.iter().map(|(k, v)| (*k, v.as_str())).collect();
     client

@@ -1,4 +1,4 @@
-# OKX Onchain Gateway — CLI Command Reference
+# Onchain OS Gateway — CLI Command Reference
 
 Detailed parameter tables, return field schemas, and usage examples for all 6 gateway commands.
 

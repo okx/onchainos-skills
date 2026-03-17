@@ -1,4 +1,4 @@
-# OKX DEX Signal — CLI Command Reference
+# Onchain OS DEX Signal — CLI Command Reference
 
 Detailed parameter tables, return field schemas, and usage examples for the 2 signal commands.
 

@@ -1,4 +1,4 @@
-# OKX DEX Swap — CLI Command Reference
+# Onchain OS DEX Swap — CLI Command Reference
 
 Detailed parameter tables, return field schemas, and usage examples for all 5 swap commands.
 
@@ -104,7 +104,7 @@ onchainos swap quote --from <address> --to <address> --amount <amount> --chain <
 Get swap transaction data (quote -> sign -> broadcast).
 
 ```bash
-onchainos swap swap --from <address> --to <address> --amount <amount> --chain <chain> --wallet <address> [--slippage <pct>] [--swap-mode <mode>]
+onchainos swap swap --from <address> --to <address> --amount <amount> --chain <chain> --wallet <address> [--slippage <pct>] [--gas-level <level>] [--swap-mode <mode>]
 ```
 
 | Param | Required | Default | Description |
@@ -114,7 +114,8 @@ onchainos swap swap --from <address> --to <address> --amount <amount> --chain <c
 | `--amount` | Yes | - | Amount in minimal units |
 | `--chain` | Yes | - | Chain name |
 | `--wallet` | Yes | - | User's wallet address |
-| `--slippage` | No | `"1"` | Slippage tolerance in percent (e.g., `"1"` for 1%) |
+| `--slippage` | No | autoSlippage | Slippage tolerance in percent (e.g., `"1"` for 1%). Omit to use autoSlippage. |
+| `--gas-level` | No | `average` | Gas priority: `slow`, `average`, `fast` |
 | `--swap-mode` | No | `"exactIn"` | `exactIn` or `exactOut` |
 
 **Return fields**:
@@ -146,8 +147,8 @@ onchainos swap approve --token 0x74b7f16337b8972027f6196a17a631ac6de26d22 --amou
 # -> Returns approval calldata -> user signs -> broadcast
 
 # 3. Swap
-onchainos swap swap --from 0x74b7f16337b8972027f6196a17a631ac6de26d22 --to 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --amount 100000000 --chain xlayer --wallet 0xYourWallet --slippage 1
-# -> Returns tx data -> user signs -> broadcast
+onchainos swap swap --from 0x74b7f16337b8972027f6196a17a631ac6de26d22 --to 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --amount 100000000 --chain xlayer --wallet 0xYourWallet
+# -> Returns tx data (autoSlippage, average gas) -> user signs -> broadcast
 ```
 
 **User says:** "What DEXes are available on XLayer?"
