@@ -154,7 +154,7 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
             output::success(fetch_index(&client, &address, &chain_index).await?);
         }
         MarketCommand::PortfolioSupportedChains => {
-            portfolio_chains(ctx).await?;
+            portfolio_supported_chains(ctx).await?;
         }
         MarketCommand::PortfolioOverview {
             address,
@@ -275,7 +275,7 @@ pub async fn fetch_portfolio_supported_chains(client: &ApiClient) -> Result<Valu
         .await
 }
 
-async fn portfolio_chains(ctx: &Context) -> Result<()> {
+async fn portfolio_supported_chains(ctx: &Context) -> Result<()> {
     let client = ctx.client()?;
     output::success(fetch_portfolio_supported_chains(&client).await?);
     Ok(())
