@@ -417,6 +417,50 @@ fn mcp_signal_chains() {
     assert!(data.is_array(), "expected chain list: {data}");
 }
 
+// ── Leaderboard tools ──────────────────────────────────────────────────
+
+#[test]
+fn mcp_leaderboard_chains() {
+    let mut client = McpClient::start();
+    let result = client.call_tool("leaderboard_chains", json!({}));
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    assert!(data.is_array(), "expected chain list: {data}");
+    let arr = data.as_array().unwrap();
+    assert!(!arr.is_empty(), "expected at least one supported chain");
+    assert!(
+        arr[0].get("chainIndex").is_some(),
+        "chain entry missing 'chainIndex': {}",
+        arr[0]
+    );
+}
+
+#[test]
+fn mcp_leaderboard_list_solana_pnl() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "leaderboard_list",
+        json!({"chain": "solana", "time_frame": "3", "sort_by": "1"}),
+    );
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    assert!(data.is_array(), "expected leaderboard array: {data}");
+}
+
+#[test]
+#[should_panic(expected = "JSON-RPC error")]
+fn mcp_leaderboard_list_missing_chain_fails() {
+    let mut client = McpClient::start();
+    client.call_tool(
+        "leaderboard_list",
+        json!({"time_frame": "3", "sort_by": "1"}),
+    );
+}
+
 // ── Memepump tools ─────────────────────────────────────────────────────
 
 #[test]

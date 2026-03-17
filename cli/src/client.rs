@@ -34,9 +34,11 @@ impl ApiClient {
             .or_else(|| std::env::var("OKX_BASE_URL").ok())
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
 
+        let insecure = std::env::var("OKX_INSECURE_TLS").is_ok_and(|v| v == "1");
         Ok(Self {
             http: Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
+                .danger_accept_invalid_certs(insecure)
                 .build()?,
             base_url,
             api_key,
