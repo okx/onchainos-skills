@@ -277,8 +277,8 @@ Before swapping an unknown token, always verify:
 > User: "What is smart money buying? Check if it's safe and buy"
 
 ```
-1. okx-dex-tracker  onchainos tracker trades --tracker-type smart_money --trade-type buy
-                                                                          → get baseTokenContractAddress + baseTokenChainIndex
+1. okx-dex-signal   onchainos signal list --chain <chain> --wallet-type 1
+                                                                          → get tokenContractAddress + chainIndex
        ↓ pick a token
 2. okx-dex-token    onchainos token price-info --address <address> --chain <chain>    → market cap, liquidity, 24h volume
 3. okx-dex-token    onchainos token cluster-overview --address <address> --chain <chain>

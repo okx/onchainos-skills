@@ -164,9 +164,9 @@ This skill is often used **before swap** (to verify sufficient balance) or **as 
 > User: "What are smart money wallets holding that I'm not? Help me rebalance"
 
 ```
-1. okx-dex-tracker  onchainos tracker trades --tracker-type smart_money --trade-type buy --chain solana
+1. okx-dex-signal   onchainos signal list --chain solana --wallet-type 1
                                                    → recent smart money buys; get list of tokens being accumulated
-       ↓ extract baseTokenContractAddress + baseTokenChainIndex for top tokens
+       ↓ extract tokenContractAddress + chainIndex for top tokens
 2. okx-wallet-portfolio  onchainos portfolio all-balances --address <my-wallet> --chains solana
                                                    → my current holdings; identify which smart-money tokens I don't hold
 3. okx-dex-token    onchainos token price-info --address <candidate-token> --chain solana
