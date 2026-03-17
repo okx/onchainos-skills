@@ -100,6 +100,22 @@ curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh
 
 > **Note:** Beta versions (e.g., `v2.0.0-beta.0`) are opt-in only. The default installer and all skill auto-updates always use the latest stable release. Running without `--beta` will never downgrade a beta installation whose base version is ahead of the latest stable.
 
+### PowerShell (Windows)
+
+Auto-detects your platform, downloads the latest **stable** release, verifies SHA256 checksum, and installs to `%USERPROFILE%\.local\bin`:
+
+```powershell
+irm https://raw.githubusercontent.com/okx/onchainos-skills/main/install.ps1 | iex
+```
+
+To install the latest **beta** version (includes pre-releases):
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/okx/onchainos-skills/main/install.ps1))) --beta
+```
+
+> **Note:** The same beta/stable rules apply — default installs always use the latest stable release, and `--beta` is opt-in only.
+
 ## MCP Server
 
 The `onchainos` CLI doubles as a native MCP server exposing tools to any MCP-compatible client.
