@@ -86,6 +86,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::security::SecurityCommand,
     },
+    /// Payment protocols — auto-pay gated APIs (x402, etc.)
+    Payment {
+        #[command(subcommand)]
+        command: commands::agentic_wallet::payment::PaymentCommand,
+    },
 }
 
 fn main() {
@@ -118,6 +123,7 @@ async fn run() {
         Commands::Mcp { base_url } => mcp::serve(base_url.as_deref()).await,
         Commands::Wallet { command } => commands::agentic_wallet::wallet::execute(command).await,
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
+        Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
     };
 
     if let Err(e) = result {

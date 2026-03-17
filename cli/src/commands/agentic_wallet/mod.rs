@@ -6,3 +6,4 @@ pub mod common;
 pub mod history;
 pub mod transfer;
 pub mod wallet;
+pub mod payment;
