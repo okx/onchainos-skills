@@ -256,9 +256,9 @@ pub enum TokenCommand {
         /// Chain
         #[arg(long)]
         chain: Option<String>,
-        /// Holder rank tier: 10, 50, or 100
+        /// Holder rank filter: 1 = top 10, 2 = top 50, 3 = top 100
         #[arg(long)]
-        ranks: String,
+        range_filter: String,
     },
     /// Get holder cluster list (clusters of top 300 holders with address details)
     ClusterList {
@@ -459,8 +459,8 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
         TokenCommand::ClusterTopHolders {
             address,
             chain,
-            ranks,
-        } => cluster_top_holders(ctx, &address, chain, &ranks).await?,
+            range_filter,
+        } => cluster_top_holders(ctx, &address, chain, &range_filter).await?,
         TokenCommand::ClusterList { address, chain } => {
             cluster_by_address(
                 ctx,
@@ -871,7 +871,7 @@ pub async fn fetch_cluster_top_holders(
     client: &ApiClient,
     address: &str,
     chain_index: &str,
-    ranks: &str,
+    range_filter: &str,
 ) -> Result<Value> {
     client
         .get(
@@ -879,7 +879,7 @@ pub async fn fetch_cluster_top_holders(
             &[
                 ("chainIndex", chain_index),
                 ("tokenContractAddress", address),
-                ("ranks", ranks),
+                ("rangeFilter", range_filter),
             ],
         )
         .await
@@ -889,12 +889,12 @@ async fn cluster_top_holders(
     ctx: &Context,
     address: &str,
     chain: Option<String>,
-    ranks: &str,
+    range_filter: &str,
 ) -> Result<()> {
     let chain_index = chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
     let client = ctx.client()?;
-    output::success(fetch_cluster_top_holders(&client, address, &chain_index, ranks).await?);
+    output::success(fetch_cluster_top_holders(&client, address, &chain_index, range_filter).await?);
     Ok(())
 }

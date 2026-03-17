@@ -10,7 +10,7 @@ use crate::output;
 #[allow(clippy::large_enum_variant)]
 pub enum LeaderboardCommand {
     /// Get supported chains for the leaderboard
-    Chains,
+    SupportedChains,
     /// Get leaderboard list (top traders ranked by PnL, win rate, or volume)
     List {
         /// Chain (e.g. ethereum, solana, base). Required.
@@ -54,7 +54,7 @@ pub enum LeaderboardCommand {
 
 pub async fn execute(ctx: &Context, cmd: LeaderboardCommand) -> Result<()> {
     match cmd {
-        LeaderboardCommand::Chains => supported_chains(ctx).await,
+        LeaderboardCommand::SupportedChains => supported_chains(ctx).await,
         LeaderboardCommand::List {
             chain,
             time_frame,

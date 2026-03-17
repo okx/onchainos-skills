@@ -863,8 +863,8 @@ fn token_cluster_top_holders_top10() {
         tokens::ETH_USDC,
         "--chain",
         "ethereum",
-        "--ranks",
-        "10",
+        "--range-filter",
+        "1",
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
@@ -882,8 +882,8 @@ fn token_cluster_top_holders_top100() {
         tokens::ETH_USDC,
         "--chain",
         "ethereum",
-        "--ranks",
-        "100",
+        "--range-filter",
+        "3",
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
@@ -895,14 +895,14 @@ fn token_cluster_top_holders_top100() {
 #[test]
 fn token_cluster_top_holders_missing_address_fails() {
     onchainos()
-        .args(["token", "cluster-top-holders", "--ranks", "10"])
+        .args(["token", "cluster-top-holders", "--range-filter", "1"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
 }
 
 #[test]
-fn token_cluster_top_holders_missing_ranks_fails() {
+fn token_cluster_top_holders_missing_range_filter_fails() {
     onchainos()
         .args([
             "token",

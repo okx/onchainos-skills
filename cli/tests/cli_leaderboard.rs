@@ -1,5 +1,5 @@
 //! Integration tests for `onchainos leaderboard` commands:
-//! chains, list.
+//! supported-chains, list.
 
 mod common;
 
@@ -10,7 +10,7 @@ use predicates::prelude::*;
 
 #[test]
 fn leaderboard_supported_chains_returns_list() {
-    let output = run_with_retry(&["leaderboard", "chains"]);
+    let output = run_with_retry(&["leaderboard", "supported-chains"]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.is_array(), "expected array of chains: {data}");
     let arr = data.as_array().unwrap();

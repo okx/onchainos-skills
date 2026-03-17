@@ -99,11 +99,12 @@ Users may use Chinese crypto slang or platform-specific terms. Map them to the c
 | 净流入 | net inflow | `token hot-tokens --inflow-min/max` |
 | 社区认可 | community recognized, verified | `token search` (communityRecognized field) |
 | 持仓集中度 / 聚类分析 | holder cluster concentration, cluster analysis | `token cluster-overview` |
-| 前100持仓概览 / Top100 | top 100 holder overview, top 100 behavior | `token cluster-top-holders --ranks 100` |
+| 前100持仓概览 / Top100 | top 100 holder overview, top 100 behavior | `token cluster-top-holders --range-filter 3` |
 | 持仓集群 / 集群列表 | holder cluster list, cluster groups | `token cluster-list` |
 | Rug Pull可能性 | rug pull probability, rug pull risk | `token cluster-overview` (rugPullPercent) |
-| 新地址占比 | new address ratio, fresh wallet ratio | `token cluster-overview` (newAddressPercent) |
-| 同资金来源 | same funding source | `token cluster-overview` (sameFundSourcePercent) |
+| 新地址占比 | new address ratio, fresh wallet ratio | `token cluster-overview` (holderNewAddressPercent) |
+| 同资金来源 | same funding source | `token cluster-overview` (holderSameFundSourcePercent) |
+| 同创建时间地址占比 | same creation time address ratio | `token cluster-overview` (holderSameCreationTimePercent) |
 | 支持的链 / cluster支持链 | supported chains for cluster | `token cluster-supported-chains` |
 
 ## Quickstart
@@ -146,7 +147,7 @@ onchainos token top-trader --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1
 onchainos token cluster-overview --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana
 
 # Top 100 holder behavior (avg PnL, avg cost, trend)
-onchainos token cluster-top-holders --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana --ranks 100
+onchainos token cluster-top-holders --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana --range-filter 3
 
 # Holder cluster list (groups of top 300 holders)
 onchainos token cluster-list --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana
@@ -183,7 +184,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | 9 | `onchainos token top-trader --address <address>` | Get top traders / profit addresses for a token |
 | 10 | `onchainos token trades --address <address>` | Get token DEX trade history with optional tag/wallet filters |
 | 11 | `onchainos token cluster-overview --address <address>` | Get holder cluster concentration overview (cluster level, rug pull %, new address %) |
-| 12 | `onchainos token cluster-top-holders --address <address> --ranks <10\|50\|100>` | Get top 10/50/100 holder overview (avg PnL, avg cost, trend type) |
+| 12 | `onchainos token cluster-top-holders --address <address> --range-filter <1\|2\|3>` | Get top 10/50/100 holder overview (avg PnL, avg cost, trend type); 1=top10, 2=top50, 3=top100 |
 | 13 | `onchainos token cluster-list --address <address>` | Get holder cluster list (clusters of top 300 holders with address details) |
 | 14 | `onchainos token cluster-supported-chains` | Get chains supported by holder cluster analysis |
 
@@ -282,7 +283,7 @@ Before swapping an unknown token, always verify:
 2. okx-dex-token    onchainos token price-info --address <address> --chain <chain>    → market cap, liquidity, 24h volume
 3. okx-dex-token    onchainos token cluster-overview --address <address> --chain <chain>
                                                                           → cluster concentration, rug pull %, new address %
-4. okx-dex-token    onchainos token cluster-top-holders --address <address> --chain <chain> --ranks 100
+4. okx-dex-token    onchainos token cluster-top-holders --address <address> --chain <chain> --range-filter 3
                                                                           → top 100 avg PnL, cost, trend direction
 5. okx-dex-market   onchainos market kline --address <address> --chain <chain>        → price chart
        ↓ user decides to buy
@@ -306,7 +307,7 @@ Before swapping an unknown token, always verify:
                                                    → risk level, honeypot check, dev rug pull history
 4. okx-dex-token    onchainos token cluster-overview --address <address> --chain solana
                                                    → concentration level, rug pull %, new address %, same-funding %
-5. okx-dex-token    onchainos token cluster-top-holders --address <address> --chain solana --ranks 100
+5. okx-dex-token    onchainos token cluster-top-holders --address <address> --chain solana --range-filter 3
                                                    → top 100 holder avg PnL, avg cost, hold/sell trend
        ↓ green flags → confirm price momentum
 6. okx-dex-market   onchainos market kline --address <address> --chain solana --bar 15m --limit 48
