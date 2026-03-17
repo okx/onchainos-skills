@@ -133,8 +133,8 @@ onchainos leaderboard list --chain bsc --time-frame 1 --sort-by 4 --wallet-type 
 
 - Supported chains for signals → `onchainos signal chains`
 - Smart money / whale / KOL buy signals → `onchainos signal list`
-- Leaderboard / 牛人榜 / top traders ranking → `onchainos leaderboard list`
 - Supported chains for leaderboard → `onchainos leaderboard supported-chains`
+- Leaderboard / 牛人榜 / top traders ranking → `onchainos leaderboard list`
 
 ### Step 2: Collect Parameters
 
