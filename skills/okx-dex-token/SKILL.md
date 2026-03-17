@@ -67,6 +67,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For transaction broadcasting → use `okx-onchain-gateway`
 - For meme token scanning (dev reputation, rug pull history, bundlers, new launches, similar tokens by same dev) → use `okx-dex-trenches`
 - For market-wide smart money / whale / KOL signal alerts → use `okx-dex-signal`
+- For leaderboard / 牛人榜 / top traders ranked across the market (by PnL, win rate, volume) → use `okx-dex-signal`
 - For per-token holder filtering by tag (whale, smart money, KOL, sniper) → use this skill (`holders --tag-filter`)
 - For per-token risk analysis (dev rug pull count, holder concentration, creator info) → use this skill (`advanced-info`)
 

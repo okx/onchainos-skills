@@ -69,13 +69,16 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For wallet balances / token holdings → use `okx-wallet-portfolio`
 - For wallet PnL analysis (realized/unrealized PnL, DEX history, recent PnL, per-token PnL) → use `okx-dex-market` portfolio commands (this skill)
 - For smart money / whale / KOL signal tracking → use `okx-dex-signal`
+- For leaderboard / 牛人榜 / top traders ranked by PnL, win rate, or volume → use `okx-dex-signal`
+- For holder cluster analysis (concentration level, rug pull %, new address %, cluster groups) → use `okx-dex-token`
 - For meme pump scanning (new launches, dev reputation, bundle detection, aped wallets) → use `okx-dex-trenches`
 
 ## Keyword Glossary
 
 | Chinese | English / Platform Terms | Maps To |
 |---|---|---|
-| 行情 | market data, price, chart | `price`, `kline` |
+| 行情 / 价格 / 多少钱 | market data, price, "how much is X" | `price` (default), `kline` — **never `index`** |
+| 指数价格 / 综合价格 / 跨所价格 | index price, aggregate price, cross-exchange composite | `index` — only when user explicitly requests it |
 | 盈亏 / 收益 / PnL | PnL, profit and loss, realized/unrealized | `portfolio-overview`, `portfolio-recent-pnl`, `portfolio-token-pnl` |
 | 已实现盈亏 | realized PnL, realized profit | `portfolio-token-pnl` (realizedPnlUsd) |
 | 未实现盈亏 | unrealized PnL, paper profit, holding gain | `portfolio-token-pnl` (unrealizedPnlUsd) |
@@ -142,7 +145,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 
 | # | Command | Description |
 |---|---|---|
-| 4 | `onchainos market index --address <address>` | Get index price (aggregated from multiple sources) |
+| 4 | `onchainos market index --address <address>` | Get index price (aggregated from multiple sources) — **use only when user explicitly requests aggregate/index price; use `price` for all other price queries** |
 
 ### Portfolio PnL Commands
 
@@ -174,6 +177,12 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Trade history with tag/wallet filter | - | `okx-dex-token` → `onchainos token trades` |
 | Smart money / whale / KOL signals | - | `okx-dex-signal` → `onchainos signal list` |
 | Signal-supported chains | - | `okx-dex-signal` → `onchainos signal chains` |
+| Leaderboard / top traders by PnL, win rate, volume | - | `okx-dex-signal` → `onchainos leaderboard list` |
+| Leaderboard-supported chains | - | `okx-dex-signal` → `onchainos leaderboard supported-chains` |
+| Holder cluster concentration (rug pull %, new address %) | - | `okx-dex-token` → `onchainos token cluster-overview` |
+| Top 10/50/100 holder behavior (avg PnL, avg cost, trend) | - | `okx-dex-token` → `onchainos token cluster-top-holders` |
+| Holder cluster groups (top 300 holders with address details) | - | `okx-dex-token` → `onchainos token cluster-list` |
+| Cluster-supported chains | - | `okx-dex-token` → `onchainos token cluster-supported-chains` |
 | Browse meme pump tokens by stage | - | `okx-dex-trenches` → `onchainos memepump tokens` |
 | Meme token audit (top10, dev, insiders) | - | `okx-dex-trenches` → `onchainos memepump token-details` |
 | Developer reputation / rug pull history | - | `okx-dex-trenches` → `onchainos memepump token-dev-info` |
@@ -213,7 +222,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
        ↓ select tokens of interest
 2. okx-dex-market   onchainos market price --address <address> --chain solana        → get current price for each
 3. okx-dex-market   onchainos market kline --address <address> --chain solana --bar 1H  → hourly chart
-4. okx-dex-market   onchainos market index --address <address> --chain solana        → compare on-chain vs index price
+4. okx-dex-market   onchainos market index --address <address> --chain solana        → (optional) compare on-chain vs aggregate index price — only if user explicitly asks for it
 ```
 
 ### Workflow C: Wallet PnL Analysis
@@ -258,10 +267,10 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 
 ### Step 1: Identify Intent
 
-- Real-time price (single token) → `onchainos market price`
+- Real-time price (single token) → `onchainos market price` (**default for all price / 行情 queries**)
 - K-line chart → `onchainos market kline`
-- Index price (current) → `onchainos market index`
 - Batch prices → `onchainos market prices`
+- **Index price** → `onchainos market index` — **ONLY when the user explicitly asks for "aggregate price", "index price", "综合价格", "指数价格", or a cross-exchange composite price. Do NOT use for general "price" / "行情" / "how much is X" queries — use `onchainos market price` instead.**
 - Wallet PnL overview (win rate, realized PnL, top 3 tokens) → `onchainos market portfolio-overview`
 - Wallet DEX transaction history → `onchainos market portfolio-dex-history`
 - Recent token PnL list for a wallet → `onchainos market portfolio-recent-pnl`

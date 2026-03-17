@@ -62,7 +62,9 @@ Every time before running any `onchainos` command, always follow these steps in 
 ## Skill Routing
 
 - For market-wide whale/smart-money/KOL signal alerts → use `okx-dex-signal`
+- For leaderboard / 牛人榜 / top traders ranked by PnL, win rate, or volume → use `okx-dex-signal`
 - For per-token holder distribution filtered by tag (whale, sniper, KOL) → use `okx-dex-token`
+- For holder cluster analysis (concentration, rug pull %, cluster groups) → use `okx-dex-token`
 - For honeypot / token safety checks → use `okx-dex-token`
 - For real-time prices / K-line charts → use `okx-dex-market`
 - For wallet PnL / DEX trade history → use `okx-dex-market`

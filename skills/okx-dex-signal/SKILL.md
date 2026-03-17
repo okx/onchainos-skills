@@ -64,6 +64,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For meme/pump.fun token scanning (dev reputation, bundle detection, new launches) → use `okx-dex-trenches`
 - For per-token holder distribution filtered by wallet tag → use `okx-dex-token`
 - For token search / metadata / rankings → use `okx-dex-token`
+- For holder cluster analysis (concentration, rug pull %, cluster groups) → use `okx-dex-token`
 - For real-time prices / K-line charts → use `okx-dex-market`
 - For wallet PnL / DEX trade history → use `okx-dex-market`
 - For swap execution → use `okx-dex-swap`
