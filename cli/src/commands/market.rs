@@ -52,7 +52,7 @@ pub enum MarketCommand {
         chain: Option<String>,
     },
     /// Get supported chains for portfolio PnL endpoints
-    PortfolioChains,
+    PortfolioSupportedChains,
     /// Get wallet portfolio overview: realized/unrealized PnL, win rate, trading stats
     PortfolioOverview {
         /// Wallet address
@@ -153,7 +153,7 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
             output::success(fetch_index(&client, &address, &chain_index).await?);
         }
-        MarketCommand::PortfolioChains => {
+        MarketCommand::PortfolioSupportedChains => {
             portfolio_chains(ctx).await?;
         }
         MarketCommand::PortfolioOverview {
