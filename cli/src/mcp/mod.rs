@@ -308,8 +308,8 @@ struct ClusterTopHoldersParams {
     address: String,
     /// Chain name (optional, defaults to ethereum)
     chain: Option<String>,
-    /// Holder rank groups to include: 10, 50, 100, 200, 300 (comma-separated, e.g. "10,50")
-    ranks: String,
+    /// Holder rank tier: 1 = top 10, 2 = top 50, 3 = top 100
+    range_filter: String,
 }
 
 // ── Gateway ────────────────────────────────────────────────────────────
@@ -1311,7 +1311,7 @@ impl McpServer {
 
     #[tool(
         name = "token_cluster_top_holders",
-        description = "Get token holder cluster analysis for top holder groups (ranks: 10, 50, 100, 200, 300)"
+        description = "Get token holder cluster analysis for top holder groups (range_filter: 1 = top 10, 2 = top 50, 3 = top 100)"
     )]
     async fn token_cluster_top_holders(
         &self,
@@ -1322,8 +1322,13 @@ impl McpServer {
             .as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "1".to_string());
-        match token::fetch_cluster_top_holders(&self.client, &p.address, &chain_index, &p.ranks)
-            .await
+        match token::fetch_cluster_top_holders(
+            &self.client,
+            &p.address,
+            &chain_index,
+            &p.range_filter,
+        )
+        .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),

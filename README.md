@@ -13,7 +13,6 @@ onchainos skills for AI coding assistants. Provides token search, market data, w
 | `okx-dex-swap` | Token swap via DEX aggregation (500+ liquidity sources) |
 | `okx-dex-token` | Token search, metadata, market cap, rankings, liquidity pools, hot tokens, advanced info, holder analysis, top traders, trade history, holder cluster analysis |
 | `okx-onchain-gateway` | Gas estimation, transaction simulation, broadcasting, order tracking |
-| `okx-dex-leaderboard` | Smart money leaderboard (牛人榜) — top traders ranked by PnL, win rate, volume, or ROI |
 
 ## Supported Chains
 
@@ -93,7 +92,7 @@ The skills work together in typical DeFi flows:
 
 **Full Trading Flow**: `okx-dex-token` (search) -> `okx-dex-market` (price/chart) -> `okx-wallet-portfolio` (check balance) -> `okx-dex-swap` (get tx) -> `okx-onchain-gateway` (simulate + broadcast + track)
 
-**Leaderboard → Research → Trade**: `okx-dex-leaderboard` (top traders by PnL/win rate) -> `okx-dex-token` (token analytics) -> `okx-dex-swap` (execute trade)
+**Leaderboard → Research → Trade**: `okx-dex-signal` (top traders by PnL/win rate) -> `okx-dex-token` (token analytics) -> `okx-dex-swap` (execute trade)
 
 **Follow Smart Money**: `okx-dex-signal` (KOL/smart money buys) -> `okx-dex-token` (token details + holder cluster) -> `okx-dex-market` (price chart) -> `okx-dex-swap` (trade)
 
