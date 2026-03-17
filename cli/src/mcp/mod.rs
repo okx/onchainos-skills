@@ -1273,10 +1273,10 @@ impl McpServer {
     // ── Token Cluster ─────────────────────────────────────────────────
 
     #[tool(
-        name = "token_cluster_chains",
+        name = "token_cluster_supported_chains",
         description = "Get supported chains for token holder cluster analysis"
     )]
-    async fn token_cluster_chains(&self) -> Result<String, String> {
+    async fn token_cluster_supported_chains(&self) -> Result<String, String> {
         match token::fetch_cluster_supported_chains(&self.client).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
