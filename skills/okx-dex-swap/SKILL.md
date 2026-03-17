@@ -154,8 +154,8 @@ The CLI accepts human-readable chain names and resolves them automatically.
 | 1 | `onchainos swap chains` | Get supported chains for DEX aggregator |
 | 2 | `onchainos swap liquidity --chain <chain>` | Get available liquidity sources on a chain |
 | 3 | `onchainos swap approve --token ... --amount ... --chain ...` | Get ERC-20 approval transaction data |
-| 4 | `onchainos swap quote --from ... --to ... --amount ... --chain ...` | Get swap quote (read-only price estimate) |
-| 5 | `onchainos swap swap --from ... --to ... --amount ... --chain ... --wallet ... [--gas-level <level>]` | Get swap transaction data |
+| 4 | `onchainos swap quote --from ... --to ... --amount ... --chain ...` | Get swap quote (read-only price estimate). **No `--slippage` param** — slippage only applies to `swap swap`. |
+| 5 | `onchainos swap swap --from ... --to ... --amount ... --chain ... --wallet ... [--slippage <pct>] [--gas-level <level>]` | Get swap transaction data. `--slippage` sets fixed slippage (e.g. `30` for 30%); omit to use autoSlippage. |
 
 ## Boundary Table
 
@@ -321,7 +321,7 @@ Flow: quote → approve(nonce=N) + swap(nonce=N+1) → sign both → broadcast s
 - Missing chain → recommend XLayer (`--chain xlayer`, low gas, fast confirmation) as the default, then ask which chain the user prefers
 - Missing token addresses → use `okx-dex-token` `onchainos token search` to resolve name → address
 - Missing amount → ask user, remind to convert to minimal units
-- Missing slippage → use autoSlippage by default (do NOT pass `--slippage`; the API calculates optimal slippage automatically). If the user explicitly specifies a fixed slippage value, pass `--slippage <value>` which disables autoSlippage. Note: `taxRate` is separate from slippage — taxRate is deducted by the token contract and is NOT included in the slippage setting.
+- Missing slippage → use autoSlippage by default (do NOT pass `--slippage`; the API calculates optimal slippage automatically). If the user explicitly specifies a fixed slippage value, pass `--slippage <value>` which disables autoSlippage. **IMPORTANT: `--slippage` is only a parameter of `onchainos swap swap`, NOT `onchainos swap quote`. Never pass `--slippage` to the quote command — it will fail.** Note: `taxRate` is separate from slippage — taxRate is deducted by the token contract and is NOT included in the slippage setting.
   - **Slippage warnings**: Too small → warn about transaction failure risk. Too large → warn about potential loss.
   - **Slippage retry**: If swap fails with autoSlippage → suggest switching to fixed slippage. If swap fails with fixed slippage → suggest increasing the value.
 - Missing wallet address → follow the **Wallet Address Resolution** flow below
