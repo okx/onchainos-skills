@@ -1,4 +1,4 @@
-# OKX DEX Market — CLI Command Reference
+# Onchain OS DEX Market — CLI Command Reference
 
 Detailed parameter tables, return field schemas, and usage examples for all 9 market commands.
 

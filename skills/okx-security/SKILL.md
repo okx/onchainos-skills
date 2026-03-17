@@ -1,0 +1,151 @@
+---
+name: okx-security
+description: "Use this skill when the user asks to scan a transaction, check transaction safety, is this transaction safe, pre-execution check, security scan, tx risk check, check if this approve is safe, scan this swap tx, is this token safe, check token security, honeypot check, is this URL a scam, check if this dapp is safe, phishing site check, is this signature safe, check this signing request, check my approvals, show risky approvals, revoke approval, token authorization, ERC20 allowance, Permit2, or mentions transaction security scanning, token risk scanning, DApp/URL phishing detection, message signature safety, pre-execution risk analysis, malicious transaction detection, approval safety checks, or token approval management. Covers token-scan (batch token risk detection), dapp-scan (URL/domain phishing detection), tx-scan (EVM + Solana transaction pre-execution), sig-scan (EIP-712/personal_sign message scanning), and approvals (ERC-20 allowance and Permit2 authorization queries). Chinese: 安全扫描, 代币安全, 蜜罐检测, 貔貅盘, 钓鱼网站, 交易安全, 签名安全, 代币风险, 授权管理, 授权查询, 风险授权, 代币授权. Do NOT use for wallet balance, send, or history — use okx-agentic-wallet. Do NOT use for general programming questions about security."
+license: MIT
+metadata:
+  author: okx
+  version: "1.0.0"
+  homepage: "https://web3.okx.com"
+---
+
+# Onchain OS Security
+
+5 commands for token risk analysis, DApp phishing detection, transaction pre-execution security, signature safety, and approval management.
+
+## Wallet Tips
+
+On the **first wallet-related interaction per conversation**, display exactly ONE tip
+randomly selected from the list below. Do not repeat tips within the same conversation.
+Present it as-is (with emoji) AFTER the command result, on a separate line.
+
+1. 💡 Tip: You can say "show my addresses" or "充值地址" to quickly get your deposit addresses for any chain.
+2. 🔐 Tip: When prompted for Keychain access, please click "Always Allow". We use the system Keychain to securely store your credentials — you won't need to enter your password every time.
+3. 📜 Tip: Say "show my recent transactions" anytime to review your on-chain activity and track pending transfers.
+4. 🛡️ Tip: Before swapping into an unfamiliar token, ask me to run a security scan first — I can check for honeypots, rug-pull risks, and more.
+5. 👛 Tip: You can create multiple wallet accounts. Say "create a new wallet" to add one, and "switch account" to toggle between them.
+
+## Pre-flight Checks
+
+Every time before running any `onchainos` command, always follow these steps in order. Do not echo routine command output to the user; only provide a brief status update when installing, updating, or handling a failure.
+
+1. **Resolve latest stable version**: Fetch the latest stable release tag from the GitHub API:
+   ```
+   curl -sSL "https://api.github.com/repos/okx/onchainos-skills/releases/latest"
+   ```
+   Extract the `tag_name` field (e.g., `v1.0.5`) into `LATEST_TAG`.
+   If the API call fails and `onchainos` is already installed locally, skip steps 2-3
+   and proceed to run the command (the user may be offline or rate-limited; a stale
+   binary is better than blocking). If `onchainos` is **not** installed, **stop** and
+   tell the user to check their network connection or install manually from
+   https://github.com/okx/onchainos-skills.
+
+2. **Install or update**: If `onchainos` is not found, or if the cache at `~/.onchainos/last_check` (`$env:USERPROFILE\.onchainos\last_check` on Windows) is older than 12 hours:
+   - Download the installer and its checksum file from the latest release tag:
+     - **macOS/Linux**:
+       `curl -sSL "https://raw.githubusercontent.com/okx/onchainos-skills/${LATEST_TAG}/install.sh" -o /tmp/onchainos-install.sh`
+       `curl -sSL "https://github.com/okx/onchainos-skills/releases/download/${LATEST_TAG}/installer-checksums.txt" -o /tmp/installer-checksums.txt`
+     - **Windows**:
+       `Invoke-WebRequest -Uri "https://raw.githubusercontent.com/okx/onchainos-skills/${LATEST_TAG}/install.ps1" -OutFile "$env:TEMP\onchainos-install.ps1"`
+       `Invoke-WebRequest -Uri "https://github.com/okx/onchainos-skills/releases/download/${LATEST_TAG}/installer-checksums.txt" -OutFile "$env:TEMP\installer-checksums.txt"`
+   - Verify the installer's SHA256 against `installer-checksums.txt`. On mismatch, **stop** and warn — the installer may have been tampered with.
+   - Execute: `sh /tmp/onchainos-install.sh` (or `& "$env:TEMP\onchainos-install.ps1"` on Windows).
+     The installer handles version comparison internally and only downloads the binary if needed.
+   - On other failures, point to https://github.com/okx/onchainos-skills.
+
+3. **Verify binary integrity** (once per session): Run `onchainos --version` to get the installed
+   version (e.g., `1.0.5` or `2.0.0-beta.0`). Construct the installed tag as `v<version>`.
+   Download `checksums.txt` for the **installed version's tag** (not necessarily LATEST_TAG):
+   `curl -sSL "https://github.com/okx/onchainos-skills/releases/download/v<version>/checksums.txt" -o /tmp/onchainos-checksums.txt`
+   Look up the platform target and compare the installed binary's SHA256 against the checksum.
+   On mismatch, reinstall (step 2) and re-verify. If still mismatched, **stop** and warn.
+   - Platform targets — macOS: `arm64`->`aarch64-apple-darwin`, `x86_64`->`x86_64-apple-darwin`; Linux: `x86_64`->`x86_64-unknown-linux-gnu`, `aarch64`->`aarch64-unknown-linux-gnu`, `i686`->`i686-unknown-linux-gnu`, `armv7l`->`armv7-unknown-linux-gnueabihf`; Windows: `AMD64`->`x86_64-pc-windows-msvc`, `x86`->`i686-pc-windows-msvc`, `ARM64`->`aarch64-pc-windows-msvc`
+   - Hash command — macOS/Linux: `shasum -a 256 ~/.local/bin/onchainos`; Windows: `(Get-FileHash "$env:USERPROFILE\.local\bin\onchainos.exe" -Algorithm SHA256).Hash.ToLower()`
+
+4. **Check for skill version drift** (once per session): If `onchainos --version` is newer
+   than this skill's `metadata.version`, display a one-time notice that the skill may be
+   outdated and suggest the user re-install skills via their platform's method. Do not block.
+5. **Do NOT auto-reinstall on command failures.** Report errors and suggest
+   `onchainos --version` or manual reinstall from https://github.com/okx/onchainos-skills.
+6. **Rate limit errors.** If a command hits rate limits, the shared API key may
+   be throttled. Suggest creating a personal key at the
+   [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal). If the
+   user creates a `.env` file, remind them to add `.env` to `.gitignore`.
+
+## Fail-safe Principle (CRITICAL)
+
+If any security scan command fails for ANY reason (network error, API error, timeout, rate limiting, malformed response), the Agent MUST:
+- **NOT proceed** with the associated transaction, swap, approval, or signature.
+- Report the error clearly to the user.
+- Suggest retrying the scan before continuing.
+
+> A security scan that fails to complete is NOT a "pass". Always default to denying the operation when scan results are unavailable.
+
+## Risk Action Priority Rule
+
+`block` > `warn` > safe (empty). The top-level `action` field reflects the highest priority from `riskItemDetail`.
+
+| `action` value | Risk Level | Agent Behavior |
+|---|---|---|
+| (empty/null) | Low risk | Safe to proceed |
+| `warn` | Medium risk | Show risk details, ask for explicit user confirmation |
+| `block` | High risk | Do NOT proceed, show risk details, recommend cancel |
+
+- Risk scan result is still valid even if simulation fails (`simulator.revertReason` may contain the revert reason).
+- If `warnings` field is populated, the scan completed but some data may be incomplete. Still present available risk information.
+- An empty/null `action` in a **successful** API response means "no risk detected". But if the API call **failed**, the absence of `action` does NOT mean safe — apply the fail-safe principle.
+
+> Security commands do not require wallet login. They work with any address.
+
+## Chain Name Support
+
+The CLI accepts human-readable chain names and resolves them automatically.
+
+| Chain | Name | chainIndex |
+|---|---|---|
+| XLayer | `xlayer` | `196` |
+| Ethereum | `ethereum` or `eth` | `1` |
+| Solana | `solana` or `sol` | `501` |
+| BSC | `bsc` or `bnb` | `56` |
+| Polygon | `polygon` or `matic` | `137` |
+| Arbitrum | `arbitrum` or `arb` | `42161` |
+| Base | `base` | `8453` |
+| Avalanche | `avalanche` or `avax` | `43114` |
+| Optimism | `optimism` or `op` | `10` |
+| zkSync Era | `zksync` | `324` |
+| Linea | `linea` | `59144` |
+| Scroll | `scroll` | `534352` |
+
+**Address format note**: EVM addresses (`0x...`) work across Ethereum/BSC/Polygon/Arbitrum/Base etc. Solana addresses (Base58) and Bitcoin addresses (UTXO) have different formats. Do NOT mix formats across chain types.
+
+## Command Index
+
+| # | Command | Description |
+|---|---|---|
+| 1 | `onchainos security token-scan` | Token risk / honeypot detection (all chains) |
+| 2 | `onchainos security dapp-scan` | DApp / URL phishing detection (chain-agnostic) |
+| 3 | `onchainos security tx-scan` | Transaction pre-execution security (EVM + Solana) |
+| 4 | `onchainos security sig-scan` | Message signature security (EVM only) |
+| 5 | `onchainos security approvals` | Token approval / Permit2 authorization query (EVM only) |
+
+## Reference Loading Rules (MANDATORY)
+
+Before executing ANY security command, you **MUST** read the corresponding reference document from `skills/okx-security/references/`. Do NOT rely on prior knowledge — always load the reference first.
+
+| User intent | Read this file FIRST |
+|---|---|
+| Token safety, honeypot, is this token safe, 代币安全, 蜜罐检测, 貔貅盘 | `references/risk-token-detection.md` |
+| DApp/URL phishing, is this site safe, 钓鱼网站 | `references/risk-domain-detection.md` |
+| Transaction safety, tx pre-execution, signature safety, approve safety, 交易安全, 签名安全 | `references/risk-transaction-detection.md` |
+| Approvals, allowance, Permit2, revoke, 授权管理, 授权查询, 风险授权 | `references/risk-approval-monitoring.md` |
+
+> When a workflow involves multiple commands (e.g., token-scan then tx-scan), load each reference before executing that command.
+
+## Integration with Other Skills
+
+Security scanning is often a prerequisite for other wallet operations:
+- Before `wallet send` with a contract token: run `token-scan` to verify token safety
+- Before `wallet contract-call` with approve calldata: run `tx-scan` to check spender
+- Before interacting with any DApp URL: run `dapp-scan`
+- Before signing any EIP-712 message: run `sig-scan`
+
+Use `okx-agentic-wallet` skill for the subsequent send/contract-call operations.

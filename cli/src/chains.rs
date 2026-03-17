@@ -33,25 +33,6 @@ pub fn resolve_chains(names: &str) -> String {
         .join(",")
 }
 
-/// Convert OKX chain index to EVM chain ID (for transaction signing).
-pub fn evm_chain_id(chain_index: &str) -> Option<u64> {
-    match chain_index {
-        "1" => Some(1),           // Ethereum
-        "56" => Some(56),         // BSC
-        "137" => Some(137),       // Polygon
-        "42161" => Some(42161),   // Arbitrum
-        "8453" => Some(8453),     // Base
-        "196" => Some(196),       // XLayer
-        "43114" => Some(43114),   // Avalanche
-        "10" => Some(10),         // Optimism
-        "250" => Some(250),       // Fantom
-        "59144" => Some(59144),   // Linea
-        "534352" => Some(534352), // Scroll
-        "324" => Some(324),       // zkSync
-        _ => None,
-    }
-}
-
 /// Determine chain family from chain index.
 pub fn chain_family(chain_index: &str) -> &str {
     match chain_index {

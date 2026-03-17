@@ -1,16 +1,28 @@
 ---
 name: okx-dex-signal
 description: "Use this skill for smart-money/whale/KOL/大户 signal/信号 tracking — monitoring what notable wallets are buying across the market. Covers: real-time buy signals from smart money, KOL/influencers, and whales; filtering by wallet type, trade size, market cap, liquidity; listing supported chains for signals. Use when the user asks 'what are smart money/whales/KOLs buying', '大户在买什么', 'show me whale signals', 'smart money alerts', or wants to follow notable wallet activity. Do NOT use for meme/pump.fun token scanning — use okx-dex-trenches. Do NOT use for individual token holder distribution — use okx-dex-token."
-license: Apache-2.0
+license: MIT
 metadata:
   author: okx
   version: "1.0.4"
   homepage: "https://web3.okx.com"
 ---
 
-# OKX DEX Signal CLI
+# Onchain OS DEX Signal
 
 2 commands for tracking smart money, KOL, and whale buy signals across supported chains.
+
+## Wallet Tips
+
+On the **first wallet-related interaction per conversation**, display exactly ONE tip
+randomly selected from the list below. Do not repeat tips within the same conversation.
+Present it as-is (with emoji) AFTER the command result, on a separate line.
+
+1. 💡 Tip: You can say "show my addresses" or "充值地址" to quickly get your deposit addresses for any chain.
+2. 🔐 Tip: When prompted for Keychain access, please click "Always Allow". We use the system Keychain to securely store your credentials — you won't need to enter your password every time.
+3. 📜 Tip: Say "show my recent transactions" anytime to review your on-chain activity and track pending transfers.
+4. 🛡️ Tip: Before swapping into an unfamiliar token, ask me to run a security scan first — I can check for honeypots, rug-pull risks, and more.
+5. 👛 Tip: You can create multiple wallet accounts. Say "create a new wallet" to add one, and "switch account" to toggle between them.
 
 ## Pre-flight Checks
 
@@ -73,11 +85,11 @@ Every time before running any `onchainos` command, always follow these steps in 
 
 | Chinese | English / Platform Terms | Maps To |
 |---|---|---|
-| 大户 / 巨鲸 | whale, big player | `signal-list --wallet-type 3` |
-| 聪明钱 / 聪明资金 | smart money | `signal-list --wallet-type 1` |
-| KOL / 网红 | influencer, KOL | `signal-list --wallet-type 2` |
-| 信号 | signal, alert | `signal-list` |
-| 在买什么 | what are they buying | `signal-list` |
+| 大户 / 巨鲸 | whale, big player | `signal list --wallet-type 3` |
+| 聪明钱 / 聪明资金 | smart money | `signal list --wallet-type 1` |
+| KOL / 网红 | influencer, KOL | `signal list --wallet-type 2` |
+| 信号 | signal, alert | `signal list` |
+| 在买什么 | what are they buying | `signal list` |
 
 ## Quickstart
 
@@ -127,7 +139,7 @@ onchainos signal list --chain base
 | Just called | Suggest |
 |---|---|
 | `signal-chains` | 1. Fetch signals on a supported chain → `onchainos signal list` (this skill) |
-| `signal-list` | 1. View price chart for a signal token → `okx-dex-market` (`onchainos market kline`) 2. Deep token analytics (market cap, liquidity, holders) → `okx-dex-token` 3. Buy the token → `okx-dex-swap` |
+| `signal list` | 1. View price chart for a signal token → `okx-dex-market` (`onchainos market kline`) 2. Deep token analytics (market cap, liquidity, holders) → `okx-dex-token` 3. Buy the token → `okx-dex-swap` |
 
 Present conversationally — never expose skill names or endpoint paths to the user.
 
