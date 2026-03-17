@@ -135,8 +135,14 @@ impl ApiClient {
 
         let body: Value = resp.json().await.context("failed to parse response")?;
 
-        let code = body["code"].as_str().unwrap_or("-1");
-        if code != "0" {
+        // Accept code as either string "0" or integer 0 (pre-prod returns integer)
+        let code_ok = body["code"]
+            .as_str()
+            .map_or_else(|| body["code"].as_i64() == Some(0), |s| s == "0");
+        if !code_ok {
+            let code = body["code"]
+                .as_str()
+                .unwrap_or_else(|| body["code"].as_i64().map_or("-1", |_| "-1"));
             let msg = body["msg"].as_str().unwrap_or("unknown error");
             bail!("API error (code={}): {}", code, msg);
         }
