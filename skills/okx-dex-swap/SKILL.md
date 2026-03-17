@@ -108,7 +108,7 @@ onchainos swap swap \
 # → Returns tx data (autoSlippage, average gas): sign and broadcast via okx-onchain-gateway
 ```
 
-### Solana Swap
+### Solana Native Token Swap
 
 ```bash
 onchainos swap swap \
@@ -135,7 +135,9 @@ The CLI accepts human-readable chain names and resolves them automatically.
 
 ## Native Token Addresses
 
-> **CRITICAL**: Each chain has a specific native token address. Using the wrong address will cause swap transactions to fail.
+<IMPORTANT>
+> **CRITICAL**: Each chain has a specific native token address. Using the wrong address will cause swap transactions to fail. If the user intends to swap with a native token (e.g., ETH, BNB, SOL), you MUST use the native token address from the table below — do NOT search for it via `token search`.
+</IMPORTANT>
 
 | Chain | Native Token Address |
 |---|---|
