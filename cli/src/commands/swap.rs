@@ -94,15 +94,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(
-                fetch_quote(
-                    &client,
-                    &chain_index,
-                    &from,
-                    &to,
-                    &amount,
-                    &swap_mode,
-                )
-                .await?,
+                fetch_quote(&client, &chain_index, &from, &to, &amount, &swap_mode).await?,
             );
         }
         SwapCommand::Swap {

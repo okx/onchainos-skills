@@ -177,7 +177,9 @@ pub(super) async fn cmd_login(
                     if let Ok(Some(wallets)) = wallet_store::load_wallets() {
                         if wallets.is_ak {
                             if let Ok(blob) = keyring_store::read_blob() {
-                                if let Some(old_api_key) = blob.get("api_key").filter(|k| !k.is_empty()) {
+                                if let Some(old_api_key) =
+                                    blob.get("api_key").filter(|k| !k.is_empty())
+                                {
                                     if old_api_key != &api_key {
                                         bail!(
                                             "You are about to switch from API Key \"{}\" to \"{}\". \
