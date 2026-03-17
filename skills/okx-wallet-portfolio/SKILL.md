@@ -159,27 +159,6 @@ This skill is often used **before swap** (to verify sufficient balance) or **as 
 
 **Key conversion**: `balance` (UI units) × `10^decimal` = `amount` (minimal units) for swap.
 
-### Workflow D: Mirror Smart Money Holdings
-
-> User: "What are smart money wallets holding that I'm not? Help me rebalance"
-
-```
-1. okx-dex-signal   onchainos signal list --chain solana --wallet-type 1
-                                                   → recent smart money buys; get list of tokens being accumulated
-       ↓ extract tokenContractAddress + chainIndex for top tokens
-2. okx-wallet-portfolio  onchainos portfolio all-balances --address <my-wallet> --chains solana
-                                                   → my current holdings; identify which smart-money tokens I don't hold
-3. okx-dex-token    onchainos token price-info --address <candidate-token> --chain solana
-                                                   → validate: market cap, liquidity, 24h volume for candidate tokens
-4. okx-dex-token    onchainos token cluster-overview --address <candidate-token> --chain solana
-                                                   → concentration risk and rug pull % before committing
-       ↓ token passes checks → confirm available balance for swap
-5. okx-dex-swap     onchainos swap quote --from 11111111111111111111111111111111 --to <candidate-token> --amount <amount> --chain solana
-6. okx-dex-swap     onchainos swap swap  --from 11111111111111111111111111111111 --to <candidate-token> --amount <amount> --chain solana --wallet <my-wallet>
-```
-
-**Data handoff**: tokens from step 1 cross-referenced against step 2 holdings to find gaps; `tokenContractAddress` from step 3 feeds into steps 4–6; `balance` from step 2 × `10^decimal` = `--amount` for swap.
-
 ## Operation Flow
 
 ### Step 1: Identify Intent
