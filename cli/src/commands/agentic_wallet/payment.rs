@@ -40,7 +40,17 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
             asset,
             from,
             max_timeout_seconds,
-        } => pay(&network, &amount, &pay_to, &asset, from.as_deref(), max_timeout_seconds).await,
+        } => {
+            pay(
+                &network,
+                &amount,
+                &pay_to,
+                &asset,
+                from.as_deref(),
+                max_timeout_seconds,
+            )
+            .await
+        }
     }
 }
 
@@ -100,7 +110,11 @@ async fn pay(
 
     // 2. Get EIP-3009 unsigned hash
     let unsigned_hash_resp = client
-        .post_authed("/priapi/v5/wallet/agentic/pre-transaction/gen-msg-hash", &access_token, &message)
+        .post_authed(
+            "/priapi/v5/wallet/agentic/pre-transaction/gen-msg-hash",
+            &access_token,
+            &message,
+        )
         .await
         .map_err(format_api_error)
         .context("x402 gen-msg-hash failed")?;
@@ -233,12 +247,18 @@ mod tests {
         let cli = TestCli::parse_from([
             "test",
             "x402-pay",
-            "--network", "eip155:8453",
-            "--amount", "1000000",
-            "--pay-to", "0xRecipient",
-            "--asset", "0xUSDC",
-            "--from", "0xPayer",
-            "--max-timeout-seconds", "600",
+            "--network",
+            "eip155:8453",
+            "--amount",
+            "1000000",
+            "--pay-to",
+            "0xRecipient",
+            "--asset",
+            "0xUSDC",
+            "--from",
+            "0xPayer",
+            "--max-timeout-seconds",
+            "600",
         ]);
         match cli.command {
             PaymentCommand::X402Pay {
@@ -264,10 +284,14 @@ mod tests {
         let cli = TestCli::parse_from([
             "test",
             "x402-pay",
-            "--network", "eip155:1",
-            "--amount", "500",
-            "--pay-to", "0xRecipient",
-            "--asset", "0xToken",
+            "--network",
+            "eip155:1",
+            "--amount",
+            "500",
+            "--pay-to",
+            "0xRecipient",
+            "--asset",
+            "0xToken",
         ]);
         match cli.command {
             PaymentCommand::X402Pay {
@@ -287,11 +311,13 @@ mod tests {
         let result = TestCli::try_parse_from([
             "test",
             "x402-pay",
-            "--network", "eip155:8453",
-            "--amount", "1000000",
-            "--pay-to", "0xRecipient",
+            "--network",
+            "eip155:8453",
+            "--amount",
+            "1000000",
+            "--pay-to",
+            "0xRecipient",
         ]);
         assert!(result.is_err());
     }
 }
-
