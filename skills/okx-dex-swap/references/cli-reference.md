@@ -144,11 +144,11 @@ onchainos swap quote --from 0x74b7f16337b8972027f6196a17a631ac6de26d22 --to 0xee
 
 # 2. Approve (ERC-20 token needs approval)
 onchainos swap approve --token 0x74b7f16337b8972027f6196a17a631ac6de26d22 --amount 100000000 --chain xlayer
-# -> Returns approval calldata -> user signs -> broadcast
+# -> Returns approval calldata -> sign & broadcast via wallet contract-call
 
 # 3. Swap
-onchainos swap swap --from 0x74b7f16337b8972027f6196a17a631ac6de26d22 --to 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --amount 100000000 --chain xlayer --wallet 0xYourWallet
-# -> Returns tx data (autoSlippage, average gas) -> user signs -> broadcast
+onchainos swap swap --from 0x74b7f16337b8972027f6196a17a631ac6de26d22 --to 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --amount 100000000 --chain xlayer --wallet <local_wallet_addr>
+# -> Returns swap calldata -> sign & broadcast via wallet contract-call
 ```
 
 **User says:** "What DEXes are available on XLayer?"

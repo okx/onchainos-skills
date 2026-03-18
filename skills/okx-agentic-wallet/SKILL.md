@@ -723,3 +723,4 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 - **Account display rule**: Never show raw `accountId` to users — always display the human-readable account name (`accountName`). The `accountId` is an internal identifier only needed when calling CLI commands (e.g. `wallet switch <account_id>`).
 - **XKO address format**: OKX uses a custom `XKO` prefix (case-insensitive) in place of `0x` for EVM addresses. If a user-supplied address starts with `XKO` / `xko`, display this message verbatim:
   > "XKO address format is not supported yet. Please find the 0x address by switching to your commonly used address, then you can continue."
+- **Disclaimer**: This is a self-custody wallet — all on-chain transactions are irreversible and the user bears full responsibility for their trading decisions; quotes and routing information are for reference only and do not constitute investment advice.
