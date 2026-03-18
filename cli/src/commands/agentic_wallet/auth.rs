@@ -27,7 +27,9 @@ pub(super) fn ensure_tokens() -> Result<(String, String)> {
         let exp_dt = chrono::DateTime::from_timestamp(exp_ts, 0)
             .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
             .unwrap_or_else(|| "invalid".to_string());
-        let now_dt = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+        let now_dt = chrono::Utc::now()
+            .format("%Y-%m-%d %H:%M:%S UTC")
+            .to_string();
         let diff = exp_ts - now_ts;
         eprintln!(
             "[DEBUG][ensure_tokens] session_key_expire_at: value=\"{}\", parsed_exp={} ({}), now={} ({}), diff={}s ({:.1}min, {:.1}h), expired={}",
@@ -54,7 +56,9 @@ pub(super) fn ensure_tokens() -> Result<(String, String)> {
             let exp_dt = chrono::DateTime::from_timestamp(exp_ts, 0)
                 .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
                 .unwrap_or_else(|| "invalid".to_string());
-            let now_dt = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+            let now_dt = chrono::Utc::now()
+                .format("%Y-%m-%d %H:%M:%S UTC")
+                .to_string();
             let diff = exp_ts - now_ts;
             eprintln!(
                 "[DEBUG][ensure_tokens] refresh_token: exp={} ({}), now={} ({}), diff={}s ({:.1}min, {:.1}h), expired={}",
@@ -83,7 +87,9 @@ pub(super) fn ensure_tokens() -> Result<(String, String)> {
             let exp_dt = chrono::DateTime::from_timestamp(exp_ts, 0)
                 .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
                 .unwrap_or_else(|| "invalid".to_string());
-            let now_dt = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+            let now_dt = chrono::Utc::now()
+                .format("%Y-%m-%d %H:%M:%S UTC")
+                .to_string();
             let diff = exp_ts - now_ts;
             eprintln!(
                 "[DEBUG][ensure_tokens] access_token: exp={} ({}), now={} ({}), diff={}s ({:.1}min, {:.1}h), expired={}",
@@ -110,7 +116,9 @@ pub(super) async fn ensure_tokens_refreshed() -> Result<String> {
 
         if cfg!(feature = "debug-log") {
             let now_ts = chrono::Utc::now().timestamp();
-            let now_dt = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+            let now_dt = chrono::Utc::now()
+                .format("%Y-%m-%d %H:%M:%S UTC")
+                .to_string();
             if let Some(old_exp) = token_exp_timestamp(&access_token) {
                 let old_exp_dt = chrono::DateTime::from_timestamp(old_exp, 0)
                     .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
@@ -553,10 +561,7 @@ pub(super) async fn cmd_add() -> Result<()> {
     let access_token = ensure_tokens_refreshed().await?;
 
     if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG] cmd_add: access_token_len={}",
-            access_token.len()
-        );
+        eprintln!("[DEBUG] cmd_add: access_token_len={}", access_token.len());
     }
 
     let wallets = wallet_store::load_wallets()?
