@@ -1,6 +1,6 @@
 ---
 name: okx-dex-market
-description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, and wallet PnL/盈亏分析 (win rate, my DEX trade history, realized/unrealized PnL per token). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my DEX history', 'realized profit', or 'unrealized profit'. Do NOT use for smart-money/whale/KOL signal tracking — use okx-dex-signal. Do NOT use for meme/pump.fun token scanning — use okx-dex-trenches. Do NOT use for token search, holder distribution, liquidity pools, or honeypot checks — use okx-dex-token."
+description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, wallet PnL/盈亏分析 (win rate, my DEX trade history, realized/unrealized PnL per token), and address tracker trades (latest DEX trades by smart money, KOL, or custom addresses). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my DEX history', 'realized profit', 'unrealized profit', 'what are smart money buying', 'latest trades by KOL', 'track address trades', or '追踪地址交易'. Do NOT use for smart-money/whale/KOL signal tracking — use okx-dex-signal. Do NOT use for meme/pump.fun token scanning — use okx-dex-trenches. Do NOT use for token search, holder distribution, liquidity pools, or honeypot checks — use okx-dex-token."
 license: Apache-2.0
 metadata:
   author: okx
@@ -10,7 +10,7 @@ metadata:
 
 # OKX DEX Market Data CLI
 
-9 commands for on-chain prices, candlesticks, index prices, and wallet PnL analysis.
+10 commands for on-chain prices, candlesticks, index prices, wallet PnL analysis, and address tracker trades.
 
 ## Pre-flight Checks
 
@@ -84,6 +84,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 | 未实现盈亏 | unrealized PnL, paper profit, holding gain | `portfolio-token-pnl` (unrealizedPnlUsd) |
 | 胜率 | win rate, success rate | `portfolio-overview` (winRate) |
 | 历史交易 / 交易记录 | DEX transaction history, trade log | `portfolio-dex-history` |
+| 追踪地址交易 / 聪明钱最新交易 / KOL 动态 | address tracker trades, latest trades by smart money / KOL / custom addresses | `tracker-trades` |
 | 清仓 | sold all, liquidated, sell off | `portfolio-recent-pnl` (unrealizedPnlUsd = "SELL_ALL") |
 | 画像 / 钱包画像 / 持仓分析 | wallet profile, portfolio analysis | `portfolio-overview` |
 | 近期收益 | recent PnL, latest earnings by token | `portfolio-recent-pnl` |
@@ -157,6 +158,12 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | 8 | `onchainos market portfolio-recent-pnl` | Get recent PnL list by token for a wallet (paginated, up to 1000 records) |
 | 9 | `onchainos market portfolio-token-pnl` | Get latest PnL snapshot for a specific token in a wallet |
 
+### Address Tracker Commands
+
+| # | Command | Description |
+|---|---|---|
+| 10 | `onchainos market tracker-trades --tracker-type <type>` | Get latest DEX trades for smart money, KOL, or custom tracked addresses |
+
 ## Boundary: market vs other skills
 
 | Need | Use this skill (`okx-dex-market`) | Use other skill instead |
@@ -194,6 +201,9 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Recent PnL list by token | `onchainos market portfolio-recent-pnl` | - |
 | Per-token latest PnL (realized/unrealized) | `onchainos market portfolio-token-pnl` | - |
 | PnL-supported chain list | `onchainos market portfolio-supported-chains` | - |
+| Latest trades by platform smart money | `onchainos market tracker-trades --tracker-type smart_money` | - |
+| Latest trades by platform KOL addresses | `onchainos market tracker-trades --tracker-type kol` | - |
+| Latest trades for custom wallet addresses | `onchainos market tracker-trades --tracker-type multi_address --wallet-address <addrs>` | - |
 
 **Rule of thumb**: `okx-dex-market` = raw price feeds, charts, and wallet PnL analysis. Use `okx-dex-signal` for signal tracking, `okx-dex-trenches` for meme token research, `okx-dex-token` for token discovery & analytics.
 
@@ -276,6 +286,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 - Recent token PnL list for a wallet → `onchainos market portfolio-recent-pnl`
 - Per-token latest PnL (realized/unrealized) → `onchainos market portfolio-token-pnl`
 - Chains supported for PnL → `onchainos market portfolio-supported-chains`
+- Latest DEX trades for smart money / KOL / custom addresses → `onchainos market tracker-trades`
 
 ### Step 2: Collect Parameters
 
@@ -302,12 +313,13 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | `market portfolio-dex-history` | 1. Check PnL for a specific traded token → `onchainos market portfolio-token-pnl` (this skill) 2. View token price chart → `onchainos market kline` (this skill) |
 | `market portfolio-recent-pnl` | 1. Get detailed PnL for a specific token → `onchainos market portfolio-token-pnl` (this skill) 2. View token analytics → `okx-dex-token` |
 | `market portfolio-token-pnl` | 1. View full trade history for this token → `onchainos market portfolio-dex-history` (this skill) 2. View token price chart → `onchainos market kline` (this skill) |
+| `market tracker-trades` | 1. Get token price for a traded token → `onchainos market price` (this skill) 2. Deeper token analytics → `okx-dex-token` 3. Buy/swap a token that smart money is buying → `okx-dex-swap` |
 
 Present conversationally, e.g.: "Would you like to see the K-line chart, or buy this token?" — never expose skill names or endpoint paths to the user.
 
 ## Additional Resources
 
-For detailed parameter tables, return field schemas, and usage examples for all 9 commands, consult:
+For detailed parameter tables, return field schemas, and usage examples for all 10 commands, consult:
 - **`references/cli-reference.md`** — Full CLI command reference with params, return fields, and examples
 
 To search for specific command details: `grep -n "onchainos market <command>" references/cli-reference.md`

@@ -181,6 +181,32 @@ struct MarketSignalListParams {
     max_liquidity_usd: Option<String>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+struct TrackerTradesParams {
+    /// Tracker type: smart_money (or 1), kol (or 2), multi_address (or 3)
+    tracker_type: String,
+    /// Wallet addresses, comma-separated (required when tracker_type=multi_address, max 20)
+    wallet_address: Option<String>,
+    /// Trade type: 0=all (default), 1=buy, 2=sell
+    trade_type: Option<String>,
+    /// Chain filter (e.g. ethereum, solana). Omit for all chains
+    chain: Option<String>,
+    /// Minimum trade volume in USD
+    min_volume: Option<String>,
+    /// Maximum trade volume in USD
+    max_volume: Option<String>,
+    /// Minimum number of holding addresses
+    min_holders: Option<String>,
+    /// Minimum market cap in USD
+    min_market_cap: Option<String>,
+    /// Maximum market cap in USD
+    max_market_cap: Option<String>,
+    /// Minimum liquidity in USD
+    min_liquidity: Option<String>,
+    /// Maximum liquidity in USD
+    max_liquidity: Option<String>,
+}
+
 // ── Swap ───────────────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
 struct SwapQuoteParams {
@@ -1218,6 +1244,39 @@ impl McpServer {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         match market::fetch_portfolio_token_pnl(&self.client, &chain_index, &p.address, &p.token)
             .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "market_tracker_trades",
+        description = "Get latest DEX trades for tracked addresses. trackerType: smart_money (or 1) = platform smart money, kol (or 2) = platform Top 100 KOL addresses, multi_address (or 3) = custom addresses (requires wallet_address)"
+    )]
+    async fn market_tracker_trades(
+        &self,
+        Parameters(p): Parameters<TrackerTradesParams>,
+    ) -> Result<String, String> {
+        let chain_index = p
+            .chain
+            .as_deref()
+            .map(|c| crate::chains::resolve_chain(c).to_string());
+        match market::fetch_tracker_trades(
+            &self.client,
+            &p.tracker_type,
+            p.wallet_address.as_deref(),
+            p.trade_type.as_deref(),
+            chain_index.as_deref(),
+            p.min_volume.as_deref(),
+            p.max_volume.as_deref(),
+            p.min_holders.as_deref(),
+            p.min_market_cap.as_deref(),
+            p.max_market_cap.as_deref(),
+            p.min_liquidity.as_deref(),
+            p.max_liquidity.as_deref(),
+        )
+        .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),

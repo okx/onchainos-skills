@@ -412,7 +412,7 @@ onchainos token cluster-overview --address <address> [--chain <chain>]
 
 | Field | Type | Description |
 |---|---|---|
-| `clusterConcentration` | String | Cluster concentration level: `LOW`, `MEDIUM`, or `HIGH` |
+| `clusterConcentration` | String | Cluster concentration level: `Low`, `Medium`, or `High` |
 | `top100HoldingsPercent` | String | % of token supply held by top 100 addresses |
 | `rugPullPercent` | String | Rug pull probability % |
 | `holderNewAddressPercent` | String | % of top 1,000 holders created in the last 3 days |
@@ -451,7 +451,7 @@ onchainos token cluster-top-holders --address <address> --range-filter <1|2|3> [
 |---|---|---|
 | `holdingAmount` | String | Sum of all tokens held by top N addresses (excludes blackhole and LP addresses) |
 | `holdingPercent` | String | % of token supply held by top N addresses |
-| `clusterTrendType` | Object | Overall position direction; nested `trendType` field: `buy`, `sell`, `neutral`, or `transfer` |
+| `clusterTrendType` | Array\<String\> | Overall position direction; possible values: `buy`, `sell`, `neutral`, `transfer`, `transferIn`. May be absent if no trend data. |
 | `averageHoldingPeriod` | String | Weighted average holding time across the top N holders |
 | `averagePnlUsd` | String | Weighted average profit/loss of top N holders (USD) |
 | `averageBuyPriceUsd` | String | Weighted average cost price for the top N holders (USD) |
