@@ -356,7 +356,7 @@ After quote completes, resolve the wallet address using this priority:
    3. **Logged in, local wallet exists**:
       - **Single account** → use the active wallet address for the target chain directly. Inform the user which address is being used and ask for confirmation before proceeding.
       - **Multiple accounts** → list all accounts (name + address) and ask the user to choose which one to use. Then use the selected account's address for the target chain.
-   4. **Logged in, no local wallet** → suggest creating one (`onchainos wallet create`). If the user declines, ask for a wallet address manually.
+   4. **Logged in, no local wallet** → suggest adding one (`onchainos wallet add`). If the user declines, ask for a wallet address manually.
 
 Track whether the wallet address was **user-provided** or **resolved from local wallet** — this determines the execution path in Step 3.
 

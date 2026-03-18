@@ -19,8 +19,8 @@ pub enum WalletCommand {
         /// One-time password received via email
         otp: String,
     },
-    /// Create a new wallet account
-    Create,
+    /// Add a new wallet account
+    Add,
     /// Switch active account
     Switch {
         /// Account ID to switch to
@@ -151,7 +151,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             force,
         } => super::auth::cmd_login(email.as_deref(), locale.as_deref(), force).await,
         WalletCommand::Verify { otp } => super::auth::cmd_verify(&otp).await,
-        WalletCommand::Create => super::auth::cmd_create().await,
+        WalletCommand::Add => super::auth::cmd_add().await,
         WalletCommand::Switch { account_id } => super::account::cmd_switch(&account_id).await,
         WalletCommand::Status => super::account::cmd_status().await,
         WalletCommand::Addresses { chain } => super::account::cmd_addresses(chain.as_deref()).await,
