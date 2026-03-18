@@ -182,7 +182,7 @@ struct MarketSignalListParams {
 }
 
 #[derive(Deserialize, JsonSchema)]
-struct TrackerTradesParams {
+struct AddressTrackerActivitiesParams {
     /// Tracker type: smart_money (or 1), kol (or 2), multi_address (or 3)
     tracker_type: String,
     /// Wallet addresses, comma-separated (required when tracker_type=multi_address, max 20)
@@ -1271,18 +1271,18 @@ impl McpServer {
     }
 
     #[tool(
-        name = "market_tracker_trades",
-        description = "Get latest DEX trades for tracked addresses. trackerType: smart_money (or 1) = platform smart money, kol (or 2) = platform Top 100 KOL addresses, multi_address (or 3) = custom addresses (requires wallet_address)"
+        name = "market_address_tracker_activities",
+        description = "Get latest DEX activities for tracked addresses. trackerType: smart_money (or 1) = platform smart money, kol (or 2) = platform Top 100 KOL addresses, multi_address (or 3) = custom addresses (requires wallet_address)"
     )]
-    async fn market_tracker_trades(
+    async fn market_address_tracker_activities(
         &self,
-        Parameters(p): Parameters<TrackerTradesParams>,
+        Parameters(p): Parameters<AddressTrackerActivitiesParams>,
     ) -> Result<String, String> {
         let chain_index = p
             .chain
             .as_deref()
             .map(|c| crate::chains::resolve_chain(c).to_string());
-        match market::fetch_tracker_trades(
+        match market::fetch_address_tracker_activities(
             &self.client,
             &p.tracker_type,
             p.wallet_address.as_deref(),

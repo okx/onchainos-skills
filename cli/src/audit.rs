@@ -345,7 +345,7 @@ fn market_sub(c: &MarketCommand) -> &'static str {
         MarketCommand::PortfolioDexHistory { .. } => "portfolio-dex-history",
         MarketCommand::PortfolioRecentPnl { .. } => "portfolio-recent-pnl",
         MarketCommand::PortfolioTokenPnl { .. } => "portfolio-token-pnl",
-        MarketCommand::TrackerTrades { .. } => "address-tracker-activities",
+        MarketCommand::AddressTrackerActivities { .. } => "address-tracker-activities",
     }
 }
 

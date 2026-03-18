@@ -119,8 +119,8 @@ pub enum MarketCommand {
         #[arg(long)]
         token: String,
     },
-    /// Get latest DEX trades for tracked addresses (smart money, KOL, or custom multi-address)
-    TrackerTrades {
+    /// Get latest DEX activities for tracked addresses (smart money, KOL, or custom multi-address)
+    AddressTrackerActivities {
         /// Tracker type: smart_money (or 1), kol (or 2), multi_address (or 3)
         #[arg(long)]
         tracker_type: String,
@@ -250,7 +250,7 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
         } => {
             portfolio_token_pnl(ctx, &address, &chain, &token).await?;
         }
-        MarketCommand::TrackerTrades {
+        MarketCommand::AddressTrackerActivities {
             tracker_type,
             wallet_address,
             trade_type,
@@ -263,7 +263,7 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
             min_liquidity,
             max_liquidity,
         } => {
-            tracker_trades(
+            address_tracker_activities(
                 ctx,
                 &tracker_type,
                 wallet_address.as_deref(),
@@ -555,7 +555,7 @@ fn resolve_tracker_type(t: &str) -> &str {
 
 /// GET /api/v6/dex/market/address-tracker/trades
 #[allow(clippy::too_many_arguments)]
-pub async fn fetch_tracker_trades(
+pub async fn fetch_address_tracker_activities(
     client: &ApiClient,
     tracker_type: &str,
     wallet_address: Option<&str>,
@@ -607,7 +607,7 @@ pub async fn fetch_tracker_trades(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn tracker_trades(
+async fn address_tracker_activities(
     ctx: &Context,
     tracker_type: &str,
     wallet_address: Option<&str>,
@@ -624,7 +624,7 @@ async fn tracker_trades(
     let chain_index = chain.map(|c| crate::chains::resolve_chain(c).to_string());
     let client = ctx.client()?;
     output::success(
-        fetch_tracker_trades(
+        fetch_address_tracker_activities(
             &client,
             tracker_type,
             wallet_address,

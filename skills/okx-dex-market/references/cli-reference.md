@@ -295,12 +295,12 @@ onchainos market portfolio-dex-history --address <wallet> --chain ethereum \
 
 ---
 
-## 10. onchainos market tracker-trades
+## 10. onchainos market address-tracker-activities
 
-Get latest DEX trades for tracked addresses. Supports smart money, KOL, or custom multi-address tracking, with filters for trade type, chain, volume, market cap, liquidity, and holder count.
+Get latest DEX activities for tracked addresses. Supports smart money, KOL, or custom multi-address tracking, with filters for trade type, chain, volume, market cap, liquidity, and holder count.
 
 ```bash
-onchainos market tracker-trades --tracker-type <type> [options]
+onchainos market address-tracker-activities --tracker-type <type> [options]
 ```
 
 | Param | Required | Default | Description |
@@ -339,15 +339,15 @@ onchainos market tracker-trades --tracker-type <type> [options]
 
 ```bash
 # Latest trades by platform smart money (all chains)
-onchainos market tracker-trades --tracker-type smart_money
+onchainos market address-tracker-activities --tracker-type smart_money
 
 # Latest buys by KOL addresses on Solana
-onchainos market tracker-trades --tracker-type kol --chain solana --trade-type 1
+onchainos market address-tracker-activities --tracker-type kol --chain solana --trade-type 1
 
 # Latest trades for custom wallet addresses
-onchainos market tracker-trades --tracker-type multi_address \
+onchainos market address-tracker-activities --tracker-type multi_address \
   --wallet-address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045,0xab5801a7d398351b8be11c439e05c5b3259aec9b
 
 # Smart money buys with volume filter
-onchainos market tracker-trades --tracker-type smart_money --trade-type 1 --min-volume 10000
+onchainos market address-tracker-activities --tracker-type smart_money --trade-type 1 --min-volume 10000
 ```
