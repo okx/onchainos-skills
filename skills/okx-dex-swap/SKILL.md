@@ -158,7 +158,9 @@ The CLI accepts human-readable chain names and resolves them automatically.
 | Tron | `T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb` |
 | Ton | `EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c` |
 
-> **WARNING — Solana native SOL**: The correct address is `11111111111111111111111111111111` (Solana system program). Do **NOT** use `So11111111111111111111111111111111111111112` (wSOL SPL token) — it is a different token and will cause swap failures.
+<IMPORTANT>
+> **CRITICAL — Solana native SOL**: You MUST use `11111111111111111111111111111111` (Solana system program). NEVER use `So11111111111111111111111111111111111111112` (wSOL SPL token) — it is a completely different token and WILL cause the transaction to fail and unable to be packaged on-chain. This rule has no exceptions.
+</IMPORTANT>
 
 ## Command Index
 
@@ -462,8 +464,8 @@ This helps debug issues without requiring the user to gather info manually.
 
 ## Amount Display Rules
 
-- Input/output amounts in UI units (`1.5 ETH`, `3,200 USDC`)
-- Internal CLI params use minimal units (`1 USDC` = `"1000000"`, `1 ETH` = `"1000000000000000000"`)
+- **Display** input/output amounts to the user in UI units (`1.5 ETH`, `3,200 USDC`)
+- **CLI `--amount` parameter** always uses **minimal units** (wei/lamports): `1 USDC` = `"1000000"` (6 decimals), `1 ETH` = `"1000000000000000000"` (18 decimals), `1 SOL` = `"1000000000"` (9 decimals). Convert before calling any swap command.
 - Gas fees in USD
 - `minReceiveAmount` in both UI units and USD
 - Price impact as percentage

@@ -16,9 +16,10 @@ pub enum MemepumpCommand {
         /// Chain (e.g. solana, bsc). Required.
         #[arg(long)]
         chain: String,
-        /// Token stage: NEW, MIGRATING, or MIGRATED (required by API)
-        #[arg(long)]
+        /// Token stage: NEW, MIGRATING, or MIGRATED (default: NEW)
+        #[arg(long, default_value = "NEW")]
         stage: String,
+
         /// Wallet address for position-specific data
         #[arg(long)]
         wallet_address: Option<String>,
@@ -310,7 +311,7 @@ pub async fn execute(ctx: &Context, cmd: MemepumpCommand) -> Result<()> {
                     &client,
                     MemepumpTokenListParams {
                         chain,
-                        stage,
+                        stage: Some(stage),
                         wallet_address,
                         protocol_id_list,
                         quote_token_address_list,
@@ -417,7 +418,8 @@ pub async fn execute(ctx: &Context, cmd: MemepumpCommand) -> Result<()> {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 pub struct MemepumpTokenListParams {
     pub chain: String,
-    pub stage: String,
+    /// Token stage: NEW, MIGRATING, or MIGRATED (default: NEW)
+    pub stage: Option<String>,
     pub wallet_address: Option<String>,
     pub protocol_id_list: Option<String>,
     pub quote_token_address_list: Option<String>,
@@ -484,6 +486,7 @@ pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
 /// GET /api/v6/dex/market/memepump/tokenList
 pub async fn fetch_token_list(client: &ApiClient, p: MemepumpTokenListParams) -> Result<Value> {
     let chain_index = crate::chains::resolve_chain(&p.chain).to_string();
+    let stage = p.stage.unwrap_or_else(|| "NEW".to_string());
 
     let wallet_address = p.wallet_address.unwrap_or_default();
     let protocol_id_list = p.protocol_id_list.unwrap_or_default();
@@ -545,7 +548,7 @@ pub async fn fetch_token_list(client: &ApiClient, p: MemepumpTokenListParams) ->
             "/api/v6/dex/market/memepump/tokenList",
             &[
                 ("chainIndex", chain_index.as_str()),
-                ("stage", &p.stage),
+                ("stage", &stage),
                 ("walletAddress", &wallet_address),
                 ("protocolIdList", &protocol_id_list),
                 ("quoteTokenAddressList", &quote_token_address_list),

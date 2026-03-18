@@ -61,8 +61,8 @@ pub enum MarketCommand {
         /// Chain name or ID (e.g. ethereum, solana, xlayer)
         #[arg(long)]
         chain: String,
-        /// Time frame: 1=1D, 2=3D, 3=7D, 4=1M, 5=3M
-        #[arg(long)]
+        /// Time frame: 1=1D, 2=3D, 3=7D, 4=1M, 5=3M (default: 4 = 1M)
+        #[arg(long, default_value = "4")]
         time_frame: String,
     },
     /// Get wallet DEX transaction history (paginated)
@@ -125,10 +125,22 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
     let client = ctx.client()?;
     match cmd {
         MarketCommand::Price { address, chain } => {
+            let address = address.trim().to_string();
+            if address.is_empty() {
+                anyhow::bail!("Parameter --address cannot be empty");
+            }
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_price(&client, &address, &chain_index).await?);
+            let result = fetch_price(&client, &address, &chain_index).await?;
+            if result.as_array().is_some_and(|a| a.is_empty()) {
+                anyhow::bail!(
+                    "No price data found for address {} on chain {}. Verify the token address is valid on this chain.",
+                    address,
+                    chain_index
+                );
+            }
+            output::success(result);
         }
         MarketCommand::Prices { tokens, chain } => {
             let default_chain = chain
@@ -240,7 +252,32 @@ pub async fn fetch_prices(
         .await
 }
 
-/// GET /api/v6/dex/market/candles
+/// Transform kline raw arrays into named objects for LLM-friendly output.
+/// API returns: [ts, open, high, low, close, vol, volUsd, confirm]
+fn kline_to_named_objects(data: Value) -> Value {
+    const FIELDS: &[&str] = &["ts", "o", "h", "l", "c", "vol", "volUsd", "confirm"];
+    match data {
+        Value::Array(candles) => Value::Array(
+            candles
+                .into_iter()
+                .map(|candle| match candle {
+                    Value::Array(values) => {
+                        let mut map = serde_json::Map::new();
+                        for (i, val) in values.into_iter().enumerate() {
+                            let key = FIELDS.get(i).unwrap_or(&"unknown");
+                            map.insert((*key).to_string(), val);
+                        }
+                        Value::Object(map)
+                    }
+                    other => other,
+                })
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+/// GET /api/v6/dex/market/candles — returns named objects (transformed from raw arrays).
 pub async fn fetch_kline(
     client: &ApiClient,
     address: &str,
@@ -249,7 +286,7 @@ pub async fn fetch_kline(
     limit: u32,
 ) -> Result<Value> {
     let limit_str = limit.to_string();
-    client
+    let raw = client
         .get(
             "/api/v6/dex/market/candles",
             &[
@@ -259,7 +296,8 @@ pub async fn fetch_kline(
                 ("limit", &limit_str),
             ],
         )
-        .await
+        .await?;
+    Ok(kline_to_named_objects(raw))
 }
 
 /// POST /api/v6/dex/index/current-price — body is JSON array
