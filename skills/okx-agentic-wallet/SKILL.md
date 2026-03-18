@@ -735,6 +735,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
       > "XKO address format is not supported yet. Please find the 0x address by switching to your commonly used address, then you can continue."
     - **User-facing language**: When communicating in Chinese, never use the abbreviation "OTP". Always use "验证码" instead. In English, prefer "verification code" over "OTP" in messages shown to users.
     - **Full chain names**: Always display chains by their full name — never use abbreviations or internal IDs. If unsure, run `onchainos wallet chains` and use the `showName` field.
+    - **Disclaimer**: This is a self-custody wallet — all on-chain transactions are irreversible and the user bears full responsibility for their trading decisions; quotes and routing information are for reference only and do not constitute investment advice.
 </must>
 <should>
     - The send and contract-call flows are atomic: unsigned -> sign -> broadcast in one command
