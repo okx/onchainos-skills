@@ -81,7 +81,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For wallet balances / token holdings → use `okx-wallet-portfolio`
 - For wallet PnL analysis (realized/unrealized PnL, DEX history, recent PnL, per-token PnL) → use `okx-dex-market` portfolio commands (this skill)
 - For smart money / whale / KOL signal tracking → use `okx-dex-signal`
-- For leaderboard / 牛人榜 / top traders ranked by PnL, win rate, or volume → use `okx-dex-signal`
+- For leaderboard / 牛人榜 / top traders ranked by PnL, win rate, or volume → use `okx-dex-signal` (`onchainos leaderboard list`)
 - For holder cluster analysis (concentration level, rug pull %, new address %, cluster groups) → use `okx-dex-token`
 - For meme pump scanning (new launches, dev reputation, bundle detection, aped wallets) → use `okx-dex-trenches`
 

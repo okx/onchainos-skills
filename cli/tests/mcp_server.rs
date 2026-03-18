@@ -231,6 +231,12 @@ fn mcp_tools_list_returns_all_tools() {
         "gateway_broadcast",
         "signal_list",
         "memepump_tokens",
+        "leaderboard_chains",
+        "leaderboard_list",
+        "token_cluster_supported_chains",
+        "token_cluster_overview",
+        "token_cluster_top_holders",
+        "token_cluster_list",
     ];
     for name in expected {
         assert!(

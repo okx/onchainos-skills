@@ -544,7 +544,7 @@ async fn portfolio_token_pnl(ctx: &Context, address: &str, chain: &str, token: &
     Ok(())
 }
 
-fn resolve_tracker_type(t: &str) -> &str {
+pub fn resolve_tracker_type(t: &str) -> &str {
     match t {
         "smart_money" => "1",
         "kol" => "2",
@@ -621,6 +621,10 @@ async fn address_tracker_activities(
     min_liquidity: Option<&str>,
     max_liquidity: Option<&str>,
 ) -> Result<()> {
+    let resolved = resolve_tracker_type(tracker_type);
+    if (resolved == "3" || tracker_type == "multi_address") && wallet_address.is_none() {
+        anyhow::bail!("--wallet-address is required when --tracker-type is multi_address");
+    }
     let chain_index = chain.map(|c| crate::chains::resolve_chain(c).to_string());
     let client = ctx.client()?;
     output::success(

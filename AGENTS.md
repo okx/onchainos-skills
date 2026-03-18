@@ -1,6 +1,6 @@
 # onchainos Skills — Agent Instructions
 
-This is an **onchainos skill collection** providing 7 skills for on-chain operations: token search, market data, wallet balance, swap execution, transaction broadcasting, leaderboard rankings, and token cluster analysis across 20+ blockchains.
+This is an **onchainos skill collection** providing 10 skills for on-chain operations across 20+ blockchains.
 
 ## Available Skills
 
@@ -14,7 +14,7 @@ This is an **onchainos skill collection** providing 7 skills for on-chain operat
 
 ## Architecture
 
-- **skills/** — 7 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **skills/** — 10 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
 - **.mcp.json.example** — MCP server configuration template

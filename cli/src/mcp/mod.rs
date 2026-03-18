@@ -465,7 +465,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_info(&self.client, &p.address, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -484,7 +484,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_holders(&self.client, &p.address, &chain_index, p.tag_filter).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -517,7 +517,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_price_info(&self.client, &p.address, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -536,7 +536,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match market::fetch_price(&self.client, &p.address, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -555,7 +555,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match market::fetch_prices(&self.client, &p.tokens, &default_chain).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -574,7 +574,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         let bar = p.bar.as_deref().unwrap_or("1H");
         let limit = p.limit.unwrap_or(100);
         match market::fetch_kline(&self.client, &p.address, &chain_index, bar, limit).await {
@@ -595,7 +595,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         let limit = p.limit.unwrap_or(100);
         match token::fetch_token_trades(
             &self.client,
@@ -624,7 +624,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match market::fetch_index(&self.client, &p.address, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -1113,7 +1113,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_liquidity(&self.client, &p.address, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -1146,7 +1146,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_advanced_info(&self.client, &p.address, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -1165,7 +1165,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_top_trader(&self.client, &p.address, &chain_index, p.tag_filter).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -1278,6 +1278,11 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<AddressTrackerActivitiesParams>,
     ) -> Result<String, String> {
+        let resolved_type = market::resolve_tracker_type(&p.tracker_type);
+        if (resolved_type == "3" || p.tracker_type == "multi_address") && p.wallet_address.is_none()
+        {
+            return Err("wallet_address is required when tracker_type is multi_address".into());
+        }
         let chain_index = p
             .chain
             .as_deref()
@@ -1325,22 +1330,23 @@ impl McpServer {
         Parameters(p): Parameters<LeaderboardListParams>,
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain).to_string();
-        let wallet_type =
-            leaderboard::resolve_leaderboard_wallet_type(p.wallet_type.unwrap_or_default());
+        let wallet_type_resolved = p
+            .wallet_type
+            .map(leaderboard::resolve_leaderboard_wallet_type);
         match leaderboard::fetch_list(
             &self.client,
             &chain_index,
             &p.time_frame,
             &p.sort_by,
-            &wallet_type,
-            &p.min_realized_pnl_usd.unwrap_or_default(),
-            &p.max_realized_pnl_usd.unwrap_or_default(),
-            &p.min_win_rate_percent.unwrap_or_default(),
-            &p.max_win_rate_percent.unwrap_or_default(),
-            &p.min_txs.unwrap_or_default(),
-            &p.max_txs.unwrap_or_default(),
-            &p.min_tx_volume.unwrap_or_default(),
-            &p.max_tx_volume.unwrap_or_default(),
+            wallet_type_resolved.as_deref(),
+            p.min_realized_pnl_usd.as_deref(),
+            p.max_realized_pnl_usd.as_deref(),
+            p.min_win_rate_percent.as_deref(),
+            p.max_win_rate_percent.as_deref(),
+            p.min_txs.as_deref(),
+            p.max_txs.as_deref(),
+            p.min_tx_volume.as_deref(),
+            p.max_tx_volume.as_deref(),
         )
         .await
         {
@@ -1374,7 +1380,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_cluster_by_address(
             &self.client,
             "/api/v6/dex/market/token/cluster/overview",
@@ -1400,7 +1406,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_cluster_top_holders(
             &self.client,
             &p.address,
@@ -1426,7 +1432,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_cluster_by_address(
             &self.client,
             "/api/v6/dex/market/token/cluster/list",
