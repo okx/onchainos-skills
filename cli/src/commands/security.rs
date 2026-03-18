@@ -398,6 +398,7 @@ async fn dapp_scan(ctx: &Context, domain: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn tx_scan(
     ctx: &Context,
     from: &str,

@@ -148,7 +148,7 @@ fn sort_token_assets(data: &mut Value) {
 }
 
 /// Core sorting logic on a token Vec.
-fn sort_tokens_vec(tokens: &mut Vec<Value>) {
+fn sort_tokens_vec(tokens: &mut [Value]) {
     use std::collections::HashMap;
 
     // 1. Compute per-chain total USD for ordering chains.

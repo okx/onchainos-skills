@@ -554,6 +554,7 @@ impl WalletApiClient {
     }
 
     /// POST /priapi/v5/wallet/agentic/pre-transaction/unsignedInfo
+    #[allow(clippy::too_many_arguments)]
     pub async fn pre_transaction_unsigned_info(
         &self,
         access_token: &str,
@@ -603,7 +604,7 @@ impl WalletApiClient {
         let data = self
             .post_authed(
                 "/priapi/v5/wallet/agentic/pre-transaction/unsignedInfo",
-                &access_token,
+                access_token,
                 &body,
             )
             .await?;

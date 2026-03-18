@@ -29,3 +29,11 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 | okx-dex-token        | Token search, liquidity, hot tokens, advanced info, holders, top traders, trade history | User searches for tokens, wants rankings, liquidity pools, holder info, top traders, or filtered trade history |
 | okx-onchain-gateway  | Transaction broadcasting and tracking | User wants to broadcast tx, estimate gas, simulate tx, check tx status |
 | okx-audit-log        | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
+
+## Clippy
+
+CI uses `-D warnings` (warnings as errors). Run `cargo clippy` before pushing. Common issues:
+
+- `ptr_arg`: use `&[T]` / `&mut [T]` instead of `&Vec<T>` / `&mut Vec<T>` when the function doesn't need Vec-specific methods
+- `too_many_arguments`: add `#[allow(clippy::too_many_arguments)]` or refactor into a params struct
+- `needless_borrow`: don't `&` a value that's already a reference
