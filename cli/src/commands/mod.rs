@@ -53,4 +53,66 @@ impl Context {
         self.chain_index()
             .unwrap_or_else(|| chains::resolve_chain(default).to_string())
     }
+
+    /// Resolve an optional `--chains` arg: use the explicit value if provided,
+    /// fall back to the global `--chain` CLI override only (ignores persisted
+    /// default_chain to avoid silently narrowing cross-chain queries).
+    pub fn resolve_chains_or(&self, explicit: Option<String>, default: &str) -> String {
+        explicit.unwrap_or_else(|| {
+            self.chain_override
+                .as_ref()
+                .map(|c| chains::resolve_chain(c).to_string())
+                .unwrap_or_else(|| default.to_string())
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ctx_no_override() -> Context {
+        Context {
+            config: AppConfig::default(),
+            base_url_override: None,
+            chain_override: None,
+        }
+    }
+
+    fn ctx_with_override(chain: &str) -> Context {
+        Context {
+            config: AppConfig::default(),
+            base_url_override: None,
+            chain_override: Some(chain.to_string()),
+        }
+    }
+
+    #[test]
+    fn resolve_chains_or_uses_explicit_when_provided() {
+        let ctx = ctx_with_override("solana");
+        assert_eq!(
+            ctx.resolve_chains_or(Some("ethereum".into()), "1,501"),
+            "ethereum"
+        );
+    }
+
+    #[test]
+    fn resolve_chains_or_falls_back_to_chain_override() {
+        let ctx = ctx_with_override("solana");
+        assert_eq!(ctx.resolve_chains_or(None, "1,501"), "501");
+    }
+
+    #[test]
+    fn resolve_chains_or_uses_default_when_no_override() {
+        let ctx = ctx_no_override();
+        assert_eq!(ctx.resolve_chains_or(None, "1,501"), "1,501");
+    }
+
+    #[test]
+    fn resolve_chains_or_ignores_persisted_default_chain() {
+        let mut ctx = ctx_no_override();
+        ctx.config.default_chain = "xlayer".to_string();
+        // Should still return the hardcoded default, NOT resolve xlayer
+        assert_eq!(ctx.resolve_chains_or(None, "1,501"), "1,501");
+    }
 }

@@ -75,12 +75,11 @@ Every time before running any `onchainos` command, always follow these steps in 
 
 - For token search → use `okx-dex-token`
 - For market prices → use `okx-dex-market`
-- For transaction broadcasting → use `okx-onchain-gateway`
 - For wallet balances / portfolio → use `okx-wallet-portfolio`
 
 ## Quickstart
 
-### EVM Swap (quote → approve → swap)
+### EVM Swap (quote → approve → contract-call)
 
 ```bash
 # 1. Quote — sell 100 USDC for OKB on XLayer
@@ -96,7 +95,8 @@ onchainos swap approve \
   --token 0x74b7f16337b8972027f6196a17a631ac6de26d22 \
   --amount 100000000 \
   --chain xlayer
-# → Returns approval calldata: sign and broadcast via okx-onchain-gateway
+# → Returns approval calldata → sign & broadcast via wallet contract-call
+onchainos wallet contract-call --to 0x74b7f16337b8972027f6196a17a631ac6de26d22 --chain 196 --input-data <approve_calldata>
 
 # 3. Swap
 onchainos swap swap \
@@ -104,20 +104,31 @@ onchainos swap swap \
   --to 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
   --amount 100000000 \
   --chain xlayer \
-  --wallet 0xYourWallet
-# → Returns tx data (autoSlippage, average gas): sign and broadcast via okx-onchain-gateway
+  --wallet <local_wallet_addr>
+# → Returns swap calldata → sign & broadcast via wallet contract-call
+onchainos wallet contract-call --to <tx.to> --chain 196 --value <value_in_UI_units> --input-data <tx.data> \
+  --aa-dex-token-addr 0x74b7f16337b8972027f6196a17a631ac6de26d22 --aa-dex-token-amount <fromTokenAmount>
 ```
 
-### Solana Swap
+### Solana Native Token Swap
 
 ```bash
+# 1. Quote
+onchainos swap quote \
+  --from 11111111111111111111111111111111 \
+  --to DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263 \
+  --amount 1000000000 \
+  --chain solana
+
+# 2. Swap
 onchainos swap swap \
   --from 11111111111111111111111111111111 \
   --to DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263 \
   --amount 1000000000 \
   --chain solana \
-  --wallet YourSolanaWallet
-# → Returns tx data (autoSlippage, average gas): sign and broadcast via okx-onchain-gateway
+  --wallet <local_wallet_addr>
+# → Returns unsigned tx → sign & broadcast via wallet contract-call
+onchainos wallet contract-call --to <contract> --chain 501 --unsigned-tx <unsigned_tx>
 ```
 
 ## Chain Name Support
@@ -135,7 +146,9 @@ The CLI accepts human-readable chain names and resolves them automatically.
 
 ## Native Token Addresses
 
-> **CRITICAL**: Each chain has a specific native token address. Using the wrong address will cause swap transactions to fail.
+<IMPORTANT>
+> **CRITICAL**: Each chain has a specific native token address. Using the wrong address will cause swap transactions to fail. If the user intends to swap with a native token (e.g., ETH, BNB, SOL), you MUST use the native token address from the table below — do NOT search for it via `token search`.
+</IMPORTANT>
 
 | Chain | Native Token Address |
 |---|---|
@@ -145,7 +158,9 @@ The CLI accepts human-readable chain names and resolves them automatically.
 | Tron | `T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb` |
 | Ton | `EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c` |
 
-> **WARNING — Solana native SOL**: The correct address is `11111111111111111111111111111111` (Solana system program). Do **NOT** use `So11111111111111111111111111111111111111112` (wSOL SPL token) — it is a different token and will cause swap failures.
+<IMPORTANT>
+> **CRITICAL — Solana native SOL**: You MUST use `11111111111111111111111111111111` (Solana system program). NEVER use `So11111111111111111111111111111111111111112` (wSOL SPL token) — it is a completely different token and WILL cause the transaction to fail and unable to be packaged on-chain. This rule has no exceptions.
+</IMPORTANT>
 
 ## Command Index
 
@@ -154,8 +169,8 @@ The CLI accepts human-readable chain names and resolves them automatically.
 | 1 | `onchainos swap chains` | Get supported chains for DEX aggregator |
 | 2 | `onchainos swap liquidity --chain <chain>` | Get available liquidity sources on a chain |
 | 3 | `onchainos swap approve --token ... --amount ... --chain ...` | Get ERC-20 approval transaction data |
-| 4 | `onchainos swap quote --from ... --to ... --amount ... --chain ...` | Get swap quote (read-only price estimate) |
-| 5 | `onchainos swap swap --from ... --to ... --amount ... --chain ... --wallet ... [--gas-level <level>]` | Get swap transaction data |
+| 4 | `onchainos swap quote --from ... --to ... --amount ... --chain ...` | Get swap quote (read-only price estimate). **No `--slippage` param** — slippage only applies to `swap swap`. |
+| 5 | `onchainos swap swap --from ... --to ... --amount ... --chain ... --wallet ... [--slippage <pct>] [--gas-level <level>]` | Get swap transaction data. `--slippage` sets fixed slippage (e.g. `30` for 30%); omit to use autoSlippage. |
 
 ## Boundary Table
 
@@ -163,9 +178,9 @@ The CLI accepts human-readable chain names and resolves them automatically.
 |---|---|---|---|
 | okx-dex-market | Executing swaps (quote, approve, swap) | Price queries, charts, PnL analysis | If user wants to *trade* → here; if user wants to *check price* → market |
 | okx-dex-token | Swap execution | Token search, metadata, rankings | If user wants to *swap* → here; if user wants to *find/lookup* a token → token |
-| okx-onchain-gateway | Generating swap tx data | Broadcasting signed tx, gas estimation | This skill generates calldata; gateway broadcasts it on-chain |
+| okx-agentic-wallet | Quote + calldata generation + signing & broadcasting via `wallet contract-call` | Wallet auth, balance, send, history | This skill orchestrates the full swap flow; wallet provides signing |
 
-> **Rule of thumb**: okx-dex-swap generates transaction data; it does NOT broadcast, query prices, or search tokens.
+> **Rule of thumb**: okx-dex-swap orchestrates the full swap flow — quote, approve, swap calldata generation, and signing/broadcasting via `onchainos wallet contract-call`. It does NOT query prices or search tokens.
 
 ## Cross-Skill Workflows
 
@@ -186,8 +201,7 @@ This skill is the **execution endpoint** of most user trading flows. It almost a
                       --from 11111111111111111111111111111111 \
                       --to <BONK_address> --amount 1000000000 --chain solana \
                       --wallet <addr>                                        → get swap calldata
-4. User signs the transaction (or onchainos wallet contract-call for local wallet)
-5. okx-onchain-gateway  onchainos gateway broadcast --signed-tx <tx> --address <addr> --chain solana
+4. onchainos wallet contract-call --to <contract> --chain 501 --unsigned-tx <unsigned_tx>
 ```
 
 **Data handoff**:
@@ -195,31 +209,19 @@ This skill is the **execution endpoint** of most user trading flows. It almost a
 - SOL native address = `11111111111111111111111111111111` → `--from`. Do NOT use wSOL address.
 - Amount `1 SOL` = `1000000000` (9 decimals) → `--amount` param
 
-### Workflow B: EVM Swap with Merged Approve+Swap
+### Workflow B: EVM Swap with Approve+Swap
 
 > User: "Swap 100 USDC for OKB on XLayer"
 
-**Path A — user-provided wallet address (merged nonce):**
-```
-1. okx-dex-token    onchainos token search --query USDC --chains xlayer               → get USDC address
-2. okx-dex-swap     onchainos swap quote --from <USDC> --to 0xeeee...eeee --amount 100000000 --chain xlayer
-       ↓ check isHoneyPot, taxRate, priceImpactPercent + MEV assessment
-3. okx-dex-swap     onchainos swap approve --token <USDC> --amount 100000000 --chain xlayer  → get approve calldata
-4. okx-dex-swap     onchainos swap swap --from <USDC> --to 0xeeee...eeee --amount 100000000 --chain xlayer --wallet <addr>  → get swap calldata
-5. Build approve tx with nonce=N, swap tx with nonce=N+1
-6. okx-onchain-gateway  broadcast: approve tx first, then swap tx
-7. Track both txs via okx-onchain-gateway orders
-```
-
-**Path B — local Agentic Wallet:**
 ```
 1. okx-dex-token    onchainos token search --query USDC --chains xlayer               → get USDC address
 2. onchainos wallet status                                                             → check login + get wallet address
 3. okx-dex-swap     onchainos swap quote --from <USDC> --to 0xeeee...eeee --amount 100000000 --chain xlayer
-4. okx-dex-swap     onchainos swap approve --token <USDC> --amount 100000000 --chain xlayer
-5. onchainos wallet contract-call --to <token_contract_address> --chain okb --input-data <approve_calldata>  → sign & broadcast approval
+       ↓ check isHoneyPot, taxRate, priceImpactPercent + MEV assessment
+4. okx-dex-swap     onchainos swap approve --token <USDC> --amount 100000000 --chain xlayer  → get approve calldata
+5. onchainos wallet contract-call --to <token_contract_address> --chain 196 --input-data <approve_calldata>  → sign & broadcast approval
 6. okx-dex-swap     onchainos swap swap --from <USDC> --to 0xeeee...eeee --amount 100000000 --chain xlayer --wallet <local_wallet_addr>
-7. onchainos wallet contract-call --to <contract> --chain okb --value <value_in_UI_units> --input-data <swap_calldata> \
+7. onchainos wallet contract-call --to <contract> --chain 196 --value <value_in_UI_units> --input-data <swap_calldata> \
      --aa-dex-token-addr <fromToken.tokenContractAddress> --aa-dex-token-amount <fromTokenAmount>
 ```
 
@@ -233,58 +235,36 @@ This skill is the **execution endpoint** of most user trading flows. It almost a
 1. onchainos swap quote --from ... --to ... --amount ... --chain ...  → get quote with route info
 2. Display: expected output, gas, price impact, route, MEV risk assessment
 3. If price impact > 5% → warn. If isHoneyPot = true → block (buy) / warn (sell).
-4. User confirms → proceed to approve (if EVM) → swap
+4. User confirms → proceed to approve (if EVM) → swap → wallet contract-call
 ```
 
 ## Swap Flow
 
-### EVM Chains — Merged Approve+Swap (Default)
+### EVM Chains — Approve+Swap
 
-Default when ALL met: EVM P0 chain + OKX Router only + allowance < needed.
-Flow: quote → approve(nonce=N) + swap(nonce=N+1) → sign both → broadcast sequentially → monitor.
+Flow: quote → approve (if non-native token) → contract-call approve → swap → contract-call swap.
 
-**Path A: User-provided wallet address**
+> **`--chain` mapping**: `swap` commands accept chain names (e.g., `xlayer`), but `wallet contract-call` requires `realChainIndex` (e.g., `196`). See the mapping table in "Chain Name Support" above. Common: `xlayer`→`196`, `ethereum`→`1`, `bsc`→`56`, `base`→`8453`, `arbitrum`→`42161`, `solana`→`501`.
+
 ```
 1. onchainos swap quote ...                 → Get price, route, and spender address
 2. onchainos swap approve ...               → Get approval calldata (skip for native tokens)
-3. onchainos swap swap ...                  → Get swap calldata
-4. Build approve tx (nonce=N) + swap tx (nonce=N+1)
-5. User signs both transactions
-6. onchainos gateway broadcast approve tx   → Broadcast approval
-7. onchainos gateway broadcast swap tx      → Broadcast swap (immediately after)
-8. Track both via onchainos gateway orders
-```
-
-**Path B: Local Agentic Wallet**
-```
-1. onchainos swap quote ...                 → Get price and route
-2. onchainos swap approve ...               → Get approval calldata (skip for native tokens)
-3. onchainos wallet contract-call --to <token_contract_address> --chain <chain> --input-data <approve_calldata>
+3. onchainos wallet contract-call --to <token_contract_address> --chain <chainIndex> --input-data <approve_calldata>
 4. onchainos swap swap ...                  → Get swap calldata
-5. onchainos wallet contract-call --to <contract> --chain <chain> --value <value_in_UI_units> --input-data <swap_calldata> \
+5. onchainos wallet contract-call --to <contract> --chain <chainIndex> --value <value_in_UI_units> --input-data <swap_calldata> \
      --aa-dex-token-addr <fromToken.tokenContractAddress> --aa-dex-token-amount <fromTokenAmount>
 ```
 
 - **Approval**: default unlimited. **Gas**: check approve+swap combined, show only swap fee.
-- **USDT special**: non-zero but insufficient allowance → revoke(0) → approve → swap (no simple merge).
+- **USDT special**: non-zero but insufficient allowance → revoke(0) → approve → swap.
 - **Error**: approve+swap both succeed = done | approve succeeds + swap fails = retry swap only | approve fails = swap not sent.
-- **Fallback**: step-by-step when conditions not met.
 
 ### Solana
 
-**Path A: User-provided wallet address**
 ```
 1. onchainos swap quote ...              → Get price and route
 2. onchainos swap swap ...               → Get swap calldata
-3. User signs the transaction
-4. onchainos gateway broadcast ...       → Broadcast tx
-```
-
-**Path B: Local Agentic Wallet**
-```
-1. onchainos swap quote ...              → Get price and route
-2. onchainos swap swap ...               → Get swap calldata
-3. onchainos wallet contract-call --to <contract> --chain sol --unsigned-tx <unsigned_tx>
+3. onchainos wallet contract-call --to <contract> --chain 501 --unsigned-tx <unsigned_tx>
 ```
 
 ## Security Rules
@@ -321,7 +301,7 @@ Flow: quote → approve(nonce=N) + swap(nonce=N+1) → sign both → broadcast s
 - Missing chain → recommend XLayer (`--chain xlayer`, low gas, fast confirmation) as the default, then ask which chain the user prefers
 - Missing token addresses → use `okx-dex-token` `onchainos token search` to resolve name → address
 - Missing amount → ask user, remind to convert to minimal units
-- Missing slippage → use autoSlippage by default (do NOT pass `--slippage`; the API calculates optimal slippage automatically). If the user explicitly specifies a fixed slippage value, pass `--slippage <value>` which disables autoSlippage. Note: `taxRate` is separate from slippage — taxRate is deducted by the token contract and is NOT included in the slippage setting.
+- Missing slippage → use autoSlippage by default (do NOT pass `--slippage`; the API calculates optimal slippage automatically). If the user explicitly specifies a fixed slippage value, pass `--slippage <value>` which disables autoSlippage. **IMPORTANT: `--slippage` is only a parameter of `onchainos swap swap`, NOT `onchainos swap quote`. Never pass `--slippage` to the quote command — it will fail.** Note: `taxRate` is separate from slippage — taxRate is deducted by the token contract and is NOT included in the slippage setting.
   - **Slippage warnings**: Too small → warn about transaction failure risk. Too large → warn about potential loss.
   - **Slippage retry**: If swap fails with autoSlippage → suggest switching to fixed slippage. If swap fails with fixed slippage → suggest increasing the value.
 - Missing wallet address → follow the **Wallet Address Resolution** flow below
@@ -345,18 +325,14 @@ Use these reference presets to guide parameter selection based on token characte
 
 ### Wallet Address Resolution
 
-After quote completes, resolve the wallet address using this priority:
+After quote completes, resolve the wallet address from the local Agentic Wallet:
 
-1. **User provided a wallet address** → use it directly, proceed with the normal flow.
-2. **User did NOT provide a wallet address**:
-   1. Run `onchainos wallet status` to check if a local wallet exists and login state.
-   2. **Not logged in** → run `onchainos wallet login` (without email parameter) for silent login. If silent login fails (e.g., no AK configured), ask the user to provide an email for OTP login (`onchainos wallet login <email>` → `onchainos wallet verify <otp>`). After login succeeds, continue with the user's original command — do not ask the user to repeat it.
-   3. **Logged in, local wallet exists**:
-      - **Single account** → use the active wallet address for the target chain directly. Inform the user which address is being used and ask for confirmation before proceeding.
-      - **Multiple accounts** → list all accounts (name + address) and ask the user to choose which one to use. Then use the selected account's address for the target chain.
-   4. **Logged in, no local wallet** → suggest creating one (`onchainos wallet create`). If the user declines, ask for a wallet address manually.
-
-Track whether the wallet address was **user-provided** or **resolved from local wallet** — this determines the execution path in Step 3.
+1. Run `onchainos wallet status` to check login state.
+2. **Not logged in** → run `onchainos wallet login` (without email parameter) for silent login. If silent login fails (e.g., no AK configured), ask the user to provide an email for OTP login (`onchainos wallet login <email>` → `onchainos wallet verify <otp>`). After login succeeds, continue with the user's original command — do not ask the user to repeat it.
+3. **Logged in, local wallet exists**:
+   - **Single account** → use the active wallet address for the target chain directly. Inform the user which address is being used and ask for confirmation before proceeding.
+   - **Multiple accounts** → list all accounts (name + address) and ask the user to choose which one to use. Then use the selected account's address for the target chain.
+4. **Logged in, no local wallet** → suggest adding one (`onchainos wallet add`).
 
 ### Step 3: Execute
 
@@ -380,26 +356,24 @@ Enabled only when the user has **explicitly authorized** automated execution (e.
 
 ### Step 3a: Transaction Signing & Broadcasting
 
-After `onchainos swap swap` returns successfully, the signing path depends on how the wallet address was obtained:
+After `onchainos swap swap` returns successfully, use `onchainos wallet contract-call` to sign and broadcast in one step. Note: `wallet contract-call --chain` requires `realChainIndex` (e.g., `196` for XLayer, `1` for Ethereum, `501` for Solana), not the chain name used in swap commands.
 
-1. **User-provided wallet address** → return the tx data to the user for external signing, then broadcast via `okx-onchain-gateway` (`onchainos gateway broadcast`).
-2. **Local Agentic Wallet address** → use `onchainos wallet contract-call` to sign and broadcast in one step:
-   - **EVM**: `onchainos wallet contract-call --to <contract_address> --chain <chain> --value <value_in_UI_units> --input-data <tx_calldata>`
-   - **EVM (XLayer)**: `onchainos wallet contract-call --to <contract_address> --chain okb --value <value_in_UI_units> --input-data <tx_calldata> --aa-dex-token-addr <fromToken.tokenContractAddress> --aa-dex-token-amount <fromTokenAmount>`
-   - **Solana**: `onchainos wallet contract-call --to <contract_address> --chain sol --unsigned-tx <unsigned_tx_data>`
-   - The `contract-call` command handles TEE signing and broadcasting internally — no separate `gateway broadcast` step is needed.
-   - **`--value` unit conversion**: `swap swap` returns `tx.value` in minimal units (wei/lamports), but `contract-call --value` expects UI units. Convert: `value_in_UI_units = tx.value / 10^nativeToken.decimal` (e.g., 18 for ETH, 9 for SOL). If `tx.value` is `"0"` or empty, use `"0"`.
+- **EVM**: `onchainos wallet contract-call --to <contract_address> --chain <chainIndex> --value <value_in_UI_units> --input-data <tx_calldata>`
+- **EVM (XLayer)**: `onchainos wallet contract-call --to <contract_address> --chain 196 --value <value_in_UI_units> --input-data <tx_calldata> --aa-dex-token-addr <fromToken.tokenContractAddress> --aa-dex-token-amount <fromTokenAmount>`
+- **Solana**: `onchainos wallet contract-call --to <contract_address> --chain 501 --unsigned-tx <unsigned_tx_data>`
+
+The `contract-call` command handles TEE signing and broadcasting internally — no separate broadcast step is needed.
+
+**`--value` unit conversion**: `swap swap` returns `tx.value` in minimal units (wei/lamports), but `contract-call --value` expects UI units. Convert: `value_in_UI_units = tx.value / 10^nativeToken.decimal` (e.g., 18 for ETH, 9 for SOL). If `tx.value` is `"0"` or empty, use `"0"`.
 
 ### Step 3b: Result Messaging
 
-When using **Agentic Wallet** (contract-call path), use **business-level** language for success messages:
+Use **business-level** language for success messages:
 - Approve succeeded → "Approval complete"
 - Swap succeeded → "Swap complete"
 - Approve + Swap both succeeded → "Approval and swap complete"
 
 Do **NOT** use chain/broadcast-level wording such as "Transaction confirmed on-chain", "Successfully broadcast", "On-chain success", etc. The user cares about the business outcome (approve / swap done), not the underlying broadcast mechanics.
-
-When using **user-provided wallet** (external signing + gateway broadcast path), you may mention broadcast/on-chain status since the user is managing the signing themselves.
 
 ### Step 4: Suggest Next Steps
 
@@ -407,7 +381,7 @@ After displaying results, suggest 2-3 relevant follow-up actions:
 
 | Just completed | Suggest |
 |---|---|
-| `swap quote` (not yet confirmed) | 1. View price chart before deciding → `okx-dex-market` 2. Proceed with swap → continue approve + swap (this skill) 3. No wallet yet → suggest login to create Agentic Wallet |
+| `swap quote` (not yet confirmed) | 1. View price chart before deciding → `okx-dex-market` 2. Proceed with swap → continue approve + swap (this skill) |
 | Swap executed successfully | 1. View transaction details → provide explorer link (e.g. `https://<explorer>/tx/<txHash>`) 2. Check price of the token just received → `okx-dex-market` 3. Swap another token → new swap flow (this skill) |
 | `swap liquidity` | 1. Get a swap quote → `onchainos swap quote` (this skill) |
 
@@ -447,13 +421,13 @@ If `toTokenPrice` or `fromTokenPrice` unavailable/0 → enable by default.
 
 | Chain | MEV Protection | Threshold | Path |
 |---|---|---|---|
-| Ethereum | Yes | $2,000 | Broadcast: `enableMevProtection: true` |
-| Solana | Yes | $1,000 | `/swap` with `tips` param (SOL, 0.0000000001–2) + `computeUnitPrice=0` → response returns `jitoCalldata` (contains data/from/to/value) → user signs both main swap tx + jitoCalldata → broadcast with `signedTx` (main tx) + `extraData: { enableMevProtection: true, jitoSignedTx: <signed jitoCalldata> }` |
-| BNB Chain | Yes | $200 | Broadcast: `enableMevProtection: true` |
-| Base | Yes | $200 | Broadcast: `enableMevProtection: true` |
+| Ethereum | Yes | $2,000 | `wallet contract-call --mev-protection` |
+| Solana | Yes | $1,000 | `/swap` with `tips` param (SOL, 0.0000000001–2) + `computeUnitPrice=0` → response returns `jitoCalldata` → `wallet contract-call --mev-protection --jito-unsigned-tx <jito_base58_tx>` |
+| BNB Chain | Yes | $200 | `wallet contract-call --mev-protection` |
+| Base | Yes | $200 | `wallet contract-call --mev-protection` |
 | Others | No | — | — |
 
-MEV requires okx-dex-swap → okx-onchain-gateway coordination.
+MEV protection is handled directly by `onchainos wallet contract-call --mev-protection`.
 
 ### Failure Diagnostics
 
@@ -461,7 +435,7 @@ When a swap transaction fails (broadcast error, on-chain revert, or timeout), ge
 
 ```
 Diagnostic Summary:
-  txHash:        <hash or "not broadcast">
+  txHash:        <hash or "simulation failed">
   chain:         <chain name (chainIndex)>
   errorCode:     <API or on-chain error code>
   errorMessage:  <human-readable error>
@@ -490,8 +464,8 @@ This helps debug issues without requiring the user to gather info manually.
 
 ## Amount Display Rules
 
-- Input/output amounts in UI units (`1.5 ETH`, `3,200 USDC`)
-- Internal CLI params use minimal units (`1 USDC` = `"1000000"`, `1 ETH` = `"1000000000000000000"`)
+- **Display** input/output amounts to the user in UI units (`1.5 ETH`, `3,200 USDC`)
+- **CLI `--amount` parameter** always uses **minimal units** (wei/lamports): `1 USDC` = `"1000000"` (6 decimals), `1 ETH` = `"1000000000000000000"` (18 decimals), `1 SOL` = `"1000000000"` (9 decimals). Convert before calling any swap command.
 - Gas fees in USD
 - `minReceiveAmount` in both UI units and USD
 - Price impact as percentage

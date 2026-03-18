@@ -61,18 +61,18 @@ onchainos market kline --address <address> [--bar <bar>] [--limit <n>] [--chain 
 | `--limit` | No | `100` | Number of data points (max 299) |
 | `--chain` | No | `ethereum` | Chain name |
 
-**Return fields**: Each data point is an array with the following elements:
+**Return fields**: Each data point is now a named JSON object (transformed from the API's raw array `[ts,o,h,l,c,vol,volUsd,confirm]`):
 
-| Index | Field | Type | Description |
-|---|---|---|---|
-| 0 | `ts` | String | Timestamp (Unix milliseconds) |
-| 1 | `open` | String | Opening price |
-| 2 | `high` | String | Highest price |
-| 3 | `low` | String | Lowest price |
-| 4 | `close` | String | Closing price |
-| 5 | `vol` | String | Trading volume (token units) |
-| 6 | `volUsd` | String | Trading volume (USD) |
-| 7 | `confirm` | String | `"0"` = uncompleted candle, `"1"` = completed candle |
+| Field | Type | Description |
+|---|---|---|
+| `ts` | String | Opening time (Unix milliseconds) |
+| `o` | String | Open price |
+| `h` | String | Highest price |
+| `l` | String | Lowest price |
+| `c` | String | Close price |
+| `vol` | String | Trading volume (base currency unit) |
+| `volUsd` | String | Trading volume (USD) |
+| `confirm` | String | `"0"` = uncompleted candle, `"1"` = completed candle |
 
 ## 4. onchainos market index
 

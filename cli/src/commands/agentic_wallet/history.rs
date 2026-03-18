@@ -10,6 +10,7 @@ use super::auth::{ensure_tokens_refreshed, format_api_error};
 // ── history ───────────────────────────────────────────────────────────
 
 /// onchainos wallet history
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn cmd_history(
     account_id: Option<&str>,
     chain: Option<&str>,

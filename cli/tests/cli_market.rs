@@ -100,11 +100,18 @@ fn market_kline_returns_candles() {
     assert!(data.is_array(), "kline data should be an array: {data}");
     let arr = data.as_array().unwrap();
     assert!(!arr.is_empty(), "expected at least one candle");
+    // Candles are now named objects with fields: ts, o, h, l, c, vol, volUsd, confirm
+    let candle = &arr[0];
     assert!(
-        arr[0].is_array(),
-        "each candle should be an array [ts, open, high, low, close, vol, volUsd, confirm]: {}",
-        arr[0]
+        candle.is_object(),
+        "each candle should be a named object: {candle}"
     );
+    for field in ["ts", "o", "h", "l", "c", "vol", "volUsd", "confirm"] {
+        assert!(
+            candle.get(field).is_some(),
+            "candle missing field '{field}': {candle}"
+        );
+    }
 }
 
 #[test]
@@ -400,12 +407,11 @@ fn memepump_tokens_missing_chain_arg_fails() {
 }
 
 #[test]
-fn memepump_tokens_missing_stage_arg_fails() {
-    onchainos()
-        .args(["memepump", "tokens", "--chain", "solana"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("required"));
+fn memepump_tokens_without_stage_defaults_to_new() {
+    // --stage now defaults to "NEW" per user feedback (#20)
+    let output = run_with_retry(&["memepump", "tokens", "--chain", "solana"]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(data.is_array(), "expected array of tokens: {data}");
 }
 
 // ─── Helper: fetch a real memepump token address ────────────────────
@@ -942,19 +948,18 @@ fn market_portfolio_overview_missing_chain_fails() {
 }
 
 #[test]
-fn market_portfolio_overview_missing_time_frame_fails() {
-    onchainos()
-        .args([
-            "market",
-            "portfolio-overview",
-            "--address",
-            PORTFOLIO_TEST_WALLET,
-            "--chain",
-            "ethereum",
-        ])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("required"));
+fn market_portfolio_overview_without_time_frame_defaults_to_1m() {
+    // --time-frame now defaults to "4" (1M) per user feedback (#21)
+    let output = run_with_retry(&[
+        "market",
+        "portfolio-overview",
+        "--address",
+        PORTFOLIO_TEST_WALLET,
+        "--chain",
+        "ethereum",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(data.is_object(), "expected PnL overview object: {data}");
 }
 
 // ─── portfolio-dex-history ──────────────────────────────────────────

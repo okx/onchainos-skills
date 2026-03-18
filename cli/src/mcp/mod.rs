@@ -109,8 +109,8 @@ struct PortfolioPnlOverviewParams {
     address: String,
     /// Chain name (e.g. ethereum, solana)
     chain: String,
-    /// Time frame: 1=1D, 2=3D, 3=7D, 4=1M, 5=3M
-    time_frame: String,
+    /// Time frame: 1=1D, 2=3D, 3=7D, 4=1M, 5=3M (default: 4 = 1M)
+    time_frame: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -1120,13 +1120,9 @@ impl McpServer {
         Parameters(p): Parameters<PortfolioPnlOverviewParams>,
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match market::fetch_portfolio_overview(
-            &self.client,
-            &chain_index,
-            &p.address,
-            &p.time_frame,
-        )
-        .await
+        let time_frame = p.time_frame.as_deref().unwrap_or("4");
+        match market::fetch_portfolio_overview(&self.client, &chain_index, &p.address, time_frame)
+            .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),

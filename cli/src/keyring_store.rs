@@ -1,7 +1,8 @@
 //! Keyring store for onchainos.
 //!
-//! All credentials are stored as a single JSON blob under one keyring entry
-//! ("agentic-wallet") so that only one OS authorization prompt is required.
+//! Sensitive credentials (tokens, session key) are stored as a single JSON blob
+//! under one keyring entry ("agentic-wallet"). Non-sensitive session metadata
+//! lives in `~/.onchainos/session.json` (see `wallet_store::SessionJson`).
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
