@@ -93,7 +93,12 @@ fn try_log(
             let local = chrono::Local::now();
             let offset_secs = local.offset().local_minus_utc();
             let offset_hours = offset_secs as f32 / 3600.0;
-            format!("{} {:+.1} {}", local.format("%Y-%m-%d"), offset_hours, local.format("%H:%M:%S%.3f"))
+            format!(
+                "{} {:+.1} {}",
+                local.format("%Y-%m-%d"),
+                offset_hours,
+                local.format("%H:%M:%S%.3f")
+            )
         },
         source,
         command,
@@ -321,12 +326,12 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
     }
 }
 
+use crate::commands::agentic_wallet::wallet::WalletCommand;
 use crate::commands::{
     gateway::GatewayCommand, market::MarketCommand, memepump::MemepumpCommand,
     portfolio::PortfolioCommand, security::SecurityCommand, signal::SignalCommand,
     swap::SwapCommand, token::TokenCommand,
 };
-use crate::commands::agentic_wallet::wallet::WalletCommand;
 
 fn market_sub(c: &MarketCommand) -> &'static str {
     match c {
@@ -592,19 +597,33 @@ mod tests {
     fn redact_otp_two_arg_form() {
         let args = vec_s(&["onchainos", "wallet", "login", "--otp", "123456"]);
         let out = redact_args(&args);
-        assert_eq!(out, vec_s(&["onchainos", "wallet", "login", "--otp", "[REDACTED]"]));
+        assert_eq!(
+            out,
+            vec_s(&["onchainos", "wallet", "login", "--otp", "[REDACTED]"])
+        );
     }
 
     #[test]
     fn redact_otp_equals_form() {
         let args = vec_s(&["onchainos", "wallet", "login", "--otp=123456"]);
         let out = redact_args(&args);
-        assert_eq!(out, vec_s(&["onchainos", "wallet", "login", "--otp=[REDACTED]"]));
+        assert_eq!(
+            out,
+            vec_s(&["onchainos", "wallet", "login", "--otp=[REDACTED]"])
+        );
     }
 
     #[test]
     fn redact_signed_tx() {
-        let args = vec_s(&["onchainos", "gateway", "broadcast", "--chain", "ethereum", "--signed-tx", "0xdeadbeef1234"]);
+        let args = vec_s(&[
+            "onchainos",
+            "gateway",
+            "broadcast",
+            "--chain",
+            "ethereum",
+            "--signed-tx",
+            "0xdeadbeef1234",
+        ]);
         let out = redact_args(&args);
         assert_eq!(out[5], "--signed-tx");
         assert_eq!(out[6], "[REDACTED]");
@@ -612,14 +631,26 @@ mod tests {
 
     #[test]
     fn redact_wallet_addr() {
-        let args = vec_s(&["onchainos", "swap", "swap", "--wallet", "0x1234567890abcdef1234567890abcdef12345678"]);
+        let args = vec_s(&[
+            "onchainos",
+            "swap",
+            "swap",
+            "--wallet",
+            "0x1234567890abcdef1234567890abcdef12345678",
+        ]);
         let out = redact_args(&args);
         assert_eq!(out[4], "0x1234***5678");
     }
 
     #[test]
     fn redact_email() {
-        let args = vec_s(&["onchainos", "wallet", "login", "--email", "alice@example.com"]);
+        let args = vec_s(&[
+            "onchainos",
+            "wallet",
+            "login",
+            "--email",
+            "alice@example.com",
+        ]);
         let out = redact_args(&args);
         assert_eq!(out[4], "alice@***.com");
     }
@@ -652,7 +683,10 @@ mod tests {
         // Flag between subcommands: onchainos wallet --force verify 123456
         let args = vec_s(&["onchainos", "wallet", "--force", "verify", "123456"]);
         let out = redact_args(&args);
-        assert_eq!(out, vec_s(&["onchainos", "wallet", "--force", "verify", "[REDACTED]"]));
+        assert_eq!(
+            out,
+            vec_s(&["onchainos", "wallet", "--force", "verify", "[REDACTED]"])
+        );
     }
 
     #[test]
