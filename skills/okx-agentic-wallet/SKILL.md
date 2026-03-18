@@ -92,7 +92,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 
 ### `--chain` Resolution
 
-**IMPORTANT: `--chain` accepts a chain ID, e.g. `1` for Ethereum, `501` for Solana.** Passing an incorrect chain ID will cause the command to fail.
+**IMPORTANT: `--chain` only accepts a numeric chain ID (e.g. `1` for Ethereum, `501` for Solana, `196` for X Layer). Text values such as `sol`, `xlayer`, `eth`, or any chain name/alias are NOT accepted and will cause the command to fail.**
 
 Whenever a command requires `--chain`, follow these steps:
 
@@ -452,6 +452,12 @@ For EVM, help the user ABI-encode: identify function signature, encode parameter
 The `contract-call` command supports MEV (Maximal Extractable Value) protection via the `--mev-protection` flag. When enabled, the broadcast API passes `isMEV: true` in `extraData` to route the transaction through MEV-protected channels, preventing front-running, sandwich attacks, and other MEV exploitation.
 
 > **⚠️ Solana MEV Protection**: On Solana, enabling `--mev-protection` also **requires** the `--jito-unsigned-tx` parameter. Without it, the command will fail. This parameter provides the Jito bundle unsigned transaction data needed for Solana MEV-protected routing.
+
+> 🚨 **CRITICAL — NEVER substitute `--unsigned-tx` for `--jito-unsigned-tx`**
+>
+> `--jito-unsigned-tx` and `--unsigned-tx` are **completely different parameters** with different data sources.
+> If the user requests MEV protection but you do not have a valid Jito bundle transaction to pass to `--jito-unsigned-tx`, you **MUST NOT** pass the `--unsigned-tx` value into `--jito-unsigned-tx` as a substitute — doing so will result in an invalid transaction.
+> Instead, **stop immediately**, inform the user that the MEV-protected transaction cannot be initiated because the required Jito bundle data is unavailable, and ask the user how they would like to proceed (e.g., proceed without MEV protection, or cancel).
 
 ### Supported Chains
 
