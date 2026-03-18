@@ -1175,7 +1175,7 @@ impl McpServer {
     // ── Portfolio PnL: new tools ──────────────────────────────────────
 
     #[tool(
-        name = "market_portfolio_chains",
+        name = "market_portfolio_supported_chains",
         description = "Get supported chains for wallet portfolio PnL analysis"
     )]
     async fn market_portfolio_supported_chains(&self) -> Result<String, String> {
