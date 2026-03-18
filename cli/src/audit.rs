@@ -27,6 +27,34 @@ struct Entry<'a> {
     error: Option<String>,
 }
 
+/// First line of the log file — written once when the file is created.
+#[derive(Serialize)]
+struct DeviceHeader {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    os: &'static str,
+    arch: &'static str,
+    version: &'static str,
+}
+
+const DEVICE_HEADER_TYPE: &str = "device";
+
+fn device_header_line() -> String {
+    let h = DeviceHeader {
+        kind: DEVICE_HEADER_TYPE,
+        os: std::env::consts::OS,
+        arch: std::env::consts::ARCH,
+        version: env!("CARGO_PKG_VERSION"),
+    };
+    serde_json::to_string(&h).unwrap_or_default()
+}
+
+/// Returns true if `line` is a device-header line.
+fn is_device_header(line: &str) -> bool {
+    // Fast path: check prefix before parsing full JSON.
+    line.starts_with("{\"type\":\"device\"")
+}
+
 /// Append one audit entry. Never panics — failures are silently ignored.
 pub fn log(
     source: &str,
@@ -56,6 +84,9 @@ fn try_log(
     // Rotate if needed (best-effort, ignore errors)
     rotate_if_needed(&path);
 
+    // Write device header as first line if the file is new or empty.
+    let needs_header = !path.exists() || fs::metadata(&path).map(|m| m.len() == 0).unwrap_or(true);
+
     let entry = Entry {
         ts: {
             let local = chrono::Local::now();
@@ -76,6 +107,9 @@ fn try_log(
         .append(true)
         .open(&path)
         .ok()?;
+    if needs_header {
+        writeln!(file, "{}", device_header_line()).ok()?;
+    }
     writeln!(file, "{}", line).ok()
 }
 
@@ -89,7 +123,8 @@ fn truncate_error(msg: &str) -> String {
     }
 }
 
-/// If the file exceeds MAX_LINES, keep only the last KEEP_LINES.
+/// If the file exceeds MAX_LINES, keep the device-header line (first line)
+/// plus the most recent KEEP_LINES entry lines.
 fn rotate_if_needed(path: &std::path::Path) {
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
@@ -100,8 +135,26 @@ fn rotate_if_needed(path: &std::path::Path) {
         return;
     }
     let lines: Vec<&str> = content.lines().collect();
-    let keep = &lines[lines.len().saturating_sub(KEEP_LINES)..];
-    let _ = fs::write(path, keep.join("\n") + "\n");
+
+    // Separate the device-header (if present) from entry lines.
+    let (header, entries): (Option<&str>, &[&str]) =
+        if !lines.is_empty() && is_device_header(lines[0]) {
+            (Some(lines[0]), &lines[1..])
+        } else {
+            (None, &lines[..])
+        };
+
+    let keep = &entries[entries.len().saturating_sub(KEEP_LINES)..];
+    let mut out = String::new();
+    if let Some(h) = header {
+        out.push_str(h);
+        out.push('\n');
+    }
+    for line in keep {
+        out.push_str(line);
+        out.push('\n');
+    }
+    let _ = fs::write(path, out);
 }
 
 // ── Argument redaction ───────────────────────────────────────────────
@@ -120,16 +173,32 @@ const REDACT_FULL: &[&str] = &[
 /// Flags whose next positional value is an address / email — keep prefix + suffix.
 const REDACT_ADDR: &[&str] = &["--from", "--wallet", "--email"];
 
+/// Subcommand sequences whose next positional argument is sensitive.
+/// e.g. `onchainos wallet verify <OTP>` — the OTP is a positional arg, not a flag.
+const REDACT_POSITIONAL: &[&[&str]] = &[&["wallet", "verify"]];
+
 /// Redact sensitive values from a CLI argv list.
 ///
-/// Handles both `--flag value` (two separate args) and `--flag=value` forms.
+/// Handles:
+/// - `--flag value` and `--flag=value` forms (flag-based redaction)
+/// - Positional args after known subcommand sequences (e.g. `wallet verify <otp>`)
 pub fn redact_args(raw: &[String]) -> Vec<String> {
     let mut out = Vec::with_capacity(raw.len());
     let mut redact_next: Option<RedactKind> = None;
 
-    for arg in raw {
+    // Check if any REDACT_POSITIONAL pattern matches and find the index of the
+    // positional arg to redact (the arg right after the last subcommand word).
+    let positional_redact_indices = positional_indices_to_redact(raw);
+
+    for (i, arg) in raw.iter().enumerate() {
         if let Some(kind) = redact_next.take() {
             out.push(apply_redact(arg, kind));
+            continue;
+        }
+
+        // Positional arg redaction (e.g. `wallet verify <otp>`)
+        if positional_redact_indices.contains(&i) {
+            out.push("[REDACTED]".to_string());
             continue;
         }
 
@@ -151,6 +220,42 @@ pub fn redact_args(raw: &[String]) -> Vec<String> {
         out.push(arg.clone());
     }
     out
+}
+
+/// Find indices of positional args that should be redacted based on subcommand patterns.
+fn positional_indices_to_redact(raw: &[String]) -> Vec<usize> {
+    let lower: Vec<String> = raw.iter().map(|s| s.to_ascii_lowercase()).collect();
+    let mut indices = Vec::new();
+    for pattern in REDACT_POSITIONAL {
+        // Find the pattern sequence in the args (skipping flags).
+        if let Some(pos) = find_subcommand_sequence(&lower, pattern) {
+            // The positional arg is the next non-flag arg after the pattern.
+            let redact_idx = pos + pattern.len();
+            if redact_idx < raw.len() && !raw[redact_idx].starts_with('-') {
+                indices.push(redact_idx);
+            }
+        }
+    }
+    indices
+}
+
+/// Find the starting index of a subcommand sequence in args, skipping flags and their values.
+fn find_subcommand_sequence(args: &[String], pattern: &[&str]) -> Option<usize> {
+    // Collect only the non-flag args with their original indices.
+    let subcmds: Vec<(usize, &str)> = args
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| !a.starts_with('-'))
+        .map(|(i, a)| (i, a.as_str()))
+        .collect();
+
+    // Slide a window over the subcommand positions.
+    for window in subcmds.windows(pattern.len()) {
+        if window.iter().zip(pattern.iter()).all(|((_, a), p)| a == p) {
+            return Some(window[0].0);
+        }
+    }
+    None
 }
 
 #[derive(Clone, Copy)]
@@ -355,11 +460,15 @@ mod tests {
     fn rotate_if_needed_does_nothing_under_limit() {
         with_temp_dir("rotate_noop", |dir| {
             let path = dir.join("test.jsonl");
-            let content = (0..100).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n") + "\n";
+            let header = device_header_line();
+            let mut content = format!("{header}\n");
+            for i in 0..100 {
+                content.push_str(&format!("line {i}\n"));
+            }
             fs::write(&path, &content).unwrap();
             rotate_if_needed(&path);
             let after = fs::read_to_string(&path).unwrap();
-            assert_eq!(after.lines().count(), 100);
+            assert_eq!(after.lines().count(), 101); // header + 100
         });
     }
 
@@ -367,7 +476,28 @@ mod tests {
     fn rotate_if_needed_truncates_over_limit() {
         with_temp_dir("rotate_truncate", |dir| {
             let path = dir.join("test.jsonl");
-            let content = (0..MAX_LINES + 500)
+            let header = device_header_line();
+            let mut content = format!("{header}\n");
+            for i in 0..MAX_LINES + 500 {
+                content.push_str(&format!("line {i}\n"));
+            }
+            fs::write(&path, &content).unwrap();
+            rotate_if_needed(&path);
+            let after = fs::read_to_string(&path).unwrap();
+            // header + KEEP_LINES entries
+            assert_eq!(after.lines().count(), KEEP_LINES + 1);
+            // First line is still the device header
+            assert!(is_device_header(after.lines().next().unwrap()));
+            // Should keep the LAST entry lines
+            assert!(after.contains(&format!("line {}", MAX_LINES + 499)));
+        });
+    }
+
+    #[test]
+    fn rotate_without_header_still_works() {
+        with_temp_dir("rotate_no_header", |dir| {
+            let path = dir.join("test.jsonl");
+            let content = (0..MAX_LINES + 100)
                 .map(|i| format!("line {i}"))
                 .collect::<Vec<_>>()
                 .join("\n")
@@ -376,8 +506,7 @@ mod tests {
             rotate_if_needed(&path);
             let after = fs::read_to_string(&path).unwrap();
             assert_eq!(after.lines().count(), KEEP_LINES);
-            // Should keep the LAST lines
-            assert!(after.contains(&format!("line {}", MAX_LINES + 499)));
+            assert!(after.contains(&format!("line {}", MAX_LINES + 99)));
         });
     }
 
@@ -435,7 +564,17 @@ mod tests {
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains("\"error\":\"not found\""));
         assert!(json.contains("\"source\":\"mcp\""));
-        assert!(!json.contains("args"));
+        assert!(!json.contains("\"args\""));
+    }
+
+    #[test]
+    fn device_header_line_contains_expected_fields() {
+        let header = device_header_line();
+        assert!(header.contains("\"type\":\"device\""));
+        assert!(header.contains("\"os\":"));
+        assert!(header.contains("\"arch\":"));
+        assert!(header.contains("\"version\":"));
+        assert!(is_device_header(&header));
     }
 
     // ── redact_args tests ────────────────────────────────────────────
@@ -486,6 +625,29 @@ mod tests {
     #[test]
     fn no_redaction_for_safe_args() {
         let args = vec_s(&["onchainos", "token", "search", "--chain", "ethereum", "ETH"]);
+        let out = redact_args(&args);
+        assert_eq!(out, args);
+    }
+
+    // ── positional redaction tests ──────────────────────────────────
+
+    #[test]
+    fn redact_wallet_verify_positional_otp() {
+        let args = vec_s(&["onchainos", "wallet", "verify", "123456"]);
+        let out = redact_args(&args);
+        assert_eq!(out, vec_s(&["onchainos", "wallet", "verify", "[REDACTED]"]));
+    }
+
+    #[test]
+    fn redact_wallet_verify_with_flag_before() {
+        let args = vec_s(&["onchainos", "wallet", "verify", "999888"]);
+        let out = redact_args(&args);
+        assert_eq!(out[3], "[REDACTED]");
+    }
+
+    #[test]
+    fn no_redact_wallet_other_subcommand() {
+        let args = vec_s(&["onchainos", "wallet", "status"]);
         let out = redact_args(&args);
         assert_eq!(out, args);
     }

@@ -4,7 +4,7 @@ description: "Use this skill when the user asks to export audit logs, find audit
 license: MIT
 metadata:
   author: okx
-  version: "1.0.0"
+  version: "1.0.6"
   homepage: "https://web3.okx.com"
 ---
 
@@ -18,7 +18,8 @@ Tell the user:
 
 1. **Log file path**: `~/.onchainos/audit.jsonl` (or `$ONCHAINOS_HOME/audit.jsonl` if the env var is set)
 2. **Format**: JSON Lines, one JSON object per line
-3. **Fields**: `ts` (local time with timezone, e.g. `2026-03-18 +8.0 18:00:00.123`), `source` (cli/mcp), `command`, `ok`, `duration_ms`, `args` (redacted), `error`
-4. **Rotation**: max 10,000 lines, auto-keeps the most recent 5,000
+3. **First line (device header)**: `{"type":"device","os":"<os>","arch":"<arch>","version":"<cli_version>"}` — written once when the log file is created; preserved across rotations
+4. **Entry fields**: `ts` (local time with timezone, e.g. `2026-03-18 +8.0 18:00:00.123`), `source` (cli/mcp), `command`, `ok`, `duration_ms`, `args` (redacted), `error`
+5. **Rotation**: max 10,000 lines, auto-keeps the device header + most recent 5,000 entries
 
 Do NOT read or display the file contents in the conversation.
