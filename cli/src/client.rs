@@ -219,8 +219,13 @@ impl ApiClient {
             .copied()
             .collect();
 
-        let mut url =
-            reqwest::Url::parse(&format!("{}{}", self.base_url.trim_end_matches('/'), path))?;
+        // DEX paths always use the public DEX base URL; base_url override is for priapi/wallet only.
+        let base = if path.starts_with("/api/v6/dex") {
+            DEFAULT_BASE_URL
+        } else {
+            self.base_url.trim_end_matches('/')
+        };
+        let mut url = reqwest::Url::parse(&format!("{}{}", base, path))?;
 
         if !filtered.is_empty() {
             url.query_pairs_mut().extend_pairs(filtered.iter().copied());
@@ -262,7 +267,12 @@ impl ApiClient {
     /// Signature uses path only (no query string) + JSON body string.
     pub async fn post(&self, path: &str, body: &Value) -> Result<Value> {
         let body_str = serde_json::to_string(body)?;
-        let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
+        let base = if path.starts_with("/api/v6/dex") {
+            DEFAULT_BASE_URL
+        } else {
+            self.base_url.trim_end_matches('/')
+        };
+        let url = format!("{}{}", base, path);
         let req = self.http.post(&url).body(body_str.clone());
         let req = match &self.auth {
             AuthMode::Jwt(token) => Self::apply_jwt(req, token),
