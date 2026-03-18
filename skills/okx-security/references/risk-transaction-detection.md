@@ -13,7 +13,7 @@
 | `--from` | Yes | Sender address (0x + 40 hex) |
 | `--data` | Yes | Transaction calldata (hex) |
 | `--to` | No | Target contract/address |
-| `--value` | No | Value in wei (hex string) |
+| `--value` | No | Value in wei — decimal (e.g. `1000000000000000000`) or hex string (e.g. `0xde0b6b3a7640000`); decimal is auto-converted to hex |
 | `--gas` | No | Gas limit |
 | `--gas-price` | No | Gas price |
 
