@@ -14,9 +14,9 @@ pub enum TokenCommand {
         /// Search keyword (name, symbol, or contract address)
         #[arg(long)]
         query: String,
-        /// Chains to search (comma-separated, e.g. "ethereum,solana")
-        #[arg(long, default_value = "1,501")]
-        chains: String,
+        /// Chains to search (comma-separated, e.g. "ethereum,solana"). Defaults to global --chain if set, otherwise "1,501"
+        #[arg(long)]
+        chains: Option<String>,
     },
     /// Get token basic info (name, symbol, decimals, logo)
     Info {
@@ -41,9 +41,9 @@ pub enum TokenCommand {
     },
     /// Get trending / top tokens
     Trending {
-        /// Chains (comma-separated)
-        #[arg(long, default_value = "1,501")]
-        chains: String,
+        /// Chains (comma-separated). Defaults to global --chain if set, otherwise "1,501"
+        #[arg(long)]
+        chains: Option<String>,
         /// Sort by: 2=price change, 5=volume, 6=market cap
         #[arg(long, default_value = "5")]
         sort_by: String,
@@ -245,7 +245,11 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
     let client = ctx.client()?;
     match cmd {
         TokenCommand::Search { query, chains } => {
-            output::success(fetch_search(&client, &query, &chains).await?);
+            if query.trim().is_empty() {
+                anyhow::bail!("Parameter --query cannot be empty");
+            }
+            let resolved_chains = ctx.resolve_chains_or(chains, "1,501");
+            output::success(fetch_search(&client, &query, &resolved_chains).await?);
         }
         TokenCommand::Info { address, chain } => {
             let chain_index = chain
@@ -268,7 +272,10 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             sort_by,
             time_frame,
         } => {
-            output::success(fetch_trending(&client, &chains, &sort_by, &time_frame).await?);
+            let resolved_chains = ctx.resolve_chains_or(chains, "1,501");
+            output::success(
+                fetch_trending(&client, &resolved_chains, &sort_by, &time_frame).await?,
+            );
         }
         TokenCommand::PriceInfo { address, chain } => {
             let chain_index = chain

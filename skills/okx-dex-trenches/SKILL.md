@@ -135,7 +135,7 @@ Currently supports: Solana (501), BSC (56), X Layer (196), TRON (195). Always ve
 | # | Command | Description |
 |---|---|---|
 | 1 | `onchainos memepump chains` | Get supported chains and protocols |
-| 2 | `onchainos memepump tokens --chain <chain>` | List meme pump tokens with advanced filtering |
+| 2 | `onchainos memepump tokens --chain <chain> [--stage <stage>]` | List meme pump tokens with advanced filtering (default stage: NEW) |
 | 3 | `onchainos memepump token-details --address <address>` | Get detailed info for a single meme pump token |
 | 4 | `onchainos memepump token-dev-info --address <address>` | Get developer analysis and holding info |
 | 5 | `onchainos memepump similar-tokens --address <address>` | Find similar tokens by same creator |

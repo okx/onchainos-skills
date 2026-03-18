@@ -165,10 +165,10 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 
 | # | Command | Description |
 |---|---|---|
-| 1 | `onchainos token search --query <query>` | Search for tokens by name, symbol, or address |
+| 1 | `onchainos token search --query <query> [--chains <chains>]` | Search for tokens by name, symbol, or address. Accepts `--chains` (comma-separated) or global `--chain` (single chain) |
 | 2 | `onchainos token info --address <address>` | Get token basic info (name, symbol, decimals, logo) |
 | 3 | `onchainos token price-info --address <address>` | Get detailed price info (price, market cap, liquidity, volume, 24h change) |
-| 4 | `onchainos token trending` | Get trending / top tokens |
+| 4 | `onchainos token trending [--chains <chains>]` | Get trending / top tokens. Accepts `--chains` (comma-separated) or global `--chain` |
 | 5 | `onchainos token holders --address <address>` | Get token holder distribution (top 100, with optional tag filter) |
 | 6 | `onchainos token liquidity --address <address>` | Get top 5 liquidity pools for a token |
 | 7 | `onchainos token hot-tokens` | Get hot token list ranked by trending score or X mentions (max 100) |
