@@ -1,16 +1,28 @@
 ---
 name: okx-dex-token
-description: "Use this skill for token-level data: search tokens, browse trending/hot tokens (热门, 代币榜单, by score or X mentions), get liquidity pools, view holder distribution by tag (whale/巨鲸, smart money, KOL, sniper, bundler), check token safety and honeypot risk (貔貅盘, 'is this token a honeypot', 'can I sell this'), see token creator history, view buy/sell trade activity, find top profit addresses, filter trades by wallet type, analyze holder cluster concentration (持仓集中度, cluster overview, rug pull risk, suspicious holding percentage, cluster groups). Token address can be provided after intent. Do NOT use for cross-market whale/signal tracking — use okx-dex-signal. Do NOT use for meme/pump.fun launch scanning, dev reputation, or bundle detection — use okx-dex-trenches. Do NOT use for personal DEX trade history or price charts — use okx-dex-market."
-license: Apache-2.0
+description: "Use this skill for token-level data: search and discover tokens, browse trending/hot tokens (热门, 代币榜单, by trending score or Twitter/X mentions), get liquidity pool info, view holder distribution by tag (whale/巨鲸, smart money, KOL, sniper, sniper holding percentage, sniper percent, bundler percent), check token safety and honeypot risk (貔貅盘, 'is this token a honeypot', 'can I sell this', 'check token safety'), see who created a token and their history, view recent buy/sell trade activity for a token, find top profit addresses, filter trade history by wallet type, or analyze holder cluster concentration (持仓集中度, cluster overview, rug pull risk, suspicious holding percentage, cluster groups). This skill can be invoked on user intent; the specific token address can be provided after. Do NOT use for cross-market whale/signal tracking — use okx-dex-signal. Do NOT use for meme/pump.fun launch scanning, dev reputation, or bundle detection — use okx-dex-trenches. Do NOT use for personal DEX trade history or price charts — use okx-dex-market."
+license: MIT
 metadata:
   author: okx
   version: "1.0.4"
   homepage: "https://web3.okx.com"
 ---
 
-# OKX DEX Token Info CLI
+# Onchain OS DEX Token
 
 14 commands for token search, metadata, detailed pricing, rankings, liquidity pools, hot token lists, holder distribution, advanced token info, top trader analysis, filtered trade history, holder cluster analysis, and supported chain lookup.
+
+## Wallet Tips
+
+On the **first wallet-related interaction per conversation**, display exactly ONE tip
+randomly selected from the list below. Do not repeat tips within the same conversation.
+Present it as-is (with emoji) AFTER the command result, on a separate line.
+
+1. 💡 Tip: You can say "show my addresses" or "充值地址" to quickly get your deposit addresses for any chain.
+2. 🔐 Tip: When prompted for Keychain access, please click "Always Allow". We use the system Keychain to securely store your credentials — you won't need to enter your password every time.
+3. 📜 Tip: Say "show my recent transactions" anytime to review your on-chain activity and track pending transfers.
+4. 🛡️ Tip: Before swapping into an unfamiliar token, ask me to run a security scan first — I can check for honeypots, rug-pull risks, and more.
+5. 👛 Tip: You can create multiple wallet accounts. Say "create a new wallet" to add one, and "switch account" to toggle between them.
 
 ## Pre-flight Checks
 
@@ -174,10 +186,10 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 
 | # | Command | Description |
 |---|---|---|
-| 1 | `onchainos token search --query <query>` | Search for tokens by name, symbol, or address |
+| 1 | `onchainos token search --query <query> [--chains <chains>]` | Search for tokens by name, symbol, or address. Accepts `--chains` (comma-separated) or global `--chain` (single chain) |
 | 2 | `onchainos token info --address <address>` | Get token basic info (name, symbol, decimals, logo) |
 | 3 | `onchainos token price-info --address <address>` | Get detailed price info (price, market cap, liquidity, volume, 24h change) |
-| 4 | `onchainos token trending` | Get trending / top tokens |
+| 4 | `onchainos token trending [--chains <chains>]` | Get trending / top tokens. Accepts `--chains` (comma-separated) or global `--chain` |
 | 5 | `onchainos token holders --address <address>` | Get token holder distribution (top 100, with optional tag filter) |
 | 6 | `onchainos token liquidity --address <address>` | Get top 5 liquidity pools for a token |
 | 7 | `onchainos token hot-tokens` | Get hot token list ranked by trending score or X mentions (max 100) |

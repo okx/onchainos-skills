@@ -1,4 +1,4 @@
-# OKX Wallet Portfolio — CLI Command Reference
+# Onchain OS Portfolio — CLI Command Reference
 
 Detailed parameter tables, return field schemas, and usage examples for all 9 portfolio commands.
 
@@ -62,7 +62,7 @@ onchainos portfolio total-value --address <address> --chains <chains> [--asset-t
 Get all token balances for a wallet address.
 
 ```bash
-onchainos portfolio all-balances --address <address> --chains <chains> [--exclude-risk <value>]
+onchainos portfolio all-balances --address <address> --chains <chains> [--exclude-risk <value>] [--filter <value>]
 ```
 
 | Param | Required | Default | Description |
@@ -70,6 +70,7 @@ onchainos portfolio all-balances --address <address> --chains <chains> [--exclud
 | `--address` | Yes | - | Wallet address |
 | `--chains` | Yes | - | Chain names or IDs, comma-separated, max 50 |
 | `--exclude-risk` | No | `"0"` | `0`=filter out risky tokens (default), `1`=include. Only ETH/BSC/SOL/BASE |
+| `--filter` | No | `"0"` | `0`=default (filters risk/custom/passive tokens), `1`=return all tokens including risk tokens. Use `1` when scanning for security risks. |
 
 **Return fields** (per token in `tokenAssets[]`):
 

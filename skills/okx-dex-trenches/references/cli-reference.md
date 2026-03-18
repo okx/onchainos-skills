@@ -1,4 +1,4 @@
-# OKX DEX Memepump — CLI Command Reference
+# Onchain OS DEX Trenches — CLI Command Reference
 
 Detailed parameter tables, return field schemas, and usage examples for all 7 memepump commands.
 

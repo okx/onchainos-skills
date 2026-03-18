@@ -1,7 +1,8 @@
 # ──────────────────────────────────────────────────────────────
 # Automated release pipeline
 # Trigger: workflow_dispatch with version input
-# Flow: validate → build 9 platforms → generate checksums →
+# Flow: validate → build non-macOS platforms → download signed
+#        macOS from sign-server → generate checksums →
 #        commit version update → tag → publish Release
 # Artifacts: raw binaries (not tar.gz), with checksums.txt
 #
@@ -32,6 +33,7 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_DIR: cli
   BIN_NAME: onchainos
+  SIGN_SERVER_REPO: okx/macos-sign-service
 
 jobs:
   # ── Step 1: Validate version input ──────────────────────────
@@ -82,7 +84,7 @@ jobs:
             exit 1
           fi
 
-  # ── Step 2: Build raw binaries for 9 platforms in parallel ──
+  # ── Step 2: Build non-macOS binaries in parallel ────────────
   build:
     needs: validate
     runs-on: ${{ matrix.os }}
@@ -92,9 +94,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ── macOS (Apple Silicon + Intel) ──
-          - { target: aarch64-apple-darwin, os: macos-latest }
-          - { target: x86_64-apple-darwin, os: macos-latest }
           # ── Linux (x64 native, others via cross-compilation) ──
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
           - { target: i686-unknown-linux-gnu, os: ubuntu-latest, cross: true }
@@ -215,9 +214,44 @@ jobs:
           name: ${{ env.BIN_NAME }}-${{ matrix.target }}
           path: ${{ env.BIN_NAME }}-${{ matrix.target }}*
 
+  # ── Step 2.5: Download signed macOS binaries from sign-server ──
+  download-signed-macos:
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          repositories: "macos-sign-service"
+          owner: "okx"
+
+      - name: Download signed macOS binary from sign-server
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: v${{ needs.validate.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          gh release download "$TAG" \
+            --repo "$SIGN_SERVER_REPO" \
+            --pattern "${BIN_NAME}-${TARGET}" \
+            --dir .
+          echo "Downloaded signed binary:"
+          ls -lh "${BIN_NAME}-${TARGET}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BIN_NAME }}-${{ matrix.target }}
+          path: ${{ env.BIN_NAME }}-${{ matrix.target }}
+
   # ── Step 3: Generate SHA256 checksums ───────────────────────
   checksums:
-    needs: build
+    needs: [build, download-signed-macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

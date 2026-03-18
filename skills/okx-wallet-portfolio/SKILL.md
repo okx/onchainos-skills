@@ -1,16 +1,28 @@
 ---
 name: okx-wallet-portfolio
-description: "Use this skill to 'check my wallet balance', 'show my token holdings', 'how much OKB do I have', 'what tokens do I have', 'check my portfolio value', 'view my assets', 'how much is my portfolio worth', 'what\\'s in my wallet', or mentions checking wallet balance, total assets, token holdings, portfolio value, remaining funds, DeFi positions, or multi-chain balance lookup. Supports XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. Do NOT use for PnL analysis, DEX transaction history, win rate, or realized/unrealized profit — use okx-dex-market instead. Do NOT use for signal tracking — use okx-dex-signal. Do NOT use for meme token scanning — use okx-dex-trenches. Do NOT use for general programming questions about balance variables or API documentation. Do NOT use when the user is asking how to build or integrate a balance feature into code."
-license: Apache-2.0
+description: "Use this skill when the user provides a specific wallet address and wants to check its balance, token holdings, portfolio value, or DeFi positions. Typical triggers: 'check balance of 0xAbc...', 'show tokens in this address', 'what tokens does 0xAbc hold', 'portfolio value of this address', address portfolio value, multi-chain balance lookup for a given address. Supports XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. Do NOT use when the user asks about their own wallet without providing an address (e.g., 'check my wallet balance', 'show my assets', '查看我的余额') — use okx-agentic-wallet instead, which queries the logged-in wallet. Do NOT use for PnL analysis, DEX history, realized/unrealized profit — use okx-dex-market. Do NOT use for signal tracking — use okx-dex-signal. Do NOT use for meme scanning — use okx-dex-trenches. Do NOT use for programming questions about balance APIs or integration."
+license: MIT
 metadata:
   author: okx
   version: "1.0.4"
   homepage: "https://web3.okx.com"
 ---
 
-# OKX Wallet Portfolio CLI
+# Onchain OS Portfolio
 
 4 commands for supported chains, wallet total value, all token balances, and specific token balances.
+
+## Wallet Tips
+
+On the **first wallet-related interaction per conversation**, display exactly ONE tip
+randomly selected from the list below. Do not repeat tips within the same conversation.
+Present it as-is (with emoji) AFTER the command result, on a separate line.
+
+1. 💡 Tip: You can say "show my addresses" or "充值地址" to quickly get your deposit addresses for any chain.
+2. 🔐 Tip: When prompted for Keychain access, please click "Always Allow". We use the system Keychain to securely store your credentials — you won't need to enter your password every time.
+3. 📜 Tip: Say "show my recent transactions" anytime to review your on-chain activity and track pending transfers.
+4. 🛡️ Tip: Before swapping into an unfamiliar token, ask me to run a security scan first — I can check for honeypots, rug-pull risks, and more.
+5. 👛 Tip: You can create multiple wallet accounts. Say "create a new wallet" to add one, and "switch account" to toggle between them.
 
 ## Pre-flight Checks
 
@@ -105,8 +117,8 @@ The CLI accepts human-readable chain names and resolves them automatically.
 | # | Command | Description |
 |---|---|---|
 | 1 | `onchainos portfolio chains` | Get supported chains for balance queries |
-| 2 | `onchainos portfolio total-value --address ... --chains ...` | Get total asset value for a wallet |
-| 3 | `onchainos portfolio all-balances --address ... --chains ...` | Get all token balances for a wallet |
+| 2 | `onchainos portfolio total-value --address <address> --chains <chains>` | Get total asset value for a wallet (both params required) |
+| 3 | `onchainos portfolio all-balances --address <address> --chains <chains>` | Get all token balances for a wallet (both params required) |
 | 4 | `onchainos portfolio token-balances --address ... --tokens ...` | Get specific token balances |
 
 ## Cross-Skill Workflows
@@ -125,6 +137,9 @@ This skill is often used **before swap** (to verify sufficient balance) or **as 
        ↓ balance field (UI units) → convert to minimal units for swap
 3. okx-dex-swap     onchainos swap quote --from 11111111111111111111111111111111 --to <BONK_address> --amount 1000000000 --chain solana
 4. okx-dex-swap     onchainos swap swap --from ... --to <BONK_address> --amount 1000000000 --chain solana --wallet <addr>
+       ↓ get swap calldata, then execute via one of two paths:
+   Path A (user-provided wallet): user signs externally → onchainos gateway broadcast --signed-tx <tx> --address <addr> --chain solana
+   Path B (Agentic Wallet):      onchainos wallet contract-call --to <tx.to> --chain solana --unsigned-tx <tx.data>
 ```
 
 **Data handoff**:
@@ -142,6 +157,7 @@ This skill is often used **before swap** (to verify sufficient balance) or **as 
 2. okx-wallet-portfolio  onchainos portfolio all-balances --address <addr> --chains "xlayer,solana,ethereum"
        → per-token breakdown
        ↓ top holdings by USD value
+2b. (okx-dex-market) onchainos market portfolio-overview --address <addr> --chain ethereum  -> PnL summary and win rate
 3. okx-dex-token    onchainos token price-info --address <address> --chain <chain>  → enrich with 24h change, market cap
 4. okx-dex-market   onchainos market kline --address <address> --chain <chain>      → price charts for tokens of interest
 ```
@@ -154,7 +170,11 @@ This skill is often used **before swap** (to verify sufficient balance) or **as 
        ↓ tokenContractAddress + chainIndex for each
 2. okx-dex-token    onchainos token price-info --address <address> --chain <chain>  → get priceChange24H per token
 3. Filter by negative change → user confirms which to sell
-4. okx-dex-swap     onchainos swap quote → onchainos swap swap → execute sell
+4. okx-dex-swap     onchainos swap quote --from <token_addr> --to <native_addr> --amount ... --chain <chain>  → get quote
+5. okx-dex-swap     onchainos swap swap --from <token_addr> --to <native_addr> --amount ... --chain <chain> --wallet <addr>
+       → get swap calldata, then execute via one of two paths:
+   Path A (user-provided wallet): user signs externally → onchainos gateway broadcast --signed-tx <tx> --address <addr> --chain <chain>
+   Path B (Agentic Wallet):      onchainos wallet contract-call --to <tx.to> --chain <chain> --value <value_in_UI_units> --input-data <tx.data>
 ```
 
 **Key conversion**: `balance` (UI units) × `10^decimal` = `amount` (minimal units) for swap.
@@ -167,7 +187,7 @@ This skill is often used **before swap** (to verify sufficient balance) or **as 
 - View all token holdings → `onchainos portfolio all-balances`
 - Check specific token balance → `onchainos portfolio token-balances`
 - Unsure which chains are supported for balance queries → `onchainos portfolio chains` first
-- PnL analysis, win rate, DEX transaction history → use `okx-dex-market` (`onchainos market portfolio-*`)
+- PnL analysis, win rate, DEX transaction history → use `okx-dex-market` (`onchainos market portfolio-overview/portfolio-dex-history/portfolio-recent-pnl/portfolio-token-pnl`)
 
 ### Step 2: Collect Parameters
 
@@ -191,7 +211,7 @@ After displaying results, suggest 2-3 relevant follow-up actions:
 | Just completed | Suggest |
 |---|---|
 | `portfolio total-value` | 1. View token-level breakdown → `onchainos portfolio all-balances` (this skill) 2. Check price trend for top holdings → `okx-dex-market` |
-| `portfolio all-balances` | 1. View detailed analytics (market cap, 24h change) for a token → `okx-dex-token` 2. Swap a token → `okx-dex-swap` 3. View PnL analysis → `okx-dex-market` (`onchainos market portfolio-overview`) |
+| `portfolio all-balances` | 1. View detailed analytics for a token → `okx-dex-token` 2. Swap a token → `okx-dex-swap` 3. View PnL analysis → `okx-dex-market` (`onchainos market portfolio-overview`) |
 | `portfolio token-balances` | 1. View full portfolio across all tokens → `onchainos portfolio all-balances` (this skill) 2. Swap this token → `okx-dex-swap` |
 
 Present conversationally, e.g.: "Would you like to see the price chart for your top holding, or swap any of these tokens?" — never expose skill names or endpoint paths to the user.
@@ -211,8 +231,6 @@ To search for specific command details: `grep -n "onchainos portfolio <command>"
 - **`--exclude-risk` not working**: only supported on ETH/BSC/SOL/BASE
 - **DeFi positions**: use `--asset-type 2` to query DeFi holdings separately
 - **Address format mismatch**: EVM (`0x…`) and Solana/UTXO addresses have incompatible formats. Passing an EVM address with a Solana chain (or vice versa) causes the **entire request to fail** with an API error — no partial results are returned. Always make **separate requests**: one call for EVM chains using the EVM address, a separate call for Solana using the Solana address
-- **`tokenBalanceAmount = "0"`** in `token-pnl`: position is fully closed (sold)
-- **Empty `cursor`** in `dex-history` / `recent-pnl`: no more pages — stop pagination
 - **Network error**: retry once, then prompt user to try again later
 - **Region restriction (error code 50125 or 80001)**: do NOT show the raw error code to the user. Instead, display a friendly message: `⚠️ Service is not available in your region. Please switch to a supported region and try again.`
 

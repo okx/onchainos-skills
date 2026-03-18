@@ -109,8 +109,8 @@ struct PortfolioPnlOverviewParams {
     address: String,
     /// Chain name (e.g. ethereum, solana)
     chain: String,
-    /// Time frame: 1=1D, 2=3D, 3=7D, 4=1M, 5=3M
-    time_frame: String,
+    /// Time frame: 1=1D, 2=3D, 3=7D, 4=1M, 5=3M (default: 4 = 1M)
+    time_frame: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -232,12 +232,18 @@ struct SwapSwapParams {
     amount: String,
     /// Chain name
     chain: String,
-    /// Slippage tolerance in percent, e.g. "1" for 1% (default: "1")
+    /// Slippage tolerance in percent, e.g. "1" for 1%. Omit to use autoSlippage.
     slippage: Option<String>,
     /// User wallet address
     wallet: String,
+    /// Gas priority: slow, average (default), fast
+    gas_level: Option<String>,
     /// Swap mode: exactIn (default) or exactOut
     swap_mode: Option<String>,
+    /// Jito tips in SOL for Solana MEV protection (range: 0.0000000001–2)
+    tips: Option<String>,
+    /// Max auto slippage percent cap when autoSlippage is enabled (e.g. "0.5")
+    max_auto_slippage: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -277,6 +283,9 @@ struct PortfolioAllBalancesParams {
     chains: String,
     /// Exclude risky tokens: 0=filter out (default), 1=include
     exclude_risk: Option<String>,
+    /// Token filter level: 0=default (filters risk/custom/passive tokens), 1=return all tokens.
+    /// Use 1 when you need the full token list including risk tokens (e.g. for security scanning).
+    filter: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -375,6 +384,9 @@ struct GatewayBroadcastParams {
     address: String,
     /// Chain name
     chain: String,
+    /// Enable MEV protection (supported on Base and other EVM chains)
+    #[serde(default)]
+    mev_protection: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -857,17 +869,20 @@ impl McpServer {
     )]
     async fn swap_swap(&self, Parameters(p): Parameters<SwapSwapParams>) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        let slippage = p.slippage.as_deref().unwrap_or("1");
         let swap_mode = p.swap_mode.as_deref().unwrap_or("exactIn");
+        let gas_level = p.gas_level.as_deref().unwrap_or("average");
         match swap::fetch_swap(
             &self.client,
             &chain_index,
             &p.from,
             &p.to,
             &p.amount,
-            slippage,
+            p.slippage.as_deref(),
             &p.wallet,
             swap_mode,
+            gas_level,
+            p.tips.as_deref(),
+            p.max_auto_slippage.as_deref(),
         )
         .await
         {
@@ -952,6 +967,7 @@ impl McpServer {
             &p.address,
             &p.chains,
             p.exclude_risk.as_deref(),
+            p.filter.as_deref(),
         )
         .await
         {
@@ -1056,7 +1072,15 @@ impl McpServer {
         Parameters(p): Parameters<GatewayBroadcastParams>,
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match gateway::fetch_broadcast(&self.client, &chain_index, &p.signed_tx, &p.address).await {
+        match gateway::fetch_broadcast(
+            &self.client,
+            &chain_index,
+            &p.signed_tx,
+            &p.address,
+            p.mev_protection,
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1170,13 +1194,9 @@ impl McpServer {
         Parameters(p): Parameters<PortfolioPnlOverviewParams>,
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match market::fetch_portfolio_overview(
-            &self.client,
-            &chain_index,
-            &p.address,
-            &p.time_frame,
-        )
-        .await
+        let time_frame = p.time_frame.as_deref().unwrap_or("4");
+        match market::fetch_portfolio_overview(&self.client, &chain_index, &p.address, time_frame)
+            .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),

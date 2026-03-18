@@ -32,16 +32,6 @@ OKX_PASSPHRASE="your-passphrase"
 
 **Security warning**: Never commit `.env` to git (add it to `.gitignore`) and never expose credentials in logs, screenshots, or chat messages.
 
-### Quick Start — Try It Now
-
-Want to try the skills right away? Use the shared API key below:
-
-```bash
-OKX_API_KEY="03f0b376-251c-4618-862e-ae92929e0416"
-OKX_SECRET_KEY="652ECE8FF13210065B0851FFDA9191F7"
-OKX_PASSPHRASE="onchainOS#666"
-```
-
 ## Installation
 
 ### Recommended
@@ -114,6 +104,22 @@ curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh
 
 > **Note:** Beta versions (e.g., `v2.0.0-beta.0`) are opt-in only. The default installer and all skill auto-updates always use the latest stable release. Running without `--beta` will never downgrade a beta installation whose base version is ahead of the latest stable.
 
+### PowerShell (Windows)
+
+Auto-detects your platform, downloads the latest **stable** release, verifies SHA256 checksum, and installs to `%USERPROFILE%\.local\bin`:
+
+```powershell
+irm https://raw.githubusercontent.com/okx/onchainos-skills/main/install.ps1 | iex
+```
+
+To install the latest **beta** version (includes pre-releases):
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/okx/onchainos-skills/main/install.ps1))) --beta
+```
+
+> **Note:** The same beta/stable rules apply — default installs always use the latest stable release, and `--beta` is opt-in only.
+
 ## MCP Server
 
 The `onchainos` CLI doubles as a native MCP server exposing tools to any MCP-compatible client.
@@ -143,4 +149,4 @@ You are solely responsible for the security, confidentiality, and proper managem
 
 ## License
 
-Apache-2.0
+MIT

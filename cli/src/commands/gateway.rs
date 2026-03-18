@@ -61,6 +61,9 @@ pub enum GatewayCommand {
         /// Chain
         #[arg(long)]
         chain: String,
+        /// Enable MEV protection (supported on Base and other EVM chains)
+        #[arg(long, default_value_t = false)]
+        mev_protection: bool,
     },
     /// Track broadcast order status
     Orders {
@@ -114,9 +117,13 @@ pub async fn execute(ctx: &Context, cmd: GatewayCommand) -> Result<()> {
             signed_tx,
             address,
             chain,
+            mev_protection,
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
-            output::success(fetch_broadcast(&client, &chain_index, &signed_tx, &address).await?);
+            output::success(
+                fetch_broadcast(&client, &chain_index, &signed_tx, &address, mev_protection)
+                    .await?,
+            );
         }
         GatewayCommand::Orders {
             address,
@@ -195,12 +202,16 @@ pub async fn fetch_broadcast(
     chain_index: &str,
     signed_tx: &str,
     address: &str,
+    mev_protection: bool,
 ) -> Result<Value> {
-    let body = json!({
+    let mut body = json!({
         "signedTx": signed_tx,
         "chainIndex": chain_index,
         "address": address,
     });
+    if mev_protection {
+        body["extraData"] = json!("{\"enableMevProtection\":true}");
+    }
     client
         .post("/api/v6/dex/pre-transaction/broadcast-transaction", &body)
         .await

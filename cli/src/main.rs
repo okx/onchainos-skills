@@ -1,11 +1,17 @@
 #![allow(dead_code)]
 
+pub mod audit;
 pub mod chains;
 mod client;
 mod commands;
 mod config;
+pub mod crypto;
+mod home;
+mod keyring_store;
 mod mcp;
 mod output;
+mod wallet_api;
+mod wallet_store;
 
 use clap::{Parser, Subcommand};
 
@@ -76,6 +82,16 @@ pub enum Commands {
         #[arg(long)]
         base_url: Option<String>,
     },
+    /// Agentic wallet: login, verify, create, switch, status, logout, balance
+    Wallet {
+        #[command(subcommand)]
+        command: commands::agentic_wallet::wallet::WalletCommand,
+    },
+    /// Security scanning (tx-scan, token-scan, dapp-scan, sig-scan)
+    Security {
+        #[command(subcommand)]
+        command: commands::security::SecurityCommand,
+    },
 }
 
 fn main() {
@@ -95,6 +111,23 @@ async fn run() {
     dotenvy::dotenv().ok();
 
     let cli = Cli::parse();
+
+    // MCP server runs indefinitely — skip audit for it (MCP tools log individually).
+    if matches!(cli.command, Commands::Mcp { .. }) {
+        if let Commands::Mcp { base_url } = cli.command {
+            if let Err(e) = mcp::serve(base_url.as_deref()).await {
+                output::error(&format!("{e:#}"));
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    let raw_args: Vec<String> = std::env::args().collect();
+    let redacted_args = audit::redact_args(&raw_args);
+    let command_name = audit::cli_command_name(&cli.command);
+    let start = std::time::Instant::now();
+
     let ctx = commands::Context::new(&cli);
 
     let result = match cli.command {
@@ -106,8 +139,20 @@ async fn run() {
         Commands::Swap { command } => commands::swap::execute(&ctx, command).await,
         Commands::Gateway { command } => commands::gateway::execute(&ctx, command).await,
         Commands::Portfolio { command } => commands::portfolio::execute(&ctx, command).await,
-        Commands::Mcp { base_url } => mcp::serve(base_url.as_deref()).await,
+        Commands::Mcp { .. } => unreachable!("handled above"),
+        Commands::Wallet { command } => commands::agentic_wallet::wallet::execute(command).await,
+        Commands::Security { command } => commands::security::execute(&ctx, command).await,
     };
+
+    let elapsed = start.elapsed();
+    audit::log(
+        "cli",
+        &command_name,
+        result.is_ok(),
+        elapsed,
+        Some(redacted_args),
+        result.as_ref().err().map(|e| format!("{e:#}")).as_deref(),
+    );
 
     if let Err(e) = result {
         output::error(&format!("{e:#}"));

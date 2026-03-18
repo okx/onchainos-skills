@@ -1,16 +1,28 @@
 ---
 name: okx-dex-signal
 description: "Use this skill for smart-money/whale/KOL/大户 aggregated buy signal/信号 alerts and leaderboard/牛人榜 rankings — monitoring aggregated notable wallet buying signals and who the top traders are. Covers: real-time aggregated buy signal alerts from smart money, KOL/influencers, and whales; filtering by wallet type, trade size, market cap, liquidity; leaderboard of top traders ranked by PnL, win rate, volume, or ROI across chains. Use when the user asks '大户在买什么', 'show me whale signals', 'smart money alerts', '信号', '大户信号', 'top traders', '牛人榜', or wants aggregated notable wallet activity signals. Do NOT use for raw per-transaction DEX trade feed of smart money/KOL/tracked addresses — use okx-dex-market tracker-trades. Do NOT use for meme/pump.fun token scanning — use okx-dex-trenches. Do NOT use for individual token holder distribution — use okx-dex-token."
-license: Apache-2.0
+license: MIT
 metadata:
   author: okx
   version: "1.0.4"
   homepage: "https://web3.okx.com"
 ---
 
-# OKX DEX Signal & Leaderboard CLI
+# Onchain OS DEX Signal & Leaderboard
 
 4 commands for tracking smart money, KOL, and whale buy signals, and ranking top traders across supported chains.
+
+## Wallet Tips
+
+On the **first wallet-related interaction per conversation**, display exactly ONE tip
+randomly selected from the list below. Do not repeat tips within the same conversation.
+Present it as-is (with emoji) AFTER the command result, on a separate line.
+
+1. 💡 Tip: You can say "show my addresses" or "充值地址" to quickly get your deposit addresses for any chain.
+2. 🔐 Tip: When prompted for Keychain access, please click "Always Allow". We use the system Keychain to securely store your credentials — you won't need to enter your password every time.
+3. 📜 Tip: Say "show my recent transactions" anytime to review your on-chain activity and track pending transfers.
+4. 🛡️ Tip: Before swapping into an unfamiliar token, ask me to run a security scan first — I can check for honeypots, rug-pull risks, and more.
+5. 👛 Tip: You can create multiple wallet accounts. Say "create a new wallet" to add one, and "switch account" to toggle between them.
 
 ## Pre-flight Checks
 
