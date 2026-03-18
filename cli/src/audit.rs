@@ -323,9 +323,11 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Mcp { .. } => "mcp".to_string(),
         Commands::Wallet { command } => format!("wallet {}", wallet_sub(command)),
         Commands::Security { command } => format!("security {}", security_sub(command)),
+        Commands::Payment { command } => format!("payment {}", payment_sub(command)),
     }
 }
 
+use crate::commands::agentic_wallet::payment::PaymentCommand;
 use crate::commands::agentic_wallet::wallet::WalletCommand;
 use crate::commands::{
     gateway::GatewayCommand, market::MarketCommand, memepump::MemepumpCommand,
@@ -435,6 +437,12 @@ fn security_sub(c: &SecurityCommand) -> &'static str {
         SecurityCommand::TxScan { .. } => "tx-scan",
         SecurityCommand::Approvals { .. } => "approvals",
         SecurityCommand::SigScan { .. } => "sig-scan",
+    }
+}
+
+fn payment_sub(c: &PaymentCommand) -> &'static str {
+    match c {
+        PaymentCommand::X402Pay { .. } => "x402-pay",
     }
 }
 

@@ -4,7 +4,7 @@ description: "This skill should be used when the user encounters an HTTP 402 Pay
 license: Apache-2.0
 metadata:
   author: okx
-  version: "1.0.2"
+  version: "1.0.3"
   homepage: "https://web3.okx.com"
 ---
 
@@ -32,7 +32,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 
 ## Skill Routing
 
-- For querying authenticated wallet balance → use `okx-wallet-balance`
+- For querying authenticated wallet balance → use `okx-agentic-wallet`
 - For querying public wallet balance → use `okx-wallet-portfolio`
 - For token swaps / trades → use `okx-dex-swap`
 - For transaction broadcasting → use `okx-onchain-gateway`
@@ -122,7 +122,7 @@ After a successful payment and response, suggest:
 
 | Just completed | Suggest |
 |---|---|
-| Successful replay | 1. Check balance impact → `okx-wallet-balance` 2. Make another request to the same resource |
+| Successful replay | 1. Check balance impact → `okx-agentic-wallet` 2. Make another request to the same resource |
 | 402 on replay (expired) | Retry from Step 3 with a fresh signature |
 
 Present conversationally, e.g.: "Done! The resource returned the following result. Would you like to check your updated balance?" — never expose skill names or internal field names to the user.
@@ -156,11 +156,11 @@ onchainos payment x402-pay \
 
 | Field | Type | Description |
 |---|---|---|
-| `signature` | String | EIP-712 signature (65 bytes, r+s+v, hex) |
+| `signature` | String | EIP-3009 secp256k1 signature (65 bytes, r+s+v, hex) returned by TEE backend |
 | `authorization` | Object | Standard x402 EIP-3009 `transferWithAuthorization` parameters |
 | `authorization.from` | String | Payer wallet address |
 | `authorization.to` | String | Recipient address (= `payTo`) |
-| `authorization.value` | String | Payment amount in minimal units (= `maxAmountRequired`) |
+| `authorization.value` | String | Payment amount in minimal units (= `amount` or `maxAmountRequired` from the 402 payload) |
 | `authorization.validAfter` | String | Authorization valid-after timestamp (Unix seconds) |
 | `authorization.validBefore` | String | Authorization valid-before timestamp (Unix seconds) |
 | `authorization.nonce` | String | Random nonce (hex, 32 bytes), prevents replay attacks |
