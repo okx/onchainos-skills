@@ -223,6 +223,7 @@ fn mcp_tools_list_returns_all_tools() {
         "token_info",
         "market_price",
         "market_kline",
+        "market_tracker_trades",
         "swap_quote",
         "swap_swap",
         "portfolio_total_value",
@@ -314,6 +315,20 @@ fn mcp_market_kline() {
     }
     let data = result.api_data();
     assert!(data.is_array(), "expected candle data: {data}");
+}
+
+#[test]
+fn mcp_market_tracker_trades() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "market_tracker_trades",
+        json!({"tracker_type": "smart_money"}),
+    );
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    assert!(data["trades"].is_array(), "expected trades array: {data}");
 }
 
 // ── Swap tools ─────────────────────────────────────────────────────────
