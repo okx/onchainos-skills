@@ -53,17 +53,17 @@ onchainos wallet verify <otp>
 
 > Never expose sensitive fields (tokens, keys, certificates) to the user.
 
-### A3. `onchainos wallet create`
+### A3. `onchainos wallet add`
 
-Create a new wallet account under the logged-in user.
+Add a new wallet account under the logged-in user.
 
 ```bash
-onchainos wallet create
+onchainos wallet add
 ```
 
 **Parameters:** None.
 
-> **Note:** Creating a wallet automatically switches to the new account. No need to run `wallet switch` manually.
+> **Note:** Adding a wallet automatically switches to the new account. No need to run `wallet switch` manually.
 
 **Return fields:**
 

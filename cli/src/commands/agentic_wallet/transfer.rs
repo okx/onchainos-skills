@@ -117,19 +117,12 @@ async fn sign_and_broadcast(
         );
     }
 
-    let blob = keyring_store::read_blob()?;
-    let session_cert = blob
-        .get("session_cert")
-        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?
-        .clone();
-    let session_key = blob
-        .get("session_key")
-        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?
-        .clone();
-    let encrypted_session_sk = blob
-        .get("encrypted_session_sk")
-        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?
-        .clone();
+    let session = wallet_store::load_session()?
+        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+    let session_cert = session.session_cert;
+    let encrypted_session_sk = session.encrypted_session_sk;
+    let session_key = keyring_store::get("session_key")
+        .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][sign_and_broadcast] Step 4: TEE session loaded, session_cert length={}, session_key length={}",

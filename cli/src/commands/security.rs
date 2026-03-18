@@ -453,7 +453,15 @@ async fn tx_scan(
                 body["to"] = json!(to);
             }
             if let Some(value) = value {
-                body["value"] = json!(value);
+                // API requires hex string; auto-convert decimal input to hex
+                let hex_value = if value.starts_with("0x") || value.starts_with("0X") {
+                    value.to_string()
+                } else if let Ok(n) = value.parse::<u128>() {
+                    format!("0x{:x}", n)
+                } else {
+                    value.to_string()
+                };
+                body["value"] = json!(hex_value);
             }
             if let Some(gas) = gas {
                 body["gas"] = json!(gas);

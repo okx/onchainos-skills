@@ -7,25 +7,64 @@ use serde_json::json;
 use crate::keyring_store;
 use crate::output;
 use crate::wallet_api::{ApiCodeError, WalletApiClient};
-use crate::wallet_store::{self, AccountMapEntry, AddressInfo, LoginCache, WalletsJson};
+use crate::wallet_store::{
+    self, AccountMapEntry, AddressInfo, LoginCache, SessionJson, WalletsJson,
+};
 
 // ── Token / session helpers ──────────────────────────────────────────
 
 /// Ensure accessToken and refreshToken exist and the session is still valid.
 pub(super) fn ensure_tokens() -> Result<(String, String)> {
-    let blob = keyring_store::read_blob()?;
+    let session = wallet_store::load_session()?;
+    let expire_at = session
+        .as_ref()
+        .map(|s| s.session_key_expire_at.as_str())
+        .unwrap_or("");
 
-    if is_session_key_expired_in(&blob) {
+    if cfg!(feature = "debug-log") {
+        let now_ts = chrono::Utc::now().timestamp();
+        let exp_ts = expire_at.parse::<i64>().unwrap_or(0);
+        let exp_dt = chrono::DateTime::from_timestamp(exp_ts, 0)
+            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+            .unwrap_or_else(|| "invalid".to_string());
+        let now_dt = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+        let diff = exp_ts - now_ts;
+        eprintln!(
+            "[DEBUG][ensure_tokens] session_key_expire_at: value=\"{}\", parsed_exp={} ({}), now={} ({}), diff={}s ({:.1}min, {:.1}h), expired={}",
+            expire_at, exp_ts, exp_dt, now_ts, now_dt, diff, diff as f64 / 60.0, diff as f64 / 3600.0, now_ts >= exp_ts
+        );
+    }
+
+    if is_session_key_expired(expire_at) {
         if cfg!(feature = "debug-log") {
             eprintln!("[DEBUG][session_key_expired] session key expired");
         }
         bail!("session expired, please login again: onchainos wallet login");
     }
 
+    let blob = keyring_store::read_blob()?;
+
     let refresh_token = match blob.get("refresh_token").filter(|t| !t.is_empty()) {
         Some(t) => t.clone(),
         _ => bail!(super::common::ERR_NOT_LOGGED_IN),
     };
+    if cfg!(feature = "debug-log") {
+        let now_ts = chrono::Utc::now().timestamp();
+        if let Some(exp_ts) = token_exp_timestamp(&refresh_token) {
+            let exp_dt = chrono::DateTime::from_timestamp(exp_ts, 0)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                .unwrap_or_else(|| "invalid".to_string());
+            let now_dt = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+            let diff = exp_ts - now_ts;
+            eprintln!(
+                "[DEBUG][ensure_tokens] refresh_token: exp={} ({}), now={} ({}), diff={}s ({:.1}min, {:.1}h), expired={}",
+                exp_ts, exp_dt, now_ts, now_dt, diff, diff as f64 / 60.0, diff as f64 / 3600.0, now_ts >= exp_ts
+            );
+        } else {
+            eprintln!("[DEBUG][ensure_tokens] refresh_token: failed to parse exp from JWT");
+        }
+    }
+
     if is_token_expired(&refresh_token) {
         if cfg!(feature = "debug-log") {
             eprintln!("[DEBUG][refresh_token] refresh token expired");
@@ -37,6 +76,23 @@ pub(super) fn ensure_tokens() -> Result<(String, String)> {
         Some(t) => t.clone(),
         _ => bail!(super::common::ERR_NOT_LOGGED_IN),
     };
+
+    if cfg!(feature = "debug-log") {
+        let now_ts = chrono::Utc::now().timestamp();
+        if let Some(exp_ts) = token_exp_timestamp(&access_token) {
+            let exp_dt = chrono::DateTime::from_timestamp(exp_ts, 0)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                .unwrap_or_else(|| "invalid".to_string());
+            let now_dt = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+            let diff = exp_ts - now_ts;
+            eprintln!(
+                "[DEBUG][ensure_tokens] access_token: exp={} ({}), now={} ({}), diff={}s ({:.1}min, {:.1}h), expired={}",
+                exp_ts, exp_dt, now_ts, now_dt, diff, diff as f64 / 60.0, diff as f64 / 3600.0, now_ts >= exp_ts
+            );
+        } else {
+            eprintln!("[DEBUG][ensure_tokens] access_token: failed to parse exp from JWT");
+        }
+    }
 
     Ok((access_token, refresh_token))
 }
@@ -53,10 +109,37 @@ pub(super) async fn ensure_tokens_refreshed() -> Result<String> {
             .map_err(format_api_error)?;
 
         if cfg!(feature = "debug-log") {
-            eprintln!(
-                "[DEBUG][ensure_tokens_refreshed] refresh access token: length={}",
-                access_token.len()
-            );
+            let now_ts = chrono::Utc::now().timestamp();
+            let now_dt = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+            if let Some(old_exp) = token_exp_timestamp(&access_token) {
+                let old_exp_dt = chrono::DateTime::from_timestamp(old_exp, 0)
+                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                    .unwrap_or_else(|| "invalid".to_string());
+                eprintln!(
+                    "[DEBUG][ensure_tokens_refreshed] old access_token: exp={} ({}), was expired by {}s",
+                    old_exp, old_exp_dt, now_ts - old_exp
+                );
+            }
+            if let Some(new_exp) = token_exp_timestamp(&resp.access_token) {
+                let new_exp_dt = chrono::DateTime::from_timestamp(new_exp, 0)
+                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                    .unwrap_or_else(|| "invalid".to_string());
+                let diff = new_exp - now_ts;
+                eprintln!(
+                    "[DEBUG][ensure_tokens_refreshed] new access_token: exp={} ({}), now={} ({}), diff={}s ({:.1}min, {:.1}h)",
+                    new_exp, new_exp_dt, now_ts, now_dt, diff, diff as f64 / 60.0, diff as f64 / 3600.0
+                );
+            }
+            if let Some(new_rexp) = token_exp_timestamp(&resp.refresh_token) {
+                let new_rexp_dt = chrono::DateTime::from_timestamp(new_rexp, 0)
+                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                    .unwrap_or_else(|| "invalid".to_string());
+                let diff = new_rexp - now_ts;
+                eprintln!(
+                    "[DEBUG][ensure_tokens_refreshed] new refresh_token: exp={} ({}), now={} ({}), diff={}s ({:.1}min, {:.1}h)",
+                    new_rexp, new_rexp_dt, now_ts, now_dt, diff, diff as f64 / 60.0, diff as f64 / 3600.0
+                );
+            }
         }
 
         keyring_store::store(&[
@@ -103,14 +186,14 @@ fn token_exp_timestamp(token: &str) -> Option<i64> {
     val["exp"].as_i64()
 }
 
-/// Check if `session_key_expire_at` has passed.
-pub(super) fn is_session_key_expired_in(blob: &HashMap<String, String>) -> bool {
-    match blob.get("session_key_expire_at") {
-        Some(ts) => match ts.parse::<i64>() {
-            Ok(exp) => chrono::Utc::now().timestamp() >= exp,
-            Err(_) => true,
-        },
-        None => true,
+/// Check if `session_key_expire_at` timestamp has passed.
+pub(super) fn is_session_key_expired(expire_at: &str) -> bool {
+    if expire_at.is_empty() {
+        return true;
+    }
+    match expire_at.parse::<i64>() {
+        Ok(exp) => chrono::Utc::now().timestamp() >= exp,
+        Err(_) => true,
     }
 }
 
@@ -176,15 +259,14 @@ pub(super) async fn cmd_login(
                 if !force {
                     if let Ok(Some(wallets)) = wallet_store::load_wallets() {
                         if wallets.is_ak {
-                            if let Ok(blob) = keyring_store::read_blob() {
-                                if let Some(old_api_key) = blob.get("api_key").filter(|k| !k.is_empty()) {
-                                    if old_api_key != &api_key {
-                                        bail!(
-                                            "You are about to switch from API Key \"{}\" to \"{}\". \
-                                             If you are sure, re-run with --force to confirm.",
-                                            old_api_key, api_key
-                                        );
-                                    }
+                            if let Ok(Some(session)) = wallet_store::load_session() {
+                                if !session.api_key.is_empty() && session.api_key != api_key {
+                                    bail!(
+                                        "You are about to switch from API Key \"{}\" to \"{}\". \
+                                         If you are sure, re-run with --force to confirm.",
+                                        session.api_key,
+                                        api_key
+                                    );
                                 }
                             }
                         }
@@ -353,19 +435,22 @@ async fn save_verify_result(
     };
     wallet_store::save_wallets(&wallets)?;
 
+    wallet_store::save_session(&SessionJson {
+        tee_id: resp.tee_id.clone(),
+        session_cert: resp.session_cert.clone(),
+        encrypted_session_sk: resp.encrypted_session_sk.clone(),
+        session_key_expire_at: resp.session_key_expire_at.clone(),
+        api_key: api_key.to_string(),
+    })?;
+
     keyring_store::store(&[
         ("refresh_token", &resp.refresh_token),
         ("access_token", &resp.access_token),
-        ("tee_id", &resp.tee_id),
-        ("session_cert", &resp.session_cert),
-        ("encrypted_session_sk", &resp.encrypted_session_sk),
-        ("session_key_expire_at", &resp.session_key_expire_at),
         ("session_key", session_private_key),
-        ("api_key", api_key),
     ])?;
 
     if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG] keyring store: ok");
+        eprintln!("[DEBUG] session.json + keyring store: ok");
     }
 
     fetch_and_save_account_list(client, &resp.access_token, &resp.project_id).await;
@@ -461,15 +546,15 @@ async fn fetch_and_save_account_list(
     }
 }
 
-// ── Create ───────────────────────────────────────────────────────────
+// ── Add ──────────────────────────────────────────────────────────────
 
-/// onchainos wallet create
-pub(super) async fn cmd_create() -> Result<()> {
+/// onchainos wallet add
+pub(super) async fn cmd_add() -> Result<()> {
     let access_token = ensure_tokens_refreshed().await?;
 
     if cfg!(feature = "debug-log") {
         eprintln!(
-            "[DEBUG] cmd_create: access_token_len={}",
+            "[DEBUG] cmd_add: access_token_len={}",
             access_token.len()
         );
     }
@@ -482,7 +567,7 @@ pub(super) async fn cmd_create() -> Result<()> {
     }
 
     if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG] cmd_create: project_id={}", wallets.project_id);
+        eprintln!("[DEBUG] cmd_add: project_id={}", wallets.project_id);
     }
 
     let client = WalletApiClient::new()?;
@@ -580,7 +665,7 @@ pub(super) async fn cmd_create() -> Result<()> {
 
     if cfg!(feature = "debug-log") {
         eprintln!(
-            "[DEBUG] cmd_create: switched to new account_id={}",
+            "[DEBUG] cmd_add: switched to new account_id={}",
             resp.account_id
         );
     }
@@ -608,6 +693,11 @@ pub(super) async fn cmd_logout() -> Result<()> {
     keyring_store::clear_all()?;
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG] cmd_logout: keyring cleared");
+    }
+
+    wallet_store::delete_session()?;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG] cmd_logout: session.json deleted");
     }
 
     wallet_store::delete_wallets()?;

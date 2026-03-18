@@ -110,7 +110,7 @@ onchainos wallet contract-call --to <tx.to> --chain 196 --value <value_in_UI_uni
   --aa-dex-token-addr 0x74b7f16337b8972027f6196a17a631ac6de26d22 --aa-dex-token-amount <fromTokenAmount>
 ```
 
-### Solana Swap
+### Solana Native Token Swap
 
 ```bash
 # 1. Quote
@@ -146,7 +146,9 @@ The CLI accepts human-readable chain names and resolves them automatically.
 
 ## Native Token Addresses
 
-> **CRITICAL**: Each chain has a specific native token address. Using the wrong address will cause swap transactions to fail.
+<IMPORTANT>
+> **CRITICAL**: Each chain has a specific native token address. Using the wrong address will cause swap transactions to fail. If the user intends to swap with a native token (e.g., ETH, BNB, SOL), you MUST use the native token address from the table below — do NOT search for it via `token search`.
+</IMPORTANT>
 
 | Chain | Native Token Address |
 |---|---|
@@ -165,8 +167,8 @@ The CLI accepts human-readable chain names and resolves them automatically.
 | 1 | `onchainos swap chains` | Get supported chains for DEX aggregator |
 | 2 | `onchainos swap liquidity --chain <chain>` | Get available liquidity sources on a chain |
 | 3 | `onchainos swap approve --token ... --amount ... --chain ...` | Get ERC-20 approval transaction data |
-| 4 | `onchainos swap quote --from ... --to ... --amount ... --chain ...` | Get swap quote (read-only price estimate) |
-| 5 | `onchainos swap swap --from ... --to ... --amount ... --chain ... --wallet ... [--gas-level <level>]` | Get swap transaction data |
+| 4 | `onchainos swap quote --from ... --to ... --amount ... --chain ...` | Get swap quote (read-only price estimate). **No `--slippage` param** — slippage only applies to `swap swap`. |
+| 5 | `onchainos swap swap --from ... --to ... --amount ... --chain ... --wallet ... [--slippage <pct>] [--gas-level <level>]` | Get swap transaction data. `--slippage` sets fixed slippage (e.g. `30` for 30%); omit to use autoSlippage. |
 
 ## Boundary Table
 
@@ -297,7 +299,7 @@ Flow: quote → approve (if non-native token) → contract-call approve → swap
 - Missing chain → recommend XLayer (`--chain xlayer`, low gas, fast confirmation) as the default, then ask which chain the user prefers
 - Missing token addresses → use `okx-dex-token` `onchainos token search` to resolve name → address
 - Missing amount → ask user, remind to convert to minimal units
-- Missing slippage → use autoSlippage by default (do NOT pass `--slippage`; the API calculates optimal slippage automatically). If the user explicitly specifies a fixed slippage value, pass `--slippage <value>` which disables autoSlippage. Note: `taxRate` is separate from slippage — taxRate is deducted by the token contract and is NOT included in the slippage setting.
+- Missing slippage → use autoSlippage by default (do NOT pass `--slippage`; the API calculates optimal slippage automatically). If the user explicitly specifies a fixed slippage value, pass `--slippage <value>` which disables autoSlippage. **IMPORTANT: `--slippage` is only a parameter of `onchainos swap swap`, NOT `onchainos swap quote`. Never pass `--slippage` to the quote command — it will fail.** Note: `taxRate` is separate from slippage — taxRate is deducted by the token contract and is NOT included in the slippage setting.
   - **Slippage warnings**: Too small → warn about transaction failure risk. Too large → warn about potential loss.
   - **Slippage retry**: If swap fails with autoSlippage → suggest switching to fixed slippage. If swap fails with fixed slippage → suggest increasing the value.
 - Missing wallet address → follow the **Wallet Address Resolution** flow below
@@ -328,7 +330,7 @@ After quote completes, resolve the wallet address from the local Agentic Wallet:
 3. **Logged in, local wallet exists**:
    - **Single account** → use the active wallet address for the target chain directly. Inform the user which address is being used and ask for confirmation before proceeding.
    - **Multiple accounts** → list all accounts (name + address) and ask the user to choose which one to use. Then use the selected account's address for the target chain.
-4. **Logged in, no local wallet** → suggest creating one (`onchainos wallet create`).
+4. **Logged in, no local wallet** → suggest adding one (`onchainos wallet add`).
 
 ### Step 3: Execute
 
