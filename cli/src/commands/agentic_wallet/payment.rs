@@ -82,6 +82,8 @@ async fn pay(
     .ok_or_else(|| anyhow!("chain not found for realChainIndex {}", real_chain_id))?;
     let chain_index = chain_entry["chainIndex"]
         .as_str()
+        .map(|s| s.to_string())
+        .or_else(|| chain_entry["chainIndex"].as_u64().map(|n| n.to_string()))
         .ok_or_else(|| anyhow!("missing chainIndex in chain entry"))?;
     let chain_name = chain_entry["chainName"]
         .as_str()
