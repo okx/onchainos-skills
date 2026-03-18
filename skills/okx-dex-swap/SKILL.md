@@ -158,7 +158,9 @@ The CLI accepts human-readable chain names and resolves them automatically.
 | Tron | `T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb` |
 | Ton | `EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c` |
 
-> **WARNING — Solana native SOL**: The correct address is `11111111111111111111111111111111` (Solana system program). Do **NOT** use `So11111111111111111111111111111111111111112` (wSOL SPL token) — it is a different token and will cause swap failures.
+<IMPORTANT>
+> **CRITICAL — Solana native SOL**: You MUST use `11111111111111111111111111111111` (Solana system program). NEVER use `So11111111111111111111111111111111111111112` (wSOL SPL token) — it is a completely different token and WILL cause the transaction to fail and unable to be packaged on-chain. This rule has no exceptions.
+</IMPORTANT>
 
 ## Command Index
 
