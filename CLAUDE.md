@@ -8,7 +8,7 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 
 ## Architecture
 
-- **skills/** — 9 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **skills/** — 10 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
 - **.mcp.json.example** — MCP server configuration template for Claude Code
@@ -28,3 +28,4 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 | okx-dex-swap         | DEX swap execution | User wants to swap/trade/buy/sell tokens |
 | okx-dex-token        | Token search, liquidity, hot tokens, advanced info, holders, top traders, trade history | User searches for tokens, wants rankings, liquidity pools, holder info, top traders, or filtered trade history |
 | okx-onchain-gateway  | Transaction broadcasting and tracking | User wants to broadcast tx, estimate gas, simulate tx, check tx status |
+| okx-audit-log        | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
