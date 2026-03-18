@@ -133,7 +133,7 @@ async fn run() {
         Commands::Swap { command } => commands::swap::execute(&ctx, command).await,
         Commands::Gateway { command } => commands::gateway::execute(&ctx, command).await,
         Commands::Portfolio { command } => commands::portfolio::execute(&ctx, command).await,
-        Commands::Mcp { base_url } => mcp::serve(base_url.as_deref()).await,
+        Commands::Mcp { .. } => unreachable!("handled above"),
         Commands::Wallet { command } => commands::agentic_wallet::wallet::execute(command).await,
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
     };

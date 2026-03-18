@@ -50,8 +50,9 @@ fn device_header_line() -> String {
 }
 
 /// Returns true if `line` is a device-header line.
+/// NOTE: relies on `type` being the first field in `DeviceHeader` (serde serializes
+/// struct fields in declaration order). Keep `kind` as the first field in the struct.
 fn is_device_header(line: &str) -> bool {
-    // Fast path: check prefix before parsing full JSON.
     line.starts_with("{\"type\":\"device\"")
 }
 
@@ -114,12 +115,18 @@ fn try_log(
 }
 
 /// Truncate error messages to avoid bloating the log.
+/// Safe for multi-byte UTF-8: never splits in the middle of a character.
 fn truncate_error(msg: &str) -> String {
     const MAX_LEN: usize = 512;
     if msg.len() <= MAX_LEN {
         msg.to_string()
     } else {
-        format!("{}…", &msg[..MAX_LEN])
+        // Find the last char boundary at or before MAX_LEN.
+        let mut end = MAX_LEN;
+        while !msg.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &msg[..end])
     }
 }
 
@@ -227,10 +234,10 @@ fn positional_indices_to_redact(raw: &[String]) -> Vec<usize> {
     let lower: Vec<String> = raw.iter().map(|s| s.to_ascii_lowercase()).collect();
     let mut indices = Vec::new();
     for pattern in REDACT_POSITIONAL {
-        // Find the pattern sequence in the args (skipping flags).
-        if let Some(pos) = find_subcommand_sequence(&lower, pattern) {
-            // The positional arg is the next non-flag arg after the pattern.
-            let redact_idx = pos + pattern.len();
+        // Find the last original index of the matched subcommand sequence.
+        if let Some(last_pattern_idx) = find_subcommand_sequence_last_idx(&lower, pattern) {
+            // The positional arg to redact is the next non-flag arg after the pattern.
+            let redact_idx = last_pattern_idx + 1;
             if redact_idx < raw.len() && !raw[redact_idx].starts_with('-') {
                 indices.push(redact_idx);
             }
@@ -239,8 +246,10 @@ fn positional_indices_to_redact(raw: &[String]) -> Vec<usize> {
     indices
 }
 
-/// Find the starting index of a subcommand sequence in args, skipping flags and their values.
-fn find_subcommand_sequence(args: &[String], pattern: &[&str]) -> Option<usize> {
+/// Find a subcommand sequence in args (skipping flags) and return the original index
+/// of the **last** matched element. This ensures the redact target is always the arg
+/// immediately following the last subcommand word, even when flags appear in between.
+fn find_subcommand_sequence_last_idx(args: &[String], pattern: &[&str]) -> Option<usize> {
     // Collect only the non-flag args with their original indices.
     let subcmds: Vec<(usize, &str)> = args
         .iter()
@@ -252,7 +261,7 @@ fn find_subcommand_sequence(args: &[String], pattern: &[&str]) -> Option<usize> 
     // Slide a window over the subcommand positions.
     for window in subcmds.windows(pattern.len()) {
         if window.iter().zip(pattern.iter()).all(|((_, a), p)| a == p) {
-            return Some(window[0].0);
+            return Some(window[pattern.len() - 1].0);
         }
     }
     None
@@ -639,10 +648,11 @@ mod tests {
     }
 
     #[test]
-    fn redact_wallet_verify_with_flag_before() {
-        let args = vec_s(&["onchainos", "wallet", "verify", "999888"]);
+    fn redact_wallet_verify_with_flag_interleaved() {
+        // Flag between subcommands: onchainos wallet --force verify 123456
+        let args = vec_s(&["onchainos", "wallet", "--force", "verify", "123456"]);
         let out = redact_args(&args);
-        assert_eq!(out[3], "[REDACTED]");
+        assert_eq!(out, vec_s(&["onchainos", "wallet", "--force", "verify", "[REDACTED]"]));
     }
 
     #[test]
