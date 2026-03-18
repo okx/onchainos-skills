@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use clap::Subcommand;
 use serde_json::json;
@@ -62,6 +62,13 @@ async fn pay(
     from: Option<&str>,
     max_timeout_secs: u64,
 ) -> Result<()> {
+    if amount.is_empty() {
+        bail!("--amount must not be empty");
+    }
+    amount
+        .parse::<u128>()
+        .context("--amount must be a non-negative integer in minimal units")?;
+
     let access_token = ensure_tokens_refreshed().await?;
 
     let real_chain_id = parse_eip155_chain_id(network)
@@ -89,6 +96,10 @@ async fn pay(
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs();
+    let valid_before = now
+        .checked_add(max_timeout_secs)
+        .ok_or_else(|| anyhow!("timeout overflow"))?
+        .to_string();
     let nonce = {
         use rand::RngCore;
         let mut n = [0u8; 32];
@@ -101,7 +112,7 @@ async fn pay(
         "to": pay_to,
         "value": amount,
         "validAfter": "0",
-        "validBefore": (now + max_timeout_secs).to_string(),
+        "validBefore": valid_before,
         "nonce": nonce,
         "verifyingContract": asset,
     });
@@ -151,7 +162,7 @@ async fn pay(
         "to": pay_to,
         "value": amount,
         "validAfter": "0",
-        "validBefore": (now + max_timeout_secs).to_string(),
+        "validBefore": valid_before,
         "nonce": nonce,
         "verifyingContract": asset,
         "domainHash": domain_hash,
@@ -167,14 +178,24 @@ async fn pay(
         )
         .await
         .map_err(format_api_error)
-        .context("x402 get-signed-hash failed")?;
+        .context("x402 sign-msg failed")?;
     let eip3009_signature = signed_hash_resp[0]["signature"]
         .as_str()
-        .ok_or_else(|| anyhow!("missing signature in get-signed-hash response"))?;
+        .ok_or_else(|| anyhow!("missing signature in sign-msg response"))?;
+
+    // Return only the standard x402 EIP-3009 authorization fields
+    let authorization = json!({
+        "from": from,
+        "to": pay_to,
+        "value": amount,
+        "validAfter": "0",
+        "validBefore": valid_before,
+        "nonce": nonce,
+    });
 
     output::success(json!({
         "signature": eip3009_signature,
-        "authorization": signed_hash_body,
+        "authorization": authorization,
     }));
     Ok(())
 }

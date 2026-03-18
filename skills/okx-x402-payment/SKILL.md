@@ -1,5 +1,5 @@
 ---
-name: okx-payment
+name: okx-x402-payment
 description: "This skill should be used when the user encounters an HTTP 402 Payment Required response, wants to pay for a payment-gated API or resource, or mentions 'x402', 'pay for access', '402 payment', 'payment-gated URL', or 'sign x402 payment'. Requires an active login session (JWT). Signs an EIP-3009 authorization via TEE and returns the payment proof (signature + authorization) that the caller can attach as a payment header to access the resource. Do NOT use for swap or token transfers — use okx-dex-swap instead. Do NOT use for general programming questions."
 license: Apache-2.0
 metadata:
@@ -156,19 +156,14 @@ onchainos payment x402-pay \
 
 | Field | Type | Description |
 |---|---|---|
-| `signature` | String | TEE-generated EIP-3009 signature (hex) |
-| `authorization` | Object | EIP-3009 `transferWithAuthorization` message including `domainHash` |
-| `authorization.chainIndex` | String | OKX chain index |
+| `signature` | String | EIP-712 signature (65 bytes, r+s+v, hex) |
+| `authorization` | Object | Standard x402 EIP-3009 `transferWithAuthorization` parameters |
 | `authorization.from` | String | Payer wallet address |
-| `authorization.to` | String | Recipient address |
-| `authorization.value` | String | Payment amount in minimal units |
-| `authorization.validAfter` | String | Authorization valid-after timestamp (always `"0"`) |
+| `authorization.to` | String | Recipient address (= `payTo`) |
+| `authorization.value` | String | Payment amount in minimal units (= `maxAmountRequired`) |
+| `authorization.validAfter` | String | Authorization valid-after timestamp (Unix seconds) |
 | `authorization.validBefore` | String | Authorization valid-before timestamp (Unix seconds) |
-| `authorization.nonce` | String | Random nonce (hex, 32 bytes) |
-| `authorization.verifyingContract` | String | Token contract address |
-| `authorization.domainHash` | String | EIP-712 domain separator hash |
-| `authorization.sessionCert` | String | Session certificate (base64) |
-| `authorization.sessionSignature` | String | Ed25519 session signature (base64) |
+| `authorization.nonce` | String | Random nonce (hex, 32 bytes), prevents replay attacks |
 
 ## Input / Output Examples
 
