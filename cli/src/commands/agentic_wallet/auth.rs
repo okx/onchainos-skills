@@ -7,20 +7,28 @@ use serde_json::json;
 use crate::keyring_store;
 use crate::output;
 use crate::wallet_api::{ApiCodeError, WalletApiClient};
-use crate::wallet_store::{self, AccountMapEntry, AddressInfo, LoginCache, WalletsJson};
+use crate::wallet_store::{
+    self, AccountMapEntry, AddressInfo, LoginCache, SessionJson, WalletsJson,
+};
 
 // ── Token / session helpers ──────────────────────────────────────────
 
 /// Ensure accessToken and refreshToken exist and the session is still valid.
 pub(super) fn ensure_tokens() -> Result<(String, String)> {
-    let blob = keyring_store::read_blob()?;
+    let session = wallet_store::load_session()?;
+    let expire_at = session
+        .as_ref()
+        .map(|s| s.session_key_expire_at.as_str())
+        .unwrap_or("");
 
-    if is_session_key_expired_in(&blob) {
+    if is_session_key_expired(expire_at) {
         if cfg!(feature = "debug-log") {
             eprintln!("[DEBUG][session_key_expired] session key expired");
         }
         bail!("session expired, please login again: onchainos wallet login");
     }
+
+    let blob = keyring_store::read_blob()?;
 
     let refresh_token = match blob.get("refresh_token").filter(|t| !t.is_empty()) {
         Some(t) => t.clone(),
@@ -103,14 +111,14 @@ fn token_exp_timestamp(token: &str) -> Option<i64> {
     val["exp"].as_i64()
 }
 
-/// Check if `session_key_expire_at` has passed.
-pub(super) fn is_session_key_expired_in(blob: &HashMap<String, String>) -> bool {
-    match blob.get("session_key_expire_at") {
-        Some(ts) => match ts.parse::<i64>() {
-            Ok(exp) => chrono::Utc::now().timestamp() >= exp,
-            Err(_) => true,
-        },
-        None => true,
+/// Check if `session_key_expire_at` timestamp has passed.
+pub(super) fn is_session_key_expired(expire_at: &str) -> bool {
+    if expire_at.is_empty() {
+        return true;
+    }
+    match expire_at.parse::<i64>() {
+        Ok(exp) => chrono::Utc::now().timestamp() >= exp,
+        Err(_) => true,
     }
 }
 
@@ -176,17 +184,14 @@ pub(super) async fn cmd_login(
                 if !force {
                     if let Ok(Some(wallets)) = wallet_store::load_wallets() {
                         if wallets.is_ak {
-                            if let Ok(blob) = keyring_store::read_blob() {
-                                if let Some(old_api_key) =
-                                    blob.get("api_key").filter(|k| !k.is_empty())
-                                {
-                                    if old_api_key != &api_key {
-                                        bail!(
-                                            "You are about to switch from API Key \"{}\" to \"{}\". \
-                                             If you are sure, re-run with --force to confirm.",
-                                            old_api_key, api_key
-                                        );
-                                    }
+                            if let Ok(Some(session)) = wallet_store::load_session() {
+                                if !session.api_key.is_empty() && session.api_key != api_key {
+                                    bail!(
+                                        "You are about to switch from API Key \"{}\" to \"{}\". \
+                                         If you are sure, re-run with --force to confirm.",
+                                        session.api_key,
+                                        api_key
+                                    );
                                 }
                             }
                         }
@@ -355,19 +360,22 @@ async fn save_verify_result(
     };
     wallet_store::save_wallets(&wallets)?;
 
+    wallet_store::save_session(&SessionJson {
+        tee_id: resp.tee_id.clone(),
+        session_cert: resp.session_cert.clone(),
+        encrypted_session_sk: resp.encrypted_session_sk.clone(),
+        session_key_expire_at: resp.session_key_expire_at.clone(),
+        api_key: api_key.to_string(),
+    })?;
+
     keyring_store::store(&[
         ("refresh_token", &resp.refresh_token),
         ("access_token", &resp.access_token),
-        ("tee_id", &resp.tee_id),
-        ("session_cert", &resp.session_cert),
-        ("encrypted_session_sk", &resp.encrypted_session_sk),
-        ("session_key_expire_at", &resp.session_key_expire_at),
         ("session_key", session_private_key),
-        ("api_key", api_key),
     ])?;
 
     if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG] keyring store: ok");
+        eprintln!("[DEBUG] session.json + keyring store: ok");
     }
 
     fetch_and_save_account_list(client, &resp.access_token, &resp.project_id).await;
@@ -610,6 +618,11 @@ pub(super) async fn cmd_logout() -> Result<()> {
     keyring_store::clear_all()?;
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG] cmd_logout: keyring cleared");
+    }
+
+    wallet_store::delete_session()?;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG] cmd_logout: session.json deleted");
     }
 
     wallet_store::delete_wallets()?;

@@ -5,7 +5,7 @@ use crate::keyring_store;
 use crate::output;
 use crate::wallet_store::{self, WalletsJson};
 
-use super::auth::{is_session_key_expired_in, is_token_expired};
+use super::auth::{is_session_key_expired, is_token_expired};
 
 // ── switch ───────────────────────────────────────────────────────────
 
@@ -87,17 +87,19 @@ pub(super) async fn cmd_status() -> Result<()> {
         );
     }
 
+    let session = wallet_store::load_session()?.unwrap_or_default();
     let blob = keyring_store::read_blob().unwrap_or_default();
 
     if cfg!(feature = "debug-log") {
         eprintln!(
-            "[DEBUG] cmd_status: keyring blob keys={:?}, refresh_token_len={}",
+            "[DEBUG] cmd_status: session.session_key_expire_at={}, keyring blob keys={:?}, refresh_token_len={}",
+            session.session_key_expire_at,
             blob.keys().collect::<Vec<_>>(),
             blob.get("refresh_token").map(|t| t.len()).unwrap_or(0)
         );
     }
 
-    let logged_in = !is_session_key_expired_in(&blob)
+    let logged_in = !is_session_key_expired(&session.session_key_expire_at)
         && blob
             .get("refresh_token")
             .map(|t| !t.is_empty() && !is_token_expired(t))
@@ -106,7 +108,7 @@ pub(super) async fn cmd_status() -> Result<()> {
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG] cmd_status: session_key_expired={}, logged_in={}",
-            is_session_key_expired_in(&blob),
+            is_session_key_expired(&session.session_key_expire_at),
             logged_in
         );
     }
@@ -129,11 +131,11 @@ pub(super) async fn cmd_status() -> Result<()> {
     let (login_type, api_key): (serde_json::Value, serde_json::Value) = if !logged_in {
         (serde_json::Value::Null, serde_json::Value::Null)
     } else if wallets.is_ak {
-        let ak = blob
-            .get("api_key")
-            .filter(|k| !k.is_empty())
-            .cloned()
-            .unwrap_or_default();
+        let ak = if session.api_key.is_empty() {
+            String::new()
+        } else {
+            session.api_key.clone()
+        };
         (json!("ak"), json!(ak))
     } else {
         (json!("email"), serde_json::Value::Null)

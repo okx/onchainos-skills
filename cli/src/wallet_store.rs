@@ -115,6 +115,27 @@ pub struct ChainCacheJson {
     pub chains: Vec<serde_json::Value>,
 }
 
+// ── session.json ────────────────────────────────────────────────────
+/// Non-sensitive session metadata stored on disk (moved out of OS keyring
+/// to stay within Windows Credential Manager's 2560-byte limit).
+///
+/// Sensitive secrets (`refresh_token`, `access_token`, `session_key`)
+/// remain in the OS keyring via `keyring_store`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJson {
+    #[serde(default)]
+    pub tee_id: String,
+    #[serde(default)]
+    pub session_cert: String,
+    #[serde(default)]
+    pub encrypted_session_sk: String,
+    #[serde(default)]
+    pub session_key_expire_at: String,
+    #[serde(default)]
+    pub api_key: String,
+}
+
 // ── Path helpers ────────────────────────────────────────────────────
 
 fn wallets_path() -> Result<PathBuf> {
@@ -131,6 +152,10 @@ fn balance_cache_path() -> Result<PathBuf> {
 
 fn chain_cache_path() -> Result<PathBuf> {
     Ok(onchainos_home()?.join("chain_cache.json"))
+}
+
+fn session_path() -> Result<PathBuf> {
+    Ok(onchainos_home()?.join("session.json"))
 }
 
 fn ensure_home_dir() -> Result<()> {
@@ -331,6 +356,36 @@ pub fn set_chain_cache(chains: Vec<serde_json::Value>) -> Result<()> {
         updated_at: now,
         chains,
     })
+}
+
+// ── session.json operations ──────────────────────────────────────────
+
+pub fn load_session() -> Result<Option<SessionJson>> {
+    let path = session_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let data = fs::read_to_string(&path).context("failed to read session.json")?;
+    let s: SessionJson = serde_json::from_str(&data).context("failed to parse session.json")?;
+    Ok(Some(s))
+}
+
+pub fn save_session(s: &SessionJson) -> Result<()> {
+    ensure_home_dir()?;
+    let path = session_path()?;
+    let json = serde_json::to_string_pretty(s)?;
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, &json)?;
+    fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+pub fn delete_session() -> Result<()> {
+    let path = session_path()?;
+    if path.exists() {
+        fs::remove_file(&path).context("failed to delete session.json")?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -643,6 +698,94 @@ mod tests {
             let loaded = load_chain_cache().unwrap();
             assert_eq!(loaded.chains.len(), 2);
             assert_eq!(loaded.chains[0]["chainIndex"], "56");
+        });
+    }
+
+    // ── session.json tests ───────────────────────────────────────────
+
+    #[test]
+    fn session_json_serde_roundtrip() {
+        let s = SessionJson {
+            tee_id: "tee-123".to_string(),
+            session_cert: "cert-abc".to_string(),
+            encrypted_session_sk: "esk-xyz".to_string(),
+            session_key_expire_at: "1700000000".to_string(),
+            api_key: "ak-key".to_string(),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let parsed: SessionJson = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.tee_id, "tee-123");
+        assert_eq!(parsed.session_cert, "cert-abc");
+        assert_eq!(parsed.encrypted_session_sk, "esk-xyz");
+        assert_eq!(parsed.session_key_expire_at, "1700000000");
+        assert_eq!(parsed.api_key, "ak-key");
+    }
+
+    #[test]
+    fn session_json_camel_case_field_names() {
+        let s = SessionJson {
+            tee_id: "t".to_string(),
+            encrypted_session_sk: "e".to_string(),
+            session_key_expire_at: "1".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"teeId\""));
+        assert!(json.contains("\"sessionCert\""));
+        assert!(json.contains("\"encryptedSessionSk\""));
+        assert!(json.contains("\"sessionKeyExpireAt\""));
+        assert!(json.contains("\"apiKey\""));
+    }
+
+    #[test]
+    fn session_json_default_is_empty() {
+        let s = SessionJson::default();
+        assert!(s.tee_id.is_empty());
+        assert!(s.session_cert.is_empty());
+        assert!(s.encrypted_session_sk.is_empty());
+        assert!(s.session_key_expire_at.is_empty());
+        assert!(s.api_key.is_empty());
+    }
+
+    #[test]
+    fn save_and_load_session() {
+        with_temp_home("save_load_session", || {
+            let s = SessionJson {
+                tee_id: "tee1".to_string(),
+                session_cert: "cert1".to_string(),
+                encrypted_session_sk: "esk1".to_string(),
+                session_key_expire_at: "999".to_string(),
+                api_key: "ak1".to_string(),
+            };
+            save_session(&s).unwrap();
+            let loaded = load_session().unwrap().unwrap();
+            assert_eq!(loaded.tee_id, "tee1");
+            assert_eq!(loaded.api_key, "ak1");
+        });
+    }
+
+    #[test]
+    fn load_session_returns_none_when_missing() {
+        with_temp_home("load_session_none", || {
+            let result = load_session().unwrap();
+            assert!(result.is_none());
+        });
+    }
+
+    #[test]
+    fn delete_session_removes_file() {
+        with_temp_home("delete_session", || {
+            save_session(&SessionJson::default()).unwrap();
+            assert!(load_session().unwrap().is_some());
+            delete_session().unwrap();
+            assert!(load_session().unwrap().is_none());
+        });
+    }
+
+    #[test]
+    fn delete_session_noop_when_missing() {
+        with_temp_home("delete_session_noop", || {
+            delete_session().unwrap();
         });
     }
 }

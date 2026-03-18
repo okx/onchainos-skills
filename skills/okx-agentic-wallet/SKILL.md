@@ -139,12 +139,12 @@ Applies to:
 
 > Login commands (`wallet login`, `wallet verify`) are covered in **Step 2: Authentication**.
 
-| # | Command | Description | Auth Required |
+| # | Command | Description                                                            | Auth Required |
 |---|---|---|---|
-| A3 | `onchainos wallet create` | Create a new wallet account | Yes           |
-| A4 | `onchainos wallet switch <account_id>` | Switch to a different wallet account | No            |
-| A5 | `onchainos wallet status` | Show current login status and active account | No            |
-| A6 | `onchainos wallet logout` | Logout and clear all stored credentials | No            |
+| A3 | `onchainos wallet create` | Add a new wallet account                                               | Yes           |
+| A4 | `onchainos wallet switch <account_id>` | Switch to a different wallet account                                   | No            |
+| A5 | `onchainos wallet status` | Show current login status and active account                           | No            |
+| A6 | `onchainos wallet logout` | Logout and clear all stored credentials                                | No            |
 | A7 | `onchainos wallet addresses [--chain <chainId>]` | Show wallet addresses grouped by chain category (X Layer, EVM, Solana) | No            |
 
 ### B — Authenticated Balance
@@ -215,8 +215,12 @@ For commands requiring auth (sections B, D, E), check login state:
 2. If not logged in, or the user explicitly requests to re-login:
    - **2a.** Display the following message to the user verbatim (translated to the user's language):
      > You need to log in with your email first before creating a wallet. What is your email address?
-     > We also offer an API Key login method that doesn't require an email. If interested, visit https://web3.okx.com/onchainos/dev-docs/wallet/build-your-agentic-wallet
-   - **2b.** Once the user provides their email, run: `onchainos wallet login <email> --locale <locale>` → tell user to check email for OTP → `onchainos wallet verify <otp>`.
+     > We also offer an API Key login method that doesn't require an email. If interested, visit https://web3.okx.com/onchainos/dev-docs/home/api-access-and-usage
+   - **2b.** Once the user provides their email, run: `onchainos wallet login <email> --locale <locale>`.
+     Then display the following message verbatim (translated to the user's language):
+     > **English**: "A verification code has been sent to **{email}**. Please check your inbox and tell me the code."
+     > **Chinese**: "验证码已发送到 **{email}**，请查收邮件并告诉我验证码。"
+     Once the user provides the code, run: `onchainos wallet verify <code>`.
      > AI should always infer `--locale` from conversation context and include it:
      > - Chinese (简体/繁体, or user writes in Chinese) → `zh-CN`
      > - Japanese (user writes in Japanese) → `ja-JP`
@@ -225,7 +229,7 @@ For commands requiring auth (sections B, D, E), check login state:
      > If you cannot confidently determine the user's language, default to `en-US`.
 3. If the user declines to provide an email:
    - **3a.** Display the following message to the user verbatim (translated to the user's language):
-     > We also offer an API Key login method that doesn't require an email. If interested, visit https://web3.okx.com/onchainos/dev-docs/wallet/build-your-agentic-wallet
+     > We also offer an API Key login method that doesn't require an email. If interested, visit https://web3.okx.com/onchainos/dev-docs/home/api-access-and-usage
    - **3b.** If the user confirms they want to use API Key, first check whether an API Key switch is needed:
      Use the `wallet status` result (from step 1 or re-run). If `loginType` is `"ak"` and the returned `apiKey` differs from the current environment variable `OKX_API_KEY`, show both keys to the user and ask to confirm the switch. If the user confirms, run `onchainos wallet login --force`. If `apiKey` is absent, empty, or identical, skip the confirmation and run `onchainos wallet login` directly.
    - **3c.** After silent login succeeds, inform the user that they have been logged in via the API Key method.
@@ -729,6 +733,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
     - Solana addresses are **Base58, 32-44 chars**
     - **XKO address format**: OKX uses a custom `XKO` prefix (case-insensitive) in place of `0x` for EVM addresses. If a user-supplied address starts with `XKO` / `xko`, display this message verbatim:
       > "XKO address format is not supported yet. Please find the 0x address by switching to your commonly used address, then you can continue."
+    - **User-facing language**: When communicating in Chinese, never use the abbreviation "OTP". Always use "验证码" instead. In English, prefer "verification code" over "OTP" in messages shown to users.
 </must>
 <should>
     - The send and contract-call flows are atomic: unsigned -> sign -> broadcast in one command
