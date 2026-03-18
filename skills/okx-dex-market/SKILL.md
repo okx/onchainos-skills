@@ -1,6 +1,6 @@
 ---
 name: okx-dex-market
-description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, wallet PnL/盈亏分析 (win rate, my DEX trade history, realized/unrealized PnL per token), and address tracker trades (latest DEX trades by smart money, KOL, or custom addresses). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my DEX history', 'realized profit', 'unrealized profit', 'what are smart money buying', 'latest trades by KOL', 'track address trades', or '追踪地址交易'. Do NOT use for smart-money/whale/KOL signal tracking — use okx-dex-signal. Do NOT use for meme/pump.fun token scanning — use okx-dex-trenches. Do NOT use for token search, holder distribution, liquidity pools, or honeypot checks — use okx-dex-token."
+description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, wallet PnL/盈亏分析 (win rate, my DEX trade history, realized/unrealized PnL per token), and raw DEX transaction feed for tracked addresses (latest trades/transactions by smart money, KOL, or custom addresses). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my DEX history', 'realized profit', 'unrealized profit', 'latest trades by smart money', 'what are KOL wallets buying', 'KOL address transactions', 'track address trades', 'KOL交易动态', '聪明钱最新交易', '追踪地址交易', or 'address transaction feed'. Do NOT use for smart-money/whale/KOL aggregated signal alerts — use okx-dex-signal. Do NOT use for meme/pump.fun token scanning — use okx-dex-trenches. Do NOT use for token search, holder distribution, liquidity pools, or honeypot checks — use okx-dex-token."
 license: Apache-2.0
 metadata:
   author: okx
@@ -84,7 +84,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 | 未实现盈亏 | unrealized PnL, paper profit, holding gain | `portfolio-token-pnl` (unrealizedPnlUsd) |
 | 胜率 | win rate, success rate | `portfolio-overview` (winRate) |
 | 历史交易 / 交易记录 | DEX transaction history, trade log | `portfolio-dex-history` |
-| 追踪地址交易 / 聪明钱最新交易 / KOL 动态 | address tracker trades, latest trades by smart money / KOL / custom addresses | `tracker-trades` |
+| 追踪地址交易 / 聪明钱最新交易 / KOL交易动态 / 追踪聪明钱 | address tracker trades, latest DEX transactions by smart money / KOL wallets / custom addresses, raw trade feed, what are KOL wallets buying (transaction-level) | `tracker-trades` |
 | 清仓 | sold all, liquidated, sell off | `portfolio-recent-pnl` (unrealizedPnlUsd = "SELL_ALL") |
 | 画像 / 钱包画像 / 持仓分析 | wallet profile, portfolio analysis | `portfolio-overview` |
 | 近期收益 | recent PnL, latest earnings by token | `portfolio-recent-pnl` |
@@ -182,7 +182,8 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Advanced token info (risk, creator, dev stats) | - | `okx-dex-token` → `onchainos token advanced-info` |
 | Top traders / profit addresses | - | `okx-dex-token` → `onchainos token top-trader` |
 | Trade history with tag/wallet filter | - | `okx-dex-token` → `onchainos token trades` |
-| Smart money / whale / KOL signals | - | `okx-dex-signal` → `onchainos signal list` |
+| Aggregated smart money / whale / KOL buy signal alerts | - | `okx-dex-signal` → `onchainos signal list` |
+| Raw DEX transaction feed for smart money / KOL addresses | `onchainos market tracker-trades --tracker-type smart_money\|kol` | - |
 | Signal-supported chains | - | `okx-dex-signal` → `onchainos signal chains` |
 | Leaderboard / top traders by PnL, win rate, volume | - | `okx-dex-signal` → `onchainos leaderboard list` |
 | Leaderboard-supported chains | - | `okx-dex-signal` → `onchainos leaderboard supported-chains` |

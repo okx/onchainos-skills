@@ -1,6 +1,6 @@
 ---
 name: okx-dex-signal
-description: "Use this skill for smart-money/whale/KOL/大户 signal/信号 tracking and leaderboard/牛人榜 rankings — monitoring what notable wallets are buying and who the top traders are. Covers: real-time buy signals from smart money, KOL/influencers, and whales; filtering by wallet type, trade size, market cap, liquidity; leaderboard of top traders ranked by PnL, win rate, volume, or ROI across chains. Use when the user asks 'what are smart money/whales/KOLs buying', '大户在买什么', 'show me whale signals', 'smart money alerts', 'top traders', '牛人榜', or wants to follow notable wallet activity. Do NOT use for meme/pump.fun token scanning — use okx-dex-trenches. Do NOT use for individual token holder distribution — use okx-dex-token."
+description: "Use this skill for smart-money/whale/KOL/大户 aggregated buy signal/信号 alerts and leaderboard/牛人榜 rankings — monitoring aggregated notable wallet buying signals and who the top traders are. Covers: real-time aggregated buy signal alerts from smart money, KOL/influencers, and whales; filtering by wallet type, trade size, market cap, liquidity; leaderboard of top traders ranked by PnL, win rate, volume, or ROI across chains. Use when the user asks '大户在买什么', 'show me whale signals', 'smart money alerts', '信号', '大户信号', 'top traders', '牛人榜', or wants aggregated notable wallet activity signals. Do NOT use for raw per-transaction DEX trade feed of smart money/KOL/tracked addresses — use okx-dex-market tracker-trades. Do NOT use for meme/pump.fun token scanning — use okx-dex-trenches. Do NOT use for individual token holder distribution — use okx-dex-token."
 license: Apache-2.0
 metadata:
   author: okx
@@ -67,9 +67,10 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For holder cluster analysis (concentration, rug pull %, cluster groups) → use `okx-dex-token`
 - For real-time prices / K-line charts → use `okx-dex-market`
 - For wallet PnL / DEX trade history → use `okx-dex-market`
+- For raw per-transaction DEX feed for smart money / KOL / custom tracked addresses (latest txHash-level trades) → use `okx-dex-market` (`tracker-trades`)
 - For swap execution → use `okx-dex-swap`
 - For wallet balance / portfolio → use `okx-wallet-portfolio`
-- **Smart money / whale / KOL buy signals** → `onchainos signal` (this skill)
+- **Aggregated smart money / whale / KOL buy signal alerts** → `onchainos signal` (this skill)
 - **Leaderboard / 牛人榜 / top traders ranked across the market** → `onchainos leaderboard` (this skill)
 
 ## Keyword Glossary
@@ -77,10 +78,10 @@ Every time before running any `onchainos` command, always follow these steps in 
 | Chinese | English / Platform Terms | Maps To |
 |---|---|---|
 | 大户 / 巨鲸 | whale, big player | `signal list --wallet-type 3` |
-| 聪明钱 / 聪明资金 | smart money | `signal list --wallet-type 1` |
-| KOL / 网红 | influencer, KOL | `signal list --wallet-type 2` |
+| 聪明钱 / 聪明资金 (信号/alerts) | smart money signals/alerts (aggregated) | `signal list --wallet-type 1` — for raw trade feed use `okx-dex-market tracker-trades` |
+| KOL / 网红 (信号/alerts) | influencer/KOL signals (aggregated) | `signal list --wallet-type 2` — for raw KOL transaction feed use `okx-dex-market tracker-trades` |
 | 信号 | signal, alert | `signal list` |
-| 在买什么 | what are they buying | `signal list` |
+| 在买什么 (信号场景) | what tokens triggered buy signals | `signal list` |
 | 牛人榜 | leaderboard, top traders ranking, smart money ranking | `leaderboard list` |
 | 胜率 | win rate | `leaderboard list --sort-by 2` |
 | 已实现盈亏 / PnL | realized PnL | `leaderboard list --sort-by 1` |
