@@ -265,6 +265,9 @@ async fn relogin_or_anonymous() -> Result<String> {
             cmd_login_ak(&api_key, &secret_key, &passphrase, None).await?;
             let blob = keyring_store::read_blob()?;
             let access_token = blob.get("access_token").cloned().unwrap_or_default();
+            if access_token.is_empty() {
+                bail!("AK re-login succeeded but access_token was not stored — please retry");
+            }
             if cfg!(feature = "debug-log") {
                 eprintln!(
                     "[DEBUG][relogin_or_anonymous] AK re-login successful, access_token_len={}",
