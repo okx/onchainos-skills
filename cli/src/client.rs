@@ -788,12 +788,12 @@ mod tests {
     }
 
     #[test]
-    fn dex_paths_always_use_default_base_url() {
+    fn dex_paths_respect_base_url_override() {
         set_test_credentials();
         let client = ApiClient::new(Some("https://custom.example.com")).expect("client");
         let (url, _) = client
             .build_get_url_and_request_path("/api/v6/dex/market/candles", &[])
             .expect("url");
-        assert!(url.as_str().starts_with(super::DEFAULT_BASE_URL));
+        assert!(url.as_str().starts_with("https://custom.example.com"));
     }
 }

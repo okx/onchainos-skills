@@ -73,16 +73,13 @@ async fn pay(
     if parsed_amount == 0 {
         bail!("--amount must be greater than zero");
     }
-    if pay_to.is_empty() {
-        bail!("--pay-to must not be empty");
+    fn is_valid_evm_address(addr: &str) -> bool {
+        addr.starts_with("0x") && addr.len() == 42 && addr[2..].chars().all(|c| c.is_ascii_hexdigit())
     }
-    if !pay_to.starts_with("0x") || pay_to.len() != 42 {
+    if !is_valid_evm_address(pay_to) {
         bail!("--pay-to must be a valid EVM address (0x + 40 hex chars)");
     }
-    if asset.is_empty() {
-        bail!("--asset must not be empty");
-    }
-    if !asset.starts_with("0x") || asset.len() != 42 {
+    if !is_valid_evm_address(asset) {
         bail!("--asset must be a valid EVM contract address (0x + 40 hex chars)");
     }
 
