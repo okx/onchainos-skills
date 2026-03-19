@@ -1,20 +1,26 @@
 # onchainos Skills — Agent Instructions
 
-This is an **onchainos skill collection** providing 5 skills for on-chain operations: token search, market data, wallet balance, swap execution, and transaction broadcasting across 20+ blockchains.
+This is an **onchainos skill collection** providing 11 skills for on-chain operations across 20+ blockchains.
 
 ## Available Skills
 
 | Skill | Purpose | When to Use |
 |-------|---------|-------------|
-| okx-wallet-portfolio | Wallet balance and portfolio value | User asks about wallet holdings, token balances, portfolio value, remaining funds; user wants to check if a wallet has enough balance before a swap; user asks "how much ETH do I have", "what tokens are in my wallet", "show me my portfolio on Solana", "is my address funded" |
-| okx-dex-market | Prices, K-line charts, index prices, signals, meme pump, wallet PnL | User asks for token prices, candlestick data, index prices, smart money/whale/KOL signals, meme token scanning, or wallet PnL analysis; user asks "what's the current price of USDT", "show me the 1h candle chart for ETH", "show smart money signals", "scan new meme launches on Solana", "what's my wallet PnL", "show my DEX transaction history" |
-| okx-dex-swap | DEX swap execution | User wants to swap, trade, buy, or sell tokens on-chain; user wants to get a swap quote before executing; user asks "swap 10 USDC for ETH on Base", "buy some SOL with USDT", "what's the best rate to trade ARB for WETH", "execute the trade for me" |
-| okx-dex-token | Token search, metadata, rankings, liquidity, hot tokens, advanced info, holders, top traders, trade history | User searches for tokens by name/symbol/address, wants trending rankings, liquidity pools, holder distribution, top trader analysis, or filtered trade history; user asks "find the contract address for PEPE", "show me trending tokens on Base", "who holds the most of this token", "show top liquidity pools", "show hot tokens on Solana", "is this token a honeypot", "show KOL trades for this token" |
-| okx-onchain-gateway | Gas estimation, tx simulation, broadcasting | User wants to broadcast a signed tx, estimate gas fees, simulate a transaction before sending, or track a tx by hash; user asks "how much gas will this cost", "simulate this tx before I send it", "broadcast my signed transaction", "is my tx confirmed", "what's the status of this hash" |
+| okx-agentic-wallet | Wallet lifecycle: auth, balance (authenticated), portfolio PnL, send, history, contract call | User wants to log in, check balance, view PnL, send tokens, view tx history, or call contracts |
+| okx-wallet-portfolio | Public address balance, token holdings, portfolio value | User asks about wallet holdings, token balances, portfolio value across chains by providing a specific address |
+| okx-security | Security scanning: token risk, DApp phishing, tx pre-execution, signature safety, approval management | User wants to check if a token/DApp/tx/signature is safe, honeypot check, phishing detection, approve safety, or view/manage token approvals |
+| okx-dex-market | Prices, K-line charts, index prices, wallet PnL, address tracker activities | User asks for token prices, candlestick data, index prices, wallet PnL analysis, or latest activities by smart money/KOL addresses |
+| okx-dex-signal | Smart money / whale / KOL signals + leaderboard | User asks what smart money/whales/KOLs are buying, signal alerts, 大户信号, top traders ranked by PnL/win rate/volume |
+| okx-dex-trenches | Meme/pump.fun token scanning | User asks about new meme launches, dev reputation, bundle detection, 打狗/扫链/新盘, or mentions trench/trenches |
+| okx-dex-swap | DEX swap execution | User wants to swap, trade, buy, or sell tokens on-chain; user wants to get a swap quote before executing |
+| okx-dex-token | Token search, metadata, rankings, liquidity, hot tokens, advanced info, holders, top traders, trade history, holder cluster analysis | User searches for tokens, wants rankings, liquidity pools, holder info, top traders, filtered trade history, or holder cluster concentration |
+| okx-onchain-gateway | Gas estimation, tx simulation, broadcasting | User wants to broadcast a signed tx, estimate gas fees, simulate a transaction before sending, or track a tx by hash |
+| okx-x402-payment | Sign x402 payment authorization via TEE for payment-gated resources | User encounters HTTP 402, wants to pay for a payment-gated API, or mentions x402 / pay for access |
+| okx-audit-log | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
 
 ## Architecture
 
-- **skills/** — 5 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **skills/** — 11 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
 - **.mcp.json.example** — MCP server configuration template

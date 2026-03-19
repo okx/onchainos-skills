@@ -8,7 +8,7 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 
 ## Architecture
 
-- **skills/** — 10 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **skills/** — 11 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
 - **.mcp.json.example** — MCP server configuration template for Claude Code
@@ -22,12 +22,13 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 | okx-agentic-wallet   | Wallet lifecycle: auth, balance (authenticated), portfolio PnL, send, history, contract call | User wants to log in, check balance, view PnL, send tokens, view tx history, or call contracts |
 | okx-wallet-portfolio | Public address balance: total value, all tokens, specific tokens | User asks about wallet holdings, token balances, portfolio value across chains |
 | okx-security         | Security scanning: token risk, DApp phishing, tx pre-execution, signature safety, approval management | User wants to check if a token/DApp/tx/signature is safe, honeypot check, phishing detection, approve safety, or view/manage token approvals |
-| okx-dex-market       | Prices, charts, wallet PnL | User asks for token prices, K-line data, or wallet PnL analysis (win rate, DEX history, realized/unrealized PnL) |
-| okx-dex-signal       | Smart money / whale / KOL signals | User asks what smart money/whales/KOLs are buying, signal alerts, 大户信号 |
+| okx-dex-market       | Prices, charts, wallet PnL, address tracker activities | User asks for token prices, K-line data, wallet PnL analysis (win rate, DEX history, realized/unrealized PnL), or latest activities by smart money/KOL addresses |
+| okx-dex-signal       | Smart money / whale / KOL signals + leaderboard | User asks what smart money/whales/KOLs are buying, signal alerts, 大户信号, top traders ranked by PnL/win rate/volume |
 | okx-dex-trenches     | Meme/pump.fun token scanning | User asks about new meme launches, dev reputation, bundle detection, 打狗/扫链/新盘, or mentions trench/trenches |
 | okx-dex-swap         | DEX swap execution | User wants to swap/trade/buy/sell tokens |
-| okx-dex-token        | Token search, liquidity, hot tokens, advanced info, holders, top traders, trade history | User searches for tokens, wants rankings, liquidity pools, holder info, top traders, or filtered trade history |
+| okx-dex-token        | Token search, liquidity, hot tokens, advanced info, holders, top traders, trade history, holder cluster analysis | User searches for tokens, wants rankings, liquidity pools, holder info, top traders, filtered trade history, or holder cluster concentration |
 | okx-onchain-gateway  | Transaction broadcasting and tracking | User wants to broadcast tx, estimate gas, simulate tx, check tx status |
+| okx-x402-payment     | Sign x402 payment authorization via TEE for payment-gated resources | User encounters HTTP 402, wants to pay for a payment-gated API, or mentions x402 / pay for access |
 | okx-audit-log        | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
 
 ## Clippy

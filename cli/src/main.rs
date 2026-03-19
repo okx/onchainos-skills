@@ -51,6 +51,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: Box<commands::memepump::MemepumpCommand>,
     },
+    /// Leaderboard (top traders ranked by PnL, win rate, or volume)
+    Leaderboard {
+        #[command(subcommand)]
+        command: commands::leaderboard::LeaderboardCommand,
+    },
     /// Token information
     Token {
         #[command(subcommand)]
@@ -87,6 +92,13 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::security::SecurityCommand,
     },
+    /// Payment protocols — auto-pay gated APIs (x402, etc.)
+    Payment {
+        #[command(subcommand)]
+        command: commands::agentic_wallet::payment::PaymentCommand,
+    },
+    /// Upgrade onchainos to the latest version
+    Upgrade(commands::upgrade::UpgradeArgs),
 }
 
 fn main() {
@@ -129,6 +141,7 @@ async fn run() {
         Commands::Market { command } => commands::market::execute(&ctx, *command).await,
         Commands::Signal { command } => commands::signal::execute(&ctx, command).await,
         Commands::Memepump { command } => commands::memepump::execute(&ctx, *command).await,
+        Commands::Leaderboard { command } => commands::leaderboard::execute(&ctx, command).await,
         Commands::Token { command } => commands::token::execute(&ctx, *command).await,
         Commands::Swap { command } => commands::swap::execute(&ctx, command).await,
         Commands::Gateway { command } => commands::gateway::execute(&ctx, command).await,
@@ -136,6 +149,8 @@ async fn run() {
         Commands::Mcp { .. } => unreachable!("handled above"),
         Commands::Wallet { command } => commands::agentic_wallet::wallet::execute(command).await,
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
+        Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
+        Commands::Upgrade(args) => commands::upgrade::execute(args).await,
     };
 
     let elapsed = start.elapsed();

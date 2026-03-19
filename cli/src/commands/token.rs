@@ -239,10 +239,42 @@ pub enum TokenCommand {
         #[arg(long)]
         wallet_filter: Option<String>,
     },
+    /// Get token holder cluster concentration overview (cluster level, rug pull %, new address %)
+    ClusterOverview {
+        /// Token contract address
+        #[arg(long)]
+        address: String,
+        /// Chain
+        #[arg(long)]
+        chain: Option<String>,
+    },
+    /// Get top 10/50/100 holder overview (holding %, trend, avg PnL, avg cost, avg sell)
+    ClusterTopHolders {
+        /// Token contract address
+        #[arg(long)]
+        address: String,
+        /// Chain
+        #[arg(long)]
+        chain: Option<String>,
+        /// Holder rank filter: 1 = top 10, 2 = top 50, 3 = top 100
+        #[arg(long)]
+        range_filter: String,
+    },
+    /// Get holder cluster list (clusters of top 300 holders with address details)
+    ClusterList {
+        /// Token contract address
+        #[arg(long)]
+        address: String,
+        /// Chain
+        #[arg(long)]
+        chain: Option<String>,
+    },
+    /// Get supported chains for holder cluster analysis
+    ClusterSupportedChains,
 }
 
 pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     match cmd {
         TokenCommand::Search { query, chains } => {
             if query.trim().is_empty() {
@@ -422,6 +454,30 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
                 .await?,
             );
         }
+        TokenCommand::ClusterOverview { address, chain } => {
+            cluster_by_address(
+                ctx,
+                "/api/v6/dex/market/token/cluster/overview",
+                &address,
+                chain,
+            )
+            .await?;
+        }
+        TokenCommand::ClusterTopHolders {
+            address,
+            chain,
+            range_filter,
+        } => cluster_top_holders(ctx, &address, chain, &range_filter).await?,
+        TokenCommand::ClusterList { address, chain } => {
+            cluster_by_address(
+                ctx,
+                "/api/v6/dex/market/token/cluster/list",
+                &address,
+                chain,
+            )
+            .await?;
+        }
+        TokenCommand::ClusterSupportedChains => cluster_supported_chains(ctx).await?,
     }
     Ok(())
 }
@@ -769,4 +825,83 @@ pub async fn fetch_token_trades(
             ],
         )
         .await
+}
+
+/// Shared helper for cluster endpoints that take (chainIndex, tokenContractAddress) only.
+async fn cluster_by_address(
+    ctx: &Context,
+    path: &str,
+    address: &str,
+    chain: Option<String>,
+) -> Result<()> {
+    let chain_index = chain
+        .map(|c| crate::chains::resolve_chain(&c).to_string())
+        .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+    let client = ctx.client_async().await?;
+    output::success(fetch_cluster_by_address(&client, path, address, &chain_index).await?);
+    Ok(())
+}
+
+/// GET /api/v6/dex/market/token/cluster/supported/chain — no parameters
+pub async fn fetch_cluster_supported_chains(client: &ApiClient) -> Result<Value> {
+    client
+        .get("/api/v6/dex/market/token/cluster/supported/chain", &[])
+        .await
+}
+
+async fn cluster_supported_chains(ctx: &Context) -> Result<()> {
+    let client = ctx.client_async().await?;
+    output::success(fetch_cluster_supported_chains(&client).await?);
+    Ok(())
+}
+
+/// GET /api/v6/dex/market/token/cluster/overview or /cluster/list
+pub async fn fetch_cluster_by_address(
+    client: &ApiClient,
+    path: &str,
+    address: &str,
+    chain_index: &str,
+) -> Result<Value> {
+    client
+        .get(
+            path,
+            &[
+                ("chainIndex", chain_index),
+                ("tokenContractAddress", address),
+            ],
+        )
+        .await
+}
+
+/// GET /api/v6/dex/market/token/cluster/top-holders
+pub async fn fetch_cluster_top_holders(
+    client: &ApiClient,
+    address: &str,
+    chain_index: &str,
+    range_filter: &str,
+) -> Result<Value> {
+    client
+        .get(
+            "/api/v6/dex/market/token/cluster/top-holders",
+            &[
+                ("chainIndex", chain_index),
+                ("tokenContractAddress", address),
+                ("rangeFilter", range_filter),
+            ],
+        )
+        .await
+}
+
+async fn cluster_top_holders(
+    ctx: &Context,
+    address: &str,
+    chain: Option<String>,
+    range_filter: &str,
+) -> Result<()> {
+    let chain_index = chain
+        .map(|c| crate::chains::resolve_chain(&c).to_string())
+        .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+    let client = ctx.client_async().await?;
+    output::success(fetch_cluster_top_holders(&client, address, &chain_index, range_filter).await?);
+    Ok(())
 }

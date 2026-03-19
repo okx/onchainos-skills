@@ -147,7 +147,7 @@ pub async fn fetch_list(
 // ── CLI wrappers ─────────────────────────────────────────────────────
 
 async fn signal_chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     output::success(fetch_chains(&client).await?);
     Ok(())
 }
@@ -168,7 +168,7 @@ async fn signal_list(
     max_liquidity_usd: Option<String>,
 ) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain).to_string();
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     output::success(
         fetch_list(
             &client,

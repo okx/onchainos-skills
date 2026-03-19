@@ -1,5 +1,6 @@
 pub mod agentic_wallet;
 pub mod gateway;
+pub mod leaderboard;
 pub mod market;
 pub mod memepump;
 pub mod portfolio;
@@ -7,6 +8,7 @@ pub mod security;
 pub mod signal;
 pub mod swap;
 pub mod token;
+pub mod upgrade;
 
 use crate::chains;
 use crate::client::ApiClient;
@@ -31,9 +33,16 @@ impl Context {
         }
     }
 
-    /// Create an OKX API client with HMAC-SHA256 authentication.
+    /// Create an OKX API client with HMAC-SHA256 authentication (no JWT expiry check).
+    /// Prefer `client_async()` in async command handlers.
     pub fn client(&self) -> Result<ApiClient> {
         ApiClient::new(self.base_url_override.as_deref())
+    }
+
+    /// Create an OKX API client with full JWT lifecycle check:
+    /// expired JWT → auto-refresh; refresh token expired → AK / anonymous fallback.
+    pub async fn client_async(&self) -> Result<ApiClient> {
+        ApiClient::new_async(self.base_url_override.as_deref()).await
     }
 
     /// Resolve chain to OKX chainIndex (e.g. "ethereum" -> "1", "solana" -> "501").

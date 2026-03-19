@@ -50,19 +50,87 @@ impl ApiClient {
         })
     }
 
+    /// Create a client with full JWT lifecycle check:
+    /// 1. JWT exists and not expired                → use JWT
+    /// 2. JWT expired + refresh token valid         → refresh JWT → use new JWT
+    /// 3. JWT expired + refresh token expired       → prompt user + AK / Anonymous
+    /// 4. No JWT                                    → AK / Anonymous
+    pub async fn new_async(base_url_override: Option<&str>) -> Result<Self> {
+        let auth = Self::resolve_auth_async().await?;
+        let base_url = base_url_override
+            .map(|s| s.to_string())
+            .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
+            .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
+        Ok(Self {
+            http: Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()?,
+            base_url,
+            auth,
+        })
+    }
+
     /// Resolve authentication mode:
     /// 1. JWT from keyring (user is logged in)
     /// 2. AK from env vars / ~/.onchainos/.env (user has configured credentials)
     /// 3. Anonymous — no credentials, send only basic headers
     fn resolve_auth() -> Result<AuthMode> {
-        // 1. Try JWT from keyring
+        // 1. Try JWT from keyring (no expiry check — sync path)
         if let Some(token) = crate::keyring_store::get_opt("access_token") {
             if !token.is_empty() {
                 return Ok(AuthMode::Jwt(token));
             }
         }
 
-        // 2. Load ~/.onchainos/.env if AK not yet in env
+        Self::resolve_ak_or_anonymous()
+    }
+
+    /// Full async auth resolution with JWT expiry check and auto-refresh.
+    async fn resolve_auth_async() -> Result<AuthMode> {
+        // ── Step 1: is there a JWT? ──────────────────────────────────
+        let access_token = crate::keyring_store::get_opt("access_token").filter(|t| !t.is_empty());
+
+        let token = match access_token {
+            None => return Self::resolve_ak_or_anonymous(),
+            Some(t) => t,
+        };
+
+        // ── Step 2: JWT not expired → use it ────────────────────────
+        if !Self::is_jwt_expired(&token) {
+            return Ok(AuthMode::Jwt(token));
+        }
+
+        // ── Step 3: JWT expired → check refresh token ────────────────
+        let refresh_token =
+            crate::keyring_store::get_opt("refresh_token").filter(|t| !t.is_empty());
+
+        let rt = match refresh_token {
+            None => return Self::resolve_ak_or_anonymous(),
+            Some(rt) => rt,
+        };
+
+        // ── Step 4: refresh token expired → prompt + fallback ────────
+        if Self::is_jwt_expired(&rt) {
+            eprintln!("Session expired. Please log in again: onchainos wallet login");
+            return Self::resolve_ak_or_anonymous();
+        }
+
+        // ── Step 5: refresh token valid → refresh JWT ────────────────
+        match Self::refresh_jwt_inline(&rt).await {
+            Ok(new_token) => Ok(AuthMode::Jwt(new_token)),
+            Err(e) => {
+                eprintln!(
+                    "Failed to refresh session ({}). Falling back to API key auth.",
+                    e
+                );
+                Self::resolve_ak_or_anonymous()
+            }
+        }
+    }
+
+    /// Shared AK / Anonymous resolution used by both sync and async paths.
+    fn resolve_ak_or_anonymous() -> Result<AuthMode> {
+        // Load ~/.onchainos/.env if AK not yet in env
         if std::env::var("OKX_API_KEY").is_err() && std::env::var("OKX_ACCESS_KEY").is_err() {
             if let Ok(home) = crate::home::onchainos_home() {
                 let env_path = home.join(".env");
@@ -72,7 +140,6 @@ impl ApiClient {
             }
         }
 
-        // 3. Try AK credentials — if absent, fall through to Anonymous
         let api_key = std::env::var("OKX_API_KEY")
             .ok()
             .filter(|s| !s.is_empty())
@@ -100,6 +167,78 @@ impl ApiClient {
                 })
             }
         }
+    }
+
+    /// Inline JWT refresh — avoids circular dependency with WalletApiClient.
+    /// Calls /priapi/v5/wallet/agentic/auth/refresh and stores the new tokens.
+    async fn refresh_jwt_inline(refresh_token: &str) -> Result<String> {
+        let base_url = option_env!("OKX_BASE_URL").unwrap_or(DEFAULT_BASE_URL);
+        let url = format!("{}/priapi/v5/wallet/agentic/auth/refresh", base_url);
+        let body = serde_json::json!({ "refreshToken": refresh_token });
+
+        let http = Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()?;
+        let resp = http
+            .post(&url)
+            .headers(Self::anonymous_headers())
+            .json(&body)
+            .send()
+            .await
+            .context("JWT refresh request failed")?;
+
+        let json: Value = resp
+            .json()
+            .await
+            .context("failed to parse JWT refresh response")?;
+
+        let code_ok = match &json["code"] {
+            Value::String(s) => s == "0",
+            Value::Number(n) => n.as_i64() == Some(0),
+            _ => false,
+        };
+        if !code_ok {
+            let msg = json["msg"].as_str().unwrap_or("unknown error");
+            bail!("JWT refresh failed: {}", msg);
+        }
+
+        let arr = json["data"]
+            .as_array()
+            .context("refresh: expected data array")?;
+        let item = arr.first().context("refresh: empty data array")?;
+        let new_access = item["accessToken"]
+            .as_str()
+            .context("refresh: missing accessToken")?;
+        let new_refresh = item["refreshToken"]
+            .as_str()
+            .context("refresh: missing refreshToken")?;
+
+        crate::keyring_store::store(&[
+            ("access_token", new_access),
+            ("refresh_token", new_refresh),
+        ])?;
+
+        Ok(new_access.to_string())
+    }
+
+    /// Decode JWT payload and extract `exp` claim without signature verification.
+    fn jwt_exp_timestamp(token: &str) -> Option<i64> {
+        let parts: Vec<&str> = token.split('.').collect();
+        if parts.len() != 3 {
+            return None;
+        }
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(parts[1])
+            .ok()?;
+        let val: Value = serde_json::from_slice(&payload).ok()?;
+        val["exp"].as_i64()
+    }
+
+    /// Returns true if the JWT is expired or unparseable.
+    fn is_jwt_expired(token: &str) -> bool {
+        Self::jwt_exp_timestamp(token)
+            .map(|exp| chrono::Utc::now().timestamp() >= exp)
+            .unwrap_or(true)
     }
 
     /// HMAC-SHA256 signature for AK auth.

@@ -223,6 +223,7 @@ fn mcp_tools_list_returns_all_tools() {
         "token_info",
         "market_price",
         "market_kline",
+        "market_address_tracker_activities",
         "swap_quote",
         "swap_swap",
         "portfolio_total_value",
@@ -230,6 +231,12 @@ fn mcp_tools_list_returns_all_tools() {
         "gateway_broadcast",
         "signal_list",
         "memepump_tokens",
+        "leaderboard_chains",
+        "leaderboard_list",
+        "token_cluster_supported_chains",
+        "token_cluster_overview",
+        "token_cluster_top_holders",
+        "token_cluster_list",
     ];
     for name in expected {
         assert!(
@@ -314,6 +321,20 @@ fn mcp_market_kline() {
     }
     let data = result.api_data();
     assert!(data.is_array(), "expected candle data: {data}");
+}
+
+#[test]
+fn mcp_market_address_tracker_activities() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "market_address_tracker_activities",
+        json!({"tracker_type": "smart_money"}),
+    );
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    assert!(data["trades"].is_array(), "expected trades array: {data}");
 }
 
 // ── Swap tools ─────────────────────────────────────────────────────────
@@ -415,6 +436,50 @@ fn mcp_signal_chains() {
     }
     let data = result.api_data();
     assert!(data.is_array(), "expected chain list: {data}");
+}
+
+// ── Leaderboard tools ──────────────────────────────────────────────────
+
+#[test]
+fn mcp_leaderboard_chains() {
+    let mut client = McpClient::start();
+    let result = client.call_tool("leaderboard_chains", json!({}));
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    assert!(data.is_array(), "expected chain list: {data}");
+    let arr = data.as_array().unwrap();
+    assert!(!arr.is_empty(), "expected at least one supported chain");
+    assert!(
+        arr[0].get("chainIndex").is_some(),
+        "chain entry missing 'chainIndex': {}",
+        arr[0]
+    );
+}
+
+#[test]
+fn mcp_leaderboard_list_solana_pnl() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "leaderboard_list",
+        json!({"chain": "solana", "time_frame": "3", "sort_by": "1"}),
+    );
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    assert!(data.is_array(), "expected leaderboard array: {data}");
+}
+
+#[test]
+#[should_panic(expected = "JSON-RPC error")]
+fn mcp_leaderboard_list_missing_chain_fails() {
+    let mut client = McpClient::start();
+    client.call_tool(
+        "leaderboard_list",
+        json!({"time_frame": "3", "sort_by": "1"}),
+    );
 }
 
 // ── Memepump tools ─────────────────────────────────────────────────────

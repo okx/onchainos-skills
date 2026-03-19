@@ -15,7 +15,7 @@ use super::auth::{ensure_tokens_refreshed, format_api_error};
 ///
 /// If `from_addr` is Some, scan ALL entries in accounts_map for a matching
 /// (address, chain_name) pair. Otherwise use selected_account_id.
-pub(super) fn resolve_address(
+pub(crate) fn resolve_address(
     wallets: &WalletsJson,
     from_addr: Option<&str>,
     chain: &str,
@@ -498,7 +498,9 @@ mod tests {
         let err: anyhow::Error = api_err.into();
         let result = handle_broadcast_error(err, true);
         // Should NOT be CliConfirming when force=true
-        assert!(result.downcast_ref::<crate::output::CliConfirming>().is_none());
+        assert!(result
+            .downcast_ref::<crate::output::CliConfirming>()
+            .is_none());
         assert_eq!(format!("{}", result), "please confirm");
     }
 
@@ -510,7 +512,9 @@ mod tests {
         };
         let err: anyhow::Error = api_err.into();
         let result = handle_broadcast_error(err, false);
-        assert!(result.downcast_ref::<crate::output::CliConfirming>().is_none());
+        assert!(result
+            .downcast_ref::<crate::output::CliConfirming>()
+            .is_none());
         assert_eq!(format!("{}", result), "server error");
     }
 
@@ -518,7 +522,9 @@ mod tests {
     fn broadcast_error_non_api_error_passes_through() {
         let err = anyhow::anyhow!("network timeout");
         let result = handle_broadcast_error(err, false);
-        assert!(result.downcast_ref::<crate::output::CliConfirming>().is_none());
+        assert!(result
+            .downcast_ref::<crate::output::CliConfirming>()
+            .is_none());
         assert_eq!(format!("{}", result), "network timeout");
     }
 }

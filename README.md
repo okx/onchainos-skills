@@ -1,18 +1,22 @@
 # onchainos Skills
 
-onchainos skills for AI coding assistants. Provides token search, market data, wallet balance queries, swap execution, and transaction broadcasting across 20+ blockchains.
+onchainos skills for AI coding assistants. Provides token search, market data, wallet balance queries, swap execution, transaction broadcasting, leaderboard rankings, and token cluster analysis across 20+ blockchains.
 
 ## Available Skills
 
 | Skill | Description |
 |-------|-------------|
-| `okx-wallet-portfolio` | Wallet balance, token holdings, portfolio value |
-| `okx-dex-market` | Real-time prices, K-line charts, index prices, wallet PnL analysis |
-| `okx-dex-signal` | Smart money / whale / KOL signal tracking |
+| `okx-agentic-wallet` | Wallet lifecycle: auth, balance, portfolio PnL, send, tx history, contract call |
+| `okx-wallet-portfolio` | Public address balance, token holdings, portfolio value |
+| `okx-security` | Security scanning: token risk, DApp phishing, tx pre-execution, signature safety, approval management |
+| `okx-dex-market` | Real-time prices, K-line charts, index prices, wallet PnL analysis, address tracker activities |
+| `okx-dex-signal` | Smart money / whale / KOL signal tracking, leaderboard rankings |
 | `okx-dex-trenches` | Meme pump/trenches token scanning, dev reputation, bundle detection, aped wallets |
 | `okx-dex-swap` | Token swap via DEX aggregation (500+ liquidity sources) |
-| `okx-dex-token` | Token search, metadata, market cap, rankings, liquidity pools, hot tokens, advanced info, holder analysis, top traders, trade history |
+| `okx-dex-token` | Token search, metadata, market cap, rankings, liquidity pools, hot tokens, advanced info, holder analysis, top traders, trade history, holder cluster analysis |
 | `okx-onchain-gateway` | Gas estimation, transaction simulation, broadcasting, order tracking |
+| `okx-x402-payment` | Sign x402 payment authorization via TEE for payment-gated resources |
+| `okx-audit-log` | Audit log export and troubleshooting |
 
 ## Supported Chains
 
@@ -81,6 +85,10 @@ The skills work together in typical DeFi flows:
 **Pre-flight Check**: `okx-onchain-gateway` (estimate gas) -> `okx-onchain-gateway` (simulate tx) -> `okx-onchain-gateway` (broadcast) -> `okx-onchain-gateway` (track order)
 
 **Full Trading Flow**: `okx-dex-token` (search) -> `okx-dex-market` (price/chart) -> `okx-wallet-portfolio` (check balance) -> `okx-dex-swap` (get tx) -> `okx-onchain-gateway` (simulate + broadcast + track)
+
+**Leaderboard → Research → Trade**: `okx-dex-signal` (top traders by PnL/win rate) -> `okx-dex-token` (token analytics) -> `okx-dex-swap` (execute trade)
+
+**Follow Smart Money**: `okx-dex-signal` (KOL/smart money buys) -> `okx-dex-token` (token details + holder cluster) -> `okx-dex-market` (price chart) -> `okx-dex-swap` (trade)
 
 ## Install CLI
 

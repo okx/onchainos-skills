@@ -323,14 +323,18 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Mcp { .. } => "mcp".to_string(),
         Commands::Wallet { command } => format!("wallet {}", wallet_sub(command)),
         Commands::Security { command } => format!("security {}", security_sub(command)),
+        Commands::Leaderboard { command } => format!("leaderboard {}", leaderboard_sub(command)),
+        Commands::Payment { command } => format!("payment {}", payment_sub(command)),
+        Commands::Upgrade(_) => "upgrade".to_string(),
     }
 }
 
+use crate::commands::agentic_wallet::payment::PaymentCommand;
 use crate::commands::agentic_wallet::wallet::WalletCommand;
 use crate::commands::{
-    gateway::GatewayCommand, market::MarketCommand, memepump::MemepumpCommand,
-    portfolio::PortfolioCommand, security::SecurityCommand, signal::SignalCommand,
-    swap::SwapCommand, token::TokenCommand,
+    gateway::GatewayCommand, leaderboard::LeaderboardCommand, market::MarketCommand,
+    memepump::MemepumpCommand, portfolio::PortfolioCommand, security::SecurityCommand,
+    signal::SignalCommand, swap::SwapCommand, token::TokenCommand,
 };
 
 fn market_sub(c: &MarketCommand) -> &'static str {
@@ -344,6 +348,7 @@ fn market_sub(c: &MarketCommand) -> &'static str {
         MarketCommand::PortfolioDexHistory { .. } => "portfolio-dex-history",
         MarketCommand::PortfolioRecentPnl { .. } => "portfolio-recent-pnl",
         MarketCommand::PortfolioTokenPnl { .. } => "portfolio-token-pnl",
+        MarketCommand::AddressTrackerActivities { .. } => "address-tracker-activities",
     }
 }
 
@@ -351,6 +356,13 @@ fn signal_sub(c: &SignalCommand) -> &'static str {
     match c {
         SignalCommand::Chains => "chains",
         SignalCommand::List { .. } => "list",
+    }
+}
+
+fn leaderboard_sub(c: &LeaderboardCommand) -> &'static str {
+    match c {
+        LeaderboardCommand::SupportedChains => "supported-chains",
+        LeaderboardCommand::List { .. } => "list",
     }
 }
 
@@ -378,6 +390,10 @@ fn token_sub(c: &TokenCommand) -> &'static str {
         TokenCommand::AdvancedInfo { .. } => "advanced-info",
         TokenCommand::TopTrader { .. } => "top-trader",
         TokenCommand::Trades { .. } => "trades",
+        TokenCommand::ClusterOverview { .. } => "cluster-overview",
+        TokenCommand::ClusterTopHolders { .. } => "cluster-top-holders",
+        TokenCommand::ClusterList { .. } => "cluster-list",
+        TokenCommand::ClusterSupportedChains => "cluster-supported-chains",
     }
 }
 
@@ -435,6 +451,12 @@ fn security_sub(c: &SecurityCommand) -> &'static str {
         SecurityCommand::TxScan { .. } => "tx-scan",
         SecurityCommand::Approvals { .. } => "approvals",
         SecurityCommand::SigScan { .. } => "sig-scan",
+    }
+}
+
+fn payment_sub(c: &PaymentCommand) -> &'static str {
+    match c {
+        PaymentCommand::X402Pay { .. } => "x402-pay",
     }
 }
 
