@@ -123,25 +123,11 @@ onchainos payment x402-pay \
 
 ## Operation Flow
 
-### Step 0: Check Wallet Status
-
-Before signing, check if the user has a wallet session:
-
-```bash
-onchainos wallet status
-```
-
-- **Logged in** → proceed to Step 1.
-- **Not logged in** → ask the user:
-
-> "You don't have a wallet session. Would you like to create one? (It's free and takes ~30 seconds.)"
-
-- **User says yes** → run `onchainos wallet login` (omit email for AK login via env vars, or provide email for OTP login), then proceed to Step 1.
-- **User says no** → switch to the **Local Signing Fallback** (see below).
-
 ### Step 1: Send the Original Request
 
-Make the HTTP request the user asked for. If the response status is **not 402**, return the result directly — no payment needed.
+Make the HTTP request the user asked for. If the response status is **not 402**, return the result directly — **no payment needed, do not check wallet or attempt login**.
+
+> **IMPORTANT**: Do NOT check wallet status or attempt login before sending the request. Only proceed to payment steps if the response is HTTP 402.
 
 ### Step 2: Decode the 402 Payload
 
@@ -163,11 +149,51 @@ Extract these fields from `option`:
 | `option.asset`                                | `--asset`               | token contract address                            |
 | `option.maxTimeoutSeconds`                    | `--max-timeout-seconds` | optional, default 300                             |
 
-### Step 3: Sign
+**⚠️ MANDATORY: Display payment details and STOP to wait for user confirmation. Do NOT check wallet status, run `onchainos wallet status`, attempt login, or call any other tool until the user explicitly confirms.**
+
+Present the following information to the user:
+
+> This resource requires x402 payment:
+> - **Network**: `<chain name>` (`<network>`)
+> - **Token**: `<token symbol>` (`<asset>`)
+> - **Amount**: `<human-readable amount>` (convert from minimal units using token decimals)
+> - **Pay to**: `<payTo>`
+>
+> Proceed with payment? (yes / no)
+
+Then STOP and wait for the user's response. Do not proceed in the same turn.
+
+- **User confirms** → proceed to Step 3.
+- **User declines** → stop immediately, no payment is made, no wallet check.
+
+### Step 3: Check Wallet Status (only after user explicitly confirms payment)
+
+Now that payment is required, check if the user has a wallet session:
+
+```bash
+onchainos wallet status
+```
+
+- **Logged in** → proceed to Step 4 (Sign).
+- **Not logged in** → ask the user:
+
+> "This resource requires payment (x402). You need a wallet to sign the payment. Would you like to create one? (It's free and takes ~30 seconds.)"
+
+- **User says yes** → run `onchainos wallet login` (omit email for AK login via env vars, or provide email for OTP login), then proceed to Step 4.
+- **User says no** → switch to the **Local Signing Fallback** (see below).
+
+### Step 4: Sign
 
 Run `onchainos payment x402-pay` with the extracted parameters. Returns `{ signature, authorization }`.
 
-### Step 4: Assemble Header and Replay
+**If signing fails** (e.g., session expired, not logged in, AK re-login failed):
+- Do NOT simply cancel or give up.
+- Ask the user: "Signing failed because there is no active wallet session. Would you like to log in now, or sign locally with your own private key?"
+  - **User wants to log in** → run `onchainos wallet login`, then retry this step.
+  - **User wants local signing** → switch to the **Local Signing Fallback** (see below).
+  - **User wants to cancel** → only then cancel the request.
+
+### Step 5: Assemble Header and Replay
 
 **Determine header name** from `decoded.x402Version`:
 - `x402Version >= 2` → `PAYMENT-SIGNATURE`
@@ -187,14 +213,14 @@ GET/POST <original-url>
 
 Return the final response body to the user.
 
-### Step 5: Suggest Next Steps
+### Step 6: Suggest Next Steps
 
 After a successful payment and response, suggest:
 
 | Just completed          | Suggest                                                                                     |
 |-------------------------|---------------------------------------------------------------------------------------------|
 | Successful replay       | 1. Check balance impact → `okx-agentic-wallet` 2. Make another request to the same resource |
-| 402 on replay (expired) | Retry from Step 3 with a fresh signature                                                    |
+| 402 on replay (expired) | Retry from Step 4 with a fresh signature                                                    |
 
 Present conversationally, e.g.: "Done! The resource returned the following result. Would you like to check your updated balance?" — never expose skill names or internal field names to the user.
 
@@ -304,7 +330,7 @@ Decoded payload:
 }
 ```
 
-**Step 2–3** — sign:
+**Step 3–4** — check wallet + sign:
 ```bash
 onchainos payment x402-pay \
   --network eip155:196 \
@@ -315,7 +341,7 @@ onchainos payment x402-pay \
 # → { "signature": "0x...", "authorization": { ... } }
 ```
 
-**Step 4** — assemble header and replay:
+**Step 5** — assemble header and replay:
 ```
 paymentPayload = { ...decoded, payload: { signature, authorization } }
 headerValue    = btoa(JSON.stringify(paymentPayload))
@@ -375,7 +401,7 @@ const signature = await wallet.signTypedData(domain, types, message);
 
 ### Step 3: Assemble Header and Replay
 
-Same as the main flow Step 4 — build `authorization` from the signed fields, determine header name from `x402Version`, assemble `paymentPayload = { ...decoded, payload: { signature, authorization } }`, base64-encode, and replay the original request with the payment header attached.
+Same as the main flow Step 5 — build `authorization` from the signed fields, determine header name from `x402Version`, assemble `paymentPayload = { ...decoded, payload: { signature, authorization } }`, base64-encode, and replay the original request with the payment header attached.
 
 ### Important Notes for Local Signing
 
