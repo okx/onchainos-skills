@@ -82,7 +82,7 @@ pub enum GatewayCommand {
 }
 
 pub async fn execute(ctx: &Context, cmd: GatewayCommand) -> Result<()> {
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     match cmd {
         GatewayCommand::Gas { chain } => {
             let chain_index = crate::chains::resolve_chain(&chain);

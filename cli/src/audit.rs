@@ -318,6 +318,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Mcp { .. } => "mcp".to_string(),
         Commands::Wallet { command } => format!("wallet {}", wallet_sub(command)),
         Commands::Security { command } => format!("security {}", security_sub(command)),
+        Commands::Upgrade(_) => "upgrade".to_string(),
     }
 }
 

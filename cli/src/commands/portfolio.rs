@@ -57,7 +57,7 @@ pub enum PortfolioCommand {
 }
 
 pub async fn execute(ctx: &Context, cmd: PortfolioCommand) -> Result<()> {
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     match cmd {
         PortfolioCommand::Chains => {
             output::success(fetch_chains(&client).await?);

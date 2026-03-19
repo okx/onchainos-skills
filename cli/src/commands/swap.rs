@@ -83,7 +83,7 @@ pub enum SwapCommand {
 }
 
 pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     match cmd {
         SwapCommand::Quote {
             from,

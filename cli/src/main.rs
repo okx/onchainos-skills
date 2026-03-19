@@ -87,6 +87,8 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::security::SecurityCommand,
     },
+    /// Upgrade onchainos to the latest version
+    Upgrade(commands::upgrade::UpgradeArgs),
 }
 
 fn main() {
@@ -136,6 +138,7 @@ async fn run() {
         Commands::Mcp { .. } => unreachable!("handled above"),
         Commands::Wallet { command } => commands::agentic_wallet::wallet::execute(command).await,
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
+        Commands::Upgrade(args) => commands::upgrade::execute(args).await,
     };
 
     let elapsed = start.elapsed();
