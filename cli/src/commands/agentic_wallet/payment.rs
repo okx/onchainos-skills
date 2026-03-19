@@ -137,18 +137,13 @@ async fn pay(
         "verifyingContract": asset,
     });
 
-    // 2. Read keyring before constructing API client (fail early)
-    let blob = keyring_store::read_blob()?;
-    let session_key = blob
-        .get("session_key")
-        .ok_or_else(|| anyhow!("session_key not found in keyring. Please login again"))?;
-    let encrypted_session_sk = blob
-        .get("encrypted_session_sk")
-        .ok_or_else(|| anyhow!("encrypted_session_sk not found in keyring. Please login again"))?;
-    let session_cert = blob
-        .get("session_cert")
-        .ok_or_else(|| anyhow!("session_cert not found in keyring. Please login again"))?
-        .clone();
+    // 2. Read session data before constructing API client (fail early)
+    let session = wallet_store::load_session()?
+        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+    let encrypted_session_sk = &session.encrypted_session_sk;
+    let session_cert = &session.session_cert;
+    let session_key = keyring_store::get("session_key")
+        .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
 
     let client = WalletApiClient::new()?;
 
@@ -171,7 +166,7 @@ async fn pay(
 
     // 4. Sign msgHash locally with Ed25519 session key
     let mut signing_seed =
-        crate::crypto::hpke_decrypt_session_sk(encrypted_session_sk, session_key)?;
+        crate::crypto::hpke_decrypt_session_sk(encrypted_session_sk, &session_key)?;
     let msg_hash_bytes =
         hex::decode(msg_hash.trim_start_matches("0x")).context("invalid msgHash hex")?;
     let session_signature = crate::crypto::ed25519_sign(&signing_seed, &msg_hash_bytes)?;
