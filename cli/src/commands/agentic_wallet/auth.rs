@@ -125,13 +125,17 @@ pub(super) async fn ensure_tokens_refreshed() -> Result<String> {
         let diff = exp_ts - now_ts;
         eprintln!(
             "[DEBUG][ensure_tokens_refreshed] session_key_expire_at=\"{}\", diff={}s, expired={}",
-            expire_at, diff, now_ts >= exp_ts
+            expire_at,
+            diff,
+            now_ts >= exp_ts
         );
     }
 
     if is_session_key_expired(expire_at) {
         if cfg!(feature = "debug-log") {
-            eprintln!("[DEBUG][ensure_tokens_refreshed] session key expired → relogin_or_anonymous");
+            eprintln!(
+                "[DEBUG][ensure_tokens_refreshed] session key expired → relogin_or_anonymous"
+            );
         }
         return relogin_or_anonymous().await;
     }
@@ -143,7 +147,9 @@ pub(super) async fn ensure_tokens_refreshed() -> Result<String> {
         Some(t) => t.clone(),
         _ => {
             if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][ensure_tokens_refreshed] no refresh_token → relogin_or_anonymous");
+                eprintln!(
+                    "[DEBUG][ensure_tokens_refreshed] no refresh_token → relogin_or_anonymous"
+                );
             }
             return relogin_or_anonymous().await;
         }
@@ -153,7 +159,9 @@ pub(super) async fn ensure_tokens_refreshed() -> Result<String> {
         Some(t) => t.clone(),
         _ => {
             if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][ensure_tokens_refreshed] no access_token → relogin_or_anonymous");
+                eprintln!(
+                    "[DEBUG][ensure_tokens_refreshed] no access_token → relogin_or_anonymous"
+                );
             }
             return relogin_or_anonymous().await;
         }
@@ -166,17 +174,19 @@ pub(super) async fn ensure_tokens_refreshed() -> Result<String> {
             let diff = exp_ts - now_ts;
             eprintln!(
                 "[DEBUG][ensure_tokens_refreshed] refresh_token: diff={}s ({:.1}h), expired={}",
-                diff, diff as f64 / 3600.0, now_ts >= exp_ts
+                diff,
+                diff as f64 / 3600.0,
+                now_ts >= exp_ts
             );
         }
     }
 
     if is_token_expired(&refresh_token) {
-        eprintln!(
-            "Session expired. Please log in again: onchainos wallet login"
-        );
+        eprintln!("Session expired. Please log in again: onchainos wallet login");
         if cfg!(feature = "debug-log") {
-            eprintln!("[DEBUG][ensure_tokens_refreshed] refresh_token expired → relogin_or_anonymous");
+            eprintln!(
+                "[DEBUG][ensure_tokens_refreshed] refresh_token expired → relogin_or_anonymous"
+            );
         }
         return relogin_or_anonymous().await;
     }
@@ -240,8 +250,8 @@ pub(super) async fn ensure_tokens_refreshed() -> Result<String> {
 /// When the session or refresh token is expired: attempt AK re-login using env vars.
 ///
 /// - AK env vars present → auto re-login → return new JWT
-/// - AK env vars absent  → bail with a clear message (wallet APIs require a valid JWT;
-///                          returning "" would only cause an opaque 401 downstream)
+/// - AK env vars absent → bail with a clear message (wallet APIs require a valid JWT;
+///   returning "" would only cause an opaque 401 downstream)
 async fn relogin_or_anonymous() -> Result<String> {
     let ak = std::env::var("OKX_API_KEY").or_else(|_| std::env::var("OKX_ACCESS_KEY"));
     let sk = std::env::var("OKX_SECRET_KEY");
@@ -265,7 +275,9 @@ async fn relogin_or_anonymous() -> Result<String> {
         }
         _ => {
             if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][relogin_or_anonymous] no AK env vars, session cannot be recovered");
+                eprintln!(
+                    "[DEBUG][relogin_or_anonymous] no AK env vars, session cannot be recovered"
+                );
             }
             bail!("session expired, please login again: onchainos wallet login")
         }

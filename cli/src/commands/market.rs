@@ -626,7 +626,7 @@ async fn address_tracker_activities(
         anyhow::bail!("--wallet-address is required when --tracker-type is multi_address");
     }
     let chain_index = chain.map(|c| crate::chains::resolve_chain(c).to_string());
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     output::success(
         fetch_address_tracker_activities(
             &client,

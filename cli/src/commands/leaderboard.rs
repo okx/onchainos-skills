@@ -97,7 +97,7 @@ pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
 }
 
 async fn supported_chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     output::success(fetch_chains(&client).await?);
     Ok(())
 }
@@ -187,7 +187,7 @@ async fn leaderboard_list(
     max_tx_volume: Option<String>,
 ) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain).to_string();
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
 
     let wallet_type_resolved = wallet_type.map(resolve_leaderboard_wallet_type);
 

@@ -498,7 +498,9 @@ mod tests {
         let err: anyhow::Error = api_err.into();
         let result = handle_broadcast_error(err, true);
         // Should NOT be CliConfirming when force=true
-        assert!(result.downcast_ref::<crate::output::CliConfirming>().is_none());
+        assert!(result
+            .downcast_ref::<crate::output::CliConfirming>()
+            .is_none());
         assert_eq!(format!("{}", result), "please confirm");
     }
 
@@ -510,7 +512,9 @@ mod tests {
         };
         let err: anyhow::Error = api_err.into();
         let result = handle_broadcast_error(err, false);
-        assert!(result.downcast_ref::<crate::output::CliConfirming>().is_none());
+        assert!(result
+            .downcast_ref::<crate::output::CliConfirming>()
+            .is_none());
         assert_eq!(format!("{}", result), "server error");
     }
 
@@ -518,7 +522,9 @@ mod tests {
     fn broadcast_error_non_api_error_passes_through() {
         let err = anyhow::anyhow!("network timeout");
         let result = handle_broadcast_error(err, false);
-        assert!(result.downcast_ref::<crate::output::CliConfirming>().is_none());
+        assert!(result
+            .downcast_ref::<crate::output::CliConfirming>()
+            .is_none());
         assert_eq!(format!("{}", result), "network timeout");
     }
 }

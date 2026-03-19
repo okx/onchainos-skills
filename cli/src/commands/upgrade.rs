@@ -35,7 +35,13 @@ fn semver_gt(a: &str, b: &str) -> bool {
             _ => return (0, 0, 0, None),
         };
         let parts: Vec<u32> = base.split('.').map(|x| x.parse().unwrap_or(0)).collect();
-        let pre_num = pre.and_then(|p| p.chars().filter(|c| c.is_ascii_digit()).collect::<String>().parse().ok());
+        let pre_num = pre.and_then(|p| {
+            p.chars()
+                .filter(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .parse()
+                .ok()
+        });
         (
             parts.first().copied().unwrap_or(0),
             parts.get(1).copied().unwrap_or(0),
@@ -47,14 +53,20 @@ fn semver_gt(a: &str, b: &str) -> bool {
     let (maj_a, min_a, pat_a, pre_a) = parse(a);
     let (maj_b, min_b, pat_b, pre_b) = parse(b);
 
-    if maj_a != maj_b { return maj_a > maj_b; }
-    if min_a != min_b { return min_a > min_b; }
-    if pat_a != pat_b { return pat_a > pat_b; }
+    if maj_a != maj_b {
+        return maj_a > maj_b;
+    }
+    if min_a != min_b {
+        return min_a > min_b;
+    }
+    if pat_a != pat_b {
+        return pat_a > pat_b;
+    }
 
     match (pre_a, pre_b) {
-        (None, None) => false,          // equal
-        (None, Some(_)) => true,        // stable > pre-release
-        (Some(_), None) => false,       // pre-release < stable
+        (None, None) => false,           // equal
+        (None, Some(_)) => true,         // stable > pre-release
+        (Some(_), None) => false,        // pre-release < stable
         (Some(na), Some(nb)) => na > nb, // higher pre-release number wins
     }
 }
@@ -117,6 +129,7 @@ async fn get_latest_with_beta(client: &Client) -> Result<String> {
 
 // ── Platform detection ──────────────────────────────────────────────────
 
+#[allow(unreachable_code)]
 fn target_triple() -> Result<&'static str> {
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     return Ok("x86_64-apple-darwin");
@@ -132,7 +145,10 @@ fn target_triple() -> Result<&'static str> {
     return Ok("armv7-unknown-linux-gnueabihf");
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     return Ok("x86_64-pc-windows-msvc");
-    bail!("unsupported platform — please install manually from https://github.com/{}", REPO)
+    bail!(
+        "unsupported platform — please install manually from https://github.com/{}",
+        REPO
+    )
 }
 
 // ── Download + verify + install ─────────────────────────────────────────
@@ -215,9 +231,7 @@ async fn download_and_install(client: &Client, version: &str) -> Result<()> {
 // ── Command entry point ─────────────────────────────────────────────────
 
 pub async fn execute(args: UpgradeArgs) -> Result<()> {
-    let client = Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()?;
+    let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
 
     let current = CURRENT_VERSION;
 
@@ -249,10 +263,7 @@ pub async fn execute(args: UpgradeArgs) -> Result<()> {
         return Ok(());
     }
 
-    eprintln!(
-        "Upgrading onchainos: {} → {}",
-        current, latest
-    );
+    eprintln!("Upgrading onchainos: {} → {}", current, latest);
 
     download_and_install(&client, &latest).await?;
 

@@ -1,5 +1,4 @@
 pub mod agentic_wallet;
-pub mod upgrade;
 pub mod gateway;
 pub mod leaderboard;
 pub mod market;
@@ -9,6 +8,7 @@ pub mod security;
 pub mod signal;
 pub mod swap;
 pub mod token;
+pub mod upgrade;
 
 use crate::chains;
 use crate::client::ApiClient;

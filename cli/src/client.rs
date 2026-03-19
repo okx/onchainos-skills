@@ -88,8 +88,7 @@ impl ApiClient {
     /// Full async auth resolution with JWT expiry check and auto-refresh.
     async fn resolve_auth_async() -> Result<AuthMode> {
         // ── Step 1: is there a JWT? ──────────────────────────────────
-        let access_token = crate::keyring_store::get_opt("access_token")
-            .filter(|t| !t.is_empty());
+        let access_token = crate::keyring_store::get_opt("access_token").filter(|t| !t.is_empty());
 
         let token = match access_token {
             None => return Self::resolve_ak_or_anonymous(),
@@ -102,8 +101,8 @@ impl ApiClient {
         }
 
         // ── Step 3: JWT expired → check refresh token ────────────────
-        let refresh_token = crate::keyring_store::get_opt("refresh_token")
-            .filter(|t| !t.is_empty());
+        let refresh_token =
+            crate::keyring_store::get_opt("refresh_token").filter(|t| !t.is_empty());
 
         let rt = match refresh_token {
             None => return Self::resolve_ak_or_anonymous(),
@@ -120,7 +119,10 @@ impl ApiClient {
         match Self::refresh_jwt_inline(&rt).await {
             Ok(new_token) => Ok(AuthMode::Jwt(new_token)),
             Err(e) => {
-                eprintln!("Failed to refresh session ({}). Falling back to API key auth.", e);
+                eprintln!(
+                    "Failed to refresh session ({}). Falling back to API key auth.",
+                    e
+                );
                 Self::resolve_ak_or_anonymous()
             }
         }
@@ -200,10 +202,16 @@ impl ApiClient {
             bail!("JWT refresh failed: {}", msg);
         }
 
-        let arr = json["data"].as_array().context("refresh: expected data array")?;
+        let arr = json["data"]
+            .as_array()
+            .context("refresh: expected data array")?;
         let item = arr.first().context("refresh: empty data array")?;
-        let new_access = item["accessToken"].as_str().context("refresh: missing accessToken")?;
-        let new_refresh = item["refreshToken"].as_str().context("refresh: missing refreshToken")?;
+        let new_access = item["accessToken"]
+            .as_str()
+            .context("refresh: missing accessToken")?;
+        let new_refresh = item["refreshToken"]
+            .as_str()
+            .context("refresh: missing refreshToken")?;
 
         crate::keyring_store::store(&[
             ("access_token", new_access),

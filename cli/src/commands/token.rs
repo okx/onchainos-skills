@@ -837,7 +837,7 @@ async fn cluster_by_address(
     let chain_index = chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     output::success(fetch_cluster_by_address(&client, path, address, &chain_index).await?);
     Ok(())
 }
@@ -850,7 +850,7 @@ pub async fn fetch_cluster_supported_chains(client: &ApiClient) -> Result<Value>
 }
 
 async fn cluster_supported_chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     output::success(fetch_cluster_supported_chains(&client).await?);
     Ok(())
 }
@@ -901,7 +901,7 @@ async fn cluster_top_holders(
     let chain_index = chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     output::success(fetch_cluster_top_holders(&client, address, &chain_index, range_filter).await?);
     Ok(())
 }
