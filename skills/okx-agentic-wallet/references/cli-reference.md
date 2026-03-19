@@ -521,7 +521,8 @@ onchainos wallet send \
   --receipt <address> \
   --chain <chainId> \
   [--from <address>] \
-  [--contract-token <address>]
+  [--contract-token <address>] \
+  [--force]
 ```
 
 | Parameter | Type | Required | Description |
@@ -531,6 +532,7 @@ onchainos wallet send \
 | `--chain` | string | Yes | Chain ID / `realChainIndex` (e.g. "1" for Ethereum, "501" for Solana, "56" for BSC) |
 | `--from` | string | No | Sender address — defaults to selected account's address on the given chain |
 | `--contract-token` | string | No | Token contract address for ERC-20 / SPL transfers. Omit for native token transfers. |
+| `--force` | bool | No | Skip confirmation prompts from the backend (default false). Use when re-running a command after the user has confirmed a `confirming` response. |
 
 **Return fields:**
 
@@ -747,7 +749,8 @@ onchainos wallet contract-call \
   [--aa-dex-token-addr <address>] \
   [--aa-dex-token-amount <amount>] \
   [--mev-protection] \
-  [--jito-unsigned-tx <jito_base58_tx>]
+  [--jito-unsigned-tx <jito_base58_tx>] \
+  [--force]
 ```
 
 | Parameter | Type | Required | Description |
@@ -763,6 +766,7 @@ onchainos wallet contract-call \
 | `--aa-dex-token-amount` | string | No | AA DEX token amount (for AA DEX interactions). |
 | `--mev-protection` | bool | No | Enable MEV protection (default false). Supported on Ethereum, BSC, Base, and Solana. On Solana, `--jito-unsigned-tx` is also required. |
 | `--jito-unsigned-tx` | string | No | Jito unsigned transaction data (base58) for Solana MEV protection. **Required when `--mev-protection` is used on Solana.** |
+| `--force` | bool | No | Skip confirmation prompts from the backend (default false). Use when re-running a command after the user has confirmed a `confirming` response. |
 
 > Either `--input-data` (EVM) or `--unsigned-tx` (Solana) must be provided. The CLI will fail if neither is present.
 

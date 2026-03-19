@@ -71,6 +71,9 @@ pub enum WalletCommand {
         /// Contract token address (optional — for ERC-20 / SPL token transfers)
         #[arg(long)]
         contract_token: Option<String>,
+        /// Force execution: skip confirmation prompts from the backend
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
     /// Query transaction history or detail
     History {
@@ -140,6 +143,9 @@ pub enum WalletCommand {
         /// Jito unsigned transaction data for Solana MEV protection (required when --mev-protection is used on Solana)
         #[arg(long)]
         jito_unsigned_tx: Option<String>,
+        /// Force execution: skip confirmation prompts from the backend
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
 }
 
@@ -172,6 +178,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             chain,
             from,
             contract_token,
+            force,
         } => {
             super::transfer::cmd_send(
                 &amount,
@@ -179,6 +186,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                 &chain,
                 from.as_deref(),
                 contract_token.as_deref(),
+                force,
             )
             .await
         }
@@ -220,6 +228,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             aa_dex_token_amount,
             mev_protection,
             jito_unsigned_tx,
+            force,
         } => {
             super::transfer::cmd_contract_call(
                 &to,
@@ -233,6 +242,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                 aa_dex_token_amount.as_deref(),
                 mev_protection,
                 jito_unsigned_tx.as_deref(),
+                force,
             )
             .await
         }
