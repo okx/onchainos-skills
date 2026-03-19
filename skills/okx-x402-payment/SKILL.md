@@ -1,6 +1,6 @@
 ---
 name: okx-x402-payment
-description: "This skill should be used when the user encounters an HTTP 402 Payment Required response, wants to pay for a payment-gated API or resource, or mentions 'x402', 'pay for access', '402 payment', 'payment-gated URL', or 'sign x402 payment'. Requires an active login session (JWT). Signs an EIP-3009 authorization via TEE and returns the payment proof (signature + authorization) that the caller can attach as a payment header to access the resource. Do NOT use for swap or token transfers — use okx-dex-swap instead. Do NOT use for wallet balance or portfolio queries — use okx-agentic-wallet or okx-wallet-portfolio. Do NOT use for security scanning — use okx-security. Do NOT use for transaction broadcasting — use okx-onchain-gateway. Do NOT use for general programming questions."
+description: "This skill should be used when the user encounters an HTTP 402 Payment Required response, wants to pay for a payment-gated API or resource, or mentions 'x402', 'pay for access', '402 payment', 'payment-gated URL', or 'sign x402 payment'. Primary path signs via TEE with a wallet session (JWT); fallback path guides local EIP-3009 signing with the user's own private key if they have no wallet. Returns the payment proof (signature + authorization) that the caller can attach as a payment header to access the resource. Do NOT use for swap or token transfers — use okx-dex-swap instead. Do NOT use for wallet balance or portfolio queries — use okx-agentic-wallet or okx-wallet-portfolio. Do NOT use for security scanning — use okx-security. Do NOT use for transaction broadcasting — use okx-onchain-gateway. Do NOT use for general programming questions."
 license: MIT
 metadata:
   author: okx
@@ -10,7 +10,7 @@ metadata:
 
 # Onchain OS x402 Payment
 
-Sign an [x402](https://x402.org) payment authorization via TEE and return the payment proof for accessing payment-gated resources.
+Sign an [x402](https://x402.org) payment authorization and return the payment proof for accessing payment-gated resources. Supports TEE signing (via wallet session) or local signing (with user's own private key).
 
 ## Pre-flight Checks
 
@@ -117,11 +117,27 @@ onchainos payment x402-pay \
 
 ## Command Index
 
-| # | Command                       | Description                                          |
-|---|-------------------------------|------------------------------------------------------|
-| 1 | `onchainos payment x402-pay`  | Sign an x402 payment and return the payment proof    |
+| # | Command                      | Description                                       |
+|---|------------------------------|---------------------------------------------------|
+| 1 | `onchainos payment x402-pay` | Sign an x402 payment and return the payment proof |
 
 ## Operation Flow
+
+### Step 0: Check Wallet Status
+
+Before signing, check if the user has a wallet session:
+
+```bash
+onchainos wallet status
+```
+
+- **Logged in** → proceed to Step 1.
+- **Not logged in** → ask the user:
+
+> "You don't have a wallet session. Would you like to create one? (It's free and takes ~30 seconds.)"
+
+- **User says yes** → run `onchainos wallet login` (omit email for AK login via env vars, or provide email for OTP login), then proceed to Step 1.
+- **User says no** → switch to the **Local Signing Fallback** (see below).
 
 ### Step 1: Send the Original Request
 
@@ -310,9 +326,68 @@ PAYMENT-SIGNATURE: <headerValue>
 → HTTP 200  { "result": "..." }
 ```
 
+## Local Signing Fallback (No Wallet)
+
+If the user does not have a wallet and chooses not to create one, guide them through local EIP-3009 signing with their own private key.
+
+### Prerequisites
+
+- User has a local private key (e.g., in a `.env` file, hardware wallet, or MetaMask export)
+- The payer address must hold sufficient ERC-20 balance of the `asset` token on the target chain
+- The `asset` token contract must support EIP-3009 `transferWithAuthorization`
+
+### Step 1: Decode the 402 Payload
+
+Same as the main flow — decode the base64 body and extract `accepts[0]`:
+
+```
+rawBody  = response.body
+decoded  = JSON.parse(atob(rawBody))
+option   = decoded.accepts[0]
+```
+
+Extract: `network`, `amount` (or `maxAmountRequired`), `payTo`, `asset`, `maxTimeoutSeconds`.
+
+### Step 2: Construct EIP-3009 Parameters and Sign
+
+Build the `TransferWithAuthorization` message and sign it with `eth_signTypedData_v4`. Key fields:
+
+| Field         | Value                                    |
+|---------------|------------------------------------------|
+| `from`        | Payer address                            |
+| `to`          | `option.payTo`                           |
+| `value`       | `option.amount`                          |
+| `validAfter`  | `"0"`                                    |
+| `validBefore` | `now + maxTimeoutSeconds` (Unix seconds) |
+| `nonce`       | Random 32 bytes (hex)                    |
+
+EIP-712 domain: query the token contract's `name()`, `version` (often `"1"` or `"2"`), `chainId` from the CAIP-2 network, and `verifyingContract` = `option.asset`.
+
+**Sign with ethers.js**:
+
+```javascript
+const wallet = new ethers.Wallet('<PRIVATE_KEY>');
+const signature = await wallet.signTypedData(domain, types, message);
+```
+
+> See [EIP-3009](https://eips.ethereum.org/EIPS/eip-3009) for the full typed data spec. `domain.name`/`version` vary per
+> token (e.g. USDC uses `"USD Coin"` / `"2"`) — query the contract to confirm.
+
+### Step 3: Assemble Header and Replay
+
+Same as the main flow Step 4 — build `authorization` from the signed fields, determine header name from `x402Version`, assemble `paymentPayload = { ...decoded, payload: { signature, authorization } }`, base64-encode, and replay the original request with the payment header attached.
+
+### Important Notes for Local Signing
+
+- The private key **never** leaves the local machine — signing is done entirely offline
+- The `nonce` must be a random 32-byte hex value; reusing a nonce will cause the transaction to be rejected
+- `validBefore` is a Unix timestamp in seconds — set it to `now + maxTimeoutSeconds` (default 300s / 5 minutes)
+- If the token uses a non-standard EIP-712 domain (e.g., different `version` string), the signature will be invalid — always query the contract first
+- The signed authorization only authorizes the **exact** `(from, to, value, nonce)` tuple — it cannot be modified or reused
+
 ## Edge Cases
 
-- **Not logged in**: Run `onchainos wallet login`, then retry
+- **Not logged in**: Ask user if they want to create a wallet (`onchainos wallet login`). If not, guide them through the Local Signing Fallback above
 - **Unsupported network**: Only EVM chains with CAIP-2 `eip155:<chainId>` format are supported
 - **No wallet for chain**: The logged-in account must have an address on the requested chain; if not, inform the user
 - **Amount in wrong units**: `--amount` must be in minimal units — remind user to convert (e.g., 1 USDG = `1000000` for 6 decimals)
@@ -327,8 +402,8 @@ PAYMENT-SIGNATURE: <headerValue>
 
 ## Global Notes
 
-- This skill requires an **authenticated JWT session** — no OKX API key needed
-- Signing is performed inside a TEE; the private key never leaves the secure enclave
+- **Primary path** (`onchainos payment x402-pay`): requires an authenticated JWT session; signing is performed inside a TEE — the private key never leaves the secure enclave
+- **Fallback path** (local signing): requires the user's own private key; signing is done entirely on the local machine — no JWT or TEE needed
 - This skill only signs — it does **not** broadcast or deduct balance directly; payment settles when the recipient redeems the authorization on-chain
 - `--network` must be CAIP-2 format: `eip155:<chainId>` (e.g., `eip155:1`, `eip155:8453`, `eip155:196`)
 - The returned `authorization` object must be included alongside `signature` when building the payment header
