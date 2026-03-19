@@ -12,18 +12,6 @@ metadata:
 
 Wallet operations: authentication, balance, token transfers, transaction history, and smart contract calls.
 
-## Wallet Tips
-
-On the **first wallet-related interaction per conversation**, display exactly ONE tip
-randomly selected from the list below. Do not repeat tips within the same conversation.
-Present it as-is (with emoji) AFTER the command result, on a separate line.
-
-1. 💡 Tip: You can say "show my addresses" or "充值地址" to quickly get your deposit addresses for any chain.
-2. 🔐 Tip: When prompted for Keychain access, please click "Always Allow". We use the system Keychain to securely store your credentials — you won't need to enter your password every time.
-3. 📜 Tip: Say "show my recent transactions" anytime to review your on-chain activity and track pending transfers.
-4. 🛡️ Tip: Before swapping into an unfamiliar token, ask me to run a security scan first — I can check for honeypots, rug-pull risks, and more.
-5. 👛 Tip: You can add multiple wallet accounts. Say "add a new wallet" to add one, and "switch account" to toggle between them.
-
 ## Pre-flight Checks
 
 Every time before running any `onchainos` command, always follow these steps in order. Do not echo routine command output to the user; only provide a brief status update when installing, updating, or handling a failure.
@@ -161,8 +149,8 @@ Applies to:
 
 | # | Command | Description | Auth Required |
 |---|---|---|---|
-| D1 | `onchainos wallet send` | Send native or contract tokens to an address | Yes |
-| D2 | `onchainos wallet contract-call` | Call a smart contract with custom calldata | Yes |
+| D1 | `onchainos wallet send` | Send native or contract tokens to an address. Supports `--force` to bypass confirmation prompts. | Yes |
+| D2 | `onchainos wallet contract-call` | Call a smart contract with custom calldata. Supports `--force` to bypass confirmation prompts. | Yes |
 
 > **⚠️ CRITICAL — Choosing the correct command:**
 > Using the wrong command may cause **loss of funds**. You MUST determine the user's exact intent before executing:
@@ -720,6 +708,53 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 - **Network error**: Retry once, then prompt user to try again later.
 - **Region restriction (error code 50125 or 80001)**: Do NOT show raw error code. Display: "Service is not available in your region. Please switch to a supported region and try again."
 
+### Confirming Response
+
+Some commands may return a **confirming** response instead of a success or error.
+This happens when the backend requires explicit user confirmation before proceeding
+(e.g., high-risk transactions). The CLI exits with code **2** (not 0 or 1).
+
+#### Output format
+
+```json
+{
+  "confirming": true,
+  "message": "The human-readable prompt to show the user.",
+  "next": "Instructions for what the agent should do after user confirms."
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `confirming` | bool | Always `true`. Indicates this is a confirmation prompt, not a success or error. |
+| `message` | String | The confirmation message to display to the user verbatim. |
+| `next` | String | Instructions describing the action the agent should take after the user confirms. Follow these instructions exactly. |
+
+#### How to handle
+
+1. **Display** the `message` field to the user and ask for confirmation.
+2. **If the user confirms**: follow the instructions in the `next` field (typically re-running the same command with `--force` flag appended).
+3. **If the user declines**: do NOT proceed. Inform the user the operation was cancelled.
+
+#### Example flow
+
+```
+# 1. Agent runs the command
+onchainos wallet send --amount "100" --receipt "0xAbc..." --chain 1
+
+# 2. CLI returns confirming response (exit code 2)
+{
+  "confirming": true,
+  "message": "This transaction may result in significant loss. Please confirm.",
+  "next": "If the user confirms, re-run the same command with --force flag appended to proceed."
+}
+
+# 3. Agent shows message to user, user confirms
+
+# 4. Agent re-runs with --force
+onchainos wallet send --amount "100" --receipt "0xAbc..." --chain 1 --force
+```
+
 ---
 
 ## Global Notes
@@ -735,7 +770,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
       > "XKO address format is not supported yet. Please find the 0x address by switching to your commonly used address, then you can continue."
     - **User-facing language**: When communicating in Chinese, never use the abbreviation "OTP". Always use "验证码" instead. In English, prefer "verification code" over "OTP" in messages shown to users.
     - **Full chain names**: Always display chains by their full name — never use abbreviations or internal IDs. If unsure, run `onchainos wallet chains` and use the `showName` field.
-    - **Friendly Reminder**: This is a self-custody wallet — all on-chain transactions are irreversible and the user bears full responsibility for their trading decisions; quotes and routing information are for reference only and do not constitute investment advice.
+    - **Friendly Reminder**: This is a self-custody wallet — all on-chain transactions are irreversible.
 </must>
 <should>
     - The send and contract-call flows are atomic: unsigned -> sign -> broadcast in one command

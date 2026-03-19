@@ -164,7 +164,15 @@ async fn run() {
     );
 
     if let Err(e) = result {
-        output::error(&format!("{e:#}"));
-        std::process::exit(1);
+        match e.downcast::<output::CliConfirming>() {
+            Ok(c) => {
+                output::confirming(&c.message, &c.next);
+                std::process::exit(2);
+            }
+            Err(e) => {
+                output::error(&format!("{e:#}"));
+                std::process::exit(1);
+            }
+        }
     }
 }

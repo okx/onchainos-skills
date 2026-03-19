@@ -69,12 +69,14 @@ struct TxParams<'a> {
 /// `is_contract_call`: when true, omits `txType` from extraData.
 /// `mev_protection`: when true, passes `isMEV: true` to the broadcast API (supported on ETH, BSC, Base).
 /// `chain`: the realChainIndex (standard chain ID, e.g. "1" for Ethereum, "501" for Solana).
+/// `force`: when true, passes `skipWarning: true` in extraData and bypasses confirmation prompts.
 async fn sign_and_broadcast(
     chain: &str,
     from: Option<&str>,
     tx: TxParams<'_>,
     is_contract_call: bool,
     mev_protection: bool,
+    force: bool,
 ) -> Result<()> {
     if cfg!(feature = "debug-log") {
         eprintln!(
@@ -231,6 +233,9 @@ async fn sign_and_broadcast(
     if mev_protection {
         extra_data_obj["isMEV"] = json!(true);
     }
+    if force {
+        extra_data_obj["skipWarning"] = json!(true);
+    }
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][sign_and_broadcast] Step 10: extraData={}",
@@ -249,7 +254,7 @@ async fn sign_and_broadcast(
             &extra_data_str,
         )
         .await
-        .map_err(format_api_error)?;
+        .map_err(|e| handle_broadcast_error(e, force))?;
 
     if cfg!(feature = "debug-log") {
         eprintln!(
@@ -261,6 +266,29 @@ async fn sign_and_broadcast(
     Ok(())
 }
 
+// ── broadcast error handling ──────────────────────────────────────────
+
+/// broadcast_transaction error handler:
+/// - code=81362 and !force → return CliConfirming (needs user confirmation)
+/// - other ApiCodeError → extract msg as plain error
+/// - non-ApiCodeError → pass through
+fn handle_broadcast_error(e: anyhow::Error, force: bool) -> anyhow::Error {
+    match e.downcast::<crate::wallet_api::ApiCodeError>() {
+        Ok(api_err) => {
+            if !force && api_err.code == "81362" {
+                crate::output::CliConfirming {
+                    message: api_err.msg,
+                    next: "If the user confirms, re-run the same command with --force flag appended to proceed.".to_string(),
+                }
+                .into()
+            } else {
+                anyhow::anyhow!("{}", api_err.msg)
+            }
+        }
+        Err(e) => e,
+    }
+}
+
 // ── send ─────────────────────────────────────────────────────────────
 
 /// onchainos wallet send
@@ -270,6 +298,7 @@ pub(super) async fn cmd_send(
     chain: &str,
     from: Option<&str>,
     contract_token: Option<&str>,
+    force: bool,
 ) -> Result<()> {
     if amount.is_empty() || receipt.is_empty() || chain.is_empty() {
         bail!("amount, receipt and chain are required");
@@ -291,6 +320,7 @@ pub(super) async fn cmd_send(
         },
         false,
         false,
+        force,
     )
     .await
 }
@@ -311,6 +341,7 @@ pub(super) async fn cmd_contract_call(
     aa_dex_token_amount: Option<&str>,
     mev_protection: bool,
     jito_unsigned_tx: Option<&str>,
+    force: bool,
 ) -> Result<()> {
     if to.is_empty() || chain.is_empty() {
         bail!("to and chain are required");
@@ -335,6 +366,7 @@ pub(super) async fn cmd_contract_call(
         },
         true,
         mev_protection,
+        force,
     )
     .await
 }
@@ -438,5 +470,55 @@ mod tests {
         let w = make_test_wallets();
         let result = resolve_address(&w, None, "unknown");
         assert!(result.is_err());
+    }
+
+    // ── handle_broadcast_error tests ─────────────────────────────────
+
+    #[test]
+    fn broadcast_error_81362_no_force_returns_cli_confirming() {
+        let api_err = crate::wallet_api::ApiCodeError {
+            code: "81362".to_string(),
+            msg: "please confirm".to_string(),
+        };
+        let err: anyhow::Error = api_err.into();
+        let result = handle_broadcast_error(err, false);
+        let confirming = result
+            .downcast_ref::<crate::output::CliConfirming>()
+            .expect("should be CliConfirming");
+        assert_eq!(confirming.message, "please confirm");
+        assert!(confirming.next.contains("--force"));
+    }
+
+    #[test]
+    fn broadcast_error_81362_with_force_returns_plain_error() {
+        let api_err = crate::wallet_api::ApiCodeError {
+            code: "81362".to_string(),
+            msg: "please confirm".to_string(),
+        };
+        let err: anyhow::Error = api_err.into();
+        let result = handle_broadcast_error(err, true);
+        // Should NOT be CliConfirming when force=true
+        assert!(result.downcast_ref::<crate::output::CliConfirming>().is_none());
+        assert_eq!(format!("{}", result), "please confirm");
+    }
+
+    #[test]
+    fn broadcast_error_other_code_returns_plain_error() {
+        let api_err = crate::wallet_api::ApiCodeError {
+            code: "50000".to_string(),
+            msg: "server error".to_string(),
+        };
+        let err: anyhow::Error = api_err.into();
+        let result = handle_broadcast_error(err, false);
+        assert!(result.downcast_ref::<crate::output::CliConfirming>().is_none());
+        assert_eq!(format!("{}", result), "server error");
+    }
+
+    #[test]
+    fn broadcast_error_non_api_error_passes_through() {
+        let err = anyhow::anyhow!("network timeout");
+        let result = handle_broadcast_error(err, false);
+        assert!(result.downcast_ref::<crate::output::CliConfirming>().is_none());
+        assert_eq!(format!("{}", result), "network timeout");
     }
 }

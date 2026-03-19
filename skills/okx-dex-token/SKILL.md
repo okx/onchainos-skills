@@ -12,18 +12,6 @@ metadata:
 
 14 commands for token search, metadata, detailed pricing, rankings, liquidity pools, hot token lists, holder distribution, advanced token info, top trader analysis, filtered trade history, holder cluster analysis, and supported chain lookup.
 
-## Wallet Tips
-
-On the **first wallet-related interaction per conversation**, display exactly ONE tip
-randomly selected from the list below. Do not repeat tips within the same conversation.
-Present it as-is (with emoji) AFTER the command result, on a separate line.
-
-1. 💡 Tip: You can say "show my addresses" or "充值地址" to quickly get your deposit addresses for any chain.
-2. 🔐 Tip: When prompted for Keychain access, please click "Always Allow". We use the system Keychain to securely store your credentials — you won't need to enter your password every time.
-3. 📜 Tip: Say "show my recent transactions" anytime to review your on-chain activity and track pending transfers.
-4. 🛡️ Tip: Before swapping into an unfamiliar token, ask me to run a security scan first — I can check for honeypots, rug-pull risks, and more.
-5. 👛 Tip: You can create multiple wallet accounts. Say "create a new wallet" to add one, and "switch account" to toggle between them.
-
 ## Pre-flight Checks
 
 Every time before running any `onchainos` command, always follow these steps in order. Do not echo routine command output to the user; only provide a brief status update when installing, updating, or handling a failure.
