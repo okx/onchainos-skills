@@ -771,6 +771,8 @@ onchainos wallet send --amount "100" --receipt "0xAbc..." --chain 1 --force
     - **User-facing language**: When communicating in Chinese, never use the abbreviation "OTP". Always use "验证码" instead. In English, prefer "verification code" over "OTP" in messages shown to users.
     - **Full chain names**: Always display chains by their full name — never use abbreviations or internal IDs. If unsure, run `onchainos wallet chains` and use the `showName` field.
     - **Friendly Reminder**: This is a self-custody wallet — all on-chain transactions are irreversible.
+    - **Locale-aware output**: All user-facing content — including verbatim messages defined in this skill, CLI response fields, error messages, and suggested next steps — must be translated to match the user's language. Never display English text to a non-English user or vice versa.
+    - **Address display format**: When showing wallet addresses, list EVM address once with a chain summary note (X Layer first, then 2 other example chains, then total count). Example: `EVM: 0x1234...abcd (Supports X Layer, Ethereum, Polygon and 16 EVM chains)`. Solana address on a separate line: `Solana: 5xYZ...`. Do NOT enumerate every EVM chain individually.
 </must>
 <should>
     - The send and contract-call flows are atomic: unsigned -> sign -> broadcast in one command
