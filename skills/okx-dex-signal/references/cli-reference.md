@@ -144,8 +144,8 @@ onchainos leaderboard list --chain <chain> --time-frame <tf> --sort-by <sort> [o
 | `topPnlTokenList` | Array | Top 3 tokens by PnL |
 | `topPnlTokenList[].tokenContractAddress` | String | Token contract address |
 | `topPnlTokenList[].tokenSymbol` | String | Token symbol |
-| `topPnlTokenList[].tokenPnlUsd` | String | Token PnL (USD) |
-| `topPnlTokenList[].tokenPnlPercent` | String | Token PnL % |
+| `topPnlTokenList[].tokenPnLUsd` | String | Token PnL (USD) |
+| `topPnlTokenList[].tokenPnLPercent` | String | Token PnL % |
 | `txVolume` | String | Total transaction volume (USD) in the selected time frame |
 | `txs` | String | Total transaction count in the selected time frame |
 | `lastActiveTimestamp` | String | Last active time (Unix milliseconds) |
