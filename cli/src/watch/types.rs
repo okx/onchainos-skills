@@ -4,20 +4,27 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TradeEvent {
-    pub trader_address: String,
+    pub wallet_address: String,
     pub quote_token_symbol: String,
     pub quote_token_amount: String,
-    pub base_token_symbol: String,
-    pub base_token_contract_address: String,
-    pub base_token_chain_index: String,
-    pub trade_price: String,
+    #[serde(rename = "tokenSymbol")]
+    pub token_symbol: String,
+    #[serde(rename = "tokenContractAddress")]
+    pub token_contract_address: String,
+    #[serde(rename = "chainIndex")]
+    pub chain_index: String,
+    #[serde(rename = "tokenPrice")]
+    pub token_price: String,
     pub market_cap: String,
     pub realized_pnl_usd: String,
+    /// "1" = buy, "2" = sell
     pub trade_type: String,
     pub trade_time: String,
-    /// Tag types: 1=smart_money, 2=kol (public channel only)
+    /// Tracker types: 1=smart_money, 2=kol
+    #[serde(rename = "trackerType", default, skip_serializing_if = "Option::is_none")]
+    pub tracker_type: Option<Vec<u8>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tag_type_list: Option<Vec<u8>>,
+    pub tx_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -33,13 +40,17 @@ pub struct ChannelDef {
 
 /// All known channels. Used as the default when --channel is not specified.
 pub const ALL_CHANNELS: &[ChannelDef] = &[
-    ChannelDef { name: "address-tracker-trade-public", visibility: ChannelVisibility::Public },
+    ChannelDef { name: "kol_smartmoney-tracker-activity", visibility: ChannelVisibility::Public },
 ];
 
 /// Persisted subscription config for a watch session.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WatchConfig {
     pub channels: Vec<String>,
+    /// Wallet addresses for `address-tracker-activity` channel.
+    /// Each address becomes a separate subscription arg: { "channel": "address-tracker-activity", "walletAddress": "0x..." }
+    #[serde(default)]
+    pub wallet_addresses: Vec<String>,
     pub env: WatchEnv,
     pub created_at: u64,
 }

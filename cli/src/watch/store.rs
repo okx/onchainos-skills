@@ -14,7 +14,9 @@ const MAX_FILES: u32 = 3;
 /// Uses $ONCHAINOS_WATCH_DIR if set, otherwise ~/.onchainos/watch/
 pub fn watch_root() -> Result<PathBuf> {
     if let Ok(dir) = std::env::var("ONCHAINOS_WATCH_DIR") {
-        return Ok(PathBuf::from(dir));
+        if !dir.is_empty() {
+            return Ok(PathBuf::from(dir));
+        }
     }
     let home = dirs::home_dir().context("cannot determine home directory")?;
     Ok(home.join(".onchainos").join("watch"))

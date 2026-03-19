@@ -96,6 +96,7 @@ pub async fn run_daemon(_id: &str, dir: &Path) -> Result<()> {
 
     let config = read_config(_id).unwrap_or_else(|_| super::types::WatchConfig {
         channels: super::types::ALL_CHANNELS.iter().map(|c| c.name.to_string()).collect(),
+        wallet_addresses: vec![],
         env: WatchEnv::Prod,
         created_at: 0,
     });
@@ -107,7 +108,7 @@ pub async fn run_daemon(_id: &str, dir: &Path) -> Result<()> {
 
     let mut attempts = 0u32;
     loop {
-        match connect_and_stream(dir, &ws_url, &creds, &config.channels).await {
+        match connect_and_stream(dir, &ws_url, &creds, &config.channels, &config.wallet_addresses).await {
             Ok(reason) => {
                 eprintln!("[watch daemon] disconnected: {}", reason);
                 if reason == "stopped" {
@@ -134,22 +135,40 @@ pub async fn run_daemon(_id: &str, dir: &Path) -> Result<()> {
 }
 
 /// Connect to WS, login, subscribe, stream events. Returns a reason string on clean exit.
-async fn connect_and_stream(dir: &Path, ws_url: &str, creds: &Credentials, channels: &[String]) -> Result<String> {
+async fn connect_and_stream(
+    dir: &Path,
+    ws_url: &str,
+    creds: &Credentials,
+    channels: &[String],
+    wallet_addresses: &[String],
+) -> Result<String> {
     let (mut ws, _): (WsStream, _) = connect_async(ws_url).await?;
 
     // Login
     ws.send(Message::Text(creds.login_msg().into())).await?;
     wait_for_login_ack(&mut ws).await?;
 
-    // Subscribe to all configured channels
-    let args: Vec<_> = channels.iter()
-        .map(|ch| serde_json::json!({ "channel": ch }))
+    // Build subscribe args:
+    //   - kol_smartmoney-tracker-activity: { "channel": ch }
+    //   - address-tracker-activity: one arg per wallet address { "channel": ch, "walletAddress": addr }
+    let args: Vec<serde_json::Value> = channels.iter()
+        .flat_map(|ch| -> Vec<serde_json::Value> {
+            if ch == "address-tracker-activity" {
+                wallet_addresses.iter()
+                    .map(|addr| serde_json::json!({ "channel": ch, "walletAddress": addr }))
+                    .collect()
+            } else {
+                vec![serde_json::json!({ "channel": ch })]
+            }
+        })
         .collect();
+
+    let ack_count = args.len();
     let sub_msg = serde_json::json!({ "op": "subscribe", "args": args });
     ws.send(Message::Text(sub_msg.to_string().into())).await?;
 
-    // Wait for subscribe ACK
-    wait_for_subscribe_ack(&mut ws).await?;
+    // Wait for one ACK per subscription arg
+    wait_for_subscribe_acks(&mut ws, ack_count).await?;
     write_status(dir, "running", None)?;
 
     let mut heartbeat = interval(Duration::from_secs(HEARTBEAT_SECS));
@@ -220,14 +239,24 @@ async fn wait_for_login_ack(ws: &mut WsStream) -> Result<()> {
     .unwrap_or(Err(anyhow::anyhow!("login ack timeout")))
 }
 
-async fn wait_for_subscribe_ack(ws: &mut WsStream) -> Result<()> {
+/// Wait for `count` subscribe ACKs (one per subscription arg).
+async fn wait_for_subscribe_acks(ws: &mut WsStream, count: usize) -> Result<()> {
+    if count == 0 {
+        return Ok(());
+    }
     timeout(Duration::from_secs(10), async {
+        let mut acked = 0usize;
         loop {
             match ws.next().await {
                 Some(Ok(Message::Text(text))) => {
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
                         match v.get("event").and_then(|e| e.as_str()) {
-                            Some("subscribe") => return Ok(()),
+                            Some("subscribe") => {
+                                acked += 1;
+                                if acked >= count {
+                                    return Ok(());
+                                }
+                            }
                             Some("error") => {
                                 let msg = v.get("msg").and_then(|m| m.as_str()).unwrap_or("unknown");
                                 return Err(anyhow::anyhow!("subscribe error: {}", msg));
@@ -279,4 +308,6 @@ struct WsPush {
 #[derive(Deserialize)]
 struct WsPushArg {
     channel: String,
+    #[serde(rename = "walletAddress", default)]
+    wallet_address: Option<String>,
 }

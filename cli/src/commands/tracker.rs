@@ -79,10 +79,15 @@ pub enum TrackerCommand {
 pub enum WatchCommand {
     /// Start a background WebSocket watch session and return its ID
     Start {
-        /// Channel(s) to subscribe, e.g. --channel address-tracker-trade-public.
+        /// Channel(s) to subscribe, e.g. --channel kol_smartmoney-tracker-activity.
         /// Can be specified multiple times. Defaults to all known channels.
         #[arg(long)]
         channel: Vec<String>,
+        /// Wallet addresses for the address-tracker-activity channel, comma-separated.
+        /// e.g. --wallet-addresses 0xAAA,0xBBB,0xCCC (max 20)
+        /// Required when --channel address-tracker-activity is used.
+        #[arg(long)]
+        wallet_addresses: Option<String>,
         /// Environment: prod (default) or pre
         #[arg(long, default_value = "prod")]
         env: String,
@@ -93,7 +98,7 @@ pub enum WatchCommand {
         /// Watch session ID returned by watch start
         #[arg(long)]
         id: String,
-        /// Channel to poll (e.g. address-tracker-trade-public). Defaults to the session's subscribed channel.
+        /// Channel to poll (e.g. kol_smartmoney-tracker-activity). Defaults to the session's subscribed channel.
         #[arg(long)]
         channel: Option<String>,
         /// Maximum number of events to return (default: 20)
@@ -122,11 +127,12 @@ pub enum WatchCommand {
         trade_type: Option<String>,
     },
 
-    /// Stop a running watch session and clean up its resources
+    /// Stop a running watch session and clean up its resources.
+    /// If --id is omitted, all running sessions are stopped.
     Stop {
-        /// Watch session ID to stop
+        /// Watch session ID to stop. Omit to stop all sessions.
         #[arg(long)]
-        id: String,
+        id: Option<String>,
         /// Return any unread events before stopping
         #[arg(long)]
         flush: bool,
@@ -180,7 +186,15 @@ pub async fn execute(ctx: &Context, cmd: TrackerCommand) -> Result<()> {
 
 async fn execute_watch(cmd: WatchCommand) -> Result<()> {
     match cmd {
-        WatchCommand::Start { channel, env } => watch_start(channel, &env).await,
+        WatchCommand::Start { channel, wallet_addresses, env } => {
+            let addrs = wallet_addresses
+                .unwrap_or_default()
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            watch_start(channel, addrs, &env).await
+        }
         WatchCommand::Poll {
             id,
             channel,
@@ -193,7 +207,10 @@ async fn execute_watch(cmd: WatchCommand) -> Result<()> {
             since,
             trade_type,
         } => watch_poll(&id, channel, limit, min_quote_amount, min_market_cap, min_pnl, trader, tag, since, trade_type),
-        WatchCommand::Stop { id, flush } => watch_stop(&id, flush),
+        WatchCommand::Stop { id, flush } => match id {
+            Some(id) => watch_stop(&id, flush),
+            None => watch_stop_all(flush),
+        },
         WatchCommand::List => watch_list(),
         WatchCommand::RunDaemon { id } => run_daemon_entry(&id).await,
     }
@@ -201,7 +218,7 @@ async fn execute_watch(cmd: WatchCommand) -> Result<()> {
 
 // ── watch start ───────────────────────────────────────────────────────────────
 
-async fn watch_start(channels: Vec<String>, env: &str) -> Result<()> {
+async fn watch_start(channels: Vec<String>, wallet_addresses: Vec<String>, env: &str) -> Result<()> {
     let watch_env = match env {
         "pre" => WatchEnv::Pre,
         "prod" => WatchEnv::Prod,
@@ -216,13 +233,31 @@ async fn watch_start(channels: Vec<String>, env: &str) -> Result<()> {
     channels.sort();
     channels.dedup();
 
+    // Validate: address-tracker-activity requires at least one wallet address, max 20
+    if channels.iter().any(|c| c == "address-tracker-activity") {
+        if wallet_addresses.is_empty() {
+            bail!("--wallet-addresses is required when using channel address-tracker-activity");
+        }
+        if wallet_addresses.len() > 20 {
+            bail!("--wallet-addresses exceeds maximum of 20 addresses (got {})", wallet_addresses.len());
+        }
+    }
+
     // Return existing session if same channel set + env is already running
     let existing = store::list_watches()?;
+    let mut wallet_addresses_sorted = wallet_addresses.clone();
+    wallet_addresses_sorted.sort();
+    wallet_addresses_sorted.dedup();
+    let wallet_addresses = wallet_addresses_sorted;
+
     for w in &existing {
         if let Some(cfg) = &w.config {
             let mut existing_channels = cfg.channels.clone();
             existing_channels.sort();
+            let mut existing_wallets = cfg.wallet_addresses.clone();
+            existing_wallets.sort();
             if existing_channels == channels
+                && existing_wallets == wallet_addresses
                 && cfg.env == watch_env
                 && matches!(w.state, DaemonState::Running | DaemonState::Reconnecting)
             {
@@ -230,6 +265,7 @@ async fn watch_start(channels: Vec<String>, env: &str) -> Result<()> {
                     "id": w.id,
                     "status": "already_running",
                     "channels": channels,
+                    "wallet_addresses": wallet_addresses,
                     "env": env
                 }));
                 return Ok(());
@@ -242,6 +278,7 @@ async fn watch_start(channels: Vec<String>, env: &str) -> Result<()> {
 
     let config = WatchConfig {
         channels: channels.clone(),
+        wallet_addresses: wallet_addresses.clone(),
         env: watch_env,
         created_at: now_ms(),
     };
@@ -277,6 +314,7 @@ async fn watch_start(channels: Vec<String>, env: &str) -> Result<()> {
         "status": "starting",
         "pid": pid,
         "channels": channels,
+        "wallet_addresses": wallet_addresses,
         "env": env,
         "dir": dir.to_string_lossy()
     }));
@@ -349,13 +387,13 @@ fn watch_poll(
                 }
             }
             if let Some(ref t) = trader {
-                if !e.trader_address.starts_with(t.as_str()) {
+                if !e.wallet_address.starts_with(t.as_str()) {
                     return false;
                 }
             }
             if let Some(tag) = tag_filter {
                 let has_tag = e
-                    .tag_type_list
+                    .tracker_type
                     .as_ref()
                     .map(|list| list.contains(&tag))
                     .unwrap_or(false);
@@ -369,9 +407,9 @@ fn watch_poll(
                 }
             }
             if let Some(ref tt) = trade_type_filter {
+                // actual data uses "1"=buy, "2"=sell; "0" means all
                 if !tt.is_empty() && tt != "0" {
-                    let expected = if tt == "1" { "buy" } else { "sell" };
-                    if e.trade_type != expected {
+                    if e.trade_type != tt.as_str() {
                         return false;
                     }
                 }
@@ -403,43 +441,57 @@ fn watch_poll(
 
 // ── watch stop ────────────────────────────────────────────────────────────────
 
-fn watch_stop(id: &str, flush: bool) -> Result<()> {
+fn stop_one(id: &str, flush: bool) -> Result<usize> {
     let dir = store::watch_dir(id)?;
     if !dir.exists() {
         bail!("watch session '{}' not found", id);
     }
 
-    // Optionally flush remaining events before stopping (all channels)
-    let flushed_trades = if flush {
+    let flushed_count = if flush {
         let config = store::read_config(id)?;
-        let mut all_events = Vec::new();
+        let mut n = 0usize;
         for ch in &config.channels {
             let result = store::read_events_from_cursor(&dir, ch, 1000)?;
             store::write_cursor(&dir, ch, result.new_cursor.file_no, result.new_cursor.offset)?;
-            all_events.extend(result.events);
+            n += result.events.len();
         }
-        all_events
+        n
     } else {
-        vec![]
+        0
     };
 
-    // Kill the daemon
     let kill_result = kill_daemon(id);
-
-    // Mark stopped and clean up
     let _ = store::write_status(&dir, "stopped", None);
     store::remove_watch_dir(id)?;
+    let _ = kill_result;
 
-    match kill_result {
-        Ok(_) | Err(_) => {} // best-effort; directory already cleaned up
-    }
+    Ok(flushed_count)
+}
 
+fn watch_stop(id: &str, flush: bool) -> Result<()> {
+    let flushed_count = stop_one(id, flush)?;
     output::success(json!({
         "id": id,
         "status": "stopped",
-        "flushed_count": flushed_trades.len(),
-        "trades": flushed_trades
+        "flushed_count": flushed_count,
     }));
+    Ok(())
+}
+
+fn watch_stop_all(flush: bool) -> Result<()> {
+    let watches = store::list_watches()?;
+    if watches.is_empty() {
+        output::success(json!({ "stopped": [], "message": "no active sessions" }));
+        return Ok(());
+    }
+    let mut stopped = Vec::new();
+    for w in watches {
+        match stop_one(&w.id, flush) {
+            Ok(_) => stopped.push(w.id),
+            Err(e) => eprintln!("[warn] failed to stop {}: {}", w.id, e),
+        }
+    }
+    output::success(json!({ "stopped": stopped }));
     Ok(())
 }
 
