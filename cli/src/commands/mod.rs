@@ -1,5 +1,6 @@
 pub mod agentic_wallet;
 pub mod gateway;
+pub mod leaderboard;
 pub mod market;
 pub mod memepump;
 pub mod portfolio;

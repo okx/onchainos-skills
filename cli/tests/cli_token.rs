@@ -1,5 +1,6 @@
 //! Integration tests for `onchainos token` commands:
-//! search, info, price-info, trending, holders, liquidity, hot-tokens, advanced-info, top-trader, trades.
+//! search, info, price-info, trending, holders, liquidity, hot-tokens, advanced-info, top-trader, trades,
+//! cluster-overview, cluster-top-holders, cluster-list.
 
 mod common;
 
@@ -804,4 +805,177 @@ fn token_trades_missing_address_fails() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
+}
+
+// ─── cluster-overview ───────────────────────────────────────────────
+
+#[test]
+fn token_cluster_overview_eth_usdc() {
+    let output = run_with_retry(&[
+        "token",
+        "cluster-overview",
+        "--address",
+        tokens::ETH_USDC,
+        "--chain",
+        "ethereum",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_object() || data.is_array(),
+        "expected object or array: {data}"
+    );
+}
+
+#[test]
+fn token_cluster_overview_solana() {
+    let output = run_with_retry(&[
+        "token",
+        "cluster-overview",
+        "--address",
+        tokens::SOL_WSOL,
+        "--chain",
+        "solana",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_object() || data.is_array(),
+        "expected object or array: {data}"
+    );
+}
+
+#[test]
+fn token_cluster_overview_missing_address_fails() {
+    onchainos()
+        .args(["token", "cluster-overview"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+}
+
+// ─── cluster-top-holders ────────────────────────────────────────────
+
+#[test]
+fn token_cluster_top_holders_top10() {
+    let output = run_with_retry(&[
+        "token",
+        "cluster-top-holders",
+        "--address",
+        tokens::ETH_USDC,
+        "--chain",
+        "ethereum",
+        "--range-filter",
+        "1",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_object() || data.is_array(),
+        "expected object or array: {data}"
+    );
+}
+
+#[test]
+fn token_cluster_top_holders_top100() {
+    let output = run_with_retry(&[
+        "token",
+        "cluster-top-holders",
+        "--address",
+        tokens::ETH_USDC,
+        "--chain",
+        "ethereum",
+        "--range-filter",
+        "3",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_object() || data.is_array(),
+        "expected object or array: {data}"
+    );
+}
+
+#[test]
+fn token_cluster_top_holders_missing_address_fails() {
+    onchainos()
+        .args(["token", "cluster-top-holders", "--range-filter", "1"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+}
+
+#[test]
+fn token_cluster_top_holders_missing_range_filter_fails() {
+    onchainos()
+        .args([
+            "token",
+            "cluster-top-holders",
+            "--address",
+            tokens::ETH_USDC,
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+}
+
+// ─── cluster-list ───────────────────────────────────────────────────
+
+#[test]
+fn token_cluster_list_eth_usdc() {
+    let output = run_with_retry(&[
+        "token",
+        "cluster-list",
+        "--address",
+        tokens::ETH_USDC,
+        "--chain",
+        "ethereum",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected array or object: {data}"
+    );
+}
+
+#[test]
+fn token_cluster_list_solana() {
+    let output = run_with_retry(&[
+        "token",
+        "cluster-list",
+        "--address",
+        tokens::SOL_WSOL,
+        "--chain",
+        "solana",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(
+        data.is_array() || data.is_object(),
+        "expected array or object: {data}"
+    );
+}
+
+#[test]
+fn token_cluster_list_missing_address_fails() {
+    onchainos()
+        .args(["token", "cluster-list"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+}
+
+// ─── cluster-supported-chains ────────────────────────────────────────
+
+#[test]
+fn token_cluster_supported_chains_returns_list() {
+    let output = run_with_retry(&["token", "cluster-supported-chains"]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(data.is_array(), "expected array of chains: {data}");
+    let arr = data.as_array().unwrap();
+    assert!(!arr.is_empty(), "expected at least one supported chain");
+    let first = &arr[0];
+    assert!(
+        first.get("chainIndex").is_some(),
+        "chain entry missing 'chainIndex': {first}"
+    );
+    assert!(
+        first.get("chainName").is_some(),
+        "chain entry missing 'chainName': {first}"
+    );
 }

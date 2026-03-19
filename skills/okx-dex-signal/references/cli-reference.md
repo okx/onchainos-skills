@@ -1,6 +1,6 @@
 # Onchain OS DEX Signal — CLI Command Reference
 
-Detailed parameter tables, return field schemas, and usage examples for the 2 signal commands.
+Detailed parameter tables, return field schemas, and usage examples for the 4 signal and leaderboard commands.
 
 ## 1. onchainos signal chains
 
@@ -84,4 +84,81 @@ onchainos signal list --chain ethereum --wallet-type 3 --min-amount-usd 10000
 ```bash
 onchainos signal list --chain ethereum --wallet-type 3 --min-amount-usd 10000
 # -> whale-only signals on Ethereum, min $10k
+```
+
+---
+
+## 3. onchainos leaderboard supported-chains
+
+
+Get supported chains for the leaderboard. No parameters required.
+
+```bash
+onchainos leaderboard supported-chains
+```
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `chainIndex` | String | Chain identifier (e.g., `"1"`, `"501"`) |
+| `chainName` | String | Human-readable chain name (e.g., `"Ethereum"`, `"Solana"`) |
+| `chainLogo` | String | Chain logo URL |
+
+> Call this first to confirm chain support before calling `onchainos leaderboard list`.
+
+---
+
+## 4. onchainos leaderboard list
+
+Get top trader leaderboard ranked by PnL, win rate, volume, tx count, or ROI. Returns at most 20 entries per request.
+
+```bash
+onchainos leaderboard list --chain <chain> --time-frame <tf> --sort-by <sort> [options]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--chain` | Yes | - | Chain name (e.g., `ethereum`, `solana`, `base`) |
+| `--time-frame` | Yes | - | Statistics window: `1`=1D, `2`=3D, `3`=7D, `4`=1M, `5`=3M |
+| `--sort-by` | Yes | - | Sort field: `1`=PnL, `2`=Win Rate, `3`=Tx number, `4`=Volume, `5`=ROI |
+| `--wallet-type` | No | all types | Single-select wallet type: `sniper`, `dev`, `fresh`, `pump`, `smartMoney`, `influencer` |
+| `--min-realized-pnl-usd` | No | - | Minimum realized PnL (USD) |
+| `--max-realized-pnl-usd` | No | - | Maximum realized PnL (USD) |
+| `--min-win-rate-percent` | No | - | Minimum win rate % (0–100) |
+| `--max-win-rate-percent` | No | - | Maximum win rate % (0–100) |
+| `--min-txs` | No | - | Minimum number of transactions |
+| `--max-txs` | No | - | Maximum number of transactions |
+| `--min-tx-volume` | No | - | Minimum transaction volume (USD) |
+| `--max-tx-volume` | No | - | Maximum transaction volume (USD) |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `walletAddress` | String | Wallet address |
+| `realizedPnlUsd` | String | Cumulative realized PnL (USD) in the selected time frame |
+| `realizedPnlPercent` | String | Cumulative realized PnL % in the selected time frame |
+| `winRatePercent` | String | Win rate % (profitable tokens / total traded tokens) |
+| `avgBuyValueUsd` | String | Average buy value (USD) |
+| `topPnlTokenList` | Array | Top 3 tokens by PnL |
+| `topPnlTokenList[].tokenContractAddress` | String | Token contract address |
+| `topPnlTokenList[].tokenSymbol` | String | Token symbol |
+| `topPnlTokenList[].tokenPnLUsd` | String | Token PnL (USD) |
+| `topPnlTokenList[].tokenPnLPercent` | String | Token PnL % |
+| `txVolume` | String | Total transaction volume (USD) in the selected time frame |
+| `txs` | String | Total transaction count in the selected time frame |
+| `lastActiveTimestamp` | String | Last active time (Unix milliseconds) |
+
+**Examples**:
+
+```bash
+# Top traders on Solana by PnL over last 7D
+onchainos leaderboard list --chain solana --time-frame 3 --sort-by 1
+
+# Top smart money on Ethereum by win rate over last 30D
+onchainos leaderboard list --chain ethereum --time-frame 4 --sort-by 2 --wallet-type smartMoney
+
+# Top snipers on BSC by volume over last 1D, min 10 txs
+onchainos leaderboard list --chain bsc --time-frame 1 --sort-by 4 --wallet-type sniper --min-txs 10
 ```

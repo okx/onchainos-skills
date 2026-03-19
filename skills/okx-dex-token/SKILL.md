@@ -1,6 +1,6 @@
 ---
 name: okx-dex-token
-description: "Use this skill for token-level data: search and discover tokens, browse trending/hot tokens (热门, 代币榜单, by trending score or Twitter/X mentions), get liquidity pool info, view holder distribution by tag (whale/巨鲸, smart money, KOL, sniper, sniper holding percentage, sniper percent, bundler percent), check token safety and honeypot risk (貔貅盘, 'is this token a honeypot', 'can I sell this', 'check token safety'), see who created a token and their history, view recent buy/sell trade activity for a token, find top profit addresses, or filter trade history by wallet type. This skill can be invoked on user intent; the specific token address can be provided after. Do NOT use for cross-market whale/signal tracking — use okx-dex-signal. Do NOT use for meme/pump.fun launch scanning, dev reputation, or bundle detection — use okx-dex-trenches. Do NOT use for personal DEX trade history or price charts — use okx-dex-market."
+description: "Use this skill for token-level data: cluster overview, search tokens, trending/hot tokens (热门, 代币榜单), liquidity pools, holder distribution (whale/巨鲸, sniper, bundler percent), token safety and honeypot risk (貔貅盘, 'is this token a honeypot', 'is this safe to buy', 'rugged?', 'can I sell this'), who created a token, recent buy/sell activity, top profit addresses, trade history by wallet type, or holder cluster analysis (持仓集中度, rug pull probability/跑路风险, new wallet percentage/新钱包持仓比例, suspicious holding percentage/可疑持仓%, bundle hold percent, holder clusters, 'are top holders in same cluster'). Invoke on user intent; address can be provided after. Do NOT use for market-wide whale/signal tracking — use okx-dex-signal. Do NOT use for meme/pump.fun launch scanning, dev reputation, or bundle detection — use okx-dex-trenches. Do NOT use for personal DEX trade history or price charts — use okx-dex-market."
 license: MIT
 metadata:
   author: okx
@@ -10,7 +10,7 @@ metadata:
 
 # Onchain OS DEX Token
 
-10 commands for token search, metadata, detailed pricing, rankings, liquidity pools, hot token lists, holder distribution, advanced token info, top trader analysis, and filtered trade history.
+14 commands for token search, metadata, detailed pricing, rankings, liquidity pools, hot token lists, holder distribution, advanced token info, top trader analysis, filtered trade history, holder cluster analysis, and supported chain lookup.
 
 ## Wallet Tips
 
@@ -79,6 +79,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For transaction broadcasting → use `okx-onchain-gateway`
 - For meme token scanning (dev reputation, rug pull history, bundlers, new launches, similar tokens by same dev) → use `okx-dex-trenches`
 - For market-wide smart money / whale / KOL signal alerts → use `okx-dex-signal`
+- For leaderboard / 牛人榜 / top traders ranked across the market (by PnL, win rate, volume) → use `okx-dex-signal`
 - For per-token holder filtering by tag (whale, smart money, KOL, sniper) → use this skill (`holders --tag-filter`)
 - For per-token risk analysis (dev rug pull count, holder concentration, creator info) → use this skill (`advanced-info`)
 
@@ -110,6 +111,14 @@ Users may use Chinese crypto slang or platform-specific terms. Map them to the c
 | 开发者持仓 | dev holding percent | `token hot-tokens --dev-hold-percent-min/max` or `token advanced-info` (devHoldingPercent) |
 | 净流入 | net inflow | `token hot-tokens --inflow-min/max` |
 | 社区认可 | community recognized, verified | `token search` (communityRecognized field) |
+| 持仓集中度 / 聚类分析 | holder cluster concentration, cluster analysis | `token cluster-overview` |
+| 前100持仓概览 / Top100 | top 100 holder overview, top 100 behavior | `token cluster-top-holders --range-filter 3` |
+| 持仓集群 / 集群列表 | holder cluster list, cluster groups | `token cluster-list` |
+| Rug Pull可能性 | rug pull probability, rug pull risk | `token cluster-overview` (rugPullPercent) |
+| 新地址占比 | new address ratio, fresh wallet ratio | `token cluster-overview` (holderNewAddressPercent) |
+| 同资金来源 | same funding source | `token cluster-overview` (holderSameFundSourcePercent) |
+| 同创建时间地址占比 | same creation time address ratio | `token cluster-overview` (holderSameCreationTimePercent) |
+| 支持的链 / cluster支持链 | supported chains for cluster | `token cluster-supported-chains` |
 
 ## Quickstart
 
@@ -146,6 +155,18 @@ onchainos token top-trader --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1
 
 # Top KOL traders
 onchainos token top-trader --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana --tag-filter 1
+
+# Holder cluster concentration overview (rug pull %, new addresses %)
+onchainos token cluster-overview --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana
+
+# Top 100 holder behavior (avg PnL, avg cost, trend)
+onchainos token cluster-top-holders --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana --range-filter 3
+
+# Holder cluster list (groups of top 300 holders)
+onchainos token cluster-list --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana
+
+# Check which chains support holder cluster analysis
+onchainos token cluster-supported-chains
 ```
 
 ## Chain Name Support
@@ -175,6 +196,10 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | 8 | `onchainos token advanced-info --address <address>` | Get advanced token info (risk level, creator, dev stats, holder concentration) |
 | 9 | `onchainos token top-trader --address <address>` | Get top traders / profit addresses for a token |
 | 10 | `onchainos token trades --address <address>` | Get token DEX trade history with optional tag/wallet filters |
+| 11 | `onchainos token cluster-overview --address <address>` | Get holder cluster concentration overview (cluster level, rug pull %, new address %) |
+| 12 | `onchainos token cluster-top-holders --address <address> --range-filter <1\|2\|3>` | Get top 10/50/100 holder overview (avg PnL, avg cost, trend type); 1=top10, 2=top50, 3=top100 |
+| 13 | `onchainos token cluster-list --address <address>` | Get holder cluster list (clusters of top 300 holders with address details) |
+| 14 | `onchainos token cluster-supported-chains` | Get chains supported by holder cluster analysis |
 
 ## Boundary: token vs market skill
 
@@ -191,6 +216,9 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Advanced token info (risk, creator, dev stats) | `onchainos token advanced-info` | - |
 | Top traders / profit addresses | `onchainos token top-trader` | - |
 | Token trade history with tag/wallet filter | `onchainos token trades` | - |
+| Holder cluster concentration (LOW/MEDIUM/HIGH, rug pull %, new address %) | `onchainos token cluster-overview` | - |
+| Top 10/50/100 holder behavior (avg PnL, avg cost, trend) | `onchainos token cluster-top-holders` | - |
+| Holder cluster groups (top 300, with address details) | `onchainos token cluster-list` | - |
 | Raw real-time price (single value) | - | `onchainos market price` |
 | K-line / candlestick chart | - | `onchainos market kline` |
 | Wallet PnL overview / DEX transaction history | - | `onchainos market portfolio-*` |
@@ -257,6 +285,53 @@ Before swapping an unknown token, always verify:
 5. If all checks pass → proceed to swap
 ```
 
+### Workflow D: Follow Smart Money → Cluster Check → Trade
+
+> User: "What is smart money buying? Check if it's safe and buy"
+
+```
+1. okx-dex-signal   onchainos signal list --chain <chain> --wallet-type 1
+                                                                          → get tokenContractAddress + chainIndex
+       ↓ pick a token
+2. okx-dex-token    onchainos token price-info --address <address> --chain <chain>    → market cap, liquidity, 24h volume
+3. okx-dex-token    onchainos token cluster-overview --address <address> --chain <chain>
+                                                                          → cluster concentration, rug pull %, new address %
+4. okx-dex-token    onchainos token cluster-top-holders --address <address> --chain <chain> --range-filter 3
+                                                                          → top 100 avg PnL, cost, trend direction
+5. okx-dex-market   onchainos market kline --address <address> --chain <chain>        → price chart
+       ↓ user decides to buy
+6. okx-dex-swap     onchainos swap quote --from ... --to <address> --amount ... --chain <chain>
+7. okx-dex-swap     onchainos swap swap --from ... --to <address> --amount ... --chain <chain> --wallet <addr>
+```
+
+**Data handoff**: `baseTokenContractAddress` + `baseTokenChainIndex` from step 1 feed into all subsequent steps.
+
+### Workflow E: Hot Token Discovery → Cluster Safety Check → Buy
+
+> User: "Show me the hottest tokens and check if any are safe to buy"
+
+```
+1. okx-dex-token    onchainos token hot-tokens --ranking-type 4 --chain solana
+                                                   → top tokens by trending score; pick an interesting one
+       ↓ tokenContractAddress + chainIndex
+2. okx-dex-token    onchainos token price-info --address <address> --chain solana
+                                                   → market cap, liquidity, 24h volume, price change
+3. okx-dex-token    onchainos token advanced-info --address <address> --chain solana
+                                                   → risk level, honeypot check, dev rug pull history
+4. okx-dex-token    onchainos token cluster-overview --address <address> --chain solana
+                                                   → concentration level, rug pull %, new address %, same-funding %
+5. okx-dex-token    onchainos token cluster-top-holders --address <address> --chain solana --range-filter 3
+                                                   → top 100 holder avg PnL, avg cost, hold/sell trend
+       ↓ green flags → confirm price momentum
+6. okx-dex-market   onchainos market kline --address <address> --chain solana --bar 15m --limit 48
+                                                   → recent price action
+       ↓ user decides to buy
+7. okx-dex-swap     onchainos swap quote --from 11111111111111111111111111111111 --to <address> --amount <amount> --chain solana
+8. okx-dex-swap     onchainos swap swap  --from 11111111111111111111111111111111 --to <address> --amount <amount> --chain solana --wallet <addr>
+```
+
+**Data handoff**: `tokenContractAddress` from step 1 reused as `<address>` in steps 2–8; if `riskControlLevel >= 3` in step 3 or `clusterLevel = HIGH` in step 4 → warn user and stop before swap.
+
 ## Operation Flow
 
 ### Step 1: Identify Intent
@@ -271,6 +346,10 @@ Before swapping an unknown token, always verify:
 - View hot/trending tokens (by score or X mentions) → `onchainos token hot-tokens`
 - Get advanced token info (risk, creator, dev stats) → `onchainos token advanced-info`
 - View top traders / profit addresses → `onchainos token top-trader`
+- Holder cluster concentration (rug pull risk, new address %, cluster level) → `onchainos token cluster-overview`
+- Top 10/50/100 holder behavior (avg PnL, cost, sell, trend) → `onchainos token cluster-top-holders`
+- Holder cluster groups (who is grouped together, per-cluster holding stats) → `onchainos token cluster-list`
+- Check which chains support cluster analysis → `onchainos token cluster-supported-chains`
 
 ### Step 2: Collect Parameters
 
@@ -280,6 +359,7 @@ Before swapping an unknown token, always verify:
 - For hot-tokens without chain → defaults to all chains; specify `--chain` to narrow
 - For search, `--chains` defaults to `"1,501"` (Ethereum + Solana)
 - For trending, `--sort-by` defaults to `5` (volume), `--time-frame` defaults to `4` (24h)
+- **Chain uncertainty for cluster commands**: If the user doesn't know whether their chain supports cluster analysis, suggest running `onchainos token cluster-supported-chains` first before calling cluster-overview / cluster-top-holders / cluster-list.
 
 ### Step 3: Call and Display
 
@@ -304,12 +384,15 @@ After displaying results, suggest 2-3 relevant follow-up actions based on the co
 | `token advanced-info` | 1. View holders → `onchainos token holders` (this skill) 2. View top traders → `onchainos token top-trader` (this skill) 3. Buy/swap this token → `okx-dex-swap` |
 | `token top-trader` | 1. View advanced info → `onchainos token advanced-info` (this skill) 2. View holder distribution → `onchainos token holders` (this skill) 3. Buy/swap this token → `okx-dex-swap` |
 | `token trades` | 1. View top traders → `onchainos token top-trader` (this skill) 2. View price chart → `okx-dex-market` 3. Buy/swap this token → `okx-dex-swap` |
+| `token cluster-overview` | 1. Drill into top holder behavior → `onchainos token cluster-top-holders` (this skill) 2. View cluster groups → `onchainos token cluster-list` (this skill) 3. Check advanced info → `onchainos token advanced-info` (this skill) |
+| `token cluster-top-holders` | 1. View cluster group details → `onchainos token cluster-list` (this skill) 2. View holder distribution → `onchainos token holders` (this skill) |
+| `token cluster-list` | 1. View price chart → `okx-dex-market` 2. Check top traders → `onchainos token top-trader` (this skill) |
 
 Present conversationally, e.g.: "Would you like to see the price chart or check the holder distribution?" — never expose skill names or endpoint paths to the user.
 
 ## Additional Resources
 
-For detailed parameter tables, return field schemas, and usage examples for all 10 commands, consult:
+For detailed parameter tables, return field schemas, and usage examples for all 14 commands, consult:
 - **`references/cli-reference.md`** — Full CLI command reference with params, return fields, and examples
 
 To search for specific command details: `grep -n "onchainos token <command>" references/cli-reference.md`
