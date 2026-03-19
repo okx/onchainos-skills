@@ -488,30 +488,30 @@ onchainos token cluster-list --address <address> [--chain <chain>]
 
 | Field | Type | Description |
 |---|---|---|
-| `clustList` | Array | List of holder clusters (top 100 clusters of the top 300 holders) |
-| `clustList[].holdingAmount` | String | Sum of all tokens held by cluster addresses (excludes blackhole and LP) |
-| `clustList[].holdingValueUsd` | String | USD value of all tokens held by cluster addresses |
-| `clustList[].holdingPercent` | String | % of token supply held by cluster addresses |
-| `clustList[].trendType` | Object | Overall position direction; nested `trendType` field: `buy`, `sell`, `neutral`, or `transfer` |
-| `clustList[].averageHoldingPeriod` | String | Weighted average holding time of cluster holders |
-| `clustList[].pnlUsd` | String | Total profit/loss of cluster holders (USD) |
-| `clustList[].pnlPercent` | String | Total profit/loss percentage of cluster holders |
-| `clustList[].buyVolume` | String | Total bought volume of the cluster (USD) |
-| `clustList[].averageBuyPriceUsd` | String | Weighted average cost price of cluster holders |
-| `clustList[].sellVolume` | String | Total sold volume of the cluster (USD) |
-| `clustList[].averageSellPriceUsd` | String | Weighted average selling price of cluster holders |
-| `clustList[].lastActiveTimestamp` | String | Last active time (Unix milliseconds) |
-| `clustList[].clusterAddressList` | Array | List of cluster holder addresses |
-| `clustList[].clusterAddressList[].address` | String | Wallet address |
-| `clustList[].clusterAddressList[].holdingAmount` | String | Tokens held by this address |
-| `clustList[].clusterAddressList[].holdingValueUsd` | String | USD value held by this address |
-| `clustList[].clusterAddressList[].holdingPercent` | String | % of supply held by this address |
-| `clustList[].clusterAddressList[].averageHoldingPeriod` | String | Average holding time of this address |
-| `clustList[].clusterAddressList[].lastActiveTimestamp` | String | Last active time (Unix milliseconds) |
-| `clustList[].clusterAddressList[].isContract` | Boolean | Whether it is a contract address |
-| `clustList[].clusterAddressList[].isExchange` | Boolean | Whether it is an exchange address |
-| `clustList[].clusterAddressList[].isKol` | Boolean | Whether it is a KOL address |
-| `clustList[].clusterAddressList[].addressRank` | String | Address ranking among all holders |
+| `clusterList` | Array | List of holder clusters (top 100 clusters of the top 300 holders) |
+| `clusterList[].holdingAmount` | String | Sum of all tokens held by cluster addresses (excludes blackhole and LP) |
+| `clusterList[].holdingValueUsd` | String | USD value of all tokens held by cluster addresses |
+| `clusterList[].holdingPercent` | String | % of token supply held by cluster addresses |
+| `clusterList[].trendType` | Object | Overall position direction; nested `trendType` field: `buy`, `sell`, `neutral`, or `transfer` |
+| `clusterList[].averageHoldingPeriod` | String | Weighted average holding time of cluster holders |
+| `clusterList[].pnlUsd` | String | Total profit/loss of cluster holders (USD) |
+| `clusterList[].pnlPercent` | String | Total profit/loss percentage of cluster holders |
+| `clusterList[].buyVolume` | String | Total bought volume of the cluster (USD) |
+| `clusterList[].averageBuyPriceUsd` | String | Weighted average cost price of cluster holders |
+| `clusterList[].sellVolume` | String | Total sold volume of the cluster (USD) |
+| `clusterList[].averageSellPriceUsd` | String | Weighted average selling price of cluster holders |
+| `clusterList[].lastActiveTimestamp` | String | Last active time (Unix milliseconds) |
+| `clusterList[].clusterAddressList` | Array | List of cluster holder addresses |
+| `clusterList[].clusterAddressList[].address` | String | Wallet address |
+| `clusterList[].clusterAddressList[].holdingAmount` | String | Tokens held by this address |
+| `clusterList[].clusterAddressList[].holdingValueUsd` | String | USD value held by this address |
+| `clusterList[].clusterAddressList[].holdingPercent` | String | % of supply held by this address |
+| `clusterList[].clusterAddressList[].averageHoldingPeriod` | String | Average holding time of this address |
+| `clusterList[].clusterAddressList[].lastActiveTimestamp` | String | Last active time (Unix milliseconds) |
+| `clusterList[].clusterAddressList[].isContract` | Boolean | Whether it is a contract address |
+| `clusterList[].clusterAddressList[].isExchange` | Boolean | Whether it is an exchange address |
+| `clusterList[].clusterAddressList[].isKol` | Boolean | Whether it is a KOL address |
+| `clusterList[].clusterAddressList[].addressRank` | String | Address ranking among all holders |
 
 **Examples**:
 
