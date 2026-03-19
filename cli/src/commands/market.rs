@@ -158,7 +158,7 @@ pub enum MarketCommand {
 }
 
 pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     match cmd {
         MarketCommand::Price { address, chain } => {
             let address = address.trim().to_string();
@@ -379,7 +379,7 @@ pub async fn fetch_portfolio_supported_chains(client: &ApiClient) -> Result<Valu
 }
 
 async fn portfolio_supported_chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     output::success(fetch_portfolio_supported_chains(&client).await?);
     Ok(())
 }
@@ -410,7 +410,7 @@ async fn portfolio_overview(
     time_frame: &str,
 ) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain);
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     output::success(fetch_portfolio_overview(&client, &chain_index, address, time_frame).await?);
     Ok(())
 }
@@ -464,7 +464,7 @@ async fn portfolio_dex_history(
     tx_type: Option<&str>,
 ) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain);
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     output::success(
         fetch_portfolio_dex_history(
             &client,
@@ -511,7 +511,7 @@ async fn portfolio_recent_pnl(
     cursor: Option<&str>,
 ) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain);
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     output::success(
         fetch_portfolio_recent_pnl(&client, &chain_index, address, limit, cursor).await?,
     );
@@ -539,7 +539,7 @@ pub async fn fetch_portfolio_token_pnl(
 
 async fn portfolio_token_pnl(ctx: &Context, address: &str, chain: &str, token: &str) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain);
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     output::success(fetch_portfolio_token_pnl(&client, &chain_index, address, token).await?);
     Ok(())
 }

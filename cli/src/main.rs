@@ -97,6 +97,8 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::agentic_wallet::payment::PaymentCommand,
     },
+    /// Upgrade onchainos to the latest version
+    Upgrade(commands::upgrade::UpgradeArgs),
 }
 
 fn main() {
@@ -148,6 +150,7 @@ async fn run() {
         Commands::Wallet { command } => commands::agentic_wallet::wallet::execute(command).await,
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
+        Commands::Upgrade(args) => commands::upgrade::execute(args).await,
     };
 
     let elapsed = start.elapsed();

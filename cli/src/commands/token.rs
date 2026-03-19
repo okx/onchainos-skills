@@ -274,7 +274,7 @@ pub enum TokenCommand {
 }
 
 pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     match cmd {
         TokenCommand::Search { query, chains } => {
             if query.trim().is_empty() {

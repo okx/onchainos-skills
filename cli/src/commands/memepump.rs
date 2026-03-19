@@ -305,7 +305,7 @@ pub async fn execute(ctx: &Context, cmd: MemepumpCommand) -> Result<()> {
             keywords_include,
             keywords_exclude,
         } => {
-            let client = ctx.client()?;
+            let client = ctx.client_async().await?;
             output::success(
                 fetch_token_list(
                     &client,
@@ -667,7 +667,7 @@ pub async fn fetch_by_address(
 // ── CLI wrappers ─────────────────────────────────────────────────────
 
 async fn memepump_chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     output::success(fetch_chains(&client).await?);
     Ok(())
 }
@@ -682,7 +682,7 @@ async fn memepump_token_details(
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("solana"));
     let wallet_address = wallet.unwrap_or_default();
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     output::success(fetch_token_details(&client, address, &chain_index, &wallet_address).await?);
     Ok(())
 }
@@ -697,7 +697,7 @@ async fn memepump_aped_wallet(
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("solana"));
     let wallet_address = wallet.unwrap_or_default();
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     output::success(fetch_aped_wallet(&client, address, &chain_index, &wallet_address).await?);
     Ok(())
 }
@@ -711,7 +711,7 @@ async fn memepump_by_address(
     let chain_index = chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("solana"));
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     output::success(fetch_by_address(&client, path, address, &chain_index).await?);
     Ok(())
 }

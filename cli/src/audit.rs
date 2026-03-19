@@ -325,6 +325,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Security { command } => format!("security {}", security_sub(command)),
         Commands::Leaderboard { command } => format!("leaderboard {}", leaderboard_sub(command)),
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
+        Commands::Upgrade(_) => "upgrade".to_string(),
     }
 }
 
