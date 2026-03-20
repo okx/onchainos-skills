@@ -26,7 +26,10 @@ pub(super) async fn cmd_sign_message(
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][cmd_sign_message] enter: sign_type={}, message_len={}, chain={}, from={}",
-            sign_type, message.len(), chain, from
+            sign_type,
+            message.len(),
+            chain,
+            from
         );
     }
 
@@ -40,10 +43,7 @@ pub(super) async fn cmd_sign_message(
 // ── shared: resolve chain + address ──────────────────────────────────
 
 /// Resolve realChainIndex → (chainIndex string, chainName), then resolve from address.
-async fn resolve_chain_and_address(
-    chain: &str,
-    from: &str,
-) -> Result<(String, String)> {
+async fn resolve_chain_and_address(chain: &str, from: &str) -> Result<(String, String)> {
     let chain_entry = super::chain::get_chain_by_real_chain_index(chain)
         .await?
         .ok_or_else(|| anyhow::anyhow!("unsupported chain: {chain}"))?;
@@ -65,8 +65,7 @@ async fn resolve_chain_and_address(
 
     let wallets = wallet_store::load_wallets()?
         .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-    let (_acct_id, addr_info) =
-        super::transfer::resolve_address(&wallets, Some(from), chain_name)?;
+    let (_acct_id, addr_info) = super::transfer::resolve_address(&wallets, Some(from), chain_name)?;
 
     if cfg!(feature = "debug-log") {
         eprintln!(
@@ -82,7 +81,10 @@ async fn resolve_chain_and_address(
 
 async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
     if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][personal_sign] enter: chain={}, from={}", chain, from);
+        eprintln!(
+            "[DEBUG][personal_sign] enter: chain={}, from={}",
+            chain, from
+        );
     }
 
     let access_token = ensure_tokens_refreshed().await?;
@@ -111,8 +113,8 @@ async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
         );
     }
 
-    // Decrypt signing seed via HPKE, then base64-encode for ed25519_sign_hex
-    let signing_seed =
+    // Decrypt signing seed via HPKE
+    let mut signing_seed =
         crate::crypto::hpke_decrypt_session_sk(encrypted_session_sk, &session_key)?;
     if cfg!(feature = "debug-log") {
         eprintln!(
@@ -120,16 +122,25 @@ async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
             signing_seed.len()
         );
     }
-    let mut signing_seed_b64 = B64.encode(signing_seed);
 
-    // Hex-encode message bytes → ed25519_sign_hex
-    let hex_msg = hex::encode(message.as_bytes());
-    let session_signature =
-        crate::crypto::ed25519_sign_hex(&hex_msg, &signing_seed_b64)?;
-    signing_seed_b64.zeroize();
+    let session_signature = if chain == "501" {
+        let hex_msg = hex::encode(message.as_bytes());
+        // Solana: sign the hex message directly via ed25519_sign_hex
+        let mut seed_b64 = B64.encode(signing_seed);
+        signing_seed.zeroize();
+        let sig = crate::crypto::ed25519_sign_hex(&hex_msg, &seed_b64)?;
+        seed_b64.zeroize();
+        sig
+    } else {
+        // EVM: EIP-191 personal sign (prefix + keccak256 + ed25519)
+        let sig = crate::crypto::ed25519_sign_eip191(&message, &signing_seed, "utf8")?;
+        signing_seed.zeroize();
+        sig
+    };
     if cfg!(feature = "debug-log") {
         eprintln!(
-            "[DEBUG][personal_sign] Step 5: ed25519_sign_hex OK, session_signature length={}",
+            "[DEBUG][personal_sign] Step 5: signed OK (chain={}), session_signature length={}",
+            chain,
             session_signature.len()
         );
     }
@@ -190,7 +201,9 @@ async fn eip712_sign(message: &str, chain: &str, from: &str) -> Result<()> {
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][eip712_sign] enter: chain={}, from={}, message_len={}",
-            chain, from, message.len()
+            chain,
+            from,
+            message.len()
         );
     }
 
@@ -264,8 +277,7 @@ async fn eip712_sign(message: &str, chain: &str, from: &str) -> Result<()> {
         );
     }
 
-    let signing_seed =
-        crate::crypto::hpke_decrypt_session_sk(encrypted_session_sk, &session_key)?;
+    let signing_seed = crate::crypto::hpke_decrypt_session_sk(encrypted_session_sk, &session_key)?;
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][eip712_sign] Step 7: HPKE decrypt OK, signing_seed length={}",
@@ -275,8 +287,7 @@ async fn eip712_sign(message: &str, chain: &str, from: &str) -> Result<()> {
     let mut signing_seed_b64 = B64.encode(signing_seed);
 
     // ed25519_sign_hex: msg_hash is already hex from gen-msg-hash API
-    let session_signature =
-        crate::crypto::ed25519_sign_hex(msg_hash, &signing_seed_b64)?;
+    let session_signature = crate::crypto::ed25519_sign_hex(msg_hash, &signing_seed_b64)?;
     signing_seed_b64.zeroize();
     if cfg!(feature = "debug-log") {
         eprintln!(

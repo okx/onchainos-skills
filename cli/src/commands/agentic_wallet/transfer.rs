@@ -183,7 +183,7 @@ async fn sign_and_broadcast(
     let mut msg_for_sign_map = serde_json::Map::new();
 
     if !unsigned.hash.is_empty() {
-        let sig = crate::crypto::ed25519_sign_eip191(&unsigned.hash, &signing_seed)?;
+        let sig = crate::crypto::ed25519_sign_eip191(&unsigned.hash, &signing_seed, "hex")?;
         msg_for_sign_map.insert("signature".into(), json!(sig));
     }
     if !unsigned.auth_hash_for7702.is_empty() {
