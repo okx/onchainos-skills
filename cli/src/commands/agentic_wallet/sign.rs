@@ -11,13 +11,16 @@ pub(super) async fn cmd_sign_message(
     sign_type: &str,
     message: &str,
     chain: &str,
-    from: Option<&str>,
+    from: &str,
 ) -> Result<()> {
     if message.is_empty() {
         bail!("--message must not be empty");
     }
     if chain.is_empty() {
         bail!("--chain must not be empty");
+    }
+    if from.is_empty() {
+        bail!("--from must not be empty");
     }
 
     match sign_type {
@@ -32,7 +35,7 @@ pub(super) async fn cmd_sign_message(
 /// Resolve realChainIndex → (chainIndex string, chainName), then resolve from address.
 async fn resolve_chain_and_address(
     chain: &str,
-    from: Option<&str>,
+    from: &str,
 ) -> Result<(String, String)> {
     let chain_entry = super::chain::get_chain_by_real_chain_index(chain)
         .await?
@@ -49,14 +52,14 @@ async fn resolve_chain_and_address(
     let wallets = wallet_store::load_wallets()?
         .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
     let (_acct_id, addr_info) =
-        super::transfer::resolve_address(&wallets, from, chain_name)?;
+        super::transfer::resolve_address(&wallets, Some(from), chain_name)?;
 
     Ok((chain_index, addr_info.address))
 }
 
 // ── personalSign ─────────────────────────────────────────────────────
 
-async fn personal_sign(message: &str, chain: &str, from: Option<&str>) -> Result<()> {
+async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
     let access_token = ensure_tokens_refreshed().await?;
     let (chain_index, from_address) = resolve_chain_and_address(chain, from).await?;
 
@@ -107,7 +110,7 @@ async fn personal_sign(message: &str, chain: &str, from: Option<&str>) -> Result
 
 // ── eip712 ───────────────────────────────────────────────────────────
 
-async fn eip712_sign(message: &str, chain: &str, from: Option<&str>) -> Result<()> {
+async fn eip712_sign(message: &str, chain: &str, from: &str) -> Result<()> {
     let parsed_message: Value =
         serde_json::from_str(message).context("--message must be valid JSON for eip712")?;
 

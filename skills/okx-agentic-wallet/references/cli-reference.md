@@ -789,7 +789,7 @@ onchainos wallet sign-message \
   --chain <chainId> \
   --message <message> \
   [--type <type>] \
-  [--from <address>]
+  --from <address>
 ```
 
 | Parameter | Type | Required | Description |
@@ -797,7 +797,7 @@ onchainos wallet sign-message \
 | `--chain` | string | Yes | Chain ID / `realChainIndex` (e.g. "1" for Ethereum, "501" for Solana, "56" for BSC) |
 | `--message` | string | Yes | Message to sign. For `personal`: arbitrary string. For `eip712`: JSON string of the typed data. |
 | `--type` | string | No | Signing type: `personal` (default) or `eip712`. |
-| `--from` | string | No | Sender address — defaults to the selected account's address on the given chain. |
+| `--from` | string | Yes | Sender address — the address whose private key is used to sign. |
 
 **Return fields:**
 
