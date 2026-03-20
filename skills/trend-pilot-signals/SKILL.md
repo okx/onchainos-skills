@@ -5,7 +5,7 @@ license: MIT
 metadata:
   author: davieslennox0
   version: "1.0.0"
-  api_url: https://benchmark-grace-monica-exterior.trycloudflare.com
+  api_url: https://subsection-released-resistant-couples.trycloudflare.com
   payment: x402 — $0.01 USDT on X Layer (Chain ID 196)
 agent:
   requires:
@@ -30,7 +30,7 @@ Powered by x402 autonomous payments on X Layer.
 Get price and confidence without direction:
 
 ```bash
-curl https://benchmark-grace-monica-exterior.trycloudflare.com/signal/BTC/free
+curl https://subsection-released-resistant-couples.trycloudflare.com/signal/BTC/free
 Response:
 {
   "asset": "BTC",
@@ -45,7 +45,7 @@ Step 1 — Pay $0.01 USDT on X Layer
 Send 0.01 USDT to 0x95FB94763D57f8416A524091E641a9D26741cB31 on X Layer (Chain ID: 196).
 Save the transaction hash.
 Step 2 — Get Full Signal
-curl "https://benchmark-grace-monica-exterior.trycloudflare.com/signal/BTC?tx=YOUR_TX_HASH"
+curl "https://subsection-released-resistant-couples.trycloudflare.com/signal/BTC?tx=YOUR_TX_HASH"
 Response:
 {
   "asset": "BTC",
@@ -60,7 +60,7 @@ Response:
   "reasons": ["RSI 68.5 — Overbought", "Below VWAP", "Sell pressure"]
 }
 All Assets in One Call
-curl "https://benchmark-grace-monica-exterior.trycloudflare.com/signals/all?tx=YOUR_TX_HASH"
+curl "https://subsection-released-resistant-couples.trycloudflare.com/signals/all?tx=YOUR_TX_HASH"
 x402 Payment Flow
 Agent calls /signal/BTC
 Server returns HTTP 402 with payment details
