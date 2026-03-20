@@ -84,9 +84,9 @@ Every time before running any `onchainos` command, always follow these steps in 
 | 新盘 / 迁移中 / 已迁移 | NEW / MIGRATING / MIGRATED | `onchainos memepump tokens --stage` |
 | pumpfun / bonkers / bonk / believe / bags / mayhem | protocol names (launch platforms) | `onchainos memepump tokens --protocol-id-list <id>` |
 
-**Protocol names are NOT token names.** When a user mentions a launch platform by name, look up its ID in the table below and pass to `--protocol-id-list`. Multiple protocols: comma-separate the IDs. Run `onchainos memepump chains` to refresh if new platforms appear.
+**Protocol names are NOT token names.** When a user mentions a launch platform by name, **always call `onchainos memepump chains` first** to get the latest protocol IDs, then pass to `--protocol-id-list`. Multiple protocols: comma-separate the IDs. The table below is a reference only — use it as a fallback if the command is unavailable.
 
-## Protocol ID Reference
+## Protocol ID Reference (Fallback Only)
 
 | Chain | Protocol Name | Protocol ID |
 |---|---|---|
