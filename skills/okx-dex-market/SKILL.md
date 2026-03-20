@@ -174,7 +174,6 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Index price (multi-source aggregate) | `onchainos market index` | - |
 | Token search by name/symbol | - | `okx-dex-token` → `onchainos token search` |
 | Token metadata (decimals, logo) | - | `okx-dex-token` → `onchainos token info` |
-| Token ranking (trending) | - | `okx-dex-token` → `onchainos token trending` |
 | Holder distribution | - | `okx-dex-token` → `onchainos token holders` |
 | Holders filtered by tag (KOL, whale, smart money) | - | `okx-dex-token` → `onchainos token holders --tag-filter` |
 | Top 5 liquidity pools for a token | - | `okx-dex-token` → `onchainos token liquidity` |
@@ -229,7 +228,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 ### Workflow B: Price Monitoring / Alerts
 
 ```
-1. okx-dex-token    onchainos token trending --chains solana --sort-by 5   → find trending tokens by volume
+1. okx-dex-token    onchainos token hot-tokens --ranking-type 4 --chain solana   → find hot tokens by trending score
        ↓ select tokens of interest
 2. okx-dex-market   onchainos market price --address <address> --chain solana        → get current price for each
 3. okx-dex-market   onchainos market kline --address <address> --chain solana --bar 1H  → hourly chart

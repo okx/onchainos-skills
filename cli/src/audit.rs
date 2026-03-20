@@ -383,7 +383,6 @@ fn token_sub(c: &TokenCommand) -> &'static str {
         TokenCommand::Search { .. } => "search",
         TokenCommand::Info { .. } => "info",
         TokenCommand::Holders { .. } => "holders",
-        TokenCommand::Trending { .. } => "trending",
         TokenCommand::PriceInfo { .. } => "price-info",
         TokenCommand::Liquidity { .. } => "liquidity",
         TokenCommand::HotTokens { .. } => "hot-tokens",
