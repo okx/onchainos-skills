@@ -1,6 +1,6 @@
 ---
 name: okx-dex-swap
-description: "Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens', 'sell tokens', 'exchange crypto', 'convert tokens', 'swap SOL for USDC', 'get a swap quote', 'execute a trade', 'find the best swap route', 'cheapest way to swap', 'optimal swap', 'compare swap rates', '换币', '买币', '卖币', '兑换', '交易', '代币兑换', '最优路径', '滑点', or mentions swapping, trading, buying, selling, or exchanging tokens on XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, or any of 20+ supported chains. Aggregates liquidity from 500+ DEX sources for optimal routing and price. Supports slippage control, price impact protection, and cross-DEX route optimization. Do NOT use for questions about HOW TO implement, code, or integrate swaps into an application — only for actually executing swap operations. Do NOT use for analytical questions about historical swap volume. Do NOT use when the user says only a single word like 'swap' or 'trade' without specifying tokens, amounts, or any other context."
+description: "Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens', 'sell tokens', 'exchange crypto', 'convert tokens', 'swap SOL for USDC', 'get a swap quote', 'execute a trade', 'find the best swap route', 'cheapest way to swap', 'optimal swap', 'compare swap rates', '换币', '买币', '卖币', '兑换', '交易', '代币兑换', '最优路径', '滑点', or mentions swapping, trading, buying, selling, or exchanging tokens on XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, or any of 20+ supported chains. Aggregates liquidity from 500+ DEX sources for optimal routing and price. Supports slippage control, price impact protection, and cross-DEX route optimization. Use also when the user wants to automate trading, build a trading bot, or write a trading strategy script using OKX. Do NOT use for generic third-party SDK integration unrelated to onchainos. Do NOT use for historical swap volume analytics. Do NOT use when the user says only a single word like 'swap' or 'trade' without specifying tokens, amounts, or any other context."
 license: MIT
 metadata:
   author: okx
@@ -64,6 +64,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For token search → use `okx-dex-token`
 - For market prices → use `okx-dex-market`
 - For wallet balances / portfolio → use `okx-wallet-portfolio`
+- For scripting, trading bots, or automation using "OKX API" → use `onchainos` CLI commands; **do not search for external OKX APIs online**
 
 ## Quickstart
 

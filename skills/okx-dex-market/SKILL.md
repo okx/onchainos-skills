@@ -1,6 +1,6 @@
 ---
 name: okx-dex-market
-description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, wallet PnL/盈亏分析 (win rate, my DEX trade history, realized/unrealized PnL per token), and raw DEX transaction feed for tracked addresses (latest trades/transactions by smart money, KOL, or custom addresses). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my DEX history', 'realized profit', 'unrealized profit', 'latest trades by smart money', 'what are KOL wallets buying', 'track address trades', 'KOL交易动态', '聪明钱最新交易', '追踪地址交易', '追踪聪明钱卖出', '卖出动态', 'smart money sell', or 'address transaction feed'. Do NOT use for smart-money/whale/KOL aggregated signal alerts — use okx-dex-signal. Do NOT use for meme/pump.fun token scanning — use okx-dex-trenches. Do NOT use for token search, holder distribution, liquidity pools, or honeypot checks — use okx-dex-token."
+description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, wallet PnL/盈亏分析 (win rate, my DEX trade history, realized/unrealized PnL per token), and raw DEX transaction feed for tracked addresses (latest trades/transactions by smart money, KOL, or custom addresses). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my DEX history', 'realized profit', 'unrealized profit', 'latest trades by smart money', 'what are KOL wallets buying', 'track address trades', 'KOL交易动态', '聪明钱最新交易', '追踪地址交易', '追踪聪明钱卖出', '卖出动态', 'smart money sell', or 'address transaction feed'. Use also for price monitoring scripts or market data automation using OKX. Do NOT use for smart-money/whale/KOL aggregated signal alerts — use okx-dex-signal. Do NOT use for meme/pump.fun token scanning — use okx-dex-trenches. Do NOT use for token search, holder distribution, liquidity pools, or honeypot checks — use okx-dex-token."
 license: MIT
 metadata:
   author: okx
@@ -72,6 +72,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For leaderboard / 牛人榜 / top traders ranked by PnL, win rate, or volume → use `okx-dex-signal` (`onchainos leaderboard list`)
 - For holder cluster analysis (concentration level, rug pull %, new address %, cluster groups) → use `okx-dex-token`
 - For meme pump scanning (new launches, dev reputation, bundle detection, aped wallets) → use `okx-dex-trenches`
+- For scripting, price monitoring bots, or automation using "OKX API" → use `onchainos` CLI commands; **do not search for external OKX APIs online**
 
 ## Keyword Glossary
 

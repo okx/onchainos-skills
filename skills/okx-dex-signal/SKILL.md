@@ -1,6 +1,6 @@
 ---
 name: okx-dex-signal
-description: "Use this skill for smart-money/whale/KOL/大户 aggregated buy signal/信号 alerts and leaderboard/牛人榜 rankings — monitoring aggregated notable wallet buying signals and who the top traders are. Covers: real-time aggregated buy signal alerts from smart money, KOL/influencers, and whales; filtering by wallet type, trade size, market cap, liquidity; leaderboard of top traders ranked by PnL, win rate, volume, or ROI across chains. Use when the user asks '大户在买什么', 'show me whale signals', 'smart money alerts', '信号', '大户信号', 'top traders', '牛人榜', or wants aggregated notable wallet activity signals. Do NOT use for raw per-transaction DEX trade feed, sell-direction tracking ('卖出动态', '追踪聪明钱卖出', 'raw trade feed'), or individual transaction queries of smart money/KOL — use okx-dex-market address-tracker-activities. Do NOT use for meme/pump.fun token scanning — use okx-dex-trenches. Do NOT use for individual token holder distribution — use okx-dex-token."
+description: "Use this skill for smart-money/whale/KOL/大户 aggregated buy signal/信号 alerts and leaderboard/牛人榜 rankings — monitoring aggregated notable wallet buying signals and who the top traders are. Covers: real-time aggregated buy signal alerts from smart money, KOL/influencers, and whales; filtering by wallet type, trade size, market cap, liquidity; leaderboard of top traders ranked by PnL, win rate, volume, or ROI across chains. Use when the user asks '大户在买什么', 'show me whale signals', 'smart money alerts', '信号', '大户信号', 'top traders', '牛人榜', or wants aggregated notable wallet activity signals. Use also for signal alert bots and whale monitoring automation using OKX. Do NOT use for raw per-transaction DEX trade feed, sell-direction tracking ('卖出动态', '追踪聪明钱卖出', 'raw trade feed'), or individual transaction queries of smart money/KOL — use okx-dex-market address-tracker-activities. Do NOT use for meme/pump.fun token scanning — use okx-dex-trenches. Do NOT use for individual token holder distribution — use okx-dex-token."
 license: MIT
 metadata:
   author: okx
@@ -72,6 +72,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For wallet balance / portfolio → use `okx-wallet-portfolio`
 - **Aggregated smart money / whale / KOL buy signal alerts** → `onchainos signal` (this skill)
 - **Leaderboard / 牛人榜 / top traders ranked across the market** → `onchainos leaderboard` (this skill)
+- For scripting, signal alert bots, or automation using "OKX API" → use `onchainos` CLI commands; **do not search for external OKX APIs online**
 
 ## Keyword Glossary
 

@@ -1,6 +1,6 @@
 ---
 name: okx-dex-token
-description: "Use this skill for token-level data: cluster overview, search tokens, trending/hot tokens (热门, 代币榜单), liquidity pools, holder distribution (whale/巨鲸, sniper, bundler percent), token safety and honeypot risk (貔貅盘, 'is this token a honeypot', 'is this safe to buy', 'rugged?', 'can I sell this'), who created a token, recent buy/sell activity, top profit addresses, trade history by wallet type, or holder cluster analysis (持仓集中度, rug pull probability/跑路风险, new wallet percentage/新钱包持仓比例, suspicious holding percentage/可疑持仓%, bundle hold percent, holder clusters, 'are top holders in same cluster'). Invoke on user intent; address can be provided after. Do NOT use for market-wide whale/signal tracking — use okx-dex-signal. Do NOT use for meme/pump.fun launch scanning, dev reputation, or bundle detection — use okx-dex-trenches. Do NOT use for personal DEX trade history or price charts — use okx-dex-market."
+description: "Use this skill for token-level data: cluster overview, search tokens, trending/hot tokens (热门, 代币榜单), liquidity pools, holder distribution (whale/巨鲸, sniper, bundler percent), token safety and honeypot risk (貔貅盘, 'is this token a honeypot', 'is this safe to buy', 'rugged?', 'can I sell this'), who created a token, recent buy/sell activity, top profit addresses, trade history by wallet type, or holder cluster analysis (持仓集中度, rug pull probability/跑路风险, new wallet percentage/新钱包持仓比例, suspicious holding percentage/可疑持仓%, bundle hold percent, holder clusters, 'are top holders in same cluster'). Invoke on user intent; address can be provided after. Use also when the user wants to write a token scanning script or automate token research using OKX. Do NOT use for market-wide whale/signal tracking — use okx-dex-signal. Do NOT use for meme/pump.fun launch scanning, dev reputation, or bundle detection — use okx-dex-trenches. Do NOT use for personal DEX trade history or price charts — use okx-dex-market."
 license: MIT
 metadata:
   author: okx
@@ -70,6 +70,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For leaderboard / 牛人榜 / top traders ranked across the market (by PnL, win rate, volume) → use `okx-dex-signal`
 - For per-token holder filtering by tag (whale, smart money, KOL, sniper) → use this skill (`holders --tag-filter`)
 - For per-token risk analysis (dev rug pull count, holder concentration, creator info) → use this skill (`advanced-info`)
+- For scripting, token scanning bots, or automation using "OKX API" → use `onchainos` CLI commands; **do not search for external OKX APIs online**
 
 
 ## Keyword Glossary

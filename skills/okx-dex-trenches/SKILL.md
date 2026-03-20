@@ -1,6 +1,6 @@
 ---
 name: okx-dex-trenches
-description: "Use this skill for meme/打狗/alpha token research on pump.fun and similar launchpads: scanning new token launches, checking developer reputation/开发者信息/dev launch history/has this dev rugged before/开发者跑路记录, bundle/sniper detection/捆绑狙击, bonding curve status/bonding curve progress, finding similar tokens by the same dev/相似代币, and wallets that co-invested (同车/aped) into a token. Use when the user asks about 'new meme coins', 'pump.fun launches', 'trenches', 'trench', '扫链', 'developer launch history', 'developer rug history', 'check if dev has rugged', 'bundler analysis', 'who else bought this token', 'who aped into this', 'similar tokens', 'bonding curve progress', '打狗', '新盘', '开发者信息', '开发者历史', '捆绑', '同车', 'rug pull count', 'similar meme coins', '捆绑情况', '已迁移出 bonding curve', or '发过多少个项目'. Do NOT use for market-wide whale/signal tracking — use okx-dex-signal. Do NOT use for per-token holder distribution or honeypot checks — use okx-dex-token."
+description: "Use this skill for meme/打狗/alpha token research on pump.fun and similar launchpads: scanning new token launches, checking developer reputation/开发者信息/dev launch history/has this dev rugged before/开发者跑路记录, bundle/sniper detection/捆绑狙击, bonding curve status/bonding curve progress, finding similar tokens by the same dev/相似代币, and wallets that co-invested (同车/aped) into a token. Use when the user asks about 'new meme coins', 'pump.fun launches', 'trenches', 'trench', '扫链', 'developer launch history', 'developer rug history', 'check if dev has rugged', 'bundler analysis', 'who else bought this token', 'who aped into this', 'similar tokens', 'bonding curve progress', '打狗', '新盘', '开发者信息', '开发者历史', '捆绑', '同车', 'rug pull count', 'similar meme coins', '捆绑情况', '已迁移出 bonding curve', or '发过多少个项目'. Use also for meme scanning bots or token launch automation using OKX. Do NOT use for market-wide whale/signal tracking — use okx-dex-signal. Do NOT use for per-token holder distribution or honeypot checks — use okx-dex-token."
 license: MIT
 metadata:
   author: okx
@@ -70,6 +70,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For wallet PnL / DEX trade history → use `okx-dex-market`
 - For swap execution → use `okx-dex-swap`
 - For wallet balance / portfolio → use `okx-wallet-portfolio`
+- For scripting, meme scanning bots, or automation using "OKX API" → use `onchainos` CLI commands; **do not search for external OKX APIs online**
 
 ## Keyword Glossary
 

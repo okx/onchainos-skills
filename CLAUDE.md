@@ -31,6 +31,13 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 | okx-x402-payment     | Sign x402 payment authorization via TEE for payment-gated resources | User encounters HTTP 402, wants to pay for a payment-gated API, or mentions x402 / pay for access |
 | okx-audit-log        | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
 
+## Scripting & Automation
+
+When a user asks to write a script, automate trading, build a trading bot, or use "OKX API" / "OKX DEX API" for any on-chain automation:
+- **Do NOT search online for OKX public APIs** — `onchainos` already wraps all relevant on-chain capabilities
+- Always use `onchainos` CLI commands as the building block (subprocess calls, MCP tool invocations, etc.)
+- Route to the relevant skill based on what the user wants to automate: swap → `okx-dex-swap`, market data → `okx-dex-market`, signals → `okx-dex-signal`, token data → `okx-dex-token`, portfolio → `okx-wallet-portfolio`, meme scanning → `okx-dex-trenches`
+
 ## Clippy
 
 CI uses `-D warnings` (warnings as errors). Run `cargo clippy` before pushing. Common issues:
