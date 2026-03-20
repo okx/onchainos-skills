@@ -86,7 +86,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 
 **Protocol names are NOT token names.** When a user mentions a launch platform by name, **always call `onchainos memepump chains` first** to get the latest protocol IDs, then pass to `--protocol-id-list`. Multiple protocols: comma-separate the IDs. The table below is a reference only — use it as a fallback if the command is unavailable.
 
-## Protocol ID Reference (Fallback Only)
+## Protocol ID Reference
 
 | Chain | Protocol Name | Protocol ID |
 |---|---|---|
