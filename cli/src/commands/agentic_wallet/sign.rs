@@ -23,6 +23,13 @@ pub(super) async fn cmd_sign_message(
         bail!("--from must not be empty");
     }
 
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][cmd_sign_message] enter: sign_type={}, message_len={}, chain={}, from={}",
+            sign_type, message.len(), chain, from
+        );
+    }
+
     match sign_type {
         "personal" => personal_sign(message, chain, from).await,
         "eip712" => eip712_sign(message, chain, from).await,
@@ -49,10 +56,24 @@ async fn resolve_chain_and_address(
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing chainName in chain entry"))?;
 
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][resolve_chain_and_address] resolved realChainIndex={} -> chainIndex={}, chainName={}",
+            chain, chain_index, chain_name
+        );
+    }
+
     let wallets = wallet_store::load_wallets()?
         .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
     let (_acct_id, addr_info) =
         super::transfer::resolve_address(&wallets, Some(from), chain_name)?;
+
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][resolve_chain_and_address] resolve_address => from_address={}",
+            addr_info.address
+        );
+    }
 
     Ok((chain_index, addr_info.address))
 }
@@ -60,8 +81,22 @@ async fn resolve_chain_and_address(
 // ── personalSign ─────────────────────────────────────────────────────
 
 async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][personal_sign] enter: chain={}, from={}", chain, from);
+    }
+
     let access_token = ensure_tokens_refreshed().await?;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][personal_sign] Step 1: access_token refreshed OK");
+    }
+
     let (chain_index, from_address) = resolve_chain_and_address(chain, from).await?;
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][personal_sign] Step 2: chain_index={}, from_address={}",
+            chain_index, from_address
+        );
+    }
 
     let session = wallet_store::load_session()?
         .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
@@ -69,19 +104,43 @@ async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
     let encrypted_session_sk = &session.encrypted_session_sk;
     let session_key = keyring_store::get("session_key")
         .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][personal_sign] Step 3: session loaded, session_cert length={}, encrypted_session_sk length={}, session_key length={}",
+            session_cert.len(), encrypted_session_sk.len(), session_key.len()
+        );
+    }
 
     // Decrypt signing seed via HPKE
     let mut signing_seed =
         crate::crypto::hpke_decrypt_session_sk(encrypted_session_sk, &session_key)?;
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][personal_sign] Step 4: HPKE decrypt OK, signing_seed length={}",
+            signing_seed.len()
+        );
+    }
 
     // EIP-191 sign: hex-encode message bytes → ed25519_sign_eip191
     let hex_msg = hex::encode(message.as_bytes());
     let session_signature =
         crate::crypto::ed25519_sign_eip191(&hex_msg, &signing_seed)?;
     signing_seed.zeroize();
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][personal_sign] Step 5: EIP-191 signed, session_signature length={}",
+            session_signature.len()
+        );
+    }
 
     // Encode message value: base58 for Solana (chain 501), hex for EVM
     let encoded_value = encode_message_value(message.as_bytes(), chain);
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][personal_sign] Step 6: encoded_value={}",
+            encoded_value
+        );
+    }
 
     // Call sign-msg API
     let client = WalletApiClient::new()?;
@@ -95,6 +154,12 @@ async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
             "sessionSignature": session_signature,
         }]
     });
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][personal_sign] Step 7: calling sign-msg API, body={}",
+            serde_json::to_string(&body).unwrap_or_default()
+        );
+    }
 
     let data = client
         .post_authed(
@@ -104,6 +169,12 @@ async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
         )
         .await
         .map_err(format_api_error)?;
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][personal_sign] Step 8: sign-msg response={}",
+            serde_json::to_string(&data).unwrap_or_default()
+        );
+    }
 
     output_sign_result(&data)
 }
@@ -111,11 +182,32 @@ async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
 // ── eip712 ───────────────────────────────────────────────────────────
 
 async fn eip712_sign(message: &str, chain: &str, from: &str) -> Result<()> {
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][eip712_sign] enter: chain={}, from={}, message_len={}",
+            chain, from, message.len()
+        );
+    }
+
     let parsed_message: Value =
         serde_json::from_str(message).context("--message must be valid JSON for eip712")?;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][eip712_sign] Step 1: message parsed as JSON OK");
+    }
 
     let access_token = ensure_tokens_refreshed().await?;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][eip712_sign] Step 2: access_token refreshed OK");
+    }
+
     let (chain_index, from_address) = resolve_chain_and_address(chain, from).await?;
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][eip712_sign] Step 3: chain_index={}, from_address={}",
+            chain_index, from_address
+        );
+    }
+
     let client = WalletApiClient::new()?;
 
     // Step 1: gen-msg-hash
@@ -126,6 +218,12 @@ async fn eip712_sign(message: &str, chain: &str, from: &str) -> Result<()> {
             "message": parsed_message,
         }]
     });
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][eip712_sign] Step 4: calling gen-msg-hash API, body={}",
+            serde_json::to_string(&gen_hash_body).unwrap_or_default()
+        );
+    }
 
     let hash_resp = client
         .post_authed(
@@ -140,6 +238,12 @@ async fn eip712_sign(message: &str, chain: &str, from: &str) -> Result<()> {
     let msg_hash = hash_resp[0]["msgHash"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing msgHash in gen-msg-hash response"))?;
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][eip712_sign] Step 5: gen-msg-hash response, msgHash={}",
+            msg_hash
+        );
+    }
 
     // Step 2: local sign with session key
     let session = wallet_store::load_session()?
@@ -148,14 +252,33 @@ async fn eip712_sign(message: &str, chain: &str, from: &str) -> Result<()> {
     let encrypted_session_sk = &session.encrypted_session_sk;
     let session_key = keyring_store::get("session_key")
         .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][eip712_sign] Step 6: session loaded, session_cert length={}, encrypted_session_sk length={}, session_key length={}",
+            session_cert.len(), encrypted_session_sk.len(), session_key.len()
+        );
+    }
 
     let mut signing_seed =
         crate::crypto::hpke_decrypt_session_sk(encrypted_session_sk, &session_key)?;
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][eip712_sign] Step 7: HPKE decrypt OK, signing_seed length={}",
+            signing_seed.len()
+        );
+    }
+
     let msg_hash_bytes =
         hex::decode(msg_hash.trim_start_matches("0x")).context("invalid msgHash hex")?;
     let signature_bytes = crate::crypto::ed25519_sign(&signing_seed, &msg_hash_bytes)?;
     signing_seed.zeroize();
     let session_signature = B64.encode(&signature_bytes);
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][eip712_sign] Step 8: Ed25519 signed, session_signature length={}",
+            session_signature.len()
+        );
+    }
 
     // Step 3: sign-msg API
     let sign_body = json!({
@@ -168,6 +291,12 @@ async fn eip712_sign(message: &str, chain: &str, from: &str) -> Result<()> {
             "sessionSignature": session_signature,
         }]
     });
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][eip712_sign] Step 9: calling sign-msg API, body={}",
+            serde_json::to_string(&sign_body).unwrap_or_default()
+        );
+    }
 
     let data = client
         .post_authed(
@@ -177,6 +306,12 @@ async fn eip712_sign(message: &str, chain: &str, from: &str) -> Result<()> {
         )
         .await
         .map_err(format_api_error)?;
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][eip712_sign] Step 10: sign-msg response={}",
+            serde_json::to_string(&data).unwrap_or_default()
+        );
+    }
 
     output_sign_result(&data)
 }
