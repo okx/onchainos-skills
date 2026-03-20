@@ -1,6 +1,6 @@
-# OKX DEX Token — CLI Command Reference
+# Onchain OS DEX Token — CLI Command Reference
 
-Detailed parameter tables, return field schemas, and usage examples for all 13 token commands.
+Detailed parameter tables, return field schemas, and usage examples for all 14 token commands.
 
 ## 1. onchainos token search
 
@@ -412,12 +412,12 @@ onchainos token cluster-overview --address <address> [--chain <chain>]
 
 | Field | Type | Description |
 |---|---|---|
-| `clusterConcentration` | String | Cluster concentration level: `LOW`, `MEDIUM`, or `HIGH` |
+| `clusterConcentration` | String | Cluster concentration level: `Low`, `Medium`, or `High` |
 | `top100HoldingsPercent` | String | % of token supply held by top 100 addresses |
-| `rugPullPercent` | String | Rug pull probability % based on creator's past tokens flagged as rugs |
-| `newAddressPercent` | String | % of top 1,000 holders created in the last 3 days |
-| `sameFundSourcePercent` | String | % of top 1,000 holders funded by the same wallet |
-| `sameCreationTimePercent` | String | % of top 1,000 holders created at around the same time |
+| `rugPullPercent` | String | Rug pull probability % |
+| `holderNewAddressPercent` | String | % of top 1,000 holders created in the last 3 days |
+| `holderSameFundSourcePercent` | String | % of top 1,000 holders with mutual mainstream token transfer activity |
+| `holderSameCreationTimePercent` | String | % of top 1,000 holders created at around the same time |
 
 **Examples**:
 
@@ -436,13 +436,13 @@ onchainos token cluster-overview --address 0xa0b86991c6218b36c1d19d4a2e9eb0ce360
 Get overview statistics for the top 10, 50, or 100 holders of a token — including average holding period, average PnL, average cost price, and trend direction.
 
 ```bash
-onchainos token cluster-top-holders --address <address> --ranks <10|50|100> [--chain <chain>]
+onchainos token cluster-top-holders --address <address> --range-filter <1|2|3> [--chain <chain>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--address` | Yes | - | Token contract address |
-| `--ranks` | Yes | - | Holder rank tier: `10`, `50`, or `100` |
+| `--range-filter` | Yes | - | Holder rank tier: `1` = top 10, `2` = top 50, `3` = top 100 |
 | `--chain` | No | `ethereum` | Chain name |
 
 **Return fields**:
@@ -451,22 +451,22 @@ onchainos token cluster-top-holders --address <address> --ranks <10|50|100> [--c
 |---|---|---|
 | `holdingAmount` | String | Sum of all tokens held by top N addresses (excludes blackhole and LP addresses) |
 | `holdingPercent` | String | % of token supply held by top N addresses |
-| `trendType` | String | Overall position direction: `BUY`, `SELL`, `Neutral`, or `Transfer-dominant` |
+| `clusterTrendType` | Array\<String\> | Overall position direction; possible values: `buy`, `sell`, `neutral`, `transfer`, `transferIn`. May be absent if no trend data. |
 | `averageHoldingPeriod` | String | Weighted average holding time across the top N holders |
 | `averagePnlUsd` | String | Weighted average profit/loss of top N holders (USD) |
-| `averageCostUsd` | String | Weighted average cost price for the top N holders (USD) |
-| `averageCostPercent` | String | % difference between avg cost price and current token price |
-| `averageSellUsd` | String | Weighted average selling price for the top N holders (USD) |
-| `averageSellPercent` | String | % difference between avg selling price and current token price |
+| `averageBuyPriceUsd` | String | Weighted average cost price for the top N holders (USD) |
+| `averageBuyPricePercent` | String | % difference between avg cost price and current token price |
+| `averageSellPriceUsd` | String | Weighted average selling price for the top N holders (USD) |
+| `averageSellPricePercent` | String | % difference between avg selling price and current token price |
 
 **Examples**:
 
 ```bash
 # Top 100 holder behavior on Solana
-onchainos token cluster-top-holders --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana --ranks 100
+onchainos token cluster-top-holders --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana --range-filter 3
 
 # Top 10 holder behavior on Ethereum
-onchainos token cluster-top-holders --address 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48 --chain ethereum --ranks 10
+onchainos token cluster-top-holders --address 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48 --chain ethereum --range-filter 1
 ```
 
 ---
@@ -484,34 +484,34 @@ onchainos token cluster-list --address <address> [--chain <chain>]
 | `--address` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name |
 
-**Return fields** (array of cluster objects):
+**Return fields**:
 
 | Field | Type | Description |
 |---|---|---|
-| `clusterName` | String | Cluster name |
-| `holdingAmount` | String | Sum of all tokens held by cluster addresses (excludes blackhole and LP) |
-| `holdingValueUsd` | String | USD value of all tokens held by cluster addresses |
-| `holdingPercent` | String | % of token supply held by cluster addresses |
-| `clusterTrendType` | String | Overall position direction: `BUY`, `SELL`, `Neutral`, or `Transfer-dominant` |
-| `averageHoldingPeriod` | String | Weighted average holding time of cluster holders |
-| `tokenPnlUsd` | String | Total profit/loss of cluster holders (USD) |
-| `tokenPnlPercent` | String | Total profit/loss percentage of cluster holders |
-| `buyVolume` | String | Total bought volume of the cluster (USD) |
-| `averageCostUsd` | String | Weighted average cost price of cluster holders |
-| `sellVolume` | String | Total sold volume of the cluster (USD) |
-| `averageSellUsd` | String | Weighted average selling price of cluster holders |
-| `lastActiveTimestamp` | String | Last active time (Unix milliseconds) |
-| `clusterAddressList` | Array | List of cluster holder addresses |
-| `clusterAddressList[].address` | String | Wallet address |
-| `clusterAddressList[].holdingAmount` | String | Tokens held by this address |
-| `clusterAddressList[].holdingValueUsd` | String | USD value held by this address |
-| `clusterAddressList[].holdingPercent` | String | % of supply held by this address |
-| `clusterAddressList[].averageHoldingPeriod` | String | Average holding time of this address |
-| `clusterAddressList[].lastActiveTimestamp` | String | Last active time (Unix milliseconds) |
-| `clusterAddressList[].isContract` | Boolean | Whether it is a contract address |
-| `clusterAddressList[].isExchange` | Boolean | Whether it is an exchange address |
-| `clusterAddressList[].isKol` | Boolean | Whether it is a KOL address |
-| `clusterAddressList[].addressRank` | String | Address ranking among all holders |
+| `clusterList` | Array | List of holder clusters (top 100 clusters of the top 300 holders) |
+| `clusterList[].holdingAmount` | String | Sum of all tokens held by cluster addresses (excludes blackhole and LP) |
+| `clusterList[].holdingValueUsd` | String | USD value of all tokens held by cluster addresses |
+| `clusterList[].holdingPercent` | String | % of token supply held by cluster addresses |
+| `clusterList[].trendType` | Object | Overall position direction; nested `trendType` field: `buy`, `sell`, `neutral`, or `transfer` |
+| `clusterList[].averageHoldingPeriod` | String | Weighted average holding time of cluster holders |
+| `clusterList[].pnlUsd` | String | Total profit/loss of cluster holders (USD) |
+| `clusterList[].pnlPercent` | String | Total profit/loss percentage of cluster holders |
+| `clusterList[].buyVolume` | String | Total bought volume of the cluster (USD) |
+| `clusterList[].averageBuyPriceUsd` | String | Weighted average cost price of cluster holders |
+| `clusterList[].sellVolume` | String | Total sold volume of the cluster (USD) |
+| `clusterList[].averageSellPriceUsd` | String | Weighted average selling price of cluster holders |
+| `clusterList[].lastActiveTimestamp` | String | Last active time (Unix milliseconds) |
+| `clusterList[].clusterAddressList` | Array | List of cluster holder addresses |
+| `clusterList[].clusterAddressList[].address` | String | Wallet address |
+| `clusterList[].clusterAddressList[].holdingAmount` | String | Tokens held by this address |
+| `clusterList[].clusterAddressList[].holdingValueUsd` | String | USD value held by this address |
+| `clusterList[].clusterAddressList[].holdingPercent` | String | % of supply held by this address |
+| `clusterList[].clusterAddressList[].averageHoldingPeriod` | String | Average holding time of this address |
+| `clusterList[].clusterAddressList[].lastActiveTimestamp` | String | Last active time (Unix milliseconds) |
+| `clusterList[].clusterAddressList[].isContract` | Boolean | Whether it is a contract address |
+| `clusterList[].clusterAddressList[].isExchange` | Boolean | Whether it is an exchange address |
+| `clusterList[].clusterAddressList[].isKol` | Boolean | Whether it is a KOL address |
+| `clusterList[].clusterAddressList[].addressRank` | String | Address ranking among all holders |
 
 **Examples**:
 
@@ -521,4 +521,31 @@ onchainos token cluster-list --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTD
 
 # EVM token cluster list
 onchainos token cluster-list --address 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48 --chain ethereum
+```
+
+---
+
+## 14. onchainos token cluster-supported-chains
+
+**Description**: Get the list of chains that support holder cluster analysis.
+
+```bash
+onchainos token cluster-supported-chains
+```
+
+**Parameters**: None
+
+**Return fields** (array of chain objects):
+
+| Field | Type | Description |
+|---|---|---|
+| `chainIndex` | String | Chain identifier (e.g. `"1"` for Ethereum, `"501"` for Solana) |
+| `chainName` | String | Chain display name (e.g. `"Ethereum"`, `"Solana"`) |
+| `chainLogo` | String | Chain logo URL |
+
+**Examples**:
+
+```bash
+# Get all chains that support holder cluster analysis
+onchainos token cluster-supported-chains
 ```

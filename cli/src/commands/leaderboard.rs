@@ -1,7 +1,9 @@
 use anyhow::Result;
 use clap::Subcommand;
+use serde_json::Value;
 
 use super::Context;
+use crate::client::ApiClient;
 use crate::output;
 
 #[derive(Subcommand)]
@@ -88,16 +90,86 @@ pub async fn execute(ctx: &Context, cmd: LeaderboardCommand) -> Result<()> {
 }
 
 /// GET /api/v6/dex/market/leaderboard/supported/chain — no parameters
-async fn supported_chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client()?;
-    let data = client
+pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
+    client
         .get("/api/v6/dex/market/leaderboard/supported/chain", &[])
-        .await?;
-    output::success(data);
+        .await
+}
+
+async fn supported_chains(ctx: &Context) -> Result<()> {
+    let client = ctx.client_async().await?;
+    output::success(fetch_chains(&client).await?);
     Ok(())
 }
 
+/// Map human-readable wallet type names to the integer codes expected by the API.
+/// Accepts either the string name (e.g. "smartMoney") or the integer directly ("1").
+pub fn resolve_leaderboard_wallet_type(wallet_type: String) -> String {
+    match wallet_type.as_str() {
+        "smartMoney" => "1".to_string(),
+        "influencer" => "2".to_string(),
+        "sniper" => "3".to_string(),
+        "dev" => "4".to_string(),
+        "fresh" => "5".to_string(),
+        "pump" => "6".to_string(),
+        _ => wallet_type,
+    }
+}
+
 /// GET /api/v6/dex/market/leaderboard/list — top trader leaderboard with optional filters
+#[allow(clippy::too_many_arguments)]
+pub async fn fetch_list(
+    client: &ApiClient,
+    chain_index: &str,
+    time_frame: &str,
+    sort_by: &str,
+    wallet_type: Option<&str>,
+    min_realized_pnl: Option<&str>,
+    max_realized_pnl: Option<&str>,
+    min_win_rate: Option<&str>,
+    max_win_rate: Option<&str>,
+    min_txs: Option<&str>,
+    max_txs: Option<&str>,
+    min_tx_volume: Option<&str>,
+    max_tx_volume: Option<&str>,
+) -> Result<Value> {
+    let mut query: Vec<(&str, &str)> = vec![
+        ("chainIndex", chain_index),
+        ("timeFrame", time_frame),
+        ("sortBy", sort_by),
+    ];
+    if let Some(v) = wallet_type {
+        query.push(("walletType", v));
+    }
+    if let Some(v) = min_realized_pnl {
+        query.push(("minRealizedPnlUsd", v));
+    }
+    if let Some(v) = max_realized_pnl {
+        query.push(("maxRealizedPnlUsd", v));
+    }
+    if let Some(v) = min_win_rate {
+        query.push(("minWinRatePercent", v));
+    }
+    if let Some(v) = max_win_rate {
+        query.push(("maxWinRatePercent", v));
+    }
+    if let Some(v) = min_txs {
+        query.push(("minTxs", v));
+    }
+    if let Some(v) = max_txs {
+        query.push(("maxTxs", v));
+    }
+    if let Some(v) = min_tx_volume {
+        query.push(("minTxVolume", v));
+    }
+    if let Some(v) = max_tx_volume {
+        query.push(("maxTxVolume", v));
+    }
+    client
+        .get("/api/v6/dex/market/leaderboard/list", &query)
+        .await
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn leaderboard_list(
     ctx: &Context,
@@ -115,37 +187,27 @@ async fn leaderboard_list(
     max_tx_volume: Option<String>,
 ) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain).to_string();
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
 
-    let wallet_type = wallet_type.unwrap_or_default();
-    let min_realized_pnl = min_realized_pnl_usd.unwrap_or_default();
-    let max_realized_pnl = max_realized_pnl_usd.unwrap_or_default();
-    let min_win_rate = min_win_rate_percent.unwrap_or_default();
-    let max_win_rate = max_win_rate_percent.unwrap_or_default();
-    let min_txs = min_txs.unwrap_or_default();
-    let max_txs = max_txs.unwrap_or_default();
-    let min_tx_volume = min_tx_volume.unwrap_or_default();
-    let max_tx_volume = max_tx_volume.unwrap_or_default();
+    let wallet_type_resolved = wallet_type.map(resolve_leaderboard_wallet_type);
 
-    let data = client
-        .get(
-            "/api/v6/dex/market/leaderboard/list",
-            &[
-                ("chainIndex", chain_index.as_str()),
-                ("timeFrame", time_frame),
-                ("sortBy", sort_by),
-                ("walletType", &wallet_type),
-                ("minRealizedPnlUsd", &min_realized_pnl),
-                ("maxRealizedPnlUsd", &max_realized_pnl),
-                ("minWinRatePercent", &min_win_rate),
-                ("maxWinRatePercent", &max_win_rate),
-                ("minTxs", &min_txs),
-                ("maxTxs", &max_txs),
-                ("minTxVolume", &min_tx_volume),
-                ("maxTxVolume", &max_tx_volume),
-            ],
+    output::success(
+        fetch_list(
+            &client,
+            &chain_index,
+            time_frame,
+            sort_by,
+            wallet_type_resolved.as_deref(),
+            min_realized_pnl_usd.as_deref(),
+            max_realized_pnl_usd.as_deref(),
+            min_win_rate_percent.as_deref(),
+            max_win_rate_percent.as_deref(),
+            min_txs.as_deref(),
+            max_txs.as_deref(),
+            min_tx_volume.as_deref(),
+            max_tx_volume.as_deref(),
         )
-        .await?;
-    output::success(data);
+        .await?,
+    );
     Ok(())
 }

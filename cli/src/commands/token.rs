@@ -14,9 +14,9 @@ pub enum TokenCommand {
         /// Search keyword (name, symbol, or contract address)
         #[arg(long)]
         query: String,
-        /// Chains to search (comma-separated, e.g. "ethereum,solana")
-        #[arg(long, default_value = "1,501")]
-        chains: String,
+        /// Chains to search (comma-separated, e.g. "ethereum,solana"). Defaults to global --chain if set, otherwise "1,501"
+        #[arg(long)]
+        chains: Option<String>,
     },
     /// Get token basic info (name, symbol, decimals, logo)
     Info {
@@ -41,9 +41,9 @@ pub enum TokenCommand {
     },
     /// Get trending / top tokens
     Trending {
-        /// Chains (comma-separated)
-        #[arg(long, default_value = "1,501")]
-        chains: String,
+        /// Chains (comma-separated). Defaults to global --chain if set, otherwise "1,501"
+        #[arg(long)]
+        chains: Option<String>,
         /// Sort by: 2=price change, 5=volume, 6=market cap
         #[arg(long, default_value = "5")]
         sort_by: String,
@@ -256,9 +256,9 @@ pub enum TokenCommand {
         /// Chain
         #[arg(long)]
         chain: Option<String>,
-        /// Holder rank tier: 10, 50, or 100
+        /// Holder rank filter: 1 = top 10, 2 = top 50, 3 = top 100
         #[arg(long)]
-        ranks: String,
+        range_filter: String,
     },
     /// Get holder cluster list (clusters of top 300 holders with address details)
     ClusterList {
@@ -269,13 +269,19 @@ pub enum TokenCommand {
         #[arg(long)]
         chain: Option<String>,
     },
+    /// Get supported chains for holder cluster analysis
+    ClusterSupportedChains,
 }
 
 pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
-    let client = ctx.client()?;
+    let client = ctx.client_async().await?;
     match cmd {
         TokenCommand::Search { query, chains } => {
-            output::success(fetch_search(&client, &query, &chains).await?);
+            if query.trim().is_empty() {
+                anyhow::bail!("Parameter --query cannot be empty");
+            }
+            let resolved_chains = ctx.resolve_chains_or(chains, "1,501");
+            output::success(fetch_search(&client, &query, &resolved_chains).await?);
         }
         TokenCommand::Info { address, chain } => {
             let chain_index = chain
@@ -298,7 +304,10 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             sort_by,
             time_frame,
         } => {
-            output::success(fetch_trending(&client, &chains, &sort_by, &time_frame).await?);
+            let resolved_chains = ctx.resolve_chains_or(chains, "1,501");
+            output::success(
+                fetch_trending(&client, &resolved_chains, &sort_by, &time_frame).await?,
+            );
         }
         TokenCommand::PriceInfo { address, chain } => {
             let chain_index = chain
@@ -457,8 +466,8 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
         TokenCommand::ClusterTopHolders {
             address,
             chain,
-            ranks,
-        } => cluster_top_holders(ctx, &address, chain, &ranks).await?,
+            range_filter,
+        } => cluster_top_holders(ctx, &address, chain, &range_filter).await?,
         TokenCommand::ClusterList { address, chain } => {
             cluster_by_address(
                 ctx,
@@ -468,6 +477,7 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             )
             .await?;
         }
+        TokenCommand::ClusterSupportedChains => cluster_supported_chains(ctx).await?,
     }
     Ok(())
 }
@@ -827,41 +837,71 @@ async fn cluster_by_address(
     let chain_index = chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-    let client = ctx.client()?;
-    let data = client
-        .get(
-            path,
-            &[
-                ("chainIndex", chain_index.as_str()),
-                ("tokenContractAddress", address),
-            ],
-        )
-        .await?;
-    output::success(data);
+    let client = ctx.client_async().await?;
+    output::success(fetch_cluster_by_address(&client, path, address, &chain_index).await?);
     Ok(())
 }
 
+/// GET /api/v6/dex/market/token/cluster/supported/chain — no parameters
+pub async fn fetch_cluster_supported_chains(client: &ApiClient) -> Result<Value> {
+    client
+        .get("/api/v6/dex/market/token/cluster/supported/chain", &[])
+        .await
+}
+
+async fn cluster_supported_chains(ctx: &Context) -> Result<()> {
+    let client = ctx.client_async().await?;
+    output::success(fetch_cluster_supported_chains(&client).await?);
+    Ok(())
+}
+
+/// GET /api/v6/dex/market/token/cluster/overview or /cluster/list
+pub async fn fetch_cluster_by_address(
+    client: &ApiClient,
+    path: &str,
+    address: &str,
+    chain_index: &str,
+) -> Result<Value> {
+    client
+        .get(
+            path,
+            &[
+                ("chainIndex", chain_index),
+                ("tokenContractAddress", address),
+            ],
+        )
+        .await
+}
+
 /// GET /api/v6/dex/market/token/cluster/top-holders
+pub async fn fetch_cluster_top_holders(
+    client: &ApiClient,
+    address: &str,
+    chain_index: &str,
+    range_filter: &str,
+) -> Result<Value> {
+    client
+        .get(
+            "/api/v6/dex/market/token/cluster/top-holders",
+            &[
+                ("chainIndex", chain_index),
+                ("tokenContractAddress", address),
+                ("rangeFilter", range_filter),
+            ],
+        )
+        .await
+}
+
 async fn cluster_top_holders(
     ctx: &Context,
     address: &str,
     chain: Option<String>,
-    ranks: &str,
+    range_filter: &str,
 ) -> Result<()> {
     let chain_index = chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-    let client = ctx.client()?;
-    let data = client
-        .get(
-            "/api/v6/dex/market/token/cluster/top-holders",
-            &[
-                ("chainIndex", chain_index.as_str()),
-                ("tokenContractAddress", address),
-                ("ranks", ranks),
-            ],
-        )
-        .await?;
-    output::success(data);
+    let client = ctx.client_async().await?;
+    output::success(fetch_cluster_top_holders(&client, address, &chain_index, range_filter).await?);
     Ok(())
 }

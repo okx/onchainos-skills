@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::client::ApiClient;
-use crate::commands::{gateway, market, memepump, portfolio, signal, swap, token, tracker};
+use crate::commands::{gateway, leaderboard, market, memepump, portfolio, signal, swap, token};
 
 // ── Token ──────────────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
@@ -109,8 +109,8 @@ struct PortfolioPnlOverviewParams {
     address: String,
     /// Chain name (e.g. ethereum, solana)
     chain: String,
-    /// Time frame: 1=1D, 2=3D, 3=7D, 4=1M, 5=3M
-    time_frame: String,
+    /// Time frame: 1=1D, 2=3D, 3=7D, 4=1M, 5=3M (default: 4 = 1M)
+    time_frame: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -181,6 +181,32 @@ struct MarketSignalListParams {
     max_liquidity_usd: Option<String>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+struct AddressTrackerActivitiesParams {
+    /// Tracker type: smart_money (or 1), kol (or 2), multi_address (or 3)
+    tracker_type: String,
+    /// Wallet addresses, comma-separated (required when tracker_type=multi_address, max 20)
+    wallet_address: Option<String>,
+    /// Trade type: 0=all (default), 1=buy, 2=sell
+    trade_type: Option<String>,
+    /// Chain filter (e.g. ethereum, solana). Omit for all chains
+    chain: Option<String>,
+    /// Minimum trade volume in USD
+    min_volume: Option<String>,
+    /// Maximum trade volume in USD
+    max_volume: Option<String>,
+    /// Minimum number of holding addresses
+    min_holders: Option<String>,
+    /// Minimum market cap in USD
+    min_market_cap: Option<String>,
+    /// Maximum market cap in USD
+    max_market_cap: Option<String>,
+    /// Minimum liquidity in USD
+    min_liquidity: Option<String>,
+    /// Maximum liquidity in USD
+    max_liquidity: Option<String>,
+}
+
 // ── Swap ───────────────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
 struct SwapQuoteParams {
@@ -206,12 +232,18 @@ struct SwapSwapParams {
     amount: String,
     /// Chain name
     chain: String,
-    /// Slippage tolerance in percent, e.g. "1" for 1% (default: "1")
+    /// Slippage tolerance in percent, e.g. "1" for 1%. Omit to use autoSlippage.
     slippage: Option<String>,
     /// User wallet address
     wallet: String,
+    /// Gas priority: slow, average (default), fast
+    gas_level: Option<String>,
     /// Swap mode: exactIn (default) or exactOut
     swap_mode: Option<String>,
+    /// Jito tips in SOL for Solana MEV protection (range: 0.0000000001–2)
+    tips: Option<String>,
+    /// Max auto slippage percent cap when autoSlippage is enabled (e.g. "0.5")
+    max_auto_slippage: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -251,6 +283,9 @@ struct PortfolioAllBalancesParams {
     chains: String,
     /// Exclude risky tokens: 0=filter out (default), 1=include
     exclude_risk: Option<String>,
+    /// Token filter level: 0=default (filters risk/custom/passive tokens), 1=return all tokens.
+    /// Use 1 when you need the full token list including risk tokens (e.g. for security scanning).
+    filter: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -264,31 +299,52 @@ struct PortfolioTokenBalancesParams {
     exclude_risk: Option<String>,
 }
 
-// ── Tracker ────────────────────────────────────────────────────────────
+// ── Leaderboard ────────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
-struct TrackerTradesParams {
-    /// Tracker type: kol (default), smart_money/sm, multi_address/custom. Also accepts 1/2/3.
-    tracker_type: Option<String>,
-    /// Wallet address(es) — required when tracker_type is multi_address/custom/3. Comma-separated, max 20.
-    wallet_address: Option<String>,
-    /// Trade type: all (default), buy, sell. Also accepts 0/1/2.
-    trade_type: Option<String>,
-    /// Chain name, e.g. "ethereum", "solana". Empty or "all" for all chains.
+struct LeaderboardListParams {
+    /// Chain name, e.g. "ethereum", "solana" (required)
+    chain: String,
+    /// Time frame (required): 1=1D, 2=3D, 3=7D, 4=1M, 5=3M
+    time_frame: String,
+    /// Sort by (required): 1=PnL, 2=Win Rate, 3=Tx count, 4=Volume, 5=ROI
+    sort_by: String,
+    /// Wallet type (optional, single select): smartMoney, influencer, sniper, dev, fresh, pump
+    wallet_type: Option<String>,
+    /// Minimum realized PnL in USD (optional)
+    min_realized_pnl_usd: Option<String>,
+    /// Maximum realized PnL in USD (optional)
+    max_realized_pnl_usd: Option<String>,
+    /// Minimum win rate percentage 0-100 (optional)
+    min_win_rate_percent: Option<String>,
+    /// Maximum win rate percentage 0-100 (optional)
+    max_win_rate_percent: Option<String>,
+    /// Minimum number of transactions (optional)
+    min_txs: Option<String>,
+    /// Maximum number of transactions (optional)
+    max_txs: Option<String>,
+    /// Minimum transaction volume in USD (optional)
+    min_tx_volume: Option<String>,
+    /// Maximum transaction volume in USD (optional)
+    max_tx_volume: Option<String>,
+}
+
+// ── Token Cluster ───────────────────────────────────────────────────────
+#[derive(Deserialize, JsonSchema)]
+struct ClusterAddressParams {
+    /// Token contract address
+    address: String,
+    /// Chain name (optional, defaults to ethereum)
     chain: Option<String>,
-    /// Minimum trade volume in USD
-    min_volume: Option<String>,
-    /// Maximum trade volume in USD
-    max_volume: Option<String>,
-    /// Minimum holder count of the traded token
-    min_holders: Option<String>,
-    /// Minimum market cap in USD
-    min_market_cap: Option<String>,
-    /// Maximum market cap in USD
-    max_market_cap: Option<String>,
-    /// Minimum liquidity in USD
-    min_liquidity: Option<String>,
-    /// Maximum liquidity in USD
-    max_liquidity: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct ClusterTopHoldersParams {
+    /// Token contract address
+    address: String,
+    /// Chain name (optional, defaults to ethereum)
+    chain: Option<String>,
+    /// Holder rank tier: 1 = top 10, 2 = top 50, 3 = top 100
+    range_filter: String,
 }
 
 // ── Gateway ────────────────────────────────────────────────────────────
@@ -328,6 +384,9 @@ struct GatewayBroadcastParams {
     address: String,
     /// Chain name
     chain: String,
+    /// Enable MEV protection (supported on Base and other EVM chains)
+    #[serde(default)]
+    mev_protection: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -406,7 +465,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_info(&self.client, &p.address, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -425,7 +484,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_holders(&self.client, &p.address, &chain_index, p.tag_filter).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -458,7 +517,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_price_info(&self.client, &p.address, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -477,7 +536,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match market::fetch_price(&self.client, &p.address, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -496,7 +555,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match market::fetch_prices(&self.client, &p.tokens, &default_chain).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -515,7 +574,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         let bar = p.bar.as_deref().unwrap_or("1H");
         let limit = p.limit.unwrap_or(100);
         match market::fetch_kline(&self.client, &p.address, &chain_index, bar, limit).await {
@@ -536,7 +595,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         let limit = p.limit.unwrap_or(100);
         match token::fetch_token_trades(
             &self.client,
@@ -565,7 +624,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match market::fetch_index(&self.client, &p.address, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -810,17 +869,20 @@ impl McpServer {
     )]
     async fn swap_swap(&self, Parameters(p): Parameters<SwapSwapParams>) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        let slippage = p.slippage.as_deref().unwrap_or("1");
         let swap_mode = p.swap_mode.as_deref().unwrap_or("exactIn");
+        let gas_level = p.gas_level.as_deref().unwrap_or("average");
         match swap::fetch_swap(
             &self.client,
             &chain_index,
             &p.from,
             &p.to,
             &p.amount,
-            slippage,
+            p.slippage.as_deref(),
             &p.wallet,
             swap_mode,
+            gas_level,
+            p.tips.as_deref(),
+            p.max_auto_slippage.as_deref(),
         )
         .await
         {
@@ -905,6 +967,7 @@ impl McpServer {
             &p.address,
             &p.chains,
             p.exclude_risk.as_deref(),
+            p.filter.as_deref(),
         )
         .await
         {
@@ -1009,7 +1072,15 @@ impl McpServer {
         Parameters(p): Parameters<GatewayBroadcastParams>,
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match gateway::fetch_broadcast(&self.client, &chain_index, &p.signed_tx, &p.address).await {
+        match gateway::fetch_broadcast(
+            &self.client,
+            &chain_index,
+            &p.signed_tx,
+            &p.address,
+            p.mev_protection,
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1042,7 +1113,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_liquidity(&self.client, &p.address, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -1075,7 +1146,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_advanced_info(&self.client, &p.address, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -1094,7 +1165,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(crate::chains::resolve_chain)
-            .unwrap_or_else(|| "1".to_string());
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_top_trader(&self.client, &p.address, &chain_index, p.tag_filter).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -1123,13 +1194,9 @@ impl McpServer {
         Parameters(p): Parameters<PortfolioPnlOverviewParams>,
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match market::fetch_portfolio_overview(
-            &self.client,
-            &chain_index,
-            &p.address,
-            &p.time_frame,
-        )
-        .await
+        let time_frame = p.time_frame.as_deref().unwrap_or("4");
+        match market::fetch_portfolio_overview(&self.client, &chain_index, &p.address, time_frame)
+            .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -1203,22 +1270,29 @@ impl McpServer {
         }
     }
 
-    // ── Tracker ────────────────────────────────────────────────────────
-
     #[tool(
-        name = "tracker_trades",
-        description = "Get on-chain trading activity of tracked addresses (KOL / smart money / custom multi-address group). Returns recent buy/sell trades with token info, volume, and wallet details."
+        name = "market_address_tracker_activities",
+        description = "Get latest DEX activities for tracked addresses. trackerType: smart_money (or 1) = platform smart money, kol (or 2) = platform Top 100 KOL addresses, multi_address (or 3) = custom addresses (requires wallet_address)"
     )]
-    async fn tracker_trades(
+    async fn market_address_tracker_activities(
         &self,
-        Parameters(p): Parameters<TrackerTradesParams>,
+        Parameters(p): Parameters<AddressTrackerActivitiesParams>,
     ) -> Result<String, String> {
-        match tracker::fetch_tracker_trades(
+        let resolved_type = market::resolve_tracker_type(&p.tracker_type);
+        if (resolved_type == "3" || p.tracker_type == "multi_address") && p.wallet_address.is_none()
+        {
+            return Err("wallet_address is required when tracker_type is multi_address".into());
+        }
+        let chain_index = p
+            .chain
+            .as_deref()
+            .map(|c| crate::chains::resolve_chain(c).to_string());
+        match market::fetch_address_tracker_activities(
             &self.client,
-            p.tracker_type.as_deref(),
+            &p.tracker_type,
             p.wallet_address.as_deref(),
             p.trade_type.as_deref(),
-            p.chain.as_deref(),
+            chain_index.as_deref(),
             p.min_volume.as_deref(),
             p.max_volume.as_deref(),
             p.min_holders.as_deref(),
@@ -1226,6 +1300,144 @@ impl McpServer {
             p.max_market_cap.as_deref(),
             p.min_liquidity.as_deref(),
             p.max_liquidity.as_deref(),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    // ── Leaderboard ───────────────────────────────────────────────────
+
+    #[tool(
+        name = "leaderboard_chains",
+        description = "Get supported chains for the leaderboard (top traders ranking)"
+    )]
+    async fn leaderboard_chains(&self) -> Result<String, String> {
+        match leaderboard::fetch_chains(&self.client).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "leaderboard_list",
+        description = "Get top trader leaderboard ranked by PnL, win rate, volume, or ROI (max 20 per request)"
+    )]
+    async fn leaderboard_list(
+        &self,
+        Parameters(p): Parameters<LeaderboardListParams>,
+    ) -> Result<String, String> {
+        let chain_index = crate::chains::resolve_chain(&p.chain).to_string();
+        let wallet_type_resolved = p
+            .wallet_type
+            .map(leaderboard::resolve_leaderboard_wallet_type);
+        match leaderboard::fetch_list(
+            &self.client,
+            &chain_index,
+            &p.time_frame,
+            &p.sort_by,
+            wallet_type_resolved.as_deref(),
+            p.min_realized_pnl_usd.as_deref(),
+            p.max_realized_pnl_usd.as_deref(),
+            p.min_win_rate_percent.as_deref(),
+            p.max_win_rate_percent.as_deref(),
+            p.min_txs.as_deref(),
+            p.max_txs.as_deref(),
+            p.min_tx_volume.as_deref(),
+            p.max_tx_volume.as_deref(),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    // ── Token Cluster ─────────────────────────────────────────────────
+
+    #[tool(
+        name = "token_cluster_supported_chains",
+        description = "Get supported chains for token holder cluster analysis"
+    )]
+    async fn token_cluster_supported_chains(&self) -> Result<String, String> {
+        match token::fetch_cluster_supported_chains(&self.client).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "token_cluster_overview",
+        description = "Get token holder cluster concentration overview (cluster level, rug pull %, new address %)"
+    )]
+    async fn token_cluster_overview(
+        &self,
+        Parameters(p): Parameters<ClusterAddressParams>,
+    ) -> Result<String, String> {
+        let chain_index = p
+            .chain
+            .as_deref()
+            .map(crate::chains::resolve_chain)
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
+        match token::fetch_cluster_by_address(
+            &self.client,
+            "/api/v6/dex/market/token/cluster/overview",
+            &p.address,
+            &chain_index,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "token_cluster_top_holders",
+        description = "Get token holder cluster analysis for top holder groups (range_filter: 1 = top 10, 2 = top 50, 3 = top 100)"
+    )]
+    async fn token_cluster_top_holders(
+        &self,
+        Parameters(p): Parameters<ClusterTopHoldersParams>,
+    ) -> Result<String, String> {
+        let chain_index = p
+            .chain
+            .as_deref()
+            .map(crate::chains::resolve_chain)
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
+        match token::fetch_cluster_top_holders(
+            &self.client,
+            &p.address,
+            &chain_index,
+            &p.range_filter,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "token_cluster_list",
+        description = "Get holder cluster list with address details for top 300 holders of a token"
+    )]
+    async fn token_cluster_list(
+        &self,
+        Parameters(p): Parameters<ClusterAddressParams>,
+    ) -> Result<String, String> {
+        let chain_index = p
+            .chain
+            .as_deref()
+            .map(crate::chains::resolve_chain)
+            .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
+        match token::fetch_cluster_by_address(
+            &self.client,
+            "/api/v6/dex/market/token/cluster/list",
+            &p.address,
+            &chain_index,
         )
         .await
         {

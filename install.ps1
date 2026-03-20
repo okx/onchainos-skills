@@ -1,16 +1,18 @@
 # ──────────────────────────────────────────────────────────────
 # onchainos installer / updater (Windows)
 #
-# Usage:
+# Usage (stable):
 #   irm https://raw.githubusercontent.com/okx/onchainos-skills/main/install.ps1 | iex
 #
-# With --beta flag:
+# Usage (beta):
+#   $env:ONCHAINOS_BETA=1; irm https://raw.githubusercontent.com/okx/onchainos-skills/main/install.ps1 | iex
+#   # or
 #   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/okx/onchainos-skills/main/install.ps1))) --beta
 #
 # Behavior:
 #   - Default (stable): fetches latest stable release from GitHub,
 #     compares with local version, installs/upgrades if needed.
-#   - --beta: fetches all tags, finds the latest version (including
+#   - Beta: fetches all tags, finds the latest version (including
 #     pre-releases) by semver, and installs it.
 #   - Caches the last check timestamp. Skips GitHub API calls if
 #     checked within the last 12 hours.
@@ -24,6 +26,15 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# Support --beta via remaining args (PowerShell treats -- as param terminator)
+if ($args -contains "beta" -or $args -contains "--beta") {
+    $beta = [switch]::new($true)
+}
+# Support ONCHAINOS_BETA env var (for irm | iex which cannot pass args)
+if ($env:ONCHAINOS_BETA) {
+    $beta = [switch]::new($true)
+}
 
 $REPO = "okx/onchainos-skills"
 $BINARY = "onchainos"

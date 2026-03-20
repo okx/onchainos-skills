@@ -1,20 +1,22 @@
 # onchainos Skills
 
-onchainos skills for AI coding assistants. Provides token search, market data, wallet balance queries, swap execution, transaction broadcasting, leaderboard rankings, address tracker activity, and token cluster analysis across 20+ blockchains.
+onchainos skills for AI coding assistants. Provides token search, market data, wallet balance queries, swap execution, transaction broadcasting, leaderboard rankings, and token cluster analysis across 20+ blockchains.
 
 ## Available Skills
 
 | Skill | Description |
 |-------|-------------|
-| `okx-wallet-portfolio` | Wallet balance, token holdings, portfolio value |
-| `okx-dex-market` | Real-time prices, K-line charts, index prices, wallet PnL analysis |
-| `okx-dex-signal` | Smart money / whale / KOL signal tracking |
+| `okx-agentic-wallet` | Wallet lifecycle: auth, balance, portfolio PnL, send, tx history, contract call |
+| `okx-wallet-portfolio` | Public address balance, token holdings, portfolio value |
+| `okx-security` | Security scanning: token risk, DApp phishing, tx pre-execution, signature safety, approval management |
+| `okx-dex-market` | Real-time prices, K-line charts, index prices, wallet PnL analysis, address tracker activities |
+| `okx-dex-signal` | Smart money / whale / KOL signal tracking, leaderboard rankings |
 | `okx-dex-trenches` | Meme pump/trenches token scanning, dev reputation, bundle detection, aped wallets |
 | `okx-dex-swap` | Token swap via DEX aggregation (500+ liquidity sources) |
 | `okx-dex-token` | Token search, metadata, market cap, rankings, liquidity pools, hot tokens, advanced info, holder analysis, top traders, trade history, holder cluster analysis |
 | `okx-onchain-gateway` | Gas estimation, transaction simulation, broadcasting, order tracking |
-| `okx-dex-leaderboard` | Smart money leaderboard (牛人榜) — top traders ranked by PnL, win rate, volume, or ROI |
-| `okx-dex-tracker` | Address tracker — KOL / smart money / custom group on-chain trading activity feed |
+| `okx-x402-payment` | Sign x402 payment authorization via TEE for payment-gated resources |
+| `okx-audit-log` | Audit log export and troubleshooting |
 
 ## Supported Chains
 
@@ -33,16 +35,6 @@ OKX_PASSPHRASE="your-passphrase"
 ```
 
 **Security warning**: Never commit `.env` to git (add it to `.gitignore`) and never expose credentials in logs, screenshots, or chat messages.
-
-### Quick Start — Try It Now
-
-Want to try the skills right away? Use the shared API key below:
-
-```bash
-OKX_API_KEY="03f0b376-251c-4618-862e-ae92929e0416"
-OKX_SECRET_KEY="652ECE8FF13210065B0851FFDA9191F7"
-OKX_PASSPHRASE="onchainOS#666"
-```
 
 ## Installation
 
@@ -94,9 +86,9 @@ The skills work together in typical DeFi flows:
 
 **Full Trading Flow**: `okx-dex-token` (search) -> `okx-dex-market` (price/chart) -> `okx-wallet-portfolio` (check balance) -> `okx-dex-swap` (get tx) -> `okx-onchain-gateway` (simulate + broadcast + track)
 
-**Leaderboard → Research → Trade**: `okx-dex-leaderboard` (top traders by PnL/win rate) -> `okx-dex-tracker` (see what they're buying) -> `okx-dex-token` (token analytics) -> `okx-dex-swap` (execute trade)
+**Leaderboard → Research → Trade**: `okx-dex-signal` (top traders by PnL/win rate) -> `okx-dex-token` (token analytics) -> `okx-dex-swap` (execute trade)
 
-**Follow Smart Money**: `okx-dex-tracker` (KOL/smart money buys) -> `okx-dex-token` (token details + holder cluster) -> `okx-dex-market` (price chart) -> `okx-dex-swap` (trade)
+**Follow Smart Money**: `okx-dex-signal` (KOL/smart money buys) -> `okx-dex-token` (token details + holder cluster) -> `okx-dex-market` (price chart) -> `okx-dex-swap` (trade)
 
 ## Install CLI
 
@@ -115,6 +107,22 @@ curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh
 ```
 
 > **Note:** Beta versions (e.g., `v2.0.0-beta.0`) are opt-in only. The default installer and all skill auto-updates always use the latest stable release. Running without `--beta` will never downgrade a beta installation whose base version is ahead of the latest stable.
+
+### PowerShell (Windows)
+
+Auto-detects your platform, downloads the latest **stable** release, verifies SHA256 checksum, and installs to `%USERPROFILE%\.local\bin`:
+
+```powershell
+irm https://raw.githubusercontent.com/okx/onchainos-skills/main/install.ps1 | iex
+```
+
+To install the latest **beta** version (includes pre-releases):
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/okx/onchainos-skills/main/install.ps1))) --beta
+```
+
+> **Note:** The same beta/stable rules apply — default installs always use the latest stable release, and `--beta` is opt-in only.
 
 ## MCP Server
 
@@ -145,4 +153,4 @@ You are solely responsible for the security, confidentiality, and proper managem
 
 ## License
 
-Apache-2.0
+MIT
