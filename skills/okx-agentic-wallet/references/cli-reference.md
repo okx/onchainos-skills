@@ -1,6 +1,6 @@
 # Onchain OS — Agentic Wallet CLI Reference
 
-Complete parameter tables, return field schemas, and usage examples for all wallet commands (A-F).
+Complete parameter tables, return field schemas, and usage examples for all wallet commands (A-G).
 
 ---
 
@@ -799,16 +799,20 @@ onchainos wallet sign-message \
 | `--type` | string | No | Signing type: `personal` (default, EVM + Solana) or `eip712` (EVM only). |
 | `--from` | string | Yes | Sender address — the address whose private key is used to sign. |
 
-**Return fields:**
+> **Note:** Using `--type eip712` with `--chain 501` (Solana) will return an error. EIP-712 is only supported on EVM chains.
+
+**Return fields (EVM chains):**
 
 | Field | Type | Description |
 |---|---|---|
-| `signature` | String | The resulting signature (hex-encoded, 0x-prefixed) |
-| `r` | String | ECDSA r component (if available) |
-| `s` | String | ECDSA s component (if available) |
-| `v` | String | ECDSA v component (if available) |
+| `signature` | String | The resulting signature (hex-encoded, as returned by the API) |
 
-> `r`, `s`, `v` fields are only included when non-empty.
+**Return fields (Solana, chain 501):**
+
+| Field | Type | Description |
+|---|---|---|
+| `signature` | String | The resulting signature (base58-encoded, converted from hex) |
+| `publicKey` | String | The signer's public address (the `--from` address) |
 
 ### G — Input / Output Examples
 
@@ -827,7 +831,8 @@ onchainos wallet sign-message --chain 1 --from 0xYourAddress --message "Hello Wo
 ```bash
 onchainos wallet sign-message --chain 501 --from SoLYourAddress --message "Hello World"
 # -> personalSign (Solana). message.value is base58-encoded.
-#   Signature: 0xabcdef1234567890...
+#   Signature: 3xB7mK9v... (base58)
+#   PublicKey: SoLYourAddress
 ```
 
 ---
