@@ -212,7 +212,7 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | Similar tokens by same creator | - | `okx-dex-trenches` → `onchainos memepump similar-tokens` |
 | Market-wide smart money / whale / KOL alerts | - | `okx-dex-signal` → `onchainos signal list` |
 
-**Rule of thumb**: `okx-dex-token` = token discovery & enriched analytics (search, hot tokens, holders, holder filtering, market cap, advanced info, top traders, token risk, filtered trade history). `okx-dex-market` = raw price feeds, charts, wallet PnL. `okx-dex-signal` = market-wide smart money / whale / KOL signal tracking. `okx-dex-trenches` = meme pump scanning (dev reputation, rug pull history, bundler analysis, new launches).
+**Rule of thumb**: `okx-dex-token` = token discovery & enriched analytics (search, trending/hot tokens, holders, holder filtering, market cap, advanced info, top traders, token risk, filtered trade history). `okx-dex-market` = raw price feeds, charts, wallet PnL. `okx-dex-signal` = market-wide smart money / whale / KOL signal tracking. `okx-dex-trenches` = meme pump scanning (dev reputation, rug pull history, bundler analysis, new launches).
 
 ## Cross-Skill Workflows
 
@@ -238,9 +238,9 @@ This skill is the typical **entry point** — users often start by searching/dis
 - `chain` from step 1 → reused in all subsequent steps
 - `decimal` from step 1 or `onchainos token info` → needed for minimal unit conversion in swap
 
-### Workflow B: Discover Hot Tokens → Investigate → Trade
+### Workflow B: Discover Trending → Investigate → Trade
 
-> User: "What are the hottest tokens on Solana?"
+> User: "What's trending on Solana?"
 
 ```
 1. okx-dex-token    onchainos token hot-tokens --ranking-type 4 --chain solana  → top tokens by trending score
@@ -322,6 +322,7 @@ Before swapping an unknown token, always verify:
 - Search for a token → `onchainos token search`
 - Get token metadata → `onchainos token info`
 - Get price + market cap + liquidity → `onchainos token price-info`
+- View rankings / trending tokens → `onchainos token hot-tokens --ranking-type 4`
 - View holder distribution → `onchainos token holders`
 - Filter holders by tag (KOL, whale, smart money) → `onchainos token holders --tag-filter`
 - View top liquidity pools → `onchainos token liquidity`
