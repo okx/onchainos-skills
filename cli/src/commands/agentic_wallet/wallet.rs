@@ -108,6 +108,15 @@ pub enum WalletCommand {
         #[arg(long)]
         uop_hash: Option<String>,
     },
+    /// Sign an EVM message (personalSign or EIP-712)
+    SignMessage {
+        /// Signing type: "personal" (default) or "eip712"
+        #[arg(long, default_value = "personal")]
+        r#type: String,
+        /// Message to sign (arbitrary string for personal, JSON string for eip712)
+        #[arg(long)]
+        message: String,
+    },
     /// Call a smart contract (EVM inputData or SOL unsigned tx)
     ContractCall {
         /// Contract address to interact with
@@ -215,6 +224,9 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                 uop_hash.as_deref(),
             )
             .await
+        }
+        WalletCommand::SignMessage { r#type, message } => {
+            super::sign::cmd_sign_message(&r#type, &message).await
         }
         WalletCommand::ContractCall {
             to,

@@ -775,3 +775,53 @@ onchainos wallet contract-call \
 | Field | Type | Description |
 |---|---|---|
 | `txHash` | String | Broadcast transaction hash |
+
+---
+
+## G. Sign Message Command
+
+### G1. `onchainos wallet sign-message`
+
+Sign an EVM message using the TEE-backed session key. Supports personalSign (EIP-191) and EIP-712 typed structured data.
+
+```bash
+onchainos wallet sign-message \
+  --message <message> \
+  [--type <type>]
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `--message` | string | Yes | Message to sign. For `personal`: arbitrary string. For `eip712`: JSON string of the typed data. |
+| `--type` | string | No | Signing type: `personal` (default) or `eip712`. |
+
+**Return fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `signature` | String | The resulting signature (hex-encoded, 0x-prefixed) |
+| `r` | String | ECDSA r component (if available) |
+| `s` | String | ECDSA s component (if available) |
+| `v` | String | ECDSA v component (if available) |
+
+> `r`, `s`, `v` fields are only included when non-empty.
+
+### G — Input / Output Examples
+
+**User says:** "Sign this message: Hello World"
+
+```bash
+onchainos wallet sign-message --message "Hello World"
+# -> Display:
+#   Signature: 0xabcdef1234567890...
+```
+
+---
+
+**User says:** "Sign this EIP-712 typed data"
+
+```bash
+onchainos wallet sign-message --type eip712 --message '{"types":{"EIP712Domain":[{"name":"name","type":"string"}],"Mail":[{"name":"contents","type":"string"}]},"primaryType":"Mail","domain":{"name":"Example"},"message":{"contents":"Hello"}}'
+# -> Display:
+#   Signature: 0x1234abcd5678ef90...
+```

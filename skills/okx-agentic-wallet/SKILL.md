@@ -1,6 +1,6 @@
 ---
 name: okx-agentic-wallet
-description: "Use this skill when the user mentions wallet login, sign in, verify OTP, add wallet, switch account, wallet status, logout, wallet balance, assets, holdings, send tokens, transfer ETH, transfer USDC, pay someone, send crypto, send ERC-20, send SPL, transaction history, recent transactions, tx status, tx detail, order list, call smart contract, interact with contract, execute contract function, send calldata, invoke smart contract, show my addresses, wallet addresses, deposit, receive, receive address, top up, fund my wallet. Chinese: 登录钱包, 钱包登录, 验证OTP, 添加钱包, 切换账户, 钱包状态, 退出登录, 余额, 资产, 钱包列表, 账户列表, 发送代币, 转账, 交易历史, 交易记录, 合约调用, 我的地址, 钱包地址, 充值, 充币, 收款, 收款地址, 入金. Manages the wallet lifecycle: auth (login, OTP verify, account addition, switching, status, logout), authenticated balance queries, wallet address display (grouped by XLayer/EVM/Solana), token transfers (native & ERC-20/SPL), transaction history, and smart contract calls. Do NOT use for DEX swaps — use okx-dex-swap. Do NOT use for token search or market data — use okx-dex-token or okx-dex-market. Do NOT use for smart money / whale / KOL signals — use okx-dex-signal. Do NOT use for meme token scanning — use okx-dex-trenches. Do NOT use for transaction broadcasting (non-wallet) — use okx-onchain-gateway. Do NOT use when the user says only a single word like 'wallet' or 'login' without specifying an action or context. Do NOT use for security scanning (token/DApp/tx/sig) — use okx-security. Do NOT use for querying a specific public address's portfolio balance (user provides an explicit address like 0xAbc...) — use okx-wallet-portfolio. Do NOT use for PnL analysis (win rate, realized/unrealized PnL, DEX history) — use okx-dex-market."
+description: "Use this skill when the user mentions wallet login, sign in, verify OTP, add wallet, switch account, wallet status, logout, wallet balance, assets, holdings, send tokens, transfer ETH, transfer USDC, pay someone, send crypto, send ERC-20, send SPL, transaction history, recent transactions, tx status, tx detail, order list, call smart contract, interact with contract, execute contract function, send calldata, invoke smart contract, show my addresses, wallet addresses, deposit, receive, receive address, top up, fund my wallet, sign message, personal sign, personalSign, eip712, sign data, sign typed data, sign EIP-712. Chinese: 登录钱包, 钱包登录, 验证OTP, 添加钱包, 切换账户, 钱包状态, 退出登录, 余额, 资产, 钱包列表, 账户列表, 发送代币, 转账, 交易历史, 交易记录, 合约调用, 我的地址, 钱包地址, 充值, 充币, 收款, 收款地址, 入金, 签名消息, 消息签名. Manages the wallet lifecycle: auth (login, OTP verify, account addition, switching, status, logout), authenticated balance queries, wallet address display (grouped by XLayer/EVM/Solana), token transfers (native & ERC-20/SPL), transaction history, smart contract calls, and EVM message signing (personalSign & EIP-712). Do NOT use for DEX swaps — use okx-dex-swap. Do NOT use for token search or market data — use okx-dex-token or okx-dex-market. Do NOT use for smart money / whale / KOL signals — use okx-dex-signal. Do NOT use for meme token scanning — use okx-dex-trenches. Do NOT use for transaction broadcasting (non-wallet) — use okx-onchain-gateway. Do NOT use when the user says only a single word like 'wallet' or 'login' without specifying an action or context. Do NOT use for security scanning (token/DApp/tx/sig) — use okx-security. Do NOT use for querying a specific public address's portfolio balance (user provides an explicit address like 0xAbc...) — use okx-wallet-portfolio. Do NOT use for PnL analysis (win rate, realized/unrealized PnL, DEX history) — use okx-dex-market."
 license: MIT
 metadata:
   author: okx
@@ -75,6 +75,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For token approval management (ERC-20 allowances, Permit2, risky approvals) → use `okx-security`
 - For sending tokens or contract calls → **Section D**
 - For transaction history → **Section E**
+- For signing messages (personalSign, EIP-712) → **Section F**
 
 ## Parameter Rules
 
@@ -170,6 +171,13 @@ Applies to:
 | E1 | List | `onchainos wallet history` | Browse recent transactions with optional filters | Yes |
 | E2 | Detail | `onchainos wallet history --tx-hash <hash> --chain <chainId> --address <addr>` | Look up a specific transaction by hash | Yes |
 
+### F — Sign Message
+
+| # | Command | Description | Auth Required |
+|---|---|---|---|
+| F1 | `onchainos wallet sign-message --message <msg>` | Sign a message with personalSign (EIP-191). Default mode. | Yes |
+| F2 | `onchainos wallet sign-message --type eip712 --message <json>` | Sign EIP-712 typed structured data | Yes |
+
 ## Operation Flow
 
 ### Step 1: Intent Mapping
@@ -194,6 +202,8 @@ Applies to:
 | "Check tx 0xabc..." / "tx status" | E | `wallet history --tx-hash <hash> --chain <chainId> --address <addr>` |
 | "Approve USDC for contract" / "合约调用" | D | `wallet contract-call --to <addr> --chain 1 --input-data <hex>` |
 | "Execute Solana program" | D | `wallet contract-call --to <addr> --chain 501 --unsigned-tx <base58>` |
+| "Sign a message" / "签名消息" / "personal sign" | F | `wallet sign-message --message <msg>` |
+| "Sign EIP-712 data" / "签名 EIP-712" / "sign typed data" | F | `wallet sign-message --type eip712 --message <json>` |
 
 ### Step 2: Authentication
 
@@ -439,6 +449,27 @@ For EVM, help the user ABI-encode: identify function signature, encode parameter
 
 ---
 
+## Section F — Sign Message
+
+Sign arbitrary messages or EIP-712 typed data using the TEE-backed session key. Only EVM chains are supported.
+
+### Sign Message Operation
+
+1. **Collect params**: message content, signing type (personal or eip712).
+2. **Execute**: `onchainos wallet sign-message --message <msg> [--type <type>]`
+3. **Display**: Show the returned `signature`. If `r`, `s`, `v` are present, display them too.
+
+### Suggest Next Steps — Section F
+
+| Just completed | Suggest |
+|---|---|
+| Successful personalSign | 1. Check balance (Section B) 2. Send a transaction (Section D) |
+| Successful eip712 sign | 1. Check balance (Section B) 2. Execute a contract call (Section D) |
+| Failed (not logged in) | 1. Login first (Step 2) |
+| Failed (invalid JSON for eip712) | 1. Verify the JSON structure is valid |
+
+---
+
 ## MEV Protection
 
 The `contract-call` command supports MEV (Maximal Extractable Value) protection via the `--mev-protection` flag. When enabled, the broadcast API passes `isMEV: true` in `extraData` to route the transaction through MEV-protected channels, preventing front-running, sandwich attacks, and other MEV exploitation.
@@ -642,6 +673,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 - **Section A** manages authentication state only — it does NOT query balances or execute transactions.
 - **Section B** queries the logged-in user's own balances (no address needed). For public address portfolio queries (total value, all tokens), use **okx-wallet-portfolio**. For PnL analysis, use **okx-dex-market**.
 - **Section D** handles token transfers (`wallet send`) and contract interactions (`wallet contract-call`). Use `okx-dex-swap` for DEX swaps.
+- **Section F** handles EVM message signing (`wallet sign-message`) — personalSign (EIP-191) and EIP-712 typed data. EVM only.
 - For security scanning before send/sign operations, use **okx-security**.
 
 ---
