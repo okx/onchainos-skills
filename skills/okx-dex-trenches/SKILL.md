@@ -84,7 +84,32 @@ Every time before running any `onchainos` command, always follow these steps in 
 | 新盘 / 迁移中 / 已迁移 | NEW / MIGRATING / MIGRATED | `onchainos memepump tokens --stage` |
 | pumpfun / bonkers / bonk / believe / bags / mayhem | protocol names (launch platforms) | `onchainos memepump tokens --protocol-id-list <id>` |
 
-**Protocol names are NOT token names.** When a user mentions pumpfun, bonkers, bonk, believe, bags, mayhem, fourmeme, etc., look up their IDs via `onchainos memepump chains`, then pass to `--protocol-id-list`. Multiple protocols: comma-separate the IDs.
+**Protocol names are NOT token names.** When a user mentions a launch platform by name, look up its ID in the table below and pass to `--protocol-id-list`. Multiple protocols: comma-separate the IDs. Run `onchainos memepump chains` to refresh if new platforms appear.
+
+## Protocol ID Reference
+
+| Chain | Protocol Name | Protocol ID |
+|---|---|---|
+| Solana | pumpfun | `120596` |
+| Solana | bonk | `136266` |
+| Solana | bonkers | `139661` |
+| Solana | jupStudio | `137346` |
+| Solana | believe | `134788` |
+| Solana | bags | `129813` |
+| Solana | moonshotMoney | `133933` |
+| Solana | launchlab | `136137` |
+| Solana | moonshot | `121201` |
+| Solana | meteoradbc | `136460` |
+| Solana | mayhem | `139048` |
+| BNB Chain | fourmeme | `135086` |
+| BNB Chain | flap | `129826` |
+| Base | clanker | `130981` |
+| Base | bankr | `134522` |
+| X Layer | dyorfun | `137823` |
+| X Layer | flap | `129826` |
+| TRON | sunpump | `121263` |
+
+> IDs sourced from `onchainos memepump chains`. Run that command to check for newly added platforms not listed here.
 
 When presenting `memepump-token-details` or `memepump-token-dev-info` responses, translate JSON field names into human-readable language. Never dump raw field names to the user:
 - `top10HoldingsPercent` → "top-10 holder concentration"
