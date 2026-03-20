@@ -116,6 +116,12 @@ pub enum WalletCommand {
         /// Message to sign (arbitrary string for personal, JSON string for eip712)
         #[arg(long)]
         message: String,
+        /// Chain ID (e.g. "1" for Ethereum, "501" for Solana, "56" for BSC)
+        #[arg(long)]
+        chain: String,
+        /// Sender address (optional — defaults to selectedAccountId)
+        #[arg(long)]
+        from: Option<String>,
     },
     /// Call a smart contract (EVM inputData or SOL unsigned tx)
     ContractCall {
@@ -225,9 +231,12 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             )
             .await
         }
-        WalletCommand::SignMessage { r#type, message } => {
-            super::sign::cmd_sign_message(&r#type, &message).await
-        }
+        WalletCommand::SignMessage {
+            r#type,
+            message,
+            chain,
+            from,
+        } => super::sign::cmd_sign_message(&r#type, &message, &chain, from.as_deref()).await,
         WalletCommand::ContractCall {
             to,
             chain,

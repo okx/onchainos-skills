@@ -786,14 +786,18 @@ Sign an EVM message using the TEE-backed session key. Supports personalSign (EIP
 
 ```bash
 onchainos wallet sign-message \
+  --chain <chainId> \
   --message <message> \
-  [--type <type>]
+  [--type <type>] \
+  [--from <address>]
 ```
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
+| `--chain` | string | Yes | Chain ID / `realChainIndex` (e.g. "1" for Ethereum, "501" for Solana, "56" for BSC) |
 | `--message` | string | Yes | Message to sign. For `personal`: arbitrary string. For `eip712`: JSON string of the typed data. |
 | `--type` | string | No | Signing type: `personal` (default) or `eip712`. |
+| `--from` | string | No | Sender address — defaults to the selected account's address on the given chain. |
 
 **Return fields:**
 
@@ -808,20 +812,37 @@ onchainos wallet sign-message \
 
 ### G — Input / Output Examples
 
-**User says:** "Sign this message: Hello World"
+**User says:** "Sign this message on Ethereum: Hello World"
 
 ```bash
-onchainos wallet sign-message --message "Hello World"
+onchainos wallet sign-message --chain 1 --message "Hello World"
 # -> Display:
 #   Signature: 0xabcdef1234567890...
 ```
 
 ---
 
-**User says:** "Sign this EIP-712 typed data"
+**User says:** "Sign this message on Solana"
 
 ```bash
-onchainos wallet sign-message --type eip712 --message '{"types":{"EIP712Domain":[{"name":"name","type":"string"}],"Mail":[{"name":"contents","type":"string"}]},"primaryType":"Mail","domain":{"name":"Example"},"message":{"contents":"Hello"}}'
+onchainos wallet sign-message --chain 501 --message "Hello World"
+# -> message.value is base58-encoded (Solana); hex-encoded for EVM chains
+```
+
+---
+
+**User says:** "Sign this EIP-712 typed data on Ethereum"
+
+```bash
+onchainos wallet sign-message --chain 1 --type eip712 --message '{"types":{"EIP712Domain":[{"name":"name","type":"string"}],"Mail":[{"name":"contents","type":"string"}]},"primaryType":"Mail","domain":{"name":"Example"},"message":{"contents":"Hello"}}'
 # -> Display:
 #   Signature: 0x1234abcd5678ef90...
+```
+
+---
+
+**User says:** "Sign with a specific address"
+
+```bash
+onchainos wallet sign-message --chain 1 --message "Hello" --from 0xYourAddress
 ```

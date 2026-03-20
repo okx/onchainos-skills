@@ -175,8 +175,8 @@ Applies to:
 
 | # | Command | Description | Auth Required |
 |---|---|---|---|
-| F1 | `onchainos wallet sign-message --message <msg>` | Sign a message with personalSign (EIP-191). Default mode. | Yes |
-| F2 | `onchainos wallet sign-message --type eip712 --message <json>` | Sign EIP-712 typed structured data | Yes |
+| F1 | `onchainos wallet sign-message --chain <chainId> --message <msg>` | Sign a message with personalSign (EIP-191). Default mode. | Yes |
+| F2 | `onchainos wallet sign-message --chain <chainId> --type eip712 --message <json>` | Sign EIP-712 typed structured data | Yes |
 
 ## Operation Flow
 
@@ -202,8 +202,8 @@ Applies to:
 | "Check tx 0xabc..." / "tx status" | E | `wallet history --tx-hash <hash> --chain <chainId> --address <addr>` |
 | "Approve USDC for contract" / "合约调用" | D | `wallet contract-call --to <addr> --chain 1 --input-data <hex>` |
 | "Execute Solana program" | D | `wallet contract-call --to <addr> --chain 501 --unsigned-tx <base58>` |
-| "Sign a message" / "签名消息" / "personal sign" | F | `wallet sign-message --message <msg>` |
-| "Sign EIP-712 data" / "签名 EIP-712" / "sign typed data" | F | `wallet sign-message --type eip712 --message <json>` |
+| "Sign a message" / "签名消息" / "personal sign" | F | `wallet sign-message --chain <chainId> --message <msg>` |
+| "Sign EIP-712 data" / "签名 EIP-712" / "sign typed data" | F | `wallet sign-message --chain <chainId> --type eip712 --message <json>` |
 
 ### Step 2: Authentication
 
