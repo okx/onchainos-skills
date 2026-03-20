@@ -53,7 +53,7 @@ Every time before running any `onchainos` command, always follow these steps in 
    than this skill's `metadata.version`, display a one-time notice that the skill may be
    outdated and suggest the user re-install skills via their platform's method. Do not block.
 5. **Do NOT auto-reinstall on command failures.** Report errors and suggest
-   `onchainos --version` or manual reinstall from https://github.com/okx/onchainos-skills.
+   `onchainos --version` or manual reinstallation from https://github.com/okx/onchainos-skills.
 6. **Rate limit errors.** If a command hits rate limits, the shared API key may
    be throttled. Suggest creating a personal key at the
    [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal). If the
@@ -179,7 +179,7 @@ onchainos wallet status
 
 > "This resource requires payment (x402). You need a wallet to sign the payment. Would you like to create one? (It's free and takes ~30 seconds.)"
 
-- **User says yes** → run `onchainos wallet login` (omit email for AK login via env vars, or provide email for OTP login), then proceed to Step 4.
+- **User says yes** → run `onchainos wallet login` (AK login, no email) or `onchainos wallet login <email>` (OTP login), then proceed to Step 4.
 - **User says no** → switch to the **Local Signing Fallback** (see below).
 
 ### Step 4: Sign
@@ -189,7 +189,7 @@ Run `onchainos payment x402-pay` with the extracted parameters. Returns `{ signa
 **If signing fails** (e.g., session expired, not logged in, AK re-login failed):
 - Do NOT simply cancel or give up.
 - Ask the user: "Signing failed because there is no active wallet session. Would you like to log in now, or sign locally with your own private key?"
-  - **User wants to log in** → run `onchainos wallet login`, then retry this step.
+  - **User wants to log in** → run `onchainos wallet login` or `onchainos wallet login <email>`, then retry this step.
   - **User wants local signing** → switch to the **Local Signing Fallback** (see below).
   - **User wants to cancel** → only then cancel the request.
 
@@ -413,7 +413,7 @@ Same as the main flow Step 5 — build `authorization` from the signed fields, d
 
 ## Edge Cases
 
-- **Not logged in**: Ask user if they want to create a wallet (`onchainos wallet login`). If not, guide them through the Local Signing Fallback above
+- **Not logged in**: Ask user if they want to create a wallet (`onchainos wallet login` or `onchainos wallet login <email>`). If not, guide them through the Local Signing Fallback above
 - **Unsupported network**: Only EVM chains with CAIP-2 `eip155:<chainId>` format are supported
 - **No wallet for chain**: The logged-in account must have an address on the requested chain; if not, inform the user
 - **Amount in wrong units**: `--amount` must be in minimal units — remind user to convert (e.g., 1 USDG = `1000000` for 6 decimals)
