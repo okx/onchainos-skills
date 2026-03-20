@@ -782,7 +782,7 @@ onchainos wallet contract-call \
 
 ### G1. `onchainos wallet sign-message`
 
-Sign an EVM message using the TEE-backed session key. Supports personalSign (EIP-191) and EIP-712 typed structured data.
+Sign a message using the TEE-backed session key. Supports personalSign (EIP-191, EVM + Solana) and EIP-712 typed structured data (EVM only).
 
 ```bash
 onchainos wallet sign-message \
@@ -796,7 +796,7 @@ onchainos wallet sign-message \
 |---|---|---|---|
 | `--chain` | string | Yes | Chain ID / `realChainIndex` (e.g. "1" for Ethereum, "501" for Solana, "56" for BSC) |
 | `--message` | string | Yes | Message to sign. For `personal`: arbitrary string. For `eip712`: JSON string of the typed data. |
-| `--type` | string | No | Signing type: `personal` (default) or `eip712`. |
+| `--type` | string | No | Signing type: `personal` (default, EVM + Solana) or `eip712` (EVM only). |
 | `--from` | string | Yes | Sender address — the address whose private key is used to sign. |
 
 **Return fields:**
@@ -815,8 +815,8 @@ onchainos wallet sign-message \
 **User says:** "Sign this message on Ethereum: Hello World"
 
 ```bash
-onchainos wallet sign-message --chain 1 --message "Hello World"
-# -> Display:
+onchainos wallet sign-message --chain 1 --from 0xYourAddress --message "Hello World"
+# -> personalSign (EVM). message.value is hex-encoded.
 #   Signature: 0xabcdef1234567890...
 ```
 
@@ -825,8 +825,9 @@ onchainos wallet sign-message --chain 1 --message "Hello World"
 **User says:** "Sign this message on Solana"
 
 ```bash
-onchainos wallet sign-message --chain 501 --message "Hello World"
-# -> message.value is base58-encoded (Solana); hex-encoded for EVM chains
+onchainos wallet sign-message --chain 501 --from SoLYourAddress --message "Hello World"
+# -> personalSign (Solana). message.value is base58-encoded.
+#   Signature: 0xabcdef1234567890...
 ```
 
 ---
@@ -834,15 +835,7 @@ onchainos wallet sign-message --chain 501 --message "Hello World"
 **User says:** "Sign this EIP-712 typed data on Ethereum"
 
 ```bash
-onchainos wallet sign-message --chain 1 --type eip712 --message '{"types":{"EIP712Domain":[{"name":"name","type":"string"}],"Mail":[{"name":"contents","type":"string"}]},"primaryType":"Mail","domain":{"name":"Example"},"message":{"contents":"Hello"}}'
-# -> Display:
+onchainos wallet sign-message --chain 1 --from 0xYourAddress --type eip712 --message '{"types":{"EIP712Domain":[{"name":"name","type":"string"}],"Mail":[{"name":"contents","type":"string"}]},"primaryType":"Mail","domain":{"name":"Example"},"message":{"contents":"Hello"}}'
+# -> eip712 (EVM only). Solana is NOT supported for eip712.
 #   Signature: 0x1234abcd5678ef90...
-```
-
----
-
-**User says:** "Sign with a specific address"
-
-```bash
-onchainos wallet sign-message --chain 1 --message "Hello" --from 0xYourAddress
 ```

@@ -108,7 +108,7 @@ pub enum WalletCommand {
         #[arg(long)]
         uop_hash: Option<String>,
     },
-    /// Sign an EVM message (personalSign or EIP-712)
+    /// Sign a message (personalSign for EVM & Solana, EIP-712 for EVM only)
     SignMessage {
         /// Signing type: "personal" (default) or "eip712"
         #[arg(long, default_value = "personal")]
