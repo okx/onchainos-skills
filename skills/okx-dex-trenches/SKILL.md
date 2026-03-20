@@ -109,7 +109,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 | X Layer | flap | `129826` |
 | TRON | sunpump | `121263` |
 
-> IDs sourced from `onchainos memepump chains`. Run that command to check for newly added platforms not listed here.
+> **Disclaimer**: This list is not exhaustive and may be updated from time to time as new platforms launch. Always run `onchainos memepump chains` for the latest full list.
 
 When presenting `memepump-token-details` or `memepump-token-dev-info` responses, translate JSON field names into human-readable language. Never dump raw field names to the user:
 - `top10HoldingsPercent` → "top-10 holder concentration"
