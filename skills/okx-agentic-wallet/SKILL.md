@@ -458,7 +458,7 @@ Sign arbitrary messages or EIP-712 typed data using the TEE-backed session key. 
 1. **Collect params**: message content, signing type (personal or eip712), chain, from address.
 2. **Validate**: If `--type eip712`, the chain must be an EVM chain (not Solana). personalSign supports both EVM and Solana.
 3. **Execute**: `onchainos wallet sign-message --chain <chainId> --from <address> --message <msg> [--type <type>]`
-4. **Display**: Show the returned `signature`. If `r`, `s`, `v` are present, display them too.
+4. **Display**: Show the returned `signature`. For Solana (chain 501), the signature is base58-encoded and a `publicKey` field (the signer address) is also returned. For EVM chains, the signature is hex-encoded.
 
 ### Suggest Next Steps — Section F
 

@@ -26,7 +26,10 @@ pub(super) async fn cmd_sign_message(
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][cmd_sign_message] enter: sign_type={}, message_len={}, chain={}, from={}",
-            sign_type, message.len(), chain, from
+            sign_type,
+            message.len(),
+            chain,
+            from
         );
     }
 
@@ -40,10 +43,7 @@ pub(super) async fn cmd_sign_message(
 // ── shared: resolve chain + address ──────────────────────────────────
 
 /// Resolve realChainIndex → (chainIndex string, chainName), then resolve from address.
-async fn resolve_chain_and_address(
-    chain: &str,
-    from: &str,
-) -> Result<(String, String)> {
+async fn resolve_chain_and_address(chain: &str, from: &str) -> Result<(String, String)> {
     let chain_entry = super::chain::get_chain_by_real_chain_index(chain)
         .await?
         .ok_or_else(|| anyhow::anyhow!("unsupported chain: {chain}"))?;
@@ -65,8 +65,7 @@ async fn resolve_chain_and_address(
 
     let wallets = wallet_store::load_wallets()?
         .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-    let (_acct_id, addr_info) =
-        super::transfer::resolve_address(&wallets, Some(from), chain_name)?;
+    let (_acct_id, addr_info) = super::transfer::resolve_address(&wallets, Some(from), chain_name)?;
 
     if cfg!(feature = "debug-log") {
         eprintln!(
@@ -82,7 +81,10 @@ async fn resolve_chain_and_address(
 
 async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
     if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][personal_sign] enter: chain={}, from={}", chain, from);
+        eprintln!(
+            "[DEBUG][personal_sign] enter: chain={}, from={}",
+            chain, from
+        );
     }
 
     let access_token = ensure_tokens_refreshed().await?;
@@ -121,20 +123,30 @@ async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
         );
     }
 
-    // EIP-191 sign: hex-encode message bytes → ed25519_sign_eip191
-    let hex_msg = hex::encode(message.as_bytes());
-    let session_signature =
-        crate::crypto::ed25519_sign_eip191(&hex_msg, &signing_seed)?;
-    signing_seed.zeroize();
+    let session_signature = if chain == "501" {
+        let hex_msg = hex::encode(message.as_bytes());
+        // Solana: sign the hex message directly via ed25519_sign_hex
+        let mut seed_b64 = B64.encode(signing_seed);
+        signing_seed.zeroize();
+        let sig = crate::crypto::ed25519_sign_hex(&hex_msg, &seed_b64)?;
+        seed_b64.zeroize();
+        sig
+    } else {
+        // EVM: EIP-191 personal sign (prefix + keccak256 + ed25519)
+        let sig = crate::crypto::ed25519_sign_eip191(&message, &signing_seed, "utf8")?;
+        signing_seed.zeroize();
+        sig
+    };
     if cfg!(feature = "debug-log") {
         eprintln!(
-            "[DEBUG][personal_sign] Step 5: EIP-191 signed, session_signature length={}",
+            "[DEBUG][personal_sign] Step 5: signed OK (chain={}), session_signature length={}",
+            chain,
             session_signature.len()
         );
     }
 
-    // Encode message value: base58 for Solana (chain 501), hex for EVM
-    let encoded_value = encode_message_value(message.as_bytes(), chain);
+    // Encode message value: base58 for Solana (chain 501), raw for EVM
+    let encoded_value = encode_message_value(message, chain);
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][personal_sign] Step 6: encoded_value={}",
@@ -176,16 +188,22 @@ async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
         );
     }
 
-    output_sign_result(&data)
+    output_sign_result(&data, chain, &from_address)
 }
 
 // ── eip712 ───────────────────────────────────────────────────────────
 
 async fn eip712_sign(message: &str, chain: &str, from: &str) -> Result<()> {
+    if chain == "501" {
+        bail!("eip712 signing is not supported on Solana (chain 501)");
+    }
+
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][eip712_sign] enter: chain={}, from={}, message_len={}",
-            chain, from, message.len()
+            chain,
+            from,
+            message.len()
         );
     }
 
@@ -259,23 +277,21 @@ async fn eip712_sign(message: &str, chain: &str, from: &str) -> Result<()> {
         );
     }
 
-    let mut signing_seed =
-        crate::crypto::hpke_decrypt_session_sk(encrypted_session_sk, &session_key)?;
+    let signing_seed = crate::crypto::hpke_decrypt_session_sk(encrypted_session_sk, &session_key)?;
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][eip712_sign] Step 7: HPKE decrypt OK, signing_seed length={}",
             signing_seed.len()
         );
     }
+    let mut signing_seed_b64 = B64.encode(signing_seed);
 
-    let msg_hash_bytes =
-        hex::decode(msg_hash.trim_start_matches("0x")).context("invalid msgHash hex")?;
-    let signature_bytes = crate::crypto::ed25519_sign(&signing_seed, &msg_hash_bytes)?;
-    signing_seed.zeroize();
-    let session_signature = B64.encode(&signature_bytes);
+    // ed25519_sign_hex: msg_hash is already hex from gen-msg-hash API
+    let session_signature = crate::crypto::ed25519_sign_hex(msg_hash, &signing_seed_b64)?;
+    signing_seed_b64.zeroize();
     if cfg!(feature = "debug-log") {
         eprintln!(
-            "[DEBUG][eip712_sign] Step 8: Ed25519 signed, session_signature length={}",
+            "[DEBUG][eip712_sign] Step 8: ed25519_sign_hex OK, session_signature length={}",
             session_signature.len()
         );
     }
@@ -313,21 +329,21 @@ async fn eip712_sign(message: &str, chain: &str, from: &str) -> Result<()> {
         );
     }
 
-    output_sign_result(&data)
+    output_sign_result(&data, chain, &from_address)
 }
 
 // ── helpers ──────────────────────────────────────────────────────────
 
-/// Encode message bytes: base58 for Solana (chain "501"), hex for EVM chains.
-fn encode_message_value(msg: &[u8], chain: &str) -> String {
+/// Encode message: base58 for Solana (chain "501"), raw passthrough for EVM chains.
+fn encode_message_value(message: &str, chain: &str) -> String {
     if chain == "501" {
-        bs58::encode(msg).into_string()
+        bs58::encode(message.as_bytes()).into_string()
     } else {
-        format!("0x{}", hex::encode(msg))
+        message.to_string()
     }
 }
 
-fn output_sign_result(data: &Value) -> Result<()> {
+fn output_sign_result(data: &Value, chain: &str, from_address: &str) -> Result<()> {
     let item = data
         .as_array()
         .and_then(|arr| arr.first())
@@ -337,18 +353,19 @@ fn output_sign_result(data: &Value) -> Result<()> {
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing signature in sign-msg response"))?;
 
-    let mut result = json!({ "signature": signature });
-
-    // Include r, s, v if present and non-empty
-    for field in &["r", "s", "v"] {
-        if let Some(val) = item[*field].as_str() {
-            if !val.is_empty() {
-                result[*field] = json!(val);
-            }
-        }
+    if chain == "501" {
+        // Solana: convert hex signature to base58, include publicKey
+        let sig_bytes = hex::decode(signature.trim_start_matches("0x"))
+            .context("invalid hex signature from API")?;
+        let sig_b58 = bs58::encode(&sig_bytes).into_string();
+        output::success(json!({
+            "signature": sig_b58,
+            "publicKey": from_address,
+        }));
+    } else {
+        output::success(json!({ "signature": signature }));
     }
 
-    output::success(result);
     Ok(())
 }
 
@@ -359,56 +376,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn encode_message_value_hex_for_evm() {
-        let msg = b"Hello World";
-        let encoded = encode_message_value(msg, "1");
-        assert_eq!(encoded, format!("0x{}", hex::encode(msg)));
+    fn encode_message_value_raw_for_evm() {
+        let encoded = encode_message_value("Hello World", "1");
+        assert_eq!(encoded, "Hello World");
     }
 
     #[test]
     fn encode_message_value_base58_for_solana() {
-        let msg = b"Hello World";
+        let msg = "Hello World";
         let encoded = encode_message_value(msg, "501");
-        assert_eq!(encoded, bs58::encode(msg).into_string());
+        assert_eq!(encoded, bs58::encode(msg.as_bytes()).into_string());
     }
 
     #[test]
-    fn encode_message_value_hex_for_bsc() {
-        let encoded = encode_message_value(b"test", "56");
-        assert!(encoded.starts_with("0x"));
+    fn encode_message_value_raw_for_bsc() {
+        let encoded = encode_message_value("test", "56");
+        assert_eq!(encoded, "test");
     }
 
     #[test]
-    fn output_sign_result_extracts_signature() {
-        let data = json!([{
-            "signature": "0xabc123",
-            "r": "",
-            "s": "",
-            "v": ""
-        }]);
-        assert!(output_sign_result(&data).is_ok());
+    fn output_sign_result_extracts_signature_evm() {
+        let data = json!([{ "signature": "0xabc123" }]);
+        assert!(output_sign_result(&data, "1", "0xAddr").is_ok());
     }
 
     #[test]
-    fn output_sign_result_includes_rsv_when_present() {
-        let data = json!([{
-            "signature": "0xabc",
-            "r": "0x01",
-            "s": "0x02",
-            "v": "27"
-        }]);
-        assert!(output_sign_result(&data).is_ok());
+    fn output_sign_result_solana_converts_to_base58() {
+        // hex signature → base58
+        let hex_sig = format!("0x{}", hex::encode(b"test_signature"));
+        let data = json!([{ "signature": hex_sig }]);
+        assert!(output_sign_result(&data, "501", "SolAddr123").is_ok());
     }
 
     #[test]
     fn output_sign_result_errors_on_empty_array() {
         let data = json!([]);
-        assert!(output_sign_result(&data).is_err());
+        assert!(output_sign_result(&data, "1", "0xAddr").is_err());
     }
 
     #[test]
     fn output_sign_result_errors_on_missing_signature() {
-        let data = json!([{ "r": "0x01" }]);
-        assert!(output_sign_result(&data).is_err());
+        let data = json!([{}]);
+        assert!(output_sign_result(&data, "1", "0xAddr").is_err());
     }
 }
