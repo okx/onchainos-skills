@@ -108,6 +108,18 @@ pub enum WalletCommand {
         #[arg(long)]
         uop_hash: Option<String>,
     },
+    /// Sign an arbitrary message (EIP-191 personal_sign) via the TEE
+    SignMessage {
+        /// Message text to sign
+        #[arg(long)]
+        message: String,
+        /// Chain ID (e.g. "1" for Ethereum). Defaults to Ethereum.
+        #[arg(long, default_value = "1")]
+        chain: String,
+        /// Signer address (optional — defaults to selectedAccountId)
+        #[arg(long)]
+        from: Option<String>,
+    },
     /// Call a smart contract (EVM inputData or SOL unsigned tx)
     ContractCall {
         /// Contract address to interact with
@@ -216,6 +228,11 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             )
             .await
         }
+        WalletCommand::SignMessage {
+            message,
+            chain,
+            from,
+        } => super::sign_message::cmd_sign_message(&message, &chain, from.as_deref()).await,
         WalletCommand::ContractCall {
             to,
             chain,
