@@ -207,7 +207,8 @@ pub fn secp256k1_sign(seed: &[u8], message: &[u8]) -> Result<Vec<u8>> {
     let signer = PrivateKeySigner::from_slice(&seed_bytes)
         .map_err(|e| anyhow::anyhow!("invalid secp256k1 private key: {e}"))?;
     let hash = B256::from(msg_bytes);
-    let sig = signer.sign_hash_sync(&hash)
+    let sig = signer
+        .sign_hash_sync(&hash)
         .map_err(|e| anyhow::anyhow!("secp256k1 signing failed: {e}"))?;
 
     // Verify: recover address from signature and compare to signer
@@ -492,29 +493,33 @@ mod tests {
     fn eip3009_sign_cross_validates_with_reference_sdk() {
         // Inputs from 3009-rust/examples/basic_usage.rs
         let auth = TransferWithAuthorization {
-            from: "0x5B38Da6a701c568545dCfcB03FcB875f56beddC4".parse().unwrap(),
-            to: "0xAb8483F64d9C6d1EcF9b849Ae677dD3315835cb2".parse().unwrap(),
+            from: "0x5B38Da6a701c568545dCfcB03FcB875f56beddC4"
+                .parse()
+                .unwrap(),
+            to: "0xAb8483F64d9C6d1EcF9b849Ae677dD3315835cb2"
+                .parse()
+                .unwrap(),
             value: U256::from(1_000_000),
             validAfter: U256::from(0),
             validBefore: U256::from(u64::MAX),
             nonce: FixedBytes::<32>::from([
-                0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
-                0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-                0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
-                0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+                0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
+                0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x01, 0x23, 0x45, 0x67,
+                0x89, 0xab, 0xcd, 0xef,
             ]),
         };
         let domain = Eip3009DomainParams {
             name: "USD Coin".to_string(),
             version: "2".to_string(),
             chain_id: 1,
-            verifying_contract: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".parse().unwrap(),
+            verifying_contract: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+                .parse()
+                .unwrap(),
         };
         let private_key: [u8; 32] = [
-            0xac, 0x09, 0x74, 0xe4, 0x77, 0x11, 0xc0, 0x01,
-            0x54, 0x93, 0xdc, 0x81, 0x12, 0xc6, 0x82, 0x79,
-            0x50, 0x69, 0xfb, 0x28, 0x9c, 0x02, 0xba, 0x8b,
-            0x85, 0xf6, 0xbc, 0x12, 0xf0, 0x93, 0xd8, 0x8f,
+            0xac, 0x09, 0x74, 0xe4, 0x77, 0x11, 0xc0, 0x01, 0x54, 0x93, 0xdc, 0x81, 0x12, 0xc6,
+            0x82, 0x79, 0x50, 0x69, 0xfb, 0x28, 0x9c, 0x02, 0xba, 0x8b, 0x85, 0xf6, 0xbc, 0x12,
+            0xf0, 0x93, 0xd8, 0x8f,
         ];
 
         // Reference output from 3009-rust SDK (r || s || v)
@@ -582,9 +587,14 @@ mod tests {
             "84132dd41f32804774a98647c308c0c94a54c0f3931128c0210b6f3689d2b7e7",
             "0x8e81C8f0CFf3d6eA2Fe72c1A5ee49Fc377401c2D",
             "0x244A0A1d21f21167c17e04EBc5FA33c885990674",
-            U256::from(7_000_000), U256::ZERO, U256::MAX,
+            U256::from(7_000_000),
+            U256::ZERO,
+            U256::MAX,
             FixedBytes::from([0xaa; 32]),
-            "USD Coin", "2", 1, USDC_MAINNET,
+            "USD Coin",
+            "2",
+            1,
+            USDC_MAINNET,
             "07b4ad544d883e681552db26de55a707be5a5a5cd814386e0d411daef71715ea\
              66ee9a96d4c1dc65b023ceb8d89c523b80e233baa95347ff4a212817d593963b\
              1c",
@@ -595,10 +605,17 @@ mod tests {
     #[test]
     fn eip3009_sign_tv2_hardhat0_usdc_mainnet() {
         assert_eip3009_sig(
-            HH0_PK, HH0, HH1,
-            U256::from(1_000_000), U256::ZERO, U256::MAX,
+            HH0_PK,
+            HH0,
+            HH1,
+            U256::from(1_000_000),
+            U256::ZERO,
+            U256::MAX,
             FixedBytes::ZERO,
-            "USD Coin", "2", 1, USDC_MAINNET,
+            "USD Coin",
+            "2",
+            1,
+            USDC_MAINNET,
             "9c7cc05c1539ce2fee00de51df7e0a13696469b2dd1bb112832d8fe19715aaab\
              416f67528f2f176e837c0b950149c2211a7651b90a62d22c9ecc27c1ebf0b263\
              1b",
@@ -609,10 +626,17 @@ mod tests {
     #[test]
     fn eip3009_sign_tv3_hardhat1_chain31337() {
         assert_eip3009_sig(
-            HH1_PK, HH1, HH2,
-            U256::from(500_000), U256::ZERO, U256::MAX,
+            HH1_PK,
+            HH1,
+            HH2,
+            U256::from(500_000),
+            U256::ZERO,
+            U256::MAX,
             FixedBytes::from([0xbb; 32]),
-            "USD Coin", "2", 31337, USDC_MAINNET,
+            "USD Coin",
+            "2",
+            31337,
+            USDC_MAINNET,
             "04d2db5c670d69cdfeae007c5ab39ca53b5f144e66c5e26744c8efc920347d15\
              7eadfb128664e03242bd673d27a2d9108e845582228ae5b4a94865e3926f1e6c\
              1c",
@@ -623,10 +647,21 @@ mod tests {
     #[test]
     fn eip3009_sign_tv4_zero_value() {
         assert_eip3009_sig(
-            HH0_PK, HH0, HH1,
-            U256::ZERO, U256::ZERO, U256::MAX,
-            FixedBytes::from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]),
-            "USD Coin", "2", 1, USDC_MAINNET,
+            HH0_PK,
+            HH0,
+            HH1,
+            U256::ZERO,
+            U256::ZERO,
+            U256::MAX,
+            FixedBytes::from([
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x01,
+            ]),
+            "USD Coin",
+            "2",
+            1,
+            USDC_MAINNET,
             "fb96cf2c611c860e2fd0cd4ee3cf71236871d6a1d8052971e530ef3cd45e9f61\
              253e32b78311aec9470ad22aa52f0ddc2061357d87fa8cf2c384411d14035a54\
              1c",
@@ -637,10 +672,17 @@ mod tests {
     #[test]
     fn eip3009_sign_tv5_max_value() {
         assert_eip3009_sig(
-            HH1_PK, HH1, HH2,
-            U256::MAX, U256::ZERO, U256::MAX,
+            HH1_PK,
+            HH1,
+            HH2,
+            U256::MAX,
+            U256::ZERO,
+            U256::MAX,
             FixedBytes::from([0xff; 32]),
-            "USD Coin", "2", 1, USDC_MAINNET,
+            "USD Coin",
+            "2",
+            1,
+            USDC_MAINNET,
             "b114bc5ccf7cbcbdde716ce0cafb20ed5c18ddfb7ad06334af87117c6cfceddf\
              4b050e0c3def7c403b9d08b449db2a31521c4d0a1d5b3147718a4a86406418d6\
              1b",
@@ -651,13 +693,21 @@ mod tests {
     #[test]
     fn eip3009_sign_tv6_time_window() {
         assert_eip3009_sig(
-            HH2_PK, HH2,
+            HH2_PK,
+            HH2,
             "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
             U256::from(50_000_000),
             U256::from(1_700_000_000u64),
             U256::from(1_800_000_000u64),
-            FixedBytes::from([0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef]),
-            "USD Coin", "2", 1, USDC_MAINNET,
+            FixedBytes::from([
+                0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad,
+                0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
+                0xde, 0xad, 0xbe, 0xef,
+            ]),
+            "USD Coin",
+            "2",
+            1,
+            USDC_MAINNET,
             "5af722bee4884f192b5c9373a71f1110da8f844bc8ea77bc0d95b6c5114f506e\
              6fba6639af57a30e9a9a34a8d609c5e7650b3625a7ee9ad9a780633836c084eb\
              1b",
@@ -671,9 +721,17 @@ mod tests {
             "7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6",
             "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
             "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
-            U256::from(1_000_000_000u64), U256::ZERO, U256::MAX,
-            FixedBytes::from([0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef]),
-            "USD Coin", "2", 137,
+            U256::from(1_000_000_000u64),
+            U256::ZERO,
+            U256::MAX,
+            FixedBytes::from([
+                0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90, 0xab,
+                0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78,
+                0x90, 0xab, 0xcd, 0xef,
+            ]),
+            "USD Coin",
+            "2",
+            137,
             "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
             "b43b84668eda289dc9e28973b020cf1289b08e2c620c80a5e9863d2b8194421f\
              0568ed2f6a2cb496cf4348bb67354c266e0c62dee5e1b38dc96491f88b73f318\
@@ -688,9 +746,13 @@ mod tests {
             "84132dd41f32804774a98647c308c0c94a54c0f3931128c0210b6f3689d2b7e7",
             "0x8e81C8f0CFf3d6eA2Fe72c1A5ee49Fc377401c2D",
             "0x244A0A1d21f21167c17e04EBc5FA33c885990674",
-            U256::from(100_000_000u64), U256::ZERO, U256::MAX,
+            U256::from(100_000_000u64),
+            U256::ZERO,
+            U256::MAX,
             FixedBytes::from([0x55; 32]),
-            "Tether USD", "1", 1,
+            "Tether USD",
+            "1",
+            1,
             "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             "a225847251a9804adf9b6a3e88e247600404db83d5a10b69caedc5aca720339e\
              0f919473e41e6ab718b7d0c4d79a630365c9e221860e4501d2a36573990d9f9f\
@@ -702,12 +764,20 @@ mod tests {
     #[test]
     fn eip3009_sign_tv9_arbitrum() {
         assert_eip3009_sig(
-            HH0_PK, HH0, HH1,
+            HH0_PK,
+            HH0,
+            HH1,
             U256::from(250_000),
             U256::from(1_600_000_000u64),
             U256::from(1_900_000_000u64),
-            FixedBytes::from([0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89]),
-            "USD Coin", "2", 42161,
+            FixedBytes::from([
+                0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45,
+                0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01,
+                0x23, 0x45, 0x67, 0x89,
+            ]),
+            "USD Coin",
+            "2",
+            42161,
             "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
             "fa2f5b36f4a60b3a25ea350fb5e335cf113b2d7eb00685599b48680f9ddc324e\
              340b12d7cc9d37312a6aa327dcc27dc71ecb7ac9c699cccfc33283bdd292a94b\
@@ -719,10 +789,17 @@ mod tests {
     #[test]
     fn eip3009_sign_tv10_self_transfer() {
         assert_eip3009_sig(
-            HH2_PK, HH2, HH2,
-            U256::from(1), U256::ZERO, U256::MAX,
+            HH2_PK,
+            HH2,
+            HH2,
+            U256::from(1),
+            U256::ZERO,
+            U256::MAX,
             FixedBytes::ZERO,
-            "USD Coin", "2", 1, USDC_MAINNET,
+            "USD Coin",
+            "2",
+            1,
+            USDC_MAINNET,
             "7be5ae042f7f2c2a3fae133465c4aa5e83a39341ed756beaae6b07f36dc36e29\
              4f243883c33f044991cdfc88d4424999424c81705ee5377623a12d16a8e2ad3f\
              1c",
