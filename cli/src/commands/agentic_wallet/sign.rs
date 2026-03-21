@@ -145,8 +145,8 @@ async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
         );
     }
 
-    // Encode message value: base58 for Solana (chain 501), hex for EVM
-    let encoded_value = encode_message_value(message.as_bytes(), chain);
+    // Encode message value: base58 for Solana (chain 501), raw for EVM
+    let encoded_value = encode_message_value(message, chain);
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][personal_sign] Step 6: encoded_value={}",
@@ -334,12 +334,12 @@ async fn eip712_sign(message: &str, chain: &str, from: &str) -> Result<()> {
 
 // ── helpers ──────────────────────────────────────────────────────────
 
-/// Encode message bytes: base58 for Solana (chain "501"), hex for EVM chains.
-fn encode_message_value(msg: &[u8], chain: &str) -> String {
+/// Encode message: base58 for Solana (chain "501"), raw passthrough for EVM chains.
+fn encode_message_value(message: &str, chain: &str) -> String {
     if chain == "501" {
-        bs58::encode(msg).into_string()
+        bs58::encode(message.as_bytes()).into_string()
     } else {
-        format!("0x{}", hex::encode(msg))
+        message.to_string()
     }
 }
 
@@ -376,23 +376,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn encode_message_value_hex_for_evm() {
-        let msg = b"Hello World";
-        let encoded = encode_message_value(msg, "1");
-        assert_eq!(encoded, format!("0x{}", hex::encode(msg)));
+    fn encode_message_value_raw_for_evm() {
+        let encoded = encode_message_value("Hello World", "1");
+        assert_eq!(encoded, "Hello World");
     }
 
     #[test]
     fn encode_message_value_base58_for_solana() {
-        let msg = b"Hello World";
+        let msg = "Hello World";
         let encoded = encode_message_value(msg, "501");
-        assert_eq!(encoded, bs58::encode(msg).into_string());
+        assert_eq!(encoded, bs58::encode(msg.as_bytes()).into_string());
     }
 
     #[test]
-    fn encode_message_value_hex_for_bsc() {
-        let encoded = encode_message_value(b"test", "56");
-        assert!(encoded.starts_with("0x"));
+    fn encode_message_value_raw_for_bsc() {
+        let encoded = encode_message_value("test", "56");
+        assert_eq!(encoded, "test");
     }
 
     #[test]
