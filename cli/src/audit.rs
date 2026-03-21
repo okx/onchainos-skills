@@ -440,6 +440,7 @@ fn wallet_sub(c: &WalletCommand) -> &'static str {
         WalletCommand::Balance { .. } => "balance",
         WalletCommand::Send { .. } => "send",
         WalletCommand::History { .. } => "history",
+        WalletCommand::SignMessage { .. } => "sign-message",
         WalletCommand::ContractCall { .. } => "contract-call",
     }
 }
