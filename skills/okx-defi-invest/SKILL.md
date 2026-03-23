@@ -93,7 +93,8 @@ Before calling `defi redeem`:
 
 Before calling `defi claim`:
 - MUST call `defi position-detail` first to get `investmentId`, `rewardType`, reward token info (`rewardDefiTokenInfo`)
-- If reward token info available → ALWAYS pass `--expect-output` directly (do NOT rely on auto-fetch)
+- **Zero reward check**: if all reward tokens have `coinAmount=0` or `currencyAmount=0` → inform user "No rewards available to claim" and STOP. Do NOT call `defi claim`.
+- If reward token info available and non-zero → ALWAYS pass `--expect-output` directly (do NOT rely on auto-fetch)
 
 ### Step 3: Execute
 
