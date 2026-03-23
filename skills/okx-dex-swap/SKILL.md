@@ -410,8 +410,6 @@ To search for specific command details: `grep -n "onchainos swap <command>" refe
 |---|---|---|---|
 | Honeypot (`isHoneyPot=true`) | BLOCK | WARN (allow exit) | Selling allowed for stop-loss scenarios |
 | High tax rate (>10%) | WARN | WARN | Display exact tax rate |
-| Price impact >5% | WARN | WARN | Suggest splitting trade |
-| Price impact >10% | BLOCK | WARN | Strongly discourage, allow sell for exit |
 | No quote available | CANNOT | CANNOT | Token may be unlisted or zero liquidity |
 | Black/flagged address | BLOCK | BLOCK | Address flagged by security services |
 | New token (<24h) | WARN | PROCEED | Extra caution on buy side |
