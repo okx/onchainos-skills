@@ -9,7 +9,148 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::client::ApiClient;
-use crate::commands::{gateway, leaderboard, market, memepump, portfolio, signal, swap, token};
+use crate::commands::{defi, gateway, leaderboard, market, memepump, portfolio, signal, swap, token};
+
+// ── DeFi ──────────────────────────────────────────────────────────────
+
+#[derive(Deserialize, JsonSchema)]
+struct DefiListParams {
+    /// Page number (min 1, page size fixed at 20)
+    page_num: Option<u32>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct DefiSearchParams {
+    /// Comma-separated token keywords (e.g. "USDC,ETH"). At least one of token or platform is required
+    token: Option<String>,
+    /// Comma-separated platform keywords (e.g. "Aave,Compound")
+    platform: Option<String>,
+    /// Chain name (e.g. "ethereum", "avalanche")
+    chain: Option<String>,
+    /// Product group: SINGLE_EARN (default), DEX_POOL, LENDING
+    product_group: Option<String>,
+    /// Page number (min 1)
+    page_num: Option<u32>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct DefiDetailParams {
+    /// Investment ID from search results
+    investment_id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct DefiPrepareParams {
+    /// Investment ID from search results
+    investment_id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct DefiEnterParams {
+    /// Investment ID from search results
+    investment_id: String,
+    /// User wallet address
+    address: String,
+    /// User input tokens as JSON array. coinAmount MUST be minimal units (integer), tokenPrecision REQUIRED.
+    /// Convert: userAmount × 10^tokenPrecision (e.g. 0.1 USDT with precision=6 → coinAmount="100000").
+    /// Get tokenPrecision from defi_prepare → investWithTokenList[].tokenPrecision.
+    /// Example: '[{"tokenAddress":"0x...","chainIndex":"1","coinAmount":"100000","tokenPrecision":"6"}]'
+    user_input: String,
+    /// Slippage tolerance (default "0.01" = 1%)
+    slippage: Option<String>,
+    /// Token ID for V3 Pool positions (required for V3 add liquidity to existing position)
+    token_id: Option<String>,
+    /// Lower tick for V3 Pool new position
+    tick_lower: Option<i64>,
+    /// Upper tick for V3 Pool new position
+    tick_upper: Option<i64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct DefiExitParams {
+    /// Investment product ID (investmentId from defi_position_detail)
+    product_id: String,
+    /// Chain name (e.g. "ethereum", "bsc", "solana", "avax")
+    chain: String,
+    /// User wallet address
+    address: String,
+    /// Redemption ratio: "1"=full exit (100%), "0.5"=50%. Required for V3 Pool exits.
+    redeem_ratio: Option<String>,
+    /// V3 Pool NFT tokenId (required ONLY for V3 Pool exits)
+    token_id: Option<String>,
+    /// Slippage tolerance (default "0.01" = 1%)
+    slippage: Option<String>,
+    /// User input tokens as JSON array. coinAmount MUST be minimal units (integer), tokenPrecision REQUIRED.
+    /// Convert: userAmount × 10^tokenPrecision. Get tokenPrecision from defi_position_detail → assetsTokenList[].tokenPrecision.
+    /// Example: '[{"tokenAddress":"<underlying>","chainIndex":"<id>","coinAmount":"100000","tokenPrecision":"6"}]'
+    /// tokenAddress: underlying token (NOT aToken/receipt token).
+    /// Always pass user_input when token info is available — do not default to redeem_ratio.
+    user_input: Option<String>,
+    /// Single-token shorthand: LP token address (alternative to user_input)
+    token_address: Option<String>,
+    /// LP token symbol (used with token_address)
+    token_symbol: Option<String>,
+    /// Amount to redeem (used with token_address)
+    amount: Option<String>,
+    /// LP token decimals (used with token_address)
+    token_precision: Option<u32>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct DefiClaimParams {
+    /// User wallet address
+    address: String,
+    /// Chain name (e.g. "ethereum", "avalanche")
+    chain: String,
+    /// Reward type — must be one of: REWARD_PLATFORM, REWARD_INVESTMENT, REWARD_OKX_BONUS, REWARD_MERKLE_BONUS, V3_FEE, UNLOCKED_PRINCIPAL
+    reward_type: String,
+    /// Product ID / investmentId
+    product_id: Option<String>,
+    /// Protocol platform ID / analysisPlatformId
+    platform_id: Option<String>,
+    /// V3 Pool NFT tokenId (required for V3_FEE)
+    token_id: Option<String>,
+    /// Principal order index (for UNLOCKED_PRINCIPAL)
+    principal_index: Option<String>,
+    /// Expected output token list as JSON array
+    expect_output_list: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct DefiPositionsParams {
+    /// User wallet address
+    address: String,
+    /// Chains to query, comma-separated (e.g. "ethereum,bsc,solana")
+    chains: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct DefiPositionDetailParams {
+    /// User wallet address
+    address: String,
+    /// Chain name (e.g. "ethereum", "avalanche")
+    chain: String,
+    /// Protocol platform ID (analysisPlatformId from positions results)
+    platform_id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct DefiCalculateEntryParams {
+    /// Investment ID from search results
+    id: String,
+    /// User wallet address
+    address: String,
+    /// Input token contract address
+    input_token: String,
+    /// Input amount (human-readable, e.g. "100")
+    input_amount: String,
+    /// Token decimals
+    token_decimal: String,
+    /// Lower tick for V3 Pool position
+    tick_lower: Option<i64>,
+    /// Upper tick for V3 Pool position
+    tick_upper: Option<i64>,
+}
 
 // ── Token ──────────────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
@@ -1438,6 +1579,235 @@ impl McpServer {
             "/api/v6/dex/market/token/cluster/list",
             &p.address,
             &chain_index,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    // ── DeFi A: Search / Detail / Prepare / Deposit ────────────────────
+
+    #[tool(
+        name = "defi_list",
+        description = "List top DeFi products by APY across all chains (no filters, paginated)"
+    )]
+    async fn defi_list(
+        &self,
+        Parameters(p): Parameters<DefiListParams>,
+    ) -> Result<String, String> {
+        match defi::fetch_search(&self.client, None, None, None, None, p.page_num).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "defi_search",
+        description = "Search DeFi investment products (earn, liquidity pools, lending)"
+    )]
+    async fn defi_search(
+        &self,
+        Parameters(p): Parameters<DefiSearchParams>,
+    ) -> Result<String, String> {
+        let chain_index = p.chain.as_deref().map(crate::chains::resolve_chain);
+        match defi::fetch_search(
+            &self.client,
+            p.token.as_deref(),
+            p.platform.as_deref(),
+            chain_index.as_deref(),
+            p.product_group.as_deref(),
+            p.page_num,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "defi_detail",
+        description = "Get full DeFi product details (APY, TVL, fee rate, isInvestable)"
+    )]
+    async fn defi_detail(
+        &self,
+        Parameters(p): Parameters<DefiDetailParams>,
+    ) -> Result<String, String> {
+        match defi::fetch_detail(&self.client, &p.investment_id).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "defi_prepare",
+        description = "Pre-investment check — returns supported tokens (tokenAddress, chainIndex, tokenPrecision), V3 tick parameters. MUST call before defi_deposit."
+    )]
+    async fn defi_prepare(
+        &self,
+        Parameters(p): Parameters<DefiPrepareParams>,
+    ) -> Result<String, String> {
+        match defi::fetch_prepare(&self.client, &p.investment_id).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "defi_deposit",
+        description = "Generate calldata for DeFi investment (subscribe, add liquidity, borrow). IMPORTANT: coinAmount in user_input must be minimal units (integer) with tokenPrecision. Convert: userAmount × 10^tokenPrecision. Example: 0.1 USDT (precision=6) → coinAmount=\"100000\". tokenPrecision is required for each token (from defi_prepare → investWithTokenList[].tokenPrecision)."
+    )]
+    async fn defi_deposit(
+        &self,
+        Parameters(p): Parameters<DefiEnterParams>,
+    ) -> Result<String, String> {
+        let slippage = p.slippage.as_deref().unwrap_or("0.01");
+        match defi::fetch_enter(
+            &self.client,
+            &p.investment_id,
+            &p.address,
+            &p.user_input,
+            slippage,
+            p.token_id.as_deref(),
+            p.tick_lower,
+            p.tick_upper,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    // ── DeFi B: Exit / Claim / Positions ─────────────────────────────
+
+    #[tool(
+        name = "defi_redeem",
+        description = "Generate calldata for DeFi redemption/withdrawal. IMPORTANT: coinAmount in user_input must be minimal units (integer) with tokenPrecision. V3 Pool: pass token_id + redeem_ratio only. Non-V3: pass user_input with underlying token."
+    )]
+    async fn defi_redeem(
+        &self,
+        Parameters(p): Parameters<DefiExitParams>,
+    ) -> Result<String, String> {
+        let chain_index = crate::chains::resolve_chain(&p.chain);
+        let slippage = p.slippage.as_deref().unwrap_or("0.01");
+        match defi::fetch_exit(
+            &self.client,
+            &p.product_id,
+            &chain_index,
+            &p.address,
+            p.redeem_ratio.as_deref(),
+            p.token_address.as_deref(),
+            p.token_symbol.as_deref(),
+            p.amount.as_deref(),
+            p.token_precision,
+            p.token_id.as_deref(),
+            slippage,
+            p.user_input.as_deref(),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "defi_claim",
+        description = "Generate calldata to claim DeFi rewards. ALWAYS pass platform_id when available. Pass expect_output_list from position-detail if in context."
+    )]
+    async fn defi_claim(
+        &self,
+        Parameters(p): Parameters<DefiClaimParams>,
+    ) -> Result<String, String> {
+        let chain_index = crate::chains::resolve_chain(&p.chain);
+        let auto_expect: Option<String> = if p.expect_output_list.is_none() {
+            if let Some(pfid) = p.platform_id.as_deref() {
+                defi::extract_expect_output(
+                    &self.client,
+                    &p.address,
+                    &chain_index,
+                    pfid,
+                    &p.reward_type,
+                    p.product_id.as_deref(),
+                )
+                .await
+                .unwrap_or(None)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let final_expect = p.expect_output_list.as_deref().or(auto_expect.as_deref());
+        match defi::fetch_claim(
+            &self.client,
+            &p.address,
+            &chain_index,
+            &p.reward_type,
+            p.product_id.as_deref(),
+            p.platform_id.as_deref(),
+            p.token_id.as_deref(),
+            p.principal_index.as_deref(),
+            final_expect,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "defi_positions",
+        description = "Get user DeFi holdings overview across all protocols and chains. DISPLAY RULE: render ALL platforms in a markdown table with columns: # | Platform | analysisPlatformId | Chain | Positions | Value(USD). analysisPlatformId is MANDATORY."
+    )]
+    async fn defi_positions(
+        &self,
+        Parameters(p): Parameters<DefiPositionsParams>,
+    ) -> Result<String, String> {
+        match defi::fetch_positions(&self.client, &p.address, &p.chains).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "defi_position_detail",
+        description = "Get detailed DeFi holdings for a specific protocol. Requires analysisPlatformId from defi_positions."
+    )]
+    async fn defi_position_detail(
+        &self,
+        Parameters(p): Parameters<DefiPositionDetailParams>,
+    ) -> Result<String, String> {
+        let chain_index = crate::chains::resolve_chain(&p.chain);
+        match defi::fetch_position_detail(&self.client, &p.address, &chain_index, &p.platform_id)
+            .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "defi_calculate_entry",
+        description = "Calculate exact token amounts for V3 pool entry. Returns both token amounts needed based on one input token."
+    )]
+    async fn defi_calculate_entry(
+        &self,
+        Parameters(p): Parameters<DefiCalculateEntryParams>,
+    ) -> Result<String, String> {
+        match defi::fetch_calculate_entry(
+            &self.client,
+            &p.id,
+            &p.address,
+            &p.input_token,
+            &p.input_amount,
+            &p.token_decimal,
+            p.tick_lower,
+            p.tick_upper,
         )
         .await
         {
