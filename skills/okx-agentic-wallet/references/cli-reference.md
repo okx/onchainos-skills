@@ -517,7 +517,7 @@ Send native tokens or contract tokens (ERC-20 / SPL) from the Agentic Wallet.
 
 ```bash
 onchainos wallet send \
-  --amount <amount> \
+  --amt <amount> \
   --receipt <address> \
   --chain <chainId> \
   [--from <address>] \
@@ -527,7 +527,7 @@ onchainos wallet send \
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `--amount` | string | Yes | Amount in UI units (e.g. "0.01" for 0.01 ETH) |
+| `--amt` | string | Yes | Amount in minimal units — whole number, no decimals (e.g. `"100000000000000000"` for 0.1 ETH). See SKILL.md `--amt` section for conversion rules. |
 | `--receipt` | string | Yes | Recipient address (0x-prefixed for EVM, Base58 for Solana) |
 | `--chain` | string | Yes | Chain ID / `realChainIndex` (e.g. "1" for Ethereum, "501" for Solana, "56" for BSC) |
 | `--from` | string | No | Sender address — defaults to selected account's address on the given chain |
@@ -741,7 +741,7 @@ Call a smart contract on an EVM chain or Solana program with TEE signing and aut
 onchainos wallet contract-call \
   --to <contract_address> \
   --chain <chainId> \
-  [--value <amount>] \
+  [--amt <amount>] \
   [--input-data <hex_calldata>] \
   [--unsigned-tx <base58_tx>] \
   [--gas-limit <number>] \
@@ -757,7 +757,7 @@ onchainos wallet contract-call \
 |---|---|---|---|
 | `--to` | string | Yes | Contract address to interact with |
 | `--chain` | string | Yes | Chain ID / `realChainIndex` (e.g. "1" for Ethereum, "501" for Solana, "56" for BSC) |
-| `--value` | string | No | Native token amount to send with the call (default "0"). In UI units (e.g., "0.01" for 0.01 ETH). |
+| `--amt` | string | No | Native token amount in minimal units — whole number, no decimals (default "0"). See SKILL.md `--amt` section for conversion rules. |
 | `--input-data` | string | Conditional | EVM call data (hex-encoded, e.g. "0xa9059cbb..."). **Required for EVM chains.** |
 | `--unsigned-tx` | string | Conditional | Solana unsigned transaction data (base58). **Required for Solana.** |
 | `--gas-limit` | string | No | Gas limit override (EVM only). If omitted, the CLI estimates gas automatically. |

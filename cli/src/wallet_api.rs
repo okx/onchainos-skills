@@ -562,7 +562,7 @@ impl WalletApiClient {
         chain_index: u64,
         from_addr: &str,
         to_addr: &str,
-        value: &str,
+        amount: &str,
         contract_addr: Option<&str>,
         session_cert: &str,
         input_data: Option<&str>,
@@ -577,7 +577,7 @@ impl WalletApiClient {
             "chainIndex": chain_index,
             "fromAddr": from_addr,
             "toAddr": to_addr,
-            "value": value,
+            "amount": amount,
             "sessionCert": session_cert,
         });
         if let Some(ca) = contract_addr {

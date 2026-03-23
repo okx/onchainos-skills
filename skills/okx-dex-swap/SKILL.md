@@ -94,7 +94,7 @@ onchainos swap swap \
   --chain xlayer \
   --wallet <local_wallet_addr>
 # → Returns swap calldata → sign & broadcast via wallet contract-call
-onchainos wallet contract-call --to <tx.to> --chain 196 --value <value_in_UI_units> --input-data <tx.data> \
+onchainos wallet contract-call --to <tx.to> --chain 196 --amt <tx.value> --input-data <tx.data> \
   --aa-dex-token-addr 0x74b7f16337b8972027f6196a17a631ac6de26d22 --aa-dex-token-amount <fromTokenAmount>
 ```
 
@@ -209,11 +209,11 @@ This skill is the **execution endpoint** of most user trading flows. It almost a
 4. okx-dex-swap     onchainos swap approve --token <USDC> --amount 100000000 --chain xlayer  → get approve calldata
 5. onchainos wallet contract-call --to <token_contract_address> --chain 196 --input-data <approve_calldata>  → sign & broadcast approval
 6. okx-dex-swap     onchainos swap swap --from <USDC> --to 0xeeee...eeee --amount 100000000 --chain xlayer --wallet <local_wallet_addr>
-7. onchainos wallet contract-call --to <contract> --chain 196 --value <value_in_UI_units> --input-data <swap_calldata> \
+7. onchainos wallet contract-call --to <contract> --chain 196 --amt <tx.value> --input-data <swap_calldata> \
      --aa-dex-token-addr <fromToken.tokenContractAddress> --aa-dex-token-amount <fromTokenAmount>
 ```
 
-**Unit conversion for `--value`**: `swap swap` returns `tx.value` in **minimal units** (wei), but `contract-call --value` expects **UI units**. Convert: `UI_value = tx.value / 10^nativeToken.decimal` (e.g., `10000000000000000` wei ÷ 10^18 = `0.01` ETH). If `tx.value` is `"0"` or empty, use `"0"`.
+**`--amt` value**: `swap swap` returns `tx.value` in **minimal units** — pass it directly to `contract-call --amt` (no conversion needed). If `tx.value` is `"0"` or empty, use `"0"`.
 
 **Key**: EVM tokens (not native) require an **approve** step. Skip if selling native tokens.
 
@@ -239,7 +239,7 @@ Flow: quote → approve (if non-native token) → contract-call approve → swap
 2. onchainos swap approve ...               → Get approval calldata (skip for native tokens)
 3. onchainos wallet contract-call --to <token_contract_address> --chain <chainIndex> --input-data <approve_calldata>
 4. onchainos swap swap ...                  → Get swap calldata
-5. onchainos wallet contract-call --to <contract> --chain <chainIndex> --value <value_in_UI_units> --input-data <swap_calldata> \
+5. onchainos wallet contract-call --to <contract> --chain <chainIndex> --amt <tx.value> --input-data <swap_calldata> \
      --aa-dex-token-addr <fromToken.tokenContractAddress> --aa-dex-token-amount <fromTokenAmount>
 ```
 
@@ -346,13 +346,13 @@ Enabled only when the user has **explicitly authorized** automated execution (e.
 
 After `onchainos swap swap` returns successfully, use `onchainos wallet contract-call` to sign and broadcast in one step. Note: `wallet contract-call --chain` requires `realChainIndex` (e.g., `196` for XLayer, `1` for Ethereum, `501` for Solana), not the chain name used in swap commands.
 
-- **EVM**: `onchainos wallet contract-call --to <contract_address> --chain <chainIndex> --value <value_in_UI_units> --input-data <tx_calldata>`
-- **EVM (XLayer)**: `onchainos wallet contract-call --to <contract_address> --chain 196 --value <value_in_UI_units> --input-data <tx_calldata> --aa-dex-token-addr <fromToken.tokenContractAddress> --aa-dex-token-amount <fromTokenAmount>`
+- **EVM**: `onchainos wallet contract-call --to <contract_address> --chain <chainIndex> --amt <tx.value> --input-data <tx_calldata>`
+- **EVM (XLayer)**: `onchainos wallet contract-call --to <contract_address> --chain 196 --amt <tx.value> --input-data <tx_calldata> --aa-dex-token-addr <fromToken.tokenContractAddress> --aa-dex-token-amount <fromTokenAmount>`
 - **Solana**: `onchainos wallet contract-call --to <contract_address> --chain 501 --unsigned-tx <unsigned_tx_data>`
 
 The `contract-call` command handles TEE signing and broadcasting internally — no separate broadcast step is needed.
 
-**`--value` unit conversion**: `swap swap` returns `tx.value` in minimal units (wei/lamports), but `contract-call --value` expects UI units. Convert: `value_in_UI_units = tx.value / 10^nativeToken.decimal` (e.g., 18 for ETH, 9 for SOL). If `tx.value` is `"0"` or empty, use `"0"`.
+**`--amt` value**: `swap swap` returns `tx.value` in minimal units — pass it directly to `contract-call --amt` (no conversion needed). If `tx.value` is `"0"` or empty, use `"0"`.
 
 ### Step 3b: Result Messaging
 

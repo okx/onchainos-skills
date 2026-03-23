@@ -105,19 +105,38 @@ Applies to:
 - `onchainos wallet history --chain` (detail mode)
 - `onchainos wallet addresses --chain`
 
-### `--amount` / `--value` Units
+### `--amt` — Minimal Unit Amount
 
-**IMPORTANT: Always pass amounts in UI units (human-readable), never in base units (wei, lamports, etc.).** The CLI handles unit conversion internally.
+**IMPORTANT: `--amt` accepts only whole numbers in minimal units (wei, lamports, etc.). Decimal values are rejected by the CLI.**
 
-| User says | `--amount` value | ❌ Wrong |
+#### Converting User Amounts to `--amt`
+
+Formula: `amt = user_amount × 10^decimals`
+
+**Native token decimals (fixed):**
+
+| Chain type | Native token | Decimals | Example: user says "0.1" → `--amt` |
+|---|---|---|---|
+| EVM (Ethereum, BSC, Base, Arbitrum, Polygon, X Layer…) | ETH / BNB / OKB… | 18 | `100000000000000000` |
+| Solana | SOL | 9 | `100000000` |
+
+**Non-native tokens (ERC-20 / SPL):** Query decimals first via `okx-dex-token`:
+
+```bash
+onchainos token search --query USDC --chains <chain_name>
+```
+
+Use the `decimals` field from the result to compute `amt`. If multiple tokens match, **ask the user to confirm** which one to use.
+
+| User says | Token decimals | `--amt` value |
 |---|---|---|
-| "Transfer 0.15 ETH" | `"0.15"` | `"150000000000000000"` (wei) |
-| "Send 100 USDC" | `"100"` | `"100000000"` (6 decimals) |
-| "Send 0.5 SOL" | `"0.5"` | `"500000000"` (lamports) |
+| "Transfer 0.15 ETH" | 18 (native) | `"150000000000000000"` |
+| "Send 100 USDC" | 6 | `"100000000"` |
+| "Send 0.5 SOL" | 9 (native) | `"500000000"` |
 
 Applies to:
-- `onchainos wallet send --amount`
-- `onchainos wallet contract-call --value`
+- `onchainos wallet send --amt`
+- `onchainos wallet contract-call --amt`
 
 ## Command Index
 
@@ -188,8 +207,8 @@ Applies to:
 | "Refresh my wallet" / "刷新钱包" / "同步余额" | B | `wallet balance --force` |
 | "Balance on Ethereum" / "What's on Solana?" | B | `wallet balance --chain <chainId>` |
 | "Check token 0x3883... on Ethereum" | B | `wallet balance --chain 1 --token-address <addr>` |
-| "Send 0.01 ETH to 0xAbc" / "转账" / "发送代币" | D | `wallet send --amount "0.01" --receipt <addr> --chain 1` |
-| "Transfer 100 USDC on Ethereum" | D | `wallet send --amount "100" --receipt <addr> --chain 1 --contract-token <addr>` |
+| "Send 0.01 ETH to 0xAbc" / "转账" / "发送代币" | D | `wallet send --amt "10000000000000000" --receipt <addr> --chain 1` |
+| "Transfer 100 USDC on Ethereum" | D | `wallet send --amt "100000000" --receipt <addr> --chain 1 --contract-token <addr>` |
 | "Show my recent transactions" / "交易历史" | E | `wallet history` |
 | "Check tx 0xabc..." / "tx status" | E | `wallet history --tx-hash <hash> --chain <chainId> --address <addr>` |
 | "Approve USDC for contract" / "合约调用" | D | `wallet contract-call --to <addr> --chain 1 --input-data <hex>` |
@@ -340,7 +359,7 @@ Present conversationally, e.g.: "Would you like to see the breakdown by chain, o
 
 ### Send Operation
 
-1. **Collect params**: amount, recipient, chain, optional contract-token. If user provides token name, use `okx-dex-token` to resolve contract address.
+1. **Collect params**: amount, recipient, chain, optional contract-token. If user provides token name, use `okx-dex-token` to resolve contract address and decimals. Convert the user-provided amount to minimal units (see `--amt` conversion rules above).
 2. **Pre-send safety**: Check balance with `onchainos wallet balance --chain <chainId>` (e.g. `--chain 1` for Ethereum). Confirm with user: "I'll send **0.01 ETH** to **0xAbc...1234** on **Ethereum**. Proceed?"
 3. **Execute**: `onchainos wallet send ...`
 4. **Display**: Show `txHash`. Provide block explorer link if available. If simulation fails, show `executeErrorMsg` and do NOT broadcast.
@@ -503,7 +522,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 1. onchainos wallet add                             -> new account added (auto-switches to it)
 2. (okx-dex-swap) onchainos swap quote --from ... --to ... --amount ... --chain <chainId>  -> get quote
 3. (okx-dex-swap) onchainos swap swap --from ... --to ... --amount ... --chain <chainId> --wallet <addr>  -> get swap calldata
-4. onchainos wallet contract-call --to <tx.to> --chain <chainId> --value <value_in_UI_units> --input-data <tx.data>
+4. onchainos wallet contract-call --to <tx.to> --chain <chainId> --amt <tx.value> --input-data <tx.data>
        -> sign & broadcast via Agentic Wallet (Solana: use --unsigned-tx instead of --input-data)
 ```
 
@@ -522,10 +541,10 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 5. (okx-dex-swap) onchainos swap swap --from <USDC_addr> --to <ETH_addr> --amount 50000000 --chain 1 --wallet <addr>
        -> get swap calldata
 6. Execute swap:
-   onchainos wallet contract-call --to <tx.to> --chain 1 --value <value_in_UI_units> --input-data <tx.data>
+   onchainos wallet contract-call --to <tx.to> --chain 1 --amt <tx.value> --input-data <tx.data>
 ```
 
-**Data handoff**: `balance` is UI units; swap needs minimal units -> multiply by `10^decimal` (USDC = 6 decimals).
+**Data handoff**: `balance` is UI units; swap `--amount` and wallet `--amt` both need minimal units → multiply by `10^decimals` (USDC = 6 decimals).
 
 ### Workflow 4: Balance Overview + Swap Decision (from Balance)
 
@@ -537,7 +556,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 3. (okx-dex-swap) onchainos swap quote --from <token_addr> --to ... --amount ... --chain <chainId>  -> get quote
 4. (okx-dex-swap) onchainos swap swap --from <token_addr> --to ... --amount ... --chain <chainId> --wallet <addr>  -> get swap calldata
 5. Execute swap:
-   onchainos wallet contract-call --to <tx.to> --chain <chainId> --value <value_in_UI_units> --input-data <tx.data>
+   onchainos wallet contract-call --to <tx.to> --chain <chainId> --amt <tx.value> --input-data <tx.data>
 ```
 
 ### Workflow 5: Check Balance -> Send -> Verify (from Send)
@@ -547,7 +566,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 ```
 1. onchainos wallet balance --chain 1
        -> verify ETH balance >= 0.5 (plus gas)
-2. onchainos wallet send --amount "0.5" --receipt "0xAbc..." --chain 1
+2. onchainos wallet send --amt "500000000000000000" --receipt "0xAbc..." --chain 1
        -> obtain txHash
 3. onchainos wallet history --tx-hash "0xTxHash" --chain 1 --address "0xSenderAddr"
        -> verify transaction status
@@ -563,7 +582,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
        -> verify token is not malicious  (use okx-security skill for token-scan)
 3. onchainos wallet balance --chain 1 --token-address "0xA0b86991..."
        -> verify balance >= 100
-4. onchainos wallet send --amount "100" --receipt "0xAbc..." --chain 1 --contract-token "0xA0b86991..."
+4. onchainos wallet send --amt "100000000" --receipt "0xAbc..." --chain 1 --contract-token "0xA0b86991..."
 ```
 
 ### Workflow 7: Send from Specific Account (from Send)
@@ -572,7 +591,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 
 ```
 1. onchainos wallet status                          -> list accounts
-2. onchainos wallet send --amount "1" --receipt "SolAddress..." --chain 501 --from "SenderSolAddr"
+2. onchainos wallet send --amt "1000000000" --receipt "SolAddress..." --chain 501 --from "SenderSolAddr"
 ```
 
 ### Workflow 8: Send -> Check Status (from History)
@@ -632,7 +651,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 
 ```
 1. Agent encodes: deposit() -> "0xd0e30db0"
-2. onchainos wallet contract-call --to "0xDef..." --chain 1 --value "0.1" --input-data "0xd0e30db0"
+2. onchainos wallet contract-call --to "0xDef..." --chain 1 --amt "100000000000000000" --input-data "0xd0e30db0"
 ```
 
 ---
@@ -654,7 +673,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 - Sort by USD value descending
 - **Always show abbreviated contract address** alongside token symbol (format: `0x1234...abcd`). For native tokens with empty `tokenContractAddress`, display `(native)`.
 - **Flag suspicious prices**: if the token appears to be a wrapped/bridged variant (e.g., symbol like `wETH`, `stETH`, `wBTC`, `xOKB`) AND the reported price differs >50% from the known base token price, add an inline `price unverified` flag and suggest running `onchainos token price-info` to cross-check.
-- `--amount` for wallet send is in **UI units** — the CLI handles conversion internally
+- `--amt` for wallet send and contract-call is in **minimal units** (whole numbers only, no decimals)
 
 ---
 
@@ -740,7 +759,7 @@ This happens when the backend requires explicit user confirmation before proceed
 
 ```
 # 1. Agent runs the command
-onchainos wallet send --amount "100" --receipt "0xAbc..." --chain 1
+onchainos wallet send --amt "100000000" --receipt "0xAbc..." --chain 1
 
 # 2. CLI returns confirming response (exit code 2)
 {
@@ -752,7 +771,7 @@ onchainos wallet send --amount "100" --receipt "0xAbc..." --chain 1
 # 3. Agent shows message to user, user confirms
 
 # 4. Agent re-runs with --force
-onchainos wallet send --amount "100" --receipt "0xAbc..." --chain 1 --force
+onchainos wallet send --amt "100000000" --receipt "0xAbc..." --chain 1 --force
 ```
 
 ---
@@ -775,7 +794,7 @@ onchainos wallet send --amount "100" --receipt "0xAbc..." --chain 1 --force
 <should>
     - The send and contract-call flows are atomic: unsigned -> sign -> broadcast in one command
     - If `--from` is omitted (send/contract-call), the CLI uses the currently selected account's address
-    - `--value` in contract-call defaults to "0" — only set for payable functions
+    - `--amt` in contract-call defaults to "0" — only set for payable functions
     - `wallet balance` (no flags) uses the single-account endpoint for the active account only (no cache, always fresh)
     - `--all` in wallet balance uses the batch endpoint for all accounts at once — only use when user explicitly asks to see every account
     - `--token-address` in wallet balance accepts single token contract, requires `--chain`

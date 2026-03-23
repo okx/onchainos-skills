@@ -293,15 +293,21 @@ fn handle_broadcast_error(e: anyhow::Error, force: bool) -> anyhow::Error {
 
 /// onchainos wallet send
 pub(super) async fn cmd_send(
-    amount: &str,
+    amt: &str,
     receipt: &str,
     chain: &str,
     from: Option<&str>,
     contract_token: Option<&str>,
     force: bool,
 ) -> Result<()> {
-    if amount.is_empty() || receipt.is_empty() || chain.is_empty() {
-        bail!("amount, receipt and chain are required");
+    if amt.is_empty() {
+        bail!("amt is required");
+    }
+    if amt.contains('.') {
+        bail!("amt must be a whole number in minimal units (no decimals). For example, to send 0.1 ETH pass 100000000000000000");
+    }
+    if receipt.is_empty() || chain.is_empty() {
+        bail!("receipt and chain are required");
     }
 
     sign_and_broadcast(
@@ -309,7 +315,7 @@ pub(super) async fn cmd_send(
         from,
         TxParams {
             to_addr: receipt,
-            value: amount,
+            value: amt,
             contract_addr: contract_token,
             input_data: None,
             unsigned_tx: None,
@@ -332,7 +338,7 @@ pub(super) async fn cmd_send(
 pub(super) async fn cmd_contract_call(
     to: &str,
     chain: &str,
-    value: &str,
+    amt: &str,
     input_data: Option<&str>,
     unsigned_tx: Option<&str>,
     gas_limit: Option<&str>,
@@ -346,6 +352,9 @@ pub(super) async fn cmd_contract_call(
     if to.is_empty() || chain.is_empty() {
         bail!("to and chain are required");
     }
+    if amt.contains('.') {
+        bail!("amt must be a whole number in minimal units (no decimals). For example, to send 0.1 ETH pass 100000000000000000");
+    }
     if input_data.is_none() && unsigned_tx.is_none() {
         bail!("either --input-data (EVM) or --unsigned-tx (SOL) is required");
     }
@@ -355,7 +364,7 @@ pub(super) async fn cmd_contract_call(
         from,
         TxParams {
             to_addr: to,
-            value,
+            value: amt,
             contract_addr: Some(to),
             input_data,
             unsigned_tx,
