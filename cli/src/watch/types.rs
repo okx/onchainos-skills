@@ -38,8 +38,10 @@ pub struct ChannelDef {
     pub visibility: ChannelVisibility,
 }
 
-/// All known channels. Used as the default when --channel is not specified.
-pub const ALL_CHANNELS: &[ChannelDef] = &[
+/// Default channels subscribed when --channel is not specified.
+/// `address-tracker-activity` is intentionally excluded because it requires
+/// `--wallet-addresses` and cannot be subscribed without user input.
+pub const DEFAULT_CHANNELS: &[ChannelDef] = &[
     ChannelDef { name: "kol_smartmoney-tracker-activity", visibility: ChannelVisibility::Public },
 ];
 

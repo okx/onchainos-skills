@@ -98,6 +98,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::agentic_wallet::payment::PaymentCommand,
     },
+    /// Address tracker: real-time WebSocket watch for KOL / smart money / custom address activity
+    Tracker {
+        #[command(subcommand)]
+        command: commands::tracker::TrackerCommand,
+    },
     /// Upgrade onchainos to the latest version
     Upgrade(commands::upgrade::UpgradeArgs),
 }
@@ -151,6 +156,7 @@ async fn run() {
         Commands::Wallet { command } => commands::agentic_wallet::wallet::execute(command).await,
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
+        Commands::Tracker { command } => commands::tracker::execute(command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
     };
 

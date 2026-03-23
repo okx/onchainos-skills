@@ -325,6 +325,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Security { command } => format!("security {}", security_sub(command)),
         Commands::Leaderboard { command } => format!("leaderboard {}", leaderboard_sub(command)),
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
+        Commands::Tracker { command } => format!("tracker {}", tracker_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
     }
 }
@@ -335,6 +336,7 @@ use crate::commands::{
     gateway::GatewayCommand, leaderboard::LeaderboardCommand, market::MarketCommand,
     memepump::MemepumpCommand, portfolio::PortfolioCommand, security::SecurityCommand,
     signal::SignalCommand, swap::SwapCommand, token::TokenCommand,
+    tracker::TrackerCommand,
 };
 
 fn market_sub(c: &MarketCommand) -> &'static str {
@@ -457,6 +459,19 @@ fn security_sub(c: &SecurityCommand) -> &'static str {
 fn payment_sub(c: &PaymentCommand) -> &'static str {
     match c {
         PaymentCommand::X402Pay { .. } => "x402-pay",
+    }
+}
+
+fn tracker_sub(c: &TrackerCommand) -> &'static str {
+    use crate::commands::tracker::WatchCommand;
+    match c {
+        TrackerCommand::Watch { command } => match command {
+            WatchCommand::Start { .. } => "watch start",
+            WatchCommand::Poll { .. } => "watch poll",
+            WatchCommand::Stop { .. } => "watch stop",
+            WatchCommand::List => "watch list",
+            WatchCommand::RunDaemon { .. } => "watch run-daemon",
+        },
     }
 }
 

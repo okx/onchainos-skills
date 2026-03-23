@@ -191,53 +191,68 @@ pub fn read_events_from_cursor(dir: &Path, channel: &str, limit: usize) -> Resul
     let mut cursor = read_cursor(dir, channel);
     let mut events = Vec::new();
 
-    // Try reading from cursor.file_no first, then fall back to file 0 if rotated
-    'outer: for attempt in 0..2u32 {
-        let file_no = if attempt == 0 { cursor.file_no } else { 0 };
-        let path = events_path(dir, channel, file_no);
+    let path = events_path(dir, channel, cursor.file_no);
 
-        if !path.exists() {
-            if attempt == 0 {
-                // File may have been rotated; reset cursor to file 0 offset 0
-                cursor = Cursor { file_no: 0, offset: 0 };
-                continue;
-            }
-            break;
+    // Detect rotation: the file at cursor.file_no either no longer exists, or its
+    // current size is smaller than our saved offset. Both cases mean the file was
+    // rotated (renamed to file_no+1) while we weren't looking. Drain the tail of
+    // the rotated file first so those events are not lost, then fall through to
+    // reading fresh data from the new file at cursor.file_no.
+    let rotated = if !path.exists() {
+        true
+    } else {
+        fs::metadata(&path)?.len() < cursor.offset
+    };
+
+    if rotated {
+        let rotated_path = events_path(dir, channel, cursor.file_no + 1);
+        if rotated_path.exists() {
+            let new_offset = drain_file(&rotated_path, cursor.offset, limit, &mut events)?;
+            let _ = new_offset; // We don't persist a cursor into the rotated file;
+                                // the loop below will advance cursor in the new file.
         }
+        // Reset cursor to the fresh file at cursor.file_no, beginning.
+        cursor = Cursor { file_no: cursor.file_no, offset: 0 };
+    }
 
-        let mut file = fs::File::open(&path)?;
-        file.seek(SeekFrom::Start(cursor.offset))?;
-        let mut reader = BufReader::new(file);
-        let mut line = String::new();
-        let mut offset = cursor.offset;
-
-        loop {
-            line.clear();
-            let n = reader.read_line(&mut line)?;
-            if n == 0 {
-                break; // EOF
-            }
-            if !line.ends_with('\n') {
-                break; // incomplete line, stop here
-            }
-            offset += n as u64;
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            if let Ok(event) = serde_json::from_str::<TradeEvent>(trimmed) {
-                events.push(event);
-            }
-            if events.len() >= limit {
-                cursor = Cursor { file_no, offset };
-                break 'outer;
-            }
-        }
-        cursor = Cursor { file_no, offset };
-        break;
+    // Normal read from the (possibly reset) cursor position.
+    let path = events_path(dir, channel, cursor.file_no);
+    if path.exists() {
+        let remaining = limit.saturating_sub(events.len());
+        let new_offset = drain_file(&path, cursor.offset, remaining, &mut events)?;
+        cursor.offset = new_offset;
     }
 
     Ok(PollResult { events, new_cursor: cursor })
+}
+
+/// Read up to `limit` complete JSONL lines from `path` starting at byte `offset`.
+/// Returns the new file offset after reading.
+fn drain_file(path: &Path, offset: u64, limit: usize, events: &mut Vec<TradeEvent>) -> Result<u64> {
+    let mut file = fs::File::open(path)?;
+    file.seek(SeekFrom::Start(offset))?;
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    let mut current_offset = offset;
+    loop {
+        if events.len() >= limit {
+            break;
+        }
+        line.clear();
+        let n = reader.read_line(&mut line)?;
+        if n == 0 || !line.ends_with('\n') {
+            break; // EOF or incomplete line
+        }
+        current_offset += n as u64;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Ok(event) = serde_json::from_str::<TradeEvent>(trimmed) {
+            events.push(event);
+        }
+    }
+    Ok(current_offset)
 }
 
 // ── Watch list ────────────────────────────────────────────────────────────────

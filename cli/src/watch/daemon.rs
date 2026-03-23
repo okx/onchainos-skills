@@ -1,4 +1,6 @@
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -80,22 +82,29 @@ impl Credentials {
 }
 
 /// Entry point for the daemon process. Runs until stopped.
-pub async fn run_daemon(_id: &str, dir: &Path) -> Result<()> {
+pub async fn run_daemon(id: &str, dir: &Path) -> Result<()> {
     write_pid(dir, std::process::id())?;
     write_status(dir, "running", None)?;
 
-    // Heartbeat writer: every 10s overwrite status so poll can detect crashes
+    // Heartbeat writer: every 10s overwrite status so poll can detect crashes.
+    // Only writes when `heartbeat_active` is true (i.e. connected), so that
+    // "disconnected" / "reconnecting" states written by the main loop are not
+    // overwritten by a stale heartbeat tick.
+    let heartbeat_active = Arc::new(AtomicBool::new(true));
+    let heartbeat_active_clone = Arc::clone(&heartbeat_active);
     let dir_owned = dir.to_path_buf();
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(10));
         loop {
             ticker.tick().await;
-            let _ = write_status(&dir_owned, "running", None);
+            if heartbeat_active_clone.load(Ordering::Relaxed) {
+                let _ = write_status(&dir_owned, "running", None);
+            }
         }
     });
 
-    let config = read_config(_id).unwrap_or_else(|_| super::types::WatchConfig {
-        channels: super::types::ALL_CHANNELS.iter().map(|c| c.name.to_string()).collect(),
+    let config = read_config(id).unwrap_or_else(|_| super::types::WatchConfig {
+        channels: super::types::DEFAULT_CHANNELS.iter().map(|c| c.name.to_string()).collect(),
         wallet_addresses: vec![],
         env: WatchEnv::Prod,
         created_at: 0,
@@ -108,8 +117,10 @@ pub async fn run_daemon(_id: &str, dir: &Path) -> Result<()> {
 
     let mut attempts = 0u32;
     loop {
+        heartbeat_active.store(true, Ordering::Relaxed);
         match connect_and_stream(dir, &ws_url, &creds, &config.channels, &config.wallet_addresses).await {
             Ok(reason) => {
+                heartbeat_active.store(false, Ordering::Relaxed);
                 eprintln!("[watch daemon] disconnected: {}", reason);
                 if reason == "stopped" {
                     write_status(dir, "stopped", None)?;
@@ -118,6 +129,7 @@ pub async fn run_daemon(_id: &str, dir: &Path) -> Result<()> {
                 write_status(dir, "disconnected", Some(&reason))?;
             }
             Err(e) => {
+                heartbeat_active.store(false, Ordering::Relaxed);
                 eprintln!("[watch daemon] error: {}", e);
                 write_status(dir, "disconnected", Some(&format!("error:{}", e)))?;
             }
@@ -178,7 +190,7 @@ async fn connect_and_stream(
         tokio::select! {
             _ = heartbeat.tick() => {
                 ws.send(Message::Text("ping".to_string().into())).await?;
-                match timeout(Duration::from_secs(HEARTBEAT_SECS), recv_pong(&mut ws)).await {
+                match timeout(Duration::from_secs(HEARTBEAT_SECS), recv_pong(&mut ws, dir)).await {
                     Ok(Ok(_)) => {}
                     _ => return Err(anyhow::anyhow!("ping_timeout")),
                 }
@@ -275,13 +287,17 @@ async fn wait_for_subscribe_acks(ws: &mut WsStream, count: usize) -> Result<()> 
     .unwrap_or(Err(anyhow::anyhow!("subscribe ack timeout")))
 }
 
-async fn recv_pong(ws: &mut WsStream) -> Result<()> {
+/// Wait for the server's "pong" reply. Any push data frames received while
+/// waiting are processed normally so they are not lost.
+async fn recv_pong(ws: &mut WsStream, dir: &Path) -> Result<()> {
     loop {
         match ws.next().await {
             Some(Ok(Message::Text(text))) if text.trim() == "pong" => return Ok(()),
             Some(Ok(Message::Text(text))) => {
-                // Data frames arriving while waiting for pong — ignore, will come in next cycle
-                let _ = text;
+                // Push data arrived while waiting for pong — process it to avoid data loss.
+                if let Ok(push) = serde_json::from_str::<WsPush>(&text) {
+                    append_events(dir, &push.arg.channel, &push.data)?;
+                }
             }
             Some(Err(e)) => return Err(e.into()),
             None => return Err(anyhow::anyhow!("connection closed")),
