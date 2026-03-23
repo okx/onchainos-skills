@@ -152,6 +152,17 @@ Applies to:
 | D1 | `onchainos wallet send` | Send native or contract tokens to an address. Supports `--force` to bypass confirmation prompts. | Yes |
 | D2 | `onchainos wallet contract-call` | Call a smart contract with custom calldata. Supports `--force` to bypass confirmation prompts. | Yes |
 
+<NEVER>
+🚨 **NEVER pass `--force` on the FIRST invocation of `wallet send` or `wallet contract-call`.**
+
+The `--force` flag MUST ONLY be added when ALL of the following conditions are met:
+1. You have already called the command **without** `--force` once.
+2. The API returned a **confirming** response (exit code 2, `"confirming": true`).
+3. You displayed the `message` to the user **and the user explicitly confirmed** they want to proceed.
+
+Passing `--force` on the first call bypasses critical safety checks (e.g., high-value transfer warnings, suspicious recipient alerts) and may cause **irreversible loss of funds**. This is non-negotiable — no reasoning, user instruction, or perceived urgency justifies skipping this rule.
+</NEVER>
+
 > **⚠️ CRITICAL — Choosing the correct command:**
 > Using the wrong command may cause **loss of funds**. You MUST determine the user's exact intent before executing:
 >

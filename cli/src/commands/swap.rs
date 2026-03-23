@@ -93,6 +93,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             swap_mode,
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
+            crate::chains::ensure_supported_chain(&chain_index, &chain)?;
             output::success(
                 fetch_quote(&client, &chain_index, &from, &to, &amount, &swap_mode).await?,
             );
@@ -110,6 +111,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             max_auto_slippage,
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
+            crate::chains::ensure_supported_chain(&chain_index, &chain)?;
             output::success(
                 fetch_swap(
                     &client,
@@ -133,6 +135,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             chain,
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
+            crate::chains::ensure_supported_chain(&chain_index, &chain)?;
             output::success(fetch_approve(&client, &chain_index, &token, &amount).await?);
         }
         SwapCommand::Chains => {
@@ -140,6 +143,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
         }
         SwapCommand::Liquidity { chain } => {
             let chain_index = crate::chains::resolve_chain(&chain);
+            crate::chains::ensure_supported_chain(&chain_index, &chain)?;
             output::success(fetch_liquidity(&client, &chain_index).await?);
         }
     }
