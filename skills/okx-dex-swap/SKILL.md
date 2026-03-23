@@ -170,6 +170,28 @@ The CLI accepts human-readable chain names and resolves them automatically.
 
 > **Rule of thumb**: okx-dex-swap orchestrates the full swap flow — quote, approve, swap calldata generation, and signing/broadcasting via `onchainos wallet contract-call`. It does NOT query prices or search tokens.
 
+## Token Address Resolution (Mandatory)
+
+<IMPORTANT>
+🚨 **NEVER guess, assume, or hardcode a token contract address (CA) from memory based on token symbol/name.**
+
+- The same symbol (e.g., USDC, USDT, BONK) has **different contract addresses on different chains**.
+- Tokens can share the same symbol — there are hundreds of tokens named "PEPE" or "DOGE" across chains.
+- Using a wrong CA will swap into the **wrong token** or cause the transaction to **fail silently**, resulting in **loss of funds**.
+
+**The ONLY acceptable sources for a token contract address are:**
+1. `onchainos token search --query <symbol> --chains <chain>` — resolve symbol → CA on the target chain.
+2. The **Native Token Addresses** table above — for native tokens (ETH, SOL, BNB, etc.) only.
+3. The user explicitly provides a full contract address themselves.
+
+If the user says a token symbol (e.g., "swap USDC for ETH on Arbitrum"), you MUST run `onchainos token search --query USDC --chains arbitrum` first to get the correct CA, even if you "think you know" the address. No exceptions.
+
+**When `token search` returns multiple results** (this is common — token symbols are NOT unique):
+1. **Do NOT silently pick one.** Present the top matches to the user, showing: name, symbol, contract address, and chain.
+2. **Ask the user to confirm** which token they intend to use before proceeding to quote/swap.
+3. If only **one result** matches the target chain and symbol exactly, you may proceed — but still display the token details (name, CA, chain) for the user to verify before executing any transaction.
+</IMPORTANT>
+
 ## Cross-Skill Workflows
 
 This skill is the **execution endpoint** of most user trading flows. It almost always needs input from other skills first.
@@ -287,7 +309,7 @@ Flow: quote → approve (if non-native token) → contract-call approve → swap
 ### Step 2: Collect Parameters
 
 - Missing chain → recommend XLayer (`--chain xlayer`, low gas, fast confirmation) as the default, then ask which chain the user prefers
-- Missing token addresses → use `okx-dex-token` `onchainos token search` to resolve name → address
+- Missing token addresses → **MUST** use `onchainos token search --query <symbol> --chains <chain>` to resolve symbol → contract address on the target chain. See **Token Address Resolution** section above — never guess or recall an address from memory. Exception: native tokens (ETH/SOL/BNB…) use the fixed addresses in the **Native Token Addresses** table.
 - Missing amount → ask user, remind to convert to minimal units
 - Missing slippage → use autoSlippage by default (do NOT pass `--slippage`; the API calculates optimal slippage automatically). If the user explicitly specifies a fixed slippage value, pass `--slippage <value>` which disables autoSlippage. **IMPORTANT: `--slippage` is only a parameter of `onchainos swap swap`, NOT `onchainos swap quote`. Never pass `--slippage` to the quote command — it will fail.** Note: `taxRate` is separate from slippage — taxRate is deducted by the token contract and is NOT included in the slippage setting.
   - **Slippage warnings**: Too small → warn about transaction failure risk. Too large → warn about potential loss.
