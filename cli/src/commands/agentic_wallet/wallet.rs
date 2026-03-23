@@ -56,9 +56,9 @@ pub enum WalletCommand {
     },
     /// Send a transaction (native or token transfer)
     Send {
-        /// Amount to send (e.g. "0.01")
+        /// Amount in minimal units — whole number, no decimals (e.g. "100000000000000000" for 0.1 ETH)
         #[arg(long)]
-        amount: String,
+        amt: String,
         /// Recipient address
         #[arg(long)]
         receipt: String,
@@ -116,9 +116,9 @@ pub enum WalletCommand {
         /// Chain ID (e.g. "1" for Ethereum, "501" for Solana, "56" for BSC)
         #[arg(long)]
         chain: String,
-        /// Native token amount to send with the call (default "0")
+        /// Native token amount in minimal units — whole number, no decimals (default "0")
         #[arg(long, default_value = "0")]
-        value: String,
+        amt: String,
         /// EVM call data (hex-encoded, e.g. "0xa9059cbb...")
         #[arg(long)]
         input_data: Option<String>,
@@ -173,7 +173,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                 .await
         }
         WalletCommand::Send {
-            amount,
+            amt,
             receipt,
             chain,
             from,
@@ -181,7 +181,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             force,
         } => {
             super::transfer::cmd_send(
-                &amount,
+                &amt,
                 &receipt,
                 &chain,
                 from.as_deref(),
@@ -219,7 +219,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
         WalletCommand::ContractCall {
             to,
             chain,
-            value,
+            amt,
             input_data,
             unsigned_tx,
             gas_limit,
@@ -233,7 +233,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             super::transfer::cmd_contract_call(
                 &to,
                 &chain,
-                &value,
+                &amt,
                 input_data.as_deref(),
                 unsigned_tx.as_deref(),
                 gas_limit.as_deref(),

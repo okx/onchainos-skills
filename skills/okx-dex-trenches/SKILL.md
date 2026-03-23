@@ -193,10 +193,10 @@ Present conversationally — never expose skill names or endpoint paths to the u
    Path A (user-provided wallet): user signs externally → onchainos gateway broadcast --signed-tx <tx> --address <addr> --chain <chain>
    Path B (Agentic Wallet):
      Solana: onchainos wallet contract-call --to <tx.to> --chain sol --unsigned-tx <tx.data>
-     EVM:    onchainos wallet contract-call --to <tx.to> --chain <chain> --value <value_in_UI_units> --input-data <tx.data>
+     EVM:    onchainos wallet contract-call --to <tx.to> --chain <chain> --amt <tx.value> --input-data <tx.data>
 ```
 
-**Data handoff**: `tokenAddress` from step 2 is reused as `<address>` in steps 3–8. The `tx.to` and `tx.data` come from the `swap swap` response. EVM `--value` needs unit conversion: `tx.value / 10^nativeToken.decimal` (e.g., wei ÷ 10^18 = ETH). If `tx.value` is `"0"` or empty, use `"0"`. EVM non-native tokens also need an approve step before swap (see `okx-dex-swap` skill).
+**Data handoff**: `tokenAddress` from step 2 is reused as `<address>` in steps 3–8. The `tx.to` and `tx.data` come from the `swap swap` response. EVM `--amt` takes `tx.value` directly (already in minimal units). If `tx.value` is `"0"` or empty, use `"0"`. EVM non-native tokens also need an approve step before swap (see `okx-dex-swap` skill).
 
 ### Workflow B: Meme Token Due Diligence
 
@@ -229,7 +229,7 @@ Present conversationally — never expose skill names or endpoint paths to the u
    Path A (user-provided wallet): user signs externally → onchainos gateway broadcast --signed-tx <tx> --address <addr> --chain <chain>
    Path B (Agentic Wallet):
      Solana: onchainos wallet contract-call --to <tx.to> --chain sol --unsigned-tx <tx.data>
-     EVM:    onchainos wallet contract-call --to <tx.to> --chain <chain> --value <value_in_UI_units> --input-data <tx.data>
+     EVM:    onchainos wallet contract-call --to <tx.to> --chain <chain> --amt <tx.value> --input-data <tx.data>
 ```
 
 **When to use**: when a `signal-list` result has a token address that matches a known meme launchpad (pump.fun, bonkers, etc.) — cross-validate in memepump before acting on the signal.

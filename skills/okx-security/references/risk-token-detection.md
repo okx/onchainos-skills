@@ -178,5 +178,5 @@ onchainos security token-scan --tokens "1:0xdAC17F958D2ee523a2206206994597C13D83
        -> If action is "warn": show risk details, require explicit user confirmation before continuing
 10. If safe or user confirmed after warn, execute swap:
    Path A (user-provided wallet): user signs externally -> onchainos gateway broadcast --signed-tx <tx> --address <addr> --chain ethereum
-   Path B (Agentic Wallet):      onchainos wallet contract-call --to <tx.to> --chain eth --value <value_in_UI_units> --input-data <tx.data>
+   Path B (Agentic Wallet):      onchainos wallet contract-call --to <tx.to> --chain eth --amt <tx.value> --input-data <tx.data>
 ```
