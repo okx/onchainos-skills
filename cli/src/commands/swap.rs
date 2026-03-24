@@ -705,60 +705,7 @@ async fn cmd_execute(
     let native_addr = chains::native_token_address(&chain_index);
     let is_from_native = from_token.eq_ignore_ascii_case(native_addr);
 
-    // ── 1. Quote ─────────────────────────────────────────────────────
-    let quote_data = fetch_quote(
-        client,
-        &chain_index,
-        from_token,
-        to_token,
-        amount,
-        swap_mode,
-    )
-    .await?;
-
-    let quote = unwrap_api_array(&quote_data);
-    if quote.is_null() {
-        bail!("no quote available for this token pair");
-    }
-
-    // Safety checks
-    if quote["toToken"]["isHoneyPot"].as_bool() == Some(true) {
-        bail!("blocked: destination token is flagged as honeypot");
-    }
-
-    let price_impact = quote["priceImpactPercent"]
-        .as_str()
-        .and_then(|s| s.parse::<f64>().ok())
-        .unwrap_or(0.0);
-    if price_impact > 10.0 {
-        bail!(
-            "blocked: price impact is {:.2}% (>10%). Reduce amount or split into smaller trades",
-            price_impact
-        );
-    }
-
-    // Tax rate check
-    for side in &["fromToken", "toToken"] {
-        let tax_rate = quote[side]["taxRate"]
-            .as_str()
-            .and_then(|s| s.parse::<f64>().ok())
-            .unwrap_or(0.0);
-        if tax_rate > 0.1 {
-            bail!(
-                "blocked: {} has a {:.1}% tax rate (>10%)",
-                quote[side]["tokenSymbol"].as_str().unwrap_or(side),
-                tax_rate * 100.0
-            );
-        } else if tax_rate > 0.0 {
-            eprintln!(
-                "[swap execute] warning: {} has a {:.1}% tax rate",
-                quote[side]["tokenSymbol"].as_str().unwrap_or(side),
-                tax_rate * 100.0
-            );
-        }
-    }
-
-    // ── 3. Approve (EVM + non-native only) ───────────────────────────
+    // ── 1. Approve (EVM + non-native only) ──────────────────────────
     let mut approve_tx_hash: Option<String> = None;
 
     if family == "evm" && !is_from_native {
