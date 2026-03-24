@@ -108,6 +108,9 @@ pub enum SwapCommand {
         /// Chain (e.g. ethereum, solana, xlayer)
         #[arg(long)]
         chain: String,
+        /// User wallet address
+        #[arg(long)]
+        wallet: String,
         /// Slippage tolerance in percent. Omit to use autoSlippage.
         #[arg(long)]
         slippage: Option<String>,
@@ -212,6 +215,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             to,
             amount,
             chain,
+            wallet,
             slippage,
             gas_level,
             swap_mode,
@@ -225,6 +229,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
                 &to,
                 &amount,
                 &chain,
+                &wallet,
                 slippage.as_deref(),
                 &gas_level,
                 &swap_mode,
@@ -422,6 +427,7 @@ async fn cmd_execute(
     to_token: &str,
     amount: &str,
     chain: &str,
+    wallet_address: &str,
     slippage: Option<&str>,
     gas_level: &str,
     swap_mode: &str,
@@ -436,10 +442,7 @@ async fn cmd_execute(
     let native_addr = chains::native_token_address(&chain_index);
     let is_from_native = from_token.eq_ignore_ascii_case(native_addr);
 
-    // ── 1. Resolve wallet address ────────────────────────────────────
-    let wallet_address = resolve_wallet_address(&chain_index).await?;
-
-    // ── 2. Quote ─────────────────────────────────────────────────────
+    // ── 1. Quote ─────────────────────────────────────────────────────
     let quote_data =
         fetch_quote(client, &chain_index, from_token, to_token, amount, swap_mode).await?;
 
@@ -490,7 +493,7 @@ async fn cmd_execute(
 
     if family == "evm" && !is_from_native {
         let approvals =
-            fetch_check_approvals(client, &chain_index, &wallet_address, from_token, None).await?;
+            fetch_check_approvals(client, &chain_index, wallet_address, from_token, None).await?;
 
         let spendable = approvals["results"]
             .as_array()
@@ -537,7 +540,7 @@ async fn cmd_execute(
         to_token,
         amount,
         slippage,
-        &wallet_address,
+        wallet_address,
         swap_mode,
         gas_level,
         tips,
@@ -635,36 +638,6 @@ async fn cmd_execute(
     Ok(())
 }
 
-/// Resolve wallet address by calling `onchainos wallet addresses --chain <chainIndex>`.
-///
-/// Output structure (after envelope unwrap):
-/// ```json
-/// { "accountId": "...", "xlayer": [...], "evm": [...], "solana": [...] }
-/// ```
-/// Each array entry: `{ "address": "0x...", "chainIndex": "1", "chainName": "eth" }`
-async fn resolve_wallet_address(chain_index: &str) -> Result<String> {
-    let data = run_onchainos_cmd(&["wallet", "addresses", "--chain", chain_index]).await?;
-
-    // Determine which group to look into based on chain_index
-    let group_key = match chain_index {
-        "196" => "xlayer",
-        "501" => "solana",
-        _ => "evm",
-    };
-
-    let address = data[group_key]
-        .as_array()
-        .and_then(|arr| arr.first())
-        .and_then(|entry| entry["address"].as_str())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "no wallet address found for chain {} — run `onchainos wallet login` first",
-                chain_index
-            )
-        })?;
-
-    Ok(address.to_string())
-}
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
