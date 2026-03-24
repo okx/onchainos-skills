@@ -199,14 +199,8 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(
-                fetch_check_approvals(
-                    &client,
-                    &chain_index,
-                    &address,
-                    &token,
-                    spender.as_deref(),
-                )
-                .await?,
+                fetch_check_approvals(&client, &chain_index, &address, &token, spender.as_deref())
+                    .await?,
             );
         }
         SwapCommand::Chains => {
@@ -625,7 +619,12 @@ async fn run_onchainos_cmd(args: &[&str]) -> Result<Value> {
         .args(args)
         .output()
         .await
-        .map_err(|e| anyhow::anyhow!("failed to spawn onchainos {}: {e}", args.first().unwrap_or(&"")))?;
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "failed to spawn onchainos {}: {e}",
+                args.first().unwrap_or(&"")
+            )
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -695,8 +694,15 @@ async fn cmd_execute(
     let is_from_native = from_token.eq_ignore_ascii_case(native_addr);
 
     // ── 1. Quote ─────────────────────────────────────────────────────
-    let quote_data =
-        fetch_quote(client, &chain_index, from_token, to_token, amount, swap_mode).await?;
+    let quote_data = fetch_quote(
+        client,
+        &chain_index,
+        from_token,
+        to_token,
+        amount,
+        swap_mode,
+    )
+    .await?;
 
     let quote = unwrap_api_array(&quote_data);
     if quote.is_null() {
@@ -762,10 +768,14 @@ async fn cmd_execute(
                 let revoke_calldata = extract_approve_calldata(&revoke_data)?;
 
                 let result = wallet_contract_call(&[
-                    "--to", from_token,
-                    "--chain", &chain_index,
-                    "--input-data", &revoke_calldata,
-                ]).await?;
+                    "--to",
+                    from_token,
+                    "--chain",
+                    &chain_index,
+                    "--input-data",
+                    &revoke_calldata,
+                ])
+                .await?;
                 // We don't need the revoke txHash in output, just ensure it succeeded
                 extract_tx_hash(&result)?;
             }
@@ -775,10 +785,14 @@ async fn cmd_execute(
             let approve_calldata = extract_approve_calldata(&approve_data)?;
 
             let result = wallet_contract_call(&[
-                "--to", from_token,
-                "--chain", &chain_index,
-                "--input-data", &approve_calldata,
-            ]).await?;
+                "--to",
+                from_token,
+                "--chain",
+                &chain_index,
+                "--input-data",
+                &approve_calldata,
+            ])
+            .await?;
             approve_tx_hash = Some(extract_tx_hash(&result)?);
         }
     }
@@ -815,9 +829,12 @@ async fn cmd_execute(
         let to_addr = tx["to"].as_str().unwrap_or("");
 
         let mut args = vec![
-            "--to", to_addr,
-            "--chain", &chain_index,
-            "--unsigned-tx", unsigned_tx,
+            "--to",
+            to_addr,
+            "--chain",
+            &chain_index,
+            "--unsigned-tx",
+            unsigned_tx,
         ];
 
         // Jito MEV protection
@@ -840,10 +857,14 @@ async fn cmd_execute(
         let value_ui = wei_to_ui(tx_value_wei, 18);
 
         let mut args = vec![
-            "--to", to_addr,
-            "--chain", &chain_index,
-            "--value", &value_ui,
-            "--input-data", input_data,
+            "--to",
+            to_addr,
+            "--chain",
+            &chain_index,
+            "--value",
+            &value_ui,
+            "--input-data",
+            input_data,
         ];
 
         // Gas limit from swap response
@@ -861,8 +882,10 @@ async fn cmd_execute(
                 .unwrap_or(amount)
                 .to_string();
             args.extend_from_slice(&[
-                "--aa-dex-token-addr", from_token,
-                "--aa-dex-token-amount", &from_token_amount,
+                "--aa-dex-token-addr",
+                from_token,
+                "--aa-dex-token-amount",
+                &from_token_amount,
             ]);
         }
 
@@ -889,7 +912,6 @@ async fn cmd_execute(
 
     Ok(())
 }
-
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -964,7 +986,8 @@ mod tests {
         // Unparseable spendable defaults to 0 → insufficient
         assert!(is_allowance_insufficient("abc", "1000000"));
         // uint256 max approval (78 digits) → sufficient (not insufficient)
-        let uint256_max = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+        let uint256_max =
+            "115792089237316195423570985008687907853269984665640564039457584007913129639935";
         assert!(!is_allowance_insufficient(uint256_max, "1000000"));
     }
 
