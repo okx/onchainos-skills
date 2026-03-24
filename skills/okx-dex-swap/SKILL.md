@@ -94,7 +94,7 @@ onchainos swap swap \
   --chain xlayer \
   --wallet <local_wallet_addr>
 # → Returns swap calldata → sign & broadcast via wallet contract-call
-onchainos wallet contract-call --to <tx.to> --chain 196 --value <value_in_UI_units> --input-data <tx.data> \
+onchainos wallet contract-call --to <tx.to> --chain 196 --amt <tx.value> --input-data <tx.data> \
   --aa-dex-token-addr 0x74b7f16337b8972027f6196a17a631ac6de26d22 --aa-dex-token-amount <fromTokenAmount>
 ```
 
@@ -170,6 +170,28 @@ The CLI accepts human-readable chain names and resolves them automatically.
 
 > **Rule of thumb**: okx-dex-swap orchestrates the full swap flow — quote, approve, swap calldata generation, and signing/broadcasting via `onchainos wallet contract-call`. It does NOT query prices or search tokens.
 
+## Token Address Resolution (Mandatory)
+
+<IMPORTANT>
+🚨 **NEVER guess, assume, or hardcode a token contract address (CA) from memory based on token symbol/name.**
+
+- The same symbol (e.g., USDC, USDT, BONK) has **different contract addresses on different chains**.
+- Tokens can share the same symbol — there are hundreds of tokens named "PEPE" or "DOGE" across chains.
+- Using a wrong CA will swap into the **wrong token** or cause the transaction to **fail silently**, resulting in **loss of funds**.
+
+**The ONLY acceptable sources for a token contract address are:**
+1. `onchainos token search --query <symbol> --chains <chain>` — resolve symbol → CA on the target chain.
+2. The **Native Token Addresses** table above — for native tokens (ETH, SOL, BNB, etc.) only.
+3. The user explicitly provides a full contract address themselves.
+
+If the user says a token symbol (e.g., "swap USDC for ETH on Arbitrum"), you MUST run `onchainos token search --query USDC --chains arbitrum` first to get the correct CA, even if you "think you know" the address. No exceptions.
+
+**When `token search` returns multiple results** (this is common — token symbols are NOT unique):
+1. **Do NOT silently pick one.** Present the top matches to the user, showing: name, symbol, contract address, and chain.
+2. **Ask the user to confirm** which token they intend to use before proceeding to quote/swap.
+3. If only **one result** matches the target chain and symbol exactly, you may proceed — but still display the token details (name, CA, chain) for the user to verify before executing any transaction.
+</IMPORTANT>
+
 ## Cross-Skill Workflows
 
 This skill is the **execution endpoint** of most user trading flows. It almost always needs input from other skills first.
@@ -209,11 +231,11 @@ This skill is the **execution endpoint** of most user trading flows. It almost a
 4. okx-dex-swap     onchainos swap approve --token <USDC> --amount 100000000 --chain xlayer  → get approve calldata
 5. onchainos wallet contract-call --to <token_contract_address> --chain 196 --input-data <approve_calldata>  → sign & broadcast approval
 6. okx-dex-swap     onchainos swap swap --from <USDC> --to 0xeeee...eeee --amount 100000000 --chain xlayer --wallet <local_wallet_addr>
-7. onchainos wallet contract-call --to <contract> --chain 196 --value <value_in_UI_units> --input-data <swap_calldata> \
+7. onchainos wallet contract-call --to <contract> --chain 196 --amt <tx.value> --input-data <swap_calldata> \
      --aa-dex-token-addr <fromToken.tokenContractAddress> --aa-dex-token-amount <fromTokenAmount>
 ```
 
-**Unit conversion for `--value`**: `swap swap` returns `tx.value` in **minimal units** (wei), but `contract-call --value` expects **UI units**. Convert: `UI_value = tx.value / 10^nativeToken.decimal` (e.g., `10000000000000000` wei ÷ 10^18 = `0.01` ETH). If `tx.value` is `"0"` or empty, use `"0"`.
+**`--amt` value**: `swap swap` returns `tx.value` in **minimal units** — pass it directly to `contract-call --amt` (no conversion needed). If `tx.value` is `"0"` or empty, use `"0"`.
 
 **Key**: EVM tokens (not native) require an **approve** step. Skip if selling native tokens.
 
@@ -239,7 +261,7 @@ Flow: quote → approve (if non-native token) → contract-call approve → swap
 2. onchainos swap approve ...               → Get approval calldata (skip for native tokens)
 3. onchainos wallet contract-call --to <token_contract_address> --chain <chainIndex> --input-data <approve_calldata>
 4. onchainos swap swap ...                  → Get swap calldata
-5. onchainos wallet contract-call --to <contract> --chain <chainIndex> --value <value_in_UI_units> --input-data <swap_calldata> \
+5. onchainos wallet contract-call --to <contract> --chain <chainIndex> --amt <tx.value> --input-data <swap_calldata> \
      --aa-dex-token-addr <fromToken.tokenContractAddress> --aa-dex-token-amount <fromTokenAmount>
 ```
 
@@ -287,7 +309,7 @@ Flow: quote → approve (if non-native token) → contract-call approve → swap
 ### Step 2: Collect Parameters
 
 - Missing chain → recommend XLayer (`--chain xlayer`, low gas, fast confirmation) as the default, then ask which chain the user prefers
-- Missing token addresses → use `okx-dex-token` `onchainos token search` to resolve name → address
+- Missing token addresses → **MUST** use `onchainos token search --query <symbol> --chains <chain>` to resolve symbol → contract address on the target chain. See **Token Address Resolution** section above — never guess or recall an address from memory. Exception: native tokens (ETH/SOL/BNB…) use the fixed addresses in the **Native Token Addresses** table.
 - Missing amount → ask user, remind to convert to minimal units
 - Missing slippage → use autoSlippage by default (do NOT pass `--slippage`; the API calculates optimal slippage automatically). If the user explicitly specifies a fixed slippage value, pass `--slippage <value>` which disables autoSlippage. **IMPORTANT: `--slippage` is only a parameter of `onchainos swap swap`, NOT `onchainos swap quote`. Never pass `--slippage` to the quote command — it will fail.** Note: `taxRate` is separate from slippage — taxRate is deducted by the token contract and is NOT included in the slippage setting.
   - **Slippage warnings**: Too small → warn about transaction failure risk. Too large → warn about potential loss.
@@ -346,13 +368,13 @@ Enabled only when the user has **explicitly authorized** automated execution (e.
 
 After `onchainos swap swap` returns successfully, use `onchainos wallet contract-call` to sign and broadcast in one step. Note: `wallet contract-call --chain` requires `realChainIndex` (e.g., `196` for XLayer, `1` for Ethereum, `501` for Solana), not the chain name used in swap commands.
 
-- **EVM**: `onchainos wallet contract-call --to <contract_address> --chain <chainIndex> --value <value_in_UI_units> --input-data <tx_calldata>`
-- **EVM (XLayer)**: `onchainos wallet contract-call --to <contract_address> --chain 196 --value <value_in_UI_units> --input-data <tx_calldata> --aa-dex-token-addr <fromToken.tokenContractAddress> --aa-dex-token-amount <fromTokenAmount>`
+- **EVM**: `onchainos wallet contract-call --to <contract_address> --chain <chainIndex> --amt <tx.value> --input-data <tx_calldata>`
+- **EVM (XLayer)**: `onchainos wallet contract-call --to <contract_address> --chain 196 --amt <tx.value> --input-data <tx_calldata> --aa-dex-token-addr <fromToken.tokenContractAddress> --aa-dex-token-amount <fromTokenAmount>`
 - **Solana**: `onchainos wallet contract-call --to <contract_address> --chain 501 --unsigned-tx <unsigned_tx_data>`
 
 The `contract-call` command handles TEE signing and broadcasting internally — no separate broadcast step is needed.
 
-**`--value` unit conversion**: `swap swap` returns `tx.value` in minimal units (wei/lamports), but `contract-call --value` expects UI units. Convert: `value_in_UI_units = tx.value / 10^nativeToken.decimal` (e.g., 18 for ETH, 9 for SOL). If `tx.value` is `"0"` or empty, use `"0"`.
+**`--amt` value**: `swap swap` returns `tx.value` in minimal units — pass it directly to `contract-call --amt` (no conversion needed). If `tx.value` is `"0"` or empty, use `"0"`.
 
 ### Step 3b: Result Messaging
 
@@ -388,8 +410,6 @@ To search for specific command details: `grep -n "onchainos swap <command>" refe
 |---|---|---|---|
 | Honeypot (`isHoneyPot=true`) | BLOCK | WARN (allow exit) | Selling allowed for stop-loss scenarios |
 | High tax rate (>10%) | WARN | WARN | Display exact tax rate |
-| Price impact >5% | WARN | WARN | Suggest splitting trade |
-| Price impact >10% | BLOCK | WARN | Strongly discourage, allow sell for exit |
 | No quote available | CANNOT | CANNOT | Token may be unlisted or zero liquidity |
 | Black/flagged address | BLOCK | BLOCK | Address flagged by security services |
 | New token (<24h) | WARN | PROCEED | Extra caution on buy side |

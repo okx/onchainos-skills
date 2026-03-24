@@ -1,6 +1,6 @@
 # Onchain OS — Agentic Wallet CLI Reference
 
-Complete parameter tables, return field schemas, and usage examples for all wallet commands (A-F).
+Complete parameter tables, return field schemas, and usage examples for all wallet commands (A-G).
 
 ---
 
@@ -517,7 +517,7 @@ Send native tokens or contract tokens (ERC-20 / SPL) from the Agentic Wallet.
 
 ```bash
 onchainos wallet send \
-  --amount <amount> \
+  --amt <amount> \
   --receipt <address> \
   --chain <chainId> \
   [--from <address>] \
@@ -527,7 +527,7 @@ onchainos wallet send \
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `--amount` | string | Yes | Amount in UI units (e.g. "0.01" for 0.01 ETH) |
+| `--amt` | string | Yes | Amount in minimal units — whole number, no decimals (e.g. `"100000000000000000"` for 0.1 ETH). See SKILL.md `--amt` section for conversion rules. |
 | `--receipt` | string | Yes | Recipient address (0x-prefixed for EVM, Base58 for Solana) |
 | `--chain` | string | Yes | Chain ID / `realChainIndex` (e.g. "1" for Ethereum, "501" for Solana, "56" for BSC) |
 | `--from` | string | No | Sender address — defaults to selected account's address on the given chain |
@@ -741,7 +741,7 @@ Call a smart contract on an EVM chain or Solana program with TEE signing and aut
 onchainos wallet contract-call \
   --to <contract_address> \
   --chain <chainId> \
-  [--value <amount>] \
+  [--amt <amount>] \
   [--input-data <hex_calldata>] \
   [--unsigned-tx <base58_tx>] \
   [--gas-limit <number>] \
@@ -757,7 +757,7 @@ onchainos wallet contract-call \
 |---|---|---|---|
 | `--to` | string | Yes | Contract address to interact with |
 | `--chain` | string | Yes | Chain ID / `realChainIndex` (e.g. "1" for Ethereum, "501" for Solana, "56" for BSC) |
-| `--value` | string | No | Native token amount to send with the call (default "0"). In UI units (e.g., "0.01" for 0.01 ETH). |
+| `--amt` | string | No | Native token amount in minimal units — whole number, no decimals (default "0"). See SKILL.md `--amt` section for conversion rules. |
 | `--input-data` | string | Conditional | EVM call data (hex-encoded, e.g. "0xa9059cbb..."). **Required for EVM chains.** |
 | `--unsigned-tx` | string | Conditional | Solana unsigned transaction data (base58). **Required for Solana.** |
 | `--gas-limit` | string | No | Gas limit override (EVM only). If omitted, the CLI estimates gas automatically. |
@@ -775,3 +775,74 @@ onchainos wallet contract-call \
 | Field | Type | Description |
 |---|---|---|
 | `txHash` | String | Broadcast transaction hash |
+
+---
+
+## G. Sign Message Command
+
+### G1. `onchainos wallet sign-message`
+
+Sign a message using the TEE-backed session key. Supports personalSign (EIP-191, EVM + Solana) and EIP-712 typed structured data (EVM only).
+
+```bash
+onchainos wallet sign-message \
+  --chain <chainId> \
+  --message <message> \
+  [--type <type>] \
+  --from <address> \
+  [--force]
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `--chain` | string | Yes | Chain ID / `realChainIndex` (e.g. "1" for Ethereum, "501" for Solana, "56" for BSC) |
+| `--message` | string | Yes | Message to sign. For `personal`: arbitrary string. For `eip712`: JSON string of the typed data. |
+| `--type` | string | No | Signing type: `personal` (default, EVM + Solana) or `eip712` (EVM only). |
+| `--from` | string | Yes | Sender address — the address whose private key is used to sign. |
+| `--force` | bool | No | Skip confirmation prompts from the backend (default false). Use when re-running a command after the user has confirmed a `confirming` response. |
+
+> **Note:** Using `--type eip712` with `--chain 501` (Solana) will return an error. EIP-712 is only supported on EVM chains.
+
+**Return fields (EVM chains):**
+
+| Field | Type | Description |
+|---|---|---|
+| `signature` | String | The resulting signature (hex-encoded, as returned by the API) |
+
+**Return fields (Solana, chain 501):**
+
+| Field | Type | Description |
+|---|---|---|
+| `signature` | String | The resulting signature (base58-encoded, converted from hex) |
+| `publicKey` | String | The signer's public address (the `--from` address) |
+
+### G — Input / Output Examples
+
+**User says:** "Sign this message on Ethereum: Hello World"
+
+```bash
+onchainos wallet sign-message --chain 1 --from 0xYourAddress --message "Hello World"
+# -> personalSign (EVM). message.value is hex-encoded.
+#   Signature: 0xabcdef1234567890...
+```
+
+---
+
+**User says:** "Sign this message on Solana"
+
+```bash
+onchainos wallet sign-message --chain 501 --from SoLYourAddress --message "Hello World"
+# -> personalSign (Solana). message.value is base58-encoded.
+#   Signature: 3xB7mK9v... (base58)
+#   PublicKey: SoLYourAddress
+```
+
+---
+
+**User says:** "Sign this EIP-712 typed data on Ethereum"
+
+```bash
+onchainos wallet sign-message --chain 1 --from 0xYourAddress --type eip712 --message '{"types":{"EIP712Domain":[{"name":"name","type":"string"}],"Mail":[{"name":"contents","type":"string"}]},"primaryType":"Mail","domain":{"name":"Example"},"message":{"contents":"Hello"}}'
+# -> eip712 (EVM only). Solana is NOT supported for eip712.
+#   Signature: 0x1234abcd5678ef90...
+```

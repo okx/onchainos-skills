@@ -74,7 +74,9 @@ async fn pay(
         bail!("--amount must be greater than zero");
     }
     fn is_valid_evm_address(addr: &str) -> bool {
-        addr.starts_with("0x") && addr.len() == 42 && addr[2..].chars().all(|c| c.is_ascii_hexdigit())
+        addr.starts_with("0x")
+            && addr.len() == 42
+            && addr[2..].chars().all(|c| c.is_ascii_hexdigit())
     }
     if !is_valid_evm_address(pay_to) {
         bail!("--pay-to must be a valid EVM address (0x + 40 hex chars)");

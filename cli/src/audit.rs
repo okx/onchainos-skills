@@ -443,6 +443,7 @@ fn wallet_sub(c: &WalletCommand) -> &'static str {
         WalletCommand::Send { .. } => "send",
         WalletCommand::History { .. } => "history",
         WalletCommand::ContractCall { .. } => "contract-call",
+        WalletCommand::SignMessage { .. } => "sign-message",
     }
 }
 

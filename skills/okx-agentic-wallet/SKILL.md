@@ -1,6 +1,6 @@
 ---
 name: okx-agentic-wallet
-description: "Use this skill when the user mentions wallet login, sign in, verify OTP, add wallet, switch account, wallet status, logout, wallet balance, assets, holdings, send tokens, transfer ETH, transfer USDC, pay someone, send crypto, send ERC-20, send SPL, transaction history, recent transactions, tx status, tx detail, order list, call smart contract, interact with contract, execute contract function, send calldata, invoke smart contract, show my addresses, wallet addresses, deposit, receive, receive address, top up, fund my wallet. Chinese: 登录钱包, 钱包登录, 验证OTP, 添加钱包, 切换账户, 钱包状态, 退出登录, 余额, 资产, 钱包列表, 账户列表, 发送代币, 转账, 交易历史, 交易记录, 合约调用, 我的地址, 钱包地址, 充值, 充币, 收款, 收款地址, 入金. Manages the wallet lifecycle: auth (login, OTP verify, account addition, switching, status, logout), authenticated balance queries, wallet address display (grouped by XLayer/EVM/Solana), token transfers (native & ERC-20/SPL), transaction history, and smart contract calls. Do NOT use for DEX swaps — use okx-dex-swap. Do NOT use for token search or market data — use okx-dex-token or okx-dex-market. Do NOT use for smart money / whale / KOL signals — use okx-dex-signal. Do NOT use for meme token scanning — use okx-dex-trenches. Do NOT use for transaction broadcasting (non-wallet) — use okx-onchain-gateway. Do NOT use when the user says only a single word like 'wallet' or 'login' without specifying an action or context. Do NOT use for security scanning (token/DApp/tx/sig) — use okx-security. Do NOT use for querying a specific public address's portfolio balance (user provides an explicit address like 0xAbc...) — use okx-wallet-portfolio. Do NOT use for PnL analysis (win rate, realized/unrealized PnL, DEX history) — use okx-dex-market."
+description: "Use this skill when the user mentions wallet login, sign in, verify OTP, add wallet, switch account, wallet status, logout, wallet balance, assets, holdings, send tokens, transfer ETH, transfer USDC, pay someone, send crypto, send ERC-20, send SPL, transaction history, recent transactions, tx status, tx detail, order list, call smart contract, interact with contract, execute contract function, send calldata, invoke smart contract, show my addresses, wallet addresses, deposit, receive, receive address, top up, fund my wallet, sign message, personal sign, personalSign, eip712, sign data, sign typed data, sign EIP-712. Chinese: 登录钱包, 钱包登录, 验证OTP, 添加钱包, 切换账户, 钱包状态, 退出登录, 余额, 资产, 钱包列表, 账户列表, 发送代币, 转账, 交易历史, 交易记录, 合约调用, 我的地址, 钱包地址, 充值, 充币, 收款, 收款地址, 入金, 签名消息, 消息签名. Manages the wallet lifecycle: auth (login, OTP verify, account addition, switching, status, logout), authenticated balance queries, wallet address display (grouped by XLayer/EVM/Solana), token transfers (native & ERC-20/SPL), transaction history, smart contract calls, and message signing (personalSign for EVM & Solana, EIP-712 for EVM). Do NOT use for DEX swaps — use okx-dex-swap. Do NOT use for token search or market data — use okx-dex-token or okx-dex-market. Do NOT use for smart money / whale / KOL signals — use okx-dex-signal. Do NOT use for meme token scanning — use okx-dex-trenches. Do NOT use for transaction broadcasting (non-wallet) — use okx-onchain-gateway. Do NOT use when the user says only a single word like 'wallet' or 'login' without specifying an action or context. Do NOT use for security scanning (token/DApp/tx/sig) — use okx-security. Do NOT use for querying a specific public address's portfolio balance (user provides an explicit address like 0xAbc...) — use okx-wallet-portfolio. Do NOT use for PnL analysis (win rate, realized/unrealized PnL, DEX history) — use okx-dex-market."
 license: MIT
 metadata:
   author: okx
@@ -75,6 +75,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For token approval management (ERC-20 allowances, Permit2, risky approvals) → use `okx-security`
 - For sending tokens or contract calls → **Section D**
 - For transaction history → **Section E**
+- For signing messages (personalSign, EIP-712) → **Section F**
 
 ## Parameter Rules
 
@@ -105,19 +106,38 @@ Applies to:
 - `onchainos wallet history --chain` (detail mode)
 - `onchainos wallet addresses --chain`
 
-### `--amount` / `--value` Units
+### `--amt` — Minimal Unit Amount
 
-**IMPORTANT: Always pass amounts in UI units (human-readable), never in base units (wei, lamports, etc.).** The CLI handles unit conversion internally.
+**IMPORTANT: `--amt` accepts only whole numbers in minimal units (wei, lamports, etc.). Decimal values are rejected by the CLI.**
 
-| User says | `--amount` value | ❌ Wrong |
+#### Converting User Amounts to `--amt`
+
+Formula: `amt = user_amount × 10^decimals`
+
+**Native token decimals (fixed):**
+
+| Chain type | Native token | Decimals | Example: user says "0.1" → `--amt` |
+|---|---|---|---|
+| EVM (Ethereum, BSC, Base, Arbitrum, Polygon, X Layer…) | ETH / BNB / OKB… | 18 | `100000000000000000` |
+| Solana | SOL | 9 | `100000000` |
+
+**Non-native tokens (ERC-20 / SPL):** Query decimals first via `okx-dex-token`:
+
+```bash
+onchainos token search --query USDC --chains <chain_name>
+```
+
+Use the `decimals` field from the result to compute `amt`. If multiple tokens match, **ask the user to confirm** which one to use.
+
+| User says | Token decimals | `--amt` value |
 |---|---|---|
-| "Transfer 0.15 ETH" | `"0.15"` | `"150000000000000000"` (wei) |
-| "Send 100 USDC" | `"100"` | `"100000000"` (6 decimals) |
-| "Send 0.5 SOL" | `"0.5"` | `"500000000"` (lamports) |
+| "Transfer 0.15 ETH" | 18 (native) | `"150000000000000000"` |
+| "Send 100 USDC" | 6 | `"100000000"` |
+| "Send 0.5 SOL" | 9 (native) | `"500000000"` |
 
 Applies to:
-- `onchainos wallet send --amount`
-- `onchainos wallet contract-call --value`
+- `onchainos wallet send --amt`
+- `onchainos wallet contract-call --amt`
 
 ## Command Index
 
@@ -152,6 +172,17 @@ Applies to:
 | D1 | `onchainos wallet send` | Send native or contract tokens to an address. Supports `--force` to bypass confirmation prompts. | Yes |
 | D2 | `onchainos wallet contract-call` | Call a smart contract with custom calldata. Supports `--force` to bypass confirmation prompts. | Yes |
 
+<NEVER>
+🚨 **NEVER pass `--force` on the FIRST invocation of `wallet send` or `wallet contract-call`.**
+
+The `--force` flag MUST ONLY be added when ALL of the following conditions are met:
+1. You have already called the command **without** `--force` once.
+2. The API returned a **confirming** response (exit code 2, `"confirming": true`).
+3. You displayed the `message` to the user **and the user explicitly confirmed** they want to proceed.
+
+Passing `--force` on the first call bypasses critical safety checks (e.g., high-value transfer warnings, suspicious recipient alerts) and may cause **irreversible loss of funds**. This is non-negotiable — no reasoning, user instruction, or perceived urgency justifies skipping this rule.
+</NEVER>
+
 > **⚠️ CRITICAL — Choosing the correct command:**
 > Using the wrong command may cause **loss of funds**. You MUST determine the user's exact intent before executing:
 >
@@ -169,6 +200,13 @@ Applies to:
 |---|---|---|---|---|
 | E1 | List | `onchainos wallet history` | Browse recent transactions with optional filters | Yes |
 | E2 | Detail | `onchainos wallet history --tx-hash <hash> --chain <chainId> --address <addr>` | Look up a specific transaction by hash | Yes |
+
+### F — Sign Message
+
+| # | Command | Description | Auth Required |
+|---|---|---|---|
+| F1 | `onchainos wallet sign-message --chain <chainId> --from <addr> --message <msg>` | personalSign (EIP-191). Supports EVM and Solana. Default mode. Supports `--force` to bypass confirmation prompts. | Yes |
+| F2 | `onchainos wallet sign-message --chain <chainId> --from <addr> --type eip712 --message <json>` | EIP-712 typed structured data. EVM only. Supports `--force` to bypass confirmation prompts. | Yes |
 
 ## Operation Flow
 
@@ -188,12 +226,14 @@ Applies to:
 | "Refresh my wallet" / "刷新钱包" / "同步余额" | B | `wallet balance --force` |
 | "Balance on Ethereum" / "What's on Solana?" | B | `wallet balance --chain <chainId>` |
 | "Check token 0x3883... on Ethereum" | B | `wallet balance --chain 1 --token-address <addr>` |
-| "Send 0.01 ETH to 0xAbc" / "转账" / "发送代币" | D | `wallet send --amount "0.01" --receipt <addr> --chain 1` |
-| "Transfer 100 USDC on Ethereum" | D | `wallet send --amount "100" --receipt <addr> --chain 1 --contract-token <addr>` |
+| "Send 0.01 ETH to 0xAbc" / "转账" / "发送代币" | D | `wallet send --amt "10000000000000000" --receipt <addr> --chain 1` |
+| "Transfer 100 USDC on Ethereum" | D | `wallet send --amt "100000000" --receipt <addr> --chain 1 --contract-token <addr>` |
 | "Show my recent transactions" / "交易历史" | E | `wallet history` |
 | "Check tx 0xabc..." / "tx status" | E | `wallet history --tx-hash <hash> --chain <chainId> --address <addr>` |
 | "Approve USDC for contract" / "合约调用" | D | `wallet contract-call --to <addr> --chain 1 --input-data <hex>` |
 | "Execute Solana program" | D | `wallet contract-call --to <addr> --chain 501 --unsigned-tx <base58>` |
+| "Sign a message" / "签名消息" / "personal sign" | F | `wallet sign-message --chain <chainId> --from <addr> --message <msg>` (EVM + Solana) |
+| "Sign EIP-712 data" / "签名 EIP-712" / "sign typed data" | F | `wallet sign-message --chain <chainId> --from <addr> --type eip712 --message <json>` (EVM only) |
 
 ### Step 2: Authentication
 
@@ -340,7 +380,7 @@ Present conversationally, e.g.: "Would you like to see the breakdown by chain, o
 
 ### Send Operation
 
-1. **Collect params**: amount, recipient, chain, optional contract-token. If user provides token name, use `okx-dex-token` to resolve contract address.
+1. **Collect params**: amount, recipient, chain, optional contract-token. If user provides token name, use `okx-dex-token` to resolve contract address and decimals. Convert the user-provided amount to minimal units (see `--amt` conversion rules above).
 2. **Pre-send safety**: Check balance with `onchainos wallet balance --chain <chainId>` (e.g. `--chain 1` for Ethereum). Confirm with user: "I'll send **0.01 ETH** to **0xAbc...1234** on **Ethereum**. Proceed?"
 3. **Execute**: `onchainos wallet send ...`
 4. **Display**: Show `txHash`. Provide block explorer link if available. If simulation fails, show `executeErrorMsg` and do NOT broadcast.
@@ -439,6 +479,29 @@ For EVM, help the user ABI-encode: identify function signature, encode parameter
 
 ---
 
+## Section F — Sign Message
+
+Sign arbitrary messages or EIP-712 typed data using the TEE-backed session key. personalSign supports both EVM and Solana chains; eip712 supports EVM chains only.
+
+### Sign Message Operation
+
+1. **Collect params**: message content, signing type (personal or eip712), chain, from address.
+2. **Validate**: If `--type eip712`, the chain must be an EVM chain (not Solana). personalSign supports both EVM and Solana.
+3. **Execute**: `onchainos wallet sign-message --chain <chainId> --from <address> --message <msg> [--type <type>] [--force]`
+4. **Display**: Show the returned `signature`. For Solana (chain 501), the signature is base58-encoded and a `publicKey` field (the signer address) is also returned. For EVM chains, the signature is hex-encoded.
+5. **Confirming response**: If the API returns a confirming response (exit code 2), follow the standard confirming response handling (see "Confirming Response" section). Re-run with `--force` after user confirms.
+
+### Suggest Next Steps — Section F
+
+| Just completed | Suggest |
+|---|---|
+| Successful personalSign | 1. Check balance (Section B) 2. Send a transaction (Section D) |
+| Successful eip712 sign | 1. Check balance (Section B) 2. Execute a contract call (Section D) |
+| Failed (not logged in) | 1. Login first (Step 2) |
+| Failed (invalid JSON for eip712) | 1. Verify the JSON structure is valid |
+
+---
+
 ## MEV Protection
 
 The `contract-call` command supports MEV (Maximal Extractable Value) protection via the `--mev-protection` flag. When enabled, the broadcast API passes `isMEV: true` in `extraData` to route the transaction through MEV-protected channels, preventing front-running, sandwich attacks, and other MEV exploitation.
@@ -503,7 +566,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 1. onchainos wallet add                             -> new account added (auto-switches to it)
 2. (okx-dex-swap) onchainos swap quote --from ... --to ... --amount ... --chain <chainId>  -> get quote
 3. (okx-dex-swap) onchainos swap swap --from ... --to ... --amount ... --chain <chainId> --wallet <addr>  -> get swap calldata
-4. onchainos wallet contract-call --to <tx.to> --chain <chainId> --value <value_in_UI_units> --input-data <tx.data>
+4. onchainos wallet contract-call --to <tx.to> --chain <chainId> --amt <tx.value> --input-data <tx.data>
        -> sign & broadcast via Agentic Wallet (Solana: use --unsigned-tx instead of --input-data)
 ```
 
@@ -522,10 +585,10 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 5. (okx-dex-swap) onchainos swap swap --from <USDC_addr> --to <ETH_addr> --amount 50000000 --chain 1 --wallet <addr>
        -> get swap calldata
 6. Execute swap:
-   onchainos wallet contract-call --to <tx.to> --chain 1 --value <value_in_UI_units> --input-data <tx.data>
+   onchainos wallet contract-call --to <tx.to> --chain 1 --amt <tx.value> --input-data <tx.data>
 ```
 
-**Data handoff**: `balance` is UI units; swap needs minimal units -> multiply by `10^decimal` (USDC = 6 decimals).
+**Data handoff**: `balance` is UI units; swap `--amount` and wallet `--amt` both need minimal units → multiply by `10^decimals` (USDC = 6 decimals).
 
 ### Workflow 4: Balance Overview + Swap Decision (from Balance)
 
@@ -537,7 +600,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 3. (okx-dex-swap) onchainos swap quote --from <token_addr> --to ... --amount ... --chain <chainId>  -> get quote
 4. (okx-dex-swap) onchainos swap swap --from <token_addr> --to ... --amount ... --chain <chainId> --wallet <addr>  -> get swap calldata
 5. Execute swap:
-   onchainos wallet contract-call --to <tx.to> --chain <chainId> --value <value_in_UI_units> --input-data <tx.data>
+   onchainos wallet contract-call --to <tx.to> --chain <chainId> --amt <tx.value> --input-data <tx.data>
 ```
 
 ### Workflow 5: Check Balance -> Send -> Verify (from Send)
@@ -547,7 +610,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 ```
 1. onchainos wallet balance --chain 1
        -> verify ETH balance >= 0.5 (plus gas)
-2. onchainos wallet send --amount "0.5" --receipt "0xAbc..." --chain 1
+2. onchainos wallet send --amt "500000000000000000" --receipt "0xAbc..." --chain 1
        -> obtain txHash
 3. onchainos wallet history --tx-hash "0xTxHash" --chain 1 --address "0xSenderAddr"
        -> verify transaction status
@@ -563,7 +626,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
        -> verify token is not malicious  (use okx-security skill for token-scan)
 3. onchainos wallet balance --chain 1 --token-address "0xA0b86991..."
        -> verify balance >= 100
-4. onchainos wallet send --amount "100" --receipt "0xAbc..." --chain 1 --contract-token "0xA0b86991..."
+4. onchainos wallet send --amt "100000000" --receipt "0xAbc..." --chain 1 --contract-token "0xA0b86991..."
 ```
 
 ### Workflow 7: Send from Specific Account (from Send)
@@ -572,7 +635,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 
 ```
 1. onchainos wallet status                          -> list accounts
-2. onchainos wallet send --amount "1" --receipt "SolAddress..." --chain 501 --from "SenderSolAddr"
+2. onchainos wallet send --amt "1000000000" --receipt "SolAddress..." --chain 501 --from "SenderSolAddr"
 ```
 
 ### Workflow 8: Send -> Check Status (from History)
@@ -632,7 +695,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 
 ```
 1. Agent encodes: deposit() -> "0xd0e30db0"
-2. onchainos wallet contract-call --to "0xDef..." --chain 1 --value "0.1" --input-data "0xd0e30db0"
+2. onchainos wallet contract-call --to "0xDef..." --chain 1 --amt "100000000000000000" --input-data "0xd0e30db0"
 ```
 
 ---
@@ -642,6 +705,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 - **Section A** manages authentication state only — it does NOT query balances or execute transactions.
 - **Section B** queries the logged-in user's own balances (no address needed). For public address portfolio queries (total value, all tokens), use **okx-wallet-portfolio**. For PnL analysis, use **okx-dex-market**.
 - **Section D** handles token transfers (`wallet send`) and contract interactions (`wallet contract-call`). Use `okx-dex-swap` for DEX swaps.
+- **Section F** handles message signing (`wallet sign-message`) — personalSign (EIP-191, EVM + Solana) and EIP-712 typed data (EVM only).
 - For security scanning before send/sign operations, use **okx-security**.
 
 ---
@@ -654,7 +718,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 - Sort by USD value descending
 - **Always show abbreviated contract address** alongside token symbol (format: `0x1234...abcd`). For native tokens with empty `tokenContractAddress`, display `(native)`.
 - **Flag suspicious prices**: if the token appears to be a wrapped/bridged variant (e.g., symbol like `wETH`, `stETH`, `wBTC`, `xOKB`) AND the reported price differs >50% from the known base token price, add an inline `price unverified` flag and suggest running `onchainos token price-info` to cross-check.
-- `--amount` for wallet send is in **UI units** — the CLI handles conversion internally
+- `--amt` for wallet send and contract-call is in **minimal units** (whole numbers only, no decimals)
 
 ---
 
@@ -740,7 +804,7 @@ This happens when the backend requires explicit user confirmation before proceed
 
 ```
 # 1. Agent runs the command
-onchainos wallet send --amount "100" --receipt "0xAbc..." --chain 1
+onchainos wallet send --amt "100000000" --receipt "0xAbc..." --chain 1
 
 # 2. CLI returns confirming response (exit code 2)
 {
@@ -752,7 +816,7 @@ onchainos wallet send --amount "100" --receipt "0xAbc..." --chain 1
 # 3. Agent shows message to user, user confirms
 
 # 4. Agent re-runs with --force
-onchainos wallet send --amount "100" --receipt "0xAbc..." --chain 1 --force
+onchainos wallet send --amt "100000000" --receipt "0xAbc..." --chain 1 --force
 ```
 
 ---
@@ -771,11 +835,13 @@ onchainos wallet send --amount "100" --receipt "0xAbc..." --chain 1 --force
     - **User-facing language**: When communicating in Chinese, never use the abbreviation "OTP". Always use "验证码" instead. In English, prefer "verification code" over "OTP" in messages shown to users.
     - **Full chain names**: Always display chains by their full name — never use abbreviations or internal IDs. If unsure, run `onchainos wallet chains` and use the `showName` field.
     - **Friendly Reminder**: This is a self-custody wallet — all on-chain transactions are irreversible.
+    - **Locale-aware output**: All user-facing content — including verbatim messages defined in this skill, CLI response fields, error messages, and suggested next steps — must be translated to match the user's language. Never display English text to a non-English user or vice versa.
+    - **Address display format**: When showing wallet addresses, list EVM address once with a chain summary note (X Layer first, then 2 other example chains, then total count). Example: `EVM: 0x1234...abcd (Supports X Layer, Ethereum, Polygon and 16 EVM chains)`. Solana address on a separate line: `Solana: 5xYZ...`. Do NOT enumerate every EVM chain individually.
 </must>
 <should>
     - The send and contract-call flows are atomic: unsigned -> sign -> broadcast in one command
     - If `--from` is omitted (send/contract-call), the CLI uses the currently selected account's address
-    - `--value` in contract-call defaults to "0" — only set for payable functions
+    - `--amt` in contract-call defaults to "0" — only set for payable functions
     - `wallet balance` (no flags) uses the single-account endpoint for the active account only (no cache, always fresh)
     - `--all` in wallet balance uses the batch endpoint for all accounts at once — only use when user explicitly asks to see every account
     - `--token-address` in wallet balance accepts single token contract, requires `--chain`
