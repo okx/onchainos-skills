@@ -33,7 +33,9 @@ metadata:
 | 新盘 / 迁移中 / 已迁移 | NEW / MIGRATING / MIGRATED | `onchainos memepump tokens --stage` |
 | pumpfun / bonkers / bonk / believe / bags / mayhem | protocol names (launch platforms) | `onchainos memepump tokens --protocol-id-list <id>` |
 
+<IMPORTANT>
 **Protocol names are NOT token names.** When a user mentions pumpfun, bonkers, bonk, believe, bags, mayhem, fourmeme, etc., look up their IDs via `onchainos memepump chains`, then pass to `--protocol-id-list`. Multiple protocols: comma-separate the IDs. The table below is a reference only — use it as a fallback if the command is unavailable.
+</IMPORTANT>
 
 ## Protocol ID Reference
 
@@ -64,31 +66,6 @@ When presenting `memepump-token-details` or `memepump-token-dev-info` responses,
 - `top10HoldingsPercent` → "top-10 holder concentration"
 - `rugPullCount` → "rug pull count / 跑路次数"
 - `bondingPercent` → "bonding curve progress"
-
-## Quickstart
-
-```bash
-# Get supported chains and protocols for meme pump
-onchainos memepump chains
-
-# List new meme pump tokens on Solana
-onchainos memepump tokens --chain solana --stage NEW
-
-# Get meme pump token details
-onchainos memepump token-details --address <address> --chain solana
-
-# Check developer reputation for a meme token
-onchainos memepump token-dev-info --address <address> --chain solana
-
-# Get bundle/sniper analysis
-onchainos memepump token-bundle-info --address <address> --chain solana
-
-# Find similar tokens by same dev
-onchainos memepump similar-tokens --address <address> --chain solana
-
-# Get aped (same-car) wallet list
-onchainos memepump aped-wallet --address <address> --chain solana
-```
 
 ## Command Index
 

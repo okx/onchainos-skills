@@ -56,52 +56,6 @@ Users may use Chinese crypto slang or platform-specific terms. Map them to the c
 | 同创建时间地址占比 | same creation time address ratio | `token cluster-overview` (holderSameCreationTimePercent) |
 | 支持的链 / cluster支持链 | supported chains for cluster | `token cluster-supported-chains` |
 
-## Quickstart
-
-```bash
-# Search token
-onchainos token search --query xETH --chains "ethereum,solana"
-
-# Get top 5 liquidity pools for a token
-onchainos token liquidity --address 0x1f16e03c1a5908818f47f6ee7bb16690b40d0671 --chain base
-
-# Get hot tokens (trending by score, all chains)
-onchainos token hot-tokens --ranking-type 4
-
-# Get X-mentioned hot tokens on Solana
-onchainos token hot-tokens --ranking-type 5 --chain solana
-
-# Get detailed price info
-onchainos token price-info --address 0xe7b000003a45145decf8a28fc755ad5ec5ea025a --chain xlayer
-
-# Check holder distribution
-onchainos token holders --address 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
-
-# Filter holders by smart money
-onchainos token holders --address 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer --tag-filter 3
-
-# Get advanced token info (risk, creator, dev stats)
-onchainos token advanced-info --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana
-
-# Get top traders / profit addresses
-onchainos token top-trader --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana
-
-# Top KOL traders
-onchainos token top-trader --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana --tag-filter 1
-
-# Holder cluster concentration overview (rug pull %, new addresses %)
-onchainos token cluster-overview --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana
-
-# Top 100 holder behavior (avg PnL, avg cost, trend)
-onchainos token cluster-top-holders --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana --range-filter 3
-
-# Holder cluster list (groups of top 300 holders)
-onchainos token cluster-list --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana
-
-# Check which chains support holder cluster analysis
-onchainos token cluster-supported-chains
-```
-
 ## Command Index
 
 | # | Command | Description |
@@ -133,7 +87,9 @@ onchainos token cluster-supported-chains
 - View top liquidity pools → `onchainos token liquidity`
 - View hot/trending tokens (by score or X mentions) → `onchainos token hot-tokens`
 - Get advanced token info (risk metadata, creator, dev stats) → `onchainos token advanced-info`
-- "Is this token safe / honeypot / 貔貅盘" (primary safety intent) → redirect to `okx-security`
+<IMPORTANT>
+"Is this token safe / honeypot / 貔貅盘" → always redirect to `okx-security` (`onchainos security token-scan`). Do not attempt to answer safety questions from token data alone.
+</IMPORTANT>
 - View top traders / profit addresses → `onchainos token top-trader`
 - Holder cluster concentration (rug pull risk, new address %, cluster level) → `onchainos token cluster-overview`
 - Top 10/50/100 holder behavior (avg PnL, cost, sell, trend) → `onchainos token cluster-top-holders`

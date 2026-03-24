@@ -42,44 +42,6 @@ metadata:
 | 开发者 | dev, developer | `leaderboard list --wallet-type dev` |
 | 新钱包 | fresh wallet | `leaderboard list --wallet-type fresh` |
 
-## Quickstart
-
-```bash
-# Latest trades by platform smart money (all chains)
-onchainos market address-tracker-activities --tracker-type smart_money
-
-# Latest buys by KOL addresses on Solana
-onchainos market address-tracker-activities --tracker-type kol --chain solana --trade-type 1
-
-# Latest trades for custom wallet addresses
-onchainos market address-tracker-activities --tracker-type multi_address \
-  --wallet-address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045,0xab5801a7d398351b8be11c439e05c5b3259aec9b
-
-# Smart money buys with volume filter
-onchainos market address-tracker-activities --tracker-type smart_money --trade-type 1 --min-volume 10000
-
-# Check which chains support signals
-onchainos signal chains
-
-# Get smart money buy signal alerts on Solana
-onchainos signal list --chain solana --wallet-type 1
-
-# Get whale buy signal alerts above $10k on Ethereum
-onchainos signal list --chain ethereum --wallet-type 3 --min-amount-usd 10000
-
-# Get supported chains for leaderboard
-onchainos leaderboard supported-chains
-
-# Top traders on Solana by PnL over last 7D
-onchainos leaderboard list --chain solana --time-frame 3 --sort-by 1
-
-# Top smart money on Ethereum by win rate over last 30D
-onchainos leaderboard list --chain ethereum --time-frame 4 --sort-by 2 --wallet-type smartMoney
-
-# Top snipers on BSC by volume over last 1D, min 10 txs
-onchainos leaderboard list --chain bsc --time-frame 1 --sort-by 4 --wallet-type sniper --min-txs 10
-```
-
 ## Command Index
 
 ### Address Tracker Commands
@@ -120,7 +82,9 @@ onchainos leaderboard list --chain bsc --time-frame 1 --sort-by 4 --wallet-type 
 - Supported chains for leaderboard → `onchainos leaderboard supported-chains`
 - Leaderboard / 牛人榜 / top traders ranking → `onchainos leaderboard list`
 
-> **Rule**: If the user wants to see actual trades (transaction-level, can include sells) → tracker. If the user wants to know which tokens have triggered buy alerts across multiple wallets → signal list.
+<IMPORTANT>
+**Rule**: If the user wants to see actual trades (transaction-level, can include sells) → tracker. If the user wants to know which tokens have triggered buy alerts across multiple wallets → signal list.
+</IMPORTANT>
 
 ### Step 2: Collect Parameters
 

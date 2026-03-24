@@ -36,36 +36,6 @@ metadata:
 | 画像 / 钱包画像 / 持仓分析 | wallet profile, portfolio analysis | `portfolio-overview` |
 | 近期收益 | recent PnL, latest earnings by token | `portfolio-recent-pnl` |
 
-## Quickstart
-
-```bash
-# Get real-time price of OKB on XLayer
-onchainos market price --address 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
-
-# Get hourly candles
-onchainos market kline --address 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer --bar 1H --limit 24
-
-# Solana USDC candles
-onchainos market kline --address EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --chain solana --bar 1H --limit 24
-
-# Get batch prices for multiple tokens
-onchainos market prices --tokens "1:0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee,501:EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
-
-# Get wallet PnL overview (7D)
-onchainos market portfolio-overview --address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain ethereum --time-frame 3
-
-# Get wallet DEX transaction history
-onchainos market portfolio-dex-history --address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain ethereum \
-  --begin 1700000000000 --end 1710000000000
-
-# Get recent PnL by token
-onchainos market portfolio-recent-pnl --address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain ethereum
-
-# Get per-token PnL snapshot
-onchainos market portfolio-token-pnl --address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain ethereum \
-  --token 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48
-```
-
 ## Command Index
 
 ### Market Price Commands
@@ -99,7 +69,9 @@ onchainos market portfolio-token-pnl --address 0xd8dA6BF26964aF9D7eEd9e03E53415D
 - Real-time price (single token) → `onchainos market price` (**default for all price / 行情 queries**)
 - K-line chart → `onchainos market kline`
 - Batch prices → `onchainos market prices`
-- **Index price** → `onchainos market index` — **ONLY when the user explicitly asks for "aggregate price", "index price", "综合价格", "指数价格", or a cross-exchange composite price. Do NOT use for general "price" / "行情" / "how much is X" queries — use `onchainos market price` instead.**
+<IMPORTANT>
+**Index price** → `onchainos market index` only when the user explicitly asks for "aggregate price", "index price", "综合价格", "指数价格", or a cross-exchange composite price. For all other price / 行情 / "how much is X" queries → use `onchainos market price`.
+</IMPORTANT>
 - Wallet PnL overview (win rate, realized PnL, top 3 tokens) → `onchainos market portfolio-overview`
 - Wallet DEX transaction history → `onchainos market portfolio-dex-history`
 - Recent token PnL list for a wallet → `onchainos market portfolio-recent-pnl`
