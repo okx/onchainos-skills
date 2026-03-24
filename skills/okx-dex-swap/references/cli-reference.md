@@ -99,12 +99,12 @@ onchainos swap quote --from <address> --to <address> --amount <amount> --chain <
 | `toToken.decimal` | String | Destination token decimals |
 | `toToken.tokenUnitPrice` | String | Destination token unit price in USD |
 
-## 5. onchainos swap swap
+## 5. onchainos swap execute
 
-Get swap transaction data (quote -> sign -> broadcast).
+One-shot swap: quote → approve (if needed) → sign → broadcast → txHash. Honeypot and price impact >10% are blocked internally.
 
 ```bash
-onchainos swap swap --from <address> --to <address> --amount <amount> --chain <chain> --wallet <address> [--slippage <pct>] [--gas-level <level>] [--swap-mode <mode>]
+onchainos swap execute --from <address> --to <address> --amount <amount> --chain <chain> --wallet <address> [--slippage <pct>] [--gas-level <level>] [--swap-mode <mode>] [--mev-protection] [--tips <sol_amount>]
 ```
 
 | Param | Required | Default | Description |
@@ -116,22 +116,20 @@ onchainos swap swap --from <address> --to <address> --amount <amount> --chain <c
 | `--wallet` | Yes | - | User's wallet address |
 | `--slippage` | No | autoSlippage | Slippage tolerance in percent (e.g., `"1"` for 1%). Omit to use autoSlippage. |
 | `--gas-level` | No | `average` | Gas priority: `slow`, `average`, `fast` |
-| `--swap-mode` | No | `"exactIn"` | `exactIn` or `exactOut` |
+| `--swap-mode` | No | `exactIn` | `exactIn` or `exactOut` |
+| `--mev-protection` | No | - | Enable MEV protection (EVM chains: Ethereum, BSC, Base) |
+| `--tips` | No | - | Jito tips in SOL for MEV protection (Solana only, e.g. `0.001`). Mutually exclusive with `computeUnitPrice`. |
 
 **Return fields**:
 
 | Field | Type | Description |
 |---|---|---|
-| `routerResult` | Object | Same structure as quote return (see swap quote above) |
-| `tx.from` | String | Sender address |
-| `tx.to` | String | Contract address to send the transaction to |
-| `tx.data` | String | Transaction calldata (hex) |
-| `tx.gas` | String | Gas limit for the transaction |
-| `tx.gasPrice` | String | Gas price |
-| `tx.value` | String | Native token value to send (in minimal units) |
-| `tx.minReceiveAmount` | String | Minimum receive amount after slippage (minimal units) |
-| `tx.maxSpendAmount` | String | Maximum spend amount (for exactOut mode) |
-| `tx.slippagePercent` | String | Applied slippage tolerance percentage |
+| `approveTxHash` | String? | Approval tx hash (only if approval was needed) |
+| `swapTxHash` | String | Swap transaction hash |
+| `fromAmount` | String | Input amount in UI units |
+| `toAmount` | String | Output amount in UI units |
+| `priceImpact` | String | Price impact percentage |
+| `gasUsed` | String | Gas used (USD estimate) |
 
 ## Input / Output Examples
 
@@ -142,13 +140,9 @@ onchainos swap swap --from <address> --to <address> --amount <amount> --chain <c
 onchainos swap quote --from 0x74b7f16337b8972027f6196a17a631ac6de26d22 --to 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --amount 100000000 --chain xlayer
 # -> Expected output: 3.2 OKB, Gas fee: ~$0.001, Price impact: 0.05%
 
-# 2. Approve (ERC-20 token needs approval)
-onchainos swap approve --token 0x74b7f16337b8972027f6196a17a631ac6de26d22 --amount 100000000 --chain xlayer
-# -> Returns approval calldata -> sign & broadcast via wallet contract-call
-
-# 3. Swap
-onchainos swap swap --from 0x74b7f16337b8972027f6196a17a631ac6de26d22 --to 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --amount 100000000 --chain xlayer --wallet <local_wallet_addr>
-# -> Returns swap calldata -> sign & broadcast via wallet contract-call
+# 2. Execute (approve + swap + broadcast in one shot)
+onchainos swap execute --from 0x74b7f16337b8972027f6196a17a631ac6de26d22 --to 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --amount 100000000 --chain xlayer --wallet <wallet_addr>
+# -> { approveTxHash: "0x...", swapTxHash: "0x...", fromAmount: "100", toAmount: "3.2", priceImpact: "0.05%", gasUsed: "$0.001" }
 ```
 
 **User says:** "What DEXes are available on XLayer?"
