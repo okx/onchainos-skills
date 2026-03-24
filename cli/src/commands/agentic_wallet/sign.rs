@@ -135,12 +135,19 @@ async fn personal_sign(message: &str, chain: &str, from: &str, force: bool) -> R
         sig
     } else {
         // EVM: EIP-191 personal sign (prefix + keccak256 + ed25519)
-        let encoding = if super::common::is_hex_string(message, None) {
-            "hex"
+        let (msg_to_sign, encoding) = if super::common::is_hex_string(message, None) {
+            // Pad odd-length hex so that hex::decode won't fail
+            // e.g. "0x123" → "0x0123"
+            let hex_part = &message[2..];
+            if !hex_part.len().is_multiple_of(2) {
+                (format!("0x0{hex_part}"), "hex")
+            } else {
+                (message.to_string(), "hex")
+            }
         } else {
-            "utf8"
+            (message.to_string(), "utf8")
         };
-        let sig = crate::crypto::ed25519_sign_eip191(message, &signing_seed, encoding)?;
+        let sig = crate::crypto::ed25519_sign_eip191(&msg_to_sign, &signing_seed, encoding)?;
         signing_seed.zeroize();
         sig
     };
