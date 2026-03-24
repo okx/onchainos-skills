@@ -854,15 +854,14 @@ async fn cmd_execute(
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing tx.data in swap response"))?;
         let tx_value_wei = tx["value"].as_str().unwrap_or("0");
-        let value_ui = wei_to_ui(tx_value_wei, 18);
 
         let mut args = vec![
             "--to",
             to_addr,
             "--chain",
             &chain_index,
-            "--value",
-            &value_ui,
+            "--amt",
+            &tx_value_wei,
             "--input-data",
             input_data,
         ];
