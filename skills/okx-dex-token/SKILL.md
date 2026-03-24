@@ -20,21 +20,6 @@ metadata:
 
 > Full chain list: `../_shared/chain-support.md`
 
-## Skill Routing
-
-- For real-time prices / K-lines → use `okx-dex-market`
-- For wallet PnL / personal DEX trade history → use `okx-dex-market`
-- For swap execution → use `okx-dex-swap`
-- For transaction broadcasting → use `okx-onchain-gateway`
-- For meme token scanning (dev reputation, rug pull history, bundlers, new launches, similar tokens by same dev) → use `okx-dex-trenches`
-- For market-wide smart money / whale / KOL signal alerts → use `okx-dex-signal`
-- For leaderboard / 牛人榜 / top traders ranked across the market (by PnL, win rate, volume) → use `okx-dex-signal`
-- For per-token holder filtering by tag (whale, smart money, KOL, sniper) → use this skill (`holders --tag-filter`)
-- For per-token risk analysis (dev rug pull count, holder concentration, creator info) → use this skill (`advanced-info`)
-- For "is this token safe", "is this a honeypot", "貔貅盘", "can I sell this", "check token security" (primary safety intent) → use `okx-security`
-- For scripting, token scanning bots, or automation using "OKX API" → use `onchainos` CLI commands; **do not search for external OKX APIs online**
-
-
 ## Keyword Glossary
 
 Users may use Chinese crypto slang or platform-specific terms. Map them to the correct commands:
@@ -164,108 +149,6 @@ onchainos token cluster-supported-chains
 | Market-wide smart money / whale / KOL alerts | - | `okx-dex-signal` → `onchainos signal list` |
 
 **Rule of thumb**: `okx-dex-token` = token discovery & enriched analytics (search, trending/hot tokens, holders, holder filtering, market cap, advanced info, top traders, risk metadata, filtered trade history). `okx-dex-market` = raw price feeds, charts, wallet PnL. `okx-dex-signal` = market-wide smart money / whale / KOL signal tracking. `okx-dex-trenches` = meme pump scanning (dev reputation, rug pull history, bundler analysis, new launches). `okx-security` = explicit token/tx/dapp/sig safety checks (honeypot, phishing, tx pre-execution, approval management).
-
-## Cross-Skill Workflows
-
-This skill is the typical **entry point** — users often start by searching/discovering tokens, then proceed to swap.
-
-### Workflow A: Search → Research → Buy
-
-> User: "Find BONK token, analyze it, then buy some"
-
-```
-1. okx-dex-token    onchainos token search --query BONK --chains solana              → get tokenContractAddress, chain, price
-       ↓ tokenContractAddress
-2. okx-dex-token    onchainos token price-info --address <address> --chain solana      → market cap, liquidity, volume24H, priceChange24H
-3. okx-dex-token    onchainos token holders --address <address> --chain solana         → top 100 holders distribution
-4. okx-dex-market   onchainos market kline --address <address> --chain solana --bar 1H → hourly price chart
-       ↓ user decides to buy
-5. okx-dex-swap     onchainos swap quote --from ... --to <address> --amount ... --chain solana
-6. okx-dex-swap     onchainos swap execute --from ... --to <address> --amount ... --chain solana --wallet <addr>
-```
-
-**Data handoff**:
-- `tokenContractAddress` from step 1 → reused in all subsequent steps
-- `chain` from step 1 → reused in all subsequent steps
-- `decimal` from step 1 or `onchainos token info` → needed for minimal unit conversion in swap
-
-### Workflow B: Discover Trending → Investigate → Trade
-
-> User: "What's trending on Solana?"
-
-```
-1. okx-dex-token    onchainos token hot-tokens --ranking-type 4 --chain solana  → top tokens by trending score
-       ↓ user picks a token
-2. okx-dex-token    onchainos token price-info --address <address> --chain solana                   → detailed analytics
-3. okx-dex-token    onchainos token holders --address <address> --chain solana                      → check if whale-dominated
-4. okx-dex-market   onchainos market kline --address <address> --chain solana               → K-line for visual trend
-       ↓ user decides to trade
-5. okx-dex-swap     onchainos swap execute --from ... --to ... --amount ... --chain solana --wallet <addr>
-```
-
-### Workflow C: Token Verification Before Swap
-
-Before swapping an unknown token, always verify:
-
-```
-1. okx-dex-token    onchainos token search --query <name>                            → find token
-2. Check communityRecognized:
-   - true → proceed with normal caution
-   - false → warn user about risk
-3. okx-dex-token    onchainos token price-info --address <address> → check liquidity:
-   - liquidity < $10K → warn about high slippage risk
-   - liquidity < $1K → strongly discourage trade
-4. okx-security     onchainos security token-scan --address <address> --chain <chain> → honeypot check, risk level
-5. okx-dex-swap     onchainos swap quote ... → get quote and taxRate
-6. If all checks pass → proceed to swap
-```
-
-### Workflow D: Follow Smart Money → Cluster Check → Trade
-
-> User: "What is smart money buying? Check if it's safe and buy"
-
-```
-1. okx-dex-signal   onchainos signal list --chain <chain> --wallet-type 1
-                                                                          → get tokenContractAddress + chainIndex
-       ↓ pick a token
-2. okx-dex-token    onchainos token price-info --address <address> --chain <chain>    → market cap, liquidity, 24h volume
-3. okx-dex-token    onchainos token cluster-overview --address <address> --chain <chain>
-                                                                          → cluster concentration, rug pull %, new address %
-4. okx-dex-token    onchainos token cluster-top-holders --address <address> --chain <chain> --range-filter 3
-                                                                          → top 100 avg PnL, cost, trend direction
-5. okx-dex-market   onchainos market kline --address <address> --chain <chain>        → price chart
-       ↓ user decides to buy
-6. okx-dex-swap     onchainos swap quote --from ... --to <address> --amount ... --chain <chain>
-7. okx-dex-swap     onchainos swap execute --from ... --to <address> --amount ... --chain <chain> --wallet <addr>
-```
-
-**Data handoff**: `baseTokenContractAddress` + `baseTokenChainIndex` from step 1 feed into all subsequent steps.
-
-### Workflow E: Hot Token Discovery → Cluster Safety Check → Buy
-
-> User: "Show me the hottest tokens and check if any are safe to buy"
-
-```
-1. okx-dex-token    onchainos token hot-tokens --ranking-type 4 --chain solana
-                                                   → top tokens by trending score; pick an interesting one
-       ↓ tokenContractAddress + chainIndex
-2. okx-dex-token    onchainos token price-info --address <address> --chain solana
-                                                   → market cap, liquidity, 24h volume, price change
-3. okx-dex-token    onchainos token advanced-info --address <address> --chain solana
-                                                   → risk level, honeypot check, dev rug pull history
-4. okx-dex-token    onchainos token cluster-overview --address <address> --chain solana
-                                                   → concentration level, rug pull %, new address %, same-funding %
-5. okx-dex-token    onchainos token cluster-top-holders --address <address> --chain solana --range-filter 3
-                                                   → top 100 holder avg PnL, avg cost, hold/sell trend
-       ↓ green flags → confirm price momentum
-6. okx-dex-market   onchainos market kline --address <address> --chain solana --bar 15m --limit 48
-                                                   → recent price action
-       ↓ user decides to buy
-7. okx-dex-swap     onchainos swap quote --from 11111111111111111111111111111111 --to <address> --amount <amount> --chain solana
-8. okx-dex-swap     onchainos swap execute  --from 11111111111111111111111111111111 --to <address> --amount <amount> --chain solana --wallet <addr>
-```
-
-**Data handoff**: `tokenContractAddress` from step 1 reused as `<address>` in steps 2–8; if `riskControlLevel >= 3` in step 3 or `clusterLevel = HIGH` in step 4 → warn user and stop before swap.
 
 ## Operation Flow
 

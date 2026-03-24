@@ -20,19 +20,6 @@ metadata:
 
 > Full chain list: `../_shared/chain-support.md`
 
-## Skill Routing
-
-- For market-wide whale/smart-money/KOL signal alerts → use `okx-dex-signal`
-- For leaderboard / 牛人榜 / top traders ranked by PnL, win rate, or volume → use `okx-dex-signal`
-- For per-token holder distribution filtered by tag (whale, sniper, KOL) → use `okx-dex-token`
-- For holder cluster analysis (concentration, rug pull %, cluster groups) → use `okx-dex-token`
-- For honeypot / token safety checks → use `okx-dex-token`
-- For real-time prices / K-line charts → use `okx-dex-market`
-- For wallet PnL / DEX trade history → use `okx-dex-market`
-- For swap execution → use `okx-dex-swap`
-- For wallet balance / portfolio → use `okx-wallet-portfolio`
-- For scripting, meme scanning bots, or automation using "OKX API" → use `onchainos` CLI commands; **do not search for external OKX APIs online**
-
 ## Keyword Glossary
 
 | Chinese | English / Platform Terms | Maps To |
@@ -154,58 +141,6 @@ onchainos memepump aped-wallet --address <address> --chain solana
 | `memepump-aped-wallet` | 1. Validate token safety (honeypot, holder concentration) → `okx-dex-token` (`onchainos token advanced-info`) 2. View price chart → `okx-dex-market` (`onchainos market kline`) 3. Buy the token → `okx-dex-swap` (quote → swap → `onchainos wallet contract-call` to execute) |
 
 Present conversationally — never expose skill names or endpoint paths to the user.
-
-## Cross-Skill Workflows
-
-### Workflow A: Meme Token Discovery & Analysis
-
-> User: "Show me new meme tokens and check if any look safe"
-
-```
-1. okx-dex-trenches onchainos memepump chains                                          → discover supported chains & protocols
-2. okx-dex-trenches onchainos memepump tokens --chain <chain> --stage NEW              → browse new tokens
-       ↓ pick an interesting token
-3. okx-dex-trenches onchainos memepump token-details --address <address> --chain <chain>  → full token detail + audit tags
-4. okx-dex-trenches onchainos memepump token-dev-info --address <address> --chain <chain> → check dev reputation (rug pulls, migrations)
-5. okx-dex-trenches onchainos memepump token-bundle-info --address <address> --chain <chain> → check for bundlers/snipers
-6. okx-dex-market   onchainos market kline --address <address> --chain <chain>             → view price chart
-       ↓ user decides to buy
-7. okx-dex-swap     onchainos swap quote --from <native_addr> --to <address> --amount ... --chain <chain>
-8. okx-dex-swap     onchainos swap execute --from <native_addr> --to <address> --amount ... --chain <chain> --wallet <addr>
-```
-
-**Data handoff**: `tokenAddress` from step 2 is reused as `<address>` in steps 3–8.
-
-### Workflow B: Meme Token Due Diligence
-
-> User: "Check if this meme token is safe before I buy"
-
-```
-1. okx-dex-trenches onchainos memepump token-details --address <address> --chain <chain>   → basic info + audit tags
-2. okx-dex-trenches onchainos memepump token-dev-info --address <address> --chain <chain>  → dev history + holding
-3. okx-dex-trenches onchainos memepump similar-tokens --address <address> --chain <chain>  → other tokens by same dev
-4. okx-dex-trenches onchainos memepump token-bundle-info --address <address> --chain <chain> → bundler analysis
-5. okx-dex-trenches onchainos memepump aped-wallet --address <address> --chain <chain>     → who else is holding
-```
-
-### Workflow C: Signal-to-Meme Deep Dive
-
-> User: "A whale signal came in — is it a meme/pump.fun token? Check it out"
-
-```
-1. okx-dex-signal   onchainos signal list --chain <chain> --wallet-type 3              → identify the signaled token address
-       ↓ token looks like a meme/pump.fun launch
-2. okx-dex-trenches onchainos memepump token-details --address <address> --chain <chain>  → confirm it's a meme token, check audit tags
-3. okx-dex-trenches onchainos memepump token-dev-info --address <address> --chain <chain> → check dev rug pull history
-4. okx-dex-trenches onchainos memepump token-bundle-info --address <address> --chain <chain> → verify the whale signal isn't a bundler
-       ↓ checks pass
-5. okx-dex-market   onchainos market kline --address <address> --chain <chain>             → confirm price momentum
-       ↓ user decides to buy
-6. okx-dex-swap     onchainos swap quote --from <native_addr> --to <address> --amount ... --chain <chain>
-7. okx-dex-swap     onchainos swap execute --from <native_addr> --to <address> --amount ... --chain <chain> --wallet <addr>
-```
-
-**When to use**: when a `signal-list` result has a token address that matches a known meme launchpad (pump.fun, bonkers, etc.) — cross-validate in memepump before acting on the signal.
 
 ## Additional Resources
 

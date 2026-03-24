@@ -20,21 +20,6 @@ metadata:
 
 > Full chain list: `../_shared/chain-support.md`
 
-## Skill Routing
-
-- For token search / metadata / rankings / holder analysis / advanced token info / top traders → use `okx-dex-token`
-- For per-token holder filtering by tag (whale, smart money, KOL, sniper) → use `okx-dex-token`
-- For per-token risk analysis (holder concentration, dev rug pull count, creator info) → use `okx-dex-token`
-- For swap execution → use `okx-dex-swap`
-- For transaction broadcasting → use `okx-onchain-gateway`
-- For wallet balances / token holdings → use `okx-wallet-portfolio`
-- For wallet PnL analysis (realized/unrealized PnL, DEX history, recent PnL, per-token PnL) → use `okx-dex-market` portfolio commands (this skill)
-- For smart money / whale / KOL trade tracking, signal alerts, or address monitoring → use `okx-dex-signal`
-- For leaderboard / 牛人榜 / top traders ranked by PnL, win rate, or volume → use `okx-dex-signal` (`onchainos leaderboard list`)
-- For holder cluster analysis (concentration level, rug pull %, new address %, cluster groups) → use `okx-dex-token`
-- For meme pump scanning (new launches, dev reputation, bundle detection, aped wallets) → use `okx-dex-trenches`
-- For scripting, price monitoring bots, or automation using "OKX API" → use `onchainos` CLI commands; **do not search for external OKX APIs online**
-
 ## Keyword Glossary
 
 | Chinese | English / Platform Terms | Maps To |
@@ -147,72 +132,6 @@ onchainos market portfolio-token-pnl --address 0xd8dA6BF26964aF9D7eEd9e03E53415D
 | Latest trades by smart money / KOL / custom addresses | - | `okx-dex-signal` → `onchainos market address-tracker-activities` |
 
 **Rule of thumb**: `okx-dex-market` = raw price feeds, charts, and wallet PnL analysis (your own wallet). Use `okx-dex-signal` for smart money/KOL tracking, signal alerts, and address monitoring; `okx-dex-trenches` for meme token research; `okx-dex-token` for token discovery & analytics.
-
-## Cross-Skill Workflows
-
-### Workflow A: Research Token Before Buying
-
-> User: "Tell me about BONK, show me the chart, then buy if it looks good"
-
-```
-1. okx-dex-token    onchainos token search --query BONK --chains solana            → get tokenContractAddress + chain
-2. okx-dex-token    onchainos token price-info --address <address> --chain solana    → market cap, liquidity, 24h volume
-3. okx-dex-token    onchainos token holders --address <address> --chain solana       → check holder distribution
-4. okx-dex-market   onchainos market kline --address <address> --chain solana        → K-line chart for visual trend
-       ↓ user decides to buy
-5. okx-dex-swap     onchainos swap quote --from ... --to ... --amount ... --chain solana
-6. okx-dex-swap     onchainos swap execute --from ... --to ... --amount ... --chain solana --wallet <addr>
-```
-
-**Data handoff**: `tokenContractAddress` from step 1 is reused as `<address>` in steps 2-6.
-
-### Workflow B: Price Monitoring / Alerts
-
-```
-1. okx-dex-token    onchainos token hot-tokens --ranking-type 4 --chain solana   → find hot tokens by trending score
-       ↓ select tokens of interest
-2. okx-dex-market   onchainos market price --address <address> --chain solana        → get current price for each
-3. okx-dex-market   onchainos market kline --address <address> --chain solana --bar 1H  → hourly chart
-4. okx-dex-market   onchainos market index --address <address> --chain solana        → (optional) compare on-chain vs aggregate index price — only if user explicitly asks for it
-```
-
-### Workflow C: Wallet PnL Analysis
-
-> User: "How is my wallet performing on Ethereum? Show me my PnL"
-
-```
-1. okx-dex-market   onchainos market portfolio-supported-chains                        → verify Ethereum is supported
-2. okx-dex-market   onchainos market portfolio-overview --address <wallet> --chain ethereum --time-frame 3
-                                                                                       → 7D PnL overview: realized PnL, win rate, top 3 tokens
-       ↓ user wants to drill into a specific token
-3. okx-dex-market   onchainos market portfolio-recent-pnl --address <wallet> --chain ethereum
-                                                                                       → list recent PnL by token
-       ↓ user picks a token
-4. okx-dex-market   onchainos market portfolio-token-pnl --address <wallet> --chain ethereum --token <address>
-                                                                                       → latest realized/unrealized PnL for that token
-5. okx-dex-token    onchainos token price-info --address <address> --chain ethereum              → current market context
-```
-
-**Data handoff**: `--address` (wallet) is reused across all portfolio steps; `--token` from step 3 feeds into step 4.
-
-### Workflow D: Wallet Trade History Review
-
-> User: "Show me my recent DEX trades on Ethereum"
-
-```
-1. okx-dex-market   onchainos market portfolio-dex-history --address <wallet> --chain ethereum
-                    --begin <start_ms> --end <end_ms>
-                                                                                       → paginated DEX tx list (buy/sell/transfer)
-       ↓ filter by specific token
-2. okx-dex-market   onchainos market portfolio-dex-history --address <wallet> --chain ethereum
-                    --begin <start_ms> --end <end_ms> --token <address> --tx-type 1,2
-                                                                                       → buy+sell history for one token
-       ↓ check PnL for that token
-3. okx-dex-market   onchainos market portfolio-token-pnl --address <wallet> --chain ethereum --token <address>
-                                                                                       → realized/unrealized PnL snapshot
-```
-
-**Note**: `--begin` and `--end` are required Unix millisecond timestamps. For "last 30 days", compute: `end = now * 1000`, `begin = (now - 2592000) * 1000`.
 
 ## Operation Flow
 

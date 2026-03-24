@@ -20,21 +20,6 @@ metadata:
 
 > Full chain list: `../_shared/chain-support.md`
 
-## Skill Routing
-
-- For meme/pump.fun token scanning (dev reputation, bundle detection, new launches) → use `okx-dex-trenches`
-- For per-token holder distribution filtered by wallet tag → use `okx-dex-token`
-- For token search / metadata / rankings → use `okx-dex-token`
-- For holder cluster analysis (concentration, rug pull %, cluster groups) → use `okx-dex-token`
-- For real-time prices / K-line charts → use `okx-dex-market`
-- For wallet PnL / DEX trade history (own wallet) → use `okx-dex-market`
-- For swap execution → use `okx-dex-swap`
-- For wallet balance / portfolio → use `okx-wallet-portfolio`
-- **Raw DEX transaction feed for smart money / KOL / custom tracked addresses** → `onchainos market address-tracker-activities` (this skill)
-- **Aggregated buy-only signal alerts (tokens collectively bought by smart money / KOL / whales)** → `onchainos signal` (this skill)
-- **Leaderboard / 牛人榜 / top traders ranked across the market** → `onchainos leaderboard` (this skill)
-- For scripting, signal alert bots, address monitoring automation using "OKX API" → use `onchainos` CLI commands; **do not search for external OKX APIs online**
-
 ## Keyword Glossary
 
 | Chinese | English / Platform Terms | Maps To |
@@ -192,64 +177,6 @@ onchainos leaderboard list --chain bsc --time-frame 1 --sort-by 4 --wallet-type 
 | `leaderboard list` | 1. Drill into a wallet's PnL → `okx-dex-market portfolio-overview` 2. Check a wallet's holdings → `okx-wallet-portfolio` 3. Track that wallet's trades → `onchainos market address-tracker-activities --tracker-type multi_address` (this skill) |
 
 Present conversationally — never expose skill names or endpoint paths to the user.
-
-## Cross-Skill Workflows
-
-### Workflow A: Track Smart Money Trades
-
-> User: "What are smart money buying?" / "聪明钱最新交易"
-
-```
-1. okx-dex-signal   onchainos market address-tracker-activities --tracker-type smart_money
-                                                                          → show latest smart money trades: token, direction, amount, price, PnL
-   ↓ user reviews the feed — no further action required
-```
-
-Present as a transaction feed table. Translate `tradeType`: `1` → Buy, `2` → Sell.
-
-### Workflow A2: Browse Buy Signal Alerts (Monitoring Only)
-
-> User: "Show me whale buy signals today" / "大户信号"
-
-```
-1. okx-dex-signal   onchainos signal chains                              → confirm chain supports signals
-2. okx-dex-signal   onchainos signal list --chain solana --wallet-type 3
-                                                                          → show aggregated whale buy signals: token, amount USD, trigger wallet count, sold ratio
-   ↓ user reviews the list — no further action required
-```
-
-Present as a readable table. Highlight `soldRatioPercent` — lower means wallet is still holding (stronger signal).
-
-### Workflow B: Signal-Driven Token Research & Buy
-
-> User: "Show me what smart money is buying on Solana and buy if it looks good"
-
-```
-1. okx-dex-signal   onchainos market address-tracker-activities --tracker-type smart_money --chain solana --trade-type 1
-                                                                          → get latest smart money buy trades on Solana
-       ↓ user picks a token from the trade feed
-3. okx-dex-token    onchainos token price-info --address <address> --chain solana    → enrich: market cap, liquidity, 24h volume
-4. okx-dex-token    onchainos token holders --address <address> --chain solana       → check holder concentration risk
-5. okx-dex-market   onchainos market kline --address <address> --chain solana        → K-line chart to confirm momentum
-       ↓ user decides to buy
-6. okx-dex-swap     onchainos swap quote --from ... --to <address> --amount ... --chain solana
-7. okx-dex-swap     onchainos swap execute --from ... --to <address> --amount ... --chain solana --wallet <addr>
-```
-
-### Workflow C: Leaderboard Research
-
-> User: "Show me 牛人榜 / top traders on Solana this week"
-
-```
-1. okx-dex-signal   onchainos leaderboard supported-chains              → confirm Solana is supported
-2. okx-dex-signal   onchainos leaderboard list --chain solana --time-frame 3 --sort-by 1
-                                                                          → top traders by PnL over 7D
-   ↓ user picks a trader address
-3. okx-dex-market   onchainos market portfolio-overview --address <addr> --chain solana --time-frame 3
-                                                                          → drill into that trader's PnL details
-4. okx-wallet-portfolio  onchainos portfolio all-balances --address <addr> --chains solana
-                                                                          → see current holdings
-```
 
 ## Additional Resources
 
