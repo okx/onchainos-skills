@@ -10,7 +10,7 @@ metadata:
 
 # Onchain OS DEX Swap
 
-6 commands for multi-chain swap aggregation — quote, approve, and one-shot execute.
+5 commands for multi-chain swap aggregation — quote, approve, and one-shot execute.
 
 ## Pre-flight Checks
 
@@ -24,7 +24,7 @@ metadata:
 ## Native Token Addresses
 
 <IMPORTANT>
-> **CRITICAL**: Each chain has a specific native token address. Using the wrong address will cause swap transactions to fail. If the user intends to swap with a native token (e.g., ETH, BNB, SOL), you MUST use the native token address from the table below — do NOT search for it via `token search`.
+> Native token swaps: use address from table below, do NOT use `token search`.
 </IMPORTANT>
 
 | Chain | Native Token Address |
@@ -36,7 +36,7 @@ metadata:
 | Ton | `EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c` |
 
 <IMPORTANT>
-> **CRITICAL — Solana native SOL**: You MUST use `11111111111111111111111111111111` (Solana system program). NEVER use `So11111111111111111111111111111111111111112` (wSOL SPL token) — it is a completely different token and WILL cause the transaction to fail and unable to be packaged on-chain. This rule has no exceptions.
+> **CRITICAL — Solana native SOL**: You MUST use `11111111111111111111111111111111` (Solana system program). NEVER use `So11111111111111111111111111111111111111112` (wSOL SPL token) — it is a completely different token and WILL cause the transaction to fail and unable to be packaged on-chain.
 </IMPORTANT>
 
 ## Command Index
@@ -126,10 +126,7 @@ Suggest follow-up: explorer link for `swapTxHash`, check new token price, or swa
 
 ## Additional Resources
 
-For detailed parameter tables, return field schemas, and usage examples for all 6 commands, consult:
-- **`references/cli-reference.md`** — Full CLI command reference with params, return fields, and examples
-
-To search for specific command details: `grep -n "onchainos swap <command>" references/cli-reference.md`
+`references/cli-reference.md` — full params, return fields, and examples for all 5 commands.
 
 ## Risk Controls
 
@@ -162,7 +159,7 @@ If `toTokenPrice` or `fromTokenPrice` unavailable/0 → enable by default.
 | Base | Yes | $200 | `onchainos swap execute --mev-protection` |
 | Others | No | — | — |
 
-MEV protection is handled internally by `onchainos swap execute`. Pass `--mev-protection` flag (EVM) or `--tips` (Solana) — no manual `wallet contract-call` step needed.
+Pass `--mev-protection` (EVM) or `--tips` (Solana) to `swap execute`.
 
 ## Edge Cases
 
@@ -180,7 +177,6 @@ MEV protection is handled internally by `onchainos swap execute`. Pass `--mev-pr
 
 - `exactOut` only on Ethereum(`1`)/Base(`8453`)/BSC(`56`)/Arbitrum(`42161`)
 - EVM contract addresses must be **all lowercase**
-- The CLI handles authentication internally via environment variables — see Prerequisites step 4 for default values
 - **Gas default**: `--gas-level average` for `swap execute`. Use `fast` for meme/time-sensitive trades, `slow` for cost-sensitive non-urgent trades. Solana: use `--tips` for Jito MEV; the CLI sets `computeUnitPrice=0` automatically (they are mutually exclusive).
 - **Quote freshness**: In interactive mode, if >10 seconds elapse between quote and execution, re-fetch the quote before calling `swap execute`. Compare price difference against the user's slippage value (or the autoSlippage-returned value): if price diff < slippage → proceed silently; if price diff ≥ slippage → warn user and ask for re-confirmation.
 - **API fallback**: If the CLI is unavailable or does not support needed parameters (e.g., autoSlippage, gasLevel, MEV tips), call the OKX DEX Aggregator API directly. Full API reference: https://web3.okx.com/onchainos/dev-docs/trade/dex-api-reference. Prefer CLI when available.
