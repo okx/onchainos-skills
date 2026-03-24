@@ -188,15 +188,10 @@ Present conversationally — never expose skill names or endpoint paths to the u
 6. okx-dex-market   onchainos market kline --address <address> --chain <chain>             → view price chart
        ↓ user decides to buy
 7. okx-dex-swap     onchainos swap quote --from <native_addr> --to <address> --amount ... --chain <chain>
-8. okx-dex-swap     onchainos swap swap --from <native_addr> --to <address> --amount ... --chain <chain> --wallet <addr>
-       ↓ get swap calldata, then execute via one of two paths:
-   Path A (user-provided wallet): user signs externally → onchainos gateway broadcast --signed-tx <tx> --address <addr> --chain <chain>
-   Path B (Agentic Wallet):
-     Solana: onchainos wallet contract-call --to <tx.to> --chain 501 --unsigned-tx <tx.data>
-     EVM:    onchainos wallet contract-call --to <tx.to> --chain <chain> --amt <tx.value> --input-data <tx.data>
+8. okx-dex-swap     onchainos swap execute --from <native_addr> --to <address> --amount ... --chain <chain> --wallet <addr>
 ```
 
-**Data handoff**: `tokenAddress` from step 2 is reused as `<address>` in steps 3–8. The `tx.to` and `tx.data` come from the `swap swap` response. EVM `--amt` takes `tx.value` directly (already in minimal units). If `tx.value` is `"0"` or empty, use `"0"`. EVM non-native tokens also need an approve step before swap (see `okx-dex-swap` skill).
+**Data handoff**: `tokenAddress` from step 2 is reused as `<address>` in steps 3–8.
 
 ### Workflow B: Meme Token Due Diligence
 
@@ -224,12 +219,7 @@ Present conversationally — never expose skill names or endpoint paths to the u
 5. okx-dex-market   onchainos market kline --address <address> --chain <chain>             → confirm price momentum
        ↓ user decides to buy
 6. okx-dex-swap     onchainos swap quote --from <native_addr> --to <address> --amount ... --chain <chain>
-7. okx-dex-swap     onchainos swap swap --from <native_addr> --to <address> --amount ... --chain <chain> --wallet <addr>
-       ↓ get swap calldata, then execute via one of two paths:
-   Path A (user-provided wallet): user signs externally → onchainos gateway broadcast --signed-tx <tx> --address <addr> --chain <chain>
-   Path B (Agentic Wallet):
-     Solana: onchainos wallet contract-call --to <tx.to> --chain 501 --unsigned-tx <tx.data>
-     EVM:    onchainos wallet contract-call --to <tx.to> --chain <chain> --amt <tx.value> --input-data <tx.data>
+7. okx-dex-swap     onchainos swap execute --from <native_addr> --to <address> --amount ... --chain <chain> --wallet <addr>
 ```
 
 **When to use**: when a `signal-list` result has a token address that matches a known meme launchpad (pump.fun, bonkers, etc.) — cross-validate in memepump before acting on the signal.

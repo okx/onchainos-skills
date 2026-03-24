@@ -235,7 +235,7 @@ This skill is the typical **entry point** — users often start by searching/dis
 4. okx-dex-market   onchainos market kline --address <address> --chain solana --bar 1H → hourly price chart
        ↓ user decides to buy
 5. okx-dex-swap     onchainos swap quote --from ... --to <address> --amount ... --chain solana
-6. okx-dex-swap     onchainos swap swap --from ... --to <address> --amount ... --chain solana --wallet <addr>
+6. okx-dex-swap     onchainos swap execute --from ... --to <address> --amount ... --chain solana --wallet <addr>
 ```
 
 **Data handoff**:
@@ -254,7 +254,7 @@ This skill is the typical **entry point** — users often start by searching/dis
 3. okx-dex-token    onchainos token holders --address <address> --chain solana                      → check if whale-dominated
 4. okx-dex-market   onchainos market kline --address <address> --chain solana               → K-line for visual trend
        ↓ user decides to trade
-5. okx-dex-swap     onchainos swap swap --from ... --to ... --amount ... --chain solana --wallet <addr>
+5. okx-dex-swap     onchainos swap execute --from ... --to ... --amount ... --chain solana --wallet <addr>
 ```
 
 ### Workflow C: Token Verification Before Swap
@@ -289,7 +289,7 @@ Before swapping an unknown token, always verify:
 5. okx-dex-market   onchainos market kline --address <address> --chain <chain>        → price chart
        ↓ user decides to buy
 6. okx-dex-swap     onchainos swap quote --from ... --to <address> --amount ... --chain <chain>
-7. okx-dex-swap     onchainos swap swap --from ... --to <address> --amount ... --chain <chain> --wallet <addr>
+7. okx-dex-swap     onchainos swap execute --from ... --to <address> --amount ... --chain <chain> --wallet <addr>
 ```
 
 **Data handoff**: `baseTokenContractAddress` + `baseTokenChainIndex` from step 1 feed into all subsequent steps.
@@ -315,7 +315,7 @@ Before swapping an unknown token, always verify:
                                                    → recent price action
        ↓ user decides to buy
 7. okx-dex-swap     onchainos swap quote --from 11111111111111111111111111111111 --to <address> --amount <amount> --chain solana
-8. okx-dex-swap     onchainos swap swap  --from 11111111111111111111111111111111 --to <address> --amount <amount> --chain solana --wallet <addr>
+8. okx-dex-swap     onchainos swap execute  --from 11111111111111111111111111111111 --to <address> --amount <amount> --chain solana --wallet <addr>
 ```
 
 **Data handoff**: `tokenContractAddress` from step 1 reused as `<address>` in steps 2–8; if `riskControlLevel >= 3` in step 3 or `clusterLevel = HIGH` in step 4 → warn user and stop before swap.
