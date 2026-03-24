@@ -145,6 +145,9 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             chain,
             swap_mode,
         } => {
+            if amount.contains('.') {
+                bail!("--amount must be a whole number in minimal units (no decimals)");
+            }
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
             output::success(
@@ -163,6 +166,9 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             tips,
             max_auto_slippage,
         } => {
+            if amount.contains('.') {
+                bail!("--amount must be a whole number in minimal units (no decimals)");
+            }
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
             output::success(
@@ -187,6 +193,9 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             amount,
             chain,
         } => {
+            if amount.contains('.') {
+                bail!("--amount must be a whole number in minimal units (no decimals)");
+            }
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
             output::success(fetch_approve(&client, &chain_index, &token, &amount).await?);
@@ -224,6 +233,9 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             max_auto_slippage,
             mev_protection,
         } => {
+            if amount.contains('.') {
+                bail!("--amount must be a whole number in minimal units (no decimals)");
+            }
             cmd_execute(
                 &client,
                 &from,
@@ -948,30 +960,6 @@ fn is_allowance_insufficient(spendable: &str, amount: &str) -> bool {
     spendable_val < amount_val
 }
 
-/// Convert minimal units (wei) to UI units string.
-fn wei_to_ui(wei: &str, decimals: u32) -> String {
-    if wei == "0" || wei.is_empty() {
-        return "0".to_string();
-    }
-    let wei_val: u128 = match wei.parse() {
-        Ok(v) => v,
-        Err(_) => return wei.to_string(),
-    };
-    if decimals == 0 {
-        return wei_val.to_string();
-    }
-    let divisor = 10u128.pow(decimals);
-    let whole = wei_val / divisor;
-    let frac = wei_val % divisor;
-    if frac == 0 {
-        whole.to_string()
-    } else {
-        let frac_str = format!("{:0>width$}", frac, width = decimals as usize);
-        let trimmed = frac_str.trim_end_matches('0');
-        format!("{}.{}", whole, trimmed)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -988,17 +976,5 @@ mod tests {
         let uint256_max =
             "115792089237316195423570985008687907853269984665640564039457584007913129639935";
         assert!(!is_allowance_insufficient(uint256_max, "1000000"));
-    }
-
-    #[test]
-    fn test_wei_to_ui() {
-        assert_eq!(wei_to_ui("0", 18), "0");
-        assert_eq!(wei_to_ui("", 18), "0");
-        assert_eq!(wei_to_ui("1000000000000000000", 18), "1");
-        assert_eq!(wei_to_ui("10000000000000000", 18), "0.01");
-        assert_eq!(wei_to_ui("1500000000000000000", 18), "1.5");
-        assert_eq!(wei_to_ui("1000000", 6), "1");
-        assert_eq!(wei_to_ui("1500000", 6), "1.5");
-        assert_eq!(wei_to_ui("100", 0), "100");
     }
 }
