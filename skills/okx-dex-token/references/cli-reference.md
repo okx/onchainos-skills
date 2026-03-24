@@ -243,7 +243,7 @@ onchainos token advanced-info --address <address> [--chain <chain>]
 
 | Field | Type | Description |
 |---|---|---|
-| `riskControlLevel` | String | Risk control level |
+| `riskControlLevel` | String | Risk control level: `0`=Undefined, `1`=Low Risk, `2`=Medium Risk, `3`=Medium-High Risk, `4`=High Risk, `5`=High Risk (manual) |
 | `totalFee` | String | Total fee collected |
 | `lpBurnedPercent` | String | Percentage of LP tokens burned |
 | `isInternal` | Boolean | Whether the token is internal |

@@ -183,17 +183,24 @@ onchainos leaderboard list --chain bsc --time-frame 1 --sort-by 4 --wallet-type 
 - `--wallet-address` is required when `--tracker-type multi_address`; omit for smart_money/kol
 - `--trade-type` defaults to `0` (all); use `1` for buy-only, `2` for sell-only
 - `--chain` is optional — omit to get results across all chains
+- Optional token filters (use when user wants to narrow results by token quality or size):
+  - `--min-volume` / `--max-volume` — trade volume range (USD)
+  - `--min-market-cap` / `--max-market-cap` — token market cap range (USD)
+  - `--min-liquidity` / `--max-liquidity` — token liquidity range (USD)
+  - `--min-holders` — minimum number of token holders
 
 **Signal:**
 - Missing chain → always call `onchainos signal chains` first to confirm the chain is supported
 - Signal filter params (`--wallet-type`, `--min-amount-usd`, etc.) → ask user for preferences if not specified; default to no filter (returns all signal types)
 - `--token-address` is optional — omit to get all signals on the chain; include to filter for a specific token
+- **`--wallet-type` is multi-select** (comma-separated integers: `1`=Smart Money, `2`=KOL, `3`=Whale) — e.g. `--wallet-type 1,3` returns both Smart Money and Whale signals
 
 **Leaderboard:**
 - Missing chain → call `onchainos leaderboard supported-chains` to confirm support; default to `solana` if user doesn't specify
+- `--time-frame` and `--sort-by` are required by the CLI but the agent should infer them from user language before asking — use the mappings below. Only prompt the user if intent is genuinely ambiguous.
 - Missing `--time-frame` → map "today/1D" → `1`, "3 days/3D" → `2`, "7 days/1W/7D" → `3`, "1 month/30D" → `4`, "3 months/3M" → `5`
 - Missing `--sort-by` → map "PnL/盈亏" → `1`, "win rate/胜率" → `2`, "tx count/交易笔数" → `3`, "volume/交易量" → `4`, "ROI/收益率" → `5`
-- `--wallet-type` is optional single-select; if omitted, all types are returned
+- **`--wallet-type` is single-select only** (one value at a time: `sniper`, `dev`, `fresh`, `pump`, `smartMoney`, `influencer`) — do NOT pass comma-separated values or it will error; if omitted, all types are returned
 
 ### Step 3: Call and Display
 

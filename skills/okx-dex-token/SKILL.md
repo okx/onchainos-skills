@@ -1,6 +1,6 @@
 ---
 name: okx-dex-token
-description: "Use this skill for token-level data: cluster overview, search tokens, trending/hot tokens (热门, 代币榜单), liquidity pools, holder distribution (whale/巨鲸, sniper, bundler-tagged holder %), token risk metadata (riskControlLevel, tokenTags, dev stats, suspicious/bundle holding % via advanced-info), recent buy/sell activity, top profit addresses, trade history by wallet type, or holder cluster analysis (持仓集中度, cluster rug pull risk/跑路风险, new wallet percentage/新钱包持仓比例, holder clusters, 'are top holders in same cluster'). Invoke on user intent; address can be provided after. Use also when the user wants to write a token scanning script or automate token research using OKX. Do NOT use for market-wide whale/signal tracking — use okx-dex-signal. Do NOT use for meme/pump.fun launch scanning, dev reputation, or bundle detection — use okx-dex-trenches. Do NOT use for personal DEX trade history or price charts — use okx-dex-market."
+description: "Use this skill for token-level data: search tokens, trending/hot tokens (热门, 代币榜单), liquidity pools, holder distribution (whale/巨鲸, sniper, bundler-tagged holder %), token risk metadata (riskControlLevel, tokenTags, dev stats, suspicious/bundle holding % via advanced-info), recent buy/sell activity, top profit addresses, trade history by wallet type, or holder cluster analysis (持仓集中度, cluster overview, cluster rug pull risk/跑路风险, new wallet percentage/新钱包持仓比例, holder clusters, 'are top holders in same cluster'). Invoke on user intent; address can be provided after. Use also when the user wants to write a token scanning script or automate token research using OKX. Do NOT use for market-wide whale/signal tracking — use okx-dex-signal. Do NOT use for meme/pump.fun launch scanning, dev reputation, or bundle detection — use okx-dex-trenches. Do NOT use for personal DEX trade history or price charts — use okx-dex-market."
 license: MIT
 metadata:
   author: okx
@@ -397,6 +397,7 @@ To search for specific command details: `grep -n "onchainos token <command>" ref
 ## Edge Cases
 
 - **Token not found**: suggest verifying the contract address (symbols can collide)
+- **Wrong chain default**: all address-based commands default to `--chain ethereum`. Always infer chain from address format (Solana = base58, no `0x`) and pass it explicitly — omitting `--chain` for a Solana address will error or return wrong results.
 - **Same symbol on multiple chains**: show all matches with chain names
 - **Unverified token**: `communityRecognized = false` — warn user about risk
 - **Too many results**: name/symbol search caps at 100 — suggest using exact contract address

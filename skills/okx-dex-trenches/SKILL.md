@@ -173,7 +173,7 @@ Currently supports: Solana (501), BSC (56), X Layer (196), TRON (195). Always ve
 ### Step 2: Collect Parameters
 
 - Missing chain → default to Solana (`--chain solana`); verify support with `onchainos memepump chains` first
-- Missing `--stage` for memepump-tokens → ask user which stage (NEW / MIGRATING / MIGRATED)
+- Missing `--stage` for memepump-tokens → default to `NEW`; only ask if the user's intent clearly points to a different stage
 - User mentions a protocol name → first call `onchainos memepump chains` to get the protocol ID, then pass `--protocol-id-list <id>` to `memepump-tokens`. Do NOT use `okx-dex-token` to search for protocol names as tokens.
 
 ### Step 3: Call and Display
