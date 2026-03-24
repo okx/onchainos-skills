@@ -53,27 +53,14 @@ metadata:
 ## Token Address Resolution (Mandatory)
 
 <IMPORTANT>
-🚨 **NEVER guess, assume, or hardcode a token contract address (CA) from memory based on token symbol/name.**
+🚨 Never guess or hardcode token CAs — same symbol has different addresses per chain.
 
-- The same symbol (e.g., USDC, USDT, BONK) has **different contract addresses on different chains**.
-- Tokens can share the same symbol — there are hundreds of tokens named "PEPE" or "DOGE" across chains.
-- Using a wrong CA will swap into the **wrong token** or cause the transaction to **fail silently**, resulting in **loss of funds**.
+Acceptable CA sources (in order):
+1. **CLI TOKEN_MAP** (pass directly as `--from`/`--to`): native: `sol eth bnb okb matic pol avax ftm trx sui`; stablecoins: `usdc usdt dai`; wrapped: `weth wbtc wbnb wmatic`; `So11111111111111111111111111111111111111112` (wSOL) → auto-corrected to native SOL
+2. `onchainos token search --query <symbol> --chains <chain>` — for all other symbols
+3. User provides full CA directly
 
-**The ONLY acceptable sources for a token contract address are:**
-1. **CLI built-in TOKEN_MAP** — The CLI resolves common symbols automatically (case-insensitive). You may pass these directly as `--from`/`--to` without calling `token search`:
-   - Native tokens: `sol`, `eth`, `bnb`, `okb`, `matic`/`pol`, `avax`, `ftm`, `trx`, `sui`
-   - Stablecoins: `usdc`, `usdt`, `dai` (chain-specific addresses resolved automatically)
-   - Wrapped tokens: `weth`, `wbtc`, `wbnb`, `wmatic`, etc.
-   - Error correction: `So11111111111111111111111111111111111111112` (wSOL) → auto-corrected to native SOL
-2. `onchainos token search --query <symbol> --chains <chain>` — resolve any other symbol → CA on the target chain.
-3. The user explicitly provides a full contract address themselves.
-
-For symbols NOT in the TOKEN_MAP (e.g., meme coins, long-tail tokens), you MUST run `onchainos token search` first. No exceptions.
-
-**When `token search` returns multiple results** (this is common — token symbols are NOT unique):
-1. **Do NOT silently pick one.** Present the top matches to the user, showing: name, symbol, contract address, and chain.
-2. **Ask the user to confirm** which token they intend to use before proceeding to quote/execute.
-3. If only **one result** matches the target chain and symbol exactly, you may proceed — but still display the token details (name, CA, chain) for the user to verify before executing any transaction.
+Multiple search results → show name/symbol/CA/chain, ask user to confirm before executing. Single exact match → show token details for user to verify before executing.
 </IMPORTANT>
 
 ## Execution Flow
