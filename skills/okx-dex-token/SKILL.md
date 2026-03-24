@@ -120,36 +120,6 @@ onchainos token cluster-supported-chains
 | 12 | `onchainos token cluster-list --address <address>` | Get holder cluster list (clusters of top 300 holders with address details) |
 | 13 | `onchainos token cluster-supported-chains` | Get chains supported by holder cluster analysis |
 
-## Boundary: token vs market skill
-
-| Need | Use this skill (`okx-dex-token`) | Use `okx-dex-market` instead |
-|---|---|---|
-| Search token by name/symbol | `onchainos token search` | - |
-| Token metadata (decimals, logo) | `onchainos token info` | - |
-| Price + market cap + liquidity + multi-timeframe change | `onchainos token price-info` | - |
-| Holder distribution | `onchainos token holders` | - |
-| Holders filtered by tag (KOL, whale, smart money) | `onchainos token holders --tag-filter` | - |
-| Top 5 liquidity pools for a token | `onchainos token liquidity` | - |
-| Hot tokens by trending score or X mentions | `onchainos token hot-tokens` | - |
-| Advanced token info (risk, creator, dev stats) | `onchainos token advanced-info` | - |
-| Top traders / profit addresses | `onchainos token top-trader` | - |
-| Token trade history with tag/wallet filter | `onchainos token trades` | - |
-| Holder cluster concentration (LOW/MEDIUM/HIGH, rug pull %, new address %) | `onchainos token cluster-overview` | - |
-| Top 10/50/100 holder behavior (avg PnL, avg cost, trend) | `onchainos token cluster-top-holders` | - |
-| Holder cluster groups (top 300, with address details) | `onchainos token cluster-list` | - |
-| Raw real-time price (single value) | - | `onchainos market price` |
-| K-line / candlestick chart | - | `onchainos market kline` |
-| Wallet PnL overview / DEX transaction history | - | `onchainos market portfolio-*` |
-| Index price (multi-source aggregate) | - | `onchainos market index` |
-| Token risk metadata (dev rug pull count, holder %, riskControlLevel, tokenTags) | `onchainos token advanced-info` | - |
-| Token safety check / honeypot detection (primary safety intent) | - | `okx-security` → `onchainos security token-scan` |
-| Meme token dev reputation / rug pull history | - | `okx-dex-trenches` → `onchainos memepump token-dev-info` |
-| Bundle/sniper detection | - | `okx-dex-trenches` → `onchainos memepump token-bundle-info` |
-| Similar tokens by same creator | - | `okx-dex-trenches` → `onchainos memepump similar-tokens` |
-| Market-wide smart money / whale / KOL alerts | - | `okx-dex-signal` → `onchainos signal list` |
-
-**Rule of thumb**: `okx-dex-token` = token discovery & enriched analytics (search, trending/hot tokens, holders, holder filtering, market cap, advanced info, top traders, risk metadata, filtered trade history). `okx-dex-market` = raw price feeds, charts, wallet PnL. `okx-dex-signal` = market-wide smart money / whale / KOL signal tracking. `okx-dex-trenches` = meme pump scanning (dev reputation, rug pull history, bundler analysis, new launches). `okx-security` = explicit token/tx/dapp/sig safety checks (honeypot, phishing, tx pre-execution, approval management).
-
 ## Operation Flow
 
 ### Step 1: Identify Intent

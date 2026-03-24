@@ -92,47 +92,6 @@ onchainos market portfolio-token-pnl --address 0xd8dA6BF26964aF9D7eEd9e03E53415D
 | 8 | `onchainos market portfolio-recent-pnl` | Get recent PnL list by token for a wallet (paginated, up to 1000 records) |
 | 9 | `onchainos market portfolio-token-pnl` | Get latest PnL snapshot for a specific token in a wallet |
 
-## Boundary: market vs other skills
-
-| Need | Use this skill (`okx-dex-market`) | Use other skill instead |
-|---|---|---|
-| Real-time price (single value) | `onchainos market price` | - |
-| Price + market cap + liquidity + 24h change | - | `okx-dex-token` → `onchainos token price-info` |
-| K-line / candlestick chart | `onchainos market kline` | - |
-| Index price (multi-source aggregate) | `onchainos market index` | - |
-| Token search by name/symbol | - | `okx-dex-token` → `onchainos token search` |
-| Token metadata (decimals, logo) | - | `okx-dex-token` → `onchainos token info` |
-| Holder distribution | - | `okx-dex-token` → `onchainos token holders` |
-| Holders filtered by tag (KOL, whale, smart money) | - | `okx-dex-token` → `onchainos token holders --tag-filter` |
-| Top 5 liquidity pools for a token | - | `okx-dex-token` → `onchainos token liquidity` |
-| Hot tokens by trending score or X mentions | - | `okx-dex-token` → `onchainos token hot-tokens` |
-| Advanced token info (risk, creator, dev stats) | - | `okx-dex-token` → `onchainos token advanced-info` |
-| Top traders / profit addresses | - | `okx-dex-token` → `onchainos token top-trader` |
-| Trade history with tag/wallet filter | - | `okx-dex-token` → `onchainos token trades` |
-| Aggregated smart money / whale / KOL buy signal alerts | - | `okx-dex-signal` → `onchainos signal list` |
-| Raw DEX transaction feed for smart money / KOL / custom addresses | - | `okx-dex-signal` → `onchainos market address-tracker-activities` |
-| Signal-supported chains | - | `okx-dex-signal` → `onchainos signal chains` |
-| Leaderboard / top traders by PnL, win rate, volume | - | `okx-dex-signal` → `onchainos leaderboard list` |
-| Leaderboard-supported chains | - | `okx-dex-signal` → `onchainos leaderboard supported-chains` |
-| Holder cluster concentration (rug pull %, new address %) | - | `okx-dex-token` → `onchainos token cluster-overview` |
-| Top 10/50/100 holder behavior (avg PnL, avg cost, trend) | - | `okx-dex-token` → `onchainos token cluster-top-holders` |
-| Holder cluster groups (top 300 holders with address details) | - | `okx-dex-token` → `onchainos token cluster-list` |
-| Cluster-supported chains | - | `okx-dex-token` → `onchainos token cluster-supported-chains` |
-| Browse meme pump tokens by stage | - | `okx-dex-trenches` → `onchainos memepump tokens` |
-| Meme token audit (top10, dev, insiders) | - | `okx-dex-trenches` → `onchainos memepump token-details` |
-| Developer reputation / rug pull history | - | `okx-dex-trenches` → `onchainos memepump token-dev-info` |
-| Similar tokens by same creator | - | `okx-dex-trenches` → `onchainos memepump similar-tokens` |
-| Bundle/sniper detection | - | `okx-dex-trenches` → `onchainos memepump token-bundle-info` |
-| Aped (same-car) wallet analysis | - | `okx-dex-trenches` → `onchainos memepump aped-wallet` |
-| Wallet PnL overview (win rate, realized PnL, top tokens) | `onchainos market portfolio-overview` | - |
-| Wallet DEX transaction history | `onchainos market portfolio-dex-history` | - |
-| Recent PnL list by token | `onchainos market portfolio-recent-pnl` | - |
-| Per-token latest PnL (realized/unrealized) | `onchainos market portfolio-token-pnl` | - |
-| PnL-supported chain list | `onchainos market portfolio-supported-chains` | - |
-| Latest trades by smart money / KOL / custom addresses | - | `okx-dex-signal` → `onchainos market address-tracker-activities` |
-
-**Rule of thumb**: `okx-dex-market` = raw price feeds, charts, and wallet PnL analysis (your own wallet). Use `okx-dex-signal` for smart money/KOL tracking, signal alerts, and address monitoring; `okx-dex-trenches` for meme token research; `okx-dex-token` for token discovery & analytics.
-
 ## Operation Flow
 
 ### Step 1: Identify Intent
