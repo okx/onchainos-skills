@@ -73,7 +73,7 @@ For complex flows (V3 pool, borrow/repay, Agentic Wallet), see Cross-Skill Workf
 - **Missing investmentId** → run `defi search` or `defi list` first
 - **Missing slippage** → default `"0.01"` (1%); suggest `"0.03"`–`"0.05"` for volatile V3 pools
 - **MUST call `defi prepare` before `defi deposit`** → for ALL product types. Returns `investWithTokenList` (tokenAddress, chainIndex, tokenPrecision)
-- **V3 Pool: MUST call `defi calculate-entry` after `defi prepare`** → returns exact dual-token amounts for `--user-input`
+- **V3 Pool: MUST call `defi calculate-entry` after `defi prepare`** → returns exact dual-token amounts in minimal units with tokenPrecision, ready to pass directly to `defi deposit --user-input`
 - **V3 tick range** → from prepare get `currentTick`, `tickSpacing`; use `=` syntax for negatives: `--tick-lower=-11`
 
 ### Pre-Deposit Gate (MANDATORY)

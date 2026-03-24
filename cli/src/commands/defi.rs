@@ -345,19 +345,60 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
                 anyhow::anyhow!("token-decimal must be a non-negative integer, got \"{}\"", token_decimal)
             })?;
             let human_readable_amount = minimal_to_decimal_str(&input_amount, precision);
-            output::success(
-                fetch_calculate_entry(
-                    &client,
-                    &id,
-                    &address,
-                    &input_token,
-                    &human_readable_amount,
-                    &token_decimal,
-                    tick_lower,
-                    tick_upper,
-                )
-                .await?,
-            );
+            let result = fetch_calculate_entry(
+                &client,
+                &id,
+                &address,
+                &input_token,
+                &human_readable_amount,
+                &token_decimal,
+                tick_lower,
+                tick_upper,
+            )
+            .await?;
+
+            // Convert output: coinAmount from UI decimal → minimal units + add tokenPrecision
+            // Get tokenPrecision from prepare for each token
+            let prepare_data = fetch_prepare(&client, &id).await?;
+            let mut precision_map = std::collections::HashMap::new();
+            if let Some(tokens) = prepare_data.get("investWithTokenList").and_then(|v| v.as_array()) {
+                for t in tokens {
+                    if let (Some(addr), Some(prec)) = (
+                        t.get("tokenAddress").and_then(|v| v.as_str()),
+                        t.get("tokenPrecision").and_then(|v| v.as_str().or_else(|| v.as_u64().map(|_| "")).and_then(|_| None))
+                            .or_else(|| t.get("tokenPrecision").and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_u64().map(|n| n.to_string()))).as_deref().map(|s| s.to_string()))
+                    ) {
+                        precision_map.insert(addr.to_lowercase(), prec);
+                    }
+                }
+            }
+            // Simpler precision extraction
+            let mut precision_map: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+            if let Some(tokens) = prepare_data.get("investWithTokenList").and_then(|v| v.as_array()) {
+                for t in tokens {
+                    let addr = t.get("tokenAddress").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                    let prec = t.get("tokenPrecision")
+                        .and_then(|v| v.as_str().and_then(|s| s.parse::<u32>().ok()).or_else(|| v.as_u64().map(|n| n as u32)))
+                        .unwrap_or(18);
+                    precision_map.insert(addr, prec);
+                }
+            }
+
+            // Transform investWithTokenList in result
+            let mut output = result.clone();
+            if let Some(tokens) = output.get_mut("investWithTokenList").and_then(|v| v.as_array_mut()) {
+                for t in tokens.iter_mut() {
+                    let addr = t.get("tokenAddress").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                    let prec = precision_map.get(&addr).copied().unwrap_or(18);
+                    if let Some(amount_str) = t.get("coinAmount").and_then(|v| v.as_str()) {
+                        let minimal = decimal_to_minimal_str(amount_str, prec);
+                        t["coinAmount"] = json!(minimal);
+                        t["tokenPrecision"] = json!(prec.to_string());
+                    }
+                }
+            }
+
+            output::success(output);
         }
         DefiCommand::Positions { address, chains } => {
             let raw = fetch_positions(&client, &address, &chains).await?;
@@ -449,6 +490,36 @@ fn minimal_to_decimal_str(amount: &str, precision: u32) -> String {
     } else {
         format!("{}.{}", integer_part, trimmed)
     }
+}
+
+/// Convert a decimal string to an integer string (minimal units) given precision.
+/// Pure string operation — no floating point, no precision loss.
+/// e.g. "0.5" with precision 6 → "500000"
+/// e.g. "226.483834" with precision 6 → "226483834"
+/// e.g. "0.005" with precision 18 → "5000000000000000"
+fn decimal_to_minimal_str(amount: &str, precision: u32) -> String {
+    let p = precision as usize;
+    if p == 0 {
+        // No decimal part expected; strip any decimal point
+        return amount.split('.').next().unwrap_or(amount).to_string();
+    }
+    let (integer, decimal) = if let Some(dot_pos) = amount.find('.') {
+        (&amount[..dot_pos], &amount[dot_pos + 1..])
+    } else {
+        (amount, "")
+    };
+    // Handle owned string for padding case
+    let padded_owned;
+    let final_decimal = if decimal.len() >= p {
+        &decimal[..p]
+    } else {
+        padded_owned = format!("{:0<width$}", decimal, width = p);
+        &padded_owned
+    };
+    let combined = format!("{}{}", integer, final_decimal);
+    // Strip leading zeros but keep at least "0"
+    let stripped = combined.trim_start_matches('0');
+    if stripped.is_empty() { "0".to_string() } else { stripped.to_string() }
 }
 
 // ── API functions ────────────────────────────────────────────────────
