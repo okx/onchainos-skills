@@ -1,6 +1,6 @@
 ---
 name: okx-dex-market
-description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, and wallet PnL/盈亏分析 (win rate, my DEX trade history, realized/unrealized PnL per token). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my DEX history', 'realized profit', or 'unrealized profit'. Use also for price monitoring scripts or market data automation using OKX. Do NOT use for smart-money/whale/KOL activity tracking, signal alerts, or address transaction feed — use okx-dex-signal. Do NOT use for meme/pump.fun token scanning — use okx-dex-trenches. Do NOT use for token search, holder distribution, or liquidity pools — use okx-dex-token."
+description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, and wallet PnL/盈亏分析 (win rate, my DEX trade history, realized/unrealized PnL per token). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my DEX history', 'realized profit', or 'unrealized profit'. Use also for price monitoring scripts or market data automation using OKX."
 license: MIT
 metadata:
   author: okx
