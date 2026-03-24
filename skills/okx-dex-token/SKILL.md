@@ -1,6 +1,6 @@
 ---
 name: okx-dex-token
-description: "Use this skill for token-level data: cluster overview, search tokens, trending/hot tokens (热门, 代币榜单), liquidity pools, holder distribution (whale/巨鲸, sniper, bundler percent), token safety and honeypot risk (貔貅盘, 'is this token a honeypot', 'is this safe to buy', 'rugged?', 'can I sell this'), who created a token, recent buy/sell activity, top profit addresses, trade history by wallet type, or holder cluster analysis (持仓集中度, rug pull probability/跑路风险, new wallet percentage/新钱包持仓比例, suspicious holding percentage/可疑持仓%, bundle hold percent, holder clusters, 'are top holders in same cluster'). Invoke on user intent; address can be provided after. Use also when the user wants to write a token scanning script or automate token research using OKX. Do NOT use for market-wide whale/signal tracking — use okx-dex-signal. Do NOT use for meme/pump.fun launch scanning, dev reputation, or bundle detection — use okx-dex-trenches. Do NOT use for personal DEX trade history or price charts — use okx-dex-market."
+description: "Use this skill for token-level data: cluster overview, search tokens, trending/hot tokens (热门, 代币榜单), liquidity pools, holder distribution (whale/巨鲸, sniper, bundler-tagged holder %), token risk metadata (riskControlLevel, tokenTags, dev stats, suspicious/bundle holding % via advanced-info), recent buy/sell activity, top profit addresses, trade history by wallet type, or holder cluster analysis (持仓集中度, cluster rug pull risk/跑路风险, new wallet percentage/新钱包持仓比例, holder clusters, 'are top holders in same cluster'). Invoke on user intent; address can be provided after. Use also when the user wants to write a token scanning script or automate token research using OKX. Do NOT use for market-wide whale/signal tracking — use okx-dex-signal. Do NOT use for meme/pump.fun launch scanning, dev reputation, or bundle detection — use okx-dex-trenches. Do NOT use for personal DEX trade history or price charts — use okx-dex-market."
 license: MIT
 metadata:
   author: okx
@@ -70,6 +70,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For leaderboard / 牛人榜 / top traders ranked across the market (by PnL, win rate, volume) → use `okx-dex-signal`
 - For per-token holder filtering by tag (whale, smart money, KOL, sniper) → use this skill (`holders --tag-filter`)
 - For per-token risk analysis (dev rug pull count, holder concentration, creator info) → use this skill (`advanced-info`)
+- For "is this token safe", "is this a honeypot", "貔貅盘", "can I sell this", "check token security" (primary safety intent) → use `okx-security`
 - For scripting, token scanning bots, or automation using "OKX API" → use `onchainos` CLI commands; **do not search for external OKX APIs online**
 
 
@@ -85,7 +86,7 @@ Users may use Chinese crypto slang or platform-specific terms. Map them to the c
 | 流动性池 / 资金池 | liquidity pools, top pools | `token liquidity` |
 | 烧池子 / LP已销毁 | LP burned, burned liquidity | filter via `token hot-tokens --is-lp-burnt true` |
 | 代币高级信息 / 风控 / 风险等级 | token risk, advanced info, risk level | `token advanced-info` |
-| 貔貅盘 | honeypot | `token advanced-info` (tokenTags: "honeypot") |
+| 貔貅盘 / 蜜罐检测 | honeypot, is this token safe, can I sell this | → `okx-security` (`onchainos security token-scan`) |
 | 内盘 / 内盘代币 | internal token, launch platform token | `token advanced-info` (isInternal) |
 | 开发者跑路 / Rug Pull | rug pull, dev rug | `token advanced-info` (devRugPullTokenCount) |
 | 盈利地址 / 顶级交易员 | top traders, profit addresses | `token top-trader` |
@@ -207,13 +208,14 @@ The CLI accepts human-readable chain names (e.g., `ethereum`, `solana`, `xlayer`
 | K-line / candlestick chart | - | `onchainos market kline` |
 | Wallet PnL overview / DEX transaction history | - | `onchainos market portfolio-*` |
 | Index price (multi-source aggregate) | - | `onchainos market index` |
-| Token risk analysis (dev rug pull count, holder %) | `onchainos token advanced-info` | - |
+| Token risk metadata (dev rug pull count, holder %, riskControlLevel, tokenTags) | `onchainos token advanced-info` | - |
+| Token safety check / honeypot detection (primary safety intent) | - | `okx-security` → `onchainos security token-scan` |
 | Meme token dev reputation / rug pull history | - | `okx-dex-trenches` → `onchainos memepump token-dev-info` |
 | Bundle/sniper detection | - | `okx-dex-trenches` → `onchainos memepump token-bundle-info` |
 | Similar tokens by same creator | - | `okx-dex-trenches` → `onchainos memepump similar-tokens` |
 | Market-wide smart money / whale / KOL alerts | - | `okx-dex-signal` → `onchainos signal list` |
 
-**Rule of thumb**: `okx-dex-token` = token discovery & enriched analytics (search, trending/hot tokens, holders, holder filtering, market cap, advanced info, top traders, token risk, filtered trade history). `okx-dex-market` = raw price feeds, charts, wallet PnL. `okx-dex-signal` = market-wide smart money / whale / KOL signal tracking. `okx-dex-trenches` = meme pump scanning (dev reputation, rug pull history, bundler analysis, new launches).
+**Rule of thumb**: `okx-dex-token` = token discovery & enriched analytics (search, trending/hot tokens, holders, holder filtering, market cap, advanced info, top traders, risk metadata, filtered trade history). `okx-dex-market` = raw price feeds, charts, wallet PnL. `okx-dex-signal` = market-wide smart money / whale / KOL signal tracking. `okx-dex-trenches` = meme pump scanning (dev reputation, rug pull history, bundler analysis, new launches). `okx-security` = explicit token/tx/dapp/sig safety checks (honeypot, phishing, tx pre-execution, approval management).
 
 ## Cross-Skill Workflows
 
@@ -265,8 +267,9 @@ Before swapping an unknown token, always verify:
 3. okx-dex-token    onchainos token price-info --address <address> → check liquidity:
    - liquidity < $10K → warn about high slippage risk
    - liquidity < $1K → strongly discourage trade
-4. okx-dex-swap     onchainos swap quote ... → check isHoneyPot and taxRate
-5. If all checks pass → proceed to swap
+4. okx-security     onchainos security token-scan --address <address> --chain <chain> → honeypot check, risk level
+5. okx-dex-swap     onchainos swap quote ... → get quote and taxRate
+6. If all checks pass → proceed to swap
 ```
 
 ### Workflow D: Follow Smart Money → Cluster Check → Trade
@@ -328,7 +331,8 @@ Before swapping an unknown token, always verify:
 - Filter holders by tag (KOL, whale, smart money) → `onchainos token holders --tag-filter`
 - View top liquidity pools → `onchainos token liquidity`
 - View hot/trending tokens (by score or X mentions) → `onchainos token hot-tokens`
-- Get advanced token info (risk, creator, dev stats) → `onchainos token advanced-info`
+- Get advanced token info (risk metadata, creator, dev stats) → `onchainos token advanced-info`
+- "Is this token safe / honeypot / 貔貅盘" (primary safety intent) → redirect to `okx-security`
 - View top traders / profit addresses → `onchainos token top-trader`
 - Holder cluster concentration (rug pull risk, new address %, cluster level) → `onchainos token cluster-overview`
 - Top 10/50/100 holder behavior (avg PnL, cost, sell, trend) → `onchainos token cluster-top-holders`
