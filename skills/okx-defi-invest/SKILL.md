@@ -55,25 +55,32 @@ CLI resolves chain names automatically (e.g. `ethereum` → `1`, `bsc` → `56`,
 
 ```
 1. defi search --token USDC --chain ethereum       → pick investmentId
-2. defi detail --investment-id <id>                 → confirm APY, TVL, isInvestable
-3. Ask user for amount
-4. Check wallet balance (okx-wallet-portfolio) → if insufficient, warn user and stop
-5. defi invest --investment-id <id> --address <addr> --token USDC --amount 100000000
+2. defi detail --investment-id <id>                 → confirm APY/TVL, get underlyingToken[].tokenAddress
+3. token search --query <tokenAddress> --chains <chain>  → get decimal (e.g. 6) for amount conversion
+4. Ask user for amount → convert: userAmount × 10^decimal (e.g. 100 USDC → 100000000)
+5. Check wallet balance (okx-wallet-portfolio) → if insufficient, warn user and stop
+6. defi invest --investment-id <id> --address <addr> --token USDC --amount 100000000
    → CLI returns calldata (APPROVE + DEPOSIT steps)
-6. User signs and broadcasts each step in order
+7. User signs and broadcasts each step in order
 ```
 
-> **Balance check is mandatory before invest.** Use `okx-wallet-portfolio` to verify sufficient balance. CLI does NOT check balance internally — this must be done at the AI/skill layer.
+> **Token decimal**: Get `tokenAddress` from `defi detail` → `underlyingToken[].tokenAddress`, then use `token search --query <tokenAddress>` to get `decimal`. Same approach as DEX swap.
+> **Balance check is mandatory before invest.** Use `okx-wallet-portfolio` to verify sufficient balance.
 
 ### Withdraw
 
 ```
 1. defi positions --address <addr> --chains ethereum
 2. defi position-detail --address <addr> --chain ethereum --platform-id <pid>
-3. defi withdraw --investment-id <id> --address <addr> --chain ethereum --ratio 1
-   → CLI returns calldata
+   → get investmentId, tokenPrecision, coinAmount (current balance)
+3. Full exit:
+   defi withdraw --investment-id <id> --address <addr> --chain ethereum --ratio 1 --platform-id <pid>
+   Partial exit (convert coinAmount to minimal units: amount × 10^tokenPrecision):
+   defi withdraw --investment-id <id> --address <addr> --chain ethereum --amount <minimal_units> --platform-id <pid>
 4. User signs and broadcasts
 ```
+
+> **Partial exit --amount**: position-detail returns `coinAmount` in human-readable (e.g. "2.3792") and `tokenPrecision` (e.g. 6). Convert to minimal units: `floor(2.3792 × 10^6) = 2379200` → `--amount 2379200`.
 
 ### Claim Rewards
 
