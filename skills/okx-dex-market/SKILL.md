@@ -93,11 +93,10 @@ metadata:
 
 ### Step 4: Suggest Next Steps
 
+After price, kline, or index results: suggest viewing the chart, checking token analytics, or buying — conversationally.
+
 | Just called | Suggest |
 |---|---|
-| `market price` | 1. View K-line chart → `onchainos market kline` (this skill) 2. Deeper analytics (market cap, liquidity, 24h volume) → `okx-dex-token` 3. Buy/swap this token → `okx-dex-swap` |
-| `market kline` | 1. Check filtered trade history → `onchainos token trades` (okx-dex-token) 2. Buy/swap based on the chart → `okx-dex-swap` |
-| `market index` | 1. Compare with on-chain DEX price → `onchainos market price` (this skill) 2. View full price chart → `onchainos market kline` (this skill) |
 | `market portfolio-supported-chains` | 1. Get PnL overview → `onchainos market portfolio-overview` (this skill) |
 | `market portfolio-overview` | 1. Drill into trade history → `onchainos market portfolio-dex-history` (this skill) 2. Check recent PnL by token → `onchainos market portfolio-recent-pnl` (this skill) 3. Buy/sell a top-PnL token → `okx-dex-swap` |
 | `market portfolio-dex-history` | 1. Check PnL for a specific traded token → `onchainos market portfolio-token-pnl` (this skill) 2. View token price chart → `onchainos market kline` (this skill) |

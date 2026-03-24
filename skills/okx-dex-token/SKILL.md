@@ -114,24 +114,22 @@ Users may use Chinese crypto slang or platform-specific terms. Map them to the c
 
 ### Step 4: Suggest Next Steps
 
-After displaying results, suggest 2-3 relevant follow-up actions based on the command just executed:
-
 | Just called | Suggest |
 |---|---|
-| `token search` | 1. View detailed analytics (market cap, liquidity) → `onchainos token price-info` (this skill) 2. View price chart → `okx-dex-market` 3. Buy/swap this token → `okx-dex-swap` |
+| `token search` | 1. View price and market data → `onchainos token price-info` (this skill) 2. Check holder distribution → `onchainos token holders` (this skill) |
 | `token info` | 1. View price and market data → `onchainos token price-info` (this skill) 2. Check holder distribution → `onchainos token holders` (this skill) |
-| `token price-info` | 1. View K-line chart → `okx-dex-market` 2. Check holder distribution → `onchainos token holders` (this skill) 3. Buy/swap this token → `okx-dex-swap` |
-| `token holders` | 1. View price trend → `okx-dex-market` 2. Buy/swap this token → `okx-dex-swap` 3. Check advanced info → `onchainos token advanced-info` (this skill) |
-| `token liquidity` | 1. View price chart → `okx-dex-market` 2. Buy/swap this token → `okx-dex-swap` 3. Check holders → `onchainos token holders` (this skill) |
-| `token hot-tokens` | 1. View details for a hot token → `onchainos token price-info` (this skill) 2. Check liquidity pools → `onchainos token liquidity` (this skill) 3. Buy a hot token → `okx-dex-swap` |
-| `token advanced-info` | 1. View holders → `onchainos token holders` (this skill) 2. View top traders → `onchainos token top-trader` (this skill) 3. Buy/swap this token → `okx-dex-swap` |
-| `token top-trader` | 1. View advanced info → `onchainos token advanced-info` (this skill) 2. View holder distribution → `onchainos token holders` (this skill) 3. Buy/swap this token → `okx-dex-swap` |
-| `token trades` | 1. View top traders → `onchainos token top-trader` (this skill) 2. View price chart → `okx-dex-market` 3. Buy/swap this token → `okx-dex-swap` |
+| `token price-info` | 1. Check holder distribution → `onchainos token holders` (this skill) 2. View K-line chart → `okx-dex-market` 3. Buy/swap this token → `okx-dex-swap` |
+| `token holders` | 1. Get advanced info → `onchainos token advanced-info` (this skill) 2. View top traders → `onchainos token top-trader` (this skill) |
+| `token liquidity` | 1. Check holders → `onchainos token holders` (this skill) 2. Get advanced info → `onchainos token advanced-info` (this skill) |
+| `token hot-tokens` | 1. View price details → `onchainos token price-info` (this skill) 2. Check liquidity pools → `onchainos token liquidity` (this skill) |
+| `token advanced-info` | 1. View holders → `onchainos token holders` (this skill) 2. View top traders → `onchainos token top-trader` (this skill) |
+| `token top-trader` | 1. View advanced info → `onchainos token advanced-info` (this skill) 2. View token trade history → `onchainos token trades` (this skill) |
+| `token trades` | 1. View top traders → `onchainos token top-trader` (this skill) 2. Get advanced info → `onchainos token advanced-info` (this skill) |
 | `token cluster-overview` | 1. Drill into top holder behavior → `onchainos token cluster-top-holders` (this skill) 2. View cluster groups → `onchainos token cluster-list` (this skill) 3. Check advanced info → `onchainos token advanced-info` (this skill) |
 | `token cluster-top-holders` | 1. View cluster group details → `onchainos token cluster-list` (this skill) 2. View holder distribution → `onchainos token holders` (this skill) |
-| `token cluster-list` | 1. View price chart → `okx-dex-market` 2. Check top traders → `onchainos token top-trader` (this skill) |
+| `token cluster-list` | 1. Check top traders → `onchainos token top-trader` (this skill) 2. Get advanced info → `onchainos token advanced-info` (this skill) |
 
-Present conversationally, e.g.: "Would you like to see the price chart or check the holder distribution?" — never expose skill names or endpoint paths to the user.
+Present conversationally, e.g.: "Would you like to check the holder distribution or see the top traders?" — never expose skill names or endpoint paths to the user.
 
 ## Additional Resources
 
