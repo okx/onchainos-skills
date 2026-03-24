@@ -128,6 +128,7 @@ Users may use Chinese crypto slang or platform-specific terms. Map them to the c
 | `token cluster-overview` | 1. Drill into top holder behavior → `onchainos token cluster-top-holders` 2. View cluster groups → `onchainos token cluster-list` 3. Check advanced info → `onchainos token advanced-info` |
 | `token cluster-top-holders` | 1. View cluster group details → `onchainos token cluster-list` 2. View holder distribution → `onchainos token holders` |
 | `token cluster-list` | 1. Check top traders → `onchainos token top-trader` 2. Get advanced info → `onchainos token advanced-info` |
+| `token cluster-supported-chains` | 1. Get holder cluster overview → `onchainos token cluster-overview` |
 
 Present conversationally, e.g.: "Would you like to check the holder distribution or see the top traders?" — never expose command paths to the user.
 

@@ -93,10 +93,11 @@ metadata:
 
 ### Step 4: Suggest Next Steps
 
-After price, kline, or index results: suggest `onchainos market kline`, `onchainos token price-info`, or `onchainos swap execute` — conversationally.
+After price, kline, or index results: suggest viewing the chart, checking token analytics, or buying — conversationally.
 
 | Just called | Suggest |
 |---|---|
+| `market prices` | 1. View K-line chart for a token → `onchainos market kline` 2. View single token price → `onchainos market price` |
 | `market portfolio-supported-chains` | 1. Get PnL overview → `onchainos market portfolio-overview` |
 | `market portfolio-overview` | 1. Drill into trade history → `onchainos market portfolio-dex-history` 2. Check recent PnL by token → `onchainos market portfolio-recent-pnl` 3. Buy/sell a top-PnL token → `onchainos swap execute` |
 | `market portfolio-dex-history` | 1. Check PnL for a specific traded token → `onchainos market portfolio-token-pnl` 2. View token price chart → `onchainos market kline` |
