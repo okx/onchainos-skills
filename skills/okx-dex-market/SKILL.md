@@ -93,17 +93,17 @@ metadata:
 
 ### Step 4: Suggest Next Steps
 
-After price, kline, or index results: suggest viewing the chart, checking token analytics, or buying — conversationally.
+After price, kline, or index results: suggest `onchainos market kline`, `onchainos token price-info`, or `onchainos swap execute` — conversationally.
 
 | Just called | Suggest |
 |---|---|
-| `market portfolio-supported-chains` | 1. Get PnL overview → `onchainos market portfolio-overview` (this skill) |
-| `market portfolio-overview` | 1. Drill into trade history → `onchainos market portfolio-dex-history` (this skill) 2. Check recent PnL by token → `onchainos market portfolio-recent-pnl` (this skill) 3. Buy/sell a top-PnL token → `okx-dex-swap` |
-| `market portfolio-dex-history` | 1. Check PnL for a specific traded token → `onchainos market portfolio-token-pnl` (this skill) 2. View token price chart → `onchainos market kline` (this skill) |
-| `market portfolio-recent-pnl` | 1. Get detailed PnL for a specific token → `onchainos market portfolio-token-pnl` (this skill) 2. View token analytics → `okx-dex-token` |
-| `market portfolio-token-pnl` | 1. View full trade history for this token → `onchainos market portfolio-dex-history` (this skill) 2. View token price chart → `onchainos market kline` (this skill) |
+| `market portfolio-supported-chains` | 1. Get PnL overview → `onchainos market portfolio-overview` |
+| `market portfolio-overview` | 1. Drill into trade history → `onchainos market portfolio-dex-history` 2. Check recent PnL by token → `onchainos market portfolio-recent-pnl` 3. Buy/sell a top-PnL token → `onchainos swap execute` |
+| `market portfolio-dex-history` | 1. Check PnL for a specific traded token → `onchainos market portfolio-token-pnl` 2. View token price chart → `onchainos market kline` |
+| `market portfolio-recent-pnl` | 1. Get detailed PnL for a specific token → `onchainos market portfolio-token-pnl` 2. View token analytics → `onchainos token price-info` |
+| `market portfolio-token-pnl` | 1. View full trade history for this token → `onchainos market portfolio-dex-history` 2. View token price chart → `onchainos market kline` |
 
-Present conversationally, e.g.: "Would you like to see the K-line chart, or buy this token?" — never expose skill names or endpoint paths to the user.
+Present conversationally, e.g.: "Would you like to see the K-line chart, or buy this token?" — never expose command paths to the user.
 
 ## Additional Resources
 

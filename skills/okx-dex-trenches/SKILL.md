@@ -109,15 +109,15 @@ When presenting `memepump-token-details` or `memepump-token-dev-info` responses,
 
 | Just called | Suggest |
 |---|---|
-| `memepump-chains` | 1. Browse tokens → `onchainos memepump tokens` (this skill) |
-| `memepump-tokens` | 1. Pick a token for details → `onchainos memepump token-details` (this skill) 2. Check dev → `onchainos memepump token-dev-info` (this skill) |
-| `memepump-token-details` | 1. Dev analysis → `onchainos memepump token-dev-info` (this skill) 2. Similar tokens → `onchainos memepump similar-tokens` (this skill) 3. Bundle check → `onchainos memepump token-bundle-info` (this skill) |
-| `memepump-token-dev-info` | 1. Check bundle activity → `onchainos memepump token-bundle-info` (this skill) 2. View price chart → `okx-dex-market` (`onchainos market kline`) |
-| `memepump-similar-tokens` | 1. Compare with details → `onchainos memepump token-details` (this skill) |
-| `memepump-token-bundle-info` | 1. Check aped wallets → `onchainos memepump aped-wallet` (this skill) |
-| `memepump-aped-wallet` | 1. Validate token safety (honeypot, holder concentration) → `okx-dex-token` (`onchainos token advanced-info`) 2. View price chart → `okx-dex-market` (`onchainos market kline`) 3. Buy the token → `okx-dex-swap` (quote → swap → `onchainos wallet contract-call` to execute) |
+| `memepump-chains` | 1. Browse tokens → `onchainos memepump tokens` |
+| `memepump-tokens` | 1. Pick a token for details → `onchainos memepump token-details` 2. Check dev → `onchainos memepump token-dev-info` |
+| `memepump-token-details` | 1. Dev analysis → `onchainos memepump token-dev-info` 2. Similar tokens → `onchainos memepump similar-tokens` 3. Bundle check → `onchainos memepump token-bundle-info` |
+| `memepump-token-dev-info` | 1. Check bundle activity → `onchainos memepump token-bundle-info` 2. View price chart → `onchainos market kline` |
+| `memepump-similar-tokens` | 1. Compare with details → `onchainos memepump token-details` |
+| `memepump-token-bundle-info` | 1. Check aped wallets → `onchainos memepump aped-wallet` |
+| `memepump-aped-wallet` | 1. Validate token safety → `onchainos token advanced-info` 2. View price chart → `onchainos market kline` 3. Buy the token → `onchainos swap execute` |
 
-Present conversationally — never expose skill names or endpoint paths to the user.
+Present conversationally — never expose command paths to the user.
 
 ## Additional Resources
 

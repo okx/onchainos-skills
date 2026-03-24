@@ -134,11 +134,11 @@ metadata:
 
 | Just called | Suggest |
 |---|---|
-| `address-tracker-activities` | 1. Get token price for a traded token → `okx-dex-market` (`onchainos market price`) 2. Deep token analytics (market cap, liquidity, holders) → `okx-dex-token` 3. Buy/swap a token that smart money is buying → `okx-dex-swap` |
-| `signal list` | 1. Drill into actual trades for a signal token → `onchainos market address-tracker-activities` (this skill) 2. View price chart → `okx-dex-market` (`onchainos market kline`) 3. Deep token analytics → `okx-dex-token` 4. Buy the token → `okx-dex-swap` |
-| `leaderboard list` | 1. Drill into a wallet's PnL → `okx-dex-market portfolio-overview` 2. Check a wallet's holdings → `okx-wallet-portfolio` 3. Track that wallet's trades → `onchainos market address-tracker-activities --tracker-type multi_address` (this skill) |
+| `address-tracker-activities` | 1. Get token price → `onchainos market price` 2. Deep token analytics → `onchainos token price-info` 3. Buy/swap the token → `onchainos swap execute` |
+| `signal list` | 1. Drill into actual trades → `onchainos market address-tracker-activities` 2. View price chart → `onchainos market kline` 3. Deep token analytics → `onchainos token price-info` 4. Buy the token → `onchainos swap execute` |
+| `leaderboard list` | 1. Drill into a wallet's PnL → `onchainos market portfolio-overview` 2. Check a wallet's holdings → `onchainos portfolio all-balances` 3. Track that wallet's trades → `onchainos market address-tracker-activities --tracker-type multi_address` |
 
-Present conversationally — never expose skill names or endpoint paths to the user.
+Present conversationally — never expose command paths to the user.
 
 ## Additional Resources
 
