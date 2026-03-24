@@ -108,6 +108,24 @@ pub enum WalletCommand {
         #[arg(long)]
         uop_hash: Option<String>,
     },
+    /// Sign a message (personalSign for EVM & Solana, EIP-712 for EVM only)
+    SignMessage {
+        /// Signing type: "personal" (default) or "eip712"
+        #[arg(long, default_value = "personal")]
+        r#type: String,
+        /// Message to sign (arbitrary string for personal, JSON string for eip712)
+        #[arg(long)]
+        message: String,
+        /// Chain ID (e.g. "1" for Ethereum, "501" for Solana, "56" for BSC)
+        #[arg(long)]
+        chain: String,
+        /// Sender address (the address whose private key is used to sign)
+        #[arg(long)]
+        from: String,
+        /// Force execution: skip confirmation prompts from the backend
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
     /// Call a smart contract (EVM inputData or SOL unsigned tx)
     ContractCall {
         /// Contract address to interact with
@@ -216,6 +234,13 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             )
             .await
         }
+        WalletCommand::SignMessage {
+            r#type,
+            message,
+            chain,
+            from,
+            force,
+        } => super::sign::cmd_sign_message(&r#type, &message, &chain, &from, force).await,
         WalletCommand::ContractCall {
             to,
             chain,
