@@ -35,9 +35,6 @@ metadata:
 | Tron | `T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb` |
 | Ton | `EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c` |
 
-<IMPORTANT>
-> **CRITICAL — Solana native SOL**: You MUST use `11111111111111111111111111111111` (Solana system program). NEVER use `So11111111111111111111111111111111111111112` (wSOL SPL token) — it is a completely different token and WILL cause the transaction to fail and unable to be packaged on-chain.
-</IMPORTANT>
 
 ## Command Index
 
@@ -55,7 +52,7 @@ metadata:
 🚨 Never guess or hardcode token CAs — same symbol has different addresses per chain.
 
 Acceptable CA sources (in order):
-1. **CLI TOKEN_MAP** (pass directly as `--from`/`--to`): native: `sol eth bnb okb matic pol avax ftm trx sui`; stablecoins: `usdc usdt dai`; wrapped: `weth wbtc wbnb wmatic`; `So11111111111111111111111111111111111111112` (wSOL) → auto-corrected to native SOL
+1. **CLI TOKEN_MAP** (pass directly as `--from`/`--to`): native: `sol eth bnb okb matic pol avax ftm trx sui`; stablecoins: `usdc usdt dai`; wrapped: `weth wbtc wbnb wmatic`
 2. `onchainos token search --query <symbol> --chains <chain>` — for all other symbols
 3. User provides full CA directly
 
