@@ -47,8 +47,7 @@ metadata:
 | 2 | `onchainos swap liquidity --chain <chain>` | Get available liquidity sources on a chain |
 | 3 | `onchainos swap approve --token ... --amount ... --chain ...` | Get ERC-20 approval transaction data (advanced/manual use) |
 | 4 | `onchainos swap quote --from ... --to ... --amount ... --chain ...` | Get swap quote (read-only price estimate). **No `--slippage` param**. |
-| 5 | `onchainos swap check-approvals --chain ... --address ... --token ...` | Check current ERC-20 allowance for a token |
-| 6 | `onchainos swap execute --from ... --to ... --amount ... --chain ... --wallet ... [--slippage <pct>] [--gas-level <level>] [--mev-protection]` | **One-shot swap**: quote → approve (if needed) → swap → sign & broadcast → txHash. CLI internally blocks honeypots and price impact >10%. |
+| 5 | `onchainos swap execute --from ... --to ... --amount ... --chain ... --wallet ... [--slippage <pct>] [--gas-level <level>] [--mev-protection]` | **One-shot swap**: quote → approve (if needed) → swap → sign & broadcast → txHash. CLI internally blocks honeypots and price impact >10%. |
 
 ## Token Address Resolution (Mandatory)
 
