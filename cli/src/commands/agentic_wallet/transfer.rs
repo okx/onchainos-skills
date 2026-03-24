@@ -152,6 +152,12 @@ async fn sign_and_broadcast(
     let trace_ref = if trace_headers_unsigned.is_empty() {
         None
     } else {
+        if cfg!(feature = "debug-log") {
+            eprintln!(
+                "[DEBUG][sign_and_broadcast] unsignedInfo trace headers: ok-client-tid={}, ok-client-timestamp={}",
+                cached_tid.as_deref().unwrap_or(""), ts_unsigned
+            );
+        }
         Some(trace_headers_unsigned.as_slice())
     };
     let unsigned = client
@@ -275,6 +281,12 @@ async fn sign_and_broadcast(
     let trace_ref_broadcast = if trace_headers_broadcast.is_empty() {
         None
     } else {
+        if cfg!(feature = "debug-log") {
+            eprintln!(
+                "[DEBUG][sign_and_broadcast] broadcast trace headers: ok-client-tid={}, ok-client-timestamp={}",
+                cached_tid.as_deref().unwrap_or(""), ts_broadcast
+            );
+        }
         Some(trace_headers_broadcast.as_slice())
     };
     let broadcast_resp = client

@@ -354,6 +354,12 @@ pub async fn fetch_quote(
         ("ok-client-tid", tid.as_str()),
         ("ok-client-timestamp", timestamp.as_str()),
     ];
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][fetch_quote] trace headers: ok-client-tid={}, ok-client-timestamp={}",
+            tid, timestamp
+        );
+    }
     client
         .get_with_headers("/api/v6/dex/aggregator/quote", &params, Some(&headers))
         .await
@@ -420,6 +426,12 @@ pub async fn fetch_swap(
     let cached_tid = crate::wallet_store::get_swap_trace_id().ok().flatten();
     if let Some(ref tid) = cached_tid {
         let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+        if cfg!(feature = "debug-log") {
+            eprintln!(
+                "[DEBUG][fetch_swap] trace headers: ok-client-tid={}, ok-client-timestamp={}",
+                tid, timestamp
+            );
+        }
         let headers = [
             ("ok-client-tid", tid.as_str()),
             ("ok-client-timestamp", timestamp.as_str()),
