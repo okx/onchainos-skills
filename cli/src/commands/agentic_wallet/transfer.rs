@@ -8,6 +8,7 @@ use crate::wallet_api::WalletApiClient;
 use crate::wallet_store::{self, AddressInfo, WalletsJson};
 
 use super::auth::{ensure_tokens_refreshed, format_api_error};
+use super::common::handle_confirming_error;
 
 // ── resolve_address ───────────────────────────────────────────────────
 
@@ -137,6 +138,28 @@ async fn sign_and_broadcast(
     })?;
 
     let client = WalletApiClient::new()?;
+    // Read swap trace ID from cache; build trace headers if present
+    let cached_tid = crate::wallet_store::get_swap_trace_id().ok().flatten();
+    let ts_unsigned = chrono::Utc::now().timestamp_millis().to_string();
+    let trace_headers_unsigned: Vec<(&str, &str)> = if let Some(ref tid) = cached_tid {
+        vec![
+            ("ok-client-tid", tid.as_str()),
+            ("ok-client-timestamp", ts_unsigned.as_str()),
+        ]
+    } else {
+        vec![]
+    };
+    let trace_ref = if trace_headers_unsigned.is_empty() {
+        None
+    } else {
+        if cfg!(feature = "debug-log") {
+            eprintln!(
+                "[DEBUG][sign_and_broadcast] unsignedInfo trace headers: ok-client-tid={}, ok-client-timestamp={}",
+                cached_tid.as_deref().unwrap_or(""), ts_unsigned
+            );
+        }
+        Some(trace_headers_unsigned.as_slice())
+    };
     let unsigned = client
         .pre_transaction_unsigned_info(
             &access_token,
@@ -153,6 +176,7 @@ async fn sign_and_broadcast(
             tx.aa_dex_token_addr,
             tx.aa_dex_token_amount,
             tx.jito_unsigned_tx,
+            trace_ref,
         )
         .await
         .map_err(format_api_error)?;
@@ -183,7 +207,7 @@ async fn sign_and_broadcast(
     let mut msg_for_sign_map = serde_json::Map::new();
 
     if !unsigned.hash.is_empty() {
-        let sig = crate::crypto::ed25519_sign_eip191(&unsigned.hash, &signing_seed)?;
+        let sig = crate::crypto::ed25519_sign_eip191(&unsigned.hash, &signing_seed, "hex")?;
         msg_for_sign_map.insert("signature".into(), json!(sig));
     }
     if !unsigned.auth_hash_for7702.is_empty() {
@@ -245,6 +269,26 @@ async fn sign_and_broadcast(
     let extra_data_str =
         serde_json::to_string(&extra_data_obj).context("failed to serialize extraData")?;
 
+    let ts_broadcast = chrono::Utc::now().timestamp_millis().to_string();
+    let trace_headers_broadcast: Vec<(&str, &str)> = if let Some(ref tid) = cached_tid {
+        vec![
+            ("ok-client-tid", tid.as_str()),
+            ("ok-client-timestamp", ts_broadcast.as_str()),
+        ]
+    } else {
+        vec![]
+    };
+    let trace_ref_broadcast = if trace_headers_broadcast.is_empty() {
+        None
+    } else {
+        if cfg!(feature = "debug-log") {
+            eprintln!(
+                "[DEBUG][sign_and_broadcast] broadcast trace headers: ok-client-tid={}, ok-client-timestamp={}",
+                cached_tid.as_deref().unwrap_or(""), ts_broadcast
+            );
+        }
+        Some(trace_headers_broadcast.as_slice())
+    };
     let broadcast_resp = client
         .broadcast_transaction(
             &access_token,
@@ -252,9 +296,10 @@ async fn sign_and_broadcast(
             &addr_info.address,
             &addr_info.chain_index,
             &extra_data_str,
+            trace_ref_broadcast,
         )
         .await
-        .map_err(|e| handle_broadcast_error(e, force))?;
+        .map_err(|e| handle_confirming_error(e, force))?;
 
     if cfg!(feature = "debug-log") {
         eprintln!(
@@ -266,42 +311,25 @@ async fn sign_and_broadcast(
     Ok(())
 }
 
-// ── broadcast error handling ──────────────────────────────────────────
-
-/// broadcast_transaction error handler:
-/// - code=81362 and !force → return CliConfirming (needs user confirmation)
-/// - other ApiCodeError → extract msg as plain error
-/// - non-ApiCodeError → pass through
-fn handle_broadcast_error(e: anyhow::Error, force: bool) -> anyhow::Error {
-    match e.downcast::<crate::wallet_api::ApiCodeError>() {
-        Ok(api_err) => {
-            if !force && api_err.code == "81362" {
-                crate::output::CliConfirming {
-                    message: api_err.msg,
-                    next: "If the user confirms, re-run the same command with --force flag appended to proceed.".to_string(),
-                }
-                .into()
-            } else {
-                anyhow::anyhow!("{}", api_err.msg)
-            }
-        }
-        Err(e) => e,
-    }
-}
-
 // ── send ─────────────────────────────────────────────────────────────
 
 /// onchainos wallet send
 pub(super) async fn cmd_send(
-    amount: &str,
+    amt: &str,
     receipt: &str,
     chain: &str,
     from: Option<&str>,
     contract_token: Option<&str>,
     force: bool,
 ) -> Result<()> {
-    if amount.is_empty() || receipt.is_empty() || chain.is_empty() {
-        bail!("amount, receipt and chain are required");
+    if amt.is_empty() {
+        bail!("amt is required");
+    }
+    if amt.contains('.') {
+        bail!("amt must be a whole number in minimal units (no decimals). For example, to send 0.1 ETH pass 100000000000000000");
+    }
+    if receipt.is_empty() || chain.is_empty() {
+        bail!("receipt and chain are required");
     }
 
     sign_and_broadcast(
@@ -309,7 +337,7 @@ pub(super) async fn cmd_send(
         from,
         TxParams {
             to_addr: receipt,
-            value: amount,
+            value: amt,
             contract_addr: contract_token,
             input_data: None,
             unsigned_tx: None,
@@ -332,7 +360,7 @@ pub(super) async fn cmd_send(
 pub(super) async fn cmd_contract_call(
     to: &str,
     chain: &str,
-    value: &str,
+    amt: &str,
     input_data: Option<&str>,
     unsigned_tx: Option<&str>,
     gas_limit: Option<&str>,
@@ -346,6 +374,9 @@ pub(super) async fn cmd_contract_call(
     if to.is_empty() || chain.is_empty() {
         bail!("to and chain are required");
     }
+    if amt.contains('.') {
+        bail!("amt must be a whole number in minimal units (no decimals). For example, to send 0.1 ETH pass 100000000000000000");
+    }
     if input_data.is_none() && unsigned_tx.is_none() {
         bail!("either --input-data (EVM) or --unsigned-tx (SOL) is required");
     }
@@ -355,7 +386,7 @@ pub(super) async fn cmd_contract_call(
         from,
         TxParams {
             to_addr: to,
-            value,
+            value: amt,
             contract_addr: Some(to),
             input_data,
             unsigned_tx,
@@ -472,7 +503,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── handle_broadcast_error tests ─────────────────────────────────
+    // ── handle_confirming_error tests ─────────────────────────────────
 
     #[test]
     fn broadcast_error_81362_no_force_returns_cli_confirming() {
@@ -481,7 +512,7 @@ mod tests {
             msg: "please confirm".to_string(),
         };
         let err: anyhow::Error = api_err.into();
-        let result = handle_broadcast_error(err, false);
+        let result = handle_confirming_error(err, false);
         let confirming = result
             .downcast_ref::<crate::output::CliConfirming>()
             .expect("should be CliConfirming");
@@ -496,7 +527,7 @@ mod tests {
             msg: "please confirm".to_string(),
         };
         let err: anyhow::Error = api_err.into();
-        let result = handle_broadcast_error(err, true);
+        let result = handle_confirming_error(err, true);
         // Should NOT be CliConfirming when force=true
         assert!(result
             .downcast_ref::<crate::output::CliConfirming>()
@@ -511,7 +542,7 @@ mod tests {
             msg: "server error".to_string(),
         };
         let err: anyhow::Error = api_err.into();
-        let result = handle_broadcast_error(err, false);
+        let result = handle_confirming_error(err, false);
         assert!(result
             .downcast_ref::<crate::output::CliConfirming>()
             .is_none());
@@ -521,7 +552,7 @@ mod tests {
     #[test]
     fn broadcast_error_non_api_error_passes_through() {
         let err = anyhow::anyhow!("network timeout");
-        let result = handle_broadcast_error(err, false);
+        let result = handle_confirming_error(err, false);
         assert!(result
             .downcast_ref::<crate::output::CliConfirming>()
             .is_none());

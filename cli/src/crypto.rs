@@ -183,20 +183,28 @@ pub fn ed25519_sign_hex(hex_hash: &str, session_key_b64: &str) -> Result<String>
 }
 
 /// EIP-191 (personal_sign) + Ed25519:
-/// 1. Strip optional "0x" prefix from `hex_hash`, decode to raw bytes
+/// 1. Decode `msg` according to `encoding`:
+///    - `"hex"`: strip optional "0x" prefix, hex-decode to raw bytes
+///    - `"utf8"`: use the raw UTF-8 bytes directly
 /// 2. Build EIP-191 message: "\x19Ethereum Signed Message:\n" + len(raw_bytes) + raw_bytes
 /// 3. Keccak-256 hash the message
 /// 4. Ed25519 sign the hash with `signing_seed`
 /// 5. Return base64-encoded signature
-pub fn ed25519_sign_eip191(hex_hash: &str, signing_seed: &[u8]) -> Result<String> {
+pub fn ed25519_sign_eip191(msg: &str, signing_seed: &[u8], encoding: &str) -> Result<String> {
     use tiny_keccak::{Hasher, Keccak};
 
-    let hex_clean = hex_hash.strip_prefix("0x").unwrap_or(hex_hash);
-    if hex_clean.is_empty() {
+    if msg.is_empty() {
         return Ok(String::new());
     }
 
-    let data = hex::decode(hex_clean).context("unsigned.hash is not valid hex")?;
+    let data = match encoding {
+        "hex" => {
+            let hex_clean = msg.strip_prefix("0x").unwrap_or(msg);
+            hex::decode(hex_clean).context("msg is not valid hex")?
+        }
+        "utf8" => msg.as_bytes().to_vec(),
+        _ => bail!("unsupported encoding for eip191: {encoding}, expected \"hex\" or \"utf8\""),
+    };
 
     // Build EIP-191 message
     let prefix = format!("\x19Ethereum Signed Message:\n{}", data.len());
@@ -208,6 +216,12 @@ pub fn ed25519_sign_eip191(hex_hash: &str, signing_seed: &[u8]) -> Result<String
     keccak.update(&eth_msg);
     let mut hash = [0u8; 32];
     keccak.finalize(&mut hash);
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][ed25519_sign_eip191] keccak256 hash={}",
+            hex::encode(hash)
+        );
+    }
 
     // Sign & base64 encode
     let sig_bytes = ed25519_sign(signing_seed, &hash)?;
