@@ -376,6 +376,16 @@ impl ApiClient {
 
     /// GET request with automatic auth (JWT or AK).
     pub async fn get(&self, path: &str, query: &[(&str, &str)]) -> Result<Value> {
+        self.get_with_headers(path, query, None).await
+    }
+
+    /// GET request with automatic auth + optional extra headers.
+    pub async fn get_with_headers(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        extra_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Value> {
         let (url, request_path) = self.build_get_url_and_request_path(path, query)?;
         let req = self.http.get(url);
         let req = match &self.auth {
@@ -392,6 +402,7 @@ impl ApiClient {
             }
             AuthMode::Anonymous => Self::apply_anonymous(req),
         };
+        let req = Self::apply_extra_headers(req, extra_headers);
 
         let resp = req.send().await.context("request failed")?;
         self.handle_response(resp).await
@@ -400,6 +411,16 @@ impl ApiClient {
     /// POST request with automatic auth (JWT or AK).
     /// Signature uses path only (no query string) + JSON body string.
     pub async fn post(&self, path: &str, body: &Value) -> Result<Value> {
+        self.post_with_headers(path, body, None).await
+    }
+
+    /// POST request with automatic auth + optional extra headers.
+    pub async fn post_with_headers(
+        &self,
+        path: &str,
+        body: &Value,
+        extra_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Value> {
         let body_str = serde_json::to_string(body)?;
         let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
         let req = self.http.post(&url).body(body_str.clone());
@@ -417,9 +438,33 @@ impl ApiClient {
             }
             AuthMode::Anonymous => Self::apply_anonymous(req),
         };
+        let req = Self::apply_extra_headers(req, extra_headers);
 
         let resp = req.send().await.context("request failed")?;
         self.handle_response(resp).await
+    }
+
+    /// Apply optional extra headers to a request builder.
+    fn apply_extra_headers(
+        builder: reqwest::RequestBuilder,
+        extra_headers: Option<&[(&str, &str)]>,
+    ) -> reqwest::RequestBuilder {
+        match extra_headers {
+            Some(headers) => {
+                use reqwest::header::HeaderValue;
+                let mut map = reqwest::header::HeaderMap::new();
+                for (k, v) in headers {
+                    if let (Ok(name), Ok(val)) = (
+                        reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                        HeaderValue::from_str(v),
+                    ) {
+                        map.insert(name, val);
+                    }
+                }
+                builder.headers(map)
+            }
+            None => builder,
+        }
     }
 
     async fn handle_response(&self, resp: reqwest::Response) -> Result<Value> {
