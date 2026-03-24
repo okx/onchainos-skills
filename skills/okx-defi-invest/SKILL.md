@@ -31,8 +31,8 @@ For CLI parameter details, see [references/cli-reference.md](references/cli-refe
 | 1 | `defi list` | List top DeFi products by APY |
 | 2 | `defi search --token <tokens> [--platform <names>] [--chain <chain>] [--product-group <group>]` | Search DeFi products |
 | 3 | `defi detail --investment-id <id>` | Get full product details |
-| 4 | `defi invest --investment-id <id> --address <addr> --token <symbol_or_addr> --amount <human_amount> [--chain <chain>] [--slippage <pct>] [--tick-lower <n>] [--tick-upper <n>] [--token-id <nft>]` | One-step deposit (CLI handles prepare + precision + calldata) |
-| 5 | `defi withdraw --investment-id <id> --address <addr> --chain <chain> [--ratio <0-1>] [--amount <human_amount>] [--token-id <nft>] [--platform-id <pid>] [--slippage <pct>]` | One-step withdrawal (CLI handles position lookup + calldata) |
+| 4 | `defi invest --investment-id <id> --address <addr> --token <symbol_or_addr> --amount <minimal_units> [--chain <chain>] [--slippage <pct>] [--tick-lower <n>] [--tick-upper <n>] [--token-id <nft>]` | One-step deposit (CLI handles prepare + precision + calldata) |
+| 5 | `defi withdraw --investment-id <id> --address <addr> --chain <chain> [--ratio <0-1>] [--amount <minimal_units>] [--token-id <nft>] [--platform-id <pid>] [--slippage <pct>]` | One-step withdrawal (CLI handles position lookup + calldata) |
 | 6 | `defi collect --address <addr> --chain <chain> --reward-type <type> [--investment-id <id>] [--platform-id <pid>] [--token-id <nft>] [--principal-index <idx>]` | One-step reward claim (CLI handles reward check + calldata) |
 | 7 | `defi positions --address <addr> --chains <chains>` | List DeFi positions by platform |
 | 8 | `defi position-detail --address <addr> --chain <chain> --platform-id <pid>` | Get detailed position info |
@@ -91,7 +91,7 @@ CLI resolves chain names automatically (e.g. `ethereum` → `1`, `bsc` → `56`,
 1. defi search --token USDT --platform PancakeSwap --chain bsc --product-group DEX_POOL
 2. defi detail --investment-id <id>
 3. Ask user for amount and tick range
-4. defi invest --investment-id <id> --address <addr> --token USDT --amount 100 --tick-lower=-100 --tick-upper=100
+4. defi invest --investment-id <id> --address <addr> --token USDT --amount 100000000 --range 5
    → CLI handles calculate-entry internally, returns calldata
 5. User signs and broadcasts
 ```
@@ -170,7 +170,7 @@ Step 2/N: DEPOSIT  to: 0x7251... chain: Ethereum  value: 0x48da...
 
 ## Global Notes
 
-- Pass human-readable amounts to `invest`/`withdraw` — CLI handles precision conversion
+- `--amount` must be in **minimal units** (integer). Convert: userAmount × 10^tokenPrecision. Example: 0.1 USDC (precision=6) → `--amount 100000`. Get tokenPrecision from `defi detail` or `defi position-detail`
 - The wallet address parameter for ALL defi commands is `--address`
 - `--slippage` default is `"0.01"` (1%); suggest `"0.03"`–`"0.05"` for volatile V3 pools
 - Solana DeFi transactions use base58-encoded VersionedTransaction — sign and broadcast within 60 seconds
