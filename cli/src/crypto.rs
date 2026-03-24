@@ -216,6 +216,12 @@ pub fn ed25519_sign_eip191(msg: &str, signing_seed: &[u8], encoding: &str) -> Re
     keccak.update(&eth_msg);
     let mut hash = [0u8; 32];
     keccak.finalize(&mut hash);
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][ed25519_sign_eip191] keccak256 hash={}",
+            hex::encode(hash)
+        );
+    }
 
     // Sign & base64 encode
     let sig_bytes = ed25519_sign(signing_seed, &hash)?;
