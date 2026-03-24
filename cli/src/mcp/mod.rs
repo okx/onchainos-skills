@@ -152,6 +152,72 @@ struct DefiCalculateEntryParams {
     tick_upper: Option<i64>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+struct DefiInvestParams {
+    /// Investment ID from defi_search or defi_detail
+    investment_id: String,
+    /// User wallet address
+    address: String,
+    /// Token symbol or contract address (e.g. "USDC" or "0xa0b8...")
+    token: String,
+    /// Amount in minimal units (integer). Convert: userAmount × 10^tokenPrecision. Example: 0.1 USDC (precision=6) → "100000"
+    amount: String,
+    /// Second token symbol or address (V3 dual-token entry). Auto-detected from pool if only amount2 is provided.
+    token2: Option<String>,
+    /// Second token amount in minimal units (V3 dual-token entry). CLI rebalances to pool ratio and returns surplus info.
+    amount2: Option<String>,
+    /// Chain name (optional, auto-resolved from product detail if omitted)
+    chain: Option<String>,
+    /// Slippage tolerance (default "0.01" = 1%)
+    slippage: Option<String>,
+    /// V3 Pool: NFT tokenId for adding to existing position (no tick/range needed)
+    token_id: Option<String>,
+    /// V3 Pool: lower tick for new position (alternative to range)
+    tick_lower: Option<i64>,
+    /// V3 Pool: upper tick for new position (alternative to range)
+    tick_upper: Option<i64>,
+    /// V3 Pool: price range percentage (e.g. 5 for ±5%). Required for V3 new position if tick_lower/tick_upper not provided.
+    range: Option<f64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct DefiWithdrawParams {
+    /// Investment product ID
+    investment_id: String,
+    /// User wallet address
+    address: String,
+    /// Chain name (e.g. "ethereum", "polygon")
+    chain: String,
+    /// Redemption ratio: "1"=100% full exit, "0.5"=50%
+    ratio: Option<String>,
+    /// V3 Pool NFT tokenId
+    token_id: Option<String>,
+    /// Slippage tolerance (default "0.01")
+    slippage: Option<String>,
+    /// Partial exit amount in human-readable units. CLI handles precision internally.
+    amount: Option<String>,
+    /// Platform ID (analysisPlatformId) for auto-fetching position info
+    platform_id: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct DefiCollectParams {
+    /// User wallet address
+    address: String,
+    /// Chain name
+    chain: String,
+    /// Reward type: REWARD_PLATFORM, REWARD_INVESTMENT, V3_FEE, REWARD_OKX_BONUS, REWARD_MERKLE_BONUS, UNLOCKED_PRINCIPAL
+    reward_type: String,
+    /// Investment product ID
+    investment_id: Option<String>,
+    /// Platform ID (analysisPlatformId)
+    platform_id: Option<String>,
+    /// V3 Pool NFT tokenId (for V3_FEE)
+    token_id: Option<String>,
+    /// Principal order index (for UNLOCKED_PRINCIPAL)
+    principal_index: Option<String>,
+}
+
 // ── Token ──────────────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
 struct TokenSearchParams {
@@ -1641,124 +1707,7 @@ impl McpServer {
         }
     }
 
-    #[tool(
-        name = "defi_prepare",
-        description = "Pre-investment check — returns supported tokens (tokenAddress, chainIndex, tokenPrecision), V3 tick parameters. MUST call before defi_deposit."
-    )]
-    async fn defi_prepare(
-        &self,
-        Parameters(p): Parameters<DefiPrepareParams>,
-    ) -> Result<String, String> {
-        match defi::fetch_prepare(&self.client, &p.investment_id).await {
-            Ok(data) => ok(data),
-            Err(e) => err(e),
-        }
-    }
-
-    #[tool(
-        name = "defi_deposit",
-        description = "Generate calldata for DeFi investment (subscribe, add liquidity, borrow). IMPORTANT: coinAmount in user_input must be minimal units (integer) with tokenPrecision. Convert: userAmount × 10^tokenPrecision. Example: 0.1 USDT (precision=6) → coinAmount=\"100000\". tokenPrecision is required for each token (from defi_prepare → investWithTokenList[].tokenPrecision)."
-    )]
-    async fn defi_deposit(
-        &self,
-        Parameters(p): Parameters<DefiEnterParams>,
-    ) -> Result<String, String> {
-        let slippage = p.slippage.as_deref().unwrap_or("0.01");
-        match defi::fetch_enter(
-            &self.client,
-            &p.investment_id,
-            &p.address,
-            &p.user_input,
-            slippage,
-            p.token_id.as_deref(),
-            p.tick_lower,
-            p.tick_upper,
-        )
-        .await
-        {
-            Ok(data) => ok(data),
-            Err(e) => err(e),
-        }
-    }
-
-    // ── DeFi B: Exit / Claim / Positions ─────────────────────────────
-
-    #[tool(
-        name = "defi_redeem",
-        description = "Generate calldata for DeFi redemption/withdrawal. IMPORTANT: coinAmount in user_input must be minimal units (integer) with tokenPrecision. V3 Pool: pass token_id + redeem_ratio only. Non-V3: pass user_input with underlying token."
-    )]
-    async fn defi_redeem(
-        &self,
-        Parameters(p): Parameters<DefiExitParams>,
-    ) -> Result<String, String> {
-        let chain_index = crate::chains::resolve_chain(&p.chain);
-        let slippage = p.slippage.as_deref().unwrap_or("0.01");
-        match defi::fetch_exit(
-            &self.client,
-            &p.product_id,
-            &chain_index,
-            &p.address,
-            p.redeem_ratio.as_deref(),
-            p.token_address.as_deref(),
-            p.token_symbol.as_deref(),
-            p.amount.as_deref(),
-            p.token_precision,
-            p.token_id.as_deref(),
-            slippage,
-            p.user_input.as_deref(),
-        )
-        .await
-        {
-            Ok(data) => ok(data),
-            Err(e) => err(e),
-        }
-    }
-
-    #[tool(
-        name = "defi_claim",
-        description = "Generate calldata to claim DeFi rewards. ALWAYS pass platform_id when available. Pass expect_output_list from position-detail if in context."
-    )]
-    async fn defi_claim(
-        &self,
-        Parameters(p): Parameters<DefiClaimParams>,
-    ) -> Result<String, String> {
-        let chain_index = crate::chains::resolve_chain(&p.chain);
-        let auto_expect: Option<String> = if p.expect_output_list.is_none() {
-            if let Some(pfid) = p.platform_id.as_deref() {
-                defi::extract_expect_output(
-                    &self.client,
-                    &p.address,
-                    &chain_index,
-                    pfid,
-                    &p.reward_type,
-                    p.product_id.as_deref(),
-                )
-                .await
-                .unwrap_or(None)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        let final_expect = p.expect_output_list.as_deref().or(auto_expect.as_deref());
-        match defi::fetch_claim(
-            &self.client,
-            &p.address,
-            &chain_index,
-            &p.reward_type,
-            p.product_id.as_deref(),
-            p.platform_id.as_deref(),
-            p.token_id.as_deref(),
-            p.principal_index.as_deref(),
-            final_expect,
-        )
-        .await
-        {
-            Ok(data) => ok(data),
-            Err(e) => err(e),
-        }
-    }
+    // ── DeFi: Positions / Position Detail (query tools) ──────────────
 
     #[tool(
         name = "defi_positions",
@@ -1791,23 +1740,80 @@ impl McpServer {
         }
     }
 
+    // ── DeFi: One-step tools (invest/withdraw/collect) ─────────────
+
     #[tool(
-        name = "defi_calculate_entry",
-        description = "Calculate exact token amounts for V3 pool entry. Returns both token amounts needed based on one input token."
+        name = "defi_invest",
+        description = "One-step DeFi deposit. Internally handles: detail check, prepare, precision conversion, V3 calculate-entry, calldata generation. Amount must be in minimal units (integer). For V3 pools pass range (e.g. 5 for ±5%). Returns calldata for signing."
     )]
-    async fn defi_calculate_entry(
+    async fn defi_invest(
         &self,
-        Parameters(p): Parameters<DefiCalculateEntryParams>,
+        Parameters(p): Parameters<DefiInvestParams>,
     ) -> Result<String, String> {
-        match defi::fetch_calculate_entry(
+        match defi::execute_invest(
             &self.client,
-            &p.id,
+            &p.investment_id,
             &p.address,
-            &p.input_token,
-            &p.input_amount,
-            &p.token_decimal,
+            &p.token,
+            &p.amount,
+            p.token2.as_deref(),
+            p.amount2.as_deref(),
+            p.slippage.as_deref().unwrap_or("0.01"),
+            p.token_id.as_deref(),
             p.tick_lower,
             p.tick_upper,
+            p.range,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "defi_withdraw",
+        description = "One-step DeFi withdrawal. Internally handles: position-detail lookup, parameter construction, calldata generation. For full exit use ratio='1'. For V3 pools pass token_id + ratio."
+    )]
+    async fn defi_withdraw(
+        &self,
+        Parameters(p): Parameters<DefiWithdrawParams>,
+    ) -> Result<String, String> {
+        match defi::execute_withdraw(
+            &self.client,
+            &p.investment_id,
+            &p.address,
+            &p.chain,
+            p.ratio.as_deref(),
+            p.token_id.as_deref(),
+            p.slippage.as_deref().unwrap_or("0.01"),
+            p.amount.as_deref(),
+            p.platform_id.as_deref(),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "defi_collect",
+        description = "One-step DeFi reward claim. Internally handles: position-detail lookup, reward check, expectOutputList construction, calldata generation. Skips if no rewards available."
+    )]
+    async fn defi_collect(
+        &self,
+        Parameters(p): Parameters<DefiCollectParams>,
+    ) -> Result<String, String> {
+        match defi::execute_collect(
+            &self.client,
+            &p.address,
+            &p.chain,
+            &p.reward_type,
+            p.investment_id.as_deref(),
+            p.platform_id.as_deref(),
+            p.token_id.as_deref(),
+            p.principal_index.as_deref(),
         )
         .await
         {

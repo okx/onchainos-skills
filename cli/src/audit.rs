@@ -471,6 +471,9 @@ fn defi_sub(c: &DefiCommand) -> &'static str {
         DefiCommand::Redeem { .. } => "redeem",
         DefiCommand::Claim { .. } => "claim",
         DefiCommand::CalculateEntry { .. } => "calculate-entry",
+        DefiCommand::Invest { .. } => "invest",
+        DefiCommand::Withdraw { .. } => "withdraw",
+        DefiCommand::Collect { .. } => "collect",
         DefiCommand::Positions { .. } => "positions",
         DefiCommand::PositionDetail { .. } => "position-detail",
     }
