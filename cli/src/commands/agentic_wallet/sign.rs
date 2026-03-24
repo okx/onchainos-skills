@@ -5,6 +5,7 @@ use zeroize::Zeroize;
 
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
 use crate::{keyring_store, output, wallet_api::WalletApiClient, wallet_store};
+use crate::commands::agentic_wallet::common::handle_confirming_error;
 
 /// onchainos wallet sign-message
 pub(super) async fn cmd_sign_message(
@@ -12,6 +13,7 @@ pub(super) async fn cmd_sign_message(
     message: &str,
     chain: &str,
     from: &str,
+    force: bool,
 ) -> Result<()> {
     if message.is_empty() {
         bail!("--message must not be empty");
@@ -34,8 +36,8 @@ pub(super) async fn cmd_sign_message(
     }
 
     match sign_type {
-        "personal" => personal_sign(message, chain, from).await,
-        "eip712" => eip712_sign(message, chain, from).await,
+        "personal" => personal_sign(message, chain, from, force).await,
+        "eip712" => eip712_sign(message, chain, from, force).await,
         _ => bail!("unsupported --type: {sign_type}, expected 'personal' or 'eip712'"),
     }
 }
@@ -79,7 +81,7 @@ async fn resolve_chain_and_address(chain: &str, from: &str) -> Result<(String, S
 
 // ── personalSign ─────────────────────────────────────────────────────
 
-async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
+async fn personal_sign(message: &str, chain: &str, from: &str, force: bool) -> Result<()> {
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][personal_sign] enter: chain={}, from={}",
@@ -133,7 +135,7 @@ async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
         sig
     } else {
         // EVM: EIP-191 personal sign (prefix + keccak256 + ed25519)
-        let sig = crate::crypto::ed25519_sign_eip191(&message, &signing_seed, "utf8")?;
+        let sig = crate::crypto::ed25519_sign_eip191(message, &signing_seed, "utf8")?;
         signing_seed.zeroize();
         sig
     };
@@ -156,7 +158,7 @@ async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
 
     // Call sign-msg API
     let client = WalletApiClient::new()?;
-    let body = json!({
+    let mut body = json!({
         "chainIndex": chain_index,
         "from": from_address,
         "sessionCert": session_cert,
@@ -166,6 +168,9 @@ async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
             "sessionSignature": session_signature,
         }]
     });
+    if force {
+        body["skipWarning"] = json!(true);
+    }
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][personal_sign] Step 7: calling sign-msg API, body={}",
@@ -180,7 +185,7 @@ async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
             &body,
         )
         .await
-        .map_err(format_api_error)?;
+        .map_err(|e| handle_confirming_error(e, force))?;
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][personal_sign] Step 8: sign-msg response={}",
@@ -193,7 +198,7 @@ async fn personal_sign(message: &str, chain: &str, from: &str) -> Result<()> {
 
 // ── eip712 ───────────────────────────────────────────────────────────
 
-async fn eip712_sign(message: &str, chain: &str, from: &str) -> Result<()> {
+async fn eip712_sign(message: &str, chain: &str, from: &str, force: bool) -> Result<()> {
     if chain == "501" {
         bail!("eip712 signing is not supported on Solana (chain 501)");
     }
@@ -297,7 +302,7 @@ async fn eip712_sign(message: &str, chain: &str, from: &str) -> Result<()> {
     }
 
     // Step 3: sign-msg API
-    let sign_body = json!({
+    let mut sign_body = json!({
         "chainIndex": chain_index,
         "from": from_address,
         "sessionCert": session_cert,
@@ -307,6 +312,9 @@ async fn eip712_sign(message: &str, chain: &str, from: &str) -> Result<()> {
             "sessionSignature": session_signature,
         }]
     });
+    if force {
+        sign_body["skipWarning"] = json!(true);
+    }
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][eip712_sign] Step 9: calling sign-msg API, body={}",
@@ -321,7 +329,7 @@ async fn eip712_sign(message: &str, chain: &str, from: &str) -> Result<()> {
             &sign_body,
         )
         .await
-        .map_err(format_api_error)?;
+        .map_err(|e| handle_confirming_error(e, force))?;
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][eip712_sign] Step 10: sign-msg response={}",

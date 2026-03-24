@@ -175,8 +175,8 @@ Applies to:
 
 | # | Command | Description | Auth Required |
 |---|---|---|---|
-| F1 | `onchainos wallet sign-message --chain <chainId> --from <addr> --message <msg>` | personalSign (EIP-191). Supports EVM and Solana. Default mode. | Yes |
-| F2 | `onchainos wallet sign-message --chain <chainId> --from <addr> --type eip712 --message <json>` | EIP-712 typed structured data. EVM only. | Yes |
+| F1 | `onchainos wallet sign-message --chain <chainId> --from <addr> --message <msg>` | personalSign (EIP-191). Supports EVM and Solana. Default mode. Supports `--force` to bypass confirmation prompts. | Yes |
+| F2 | `onchainos wallet sign-message --chain <chainId> --from <addr> --type eip712 --message <json>` | EIP-712 typed structured data. EVM only. Supports `--force` to bypass confirmation prompts. | Yes |
 
 ## Operation Flow
 
@@ -457,8 +457,9 @@ Sign arbitrary messages or EIP-712 typed data using the TEE-backed session key. 
 
 1. **Collect params**: message content, signing type (personal or eip712), chain, from address.
 2. **Validate**: If `--type eip712`, the chain must be an EVM chain (not Solana). personalSign supports both EVM and Solana.
-3. **Execute**: `onchainos wallet sign-message --chain <chainId> --from <address> --message <msg> [--type <type>]`
+3. **Execute**: `onchainos wallet sign-message --chain <chainId> --from <address> --message <msg> [--type <type>] [--force]`
 4. **Display**: Show the returned `signature`. For Solana (chain 501), the signature is base58-encoded and a `publicKey` field (the signer address) is also returned. For EVM chains, the signature is hex-encoded.
+5. **Confirming response**: If the API returns a confirming response (exit code 2), follow the standard confirming response handling (see "Confirming Response" section). Re-run with `--force` after user confirms.
 
 ### Suggest Next Steps — Section F
 

@@ -789,7 +789,8 @@ onchainos wallet sign-message \
   --chain <chainId> \
   --message <message> \
   [--type <type>] \
-  --from <address>
+  --from <address> \
+  [--force]
 ```
 
 | Parameter | Type | Required | Description |
@@ -798,6 +799,7 @@ onchainos wallet sign-message \
 | `--message` | string | Yes | Message to sign. For `personal`: arbitrary string. For `eip712`: JSON string of the typed data. |
 | `--type` | string | No | Signing type: `personal` (default, EVM + Solana) or `eip712` (EVM only). |
 | `--from` | string | Yes | Sender address — the address whose private key is used to sign. |
+| `--force` | bool | No | Skip confirmation prompts from the backend (default false). Use when re-running a command after the user has confirmed a `confirming` response. |
 
 > **Note:** Using `--type eip712` with `--chain 501` (Solana) will return an error. EIP-712 is only supported on EVM chains.
 

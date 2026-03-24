@@ -8,6 +8,7 @@ use crate::wallet_api::WalletApiClient;
 use crate::wallet_store::{self, AddressInfo, WalletsJson};
 
 use super::auth::{ensure_tokens_refreshed, format_api_error};
+use super::common::handle_confirming_error;
 
 // ── resolve_address ───────────────────────────────────────────────────
 
@@ -254,7 +255,7 @@ async fn sign_and_broadcast(
             &extra_data_str,
         )
         .await
-        .map_err(|e| handle_broadcast_error(e, force))?;
+        .map_err(|e| handle_confirming_error(e, force))?;
 
     if cfg!(feature = "debug-log") {
         eprintln!(
@@ -264,29 +265,6 @@ async fn sign_and_broadcast(
     }
     output::success(json!({ "txHash": broadcast_resp.tx_hash }));
     Ok(())
-}
-
-// ── broadcast error handling ──────────────────────────────────────────
-
-/// broadcast_transaction error handler:
-/// - code=81362 and !force → return CliConfirming (needs user confirmation)
-/// - other ApiCodeError → extract msg as plain error
-/// - non-ApiCodeError → pass through
-fn handle_broadcast_error(e: anyhow::Error, force: bool) -> anyhow::Error {
-    match e.downcast::<crate::wallet_api::ApiCodeError>() {
-        Ok(api_err) => {
-            if !force && api_err.code == "81362" {
-                crate::output::CliConfirming {
-                    message: api_err.msg,
-                    next: "If the user confirms, re-run the same command with --force flag appended to proceed.".to_string(),
-                }
-                .into()
-            } else {
-                anyhow::anyhow!("{}", api_err.msg)
-            }
-        }
-        Err(e) => e,
-    }
 }
 
 // ── send ─────────────────────────────────────────────────────────────
@@ -472,7 +450,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── handle_broadcast_error tests ─────────────────────────────────
+    // ── handle_confirming_error tests ─────────────────────────────────
 
     #[test]
     fn broadcast_error_81362_no_force_returns_cli_confirming() {
@@ -481,7 +459,7 @@ mod tests {
             msg: "please confirm".to_string(),
         };
         let err: anyhow::Error = api_err.into();
-        let result = handle_broadcast_error(err, false);
+        let result = handle_confirming_error(err, false);
         let confirming = result
             .downcast_ref::<crate::output::CliConfirming>()
             .expect("should be CliConfirming");
@@ -496,7 +474,7 @@ mod tests {
             msg: "please confirm".to_string(),
         };
         let err: anyhow::Error = api_err.into();
-        let result = handle_broadcast_error(err, true);
+        let result = handle_confirming_error(err, true);
         // Should NOT be CliConfirming when force=true
         assert!(result
             .downcast_ref::<crate::output::CliConfirming>()
@@ -511,7 +489,7 @@ mod tests {
             msg: "server error".to_string(),
         };
         let err: anyhow::Error = api_err.into();
-        let result = handle_broadcast_error(err, false);
+        let result = handle_confirming_error(err, false);
         assert!(result
             .downcast_ref::<crate::output::CliConfirming>()
             .is_none());
@@ -521,7 +499,7 @@ mod tests {
     #[test]
     fn broadcast_error_non_api_error_passes_through() {
         let err = anyhow::anyhow!("network timeout");
-        let result = handle_broadcast_error(err, false);
+        let result = handle_confirming_error(err, false);
         assert!(result
             .downcast_ref::<crate::output::CliConfirming>()
             .is_none());

@@ -122,6 +122,9 @@ pub enum WalletCommand {
         /// Sender address (the address whose private key is used to sign)
         #[arg(long)]
         from: String,
+        /// Force execution: skip confirmation prompts from the backend
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
     /// Call a smart contract (EVM inputData or SOL unsigned tx)
     ContractCall {
@@ -236,7 +239,8 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             message,
             chain,
             from,
-        } => super::sign::cmd_sign_message(&r#type, &message, &chain, &from).await,
+            force,
+        } => super::sign::cmd_sign_message(&r#type, &message, &chain, &from, force).await,
         WalletCommand::ContractCall {
             to,
             chain,
