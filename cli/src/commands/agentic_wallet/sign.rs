@@ -4,8 +4,8 @@ use serde_json::{json, Value};
 use zeroize::Zeroize;
 
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
-use crate::{keyring_store, output, wallet_api::WalletApiClient, wallet_store};
 use crate::commands::agentic_wallet::common::handle_confirming_error;
+use crate::{keyring_store, output, wallet_api::WalletApiClient, wallet_store};
 
 /// onchainos wallet sign-message
 pub(super) async fn cmd_sign_message(

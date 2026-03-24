@@ -138,6 +138,22 @@ async fn sign_and_broadcast(
     })?;
 
     let client = WalletApiClient::new()?;
+    // Read swap trace ID from cache; build trace headers if present
+    let cached_tid = crate::wallet_store::get_swap_trace_id().ok().flatten();
+    let ts_unsigned = chrono::Utc::now().timestamp_millis().to_string();
+    let trace_headers_unsigned: Vec<(&str, &str)> = if let Some(ref tid) = cached_tid {
+        vec![
+            ("ok-client-tid", tid.as_str()),
+            ("ok-client-timestamp", ts_unsigned.as_str()),
+        ]
+    } else {
+        vec![]
+    };
+    let trace_ref = if trace_headers_unsigned.is_empty() {
+        None
+    } else {
+        Some(trace_headers_unsigned.as_slice())
+    };
     let unsigned = client
         .pre_transaction_unsigned_info(
             &access_token,
@@ -154,6 +170,7 @@ async fn sign_and_broadcast(
             tx.aa_dex_token_addr,
             tx.aa_dex_token_amount,
             tx.jito_unsigned_tx,
+            trace_ref,
         )
         .await
         .map_err(format_api_error)?;
@@ -246,6 +263,20 @@ async fn sign_and_broadcast(
     let extra_data_str =
         serde_json::to_string(&extra_data_obj).context("failed to serialize extraData")?;
 
+    let ts_broadcast = chrono::Utc::now().timestamp_millis().to_string();
+    let trace_headers_broadcast: Vec<(&str, &str)> = if let Some(ref tid) = cached_tid {
+        vec![
+            ("ok-client-tid", tid.as_str()),
+            ("ok-client-timestamp", ts_broadcast.as_str()),
+        ]
+    } else {
+        vec![]
+    };
+    let trace_ref_broadcast = if trace_headers_broadcast.is_empty() {
+        None
+    } else {
+        Some(trace_headers_broadcast.as_slice())
+    };
     let broadcast_resp = client
         .broadcast_transaction(
             &access_token,
@@ -253,6 +284,7 @@ async fn sign_and_broadcast(
             &addr_info.address,
             &addr_info.chain_index,
             &extra_data_str,
+            trace_ref_broadcast,
         )
         .await
         .map_err(|e| handle_confirming_error(e, force))?;

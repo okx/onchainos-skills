@@ -212,9 +212,26 @@ pub async fn fetch_broadcast(
     if mev_protection {
         body["extraData"] = json!("{\"enableMevProtection\":true}");
     }
-    client
-        .post("/api/v6/dex/pre-transaction/broadcast-transaction", &body)
-        .await
+    // Read swap trace ID from cache; attach trace headers if present
+    let cached_tid = crate::wallet_store::get_swap_trace_id().ok().flatten();
+    if let Some(ref tid) = cached_tid {
+        let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+        let headers = [
+            ("ok-client-tid", tid.as_str()),
+            ("ok-client-timestamp", timestamp.as_str()),
+        ];
+        client
+            .post_with_headers(
+                "/api/v6/dex/pre-transaction/broadcast-transaction",
+                &body,
+                Some(&headers),
+            )
+            .await
+    } else {
+        client
+            .post("/api/v6/dex/pre-transaction/broadcast-transaction", &body)
+            .await
+    }
 }
 
 /// GET /api/v6/dex/post-transaction/orders

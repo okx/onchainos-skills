@@ -334,12 +334,15 @@ pub async fn fetch_quote(
             );
         }
         if orig_to != to.as_str() {
-            eprintln!(
-                "[DEBUG][fetch_quote] to resolved: {} → {}",
-                orig_to, to
-            );
+            eprintln!("[DEBUG][fetch_quote] to resolved: {} → {}", orig_to, to);
         }
     }
+    // Generate trace ID: resolved from address + timestamp
+    let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+    let tid = format!("{}{}", from, timestamp);
+    // Save to cache (best-effort, don't fail the request)
+    let _ = crate::wallet_store::set_swap_trace_id(&tid);
+
     let params = vec![
         ("chainIndex", chain_index),
         ("fromTokenAddress", from.as_str()),
@@ -347,7 +350,13 @@ pub async fn fetch_quote(
         ("amount", amount),
         ("swapMode", swap_mode),
     ];
-    client.get("/api/v6/dex/aggregator/quote", &params).await
+    let headers = [
+        ("ok-client-tid", tid.as_str()),
+        ("ok-client-timestamp", timestamp.as_str()),
+    ];
+    client
+        .get_with_headers("/api/v6/dex/aggregator/quote", &params, Some(&headers))
+        .await
 }
 
 /// GET /api/v6/dex/aggregator/swap
@@ -381,10 +390,7 @@ pub async fn fetch_swap(
             );
         }
         if orig_to != to.as_str() {
-            eprintln!(
-                "[DEBUG][fetch_swap] to resolved: {} → {}",
-                orig_to, to
-            );
+            eprintln!("[DEBUG][fetch_swap] to resolved: {} → {}", orig_to, to);
         }
     }
     let mut params = vec![
@@ -410,7 +416,20 @@ pub async fn fetch_swap(
     if let Some(m) = max_auto_slippage {
         params.push(("maxAutoSlippagePercent", m));
     }
-    client.get("/api/v6/dex/aggregator/swap", &params).await
+    // Read swap trace ID from cache; attach trace headers if present
+    let cached_tid = crate::wallet_store::get_swap_trace_id().ok().flatten();
+    if let Some(ref tid) = cached_tid {
+        let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+        let headers = [
+            ("ok-client-tid", tid.as_str()),
+            ("ok-client-timestamp", timestamp.as_str()),
+        ];
+        client
+            .get_with_headers("/api/v6/dex/aggregator/swap", &params, Some(&headers))
+            .await
+    } else {
+        client.get("/api/v6/dex/aggregator/swap", &params).await
+    }
 }
 
 /// GET /api/v6/dex/aggregator/approve-transaction
