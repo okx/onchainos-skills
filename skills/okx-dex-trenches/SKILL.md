@@ -192,7 +192,7 @@ Present conversationally — never expose skill names or endpoint paths to the u
        ↓ get swap calldata, then execute via one of two paths:
    Path A (user-provided wallet): user signs externally → onchainos gateway broadcast --signed-tx <tx> --address <addr> --chain <chain>
    Path B (Agentic Wallet):
-     Solana: onchainos wallet contract-call --to <tx.to> --chain sol --unsigned-tx <tx.data>
+     Solana: onchainos wallet contract-call --to <tx.to> --chain 501 --unsigned-tx <tx.data>
      EVM:    onchainos wallet contract-call --to <tx.to> --chain <chain> --amt <tx.value> --input-data <tx.data>
 ```
 
@@ -228,7 +228,7 @@ Present conversationally — never expose skill names or endpoint paths to the u
        ↓ get swap calldata, then execute via one of two paths:
    Path A (user-provided wallet): user signs externally → onchainos gateway broadcast --signed-tx <tx> --address <addr> --chain <chain>
    Path B (Agentic Wallet):
-     Solana: onchainos wallet contract-call --to <tx.to> --chain sol --unsigned-tx <tx.data>
+     Solana: onchainos wallet contract-call --to <tx.to> --chain 501 --unsigned-tx <tx.data>
      EVM:    onchainos wallet contract-call --to <tx.to> --chain <chain> --amt <tx.value> --input-data <tx.data>
 ```
 

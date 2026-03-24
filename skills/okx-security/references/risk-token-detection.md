@@ -169,7 +169,7 @@ onchainos security token-scan --tokens "1:0xdAC17F958D2ee523a2206206994597C13D83
        -> If action is "warn": show risk details, require explicit user confirmation before continuing
 7. Execute approval (only if tx-scan passed):
    Path A (user-provided wallet): user signs approve calldata externally -> onchainos gateway broadcast
-   Path B (Agentic Wallet):      onchainos wallet contract-call --to <token_contract_address> --chain eth --input-data <approve_calldata>
+   Path B (Agentic Wallet):      onchainos wallet contract-call --to <token_contract_address> --chain 1 --input-data <approve_calldata>
 8. (okx-dex-swap) onchainos swap swap --from ... --to ... --amount ... --chain ethereum --wallet <addr>
        -> get swap calldata (tx.to, tx.data, tx.value)
 9. onchainos security tx-scan --chain ethereum --from <addr> --to <tx.to> --data <tx.data> --value <tx.value>
@@ -178,5 +178,5 @@ onchainos security token-scan --tokens "1:0xdAC17F958D2ee523a2206206994597C13D83
        -> If action is "warn": show risk details, require explicit user confirmation before continuing
 10. If safe or user confirmed after warn, execute swap:
    Path A (user-provided wallet): user signs externally -> onchainos gateway broadcast --signed-tx <tx> --address <addr> --chain ethereum
-   Path B (Agentic Wallet):      onchainos wallet contract-call --to <tx.to> --chain eth --amt <tx.value> --input-data <tx.data>
+   Path B (Agentic Wallet):      onchainos wallet contract-call --to <tx.to> --chain 1 --amt <tx.value> --input-data <tx.data>
 ```

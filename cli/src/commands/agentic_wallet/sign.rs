@@ -282,14 +282,16 @@ async fn eip712_sign(message: &str, chain: &str, from: &str, force: bool) -> Res
         );
     }
 
-    let signing_seed = crate::crypto::hpke_decrypt_session_sk(encrypted_session_sk, &session_key)?;
+    let mut signing_seed =
+        crate::crypto::hpke_decrypt_session_sk(encrypted_session_sk, &session_key)?;
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][eip712_sign] Step 7: HPKE decrypt OK, signing_seed length={}",
             signing_seed.len()
         );
     }
-    let mut signing_seed_b64 = B64.encode(signing_seed);
+    let mut signing_seed_b64 = B64.encode(signing_seed.as_slice());
+    signing_seed.zeroize();
 
     // ed25519_sign_hex: msg_hash is already hex from gen-msg-hash API
     let session_signature = crate::crypto::ed25519_sign_hex(msg_hash, &signing_seed_b64)?;
