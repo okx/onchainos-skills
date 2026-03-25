@@ -100,7 +100,7 @@ Display: expected output, gas, price impact, routing path. Check `isHoneyPot` an
 ### Step 5 — Execute
 
 ```bash
-onchainos swap execute --from <token> --to <token> --amount <minimal_units> --chain <chain> --wallet <addr> [--slippage <pct>] [--gas-level <level>] [--mev-protection]
+onchainos swap execute --from <token address from step1> --to <token address from step1> --amount <minimal_units> --chain <chain> --wallet <addr> [--slippage <pct>] [--gas-level <level>] [--mev-protection]
 ```
 
 CLI handles approve (if needed) + sign + broadcast internally.
