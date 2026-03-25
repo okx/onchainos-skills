@@ -325,6 +325,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Security { command } => format!("security {}", security_sub(command)),
         Commands::Leaderboard { command } => format!("leaderboard {}", leaderboard_sub(command)),
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
+        Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
     }
 }
@@ -332,9 +333,9 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
 use crate::commands::agentic_wallet::payment::PaymentCommand;
 use crate::commands::agentic_wallet::wallet::WalletCommand;
 use crate::commands::{
-    gateway::GatewayCommand, leaderboard::LeaderboardCommand, market::MarketCommand,
-    memepump::MemepumpCommand, portfolio::PortfolioCommand, security::SecurityCommand,
-    signal::SignalCommand, swap::SwapCommand, token::TokenCommand,
+    defi::DefiCommand, gateway::GatewayCommand, leaderboard::LeaderboardCommand,
+    market::MarketCommand, memepump::MemepumpCommand, portfolio::PortfolioCommand,
+    security::SecurityCommand, signal::SignalCommand, swap::SwapCommand, token::TokenCommand,
 };
 
 fn market_sub(c: &MarketCommand) -> &'static str {
@@ -460,6 +461,24 @@ fn security_sub(c: &SecurityCommand) -> &'static str {
 fn payment_sub(c: &PaymentCommand) -> &'static str {
     match c {
         PaymentCommand::X402Pay { .. } => "x402-pay",
+    }
+}
+
+fn defi_sub(c: &DefiCommand) -> &'static str {
+    match c {
+        DefiCommand::List { .. } => "list",
+        DefiCommand::Search { .. } => "search",
+        DefiCommand::Detail { .. } => "detail",
+        DefiCommand::Prepare { .. } => "prepare",
+        DefiCommand::Deposit { .. } => "deposit",
+        DefiCommand::Redeem { .. } => "redeem",
+        DefiCommand::Claim { .. } => "claim",
+        DefiCommand::CalculateEntry { .. } => "calculate-entry",
+        DefiCommand::Invest { .. } => "invest",
+        DefiCommand::Withdraw { .. } => "withdraw",
+        DefiCommand::Collect { .. } => "collect",
+        DefiCommand::Positions { .. } => "positions",
+        DefiCommand::PositionDetail { .. } => "position-detail",
     }
 }
 

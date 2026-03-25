@@ -97,6 +97,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::agentic_wallet::payment::PaymentCommand,
     },
+    /// DeFi product discovery, investment, redemption, and portfolio
+    Defi {
+        #[command(subcommand)]
+        command: commands::defi::DefiCommand,
+    },
     /// Upgrade onchainos to the latest version
     Upgrade(commands::upgrade::UpgradeArgs),
 }
@@ -150,6 +155,7 @@ async fn run() {
         Commands::Wallet { command } => commands::agentic_wallet::wallet::execute(command).await,
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
+        Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
     };
 
