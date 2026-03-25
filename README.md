@@ -62,6 +62,14 @@ Tell Codex:
 Fetch and follow instructions from https://raw.githubusercontent.com/okx/onchainos-skills/refs/heads/main/.codex/INSTALL.md
 ```
 
+### OpenClaw
+
+Tell OpenClaw:
+
+```plain
+Fetch and follow instructions from https://raw.githubusercontent.com/okx/onchainos-skills/refs/heads/main/.openclaw/INSTALL.md
+```
+
 ### OpenCode
 
 Tell OpenCode:
