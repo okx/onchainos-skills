@@ -154,7 +154,8 @@ For detailed parameter tables, return field schemas, and usage examples, consult
 | `bondingPercent` | `token-details` | stage awareness: `100` = fully migrated out of bonding curve |
 | `totalBundlers`, `bundlerAthPercent` | `token-bundle-info` | risk signal before buy decision |
 | `devHoldingPercent` | `token-dev-info` | risk signal (high % = dev not exited yet) |
-| `insidersPercent`, `snipersPercent` | `token-details` | additional risk signals before buy decision |
+| `insidersPercent`, `snipersPercent`, `bundlersPercent`, `top10HoldingsPercent` | `token-details` | additional risk signals before buy decision |
+| `migratedCount` | `token-dev-info` | dev track record: number of tokens successfully migrated |
 
 ## Region Restrictions (IP Blocking)
 
