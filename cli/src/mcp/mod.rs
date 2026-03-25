@@ -194,7 +194,7 @@ struct DefiWithdrawParams {
     token_id: Option<String>,
     /// Slippage tolerance (default "0.01")
     slippage: Option<String>,
-    /// Partial exit amount in human-readable units. CLI handles precision internally.
+    /// Partial exit amount in minimal units (integer). Convert: userAmount × 10^tokenPrecision. Get tokenPrecision from defi_position_detail.
     amount: Option<String>,
     /// Platform ID (analysisPlatformId) for auto-fetching position info
     platform_id: Option<String>,
@@ -1750,7 +1750,7 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<DefiInvestParams>,
     ) -> Result<String, String> {
-        match defi::execute_invest(
+        match defi::cmd_invest(
             &self.client,
             &p.investment_id,
             &p.address,
@@ -1779,7 +1779,7 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<DefiWithdrawParams>,
     ) -> Result<String, String> {
-        match defi::execute_withdraw(
+        match defi::cmd_withdraw(
             &self.client,
             &p.investment_id,
             &p.address,
@@ -1805,7 +1805,7 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<DefiCollectParams>,
     ) -> Result<String, String> {
-        match defi::execute_collect(
+        match defi::cmd_collect(
             &self.client,
             &p.address,
             &p.chain,

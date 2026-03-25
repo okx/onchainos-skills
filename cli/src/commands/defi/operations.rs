@@ -19,7 +19,7 @@ struct TokenInfo<'a> {
 
 /// High-level invest: route to V3 or standard based on investType
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn execute_invest(
+pub(crate) async fn cmd_invest(
     client: &ApiClient,
     investment_id: &str,
     address: &str,
@@ -430,7 +430,7 @@ fn append_warnings(result: &mut Value, detail: &Value) {
 
 /// High-level withdraw: resolve position, build exit calldata
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn execute_withdraw(
+pub(crate) async fn cmd_withdraw(
     client: &ApiClient,
     investment_id: &str,
     address: &str,
@@ -629,7 +629,7 @@ fn extract_position_token(token: &JsonValue) -> PositionTokenInfo {
 
 /// High-level collect: auto-build expectOutputList, claim rewards
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn execute_collect(
+pub(crate) async fn cmd_collect(
     client: &ApiClient,
     address: &str,
     chain: &str,

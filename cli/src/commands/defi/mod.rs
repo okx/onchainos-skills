@@ -4,7 +4,7 @@ mod operations;
 
 pub use api::*;
 pub use helpers::extract_expect_output;
-pub(crate) use operations::{execute_invest, execute_withdraw, execute_collect};
+pub(crate) use operations::{cmd_invest, cmd_withdraw, cmd_collect};
 
 use anyhow::{bail, Result};
 use clap::Subcommand;
@@ -514,7 +514,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             tick_upper,
             range,
         } => {
-            let result = operations::execute_invest(
+            let result = operations::cmd_invest(
                 &client,
                 &investment_id,
                 &address,
@@ -541,7 +541,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             amount,
             platform_id,
         } => {
-            let result = operations::execute_withdraw(
+            let result = operations::cmd_withdraw(
                 &client,
                 &investment_id,
                 &address,
@@ -564,7 +564,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             token_id,
             principal_index,
         } => {
-            let result = operations::execute_collect(
+            let result = operations::cmd_collect(
                 &client,
                 &address,
                 &chain,
