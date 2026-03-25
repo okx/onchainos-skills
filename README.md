@@ -16,6 +16,8 @@ onchainos skills for AI coding assistants. Provides token search, market data, w
 | `okx-dex-token` | Token search, metadata, market cap, rankings, liquidity pools, hot tokens, advanced info, holder analysis, top traders, trade history, holder cluster analysis |
 | `okx-onchain-gateway` | Gas estimation, transaction simulation, broadcasting, order tracking |
 | `okx-x402-payment` | Sign x402 payment authorization via TEE for payment-gated resources |
+| `okx-defi-invest` | DeFi product discovery, deposit, withdraw, claim rewards across Aave, Lido, PancakeSwap, Kamino, NAVI and more |
+| `okx-defi-portfolio` | DeFi positions and holdings overview across protocols and chains |
 | `okx-audit-log` | Audit log export and troubleshooting |
 
 ## Supported Chains
