@@ -106,6 +106,23 @@ onchainos swap execute --from <token address from step1> --to <token address fro
 CLI handles approve (if needed) + sign + broadcast internally.
 Returns: `{ approveTxHash?, swapTxHash, fromAmount, toAmount, priceImpact, gasUsed }`
 
+#### Error Retry
+
+If `swap execute` returns an error, it may be caused by a preceding approval transaction that has not yet been confirmed on-chain. Handle as follows:
+
+1. **Wait** based on chain block time before retrying:
+
+| Chain | Typical Wait |
+|---|---|
+| Ethereum | ~15 s |
+| BSC | ~5 s |
+| Arbitrum / Base | ~3 s |
+| XLayer | ~3 s |
+| Other EVM | ~10 s (conservative default) |
+
+2. **Inform the user**: e.g. "Swap failed, possibly due to a pending approval — waiting for on-chain confirmation before retrying."
+3. **Retry** the same `swap execute` command **once**. If the retry also fails, do **not** retry again — surface the error to the user directly.
+
 #### Silent / Automated Mode
 
 Enabled only when the user has **explicitly authorized** automated execution. Three mandatory rules:
