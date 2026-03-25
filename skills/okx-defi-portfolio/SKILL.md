@@ -64,6 +64,28 @@ onchainos defi position-detail \
 
 ## Operation Flow
 
+### Step 0: Address Resolution
+
+When the user does NOT provide a wallet address, resolve it automatically from the Agentic Wallet **before** running any defi command:
+
+```
+1. onchainos wallet status          → check if logged in, get active account
+2. onchainos wallet addresses       → get addresses grouped by chain category:
+                                       - XLayer addresses
+                                       - EVM addresses (Ethereum, BSC, Polygon, etc.)
+                                       - Solana addresses
+3. Match address to target chain:
+   - EVM chains → use EVM address
+   - Solana     → use Solana address
+   - XLayer     → use XLayer address
+```
+
+Rules:
+- If the user provides an explicit address, use it directly — skip this step
+- If wallet is not logged in, ask the user to log in first (→ `okx-agentic-wallet`) or provide an address manually
+- If the user says "check all accounts" or "all wallets", use `wallet balance --all` to get all account IDs, then `wallet switch <id>` + `wallet addresses` for each account, and query positions for each
+- Always confirm the resolved address with the user before proceeding if the account has multiple addresses of the same type
+
 ### Step 1: Identify Intent
 
 | User says | Action |
@@ -74,7 +96,7 @@ onchainos defi position-detail \
 
 ### Step 2: Collect Parameters
 
-- **Missing wallet address** → ask user
+- **Missing wallet address** → resolve via Step 0 (wallet status → wallet addresses), or ask user if not logged in
 - **Missing chains** → ask user which chains to query, or suggest common ones (ethereum, bsc, solana)
 - **Missing platform-id** → run `defi positions` first to get `analysisPlatformId`
 
