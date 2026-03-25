@@ -59,16 +59,16 @@ pub(super) fn convert_minimal_to_decimal(items: &mut Vec<Value>) -> Result<()> {
 /// e.g. "500000" with precision 6 -> "0.5"
 /// e.g. "1154528481238320444" with precision 18 -> "1.154528481238320444"
 pub(super) fn minimal_to_decimal_str(amount: &str, precision: u32) -> String {
-    let p = precision as usize;
-    if p == 0 {
+    let precision_digits = precision as usize;
+    if precision_digits == 0 {
         return amount.to_string();
     }
-    let padded = if amount.len() <= p {
-        format!("{:0>width$}", amount, width = p + 1)
+    let zero_padded = if amount.len() <= precision_digits {
+        format!("{:0>width$}", amount, width = precision_digits + 1)
     } else {
         amount.to_string()
     };
-    let (integer_part, decimal_part) = padded.split_at(padded.len() - p);
+    let (integer_part, decimal_part) = zero_padded.split_at(zero_padded.len() - precision_digits);
     // Trim trailing zeros from decimal part
     let trimmed = decimal_part.trim_end_matches('0');
     if trimmed.is_empty() {
@@ -84,8 +84,8 @@ pub(super) fn minimal_to_decimal_str(amount: &str, precision: u32) -> String {
 /// e.g. "226.483834" with precision 6 -> "226483834"
 /// e.g. "0.005" with precision 18 -> "5000000000000000"
 pub(super) fn decimal_to_minimal_str(amount: &str, precision: u32) -> String {
-    let p = precision as usize;
-    if p == 0 {
+    let precision_digits = precision as usize;
+    if precision_digits == 0 {
         // No decimal part expected; strip any decimal point
         return amount.split('.').next().unwrap_or(amount).to_string();
     }
@@ -95,17 +95,17 @@ pub(super) fn decimal_to_minimal_str(amount: &str, precision: u32) -> String {
         (amount, "")
     };
     // Handle owned string for padding case
-    let padded_owned;
-    let final_decimal = if decimal.len() >= p {
-        &decimal[..p]
+    let zero_padded;
+    let final_decimal = if decimal.len() >= precision_digits {
+        &decimal[..precision_digits]
     } else {
-        padded_owned = format!("{:0<width$}", decimal, width = p);
-        &padded_owned
+        zero_padded = format!("{:0<width$}", decimal, width = precision_digits);
+        &zero_padded
     };
-    let combined = format!("{}{}", integer, final_decimal);
+    let integer_with_decimal = format!("{}{}", integer, final_decimal);
     // Strip leading zeros but keep at least "0"
-    let stripped = combined.trim_start_matches('0');
-    if stripped.is_empty() { "0".to_string() } else { stripped.to_string() }
+    let leading_zeros_stripped = integer_with_decimal.trim_start_matches('0');
+    if leading_zeros_stripped.is_empty() { "0".to_string() } else { leading_zeros_stripped.to_string() }
 }
 
 /// Try to auto-build expectOutputList from position-detail for the given reward type.
