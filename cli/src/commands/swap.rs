@@ -763,10 +763,12 @@ async fn cmd_execute(
         let approvals =
             fetch_check_approvals(client, &chain_index, wallet_address, &from_token, None).await?;
 
-        let spendable = approvals["results"]
+        let spendable = approvals
             .as_array()
             .and_then(|arr| arr.first())
-            .and_then(|r| r["spendable"].as_str())
+            .and_then(|r| r["tokens"].as_array())
+            .and_then(|tokens| tokens.first())
+            .and_then(|t| t["spendable"].as_str())
             .unwrap_or("0");
 
         if cfg!(feature = "debug-log") {
