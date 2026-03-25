@@ -103,7 +103,7 @@ metadata:
 - Missing chain → always call `onchainos signal chains` first to confirm the chain is supported
 - Signal filter params (`--wallet-type`, `--min-amount-usd`, etc.) → ask user for preferences if not specified; default to no filter (returns all signal types)
 - `--token-address` is optional — omit to get all signals on the chain; include to filter for a specific token
-- **`--wallet-type` is multi-select** (comma-separated integers: `1`=Smart Money, `2`=KOL, `3`=Whale) — e.g. `--wallet-type 1,3` returns both Smart Money and Whale signals
+- **`--wallet-type` is multi-select** (comma-separated integers: `1`=Smart Money, `2`=KOL/Influencer, `3`=Whale) — e.g. `--wallet-type 1,3` returns both Smart Money and Whale signals
 
 **Leaderboard:**
 - Missing chain → call `onchainos leaderboard supported-chains` to confirm support; default to `solana` if user doesn't specify
