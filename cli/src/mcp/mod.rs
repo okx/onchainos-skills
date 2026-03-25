@@ -481,6 +481,22 @@ impl McpServer {
         }
     }
 
+    #[tool(name = "token_trending", description = "Get trending token rankings")]
+    async fn token_trending(&self) -> Result<String, String> {
+        match token::fetch_hot_tokens(
+            &self.client,
+            token::HotTokensParams {
+                ranking_type: "4".to_string(),
+                ..Default::default()
+            },
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
     #[tool(
         name = "token_price_info",
         description = "Get token price info: market cap, liquidity, 24h change, volume"
