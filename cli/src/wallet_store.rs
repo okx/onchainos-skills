@@ -62,9 +62,12 @@ pub struct AccountInfo {
 // ── cache.json ──────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct CacheJson {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub login: Option<LoginCache>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swap_trace_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -231,6 +234,19 @@ pub fn clear_login_cache() -> Result<()> {
     let mut cache = load_cache()?;
     cache.login = None;
     save_cache(&cache)
+}
+
+/// Save the swap trace ID to cache.json (preserves other fields).
+pub fn set_swap_trace_id(tid: &str) -> Result<()> {
+    let mut cache = load_cache()?;
+    cache.swap_trace_id = Some(tid.to_string());
+    save_cache(&cache)
+}
+
+/// Read the swap trace ID from cache.json. Returns None if not set.
+pub fn get_swap_trace_id() -> Result<Option<String>> {
+    let cache = load_cache()?;
+    Ok(cache.swap_trace_id)
 }
 
 // ── balance_cache.json operations ────────────────────────────────────
@@ -493,6 +509,7 @@ mod tests {
                 email: "user@test.com".to_string(),
                 flow_id: "flow-123".to_string(),
             }),
+            ..Default::default()
         };
         let json = serde_json::to_string(&c).unwrap();
         let parsed: CacheJson = serde_json::from_str(&json).unwrap();
@@ -503,7 +520,10 @@ mod tests {
 
     #[test]
     fn cache_json_login_none_skips_field() {
-        let c = CacheJson { login: None };
+        let c = CacheJson {
+            login: None,
+            ..Default::default()
+        };
         let json = serde_json::to_string(&c).unwrap();
         assert!(!json.contains("login"));
     }
@@ -565,6 +585,7 @@ mod tests {
                     email: "cache@test.com".to_string(),
                     flow_id: "f1".to_string(),
                 }),
+                ..Default::default()
             };
             save_cache(&c).unwrap();
             let loaded = load_cache().unwrap();
@@ -599,6 +620,7 @@ mod tests {
                     email: "clear@test.com".to_string(),
                     flow_id: "f2".to_string(),
                 }),
+                ..Default::default()
             };
             save_cache(&c).unwrap();
             clear_login_cache().unwrap();

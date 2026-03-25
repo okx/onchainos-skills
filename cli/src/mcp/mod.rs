@@ -28,16 +28,6 @@ struct TokenAddressParams {
     chain: Option<String>,
 }
 
-#[derive(Deserialize, JsonSchema)]
-struct TokenTrendingParams {
-    /// Comma-separated chain names, e.g. "ethereum,solana" (optional)
-    chains: Option<String>,
-    /// Sort by: 2=price change, 5=volume (default), 6=market cap
-    sort_by: Option<String>,
-    /// Time frame: 1=5min, 2=1h, 3=4h, 4=24h (default)
-    time_frame: Option<String>,
-}
-
 // ── Market ─────────────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
 struct MarketTokenParams {
@@ -486,20 +476,6 @@ impl McpServer {
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_holders(&self.client, &p.address, &chain_index, p.tag_filter).await {
-            Ok(data) => ok(data),
-            Err(e) => err(e),
-        }
-    }
-
-    #[tool(name = "token_trending", description = "Get trending token rankings")]
-    async fn token_trending(
-        &self,
-        Parameters(p): Parameters<TokenTrendingParams>,
-    ) -> Result<String, String> {
-        let chains = p.chains.as_deref().unwrap_or("1,501");
-        let sort_by = p.sort_by.as_deref().unwrap_or("5");
-        let time_frame = p.time_frame.as_deref().unwrap_or("4");
-        match token::fetch_trending(&self.client, chains, sort_by, time_frame).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }

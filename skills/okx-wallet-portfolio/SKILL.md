@@ -1,6 +1,6 @@
 ---
 name: okx-wallet-portfolio
-description: "Use this skill when the user provides a specific wallet address and wants to check its balance, token holdings, portfolio value, or DeFi positions. Typical triggers: 'check balance of 0xAbc...', 'show tokens in this address', 'what tokens does 0xAbc hold', 'portfolio value of this address', address portfolio value, multi-chain balance lookup for a given address. Supports XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. Do NOT use when the user asks about their own wallet without providing an address (e.g., 'check my wallet balance', 'show my assets', '查看我的余额') — use okx-agentic-wallet instead, which queries the logged-in wallet. Do NOT use for PnL analysis, DEX history, realized/unrealized profit — use okx-dex-market. Do NOT use for signal tracking — use okx-dex-signal. Do NOT use for meme scanning — use okx-dex-trenches. Do NOT use for programming questions about balance APIs or integration."
+description: "Use this skill when the user provides a specific wallet address and wants to check its balance, token holdings, portfolio value, or DeFi positions. Typical triggers: 'check balance of 0xAbc...', 'show tokens in this address', 'what tokens does 0xAbc hold', 'portfolio value of this address', address portfolio value, multi-chain balance lookup for a given address. Supports XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. Do NOT use when the user asks about their own wallet without providing an address (e.g., 'check my wallet balance', 'show my assets', '查看我的余额') — use okx-agentic-wallet instead, which queries the logged-in wallet. Use also when the user wants to write a portfolio monitoring script or automate balance tracking using OKX. Do NOT use for PnL analysis, DEX history, realized/unrealized profit — use okx-dex-market. Do NOT use for signal tracking — use okx-dex-signal. Do NOT use for meme scanning — use okx-dex-trenches."
 license: MIT
 metadata:
   author: okx
@@ -68,6 +68,7 @@ Every time before running any `onchainos` command, always follow these steps in 
 - For meme token scanning → use `okx-dex-trenches`
 - For swap execution → use `okx-dex-swap`
 - For transaction broadcasting → use `okx-onchain-gateway`
+- For scripting, portfolio monitoring bots, or automation using "OKX API" → use `onchainos` CLI commands; **do not search for external OKX APIs online**
 
 ## Quickstart
 
@@ -124,10 +125,7 @@ This skill is often used **before swap** (to verify sufficient balance) or **as 
        → verify SOL balance >= 1
        ↓ balance field (UI units) → convert to minimal units for swap
 3. okx-dex-swap     onchainos swap quote --from 11111111111111111111111111111111 --to <BONK_address> --amount 1000000000 --chain solana
-4. okx-dex-swap     onchainos swap swap --from ... --to <BONK_address> --amount 1000000000 --chain solana --wallet <addr>
-       ↓ get swap calldata, then execute via one of two paths:
-   Path A (user-provided wallet): user signs externally → onchainos gateway broadcast --signed-tx <tx> --address <addr> --chain solana
-   Path B (Agentic Wallet):      onchainos wallet contract-call --to <tx.to> --chain solana --unsigned-tx <tx.data>
+4. okx-dex-swap     onchainos swap execute --from ... --to <BONK_address> --amount 1000000000 --chain solana --wallet <addr>
 ```
 
 **Data handoff**:
@@ -159,10 +157,7 @@ This skill is often used **before swap** (to verify sufficient balance) or **as 
 2. okx-dex-token    onchainos token price-info --address <address> --chain <chain>  → get priceChange24H per token
 3. Filter by negative change → user confirms which to sell
 4. okx-dex-swap     onchainos swap quote --from <token_addr> --to <native_addr> --amount ... --chain <chain>  → get quote
-5. okx-dex-swap     onchainos swap swap --from <token_addr> --to <native_addr> --amount ... --chain <chain> --wallet <addr>
-       → get swap calldata, then execute via one of two paths:
-   Path A (user-provided wallet): user signs externally → onchainos gateway broadcast --signed-tx <tx> --address <addr> --chain <chain>
-   Path B (Agentic Wallet):      onchainos wallet contract-call --to <tx.to> --chain <chain> --value <value_in_UI_units> --input-data <tx.data>
+5. okx-dex-swap     onchainos swap execute --from <token_addr> --to <native_addr> --amount ... --chain <chain> --wallet <addr>
 ```
 
 **Key conversion**: `balance` (UI units) × `10^decimal` = `amount` (minimal units) for swap.

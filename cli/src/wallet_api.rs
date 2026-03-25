@@ -272,16 +272,40 @@ impl WalletApiClient {
 
     /// POST with Bearer accessToken (for create / list / refresh / x402).
     pub async fn post_authed(&self, path: &str, access_token: &str, body: &Value) -> Result<Value> {
+        self.post_authed_with_headers(path, access_token, body, None)
+            .await
+    }
+
+    /// POST with Bearer accessToken + optional extra headers.
+    pub async fn post_authed_with_headers(
+        &self,
+        path: &str,
+        access_token: &str,
+        body: &Value,
+        extra_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
 
         if cfg!(feature = "debug-log") {
             eprintln!("[DEBUG][post_authed] url_path={}", &url);
         }
 
+        let mut headers = crate::client::ApiClient::jwt_headers(access_token);
+        if let Some(extra) = extra_headers {
+            for (k, v) in extra {
+                if let (Ok(name), Ok(val)) = (
+                    reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(v),
+                ) {
+                    headers.insert(name, val);
+                }
+            }
+        }
+
         let resp = self
             .http
             .post(&url)
-            .headers(crate::client::ApiClient::jwt_headers(access_token))
+            .headers(headers)
             .json(body)
             .send()
             .await
@@ -562,7 +586,7 @@ impl WalletApiClient {
         chain_index: u64,
         from_addr: &str,
         to_addr: &str,
-        value: &str,
+        amount: &str,
         contract_addr: Option<&str>,
         session_cert: &str,
         input_data: Option<&str>,
@@ -571,13 +595,14 @@ impl WalletApiClient {
         aa_dex_token_addr: Option<&str>,
         aa_dex_token_amount: Option<&str>,
         jito_unsigned_tx: Option<&str>,
+        trace_headers: Option<&[(&str, &str)]>,
     ) -> Result<UnsignedInfoResponse> {
         let mut body = json!({
             "chainPath": chain_path,
             "chainIndex": chain_index,
             "fromAddr": from_addr,
             "toAddr": to_addr,
-            "value": value,
+            "amount": amount,
             "sessionCert": session_cert,
         });
         if let Some(ca) = contract_addr {
@@ -602,10 +627,11 @@ impl WalletApiClient {
             body["jitoUnsignedTx"] = Value::String(jito_tx.to_string());
         }
         let data = self
-            .post_authed(
+            .post_authed_with_headers(
                 "/priapi/v5/wallet/agentic/pre-transaction/unsignedInfo",
                 access_token,
                 &body,
+                trace_headers,
             )
             .await?;
         let arr = data
@@ -625,6 +651,7 @@ impl WalletApiClient {
         address: &str,
         chain_index: &str,
         extra_data: &str,
+        trace_headers: Option<&[(&str, &str)]>,
     ) -> Result<BroadcastResponse> {
         let body = json!({
             "accountId": account_id,
@@ -633,10 +660,11 @@ impl WalletApiClient {
             "extraData": extra_data,
         });
         let data = self
-            .post_authed(
+            .post_authed_with_headers(
                 "/priapi/v5/wallet/agentic/pre-transaction/broadcast-transaction",
                 access_token,
                 &body,
+                trace_headers,
             )
             .await?;
         let arr = data

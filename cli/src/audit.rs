@@ -183,7 +183,7 @@ const REDACT_FULL: &[&str] = &[
 ];
 
 /// Flags whose next positional value is an address / email — keep prefix + suffix.
-const REDACT_ADDR: &[&str] = &["--from", "--wallet", "--email"];
+const REDACT_ADDR: &[&str] = &["--from", "--wallet", "--email", "--address"];
 
 /// Subcommand sequences whose next positional argument is sensitive.
 /// e.g. `onchainos wallet verify <OTP>` — the OTP is a positional arg, not a flag.
@@ -385,7 +385,6 @@ fn token_sub(c: &TokenCommand) -> &'static str {
         TokenCommand::Search { .. } => "search",
         TokenCommand::Info { .. } => "info",
         TokenCommand::Holders { .. } => "holders",
-        TokenCommand::Trending { .. } => "trending",
         TokenCommand::PriceInfo { .. } => "price-info",
         TokenCommand::Liquidity { .. } => "liquidity",
         TokenCommand::HotTokens { .. } => "hot-tokens",
@@ -404,8 +403,10 @@ fn swap_sub(c: &SwapCommand) -> &'static str {
         SwapCommand::Quote { .. } => "quote",
         SwapCommand::Swap { .. } => "swap",
         SwapCommand::Approve { .. } => "approve",
+        SwapCommand::CheckApprovals { .. } => "check-approvals",
         SwapCommand::Chains => "chains",
         SwapCommand::Liquidity { .. } => "liquidity",
+        SwapCommand::Execute { .. } => "execute",
     }
 }
 
@@ -443,6 +444,7 @@ fn wallet_sub(c: &WalletCommand) -> &'static str {
         WalletCommand::Send { .. } => "send",
         WalletCommand::History { .. } => "history",
         WalletCommand::ContractCall { .. } => "contract-call",
+        WalletCommand::SignMessage { .. } => "sign-message",
     }
 }
 
