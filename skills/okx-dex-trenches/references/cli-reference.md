@@ -26,13 +26,13 @@ onchainos memepump chains
 List meme pump tokens with advanced filtering. Returns up to 30 tokens per request.
 
 ```bash
-onchainos memepump tokens --chain <chain> --stage <stage> [options]
+onchainos memepump tokens --chain <chain> [--stage <stage>] [options]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--chain` | Yes | - | Chain name (e.g., `solana`, `bsc`) |
-| `--stage` | Yes | `NEW` | Token stage: `NEW`, `MIGRATING`, or `MIGRATED` |
+| `--stage` | No | `NEW` | Token stage: `NEW`, `MIGRATING`, or `MIGRATED` |
 | `--wallet-address` | No | - | Wallet address for position-specific data |
 | `--protocol-id-list` | No | - | Comma-separated protocol IDs (get IDs from `memepump chains`) |
 | `--quote-token-address-list` | No | - | Comma-separated quote token addresses |
