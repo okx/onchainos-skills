@@ -324,6 +324,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Wallet { command } => format!("wallet {}", wallet_sub(command)),
         Commands::Security { command } => format!("security {}", security_sub(command)),
         Commands::Leaderboard { command } => format!("leaderboard {}", leaderboard_sub(command)),
+        Commands::Tracker { command } => format!("tracker {}", tracker_sub(command)),
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
     }
@@ -335,6 +336,7 @@ use crate::commands::{
     gateway::GatewayCommand, leaderboard::LeaderboardCommand, market::MarketCommand,
     memepump::MemepumpCommand, portfolio::PortfolioCommand, security::SecurityCommand,
     signal::SignalCommand, swap::SwapCommand, token::TokenCommand,
+    tracker::TrackerCommand,
 };
 
 fn market_sub(c: &MarketCommand) -> &'static str {
@@ -353,9 +355,14 @@ fn market_sub(c: &MarketCommand) -> &'static str {
 
 fn signal_sub(c: &SignalCommand) -> &'static str {
     match c {
-        SignalCommand::AddressTrackerActivities { .. } => "address-tracker-activities",
         SignalCommand::Chains => "chains",
         SignalCommand::List { .. } => "list",
+    }
+}
+
+fn tracker_sub(c: &TrackerCommand) -> &'static str {
+    match c {
+        TrackerCommand::Activities { .. } => "activities",
     }
 }
 

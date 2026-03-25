@@ -48,7 +48,7 @@ metadata:
 
 | # | Command | Description |
 |---|---|---|
-| 1 | `onchainos signal address-tracker-activities --tracker-type <type>` | Get latest DEX trades for smart money, KOL, or custom tracked addresses (raw transaction feed, includes buys and sells) |
+| 1 | `onchainos tracker activities --tracker-type <type>` | Get latest DEX trades for smart money, KOL, or custom tracked addresses (raw transaction feed, includes buys and sells) |
 
 ### Signal Commands
 
@@ -135,8 +135,8 @@ metadata:
 | Just called | Suggest |
 |---|---|
 | `address-tracker-activities` | 1. Get token price → `onchainos market price` 2. Deep token analytics → `onchainos token price-info` 3. Buy/swap the token → `onchainos swap execute` |
-| `signal list` | 1. Drill into actual trades → `onchainos signal address-tracker-activities` 2. View price chart → `onchainos market kline` 3. Deep token analytics → `onchainos token price-info` 4. Buy the token → `onchainos swap execute` |
-| `leaderboard list` | 1. Drill into a wallet's PnL → `onchainos market portfolio-overview` 2. Check a wallet's holdings → `onchainos portfolio all-balances` 3. Track that wallet's trades → `onchainos signal address-tracker-activities --tracker-type multi_address` |
+| `signal list` | 1. Drill into actual trades → `onchainos tracker activities` 2. View price chart → `onchainos market kline` 3. Deep token analytics → `onchainos token price-info` 4. Buy the token → `onchainos swap execute` |
+| `leaderboard list` | 1. Drill into a wallet's PnL → `onchainos market portfolio-overview` 2. Check a wallet's holdings → `onchainos portfolio all-balances` 3. Track that wallet's trades → `onchainos tracker activities --tracker-type multi_address` |
 
 Present conversationally — never expose command paths to the user.
 

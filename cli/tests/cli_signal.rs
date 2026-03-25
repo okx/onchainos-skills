@@ -49,8 +49,8 @@ fn extract_trades(data: Value) -> Vec<Value> {
 #[test]
 fn address_tracker_smart_money_returns_trades() {
     let output = run_with_retry(&[
-        "signal",
-        "address-tracker-activities",
+        "tracker",
+        "activities",
         "--tracker-type",
         "smart_money",
     ]);
@@ -63,8 +63,8 @@ fn address_tracker_smart_money_returns_trades() {
 #[test]
 fn address_tracker_kol_returns_trades() {
     let output = run_with_retry(&[
-        "signal",
-        "address-tracker-activities",
+        "tracker",
+        "activities",
         "--tracker-type",
         "kol",
     ]);
@@ -77,8 +77,8 @@ fn address_tracker_kol_returns_trades() {
 #[test]
 fn address_tracker_smart_money_solana_buy_only() {
     let output = run_with_retry(&[
-        "signal",
-        "address-tracker-activities",
+        "tracker",
+        "activities",
         "--tracker-type",
         "smart_money",
         "--chain",
@@ -101,8 +101,8 @@ fn address_tracker_smart_money_solana_buy_only() {
 #[test]
 fn address_tracker_smart_money_with_volume_filter() {
     let output = run_with_retry(&[
-        "signal",
-        "address-tracker-activities",
+        "tracker",
+        "activities",
         "--tracker-type",
         "smart_money",
         "--min-volume",
@@ -119,8 +119,8 @@ fn address_tracker_smart_money_with_volume_filter() {
 fn address_tracker_multi_address_returns_trades() {
     // Use two well-known Ethereum addresses as custom tracked wallets
     let output = run_with_retry(&[
-        "signal",
-        "address-tracker-activities",
+        "tracker",
+        "activities",
         "--tracker-type",
         "multi_address",
         "--wallet-address",
@@ -136,7 +136,7 @@ fn address_tracker_multi_address_returns_trades() {
 #[test]
 fn address_tracker_missing_tracker_type_fails() {
     onchainos()
-        .args(["signal", "address-tracker-activities"])
+        .args(["tracker", "activities"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
@@ -146,8 +146,8 @@ fn address_tracker_missing_tracker_type_fails() {
 fn address_tracker_multi_address_missing_wallet_fails() {
     onchainos()
         .args([
-            "signal",
-            "address-tracker-activities",
+            "tracker",
+            "activities",
             "--tracker-type",
             "multi_address",
         ])

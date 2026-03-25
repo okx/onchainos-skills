@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::client::ApiClient;
-use crate::commands::{gateway, leaderboard, market, memepump, portfolio, signal, swap, token};
+use crate::commands::{gateway, leaderboard, market, memepump, portfolio, signal, swap, token, tracker};
 
 // ── Token ──────────────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
@@ -1254,7 +1254,7 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<AddressTrackerActivitiesParams>,
     ) -> Result<String, String> {
-        let resolved_type = signal::resolve_tracker_type(&p.tracker_type);
+        let resolved_type = tracker::resolve_tracker_type(&p.tracker_type);
         if (resolved_type == "3" || p.tracker_type == "multi_address") && p.wallet_address.is_none()
         {
             return Err("wallet_address is required when tracker_type is multi_address".into());
@@ -1263,7 +1263,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(|c| crate::chains::resolve_chain(c).to_string());
-        match signal::fetch_address_tracker_activities(
+        match tracker::fetch_activities(
             &self.client,
             &p.tracker_type,
             p.wallet_address.as_deref(),
