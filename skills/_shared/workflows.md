@@ -115,7 +115,7 @@ Key fields passed between skills:
 | Field | Produced By | Consumed By |
 |---|---|---|
 | `tokenAddress` | `okx-dex-token` (search, hot-tokens), `okx-dex-signal` (signal list), `okx-dex-trenches` (tokens) | all token-level commands in any skill |
-| `chainIndex` / `chain` | any skill that returns token data | all `--chain` params downstream |
+| `chainIndex` | any skill that returns token data (returned as numeric string e.g. `"501"`) | all `--chain` params downstream — pass `chainIndex` directly; CLI accepts numeric IDs. Do NOT use `chainName` (capitalized, not accepted by CLI) |
 | `decimal` | `okx-dex-token` (search, info) | amount unit conversion for swap |
 | `walletAddress` | `okx-dex-signal` (leaderboard), user input | `okx-dex-market` portfolio commands |
 | `rugPullCount` | `okx-dex-trenches` (token-dev-info) | stop condition before proceeding |

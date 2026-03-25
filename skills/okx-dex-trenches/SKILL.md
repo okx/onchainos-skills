@@ -149,7 +149,7 @@ For detailed parameter tables, return field schemas, and usage examples, consult
 | Field | Command | Consumed By |
 |---|---|---|
 | `tokenAddress` | `memepump tokens` | all detail commands; `okx-dex-market` kline; swap |
-| `chainIndex` | `memepump tokens` | all downstream `--chain` params |
+| `chainIndex` | `memepump tokens` | all downstream `--chain` params (pass as-is; CLI accepts numeric IDs. Do NOT use `chainName` — it is capitalized and not accepted by CLI) |
 | `rugPullCount` | `token-dev-info` | stop condition: `> 0` → warn before proceeding |
 | `bondingPercent` | `token-details` | stage awareness: `100` = fully migrated out of bonding curve |
 | `totalBundlers`, `bundlerAthPercent` | `token-bundle-info` | risk signal before buy decision |

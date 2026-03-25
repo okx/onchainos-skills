@@ -182,7 +182,7 @@ To search for specific command details: `grep -n "onchainos token <command>" ref
 | Field | Command | Consumed By |
 |---|---|---|
 | `tokenAddress` | `token search`, `token hot-tokens` | all downstream token commands; swap `--from`/`--to` |
-| `chain` | `token search` | all downstream `--chain` params |
+| `chainIndex` | `token search`, `token hot-tokens` | all downstream `--chain` params (pass as-is; CLI accepts numeric chain IDs) |
 | `decimal` | `token search`, `token info` | swap `--amount` (minimal unit conversion: `UI amount × 10^decimal`) |
 | `liquidity` | `token price-info` | stop condition: `< $10K` → warn; `< $1K` → strongly discourage |
 | `communityRecognized` | `token search`, `token price-info` | trust signal for user display |
