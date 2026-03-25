@@ -465,9 +465,13 @@ pub async fn fetch_quote(
             tid, timestamp
         );
     }
-    client
+    let result = client
         .get_with_headers("/api/v6/dex/aggregator/quote", &params, Some(&headers))
-        .await
+        .await;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][fetch_quote] response: {:?}", result);
+    }
+    result
 }
 
 /// GET /api/v6/dex/aggregator/swap
@@ -529,7 +533,7 @@ pub async fn fetch_swap(
     }
     // Read swap trace ID from cache; attach trace headers if present
     let cached_tid = crate::wallet_store::get_swap_trace_id().ok().flatten();
-    if let Some(ref tid) = cached_tid {
+    let result = if let Some(ref tid) = cached_tid {
         let timestamp = chrono::Utc::now().timestamp_millis().to_string();
         if cfg!(feature = "debug-log") {
             eprintln!(
@@ -546,7 +550,11 @@ pub async fn fetch_swap(
             .await
     } else {
         client.get("/api/v6/dex/aggregator/swap", &params).await
+    };
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][fetch_swap] response: {:?}", result);
     }
+    result
 }
 
 /// GET /api/v6/dex/aggregator/approve-transaction
@@ -570,7 +578,7 @@ pub async fn fetch_approve(
             );
         }
     }
-    client
+    let result = client
         .get(
             "/api/v6/dex/aggregator/approve-transaction",
             &[
@@ -579,7 +587,11 @@ pub async fn fetch_approve(
                 ("approveAmount", amount),
             ],
         )
-        .await
+        .await;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][fetch_approve] response: {:?}", result);
+    }
+    result
 }
 
 /// POST /api/v6/dex/pre-transaction/check-approvals
@@ -590,6 +602,12 @@ pub async fn fetch_check_approvals(
     token: &str,
     spender: Option<&str>,
 ) -> Result<Value> {
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][fetch_check_approvals] chain_index={}, address={}, token={}, spender={:?}",
+            chain_index, address, token, spender
+        );
+    }
     let mut body = json!({
         "chainIndex": chain_index,
         "address": address,
@@ -598,26 +616,44 @@ pub async fn fetch_check_approvals(
     if let Some(s) = spender {
         body["spender"] = json!(s);
     }
-    client
+    let result = client
         .post("/api/v6/dex/pre-transaction/check-approvals", &body)
-        .await
+        .await;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][fetch_check_approvals] response: {:?}", result);
+    }
+    result
 }
 
 /// GET /api/v6/dex/aggregator/supported/chain
 pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
-    client
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][fetch_chains] fetching supported chains");
+    }
+    let result = client
         .get("/api/v6/dex/aggregator/supported/chain", &[])
-        .await
+        .await;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][fetch_chains] response: {:?}", result);
+    }
+    result
 }
 
 /// GET /api/v6/dex/aggregator/get-liquidity
 pub async fn fetch_liquidity(client: &ApiClient, chain_index: &str) -> Result<Value> {
-    client
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][fetch_liquidity] chain_index={}", chain_index);
+    }
+    let result = client
         .get(
             "/api/v6/dex/aggregator/get-liquidity",
             &[("chainIndex", chain_index)],
         )
-        .await
+        .await;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][fetch_liquidity] response: {:?}", result);
+    }
+    result
 }
 
 // ── Execute orchestration ────────────────────────────────────────────
@@ -626,6 +662,9 @@ pub async fn fetch_liquidity(client: &ApiClient, chain_index: &str) -> Result<Va
 /// the `{ "ok": true, "data": ... }` output envelope.
 /// This keeps swap independent of wallet internals.
 async fn run_onchainos_cmd(args: &[&str]) -> Result<Value> {
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][run_onchainos_cmd] args: {:?}", args);
+    }
     let exe = std::env::current_exe().unwrap_or_else(|_| "onchainos".into());
     let output = tokio::process::Command::new(&exe)
         .args(args)
@@ -665,6 +704,9 @@ async fn run_onchainos_cmd(args: &[&str]) -> Result<Value> {
         bail!("onchainos command failed: {}", err_msg);
     }
 
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][run_onchainos_cmd] result: {}", parsed["data"]);
+    }
     Ok(parsed["data"].clone())
 }
 
@@ -703,32 +745,54 @@ async fn cmd_execute(
     let chain_index = chains::resolve_chain(chain);
     let family = chains::chain_family(&chain_index);
     let native_addr = chains::native_token_address(&chain_index);
+    let from_token = resolve_token_address(&chain_index, from_token);
+    let to_token = resolve_token_address(&chain_index, to_token);
     let is_from_native = from_token.eq_ignore_ascii_case(native_addr);
 
-    // ── 1. Approve (EVM + non-native only) ───────────────────────────
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][cmd_execute] from_token={}, to_token={}, amount={}, chain={} (chain_index={}, family={}), wallet={}, slippage={:?}, gas_level={}, swap_mode={}, tips={:?}, max_auto_slippage={:?}, mev_protection={}",
+            from_token, to_token, amount, chain, chain_index, family, wallet_address, slippage, gas_level, swap_mode, tips, max_auto_slippage, mev_protection
+        );
+    }
+
+    // ── 1. Approve (EVM + non-native only) ──────────────────────────
     let mut approve_tx_hash: Option<String> = None;
 
     if family == "evm" && !is_from_native {
         let approvals =
-            fetch_check_approvals(client, &chain_index, wallet_address, from_token, None).await?;
+            fetch_check_approvals(client, &chain_index, wallet_address, &from_token, None).await?;
 
-        let spendable = approvals["results"]
+        let spendable = approvals
             .as_array()
             .and_then(|arr| arr.first())
-            .and_then(|r| r["spendable"].as_str())
+            .and_then(|r| r["tokens"].as_array())
+            .and_then(|tokens| tokens.first())
+            .and_then(|t| t["spendable"].as_str())
             .unwrap_or("0");
+
+        if cfg!(feature = "debug-log") {
+            eprintln!(
+                "[DEBUG][cmd_execute] spendable={}, amount={}, needs_approve={}",
+                spendable,
+                amount,
+                is_allowance_insufficient(spendable, amount)
+            );
+        }
 
         if is_allowance_insufficient(spendable, amount) {
             // USDT pattern: non-zero but insufficient → revoke first
             let spendable_nonzero = spendable != "0" && !spendable.is_empty();
             if spendable_nonzero {
-                eprintln!("[swap execute] revoking stale approval (USDT pattern)...");
-                let revoke_data = fetch_approve(client, &chain_index, from_token, "0").await?;
+                if cfg!(feature = "debug-log") {
+                    eprintln!("[swap execute] revoking stale approval (USDT pattern)...");
+                }
+                let revoke_data = fetch_approve(client, &chain_index, &from_token, "0").await?;
                 let revoke_calldata = extract_approve_calldata(&revoke_data)?;
 
                 let result = wallet_contract_call(&[
                     "--to",
-                    from_token,
+                    &from_token,
                     "--chain",
                     &chain_index,
                     "--input-data",
@@ -739,13 +803,15 @@ async fn cmd_execute(
                 extract_tx_hash(&result)?;
             }
 
-            eprintln!("[swap execute] approving token...");
-            let approve_data = fetch_approve(client, &chain_index, from_token, amount).await?;
+            if cfg!(feature = "debug-log") {
+                eprintln!("[swap execute] approving token...");
+            }
+            let approve_data = fetch_approve(client, &chain_index, &from_token, amount).await?;
             let approve_calldata = extract_approve_calldata(&approve_data)?;
 
             let result = wallet_contract_call(&[
                 "--to",
-                from_token,
+                &from_token,
                 "--chain",
                 &chain_index,
                 "--input-data",
@@ -757,12 +823,14 @@ async fn cmd_execute(
     }
 
     // ── 4. Swap ──────────────────────────────────────────────────────
-    eprintln!("[swap execute] executing swap...");
+    if cfg!(feature = "debug-log") {
+        eprintln!("[swap execute] executing swap...");
+    }
     let swap_data = fetch_swap(
         client,
         &chain_index,
-        from_token,
-        to_token,
+        &from_token,
+        &to_token,
         amount,
         slippage,
         wallet_address,
@@ -776,6 +844,9 @@ async fn cmd_execute(
     let swap_result = unwrap_api_array(&swap_data);
     if swap_result.is_null() {
         bail!("swap API returned empty result");
+    }
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][cmd_execute] swap_result: {}", swap_result);
     }
 
     let tx = &swap_result["tx"];
@@ -841,7 +912,7 @@ async fn cmd_execute(
                 .to_string();
             args.extend_from_slice(&[
                 "--aa-dex-token-addr",
-                from_token,
+                &from_token,
                 "--aa-dex-token-amount",
                 &from_token_amount,
             ]);
@@ -856,6 +927,12 @@ async fn cmd_execute(
     };
 
     // ── 6. Output ────────────────────────────────────────────────────
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][cmd_execute] swap_tx_hash={}, approve_tx_hash={:?}",
+            swap_tx_hash, approve_tx_hash
+        );
+    }
     let router_result = &swap_result["routerResult"];
     output::success(json!({
         "approveTxHash": approve_tx_hash,
