@@ -13,7 +13,7 @@ use super::api::fetch_position_detail;
 /// Requirements:
 /// - `tokenPrecision` is REQUIRED for every item
 /// - `coinAmount` MUST be an integer (no decimal point) -- fails fast otherwise
-pub(super) fn convert_minimal_to_decimal(items: &mut Vec<Value>) -> Result<()> {
+pub(super) fn convert_minimal_to_decimal(items: &mut [Value]) -> Result<()> {
     for item in items.iter_mut() {
         let prec: Option<u32> = item.get("tokenPrecision").and_then(|v| {
             v.as_str()

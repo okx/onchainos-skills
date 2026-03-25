@@ -479,7 +479,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
                             .and_then(|v| {
                                 v.as_str()
                                     .or_else(|| v.as_u64().map(|_| ""))
-                                    .and_then(|_| None)
+                                    .and(None)
                             })
                             .or_else(|| {
                                 t.get("tokenPrecision")

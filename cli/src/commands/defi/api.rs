@@ -54,6 +54,7 @@ pub async fn fetch_prepare(client: &ApiClient, investment_id: &str) -> Result<Va
 }
 
 /// POST /api/v6/defi/transaction/enter
+#[allow(clippy::too_many_arguments)]
 pub async fn fetch_enter(
     client: &ApiClient,
     investment_id: &str,

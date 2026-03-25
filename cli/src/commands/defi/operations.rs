@@ -139,10 +139,12 @@ pub(crate) async fn cmd_invest(
 
 // ── Standard (non-V3) invest ────────────────────────────────────────
 
+type InvestResult = (String, Option<(String, String, String)>);
+
 fn invest_standard(
     primary_token: &TokenInfo,
     amount: &str,
-) -> Result<(String, Option<(String, String, String)>)> {
+) -> Result<InvestResult> {
     let user_input_list = vec![json!({
         "tokenAddress": primary_token.address,
         "chainIndex": primary_token.chain_index,
@@ -608,7 +610,7 @@ pub(crate) async fn cmd_withdraw(
             bail!("V3 Pool withdrawal requires --ratio (e.g. --ratio 1 for full exit).");
         }
         // V3: only needs token_id + ratio, no user_input
-        return Ok(fetch_exit(
+        return fetch_exit(
             client,
             investment_id,
             &chain_index,
@@ -622,7 +624,7 @@ pub(crate) async fn cmd_withdraw(
             slippage,
             None,
         )
-        .await?);
+        .await;
     }
 
     // ── Non-V3 path ──
@@ -684,7 +686,7 @@ pub(crate) async fn cmd_withdraw(
         None
     };
 
-    Ok(fetch_exit(
+    fetch_exit(
         client,
         investment_id,
         &chain_index,
@@ -698,7 +700,7 @@ pub(crate) async fn cmd_withdraw(
         slippage,
         user_input.as_deref(),
     )
-    .await?)
+    .await
 }
 
 /// Token info extracted from position-detail
@@ -934,7 +936,7 @@ pub(crate) async fn cmd_collect(
         None // V3_FEE and UNLOCKED_PRINCIPAL don't need expectOutputList
     };
 
-    Ok(fetch_claim(
+    fetch_claim(
         client,
         address,
         &chain_index,
@@ -945,5 +947,5 @@ pub(crate) async fn cmd_collect(
         principal_index,
         expect_output.as_deref(),
     )
-    .await?)
+    .await
 }
