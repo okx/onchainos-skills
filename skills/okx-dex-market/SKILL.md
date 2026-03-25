@@ -161,10 +161,9 @@ Do not expose raw error codes or internal error messages to the user.
 
 | Field | Source | Used In |
 |---|---|---|
-| `tokenAddress` | `okx-dex-token`, `okx-dex-signal`, `okx-dex-trenches` | `market price`, `market kline`, `market portfolio-token-pnl` |
-| `chain` | any upstream skill | all commands |
+| `tokenAddress` | `okx-dex-token`, `okx-dex-signal`, `okx-dex-trenches` | `market price`, `market kline`, `market portfolio-token-pnl --token` |
+| `chain` | any upstream skill or user input | all commands |
 | `walletAddress` | `okx-dex-signal` (leaderboard), user input | all `portfolio-*` commands |
-| `tokenAddress` (portfolio) | `market portfolio-recent-pnl` (step 3) | `market portfolio-token-pnl --token` |
 
 **Outputs** (for downstream skills):
 
