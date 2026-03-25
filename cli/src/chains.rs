@@ -1,3 +1,24 @@
+use anyhow::Result;
+
+/// All known chain indices produced by [`resolve_chain`].
+/// Used by callers that need to reject unrecognised chains early.
+pub const SUPPORTED_CHAIN_INDICES: &[&str] = &[
+    "1", "10", "56", "137", "195", "196", "250", "324", "501", "534352", "607", "784", "8453",
+    "42161", "43114", "59144",
+];
+
+/// Validate that `chain_index` is a known chain. Returns an error that
+/// includes the original user input (`raw_input`) for a friendlier message.
+pub fn ensure_supported_chain(chain_index: &str, raw_input: &str) -> Result<()> {
+    if !SUPPORTED_CHAIN_INDICES.contains(&chain_index) {
+        anyhow::bail!(
+            "unsupported chain: \"{raw_input}\" (resolved to \"{chain_index}\"). \
+             Use `onchainos swap chains` to list supported chains."
+        );
+    }
+    Ok(())
+}
+
 /// Resolve a chain name to its OKX chainIndex string.
 /// Accepts both names ("ethereum", "solana") and raw chain IDs ("1", "501").
 /// Returns an owned String since the input may need case conversion.
