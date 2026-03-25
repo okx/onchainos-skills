@@ -101,10 +101,10 @@ For dynamic orchestration, also read each skill's `## Data Contract` section.
 |---|---|---|---|
 | 1 | `okx-dex-market` | `onchainos market portfolio-supported-chains` | confirmed supported chains |
 | 2 | `okx-dex-market` | `onchainos market portfolio-overview --address <wallet> --chain <chain> --time-frame 3` | `realizedPnlUsd`, `winRate`, top 3 tokens |
-| 3 | `okx-dex-market` | `onchainos market portfolio-recent-pnl --address <wallet> --chain <chain>` | per-token PnL list, `tokenContractAddress` |
-| 4 | `okx-dex-market` | `onchainos market portfolio-token-pnl --address <wallet> --chain <chain> --token <tokenContractAddress>` | realized/unrealized PnL snapshot |
+| 3 | `okx-dex-market` | `onchainos market portfolio-recent-pnl --address <wallet> --chain <chain>` | per-token PnL list, `pnlList[].tokenContractAddress` |
+| 4 | `okx-dex-market` | `onchainos market portfolio-token-pnl --address <wallet> --chain <chain> --token <pnlList[].tokenContractAddress>` | realized/unrealized PnL snapshot |
 
-**Data handoff**: `--address` (wallet) reused across all steps; `tokenContractAddress` from step 3 → `--token` in step 4.
+**Data handoff**: `--address` (wallet) reused across all steps; `pnlList[].tokenContractAddress` from step 3 → `--token` in step 4.
 
 ---
 
@@ -114,7 +114,8 @@ Key fields passed between skills:
 
 | Field | Produced By | Consumed By |
 |---|---|---|
-| `tokenContractAddress` | `okx-dex-token` (search, hot-tokens), `okx-dex-market` (portfolio-*), `okx-dex-signal` (tracker activities) | pass as `--address` to all downstream token commands |
+| `tokenContractAddress` | `okx-dex-token` (search, hot-tokens), `okx-dex-signal` (tracker activities) | pass as `--address` to all downstream token commands |
+| `pnlList[].tokenContractAddress` | `okx-dex-market` (portfolio-recent-pnl) | pass as `--token` to `portfolio-token-pnl` |
 | `token.tokenAddress` | `okx-dex-signal` (signal list) — nested field | extract via `token.tokenAddress`; pass as `--address` downstream |
 | `tokenAddress` | `okx-dex-trenches` (memepump tokens, token-details) | pass as `--address` to all downstream token commands |
 | `chainIndex` | any skill that returns token data (returned as numeric string e.g. `"501"`) | all `--chain` params downstream — pass `chainIndex` directly; CLI accepts numeric IDs. Do NOT use `chainName` (capitalized, not accepted by CLI) |

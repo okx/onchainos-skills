@@ -170,7 +170,7 @@ Do not expose raw error codes or internal error messages to the user.
 | Field | Command | Consumed By |
 |---|---|---|
 | `realizedPnlUsd`, `winRate` | `portfolio-overview` | display / decision |
-| `tokenContractAddress` | `portfolio-recent-pnl` | `portfolio-token-pnl --token` |
+| `pnlList[].tokenContractAddress` | `portfolio-recent-pnl` | `portfolio-token-pnl --token` |
 
 ## Global Notes
 
