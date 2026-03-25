@@ -1247,10 +1247,10 @@ impl McpServer {
     }
 
     #[tool(
-        name = "market_address_tracker_activities",
+        name = "tracker_activities",
         description = "Get latest DEX activities for tracked addresses. trackerType: smart_money (or 1) = platform smart money, kol (or 2) = platform Top 100 KOL addresses, multi_address (or 3) = custom addresses (requires wallet_address)"
     )]
-    async fn market_address_tracker_activities(
+    async fn tracker_activities(
         &self,
         Parameters(p): Parameters<AddressTrackerActivitiesParams>,
     ) -> Result<String, String> {

@@ -1,8 +1,8 @@
-//! Integration tests for `onchainos signal` commands: signal chains, signal list,
-//! and signal address-tracker-activities.
+//! Integration tests for `onchainos tracker` and `onchainos signal` commands.
 //!
-//! address-tracker-activities lives under the `market` CLI namespace but belongs to the
-//! okx-dex-signal skill — both are tested here.
+//! Both namespaces belong to the okx-dex-signal skill:
+//! - `tracker activities` — raw DEX transaction feed for smart money / KOL / custom wallets
+//! - `signal chains` / `signal list` — aggregated buy-only signal alerts
 //!
 //! These tests run the compiled binary against the live OKX API,
 //! so they require network access and valid API credentials.
@@ -13,7 +13,7 @@ use common::{assert_ok_and_extract_data, onchainos, run_with_retry};
 use predicates::prelude::*;
 use serde_json::Value;
 
-// ─── address-tracker-activities ─────────────────────────────────────
+// ─── tracker activities ──────────────────────────────────────────────
 
 /// Verify expected fields are present in a trade entry.
 fn assert_tracker_trade_fields(entry: &Value) {

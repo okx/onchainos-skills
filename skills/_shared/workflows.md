@@ -114,7 +114,7 @@ Key fields passed between skills:
 
 | Field | Produced By | Consumed By |
 |---|---|---|
-| `tokenContractAddress` | `okx-dex-token` (search, hot-tokens), `okx-dex-market` (portfolio-*), `okx-dex-signal` (address-tracker-activities) | pass as `--address` to all downstream token commands |
+| `tokenContractAddress` | `okx-dex-token` (search, hot-tokens), `okx-dex-market` (portfolio-*), `okx-dex-signal` (tracker activities) | pass as `--address` to all downstream token commands |
 | `token.tokenAddress` | `okx-dex-signal` (signal list) — nested field | extract via `token.tokenAddress`; pass as `--address` downstream |
 | `tokenAddress` | `okx-dex-trenches` (memepump tokens, token-details) | pass as `--address` to all downstream token commands |
 | `chainIndex` | any skill that returns token data (returned as numeric string e.g. `"501"`) | all `--chain` params downstream — pass `chainIndex` directly; CLI accepts numeric IDs. Do NOT use `chainName` (capitalized, not accepted by CLI) |

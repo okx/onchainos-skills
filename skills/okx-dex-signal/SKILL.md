@@ -24,10 +24,10 @@ metadata:
 
 | Chinese | English / Platform Terms | Maps To |
 |---|---|---|
-| 聪明钱最新交易 / 追踪聪明钱 / 聪明钱在买什么 | latest smart money trades, track smart money, what are smart money buying (transaction-level) | `address-tracker-activities --tracker-type smart_money` |
-| KOL交易动态 / 追踪KOL / KOL在买什么 | KOL trade feed, track KOL activity, what are KOL buying (transaction-level) | `address-tracker-activities --tracker-type kol` |
-| 追踪地址 / 追踪钱包 / 特定地址交易 | track specific addresses, custom wallet monitoring | `address-tracker-activities --tracker-type multi_address` |
-| 卖出动态 / 追踪聪明钱卖出 | sell tracking, smart money sell feed | `address-tracker-activities --trade-type 2` |
+| 聪明钱最新交易 / 追踪聪明钱 / 聪明钱在买什么 | latest smart money trades, track smart money, what are smart money buying (transaction-level) | `tracker activities --tracker-type smart_money` |
+| KOL交易动态 / 追踪KOL / KOL在买什么 | KOL trade feed, track KOL activity, what are KOL buying (transaction-level) | `tracker activities --tracker-type kol` |
+| 追踪地址 / 追踪钱包 / 特定地址交易 | track specific addresses, custom wallet monitoring | `tracker activities --tracker-type multi_address` |
+| 卖出动态 / 追踪聪明钱卖出 | sell tracking, smart money sell feed | `tracker activities --trade-type 2` |
 | 大户 / 巨鲸 (信号场景) | whale buy signal alerts (aggregated) | `signal list --wallet-type 3` |
 | 聪明钱信号 / 聪明资金信号 | smart money buy signal alerts (aggregated) | `signal list --wallet-type 1` |
 | KOL信号 / 网红信号 | KOL buy signal alerts (aggregated) | `signal list --wallet-type 2` |
@@ -69,10 +69,10 @@ metadata:
 ### Step 1: Identify Intent
 
 **Address Tracker** (raw transaction feed — what are specific wallet types actually trading):
-- "What are smart money buying/trading/doing?", "show me smart money trades", "聪明钱最新交易", "追踪聪明钱" → `address-tracker-activities --tracker-type smart_money`
-- "What are KOLs buying/trading?", "KOL交易动态", "追踪KOL" → `address-tracker-activities --tracker-type kol`
-- "Track this address / these wallets", "追踪地址" → `address-tracker-activities --tracker-type multi_address`
-- "Smart money sell tracking", "追踪聪明钱卖出", "卖出动态" → `address-tracker-activities --trade-type 2`
+- "What are smart money buying/trading/doing?", "show me smart money trades", "聪明钱最新交易", "追踪聪明钱" → `tracker activities --tracker-type smart_money`
+- "What are KOLs buying/trading?", "KOL交易动态", "追踪KOL" → `tracker activities --tracker-type kol`
+- "Track this address / these wallets", "追踪地址" → `tracker activities --tracker-type multi_address`
+- "Smart money sell tracking", "追踪聪明钱卖出", "卖出动态" → `tracker activities --trade-type 2`
 
 **Signal** (aggregated buy-only alerts — which tokens are being collectively bought):
 - "Show me buy signals", "大户信号", "whale signals", "smart money alerts", "what tokens are being bought" → `onchainos signal list`
@@ -134,7 +134,7 @@ metadata:
 
 | Just called | Suggest |
 |---|---|
-| `address-tracker-activities` | 1. Get token price → `onchainos market price` 2. Deep token analytics → `onchainos token price-info` 3. Buy/swap the token → `onchainos swap execute` |
+| `tracker activities` | 1. Get token price → `onchainos market price` 2. Deep token analytics → `onchainos token price-info` 3. Buy/swap the token → `onchainos swap execute` |
 | `signal list` | 1. Drill into actual trades → `onchainos tracker activities` 2. View price chart → `onchainos market kline` 3. Deep token analytics → `onchainos token price-info` 4. Buy the token → `onchainos swap execute` |
 | `leaderboard list` | 1. Drill into a wallet's PnL → `onchainos market portfolio-overview` 2. Check a wallet's holdings → `onchainos portfolio all-balances` 3. Track that wallet's trades → `onchainos tracker activities --tracker-type multi_address` |
 
@@ -162,8 +162,8 @@ For detailed parameter tables and return field schemas, consult:
 
 | Field | Source | Used In |
 |---|---|---|
-| `chain` | user input | `signal list`, `leaderboard list`, `address-tracker-activities` |
-| `walletAddress` | user input | `address-tracker-activities --tracker-type multi_address` |
+| `chain` | user input | `signal list`, `leaderboard list`, `tracker activities` |
+| `walletAddress` | user input | `tracker activities --tracker-type multi_address` |
 | `tokenAddress` | user input (optional) | `signal list --token-address` to filter for a specific token |
 
 **Outputs** (for downstream skills):
@@ -171,7 +171,7 @@ For detailed parameter tables and return field schemas, consult:
 | Field | Command | Consumed By |
 |---|---|---|
 | `token.tokenAddress` | `signal list` (nested field) | pass as `--address` to `okx-dex-token` price-info, holders, cluster; `okx-dex-trenches` token-details; `okx-dex-market` kline |
-| `tokenContractAddress` | `address-tracker-activities` (flat field) | pass as `--address` to downstream token commands |
+| `tokenContractAddress` | `tracker activities` (flat field) | pass as `--address` to downstream token commands |
 | `chainIndex` | `signal list` | all downstream `--chain` params (pass as-is; CLI accepts numeric IDs. Do NOT use `chainName` — it is capitalized and not accepted by CLI) |
 | `soldRatioPercent` | `signal list` | signal strength assessment (lower = still holding = bullish) |
 | `walletAddress` | `leaderboard list` | `okx-dex-market` portfolio-overview, `okx-wallet-portfolio` all-balances |

@@ -223,7 +223,7 @@ fn mcp_tools_list_returns_all_tools() {
         "token_info",
         "market_price",
         "market_kline",
-        "market_address_tracker_activities",
+        "tracker_activities",
         "swap_quote",
         "swap_swap",
         "portfolio_total_value",
@@ -324,10 +324,10 @@ fn mcp_market_kline() {
 }
 
 #[test]
-fn mcp_market_address_tracker_activities() {
+fn mcp_tracker_activities() {
     let mut client = McpClient::start();
     let result = client.call_tool(
-        "market_address_tracker_activities",
+        "tracker_activities",
         json!({"tracker_type": "smart_money"}),
     );
     if result.is_rate_limited() {
