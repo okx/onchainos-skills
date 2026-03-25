@@ -171,11 +171,8 @@ pub async fn fetch_claim(
     if let Some(pid) = product_id {
         body["investmentId"] = json!(pid);
     }
-    // analysisPlatformId is only required for REWARD_PLATFORM
     if let Some(pfid) = platform_id {
-        if reward_type == "REWARD_PLATFORM" {
-            body["analysisPlatformId"] = json!(pfid);
-        }
+        body["analysisPlatformId"] = json!(pfid);
     }
     if let Some(tid) = token_id {
         body["tokenId"] = json!(tid);

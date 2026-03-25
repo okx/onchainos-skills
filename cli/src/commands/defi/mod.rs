@@ -476,11 +476,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
                     if let (Some(addr), Some(prec)) = (
                         t.get("tokenAddress").and_then(|v| v.as_str()),
                         t.get("tokenPrecision")
-                            .and_then(|v| {
-                                v.as_str()
-                                    .or_else(|| v.as_u64().map(|_| ""))
-                                    .and(None)
-                            })
+                            .and_then(|v| v.as_str().or_else(|| v.as_u64().map(|_| "")).and(None))
                             .or_else(|| {
                                 t.get("tokenPrecision")
                                     .and_then(|v| {

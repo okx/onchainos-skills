@@ -141,10 +141,7 @@ pub(crate) async fn cmd_invest(
 
 type InvestResult = (String, Option<(String, String, String)>);
 
-fn invest_standard(
-    primary_token: &TokenInfo,
-    amount: &str,
-) -> Result<InvestResult> {
+fn invest_standard(primary_token: &TokenInfo, amount: &str) -> Result<InvestResult> {
     let user_input_list = vec![json!({
         "tokenAddress": primary_token.address,
         "chainIndex": primary_token.chain_index,

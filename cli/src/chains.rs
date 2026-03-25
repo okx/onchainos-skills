@@ -40,15 +40,3 @@ pub fn chain_family(chain_index: &str) -> &str {
         _ => "evm",
     }
 }
-
-/// Native token address for a given chainIndex.
-pub fn native_token_address(chain_index: &str) -> &str {
-    match chain_index {
-        "501" => "11111111111111111111111111111111",
-        "784" => "0x2::sui::SUI",
-        "195" => "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb",
-        "607" => "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c",
-        // EVM chains (Ethereum, BSC, Polygon, Arbitrum, Base, etc.)
-        _ => "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-    }
-}
