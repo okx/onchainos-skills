@@ -59,7 +59,7 @@ For dynamic orchestration, also read each skill's `## Data Contract` section.
 | Step | Skill | Command | Produces |
 |---|---|---|---|
 | 1 | `okx-dex-trenches` | `onchainos memepump tokens --chain solana --stage NEW` | `tokenAddress`, `chainIndex` |
-| 2 | `okx-dex-trenches` | `onchainos memepump token-details --address <tokenAddress> --chain solana` | `bondingPercent`, `bundlersPercent`, `top10HoldingsPercent` |
+| 2 | `okx-dex-trenches` | `onchainos memepump token-details --address <tokenAddress> --chain solana` | `bondingPercent`, `tags.bundlersPercent`, `tags.top10HoldingsPercent` |
 | 3 | `okx-dex-trenches` | `onchainos memepump token-dev-info --address <tokenAddress> --chain solana` | `rugPullCount`, `migratedCount`, `devHoldingPercent` |
 | 4 | `okx-dex-trenches` | `onchainos memepump token-bundle-info --address <tokenAddress> --chain solana` | `totalBundlers`, `bundlerAthPercent` |
 | 5 | `okx-dex-market` | `onchainos market kline --address <tokenAddress> --chain solana` | price chart |

@@ -169,8 +169,8 @@ Do not expose raw error codes or internal error messages to the user.
 
 | Field | Command | Consumed By |
 |---|---|---|
-| `realizedPnl`, `winRate` | `portfolio-overview` | display / decision |
-| `tokenAddress` | `portfolio-recent-pnl` | `portfolio-token-pnl --token` |
+| `realizedPnlUsd`, `winRate` | `portfolio-overview` | display / decision |
+| `tokenContractAddress` | `portfolio-recent-pnl` | `portfolio-token-pnl --token` |
 
 ## Global Notes
 
