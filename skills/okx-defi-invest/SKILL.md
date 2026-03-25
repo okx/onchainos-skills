@@ -92,10 +92,12 @@ Rules:
 
 ### Withdraw
 
+> **CRITICAL — position-detail is MANDATORY before withdraw.** You MUST call `defi position-detail` immediately before every `defi withdraw`, even if you already have position data from a previous call. Do NOT reuse stale position-detail results.
+
 ```
 1. defi positions --address <addr> --chains ethereum
 2. defi position-detail --address <addr> --chain ethereum --platform-id <pid>
-   → get investmentId, tokenPrecision, coinAmount (current balance)
+   → MUST be called fresh — get investmentId, tokenPrecision, coinAmount (current balance)
 3. Full exit:
    defi withdraw --investment-id <id> --address <addr> --chain ethereum --ratio 1 --platform-id <pid>
    Partial exit (convert coinAmount to minimal units: amount × 10^tokenPrecision):
@@ -107,9 +109,12 @@ Rules:
 
 ### Claim Rewards
 
+> **CRITICAL — position-detail is MANDATORY before collect.** You MUST call `defi position-detail` immediately before every `defi collect`, even if you already have position data from a previous call in the conversation. Position data (rewards, investmentId, platformId, tokenId) changes after each on-chain operation (withdraw, previous collect, etc.), so stale data leads to wrong parameters or failed transactions. Do NOT skip this step. Do NOT reuse position-detail results from earlier in the conversation.
+
 ```
 1. defi positions --address <addr> --chains ethereum
 2. defi position-detail --address <addr> --chain ethereum --platform-id <pid>
+   → MUST be called fresh — do NOT reuse prior results
 3. defi collect --address <addr> --chain ethereum --reward-type REWARD_INVESTMENT --investment-id <id> --platform-id <pid>
    → CLI returns calldata (or skips if no rewards)
 4. User signs and broadcasts
