@@ -1,6 +1,8 @@
 //! Integration tests for `onchainos market` commands:
 //! price, prices, kline, index, and portfolio-*.
 //!
+//! Signal tests have moved to cli_signal.rs; memepump tests have moved to cli_trenches.rs.
+//!
 //! These tests run the compiled binary against the live OKX API,
 //! so they require network access and valid API credentials.
 

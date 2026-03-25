@@ -209,9 +209,9 @@ fn mcp_tools_list_returns_all_tools() {
     let mut client = McpClient::start();
     let tools = client.list_tools();
 
-    // Verify minimum tool count (43 as of current implementation)
+    // Verify minimum tool count (50 as of current implementation)
     assert!(
-        tools.len() >= 40,
+        tools.len() >= 48,
         "expected at least 40 tools, got {}: {:?}",
         tools.len(),
         tools
