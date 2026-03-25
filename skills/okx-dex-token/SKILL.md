@@ -187,7 +187,7 @@ To search for specific command details: `grep -n "onchainos token <command>" ref
 | `liquidity` | `token price-info` | stop condition: `< $10K` → warn; `< $1K` → strongly discourage |
 | `communityRecognized` | `token search`, `token price-info` | trust signal for user display |
 | `riskControlLevel` | `token advanced-info` | stop condition: `>= 3` → warn before swap |
-| `clusterLevel`, `rugPullPercent` | `token cluster-overview` | stop condition before swap |
+| `clusterConcentration`, `rugPullPercent` | `token cluster-overview` | stop condition: `clusterConcentration = High` → warn before swap |
 
 ## Global Notes
 

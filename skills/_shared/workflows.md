@@ -30,10 +30,10 @@ For dynamic orchestration, also read each skill's `## Data Contract` section.
 | 1 | `okx-dex-token` | `onchainos token hot-tokens --ranking-type 4 --chain solana` | `tokenAddress`, `chainIndex` |
 | 2 | `okx-dex-token` | `onchainos token price-info --address <tokenAddress> --chain solana` | `liquidity`, `marketCap` |
 | 3 | `okx-dex-token` | `onchainos token advanced-info --address <tokenAddress> --chain solana` | `riskControlLevel`, `devHoldingPercent` |
-| 4 | `okx-dex-token` | `onchainos token cluster-overview --address <tokenAddress> --chain solana` | `clusterLevel`, `rugPullPercent` |
+| 4 | `okx-dex-token` | `onchainos token cluster-overview --address <tokenAddress> --chain solana` | `clusterConcentration`, `rugPullPercent` |
 | 5 | `okx-dex-market` | `onchainos market kline --address <tokenAddress> --chain solana` | price momentum |
 
-**Stop condition**: `riskControlLevel >= 3` in step 3 or `clusterLevel = HIGH` in step 4 → warn user.
+**Stop condition**: `riskControlLevel >= 3` in step 3 or `clusterConcentration = High` in step 4 → warn user.
 
 ---
 
@@ -45,7 +45,7 @@ For dynamic orchestration, also read each skill's `## Data Contract` section.
 |---|---|---|---|
 | 1 | `okx-dex-signal` | `onchainos signal list --chain solana --wallet-type 1,2,3` | `tokenAddress`, `chainIndex`, `soldRatioPercent` |
 | 2 | `okx-dex-token` | `onchainos token price-info --address <tokenAddress> --chain <chain>` | `liquidity`, `marketCap` |
-| 3 | `okx-dex-token` | `onchainos token cluster-overview --address <tokenAddress> --chain <chain>` | `clusterLevel`, `rugPullPercent` |
+| 3 | `okx-dex-token` | `onchainos token cluster-overview --address <tokenAddress> --chain <chain>` | `clusterConcentration`, `rugPullPercent` |
 | 4 | `okx-dex-market` | `onchainos market kline --address <tokenAddress> --chain <chain>` | price chart |
 
 **Data handoff**: `tokenAddress` + `chainIndex` from step 1 → reused in steps 2–4.
@@ -120,5 +120,5 @@ Key fields passed between skills:
 | `walletAddress` | `okx-dex-signal` (leaderboard), user input | `okx-dex-market` portfolio commands |
 | `rugPullCount` | `okx-dex-trenches` (token-dev-info) | stop condition before proceeding |
 | `riskControlLevel` | `okx-dex-token` (advanced-info) | stop condition before proceeding |
-| `clusterLevel` | `okx-dex-token` (cluster-overview) | stop condition before proceeding |
+| `clusterConcentration` | `okx-dex-token` (cluster-overview) | stop condition before proceeding |
 | `soldRatioPercent` | `okx-dex-signal` (signal list) | signal strength assessment |
