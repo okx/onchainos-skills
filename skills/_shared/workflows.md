@@ -89,7 +89,7 @@ For dynamic orchestration, also read each skill's `## Data Contract` section.
 | Step | Skill | Command | Produces |
 |---|---|---|---|
 | 1 | `okx-dex-signal` | `onchainos leaderboard list --chain solana --time-frame 3 --sort-by 1` | `walletAddress` |
-| 2 | `okx-dex-market` | `onchainos market portfolio-overview --address <walletAddress> --chain solana --time-frame 3` | `realizedPnl`, `winRate`, top tokens |
+| 2 | `okx-dex-market` | `onchainos market portfolio-overview --address <walletAddress> --chain solana --time-frame 3` | `realizedPnlUsd`, `winRate`, top tokens |
 
 ---
 
@@ -100,11 +100,11 @@ For dynamic orchestration, also read each skill's `## Data Contract` section.
 | Step | Skill | Command | Produces |
 |---|---|---|---|
 | 1 | `okx-dex-market` | `onchainos market portfolio-supported-chains` | confirmed supported chains |
-| 2 | `okx-dex-market` | `onchainos market portfolio-overview --address <wallet> --chain <chain> --time-frame 3` | `realizedPnl`, `winRate`, top 3 tokens |
-| 3 | `okx-dex-market` | `onchainos market portfolio-recent-pnl --address <wallet> --chain <chain>` | per-token PnL list, `tokenAddress` |
-| 4 | `okx-dex-market` | `onchainos market portfolio-token-pnl --address <wallet> --chain <chain> --token <tokenAddress>` | realized/unrealized PnL snapshot |
+| 2 | `okx-dex-market` | `onchainos market portfolio-overview --address <wallet> --chain <chain> --time-frame 3` | `realizedPnlUsd`, `winRate`, top 3 tokens |
+| 3 | `okx-dex-market` | `onchainos market portfolio-recent-pnl --address <wallet> --chain <chain>` | per-token PnL list, `tokenContractAddress` |
+| 4 | `okx-dex-market` | `onchainos market portfolio-token-pnl --address <wallet> --chain <chain> --token <tokenContractAddress>` | realized/unrealized PnL snapshot |
 
-**Data handoff**: `--address` (wallet) reused across all steps; `tokenAddress` from step 3 → `--token` in step 4.
+**Data handoff**: `--address` (wallet) reused across all steps; `tokenContractAddress` from step 3 → `--token` in step 4.
 
 ---
 
