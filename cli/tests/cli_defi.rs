@@ -13,14 +13,7 @@ use predicates::prelude::*;
 
 #[test]
 fn defi_search_returns_results() {
-    let output = run_with_retry(&[
-        "defi",
-        "search",
-        "--token",
-        "USDC",
-        "--chain",
-        "ethereum",
-    ]);
+    let output = run_with_retry(&["defi", "search", "--token", "USDC", "--chain", "ethereum"]);
     let data = assert_ok_and_extract_data(&output);
     // search may return array or object depending on API response
     assert!(
@@ -73,7 +66,9 @@ fn defi_search_without_token_or_platform_fails() {
         .args(["defi", "search", "--chain", "ethereum"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("at least one of --token or --platform"));
+        .stderr(predicate::str::contains(
+            "at least one of --token or --platform",
+        ));
 }
 
 // ─── detail ────────────────────────────────────────────────────────
@@ -125,8 +120,10 @@ fn defi_redeem_missing_required_args_fails() {
 fn defi_redeem_missing_id_fails() {
     onchainos()
         .args([
-            "defi", "redeem",
-            "--address", "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+            "defi",
+            "redeem",
+            "--address",
+            "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
         ])
         .assert()
         .failure()
@@ -136,10 +133,7 @@ fn defi_redeem_missing_id_fails() {
 #[test]
 fn defi_redeem_missing_address_fails() {
     onchainos()
-        .args([
-            "defi", "redeem",
-            "--id", "test123",
-        ])
+        .args(["defi", "redeem", "--id", "test123"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
@@ -151,7 +145,12 @@ fn defi_redeem_missing_address_fails() {
 fn defi_claim_missing_required_args_fails() {
     // --address and --reward-type are both required
     onchainos()
-        .args(["defi", "claim", "--address", "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"])
+        .args([
+            "defi",
+            "claim",
+            "--address",
+            "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+        ])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
@@ -160,10 +159,7 @@ fn defi_claim_missing_required_args_fails() {
 #[test]
 fn defi_claim_missing_address_fails() {
     onchainos()
-        .args([
-            "defi", "claim",
-            "--reward-type", "REWARD_INVESTMENT",
-        ])
+        .args(["defi", "claim", "--reward-type", "REWARD_INVESTMENT"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
@@ -173,8 +169,10 @@ fn defi_claim_missing_address_fails() {
 fn defi_claim_missing_reward_type_fails() {
     onchainos()
         .args([
-            "defi", "claim",
-            "--address", "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+            "defi",
+            "claim",
+            "--address",
+            "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
         ])
         .assert()
         .failure()
@@ -195,7 +193,12 @@ fn defi_positions_missing_wallet_fails() {
 #[test]
 fn defi_positions_missing_chains_fails() {
     onchainos()
-        .args(["defi", "positions", "--address", "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"])
+        .args([
+            "defi",
+            "positions",
+            "--address",
+            "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+        ])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
@@ -204,9 +207,12 @@ fn defi_positions_missing_chains_fails() {
 #[test]
 fn defi_positions_single_chain_returns_ok() {
     let output = run_with_retry(&[
-        "defi", "positions",
-        "--address", "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-        "--chains", "ethereum",
+        "defi",
+        "positions",
+        "--address",
+        "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+        "--chains",
+        "ethereum",
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
@@ -218,9 +224,12 @@ fn defi_positions_single_chain_returns_ok() {
 #[test]
 fn defi_positions_multi_chain_returns_ok() {
     let output = run_with_retry(&[
-        "defi", "positions",
-        "--address", "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-        "--chains", "ethereum,bsc",
+        "defi",
+        "positions",
+        "--address",
+        "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+        "--chains",
+        "ethereum,bsc",
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
@@ -235,9 +244,12 @@ fn defi_positions_multi_chain_returns_ok() {
 fn defi_position_detail_missing_wallet_fails() {
     onchainos()
         .args([
-            "defi", "position-detail",
-            "--chain", "ethereum",
-            "--platform-id", "44",
+            "defi",
+            "position-detail",
+            "--chain",
+            "ethereum",
+            "--platform-id",
+            "44",
         ])
         .assert()
         .failure()
@@ -248,9 +260,12 @@ fn defi_position_detail_missing_wallet_fails() {
 fn defi_position_detail_missing_chain_fails() {
     onchainos()
         .args([
-            "defi", "position-detail",
-            "--address", "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-            "--platform-id", "44",
+            "defi",
+            "position-detail",
+            "--address",
+            "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+            "--platform-id",
+            "44",
         ])
         .assert()
         .failure()
@@ -261,9 +276,12 @@ fn defi_position_detail_missing_chain_fails() {
 fn defi_position_detail_missing_platform_id_fails() {
     onchainos()
         .args([
-            "defi", "position-detail",
-            "--address", "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-            "--chain", "ethereum",
+            "defi",
+            "position-detail",
+            "--address",
+            "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+            "--chain",
+            "ethereum",
         ])
         .assert()
         .failure()

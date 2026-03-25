@@ -3,8 +3,8 @@ use serde_json::{json, Value};
 //
 use super::api::*;
 use super::helpers::*;
-use serde_json::Value as JsonValue;
 use crate::client::ApiClient;
+use serde_json::Value as JsonValue;
 
 // ── Shared types ────────────────────────────────────────────────────
 
@@ -54,37 +54,52 @@ pub(crate) async fn cmd_invest(
     // 4. Route: V3 or standard
     let invest_type = detail
         .get("investType")
-        .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
         .unwrap_or(0);
 
     // Returns: (user_input_json, surplus_info, resolved_tick_lower, resolved_tick_upper)
     let (user_input_json, surplus_info, resolved_tl, resolved_tu) = if invest_type == 2 {
         // V3: resolve token2 — explicit or auto-detect from investWithTokenList
-        let secondary_token_resolved: Option<(TokenInfo, &str)> = if let (Some(secondary_token_name), Some(secondary_amount)) = (token2, amount2) {
-            let matched2 = find_matching_token(invest_tokens, secondary_token_name)?;
-            let secondary_token = extract_token_info(matched2, secondary_token_name)?;
-            validate_amount(secondary_amount)?;
-            Some((secondary_token, secondary_amount))
-        } else if let Some(secondary_amount) = amount2 {
-            validate_amount(secondary_amount)?;
-            let other = invest_tokens.iter()
-                .find(|t| {
-                    let addr = t.get("tokenAddress").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+        let secondary_token_resolved: Option<(TokenInfo, &str)> =
+            if let (Some(secondary_token_name), Some(secondary_amount)) = (token2, amount2) {
+                let matched2 = find_matching_token(invest_tokens, secondary_token_name)?;
+                let secondary_token = extract_token_info(matched2, secondary_token_name)?;
+                validate_amount(secondary_amount)?;
+                Some((secondary_token, secondary_amount))
+            } else if let Some(secondary_amount) = amount2 {
+                validate_amount(secondary_amount)?;
+                let other = invest_tokens.iter().find(|t| {
+                    let addr = t
+                        .get("tokenAddress")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_lowercase();
                     addr != primary_token.address.to_lowercase()
                 });
-            if let Some(other_token) = other {
-                let secondary_token = extract_token_info(other_token, "auto-detected")?;
-                Some((secondary_token, secondary_amount))
+                if let Some(other_token) = other {
+                    let secondary_token = extract_token_info(other_token, "auto-detected")?;
+                    Some((secondary_token, secondary_amount))
+                } else {
+                    None
+                }
             } else {
                 None
-            }
-        } else {
-            None
-        };
+            };
         let (json, change, tl, tu) = invest_v3(
-            client, investment_id, address, &primary_token, amount,
+            client,
+            investment_id,
+            address,
+            &primary_token,
+            amount,
             secondary_token_resolved.as_ref(),
-            &prepare, token_id, tick_lower, tick_upper, range,
+            &prepare,
+            token_id,
+            tick_lower,
+            tick_upper,
+            range,
         )
         .await?;
         (json, change, tl, tu)
@@ -146,13 +161,18 @@ async fn invest_v3(
     address: &str,
     primary_token: &TokenInfo<'_>,
     amount: &str,
-    secondary_token_resolved: Option<&(TokenInfo<'_>, &str)>,  // (token2_info, amount2) — already validated
+    secondary_token_resolved: Option<&(TokenInfo<'_>, &str)>, // (token2_info, amount2) — already validated
     prepare: &Value,
     token_id: Option<&str>,
     tick_lower: Option<i64>,
     tick_upper: Option<i64>,
     range: Option<f64>,
-) -> Result<(String, Option<(String, String, String)>, Option<i64>, Option<i64>)> {
+) -> Result<(
+    String,
+    Option<(String, String, String)>,
+    Option<i64>,
+    Option<i64>,
+)> {
     // Add-to-existing position (token_id): no tick needed
     // New position: must have tick range
     let (resolved_tl, resolved_tu) = if token_id.is_some() {
@@ -161,17 +181,34 @@ async fn invest_v3(
         resolve_ticks(prepare, tick_lower, tick_upper, range)?
     };
 
-    let (json, change) = if let Some((secondary_token, secondary_amount)) = secondary_token_resolved {
+    let (json, change) = if let Some((secondary_token, secondary_amount)) = secondary_token_resolved
+    {
         invest_v3_dual(
-            client, investment_id, address, primary_token, amount,
-            secondary_token, secondary_amount, resolved_tl, resolved_tu,
+            client,
+            investment_id,
+            address,
+            primary_token,
+            amount,
+            secondary_token,
+            secondary_amount,
+            resolved_tl,
+            resolved_tu,
         )
         .await?
     } else {
         invest_v3_single(
-            client, investment_id, address, primary_token, amount,
-            &prepare.get("investWithTokenList").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
-            resolved_tl, resolved_tu,
+            client,
+            investment_id,
+            address,
+            primary_token,
+            amount,
+            &prepare
+                .get("investWithTokenList")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default(),
+            resolved_tl,
+            resolved_tu,
         )
         .await?
     };
@@ -192,21 +229,34 @@ async fn invest_v3_single(
 ) -> Result<(String, Option<(String, String, String)>)> {
     let human_amount = minimal_to_decimal_str(amount, primary_token.precision);
     let calc_result = fetch_calculate_entry(
-        client, investment_id, address, primary_token.address,
-        &human_amount, &primary_token.precision.to_string(),
-        tick_lower, tick_upper,
+        client,
+        investment_id,
+        address,
+        primary_token.address,
+        &human_amount,
+        &primary_token.precision.to_string(),
+        tick_lower,
+        tick_upper,
     )
     .await?;
 
     let calc_tokens = calc_result
         .get("investWithTokenList")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| anyhow::anyhow!("investWithTokenList not found in calculate-entry response"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("investWithTokenList not found in calculate-entry response")
+        })?;
 
     let mut user_input_list: Vec<Value> = Vec::new();
     for ct in calc_tokens {
-        let calc_token_address = ct.get("tokenAddress").and_then(|v| v.as_str()).unwrap_or("");
-        let calc_token_chain = ct.get("chainIndex").and_then(|v| v.as_str()).unwrap_or(primary_token.chain_index);
+        let calc_token_address = ct
+            .get("tokenAddress")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let calc_token_chain = ct
+            .get("chainIndex")
+            .and_then(|v| v.as_str())
+            .unwrap_or(primary_token.chain_index);
         let calc_token_amount = ct.get("coinAmount").and_then(|v| v.as_str()).unwrap_or("0");
         let calc_token_precision = find_token_precision(invest_tokens, calc_token_address);
         let calc_token_minimal = decimal_to_minimal_str(calc_token_amount, calc_token_precision);
@@ -236,9 +286,14 @@ async fn invest_v3_dual(
     // Rebalance: use token1 as constraint, check if token2 fits
     let human_amount1 = minimal_to_decimal_str(amount, primary_token.precision);
     let calc1 = fetch_calculate_entry(
-        client, investment_id, address, primary_token.address,
-        &human_amount1, &primary_token.precision.to_string(),
-        tick_lower, tick_upper,
+        client,
+        investment_id,
+        address,
+        primary_token.address,
+        &human_amount1,
+        &primary_token.precision.to_string(),
+        tick_lower,
+        tick_upper,
     )
     .await?;
 
@@ -248,7 +303,9 @@ async fn invest_v3_dual(
     let user_t2: u128 = secondary_amount.parse().unwrap_or(0);
     let needed_t2: u128 = needed_t2_minimal.parse().unwrap_or(0);
 
-    let (final_t1, final_t2, surplus_symbol, surplus_address, surplus_amount) = if needed_t2 <= user_t2 {
+    let (final_t1, final_t2, surplus_symbol, surplus_address, surplus_amount) = if needed_t2
+        <= user_t2
+    {
         // token1 is the constraint, token2 has surplus
         let change = user_t2 - needed_t2;
         (
@@ -262,9 +319,14 @@ async fn invest_v3_dual(
         // token2 is the constraint, recalculate with token2
         let human_amount2 = minimal_to_decimal_str(secondary_amount, secondary_token.precision);
         let calc2 = fetch_calculate_entry(
-            client, investment_id, address, secondary_token.address,
-            &human_amount2, &secondary_token.precision.to_string(),
-            tick_lower, tick_upper,
+            client,
+            investment_id,
+            address,
+            secondary_token.address,
+            &human_amount2,
+            &secondary_token.precision.to_string(),
+            tick_lower,
+            tick_upper,
         )
         .await?;
 
@@ -310,7 +372,10 @@ async fn invest_v3_dual(
 fn is_investable(detail: &Value) -> bool {
     detail
         .get("isInvestable")
-        .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true" || s == "1")))
+        .and_then(|v| {
+            v.as_bool()
+                .or_else(|| v.as_str().map(|s| s == "true" || s == "1"))
+        })
         .unwrap_or(false)
 }
 
@@ -334,46 +399,98 @@ fn find_matching_token<'a>(invest_tokens: &'a [Value], token: &str) -> Result<&'
     invest_tokens
         .iter()
         .find(|t| {
-            let sym = t.get("tokenSymbol").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-            let addr = t.get("tokenAddress").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+            let sym = t
+                .get("tokenSymbol")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_lowercase();
+            let addr = t
+                .get("tokenAddress")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_lowercase();
             sym == token_lower || addr == token_lower
         })
         .ok_or_else(|| {
             let available: Vec<String> = invest_tokens
                 .iter()
-                .filter_map(|t| t.get("tokenSymbol").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                .filter_map(|t| {
+                    t.get("tokenSymbol")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
                 .collect();
-            anyhow::anyhow!("Token '{}' not found in investWithTokenList. Available: {}", token, available.join(", "))
+            anyhow::anyhow!(
+                "Token '{}' not found in investWithTokenList. Available: {}",
+                token,
+                available.join(", ")
+            )
         })
 }
 
 fn extract_token_info<'a>(matched: &'a Value, token: &str) -> Result<TokenInfo<'a>> {
-    let address = matched.get("tokenAddress").and_then(|v| v.as_str())
+    let address = matched
+        .get("tokenAddress")
+        .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow::anyhow!("tokenAddress is empty for token '{}'", token))?;
-    let chain_index = matched.get("chainIndex").and_then(|v| v.as_str())
+    let chain_index = matched
+        .get("chainIndex")
+        .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow::anyhow!("chainIndex is empty for token '{}'", token))?;
-    let precision: u32 = matched.get("tokenPrecision")
-        .and_then(|v| v.as_str().and_then(|s| s.parse().ok()).or_else(|| v.as_u64().map(|n| n as u32)))
+    let precision: u32 = matched
+        .get("tokenPrecision")
+        .and_then(|v| {
+            v.as_str()
+                .and_then(|s| s.parse().ok())
+                .or_else(|| v.as_u64().map(|n| n as u32))
+        })
         .unwrap_or(18);
-    let symbol = matched.get("tokenSymbol").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
-    Ok(TokenInfo { address, chain_index, precision, symbol })
+    let symbol = matched
+        .get("tokenSymbol")
+        .and_then(|v| v.as_str())
+        .unwrap_or("UNKNOWN");
+    Ok(TokenInfo {
+        address,
+        chain_index,
+        precision,
+        symbol,
+    })
 }
 
 fn find_token_precision(invest_tokens: &[Value], token_address: &str) -> u32 {
     invest_tokens
         .iter()
-        .find(|t| t.get("tokenAddress").and_then(|v| v.as_str()).unwrap_or("").eq_ignore_ascii_case(token_address))
-        .and_then(|t| t.get("tokenPrecision").and_then(|v| v.as_str().and_then(|s| s.parse().ok()).or_else(|| v.as_u64().map(|n| n as u32))))
+        .find(|t| {
+            t.get("tokenAddress")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .eq_ignore_ascii_case(token_address)
+        })
+        .and_then(|t| {
+            t.get("tokenPrecision").and_then(|v| {
+                v.as_str()
+                    .and_then(|s| s.parse().ok())
+                    .or_else(|| v.as_u64().map(|n| n as u32))
+            })
+        })
         .unwrap_or(18)
 }
 
 fn find_token_amount_in_calc_result(calc_result: &Value, token_address: &str) -> Result<String> {
-    let tokens = calc_result.get("investWithTokenList").and_then(|v| v.as_array())
+    let tokens = calc_result
+        .get("investWithTokenList")
+        .and_then(|v| v.as_array())
         .ok_or_else(|| anyhow::anyhow!("calculate-entry response missing investWithTokenList"))?;
-    let amount = tokens.iter()
-        .find(|t| t.get("tokenAddress").and_then(|v| v.as_str()).unwrap_or("").eq_ignore_ascii_case(token_address))
+    let amount = tokens
+        .iter()
+        .find(|t| {
+            t.get("tokenAddress")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .eq_ignore_ascii_case(token_address)
+        })
         .and_then(|t| t.get("coinAmount").and_then(|v| v.as_str()))
         .unwrap_or("0");
     Ok(amount.to_string())
@@ -390,36 +507,63 @@ fn resolve_ticks(
     }
     if let Some(range_percent) = range {
         if range_percent <= 0.0 || range_percent > 100.0 {
-            bail!("--range must be between 0 and 100 (percent), got {}", range_percent);
+            bail!(
+                "--range must be between 0 and 100 (percent), got {}",
+                range_percent
+            );
         }
         let current_tick: i64 = prepare
             .get("currentTick")
-            .and_then(|v| v.as_str().and_then(|s| s.parse().ok()).or_else(|| v.as_i64()))
+            .and_then(|v| {
+                v.as_str()
+                    .and_then(|s| s.parse().ok())
+                    .or_else(|| v.as_i64())
+            })
             .ok_or_else(|| anyhow::anyhow!("currentTick not found in prepare response"))?;
         let tick_spacing: i64 = prepare
             .get("tickSpacing")
-            .and_then(|v| v.as_str().and_then(|s| s.parse().ok()).or_else(|| v.as_i64()))
+            .and_then(|v| {
+                v.as_str()
+                    .and_then(|s| s.parse().ok())
+                    .or_else(|| v.as_i64())
+            })
             .ok_or_else(|| anyhow::anyhow!("tickSpacing not found in prepare response"))?;
-        let tick_delta = ((current_tick.abs() as f64) * range_percent / 100.0).max((tick_spacing * 2) as f64) as i64;
+        let tick_delta = ((current_tick.abs() as f64) * range_percent / 100.0)
+            .max((tick_spacing * 2) as f64) as i64;
         let tick_lower_resolved = ((current_tick - tick_delta) / tick_spacing) * tick_spacing;
-        let tick_upper_resolved = ((current_tick + tick_delta + tick_spacing - 1) / tick_spacing) * tick_spacing;
+        let tick_upper_resolved =
+            ((current_tick + tick_delta + tick_spacing - 1) / tick_spacing) * tick_spacing;
         return Ok((Some(tick_lower_resolved), Some(tick_upper_resolved)));
     }
     bail!(
         "V3 pool requires --range (e.g. --range 5 for ±5%) or --tick-lower/--tick-upper. \
          Current tick: {}, tick spacing: {}.",
-        prepare.get("currentTick").and_then(|v| v.as_str()).unwrap_or("unknown"),
-        prepare.get("tickSpacing").and_then(|v| v.as_str()).unwrap_or("unknown")
+        prepare
+            .get("currentTick")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown"),
+        prepare
+            .get("tickSpacing")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
     );
 }
 
 fn append_warnings(result: &mut Value, detail: &Value) {
-    if let Some(rate) = detail.get("rate").and_then(|v| v.as_str().and_then(|s| s.parse::<f64>().ok()).or_else(|| v.as_f64())) {
+    if let Some(rate) = detail.get("rate").and_then(|v| {
+        v.as_str()
+            .and_then(|s| s.parse::<f64>().ok())
+            .or_else(|| v.as_f64())
+    }) {
         if rate > 0.5 {
             result["highApyWarning"] = json!(true);
         }
     }
-    if let Some(health) = detail.get("healthRate").and_then(|v| v.as_str().and_then(|s| s.parse::<f64>().ok()).or_else(|| v.as_f64())) {
+    if let Some(health) = detail.get("healthRate").and_then(|v| {
+        v.as_str()
+            .and_then(|s| s.parse::<f64>().ok())
+            .or_else(|| v.as_f64())
+    }) {
         if health < 1.5 {
             result["liquidationWarning"] = json!(true);
         }
@@ -447,7 +591,10 @@ pub(crate) async fn cmd_withdraw(
     let detail = fetch_detail(client, investment_id).await?;
     let is_support_redeem = detail
         .get("isSupportRedeem")
-        .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true" || s == "1")))
+        .and_then(|v| {
+            v.as_bool()
+                .or_else(|| v.as_str().map(|s| s == "true" || s == "1"))
+        })
         .unwrap_or(true); // default true if field missing
     if !is_support_redeem {
         bail!("This product does not support redemption (isSupportRedeem=false).");
@@ -462,9 +609,18 @@ pub(crate) async fn cmd_withdraw(
         }
         // V3: only needs token_id + ratio, no user_input
         return Ok(fetch_exit(
-            client, investment_id, &chain_index, address,
-            ratio, None, None, None, None,
-            token_id, slippage, None,
+            client,
+            investment_id,
+            &chain_index,
+            address,
+            ratio,
+            None,
+            None,
+            None,
+            None,
+            token_id,
+            slippage,
+            None,
         )
         .await?);
     }
@@ -488,7 +644,8 @@ pub(crate) async fn cmd_withdraw(
 
     // Build user_input from position-detail
     let user_input: Option<String> = if let Some(platform_id_str) = platform_id {
-        let pos_detail = fetch_position_detail(client, address, &chain_index, platform_id_str).await?;
+        let pos_detail =
+            fetch_position_detail(client, address, &chain_index, platform_id_str).await?;
         let token_info = find_position_token(&pos_detail, investment_id)?;
 
         if let Some(amt) = amount {
@@ -528,9 +685,18 @@ pub(crate) async fn cmd_withdraw(
     };
 
     Ok(fetch_exit(
-        client, investment_id, &chain_index, address,
-        ratio, None, None, None, None,
-        None, slippage, user_input.as_deref(),
+        client,
+        investment_id,
+        &chain_index,
+        address,
+        ratio,
+        None,
+        None,
+        None,
+        None,
+        None,
+        slippage,
+        user_input.as_deref(),
     )
     .await?)
 }
@@ -546,11 +712,15 @@ struct PositionTokenInfo {
 
 /// Find the token matching investment_id in position-detail response
 fn find_position_token(pos_detail: &JsonValue, investment_id: &str) -> Result<PositionTokenInfo> {
-    let platforms = pos_detail.as_array()
+    let platforms = pos_detail
+        .as_array()
         .ok_or_else(|| anyhow::anyhow!("position-detail response is not an array"))?;
 
     for platform in platforms {
-        let wallets = match platform.get("walletIdPlatformDetailList").and_then(|v| v.as_array()) {
+        let wallets = match platform
+            .get("walletIdPlatformDetailList")
+            .and_then(|v| v.as_array())
+        {
             Some(a) => a,
             None => continue,
         };
@@ -561,13 +731,19 @@ fn find_position_token(pos_detail: &JsonValue, investment_id: &str) -> Result<Po
             };
             for net in networks {
                 // Search in investTokenBalanceVoList (direct positions like SushiSwap pools)
-                if let Some(invests) = net.get("investTokenBalanceVoList").and_then(|v| v.as_array()) {
+                if let Some(invests) = net
+                    .get("investTokenBalanceVoList")
+                    .and_then(|v| v.as_array())
+                {
                     if let Some(info) = find_token_in_invest_list(invests, investment_id) {
                         return Ok(info);
                     }
                 }
                 // Search in investMarketTokenBalanceVoList (market positions like Aave)
-                if let Some(markets) = net.get("investMarketTokenBalanceVoList").and_then(|v| v.as_array()) {
+                if let Some(markets) = net
+                    .get("investMarketTokenBalanceVoList")
+                    .and_then(|v| v.as_array())
+                {
                     if let Some(info) = find_token_in_market_list(markets, investment_id) {
                         return Ok(info);
                     }
@@ -575,15 +751,28 @@ fn find_position_token(pos_detail: &JsonValue, investment_id: &str) -> Result<Po
             }
         }
     }
-    bail!("No position found for investmentId {} in position-detail", investment_id);
+    bail!(
+        "No position found for investmentId {} in position-detail",
+        investment_id
+    );
 }
 
-fn find_token_in_invest_list(invests: &[JsonValue], investment_id: &str) -> Option<PositionTokenInfo> {
+fn find_token_in_invest_list(
+    invests: &[JsonValue],
+    investment_id: &str,
+) -> Option<PositionTokenInfo> {
     for invest in invests {
-        let iid = invest.get("investmentId")
-            .and_then(|v| v.as_i64().map(|n| n.to_string()).or_else(|| v.as_str().map(|s| s.to_string())))
+        let iid = invest
+            .get("investmentId")
+            .and_then(|v| {
+                v.as_i64()
+                    .map(|n| n.to_string())
+                    .or_else(|| v.as_str().map(|s| s.to_string()))
+            })
             .unwrap_or_default();
-        if iid != investment_id { continue; }
+        if iid != investment_id {
+            continue;
+        }
         if let Some(assets) = invest.get("assetsTokenList").and_then(|v| v.as_array()) {
             if let Some(token) = assets.first() {
                 return Some(extract_position_token(token));
@@ -593,7 +782,10 @@ fn find_token_in_invest_list(invests: &[JsonValue], investment_id: &str) -> Opti
     None
 }
 
-fn find_token_in_market_list(markets: &[JsonValue], investment_id: &str) -> Option<PositionTokenInfo> {
+fn find_token_in_market_list(
+    markets: &[JsonValue],
+    investment_id: &str,
+) -> Option<PositionTokenInfo> {
     for market in markets {
         let asset_map = match market.get("assetMap") {
             Some(m) => m,
@@ -602,8 +794,13 @@ fn find_token_in_market_list(markets: &[JsonValue], investment_id: &str) -> Opti
         for side in &["SUPPLY", "BORROW"] {
             if let Some(items) = asset_map.get(side).and_then(|v| v.as_array()) {
                 for item in items {
-                    let iid = item.get("investmentId")
-                        .and_then(|v| v.as_i64().map(|n| n.to_string()).or_else(|| v.as_str().map(|s| s.to_string())))
+                    let iid = item
+                        .get("investmentId")
+                        .and_then(|v| {
+                            v.as_i64()
+                                .map(|n| n.to_string())
+                                .or_else(|| v.as_str().map(|s| s.to_string()))
+                        })
                         .unwrap_or_default();
                     if iid == investment_id {
                         return Some(extract_position_token(item));
@@ -617,13 +814,34 @@ fn find_token_in_market_list(markets: &[JsonValue], investment_id: &str) -> Opti
 
 fn extract_position_token(token: &JsonValue) -> PositionTokenInfo {
     PositionTokenInfo {
-        address: token.get("tokenAddress").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-        chain_index: token.get("chainIndex").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-        precision: token.get("tokenPrecision")
-            .and_then(|v| v.as_u64().map(|n| n as u32).or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+        address: token
+            .get("tokenAddress")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        chain_index: token
+            .get("chainIndex")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        precision: token
+            .get("tokenPrecision")
+            .and_then(|v| {
+                v.as_u64()
+                    .map(|n| n as u32)
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
             .unwrap_or(18),
-        balance: token.get("coinAmount").and_then(|v| v.as_str()).unwrap_or("0").to_string(),
-        symbol: token.get("tokenSymbol").and_then(|v| v.as_str()).unwrap_or("UNKNOWN").to_string(),
+        balance: token
+            .get("coinAmount")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0")
+            .to_string(),
+        symbol: token
+            .get("tokenSymbol")
+            .and_then(|v| v.as_str())
+            .unwrap_or("UNKNOWN")
+            .to_string(),
     }
 }
 
@@ -645,7 +863,9 @@ pub(crate) async fn cmd_collect(
     match reward_type {
         "REWARD_PLATFORM" => {
             if platform_id.is_none() {
-                bail!("REWARD_PLATFORM requires --platform-id (analysisPlatformId from positions).");
+                bail!(
+                    "REWARD_PLATFORM requires --platform-id (analysisPlatformId from positions)."
+                );
             }
         }
         "REWARD_INVESTMENT" | "REWARD_OKX_BONUS" | "REWARD_MERKLE_BONUS" => {
@@ -670,9 +890,16 @@ pub(crate) async fn cmd_collect(
 
     // 2. Auto-build expectOutputList from position-detail
     let expect_output: Option<String> = if let Some(platform_id_str) = platform_id {
-        let auto = extract_expect_output(client, address, &chain_index, platform_id_str, reward_type, investment_id)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to fetch reward info from position-detail: {}", e))?;
+        let auto = extract_expect_output(
+            client,
+            address,
+            &chain_index,
+            platform_id_str,
+            reward_type,
+            investment_id,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to fetch reward info from position-detail: {}", e))?;
 
         // Zero reward check
         if let Some(ref eo) = auto {
@@ -682,10 +909,15 @@ pub(crate) async fn cmd_collect(
             }
             let all_zero = tokens.iter().all(|t| {
                 let reward_amount = t.get("coinAmount").and_then(|v| v.as_str()).unwrap_or("0");
-                reward_amount == "0" || reward_amount.is_empty() || reward_amount.chars().all(|c| c == '0' || c == '.')
+                reward_amount == "0"
+                    || reward_amount.is_empty()
+                    || reward_amount.chars().all(|c| c == '0' || c == '.')
             });
             if all_zero {
-                bail!("No rewards available. All reward amounts are zero for {}.", reward_type);
+                bail!(
+                    "No rewards available. All reward amounts are zero for {}.",
+                    reward_type
+                );
             }
         } else {
             // extract_expect_output returned None — no matching reward tokens found
@@ -694,15 +926,24 @@ pub(crate) async fn cmd_collect(
         auto
     } else if reward_type != "V3_FEE" && reward_type != "UNLOCKED_PRINCIPAL" {
         // Non-V3_FEE/UNLOCKED_PRINCIPAL without platform_id — can't auto-build expectOutputList
-        bail!("--platform-id is required for {} to auto-build expectOutputList.", reward_type);
+        bail!(
+            "--platform-id is required for {} to auto-build expectOutputList.",
+            reward_type
+        );
     } else {
         None // V3_FEE and UNLOCKED_PRINCIPAL don't need expectOutputList
     };
 
     Ok(fetch_claim(
-        client, address, &chain_index, reward_type,
-        investment_id, platform_id, token_id,
-        principal_index, expect_output.as_deref(),
+        client,
+        address,
+        &chain_index,
+        reward_type,
+        investment_id,
+        platform_id,
+        token_id,
+        principal_index,
+        expect_output.as_deref(),
     )
     .await?)
 }

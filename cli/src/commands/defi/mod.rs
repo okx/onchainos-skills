@@ -4,7 +4,7 @@ mod operations;
 
 pub use api::*;
 pub use helpers::extract_expect_output;
-pub(crate) use operations::{cmd_invest, cmd_withdraw, cmd_collect};
+pub(crate) use operations::{cmd_collect, cmd_invest, cmd_withdraw};
 
 use anyhow::{bail, Result};
 use clap::Subcommand;
@@ -288,9 +288,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
     let client = ctx.client_async().await?;
     match cmd {
         DefiCommand::List { page_num } => {
-            output::success(
-                fetch_search(&client, None, None, None, None, page_num).await?,
-            );
+            output::success(fetch_search(&client, None, None, None, None, page_num).await?);
         }
         DefiCommand::Search {
             token,
@@ -357,7 +355,10 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             amount,
             precision,
         } => {
-            let chain_index = chain.as_deref().map(crate::chains::resolve_chain).unwrap_or_default();
+            let chain_index = chain
+                .as_deref()
+                .map(crate::chains::resolve_chain)
+                .unwrap_or_default();
             output::success(
                 fetch_exit(
                     &client,
@@ -386,7 +387,10 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             principal_index,
             expect_output,
         } => {
-            let chain_index = chain.as_deref().map(crate::chains::resolve_chain).unwrap_or_default();
+            let chain_index = chain
+                .as_deref()
+                .map(crate::chains::resolve_chain)
+                .unwrap_or_default();
             // Auto-fetch expectOutputList from position-detail when user didn't provide it
             let auto_expect_output: Option<String> = if expect_output.is_none() {
                 if let Some(pfid) = platform_id.as_deref() {
@@ -442,7 +446,10 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             }
             // Convert minimal units to human-readable for API
             let precision: u32 = token_decimal.parse().map_err(|_| {
-                anyhow::anyhow!("token-decimal must be a non-negative integer, got \"{}\"", token_decimal)
+                anyhow::anyhow!(
+                    "token-decimal must be a non-negative integer, got \"{}\"",
+                    token_decimal
+                )
             })?;
             let human_readable_amount = helpers::minimal_to_decimal_str(&input_amount, precision);
             let result = fetch_calculate_entry(
@@ -461,24 +468,54 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             // Get tokenPrecision from prepare for each token
             let prepare_data = fetch_prepare(&client, &id).await?;
             let mut precision_map = std::collections::HashMap::new();
-            if let Some(tokens) = prepare_data.get("investWithTokenList").and_then(|v| v.as_array()) {
+            if let Some(tokens) = prepare_data
+                .get("investWithTokenList")
+                .and_then(|v| v.as_array())
+            {
                 for t in tokens {
                     if let (Some(addr), Some(prec)) = (
                         t.get("tokenAddress").and_then(|v| v.as_str()),
-                        t.get("tokenPrecision").and_then(|v| v.as_str().or_else(|| v.as_u64().map(|_| "")).and_then(|_| None))
-                            .or_else(|| t.get("tokenPrecision").and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_u64().map(|n| n.to_string()))).as_deref().map(|s| s.to_string()))
+                        t.get("tokenPrecision")
+                            .and_then(|v| {
+                                v.as_str()
+                                    .or_else(|| v.as_u64().map(|_| ""))
+                                    .and_then(|_| None)
+                            })
+                            .or_else(|| {
+                                t.get("tokenPrecision")
+                                    .and_then(|v| {
+                                        v.as_str()
+                                            .map(|s| s.to_string())
+                                            .or_else(|| v.as_u64().map(|n| n.to_string()))
+                                    })
+                                    .as_deref()
+                                    .map(|s| s.to_string())
+                            }),
                     ) {
                         precision_map.insert(addr.to_lowercase(), prec);
                     }
                 }
             }
             // Simpler precision extraction
-            let mut precision_map: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-            if let Some(tokens) = prepare_data.get("investWithTokenList").and_then(|v| v.as_array()) {
+            let mut precision_map: std::collections::HashMap<String, u32> =
+                std::collections::HashMap::new();
+            if let Some(tokens) = prepare_data
+                .get("investWithTokenList")
+                .and_then(|v| v.as_array())
+            {
                 for t in tokens {
-                    let addr = t.get("tokenAddress").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-                    let prec = t.get("tokenPrecision")
-                        .and_then(|v| v.as_str().and_then(|s| s.parse::<u32>().ok()).or_else(|| v.as_u64().map(|n| n as u32)))
+                    let addr = t
+                        .get("tokenAddress")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    let prec = t
+                        .get("tokenPrecision")
+                        .and_then(|v| {
+                            v.as_str()
+                                .and_then(|s| s.parse::<u32>().ok())
+                                .or_else(|| v.as_u64().map(|n| n as u32))
+                        })
                         .unwrap_or(18);
                     precision_map.insert(addr, prec);
                 }
@@ -486,9 +523,16 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
 
             // Transform investWithTokenList in result
             let mut output = result.clone();
-            if let Some(tokens) = output.get_mut("investWithTokenList").and_then(|v| v.as_array_mut()) {
+            if let Some(tokens) = output
+                .get_mut("investWithTokenList")
+                .and_then(|v| v.as_array_mut())
+            {
                 for t in tokens.iter_mut() {
-                    let addr = t.get("tokenAddress").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                    let addr = t
+                        .get("tokenAddress")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_lowercase();
                     let prec = precision_map.get(&addr).copied().unwrap_or(18);
                     if let Some(amount_str) = t.get("coinAmount").and_then(|v| v.as_str()) {
                         let minimal = helpers::decimal_to_minimal_str(amount_str, prec);

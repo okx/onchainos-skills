@@ -9,7 +9,9 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::client::ApiClient;
-use crate::commands::{defi, gateway, leaderboard, market, memepump, portfolio, signal, swap, token};
+use crate::commands::{
+    defi, gateway, leaderboard, market, memepump, portfolio, signal, swap, token,
+};
 
 // ── DeFi ──────────────────────────────────────────────────────────────
 
@@ -1659,10 +1661,7 @@ impl McpServer {
         name = "defi_list",
         description = "List top DeFi products by APY across all chains (no filters, paginated)"
     )]
-    async fn defi_list(
-        &self,
-        Parameters(p): Parameters<DefiListParams>,
-    ) -> Result<String, String> {
+    async fn defi_list(&self, Parameters(p): Parameters<DefiListParams>) -> Result<String, String> {
         match defi::fetch_search(&self.client, None, None, None, None, p.page_num).await {
             Ok(data) => ok(data),
             Err(e) => err(e),

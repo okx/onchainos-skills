@@ -15,13 +15,11 @@ use super::api::fetch_position_detail;
 /// - `coinAmount` MUST be an integer (no decimal point) -- fails fast otherwise
 pub(super) fn convert_minimal_to_decimal(items: &mut Vec<Value>) -> Result<()> {
     for item in items.iter_mut() {
-        let prec: Option<u32> = item
-            .get("tokenPrecision")
-            .and_then(|v| {
-                v.as_str()
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .or_else(|| v.as_u64().map(|n| n as u32))
-            });
+        let prec: Option<u32> = item.get("tokenPrecision").and_then(|v| {
+            v.as_str()
+                .and_then(|s| s.parse::<u32>().ok())
+                .or_else(|| v.as_u64().map(|n| n as u32))
+        });
 
         let precision = prec.ok_or_else(|| {
             anyhow::anyhow!(
@@ -105,7 +103,11 @@ pub(super) fn decimal_to_minimal_str(amount: &str, precision: u32) -> String {
     let integer_with_decimal = format!("{}{}", integer, final_decimal);
     // Strip leading zeros but keep at least "0"
     let leading_zeros_stripped = integer_with_decimal.trim_start_matches('0');
-    if leading_zeros_stripped.is_empty() { "0".to_string() } else { leading_zeros_stripped.to_string() }
+    if leading_zeros_stripped.is_empty() {
+        "0".to_string()
+    } else {
+        leading_zeros_stripped.to_string()
+    }
 }
 
 /// Try to auto-build expectOutputList from position-detail for the given reward type.
@@ -203,16 +205,16 @@ pub async fn extract_expect_output(
                 }
                 // Also search availableRewards for REWARD_PLATFORM, REWARD_OKX_BONUS, REWARD_MERKLE_BONUS
                 if reward_type != "REWARD_INVESTMENT" {
-                    if let Some(available) = net.get("availableRewards").and_then(|v| v.as_array()) {
+                    if let Some(available) = net.get("availableRewards").and_then(|v| v.as_array())
+                    {
                         for reward in available {
                             let rt = reward
                                 .get("rewardType")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
                             if rt == reward_type {
-                                if let Some(base) = reward
-                                    .get("baseDefiTokenInfos")
-                                    .and_then(|v| v.as_array())
+                                if let Some(base) =
+                                    reward.get("baseDefiTokenInfos").and_then(|v| v.as_array())
                                 {
                                     for t in base {
                                         tokens.push(json!({

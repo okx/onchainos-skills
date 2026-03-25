@@ -222,11 +222,7 @@ pub async fn fetch_calculate_entry(
 }
 
 /// POST /api/v6/defi/user/asset/platform/list
-pub async fn fetch_positions(
-    client: &ApiClient,
-    wallet: &str,
-    chains: &str,
-) -> Result<Value> {
+pub async fn fetch_positions(client: &ApiClient, wallet: &str, chains: &str) -> Result<Value> {
     let wallet_list: Vec<Value> = chains
         .split(',')
         .map(|c| {
