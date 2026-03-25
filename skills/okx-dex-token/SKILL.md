@@ -185,7 +185,7 @@ To search for specific command details: `grep -n "onchainos token <command>" ref
 | `chainIndex` | `token search`, `token hot-tokens` | all downstream `--chain` params (pass as-is; CLI accepts numeric chain IDs) |
 | `decimal` | `token search`, `token info` | swap `--amount` (minimal unit conversion: `UI amount × 10^decimal`) |
 | `liquidity` | `token price-info` | stop condition: `< $10K` → warn; `< $1K` → strongly discourage |
-| `communityRecognized` | `token search`, `token price-info` | trust signal for user display |
+| `tagList.communityRecognized` | `token search`, `token info` | trust signal for user display |
 | `riskControlLevel`, `devHoldingPercent` | `token advanced-info` | stop condition: `riskControlLevel >= 3` → warn before swap; `devHoldingPercent` = dev stake signal |
 | `clusterConcentration`, `rugPullPercent` | `token cluster-overview` | stop condition: `clusterConcentration = High` → warn before swap |
 

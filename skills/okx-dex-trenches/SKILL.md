@@ -150,12 +150,12 @@ For detailed parameter tables, return field schemas, and usage examples, consult
 |---|---|---|
 | `tokenAddress` | `memepump tokens`, `token-details` | pass as `--address` to all detail commands; `okx-dex-market` kline; swap |
 | `chainIndex` | `memepump tokens` | all downstream `--chain` params (pass as-is; CLI accepts numeric IDs. Do NOT use `chainName` — it is capitalized and not accepted by CLI) |
-| `rugPullCount` | `token-dev-info` | stop condition: `> 0` → warn before proceeding |
+| `devLaunchedInfo.rugPullCount` | `token-dev-info` | stop condition: `> 0` → warn before proceeding |
 | `bondingPercent` | `token-details` | stage awareness: `100` = fully migrated out of bonding curve |
 | `totalBundlers`, `bundlerAthPercent` | `token-bundle-info` | risk signal before buy decision |
-| `devHoldingPercent` | `token-dev-info` | risk signal (high % = dev not exited yet) |
+| `devHoldingInfo.devHoldingPercent` | `token-dev-info` | risk signal (high % = dev not exited yet) |
 | `tags.insidersPercent`, `tags.snipersPercent`, `tags.bundlersPercent`, `tags.top10HoldingsPercent` | `token-details` | additional risk signals before buy decision |
-| `migratedCount` | `token-dev-info` | dev track record: number of tokens successfully migrated |
+| `devLaunchedInfo.migratedCount` | `token-dev-info` | dev track record: number of tokens successfully migrated |
 
 ## Region Restrictions (IP Blocking)
 

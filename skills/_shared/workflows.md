@@ -60,11 +60,11 @@ For dynamic orchestration, also read each skill's `## Data Contract` section.
 |---|---|---|---|
 | 1 | `okx-dex-trenches` | `onchainos memepump tokens --chain solana --stage NEW` | `tokenAddress`, `chainIndex` |
 | 2 | `okx-dex-trenches` | `onchainos memepump token-details --address <tokenAddress> --chain solana` | `bondingPercent`, `tags.bundlersPercent`, `tags.top10HoldingsPercent` |
-| 3 | `okx-dex-trenches` | `onchainos memepump token-dev-info --address <tokenAddress> --chain solana` | `rugPullCount`, `migratedCount`, `devHoldingPercent` |
+| 3 | `okx-dex-trenches` | `onchainos memepump token-dev-info --address <tokenAddress> --chain solana` | `devLaunchedInfo.rugPullCount`, `devLaunchedInfo.migratedCount`, `devHoldingInfo.devHoldingPercent` |
 | 4 | `okx-dex-trenches` | `onchainos memepump token-bundle-info --address <tokenAddress> --chain solana` | `totalBundlers`, `bundlerAthPercent` |
 | 5 | `okx-dex-market` | `onchainos market kline --address <tokenAddress> --chain solana` | price chart |
 
-**Stop condition**: `rugPullCount > 0` in step 3 or high `totalBundlers` in step 4 → warn user.
+**Stop condition**: `devLaunchedInfo.rugPullCount > 0` in step 3 or high `totalBundlers` in step 4 → warn user.
 
 ---
 
@@ -76,7 +76,7 @@ For dynamic orchestration, also read each skill's `## Data Contract` section.
 |---|---|---|---|
 | 1 | `okx-dex-signal` | `onchainos signal list --chain <chain> --wallet-type 3` | `token.tokenAddress`, `chainIndex` |
 | 2 | `okx-dex-trenches` | `onchainos memepump token-details --address <token.tokenAddress> --chain <chainIndex>` | confirms meme token, audit tags |
-| 3 | `okx-dex-trenches` | `onchainos memepump token-dev-info --address <token.tokenAddress> --chain <chainIndex>` | `rugPullCount` |
+| 3 | `okx-dex-trenches` | `onchainos memepump token-dev-info --address <token.tokenAddress> --chain <chainIndex>` | `devLaunchedInfo.rugPullCount` |
 | 4 | `okx-dex-trenches` | `onchainos memepump token-bundle-info --address <token.tokenAddress> --chain <chainIndex>` | verifies signal isn't a bundler |
 | 5 | `okx-dex-market` | `onchainos market kline --address <token.tokenAddress> --chain <chainIndex>` | price momentum |
 
@@ -120,7 +120,7 @@ Key fields passed between skills:
 | `chainIndex` | any skill that returns token data (returned as numeric string e.g. `"501"`) | all `--chain` params downstream — pass `chainIndex` directly; CLI accepts numeric IDs. Do NOT use `chainName` (capitalized, not accepted by CLI) |
 | `decimal` | `okx-dex-token` (search, info) | amount unit conversion for swap |
 | `walletAddress` | `okx-dex-signal` (leaderboard), user input | `okx-dex-market` portfolio commands |
-| `rugPullCount` | `okx-dex-trenches` (token-dev-info) | stop condition before proceeding |
+| `devLaunchedInfo.rugPullCount` | `okx-dex-trenches` (token-dev-info) | stop condition before proceeding |
 | `riskControlLevel` | `okx-dex-token` (advanced-info) | stop condition before proceeding |
 | `clusterConcentration` | `okx-dex-token` (cluster-overview) | stop condition before proceeding |
 | `soldRatioPercent` | `okx-dex-signal` (signal list) | signal strength assessment |
