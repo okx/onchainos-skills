@@ -208,7 +208,7 @@ onchainos wallet contract-call \
 | `V3_FEE` | V3 trading fee collection | `--investment-id` + `--token-id` |
 | `REWARD_OKX_BONUS` | OKX bonus rewards | `--investment-id` + `--platform-id` |
 | `REWARD_MERKLE_BONUS` | Merkle proof-based bonus | `--investment-id` + `--platform-id` |
-| `UNLOCKED_PRINCIPAL` | Unlocked principal after lock | `--principal-index` |
+| `UNLOCKED_PRINCIPAL` | Unlocked principal after lock | `--investment-id` + `--principal-index` |
 
 ## Key Protocol Rules
 

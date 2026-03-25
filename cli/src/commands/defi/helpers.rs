@@ -203,6 +203,85 @@ pub async fn extract_expect_output(
                         }
                     }
                 }
+                // Search investMarketTokenBalanceVoList[].marketRewards[] for REWARD_PLATFORM
+                // (and other market-level reward types). Many protocols (Venus, BENQI, etc.)
+                // put REWARD_PLATFORM here instead of availableRewards.
+                if let Some(markets) = net
+                    .get("investMarketTokenBalanceVoList")
+                    .and_then(|v| v.as_array())
+                {
+                    for market in markets {
+                        if let Some(rewards) =
+                            market.get("marketRewards").and_then(|v| v.as_array())
+                        {
+                            for reward in rewards {
+                                let rt = reward
+                                    .get("rewardType")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                if rt == reward_type {
+                                    if let Some(base) = reward
+                                        .get("baseDefiTokenInfos")
+                                        .and_then(|v| v.as_array())
+                                    {
+                                        for t in base {
+                                            tokens.push(json!({
+                                                "chainIndex": chain_index,
+                                                "tokenAddress": t.get("tokenAddress").and_then(|v| v.as_str()).unwrap_or(""),
+                                                "coinAmount": t.get("coinAmount").and_then(|v| v.as_str()).unwrap_or("0"),
+                                            }));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Search investTokenBalanceVoList[].rewardDefiTokenInfo[] for standalone
+                // positions (Radpie, Compound, etc. that don't use investMarketTokenBalanceVoList).
+                if let Some(standalone) = net
+                    .get("investTokenBalanceVoList")
+                    .and_then(|v| v.as_array())
+                {
+                    for item in standalone {
+                        // Filter by investmentId when provided
+                        if let Some(id) = investment_id {
+                            let item_id = item
+                                .get("investmentId")
+                                .and_then(|v| v.as_i64())
+                                .map(|n| n.to_string());
+                            if item_id.as_deref() != Some(id) {
+                                continue;
+                            }
+                        }
+                        if let Some(rewards) =
+                            item.get("rewardDefiTokenInfo").and_then(|v| v.as_array())
+                        {
+                            for reward in rewards {
+                                let rt = reward
+                                    .get("rewardType")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                if rt == reward_type {
+                                    if let Some(base) = reward
+                                        .get("baseDefiTokenInfos")
+                                        .and_then(|v| v.as_array())
+                                    {
+                                        for t in base {
+                                            tokens.push(json!({
+                                                "chainIndex": chain_index,
+                                                "tokenAddress": t.get("tokenAddress").and_then(|v| v.as_str()).unwrap_or(""),
+                                                "coinAmount": t.get("coinAmount").and_then(|v| v.as_str()).unwrap_or("0"),
+                                            }));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Also search availableRewards for REWARD_PLATFORM, REWARD_OKX_BONUS, REWARD_MERKLE_BONUS
                 if reward_type != "REWARD_INVESTMENT" {
                     if let Some(available) = net.get("availableRewards").and_then(|v| v.as_array())

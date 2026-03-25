@@ -892,8 +892,11 @@ pub(crate) async fn cmd_collect(
             }
         }
         "REWARD_INVESTMENT" | "REWARD_OKX_BONUS" | "REWARD_MERKLE_BONUS" => {
-            if investment_id.is_none() {
-                bail!("{} requires --investment-id.", reward_type);
+            if investment_id.is_none() || platform_id.is_none() {
+                bail!(
+                    "{} requires both --investment-id and --platform-id.",
+                    reward_type
+                );
             }
         }
         "V3_FEE" => {
@@ -902,8 +905,8 @@ pub(crate) async fn cmd_collect(
             }
         }
         "UNLOCKED_PRINCIPAL" => {
-            if principal_index.is_none() {
-                bail!("UNLOCKED_PRINCIPAL requires --principal-index.");
+            if investment_id.is_none() || principal_index.is_none() {
+                bail!("UNLOCKED_PRINCIPAL requires both --investment-id and --principal-index.");
             }
         }
         _ => {
@@ -960,13 +963,23 @@ pub(crate) async fn cmd_collect(
             );
         };
 
+
+    // API: investmentId and analysisPlatformId cannot both be specified.
+    // When investment_id is present (V3_FEE, UNLOCKED_PRINCIPAL, REWARD_INVESTMENT),
+    // omit platform_id to avoid the conflict.
+    let effective_platform_id = if investment_id.is_some() {
+        None
+    } else {
+        platform_id
+    };
+
     fetch_claim(
         client,
         address,
         &chain_index,
         reward_type,
         investment_id,
-        platform_id,
+        effective_platform_id,
         token_id,
         principal_index,
         expect_output.as_deref(),
