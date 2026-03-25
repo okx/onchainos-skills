@@ -87,7 +87,7 @@ Follow the **Token Address Resolution** section above.
 ### Step 3 — Quote
 
 ```bash
-onchainos swap quote --from <token> --to <token> --amount <minimal_units> --chain <chain>
+onchainos swap quote --from <token address from step1> --to <token address from step1> --amount <minimal_units> --chain <chain>
 ```
 
 Display: expected output, gas, price impact, routing path. Check `isHoneyPot` and `taxRate` — surface to user. Perform MEV risk assessment (see **MEV Protection**).
