@@ -55,4 +55,4 @@ onchainos_bin
 run.sh
 test-cases.json
 
-evals/dep.json
+evals/
