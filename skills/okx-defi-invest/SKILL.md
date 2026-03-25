@@ -103,20 +103,44 @@ CLI resolves chain names automatically (e.g. `ethereum` → `1`, `bsc` → `56`,
 5. User signs and broadcasts
 ```
 
-### Step 3: Execute Calldata
+### Step 3: Sign & Broadcast Calldata
 
-After `invest`/`withdraw`/`collect` returns `dataList`:
+After `invest`/`withdraw`/`collect` returns `dataList`, use `onchainos wallet contract-call` to sign and broadcast each step. Execute steps **strictly in order** — wait for each to complete before proceeding.
 
+**EVM chains** (Ethereum, BSC, Polygon, Arbitrum, Base, etc.):
+```bash
+onchainos wallet contract-call \
+  --to <dataList[N].to> \
+  --chain <chainIndex> \
+  --input-data <dataList[N].serializedData> \
+  --value <value_in_UI_units>
 ```
-Calldata ready! N transaction(s) to execute:
-Step 1/N: APPROVE  to: 0x7251... chain: Ethereum  value: 0x0
-Step 2/N: DEPOSIT  to: 0x7251... chain: Ethereum  value: 0x48da...
+
+**EVM (XLayer)**:
+```bash
+onchainos wallet contract-call \
+  --to <dataList[N].to> \
+  --chain 196 \
+  --input-data <dataList[N].serializedData> \
+  --value <value_in_UI_units>
 ```
 
-- Display `serializedData` in its own fenced code block (for easy copy)
-- Execute steps strictly in order — wait for on-chain confirmation before next step
-- External Wallet: sign → `onchainos gateway broadcast --signed-tx <tx> --address <addr> --chain <chain>`
-- After broadcast: poll `gateway orders` until `txStatus=2` (confirmed)
+**Solana**:
+```bash
+onchainos wallet contract-call \
+  --to <dataList[N].to> \
+  --chain 501 \
+  --unsigned-tx <dataList[N].serializedData>
+```
+
+**`--value` unit conversion**: `dataList[].value` is in minimal units (wei). `contract-call --value` expects UI units. Convert: `value_UI = value / 10^nativeToken.decimal` (e.g. 18 for ETH/POL, 9 for SOL). If `value` is `""`, `"0"`, or `"0x0"`, use `"0"`.
+
+**`--chain` mapping**: `contract-call` requires `realChainIndex` (e.g. `1` for Ethereum, `137` for Polygon, `56` for BSC, `501` for Solana, `196` for XLayer).
+
+**Execution rules**:
+- Execute `dataList[0]` first, then `dataList[1]`, etc. Never in parallel.
+- `contract-call` handles TEE signing and broadcasting internally — no separate broadcast step needed.
+- If any step fails, stop all remaining steps and report which succeeded/failed.
 
 > `invest`/`withdraw`/`collect` only return **unsigned calldata** — they do NOT broadcast. The CLI never holds private keys.
 
