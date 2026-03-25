@@ -12,12 +12,12 @@ For dynamic orchestration, also read each skill's `## Data Contract` section.
 
 | Step | Skill | Command | Produces |
 |---|---|---|---|
-| 1 | `okx-dex-token` | `onchainos token search --query BONK --chains solana` | `tokenAddress`, `chain`, `decimal` |
-| 2 | `okx-dex-token` | `onchainos token price-info --address <tokenAddress> --chain <chain>` | `liquidity`, `marketCap`, `priceChange24H` |
-| 3 | `okx-dex-token` | `onchainos token holders --address <tokenAddress> --chain <chain>` | holder concentration |
-| 4 | `okx-dex-market` | `onchainos market kline --address <tokenAddress> --chain <chain>` | price chart |
+| 1 | `okx-dex-token` | `onchainos token search --query BONK --chains solana` | `tokenContractAddress`, `chainIndex`, `decimal` |
+| 2 | `okx-dex-token` | `onchainos token price-info --address <tokenContractAddress> --chain <chainIndex>` | `liquidity`, `marketCap`, `priceChange24H` |
+| 3 | `okx-dex-token` | `onchainos token holders --address <tokenContractAddress> --chain <chainIndex>` | holder concentration |
+| 4 | `okx-dex-market` | `onchainos market kline --address <tokenContractAddress> --chain <chainIndex>` | price chart |
 
-**Data handoff**: `tokenAddress` + `chain` from step 1 → reused in steps 2–4.
+**Data handoff**: `tokenContractAddress` + `chainIndex` from step 1 → reused in steps 2–4.
 
 ---
 
@@ -27,11 +27,11 @@ For dynamic orchestration, also read each skill's `## Data Contract` section.
 
 | Step | Skill | Command | Produces |
 |---|---|---|---|
-| 1 | `okx-dex-token` | `onchainos token hot-tokens --ranking-type 4 --chain solana` | `tokenAddress`, `chainIndex` |
-| 2 | `okx-dex-token` | `onchainos token price-info --address <tokenAddress> --chain solana` | `liquidity`, `marketCap` |
-| 3 | `okx-dex-token` | `onchainos token advanced-info --address <tokenAddress> --chain solana` | `riskControlLevel`, `devHoldingPercent` |
-| 4 | `okx-dex-token` | `onchainos token cluster-overview --address <tokenAddress> --chain solana` | `clusterConcentration`, `rugPullPercent` |
-| 5 | `okx-dex-market` | `onchainos market kline --address <tokenAddress> --chain solana` | price momentum |
+| 1 | `okx-dex-token` | `onchainos token hot-tokens --ranking-type 4 --chain solana` | `tokenContractAddress`, `chainIndex` |
+| 2 | `okx-dex-token` | `onchainos token price-info --address <tokenContractAddress> --chain solana` | `liquidity`, `marketCap` |
+| 3 | `okx-dex-token` | `onchainos token advanced-info --address <tokenContractAddress> --chain solana` | `riskControlLevel`, `devHoldingPercent` |
+| 4 | `okx-dex-token` | `onchainos token cluster-overview --address <tokenContractAddress> --chain solana` | `clusterConcentration`, `rugPullPercent` |
+| 5 | `okx-dex-market` | `onchainos market kline --address <tokenContractAddress> --chain solana` | price momentum |
 
 **Stop condition**: `riskControlLevel >= 3` in step 3 or `clusterConcentration = High` in step 4 → warn user.
 
@@ -43,12 +43,12 @@ For dynamic orchestration, also read each skill's `## Data Contract` section.
 
 | Step | Skill | Command | Produces |
 |---|---|---|---|
-| 1 | `okx-dex-signal` | `onchainos signal list --chain solana --wallet-type 1,2,3` | `tokenAddress`, `chainIndex`, `soldRatioPercent` |
-| 2 | `okx-dex-token` | `onchainos token price-info --address <tokenAddress> --chain <chain>` | `liquidity`, `marketCap` |
-| 3 | `okx-dex-token` | `onchainos token cluster-overview --address <tokenAddress> --chain <chain>` | `clusterConcentration`, `rugPullPercent` |
-| 4 | `okx-dex-market` | `onchainos market kline --address <tokenAddress> --chain <chain>` | price chart |
+| 1 | `okx-dex-signal` | `onchainos signal list --chain solana --wallet-type 1,2,3` | `token.tokenAddress`, `chainIndex`, `soldRatioPercent` |
+| 2 | `okx-dex-token` | `onchainos token price-info --address <token.tokenAddress> --chain <chainIndex>` | `liquidity`, `marketCap` |
+| 3 | `okx-dex-token` | `onchainos token cluster-overview --address <token.tokenAddress> --chain <chainIndex>` | `clusterConcentration`, `rugPullPercent` |
+| 4 | `okx-dex-market` | `onchainos market kline --address <token.tokenAddress> --chain <chainIndex>` | price chart |
 
-**Data handoff**: `tokenAddress` + `chainIndex` from step 1 → reused in steps 2–4.
+**Data handoff**: `token.tokenAddress` + `chainIndex` from step 1 → reused in steps 2–4.
 
 ---
 
@@ -74,11 +74,11 @@ For dynamic orchestration, also read each skill's `## Data Contract` section.
 
 | Step | Skill | Command | Produces |
 |---|---|---|---|
-| 1 | `okx-dex-signal` | `onchainos signal list --chain <chain> --wallet-type 3` | `tokenAddress`, `chainIndex` |
-| 2 | `okx-dex-trenches` | `onchainos memepump token-details --address <tokenAddress> --chain <chain>` | confirms meme token, audit tags |
-| 3 | `okx-dex-trenches` | `onchainos memepump token-dev-info --address <tokenAddress> --chain <chain>` | `rugPullCount` |
-| 4 | `okx-dex-trenches` | `onchainos memepump token-bundle-info --address <tokenAddress> --chain <chain>` | verifies signal isn't a bundler |
-| 5 | `okx-dex-market` | `onchainos market kline --address <tokenAddress> --chain <chain>` | price momentum |
+| 1 | `okx-dex-signal` | `onchainos signal list --chain <chain> --wallet-type 3` | `token.tokenAddress`, `chainIndex` |
+| 2 | `okx-dex-trenches` | `onchainos memepump token-details --address <token.tokenAddress> --chain <chainIndex>` | confirms meme token, audit tags |
+| 3 | `okx-dex-trenches` | `onchainos memepump token-dev-info --address <token.tokenAddress> --chain <chainIndex>` | `rugPullCount` |
+| 4 | `okx-dex-trenches` | `onchainos memepump token-bundle-info --address <token.tokenAddress> --chain <chainIndex>` | verifies signal isn't a bundler |
+| 5 | `okx-dex-market` | `onchainos market kline --address <token.tokenAddress> --chain <chainIndex>` | price momentum |
 
 ---
 
