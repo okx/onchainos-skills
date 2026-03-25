@@ -237,6 +237,7 @@ fn mcp_tools_list_returns_all_tools() {
         "token_cluster_overview",
         "token_cluster_top_holders",
         "token_cluster_list",
+        "token_hot_tokens",
     ];
     for name in expected {
         assert!(
@@ -280,7 +281,7 @@ fn mcp_token_info() {
 #[test]
 fn mcp_token_trending() {
     let mut client = McpClient::start();
-    let result = client.call_tool("token_trending", json!({}));
+    let result = client.call_tool("token_hot_tokens", json!({"ranking_type": "4"}));
     if result.is_rate_limited() {
         return;
     }
