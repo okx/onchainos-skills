@@ -181,7 +181,7 @@ To search for specific command details: `grep -n "onchainos token <command>" ref
 
 | Field | Command | Consumed By |
 |---|---|---|
-| `tokenAddress` | `token search`, `token hot-tokens` | all downstream token commands; swap `--from`/`--to` |
+| `tokenContractAddress` | `token search`, `token hot-tokens` | pass as `--address` to all downstream token commands; pass as `--from`/`--to` in swap |
 | `chainIndex` | `token search`, `token hot-tokens` | all downstream `--chain` params (pass as-is; CLI accepts numeric chain IDs) |
 | `decimal` | `token search`, `token info` | swap `--amount` (minimal unit conversion: `UI amount × 10^decimal`) |
 | `liquidity` | `token price-info` | stop condition: `< $10K` → warn; `< $1K` → strongly discourage |
