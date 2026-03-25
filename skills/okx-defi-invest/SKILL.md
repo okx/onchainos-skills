@@ -105,9 +105,22 @@ CLI resolves chain names automatically (e.g. `ethereum` → `1`, `bsc` → `56`,
 
 ### Step 3: Sign & Broadcast Calldata
 
-After `invest`/`withdraw`/`collect` returns `dataList`, use `onchainos wallet contract-call` to sign and broadcast each step. Execute steps **strictly in order** — wait for each to complete before proceeding.
+After `invest`/`withdraw`/`collect` returns `dataList`, execute each step via one of two paths:
 
-**EVM chains** (Ethereum, BSC, Polygon, Arbitrum, Base, etc.):
+**Path A (user-provided wallet)**: user signs externally → broadcast via gateway
+```bash
+# For each dataList step:
+# 1. User signs the tx externally using dataList[N].to, dataList[N].serializedData, dataList[N].value
+# 2. Broadcast:
+onchainos gateway broadcast --signed-tx <signed_hex> --address <addr> --chain <chain>
+# 3. Poll until confirmed:
+onchainos gateway orders --address <addr> --chain <chain> --order-id <orderId>
+# → wait for txStatus=2, then proceed to next step
+```
+
+**Path B (Agentic Wallet)**: sign & broadcast via `wallet contract-call`
+
+EVM chains (Ethereum, BSC, Polygon, Arbitrum, Base, etc.):
 ```bash
 onchainos wallet contract-call \
   --to <dataList[N].to> \
@@ -116,7 +129,7 @@ onchainos wallet contract-call \
   --value <value_in_UI_units>
 ```
 
-**EVM (XLayer)**:
+EVM (XLayer):
 ```bash
 onchainos wallet contract-call \
   --to <dataList[N].to> \
@@ -125,7 +138,7 @@ onchainos wallet contract-call \
   --value <value_in_UI_units>
 ```
 
-**Solana**:
+Solana:
 ```bash
 onchainos wallet contract-call \
   --to <dataList[N].to> \
@@ -133,13 +146,15 @@ onchainos wallet contract-call \
   --unsigned-tx <dataList[N].serializedData>
 ```
 
+`contract-call` handles TEE signing and broadcasting internally — no separate broadcast step needed.
+
 **`--value` unit conversion**: `dataList[].value` is in minimal units (wei). `contract-call --value` expects UI units. Convert: `value_UI = value / 10^nativeToken.decimal` (e.g. 18 for ETH/POL, 9 for SOL). If `value` is `""`, `"0"`, or `"0x0"`, use `"0"`.
 
-**`--chain` mapping**: `contract-call` requires `realChainIndex` (e.g. `1` for Ethereum, `137` for Polygon, `56` for BSC, `501` for Solana, `196` for XLayer).
+**`--chain` mapping**: `contract-call` and `gateway broadcast` require `realChainIndex` (e.g. `1`=Ethereum, `137`=Polygon, `56`=BSC, `501`=Solana, `196`=XLayer).
 
 **Execution rules**:
 - Execute `dataList[0]` first, then `dataList[1]`, etc. Never in parallel.
-- `contract-call` handles TEE signing and broadcasting internally — no separate broadcast step needed.
+- Wait for on-chain confirmation before next step (Path A: `txStatus=2`; Path B: `contract-call` returns txHash).
 - If any step fails, stop all remaining steps and report which succeeded/failed.
 
 > `invest`/`withdraw`/`collect` only return **unsigned calldata** — they do NOT broadcast. The CLI never holds private keys.
