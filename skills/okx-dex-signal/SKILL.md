@@ -154,6 +154,27 @@ For detailed parameter tables and return field schemas, consult:
 - **Max 20 leaderboard results per request**: inform user if they need more
 - **`--wallet-type` is single select for leaderboard**: only one wallet type can be passed at a time; if omitted, all types are returned
 
+## Data Contract
+
+> For orchestrator agents. Describes what this skill consumes from upstream skills and produces for downstream skills.
+
+**Inputs** (from upstream skills or user):
+
+| Field | Source | Used In |
+|---|---|---|
+| `chain` | user input | `signal list`, `leaderboard list`, `address-tracker-activities` |
+| `walletAddress` | user input | `address-tracker-activities --tracker-type multi_address` |
+| `tokenAddress` | user input (optional) | `signal list --token-address` to filter for a specific token |
+
+**Outputs** (for downstream skills):
+
+| Field | Command | Consumed By |
+|---|---|---|
+| `tokenAddress` | `signal list` | `okx-dex-token` price-info, holders, cluster; `okx-dex-trenches` token-details; `okx-dex-market` kline |
+| `chainIndex` | `signal list` | all downstream `--chain` params |
+| `soldRatioPercent` | `signal list` | signal strength assessment (lower = still holding = bullish) |
+| `walletAddress` | `leaderboard list` | `okx-dex-market` portfolio-overview, `okx-wallet-portfolio` all-balances |
+
 ## Region Restrictions (IP Blocking)
 
 When a command fails with error code `50125` or `80001`, display:

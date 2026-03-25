@@ -133,6 +133,28 @@ For detailed parameter tables, return field schemas, and usage examples, consult
 - **Empty similar tokens**: `memepump-similar-tokens` may return empty array if no similar tokens are found
 - **Empty aped wallets**: `memepump-aped-wallet` returns empty array if no co-holders found
 
+## Data Contract
+
+> For orchestrator agents. Describes what this skill consumes from upstream skills and produces for downstream skills.
+
+**Inputs** (from upstream skills or user):
+
+| Field | Source | Used In |
+|---|---|---|
+| `tokenAddress` | `okx-dex-signal` (signal list), user input | `token-details`, `token-dev-info`, `similar-tokens`, `token-bundle-info`, `aped-wallet` |
+| `chain` | user input or upstream skill | all commands (defaults to `solana`) |
+
+**Outputs** (for downstream skills):
+
+| Field | Command | Consumed By |
+|---|---|---|
+| `tokenAddress` | `memepump tokens` | all detail commands; `okx-dex-market` kline; swap |
+| `chainIndex` | `memepump tokens` | all downstream `--chain` params |
+| `rugPullCount` | `token-dev-info` | stop condition: `> 0` → warn before proceeding |
+| `bondingPercent` | `token-details` | stage awareness: `100` = fully migrated out of bonding curve |
+| `totalBundlers`, `bundlerAthPercent` | `token-bundle-info` | risk signal before buy decision |
+| `devHoldingPercent` | `token-dev-info` | risk signal (high % = dev not exited yet) |
+
 ## Region Restrictions (IP Blocking)
 
 When a command fails with error code `50125` or `80001`, display:

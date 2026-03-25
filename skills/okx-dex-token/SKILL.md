@@ -166,6 +166,29 @@ To search for specific command details: `grep -n "onchainos token <command>" ref
 - Market cap / liquidity in shorthand ($1.2B, $45M)
 - 24h change with sign and color hint (+X% / -X%)
 
+## Data Contract
+
+> For orchestrator agents. Describes what this skill consumes from upstream skills and produces for downstream skills.
+
+**Inputs** (from upstream skills or user):
+
+| Field | Source | Used In |
+|---|---|---|
+| `tokenAddress` | `okx-dex-signal` (signal list), `okx-dex-trenches` (tokens), user input | all address-based commands |
+| `chain` | any upstream skill or user input | all commands |
+
+**Outputs** (for downstream skills):
+
+| Field | Command | Consumed By |
+|---|---|---|
+| `tokenAddress` | `token search`, `token hot-tokens` | all downstream token commands; swap `--from`/`--to` |
+| `chain` | `token search` | all downstream `--chain` params |
+| `decimal` | `token search`, `token info` | swap `--amount` (minimal unit conversion: `UI amount × 10^decimal`) |
+| `liquidity` | `token price-info` | stop condition: `< $10K` → warn; `< $1K` → strongly discourage |
+| `communityRecognized` | `token search`, `token price-info` | trust signal for user display |
+| `riskControlLevel` | `token advanced-info` | stop condition: `>= 3` → warn before swap |
+| `clusterLevel`, `rugPullPercent` | `token cluster-overview` | stop condition before swap |
+
 ## Global Notes
 
 - When presenting `advanced-info`, translate `tokenTags` values into human-readable language: `honeypot`→貔貅盘, `lowLiquidity`→低流动性, `devHoldingStatusSellAll`→开发者已全部卖出, `smartMoneyBuy`→聪明钱买入, `communityRecognized`→社区认可, `dexBoost`→Boost活动, `devBurnToken`→开发者燃烧代币, `devAddLiquidity`→开发者添加流动性. Never dump raw tag strings to the user.
