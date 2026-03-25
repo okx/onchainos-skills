@@ -1,5 +1,5 @@
 //! Integration tests for all `onchainos market` commands:
-//! price, prices, kline, index, signals, memepump, and portfolio-*.
+//! price, prices, kline, index, memepump, and portfolio-*.
 //!
 //! These tests run the compiled binary against the live OKX API,
 //! so they require network access and valid API credentials.
@@ -139,88 +139,6 @@ fn market_index_price() {
     assert!(data.is_array(), "expected array: {data}");
     let arr = data.as_array().unwrap();
     assert!(!arr.is_empty(), "expected at least one index price entry");
-}
-
-// ─── signal-chains ──────────────────────────────────────────────────
-
-#[test]
-fn market_signal_chains_returns_list() {
-    let output = run_with_retry(&["signal", "chains"]);
-    let data = assert_ok_and_extract_data(&output);
-    assert!(data.is_array(), "expected array of chains: {data}");
-    let arr = data.as_array().unwrap();
-    assert!(!arr.is_empty(), "expected at least one signal chain");
-    assert!(
-        arr[0].get("chainIndex").is_some(),
-        "entry missing 'chainIndex': {}",
-        arr[0]
-    );
-}
-
-// ─── signal-list ────────────────────────────────────────────────────
-
-#[test]
-fn market_signal_list_ethereum() {
-    let output = run_with_retry(&["signal", "list", "--chain", "ethereum"]);
-    let data = assert_ok_and_extract_data(&output);
-    assert!(
-        data.is_array() || data.is_object(),
-        "expected signal data: {data}"
-    );
-}
-
-#[test]
-fn market_signal_list_with_wallet_type_filter() {
-    let output = run_with_retry(&["signal", "list", "--chain", "solana", "--wallet-type", "1"]);
-    let data = assert_ok_and_extract_data(&output);
-    assert!(
-        data.is_array() || data.is_object(),
-        "expected signal data: {data}"
-    );
-}
-
-#[test]
-fn market_signal_list_with_all_filters() {
-    let output = run_with_retry(&[
-        "signal",
-        "list",
-        "--chain",
-        "solana",
-        "--wallet-type",
-        "1,2,3",
-        "--min-amount-usd",
-        "0",
-        "--max-amount-usd",
-        "1000000000",
-        "--min-address-count",
-        "1",
-        "--max-address-count",
-        "1000000",
-        "--token-address",
-        tokens::SOL_WSOL,
-        "--min-market-cap-usd",
-        "0",
-        "--max-market-cap-usd",
-        "1000000000000",
-        "--min-liquidity-usd",
-        "0",
-        "--max-liquidity-usd",
-        "1000000000000",
-    ]);
-    let data = assert_ok_and_extract_data(&output);
-    assert!(
-        data.is_array() || data.is_object(),
-        "expected signal data: {data}"
-    );
-}
-
-#[test]
-fn market_signal_list_missing_chain_fails() {
-    onchainos()
-        .args(["signal", "list"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("required"));
 }
 
 // ─── memepump-chains ────────────────────────────────────────────────

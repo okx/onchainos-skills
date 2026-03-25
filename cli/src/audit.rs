@@ -348,12 +348,12 @@ fn market_sub(c: &MarketCommand) -> &'static str {
         MarketCommand::PortfolioDexHistory { .. } => "portfolio-dex-history",
         MarketCommand::PortfolioRecentPnl { .. } => "portfolio-recent-pnl",
         MarketCommand::PortfolioTokenPnl { .. } => "portfolio-token-pnl",
-        MarketCommand::AddressTrackerActivities { .. } => "address-tracker-activities",
     }
 }
 
 fn signal_sub(c: &SignalCommand) -> &'static str {
     match c {
+        SignalCommand::AddressTrackerActivities { .. } => "address-tracker-activities",
         SignalCommand::Chains => "chains",
         SignalCommand::List { .. } => "list",
     }
