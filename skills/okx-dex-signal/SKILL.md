@@ -171,7 +171,7 @@ For detailed parameter tables and return field schemas, consult:
 | Field | Command | Consumed By |
 |---|---|---|
 | `token.tokenAddress` | `signal list` (nested field) | pass as `--address` to `okx-dex-token` price-info, holders, cluster; `okx-dex-trenches` token-details; `okx-dex-market` kline |
-| `tokenContractAddress` | `tracker activities` (flat field) | pass as `--address` to downstream token commands |
+| `trades[].tokenContractAddress` | `tracker activities` (nested inside `trades` array) | pass as `--address` to downstream token commands |
 | `chainIndex` | `signal list` | all downstream `--chain` params (pass as-is; CLI accepts numeric IDs. Do NOT use `chainName` — it is capitalized and not accepted by CLI) |
 | `soldRatioPercent` | `signal list` | signal strength assessment (lower = still holding = bullish) |
 | `walletAddress` | `leaderboard list` | `okx-dex-market` portfolio-overview, `okx-wallet-portfolio` all-balances |

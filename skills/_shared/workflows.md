@@ -114,7 +114,8 @@ Key fields passed between skills:
 
 | Field | Produced By | Consumed By |
 |---|---|---|
-| `tokenContractAddress` | `okx-dex-token` (search, hot-tokens), `okx-dex-signal` (tracker activities) | pass as `--address` to all downstream token commands |
+| `tokenContractAddress` | `okx-dex-token` (search, hot-tokens) | pass as `--address` to all downstream token commands |
+| `trades[].tokenContractAddress` | `okx-dex-signal` (tracker activities — nested in `trades` array) | pass as `--address` to downstream token commands |
 | `pnlList[].tokenContractAddress` | `okx-dex-market` (portfolio-recent-pnl) | pass as `--token` to `portfolio-token-pnl` |
 | `token.tokenAddress` | `okx-dex-signal` (signal list) — nested field | extract via `token.tokenAddress`; pass as `--address` downstream |
 | `tokenAddress` | `okx-dex-trenches` (memepump tokens, token-details) | pass as `--address` to all downstream token commands |
