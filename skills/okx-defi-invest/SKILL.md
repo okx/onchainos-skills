@@ -65,7 +65,8 @@ CLI resolves chain names automatically (e.g. `ethereum` → `1`, `bsc` → `56`,
 ```
 
 > **Token decimal**: Get `tokenAddress` from `defi detail` → `underlyingToken[].tokenAddress`, then use `token search --query <tokenAddress>` to get `decimal`. Same approach as DEX swap.
-> **Balance check is mandatory before invest.** Use `okx-wallet-portfolio` to verify sufficient balance.
+>
+> **CRITICAL — Balance check is REQUIRED before calling `defi invest`.** You MUST call `okx-wallet-portfolio` to verify the user has sufficient balance of the deposit token BEFORE generating calldata. If balance is insufficient, STOP and warn the user. Do NOT proceed to `defi invest` without confirming balance. Skipping this step wastes gas and results in failed on-chain transactions.
 
 ### Withdraw
 
@@ -98,9 +99,10 @@ CLI resolves chain names automatically (e.g. `ethereum` → `1`, `bsc` → `56`,
 1. defi search --token USDT --platform PancakeSwap --chain bsc --product-group DEX_POOL
 2. defi detail --investment-id <id>
 3. Ask user for amount and tick range
-4. defi invest --investment-id <id> --address <addr> --token USDT --amount 100000000 --range 5
+4. Check wallet balance (okx-wallet-portfolio) → if insufficient, warn user and stop
+5. defi invest --investment-id <id> --address <addr> --token USDT --amount 100000000 --range 5
    → CLI handles calculate-entry internally, returns calldata
-5. User signs and broadcasts
+6. User signs and broadcasts
 ```
 
 ### Step 3: Sign & Broadcast Calldata
@@ -219,7 +221,7 @@ onchainos wallet contract-call \
 - `--amount` must be in **minimal units** (integer). Convert: userAmount × 10^tokenPrecision. Example: 0.1 USDC (precision=6) → `--amount 100000`. Get tokenPrecision from `defi detail` or `defi position-detail`
 - The wallet address parameter for ALL defi commands is `--address`
 - `--slippage` default is `"0.01"` (1%); suggest `"0.03"`–`"0.05"` for volatile V3 pools
-- Solana DeFi transactions use base58-encoded VersionedTransaction — sign and broadcast within 60 seconds
-- High APY warning: APY > 50% → alert user about elevated risk
+- **CRITICAL — Solana transaction expiry**: Solana DeFi transactions use base58-encoded VersionedTransaction with a blockhash that expires in ~60 seconds. After receiving calldata, you MUST warn the user: "This Solana transaction must be signed and broadcast within 60 seconds or it will expire. Please sign immediately." Do NOT proceed to other conversation without delivering this warning first.
+- **CRITICAL — High APY risk warning**: When displaying search/list results, if any product has APY > 50% (rate > 0.5), you MUST warn the user: "WARNING: This product shows APY above 50%, which indicates elevated risk (potential impermanent loss, smart contract risk, or unsustainable rewards). Proceed with caution." Do NOT silently display high-APY products without this warning.
 - User confirmation required before every invest/withdraw/collect execution
 - Address used for calldata generation MUST match the signing address

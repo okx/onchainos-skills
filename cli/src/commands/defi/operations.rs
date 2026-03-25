@@ -67,10 +67,11 @@ pub(crate) async fn cmd_invest(
             if let (Some(secondary_token_name), Some(secondary_amount)) = (token2, amount2) {
                 let matched2 = find_matching_token(invest_tokens, secondary_token_name)?;
                 let secondary_token = extract_token_info(matched2, secondary_token_name)?;
-                validate_amount(secondary_amount)?;
+                // V3 allows amount=0 for single-sided liquidity
+                validate_amount_v3(secondary_amount)?;
                 Some((secondary_token, secondary_amount))
             } else if let Some(secondary_amount) = amount2 {
-                validate_amount(secondary_amount)?;
+                validate_amount_v3(secondary_amount)?;
                 let other = invest_tokens.iter().find(|t| {
                     let addr = t
                         .get("tokenAddress")
@@ -389,6 +390,22 @@ fn validate_amount(amount: &str) -> Result<()> {
     }
     if amount.is_empty() || amount.chars().all(|c| c == '0') {
         bail!("amount cannot be zero or empty. Got \"{}\".", amount);
+    }
+    Ok(())
+}
+
+/// Like validate_amount but allows "0" for V3 single-sided liquidity.
+fn validate_amount_v3(amount: &str) -> Result<()> {
+    if amount.contains('.') {
+        bail!(
+            "amount must be in minimal units (integer), got \"{}\". \
+             Convert: userAmount × 10^tokenPrecision. \
+             Example: 0.1 USDC (precision=6) → amount=\"100000\"",
+            amount
+        );
+    }
+    if amount.is_empty() {
+        bail!("amount cannot be empty.");
     }
     Ok(())
 }
@@ -888,50 +905,53 @@ pub(crate) async fn cmd_collect(
     }
 
     // 2. Auto-build expectOutputList from position-detail
-    let expect_output: Option<String> = if let Some(platform_id_str) = platform_id {
-        let auto = extract_expect_output(
-            client,
-            address,
-            &chain_index,
-            platform_id_str,
-            reward_type,
-            investment_id,
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to fetch reward info from position-detail: {}", e))?;
+    // V3_FEE and UNLOCKED_PRINCIPAL never need expectOutputList — backend resolves internally
+    let expect_output: Option<String> =
+        if reward_type == "V3_FEE" || reward_type == "UNLOCKED_PRINCIPAL" {
+            None
+        } else if let Some(platform_id_str) = platform_id {
+            let auto = extract_expect_output(
+                client,
+                address,
+                &chain_index,
+                platform_id_str,
+                reward_type,
+                investment_id,
+            )
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to fetch reward info from position-detail: {}", e)
+            })?;
 
-        // Zero reward check
-        if let Some(ref eo) = auto {
-            let tokens: Vec<Value> = serde_json::from_str(eo).unwrap_or_default();
-            if tokens.is_empty() {
-                bail!("No rewards found for {} in position-detail.", reward_type);
+            // Zero reward check
+            if let Some(ref eo) = auto {
+                let tokens: Vec<Value> = serde_json::from_str(eo).unwrap_or_default();
+                if tokens.is_empty() {
+                    bail!("No rewards found for {} in position-detail.", reward_type);
+                }
+                let all_zero = tokens.iter().all(|t| {
+                    let reward_amount =
+                        t.get("coinAmount").and_then(|v| v.as_str()).unwrap_or("0");
+                    reward_amount == "0"
+                        || reward_amount.is_empty()
+                        || reward_amount.chars().all(|c| c == '0' || c == '.')
+                });
+                if all_zero {
+                    bail!(
+                        "No rewards available. All reward amounts are zero for {}.",
+                        reward_type
+                    );
+                }
+            } else {
+                bail!("No reward tokens found for {} in position-detail. Verify investment-id and platform-id.", reward_type);
             }
-            let all_zero = tokens.iter().all(|t| {
-                let reward_amount = t.get("coinAmount").and_then(|v| v.as_str()).unwrap_or("0");
-                reward_amount == "0"
-                    || reward_amount.is_empty()
-                    || reward_amount.chars().all(|c| c == '0' || c == '.')
-            });
-            if all_zero {
-                bail!(
-                    "No rewards available. All reward amounts are zero for {}.",
-                    reward_type
-                );
-            }
+            auto
         } else {
-            // extract_expect_output returned None — no matching reward tokens found
-            bail!("No reward tokens found for {} in position-detail. Verify investment-id and platform-id.", reward_type);
-        }
-        auto
-    } else if reward_type != "V3_FEE" && reward_type != "UNLOCKED_PRINCIPAL" {
-        // Non-V3_FEE/UNLOCKED_PRINCIPAL without platform_id — can't auto-build expectOutputList
-        bail!(
-            "--platform-id is required for {} to auto-build expectOutputList.",
-            reward_type
-        );
-    } else {
-        None // V3_FEE and UNLOCKED_PRINCIPAL don't need expectOutputList
-    };
+            bail!(
+                "--platform-id is required for {} to auto-build expectOutputList.",
+                reward_type
+            );
+        };
 
     fetch_claim(
         client,
