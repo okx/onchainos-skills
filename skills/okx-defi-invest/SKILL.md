@@ -223,5 +223,9 @@ onchainos wallet contract-call \
 - `--slippage` default is `"0.01"` (1%); suggest `"0.03"`–`"0.05"` for volatile V3 pools
 - **CRITICAL — Solana transaction expiry**: Solana DeFi transactions use base58-encoded VersionedTransaction with a blockhash that expires in ~60 seconds. After receiving calldata, you MUST warn the user: "This Solana transaction must be signed and broadcast within 60 seconds or it will expire. Please sign immediately." Do NOT proceed to other conversation without delivering this warning first.
 - **CRITICAL — High APY risk warning**: When displaying search/list results, if any product has APY > 50% (rate > 0.5), you MUST warn the user: "WARNING: This product shows APY above 50%, which indicates elevated risk (potential impermanent loss, smart contract risk, or unsustainable rewards). Proceed with caution." Do NOT silently display high-APY products without this warning.
+- **CRITICAL — Address-chain compatibility**: When calling `defi positions` or `defi position-detail`, the `--address` and chain parameters must be compatible. EVM addresses (`0x…`) can only query EVM chains; Solana addresses (base58) can only query `solana`. Never mix them — the API will return error 84019 (Address format error).
+  - `0x…` address → only pass EVM chains: `ethereum,bsc,polygon,arbitrum,base,xlayer,avalanche,optimism,fantom,linea,scroll,zksync`
+  - base58 address → only pass `solana`
+  - If the user wants positions across both EVM and Solana, make **two separate calls** with the respective addresses
 - User confirmation required before every invest/withdraw/collect execution
 - Address used for calldata generation MUST match the signing address

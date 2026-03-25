@@ -143,6 +143,13 @@ Rules:
 
 ## Global Notes
 
+- **CRITICAL — Address-chain compatibility**: The `--address` and `--chains` parameters must be compatible. EVM addresses (`0x…`) can only query EVM chains; Solana addresses (base58) can only query `solana`. Never mix them in a single call — the API will return error 84019 (Address format error).
+  - `0x…` address → only pass EVM chains: `ethereum,bsc,polygon,arbitrum,base,xlayer,avalanche,optimism,fantom,linea,scroll,zksync`
+  - base58 address → only pass `solana`
+  - Sui address → only pass `sui`
+  - Tron address (`T…`) → only pass `tron`
+  - TON address → only pass `ton`
+  - If the user wants positions across both EVM and Solana, make **two separate calls** with the respective addresses
 - `defi positions` uses `--chains` (plural, comma-separated, e.g. `--chains ethereum,bsc`) — do NOT use `--chain`
 - `defi position-detail` uses `--chain` (singular) — do NOT use `--chains`
 - The wallet address parameter is `--address` for both commands

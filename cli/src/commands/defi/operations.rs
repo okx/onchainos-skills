@@ -819,7 +819,14 @@ fn find_token_in_market_list(
                         })
                         .unwrap_or_default();
                     if iid == investment_id {
-                        return Some(extract_position_token(item));
+                        // Token info is inside assetsTokenList[0], not at item top level
+                        if let Some(assets) =
+                            item.get("assetsTokenList").and_then(|v| v.as_array())
+                        {
+                            if let Some(token) = assets.first() {
+                                return Some(extract_position_token(token));
+                            }
+                        }
                     }
                 }
             }
