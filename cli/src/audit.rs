@@ -466,6 +466,8 @@ fn payment_sub(c: &PaymentCommand) -> &'static str {
 
 fn defi_sub(c: &DefiCommand) -> &'static str {
     match c {
+        DefiCommand::Chains => "chains",
+        DefiCommand::Protocols => "protocols",
         DefiCommand::List { .. } => "list",
         DefiCommand::Search { .. } => "search",
         DefiCommand::Detail { .. } => "detail",

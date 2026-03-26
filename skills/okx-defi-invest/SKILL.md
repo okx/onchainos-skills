@@ -28,14 +28,16 @@ For CLI parameter details, see [references/cli-reference.md](references/cli-refe
 
 | # | Command | Description |
 |---|---------|-------------|
-| 1 | `defi list` | List top DeFi products by APY |
-| 2 | `defi search --token <tokens> [--platform <names>] [--chain <chain>] [--product-group <group>]` | Search DeFi products |
-| 3 | `defi detail --investment-id <id>` | Get full product details |
-| 4 | `defi invest --investment-id <id> --address <addr> --token <symbol_or_addr> --amount <minimal_units> [--chain <chain>] [--slippage <pct>] [--tick-lower <n>] [--tick-upper <n>] [--token-id <nft>]` | One-step deposit (CLI handles prepare + precision + calldata) |
-| 5 | `defi withdraw --investment-id <id> --address <addr> --chain <chain> [--ratio <0-1>] [--amount <minimal_units>] [--token-id <nft>] [--platform-id <pid>] [--slippage <pct>]` | One-step withdrawal (CLI handles position lookup + calldata) |
-| 6 | `defi collect --address <addr> --chain <chain> --reward-type <type> [--investment-id <id>] [--platform-id <pid>] [--token-id <nft>] [--principal-index <idx>]` | One-step reward claim (CLI handles reward check + calldata) |
-| 7 | `defi positions --address <addr> --chains <chains>` | List DeFi positions by platform |
-| 8 | `defi position-detail --address <addr> --chain <chain> --platform-id <pid>` | Get detailed position info |
+| 1 | `defi chains` | Get supported chains for DeFi |
+| 2 | `defi protocols` | Get supported protocols/platforms for DeFi |
+| 3 | `defi list` | List top DeFi products by APY |
+| 4 | `defi search --token <tokens> [--platform <names>] [--chain <chain>] [--product-group <group>]` | Search DeFi products |
+| 5 | `defi detail --investment-id <id>` | Get full product details |
+| 6 | `defi invest --investment-id <id> --address <addr> --token <symbol_or_addr> --amount <minimal_units> [--chain <chain>] [--slippage <pct>] [--tick-lower <n>] [--tick-upper <n>] [--token-id <nft>]` | One-step deposit (CLI handles prepare + precision + calldata) |
+| 7 | `defi withdraw --investment-id <id> --address <addr> --chain <chain> [--ratio <0-1>] [--amount <minimal_units>] [--token-id <nft>] [--platform-id <pid>] [--slippage <pct>]` | One-step withdrawal (CLI handles position lookup + calldata) |
+| 8 | `defi collect --address <addr> --chain <chain> --reward-type <type> [--investment-id <id>] [--platform-id <pid>] [--token-id <nft>] [--principal-index <idx>]` | One-step reward claim (CLI handles reward check + calldata) |
+| 9 | `defi positions --address <addr> --chains <chains>` | List DeFi positions by platform |
+| 10 | `defi position-detail --address <addr> --chain <chain> --platform-id <pid>` | Get detailed position info |
 
 ## Investment Types
 
