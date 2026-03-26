@@ -106,23 +106,3 @@ For dynamic orchestration, also read each skill's `## Data Contract` section.
 
 **Data handoff**: `--address` (wallet) reused across all steps; `pnlList[].tokenContractAddress` from step 3 → `--token` in step 4.
 
----
-
-## Data Flow Reference
-
-Key fields passed between skills:
-
-| Field | Produced By | Consumed By |
-|---|---|---|
-| `tokenContractAddress` | `okx-dex-token` (search, hot-tokens) | pass as `--address` to all downstream token commands |
-| `trades[].tokenContractAddress` | `okx-dex-signal` (tracker activities — nested in `trades` array) | pass as `--address` to downstream token commands |
-| `pnlList[].tokenContractAddress` | `okx-dex-market` (portfolio-recent-pnl) | pass as `--token` to `portfolio-token-pnl` |
-| `token.tokenAddress` | `okx-dex-signal` (signal list) — nested field | extract via `token.tokenAddress`; pass as `--address` downstream |
-| `tokenAddress` | `okx-dex-trenches` (memepump tokens, token-details) | pass as `--address` to all downstream token commands |
-| `chainIndex` | any skill that returns token data (returned as numeric string e.g. `"501"`) | all `--chain` params downstream — pass `chainIndex` directly; CLI accepts numeric IDs. Do NOT use `chainName` (capitalized, not accepted by CLI) |
-| `decimal` | `okx-dex-token` (search, info) | amount unit conversion for swap |
-| `walletAddress` | `okx-dex-signal` (leaderboard), user input | `okx-dex-market` portfolio commands |
-| `devLaunchedInfo.rugPullCount` | `okx-dex-trenches` (token-dev-info) | stop condition before proceeding |
-| `riskControlLevel` | `okx-dex-token` (advanced-info) | stop condition before proceeding |
-| `clusterConcentration` | `okx-dex-token` (cluster-overview) | stop condition before proceeding |
-| `soldRatioPercent` | `okx-dex-signal` (signal list) | signal strength assessment |

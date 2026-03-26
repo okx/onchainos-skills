@@ -153,25 +153,6 @@ Do not expose raw error codes or internal error messages to the user.
 - Show USD value alongside (`1.5 ETH ≈ $4,500`)
 - Prices are strings — handle precision carefully
 
-## Data Contract
-
-> For orchestrator agents. Describes what this skill consumes from upstream skills and produces for downstream skills.
-
-**Inputs** (from upstream skills or user):
-
-| Field | Source | Used In |
-|---|---|---|
-| `tokenAddress` | `okx-dex-token`, `okx-dex-signal`, `okx-dex-trenches` | `market price`, `market kline`, `market portfolio-token-pnl --token` |
-| `chain` | any upstream skill or user input | all commands |
-| `walletAddress` | `okx-dex-signal` (leaderboard), user input | all `portfolio-*` commands |
-
-**Outputs** (for downstream skills):
-
-| Field | Command | Consumed By |
-|---|---|---|
-| `realizedPnlUsd`, `winRate` | `portfolio-overview` | display / decision |
-| `pnlList[].tokenContractAddress` | `portfolio-recent-pnl` | `portfolio-token-pnl --token` |
-
 ## Global Notes
 
 - EVM contract addresses must be **all lowercase**

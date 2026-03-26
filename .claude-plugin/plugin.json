@@ -16,6 +16,19 @@
     "onchainos",
     "gas",
     "broadcast",
-    "transaction"
+    "transaction",
+    "invest",
+    "earn",
+    "yield",
+    "stake",
+    "liquidity",
+    "lending",
+    "borrow",
+    "apy",
+    "tvl",
+    "deposit",
+    "withdraw",
+    "redeem",
+    "claim"
   ]
 }
