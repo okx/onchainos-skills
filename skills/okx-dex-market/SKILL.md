@@ -20,10 +20,6 @@ metadata:
 
 > Full chain list: `../okx-agentic-wallet/_shared/chain-support.md`. If that file does not exist, read `_shared/chain-support.md` instead.
 
-## Cross-Skill Workflows
-
-> Multi-step workflows: `../okx-agentic-wallet/_shared/workflows.md`. If that file does not exist, read `_shared/workflows.md` instead.
-
 ## Keyword Glossary
 
 | Chinese | English / Platform Terms | Maps To |
@@ -101,6 +97,8 @@ After price, kline, or index results: suggest viewing the chart, checking token 
 
 | Just called | Suggest |
 |---|---|
+| `market price` | 1. View K-line chart → `onchainos market kline` 2. Check token analytics → `onchainos token price-info` 3. Buy/swap this token → `onchainos swap execute` |
+| `market kline` | 1. Check token analytics → `onchainos token price-info` 2. Check holder distribution → `onchainos token holders` 3. Buy/swap this token → `onchainos swap execute` |
 | `market prices` | 1. View K-line chart for a token → `onchainos market kline` 2. View single token price → `onchainos market price` |
 | `market portfolio-supported-chains` | 1. Get PnL overview → `onchainos market portfolio-overview` |
 | `market portfolio-overview` | 1. Drill into trade history → `onchainos market portfolio-dex-history` 2. Check recent PnL by token → `onchainos market portfolio-recent-pnl` 3. Buy/sell a top-PnL token → `onchainos swap execute` |

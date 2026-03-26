@@ -20,10 +20,6 @@ metadata:
 
 > Full chain list: `../okx-agentic-wallet/_shared/chain-support.md`. If that file does not exist, read `_shared/chain-support.md` instead.
 
-## Cross-Skill Workflows
-
-> Multi-step workflows: `../okx-agentic-wallet/_shared/workflows.md`. If that file does not exist, read `_shared/workflows.md` instead.
-
 ## Keyword Glossary
 
 Users may use Chinese crypto slang or platform-specific terms. Map them to the correct commands:
@@ -125,8 +121,8 @@ Users may use Chinese crypto slang or platform-specific terms. Map them to the c
 | `token price-info` | 1. Check holder distribution → `onchainos token holders` 2. View K-line chart → `onchainos market kline` 3. Buy/swap this token → `onchainos swap execute` |
 | `token holders` | 1. Get advanced info → `onchainos token advanced-info` 2. View top traders → `onchainos token top-trader` |
 | `token liquidity` | 1. Check holders → `onchainos token holders` 2. Get advanced info → `onchainos token advanced-info` |
-| `token hot-tokens` | 1. View price details → `onchainos token price-info` 2. Check liquidity pools → `onchainos token liquidity` |
-| `token advanced-info` | 1. View holders → `onchainos token holders` 2. View top traders → `onchainos token top-trader` |
+| `token hot-tokens` | 1. View price details → `onchainos token price-info` 2. Check liquidity pools → `onchainos token liquidity` 3. Get advanced info → `onchainos token advanced-info` |
+| `token advanced-info` | 1. View holders → `onchainos token holders` 2. View top traders → `onchainos token top-trader` 3. Check holder cluster concentration → `onchainos token cluster-overview` |
 | `token top-trader` | 1. View advanced info → `onchainos token advanced-info` 2. View token trade history → `onchainos token trades` |
 | `token trades` | 1. View top traders → `onchainos token top-trader` 2. Get advanced info → `onchainos token advanced-info` |
 | `token cluster-supported-chains` | 1. Get holder cluster overview → `onchainos token cluster-overview` |
