@@ -2,7 +2,7 @@
 
 This file is for **orchestrator agents**. It documents common multi-step workflows spanning the 4 core skills: `okx-dex-market`, `okx-dex-signal`, `okx-dex-token`, `okx-dex-trenches`.
 
-For dynamic orchestration, also read each skill's `## Data Contract` section.
+For dynamic orchestration, also read each skill's CLI reference for return field details.
 
 ---
 
