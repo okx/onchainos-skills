@@ -20,6 +20,10 @@ metadata:
 
 > Full chain list: `../okx-agentic-wallet/_shared/chain-support.md`. If that file does not exist, read `_shared/chain-support.md` instead.
 
+## Cross-Skill Workflows
+
+> Multi-step workflows: `../okx-agentic-wallet/_shared/workflows.md`. If that file does not exist, read `_shared/workflows.md` instead.
+
 ## Keyword Glossary
 
 Users may use Chinese crypto slang or platform-specific terms. Map them to the correct commands:
