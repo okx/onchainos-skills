@@ -10,7 +10,7 @@ metadata:
 
 # Onchain OS DEX Signal & Leaderboard
 
-6 commands for tracking smart money, KOL, and whale activity — raw transaction feed, aggregated buy signals, and top trader leaderboard.
+5 commands for tracking smart money, KOL, and whale activity — raw transaction feed, aggregated buy signals, and top trader leaderboard.
 
 ## Pre-flight Checks
 
@@ -134,6 +134,7 @@ metadata:
 
 | Just called | Suggest |
 |---|---|
+| `signal chains` | 1. Fetch signals on a supported chain → `onchainos signal list` |
 | `tracker activities` | 1. Get token price → `onchainos market price` 2. Deep token analytics → `onchainos token price-info` 3. Buy/swap the token → `onchainos swap execute` |
 | `signal list` | 1. Drill into actual trades → `onchainos tracker activities` 2. View price chart → `onchainos market kline` 3. Deep token analytics → `onchainos token price-info` 4. Buy the token → `onchainos swap execute` |
 | `leaderboard list` | 1. Drill into a wallet's PnL → `onchainos market portfolio-overview` 2. Check a wallet's holdings → `onchainos portfolio all-balances` 3. Track that wallet's trades → `onchainos tracker activities --tracker-type multi_address` |

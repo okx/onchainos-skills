@@ -30,8 +30,7 @@ metadata:
 | 已实现盈亏 | realized PnL, realized profit | `portfolio-token-pnl` (realizedPnlUsd) |
 | 未实现盈亏 | unrealized PnL, paper profit, holding gain | `portfolio-token-pnl` (unrealizedPnlUsd) |
 | 胜率 | win rate, success rate | `portfolio-overview` (winRate) |
-| 历史交易 / 交易记录 | DEX transaction history, trade log | `portfolio-dex-history` |
-| 历史交易 / DEX记录 (自己的钱包) | own wallet DEX transaction history | `portfolio-dex-history` |
+| 历史交易 / 交易记录 / DEX记录 | DEX transaction history, trade log, own wallet DEX history | `portfolio-dex-history` |
 | 清仓 | sold all, liquidated, sell off | `portfolio-recent-pnl` (unrealizedPnlUsd = "SELL_ALL") |
 | 画像 / 钱包画像 / 持仓分析 | wallet profile, portfolio analysis | `portfolio-overview` |
 | 近期收益 | recent PnL, latest earnings by token | `portfolio-recent-pnl` |
@@ -100,6 +99,7 @@ After price, kline, or index results: suggest viewing the chart, checking token 
 | `market price` | 1. View K-line chart → `onchainos market kline` 2. Check token analytics → `onchainos token price-info` 3. Buy/swap this token → `onchainos swap execute` |
 | `market kline` | 1. Check token analytics → `onchainos token price-info` 2. Check holder distribution → `onchainos token holders` 3. Buy/swap this token → `onchainos swap execute` |
 | `market prices` | 1. View K-line chart for a token → `onchainos market kline` 2. View single token price → `onchainos market price` |
+| `market index` | 1. Compare with on-chain DEX price → `onchainos market price` 2. View full price chart → `onchainos market kline` |
 | `market portfolio-supported-chains` | 1. Get PnL overview → `onchainos market portfolio-overview` |
 | `market portfolio-overview` | 1. Drill into trade history → `onchainos market portfolio-dex-history` 2. Check recent PnL by token → `onchainos market portfolio-recent-pnl` 3. Buy/sell a top-PnL token → `onchainos swap execute` |
 | `market portfolio-dex-history` | 1. Check PnL for a specific traded token → `onchainos market portfolio-token-pnl` 2. View token price chart → `onchainos market kline` |
