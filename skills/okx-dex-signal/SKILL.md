@@ -141,6 +141,11 @@ metadata:
 
 Present conversationally — never expose command paths to the user.
 
+## Additional Resources
+
+For detailed parameter tables and return field schemas, consult:
+- **`references/cli-reference.md`** — Full CLI command reference for tracker, signal, and leaderboard commands
+
 ## WebSocket Protocol Reference
 
 When the user wants to build a custom WebSocket client, write a WS subscription script, implement a real-time trade monitoring bot, or asks about the raw OKX DEX WebSocket protocol (authentication, subscribe format, push data schema, heartbeat), read **`references/ws-protocol.md`** before responding. That file contains the complete protocol specification needed to subscribe to `kol_smartmoney-tracker-activity` and `address-tracker-activity` channels directly.

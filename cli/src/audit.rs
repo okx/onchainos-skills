@@ -361,6 +361,12 @@ fn signal_sub(c: &SignalCommand) -> &'static str {
     }
 }
 
+fn tracker_sub(c: &TrackerCommand) -> &'static str {
+    match c {
+        TrackerCommand::Activities { .. } => "activities",
+    }
+}
+
 fn leaderboard_sub(c: &LeaderboardCommand) -> &'static str {
     match c {
         LeaderboardCommand::SupportedChains => "supported-chains",
@@ -461,12 +467,6 @@ fn security_sub(c: &SecurityCommand) -> &'static str {
 fn payment_sub(c: &PaymentCommand) -> &'static str {
     match c {
         PaymentCommand::X402Pay { .. } => "x402-pay",
-    }
-}
-
-fn tracker_sub(c: &TrackerCommand) -> &'static str {
-    match c {
-        TrackerCommand::Activities { .. } => "activities",
     }
 }
 
