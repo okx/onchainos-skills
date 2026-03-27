@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::client::ApiClient;
 use crate::commands::{
-    defi, gateway, leaderboard, market, memepump, portfolio, signal, swap, token,
+    defi, gateway, leaderboard, market, memepump, portfolio, signal, swap, token, tracker,
 };
 
 // ── DeFi ──────────────────────────────────────────────────────────────
@@ -235,16 +235,6 @@ struct TokenAddressParams {
     address: String,
     /// Chain name, e.g. "ethereum", "solana" (optional, defaults to ethereum)
     chain: Option<String>,
-}
-
-#[derive(Deserialize, JsonSchema)]
-struct TokenTrendingParams {
-    /// Comma-separated chain names, e.g. "ethereum,solana" (optional)
-    chains: Option<String>,
-    /// Sort by: 2=price change, 5=volume (default), 6=market cap
-    sort_by: Option<String>,
-    /// Time frame: 1=5min, 2=1h, 3=4h, 4=24h (default)
-    time_frame: Option<String>,
 }
 
 // ── Market ─────────────────────────────────────────────────────────────
@@ -701,14 +691,16 @@ impl McpServer {
     }
 
     #[tool(name = "token_trending", description = "Get trending token rankings")]
-    async fn token_trending(
-        &self,
-        Parameters(p): Parameters<TokenTrendingParams>,
-    ) -> Result<String, String> {
-        let chains = p.chains.as_deref().unwrap_or("1,501");
-        let sort_by = p.sort_by.as_deref().unwrap_or("5");
-        let time_frame = p.time_frame.as_deref().unwrap_or("4");
-        match token::fetch_trending(&self.client, chains, sort_by, time_frame).await {
+    async fn token_trending(&self) -> Result<String, String> {
+        match token::fetch_hot_tokens(
+            &self.client,
+            token::HotTokensParams {
+                ranking_type: "4".to_string(),
+                ..Default::default()
+            },
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1480,14 +1472,14 @@ impl McpServer {
     }
 
     #[tool(
-        name = "market_address_tracker_activities",
+        name = "tracker_activities",
         description = "Get latest DEX activities for tracked addresses. trackerType: smart_money (or 1) = platform smart money, kol (or 2) = platform Top 100 KOL addresses, multi_address (or 3) = custom addresses (requires wallet_address)"
     )]
-    async fn market_address_tracker_activities(
+    async fn tracker_activities(
         &self,
         Parameters(p): Parameters<AddressTrackerActivitiesParams>,
     ) -> Result<String, String> {
-        let resolved_type = market::resolve_tracker_type(&p.tracker_type);
+        let resolved_type = tracker::resolve_tracker_type(&p.tracker_type);
         if (resolved_type == "3" || p.tracker_type == "multi_address") && p.wallet_address.is_none()
         {
             return Err("wallet_address is required when tracker_type is multi_address".into());
@@ -1496,7 +1488,7 @@ impl McpServer {
             .chain
             .as_deref()
             .map(|c| crate::chains::resolve_chain(c).to_string());
-        match market::fetch_address_tracker_activities(
+        match tracker::fetch_activities(
             &self.client,
             &p.tracker_type,
             p.wallet_address.as_deref(),

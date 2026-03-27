@@ -39,18 +39,6 @@ pub enum TokenCommand {
         #[arg(long)]
         tag_filter: Option<u8>,
     },
-    /// Get trending / top tokens
-    Trending {
-        /// Chains (comma-separated). Defaults to global --chain if set, otherwise "1,501"
-        #[arg(long)]
-        chains: Option<String>,
-        /// Sort by: 2=price change, 5=volume, 6=market cap
-        #[arg(long, default_value = "5")]
-        sort_by: String,
-        /// Time frame: 1=5min, 2=1h, 3=4h, 4=24h
-        #[arg(long, default_value = "4")]
-        time_frame: String,
-    },
     /// Get detailed price info (price, market cap, liquidity, volume, 24h change)
     PriceInfo {
         /// Token contract address
@@ -299,16 +287,6 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
             output::success(fetch_holders(&client, &address, &chain_index, tag_filter).await?);
         }
-        TokenCommand::Trending {
-            chains,
-            sort_by,
-            time_frame,
-        } => {
-            let resolved_chains = ctx.resolve_chains_or(chains, "1,501");
-            output::success(
-                fetch_trending(&client, &resolved_chains, &sort_by, &time_frame).await?,
-            );
-        }
         TokenCommand::PriceInfo { address, chain } => {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
@@ -521,26 +499,6 @@ pub async fn fetch_holders(
         .await
 }
 
-/// GET /api/v6/dex/market/token/toplist
-pub async fn fetch_trending(
-    client: &ApiClient,
-    chains: &str,
-    sort_by: &str,
-    time_frame: &str,
-) -> Result<Value> {
-    let resolved_chains = crate::chains::resolve_chains(chains);
-    client
-        .get(
-            "/api/v6/dex/market/token/toplist",
-            &[
-                ("chains", resolved_chains.as_str()),
-                ("sortBy", sort_by),
-                ("timeFrame", time_frame),
-            ],
-        )
-        .await
-}
-
 /// GET /api/v6/dex/market/token/top-liquidity — top 5 liquidity pools for a token
 pub async fn fetch_liquidity(
     client: &ApiClient,
@@ -569,7 +527,7 @@ pub async fn fetch_price_info(
 }
 
 /// Parameters for the hot token list query.
-#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[derive(serde::Deserialize, schemars::JsonSchema, Default)]
 pub struct HotTokensParams {
     /// Ranking type: 4=Trending (token score), 5=Xmentioned (Twitter mentions)
     pub ranking_type: String,

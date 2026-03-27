@@ -57,6 +57,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::leaderboard::LeaderboardCommand,
     },
+    /// Address tracker: latest DEX trades by smart money, KOL, or custom wallets
+    Tracker {
+        #[command(subcommand)]
+        command: commands::tracker::TrackerCommand,
+    },
     /// Token information
     Token {
         #[command(subcommand)]
@@ -148,6 +153,7 @@ async fn run() {
         Commands::Signal { command } => commands::signal::execute(&ctx, command).await,
         Commands::Memepump { command } => commands::memepump::execute(&ctx, *command).await,
         Commands::Leaderboard { command } => commands::leaderboard::execute(&ctx, command).await,
+        Commands::Tracker { command } => commands::tracker::execute(&ctx, command).await,
         Commands::Token { command } => commands::token::execute(&ctx, *command).await,
         Commands::Swap { command } => commands::swap::execute(&ctx, command).await,
         Commands::Gateway { command } => commands::gateway::execute(&ctx, command).await,

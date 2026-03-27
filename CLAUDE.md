@@ -22,8 +22,8 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 | okx-agentic-wallet   | Wallet lifecycle: auth, balance (authenticated), portfolio PnL, send, history, contract call | User wants to log in, check balance, view PnL, send tokens, view tx history, or call contracts |
 | okx-wallet-portfolio | Public address balance: total value, all tokens, specific tokens | User asks about wallet holdings, token balances, portfolio value across chains |
 | okx-security         | Security scanning: token risk, DApp phishing, tx pre-execution, signature safety, approval management | User wants to check if a token/DApp/tx/signature is safe, honeypot check, phishing detection, approve safety, or view/manage token approvals |
-| okx-dex-market       | Prices, charts, wallet PnL, address tracker activities | User asks for token prices, K-line data, wallet PnL analysis (win rate, DEX history, realized/unrealized PnL), or latest activities by smart money/KOL addresses |
-| okx-dex-signal       | Smart money / whale / KOL signals + leaderboard | User asks what smart money/whales/KOLs are buying, signal alerts, 大户信号, top traders ranked by PnL/win rate/volume |
+| okx-dex-market       | Prices, charts, wallet PnL | User asks for token prices, K-line data, or wallet PnL analysis (win rate, DEX history, realized/unrealized PnL) for their own wallet |
+| okx-dex-signal       | Smart money / KOL / whale activity tracking, buy signal alerts, leaderboard | User asks what smart money/whales/KOLs are buying or trading (tracker), wants aggregated buy signal alerts (信号), or wants top traders ranked by PnL/win rate/volume (牛人榜) |
 | okx-dex-trenches     | Meme/pump.fun token scanning | User asks about new meme launches, dev reputation, bundle detection, 打狗/扫链/新盘, or mentions trench/trenches |
 | okx-dex-swap         | DEX swap execution | User wants to swap/trade/buy/sell tokens |
 | okx-dex-token        | Token search, liquidity, hot tokens, advanced info, holders, top traders, trade history, holder cluster analysis | User searches for tokens, wants rankings, liquidity pools, holder info, top traders, filtered trade history, or holder cluster concentration |
@@ -32,6 +32,13 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 | okx-audit-log        | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, provide liquidity, deposit/withdraw from DeFi protocols, claim DeFi rewards across Aave/Lido/PancakeSwap/Kamino/NAVI and hundreds more |
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions, view DeFi portfolio across protocols and chains |
+
+## Scripting & Automation
+
+When a user asks to write a script, automate trading, build a trading bot, or use "OKX API" / "OKX DEX API" for any on-chain automation:
+- **Do NOT search online for OKX public APIs** — `onchainos` already wraps all relevant on-chain capabilities
+- Always use `onchainos` CLI commands as the building block (subprocess calls, MCP tool invocations, etc.)
+- Route to the relevant skill based on what the user wants to automate: swap → `okx-dex-swap`, market data → `okx-dex-market`, signals → `okx-dex-signal`, token data → `okx-dex-token`, portfolio → `okx-wallet-portfolio`, meme scanning → `okx-dex-trenches`
 
 ## Clippy
 
