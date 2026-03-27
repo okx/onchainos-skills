@@ -1,6 +1,6 @@
 # Onchain OS DEX Token — CLI Command Reference
 
-Detailed parameter tables, return field schemas, and usage examples for all 14 token commands.
+Detailed parameter tables, return field schemas, and usage examples for all 13 token commands.
 
 ## 1. onchainos token search
 
@@ -96,41 +96,7 @@ onchainos token price-info --address <address> [--chain <chain>]
 | `maxPrice` | String | 24-hour highest price |
 | `minPrice` | String | 24-hour lowest price |
 
-## 4. onchainos token trending
-
-Get trending / top tokens by various criteria.
-
-```bash
-onchainos token trending [--chains <chains>] [--sort-by <sort>] [--time-frame <frame>]
-```
-
-| Param | Required | Default | Description |
-|---|---|---|---|
-| `--chains` | No | `"1,501"` | Chain names or IDs, comma-separated |
-| `--sort-by` | No | `"5"` | Sort: `2`=price change, `5`=volume, `6`=market cap |
-| `--time-frame` | No | `"4"` | Window: `1`=5min, `2`=1h, `3`=4h, `4`=24h |
-
-**Return fields**:
-
-| Field | Type | Description |
-|---|---|---|
-| `tokenSymbol` | String | Token symbol |
-| `tokenContractAddress` | String | Token contract address |
-| `tokenLogoUrl` | String | Token logo image URL |
-| `chainIndex` | String | Chain identifier |
-| `price` | String | Current price in USD |
-| `change` | String | Price change percentage (for selected time frame) |
-| `volume` | String | Trading volume in USD (for selected time frame) |
-| `marketCap` | String | Market capitalization in USD |
-| `liquidity` | String | Total liquidity in USD |
-| `holders` | String | Number of token holders |
-| `uniqueTraders` | String | Number of unique traders (for selected time frame) |
-| `txsBuy` | String | Buy transaction count (for selected time frame) |
-| `txsSell` | String | Sell transaction count (for selected time frame) |
-| `txs` | String | Total transaction count (for selected time frame) |
-| `firstTradeTime` | String | First trade timestamp (Unix milliseconds) |
-
-## 5. onchainos token holders
+## 4. onchainos token holders
 
 Get token holder distribution (top 100), with optional tag filter.
 
@@ -161,7 +127,7 @@ onchainos token holders --address <address> [--chain <chain>] [--tag-filter <n>]
 | `unrealizedPnlUsd` | String | Unrealized PnL (USD) |
 | `fundingSource` | String | Source of funding for the wallet |
 
-## 6. onchainos token liquidity
+## 5. onchainos token liquidity
 
 Get top 5 liquidity pools for a token.
 
@@ -188,7 +154,7 @@ onchainos token liquidity --address <address> [--chain <chain>]
 | `poolAddress` | String | Pool contract address |
 | `poolCreator` | String | Pool creator address |
 
-## 7. onchainos token hot-tokens
+## 6. onchainos token hot-tokens
 
 Get hot token list ranked by trending score or X/Twitter mentions (max 100 results).
 
@@ -260,7 +226,7 @@ onchainos token hot-tokens [--ranking-type <type>] [--chain <chain>] [--rank-by 
 | `vibeScore` | String | Vibe score |
 | `mentionsCount` | String | X/Twitter mention count |
 
-## 8. onchainos token advanced-info
+## 7. onchainos token advanced-info
 
 Get advanced token info including risk level, creator details, dev stats, and holder concentration.
 
@@ -277,7 +243,7 @@ onchainos token advanced-info --address <address> [--chain <chain>]
 
 | Field | Type | Description |
 |---|---|---|
-| `riskControlLevel` | String | Risk control level |
+| `riskControlLevel` | String | Risk control level: `0`=Undefined, `1`=Low Risk, `2`=Medium Risk, `3`=Medium-High Risk, `4`=High Risk, `5`=High Risk (manual) |
 | `totalFee` | String | Total fee collected |
 | `lpBurnedPercent` | String | Percentage of LP tokens burned |
 | `isInternal` | Boolean | Whether the token is internal |
@@ -297,7 +263,7 @@ onchainos token advanced-info --address <address> [--chain <chain>]
 | `snipersClearAddressCount` | String | Number of sniper addresses that cleared |
 | `snipersTotal` | String | Total sniper count |
 
-## 9. onchainos token top-trader
+## 8. onchainos token top-trader
 
 Get top traders (profit addresses) for a token.
 
@@ -328,7 +294,7 @@ onchainos token top-trader --address <address> [--chain <chain>] [--tag-filter <
 | `unrealizedPnlUsd` | String | Unrealized PnL (USD) |
 | `fundingSource` | String | Funding source of the wallet |
 
-## 10. onchainos token trades
+## 9. onchainos token trades
 
 Get token DEX trade history with optional tag and wallet address filters.
 
@@ -379,7 +345,7 @@ onchainos token search --query xETH --chains xlayer
 **User says:** "What's trending on Solana by volume?"
 
 ```bash
-onchainos token trending --chains solana --sort-by 5 --time-frame 4
+onchainos token hot-tokens --chain solana --rank-by 5 --time-frame 4
 # -> Display top tokens sorted by 24h volume:
 #   #1 SOL  - Vol: $1.2B | Change: +3.5% | MC: $80B
 #   #2 BONK - Vol: $450M | Change: +12.8% | MC: $1.5B
@@ -395,7 +361,7 @@ onchainos token holders --address 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --c
 
 ---
 
-## 11. onchainos token cluster-overview
+## 10. onchainos token cluster-overview
 
 Get token holder cluster concentration overview — cluster level, rug pull probability, new address ratio, same-fund-source ratio, and same-creation-time ratio.
 
@@ -431,7 +397,7 @@ onchainos token cluster-overview --address 0xa0b86991c6218b36c1d19d4a2e9eb0ce360
 
 ---
 
-## 12. onchainos token cluster-top-holders
+## 11. onchainos token cluster-top-holders
 
 Get overview statistics for the top 10, 50, or 100 holders of a token — including average holding period, average PnL, average cost price, and trend direction.
 
@@ -471,7 +437,7 @@ onchainos token cluster-top-holders --address 0xa0b86991c6218b36c1d19d4a2e9eb0ce
 
 ---
 
-## 13. onchainos token cluster-list
+## 12. onchainos token cluster-list
 
 Get holder cluster list — groups of top 300 holders organized into clusters, with per-cluster holding stats and individual address details.
 
@@ -525,7 +491,7 @@ onchainos token cluster-list --address 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb4
 
 ---
 
-## 14. onchainos token cluster-supported-chains
+## 13. onchainos token cluster-supported-chains
 
 **Description**: Get the list of chains that support holder cluster analysis.
 
