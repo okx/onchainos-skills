@@ -145,9 +145,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             chain,
             swap_mode,
         } => {
-            if amount.contains('.') {
-                bail!("--amount must be a whole number in minimal units (no decimals)");
-            }
+            validate_amount(&amount)?;
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
             output::success(
@@ -166,9 +164,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             tips,
             max_auto_slippage,
         } => {
-            if amount.contains('.') {
-                bail!("--amount must be a whole number in minimal units (no decimals)");
-            }
+            validate_amount(&amount)?;
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
             output::success(
@@ -193,11 +189,11 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             amount,
             chain,
         } => {
-            if amount.contains('.') {
-                bail!("--amount must be a whole number in minimal units (no decimals)");
-            }
+            validate_amount(&amount)?;
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
+            let resolved_token = resolve_token_address(&chain_index, &token);
+            validate_token_for_chain(&chain_index, &resolved_token, "token")?;
             output::success(fetch_approve(&client, &chain_index, &token, &amount).await?);
         }
         SwapCommand::CheckApprovals {
@@ -233,9 +229,9 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             max_auto_slippage,
             mev_protection,
         } => {
-            if amount.contains('.') {
-                bail!("--amount must be a whole number in minimal units (no decimals)");
-            }
+            validate_amount(&amount)?;
+            let chain_index = crate::chains::resolve_chain(&chain);
+            crate::chains::ensure_supported_chain(&chain_index, &chain)?;
             cmd_execute(
                 &client,
                 &from,
@@ -412,6 +408,92 @@ fn resolve_token_address(chain_index: &str, token: &str) -> String {
     token.to_string()
 }
 
+// ── Pre-flight validation helpers ────────────────────────────────────
+
+/// Validate that `amount` is a non-empty string of digits (no Infinity, NaN,
+/// negative, zero-only, leading-zeros, or other non-numeric values).
+fn validate_amount(amount: &str) -> Result<()> {
+    if amount.is_empty() {
+        bail!("--amount must not be empty");
+    }
+    if amount.contains('.') {
+        bail!("--amount must be a whole number in minimal units (no decimals)");
+    }
+    if !amount.chars().all(|c| c.is_ascii_digit()) {
+        bail!(
+            "--amount must be a whole number in minimal units, got \"{}\". \
+             Infinity, NaN, negative numbers and non-numeric values are not accepted.",
+            amount
+        );
+    }
+    if amount.chars().all(|c| c == '0') {
+        bail!("--amount must be greater than zero");
+    }
+    Ok(())
+}
+
+/// Check that a *resolved* token address format matches the chain.
+/// Called after `resolve_token_address` so we inspect the actual address.
+///
+/// Note: chain_family() is a binary "solana" / "evm" function and classifies
+/// Tron (195), TON (607), and Sui (784) as "evm" for historical reasons.
+/// Those chains have their own address formats, so we skip format validation
+/// for them and only check genuine Solana vs. EVM chains.
+fn validate_token_for_chain(chain_index: &str, token: &str, label: &str) -> Result<()> {
+    match chain_index {
+        // Solana: must not be a 0x-prefixed EVM address.
+        "501" => {
+            if token.starts_with("0x") || token.starts_with("0X") {
+                bail!(
+                    "--{label} looks like an EVM address (0x…) but chain is Solana. \
+                     Solana uses base58 addresses (e.g. EPjFWdd5...wyTDt1v). \
+                     Did you mean to use a different chain?"
+                );
+            }
+        }
+        // Tron / TON / Sui — their native address formats differ from both EVM and Solana;
+        // skip format validation and let the API handle address errors.
+        "195" | "607" | "784" => {}
+        // EVM chains: heuristic — 32-44 alphanumeric chars with uppercase → likely Solana base58.
+        _ => {
+            if !token.starts_with("0x")
+                && !token.starts_with("0X")
+                && token.len() >= 32
+                && token.len() <= 44
+                && token.chars().all(|c| c.is_ascii_alphanumeric())
+                && token.chars().any(|c| c.is_ascii_uppercase())
+            {
+                bail!(
+                    "--{label} looks like a Solana/base58 address but chain is EVM (chainIndex={chain_index}). \
+                     EVM addresses start with 0x (e.g. 0xa0b869...606eb48). \
+                     Did you mean to use --chain solana?"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Reject swaps where fromToken and toToken are the same address.
+fn ensure_different_tokens(from: &str, to: &str) -> Result<()> {
+    if from.eq_ignore_ascii_case(to) {
+        bail!(
+            "fromToken and toToken are the same address ({}). Cannot swap a token to itself.",
+            from
+        );
+    }
+    Ok(())
+}
+
+/// Validate resolved token pair: format matches chain + tokens are different.
+/// Call after `resolve_token_address`.
+fn validate_swap_params(chain_index: &str, from: &str, to: &str) -> Result<()> {
+    validate_token_for_chain(chain_index, from, "from")?;
+    validate_token_for_chain(chain_index, to, "to")?;
+    ensure_different_tokens(from, to)?;
+    Ok(())
+}
+
 // ── Aggregator API functions ─────────────────────────────────────────
 
 /// GET /api/v6/dex/aggregator/quote
@@ -427,6 +509,7 @@ pub async fn fetch_quote(
     let orig_to = to;
     let from = resolve_token_address(chain_index, orig_from);
     let to = resolve_token_address(chain_index, orig_to);
+    validate_swap_params(chain_index, &from, &to)?;
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][fetch_quote] chain_index={}, from={}, to={}, amount={}, swap_mode={}",
@@ -493,6 +576,7 @@ pub async fn fetch_swap(
     let orig_to = to;
     let from = resolve_token_address(chain_index, orig_from);
     let to = resolve_token_address(chain_index, orig_to);
+    validate_swap_params(chain_index, &from, &to)?;
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][fetch_swap] chain_index={}, from={}, to={}, amount={}, wallet={}, swap_mode={}, gas_level={}, slippage={:?}, tips={:?}, max_auto_slippage={:?}",
