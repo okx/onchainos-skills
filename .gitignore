@@ -20,8 +20,16 @@ Thumbs.db
 # Build output
 dist/
 build/
+.build/
 out/
 target/
+
+# Xcode / Swift
+xcuserdata/
+*.xcuserstate
+*.swiftpm/xcode/
+DerivedData/
+*.bak
 
 # onchainOS local config
 .onchainos/
