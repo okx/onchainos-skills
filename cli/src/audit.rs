@@ -465,16 +465,8 @@ fn payment_sub(c: &PaymentCommand) -> &'static str {
 }
 
 fn tracker_sub(c: &TrackerCommand) -> &'static str {
-    use crate::commands::tracker::WatchCommand;
     match c {
         TrackerCommand::Activities { .. } => "activities",
-        TrackerCommand::Watch { command } => match command {
-            WatchCommand::Start { .. } => "watch start",
-            WatchCommand::Poll { .. } => "watch poll",
-            WatchCommand::Stop { .. } => "watch stop",
-            WatchCommand::List => "watch list",
-            WatchCommand::RunDaemon { .. } => "watch run-daemon",
-        },
     }
 }
 

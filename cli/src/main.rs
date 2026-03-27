@@ -11,7 +11,6 @@ mod home;
 mod keyring_store;
 mod mcp;
 mod output;
-mod watch;
 mod wallet_api;
 mod wallet_store;
 
@@ -99,7 +98,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::agentic_wallet::payment::PaymentCommand,
     },
-    /// Address tracker: REST activities and real-time WebSocket watch for KOL / smart money / custom address activity
+    /// Address tracker: REST activities for KOL / smart money / custom address activity
     Tracker {
         #[command(subcommand)]
         command: commands::tracker::TrackerCommand,
