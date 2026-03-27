@@ -14,11 +14,11 @@ metadata:
 
 ## Pre-flight Checks
 
-> Before the first `onchainos` command this session, read and follow: `../_shared/preflight.md`
+> Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
 
 ## Chain Name Support
 
-> Full chain list: `../_shared/chain-support.md`
+> Full chain list: `../okx-agentic-wallet/_shared/chain-support.md`. If that file does not exist, read `_shared/chain-support.md` instead.
 
 ## Keyword Glossary
 
@@ -30,8 +30,7 @@ metadata:
 | 已实现盈亏 | realized PnL, realized profit | `portfolio-token-pnl` (realizedPnlUsd) |
 | 未实现盈亏 | unrealized PnL, paper profit, holding gain | `portfolio-token-pnl` (unrealizedPnlUsd) |
 | 胜率 | win rate, success rate | `portfolio-overview` (winRate) |
-| 历史交易 / 交易记录 | DEX transaction history, trade log | `portfolio-dex-history` |
-| 历史交易 / DEX记录 (自己的钱包) | own wallet DEX transaction history | `portfolio-dex-history` |
+| 历史交易 / 交易记录 / DEX记录 | DEX transaction history, trade log, own wallet DEX history | `portfolio-dex-history` |
 | 清仓 | sold all, liquidated, sell off | `portfolio-recent-pnl` (unrealizedPnlUsd = "SELL_ALL") |
 | 画像 / 钱包画像 / 持仓分析 | wallet profile, portfolio analysis | `portfolio-overview` |
 | 近期收益 | recent PnL, latest earnings by token | `portfolio-recent-pnl` |
@@ -97,7 +96,10 @@ After price, kline, or index results: suggest viewing the chart, checking token 
 
 | Just called | Suggest |
 |---|---|
+| `market price` | 1. View K-line chart → `onchainos market kline` 2. Check token analytics → `onchainos token price-info` 3. Buy/swap this token → `onchainos swap execute` |
+| `market kline` | 1. Check token analytics → `onchainos token price-info` 2. Check holder distribution → `onchainos token holders` 3. Buy/swap this token → `onchainos swap execute` |
 | `market prices` | 1. View K-line chart for a token → `onchainos market kline` 2. View single token price → `onchainos market price` |
+| `market index` | 1. Compare with on-chain DEX price → `onchainos market price` 2. View full price chart → `onchainos market kline` |
 | `market portfolio-supported-chains` | 1. Get PnL overview → `onchainos market portfolio-overview` |
 | `market portfolio-overview` | 1. Drill into trade history → `onchainos market portfolio-dex-history` 2. Check recent PnL by token → `onchainos market portfolio-recent-pnl` 3. Buy/sell a top-PnL token → `onchainos swap execute` |
 | `market portfolio-dex-history` | 1. Check PnL for a specific traded token → `onchainos market portfolio-token-pnl` 2. View token price chart → `onchainos market kline` |
@@ -152,25 +154,6 @@ Do not expose raw error codes or internal error messages to the user.
 - Always display in UI units (`1.5 ETH`), never base units
 - Show USD value alongside (`1.5 ETH ≈ $4,500`)
 - Prices are strings — handle precision carefully
-
-## Data Contract
-
-> For orchestrator agents. Describes what this skill consumes from upstream skills and produces for downstream skills.
-
-**Inputs** (from upstream skills or user):
-
-| Field | Source | Used In |
-|---|---|---|
-| `tokenAddress` | `okx-dex-token`, `okx-dex-signal`, `okx-dex-trenches` | `market price`, `market kline`, `market portfolio-token-pnl --token` |
-| `chain` | any upstream skill or user input | all commands |
-| `walletAddress` | `okx-dex-signal` (leaderboard), user input | all `portfolio-*` commands |
-
-**Outputs** (for downstream skills):
-
-| Field | Command | Consumed By |
-|---|---|---|
-| `realizedPnl`, `winRate` | `portfolio-overview` | display / decision |
-| `tokenAddress` | `portfolio-recent-pnl` | `portfolio-token-pnl --token` |
 
 ## Global Notes
 

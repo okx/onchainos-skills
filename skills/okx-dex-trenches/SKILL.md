@@ -14,11 +14,11 @@ metadata:
 
 ## Pre-flight Checks
 
-> Before the first `onchainos` command this session, read and follow: `../_shared/preflight.md`
+> Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
 
 ## Chain Name Support
 
-> Full chain list: `../_shared/chain-support.md`
+> Full chain list: `../okx-agentic-wallet/_shared/chain-support.md`. If that file does not exist, read `_shared/chain-support.md` instead.
 
 ## Keyword Glossary
 
@@ -132,29 +132,6 @@ For detailed parameter tables, return field schemas, and usage examples, consult
 - **No dev holding info**: `memepump-token-dev-info` returns `devHoldingInfo` as `null` if the creator address is unavailable
 - **Empty similar tokens**: `memepump-similar-tokens` may return empty array if no similar tokens are found
 - **Empty aped wallets**: `memepump-aped-wallet` returns empty array if no co-holders found
-
-## Data Contract
-
-> For orchestrator agents. Describes what this skill consumes from upstream skills and produces for downstream skills.
-
-**Inputs** (from upstream skills or user):
-
-| Field | Source | Used In |
-|---|---|---|
-| `tokenAddress` | `okx-dex-signal` (signal list), user input | `token-details`, `token-dev-info`, `similar-tokens`, `token-bundle-info`, `aped-wallet` |
-| `chain` | user input or upstream skill | all commands (defaults to `solana`) |
-
-**Outputs** (for downstream skills):
-
-| Field | Command | Consumed By |
-|---|---|---|
-| `tokenAddress` | `memepump tokens`, `token-details` | pass as `--address` to all detail commands; `okx-dex-market` kline; swap |
-| `chainIndex` | `memepump tokens` | all downstream `--chain` params (pass as-is; CLI accepts numeric IDs. Do NOT use `chainName` — it is capitalized and not accepted by CLI) |
-| `rugPullCount` | `token-dev-info` | stop condition: `> 0` → warn before proceeding |
-| `bondingPercent` | `token-details` | stage awareness: `100` = fully migrated out of bonding curve |
-| `totalBundlers`, `bundlerAthPercent` | `token-bundle-info` | risk signal before buy decision |
-| `devHoldingPercent` | `token-dev-info` | risk signal (high % = dev not exited yet) |
-| `insidersPercent`, `snipersPercent` | `token-details` | additional risk signals before buy decision |
 
 ## Region Restrictions (IP Blocking)
 

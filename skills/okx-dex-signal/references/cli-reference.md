@@ -4,12 +4,12 @@ Detailed parameter tables, return field schemas, and usage examples for the trac
 
 ---
 
-## 1. onchainos market address-tracker-activities
+## 1. onchainos tracker activities (address tracker)
 
 Get latest DEX activities for tracked addresses. Supports smart money, KOL, or custom multi-address tracking, with filters for trade type, chain, volume, market cap, liquidity, and holder count.
 
 ```bash
-onchainos market address-tracker-activities --tracker-type <type> [options]
+onchainos tracker activities --tracker-type <type> [options]
 ```
 
 | Param | Required | Default | Description |
@@ -42,23 +42,23 @@ onchainos market address-tracker-activities --tracker-type <type> [options]
 | `realizedPnlUsd` | String | Realized PnL of the trading token (USD) |
 | `tradeType` | String | Trade direction: `1`=buy, `2`=sell |
 | `tradeTime` | String | Transaction time (Unix milliseconds) |
-| `trackerType` | Array\<String\> | Tracker type tags for this trade; values: `"1"`=smart_money, `"2"`=kol, `"3"`=multi_address. May contain multiple values if the address matches more than one tracker type. |
+| `trackerType` | Array\<String\> | Tracker type tags for this trade; values: `"1"`=smart_money, `"2"`=kol, `"3"`=multi_address. May be empty `[]` if the API does not populate the field for this trade. |
 
 **Examples**:
 
 ```bash
 # Latest trades by platform smart money (all chains)
-onchainos market address-tracker-activities --tracker-type smart_money
+onchainos tracker activities --tracker-type smart_money
 
 # Latest buys by KOL addresses on Solana
-onchainos market address-tracker-activities --tracker-type kol --chain solana --trade-type 1
+onchainos tracker activities --tracker-type kol --chain solana --trade-type 1
 
 # Latest trades for custom wallet addresses
-onchainos market address-tracker-activities --tracker-type multi_address \
+onchainos tracker activities --tracker-type multi_address \
   --wallet-address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045,0xab5801a7d398351b8be11c439e05c5b3259aec9b
 
 # Smart money buys with volume filter
-onchainos market address-tracker-activities --tracker-type smart_money --trade-type 1 --min-volume 10000
+onchainos tracker activities --tracker-type smart_money --trade-type 1 --min-volume 10000
 ```
 
 ---
@@ -110,7 +110,7 @@ onchainos signal list --chain <chain> [options]
 | `timestamp` | String | Signal timestamp (Unix milliseconds) |
 | `chainIndex` | String | Chain identifier |
 | `price` | String | Token price at signal time (USD) |
-| `walletType` | String | Wallet classification: `SMART_MONEY`, `WHALE`, or `INFLUENCER` |
+| `walletType` | String | Wallet classification: `"1"`=Smart Money, `"2"`=KOL/Influencer, `"3"`=Whale |
 | `triggerWalletCount` | String | Number of wallets that triggered this signal |
 | `triggerWalletAddress` | String | Comma-separated wallet addresses that triggered the signal |
 | `amountUsd` | String | Total transaction amount in USD |
@@ -128,7 +128,7 @@ onchainos signal list --chain <chain> [options]
 **User says:** "What are smart money wallets buying on Solana?" (transaction-level)
 
 ```bash
-onchainos market address-tracker-activities --tracker-type smart_money --chain solana --trade-type 1
+onchainos tracker activities --tracker-type smart_money --chain solana --trade-type 1
 # -> Display latest smart money buy transactions on Solana
 ```
 

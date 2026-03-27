@@ -14,12 +14,12 @@ metadata:
 
 ## Pre-flight Checks
 
-> Before the first `onchainos` command this session, read and follow: `../_shared/preflight.md`
+> Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
 
 
 ## Chain Name Support
 
-> Full chain list: `../_shared/chain-support.md`
+> Full chain list: `../okx-agentic-wallet/_shared/chain-support.md`. If that file does not exist, read `_shared/chain-support.md` instead.
 
 ## Native Token Addresses
 
@@ -44,7 +44,7 @@ metadata:
 | 2 | `onchainos swap liquidity --chain <chain>` | Get available liquidity sources on a chain |
 | 3 | `onchainos swap approve --token ... --amount ... --chain ...` | Get ERC-20 approval transaction data (advanced/manual use) |
 | 4 | `onchainos swap quote --from ... --to ... --amount ... --chain ...` | Get swap quote (read-only price estimate). **No `--slippage` param**. |
-| 5 | `onchainos swap execute --from ... --to ... --amount ... --chain ... --wallet ... [--slippage <pct>] [--gas-level <level>] [--mev-protection]` | **One-shot swap**: quote → approve (if needed) → swap → sign & broadcast → txHash. CLI internally blocks honeypots and price impact >10%. |
+| 5 | `onchainos swap execute --from ... --to ... --amount ... --chain ... --wallet ... [--slippage <pct>] [--gas-level <level>] [--mev-protection]` | **One-shot swap**: quote → approve (if needed) → swap → sign & broadcast → txHash. |
 
 ## Token Address Resolution (Mandatory)
 
@@ -82,7 +82,7 @@ Follow the **Token Address Resolution** section above.
 | 1 | Meme/Low-cap | Meme coins, new tokens, low liquidity | autoSlippage (ref 5%-20%) | `fast` |
 | 2 | Mainstream | BTC/ETH/SOL/major tokens, high liquidity | autoSlippage (ref 0.5%-1%) | `average` |
 | 3 | Stablecoin | USDC/USDT/DAI pairs | autoSlippage (ref 0.1%-0.3%) | `average` |
-| 4 | Large Trade | priceImpact >= 10% AND value >= $1,000 | autoSlippage | `average` |
+| 4 | Large Trade | priceImpact >= 10% AND value >= $1,000 AND pair liquidity >= $10,000 | autoSlippage | `average` |
 
 ### Step 3 — Quote
 
@@ -105,6 +105,23 @@ onchainos swap execute --from <token address from step1> --to <token address fro
 
 CLI handles approve (if needed) + sign + broadcast internally.
 Returns: `{ approveTxHash?, swapTxHash, fromAmount, toAmount, priceImpact, gasUsed }`
+
+#### Error Retry
+
+If `swap execute` returns an error, it may be caused by a preceding approval transaction that has not yet been confirmed on-chain. Handle as follows:
+
+1. **Wait** based on chain block time before retrying:
+
+| Chain | Typical Wait |
+|---|---|
+| Ethereum | ~15 s |
+| BSC | ~5 s |
+| Arbitrum / Base | ~3 s |
+| XLayer | ~3 s |
+| Other EVM | ~10 s (conservative default) |
+
+2. **Inform the user**: e.g. "Swap failed, possibly due to a pending approval — waiting for on-chain confirmation before retrying."
+3. **Retry** the same `swap execute` command **once**. If the retry also fails, do **not** retry again — surface the error to the user directly.
 
 #### Silent / Automated Mode
 

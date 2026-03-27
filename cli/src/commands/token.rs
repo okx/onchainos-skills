@@ -527,7 +527,7 @@ pub async fn fetch_price_info(
 }
 
 /// Parameters for the hot token list query.
-#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[derive(serde::Deserialize, schemars::JsonSchema, Default)]
 pub struct HotTokensParams {
     /// Ranking type: 4=Trending (token score), 5=Xmentioned (Twitter mentions)
     pub ranking_type: String,

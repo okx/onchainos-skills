@@ -98,10 +98,15 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::agentic_wallet::payment::PaymentCommand,
     },
-    /// Address tracker: real-time WebSocket watch for KOL / smart money / custom address activity
+    /// Address tracker: REST activities and real-time WebSocket watch for KOL / smart money / custom address activity
     Tracker {
         #[command(subcommand)]
         command: commands::tracker::TrackerCommand,
+    },
+    /// DeFi product discovery, investment, redemption, and portfolio
+    Defi {
+        #[command(subcommand)]
+        command: commands::defi::DefiCommand,
     },
     /// Upgrade onchainos to the latest version
     Upgrade(commands::upgrade::UpgradeArgs),
@@ -148,6 +153,7 @@ async fn run() {
         Commands::Signal { command } => commands::signal::execute(&ctx, command).await,
         Commands::Memepump { command } => commands::memepump::execute(&ctx, *command).await,
         Commands::Leaderboard { command } => commands::leaderboard::execute(&ctx, command).await,
+        Commands::Tracker { command } => commands::tracker::execute(&ctx, command).await,
         Commands::Token { command } => commands::token::execute(&ctx, *command).await,
         Commands::Swap { command } => commands::swap::execute(&ctx, command).await,
         Commands::Gateway { command } => commands::gateway::execute(&ctx, command).await,
@@ -156,7 +162,7 @@ async fn run() {
         Commands::Wallet { command } => commands::agentic_wallet::wallet::execute(command).await,
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
-        Commands::Tracker { command } => commands::tracker::execute(command).await,
+        Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
     };
 

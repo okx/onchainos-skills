@@ -324,8 +324,9 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Wallet { command } => format!("wallet {}", wallet_sub(command)),
         Commands::Security { command } => format!("security {}", security_sub(command)),
         Commands::Leaderboard { command } => format!("leaderboard {}", leaderboard_sub(command)),
-        Commands::Payment { command } => format!("payment {}", payment_sub(command)),
         Commands::Tracker { command } => format!("tracker {}", tracker_sub(command)),
+        Commands::Payment { command } => format!("payment {}", payment_sub(command)),
+        Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
     }
 }
@@ -333,9 +334,9 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
 use crate::commands::agentic_wallet::payment::PaymentCommand;
 use crate::commands::agentic_wallet::wallet::WalletCommand;
 use crate::commands::{
-    gateway::GatewayCommand, leaderboard::LeaderboardCommand, market::MarketCommand,
-    memepump::MemepumpCommand, portfolio::PortfolioCommand, security::SecurityCommand,
-    signal::SignalCommand, swap::SwapCommand, token::TokenCommand,
+    defi::DefiCommand, gateway::GatewayCommand, leaderboard::LeaderboardCommand,
+    market::MarketCommand, memepump::MemepumpCommand, portfolio::PortfolioCommand,
+    security::SecurityCommand, signal::SignalCommand, swap::SwapCommand, token::TokenCommand,
     tracker::TrackerCommand,
 };
 
@@ -350,7 +351,6 @@ fn market_sub(c: &MarketCommand) -> &'static str {
         MarketCommand::PortfolioDexHistory { .. } => "portfolio-dex-history",
         MarketCommand::PortfolioRecentPnl { .. } => "portfolio-recent-pnl",
         MarketCommand::PortfolioTokenPnl { .. } => "portfolio-token-pnl",
-        MarketCommand::AddressTrackerActivities { .. } => "address-tracker-activities",
     }
 }
 
@@ -467,6 +467,7 @@ fn payment_sub(c: &PaymentCommand) -> &'static str {
 fn tracker_sub(c: &TrackerCommand) -> &'static str {
     use crate::commands::tracker::WatchCommand;
     match c {
+        TrackerCommand::Activities { .. } => "activities",
         TrackerCommand::Watch { command } => match command {
             WatchCommand::Start { .. } => "watch start",
             WatchCommand::Poll { .. } => "watch poll",
@@ -474,6 +475,24 @@ fn tracker_sub(c: &TrackerCommand) -> &'static str {
             WatchCommand::List => "watch list",
             WatchCommand::RunDaemon { .. } => "watch run-daemon",
         },
+    }
+}
+
+fn defi_sub(c: &DefiCommand) -> &'static str {
+    match c {
+        DefiCommand::List { .. } => "list",
+        DefiCommand::Search { .. } => "search",
+        DefiCommand::Detail { .. } => "detail",
+        DefiCommand::Prepare { .. } => "prepare",
+        DefiCommand::Deposit { .. } => "deposit",
+        DefiCommand::Redeem { .. } => "redeem",
+        DefiCommand::Claim { .. } => "claim",
+        DefiCommand::CalculateEntry { .. } => "calculate-entry",
+        DefiCommand::Invest { .. } => "invest",
+        DefiCommand::Withdraw { .. } => "withdraw",
+        DefiCommand::Collect { .. } => "collect",
+        DefiCommand::Positions { .. } => "positions",
+        DefiCommand::PositionDetail { .. } => "position-detail",
     }
 }
 

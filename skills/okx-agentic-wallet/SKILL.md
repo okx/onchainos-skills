@@ -14,7 +14,7 @@ Wallet operations: authentication, balance, token transfers, transaction history
 
 ## Pre-flight Checks
 
-> Before the first `onchainos` command this session, read and follow: `../_shared/preflight.md`
+> Before the first `onchainos` command this session, read and follow: `_shared/preflight.md`
 
 ## Parameter Rules
 

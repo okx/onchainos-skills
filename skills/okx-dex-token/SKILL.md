@@ -1,6 +1,6 @@
 ---
 name: okx-dex-token
-description: "Use this skill for token-level data: search tokens, trending/hot tokens (热门, 代币榜单), liquidity pools, holder distribution (whale/巨鲸, sniper, bundler-tagged holder %), token risk metadata (riskControlLevel, tokenTags, dev stats, suspicious/bundle holding % via advanced-info), recent buy/sell activity, top profit addresses, trade history by wallet type, or holder cluster analysis (持仓集中度, cluster overview, cluster rug pull risk/跑路风险, new wallet percentage/新钱包持仓比例, holder clusters, 'are top holders in same cluster'). Invoke on user intent; address can be provided after. Use also when the user wants to write a token scanning script or automate token research using OKX."
+description: "Use this skill for token-level data: search tokens, trending/hot tokens (热门, 代币榜单), liquidity pools, holder distribution (whale/巨鲸, sniper, bundler-tagged holder %), token risk metadata (riskControlLevel, tokenTags, dev stats, suspicious/bundle holding % via advanced-info), recent buy/sell activity, top profit addresses, token trade history, or holder cluster analysis (持仓集中度, cluster overview, cluster rug pull risk/跑路风险, new wallet percentage/新钱包持仓比例, holder clusters, 'are top holders in same cluster'). Invoke on user intent; token address can be provided after. Use also when the user wants to write a token scanning script or automate token research using OKX."
 license: MIT
 metadata:
   author: okx
@@ -14,11 +14,11 @@ metadata:
 
 ## Pre-flight Checks
 
-> Before the first `onchainos` command this session, read and follow: `../_shared/preflight.md`
+> Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
 
 ## Chain Name Support
 
-> Full chain list: `../_shared/chain-support.md`
+> Full chain list: `../okx-agentic-wallet/_shared/chain-support.md`. If that file does not exist, read `_shared/chain-support.md` instead.
 
 ## Keyword Glossary
 
@@ -121,8 +121,8 @@ Users may use Chinese crypto slang or platform-specific terms. Map them to the c
 | `token price-info` | 1. Check holder distribution → `onchainos token holders` 2. View K-line chart → `onchainos market kline` 3. Buy/swap this token → `onchainos swap execute` |
 | `token holders` | 1. Get advanced info → `onchainos token advanced-info` 2. View top traders → `onchainos token top-trader` |
 | `token liquidity` | 1. Check holders → `onchainos token holders` 2. Get advanced info → `onchainos token advanced-info` |
-| `token hot-tokens` | 1. View price details → `onchainos token price-info` 2. Check liquidity pools → `onchainos token liquidity` |
-| `token advanced-info` | 1. View holders → `onchainos token holders` 2. View top traders → `onchainos token top-trader` |
+| `token hot-tokens` | 1. View price details → `onchainos token price-info` 2. Check liquidity pools → `onchainos token liquidity` 3. Get advanced info → `onchainos token advanced-info` |
+| `token advanced-info` | 1. View holders → `onchainos token holders` 2. View top traders → `onchainos token top-trader` 3. Check holder cluster concentration → `onchainos token cluster-overview` |
 | `token top-trader` | 1. View advanced info → `onchainos token advanced-info` 2. View token trade history → `onchainos token trades` |
 | `token trades` | 1. View top traders → `onchainos token top-trader` 2. Get advanced info → `onchainos token advanced-info` |
 | `token cluster-supported-chains` | 1. Get holder cluster overview → `onchainos token cluster-overview` |
@@ -165,29 +165,6 @@ To search for specific command details: `grep -n "onchainos token <command>" ref
 - Use appropriate precision: 2 decimals for high-value, significant digits for low-value
 - Market cap / liquidity in shorthand ($1.2B, $45M)
 - 24h change with sign and color hint (+X% / -X%)
-
-## Data Contract
-
-> For orchestrator agents. Describes what this skill consumes from upstream skills and produces for downstream skills.
-
-**Inputs** (from upstream skills or user):
-
-| Field | Source | Used In |
-|---|---|---|
-| `tokenAddress` | `okx-dex-signal` (signal list), `okx-dex-trenches` (tokens), user input | all address-based commands |
-| `chain` | any upstream skill or user input | all commands |
-
-**Outputs** (for downstream skills):
-
-| Field | Command | Consumed By |
-|---|---|---|
-| `tokenContractAddress` | `token search`, `token hot-tokens` | pass as `--address` to all downstream token commands; pass as `--from`/`--to` in swap |
-| `chainIndex` | `token search`, `token hot-tokens` | all downstream `--chain` params (pass as-is; CLI accepts numeric chain IDs) |
-| `decimal` | `token search`, `token info` | swap `--amount` (minimal unit conversion: `UI amount × 10^decimal`) |
-| `liquidity` | `token price-info` | stop condition: `< $10K` → warn; `< $1K` → strongly discourage |
-| `communityRecognized` | `token search`, `token price-info` | trust signal for user display |
-| `riskControlLevel` | `token advanced-info` | stop condition: `>= 3` → warn before swap |
-| `clusterConcentration`, `rugPullPercent` | `token cluster-overview` | stop condition: `clusterConcentration = High` → warn before swap |
 
 ## Global Notes
 

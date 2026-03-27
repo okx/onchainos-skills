@@ -357,7 +357,7 @@ pub(super) async fn cmd_send(
 
 /// onchainos wallet contract-call
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn cmd_contract_call(
+pub async fn cmd_contract_call(
     to: &str,
     chain: &str,
     amt: &str,

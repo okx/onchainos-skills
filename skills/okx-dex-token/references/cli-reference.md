@@ -345,7 +345,7 @@ onchainos token search --query xETH --chains xlayer
 **User says:** "What's trending on Solana by volume?"
 
 ```bash
-onchainos token trending --chains solana --sort-by 5 --time-frame 4
+onchainos token hot-tokens --chain solana --rank-by 5 --time-frame 4
 # -> Display top tokens sorted by 24h volume:
 #   #1 SOL  - Vol: $1.2B | Change: +3.5% | MC: $80B
 #   #2 BONK - Vol: $450M | Change: +12.8% | MC: $1.5B
