@@ -1,4 +1,4 @@
-# OKX DEX Signal — WebSocket Protocol Reference
+# Onchain OS DEX Signal — WebSocket Protocol Reference
 
 This document is for **developers** who want to connect directly to the OKX DEX WebSocket
 and subscribe to signal channels without using the `onchainos` CLI.
