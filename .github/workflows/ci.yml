@@ -7,9 +7,12 @@
 name: CI
 
 on:
-  push:
-    branches: ["*"]
-  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 1.0.5 or 2.0.0-beta.0) — must match Cargo.toml"
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always

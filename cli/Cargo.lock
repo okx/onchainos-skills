@@ -2599,6 +2599,7 @@ dependencies = [
  "jsonwebtoken",
  "k256",
  "keyring",
+ "libc",
  "predicates",
  "rand 0.8.5",
  "reqwest",
