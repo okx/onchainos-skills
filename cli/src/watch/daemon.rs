@@ -19,6 +19,7 @@ const WS_URL_PROD: &str = "wss://wsdex.okx.com:8443/ws/v5/dex";
 const WS_URL_PRE: &str = "wss://wsdexpre.okx.com:8443/ws/v6/dex";
 
 const HEARTBEAT_SECS: u64 = 25;
+const PONG_TIMEOUT_SECS: u64 = 10;
 const RECONNECT_DELAY_SECS: u64 = 3;
 const MAX_RECONNECT_ATTEMPTS: u32 = 20;
 
@@ -190,7 +191,7 @@ async fn connect_and_stream(
         tokio::select! {
             _ = heartbeat.tick() => {
                 ws.send(Message::Text("ping".to_string().into())).await?;
-                match timeout(Duration::from_secs(HEARTBEAT_SECS), recv_pong(&mut ws, dir)).await {
+                match timeout(Duration::from_secs(PONG_TIMEOUT_SECS), recv_pong(&mut ws, dir)).await {
                     Ok(Ok(_)) => {}
                     _ => return Err(anyhow::anyhow!("ping_timeout")),
                 }

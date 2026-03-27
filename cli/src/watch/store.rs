@@ -53,7 +53,10 @@ pub fn init_watch_dir(id: &str, config: &WatchConfig) -> Result<PathBuf> {
     let dir = watch_dir(id)?;
     fs::create_dir_all(&dir)?;
     let cfg_json = serde_json::to_string_pretty(config)?;
-    fs::write(config_path(&dir), cfg_json)?;
+    // Atomic write: tmp + rename, consistent with status/cursor writes
+    let tmp = dir.join(".config.json.tmp");
+    fs::write(&tmp, cfg_json)?;
+    fs::rename(&tmp, config_path(&dir))?;
     // Cursor is initialised lazily per channel on first write
     Ok(dir)
 }
@@ -183,6 +186,10 @@ fn rotate_files(dir: &Path, channel: &str) -> Result<()> {
 
 pub struct PollResult {
     pub events: Vec<TradeEvent>,
+    /// Cursor position after each event — `per_event_cursors[i]` is the cursor
+    /// right after `events[i]` was read.  Used to commit the cursor only up to
+    /// the last event that survived filtering.
+    pub per_event_cursors: Vec<Cursor>,
     pub new_cursor: Cursor,
 }
 
@@ -190,6 +197,7 @@ pub struct PollResult {
 pub fn read_events_from_cursor(dir: &Path, channel: &str, limit: usize) -> Result<PollResult> {
     let mut cursor = read_cursor(dir, channel);
     let mut events = Vec::new();
+    let mut per_event_cursors = Vec::new();
 
     let path = events_path(dir, channel, cursor.file_no);
 
@@ -207,9 +215,9 @@ pub fn read_events_from_cursor(dir: &Path, channel: &str, limit: usize) -> Resul
     if rotated {
         let rotated_path = events_path(dir, channel, cursor.file_no + 1);
         if rotated_path.exists() {
-            let new_offset = drain_file(&rotated_path, cursor.offset, limit, &mut events)?;
-            let _ = new_offset; // We don't persist a cursor into the rotated file;
-                                // the loop below will advance cursor in the new file.
+            drain_file(&rotated_path, cursor.offset, limit, &mut events, None)?;
+            // We don't persist a cursor into the rotated file;
+            // the loop below will advance cursor in the new file.
         }
         // Reset cursor to the fresh file at cursor.file_no, beginning.
         cursor = Cursor { file_no: cursor.file_no, offset: 0 };
@@ -219,16 +227,35 @@ pub fn read_events_from_cursor(dir: &Path, channel: &str, limit: usize) -> Resul
     let path = events_path(dir, channel, cursor.file_no);
     if path.exists() {
         let remaining = limit.saturating_sub(events.len());
-        let new_offset = drain_file(&path, cursor.offset, remaining, &mut events)?;
+        let new_offset = drain_file(&path, cursor.offset, remaining, &mut events, Some(&mut per_event_cursors))?;
+        // Fill cursor info: per_event_cursors tracks positions for events read from the current file.
+        // Events from the rotated file don't get per-event cursors (they are behind the new file).
+        // Pad the front with the reset cursor so indices align with `events`.
+        let rotated_count = events.len() - per_event_cursors.len();
+        if rotated_count > 0 {
+            let pad_cursor = Cursor { file_no: cursor.file_no, offset: 0 };
+            let mut padded = vec![pad_cursor; rotated_count];
+            padded.append(&mut per_event_cursors);
+            per_event_cursors = padded;
+        }
         cursor.offset = new_offset;
     }
 
-    Ok(PollResult { events, new_cursor: cursor })
+    Ok(PollResult { events, per_event_cursors, new_cursor: cursor })
 }
 
 /// Read up to `limit` complete JSONL lines from `path` starting at byte `offset`.
-/// Returns the new file offset after reading.
-fn drain_file(path: &Path, offset: u64, limit: usize, events: &mut Vec<TradeEvent>) -> Result<u64> {
+/// Returns the new file offset after reading.  When `per_event_cursors` is
+/// provided, each successfully parsed event records the cursor position right
+/// after that line so callers can commit a partial read.
+fn drain_file(
+    path: &Path,
+    offset: u64,
+    limit: usize,
+    events: &mut Vec<TradeEvent>,
+    mut per_event_cursors: Option<&mut Vec<Cursor>>,
+) -> Result<u64> {
+    let file_no = parse_file_no_from_path(path);
     let mut file = fs::File::open(path)?;
     file.seek(SeekFrom::Start(offset))?;
     let mut reader = BufReader::new(file);
@@ -250,9 +277,21 @@ fn drain_file(path: &Path, offset: u64, limit: usize, events: &mut Vec<TradeEven
         }
         if let Ok(event) = serde_json::from_str::<TradeEvent>(trimmed) {
             events.push(event);
+            if let Some(ref mut cursors) = per_event_cursors {
+                cursors.push(Cursor { file_no, offset: current_offset });
+            }
         }
     }
     Ok(current_offset)
+}
+
+/// Extract the file number from an events path like `events.channel.0.jsonl`.
+fn parse_file_no_from_path(path: &Path) -> u32 {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .and_then(|s| s.rsplit('.').next())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
 }
 
 // ── Watch list ────────────────────────────────────────────────────────────────

@@ -444,7 +444,18 @@ fn watch_poll(
         }
     };
 
-    let result = store::read_events_from_cursor(&dir, &poll_channel, limit * 4)?;
+    let has_filters = min_quote_amount.is_some()
+        || min_market_cap.is_some()
+        || min_pnl.is_some()
+        || trader.is_some()
+        || tag.is_some()
+        || since.is_some()
+        || trade_type.is_some();
+
+    // When filters are active, over-fetch so we can fill the requested limit
+    // after filtering. Without filters, read exactly `limit`.
+    let fetch_limit = if has_filters { limit * 4 } else { limit };
+    let result = store::read_events_from_cursor(&dir, &poll_channel, fetch_limit)?;
 
     let tag_filter: Option<u8> = match tag.as_deref() {
         Some("smart_money") | Some("sm") | Some("1") => Some(1),
@@ -511,7 +522,16 @@ fn watch_poll(
         .to_string();
     let new_count = filtered.len();
 
-    store::write_cursor(&dir, &poll_channel, result.new_cursor.file_no, result.new_cursor.offset)?;
+    // When filters are active, only advance the cursor to the position of the
+    // last *returned* event so that filtered-out events are not permanently lost.
+    // Without filters, advance to the end of the read window as before.
+    let commit_cursor = if has_filters && !filtered.is_empty() {
+        result.per_event_cursors.get(new_count - 1).copied()
+            .unwrap_or(result.new_cursor)
+    } else {
+        result.new_cursor
+    };
+    store::write_cursor(&dir, &poll_channel, commit_cursor.file_no, commit_cursor.offset)?;
 
     let status_str = match &daemon_state {
         DaemonState::Disconnected(reason) => format!("disconnected:{}", reason),
@@ -588,14 +608,18 @@ fn kill_daemon(id: &str) -> Result<()> {
     #[cfg(unix)]
     {
         use std::time::Duration;
-        unsafe { libc_kill(pid, 15) }; // SIGTERM
+        let pid_i32 = i32::try_from(pid)
+            .ok()
+            .filter(|&p| p > 0)
+            .ok_or_else(|| anyhow::anyhow!("invalid PID {} — refusing to send signal", pid))?;
+        unsafe { libc_kill(pid_i32, 15) }; // SIGTERM
         for _ in 0..30 {
             std::thread::sleep(Duration::from_millis(100));
-            if unsafe { libc_kill(pid, 0) } != 0 {
+            if unsafe { libc_kill(pid_i32, 0) } != 0 {
                 return Ok(());
             }
         }
-        unsafe { libc_kill(pid, 9) }; // SIGKILL
+        unsafe { libc_kill(pid_i32, 9) }; // SIGKILL
     }
 
     #[cfg(windows)]
@@ -609,11 +633,11 @@ fn kill_daemon(id: &str) -> Result<()> {
 }
 
 #[cfg(unix)]
-unsafe fn libc_kill(pid: u32, sig: i32) -> i32 {
+unsafe fn libc_kill(pid: i32, sig: i32) -> i32 {
     extern "C" {
         fn kill(pid: i32, sig: i32) -> i32;
     }
-    kill(pid as i32, sig)
+    kill(pid, sig)
 }
 
 // ── watch list ────────────────────────────────────────────────────────────────
