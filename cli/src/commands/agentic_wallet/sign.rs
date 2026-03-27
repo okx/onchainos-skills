@@ -139,7 +139,7 @@ async fn personal_sign(message: &str, chain: &str, from: &str, force: bool) -> R
             // Pad odd-length hex so that hex::decode won't fail
             // e.g. "0x123" → "0x0123"
             let hex_part = &message[2..];
-            if hex_part.len() % 2 != 0 {
+            if !hex_part.len().is_multiple_of(2) {
                 (format!("0x0{hex_part}"), "hex")
             } else {
                 (message.to_string(), "hex")

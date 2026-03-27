@@ -4,7 +4,7 @@ description: "Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens
 license: MIT
 metadata:
   author: okx
-  version: "2.2.1"
+  version: "1.1.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -121,7 +121,7 @@ If `swap execute` returns an error, it may be caused by a preceding approval tra
 | Other EVM | ~10 s (conservative default) |
 
 2. **Inform the user**: e.g. "Swap failed, possibly due to a pending approval — waiting for on-chain confirmation before retrying."
-3. **Retry** the same `swap execute` command **once**. If the retry also fails, do **not** retry again — surface the error to the user directly.
+3. After 5 consecutive Insufficient liquidity (error 82000) for the same (wallet, fromToken, toToken), run `token advanced-info` and **warn** if `devRugPullTokenCount > 0` or `tokenTags` contains `lowLiquidity`. For all other errors, if retry also fails, do **not** retry again — surface the error to the user directly.
 
 #### Silent / Automated Mode
 

@@ -66,7 +66,7 @@ fn defi_search_without_token_or_platform_fails() {
         .args(["defi", "search", "--chain", "ethereum"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
+        .stdout(predicate::str::contains(
             "at least one of --token or --platform",
         ));
 }

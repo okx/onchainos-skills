@@ -32,7 +32,7 @@ onchainos memepump tokens --chain <chain> --stage <stage> [options]
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--chain` | Yes | - | Chain name (e.g., `solana`, `bsc`) |
-| `--stage` | Yes | - | Token stage: `NEW`, `MIGRATING`, or `MIGRATED` |
+| `--stage` | Yes | `NEW` | Token stage: `NEW`, `MIGRATING`, or `MIGRATED` |
 | `--wallet-address` | No | - | Wallet address for position-specific data |
 | `--protocol-id-list` | No | - | Comma-separated protocol IDs (get IDs from `memepump chains`) |
 | `--quote-token-address-list` | No | - | Comma-separated quote token addresses |

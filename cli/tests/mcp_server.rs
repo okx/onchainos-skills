@@ -209,9 +209,9 @@ fn mcp_tools_list_returns_all_tools() {
     let mut client = McpClient::start();
     let tools = client.list_tools();
 
-    // Verify minimum tool count (43 as of current implementation)
+    // Verify minimum tool count (50 as of current implementation)
     assert!(
-        tools.len() >= 40,
+        tools.len() >= 48,
         "expected at least 40 tools, got {}: {:?}",
         tools.len(),
         tools
@@ -223,7 +223,7 @@ fn mcp_tools_list_returns_all_tools() {
         "token_info",
         "market_price",
         "market_kline",
-        "market_address_tracker_activities",
+        "tracker_activities",
         "swap_quote",
         "swap_swap",
         "portfolio_total_value",
@@ -237,6 +237,7 @@ fn mcp_tools_list_returns_all_tools() {
         "token_cluster_overview",
         "token_cluster_top_holders",
         "token_cluster_list",
+        "token_trending",
     ];
     for name in expected {
         assert!(
@@ -324,10 +325,10 @@ fn mcp_market_kline() {
 }
 
 #[test]
-fn mcp_market_address_tracker_activities() {
+fn mcp_tracker_activities() {
     let mut client = McpClient::start();
     let result = client.call_tool(
-        "market_address_tracker_activities",
+        "tracker_activities",
         json!({"tracker_type": "smart_money"}),
     );
     if result.is_rate_limited() {

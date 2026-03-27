@@ -162,10 +162,7 @@ fn session_path() -> Result<PathBuf> {
 }
 
 fn ensure_home_dir() -> Result<()> {
-    let home = onchainos_home()?;
-    if !home.exists() {
-        fs::create_dir_all(&home).context("failed to create ~/.onchainos")?;
-    }
+    crate::home::ensure_onchainos_home()?;
     Ok(())
 }
 
@@ -408,14 +405,10 @@ pub fn delete_session() -> Result<()> {
 mod tests {
     use super::*;
     use std::path::Path;
-    use std::sync::Mutex;
-
-    // Serialize file I/O tests that share the ONCHAINOS_HOME env var
-    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     /// Helper: set ONCHAINOS_HOME to a unique dir under target/ for the closure.
     fn with_temp_home<F: FnOnce()>(name: &str, f: F) {
-        let _lock = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_tmp")

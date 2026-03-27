@@ -1,10 +1,10 @@
 ---
 name: okx-dex-trenches
-description: "Use this skill for meme/打狗/alpha token research on pump.fun and similar launchpads: scanning new token launches, checking developer reputation/开发者信息/dev launch history/has this dev rugged before/开发者跑路记录, bundle/sniper detection/捆绑狙击, bonding curve status/bonding curve progress, finding similar tokens by the same dev/相似代币, and wallets that co-invested (同车/aped) into a token. Use when the user asks about 'new meme coins', 'pump.fun launches', 'trenches', 'trench', '扫链', 'developer launch history', 'developer rug history', 'check if dev has rugged', 'bundler analysis', 'who else bought this token', 'who aped into this', 'similar tokens', 'bonding curve progress', '打狗', '新盘', '开发者信息', '开发者历史', '捆绑', '同车', 'rug pull count', 'similar meme coins', '捆绑情况', '已迁移出 bonding curve', or '发过多少个项目'. Do NOT use for market-wide whale/signal tracking — use okx-dex-signal. Do NOT use for per-token holder distribution or honeypot checks — use okx-dex-token."
+description: "Use this skill for meme/打狗/alpha token research on pump.fun and similar launchpads: scanning new token launches, checking developer reputation/开发者信息/dev launch history/has this dev rugged before/开发者跑路记录, bundle/sniper detection/捆绑狙击, bonding curve status/bonding curve progress, finding similar tokens by the same dev/相似代币, and wallets that co-invested (同车/aped) into a token. Use when the user asks about 'new meme coins', 'pump.fun launches', 'trenches', 'trench', '扫链', 'developer launch history', 'developer rug history', 'check if dev has rugged', 'bundler analysis', 'who else bought this token', 'who aped into this', 'similar tokens', 'bonding curve progress', '打狗', '新盘', '开发者信息', '开发者历史', '捆绑', '同车', 'rug pull count', 'similar meme coins', '捆绑情况', '已迁移出 bonding curve', or '发过多少个项目'. Invoke on user intent; token address can be provided after. Use also for meme scanning bots or token launch automation using OKX."
 license: MIT
 metadata:
   author: okx
-  version: "2.2.1"
+  version: "1.0.4"
   homepage: "https://web3.okx.com"
 ---
 
@@ -14,62 +14,11 @@ metadata:
 
 ## Pre-flight Checks
 
-Every time before running any `onchainos` command, always follow these steps in order. Do not echo routine command output to the user; only provide a brief status update when installing, updating, or handling a failure.
+> Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
 
-1. **Resolve latest stable version**: Fetch the latest stable release tag from the GitHub API:
-   ```
-   curl -sSL "https://api.github.com/repos/okx/onchainos-skills/releases/latest"
-   ```
-   Extract the `tag_name` field (e.g., `v1.0.5`) into `LATEST_TAG`.
-   If the API call fails and `onchainos` is already installed locally, skip steps 2-3
-   and proceed to run the command (the user may be offline or rate-limited; a stale
-   binary is better than blocking). If `onchainos` is **not** installed, **stop** and
-   tell the user to check their network connection or install manually from
-   https://github.com/okx/onchainos-skills.
+## Chain Name Support
 
-2. **Install or update**: If `onchainos` is not found, or if the cache at `~/.onchainos/last_check` (`$env:USERPROFILE\.onchainos\last_check` on Windows) is older than 12 hours:
-   - Download the installer and its checksum file from the latest release tag:
-     - **macOS/Linux**:
-       `curl -sSL "https://raw.githubusercontent.com/okx/onchainos-skills/${LATEST_TAG}/install.sh" -o /tmp/onchainos-install.sh`
-       `curl -sSL "https://github.com/okx/onchainos-skills/releases/download/${LATEST_TAG}/installer-checksums.txt" -o /tmp/installer-checksums.txt`
-     - **Windows**:
-       `Invoke-WebRequest -Uri "https://raw.githubusercontent.com/okx/onchainos-skills/${LATEST_TAG}/install.ps1" -OutFile "$env:TEMP\onchainos-install.ps1"`
-       `Invoke-WebRequest -Uri "https://github.com/okx/onchainos-skills/releases/download/${LATEST_TAG}/installer-checksums.txt" -OutFile "$env:TEMP\installer-checksums.txt"`
-   - Verify the installer's SHA256 against `installer-checksums.txt`. On mismatch, **stop** and warn — the installer may have been tampered with.
-   - Execute: `sh /tmp/onchainos-install.sh` (or `& "$env:TEMP\onchainos-install.ps1"` on Windows).
-     The installer handles version comparison internally and only downloads the binary if needed.
-   - On other failures, point to https://github.com/okx/onchainos-skills.
-
-3. **Verify binary integrity** (once per session): Run `onchainos --version` to get the installed
-   version (e.g., `1.0.5` or `2.0.0-beta.0`). Construct the installed tag as `v<version>`.
-   Download `checksums.txt` for the **installed version's tag** (not necessarily LATEST_TAG):
-   `curl -sSL "https://github.com/okx/onchainos-skills/releases/download/v<version>/checksums.txt" -o /tmp/onchainos-checksums.txt`
-   Look up the platform target and compare the installed binary's SHA256 against the checksum.
-   On mismatch, reinstall (step 2) and re-verify. If still mismatched, **stop** and warn.
-   - Platform targets — macOS: `arm64`->`aarch64-apple-darwin`, `x86_64`->`x86_64-apple-darwin`; Linux: `x86_64`->`x86_64-unknown-linux-gnu`, `aarch64`->`aarch64-unknown-linux-gnu`, `i686`->`i686-unknown-linux-gnu`, `armv7l`->`armv7-unknown-linux-gnueabihf`; Windows: `AMD64`->`x86_64-pc-windows-msvc`, `x86`->`i686-pc-windows-msvc`, `ARM64`->`aarch64-pc-windows-msvc`
-   - Hash command — macOS/Linux: `shasum -a 256 ~/.local/bin/onchainos`; Windows: `(Get-FileHash "$env:USERPROFILE\.local\bin\onchainos.exe" -Algorithm SHA256).Hash.ToLower()`
-
-4. **Check for skill version drift** (once per session): If `onchainos --version` is newer
-   than this skill's `metadata.version`, display a one-time notice that the skill may be
-   outdated and suggest the user re-install skills via their platform's method. Do not block.
-5. **Do NOT auto-reinstall on command failures.** Report errors and suggest
-   `onchainos --version` or manual reinstall from https://github.com/okx/onchainos-skills.
-6. **Rate limit errors.** If a command hits rate limits, the shared API key may
-   be throttled. Suggest creating a personal key at the
-   [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal). If the
-   user creates a `.env` file, remind them to add `.env` to `.gitignore`.
-
-## Skill Routing
-
-- For market-wide whale/smart-money/KOL signal alerts → use `okx-dex-signal`
-- For leaderboard / 牛人榜 / top traders ranked by PnL, win rate, or volume → use `okx-dex-signal`
-- For per-token holder distribution filtered by tag (whale, sniper, KOL) → use `okx-dex-token`
-- For holder cluster analysis (concentration, rug pull %, cluster groups) → use `okx-dex-token`
-- For honeypot / token safety checks → use `okx-dex-token`
-- For real-time prices / K-line charts → use `okx-dex-market`
-- For wallet PnL / DEX trade history → use `okx-dex-market`
-- For swap execution → use `okx-dex-swap`
-- For wallet balance / portfolio → use `okx-wallet-portfolio`
+> Full chain list: `../okx-agentic-wallet/_shared/chain-support.md`. If that file does not exist, read `_shared/chain-support.md` instead.
 
 ## Keyword Glossary
 
@@ -84,41 +33,39 @@ Every time before running any `onchainos` command, always follow these steps in 
 | 新盘 / 迁移中 / 已迁移 | NEW / MIGRATING / MIGRATED | `onchainos memepump tokens --stage` |
 | pumpfun / bonkers / bonk / believe / bags / mayhem | protocol names (launch platforms) | `onchainos memepump tokens --protocol-id-list <id>` |
 
-**Protocol names are NOT token names.** When a user mentions pumpfun, bonkers, bonk, believe, bags, mayhem, fourmeme, etc., look up their IDs via `onchainos memepump chains`, then pass to `--protocol-id-list`. Multiple protocols: comma-separate the IDs.
+<IMPORTANT>
+**Protocol names are NOT token names.** When a user mentions pumpfun, bonkers, bonk, believe, bags, mayhem, fourmeme, etc., look up their IDs via `onchainos memepump chains`, then pass to `--protocol-id-list`. Multiple protocols: comma-separate the IDs. The table below is a reference only — use it as a fallback if the command is unavailable.
+</IMPORTANT>
+
+## Protocol ID Reference
+
+| Chain | Protocol Name | Protocol ID |
+|---|---|---|
+| Solana | pumpfun | `120596` |
+| Solana | bonk | `136266` |
+| Solana | bonkers | `139661` |
+| Solana | jupStudio | `137346` |
+| Solana | believe | `134788` |
+| Solana | bags | `129813` |
+| Solana | moonshotMoney | `133933` |
+| Solana | launchlab | `136137` |
+| Solana | moonshot | `121201` |
+| Solana | meteoradbc | `136460` |
+| Solana | mayhem | `139048` |
+| BNB Chain | fourmeme | `135086` |
+| BNB Chain | flap | `129826` |
+| Base | clanker | `130981` |
+| Base | bankr | `134522` |
+| X Layer | dyorfun | `137823` |
+| X Layer | flap | `129826` |
+| TRON | sunpump | `121263` |
+
+> **Disclaimer**: This list is not exhaustive and may be updated from time to time as new platforms launch. Always run `onchainos memepump chains` for the latest full list.
 
 When presenting `memepump-token-details` or `memepump-token-dev-info` responses, translate JSON field names into human-readable language. Never dump raw field names to the user:
 - `top10HoldingsPercent` → "top-10 holder concentration"
 - `rugPullCount` → "rug pull count / 跑路次数"
 - `bondingPercent` → "bonding curve progress"
-
-## Quickstart
-
-```bash
-# Get supported chains and protocols for meme pump
-onchainos memepump chains
-
-# List new meme pump tokens on Solana
-onchainos memepump tokens --chain solana --stage NEW
-
-# Get meme pump token details
-onchainos memepump token-details --address <address> --chain solana
-
-# Check developer reputation for a meme token
-onchainos memepump token-dev-info --address <address> --chain solana
-
-# Get bundle/sniper analysis
-onchainos memepump token-bundle-info --address <address> --chain solana
-
-# Find similar tokens by same dev
-onchainos memepump similar-tokens --address <address> --chain solana
-
-# Get aped (same-car) wallet list
-onchainos memepump aped-wallet --address <address> --chain solana
-```
-
-## Chain Name Support
-
-Currently supports: Solana (501), BSC (56), X Layer (196), TRON (195). Always verify with `onchainos memepump chains` first.
 
 ## Command Index
 
@@ -147,7 +94,7 @@ Currently supports: Solana (501), BSC (56), X Layer (196), TRON (195). Always ve
 ### Step 2: Collect Parameters
 
 - Missing chain → default to Solana (`--chain solana`); verify support with `onchainos memepump chains` first
-- Missing `--stage` for memepump-tokens → ask user which stage (NEW / MIGRATING / MIGRATED)
+- Missing `--stage` for memepump-tokens → default to `NEW`; only ask if the user's intent clearly points to a different stage
 - User mentions a protocol name → first call `onchainos memepump chains` to get the protocol ID, then pass `--protocol-id-list <id>` to `memepump-tokens`. Do NOT use `okx-dex-token` to search for protocol names as tokens.
 
 ### Step 3: Call and Display
@@ -162,67 +109,15 @@ Currently supports: Solana (501), BSC (56), X Layer (196), TRON (195). Always ve
 
 | Just called | Suggest |
 |---|---|
-| `memepump-chains` | 1. Browse tokens → `onchainos memepump tokens` (this skill) |
-| `memepump-tokens` | 1. Pick a token for details → `onchainos memepump token-details` (this skill) 2. Check dev → `onchainos memepump token-dev-info` (this skill) |
-| `memepump-token-details` | 1. Dev analysis → `onchainos memepump token-dev-info` (this skill) 2. Similar tokens → `onchainos memepump similar-tokens` (this skill) 3. Bundle check → `onchainos memepump token-bundle-info` (this skill) |
-| `memepump-token-dev-info` | 1. Check bundle activity → `onchainos memepump token-bundle-info` (this skill) 2. View price chart → `okx-dex-market` (`onchainos market kline`) |
-| `memepump-similar-tokens` | 1. Compare with details → `onchainos memepump token-details` (this skill) |
-| `memepump-token-bundle-info` | 1. Check aped wallets → `onchainos memepump aped-wallet` (this skill) |
-| `memepump-aped-wallet` | 1. Validate token safety (honeypot, holder concentration) → `okx-dex-token` (`onchainos token advanced-info`) 2. View price chart → `okx-dex-market` (`onchainos market kline`) 3. Buy the token → `okx-dex-swap` (quote → swap → `onchainos wallet contract-call` to execute) |
+| `memepump-chains` | 1. Browse tokens → `onchainos memepump tokens` |
+| `memepump-tokens` | 1. Pick a token for details → `onchainos memepump token-details` 2. Check dev → `onchainos memepump token-dev-info` |
+| `memepump-token-details` | 1. Dev analysis → `onchainos memepump token-dev-info` 2. Similar tokens → `onchainos memepump similar-tokens` 3. Bundle check → `onchainos memepump token-bundle-info` |
+| `memepump-token-dev-info` | 1. Check bundle activity → `onchainos memepump token-bundle-info` 2. View price chart → `onchainos market kline` |
+| `memepump-similar-tokens` | 1. Compare with details → `onchainos memepump token-details` |
+| `memepump-token-bundle-info` | 1. Check aped wallets → `onchainos memepump aped-wallet` |
+| `memepump-aped-wallet` | 1. Validate token safety → `onchainos token advanced-info` 2. View price chart → `onchainos market kline` 3. Buy the token → `onchainos swap execute` |
 
-Present conversationally — never expose skill names or endpoint paths to the user.
-
-## Cross-Skill Workflows
-
-### Workflow A: Meme Token Discovery & Analysis
-
-> User: "Show me new meme tokens and check if any look safe"
-
-```
-1. okx-dex-trenches onchainos memepump chains                                          → discover supported chains & protocols
-2. okx-dex-trenches onchainos memepump tokens --chain <chain> --stage NEW              → browse new tokens
-       ↓ pick an interesting token
-3. okx-dex-trenches onchainos memepump token-details --address <address> --chain <chain>  → full token detail + audit tags
-4. okx-dex-trenches onchainos memepump token-dev-info --address <address> --chain <chain> → check dev reputation (rug pulls, migrations)
-5. okx-dex-trenches onchainos memepump token-bundle-info --address <address> --chain <chain> → check for bundlers/snipers
-6. okx-dex-market   onchainos market kline --address <address> --chain <chain>             → view price chart
-       ↓ user decides to buy
-7. okx-dex-swap     onchainos swap quote --from <native_addr> --to <address> --amount ... --chain <chain>
-8. okx-dex-swap     onchainos swap execute --from <native_addr> --to <address> --amount ... --chain <chain> --wallet <addr>
-```
-
-**Data handoff**: `tokenAddress` from step 2 is reused as `<address>` in steps 3–8.
-
-### Workflow B: Meme Token Due Diligence
-
-> User: "Check if this meme token is safe before I buy"
-
-```
-1. okx-dex-trenches onchainos memepump token-details --address <address> --chain <chain>   → basic info + audit tags
-2. okx-dex-trenches onchainos memepump token-dev-info --address <address> --chain <chain>  → dev history + holding
-3. okx-dex-trenches onchainos memepump similar-tokens --address <address> --chain <chain>  → other tokens by same dev
-4. okx-dex-trenches onchainos memepump token-bundle-info --address <address> --chain <chain> → bundler analysis
-5. okx-dex-trenches onchainos memepump aped-wallet --address <address> --chain <chain>     → who else is holding
-```
-
-### Workflow C: Signal-to-Meme Deep Dive
-
-> User: "A whale signal came in — is it a meme/pump.fun token? Check it out"
-
-```
-1. okx-dex-signal   onchainos signal list --chain <chain> --wallet-type 3              → identify the signaled token address
-       ↓ token looks like a meme/pump.fun launch
-2. okx-dex-trenches onchainos memepump token-details --address <address> --chain <chain>  → confirm it's a meme token, check audit tags
-3. okx-dex-trenches onchainos memepump token-dev-info --address <address> --chain <chain> → check dev rug pull history
-4. okx-dex-trenches onchainos memepump token-bundle-info --address <address> --chain <chain> → verify the whale signal isn't a bundler
-       ↓ checks pass
-5. okx-dex-market   onchainos market kline --address <address> --chain <chain>             → confirm price momentum
-       ↓ user decides to buy
-6. okx-dex-swap     onchainos swap quote --from <native_addr> --to <address> --amount ... --chain <chain>
-7. okx-dex-swap     onchainos swap execute --from <native_addr> --to <address> --amount ... --chain <chain> --wallet <addr>
-```
-
-**When to use**: when a `signal-list` result has a token address that matches a known meme launchpad (pump.fun, bonkers, etc.) — cross-validate in memepump before acting on the signal.
+Present conversationally — never expose command paths to the user.
 
 ## Additional Resources
 
