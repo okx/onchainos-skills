@@ -1,7 +1,7 @@
-# OKX DEX Tracker — WebSocket Protocol Reference
+# OKX DEX Signal — WebSocket Protocol Reference
 
 This document is for **developers** who want to connect directly to the OKX DEX WebSocket
-and subscribe to tracker channels without using the `onchainos` CLI.
+and subscribe to signal channels without using the `onchainos` CLI.
 
 If you are using Claude Code or an AI agent, use the CLI commands documented in
 `../SKILL.md` instead — the CLI handles authentication and event persistence for you.
