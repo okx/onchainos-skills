@@ -384,7 +384,8 @@ async fn watch_start(channels: Vec<String>, wallet_addresses: Vec<String>, env: 
     cmd.args(["tracker", "watch", "run-daemon", "--id", &id]);
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::null());
-    cmd.stderr(std::process::Stdio::null());
+    let log_file = std::fs::File::create(dir.join("daemon.log"))?;
+    cmd.stderr(std::process::Stdio::from(log_file));
 
     #[cfg(windows)]
     {
