@@ -6,6 +6,7 @@ mod client;
 mod commands;
 mod config;
 pub mod crypto;
+mod file_keyring;
 mod home;
 mod keyring_store;
 mod mcp;
