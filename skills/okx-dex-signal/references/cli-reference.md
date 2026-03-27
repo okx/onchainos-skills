@@ -223,4 +223,3 @@ onchainos leaderboard list --chain ethereum --time-frame 4 --sort-by 2 --wallet-
 # Top snipers on BSC by volume over last 1D, min 10 txs
 onchainos leaderboard list --chain bsc --time-frame 1 --sort-by 4 --wallet-type sniper --min-txs 10
 ```
-
