@@ -1,7 +1,7 @@
 # Onchain OS DEX Signal — WebSocket Protocol Reference
 
 This document is for **developers and agents** who want to connect directly to the OKX DEX WebSocket
-and subscribe to signal channels.
+and subscribe to real-time data.
 
 If you are using Claude Code or an AI agent, use the CLI commands documented in
 `../SKILL.md` instead — the CLI handles authentication and event persistence for you.
