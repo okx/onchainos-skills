@@ -267,20 +267,3 @@ Recommended reconnect policy:
 
 After reconnecting, re-send the full login + subscribe sequence.
 
----
-
-## Chain Index Reference
-
-Common chain identifiers used in `chainIndex`:
-
-| chainIndex | Chain |
-|---|---|
-| `1` | Ethereum |
-| `56` | BSC |
-| `137` | Polygon |
-| `42161` | Arbitrum |
-| `8453` | Base |
-| `501` | Solana |
-| `195` | X Layer |
-
-Full list: see the OKX DEX API documentation.
