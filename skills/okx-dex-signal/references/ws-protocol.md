@@ -19,7 +19,7 @@ Uses TLS. Connect with any standard WebSocket client that supports TLS.
 
 The OKX DEX WebSocket uses HMAC-SHA256 API key authentication, which is the same scheme
 as the OKX REST API. Full documentation:
-👉 https://web3.okx.com/zh-hans/onchainos/dev-docs/market/websocket-login
+👉 https://web3.okx.com/onchainos/dev-docs/market/websocket-login
 
 ### Credentials
 
