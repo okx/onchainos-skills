@@ -6,16 +6,6 @@ use super::Context;
 use crate::client::ApiClient;
 use crate::output;
 
-/// Resolve trade type alias to API integer string.
-fn resolve_trade_type(s: &str) -> &str {
-    match s.to_lowercase().as_str() {
-        "all" | "0" => "0",
-        "buy" | "1" => "1",
-        "sell" | "2" => "2",
-        _ => s,
-    }
-}
-
 #[derive(Subcommand)]
 pub enum TrackerCommand {
     /// Get latest DEX activities for tracked addresses (smart money, KOL, or custom multi-address)
