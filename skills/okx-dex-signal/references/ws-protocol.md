@@ -283,4 +283,4 @@ Common chain identifiers used in `chainIndex`:
 | `501` | Solana |
 | `195` | X Layer |
 
-Full list: `onchainos market price-chains` or the OKX DEX API documentation.
+Full list: see the OKX DEX API documentation.
