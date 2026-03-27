@@ -11,44 +11,101 @@ use crate::{keyring_store, output, wallet_api::WalletApiClient, wallet_store};
 pub enum PaymentCommand {
     /// Sign an x402 payment and return the payment proof
     X402Pay {
-        /// CAIP-2 network identifier (e.g. eip155:8453)
+        /// JSON accepts array from the 402 response (decoded.accepts).
+        /// The CLI selects the best scheme automatically
+        /// (prefers "deferred", falls back to "exact", then first entry).
         #[arg(long)]
-        network: String,
-        /// Payment amount in minimal units
-        #[arg(long)]
-        amount: String,
-        /// Recipient address
-        #[arg(long)]
-        pay_to: String,
-        /// Token contract address (asset)
-        #[arg(long)]
-        asset: String,
+        accepts: String,
         /// Payer address (optional, defaults to selected account)
         #[arg(long)]
         from: Option<String>,
-        /// Maximum timeout in seconds
-        #[arg(long, default_value = "300")]
-        max_timeout_seconds: u64,
     },
+}
+
+/// Resolved parameters extracted from the accepts array.
+struct ResolvedParams {
+    network: String,
+    amount: String,
+    pay_to: String,
+    asset: String,
+    max_timeout_seconds: u64,
+    scheme: Option<String>,
+}
+
+/// Select the best entry from the accepts array.
+/// Priority: "deferred" > "exact" > first entry.
+fn select_accept(accepts: &[serde_json::Value]) -> Result<(serde_json::Value, Option<String>)> {
+    if accepts.is_empty() {
+        bail!("accepts array is empty");
+    }
+    // Prefer deferred
+    if let Some(entry) = accepts.iter().find(|a| a["scheme"].as_str() == Some("deferred")) {
+        return Ok((entry.clone(), Some("deferred".to_string())));
+    }
+    // Then exact
+    if let Some(entry) = accepts.iter().find(|a| a["scheme"].as_str() == Some("exact")) {
+        return Ok((entry.clone(), Some("exact".to_string())));
+    }
+    // Fallback to first
+    Ok((accepts[0].clone(), accepts[0]["scheme"].as_str().map(|s| s.to_string())))
+}
+
+fn parse_payload(raw: &str) -> Result<ResolvedParams> {
+    let accepts: Vec<serde_json::Value> =
+        serde_json::from_str(raw).context("--accepts must be a valid JSON array")?;
+    let (entry, selected_scheme) = select_accept(&accepts)?;
+    let network = entry["network"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing 'network' in selected accepts entry"))?
+        .to_string();
+    // Extract amount (handle both string and number), fall back to maxAmountRequired
+    let amount = if let Some(s) = entry.get("amount").and_then(|v| v.as_str()) {
+        s.to_string()
+    } else if let Some(n) = entry.get("amount").and_then(|v| v.as_u64()) {
+        n.to_string()
+    } else if let Some(s) = entry.get("maxAmountRequired").and_then(|v| v.as_str()) {
+        s.to_string()
+    } else if let Some(n) = entry.get("maxAmountRequired").and_then(|v| v.as_u64()) {
+        n.to_string()
+    } else {
+        bail!("missing 'amount' or 'maxAmountRequired' in accepts entry");
+    };
+    let pay_to = entry["payTo"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing 'payTo' in selected accepts entry"))?
+        .to_string();
+    let asset = entry["asset"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing 'asset' in selected accepts entry"))?
+        .to_string();
+    let max_timeout = entry["maxTimeoutSeconds"]
+        .as_u64()
+        .unwrap_or(300);
+    Ok(ResolvedParams {
+        network,
+        amount,
+        pay_to,
+        asset,
+        max_timeout_seconds: max_timeout,
+        scheme: selected_scheme,
+    })
 }
 
 pub async fn execute(cmd: PaymentCommand) -> Result<()> {
     match cmd {
         PaymentCommand::X402Pay {
-            network,
-            amount,
-            pay_to,
-            asset,
+            accepts,
             from,
-            max_timeout_seconds,
         } => {
+            let params = parse_payload(&accepts)?;
             pay(
-                &network,
-                &amount,
-                &pay_to,
-                &asset,
+                &params.network,
+                &params.amount,
+                &params.pay_to,
+                &params.asset,
                 from.as_deref(),
-                max_timeout_seconds,
+                params.max_timeout_seconds,
+                params.scheme.as_deref(),
             )
             .await
         }
@@ -62,6 +119,7 @@ async fn pay(
     asset: &str,
     from: Option<&str>,
     max_timeout_secs: u64,
+    scheme: Option<&str>,
 ) -> Result<()> {
     // ── Input validation ──────────────────────────────────────────────
     if amount.is_empty() {
@@ -172,25 +230,6 @@ async fn pay(
     signing_seed.zeroize();
     let session_signature_b64 = B64.encode(&session_signature);
 
-    // 5. Get EIP-3009 signature
-    let mut signed_hash_body = base_fields.clone();
-    signed_hash_body["domainHash"] = json!(domain_hash);
-    signed_hash_body["sessionCert"] = json!(session_cert);
-    signed_hash_body["sessionSignature"] = json!(session_signature_b64);
-
-    let signed_hash_resp = client
-        .post_authed(
-            "/priapi/v5/wallet/agentic/pre-transaction/sign-msg",
-            &access_token,
-            &signed_hash_body,
-        )
-        .await
-        .map_err(format_api_error)
-        .context("x402 sign-msg failed")?;
-    let eip3009_signature = signed_hash_resp[0]["signature"]
-        .as_str()
-        .ok_or_else(|| anyhow!("missing signature in sign-msg response"))?;
-
     // Return only the standard x402 EIP-3009 authorization fields
     let authorization = json!({
         "from": payer_addr,
@@ -201,10 +240,40 @@ async fn pay(
         "nonce": nonce,
     });
 
-    output::success(json!({
-        "signature": eip3009_signature,
-        "authorization": authorization,
-    }));
+    let is_deferred = scheme.map(|s| s.eq_ignore_ascii_case("deferred")).unwrap_or(false);
+
+    if is_deferred {
+        // Deferred scheme: return session-key signature only, skip EOA signing
+        output::success(json!({
+            "signature": session_signature_b64,
+            "authorization": authorization,
+            "sessionCert": session_cert,
+        }));
+    } else {
+        // Exact scheme (default): full EIP-3009 signing via TEE
+        let mut signed_hash_body = base_fields.clone();
+        signed_hash_body["domainHash"] = json!(domain_hash);
+        signed_hash_body["sessionCert"] = json!(session_cert);
+        signed_hash_body["sessionSignature"] = json!(session_signature_b64);
+
+        let signed_hash_resp = client
+            .post_authed(
+                "/priapi/v5/wallet/agentic/pre-transaction/sign-msg",
+                &access_token,
+                &signed_hash_body,
+            )
+            .await
+            .map_err(format_api_error)
+            .context("x402 sign-msg failed")?;
+        let eip3009_signature = signed_hash_resp[0]["signature"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing signature in sign-msg response"))?;
+
+        output::success(json!({
+            "signature": eip3009_signature,
+            "authorization": authorization,
+        }));
+    }
     Ok(())
 }
 
@@ -292,82 +361,126 @@ mod tests {
         command: PaymentCommand,
     }
 
+    // ── select_accept ────────────────────────────────────────────────
+
     #[test]
-    fn cli_x402_pay_all_args() {
+    fn select_accept_prefers_deferred() {
+        let accepts: Vec<serde_json::Value> = serde_json::from_str(r#"[
+            {"scheme":"exact","network":"eip155:196","amount":"1000000","payTo":"0xABC","asset":"0xDEF"},
+            {"scheme":"deferred","network":"eip155:196","amount":"2000000","payTo":"0xABC","asset":"0xDEF"}
+        ]"#).unwrap();
+        let (entry, scheme) = select_accept(&accepts).unwrap();
+        assert_eq!(scheme.as_deref(), Some("deferred"));
+        assert_eq!(entry["amount"].as_str().unwrap(), "2000000");
+    }
+
+    #[test]
+    fn select_accept_falls_back_to_exact() {
+        let accepts: Vec<serde_json::Value> = serde_json::from_str(r#"[
+            {"scheme":"exact","network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}
+        ]"#).unwrap();
+        let (_entry, scheme) = select_accept(&accepts).unwrap();
+        assert_eq!(scheme.as_deref(), Some("exact"));
+    }
+
+    #[test]
+    fn select_accept_falls_back_to_first() {
+        let accepts: Vec<serde_json::Value> = serde_json::from_str(r#"[
+            {"network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}
+        ]"#).unwrap();
+        let (_entry, scheme) = select_accept(&accepts).unwrap();
+        assert_eq!(scheme, None);
+    }
+
+    #[test]
+    fn select_accept_empty_array() {
+        let accepts: Vec<serde_json::Value> = vec![];
+        assert!(select_accept(&accepts).is_err());
+    }
+
+    // ── parse_payload ─────────────────────────────────────────────────
+
+    #[test]
+    fn parse_payload_selects_deferred() {
+        let json = r#"[
+            {"scheme":"exact","network":"eip155:1","amount":"100","payTo":"0xA","asset":"0xB","maxTimeoutSeconds":600},
+            {"scheme":"deferred","network":"eip155:196","amount":"200","payTo":"0xC","asset":"0xD"}
+        ]"#;
+        let p = parse_payload(json).unwrap();
+        assert_eq!(p.scheme.as_deref(), Some("deferred"));
+        assert_eq!(p.network, "eip155:196");
+        assert_eq!(p.amount, "200");
+        assert_eq!(p.pay_to, "0xC");
+        assert_eq!(p.asset, "0xD");
+        assert_eq!(p.max_timeout_seconds, 300); // deferred entry has no maxTimeoutSeconds → default
+    }
+
+    #[test]
+    fn parse_payload_max_amount_required() {
+        let json = r#"[{"scheme":"deferred","network":"eip155:1","maxAmountRequired":"999","payTo":"0xA","asset":"0xB"}]"#;
+        let p = parse_payload(json).unwrap();
+        assert_eq!(p.amount, "999");
+    }
+
+    #[test]
+    fn parse_payload_numeric_amount() {
+        let json = r#"[{"scheme":"exact","network":"eip155:1","amount":500,"payTo":"0xA","asset":"0xB"}]"#;
+        let p = parse_payload(json).unwrap();
+        assert_eq!(p.amount, "500");
+    }
+
+    #[test]
+    fn parse_payload_invalid_json() {
+        assert!(parse_payload("not json").is_err());
+    }
+
+    #[test]
+    fn parse_payload_missing_network() {
+        let json = r#"[{"amount":"100","payTo":"0xA","asset":"0xB"}]"#;
+        assert!(parse_payload(json).is_err());
+    }
+
+    // ── CLI argument parsing ──────────────────────────────────────────
+
+    #[test]
+    fn cli_x402_pay_accepts_and_from() {
+        let json = r#"[{"scheme":"deferred","network":"eip155:196","amount":"1000","payTo":"0xA","asset":"0xB"}]"#;
         let cli = TestCli::parse_from([
             "test",
             "x402-pay",
-            "--network",
-            "eip155:8453",
-            "--amount",
-            "1000000",
-            "--pay-to",
-            "0xRecipient",
-            "--asset",
-            "0xUSDC",
+            "--accepts",
+            json,
             "--from",
             "0xPayer",
-            "--max-timeout-seconds",
-            "600",
         ]);
         match cli.command {
-            PaymentCommand::X402Pay {
-                network,
-                amount,
-                pay_to,
-                asset,
-                from,
-                max_timeout_seconds,
-            } => {
-                assert_eq!(network, "eip155:8453");
-                assert_eq!(amount, "1000000");
-                assert_eq!(pay_to, "0xRecipient");
-                assert_eq!(asset, "0xUSDC");
+            PaymentCommand::X402Pay { accepts, from } => {
+                assert_eq!(accepts, json);
                 assert_eq!(from.as_deref(), Some("0xPayer"));
-                assert_eq!(max_timeout_seconds, 600);
             }
         }
     }
 
     #[test]
-    fn cli_x402_pay_defaults() {
+    fn cli_x402_pay_accepts_only() {
+        let json = r#"[{"network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}]"#;
         let cli = TestCli::parse_from([
             "test",
             "x402-pay",
-            "--network",
-            "eip155:1",
-            "--amount",
-            "500",
-            "--pay-to",
-            "0xRecipient",
-            "--asset",
-            "0xToken",
+            "--accepts",
+            json,
         ]);
         match cli.command {
-            PaymentCommand::X402Pay {
-                from,
-                max_timeout_seconds,
-                ..
-            } => {
+            PaymentCommand::X402Pay { accepts, from } => {
+                assert_eq!(accepts, json);
                 assert_eq!(from, None);
-                assert_eq!(max_timeout_seconds, 300);
             }
         }
     }
 
     #[test]
-    fn cli_x402_pay_missing_required() {
-        // --asset is missing, should fail
-        let result = TestCli::try_parse_from([
-            "test",
-            "x402-pay",
-            "--network",
-            "eip155:8453",
-            "--amount",
-            "1000000",
-            "--pay-to",
-            "0xRecipient",
-        ]);
+    fn cli_x402_pay_missing_accepts() {
+        let result = TestCli::try_parse_from(["test", "x402-pay"]);
         assert!(result.is_err());
     }
 }

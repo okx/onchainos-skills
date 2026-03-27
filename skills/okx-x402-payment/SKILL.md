@@ -14,50 +14,7 @@ Sign an [x402](https://x402.org) payment authorization and return the payment pr
 
 ## Pre-flight Checks
 
-Every time before running any `onchainos` command, always follow these steps in order. Do not echo routine command output to the user; only provide a brief status update when installing, updating, or handling a failure.
-
-1. **Resolve latest stable version**: Fetch the latest stable release tag from the GitHub API:
-   ```
-   curl -sSL "https://api.github.com/repos/okx/onchainos-skills/releases/latest"
-   ```
-   Extract the `tag_name` field (e.g., `v1.0.5`) into `LATEST_TAG`.
-   If the API call fails and `onchainos` is already installed locally, skip steps 2-3
-   and proceed to run the command (the user may be offline or rate-limited; a stale
-   binary is better than blocking). If `onchainos` is **not** installed, **stop** and
-   tell the user to check their network connection or install manually from
-   https://github.com/okx/onchainos-skills.
-
-2. **Install or update**: If `onchainos` is not found, or if the cache at `~/.onchainos/last_check` (`$env:USERPROFILE\.onchainos\last_check` on Windows) is older than 12 hours:
-   - Download the installer and its checksum file from the latest release tag:
-     - **macOS/Linux**:
-       `curl -sSL "https://raw.githubusercontent.com/okx/onchainos-skills/${LATEST_TAG}/install.sh" -o /tmp/onchainos-install.sh`
-       `curl -sSL "https://github.com/okx/onchainos-skills/releases/download/${LATEST_TAG}/installer-checksums.txt" -o /tmp/installer-checksums.txt`
-     - **Windows**:
-       `Invoke-WebRequest -Uri "https://raw.githubusercontent.com/okx/onchainos-skills/${LATEST_TAG}/install.ps1" -OutFile "$env:TEMP\onchainos-install.ps1"`
-       `Invoke-WebRequest -Uri "https://github.com/okx/onchainos-skills/releases/download/${LATEST_TAG}/installer-checksums.txt" -OutFile "$env:TEMP\installer-checksums.txt"`
-   - Verify the installer's SHA256 against `installer-checksums.txt`. On mismatch, **stop** and warn — the installer may have been tampered with.
-   - Execute: `sh /tmp/onchainos-install.sh` (or `& "$env:TEMP\onchainos-install.ps1"` on Windows).
-     The installer handles version comparison internally and only downloads the binary if needed.
-   - On other failures, point to https://github.com/okx/onchainos-skills.
-
-3. **Verify binary integrity** (once per session): Run `onchainos --version` to get the installed
-   version (e.g., `1.0.5` or `2.0.0-beta.0`). Construct the installed tag as `v<version>`.
-   Download `checksums.txt` for the **installed version's tag** (not necessarily LATEST_TAG):
-   `curl -sSL "https://github.com/okx/onchainos-skills/releases/download/v<version>/checksums.txt" -o /tmp/onchainos-checksums.txt`
-   Look up the platform target and compare the installed binary's SHA256 against the checksum.
-   On mismatch, reinstall (step 2) and re-verify. If still mismatched, **stop** and warn.
-   - Platform targets — macOS: `arm64`->`aarch64-apple-darwin`, `x86_64`->`x86_64-apple-darwin`; Linux: `x86_64`->`x86_64-unknown-linux-gnu`, `aarch64`->`aarch64-unknown-linux-gnu`, `i686`->`i686-unknown-linux-gnu`, `armv7l`->`armv7-unknown-linux-gnueabihf`; Windows: `AMD64`->`x86_64-pc-windows-msvc`, `x86`->`i686-pc-windows-msvc`, `ARM64`->`aarch64-pc-windows-msvc`
-   - Hash command — macOS/Linux: `shasum -a 256 ~/.local/bin/onchainos`; Windows: `(Get-FileHash "$env:USERPROFILE\.local\bin\onchainos.exe" -Algorithm SHA256).Hash.ToLower()`
-
-4. **Check for skill version drift** (once per session): If `onchainos --version` is newer
-   than this skill's `metadata.version`, display a one-time notice that the skill may be
-   outdated and suggest the user re-install skills via their platform's method. Do not block.
-5. **Do NOT auto-reinstall on command failures.** Report errors and suggest
-   `onchainos --version` or manual reinstallation from https://github.com/okx/onchainos-skills.
-6. **Rate limit errors.** If a command hits rate limits, the shared API key may
-   be throttled. Suggest creating a personal key at the
-   [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal). If the
-   user creates a `.env` file, remind them to add `.env` to `.gitignore`.
+> Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
 
 ## Skill Routing
 
@@ -94,11 +51,21 @@ onchainos wallet chains
 
 ## Background: x402 Protocol
 
-x402 is an HTTP payment protocol. When a server returns `HTTP 402 Payment Required`, it includes a base64-encoded JSON payload describing what payment is required. The full flow is:
+x402 is an HTTP payment protocol with two versions:
 
-1. Send request → receive `HTTP 402` with base64-encoded payment payload
-2. Decode the payload, extract payment parameters from `accepts[0]`
-3. Sign via TEE → `onchainos payment x402-pay` → obtain `{ signature, authorization }`
+|                                | v2                                                                | v1                                          |
+|--------------------------------|-------------------------------------------------------------------|---------------------------------------------|
+| **402 payload location**       | `PAYMENT-REQUIRED` **header** (base64-encoded JSON); body is `{}` | Response **body** (direct JSON, not base64) |
+| **Client header name**         | `PAYMENT-SIGNATURE`                                               | `X-PAYMENT`                                 |
+| **Client payload structure**   | `{ x402Version, resource, accepted, payload }`                    | `{ x402Version, scheme, network, payload }` |
+| **Amount field in accepts**    | `amount`                                                          | `maxAmountRequired`                         |
+| **Settlement response header** | `PAYMENT-RESPONSE`                                                | `X-PAYMENT-RESPONSE`                        |
+
+The full flow is:
+
+1. Send request → receive `HTTP 402`
+2. Decode the payload (from `PAYMENT-REQUIRED` header for v2; from response body for v1), pass the `accepts` array to the CLI
+3. Sign via TEE → `onchainos payment x402-pay --accepts '<accepts array>'` → CLI selects best scheme, returns payment proof
 4. Assemble payment header and replay the original request
 
 This skill owns **steps 2–4** end to end.
@@ -106,13 +73,8 @@ This skill owns **steps 2–4** end to end.
 ## Quickstart
 
 ```bash
-# Sign an x402 payment for an X Layer USDG-gated resource
 onchainos payment x402-pay \
-  --network eip155:196 \
-  --amount 1000000 \
-  --pay-to 0xRecipientAddress \
-  --asset 0x4ae46a509f6b1d9056937ba4500cb143933d2dc8 \
-  --max-timeout-seconds 300
+  --accepts '[{"scheme":"deferred","network":"eip155:196","amount":"1000000","payTo":"0xRecipientAddress","asset":"0x4ae46a509f6b1d9056937ba4500cb143933d2dc8","maxTimeoutSeconds":300}]'
 ```
 
 ## Command Index
@@ -131,33 +93,41 @@ Make the HTTP request the user asked for. If the response status is **not 402**,
 
 ### Step 2: Decode the 402 Payload
 
-If the response is `HTTP 402`, the body is a base64-encoded JSON string. Decode it:
+If the response is `HTTP 402`, extract the payment requirements. The location differs by version:
+
+**v2** — payload is in the `PAYMENT-REQUIRED` response **header** (base64-encoded JSON):
 
 ```
-rawBody  = response.body          // base64 string
-decoded  = JSON.parse(atob(rawBody))
-option   = decoded.accepts[0]
+headerValue = response.headers['PAYMENT-REQUIRED']
+decoded     = JSON.parse(atob(headerValue))
 ```
 
-Extract these fields from `option`:
+**v1** — payload is in the response **body** (direct JSON, not base64):
 
-| x402 field                                    | CLI param               | Notes                                             |
-|-----------------------------------------------|-------------------------|---------------------------------------------------|
-| `option.network`                              | `--network`             | CAIP-2 format, e.g. `eip155:196`                  |
-| `option.amount` or `option.maxAmountRequired` | `--amount`              | prefer `amount`; fall back to `maxAmountRequired` |
-| `option.payTo`                                | `--pay-to`              |                                                   |
-| `option.asset`                                | `--asset`               | token contract address                            |
-| `option.maxTimeoutSeconds`                    | `--max-timeout-seconds` | optional, default 300                             |
+```
+decoded = JSON.parse(response.body)
+```
+
+In both cases, extract the `accepts` array:
+
+```
+accepts = decoded.accepts        // keep the full array for the CLI
+option  = decoded.accepts[0]     // for display purposes
+```
+
+Save `decoded.accepts` as a JSON string — it will be passed directly to the CLI via `--accepts`. The CLI handles scheme selection internally (prefers `"deferred"` > `"exact"` > first entry).
+
+Save `decoded` for later — you will need `decoded.x402Version` and `decoded.resource` (v2) when assembling the payment header in Step 5.
 
 **⚠️ MANDATORY: Display payment details and STOP to wait for user confirmation. Do NOT check wallet status, run `onchainos wallet status`, attempt login, or call any other tool until the user explicitly confirms.**
 
 Present the following information to the user:
 
 > This resource requires x402 payment:
-> - **Network**: `<chain name>` (`<network>`)
-> - **Token**: `<token symbol>` (`<asset>`)
-> - **Amount**: `<human-readable amount>` (convert from minimal units using token decimals)
-> - **Pay to**: `<payTo>`
+> - **Network**: `<chain name>` (`<option.network>`)
+> - **Token**: `<token symbol>` (`<option.asset>`)
+> - **Amount**: `<human-readable amount>` (from `option.amount` for v2, or `option.maxAmountRequired` for v1; convert from minimal units using token decimals)
+> - **Pay to**: `<option.payTo>`
 >
 > Proceed with payment? (yes / no)
 
@@ -184,28 +154,76 @@ onchainos wallet status
 
 ### Step 4: Sign
 
-Run `onchainos payment x402-pay` with the extracted parameters. Returns `{ signature, authorization }`.
+Pass the raw `accepts` array to the CLI. The CLI automatically selects the best scheme (prefers `"deferred"` over `"exact"`):
+
+```bash
+onchainos payment x402-pay \
+  --accepts '<JSON.stringify(decoded.accepts)>'
+```
+
+The CLI returns different fields depending on the scheme it selected:
+
+- **`deferred` scheme** (preferred): Only Session Key (Ed25519) signing, skips EOA signing. Returns `{ signature, authorization, sessionCert }`. The `signature` is the base64-encoded session-key signature.
+- **`exact` scheme**: Full EIP-3009 signing via TEE. Returns `{ signature, authorization }`. The `signature` is the secp256k1 EIP-3009 signature.
+
+Check the response: if `sessionCert` is present, the CLI selected deferred scheme.
 
 **If signing fails** (e.g., session expired, not logged in, AK re-login failed):
+
 - Do NOT simply cancel or give up.
 - Ask the user: "Signing failed because there is no active wallet session. Would you like to log in now, or sign locally with your own private key?"
   - **User wants to log in** → run `onchainos wallet login` or `onchainos wallet login <email>`, then retry this step.
-  - **User wants local signing** → switch to the **Local Signing Fallback** (see below).
-  - **User wants to cancel** → only then cancel the request.
+    - **User wants local signing** → switch to the **Local Signing Fallback** (see below).
+    - **User wants to cancel** → only then cancel the request.
 
 ### Step 5: Assemble Header and Replay
 
-**Determine header name** from `decoded.x402Version`:
-- `x402Version >= 2` → `PAYMENT-SIGNATURE`
-- `x402Version < 2` (or absent) → `X-PAYMENT`
+The PaymentPayload structure and header name differ between v1 and v2.
 
-**Build header value**:
+#### v2 (`x402Version >= 2`)
+
+Header name: `PAYMENT-SIGNATURE`
+
+The `accepted` field is a **single object** (the entry the CLI selected from `accepts`), not the whole array. If the CLI returned `sessionCert` (deferred scheme), **merge** it into the existing `accepted.extra` (preserve original fields like `name`, `version`):
+
 ```
-paymentPayload = { ...decoded, payload: { signature, authorization } }
-headerValue    = btoa(JSON.stringify(paymentPayload))
+// Pick the accepted entry (CLI selected deferred if available)
+accepted = decoded.accepts.find(a => a.scheme === selectedScheme)
+
+// Deferred: merge sessionCert into existing extra
+if (sessionCert) {
+  accepted.extra = { ...accepted.extra, sessionCert }
+}
+
+paymentPayload = {
+  x402Version: decoded.x402Version,
+  resource:    decoded.resource,          // from the 402 payload
+  accepted:    accepted,                  // single object, NOT the array
+  payload:     { signature, authorization }
+}
+headerValue = btoa(JSON.stringify(paymentPayload))
 ```
 
-**Replay** the original request with the header attached:
+#### v1 (`x402Version < 2` or absent)
+
+Header name: `X-PAYMENT`
+
+v1 has no `accepted` or `resource` — instead, `scheme` and `network` are top-level:
+
+```
+paymentPayload = {
+  x402Version: 1,
+  scheme:      selectedScheme,            // "exact" or "deferred"
+  network:     option.network,
+  payload:     { signature, authorization }
+}
+headerValue = btoa(JSON.stringify(paymentPayload))
+```
+
+#### Replay
+
+Attach the header and replay the original request:
+
 ```
 GET/POST <original-url>
 <header-name>: <headerValue>
@@ -231,21 +249,18 @@ Present conversationally, e.g.: "Done! The resource returned the following resul
 > User: "Fetch https://api.example.com/data — it requires x402 payment"
 
 ```
-1. Send GET https://api.example.com/data                              → HTTP 402 with base64 payload
-       ↓ decode payload, extract accepts[0]
+1. Send GET https://api.example.com/data                              → HTTP 402
+       ↓ decode (v2: PAYMENT-REQUIRED header; v1: response body)
 2. okx-x402-payment   onchainos payment x402-pay \
-                        --network eip155:196 --amount 1000000 \
-                        --pay-to 0xAbC... \
-                        --asset 0x4ae46a509f6b1d9056937ba4500cb143933d2dc8   → { signature, authorization }
-       ↓ assemble payment header
-3. Replay GET https://api.example.com/data with PAYMENT-SIGNATURE header  → HTTP 200
+                        --accepts '<accepts array JSON>'         → { signature, authorization[, sessionCert] }
+       ↓ CLI selects best scheme; assemble payment header per version
+3. Replay with payment header (v2: PAYMENT-SIGNATURE, v1: X-PAYMENT)  → HTTP 200
 ```
 
 **Data handoff**:
-- `accepts[0].network` → `--network`
-- `accepts[0].amount` (or `maxAmountRequired`) → `--amount`
-- `accepts[0].payTo` → `--pay-to`
-- `accepts[0].asset` → `--asset`
+
+- `decoded.accepts` → `--accepts`
+- CLI output `sessionCert` → `accepted.extra.sessionCert` (present only when deferred scheme was selected)
 
 ### Workflow B: Pay then Check Balance
 
@@ -272,28 +287,20 @@ Present conversationally, e.g.: "Done! The resource returned the following resul
 
 ### 1. onchainos payment x402-pay
 
-Sign an x402 payment and return the EIP-3009 payment proof.
+Sign an x402 payment and return the payment proof. Pass the raw `accepts` array from the 402 payload — the CLI selects the best scheme automatically (prefers `"deferred"` > `"exact"` > first entry).
 
 ```bash
 onchainos payment x402-pay \
-  --network <network> \
-  --amount <amount> \
-  --pay-to <address> \
-  --asset <address> \
-  [--from <address>] \
-  [--max-timeout-seconds <seconds>]
+  --accepts '<accepts array JSON>' \
+  [--from <address>]
 ```
 
-| Param                   | Required | Default          | Description                                                                         |
-|-------------------------|----------|------------------|-------------------------------------------------------------------------------------|
-| `--network`             | Yes      | -                | CAIP-2 network identifier (e.g., `eip155:196` for X Layer, `eip155:1` for Ethereum) |
-| `--amount`              | Yes      | -                | Payment amount in minimal units (e.g., `1000000` = 1 USDG with 6 decimals)          |
-| `--pay-to`              | Yes      | -                | Recipient address (from x402 `payTo` field)                                         |
-| `--asset`               | Yes      | -                | Token contract address (from x402 `asset` field)                                    |
-| `--from`                | No       | selected account | Payer address; if omitted, uses the currently selected account                      |
-| `--max-timeout-seconds` | No       | `300`            | Authorization validity window in seconds                                            |
+| Param       | Required | Default          | Description                                                        |
+|-------------|----------|------------------|--------------------------------------------------------------------|
+| `--accepts` | Yes      | -                | JSON `accepts` array from the 402 payload; CLI selects best scheme |
+| `--from`    | No       | selected account | Payer address; if omitted, uses the currently selected account     |
 
-**Return fields**:
+**Return fields (exact scheme)**:
 
 | Field                       | Type   | Description                                                                              |
 |-----------------------------|--------|------------------------------------------------------------------------------------------|
@@ -306,45 +313,90 @@ onchainos payment x402-pay \
 | `authorization.validBefore` | String | Authorization valid-before timestamp (Unix seconds)                                      |
 | `authorization.nonce`       | String | Random nonce (hex, 32 bytes), prevents replay attacks                                    |
 
+**Return fields (deferred scheme)**:
+
+| Field           | Type   | Description                                                                          |
+|-----------------|--------|--------------------------------------------------------------------------------------|
+| `signature`     | String | Base64-encoded Ed25519 session-key signature (no EOA signing)                        |
+| `authorization` | Object | Standard x402 EIP-3009 `transferWithAuthorization` parameters (same fields as exact) |
+| `sessionCert`   | String | Session certificate proving the session key's authority over the wallet              |
+
 ## Input / Output Examples
 
 **User says:** "Fetch https://api.example.com/data — it requires x402 payment"
 
-**Step 1** — original request returns 402:
+**Step 1** — original request returns 402 (v2 example):
+
 ```
-HTTP 402
-Body: "eyJ4NDAyVmVyc2lvbiI6MiwiYWNjZXB0cyI6W3s..."  ← base64
+HTTP/1.1 402 Payment Required
+PAYMENT-REQUIRED: eyJ4NDAyVmVyc2lvbiI6Miwi...   ← base64 in header
+Content-Type: application/json
+
+{}
 ```
 
-Decoded payload:
+Decoded `PAYMENT-REQUIRED` header:
+
 ```json
 {
   "x402Version": 2,
-  "accepts": [{
-    "network": "eip155:196",
-    "amount": "1000000",
-    "payTo": "0xAbC...",
-    "asset": "0x4ae46a509f6b1d9056937ba4500cb143933d2dc8",
-    "maxTimeoutSeconds": 300
-  }]
+  "error": "PAYMENT-SIGNATURE header is required",
+  "resource": {
+    "url": "https://api.example.com/data",
+    "description": "Premium data",
+    "mimeType": "application/json"
+  },
+  "accepts": [
+    {
+      "scheme": "deferred",
+      "network": "eip155:196",
+      "amount": "1000000",
+      "payTo": "0xAbC...",
+      "asset": "0x4ae46a509f6b1d9056937ba4500cb143933d2dc8",
+      "maxTimeoutSeconds": 300,
+      "extra": {
+        "name": "USDG",
+        "version": "1"
+      }
+    },
+    {
+      "scheme": "exact",
+      "network": "eip155:196",
+      "amount": "1000000",
+      "payTo": "0xAbC...",
+      "asset": "0x4ae46a509f6b1d9056937ba4500cb143933d2dc8",
+      "maxTimeoutSeconds": 300,
+      "extra": {
+        "name": "USDG",
+        "version": "1"
+      }
+    }
+  ]
 }
 ```
 
-**Step 3–4** — check wallet + sign:
+**Step 3–4** — check wallet + sign (CLI selects deferred automatically):
+
 ```bash
 onchainos payment x402-pay \
-  --network eip155:196 \
-  --amount 1000000 \
-  --pay-to 0xAbC... \
-  --asset 0x4ae46a509f6b1d9056937ba4500cb143933d2dc8 \
-  --max-timeout-seconds 300
-# → { "signature": "0x...", "authorization": { ... } }
+  --accepts '<JSON.stringify(decoded.accepts)>'
+# → { "signature": "base64...", "authorization": { ... }, "sessionCert": "..." }
+# sessionCert present → CLI selected deferred scheme
 ```
 
-**Step 5** — assemble header and replay:
+**Step 5** — assemble v2 header (deferred, merge sessionCert into existing extra):
+
 ```
-paymentPayload = { ...decoded, payload: { signature, authorization } }
-headerValue    = btoa(JSON.stringify(paymentPayload))
+accepted       = decoded.accepts.find(a => a.scheme === "deferred")
+accepted.extra = { ...accepted.extra, sessionCert }  // merge, keep name/version
+
+paymentPayload = {
+  x402Version: 2,
+  resource:    decoded.resource,
+  accepted:    accepted,
+  payload:     { signature, authorization }
+}
+headerValue = btoa(JSON.stringify(paymentPayload))
 
 GET https://api.example.com/data
 PAYMENT-SIGNATURE: <headerValue>
@@ -364,28 +416,31 @@ If the user does not have a wallet and chooses not to create one, guide them thr
 
 ### Step 1: Decode the 402 Payload
 
-Same as the main flow — decode the base64 body and extract `accepts[0]`:
+Same as the main flow Step 2 — decode from `PAYMENT-REQUIRED` header (v2) or response body (v1):
 
 ```
-rawBody  = response.body
-decoded  = JSON.parse(atob(rawBody))
-option   = decoded.accepts[0]
+// v2:
+decoded = JSON.parse(atob(response.headers['PAYMENT-REQUIRED']))
+// v1:
+decoded = JSON.parse(response.body)
+
+option = decoded.accepts[0]
 ```
 
-Extract: `network`, `amount` (or `maxAmountRequired`), `payTo`, `asset`, `maxTimeoutSeconds`.
+Extract: `network`, `amount` (v2) or `maxAmountRequired` (v1), `payTo`, `asset`, `maxTimeoutSeconds`.
 
 ### Step 2: Construct EIP-3009 Parameters and Sign
 
 Build the `TransferWithAuthorization` message and sign it with `eth_signTypedData_v4`. Key fields:
 
-| Field         | Value                                    |
-|---------------|------------------------------------------|
-| `from`        | Payer address                            |
-| `to`          | `option.payTo`                           |
-| `value`       | `option.amount`                          |
-| `validAfter`  | `"0"`                                    |
-| `validBefore` | `now + maxTimeoutSeconds` (Unix seconds) |
-| `nonce`       | Random 32 bytes (hex)                    |
+| Field         | Value                                                   |
+|---------------|---------------------------------------------------------|
+| `from`        | Payer address                                           |
+| `to`          | `option.payTo`                                          |
+| `value`       | `option.amount` (v2) or `option.maxAmountRequired` (v1) |
+| `validAfter`  | `"0"`                                                   |
+| `validBefore` | `now + maxTimeoutSeconds` (Unix seconds)                |
+| `nonce`       | Random 32 bytes (hex)                                   |
 
 EIP-712 domain: query the token contract's `name()`, `version` (often `"1"` or `"2"`), `chainId` from the CAIP-2 network, and `verifyingContract` = `option.asset`.
 
@@ -401,7 +456,12 @@ const signature = await wallet.signTypedData(domain, types, message);
 
 ### Step 3: Assemble Header and Replay
 
-Same as the main flow Step 5 — build `authorization` from the signed fields, determine header name from `x402Version`, assemble `paymentPayload = { ...decoded, payload: { signature, authorization } }`, base64-encode, and replay the original request with the payment header attached.
+Same as the main flow Step 5 — build `authorization` from the signed fields, then assemble the `paymentPayload` per version:
+
+- **v2**: `{ x402Version: 2, resource: decoded.resource, accepted: option, payload: { signature, authorization } }` → header `PAYMENT-SIGNATURE`
+- **v1**: `{ x402Version: 1, scheme: option.scheme, network: option.network, payload: { signature, authorization } }` → header `X-PAYMENT`
+
+Base64-encode and replay the original request with the header attached.
 
 ### Important Notes for Local Signing
 
@@ -416,13 +476,13 @@ Same as the main flow Step 5 — build `authorization` from the signed fields, d
 - **Not logged in**: Ask user if they want to create a wallet (`onchainos wallet login` or `onchainos wallet login <email>`). If not, guide them through the Local Signing Fallback above
 - **Unsupported network**: Only EVM chains with CAIP-2 `eip155:<chainId>` format are supported
 - **No wallet for chain**: The logged-in account must have an address on the requested chain; if not, inform the user
-- **Amount in wrong units**: `--amount` must be in minimal units — remind user to convert (e.g., 1 USDG = `1000000` for 6 decimals)
+- **Amount in wrong units**: `amount` (v2) / `maxAmountRequired` (v1) must be in minimal units — remind user to convert (e.g., 1 USDG = `1000000` for 6 decimals)
 - **Expired authorization**: If the server rejects the payment as expired, retry with a fresh signature
 - **Network error**: Retry once, then prompt user to try again later
 
 ## Amount Display Rules
 
-- `--amount` is always in minimal units (e.g., `1000000` for 1 USDG)
+- `amount` (v2) / `maxAmountRequired` (v1) is always in minimal units (e.g., `1000000` for 1 USDG)
 - When displaying to the user, convert to UI units: divide by `10^decimal`
 - Show token symbol alongside (e.g., `1.00 USDG`)
 
@@ -431,5 +491,4 @@ Same as the main flow Step 5 — build `authorization` from the signed fields, d
 - **Primary path** (`onchainos payment x402-pay`): requires an authenticated JWT session; signing is performed inside a TEE — the private key never leaves the secure enclave
 - **Fallback path** (local signing): requires the user's own private key; signing is done entirely on the local machine — no JWT or TEE needed
 - This skill only signs — it does **not** broadcast or deduct balance directly; payment settles when the recipient redeems the authorization on-chain
-- `--network` must be CAIP-2 format: `eip155:<chainId>` (e.g., `eip155:1`, `eip155:8453`, `eip155:196`)
 - The returned `authorization` object must be included alongside `signature` when building the payment header
