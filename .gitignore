@@ -33,6 +33,7 @@ DerivedData/
 
 # onchainOS local config
 .onchainos/
+.watch/
 
 # Logs
 *.log
