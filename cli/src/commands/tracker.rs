@@ -7,7 +7,6 @@ use crate::client::ApiClient;
 use crate::output;
 
 #[derive(Subcommand)]
-#[allow(clippy::large_enum_variant)]
 pub enum TrackerCommand {
     /// Get latest DEX activities for tracked addresses (smart money, KOL, or custom multi-address)
     Activities {
