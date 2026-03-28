@@ -124,6 +124,13 @@ Present conversationally — never expose command paths to the user.
 For detailed parameter tables, return field schemas, and usage examples, consult:
 - **`references/cli-reference.md`** — Full CLI command reference for memepump commands
 
+## WebSocket Protocol Reference
+
+When the user wants to build a custom WebSocket client, write a real-time meme token scanner, implement a new-token alert bot, or asks about the raw OKX DEX WebSocket protocol for trenches/memepump data, read **`references/ws-protocol.md`** before responding. That file contains the complete protocol specification for these channels:
+
+- **`dex-market-memepump-new-token-openapi`** — real-time new meme token launches (full token snapshot with market data, holder analytics, social links)
+- **`dex-market-memepump-update-metrics-openapi`** — incremental metric updates for meme tokens (market cap, volume, holder stats, bonding curve progress)
+
 ## Edge Cases
 
 - **Unsupported chain for meme pump**: only Solana (501), BSC (56), X Layer (196), TRON (195) are supported — verify with `onchainos memepump chains` first

@@ -148,7 +148,11 @@ For detailed parameter tables and return field schemas, consult:
 
 ## WebSocket Protocol Reference
 
-When the user wants to build a custom WebSocket client, write a WS subscription script, implement a real-time trade monitoring bot, or asks about the raw OKX DEX WebSocket protocol (authentication, subscribe format, push data schema, heartbeat), read **`references/ws-protocol.md`** before responding. That file contains the complete protocol specification needed to subscribe to `kol_smartmoney-tracker-activity` and `address-tracker-activity` channels directly.
+When the user wants to build a custom WebSocket client, write a WS subscription script, implement a real-time trade monitoring bot, or asks about the raw OKX DEX WebSocket protocol (authentication, subscribe format, push data schema, heartbeat), read **`references/ws-protocol.md`** before responding. That file contains the complete protocol specification for these channels:
+
+- **`signal`** — real-time aggregated buy signal alerts from smart money, KOL, and whale wallets (single-chain subscription)
+- **`kol_smartmoney-tracker-activity`** — aggregated trade feed from KOL and smart money wallets (public, no wallet address needed)
+- **`address-tracker-activity`** — trade feed for custom wallet addresses (up to 20 addresses per subscription)
 
 ## Edge Cases
 
