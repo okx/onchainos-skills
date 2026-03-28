@@ -22,9 +22,9 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 | okx-agentic-wallet   | Wallet lifecycle: auth, balance (authenticated), portfolio PnL, send, history, contract call | User wants to log in, check balance, view PnL, send tokens, view tx history, or call contracts |
 | okx-wallet-portfolio | Public address balance: total value, all tokens, specific tokens | User asks about wallet holdings, token balances, portfolio value across chains |
 | okx-security         | Security scanning: token risk, DApp phishing, tx pre-execution, signature safety, approval management | User wants to check if a token/DApp/tx/signature is safe, honeypot check, phishing detection, approve safety, or view/manage token approvals |
-| okx-dex-market       | Prices, charts, wallet PnL | User asks for token prices, K-line data, or wallet PnL analysis (win rate, DEX history, realized/unrealized PnL) for their own wallet |
-| okx-dex-signal       | Smart money / KOL / whale activity tracking, buy signal alerts, leaderboard | User asks what smart money/whales/KOLs are buying or trading (tracker), wants aggregated buy signal alerts (信号), wants top traders ranked by PnL/win rate/volume (牛人榜), or wants to write a WS subscription script (references ws-protocol.md) |
-| okx-dex-trenches     | Meme/pump.fun token scanning | User asks about new meme launches, dev reputation, bundle detection, 打狗/扫链/新盘, or mentions trench/trenches |
+| okx-dex-market       | Prices, charts, wallet PnL, WS price/candle/trade streaming | User asks for token prices, K-line data, wallet PnL analysis, or wants to write a script/脚本 for real-time price monitoring/价格监控, candlestick streaming/K线推送, or trade feed subscription via WebSocket |
+| okx-dex-signal       | Smart money / KOL / whale tracking, buy signals, leaderboard, WS signal/tracker streaming | User asks what smart money/whales/KOLs are buying (tracker), wants buy signal alerts (信号), top traders (牛人榜), or wants to write a script/脚本 for monitoring/监控 KOL/smart money trades, building a trading bot/交易机器人 via WebSocket |
+| okx-dex-trenches     | Meme/pump.fun token scanning, WS new-token/metric streaming | User asks about new meme launches, dev reputation, bundle detection, 打狗/扫链/新盘, or wants to write a script/脚本 for real-time meme scanning/实时扫链, new token alerts/新盘提醒 via WebSocket |
 | okx-dex-swap         | DEX swap execution | User wants to swap/trade/buy/sell tokens |
 | okx-dex-token        | Token search, liquidity, hot tokens, advanced info, holders, top traders, trade history, holder cluster analysis | User searches for tokens, wants rankings, liquidity pools, holder info, top traders, filtered trade history, or holder cluster concentration |
 | okx-onchain-gateway  | Transaction broadcasting and tracking | User wants to broadcast tx, estimate gas, simulate tx, check tx status |
@@ -39,6 +39,15 @@ When a user asks to write a script, automate trading, build a trading bot, or us
 - **Do NOT search online for OKX public APIs** — `onchainos` already wraps all relevant on-chain capabilities
 - Always use `onchainos` CLI commands as the building block (subprocess calls, MCP tool invocations, etc.)
 - Route to the relevant skill based on what the user wants to automate: swap → `okx-dex-swap`, market data → `okx-dex-market`, signals → `okx-dex-signal`, token data → `okx-dex-token`, portfolio → `okx-wallet-portfolio`, meme scanning → `okx-dex-trenches`
+
+### WebSocket Script Routing (IMPORTANT)
+
+When a user asks to write a WebSocket script/脚本, build a monitoring bot/监控机器人, or subscribe to real-time data/实时数据推送, you **MUST load the corresponding skill via the Skill tool first** — do NOT skip the skill and directly read files from the `skills/` directory. The skill contains essential context (protocol docs, auth flow, field schemas) that prevents hallucination.
+
+Route by topic:
+- KOL/聪明钱/大户追踪、信号/signal、牛人榜、tracker WebSocket → load **`okx-dex-signal`**
+- 价格监控/price monitoring、K线推送/candlestick streaming、交易流/trade feed → load **`okx-dex-market`**
+- Meme 扫链/新盘提醒/打狗机器人/trenches scanner → load **`okx-dex-trenches`**
 
 ## Clippy
 
