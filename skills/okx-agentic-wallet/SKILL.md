@@ -36,38 +36,11 @@ Wallet operations: authentication, balance, token transfers, transaction history
           → onchainos wallet balance --chain 1
 ```
 
-### `--amt` — Minimal Unit Amount
+### Amount
 
-**`--amt`: minimal units only, whole numbers, no decimals.**
+**`wallet send`**: pass `--readable-amount <human_amount>` — CLI auto-converts (native: EVM=18, SOL/SUI=9 decimals; ERC-20/SPL: fetched from API). Never compute minimal units manually. Use `--amt` only for raw minimal units.
 
-#### Converting User Amounts to `--amt`
-
-Formula: `amt = user_amount × 10^decimals`
-
-**Native token decimals (fixed):**
-
-| Chain type | Native token | Decimals | Example: user says "0.1" → `--amt` |
-|---|---|---|---|
-| EVM (Ethereum, BSC, Base, Arbitrum, Polygon, X Layer…) | ETH / BNB / OKB… | 18 | `100000000000000000` |
-| Solana | SOL | 9 | `100000000` |
-
-**Non-native tokens (ERC-20 / SPL):** Query decimals first via `okx-dex-token`:
-
-```bash
-onchainos token search --query USDC --chains <chain_name>
-```
-
-Use the `decimals` field from the result to compute `amt`. If multiple tokens match, **ask the user to confirm** which one to use.
-
-| User says | Token decimals | `--amt` value |
-|---|---|---|
-| "Transfer 0.15 ETH" | 18 (native) | `"150000000000000000"` |
-| "Send 100 USDC" | 6 | `"100000000"` |
-| "Send 0.5 SOL" | 9 (native) | `"500000000"` |
-
-Applies to:
-- `onchainos wallet send --amt`
-- `onchainos wallet contract-call --amt`
+**`wallet contract-call`**: `--amt` is the native token value attached to the call (payable functions only), in minimal units. Default `"0"` for non-payable. EVM=18 decimals, SOL=9.
 
 ## Command Index
 
@@ -166,11 +139,11 @@ Some commands return **confirming** (exit code **2**) when backend requires user
 
 ```
 # 1. Run command without --force
-onchainos wallet send --amt "100000000" --receipt "0xAbc..." --chain 1
+onchainos wallet send --readable-amount "0.1" --receipt "0xAbc..." --chain 1
 # → exit code 2, confirming: true → show message to user
 
 # 2. User confirms → re-run with --force
-onchainos wallet send --amt "100000000" --receipt "0xAbc..." --chain 1 --force
+onchainos wallet send --readable-amount "0.1" --receipt "0xAbc..." --chain 1 --force
 ```
 ## Authentication
 
