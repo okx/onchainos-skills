@@ -19,9 +19,12 @@ pub enum SwapCommand {
         /// Destination token contract address
         #[arg(long)]
         to: String,
-        /// Amount in minimal units (wei/lamports)
-        #[arg(long)]
-        amount: String,
+        /// Amount in minimal units (wei/lamports). Mutually exclusive with --readable-amount.
+        #[arg(long, conflicts_with = "readable_amount")]
+        amount: Option<String>,
+        /// Human-readable amount (e.g. "1.5" for 1.5 USDC). CLI fetches token decimals and converts automatically.
+        #[arg(long, conflicts_with = "amount")]
+        readable_amount: Option<String>,
         /// Chain (e.g. ethereum, solana, xlayer)
         #[arg(long)]
         chain: String,
@@ -37,9 +40,12 @@ pub enum SwapCommand {
         /// Destination token contract address
         #[arg(long)]
         to: String,
-        /// Amount in minimal units
-        #[arg(long)]
-        amount: String,
+        /// Amount in minimal units. Mutually exclusive with --readable-amount.
+        #[arg(long, conflicts_with = "readable_amount")]
+        amount: Option<String>,
+        /// Human-readable amount (e.g. "1.5" for 1.5 USDC). CLI fetches token decimals and converts automatically.
+        #[arg(long, conflicts_with = "amount")]
+        readable_amount: Option<String>,
         /// Chain
         #[arg(long)]
         chain: String,
@@ -105,9 +111,12 @@ pub enum SwapCommand {
         /// Destination token contract address
         #[arg(long)]
         to: String,
-        /// Amount in minimal units (wei/lamports)
-        #[arg(long)]
-        amount: String,
+        /// Amount in minimal units (wei/lamports). Mutually exclusive with --readable-amount.
+        #[arg(long, conflicts_with = "readable_amount")]
+        amount: Option<String>,
+        /// Human-readable amount (e.g. "1.5" for 1.5 USDC). CLI fetches token decimals and converts automatically.
+        #[arg(long, conflicts_with = "amount")]
+        readable_amount: Option<String>,
         /// Chain (e.g. ethereum, solana, xlayer)
         #[arg(long)]
         chain: String,
@@ -142,20 +151,22 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             from,
             to,
             amount,
+            readable_amount,
             chain,
             swap_mode,
         } => {
-            validate_amount(&amount)?;
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
+            let raw_amount = resolve_amount_arg(&client, amount.as_deref(), readable_amount.as_deref(), &from, &chain_index).await?;
             output::success(
-                fetch_quote(&client, &chain_index, &from, &to, &amount, &swap_mode).await?,
+                fetch_quote(&client, &chain_index, &from, &to, &raw_amount, &swap_mode).await?,
             );
         }
         SwapCommand::Swap {
             from,
             to,
             amount,
+            readable_amount,
             chain,
             slippage,
             wallet,
@@ -164,16 +175,16 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             tips,
             max_auto_slippage,
         } => {
-            validate_amount(&amount)?;
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
+            let raw_amount = resolve_amount_arg(&client, amount.as_deref(), readable_amount.as_deref(), &from, &chain_index).await?;
             output::success(
                 fetch_swap(
                     &client,
                     &chain_index,
                     &from,
                     &to,
-                    &amount,
+                    &raw_amount,
                     slippage.as_deref(),
                     &wallet,
                     &swap_mode,
@@ -220,6 +231,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             from,
             to,
             amount,
+            readable_amount,
             chain,
             wallet,
             slippage,
@@ -229,14 +241,14 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             max_auto_slippage,
             mev_protection,
         } => {
-            validate_amount(&amount)?;
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
+            let raw_amount = resolve_amount_arg(&client, amount.as_deref(), readable_amount.as_deref(), &from, &chain_index).await?;
             cmd_execute(
                 &client,
                 &from,
                 &to,
-                &amount,
+                &raw_amount,
                 &chain,
                 &wallet,
                 slippage.as_deref(),
@@ -413,6 +425,7 @@ fn resolve_token_address(chain_index: &str, token: &str) -> String {
 /// Validate that `amount` is a non-empty string of digits (no Infinity, NaN,
 /// negative, zero-only, leading-zeros, or other non-numeric values).
 fn validate_amount(amount: &str) -> Result<()> {
+    let amount = amount.trim();
     if amount.is_empty() {
         bail!("--amount must not be empty");
     }
@@ -429,10 +442,104 @@ fn validate_amount(amount: &str) -> Result<()> {
     if amount.chars().all(|c| c == '0') {
         bail!("--amount must be greater than zero");
     }
+    if amount.starts_with('0') {
+        bail!("--amount must not have leading zeros, got \"{}\"", amount);
+    }
     Ok(())
 }
 
-/// Check that a *resolved* token address format matches the chain.
+/// Convert a human-readable decimal string to minimal units (integer string).
+/// Uses string arithmetic to avoid floating-point precision issues.
+/// e.g. "0.1" with decimal=6 → "100000", "1.5" with decimal=18 → "1500000000000000000"
+pub(crate) fn readable_to_minimal_str(amount: &str, decimal: u32) -> Result<String> {
+    let (integer, frac) = if let Some(dot_pos) = amount.find('.') {
+        (&amount[..dot_pos], &amount[dot_pos + 1..])
+    } else {
+        (amount, "")
+    };
+    if integer.is_empty() || !integer.chars().all(|c| c.is_ascii_digit()) {
+        bail!("--readable-amount must be a positive number, got \"{}\"", amount);
+    }
+    if !frac.chars().all(|c| c.is_ascii_digit()) {
+        bail!("--readable-amount must be a positive number, got \"{}\"", amount);
+    }
+    let precision = decimal as usize;
+    let frac_padded = if frac.len() >= precision {
+        if frac[precision..].chars().any(|c| c != '0') {
+            bail!(
+                "--readable-amount \"{}\" has more decimal places than this token supports ({} decimals)",
+                amount, decimal
+            );
+        }
+        frac[..precision].to_string()
+    } else {
+        format!("{:0<width$}", frac, width = precision)
+    };
+    let combined = format!("{}{}", integer, frac_padded);
+    let stripped = combined.trim_start_matches('0');
+    let result = if stripped.is_empty() { "0" } else { stripped };
+    if result == "0" {
+        bail!(
+            "--readable-amount {} is too small for this token ({} decimals); results in zero minimal units",
+            amount, decimal
+        );
+    }
+    Ok(result.to_string())
+}
+
+/// Resolve the effective raw amount from either --amount (raw) or --readable-amount (human-readable).
+/// If --readable-amount is given, fetches token decimals via token info and converts.
+async fn resolve_amount_arg(
+    client: &ApiClient,
+    amount: Option<&str>,
+    readable_amount: Option<&str>,
+    from: &str,
+    chain_index: &str,
+) -> Result<String> {
+    if let Some(amt) = amount {
+        let amt = amt.trim();
+        validate_amount(amt)?;
+        return Ok(amt.to_string());
+    }
+    if let Some(readable) = readable_amount {
+        let readable = readable.trim();
+        if readable.is_empty() {
+            bail!("--readable-amount must not be empty");
+        }
+        let resolved_from = resolve_token_address(chain_index, from);
+        let info = crate::commands::token::fetch_info(client, &resolved_from, chain_index)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to fetch token decimals for {}: {}. Use --amount with raw units instead.",
+                    resolved_from, e
+                )
+            })?;
+        let info_arr = info.as_array().filter(|a| !a.is_empty()).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Token not found for address {} on chain {}. Verify the address is correct. \
+                 Use --amount with raw units instead.",
+                resolved_from, chain_index
+            )
+        })?;
+        let decimal: u32 = match &info_arr[0]["decimal"] {
+            serde_json::Value::String(s) => s.parse().map_err(|_| {
+                anyhow::anyhow!("Invalid decimal value \"{}\" for token {}", s, resolved_from)
+            })?,
+            serde_json::Value::Number(n) => n.as_u64().ok_or_else(|| {
+                anyhow::anyhow!("Invalid decimal value for token {}", resolved_from)
+            })? as u32,
+            _ => anyhow::bail!(
+                "Token decimal not found for {}. Use --amount with raw units instead.",
+                resolved_from
+            ),
+        };
+        return readable_to_minimal_str(readable, decimal);
+    }
+    bail!("Either --amount or --readable-amount is required")
+}
+
+
 /// Called after `resolve_token_address` so we inspect the actual address.
 ///
 /// Note: chain_family() is a binary "solana" / "evm" function and classifies
@@ -1082,5 +1189,26 @@ mod tests {
         let uint256_max =
             "115792089237316195423570985008687907853269984665640564039457584007913129639935";
         assert!(!is_allowance_insufficient(uint256_max, "1000000"));
+    }
+
+    #[test]
+    fn test_readable_to_minimal_str() {
+        // USDC: 6 decimals
+        assert_eq!(readable_to_minimal_str("0.1", 6).unwrap(), "100000");
+        assert_eq!(readable_to_minimal_str("1.5", 6).unwrap(), "1500000");
+        assert_eq!(readable_to_minimal_str("100", 6).unwrap(), "100000000");
+        assert_eq!(readable_to_minimal_str("1", 6).unwrap(), "1000000");
+        assert_eq!(readable_to_minimal_str("0.000001", 6).unwrap(), "1");
+        // ETH: 18 decimals
+        assert_eq!(readable_to_minimal_str("0.1", 18).unwrap(), "100000000000000000");
+        assert_eq!(readable_to_minimal_str("1", 18).unwrap(), "1000000000000000000");
+        // SOL: 9 decimals
+        assert_eq!(readable_to_minimal_str("1", 9).unwrap(), "1000000000");
+        // 超出精度且非零 → error
+        assert!(readable_to_minimal_str("0.1234567", 6).is_err());
+        assert!(readable_to_minimal_str("1.00000002", 2).is_err());
+        // 超出精度但全是零 → ok
+        assert_eq!(readable_to_minimal_str("1.000", 2).unwrap(), "100");
+        assert_eq!(readable_to_minimal_str("0.1230000", 6).unwrap(), "123000");
     }
 }
