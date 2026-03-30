@@ -2,12 +2,12 @@
 
 Detailed parameter tables, return field schemas, and usage examples for all 12 DeFi commands.
 
-## 1. onchainos defi chains
+## 1. onchainos defi support-chains
 
 Get all chains currently supported by DeFi products.
 
 ```bash
-onchainos defi chains
+onchainos defi support-chains
 ```
 
 No parameters.
@@ -33,12 +33,12 @@ No parameters.
 
 ---
 
-## 2. onchainos defi protocols
+## 2. onchainos defi support-platforms
 
-Get all DeFi protocol platforms and their product counts.
+Get all DeFi platforms and their product counts.
 
 ```bash
-onchainos defi protocols
+onchainos defi support-platforms
 ```
 
 No parameters.

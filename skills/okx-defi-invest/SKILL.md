@@ -28,8 +28,8 @@ For CLI parameter details, see [references/cli-reference.md](references/cli-refe
 
 | # | Command | Description |
 |---|---------|-------------|
-| 1 | `defi chains` | Get supported chains for DeFi |
-| 2 | `defi protocols` | Get supported protocols/platforms for DeFi |
+| 1 | `defi support-chains` | Get supported chains for DeFi |
+| 2 | `defi support-platforms` | Get supported platforms for DeFi |
 | 3 | `defi list` | List top DeFi products by APY |
 | 4 | `defi search --token <tokens> [--platform <names>] [--chain <chain>] [--product-group <group>]` | Search DeFi products |
 | 5 | `defi detail --investment-id <id>` | Get full product details |
