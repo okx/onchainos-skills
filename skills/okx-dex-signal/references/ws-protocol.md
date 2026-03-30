@@ -8,7 +8,7 @@ and subscribe to real-time data.
 ## Endpoint
 
 ```
-wss://wsdex.okx.com:8443/ws/v5/dex
+wss://wsdex.okx.com/ws/v6/dex
 ```
 
 Uses TLS. Connect with any standard WebSocket client that supports TLS.
@@ -222,6 +222,39 @@ The server sends one ACK per subscription arg:
 
 Wait for N ACKs (one per arg) before considering the session active.
 If any arg fails, you receive:
+
+```json
+{ "event": "error", "code": "...", "msg": "..." }
+```
+
+---
+
+## Unsubscribe Message
+
+To cancel one or more channel subscriptions without disconnecting:
+
+```json
+{
+  "op": "unsubscribe",
+  "args": ["<SubscriptionTopic>"]
+}
+```
+
+The `args` array uses the same topic format as subscribe (e.g. `{"channel": "kol_smartmoney-tracker-activity"}`).
+
+### Unsubscribe ACK
+
+On success:
+
+```json
+{
+  "event": "unsubscribe",
+  "arg": { "channel": "kol_smartmoney-tracker-activity" },
+  "connId": "d0b44253"
+}
+```
+
+On failure:
 
 ```json
 { "event": "error", "code": "...", "msg": "..." }

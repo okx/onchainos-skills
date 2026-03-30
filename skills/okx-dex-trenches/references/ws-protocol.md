@@ -299,6 +299,39 @@ If any arg fails, you receive:
 
 ---
 
+## Unsubscribe Message
+
+To cancel one or more channel subscriptions without disconnecting:
+
+```json
+{
+  "op": "unsubscribe",
+  "args": ["<SubscriptionTopic>"]
+}
+```
+
+The `args` array uses the same topic format as subscribe (e.g. `{"channel": "dex-market-memepump-new-token-openapi", "chainIndex": "501"}`).
+
+### Unsubscribe ACK
+
+On success:
+
+```json
+{
+  "event": "unsubscribe",
+  "arg": { "channel": "dex-market-memepump-new-token-openapi", "chainIndex": "501" },
+  "connId": "d0b44253"
+}
+```
+
+On failure:
+
+```json
+{ "event": "error", "code": "...", "msg": "..." }
+```
+
+---
+
 ## Heartbeat
 
 Send `"ping"` as a plain text frame every **25 seconds**.

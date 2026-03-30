@@ -403,6 +403,39 @@ If any arg fails, you receive:
 
 ---
 
+## Unsubscribe Message
+
+To cancel one or more channel subscriptions without disconnecting:
+
+```json
+{
+  "op": "unsubscribe",
+  "args": ["<SubscriptionTopic>"]
+}
+```
+
+The `args` array uses the same topic format as subscribe (e.g. `{"channel": "price", "chainIndex": "1", "tokenContractAddress": "0xabc..."}`).
+
+### Unsubscribe ACK
+
+On success:
+
+```json
+{
+  "event": "unsubscribe",
+  "arg": { "channel": "price", "chainIndex": "1", "tokenContractAddress": "0x382bb369d343125bfb2117af9c149795c6c65c50" },
+  "connId": "d0b44253"
+}
+```
+
+On failure:
+
+```json
+{ "event": "error", "code": "...", "msg": "..." }
+```
+
+---
+
 ## Heartbeat
 
 Send `"ping"` as a plain text frame every **25 seconds**.
