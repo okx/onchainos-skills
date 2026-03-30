@@ -5,52 +5,16 @@ use crate::client::ApiClient;
 
 use super::helpers::convert_minimal_to_decimal;
 
-/// TODO: Replace with real API endpoint once available
-/// GET /api/v6/defi/supported/chain (placeholder)
-pub async fn fetch_chains(_client: &ApiClient) -> Result<Value> {
-    Ok(json!({
-        "placeholder": true,
-        "message": "API endpoint not yet available. This is a placeholder response.",
-        "chains": [
-            {"chainIndex": "1", "chainName": "Ethereum"},
-            {"chainIndex": "56", "chainName": "BSC"},
-            {"chainIndex": "137", "chainName": "Polygon"},
-            {"chainIndex": "42161", "chainName": "Arbitrum"},
-            {"chainIndex": "8453", "chainName": "Base"},
-            {"chainIndex": "196", "chainName": "X Layer"},
-            {"chainIndex": "43114", "chainName": "Avalanche"},
-            {"chainIndex": "10", "chainName": "Optimism"},
-            {"chainIndex": "250", "chainName": "Fantom"},
-            {"chainIndex": "784", "chainName": "Sui"},
-            {"chainIndex": "195", "chainName": "Tron"},
-            {"chainIndex": "607", "chainName": "TON"},
-            {"chainIndex": "59144", "chainName": "Linea"},
-            {"chainIndex": "534352", "chainName": "Scroll"},
-            {"chainIndex": "324", "chainName": "zkSync"},
-            {"chainIndex": "501", "chainName": "Solana"}
-        ]
-    }))
+/// GET /api/v6/defi/product/supported-chains
+pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
+    client.get("/api/v6/defi/product/supported-chains", &[]).await
 }
 
-/// TODO: Replace with real API endpoint once available
-/// GET /api/v6/defi/supported/protocol (placeholder)
-pub async fn fetch_protocols(_client: &ApiClient) -> Result<Value> {
-    Ok(json!({
-        "placeholder": true,
-        "message": "API endpoint not yet available. This is a placeholder response.",
-        "protocols": [
-            {"platformName": "Aave V3", "supportedChains": ["1", "137", "42161", "43114", "10", "8453"]},
-            {"platformName": "Lido", "supportedChains": ["1"]},
-            {"platformName": "Compound V3", "supportedChains": ["1", "137", "42161", "8453"]},
-            {"platformName": "PancakeSwap", "supportedChains": ["56", "1", "42161", "8453"]},
-            {"platformName": "Uniswap V3", "supportedChains": ["1", "137", "42161", "10", "8453"]},
-            {"platformName": "NAVI", "supportedChains": ["784"]},
-            {"platformName": "Kamino", "supportedChains": ["501"]},
-            {"platformName": "BENQI", "supportedChains": ["43114"]},
-            {"platformName": "Venus", "supportedChains": ["56"]},
-            {"platformName": "Spark", "supportedChains": ["1"]}
-        ]
-    }))
+/// GET /api/v6/defi/product/supported-platforms
+pub async fn fetch_protocols(client: &ApiClient) -> Result<Value> {
+    client
+        .get("/api/v6/defi/product/supported-platforms", &[])
+        .await
 }
 
 /// POST /api/v6/defi/product/search
