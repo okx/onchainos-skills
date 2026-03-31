@@ -632,11 +632,9 @@ pub async fn fetch_quote(
             eprintln!("[DEBUG][fetch_quote] to resolved: {} → {}", orig_to, to);
         }
     }
-    // Generate trace ID: resolved from address + timestamp
+    // Generate trace ID: resolved from address + timestamp (not cached; quote has its own independent tid)
     let timestamp = chrono::Utc::now().timestamp_millis().to_string();
     let tid = format!("{}{}", from, timestamp);
-    // Save to cache (best-effort, don't fail the request)
-    let _ = crate::wallet_store::set_swap_trace_id(&tid);
 
     let params = vec![
         ("chainIndex", chain_index),
@@ -722,26 +720,24 @@ pub async fn fetch_swap(
     if let Some(m) = max_auto_slippage {
         params.push(("maxAutoSlippagePercent", m));
     }
-    // Read swap trace ID from cache; attach trace headers if present
-    let cached_tid = crate::wallet_store::get_swap_trace_id().ok().flatten();
-    let result = if let Some(ref tid) = cached_tid {
-        let timestamp = chrono::Utc::now().timestamp_millis().to_string();
-        if cfg!(feature = "debug-log") {
-            eprintln!(
-                "[DEBUG][fetch_swap] trace headers: ok-client-tid={}, ok-client-timestamp={}",
-                tid, timestamp
-            );
-        }
-        let headers = [
-            ("ok-client-tid", tid.as_str()),
-            ("ok-client-timestamp", timestamp.as_str()),
-        ];
-        client
-            .get_with_headers("/api/v6/dex/aggregator/swap", &params, Some(&headers))
-            .await
-    } else {
-        client.get("/api/v6/dex/aggregator/swap", &params).await
-    };
+    // Generate a new trace ID for the swap flow and save to cache
+    let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+    let tid = format!("{}{}", from, timestamp);
+    // Save to cache (best-effort) — downstream sign_and_broadcast reads it for contract calls
+    let _ = crate::wallet_store::set_swap_trace_id(&tid);
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][fetch_swap] trace headers: ok-client-tid={}, ok-client-timestamp={}",
+            tid, timestamp
+        );
+    }
+    let headers = [
+        ("ok-client-tid", tid.as_str()),
+        ("ok-client-timestamp", timestamp.as_str()),
+    ];
+    let result = client
+        .get_with_headers("/api/v6/dex/aggregator/swap", &params, Some(&headers))
+        .await;
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG][fetch_swap] response: {:?}", result);
     }
@@ -965,7 +961,9 @@ async fn cmd_execute(
         if cfg!(feature = "debug-log") {
             eprintln!(
                 "[DEBUG][cmd_execute] spendable={}, amount={}, needs_approve={}",
-                spendable, amount, is_allowance_insufficient(spendable, amount)
+                spendable,
+                amount,
+                is_allowance_insufficient(spendable, amount)
             );
         }
 
