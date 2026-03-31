@@ -3,9 +3,15 @@
 //! Sensitive credentials (tokens, session key) are stored as a single JSON blob
 //! under one keyring entry ("agentic-wallet"). Non-sensitive session metadata
 //! lives in `~/.onchainos/session.json` (see `wallet_store::SessionJson`).
+//!
+//! On systems where the OS keyring is unavailable (headless Linux, Docker,
+//! minimal distros), we silently fall back to an encrypted local file
+//! (`~/.onchainos/keyring.enc`) via the `file_keyring` module.
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
+
+use crate::file_keyring;
 
 const SERVICE: &str = "onchainos";
 const UNIFIED_KEY: &str = "agentic-wallet";
@@ -14,7 +20,25 @@ const UNIFIED_KEY: &str = "agentic-wallet";
 
 /// Read the entire JSON blob from the single keyring entry.
 /// Public so callers can batch-read multiple keys in a single OS keyring access.
+///
+/// Falls back to an encrypted local file if the OS keyring is unavailable.
 pub fn read_blob() -> Result<HashMap<String, String>> {
+    match os_read_blob() {
+        Ok(map) => Ok(map),
+        Err(_) => file_keyring::read_blob(),
+    }
+}
+
+/// Write the entire JSON blob back to the single keyring entry.
+fn write_blob(map: &HashMap<String, String>) -> Result<()> {
+    match os_write_blob(map) {
+        Ok(()) => Ok(()),
+        Err(_) => file_keyring::write_blob(map),
+    }
+}
+
+/// Read from OS keyring only.
+fn os_read_blob() -> Result<HashMap<String, String>> {
     let e = keyring::Entry::new(SERVICE, UNIFIED_KEY).context("failed to create keyring entry")?;
     match e.get_password() {
         Ok(json) => {
@@ -27,8 +51,8 @@ pub fn read_blob() -> Result<HashMap<String, String>> {
     }
 }
 
-/// Write the entire JSON blob back to the single keyring entry.
-fn write_blob(map: &HashMap<String, String>) -> Result<()> {
+/// Write to OS keyring only.
+fn os_write_blob(map: &HashMap<String, String>) -> Result<()> {
     let e = keyring::Entry::new(SERVICE, UNIFIED_KEY).context("failed to create keyring entry")?;
     let json = serde_json::to_string(map).context("failed to serialize keyring blob")?;
     e.set_password(&json)
@@ -71,7 +95,13 @@ pub fn store(credentials: &[(&str, &str)]) -> Result<()> {
 }
 
 /// Clear all credentials by deleting the single keyring entry.
+/// Also clears the file fallback to ensure no stale credentials remain.
 pub fn clear_all() -> Result<()> {
+    let _ = os_clear_all();
+    file_keyring::clear_all()
+}
+
+fn os_clear_all() -> Result<()> {
     let e = keyring::Entry::new(SERVICE, UNIFIED_KEY).context("failed to create keyring entry")?;
     match e.delete_credential() {
         Ok(()) => Ok(()),

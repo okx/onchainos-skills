@@ -66,14 +66,15 @@ onchainos swap approve --token <address> --amount <amount> --chain <chain>
 Get swap quote (read-only price estimate).
 
 ```bash
-onchainos swap quote --from <address> --to <address> --amount <amount> --chain <chain> [--swap-mode <mode>]
+onchainos swap quote --from <address> --to <address> --readable-amount <amount> --chain <chain> [--swap-mode <mode>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--from` | Yes | - | Source token contract address |
 | `--to` | Yes | - | Destination token contract address |
-| `--amount` | Yes | - | Amount in minimal units (sell amount if exactIn, buy amount if exactOut) |
+| `--readable-amount` | One of | - | Human-readable sell amount (e.g. `"1.5"` for 1.5 USDC). CLI fetches token decimals and converts automatically. |
+| `--amount` | One of | - | Amount in minimal units — use only when raw units are explicitly known. Mutually exclusive with `--readable-amount`. |
 | `--chain` | Yes | - | Chain name |
 | `--swap-mode` | No | `exactIn` | `exactIn` or `exactOut` |
 
@@ -104,14 +105,15 @@ onchainos swap quote --from <address> --to <address> --amount <amount> --chain <
 One-shot swap: quote → approve (if needed) → sign → broadcast → txHash. Honeypot and price impact >10% are blocked internally.
 
 ```bash
-onchainos swap execute --from <address> --to <address> --amount <amount> --chain <chain> --wallet <address> [--slippage <pct>] [--gas-level <level>] [--swap-mode <mode>] [--mev-protection] [--tips <sol_amount>]
+onchainos swap execute --from <address> --to <address> --readable-amount <amount> --chain <chain> --wallet <address> [--slippage <pct>] [--gas-level <level>] [--swap-mode <mode>] [--mev-protection] [--tips <sol_amount>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--from` | Yes | - | Source token contract address |
 | `--to` | Yes | - | Destination token contract address |
-| `--amount` | Yes | - | Amount in minimal units |
+| `--readable-amount` | One of | - | Human-readable sell amount (e.g. `"1.5"` for 1.5 USDC). CLI fetches token decimals and converts automatically. |
+| `--amount` | One of | - | Amount in minimal units — use only when raw units are explicitly known. Mutually exclusive with `--readable-amount`. |
 | `--chain` | Yes | - | Chain name |
 | `--wallet` | Yes | - | User's wallet address |
 | `--slippage` | No | autoSlippage | Slippage tolerance in percent (e.g., `"1"` for 1%). Omit to use autoSlippage. |
@@ -137,11 +139,11 @@ onchainos swap execute --from <address> --to <address> --amount <amount> --chain
 
 ```bash
 # 1. Quote
-onchainos swap quote --from 0x74b7f16337b8972027f6196a17a631ac6de26d22 --to 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --amount 100000000 --chain xlayer
+onchainos swap quote --from 0x74b7f16337b8972027f6196a17a631ac6de26d22 --to 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --readable-amount 100 --chain xlayer
 # -> Expected output: 3.2 OKB, Gas fee: ~$0.001, Price impact: 0.05%
 
 # 2. Execute (approve + swap + broadcast in one shot)
-onchainos swap execute --from 0x74b7f16337b8972027f6196a17a631ac6de26d22 --to 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --amount 100000000 --chain xlayer --wallet <wallet_addr>
+onchainos swap execute --from 0x74b7f16337b8972027f6196a17a631ac6de26d22 --to 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --readable-amount 100 --chain xlayer --wallet <wallet_addr>
 # -> { approveTxHash: "0x...", swapTxHash: "0x...", fromAmount: "100", toAmount: "3.2", priceImpact: "0.05%", gasUsed: "$0.001" }
 ```
 

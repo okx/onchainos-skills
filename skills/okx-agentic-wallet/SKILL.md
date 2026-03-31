@@ -1,6 +1,6 @@
 ---
 name: okx-agentic-wallet
-description: "Use this skill when the user mentions wallet login, sign in, verify OTP, add wallet, switch account, wallet status, logout, wallet balance, assets, holdings, send tokens, transfer ETH, transfer USDC, pay someone, send crypto, send ERC-20, send SPL, transaction history, recent transactions, tx status, tx detail, order list, call smart contract, interact with contract, execute contract function, send calldata, invoke smart contract, show my addresses, wallet addresses, deposit, receive, receive address, top up, fund my wallet, sign message, personal sign, personalSign, eip712, sign data, sign typed data, sign EIP-712. Chinese: 登录钱包, 钱包登录, 验证OTP, 添加钱包, 切换账户, 钱包状态, 退出登录, 余额, 资产, 钱包列表, 账户列表, 发送代币, 转账, 交易历史, 交易记录, 合约调用, 我的地址, 钱包地址, 充值, 充币, 收款, 收款地址, 入金, 签名消息, 消息签名. Manages the wallet lifecycle: auth (login, OTP verify, account addition, switching, status, logout), authenticated balance queries, wallet address display (grouped by XLayer/EVM/Solana), token transfers (native & ERC-20/SPL), transaction history, smart contract calls, and message signing (personalSign for EVM & Solana, EIP-712 for EVM)."
+description: "Use this skill when the user mentions wallet login, sign in, verify OTP, add wallet, switch account, wallet status, logout, wallet balance, assets, holdings, send tokens, transfer ETH, transfer USDC, pay someone, send crypto, send ERC-20, send SPL, transaction history, recent transactions, tx status, tx detail, order list, call smart contract, interact with contract, execute contract function, send calldata, invoke smart contract, show my addresses, wallet addresses, deposit, receive, receive address, top up, fund my wallet, sign message, personal sign, personalSign, eip712, sign data, sign typed data, sign EIP-712, TEE signing, trusted execution environment. Chinese: 登录钱包, 钱包登录, 验证OTP, 添加钱包, 切换账户, 钱包状态, 退出登录, 余额, 资产, 钱包列表, 账户列表, 发送代币, 转账, 交易历史, 交易记录, 合约调用, 我的地址, 钱包地址, 充值, 充币, 收款, 收款地址, 入金, 签名消息, 消息签名, TEE签名, 可信执行环境. Manages the wallet lifecycle: auth (login, OTP verify, account addition, switching, status, logout), authenticated balance queries, wallet address display (grouped by XLayer/EVM/Solana), token transfers (native & ERC-20/SPL), transaction history, smart contract calls, and message signing (personalSign for EVM & Solana, EIP-712 for EVM)."
 license: MIT
 metadata:
   author: okx
@@ -36,38 +36,11 @@ Wallet operations: authentication, balance, token transfers, transaction history
           → onchainos wallet balance --chain 1
 ```
 
-### `--amt` — Minimal Unit Amount
+### Amount
 
-**`--amt`: minimal units only, whole numbers, no decimals.**
+**`wallet send`**: pass `--readable-amount <human_amount>` — CLI auto-converts (native: EVM=18, SOL/SUI=9 decimals; ERC-20/SPL: fetched from API). Never compute minimal units manually. Use `--amt` only for raw minimal units.
 
-#### Converting User Amounts to `--amt`
-
-Formula: `amt = user_amount × 10^decimals`
-
-**Native token decimals (fixed):**
-
-| Chain type | Native token | Decimals | Example: user says "0.1" → `--amt` |
-|---|---|---|---|
-| EVM (Ethereum, BSC, Base, Arbitrum, Polygon, X Layer…) | ETH / BNB / OKB… | 18 | `100000000000000000` |
-| Solana | SOL | 9 | `100000000` |
-
-**Non-native tokens (ERC-20 / SPL):** Query decimals first via `okx-dex-token`:
-
-```bash
-onchainos token search --query USDC --chains <chain_name>
-```
-
-Use the `decimals` field from the result to compute `amt`. If multiple tokens match, **ask the user to confirm** which one to use.
-
-| User says | Token decimals | `--amt` value |
-|---|---|---|
-| "Transfer 0.15 ETH" | 18 (native) | `"150000000000000000"` |
-| "Send 100 USDC" | 6 | `"100000000"` |
-| "Send 0.5 SOL" | 9 (native) | `"500000000"` |
-
-Applies to:
-- `onchainos wallet send --amt`
-- `onchainos wallet contract-call --amt`
+**`wallet contract-call`**: `--amt` is the native token value attached to the call (payable functions only), in minimal units. Default `"0"` for non-payable. EVM=18 decimals, SOL=9.
 
 ## Command Index
 
@@ -166,11 +139,11 @@ Some commands return **confirming** (exit code **2**) when backend requires user
 
 ```
 # 1. Run command without --force
-onchainos wallet send --amt "100000000" --receipt "0xAbc..." --chain 1
+onchainos wallet send --readable-amount "0.1" --receipt "0xAbc..." --chain 1
 # → exit code 2, confirming: true → show message to user
 
 # 2. User confirms → re-run with --force
-onchainos wallet send --amt "100000000" --receipt "0xAbc..." --chain 1 --force
+onchainos wallet send --readable-amount "0.1" --receipt "0xAbc..." --chain 1 --force
 ```
 ## Authentication
 
@@ -298,3 +271,9 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
     - Do NOT mix address formats across chain types
 </never>
 </rules>
+
+## FAQ
+
+**Q: The agent cannot autonomously sign and execute transactions — it says local signing is required or asks the user to sign manually. How does signing work?**
+
+A: OKX Agentic Wallet uses **TEE (Trusted Execution Environment)** for transaction signing. The private key is generated and stored inside a server-side secure enclave — it never leaves the TEE.
