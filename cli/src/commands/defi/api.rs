@@ -5,6 +5,18 @@ use crate::client::ApiClient;
 
 use super::helpers::convert_minimal_to_decimal;
 
+/// GET /api/v6/defi/product/supported-chains
+pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
+    client.get("/api/v6/defi/product/supported-chains", &[]).await
+}
+
+/// GET /api/v6/defi/product/supported-platforms
+pub async fn fetch_protocols(client: &ApiClient) -> Result<Value> {
+    client
+        .get("/api/v6/defi/product/supported-platforms", &[])
+        .await
+}
+
 /// POST /api/v6/defi/product/search
 pub async fn fetch_search(
     client: &ApiClient,

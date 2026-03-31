@@ -1647,6 +1647,30 @@ impl McpServer {
         }
     }
 
+    // ── DeFi: Support Chains / Platforms ──────────────────────────────
+
+    #[tool(
+        name = "defi_support_chains",
+        description = "Get supported chains for DeFi operations"
+    )]
+    async fn defi_support_chains(&self) -> Result<String, String> {
+        match defi::fetch_chains(&self.client).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "defi_support_platforms",
+        description = "Get supported platforms for DeFi operations (e.g. Aave, Lido, Compound, PancakeSwap)"
+    )]
+    async fn defi_support_platforms(&self) -> Result<String, String> {
+        match defi::fetch_protocols(&self.client).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
     // ── DeFi A: Search / Detail / Prepare / Deposit ────────────────────
 
     #[tool(
