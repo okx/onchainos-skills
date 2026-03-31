@@ -249,6 +249,13 @@ pub fn get_swap_trace_id() -> Result<Option<String>> {
     Ok(cache.swap_trace_id)
 }
 
+/// Clear the swap trace ID from cache.json (preserves other fields).
+pub fn clear_swap_trace_id() -> Result<()> {
+    let mut cache = load_cache()?;
+    cache.swap_trace_id = None;
+    save_cache(&cache)
+}
+
 // ── balance_cache.json operations ────────────────────────────────────
 
 pub fn load_balance_cache() -> Result<BalanceCacheJson> {
