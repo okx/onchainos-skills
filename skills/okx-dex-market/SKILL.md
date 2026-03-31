@@ -1,6 +1,6 @@
 ---
 name: okx-dex-market
-description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, and wallet PnL/盈亏分析 (win rate, my wallet's DEX trade history, realized/unrealized PnL per token). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my wallet DEX history', 'realized profit', or 'unrealized profit'. Also use when the user wants to write a script/脚本 (Python, JS, Rust, etc.) for real-time price monitoring/实时价格监控, candlestick streaming/K线推送, trade feed subscription/交易流推送, or building a price alert bot/价格提醒机器人 via WebSocket. Covers WS channels: price, price-info, dex-token-candle{period}, trades."
+description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, and wallet PnL/盈亏分析 (win rate, my wallet's DEX trade history, realized/unrealized PnL per token). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my wallet DEX history', 'realized profit', or 'unrealized profit'. Use also for price monitoring scripts or market data automation using OKX."
 license: MIT
 metadata:
   author: okx
