@@ -4,7 +4,7 @@ description: "Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens
 license: MIT
 metadata:
   author: okx
-  version: "1.1.0"
+  version: "2.2.4"
   homepage: "https://web3.okx.com"
 ---
 
