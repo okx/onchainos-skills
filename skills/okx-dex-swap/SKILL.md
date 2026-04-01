@@ -44,7 +44,8 @@ metadata:
 | 2 | `onchainos swap liquidity --chain <chain>` | Get available liquidity sources on a chain |
 | 3 | `onchainos swap approve --token ... --amount ... --chain ...` | Get ERC-20 approval transaction data (advanced/manual use) |
 | 4 | `onchainos swap quote --from ... --to ... --readable-amount ... --chain ...` | Get swap quote (read-only price estimate). **No `--slippage` param**. |
-| 5 | `onchainos swap execute --from ... --to ... --readable-amount ... --chain ... --wallet ... [--slippage <pct>] [--gas-level <level>] [--mev-protection]` | **One-shot swap**: quote → approve (if needed) → swap → sign & broadcast → txHash. |
+| 5 | `onchainos swap swap --from ... --to ... --amount ... --chain ... --wallet ... [--slippage <pct>] [--gas-level <level>] [--tips <sol>] [--max-auto-slippage <pct>]` | Get swap transaction data (quote → sign → broadcast). Returns transaction data for signing. |
+| 6 | `onchainos swap execute --from ... --to ... --readable-amount ... --chain ... --wallet ... [--slippage <pct>] [--gas-level <level>] [--mev-protection]` | **One-shot swap**: quote → approve (if needed) → swap → sign & broadcast → txHash. |
 
 ## Token Address Resolution (Mandatory)
 
@@ -71,7 +72,7 @@ Follow the **Token Address Resolution** section above.
 
 - **Chain**: missing → recommend XLayer (`--chain xlayer`, zero gas, fast confirmation).
 - **Amount**: extract human-readable amount from user's request; pass directly as `--readable-amount <amount>`. CLI fetches token decimals and converts to raw units automatically.
-- **Slippage**: omit to use autoSlippage. Pass `--slippage <value>` only if user explicitly requests. Never pass `--slippage` to `swap quote`.
+- **Slippage**: omit to use autoSlippage. Pass `--slippage <value>` only if user explicitly requests. Value must be greater than 0 and at most 100 (percent), decimals allowed (e.g. `0.5`, `1`, `100`). Never pass `--slippage` to `swap quote`.
 - **Gas level**: default `average`. Use `fast` for meme/time-sensitive trades.
 - **Wallet**: run `onchainos wallet status`. Not logged in → `onchainos wallet login`. Single account → use active address. Multiple accounts → list and ask user to choose.
 

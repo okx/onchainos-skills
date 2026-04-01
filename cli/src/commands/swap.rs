@@ -200,11 +200,8 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             amount,
             chain,
         } => {
-            validate_amount(&amount)?;
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
-            let resolved_token = resolve_token_address(&chain_index, &token);
-            validate_token_for_chain(&chain_index, &resolved_token, "token")?;
             output::success(fetch_approve(&client, &chain_index, &token, &amount).await?);
         }
         SwapCommand::CheckApprovals {
@@ -448,6 +445,31 @@ fn validate_amount(amount: &str) -> Result<()> {
     Ok(())
 }
 
+/// Validate that `slippage` is a number strictly greater than 0 and at most 100.
+/// Accepts decimals like "0.5", "1", "99.9", "100". Rejects "0", negatives, >100, non-numeric.
+fn validate_slippage(slippage: &str) -> Result<()> {
+    let slippage = slippage.trim();
+    let val: f64 = slippage.parse().map_err(|_| {
+        anyhow::anyhow!(
+            "--slippage must be a number between 0 (exclusive) and 100 (inclusive), got \"{}\"",
+            slippage
+        )
+    })?;
+    if val.is_nan() || val.is_infinite() {
+        bail!(
+            "--slippage must be a finite number between 0 (exclusive) and 100 (inclusive), got \"{}\"",
+            slippage
+        );
+    }
+    if val <= 0.0 || val > 100.0 {
+        bail!(
+            "--slippage must be greater than 0 and at most 100, got \"{}\"",
+            slippage
+        );
+    }
+    Ok(())
+}
+
 /// Convert a human-readable decimal string to minimal units (integer string).
 /// Uses string arithmetic to avoid floating-point precision issues.
 /// e.g. "0.1" with decimal=6 → "100000", "1.5" with decimal=18 → "1500000000000000000"
@@ -677,6 +699,13 @@ pub async fn fetch_swap(
     tips: Option<&str>,
     max_auto_slippage: Option<&str>,
 ) -> Result<Value> {
+    // ── Input validation ──
+    if let Some(s) = slippage {
+        validate_slippage(s)?;
+    }
+    validate_token_for_chain(chain_index, wallet, "wallet")?;
+    validate_amount(amount)?;
+
     let orig_from = from;
     let orig_to = to;
     let from = resolve_token_address(chain_index, orig_from);
@@ -744,6 +773,29 @@ pub async fn fetch_swap(
     result
 }
 
+/// Validate that `amount` is a non-negative integer string (allows "0" for revoke).
+fn validate_approve_amount(amount: &str) -> Result<()> {
+    let amount = amount.trim();
+    if amount.is_empty() {
+        bail!("--amount must not be empty");
+    }
+    if amount.contains('.') {
+        bail!("--amount must be a whole number in minimal units (no decimals)");
+    }
+    if !amount.chars().all(|c| c.is_ascii_digit()) {
+        bail!(
+            "--amount must be a whole number in minimal units, got \"{}\". \
+             Infinity, NaN, negative numbers and non-numeric values are not accepted.",
+            amount
+        );
+    }
+    // Allow "0" for revoke, but reject leading zeros like "007"
+    if amount.len() > 1 && amount.starts_with('0') {
+        bail!("--amount must not have leading zeros, got \"{}\"", amount);
+    }
+    Ok(())
+}
+
 /// GET /api/v6/dex/aggregator/approve-transaction
 pub async fn fetch_approve(
     client: &ApiClient,
@@ -751,8 +803,11 @@ pub async fn fetch_approve(
     token: &str,
     amount: &str,
 ) -> Result<Value> {
+    // ── Input validation ──
+    validate_approve_amount(amount)?;
     let orig_token = token;
     let token = resolve_token_address(chain_index, orig_token);
+    validate_token_for_chain(chain_index, &token, "token")?;
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][fetch_approve] chain_index={}, token={}, amount={}",
@@ -1208,5 +1263,169 @@ mod tests {
         // 超出精度但全是零 → ok
         assert_eq!(readable_to_minimal_str("1.000", 2).unwrap(), "100");
         assert_eq!(readable_to_minimal_str("0.1230000", 6).unwrap(), "123000");
+    }
+
+    // ── slippage validation ────────────────────────────────────────
+
+    #[test]
+    fn test_validate_slippage_valid() {
+        assert!(validate_slippage("0.5").is_ok());
+        assert!(validate_slippage("1").is_ok());
+        assert!(validate_slippage("50").is_ok());
+        assert!(validate_slippage("99.9").is_ok());
+        assert!(validate_slippage("100").is_ok());   // upper bound inclusive
+        assert!(validate_slippage("100.0").is_ok());
+        assert!(validate_slippage("0.001").is_ok());
+        assert!(validate_slippage("0.01").is_ok());
+        assert!(validate_slippage("  1  ").is_ok()); // trimmed
+    }
+
+    #[test]
+    fn test_validate_slippage_boundary_reject() {
+        // 0 is exclusive
+        assert!(validate_slippage("0").is_err());
+        assert!(validate_slippage("0.0").is_err());
+        // >100 rejected
+        assert!(validate_slippage("100.1").is_err());
+    }
+
+    #[test]
+    fn test_validate_slippage_out_of_range() {
+        assert!(validate_slippage("-1").is_err());
+        assert!(validate_slippage("-0.5").is_err());
+        assert!(validate_slippage("100.1").is_err());
+        assert!(validate_slippage("200").is_err());
+    }
+
+    #[test]
+    fn test_validate_slippage_non_numeric() {
+        assert!(validate_slippage("abc").is_err());
+        assert!(validate_slippage("").is_err());
+        assert!(validate_slippage("   ").is_err());
+        assert!(validate_slippage("NaN").is_err());
+        assert!(validate_slippage("inf").is_err());
+        assert!(validate_slippage("infinity").is_err());
+        assert!(validate_slippage("-inf").is_err());
+    }
+
+    // ── amount validation (swap: positive integer) ─────────────────
+
+    #[test]
+    fn test_validate_amount_valid() {
+        assert!(validate_amount("1").is_ok());
+        assert!(validate_amount("1000000").is_ok());
+        assert!(validate_amount("999999999999999999").is_ok());
+    }
+
+    #[test]
+    fn test_validate_amount_reject_decimal() {
+        assert!(validate_amount("1.5").is_err());
+        assert!(validate_amount("0.1").is_err());
+        assert!(validate_amount("100.0").is_err());
+    }
+
+    #[test]
+    fn test_validate_amount_reject_zero() {
+        assert!(validate_amount("0").is_err());
+        assert!(validate_amount("000").is_err());
+    }
+
+    #[test]
+    fn test_validate_amount_reject_negative_and_non_numeric() {
+        assert!(validate_amount("-1").is_err());
+        assert!(validate_amount("-100").is_err());
+        assert!(validate_amount("abc").is_err());
+        assert!(validate_amount("12abc").is_err());
+        assert!(validate_amount("").is_err());
+        assert!(validate_amount("  ").is_err());
+    }
+
+    #[test]
+    fn test_validate_amount_reject_leading_zeros() {
+        assert!(validate_amount("007").is_err());
+        assert!(validate_amount("01").is_err());
+    }
+
+    // ── approve amount validation (allows 0 for revoke) ────────────
+
+    #[test]
+    fn test_validate_approve_amount_valid() {
+        assert!(validate_approve_amount("0").is_ok()); // revoke
+        assert!(validate_approve_amount("1").is_ok());
+        assert!(validate_approve_amount("1000000").is_ok());
+    }
+
+    #[test]
+    fn test_validate_approve_amount_reject_decimal() {
+        assert!(validate_approve_amount("1.5").is_err());
+        assert!(validate_approve_amount("0.1").is_err());
+    }
+
+    #[test]
+    fn test_validate_approve_amount_reject_leading_zeros() {
+        assert!(validate_approve_amount("007").is_err());
+        assert!(validate_approve_amount("00").is_err());
+    }
+
+    #[test]
+    fn test_validate_approve_amount_reject_negative_and_non_numeric() {
+        assert!(validate_approve_amount("-1").is_err());
+        assert!(validate_approve_amount("abc").is_err());
+        assert!(validate_approve_amount("").is_err());
+    }
+
+    // ── token/wallet address vs chain validation ───────────────────
+
+    #[test]
+    fn test_validate_token_for_chain_evm_valid() {
+        // EVM address on EVM chain — ok
+        assert!(validate_token_for_chain("1", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "from").is_ok());
+        assert!(validate_token_for_chain("1", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "wallet").is_ok());
+        assert!(validate_token_for_chain("56", "0x55d398326f99059ff775485246999027b3197955", "token").is_ok());
+    }
+
+    #[test]
+    fn test_validate_token_for_chain_evm_rejects_solana_address() {
+        // Solana base58 address on EVM chain — rejected
+        let sol_addr = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+        assert!(validate_token_for_chain("1", sol_addr, "from").is_err());
+        assert!(validate_token_for_chain("1", sol_addr, "wallet").is_err());
+        assert!(validate_token_for_chain("56", sol_addr, "token").is_err());
+        assert!(validate_token_for_chain("8453", sol_addr, "wallet").is_err());
+    }
+
+    #[test]
+    fn test_validate_token_for_chain_solana_valid() {
+        // Solana base58 on Solana — ok
+        assert!(validate_token_for_chain("501", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "from").is_ok());
+        assert!(validate_token_for_chain("501", "11111111111111111111111111111111", "wallet").is_ok());
+    }
+
+    #[test]
+    fn test_validate_token_for_chain_solana_rejects_evm_address() {
+        // EVM 0x address on Solana — rejected
+        assert!(validate_token_for_chain("501", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "from").is_err());
+        assert!(validate_token_for_chain("501", "0x1234567890abcdef1234567890abcdef12345678", "wallet").is_err());
+    }
+
+    #[test]
+    fn test_validate_token_for_chain_tron_skip() {
+        // Tron (195) — all formats pass, validation is skipped
+        assert!(validate_token_for_chain("195", "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb", "from").is_ok());
+        assert!(validate_token_for_chain("195", "0xabc123", "wallet").is_ok());
+    }
+
+    #[test]
+    fn test_validate_token_for_chain_sui_skip() {
+        // Sui (784) — validation is skipped
+        assert!(validate_token_for_chain("784", "0x2::sui::SUI", "from").is_ok());
+    }
+
+    #[test]
+    fn test_validate_token_for_chain_wallet_label() {
+        // Verify the "wallet" label appears in error messages
+        let err = validate_token_for_chain("1", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "wallet")
+            .unwrap_err();
+        assert!(err.to_string().contains("--wallet"));
     }
 }
