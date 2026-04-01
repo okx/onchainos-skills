@@ -26,6 +26,8 @@ as the OKX REST API. Full documentation:
 Obtain your API Key, Secret Key, and Passphrase from the
 [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal).
 
+> **Security**: Never hardcode credentials in source code. Use environment variables or a `.env` file.
+
 ### Login Message
 
 After connecting, send a login message before subscribing:
@@ -103,21 +105,21 @@ Wait for this ACK before sending subscribe messages. Recommended timeout: 10 sec
 
 ## Channels
 
-### `signal` — Signal Alerts
+### `dex-market-new-signal-openapi` — Signal Alerts
 
 Retrieve real-time aggregated buy signal alerts from smart money, KOL, and whale wallets.
 Single-chain subscription only.
 
 Subscribe arg:
 ```json
-{ "channel": "signal", "chainIndex": "1" }
+{ "channel": "dex-market-new-signal-openapi", "chainIndex": "1" }
 ```
 
 #### Subscribe Parameters
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `channel` | String | Yes | `"signal"` |
+| `channel` | String | Yes | `"dex-market-new-signal-openapi"` |
 | `chainIndex` | String | Yes | Chain ID — single chain only (e.g. `"1"` = Ethereum, `"501"` = Solana) |
 
 #### Push Data Fields
@@ -146,7 +148,7 @@ Subscribe arg:
 ```json
 {
   "arg": {
-    "channel": "signal",
+    "channel": "dex-market-new-signal-openapi",
     "chainIndex": "1"
   },
   "data": [{
@@ -236,11 +238,11 @@ To cancel one or more channel subscriptions without disconnecting:
 ```json
 {
   "op": "unsubscribe",
-  "args": ["<SubscriptionTopic>"]
+  "args": [{ "channel": "kol_smartmoney-tracker-activity" }]
 }
 ```
 
-The `args` array uses the same topic format as subscribe (e.g. `{"channel": "kol_smartmoney-tracker-activity"}`).
+The `args` array uses the same object format as subscribe.
 
 ### Unsubscribe ACK
 

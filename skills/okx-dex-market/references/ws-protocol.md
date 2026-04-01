@@ -26,6 +26,8 @@ as the OKX REST API. Full documentation:
 Obtain your API Key, Secret Key, and Passphrase from the
 [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal).
 
+> **Security**: Never hardcode credentials in source code. Use environment variables or a `.env` file.
+
 ### Login Message
 
 After connecting, send a login message before subscribing:
@@ -410,11 +412,11 @@ To cancel one or more channel subscriptions without disconnecting:
 ```json
 {
   "op": "unsubscribe",
-  "args": ["<SubscriptionTopic>"]
+  "args": [{ "channel": "price", "chainIndex": "1", "tokenContractAddress": "0xabc..." }]
 }
 ```
 
-The `args` array uses the same topic format as subscribe (e.g. `{"channel": "price", "chainIndex": "1", "tokenContractAddress": "0xabc..."}`).
+The `args` array uses the same object format as subscribe.
 
 ### Unsubscribe ACK
 
