@@ -415,7 +415,9 @@ mod tests {
 
     /// Helper: set ONCHAINOS_HOME to a unique dir under target/ for the closure.
     fn with_temp_home<F: FnOnce()>(name: &str, f: F) {
-        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_tmp")

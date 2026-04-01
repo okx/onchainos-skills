@@ -1,6 +1,6 @@
 # Onchain OS DEX Swap — CLI Command Reference
 
-Detailed parameter tables, return field schemas, and usage examples for all 5 swap commands.
+Detailed parameter tables, return field schemas, and usage examples for all 6 swap commands.
 
 ## 1. onchainos swap chains
 
@@ -153,3 +153,50 @@ onchainos swap execute --from 0x74b7f16337b8972027f6196a17a631ac6de26d22 --to 0x
 onchainos swap liquidity --chain xlayer
 # -> Display: CurveNG, XLayer DEX, ... (DEX sources on XLayer)
 ```
+
+## 6. onchainos swap swap
+
+Calldata only — returns unsigned transaction data. Does NOT sign or broadcast.
+
+```bash
+onchainos swap swap --from <address> --to <address> --readable-amount <amount> --chain <chain> --wallet <address> [--slippage <pct>] [--swap-mode <mode>] [--tips <sol_amount>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--from` | Yes | - | Source token contract address |
+| `--to` | Yes | - | Destination token contract address |
+| `--readable-amount` | One of | - | Human-readable sell amount (e.g. `"1.5"` for 1.5 USDC). CLI fetches token decimals and converts automatically. |
+| `--amount` | One of | - | Amount in minimal units — use only when raw units are explicitly known. Mutually exclusive with `--readable-amount`. |
+| `--chain` | Yes | - | Chain name |
+| `--wallet` | Yes | - | User's wallet address |
+| `--slippage` | No | autoSlippage | Slippage tolerance in percent (e.g., `"1"` for 1%). Omit to use autoSlippage. |
+| `--swap-mode` | No | `exactIn` | `exactIn` or `exactOut` |
+| `--tips` | No | - | Jito tips in SOL for MEV protection (Solana only, e.g. `0.001`). Jito calldata embedded in returned tx data. |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `routerResult` | Object | Same structure as `swap quote` return |
+| `tx.to` | String | Target contract address |
+| `tx.data` | String | Transaction calldata (hex) |
+| `tx.gas` | String | Gas limit |
+| `tx.gasPrice` | String | Gas price |
+| `tx.value` | String | Native token transfer value (minimal units) |
+| `tx.minReceiveAmount` | String | Minimum receive amount after slippage |
+
+### Calldata Usage
+
+Returns unsigned tx data: `{ routerResult, tx: { to, data, gas, gasPrice, value, minReceiveAmount } }`
+
+Present to user: token pair summary + tx fields (`to`, `data`, `value`, `gas`).
+EVM non-native token → also run `swap approve` first, present approve calldata separately.
+Remind: calldata expires in minutes, re-run if stale.
+
+> Do NOT call `gateway broadcast`. User handles signing and broadcasting.
+
+### MEV Notes
+
+- **Solana**: `--tips` applies — Jito calldata is embedded in the returned tx data.
+- **EVM**: `--mev-protection` is not supported for `swap swap`. Recommend submitting via a MEV-protected RPC (e.g. Flashbots Protect) if needed.
