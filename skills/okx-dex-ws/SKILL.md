@@ -12,6 +12,10 @@ metadata:
 
 This skill provides the complete OKX DEX WebSocket protocol reference for writing real-time streaming scripts.
 
+## Prerequisites
+
+This skill requires co-installation with `okx-dex-market`, `okx-dex-signal`, and `okx-dex-trenches` (all included in the onchainos-skills repository).
+
 ## When to Use
 
 Load this skill when the user asks to:
