@@ -120,9 +120,7 @@ To search for specific command details: `grep -n "onchainos market <command>" re
 When the user wants to build a custom WebSocket client, write a real-time price monitoring script, implement a candlestick streaming bot, or asks about the raw OKX DEX WebSocket protocol for market data, read **`references/ws-protocol.md`** before responding. That file contains the complete protocol specification for these channels:
 
 - **`price`** — real-time token price updates (push on every change)
-- **`price-info`** — detailed price data with market cap, price changes, volume, liquidity, holder count (max 1 push/sec)
 - **`dex-token-candle{period}`** — candlestick/K-line data (27 period variants from 1s to 3M, including UTC variants)
-- **`trades`** — real-time trade feed for a token (push on every trade)
 
 ## Region Restrictions (IP Blocking)
 

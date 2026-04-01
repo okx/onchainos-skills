@@ -14,7 +14,7 @@ This skill provides the complete OKX DEX WebSocket protocol reference for writin
 
 ## Prerequisites
 
-This skill requires co-installation with `okx-dex-market`, `okx-dex-signal`, and `okx-dex-trenches` (all included in the onchainos-skills repository).
+This skill requires co-installation with `okx-dex-market`, `okx-dex-token`, `okx-dex-signal`, and `okx-dex-trenches` (all included in the onchainos-skills repository).
 
 ## When to Use
 
@@ -28,16 +28,24 @@ Load this skill when the user asks to:
 
 Based on the user's intent, read the corresponding protocol reference file:
 
-### Market Data (per-token streams)
+### Market Data (price & candlestick streams)
 
-**Use when**: price monitoring, candlestick/K-line streaming, token trade feed, market cap/liquidity updates
+**Use when**: simple price monitoring, candlestick/K-line streaming
 
 **Read**: `../okx-dex-market/references/ws-protocol.md`
 
 Channels:
 - **`price`** — real-time token price updates
-- **`price-info`** — detailed price data with market cap, volume, liquidity, holder count (max 1 push/sec)
 - **`dex-token-candle{period}`** — candlestick/K-line data (27 periods from 1s to 3M)
+
+### Token Data (detailed token streams)
+
+**Use when**: detailed price info with market cap/volume/liquidity/holders, token trade feed
+
+**Read**: `../okx-dex-token/references/ws-protocol.md`
+
+Channels:
+- **`price-info`** — detailed price data with market cap, volume, liquidity, holder count (max 1 push/sec)
 - **`trades`** — real-time trade feed for a token (every buy/sell)
 
 ### Signal & Wallet Tracking (per-wallet streams)

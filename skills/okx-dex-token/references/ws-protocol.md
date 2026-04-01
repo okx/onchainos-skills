@@ -1,7 +1,7 @@
-# Onchain OS DEX Market — WebSocket Protocol Reference
+# Onchain OS DEX Token — WebSocket Protocol Reference
 
 This document is for **developers and agents** who want to connect directly to the OKX DEX WebSocket
-and subscribe to real-time market data (prices, candlesticks).
+and subscribe to real-time token data (detailed price info, trades).
 
 ---
 
@@ -105,20 +105,21 @@ Wait for this ACK before sending subscribe messages. Recommended timeout: 10 sec
 
 ## Channels
 
-### `price` — Token Price
+### `price-info` — Token Price Info (Detailed)
 
-Retrieve the latest price of a token. Data is pushed whenever there is an update.
+Retrieve detailed price data including market cap, price changes, volume, liquidity, and holder count.
+Maximum push frequency: once per second.
 
 Subscribe arg:
 ```json
-{ "channel": "price", "chainIndex": "1", "tokenContractAddress": "0x382bb..." }
+{ "channel": "price-info", "chainIndex": "1", "tokenContractAddress": "0x382bb..." }
 ```
 
 #### Subscribe Parameters
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `channel` | String | Yes | `"price"` |
+| `channel` | String | Yes | `"price-info"` |
 | `chainIndex` | String | Yes | Chain ID (e.g. `"1"` = Ethereum, `"501"` = Solana) |
 | `tokenContractAddress` | String | Yes | Token contract address (EVM: all lowercase) |
 
@@ -127,72 +128,70 @@ Subscribe arg:
 | Field | Type | Description |
 |---|---|---|
 | `time` | String | Unix timestamp in milliseconds |
-| `price` | String | Latest token price (USD) |
+| `price` | String | Latest token price |
+| `marketCap` | String | Token market capitalization (USD) |
+| `priceChange5M` | String | 5-minute price change (%) |
+| `priceChange1H` | String | 1-hour price change (%) |
+| `priceChange4H` | String | 4-hour price change (%) |
+| `priceChange24H` | String | 24-hour price change (%) |
+| `volume5M` | String | 5-minute trading volume (USD) |
+| `volume1H` | String | 1-hour trading volume (USD) |
+| `volume4H` | String | 4-hour trading volume (USD) |
+| `volume24H` | String | 24-hour trading volume (USD) |
+| `txs5M` | String | 5-minute transaction count |
+| `txs1H` | String | 1-hour transaction count |
+| `txs4H` | String | 4-hour transaction count |
+| `txs24H` | String | 24-hour transaction count |
+| `maxPrice` | String | 24-hour highest price |
+| `minPrice` | String | 24-hour lowest price |
+| `liquidity` | String | Token liquidity in the pool (USD) |
+| `circSupply` | String | Token circulating supply |
+| `holders` | String | Token holder address count |
+| `tradeNum` | String | 24-hour trade quantity |
 
 #### Push Example
 
 ```json
 {
   "arg": {
-    "channel": "price",
-    "chainIndex": "1",
-    "tokenContractAddress": "0x382bb369d343125bfb2117af9c149795c6c65c50"
+    "channel": "price-info",
+    "chainIndex": "501",
+    "tokenContractAddress": "HeLp6NuQkmYB4pYWo2zYs22mESHXPQYzXbB8n4V98jwC"
   },
   "data": [{
     "time": "1716892020000",
-    "price": "26.458143090226812"
+    "price": "0.019960839902217294",
+    "marketCap": "19960839",
+    "priceChange5M": "0.5",
+    "priceChange1H": "-1.2",
+    "priceChange4H": "3.8",
+    "priceChange24H": "12.5",
+    "volume5M": "50000",
+    "volume1H": "250000",
+    "volume4H": "1000000",
+    "volume24H": "5000000",
+    "liquidity": "3923952.461979153265333544895656917",
+    "holders": "37241"
   }]
 }
 ```
 
 ---
 
-### `dex-token-candle{period}` — Candlestick
+### `trades` — Recent Trades
 
-Retrieve candlestick (K-line) data for a token. Maximum push frequency: once per second.
-
-#### Available Channel Names
-
-| Channel | Period |
-|---|---|
-| `dex-token-candle1s` | 1 second |
-| `dex-token-candle1m` | 1 minute |
-| `dex-token-candle3m` | 3 minutes |
-| `dex-token-candle5m` | 5 minutes |
-| `dex-token-candle15m` | 15 minutes |
-| `dex-token-candle30m` | 30 minutes |
-| `dex-token-candle1H` | 1 hour |
-| `dex-token-candle2H` | 2 hours |
-| `dex-token-candle4H` | 4 hours |
-| `dex-token-candle6H` | 6 hours |
-| `dex-token-candle12H` | 12 hours |
-| `dex-token-candle1D` | 1 day |
-| `dex-token-candle2D` | 2 days |
-| `dex-token-candle3D` | 3 days |
-| `dex-token-candle5D` | 5 days |
-| `dex-token-candle1W` | 1 week |
-| `dex-token-candle1M` | 1 month |
-| `dex-token-candle3M` | 3 months |
-| `dex-token-candle6Hutc` | 6 hours (UTC) |
-| `dex-token-candle12Hutc` | 12 hours (UTC) |
-| `dex-token-candle1Dutc` | 1 day (UTC) |
-| `dex-token-candle2Dutc` | 2 days (UTC) |
-| `dex-token-candle3Dutc` | 3 days (UTC) |
-| `dex-token-candle5Dutc` | 5 days (UTC) |
-| `dex-token-candle1Wutc` | 1 week (UTC) |
-| `dex-token-candle1Mutc` | 1 month (UTC) |
-| `dex-token-candle3Mutc` | 3 months (UTC) |
+Retrieve recent trade data. Data is pushed whenever there is a trade.
 
 Subscribe arg:
 ```json
-{ "channel": "dex-token-candle1m", "chainIndex": "1", "tokenContractAddress": "0x382bb..." }
+{ "channel": "trades", "chainIndex": "501", "tokenContractAddress": "HeLp6N..." }
 ```
 
 #### Subscribe Parameters
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `channel` | String | Yes | One of the candle channel names above |
+| `channel` | String | Yes | `"trades"` |
 | `chainIndex` | String | Yes | Chain ID (e.g. `"1"` = Ethereum, `"501"` = Solana) |
 | `tokenContractAddress` | String | Yes | Token contract address (EVM: all lowercase) |
 
@@ -200,33 +199,45 @@ Subscribe arg:
 
 | Field | Type | Description |
 |---|---|---|
-| `ts` | String | Opening time, Unix timestamp in milliseconds |
-| `o` | String | Open price |
-| `h` | String | Highest price |
-| `l` | String | Lowest price |
-| `c` | String | Close price |
-| `vol` | String | Volume in base currency |
-| `volUsd` | String | Volume in USD |
-| `confirm` | String | `"0"` = incomplete (still forming), `"1"` = completed |
+| `id` | String | Unique trade identifier |
+| `txHashUrl` | String | On-chain transaction hash URL |
+| `userAddress` | String | Address of the trader |
+| `dexName` | String | DEX name where the trade occurred |
+| `poolLogoUrl` | String | Pool logo URL |
+| `type` | String | `"buy"` or `"sell"` |
+| `changedTokenInfo` | Array | Token exchange details |
+| `changedTokenInfo[].amount` | String | Token amount exchanged |
+| `changedTokenInfo[].tokenSymbol` | String | Token symbol |
+| `changedTokenInfo[].tokenContractAddress` | String | Token contract address |
+| `price` | String | Token price at trade time |
+| `volume` | String | USD value of the trade |
+| `time` | String | Unix timestamp in milliseconds |
+| `isFiltered` | String | `"0"` = not filtered, `"1"` = filtered for price/K-line calculation |
 
 #### Push Example
 
 ```json
 {
   "arg": {
-    "channel": "dex-token-candle1m",
-    "chainIndex": "1",
-    "tokenContractAddress": "0x382bb369d343125bfb2117af9c149795c6c65c50"
+    "channel": "trades",
+    "chainIndex": "501",
+    "tokenContractAddress": "HeLp6NuQkmYB4pYWo2zYs22mESHXPQYzXbB8n4V98jwC"
   },
   "data": [{
-    "ts": "1716892020000",
-    "o": "26.1",
-    "h": "26.8",
-    "l": "25.9",
-    "c": "26.5",
-    "vol": "123456.78",
-    "volUsd": "3267890.12",
-    "confirm": "0"
+    "id": "1739439633000!@#120!@#14731892839",
+    "txHashUrl": "https://solscan.io/tx/5x...",
+    "userAddress": "7xKX...",
+    "dexName": "Raydium",
+    "poolLogoUrl": "https://...",
+    "type": "sell",
+    "changedTokenInfo": [
+      { "amount": "1000", "tokenSymbol": "USDC", "tokenContractAddress": "EPjF..." },
+      { "amount": "50.5", "tokenSymbol": "HeLp", "tokenContractAddress": "HeLp6N..." }
+    ],
+    "price": "26.458143090226812",
+    "volume": "519.788163",
+    "time": "1739439633000",
+    "isFiltered": "0"
   }]
 }
 ```
@@ -241,8 +252,8 @@ Send a single subscribe message containing all channel args:
 {
   "op": "subscribe",
   "args": [
-    { "channel": "price", "chainIndex": "1", "tokenContractAddress": "0xabc..." },
-    { "channel": "dex-token-candle1m", "chainIndex": "1", "tokenContractAddress": "0xabc..." }
+    { "channel": "price-info", "chainIndex": "1", "tokenContractAddress": "0xabc..." },
+    { "channel": "trades", "chainIndex": "1", "tokenContractAddress": "0xabc..." }
   ]
 }
 ```
@@ -252,7 +263,7 @@ Send a single subscribe message containing all channel args:
 The server sends one ACK per subscription arg:
 
 ```json
-{ "event": "subscribe", "arg": { "channel": "price", "chainIndex": "1", "tokenContractAddress": "0xabc..." }, "connId": "abc123" }
+{ "event": "subscribe", "arg": { "channel": "price-info", "chainIndex": "1", "tokenContractAddress": "0xabc..." }, "connId": "abc123" }
 ```
 
 Wait for N ACKs (one per arg) before considering the session active.
@@ -271,7 +282,7 @@ To cancel one or more channel subscriptions without disconnecting:
 ```json
 {
   "op": "unsubscribe",
-  "args": [{ "channel": "price", "chainIndex": "1", "tokenContractAddress": "0xabc..." }]
+  "args": [{ "channel": "price-info", "chainIndex": "1", "tokenContractAddress": "0xabc..." }]
 }
 ```
 
@@ -284,7 +295,7 @@ On success:
 ```json
 {
   "event": "unsubscribe",
-  "arg": { "channel": "price", "chainIndex": "1", "tokenContractAddress": "0x382bb369d343125bfb2117af9c149795c6c65c50" },
+  "arg": { "channel": "price-info", "chainIndex": "1", "tokenContractAddress": "0x382bb369d343125bfb2117af9c149795c6c65c50" },
   "connId": "d0b44253"
 }
 ```
