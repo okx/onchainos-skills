@@ -138,8 +138,12 @@ async fn sign_and_broadcast(
     })?;
 
     let client = WalletApiClient::new()?;
-    // Read swap trace ID from cache; build trace headers if present
-    let cached_tid = crate::wallet_store::get_swap_trace_id().ok().flatten();
+    // Only read swap trace ID from cache for contract calls (swap flow)
+    let cached_tid = if is_contract_call {
+        crate::wallet_store::get_swap_trace_id().ok().flatten()
+    } else {
+        None
+    };
     let ts_unsigned = chrono::Utc::now().timestamp_millis().to_string();
     let trace_headers_unsigned: Vec<(&str, &str)> = if let Some(ref tid) = cached_tid {
         vec![
@@ -301,6 +305,10 @@ async fn sign_and_broadcast(
         .await
         .map_err(|e| handle_confirming_error(e, force))?;
 
+    // Clear cached swap trace ID after successful broadcast (contract calls only)
+    if is_contract_call {
+        let _ = crate::wallet_store::clear_swap_trace_id();
+    }
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][sign_and_broadcast] === END SUCCESS: txHash={}",

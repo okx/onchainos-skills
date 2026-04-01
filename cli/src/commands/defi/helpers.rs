@@ -220,9 +220,8 @@ pub async fn extract_expect_output(
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("");
                                 if rt == reward_type {
-                                    if let Some(base) = reward
-                                        .get("baseDefiTokenInfos")
-                                        .and_then(|v| v.as_array())
+                                    if let Some(base) =
+                                        reward.get("baseDefiTokenInfos").and_then(|v| v.as_array())
                                     {
                                         for t in base {
                                             tokens.push(json!({
@@ -264,9 +263,8 @@ pub async fn extract_expect_output(
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("");
                                 if rt == reward_type {
-                                    if let Some(base) = reward
-                                        .get("baseDefiTokenInfos")
-                                        .and_then(|v| v.as_array())
+                                    if let Some(base) =
+                                        reward.get("baseDefiTokenInfos").and_then(|v| v.as_array())
                                     {
                                         for t in base {
                                             tokens.push(json!({
