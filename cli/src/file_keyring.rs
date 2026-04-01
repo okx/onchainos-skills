@@ -172,15 +172,9 @@ pub fn read_blob() -> Result<HashMap<String, String>> {
     let key = derive_key(&identity, salt);
     let cipher = Aes256Gcm::new_from_slice(&key).context("failed to create AES cipher")?;
     let nonce = Nonce::from_slice(nonce_bytes);
-    let plaintext = Zeroizing::new(
-        cipher
-            .decrypt(nonce, ciphertext)
-            .map_err(|_| {
-                anyhow::anyhow!(
-                    "failed to decrypt keyring.enc (wrong machine or corrupted file)"
-                )
-            })?,
-    );
+    let plaintext = Zeroizing::new(cipher.decrypt(nonce, ciphertext).map_err(|_| {
+        anyhow::anyhow!("failed to decrypt keyring.enc (wrong machine or corrupted file)")
+    })?);
 
     let map: HashMap<String, String> =
         serde_json::from_slice(&plaintext).context("failed to parse decrypted keyring blob")?;
@@ -192,7 +186,8 @@ pub fn write_blob(map: &HashMap<String, String>) -> Result<()> {
     let home = onchainos_home()?;
     ensure_dir_permissions(&home)?;
     let path = home.join(KEYRING_FILE);
-    let json = Zeroizing::new(serde_json::to_string(map).context("failed to serialize keyring blob")?);
+    let json =
+        Zeroizing::new(serde_json::to_string(map).context("failed to serialize keyring blob")?);
 
     let mut salt = [0u8; SALT_LEN];
     let mut nonce_bytes = [0u8; NONCE_LEN];
@@ -348,7 +343,9 @@ mod tests {
     }
 
     fn with_temp_home<F: FnOnce()>(name: &str, f: F) {
-        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_tmp")

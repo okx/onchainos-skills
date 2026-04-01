@@ -189,7 +189,10 @@ async fn resolve_send_amount(
             bail!("--amt must be a whole number in minimal units (no decimals)");
         }
         if !raw.chars().all(|c| c.is_ascii_digit()) {
-            bail!("--amt must be a whole number in minimal units, got \"{}\"", raw);
+            bail!(
+                "--amt must be a whole number in minimal units, got \"{}\"",
+                raw
+            );
         }
         if raw.chars().all(|c| c == '0') {
             bail!("--amt must be greater than zero");
@@ -210,9 +213,9 @@ async fn resolve_send_amount(
             None => {
                 // Native token — decimals are fixed per chain
                 match chain {
-                    "501" => 9,  // SOL (lamports)
-                    "784" => 9,  // SUI (MIST)
-                    _ => 18,     // All EVM native tokens (ETH, BNB, MATIC, OKB, AVAX, …)
+                    "501" => 9, // SOL (lamports)
+                    "784" => 9, // SUI (MIST)
+                    _ => 18,    // All EVM native tokens (ETH, BNB, MATIC, OKB, AVAX, …)
                 }
             }
             Some(token_addr) => {
@@ -230,14 +233,16 @@ async fn resolve_send_amount(
                         anyhow::anyhow!(
                             "Failed to fetch token decimals for {}: {}. \
                              Use --amt with raw minimal units instead.",
-                            token_addr, e
+                            token_addr,
+                            e
                         )
                     })?;
                 let info_arr = info.as_array().filter(|a| !a.is_empty()).ok_or_else(|| {
                     anyhow::anyhow!(
                         "Token not found for address {} on chain {}. \
                          Verify the address is correct. Use --amt with raw minimal units instead.",
-                        token_addr, chain
+                        token_addr,
+                        chain
                     )
                 })?;
                 match &info_arr[0]["decimal"] {

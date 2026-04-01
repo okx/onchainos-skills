@@ -478,4 +478,3 @@ async fn portfolio_token_pnl(ctx: &Context, address: &str, chain: &str, token: &
     output::success(fetch_portfolio_token_pnl(&client, &chain_index, address, token).await?);
     Ok(())
 }
-
