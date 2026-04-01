@@ -157,7 +157,14 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
-            let raw_amount = resolve_amount_arg(&client, amount.as_deref(), readable_amount.as_deref(), &from, &chain_index).await?;
+            let raw_amount = resolve_amount_arg(
+                &client,
+                amount.as_deref(),
+                readable_amount.as_deref(),
+                &from,
+                &chain_index,
+            )
+            .await?;
             output::success(
                 fetch_quote(&client, &chain_index, &from, &to, &raw_amount, &swap_mode).await?,
             );
@@ -177,7 +184,14 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
-            let raw_amount = resolve_amount_arg(&client, amount.as_deref(), readable_amount.as_deref(), &from, &chain_index).await?;
+            let raw_amount = resolve_amount_arg(
+                &client,
+                amount.as_deref(),
+                readable_amount.as_deref(),
+                &from,
+                &chain_index,
+            )
+            .await?;
             output::success(
                 fetch_swap(
                     &client,
@@ -240,7 +254,14 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
-            let raw_amount = resolve_amount_arg(&client, amount.as_deref(), readable_amount.as_deref(), &from, &chain_index).await?;
+            let raw_amount = resolve_amount_arg(
+                &client,
+                amount.as_deref(),
+                readable_amount.as_deref(),
+                &from,
+                &chain_index,
+            )
+            .await?;
             cmd_execute(
                 &client,
                 &from,
@@ -480,10 +501,16 @@ pub(crate) fn readable_to_minimal_str(amount: &str, decimal: u32) -> Result<Stri
         (amount, "")
     };
     if integer.is_empty() || !integer.chars().all(|c| c.is_ascii_digit()) {
-        bail!("--readable-amount must be a positive number, got \"{}\"", amount);
+        bail!(
+            "--readable-amount must be a positive number, got \"{}\"",
+            amount
+        );
     }
     if !frac.chars().all(|c| c.is_ascii_digit()) {
-        bail!("--readable-amount must be a positive number, got \"{}\"", amount);
+        bail!(
+            "--readable-amount must be a positive number, got \"{}\"",
+            amount
+        );
     }
     let precision = decimal as usize;
     let frac_padded = if frac.len() >= precision {
@@ -541,12 +568,17 @@ async fn resolve_amount_arg(
             anyhow::anyhow!(
                 "Token not found for address {} on chain {}. Verify the address is correct. \
                  Use --amount with raw units instead.",
-                resolved_from, chain_index
+                resolved_from,
+                chain_index
             )
         })?;
         let decimal: u32 = match &info_arr[0]["decimal"] {
             serde_json::Value::String(s) => s.parse().map_err(|_| {
-                anyhow::anyhow!("Invalid decimal value \"{}\" for token {}", s, resolved_from)
+                anyhow::anyhow!(
+                    "Invalid decimal value \"{}\" for token {}",
+                    s,
+                    resolved_from
+                )
             })?,
             serde_json::Value::Number(n) => n.as_u64().ok_or_else(|| {
                 anyhow::anyhow!("Invalid decimal value for token {}", resolved_from)
@@ -561,14 +593,17 @@ async fn resolve_amount_arg(
     bail!("Either --amount or --readable-amount is required")
 }
 
-
 /// Called after `resolve_token_address` so we inspect the actual address.
 ///
 /// Note: chain_family() is a binary "solana" / "evm" function and classifies
 /// Tron (195), TON (607), and Sui (784) as "evm" for historical reasons.
 /// Those chains have their own address formats, so we skip format validation
 /// for them and only check genuine Solana vs. EVM chains.
-pub(crate) fn validate_address_for_chain(chain_index: &str, token: &str, label: &str) -> Result<()> {
+pub(crate) fn validate_address_for_chain(
+    chain_index: &str,
+    token: &str,
+    label: &str,
+) -> Result<()> {
     match chain_index {
         // Solana: must not be a 0x-prefixed EVM address, and must be 32-44 chars (base58).
         "501" => {
@@ -688,7 +723,8 @@ pub(crate) fn validate_non_negative_integer(value: &str, label: &str) -> Result<
     if !value.chars().all(|c| c.is_ascii_digit()) {
         bail!(
             "--{} must be a non-negative integer, got \"{}\"",
-            label, value
+            label,
+            value
         );
     }
     // Allow "0", but reject leading zeros like "007"
@@ -1350,8 +1386,14 @@ mod tests {
         assert_eq!(readable_to_minimal_str("1", 6).unwrap(), "1000000");
         assert_eq!(readable_to_minimal_str("0.000001", 6).unwrap(), "1");
         // ETH: 18 decimals
-        assert_eq!(readable_to_minimal_str("0.1", 18).unwrap(), "100000000000000000");
-        assert_eq!(readable_to_minimal_str("1", 18).unwrap(), "1000000000000000000");
+        assert_eq!(
+            readable_to_minimal_str("0.1", 18).unwrap(),
+            "100000000000000000"
+        );
+        assert_eq!(
+            readable_to_minimal_str("1", 18).unwrap(),
+            "1000000000000000000"
+        );
         // SOL: 9 decimals
         assert_eq!(readable_to_minimal_str("1", 9).unwrap(), "1000000000");
         // 超出精度且非零 → error
@@ -1370,7 +1412,7 @@ mod tests {
         assert!(validate_slippage("1").is_ok());
         assert!(validate_slippage("50").is_ok());
         assert!(validate_slippage("99.9").is_ok());
-        assert!(validate_slippage("100").is_ok());   // upper bound inclusive
+        assert!(validate_slippage("100").is_ok()); // upper bound inclusive
         assert!(validate_slippage("100.0").is_ok());
         assert!(validate_slippage("0.001").is_ok());
         assert!(validate_slippage("0.01").is_ok());
@@ -1476,9 +1518,24 @@ mod tests {
     #[test]
     fn test_validate_address_for_chain_evm_valid() {
         // EVM address on EVM chain — ok
-        assert!(validate_address_for_chain("1", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "from").is_ok());
-        assert!(validate_address_for_chain("1", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "wallet").is_ok());
-        assert!(validate_address_for_chain("56", "0x55d398326f99059ff775485246999027b3197955", "token").is_ok());
+        assert!(validate_address_for_chain(
+            "1",
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            "from"
+        )
+        .is_ok());
+        assert!(validate_address_for_chain(
+            "1",
+            "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            "wallet"
+        )
+        .is_ok());
+        assert!(validate_address_for_chain(
+            "56",
+            "0x55d398326f99059ff775485246999027b3197955",
+            "token"
+        )
+        .is_ok());
     }
 
     #[test]
@@ -1494,21 +1551,40 @@ mod tests {
     #[test]
     fn test_validate_address_for_chain_solana_valid() {
         // Solana base58 on Solana — ok
-        assert!(validate_address_for_chain("501", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "from").is_ok());
-        assert!(validate_address_for_chain("501", "11111111111111111111111111111111", "wallet").is_ok());
+        assert!(validate_address_for_chain(
+            "501",
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "from"
+        )
+        .is_ok());
+        assert!(
+            validate_address_for_chain("501", "11111111111111111111111111111111", "wallet").is_ok()
+        );
     }
 
     #[test]
     fn test_validate_address_for_chain_solana_rejects_evm_address() {
         // EVM 0x address on Solana — rejected
-        assert!(validate_address_for_chain("501", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "from").is_err());
-        assert!(validate_address_for_chain("501", "0x1234567890abcdef1234567890abcdef12345678", "wallet").is_err());
+        assert!(validate_address_for_chain(
+            "501",
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            "from"
+        )
+        .is_err());
+        assert!(validate_address_for_chain(
+            "501",
+            "0x1234567890abcdef1234567890abcdef12345678",
+            "wallet"
+        )
+        .is_err());
     }
 
     #[test]
     fn test_validate_address_for_chain_tron_skip() {
         // Tron (195) — all formats pass, validation is skipped
-        assert!(validate_address_for_chain("195", "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb", "from").is_ok());
+        assert!(
+            validate_address_for_chain("195", "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb", "from").is_ok()
+        );
         assert!(validate_address_for_chain("195", "0xabc123", "wallet").is_ok());
     }
 
@@ -1521,8 +1597,12 @@ mod tests {
     #[test]
     fn test_validate_address_for_chain_wallet_label() {
         // Verify the "wallet" label appears in error messages
-        let err = validate_address_for_chain("1", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "wallet")
-            .unwrap_err();
+        let err = validate_address_for_chain(
+            "1",
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "wallet",
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("--wallet"));
     }
 
@@ -1567,14 +1647,29 @@ mod tests {
     #[test]
     fn test_validate_address_for_chain_evm_rejects_long_0x_address() {
         // 0x + more than 40 hex digits (43 chars total)
-        assert!(validate_address_for_chain("1", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48a", "from").is_err());
+        assert!(validate_address_for_chain(
+            "1",
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48a",
+            "from"
+        )
+        .is_err());
     }
 
     #[test]
     fn test_validate_address_for_chain_evm_exact_42_chars() {
         // Exactly 42 chars — ok
-        assert!(validate_address_for_chain("1", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "from").is_ok());
-        assert!(validate_address_for_chain("8453", "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", "token").is_ok());
+        assert!(validate_address_for_chain(
+            "1",
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            "from"
+        )
+        .is_ok());
+        assert!(validate_address_for_chain(
+            "8453",
+            "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+            "token"
+        )
+        .is_ok());
     }
 
     // ── swapMode validation ───────────────────────────────────────────

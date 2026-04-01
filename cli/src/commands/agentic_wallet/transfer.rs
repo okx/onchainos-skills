@@ -605,14 +605,20 @@ mod tests {
     async fn cmd_send_rejects_empty_receipt() {
         let result = cmd_send("100", "", "1", None, None, false).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("receipt and chain are required"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("receipt and chain are required"));
     }
 
     #[tokio::test]
     async fn cmd_send_rejects_empty_chain() {
         let result = cmd_send("100", "0xRecipient", "", None, None, false).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("receipt and chain are required"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("receipt and chain are required"));
     }
 
     // ── cmd_contract_call input validation tests ─────────────────────
@@ -620,26 +626,68 @@ mod tests {
     #[tokio::test]
     async fn cmd_contract_call_rejects_empty_to() {
         let result = cmd_contract_call(
-            "", "1", "0", Some("0xdata"), None, None, None, None, None, false, None, false,
-        ).await;
+            "",
+            "1",
+            "0",
+            Some("0xdata"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            false,
+        )
+        .await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("to and chain are required"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("to and chain are required"));
     }
 
     #[tokio::test]
     async fn cmd_contract_call_rejects_empty_chain() {
         let result = cmd_contract_call(
-            "0xTo", "", "0", Some("0xdata"), None, None, None, None, None, false, None, false,
-        ).await;
+            "0xTo",
+            "",
+            "0",
+            Some("0xdata"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            false,
+        )
+        .await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("to and chain are required"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("to and chain are required"));
     }
 
     #[tokio::test]
     async fn cmd_contract_call_rejects_decimal_amt() {
         let result = cmd_contract_call(
-            "0xTo", "1", "1.5", Some("0xdata"), None, None, None, None, None, false, None, false,
-        ).await;
+            "0xTo",
+            "1",
+            "1.5",
+            Some("0xdata"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            false,
+        )
+        .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("whole number"));
     }
@@ -648,7 +696,8 @@ mod tests {
     async fn cmd_contract_call_rejects_missing_input_and_unsigned() {
         let result = cmd_contract_call(
             "0xTo", "1", "0", None, None, None, None, None, None, false, None, false,
-        ).await;
+        )
+        .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("--input-data"));
     }
@@ -658,8 +707,18 @@ mod tests {
     #[test]
     fn transfer_uses_validate_address_for_chain() {
         // Ensure the imported function works correctly in this module context
-        assert!(validate_address_for_chain("1", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "to").is_ok());
-        assert!(validate_address_for_chain("501", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "to").is_ok());
+        assert!(validate_address_for_chain(
+            "1",
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            "to"
+        )
+        .is_ok());
+        assert!(validate_address_for_chain(
+            "501",
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "to"
+        )
+        .is_ok());
         // EVM short address rejected
         assert!(validate_address_for_chain("1", "0xabc", "to").is_err());
         // Solana short address rejected

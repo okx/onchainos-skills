@@ -327,10 +327,7 @@ fn mcp_market_kline() {
 #[test]
 fn mcp_tracker_activities() {
     let mut client = McpClient::start();
-    let result = client.call_tool(
-        "tracker_activities",
-        json!({"tracker_type": "smart_money"}),
-    );
+    let result = client.call_tool("tracker_activities", json!({"tracker_type": "smart_money"}));
     if result.is_rate_limited() {
         return;
     }
