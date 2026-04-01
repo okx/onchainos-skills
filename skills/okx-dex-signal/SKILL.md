@@ -152,7 +152,7 @@ When the user wants to build a custom WebSocket client, write a WS subscription 
 
 - **`dex-market-new-signal-openapi`** — real-time aggregated buy signal alerts from smart money, KOL, and whale wallets (single-chain subscription)
 - **`kol_smartmoney-tracker-activity`** — aggregated trade feed from KOL and smart money wallets (public, no wallet address needed)
-- **`address-tracker-activity`** — trade feed for custom wallet addresses (up to 20 addresses per subscription)
+- **`address-tracker-activity`** — trade feed for custom wallet addresses (up to 200 per connection; create additional connections for more)
 
 ## Edge Cases
 

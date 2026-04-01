@@ -45,7 +45,7 @@ Channels:
 Channels:
 - **`dex-market-new-signal-openapi`** — aggregated buy signal alerts from smart money/KOL/whales (single-chain)
 - **`kol_smartmoney-tracker-activity`** — KOL and smart money trade feed (no wallet address needed)
-- **`address-tracker-activity`** — trade feed for custom wallet addresses (up to 20 per subscription)
+- **`address-tracker-activity`** — trade feed for custom wallet addresses (up to 200 per connection; create additional connections for more)
 
 ### Meme/Trenches (meme token streams)
 

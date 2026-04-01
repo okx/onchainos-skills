@@ -188,7 +188,7 @@ Subscribe arg:
 ### `address-tracker-activity` (Per-address)
 
 Real-time trade feed for a custom wallet address.
-Send **one subscription arg per address** (up to 20 addresses).
+Send **one subscription arg per address** (up to 200 addresses per connection). If you need to track more than 200 addresses, create additional WebSocket connections.
 
 Subscribe arg:
 ```json
