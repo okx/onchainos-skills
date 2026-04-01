@@ -568,9 +568,9 @@ async fn resolve_amount_arg(
 /// Tron (195), TON (607), and Sui (784) as "evm" for historical reasons.
 /// Those chains have their own address formats, so we skip format validation
 /// for them and only check genuine Solana vs. EVM chains.
-fn validate_token_for_chain(chain_index: &str, token: &str, label: &str) -> Result<()> {
+pub(crate) fn validate_address_for_chain(chain_index: &str, token: &str, label: &str) -> Result<()> {
     match chain_index {
-        // Solana: must not be a 0x-prefixed EVM address.
+        // Solana: must not be a 0x-prefixed EVM address, and must be 32-44 chars (base58).
         "501" => {
             if token.starts_with("0x") || token.starts_with("0X") {
                 bail!(
@@ -579,11 +579,17 @@ fn validate_token_for_chain(chain_index: &str, token: &str, label: &str) -> Resu
                      Did you mean to use a different chain?"
                 );
             }
+            if token.len() < 32 || token.len() > 44 {
+                bail!(
+                    "--{label} is not a valid Solana address: expected 32-44 base58 characters, got {} characters (\"{}\")",
+                    token.len(), token
+                );
+            }
         }
         // Tron / TON / Sui — their native address formats differ from both EVM and Solana;
         // skip format validation and let the API handle address errors.
         "195" | "607" | "784" => {}
-        // EVM chains: heuristic — 32-44 alphanumeric chars with uppercase → likely Solana base58.
+        // EVM chains: must start with 0x and be 42 characters long.
         _ => {
             if !token.starts_with("0x")
                 && !token.starts_with("0X")
@@ -596,6 +602,13 @@ fn validate_token_for_chain(chain_index: &str, token: &str, label: &str) -> Resu
                     "--{label} looks like a Solana/base58 address but chain is EVM (chainIndex={chain_index}). \
                      EVM addresses start with 0x (e.g. 0xa0b869...606eb48). \
                      Did you mean to use --chain solana?"
+                );
+            }
+            // EVM addresses must be 42 characters (0x + 40 hex digits)
+            if (token.starts_with("0x") || token.starts_with("0X")) && token.len() != 42 {
+                bail!(
+                    "--{label} is not a valid EVM address: expected 42 characters (0x + 40 hex digits), got {} characters (\"{}\")",
+                    token.len(), token
                 );
             }
         }
@@ -617,9 +630,71 @@ fn ensure_different_tokens(from: &str, to: &str) -> Result<()> {
 /// Validate resolved token pair: format matches chain + tokens are different.
 /// Call after `resolve_token_address`.
 fn validate_swap_params(chain_index: &str, from: &str, to: &str) -> Result<()> {
-    validate_token_for_chain(chain_index, from, "from")?;
-    validate_token_for_chain(chain_index, to, "to")?;
+    validate_address_for_chain(chain_index, from, "from")?;
+    validate_address_for_chain(chain_index, to, "to")?;
     ensure_different_tokens(from, to)?;
+    Ok(())
+}
+
+/// Validate that `swap_mode` is one of the accepted values: "exactIn" or "exactOut".
+fn validate_swap_mode(swap_mode: &str) -> Result<()> {
+    match swap_mode {
+        "exactIn" | "exactOut" => Ok(()),
+        _ => bail!(
+            "--swap-mode must be \"exactIn\" or \"exactOut\", got \"{}\"",
+            swap_mode
+        ),
+    }
+}
+
+/// Validate that `gas_level` is one of the accepted values: "slow", "average", or "fast".
+fn validate_gas_level(gas_level: &str) -> Result<()> {
+    match gas_level {
+        "slow" | "average" | "fast" => Ok(()),
+        _ => bail!(
+            "--gas-level must be \"slow\", \"average\", or \"fast\", got \"{}\"",
+            gas_level
+        ),
+    }
+}
+
+/// Validate that `tips` is a positive integer (greater than 0).
+fn validate_tips(tips: &str) -> Result<()> {
+    let tips = tips.trim();
+    if tips.is_empty() {
+        bail!("--tips must not be empty");
+    }
+    if !tips.chars().all(|c| c.is_ascii_digit()) {
+        bail!(
+            "--tips must be a positive integer greater than 0, got \"{}\"",
+            tips
+        );
+    }
+    if tips.chars().all(|c| c == '0') {
+        bail!("--tips must be greater than 0");
+    }
+    if tips.starts_with('0') && tips.len() > 1 {
+        bail!("--tips must not have leading zeros, got \"{}\"", tips);
+    }
+    Ok(())
+}
+
+/// Validate non-negative integer string (≥ 0). Used for gasLimit, aaDexTokenAmount, etc.
+pub(crate) fn validate_non_negative_integer(value: &str, label: &str) -> Result<()> {
+    let value = value.trim();
+    if value.is_empty() {
+        bail!("--{} must not be empty", label);
+    }
+    if !value.chars().all(|c| c.is_ascii_digit()) {
+        bail!(
+            "--{} must be a non-negative integer, got \"{}\"",
+            label, value
+        );
+    }
+    // Allow "0", but reject leading zeros like "007"
+    if value.len() > 1 && value.starts_with('0') {
+        bail!("--{} must not have leading zeros, got \"{}\"", label, value);
+    }
     Ok(())
 }
 
@@ -634,6 +709,9 @@ pub async fn fetch_quote(
     amount: &str,
     swap_mode: &str,
 ) -> Result<Value> {
+    if !swap_mode.is_empty() {
+        validate_swap_mode(swap_mode)?;
+    }
     let orig_from = from;
     let orig_to = to;
     let from = resolve_token_address(chain_index, orig_from);
@@ -700,10 +778,22 @@ pub async fn fetch_swap(
     max_auto_slippage: Option<&str>,
 ) -> Result<Value> {
     // ── Input validation ──
+    if !swap_mode.is_empty() {
+        validate_swap_mode(swap_mode)?;
+    }
+    if !gas_level.is_empty() {
+        validate_gas_level(gas_level)?;
+    }
     if let Some(s) = slippage {
         validate_slippage(s)?;
     }
-    validate_token_for_chain(chain_index, wallet, "wallet")?;
+    if let Some(t) = tips {
+        validate_tips(t)?;
+    }
+    if let Some(m) = max_auto_slippage {
+        validate_slippage(m)?;
+    }
+    validate_address_for_chain(chain_index, wallet, "wallet")?;
     validate_amount(amount)?;
 
     let orig_from = from;
@@ -807,7 +897,7 @@ pub async fn fetch_approve(
     validate_approve_amount(amount)?;
     let orig_token = token;
     let token = resolve_token_address(chain_index, orig_token);
-    validate_token_for_chain(chain_index, &token, "token")?;
+    validate_address_for_chain(chain_index, &token, "token")?;
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][fetch_approve] chain_index={}, token={}, amount={}",
@@ -844,6 +934,13 @@ pub async fn fetch_check_approvals(
     token: &str,
     spender: Option<&str>,
 ) -> Result<Value> {
+    // ── Input validation ──
+    validate_address_for_chain(chain_index, address, "address")?;
+    let token = resolve_token_address(chain_index, token);
+    validate_address_for_chain(chain_index, &token, "token")?;
+    if let Some(s) = spender {
+        validate_address_for_chain(chain_index, s, "spender")?;
+    }
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][fetch_check_approvals] chain_index={}, address={}, token={}, spender={:?}",
@@ -1377,55 +1474,232 @@ mod tests {
     // ── token/wallet address vs chain validation ───────────────────
 
     #[test]
-    fn test_validate_token_for_chain_evm_valid() {
+    fn test_validate_address_for_chain_evm_valid() {
         // EVM address on EVM chain — ok
-        assert!(validate_token_for_chain("1", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "from").is_ok());
-        assert!(validate_token_for_chain("1", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "wallet").is_ok());
-        assert!(validate_token_for_chain("56", "0x55d398326f99059ff775485246999027b3197955", "token").is_ok());
+        assert!(validate_address_for_chain("1", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "from").is_ok());
+        assert!(validate_address_for_chain("1", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "wallet").is_ok());
+        assert!(validate_address_for_chain("56", "0x55d398326f99059ff775485246999027b3197955", "token").is_ok());
     }
 
     #[test]
-    fn test_validate_token_for_chain_evm_rejects_solana_address() {
+    fn test_validate_address_for_chain_evm_rejects_solana_address() {
         // Solana base58 address on EVM chain — rejected
         let sol_addr = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-        assert!(validate_token_for_chain("1", sol_addr, "from").is_err());
-        assert!(validate_token_for_chain("1", sol_addr, "wallet").is_err());
-        assert!(validate_token_for_chain("56", sol_addr, "token").is_err());
-        assert!(validate_token_for_chain("8453", sol_addr, "wallet").is_err());
+        assert!(validate_address_for_chain("1", sol_addr, "from").is_err());
+        assert!(validate_address_for_chain("1", sol_addr, "wallet").is_err());
+        assert!(validate_address_for_chain("56", sol_addr, "token").is_err());
+        assert!(validate_address_for_chain("8453", sol_addr, "wallet").is_err());
     }
 
     #[test]
-    fn test_validate_token_for_chain_solana_valid() {
+    fn test_validate_address_for_chain_solana_valid() {
         // Solana base58 on Solana — ok
-        assert!(validate_token_for_chain("501", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "from").is_ok());
-        assert!(validate_token_for_chain("501", "11111111111111111111111111111111", "wallet").is_ok());
+        assert!(validate_address_for_chain("501", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "from").is_ok());
+        assert!(validate_address_for_chain("501", "11111111111111111111111111111111", "wallet").is_ok());
     }
 
     #[test]
-    fn test_validate_token_for_chain_solana_rejects_evm_address() {
+    fn test_validate_address_for_chain_solana_rejects_evm_address() {
         // EVM 0x address on Solana — rejected
-        assert!(validate_token_for_chain("501", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "from").is_err());
-        assert!(validate_token_for_chain("501", "0x1234567890abcdef1234567890abcdef12345678", "wallet").is_err());
+        assert!(validate_address_for_chain("501", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "from").is_err());
+        assert!(validate_address_for_chain("501", "0x1234567890abcdef1234567890abcdef12345678", "wallet").is_err());
     }
 
     #[test]
-    fn test_validate_token_for_chain_tron_skip() {
+    fn test_validate_address_for_chain_tron_skip() {
         // Tron (195) — all formats pass, validation is skipped
-        assert!(validate_token_for_chain("195", "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb", "from").is_ok());
-        assert!(validate_token_for_chain("195", "0xabc123", "wallet").is_ok());
+        assert!(validate_address_for_chain("195", "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb", "from").is_ok());
+        assert!(validate_address_for_chain("195", "0xabc123", "wallet").is_ok());
     }
 
     #[test]
-    fn test_validate_token_for_chain_sui_skip() {
+    fn test_validate_address_for_chain_sui_skip() {
         // Sui (784) — validation is skipped
-        assert!(validate_token_for_chain("784", "0x2::sui::SUI", "from").is_ok());
+        assert!(validate_address_for_chain("784", "0x2::sui::SUI", "from").is_ok());
     }
 
     #[test]
-    fn test_validate_token_for_chain_wallet_label() {
+    fn test_validate_address_for_chain_wallet_label() {
         // Verify the "wallet" label appears in error messages
-        let err = validate_token_for_chain("1", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "wallet")
+        let err = validate_address_for_chain("1", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "wallet")
             .unwrap_err();
         assert!(err.to_string().contains("--wallet"));
+    }
+
+    // ── Solana address length validation ──────────────────────────────
+
+    #[test]
+    fn test_validate_address_for_chain_solana_rejects_short_address() {
+        // Too short (< 32 chars)
+        assert!(validate_address_for_chain("501", "abc", "from").is_err());
+        assert!(validate_address_for_chain("501", "ShortAddr123", "wallet").is_err());
+    }
+
+    #[test]
+    fn test_validate_address_for_chain_solana_rejects_long_address() {
+        // Too long (> 44 chars)
+        let long_addr = "A".repeat(45);
+        assert!(validate_address_for_chain("501", &long_addr, "from").is_err());
+    }
+
+    #[test]
+    fn test_validate_address_for_chain_solana_length_boundary() {
+        // Exactly 32 chars — ok
+        let addr_32 = "1".repeat(32);
+        assert!(validate_address_for_chain("501", &addr_32, "from").is_ok());
+        // Exactly 44 chars — ok
+        let addr_44 = "A".repeat(44);
+        assert!(validate_address_for_chain("501", &addr_44, "from").is_ok());
+        // 31 chars — too short
+        let addr_31 = "1".repeat(31);
+        assert!(validate_address_for_chain("501", &addr_31, "from").is_err());
+    }
+
+    // ── EVM address length validation ─────────────────────────────────
+
+    #[test]
+    fn test_validate_address_for_chain_evm_rejects_short_0x_address() {
+        // 0x + less than 40 hex digits
+        assert!(validate_address_for_chain("1", "0xabc123", "from").is_err());
+        assert!(validate_address_for_chain("56", "0x1234", "token").is_err());
+    }
+
+    #[test]
+    fn test_validate_address_for_chain_evm_rejects_long_0x_address() {
+        // 0x + more than 40 hex digits (43 chars total)
+        assert!(validate_address_for_chain("1", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48a", "from").is_err());
+    }
+
+    #[test]
+    fn test_validate_address_for_chain_evm_exact_42_chars() {
+        // Exactly 42 chars — ok
+        assert!(validate_address_for_chain("1", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "from").is_ok());
+        assert!(validate_address_for_chain("8453", "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", "token").is_ok());
+    }
+
+    // ── swapMode validation ───────────────────────────────────────────
+
+    #[test]
+    fn test_validate_swap_mode_valid() {
+        assert!(validate_swap_mode("exactIn").is_ok());
+        assert!(validate_swap_mode("exactOut").is_ok());
+    }
+
+    #[test]
+    fn test_validate_swap_mode_invalid() {
+        assert!(validate_swap_mode("exactin").is_err());
+        assert!(validate_swap_mode("EXACTIN").is_err());
+        assert!(validate_swap_mode("ExactIn").is_err());
+        assert!(validate_swap_mode("").is_err());
+        assert!(validate_swap_mode("foobar").is_err());
+        assert!(validate_swap_mode("exact_in").is_err());
+    }
+
+    #[test]
+    fn test_validate_swap_mode_error_message() {
+        let err = validate_swap_mode("bad").unwrap_err();
+        assert!(err.to_string().contains("exactIn"));
+        assert!(err.to_string().contains("exactOut"));
+    }
+
+    // ── gasLevel validation ───────────────────────────────────────────
+
+    #[test]
+    fn test_validate_gas_level_valid() {
+        assert!(validate_gas_level("slow").is_ok());
+        assert!(validate_gas_level("average").is_ok());
+        assert!(validate_gas_level("fast").is_ok());
+    }
+
+    #[test]
+    fn test_validate_gas_level_invalid() {
+        assert!(validate_gas_level("").is_err());
+        assert!(validate_gas_level("Slow").is_err());
+        assert!(validate_gas_level("FAST").is_err());
+        assert!(validate_gas_level("medium").is_err());
+        assert!(validate_gas_level("turbo").is_err());
+        assert!(validate_gas_level("instant").is_err());
+    }
+
+    #[test]
+    fn test_validate_gas_level_error_message() {
+        let err = validate_gas_level("medium").unwrap_err();
+        assert!(err.to_string().contains("slow"));
+        assert!(err.to_string().contains("average"));
+        assert!(err.to_string().contains("fast"));
+    }
+
+    // ── tips validation ───────────────────────────────────────────────
+
+    #[test]
+    fn test_validate_tips_valid() {
+        assert!(validate_tips("1").is_ok());
+        assert!(validate_tips("100").is_ok());
+        assert!(validate_tips("999999").is_ok());
+    }
+
+    #[test]
+    fn test_validate_tips_rejects_zero() {
+        assert!(validate_tips("0").is_err());
+        assert!(validate_tips("000").is_err());
+    }
+
+    #[test]
+    fn test_validate_tips_rejects_non_numeric() {
+        assert!(validate_tips("abc").is_err());
+        assert!(validate_tips("1.5").is_err());
+        assert!(validate_tips("-1").is_err());
+        assert!(validate_tips("").is_err());
+        assert!(validate_tips("  ").is_err());
+    }
+
+    #[test]
+    fn test_validate_tips_rejects_leading_zeros() {
+        assert!(validate_tips("01").is_err());
+        assert!(validate_tips("007").is_err());
+    }
+
+    #[test]
+    fn test_validate_tips_trims_whitespace() {
+        assert!(validate_tips("  1  ").is_ok());
+    }
+
+    // ── non-negative integer validation ───────────────────────────────
+
+    #[test]
+    fn test_validate_non_negative_integer_valid() {
+        assert!(validate_non_negative_integer("0", "gas-limit").is_ok());
+        assert!(validate_non_negative_integer("1", "gas-limit").is_ok());
+        assert!(validate_non_negative_integer("21000", "gas-limit").is_ok());
+        assert!(validate_non_negative_integer("999999999", "aa-dex-token-amount").is_ok());
+    }
+
+    #[test]
+    fn test_validate_non_negative_integer_rejects_non_numeric() {
+        assert!(validate_non_negative_integer("abc", "gas-limit").is_err());
+        assert!(validate_non_negative_integer("-1", "gas-limit").is_err());
+        assert!(validate_non_negative_integer("1.5", "gas-limit").is_err());
+        assert!(validate_non_negative_integer("", "gas-limit").is_err());
+        assert!(validate_non_negative_integer("  ", "gas-limit").is_err());
+    }
+
+    #[test]
+    fn test_validate_non_negative_integer_rejects_leading_zeros() {
+        assert!(validate_non_negative_integer("007", "gas-limit").is_err());
+        assert!(validate_non_negative_integer("00", "gas-limit").is_err());
+        assert!(validate_non_negative_integer("01", "aa-dex-token-amount").is_err());
+    }
+
+    #[test]
+    fn test_validate_non_negative_integer_allows_zero() {
+        assert!(validate_non_negative_integer("0", "gas-limit").is_ok());
+    }
+
+    #[test]
+    fn test_validate_non_negative_integer_error_contains_label() {
+        let err = validate_non_negative_integer("abc", "gas-limit").unwrap_err();
+        assert!(err.to_string().contains("--gas-limit"));
+        let err2 = validate_non_negative_integer("-1", "aa-dex-token-amount").unwrap_err();
+        assert!(err2.to_string().contains("--aa-dex-token-amount"));
     }
 }
