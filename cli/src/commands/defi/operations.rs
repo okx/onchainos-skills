@@ -820,8 +820,7 @@ fn find_token_in_market_list(
                         .unwrap_or_default();
                     if iid == investment_id {
                         // Token info is inside assetsTokenList[0], not at item top level
-                        if let Some(assets) =
-                            item.get("assetsTokenList").and_then(|v| v.as_array())
+                        if let Some(assets) = item.get("assetsTokenList").and_then(|v| v.as_array())
                         {
                             if let Some(token) = assets.first() {
                                 return Some(extract_position_token(token));
@@ -916,53 +915,50 @@ pub(crate) async fn cmd_collect(
 
     // 2. Auto-build expectOutputList from position-detail
     // V3_FEE and UNLOCKED_PRINCIPAL never need expectOutputList — backend resolves internally
-    let expect_output: Option<String> =
-        if reward_type == "V3_FEE" || reward_type == "UNLOCKED_PRINCIPAL" {
-            None
-        } else if let Some(platform_id_str) = platform_id {
-            let auto = extract_expect_output(
-                client,
-                address,
-                &chain_index,
-                platform_id_str,
-                reward_type,
-                investment_id,
-            )
-            .await
-            .map_err(|e| {
-                anyhow::anyhow!("Failed to fetch reward info from position-detail: {}", e)
-            })?;
+    let expect_output: Option<String> = if reward_type == "V3_FEE"
+        || reward_type == "UNLOCKED_PRINCIPAL"
+    {
+        None
+    } else if let Some(platform_id_str) = platform_id {
+        let auto = extract_expect_output(
+            client,
+            address,
+            &chain_index,
+            platform_id_str,
+            reward_type,
+            investment_id,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to fetch reward info from position-detail: {}", e))?;
 
-            // Zero reward check
-            if let Some(ref eo) = auto {
-                let tokens: Vec<Value> = serde_json::from_str(eo).unwrap_or_default();
-                if tokens.is_empty() {
-                    bail!("No rewards found for {} in position-detail.", reward_type);
-                }
-                let all_zero = tokens.iter().all(|t| {
-                    let reward_amount =
-                        t.get("coinAmount").and_then(|v| v.as_str()).unwrap_or("0");
-                    reward_amount == "0"
-                        || reward_amount.is_empty()
-                        || reward_amount.chars().all(|c| c == '0' || c == '.')
-                });
-                if all_zero {
-                    bail!(
-                        "No rewards available. All reward amounts are zero for {}.",
-                        reward_type
-                    );
-                }
-            } else {
-                bail!("No reward tokens found for {} in position-detail. Verify investment-id and platform-id.", reward_type);
+        // Zero reward check
+        if let Some(ref eo) = auto {
+            let tokens: Vec<Value> = serde_json::from_str(eo).unwrap_or_default();
+            if tokens.is_empty() {
+                bail!("No rewards found for {} in position-detail.", reward_type);
             }
-            auto
+            let all_zero = tokens.iter().all(|t| {
+                let reward_amount = t.get("coinAmount").and_then(|v| v.as_str()).unwrap_or("0");
+                reward_amount == "0"
+                    || reward_amount.is_empty()
+                    || reward_amount.chars().all(|c| c == '0' || c == '.')
+            });
+            if all_zero {
+                bail!(
+                    "No rewards available. All reward amounts are zero for {}.",
+                    reward_type
+                );
+            }
         } else {
-            bail!(
-                "--platform-id is required for {} to auto-build expectOutputList.",
-                reward_type
-            );
-        };
-
+            bail!("No reward tokens found for {} in position-detail. Verify investment-id and platform-id.", reward_type);
+        }
+        auto
+    } else {
+        bail!(
+            "--platform-id is required for {} to auto-build expectOutputList.",
+            reward_type
+        );
+    };
 
     // API: investmentId and analysisPlatformId cannot both be specified.
     // When investment_id is present (V3_FEE, UNLOCKED_PRINCIPAL, REWARD_INVESTMENT),
