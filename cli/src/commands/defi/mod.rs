@@ -15,6 +15,10 @@ use crate::output;
 
 #[derive(Subcommand)]
 pub enum DefiCommand {
+    /// Get supported chains for DeFi
+    SupportChains,
+    /// Get supported platforms for DeFi
+    SupportPlatforms,
     /// List all DeFi products (no filters, paginated)
     List {
         /// Page number (min 1, page size fixed at 20)
@@ -287,6 +291,12 @@ pub enum DefiCommand {
 pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
     let client = ctx.client_async().await?;
     match cmd {
+        DefiCommand::SupportChains => {
+            output::success(fetch_chains(&client).await?);
+        }
+        DefiCommand::SupportPlatforms => {
+            output::success(fetch_protocols(&client).await?);
+        }
         DefiCommand::List { page_num } => {
             output::success(fetch_search(&client, None, None, None, None, page_num).await?);
         }

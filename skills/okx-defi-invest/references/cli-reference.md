@@ -1,8 +1,69 @@
 # OKX DeFi — CLI Command Reference
 
-Detailed parameter tables, return field schemas, and usage examples for all 10 DeFi commands.
+Detailed parameter tables, return field schemas, and usage examples for all 12 DeFi commands.
 
-## 1. onchainos defi list
+## 1. onchainos defi support-chains
+
+Get all chains currently supported by DeFi products.
+
+```bash
+onchainos defi support-chains
+```
+
+No parameters.
+
+**Return fields** (array):
+
+| Field | Type | Description |
+|---|---|---|
+| `chainIndex` | String | Chain ID (e.g. `"1"` = Ethereum, `"56"` = BSC) |
+| `network` | String | Network identifier (e.g. `"ETH"`, `"BSC"`, `"POLYGON"`) |
+
+**Example output:**
+
+```json
+[
+  {"chainIndex": "1", "network": "ETH"},
+  {"chainIndex": "56", "network": "BSC"},
+  {"chainIndex": "137", "network": "POLYGON"},
+  {"chainIndex": "42161", "network": "ARBITRUM"},
+  {"chainIndex": "8453", "network": "BASE"}
+]
+```
+
+---
+
+## 2. onchainos defi support-platforms
+
+Get all DeFi platforms and their product counts.
+
+```bash
+onchainos defi support-platforms
+```
+
+No parameters.
+
+**Return fields** (array):
+
+| Field | Type | Description |
+|---|---|---|
+| `analysisPlatformId` | String | Platform ID (used in `--platform-id` for other commands) |
+| `platformName` | String | Platform display name (e.g. `"Aave V3"`, `"Lido"`) |
+| `investmentCount` | Integer | Number of products on this platform |
+
+**Example output:**
+
+```json
+[
+  {"analysisPlatformId": "10", "platformName": "Aave V3", "investmentCount": 68},
+  {"analysisPlatformId": "20", "platformName": "Lido", "investmentCount": 1},
+  {"analysisPlatformId": "30", "platformName": "PancakeSwap V3", "investmentCount": 120}
+]
+```
+
+---
+
+## 3. onchainos defi list
 
 List all DeFi products by APY (no filters, paginated).
 
@@ -20,7 +81,7 @@ onchainos defi list [--page-num <n>]
 
 ---
 
-## 2. onchainos defi search
+## 4. onchainos defi search
 
 Search DeFi products across chains (earn, pools, lending).
 
@@ -62,7 +123,7 @@ onchainos defi search --token <tokens> [--platform <names>] [--chain <chain>] [-
 
 ---
 
-## 3. onchainos defi detail
+## 5. onchainos defi detail
 
 Get full product details and live APY.
 
@@ -114,7 +175,7 @@ onchainos defi detail --investment-id <id>
 
 ---
 
-## 4. onchainos defi prepare
+## 6. onchainos defi prepare
 
 Get pre-investment info: accepted tokens, V3 tick parameters.
 
@@ -158,7 +219,7 @@ onchainos defi prepare --investment-id <id>
 
 ---
 
-## 5. onchainos defi deposit
+## 7. onchainos defi deposit
 
 Generate calldata to enter a DeFi position (subscribe, add liquidity, borrow).
 
@@ -225,7 +286,7 @@ onchainos defi deposit \
 
 ---
 
-## 6. onchainos defi redeem
+## 8. onchainos defi redeem
 
 Generate calldata to exit a DeFi position (redeem, remove liquidity, repay).
 
@@ -277,7 +338,7 @@ Common `callDataType` patterns for redeem:
 
 ---
 
-## 7. onchainos defi claim
+## 9. onchainos defi claim
 
 Generate calldata to claim DeFi rewards.
 
@@ -319,7 +380,7 @@ onchainos defi claim \
 
 ---
 
-## 8. onchainos defi calculate-entry
+## 10. onchainos defi calculate-entry
 
 Calculate exact token amounts needed for V3 pool entry based on input token and amount. **Must be called after `defi prepare` for V3 pools.**
 
@@ -358,7 +419,7 @@ onchainos defi calculate-entry \
 
 ---
 
-## 9. onchainos defi positions
+## 11. onchainos defi positions
 
 Get user DeFi holdings overview across protocols and chains.
 
@@ -387,7 +448,7 @@ onchainos defi positions --address <address> --chains <chains>
 
 ---
 
-## 10. onchainos defi position-detail
+## 12. onchainos defi position-detail
 
 Get detailed DeFi holdings for a specific protocol.
 
