@@ -1,16 +1,16 @@
 ---
 name: okx-dex-swap
-description: "Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens', 'sell tokens', 'exchange crypto', 'convert tokens', 'swap SOL for USDC', 'get a swap quote', 'execute a trade', 'find the best swap route', 'cheapest way to swap', 'optimal swap', 'compare swap rates', '换币', '买币', '卖币', '兑换', '交易', '代币兑换', '最优路径', '滑点', or mentions swapping, trading, buying, selling, or exchanging tokens on XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, or any of 20+ supported chains. Aggregates liquidity from 500+ DEX sources for optimal routing and price. Supports slippage control, price impact protection, and cross-DEX route optimization."
+description: "Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens', 'sell tokens', 'exchange crypto', 'convert tokens', 'swap SOL for USDC', 'get a swap quote', 'execute a trade', 'find the best swap route', 'cheapest way to swap', 'optimal swap', 'compare swap rates', '换币', '买币', '卖币', '兑换', '交易', '代币兑换', '最优路径', '滑点', 'get swap calldata', 'build unsigned tx', or mentions swapping, trading, buying, selling, or exchanging tokens on XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, or any of 20+ supported chains. Aggregates liquidity from 500+ DEX sources for optimal routing and price. Supports slippage control, price impact protection, and cross-DEX route optimization."
 license: MIT
 metadata:
   author: okx
-  version: "1.1.0"
+  version: "1.2.0"
   homepage: "https://web3.okx.com"
 ---
 
 # Onchain OS DEX Swap
 
-5 commands for multi-chain swap aggregation — quote, approve, and one-shot execute.
+6 commands for multi-chain swap aggregation — quote, approve, one-shot execute, and calldata-only swap.
 
 ## Pre-flight Checks
 
@@ -44,8 +44,9 @@ metadata:
 | 2 | `onchainos swap liquidity --chain <chain>` | Get available liquidity sources on a chain |
 | 3 | `onchainos swap approve --token ... --amount ... --chain ...` | Get ERC-20 approval transaction data (advanced/manual use) |
 | 4 | `onchainos swap quote --from ... --to ... --readable-amount ... --chain ...` | Get swap quote (read-only price estimate). **No `--slippage` param**. |
-| 5 | `onchainos swap swap --from ... --to ... --amount ... --chain ... --wallet <user_wallet_address> [--slippage <pct>] [--gas-level <level>] [--tips <sol>] [--max-auto-slippage <pct>]` | Get swap transaction data (quote → sign → broadcast). Returns transaction data for signing. |
-| 6 | `onchainos swap execute --from ... --to ... --readable-amount ... --chain ... --wallet <user_wallet_address> [--slippage <pct>] [--gas-level <level>] [--mev-protection]` | **One-shot swap**: quote → approve (if needed) → swap → sign & broadcast → txHash. |
+| 5 | `onchainos swap execute --from ... --to ... --readable-amount ... --chain ... --wallet ... [--slippage <pct>] [--gas-level <level>] [--mev-protection]` | **One-shot swap**: quote → approve (if needed) → swap → sign & broadcast → txHash. |
+| 6 | `onchainos swap swap --from ... --to ... --readable-amount ... --chain ... --wallet ... [--slippage <pct>]` | **Calldata only**: returns unsigned tx data. Does NOT sign or broadcast. |
+
 
 ## Token Address Resolution (Mandatory)
 
@@ -72,9 +73,9 @@ Follow the **Token Address Resolution** section above.
 
 - **Chain**: missing → recommend XLayer (`--chain xlayer`, zero gas, fast confirmation).
 - **Amount**: extract human-readable amount from user's request; pass directly as `--readable-amount <amount>`. CLI fetches token decimals and converts to raw units automatically.
-- **Slippage**: omit to use autoSlippage. Pass `--slippage <value>` only if user explicitly requests. Value must be greater than 0 and at most 100 (percent), decimals allowed (e.g. `0.5`, `1`, `100`). Never pass `--slippage` to `swap quote`.
+- **Slippage**: omit to use autoSlippage. Pass `--slippage <value>` only if user explicitly requests. Never pass `--slippage` to `swap quote`.
 - **Gas level**: default `average`. Use `fast` for meme/time-sensitive trades.
-- **Wallet**: `--wallet` is the user's on-chain wallet address (e.g. `0x1a2b...3c4d` for EVM, a base58 address like `7xKXtg...` for Solana). It is NOT a chain name or token symbol. To obtain: run `onchainos wallet status`. Not logged in → `onchainos wallet login`. Single account → use active address. Multiple accounts → list and ask user to choose.
+- **Wallet**: run `onchainos wallet status`. Not logged in → `onchainos wallet login`. Single account → use active address. Multiple accounts → list and ask user to choose.
 
 #### Trading Parameter Presets
 
@@ -101,7 +102,7 @@ Display: expected output, gas, price impact, routing path. Check `isHoneyPot` an
 ### Step 5 — Execute
 
 ```bash
-onchainos swap execute --from <token address from step1> --to <token address from step1> --readable-amount <amount> --chain <chain> --wallet <user_wallet_address> [--slippage <pct>] [--gas-level <level>] [--mev-protection]
+onchainos swap execute --from <token address from step1> --to <token address from step1> --readable-amount <amount> --chain <chain> --wallet <addr> [--slippage <pct>] [--gas-level <level>] [--mev-protection]
 ```
 
 CLI handles approve (if needed) + sign + broadcast internally.
@@ -142,7 +143,7 @@ Suggest follow-up: explorer link for `swapTxHash`, check new token price, or swa
 
 ## Additional Resources
 
-`references/cli-reference.md` — full params, return fields, and examples for all 5 commands.
+`references/cli-reference.md` — full params, return fields, and examples for all 6 commands.
 
 ## Risk Controls
 
