@@ -162,6 +162,7 @@ defi tvl-chart --investment-id <id> --time-range SEASON
 defi depth-price-chart --investment-id <id>
 ```
 - Returns: `tick`, `liquidity`, `liquidityNet`, `token0Price`, `token1Price` per tick.
+- No `--time-range` parameter — DEPTH mode always returns current snapshot.
 - Use this before V3 Pool deposit to identify where liquidity is concentrated and choose `tickLower`/`tickUpper` accordingly.
 
 **V3 Price History** — see historical relative price between token0 and token1:
@@ -169,7 +170,7 @@ defi depth-price-chart --investment-id <id>
 defi depth-price-chart --investment-id <id> --chart-type PRICE --time-range WEEK
 ```
 - Chart types: `DEPTH` (default), `PRICE`.
-- Time ranges: `DAY` (default), `WEEK`, `MONTH`.
+- `--time-range` only applies to PRICE mode: `DAY` (default), `WEEK`.
 - Returns: `token0Price`, `token1Price`, `timestamp` per data point.
 
 ### Step 3: Sign & Broadcast Calldata

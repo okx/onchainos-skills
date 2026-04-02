@@ -199,7 +199,7 @@ pub enum DefiCommand {
         /// Chart type: DEPTH (default) or PRICE
         #[arg(long)]
         chart_type: Option<String>,
-        /// Time range: DAY (default), WEEK, MONTH
+        /// Time range (only for PRICE mode): DAY (default), WEEK. Ignored in DEPTH mode
         #[arg(long)]
         time_range: Option<String>,
     },

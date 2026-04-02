@@ -69,7 +69,7 @@ struct DefiDepthPriceChartParams {
     investment_id: String,
     /// Chart type: DEPTH (default) or PRICE
     chart_type: Option<String>,
-    /// Time range: DAY (default), WEEK, MONTH
+    /// Time range (only for PRICE mode): DAY (default), WEEK. Ignored in DEPTH mode
     time_range: Option<String>,
 }
 
@@ -1780,7 +1780,7 @@ impl McpServer {
 
     #[tool(
         name = "defi_depth_price_chart",
-        description = "Get V3 Pool liquidity depth distribution or price history chart. V3 Pool only. Chart types: DEPTH (default, shows liquidity per tick), PRICE (shows historical token0/token1 prices). Time ranges: DAY (default), WEEK, MONTH."
+        description = "Get V3 Pool liquidity depth distribution or price history chart. V3 Pool only. Chart types: DEPTH (default, shows liquidity per tick), PRICE (shows historical token0/token1 prices). Time range only applies to PRICE mode: DAY (default), WEEK."
     )]
     async fn defi_depth_price_chart(
         &self,

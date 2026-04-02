@@ -592,7 +592,7 @@ onchainos defi depth-price-chart --investment-id <id> [--chart-type <type>] [--t
 |---|---|---|---|
 | `--investment-id` | Yes | — | Investment ID (must be a V3 Pool product) |
 | `--chart-type` | No | `DEPTH` | Chart type: `DEPTH` (liquidity per tick) or `PRICE` (historical token0/token1 prices) |
-| `--time-range` | No | `DAY` | Time range: `DAY`, `WEEK`, `MONTH` |
+| `--time-range` | No | `DAY` | Time range, **only for PRICE mode**: `DAY` (default), `WEEK`. Ignored in DEPTH mode |
 
 **Return fields — DEPTH mode** (array):
 
@@ -612,10 +612,12 @@ onchainos defi depth-price-chart --investment-id <id> [--chart-type <type>] [--t
 | `token1Price` | String | Historical token1 price |
 | `timestamp` | Long | Timestamp in milliseconds |
 
+> **Note**: `--time-range` is only used in PRICE mode. DEPTH mode always returns the current liquidity snapshot — passing `--time-range` has no effect.
+
 **Examples:**
 
 ```bash
-# Depth chart — see liquidity concentration to pick tick range
+# Depth chart — see liquidity concentration to pick tick range (no time-range needed)
 onchainos defi depth-price-chart --investment-id 1589649169
 
 # Price history — see token0/token1 relative price over past week
