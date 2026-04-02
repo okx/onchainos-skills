@@ -27,6 +27,7 @@ Obtain your API Key, Secret Key, and Passphrase from the
 [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal).
 
 > **Security**: Never hardcode credentials in source code. Use environment variables or a `.env` file.
+> Ensure `.env` is listed in `.gitignore` — never commit it to version control.
 
 ### Login Message
 
@@ -100,6 +101,21 @@ The server responds with:
 
 `code` = `"0"` means success. Any other code means failure — check `msg` for details.
 Wait for this ACK before sending subscribe messages. Recommended timeout: 10 seconds.
+
+---
+
+## Push Message Envelope
+
+Every push message from the server uses the same envelope structure:
+
+```json
+{ "arg": { "channel": "...", ... }, "data": [{ ... }] }
+```
+
+- `arg`: echoes back the subscription parameters (channel, chainIndex, etc.)
+- `data`: array containing the actual push payload — the fields described per channel below
+
+The "Push Data Fields" tables below describe the contents of each object inside the `data` array, **not** the top-level message.
 
 ---
 
