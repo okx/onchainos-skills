@@ -211,6 +211,10 @@ impl DaemonState {
         if parts.len() < 2 {
             return DaemonState::Crashed;
         }
+        // "stopped" is a terminal state — not subject to staleness check
+        if parts[0] == "stopped" {
+            return DaemonState::Stopped;
+        }
         let ts: u64 = parts[1].parse().unwrap_or(0);
         if now_ms.saturating_sub(ts) > 60_000 {
             return DaemonState::Crashed;
@@ -222,7 +226,6 @@ impl DaemonState {
                 DaemonState::Disconnected(reason)
             }
             "reconnecting" => DaemonState::Reconnecting,
-            "stopped" => DaemonState::Stopped,
             _ => DaemonState::Crashed,
         }
     }

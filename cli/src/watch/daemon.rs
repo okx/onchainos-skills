@@ -146,8 +146,8 @@ pub async fn run_daemon(id: &str, dir: &Path) -> Result<()> {
                 heartbeat_active.store(false, Ordering::Relaxed);
                 attempts = 0; // reset after successful session
                 eprintln!("[watch daemon] disconnected: {}", reason);
-                if reason == "stopped" {
-                    write_status(dir, "stopped", None)?;
+                if reason == "stopped" || reason == "idle_timeout" {
+                    write_status(dir, "stopped", Some(&reason))?;
                     return Ok(());
                 }
                 write_status(dir, "disconnected", Some(&reason))?;
