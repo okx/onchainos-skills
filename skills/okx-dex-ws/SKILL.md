@@ -63,6 +63,7 @@ onchainos ws stop [--id <ID>]                      # stop session(s)
 - `--token-pair`: `chainIndex:tokenContractAddress` (e.g. `1:0xdac17f958d2ee523a2206206994597c13d831ec7`)
 - `--chain-index`: comma-separated chain IDs (e.g. `1,501,56`)
 - `--wallet-addresses`: comma-separated addresses, max 200
+- `--idle-timeout`: auto-stop if no poll within this duration (default `30m`; `1h`, `2h`, `300s`, `0` to disable)
 
 ### Examples
 
