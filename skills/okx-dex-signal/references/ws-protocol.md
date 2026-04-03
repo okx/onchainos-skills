@@ -1,6 +1,6 @@
 # Onchain OS DEX Signal — WebSocket Protocol Reference
 
-This document is for **developers and agents** who want to connect directly to the OKX DEX WebSocket
+This document is for **developers and agents** who want to connect directly to the Onchain OS DEX WebSocket
 and subscribe to real-time data.
 
 ---
@@ -17,7 +17,7 @@ Uses TLS. Connect with any standard WebSocket client that supports TLS.
 
 ## Authentication
 
-The OKX DEX WebSocket uses HMAC-SHA256 API key authentication, which is the same scheme
+The Onchain OS DEX WebSocket uses HMAC-SHA256 API key authentication, which is the same scheme
 as the OKX REST API. Full documentation:
 👉 https://web3.okx.com/onchainos/dev-docs/market/websocket-login
 

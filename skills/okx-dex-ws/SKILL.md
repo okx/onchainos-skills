@@ -8,7 +8,7 @@ metadata:
   homepage: "https://web3.okx.com"
 ---
 
-# OKX DEX WebSocket — Unified Skill
+# Onchain OS DEX WebSocket — Unified Skill
 
 Two ways to consume real-time DEX data:
 1. **CLI** (`onchainos ws`) — start a background session, poll events incrementally. Best for monitoring and agent-driven workflows.
