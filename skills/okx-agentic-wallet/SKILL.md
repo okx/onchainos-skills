@@ -1,6 +1,6 @@
 ---
 name: okx-agentic-wallet
-description: "Use this skill when the user mentions wallet login, sign in, verify OTP, add wallet, switch account, wallet status, logout, wallet balance, assets, holdings, send tokens, transfer ETH, transfer USDC, pay someone, send crypto, send ERC-20, send SPL, transaction history, recent transactions, tx status, tx detail, order list, call smart contract, interact with contract, execute contract function, send calldata, invoke smart contract, show my addresses, wallet addresses, deposit, receive, receive address, top up, fund my wallet, sign message, personal sign, personalSign, eip712, sign data, sign typed data, sign EIP-712, TEE signing, trusted execution environment, export wallet, export mnemonic, migrate wallet, backup wallet, import to hardware wallet, seed phrase export. Chinese: 登录钱包, 钱包登录, 验证OTP, 添加钱包, 切换账户, 钱包状态, 退出登录, 余额, 资产, 钱包列表, 账户列表, 发送代币, 转账, 交易历史, 交易记录, 合约调用, 我的地址, 钱包地址, 充值, 充币, 收款, 收款地址, 入金, 签名消息, 消息签名, TEE签名, 可信执行环境, 导出钱包, 导出助记词, 迁移钱包, 备份钱包. Manages the wallet lifecycle: auth (login, OTP verify, account addition, switching, status, logout), authenticated balance queries, wallet address display (grouped by XLayer/EVM/Solana), token transfers (native & ERC-20/SPL), transaction history, smart contract calls, message signing (personalSign for EVM & Solana, EIP-712 for EVM), and wallet export guidance (agent-side risk disclosure and Web portal redirection)."
+description: "Use this skill when the user mentions wallet login, sign in, verify OTP, add wallet, switch account, wallet status, logout, wallet balance, assets, holdings, send tokens, transfer ETH, transfer USDC, pay someone, send crypto, send ERC-20, send SPL, transaction history, recent transactions, tx status, tx detail, order list, call smart contract, interact with contract, execute contract function, send calldata, invoke smart contract, show my addresses, wallet addresses, deposit, receive, receive address, top up, fund my wallet, sign message, personal sign, personalSign, eip712, sign data, sign typed data, sign EIP-712, TEE signing, trusted execution environment. Chinese: 登录钱包, 钱包登录, 验证OTP, 添加钱包, 切换账户, 钱包状态, 退出登录, 余额, 资产, 钱包列表, 账户列表, 发送代币, 转账, 交易历史, 交易记录, 合约调用, 我的地址, 钱包地址, 充值, 充币, 收款, 收款地址, 入金, 签名消息, 消息签名, TEE签名, 可信执行环境. Manages the wallet lifecycle: auth (login, OTP verify, account addition, switching, status, logout), authenticated balance queries, wallet address display (grouped by XLayer/EVM/Solana), token transfers (native & ERC-20/SPL), transaction history, smart contract calls, message signing (personalSign for EVM & Solana, EIP-712 for EVM)"
 license: MIT
 metadata:
   author: okx
@@ -232,29 +232,6 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 - **Risk action priority**: `block` > `warn` > empty (safe). Top-level `action` = highest priority from `riskItemDetail`.
 - **Approve calls**: Warn about unlimited approvals (`type(uint256).max`). Suggest limited approvals.
 
-
-## Wallet Export (Agent-Side Guidance)
-
-> The Agent must **never** display any mnemonic phrase or private key content in the conversation. The Agent's role is limited to: recognizing user intent, explaining the risks, and providing the Web portal link.
-
-### Trigger Conditions
-
-1. **First wallet creation**: When a user creates a wallet for the first time, inform them that wallet export is available. Do NOT repeat this reminder when the same user creates additional accounts later.
-2. **User explicitly asks**: e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I import my wallet into a hardware wallet?"
-
-### Agent Behavior
-
-When triggered, follow these steps in order:
-
-1. **Explain the core risk**: After export, the current wallet will be permanently unbound from the user's email. The Agent will no longer be able to operate this wallet.
-2. **Recommend pre-export actions**: Advise the user to transfer all assets to a safe address (including DeFi deposits, liquidity positions, etc.) and stop any running Agent strategies (grid trading, copy trading, pending orders in protocols) before proceeding.
-3. **Provide the Web portal link**: Direct the user to complete the export on the Web portal — [Go to Wallet Export →]
-4. **Never expose secrets**: Do NOT display any mnemonic phrase, private key, or seed-related content in the conversation under any circumstances.
-
-### Example Response
-
-> Wallet export must be completed on the Web portal. Please note: once the export is complete, your current wallet will be permanently unbound from your email, and the Agent will no longer be able to operate this wallet. The system will automatically create a new empty wallet for your account. Before exporting, please transfer your assets to a safe address and stop any running strategies. [Go to Wallet Export →]
-
 ---
 
 ## Edge Cases
@@ -293,7 +270,6 @@ When triggered, follow these steps in order:
 <never>
     - Never show raw `accountId` — show `accountName`. `accountId` is for CLI calls only.
     - Do NOT mix address formats across chain types
-    - **Never display mnemonic phrases, seed phrases, or private keys** in the conversation — wallet export must always be completed on the Web portal.
 </never>
 </rules>
 
