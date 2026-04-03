@@ -1,6 +1,6 @@
 ---
 name: okx-dex-ws
-description: "Use this skill when the user wants to subscribe to real-time on-chain data via OKX DEX WebSocket — either through the onchainos ws CLI (start/poll/stop for quick monitoring) or by writing a custom WebSocket script/脚本/bot. Covers ALL OKX DEX WebSocket channels: token price/价格监控, market cap & liquidity/市值变化, candlestick/K线推送, token trade feed/代币交易流, smart money/KOL/大户 wallet tracking/聪明钱监控, buy signal alerts/信号, meme token scanning/扫链/新盘提醒."
+description: "Use this skill when the user mentions 'onchainos ws', 'ws start', 'ws poll', 'ws stop', 'ws channels', 'ws session', 'ws channel-info', 'idle-timeout', 'idle timeout', 'WebSocket channels', 'WS频道', or asks about managing WebSocket sessions/会话管理. Also use when writing a custom WebSocket script/脚本/bot for real-time on-chain data. Covers: onchainos ws CLI commands (start/poll/stop/list/channels/channel-info), session lifecycle, idle-timeout configuration, and all 9 DEX WebSocket channels (price, candle, trades, price-info, signals, tracker, meme scanning)."
 license: MIT
 metadata:
   author: okx
