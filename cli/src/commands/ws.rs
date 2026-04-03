@@ -486,7 +486,9 @@ fn ws_poll(
             "trades": filtered
         }));
     } else {
-        // Non-tracker channel or no filters: return raw JSON events
+        // Non-tracker channel or no filters: return raw JSON events.
+        // Cursor advances to the end of the read window (fetch_limit == limit here,
+        // so all read events are returned — no events are skipped).
         let events: Vec<Value> = result.events.into_iter().take(limit).collect();
         let new_count = events.len();
         store::write_cursor(&dir, &poll_channel, result.new_cursor.file_no, result.new_cursor.offset)?;
@@ -503,38 +505,40 @@ fn ws_poll(
 
 // ── stop ─────────────────────────────────────────────────────────────────────
 
-fn stop_one(id: &str, flush: bool) -> Result<usize> {
+struct StopResult {
+    flushed_events: Vec<Value>,
+}
+
+fn stop_one(id: &str, flush: bool) -> Result<StopResult> {
     let dir = store::watch_dir(id)?;
     if !dir.exists() {
         bail!("session '{}' not found", id);
     }
 
-    let flushed_count = if flush {
+    let mut flushed_events = Vec::new();
+    if flush {
         let config = store::read_config(id)?;
-        let mut n = 0usize;
         for ch in &config.channels {
             let result = store::read_events_from_cursor(&dir, ch, 1000)?;
             store::write_cursor(&dir, ch, result.new_cursor.file_no, result.new_cursor.offset)?;
-            n += result.events.len();
+            flushed_events.extend(result.events);
         }
-        n
-    } else {
-        0
-    };
+    }
 
     let _ = kill_daemon(id);
     let _ = store::write_status(&dir, "stopped", None);
     store::remove_watch_dir(id)?;
 
-    Ok(flushed_count)
+    Ok(StopResult { flushed_events })
 }
 
 fn ws_stop(id: &str, flush: bool) -> Result<()> {
-    let flushed_count = stop_one(id, flush)?;
+    let result = stop_one(id, flush)?;
     output::success(json!({
         "id": id,
         "status": "stopped",
-        "flushed_count": flushed_count,
+        "flushed_count": result.flushed_events.len(),
+        "flushed_events": result.flushed_events,
     }));
     Ok(())
 }

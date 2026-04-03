@@ -98,9 +98,11 @@ pub async fn run_daemon(id: &str, dir: &Path) -> Result<()> {
     });
 
     // Heartbeat writer: every 10s overwrite status so poll can detect crashes.
-    // Also checks idle timeout — auto-stops if no poll within the configured duration.
+    // Also checks idle timeout — signals main loop to exit gracefully.
     let heartbeat_active = Arc::new(AtomicBool::new(true));
     let heartbeat_active_clone = Arc::clone(&heartbeat_active);
+    let idle_expired = Arc::new(AtomicBool::new(false));
+    let idle_expired_clone = Arc::clone(&idle_expired);
     let dir_owned = dir.to_path_buf();
     let idle_timeout_ms = config.idle_timeout_ms;
     let created_at = config.created_at;
@@ -111,13 +113,14 @@ pub async fn run_daemon(id: &str, dir: &Path) -> Result<()> {
             if heartbeat_active_clone.load(Ordering::Relaxed) {
                 let _ = write_status(&dir_owned, "running", None);
             }
-            // Idle timeout check
+            // Idle timeout check — signal main loop instead of process::exit
             if idle_timeout_ms > 0 {
                 let last_activity = super::store::last_poll_time(&dir_owned)
                     .unwrap_or(created_at);
                 if super::store::now_ms().saturating_sub(last_activity) > idle_timeout_ms {
                     let _ = write_status(&dir_owned, "stopped", Some("idle_timeout"));
-                    std::process::exit(0);
+                    idle_expired_clone.store(true, Ordering::Relaxed);
+                    break;
                 }
             }
         }
@@ -138,7 +141,7 @@ pub async fn run_daemon(id: &str, dir: &Path) -> Result<()> {
     let mut attempts = 0u32;
     loop {
         heartbeat_active.store(true, Ordering::Relaxed);
-        match connect_and_stream(dir, &ws_url, &creds, &config).await {
+        match connect_and_stream(dir, &ws_url, &creds, &config, &idle_expired).await {
             Ok(reason) => {
                 heartbeat_active.store(false, Ordering::Relaxed);
                 attempts = 0; // reset after successful session
@@ -154,6 +157,12 @@ pub async fn run_daemon(id: &str, dir: &Path) -> Result<()> {
                 eprintln!("[watch daemon] error: {}", e);
                 write_status(dir, "disconnected", Some(&format!("error:{}", e)))?;
             }
+        }
+
+        // Check idle timeout signal before reconnecting
+        if idle_expired.load(Ordering::Relaxed) {
+            eprintln!("[watch daemon] idle timeout reached, shutting down");
+            return Ok(());
         }
 
         attempts += 1;
@@ -173,6 +182,7 @@ async fn connect_and_stream(
     ws_url: &str,
     creds: &Credentials,
     config: &WatchConfig,
+    idle_expired: &AtomicBool,
 ) -> Result<String> {
     let (mut ws, _): (WsStream, _) = connect_async(ws_url).await?;
 
@@ -224,6 +234,9 @@ async fn connect_and_stream(
     loop {
         tokio::select! {
             _ = heartbeat.tick() => {
+                if idle_expired.load(Ordering::Relaxed) {
+                    return Ok("idle_timeout".to_string());
+                }
                 ws.send(Message::Text("ping".to_string().into())).await?;
                 match timeout(Duration::from_secs(PONG_TIMEOUT_SECS), recv_pong(&mut ws, dir)).await {
                     Ok(Ok(_)) => {}
