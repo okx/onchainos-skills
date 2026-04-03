@@ -1,10 +1,10 @@
 ---
 name: okx-dex-signal
-description: "Use this skill for smart-money/whale/KOL/大户 activity tracking, aggregated buy signal/信号 alerts, leaderboard/牛人榜 rankings, and WebSocket real-time trade feeds. Covers: (1) address tracker — raw DEX transaction feed for smart money, KOL, or custom wallet addresses; (2) aggregated buy-only signal alerts — tokens bought collectively by smart money/KOL/whales; (3) leaderboard — top traders by PnL, win rate, volume, or ROI; (4) WebSocket protocol reference for building real-time subscription scripts. Use when the user asks 'what are smart money buying', '聪明钱最新交易', 'KOL交易动态', '追踪聪明钱', 'track address trades', '大户在买什么', 'whale signals', 'smart money alerts', '信号', '大户信号', 'top traders', '牛人榜', 'real-time trade feed', 'WebSocket subscription', or wants to monitor notable wallet activity."
+description: "Use this skill for smart-money/whale/KOL/大户 activity tracking, aggregated buy signal/信号 alerts, and leaderboard/牛人榜 rankings. Covers: (1) address tracker — raw DEX transaction feed for smart money, KOL, or custom wallet addresses; (2) aggregated buy-only signal alerts — tokens bought collectively by smart money/KOL/whales; (3) leaderboard — top traders by PnL, win rate, volume, or ROI. Use when the user asks 'what are smart money buying', '聪明钱最新交易', 'KOL交易动态', '追踪聪明钱', 'track address trades', '大户在买什么', 'whale signals', 'smart money alerts', '信号', '大户信号', 'top traders', '牛人榜', or wants to monitor notable wallet activity. NOTE: if the user wants to write a WebSocket script/脚本/bot, use okx-dex-ws instead."
 license: MIT
 metadata:
   author: okx
-  version: "2.2.5"
+  version: "1.0.4"
   homepage: "https://web3.okx.com"
 ---
 
@@ -146,9 +146,25 @@ Present conversationally — never expose command paths to the user.
 For detailed parameter tables and return field schemas, consult:
 - **`references/cli-reference.md`** — Full CLI command reference for tracker, signal, and leaderboard commands
 
-## WebSocket Protocol Reference
+## Real-time WebSocket Monitoring
 
-When the user wants to build a custom WebSocket client, write a WS subscription script, implement a real-time trade monitoring bot, or asks about the raw OKX DEX WebSocket protocol (authentication, subscribe format, push data schema, heartbeat), read **`references/ws-protocol.md`** before responding. That file contains the complete protocol specification needed to subscribe to `kol_smartmoney-tracker-activity` and `address-tracker-activity` channels directly.
+For real-time signal and tracker data, use the `onchainos ws` CLI:
+
+```bash
+# KOL + smart money aggregated trade feed
+onchainos ws start --channel kol_smartmoney-tracker-activity
+
+# Track custom wallet addresses
+onchainos ws start --channel address-tracker-activity --wallet-addresses 0xAAA,0xBBB
+
+# Buy signal alerts on specific chains
+onchainos ws start --channel dex-market-new-signal-openapi --chain-index 1,501
+
+# Poll events
+onchainos ws poll --id <ID>
+```
+
+For custom WebSocket scripts/bots, read **`references/ws-protocol.md`** for the complete protocol specification.
 
 ## Edge Cases
 

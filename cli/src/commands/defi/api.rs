@@ -7,7 +7,9 @@ use super::helpers::convert_minimal_to_decimal;
 
 /// GET /api/v6/defi/product/supported-chains
 pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
-    client.get("/api/v6/defi/product/supported-chains", &[]).await
+    client
+        .get("/api/v6/defi/product/supported-chains", &[])
+        .await
 }
 
 /// GET /api/v6/defi/product/supported-platforms

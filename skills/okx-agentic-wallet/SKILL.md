@@ -4,7 +4,7 @@ description: "Use this skill when the user mentions wallet login, sign in, verif
 license: MIT
 metadata:
   author: okx
-  version: "2.2.5"
+  version: "2.0.0"
   homepage: "https://web3.okx.com"
 ---
 

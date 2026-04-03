@@ -4,7 +4,7 @@ description: "Use this skill for on-chain market data: token prices/价格, K-li
 license: MIT
 metadata:
   author: okx
-  version: "2.2.5"
+  version: "1.0.4"
   homepage: "https://web3.okx.com"
 ---
 
@@ -114,6 +114,23 @@ For detailed parameter tables, return field schemas, and usage examples for all 
 - **`references/cli-reference.md`** — Full CLI command reference with params, return fields, and examples
 
 To search for specific command details: `grep -n "onchainos market <command>" references/cli-reference.md`
+
+## Real-time WebSocket Monitoring
+
+For real-time price and candlestick data, use the `onchainos ws` CLI:
+
+```bash
+# Real-time token price
+onchainos ws start --channel price --token-pair 1:0xdac17f958d2ee523a2206206994597c13d831ec7
+
+# K-line 1-minute candles
+onchainos ws start --channel dex-token-candle1m --token-pair 1:0xdac17f958d2ee523a2206206994597c13d831ec7
+
+# Poll events
+onchainos ws poll --id <ID>
+```
+
+For custom WebSocket scripts/bots, read **`references/ws-protocol.md`** for the complete protocol specification.
 
 ## Region Restrictions (IP Blocking)
 

@@ -1,10 +1,10 @@
 ---
 name: okx-dex-token
-description: "Use this skill for token-level data: search tokens, trending/hot tokens (热门, 代币榜单), liquidity pools, holder distribution (whale/巨鲸, sniper, bundler-tagged holder %), token risk metadata (riskControlLevel, tokenTags, dev stats, suspicious/bundle holding % via advanced-info), recent buy/sell activity, top profit addresses, token trade history, or holder cluster analysis (持仓集中度, cluster overview, cluster rug pull risk/跑路风险, new wallet percentage/新钱包持仓比例, holder clusters, 'are top holders in same cluster'). Invoke on user intent; token address can be provided after. Use also when the user wants to write a token scanning script or automate token research using OKX."
+description: "Use this skill for token-level data: search tokens, trending/hot tokens (热门, 代币榜单), liquidity pools, holder distribution (whale/巨鲸, sniper, bundler-tagged holder %), token risk metadata (riskControlLevel, tokenTags, dev stats, suspicious/bundle holding % via advanced-info), recent buy/sell activity, trade feed/逐笔成交/每笔交易/stream trades, top profit addresses, token trade history, detailed price info with market cap volume liquidity and holder count (price-info), or holder cluster analysis (持仓集中度, cluster overview, cluster rug pull risk/跑路风险, new wallet percentage/新钱包持仓比例, holder clusters, 'are top holders in same cluster'). Invoke on user intent; token address can be provided after. Use also when the user wants to write a token scanning script or automate token research using OKX."
 license: MIT
 metadata:
   author: okx
-  version: "2.2.5"
+  version: "1.0.4"
   homepage: "https://web3.okx.com"
 ---
 
@@ -138,6 +138,23 @@ For detailed parameter tables, return field schemas, and usage examples for all 
 - **`references/cli-reference.md`** — Full CLI command reference with params, return fields, and examples
 
 To search for specific command details: `grep -n "onchainos token <command>" references/cli-reference.md`
+
+## Real-time WebSocket Monitoring
+
+For real-time token data streaming, use the `onchainos ws` CLI:
+
+```bash
+# Detailed price info (market cap, volume, liquidity, holders)
+onchainos ws start --channel price-info --token-pair 1:0xdac17f958d2ee523a2206206994597c13d831ec7
+
+# Real-time trade feed (every buy/sell)
+onchainos ws start --channel trades --token-pair 1:0xdac17f958d2ee523a2206206994597c13d831ec7
+
+# Poll events
+onchainos ws poll --id <ID>
+```
+
+For custom WebSocket scripts/bots, read **`references/ws-protocol.md`** for the complete protocol specification.
 
 ## Security Rules
 

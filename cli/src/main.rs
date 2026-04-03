@@ -13,6 +13,7 @@ mod mcp;
 mod output;
 mod wallet_api;
 mod wallet_store;
+mod watch;
 
 use clap::{Parser, Subcommand};
 
@@ -57,11 +58,6 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::leaderboard::LeaderboardCommand,
     },
-    /// Address tracker: latest DEX trades by smart money, KOL, or custom wallets
-    Tracker {
-        #[command(subcommand)]
-        command: commands::tracker::TrackerCommand,
-    },
     /// Token information
     Token {
         #[command(subcommand)]
@@ -102,6 +98,16 @@ pub enum Commands {
     Payment {
         #[command(subcommand)]
         command: commands::agentic_wallet::payment::PaymentCommand,
+    },
+    /// Address tracker: REST activities for KOL / smart money / custom address activity
+    Tracker {
+        #[command(subcommand)]
+        command: commands::tracker::TrackerCommand,
+    },
+    /// Real-time WebSocket subscriptions for DEX data
+    Ws {
+        #[command(subcommand)]
+        command: commands::ws::WsCommand,
     },
     /// DeFi product discovery, investment, redemption, and portfolio
     Defi {
@@ -163,6 +169,7 @@ async fn run() {
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
+        Commands::Ws { command } => commands::ws::execute(command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
     };
 
