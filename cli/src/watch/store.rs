@@ -336,3 +336,22 @@ pub fn now_ms() -> u64 {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
+
+/// Return the most recent mtime (as unix ms) across all `cursor.*` files in `dir`.
+/// Returns `None` if no cursor files exist (session has never been polled).
+pub fn last_poll_time(dir: &Path) -> Option<u64> {
+    let mut latest: Option<u64> = None;
+    let entries = fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with("cursor.") {
+            if let Ok(meta) = entry.metadata() {
+                if let Ok(mtime) = meta.modified() {
+                    let ms = mtime.duration_since(UNIX_EPOCH).ok()?.as_millis() as u64;
+                    latest = Some(latest.map_or(ms, |prev: u64| prev.max(ms)));
+                }
+            }
+        }
+    }
+    latest
+}

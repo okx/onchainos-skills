@@ -178,6 +178,13 @@ pub struct WatchConfig {
     pub chain_indexes: Vec<String>,
     pub env: WatchEnv,
     pub created_at: u64,
+    /// Auto-stop if no poll within this duration (ms). 0 = disabled.
+    #[serde(default = "default_idle_timeout_ms")]
+    pub idle_timeout_ms: u64,
+}
+
+fn default_idle_timeout_ms() -> u64 {
+    30 * 60 * 1000 // 30 minutes
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

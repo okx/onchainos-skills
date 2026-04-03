@@ -19,6 +19,25 @@ fn resolve_trade_type(s: &str) -> &str {
     }
 }
 
+/// Parse a human-friendly duration string (e.g. "30m", "1h", "0") into milliseconds.
+fn parse_duration_ms(s: &str) -> Result<u64> {
+    let s = s.trim();
+    if s == "0" {
+        return Ok(0);
+    }
+    let (num, suffix) = if let Some(n) = s.strip_suffix('m') {
+        (n, 60_000u64)
+    } else if let Some(n) = s.strip_suffix('h') {
+        (n, 3_600_000u64)
+    } else if let Some(n) = s.strip_suffix('s') {
+        (n, 1_000u64)
+    } else {
+        bail!("invalid --idle-timeout '{}'; use e.g. 30m, 1h, 0", s);
+    };
+    let n: u64 = num.parse().map_err(|_| anyhow::anyhow!("invalid --idle-timeout '{}'; use e.g. 30m, 1h, 0", s))?;
+    Ok(n * suffix)
+}
+
 #[derive(Subcommand)]
 pub enum WsCommand {
     /// List all supported WebSocket channels
@@ -50,6 +69,10 @@ pub enum WsCommand {
         /// Environment: prod (default) or pre
         #[arg(long, default_value = "prod")]
         env: String,
+        /// Auto-stop if no poll within this duration (default: 30m, 0 to disable).
+        /// Formats: 30m, 1h, 2h, 0
+        #[arg(long, default_value = "30m")]
+        idle_timeout: String,
     },
 
     /// Poll incremental events from a running session
@@ -111,7 +134,7 @@ pub async fn execute(cmd: WsCommand) -> Result<()> {
     match cmd {
         WsCommand::Channels => ws_channels(),
         WsCommand::ChannelInfo { channel } => ws_channel_info(&channel),
-        WsCommand::Start { channel, wallet_addresses, chain_index, token_pair, env } => {
+        WsCommand::Start { channel, wallet_addresses, chain_index, token_pair, env, idle_timeout } => {
             let addrs: Vec<String> = wallet_addresses
                 .unwrap_or_default()
                 .split(',')
@@ -137,7 +160,8 @@ pub async fn execute(cmd: WsCommand) -> Result<()> {
                     })
                 })
                 .collect();
-            ws_start(channel, addrs, chain_indexes, token_pairs, &env).await
+            let idle_timeout_ms = parse_duration_ms(&idle_timeout)?;
+            ws_start(channel, addrs, chain_indexes, token_pairs, &env, idle_timeout_ms).await
         }
         WsCommand::Poll {
             id, channel, limit,
@@ -201,6 +225,7 @@ async fn ws_start(
     chain_indexes: Vec<String>,
     token_pairs: Vec<TokenPair>,
     env: &str,
+    idle_timeout_ms: u64,
 ) -> Result<()> {
     let watch_env = match env {
         "pre" => WatchEnv::Pre,
@@ -295,6 +320,7 @@ async fn ws_start(
         chain_indexes: chain_indexes.clone(),
         env: watch_env,
         created_at: now_ms(),
+        idle_timeout_ms,
     };
     // Pre-flight: verify credentials before spawning daemon
     crate::watch::daemon::Credentials::from_watch_env(&config.env)?;

@@ -87,23 +87,6 @@ pub async fn run_daemon(id: &str, dir: &Path) -> Result<()> {
     write_pid(dir, std::process::id())?;
     write_status(dir, "running", None)?;
 
-    // Heartbeat writer: every 10s overwrite status so poll can detect crashes.
-    // Only writes when `heartbeat_active` is true (i.e. connected), so that
-    // "disconnected" / "reconnecting" states written by the main loop are not
-    // overwritten by a stale heartbeat tick.
-    let heartbeat_active = Arc::new(AtomicBool::new(true));
-    let heartbeat_active_clone = Arc::clone(&heartbeat_active);
-    let dir_owned = dir.to_path_buf();
-    tokio::spawn(async move {
-        let mut ticker = interval(Duration::from_secs(10));
-        loop {
-            ticker.tick().await;
-            if heartbeat_active_clone.load(Ordering::Relaxed) {
-                let _ = write_status(&dir_owned, "running", None);
-            }
-        }
-    });
-
     let config = read_config(id).unwrap_or_else(|_| WatchConfig {
         channels: super::types::DEFAULT_CHANNELS.iter().map(|c| c.to_string()).collect(),
         wallet_addresses: vec![],
@@ -111,6 +94,33 @@ pub async fn run_daemon(id: &str, dir: &Path) -> Result<()> {
         chain_indexes: vec![],
         env: WatchEnv::Prod,
         created_at: 0,
+        idle_timeout_ms: 30 * 60 * 1000,
+    });
+
+    // Heartbeat writer: every 10s overwrite status so poll can detect crashes.
+    // Also checks idle timeout — auto-stops if no poll within the configured duration.
+    let heartbeat_active = Arc::new(AtomicBool::new(true));
+    let heartbeat_active_clone = Arc::clone(&heartbeat_active);
+    let dir_owned = dir.to_path_buf();
+    let idle_timeout_ms = config.idle_timeout_ms;
+    let created_at = config.created_at;
+    tokio::spawn(async move {
+        let mut ticker = interval(Duration::from_secs(10));
+        loop {
+            ticker.tick().await;
+            if heartbeat_active_clone.load(Ordering::Relaxed) {
+                let _ = write_status(&dir_owned, "running", None);
+            }
+            // Idle timeout check
+            if idle_timeout_ms > 0 {
+                let last_activity = super::store::last_poll_time(&dir_owned)
+                    .unwrap_or(created_at);
+                if super::store::now_ms().saturating_sub(last_activity) > idle_timeout_ms {
+                    let _ = write_status(&dir_owned, "stopped", Some("idle_timeout"));
+                    std::process::exit(0);
+                }
+            }
+        }
     });
     let ws_url = std::env::var("ONCHAINOS_WS_URL").unwrap_or_else(|_| match config.env {
         WatchEnv::Pre => WS_URL_PRE.to_string(),
