@@ -14,11 +14,13 @@ Two ways to consume real-time DEX data:
 1. **CLI** (`onchainos ws`) — start a background session, poll events incrementally. Best for monitoring and agent-driven workflows.
 2. **Script** — write a custom WebSocket client in Python/Node/Rust. Best for bots and custom logic.
 
+## Pre-flight Checks
+
+> Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
+
 ## Prerequisites
 
 This skill requires co-installation with `okx-dex-market`, `okx-dex-token`, `okx-dex-signal`, and `okx-dex-trenches` (all included in the onchainos-skills repository).
-
-> Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
 
 ## Approach 1: CLI (`onchainos ws`)
 
