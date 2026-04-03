@@ -160,23 +160,8 @@ pub struct TradeEvent {
     pub tx_hash: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ChannelVisibility {
-    Public,
-    Private,
-}
-
-pub struct ChannelDef {
-    pub name: &'static str,
-    pub visibility: ChannelVisibility,
-}
-
-/// Default channels subscribed when --channel is not specified.
-/// `address-tracker-activity` is intentionally excluded because it requires
-/// `--wallet-addresses` and cannot be subscribed without user input.
-pub const DEFAULT_CHANNELS: &[ChannelDef] = &[
-    ChannelDef { name: "kol_smartmoney-tracker-activity", visibility: ChannelVisibility::Public },
-];
+/// Default channels subscribed when `--channel` is not specified.
+pub const DEFAULT_CHANNELS: &[&str] = &["kol_smartmoney-tracker-activity"];
 
 /// Persisted subscription config for a watch session.
 #[derive(Debug, Serialize, Deserialize)]

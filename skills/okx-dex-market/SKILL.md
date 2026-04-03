@@ -115,12 +115,22 @@ For detailed parameter tables, return field schemas, and usage examples for all 
 
 To search for specific command details: `grep -n "onchainos market <command>" references/cli-reference.md`
 
-## WebSocket Protocol Reference
+## Real-time WebSocket Monitoring
 
-When the user wants to build a custom WebSocket client, write a real-time price monitoring script, implement a candlestick streaming bot, or asks about the raw OKX DEX WebSocket protocol for market data, read **`references/ws-protocol.md`** before responding. That file contains the complete protocol specification for these channels:
+For real-time price and candlestick data, use the `onchainos ws` CLI:
 
-- **`price`** — real-time token price updates (push on every change)
-- **`dex-token-candle{period}`** — candlestick/K-line data (27 period variants from 1s to 3M, including UTC variants)
+```bash
+# Real-time token price
+onchainos ws start --channel price --token-pair 1:0xdac17f958d2ee523a2206206994597c13d831ec7
+
+# K-line 1-minute candles
+onchainos ws start --channel dex-token-candle1m --token-pair 1:0xdac17f958d2ee523a2206206994597c13d831ec7
+
+# Poll events
+onchainos ws poll --id <ID>
+```
+
+For custom WebSocket scripts/bots, read **`references/ws-protocol.md`** for the complete protocol specification.
 
 ## Region Restrictions (IP Blocking)
 

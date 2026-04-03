@@ -139,12 +139,22 @@ For detailed parameter tables, return field schemas, and usage examples for all 
 
 To search for specific command details: `grep -n "onchainos token <command>" references/cli-reference.md`
 
-## WebSocket Protocol Reference
+## Real-time WebSocket Monitoring
 
-When the user wants to build a custom WebSocket client for real-time token data streaming, or asks about the raw OKX DEX WebSocket protocol for token-level data, read **`references/ws-protocol.md`** before responding. That file contains the complete protocol specification for these channels:
+For real-time token data streaming, use the `onchainos ws` CLI:
 
-- **`price-info`** — detailed price data with market cap, price changes, volume, liquidity, holder count (max 1 push/sec)
-- **`trades`** — real-time trade feed for a token (push on every trade)
+```bash
+# Detailed price info (market cap, volume, liquidity, holders)
+onchainos ws start --channel price-info --token-pair 1:0xdac17f958d2ee523a2206206994597c13d831ec7
+
+# Real-time trade feed (every buy/sell)
+onchainos ws start --channel trades --token-pair 1:0xdac17f958d2ee523a2206206994597c13d831ec7
+
+# Poll events
+onchainos ws poll --id <ID>
+```
+
+For custom WebSocket scripts/bots, read **`references/ws-protocol.md`** for the complete protocol specification.
 
 ## Security Rules
 

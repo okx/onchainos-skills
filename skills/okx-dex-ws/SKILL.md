@@ -1,80 +1,127 @@
 ---
 name: okx-dex-ws
-description: "Use this skill when the user wants to write a WebSocket script/脚本, build a real-time monitoring bot/监控机器人, or subscribe to on-chain streaming data/实时数据推送 via OKX DEX WebSocket. Covers ALL OKX DEX WebSocket channels: token price monitoring/价格监控/实时行情, market cap & liquidity streaming/市值变化/流动性变化, candlestick/K线推送, token trade feed/代币交易流/每笔成交, smart money/KOL/大户 wallet tracking/聪明钱监控/追踪地址, buy signal alerts/信号/大户信号, meme token scanning/扫链/新盘提醒/打狗机器人, meme metric updates/巨鲸占比/bonding curve进度. This skill contains the proprietary OKX DEX WebSocket protocol (endpoint, auth, channel names, field schemas) required to write correct code."
+description: "Use this skill when the user wants to subscribe to real-time on-chain data via OKX DEX WebSocket — either through the onchainos ws CLI (start/poll/stop for quick monitoring) or by writing a custom WebSocket script/脚本/bot. Covers ALL OKX DEX WebSocket channels: token price/价格监控, market cap & liquidity/市值变化, candlestick/K线推送, token trade feed/代币交易流, smart money/KOL/大户 wallet tracking/聪明钱监控, buy signal alerts/信号, meme token scanning/扫链/新盘提醒."
 license: MIT
 metadata:
   author: okx
-  version: "1.0.0"
+  version: "2.0.0"
   homepage: "https://web3.okx.com"
 ---
 
-# OKX DEX WebSocket Protocol — Unified Skill
+# OKX DEX WebSocket — Unified Skill
 
-This skill provides the complete OKX DEX WebSocket protocol reference for writing real-time streaming scripts.
+Two ways to consume real-time DEX data:
+1. **CLI** (`onchainos ws`) — start a background session, poll events incrementally. Best for monitoring and agent-driven workflows.
+2. **Script** — write a custom WebSocket client in Python/Node/Rust. Best for bots and custom logic.
 
 ## Prerequisites
 
-This skill requires co-installation with `okx-dex-market`, `okx-dex-token`, `okx-dex-signal`, and `okx-dex-trenches` (all included in the onchainos-skills repository).
+> Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
 
 ## When to Use
 
 Load this skill when the user asks to:
-- Write a WebSocket script/脚本 for any OKX DEX real-time data
-- Build a monitoring bot/机器人 for token prices, trades, signals, or meme tokens
-- Subscribe to on-chain streaming data via WebSocket
-- Implement real-time price alerts, trade feeds, wallet tracking, or meme scanners
+- Monitor real-time on-chain data (prices, trades, signals, meme launches)
+- Track smart money / KOL / whale activity in real-time
+- Write a WebSocket script/脚本 or monitoring bot/机器人
+- Subscribe to streaming DEX data
 
-## Channel Routing
+## Approach 1: CLI (`onchainos ws`)
 
-Based on the user's intent, read the corresponding protocol reference file:
+### Discover Channels
+
+```
+onchainos ws channels                          # list all 9 supported channels
+onchainos ws channel-info --channel <name>     # detailed info + example for a channel
+```
+
+### Start / Poll / Stop
+
+```
+onchainos ws start --channel <channel> [params]   # start background session
+onchainos ws poll --id <ID> [--channel <ch>]       # pull new events
+onchainos ws list                                  # list sessions
+onchainos ws stop [--id <ID>]                      # stop session(s)
+```
+
+### Channel Quick Reference
+
+| Channel | Group | Pattern | Required Params |
+|---------|-------|---------|-----------------|
+| `kol_smartmoney-tracker-activity` | signal | global | (none) |
+| `address-tracker-activity` | signal | per-wallet | `--wallet-addresses` |
+| `dex-market-new-signal-openapi` | signal | per-chain | `--chain-index` |
+| `price` | market | per-token | `--token-pair` |
+| `dex-token-candle{period}` | market | per-token | `--token-pair` |
+| `price-info` | token | per-token | `--token-pair` |
+| `trades` | token | per-token | `--token-pair` |
+| `dex-market-memepump-new-token-openapi` | trenches | per-chain | `--chain-index` |
+| `dex-market-memepump-update-metrics-openapi` | trenches | per-chain | `--chain-index` |
+
+### Parameter Formats
+
+- `--token-pair`: `chainIndex:tokenContractAddress` (e.g. `1:0xdac17f958d2ee523a2206206994597c13d831ec7`)
+- `--chain-index`: comma-separated chain IDs (e.g. `1,501,56`)
+- `--wallet-addresses`: comma-separated addresses, max 200
+
+### Examples
+
+```bash
+# Smart money trade feed
+onchainos ws start --channel kol_smartmoney-tracker-activity
+
+# Track specific wallets
+onchainos ws start --channel address-tracker-activity --wallet-addresses 0xAAA,0xBBB
+
+# Token price monitoring
+onchainos ws start --channel price --token-pair 1:0xdac17f958d2ee523a2206206994597c13d831ec7
+
+# Buy signal alerts on Ethereum + Solana
+onchainos ws start --channel dex-market-new-signal-openapi --chain-index 1,501
+
+# New meme token launches on Solana
+onchainos ws start --channel dex-market-memepump-new-token-openapi --chain-index 501
+
+# K-line 1-minute candles
+onchainos ws start --channel dex-token-candle1m --token-pair 1:0xdac17f958d2ee523a2206206994597c13d831ec7
+```
+
+### Poll Filters (tracker channels only)
+
+When polling `kol_smartmoney-tracker-activity` or `address-tracker-activity`, these filters are available:
+- `--min-quote-amount`, `--min-market-cap`, `--min-pnl`
+- `--trader` (wallet address prefix match)
+- `--tag` (smart_money or kol)
+- `--trade-type` (buy or sell)
+- `--since` (ms timestamp)
+
+## Approach 2: Custom Script
+
+When the user wants to build a custom WebSocket client with their own logic, read the corresponding protocol reference file:
 
 ### Market Data (price & candlestick streams)
 
-**Use when**: simple price monitoring, candlestick/K-line streaming
-
 **Read**: `../okx-dex-market/references/ws-protocol.md`
 
-Channels:
-- **`price`** — real-time token price updates
-- **`dex-token-candle{period}`** — candlestick/K-line data (27 periods from 1s to 3M)
+Channels: `price`, `dex-token-candle{period}`
 
 ### Token Data (detailed token streams)
 
-**Use when**: detailed price info with market cap/volume/liquidity/holders, token trade feed
-
 **Read**: `../okx-dex-token/references/ws-protocol.md`
 
-Channels:
-- **`price-info`** — detailed price data with market cap, volume, liquidity, holder count (max 1 push/sec)
-- **`trades`** — real-time trade feed for a token (every buy/sell)
+Channels: `price-info`, `trades`
 
-### Signal & Wallet Tracking (per-wallet streams)
-
-**Use when**: smart money/KOL/whale wallet monitoring, buy signal alerts, address tracking
+### Signal & Wallet Tracking
 
 **Read**: `../okx-dex-signal/references/ws-protocol.md`
 
-Channels:
-- **`dex-market-new-signal-openapi`** — aggregated buy signal alerts from smart money/KOL/whales (single-chain)
-- **`kol_smartmoney-tracker-activity`** — KOL and smart money trade feed (no wallet address needed)
-- **`address-tracker-activity`** — trade feed for custom wallet addresses (up to 200 per connection; create additional connections for more)
+Channels: `dex-market-new-signal-openapi`, `kol_smartmoney-tracker-activity`, `address-tracker-activity`
 
-### Meme/Trenches (meme token streams)
-
-**Use when**: new meme token scanning, meme metric updates, bonding curve tracking
+### Meme/Trenches
 
 **Read**: `../okx-dex-trenches/references/ws-protocol.md`
 
-Channels:
-- **`dex-market-memepump-new-token-openapi`** — new meme token launches (full snapshot)
-- **`dex-market-memepump-update-metrics-openapi`** — incremental metric updates (market cap, volume, holders, bonding curve)
-
-## Workflow
-
-1. Identify the user's intent and select the correct channel group above
-2. Read the corresponding `ws-protocol.md` file for the full protocol spec
-3. Write the script using the endpoint, auth flow, channel names, and field schemas from that file
-4. Include heartbeat (ping every 25s) and reconnection logic
+Channels: `dex-market-memepump-new-token-openapi`, `dex-market-memepump-update-metrics-openapi`
 
 ## Common Protocol (all channels share)
 

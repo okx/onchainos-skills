@@ -15,7 +15,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use super::store::{append_events, read_config, write_pid, write_status};
 use super::types::{WatchConfig, WatchEnv, channel_pattern, ChannelPattern};
 
-const WS_URL_PROD: &str = "wss://wsdex.okx.com:8443/ws/v5/dex";
+const WS_URL_PROD: &str = "wss://wsdex.okx.com/ws/v6/dex";
 const WS_URL_PRE: &str = "wss://wsdexpre.okx.com:8443/ws/v6/dex";
 
 const HEARTBEAT_SECS: u64 = 25;
@@ -105,7 +105,7 @@ pub async fn run_daemon(id: &str, dir: &Path) -> Result<()> {
     });
 
     let config = read_config(id).unwrap_or_else(|_| WatchConfig {
-        channels: super::types::DEFAULT_CHANNELS.iter().map(|c| c.name.to_string()).collect(),
+        channels: super::types::DEFAULT_CHANNELS.iter().map(|c| c.to_string()).collect(),
         wallet_addresses: vec![],
         token_pairs: vec![],
         chain_indexes: vec![],
@@ -131,6 +131,7 @@ pub async fn run_daemon(id: &str, dir: &Path) -> Result<()> {
         match connect_and_stream(dir, &ws_url, &creds, &config).await {
             Ok(reason) => {
                 heartbeat_active.store(false, Ordering::Relaxed);
+                attempts = 0; // reset after successful session
                 eprintln!("[watch daemon] disconnected: {}", reason);
                 if reason == "stopped" {
                     write_status(dir, "stopped", None)?;

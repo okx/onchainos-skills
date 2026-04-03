@@ -146,13 +146,25 @@ Present conversationally — never expose command paths to the user.
 For detailed parameter tables and return field schemas, consult:
 - **`references/cli-reference.md`** — Full CLI command reference for tracker, signal, and leaderboard commands
 
-## WebSocket Protocol Reference
+## Real-time WebSocket Monitoring
 
-When the user wants to build a custom WebSocket client, write a WS subscription script, implement a real-time trade monitoring bot, or asks about the raw OKX DEX WebSocket protocol (authentication, subscribe format, push data schema, heartbeat), read **`references/ws-protocol.md`** before responding. That file contains the complete protocol specification for these channels:
+For real-time signal and tracker data, use the `onchainos ws` CLI:
 
-- **`dex-market-new-signal-openapi`** — real-time aggregated buy signal alerts from smart money, KOL, and whale wallets (single-chain subscription)
-- **`kol_smartmoney-tracker-activity`** — aggregated trade feed from KOL and smart money wallets (public, no wallet address needed)
-- **`address-tracker-activity`** — trade feed for custom wallet addresses (up to 200 per connection; create additional connections for more)
+```bash
+# KOL + smart money aggregated trade feed
+onchainos ws start --channel kol_smartmoney-tracker-activity
+
+# Track custom wallet addresses
+onchainos ws start --channel address-tracker-activity --wallet-addresses 0xAAA,0xBBB
+
+# Buy signal alerts on specific chains
+onchainos ws start --channel dex-market-new-signal-openapi --chain-index 1,501
+
+# Poll events
+onchainos ws poll --id <ID>
+```
+
+For custom WebSocket scripts/bots, read **`references/ws-protocol.md`** for the complete protocol specification.
 
 ## Edge Cases
 

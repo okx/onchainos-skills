@@ -210,7 +210,7 @@ async fn ws_start(
 
     let mut channels = channels;
     if channels.is_empty() {
-        channels = DEFAULT_CHANNELS.iter().map(|c| c.name.to_string()).collect();
+        channels = DEFAULT_CHANNELS.iter().map(|c| c.to_string()).collect();
     }
     channels.sort();
     channels.dedup();
@@ -393,10 +393,12 @@ fn ws_poll(
         };
         let trade_type_filter = trade_type.as_deref().map(resolve_trade_type).map(str::to_string);
 
-        let filtered: Vec<Value> = result
+        // Filter with original index tracking for correct cursor commit
+        let filtered: Vec<(usize, Value)> = result
             .events
-            .into_iter()
-            .filter(|v| {
+            .iter()
+            .enumerate()
+            .filter(|&(_, v)| {
                 let Ok(e) = serde_json::from_value::<TradeEvent>(v.clone()) else {
                     return false;
                 };
@@ -439,15 +441,18 @@ fn ws_poll(
                 true
             })
             .take(limit)
+            .map(|(i, v)| (i, v.clone()))
             .collect();
 
         let new_count = filtered.len();
-        let commit_cursor = if !filtered.is_empty() {
-            result.per_event_cursors.get(new_count - 1).copied().unwrap_or(result.new_cursor)
-        } else {
-            result.new_cursor
-        };
-        store::write_cursor(&dir, &poll_channel, commit_cursor.file_no, commit_cursor.offset)?;
+        // Only advance cursor to the last *returned* event's position.
+        // If no events matched, do NOT advance — those events may match
+        // different filters on the next poll.
+        if let Some((last_idx, _)) = filtered.last() {
+            let commit_cursor = result.per_event_cursors.get(*last_idx).copied().unwrap_or(result.new_cursor);
+            store::write_cursor(&dir, &poll_channel, commit_cursor.file_no, commit_cursor.offset)?;
+        }
+        let filtered: Vec<Value> = filtered.into_iter().map(|(_, v)| v).collect();
 
         output::success(json!({
             "daemon_status": status_str,
