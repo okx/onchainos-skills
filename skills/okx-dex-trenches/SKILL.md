@@ -1,6 +1,6 @@
 ---
 name: okx-dex-trenches
-description: "Use this skill for meme/打狗/alpha token research on pump.fun and similar launchpads: scanning new token launches, checking developer reputation/开发者信息/dev launch history/has this dev rugged before/开发者跑路记录, bundle/sniper detection/捆绑狙击, bonding curve status/bonding curve progress, finding similar tokens by the same dev/相似代币, and wallets that co-invested (同车/aped) into a token. Use when the user asks about 'new meme coins', 'pump.fun launches', 'trenches', 'trench', '扫链', 'developer launch history', 'developer rug history', 'check if dev has rugged', 'bundler analysis', 'who else bought this token', 'who aped into this', 'similar tokens', 'bonding curve progress', '打狗', '新盘', '开发者信息', '开发者历史', '捆绑', '同车', 'rug pull count', 'similar meme coins', '捆绑情况', '已迁移出 bonding curve', or '发过多少个项目'. Invoke on user intent; token address can be provided after. Use also for meme scanning bots or token launch automation using OKX."
+description: "Use this skill for meme/打狗/alpha token research on pump.fun and similar launchpads: scanning new token launches, checking developer reputation/开发者信息/dev launch history/has this dev rugged before/开发者跑路记录, bundle/sniper detection/捆绑狙击, bonding curve status/bonding curve progress, finding similar tokens by the same dev/相似代币, and wallets that co-invested (同车/aped) into a token. Use when the user asks about 'new meme coins', 'pump.fun launches', 'trenches', 'trench', '扫链', 'developer launch history', 'developer rug history', 'check if dev has rugged', 'bundler analysis', 'who else bought this token', 'who aped into this', 'similar tokens', 'bonding curve progress', '打狗', '新盘', '开发者信息', '开发者历史', '捆绑', '同车', 'rug pull count', 'similar meme coins', '捆绑情况', '已迁移出 bonding curve', or '发过多少个项目'. Invoke on user intent; token address can be provided after. NOTE: if the user wants to write a WebSocket script/脚本/bot, use okx-dex-ws instead."
 license: MIT
 metadata:
   author: okx
@@ -123,6 +123,13 @@ Present conversationally — never expose command paths to the user.
 
 For detailed parameter tables, return field schemas, and usage examples, consult:
 - **`references/cli-reference.md`** — Full CLI command reference for memepump commands
+
+## WebSocket Protocol Reference
+
+When the user wants to build a custom WebSocket client, write a real-time meme token scanner, implement a new-token alert bot, or asks about the raw OKX DEX WebSocket protocol for trenches/memepump data, read **`references/ws-protocol.md`** before responding. That file contains the complete protocol specification for these channels:
+
+- **`dex-market-memepump-new-token-openapi`** — real-time new meme token launches (full token snapshot with market data, holder analytics, social links)
+- **`dex-market-memepump-update-metrics-openapi`** — incremental metric updates for meme tokens (market cap, volume, holder stats, bonding curve progress)
 
 ## Edge Cases
 

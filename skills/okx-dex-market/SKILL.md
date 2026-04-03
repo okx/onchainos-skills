@@ -115,6 +115,13 @@ For detailed parameter tables, return field schemas, and usage examples for all 
 
 To search for specific command details: `grep -n "onchainos market <command>" references/cli-reference.md`
 
+## WebSocket Protocol Reference
+
+When the user wants to build a custom WebSocket client, write a real-time price monitoring script, implement a candlestick streaming bot, or asks about the raw OKX DEX WebSocket protocol for market data, read **`references/ws-protocol.md`** before responding. That file contains the complete protocol specification for these channels:
+
+- **`price`** — real-time token price updates (push on every change)
+- **`dex-token-candle{period}`** — candlestick/K-line data (27 period variants from 1s to 3M, including UTC variants)
+
 ## Region Restrictions (IP Blocking)
 
 Some services are geo-restricted. When a command fails with error code `50125` or `80001`, return a friendly message without exposing the raw error code:
