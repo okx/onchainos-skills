@@ -327,6 +327,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Tracker { command } => format!("tracker {}", tracker_sub(command)),
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
+        Commands::Ws { command } => format!("ws {}", ws_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
     }
 }
@@ -364,6 +365,19 @@ fn signal_sub(c: &SignalCommand) -> &'static str {
 fn tracker_sub(c: &TrackerCommand) -> &'static str {
     match c {
         TrackerCommand::Activities { .. } => "activities",
+    }
+}
+
+fn ws_sub(c: &crate::commands::ws::WsCommand) -> &'static str {
+    use crate::commands::ws::WsCommand;
+    match c {
+        WsCommand::Channels => "channels",
+        WsCommand::ChannelInfo { .. } => "channel-info",
+        WsCommand::Start { .. } => "start",
+        WsCommand::Poll { .. } => "poll",
+        WsCommand::Stop { .. } => "stop",
+        WsCommand::List => "list",
+        WsCommand::RunDaemon { .. } => "run-daemon",
     }
 }
 

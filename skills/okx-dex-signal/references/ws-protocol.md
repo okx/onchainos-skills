@@ -1,6 +1,6 @@
 # Onchain OS DEX Signal — WebSocket Protocol Reference
 
-This document is for **developers and agents** who want to connect directly to the OKX DEX WebSocket
+This document is for **developers and agents** who want to connect directly to the Onchain OS DEX WebSocket
 and subscribe to real-time data.
 
 ---
@@ -8,7 +8,7 @@ and subscribe to real-time data.
 ## Endpoint
 
 ```
-wss://wsdex.okx.com:8443/ws/v5/dex
+wss://wsdex.okx.com/ws/v6/dex
 ```
 
 Uses TLS. Connect with any standard WebSocket client that supports TLS.
@@ -17,7 +17,7 @@ Uses TLS. Connect with any standard WebSocket client that supports TLS.
 
 ## Authentication
 
-The OKX DEX WebSocket uses HMAC-SHA256 API key authentication, which is the same scheme
+The Onchain OS DEX WebSocket uses HMAC-SHA256 API key authentication, which is the same scheme
 as the OKX REST API. Full documentation:
 👉 https://web3.okx.com/onchainos/dev-docs/market/websocket-login
 
@@ -25,6 +25,9 @@ as the OKX REST API. Full documentation:
 
 Obtain your API Key, Secret Key, and Passphrase from the
 [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal).
+
+> **Security**: Never hardcode credentials in source code. Use environment variables or a `.env` file.
+> Ensure `.env` is listed in `.gitignore` — never commit it to version control.
 
 ### Login Message
 
@@ -101,7 +104,92 @@ Wait for this ACK before sending subscribe messages. Recommended timeout: 10 sec
 
 ---
 
+## Push Message Envelope
+
+Every push message from the server uses the same envelope structure:
+
+```json
+{ "arg": { "channel": "...", ... }, "data": [{ ... }] }
+```
+
+- `arg`: echoes back the subscription parameters (channel, chainIndex, etc.)
+- `data`: array containing the actual push payload — the fields described per channel below
+
+The "Push Data Fields" tables below describe the contents of each object inside the `data` array, **not** the top-level message.
+
+---
+
 ## Channels
+
+### `dex-market-new-signal-openapi` — Signal Alerts
+
+Retrieve real-time aggregated buy signal alerts from smart money, KOL, and whale wallets.
+Single-chain subscription only.
+
+Subscribe arg:
+```json
+{ "channel": "dex-market-new-signal-openapi", "chainIndex": "1" }
+```
+
+#### Subscribe Parameters
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `channel` | String | Yes | `"dex-market-new-signal-openapi"` |
+| `chainIndex` | String | Yes | Chain ID — single chain only (e.g. `"1"` = Ethereum, `"501"` = Solana) |
+
+#### Push Data Fields
+
+| Field | Type | Description |
+|---|---|---|
+| `timestamp` | String | Signal trigger time (Unix ms) |
+| `chainIndex` | String | Chain ID |
+| `token` | Object | Token info |
+| `token.tokenAddress` | String | Token contract address |
+| `token.symbol` | String | Token symbol |
+| `token.name` | String | Token name |
+| `token.logo` | String | Token logo URL |
+| `token.marketCapUsd` | String | Market cap (USD) |
+| `token.holders` | String | Holder address count |
+| `token.top10HolderPercentage` | String | Top-10 holder concentration (%) |
+| `price` | String | Token price at signal time (USD) |
+| `walletType` | String | Wallet type: `"1"` = Smart Money, `"2"` = KOL/Influencer, `"3"` = Whale (comma-separated for multiple) |
+| `triggerWalletCount` | String | Number of wallets that triggered the signal |
+| `triggerWalletAddress` | String | Wallet addresses (comma-separated) |
+| `amountUsd` | String | Total trade amount (USD) |
+| `soldRatioPercentage` | String | Sell ratio (%) — lower means wallets are still holding |
+
+#### Push Example
+
+```json
+{
+  "arg": {
+    "channel": "dex-market-new-signal-openapi",
+    "chainIndex": "1"
+  },
+  "data": [{
+    "timestamp": "1716892020000",
+    "chainIndex": "1",
+    "token": {
+      "tokenAddress": "0x6982508145454ce325ddbe47a25d4ec3d2311933",
+      "symbol": "PEPE",
+      "name": "Pepe",
+      "logo": "https://...",
+      "marketCapUsd": "5200000000",
+      "holders": "250000",
+      "top10HolderPercentage": "45.2"
+    },
+    "price": "0.00001234",
+    "walletType": "1",
+    "triggerWalletCount": "5",
+    "triggerWalletAddress": "0xabc...,0xdef...,0x123...",
+    "amountUsd": "250000",
+    "soldRatioPercentage": "10.5"
+  }]
+}
+```
+
+---
 
 ### `kol_smartmoney-tracker-activity` (Public)
 
@@ -116,7 +204,7 @@ Subscribe arg:
 ### `address-tracker-activity` (Per-address)
 
 Real-time trade feed for a custom wallet address.
-Send **one subscription arg per address** (up to 20 addresses).
+Send **one subscription arg per address** (up to 200 addresses per connection). If you need to track more than 200 addresses, create additional WebSocket connections.
 
 Subscribe arg:
 ```json
@@ -152,6 +240,39 @@ The server sends one ACK per subscription arg:
 
 Wait for N ACKs (one per arg) before considering the session active.
 If any arg fails, you receive:
+
+```json
+{ "event": "error", "code": "...", "msg": "..." }
+```
+
+---
+
+## Unsubscribe Message
+
+To cancel one or more channel subscriptions without disconnecting:
+
+```json
+{
+  "op": "unsubscribe",
+  "args": [{ "channel": "kol_smartmoney-tracker-activity" }]
+}
+```
+
+The `args` array uses the same object format as subscribe.
+
+### Unsubscribe ACK
+
+On success:
+
+```json
+{
+  "event": "unsubscribe",
+  "arg": { "channel": "kol_smartmoney-tracker-activity" },
+  "connId": "d0b44253"
+}
+```
+
+On failure:
 
 ```json
 { "event": "error", "code": "...", "msg": "..." }
