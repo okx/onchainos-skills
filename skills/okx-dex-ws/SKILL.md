@@ -20,14 +20,6 @@ This skill requires co-installation with `okx-dex-market`, `okx-dex-token`, `okx
 
 > Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
 
-## When to Use
-
-Load this skill when the user asks to:
-- Monitor real-time on-chain data (prices, trades, signals, meme launches)
-- Track smart money / KOL / whale activity in real-time
-- Write a WebSocket script/脚本 or monitoring bot/机器人
-- Subscribe to streaming DEX data
-
 ## Approach 1: CLI (`onchainos ws`)
 
 ### Discover Channels
