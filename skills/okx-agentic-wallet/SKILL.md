@@ -243,18 +243,11 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 1. **First wallet creation**: After a user's first successful `wallet verify` (email login) or `wallet login` (API Key login), inform them that wallet export is available. Do NOT repeat this on subsequent account additions.
 2. **User explicitly asks**: e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I import my wallet into a hardware wallet?"
 
-### Agent Behavior
+### Required Response
 
-When triggered, follow these steps in order:
+When triggered, output the following message (translated to the user's language):
 
-1. **Explain the core risk**: After export, the current wallet will be permanently unbound from the user's email. The Agent will no longer be able to operate this wallet.
-2. **Recommend pre-export actions**: Advise the user to transfer all assets to a safe address (including DeFi deposits, liquidity positions, etc.) and stop any running Agent strategies (grid trading, copy trading, pending orders in protocols) before proceeding.
-3. **Provide the Web portal link**: Direct the user to complete the export on the Web portal — [Go to Wallet Export →]
-4. **Never expose secrets**: Do NOT display any mnemonic phrase, private key, or seed-related content in the conversation under any circumstances.
-
-### Example Response
-
-> Wallet export must be completed on the Web portal. Please note: once the export is complete, your current wallet will be permanently unbound from your email, and the Agent will no longer be able to operate this wallet. The system will automatically create a new empty wallet for your account. Before exporting, please transfer your assets to a safe address and stop any running strategies. [Go to Wallet Export →]
+> Wallet export must be completed on the Web portal. Please note: once the export is complete, your current wallet will be permanently unbound from your email, and the Agent will no longer be able to operate this wallet. The system will automatically create a new empty wallet for your account. Before exporting, please transfer your assets to a safe address and stop any running strategies. [Go to Wallet Export → https://web3.okx.com]
 
 ---
 
@@ -262,30 +255,16 @@ When triggered, follow these steps in order:
 
 > Policy configuration **must be completed by the user on the Web portal**. The Agent only detects the scenario, provides guidance, and gives the jump link.
 
-### Policy Setting Links
+### Trigger Conditions
 
-- **Email-created wallet**: `https://web3.okx.com/agentic-wallet/policy`
-- **API Key-created wallet**: `https://web3.okx.com/agentic-wallet/dev-policy`
+1. **First wallet activation**: After a user's first successful `wallet verify` (email) or `wallet login` (API Key). Do NOT repeat on subsequent account additions. Output the following message (translated to the user's language):
 
-Choose the link based on `loginType` from `wallet status`: `"email"` → first link, `"ak"` → second link.
+> Your Agent Wallet is ready. To let the Agent operate more securely on your behalf, we recommend setting up a Policy first — including per-transaction / daily spending limits and a transfer whitelist. [Go to Policy Settings → https://web3.okx.com/portfolio/agentic-wallet-policy]
 
-### Scenario A: First Wallet Activation
-
-**Trigger**: After a user's first successful `wallet verify` (email) or `wallet login` (API Key). Do NOT repeat on subsequent account additions.
-
-**Agent behavior**:
-1. Welcome the user and briefly explain Policy (spending limits + transfer whitelist protect against unauthorized transactions).
-2. Recommend setting a basic Policy with the Web portal link.
-3. If the user skips, do not insist — other scenarios will re-trigger later.
-
-### Scenario B: User Asks About Policy
-
-**Trigger**: User asks about Policy settings, e.g. "How do I set a spending limit?", "What's my daily limit?", "How to configure whitelist?"
-
-**Agent behavior**:
-1. Run `onchainos wallet status` and check the `policy` field.
-2. **If `policy` is null or all flags are false**: explain what Policy offers (per-tx limit, daily transfer limit, daily trade limit, transfer whitelist) and provide the Web portal link to configure.
-3. **If policy is configured** (any flag is true): display the current settings to the user (limits, used amounts) and provide the Web portal link for modifications.
+2. **User asks about Policy**: e.g., "How do I set a spending limit?", "What's my daily limit?", "How to configure whitelist?"
+   - Run `onchainos wallet status` and check the `policy` field.
+   - **`policy` is null or all flags are false**: explain what Policy offers (per-tx limit, daily transfer/trade limit, transfer whitelist) and provide the link: `https://web3.okx.com/portfolio/agentic-wallet-policy`
+   - **Any flag is true**: display the current settings (limits, used amounts) and provide the same link for modifications.
 
 ---
 
