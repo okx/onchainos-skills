@@ -1,6 +1,6 @@
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -13,7 +13,7 @@ use tokio::time::{interval, sleep, timeout};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use super::store::{append_events, read_config, write_pid, write_status};
-use super::types::{WatchConfig, WatchEnv, channel_pattern, ChannelPattern};
+use super::types::{channel_pattern, ChannelPattern, WatchConfig, WatchEnv};
 
 const WS_URL_PROD: &str = "wss://wsdex.okx.com/ws/v6/dex";
 const WS_URL_PRE: &str = "wss://wsdexpre.okx.com:8443/ws/v6/dex";
@@ -46,10 +46,14 @@ impl Credentials {
                     .map_err(|_| anyhow::anyhow!("OKX_PROD_API_KEY or OKX_API_KEY is not set"))?,
                 secret_key: std::env::var("OKX_PROD_SECRET_KEY")
                     .or_else(|_| std::env::var("OKX_SECRET_KEY"))
-                    .map_err(|_| anyhow::anyhow!("OKX_PROD_SECRET_KEY or OKX_SECRET_KEY is not set"))?,
+                    .map_err(|_| {
+                        anyhow::anyhow!("OKX_PROD_SECRET_KEY or OKX_SECRET_KEY is not set")
+                    })?,
                 passphrase: std::env::var("OKX_PROD_PASSPHRASE")
                     .or_else(|_| std::env::var("OKX_PASSPHRASE"))
-                    .map_err(|_| anyhow::anyhow!("OKX_PROD_PASSPHRASE or OKX_PASSPHRASE is not set"))?,
+                    .map_err(|_| {
+                        anyhow::anyhow!("OKX_PROD_PASSPHRASE or OKX_PASSPHRASE is not set")
+                    })?,
             }),
         }
     }
@@ -88,7 +92,10 @@ pub async fn run_daemon(id: &str, dir: &Path) -> Result<()> {
     write_status(dir, "running", None)?;
 
     let config = read_config(id).unwrap_or_else(|_| WatchConfig {
-        channels: super::types::DEFAULT_CHANNELS.iter().map(|c| c.to_string()).collect(),
+        channels: super::types::DEFAULT_CHANNELS
+            .iter()
+            .map(|c| c.to_string())
+            .collect(),
         wallet_addresses: vec![],
         token_pairs: vec![],
         chain_indexes: vec![],
@@ -115,8 +122,7 @@ pub async fn run_daemon(id: &str, dir: &Path) -> Result<()> {
             }
             // Idle timeout check — signal main loop instead of process::exit
             if idle_timeout_ms > 0 {
-                let last_activity = super::store::last_poll_time(&dir_owned)
-                    .unwrap_or(created_at);
+                let last_activity = super::store::last_poll_time(&dir_owned).unwrap_or(created_at);
                 if super::store::now_ms().saturating_sub(last_activity) > idle_timeout_ms {
                     let _ = write_status(&dir_owned, "stopped", Some("idle_timeout"));
                     idle_expired_clone.store(true, Ordering::Relaxed);
@@ -191,31 +197,35 @@ async fn connect_and_stream(
     wait_for_login_ack(&mut ws).await?;
 
     // Build subscribe args per channel pattern
-    let args: Vec<serde_json::Value> = config.channels.iter()
+    let args: Vec<serde_json::Value> = config
+        .channels
+        .iter()
         .flat_map(|ch| -> Vec<serde_json::Value> {
             match channel_pattern(ch) {
                 ChannelPattern::Global => {
                     vec![serde_json::json!({ "channel": ch })]
                 }
-                ChannelPattern::PerWallet => {
-                    config.wallet_addresses.iter()
-                        .map(|addr| serde_json::json!({ "channel": ch, "walletAddress": addr }))
-                        .collect()
-                }
-                ChannelPattern::PerToken => {
-                    config.token_pairs.iter()
-                        .map(|tp| serde_json::json!({
+                ChannelPattern::PerWallet => config
+                    .wallet_addresses
+                    .iter()
+                    .map(|addr| serde_json::json!({ "channel": ch, "walletAddress": addr }))
+                    .collect(),
+                ChannelPattern::PerToken => config
+                    .token_pairs
+                    .iter()
+                    .map(|tp| {
+                        serde_json::json!({
                             "channel": ch,
                             "chainIndex": tp.chain_index,
                             "tokenContractAddress": tp.token_contract_address
-                        }))
-                        .collect()
-                }
-                ChannelPattern::PerChain => {
-                    config.chain_indexes.iter()
-                        .map(|ci| serde_json::json!({ "channel": ch, "chainIndex": ci }))
-                        .collect()
-                }
+                        })
+                    })
+                    .collect(),
+                ChannelPattern::PerChain => config
+                    .chain_indexes
+                    .iter()
+                    .map(|ci| serde_json::json!({ "channel": ch, "chainIndex": ci }))
+                    .collect(),
             }
         })
         .collect();
@@ -269,9 +279,8 @@ async fn connect_and_stream(
     }
 }
 
-type WsStream = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+type WsStream =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn wait_for_login_ack(ws: &mut WsStream) -> Result<()> {
     timeout(Duration::from_secs(10), async {
@@ -318,7 +327,8 @@ async fn wait_for_subscribe_acks(ws: &mut WsStream, count: usize) -> Result<()> 
                                 }
                             }
                             Some("error") => {
-                                let msg = v.get("msg").and_then(|m| m.as_str()).unwrap_or("unknown");
+                                let msg =
+                                    v.get("msg").and_then(|m| m.as_str()).unwrap_or("unknown");
                                 return Err(anyhow::anyhow!("subscribe error: {}", msg));
                             }
                             _ => {}

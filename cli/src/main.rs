@@ -11,9 +11,9 @@ mod home;
 mod keyring_store;
 mod mcp;
 mod output;
-mod watch;
 mod wallet_api;
 mod wallet_store;
+mod watch;
 
 use clap::{Parser, Subcommand};
 

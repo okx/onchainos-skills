@@ -113,7 +113,10 @@ pub struct Cursor {
 
 pub fn read_cursor(dir: &Path, channel: &str) -> Cursor {
     let Ok(s) = fs::read_to_string(cursor_path(dir, channel)) else {
-        return Cursor { file_no: 0, offset: 0 };
+        return Cursor {
+            file_no: 0,
+            offset: 0,
+        };
     };
     let parts: Vec<&str> = s.trim().splitn(2, '|').collect();
     if parts.len() == 2 {
@@ -121,7 +124,10 @@ pub fn read_cursor(dir: &Path, channel: &str) -> Cursor {
         let offset = parts[1].parse().unwrap_or(0);
         Cursor { file_no, offset }
     } else {
-        Cursor { file_no: 0, offset: 0 }
+        Cursor {
+            file_no: 0,
+            offset: 0,
+        }
     }
 }
 
@@ -215,20 +221,32 @@ pub fn read_events_from_cursor(dir: &Path, channel: &str, limit: usize) -> Resul
             // the loop below will advance cursor in the new file.
         }
         // Reset cursor to the fresh file at cursor.file_no, beginning.
-        cursor = Cursor { file_no: cursor.file_no, offset: 0 };
+        cursor = Cursor {
+            file_no: cursor.file_no,
+            offset: 0,
+        };
     }
 
     // Normal read from the (possibly reset) cursor position.
     let path = events_path(dir, channel, cursor.file_no);
     if path.exists() {
         let remaining = limit.saturating_sub(events.len());
-        let new_offset = drain_file(&path, cursor.offset, remaining, &mut events, Some(&mut per_event_cursors))?;
+        let new_offset = drain_file(
+            &path,
+            cursor.offset,
+            remaining,
+            &mut events,
+            Some(&mut per_event_cursors),
+        )?;
         // Fill cursor info: per_event_cursors tracks positions for events read from the current file.
         // Events from the rotated file don't get per-event cursors (they are behind the new file).
         // Pad the front with the reset cursor so indices align with `events`.
         let rotated_count = events.len() - per_event_cursors.len();
         if rotated_count > 0 {
-            let pad_cursor = Cursor { file_no: cursor.file_no, offset: 0 };
+            let pad_cursor = Cursor {
+                file_no: cursor.file_no,
+                offset: 0,
+            };
             let mut padded = vec![pad_cursor; rotated_count];
             padded.append(&mut per_event_cursors);
             per_event_cursors = padded;
@@ -236,7 +254,11 @@ pub fn read_events_from_cursor(dir: &Path, channel: &str, limit: usize) -> Resul
         cursor.offset = new_offset;
     }
 
-    Ok(PollResult { events, per_event_cursors, new_cursor: cursor })
+    Ok(PollResult {
+        events,
+        per_event_cursors,
+        new_cursor: cursor,
+    })
 }
 
 /// Read up to `limit` complete JSONL lines from `path` starting at byte `offset`.
@@ -273,7 +295,10 @@ fn drain_file(
         if let Ok(event) = serde_json::from_str::<Value>(trimmed) {
             events.push(event);
             if let Some(ref mut cursors) = per_event_cursors {
-                cursors.push(Cursor { file_no, offset: current_offset });
+                cursors.push(Cursor {
+                    file_no,
+                    offset: current_offset,
+                });
             }
         }
     }
@@ -313,7 +338,12 @@ pub fn list_watches() -> Result<Vec<WatchEntry>> {
         let state = read_daemon_state(&id).unwrap_or(DaemonState::Crashed);
         let pid = read_pid(&id).ok();
         let config = read_config(&id).ok();
-        entries.push(WatchEntry { id, state, pid, config });
+        entries.push(WatchEntry {
+            id,
+            state,
+            pid,
+            config,
+        });
     }
     entries.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(entries)

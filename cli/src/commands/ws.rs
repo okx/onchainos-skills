@@ -34,7 +34,9 @@ fn parse_duration_ms(s: &str) -> Result<u64> {
     } else {
         bail!("invalid --idle-timeout '{}'; use e.g. 30m, 1h, 0", s);
     };
-    let n: u64 = num.parse().map_err(|_| anyhow::anyhow!("invalid --idle-timeout '{}'; use e.g. 30m, 1h, 0", s))?;
+    let n: u64 = num
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid --idle-timeout '{}'; use e.g. 30m, 1h, 0", s))?;
     Ok(n * suffix)
 }
 
@@ -134,7 +136,14 @@ pub async fn execute(cmd: WsCommand) -> Result<()> {
     match cmd {
         WsCommand::Channels => ws_channels(),
         WsCommand::ChannelInfo { channel } => ws_channel_info(&channel),
-        WsCommand::Start { channel, wallet_addresses, chain_index, token_pair, env, idle_timeout } => {
+        WsCommand::Start {
+            channel,
+            wallet_addresses,
+            chain_index,
+            token_pair,
+            env,
+            idle_timeout,
+        } => {
             let addrs: Vec<String> = wallet_addresses
                 .unwrap_or_default()
                 .split(',')
@@ -153,7 +162,9 @@ pub async fn execute(cmd: WsCommand) -> Result<()> {
                 .filter_map(|s| {
                     let s = s.trim();
                     let (ci, addr) = s.split_once(':')?;
-                    if ci.is_empty() || addr.is_empty() { return None; }
+                    if ci.is_empty() || addr.is_empty() {
+                        return None;
+                    }
                     Some(TokenPair {
                         chain_index: ci.to_string(),
                         token_contract_address: addr.to_string(),
@@ -161,12 +172,39 @@ pub async fn execute(cmd: WsCommand) -> Result<()> {
                 })
                 .collect();
             let idle_timeout_ms = parse_duration_ms(&idle_timeout)?;
-            ws_start(channel, addrs, chain_indexes, token_pairs, &env, idle_timeout_ms).await
+            ws_start(
+                channel,
+                addrs,
+                chain_indexes,
+                token_pairs,
+                &env,
+                idle_timeout_ms,
+            )
+            .await
         }
         WsCommand::Poll {
-            id, channel, limit,
-            min_quote_amount, min_market_cap, min_pnl, trader, tag, since, trade_type,
-        } => ws_poll(&id, channel, limit, min_quote_amount, min_market_cap, min_pnl, trader, tag, since, trade_type),
+            id,
+            channel,
+            limit,
+            min_quote_amount,
+            min_market_cap,
+            min_pnl,
+            trader,
+            tag,
+            since,
+            trade_type,
+        } => ws_poll(
+            &id,
+            channel,
+            limit,
+            min_quote_amount,
+            min_market_cap,
+            min_pnl,
+            trader,
+            tag,
+            since,
+            trade_type,
+        ),
         WsCommand::Stop { id, flush } => match id {
             Some(id) => ws_stop(&id, flush),
             None => ws_stop_all(flush),
@@ -197,7 +235,8 @@ fn ws_channels() -> Result<()> {
 fn ws_channel_info(name: &str) -> Result<()> {
     // Match exact name or candle pattern
     let info = ALL_CHANNELS.iter().find(|ch| {
-        ch.name == name || (ch.name == "dex-token-candle{period}" && name.starts_with("dex-token-candle"))
+        ch.name == name
+            || (ch.name == "dex-token-candle{period}" && name.starts_with("dex-token-candle"))
     });
     match info {
         Some(ch) => {
@@ -211,7 +250,10 @@ fn ws_channel_info(name: &str) -> Result<()> {
             }));
         }
         None => {
-            bail!("unknown channel '{}'; use 'onchainos ws channels' to list all", name);
+            bail!(
+                "unknown channel '{}'; use 'onchainos ws channels' to list all",
+                name
+            );
         }
     }
     Ok(())
@@ -248,7 +290,10 @@ async fn ws_start(
                     bail!("--wallet-addresses is required for channel '{}'", ch);
                 }
                 if wallet_addresses.len() > 200 {
-                    bail!("--wallet-addresses exceeds maximum of 200 (got {})", wallet_addresses.len());
+                    bail!(
+                        "--wallet-addresses exceeds maximum of 200 (got {})",
+                        wallet_addresses.len()
+                    );
                 }
             }
             ChannelPattern::PerToken => {
@@ -417,7 +462,10 @@ fn ws_poll(
             Some(other) => bail!("unknown --tag value '{}'; use smart_money or kol", other),
             None => None,
         };
-        let trade_type_filter = trade_type.as_deref().map(resolve_trade_type).map(str::to_string);
+        let trade_type_filter = trade_type
+            .as_deref()
+            .map(resolve_trade_type)
+            .map(str::to_string);
 
         // Filter with original index tracking for correct cursor commit
         let filtered: Vec<(usize, Value)> = result
@@ -439,7 +487,11 @@ fn ws_poll(
                     }
                 }
                 if let Some(min) = min_pnl {
-                    if e.realized_pnl_usd.parse::<f64>().unwrap_or(f64::NEG_INFINITY) < min {
+                    if e.realized_pnl_usd
+                        .parse::<f64>()
+                        .unwrap_or(f64::NEG_INFINITY)
+                        < min
+                    {
                         return false;
                     }
                 }
@@ -449,7 +501,11 @@ fn ws_poll(
                     }
                 }
                 if let Some(tag) = tag_filter {
-                    let has_tag = e.tracker_type.as_ref().map(|list| list.contains(&tag)).unwrap_or(false);
+                    let has_tag = e
+                        .tracker_type
+                        .as_ref()
+                        .map(|list| list.contains(&tag))
+                        .unwrap_or(false);
                     if !has_tag {
                         return false;
                     }
@@ -475,8 +531,17 @@ fn ws_poll(
         // If no events matched, do NOT advance — those events may match
         // different filters on the next poll.
         if let Some((last_idx, _)) = filtered.last() {
-            let commit_cursor = result.per_event_cursors.get(*last_idx).copied().unwrap_or(result.new_cursor);
-            store::write_cursor(&dir, &poll_channel, commit_cursor.file_no, commit_cursor.offset)?;
+            let commit_cursor = result
+                .per_event_cursors
+                .get(*last_idx)
+                .copied()
+                .unwrap_or(result.new_cursor);
+            store::write_cursor(
+                &dir,
+                &poll_channel,
+                commit_cursor.file_no,
+                commit_cursor.offset,
+            )?;
         }
         let filtered: Vec<Value> = filtered.into_iter().map(|(_, v)| v).collect();
 
@@ -491,7 +556,12 @@ fn ws_poll(
         // so all read events are returned — no events are skipped).
         let events: Vec<Value> = result.events.into_iter().take(limit).collect();
         let new_count = events.len();
-        store::write_cursor(&dir, &poll_channel, result.new_cursor.file_no, result.new_cursor.offset)?;
+        store::write_cursor(
+            &dir,
+            &poll_channel,
+            result.new_cursor.file_no,
+            result.new_cursor.offset,
+        )?;
 
         let data_key = if is_tracker { "trades" } else { "events" };
         output::success(json!({
@@ -520,7 +590,12 @@ fn stop_one(id: &str, flush: bool) -> Result<StopResult> {
         let config = store::read_config(id)?;
         for ch in &config.channels {
             let result = store::read_events_from_cursor(&dir, ch, 1000)?;
-            store::write_cursor(&dir, ch, result.new_cursor.file_no, result.new_cursor.offset)?;
+            store::write_cursor(
+                &dir,
+                ch,
+                result.new_cursor.file_no,
+                result.new_cursor.offset,
+            )?;
             flushed_events.extend(result.events);
         }
     }
@@ -605,9 +680,21 @@ fn ws_list() -> Result<()> {
     let entries: Vec<_> = watches
         .iter()
         .map(|w| {
-            let channels = w.config.as_ref().map(|c| c.channels.clone()).unwrap_or_default();
-            let env = w.config.as_ref().map(|c| format!("{:?}", c.env).to_lowercase()).unwrap_or_default();
-            let created_at = w.config.as_ref().map(|c| c.created_at.to_string()).unwrap_or_default();
+            let channels = w
+                .config
+                .as_ref()
+                .map(|c| c.channels.clone())
+                .unwrap_or_default();
+            let env = w
+                .config
+                .as_ref()
+                .map(|c| format!("{:?}", c.env).to_lowercase())
+                .unwrap_or_default();
+            let created_at = w
+                .config
+                .as_ref()
+                .map(|c| c.created_at.to_string())
+                .unwrap_or_default();
             let status_str = match &w.state {
                 DaemonState::Disconnected(r) => format!("disconnected:{}", r),
                 other => other.as_str().to_string(),

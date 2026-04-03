@@ -154,7 +154,11 @@ pub struct TradeEvent {
     pub trade_type: String,
     pub trade_time: String,
     /// Tracker types: 1=smart_money, 2=kol
-    #[serde(rename = "trackerType", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "trackerType",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub tracker_type: Option<Vec<u8>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_hash: Option<String>,
