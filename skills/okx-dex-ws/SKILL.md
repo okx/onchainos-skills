@@ -16,6 +16,8 @@ Two ways to consume real-time DEX data:
 
 ## Prerequisites
 
+This skill requires co-installation with `okx-dex-market`, `okx-dex-token`, `okx-dex-signal`, and `okx-dex-trenches` (all included in the onchainos-skills repository).
+
 > Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
 
 ## When to Use
