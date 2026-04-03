@@ -5,7 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 
-use super::types::{DaemonState, TradeEvent, WatchConfig};
+use serde_json::Value;
+
+use super::types::{DaemonState, WatchConfig};
 
 const MAX_FILE_SIZE: u64 = 32 * 1024 * 1024; // 32 MB
 const MAX_FILES: u32 = 3;
@@ -133,7 +135,7 @@ pub fn write_cursor(dir: &Path, channel: &str, file_no: u32, offset: u64) -> Res
 // ── Event append (daemon side) ────────────────────────────────────────────────
 
 /// Append events to events.<channel>.0.jsonl, rotating if needed.
-pub fn append_events(dir: &Path, channel: &str, events: &[TradeEvent]) -> Result<()> {
+pub fn append_events(dir: &Path, channel: &str, events: &[Value]) -> Result<()> {
     if events.is_empty() {
         return Ok(());
     }
@@ -178,7 +180,7 @@ fn rotate_files(dir: &Path, channel: &str) -> Result<()> {
 // ── Event read (poll side) ────────────────────────────────────────────────────
 
 pub struct PollResult {
-    pub events: Vec<TradeEvent>,
+    pub events: Vec<Value>,
     /// Cursor position after each event — `per_event_cursors[i]` is the cursor
     /// right after `events[i]` was read.  Used to commit the cursor only up to
     /// the last event that survived filtering.
@@ -245,7 +247,7 @@ fn drain_file(
     path: &Path,
     offset: u64,
     limit: usize,
-    events: &mut Vec<TradeEvent>,
+    events: &mut Vec<Value>,
     mut per_event_cursors: Option<&mut Vec<Cursor>>,
 ) -> Result<u64> {
     let file_no = parse_file_no_from_path(path);
@@ -268,7 +270,7 @@ fn drain_file(
         if trimmed.is_empty() {
             continue;
         }
-        if let Ok(event) = serde_json::from_str::<TradeEvent>(trimmed) {
+        if let Ok(event) = serde_json::from_str::<Value>(trimmed) {
             events.push(event);
             if let Some(ref mut cursors) = per_event_cursors {
                 cursors.push(Cursor { file_no, offset: current_offset });
@@ -305,7 +307,7 @@ pub fn list_watches() -> Result<Vec<WatchEntry>> {
     for entry in fs::read_dir(&root)? {
         let entry = entry?;
         let id = entry.file_name().to_string_lossy().to_string();
-        if !id.starts_with("watch_") {
+        if !id.starts_with("ws_") && !id.starts_with("watch_") {
             continue;
         }
         let state = read_daemon_state(&id).unwrap_or(DaemonState::Crashed);

@@ -13,7 +13,7 @@ use tokio::time::{interval, sleep, timeout};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use super::store::{append_events, read_config, write_pid, write_status};
-use super::types::{TradeEvent, WatchEnv};
+use super::types::{WatchConfig, WatchEnv, channel_pattern, ChannelPattern};
 
 const WS_URL_PROD: &str = "wss://wsdex.okx.com:8443/ws/v5/dex";
 const WS_URL_PRE: &str = "wss://wsdexpre.okx.com:8443/ws/v6/dex";
@@ -23,14 +23,14 @@ const PONG_TIMEOUT_SECS: u64 = 10;
 const RECONNECT_DELAY_SECS: u64 = 3;
 const MAX_RECONNECT_ATTEMPTS: u32 = 20;
 
-struct Credentials {
+pub struct Credentials {
     api_key: String,
     secret_key: String,
     passphrase: String,
 }
 
 impl Credentials {
-    fn from_watch_env(env: &WatchEnv) -> Result<Self> {
+    pub fn from_watch_env(env: &WatchEnv) -> Result<Self> {
         match env {
             WatchEnv::Pre => Ok(Self {
                 api_key: std::env::var("OKX_PRE_API_KEY")
@@ -104,9 +104,11 @@ pub async fn run_daemon(id: &str, dir: &Path) -> Result<()> {
         }
     });
 
-    let config = read_config(id).unwrap_or_else(|_| super::types::WatchConfig {
+    let config = read_config(id).unwrap_or_else(|_| WatchConfig {
         channels: super::types::DEFAULT_CHANNELS.iter().map(|c| c.name.to_string()).collect(),
         wallet_addresses: vec![],
+        token_pairs: vec![],
+        chain_indexes: vec![],
         env: WatchEnv::Prod,
         created_at: 0,
     });
@@ -114,12 +116,19 @@ pub async fn run_daemon(id: &str, dir: &Path) -> Result<()> {
         WatchEnv::Pre => WS_URL_PRE.to_string(),
         WatchEnv::Prod => WS_URL_PROD.to_string(),
     });
-    let creds = Credentials::from_watch_env(&config.env)?;
+    let creds = match Credentials::from_watch_env(&config.env) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[watch daemon] credentials error: {}", e);
+            write_status(dir, "stopped", Some(&format!("credentials:{}", e)))?;
+            return Err(e);
+        }
+    };
 
     let mut attempts = 0u32;
     loop {
         heartbeat_active.store(true, Ordering::Relaxed);
-        match connect_and_stream(dir, &ws_url, &creds, &config.channels, &config.wallet_addresses).await {
+        match connect_and_stream(dir, &ws_url, &creds, &config).await {
             Ok(reason) => {
                 heartbeat_active.store(false, Ordering::Relaxed);
                 eprintln!("[watch daemon] disconnected: {}", reason);
@@ -152,8 +161,7 @@ async fn connect_and_stream(
     dir: &Path,
     ws_url: &str,
     creds: &Credentials,
-    channels: &[String],
-    wallet_addresses: &[String],
+    config: &WatchConfig,
 ) -> Result<String> {
     let (mut ws, _): (WsStream, _) = connect_async(ws_url).await?;
 
@@ -161,17 +169,32 @@ async fn connect_and_stream(
     ws.send(Message::Text(creds.login_msg().into())).await?;
     wait_for_login_ack(&mut ws).await?;
 
-    // Build subscribe args:
-    //   - kol_smartmoney-tracker-activity: { "channel": ch }
-    //   - address-tracker-activity: one arg per wallet address { "channel": ch, "walletAddress": addr }
-    let args: Vec<serde_json::Value> = channels.iter()
+    // Build subscribe args per channel pattern
+    let args: Vec<serde_json::Value> = config.channels.iter()
         .flat_map(|ch| -> Vec<serde_json::Value> {
-            if ch == "address-tracker-activity" {
-                wallet_addresses.iter()
-                    .map(|addr| serde_json::json!({ "channel": ch, "walletAddress": addr }))
-                    .collect()
-            } else {
-                vec![serde_json::json!({ "channel": ch })]
+            match channel_pattern(ch) {
+                ChannelPattern::Global => {
+                    vec![serde_json::json!({ "channel": ch })]
+                }
+                ChannelPattern::PerWallet => {
+                    config.wallet_addresses.iter()
+                        .map(|addr| serde_json::json!({ "channel": ch, "walletAddress": addr }))
+                        .collect()
+                }
+                ChannelPattern::PerToken => {
+                    config.token_pairs.iter()
+                        .map(|tp| serde_json::json!({
+                            "channel": ch,
+                            "chainIndex": tp.chain_index,
+                            "tokenContractAddress": tp.token_contract_address
+                        }))
+                        .collect()
+                }
+                ChannelPattern::PerChain => {
+                    config.chain_indexes.iter()
+                        .map(|ci| serde_json::json!({ "channel": ch, "chainIndex": ci }))
+                        .collect()
+                }
             }
         })
         .collect();
@@ -319,12 +342,10 @@ fn check_notice(text: &str) -> Option<String> {
 #[derive(Deserialize)]
 struct WsPush {
     arg: WsPushArg,
-    data: Vec<TradeEvent>,
+    data: Vec<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
 struct WsPushArg {
     channel: String,
-    #[serde(rename = "walletAddress", default)]
-    wallet_address: Option<String>,
 }

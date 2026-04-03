@@ -99,10 +99,15 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::agentic_wallet::payment::PaymentCommand,
     },
-    /// Address tracker: REST activities and real-time WebSocket watch for KOL / smart money / custom address activity
+    /// Address tracker: REST activities for KOL / smart money / custom address activity
     Tracker {
         #[command(subcommand)]
         command: commands::tracker::TrackerCommand,
+    },
+    /// Real-time WebSocket subscriptions for DEX data
+    Ws {
+        #[command(subcommand)]
+        command: commands::ws::WsCommand,
     },
     /// DeFi product discovery, investment, redemption, and portfolio
     Defi {
@@ -164,6 +169,7 @@ async fn run() {
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
+        Commands::Ws { command } => commands::ws::execute(command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
     };
 
