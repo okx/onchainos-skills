@@ -11,6 +11,7 @@ mod home;
 mod keyring_store;
 mod mcp;
 mod output;
+mod watch;
 mod wallet_api;
 mod wallet_store;
 
@@ -57,11 +58,6 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::leaderboard::LeaderboardCommand,
     },
-    /// Address tracker: latest DEX trades by smart money, KOL, or custom wallets
-    Tracker {
-        #[command(subcommand)]
-        command: commands::tracker::TrackerCommand,
-    },
     /// Token information
     Token {
         #[command(subcommand)]
@@ -102,6 +98,11 @@ pub enum Commands {
     Payment {
         #[command(subcommand)]
         command: commands::agentic_wallet::payment::PaymentCommand,
+    },
+    /// Address tracker: REST activities and real-time WebSocket watch for KOL / smart money / custom address activity
+    Tracker {
+        #[command(subcommand)]
+        command: commands::tracker::TrackerCommand,
     },
     /// DeFi product discovery, investment, redemption, and portfolio
     Defi {
