@@ -25,7 +25,7 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 | okx-dex-market       | Prices, charts, index prices, wallet PnL | User asks for token prices, K-line data, index/aggregate prices, wallet PnL analysis |
 | okx-dex-signal       | Smart money / KOL / whale tracking, buy signals, leaderboard | User asks what smart money/whales/KOLs are buying, wants buy signal alerts (信号), top traders (牛人榜) |
 | okx-dex-trenches     | Meme/pump.fun token scanning, trenches | User asks about new meme launches, dev reputation, bundle detection, 打狗/扫链/新盘, or mentions trench/trenches |
-| okx-dex-ws           | WebSocket scripting for all DEX channels | User wants to write a WebSocket script/脚本/bot for real-time on-chain data (price, candle, trades, signals, wallet tracking, meme scanning) |
+| okx-dex-ws           | Real-time WebSocket monitoring (`onchainos ws` CLI) and scripting for all DEX channels | User wants real-time on-chain data (price, candle, trades, signals, wallet tracking, meme scanning) via CLI monitoring or custom WS script |
 | okx-dex-swap         | DEX swap execution | User wants to swap/trade/buy/sell tokens |
 | okx-dex-token        | Token search, liquidity, hot tokens, advanced info, holders, top traders, trade history, holder cluster analysis | User searches for tokens, wants rankings, liquidity pools, holder info, top traders, filtered trade history, or holder cluster concentration |
 | okx-onchain-gateway  | Transaction broadcasting and tracking | User wants to broadcast tx, estimate gas, simulate tx, check tx status |
@@ -41,9 +41,11 @@ When a user asks to write a script, automate trading, build a trading bot, or us
 - Always use `onchainos` CLI commands as the building block (subprocess calls, MCP tool invocations, etc.)
 - Route to the relevant skill based on what the user wants to automate: swap → `okx-dex-swap`, market data → `okx-dex-market`, signals → `okx-dex-signal`, token data → `okx-dex-token`, portfolio → `okx-wallet-portfolio`, meme scanning → `okx-dex-trenches`
 
-### WebSocket Script Routing
+### WebSocket / Real-time Data
 
-When a user asks to write a WebSocket script/脚本/bot, load **`okx-dex-ws`** — it covers all DEX WebSocket channels (market data, signals, wallet tracking, meme scanning) and routes to the correct protocol docs internally.
+When a user asks about real-time on-chain data, WebSocket monitoring, or writing a WS script/脚本/bot, load **`okx-dex-ws`**. It supports two approaches:
+- **CLI** (`onchainos ws start/poll/stop`) — quick monitoring, 9 channels across signal/market/token/trenches
+- **Custom script** — full WS protocol docs for Python/Node/Rust bots
 
 ## Clippy
 

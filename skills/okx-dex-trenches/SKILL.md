@@ -124,12 +124,22 @@ Present conversationally — never expose command paths to the user.
 For detailed parameter tables, return field schemas, and usage examples, consult:
 - **`references/cli-reference.md`** — Full CLI command reference for memepump commands
 
-## WebSocket Protocol Reference
+## Real-time WebSocket Monitoring
 
-When the user wants to build a custom WebSocket client, write a real-time meme token scanner, implement a new-token alert bot, or asks about the raw OKX DEX WebSocket protocol for trenches/memepump data, read **`references/ws-protocol.md`** before responding. That file contains the complete protocol specification for these channels:
+For real-time meme token scanning, use the `onchainos ws` CLI:
 
-- **`dex-market-memepump-new-token-openapi`** — real-time new meme token launches (full token snapshot with market data, holder analytics, social links)
-- **`dex-market-memepump-update-metrics-openapi`** — incremental metric updates for meme tokens (market cap, volume, holder stats, bonding curve progress)
+```bash
+# New meme token launches on Solana
+onchainos ws start --channel dex-market-memepump-new-token-openapi --chain-index 501
+
+# Meme token metric updates (market cap, volume, bonding curve)
+onchainos ws start --channel dex-market-memepump-update-metrics-openapi --chain-index 501
+
+# Poll events
+onchainos ws poll --id <ID>
+```
+
+For custom WebSocket scripts/bots, read **`references/ws-protocol.md`** for the complete protocol specification.
 
 ## Edge Cases
 

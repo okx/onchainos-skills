@@ -11,6 +11,7 @@ pub mod swap;
 pub mod token;
 pub mod tracker;
 pub mod upgrade;
+pub mod ws;
 
 use crate::chains;
 use crate::client::ApiClient;

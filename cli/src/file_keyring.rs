@@ -58,8 +58,8 @@ fn machine_identity() -> String {
 /// Read the persisted identity file.
 fn read_persisted_identity() -> Result<String> {
     let path = onchainos_home()?.join(IDENTITY_FILE);
-    let content = fs::read_to_string(&path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
+    let content =
+        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
     let trimmed = content.trim().to_string();
     if trimmed.is_empty() {
         anyhow::bail!("identity file is empty");
@@ -241,7 +241,9 @@ pub fn read_blob() -> Result<HashMap<String, String>> {
         if let Ok(map) = try_decrypt(&legacy, salt, nonce_bytes, ciphertext) {
             // Re-encrypt under the persisted identity so future reads succeed.
             if let Err(e) = write_blob(&map) {
-                eprintln!("Warning: identity migration re-encrypt failed ({e}), will retry next read");
+                eprintln!(
+                    "Warning: identity migration re-encrypt failed ({e}), will retry next read"
+                );
             }
             return Ok(map);
         }
@@ -588,8 +590,8 @@ mod tests {
             map1.insert("token".to_string(), "old".to_string());
             write_blob(&map1).unwrap();
 
-            let id_before = fs::read_to_string(onchainos_home().unwrap().join(IDENTITY_FILE))
-                .unwrap();
+            let id_before =
+                fs::read_to_string(onchainos_home().unwrap().join(IDENTITY_FILE)).unwrap();
 
             // Purge (simulates purge_stale_credentials)
             clear_all().unwrap();
@@ -600,8 +602,8 @@ mod tests {
             map2.insert("token".to_string(), "new".to_string());
             write_blob(&map2).unwrap();
 
-            let id_after = fs::read_to_string(onchainos_home().unwrap().join(IDENTITY_FILE))
-                .unwrap();
+            let id_after =
+                fs::read_to_string(onchainos_home().unwrap().join(IDENTITY_FILE)).unwrap();
             assert_eq!(id_before, id_after);
 
             // Must be readable
@@ -620,7 +622,11 @@ mod tests {
 
             // Corrupt the keyring.enc file
             let path = onchainos_home().unwrap().join(KEYRING_FILE);
-            fs::write(&path, b"this is not valid encrypted data at all, needs to be long enough for salt+nonce").unwrap();
+            fs::write(
+                &path,
+                b"this is not valid encrypted data at all, needs to be long enough for salt+nonce",
+            )
+            .unwrap();
 
             // read_blob should fail (corrupted ciphertext)
             assert!(read_blob().is_err());
