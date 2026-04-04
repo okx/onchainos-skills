@@ -1,6 +1,6 @@
 ---
 name: okx-dex-trenches
-description: "Use this skill for meme/打狗/alpha token research on pump.fun and similar launchpads: scanning new token launches, checking developer reputation/开发者信息/dev launch history/has this dev rugged before/开发者跑路记录, bundle/sniper detection/捆绑狙击, bonding curve status/bonding curve progress, finding similar tokens by the same dev/相似代币, and wallets that co-invested (同车/aped) into a token. Use when the user asks about 'new meme coins', 'pump.fun launches', 'trenches', 'trench', '扫链', 'developer launch history', 'developer rug history', 'check if dev has rugged', 'bundler analysis', 'who else bought this token', 'who aped into this', 'similar tokens', 'bonding curve progress', '打狗', '新盘', '开发者信息', '开发者历史', '捆绑', '同车', 'rug pull count', 'similar meme coins', '捆绑情况', '已迁移出 bonding curve', or '发过多少个项目'. Invoke on user intent; token address can be provided after. NOTE: if the user wants to write a WebSocket script/脚本/bot, use okx-dex-ws instead."
+description: "Use this skill for meme/alpha token research on pump.fun and similar launchpads: scanning new token launches, checking developer reputation (dev launch history, has this dev rugged before), bundle/sniper detection, bonding curve status, finding similar tokens by the same dev, and wallets that co-invested (aped) into a token. Use when the user asks about 'new meme coins', 'pump.fun launches', 'trenches', '扫链', '打狗', 'developer rug history', 'bundler analysis', 'who aped into this', 'similar tokens', 'bonding curve progress', 'rug pull count', or '新盘'."
 license: MIT
 metadata:
   author: okx
@@ -56,17 +56,17 @@ metadata:
 
 ### Step 3: Suggest Next Steps
 
-| Just called | Suggest |
-|---|---|
-| `memepump-chains` | 1. Browse tokens → `onchainos memepump tokens` |
-| `memepump-tokens` | 1. Pick a token for details → `onchainos memepump token-details` 2. Check dev → `onchainos memepump token-dev-info` |
-| `memepump-token-details` | 1. Dev analysis → `onchainos memepump token-dev-info` 2. Similar tokens → `onchainos memepump similar-tokens` 3. Bundle check → `onchainos memepump token-bundle-info` |
-| `memepump-token-dev-info` | 1. Check bundle activity → `onchainos memepump token-bundle-info` 2. View price chart → `onchainos market kline` |
-| `memepump-similar-tokens` | 1. Compare with details → `onchainos memepump token-details` |
-| `memepump-token-bundle-info` | 1. Check aped wallets → `onchainos memepump aped-wallet` |
-| `memepump-aped-wallet` | 1. Validate token safety → `onchainos token advanced-info` 2. View price chart → `onchainos market kline` 3. Buy the token → `onchainos swap execute` |
+Present next actions conversationally — never expose command paths to the user.
 
-Present conversationally — never expose command paths to the user.
+| After | Suggest |
+|---|---|
+| `memepump chains` | `memepump tokens` |
+| `memepump tokens` | `memepump token-details`, `memepump token-dev-info` |
+| `memepump token-details` | `memepump token-dev-info`, `memepump similar-tokens`, `memepump token-bundle-info` |
+| `memepump token-dev-info` | `memepump token-bundle-info`, `market kline` |
+| `memepump similar-tokens` | `memepump token-details` |
+| `memepump token-bundle-info` | `memepump aped-wallet` |
+| `memepump aped-wallet` | `token advanced-info`, `market kline`, `swap execute` |
 
 ## Additional Resources
 

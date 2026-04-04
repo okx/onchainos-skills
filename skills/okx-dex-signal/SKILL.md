@@ -1,6 +1,6 @@
 ---
 name: okx-dex-signal
-description: "Use this skill for smart-money/whale/KOL/大户 activity tracking, aggregated buy signal/信号 alerts, and leaderboard/牛人榜 rankings. Covers: (1) address tracker — raw DEX transaction feed for smart money, KOL, or custom wallet addresses; (2) aggregated buy-only signal alerts — tokens bought collectively by smart money/KOL/whales; (3) leaderboard — top traders by PnL, win rate, volume, or ROI. Use when the user asks 'what are smart money buying', '聪明钱最新交易', 'KOL交易动态', '追踪聪明钱', 'track address trades', '大户在买什么', 'whale signals', 'smart money alerts', '信号', '大户信号', 'top traders', '牛人榜', or wants to monitor notable wallet activity. NOTE: if the user wants to write a WebSocket script/脚本/bot, use okx-dex-ws instead."
+description: "Use this skill for smart-money/whale/KOL activity tracking, aggregated buy signal alerts, and leaderboard rankings. Covers: (1) address tracker — DEX transaction feed for smart money, KOL, or custom wallets; (2) aggregated buy-only signal alerts — tokens bought collectively by smart money/KOL/whales; (3) leaderboard — top traders by PnL, win rate, volume, or ROI. Use when the user asks 'what are smart money buying', '聪明钱', 'track address trades', 'whale signals', 'smart money alerts', '信号', 'top traders', '牛人榜'."
 license: MIT
 metadata:
   author: okx
@@ -86,14 +86,14 @@ metadata:
 
 ### Step 3: Suggest Next Steps
 
-| Just called | Suggest |
-|---|---|
-| `signal chains` | 1. Fetch signals on a supported chain → `onchainos signal list` |
-| `tracker activities` | 1. Get token price → `onchainos market price` 2. Deep token analytics → `onchainos token price-info` 3. Buy/swap the token → `onchainos swap execute` |
-| `signal list` | 1. Drill into actual trades → `onchainos tracker activities` 2. View price chart → `onchainos market kline` 3. Deep token analytics → `onchainos token price-info` 4. Buy the token → `onchainos swap execute` |
-| `leaderboard list` | 1. Drill into a wallet's PnL → `onchainos market portfolio-overview` 2. Check a wallet's holdings → `onchainos portfolio all-balances` 3. Track that wallet's trades → `onchainos tracker activities --tracker-type multi_address` |
+Present next actions conversationally — never expose command paths to the user.
 
-Present conversationally — never expose command paths to the user.
+| After | Suggest |
+|---|---|
+| `signal chains` | `signal list` |
+| `tracker activities` | `market price`, `token price-info`, `swap execute` |
+| `signal list` | `tracker activities`, `market kline`, `token price-info`, `swap execute` |
+| `leaderboard list` | `market portfolio-overview`, `portfolio all-balances`, `tracker activities --tracker-type multi_address` |
 
 ## Additional Resources
 

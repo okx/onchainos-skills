@@ -1,6 +1,6 @@
 ---
 name: okx-dex-token
-description: "Use this skill for token-level data: search tokens, trending/hot tokens, liquidity pools, holder distribution (whale, sniper, bundler-tagged holder %), token risk analysis (risk level, dev rug history, honeypot tags, holder concentration), recent buy/sell activity, trade feed, top profit addresses, token trade history, detailed price info (market cap, volume, liquidity, holder count), or holder cluster analysis (cluster concentration, rug pull risk, new wallet %). Invoke on user intent; token address can be provided after. Use also when the user wants to write a token scanning script or automate token research using OKX."
+description: "Use this skill for token-level data: search tokens, trending/hot tokens, liquidity pools, holder distribution (whale, sniper, bundler-tagged holder %), token risk analysis (risk level, dev rug history, honeypot tags, holder concentration), recent buy/sell activity, trade feed, top profit addresses, token trade history, detailed price info (market cap, volume, liquidity, holder count), or holder cluster analysis (cluster concentration, rug pull risk, new wallet %)."
 license: MIT
 metadata:
   author: okx
@@ -67,23 +67,23 @@ metadata:
 
 ### Step 3: Suggest Next Steps
 
-| Just called | Suggest |
-|---|---|
-| `token search` | 1. View price and market data → `onchainos token price-info` 2. Check holder distribution → `onchainos token holders` |
-| `token info` | 1. View price and market data → `onchainos token price-info` 2. Check holder distribution → `onchainos token holders` |
-| `token price-info` | 1. Check holder distribution → `onchainos token holders` 2. View K-line chart → `onchainos market kline` 3. Buy/swap this token → `onchainos swap execute` |
-| `token holders` | 1. Get advanced info → `onchainos token advanced-info` 2. View top traders → `onchainos token top-trader` |
-| `token liquidity` | 1. Check holders → `onchainos token holders` 2. Get advanced info → `onchainos token advanced-info` |
-| `token hot-tokens` | 1. View price details → `onchainos token price-info` 2. Check liquidity pools → `onchainos token liquidity` 3. Get advanced info → `onchainos token advanced-info` |
-| `token advanced-info` | 1. View holders → `onchainos token holders` 2. View top traders → `onchainos token top-trader` 3. Check holder cluster concentration → `onchainos token cluster-overview` |
-| `token top-trader` | 1. View advanced info → `onchainos token advanced-info` 2. View token trade history → `onchainos token trades` |
-| `token trades` | 1. View top traders → `onchainos token top-trader` 2. Get advanced info → `onchainos token advanced-info` |
-| `token cluster-supported-chains` | 1. Get holder cluster overview → `onchainos token cluster-overview` |
-| `token cluster-overview` | 1. Drill into top holder behavior → `onchainos token cluster-top-holders` 2. View cluster groups → `onchainos token cluster-list` 3. Check advanced info → `onchainos token advanced-info` |
-| `token cluster-top-holders` | 1. View cluster group details → `onchainos token cluster-list` 2. View holder distribution → `onchainos token holders` |
-| `token cluster-list` | 1. Check top traders → `onchainos token top-trader` 2. Get advanced info → `onchainos token advanced-info` |
+Present next actions conversationally — never expose command paths to the user.
 
-Present conversationally, e.g.: "Would you like to check the holder distribution or see the top traders?" — never expose command paths to the user.
+| After | Suggest |
+|---|---|
+| `token search` | `token price-info`, `token holders` |
+| `token info` | `token price-info`, `token holders` |
+| `token price-info` | `token holders`, `market kline`, `swap execute` |
+| `token holders` | `token advanced-info`, `token top-trader` |
+| `token liquidity` | `token holders`, `token advanced-info` |
+| `token hot-tokens` | `token price-info`, `token liquidity`, `token advanced-info` |
+| `token advanced-info` | `token holders`, `token top-trader`, `token cluster-overview` |
+| `token top-trader` | `token advanced-info`, `token trades` |
+| `token trades` | `token top-trader`, `token advanced-info` |
+| `token cluster-supported-chains` | `token cluster-overview` |
+| `token cluster-overview` | `token cluster-top-holders`, `token cluster-list`, `token advanced-info` |
+| `token cluster-top-holders` | `token cluster-list`, `token holders` |
+| `token cluster-list` | `token top-trader`, `token advanced-info` |
 
 ## Additional Resources
 

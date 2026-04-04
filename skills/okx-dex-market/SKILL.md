@@ -1,6 +1,6 @@
 ---
 name: okx-dex-market
-description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, and wallet PnL/盈亏分析 (win rate, my wallet's DEX trade history, realized/unrealized PnL per token). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my wallet DEX history', 'realized profit', or 'unrealized profit'. Use also for price monitoring scripts or market data automation using OKX."
+description: "Use this skill for on-chain market data: token prices, K-line/OHLC charts, index prices, and wallet PnL analysis (win rate, DEX trade history, realized/unrealized PnL per token). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '盈亏', 'DEX history', 'realized profit', or 'unrealized profit'."
 license: MIT
 metadata:
   author: okx
@@ -61,21 +61,19 @@ metadata:
 
 ### Step 3: Suggest Next Steps
 
-After price, kline, or index results: suggest viewing the chart, checking token analytics, or buying — conversationally.
+Present next actions conversationally — never expose command paths to the user.
 
-| Just called | Suggest |
+| After | Suggest |
 |---|---|
-| `market price` | 1. View K-line chart → `onchainos market kline` 2. Check token analytics → `onchainos token price-info` 3. Buy/swap this token → `onchainos swap execute` |
-| `market kline` | 1. Check token analytics → `onchainos token price-info` 2. Check holder distribution → `onchainos token holders` 3. Buy/swap this token → `onchainos swap execute` |
-| `market prices` | 1. View K-line chart for a token → `onchainos market kline` 2. View single token price → `onchainos market price` |
-| `market index` | 1. Compare with on-chain DEX price → `onchainos market price` 2. View full price chart → `onchainos market kline` |
-| `market portfolio-supported-chains` | 1. Get PnL overview → `onchainos market portfolio-overview` |
-| `market portfolio-overview` | 1. Drill into trade history → `onchainos market portfolio-dex-history` 2. Check recent PnL by token → `onchainos market portfolio-recent-pnl` 3. Buy/sell a top-PnL token → `onchainos swap execute` |
-| `market portfolio-dex-history` | 1. Check PnL for a specific traded token → `onchainos market portfolio-token-pnl` 2. View token price chart → `onchainos market kline` |
-| `market portfolio-recent-pnl` | 1. Get detailed PnL for a specific token → `onchainos market portfolio-token-pnl` 2. View token analytics → `onchainos token price-info` |
-| `market portfolio-token-pnl` | 1. View full trade history for this token → `onchainos market portfolio-dex-history` 2. View token price chart → `onchainos market kline` |
-
-Present conversationally, e.g.: "Would you like to see the K-line chart, or buy this token?" — never expose command paths to the user.
+| `market price` | `market kline`, `token price-info`, `swap execute` |
+| `market kline` | `token price-info`, `token holders`, `swap execute` |
+| `market prices` | `market kline`, `market price` |
+| `market index` | `market price`, `market kline` |
+| `market portfolio-supported-chains` | `market portfolio-overview` |
+| `market portfolio-overview` | `market portfolio-dex-history`, `market portfolio-recent-pnl`, `swap execute` |
+| `market portfolio-dex-history` | `market portfolio-token-pnl`, `market kline` |
+| `market portfolio-recent-pnl` | `market portfolio-token-pnl`, `token price-info` |
+| `market portfolio-token-pnl` | `market portfolio-dex-history`, `market kline` |
 
 ## Additional Resources
 
