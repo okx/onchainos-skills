@@ -26,7 +26,7 @@ metadata:
 
 ## Keyword Glossary
 
-> If the user's query contains Chinese text (中文) or mentions a protocol name (pumpfun, bonkers, believe, etc.), read `references/keyword-glossary.md` for keyword-to-command mappings and protocol ID lookups.
+> If the user's query contains Chinese text (中文), mentions a protocol name (pumpfun, bonkers, believe, etc.), or is ambiguous about which command to use, read `references/keyword-glossary.md` for keyword-to-command mappings and protocol ID lookups.
 
 ## Commands
 
