@@ -35,11 +35,11 @@ metadata:
 | 1 | `onchainos token search --query <query> [--chains <chains>]` | Search tokens by name, symbol, or address |
 | 2 | `onchainos token info --address <address>` | Token metadata (name, symbol, decimals, logo) |
 | 3 | `onchainos token price-info --address <address>` | Price + market cap + liquidity + volume + 24h change |
-| 4 | `onchainos token holders --address <address>` | Holder distribution (top 100, optional `--tag-filter`: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious, 9=Bundler) |
+| 4 | `onchainos token holders --address <address>` | Holder distribution (top 100, optional tag filter: KOL/whale/smart money) |
 | 5 | `onchainos token liquidity --address <address>` | Top 5 liquidity pools |
 | 6 | `onchainos token hot-tokens` | Hot/trending token list (by trending score or X mentions, max 100) |
 | 7 | `onchainos token advanced-info --address <address>` | Risk level, creator, dev stats, holder concentration |
-| 8 | `onchainos token top-trader --address <address>` | Top traders / profit addresses (same `--tag-filter` as holders) |
+| 8 | `onchainos token top-trader --address <address>` | Top traders / profit addresses for a token |
 | 9 | `onchainos token trades --address <address>` | DEX trade history with optional tag/wallet filters |
 | 10 | `onchainos token cluster-overview --address <address>` | Holder cluster concentration (cluster level, rug pull %, new address %) |
 | 11 | `onchainos token cluster-top-holders --address <address> --range-filter <1\|2\|3>` | Top 10/50/100 holder overview (avg PnL, cost, trend); 1=top10, 2=top50, 3=top100 |
