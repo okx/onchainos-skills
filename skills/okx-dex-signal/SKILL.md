@@ -26,7 +26,7 @@ metadata:
 
 ## Keyword Glossary
 
-> If the user's query contains Chinese text (中文) or is ambiguous about which command to use, read `references/keyword-glossary.md` for keyword-to-command mappings.
+> If the user's query contains Chinese text (中文), read `references/keyword-glossary.md` for keyword-to-command mappings.
 
 ## Commands
 
