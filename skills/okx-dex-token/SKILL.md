@@ -1,6 +1,6 @@
 ---
 name: okx-dex-token
-description: "Use this skill for token-level data: search tokens, trending/hot tokens, liquidity pools, holder distribution (whale, sniper, bundler-tagged holder %), token risk analysis (risk level, dev rug history, honeypot tags, holder concentration), recent buy/sell activity, trade feed, top profit addresses, token trade history, detailed price info (market cap, volume, liquidity, holder count), or holder cluster analysis (cluster concentration, rug pull risk, new wallet %)."
+description: "Use this skill for token-level data: search tokens, trending/hot tokens (热门, 代币榜单), liquidity pools, holder distribution (whale/巨鲸, sniper, bundler-tagged holder %), token risk metadata (riskControlLevel, tokenTags, dev stats, suspicious/bundle holding % via advanced-info), recent buy/sell activity, trade feed/逐笔成交/每笔交易/stream trades, top profit addresses, token trade history, detailed price info with market cap volume liquidity and holder count (price-info), or holder cluster analysis (持仓集中度, cluster overview, cluster rug pull risk/跑路风险, new wallet percentage/新钱包持仓比例, holder clusters, 'are top holders in same cluster')."
 license: MIT
 metadata:
   author: okx

@@ -1,6 +1,6 @@
 ---
 name: okx-dex-signal
-description: "Use this skill for smart-money/whale/KOL activity tracking, aggregated buy signal alerts, and leaderboard rankings. Covers: (1) address tracker — DEX transaction feed for smart money, KOL, or custom wallets; (2) aggregated buy-only signal alerts — tokens bought collectively by smart money/KOL/whales; (3) leaderboard — top traders by PnL, win rate, volume, or ROI. Use when the user asks 'what are smart money buying', '聪明钱', 'track address trades', 'whale signals', 'smart money alerts', '信号', 'top traders', '牛人榜'."
+description: "Use this skill for smart-money/whale/KOL/大户 activity tracking, aggregated buy signal/信号 alerts, and leaderboard/牛人榜 rankings. Covers: (1) address tracker — raw DEX transaction feed for smart money, KOL, or custom wallet addresses; (2) aggregated buy-only signal alerts — tokens bought collectively by smart money/KOL/whales; (3) leaderboard — top traders by PnL, win rate, volume, or ROI. Use when the user asks 'what are smart money buying', '聪明钱最新交易', 'KOL交易动态', '追踪聪明钱', 'track address trades', '大户在买什么', 'whale signals', 'smart money alerts', '信号', '大户信号', 'top traders', '牛人榜'."
 license: MIT
 metadata:
   author: okx
