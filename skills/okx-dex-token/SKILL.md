@@ -124,7 +124,6 @@ For custom WebSocket scripts/bots, read **`references/ws-protocol.md`** for the 
 - **Token not found**: suggest verifying the contract address (symbols can collide)
 - **Wrong chain default**: all address-based commands default to `--chain ethereum`. Always infer chain from address format (Solana = base58, no `0x`) and pass it explicitly — omitting `--chain` for a Solana address will error or return wrong results.
 - **Same symbol on multiple chains**: show all matches with chain names
-- **Unverified token**: `communityRecognized = false` — warn user about risk
 - **Too many results**: name/symbol search caps at 100 — suggest using exact contract address
 - **Network error**: retry once
 - **Region restriction (error code 50125 or 80001)**: do NOT show the raw error code to the user. Instead, display a friendly message: `⚠️ Service is not available in your region. Please switch to a supported region and try again.`
@@ -137,10 +136,5 @@ For custom WebSocket scripts/bots, read **`references/ws-protocol.md`** for the 
 
 ## Global Notes
 
-- When presenting `advanced-info`, translate `tokenTags` values into human-readable language: `honeypot`→貔貅盘, `lowLiquidity`→低流动性, `devHoldingStatusSellAll`→开发者已全部卖出, `smartMoneyBuy`→聪明钱买入, `communityRecognized`→社区认可, `dexBoost`→Boost活动, `devBurnToken`→开发者燃烧代币, `devAddLiquidity`→开发者添加流动性. Never dump raw tag strings to the user.
-- `riskControlLevel` values: `0`=未定义, `1`=低风险, `2`=中风险, `3`=中高风险, `4`=高风险, `5`=高风险(手动配置)
-- Use contract address as **primary identity** — symbols can collide across tokens
-- `communityRecognized = true` means listed on Top 10 CEX or community verified
-- The CLI resolves chain names automatically (e.g., `ethereum` → `1`, `solana` → `501`)
 - EVM addresses must be **all lowercase**
 - The CLI handles authentication internally via environment variables — see Prerequisites step 4 for default values

@@ -128,7 +128,6 @@ For custom WebSocket scripts/bots, read **`references/ws-protocol.md`** for the 
 - **Unsupported chain for leaderboard**: always verify with `onchainos leaderboard supported-chains` first
 - **Empty leaderboard**: no traders match the filter combination — suggest relaxing `--wallet-type`, PnL range, or win rate filters
 - **Max 20 leaderboard results per request**: inform user if they need more
-- **`--wallet-type` is single select for leaderboard**: only one wallet type can be passed at a time; if omitted, all types are returned
 
 ## Region Restrictions (IP Blocking)
 
