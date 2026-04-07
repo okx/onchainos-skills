@@ -2,6 +2,7 @@ use anyhow::{bail, Context, Result};
 use base64::Engine;
 use serde_json::{json, Value};
 
+use crate::commands::swap::{validate_address_for_chain, validate_non_negative_integer};
 use crate::keyring_store;
 use crate::output;
 use crate::wallet_api::WalletApiClient;
@@ -137,9 +138,30 @@ async fn sign_and_broadcast(
         anyhow::anyhow!("chain id '{}' is not a valid number", addr_info.chain_index)
     })?;
 
+    // ── Address validation ──
+    let ci = &addr_info.chain_index;
+    validate_address_for_chain(ci, tx.to_addr, "to")?;
+    if let Some(ca) = tx.contract_addr {
+        validate_address_for_chain(ci, ca, "contract-token")?;
+    }
+    if let Some(aa_addr) = tx.aa_dex_token_addr {
+        validate_address_for_chain(ci, aa_addr, "aa-dex-token-addr")?;
+    }
+    // ── Optional field validation ──
+    if let Some(gl) = tx.gas_limit {
+        validate_non_negative_integer(gl, "gas-limit")?;
+    }
+    if let Some(aa_amount) = tx.aa_dex_token_amount {
+        validate_non_negative_integer(aa_amount, "aa-dex-token-amount")?;
+    }
+
     let client = WalletApiClient::new()?;
-    // Read swap trace ID from cache; build trace headers if present
-    let cached_tid = crate::wallet_store::get_swap_trace_id().ok().flatten();
+    // Only read swap trace ID from cache for contract calls (swap flow)
+    let cached_tid = if is_contract_call {
+        crate::wallet_store::get_swap_trace_id().ok().flatten()
+    } else {
+        None
+    };
     let ts_unsigned = chrono::Utc::now().timestamp_millis().to_string();
     let trace_headers_unsigned: Vec<(&str, &str)> = if let Some(ref tid) = cached_tid {
         vec![
@@ -301,6 +323,10 @@ async fn sign_and_broadcast(
         .await
         .map_err(|e| handle_confirming_error(e, force))?;
 
+    // Clear cached swap trace ID after successful broadcast (contract calls only)
+    if is_contract_call {
+        let _ = crate::wallet_store::clear_swap_trace_id();
+    }
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][sign_and_broadcast] === END SUCCESS: txHash={}",
@@ -557,5 +583,156 @@ mod tests {
             .downcast_ref::<crate::output::CliConfirming>()
             .is_none());
         assert_eq!(format!("{}", result), "network timeout");
+    }
+
+    // ── cmd_send input validation tests ──────────────────────────────
+
+    #[tokio::test]
+    async fn cmd_send_rejects_empty_amt() {
+        let result = cmd_send("", "0xRecipient", "1", None, None, false).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("amt is required"));
+    }
+
+    #[tokio::test]
+    async fn cmd_send_rejects_decimal_amt() {
+        let result = cmd_send("1.5", "0xRecipient", "1", None, None, false).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("whole number"));
+    }
+
+    #[tokio::test]
+    async fn cmd_send_rejects_empty_receipt() {
+        let result = cmd_send("100", "", "1", None, None, false).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("receipt and chain are required"));
+    }
+
+    #[tokio::test]
+    async fn cmd_send_rejects_empty_chain() {
+        let result = cmd_send("100", "0xRecipient", "", None, None, false).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("receipt and chain are required"));
+    }
+
+    // ── cmd_contract_call input validation tests ─────────────────────
+
+    #[tokio::test]
+    async fn cmd_contract_call_rejects_empty_to() {
+        let result = cmd_contract_call(
+            "",
+            "1",
+            "0",
+            Some("0xdata"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            false,
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("to and chain are required"));
+    }
+
+    #[tokio::test]
+    async fn cmd_contract_call_rejects_empty_chain() {
+        let result = cmd_contract_call(
+            "0xTo",
+            "",
+            "0",
+            Some("0xdata"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            false,
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("to and chain are required"));
+    }
+
+    #[tokio::test]
+    async fn cmd_contract_call_rejects_decimal_amt() {
+        let result = cmd_contract_call(
+            "0xTo",
+            "1",
+            "1.5",
+            Some("0xdata"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            false,
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("whole number"));
+    }
+
+    #[tokio::test]
+    async fn cmd_contract_call_rejects_missing_input_and_unsigned() {
+        let result = cmd_contract_call(
+            "0xTo", "1", "0", None, None, None, None, None, None, false, None, false,
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("--input-data"));
+    }
+
+    // ── validate_address_for_chain integration tests (from swap.rs) ──
+
+    #[test]
+    fn transfer_uses_validate_address_for_chain() {
+        // Ensure the imported function works correctly in this module context
+        assert!(validate_address_for_chain(
+            "1",
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            "to"
+        )
+        .is_ok());
+        assert!(validate_address_for_chain(
+            "501",
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "to"
+        )
+        .is_ok());
+        // EVM short address rejected
+        assert!(validate_address_for_chain("1", "0xabc", "to").is_err());
+        // Solana short address rejected
+        assert!(validate_address_for_chain("501", "short", "to").is_err());
+    }
+
+    // ── validate_non_negative_integer integration tests (from swap.rs) ──
+
+    #[test]
+    fn transfer_uses_validate_non_negative_integer() {
+        assert!(validate_non_negative_integer("0", "gas-limit").is_ok());
+        assert!(validate_non_negative_integer("21000", "gas-limit").is_ok());
+        assert!(validate_non_negative_integer("-1", "gas-limit").is_err());
+        assert!(validate_non_negative_integer("abc", "aa-dex-token-amount").is_err());
+        assert!(validate_non_negative_integer("007", "gas-limit").is_err());
     }
 }

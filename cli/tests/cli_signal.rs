@@ -48,12 +48,7 @@ fn extract_trades(data: Value) -> Vec<Value> {
 
 #[test]
 fn address_tracker_smart_money_returns_trades() {
-    let output = run_with_retry(&[
-        "tracker",
-        "activities",
-        "--tracker-type",
-        "smart_money",
-    ]);
+    let output = run_with_retry(&["tracker", "activities", "--tracker-type", "smart_money"]);
     let data = assert_ok_and_extract_data(&output);
     let trades = extract_trades(data);
     assert!(!trades.is_empty(), "expected at least one trade entry");
@@ -62,12 +57,7 @@ fn address_tracker_smart_money_returns_trades() {
 
 #[test]
 fn address_tracker_kol_returns_trades() {
-    let output = run_with_retry(&[
-        "tracker",
-        "activities",
-        "--tracker-type",
-        "kol",
-    ]);
+    let output = run_with_retry(&["tracker", "activities", "--tracker-type", "kol"]);
     let data = assert_ok_and_extract_data(&output);
     let trades = extract_trades(data);
     assert!(!trades.is_empty(), "expected at least one trade entry");
@@ -145,12 +135,7 @@ fn address_tracker_missing_tracker_type_fails() {
 #[test]
 fn address_tracker_multi_address_missing_wallet_fails() {
     onchainos()
-        .args([
-            "tracker",
-            "activities",
-            "--tracker-type",
-            "multi_address",
-        ])
+        .args(["tracker", "activities", "--tracker-type", "multi_address"])
         .assert()
         .failure();
 }
@@ -199,7 +184,10 @@ fn signal_list_wallet_type_values_are_numeric() {
     let data = assert_ok_and_extract_data(&output);
     if let Some(arr) = data.as_array() {
         if let Some(entry) = arr.first() {
-            let wt = entry.get("walletType").and_then(|v| v.as_str()).unwrap_or("");
+            let wt = entry
+                .get("walletType")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             assert!(
                 ["1", "2", "3"].contains(&wt),
                 "walletType should be '1', '2', or '3', got: '{wt}'"

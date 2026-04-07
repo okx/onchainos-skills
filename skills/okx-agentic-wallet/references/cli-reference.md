@@ -517,7 +517,7 @@ Send native tokens or contract tokens (ERC-20 / SPL) from the Agentic Wallet.
 
 ```bash
 onchainos wallet send \
-  --amt <amount> \
+  --readable-amount <amount> \
   --receipt <address> \
   --chain <chainId> \
   [--from <address>] \
@@ -527,7 +527,8 @@ onchainos wallet send \
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `--amt` | string | Yes | Amount in minimal units — whole number, no decimals (e.g. `"100000000000000000"` for 0.1 ETH). See SKILL.md `--amt` section for conversion rules. |
+| `--readable-amount` | string | One of | Human-readable amount (e.g. `"0.1"`, `"100"`). CLI converts to minimal units automatically. Preferred. |
+| `--amt` | string | One of | Raw minimal units. Use only when explicitly known. Mutually exclusive with `--readable-amount`. |
 | `--receipt` | string | Yes | Recipient address (0x-prefixed for EVM, Base58 for Solana) |
 | `--chain` | string | Yes | Chain ID / `realChainIndex` (e.g. "1" for Ethereum, "501" for Solana, "56" for BSC) |
 | `--from` | string | No | Sender address — defaults to selected account's address on the given chain |

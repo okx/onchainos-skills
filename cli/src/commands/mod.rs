@@ -8,9 +8,10 @@ pub mod portfolio;
 pub mod security;
 pub mod signal;
 pub mod swap;
-pub mod tracker;
 pub mod token;
+pub mod tracker;
 pub mod upgrade;
+pub mod ws;
 
 use crate::chains;
 use crate::client::ApiClient;

@@ -246,6 +246,13 @@ pub fn get_swap_trace_id() -> Result<Option<String>> {
     Ok(cache.swap_trace_id)
 }
 
+/// Clear the swap trace ID from cache.json (preserves other fields).
+pub fn clear_swap_trace_id() -> Result<()> {
+    let mut cache = load_cache()?;
+    cache.swap_trace_id = None;
+    save_cache(&cache)
+}
+
 // ── balance_cache.json operations ────────────────────────────────────
 
 pub fn load_balance_cache() -> Result<BalanceCacheJson> {
@@ -408,7 +415,9 @@ mod tests {
 
     /// Helper: set ONCHAINOS_HOME to a unique dir under target/ for the closure.
     fn with_temp_home<F: FnOnce()>(name: &str, f: F) {
-        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_tmp")
