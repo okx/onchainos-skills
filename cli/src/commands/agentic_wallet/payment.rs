@@ -22,31 +22,16 @@ pub enum PaymentCommand {
         from: Option<String>,
     },
     /// Sign an EIP-3009 TransferWithAuthorization locally with a hex private key
+    /// (reads EVM_PRIVATE_KEY env var). Accepts the same JSON accepts array as x402-pay;
+    /// domain name/version are read from accepts[].extra.name / extra.version.
     Eip3009Sign {
-        /// CAIP-2 network identifier (e.g. eip155:8453)
+        /// JSON accepts array from the 402 response (same format as x402-pay).
+        /// domain name/version are extracted from the selected entry's `extra.name` / `extra.version`.
         #[arg(long)]
-        network: String,
-        /// Payment amount in minimal units
-        #[arg(long)]
-        amount: String,
-        /// Recipient address
-        #[arg(long)]
-        pay_to: String,
-        /// Token contract address (asset / verifyingContract in EIP-712 domain)
-        #[arg(long)]
-        asset: String,
-        /// Payer address (EVM, 0x-prefixed)
+        accepts: String,
+        /// Payer address (EVM, 0x-prefixed, required)
         #[arg(long)]
         from: String,
-        /// Maximum timeout in seconds (used to compute validBefore = now + timeout)
-        #[arg(long, default_value = "300")]
-        max_timeout_seconds: u64,
-        /// EIP-712 domain name (e.g. "USD Coin")
-        #[arg(long)]
-        domain_name: String,
-        /// EIP-712 domain version (e.g. "2")
-        #[arg(long, default_value = "2")]
-        domain_version: String,
     },
 }
 
@@ -58,6 +43,10 @@ struct ResolvedParams {
     asset: String,
     max_timeout_seconds: u64,
     scheme: Option<String>,
+    /// EIP-712 domain name from `extra.name` (e.g. "USD Coin")
+    domain_name: Option<String>,
+    /// EIP-712 domain version from `extra.version` (e.g. "2")
+    domain_version: Option<String>,
 }
 
 /// Select the best entry from the accepts array.
@@ -88,9 +77,29 @@ fn select_accept(accepts: &[serde_json::Value]) -> Result<(serde_json::Value, Op
 }
 
 fn parse_payload(raw: &str) -> Result<ResolvedParams> {
+    parse_payload_inner(raw, false)
+}
+
+/// Like `parse_payload` but ignores scheme priority — just picks the first entry.
+/// Used by `eip3009-sign` where local signing is always "exact" semantics.
+fn parse_payload_local(raw: &str) -> Result<ResolvedParams> {
+    parse_payload_inner(raw, true)
+}
+
+fn parse_payload_inner(raw: &str, first_only: bool) -> Result<ResolvedParams> {
     let accepts: Vec<serde_json::Value> =
         serde_json::from_str(raw).context("--accepts must be a valid JSON array")?;
-    let (entry, selected_scheme) = select_accept(&accepts)?;
+    let (entry, selected_scheme) = if first_only {
+        if accepts.is_empty() {
+            bail!("accepts array is empty");
+        }
+        (
+            accepts[0].clone(),
+            accepts[0]["scheme"].as_str().map(|s| s.to_string()),
+        )
+    } else {
+        select_accept(&accepts)?
+    };
     let network = entry["network"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'network' in selected accepts entry"))?
@@ -116,6 +125,8 @@ fn parse_payload(raw: &str) -> Result<ResolvedParams> {
         .ok_or_else(|| anyhow!("missing 'asset' in selected accepts entry"))?
         .to_string();
     let max_timeout = entry["maxTimeoutSeconds"].as_u64().unwrap_or(300);
+    let domain_name = entry["extra"]["name"].as_str().map(|s| s.to_string());
+    let domain_version = entry["extra"]["version"].as_str().map(|s| s.to_string());
     Ok(ResolvedParams {
         network,
         amount,
@@ -123,6 +134,8 @@ fn parse_payload(raw: &str) -> Result<ResolvedParams> {
         asset,
         max_timeout_seconds: max_timeout,
         scheme: selected_scheme,
+        domain_name,
+        domain_version,
     })
 }
 
@@ -141,29 +154,26 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
             )
             .await
         }
-        PaymentCommand::Eip3009Sign {
-            network,
-            amount,
-            pay_to,
-            asset,
-            from,
-            max_timeout_seconds,
-            domain_name,
-            domain_version,
-        } => {
+        PaymentCommand::Eip3009Sign { accepts, from } => {
+            let params = parse_payload_local(&accepts)?;
             let pk = std::env::var("EVM_PRIVATE_KEY")
                 .ok()
                 .ok_or_else(|| anyhow!("EVM_PRIVATE_KEY env var is required"))?;
+            let domain_name = params
+                .domain_name
+                .as_deref()
+                .ok_or_else(|| anyhow!("missing 'extra.name' (EIP-712 domain name) in accepts entry"))?;
+            let domain_version = params.domain_version.as_deref().unwrap_or("2");
             cmd_eip3009_sign(
                 &pk,
-                &network,
-                &amount,
-                &pay_to,
-                &asset,
+                &params.network,
+                &params.amount,
+                &params.pay_to,
+                &params.asset,
                 &from,
-                max_timeout_seconds,
-                &domain_name,
-                &domain_version,
+                params.max_timeout_seconds,
+                domain_name,
+                domain_version,
             )
         }
     }
@@ -231,7 +241,7 @@ async fn cmd_pay(
         .unwrap_or(false);
     let valid_before = if is_deferred {
         // aggr_deferred: use max uint256 so the authorization never expires
-        alloy_primitives::U256::MAX.to_string()
+        U256::MAX.to_string()
     } else {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
@@ -562,9 +572,23 @@ mod tests {
     // ── parse_payload ─────────────────────────────────────────────────
 
     #[test]
-    fn parse_payload_selects_deferred() {
+    fn parse_payload_prefers_exact() {
         let json = r#"[
-            {"scheme":"exact","network":"eip155:1","amount":"100","payTo":"0xA","asset":"0xB","maxTimeoutSeconds":600},
+            {"scheme":"aggr_deferred","network":"eip155:196","amount":"200","payTo":"0xC","asset":"0xD"},
+            {"scheme":"exact","network":"eip155:1","amount":"100","payTo":"0xA","asset":"0xB","maxTimeoutSeconds":600}
+        ]"#;
+        let p = parse_payload(json).unwrap();
+        assert_eq!(p.scheme.as_deref(), Some("exact"));
+        assert_eq!(p.network, "eip155:1");
+        assert_eq!(p.amount, "100");
+        assert_eq!(p.pay_to, "0xA");
+        assert_eq!(p.asset, "0xB");
+        assert_eq!(p.max_timeout_seconds, 600);
+    }
+
+    #[test]
+    fn parse_payload_falls_back_to_aggr_deferred() {
+        let json = r#"[
             {"scheme":"aggr_deferred","network":"eip155:196","amount":"200","payTo":"0xC","asset":"0xD"}
         ]"#;
         let p = parse_payload(json).unwrap();
@@ -573,7 +597,7 @@ mod tests {
         assert_eq!(p.amount, "200");
         assert_eq!(p.pay_to, "0xC");
         assert_eq!(p.asset, "0xD");
-        assert_eq!(p.max_timeout_seconds, 300); // aggr_deferred entry has no maxTimeoutSeconds → default
+        assert_eq!(p.max_timeout_seconds, 300); // no maxTimeoutSeconds → default
     }
 
     #[test]
@@ -634,5 +658,59 @@ mod tests {
     fn cli_x402_pay_missing_accepts() {
         let result = TestCli::try_parse_from(["test", "x402-pay"]);
         assert!(result.is_err());
+    }
+
+    // ── eip3009-sign CLI parsing ─────────────────────────────────────
+
+    #[test]
+    fn cli_eip3009_sign_accepts_and_from() {
+        let json = r#"[{"scheme":"exact","network":"eip155:8453","amount":"1000000","payTo":"0xA","asset":"0xB","extra":{"name":"USD Coin","version":"2"}}]"#;
+        let cli = TestCli::parse_from([
+            "test",
+            "eip3009-sign",
+            "--accepts",
+            json,
+            "--from",
+            "0xPayer",
+        ]);
+        match cli.command {
+            PaymentCommand::Eip3009Sign { accepts, from } => {
+                assert_eq!(accepts, json);
+                assert_eq!(from, "0xPayer");
+            }
+            _ => panic!("expected Eip3009Sign"),
+        }
+    }
+
+    #[test]
+    fn cli_eip3009_sign_missing_from() {
+        let json = r#"[{"network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}]"#;
+        let result = TestCli::try_parse_from(["test", "eip3009-sign", "--accepts", json]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_eip3009_sign_missing_accepts() {
+        let result =
+            TestCli::try_parse_from(["test", "eip3009-sign", "--from", "0xPayer"]);
+        assert!(result.is_err());
+    }
+
+    // ── parse_payload with extra (domain) fields ────────────────────
+
+    #[test]
+    fn parse_payload_extracts_domain_from_extra() {
+        let json = r#"[{"scheme":"exact","network":"eip155:8453","amount":"1000000","payTo":"0xA","asset":"0xB","extra":{"name":"USD Coin","version":"2"}}]"#;
+        let p = parse_payload(json).unwrap();
+        assert_eq!(p.domain_name.as_deref(), Some("USD Coin"));
+        assert_eq!(p.domain_version.as_deref(), Some("2"));
+    }
+
+    #[test]
+    fn parse_payload_no_extra_returns_none() {
+        let json = r#"[{"scheme":"exact","network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}]"#;
+        let p = parse_payload(json).unwrap();
+        assert_eq!(p.domain_name, None);
+        assert_eq!(p.domain_version, None);
     }
 }

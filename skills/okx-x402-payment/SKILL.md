@@ -324,31 +324,21 @@ onchainos payment x402-pay \
 
 ### 2. onchainos payment eip3009-sign
 
-Sign an EIP-3009 `TransferWithAuthorization` locally using a hex private key (from `EVM_PRIVATE_KEY` env var). No wallet session or TEE required.
+Sign an EIP-3009 `TransferWithAuthorization` locally using a hex private key (from `EVM_PRIVATE_KEY` env var). No wallet session or TEE required. Uses the same `--accepts` interface as `x402-pay` — EIP-712 domain `name`/`version` are extracted from `accepts[].extra.name` / `extra.version`.
 
 ```bash
 EVM_PRIVATE_KEY=0x<hex> onchainos payment eip3009-sign \
-  --network <CAIP-2 network> \
-  --amount <amount in minimal units> \
-  --pay-to <recipient address> \
-  --asset <token contract address> \
-  --from <payer address> \
-  --domain-name <EIP-712 domain name> \
-  [--domain-version <EIP-712 domain version>] \
-  [--max-timeout-seconds <seconds>]
+  --accepts '<accepts array JSON>' \
+  --from <payer address>
 ```
 
-| Param                    | Required | Default | Description                                                        |
-|--------------------------|----------|---------|--------------------------------------------------------------------|
-| `EVM_PRIVATE_KEY` (env)  | Yes      | -       | Hex-encoded secp256k1 private key (with or without `0x` prefix)    |
-| `--network`              | Yes      | -       | CAIP-2 network identifier (e.g. `eip155:8453`)                     |
-| `--amount`               | Yes      | -       | Payment amount in minimal units                                    |
-| `--pay-to`               | Yes      | -       | Recipient address (EVM, 0x-prefixed)                               |
-| `--asset`                | Yes      | -       | Token contract address (also used as `verifyingContract` in domain)|
-| `--from`                 | Yes      | -       | Payer address (EVM, 0x-prefixed)                                   |
-| `--domain-name`          | Yes      | -       | EIP-712 domain `name` (e.g. `"USD Coin"`)                          |
-| `--domain-version`       | No       | `"2"`   | EIP-712 domain `version`                                           |
-| `--max-timeout-seconds`  | No       | `300`   | `validBefore = now + timeout` (Unix seconds)                       |
+| Param                    | Required | Default | Description                                                                                |
+|--------------------------|----------|---------|--------------------------------------------------------------------------------------------|
+| `EVM_PRIVATE_KEY` (env)  | Yes      | -       | Hex-encoded secp256k1 private key (with or without `0x` prefix)                            |
+| `--accepts`              | Yes      | -       | JSON `accepts` array from the 402 payload (same as `x402-pay`); `extra.name`/`extra.version` provide the EIP-712 domain |
+| `--from`                 | Yes      | -       | Payer address (EVM, 0x-prefixed)                                                           |
+
+The CLI extracts `network`, `amount`, `payTo`, `asset`, `maxTimeoutSeconds` from the accepts array (same logic as `x402-pay`), plus `extra.name` → EIP-712 domain name, `extra.version` → EIP-712 domain version (defaults to `"2"` if absent).
 
 **Return fields**:
 
@@ -455,7 +445,7 @@ If the user does not have a wallet and chooses not to create one, use the native
 - User has a local hex private key (e.g., in a `.env` file or MetaMask export)
 - The payer address must hold sufficient ERC-20 balance of the `asset` token on the target chain
 - The `asset` token contract must support EIP-3009 `transferWithAuthorization`
-- The EIP-712 domain `name` and `version` of the token contract must be known (e.g., USDC uses `"USD Coin"` / `"2"`)
+- The 402 payload's `accepts[].extra` must include `name` (EIP-712 domain name); `version` is optional (defaults to `"2"`)
 
 ### Step 1: Decode the 402 Payload
 
@@ -474,25 +464,15 @@ Extract: `network`, `amount` (v2) or `maxAmountRequired` (v1), `payTo`, `asset`,
 
 ### Step 2: Sign with `onchainos payment eip3009-sign`
 
-Set the private key via environment variable and call the CLI:
+Set the private key via environment variable and pass the same `accepts` array:
 
 ```bash
 EVM_PRIVATE_KEY=0x<hex_private_key> onchainos payment eip3009-sign \
-  --network <option.network> \
-  --amount <option.amount or option.maxAmountRequired> \
-  --pay-to <option.payTo> \
-  --asset <option.asset> \
-  --from <payer_address> \
-  --domain-name <token_domain_name> \
-  --domain-version <token_domain_version> \
-  --max-timeout-seconds <option.maxTimeoutSeconds or 300>
+  --accepts '<JSON.stringify(decoded.accepts)>' \
+  --from <payer_address>
 ```
 
-The CLI handles nonce generation, `validBefore` calculation, EIP-712 struct hashing, and secp256k1 signing internally. It returns `{ signature, authorization }` — same structure as the TEE path (exact scheme).
-
-> `domain-name` and `domain-version` correspond to the EIP-712 domain `name` and `version` fields of the token contract.
-> These vary per token (e.g., USDC on Base uses `"USD Coin"` / `"2"`). If the 402 payload's `accepts[].extra` includes
-> `name` and `version`, use those values. Otherwise, query the token contract's `name()` and `version()` to confirm.
+The CLI parses the accepts array (same as `x402-pay`), extracts `extra.name`/`extra.version` as the EIP-712 domain, and handles nonce generation, `validBefore` calculation, struct hashing, and secp256k1 signing internally. It returns `{ signature, authorization }` — same structure as the TEE path (exact scheme).
 
 ### Step 3: Assemble Header and Replay
 
@@ -506,8 +486,8 @@ Base64-encode and replay the original request with the header attached.
 ### Important Notes for Local Signing
 
 - The private key is read from the `EVM_PRIVATE_KEY` environment variable — it **never** leaves the local machine
-- The CLI generates a random 32-byte nonce and computes `validBefore = now + max-timeout-seconds` automatically
-- If the token uses a non-standard EIP-712 domain (e.g., different `name` or `version` string), the signature will be invalid — always verify `domain-name` and `domain-version` against the contract
+- The CLI generates a random 32-byte nonce and computes `validBefore = now + maxTimeoutSeconds` automatically
+- The EIP-712 domain `name` must be present in `accepts[].extra.name`; if missing the CLI will error. `version` defaults to `"2"` if `extra.version` is absent
 - The signed authorization only authorizes the **exact** `(from, to, value, nonce)` tuple — it cannot be modified or reused
 
 ## Edge Cases
