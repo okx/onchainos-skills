@@ -88,7 +88,7 @@ Present next actions conversationally — never expose command paths to the user
 ## Additional Resources
 
 For detailed params and return field schemas for a specific command:
-- Run: `grep -A 50 "## N. onchainos token <command>" references/cli-reference.md`
+- Run: `grep -A 80 "## [0-9]*\. onchainos token <command>" references/cli-reference.md`
 - Only read the full `references/cli-reference.md` if you need multiple command details at once.
 
 ## Real-time WebSocket Monitoring
