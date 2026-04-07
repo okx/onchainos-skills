@@ -74,7 +74,7 @@ This skill owns **steps 2–4** end to end.
 
 ```bash
 onchainos payment x402-pay \
-  --accepts '[{"scheme":"deferred","network":"eip155:196","amount":"1000000","payTo":"0xRecipientAddress","asset":"0x4ae46a509f6b1d9056937ba4500cb143933d2dc8","maxTimeoutSeconds":300}]'
+  --accepts '[{"scheme":"aggr_deferred","network":"eip155:196","amount":"1000000","payTo":"0xRecipientAddress","asset":"0x4ae46a509f6b1d9056937ba4500cb143933d2dc8","maxTimeoutSeconds":300}]'
 ```
 
 ## Command Index
@@ -115,7 +115,7 @@ accepts = decoded.accepts        // keep the full array for the CLI
 option  = decoded.accepts[0]     // for display purposes
 ```
 
-Save `decoded.accepts` as a JSON string — it will be passed directly to the CLI via `--accepts`. The CLI handles scheme selection internally (prefers `"deferred"` > `"exact"` > first entry).
+Save `decoded.accepts` as a JSON string — it will be passed directly to the CLI via `--accepts`. The CLI handles scheme selection internally (prefers `"exact"` > `"aggr_deferred"` > first entry).
 
 Save `decoded` for later — you will need `decoded.x402Version` and `decoded.resource` (v2) when assembling the payment header in Step 5.
 
@@ -154,7 +154,7 @@ onchainos wallet status
 
 ### Step 4: Sign
 
-Pass the raw `accepts` array to the CLI. The CLI automatically selects the best scheme (prefers `"deferred"` over `"exact"`):
+Pass the raw `accepts` array to the CLI. The CLI automatically selects the best scheme (prefers `"exact"` over `"aggr_deferred"`):
 
 ```bash
 onchainos payment x402-pay \
@@ -163,10 +163,10 @@ onchainos payment x402-pay \
 
 The CLI returns different fields depending on the scheme it selected:
 
-- **`deferred` scheme** (preferred): Only Session Key (Ed25519) signing, skips EOA signing. Returns `{ signature, authorization, sessionCert }`. The `signature` is the base64-encoded session-key signature.
+- **`aggr_deferred` scheme** (preferred): Only Session Key (Ed25519) signing, skips EOA signing. Returns `{ signature, authorization, sessionCert }`. The `signature` is the base64-encoded session-key signature.
 - **`exact` scheme**: Full EIP-3009 signing via TEE. Returns `{ signature, authorization }`. The `signature` is the secp256k1 EIP-3009 signature.
 
-Check the response: if `sessionCert` is present, the CLI selected deferred scheme.
+Check the response: if `sessionCert` is present, the CLI selected aggr_deferred scheme.
 
 **If signing fails** (e.g., session expired, not logged in, AK re-login failed):
 
@@ -184,13 +184,13 @@ The PaymentPayload structure and header name differ between v1 and v2.
 
 Header name: `PAYMENT-SIGNATURE`
 
-The `accepted` field is a **single object** (the entry the CLI selected from `accepts`), not the whole array. If the CLI returned `sessionCert` (deferred scheme), **merge** it into the existing `accepted.extra` (preserve original fields like `name`, `version`):
+The `accepted` field is a **single object** (the entry the CLI selected from `accepts`), not the whole array. If the CLI returned `sessionCert` (aggr_deferred scheme), **merge** it into the existing `accepted.extra` (preserve original fields like `name`, `version`):
 
 ```
-// Pick the accepted entry (CLI selected deferred if available)
+// Pick the accepted entry (CLI selected aggr_deferred if available)
 accepted = decoded.accepts.find(a => a.scheme === selectedScheme)
 
-// Deferred: merge sessionCert into existing extra
+// aggr_deferred: merge sessionCert into existing extra
 if (sessionCert) {
   accepted.extra = { ...accepted.extra, sessionCert }
 }
@@ -213,7 +213,7 @@ v1 has no `accepted` or `resource` — instead, `scheme` and `network` are top-l
 ```
 paymentPayload = {
   x402Version: 1,
-  scheme:      selectedScheme,            // "exact" or "deferred"
+  scheme:      selectedScheme,            // "exact" or "aggr_deferred"
   network:     option.network,
   payload:     { signature, authorization }
 }
@@ -260,7 +260,7 @@ Present conversationally, e.g.: "Done! The resource returned the following resul
 **Data handoff**:
 
 - `decoded.accepts` → `--accepts`
-- CLI output `sessionCert` → `accepted.extra.sessionCert` (present only when deferred scheme was selected)
+- CLI output `sessionCert` → `accepted.extra.sessionCert` (present only when aggr_deferred scheme was selected)
 
 ### Workflow B: Pay then Check Balance
 
@@ -287,7 +287,7 @@ Present conversationally, e.g.: "Done! The resource returned the following resul
 
 ### 1. onchainos payment x402-pay
 
-Sign an x402 payment and return the payment proof. Pass the raw `accepts` array from the 402 payload — the CLI selects the best scheme automatically (prefers `"deferred"` > `"exact"` > first entry).
+Sign an x402 payment and return the payment proof. Pass the raw `accepts` array from the 402 payload — the CLI selects the best scheme automatically (prefers `"exact"` > `"aggr_deferred"` > first entry).
 
 ```bash
 onchainos payment x402-pay \
@@ -313,7 +313,7 @@ onchainos payment x402-pay \
 | `authorization.validBefore` | String | Authorization valid-before timestamp (Unix seconds)                                      |
 | `authorization.nonce`       | String | Random nonce (hex, 32 bytes), prevents replay attacks                                    |
 
-**Return fields (deferred scheme)**:
+**Return fields (aggr_deferred scheme)**:
 
 | Field           | Type   | Description                                                                          |
 |-----------------|--------|--------------------------------------------------------------------------------------|
@@ -348,7 +348,7 @@ Decoded `PAYMENT-REQUIRED` header:
   },
   "accepts": [
     {
-      "scheme": "deferred",
+      "scheme": "aggr_deferred",
       "network": "eip155:196",
       "amount": "1000000",
       "payTo": "0xAbC...",
@@ -375,19 +375,19 @@ Decoded `PAYMENT-REQUIRED` header:
 }
 ```
 
-**Step 3–4** — check wallet + sign (CLI selects deferred automatically):
+**Step 3–4** — check wallet + sign (CLI selects aggr_deferred automatically):
 
 ```bash
 onchainos payment x402-pay \
   --accepts '<JSON.stringify(decoded.accepts)>'
 # → { "signature": "base64...", "authorization": { ... }, "sessionCert": "..." }
-# sessionCert present → CLI selected deferred scheme
+# sessionCert present → CLI selected aggr_deferred scheme
 ```
 
-**Step 5** — assemble v2 header (deferred, merge sessionCert into existing extra):
+**Step 5** — assemble v2 header (aggr_deferred, merge sessionCert into existing extra):
 
 ```
-accepted       = decoded.accepts.find(a => a.scheme === "deferred")
+accepted       = decoded.accepts.find(a => a.scheme === "aggr_deferred")
 accepted.extra = { ...accepted.extra, sessionCert }  // merge, keep name/version
 
 paymentPayload = {

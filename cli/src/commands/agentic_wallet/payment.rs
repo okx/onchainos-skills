@@ -13,7 +13,7 @@ pub enum PaymentCommand {
     X402Pay {
         /// JSON accepts array from the 402 response (decoded.accepts).
         /// The CLI selects the best scheme automatically
-        /// (prefers "deferred", falls back to "exact", then first entry).
+        /// (prefers "exact", falls back to "aggr_deferred", then first entry).
         #[arg(long)]
         accepts: String,
         /// Payer address (optional, defaults to selected account)
@@ -33,18 +33,18 @@ struct ResolvedParams {
 }
 
 /// Select the best entry from the accepts array.
-/// Priority: "deferred" > "exact" > first entry.
+/// Priority: "exact" > "aggr_deferred" > first entry.
 fn select_accept(accepts: &[serde_json::Value]) -> Result<(serde_json::Value, Option<String>)> {
     if accepts.is_empty() {
         bail!("accepts array is empty");
     }
-    // Prefer deferred
-    if let Some(entry) = accepts.iter().find(|a| a["scheme"].as_str() == Some("deferred")) {
-        return Ok((entry.clone(), Some("deferred".to_string())));
-    }
-    // Then exact
+    // Prefer exact
     if let Some(entry) = accepts.iter().find(|a| a["scheme"].as_str() == Some("exact")) {
         return Ok((entry.clone(), Some("exact".to_string())));
+    }
+    // Then aggr_deferred
+    if let Some(entry) = accepts.iter().find(|a| a["scheme"].as_str() == Some("aggr_deferred")) {
+        return Ok((entry.clone(), Some("aggr_deferred".to_string())));
     }
     // Fallback to first
     Ok((accepts[0].clone(), accepts[0]["scheme"].as_str().map(|s| s.to_string())))
@@ -168,13 +168,18 @@ async fn pay(
     let (_acct_id, addr_info) =
         crate::commands::agentic_wallet::transfer::resolve_address(&wallets, from, chain_name)?;
     let payer_addr = &addr_info.address;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_secs();
-    let valid_before = now
-        .checked_add(max_timeout_secs)
-        .ok_or_else(|| anyhow!("timeout overflow"))?
-        .to_string();
+    let is_deferred = scheme.map(|s| s.eq_ignore_ascii_case("aggr_deferred")).unwrap_or(false);
+    let valid_before = if is_deferred {
+        // aggr_deferred: use max uint256 so the authorization never expires
+        alloy_primitives::U256::MAX.to_string()
+    } else {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        now.checked_add(max_timeout_secs)
+            .ok_or_else(|| anyhow!("timeout overflow"))?
+            .to_string()
+    };
     let nonce = {
         use rand::RngCore;
         let mut n = [0u8; 32];
@@ -240,10 +245,8 @@ async fn pay(
         "nonce": nonce,
     });
 
-    let is_deferred = scheme.map(|s| s.eq_ignore_ascii_case("deferred")).unwrap_or(false);
-
     if is_deferred {
-        // Deferred scheme: return session-key signature only, skip EOA signing
+        // aggr_deferred scheme: return session-key signature only, skip EOA signing
         output::success(json!({
             "signature": session_signature_b64,
             "authorization": authorization,
@@ -364,23 +367,23 @@ mod tests {
     // ── select_accept ────────────────────────────────────────────────
 
     #[test]
-    fn select_accept_prefers_deferred() {
+    fn select_accept_prefers_exact() {
         let accepts: Vec<serde_json::Value> = serde_json::from_str(r#"[
-            {"scheme":"exact","network":"eip155:196","amount":"1000000","payTo":"0xABC","asset":"0xDEF"},
-            {"scheme":"deferred","network":"eip155:196","amount":"2000000","payTo":"0xABC","asset":"0xDEF"}
+            {"scheme":"aggr_deferred","network":"eip155:196","amount":"2000000","payTo":"0xABC","asset":"0xDEF"},
+            {"scheme":"exact","network":"eip155:196","amount":"1000000","payTo":"0xABC","asset":"0xDEF"}
         ]"#).unwrap();
         let (entry, scheme) = select_accept(&accepts).unwrap();
-        assert_eq!(scheme.as_deref(), Some("deferred"));
-        assert_eq!(entry["amount"].as_str().unwrap(), "2000000");
+        assert_eq!(scheme.as_deref(), Some("exact"));
+        assert_eq!(entry["amount"].as_str().unwrap(), "1000000");
     }
 
     #[test]
-    fn select_accept_falls_back_to_exact() {
+    fn select_accept_falls_back_to_aggr_deferred() {
         let accepts: Vec<serde_json::Value> = serde_json::from_str(r#"[
-            {"scheme":"exact","network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}
+            {"scheme":"aggr_deferred","network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}
         ]"#).unwrap();
         let (_entry, scheme) = select_accept(&accepts).unwrap();
-        assert_eq!(scheme.as_deref(), Some("exact"));
+        assert_eq!(scheme.as_deref(), Some("aggr_deferred"));
     }
 
     #[test]
@@ -404,20 +407,20 @@ mod tests {
     fn parse_payload_selects_deferred() {
         let json = r#"[
             {"scheme":"exact","network":"eip155:1","amount":"100","payTo":"0xA","asset":"0xB","maxTimeoutSeconds":600},
-            {"scheme":"deferred","network":"eip155:196","amount":"200","payTo":"0xC","asset":"0xD"}
+            {"scheme":"aggr_deferred","network":"eip155:196","amount":"200","payTo":"0xC","asset":"0xD"}
         ]"#;
         let p = parse_payload(json).unwrap();
-        assert_eq!(p.scheme.as_deref(), Some("deferred"));
+        assert_eq!(p.scheme.as_deref(), Some("aggr_deferred"));
         assert_eq!(p.network, "eip155:196");
         assert_eq!(p.amount, "200");
         assert_eq!(p.pay_to, "0xC");
         assert_eq!(p.asset, "0xD");
-        assert_eq!(p.max_timeout_seconds, 300); // deferred entry has no maxTimeoutSeconds → default
+        assert_eq!(p.max_timeout_seconds, 300); // aggr_deferred entry has no maxTimeoutSeconds → default
     }
 
     #[test]
     fn parse_payload_max_amount_required() {
-        let json = r#"[{"scheme":"deferred","network":"eip155:1","maxAmountRequired":"999","payTo":"0xA","asset":"0xB"}]"#;
+        let json = r#"[{"scheme":"aggr_deferred","network":"eip155:1","maxAmountRequired":"999","payTo":"0xA","asset":"0xB"}]"#;
         let p = parse_payload(json).unwrap();
         assert_eq!(p.amount, "999");
     }
@@ -444,7 +447,7 @@ mod tests {
 
     #[test]
     fn cli_x402_pay_accepts_and_from() {
-        let json = r#"[{"scheme":"deferred","network":"eip155:196","amount":"1000","payTo":"0xA","asset":"0xB"}]"#;
+        let json = r#"[{"scheme":"aggr_deferred","network":"eip155:196","amount":"1000","payTo":"0xA","asset":"0xB"}]"#;
         let cli = TestCli::parse_from([
             "test",
             "x402-pay",
