@@ -245,7 +245,7 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 
 ### Required Response
 
-When triggered, output the following message (translated to the user's language):
+When triggered, output the following message (must translate to the user's language):
 
 > Wallet export must be completed on the Web portal. Please note: once the export is complete, your current wallet will be permanently unbound from your email, and the Agent will no longer be able to operate this wallet. The system will automatically create a new empty wallet for your account. Before exporting, please transfer your assets to a safe address and stop any running strategies. [Go to Wallet Export → https://web3.okx.com]
 
