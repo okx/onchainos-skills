@@ -4,6 +4,8 @@
 //! wallet commands (`cmd_login_ak`, `cmd_verify`, `sign_and_broadcast`, …)
 //! can share a single implementation without duplication.
 
+use alloy_primitives::Address;
+use alloy_sol_types::sol;
 use anyhow::{bail, Context, Result};
 use base64::Engine;
 
@@ -182,6 +184,102 @@ pub fn ed25519_sign_hex(hex_hash: &str, session_key_b64: &str) -> Result<String>
     ed25519_sign_encoded(hex_hash, session_key_b64, "hex")
 }
 
+// ── secp256k1 (ECDSA) signing ───────────────────────────────────────────
+
+/// Sign a 32-byte hash with secp256k1 ECDSA using a 32-byte private key.
+///
+/// Returns a 65-byte recoverable signature: `r (32) || s (32) || v (1)`.
+/// **`v` is normalized to modern format (0 or 1).** Callers that need
+/// legacy Ethereum `v` values (27/28) must add 27 themselves — see
+/// [`eip3009_sign`] for an example.
+pub fn secp256k1_sign(seed: &[u8], message: &[u8]) -> Result<Vec<u8>> {
+    use alloy_primitives::B256;
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
+
+    let seed_bytes: [u8; 32] = seed
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("private key must be 32 bytes, got {}", seed.len()))?;
+    let msg_bytes: [u8; 32] = message
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("message hash must be 32 bytes, got {}", message.len()))?;
+
+    let signer = PrivateKeySigner::from_slice(&seed_bytes)
+        .map_err(|e| anyhow::anyhow!("invalid secp256k1 private key: {e}"))?;
+    let hash = B256::from(msg_bytes);
+    let sig = signer
+        .sign_hash_sync(&hash)
+        .map_err(|e| anyhow::anyhow!("secp256k1 signing failed: {e}"))?;
+
+    // Verify: recover address from signature and compare to signer
+    let recovered = sig
+        .recover_address_from_prehash(&hash)
+        .map_err(|e| anyhow::anyhow!("signature recovery failed: {e}"))?;
+    if recovered != signer.address() {
+        bail!(
+            "signature verification failed: recovered {} but expected {}",
+            recovered,
+            signer.address()
+        );
+    }
+
+    let v = sig.v() as u8;
+    let mut out = Vec::with_capacity(65);
+    out.extend_from_slice(&sig.r().to_be_bytes::<32>());
+    out.extend_from_slice(&sig.s().to_be_bytes::<32>());
+    out.push(if v < 27 { v } else { v - 27 }); // normalize to 0/1
+    Ok(out)
+}
+
+// ── EIP-3009 (Transfer With Authorization) ──────────────────────────────
+
+sol! {
+    #[derive(Debug, PartialEq)]
+    struct TransferWithAuthorization {
+        address from;
+        address to;
+        uint256 value;
+        uint256 validAfter;
+        uint256 validBefore;
+        bytes32 nonce;
+    }
+}
+
+/// EIP-712 domain parameters for EIP-3009.
+#[derive(Debug, Clone)]
+pub struct Eip3009DomainParams {
+    pub name: String,
+    pub version: String,
+    pub chain_id: u64,
+    pub verifying_contract: Address,
+}
+
+/// Sign an EIP-3009 TransferWithAuthorization using EIP-712 typed data signing.
+///
+/// Returns a base64-encoded 65-byte recoverable signature: `r (32) || s (32) || v (1)`,
+/// where `v` is 27 or 28.
+pub fn eip3009_sign(
+    auth: &TransferWithAuthorization,
+    domain_params: &Eip3009DomainParams,
+    private_key: &[u8],
+) -> Result<String> {
+    use alloy_sol_types::{eip712_domain, SolStruct};
+
+    let domain = eip712_domain! {
+        name: domain_params.name.clone(),
+        version: domain_params.version.clone(),
+        chain_id: domain_params.chain_id,
+        verifying_contract: domain_params.verifying_contract,
+    };
+
+    let signing_hash = auth.eip712_signing_hash(&domain);
+
+    let mut sig = secp256k1_sign(private_key, signing_hash.as_ref())?;
+    // Convert v from modern (0/1) to legacy (27/28)
+    sig[64] += 27;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&sig))
+}
+
 /// EIP-191 (personal_sign) + Ed25519:
 /// 1. Decode `msg` according to `encoding`:
 ///    - `"hex"`: strip optional "0x" prefix, hex-decode to raw bytes
@@ -231,6 +329,7 @@ pub fn ed25519_sign_eip191(msg: &str, signing_seed: &[u8], encoding: &str) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::{FixedBytes, U256};
 
     #[test]
     fn x25519_keypair_deterministic_from_same_secret() {
@@ -286,6 +385,439 @@ mod tests {
     fn ed25519_sign_rejects_wrong_seed_length() {
         let short_seed = [0u8; 16];
         assert!(ed25519_sign(&short_seed, b"msg").is_err());
+    }
+
+    #[test]
+    fn secp256k1_sign_returns_65_bytes() {
+        let seed = [7u8; 32];
+        let hash = [0xabu8; 32];
+        let sig = secp256k1_sign(&seed, &hash).unwrap();
+        assert_eq!(sig.len(), 65);
+    }
+
+    #[test]
+    fn secp256k1_sign_deterministic() {
+        let seed = [7u8; 32];
+        let hash = [0xabu8; 32];
+        let sig1 = secp256k1_sign(&seed, &hash).unwrap();
+        let sig2 = secp256k1_sign(&seed, &hash).unwrap();
+        assert_eq!(sig1, sig2);
+    }
+
+    #[test]
+    fn secp256k1_sign_rejects_wrong_seed_length() {
+        let short_seed = [0u8; 16];
+        let hash = [0u8; 32];
+        assert!(secp256k1_sign(&short_seed, &hash).is_err());
+    }
+
+    #[test]
+    fn secp256k1_sign_rejects_wrong_message_length() {
+        let seed = [7u8; 32];
+        let short_msg = [0u8; 16];
+        assert!(secp256k1_sign(&seed, &short_msg).is_err());
+    }
+
+    #[test]
+    fn eip3009_sign_returns_65_bytes() {
+        let auth = TransferWithAuthorization {
+            from: Address::from([0x11; 20]),
+            to: Address::from([0x22; 20]),
+            value: U256::from(1_000_000),
+            validAfter: U256::from(0),
+            validBefore: U256::from(u64::MAX),
+            nonce: FixedBytes::<32>::from([0x33; 32]),
+        };
+        let domain = Eip3009DomainParams {
+            name: "USD Coin".to_string(),
+            version: "2".to_string(),
+            chain_id: 1,
+            verifying_contract: Address::from([0x44; 20]),
+        };
+        let sig_b64 = eip3009_sign(&auth, &domain, &[0x55; 32]).unwrap();
+        let sig = base64::engine::general_purpose::STANDARD
+            .decode(&sig_b64)
+            .unwrap();
+        assert_eq!(sig.len(), 65);
+        let v = sig[64];
+        assert!(v == 27 || v == 28);
+    }
+
+    #[test]
+    fn eip3009_sign_deterministic() {
+        let auth = TransferWithAuthorization {
+            from: Address::from([0x11; 20]),
+            to: Address::from([0x22; 20]),
+            value: U256::from(1_000_000),
+            validAfter: U256::from(0),
+            validBefore: U256::from(u64::MAX),
+            nonce: FixedBytes::<32>::from([0x33; 32]),
+        };
+        let domain = Eip3009DomainParams {
+            name: "USD Coin".to_string(),
+            version: "2".to_string(),
+            chain_id: 1,
+            verifying_contract: Address::from([0x44; 20]),
+        };
+        let pk = [0x55; 32];
+        let sig1 = eip3009_sign(&auth, &domain, &pk).unwrap();
+        let sig2 = eip3009_sign(&auth, &domain, &pk).unwrap();
+        assert_eq!(sig1, sig2);
+    }
+
+    #[test]
+    fn eip3009_sign_rejects_invalid_private_key() {
+        let auth = TransferWithAuthorization {
+            from: Address::ZERO,
+            to: Address::ZERO,
+            value: U256::from(0),
+            validAfter: U256::from(0),
+            validBefore: U256::from(0),
+            nonce: FixedBytes::<32>::ZERO,
+        };
+        let domain = Eip3009DomainParams {
+            name: "Test".to_string(),
+            version: "1".to_string(),
+            chain_id: 1,
+            verifying_contract: Address::ZERO,
+        };
+        assert!(eip3009_sign(&auth, &domain, &[0x00; 32]).is_err());
+    }
+
+    #[test]
+    fn eip3009_sign_rejects_wrong_key_length() {
+        let auth = TransferWithAuthorization {
+            from: Address::ZERO,
+            to: Address::ZERO,
+            value: U256::from(0),
+            validAfter: U256::from(0),
+            validBefore: U256::from(0),
+            nonce: FixedBytes::<32>::ZERO,
+        };
+        let domain = Eip3009DomainParams {
+            name: "Test".to_string(),
+            version: "1".to_string(),
+            chain_id: 1,
+            verifying_contract: Address::ZERO,
+        };
+        assert!(eip3009_sign(&auth, &domain, &[0x55; 16]).is_err());
+    }
+
+    #[test]
+    fn eip3009_sign_cross_validates_with_reference_sdk() {
+        // Inputs from 3009-rust/examples/basic_usage.rs
+        let auth = TransferWithAuthorization {
+            from: "0x5B38Da6a701c568545dCfcB03FcB875f56beddC4"
+                .parse()
+                .unwrap(),
+            to: "0xAb8483F64d9C6d1EcF9b849Ae677dD3315835cb2"
+                .parse()
+                .unwrap(),
+            value: U256::from(1_000_000),
+            validAfter: U256::from(0),
+            validBefore: U256::from(u64::MAX),
+            nonce: FixedBytes::<32>::from([
+                0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
+                0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x01, 0x23, 0x45, 0x67,
+                0x89, 0xab, 0xcd, 0xef,
+            ]),
+        };
+        let domain = Eip3009DomainParams {
+            name: "USD Coin".to_string(),
+            version: "2".to_string(),
+            chain_id: 1,
+            verifying_contract: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+                .parse()
+                .unwrap(),
+        };
+        let private_key: [u8; 32] = [
+            0xac, 0x09, 0x74, 0xe4, 0x77, 0x11, 0xc0, 0x01, 0x54, 0x93, 0xdc, 0x81, 0x12, 0xc6,
+            0x82, 0x79, 0x50, 0x69, 0xfb, 0x28, 0x9c, 0x02, 0xba, 0x8b, 0x85, 0xf6, 0xbc, 0x12,
+            0xf0, 0x93, 0xd8, 0x8f,
+        ];
+
+        // Reference output from 3009-rust SDK (r || s || v)
+        let expected_hex = "ed28be892229aa598e67b22b32f971cc0c5568723a634013368eedbd100db85f\
+                            64d080891ec962b4229f07ce4f55531f587ad7e8cbc591ee5fefbbd9ec96e980\
+                            1c";
+
+        let sig_b64 = eip3009_sign(&auth, &domain, &private_key).unwrap();
+        let sig_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&sig_b64)
+            .unwrap();
+        assert_eq!(hex::encode(&sig_bytes), expected_hex);
+    }
+
+    // ── EIP-3009 test vectors (verified with foundry cast & viem) ─────────
+
+    /// Helper: build auth + domain, sign, assert hex matches expected.
+    fn assert_eip3009_sig(
+        pk_hex: &str,
+        from: &str,
+        to: &str,
+        value: U256,
+        valid_after: U256,
+        valid_before: U256,
+        nonce: FixedBytes<32>,
+        domain_name: &str,
+        domain_version: &str,
+        chain_id: u64,
+        contract: &str,
+        expected_hex: &str,
+    ) {
+        let pk = hex::decode(pk_hex).unwrap();
+        let auth = TransferWithAuthorization {
+            from: from.parse().unwrap(),
+            to: to.parse().unwrap(),
+            value,
+            validAfter: valid_after,
+            validBefore: valid_before,
+            nonce,
+        };
+        let domain = Eip3009DomainParams {
+            name: domain_name.to_string(),
+            version: domain_version.to_string(),
+            chain_id,
+            verifying_contract: contract.parse().unwrap(),
+        };
+        let sig = base64::engine::general_purpose::STANDARD
+            .decode(eip3009_sign(&auth, &domain, &pk).unwrap())
+            .unwrap();
+        assert_eq!(hex::encode(&sig), expected_hex);
+    }
+
+    const USDC_MAINNET: &str = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+    const HH0: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+    const HH1: &str = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
+    const HH2: &str = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
+    const HH0_PK: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    const HH1_PK: &str = "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+    const HH2_PK: &str = "5de4111afe1b170e56a4e0ee6c276e0589e99db33164f00c2a7b4a9e10c904fb";
+
+    /// TV1: Circle alice account, USDC mainnet, 7 USDC
+    #[test]
+    fn eip3009_sign_tv1_circle_alice_usdc_mainnet() {
+        assert_eip3009_sig(
+            "84132dd41f32804774a98647c308c0c94a54c0f3931128c0210b6f3689d2b7e7",
+            "0x8e81C8f0CFf3d6eA2Fe72c1A5ee49Fc377401c2D",
+            "0x244A0A1d21f21167c17e04EBc5FA33c885990674",
+            U256::from(7_000_000),
+            U256::ZERO,
+            U256::MAX,
+            FixedBytes::from([0xaa; 32]),
+            "USD Coin",
+            "2",
+            1,
+            USDC_MAINNET,
+            "07b4ad544d883e681552db26de55a707be5a5a5cd814386e0d411daef71715ea\
+             66ee9a96d4c1dc65b023ceb8d89c523b80e233baa95347ff4a212817d593963b\
+             1c",
+        );
+    }
+
+    /// TV2: Hardhat #0, USDC mainnet, 1 USDC, zero nonce
+    #[test]
+    fn eip3009_sign_tv2_hardhat0_usdc_mainnet() {
+        assert_eip3009_sig(
+            HH0_PK,
+            HH0,
+            HH1,
+            U256::from(1_000_000),
+            U256::ZERO,
+            U256::MAX,
+            FixedBytes::ZERO,
+            "USD Coin",
+            "2",
+            1,
+            USDC_MAINNET,
+            "9c7cc05c1539ce2fee00de51df7e0a13696469b2dd1bb112832d8fe19715aaab\
+             416f67528f2f176e837c0b950149c2211a7651b90a62d22c9ecc27c1ebf0b263\
+             1b",
+        );
+    }
+
+    /// TV3: Hardhat #1, USDC on chainId 31337
+    #[test]
+    fn eip3009_sign_tv3_hardhat1_chain31337() {
+        assert_eip3009_sig(
+            HH1_PK,
+            HH1,
+            HH2,
+            U256::from(500_000),
+            U256::ZERO,
+            U256::MAX,
+            FixedBytes::from([0xbb; 32]),
+            "USD Coin",
+            "2",
+            31337,
+            USDC_MAINNET,
+            "04d2db5c670d69cdfeae007c5ab39ca53b5f144e66c5e26744c8efc920347d15\
+             7eadfb128664e03242bd673d27a2d9108e845582228ae5b4a94865e3926f1e6c\
+             1c",
+        );
+    }
+
+    /// TV4: Zero value transfer
+    #[test]
+    fn eip3009_sign_tv4_zero_value() {
+        assert_eip3009_sig(
+            HH0_PK,
+            HH0,
+            HH1,
+            U256::ZERO,
+            U256::ZERO,
+            U256::MAX,
+            FixedBytes::from([
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x01,
+            ]),
+            "USD Coin",
+            "2",
+            1,
+            USDC_MAINNET,
+            "fb96cf2c611c860e2fd0cd4ee3cf71236871d6a1d8052971e530ef3cd45e9f61\
+             253e32b78311aec9470ad22aa52f0ddc2061357d87fa8cf2c384411d14035a54\
+             1c",
+        );
+    }
+
+    /// TV5: Max uint256 value, max nonce
+    #[test]
+    fn eip3009_sign_tv5_max_value() {
+        assert_eip3009_sig(
+            HH1_PK,
+            HH1,
+            HH2,
+            U256::MAX,
+            U256::ZERO,
+            U256::MAX,
+            FixedBytes::from([0xff; 32]),
+            "USD Coin",
+            "2",
+            1,
+            USDC_MAINNET,
+            "b114bc5ccf7cbcbdde716ce0cafb20ed5c18ddfb7ad06334af87117c6cfceddf\
+             4b050e0c3def7c403b9d08b449db2a31521c4d0a1d5b3147718a4a86406418d6\
+             1b",
+        );
+    }
+
+    /// TV6: Specific time window (validAfter=1700000000, validBefore=1800000000)
+    #[test]
+    fn eip3009_sign_tv6_time_window() {
+        assert_eip3009_sig(
+            HH2_PK,
+            HH2,
+            "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+            U256::from(50_000_000),
+            U256::from(1_700_000_000u64),
+            U256::from(1_800_000_000u64),
+            FixedBytes::from([
+                0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad,
+                0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
+                0xde, 0xad, 0xbe, 0xef,
+            ]),
+            "USD Coin",
+            "2",
+            1,
+            USDC_MAINNET,
+            "5af722bee4884f192b5c9373a71f1110da8f844bc8ea77bc0d95b6c5114f506e\
+             6fba6639af57a30e9a9a34a8d609c5e7650b3625a7ee9ad9a780633836c084eb\
+             1b",
+        );
+    }
+
+    /// TV7: USDC on Polygon (chainId 137)
+    #[test]
+    fn eip3009_sign_tv7_polygon() {
+        assert_eip3009_sig(
+            "7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6",
+            "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+            "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
+            U256::from(1_000_000_000u64),
+            U256::ZERO,
+            U256::MAX,
+            FixedBytes::from([
+                0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90, 0xab,
+                0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78,
+                0x90, 0xab, 0xcd, 0xef,
+            ]),
+            "USD Coin",
+            "2",
+            137,
+            "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+            "b43b84668eda289dc9e28973b020cf1289b08e2c620c80a5e9863d2b8194421f\
+             0568ed2f6a2cb496cf4348bb67354c266e0c62dee5e1b38dc96491f88b73f318\
+             1c",
+        );
+    }
+
+    /// TV8: Tether-like domain (different name/version/contract)
+    #[test]
+    fn eip3009_sign_tv8_tether_domain() {
+        assert_eip3009_sig(
+            "84132dd41f32804774a98647c308c0c94a54c0f3931128c0210b6f3689d2b7e7",
+            "0x8e81C8f0CFf3d6eA2Fe72c1A5ee49Fc377401c2D",
+            "0x244A0A1d21f21167c17e04EBc5FA33c885990674",
+            U256::from(100_000_000u64),
+            U256::ZERO,
+            U256::MAX,
+            FixedBytes::from([0x55; 32]),
+            "Tether USD",
+            "1",
+            1,
+            "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+            "a225847251a9804adf9b6a3e88e247600404db83d5a10b69caedc5aca720339e\
+             0f919473e41e6ab718b7d0c4d79a630365c9e221860e4501d2a36573990d9f9f\
+             1c",
+        );
+    }
+
+    /// TV9: USDC on Arbitrum (chainId 42161), specific time window
+    #[test]
+    fn eip3009_sign_tv9_arbitrum() {
+        assert_eip3009_sig(
+            HH0_PK,
+            HH0,
+            HH1,
+            U256::from(250_000),
+            U256::from(1_600_000_000u64),
+            U256::from(1_900_000_000u64),
+            FixedBytes::from([
+                0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45,
+                0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01,
+                0x23, 0x45, 0x67, 0x89,
+            ]),
+            "USD Coin",
+            "2",
+            42161,
+            "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+            "fa2f5b36f4a60b3a25ea350fb5e335cf113b2d7eb00685599b48680f9ddc324e\
+             340b12d7cc9d37312a6aa327dcc27dc71ecb7ac9c699cccfc33283bdd292a94b\
+             1b",
+        );
+    }
+
+    /// TV10: Self-transfer (from == to)
+    #[test]
+    fn eip3009_sign_tv10_self_transfer() {
+        assert_eip3009_sig(
+            HH2_PK,
+            HH2,
+            HH2,
+            U256::from(1),
+            U256::ZERO,
+            U256::MAX,
+            FixedBytes::ZERO,
+            "USD Coin",
+            "2",
+            1,
+            USDC_MAINNET,
+            "7be5ae042f7f2c2a3fae133465c4aa5e83a39341ed756beaae6b07f36dc36e29\
+             4f243883c33f044991cdfc88d4424999424c81705ee5377623a12d16a8e2ad3f\
+             1c",
+        );
     }
 
     #[test]

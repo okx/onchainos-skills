@@ -1,3 +1,4 @@
+use alloy_primitives::{FixedBytes, U256};
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use clap::Subcommand;
@@ -19,6 +20,33 @@ pub enum PaymentCommand {
         /// Payer address (optional, defaults to selected account)
         #[arg(long)]
         from: Option<String>,
+    },
+    /// Sign an EIP-3009 TransferWithAuthorization locally with a hex private key
+    Eip3009Sign {
+        /// CAIP-2 network identifier (e.g. eip155:8453)
+        #[arg(long)]
+        network: String,
+        /// Payment amount in minimal units
+        #[arg(long)]
+        amount: String,
+        /// Recipient address
+        #[arg(long)]
+        pay_to: String,
+        /// Token contract address (asset / verifyingContract in EIP-712 domain)
+        #[arg(long)]
+        asset: String,
+        /// Payer address (EVM, 0x-prefixed)
+        #[arg(long)]
+        from: String,
+        /// Maximum timeout in seconds (used to compute validBefore = now + timeout)
+        #[arg(long, default_value = "300")]
+        max_timeout_seconds: u64,
+        /// EIP-712 domain name (e.g. "USD Coin")
+        #[arg(long)]
+        domain_name: String,
+        /// EIP-712 domain version (e.g. "2")
+        #[arg(long, default_value = "2")]
+        domain_version: String,
     },
 }
 
@@ -102,7 +130,7 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
     match cmd {
         PaymentCommand::X402Pay { accepts, from } => {
             let params = parse_payload(&accepts)?;
-            pay(
+            cmd_pay(
                 &params.network,
                 &params.amount,
                 &params.pay_to,
@@ -113,19 +141,37 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
             )
             .await
         }
+        PaymentCommand::Eip3009Sign {
+            network,
+            amount,
+            pay_to,
+            asset,
+            from,
+            max_timeout_seconds,
+            domain_name,
+            domain_version,
+        } => {
+            let pk = std::env::var("EVM_PRIVATE_KEY")
+                .ok()
+                .ok_or_else(|| anyhow!("EVM_PRIVATE_KEY env var is required"))?;
+            cmd_eip3009_sign(
+                &pk,
+                &network,
+                &amount,
+                &pay_to,
+                &asset,
+                &from,
+                max_timeout_seconds,
+                &domain_name,
+                &domain_version,
+            )
+        }
     }
 }
 
-async fn pay(
-    network: &str,
-    amount: &str,
-    pay_to: &str,
-    asset: &str,
-    from: Option<&str>,
-    max_timeout_secs: u64,
-    scheme: Option<&str>,
-) -> Result<()> {
-    // ── Input validation ──────────────────────────────────────────────
+/// Validate common payment inputs: amount, pay_to, asset.
+/// Returns the parsed amount as u128.
+fn validate_payment_inputs(amount: &str, pay_to: &str, asset: &str) -> Result<u128> {
     if amount.is_empty() {
         bail!("--amount must not be empty");
     }
@@ -135,17 +181,25 @@ async fn pay(
     if parsed_amount == 0 {
         bail!("--amount must be greater than zero");
     }
-    fn is_valid_evm_address(addr: &str) -> bool {
-        addr.starts_with("0x")
-            && addr.len() == 42
-            && addr[2..].chars().all(|c| c.is_ascii_hexdigit())
-    }
     if !is_valid_evm_address(pay_to) {
         bail!("--pay-to must be a valid EVM address (0x + 40 hex chars)");
     }
     if !is_valid_evm_address(asset) {
         bail!("--asset must be a valid EVM contract address (0x + 40 hex chars)");
     }
+    Ok(parsed_amount)
+}
+
+async fn cmd_pay(
+    network: &str,
+    amount: &str,
+    pay_to: &str,
+    asset: &str,
+    from: Option<&str>,
+    max_timeout_secs: u64,
+    scheme: Option<&str>,
+) -> Result<()> {
+    validate_payment_inputs(amount, pay_to, asset)?;
 
     let access_token = ensure_tokens_refreshed().await?;
 
@@ -284,6 +338,101 @@ async fn pay(
         }));
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_eip3009_sign(
+    private_key_hex: &str,
+    network: &str,
+    amount: &str,
+    pay_to: &str,
+    asset: &str,
+    from: &str,
+    max_timeout_secs: u64,
+    domain_name: &str,
+    domain_version: &str,
+) -> Result<()> {
+    let parsed_amount = validate_payment_inputs(amount, pay_to, asset)?;
+    if !is_valid_evm_address(from) {
+        bail!("--from must be a valid EVM address (0x + 40 hex chars)");
+    }
+
+    // ── Parse private key ────────────────────────────────────────────
+    let pk_clean = private_key_hex
+        .strip_prefix("0x")
+        .unwrap_or(private_key_hex);
+    let mut pk_bytes = hex::decode(pk_clean).context("EVM_PRIVATE_KEY is not valid hex")?;
+    if pk_bytes.len() != 32 {
+        bail!(
+            "EVM_PRIVATE_KEY must be 32 bytes (64 hex chars), got {}",
+            pk_bytes.len()
+        );
+    }
+
+    // ── Derive chain_id from network ─────────────────────────────────
+    let chain_id = parse_eip155_chain_id(network)?;
+
+    // ── Compute validBefore = now + max_timeout_secs ─────────────────
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let valid_before = now
+        .checked_add(max_timeout_secs)
+        .ok_or_else(|| anyhow!("timeout overflow"))?;
+
+    // ── Generate random nonce ────────────────────────────────────────
+    let nonce = {
+        use rand::RngCore;
+        let mut n = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut n);
+        FixedBytes::from(n)
+    };
+
+    // ── Build auth struct & domain ───────────────────────────────────
+    let auth = crate::crypto::TransferWithAuthorization {
+        from: from.parse().context("--from is not a valid EVM address")?,
+        to: pay_to
+            .parse()
+            .context("--pay-to is not a valid EVM address")?,
+        value: U256::from(parsed_amount),
+        validAfter: U256::ZERO,
+        validBefore: U256::from(valid_before),
+        nonce,
+    };
+    let domain = crate::crypto::Eip3009DomainParams {
+        name: domain_name.to_string(),
+        version: domain_version.to_string(),
+        chain_id,
+        verifying_contract: asset
+            .parse()
+            .context("--asset is not a valid EVM address")?,
+    };
+
+    // ── Sign ─────────────────────────────────────────────────────────
+    let sig_b64 = crate::crypto::eip3009_sign(&auth, &domain, &pk_bytes)?;
+    pk_bytes.zeroize();
+
+    let sig_bytes = B64
+        .decode(&sig_b64)
+        .context("unexpected base64 decode error")?;
+
+    let nonce_hex = format!("0x{}", hex::encode(nonce));
+    output::success(json!({
+        "signature": format!("0x{}", hex::encode(&sig_bytes)),
+        "authorization": {
+            "from": from,
+            "to": pay_to,
+            "value": amount,
+            "validAfter": "0",
+            "validBefore": valid_before.to_string(),
+            "nonce": nonce_hex,
+        }
+    }));
+    Ok(())
+}
+
+fn is_valid_evm_address(addr: &str) -> bool {
+    addr.starts_with("0x") && addr.len() == 42 && addr[2..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Extract numeric chain ID from a CAIP-2 "eip155:<chainId>" identifier.
@@ -464,6 +613,7 @@ mod tests {
                 assert_eq!(accepts, json);
                 assert_eq!(from.as_deref(), Some("0xPayer"));
             }
+            _ => panic!("expected X402Pay"),
         }
     }
 
@@ -476,6 +626,7 @@ mod tests {
                 assert_eq!(accepts, json);
                 assert_eq!(from, None);
             }
+            _ => panic!("expected X402Pay"),
         }
     }
 
