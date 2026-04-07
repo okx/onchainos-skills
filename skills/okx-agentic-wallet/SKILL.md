@@ -172,6 +172,7 @@ For commands requiring auth (sections B, D, E), check login state:
      Use the `wallet status` result (from step 1 or re-run). If `loginType` is `"ak"` and the returned `apiKey` differs from the current environment variable `OKX_API_KEY`, show both keys to the user and ask to confirm the switch. If the user confirms, run `onchainos wallet login --force`. If `apiKey` is absent, empty, or identical, skip the confirmation and run `onchainos wallet login` directly.
    - **3c.** After silent login succeeds, inform the user that they have been logged in via the API Key method.
 4. After login succeeds, display the full account list with addresses by running `onchainos wallet balance`.
+5. **New user check**: If the `wallet verify` or `wallet login` response contains `"isNew": true`, read and follow `references/new-user-guide.md` to display the new-user guidance. If `"isNew": false`, skip this step.
 
 
 > **After successful login**: a wallet account is created automatically — never call `wallet add` unless the user is already logged in and explicitly requests an additional account.
@@ -238,16 +239,24 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 
 > Policy configuration **must be completed by the user on the Web portal**. The Agent only detects the scenario, provides guidance, and gives the jump link.
 
-### Trigger Conditions
+The following three subsections are **trigger conditions** — when any condition is met, the Agent **MUST** output the corresponding guidance. Do not skip or omit.
 
-1. **First wallet activation**: After a user's first successful `wallet verify` (email) or `wallet login` (API Key). Do NOT repeat on subsequent account additions. Output the following message (translated to the user's language):
+### New user login (`isNew: true`)
 
-> Your Agent Wallet is ready. To let the Agent operate more securely on your behalf, we recommend setting up a Policy first — including per-transaction / daily spending limits and a transfer whitelist. [Go to Policy Settings → https://web3.okx.com/portfolio/agentic-wallet-policy]
+Handled in Authentication step 5
 
-2. **User asks about Policy**: e.g., "How do I set a spending limit?", "What's my daily limit?", "How to configure whitelist?"
-   - Run `onchainos wallet status` and check the `policy` field.
-   - **`policy` is null or all flags are false**: explain what Policy offers (per-tx limit, daily transfer/trade limit, transfer whitelist) and provide the link: `https://web3.okx.com/portfolio/agentic-wallet-policy`
-   - **Any flag is true**: display the current settings (limits, used amounts) and provide the same link for modifications.
+### New account via `wallet add`
+
+After a successful `wallet add`, **MUST** output the following message (translated to the user's language):
+
+> New account created. You can configure spending limits and transfer whitelist in [Policy Settings → https://web3.okx.com/portfolio/agentic-wallet-policy].
+
+### User asks about Policy
+
+e.g., "How do I set a spending limit?", "What's my daily limit?", "How to configure whitelist?"
+- Run `onchainos wallet status` and check the `policy` field.
+- **`policy` is null or all flags are false**: explain what Policy offers (per-tx limit, daily transfer/trade limit, transfer whitelist) and provide the link: `https://web3.okx.com/portfolio/agentic-wallet-policy`
+- **Any flag is true**: display the current settings (limits, used amounts) and provide the same link for modifications.
 
 ---
 

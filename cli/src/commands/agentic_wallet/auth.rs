@@ -602,6 +602,7 @@ async fn save_verify_result(
     output::success(json!({
         "accountId": resp.account_id,
         "accountName": account_name,
+        "isNew": resp.is_new,
     }));
     Ok(())
 }
