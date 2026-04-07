@@ -39,15 +39,24 @@ fn select_accept(accepts: &[serde_json::Value]) -> Result<(serde_json::Value, Op
         bail!("accepts array is empty");
     }
     // Prefer exact
-    if let Some(entry) = accepts.iter().find(|a| a["scheme"].as_str() == Some("exact")) {
+    if let Some(entry) = accepts
+        .iter()
+        .find(|a| a["scheme"].as_str() == Some("exact"))
+    {
         return Ok((entry.clone(), Some("exact".to_string())));
     }
     // Then aggr_deferred
-    if let Some(entry) = accepts.iter().find(|a| a["scheme"].as_str() == Some("aggr_deferred")) {
+    if let Some(entry) = accepts
+        .iter()
+        .find(|a| a["scheme"].as_str() == Some("aggr_deferred"))
+    {
         return Ok((entry.clone(), Some("aggr_deferred".to_string())));
     }
     // Fallback to first
-    Ok((accepts[0].clone(), accepts[0]["scheme"].as_str().map(|s| s.to_string())))
+    Ok((
+        accepts[0].clone(),
+        accepts[0]["scheme"].as_str().map(|s| s.to_string()),
+    ))
 }
 
 fn parse_payload(raw: &str) -> Result<ResolvedParams> {
@@ -78,9 +87,7 @@ fn parse_payload(raw: &str) -> Result<ResolvedParams> {
         .as_str()
         .ok_or_else(|| anyhow!("missing 'asset' in selected accepts entry"))?
         .to_string();
-    let max_timeout = entry["maxTimeoutSeconds"]
-        .as_u64()
-        .unwrap_or(300);
+    let max_timeout = entry["maxTimeoutSeconds"].as_u64().unwrap_or(300);
     Ok(ResolvedParams {
         network,
         amount,
@@ -93,10 +100,7 @@ fn parse_payload(raw: &str) -> Result<ResolvedParams> {
 
 pub async fn execute(cmd: PaymentCommand) -> Result<()> {
     match cmd {
-        PaymentCommand::X402Pay {
-            accepts,
-            from,
-        } => {
+        PaymentCommand::X402Pay { accepts, from } => {
             let params = parse_payload(&accepts)?;
             pay(
                 &params.network,
@@ -168,7 +172,9 @@ async fn pay(
     let (_acct_id, addr_info) =
         crate::commands::agentic_wallet::transfer::resolve_address(&wallets, from, chain_name)?;
     let payer_addr = &addr_info.address;
-    let is_deferred = scheme.map(|s| s.eq_ignore_ascii_case("aggr_deferred")).unwrap_or(false);
+    let is_deferred = scheme
+        .map(|s| s.eq_ignore_ascii_case("aggr_deferred"))
+        .unwrap_or(false);
     let valid_before = if is_deferred {
         // aggr_deferred: use max uint256 so the authorization never expires
         alloy_primitives::U256::MAX.to_string()
@@ -388,9 +394,12 @@ mod tests {
 
     #[test]
     fn select_accept_falls_back_to_first() {
-        let accepts: Vec<serde_json::Value> = serde_json::from_str(r#"[
+        let accepts: Vec<serde_json::Value> = serde_json::from_str(
+            r#"[
             {"network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}
-        ]"#).unwrap();
+        ]"#,
+        )
+        .unwrap();
         let (_entry, scheme) = select_accept(&accepts).unwrap();
         assert_eq!(scheme, None);
     }
@@ -427,7 +436,8 @@ mod tests {
 
     #[test]
     fn parse_payload_numeric_amount() {
-        let json = r#"[{"scheme":"exact","network":"eip155:1","amount":500,"payTo":"0xA","asset":"0xB"}]"#;
+        let json =
+            r#"[{"scheme":"exact","network":"eip155:1","amount":500,"payTo":"0xA","asset":"0xB"}]"#;
         let p = parse_payload(json).unwrap();
         assert_eq!(p.amount, "500");
     }
@@ -448,14 +458,7 @@ mod tests {
     #[test]
     fn cli_x402_pay_accepts_and_from() {
         let json = r#"[{"scheme":"aggr_deferred","network":"eip155:196","amount":"1000","payTo":"0xA","asset":"0xB"}]"#;
-        let cli = TestCli::parse_from([
-            "test",
-            "x402-pay",
-            "--accepts",
-            json,
-            "--from",
-            "0xPayer",
-        ]);
+        let cli = TestCli::parse_from(["test", "x402-pay", "--accepts", json, "--from", "0xPayer"]);
         match cli.command {
             PaymentCommand::X402Pay { accepts, from } => {
                 assert_eq!(accepts, json);
@@ -467,12 +470,7 @@ mod tests {
     #[test]
     fn cli_x402_pay_accepts_only() {
         let json = r#"[{"network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}]"#;
-        let cli = TestCli::parse_from([
-            "test",
-            "x402-pay",
-            "--accepts",
-            json,
-        ]);
+        let cli = TestCli::parse_from(["test", "x402-pay", "--accepts", json]);
         match cli.command {
             PaymentCommand::X402Pay { accepts, from } => {
                 assert_eq!(accepts, json);
