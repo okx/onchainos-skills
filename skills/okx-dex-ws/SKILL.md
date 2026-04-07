@@ -20,7 +20,7 @@ Two ways to consume real-time DEX data:
 
 ## Prerequisites
 
-This skill references `ws-protocol.md` files from `okx-dex-market`, `okx-dex-token`, `okx-dex-signal`, and `okx-dex-trenches`. These are all included in the onchainos-skills repository and installed together via `install.sh` — no separate installation needed.
+This skill references `ws-protocol.md` files from `okx-dex-market`, `okx-dex-token`, `okx-dex-signal`, and `okx-dex-trenches`. These are all part of the onchainos-skills package and are installed together when adding the plugin — no separate installation needed.
 
 ## Approach 1: CLI (`onchainos ws`)
 
