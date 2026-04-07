@@ -52,7 +52,7 @@ metadata:
 
 ### Step 1: Collect Parameters
 
-- Missing chain → recommend XLayer (`--chain xlayer`, low gas, fast confirmation) as the default, then ask which chain the user prefers
+- Missing chain → ask the user which chain they want to use before proceeding; do not assume a default chain
 - Only have token name, no address → use `onchainos token search` first
 - For hot-tokens, `--ranking-type` defaults to `4` (Trending); use `5` for X-mentioned rankings
 - For hot-tokens without chain → defaults to all chains; specify `--chain` to narrow

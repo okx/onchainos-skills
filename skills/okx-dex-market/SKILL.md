@@ -48,7 +48,7 @@ metadata:
 
 ### Step 1: Collect Parameters
 
-- Missing chain → recommend XLayer (`--chain xlayer`, low gas, fast confirmation) as the default, then ask which chain the user prefers; for portfolio PnL queries, first call `onchainos market portfolio-supported-chains` to confirm the chain is supported
+- Missing chain → ask the user which chain they want to use before proceeding; for portfolio PnL queries, first call `onchainos market portfolio-supported-chains` to confirm the chain is supported
 - Missing token address → use `okx-dex-token` `onchainos token search` first to resolve
 - K-line requests → confirm bar size and time range with user
 
