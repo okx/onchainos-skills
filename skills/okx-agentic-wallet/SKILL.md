@@ -249,7 +249,7 @@ Handled in Authentication step 5
 
 After a successful `wallet add`, **MUST** output the following message (translated to the user's language):
 
-> New account created. You can configure spending limits and transfer whitelist in [Policy Settings → https://web3.okx.com/portfolio/agentic-wallet-policy].
+> New account created. You can configure spending limits and transfer whitelist in [ Policy Settings → https://web3.okx.com/portfolio/agentic-wallet-policy ].
 
 ### User asks about Policy
 
