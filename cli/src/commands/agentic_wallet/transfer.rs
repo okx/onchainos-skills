@@ -79,7 +79,7 @@ async fn sign_and_broadcast(
     is_contract_call: bool,
     mev_protection: bool,
     force: bool,
-) -> Result<()> {
+) -> Result<String> {
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][sign_and_broadcast] enter: chain={}, from={:?}, to={}, value={}, contractAddr={:?}, inputData={}, unsignedTx={}, gasLimit={:?}, mev={}",
@@ -333,8 +333,7 @@ async fn sign_and_broadcast(
             broadcast_resp.tx_hash
         );
     }
-    output::success(json!({ "txHash": broadcast_resp.tx_hash }));
-    Ok(())
+    Ok(broadcast_resp.tx_hash)
 }
 
 // ── send ─────────────────────────────────────────────────────────────
@@ -358,7 +357,7 @@ pub(super) async fn cmd_send(
         bail!("receipt and chain are required");
     }
 
-    sign_and_broadcast(
+    let tx_hash = sign_and_broadcast(
         chain,
         from,
         TxParams {
@@ -376,7 +375,9 @@ pub(super) async fn cmd_send(
         false,
         force,
     )
-    .await
+    .await?;
+    output::success(json!({ "txHash": tx_hash }));
+    Ok(())
 }
 
 // ── contract-call ─────────────────────────────────────────────────────
@@ -397,6 +398,42 @@ pub async fn cmd_contract_call(
     jito_unsigned_tx: Option<&str>,
     force: bool,
 ) -> Result<()> {
+    let tx_hash = execute_contract_call(
+        to,
+        chain,
+        amt,
+        input_data,
+        unsigned_tx,
+        gas_limit,
+        from,
+        aa_dex_token_addr,
+        aa_dex_token_amount,
+        mev_protection,
+        jito_unsigned_tx,
+        force,
+    )
+    .await?;
+    output::success(json!({ "txHash": tx_hash }));
+    Ok(())
+}
+
+/// Core contract-call logic: validate → sign → broadcast → return txHash.
+/// Used by `cmd_contract_call` (CLI entry point) and directly by swap execute.
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_contract_call(
+    to: &str,
+    chain: &str,
+    amt: &str,
+    input_data: Option<&str>,
+    unsigned_tx: Option<&str>,
+    gas_limit: Option<&str>,
+    from: Option<&str>,
+    aa_dex_token_addr: Option<&str>,
+    aa_dex_token_amount: Option<&str>,
+    mev_protection: bool,
+    jito_unsigned_tx: Option<&str>,
+    force: bool,
+) -> Result<String> {
     if to.is_empty() || chain.is_empty() {
         bail!("to and chain are required");
     }
