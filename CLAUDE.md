@@ -22,9 +22,10 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 | okx-agentic-wallet   | Wallet lifecycle: auth, balance (authenticated), portfolio PnL, send, history, contract call | User wants to log in, check balance, view PnL, send tokens, view tx history, or call contracts |
 | okx-wallet-portfolio | Public address balance: total value, all tokens, specific tokens | User asks about wallet holdings, token balances, portfolio value across chains |
 | okx-security         | Security scanning: token risk, DApp phishing, tx pre-execution, signature safety, approval management | User wants to check if a token/DApp/tx/signature is safe, honeypot check, phishing detection, approve safety, or view/manage token approvals |
-| okx-dex-market       | Prices, charts, wallet PnL | User asks for token prices, K-line data, or wallet PnL analysis (win rate, DEX history, realized/unrealized PnL) for their own wallet |
-| okx-dex-signal       | Smart money / KOL / whale activity tracking, buy signal alerts, leaderboard | User asks what smart money/whales/KOLs are buying or trading (tracker), wants aggregated buy signal alerts (信号), wants top traders ranked by PnL/win rate/volume (牛人榜), or wants to write a WS subscription script (references ws-protocol.md) |
-| okx-dex-trenches     | Meme/pump.fun token scanning | User asks about new meme launches, dev reputation, bundle detection, 打狗/扫链/新盘, or mentions trench/trenches |
+| okx-dex-market       | Prices, charts, index prices, wallet PnL | User asks for token prices, K-line data, index/aggregate prices, wallet PnL analysis |
+| okx-dex-signal       | Smart money / KOL / whale tracking, buy signals, leaderboard | User asks what smart money/whales/KOLs are buying, wants buy signal alerts (信号), top traders (牛人榜) |
+| okx-dex-trenches     | Meme/pump.fun token scanning, trenches | User asks about new meme launches, dev reputation, bundle detection, 打狗/扫链/新盘, or mentions trench/trenches |
+| okx-dex-ws           | Real-time WebSocket monitoring (`onchainos ws` CLI) and scripting for all DEX channels | User wants real-time on-chain data (price, candle, trades, signals, wallet tracking, meme scanning) via CLI monitoring or custom WS script |
 | okx-dex-swap         | DEX swap execution | User wants to swap/trade/buy/sell tokens |
 | okx-dex-token        | Token search, liquidity, hot tokens, advanced info, holders, top traders, trade history, holder cluster analysis | User searches for tokens, wants rankings, liquidity pools, holder info, top traders, filtered trade history, or holder cluster concentration |
 | okx-onchain-gateway  | Transaction broadcasting and tracking | User wants to broadcast tx, estimate gas, simulate tx, check tx status |
@@ -39,6 +40,12 @@ When a user asks to write a script, automate trading, build a trading bot, or us
 - **Do NOT search online for OKX public APIs** — `onchainos` already wraps all relevant on-chain capabilities
 - Always use `onchainos` CLI commands as the building block (subprocess calls, MCP tool invocations, etc.)
 - Route to the relevant skill based on what the user wants to automate: swap → `okx-dex-swap`, market data → `okx-dex-market`, signals → `okx-dex-signal`, token data → `okx-dex-token`, portfolio → `okx-wallet-portfolio`, meme scanning → `okx-dex-trenches`
+
+### WebSocket / Real-time Data
+
+When a user asks about real-time on-chain data, WebSocket monitoring, or writing a WS script/脚本/bot, load **`okx-dex-ws`**. It supports two approaches:
+- **CLI** (`onchainos ws start/poll/stop`) — quick monitoring, 9 channels across signal/market/token/trenches
+- **Custom script** — full WS protocol docs for Python/Node/Rust bots
 
 ## Clippy
 
