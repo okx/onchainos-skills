@@ -122,7 +122,6 @@ For custom WebSocket scripts/bots, read **`references/ws-protocol.md`** for the 
 ## Edge Cases
 
 - **Token not found**: suggest verifying the contract address (symbols can collide)
-- **Wrong chain default**: all address-based commands default to `--chain ethereum`. Always infer chain from address format (Solana = base58, no `0x`) and pass it explicitly — omitting `--chain` for a Solana address will error or return wrong results.
 - **Same symbol on multiple chains**: show all matches with chain names
 - **Too many results**: name/symbol search caps at 100 — suggest using exact contract address
 - **Network error**: retry once
