@@ -239,6 +239,17 @@ onchainos wallet contract-call --to <program_id> --chain 501 --unsigned-tx <base
 
 > Policy configuration **must be completed by the user on the Web portal**. The Agent only detects the scenario, provides guidance, and gives the jump link.
 
+### Available Policy Rules
+
+Policy **only** includes the following rules. Do NOT invent or mention any rules beyond this list (e.g., no "transaction count limit", no "gas limit", no "token blacklist"):
+
+| Rule | Description | Field (from `wallet status`) |
+|---|---|---|
+| Per-transaction limit | Max USD amount per single transaction or transfer | `singleTxLimit` / `singleTxFlag` |
+| Daily transfer limit | Max USD amount for transfers per day (resets at UTC 0:00) | `dailyTransferTxLimit` / `dailyTransferTxFlag` / `dailyTransferTxUsed` |
+| Daily trade limit | Max USD amount for trades (swaps) per day (resets at UTC 0:00) | `dailyTradeTxLimit` / `dailyTradeTxFlag` / `dailyTradeTxTxUsed` |
+| Transfer whitelist | Only allow transfers to pre-approved addresses | Configured on Web portal only |
+
 The following three subsections are **trigger conditions** — when any condition is met, the Agent **MUST** output the corresponding guidance. Do not skip or omit.
 
 ### New user login (`isNew: true`)
