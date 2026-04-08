@@ -118,7 +118,7 @@ onchainos wallet status
 | `dailyTransferTxUsed` | String | Daily transfer amount already used (USD) |
 | `dailyTradeTxLimit` | String | Daily trade USD limit (`"0"` = not set) |
 | `dailyTradeTxFlag` | Boolean | Whether daily trade limit is enabled |
-| `dailyTradeTxTxUsed` | String | Daily trade amount already used (USD) |
+| `dailyTradeTxUsed` | String | Daily trade amount already used (USD) |
 
 ### A6. `onchainos wallet logout`
 
