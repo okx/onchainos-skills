@@ -109,6 +109,20 @@ pub(crate) async fn cmd_invest(
         (json, change, None, None)
     };
 
+    // 5.5 Slippage guard
+    let slippage_val: f64 = slippage.parse().unwrap_or(0.0);
+    if slippage_val > 0.2 {
+        bail!(
+            "Slippage {:.1}% exceeds maximum allowed 20%. Reduce --slippage and retry.",
+            slippage_val * 100.0
+        );
+    } else if slippage_val > 0.1 {
+        eprintln!(
+            "⚠️  WARNING: Slippage tolerance is {:.1}% (> 10%). High slippage may result in significant value loss.",
+            slippage_val * 100.0
+        );
+    }
+
     // 6. Call fetch_enter
     let mut result = fetch_enter(
         client,
@@ -602,6 +616,15 @@ pub(crate) async fn cmd_withdraw(
     platform_id: Option<&str>,
 ) -> Result<JsonValue> {
     let chain_index = crate::chains::resolve_chain(chain);
+
+    // Slippage warning for withdraw
+    let slippage_val: f64 = slippage.parse().unwrap_or(0.0);
+    if slippage_val > 0.1 {
+        eprintln!(
+            "⚠️  WARNING: Slippage tolerance is {:.1}% (> 10%). High slippage may result in significant value loss.",
+            slippage_val * 100.0
+        );
+    }
 
     // Check if redemption is supported
     let detail = fetch_detail(client, investment_id).await?;
