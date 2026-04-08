@@ -48,6 +48,32 @@ struct DefiPrepareParams {
 }
 
 #[derive(Deserialize, JsonSchema)]
+struct DefiRateChartParams {
+    /// Investment ID
+    investment_id: String,
+    /// Time range: DAY (V3 only), WEEK (default), MONTH, SEASON, YEAR
+    time_range: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct DefiTvlChartParams {
+    /// Investment ID
+    investment_id: String,
+    /// Time range: DAY (V3 only), WEEK (default), MONTH, SEASON, YEAR
+    time_range: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct DefiDepthPriceChartParams {
+    /// Investment ID (V3 Pool only)
+    investment_id: String,
+    /// Chart type: DEPTH (default) or PRICE
+    chart_type: Option<String>,
+    /// Time range (only for PRICE mode): DAY (default), WEEK. Ignored in DEPTH mode
+    time_range: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 struct DefiEnterParams {
     /// Investment ID from search results
     investment_id: String,
@@ -1717,6 +1743,57 @@ impl McpServer {
         Parameters(p): Parameters<DefiDetailParams>,
     ) -> Result<String, String> {
         match defi::fetch_detail(&self.client, &p.investment_id).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    // ── DeFi: Chart APIs ─────────────────────────────────────────────
+
+    #[tool(
+        name = "defi_rate_chart",
+        description = "Get historical APY chart data for a DeFi product. Returns timestamped APY data points for trend visualization. Time ranges: WEEK (default), MONTH, SEASON, YEAR. DAY is V3 Pool only."
+    )]
+    async fn defi_rate_chart(
+        &self,
+        Parameters(p): Parameters<DefiRateChartParams>,
+    ) -> Result<String, String> {
+        match defi::fetch_rate_chart(&self.client, &p.investment_id, p.time_range.as_deref()).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "defi_tvl_chart",
+        description = "Get historical TVL chart data for a DeFi product. Returns timestamped TVL data points for trend visualization. Time ranges: WEEK (default), MONTH, SEASON, YEAR. DAY is V3 Pool only."
+    )]
+    async fn defi_tvl_chart(
+        &self,
+        Parameters(p): Parameters<DefiTvlChartParams>,
+    ) -> Result<String, String> {
+        match defi::fetch_tvl_chart(&self.client, &p.investment_id, p.time_range.as_deref()).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "defi_depth_price_chart",
+        description = "Get V3 Pool liquidity depth distribution or price history chart. V3 Pool only. Chart types: DEPTH (default, shows liquidity per tick), PRICE (shows historical token0/token1 prices). Time range only applies to PRICE mode: DAY (default), WEEK."
+    )]
+    async fn defi_depth_price_chart(
+        &self,
+        Parameters(p): Parameters<DefiDepthPriceChartParams>,
+    ) -> Result<String, String> {
+        match defi::fetch_depth_price_chart(
+            &self.client,
+            &p.investment_id,
+            p.chart_type.as_deref(),
+            p.time_range.as_deref(),
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
