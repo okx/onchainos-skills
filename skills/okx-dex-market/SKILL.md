@@ -75,6 +75,27 @@ Present next actions conversationally — never expose command paths to the user
 | `market portfolio-recent-pnl` | `market portfolio-token-pnl`, `token price-info` |
 | `market portfolio-token-pnl` | `market portfolio-dex-history`, `market kline` |
 
+## Data Freshness
+
+### `requestTime` Field
+
+When a response includes a `requestTime` field (Unix milliseconds), display it alongside results so the user knows when the data snapshot was taken. When chaining commands (e.g., fetching price then using that timestamp as a range boundary), use the `requestTime` from the most recent response as the reference point — not the current wall clock time.
+
+### Per-Command Delays
+
+| Command | Data Freshness |
+|---|---|
+| `market price` | Real-time (sub-second, direct on-chain) |
+| `market prices` | Real-time (batch, same source) |
+| `market kline` | Real-time for incomplete candle; completed candles are finalized |
+| `market index` | Near real-time (aggregated across exchanges, ~1–2 s) |
+| `market portfolio-overview` | Typically updated every few minutes; may lag up to ~5 min behind live chain state |
+| `market portfolio-dex-history` | Updated periodically; recent transactions may take a few minutes to appear |
+| `market portfolio-recent-pnl` | Same cadence as `portfolio-overview`; PnL computed over settled trades |
+| `market portfolio-token-pnl` | Updated on trade settlement; unrealized PnL refreshes with price, realized PnL requires settled tx |
+
+When presenting portfolio results, proactively note the potential delay: "Portfolio data may be up to a few minutes behind live chain state."
+
 ## Additional Resources
 
 For detailed params and return field schemas for a specific command:

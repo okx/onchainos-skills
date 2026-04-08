@@ -95,6 +95,22 @@ Present next actions conversationally — never expose command paths to the user
 | `signal list` | `tracker activities`, `market kline`, `token price-info`, `swap execute` |
 | `leaderboard list` | `market portfolio-overview`, `portfolio all-balances`, `tracker activities --tracker-type multi_address` |
 
+## Data Freshness
+
+### `requestTime` Field
+
+When a response includes a `requestTime` field (Unix milliseconds), display it alongside results so the user knows when the snapshot was taken. When chaining commands (e.g., showing trade details after a signal), use the `requestTime` from the most recent response as the reference point for any time-based parameters.
+
+### Per-Command Delays
+
+| Command | Data Freshness |
+|---|---|
+| `tracker activities` | Near real-time transaction feed (seconds after chain finality) |
+| `signal list` | Near real-time (signals generated on-trade; list refreshed every ~30 s) |
+| `leaderboard list` | Updated periodically; PnL rankings typically have a ~5-min lag behind settled trades |
+
+When presenting leaderboard data, note that rankings reflect settled trades and may be a few minutes behind live activity.
+
 ## Additional Resources
 
 For detailed params and return field schemas for a specific command:
