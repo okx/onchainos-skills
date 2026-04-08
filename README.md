@@ -2,6 +2,10 @@
 
 onchainos skills for AI coding assistants. Provides token search, market data, wallet balance queries, swap execution, transaction broadcasting, leaderboard rankings, and token cluster analysis across 20+ blockchains.
 
+Quick references:
+- Capability matrix: [docs/CAPABILITY_MATRIX.md](./docs/CAPABILITY_MATRIX.md)
+- Example workflows: [examples/](./examples/)
+
 ## Available Skills
 
 | Skill | Description |
