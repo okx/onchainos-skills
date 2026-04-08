@@ -58,6 +58,7 @@ metadata:
 - For hot-tokens without chain → defaults to all chains; specify `--chain` to narrow
 - For search, `--chains` defaults to `"1,501"` (Ethereum + Solana)
 - **Chain uncertainty for cluster commands**: If the user doesn't know whether their chain supports cluster analysis, suggest running `onchainos token cluster-supported-chains` first before calling cluster-overview / cluster-top-holders / cluster-list.
+- **Pagination** (`token search`, `token hot-tokens`, `token holders`, `token top-trader`): All four commands support `--limit` (default `20`, max `100`) and `--cursor`. The `cursor` field on each response item points to its position; pass the **last item's `cursor`** value as `--cursor` on the next call to page forward. When `cursor` is `null` on the last item, all pages have been returned.
 
 ### Step 2: Call and Display
 

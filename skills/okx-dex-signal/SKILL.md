@@ -60,6 +60,7 @@ metadata:
 - Signal filter params (`--wallet-type`, `--min-amount-usd`, etc.) → ask user for preferences if not specified; default to no filter (returns all signal types)
 - `--token-address` is optional — omit to get all signals on the chain; include to filter for a specific token
 - **`--wallet-type` is multi-select** (comma-separated integers: `1`=Smart Money, `2`=KOL/Influencer, `3`=Whale) — e.g. `--wallet-type 1,3` returns both Smart Money and Whale signals
+- **Pagination**: `signal list` supports `--limit` (default `20`, max `100`) and `--cursor`. Each response item includes a `cursor` field; pass the **last item's `cursor`** as `--cursor` on the next call to page forward.
 
 **Leaderboard:**
 - Missing chain → call `onchainos leaderboard supported-chains` to confirm support; default to `solana` if user doesn't specify

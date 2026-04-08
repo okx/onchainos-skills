@@ -17,6 +17,12 @@ pub enum TokenCommand {
         /// Chains to search (comma-separated, e.g. "ethereum,solana"). Defaults to global --chain if set, otherwise "1,501"
         #[arg(long)]
         chains: Option<String>,
+        /// Number of results per page (default: 20, max: 100)
+        #[arg(long)]
+        limit: Option<String>,
+        /// Pagination cursor — pass the cursor from the last item of the previous page; omit for first page
+        #[arg(long)]
+        cursor: Option<String>,
     },
     /// Get token basic info (name, symbol, decimals, logo)
     Info {
@@ -38,6 +44,12 @@ pub enum TokenCommand {
         /// Filter by holder tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler
         #[arg(long)]
         tag_filter: Option<u8>,
+        /// Number of results per page (default: 20, max: 100)
+        #[arg(long)]
+        limit: Option<String>,
+        /// Pagination cursor — pass the cursor from the last item of the previous page; omit for first page
+        #[arg(long)]
+        cursor: Option<String>,
     },
     /// Get detailed price info (price, market cap, liquidity, volume, 24h change)
     PriceInfo {
@@ -187,6 +199,12 @@ pub enum TokenCommand {
         /// Freeze filter (true/false, default: true)
         #[arg(long)]
         is_freeze: Option<String>,
+        /// Number of results per page (default: 20, max: 100)
+        #[arg(long)]
+        limit: Option<String>,
+        /// Pagination cursor — pass the cursor from the last item of the previous page; omit for first page
+        #[arg(long)]
+        cursor: Option<String>,
     },
     /// Get advanced token info (risk, creator, dev stats, holder concentration)
     AdvancedInfo {
@@ -208,6 +226,12 @@ pub enum TokenCommand {
         /// Filter by trader tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler
         #[arg(long)]
         tag_filter: Option<u8>,
+        /// Number of results per page (default: 20, max: 100)
+        #[arg(long)]
+        limit: Option<String>,
+        /// Pagination cursor — pass the cursor from the last item of the previous page; omit for first page
+        #[arg(long)]
+        cursor: Option<String>,
     },
     /// Get token trade history on DEX, with optional tag and wallet filters
     Trades {
@@ -264,12 +288,26 @@ pub enum TokenCommand {
 pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
     let client = ctx.client_async().await?;
     match cmd {
-        TokenCommand::Search { query, chains } => {
+        TokenCommand::Search {
+            query,
+            chains,
+            limit,
+            cursor,
+        } => {
             if query.trim().is_empty() {
                 anyhow::bail!("Parameter --query cannot be empty");
             }
             let resolved_chains = ctx.resolve_chains_or(chains, "1,501");
-            output::success(fetch_search(&client, &query, &resolved_chains).await?);
+            output::success(
+                fetch_search(
+                    &client,
+                    &query,
+                    &resolved_chains,
+                    limit.as_deref(),
+                    cursor.as_deref(),
+                )
+                .await?,
+            );
         }
         TokenCommand::Info { address, chain } => {
             let chain_index = chain
@@ -281,11 +319,23 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             address,
             chain,
             tag_filter,
+            limit,
+            cursor,
         } => {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_holders(&client, &address, &chain_index, tag_filter).await?);
+            output::success(
+                fetch_holders(
+                    &client,
+                    &address,
+                    &chain_index,
+                    tag_filter,
+                    limit.as_deref(),
+                    cursor.as_deref(),
+                )
+                .await?,
+            );
         }
         TokenCommand::PriceInfo { address, chain } => {
             let chain_index = chain
@@ -342,6 +392,8 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             is_lp_burnt,
             is_mint,
             is_freeze,
+            limit,
+            cursor,
         } => {
             output::success(
                 fetch_hot_tokens(
@@ -389,6 +441,8 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
                         is_lp_burnt,
                         is_mint,
                         is_freeze,
+                        limit,
+                        cursor,
                     },
                 )
                 .await?,
@@ -404,11 +458,23 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             address,
             chain,
             tag_filter,
+            limit,
+            cursor,
         } => {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_top_trader(&client, &address, &chain_index, tag_filter).await?);
+            output::success(
+                fetch_top_trader(
+                    &client,
+                    &address,
+                    &chain_index,
+                    tag_filter,
+                    limit.as_deref(),
+                    cursor.as_deref(),
+                )
+                .await?,
+            );
         }
         TokenCommand::Trades {
             address,
@@ -461,12 +527,25 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
 }
 
 /// GET /api/v6/dex/market/token/search
-pub async fn fetch_search(client: &ApiClient, query: &str, chains: &str) -> Result<Value> {
+pub async fn fetch_search(
+    client: &ApiClient,
+    query: &str,
+    chains: &str,
+    limit: Option<&str>,
+    cursor: Option<&str>,
+) -> Result<Value> {
     let resolved_chains = crate::chains::resolve_chains(chains);
+    let limit_val = limit.unwrap_or("20");
+    let cursor_val = cursor.unwrap_or_default();
     client
         .get(
             "/api/v6/dex/market/token/search",
-            &[("chains", resolved_chains.as_str()), ("search", query)],
+            &[
+                ("chains", resolved_chains.as_str()),
+                ("search", query),
+                ("limit", limit_val),
+                ("cursor", cursor_val),
+            ],
         )
         .await
 }
@@ -485,8 +564,12 @@ pub async fn fetch_holders(
     address: &str,
     chain_index: &str,
     tag_filter: Option<u8>,
+    limit: Option<&str>,
+    cursor: Option<&str>,
 ) -> Result<Value> {
     let tag_str = tag_filter.map(|t| t.to_string()).unwrap_or_default();
+    let limit_val = limit.unwrap_or("20");
+    let cursor_val = cursor.unwrap_or_default();
     client
         .get(
             "/api/v6/dex/market/token/holder",
@@ -494,6 +577,8 @@ pub async fn fetch_holders(
                 ("chainIndex", chain_index),
                 ("tokenContractAddress", address),
                 ("tagFilter", tag_str.as_str()),
+                ("limit", limit_val),
+                ("cursor", cursor_val),
             ],
         )
         .await
@@ -615,6 +700,10 @@ pub struct HotTokensParams {
     pub is_mint: Option<String>,
     /// Freeze filter (true/false)
     pub is_freeze: Option<String>,
+    /// Number of results per page (default: 20, max: 100). Use cursor for pagination.
+    pub limit: Option<String>,
+    /// Pagination cursor. Pass the cursor value from the last item of the previous response to fetch the next page. Omit for first page.
+    pub cursor: Option<String>,
 }
 
 /// GET /api/v6/dex/market/token/hot-token — hot token list by trending score or X mentions
@@ -717,6 +806,14 @@ pub async fn fetch_hot_tokens(client: &ApiClient, params: HotTokensParams) -> Re
                 ("isLpBurnt", is_lp_burnt.as_str()),
                 ("isMint", is_mint.as_str()),
                 ("isFreeze", is_freeze.as_str()),
+                (
+                    "limit",
+                    params.limit.as_deref().unwrap_or("20"),
+                ),
+                (
+                    "cursor",
+                    params.cursor.as_deref().unwrap_or_default(),
+                ),
             ],
         )
         .await
@@ -745,8 +842,12 @@ pub async fn fetch_top_trader(
     address: &str,
     chain_index: &str,
     tag_filter: Option<u8>,
+    limit: Option<&str>,
+    cursor: Option<&str>,
 ) -> Result<Value> {
     let tag_str = tag_filter.map(|t| t.to_string()).unwrap_or_default();
+    let limit_val = limit.unwrap_or("20");
+    let cursor_val = cursor.unwrap_or_default();
     client
         .get(
             "/api/v6/dex/market/token/top-trader",
@@ -754,6 +855,8 @@ pub async fn fetch_top_trader(
                 ("chainIndex", chain_index),
                 ("tokenContractAddress", address),
                 ("tagFilter", &tag_str),
+                ("limit", limit_val),
+                ("cursor", cursor_val),
             ],
         )
         .await
