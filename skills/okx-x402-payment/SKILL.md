@@ -1,6 +1,6 @@
 ---
 name: okx-x402-payment
-description: "This skill should be used when the user encounters an HTTP 402 Payment Required response, wants to pay for a payment-gated API or resource, or mentions 'x402', 'pay for access', '402 payment', 'payment-gated URL', or 'sign x402 payment'. Primary path signs via TEE with a wallet session (JWT); fallback path guides local EIP-3009 signing with the user's own private key if they have no wallet. Returns the payment proof (signature + authorization) that the caller can attach as a payment header to access the resource. Do NOT use for swap or token transfers — use okx-dex-swap instead. Do NOT use for wallet balance or portfolio queries — use okx-agentic-wallet or okx-wallet-portfolio. Do NOT use for security scanning — use okx-security. Do NOT use for transaction broadcasting — use okx-onchain-gateway. Do NOT use for general programming questions."
+description: "This skill should be used when the user encounters an HTTP 402 Payment Required response, wants to pay for a payment-gated API or resource, or mentions 'x402', 'pay for access', '402 payment', 'payment-gated URL', or 'sign x402 payment'. Primary path signs via TEE with a wallet session (JWT) — recommended. Fallback path allows local EIP-3009 signing with the user's own private key only when the user explicitly opts in (key stays local but is not TEE-protected). Returns the payment proof (signature + authorization) that the caller can attach as a payment header to access the resource. Do NOT use for swap or token transfers — use okx-dex-swap instead. Do NOT use for wallet balance or portfolio queries — use okx-agentic-wallet or okx-wallet-portfolio. Do NOT use for security scanning — use okx-security. Do NOT use for transaction broadcasting — use okx-onchain-gateway. Do NOT use for general programming questions."
 license: MIT
 metadata:
   author: okx
@@ -453,6 +453,8 @@ PAYMENT-SIGNATURE: <headerValue>
 
 ## Local Signing Fallback (No Wallet)
 
+> **⚠️ Security Notice**: This fallback uses your local private key for signing — the key stays on your machine but is **not** protected by TEE. Only use this path if you cannot log in to the wallet, and ensure your private key is stored securely (e.g., `~/.onchainos/.env` with `chmod 600`). The recommended path is always TEE signing via `onchainos payment x402-pay`.
+
 If the user chose "Local private key" in Step 3, use the native `onchainos payment eip3009-sign` command to sign locally.
 
 ### Prerequisites
@@ -518,6 +520,15 @@ Base64-encode and replay the original request with the header attached.
 - `amount` (v2) / `maxAmountRequired` (v1) is always in minimal units (e.g., `1000000` for 1 USDG)
 - When displaying to the user, convert to UI units: divide by `10^decimal`
 - Show token symbol alongside (e.g., `1.00 USDG`)
+
+Common token decimal reference:
+
+| Token | Decimals | 1 unit in minimal     | Example                        |
+|-------|----------|-----------------------|--------------------------------|
+| USDC  | 6        | `1000000`             | `1000000` → 1.00 USDC          |
+| USDG  | 6        | `1000000`             | `500000` → 0.50 USDG           |
+| USDT  | 6        | `1000000`             | `2500000` → 2.50 USDT          |
+| ETH   | 18       | `1000000000000000000` | `10000000000000000` → 0.01 ETH |
 
 ## Global Notes
 
