@@ -145,13 +145,30 @@ Now that payment is required, check if the user has a wallet session:
 onchainos wallet status
 ```
 
-- **Logged in** → proceed to Step 4 (Sign).
-- **Not logged in** → ask the user:
+- **Logged in** → proceed to Step 4 (Sign via TEE).
+- **Not logged in** → **STOP and ask the user** which signing method to use. Do NOT check for private keys, read files, or call any other tool until the user responds:
 
-> "This resource requires payment (x402). You need a wallet to sign the payment. Would you like to create one? (It's free and takes ~30 seconds.)"
+> "You are not logged in. How would you like to sign the payment?"
+> 1. **Wallet login** — log in to the wallet, then sign via TEE (recommended)
+> 2. **Local private key** — sign locally with your own private key (no login needed)
 
-- **User says yes** → run `onchainos wallet login` (AK login, no email) or `onchainos wallet login <email>` (OTP login), then proceed to Step 4.
-- **User says no** → switch to the **Local Signing Fallback** (see below).
+Then STOP and wait for the user's response. Do not proceed in the same turn.
+
+#### Option 1: Wallet Login
+
+Run `onchainos wallet login` (AK login, no email) or `onchainos wallet login <email>` (OTP login), then proceed to Step 4.
+
+#### Option 2: Local Private Key
+
+Only after the user chooses this option, read `~/.onchainos/.env` to check if `EVM_PRIVATE_KEY` is already configured:
+
+- **Key found** → inform the user and proceed to the **Local Signing Fallback** below. The payer address will be derived from the private key automatically by the CLI.
+
+- **Key not found** → inform the user:
+
+  > "No private key configured. Please save it to `~/.onchainos/.env`: add a line `EVM_PRIVATE_KEY=0x<your_hex_key>`, then let me know."
+
+  Wait for user action before proceeding.
 
 ### Step 4: Sign
 
@@ -324,34 +341,32 @@ onchainos payment x402-pay \
 
 ### 2. onchainos payment eip3009-sign
 
-Sign an EIP-3009 `TransferWithAuthorization` locally using a hex private key (from `EVM_PRIVATE_KEY` env var). No wallet session or TEE required. Uses the same `--accepts` interface as `x402-pay` — EIP-712 domain `name`/`version` are extracted from `accepts[].extra.name` / `extra.version`.
+Sign an EIP-3009 `TransferWithAuthorization` locally using a hex private key (from `EVM_PRIVATE_KEY` env var or `~/.onchainos/.env`). No wallet session or TEE required. The payer address (`from`) is derived automatically from the private key. Uses the same `--accepts` interface as `x402-pay` — EIP-712 domain `name`/`version` are extracted from `accepts[].extra.name` / `extra.version`.
 
 ```bash
-EVM_PRIVATE_KEY=0x<hex> onchainos payment eip3009-sign \
-  --accepts '<accepts array JSON>' \
-  --from <payer address>
+onchainos payment eip3009-sign \
+  --accepts '<accepts array JSON>'
 ```
 
-| Param                    | Required | Default | Description                                                                                |
-|--------------------------|----------|---------|--------------------------------------------------------------------------------------------|
-| `EVM_PRIVATE_KEY` (env)  | Yes      | -       | Hex-encoded secp256k1 private key (with or without `0x` prefix)                            |
-| `--accepts`              | Yes      | -       | JSON `accepts` array from the 402 payload (same as `x402-pay`); `extra.name`/`extra.version` provide the EIP-712 domain |
-| `--from`                 | Yes      | -       | Payer address (EVM, 0x-prefixed)                                                           |
+| Param             | Required | Default | Description                                                                                                             |
+|-------------------|----------|---------|-------------------------------------------------------------------------------------------------------------------------|
+| `EVM_PRIVATE_KEY` | Yes      | -       | Hex-encoded secp256k1 private key; read from env var, falls back to `~/.onchainos/.env`                                 |
+| `--accepts`       | Yes      | -       | JSON `accepts` array from the 402 payload (same as `x402-pay`); `extra.name`/`extra.version` provide the EIP-712 domain |
 
-The CLI extracts `network`, `amount`, `payTo`, `asset`, `maxTimeoutSeconds` from the accepts array (same logic as `x402-pay`), plus `extra.name` → EIP-712 domain name, `extra.version` → EIP-712 domain version (defaults to `"2"` if absent).
+The CLI derives the payer address from the private key, and extracts `network`, `amount`, `payTo`, `asset`, `maxTimeoutSeconds` from the accepts array (same logic as `x402-pay`), plus `extra.name` → EIP-712 domain name, `extra.version` → EIP-712 domain version (defaults to `"2"` if absent).
 
 **Return fields**:
 
-| Field                       | Type   | Description                                              |
-|-----------------------------|--------|----------------------------------------------------------|
+| Field                       | Type   | Description                                                     |
+|-----------------------------|--------|-----------------------------------------------------------------|
 | `signature`                 | String | EIP-3009 secp256k1 signature (hex, 0x-prefixed, 65 bytes r+s+v) |
-| `authorization`             | Object | Standard x402 EIP-3009 `transferWithAuthorization` fields |
-| `authorization.from`        | String | Payer address                                            |
-| `authorization.to`          | String | Recipient address                                        |
-| `authorization.value`       | String | Payment amount in minimal units                          |
-| `authorization.validAfter`  | String | `"0"`                                                    |
-| `authorization.validBefore` | String | Computed expiry timestamp (Unix seconds)                 |
-| `authorization.nonce`       | String | Random nonce (hex, 0x-prefixed, 32 bytes)                |
+| `authorization`             | Object | Standard x402 EIP-3009 `transferWithAuthorization` fields       |
+| `authorization.from`        | String | Payer address                                                   |
+| `authorization.to`          | String | Recipient address                                               |
+| `authorization.value`       | String | Payment amount in minimal units                                 |
+| `authorization.validAfter`  | String | `"0"`                                                           |
+| `authorization.validBefore` | String | Computed expiry timestamp (Unix seconds)                        |
+| `authorization.nonce`       | String | Random nonce (hex, 0x-prefixed, 32 bytes)                       |
 
 ## Input / Output Examples
 
@@ -438,11 +453,11 @@ PAYMENT-SIGNATURE: <headerValue>
 
 ## Local Signing Fallback (No Wallet)
 
-If the user does not have a wallet and chooses not to create one, use the native `onchainos payment eip3009-sign` command to sign locally with their own private key.
+If the user chose "Local private key" in Step 3, use the native `onchainos payment eip3009-sign` command to sign locally.
 
 ### Prerequisites
 
-- User has a local hex private key (e.g., in a `.env` file or MetaMask export)
+- A private key is available (via `EVM_PRIVATE_KEY` env var or `~/.onchainos/.env`) — Step 3 already verified this by reading the file
 - The payer address must hold sufficient ERC-20 balance of the `asset` token on the target chain
 - The `asset` token contract must support EIP-3009 `transferWithAuthorization`
 - The 402 payload's `accepts[].extra` must include `name` (EIP-712 domain name); `version` is optional (defaults to `"2"`)
@@ -464,12 +479,11 @@ Extract: `network`, `amount` (v2) or `maxAmountRequired` (v1), `payTo`, `asset`,
 
 ### Step 2: Sign with `onchainos payment eip3009-sign`
 
-Set the private key via environment variable and pass the same `accepts` array:
+The CLI reads `EVM_PRIVATE_KEY` from env var or `~/.onchainos/.env` automatically, and derives the payer address from the private key:
 
 ```bash
-EVM_PRIVATE_KEY=0x<hex_private_key> onchainos payment eip3009-sign \
-  --accepts '<JSON.stringify(decoded.accepts)>' \
-  --from <payer_address>
+onchainos payment eip3009-sign \
+  --accepts '<JSON.stringify(decoded.accepts)>'
 ```
 
 The CLI parses the accepts array (same as `x402-pay`), extracts `extra.name`/`extra.version` as the EIP-712 domain, and handles nonce generation, `validBefore` calculation, struct hashing, and secp256k1 signing internally. It returns `{ signature, authorization }` — same structure as the TEE path (exact scheme).
@@ -485,14 +499,14 @@ Base64-encode and replay the original request with the header attached.
 
 ### Important Notes for Local Signing
 
-- The private key is read from the `EVM_PRIVATE_KEY` environment variable — it **never** leaves the local machine
+- The private key is read from the `EVM_PRIVATE_KEY` environment variable or `~/.onchainos/.env` — it **never** leaves the local machine
 - The CLI generates a random 32-byte nonce and computes `validBefore = now + maxTimeoutSeconds` automatically
 - The EIP-712 domain `name` must be present in `accepts[].extra.name`; if missing the CLI will error. `version` defaults to `"2"` if `extra.version` is absent
 - The signed authorization only authorizes the **exact** `(from, to, value, nonce)` tuple — it cannot be modified or reused
 
 ## Edge Cases
 
-- **Not logged in**: Ask user if they want to create a wallet (`onchainos wallet login` or `onchainos wallet login <email>`). If not, guide them through the Local Signing Fallback above
+- **Not logged in**: Ask user to choose between wallet login or local private key signing (see Step 3). If local: read `~/.onchainos/.env` to check for a key — the CLI derives the address automatically. If wallet: proceed with `onchainos wallet login`
 - **Unsupported network**: Only EVM chains with CAIP-2 `eip155:<chainId>` format are supported
 - **No wallet for chain**: The logged-in account must have an address on the requested chain; if not, inform the user
 - **Amount in wrong units**: `amount` (v2) / `maxAmountRequired` (v1) must be in minimal units — remind user to convert (e.g., 1 USDG = `1000000` for 6 decimals)
@@ -508,6 +522,6 @@ Base64-encode and replay the original request with the header attached.
 ## Global Notes
 
 - **Primary path** (`onchainos payment x402-pay`): requires an authenticated JWT session; signing is performed inside a TEE — the private key never leaves the secure enclave
-- **Fallback path** (`onchainos payment eip3009-sign`): requires the user's own private key via `EVM_PRIVATE_KEY` env var; signing is done entirely on the local machine — no JWT or TEE needed
+- **Fallback path** (`onchainos payment eip3009-sign`): requires the user's own private key via `EVM_PRIVATE_KEY` env var or `~/.onchainos/.env`; signing is done entirely on the local machine — no JWT or TEE needed
 - This skill only signs — it does **not** broadcast or deduct balance directly; payment settles when the recipient redeems the authorization on-chain
 - The returned `authorization` object must be included alongside `signature` when building the payment header

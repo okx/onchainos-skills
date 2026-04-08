@@ -29,9 +29,6 @@ pub enum PaymentCommand {
         /// domain name/version are extracted from the selected entry's `extra.name` / `extra.version`.
         #[arg(long)]
         accepts: String,
-        /// Payer address (EVM, 0x-prefixed, required)
-        #[arg(long)]
-        from: String,
     },
 }
 
@@ -139,6 +136,32 @@ fn parse_payload_inner(raw: &str, first_only: bool) -> Result<ResolvedParams> {
     })
 }
 
+/// Read `EVM_PRIVATE_KEY` from the environment variable.
+/// Falls back to `~/.onchainos/.env` if the env var is not set.
+fn read_private_key() -> Result<String> {
+    std::env::var("EVM_PRIVATE_KEY").or_else(|_| {
+        let env_path = crate::home::onchainos_home()?.join(".env");
+        let content = std::fs::read_to_string(&env_path).with_context(|| {
+            format!(
+                "EVM_PRIVATE_KEY not set and {} not found",
+                env_path.display()
+            )
+        })?;
+        for line in content.lines() {
+            let line = line.trim();
+            if let Some(val) = line.strip_prefix("EVM_PRIVATE_KEY=") {
+                if !val.is_empty() {
+                    return Ok(val.to_string());
+                }
+            }
+        }
+        Err(anyhow!(
+            "EVM_PRIVATE_KEY not found in {}",
+            env_path.display()
+        ))
+    })
+}
+
 pub async fn execute(cmd: PaymentCommand) -> Result<()> {
     match cmd {
         PaymentCommand::X402Pay { accepts, from } => {
@@ -154,15 +177,12 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
             )
             .await
         }
-        PaymentCommand::Eip3009Sign { accepts, from } => {
+        PaymentCommand::Eip3009Sign { accepts } => {
             let params = parse_payload_local(&accepts)?;
-            let pk = std::env::var("EVM_PRIVATE_KEY")
-                .ok()
-                .ok_or_else(|| anyhow!("EVM_PRIVATE_KEY env var is required"))?;
-            let domain_name = params
-                .domain_name
-                .as_deref()
-                .ok_or_else(|| anyhow!("missing 'extra.name' (EIP-712 domain name) in accepts entry"))?;
+            let pk = read_private_key()?;
+            let domain_name = params.domain_name.as_deref().ok_or_else(|| {
+                anyhow!("missing 'extra.name' (EIP-712 domain name) in accepts entry")
+            })?;
             let domain_version = params.domain_version.as_deref().unwrap_or("2");
             cmd_eip3009_sign(
                 &pk,
@@ -170,7 +190,6 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
                 &params.amount,
                 &params.pay_to,
                 &params.asset,
-                &from,
                 params.max_timeout_seconds,
                 domain_name,
                 domain_version,
@@ -357,15 +376,13 @@ fn cmd_eip3009_sign(
     amount: &str,
     pay_to: &str,
     asset: &str,
-    from: &str,
     max_timeout_secs: u64,
     domain_name: &str,
     domain_version: &str,
 ) -> Result<()> {
+    use alloy_signer_local::PrivateKeySigner;
+
     let parsed_amount = validate_payment_inputs(amount, pay_to, asset)?;
-    if !is_valid_evm_address(from) {
-        bail!("--from must be a valid EVM address (0x + 40 hex chars)");
-    }
 
     // ── Parse private key ────────────────────────────────────────────
     let pk_clean = private_key_hex
@@ -378,6 +395,11 @@ fn cmd_eip3009_sign(
             pk_bytes.len()
         );
     }
+
+    // ── Derive from address from private key ────────────────────────
+    let signer = PrivateKeySigner::from_slice(&pk_bytes)
+        .map_err(|e| anyhow!("invalid secp256k1 private key: {e}"))?;
+    let from = format!("{:#x}", signer.address());
 
     // ── Derive chain_id from network ─────────────────────────────────
     let chain_id = parse_eip155_chain_id(network)?;
@@ -665,18 +687,10 @@ mod tests {
     #[test]
     fn cli_eip3009_sign_accepts_and_from() {
         let json = r#"[{"scheme":"exact","network":"eip155:8453","amount":"1000000","payTo":"0xA","asset":"0xB","extra":{"name":"USD Coin","version":"2"}}]"#;
-        let cli = TestCli::parse_from([
-            "test",
-            "eip3009-sign",
-            "--accepts",
-            json,
-            "--from",
-            "0xPayer",
-        ]);
+        let cli = TestCli::parse_from(["test", "eip3009-sign", "--accepts", json]);
         match cli.command {
-            PaymentCommand::Eip3009Sign { accepts, from } => {
+            PaymentCommand::Eip3009Sign { accepts } => {
                 assert_eq!(accepts, json);
-                assert_eq!(from, "0xPayer");
             }
             _ => panic!("expected Eip3009Sign"),
         }
@@ -691,8 +705,7 @@ mod tests {
 
     #[test]
     fn cli_eip3009_sign_missing_accepts() {
-        let result =
-            TestCli::try_parse_from(["test", "eip3009-sign", "--from", "0xPayer"]);
+        let result = TestCli::try_parse_from(["test", "eip3009-sign", "--from", "0xPayer"]);
         assert!(result.is_err());
     }
 
