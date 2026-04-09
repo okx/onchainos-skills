@@ -4,7 +4,7 @@ description: "Use this skill when the user mentions 'onchainos ws', 'ws start', 
 license: MIT
 metadata:
   author: okx
-  version: "2.2.6"
+  version: "2.0.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -20,7 +20,7 @@ Two ways to consume real-time DEX data:
 
 ## Prerequisites
 
-This skill requires co-installation with `okx-dex-market`, `okx-dex-token`, `okx-dex-signal`, and `okx-dex-trenches` (all included in the onchainos-skills repository).
+This skill references `ws-protocol.md` files from `okx-dex-market`, `okx-dex-token`, `okx-dex-signal`, and `okx-dex-trenches`. If a referenced file is not found, the corresponding skill may not be installed — inform the user and suggest installing the missing skill from the onchainos-skills plugin.
 
 ## Approach 1: CLI (`onchainos ws`)
 

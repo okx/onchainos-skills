@@ -3,9 +3,10 @@ use serde_json::json;
 
 use crate::keyring_store;
 use crate::output;
+use crate::wallet_api::WalletApiClient;
 use crate::wallet_store::{self, WalletsJson};
 
-use super::auth::{is_session_key_expired, is_token_expired};
+use super::auth::{ensure_tokens_refreshed, is_session_key_expired, is_token_expired};
 
 // ── switch ───────────────────────────────────────────────────────────
 
@@ -141,6 +142,21 @@ pub(super) async fn cmd_status() -> Result<()> {
         (json!("email"), serde_json::Value::Null)
     };
 
+    // Query policy for the current account when logged in
+    let policy = if logged_in && !wallets.selected_account_id.is_empty() {
+        match query_policy(&wallets.selected_account_id).await {
+            Ok(val) => val,
+            Err(e) => {
+                if cfg!(feature = "debug-log") {
+                    eprintln!("[DEBUG] cmd_status: policy query failed: {e}");
+                }
+                serde_json::Value::Null
+            }
+        }
+    } else {
+        serde_json::Value::Null
+    };
+
     output::success(json!({
         "email": wallets.email,
         "loggedIn": logged_in,
@@ -149,6 +165,7 @@ pub(super) async fn cmd_status() -> Result<()> {
         "currentAccountId": wallets.selected_account_id,
         "currentAccountName": current_account_name,
         "accountCount": wallets.accounts.len(),
+        "policy": policy,
     }));
     Ok(())
 }
@@ -220,6 +237,28 @@ pub(super) async fn cmd_addresses(chain: Option<&str>) -> Result<()> {
         "solana": solana,
     }));
     Ok(())
+}
+
+// ── query_policy ─────────────────────────────────────────────────────
+
+/// Query policy settings for the given account via
+/// GET /priapi/v5/wallet/agentic/policy/query.
+/// Returns the first element of the `data` array, or Null on failure.
+async fn query_policy(account_id: &str) -> Result<serde_json::Value> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let client = WalletApiClient::new()?;
+    let data = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/policy/query",
+            &access_token,
+            &[("accountId", account_id)],
+        )
+        .await?;
+    let first = data
+        .as_array()
+        .and_then(|arr| arr.first().cloned())
+        .unwrap_or(serde_json::Value::Null);
+    Ok(first)
 }
 
 // ── resolve_active_account_id ─────────────────────────────────────────
