@@ -1033,63 +1033,36 @@ pub async fn fetch_liquidity(client: &ApiClient, chain_index: &str) -> Result<Va
 
 // ── Execute orchestration ────────────────────────────────────────────
 
-/// Run an onchainos subcommand as a subprocess and return the `data` field from
-/// the `{ "ok": true, "data": ... }` output envelope.
-/// This keeps swap independent of wallet internals.
-async fn run_onchainos_cmd(args: &[&str]) -> Result<Value> {
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][run_onchainos_cmd] args: {:?}", args);
-    }
-    let exe = std::env::current_exe().unwrap_or_else(|_| "onchainos".into());
-    let output = tokio::process::Command::new(&exe)
-        .args(args)
-        .output()
-        .await
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "failed to spawn onchainos {}: {e}",
-                args.first().unwrap_or(&"")
-            )
-        })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        // Try to extract error message from JSON output envelope
-        if let Ok(parsed) = serde_json::from_str::<Value>(stdout.trim()) {
-            if let Some(err_msg) = parsed["error"].as_str() {
-                bail!("{}", err_msg);
-            }
-        }
-        bail!(
-            "onchainos {} failed (exit {}): {}",
-            args.first().unwrap_or(&""),
-            output.status.code().unwrap_or(-1),
-            stderr.trim(),
-        );
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: Value = serde_json::from_str(stdout.trim())
-        .map_err(|e| anyhow::anyhow!("failed to parse onchainos output: {e}"))?;
-
-    // Unwrap the { "ok": true, "data": ... } envelope
-    if parsed["ok"].as_bool() != Some(true) {
-        let err_msg = parsed["error"].as_str().unwrap_or("unknown error");
-        bail!("onchainos command failed: {}", err_msg);
-    }
-
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][run_onchainos_cmd] result: {}", parsed["data"]);
-    }
-    Ok(parsed["data"].clone())
-}
-
-/// Run `onchainos wallet contract-call` and return the `data` field.
-async fn wallet_contract_call(args: &[&str]) -> Result<Value> {
-    let mut full_args = vec!["wallet", "contract-call"];
-    full_args.extend_from_slice(args);
-    run_onchainos_cmd(&full_args).await
+/// Call `execute_contract_call` directly and return the txHash wrapped in a JSON value.
+#[allow(clippy::too_many_arguments)]
+async fn wallet_contract_call(
+    to: &str,
+    chain: &str,
+    amt: &str,
+    input_data: Option<&str>,
+    unsigned_tx: Option<&str>,
+    gas_limit: Option<&str>,
+    aa_dex_token_addr: Option<&str>,
+    aa_dex_token_amount: Option<&str>,
+    mev_protection: bool,
+    jito_unsigned_tx: Option<&str>,
+) -> Result<Value> {
+    let tx_hash = crate::commands::agentic_wallet::transfer::execute_contract_call(
+        to,
+        chain,
+        amt,
+        input_data,
+        unsigned_tx,
+        gas_limit,
+        None, // from: use selected account
+        aa_dex_token_addr,
+        aa_dex_token_amount,
+        mev_protection,
+        jito_unsigned_tx,
+        false, // force
+    )
+    .await?;
+    Ok(json!({ "txHash": tx_hash }))
 }
 
 /// Extract txHash from `wallet contract-call` output data.
@@ -1135,8 +1108,31 @@ async fn cmd_execute(
     let mut approve_tx_hash: Option<String> = None;
 
     if family == "evm" && !is_from_native {
-        let approvals =
-            fetch_check_approvals(client, &chain_index, wallet_address, &from_token, None).await?;
+        // Fetch approve-transaction first to get dexContractAddress (spender) and calldata
+        let approve_data = fetch_approve(client, &chain_index, &from_token, amount).await?;
+        let approve_obj = unwrap_api_array(&approve_data);
+        let approve_calldata = approve_obj["data"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("missing 'data' field in approve response"))?;
+        let dex_contract_address = approve_obj["dexContractAddress"]
+            .as_str()
+            .map(|s| s.to_string());
+        if cfg!(feature = "debug-log") {
+            eprintln!(
+                "[DEBUG][cmd_execute] dexContractAddress={:?}",
+                dex_contract_address
+            );
+        }
+
+        let approvals = fetch_check_approvals(
+            client,
+            &chain_index,
+            wallet_address,
+            &from_token,
+            dex_contract_address.as_deref(),
+        )
+        .await?;
 
         let spendable = approvals
             .as_array()
@@ -1165,14 +1161,18 @@ async fn cmd_execute(
                 let revoke_data = fetch_approve(client, &chain_index, &from_token, "0").await?;
                 let revoke_calldata = extract_approve_calldata(&revoke_data)?;
 
-                let result = wallet_contract_call(&[
-                    "--to",
+                let result = wallet_contract_call(
                     &from_token,
-                    "--chain",
                     &chain_index,
-                    "--input-data",
-                    &revoke_calldata,
-                ])
+                    "0",
+                    Some(&revoke_calldata),
+                    None,
+                    None,
+                    None,
+                    None,
+                    false,
+                    None,
+                )
                 .await?;
                 // We don't need the revoke txHash in output, just ensure it succeeded
                 extract_tx_hash(&result)?;
@@ -1181,17 +1181,19 @@ async fn cmd_execute(
             if cfg!(feature = "debug-log") {
                 eprintln!("[swap execute] approving token...");
             }
-            let approve_data = fetch_approve(client, &chain_index, &from_token, amount).await?;
-            let approve_calldata = extract_approve_calldata(&approve_data)?;
-
-            let result = wallet_contract_call(&[
-                "--to",
+            // Reuse the approve calldata already fetched above
+            let result = wallet_contract_call(
                 &from_token,
-                "--chain",
                 &chain_index,
-                "--input-data",
-                &approve_calldata,
-            ])
+                "0",
+                Some(&approve_calldata),
+                None,
+                None,
+                None,
+                None,
+                false,
+                None,
+            )
             .await?;
             approve_tx_hash = Some(extract_tx_hash(&result)?);
         }
@@ -1233,23 +1235,23 @@ async fn cmd_execute(
             .ok_or_else(|| anyhow::anyhow!("missing tx.data (unsigned tx) in swap response"))?;
         let to_addr = tx["to"].as_str().unwrap_or("");
 
-        let mut args = vec![
-            "--to",
-            to_addr,
-            "--chain",
-            &chain_index,
-            "--unsigned-tx",
-            unsigned_tx,
-        ];
-
         // Jito MEV protection
-        if let Some(jito_tx) = swap_result["jitoCalldata"].as_str() {
-            args.extend_from_slice(&["--jito-unsigned-tx", jito_tx, "--mev-protection"]);
-        } else if mev_protection {
-            args.push("--mev-protection");
-        }
+        let jito_tx = swap_result["jitoCalldata"].as_str();
+        let effective_mev = jito_tx.is_some() || mev_protection;
 
-        let result = wallet_contract_call(&args).await?;
+        let result = wallet_contract_call(
+            to_addr,
+            &chain_index,
+            "0",
+            None,
+            Some(unsigned_tx),
+            None,
+            None,
+            None,
+            effective_mev,
+            jito_tx,
+        )
+        .await?;
         extract_tx_hash(&result)?
     } else {
         let to_addr = tx["to"]
@@ -1260,44 +1262,34 @@ async fn cmd_execute(
             .ok_or_else(|| anyhow::anyhow!("missing tx.data in swap response"))?;
         let tx_value_wei = tx["value"].as_str().unwrap_or("0");
 
-        let mut args = vec![
-            "--to",
-            to_addr,
-            "--chain",
-            &chain_index,
-            "--amt",
-            &tx_value_wei,
-            "--input-data",
-            input_data,
-        ];
-
         // Gas limit from swap response
-        let gas_limit_val;
-        if let Some(g) = tx["gas"].as_str() {
-            gas_limit_val = g.to_string();
-            args.extend_from_slice(&["--gas-limit", &gas_limit_val]);
-        }
+        let gas_limit_str = tx["gas"].as_str();
 
         // XLayer AA DEX params
         let from_token_amount;
-        if chain_index == "196" {
+        let (aa_addr, aa_amount) = if chain_index == "196" {
             from_token_amount = swap_result["routerResult"]["fromTokenAmount"]
                 .as_str()
                 .unwrap_or(amount)
                 .to_string();
-            args.extend_from_slice(&[
-                "--aa-dex-token-addr",
-                &from_token,
-                "--aa-dex-token-amount",
-                &from_token_amount,
-            ]);
-        }
+            (Some(from_token.as_str()), Some(from_token_amount.as_str()))
+        } else {
+            (None, None)
+        };
 
-        if mev_protection {
-            args.push("--mev-protection");
-        }
-
-        let result = wallet_contract_call(&args).await?;
+        let result = wallet_contract_call(
+            to_addr,
+            &chain_index,
+            tx_value_wei,
+            Some(input_data),
+            None,
+            gas_limit_str,
+            aa_addr,
+            aa_amount,
+            mev_protection,
+            None,
+        )
+        .await?;
         extract_tx_hash(&result)?
     };
 

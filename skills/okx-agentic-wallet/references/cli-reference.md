@@ -105,6 +105,20 @@ onchainos wallet status
 | `currentAccountId` | String | Active account UUID |
 | `currentAccountName` | String | Active account name |
 | `accountCount` | Number | Total number of wallet accounts (0 if not logged in) |
+| `policy` | Object \| Null | Policy settings for the active account (null when not logged in or no policy configured). See **Policy fields** below. |
+
+#### Policy fields (inside `policy`)
+
+| Field | Type | Description |
+|---|---|---|
+| `singleTxLimit` | String | Per-transaction USD limit (`"0"` = not set) |
+| `singleTxFlag` | Boolean | Whether per-transaction limit is enabled |
+| `dailyTransferTxLimit` | String | Daily transfer USD limit (`"0"` = not set) |
+| `dailyTransferTxFlag` | Boolean | Whether daily transfer limit is enabled |
+| `dailyTransferTxUsed` | String | Daily transfer amount already used (USD) |
+| `dailyTradeTxLimit` | String | Daily trade USD limit (`"0"` = not set) |
+| `dailyTradeTxFlag` | Boolean | Whether daily trade limit is enabled |
+| `dailyTradeTxUsed` | String | Daily trade amount already used (USD) |
 
 ### A6. `onchainos wallet logout`
 
