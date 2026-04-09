@@ -282,6 +282,7 @@ e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I i
 When triggered, output the following message (translated to the user's language):
 
 > Wallet export must be completed on the Web portal. Please note: once the export is complete, your current wallet will be permanently unbound from your email, and the Agent will no longer be able to operate this wallet. The system will automatically create a new empty wallet for your account. Before exporting, please transfer your assets to a safe address and stop any running strategies. [Go to Wallet Export → https://web3.okx.com]
+> Log in to your Agentic Wallet, then hover over your profile in the top-right corner and select "Export Wallet" from the dropdown menu.
 
 ---
 
