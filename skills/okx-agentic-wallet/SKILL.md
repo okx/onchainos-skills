@@ -1,6 +1,6 @@
 ---
 name: okx-agentic-wallet
-description: "Use this skill when the user mentions wallet login, sign in, verify OTP, add wallet, switch account, wallet status, logout, wallet balance, assets, holdings, send tokens, transfer ETH, transfer USDC, pay someone, send crypto, send ERC-20, send SPL, transaction history, recent transactions, tx status, tx detail, order list, call smart contract, interact with contract, execute contract function, send calldata, invoke smart contract, show my addresses, wallet addresses, deposit, receive, receive address, top up, fund my wallet, sign message, personal sign, personalSign, eip712, sign data, sign typed data, sign EIP-712, TEE signing, trusted execution environment. Chinese: 登录钱包, 钱包登录, 验证OTP, 添加钱包, 切换账户, 钱包状态, 退出登录, 余额, 资产, 钱包列表, 账户列表, 发送代币, 转账, 交易历史, 交易记录, 合约调用, 我的地址, 钱包地址, 充值, 充币, 收款, 收款地址, 入金, 签名消息, 消息签名, TEE签名, 可信执行环境. Manages the wallet lifecycle: auth (login, OTP verify, account addition, switching, status, logout), authenticated balance queries, wallet address display (grouped by XLayer/EVM/Solana), token transfers (native & ERC-20/SPL), transaction history, smart contract calls, and message signing (personalSign for EVM & Solana, EIP-712 for EVM)."
+description: "Use this skill when the user mentions wallet login, sign in, verify OTP, add wallet, switch account, wallet status, logout, wallet balance, assets, holdings, send tokens, transfer ETH, transfer USDC, pay someone, send crypto, send ERC-20, send SPL, transaction history, recent transactions, tx status, tx detail, order list, call smart contract, interact with contract, execute contract function, send calldata, invoke smart contract, show my addresses, wallet addresses, deposit, receive, receive address, top up, fund my wallet, sign message, personal sign, personalSign, eip712, sign data, sign typed data, sign EIP-712, TEE signing, trusted execution environment, export wallet, export mnemonic. Chinese: 登录钱包, 钱包登录, 验证OTP, 添加钱包, 切换账户, 钱包状态, 退出登录, 余额, 资产, 钱包列表, 账户列表, 发送代币, 转账, 交易历史, 交易记录, 合约调用, 我的地址, 钱包地址, 充值, 充币, 收款, 收款地址, 入金, 签名消息, 消息签名, TEE签名, 可信执行环境, 导出钱包, 导出助记词. Manages the wallet lifecycle: auth (login, OTP verify, account addition, switching, status, logout), authenticated balance queries, wallet address display (grouped by XLayer/EVM/Solana), token transfers (native & ERC-20/SPL), transaction history, smart contract calls, and message signing (personalSign for EVM & Solana, EIP-712 for EVM)."
 license: MIT
 metadata:
   author: okx
@@ -271,6 +271,21 @@ e.g., "How do I set a spending limit?", "What's my daily limit?", "How to config
 
 ---
 
+## Wallet Export Guidance
+
+> The Agent must **never** display any mnemonic phrase or private key content in the conversation. The Agent's role is limited to: recognizing user intent, explaining the risks, and providing the Web portal link.
+
+### User asks about wallet export
+
+e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I import my wallet into a hardware wallet?"
+
+When triggered, output the following message (translated to the user's language):
+
+> Wallet export must be completed on the Web portal. Please note: once the export is complete, your current wallet will be permanently unbound from your email, and the Agent will no longer be able to operate this wallet. The system will automatically create a new empty wallet for your account. Before exporting, please transfer your assets to a safe address and stop any running strategies. [Go to Wallet Export → https://web3.okx.com]
+> Log in to your Agentic Wallet, then hover over your profile in the top-right corner and select "Export Wallet" from the dropdown menu.
+
+---
+
 ## Edge Cases
 
 > Load on error: `references/troubleshooting.md`
@@ -307,6 +322,7 @@ e.g., "How do I set a spending limit?", "What's my daily limit?", "How to config
 <never>
     - Never show raw `accountId` — show `accountName`. `accountId` is for CLI calls only.
     - Do NOT mix address formats across chain types
+    - **Never display mnemonic phrases, seed phrases, or private keys** in the conversation — wallet export must always be completed on the Web portal.
 </never>
 </rules>
 
