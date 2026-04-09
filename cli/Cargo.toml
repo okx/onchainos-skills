@@ -1,6 +1,6 @@
 [package]
 name = "onchainos-cli"
-version = "2.2.6"
+version = "2.2.7"
 edition = "2021"
 
 [[bin]]
@@ -46,6 +46,8 @@ bs58 = "0.5"
 
 # EVM transaction building
 alloy-consensus = "1"
+alloy-signer = "1"
+alloy-sol-types = "1"
 alloy-signer-local = "1"
 alloy-primitives = "1"
 alloy-rlp = "0.3"

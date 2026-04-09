@@ -4,7 +4,7 @@ description: "Use this skill to 'check my DeFi positions', 'view DeFi holdings',
 license: Apache-2.0
 metadata:
   author: okx
-  version: "2.2.6"
+  version: "1.0.5"
   homepage: "https://web3.okx.com"
 ---
 
@@ -143,6 +143,20 @@ Rules:
 - Type: map investType → Supply/Borrow/Stake/Farm/Pool etc; pending rewards row uses `Pending`
 - **Health rate**: show separately below the table with warning if `healthRate < 1.5`
 
+#### V3 Pool Positions — Extra Fields
+
+For V3 Pool positions (`positionList` present), show an additional section per position:
+
+| tokenId | Status | Range | tickLower | tickUpper |
+|---------|--------|-------|-----------|-----------|
+| 93828 | ACTIVE | 0.892 – 0.992 USDC/DAI | -33500 | -30450 |
+
+- `tokenId`: from `positionList[].tokenId`
+- `positionStatus`: `ACTIVE` or `INACTIVE`
+- `range`: from `positionList[].range`
+- `tickLower` / `tickUpper`: from `positionList[].rangeInfo.tickLower` / `rangeInfo.tickUpper`
+- These fields are critical for V3 operations (add liquidity, withdraw, collect V3 fees)
+
 ## investType Reference
 
 | investType | Description |
@@ -164,6 +178,7 @@ Rules:
 |----------------|---------|
 | `defi positions` | 1. View detail → `defi position-detail`  2. Redeem → `okx-defi-invest`  3. Claim rewards → `okx-defi-invest` |
 | `defi position-detail` | 1. Redeem position → use `okx-defi-invest` with `investmentId` from table  2. Claim rewards → use `okx-defi-invest`  3. Add more → use `okx-defi-invest` |
+| `defi position-detail` (V3 Pool) | 1. View depth chart → `defi depth-price-chart --investment-id <id>` (via `okx-defi-invest`)  2. View price history → `defi depth-price-chart --investment-id <id> --chart-type PRICE` |
 
 ## Global Notes
 

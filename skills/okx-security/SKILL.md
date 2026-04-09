@@ -4,7 +4,7 @@ description: "Use this skill for security scanning: check transaction safety, is
 license: MIT
 metadata:
   author: okx
-  version: "2.2.6"
+  version: "1.0.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -61,12 +61,20 @@ Every time before running any `onchainos` command, always follow these steps in 
 
 ## Fail-safe Principle (CRITICAL)
 
-If any security scan command fails for ANY reason (network error, API error, timeout, rate limiting, malformed response), the Agent MUST:
-- **NOT proceed** with the associated transaction, swap, approval, or signature.
-- Report the error clearly to the user.
-- Suggest retrying the scan before continuing.
+### Scan completed — risk detected
 
-> A security scan that fails to complete is NOT a "pass". Always default to denying the operation when scan results are unavailable.
+If a security scan **completes successfully** and returns `action: "block"` or `action: "warn"`, follow the Risk Action Priority Rule below. The Agent MUST NOT override risk verdicts.
+
+### Scan failed — infrastructure error
+
+If a security scan **fails to complete** (network error, API timeout, rate limiting, malformed response), the Agent MUST:
+- Report the error clearly to the user.
+- **Ask the user** whether to retry the scan or proceed without scan results.
+- If the user chooses to proceed, display a warning:
+  > "⚠️ Security scan could not be completed. Proceeding without verification — please ensure you trust this operation."
+- Log the skipped scan for auditability.
+
+> A security scan that fails to complete is NOT a "pass". Always inform the user and let them make an explicit decision.
 
 ## Risk Action Priority Rule
 

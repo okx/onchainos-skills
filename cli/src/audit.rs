@@ -481,6 +481,7 @@ fn security_sub(c: &SecurityCommand) -> &'static str {
 fn payment_sub(c: &PaymentCommand) -> &'static str {
     match c {
         PaymentCommand::X402Pay { .. } => "x402-pay",
+        PaymentCommand::Eip3009Sign { .. } => "eip3009-sign",
     }
 }
 
@@ -496,6 +497,9 @@ fn defi_sub(c: &DefiCommand) -> &'static str {
         DefiCommand::Redeem { .. } => "redeem",
         DefiCommand::Claim { .. } => "claim",
         DefiCommand::CalculateEntry { .. } => "calculate-entry",
+        DefiCommand::RateChart { .. } => "rate-chart",
+        DefiCommand::TvlChart { .. } => "tvl-chart",
+        DefiCommand::DepthPriceChart { .. } => "depth-price-chart",
         DefiCommand::Invest { .. } => "invest",
         DefiCommand::Withdraw { .. } => "withdraw",
         DefiCommand::Collect { .. } => "collect",
