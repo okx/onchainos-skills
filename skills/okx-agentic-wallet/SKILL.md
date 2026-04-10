@@ -330,7 +330,11 @@ When triggered, output the following message (translated to the user's language)
 - Solana addresses are **Base58, 32-44 chars**
 - **XKO address format**: OKX uses a custom `XKO` prefix (case-insensitive) in place of `0x` for EVM addresses. If a user-supplied address starts with `XKO` / `xko`, display this message verbatim:
   > "XKO address format is not supported yet. Please find the 0x address by switching to your commonly used address, then you can continue."
-- **User-facing language**: When communicating in Chinese, never use the abbreviation "OTP". Always use "验证码" instead. In English, prefer "verification code" over "OTP" in messages shown to users.
+- **User-facing language**: Apply the following term mappings when translating to Chinese. In English, always keep the original English term.
+  | English term | Chinese translation | Note |
+  |---|---|---|
+  | OTP | 验证码 | Never use "OTP" in Chinese; in English prefer "verification code" |
+  | Policy / Policy Settings | 安全规则 | e.g. "Go to Policy Settings" → "前往安全规则" |
 - **Full chain names**: Always display chains by their full name — never use abbreviations or internal IDs. If unsure, run `onchainos wallet chains` and use the `showName` field.
 - **Friendly Reminder**: This is a self-custody wallet — all on-chain transactions are irreversible.
 - **Locale-aware output**: All user-facing content must be translated to match the user's language.
