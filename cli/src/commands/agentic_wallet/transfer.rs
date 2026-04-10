@@ -341,7 +341,7 @@ async fn sign_and_broadcast(
 /// onchainos wallet send
 pub(super) async fn cmd_send(
     amt: &str,
-    receipt: &str,
+    recipient: &str,
     chain: &str,
     from: Option<&str>,
     contract_token: Option<&str>,
@@ -353,15 +353,15 @@ pub(super) async fn cmd_send(
     if amt.contains('.') {
         bail!("amt must be a whole number in minimal units (no decimals). For example, to send 0.1 ETH pass 100000000000000000");
     }
-    if receipt.is_empty() || chain.is_empty() {
-        bail!("receipt and chain are required");
+    if recipient.is_empty() || chain.is_empty() {
+        bail!("recipient and chain are required");
     }
 
     let tx_hash = sign_and_broadcast(
         chain,
         from,
         TxParams {
-            to_addr: receipt,
+            to_addr: recipient,
             value: amt,
             contract_addr: contract_token,
             input_data: None,
@@ -639,13 +639,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cmd_send_rejects_empty_receipt() {
+    async fn cmd_send_rejects_empty_recipient() {
         let result = cmd_send("100", "", "1", None, None, false).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("receipt and chain are required"));
+            .contains("recipient and chain are required"));
     }
 
     #[tokio::test]
@@ -655,7 +655,7 @@ mod tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("receipt and chain are required"));
+            .contains("recipient and chain are required"));
     }
 
     // ── cmd_contract_call input validation tests ─────────────────────

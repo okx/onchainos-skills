@@ -81,10 +81,11 @@ pub async fn get_chain_by_name(chain_name: &str) -> Result<Option<Value>> {
     }))
 }
 
-/// Look up a single chain entry by `realChainIndex` (the standard chain ID,
-/// e.g. "1" for Ethereum, "501" for Solana, "56" for BSC).
-/// Returns `None` if no chain matches.
-pub async fn get_chain_by_real_chain_index(real_chain_index: &str) -> Result<Option<Value>> {
+/// Look up a single chain entry by `realChainIndex` or chain name.
+/// Accepts both numeric IDs (e.g. "1", "501") and names (e.g. "ethereum", "solana").
+/// Returns `None` if no chain matches after resolution.
+pub async fn get_chain_by_real_chain_index(input: &str) -> Result<Option<Value>> {
+    let resolved = crate::chains::resolve_chain(input);
     let chains = get_all_chains().await?;
     Ok(chains.into_iter().find(|c| {
         c.get("realChainIndex")
@@ -93,7 +94,7 @@ pub async fn get_chain_by_real_chain_index(real_chain_index: &str) -> Result<Opt
                     .map(|s| s.to_string())
                     .or_else(|| v.as_i64().map(|n| n.to_string()))
             })
-            .is_some_and(|idx| idx == real_chain_index)
+            .is_some_and(|idx| idx == resolved)
     }))
 }
 
