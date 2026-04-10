@@ -69,7 +69,31 @@ Multiple search results → show name/symbol/CA/chain, ask user to confirm befor
 
 Follow the **Token Address Resolution** section above.
 
-### Step 2 — Collect Missing Parameters
+### Step 2 — Pre-Swap Token Security Scan (Mandatory)
+
+Before quoting or executing a swap, **automatically** run `token-scan` on the target token to detect risks. This step is mandatory and must not be skipped.
+
+```bash
+onchainos security token-scan --tokens "<chainId>:<toTokenAddress>"
+```
+
+> Load `skills/okx-security/references/risk-token-detection.md` for the full risk label catalog and computation rules.
+
+**Interpret the result using the 4-level risk model:**
+
+| Effective Level | Buy (user is acquiring `--to` token) | Sell (user is disposing `--from` token) |
+|---|---|---|
+| **Level 4** | **BLOCK** — Refuse to execute swap. Display triggered labels. | **WARN** — Display risk labels, allow swap to continue (stop-loss exit). |
+| **Level 3** | **PAUSE** — Display risk labels, ask user "Continue? (yes/no)". Only proceed on explicit "yes". | **WARN** — Display risk labels, allow swap to continue. |
+| **Level 2** | **WARN** — Display risk labels as info, continue without pause. | **WARN** — Display risk labels as info, continue without pause. |
+| **Level 1** | Safe — proceed to Step 3. | Safe — proceed to Step 3. |
+
+**Edge cases:**
+- `isChainSupported: false` → Skip detection, warn "This chain does not support token security scanning", continue.
+- API timeout/failure → Warn "Token security scan temporarily unavailable, please trade with caution", continue.
+- Native tokens (ETH/SOL/BNB) → Cannot be scanned (no contract address). Skip token-scan for native tokens.
+
+### Step 3 — Collect Missing Parameters
 
 - **Chain**: missing → recommend XLayer (`--chain xlayer`, zero gas, fast confirmation).
 - **Amount**: extract human-readable amount from user's request; pass directly as `--readable-amount <amount>`. CLI fetches token decimals and converts to raw units automatically.
@@ -86,7 +110,7 @@ Follow the **Token Address Resolution** section above.
 | 3 | Stablecoin | USDC/USDT/DAI pairs | autoSlippage (ref 0.1%-0.3%) | `average` |
 | 4 | Large Trade | priceImpact >= 10% AND value >= $1,000 AND pair liquidity >= $10,000 | autoSlippage | `average` |
 
-### Step 3 — Quote
+### Step 4 — Quote
 
 ```bash
 onchainos swap quote --from <token address from step1> --to <token address from step1> --readable-amount <amount> --chain <chain>
@@ -94,12 +118,12 @@ onchainos swap quote --from <token address from step1> --to <token address from 
 
 Display: expected output, gas, price impact, routing path. Check `isHoneyPot` and `taxRate` — surface to user. Perform MEV risk assessment (see **MEV Protection**).
 
-### Step 4 — User Confirmation
+### Step 5 — User Confirmation
 
 - Price impact >5% → warn prominently. Honeypot (buy) → BLOCK.
 - If >10 seconds pass before user confirms, re-fetch quote. If price diff >= slippage → warn and ask for re-confirmation.
 
-### Step 5 — Execute
+### Step 6 — Execute
 
 ```bash
 onchainos swap execute --from <token address from step1> --to <token address from step1> --readable-amount <amount> --chain <chain> --wallet <addr> [--slippage <pct>] [--gas-level <level>] [--mev-protection]
@@ -133,7 +157,7 @@ Enabled only when the user has **explicitly authorized** automated execution. Th
 2. **Risk gate pause**: BLOCK-level risks must halt and notify the user even in silent mode.
 3. **Execution log**: Log every silent transaction (timestamp, pair, amount, slippage, txHash, status). Present on request or at session end.
 
-### Step 6 — Report Result
+### Step 7 — Report Result
 
 Use business-level language: "Swap complete" / "Approval and swap complete".
 Do NOT say "Transaction confirmed on-chain" / "Successfully broadcast" / "On-chain success".
@@ -147,17 +171,28 @@ Suggest follow-up: explorer link for `swapTxHash`, check new token price, or swa
 
 ## Risk Controls
 
+### Token Risk Labels (via `token-scan` — Step 2)
+
+Pre-swap `token-scan` produces a 4-level risk assessment from 20+ boolean labels and tax thresholds. See `skills/okx-security/references/risk-token-detection.md` for the full catalog.
+
+| Effective Level | Buy | Sell | Description |
+|---|---|---|---|
+| Level 4 (Critical) | BLOCK | WARN (allow exit) | Honeypot, garbage airdrop, gas-mint scam, tax > 50% |
+| Level 3 (High) | PAUSE — require yes/no | WARN | Low liquidity, dumping, rugpull gang, counterfeit, pump, tax 21-50%, etc. |
+| Level 2 (Medium) | WARN (info only) | WARN (info only) | Mintable, freeze authority, not renounced, tax 1-20% |
+| Level 1 (Low) | PROCEED | PROCEED | No risk labels triggered |
+
+### Other Risk Items
+
 | Risk Item | Buy | Sell | Notes |
 |---|---|---|---|
-| Honeypot (`isHoneyPot=true`) | BLOCK | WARN (allow exit) | Selling allowed for stop-loss scenarios |
-| High tax rate (>10%) | WARN | WARN | Display exact tax rate |
 | No quote available | CANNOT | CANNOT | Token may be unlisted or zero liquidity |
 | Black/flagged address | BLOCK | BLOCK | Address flagged by security services |
 | New token (<24h) | WARN | PROCEED | Extra caution on buy side |
 | Insufficient liquidity | CANNOT | CANNOT | Liquidity too low to execute trade |
 | Token type not supported | CANNOT | CANNOT | Inform user, suggest alternative |
 
-**Legend**: BLOCK = halt, require explicit override · WARN = display warning, ask confirmation · CANNOT = operation impossible · PROCEED = allow with info
+**Legend**: BLOCK = halt, refuse execution · PAUSE = halt, require explicit yes/no · WARN = display warning, continue · CANNOT = operation impossible · PROCEED = allow with info
 
 ### MEV Protection
 
