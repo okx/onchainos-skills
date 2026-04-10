@@ -193,15 +193,15 @@ pub(super) async fn cmd_addresses(chain: Option<&str>) -> Result<()> {
         .unwrap_or("");
 
     let chain_filter = match chain {
-        Some(id) => {
-            let entry = super::chain::get_chain_by_real_chain_index(id)
+        Some(input) => {
+            let entry = super::chain::get_chain_by_real_chain_index(input)
                 .await?
-                .ok_or_else(|| anyhow::anyhow!("unknown chain: {id}"))?;
+                .ok_or_else(|| anyhow::anyhow!("unsupported chain: {input}"))?;
             let ci = entry["chainIndex"]
                 .as_str()
                 .map(|s| s.to_string())
                 .or_else(|| entry["chainIndex"].as_i64().map(|n| n.to_string()))
-                .ok_or_else(|| anyhow::anyhow!("unknown chain: {id}"))?;
+                .ok_or_else(|| anyhow::anyhow!("unsupported chain: {input}"))?;
             Some(ci)
         }
         None => None,

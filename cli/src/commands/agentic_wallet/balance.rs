@@ -447,7 +447,7 @@ pub(super) async fn cmd_balance(
         };
         let chain_entry = super::chain::get_chain_by_real_chain_index(c)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("unknown chain: {c}"))?;
+            .ok_or_else(|| anyhow::anyhow!("unsupported chain: {c}"))?;
         if cfg!(feature = "debug-log") {
             eprintln!(
                 "[DEBUG][cmd_balance] scenario=token-address, chain_entry={}",
@@ -498,7 +498,7 @@ pub(super) async fn cmd_balance(
     if let Some(c) = chain {
         let chain_entry = super::chain::get_chain_by_real_chain_index(c)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("unknown chain: {c}"))?;
+            .ok_or_else(|| anyhow::anyhow!("unsupported chain: {c}"))?;
         if cfg!(feature = "debug-log") {
             eprintln!(
                 "[DEBUG][cmd_balance] scenario=chain, chain_entry={}",
