@@ -82,6 +82,7 @@ async fn resolve_chain_and_address(chain: &str, from: &str) -> Result<(String, S
 // ── personalSign ─────────────────────────────────────────────────────
 
 async fn personal_sign(message: &str, chain: &str, from: &str, force: bool) -> Result<()> {
+    let chain: &str = &crate::chains::resolve_chain(chain);
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][personal_sign] enter: chain={}, from={}",
@@ -211,6 +212,7 @@ async fn personal_sign(message: &str, chain: &str, from: &str, force: bool) -> R
 // ── eip712 ───────────────────────────────────────────────────────────
 
 async fn eip712_sign(message: &str, chain: &str, from: &str, force: bool) -> Result<()> {
+    let chain: &str = &crate::chains::resolve_chain(chain);
     if chain == "501" {
         bail!("eip712 signing is not supported on Solana (chain 501)");
     }
