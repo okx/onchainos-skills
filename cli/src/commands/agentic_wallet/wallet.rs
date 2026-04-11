@@ -180,6 +180,7 @@ async fn resolve_send_amount(
     contract_token: Option<&str>,
     chain: &str,
 ) -> Result<String> {
+    let chain: &str = &crate::chains::resolve_chain(chain);
     if let Some(raw) = amt {
         let raw = raw.trim();
         if raw.is_empty() {
