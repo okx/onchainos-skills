@@ -180,7 +180,6 @@ async fn resolve_send_amount(
     contract_token: Option<&str>,
     chain: &str,
 ) -> Result<String> {
-    let chain: &str = &crate::chains::resolve_chain(chain);
     if let Some(raw) = amt {
         let raw = raw.trim();
         if raw.is_empty() {
@@ -299,6 +298,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             contract_token,
             force,
         } => {
+            let chain = crate::chains::resolve_chain(&chain);
             let raw_amt = resolve_send_amount(
                 amt.as_deref(),
                 readable_amount.as_deref(),
