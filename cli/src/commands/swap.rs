@@ -639,11 +639,14 @@ pub(crate) fn validate_address_for_chain(
                      Did you mean to use --chain solana?"
                 );
             }
-            // EVM addresses must be 42 characters (0x + 40 hex digits)
-            if (token.starts_with("0x") || token.starts_with("0X")) && token.len() != 42 {
+            // EVM addresses must be 0x/0X + 40 hex digits = 42 characters
+            let is_valid_evm = (token.starts_with("0x") || token.starts_with("0X"))
+                && token.len() == 42
+                && token[2..].chars().all(|c| c.is_ascii_hexdigit());
+            if !is_valid_evm {
                 bail!(
-                    "--{label} is not a valid EVM address: expected 42 characters (0x + 40 hex digits), got {} characters (\"{}\")",
-                    token.len(), token
+                    "--{label} is not a valid EVM address: expected 0x + 40 hex digits, got \"{}\"",
+                    token
                 );
             }
         }
@@ -1662,6 +1665,36 @@ mod tests {
             "token"
         )
         .is_ok());
+    }
+
+    // ── EVM rejects non-address strings (ticker symbols, random text) ─
+
+    #[test]
+    fn test_validate_address_for_chain_evm_rejects_ticker_symbol() {
+        // Ticker symbols like "WIF" should not pass EVM validation
+        assert!(validate_address_for_chain("196", "WIF", "to").is_err());
+        assert!(validate_address_for_chain("1", "USDC", "from").is_err());
+        assert!(validate_address_for_chain("56", "BNB", "to").is_err());
+        assert!(validate_address_for_chain("8453", "ETH", "from").is_err());
+    }
+
+    #[test]
+    fn test_validate_address_for_chain_evm_rejects_random_strings() {
+        assert!(validate_address_for_chain("1", "hello", "from").is_err());
+        assert!(validate_address_for_chain("1", "native", "to").is_err());
+        assert!(validate_address_for_chain("196", "", "from").is_err());
+        assert!(validate_address_for_chain("1", "12345", "to").is_err());
+    }
+
+    #[test]
+    fn test_validate_address_for_chain_evm_rejects_non_hex_42_chars() {
+        // 42 chars but contains non-hex characters
+        assert!(validate_address_for_chain(
+            "1",
+            "0xGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+            "from"
+        )
+        .is_err());
     }
 
     // ── swapMode validation ───────────────────────────────────────────
