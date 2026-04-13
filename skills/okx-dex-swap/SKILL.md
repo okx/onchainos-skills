@@ -92,7 +92,7 @@ onchainos security token-scan --tokens "<chainId>:<toTokenAddress>"
 
 **Edge cases:**
 - `isChainSupported: false` → Skip detection, warn "This chain does not support token security scanning", continue.
-- API timeout/failure → Warn "Token security scan temporarily unavailable, please trade with caution", continue (overrides general security fail-safe's ask-user behavior).
+- API timeout/failure → Warn "Token security scan temporarily unavailable, please trade with caution", continue (in swap context, token-scan failures auto-continue with a warning to avoid blocking time-sensitive trades — this overrides the general fail-safe's ask-user behavior).
 - If the `--to` token is a native token (matches any address in the Native Token Addresses table above), skip token-scan — native tokens have no contract address and cannot be scanned.
 
 ### Step 3 — Collect Missing Parameters
@@ -118,7 +118,7 @@ onchainos security token-scan --tokens "<chainId>:<toTokenAddress>"
 onchainos swap quote --from <token address from step1> --to <token address from step1> --readable-amount <amount> --chain <chain>
 ```
 
-Display: expected output, gas, price impact, routing path. If quote returns `taxRate`, display as supplementary info (the primary risk gate is Step 2's token-scan). Perform MEV risk assessment (see **MEV Protection**).
+Display: expected output, gas, price impact, routing path. If quote returns `taxRate`, display as supplementary info (the primary risk gate is Step 2's token-scan). Note: the CLI also blocks honeypot swaps internally at execute time via `toToken.isHoneyPot` (defense-in-depth, different data source from Step 2's `token-scan`). Perform MEV risk assessment (see **MEV Protection**).
 
 ### Step 5 — User Confirmation
 
@@ -180,8 +180,8 @@ Pre-swap `token-scan` produces a 4-level risk assessment from 20+ boolean labels
 | Effective Level | Buy | Sell | Description |
 |---|---|---|---|
 | Level 4 (Critical) | BLOCK | WARN (allow exit) | Honeypot, garbage airdrop, gas-mint scam, tax ≥ 50% |
-| Level 3 (High) | PAUSE — require yes/no | WARN | Low liquidity, dumping, rugpull gang, counterfeit, pump, tax 21-50%, etc. |
-| Level 2 (Medium) | WARN (info only) | WARN (info only) | Mintable, freeze authority, not renounced, tax >0%-20% |
+| Level 3 (High) | PAUSE — require yes/no | WARN | Low liquidity, dumping, rugpull gang, counterfeit, pump, wash trading, liquidity removal, tax ≥21%-<50%, etc. |
+| Level 2 (Medium) | WARN (info only) | WARN (info only) | Mintable, freeze authority, not renounced, tax >0%-<21% |
 | Level 1 (Low) | PROCEED | PROCEED | No risk labels triggered |
 
 ### Other Risk Items

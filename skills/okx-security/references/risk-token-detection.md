@@ -177,9 +177,11 @@ When the Agent receives a token-scan response, compute the **effective risk leve
 
 1. **Collect triggered labels**: Iterate all boolean fields. For each `true` value, record its risk level from the catalog above. For `isHasAssetEditAuth`, only count as Level 3 when `chainId == 501` (Solana).
 2. **Evaluate tax thresholds**: Parse `buyTaxes` and `sellTaxes` as numbers. Map each to a risk level per the tax threshold table. If `null`, skip.
-3. **Determine effective level**: Take the **maximum** risk level across all triggered labels and tax thresholds. This is the token's effective risk level. Both `buyTaxes` and `sellTaxes` contribute to the effective level regardless of operation direction; the buy/sell distinction only affects the *action* (block vs. warn), not the level computation. **Fallback**: If `isRiskToken: true` but the computed effective level is Level 1 (no individual labels triggered), promote to Level 2 (info warning). This preserves the API's composite judgment as a safety net.
+3. **Determine effective level**: Take the **maximum** risk level across all triggered labels and tax thresholds. This is the token's effective risk level. **Fallback**: If `isRiskToken: true` but the computed effective level is Level 1 (no individual labels triggered), promote to Level 2 (info warning). In the fallback case, display: `[L2] Risk flagged by API (isRiskToken)` — no specific label identified. This preserves the API's composite judgment as a safety net.
 
-> Note: `isRiskToken` is a server-side composite flag that may incorporate signals not exposed as individual boolean fields (e.g., off-chain intelligence, ML models). The skill computes its own level from individual labels for explainability, and uses `isRiskToken` only as a fallback.
+> **Direction-agnostic tax rule**: Both `buyTaxes` and `sellTaxes` contribute to the effective level regardless of operation direction; the buy/sell distinction only affects the *action* (block vs. warn), not the level computation. Rationale: a high sell tax indicates the token may be functionally a honeypot (users can buy but cannot sell without heavy loss), so both taxes factor into the risk level regardless of direction.
+
+> **`isRiskToken` note**: `isRiskToken` is a server-side composite flag that may incorporate signals not exposed as individual boolean fields (e.g., off-chain intelligence, ML models). The skill computes its own level from individual labels for explainability, and uses `isRiskToken` only as a fallback.
 
 4. **Apply action matrix**: Use the effective risk level + operation type (buy/sell) to determine the Agent action per the matrix below.
 
@@ -203,7 +205,7 @@ When the Agent receives a token-scan response, compute the **effective risk leve
 When reporting risk scan results to the user:
 
 ```
-Token: <symbol> on <chain>
+Token: <symbol or contract address> on <chain>
 Risk Level: <CRITICAL|HIGH|MEDIUM|LOW> (Level <4|3|2|1>)
 Triggered Labels:
   - [L4] Garbage Airdrop (isRubbishAirdrop)
@@ -212,6 +214,8 @@ Triggered Labels:
 Buy Tax: <value>% | Sell Tax: <value>%
 Action: <BLOCK / WARN — requires confirmation / WARN — info only / Safe>
 ```
+
+> If symbol is unknown (e.g., raw address via Path 3), display the contract address instead, or look up the symbol via `onchainos token search` first.
 
 ## Edge Cases
 
