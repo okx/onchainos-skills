@@ -4,7 +4,7 @@ description: "Use this skill for security scanning: check transaction safety, is
 license: MIT
 metadata:
   author: okx
-  version: "2.2.8"
+  version: "1.1.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -50,7 +50,7 @@ Every time before running any `onchainos` command, always follow these steps in 
    - Hash command — macOS/Linux: `shasum -a 256 ~/.local/bin/onchainos`; Windows: `(Get-FileHash "$env:USERPROFILE\.local\bin\onchainos.exe" -Algorithm SHA256).Hash.ToLower()`
 
 4. **Check for skill version drift** (once per session): If `onchainos --version` is newer
-   than this skill's `metadata.version`, display a one-time notice that the skill may be
+   than the `version` field under `metadata:` in this file's YAML frontmatter (e.g., `version: "2.0.0"` between the `---` markers at the top), display a one-time notice that the skill may be
    outdated and suggest the user re-install skills via their platform's method. Do not block.
 5. **Do NOT auto-reinstall on command failures.** Report errors and suggest
    `onchainos --version` or manual reinstall from https://github.com/okx/onchainos-skills.
@@ -78,6 +78,8 @@ If a security scan **fails to complete** (network error, API timeout, rate limit
 
 ## Risk Action Priority Rule
 
+### tx-scan / sig-scan (transaction & signature scanning)
+
 `block` > `warn` > safe (empty). The top-level `action` field reflects the highest priority from `riskItemDetail`.
 
 | `action` value | Risk Level | Agent Behavior |
@@ -89,6 +91,26 @@ If a security scan **fails to complete** (network error, API timeout, rate limit
 - Risk scan result is still valid even if simulation fails (`simulator.revertReason` may contain the revert reason).
 - If `warnings` field is populated, the scan completed but some data may be incomplete. Still present available risk information.
 - An empty/null `action` in a **successful** API response means "no risk detected". But if the API call **failed**, the absence of `action` does NOT mean safe — apply the fail-safe principle.
+
+### token-scan (token risk label scanning)
+
+Token-scan uses a **4-level risk model** based on 20+ boolean labels and tax thresholds. The Agent computes the effective risk level from all triggered labels and applies different actions for **buy** vs. **sell** operations.
+
+| Effective Level | Buy Action | Sell Action |
+|---|---|---|
+| **Level 4** (Critical) | `block` — refuse to buy | `warn` — display risk, allow sell |
+| **Level 3** (High) | `warn` + **pause** — require explicit yes/no | `warn` — display risk, allow sell |
+| **Level 2** (Medium) | `warn` — info notice, continue | `warn` — info notice, continue |
+| **Level 1** (Low) | safe — proceed | safe — proceed |
+
+> Full label catalog, tax threshold rules, risk computation logic, and display format are defined in `references/risk-token-detection.md`. **Always load that reference before executing `token-scan`.**
+
+Key principles:
+- Effective level = **max** level across all triggered boolean labels and tax thresholds.
+- **Buy is stricter than sell**: Level 4 blocks buy but only warns on sell (to allow stop-loss exit).
+- **Level 3 buy requires explicit user confirmation** (yes/no) — do not auto-continue.
+- If `isChainSupported: false`, skip detection with a warning; do not block.
+- If API fails, warn but do not block. In swap context, token-scan failures auto-continue with a warning to avoid blocking time-sensitive trades — this overrides the general fail-safe's ask-user behavior.
 
 > Security commands do not require wallet login. They work with any address.
 

@@ -4,7 +4,7 @@ description: "Use this skill when the user mentions wallet login, sign in, verif
 license: MIT
 metadata:
   author: okx
-  version: "2.2.8"
+  version: "2.0.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -22,7 +22,9 @@ This document uses tagged blocks to indicate rule severity. In case of conflict,
 
 ## Pre-flight Checks
 
+<MUST>
 > Before the first `onchainos` command this session, read and follow: `_shared/preflight.md`
+</MUST>
 
 ## Parameter Rules
 

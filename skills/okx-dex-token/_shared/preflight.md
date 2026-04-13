@@ -38,7 +38,7 @@ Every time before running any `onchainos` command, always follow these steps in 
    - Hash command — macOS/Linux: `shasum -a 256 ~/.local/bin/onchainos`; Windows: `(Get-FileHash "$env:USERPROFILE\.local\bin\onchainos.exe" -Algorithm SHA256).Hash.ToLower()`
 
 4. **Check for skill version drift** (once per session): If `onchainos --version` is newer
-   than the active skill's `metadata.version`, display a one-time notice that the skill may be
+   than the `version` field under `metadata:` in the active skill's YAML frontmatter (e.g., `version: "2.0.0"` between the `---` markers at the top of SKILL.md), display a one-time notice that the skill may be
    outdated and suggest the user re-install skills via their platform's method. Do not block.
 5. **Do NOT auto-reinstall on command failures.** Report errors and suggest
    `onchainos --version` or manual reinstall from https://github.com/okx/onchainos-skills.
