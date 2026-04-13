@@ -175,9 +175,9 @@ Tax fields (`buyTaxes`, `sellTaxes`) map to risk levels based on value:
 
 When the Agent receives a token-scan response, compute the **effective risk level** as follows:
 
-1. **Collect triggered labels**: Iterate all boolean fields. For each `true` value, record its risk level from the catalog above.
+1. **Collect triggered labels**: Iterate all boolean fields. For each `true` value, record its risk level from the catalog above. For `isHasAssetEditAuth`, only count as Level 3 when `chainId == 501` (Solana).
 2. **Evaluate tax thresholds**: Parse `buyTaxes` and `sellTaxes` as numbers. Map each to a risk level per the tax threshold table. If `null`, skip.
-3. **Determine effective level**: Take the **maximum** risk level across all triggered labels and tax thresholds. This is the token's effective risk level.
+3. **Determine effective level**: Take the **maximum** risk level across all triggered labels and tax thresholds. This is the token's effective risk level. Both `buyTaxes` and `sellTaxes` contribute to the effective level regardless of operation direction; the buy/sell distinction only affects the *action* (block vs. warn), not the level computation.
 4. **Apply action matrix**: Use the effective risk level + operation type (buy/sell) to determine the Agent action per the matrix below.
 
 ## Risk Level Action Matrix

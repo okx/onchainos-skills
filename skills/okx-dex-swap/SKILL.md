@@ -92,8 +92,8 @@ onchainos security token-scan --tokens "<chainId>:<toTokenAddress>"
 
 **Edge cases:**
 - `isChainSupported: false` → Skip detection, warn "This chain does not support token security scanning", continue.
-- API timeout/failure → Warn "Token security scan temporarily unavailable, please trade with caution", continue.
-- Native tokens (ETH/SOL/BNB) → Cannot be scanned (no contract address). Skip token-scan for native tokens.
+- API timeout/failure → Warn "Token security scan temporarily unavailable, please trade with caution", continue (overrides general security fail-safe's ask-user behavior).
+- If the `--to` token is a native token (ETH/SOL/BNB), skip token-scan — native tokens have no contract address and cannot be scanned.
 
 ### Step 3 — Collect Missing Parameters
 
@@ -179,7 +179,7 @@ Pre-swap `token-scan` produces a 4-level risk assessment from 20+ boolean labels
 
 | Effective Level | Buy | Sell | Description |
 |---|---|---|---|
-| Level 4 (Critical) | BLOCK | WARN (allow exit) | Honeypot, garbage airdrop, gas-mint scam, tax > 50% |
+| Level 4 (Critical) | BLOCK | WARN (allow exit) | Honeypot, garbage airdrop, gas-mint scam, tax ≥ 50% |
 | Level 3 (High) | PAUSE — require yes/no | WARN | Low liquidity, dumping, rugpull gang, counterfeit, pump, tax 21-50%, etc. |
 | Level 2 (Medium) | WARN (info only) | WARN (info only) | Mintable, freeze authority, not renounced, tax 1-20% |
 | Level 1 (Low) | PROCEED | PROCEED | No risk labels triggered |
