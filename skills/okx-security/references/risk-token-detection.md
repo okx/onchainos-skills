@@ -176,8 +176,8 @@ Tax fields (`buyTaxes`, `sellTaxes`) map to risk levels based on value:
 When the Agent receives a token-scan response, compute the **effective risk level** as follows:
 
 1. **Collect triggered labels**: Iterate all boolean fields. For each `true` value, record its risk level from the catalog above. For `isHasAssetEditAuth`, only count as Level 3 when `chainId == 501` (Solana).
-2. **Evaluate tax thresholds**: Parse `buyTaxes` and `sellTaxes` as numbers. Map each to a risk level per the tax threshold table. If `null`, skip.
-3. **Determine effective level**: Take the **maximum** risk level across all triggered labels and tax thresholds. This is the token's effective risk level. **Fallback**: If `isRiskToken: true` but the computed effective level is Level 1 (no individual labels triggered), promote to Level 2 (info warning). In the fallback case, display: `[L2] Risk flagged by API (isRiskToken)` — no specific label identified. This preserves the API's composite judgment as a safety net.
+2. **Evaluate tax thresholds**: Parse `buyTaxes` and `sellTaxes` as numbers. Map each to a risk level per the tax threshold table. If `null`, empty, or non-numeric, treat as unavailable — skip tax evaluation and do not display.
+3. **Determine effective level**: Take the **maximum** risk level across all triggered labels and tax thresholds. This is the token's effective risk level. **Fallback**: If `isRiskToken: true` but the computed effective level is Level 1 (no individual boolean labels triggered AND no tax thresholds triggered), promote to Level 2 (info warning). In the fallback case, display: `[L2] Risk flagged by API (isRiskToken)` — no specific label identified. This preserves the API's composite judgment as a safety net.
 
 > **Direction-agnostic tax rule**: Both `buyTaxes` and `sellTaxes` contribute to the effective level regardless of operation direction; the buy/sell distinction only affects the *action* (block vs. warn), not the level computation. Rationale: a high sell tax indicates the token may be functionally a honeypot (users can buy but cannot sell without heavy loss), so both taxes factor into the risk level regardless of direction.
 
@@ -211,7 +211,7 @@ Triggered Labels:
   - [L4] Garbage Airdrop (isRubbishAirdrop)
   - [L3] Low Liquidity (isLowLiquidity)
   - [L3] Pump activity (isPump)
-Buy Tax: <value>% | Sell Tax: <value>%
+Buy Tax: <value>% | Sell Tax: <value>%    <!-- Omit entirely if both null; show only non-null if one is available -->
 Action: <BLOCK / WARN — requires confirmation / WARN — info only / Safe>
 ```
 

@@ -4,7 +4,7 @@ description: "Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens
 license: MIT
 metadata:
   author: okx
-  version: "1.2.0"
+  version: "1.3.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -81,7 +81,7 @@ onchainos security token-scan --tokens "<chainId>:<toTokenAddress>"
 
 **Interpret the result using the 4-level risk model:**
 
-| Effective Level | Buy Action (user is acquiring `--to` token) |
+| Effective Level | Buy Action (`--to` token only) |
 |---|---|
 | **Level 4** | **BLOCK** — Refuse to execute swap. Display triggered labels. |
 | **Level 3** | **PAUSE** — Display risk labels, ask user "Continue? (yes/no)". Only proceed on explicit "yes". |
