@@ -328,6 +328,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
+        Commands::File { .. } => "file upload".to_string(),
         Commands::Upgrade(_) => "upgrade".to_string(),
     }
 }
