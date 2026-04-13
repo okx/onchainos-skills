@@ -22,7 +22,9 @@ This document uses tagged blocks to indicate rule severity. In case of conflict,
 
 ## Pre-flight Checks
 
+<MUST>
 > Before the first `onchainos` command this session, read and follow: `_shared/preflight.md`
+</MUST>
 
 ## Parameter Rules
 

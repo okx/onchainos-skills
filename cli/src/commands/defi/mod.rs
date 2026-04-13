@@ -595,9 +595,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             investment_id,
             time_range,
         } => {
-            output::success(
-                fetch_tvl_chart(&client, &investment_id, time_range.as_deref()).await?,
-            );
+            output::success(fetch_tvl_chart(&client, &investment_id, time_range.as_deref()).await?);
         }
         DefiCommand::DepthPriceChart {
             investment_id,
