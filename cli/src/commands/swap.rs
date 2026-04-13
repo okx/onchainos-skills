@@ -620,6 +620,16 @@ pub(crate) fn validate_address_for_chain(
                     token.len(), token
                 );
             }
+            // Base58 alphabet excludes: 0, O, I, l
+            if !token
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() && !matches!(c, '0' | 'O' | 'I' | 'l'))
+            {
+                bail!(
+                    "--{label} is not a valid Solana address: contains characters outside base58 alphabet (\"{}\")",
+                    token
+                );
+            }
         }
         // Tron / TON / Sui — their native address formats differ from both EVM and Solana;
         // skip format validation and let the API handle address errors.
@@ -1098,6 +1108,7 @@ async fn cmd_execute(
     let native_addr = chains::native_token_address(&chain_index);
     let from_token = resolve_token_address(&chain_index, from_token);
     let to_token = resolve_token_address(&chain_index, to_token);
+    validate_swap_params(&chain_index, &from_token, &to_token)?;
     let is_from_native = from_token.eq_ignore_ascii_case(native_addr);
 
     if cfg!(feature = "debug-log") {
@@ -1628,6 +1639,39 @@ mod tests {
         // 31 chars — too short
         let addr_31 = "1".repeat(31);
         assert!(validate_address_for_chain("501", &addr_31, "from").is_err());
+    }
+
+    // ── Solana base58 character set validation ─────────────────────────
+
+    #[test]
+    fn test_validate_address_for_chain_solana_rejects_non_base58_chars() {
+        // '0' is not in base58 alphabet
+        let with_zero = format!("{}0", "A".repeat(31));
+        assert!(validate_address_for_chain("501", &with_zero, "from").is_err());
+        // 'O' is not in base58 alphabet
+        let with_O = format!("{}O", "A".repeat(31));
+        assert!(validate_address_for_chain("501", &with_O, "from").is_err());
+        // 'I' is not in base58 alphabet
+        let with_I = format!("{}I", "A".repeat(31));
+        assert!(validate_address_for_chain("501", &with_I, "from").is_err());
+        // 'l' is not in base58 alphabet
+        let with_l = format!("{}l", "A".repeat(31));
+        assert!(validate_address_for_chain("501", &with_l, "from").is_err());
+    }
+
+    #[test]
+    fn test_validate_address_for_chain_solana_accepts_valid_base58() {
+        // All-1s native address
+        assert!(
+            validate_address_for_chain("501", "11111111111111111111111111111111", "from").is_ok()
+        );
+        // USDC
+        assert!(validate_address_for_chain(
+            "501",
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "from"
+        )
+        .is_ok());
     }
 
     // ── EVM address length validation ─────────────────────────────────
