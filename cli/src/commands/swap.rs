@@ -442,7 +442,7 @@ fn resolve_token_address(chain_index: &str, token: &str) -> String {
 
 /// Validate that `amount` is a non-empty string of digits (no Infinity, NaN,
 /// negative, zero-only, leading-zeros, or other non-numeric values).
-fn validate_amount(amount: &str) -> Result<()> {
+pub(crate) fn validate_amount(amount: &str) -> Result<()> {
     let amount = amount.trim();
     if amount.is_empty() {
         bail!("--amount must not be empty");

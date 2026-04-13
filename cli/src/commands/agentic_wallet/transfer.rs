@@ -2,7 +2,9 @@ use anyhow::{bail, Context, Result};
 use base64::Engine;
 use serde_json::{json, Value};
 
-use crate::commands::swap::{validate_address_for_chain, validate_non_negative_integer};
+use crate::commands::swap::{
+    validate_address_for_chain, validate_amount, validate_non_negative_integer,
+};
 use crate::keyring_store;
 use crate::output;
 use crate::wallet_api::WalletApiClient;
@@ -347,7 +349,7 @@ pub(super) async fn cmd_send(
     contract_token: Option<&str>,
     force: bool,
 ) -> Result<()> {
-    validate_non_negative_integer(amt, "amt")?;
+    validate_amount(amt)?;
     if recipient.is_empty() || chain.is_empty() {
         bail!("recipient and chain are required");
     }
@@ -621,14 +623,14 @@ mod tests {
     async fn cmd_send_rejects_empty_amt() {
         let result = cmd_send("", "0xRecipient", "1", None, None, false).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("--amt"));
+        assert!(result.unwrap_err().to_string().contains("--amount"));
     }
 
     #[tokio::test]
     async fn cmd_send_rejects_decimal_amt() {
         let result = cmd_send("1.5", "0xRecipient", "1", None, None, false).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("--amt"));
+        assert!(result.unwrap_err().to_string().contains("--amount"));
     }
 
     #[tokio::test]
