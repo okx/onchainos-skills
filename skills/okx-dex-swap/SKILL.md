@@ -93,7 +93,7 @@ onchainos security token-scan --tokens "<chainId>:<toTokenAddress>"
 **Edge cases:**
 - `isChainSupported: false` → Skip detection, warn "This chain does not support token security scanning", continue.
 - API timeout/failure → Warn "Token security scan temporarily unavailable, please trade with caution", continue (overrides general security fail-safe's ask-user behavior).
-- If the `--to` token is a native token (ETH/SOL/BNB), skip token-scan — native tokens have no contract address and cannot be scanned.
+- If the `--to` token is a native token (matches any address in the Native Token Addresses table above), skip token-scan — native tokens have no contract address and cannot be scanned.
 
 ### Step 3 — Collect Missing Parameters
 
@@ -122,7 +122,7 @@ Display: expected output, gas, price impact, routing path. If quote returns `tax
 
 ### Step 5 — User Confirmation
 
-- Price impact >5% → warn prominently. (Honeypot already handled in Step 2.)
+- Price impact >5% → warn prominently. (Token risk labels including honeypot already handled in Step 2.)
 - If >10 seconds pass before user confirms, re-fetch quote. If price diff >= slippage → warn and ask for re-confirmation.
 
 ### Step 6 — Execute
@@ -181,7 +181,7 @@ Pre-swap `token-scan` produces a 4-level risk assessment from 20+ boolean labels
 |---|---|---|---|
 | Level 4 (Critical) | BLOCK | WARN (allow exit) | Honeypot, garbage airdrop, gas-mint scam, tax ≥ 50% |
 | Level 3 (High) | PAUSE — require yes/no | WARN | Low liquidity, dumping, rugpull gang, counterfeit, pump, tax 21-50%, etc. |
-| Level 2 (Medium) | WARN (info only) | WARN (info only) | Mintable, freeze authority, not renounced, tax 1-20% |
+| Level 2 (Medium) | WARN (info only) | WARN (info only) | Mintable, freeze authority, not renounced, tax >0%-20% |
 | Level 1 (Low) | PROCEED | PROCEED | No risk labels triggered |
 
 ### Other Risk Items
@@ -190,7 +190,7 @@ Pre-swap `token-scan` produces a 4-level risk assessment from 20+ boolean labels
 |---|---|---|---|
 | No quote available | CANNOT | CANNOT | Token may be unlisted or zero liquidity |
 | Black/flagged address | BLOCK | BLOCK | Address flagged by security services |
-| New token (<24h) | WARN | PROCEED | Extra caution on buy side |
+| New token (<24h) | PAUSE | PROCEED | Extra caution on buy side — require explicit confirmation |
 | Insufficient liquidity | CANNOT | CANNOT | Liquidity too low to execute trade |
 | Token type not supported | CANNOT | CANNOT | Inform user, suggest alternative |
 
