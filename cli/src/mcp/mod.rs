@@ -1758,7 +1758,8 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<DefiRateChartParams>,
     ) -> Result<String, String> {
-        match defi::fetch_rate_chart(&self.client, &p.investment_id, p.time_range.as_deref()).await {
+        match defi::fetch_rate_chart(&self.client, &p.investment_id, p.time_range.as_deref()).await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }

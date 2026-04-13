@@ -442,7 +442,7 @@ fn resolve_token_address(chain_index: &str, token: &str) -> String {
 
 /// Validate that `amount` is a non-empty string of digits (no Infinity, NaN,
 /// negative, zero-only, leading-zeros, or other non-numeric values).
-fn validate_amount(amount: &str) -> Result<()> {
+pub(crate) fn validate_amount(amount: &str) -> Result<()> {
     let amount = amount.trim();
     if amount.is_empty() {
         bail!("--amount must not be empty");
@@ -620,6 +620,16 @@ pub(crate) fn validate_address_for_chain(
                     token.len(), token
                 );
             }
+            // Base58 alphabet excludes: 0, O, I, l
+            if !token
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() && !matches!(c, '0' | 'O' | 'I' | 'l'))
+            {
+                bail!(
+                    "--{label} is not a valid Solana address: contains characters outside base58 alphabet (\"{}\")",
+                    token
+                );
+            }
         }
         // Tron / TON / Sui — their native address formats differ from both EVM and Solana;
         // skip format validation and let the API handle address errors.
@@ -639,11 +649,14 @@ pub(crate) fn validate_address_for_chain(
                      Did you mean to use --chain solana?"
                 );
             }
-            // EVM addresses must be 42 characters (0x + 40 hex digits)
-            if (token.starts_with("0x") || token.starts_with("0X")) && token.len() != 42 {
+            // EVM addresses must be 0x/0X + 40 hex digits = 42 characters
+            let is_valid_evm = (token.starts_with("0x") || token.starts_with("0X"))
+                && token.len() == 42
+                && token[2..].chars().all(|c| c.is_ascii_hexdigit());
+            if !is_valid_evm {
                 bail!(
-                    "--{label} is not a valid EVM address: expected 42 characters (0x + 40 hex digits), got {} characters (\"{}\")",
-                    token.len(), token
+                    "--{label} is not a valid EVM address: expected 0x + 40 hex digits, got \"{}\"",
+                    token
                 );
             }
         }
@@ -1095,6 +1108,7 @@ async fn cmd_execute(
     let native_addr = chains::native_token_address(&chain_index);
     let from_token = resolve_token_address(&chain_index, from_token);
     let to_token = resolve_token_address(&chain_index, to_token);
+    validate_swap_params(&chain_index, &from_token, &to_token)?;
     let is_from_native = from_token.eq_ignore_ascii_case(native_addr);
 
     if cfg!(feature = "debug-log") {
@@ -1627,6 +1641,39 @@ mod tests {
         assert!(validate_address_for_chain("501", &addr_31, "from").is_err());
     }
 
+    // ── Solana base58 character set validation ─────────────────────────
+
+    #[test]
+    fn test_validate_address_for_chain_solana_rejects_non_base58_chars() {
+        // '0' is not in base58 alphabet
+        let with_zero = format!("{}0", "A".repeat(31));
+        assert!(validate_address_for_chain("501", &with_zero, "from").is_err());
+        // 'O' is not in base58 alphabet
+        let with_O = format!("{}O", "A".repeat(31));
+        assert!(validate_address_for_chain("501", &with_O, "from").is_err());
+        // 'I' is not in base58 alphabet
+        let with_I = format!("{}I", "A".repeat(31));
+        assert!(validate_address_for_chain("501", &with_I, "from").is_err());
+        // 'l' is not in base58 alphabet
+        let with_l = format!("{}l", "A".repeat(31));
+        assert!(validate_address_for_chain("501", &with_l, "from").is_err());
+    }
+
+    #[test]
+    fn test_validate_address_for_chain_solana_accepts_valid_base58() {
+        // All-1s native address
+        assert!(
+            validate_address_for_chain("501", "11111111111111111111111111111111", "from").is_ok()
+        );
+        // USDC
+        assert!(validate_address_for_chain(
+            "501",
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "from"
+        )
+        .is_ok());
+    }
+
     // ── EVM address length validation ─────────────────────────────────
 
     #[test]
@@ -1662,6 +1709,36 @@ mod tests {
             "token"
         )
         .is_ok());
+    }
+
+    // ── EVM rejects non-address strings (ticker symbols, random text) ─
+
+    #[test]
+    fn test_validate_address_for_chain_evm_rejects_ticker_symbol() {
+        // Ticker symbols like "WIF" should not pass EVM validation
+        assert!(validate_address_for_chain("196", "WIF", "to").is_err());
+        assert!(validate_address_for_chain("1", "USDC", "from").is_err());
+        assert!(validate_address_for_chain("56", "BNB", "to").is_err());
+        assert!(validate_address_for_chain("8453", "ETH", "from").is_err());
+    }
+
+    #[test]
+    fn test_validate_address_for_chain_evm_rejects_random_strings() {
+        assert!(validate_address_for_chain("1", "hello", "from").is_err());
+        assert!(validate_address_for_chain("1", "native", "to").is_err());
+        assert!(validate_address_for_chain("196", "", "from").is_err());
+        assert!(validate_address_for_chain("1", "12345", "to").is_err());
+    }
+
+    #[test]
+    fn test_validate_address_for_chain_evm_rejects_non_hex_42_chars() {
+        // 42 chars but contains non-hex characters
+        assert!(validate_address_for_chain(
+            "1",
+            "0xGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+            "from"
+        )
+        .is_err());
     }
 
     // ── swapMode validation ───────────────────────────────────────────
