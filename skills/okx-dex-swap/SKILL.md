@@ -81,12 +81,14 @@ onchainos security token-scan --tokens "<chainId>:<toTokenAddress>"
 
 **Interpret the result using the 4-level risk model:**
 
-| Effective Level | Buy (user is acquiring `--to` token) | Sell (user is disposing `--from` token) |
-|---|---|---|
-| **Level 4** | **BLOCK** — Refuse to execute swap. Display triggered labels. | **WARN** — Display risk labels, allow swap to continue (stop-loss exit). |
-| **Level 3** | **PAUSE** — Display risk labels, ask user "Continue? (yes/no)". Only proceed on explicit "yes". | **WARN** — Display risk labels, allow swap to continue. |
-| **Level 2** | **WARN** — Display risk labels as info, continue without pause. | **WARN** — Display risk labels as info, continue without pause. |
-| **Level 1** | Safe — proceed to Step 3. | Safe — proceed to Step 3. |
+| Effective Level | Buy Action (user is acquiring `--to` token) |
+|---|---|
+| **Level 4** | **BLOCK** — Refuse to execute swap. Display triggered labels. |
+| **Level 3** | **PAUSE** — Display risk labels, ask user "Continue? (yes/no)". Only proceed on explicit "yes". |
+| **Level 2** | **WARN** — Display risk labels as info, continue without pause. |
+| **Level 1** | Safe — proceed to Step 3. |
+
+> Sell-side scanning is omitted by design — the user already holds the `--from` token. Risk labels on the `--to` token (the token being acquired) are the primary concern.
 
 **Edge cases:**
 - `isChainSupported: false` → Skip detection, warn "This chain does not support token security scanning", continue.
@@ -116,11 +118,11 @@ onchainos security token-scan --tokens "<chainId>:<toTokenAddress>"
 onchainos swap quote --from <token address from step1> --to <token address from step1> --readable-amount <amount> --chain <chain>
 ```
 
-Display: expected output, gas, price impact, routing path. Check `isHoneyPot` and `taxRate` — surface to user. Perform MEV risk assessment (see **MEV Protection**).
+Display: expected output, gas, price impact, routing path. If quote returns `taxRate`, display as supplementary info (the primary risk gate is Step 2's token-scan). Perform MEV risk assessment (see **MEV Protection**).
 
 ### Step 5 — User Confirmation
 
-- Price impact >5% → warn prominently. Honeypot (buy) → BLOCK.
+- Price impact >5% → warn prominently. (Honeypot already handled in Step 2.)
 - If >10 seconds pass before user confirms, re-fetch quote. If price diff >= slippage → warn and ask for re-confirmation.
 
 ### Step 6 — Execute
@@ -154,7 +156,7 @@ If `swap execute` returns an error, it may be caused by a preceding approval tra
 
 Enabled only when the user has **explicitly authorized** automated execution. Three mandatory rules:
 1. **Explicit authorization**: User must clearly opt in. Never assume silent mode.
-2. **Risk gate pause**: BLOCK-level risks must halt and notify the user even in silent mode.
+2. **Risk gate pause**: BLOCK-level (Level 4) risks must halt and notify the user. PAUSE-level (Level 3) buy risks must also halt and wait for user confirmation, even in silent mode.
 3. **Execution log**: Log every silent transaction (timestamp, pair, amount, slippage, txHash, status). Present on request or at session end.
 
 ### Step 7 — Report Result

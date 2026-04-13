@@ -137,7 +137,7 @@ If user provides name/symbol instead, search first with `onchainos token search`
 
 | # | Label | API Field | Description |
 |---|---|---|---|
-| 3-1 | Privileged Address (Solana) | `isHasAssetEditAuth` | Account has asset edit authority |
+| 3-1 | Privileged Address (Solana only) | `isHasAssetEditAuth` | Account has asset edit authority. Only applies to Solana (`chainId: 501`). Ignore on other chains. |
 | 3-2 | Low Liquidity | `isLowLiquidity` | Insufficient trading liquidity |
 | 3-3 | Dumping | `isDumping` | Large sell-off / insider dumping |
 | 3-4 | Liquidity Removal | `isLiquidityRemoval` | LP being removed |
@@ -166,9 +166,9 @@ Tax fields (`buyTaxes`, `sellTaxes`) map to risk levels based on value:
 
 | Tax Value | Risk Level | Agent Behavior |
 |---|---|---|
-| > 50% | Level 4 | Block buy transaction |
-| 21% – 50% | Level 3 | Pause, require user confirmation for buy |
-| 1% – 20% | Level 2 | Show tax info, do not pause |
+| ≥ 50% | Level 4 | Block buy transaction |
+| ≥ 21% and < 50% | Level 3 | Pause, require user confirmation for buy |
+| > 0% and < 21% | Level 2 | Show tax info, do not pause |
 | 0% or null | — | No tax risk (null = tax data unavailable, do not display) |
 
 ## Risk Level Computation
@@ -294,7 +294,6 @@ Display:
     - [L3] Pump activity (isPump)
     - [L2] Mintable (isMintable)
     - [L2] Has Freeze Authority (isHasFrozenAuth)
-  Buy Tax: N/A | Sell Tax: N/A
   Action: BLOCK — buy is prohibited due to critical risk labels.
 ```
 

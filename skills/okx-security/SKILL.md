@@ -110,7 +110,7 @@ Key principles:
 - **Buy is stricter than sell**: Level 4 blocks buy but only warns on sell (to allow stop-loss exit).
 - **Level 3 buy requires explicit user confirmation** (yes/no) — do not auto-continue.
 - If `isChainSupported: false`, skip detection with a warning; do not block.
-- If API fails, warn but do not block — apply the fail-safe principle.
+- If API fails, warn but do not block. In swap context, token-scan failures auto-continue with a warning to avoid blocking time-sensitive trades — this overrides the general fail-safe's ask-user behavior.
 
 > Security commands do not require wallet login. They work with any address.
 
