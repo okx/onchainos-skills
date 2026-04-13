@@ -58,12 +58,16 @@ Each call returns an independent attachment URL. Failure of one does not affect 
 
 ## Skill Routing
 
-| User Intent | Route To |
-|---|---|
-| Upload a file attachment | **This skill** (`okx-file-upload`) |
-| Log in / wallet auth | `okx-agentic-wallet` |
-| Send tokens / transfer | `okx-agentic-wallet` |
-| Swap / trade tokens | `okx-dex-swap` |
+- For uploading a file attachment to CDN → use **this skill** (`okx-file-upload`)
+- For wallet login / balance / send tokens / tx history → use `okx-agentic-wallet`
+- For public wallet balance (by address) → use `okx-wallet-portfolio`
+- For token swaps / trades / buy / sell → use `okx-dex-swap`
+- For token search / metadata / holders / cluster analysis → use `okx-dex-token`
+- For token prices / K-line charts / wallet PnL → use `okx-dex-market`
+- For smart money / whale / KOL signals → use `okx-dex-signal`
+- For meme / pump.fun token scanning → use `okx-dex-trenches`
+- For transaction broadcasting / gas estimation → use `okx-onchain-gateway`
+- For security scanning (token / DApp / tx / signature) → use `okx-security`
 
 ## Edge Cases
 
