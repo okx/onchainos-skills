@@ -423,11 +423,11 @@ impl WalletApiClient {
         {
             Ok(r) => r,
             Err(e) if e.is_connect() || e.is_timeout() => {
-                let _ = self.doh.handle_failure().await;
-                if self.doh.is_proxy() {
-                    let _ = self.rebuild_http_client();
+                if self.doh.handle_failure().await {
+                    self.rebuild_http_client()?;
+                    return Box::pin(self.get_authed(path, access_token, query)).await;
                 }
-                return Err(e).context("request failed (GET not retried during DoH failover)");
+                return Err(e).context("request failed");
             }
             Err(e) => return Err(e).context("request failed"),
         };
