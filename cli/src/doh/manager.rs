@@ -120,9 +120,14 @@ impl DohManager {
             // Only return true if we actually resolved the IP
             self.resolved_ip.is_some()
         } else {
-            // All nodes exhausted, fallback direct
+            // All nodes exhausted — clear proxy state, let caller retry with direct.
+            // Don't write cache (avoid failedNodes deadloop per spec).
+            // retried stays true so this is the last attempt.
             self.retried = true;
-            false
+            self.mode = None;
+            self.node = None;
+            self.resolved_ip = None;
+            true
         }
     }
 
