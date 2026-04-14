@@ -96,8 +96,11 @@ impl DohManager {
             return false;
         }
 
-        // Call exec_doh_binary with domain + exclude list
-        if let Some(new_node) = binary::exec_doh_binary(&self.domain, &exclude).await {
+        // Call exec_doh_binary with domain + exclude list + user-agent
+        let ua = self.proxy_user_agent();
+        if let Some(new_node) =
+            binary::exec_doh_binary(&self.domain, &exclude, ua.as_deref()).await
+        {
             // Cache new node as Proxy
             let entry = DohCacheEntry {
                 mode: DohMode::Proxy,
@@ -112,7 +115,8 @@ impl DohManager {
             self.resolved_ip = Self::resolve_node_ip(&new_node.ip);
             self.mode = Some(DohMode::Proxy);
             self.node = Some(new_node);
-            self.retried = true;
+            // Reset retried so long-lived processes (MCP) can failover again later
+            self.retried = false;
             // Only return true if we actually resolved the IP
             self.resolved_ip.is_some()
         } else {

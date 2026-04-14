@@ -109,7 +109,11 @@ pub async fn download_binary() -> Result<()> {
 
 /// Executes the okx-doh-resolver binary and parses the result.
 /// Returns `None` on any error (binary missing, timeout, bad JSON, code != 0, empty ip).
-pub async fn exec_doh_binary(domain: &str, exclude: &[String]) -> Option<DohNode> {
+pub async fn exec_doh_binary(
+    domain: &str,
+    exclude: &[String],
+    user_agent: Option<&str>,
+) -> Option<DohNode> {
     let bin = binary_path()?;
     if !bin.exists() {
         return None;
@@ -117,16 +121,21 @@ pub async fn exec_doh_binary(domain: &str, exclude: &[String]) -> Option<DohNode
 
     let domain = domain.to_string();
     let exclude = exclude.to_vec();
+    let user_agent = user_agent.map(|s| s.to_string());
 
     let output = tokio::time::timeout(Duration::from_secs(30), async {
         let bin = bin.clone();
         let domain = domain.clone();
         let exclude = exclude.clone();
+        let user_agent = user_agent.clone();
         tokio::task::spawn_blocking(move || {
             let mut cmd = std::process::Command::new(&bin);
             cmd.arg("--domain").arg(&domain);
             if !exclude.is_empty() {
                 cmd.arg("--exclude").arg(exclude.join(","));
+            }
+            if let Some(ua) = &user_agent {
+                cmd.arg("--user-agent").arg(ua);
             }
             cmd.output()
         })
