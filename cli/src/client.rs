@@ -469,6 +469,7 @@ impl ApiClient {
         };
 
         let resp = req
+            .timeout(std::time::Duration::from_secs(60))
             .multipart(form)
             .send()
             .await
