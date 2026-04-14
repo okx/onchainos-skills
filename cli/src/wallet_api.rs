@@ -405,34 +405,36 @@ impl WalletApiClient {
     }
 
     /// GET with Bearer accessToken + query params.
-    pub async fn get_authed(
-        &mut self,
-        path: &str,
-        access_token: &str,
-        query: &[(&str, &str)],
-    ) -> Result<Value> {
-        let query_string = build_query_string(query);
-        let effective = self.effective_base_url();
-        let url = format!("{}{}{}", effective.trim_end_matches('/'), path, query_string);
-        let resp = match self
-            .http
-            .get(&url)
-            .headers(crate::client::ApiClient::jwt_headers(access_token))
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) if e.is_connect() || e.is_timeout() => {
-                if self.doh.handle_failure().await {
-                    self.rebuild_http_client()?;
-                    return Box::pin(self.get_authed(path, access_token, query)).await;
+    pub fn get_authed<'a>(
+        &'a mut self,
+        path: &'a str,
+        access_token: &'a str,
+        query: &'a [(&'a str, &'a str)],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        Box::pin(async move {
+            let query_string = build_query_string(query);
+            let effective = self.effective_base_url();
+            let url = format!("{}{}{}", effective.trim_end_matches('/'), path, query_string);
+            let resp = match self
+                .http
+                .get(&url)
+                .headers(crate::client::ApiClient::jwt_headers(access_token))
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                        return self.get_authed(path, access_token, query).await;
+                    }
+                    return Err(e).context("request failed");
                 }
-                return Err(e).context("request failed");
-            }
-            Err(e) => return Err(e).context("request failed"),
-        };
-        self.doh.cache_direct_if_needed();
-        self.handle_response(resp).await
+                Err(e) => return Err(e).context("request failed"),
+            };
+            self.doh.cache_direct_if_needed();
+            self.handle_response(resp).await
+        })
     }
 
     // ── Public API methods ──────────────────────────────────────────
