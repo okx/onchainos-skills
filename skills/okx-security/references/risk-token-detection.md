@@ -175,15 +175,16 @@ Tax fields (`buyTaxes`, `sellTaxes`) map to risk levels based on value:
 
 When the Agent receives a token-scan response, compute the **effective risk level** as follows:
 
-1. **Collect triggered labels**: Iterate all boolean fields. For each `true` value, record its risk level from the catalog above. For `isHasAssetEditAuth`, only count as Level 3 when `chainId == 501` (Solana).
-2. **Evaluate tax thresholds**: Parse `buyTaxes` and `sellTaxes` as numbers. Map each to a risk level per the tax threshold table. If `null`, empty, or non-numeric, treat as unavailable — skip tax evaluation and do not display.
-3. **Determine effective level**: Take the **maximum** risk level across all triggered labels and tax thresholds. This is the token's effective risk level. **Fallback**: If `isRiskToken: true` but the computed effective level is Level 1 (no individual boolean labels triggered AND no tax thresholds triggered), promote to Level 2 (info warning). In the fallback case, display: `[L2] Risk flagged by API (isRiskToken)` — no specific label identified. This preserves the API's composite judgment as a safety net.
+1. **Gate check — `isRiskToken`**: If `isRiskToken: false`, the token is **Level 1 (safe)** — skip all further label and tax evaluation, proceed normally.
+2. **If `isRiskToken: true`** — collect triggered labels: Iterate all boolean fields. For each `true` value, record its risk level from the catalog above. For `isHasAssetEditAuth`, only count as Level 3 when `chainId == 501` (Solana).
+3. **Evaluate tax thresholds**: Parse `buyTaxes` and `sellTaxes` as numbers. Map each to a risk level per the tax threshold table. If `null`, empty, or non-numeric, treat as unavailable — skip tax evaluation and do not display.
+4. **Determine effective level**: Take the **maximum** risk level across all triggered labels and tax thresholds. This is the token's effective risk level. **Fallback**: If `isRiskToken: true` but no individual boolean labels triggered AND no tax thresholds triggered, promote to Level 2 (info warning). In the fallback case, display: `[L2] Risk flagged by API (isRiskToken)` — no specific label identified. This preserves the API's composite judgment as a safety net.
 
 > **Direction-agnostic tax rule**: Both `buyTaxes` and `sellTaxes` contribute to the effective level regardless of operation direction; the buy/sell distinction only affects the *action* (block vs. warn), not the level computation. Rationale: a high sell tax indicates the token may be functionally a honeypot (users can buy but cannot sell without heavy loss), so both taxes factor into the risk level regardless of direction.
 
-> **`isRiskToken` note**: `isRiskToken` is a server-side composite flag that may incorporate signals not exposed as individual boolean fields (e.g., off-chain intelligence, ML models). The skill computes its own level from individual labels for explainability, and uses `isRiskToken` only as a fallback.
+> **`isRiskToken` as gate**: `isRiskToken` is a server-side composite flag that may incorporate signals not exposed as individual boolean fields (e.g., off-chain intelligence, ML models). It serves as the **primary gate** — only tokens flagged by the API as risky need further label-level analysis. When `isRiskToken: false`, individual labels are not evaluated, even if some happen to be `true` (the API's composite judgment takes precedence).
 
-4. **Apply action matrix**: Use the effective risk level + operation type (buy/sell) to determine the Agent action per the matrix below.
+5. **Apply action matrix**: Use the effective risk level + operation type (buy/sell) to determine the Agent action per the matrix below.
 
 ## Risk Level Action Matrix
 
