@@ -298,6 +298,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             contract_token,
             force,
         } => {
+            let chain = crate::chains::resolve_chain(&chain);
             let raw_amt = resolve_send_amount(
                 amt.as_deref(),
                 readable_amount.as_deref(),
