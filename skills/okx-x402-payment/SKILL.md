@@ -4,7 +4,7 @@ description: "This skill should be used when the user encounters an HTTP 402 Pay
 license: MIT
 metadata:
   author: okx
-  version: "1.0.4"
+  version: "2.2.9"
   homepage: "https://web3.okx.com"
 ---
 
