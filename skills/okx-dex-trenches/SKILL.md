@@ -44,6 +44,7 @@ metadata:
 
 - Missing chain → default to Solana (`--chain solana`); verify support with `onchainos memepump chains` first
 - Missing `--stage` for memepump-tokens → default to `NEW`; only ask if the user's intent clearly points to a different stage
+- Stage coverage: `NEW` and `MIGRATING` include tokens created within the last **24 h**; `MIGRATED` includes tokens whose migration completed within the last **3 days**
 - User mentions a protocol name → first call `onchainos memepump chains` to get the protocol ID, then pass `--protocol-id-list <id>` to `memepump-tokens`. Do NOT use `okx-dex-token` to search for protocol names as tokens.
 
 ### Step 2: Call and Display
