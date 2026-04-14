@@ -21,10 +21,18 @@ fn nullify_created_timestamp_if_new(token: &mut Value) {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
 
+    if now_ms == 0 {
+        // Clock error — skip nullification to avoid false-positives on all tokens.
+        return;
+    }
+
     let created_ms = token
         .get("createdTimestamp")
-        .and_then(|v| v.as_str())
-        .and_then(|s| s.parse::<u64>().ok())
+        .and_then(|v| {
+            v.as_str()
+                .and_then(|s| s.parse::<u64>().ok())
+                .or_else(|| v.as_u64())
+        })
         .unwrap_or(0);
 
     if created_ms > 0 && now_ms.saturating_sub(created_ms) < NEW_TOKEN_THRESHOLD_MS {
