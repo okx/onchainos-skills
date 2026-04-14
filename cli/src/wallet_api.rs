@@ -3,6 +3,8 @@ use reqwest::Client;
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 
+use crate::doh::DohManager;
+
 /// Structured error for non-zero API response codes.
 /// Preserves the original backend `code` and `msg` so callers can
 /// output them directly via `output::error`.
@@ -99,6 +101,7 @@ fn build_query_string(query: &[(&str, &str)]) -> String {
 pub struct WalletApiClient {
     http: Client,
     base_url: String,
+    doh: DohManager,
 }
 
 // ── API response types ──────────────────────────────────────────────
@@ -241,50 +244,87 @@ impl WalletApiClient {
             .map(|s| s.to_string())
             .unwrap_or_else(|| crate::client::DEFAULT_BASE_URL.to_string());
 
+        let custom = option_env!("OKX_BASE_URL").is_some();
+        let mut doh = DohManager::new("web3.okx.com", &base_url, custom);
+        doh.prepare();
+
+        let mut builder = Client::builder()
+            .timeout(std::time::Duration::from_secs(30));
+        if let Some((host, addr)) = doh.resolve_override() {
+            builder = builder.resolve(&host, addr);
+        }
+
         Ok(Self {
-            http: Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()?,
+            http: builder.build()?,
             base_url,
+            doh,
         })
+    }
+
+    fn rebuild_http_client(&mut self) -> Result<()> {
+        let mut builder = Client::builder()
+            .timeout(std::time::Duration::from_secs(30));
+        if let Some((host, addr)) = self.doh.resolve_override() {
+            builder = builder.resolve(&host, addr);
+        }
+        self.http = builder.build()?;
+        Ok(())
+    }
+
+    fn effective_base_url(&self) -> String {
+        self.doh.proxy_base_url()
+            .unwrap_or_else(|| self.base_url.clone())
     }
 
     // ── Low-level POST helpers ──────────────────────────────────────
 
     /// POST without Authorization header (for init / verify / refresh).
-    pub async fn post_public(&self, path: &str, body: &Value) -> Result<Value> {
-        let url = format!("{}{}", self.base_url, path);
+    pub async fn post_public(&mut self, path: &str, body: &Value) -> Result<Value> {
+        let effective = self.effective_base_url();
+        let url = format!("{}{}", effective.trim_end_matches('/'), path);
 
         if cfg!(feature = "debug-log") {
             eprintln!("[DEBUG][post_public] url_path={}", &url);
         }
 
-        let resp = self
+        let resp = match self
             .http
             .post(&url)
             .headers(crate::client::ApiClient::anonymous_headers())
             .json(body)
             .send()
             .await
-            .context("wallet API request failed")?;
+        {
+            Ok(r) => r,
+            Err(e) if e.is_connect() || e.is_timeout() => {
+                let _ = self.doh.handle_failure().await;
+                if self.doh.is_proxy() {
+                    let _ = self.rebuild_http_client();
+                }
+                return Err(e).context("request failed (POST not retried during DoH failover)");
+            }
+            Err(e) => return Err(e).context("request failed"),
+        };
+        self.doh.cache_direct_if_needed();
         self.handle_response(resp).await
     }
 
     /// POST with Bearer accessToken (for create / list / refresh / x402).
-    pub async fn post_authed(&self, path: &str, access_token: &str, body: &Value) -> Result<Value> {
+    pub async fn post_authed(&mut self, path: &str, access_token: &str, body: &Value) -> Result<Value> {
         self.post_authed_with_headers(path, access_token, body, None)
             .await
     }
 
     /// POST with Bearer accessToken + optional extra headers.
     pub async fn post_authed_with_headers(
-        &self,
+        &mut self,
         path: &str,
         access_token: &str,
         body: &Value,
         extra_headers: Option<&[(&str, &str)]>,
     ) -> Result<Value> {
-        let url = format!("{}{}", self.base_url, path);
+        let effective = self.effective_base_url();
+        let url = format!("{}{}", effective.trim_end_matches('/'), path);
 
         if cfg!(feature = "debug-log") {
             eprintln!("[DEBUG][post_authed] url_path={}", &url);
@@ -302,14 +342,25 @@ impl WalletApiClient {
             }
         }
 
-        let resp = self
+        let resp = match self
             .http
             .post(&url)
             .headers(headers)
             .json(body)
             .send()
             .await
-            .context("wallet API request failed")?;
+        {
+            Ok(r) => r,
+            Err(e) if e.is_connect() || e.is_timeout() => {
+                let _ = self.doh.handle_failure().await;
+                if self.doh.is_proxy() {
+                    let _ = self.rebuild_http_client();
+                }
+                return Err(e).context("request failed (POST not retried during DoH failover)");
+            }
+            Err(e) => return Err(e).context("request failed"),
+        };
+        self.doh.cache_direct_if_needed();
         self.handle_response(resp).await
     }
 
@@ -349,27 +400,39 @@ impl WalletApiClient {
 
     /// GET with Bearer accessToken + query params.
     pub async fn get_authed(
-        &self,
+        &mut self,
         path: &str,
         access_token: &str,
         query: &[(&str, &str)],
     ) -> Result<Value> {
         let query_string = build_query_string(query);
-        let url = format!("{}{}{}", self.base_url, path, query_string);
-        let resp = self
+        let effective = self.effective_base_url();
+        let url = format!("{}{}{}", effective.trim_end_matches('/'), path, query_string);
+        let resp = match self
             .http
             .get(&url)
             .headers(crate::client::ApiClient::jwt_headers(access_token))
             .send()
             .await
-            .context("wallet API request failed")?;
+        {
+            Ok(r) => r,
+            Err(e) if e.is_connect() || e.is_timeout() => {
+                let _ = self.doh.handle_failure().await;
+                if self.doh.is_proxy() {
+                    let _ = self.rebuild_http_client();
+                }
+                return Err(e).context("request failed (GET not retried during DoH failover)");
+            }
+            Err(e) => return Err(e).context("request failed"),
+        };
+        self.doh.cache_direct_if_needed();
         self.handle_response(resp).await
     }
 
     // ── Public API methods ──────────────────────────────────────────
 
     /// POST /priapi/v5/wallet/agentic/auth/init
-    pub async fn auth_init(&self, email: &str, locale: Option<&str>) -> Result<InitResponse> {
+    pub async fn auth_init(&mut self, email: &str, locale: Option<&str>) -> Result<InitResponse> {
         let mut body = json!({ "email": email });
         if let Some(loc) = locale {
             body["locale"] = serde_json::Value::String(loc.to_string());
@@ -389,7 +452,7 @@ impl WalletApiClient {
 
     /// POST /priapi/v5/wallet/agentic/auth/verify
     pub async fn auth_verify(
-        &self,
+        &mut self,
         email: &str,
         flow_id: &str,
         otp: &str,
@@ -414,7 +477,7 @@ impl WalletApiClient {
     }
 
     /// POST /priapi/v5/wallet/agentic/auth/ak/init
-    pub async fn ak_auth_init(&self, api_key: &str) -> Result<AkInitResponse> {
+    pub async fn ak_auth_init(&mut self, api_key: &str) -> Result<AkInitResponse> {
         let body = json!({ "apiKey": api_key });
         let data = self
             .post_public("/priapi/v5/wallet/agentic/auth/ak/init", &body)
@@ -430,7 +493,7 @@ impl WalletApiClient {
 
     /// POST /priapi/v5/wallet/agentic/auth/ak/verify
     pub async fn ak_auth_verify(
-        &self,
+        &mut self,
         temp_pub_key: &str,
         api_key: &str,
         passphrase: &str,
@@ -459,7 +522,7 @@ impl WalletApiClient {
     }
 
     /// POST /priapi/v5/wallet/agentic/auth/refresh
-    pub async fn auth_refresh(&self, refresh_token: &str) -> Result<RefreshResponse> {
+    pub async fn auth_refresh(&mut self, refresh_token: &str) -> Result<RefreshResponse> {
         let body = json!({ "refreshToken": refresh_token });
         let data = self
             .post_public("/priapi/v5/wallet/agentic/auth/refresh", &body)
@@ -475,7 +538,7 @@ impl WalletApiClient {
 
     /// POST /priapi/v5/wallet/agentic/account/create
     pub async fn account_create(
-        &self,
+        &mut self,
         access_token: &str,
         project_id: &str,
     ) -> Result<CreateAccountResponse> {
@@ -500,7 +563,7 @@ impl WalletApiClient {
 
     /// POST /priapi/v5/wallet/agentic/account/list
     pub async fn account_list(
-        &self,
+        &mut self,
         access_token: &str,
         project_id: &str,
     ) -> Result<Vec<AccountListItem>> {
@@ -524,7 +587,7 @@ impl WalletApiClient {
     ///
     /// Batch-fetch address lists for multiple accounts.
     pub async fn account_address_list(
-        &self,
+        &mut self,
         access_token: &str,
         account_ids: &[String],
     ) -> Result<Vec<AddressListAccountItem>> {
@@ -552,7 +615,7 @@ impl WalletApiClient {
     /// GET /priapi/v5/wallet/agentic/asset/wallet-all-token-balances-batch
     ///
     /// Fetch balances for multiple accounts at once.
-    pub async fn balance_batch(&self, access_token: &str, account_ids: &str) -> Result<Value> {
+    pub async fn balance_batch(&mut self, access_token: &str, account_ids: &str) -> Result<Value> {
         self.get_authed(
             "/priapi/v5/wallet/agentic/asset/wallet-all-token-balances-batch",
             access_token,
@@ -565,7 +628,7 @@ impl WalletApiClient {
     ///
     /// Fetch balances for a single account with optional chain / token filters.
     pub async fn balance_single(
-        &self,
+        &mut self,
         access_token: &str,
         query: &[(&str, &str)],
     ) -> Result<Value> {
@@ -580,7 +643,7 @@ impl WalletApiClient {
     /// POST /priapi/v5/wallet/agentic/pre-transaction/unsignedInfo
     #[allow(clippy::too_many_arguments)]
     pub async fn pre_transaction_unsigned_info(
-        &self,
+        &mut self,
         access_token: &str,
         chain_path: &str,
         chain_index: u64,
@@ -645,7 +708,7 @@ impl WalletApiClient {
 
     /// POST /priapi/v5/wallet/agentic/pre-transaction/broadcast-transaction
     pub async fn broadcast_transaction(
-        &self,
+        &mut self,
         access_token: &str,
         account_id: &str,
         address: &str,

@@ -157,7 +157,7 @@ async fn sign_and_broadcast(
         validate_non_negative_integer(aa_amount, "aa-dex-token-amount")?;
     }
 
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
     // Only read swap trace ID from cache for contract calls (swap flow)
     let cached_tid = if is_contract_call {
         crate::wallet_store::get_swap_trace_id().ok().flatten()

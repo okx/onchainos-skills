@@ -257,7 +257,7 @@ async fn fetch_tokens_from_wallet(
     account_id: &str,
     chain: Option<&str>,
 ) -> Result<Vec<(String, String)>> {
-    let wallet_client = crate::wallet_api::WalletApiClient::new()?;
+    let mut wallet_client = crate::wallet_api::WalletApiClient::new()?;
     let chain_index = chain.map(chains::resolve_chain).unwrap_or_default();
 
     let mut query: Vec<(&str, &str)> = vec![("accountId", account_id)];
