@@ -101,24 +101,48 @@ impl DohManager {
         if let Some(new_node) =
             binary::exec_doh_binary(&self.domain, &exclude, Some(&ua)).await
         {
-            // Cache new node as Proxy
+            let failed_nodes = cache::read_cache(&self.domain)
+                .map(|e| e.failed_nodes)
+                .unwrap_or_default();
+
+            // classifyAndCache: if binary says ip/host == domain, it means "go direct"
+            if new_node.ip == self.domain || new_node.host == self.domain {
+                let entry = DohCacheEntry {
+                    mode: DohMode::Direct,
+                    node: None,
+                    failed_nodes,
+                    updated_at: now_ms(),
+                };
+                cache::write_cache(&self.domain, &entry);
+                self.mode = Some(DohMode::Direct);
+                self.node = None;
+                self.resolved_ip = None;
+                self.retried = false;
+                return true;
+            }
+
+            // Proxy node — cache and apply
             let entry = DohCacheEntry {
                 mode: DohMode::Proxy,
                 node: Some(new_node.clone()),
-                failed_nodes: cache::read_cache(&self.domain)
-                    .map(|e| e.failed_nodes)
-                    .unwrap_or_default(),
+                failed_nodes,
                 updated_at: now_ms(),
             };
             cache::write_cache(&self.domain, &entry);
 
             self.resolved_ip = Self::resolve_node_ip(&new_node.ip);
+            if self.resolved_ip.is_none() {
+                // CNAME DNS resolution failed — fall back to direct
+                self.retried = true;
+                self.mode = None;
+                self.node = None;
+                return true;
+            }
             self.mode = Some(DohMode::Proxy);
             self.node = Some(new_node);
             // Reset retried so long-lived processes (MCP) can failover again later
             self.retried = false;
-            // Only return true if we actually resolved the IP
-            self.resolved_ip.is_some()
+            true
         } else {
             // All nodes exhausted — clear proxy state, let caller retry with direct.
             // Don't write cache (avoid failedNodes deadloop per spec).
