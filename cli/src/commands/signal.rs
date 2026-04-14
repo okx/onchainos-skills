@@ -87,7 +87,7 @@ pub async fn execute(ctx: &Context, cmd: SignalCommand) -> Result<()> {
 // ── Public fetch functions (used by both CLI and MCP) ────────────────
 
 /// GET /api/v6/dex/market/signal/supported/chain
-pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
+pub async fn fetch_chains(client: &mut ApiClient) -> Result<Value> {
     client
         .get("/api/v6/dex/market/signal/supported/chain", &[])
         .await
@@ -96,7 +96,7 @@ pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
 /// POST /api/v6/dex/market/signal/list — smart money / KOL / whale signals
 #[allow(clippy::too_many_arguments)]
 pub async fn fetch_list(
-    client: &ApiClient,
+    client: &mut ApiClient,
     chain_index: &str,
     wallet_type: Option<String>,
     min_amount_usd: Option<String>,
@@ -147,8 +147,8 @@ pub async fn fetch_list(
 // ── CLI wrappers ─────────────────────────────────────────────────────
 
 async fn signal_chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client_async().await?;
-    output::success(fetch_chains(&client).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_chains(&mut client).await?);
     Ok(())
 }
 
@@ -168,10 +168,10 @@ async fn signal_list(
     max_liquidity_usd: Option<String>,
 ) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain).to_string();
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
     output::success(
         fetch_list(
-            &client,
+            &mut client,
             &chain_index,
             wallet_type,
             min_amount_usd,

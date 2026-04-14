@@ -82,11 +82,11 @@ pub enum GatewayCommand {
 }
 
 pub async fn execute(ctx: &Context, cmd: GatewayCommand) -> Result<()> {
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
     match cmd {
         GatewayCommand::Gas { chain } => {
             let chain_index = crate::chains::resolve_chain(&chain);
-            output::success(fetch_gas(&client, &chain_index).await?);
+            output::success(fetch_gas(&mut client, &chain_index).await?);
         }
         GatewayCommand::GasLimit {
             from,
@@ -97,7 +97,7 @@ pub async fn execute(ctx: &Context, cmd: GatewayCommand) -> Result<()> {
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(
-                fetch_gas_limit(&client, &chain_index, &from, &to, &amount, data.as_deref())
+                fetch_gas_limit(&mut client, &chain_index, &from, &to, &amount, data.as_deref())
                     .await?,
             );
         }
@@ -110,7 +110,7 @@ pub async fn execute(ctx: &Context, cmd: GatewayCommand) -> Result<()> {
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(
-                fetch_simulate(&client, &chain_index, &from, &to, &amount, &data).await?,
+                fetch_simulate(&mut client, &chain_index, &from, &to, &amount, &data).await?,
             );
         }
         GatewayCommand::Broadcast {
@@ -121,7 +121,7 @@ pub async fn execute(ctx: &Context, cmd: GatewayCommand) -> Result<()> {
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(
-                fetch_broadcast(&client, &chain_index, &signed_tx, &address, mev_protection)
+                fetch_broadcast(&mut client, &chain_index, &signed_tx, &address, mev_protection)
                     .await?,
             );
         }
@@ -132,18 +132,18 @@ pub async fn execute(ctx: &Context, cmd: GatewayCommand) -> Result<()> {
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(
-                fetch_orders(&client, &chain_index, &address, order_id.as_deref()).await?,
+                fetch_orders(&mut client, &chain_index, &address, order_id.as_deref()).await?,
             );
         }
         GatewayCommand::Chains => {
-            output::success(fetch_chains(&client).await?);
+            output::success(fetch_chains(&mut client).await?);
         }
     }
     Ok(())
 }
 
 /// GET /api/v6/dex/pre-transaction/gas-price
-pub async fn fetch_gas(client: &ApiClient, chain_index: &str) -> Result<Value> {
+pub async fn fetch_gas(client: &mut ApiClient, chain_index: &str) -> Result<Value> {
     client
         .get(
             "/api/v6/dex/pre-transaction/gas-price",
@@ -154,7 +154,7 @@ pub async fn fetch_gas(client: &ApiClient, chain_index: &str) -> Result<Value> {
 
 /// POST /api/v6/dex/pre-transaction/gas-limit
 pub async fn fetch_gas_limit(
-    client: &ApiClient,
+    client: &mut ApiClient,
     chain_index: &str,
     from: &str,
     to: &str,
@@ -177,7 +177,7 @@ pub async fn fetch_gas_limit(
 
 /// POST /api/v6/dex/pre-transaction/simulate
 pub async fn fetch_simulate(
-    client: &ApiClient,
+    client: &mut ApiClient,
     chain_index: &str,
     from: &str,
     to: &str,
@@ -198,7 +198,7 @@ pub async fn fetch_simulate(
 
 /// POST /api/v6/dex/pre-transaction/broadcast-transaction
 pub async fn fetch_broadcast(
-    client: &ApiClient,
+    client: &mut ApiClient,
     chain_index: &str,
     signed_tx: &str,
     address: &str,
@@ -242,7 +242,7 @@ pub async fn fetch_broadcast(
 
 /// GET /api/v6/dex/post-transaction/orders
 pub async fn fetch_orders(
-    client: &ApiClient,
+    client: &mut ApiClient,
     chain_index: &str,
     address: &str,
     order_id: Option<&str>,
@@ -257,7 +257,7 @@ pub async fn fetch_orders(
 }
 
 /// GET /api/v6/dex/pre-transaction/supported/chain
-pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
+pub async fn fetch_chains(client: &mut ApiClient) -> Result<Value> {
     client
         .get("/api/v6/dex/pre-transaction/supported/chain", &[])
         .await

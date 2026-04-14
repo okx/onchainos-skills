@@ -262,20 +262,20 @@ pub enum TokenCommand {
 }
 
 pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
     match cmd {
         TokenCommand::Search { query, chains } => {
             if query.trim().is_empty() {
                 anyhow::bail!("Parameter --query cannot be empty");
             }
             let resolved_chains = ctx.resolve_chains_or(chains, "1,501");
-            output::success(fetch_search(&client, &query, &resolved_chains).await?);
+            output::success(fetch_search(&mut client, &query, &resolved_chains).await?);
         }
         TokenCommand::Info { address, chain } => {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_info(&client, &address, &chain_index).await?);
+            output::success(fetch_info(&mut client, &address, &chain_index).await?);
         }
         TokenCommand::Holders {
             address,
@@ -285,19 +285,19 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_holders(&client, &address, &chain_index, tag_filter).await?);
+            output::success(fetch_holders(&mut client, &address, &chain_index, tag_filter).await?);
         }
         TokenCommand::PriceInfo { address, chain } => {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_price_info(&client, &address, &chain_index).await?);
+            output::success(fetch_price_info(&mut client, &address, &chain_index).await?);
         }
         TokenCommand::Liquidity { address, chain } => {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_liquidity(&client, &address, &chain_index).await?);
+            output::success(fetch_liquidity(&mut client, &address, &chain_index).await?);
         }
         TokenCommand::HotTokens {
             ranking_type,
@@ -345,7 +345,7 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
         } => {
             output::success(
                 fetch_hot_tokens(
-                    &client,
+                    &mut client,
                     HotTokensParams {
                         ranking_type,
                         chain,
@@ -398,7 +398,7 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_advanced_info(&client, &address, &chain_index).await?);
+            output::success(fetch_advanced_info(&mut client, &address, &chain_index).await?);
         }
         TokenCommand::TopTrader {
             address,
@@ -408,7 +408,7 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_top_trader(&client, &address, &chain_index, tag_filter).await?);
+            output::success(fetch_top_trader(&mut client, &address, &chain_index, tag_filter).await?);
         }
         TokenCommand::Trades {
             address,
@@ -422,7 +422,7 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
             output::success(
                 fetch_token_trades(
-                    &client,
+                    &mut client,
                     &address,
                     &chain_index,
                     limit,
@@ -461,7 +461,7 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
 }
 
 /// GET /api/v6/dex/market/token/search
-pub async fn fetch_search(client: &ApiClient, query: &str, chains: &str) -> Result<Value> {
+pub async fn fetch_search(client: &mut ApiClient, query: &str, chains: &str) -> Result<Value> {
     let resolved_chains = crate::chains::resolve_chains(chains);
     client
         .get(
@@ -472,7 +472,7 @@ pub async fn fetch_search(client: &ApiClient, query: &str, chains: &str) -> Resu
 }
 
 /// POST /api/v6/dex/market/token/basic-info — body is JSON array
-pub async fn fetch_info(client: &ApiClient, address: &str, chain_index: &str) -> Result<Value> {
+pub async fn fetch_info(client: &mut ApiClient, address: &str, chain_index: &str) -> Result<Value> {
     let body = json!([{"chainIndex": chain_index, "tokenContractAddress": address}]);
     client
         .post("/api/v6/dex/market/token/basic-info", &body)
@@ -481,7 +481,7 @@ pub async fn fetch_info(client: &ApiClient, address: &str, chain_index: &str) ->
 
 /// GET /api/v6/dex/market/token/holder
 pub async fn fetch_holders(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
     tag_filter: Option<u8>,
@@ -501,7 +501,7 @@ pub async fn fetch_holders(
 
 /// GET /api/v6/dex/market/token/top-liquidity — top 5 liquidity pools for a token
 pub async fn fetch_liquidity(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
 ) -> Result<Value> {
@@ -518,7 +518,7 @@ pub async fn fetch_liquidity(
 
 /// POST /api/v6/dex/market/price-info — body is JSON array
 pub async fn fetch_price_info(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
 ) -> Result<Value> {
@@ -618,7 +618,7 @@ pub struct HotTokensParams {
 }
 
 /// GET /api/v6/dex/market/token/hot-token — hot token list by trending score or X mentions
-pub async fn fetch_hot_tokens(client: &ApiClient, params: HotTokensParams) -> Result<Value> {
+pub async fn fetch_hot_tokens(client: &mut ApiClient, params: HotTokensParams) -> Result<Value> {
     let chain_index = params
         .chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
@@ -724,7 +724,7 @@ pub async fn fetch_hot_tokens(client: &ApiClient, params: HotTokensParams) -> Re
 
 /// GET /api/v6/dex/market/token/advanced-info
 pub async fn fetch_advanced_info(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
 ) -> Result<Value> {
@@ -741,7 +741,7 @@ pub async fn fetch_advanced_info(
 
 /// GET /api/v6/dex/market/token/top-trader
 pub async fn fetch_top_trader(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
     tag_filter: Option<u8>,
@@ -761,7 +761,7 @@ pub async fn fetch_top_trader(
 
 /// GET /api/v6/dex/market/trades — token trade history
 pub async fn fetch_token_trades(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
     limit: u32,
@@ -795,27 +795,27 @@ async fn cluster_by_address(
     let chain_index = chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-    let client = ctx.client_async().await?;
-    output::success(fetch_cluster_by_address(&client, path, address, &chain_index).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_cluster_by_address(&mut client, path, address, &chain_index).await?);
     Ok(())
 }
 
 /// GET /api/v6/dex/market/token/cluster/supported/chain — no parameters
-pub async fn fetch_cluster_supported_chains(client: &ApiClient) -> Result<Value> {
+pub async fn fetch_cluster_supported_chains(client: &mut ApiClient) -> Result<Value> {
     client
         .get("/api/v6/dex/market/token/cluster/supported/chain", &[])
         .await
 }
 
 async fn cluster_supported_chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client_async().await?;
-    output::success(fetch_cluster_supported_chains(&client).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_cluster_supported_chains(&mut client).await?);
     Ok(())
 }
 
 /// GET /api/v6/dex/market/token/cluster/overview or /cluster/list
 pub async fn fetch_cluster_by_address(
-    client: &ApiClient,
+    client: &mut ApiClient,
     path: &str,
     address: &str,
     chain_index: &str,
@@ -833,7 +833,7 @@ pub async fn fetch_cluster_by_address(
 
 /// GET /api/v6/dex/market/token/cluster/top-holders
 pub async fn fetch_cluster_top_holders(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
     range_filter: &str,
@@ -859,7 +859,7 @@ async fn cluster_top_holders(
     let chain_index = chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-    let client = ctx.client_async().await?;
-    output::success(fetch_cluster_top_holders(&client, address, &chain_index, range_filter).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_cluster_top_holders(&mut client, address, &chain_index, range_filter).await?);
     Ok(())
 }

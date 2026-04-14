@@ -322,16 +322,16 @@ pub enum DefiCommand {
 }
 
 pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
     match cmd {
         DefiCommand::SupportChains => {
-            output::success(fetch_chains(&client).await?);
+            output::success(fetch_chains(&mut client).await?);
         }
         DefiCommand::SupportPlatforms => {
-            output::success(fetch_protocols(&client).await?);
+            output::success(fetch_protocols(&mut client).await?);
         }
         DefiCommand::List { page_num } => {
-            output::success(fetch_search(&client, None, None, None, None, page_num).await?);
+            output::success(fetch_search(&mut client, None, None, None, None, page_num).await?);
         }
         DefiCommand::Search {
             token,
@@ -346,7 +346,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             let chain_index = chain.as_deref().map(crate::chains::resolve_chain);
             output::success(
                 fetch_search(
-                    &client,
+                    &mut client,
                     token.as_deref(),
                     platform.as_deref(),
                     chain_index.as_deref(),
@@ -357,10 +357,10 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             );
         }
         DefiCommand::Detail { investment_id } => {
-            output::success(fetch_detail(&client, &investment_id).await?);
+            output::success(fetch_detail(&mut client, &investment_id).await?);
         }
         DefiCommand::Prepare { investment_id } => {
-            output::success(fetch_prepare(&client, &investment_id).await?);
+            output::success(fetch_prepare(&mut client, &investment_id).await?);
         }
         DefiCommand::Deposit {
             investment_id,
@@ -373,7 +373,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
         } => {
             output::success(
                 fetch_enter(
-                    &client,
+                    &mut client,
                     &investment_id,
                     &address,
                     &user_input,
@@ -404,7 +404,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
                 .unwrap_or_default();
             output::success(
                 fetch_exit(
-                    &client,
+                    &mut client,
                     &id,
                     &chain_index,
                     &address,
@@ -438,7 +438,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             let auto_expect_output: Option<String> = if expect_output.is_none() {
                 if let Some(pfid) = platform_id.as_deref() {
                     extract_expect_output(
-                        &client,
+                        &mut client,
                         &address,
                         &chain_index,
                         pfid,
@@ -456,7 +456,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             let final_expect_output = expect_output.as_deref().or(auto_expect_output.as_deref());
             output::success(
                 fetch_claim(
-                    &client,
+                    &mut client,
                     &address,
                     &chain_index,
                     &reward_type,
@@ -496,7 +496,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             })?;
             let human_readable_amount = helpers::minimal_to_decimal_str(&input_amount, precision);
             let result = fetch_calculate_entry(
-                &client,
+                &mut client,
                 &id,
                 &address,
                 &input_token,
@@ -509,7 +509,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
 
             // Convert output: coinAmount from UI decimal -> minimal units + add tokenPrecision
             // Get tokenPrecision from prepare for each token
-            let prepare_data = fetch_prepare(&client, &id).await?;
+            let prepare_data = fetch_prepare(&mut client, &id).await?;
             let mut precision_map = std::collections::HashMap::new();
             if let Some(tokens) = prepare_data
                 .get("investWithTokenList")
@@ -588,14 +588,14 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             time_range,
         } => {
             output::success(
-                fetch_rate_chart(&client, &investment_id, time_range.as_deref()).await?,
+                fetch_rate_chart(&mut client, &investment_id, time_range.as_deref()).await?,
             );
         }
         DefiCommand::TvlChart {
             investment_id,
             time_range,
         } => {
-            output::success(fetch_tvl_chart(&client, &investment_id, time_range.as_deref()).await?);
+            output::success(fetch_tvl_chart(&mut client, &investment_id, time_range.as_deref()).await?);
         }
         DefiCommand::DepthPriceChart {
             investment_id,
@@ -604,7 +604,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
         } => {
             output::success(
                 fetch_depth_price_chart(
-                    &client,
+                    &mut client,
                     &investment_id,
                     chart_type.as_deref(),
                     time_range.as_deref(),
@@ -627,7 +627,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             range,
         } => {
             let result = operations::cmd_invest(
-                &client,
+                &mut client,
                 &investment_id,
                 &address,
                 &token,
@@ -654,7 +654,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             platform_id,
         } => {
             let result = operations::cmd_withdraw(
-                &client,
+                &mut client,
                 &investment_id,
                 &address,
                 &chain,
@@ -677,7 +677,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             principal_index,
         } => {
             let result = operations::cmd_collect(
-                &client,
+                &mut client,
                 &address,
                 &chain,
                 &reward_type,
@@ -690,7 +690,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             output::success(result);
         }
         DefiCommand::Positions { address, chains } => {
-            let raw = fetch_positions(&client, &address, &chains).await?;
+            let raw = fetch_positions(&mut client, &address, &chains).await?;
             output::success(raw);
         }
         DefiCommand::PositionDetail {
@@ -699,7 +699,7 @@ pub async fn execute(ctx: &Context, cmd: DefiCommand) -> Result<()> {
             platform_id,
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
-            let raw = fetch_position_detail(&client, &address, &chain_index, &platform_id).await?;
+            let raw = fetch_position_detail(&mut client, &address, &chain_index, &platform_id).await?;
             output::success(raw);
         }
     }

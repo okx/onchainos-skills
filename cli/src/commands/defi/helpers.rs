@@ -113,7 +113,7 @@ pub(super) fn decimal_to_minimal_str(amount: &str, precision: u32) -> String {
 /// Try to auto-build expectOutputList from position-detail for the given reward type.
 /// Returns None silently on any error or when no matching tokens are found.
 pub async fn extract_expect_output(
-    client: &ApiClient,
+    client: &mut ApiClient,
     wallet: &str,
     chain_index: &str,
     platform_id: &str,

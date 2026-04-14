@@ -8,6 +8,9 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
 use crate::client::ApiClient;
 use crate::commands::{
     defi, gateway, leaderboard, market, memepump, portfolio, signal, swap, token, tracker,
@@ -627,14 +630,14 @@ struct GatewayOrdersParams {
 #[derive(Clone)]
 pub struct McpServer {
     tool_router: ToolRouter<Self>,
-    client: ApiClient,
+    client: Arc<Mutex<ApiClient>>,
 }
 
 impl McpServer {
     pub fn new(base_url_override: Option<&str>) -> Result<Self> {
         Ok(Self {
             tool_router: Self::tool_router(),
-            client: ApiClient::new(base_url_override)?,
+            client: Arc::new(Mutex::new(ApiClient::new(base_url_override)?)),
         })
     }
 }
@@ -672,7 +675,7 @@ impl McpServer {
         Parameters(p): Parameters<TokenSearchParams>,
     ) -> Result<String, String> {
         let chains = p.chains.as_deref().unwrap_or("1,501");
-        match token::fetch_search(&self.client, &p.query, chains).await {
+        match token::fetch_search(&mut *self.client.lock().await, &p.query, chains).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -691,7 +694,7 @@ impl McpServer {
             .as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
-        match token::fetch_info(&self.client, &p.address, &chain_index).await {
+        match token::fetch_info(&mut *self.client.lock().await, &p.address, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -710,7 +713,7 @@ impl McpServer {
             .as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
-        match token::fetch_holders(&self.client, &p.address, &chain_index, p.tag_filter).await {
+        match token::fetch_holders(&mut *self.client.lock().await, &p.address, &chain_index, p.tag_filter).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -719,7 +722,7 @@ impl McpServer {
     #[tool(name = "token_trending", description = "Get trending token rankings")]
     async fn token_trending(&self) -> Result<String, String> {
         match token::fetch_hot_tokens(
-            &self.client,
+            &mut *self.client.lock().await,
             token::HotTokensParams {
                 ranking_type: "4".to_string(),
                 ..Default::default()
@@ -745,7 +748,7 @@ impl McpServer {
             .as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
-        match token::fetch_price_info(&self.client, &p.address, &chain_index).await {
+        match token::fetch_price_info(&mut *self.client.lock().await, &p.address, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -764,7 +767,7 @@ impl McpServer {
             .as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
-        match market::fetch_price(&self.client, &p.address, &chain_index).await {
+        match market::fetch_price(&mut *self.client.lock().await, &p.address, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -783,7 +786,7 @@ impl McpServer {
             .as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
-        match market::fetch_prices(&self.client, &p.tokens, &default_chain).await {
+        match market::fetch_prices(&mut *self.client.lock().await, &p.tokens, &default_chain).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -804,7 +807,7 @@ impl McpServer {
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         let bar = p.bar.as_deref().unwrap_or("1H");
         let limit = p.limit.unwrap_or(100);
-        match market::fetch_kline(&self.client, &p.address, &chain_index, bar, limit).await {
+        match market::fetch_kline(&mut *self.client.lock().await, &p.address, &chain_index, bar, limit).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -825,7 +828,7 @@ impl McpServer {
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         let limit = p.limit.unwrap_or(100);
         match token::fetch_token_trades(
-            &self.client,
+            &mut *self.client.lock().await,
             &p.address,
             &chain_index,
             limit,
@@ -852,7 +855,7 @@ impl McpServer {
             .as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
-        match market::fetch_index(&self.client, &p.address, &chain_index).await {
+        match market::fetch_index(&mut *self.client.lock().await, &p.address, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -863,7 +866,7 @@ impl McpServer {
         description = "Get chains supported for smart money / KOL / whale signals"
     )]
     async fn signal_chains(&self) -> Result<String, String> {
-        match signal::fetch_chains(&self.client).await {
+        match signal::fetch_chains(&mut *self.client.lock().await).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -879,7 +882,7 @@ impl McpServer {
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         match signal::fetch_list(
-            &self.client,
+            &mut *self.client.lock().await,
             &chain_index,
             p.wallet_type,
             p.min_amount_usd,
@@ -904,7 +907,7 @@ impl McpServer {
         description = "Get supported chains and protocols for Meme Pump"
     )]
     async fn memepump_chains(&self) -> Result<String, String> {
-        match memepump::fetch_chains(&self.client).await {
+        match memepump::fetch_chains(&mut *self.client.lock().await).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -918,7 +921,7 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<memepump::MemepumpTokenListParams>,
     ) -> Result<String, String> {
-        match memepump::fetch_token_list(&self.client, p).await {
+        match memepump::fetch_token_list(&mut *self.client.lock().await, p).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -938,7 +941,7 @@ impl McpServer {
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
         match memepump::fetch_token_details(
-            &self.client,
+            &mut *self.client.lock().await,
             &p.address,
             &chain_index,
             p.wallet_address.as_deref().unwrap_or(""),
@@ -964,7 +967,7 @@ impl McpServer {
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
         match memepump::fetch_by_address(
-            &self.client,
+            &mut *self.client.lock().await,
             "/api/v6/dex/market/memepump/tokenDevInfo",
             &p.address,
             &chain_index,
@@ -990,7 +993,7 @@ impl McpServer {
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
         match memepump::fetch_by_address(
-            &self.client,
+            &mut *self.client.lock().await,
             "/api/v6/dex/market/memepump/similarToken",
             &p.address,
             &chain_index,
@@ -1016,7 +1019,7 @@ impl McpServer {
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
         match memepump::fetch_by_address(
-            &self.client,
+            &mut *self.client.lock().await,
             "/api/v6/dex/market/memepump/tokenBundleInfo",
             &p.address,
             &chain_index,
@@ -1042,7 +1045,7 @@ impl McpServer {
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| "501".to_string());
         match memepump::fetch_aped_wallet(
-            &self.client,
+            &mut *self.client.lock().await,
             &p.address,
             &chain_index,
             p.wallet_address.as_deref().unwrap_or(""),
@@ -1059,7 +1062,7 @@ impl McpServer {
         description = "Get supported chains for DEX aggregator swaps"
     )]
     async fn swap_chains(&self) -> Result<String, String> {
-        match swap::fetch_chains(&self.client).await {
+        match swap::fetch_chains(&mut *self.client.lock().await).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1076,7 +1079,7 @@ impl McpServer {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let swap_mode = p.swap_mode.as_deref().unwrap_or("exactIn");
         match swap::fetch_quote(
-            &self.client,
+            &mut *self.client.lock().await,
             &chain_index,
             &p.from,
             &p.to,
@@ -1099,7 +1102,7 @@ impl McpServer {
         let swap_mode = p.swap_mode.as_deref().unwrap_or("exactIn");
         let gas_level = p.gas_level.as_deref().unwrap_or("average");
         match swap::fetch_swap(
-            &self.client,
+            &mut *self.client.lock().await,
             &chain_index,
             &p.from,
             &p.to,
@@ -1127,7 +1130,7 @@ impl McpServer {
         Parameters(p): Parameters<SwapApproveParams>,
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match swap::fetch_approve(&self.client, &chain_index, &p.token, &p.amount).await {
+        match swap::fetch_approve(&mut *self.client.lock().await, &chain_index, &p.token, &p.amount).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1142,7 +1145,7 @@ impl McpServer {
         Parameters(p): Parameters<ChainParam>,
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match swap::fetch_liquidity(&self.client, &chain_index).await {
+        match swap::fetch_liquidity(&mut *self.client.lock().await, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1153,7 +1156,7 @@ impl McpServer {
         description = "Get supported chains for wallet balance queries"
     )]
     async fn portfolio_chains(&self) -> Result<String, String> {
-        match portfolio::fetch_chains(&self.client).await {
+        match portfolio::fetch_chains(&mut *self.client.lock().await).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1168,7 +1171,7 @@ impl McpServer {
         Parameters(p): Parameters<PortfolioTotalValueParams>,
     ) -> Result<String, String> {
         match portfolio::fetch_total_value(
-            &self.client,
+            &mut *self.client.lock().await,
             &p.address,
             &p.chains,
             p.asset_type.as_deref(),
@@ -1190,7 +1193,7 @@ impl McpServer {
         Parameters(p): Parameters<PortfolioAllBalancesParams>,
     ) -> Result<String, String> {
         match portfolio::fetch_all_balances(
-            &self.client,
+            &mut *self.client.lock().await,
             &p.address,
             &p.chains,
             p.exclude_risk.as_deref(),
@@ -1212,7 +1215,7 @@ impl McpServer {
         Parameters(p): Parameters<PortfolioTokenBalancesParams>,
     ) -> Result<String, String> {
         match portfolio::fetch_token_balances(
-            &self.client,
+            &mut *self.client.lock().await,
             &p.address,
             &p.tokens,
             p.exclude_risk.as_deref(),
@@ -1229,7 +1232,7 @@ impl McpServer {
         description = "Get supported chains for the on-chain gateway"
     )]
     async fn gateway_chains(&self) -> Result<String, String> {
-        match gateway::fetch_chains(&self.client).await {
+        match gateway::fetch_chains(&mut *self.client.lock().await).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1241,7 +1244,7 @@ impl McpServer {
     )]
     async fn gateway_gas(&self, Parameters(p): Parameters<ChainParam>) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match gateway::fetch_gas(&self.client, &chain_index).await {
+        match gateway::fetch_gas(&mut *self.client.lock().await, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1258,7 +1261,7 @@ impl McpServer {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let amount = p.amount.as_deref().unwrap_or("0");
         match gateway::fetch_gas_limit(
-            &self.client,
+            &mut *self.client.lock().await,
             &chain_index,
             &p.from,
             &p.to,
@@ -1282,7 +1285,7 @@ impl McpServer {
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let amount = p.amount.as_deref().unwrap_or("0");
-        match gateway::fetch_simulate(&self.client, &chain_index, &p.from, &p.to, amount, &p.data)
+        match gateway::fetch_simulate(&mut *self.client.lock().await, &chain_index, &p.from, &p.to, amount, &p.data)
             .await
         {
             Ok(data) => ok(data),
@@ -1300,7 +1303,7 @@ impl McpServer {
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         match gateway::fetch_broadcast(
-            &self.client,
+            &mut *self.client.lock().await,
             &chain_index,
             &p.signed_tx,
             &p.address,
@@ -1320,7 +1323,7 @@ impl McpServer {
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let oid = p.order_id.as_deref();
-        match gateway::fetch_orders(&self.client, &chain_index, &p.address, oid).await {
+        match gateway::fetch_orders(&mut *self.client.lock().await, &chain_index, &p.address, oid).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1341,7 +1344,7 @@ impl McpServer {
             .as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
-        match token::fetch_liquidity(&self.client, &p.address, &chain_index).await {
+        match token::fetch_liquidity(&mut *self.client.lock().await, &p.address, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1355,7 +1358,7 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<token::HotTokensParams>,
     ) -> Result<String, String> {
-        match token::fetch_hot_tokens(&self.client, p).await {
+        match token::fetch_hot_tokens(&mut *self.client.lock().await, p).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1374,7 +1377,7 @@ impl McpServer {
             .as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
-        match token::fetch_advanced_info(&self.client, &p.address, &chain_index).await {
+        match token::fetch_advanced_info(&mut *self.client.lock().await, &p.address, &chain_index).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1393,7 +1396,7 @@ impl McpServer {
             .as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
-        match token::fetch_top_trader(&self.client, &p.address, &chain_index, p.tag_filter).await {
+        match token::fetch_top_trader(&mut *self.client.lock().await, &p.address, &chain_index, p.tag_filter).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1406,7 +1409,7 @@ impl McpServer {
         description = "Get supported chains for wallet portfolio PnL analysis"
     )]
     async fn market_portfolio_supported_chains(&self) -> Result<String, String> {
-        match market::fetch_portfolio_supported_chains(&self.client).await {
+        match market::fetch_portfolio_supported_chains(&mut *self.client.lock().await).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1422,7 +1425,7 @@ impl McpServer {
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let time_frame = p.time_frame.as_deref().unwrap_or("4");
-        match market::fetch_portfolio_overview(&self.client, &chain_index, &p.address, time_frame)
+        match market::fetch_portfolio_overview(&mut *self.client.lock().await, &chain_index, &p.address, time_frame)
             .await
         {
             Ok(data) => ok(data),
@@ -1440,7 +1443,7 @@ impl McpServer {
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         match market::fetch_portfolio_dex_history(
-            &self.client,
+            &mut *self.client.lock().await,
             &chain_index,
             &p.address,
             &p.begin,
@@ -1467,7 +1470,7 @@ impl McpServer {
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         match market::fetch_portfolio_recent_pnl(
-            &self.client,
+            &mut *self.client.lock().await,
             &chain_index,
             &p.address,
             p.limit.as_deref(),
@@ -1489,7 +1492,7 @@ impl McpServer {
         Parameters(p): Parameters<PortfolioPnlTokenPnlParams>,
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match market::fetch_portfolio_token_pnl(&self.client, &chain_index, &p.address, &p.token)
+        match market::fetch_portfolio_token_pnl(&mut *self.client.lock().await, &chain_index, &p.address, &p.token)
             .await
         {
             Ok(data) => ok(data),
@@ -1515,7 +1518,7 @@ impl McpServer {
             .as_deref()
             .map(|c| crate::chains::resolve_chain(c).to_string());
         match tracker::fetch_activities(
-            &self.client,
+            &mut *self.client.lock().await,
             &p.tracker_type,
             p.wallet_address.as_deref(),
             p.trade_type.as_deref(),
@@ -1542,7 +1545,7 @@ impl McpServer {
         description = "Get supported chains for the leaderboard (top traders ranking)"
     )]
     async fn leaderboard_chains(&self) -> Result<String, String> {
-        match leaderboard::fetch_chains(&self.client).await {
+        match leaderboard::fetch_chains(&mut *self.client.lock().await).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1561,7 +1564,7 @@ impl McpServer {
             .wallet_type
             .map(leaderboard::resolve_leaderboard_wallet_type);
         match leaderboard::fetch_list(
-            &self.client,
+            &mut *self.client.lock().await,
             &chain_index,
             &p.time_frame,
             &p.sort_by,
@@ -1589,7 +1592,7 @@ impl McpServer {
         description = "Get supported chains for token holder cluster analysis"
     )]
     async fn token_cluster_supported_chains(&self) -> Result<String, String> {
-        match token::fetch_cluster_supported_chains(&self.client).await {
+        match token::fetch_cluster_supported_chains(&mut *self.client.lock().await).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1609,7 +1612,7 @@ impl McpServer {
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_cluster_by_address(
-            &self.client,
+            &mut *self.client.lock().await,
             "/api/v6/dex/market/token/cluster/overview",
             &p.address,
             &chain_index,
@@ -1635,7 +1638,7 @@ impl McpServer {
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_cluster_top_holders(
-            &self.client,
+            &mut *self.client.lock().await,
             &p.address,
             &chain_index,
             &p.range_filter,
@@ -1661,7 +1664,7 @@ impl McpServer {
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         match token::fetch_cluster_by_address(
-            &self.client,
+            &mut *self.client.lock().await,
             "/api/v6/dex/market/token/cluster/list",
             &p.address,
             &chain_index,
@@ -1680,7 +1683,7 @@ impl McpServer {
         description = "Get supported chains for DeFi operations"
     )]
     async fn defi_support_chains(&self) -> Result<String, String> {
-        match defi::fetch_chains(&self.client).await {
+        match defi::fetch_chains(&mut *self.client.lock().await).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1691,7 +1694,7 @@ impl McpServer {
         description = "Get supported platforms for DeFi operations (e.g. Aave, Lido, Compound, PancakeSwap)"
     )]
     async fn defi_support_platforms(&self) -> Result<String, String> {
-        match defi::fetch_protocols(&self.client).await {
+        match defi::fetch_protocols(&mut *self.client.lock().await).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1704,7 +1707,7 @@ impl McpServer {
         description = "List top DeFi products by APY across all chains (no filters, paginated)"
     )]
     async fn defi_list(&self, Parameters(p): Parameters<DefiListParams>) -> Result<String, String> {
-        match defi::fetch_search(&self.client, None, None, None, None, p.page_num).await {
+        match defi::fetch_search(&mut *self.client.lock().await, None, None, None, None, p.page_num).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1720,7 +1723,7 @@ impl McpServer {
     ) -> Result<String, String> {
         let chain_index = p.chain.as_deref().map(crate::chains::resolve_chain);
         match defi::fetch_search(
-            &self.client,
+            &mut *self.client.lock().await,
             p.token.as_deref(),
             p.platform.as_deref(),
             chain_index.as_deref(),
@@ -1742,7 +1745,7 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<DefiDetailParams>,
     ) -> Result<String, String> {
-        match defi::fetch_detail(&self.client, &p.investment_id).await {
+        match defi::fetch_detail(&mut *self.client.lock().await, &p.investment_id).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1758,7 +1761,7 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<DefiRateChartParams>,
     ) -> Result<String, String> {
-        match defi::fetch_rate_chart(&self.client, &p.investment_id, p.time_range.as_deref()).await
+        match defi::fetch_rate_chart(&mut *self.client.lock().await, &p.investment_id, p.time_range.as_deref()).await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -1773,7 +1776,7 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<DefiTvlChartParams>,
     ) -> Result<String, String> {
-        match defi::fetch_tvl_chart(&self.client, &p.investment_id, p.time_range.as_deref()).await {
+        match defi::fetch_tvl_chart(&mut *self.client.lock().await, &p.investment_id, p.time_range.as_deref()).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1788,7 +1791,7 @@ impl McpServer {
         Parameters(p): Parameters<DefiDepthPriceChartParams>,
     ) -> Result<String, String> {
         match defi::fetch_depth_price_chart(
-            &self.client,
+            &mut *self.client.lock().await,
             &p.investment_id,
             p.chart_type.as_deref(),
             p.time_range.as_deref(),
@@ -1810,7 +1813,7 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<DefiPositionsParams>,
     ) -> Result<String, String> {
-        match defi::fetch_positions(&self.client, &p.address, &p.chains).await {
+        match defi::fetch_positions(&mut *self.client.lock().await, &p.address, &p.chains).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1825,7 +1828,7 @@ impl McpServer {
         Parameters(p): Parameters<DefiPositionDetailParams>,
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match defi::fetch_position_detail(&self.client, &p.address, &chain_index, &p.platform_id)
+        match defi::fetch_position_detail(&mut *self.client.lock().await, &p.address, &chain_index, &p.platform_id)
             .await
         {
             Ok(data) => ok(data),
@@ -1844,7 +1847,7 @@ impl McpServer {
         Parameters(p): Parameters<DefiInvestParams>,
     ) -> Result<String, String> {
         match defi::cmd_invest(
-            &self.client,
+            &mut *self.client.lock().await,
             &p.investment_id,
             &p.address,
             &p.token,
@@ -1873,7 +1876,7 @@ impl McpServer {
         Parameters(p): Parameters<DefiWithdrawParams>,
     ) -> Result<String, String> {
         match defi::cmd_withdraw(
-            &self.client,
+            &mut *self.client.lock().await,
             &p.investment_id,
             &p.address,
             &p.chain,
@@ -1899,7 +1902,7 @@ impl McpServer {
         Parameters(p): Parameters<DefiCollectParams>,
     ) -> Result<String, String> {
         match defi::cmd_collect(
-            &self.client,
+            &mut *self.client.lock().await,
             &p.address,
             &p.chain,
             &p.reward_type,
