@@ -1,4 +1,6 @@
 #[allow(unused_imports)]
+pub mod binary;
+#[allow(unused_imports)]
 pub mod cache;
 #[allow(unused_imports)]
 pub mod types;
