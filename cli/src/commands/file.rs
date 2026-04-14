@@ -6,10 +6,11 @@ use crate::client::ApiClient;
 use crate::output;
 
 const UPLOAD_PATH: &str = "/priapi/v1/aieco/im/attachments/xmtp/encrypted/upload";
+const DOWNLOAD_PATH: &str = "/priapi/v1/aieco/im/attachments/xmtp/encrypted/download";
 
 #[derive(Subcommand)]
 pub enum FileCommand {
-    /// Upload an encrypted file attachment and receive a CDN URL
+    /// Upload an encrypted file attachment and receive a file key
     Upload {
         /// Path to the local file to upload
         #[arg(long)]
@@ -23,6 +24,20 @@ pub enum FileCommand {
         #[arg(long)]
         job_id: String,
     },
+    /// Download an encrypted file attachment by file key
+    Download {
+        /// File key returned from upload
+        #[arg(long)]
+        file_key: String,
+
+        /// Agent ID
+        #[arg(long)]
+        agent_id: String,
+
+        /// Output file path to write the downloaded bytes
+        #[arg(long)]
+        output: String,
+    },
 }
 
 pub async fn execute(ctx: &super::Context, cmd: FileCommand) -> Result<()> {
@@ -32,13 +47,20 @@ pub async fn execute(ctx: &super::Context, cmd: FileCommand) -> Result<()> {
             agent_id,
             job_id,
         } => cmd_upload(ctx, &file, &agent_id, &job_id).await,
+        FileCommand::Download {
+            file_key,
+            agent_id,
+            output: output_path,
+        } => cmd_download(ctx, &file_key, &agent_id, &output_path).await,
     }
 }
+
+// ── Upload ───────────────────────────────────────────────────────────
 
 /// POST /priapi/v1/aieco/im/attachments/xmtp/encrypted/upload — multipart form
 ///
 /// Sends file bytes, agentId, and jobId.
-/// Returns the response data containing `fileKey`, `attachmentUrl`, and `fileSize`.
+/// Returns the response data containing `fileKey` and `fileSize`.
 pub async fn fetch_upload(
     client: &ApiClient,
     file_name: &str,
@@ -46,7 +68,10 @@ pub async fn fetch_upload(
     agent_id: &str,
     job_id: &str,
 ) -> Result<Value> {
-    let file_part = reqwest::multipart::Part::bytes(data).file_name(file_name.to_string());
+    let file_part = reqwest::multipart::Part::bytes(data)
+        .file_name(file_name.to_string())
+        .mime_str("application/octet-stream")
+        .context("failed to set MIME type")?;
 
     let form = reqwest::multipart::Form::new()
         .part("file", file_part)
@@ -84,8 +109,48 @@ async fn cmd_upload(
     let client = ctx.client_async().await?;
     let result = fetch_upload(&client, &file_name, data, agent_id, job_id).await?;
 
-    // 4. Output result (fileKey, attachmentUrl, fileSize)
+    // 4. Output result (fileKey, fileSize)
     output::success(&result);
+
+    Ok(())
+}
+
+// ── Download ─────────────────────────────────────────────────────────
+
+/// GET /priapi/v1/aieco/im/attachments/xmtp/encrypted/download
+///
+/// Downloads encrypted file bytes by fileKey and agentId.
+/// Returns raw bytes (not JSON).
+pub async fn fetch_download(
+    client: &ApiClient,
+    file_key: &str,
+    agent_id: &str,
+) -> Result<Vec<u8>> {
+    let query = [("fileKey", file_key), ("agentId", agent_id)];
+    client.get_bytes(DOWNLOAD_PATH, &query).await
+}
+
+async fn cmd_download(
+    ctx: &super::Context,
+    file_key: &str,
+    agent_id: &str,
+    output_path: &str,
+) -> Result<()> {
+    // 1. Download bytes
+    let client = ctx.client_async().await?;
+    let bytes = fetch_download(&client, file_key, agent_id).await?;
+
+    // 2. Write to output file
+    tokio::fs::write(output_path, &bytes)
+        .await
+        .with_context(|| format!("failed to write file: {}", output_path))?;
+
+    // 3. Output result
+    output::success(serde_json::json!({
+        "fileKey": file_key,
+        "outputPath": output_path,
+        "fileSize": bytes.len()
+    }));
 
     Ok(())
 }
@@ -101,7 +166,7 @@ mod tests {
         command: FileCommand,
     }
 
-    // ── CLI argument parsing ─────────────────────────────────────────
+    // ── Upload CLI parsing ───────────────────────────────────────────
 
     #[test]
     fn cli_upload_all_required_args() {
@@ -117,6 +182,7 @@ mod tests {
                 assert_eq!(agent_id, "agent_123");
                 assert_eq!(job_id, "task_001");
             }
+            _ => panic!("expected Upload"),
         }
     }
 
@@ -153,6 +219,56 @@ mod tests {
     #[test]
     fn cli_upload_no_args() {
         let result = TestCli::try_parse_from(["test", "upload"]);
+        assert!(result.is_err());
+    }
+
+    // ── Download CLI parsing ─────────────────────────────────────────
+
+    #[test]
+    fn cli_download_all_required_args() {
+        let cli = TestCli::parse_from([
+            "test", "download",
+            "--file-key", "task_001-abc123",
+            "--agent-id", "agent_123",
+            "--output", "/tmp/downloaded.bin",
+        ]);
+        match cli.command {
+            FileCommand::Download { file_key, agent_id, output } => {
+                assert_eq!(file_key, "task_001-abc123");
+                assert_eq!(agent_id, "agent_123");
+                assert_eq!(output, "/tmp/downloaded.bin");
+            }
+            _ => panic!("expected Download"),
+        }
+    }
+
+    #[test]
+    fn cli_download_missing_file_key() {
+        let result = TestCli::try_parse_from([
+            "test", "download",
+            "--agent-id", "agent_123",
+            "--output", "/tmp/out.bin",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_download_missing_agent_id() {
+        let result = TestCli::try_parse_from([
+            "test", "download",
+            "--file-key", "abc",
+            "--output", "/tmp/out.bin",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_download_missing_output() {
+        let result = TestCli::try_parse_from([
+            "test", "download",
+            "--file-key", "abc",
+            "--agent-id", "agent_123",
+        ]);
         assert!(result.is_err());
     }
 }
