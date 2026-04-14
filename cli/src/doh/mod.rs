@@ -6,6 +6,8 @@ pub mod cache;
 pub mod manager;
 #[allow(unused_imports)]
 pub mod types;
+#[allow(unused_imports)]
+pub mod ws;
 
 #[allow(unused_imports)]
 pub use manager::DohManager;
