@@ -1,5 +1,6 @@
 pub mod agentic_wallet;
 pub mod defi;
+pub mod file;
 pub mod gateway;
 pub mod leaderboard;
 pub mod market;
