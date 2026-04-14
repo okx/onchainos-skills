@@ -89,3 +89,70 @@ async fn cmd_upload(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(subcommand)]
+        command: FileCommand,
+    }
+
+    // ── CLI argument parsing ─────────────────────────────────────────
+
+    #[test]
+    fn cli_upload_all_required_args() {
+        let cli = TestCli::parse_from([
+            "test", "upload",
+            "--file", "/tmp/test.bin",
+            "--agent-id", "agent_123",
+            "--job-id", "task_001",
+        ]);
+        match cli.command {
+            FileCommand::Upload { file, agent_id, job_id } => {
+                assert_eq!(file, "/tmp/test.bin");
+                assert_eq!(agent_id, "agent_123");
+                assert_eq!(job_id, "task_001");
+            }
+        }
+    }
+
+    #[test]
+    fn cli_upload_missing_file() {
+        let result = TestCli::try_parse_from([
+            "test", "upload",
+            "--agent-id", "agent_123",
+            "--job-id", "task_001",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_upload_missing_agent_id() {
+        let result = TestCli::try_parse_from([
+            "test", "upload",
+            "--file", "/tmp/test.bin",
+            "--job-id", "task_001",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_upload_missing_job_id() {
+        let result = TestCli::try_parse_from([
+            "test", "upload",
+            "--file", "/tmp/test.bin",
+            "--agent-id", "agent_123",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_upload_no_args() {
+        let result = TestCli::try_parse_from(["test", "upload"]);
+        assert!(result.is_err());
+    }
+}
