@@ -106,7 +106,7 @@ Token-scan uses a **4-level risk model** based on 20+ boolean labels and tax thr
 > Full label catalog, tax threshold rules, risk computation logic, and display format are defined in `references/risk-token-detection.md`. **Always load that reference before executing `token-scan`.**
 
 Key principles:
-- Effective level = **max** level across all triggered boolean labels and tax thresholds.
+- **`isRiskToken` is the gate**: If `isRiskToken: false`, the token is Level 1 (safe) — skip all label/tax evaluation. Only when `isRiskToken: true`, compute effective level = **max** level across all triggered boolean labels and tax thresholds.
 - **Buy is stricter than sell**: Level 4 blocks buy but only warns on sell (to allow stop-loss exit).
 - **Level 3 buy requires explicit user confirmation** (yes/no) — do not auto-continue.
 - If `isChainSupported: false`, skip detection with a warning; do not block.
