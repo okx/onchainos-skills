@@ -5,12 +5,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use base64::Engine;
-use futures_util::{SinkExt, StreamExt};
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
 use tokio::time::{interval, sleep, timeout};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::tungstenite::Message;
+
+use crate::doh::DohManager;
+use crate::doh::ws::{doh_connect_ws, DohWsConnection};
 
 use super::store::{append_events, read_config, write_pid, write_status};
 use super::types::{channel_pattern, ChannelPattern, WatchConfig, WatchEnv};
@@ -135,6 +137,14 @@ pub async fn run_daemon(id: &str, dir: &Path) -> Result<()> {
         WatchEnv::Pre => WS_URL_PRE.to_string(),
         WatchEnv::Prod => WS_URL_PROD.to_string(),
     });
+    let ws_domain = url::Url::parse(&ws_url)
+        .ok()
+        .and_then(|u| u.host_str().map(|s| s.to_string()))
+        .unwrap_or_default();
+    let custom_ws = std::env::var("ONCHAINOS_WS_URL").is_ok();
+    let mut doh = DohManager::new(&ws_domain, &ws_url, custom_ws);
+    doh.prepare();
+
     let creds = match Credentials::from_watch_env(&config.env) {
         Ok(c) => c,
         Err(e) => {
@@ -147,7 +157,7 @@ pub async fn run_daemon(id: &str, dir: &Path) -> Result<()> {
     let mut attempts = 0u32;
     loop {
         heartbeat_active.store(true, Ordering::Relaxed);
-        match connect_and_stream(dir, &ws_url, &creds, &config, &idle_expired).await {
+        match connect_and_stream(dir, &ws_url, &creds, &config, &idle_expired, &doh).await {
             Ok(reason) => {
                 heartbeat_active.store(false, Ordering::Relaxed);
                 attempts = 0; // reset after successful session
@@ -178,6 +188,7 @@ pub async fn run_daemon(id: &str, dir: &Path) -> Result<()> {
         }
 
         write_status(dir, "reconnecting", None)?;
+        let _ = doh.handle_failure().await;
         sleep(Duration::from_secs(RECONNECT_DELAY_SECS)).await;
     }
 }
@@ -189,8 +200,9 @@ async fn connect_and_stream(
     creds: &Credentials,
     config: &WatchConfig,
     idle_expired: &AtomicBool,
+    doh: &DohManager,
 ) -> Result<String> {
-    let (mut ws, _): (WsStream, _) = connect_async(ws_url).await?;
+    let mut ws: DohWsConnection = doh_connect_ws(ws_url, doh).await?;
 
     // Login
     ws.send(Message::Text(creds.login_msg().into())).await?;
@@ -279,10 +291,7 @@ async fn connect_and_stream(
     }
 }
 
-type WsStream =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-async fn wait_for_login_ack(ws: &mut WsStream) -> Result<()> {
+async fn wait_for_login_ack(ws: &mut DohWsConnection) -> Result<()> {
     timeout(Duration::from_secs(10), async {
         loop {
             match ws.next().await {
@@ -309,7 +318,7 @@ async fn wait_for_login_ack(ws: &mut WsStream) -> Result<()> {
 }
 
 /// Wait for `count` subscribe ACKs (one per subscription arg).
-async fn wait_for_subscribe_acks(ws: &mut WsStream, count: usize) -> Result<()> {
+async fn wait_for_subscribe_acks(ws: &mut DohWsConnection, count: usize) -> Result<()> {
     if count == 0 {
         return Ok(());
     }
@@ -347,7 +356,7 @@ async fn wait_for_subscribe_acks(ws: &mut WsStream, count: usize) -> Result<()> 
 
 /// Wait for the server's "pong" reply. Any push data frames received while
 /// waiting are processed normally so they are not lost.
-async fn recv_pong(ws: &mut WsStream, dir: &Path) -> Result<()> {
+async fn recv_pong(ws: &mut DohWsConnection, dir: &Path) -> Result<()> {
     loop {
         match ws.next().await {
             Some(Ok(Message::Text(text))) if text.trim() == "pong" => return Ok(()),
