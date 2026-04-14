@@ -75,25 +75,7 @@ fn write_cache_inner(domain: &str, entry: &DohCacheEntry) -> Option<()> {
     Some(())
 }
 
-/// Remove a domain's entry from cache file. Best-effort.
-pub fn invalidate_cache(domain: &str) {
-    let _ = invalidate_cache_inner(domain);
-}
 
-fn invalidate_cache_inner(domain: &str) -> Option<()> {
-    let path = cache_path()?;
-    let data = fs::read_to_string(&path).ok()?;
-    let mut file: DohCacheFile = serde_json::from_str(&data).ok()?;
-
-    file.remove(domain);
-
-    let json = serde_json::to_string_pretty(&file).ok()?;
-    let tmp_path = path.with_extension("tmp");
-    fs::write(&tmp_path, json).ok()?;
-    fs::rename(&tmp_path, &path).ok()?;
-
-    Some(())
-}
 
 #[cfg(test)]
 mod tests {
@@ -180,23 +162,6 @@ mod tests {
         let b = read_cache("b.com").expect("b.com should exist");
         assert_eq!(a.mode, DohMode::Proxy);
         assert_eq!(b.mode, DohMode::Direct);
-
-        std::env::remove_var("ONCHAINOS_HOME");
-        fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn invalidate_removes_domain() {
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        let dir = test_dir("invalidate");
-        std::env::set_var("ONCHAINOS_HOME", &dir);
-
-        let entry = make_proxy_entry();
-        write_cache("example.com", &entry);
-        assert!(read_cache("example.com").is_some());
-
-        invalidate_cache("example.com");
-        assert!(read_cache("example.com").is_none());
 
         std::env::remove_var("ONCHAINOS_HOME");
         fs::remove_dir_all(&dir).ok();

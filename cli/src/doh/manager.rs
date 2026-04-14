@@ -97,9 +97,9 @@ impl DohManager {
         }
 
         // Call exec_doh_binary with domain + exclude list + user-agent
-        let ua = self.proxy_user_agent();
+        let ua = self.doh_user_agent();
         if let Some(new_node) =
-            binary::exec_doh_binary(&self.domain, &exclude, ua.as_deref()).await
+            binary::exec_doh_binary(&self.domain, &exclude, Some(&ua)).await
         {
             // Cache new node as Proxy
             let entry = DohCacheEntry {
@@ -162,10 +162,6 @@ impl DohManager {
         }
     }
 
-    pub fn reset_retried(&mut self) {
-        self.retried = false;
-    }
-
     pub fn is_proxy(&self) -> bool {
         self.mode.as_ref() == Some(&DohMode::Proxy) && self.node.is_some()
     }
@@ -190,17 +186,11 @@ impl DohManager {
         }
     }
 
-    /// Returns the User-Agent string for proxy requests.
-    /// Proxy nodes require this specific UA format to allow traffic.
-    pub fn proxy_user_agent(&self) -> Option<String> {
-        if self.is_proxy() {
-            Some(format!(
-                "OKX/@okx_ai/onchainos-cli/{}",
-                env!("CARGO_PKG_VERSION")
-            ))
-        } else {
-            None
-        }
+    /// Returns the User-Agent string for DoH operations.
+    /// Always returns the UA regardless of current mode — the binary and proxy
+    /// nodes both need it.
+    pub fn doh_user_agent(&self) -> String {
+        format!("OKX/@okx_ai/onchainos-cli/{}", env!("CARGO_PKG_VERSION"))
     }
 }
 

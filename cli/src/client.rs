@@ -51,8 +51,8 @@ impl ApiClient {
         if let Some((host, addr)) = doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
-        if let Some(ua) = doh.proxy_user_agent() {
-            builder = builder.user_agent(ua);
+        if doh.is_proxy() {
+            builder = builder.user_agent(doh.doh_user_agent());
         }
 
         Ok(Self {
@@ -83,8 +83,8 @@ impl ApiClient {
         if let Some((host, addr)) = doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
-        if let Some(ua) = doh.proxy_user_agent() {
-            builder = builder.user_agent(ua);
+        if doh.is_proxy() {
+            builder = builder.user_agent(doh.doh_user_agent());
         }
 
         Ok(Self {
@@ -378,8 +378,8 @@ impl ApiClient {
         if let Some((host, addr)) = self.doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
-        if let Some(ua) = self.doh.proxy_user_agent() {
-            builder = builder.user_agent(ua);
+        if self.doh.is_proxy() {
+            builder = builder.user_agent(self.doh.doh_user_agent());
         }
         self.http = builder.build()?;
         Ok(())
