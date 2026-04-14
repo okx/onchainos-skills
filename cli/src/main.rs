@@ -174,7 +174,7 @@ async fn run() {
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
-        Commands::File { command } => commands::file::execute(command).await,
+        Commands::File { command } => commands::file::execute(&ctx, command).await,
         Commands::Ws { command } => commands::ws::execute(command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
     };

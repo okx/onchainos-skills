@@ -444,6 +444,38 @@ impl ApiClient {
         self.handle_response(resp).await
     }
 
+    /// POST multipart form data with automatic auth (JWT or AK).
+    /// Signature uses path only (no query string) with empty body string.
+    pub async fn post_multipart(
+        &self,
+        path: &str,
+        form: reqwest::multipart::Form,
+    ) -> Result<Value> {
+        let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
+        let req = self.http.post(&url);
+        let req = match &self.auth {
+            AuthMode::Jwt(token) => Self::apply_jwt(req, token),
+            AuthMode::Ak {
+                api_key,
+                secret_key,
+                passphrase,
+            } => {
+                let timestamp =
+                    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                let sign = Self::hmac_sign(secret_key, &timestamp, "POST", path, "");
+                Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
+            }
+            AuthMode::Anonymous => Self::apply_anonymous(req),
+        };
+
+        let resp = req
+            .multipart(form)
+            .send()
+            .await
+            .context("request failed")?;
+        self.handle_response(resp).await
+    }
+
     /// Apply optional extra headers to a request builder.
     fn apply_extra_headers(
         builder: reqwest::RequestBuilder,
