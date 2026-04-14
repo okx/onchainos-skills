@@ -92,24 +92,13 @@ Present next actions conversationally — never expose command paths to the user
 
 When a response includes a `requestTime` field (Unix milliseconds), display it alongside results so the user knows when the data snapshot was taken. When chaining commands (e.g., using price data as input to a follow-up query), use the `requestTime` from the most recent response as the reference point — not the current wall clock time.
 
-### Per-Command Delays
+### Per-Command Cache
 
-| Command | Data Freshness |
+| Command | Cache |
 |---|---|
-| `token search` | Real-time index lookup |
-| `token info` | Real-time (on-chain metadata) |
-| `token price-info` | Real-time price; aggregated metrics (market cap, liquidity) updated every ~30 s |
-| `token hot-tokens` | Updated every few minutes; rankings reflect recent trading activity |
-| `token liquidity` | Near real-time (pool state synced on each swap event) |
-| `token advanced-info` | Near real-time for risk flags; dev stats computed periodically |
-| `token holders` | **May be delayed up to ~5–10 min** — holder snapshots are computed in batches, not per-block |
-| `token top-trader` | Updated periodically; reflects settled trades, may lag ~5 min |
-| `token trades` | Near real-time trade feed (seconds delay from chain finality) |
-| `token cluster-overview` | **Batch computation — may be delayed up to ~10–15 min**; cluster assignments update on a scheduled cadence |
-| `token cluster-top-holders` | Same cadence as `cluster-overview` |
-| `token cluster-list` | Same cadence as `cluster-overview` |
-
-When presenting holder or cluster results, proactively note the potential delay: "Holder data may be a few minutes behind live chain state."
+| `token holders` | 3 s |
+| `token hot-tokens` | 3 s |
+| `token top-trader` | 3 s |
 
 ## Additional Resources
 

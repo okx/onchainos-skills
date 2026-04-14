@@ -74,16 +74,11 @@ Present next actions conversationally — never expose command paths to the user
 
 When a response includes a `requestTime` field (Unix milliseconds), display it alongside results so the user knows when the data snapshot was taken. When chaining commands (e.g., fetching token details after a list scan), use the `requestTime` from the most recent response as the reference point — not the current wall clock time.
 
-### Per-Command Delays
+### Per-Command Cache
 
-| Command | Data Freshness |
+| Command | Cache |
 |---|---|
-| `memepump tokens` (NEW stage) | Near real-time — new launches appear within seconds of on-chain creation |
-| `memepump token-details` | Near real-time (price, bonding curve synced on each trade event) |
-| `memepump token-dev-info` | Near real-time for dev holdings; historical rug-pull count is computed in batches |
-| `memepump similar-tokens` | Updated periodically; new tokens by the same dev may appear with a short delay |
-| `memepump token-bundle-info` | **May be delayed ~1–3 min** — bundle detection requires cross-transaction analysis |
-| `memepump aped-wallet` | Updated periodically; co-holders reflect settled transactions, may lag ~1–2 min |
+| `memepump aped-wallet` | 1 s |
 
 **Note on `createdTimestamp`:** Tokens created less than 5 seconds before the API call may return `null` for `createdTimestamp` — this is by design to avoid surfacing an unreliable value for brand-new launches. Treat `null` as "just launched."
 
