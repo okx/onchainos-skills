@@ -33,7 +33,7 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 | okx-audit-log        | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, provide liquidity, deposit/withdraw from DeFi protocols, claim DeFi rewards across Aave/Lido/PancakeSwap/Kamino/NAVI and hundreds more |
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions, view DeFi portfolio across protocols and chains |
-| okx-file-upload | Upload files to OKX CDN, receive public URL | User wants to upload a file, image, or document to get a CDN URL |
+| okx-aieco-file-upload | Upload files to OKX CDN, receive public URL | User wants to upload a file, image, or document to get a CDN URL |
 
 ## Scripting & Automation
 

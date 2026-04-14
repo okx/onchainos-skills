@@ -1,5 +1,5 @@
 ---
-name: okx-file-upload
+name: okx-aieco-file-upload
 description: "Use this skill when the user wants to upload a file, image, document, or attachment to the OKX CDN and receive a public URL. Trigger keywords: upload file, upload image, upload document, upload attachment, file to CDN, get file URL, host file, 上传文件, 上传图片, 上传附件, 文件上传, CDN上传. Do NOT use for: downloading files, managing uploaded files, XMTP messaging, wallet transfers."
 license: MIT
 metadata:
@@ -58,7 +58,7 @@ Each call returns an independent attachment URL. Failure of one does not affect 
 
 ## Skill Routing
 
-- For uploading a file attachment to CDN → use **this skill** (`okx-file-upload`)
+- For uploading a file attachment to CDN → use **this skill** (`okx-aieco-file-upload`)
 - For wallet login / balance / send tokens / tx history → use `okx-agentic-wallet`
 - For public wallet balance (by address) → use `okx-wallet-portfolio`
 - For token swaps / trades / buy / sell → use `okx-dex-swap`

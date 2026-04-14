@@ -1,4 +1,4 @@
-# CLI Reference: okx-file-upload
+# CLI Reference: okx-aieco-file-upload
 
 ## 1. `onchainos file upload`
 
