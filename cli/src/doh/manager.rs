@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use super::types::{DohCacheEntry, DohMode, DohNode, FailedNode};
 use super::{binary, cache};
@@ -8,6 +8,9 @@ pub struct DohManager {
     original_base_url: String,
     mode: Option<DohMode>,
     node: Option<DohNode>,
+    /// Resolved IP for the current node. Needed when node.ip is a CNAME domain
+    /// instead of an IP address — we DNS-resolve it once and cache the result.
+    resolved_ip: Option<IpAddr>,
     resolved: bool,
     retried: bool,
     custom_base_url: bool,
@@ -27,6 +30,7 @@ impl DohManager {
             original_base_url: base_url.to_string(),
             mode: None,
             node: None,
+            resolved_ip: None,
             resolved: false,
             retried: false,
             custom_base_url,
@@ -42,6 +46,9 @@ impl DohManager {
 
         if let Some(entry) = cache::read_cache(&self.domain) {
             self.mode = Some(entry.mode.clone());
+            if let Some(ref node) = entry.node {
+                self.resolved_ip = Self::resolve_node_ip(&node.ip);
+            }
             self.node = entry.node.clone();
         }
     }
@@ -102,10 +109,12 @@ impl DohManager {
             };
             cache::write_cache(&self.domain, &entry);
 
+            self.resolved_ip = Self::resolve_node_ip(&new_node.ip);
             self.mode = Some(DohMode::Proxy);
             self.node = Some(new_node);
             self.retried = true;
-            true
+            // Only return true if we actually resolved the IP
+            self.resolved_ip.is_some()
         } else {
             // All nodes exhausted, fallback direct
             self.retried = true;
@@ -129,7 +138,7 @@ impl DohManager {
     pub fn resolve_override(&self) -> Option<(String, SocketAddr)> {
         if self.mode.as_ref() == Some(&DohMode::Proxy) {
             if let Some(ref node) = self.node {
-                let ip = node.ip.parse().ok()?;
+                let ip = self.resolved_ip?;
                 return Some((node.host.clone(), SocketAddr::new(ip, 443)));
             }
         }
@@ -155,6 +164,26 @@ impl DohManager {
 
     pub fn is_proxy(&self) -> bool {
         self.mode.as_ref() == Some(&DohMode::Proxy) && self.node.is_some()
+    }
+
+    /// Resolve node.ip to an IpAddr. Handles two cases:
+    /// 1. node.ip is a real IP like "8.212.1.102" → parse directly
+    /// 2. node.ip is a CNAME domain like "xyz.aliyunddos.com" → DNS lookup
+    fn resolve_node_ip(ip_or_domain: &str) -> Option<IpAddr> {
+        // Try direct IP parse first
+        if let Ok(ip) = ip_or_domain.parse::<IpAddr>() {
+            return Some(ip);
+        }
+        // CNAME domain — do blocking DNS lookup (only happens once per node switch)
+        use std::net::ToSocketAddrs;
+        let addr = format!("{}:443", ip_or_domain);
+        match addr.to_socket_addrs() {
+            Ok(mut addrs) => addrs.next().map(|a| a.ip()),
+            Err(e) => {
+                eprintln!("[doh] failed to resolve CNAME {}: {}", ip_or_domain, e);
+                None
+            }
+        }
     }
 
     /// Returns the User-Agent string for proxy requests.
@@ -293,6 +322,7 @@ mod tests {
             host: "proxy.example.com".to_string(),
             ttl: 300,
         });
+        mgr.resolved_ip = Some("93.184.216.34".parse().unwrap());
 
         let (host, addr) = mgr.resolve_override().expect("should return Some");
         assert_eq!(host, "proxy.example.com");
