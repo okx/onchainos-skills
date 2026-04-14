@@ -51,6 +51,9 @@ impl ApiClient {
         if let Some((host, addr)) = doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
+        if let Some(ua) = doh.proxy_user_agent() {
+            builder = builder.user_agent(ua);
+        }
 
         Ok(Self {
             http: builder.build()?,
@@ -79,6 +82,9 @@ impl ApiClient {
         let mut builder = Client::builder().timeout(std::time::Duration::from_secs(10));
         if let Some((host, addr)) = doh.resolve_override() {
             builder = builder.resolve(&host, addr);
+        }
+        if let Some(ua) = doh.proxy_user_agent() {
+            builder = builder.user_agent(ua);
         }
 
         Ok(Self {
@@ -371,6 +377,9 @@ impl ApiClient {
             .timeout(std::time::Duration::from_secs(10));
         if let Some((host, addr)) = self.doh.resolve_override() {
             builder = builder.resolve(&host, addr);
+        }
+        if let Some(ua) = self.doh.proxy_user_agent() {
+            builder = builder.user_agent(ua);
         }
         self.http = builder.build()?;
         Ok(())

@@ -253,6 +253,9 @@ impl WalletApiClient {
         if let Some((host, addr)) = doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
+        if let Some(ua) = doh.proxy_user_agent() {
+            builder = builder.user_agent(ua);
+        }
 
         Ok(Self {
             http: builder.build()?,
@@ -266,6 +269,9 @@ impl WalletApiClient {
             .timeout(std::time::Duration::from_secs(30));
         if let Some((host, addr)) = self.doh.resolve_override() {
             builder = builder.resolve(&host, addr);
+        }
+        if let Some(ua) = self.doh.proxy_user_agent() {
+            builder = builder.user_agent(ua);
         }
         self.http = builder.build()?;
         Ok(())

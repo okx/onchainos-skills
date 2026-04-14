@@ -156,6 +156,19 @@ impl DohManager {
     pub fn is_proxy(&self) -> bool {
         self.mode.as_ref() == Some(&DohMode::Proxy) && self.node.is_some()
     }
+
+    /// Returns the User-Agent string for proxy requests.
+    /// Proxy nodes require this specific UA format to allow traffic.
+    pub fn proxy_user_agent(&self) -> Option<String> {
+        if self.is_proxy() {
+            Some(format!(
+                "OKX/@okx_ai/onchainos-cli/{}",
+                env!("CARGO_PKG_VERSION")
+            ))
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]
