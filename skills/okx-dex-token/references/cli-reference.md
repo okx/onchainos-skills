@@ -7,13 +7,15 @@ Detailed parameter tables, return field schemas, and usage examples for all 13 t
 Search for tokens by name, symbol, or contract address.
 
 ```bash
-onchainos token search --query <query> [--chains <chains>]
+onchainos token search --query <query> [--chains <chains>] [--limit <n>] [--cursor <cursor>]
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--query` | Yes | - | Keyword: token name, symbol, or contract address |
 | `--chains` | No | `"1,501"` | Chain names or IDs, comma-separated (e.g., `"ethereum,solana"` or `"196,501"`) |
+| `--limit` | No | `20` | Number of results per page (max 100) |
+| `--cursor` | No | - | Pagination cursor — pass the `cursor` field from the last item of the previous response to get the next page |
 
 **Return fields**:
 
@@ -32,6 +34,7 @@ onchainos token search --query <query> [--chains <chains>]
 | `holders` | String | Number of token holders |
 | `explorerUrl` | String | Block explorer URL for the token |
 | `tagList.communityRecognized` | Boolean | `true` = listed on Top 10 CEX or community verified |
+| `cursor` | String | Per-item pagination cursor — pass the `cursor` of the **last item** as the next request's `--cursor` to fetch the next page |
 
 ## 2. onchainos token info
 
@@ -101,7 +104,7 @@ onchainos token price-info --address <address> [--chain <chain>]
 Get token holder distribution (top 100), with optional tag filter.
 
 ```bash
-onchainos token holders --address <address> [--chain <chain>] [--tag-filter <n>]
+onchainos token holders --address <address> [--chain <chain>] [--tag-filter <n>] [--limit <n>] [--cursor <cursor>]
 ```
 
 | Param | Required | Default | Description |
@@ -109,6 +112,8 @@ onchainos token holders --address <address> [--chain <chain>] [--tag-filter <n>]
 | `--address` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name |
 | `--tag-filter` | No | - | Filter by holder tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler |
+| `--limit` | No | `20` | Number of results per page (max 100) |
+| `--cursor` | No | - | Pagination cursor — pass the `cursor` field from the last item of the previous response to get the next page |
 
 **Return fields** (top 100 holders):
 
@@ -159,7 +164,7 @@ onchainos token liquidity --address <address> [--chain <chain>]
 Get hot token list ranked by trending score or X/Twitter mentions (max 100 results).
 
 ```bash
-onchainos token hot-tokens [--ranking-type <type>] [--chain <chain>] [--rank-by <field>] [--time-frame <frame>] [options]
+onchainos token hot-tokens [--ranking-type <type>] [--chain <chain>] [--rank-by <field>] [--time-frame <frame>] [--limit <n>] [--cursor <cursor>] [options]
 ```
 
 **Core parameters**:
@@ -170,6 +175,8 @@ onchainos token hot-tokens [--ranking-type <type>] [--chain <chain>] [--rank-by 
 | `--chain` | No | all chains | Chain name (e.g., `solana`, `ethereum`). Omit for all chains |
 | `--rank-by` | No | - | Sort field: `1`=price, `2`=price change, `3`=txs, `4`=unique traders, `5`=volume, `6`=market cap, `7`=liquidity, `8`=created time, `9`=OKX search count, `10`=holders, `11`=mention count, `12`=social score, `14`=net inflow, `15`=token score |
 | `--time-frame` | No | - | Window: `1`=5min, `2`=1h, `3`=4h, `4`=24h |
+| `--limit` | No | `20` | Number of results per page (max 100) |
+| `--cursor` | No | - | Pagination cursor — pass the `cursor` field from the last item of the previous response to get the next page |
 
 **Filter parameters** (all optional):
 
@@ -268,7 +275,7 @@ onchainos token advanced-info --address <address> [--chain <chain>]
 Get top traders (profit addresses) for a token.
 
 ```bash
-onchainos token top-trader --address <address> [--chain <chain>] [--tag-filter <n>]
+onchainos token top-trader --address <address> [--chain <chain>] [--tag-filter <n>] [--limit <n>] [--cursor <cursor>]
 ```
 
 | Param | Required | Default | Description |
@@ -276,6 +283,8 @@ onchainos token top-trader --address <address> [--chain <chain>] [--tag-filter <
 | `--address` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name |
 | `--tag-filter` | No | - | Filter by trader tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler |
+| `--limit` | No | `20` | Number of results per page (max 100) |
+| `--cursor` | No | - | Pagination cursor — pass the `cursor` field from the last item of the previous response to get the next page |
 
 **Return fields**:
 
