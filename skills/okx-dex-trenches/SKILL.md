@@ -44,6 +44,7 @@ metadata:
 
 - Missing chain → default to Solana (`--chain solana`); verify support with `onchainos memepump chains` first
 - Missing `--stage` for memepump-tokens → default to `NEW`; only ask if the user's intent clearly points to a different stage
+- Stage coverage: `NEW` and `MIGRATING` include tokens created within the last **24 h**; `MIGRATED` includes tokens whose migration completed within the last **3 days**
 - User mentions a protocol name → first call `onchainos memepump chains` to get the protocol ID, then pass `--protocol-id-list <id>` to `memepump-tokens`. Do NOT use `okx-dex-token` to search for protocol names as tokens.
 
 ### Step 2: Call and Display
@@ -67,6 +68,20 @@ Present next actions conversationally — never expose command paths to the user
 | `memepump similar-tokens` | `memepump token-details` |
 | `memepump token-bundle-info` | `memepump aped-wallet` |
 | `memepump aped-wallet` | `token advanced-info`, `market kline`, `swap execute` |
+
+## Data Freshness
+
+### `requestTime` Field
+
+When a response includes a `requestTime` field (Unix milliseconds), display it alongside results so the user knows when the data snapshot was taken. When chaining commands (e.g., fetching token details after a list scan), use the `requestTime` from the most recent response as the reference point — not the current wall clock time.
+
+### Per-Command Cache
+
+| Command | Cache |
+|---|---|
+| `memepump aped-wallet` | 1 s |
+
+**Note on `createdTimestamp`:** Tokens created less than 5 seconds before the API call may return `null` for `createdTimestamp` — this is by design to avoid surfacing an unreliable value for brand-new launches. Treat `null` as "just launched."
 
 ## Additional Resources
 

@@ -58,6 +58,7 @@ metadata:
 - For hot-tokens without chain → defaults to all chains; specify `--chain` to narrow
 - For search, `--chains` defaults to `"1,501"` (Ethereum + Solana)
 - **Chain uncertainty for cluster commands**: If the user doesn't know whether their chain supports cluster analysis, suggest running `onchainos token cluster-supported-chains` first before calling cluster-overview / cluster-top-holders / cluster-list.
+- **Pagination** (`token search`, `token hot-tokens`, `token holders`, `token top-trader`): All four commands support `--limit` (default `20`, max `100`) and `--cursor`. The `cursor` field on each response item points to its position; pass the **last item's `cursor`** value as `--cursor` on the next call to page forward. When `cursor` is `null` on the last item, all pages have been returned.
 
 ### Step 2: Call and Display
 
@@ -84,6 +85,20 @@ Present next actions conversationally — never expose command paths to the user
 | `token cluster-overview` | `token cluster-top-holders`, `token cluster-list`, `token advanced-info` |
 | `token cluster-top-holders` | `token cluster-list`, `token holders` |
 | `token cluster-list` | `token top-trader`, `token advanced-info` |
+
+## Data Freshness
+
+### `requestTime` Field
+
+When a response includes a `requestTime` field (Unix milliseconds), display it alongside results so the user knows when the data snapshot was taken. When chaining commands (e.g., using price data as input to a follow-up query), use the `requestTime` from the most recent response as the reference point — not the current wall clock time.
+
+### Per-Command Cache
+
+| Command | Cache |
+|---|---|
+| `token holders` | 3 s |
+| `token hot-tokens` | 3 s |
+| `token top-trader` | 3 s |
 
 ## Additional Resources
 
