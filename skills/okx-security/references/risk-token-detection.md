@@ -100,7 +100,6 @@ If user provides name/symbol instead, search first with `onchainos token search`
 | `tokenAddress` | String | Token contract address |
 | `isChainSupported` | Boolean | Whether the chain supports security scanning |
 | `riskLevel` | String | Overall token risk level. Values: `CRITICAL`, `HIGH`, `MEDIUM`, `LOW` |
-| `isRiskToken` | Boolean | Whether the token is high-risk (composite flag). **Informational only** — `riskLevel` supersedes this field for all risk determination. Retained for backward compatibility. |
 | `buyTaxes` | String\|null | Buy tax percentage (null = unknown) |
 | `sellTaxes` | String\|null | Sell tax percentage (null = unknown) |
 | `isHoneypot` | Boolean | Honeypot — cannot sell after buying |
@@ -299,7 +298,6 @@ API returns:
   isLowLiquidity: true
   isMintable: true
   isPump: true
-  isRiskToken: true
   buyTaxes: null, sellTaxes: null
 
 Display:
