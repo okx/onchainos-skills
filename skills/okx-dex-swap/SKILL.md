@@ -73,13 +73,16 @@ Follow the **Token Address Resolution** section above.
 
 Before quoting or executing a swap, **automatically** run `token-scan` on both the `--from` and `--to` tokens to detect risks. This step is mandatory and must not be skipped.
 
-```bash
-onchainos security token-scan --tokens "<chainId>:<fromTokenAddress>,<chainId>:<toTokenAddress>"
-```
-
 > **⚠️ Native token handling**: Exclude native tokens (matching any address in the Native Token Addresses table above) — they have no contract address and cannot be scanned.
-> - If one token is native, scan only the non-native token: `onchainos security token-scan --tokens "<chainId>:<nonNativeTokenAddress>"` — apply the action for the scanned token's position (buy/sell) as normal.
+> - If one token is native, scan only the non-native token — apply the action for the scanned token's position (buy/sell) as normal.
 > - If both tokens are native (match addresses in the Native Token Addresses table), skip token-scan entirely.
+
+```bash
+# Both non-native:
+onchainos security token-scan --tokens "<chainId>:<fromTokenAddress>,<chainId>:<toTokenAddress>"
+# One native (e.g., selling ETH for PEPE): scan only the non-native token:
+onchainos security token-scan --tokens "<chainId>:<nonNativeTokenAddress>"
+```
 
 > Load `skills/okx-security/references/risk-token-detection.md` for the full risk label catalog and display format.
 
@@ -94,7 +97,7 @@ onchainos security token-scan --tokens "<chainId>:<fromTokenAddress>,<chainId>:<
 
 > Buy side (`--to`) is stricter: `CRITICAL` blocks the swap, `HIGH` pauses for confirmation. Sell side (`--from`) only warns — allowing the user to exit risky positions.
 >
-> **Multi-token action resolution**: Apply the action matrix independently for each token based on its role (buy/sell column), then enforce the most restrictive resulting action across all tokens. Precedence: `BLOCK > PAUSE > WARN > Safe`. Display risk results for all scanned tokens first. If any token triggers BLOCK, refuse the swap after showing all results.
+> **Multi-token action resolution**: Apply the action matrix independently for each token based on its role (buy/sell column), then enforce the most restrictive resulting action across all tokens. Precedence: `BLOCK > PAUSE > WARN > Safe`. Display risk results for all scanned tokens first. If any token triggers BLOCK, refuse the swap after showing all results and state which token triggered it (e.g., "Buy BLOCKED due to CRITICAL risk on `--to` token `<symbol>`").
 
 **Edge cases:**
 - `isChainSupported: false` → Skip detection for that token, warn "This chain does not support token security scanning", continue.

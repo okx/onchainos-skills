@@ -180,13 +180,13 @@ The API returns a `riskLevel` field directly on each token-scan result. The Agen
 | `riskLevel` value | Meaning |
 |---|---|
 | `CRITICAL` | Highest risk — honeypot, scam airdrop, gas-mint, or extreme tax |
-| `HIGH` | Significant risk — low liquidity, dumping, rugpull linkage, counterfeit, etc. |
+| `HIGH` | Significant risk — low liquidity, dumping, rugpull linkage, counterfeit, not open-source, etc. |
 | `MEDIUM` | Moderate risk — mintable, freeze authority, ownership not renounced, etc. |
 | `LOW` | No risk labels triggered — safe to proceed |
 
 ### How to interpret
 
-1. **Read `riskLevel`** from the API response. This is the overall token risk level, computed server-side from all boolean labels, tax thresholds, and additional signals (off-chain intelligence, ML models). When multiple tokens are scanned in one call (e.g., `--tokens "<chainId>:<addr1>,<chainId>:<addr2>"`), the response contains one result object per token, matched by `tokenAddress`. Apply the action matrix independently for each token.
+1. **Read `riskLevel`** from the API response. This is the overall token risk level, computed server-side from all boolean labels, tax thresholds, and additional signals (off-chain intelligence, ML models). If `riskLevel` is missing, `null`, or an unrecognized value, treat as `HIGH` (see Edge Cases table for details). When multiple tokens are scanned in one call (e.g., `--tokens "<chainId>:<addr1>,<chainId>:<addr2>"`), the response contains one result object per token, matched by `tokenAddress`. Apply the action matrix independently for each token.
 2. **Collect triggered labels** for display: Iterate all boolean fields (`isHoneypot`, `isLowLiquidity`, `isNotOpenSource`, etc.). For each `true` value, include it in the triggered labels list. For `isHasAssetEditAuth`, only include when `chainId == 501` (Solana) — this condition applies to display only; the server already accounts for chain-specific context in `riskLevel`. Individual label levels are **not displayed** — only the overall `riskLevel` is shown. If `riskLevel` is non-LOW but no boolean labels are `true`, display: "Risk level: {riskLevel} — flagged by composite analysis, no specific label identified." (The server may flag risk based on off-chain signals that don't surface as individual boolean fields.)
 3. **Display tax info**: If `buyTaxes` or `sellTaxes` is non-null and numeric, display alongside the risk result. If `null`, empty, or non-numeric, omit.
 4. **Apply action matrix**: Use `riskLevel` + operation type (buy/sell) to determine the Agent action per the matrix below.
