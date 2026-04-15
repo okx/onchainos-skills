@@ -166,7 +166,7 @@ If user provides name/symbol instead, search first with `onchainos token search`
 
 > The following table shows how the server incorporates tax values into `riskLevel`. The Agent should **NOT** independently compute risk levels from tax values — `riskLevel` already accounts for them. Display tax info alongside the risk result per step 3 of "How to interpret".
 
-| Tax Value | Server-Side Risk Contribution | Display |
+| Tax Value | How Server Uses This (context only) | Display |
 |---|---|---|
 | ≥ 50% | Contributes to CRITICAL | Show tax percentage |
 | ≥ 21% and < 50% | Contributes to HIGH | Show tax percentage |
@@ -187,7 +187,7 @@ The API returns a `riskLevel` field directly on each token-scan result. The Agen
 ### How to interpret
 
 1. **Read `riskLevel`** from the API response. This is the overall token risk level, computed server-side from all boolean labels, tax thresholds, and additional signals (off-chain intelligence, ML models). When multiple tokens are scanned in one call (e.g., `--tokens "<chainId>:<addr1>,<chainId>:<addr2>"`), the response contains one result object per token, matched by `tokenAddress`. Apply the action matrix independently for each token.
-2. **Collect triggered labels** for display: Iterate all boolean fields (`isHoneypot`, `isLowLiquidity`, etc.). For each `true` value, include it in the triggered labels list. For `isHasAssetEditAuth`, only include when `chainId == 501` (Solana). Individual label levels are **not displayed** — only the overall `riskLevel` is shown. If `riskLevel` is non-LOW but no boolean labels are `true`, display: "Risk level: {riskLevel} — flagged by composite analysis, no specific label identified." (The server may flag risk based on off-chain signals that don't surface as individual boolean fields.)
+2. **Collect triggered labels** for display: Iterate all boolean fields (`isHoneypot`, `isLowLiquidity`, `isNotOpenSource`, etc.). For each `true` value, include it in the triggered labels list. For `isHasAssetEditAuth`, only include when `chainId == 501` (Solana) — this condition applies to display only; the server already accounts for chain-specific context in `riskLevel`. Individual label levels are **not displayed** — only the overall `riskLevel` is shown. If `riskLevel` is non-LOW but no boolean labels are `true`, display: "Risk level: {riskLevel} — flagged by composite analysis, no specific label identified." (The server may flag risk based on off-chain signals that don't surface as individual boolean fields.)
 3. **Display tax info**: If `buyTaxes` or `sellTaxes` is non-null and numeric, display alongside the risk result. If `null`, empty, or non-numeric, omit.
 4. **Apply action matrix**: Use `riskLevel` + operation type (buy/sell) to determine the Agent action per the matrix below.
 
@@ -320,6 +320,7 @@ Display:
 1. (okx-dex-token) onchainos token search PEPE      -> find contract address
 2. Confirm which token with user
 3. onchainos security token-scan --tokens "<chainId>:<fromAddr>,<chainId>:<toAddr>"
+       # If either token is native (e.g., ETH), omit it — scan only the non-native token
        -> read riskLevel for each token from API response
        -> --to token (buy side):  CRITICAL → BLOCK, HIGH → PAUSE, MEDIUM → WARN, LOW → safe
        -> --from token (sell side): CRITICAL/HIGH/MEDIUM → WARN, LOW → safe
