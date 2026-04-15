@@ -7,7 +7,7 @@ use crate::home::onchainos_home;
 
 use super::types::{DohBinaryResponse, DohNode};
 
-const BINARY_NAME: &str = "okx-doh-resolver";
+const BINARY_NAME: &str = "okx-pilot";
 
 const CDN_SOURCES: &[&str] = &[
     "https://static.okx.com/upgradeapp/doh",
@@ -15,7 +15,7 @@ const CDN_SOURCES: &[&str] = &[
     "https://static.coinall.ltd/upgradeapp/doh",
 ];
 
-/// Returns the path to `~/.onchainos/bin/okx-doh-resolver`.
+/// Returns the path to `~/.onchainos/bin/okx-pilot`.
 /// Overridable via `OKX_DOH_BINARY_PATH` env var.
 pub fn binary_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("OKX_DOH_BINARY_PATH") {
@@ -48,7 +48,7 @@ fn cdn_platform() -> Option<&'static str> {
     None
 }
 
-/// Downloads the okx-doh-resolver binary from CDN.
+/// Downloads the okx-pilot binary from CDN.
 /// Tries multiple CDN sources in order.
 pub async fn download_binary() -> Result<()> {
     let platform = cdn_platform()
@@ -107,7 +107,7 @@ pub async fn download_binary() -> Result<()> {
     }
 }
 
-/// Executes the okx-doh-resolver binary and parses the result.
+/// Executes the okx-pilot binary and parses the result.
 /// Returns `None` on any error (binary missing, timeout, bad JSON, code != 0, empty ip).
 pub async fn exec_doh_binary(
     domain: &str,
@@ -184,7 +184,7 @@ mod tests {
         let path = binary_path().expect("should return Some");
         assert_eq!(
             path,
-            PathBuf::from("/tmp/test_onchainos_doh/bin/okx-doh-resolver")
+            PathBuf::from("/tmp/test_onchainos_doh/bin/okx-pilot")
         );
         std::env::remove_var("ONCHAINOS_HOME");
     }

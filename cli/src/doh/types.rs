@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// A proxy node returned by okx-doh-resolver binary.
+/// A proxy node returned by okx-pilot binary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DohNode {
     pub ip: String,
@@ -36,7 +36,7 @@ pub struct DohCacheEntry {
 /// Cache file format: domain → cache entry.
 pub type DohCacheFile = HashMap<String, DohCacheEntry>;
 
-/// Parsed stdout from okx-doh-resolver binary.
+/// Parsed stdout from okx-pilot binary.
 #[derive(Debug, Deserialize)]
 pub struct DohBinaryResponse {
     pub code: i32,
