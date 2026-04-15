@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use anyhow::Result;
 use clap::Subcommand;
 use serde_json::Value;
@@ -5,6 +7,40 @@ use serde_json::Value;
 use super::Context;
 use crate::client::ApiClient;
 use crate::output;
+
+/// Tokens created less than this many milliseconds ago have their
+/// `createdTimestamp` field replaced with `null` to avoid surfacing
+/// an unreliable/zero value for brand-new launches.
+const NEW_TOKEN_THRESHOLD_MS: u64 = 5_000;
+
+/// If the token was created within `NEW_TOKEN_THRESHOLD_MS`, set its
+/// `createdTimestamp` field to `null`.  All other fields are left intact.
+fn nullify_created_timestamp_if_new(token: &mut Value) {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(0))
+        .unwrap_or(0);
+
+    if now_ms == 0 {
+        // Clock error — skip nullification to avoid false-positives on all tokens.
+        return;
+    }
+
+    let created_ms = token
+        .get("createdTimestamp")
+        .and_then(|v| {
+            v.as_str()
+                .and_then(|s| s.parse::<u64>().ok())
+                .or_else(|| v.as_u64())
+        })
+        .unwrap_or(0);
+
+    if created_ms > 0 && now_ms.saturating_sub(created_ms) < NEW_TOKEN_THRESHOLD_MS {
+        if let Some(obj) = token.as_object_mut() {
+            obj.insert("createdTimestamp".to_string(), Value::Null);
+        }
+    }
+}
 
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
@@ -543,7 +579,7 @@ pub async fn fetch_token_list(client: &ApiClient, p: MemepumpTokenListParams) ->
     let kw_include = p.keywords_include.unwrap_or_default();
     let kw_exclude = p.keywords_exclude.unwrap_or_default();
 
-    client
+    let mut data = client
         .get(
             "/api/v6/dex/market/memepump/tokenList",
             &[
@@ -605,7 +641,15 @@ pub async fn fetch_token_list(client: &ApiClient, p: MemepumpTokenListParams) ->
                 ("keywordsExclude", &kw_exclude),
             ],
         )
-        .await
+        .await?;
+
+    if let Some(tokens) = data.as_array_mut() {
+        for token in tokens.iter_mut() {
+            nullify_created_timestamp_if_new(token);
+        }
+    }
+
+    Ok(data)
 }
 
 /// GET /api/v6/dex/market/memepump/tokenDetails
@@ -615,7 +659,7 @@ pub async fn fetch_token_details(
     chain_index: &str,
     wallet_address: &str,
 ) -> Result<Value> {
-    client
+    let mut data = client
         .get(
             "/api/v6/dex/market/memepump/tokenDetails",
             &[
@@ -624,7 +668,11 @@ pub async fn fetch_token_details(
                 ("walletAddress", wallet_address),
             ],
         )
-        .await
+        .await?;
+
+    nullify_created_timestamp_if_new(&mut data);
+
+    Ok(data)
 }
 
 /// GET /api/v6/dex/market/memepump/apedWallet

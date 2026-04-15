@@ -46,6 +46,12 @@ pub enum SignalCommand {
         /// Maximum token liquidity in USD
         #[arg(long)]
         max_liquidity_usd: Option<String>,
+        /// Number of results per page (default: 20, max: 100)
+        #[arg(long)]
+        limit: Option<String>,
+        /// Pagination cursor — pass the cursor from the last item of the previous page; omit for first page
+        #[arg(long)]
+        cursor: Option<String>,
     },
 }
 
@@ -64,6 +70,8 @@ pub async fn execute(ctx: &Context, cmd: SignalCommand) -> Result<()> {
             max_market_cap_usd,
             min_liquidity_usd,
             max_liquidity_usd,
+            limit,
+            cursor,
         } => {
             signal_list(
                 ctx,
@@ -78,6 +86,8 @@ pub async fn execute(ctx: &Context, cmd: SignalCommand) -> Result<()> {
                 max_market_cap_usd,
                 min_liquidity_usd,
                 max_liquidity_usd,
+                limit,
+                cursor,
             )
             .await
         }
@@ -108,9 +118,23 @@ pub async fn fetch_list(
     max_market_cap_usd: Option<String>,
     min_liquidity_usd: Option<String>,
     max_liquidity_usd: Option<String>,
+    limit: Option<String>,
+    cursor: Option<String>,
 ) -> Result<Value> {
-    let mut body = json!({"chainIndex": chain_index});
+    if let Some(ref s) = limit {
+        let n: u64 = s
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
+        anyhow::ensure!(n >= 1 && n <= 100, "--limit must be between 1 and 100, got {n}");
+    }
+    let mut body = json!({
+        "chainIndex": chain_index,
+        "limit": limit.as_deref().unwrap_or("20"),
+    });
     let obj = body.as_object_mut().unwrap();
+    if let Some(v) = cursor {
+        obj.insert("cursor".into(), Value::String(v));
+    }
     if let Some(v) = wallet_type {
         obj.insert("walletType".into(), Value::String(v));
     }
@@ -166,6 +190,8 @@ async fn signal_list(
     max_market_cap_usd: Option<String>,
     min_liquidity_usd: Option<String>,
     max_liquidity_usd: Option<String>,
+    limit: Option<String>,
+    cursor: Option<String>,
 ) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain).to_string();
     let client = ctx.client_async().await?;
@@ -183,6 +209,8 @@ async fn signal_list(
             max_market_cap_usd,
             min_liquidity_usd,
             max_liquidity_usd,
+            limit,
+            cursor,
         )
         .await?,
     );

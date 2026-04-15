@@ -75,6 +75,13 @@ Present next actions conversationally — never expose command paths to the user
 | `market portfolio-recent-pnl` | `market portfolio-token-pnl`, `token price-info` |
 | `market portfolio-token-pnl` | `market portfolio-dex-history`, `market kline` |
 
+## Data Freshness
+
+### `requestTime` Field
+
+When a response includes a `requestTime` field (Unix milliseconds), display it alongside results so the user knows when the data snapshot was taken. When chaining commands (e.g., fetching price then using that timestamp as a range boundary), use the `requestTime` from the most recent response as the reference point — not the current wall clock time.
+
+
 ## Additional Resources
 
 For detailed params and return field schemas for a specific command:
