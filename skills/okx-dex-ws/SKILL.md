@@ -1,7 +1,7 @@
 ---
 name: okx-dex-ws
 description: "Use this skill when the user mentions 'onchainos ws', 'ws start', 'ws poll', 'ws stop', 'ws channels', 'ws session', 'ws channel-info', 'idle-timeout', 'idle timeout', 'WebSocket channels', 'WS频道', or asks about managing WebSocket sessions/会话管理. Also use when writing a custom WebSocket script/脚本/bot for real-time on-chain data. Covers: onchainos ws CLI commands (start/poll/stop/list/channels/channel-info), session lifecycle, idle-timeout configuration, and all 9 DEX WebSocket channels (price, candle, trades, price-info, signals, tracker, meme scanning)."
-license: MIT
+license: Apache-2.0
 metadata:
   author: okx
   version: "2.0.0"

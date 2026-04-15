@@ -1,7 +1,7 @@
 ---
 name: okx-wallet-portfolio
 description: "Use this skill when the user provides a specific wallet address and wants to check its balance, token holdings, portfolio value, or DeFi positions. Typical triggers: 'check balance of 0xAbc...', 'show tokens in this address', 'what tokens does 0xAbc hold', 'portfolio value of this address', address portfolio value, multi-chain balance lookup for a given address. Supports XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains. Do NOT use when the user asks about their own wallet without providing an address (e.g., 'check my wallet balance', 'show my assets', '查看我的余额') — use okx-agentic-wallet instead, which queries the logged-in wallet. Do NOT use for PnL analysis, DEX history, realized/unrealized profit — use okx-dex-market. Do NOT use for signal tracking — use okx-dex-signal. Do NOT use for meme scanning — use okx-dex-trenches. Do NOT use for programming questions about balance APIs or integration."
-license: MIT
+license: Apache-2.0
 metadata:
   author: okx
   version: "1.0.4"
