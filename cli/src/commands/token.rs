@@ -535,6 +535,12 @@ pub async fn fetch_search(
     cursor: Option<&str>,
 ) -> Result<Value> {
     let resolved_chains = crate::chains::resolve_chains(chains);
+    if let Some(s) = limit {
+        let n: u64 = s
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
+        anyhow::ensure!(n >= 1 && n <= 100, "--limit must be between 1 and 100, got {n}");
+    }
     let mut params = vec![
         ("chains", resolved_chains.as_str()),
         ("search", query),
@@ -565,6 +571,12 @@ pub async fn fetch_holders(
     limit: Option<&str>,
     cursor: Option<&str>,
 ) -> Result<Value> {
+    if let Some(s) = limit {
+        let n: u64 = s
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
+        anyhow::ensure!(n >= 1 && n <= 100, "--limit must be between 1 and 100, got {n}");
+    }
     let tag_str = tag_filter.map(|t| t.to_string()).unwrap_or_default();
     let mut params = vec![
         ("chainIndex", chain_index),
@@ -704,6 +716,12 @@ pub struct HotTokensParams {
 
 /// GET /api/v6/dex/market/token/hot-token — hot token list by trending score or X mentions
 pub async fn fetch_hot_tokens(client: &ApiClient, params: HotTokensParams) -> Result<Value> {
+    if let Some(ref s) = params.limit {
+        let n: u64 = s
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
+        anyhow::ensure!(n >= 1 && n <= 100, "--limit must be between 1 and 100, got {n}");
+    }
     let hot_limit = params.limit.unwrap_or_else(|| "20".to_string());
     let hot_cursor = params.cursor;
     let chain_index = params
@@ -837,6 +855,12 @@ pub async fn fetch_top_trader(
     limit: Option<&str>,
     cursor: Option<&str>,
 ) -> Result<Value> {
+    if let Some(s) = limit {
+        let n: u64 = s
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
+        anyhow::ensure!(n >= 1 && n <= 100, "--limit must be between 1 and 100, got {n}");
+    }
     let tag_str = tag_filter.map(|t| t.to_string()).unwrap_or_default();
     let mut params = vec![
         ("chainIndex", chain_index),
