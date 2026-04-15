@@ -79,7 +79,7 @@ When a response includes a `requestTime` field (Unix milliseconds), display it a
 
 | Command | Cache |
 |---|---|
-| `memepump aped-wallet` | 1 s |
+| `memepump aped-wallet` (with `--following` filter) | 0 – 1 s |
 
 ## Additional Resources
 
