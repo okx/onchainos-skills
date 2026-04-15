@@ -96,21 +96,22 @@ If a security scan **fails to complete** (network error, API timeout, rate limit
 
 ### token-scan (token risk label scanning)
 
-Token-scan uses a **4-level risk model** based on 20+ boolean labels and tax thresholds. The Agent computes the effective risk level from all triggered labels and applies different actions for **buy** vs. **sell** operations.
+Token-scan returns a **`riskLevel`** field (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`) that represents the overall token risk. The Agent uses this field directly and applies different actions for **buy** vs. **sell** operations.
 
-| Effective Level | Buy Action | Sell Action |
+| `riskLevel` | Buy Action | Sell Action |
 |---|---|---|
-| **Level 4** (Critical) | `block` — refuse to buy | `warn` — display risk, allow sell |
-| **Level 3** (High) | `warn` + **pause** — require explicit yes/no | `warn` — display risk, allow sell |
-| **Level 2** (Medium) | `warn` — info notice, continue | `warn` — info notice, continue |
-| **Level 1** (Low) | safe — proceed | safe — proceed |
+| **CRITICAL** | `block` — refuse to buy | `warn` — display risk, allow sell |
+| **HIGH** | `warn` + **pause** — require explicit yes/no | `warn` — display risk, allow sell |
+| **MEDIUM** | `warn` — info notice, continue | `warn` — info notice, continue |
+| **LOW** | safe — proceed | safe — proceed |
 
-> Full label catalog, tax threshold rules, risk computation logic, and display format are defined in `references/risk-token-detection.md`. **Always load that reference before executing `token-scan`.**
+> Full label catalog, tax threshold rules, and display format are defined in `references/risk-token-detection.md`. **Always load that reference before executing `token-scan`.**
 
 Key principles:
-- **`isRiskToken` is the gate**: If `isRiskToken: false`, the token is Level 1 (safe) — skip all label/tax evaluation. Only when `isRiskToken: true`, compute effective level = **max** level across all triggered boolean labels and tax thresholds.
-- **Buy is stricter than sell**: Level 4 blocks buy but only warns on sell (to allow stop-loss exit).
-- **Level 3 buy requires explicit user confirmation** (yes/no) — do not auto-continue.
+- **`riskLevel` is authoritative**: The API returns the overall risk level server-side. The Agent reads `riskLevel` directly — no client-side computation from individual labels is needed.
+- **Buy is stricter than sell**: `CRITICAL` blocks buy but only warns on sell (to allow stop-loss exit).
+- **`HIGH` buy requires explicit user confirmation** (yes/no) — do not auto-continue.
+- Individual label levels are **not displayed** to the user — only the overall `riskLevel` is shown, with triggered labels listed without level prefixes.
 - If `isChainSupported: false`, skip detection with a warning; do not block.
 - If API fails, warn but do not block. In swap context, token-scan failures auto-continue with a warning to avoid blocking time-sensitive trades — this overrides the general fail-safe's ask-user behavior.
 

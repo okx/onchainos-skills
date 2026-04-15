@@ -71,29 +71,28 @@ Follow the **Token Address Resolution** section above.
 
 ### Step 2 — Pre-Swap Token Security Scan (Mandatory)
 
-Before quoting or executing a swap, **automatically** run `token-scan` on the target token to detect risks. This step is mandatory and must not be skipped.
+Before quoting or executing a swap, **automatically** run `token-scan` on both the `--from` and `--to` tokens to detect risks. This step is mandatory and must not be skipped. Skip native tokens (matching any address in the Native Token Addresses table above) — they have no contract address and cannot be scanned.
 
 ```bash
-onchainos security token-scan --tokens "<chainId>:<toTokenAddress>"
+onchainos security token-scan --tokens "<chainId>:<fromTokenAddress>,<chainId>:<toTokenAddress>"
 ```
 
-> Load `skills/okx-security/references/risk-token-detection.md` for the full risk label catalog and computation rules.
+> Load `skills/okx-security/references/risk-token-detection.md` for the full risk label catalog and display format.
 
-**Interpret the result using the 4-level risk model:**
+**Interpret each token's result using the `riskLevel` field from the API response:**
 
-| Effective Level | Buy Action (`--to` token only) |
-|---|---|
-| **Level 4** | **BLOCK** — Refuse to execute swap. Display triggered labels. |
-| **Level 3** | **PAUSE** — Display risk labels, ask user "Continue? (yes/no)". Only proceed on explicit "yes". |
-| **Level 2** | **WARN** — Display risk labels as info, continue without pause. |
-| **Level 1** | Safe — proceed to Step 3. |
+| `riskLevel` | Buy Action (`--to` token) | Sell Action (`--from` token) |
+|---|---|---|
+| **CRITICAL** | **BLOCK** — Refuse to execute swap. Display triggered labels. | **WARN** — Display risk labels, allow sell to continue. |
+| **HIGH** | **PAUSE** — Display risk labels, ask user "Continue? (yes/no)". Only proceed on explicit "yes". | **WARN** — Display risk labels, allow sell to continue. |
+| **MEDIUM** | **WARN** — Display risk labels as info, continue without pause. | **WARN** — Display risk labels as info, continue without pause. |
+| **LOW** | Safe — proceed to Step 3. | Safe — proceed to Step 3. |
 
-> Sell-side scanning is omitted by design — the user already holds the `--from` token. Risk labels on the `--to` token (the token being acquired) are the primary concern.
+> Buy side (`--to`) is stricter: `CRITICAL` blocks the swap, `HIGH` pauses for confirmation. Sell side (`--from`) only warns — allowing the user to exit risky positions.
 
 **Edge cases:**
-- `isChainSupported: false` → Skip detection, warn "This chain does not support token security scanning", continue.
+- `isChainSupported: false` → Skip detection for that token, warn "This chain does not support token security scanning", continue.
 - API timeout/failure → Warn "Token security scan temporarily unavailable, please trade with caution", continue (in swap context, token-scan failures auto-continue with a warning to avoid blocking time-sensitive trades — this overrides the general fail-safe's ask-user behavior).
-- If the `--to` token is a native token (matches any address in the Native Token Addresses table above), skip token-scan — native tokens have no contract address and cannot be scanned.
 
 ### Step 3 — Collect Missing Parameters
 
@@ -156,7 +155,7 @@ If `swap execute` returns an error, it may be caused by a preceding approval tra
 
 Enabled only when the user has **explicitly authorized** automated execution. Three mandatory rules:
 1. **Explicit authorization**: User must clearly opt in. Never assume silent mode.
-2. **Risk gate pause**: BLOCK-level (Level 4) risks must halt and notify the user. PAUSE-level (Level 3) buy risks must also halt and wait for user confirmation, even in silent mode.
+2. **Risk gate pause**: BLOCK-level (`CRITICAL`) risks must halt and notify the user. PAUSE-level (`HIGH`) buy risks must also halt and wait for user confirmation, even in silent mode.
 3. **Execution log**: Log every silent transaction (timestamp, pair, amount, slippage, txHash, status). Present on request or at session end.
 
 ### Step 7 — Report Result
@@ -175,14 +174,14 @@ Suggest follow-up: explorer link for `swapTxHash`, check new token price, or swa
 
 ### Token Risk Labels (via `token-scan` — Step 2)
 
-Pre-swap `token-scan` produces a 4-level risk assessment from 20+ boolean labels and tax thresholds. See `skills/okx-security/references/risk-token-detection.md` for the full catalog.
+Pre-swap `token-scan` returns a `riskLevel` field representing the overall token risk. See `skills/okx-security/references/risk-token-detection.md` for the full label catalog.
 
-| Effective Level | Buy | Sell | Description |
+| `riskLevel` | Buy | Sell | Description |
 |---|---|---|---|
-| Level 4 (Critical) | BLOCK | WARN (allow exit) | Honeypot, garbage airdrop, gas-mint scam, tax ≥ 50% |
-| Level 3 (High) | PAUSE — require yes/no | WARN | Low liquidity, dumping, rugpull gang, counterfeit, pump, wash trading, liquidity removal, tax ≥21%-<50%, etc. |
-| Level 2 (Medium) | WARN (info only) | WARN (info only) | Mintable, freeze authority, not renounced, tax >0%-<21% |
-| Level 1 (Low) | PROCEED | PROCEED | No risk labels triggered |
+| CRITICAL | BLOCK | WARN (allow exit) | Honeypot, garbage airdrop, gas-mint scam, tax ≥ 50% |
+| HIGH | PAUSE — require yes/no | WARN | Low liquidity, dumping, rugpull gang, counterfeit, pump, wash trading, liquidity removal, not open-source, tax ≥21%-<50%, etc. |
+| MEDIUM | WARN (info only) | WARN (info only) | Mintable, freeze authority, not renounced, tax >0%-<21% |
+| LOW | PROCEED | PROCEED | No risk labels triggered |
 
 ### Other Risk Items
 
