@@ -81,8 +81,6 @@ When a response includes a `requestTime` field (Unix milliseconds), display it a
 |---|---|
 | `memepump aped-wallet` | 1 s |
 
-**Note on `createdTimestamp`:** Tokens created less than 5 seconds before the API call may return `null` for `createdTimestamp` — this is by design to avoid surfacing an unreliable value for brand-new launches. Treat `null` as "just launched."
-
 ## Additional Resources
 
 For detailed params and return field schemas for a specific command:
