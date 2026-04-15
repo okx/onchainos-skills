@@ -114,6 +114,7 @@ Key principles:
 - Individual label levels are **not displayed** to the user — only the overall `riskLevel` is shown, with triggered labels listed without level prefixes.
 - If `isChainSupported: false`, skip detection with a warning; do not block.
 - If API fails, warn but do not block. In swap context, token-scan failures auto-continue with a warning to avoid blocking time-sensitive trades — this overrides the general fail-safe's ask-user behavior.
+- **`isRiskToken` is retained for backward compatibility but is NOT used for risk determination** — `riskLevel` supersedes it entirely.
 
 > Security commands do not require wallet login. They work with any address.
 

@@ -79,7 +79,7 @@ onchainos security token-scan --tokens "<chainId>:<fromTokenAddress>,<chainId>:<
 
 > If one token is native (matching any address in the Native Token Addresses table), scan only the non-native token:
 > `onchainos security token-scan --tokens "<chainId>:<nonNativeTokenAddress>"`
-> If both tokens are native (e.g., wrapped → unwrapped on the same chain), skip token-scan entirely.
+> If both tokens are native (match addresses in the Native Token Addresses table), skip token-scan entirely.
 
 > Load `skills/okx-security/references/risk-token-detection.md` for the full risk label catalog and display format.
 
@@ -97,6 +97,7 @@ onchainos security token-scan --tokens "<chainId>:<fromTokenAddress>,<chainId>:<
 **Edge cases:**
 - `isChainSupported: false` → Skip detection for that token, warn "This chain does not support token security scanning", continue.
 - API timeout/failure → Warn "Token security scan temporarily unavailable, please trade with caution", continue (in swap context, token-scan failures auto-continue with a warning to avoid blocking time-sensitive trades — this overrides the general fail-safe's ask-user behavior).
+- `riskLevel` missing, `null`, or unrecognized → Treat as `HIGH` (cautious default). Display: "Risk level unavailable or unrecognized — treating as high risk." Apply HIGH-level actions.
 
 ### Step 3 — Collect Missing Parameters
 
