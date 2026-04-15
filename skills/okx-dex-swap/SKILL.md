@@ -99,7 +99,7 @@ onchainos security token-scan --tokens "<chainId>:<toTokenAddress>"
 
 - **Chain**: missing → recommend XLayer (`--chain xlayer`, zero gas, fast confirmation).
 - **Amount**: extract human-readable amount from user's request; pass directly as `--readable-amount <amount>`. CLI fetches token decimals and converts to raw units automatically.
-- **Slippage**: omit to use autoSlippage. Pass `--slippage <value>` only if user explicitly requests. Never pass `--slippage` to `swap quote`.
+- **Slippage**: omit to use autoSlippage. Pass `--slippage <value>` only if user explicitly requests. Never pass `--slippage` to `swap quote`. Use `--max-auto-slippage <pct>` to cap the autoSlippage upper bound (e.g. `"3"` caps at 3%); only meaningful when `--slippage` is omitted.
 - **Gas level**: default `average`. Use `fast` for meme/time-sensitive trades.
 - **Wallet**: run `onchainos wallet status`. Not logged in → `onchainos wallet login`. Single account → use active address. Multiple accounts → list and ask user to choose.
 
@@ -208,7 +208,7 @@ If `toTokenPrice` or `fromTokenPrice` unavailable/0 → enable by default.
 | Chain | MEV Protection | Threshold | How to enable |
 |---|---|---|---|
 | Ethereum | Yes | $2,000 | `onchainos swap execute --mev-protection` |
-| Solana | Yes | $1,000 | `onchainos swap execute --tips <sol_amount>` (0.0000000001–2 SOL); CLI auto-applies Jito calldata |
+| Solana | Yes | $1,000 | `onchainos swap execute --tips <lamports>` (positive integer, e.g. `1000` = 0.000001 SOL); CLI auto-applies Jito calldata |
 | BNB Chain | Yes | $200 | `onchainos swap execute --mev-protection` |
 | Base | Yes | $200 | `onchainos swap execute --mev-protection` |
 | Others | No | — | — |

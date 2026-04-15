@@ -61,7 +61,7 @@ pub enum SwapCommand {
         /// Swap mode: exactIn or exactOut
         #[arg(long, default_value = "exactIn")]
         swap_mode: String,
-        /// Jito tips in SOL for Solana MEV protection (range: 0.0000000001–2). Response includes signatureData for jitoCalldata.
+        /// Jito tips in lamports for Solana MEV protection (positive integer, e.g. `1000` = 0.000001 SOL). Response includes signatureData for jitoCalldata.
         #[arg(long)]
         tips: Option<String>,
         /// Max auto slippage percent cap when autoSlippage is enabled (e.g. "0.5" for 0.5%)
@@ -132,7 +132,7 @@ pub enum SwapCommand {
         /// Swap mode: exactIn or exactOut
         #[arg(long, default_value = "exactIn")]
         swap_mode: String,
-        /// Jito tips in SOL for Solana MEV protection
+        /// Jito tips in lamports for Solana MEV protection (positive integer, e.g. `1000` = 0.000001 SOL)
         #[arg(long)]
         tips: Option<String>,
         /// Max auto slippage percent cap

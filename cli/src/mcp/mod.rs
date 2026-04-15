@@ -468,7 +468,7 @@ struct SwapSwapParams {
     gas_level: Option<String>,
     /// Swap mode: exactIn (default) or exactOut
     swap_mode: Option<String>,
-    /// Jito tips in SOL for Solana MEV protection (range: 0.0000000001–2)
+    /// Jito tips in lamports for Solana MEV protection (positive integer, e.g. `1000` = 0.000001 SOL)
     tips: Option<String>,
     /// Max auto slippage percent cap when autoSlippage is enabled (e.g. "0.5")
     max_auto_slippage: Option<String>,
