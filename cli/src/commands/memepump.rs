@@ -18,7 +18,7 @@ const NEW_TOKEN_THRESHOLD_MS: u64 = 5_000;
 fn nullify_created_timestamp_if_new(token: &mut Value) {
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(0))
         .unwrap_or(0);
 
     if now_ms == 0 {
