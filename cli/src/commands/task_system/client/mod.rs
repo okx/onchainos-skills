@@ -1,7 +1,34 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Subcommand;
 
 use crate::commands::Context;
+
+// ─── mock-api helpers ──────────────────────────────────────────────────────
+
+fn task_api_url() -> String {
+    std::env::var("TASK_API_URL").unwrap_or_else(|_| "http://127.0.0.1:9001".to_string())
+}
+
+/// 解析 "72h" / "30m" / "3600" → 秒
+fn parse_duration_secs(s: &str) -> Result<u64> {
+    let s = s.trim();
+    if let Some(h) = s.strip_suffix('h') {
+        Ok(h.parse::<u64>()? * 3600)
+    } else if let Some(m) = s.strip_suffix('m') {
+        Ok(m.parse::<u64>()? * 60)
+    } else {
+        Ok(s.parse::<u64>()?)
+    }
+}
+
+/// 货币符号 → mock token 地址
+fn currency_to_token_addr(currency: &str) -> &'static str {
+    match currency.to_uppercase().as_str() {
+        "USDT" => "0xUSDT0000000000000000000000000000000001",
+        "USDG" => "0xUSDG0000000000000000000000000000000001",
+        _      => "0xUSDT0000000000000000000000000000000001",
+    }
+}
 
 // ─── task subcommands ──────────────────────────────────────────────────────
 
@@ -214,25 +241,209 @@ pub enum DisputeCommand {
 // ─── handlers (TODO) ──────────────────────────────────────────────────────
 
 pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
+    let api = task_api_url();
+    let client = reqwest::Client::new();
+
     match cmd {
-        TaskCommand::Create { .. } => todo!("task create: call XLayer contract + XMTP"),
-        TaskCommand::Recommend { job_id } => todo!("task recommend {job_id}: query provider index"),
-        TaskCommand::Status { job_id } => todo!("task status {job_id}: fetch on-chain state"),
-        TaskCommand::List { .. } => todo!("task list: query task index"),
-        TaskCommand::ConfirmAccept { job_id, .. } => todo!("task confirm-accept {job_id}: setProvider + stakeFund"),
-        TaskCommand::RejectApply { job_id, .. } => todo!("task reject-apply {job_id}"),
-        TaskCommand::Confirm { job_id } => todo!("task confirm {job_id}: provider on-chain confirm"),
-        TaskCommand::Deliver { job_id, .. } => todo!("task deliver {job_id}: hash + CDN upload + on-chain + XMTP"),
-        TaskCommand::Complete { job_id } => todo!("task complete {job_id}: release escrow"),
-        TaskCommand::Reject { job_id, .. } => todo!("task reject {job_id}: reject deliverable"),
-        TaskCommand::Close { job_id } => todo!("task close {job_id}"),
-        TaskCommand::SetPublic { job_id } => todo!("task set-public {job_id}"),
-        TaskCommand::AiEvaluate { job_id } => todo!("task ai-evaluate {job_id}"),
+        // ── 创建任务 ────────────────────────────────────────────────────────
+        TaskCommand::Create {
+            description, budget, currency,
+            deadline_open, deadline_submit,
+            quality_standards, title,
+        } => {
+            let open_secs   = parse_duration_secs(&deadline_open)
+                .map_err(|_| anyhow::anyhow!("--deadline-open 格式错误，例如 72h 或 3600"))?;
+            let submit_secs = parse_duration_secs(&deadline_submit)
+                .map_err(|_| anyhow::anyhow!("--deadline-submit 格式错误，例如 48h 或 3600"))?;
+
+            let token_addr = currency_to_token_addr(&currency);
+            let title_str  = title.unwrap_or_else(|| description.chars().take(60).collect());
+            let desc_full  = format!("{description}\n\n验收标准：{quality_standards}");
+
+            let body = serde_json::json!({
+                "title":               title_str,
+                "description":         desc_full,
+                "descriptionSummary":  description.chars().take(200).collect::<String>(),
+                "paymentTokenAddress": token_addr,
+                "paymentTokenAmount":  budget.to_string(),
+                "chainId":             196,
+                "paymentType":         0,
+                "visibility":          0,
+                "expireConfig": {
+                    "openExpireSec":     open_secs,
+                    "acceptedExpireSec": submit_secs
+                }
+            });
+
+            let resp: serde_json::Value = client
+                .post(format!("{api}/api/v1/task/create"))
+                .json(&body)
+                .send().await
+                .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}\n提示: 先启动 ./target/release/mock-api"))?
+                .json().await?;
+
+            if resp["code"] != 0 {
+                bail!("创建失败: {}", resp["msg"].as_str().unwrap_or("unknown"));
+            }
+            let job_id   = resp["data"]["jobId"].as_str().unwrap_or("?");
+            let uop_hash = resp["data"]["uopHash"].as_str().unwrap_or("?");
+            println!("✓ 任务已发布");
+            println!("  jobId:   {job_id}");
+            println!("  uopHash: {uop_hash}");
+            println!("  状态:    open（等待卖家报名）");
+            println!();
+            println!("下一步: onchainos task-system recommend {job_id}");
+        }
+
+        // ── 查询推荐卖家 ────────────────────────────────────────────────────
+        TaskCommand::Recommend { job_id } => {
+            let resp: serde_json::Value = client
+                .post(format!("{api}/api/v1/task/{job_id}/match"))
+                .send().await
+                .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
+                .json().await?;
+
+            if resp["code"] != 0 {
+                bail!("{}", resp["msg"].as_str().unwrap_or("error"));
+            }
+            let recs = resp["data"]["recommendations"].as_array()
+                .cloned().unwrap_or_default();
+            println!("推荐卖家列表（共 {} 个）：", recs.len());
+            for (i, r) in recs.iter().enumerate() {
+                println!("  {}. AgentID: {}  匹配分: {}  信用分: {}",
+                    i + 1,
+                    r["providerAgentId"].as_str().unwrap_or("?"),
+                    r["matchScore"].as_f64().unwrap_or(0.0),
+                    r["creditScore"].as_i64().unwrap_or(0),
+                );
+                println!("     能力: {}", r["capabilitySummary"].as_str().unwrap_or(""));
+                println!("     地址: {}", r["providerAddress"].as_str().unwrap_or("?"));
+            }
+        }
+
+        // ── 任务状态 ────────────────────────────────────────────────────────
+        TaskCommand::Status { job_id } => {
+            let resp: serde_json::Value = client
+                .get(format!("{api}/api/v1/task/{job_id}"))
+                .send().await
+                .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
+                .json().await?;
+
+            if resp["code"] != 0 {
+                bail!("任务不存在: {job_id}");
+            }
+            let t = &resp["data"]["task"];
+            println!("任务状态: {}", t["statusStr"].as_str().unwrap_or("?"));
+            println!("  jobId:    {job_id}");
+            println!("  标题:     {}", t["title"].as_str().unwrap_or("?"));
+            println!("  预算:     {} {}", t["tokenAmount"].as_str().unwrap_or("?"), "USDT");
+            println!("  买家:     {}", t["buyerAgentId"].as_str().unwrap_or("?"));
+            if let Some(pid) = t["providerAgentId"].as_str() {
+                println!("  卖家:     {pid}");
+            }
+            println!("  更新时间: {}", t["updateTime"].as_str().unwrap_or("?"));
+        }
+
+        // ── 任务列表 ────────────────────────────────────────────────────────
+        TaskCommand::List { role, status, page, limit } => {
+            let url = if role.as_deref() == Some("provider") || role.as_deref() == Some("client") {
+                let r = role.as_deref().unwrap_or("client");
+                format!("{api}/api/v1/tasks/my?role={r}&page={page}&page_size={limit}")
+            } else {
+                let mut u = format!("{api}/api/v1/task/list?page={page}&page_size={limit}");
+                if let Some(s) = &status { u.push_str(&format!("&status={s}")); }
+                u
+            };
+            let resp: serde_json::Value = client.get(&url).send().await
+                .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
+                .json().await?;
+            let tasks = resp["data"]["list"].as_array().cloned().unwrap_or_default();
+            let total = resp["data"]["total"].as_u64().unwrap_or(0);
+            println!("任务列表（共 {total} 个，第 {page} 页）：");
+            for t in &tasks {
+                println!("  [{}] {} — {} USDT",
+                    t["statusStr"].as_str().unwrap_or("?"),
+                    t["jobId"].as_str().unwrap_or("?"),
+                    t["tokenAmount"].as_str().unwrap_or("?"),
+                );
+                println!("       {}", t["title"].as_str().unwrap_or("?"));
+            }
+        }
+
+        // ── confirm-accept ──────────────────────────────────────────────────
+        TaskCommand::ConfirmAccept { job_id, provider } => {
+            let body = serde_json::json!({ "providerAddress": provider, "providerAgentId": provider });
+            let resp: serde_json::Value = client
+                .post(format!("{api}/api/v1/task/{job_id}/accept"))
+                .json(&body).send().await
+                .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
+                .json().await?;
+            if resp["code"] != 0 { bail!("{}", resp["msg"].as_str().unwrap_or("error")); }
+            println!("✓ 已接受卖家 {provider}，任务状态 → accepted");
+            println!("  calldata: {}", resp["data"]["calldata"].as_str().unwrap_or("?"));
+        }
+
+        // ── complete ────────────────────────────────────────────────────────
+        TaskCommand::Complete { job_id } => {
+            let resp: serde_json::Value = client
+                .post(format!("{api}/api/v1/task/{job_id}/complete"))
+                .send().await
+                .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
+                .json().await?;
+            if resp["code"] != 0 { bail!("{}", resp["msg"].as_str().unwrap_or("error")); }
+            println!("✓ 任务验收通过，状态 → complete，款项已释放");
+        }
+
+        // ── reject deliverable ──────────────────────────────────────────────
+        TaskCommand::Reject { job_id, reason } => {
+            let resp: serde_json::Value = client
+                .post(format!("{api}/api/v1/task/{job_id}/refuse"))
+                .send().await
+                .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
+                .json().await?;
+            if resp["code"] != 0 { bail!("{}", resp["msg"].as_str().unwrap_or("error")); }
+            println!("✓ 已拒绝验收（原因：{reason}），状态 → refused");
+            println!("  卖家有 24 小时内可申请仲裁");
+        }
+
+        // ── close ───────────────────────────────────────────────────────────
+        TaskCommand::Close { job_id } => {
+            let resp: serde_json::Value = client
+                .post(format!("{api}/api/v1/task/{job_id}/close"))
+                .send().await
+                .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
+                .json().await?;
+            if resp["code"] != 0 { bail!("{}", resp["msg"].as_str().unwrap_or("error")); }
+            println!("✓ 任务已关闭，状态 → close");
+        }
+
+        // ── set-public ──────────────────────────────────────────────────────
+        TaskCommand::SetPublic { job_id } => {
+            let resp: serde_json::Value = client
+                .post(format!("{api}/api/v1/task/{job_id}/setVisibility"))
+                .json(&serde_json::json!({"visibility": 1}))
+                .send().await
+                .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
+                .json().await?;
+            if resp["code"] != 0 { bail!("{}", resp["msg"].as_str().unwrap_or("error")); }
+            println!("✓ 任务已转为公开，其他卖家可以看到并报名");
+        }
+
+        // ── 剩余未实现（链上操作，暂 stub）────────────────────────────────
+        TaskCommand::RejectApply { job_id, provider, reason } =>
+            println!("[stub] reject-apply {job_id} provider={provider} reason={reason}"),
+        TaskCommand::Confirm { job_id } =>
+            println!("[stub] confirm {job_id} (provider on-chain confirm)"),
+        TaskCommand::Deliver { job_id, file, message } =>
+            println!("[stub] deliver {job_id} file={file} msg={message:?}"),
+        TaskCommand::AiEvaluate { job_id } =>
+            println!("[stub] ai-evaluate {job_id}"),
         TaskCommand::Config { action } => match action {
-            ConfigAction::Init => todo!("task config init"),
-            ConfigAction::Show => todo!("task config show"),
+            ConfigAction::Init => println!("[stub] task config init"),
+            ConfigAction::Show => println!("TASK_API_URL={}", task_api_url()),
         },
     }
+    Ok(())
 }
 
 pub async fn run_negotiate(cmd: NegotiateCommand, _ctx: &Context) -> Result<()> {

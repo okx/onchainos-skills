@@ -2,19 +2,34 @@
 name = "ws-mock"
 version = "0.1.0"
 edition = "2024"
+autobins = false
 
 [[bin]]
 name = "server"
 path = "src/server.rs"
 
 [[bin]]
-name = "mock-agent"
-path = "src/mock_agent.rs"
+name = "mock-buyer"
+path = "src/bin/mock_buyer.rs"
+
+[[bin]]
+name = "mock-seller"
+path = "src/bin/mock_seller.rs"
+
+[[bin]]
+name = "mock-arbitrator"
+path = "src/bin/mock_arbitrator.rs"
+
+[[bin]]
+name = "mock-api"
+path = "src/bin/mock_api.rs"
 
 [dependencies]
+axum = "0.7"
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.24"
 futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dashmap = "6"
+dialoguer = "0.11"

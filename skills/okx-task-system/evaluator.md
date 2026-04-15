@@ -4,8 +4,8 @@
 
 | # | Action | CLI Command | Trigger |
 |---|---|---|---|
-| E1 | Get dispute info | `onchainos dispute info` | Received arbitration notification |
-| E2 | Vote | `onchainos dispute vote` | After reviewing evidence |
+| E1 | Get dispute info | `onchainos task-system dispute info` | Received arbitration notification |
+| E2 | Vote | `onchainos task-system dispute vote` | After reviewing evidence |
 
 ---
 
@@ -16,7 +16,7 @@
 ### Step 1 — Get dispute details
 
 ```bash
-onchainos dispute info 456
+onchainos task-system dispute info 456
 ```
 
 Returns:
@@ -48,7 +48,7 @@ Standard 3: No omissions            → Compare source and target paragraph coun
 ### Step 3 — AI-assisted analysis (optional)
 
 ```bash
-onchainos task ai-evaluate 123
+onchainos task-system ai-evaluate 123
 ```
 
 Returns: `{ "criteria": [...], "verdict": "client", "confidence": 0.9 }`
@@ -71,11 +71,11 @@ Wait for both parties to respond before voting.
 
 ```bash
 # Support Client
-onchainos dispute vote 456 --side 1 \
+onchainos task-system dispute vote 456 --side 1 \
   --reason "Standard 3 not met: source paragraph 3 (~200 words) completely absent from translation"
 
 # Support Provider
-onchainos dispute vote 456 --side 2 \
+onchainos task-system dispute vote 456 --side 2 \
   --reason "All acceptance criteria met; terminology follows industry standard"
 # --side 1 = Client wins | --side 2 = Provider wins
 ```

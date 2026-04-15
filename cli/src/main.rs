@@ -116,6 +116,13 @@ pub enum Commands {
     },
     /// Upgrade onchainos to the latest version
     Upgrade(commands::upgrade::UpgradeArgs),
+
+    /// AI Agent task system: create tasks, negotiate, dispute, query context
+    #[command(name = "task-system")]
+    TaskSystem {
+        #[command(subcommand)]
+        command: commands::task_system::TaskSystemCommand,
+    },
 }
 
 fn main() {
@@ -171,6 +178,7 @@ async fn run() {
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Ws { command } => commands::ws::execute(command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
+        Commands::TaskSystem { command } => commands::task_system::run(command, &ctx).await,
     };
 
     let elapsed = start.elapsed();

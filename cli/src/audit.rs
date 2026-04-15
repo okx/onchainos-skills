@@ -329,6 +329,30 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
+        Commands::TaskSystem { command } => format!("task-system {}", task_system_sub(command)),
+    }
+}
+
+fn task_system_sub(cmd: &crate::commands::task_system::TaskSystemCommand) -> String {
+    use crate::commands::task_system::TaskSystemCommand;
+    match cmd {
+        TaskSystemCommand::CreateTask { .. }    => "create-task".into(),
+        TaskSystemCommand::Recommend { .. }     => "recommend".into(),
+        TaskSystemCommand::Status { .. }        => "status".into(),
+        TaskSystemCommand::List { .. }          => "list".into(),
+        TaskSystemCommand::ConfirmAccept { .. } => "confirm-accept".into(),
+        TaskSystemCommand::RejectApply { .. }   => "reject-apply".into(),
+        TaskSystemCommand::Confirm { .. }       => "confirm".into(),
+        TaskSystemCommand::Deliver { .. }       => "deliver".into(),
+        TaskSystemCommand::Complete { .. }      => "complete".into(),
+        TaskSystemCommand::Reject { .. }        => "reject".into(),
+        TaskSystemCommand::Close { .. }         => "close".into(),
+        TaskSystemCommand::SetPublic { .. }     => "set-public".into(),
+        TaskSystemCommand::AiEvaluate { .. }    => "ai-evaluate".into(),
+        TaskSystemCommand::Config { .. }        => "config".into(),
+        TaskSystemCommand::Negotiate(c) => format!("negotiate {:?}", std::mem::discriminant(c)),
+        TaskSystemCommand::Dispute(c)   => format!("dispute {:?}", std::mem::discriminant(c)),
+        TaskSystemCommand::Common(c)    => format!("common {:?}", std::mem::discriminant(c)),
     }
 }
 

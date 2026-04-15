@@ -5,7 +5,7 @@
 | Error | Cause | Resolution |
 |---|---|---|
 | `command not found: onchainos` | CLI not installed | Run installer: `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh \| sh` |
-| `config not initialized` | First-time setup | Run `onchainos task config init` |
+| `config not initialized` | First-time setup | Run `onchainos task-system config init` |
 | `identity not found` | 8004 identity not created | Register identity via identity CLI first |
 | `XMTP address unavailable` | Communication module not installed | Install XMTP plugin |
 
@@ -13,7 +13,7 @@
 
 | Error | Cause | Resolution |
 |---|---|---|
-| On-chain tx failure | Network congestion / wrong params | Retry up to 3 times; check `onchainos task config show` |
+| On-chain tx failure | Network congestion / wrong params | Retry up to 3 times; check `onchainos task-system config show` |
 | `onchainos: command not found` | `onchainos` not installed | Install: `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh \| sh` |
 | Wallet not authenticated | Session expired | Re-authenticate via `okx-agentic-wallet` skill |
 | Insufficient gas | Low XLayer balance | Top up native token on XLayer for gas |
@@ -22,8 +22,8 @@
 
 | Error | Cause | Resolution |
 |---|---|---|
-| `task not found` | Invalid jobId | Verify jobId via `onchainos task list` |
-| `invalid status transition` | Action not valid for current status | Check current status via `onchainos task status <jobId>` |
+| `task not found` | Invalid jobId | Verify jobId via `onchainos task-system list` |
+| `invalid status transition` | Action not valid for current status | Check current status via `onchainos task-system status <jobId>` |
 | `deadline exceeded` | Open/submit deadline passed | Task expired (notification 1009); start new task |
 | `provider not set` | Trying to confirm without provider | Wait for provider application or set-public |
 | `dispute window closed` | Provider acted after 24h window | No dispute possible; accept outcome |
