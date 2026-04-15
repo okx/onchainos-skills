@@ -1,7 +1,7 @@
 ---
 name: okx-security
 description: "Use this skill for security scanning: check transaction safety, is this transaction safe, pre-execution check, security scan, token risk scanning, honeypot detection, DApp/URL phishing detection, message signature safety, malicious transaction detection, approval safety checks, token approval management. Triggers: 'is this token safe', 'check token security', 'honeypot check', 'scan this tx', 'scan this swap tx', 'tx risk check', 'is this URL a scam', 'check if this dapp is safe', 'phishing site check', 'is this signature safe', 'check this signing request', 'check my approvals', 'show risky approvals', 'revoke approval', 'check if this approve is safe', token authorization, ERC20 allowance, Permit2. Covers token-scan, dapp-scan, tx-scan (EVM+Solana pre-execution), sig-scan (EIP-712/personal_sign), approvals (ERC-20/Permit2). Chinese: 安全扫描, 代币安全, 蜜罐检测, 貔貅盘, 钓鱼网站, 交易安全, 签名安全, 代币风险, 授权管理, 授权查询, 风险授权, 代币授权. Do NOT use for wallet balance/send/history — use okx-agentic-wallet."
-license: Apache-2.0
+license: MIT
 metadata:
   author: okx
   version: "1.1.0"

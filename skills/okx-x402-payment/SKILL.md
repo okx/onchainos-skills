@@ -1,7 +1,7 @@
 ---
 name: okx-x402-payment
 description: "This skill should be used when the user encounters an HTTP 402 Payment Required response, wants to pay for a payment-gated API or resource, or mentions 'x402', 'pay for access', '402 payment', 'payment-gated URL', or 'sign x402 payment'. Primary path signs via TEE with a wallet session (JWT) — recommended. Fallback path allows local EIP-3009 signing with the user's own private key only when the user explicitly opts in (key stays local but is not TEE-protected). Returns the payment proof (signature + authorization) that the caller can attach as a payment header to access the resource. Do NOT use for swap or token transfers — use okx-dex-swap instead. Do NOT use for wallet balance or portfolio queries — use okx-agentic-wallet or okx-wallet-portfolio. Do NOT use for security scanning — use okx-security. Do NOT use for transaction broadcasting — use okx-onchain-gateway. Do NOT use for general programming questions."
-license: Apache-2.0
+license: MIT
 metadata:
   author: okx
   version: "1.0.4"

@@ -1,7 +1,7 @@
 ---
 name: okx-audit-log
 description: "Use this skill when the user asks to export audit logs, find audit log location, view command history, 导出日志, 查看日志, 日志路径, 操作记录, 调用记录, 命令历史. Do NOT use for wallet balance, token search, swap, or any other on-chain operation — use the corresponding skill instead."
-license: Apache-2.0
+license: MIT
 metadata:
   author: okx
   version: "1.0.6"
