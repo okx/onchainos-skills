@@ -233,7 +233,7 @@ Action: <BLOCK / WARN — requires confirmation / WARN — info only / Safe>
 | `isChainSupported: false` | Skip detection. Append warning: "This chain does not support token security scanning." Do not block the trade. |
 | API timeout / request failure | **Swap context**: Append warning: "Token security scan is temporarily unavailable. Please trade with caution." Continue flow (overrides general fail-safe). **Standalone context**: Follow the general fail-safe principle — ask user whether to retry or proceed. |
 | `riskLevel: "LOW"` and no labels triggered | Safe to proceed. |
-| `riskLevel` missing, `null`, or unrecognized value | Treat as `HIGH` (cautious default). Display: "⚠️ Risk level unavailable or unrecognized — treating as high risk." Apply HIGH-level actions (pause buy for confirmation, warn on sell). |
+| `riskLevel` missing, `null`, or unrecognized value | Treat as `HIGH` (cautious default). Display: "⚠️ Risk level unavailable or unrecognized — treating as high risk." Apply HIGH-level actions (pause buy for confirmation, warn on sell). This may indicate an API regression or version mismatch — note it in the execution log if available. |
 | `buyTaxes`/`sellTaxes` is `null` | Tax data unavailable. Do not display tax info. Do not treat as risk. |
 
 ## Result Interpretation (Quick Reference)
@@ -324,6 +324,7 @@ Display:
        -> read riskLevel for each token from API response
        -> --to token (buy side):  CRITICAL → BLOCK, HIGH → PAUSE, MEDIUM → WARN, LOW → safe
        -> --from token (sell side): CRITICAL/HIGH/MEDIUM → WARN, LOW → safe
+       # Enforce most restrictive action across both tokens (BLOCK > PAUSE > WARN > Safe)
 4. If safe/confirmed: (okx-dex-swap) onchainos swap quote --from ... --to ... --chain ethereum
        -> get quote (price, impact, gas)
 5. (okx-dex-swap) onchainos swap approve --token <fromToken> --amount <amount> --chain ethereum
