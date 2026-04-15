@@ -121,6 +121,12 @@ pub async fn fetch_list(
     limit: Option<String>,
     cursor: Option<String>,
 ) -> Result<Value> {
+    if let Some(ref s) = limit {
+        let n: u64 = s
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
+        anyhow::ensure!(n >= 1 && n <= 100, "--limit must be between 1 and 100, got {n}");
+    }
     let mut body = json!({
         "chainIndex": chain_index,
         "limit": limit.as_deref().unwrap_or("20"),
