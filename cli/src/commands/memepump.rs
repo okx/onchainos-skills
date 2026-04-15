@@ -543,7 +543,7 @@ pub async fn fetch_token_list(client: &ApiClient, p: MemepumpTokenListParams) ->
     let kw_include = p.keywords_include.unwrap_or_default();
     let kw_exclude = p.keywords_exclude.unwrap_or_default();
 
-    let mut data = client
+    client
         .get(
             "/api/v6/dex/market/memepump/tokenList",
             &[
