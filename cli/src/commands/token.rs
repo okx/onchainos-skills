@@ -535,18 +535,16 @@ pub async fn fetch_search(
     cursor: Option<&str>,
 ) -> Result<Value> {
     let resolved_chains = crate::chains::resolve_chains(chains);
-    let limit_val = limit.unwrap_or("20");
-    let cursor_val = cursor.unwrap_or_default();
+    let mut params = vec![
+        ("chains", resolved_chains.as_str()),
+        ("search", query),
+        ("limit", limit.unwrap_or("20")),
+    ];
+    if let Some(c) = cursor {
+        params.push(("cursor", c));
+    }
     client
-        .get(
-            "/api/v6/dex/market/token/search",
-            &[
-                ("chains", resolved_chains.as_str()),
-                ("search", query),
-                ("limit", limit_val),
-                ("cursor", cursor_val),
-            ],
-        )
+        .get("/api/v6/dex/market/token/search", &params)
         .await
 }
 
@@ -568,19 +566,17 @@ pub async fn fetch_holders(
     cursor: Option<&str>,
 ) -> Result<Value> {
     let tag_str = tag_filter.map(|t| t.to_string()).unwrap_or_default();
-    let limit_val = limit.unwrap_or("20");
-    let cursor_val = cursor.unwrap_or_default();
+    let mut params = vec![
+        ("chainIndex", chain_index),
+        ("tokenContractAddress", address),
+        ("tagFilter", tag_str.as_str()),
+        ("limit", limit.unwrap_or("20")),
+    ];
+    if let Some(c) = cursor {
+        params.push(("cursor", c));
+    }
     client
-        .get(
-            "/api/v6/dex/market/token/holder",
-            &[
-                ("chainIndex", chain_index),
-                ("tokenContractAddress", address),
-                ("tagFilter", tag_str.as_str()),
-                ("limit", limit_val),
-                ("cursor", cursor_val),
-            ],
-        )
+        .get("/api/v6/dex/market/token/holder", &params)
         .await
 }
 
@@ -708,6 +704,8 @@ pub struct HotTokensParams {
 
 /// GET /api/v6/dex/market/token/hot-token — hot token list by trending score or X mentions
 pub async fn fetch_hot_tokens(client: &ApiClient, params: HotTokensParams) -> Result<Value> {
+    let hot_limit = params.limit.unwrap_or_else(|| "20".to_string());
+    let hot_cursor = params.cursor;
     let chain_index = params
         .chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
@@ -754,68 +752,62 @@ pub async fn fetch_hot_tokens(client: &ApiClient, params: HotTokensParams) -> Re
     let is_mint = params.is_mint.unwrap_or_default();
     let is_freeze = params.is_freeze.unwrap_or_default();
 
+    let mut req_params = vec![
+        ("rankingType", params.ranking_type.as_str()),
+        ("chainIndex", chain_index.as_str()),
+        ("rankBy", rank_by.as_str()),
+        ("rankingTimeFrame", time_frame.as_str()),
+        ("riskFilter", risk_filter.as_str()),
+        ("stableTokenFilter", stable_token_filter.as_str()),
+        ("protocolId", project_id.as_str()),
+        ("priceChangePercentMin", price_change_min.as_str()),
+        ("priceChangePercentMax", price_change_max.as_str()),
+        ("volumeMin", volume_min.as_str()),
+        ("volumeMax", volume_max.as_str()),
+        ("tradeAmountMin", transaction_min.as_str()),
+        ("tradeAmountMax", transaction_max.as_str()),
+        ("txsMin", txs_min.as_str()),
+        ("txsMax", txs_max.as_str()),
+        ("uniqueTraderMin", unique_trader_min.as_str()),
+        ("uniqueTraderMax", unique_trader_max.as_str()),
+        ("marketCapMin", market_cap_min.as_str()),
+        ("marketCapMax", market_cap_max.as_str()),
+        ("liquidityMin", liquidity_min.as_str()),
+        ("liquidityMax", liquidity_max.as_str()),
+        ("holdersMin", holders_min.as_str()),
+        ("holdersMax", holders_max.as_str()),
+        ("inflowUsdMin", inflow_min.as_str()),
+        ("inflowUsdMax", inflow_max.as_str()),
+        ("fdvMin", fdv_min.as_str()),
+        ("fdvMax", fdv_max.as_str()),
+        ("mentionedCountMin", mentioned_count_min.as_str()),
+        ("mentionedCountMax", mentioned_count_max.as_str()),
+        ("socialScoreMin", social_score_min.as_str()),
+        ("socialScoreMax", social_score_max.as_str()),
+        ("top10HoldPercentMin", top10_hold_percent_min.as_str()),
+        ("top10HoldPercentMax", top10_hold_percent_max.as_str()),
+        ("devHoldPercentMin", dev_hold_percent_min.as_str()),
+        ("devHoldPercentMax", dev_hold_percent_max.as_str()),
+        ("bundleHoldPercentMin", bundle_hold_percent_min.as_str()),
+        ("bundleHoldPercentMax", bundle_hold_percent_max.as_str()),
+        (
+            "suspiciousHoldPercentMin",
+            suspicious_hold_percent_min.as_str(),
+        ),
+        (
+            "suspiciousHoldPercentMax",
+            suspicious_hold_percent_max.as_str(),
+        ),
+        ("isLpBurnt", is_lp_burnt.as_str()),
+        ("isMint", is_mint.as_str()),
+        ("isFreeze", is_freeze.as_str()),
+        ("limit", hot_limit.as_str()),
+    ];
+    if let Some(ref c) = hot_cursor {
+        req_params.push(("cursor", c.as_str()));
+    }
     client
-        .get(
-            "/api/v6/dex/market/token/hot-token",
-            &[
-                ("rankingType", params.ranking_type.as_str()),
-                ("chainIndex", chain_index.as_str()),
-                ("rankBy", rank_by.as_str()),
-                ("rankingTimeFrame", time_frame.as_str()),
-                ("riskFilter", risk_filter.as_str()),
-                ("stableTokenFilter", stable_token_filter.as_str()),
-                ("protocolId", project_id.as_str()),
-                ("priceChangePercentMin", price_change_min.as_str()),
-                ("priceChangePercentMax", price_change_max.as_str()),
-                ("volumeMin", volume_min.as_str()),
-                ("volumeMax", volume_max.as_str()),
-                ("tradeAmountMin", transaction_min.as_str()),
-                ("tradeAmountMax", transaction_max.as_str()),
-                ("txsMin", txs_min.as_str()),
-                ("txsMax", txs_max.as_str()),
-                ("uniqueTraderMin", unique_trader_min.as_str()),
-                ("uniqueTraderMax", unique_trader_max.as_str()),
-                ("marketCapMin", market_cap_min.as_str()),
-                ("marketCapMax", market_cap_max.as_str()),
-                ("liquidityMin", liquidity_min.as_str()),
-                ("liquidityMax", liquidity_max.as_str()),
-                ("holdersMin", holders_min.as_str()),
-                ("holdersMax", holders_max.as_str()),
-                ("inflowUsdMin", inflow_min.as_str()),
-                ("inflowUsdMax", inflow_max.as_str()),
-                ("fdvMin", fdv_min.as_str()),
-                ("fdvMax", fdv_max.as_str()),
-                ("mentionedCountMin", mentioned_count_min.as_str()),
-                ("mentionedCountMax", mentioned_count_max.as_str()),
-                ("socialScoreMin", social_score_min.as_str()),
-                ("socialScoreMax", social_score_max.as_str()),
-                ("top10HoldPercentMin", top10_hold_percent_min.as_str()),
-                ("top10HoldPercentMax", top10_hold_percent_max.as_str()),
-                ("devHoldPercentMin", dev_hold_percent_min.as_str()),
-                ("devHoldPercentMax", dev_hold_percent_max.as_str()),
-                ("bundleHoldPercentMin", bundle_hold_percent_min.as_str()),
-                ("bundleHoldPercentMax", bundle_hold_percent_max.as_str()),
-                (
-                    "suspiciousHoldPercentMin",
-                    suspicious_hold_percent_min.as_str(),
-                ),
-                (
-                    "suspiciousHoldPercentMax",
-                    suspicious_hold_percent_max.as_str(),
-                ),
-                ("isLpBurnt", is_lp_burnt.as_str()),
-                ("isMint", is_mint.as_str()),
-                ("isFreeze", is_freeze.as_str()),
-                (
-                    "limit",
-                    params.limit.as_deref().unwrap_or("20"),
-                ),
-                (
-                    "cursor",
-                    params.cursor.as_deref().unwrap_or_default(),
-                ),
-            ],
-        )
+        .get("/api/v6/dex/market/token/hot-token", &req_params)
         .await
 }
 
@@ -846,19 +838,17 @@ pub async fn fetch_top_trader(
     cursor: Option<&str>,
 ) -> Result<Value> {
     let tag_str = tag_filter.map(|t| t.to_string()).unwrap_or_default();
-    let limit_val = limit.unwrap_or("20");
-    let cursor_val = cursor.unwrap_or_default();
+    let mut params = vec![
+        ("chainIndex", chain_index),
+        ("tokenContractAddress", address),
+        ("tagFilter", tag_str.as_str()),
+        ("limit", limit.unwrap_or("20")),
+    ];
+    if let Some(c) = cursor {
+        params.push(("cursor", c));
+    }
     client
-        .get(
-            "/api/v6/dex/market/token/top-trader",
-            &[
-                ("chainIndex", chain_index),
-                ("tokenContractAddress", address),
-                ("tagFilter", &tag_str),
-                ("limit", limit_val),
-                ("cursor", cursor_val),
-            ],
-        )
+        .get("/api/v6/dex/market/token/top-trader", &params)
         .await
 }
 
