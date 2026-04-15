@@ -71,15 +71,15 @@ Follow the **Token Address Resolution** section above.
 
 ### Step 2 — Pre-Swap Token Security Scan (Mandatory)
 
-Before quoting or executing a swap, **automatically** run `token-scan` on both the `--from` and `--to` tokens to detect risks. This step is mandatory and must not be skipped. Skip native tokens (matching any address in the Native Token Addresses table above) — they have no contract address and cannot be scanned.
+Before quoting or executing a swap, **automatically** run `token-scan` on both the `--from` and `--to` tokens to detect risks. This step is mandatory and must not be skipped.
 
 ```bash
 onchainos security token-scan --tokens "<chainId>:<fromTokenAddress>,<chainId>:<toTokenAddress>"
 ```
 
-> If one token is native (matching any address in the Native Token Addresses table), scan only the non-native token:
-> `onchainos security token-scan --tokens "<chainId>:<nonNativeTokenAddress>"`
-> If both tokens are native (match addresses in the Native Token Addresses table), skip token-scan entirely.
+> **Native token handling**: Exclude native tokens (matching any address in the Native Token Addresses table above) — they have no contract address and cannot be scanned.
+> - If one token is native, scan only the non-native token: `onchainos security token-scan --tokens "<chainId>:<nonNativeTokenAddress>"`
+> - If both tokens are native (match addresses in the Native Token Addresses table), skip token-scan entirely.
 
 > Load `skills/okx-security/references/risk-token-detection.md` for the full risk label catalog and display format.
 
@@ -93,11 +93,13 @@ onchainos security token-scan --tokens "<chainId>:<fromTokenAddress>,<chainId>:<
 | **LOW** | Safe — proceed to Step 3. | Safe — proceed to Step 3. |
 
 > Buy side (`--to`) is stricter: `CRITICAL` blocks the swap, `HIGH` pauses for confirmation. Sell side (`--from`) only warns — allowing the user to exit risky positions.
+>
+> **When both tokens return non-LOW risk**: Display risk results for all scanned tokens first, then apply the most restrictive action. If any token triggers BLOCK, refuse the swap after showing all results.
 
 **Edge cases:**
 - `isChainSupported: false` → Skip detection for that token, warn "This chain does not support token security scanning", continue.
 - API timeout/failure → Warn "Token security scan temporarily unavailable, please trade with caution", continue (in swap context, token-scan failures auto-continue with a warning to avoid blocking time-sensitive trades — this overrides the general fail-safe's ask-user behavior).
-- `riskLevel` missing, `null`, or unrecognized → Treat as `HIGH` (cautious default). Display: "Risk level unavailable or unrecognized — treating as high risk." Apply HIGH-level actions.
+- `riskLevel` missing, `null`, or unrecognized → Treat as `HIGH` (cautious default). Display: "⚠️ Risk level unavailable or unrecognized — treating as high risk." Apply HIGH-level actions.
 
 ### Step 3 — Collect Missing Parameters
 
