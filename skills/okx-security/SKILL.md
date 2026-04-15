@@ -96,7 +96,7 @@ If a security scan **fails to complete** (network error, API timeout, rate limit
 
 ### token-scan (token risk label scanning)
 
-Token-scan returns a **`riskLevel`** field (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`) that represents the overall token risk. The Agent uses this field directly and applies different actions for **buy** vs. **sell** operations.
+Token-scan returns a **`riskLevel`** field (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`) that represents the overall token risk, computed server-side from all boolean labels, tax thresholds, and additional signals (off-chain intelligence, ML models). The Agent uses this field directly and applies different actions for **buy** vs. **sell** operations.
 
 | `riskLevel` | Buy Action | Sell Action |
 |---|---|---|

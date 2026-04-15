@@ -77,6 +77,10 @@ Before quoting or executing a swap, **automatically** run `token-scan` on both t
 onchainos security token-scan --tokens "<chainId>:<fromTokenAddress>,<chainId>:<toTokenAddress>"
 ```
 
+> If one token is native (matching any address in the Native Token Addresses table), scan only the non-native token:
+> `onchainos security token-scan --tokens "<chainId>:<nonNativeTokenAddress>"`
+> If both tokens are native (e.g., wrapped → unwrapped on the same chain), skip token-scan entirely.
+
 > Load `skills/okx-security/references/risk-token-detection.md` for the full risk label catalog and display format.
 
 **Interpret each token's result using the `riskLevel` field from the API response:**

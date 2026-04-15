@@ -100,7 +100,7 @@ If user provides name/symbol instead, search first with `onchainos token search`
 | `tokenAddress` | String | Token contract address |
 | `isChainSupported` | Boolean | Whether the chain supports security scanning |
 | `riskLevel` | String | Overall token risk level. Values: `CRITICAL`, `HIGH`, `MEDIUM`, `LOW` |
-| `isRiskToken` | Boolean | Whether the token is high-risk (composite flag) |
+| `isRiskToken` | Boolean | Whether the token is high-risk (composite flag). **Informational only** — `riskLevel` supersedes this field for all risk determination. Retained for backward compatibility. |
 | `buyTaxes` | String\|null | Buy tax percentage (null = unknown) |
 | `sellTaxes` | String\|null | Sell tax percentage (null = unknown) |
 | `isHoneypot` | Boolean | Honeypot — cannot sell after buying |
@@ -188,7 +188,7 @@ The API returns a `riskLevel` field directly on each token-scan result. The Agen
 ### How to interpret
 
 1. **Read `riskLevel`** from the API response. This is the overall token risk level, computed server-side from all boolean labels, tax thresholds, and additional signals (off-chain intelligence, ML models).
-2. **Collect triggered labels** for display: Iterate all boolean fields (`isHoneypot`, `isLowLiquidity`, etc.). For each `true` value, include it in the triggered labels list. For `isHasAssetEditAuth`, only include when `chainId == 501` (Solana). Individual label levels are **not displayed** — only the overall `riskLevel` is shown.
+2. **Collect triggered labels** for display: Iterate all boolean fields (`isHoneypot`, `isLowLiquidity`, etc.). For each `true` value, include it in the triggered labels list. For `isHasAssetEditAuth`, only include when `chainId == 501` (Solana). Individual label levels are **not displayed** — only the overall `riskLevel` is shown. If `riskLevel` is non-LOW but no boolean labels are `true`, display: "Risk flagged by composite analysis — no specific label identified." (The server may flag risk based on off-chain signals that don't surface as individual boolean fields.)
 3. **Display tax info**: If `buyTaxes` or `sellTaxes` is non-null and numeric, display alongside the risk result. If `null`, empty, or non-numeric, omit.
 4. **Apply action matrix**: Use `riskLevel` + operation type (buy/sell) to determine the Agent action per the matrix below.
 
@@ -234,6 +234,7 @@ Action: <BLOCK / WARN — requires confirmation / WARN — info only / Safe>
 | `isChainSupported: false` | Skip detection. Append warning: "This chain does not support token security scanning." Do not block the trade. |
 | API timeout / request failure | **Swap context**: Append warning: "Token security scan is temporarily unavailable. Please trade with caution." Continue flow (overrides general fail-safe). **Standalone context**: Follow the general fail-safe principle — ask user whether to retry or proceed. |
 | `riskLevel: "LOW"` and no labels triggered | Safe to proceed. |
+| `riskLevel` missing, `null`, or unrecognized value | Treat as `HIGH` (cautious default). Display: "⚠️ Risk level unavailable or unrecognized — treating as high risk." Apply HIGH-level actions (pause buy for confirmation, warn on sell). |
 | `buyTaxes`/`sellTaxes` is `null` | Tax data unavailable. Do not display tax info. Do not treat as risk. |
 
 ## Result Interpretation (Quick Reference)
