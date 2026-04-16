@@ -4,7 +4,7 @@ description: "Use this skill to 'invest in DeFi', 'earn yield on USDC', 'deposit
 license: Apache-2.0
 metadata:
   author: okx
-  version: "2.0.0"
+  version: "2.2.10"
   homepage: "https://web3.okx.com"
 ---
 
