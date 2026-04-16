@@ -36,6 +36,12 @@ pub struct DohCacheEntry {
 /// Cache file format: domain → cache entry.
 pub type DohCacheFile = HashMap<String, DohCacheEntry>;
 
+/// Checksum manifest from CDN (`checksum.json`).
+#[derive(Debug, Deserialize)]
+pub struct DohChecksum {
+    pub sha256: String,
+}
+
 /// Parsed stdout from okx-pilot binary.
 #[derive(Debug, Deserialize)]
 pub struct DohBinaryResponse {
