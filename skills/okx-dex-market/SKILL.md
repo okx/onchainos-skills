@@ -4,7 +4,7 @@ description: "Use this skill for on-chain market data: token prices/价格, K-li
 license: MIT
 metadata:
   author: okx
-  version: "2.2.9"
+  version: "1.0.4"
   homepage: "https://web3.okx.com"
 ---
 
@@ -74,6 +74,13 @@ Present next actions conversationally — never expose command paths to the user
 | `market portfolio-dex-history` | `market portfolio-token-pnl`, `market kline` |
 | `market portfolio-recent-pnl` | `market portfolio-token-pnl`, `token price-info` |
 | `market portfolio-token-pnl` | `market portfolio-dex-history`, `market kline` |
+
+## Data Freshness
+
+### `requestTime` Field
+
+When a response includes a `requestTime` field (Unix milliseconds), display it alongside results so the user knows when the data snapshot was taken. When chaining commands (e.g., fetching price then using that timestamp as a range boundary), use the `requestTime` from the most recent response as the reference point — not the current wall clock time.
+
 
 ## Additional Resources
 

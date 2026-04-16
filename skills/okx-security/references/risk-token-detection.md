@@ -99,7 +99,7 @@ If user provides name/symbol instead, search first with `onchainos token search`
 | `chainId` | String | Chain ID |
 | `tokenAddress` | String | Token contract address |
 | `isChainSupported` | Boolean | Whether the chain supports security scanning |
-| `isRiskToken` | Boolean | Whether the token is high-risk (composite flag) |
+| `riskLevel` | String | Overall token risk level. Values: `CRITICAL`, `HIGH`, `MEDIUM`, `LOW` |
 | `buyTaxes` | String\|null | Buy tax percentage (null = unknown) |
 | `sellTaxes` | String\|null | Sell tax percentage (null = unknown) |
 | `isHoneypot` | Boolean | Honeypot — cannot sell after buying |
@@ -119,6 +119,7 @@ If user provides name/symbol instead, search first with `onchainos token search`
 | `isHasBlockingHis` | Boolean | Has history of freezing addresses |
 | `isOverIssued` | Boolean | Token over-issued beyond stated supply |
 | `isCounterfeit` | Boolean | Counterfeit — impersonates a well-known token |
+| `isNotOpenSource` | Boolean | Token contract source code is not open-source |
 | `isMintable` | Boolean | Token supply can be increased (mintable) |
 | `isHasFrozenAuth` | Boolean | Contract has freeze authority |
 | `isNotRenounced` | Boolean | Contract ownership not renounced |
@@ -151,6 +152,7 @@ If user provides name/symbol instead, search first with `onchainos token search`
 | 3-12 | Has Blocking History | `isHasBlockingHis` | Contract has frozen addresses before |
 | 3-13 | Over Issued | `isOverIssued` | Token supply exceeds stated amount |
 | 3-14 | Counterfeit | `isCounterfeit` | Impersonates a well-known token |
+| 3-15 | Not Open Source | `isNotOpenSource` | Token contract source code is not verified/open-source |
 
 ### Level 2 — Medium Risk (Info warning only)
 
@@ -160,39 +162,45 @@ If user provides name/symbol instead, search first with `onchainos token search`
 | 2-2 | Has Freeze Authority | `isHasFrozenAuth` | Contract can freeze accounts |
 | 2-3 | Not Renounced | `isNotRenounced` | Contract ownership retained |
 
-### Tax Thresholds (Special Handling)
+### Tax Thresholds (Reference Only)
 
-Tax fields (`buyTaxes`, `sellTaxes`) map to risk levels based on value:
+> The following table shows how the server incorporates tax values into `riskLevel`. The Agent should **NOT** independently compute risk levels from tax values — `riskLevel` already accounts for them. Display tax info alongside the risk result per step 3 of "How to interpret".
 
-| Tax Value | Risk Level | Agent Behavior |
+| Tax Value | How Server Uses This (context only) | Display |
 |---|---|---|
-| ≥ 50% | Level 4 | Block buy transaction |
-| ≥ 21% and < 50% | Level 3 | Pause, require user confirmation for buy |
-| > 0% and < 21% | Level 2 | Show tax info, do not pause |
-| 0% or null | — | No tax risk (null = tax data unavailable, do not display) |
+| ≥ 50% | Contributes to CRITICAL | Show tax percentage |
+| ≥ 21% and < 50% | Contributes to HIGH | Show tax percentage |
+| > 0% and < 21% | Contributes to MEDIUM | Show tax percentage |
+| 0% or null | No tax risk | Do not display (null = tax data unavailable) |
 
-## Risk Level Computation
+## Risk Level Determination
 
-When the Agent receives a token-scan response, compute the **effective risk level** as follows:
+The API returns a `riskLevel` field directly on each token-scan result. The Agent uses this field as the authoritative risk level — **no client-side computation from individual labels is needed**.
 
-1. **Collect triggered labels**: Iterate all boolean fields. For each `true` value, record its risk level from the catalog above. For `isHasAssetEditAuth`, only count as Level 3 when `chainId == 501` (Solana).
-2. **Evaluate tax thresholds**: Parse `buyTaxes` and `sellTaxes` as numbers. Map each to a risk level per the tax threshold table. If `null`, empty, or non-numeric, treat as unavailable — skip tax evaluation and do not display.
-3. **Determine effective level**: Take the **maximum** risk level across all triggered labels and tax thresholds. This is the token's effective risk level. **Fallback**: If `isRiskToken: true` but the computed effective level is Level 1 (no individual boolean labels triggered AND no tax thresholds triggered), promote to Level 2 (info warning). In the fallback case, display: `[L2] Risk flagged by API (isRiskToken)` — no specific label identified. This preserves the API's composite judgment as a safety net.
+| `riskLevel` value | Meaning |
+|---|---|
+| `CRITICAL` | Highest risk — honeypot, scam airdrop, gas-mint, or extreme tax |
+| `HIGH` | Significant risk — low liquidity, dumping, rugpull linkage, counterfeit, not open-source, etc. |
+| `MEDIUM` | Moderate risk — mintable, freeze authority, ownership not renounced, etc. |
+| `LOW` | No risk labels triggered — safe to proceed |
 
-> **Direction-agnostic tax rule**: Both `buyTaxes` and `sellTaxes` contribute to the effective level regardless of operation direction; the buy/sell distinction only affects the *action* (block vs. warn), not the level computation. Rationale: a high sell tax indicates the token may be functionally a honeypot (users can buy but cannot sell without heavy loss), so both taxes factor into the risk level regardless of direction.
+### How to interpret
 
-> **`isRiskToken` note**: `isRiskToken` is a server-side composite flag that may incorporate signals not exposed as individual boolean fields (e.g., off-chain intelligence, ML models). The skill computes its own level from individual labels for explainability, and uses `isRiskToken` only as a fallback.
+1. **Read `riskLevel`** from the API response. This is the overall token risk level, computed server-side from all boolean labels, tax thresholds, and additional signals (off-chain intelligence, ML models). If `riskLevel` is missing, `null`, or an unrecognized value, treat as `HIGH` (see Edge Cases table for details). When multiple tokens are scanned in one call (e.g., `--tokens "<chainId>:<addr1>,<chainId>:<addr2>"`), the response contains one result object per token, matched by `tokenAddress`. Apply the action matrix independently for each token.
+2. **Collect triggered labels** for display: Iterate all boolean fields (`isHoneypot`, `isLowLiquidity`, `isNotOpenSource`, etc.). For each `true` value, include it in the triggered labels list. For `isHasAssetEditAuth`, only include when `chainId == 501` (Solana) — this condition applies to display only; the server already accounts for chain-specific context in `riskLevel`. Individual label levels are **not displayed** — only the overall `riskLevel` is shown. If `riskLevel` is non-LOW but no boolean labels are `true`, display: "Risk level: {riskLevel} — flagged by composite analysis, no specific label identified." (The server may flag risk based on off-chain signals that don't surface as individual boolean fields.)
+3. **Display tax info**: If `buyTaxes` or `sellTaxes` is non-null and numeric, display alongside the risk result. If `null`, empty, or non-numeric, omit.
+4. **Apply action matrix**: Use `riskLevel` + operation type (buy/sell) to determine the Agent action per the matrix below.
 
-4. **Apply action matrix**: Use the effective risk level + operation type (buy/sell) to determine the Agent action per the matrix below.
+> **`riskLevel` is authoritative**: The server-side `riskLevel` may incorporate signals beyond the individual boolean fields (e.g., off-chain intelligence, ML models). Always trust `riskLevel` over any client-side label aggregation.
 
 ## Risk Level Action Matrix
 
-| Effective Level | Buy Action | Sell Action |
+| `riskLevel` | Buy Action | Sell Action |
 |---|---|---|
-| **4** | `action: block` — Refuse to execute. Display: "This token has triggered [label names], posing critical risk. Buy blocked." | `action: warn` — Display risk labels, allow sell to continue. Display: "This token has triggered [label names], posing critical risk. Please trade with caution." |
-| **3** | `action: warn` + **pause** — Display risk labels, halt execution, wait for explicit user confirmation (yes/no). Display: "This token has triggered [label names], posing high risk. Continue buying? (yes/no)" | `action: warn` — Display risk labels, allow sell to continue. |
-| **2** | `action: warn` — Display risk labels as informational notice, do not pause. | `action: warn` — Display risk labels as informational notice, do not pause. |
-| **1** (no labels triggered) | `action: ""` — Safe, proceed normally. | `action: ""` — Safe, proceed normally. |
+| **CRITICAL** | `action: block` — Refuse to execute. Display: "This token has triggered [label names], posing critical risk. Buy blocked." | `action: warn` — Display risk labels, allow sell to continue. Display: "This token has triggered [label names], posing critical risk. Please trade with caution." |
+| **HIGH** | `action: warn` + **pause** — Display risk labels, halt execution, wait for explicit user confirmation (yes/no). Display: "This token has triggered [label names], posing high risk. Continue buying? (yes/no)" | `action: warn` — Display risk labels, allow sell to continue. |
+| **MEDIUM** | `action: warn` — Display risk labels as informational notice, do not pause. | `action: warn` — Display risk labels as informational notice, do not pause. |
+| **LOW** | `action: ""` — Safe, proceed normally. | `action: ""` — Safe, proceed normally. |
 
 ### Determining Buy vs. Sell
 
@@ -206,15 +214,16 @@ When reporting risk scan results to the user:
 
 ```
 Token: <symbol or contract address> on <chain>
-Risk Level: <CRITICAL|HIGH|MEDIUM|LOW> (Level <4|3|2|1>)
+Risk Level: <CRITICAL|HIGH|MEDIUM|LOW>
 Triggered Labels:
-  - [L4] Garbage Airdrop (isRubbishAirdrop)
-  - [L3] Low Liquidity (isLowLiquidity)
-  - [L3] Pump activity (isPump)
+  - Garbage Airdrop (isRubbishAirdrop)
+  - Low Liquidity (isLowLiquidity)
+  - Pump activity (isPump)
 Buy Tax: <value>% | Sell Tax: <value>%    <!-- Omit entirely if both null; show only non-null if one is available -->
 Action: <BLOCK / WARN — requires confirmation / WARN — info only / Safe>
 ```
 
+> Individual label levels are **not displayed** — only the overall `riskLevel` is shown. List triggered labels without level prefixes.
 > If symbol is unknown (e.g., raw address via Path 3), display the contract address instead, or look up the symbol via `onchainos token search` first.
 
 ## Edge Cases
@@ -223,26 +232,27 @@ Action: <BLOCK / WARN — requires confirmation / WARN — info only / Safe>
 |---|---|
 | `isChainSupported: false` | Skip detection. Append warning: "This chain does not support token security scanning." Do not block the trade. |
 | API timeout / request failure | **Swap context**: Append warning: "Token security scan is temporarily unavailable. Please trade with caution." Continue flow (overrides general fail-safe). **Standalone context**: Follow the general fail-safe principle — ask user whether to retry or proceed. |
-| All labels `false` and no tax risk | Level 1 — safe to proceed. |
+| `riskLevel: "LOW"` and no labels triggered | Safe to proceed. |
+| `riskLevel` missing, `null`, or unrecognized value | Treat as `HIGH` (cautious default). Display: "⚠️ Risk level unavailable or unrecognized — treating as high risk." Apply HIGH-level actions (pause buy for confirmation, warn on sell). This may indicate an API regression or version mismatch — note it in the execution log if available. |
 | `buyTaxes`/`sellTaxes` is `null` | Tax data unavailable. Do not display tax info. Do not treat as risk. |
 
 ## Result Interpretation (Quick Reference)
 
-| Effective Level | Agent Behavior |
+| `riskLevel` | Agent Behavior |
 |---|---|
-| Level 4 | Block buy. Warn on sell. |
-| Level 3 | Pause buy for confirmation. Warn on sell. |
-| Level 2 | Info warning. Continue. |
-| Level 1 | Safe. No action needed. |
+| `CRITICAL` | Block buy. Warn on sell. |
+| `HIGH` | Pause buy for confirmation. Warn on sell. |
+| `MEDIUM` | Info warning. Continue. |
+| `LOW` | Safe. No action needed. |
 
 ## Suggest Next Steps
 
-| Result | Suggest |
+| `riskLevel` | Suggest |
 |---|---|
-| Safe (Level 1) | 1. Swap the token 2. Check market data |
-| Level 2 (info) | 1. Note risk labels 2. Swap with awareness |
-| Level 3 (confirm) | 1. Review risk details 2. Decide whether to proceed |
-| Level 4 (block buy) | Warn user. Do NOT suggest buying. If user holds the token, suggest selling. |
+| `LOW` | 1. Swap the token 2. Check market data |
+| `MEDIUM` | 1. Note risk labels 2. Swap with awareness |
+| `HIGH` | 1. Review risk details 2. Decide whether to proceed |
+| `CRITICAL` | Warn user. Do NOT suggest buying. If user holds the token, suggest selling. |
 
 ## Examples
 
@@ -260,7 +270,7 @@ Agent workflow:
 4. Scan:   onchainos security token-scan --tokens "1:0x6982508145454Ce325dDbE47a25d4ec3d2311933"
 5. Display:
    Token: PEPE on Ethereum
-   Risk Level: LOW (Level 1)
+   Risk Level: LOW
    Triggered Labels: None
    Buy Tax: 0%, Sell Tax: 0%
    Action: Safe to trade.
@@ -272,7 +282,7 @@ Agent workflow:
 onchainos security token-scan --tokens "1:0xdAC17F958D2ee523a2206206994597C13D831ec7"
 # -> Display:
 #   Token: USDT on Ethereum
-#   Risk Level: LOW (Level 1)
+#   Risk Level: LOW
 #   Triggered Labels: None
 #   Buy Tax: 0%, Sell Tax: 0%
 #   Action: Safe to trade.
@@ -282,25 +292,23 @@ onchainos security token-scan --tokens "1:0xdAC17F958D2ee523a2206206994597C13D83
 
 ```
 API returns:
-  isRubbishAirdrop: true    → Level 4
-  isHasFrozenAuth: true     → Level 2
-  isLowLiquidity: true      → Level 3
-  isMintable: true           → Level 2
-  isPump: true               → Level 3
-  isRiskToken: true
+  riskLevel: "CRITICAL"
+  isRubbishAirdrop: true
+  isHasFrozenAuth: true
+  isLowLiquidity: true
+  isMintable: true
+  isPump: true
   buyTaxes: null, sellTaxes: null
-
-Effective risk level: Level 4 (max of 4, 3, 3, 2, 2)
 
 Display:
   Token: <address> on Solana
-  Risk Level: CRITICAL (Level 4)
+  Risk Level: CRITICAL
   Triggered Labels:
-    - [L4] Garbage Airdrop (isRubbishAirdrop)
-    - [L3] Low Liquidity (isLowLiquidity)
-    - [L3] Pump activity (isPump)
-    - [L2] Mintable (isMintable)
-    - [L2] Has Freeze Authority (isHasFrozenAuth)
+    - Garbage Airdrop (isRubbishAirdrop)
+    - Low Liquidity (isLowLiquidity)
+    - Pump activity (isPump)
+    - Mintable (isMintable)
+    - Has Freeze Authority (isHasFrozenAuth)
   Action: BLOCK — buy is prohibited due to critical risk labels.
 ```
 
@@ -311,12 +319,12 @@ Display:
 ```
 1. (okx-dex-token) onchainos token search PEPE      -> find contract address
 2. Confirm which token with user
-3. onchainos security token-scan --tokens "<chainId>:<addr>"
-       -> compute effective risk level from all labels
-       -> Level 4 buy: BLOCK — abort workflow, inform user
-       -> Level 3 buy: PAUSE — show labels, wait for yes/no
-       -> Level 2 buy: WARN — show labels, continue
-       -> Level 1: safe, continue
+3. onchainos security token-scan --tokens "<chainId>:<fromAddr>,<chainId>:<toAddr>"
+       # If either token is native (e.g., ETH), omit it — scan only the non-native token
+       -> read riskLevel for each token from API response
+       -> --to token (buy side):  CRITICAL → BLOCK, HIGH → PAUSE, MEDIUM → WARN, LOW → safe
+       -> --from token (sell side): CRITICAL/HIGH/MEDIUM → WARN, LOW → safe
+       # Enforce most restrictive action across both tokens (BLOCK > PAUSE > WARN > Safe)
 4. If safe/confirmed: (okx-dex-swap) onchainos swap quote --from ... --to ... --chain ethereum
        -> get quote (price, impact, gas)
 5. (okx-dex-swap) onchainos swap approve --token <fromToken> --amount <amount> --chain ethereum
