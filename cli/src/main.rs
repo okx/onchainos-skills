@@ -114,6 +114,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::defi::DefiCommand,
     },
+    /// File operations (upload to CDN)
+    File {
+        #[command(subcommand)]
+        command: commands::file::FileCommand,
+    },
     /// Upgrade onchainos to the latest version
     Upgrade(commands::upgrade::UpgradeArgs),
 
@@ -176,6 +181,7 @@ async fn run() {
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
+        Commands::File { command } => commands::file::execute(&ctx, command).await,
         Commands::Ws { command } => commands::ws::execute(command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
         Commands::TaskSystem { command } => commands::agent_commerce::task::run(command, &ctx).await,

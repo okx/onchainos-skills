@@ -263,9 +263,13 @@ impl ApiClient {
     /// - `ok-client-version: <version>`
     /// - `Ok-Access-Client-type: agent-cli`
     pub(crate) fn anonymous_headers() -> reqwest::header::HeaderMap {
-        use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
+        use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, USER_AGENT};
         let mut map = HeaderMap::new();
         map.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        map.insert(
+            USER_AGENT,
+            HeaderValue::from_static("onchainos-cli"),
+        );
         map.insert(
             "ok-client-version",
             HeaderValue::from_static(CLIENT_VERSION),
@@ -408,6 +412,43 @@ impl ApiClient {
         self.handle_response(resp).await
     }
 
+    /// GET request that returns raw bytes instead of parsed JSON.
+    /// Used for binary downloads (e.g. file attachments).
+    pub async fn get_bytes(&self, path: &str, query: &[(&str, &str)]) -> Result<Vec<u8>> {
+        let (url, request_path) = self.build_get_url_and_request_path(path, query)?;
+        let req = self.http.get(url);
+        let req = match &self.auth {
+            AuthMode::Jwt(token) => Self::apply_jwt(req, token),
+            AuthMode::Ak {
+                api_key,
+                secret_key,
+                passphrase,
+            } => {
+                let timestamp =
+                    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                let sign = Self::hmac_sign(secret_key, &timestamp, "GET", &request_path, "");
+                Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
+            }
+            AuthMode::Anonymous => Self::apply_anonymous(req),
+        };
+
+        let resp = req
+            .timeout(std::time::Duration::from_secs(60))
+            .send()
+            .await
+            .context("request failed")?;
+
+        let status = resp.status();
+        if status.as_u16() >= 400 {
+            bail!("download failed (HTTP {})", status.as_u16());
+        }
+
+        resp.bytes()
+            .await
+            .map(|b| b.to_vec())
+            .context("failed to read response bytes")
+    }
+
     /// POST request with automatic auth (JWT or AK).
     /// Signature uses path only (no query string) + JSON body string.
     pub async fn post(&self, path: &str, body: &Value) -> Result<Value> {
@@ -441,6 +482,47 @@ impl ApiClient {
         let req = Self::apply_extra_headers(req, extra_headers);
 
         let resp = req.send().await.context("request failed")?;
+        self.handle_response(resp).await
+    }
+
+    /// POST multipart form data with automatic auth (JWT or AK).
+    /// Signature uses path only (no query string) with empty body string.
+    ///
+    /// Auth headers are built manually without Content-Type because reqwest
+    /// must set its own multipart/form-data boundary header automatically.
+    pub async fn post_multipart(
+        &self,
+        path: &str,
+        form: reqwest::multipart::Form,
+    ) -> Result<Value> {
+        let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
+        let req = self.http.post(&url);
+
+        // Build auth headers, then remove Content-Type so reqwest can set
+        // the correct multipart/form-data boundary.
+        let mut headers = match &self.auth {
+            AuthMode::Jwt(token) => Self::jwt_headers(token),
+            AuthMode::Ak {
+                api_key,
+                secret_key,
+                passphrase,
+            } => {
+                let timestamp =
+                    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                let sign = Self::hmac_sign(secret_key, &timestamp, "POST", path, "");
+                Self::ak_headers(api_key, passphrase, &timestamp, &sign)
+            }
+            AuthMode::Anonymous => Self::anonymous_headers(),
+        };
+        headers.remove(reqwest::header::CONTENT_TYPE);
+
+        let resp = req
+            .headers(headers)
+            .timeout(std::time::Duration::from_secs(60))
+            .multipart(form)
+            .send()
+            .await
+            .context("request failed")?;
         self.handle_response(resp).await
     }
 

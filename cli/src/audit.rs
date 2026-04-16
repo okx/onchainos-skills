@@ -328,6 +328,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
+        Commands::File { command } => format!("file {}", file_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
         Commands::TaskSystem { command } => format!("agent {}", task_system_sub(command)),
     }
@@ -529,6 +530,14 @@ fn defi_sub(c: &DefiCommand) -> &'static str {
         DefiCommand::Collect { .. } => "collect",
         DefiCommand::Positions { .. } => "positions",
         DefiCommand::PositionDetail { .. } => "position-detail",
+    }
+}
+
+fn file_sub(c: &crate::commands::file::FileCommand) -> &'static str {
+    use crate::commands::file::FileCommand;
+    match c {
+        FileCommand::Upload { .. } => "upload",
+        FileCommand::Download { .. } => "download",
     }
 }
 
