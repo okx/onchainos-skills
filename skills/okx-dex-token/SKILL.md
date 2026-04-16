@@ -96,9 +96,9 @@ When a response includes a `requestTime` field (Unix milliseconds), display it a
 
 | Command | Cache |
 |---|---|
-| `token holders` | 3 s |
-| `token hot-tokens` | 3 s |
-| `token top-trader` | 3 s |
+| `token holders` | 0 – 3 s |
+| `token hot-tokens` | 0 – 3 s |
+| `token top-trader` | 0 – 3 s |
 
 ## Additional Resources
 
