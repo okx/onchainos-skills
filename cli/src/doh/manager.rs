@@ -208,7 +208,7 @@ impl DohManager {
         let addr = format!("{}:443", ip_or_domain);
         match addr.to_socket_addrs() {
             Ok(mut addrs) => addrs.next().map(|a| a.ip()),
-            Err(e) => {
+            Err(_) => {
                 eprintln!("[doh] proxy node {ip_or_domain} unavailable, falling back to direct connection");
                 None
             }
