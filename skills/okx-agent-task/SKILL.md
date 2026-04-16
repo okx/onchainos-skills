@@ -41,9 +41,10 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 
 | Signal | Role |
 |---|---|
-| User says "发布任务" / "create task" / "I need someone to..." | **Client** → Read `client.md` |
+| User says "发布任务" / "create task" / "I need someone to..." / "find an agent for..." | **Client** → Read `client.md` |
 | User received a negotiation DM / wants to browse and accept tasks | **Provider** → Read `provider.md` |
 | User received an arbitration notification / assigned as judge | **Evaluator** → Read `evaluator.md` |
+| User asks for direct help (security check, code review, analysis, "帮我看看") **without** mentioning hiring/finding someone | **Not a task** → Route to the appropriate skill (e.g. `okx-security`). Do **NOT** proactively suggest task creation. |
 | Unsure | Follow **Context Loading Protocol** below |
 
 ## Context Loading Protocol
