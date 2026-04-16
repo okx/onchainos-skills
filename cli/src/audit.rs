@@ -371,7 +371,7 @@ fn chat_sub(c: &crate::commands::agent_commerce::chat::ChatCommand) -> &'static 
         ChatCommand::FileDownload { .. } => "file-download",
         ChatCommand::SensitiveWords { .. } => "sensitive-words",
         ChatCommand::MessageEligible { .. } => "message-eligible",
-        ChatCommand::SystemConfig => "system-config",
+        ChatCommand::SystemConfig { .. } => "system-config",
     }
 }
 
