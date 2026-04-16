@@ -333,8 +333,8 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
     }
 }
 
-fn task_system_sub(cmd: &crate::commands::agent_commerce::task_system::TaskSystemCommand) -> String {
-    use crate::commands::agent_commerce::task_system::TaskSystemCommand;
+fn task_system_sub(cmd: &crate::commands::agent_commerce::task::TaskSystemCommand) -> String {
+    use crate::commands::agent_commerce::task::TaskSystemCommand;
     match cmd {
         TaskSystemCommand::CreateTask { .. }    => "create-task".into(),
         TaskSystemCommand::Recommend { .. }     => "recommend".into(),
