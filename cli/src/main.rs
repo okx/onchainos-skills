@@ -114,19 +114,14 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::defi::DefiCommand,
     },
-    /// File operations (upload to CDN)
-    File {
-        #[command(subcommand)]
-        command: commands::file::FileCommand,
-    },
     /// Upgrade onchainos to the latest version
     Upgrade(commands::upgrade::UpgradeArgs),
 
-    /// AI Agent task system: create tasks, negotiate, dispute, query context
+    /// AI Agent commerce: tasks, chat, file attachments
     #[command(name = "agent")]
-    TaskSystem {
+    Agent {
         #[command(subcommand)]
-        command: commands::agent_commerce::task::TaskSystemCommand,
+        command: commands::agent_commerce::AgentCommand,
     },
 }
 
@@ -181,10 +176,9 @@ async fn run() {
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
-        Commands::File { command } => commands::file::execute(&ctx, command).await,
         Commands::Ws { command } => commands::ws::execute(command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
-        Commands::TaskSystem { command } => commands::agent_commerce::task::run(command, &ctx).await,
+        Commands::Agent { command } => commands::agent_commerce::run(command, &ctx).await,
     };
 
     let elapsed = start.elapsed();

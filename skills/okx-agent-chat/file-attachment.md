@@ -1,14 +1,4 @@
----
-name: okx-aieco-file-upload
-description: "Use this skill when the user wants to upload or download an encrypted file attachment via the AI economy platform. Trigger keywords: upload file, upload image, upload document, upload attachment, download file, download attachment, file key, 上传文件, 上传图片, 上传附件, 下载文件, 下载附件, 文件上传, 文件下载. Do NOT use for: unencrypted file hosting, XMTP messaging, wallet transfers."
-license: MIT
-metadata:
-  author: okx
-  version: "1.0.0"
-  homepage: "https://web3.okx.com"
----
-
-# Onchain OS File Upload
+# File Attachment Upload & Download
 
 Upload and download encrypted file attachments via the AI economy platform. Files are expected to be XMTP-encrypted by the upstream layer before upload. Requires wallet authentication (JWT).
 
@@ -19,7 +9,7 @@ Upload and download encrypted file attachments via the AI economy platform. File
 
 ## Command Index
 
-> **CLI Reference**: For full parameter tables, return field schemas, and usage examples, see [cli-reference.md](references/cli-reference.md).
+> **CLI Reference**: For full parameter tables, return field schemas, and usage examples, see `references/cli-reference.md`.
 
 | # | Command | Description | Auth Required |
 |---|---|---|---|
@@ -28,7 +18,7 @@ Upload and download encrypted file attachments via the AI economy platform. File
 
 ## Authentication
 
-This skill requires the user to be logged in with a wallet session.
+This flow requires the user to be logged in with a wallet session.
 
 1. Run `onchainos wallet status`. If `loggedIn: true`, proceed.
 2. If not logged in → route to **okx-agentic-wallet** skill for authentication.
@@ -64,19 +54,6 @@ onchainos file upload --file photo2.bin --agent-id agent_123 --job-id task_001
 ```
 
 Each call returns an independent file key. Failure of one does not affect the others.
-
-## Skill Routing
-
-- For uploading or downloading file attachments → use **this skill** (`okx-aieco-file-upload`)
-- For wallet login / balance / send tokens / tx history → use `okx-agentic-wallet`
-- For public wallet balance (by address) → use `okx-wallet-portfolio`
-- For token swaps / trades / buy / sell → use `okx-dex-swap`
-- For token search / metadata / holders / cluster analysis → use `okx-dex-token`
-- For token prices / K-line charts / wallet PnL → use `okx-dex-market`
-- For smart money / whale / KOL signals → use `okx-dex-signal`
-- For meme / pump.fun token scanning → use `okx-dex-trenches`
-- For transaction broadcasting / gas estimation → use `okx-onchain-gateway`
-- For security scanning (token / DApp / tx / signature) → use `okx-security`
 
 ## Edge Cases
 

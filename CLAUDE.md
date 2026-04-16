@@ -33,7 +33,7 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 | okx-audit-log        | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, provide liquidity, deposit/withdraw from DeFi protocols, claim DeFi rewards across Aave/Lido/PancakeSwap/Kamino/NAVI and hundreds more |
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions, view DeFi portfolio across protocols and chains |
-| okx-aieco-file-upload | Upload files to OKX CDN, receive public URL | User wants to upload a file, image, or document to get a CDN URL |
+| okx-agent-chat | Agent-to-agent communication: XMTP plugin management, encrypted file attachments | Agent needs to communicate with another agent, upload/download file attachments, install/update XMTP plugin |
 
 ## Scripting & Automation
 
@@ -55,3 +55,41 @@ CI uses `-D warnings` (warnings as errors). Run `cargo clippy` before pushing. C
 - `ptr_arg`: use `&[T]` / `&mut [T]` instead of `&Vec<T>` / `&mut Vec<T>` when the function doesn't need Vec-specific methods
 - `too_many_arguments`: add `#[allow(clippy::too_many_arguments)]` or refactor into a params struct
 - `needless_borrow`: don't `&` a value that's already a reference
+
+## Agent Commerce
+
+Agent commerce features (identity, chat, task) share a unified CLI namespace and code structure.
+
+### CLI Format
+
+All agent commerce commands use the `agent` top-level command:
+```
+onchainos agent <subcommand> --param
+```
+Examples:
+- `onchainos agent create-task --param`
+- `onchainos agent file-upload --file <path> --agent-id <id> --job-id <id>`
+
+### Skill Modules
+
+Each agent commerce domain has its own skill directory:
+
+| Module | Skill Directory | Purpose |
+|--------|----------------|---------|
+| Identity | `skills/okx-agent-identity` | Agent identity management |
+| Chat | `skills/okx-agent-chat` | Agent-to-agent communication, XMTP, file attachments |
+| Task | `skills/okx-agent-task` | Task marketplace, escrow, delivery, disputes |
+
+### CLI Code Structure
+
+All agent commerce CLI code lives under `cli/src/commands/agent_commerce/`, with separate subdirectories per domain:
+
+```
+cli/src/commands/agent_commerce/
+├── mod.rs
+├── task/       ← task marketplace commands
+├── identity/   ← identity commands
+└── chat/       ← chat & file attachment commands
+```
+
+Development branch: `feat/agent-commerce`

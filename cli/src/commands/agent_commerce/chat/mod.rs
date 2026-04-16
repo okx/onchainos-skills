@@ -3,15 +3,17 @@ use clap::Subcommand;
 use serde_json::Value;
 
 use crate::client::ApiClient;
+use crate::commands::Context as CliContext;
 use crate::output;
 
 const UPLOAD_PATH: &str = "/priapi/v1/aieco/im/attachments/xmtp/encrypted/upload";
 const DOWNLOAD_PATH: &str = "/priapi/v1/aieco/im/attachments/xmtp/encrypted/download";
 
 #[derive(Subcommand)]
-pub enum FileCommand {
+pub enum ChatCommand {
     /// Upload an encrypted file attachment and receive a file key
-    Upload {
+    #[command(name = "file-upload")]
+    FileUpload {
         /// Path to the local file to upload
         #[arg(long)]
         file: String,
@@ -25,7 +27,8 @@ pub enum FileCommand {
         job_id: String,
     },
     /// Download an encrypted file attachment by file key
-    Download {
+    #[command(name = "file-download")]
+    FileDownload {
         /// File key returned from upload
         #[arg(long)]
         file_key: String,
@@ -40,14 +43,14 @@ pub enum FileCommand {
     },
 }
 
-pub async fn execute(ctx: &super::Context, cmd: FileCommand) -> Result<()> {
+pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
     match cmd {
-        FileCommand::Upload {
+        ChatCommand::FileUpload {
             file,
             agent_id,
             job_id,
         } => cmd_upload(ctx, &file, &agent_id, &job_id).await,
-        FileCommand::Download {
+        ChatCommand::FileDownload {
             file_key,
             agent_id,
             output: output_path,
@@ -82,7 +85,7 @@ pub async fn fetch_upload(
 }
 
 async fn cmd_upload(
-    ctx: &super::Context,
+    ctx: &CliContext,
     file_path: &str,
     agent_id: &str,
     job_id: &str,
@@ -131,7 +134,7 @@ pub async fn fetch_download(
 }
 
 async fn cmd_download(
-    ctx: &super::Context,
+    ctx: &CliContext,
     file_key: &str,
     agent_id: &str,
     output_path: &str,
@@ -163,7 +166,7 @@ mod tests {
     #[derive(Parser)]
     struct TestCli {
         #[command(subcommand)]
-        command: FileCommand,
+        command: ChatCommand,
     }
 
     // ── Upload CLI parsing ───────────────────────────────────────────
@@ -171,25 +174,25 @@ mod tests {
     #[test]
     fn cli_upload_all_required_args() {
         let cli = TestCli::parse_from([
-            "test", "upload",
+            "test", "file-upload",
             "--file", "/tmp/test.bin",
             "--agent-id", "agent_123",
             "--job-id", "task_001",
         ]);
         match cli.command {
-            FileCommand::Upload { file, agent_id, job_id } => {
+            ChatCommand::FileUpload { file, agent_id, job_id } => {
                 assert_eq!(file, "/tmp/test.bin");
                 assert_eq!(agent_id, "agent_123");
                 assert_eq!(job_id, "task_001");
             }
-            _ => panic!("expected Upload"),
+            _ => panic!("expected FileUpload"),
         }
     }
 
     #[test]
     fn cli_upload_missing_file() {
         let result = TestCli::try_parse_from([
-            "test", "upload",
+            "test", "file-upload",
             "--agent-id", "agent_123",
             "--job-id", "task_001",
         ]);
@@ -199,7 +202,7 @@ mod tests {
     #[test]
     fn cli_upload_missing_agent_id() {
         let result = TestCli::try_parse_from([
-            "test", "upload",
+            "test", "file-upload",
             "--file", "/tmp/test.bin",
             "--job-id", "task_001",
         ]);
@@ -209,7 +212,7 @@ mod tests {
     #[test]
     fn cli_upload_missing_job_id() {
         let result = TestCli::try_parse_from([
-            "test", "upload",
+            "test", "file-upload",
             "--file", "/tmp/test.bin",
             "--agent-id", "agent_123",
         ]);
@@ -218,7 +221,7 @@ mod tests {
 
     #[test]
     fn cli_upload_no_args() {
-        let result = TestCli::try_parse_from(["test", "upload"]);
+        let result = TestCli::try_parse_from(["test", "file-upload"]);
         assert!(result.is_err());
     }
 
@@ -227,25 +230,25 @@ mod tests {
     #[test]
     fn cli_download_all_required_args() {
         let cli = TestCli::parse_from([
-            "test", "download",
+            "test", "file-download",
             "--file-key", "task_001-abc123",
             "--agent-id", "agent_123",
             "--output", "/tmp/downloaded.bin",
         ]);
         match cli.command {
-            FileCommand::Download { file_key, agent_id, output } => {
+            ChatCommand::FileDownload { file_key, agent_id, output } => {
                 assert_eq!(file_key, "task_001-abc123");
                 assert_eq!(agent_id, "agent_123");
                 assert_eq!(output, "/tmp/downloaded.bin");
             }
-            _ => panic!("expected Download"),
+            _ => panic!("expected FileDownload"),
         }
     }
 
     #[test]
     fn cli_download_missing_file_key() {
         let result = TestCli::try_parse_from([
-            "test", "download",
+            "test", "file-download",
             "--agent-id", "agent_123",
             "--output", "/tmp/out.bin",
         ]);
@@ -255,7 +258,7 @@ mod tests {
     #[test]
     fn cli_download_missing_agent_id() {
         let result = TestCli::try_parse_from([
-            "test", "download",
+            "test", "file-download",
             "--file-key", "abc",
             "--output", "/tmp/out.bin",
         ]);
@@ -265,7 +268,7 @@ mod tests {
     #[test]
     fn cli_download_missing_output() {
         let result = TestCli::try_parse_from([
-            "test", "download",
+            "test", "file-download",
             "--file-key", "abc",
             "--agent-id", "agent_123",
         ]);

@@ -20,7 +20,7 @@ This is an **onchainos skill collection** providing 15 skills for on-chain opera
 | okx-audit-log | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, provide liquidity, deposit/withdraw from DeFi protocols |
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions, view DeFi portfolio across protocols and chains |
-| okx-aieco-file-upload | Upload encrypted file attachments to OKX CDN | User wants to upload a file attachment and receive a CDN URL |
+| okx-agent-chat | Agent-to-agent communication: XMTP plugin management, encrypted file attachments | Agent needs to communicate with another agent, upload/download file attachments, install/update XMTP plugin |
 
 ## Architecture
 

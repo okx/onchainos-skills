@@ -328,9 +328,16 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
-        Commands::File { command } => format!("file {}", file_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
-        Commands::TaskSystem { command } => format!("agent {}", task_system_sub(command)),
+        Commands::Agent { command } => format!("agent {}", agent_sub(command)),
+    }
+}
+
+fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
+    use crate::commands::agent_commerce::AgentCommand;
+    match cmd {
+        AgentCommand::Task(c) => format!("task {}", task_system_sub(c)),
+        AgentCommand::Chat(c) => format!("chat {}", chat_sub(c)),
     }
 }
 
@@ -354,6 +361,14 @@ fn task_system_sub(cmd: &crate::commands::agent_commerce::task::TaskSystemComman
         TaskSystemCommand::Negotiate(c) => format!("negotiate {:?}", std::mem::discriminant(c)),
         TaskSystemCommand::Dispute(c)   => format!("dispute {:?}", std::mem::discriminant(c)),
         TaskSystemCommand::Common(c)    => format!("common {:?}", std::mem::discriminant(c)),
+    }
+}
+
+fn chat_sub(c: &crate::commands::agent_commerce::chat::ChatCommand) -> &'static str {
+    use crate::commands::agent_commerce::chat::ChatCommand;
+    match c {
+        ChatCommand::FileUpload { .. } => "file-upload",
+        ChatCommand::FileDownload { .. } => "file-download",
     }
 }
 

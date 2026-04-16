@@ -1,18 +1,8 @@
----
-name: okx-xmtp-ensure-installed
-description: "MANDATORY pre-flight check before any agent-to-agent communication, agent commerce, or XMTP messaging. Must be run every time the agent needs to interact with another agent. Also triggered by: ensure xmtp installed, check xmtp extension, install xmtp, xmtp extension, xmtp plugin, agent communication, agent commerce, talk to agent, message agent, 安装XMTP插件, 检查XMTP插件, agent间通信, agent交互. Do NOT use for: file upload, wallet operations, token swaps, market data, checking for XMTP updates (use okx-xmtp-check-version)."
-license: MIT
-metadata:
-  author: okx
-  version: "1.0.0"
----
+# Ensure XMTP Plugin Installed
 
-# Onchain OS XMTP Extension — Ensure Installed
-
-**Mandatory safeguard** — run this skill every time the agent needs to communicate with another agent, initiate agent commerce, or use XMTP messaging. Checks whether the XMTP plugin (`openclaw-plugin-xmtp`) is installed globally via npm. If not, installs the latest version and restarts the openclaw gateway. After completion, automatically proceeds to **okx-xmtp-check-version** to check for updates.
+**Mandatory safeguard** — run this every time the agent needs to communicate with another agent, initiate agent commerce, or use XMTP messaging. Checks whether the XMTP plugin (`openclaw-plugin-xmtp`) is installed globally via npm. If not, installs the latest version and restarts the openclaw gateway. After completion, automatically proceeds to `check-version.md` to check for updates.
 
 > **TODO**: Confirm the npm package name is `openclaw-plugin-xmtp`. Update if different.
-> This skill will eventually move to `okx-agent-chat/` directory when the agent module branch is ready.
 
 ## Command Index
 
@@ -74,7 +64,7 @@ If installation fails:
 
 ### Step 3: Proceed to version check
 
-After ensuring the extension is installed, automatically load and run **okx-xmtp-check-version** to check for available updates.
+After ensuring the extension is installed, automatically load and follow `check-version.md` to check for available updates.
 
 ## Edge Cases
 
@@ -86,18 +76,3 @@ After ensuring the extension is installed, automatically load and run **okx-xmtp
 | Gateway stop fails | Display error, attempt install anyway — the gateway may not have been running |
 | Gateway start fails | Display error, suggest manual start |
 | Already installed | Skip install (no gateway restart needed), proceed directly to version check |
-
-## Skill Routing
-
-- After completion → automatically run `okx-xmtp-check-version`
-- For checking/updating XMTP version independently → use `okx-xmtp-check-version`
-- For uploading/downloading file attachments → use `okx-aieco-file-upload`
-- For wallet login / balance / send tokens / tx history → use `okx-agentic-wallet`
-- For public wallet balance (by address) → use `okx-wallet-portfolio`
-- For token swaps / trades / buy / sell → use `okx-dex-swap`
-- For token search / metadata / holders / cluster analysis → use `okx-dex-token`
-- For token prices / K-line charts / wallet PnL → use `okx-dex-market`
-- For smart money / whale / KOL signals → use `okx-dex-signal`
-- For meme / pump.fun token scanning → use `okx-dex-trenches`
-- For transaction broadcasting / gas estimation → use `okx-onchain-gateway`
-- For security scanning (token / DApp / tx / signature) → use `okx-security`

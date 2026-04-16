@@ -1,4 +1,4 @@
-# CLI Reference: okx-aieco-file-upload
+# CLI Reference: okx-agent-chat — File Attachments
 
 ## 1. `onchainos file upload`
 

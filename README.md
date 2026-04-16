@@ -19,7 +19,7 @@ onchainos skills for AI coding assistants. Provides token search, market data, w
 | `okx-defi-invest` | DeFi product discovery, deposit, withdraw, claim rewards across Aave, Lido, PancakeSwap, Kamino, NAVI and more |
 | `okx-defi-portfolio` | DeFi positions and holdings overview across protocols and chains |
 | `okx-audit-log` | Audit log export and troubleshooting |
-| `okx-aieco-file-upload` | Upload encrypted file attachments to OKX CDN, receive attachment URL |
+| `okx-agent-chat` | Agent-to-agent communication: XMTP plugin management, encrypted file attachment upload/download |
 
 ## Supported Chains
 
