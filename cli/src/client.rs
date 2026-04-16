@@ -467,14 +467,59 @@ impl ApiClient {
         })
     }
 
-    /// POST request with automatic auth (JWT or AK).
+    /// POST request with automatic auth (JWT or AK). Retries after DoH failover.
     /// Signature uses path only (no query string) + JSON body string.
     pub async fn post(&mut self, path: &str, body: &Value) -> Result<Value> {
         self.post_with_headers(path, body, None).await
     }
 
     /// POST request with automatic auth + optional extra headers.
-    pub async fn post_with_headers(
+    /// Retries once after DoH failover (safe for idempotent endpoints).
+    pub fn post_with_headers<'a>(
+        &'a mut self,
+        path: &'a str,
+        body: &'a Value,
+        extra_headers: Option<&'a [(&'a str, &'a str)]>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        Box::pin(async move {
+            let body_str = serde_json::to_string(body)?;
+            let effective = self.effective_base_url();
+            let url = format!("{}{}", effective.trim_end_matches('/'), path);
+            let req = self.http.post(&url).body(body_str.clone());
+            let req = match &self.auth {
+                AuthMode::Jwt(token) => Self::apply_jwt(req, token),
+                AuthMode::Ak {
+                    api_key,
+                    secret_key,
+                    passphrase,
+                } => {
+                    let timestamp =
+                        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                    let sign = Self::hmac_sign(secret_key, &timestamp, "POST", path, &body_str);
+                    Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
+                }
+                AuthMode::Anonymous => Self::apply_anonymous(req),
+            };
+            let req = Self::apply_extra_headers(req, extra_headers);
+
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                        return self.post_with_headers(path, body, extra_headers).await;
+                    }
+                    return Err(e).context("request failed");
+                }
+                Err(e) => return Err(e).context("request failed"),
+            };
+            self.doh.cache_direct_if_needed();
+            self.handle_response(resp).await
+        })
+    }
+
+    /// POST request with no DoH retry — use only for broadcast-transaction.
+    pub async fn post_no_retry_with_headers(
         &mut self,
         path: &str,
         body: &Value,
@@ -493,7 +538,6 @@ impl ApiClient {
             } => {
                 let timestamp =
                     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-                // HMAC signing uses original path, NOT proxy URL
                 let sign = Self::hmac_sign(secret_key, &timestamp, "POST", path, &body_str);
                 Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
             }
@@ -508,7 +552,7 @@ impl ApiClient {
                 if self.doh.is_proxy() {
                     let _ = self.rebuild_http_client();
                 }
-                return Err(e).context("request failed (POST not retried during DoH failover)");
+                return Err(e).context("request failed (broadcast not retried)");
             }
             Err(e) => return Err(e).context("request failed"),
         };

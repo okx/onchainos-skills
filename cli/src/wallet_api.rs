@@ -285,44 +285,104 @@ impl WalletApiClient {
     // ── Low-level POST helpers ──────────────────────────────────────
 
     /// POST without Authorization header (for init / verify / refresh).
-    pub async fn post_public(&mut self, path: &str, body: &Value) -> Result<Value> {
-        let effective = self.effective_base_url();
-        let url = format!("{}{}", effective.trim_end_matches('/'), path);
+    /// Retries once after DoH failover.
+    pub fn post_public<'a>(
+        &'a mut self,
+        path: &'a str,
+        body: &'a Value,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        Box::pin(async move {
+            let effective = self.effective_base_url();
+            let url = format!("{}{}", effective.trim_end_matches('/'), path);
 
-        if cfg!(feature = "debug-log") {
-            eprintln!("[DEBUG][post_public] url_path={}", &url);
-        }
-
-        let resp = match self
-            .http
-            .post(&url)
-            .headers(crate::client::ApiClient::anonymous_headers())
-            .json(body)
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) if e.is_connect() || e.is_timeout() => {
-                let _ = self.doh.handle_failure().await;
-                if self.doh.is_proxy() {
-                    let _ = self.rebuild_http_client();
-                }
-                return Err(e).context("request failed (POST not retried during DoH failover)");
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][post_public] url_path={}", &url);
             }
-            Err(e) => return Err(e).context("request failed"),
-        };
-        self.doh.cache_direct_if_needed();
-        self.handle_response(resp).await
+
+            let resp = match self
+                .http
+                .post(&url)
+                .headers(crate::client::ApiClient::anonymous_headers())
+                .json(body)
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                        return self.post_public(path, body).await;
+                    }
+                    return Err(e).context("request failed");
+                }
+                Err(e) => return Err(e).context("request failed"),
+            };
+            self.doh.cache_direct_if_needed();
+            self.handle_response(resp).await
+        })
     }
 
     /// POST with Bearer accessToken (for create / list / refresh / x402).
+    /// Retries once after DoH failover.
     pub async fn post_authed(&mut self, path: &str, access_token: &str, body: &Value) -> Result<Value> {
         self.post_authed_with_headers(path, access_token, body, None)
             .await
     }
 
     /// POST with Bearer accessToken + optional extra headers.
-    pub async fn post_authed_with_headers(
+    /// Retries once after DoH failover.
+    pub fn post_authed_with_headers<'a>(
+        &'a mut self,
+        path: &'a str,
+        access_token: &'a str,
+        body: &'a Value,
+        extra_headers: Option<&'a [(&'a str, &'a str)]>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        Box::pin(async move {
+            let effective = self.effective_base_url();
+            let url = format!("{}{}", effective.trim_end_matches('/'), path);
+
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][post_authed] url_path={}", &url);
+            }
+
+            let mut headers = crate::client::ApiClient::jwt_headers(access_token);
+            if let Some(extra) = extra_headers {
+                for (k, v) in extra {
+                    if let (Ok(name), Ok(val)) = (
+                        reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                        reqwest::header::HeaderValue::from_str(v),
+                    ) {
+                        headers.insert(name, val);
+                    }
+                }
+            }
+
+            let resp = match self
+                .http
+                .post(&url)
+                .headers(headers)
+                .json(body)
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                        return self.post_authed_with_headers(path, access_token, body, extra_headers).await;
+                    }
+                    return Err(e).context("request failed");
+                }
+                Err(e) => return Err(e).context("request failed"),
+            };
+            self.doh.cache_direct_if_needed();
+            self.handle_response(resp).await
+        })
+    }
+
+    /// POST with Bearer accessToken — no DoH retry. Use only for broadcast-transaction.
+    async fn post_authed_no_retry_with_headers(
         &mut self,
         path: &str,
         access_token: &str,
@@ -333,7 +393,7 @@ impl WalletApiClient {
         let url = format!("{}{}", effective.trim_end_matches('/'), path);
 
         if cfg!(feature = "debug-log") {
-            eprintln!("[DEBUG][post_authed] url_path={}", &url);
+            eprintln!("[DEBUG][post_authed_no_retry] url_path={}", &url);
         }
 
         let mut headers = crate::client::ApiClient::jwt_headers(access_token);
@@ -362,7 +422,7 @@ impl WalletApiClient {
                 if self.doh.is_proxy() {
                     let _ = self.rebuild_http_client();
                 }
-                return Err(e).context("request failed (POST not retried during DoH failover)");
+                return Err(e).context("request failed (broadcast not retried)");
             }
             Err(e) => return Err(e).context("request failed"),
         };
@@ -731,7 +791,7 @@ impl WalletApiClient {
             "extraData": extra_data,
         });
         let data = self
-            .post_authed_with_headers(
+            .post_authed_no_retry_with_headers(
                 "/priapi/v5/wallet/agentic/pre-transaction/broadcast-transaction",
                 access_token,
                 &body,

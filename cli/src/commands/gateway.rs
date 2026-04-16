@@ -227,7 +227,7 @@ pub async fn fetch_broadcast(
             ("ok-client-timestamp", timestamp.as_str()),
         ];
         client
-            .post_with_headers(
+            .post_no_retry_with_headers(
                 "/api/v6/dex/pre-transaction/broadcast-transaction",
                 &body,
                 Some(&headers),
@@ -235,7 +235,11 @@ pub async fn fetch_broadcast(
             .await
     } else {
         client
-            .post("/api/v6/dex/pre-transaction/broadcast-transaction", &body)
+            .post_no_retry_with_headers(
+                "/api/v6/dex/pre-transaction/broadcast-transaction",
+                &body,
+                None,
+            )
             .await
     }
 }
