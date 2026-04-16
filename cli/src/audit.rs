@@ -548,14 +548,6 @@ fn defi_sub(c: &DefiCommand) -> &'static str {
     }
 }
 
-fn file_sub(c: &crate::commands::file::FileCommand) -> &'static str {
-    use crate::commands::file::FileCommand;
-    match c {
-        FileCommand::Upload { .. } => "upload",
-        FileCommand::Download { .. } => "download",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
