@@ -15,25 +15,14 @@ type Conversations = Arc<DashMap<String, Vec<String>>>;
 /// 模拟 ERC-8004 身份系统后端，存储 REQUESTER/PROVIDER/EVALUATOR 注册信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct IdentityEntry {
-    addr: String,
+    agent_id: String,
+    comm_addr: String,
     role: String,
     metadata: serde_json::Value,
 }
 
 type IdentityRegistry = Arc<DashMap<String, Vec<IdentityEntry>>>;
 
-static ADDR_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-
-fn generate_tee_addr(role: &str) -> String {
-    let n = ADDR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let role_tag = match role.to_uppercase().as_str() {
-        "REQUESTER" | "BUYER" => "Buyer",
-        "PROVIDER" | "SELLER" => "Seller",
-        "EVALUATOR" | "ARBITRATOR" | "ARB" => "Arb",
-        _ => "Agent",
-    };
-    format!("0xTEE{role_tag}{n:0>36}")
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "action")]
@@ -42,17 +31,16 @@ enum ClientMsg {
     JoinConversation { conversation_id: String, participants: Vec<String> },
     Send { conversation_id: String, payload: serde_json::Value },
     /// 注册身份：模拟 ERC-8004 身份注册
-    /// addr 可选 — 不提供时服务端生成 TEE mock 地址
     RegisterIdentity {
         role: String,
-        #[serde(default)]
-        addr: Option<String>,
+        agent_id: String,
+        comm_addr: String,
         #[serde(default)]
         metadata: Option<serde_json::Value>,
     },
     /// 按角色查询已注册的身份列表
     LookupRole { role: String },
-    /// 按地址查询该地址注册的角色
+    /// 按 agentId 查询身份
     LookupAddr { addr: String },
     /// 列出所有已注册身份
     ListIdentities {},
@@ -125,29 +113,31 @@ async fn handle_connection(stream: tokio::net::TcpStream, registry: Registry, co
                         let _ = tx.send(Message::Text(err.to_string().into()));
                     }
                 }
-                Ok(ClientMsg::RegisterIdentity { role, addr, metadata }) => {
-                    let assigned_addr = addr.unwrap_or_else(|| generate_tee_addr(&role));
+                Ok(ClientMsg::RegisterIdentity { role, agent_id, comm_addr, metadata }) => {
                     let entry = IdentityEntry {
-                        addr: assigned_addr.clone(),
+                        agent_id: agent_id.clone(),
+                        comm_addr: comm_addr.clone(),
                         role: role.clone(),
                         metadata: metadata.unwrap_or(serde_json::Value::Null),
                     };
-                    println!("[server] identity registered: role={role} addr={assigned_addr}");
+                    println!("[server] identity registered: role={role} agent_id={agent_id} comm_addr={comm_addr}");
                     identities.entry(role.clone()).or_default().push(entry);
                     let ack = serde_json::json!({
                         "type": "identity_registered",
                         "role": role,
-                        "addr": assigned_addr
+                        "agent_id": agent_id,
+                        "comm_addr": comm_addr
                     });
                     let _ = tx.send(Message::Text(ack.to_string().into()));
                 }
                 Ok(ClientMsg::LookupAddr { addr }) => {
+                    // addr 字段含义：按 agent_id 查询
                     let found: Option<IdentityEntry> = identities.iter()
                         .flat_map(|e| e.value().clone())
-                        .find(|e| e.addr == addr);
+                        .find(|e| e.agent_id == addr);
                     let ack = serde_json::json!({
                         "type": "addr_lookup",
-                        "addr": addr,
+                        "agent_id": addr,
                         "identity": found
                     });
                     let _ = tx.send(Message::Text(ack.to_string().into()));

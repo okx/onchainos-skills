@@ -1,6 +1,6 @@
 //! mock-arbitrator: 仲裁者交互式测试工具（菜单驱动）
 //!
-//! 用法: mock-arbitrator [--buyer-addr <addr>]
+//! 用法: mock-arbitrator [--buyer-addr <comm_addr>] [--buyer-agent-id <agentId>]
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
@@ -8,17 +8,18 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use ws_mock::{
     conv_id_arb, conv_id_bs, handle_inbound, lookup_role_action, parse_buyer_addr_arg,
-    register_identity_action, register_ws_action, send_action, ARB_ADDR, MOCK_BUYER_ADDR,
-    SERVER_URL,
+    parse_buyer_agent_id_arg, register_identity_action, register_ws_action, send_action,
+    ARB_AGENT_ID, ARB_COMM_ADDR, MOCK_BUYER_AGENT_ID, MOCK_BUYER_COMM_ADDR,
+    SELLER_COMM_ADDR, SERVER_URL,
 };
 
-fn parse_command(input: &str, buyer_addr: &str) -> Vec<serde_json::Value> {
+fn parse_command(input: &str, buyer_agent_id: &str, buyer_comm_addr: &str) -> Vec<serde_json::Value> {
     let parts: Vec<&str> = input.trim().splitn(3, ' ').collect();
     match parts[0] {
         "/resolve" => {
             let job_id = parts.get(1).copied().unwrap_or("unknown");
             let winner = parts.get(2).copied().unwrap_or("unknown");
-            let arb_conv = conv_id_arb(job_id, buyer_addr);
+            let arb_conv = conv_id_arb(job_id, buyer_agent_id);
             let content = format!("仲裁结果: {winner} 胜，jobId: {job_id}");
             let mut action = send_action(&arb_conv, "TASK_RESOLVE", &content, Some(job_id));
             action["payload"]["winner"] = json!(winner);
@@ -26,13 +27,19 @@ fn parse_command(input: &str, buyer_addr: &str) -> Vec<serde_json::Value> {
         }
         "/convid" => {
             let job_id = parts.get(1).copied().unwrap_or("jobId");
-            println!("\x1b[90m买卖会话: {}\x1b[0m", conv_id_bs(job_id, buyer_addr));
-            println!("\x1b[90m仲裁会话: {}\x1b[0m", conv_id_arb(job_id, buyer_addr));
+            println!("\x1b[90m买卖会话: {}\x1b[0m", conv_id_bs(job_id, buyer_agent_id));
+            println!("\x1b[90m仲裁会话: {}\x1b[0m", conv_id_arb(job_id, buyer_agent_id));
             vec![]
         }
+        "/join" => {
+            let job_id = parts.get(1).copied().unwrap_or("unknown");
+            let arb_conv = conv_id_arb(job_id, buyer_agent_id);
+            println!("\x1b[90m加入仲裁会话: {arb_conv}\x1b[0m");
+            vec![ws_mock::join_conv_action(&arb_conv, &[buyer_comm_addr, SELLER_COMM_ADDR, ARB_COMM_ADDR])]
+        }
         "/register" => {
-            println!("\x1b[90m注册身份: role=EVALUATOR addr={ARB_ADDR}\x1b[0m");
-            vec![register_identity_action("EVALUATOR", ARB_ADDR)]
+            println!("\x1b[90m注册身份: role=EVALUATOR agent_id={ARB_AGENT_ID} comm_addr={ARB_COMM_ADDR}\x1b[0m");
+            vec![register_identity_action("EVALUATOR", ARB_AGENT_ID, ARB_COMM_ADDR)]
         }
         "/lookup" => {
             let r = parts.get(1).copied().unwrap_or("");
@@ -81,7 +88,7 @@ fn pick_job_id(
     job_id
 }
 
-fn run_menu(tx: mpsc::UnboundedSender<String>, buyer_addr: String) {
+fn run_menu(tx: mpsc::UnboundedSender<String>, buyer_agent_id: String, buyer_comm_addr: String) {
     use dialoguer::{theme::ColorfulTheme, Input, Select};
     let theme = ColorfulTheme::default();
     let mut known_tasks: Vec<String> = vec![];
@@ -89,6 +96,7 @@ fn run_menu(tx: mpsc::UnboundedSender<String>, buyer_addr: String) {
     let items = [
         "/resolve buyer    裁定买家胜",
         "/resolve seller   裁定卖家胜",
+        "/join             加入仲裁会话",
         "/convid           查看会话 ID",
         "/register         注册 ERC-8004 身份",
         "/lookup           查询角色列表",
@@ -119,10 +127,14 @@ fn run_menu(tx: mpsc::UnboundedSender<String>, buyer_addr: String) {
             }
             2 => {
                 let tid = pick_job_id(&theme, &mut known_tasks);
+                format!("/join {tid}")
+            }
+            3 => {
+                let tid = pick_job_id(&theme, &mut known_tasks);
                 format!("/convid {tid}")
             }
-            3 => "/register".to_string(),
-            4 => {
+            4 => "/register".to_string(),
+            5 => {
                 let role = Select::with_theme(&theme)
                     .with_prompt("查询角色")
                     .items(&["buyer (REQUESTER)", "seller (PROVIDER)", "arbitrator (EVALUATOR)"])
@@ -131,7 +143,7 @@ fn run_menu(tx: mpsc::UnboundedSender<String>, buyer_addr: String) {
                     .unwrap_or(0);
                 ["/lookup buyer", "/lookup seller", "/lookup arbitrator"][role].to_string()
             }
-            5 => {
+            6 => {
                 let conv_id: String = Input::with_theme(&theme).with_prompt("convId").interact_text().unwrap_or_default();
                 let content: String = Input::with_theme(&theme).with_prompt("内容").interact_text().unwrap_or_default();
                 format!("send {conv_id} {content}")
@@ -139,7 +151,7 @@ fn run_menu(tx: mpsc::UnboundedSender<String>, buyer_addr: String) {
             _ => { println!("再见！"); std::process::exit(0); }
         };
 
-        let actions = parse_command(&cmd, &buyer_addr);
+        let actions = parse_command(&cmd, &buyer_agent_id, &buyer_comm_addr);
         for action in &actions {
             if action["action"].as_str() == Some("Send") {
                 let conv_id = action["conversation_id"].as_str().unwrap_or("");
@@ -153,10 +165,11 @@ fn run_menu(tx: mpsc::UnboundedSender<String>, buyer_addr: String) {
 
 #[tokio::main]
 async fn main() {
-    let buyer_addr = parse_buyer_addr_arg().unwrap_or_else(|| MOCK_BUYER_ADDR.to_string());
+    let buyer_comm_addr = parse_buyer_addr_arg().unwrap_or_else(|| MOCK_BUYER_COMM_ADDR.to_string());
+    let buyer_agent_id  = parse_buyer_agent_id_arg().unwrap_or_else(|| MOCK_BUYER_AGENT_ID.to_string());
 
-    println!("\x1b[33m[仲裁者]\x1b[0m 钱包地址: {ARB_ADDR}");
-    println!("\x1b[90m买家地址: {buyer_addr}\x1b[0m");
+    println!("\x1b[33m[仲裁者]\x1b[0m agent_id: {ARB_AGENT_ID}  comm_addr: {ARB_COMM_ADDR}");
+    println!("\x1b[90m买家 agent_id: {buyer_agent_id}  comm_addr: {buyer_comm_addr}\x1b[0m");
     println!("连接到 {SERVER_URL} ...");
 
     let (ws, _) = connect_async(SERVER_URL)
@@ -164,7 +177,7 @@ async fn main() {
         .expect("无法连接 ws-mock server，请先启动 server");
     let (mut sink, mut stream) = ws.split();
 
-    sink.send(Message::Text(register_ws_action(ARB_ADDR).to_string().into()))
+    sink.send(Message::Text(register_ws_action(ARB_COMM_ADDR).to_string().into()))
         .await
         .unwrap();
     println!("\x1b[32m✓ 已连接并注册\x1b[0m");
@@ -177,16 +190,16 @@ async fn main() {
         }
     });
 
-    let buyer_addr_recv = buyer_addr.clone();
+    let buyer_comm_addr_recv = buyer_comm_addr.clone();
     tokio::spawn(async move {
         while let Some(Ok(Message::Text(text))) = stream.next().await {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                handle_inbound(&v, "\x1b[33m仲裁者\x1b[0m > ", &buyer_addr_recv);
+                handle_inbound(&v, "\x1b[33m仲裁者\x1b[0m > ", &buyer_comm_addr_recv);
             }
         }
     });
 
-    tokio::task::spawn_blocking(move || run_menu(tx, buyer_addr))
+    tokio::task::spawn_blocking(move || run_menu(tx, buyer_agent_id, buyer_comm_addr))
         .await
         .ok();
 }

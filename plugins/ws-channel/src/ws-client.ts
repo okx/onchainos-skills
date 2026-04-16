@@ -162,8 +162,12 @@ export class WsMockClient {
     this.ws.send(JSON.stringify({ action: "Send", conversation_id: conversationId, payload }));
   }
 
-  /** Register agent identity with mock identity system */
-  registerIdentity(role: string, addr?: string, metadata?: Record<string, unknown>): Promise<string> {
+  /** Register agent identity with mock identity system.
+   * @param role     ERC-8004 role: REQUESTER / PROVIDER / EVALUATOR
+   * @param agentId  Logical agent identifier used in conv_id
+   * @param commAddr WS routing address (used for message delivery)
+   */
+  registerIdentity(role: string, agentId: string, commAddr: string, metadata?: Record<string, unknown>): Promise<void> {
     return new Promise((resolve, reject) => {
       if (this.ws?.readyState !== WebSocket.OPEN) {
         reject(new Error("[ws-channel] not connected"));
@@ -174,13 +178,12 @@ export class WsMockClient {
           const msg = JSON.parse(data.toString());
           if (msg.type === "identity_registered" && msg.role === role) {
             this.ws!.off("message", onMsg);
-            resolve(msg.addr as string);
+            resolve();
           }
         } catch {}
       };
       this.ws.on("message", onMsg);
-      const payload: Record<string, unknown> = { action: "RegisterIdentity", role };
-      if (addr) payload.addr = addr;
+      const payload: Record<string, unknown> = { action: "RegisterIdentity", role, agent_id: agentId, comm_addr: commAddr };
       if (metadata) payload.metadata = metadata;
       this.ws.send(JSON.stringify(payload));
       setTimeout(() => { this.ws?.off("message", onMsg); reject(new Error("identity_register timeout")); }, 5000);

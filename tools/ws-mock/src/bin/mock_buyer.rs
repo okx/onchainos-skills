@@ -7,34 +7,35 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use ws_mock::{
     conv_id_arb, conv_id_bs, handle_inbound, lookup_role_action, register_identity_action,
-    register_ws_action, send_action, MOCK_BUYER_ADDR, SERVER_URL,
+    register_ws_action, send_action, MOCK_BUYER_AGENT_ID, MOCK_BUYER_COMM_ADDR, SERVER_URL,
 };
 
-const MY_ADDR: &str = MOCK_BUYER_ADDR;
+const MY_AGENT_ID: &str  = MOCK_BUYER_AGENT_ID;
+const MY_COMM_ADDR: &str = MOCK_BUYER_COMM_ADDR;
 
 fn parse_command(input: &str) -> Vec<serde_json::Value> {
     let parts: Vec<&str> = input.trim().splitn(3, ' ').collect();
     match parts[0] {
         "/confirm" => {
             let job_id = parts.get(1).copied().unwrap_or("unknown");
-            let conv_id = conv_id_bs(job_id, MY_ADDR);
+            let conv_id = conv_id_bs(job_id, MY_AGENT_ID);
             vec![send_action(&conv_id, "TASK_CONFIRM", "验收通过，任务完成。", Some(job_id))]
         }
         "/reject" => {
             let job_id = parts.get(1).copied().unwrap_or("unknown");
             let reason = parts.get(2).copied().unwrap_or("不符合要求");
-            let conv_id = conv_id_bs(job_id, MY_ADDR);
+            let conv_id = conv_id_bs(job_id, MY_AGENT_ID);
             vec![send_action(&conv_id, "TASK_REJECT", reason, Some(job_id))]
         }
         "/convid" => {
             let job_id = parts.get(1).copied().unwrap_or("jobId");
-            println!("\x1b[90m买卖会话: {}\x1b[0m", conv_id_bs(job_id, MY_ADDR));
-            println!("\x1b[90m仲裁会话: {}\x1b[0m", conv_id_arb(job_id, MY_ADDR));
+            println!("\x1b[90m买卖会话: {}\x1b[0m", conv_id_bs(job_id, MY_AGENT_ID));
+            println!("\x1b[90m仲裁会话: {}\x1b[0m", conv_id_arb(job_id, MY_AGENT_ID));
             vec![]
         }
         "/register" => {
-            println!("\x1b[90m注册身份: role=REQUESTER addr={MY_ADDR}\x1b[0m");
-            vec![register_identity_action("REQUESTER", MY_ADDR)]
+            println!("\x1b[90m注册身份: role=REQUESTER agent_id={MY_AGENT_ID} comm_addr={MY_COMM_ADDR}\x1b[0m");
+            vec![register_identity_action("REQUESTER", MY_AGENT_ID, MY_COMM_ADDR)]
         }
         "/lookup" => {
             let r = parts.get(1).copied().unwrap_or("");
@@ -160,7 +161,7 @@ fn run_menu(tx: mpsc::UnboundedSender<String>) {
 
 #[tokio::main]
 async fn main() {
-    println!("\x1b[34m[买家]\x1b[0m 钱包地址: {MY_ADDR}");
+    println!("\x1b[34m[买家]\x1b[0m agent_id: {MY_AGENT_ID}  comm_addr: {MY_COMM_ADDR}");
     println!("连接到 {SERVER_URL} ...");
 
     let (ws, _) = connect_async(SERVER_URL)
@@ -168,7 +169,7 @@ async fn main() {
         .expect("无法连接 ws-mock server，请先启动 server");
     let (mut sink, mut stream) = ws.split();
 
-    sink.send(Message::Text(register_ws_action(MY_ADDR).to_string().into()))
+    sink.send(Message::Text(register_ws_action(MY_COMM_ADDR).to_string().into()))
         .await
         .unwrap();
     println!("\x1b[32m✓ 已连接并注册\x1b[0m");
@@ -184,7 +185,7 @@ async fn main() {
     tokio::spawn(async move {
         while let Some(Ok(Message::Text(text))) = stream.next().await {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                handle_inbound(&v, "\x1b[34m买家\x1b[0m > ", MY_ADDR);
+                handle_inbound(&v, "\x1b[34m买家\x1b[0m > ", MY_COMM_ADDR);
             }
         }
     });

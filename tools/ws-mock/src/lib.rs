@@ -5,21 +5,24 @@ use std::io::{self, Write};
 
 pub const SERVER_URL: &str = "ws://127.0.0.1:9000";
 
-/// 固定 mock 钱包地址
-pub const SELLER_ADDR: &str    = "0xSeller000000000000000000000000000000001";
-pub const ARB_ADDR: &str       = "0xArbitrator0000000000000000000000000001";
-pub const MOCK_BUYER_ADDR: &str = "0xMockBuyer00000000000000000000000000001";
+// ── WS 路由地址（comm_addr，用于 Register / JoinConversation 参与者列表）──────
+pub const SELLER_COMM_ADDR: &str     = "0xSeller000000000000000000000000000000001";
+pub const ARB_COMM_ADDR: &str        = "0xArbitrator0000000000000000000000000001";
+pub const MOCK_BUYER_COMM_ADDR: &str = "0xMockBuyer00000000000000000000000000001";
 
-/// 确定性买卖双方会话 ID（两地址排序后拼接）
-pub fn conv_id_bs(job_id: &str, buyer_addr: &str) -> String {
-    format!("conv-{job_id}-{buyer_addr}-{SELLER_ADDR}")
+// ── Agent 逻辑身份（agentId，用于 conv_id / RegisterIdentity）────────────────
+pub const SELLER_AGENT_ID: &str      = "mock-seller-agent-001";
+pub const ARB_AGENT_ID: &str         = "mock-arbitrator-agent-001";
+pub const MOCK_BUYER_AGENT_ID: &str  = "mock-buyer-agent-001";
+
+/// 买卖双方会话 ID：买家 agentId 在前，卖家 agentId 在后
+pub fn conv_id_bs(job_id: &str, buyer_agent_id: &str) -> String {
+    format!("conv-{job_id}-{buyer_agent_id}-{SELLER_AGENT_ID}")
 }
 
-/// 确定性三方仲裁会话 ID（三地址排序后拼接）
-pub fn conv_id_arb(job_id: &str, buyer_addr: &str) -> String {
-    let mut addrs = [buyer_addr, SELLER_ADDR, ARB_ADDR];
-    addrs.sort();
-    format!("conv-arb-{job_id}-{}-{}-{}", addrs[0], addrs[1], addrs[2])
+/// 三方仲裁会话 ID
+pub fn conv_id_arb(job_id: &str, buyer_agent_id: &str) -> String {
+    format!("conv-arb-{job_id}-{buyer_agent_id}-{SELLER_AGENT_ID}-{ARB_AGENT_ID}")
 }
 
 pub fn join_conv_action(conv_id: &str, participants: &[&str]) -> serde_json::Value {
@@ -47,19 +50,25 @@ pub fn send_action(
     })
 }
 
-pub fn register_ws_action(addr: &str) -> serde_json::Value {
-    json!({ "action": "Register", "addr": addr })
+pub fn register_ws_action(comm_addr: &str) -> serde_json::Value {
+    json!({ "action": "Register", "addr": comm_addr })
 }
 
-pub fn register_identity_action(erc_role: &str, addr: &str) -> serde_json::Value {
-    json!({ "action": "RegisterIdentity", "role": erc_role, "addr": addr })
+/// 注册 ERC-8004 身份：agent_id 是逻辑标识，comm_addr 是 WS 路由地址
+pub fn register_identity_action(erc_role: &str, agent_id: &str, comm_addr: &str) -> serde_json::Value {
+    json!({
+        "action": "RegisterIdentity",
+        "role": erc_role,
+        "agent_id": agent_id,
+        "comm_addr": comm_addr
+    })
 }
 
 pub fn lookup_role_action(role: &str) -> serde_json::Value {
     json!({ "action": "LookupRole", "role": role })
 }
 
-/// 从命令行参数解析 `--buyer-addr` / `-b`
+/// 从命令行参数解析 `--buyer-addr` / `-b`（comm_addr）
 pub fn parse_buyer_addr_arg() -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
     for i in 0..args.len() {
@@ -70,17 +79,28 @@ pub fn parse_buyer_addr_arg() -> Option<String> {
     None
 }
 
-/// 地址到可读标签（buyer_addr 在运行时确定）
-pub fn addr_label<'a>(addr: &'a str, buyer_addr: &'a str) -> &'a str {
-    if addr == buyer_addr        { "买家" }
-    else if addr == SELLER_ADDR  { "卖家" }
-    else if addr == ARB_ADDR     { "仲裁者" }
-    else                         { addr }
+/// 从命令行参数解析 `--buyer-agent-id`（逻辑 agentId）
+pub fn parse_buyer_agent_id_arg() -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    for i in 0..args.len() {
+        if args[i] == "--buyer-agent-id" {
+            return args.get(i + 1).cloned();
+        }
+    }
+    None
+}
+
+/// comm_addr 到可读标签
+pub fn addr_label<'a>(addr: &'a str, buyer_comm_addr: &'a str) -> &'a str {
+    if addr == buyer_comm_addr       { "买家" }
+    else if addr == SELLER_COMM_ADDR { "卖家" }
+    else if addr == ARB_COMM_ADDR    { "仲裁者" }
+    else                             { addr }
 }
 
 /// 处理一条入站 WS JSON 帧：打印内容并重新显示提示符。
 /// msg_type == "registered" 时静默返回（连接确认噪音）。
-pub fn handle_inbound(v: &serde_json::Value, prompt: &str, buyer_addr: &str) {
+pub fn handle_inbound(v: &serde_json::Value, prompt: &str, buyer_comm_addr: &str) {
     let msg_type = v["type"].as_str().unwrap_or("");
     match msg_type {
         "registered" => return,
@@ -92,20 +112,22 @@ pub fn handle_inbound(v: &serde_json::Value, prompt: &str, buyer_addr: &str) {
         }
         "identity_registered" => {
             println!(
-                "\x1b[32m✓ 身份已注册: role={} addr={}\x1b[0m",
+                "\x1b[32m✓ 身份已注册: role={} agent_id={} comm_addr={}\x1b[0m",
                 v["role"].as_str().unwrap_or("?"),
-                v["addr"].as_str().unwrap_or("?"),
+                v["agent_id"].as_str().unwrap_or("?"),
+                v["comm_addr"].as_str().unwrap_or("?"),
             );
         }
         "addr_lookup" => {
-            let addr = v["addr"].as_str().unwrap_or("?");
+            let agent_id = v["agent_id"].as_str().unwrap_or("?");
             match v["identity"].as_object() {
                 Some(id) => println!(
-                    "\x1b[36m[地址查询] {} → role={}\x1b[0m",
-                    addr,
-                    id.get("role").and_then(|r| r.as_str()).unwrap_or("?")
+                    "\x1b[36m[身份查询] {} → role={} comm_addr={}\x1b[0m",
+                    agent_id,
+                    id.get("role").and_then(|r| r.as_str()).unwrap_or("?"),
+                    id.get("comm_addr").and_then(|r| r.as_str()).unwrap_or("?"),
                 ),
-                None => println!("\x1b[33m[地址查询] {} 未注册\x1b[0m", addr),
+                None => println!("\x1b[33m[身份查询] {} 未注册\x1b[0m", agent_id),
             }
         }
         "identity_lookup" | "identity_list" => {
@@ -115,7 +137,11 @@ pub fn handle_inbound(v: &serde_json::Value, prompt: &str, buyer_addr: &str) {
             println!("\x1b[36m[身份查询] role={role_q} 共 {count} 个:\x1b[0m");
             if let Some(arr) = v[field].as_array() {
                 for a in arr {
-                    println!("  addr={}", a["addr"].as_str().unwrap_or("?"));
+                    println!(
+                        "  agent_id={} comm_addr={}",
+                        a["agent_id"].as_str().unwrap_or("?"),
+                        a["comm_addr"].as_str().unwrap_or("?"),
+                    );
                 }
             }
         }
@@ -131,7 +157,7 @@ pub fn handle_inbound(v: &serde_json::Value, prompt: &str, buyer_addr: &str) {
             let content = v["payload"]["content"].as_str().unwrap_or(&payload_str);
             println!(
                 "\n\x1b[90m[收到]\x1b[0m \x1b[1m{}\x1b[0m \x1b[90m({}) conv:{}\x1b[0m\n  {}",
-                addr_label(from, buyer_addr),
+                addr_label(from, buyer_comm_addr),
                 payload_type,
                 &conv_id[..n],
                 content,
