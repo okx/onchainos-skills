@@ -552,7 +552,7 @@ impl ApiClient {
                 if self.doh.is_proxy() {
                     let _ = self.rebuild_http_client();
                 }
-                return Err(e).context("request failed (broadcast not retried)");
+                return Err(e).context("Network error during broadcast — transaction was NOT sent. Safe to retry the same command.");
             }
             Err(e) => return Err(e).context("request failed"),
         };
