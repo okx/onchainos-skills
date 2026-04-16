@@ -428,7 +428,7 @@ static TOKEN_MAP: LazyLock<HashMap<&str, HashMap<&str, &str>>> = LazyLock::new(|
 
 /// Resolve a token address using the chain-specific mapping table.
 /// Matching is case-insensitive. If no match is found, returns the original value unchanged.
-fn resolve_token_address(chain_index: &str, token: &str) -> String {
+pub(crate) fn resolve_token_address(chain_index: &str, token: &str) -> String {
     let key = token.to_ascii_lowercase();
     if let Some(chain_map) = TOKEN_MAP.get(chain_index) {
         if let Some(&resolved) = chain_map.get(key.as_str()) {
@@ -1340,7 +1340,7 @@ fn extract_approve_calldata(approve_data: &Value) -> Result<String> {
 
 /// Compare allowance (spendable) against required amount.
 /// Both are decimal strings in minimal units. Returns true if allowance < amount.
-fn is_allowance_insufficient(spendable: &str, amount: &str) -> bool {
+pub(crate) fn is_allowance_insufficient(spendable: &str, amount: &str) -> bool {
     // If spendable is very long (uint256 max approval = 78 digits), treat as sufficient.
     // This avoids u128 overflow for unlimited approvals.
     if spendable.len() > 38 {

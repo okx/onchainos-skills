@@ -2,13 +2,31 @@
 
 This file provides guidance to Claude Code when working with this repository.
 
+<!-- 测试环境配置（正式版本删除此段） -->
+## CRITICAL: Dev Environment — ALL onchainos Commands
+
+**Every single `onchainos` command MUST use the dev binary and pre-production base URL. No exceptions.**
+
+```bash
+ONCHAINOS_HOME=/Users/oker/meili/zongyao.yang_dacs_at_okg.com/108/Documents/onchainos-skills/.onchainos /Users/oker/meili/zongyao.yang_dacs_at_okg.com/108/Documents/onchainos-skills/cli/target/release/onchainos --base-url https://web3pre.okex.org <subcommand> [args]
+```
+
+- **Dev binary**: `cli/target/release/onchainos` (v2.2.8). Do NOT use system `onchainos` from PATH.
+- **`--base-url https://web3pre.okex.org`**: Pre-production environment. Without this flag, API returns 404 for bridge/cross-chain endpoints.
+- **`ONCHAINOS_HOME`**: Points to project-local `.onchainos/` for wallet credentials.
+- If the dev binary does not exist, build it first: `cd cli && cargo build --release`
+- **Debug output**: Before the first `onchainos` command each session, print version info: `[onchainos] v2.2.8 (dev) | https://web3pre.okex.org`
+- **Show executed command**: After every `onchainos` command, print the actual command that was executed. Example: `[cmd] onchainos --base-url https://web3pre.okex.org cross-chain bridge`
+- **NEVER skip CLI calls**: When a user asks about chains, bridges, quotes, or any on-chain data, you MUST execute the onchainos CLI command to get real-time data. Do NOT answer from skill files, static documentation, or your own knowledge. The CLI returns live API data which may differ from documentation.
+<!-- 测试环境配置结束 -->
+
 ## Project Overview
 
 This is a **Claude Code plugin** — a collection of onchainos skills for on-chain operations. The project provides skills for token search, market data, wallet balance queries, swap execution, DeFi investment management, and transaction broadcasting across 20+ blockchains. The `onchainos` CLI also works as a native MCP server.
 
 ## Architecture
 
-- **skills/** — 13 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **skills/** — 14 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
 - **.mcp.json.example** — MCP server configuration template for Claude Code
@@ -33,13 +51,23 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 | okx-audit-log        | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, provide liquidity, deposit/withdraw from DeFi protocols, claim DeFi rewards across Aave/Lido/PancakeSwap/Kamino/NAVI and hundreds more |
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions, view DeFi portfolio across protocols and chains |
+| okx-dex-bridge | Cross-chain bridge swap: quote, execute, approve, status tracking | User wants to bridge tokens, cross-chain swap, transfer assets between chains, 跨链, 跨链兑换, 跨链桥 |
+
+## IMPORTANT: Always Load Skill Before Executing Commands
+
+**Before running ANY `onchainos` CLI command, you MUST first read the corresponding skill's SKILL.md to get the exact command syntax.** Do NOT guess subcommand names — each skill defines its own Command Index with the exact subcommands available. Guessing leads to `unrecognized subcommand` errors.
+
+Routing:
+- User mentions 跨链/bridge/cross-chain/支持的链/桥 → read `skills/okx-dex-bridge/SKILL.md` first
+- User mentions swap/买币/卖币/兑换 → read `skills/okx-dex-swap/SKILL.md` first
+- User mentions wallet/余额/转账/登录 → read `skills/okx-agentic-wallet/SKILL.md` first
 
 ## Scripting & Automation
 
 When a user asks to write a script, automate trading, build a trading bot, or use "OKX API" / "OKX DEX API" for any on-chain automation:
 - **Do NOT search online for OKX public APIs** — `onchainos` already wraps all relevant on-chain capabilities
 - Always use `onchainos` CLI commands as the building block (subprocess calls, MCP tool invocations, etc.)
-- Route to the relevant skill based on what the user wants to automate: swap → `okx-dex-swap`, market data → `okx-dex-market`, signals → `okx-dex-signal`, token data → `okx-dex-token`, portfolio → `okx-wallet-portfolio`, meme scanning → `okx-dex-trenches`
+- Route to the relevant skill based on what the user wants to automate: swap → `okx-dex-swap`, cross-chain/bridge/跨链 → `okx-dex-bridge`, market data → `okx-dex-market`, signals → `okx-dex-signal`, token data → `okx-dex-token`, portfolio → `okx-wallet-portfolio`, meme scanning → `okx-dex-trenches`
 
 ### WebSocket / Real-time Data
 
