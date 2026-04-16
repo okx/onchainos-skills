@@ -784,7 +784,11 @@ fn token_holders_with_limit() {
         "--limit", "3",
     ]);
     let data = assert_ok_and_extract_data(&output);
-    assert!(data.is_array() || data.is_object(), "expected holder data: {data}");
+    if let Some(arr) = data.as_array() {
+        assert!(arr.len() <= 3, "expected at most 3 holders, got {}", arr.len());
+    } else {
+        assert!(data.is_object(), "expected array or object: {data}");
+    }
 }
 
 #[test]
@@ -796,7 +800,11 @@ fn token_top_trader_with_limit() {
         "--limit", "3",
     ]);
     let data = assert_ok_and_extract_data(&output);
-    assert!(data.is_array() || data.is_object(), "expected trader data: {data}");
+    if let Some(arr) = data.as_array() {
+        assert!(arr.len() <= 3, "expected at most 3 traders, got {}", arr.len());
+    } else {
+        assert!(data.is_object(), "expected array or object: {data}");
+    }
 }
 
 #[test]
@@ -804,17 +812,27 @@ fn token_search_cursor_pagination() {
     // Page 1 — fetch 2 results
     let page1 = run_with_retry(&["token", "search", "--query", "USDC", "--limit", "2"]);
     let arr1 = assert_ok_and_extract_data(&page1);
-    let items = arr1.as_array().expect("expected array on page 1");
-    assert!(!items.is_empty(), "page 1 should return results");
+    let items1 = arr1.as_array().expect("expected array on page 1");
+    assert!(!items1.is_empty(), "page 1 should return results");
     // Extract cursor from last item
-    let cursor = items.last().and_then(|v| v.get("cursor")).and_then(|c| c.as_str()).unwrap_or("");
+    let cursor = items1.last().and_then(|v| v.get("cursor")).and_then(|c| c.as_str()).unwrap_or("");
     if cursor.is_empty() {
         return; // no more pages — pass
     }
+    // Collect page 1 cursors for overlap check
+    let cursors1: Vec<&str> = items1.iter()
+        .filter_map(|v| v.get("cursor").and_then(|c| c.as_str()))
+        .collect();
     // Page 2 — use cursor
     let page2 = run_with_retry(&["token", "search", "--query", "USDC", "--limit", "2", "--cursor", cursor]);
     let arr2 = assert_ok_and_extract_data(&page2);
-    assert!(arr2.is_array(), "page 2 should return array: {arr2}");
+    let items2 = arr2.as_array().expect("page 2 should return array");
+    // Assert no overlap — page 2 items must have different cursors from page 1
+    for item in items2 {
+        if let Some(c) = item.get("cursor").and_then(|c| c.as_str()) {
+            assert!(!cursors1.contains(&c), "cursor {c} appeared in both page 1 and page 2 — pagination is not advancing");
+        }
+    }
 }
 
 // ─── cluster-overview ───────────────────────────────────────────────
