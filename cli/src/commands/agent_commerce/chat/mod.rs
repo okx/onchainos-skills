@@ -8,6 +8,14 @@ use crate::output;
 
 const UPLOAD_PATH: &str = "/priapi/v1/aieco/im/attachments/xmtp/encrypted/upload";
 const DOWNLOAD_PATH: &str = "/priapi/v1/aieco/im/attachments/xmtp/encrypted/download";
+const SENSITIVE_WORDS_PATH: &str = "/priapi/v1/aieco/im/risk/a2a/sensitive/word/list";
+const MESSAGE_ELIGIBLE_PATH: &str = "/priapi/v1/aieco/im/message/eligible";
+const SYSTEM_CONFIG_PATH: &str = "/priapi/v1/aieco/im/xmtp/system-config";
+
+/// Build the agenticId extra header slice from an agent ID string.
+fn agentic_header(agent_id: &str) -> [(&str, &str); 1] {
+    [("agenticId", agent_id)]
+}
 
 #[derive(Subcommand)]
 pub enum ChatCommand {
@@ -18,7 +26,7 @@ pub enum ChatCommand {
         #[arg(long)]
         file: String,
 
-        /// Agent ID
+        /// Agent ID (sent as agenticId header)
         #[arg(long)]
         agent_id: String,
 
@@ -33,13 +41,54 @@ pub enum ChatCommand {
         #[arg(long)]
         file_key: String,
 
-        /// Agent ID
+        /// Agent ID (sent as agenticId header)
         #[arg(long)]
         agent_id: String,
 
         /// Output file path to write the downloaded bytes
         #[arg(long)]
         output: String,
+    },
+    /// Get sensitive word list for A2A risk filtering
+    #[command(name = "sensitive-words")]
+    SensitiveWords {
+        /// Agent ID (sent as agenticId header)
+        #[arg(long)]
+        agent_id: String,
+    },
+    /// Check if a message is eligible to be sent
+    #[command(name = "message-eligible")]
+    MessageEligible {
+        /// Agent ID (sent as agenticId header)
+        #[arg(long)]
+        agent_id: String,
+
+        /// Client agent ID
+        #[arg(long)]
+        client_agent_id: String,
+
+        /// Provider agent ID
+        #[arg(long)]
+        provider_agent_id: String,
+
+        /// Job ID
+        #[arg(long)]
+        job_id: String,
+
+        /// Group ID
+        #[arg(long)]
+        group_id: String,
+
+        /// Direction: client_to_provider or provider_to_client
+        #[arg(long)]
+        direction: String,
+    },
+    /// Get XMTP system config (system account addresses)
+    #[command(name = "system-config")]
+    SystemConfig {
+        /// Agent ID (sent as agenticId header)
+        #[arg(long)]
+        agent_id: String,
     },
 }
 
@@ -55,6 +104,39 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
             agent_id,
             output: output_path,
         } => cmd_download(ctx, &file_key, &agent_id, &output_path).await,
+        ChatCommand::SensitiveWords { agent_id } => {
+            let client = ctx.client_async().await?;
+            output::success(fetch_sensitive_words(&client, &agent_id).await?);
+            Ok(())
+        }
+        ChatCommand::MessageEligible {
+            agent_id,
+            client_agent_id,
+            provider_agent_id,
+            job_id,
+            group_id,
+            direction,
+        } => {
+            let client = ctx.client_async().await?;
+            output::success(
+                fetch_message_eligible(
+                    &client,
+                    &agent_id,
+                    &client_agent_id,
+                    &provider_agent_id,
+                    &job_id,
+                    &group_id,
+                    &direction,
+                )
+                .await?,
+            );
+            Ok(())
+        }
+        ChatCommand::SystemConfig { agent_id } => {
+            let client = ctx.client_async().await?;
+            output::success(fetch_system_config(&client, &agent_id).await?);
+            Ok(())
+        }
     }
 }
 
@@ -62,7 +144,7 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
 
 /// POST /priapi/v1/aieco/im/attachments/xmtp/encrypted/upload — multipart form
 ///
-/// Sends file bytes, agentId, and jobId.
+/// Sends file bytes and jobId as form fields, agenticId as header.
 /// Returns the response data containing `fileKey` and `fileSize`.
 pub async fn fetch_upload(
     client: &ApiClient,
@@ -78,10 +160,10 @@ pub async fn fetch_upload(
 
     let form = reqwest::multipart::Form::new()
         .part("file", file_part)
-        .text("agentId", agent_id.to_string())
         .text("jobId", job_id.to_string());
 
-    client.post_multipart(UPLOAD_PATH, form).await
+    let headers = agentic_header(agent_id);
+    client.post_multipart(UPLOAD_PATH, form, Some(&headers)).await
 }
 
 async fn cmd_upload(
@@ -122,15 +204,16 @@ async fn cmd_upload(
 
 /// GET /priapi/v1/aieco/im/attachments/xmtp/encrypted/download
 ///
-/// Downloads encrypted file bytes by fileKey and agentId.
+/// Downloads encrypted file bytes by fileKey, with agenticId as header.
 /// Returns raw bytes (not JSON).
 pub async fn fetch_download(
     client: &ApiClient,
     file_key: &str,
     agent_id: &str,
 ) -> Result<Vec<u8>> {
-    let query = [("fileKey", file_key), ("agentId", agent_id)];
-    client.get_bytes(DOWNLOAD_PATH, &query).await
+    let query = [("fileKey", file_key)];
+    let headers = agentic_header(agent_id);
+    client.get_bytes(DOWNLOAD_PATH, &query, Some(&headers)).await
 }
 
 async fn cmd_download(
@@ -156,6 +239,64 @@ async fn cmd_download(
     }));
 
     Ok(())
+}
+
+// ── Sensitive Words ──────────────────────────────────────────────────
+
+/// GET /priapi/v1/aieco/im/risk/a2a/sensitive/word/list
+///
+/// Returns the sensitive word checklist for A2A risk filtering.
+/// agenticId sent as header.
+pub async fn fetch_sensitive_words(client: &ApiClient, agent_id: &str) -> Result<Value> {
+    let headers = agentic_header(agent_id);
+    client
+        .get_with_headers(SENSITIVE_WORDS_PATH, &[], Some(&headers))
+        .await
+}
+
+// ── Message Eligible ─────────────────────────────────────────────────
+
+/// GET /priapi/v1/aieco/im/message/eligible
+///
+/// Checks whether a message is eligible to be sent between agents.
+/// agenticId sent as header.
+#[allow(clippy::too_many_arguments)]
+pub async fn fetch_message_eligible(
+    client: &ApiClient,
+    agent_id: &str,
+    client_agent_id: &str,
+    provider_agent_id: &str,
+    job_id: &str,
+    group_id: &str,
+    direction: &str,
+) -> Result<Value> {
+    let headers = agentic_header(agent_id);
+    client
+        .get_with_headers(
+            MESSAGE_ELIGIBLE_PATH,
+            &[
+                ("clientAgentId", client_agent_id),
+                ("providerAgentId", provider_agent_id),
+                ("jobId", job_id),
+                ("groupId", group_id),
+                ("direction", direction),
+            ],
+            Some(&headers),
+        )
+        .await
+}
+
+// ── System Config ────────────────────────────────────────────────────
+
+/// GET /priapi/v1/aieco/im/xmtp/system-config
+///
+/// Returns XMTP system config including system account sender addresses.
+/// agenticId sent as header.
+pub async fn fetch_system_config(client: &ApiClient, agent_id: &str) -> Result<Value> {
+    let headers = agentic_header(agent_id);
+    client
+        .get_with_headers(SYSTEM_CONFIG_PATH, &[], Some(&headers))
+        .await
 }
 
 #[cfg(test)]
@@ -272,6 +413,96 @@ mod tests {
             "--file-key", "abc",
             "--agent-id", "agent_123",
         ]);
+        assert!(result.is_err());
+    }
+
+    // ── Sensitive Words CLI parsing ──────────────────────────────────
+
+    #[test]
+    fn cli_sensitive_words_required_args() {
+        let cli = TestCli::parse_from([
+            "test", "sensitive-words",
+            "--agent-id", "agent_123",
+        ]);
+        match cli.command {
+            ChatCommand::SensitiveWords { agent_id } => {
+                assert_eq!(agent_id, "agent_123");
+            }
+            _ => panic!("expected SensitiveWords"),
+        }
+    }
+
+    #[test]
+    fn cli_sensitive_words_missing_agent_id() {
+        let result = TestCli::try_parse_from(["test", "sensitive-words"]);
+        assert!(result.is_err());
+    }
+
+    // ── Message Eligible CLI parsing ─────────────────────────────────
+
+    #[test]
+    fn cli_message_eligible_all_required_args() {
+        let cli = TestCli::parse_from([
+            "test", "message-eligible",
+            "--agent-id", "agent_1",
+            "--client-agent-id", "client_1",
+            "--provider-agent-id", "provider_1",
+            "--job-id", "task_001",
+            "--group-id", "group_1",
+            "--direction", "client_to_provider",
+        ]);
+        match cli.command {
+            ChatCommand::MessageEligible {
+                agent_id,
+                client_agent_id,
+                provider_agent_id,
+                job_id,
+                group_id,
+                direction,
+            } => {
+                assert_eq!(agent_id, "agent_1");
+                assert_eq!(client_agent_id, "client_1");
+                assert_eq!(provider_agent_id, "provider_1");
+                assert_eq!(job_id, "task_001");
+                assert_eq!(group_id, "group_1");
+                assert_eq!(direction, "client_to_provider");
+            }
+            _ => panic!("expected MessageEligible"),
+        }
+    }
+
+    #[test]
+    fn cli_message_eligible_missing_direction() {
+        let result = TestCli::try_parse_from([
+            "test", "message-eligible",
+            "--agent-id", "a",
+            "--client-agent-id", "c",
+            "--provider-agent-id", "p",
+            "--job-id", "j",
+            "--group-id", "g",
+        ]);
+        assert!(result.is_err());
+    }
+
+    // ── System Config CLI parsing ────────────────────────────────────
+
+    #[test]
+    fn cli_system_config_required_args() {
+        let cli = TestCli::parse_from([
+            "test", "system-config",
+            "--agent-id", "agent_123",
+        ]);
+        match cli.command {
+            ChatCommand::SystemConfig { agent_id } => {
+                assert_eq!(agent_id, "agent_123");
+            }
+            _ => panic!("expected SystemConfig"),
+        }
+    }
+
+    #[test]
+    fn cli_system_config_missing_agent_id() {
+        let result = TestCli::try_parse_from(["test", "system-config"]);
         assert!(result.is_err());
     }
 }

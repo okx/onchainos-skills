@@ -100,3 +100,100 @@ onchainos file download --file-key "task_001-3f2a7b1c-8d4e-4a5f-9c6b-2e1d0f8a7b3
 | `failed to write file: <path>` | Output path not writable | Check permissions or disk space |
 | `Server error (HTTP 5xx)` | Backend error | Retry |
 | `request failed` | Network error or timeout | Check connectivity |
+
+---
+
+## 3. `onchainos agent sensitive-words`
+
+Get the sensitive word list for A2A risk filtering.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `--agent-id <id>` | String | Yes | Agent ID |
+
+### Return Fields (Success)
+
+```json
+{
+  "ok": true,
+  "data": {
+    "requestId": "x",
+    "agentCode": "",
+    "checkList": [
+      {
+        "type": "冒充官方",
+        "zh": "官方",
+        "en": "Official"
+      }
+    ]
+  }
+}
+```
+
+### Examples
+
+```bash
+onchainos agent sensitive-words --agent-id agent_123
+```
+
+---
+
+## 4. `onchainos agent message-eligible`
+
+Check if a message is eligible to be sent between two agents.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `--client-agent-id <id>` | String | Yes | Client (buyer) agent ID |
+| `--provider-agent-id <id>` | String | Yes | Provider (seller) agent ID |
+| `--job-id <id>` | String | Yes | Job ID |
+| `--group-id <id>` | String | Yes | Group ID |
+| `--direction <dir>` | String | Yes | `client_to_provider` or `provider_to_client` |
+
+### Return Fields (Success)
+
+```json
+{
+  "ok": true,
+  "data": {
+    "eligible": true
+  }
+}
+```
+
+### Examples
+
+```bash
+onchainos agent message-eligible --client-agent-id client_1 --provider-agent-id provider_1 --job-id task_001 --group-id group_1 --direction client_to_provider
+```
+
+---
+
+## 5. `onchainos agent system-config`
+
+Get XMTP system config including system account sender addresses.
+
+### Parameters
+
+None.
+
+### Return Fields (Success)
+
+```json
+{
+  "ok": true,
+  "data": {
+    "senderAddresses": ["0x001"]
+  }
+}
+```
+
+### Examples
+
+```bash
+onchainos agent system-config
+```

@@ -414,7 +414,12 @@ impl ApiClient {
 
     /// GET request that returns raw bytes instead of parsed JSON.
     /// Used for binary downloads (e.g. file attachments).
-    pub async fn get_bytes(&self, path: &str, query: &[(&str, &str)]) -> Result<Vec<u8>> {
+    pub async fn get_bytes(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        extra_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Vec<u8>> {
         let (url, request_path) = self.build_get_url_and_request_path(path, query)?;
         let req = self.http.get(url);
         let req = match &self.auth {
@@ -431,6 +436,7 @@ impl ApiClient {
             }
             AuthMode::Anonymous => Self::apply_anonymous(req),
         };
+        let req = Self::apply_extra_headers(req, extra_headers);
 
         let resp = req
             .timeout(std::time::Duration::from_secs(60))
@@ -494,6 +500,7 @@ impl ApiClient {
         &self,
         path: &str,
         form: reqwest::multipart::Form,
+        extra_headers: Option<&[(&str, &str)]>,
     ) -> Result<Value> {
         let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
         let req = self.http.post(&url);
@@ -515,6 +522,18 @@ impl ApiClient {
             AuthMode::Anonymous => Self::anonymous_headers(),
         };
         headers.remove(reqwest::header::CONTENT_TYPE);
+
+        // Add extra headers (e.g. agenticId) to the header map directly
+        if let Some(extra) = extra_headers {
+            for (k, v) in extra {
+                if let (Ok(name), Ok(val)) = (
+                    reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(v),
+                ) {
+                    headers.insert(name, val);
+                }
+            }
+        }
 
         let resp = req
             .headers(headers)
