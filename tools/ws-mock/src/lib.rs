@@ -12,12 +12,7 @@ pub const MOCK_BUYER_ADDR: &str = "0xMockBuyer00000000000000000000000000001";
 
 /// 确定性买卖双方会话 ID（两地址排序后拼接）
 pub fn conv_id_bs(job_id: &str, buyer_addr: &str) -> String {
-    let (a, b) = if buyer_addr <= SELLER_ADDR {
-        (buyer_addr, SELLER_ADDR)
-    } else {
-        (SELLER_ADDR, buyer_addr)
-    };
-    format!("conv-{job_id}-{a}-{b}")
+    format!("conv-{job_id}-{buyer_addr}-{SELLER_ADDR}")
 }
 
 /// 确定性三方仲裁会话 ID（三地址排序后拼接）
