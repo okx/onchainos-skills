@@ -757,6 +757,66 @@ fn token_trades_missing_address_fails() {
         .stderr(predicate::str::contains("required"));
 }
 
+// ─── pagination (limit / cursor) ────────────────────────────────────
+
+#[test]
+fn token_search_with_limit() {
+    let output = run_with_retry(&["token", "search", "--query", "USDC", "--limit", "3"]);
+    let data = assert_ok_and_extract_data(&output);
+    let arr = data.as_array().expect("expected array: {data}");
+    assert!(arr.len() <= 3, "expected at most 3 results, got {}", arr.len());
+}
+
+#[test]
+fn token_hot_tokens_with_limit() {
+    let output = run_with_retry(&["token", "hot-tokens", "--limit", "3"]);
+    let data = assert_ok_and_extract_data(&output);
+    let arr = data.as_array().expect("expected array: {data}");
+    assert!(arr.len() <= 3, "expected at most 3 results, got {}", arr.len());
+}
+
+#[test]
+fn token_holders_with_limit() {
+    let output = run_with_retry(&[
+        "token", "holders",
+        "--address", tokens::ETH_USDC,
+        "--chain", "ethereum",
+        "--limit", "3",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(data.is_array() || data.is_object(), "expected holder data: {data}");
+}
+
+#[test]
+fn token_top_trader_with_limit() {
+    let output = run_with_retry(&[
+        "token", "top-trader",
+        "--address", tokens::SOL_WSOL,
+        "--chain", "solana",
+        "--limit", "3",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert!(data.is_array() || data.is_object(), "expected trader data: {data}");
+}
+
+#[test]
+fn token_search_cursor_pagination() {
+    // Page 1 — fetch 2 results
+    let page1 = run_with_retry(&["token", "search", "--query", "USDC", "--limit", "2"]);
+    let arr1 = assert_ok_and_extract_data(&page1);
+    let items = arr1.as_array().expect("expected array on page 1");
+    assert!(!items.is_empty(), "page 1 should return results");
+    // Extract cursor from last item
+    let cursor = items.last().and_then(|v| v.get("cursor")).and_then(|c| c.as_str()).unwrap_or("");
+    if cursor.is_empty() {
+        return; // no more pages — pass
+    }
+    // Page 2 — use cursor
+    let page2 = run_with_retry(&["token", "search", "--query", "USDC", "--limit", "2", "--cursor", cursor]);
+    let arr2 = assert_ok_and_extract_data(&page2);
+    assert!(arr2.is_array(), "page 2 should return array: {arr2}");
+}
+
 // ─── cluster-overview ───────────────────────────────────────────────
 
 #[test]
