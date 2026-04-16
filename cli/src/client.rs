@@ -458,7 +458,7 @@ impl ApiClient {
                         // Rebuild the entire request with potentially new URL
                         return self.get_with_headers(path, query, extra_headers).await;
                     }
-                    return Err(e).context("request failed");
+                    return Err(e).context("Network unavailable — check your connection and try again");
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
@@ -509,7 +509,7 @@ impl ApiClient {
                         self.rebuild_http_client()?;
                         return self.post_with_headers(path, body, extra_headers).await;
                     }
-                    return Err(e).context("request failed");
+                    return Err(e).context("Network unavailable — check your connection and try again");
                 }
                 Err(e) => return Err(e).context("request failed"),
             };

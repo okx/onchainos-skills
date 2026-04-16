@@ -209,7 +209,7 @@ impl DohManager {
         match addr.to_socket_addrs() {
             Ok(mut addrs) => addrs.next().map(|a| a.ip()),
             Err(e) => {
-                eprintln!("[doh] failed to resolve CNAME {}: {}", ip_or_domain, e);
+                eprintln!("[doh] proxy node {ip_or_domain} unavailable, falling back to direct connection");
                 None
             }
         }

@@ -313,7 +313,7 @@ impl WalletApiClient {
                         self.rebuild_http_client()?;
                         return self.post_public(path, body).await;
                     }
-                    return Err(e).context("request failed");
+                    return Err(e).context("Network unavailable — check your connection and try again");
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
@@ -372,7 +372,7 @@ impl WalletApiClient {
                         self.rebuild_http_client()?;
                         return self.post_authed_with_headers(path, access_token, body, extra_headers).await;
                     }
-                    return Err(e).context("request failed");
+                    return Err(e).context("Network unavailable — check your connection and try again");
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
@@ -488,7 +488,7 @@ impl WalletApiClient {
                         self.rebuild_http_client()?;
                         return self.get_authed(path, access_token, query).await;
                     }
-                    return Err(e).context("request failed");
+                    return Err(e).context("Network unavailable — check your connection and try again");
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
