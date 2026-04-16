@@ -86,7 +86,7 @@ onchainos signal chains
 Get latest buy-direction token signals sorted descending by time.
 
 ```bash
-onchainos signal list --chain <chain> [options]
+onchainos signal list --chain <chain> [--limit <n>] [--cursor <cursor>] [options]
 ```
 
 | Param | Required | Default | Description |
@@ -102,6 +102,8 @@ onchainos signal list --chain <chain> [options]
 | `--max-market-cap-usd` | No | - | Maximum token market cap in USD |
 | `--min-liquidity-usd` | No | - | Minimum token liquidity in USD |
 | `--max-liquidity-usd` | No | - | Maximum token liquidity in USD |
+| `--limit` | No | `20` | Number of results per page (max 100) |
+| `--cursor` | No | - | Pagination cursor — pass the `cursor` field from the last item of the previous response to get the next page |
 
 **Return fields**:
 
@@ -122,6 +124,7 @@ onchainos signal list --chain <chain> [options]
 | `token.marketCapUsd` | String | Token market cap in USD |
 | `token.holders` | String | Number of token holders |
 | `token.top10HolderPercent` | String | Percentage of supply held by top 10 holders |
+| `cursor` | String | Per-item pagination cursor — pass the `cursor` of the **last item** as the next request's `--cursor` to fetch the next page |
 
 ## Input / Output Examples
 

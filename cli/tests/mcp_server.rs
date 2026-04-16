@@ -237,7 +237,6 @@ fn mcp_tools_list_returns_all_tools() {
         "token_cluster_overview",
         "token_cluster_top_holders",
         "token_cluster_list",
-        "token_trending",
     ];
     for name in expected {
         assert!(
@@ -278,18 +277,7 @@ fn mcp_token_info() {
     assert!(data.is_array(), "expected array: {data}");
 }
 
-#[test]
-fn mcp_token_trending() {
-    let mut client = McpClient::start();
-    let result = client.call_tool("token_trending", json!({}));
-    if result.is_rate_limited() {
-        return;
-    }
-    let data = result.api_data();
-    assert!(data.is_array(), "expected array: {data}");
-}
-
-// ── Market tools ───────────────────────────────────────────────────────
+// ── Market tools ──────────────────────────────────────────────────────
 
 #[test]
 fn mcp_market_price() {
