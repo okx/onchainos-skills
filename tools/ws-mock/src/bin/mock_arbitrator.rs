@@ -16,18 +16,18 @@ fn parse_command(input: &str, buyer_addr: &str) -> Vec<serde_json::Value> {
     let parts: Vec<&str> = input.trim().splitn(3, ' ').collect();
     match parts[0] {
         "/resolve" => {
-            let task_id = parts.get(1).copied().unwrap_or("unknown");
+            let job_id = parts.get(1).copied().unwrap_or("unknown");
             let winner = parts.get(2).copied().unwrap_or("unknown");
-            let arb_conv = conv_id_arb(task_id, buyer_addr);
-            let content = format!("仲裁结果: {winner} 胜，task_id: {task_id}");
-            let mut action = send_action(&arb_conv, "TASK_RESOLVE", &content, Some(task_id));
+            let arb_conv = conv_id_arb(job_id, buyer_addr);
+            let content = format!("仲裁结果: {winner} 胜，jobId: {job_id}");
+            let mut action = send_action(&arb_conv, "TASK_RESOLVE", &content, Some(job_id));
             action["payload"]["winner"] = json!(winner);
             vec![action]
         }
         "/convid" => {
-            let task_id = parts.get(1).copied().unwrap_or("task_id");
-            println!("\x1b[90m买卖会话: {}\x1b[0m", conv_id_bs(task_id, buyer_addr));
-            println!("\x1b[90m仲裁会话: {}\x1b[0m", conv_id_arb(task_id, buyer_addr));
+            let job_id = parts.get(1).copied().unwrap_or("jobId");
+            println!("\x1b[90m买卖会话: {}\x1b[0m", conv_id_bs(job_id, buyer_addr));
+            println!("\x1b[90m仲裁会话: {}\x1b[0m", conv_id_arb(job_id, buyer_addr));
             vec![]
         }
         "/register" => {
@@ -53,32 +53,32 @@ fn parse_command(input: &str, buyer_addr: &str) -> Vec<serde_json::Value> {
     }
 }
 
-fn pick_task_id(
+fn pick_job_id(
     theme: &dialoguer::theme::ColorfulTheme,
     known: &mut Vec<String>,
 ) -> String {
     use dialoguer::{Input, Select};
-    let task_id = if known.is_empty() {
-        Input::with_theme(theme).with_prompt("task_id").interact_text().unwrap_or_default()
+    let job_id = if known.is_empty() {
+        Input::with_theme(theme).with_prompt("jobId").interact_text().unwrap_or_default()
     } else {
         let mut items: Vec<String> = known.clone();
-        items.push("[ 输入新 task_id ]".to_string());
+        items.push("[ 输入新 jobId ]".to_string());
         let sel = Select::with_theme(theme)
-            .with_prompt("选择 task_id")
+            .with_prompt("选择 jobId")
             .items(&items)
             .default(0)
             .interact()
             .unwrap_or(items.len() - 1);
         if sel == items.len() - 1 {
-            Input::with_theme(theme).with_prompt("新 task_id").interact_text().unwrap_or_default()
+            Input::with_theme(theme).with_prompt("新 jobId").interact_text().unwrap_or_default()
         } else {
             items[sel].clone()
         }
     };
-    if !task_id.is_empty() && !known.contains(&task_id) {
-        known.push(task_id.clone());
+    if !job_id.is_empty() && !known.contains(&job_id) {
+        known.push(job_id.clone());
     }
-    task_id
+    job_id
 }
 
 fn run_menu(tx: mpsc::UnboundedSender<String>, buyer_addr: String) {
@@ -110,15 +110,15 @@ fn run_menu(tx: mpsc::UnboundedSender<String>, buyer_addr: String) {
 
         let cmd = match sel {
             0 => {
-                let tid = pick_task_id(&theme, &mut known_tasks);
+                let tid = pick_job_id(&theme, &mut known_tasks);
                 format!("/resolve {tid} buyer")
             }
             1 => {
-                let tid = pick_task_id(&theme, &mut known_tasks);
+                let tid = pick_job_id(&theme, &mut known_tasks);
                 format!("/resolve {tid} seller")
             }
             2 => {
-                let tid = pick_task_id(&theme, &mut known_tasks);
+                let tid = pick_job_id(&theme, &mut known_tasks);
                 format!("/convid {tid}")
             }
             3 => "/register".to_string(),

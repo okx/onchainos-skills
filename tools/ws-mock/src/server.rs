@@ -75,7 +75,8 @@ async fn handle_connection(stream: tokio::net::TcpStream, registry: Registry, co
     let ws = accept_async(stream).await.unwrap();
     let (mut sink, mut source) = ws.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
-    let mut my_addr: Option<String> = None;
+    // All addresses registered by this connection (may have multiple after wallet switches).
+    let mut my_addrs: Vec<String> = vec![];
 
     let forward = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
@@ -89,7 +90,7 @@ async fn handle_connection(stream: tokio::net::TcpStream, registry: Registry, co
                 Ok(ClientMsg::Register { addr }) => {
                     println!("[server] registered: {addr}");
                     registry.insert(addr.clone(), tx.clone());
-                    my_addr = Some(addr.clone());
+                    if !my_addrs.contains(&addr) { my_addrs.push(addr.clone()); }
                     let ack = serde_json::json!({ "type": "registered", "addr": addr });
                     let _ = tx.send(Message::Text(ack.to_string().into()));
                 }
@@ -100,7 +101,7 @@ async fn handle_connection(stream: tokio::net::TcpStream, registry: Registry, co
                     let _ = tx.send(Message::Text(ack.to_string().into()));
                 }
                 Ok(ClientMsg::Send { conversation_id, payload }) => {
-                    let from = my_addr.clone().unwrap_or("unknown".into());
+                    let from = my_addrs.last().cloned().unwrap_or("unknown".into());
                     let payload_str = payload.to_string();
                     let preview: String = payload_str.chars().take(120).collect();
                     println!("[server] {from} → conv:{conversation_id}: {preview}");
@@ -171,9 +172,11 @@ async fn handle_connection(stream: tokio::net::TcpStream, registry: Registry, co
             }
         }
     }
-    if let Some(addr) = my_addr {
-        registry.remove(&addr);
-        println!("[server] disconnected: {addr}");
+    for addr in &my_addrs {
+        registry.remove(addr);
+    }
+    if !my_addrs.is_empty() {
+        println!("[server] disconnected, removed addrs: {:?}", my_addrs);
     }
     forward.abort();
 }

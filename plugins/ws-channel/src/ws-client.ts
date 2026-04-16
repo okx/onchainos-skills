@@ -8,7 +8,7 @@ export interface WsEnvelope {
 
 export interface TaskPayload {
   type: string;
-  task_id?: string;
+  jobId?: string;
   content?: string;
   [key: string]: unknown;
 }
@@ -19,11 +19,15 @@ export class WsMockClient {
   private ws: WebSocket | null = null;
   private handler: MessageHandler | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The address used as `from` when sending — updated by register(). */
+  private activeAddr: string;
 
   constructor(
     private readonly serverUrl: string,
     private readonly myAddr: string,
-  ) {}
+  ) {
+    this.activeAddr = myAddr;
+  }
 
   /** 连接并等待注册完成，返回后可安全调用 lookupAddr 等方法 */
   connectAndRegister(): Promise<void> {
@@ -106,6 +110,33 @@ export class WsMockClient {
 
     this.ws.on("error", (err) => {
       console.error("[ws-channel] error:", err.message);
+    });
+  }
+
+  /**
+   * Dynamically register an additional wallet address on the same WS connection.
+   * Useful when the user switches wallets after startup.
+   * The new address becomes the active `from` address for subsequent sends.
+   */
+  register(addr: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (this.ws?.readyState !== WebSocket.OPEN) {
+        reject(new Error("[ws-channel] not connected"));
+        return;
+      }
+      const onMsg = (data: WebSocket.RawData) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === "registered" && msg.addr === addr) {
+            this.ws!.off("message", onMsg);
+            this.activeAddr = addr;
+            resolve();
+          }
+        } catch {}
+      };
+      this.ws.on("message", onMsg);
+      this.ws.send(JSON.stringify({ action: "Register", addr }));
+      setTimeout(() => { this.ws?.off("message", onMsg); reject(new Error("register timeout")); }, 5000);
     });
   }
 

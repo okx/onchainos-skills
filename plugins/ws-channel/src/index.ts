@@ -165,7 +165,7 @@ interface WsMockAccount {
 interface PendingConv {
   conversationId: string;
   peerAddress: string;
-  taskId?: string;
+  jobId?: string;
   unreadCount: number;
   lastMessage: string;
   timestamp: number;
@@ -267,7 +267,7 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
           pendingConversations.set(envelope.conversation_id, {
             conversationId: envelope.conversation_id,
             peerAddress: envelope.from,
-            taskId: envelope.payload.task_id,
+            jobId: envelope.payload.jobId,
             unreadCount: (existing?.unreadCount ?? 0) + 1,
             lastMessage: String(envelope.payload.content ?? ""),
             timestamp: Date.now(),
@@ -372,7 +372,7 @@ function registerTools(api: OpenClawPluginApi): void {
       }
       activeConversations.add(next.conversationId);
       pendingConversations.delete(next.conversationId);
-      return toolResult({ status: "active", conversationId: next.conversationId, peerAddress: next.peerAddress, taskId: next.taskId });
+      return toolResult({ status: "active", conversationId: next.conversationId, peerAddress: next.peerAddress, jobId: next.jobId });
     },
   }));
 
@@ -385,19 +385,19 @@ function registerTools(api: OpenClawPluginApi): void {
       properties: {
         conversationId: { type: "string", description: "目标会话 ID（消息上下文 [会话: ...] 中的值）" },
         content: { type: "string", description: "消息内容" },
-        taskId: { type: "string", description: "关联任务 ID（可选）" },
+        jobId: { type: "string", description: "关联任务 ID（可选）" },
       },
       required: ["conversationId", "content"],
     },
     async execute(_toolCallId: string, params: unknown) {
-      const p = params as { conversationId: string; content: string; taskId?: string };
+      const p = params as { conversationId: string; content: string; jobId?: string };
       const client = getDefaultClient();
       if (!client) return toolResult({ error: "ws-mock client not connected" });
       if (!p.conversationId) return toolResult({ error: "conversationId is required" });
       client.sendToConv(p.conversationId, {
         type: "TEXT",
         content: p.content,
-        ...(p.taskId ? { task_id: p.taskId } : {}),
+        ...(p.jobId ? { jobId: p.jobId } : {}),
       });
       return toolResult({ messageId: `msg-${Date.now()}`, sentAt: new Date().toISOString() });
     },
@@ -420,6 +420,30 @@ function registerTools(api: OpenClawPluginApi): void {
       activeConversations.delete(p.conversationId);
       pendingConversations.delete(p.conversationId);
       return toolResult({ status: "closed", conversationId: p.conversationId, reason: p.reason ?? "completed" });
+    },
+  }));
+
+  api.registerTool((_ctx) => ({
+    name: "register_address",
+    label: "Register Address",
+    description: "向 WS mock 服务器注册新的钱包地址，用于切换钱包或添加多账户（买家/卖家各有独立地址时使用）。注册后该地址立即可以收发消息，并成为后续发送的 from 地址。",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        addr: { type: "string", description: "要注册的钱包地址（如切换后的新钱包地址）" },
+      },
+      required: ["addr"],
+    },
+    async execute(_toolCallId: string, params: unknown) {
+      const p = params as { addr: string };
+      const client = getDefaultClient();
+      if (!client) return toolResult({ error: "ws-mock client not connected" });
+      try {
+        await client.register(p.addr);
+        return toolResult({ addr: p.addr, registered: true });
+      } catch (e) {
+        return toolResult({ error: String(e) });
+      }
     },
   }));
 
@@ -473,7 +497,7 @@ function registerTools(api: OpenClawPluginApi): void {
     },
   }));
 
-  console.log("[ws-channel] 已注册 XMTP mock tools: xmtp_get_pending_list, xmtp_start_conversation, xmtp_send, xmtp_close_conversation, identity_register, identity_lookup");
+  console.log("[ws-channel] 已注册 XMTP mock tools: xmtp_get_pending_list, xmtp_start_conversation, xmtp_send, xmtp_close_conversation, register_address, identity_register, identity_lookup");
 }
 
 const plugin = {

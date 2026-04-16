@@ -11,20 +11,20 @@ pub const ARB_ADDR: &str       = "0xArbitrator0000000000000000000000000001";
 pub const MOCK_BUYER_ADDR: &str = "0xMockBuyer00000000000000000000000000001";
 
 /// 确定性买卖双方会话 ID（两地址排序后拼接）
-pub fn conv_id_bs(task_id: &str, buyer_addr: &str) -> String {
+pub fn conv_id_bs(job_id: &str, buyer_addr: &str) -> String {
     let (a, b) = if buyer_addr <= SELLER_ADDR {
         (buyer_addr, SELLER_ADDR)
     } else {
         (SELLER_ADDR, buyer_addr)
     };
-    format!("conv-{task_id}-{a}-{b}")
+    format!("conv-{job_id}-{a}-{b}")
 }
 
 /// 确定性三方仲裁会话 ID（三地址排序后拼接）
-pub fn conv_id_arb(task_id: &str, buyer_addr: &str) -> String {
+pub fn conv_id_arb(job_id: &str, buyer_addr: &str) -> String {
     let mut addrs = [buyer_addr, SELLER_ADDR, ARB_ADDR];
     addrs.sort();
-    format!("conv-arb-{task_id}-{}-{}-{}", addrs[0], addrs[1], addrs[2])
+    format!("conv-arb-{job_id}-{}-{}-{}", addrs[0], addrs[1], addrs[2])
 }
 
 pub fn join_conv_action(conv_id: &str, participants: &[&str]) -> serde_json::Value {
@@ -39,11 +39,11 @@ pub fn send_action(
     conv_id: &str,
     msg_type: &str,
     content: &str,
-    task_id: Option<&str>,
+    job_id: Option<&str>,
 ) -> serde_json::Value {
     let mut payload = json!({ "type": msg_type, "content": content });
-    if let Some(tid) = task_id {
-        payload["task_id"] = json!(tid);
+    if let Some(jid) = job_id {
+        payload["jobId"] = json!(jid);
     }
     json!({
         "action": "Send",
@@ -141,8 +141,8 @@ pub fn handle_inbound(v: &serde_json::Value, prompt: &str, buyer_addr: &str) {
                 &conv_id[..n],
                 content,
             );
-            if let Some(tid) = v["payload"]["task_id"].as_str() {
-                println!("  \x1b[90mtask_id: {tid}\x1b[0m");
+            if let Some(jid) = v["payload"]["jobId"].as_str() {
+                println!("  \x1b[90mjobId: {jid}\x1b[0m");
             }
         }
     }

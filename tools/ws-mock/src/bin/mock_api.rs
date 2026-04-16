@@ -72,8 +72,6 @@ fn status_str(s: i32) -> &'static str {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskRecord {
-    pub task_id: String,
-    /// 链上标识符，mock 中与 task_id 相同
     pub job_id: String,
     pub title: String,
     pub description: String,
@@ -367,7 +365,6 @@ async fn create_task(
 
     let job_id = gen_job_id();
     let task = TaskRecord {
-        task_id:               job_id.clone(),
         job_id:                job_id.clone(),
         title:                 req.title,
         description:           req.description.clone(),
@@ -720,7 +717,6 @@ async fn has_in_progress(
 fn seed_tasks(tasks: &DashMap<String, TaskRecord>) {
     let seeds = vec![
         TaskRecord {
-            task_id: "task-001".into(),
             job_id: "task-001".into(),
             title: "Solidity 合约安全审计".into(),
             description: "审计目标合约地址 0xABC123...，重点检查重入攻击（reentrancy）、权限控制（access control）和整数溢出漏洞。要求提交详细的审计报告，包含风险评级和修复建议。".into(),
@@ -745,7 +741,6 @@ fn seed_tasks(tasks: &DashMap<String, TaskRecord>) {
             update_time: "2026-04-15T08:00:00Z".into(),
         },
         TaskRecord {
-            task_id: "task-002".into(),
             job_id: "task-002".into(),
             title: "DEX 套利机器人开发".into(),
             description: "开发跨链 DEX 套利机器人，支持 Uniswap V3 和 PancakeSwap，使用 Rust 实现。要求完整的回测报告、单元测试和部署文档。".into(),
@@ -770,7 +765,6 @@ fn seed_tasks(tasks: &DashMap<String, TaskRecord>) {
             update_time: "2026-04-15T09:00:00Z".into(),
         },
         TaskRecord {
-            task_id: "task-003".into(),
             job_id: "task-003".into(),
             title: "XLayer 链上数据索引服务".into(),
             description: "为 XLayer 构建一个链上事件索引服务，监听指定合约的 Transfer/Swap 事件，写入 PostgreSQL，并提供 REST API 查询接口。要求支持断线重连、历史区块回扫、以及 OpenAPI 文档。".into(),
@@ -797,7 +791,7 @@ fn seed_tasks(tasks: &DashMap<String, TaskRecord>) {
     ];
     for t in seeds {
         // Don't overwrite tasks loaded from disk.
-        tasks.entry(t.task_id.clone()).or_insert(t);
+        tasks.entry(t.job_id.clone()).or_insert(t);
     }
 }
 

@@ -15,38 +15,38 @@ fn parse_command(input: &str, buyer_addr: &str) -> Vec<serde_json::Value> {
     let parts: Vec<&str> = input.trim().splitn(3, ' ').collect();
     match parts[0] {
         "/connect" => {
-            let task_id = parts.get(1).copied().unwrap_or("unknown");
-            let conv_id = conv_id_bs(task_id, buyer_addr);
+            let job_id = parts.get(1).copied().unwrap_or("unknown");
+            let conv_id = conv_id_bs(job_id, buyer_addr);
             println!("\x1b[90m创建会话: {conv_id}\x1b[0m");
             vec![
                 join_conv_action(&conv_id, &[buyer_addr, SELLER_ADDR]),
-                send_action(&conv_id, "TASK_INQUIRE", "你好，我对这个任务感兴趣，请介绍一下详情。", Some(task_id)),
+                send_action(&conv_id, "TASK_INQUIRE", "你好，我对这个任务感兴趣，请介绍一下详情。", Some(job_id)),
             ]
         }
         "/accept" => {
-            let task_id = parts.get(1).copied().unwrap_or("unknown");
-            let conv_id = conv_id_bs(task_id, buyer_addr);
-            vec![send_action(&conv_id, "TASK_ACCEPT", "我接单了，任务即将开始执行。", Some(task_id))]
+            let job_id = parts.get(1).copied().unwrap_or("unknown");
+            let conv_id = conv_id_bs(job_id, buyer_addr);
+            vec![send_action(&conv_id, "TASK_ACCEPT", "我接单了，任务即将开始执行。", Some(job_id))]
         }
         "/deliver" => {
-            let task_id = parts.get(1).copied().unwrap_or("unknown");
-            let conv_id = conv_id_bs(task_id, buyer_addr);
-            vec![send_action(&conv_id, "TASK_DELIVER", "任务已完成，请买家验收。", Some(task_id))]
+            let job_id = parts.get(1).copied().unwrap_or("unknown");
+            let conv_id = conv_id_bs(job_id, buyer_addr);
+            vec![send_action(&conv_id, "TASK_DELIVER", "任务已完成，请买家验收。", Some(job_id))]
         }
         "/dispute" => {
-            let task_id = parts.get(1).copied().unwrap_or("unknown");
+            let job_id = parts.get(1).copied().unwrap_or("unknown");
             let reason = parts.get(2).copied().unwrap_or("买家拒绝验收");
-            let arb_conv = conv_id_arb(task_id, buyer_addr);
+            let arb_conv = conv_id_arb(job_id, buyer_addr);
             println!("\x1b[90m创建仲裁会话: {arb_conv}\x1b[0m");
             vec![
                 join_conv_action(&arb_conv, &[buyer_addr, SELLER_ADDR, ARB_ADDR]),
-                send_action(&arb_conv, "TASK_DISPUTE", reason, Some(task_id)),
+                send_action(&arb_conv, "TASK_DISPUTE", reason, Some(job_id)),
             ]
         }
         "/convid" => {
-            let task_id = parts.get(1).copied().unwrap_or("task_id");
-            println!("\x1b[90m买卖会话: {}\x1b[0m", conv_id_bs(task_id, buyer_addr));
-            println!("\x1b[90m仲裁会话: {}\x1b[0m", conv_id_arb(task_id, buyer_addr));
+            let job_id = parts.get(1).copied().unwrap_or("jobId");
+            println!("\x1b[90m买卖会话: {}\x1b[0m", conv_id_bs(job_id, buyer_addr));
+            println!("\x1b[90m仲裁会话: {}\x1b[0m", conv_id_arb(job_id, buyer_addr));
             vec![]
         }
         "/register" => {
@@ -72,33 +72,33 @@ fn parse_command(input: &str, buyer_addr: &str) -> Vec<serde_json::Value> {
     }
 }
 
-/// 选择 task_id：已有的从列表点选，也可输入新的。
-fn pick_task_id(
+/// 选择 jobId：已有的从列表点选，也可输入新的。
+fn pick_job_id(
     theme: &dialoguer::theme::ColorfulTheme,
     known: &mut Vec<String>,
 ) -> String {
     use dialoguer::{Input, Select};
-    let task_id = if known.is_empty() {
-        Input::with_theme(theme).with_prompt("task_id").interact_text().unwrap_or_default()
+    let job_id = if known.is_empty() {
+        Input::with_theme(theme).with_prompt("jobId").interact_text().unwrap_or_default()
     } else {
         let mut items: Vec<String> = known.clone();
-        items.push("[ 输入新 task_id ]".to_string());
+        items.push("[ 输入新 jobId ]".to_string());
         let sel = Select::with_theme(theme)
-            .with_prompt("选择 task_id")
+            .with_prompt("选择 jobId")
             .items(&items)
             .default(0)
             .interact()
             .unwrap_or(items.len() - 1);
         if sel == items.len() - 1 {
-            Input::with_theme(theme).with_prompt("新 task_id").interact_text().unwrap_or_default()
+            Input::with_theme(theme).with_prompt("新 jobId").interact_text().unwrap_or_default()
         } else {
             items[sel].clone()
         }
     };
-    if !task_id.is_empty() && !known.contains(&task_id) {
-        known.push(task_id.clone());
+    if !job_id.is_empty() && !known.contains(&job_id) {
+        known.push(job_id.clone());
     }
-    task_id
+    job_id
 }
 
 fn run_menu(tx: mpsc::UnboundedSender<String>, buyer_addr: String) {
@@ -132,19 +132,19 @@ fn run_menu(tx: mpsc::UnboundedSender<String>, buyer_addr: String) {
 
         let cmd = match sel {
             0 => {
-                let tid = pick_task_id(&theme, &mut known_tasks);
+                let tid = pick_job_id(&theme, &mut known_tasks);
                 format!("/connect {tid}")
             }
             1 => {
-                let tid = pick_task_id(&theme, &mut known_tasks);
+                let tid = pick_job_id(&theme, &mut known_tasks);
                 format!("/accept {tid}")
             }
             2 => {
-                let tid = pick_task_id(&theme, &mut known_tasks);
+                let tid = pick_job_id(&theme, &mut known_tasks);
                 format!("/deliver {tid}")
             }
             3 => {
-                let tid = pick_task_id(&theme, &mut known_tasks);
+                let tid = pick_job_id(&theme, &mut known_tasks);
                 let reason: String = Input::with_theme(&theme)
                     .with_prompt("原因（可空）")
                     .allow_empty(true)
@@ -153,7 +153,7 @@ fn run_menu(tx: mpsc::UnboundedSender<String>, buyer_addr: String) {
                 if reason.is_empty() { format!("/dispute {tid}") } else { format!("/dispute {tid} {reason}") }
             }
             4 => {
-                let tid = pick_task_id(&theme, &mut known_tasks);
+                let tid = pick_job_id(&theme, &mut known_tasks);
                 format!("/convid {tid}")
             }
             5 => "/register".to_string(),
