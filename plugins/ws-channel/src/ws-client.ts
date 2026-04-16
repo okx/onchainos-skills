@@ -29,6 +29,9 @@ export class WsMockClient {
     this.activeAddr = myAddr;
   }
 
+  /** The comm_addr this client is registered with (WS routing address). */
+  get commAddr(): string { return this.myAddr; }
+
   /** 连接并等待注册完成，返回后可安全调用 lookupAddr 等方法 */
   connectAndRegister(): Promise<void> {
     return new Promise((resolve, reject) => {

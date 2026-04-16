@@ -155,6 +155,8 @@ const ROLE_PRESETS: Record<string, { systemPrompt: (addr: string) => string }> =
 interface WsMockAccount {
   accountId: string;
   walletAddr: string;
+  /** Logical agent identifier used in conv_id. Defaults to walletAddr if not configured. */
+  agentId: string;
   serverUrl: string;
   role: string;
   systemPrompt: string;
@@ -186,10 +188,12 @@ function resolveAccount(cfg: ClawdbotConfig, accountId?: string | null): WsMockA
   const resolvedAccountId = normalizeAccountId(accountId ?? DEFAULT_ACCOUNT_ID);
   // 显式 walletAddr 优先，否则按 accountId 查/创建（类比生产 SQLite agentId → communicationAddress）
   const walletAddr: string = s.walletAddr || resolveOrCreateWalletAddr(resolvedAccountId);
+  const agentId: string = s.agentId || walletAddr;
   const systemPrompt: string = s.systemPrompt || preset.systemPrompt(walletAddr);
   return {
     accountId: resolvedAccountId,
     walletAddr,
+    agentId,
     serverUrl: s.serverUrl ?? "ws://127.0.0.1:9000",
     role,
     systemPrompt,
@@ -241,20 +245,29 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
 
       // 若 config 未指定 role，连上后从服务端查角色
       let resolvedSystemPrompt = account.systemPrompt;
+      const roleToErc: Record<string, string> = {
+        buyer: "REQUESTER", seller: "PROVIDER", arbitrator: "EVALUATOR",
+      };
       try {
         await client.connectAndRegister();
-        if (!s.role) {
+        // 自动注册 ERC-8004 身份（agentId + commAddr）
+        const ercRole = roleToErc[account.role];
+        if (ercRole) {
+          await client.registerIdentity(ercRole, account.agentId, account.walletAddr).catch((e) => {
+            ctx.log?.warn?.(`[ws-channel] auto identity register failed: ${e}`);
+          });
+          ctx.log?.info?.(`[ws-channel] 身份已注册: role=${ercRole} agentId=${account.agentId} commAddr=${account.walletAddr}`);
+        } else {
+          // 无 role 配置时尝试从服务端查已注册身份
           const identity = await client.lookupAddr(account.walletAddr);
           if (identity?.role) {
-            const detectedRole = identity.role.toLowerCase();
+            const detectedRole = (identity.role as string).toLowerCase();
             const preset = ROLE_PRESETS[detectedRole];
             if (preset) resolvedSystemPrompt = s.systemPrompt || preset.systemPrompt(account.walletAddr);
-            ctx.log?.info?.(`[ws-channel] 自动识别角色: ${detectedRole} | 地址: ${account.walletAddr}`);
+            ctx.log?.info?.(`[ws-channel] 自动识别角色: ${detectedRole} | agentId: ${account.agentId}`);
           } else {
-            ctx.log?.info?.(`[ws-channel] 地址未注册，使用通用 prompt | 地址: ${account.walletAddr}`);
+            ctx.log?.info?.(`[ws-channel] 身份未注册，使用通用 prompt | agentId: ${account.agentId}`);
           }
-        } else {
-          ctx.log?.info?.(`[ws-channel] 角色: ${account.role} | 地址: ${account.walletAddr}`);
         }
       } catch (e) {
         ctx.log?.warn?.(`[ws-channel] 连接失败，将重试: ${e}`);
@@ -450,23 +463,25 @@ function registerTools(api: OpenClawPluginApi): void {
   api.registerTool((_ctx) => ({
     name: "identity_register",
     label: "Identity Register",
-    description: "向身份系统注册 Agent 身份（模拟 ERC-8004）。role 为 REQUESTER/PROVIDER/EVALUATOR。addr 可选，不传则由系统自动生成 TEE 通信地址。注册成功后返回分配的钱包地址。",
+    description: "向身份系统注册 Agent 身份（模拟 ERC-8004）。agentId 为逻辑标识（用于 conv_id），commAddr 自动使用当前连接地址。",
     parameters: {
       type: "object" as const,
       properties: {
         role: { type: "string", enum: ["REQUESTER", "PROVIDER", "EVALUATOR"], description: "Agent 角色" },
-        addr: { type: "string", description: "指定钱包地址（可选，不传则自动生成）" },
+        agentId: { type: "string", description: "逻辑 agentId（可选，不传则使用 commAddr）" },
         metadata: { type: "object", description: "附加元数据（可选）" },
       },
       required: ["role"],
     },
     async execute(_toolCallId: string, params: unknown) {
-      const p = params as { role: string; addr?: string; metadata?: Record<string, unknown> };
+      const p = params as { role: string; agentId?: string; metadata?: Record<string, unknown> };
       const client = getDefaultClient();
       if (!client) return toolResult({ error: "ws-mock client not connected" });
+      const commAddr = client.commAddr;
+      const agentId = p.agentId ?? commAddr;
       try {
-        const assignedAddr = await client.registerIdentity(p.role, p.addr, p.metadata);
-        return toolResult({ role: p.role, addr: assignedAddr, registered: true });
+        await client.registerIdentity(p.role, agentId, commAddr, p.metadata);
+        return toolResult({ role: p.role, agentId, commAddr, registered: true });
       } catch (e) {
         return toolResult({ error: String(e) });
       }

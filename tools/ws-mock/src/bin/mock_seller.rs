@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use ws_mock::{
     conv_id_arb, conv_id_bs, handle_inbound, join_conv_action, lookup_role_action,
-    parse_buyer_addr_arg, parse_buyer_agent_id_arg, register_identity_action, register_ws_action,
+    parse_buyer_agent_id_arg, register_identity_action, register_ws_action,
     send_action, ARB_COMM_ADDR, MOCK_BUYER_AGENT_ID, MOCK_BUYER_COMM_ADDR,
     SELLER_AGENT_ID, SELLER_COMM_ADDR, SERVER_URL,
 };
@@ -188,11 +188,10 @@ fn run_menu(tx: mpsc::UnboundedSender<String>, buyer_agent_id: String, buyer_com
 
 #[tokio::main]
 async fn main() {
-    let buyer_comm_addr  = parse_buyer_addr_arg().unwrap_or_else(|| MOCK_BUYER_COMM_ADDR.to_string());
-    let buyer_agent_id   = parse_buyer_agent_id_arg().unwrap_or_else(|| MOCK_BUYER_AGENT_ID.to_string());
+    let buyer_agent_id = parse_buyer_agent_id_arg().unwrap_or_else(|| MOCK_BUYER_AGENT_ID.to_string());
 
     println!("\x1b[32m[卖家]\x1b[0m agent_id: {SELLER_AGENT_ID}  comm_addr: {SELLER_COMM_ADDR}");
-    println!("\x1b[90m买家 agent_id: {buyer_agent_id}  comm_addr: {buyer_comm_addr}\x1b[0m");
+    println!("\x1b[90m买家 agent_id: {buyer_agent_id}\x1b[0m");
     println!("连接到 {SERVER_URL} ...");
 
     let (ws, _) = connect_async(SERVER_URL)
@@ -200,10 +199,39 @@ async fn main() {
         .expect("无法连接 ws-mock server，请先启动 server");
     let (mut sink, mut stream) = ws.split();
 
+    // 注册 WS 路由地址
     sink.send(Message::Text(register_ws_action(SELLER_COMM_ADDR).to_string().into()))
         .await
         .unwrap();
+    // 等待 registered ack
+    while let Some(Ok(Message::Text(text))) = stream.next().await {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+            if v["type"].as_str() == Some("registered") { break; }
+        }
+    }
     println!("\x1b[32m✓ 已连接并注册\x1b[0m");
+
+    // 通过 agentId 查买家的 comm_addr
+    sink.send(Message::Text(
+        serde_json::json!({ "action": "LookupAddr", "addr": buyer_agent_id }).to_string().into()
+    )).await.unwrap();
+    let buyer_comm_addr = {
+        let mut found = MOCK_BUYER_COMM_ADDR.to_string(); // fallback
+        while let Some(Ok(Message::Text(text))) = stream.next().await {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                if v["type"].as_str() == Some("addr_lookup") {
+                    if let Some(c) = v["identity"]["comm_addr"].as_str() {
+                        found = c.to_string();
+                        println!("\x1b[90m买家 comm_addr: {found}\x1b[0m");
+                    } else {
+                        println!("\x1b[33m⚠ 买家身份未注册，用默认 comm_addr: {found}\x1b[0m");
+                    }
+                    break;
+                }
+            }
+        }
+        found
+    };
 
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
 

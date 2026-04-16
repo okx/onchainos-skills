@@ -1,11 +1,38 @@
 {
+  "task-002": {
+    "jobId": "task-002",
+    "title": "DEX 套利机器人开发",
+    "description": "开发跨链 DEX 套利机器人，支持 Uniswap V3 和 PancakeSwap，使用 Rust 实现。要求完整的回测报告、单元测试和部署文档。",
+    "descriptionSummary": "Rust DEX 套利机器人，支持 Uni V3 和 PCS",
+    "tokenAddress": "0xUSDT0000000000000000000000000000000001",
+    "tokenAmount": "2000",
+    "paymentType": 0,
+    "openType": 1,
+    "status": 0,
+    "statusStr": "open",
+    "chainId": 196,
+    "minCreditScore": 80.0,
+    "designatedProvider": null,
+    "buyerAgentAddress": "0xMockBuyer00000000000000000000000000001",
+    "buyerAgentId": "mock-buyer-agent-001",
+    "providerAgentAddress": null,
+    "providerAgentId": null,
+    "groupId": null,
+    "evaluatorAddress": null,
+    "expireConfig": {
+      "acceptedExpireSec": 604800,
+      "openExpireSec": 172800
+    },
+    "createTime": "2026-04-15T09:00:00Z",
+    "updateTime": "2026-04-15T09:00:00Z"
+  },
   "0x3e8": {
     "jobId": "0x3e8",
-    "title": "智能合约安全审计",
-    "description": "对一个 ERC-20 合约进行完整的安全审计，输出审计报告\n\n验收标准：覆盖 OWASP Top 10，提供可复现的 PoC",
-    "descriptionSummary": "对一个 ERC-20 合约进行完整的安全审计，输出审计报告",
+    "title": "Solana DEX 套利机器人开发",
+    "description": "开发一个 Solana 链上 DEX 套利机器人，支持 Jupiter 和 Raydium\n\n验收标准：提供回测报告和实盘测试结果",
+    "descriptionSummary": "开发一个 Solana 链上 DEX 套利机器人，支持 Jupiter 和 Raydium",
     "tokenAddress": "0xUSDT0000000000000000000000000000000001",
-    "tokenAmount": "500",
+    "tokenAmount": "800",
     "paymentType": 0,
     "openType": 0,
     "status": 0,
@@ -20,11 +47,11 @@
     "groupId": null,
     "evaluatorAddress": null,
     "expireConfig": {
-      "acceptedExpireSec": 1296000,
-      "openExpireSec": 259200
+      "acceptedExpireSec": 604800,
+      "openExpireSec": 172800
     },
-    "createTime": "2026-04-30T06:11:25Z",
-    "updateTime": "2026-04-30T06:11:25Z"
+    "createTime": "2026-04-30T07:33:45Z",
+    "updateTime": "2026-04-30T07:33:45Z"
   },
   "task-001": {
     "jobId": "task-001",
@@ -53,33 +80,6 @@
     "createTime": "2026-04-15T08:00:00Z",
     "updateTime": "2026-04-15T08:00:00Z"
   },
-  "0x3e9": {
-    "jobId": "0x3e9",
-    "title": "以太坊 NFT 合约开发",
-    "description": "开发一个 ERC-721 合约，支持白名单铸造和公开铸造\n\n验收标准：Hardhat 测试覆盖率 > 90%，提供部署脚本",
-    "descriptionSummary": "开发一个 ERC-721 合约，支持白名单铸造和公开铸造",
-    "tokenAddress": "0xUSDT0000000000000000000000000000000001",
-    "tokenAmount": "300",
-    "paymentType": 0,
-    "openType": 0,
-    "status": 0,
-    "statusStr": "open",
-    "chainId": 196,
-    "minCreditScore": null,
-    "designatedProvider": null,
-    "buyerAgentAddress": "0xMockBuyer00000000000000000000000000001",
-    "buyerAgentId": "mock-buyer-agent-001",
-    "providerAgentAddress": null,
-    "providerAgentId": null,
-    "groupId": null,
-    "evaluatorAddress": null,
-    "expireConfig": {
-      "acceptedExpireSec": 864000,
-      "openExpireSec": 259200
-    },
-    "createTime": "2026-04-30T06:16:02Z",
-    "updateTime": "2026-04-30T06:16:02Z"
-  },
   "task-003": {
     "jobId": "task-003",
     "title": "XLayer 链上数据索引服务",
@@ -107,19 +107,19 @@
     "createTime": "2026-04-15T10:00:00Z",
     "updateTime": "2026-04-15T10:00:00Z"
   },
-  "task-002": {
-    "jobId": "task-002",
-    "title": "DEX 套利机器人开发",
-    "description": "开发跨链 DEX 套利机器人，支持 Uniswap V3 和 PancakeSwap，使用 Rust 实现。要求完整的回测报告、单元测试和部署文档。",
-    "descriptionSummary": "Rust DEX 套利机器人，支持 Uni V3 和 PCS",
+  "0x3e9": {
+    "jobId": "0x3e9",
+    "title": "以太坊 NFT 合约开发",
+    "description": "开发一个 ERC-721 合约，支持白名单铸造和公开铸造\n\n验收标准：Hardhat 测试覆盖率 > 90%，提供部署脚本",
+    "descriptionSummary": "开发一个 ERC-721 合约，支持白名单铸造和公开铸造",
     "tokenAddress": "0xUSDT0000000000000000000000000000000001",
-    "tokenAmount": "2000",
+    "tokenAmount": "300",
     "paymentType": 0,
-    "openType": 1,
+    "openType": 0,
     "status": 0,
     "statusStr": "open",
     "chainId": 196,
-    "minCreditScore": 80.0,
+    "minCreditScore": null,
     "designatedProvider": null,
     "buyerAgentAddress": "0xMockBuyer00000000000000000000000000001",
     "buyerAgentId": "mock-buyer-agent-001",
@@ -128,10 +128,10 @@
     "groupId": null,
     "evaluatorAddress": null,
     "expireConfig": {
-      "acceptedExpireSec": 604800,
-      "openExpireSec": 172800
+      "acceptedExpireSec": 864000,
+      "openExpireSec": 259200
     },
-    "createTime": "2026-04-15T09:00:00Z",
-    "updateTime": "2026-04-15T09:00:00Z"
+    "createTime": "2026-04-30T06:16:02Z",
+    "updateTime": "2026-04-30T06:16:02Z"
   }
 }
