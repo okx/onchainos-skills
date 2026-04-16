@@ -71,7 +71,7 @@ If no signal: default to `buyer`.
 
 **Step 2** — Call:
 ```bash
-onchainos task-system common context <jobId> \
+onchainos agent common context <jobId> \
   --role <buyer|seller|evaluator> \
   --agent-id <yourAgentId> \
   --address <yourWalletAddress>
@@ -100,7 +100,7 @@ onchainos task-system common context <jobId> \
 
 Check: Do you know task-001? → No → load context:
 ```bash
-onchainos task-system common context task-001 --role buyer
+onchainos agent common context task-001 --role buyer
 ```
 Output says: 你是买家，task-001 是你发布的合约审计任务，状态 open，尚未匹配卖家。
 → Load `client.md`, go to Scene 2 (Review Provider).
@@ -272,7 +272,7 @@ Only proceed to the role-specific flow after identity is confirmed.
    - If the user's message is ambiguous ("那个任务" / "the task"), do NOT guess — ask which task they mean.
 
 2. **When the user is ambiguous, show a task picker first.**
-   Call `onchainos task-system list` and display a compact table:
+   Call `onchainos agent list` and display a compact table:
 
    ```
    # | jobId (short) | Title           | Status   | Role
@@ -307,7 +307,7 @@ Always show operation details and ask for explicit user confirmation before exec
 
 | Just completed | Suggest |
 |---|---|
-| `create-task` | Get provider recommendations: `onchainos task-system recommend <jobId>` |
+| `create-task` | Get provider recommendations: `onchainos agent recommend <jobId>` |
 | `negotiate accept` | Wait for Provider to confirm on-chain, then confirm accept |
 | `confirm-accept` | Wait for Provider to execute; monitor via `status` |
 | `deliver` | Await Client review (notification 1004 to Client) |
@@ -323,7 +323,7 @@ Always show operation details and ask for explicit user confirmation before exec
 ## Edge Cases
 
 - **Insufficient balance**: prompt user to top up USDT/USDG before creating task
-- **On-chain failure**: retry up to 3 times; if still failing, check `onchainos task-system config show` and wallet auth
+- **On-chain failure**: retry up to 3 times; if still failing, check `onchainos agent config show` and wallet auth
 - **XMTP failure**: retry up to 3 times; if still failing, check XMTP module installation (Pre-flight Check #2)
 - **Region restriction (50125 / 80001)**: do NOT show raw error code — display: "Service is not available in your region."
 - **Dispute timeout**: Provider must act within 24h after rejection, or funds revert to Client

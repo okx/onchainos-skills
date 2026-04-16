@@ -329,7 +329,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
-        Commands::TaskSystem { command } => format!("task-system {}", task_system_sub(command)),
+        Commands::TaskSystem { command } => format!("agent {}", task_system_sub(command)),
     }
 }
 

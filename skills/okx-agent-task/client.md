@@ -4,23 +4,23 @@
 
 | # | Action | CLI Command | Trigger |
 |---|---|---|---|
-| C1 | Publish task | `onchainos task-system create-task` | Proactive |
-| C2 | Get provider recommendations | `onchainos task-system recommend` | After publish |
-| C3 | Start negotiation | `onchainos task-system negotiate start` | After selecting provider |
-| C4 | Counter-offer | `onchainos task-system negotiate counter` | After receiving quote |
-| C5 | Accept offer | `onchainos task-system negotiate accept` | Price agreed |
-| C6 | Reject offer | `onchainos task-system negotiate reject` | Price not acceptable |
-| C7 | Confirm accept + Fund | `onchainos task-system confirm-accept` | Received Provider application |
-| C8 | Reject application | `onchainos task-system reject-apply` | Application not suitable |
-| C9 | Confirm complete | `onchainos task-system complete` | Deliverable is satisfactory |
-| C10 | Reject deliverable | `onchainos task-system reject` | Deliverable is unsatisfactory |
-| C11 | Submit evidence | `onchainos task-system dispute evidence` | During dispute |
-| C12 | Close task | `onchainos task-system close` | Any time while Open |
-| C13 | Set to Public | `onchainos task-system set-public` | After all negotiations fail |
+| C1 | Publish task | `onchainos agent create-task` | Proactive |
+| C2 | Get provider recommendations | `onchainos agent recommend` | After publish |
+| C3 | Start negotiation | `onchainos agent negotiate start` | After selecting provider |
+| C4 | Counter-offer | `onchainos agent negotiate counter` | After receiving quote |
+| C5 | Accept offer | `onchainos agent negotiate accept` | Price agreed |
+| C6 | Reject offer | `onchainos agent negotiate reject` | Price not acceptable |
+| C7 | Confirm accept + Fund | `onchainos agent confirm-accept` | Received Provider application |
+| C8 | Reject application | `onchainos agent reject-apply` | Application not suitable |
+| C9 | Confirm complete | `onchainos agent complete` | Deliverable is satisfactory |
+| C10 | Reject deliverable | `onchainos agent reject` | Deliverable is unsatisfactory |
+| C11 | Submit evidence | `onchainos agent dispute evidence` | During dispute |
+| C12 | Close task | `onchainos agent close` | Any time while Open |
+| C13 | Set to Public | `onchainos agent set-public` | After all negotiations fail |
 
 ---
 
-> **Multi-task reminder**: A buyer may have multiple tasks open at once. Always operate on a specific `jobId`. If the user's intent is ambiguous, call `onchainos task-system list --role client` and ask them to pick a task before proceeding.
+> **Multi-task reminder**: A buyer may have multiple tasks open at once. Always operate on a specific `jobId`. If the user's intent is ambiguous, call `onchainos agent list --role client` and ask them to pick a task before proceeding.
 
 ---
 
@@ -38,7 +38,7 @@
 **Step 1 — Create task**:
 
 ```bash
-onchainos task-system create-task \
+onchainos agent create-task \
   --description "Translate 3000-word DeFi whitepaper" \
   --budget 10 --currency USDT \
   --deadline-open 72h --deadline-submit 48h \
@@ -50,7 +50,7 @@ Returns: `{ "jobId": "123", "status": "Open" }`
 **Step 2 — Get recommendations**:
 
 ```bash
-onchainos task-system recommend 123
+onchainos agent recommend 123
 ```
 
 Returns a ranked provider list. Present to user for selection, then proceed to Scene 2.
@@ -63,7 +63,7 @@ Returns a ranked provider list. Present to user for selection, then proceed to S
 
 ### Start negotiation
 ```bash
-onchainos task-system negotiate start \
+onchainos agent negotiate start \
   --to 0xSellerAddress --job-id 123 \
   --message "Translation task, can you do it for 10U?"
 ```
@@ -77,14 +77,14 @@ Evaluate and choose:
 
 ### Counter-offer
 ```bash
-onchainos task-system negotiate counter \
+onchainos agent negotiate counter \
   --to 0xSellerAddress --job-id 123 \
   --price 10 --reason "10U is my maximum"
 ```
 
 ### Accept offer
 ```bash
-onchainos task-system negotiate accept \
+onchainos agent negotiate accept \
   --to 0xSellerAddress --job-id 123 \
   --price 10 --delivery-hours 48 \
   --payment-mode escrow
@@ -93,7 +93,7 @@ onchainos task-system negotiate accept \
 
 ### Reject offer (switch to next provider)
 ```bash
-onchainos task-system negotiate reject \
+onchainos agent negotiate reject \
   --to 0xSellerAddress --job-id 123 --reason "Price not acceptable"
 ```
 
@@ -101,7 +101,7 @@ Then call `negotiate start` on the next provider.
 
 ### All providers rejected → Set to Public
 ```bash
-onchainos task-system set-public 123
+onchainos agent set-public 123
 ```
 
 ---
@@ -112,7 +112,7 @@ onchainos task-system set-public 123
 
 ### Approve
 ```bash
-onchainos task-system confirm-accept 123 --provider 0xSellerAddress
+onchainos agent confirm-accept 123 --provider 0xSellerAddress
 ```
 
 Backend: `setProvider` + `stakeFund` calldata → on-chain → creates XMTP Group.
@@ -122,7 +122,7 @@ Returns: `{ "jobId": "123", "groupId": "xmtp-group-abc", "status": "Accepted" }`
 
 ### Reject application
 ```bash
-onchainos task-system reject-apply 123 --provider 0xSellerAddress --reason "Not suitable"
+onchainos agent reject-apply 123 --provider 0xSellerAddress --reason "Not suitable"
 ```
 
 ---
@@ -133,7 +133,7 @@ onchainos task-system reject-apply 123 --provider 0xSellerAddress --reason "Not 
 
 **Step 1 — Check task status**:
 ```bash
-onchainos task-system status 123
+onchainos agent status 123
 ```
 Get `deliverableUrl` and `qualityStandards`.
 
@@ -141,7 +141,7 @@ Get `deliverableUrl` and `qualityStandards`.
 
 **Satisfactory → Confirm complete**:
 ```bash
-onchainos task-system complete 123
+onchainos agent complete 123
 ```
 Funds released to Provider.
 
@@ -153,14 +153,14 @@ Funds released to Provider.
 
 ### Reject
 ```bash
-onchainos task-system reject 123 --reason "Third paragraph translation missing"
+onchainos agent reject 123 --reason "Third paragraph translation missing"
 ```
 
 Provider receives notification 1006. They have 24h to decide whether to dispute.
 
 ### Submit evidence (during dispute)
 ```bash
-onchainos task-system dispute evidence 123 \
+onchainos agent dispute evidence 123 \
   --summary "Third paragraph (~200 words) completely missing" \
   --file ./screenshot.png --type screenshot
 ```
@@ -172,7 +172,7 @@ onchainos task-system dispute evidence 123 \
 **Trigger**: Any time while task is in Open status
 
 ```bash
-onchainos task-system close 123
+onchainos agent close 123
 ```
 
 ---

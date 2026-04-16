@@ -17,8 +17,8 @@ pub enum CommonCommand {
     /// 查询任务上下文，输出供大模型使用的结构化自然语言描述
     ///
     /// 示例：
-    ///   onchainos task-system context task-001 --role buyer
-    ///   onchainos task-system context task-001 --role seller --agent-id mock-seller-001
+    ///   onchainos agent context task-001 --role buyer
+    ///   onchainos agent context task-001 --role seller --agent-id mock-seller-001
     Context {
         /// 任务 ID（jobId），如 task-001 或 0x1a2b...
         job_id: String,
@@ -115,37 +115,37 @@ fn payment_type_desc(pt: i32) -> &'static str {
 fn available_actions(role: &str, status: &str, job_id: &str) -> Vec<String> {
     match (role, status) {
         ("buyer", "open") => vec![
-            format!("onchainos task-system recommend {job_id}      # 查看推荐卖家"),
-            format!("onchainos task-system confirm-accept {job_id} --provider <addr>  # 接受卖家并注资"),
-            format!("onchainos task-system close {job_id}          # 关闭任务"),
-            format!("onchainos task-system set-public {job_id}     # 转为公开任务"),
+            format!("onchainos agent recommend {job_id}      # 查看推荐卖家"),
+            format!("onchainos agent confirm-accept {job_id} --provider <addr>  # 接受卖家并注资"),
+            format!("onchainos agent close {job_id}          # 关闭任务"),
+            format!("onchainos agent set-public {job_id}     # 转为公开任务"),
         ],
         ("buyer", "submitted") => vec![
-            format!("onchainos task-system complete {job_id}       # 验收通过，释放款项"),
-            format!("onchainos task-system reject {job_id} --reason <reason>  # 拒绝验收"),
+            format!("onchainos agent complete {job_id}       # 验收通过，释放款项"),
+            format!("onchainos agent reject {job_id} --reason <reason>  # 拒绝验收"),
         ],
         ("buyer", "disputed") => vec![
-            format!("onchainos task-system dispute evidence {job_id} --summary <摘要>  # 提交证据"),
+            format!("onchainos agent dispute evidence {job_id} --summary <摘要>  # 提交证据"),
         ],
         ("seller", "open") => vec![
-            format!("onchainos task-system confirm {job_id}        # 确认接单（链上）"),
+            format!("onchainos agent confirm {job_id}        # 确认接单（链上）"),
         ],
         ("seller", "accepted") => vec![
-            format!("onchainos task-system deliver {job_id} --file <deliverable>  # 提交交付"),
+            format!("onchainos agent deliver {job_id} --file <deliverable>  # 提交交付"),
         ],
         ("seller", "refused") => vec![
-            format!("onchainos task-system dispute raise {job_id} --reason <reason>  # 申请仲裁"),
+            format!("onchainos agent dispute raise {job_id} --reason <reason>  # 申请仲裁"),
         ],
         ("seller", "disputed") => vec![
-            format!("onchainos task-system dispute evidence {job_id} --summary <摘要>  # 提交证据"),
+            format!("onchainos agent dispute evidence {job_id} --summary <摘要>  # 提交证据"),
         ],
         ("evaluator", "disputed") => vec![
-            format!("onchainos task-system dispute info {job_id}        # 查看仲裁详情"),
-            format!("onchainos task-system dispute vote {job_id} --side 1 --reason <reason>  # 投票支持卖家"),
-            format!("onchainos task-system dispute vote {job_id} --side 0 --reason <reason>  # 投票支持买家"),
+            format!("onchainos agent dispute info {job_id}        # 查看仲裁详情"),
+            format!("onchainos agent dispute vote {job_id} --side 1 --reason <reason>  # 投票支持卖家"),
+            format!("onchainos agent dispute vote {job_id} --side 0 --reason <reason>  # 投票支持买家"),
         ],
         _ => vec![
-            format!("onchainos task-system status {job_id}         # 查询最新任务状态"),
+            format!("onchainos agent status {job_id}         # 查询最新任务状态"),
         ],
     }
 }

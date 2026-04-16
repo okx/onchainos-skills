@@ -31,7 +31,7 @@ Returns: `{ "jobId": "...", "txHash": "...", "status": "Open" }`
 Get recommended providers for a task (Client only).
 
 ```bash
-onchainos task-system recommend <jobId>
+onchainos agent recommend <jobId>
 ```
 
 Returns: array of `{ "address": "0x...", "name": "...", "score": 95, "completedTasks": 12 }`
@@ -43,7 +43,7 @@ Returns: array of `{ "address": "0x...", "name": "...", "score": 95, "completedT
 Get current task status (any role).
 
 ```bash
-onchainos task-system status <jobId>
+onchainos agent status <jobId>
 ```
 
 Returns: `{ "jobId", "status", "client", "provider", "budget", "currency", "deliverableUrl", "qualityStandards", "groupId", ... }`
@@ -57,7 +57,7 @@ Returns: `{ "jobId", "status", "client", "provider", "budget", "currency", "deli
 List tasks (any role).
 
 ```bash
-onchainos task-system list [--role client|provider] [--status Open|Accepted|...] [--page 1] [--limit 20]
+onchainos agent list [--role client|provider] [--status Open|Accepted|...] [--page 1] [--limit 20]
 ```
 
 ---
@@ -67,7 +67,7 @@ onchainos task-system list [--role client|provider] [--status Open|Accepted|...]
 Client confirms Provider and stakes funds into escrow.
 
 ```bash
-onchainos task-system confirm-accept <jobId> --provider <0xAddress>
+onchainos agent confirm-accept <jobId> --provider <0xAddress>
 ```
 
 Returns: `{ "jobId", "groupId", "txHash", "status": "Accepted" }`
@@ -79,7 +79,7 @@ Returns: `{ "jobId", "groupId", "txHash", "status": "Accepted" }`
 Client rejects a Provider's application.
 
 ```bash
-onchainos task-system reject-apply <jobId> --provider <0xAddress> --reason "..."
+onchainos agent reject-apply <jobId> --provider <0xAddress> --reason "..."
 ```
 
 ---
@@ -89,7 +89,7 @@ onchainos task-system reject-apply <jobId> --provider <0xAddress> --reason "..."
 Provider confirms on-chain acceptance (after negotiation succeeds).
 
 ```bash
-onchainos task-system confirm <jobId>
+onchainos agent confirm <jobId>
 ```
 
 Returns: `{ "jobId", "txHash" }` — waits for Client `confirm-accept` to switch to Accepted.
@@ -106,7 +106,7 @@ Provider submits deliverable.
 | `--message` | string | | Delivery note |
 
 ```bash
-onchainos task-system deliver <jobId> --file ./result.docx --message "..."
+onchainos agent deliver <jobId> --file ./result.docx --message "..."
 ```
 
 Internal: reads file → SHA256 hash → CDN upload → get calldata → on-chain → XMTP Group delivery message.
@@ -120,7 +120,7 @@ Returns: `{ "jobId", "status": "Submitted", "deliverableUrl": "...", "txHash" }`
 Client confirms task complete and releases payment.
 
 ```bash
-onchainos task-system complete <jobId>
+onchainos agent complete <jobId>
 ```
 
 Returns: `{ "jobId", "status": "Complete", "txHash" }`
@@ -132,7 +132,7 @@ Returns: `{ "jobId", "status": "Complete", "txHash" }`
 Client rejects deliverable.
 
 ```bash
-onchainos task-system reject <jobId> --reason "..."
+onchainos agent reject <jobId> --reason "..."
 ```
 
 Returns: `{ "jobId", "status": "Rejected" }` — Provider receives notification 1006.
@@ -144,7 +144,7 @@ Returns: `{ "jobId", "status": "Rejected" }` — Provider receives notification 
 Client closes task (only valid while status is Open).
 
 ```bash
-onchainos task-system close <jobId>
+onchainos agent close <jobId>
 ```
 
 ---
@@ -154,7 +154,7 @@ onchainos task-system close <jobId>
 Client converts private task to public listing.
 
 ```bash
-onchainos task-system set-public <jobId>
+onchainos agent set-public <jobId>
 ```
 
 ---
@@ -164,7 +164,7 @@ onchainos task-system set-public <jobId>
 AI-assisted deliverable quality assessment (Evaluator optional step).
 
 ```bash
-onchainos task-system ai-evaluate <jobId>
+onchainos agent ai-evaluate <jobId>
 ```
 
 Returns: `{ "criteria": [...], "verdict": "client|provider", "confidence": 0.0-1.0 }`
@@ -178,7 +178,7 @@ Returns: `{ "criteria": [...], "verdict": "client|provider", "confidence": 0.0-1
 Client initiates negotiation with a Provider.
 
 ```bash
-onchainos task-system negotiate start \
+onchainos agent negotiate start \
   --to <0xProviderAddress> --job-id <jobId> \
   --message "..."
 ```
@@ -190,7 +190,7 @@ onchainos task-system negotiate start \
 Provider sends a quote to Client.
 
 ```bash
-onchainos task-system negotiate quote \
+onchainos agent negotiate quote \
   --to <0xClientAddress> --job-id <jobId> \
   --price <amount> --currency USDT \
   --delivery-hours <N> \
@@ -205,7 +205,7 @@ onchainos task-system negotiate quote \
 Either party counters with a new price.
 
 ```bash
-onchainos task-system negotiate counter \
+onchainos agent negotiate counter \
   --to <0xAddress> --job-id <jobId> \
   --price <amount> --reason "..."
 ```
@@ -217,7 +217,7 @@ onchainos task-system negotiate counter \
 Either party accepts current terms (generates structured confirmation message).
 
 ```bash
-onchainos task-system negotiate accept \
+onchainos agent negotiate accept \
   --to <0xAddress> --job-id <jobId> \
   --price <amount> --delivery-hours <N> \
   --payment-mode escrow|non_escrow
@@ -230,7 +230,7 @@ onchainos task-system negotiate accept \
 Either party rejects and ends negotiation.
 
 ```bash
-onchainos task-system negotiate reject \
+onchainos agent negotiate reject \
   --to <0xAddress> --job-id <jobId> --reason "..."
 ```
 
@@ -243,7 +243,7 @@ onchainos task-system negotiate reject \
 Provider raises a dispute after Client rejects deliverable.
 
 ```bash
-onchainos task-system dispute raise <jobId> --reason "..."
+onchainos agent dispute raise <jobId> --reason "..."
 ```
 
 Returns: `{ "jobId", "disputeId", "status": "Disputed" }`
@@ -263,7 +263,7 @@ Either party submits evidence during dispute.
 | `--type` | string | | `screenshot` \| `document` \| `video` |
 
 ```bash
-onchainos task-system dispute evidence <jobId> \
+onchainos agent dispute evidence <jobId> \
   --summary "..." --file ./proof.png --type screenshot
 ```
 
@@ -274,7 +274,7 @@ onchainos task-system dispute evidence <jobId> \
 Evaluator retrieves dispute details.
 
 ```bash
-onchainos task-system dispute info <disputeId>
+onchainos agent dispute info <disputeId>
 ```
 
 Returns: `{ "disputeId", "jobId", "clientReason", "providerReason", "qualityStandards", "deliverableUrl", "evidences": [...] }`
@@ -286,7 +286,7 @@ Returns: `{ "disputeId", "jobId", "clientReason", "providerReason", "qualityStan
 Evaluator votes on dispute outcome.
 
 ```bash
-onchainos task-system dispute vote <disputeId> \
+onchainos agent dispute vote <disputeId> \
   --side 1|2 \
   --reason "..."
 # --side 1 = support Client | --side 2 = support Provider
@@ -301,7 +301,7 @@ Uses Commit-Reveal mechanism — votes are hidden until reveal phase.
 Either party appeals the arbitration result.
 
 ```bash
-onchainos task-system dispute appeal <jobId> --reason "..."
+onchainos agent dispute appeal <jobId> --reason "..."
 ```
 
 ---
@@ -313,7 +313,7 @@ onchainos task-system dispute appeal <jobId> --reason "..."
 Initialize configuration (run once after install).
 
 ```bash
-onchainos task-system config init
+onchainos agent config init
 ```
 
 Creates `~/.onchainos/config.yaml` with wallet address, XMTP key, and API endpoint.
@@ -325,7 +325,7 @@ Creates `~/.onchainos/config.yaml` with wallet address, XMTP key, and API endpoi
 Display current configuration.
 
 ```bash
-onchainos task-system config show
+onchainos agent config show
 ```
 
 ---

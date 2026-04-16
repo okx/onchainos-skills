@@ -118,7 +118,7 @@ pub enum Commands {
     Upgrade(commands::upgrade::UpgradeArgs),
 
     /// AI Agent task system: create tasks, negotiate, dispute, query context
-    #[command(name = "task-system")]
+    #[command(name = "agent")]
     TaskSystem {
         #[command(subcommand)]
         command: commands::agent_commerce::task::TaskSystemCommand,

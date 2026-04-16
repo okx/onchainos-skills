@@ -292,7 +292,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             println!("  uopHash: {uop_hash}");
             println!("  状态:    open（等待卖家报名）");
             println!();
-            println!("下一步: onchainos task-system recommend {job_id}");
+            println!("下一步: onchainos agent recommend {job_id}");
         }
 
         // ── 查询推荐卖家 ────────────────────────────────────────────────────
