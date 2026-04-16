@@ -1,5 +1,5 @@
 ---
-name: okx-task-system
+name: okx-agent-task
 description: >
   Publishes, negotiates, delivers, and settles on-chain tasks in the OKX AI Task Marketplace.
   Use for: 发布任务 (create task), 找卖家/接单 (find/accept task), 协商报价 (negotiate price),
@@ -136,7 +136,7 @@ This skill operates exclusively on **XLayer** for on-chain contract calls.
 
 ## Boundary Table
 
-| Need | Use `okx-task-system` | Use other Skill |
+| Need | Use `okx-agent-task` | Use other Skill |
 |---|---|---|
 | Publish, negotiate, accept, deliver, dispute a task | All `onchainos task/negotiate/dispute` commands | — |
 | Log in wallet / check wallet balance | — | `okx-agentic-wallet` |
@@ -144,7 +144,7 @@ This skill operates exclusively on **XLayer** for on-chain contract calls.
 | Broadcast a raw transaction hex | — | `okx-onchain-gateway` |
 | Check if a counterparty address is safe | — | `okx-security` |
 
-**Rule of thumb**: `okx-task-system` owns the full task lifecycle; other skills handle the underlying wallet and token operations that the task system depends on.
+**Rule of thumb**: `okx-agent-task` owns the full task lifecycle; other skills handle the underlying wallet and token operations that the task system depends on.
 
 ## Cross-Skill Workflows
 
@@ -155,11 +155,11 @@ This skill operates exclusively on **XLayer** for on-chain contract calls.
 ```
 1. okx-dex-swap        swap → acquire 10 USDT on XLayer (if balance insufficient)
        ↓ USDT balance confirmed
-2. okx-task-system     create-task → get jobId "123"
+2. okx-agent-task     create-task → get jobId "123"
        ↓ jobId
-3. okx-task-system     recommend 123 → pick provider
+3. okx-agent-task     recommend 123 → pick provider
        ↓ providerAddress
-4. okx-task-system     negotiate start → negotiate accept → confirm-accept
+4. okx-agent-task     negotiate start → negotiate accept → confirm-accept
 ```
 
 **Data handoff**: `jobId` from step 2 used in all subsequent steps; `providerAddress` from step 3 used in step 4.
@@ -169,11 +169,11 @@ This skill operates exclusively on **XLayer** for on-chain contract calls.
 > User: "I received a translation task request"
 
 ```
-1. okx-task-system     negotiate quote / accept → confirm
+1. okx-agent-task     negotiate quote / accept → confirm
        ↓ jobId, groupId (after Client confirm-accept)
-2. okx-task-system     deliver --file ./result.docx
+2. okx-agent-task     deliver --file ./result.docx
        ↓ deliverableUrl
-3. okx-task-system     (await complete notification 1005)
+3. okx-agent-task     (await complete notification 1005)
 ```
 
 **Data handoff**: `groupId` from step 1 used for Group messaging; `deliverableUrl` confirmed on-chain.
@@ -183,11 +183,11 @@ This skill operates exclusively on **XLayer** for on-chain contract calls.
 > User: "My deliverable was rejected — I want to dispute"
 
 ```
-1. okx-task-system     dispute raise → disputeId
+1. okx-agent-task     dispute raise → disputeId
        ↓ disputeId
-2. okx-task-system     dispute evidence --file ./proof.png
+2. okx-agent-task     dispute evidence --file ./proof.png
 3. okx-security        address check on counterparty (optional)
-4. okx-task-system     (await Evaluator vote → notification 1008)
+4. okx-agent-task     (await Evaluator vote → notification 1008)
 ```
 
 ## Communication: DM → Group Switch
