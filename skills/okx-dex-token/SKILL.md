@@ -4,7 +4,7 @@ description: "Use this skill for token-level data: search tokens, trending/hot t
 license: MIT
 metadata:
   author: okx
-  version: "2.2.9"
+  version: "1.0.4"
   homepage: "https://web3.okx.com"
 ---
 
@@ -96,9 +96,9 @@ When a response includes a `requestTime` field (Unix milliseconds), display it a
 
 | Command | Cache |
 |---|---|
-| `token holders` | 3 s |
-| `token hot-tokens` | 3 s |
-| `token top-trader` | 3 s |
+| `token holders` | 0 – 3 s |
+| `token hot-tokens` | 0 – 3 s |
+| `token top-trader` | 0 – 3 s |
 
 ## Additional Resources
 

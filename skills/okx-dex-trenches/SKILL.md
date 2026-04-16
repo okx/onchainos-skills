@@ -4,7 +4,7 @@ description: "Use this skill for meme/打狗/alpha token research on pump.fun an
 license: MIT
 metadata:
   author: okx
-  version: "2.2.9"
+  version: "1.0.4"
   homepage: "https://web3.okx.com"
 ---
 
@@ -79,9 +79,7 @@ When a response includes a `requestTime` field (Unix milliseconds), display it a
 
 | Command | Cache |
 |---|---|
-| `memepump aped-wallet` | 1 s |
-
-**Note on `createdTimestamp`:** Tokens created less than 5 seconds before the API call may return `null` for `createdTimestamp` — this is by design to avoid surfacing an unreliable value for brand-new launches. Treat `null` as "just launched."
+| `memepump aped-wallet` (with `--wallet`) | 0 – 1 s |
 
 ## Additional Resources
 
