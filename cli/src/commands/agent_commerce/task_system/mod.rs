@@ -6,7 +6,7 @@ pub mod provider;
 use anyhow::Result;
 use clap::Subcommand;
 
-use super::Context;
+use crate::commands::Context;
 
 /// Task system top-level subcommands.
 #[derive(Subcommand)]
