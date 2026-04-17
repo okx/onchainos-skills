@@ -1,7 +1,7 @@
 ---
 name: okx-defi-invest
 description: "Use this skill to 'invest in DeFi', 'earn yield on USDC', 'deposit into Aave', 'stake ETH on Lido', 'search DeFi products', 'find best APY', 'redeem my DeFi position', 'withdraw from lending', 'claim DeFi rewards', 'borrow USDC', 'repay loan', 'add liquidity to Uniswap V3', 'remove liquidity', 'show APY history', 'TVL chart', 'V3 depth chart', 'V3 price history', or mentions DeFi investing, yield farming, lending, borrowing, staking, liquidity pools, APY/TVL trends, V3 depth/price charts. Do NOT use for DEX swaps (okx-dex-swap), token prices (okx-dex-market), wallet balances (okx-wallet-portfolio), or viewing positions only (okx-defi-portfolio)."
-license: Apache-2.0
+license: MIT
 metadata:
   author: okx
   version: "2.2.10"

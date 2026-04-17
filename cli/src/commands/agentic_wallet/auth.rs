@@ -193,7 +193,7 @@ pub(super) async fn ensure_tokens_refreshed() -> Result<String> {
 
     // ── Step 4: access_token expired → refresh via API ───────────────
     if is_token_expired(&access_token) {
-        let client = WalletApiClient::new()?;
+        let mut client = WalletApiClient::new()?;
         let resp = client
             .auth_refresh(&refresh_token)
             .await
@@ -356,7 +356,7 @@ pub(super) async fn cmd_login(
             eprintln!("[DEBUG] cmd_login: email={email}, locale={locale:?}");
         }
 
-        let client = WalletApiClient::new()?;
+        let mut client = WalletApiClient::new()?;
         let resp = client
             .auth_init(email, locale)
             .await
@@ -423,7 +423,7 @@ async fn cmd_login_ak(
     passphrase: &str,
     locale: Option<&str>,
 ) -> Result<()> {
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
 
     let init_resp = client
         .ak_auth_init(api_key)
@@ -481,7 +481,7 @@ async fn cmd_login_ak(
         eprintln!("[DEBUG] ak_auth_verify response: ok, proceeding to save_verify_result");
     }
 
-    save_verify_result(&client, &resp, &session_private_key, "", api_key).await
+    save_verify_result(&mut client, &resp, &session_private_key, "", api_key).await
 }
 
 /// onchainos wallet verify <otp>
@@ -516,7 +516,7 @@ pub(super) async fn cmd_verify(otp: &str) -> Result<()> {
         );
     }
 
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
 
     if cfg!(feature = "debug-log") {
         eprintln!(
@@ -534,12 +534,12 @@ pub(super) async fn cmd_verify(otp: &str) -> Result<()> {
         eprintln!("[DEBUG] auth_verify response: ok, proceeding to save_verify_result");
     }
 
-    save_verify_result(&client, &resp, &session_private_key, email, "").await
+    save_verify_result(&mut client, &resp, &session_private_key, email, "").await
 }
 
 /// Common post-verify logic: persist credentials, fetch accounts, output result.
 async fn save_verify_result(
-    client: &WalletApiClient,
+    client: &mut WalletApiClient,
     resp: &crate::wallet_api::VerifyResponse,
     session_private_key: &str,
     email: &str,
@@ -610,7 +610,7 @@ async fn save_verify_result(
 /// Fetch account/list and account/address/list, update wallets.json.
 /// Non-fatal: failures are logged as warnings.
 async fn fetch_and_save_account_list(
-    client: &WalletApiClient,
+    client: &mut WalletApiClient,
     access_token: &str,
     project_id: &str,
 ) {
@@ -702,7 +702,7 @@ pub(super) async fn cmd_add() -> Result<()> {
         eprintln!("[DEBUG] cmd_add: project_id={}", wallets.project_id);
     }
 
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
 
     if cfg!(feature = "debug-log") {
         eprintln!(

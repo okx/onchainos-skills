@@ -20,7 +20,7 @@ struct TokenInfo<'a> {
 /// High-level invest: route to V3 or standard based on investType
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn cmd_invest(
-    client: &ApiClient,
+    client: &mut ApiClient,
     investment_id: &str,
     address: &str,
     token: &str,
@@ -170,7 +170,7 @@ fn invest_standard(primary_token: &TokenInfo, amount: &str) -> Result<InvestResu
 
 #[allow(clippy::too_many_arguments)]
 async fn invest_v3(
-    client: &ApiClient,
+    client: &mut ApiClient,
     investment_id: &str,
     address: &str,
     primary_token: &TokenInfo<'_>,
@@ -232,7 +232,7 @@ async fn invest_v3(
 /// V3 single-token entry: user provides one token, API calculates the other
 #[allow(clippy::too_many_arguments)]
 async fn invest_v3_single(
-    client: &ApiClient,
+    client: &mut ApiClient,
     investment_id: &str,
     address: &str,
     primary_token: &TokenInfo<'_>,
@@ -287,7 +287,7 @@ async fn invest_v3_single(
 /// V3 dual-token entry: user provides both tokens, CLI rebalances to pool ratio
 #[allow(clippy::too_many_arguments)]
 async fn invest_v3_dual(
-    client: &ApiClient,
+    client: &mut ApiClient,
     investment_id: &str,
     address: &str,
     primary_token: &TokenInfo<'_>,
@@ -605,7 +605,7 @@ fn append_warnings(result: &mut Value, detail: &Value) {
 /// High-level withdraw: resolve position, build exit calldata
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn cmd_withdraw(
-    client: &ApiClient,
+    client: &mut ApiClient,
     investment_id: &str,
     address: &str,
     chain: &str,
@@ -893,7 +893,7 @@ fn extract_position_token(token: &JsonValue) -> PositionTokenInfo {
 /// High-level collect: auto-build expectOutputList, claim rewards
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn cmd_collect(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain: &str,
     reward_type: &str,

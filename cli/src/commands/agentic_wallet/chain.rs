@@ -100,7 +100,7 @@ pub async fn get_chain_by_real_chain_index(input: &str) -> Result<Option<Value>>
 
 /// Fetch the supported chain list from the remote API.
 async fn fetch_chains_from_api() -> Result<Vec<Value>> {
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
     let data = client
         .post_public("/priapi/v5/wallet/agentic/chain/support/list", &json!({}))
         .await?;

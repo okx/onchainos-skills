@@ -216,7 +216,7 @@ async fn token_scan(
 
 /// Path 3: scan an explicit comma-separated list of chainId:contractAddress pairs (max 50).
 async fn token_scan_explicit(ctx: &Context, tokens: &str) -> Result<()> {
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
 
     let token_list: Vec<Value> = tokens
         .split(',')
@@ -257,7 +257,7 @@ async fn fetch_tokens_from_wallet(
     account_id: &str,
     chain: Option<&str>,
 ) -> Result<Vec<(String, String)>> {
-    let wallet_client = crate::wallet_api::WalletApiClient::new()?;
+    let mut wallet_client = crate::wallet_api::WalletApiClient::new()?;
     let chain_index = chain.map(chains::resolve_chain).unwrap_or_default();
 
     let mut query: Vec<(&str, &str)> = vec![("accountId", account_id)];
@@ -283,7 +283,7 @@ async fn fetch_tokens_by_address(
     address: &str,
     chain: Option<&str>,
 ) -> Result<Vec<(String, String)>> {
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
     let chains_param = chain.map(chains::resolve_chain).unwrap_or_default();
 
     let mut query: Vec<(&str, &str)> = vec![
@@ -309,7 +309,7 @@ async fn run_batch_scan(ctx: &Context, token_pairs: Vec<(String, String)>) -> Re
         return Ok(());
     }
 
-    let client = Arc::new(ctx.client_async().await?);
+    let client = Arc::new(tokio::sync::Mutex::new(ctx.client_async().await?));
     let mut set: JoinSet<Result<Value>> = JoinSet::new();
 
     for batch in token_pairs.chunks(BATCH_SIZE) {
@@ -320,7 +320,7 @@ async fn run_batch_scan(ctx: &Context, token_pairs: Vec<(String, String)>) -> Re
             .collect();
         set.spawn(async move {
             let body = json!({ "source": "onchain_os_cli", "tokenList": token_list });
-            c.post("/api/v6/security/token-scan", &body).await
+            c.lock().await.post("/api/v6/security/token-scan", &body).await
         });
     }
 
@@ -387,7 +387,7 @@ fn extract_token_pairs(data: &Value) -> Result<Vec<(String, String)>> {
 }
 
 async fn dapp_scan(ctx: &Context, domain: &str) -> Result<()> {
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
 
     let body = json!({
         "source": "onchain_os_cli",
@@ -413,7 +413,7 @@ async fn tx_scan(
 ) -> Result<()> {
     let chain_index = chains::resolve_chain(chain);
     let family = chains::chain_family(&chain_index);
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
 
     match family {
         "solana" => {
@@ -717,7 +717,7 @@ async fn approvals(
         body["cursor"] = json!(c);
     }
 
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
     let data = client
         .post("/api/v6/security/approval-mng", &body)
         .await
@@ -762,7 +762,7 @@ async fn sig_scan(
         "message": message_value,
     });
 
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
     let result = client
         .post("/api/v6/security/sign-message-check", &body)
         .await?;

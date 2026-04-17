@@ -220,14 +220,14 @@ async fn resolve_send_amount(
             }
             Some(token_addr) => {
                 // ERC-20 / SPL — fetch decimals from token info API
-                let client = crate::client::ApiClient::new(None).map_err(|e| {
+                let mut client = crate::client::ApiClient::new(None).map_err(|e| {
                     anyhow::anyhow!(
                         "Failed to create API client to fetch token decimals: {}. \
                          Use --amt with raw minimal units instead.",
                         e
                     )
                 })?;
-                let info = crate::commands::token::fetch_info(&client, token_addr, chain)
+                let info = crate::commands::token::fetch_info(&mut client, token_addr, chain)
                     .await
                     .map_err(|e| {
                         anyhow::anyhow!(

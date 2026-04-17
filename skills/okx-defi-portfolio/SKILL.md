@@ -1,7 +1,7 @@
 ---
 name: okx-defi-portfolio
 description: "Use this skill to 'check my DeFi positions', 'view DeFi holdings', 'show my DeFi portfolio', 'what DeFi am I invested in', 'show my staking positions', 'show my lending positions', 'DeFi balance', 'DeFi 持仓', '查看DeFi持仓', '我的DeFi资产', '持仓详情', '持仓列表', or mentions viewing DeFi holdings, positions, portfolio across protocols. Covers positions overview and per-protocol position detail. Do NOT use for deposit/redeem/claim operations — use okx-defi-invest. Do NOT use for wallet token balances — use okx-wallet-portfolio. Do NOT use for DEX spot swaps — use okx-dex-swap."
-license: Apache-2.0
+license: MIT
 metadata:
   author: okx
   version: "2.2.10"
