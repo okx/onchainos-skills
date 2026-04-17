@@ -184,7 +184,7 @@ struct CreateTaskReq {
     buyer_agent_id: String,
 }
 
-fn default_token_addr() -> String { "0xUSDT0000000000000000000000000000000001".into() }
+fn default_token_addr() -> String { "0x779ded0c9e1022225f8e0630b35a9b54be713736".into() }
 fn default_amount()     -> String { "100".into() }
 fn default_chain()      -> i32    { 196 }
 fn default_buyer_addr() -> String { "0xMockBuyer00000000000000000000000000001".into() }
@@ -721,7 +721,7 @@ fn seed_tasks(tasks: &DashMap<String, TaskRecord>) {
             title: "Solidity 合约安全审计".into(),
             description: "审计目标合约地址 0xABC123...，重点检查重入攻击（reentrancy）、权限控制（access control）和整数溢出漏洞。要求提交详细的审计报告，包含风险评级和修复建议。".into(),
             description_summary: "EVM 合约安全审计，重点重入攻击和权限控制检查".into(),
-            token_address: "0xUSDT0000000000000000000000000000000001".into(),
+            token_address: "0x779ded0c9e1022225f8e0630b35a9b54be713736".into(),
             token_amount: "500".into(),
             payment_type: Some(0),
             open_type: 1,
@@ -745,7 +745,7 @@ fn seed_tasks(tasks: &DashMap<String, TaskRecord>) {
             title: "DEX 套利机器人开发".into(),
             description: "开发跨链 DEX 套利机器人，支持 Uniswap V3 和 PancakeSwap，使用 Rust 实现。要求完整的回测报告、单元测试和部署文档。".into(),
             description_summary: "Rust DEX 套利机器人，支持 Uni V3 和 PCS".into(),
-            token_address: "0xUSDT0000000000000000000000000000000001".into(),
+            token_address: "0x779ded0c9e1022225f8e0630b35a9b54be713736".into(),
             token_amount: "2000".into(),
             payment_type: Some(0),
             open_type: 1,
@@ -769,7 +769,7 @@ fn seed_tasks(tasks: &DashMap<String, TaskRecord>) {
             title: "XLayer 链上数据索引服务".into(),
             description: "为 XLayer 构建一个链上事件索引服务，监听指定合约的 Transfer/Swap 事件，写入 PostgreSQL，并提供 REST API 查询接口。要求支持断线重连、历史区块回扫、以及 OpenAPI 文档。".into(),
             description_summary: "XLayer 事件索引 + REST API，支持历史回扫".into(),
-            token_address: "0xUSDT0000000000000000000000000000000001".into(),
+            token_address: "0x779ded0c9e1022225f8e0630b35a9b54be713736".into(),
             token_amount: "800".into(),
             payment_type: Some(0),
             open_type: 1,

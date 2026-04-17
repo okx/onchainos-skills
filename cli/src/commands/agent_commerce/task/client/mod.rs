@@ -21,12 +21,11 @@ fn parse_duration_secs(s: &str) -> Result<u64> {
     }
 }
 
-/// 货币符号 → mock token 地址
-fn currency_to_token_addr(currency: &str) -> &'static str {
+/// 校验货币符号
+fn validate_currency(currency: &str) -> Result<()> {
     match currency.to_uppercase().as_str() {
-        "USDT" => "0xUSDT0000000000000000000000000000000001",
-        "USDG" => "0xUSDG0000000000000000000000000000000001",
-        _      => "0xUSDT0000000000000000000000000000000001",
+        "USDT" | "USDG" => Ok(()),
+        other => bail!("不支持的代币: {other}，仅支持 USDT 和 USDG"),
     }
 }
 
@@ -38,6 +37,8 @@ pub enum TaskCommand {
     Create {
         #[arg(long)]
         description: String,
+        #[arg(long = "description-summary")]
+        description_summary: Option<String>,
         #[arg(long)]
         budget: f64,
         #[arg(long)]
@@ -46,8 +47,6 @@ pub enum TaskCommand {
         deadline_open: String,
         #[arg(long = "deadline-submit")]
         deadline_submit: String,
-        #[arg(long = "quality-standards")]
-        quality_standards: String,
         #[arg(long)]
         title: Option<String>,
     },
@@ -245,52 +244,82 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
     let client = reqwest::Client::new();
 
     match cmd {
-        // ── 创建任务 ────────────────────────────────────────────────────────
+        // ── 创建任务 (create → sign → broadcast) ────────────────────────────
         TaskCommand::Create {
-            description, budget, currency,
-            deadline_open, deadline_submit,
-            quality_standards, title,
+            description, description_summary, budget, currency,
+            deadline_open, deadline_submit, title,
         } => {
+            validate_currency(&currency)?;
+
             let open_secs   = parse_duration_secs(&deadline_open)
                 .map_err(|_| anyhow::anyhow!("--deadline-open 格式错误，例如 72h 或 3600"))?;
             let submit_secs = parse_duration_secs(&deadline_submit)
                 .map_err(|_| anyhow::anyhow!("--deadline-submit 格式错误，例如 48h 或 3600"))?;
 
-            let token_addr = currency_to_token_addr(&currency);
-            let title_str  = title.unwrap_or_else(|| description.chars().take(60).collect());
-            let desc_full  = format!("{description}\n\n验收标准：{quality_standards}");
+            let title_str = title.unwrap_or_else(|| description.chars().take(30).collect());
+            let summary   = description_summary
+                .unwrap_or_else(|| description.chars().take(200).collect());
 
+            // ── Step 1: 生成 calldata (POST /api/v1/task/create) ────────
             let body = serde_json::json!({
-                "title":               title_str,
-                "description":         desc_full,
-                "descriptionSummary":  description.chars().take(200).collect::<String>(),
-                "paymentTokenAddress": token_addr,
-                "paymentTokenAmount":  budget.to_string(),
-                "chainId":             196,
-                "paymentType":         0,
-                "visibility":          0,
+                "title":              title_str,
+                "description":        description,
+                "description_summary": summary,
+                "paymentTokenSymbol": currency.to_uppercase(),
+                "paymentTokenAmount": budget.to_string(),
+                "chainId":            196,
                 "expireConfig": {
-                    "openExpireSec":     open_secs,
-                    "acceptedExpireSec": submit_secs
-                }
+                    "acceptDeadline":    open_secs,
+                    "submittedDeadline": submit_secs
+                },
+                "paymentMode":        0,
+                "visibility":         0
             });
 
             let resp: serde_json::Value = client
                 .post(format!("{api}/api/v1/task/create"))
                 .json(&body)
                 .send().await
-                .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}\n提示: 先启动 ./target/release/mock-api"))?
+                .map_err(|e| anyhow::anyhow!("无法连接后端: {e}"))?
                 .json().await?;
 
             if resp["code"] != 0 {
                 bail!("创建失败: {}", resp["msg"].as_str().unwrap_or("unknown"));
             }
+
             let job_id   = resp["data"]["jobId"].as_str().unwrap_or("?");
-            let uop_hash = resp["data"]["uopHash"].as_str().unwrap_or("?");
-            println!("✓ 任务已发布");
+            let uop_data = &resp["data"]["uopData"];
+            let uop_hash = uop_data["uopHash"].as_str().unwrap_or("?");
+
+            println!("✓ Calldata 已生成");
             println!("  jobId:   {job_id}");
             println!("  uopHash: {uop_hash}");
-            println!("  状态:    open（等待卖家报名）");
+
+            // ── Step 2: 签名 uopHash (TODO) ─────────────────────────────
+            // TODO: 调用 onchainos agent wallet 对 uopHash 进行签名
+            //   let sign_result = onchainos_agent_wallet_sign(uop_hash, &uop_data["extraData"]).await?;
+            //   sign_result 包含 msgForSign { sessionCert, signature }
+            println!("  [TODO] 等待 onchainos agent wallet 签名 uopHash...");
+
+            // ── Step 3: 广播上链 (POST /api/v1/task/broadcast) ──────────
+            // TODO: 签名完成后调用 broadcast
+            //   let broadcast_body = serde_json::json!({
+            //       "accountId":  wallet_account_id,
+            //       "address":    wallet_address,
+            //       "chainIndex": "196",
+            //       "bizUniqKey": format!("create-task-{job_id}"),
+            //       "extraData":  build_extra_data(&uop_data["extraData"], &sign_result)
+            //   });
+            //   let bc_resp: serde_json::Value = client
+            //       .post(format!("{api}/api/v1/task/broadcast"))
+            //       .json(&broadcast_body)
+            //       .send().await?
+            //       .json().await?;
+            //   let tx_hash = bc_resp["data"][0]["txHash"].as_str().unwrap_or("?");
+            println!("  [TODO] 广播上链...");
+            println!();
+            println!("  任务创建流程: calldata ✓ → 签名 [TODO] → 广播 [TODO]");
+            println!("  jobId: {job_id}");
             println!();
             println!("下一步: onchainos agent recommend {job_id}");
         }

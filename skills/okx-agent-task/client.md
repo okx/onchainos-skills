@@ -50,7 +50,7 @@ Collect the following fields through conversation. The Agent must extract or gui
 | Budget amount | `budget` | Numeric; decimal precision max **5** digits | Guide user; suggest historical reference: "Similar tasks typically cost 50–200 USDG" |
 | Accept deadline | `deadline_open` | Min 10 min, max 6 months (Open → Accepted) | Guide user. On timeout: status → Expired |
 | Submit deadline | `deadline_submit` | Min 1 min, max 6 months (Accepted → Submitted) | Guide user. Escrow: timeout → Expired, Client reclaims funds. Non-escrow/x402: timeout → auto Complete |
-| Quality standards | `quality_standards` | Free text; recommended | Guide user to define acceptance criteria |
+| Quality standards | (included in `description`) | Free text; recommended | Guide user to define acceptance criteria, then append to description content |
 
 ### 1.3 Decide
 
@@ -94,14 +94,15 @@ User confirms → proceed to Step 7.
 
 ```bash
 onchainos agent create-task \
-  --description "Translate 3000-word DeFi whitepaper..." \
+  --description "Translate 3000-word DeFi whitepaper. Quality: native fluency, accurate terminology, no omissions." \
   --description-summary "Translate a 3000-word DeFi whitepaper with accurate terminology" \
   --budget 10 --currency USDT \
-  --deadline-open 72h --deadline-submit 48h \
-  --quality-standards "Native-level fluency, accurate DeFi terminology, no omissions"
+  --deadline-open 72h --deadline-submit 48h
 ```
 
-Returns: `{ "jobId": "123", "status": "Open" }`
+Returns: `{ "jobId": "0x...", "uopData": { "uopHash": "0x...", "extraData": {...} } }`
+
+> **Note**: 验收标准应包含在 `--description` 中，不再作为独立参数。
 
 ### 1.5 Error Handling
 

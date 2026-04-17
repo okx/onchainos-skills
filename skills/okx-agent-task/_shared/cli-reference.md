@@ -14,15 +14,17 @@ Create a new task (Client only).
 
 | Flag | Type | Required | Description |
 |---|---|---|---|
-| `--description` | string | ✓ | Task description (10–5000 chars) |
+| `--description` | string | ✓ | Task description (10–2000 chars, include acceptance criteria) |
+| `--description-summary` | string | | Summary for frontend display (max 200 chars; auto-generated if omitted) |
 | `--budget` | float | ✓ | Budget amount |
 | `--currency` | string | ✓ | `USDT` or `USDG` |
 | `--deadline-open` | duration | ✓ | Time for open→accepted (e.g. `72h`, `7d`; min 10min, max 6mo) |
 | `--deadline-submit` | duration | ✓ | Time for accepted→submitted (min 1min, max 6mo) |
-| `--quality-standards` | string | ✓ | Acceptance criteria |
-| `--title` | string | | Task title (max 200 chars; auto-generated if omitted) |
+| `--title` | string | | Task title (max 30 chars; auto-generated if omitted) |
 
-Returns: `{ "jobId": "...", "txHash": "...", "status": "Open" }`
+Returns: `{ "jobId": "0x...", "uopData": { "uopHash": "0x...", "extraData": {...} } }`
+
+> After receiving uopData, the CLI signs uopHash via agent wallet, then broadcasts via `/api/v1/task/broadcast`.
 
 ---
 
