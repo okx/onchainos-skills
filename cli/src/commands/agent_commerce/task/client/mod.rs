@@ -1,7 +1,10 @@
 use anyhow::{bail, Result};
 use clap::Subcommand;
 
+use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
+use crate::commands::agent_commerce::task::common::{XLAYER_CHAIN_ID, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME};
 use crate::commands::Context;
+use crate::wallet_api::UnsignedInfoResponse;
 
 // ─── mock-api helpers ──────────────────────────────────────────────────────
 
@@ -241,7 +244,7 @@ pub enum DisputeCommand {
 
 pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
     let api = task_api_url();
-    let client = reqwest::Client::new();
+    let http = reqwest::Client::new();
 
     match cmd {
         // ── 创建任务 (create → sign → broadcast) ────────────────────────────
@@ -267,7 +270,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 "description_summary": summary,
                 "paymentTokenSymbol": currency.to_uppercase(),
                 "paymentTokenAmount": budget.to_string(),
-                "chainId":            196,
+                "chainId":            XLAYER_CHAIN_ID,
                 "expireConfig": {
                     "acceptDeadline":    open_secs,
                     "submittedDeadline": submit_secs
@@ -276,7 +279,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 "visibility":         0
             });
 
-            let resp: serde_json::Value = client
+            let resp: serde_json::Value = http
                 .post(format!("{api}/api/v1/task/create"))
                 .json(&body)
                 .send().await
@@ -287,46 +290,56 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 bail!("创建失败: {}", resp["msg"].as_str().unwrap_or("unknown"));
             }
 
-            let job_id   = resp["data"]["jobId"].as_str().unwrap_or("?");
+            let job_id   = resp["data"]["jobId"].as_str().unwrap_or("?").to_string();
             let uop_data = &resp["data"]["uopData"];
-            let uop_hash = uop_data["uopHash"].as_str().unwrap_or("?");
 
-            println!("✓ Calldata 已生成");
-            println!("  jobId:   {job_id}");
-            println!("  uopHash: {uop_hash}");
+            println!("✓ Calldata 已生成 (jobId: {job_id})");
 
-            // ── Step 2: 签名 uopHash (TODO) ─────────────────────────────
-            // TODO: 调用 onchainos agent wallet 对 uopHash 进行签名
-            //   let sign_result = onchainos_agent_wallet_sign(uop_hash, &uop_data["extraData"]).await?;
-            //   sign_result 包含 msgForSign { sessionCert, signature }
-            println!("  [TODO] 等待 onchainos agent wallet 签名 uopHash...");
+            // ── Step 2: 签名 uopHash (build_broadcast_body) ─────────────
+            let unsigned: UnsignedInfoResponse = serde_json::from_value(uop_data.clone())
+                .map_err(|e| anyhow::anyhow!("解析 uopData 失败: {e}"))?;
+
+            let wallets = crate::wallet_store::load_wallets()?
+                .ok_or_else(|| anyhow::anyhow!("未登录，请先执行 onchainos wallet auth"))?;
+            let (account_id, addr_info) = resolve_address(&wallets, None, XLAYER_CHAIN_NAME)?;
+
+            let broadcast_body = build_broadcast_body(
+                &unsigned,
+                &account_id,
+                &addr_info.address,
+                XLAYER_CHAIN_INDEX,
+                true,   // is_contract_call
+                false,  // mev_protection — XLayer 不需要
+                false,  // force
+            )
+            .await?;
+
+            println!("✓ 签名完成");
 
             // ── Step 3: 广播上链 (POST /api/v1/task/broadcast) ──────────
-            // TODO: 签名完成后调用 broadcast
-            //   let broadcast_body = serde_json::json!({
-            //       "accountId":  wallet_account_id,
-            //       "address":    wallet_address,
-            //       "chainIndex": "196",
-            //       "bizUniqKey": format!("create-task-{job_id}"),
-            //       "extraData":  build_extra_data(&uop_data["extraData"], &sign_result)
-            //   });
-            //   let bc_resp: serde_json::Value = client
-            //       .post(format!("{api}/api/v1/task/broadcast"))
-            //       .json(&broadcast_body)
-            //       .send().await?
-            //       .json().await?;
-            //   let tx_hash = bc_resp["data"][0]["txHash"].as_str().unwrap_or("?");
-            println!("  [TODO] 广播上链...");
-            println!();
-            println!("  任务创建流程: calldata ✓ → 签名 [TODO] → 广播 [TODO]");
-            println!("  jobId: {job_id}");
+            let bc_resp: serde_json::Value = http
+                .post(format!("{api}/api/v1/task/broadcast"))
+                .json(&broadcast_body)
+                .send().await
+                .map_err(|e| anyhow::anyhow!("广播失败: {e}"))?
+                .json().await?;
+
+            if bc_resp["code"] != 0 {
+                bail!("广播失败: {}", bc_resp["msg"].as_str().unwrap_or("unknown"));
+            }
+
+            let tx_hash = bc_resp["data"][0]["txHash"].as_str().unwrap_or("pending");
+            println!("✓ 任务已上链");
+            println!("  jobId:  {job_id}");
+            println!("  txHash: {tx_hash}");
+            println!("  状态:   open（等待 Provider 报名）");
             println!();
             println!("下一步: onchainos agent recommend {job_id}");
         }
 
         // ── 查询推荐卖家 ────────────────────────────────────────────────────
         TaskCommand::Recommend { job_id } => {
-            let resp: serde_json::Value = client
+            let resp: serde_json::Value = http
                 .post(format!("{api}/api/v1/task/{job_id}/match"))
                 .send().await
                 .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
@@ -352,7 +365,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
         // ── 任务状态 ────────────────────────────────────────────────────────
         TaskCommand::Status { job_id } => {
-            let resp: serde_json::Value = client
+            let resp: serde_json::Value = http
                 .get(format!("{api}/api/v1/task/{job_id}"))
                 .send().await
                 .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
@@ -383,7 +396,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 if let Some(s) = &status { u.push_str(&format!("&status={s}")); }
                 u
             };
-            let resp: serde_json::Value = client.get(&url).send().await
+            let resp: serde_json::Value = http.get(&url).send().await
                 .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
                 .json().await?;
             let tasks = resp["data"]["list"].as_array().cloned().unwrap_or_default();
@@ -402,7 +415,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         // ── confirm-accept ──────────────────────────────────────────────────
         TaskCommand::ConfirmAccept { job_id, provider } => {
             let body = serde_json::json!({ "providerAddress": provider, "providerAgentId": provider });
-            let resp: serde_json::Value = client
+            let resp: serde_json::Value = http
                 .post(format!("{api}/api/v1/task/{job_id}/accept"))
                 .json(&body).send().await
                 .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
@@ -414,7 +427,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
         // ── complete ────────────────────────────────────────────────────────
         TaskCommand::Complete { job_id } => {
-            let resp: serde_json::Value = client
+            let resp: serde_json::Value = http
                 .post(format!("{api}/api/v1/task/{job_id}/complete"))
                 .send().await
                 .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
@@ -425,7 +438,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
         // ── reject deliverable ──────────────────────────────────────────────
         TaskCommand::Reject { job_id, reason } => {
-            let resp: serde_json::Value = client
+            let resp: serde_json::Value = http
                 .post(format!("{api}/api/v1/task/{job_id}/refuse"))
                 .send().await
                 .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
@@ -437,7 +450,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
         // ── close ───────────────────────────────────────────────────────────
         TaskCommand::Close { job_id } => {
-            let resp: serde_json::Value = client
+            let resp: serde_json::Value = http
                 .post(format!("{api}/api/v1/task/{job_id}/close"))
                 .send().await
                 .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
@@ -448,7 +461,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
         // ── set-public ──────────────────────────────────────────────────────
         TaskCommand::SetPublic { job_id } => {
-            let resp: serde_json::Value = client
+            let resp: serde_json::Value = http
                 .post(format!("{api}/api/v1/task/{job_id}/setVisibility"))
                 .json(&serde_json::json!({"visibility": 1}))
                 .send().await

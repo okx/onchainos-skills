@@ -10,6 +10,15 @@ use serde::Deserialize;
 
 use crate::commands::Context;
 
+// ─── 链常量 ──────────────────────────────────────────────────────────────
+
+/// XLayer chain ID（用于任务系统合约部署链）
+pub const XLAYER_CHAIN_ID: i32 = 196;
+/// XLayer chain index 字符串形式（用于钱包 API）
+pub const XLAYER_CHAIN_INDEX: &str = "196";
+/// XLayer chain name（用于 wallet_store 地址查找）
+pub const XLAYER_CHAIN_NAME: &str = "xlayer";
+
 // ─── CLI 定义 ──────────────────────────────────────────────────────────────
 
 #[derive(Subcommand)]
