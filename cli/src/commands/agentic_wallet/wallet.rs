@@ -77,6 +77,16 @@ pub enum WalletCommand {
         /// Force execution: skip confirmation prompts from the backend
         #[arg(long, default_value_t = false)]
         force: bool,
+        // ── Gas Station params (second-phase call) ──
+        /// Gas token contract address for Gas Station payment (from tokenList)
+        #[arg(long)]
+        gas_token_address: Option<String>,
+        /// Relayer ID for Gas Station (from tokenList)
+        #[arg(long)]
+        relayer_id: Option<String>,
+        /// Enable Gas Station (first-time activation, sets gasTokenAddress as default)
+        #[arg(long, default_value_t = false)]
+        enable_gas_station: bool,
     },
     /// Query transaction history or detail
     History {
@@ -167,6 +177,30 @@ pub enum WalletCommand {
         /// Force execution: skip confirmation prompts from the backend
         #[arg(long, default_value_t = false)]
         force: bool,
+    },
+    /// Gas Station management commands
+    GasStation {
+        #[command(subcommand)]
+        command: GasStationCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum GasStationCommand {
+    /// Update the default Gas Token for a chain
+    UpdateDefaultToken {
+        /// Chain name or ID (e.g. "ethereum" or "1")
+        #[arg(long)]
+        chain: String,
+        /// Gas token contract address to set as default
+        #[arg(long)]
+        gas_token_address: String,
+    },
+    /// Revoke EIP-7702 upgrade and disable Gas Station for a chain
+    Revoke7702 {
+        /// Chain name or ID (e.g. "ethereum" or "1")
+        #[arg(long)]
+        chain: String,
     },
 }
 
@@ -297,6 +331,9 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             from,
             contract_token,
             force,
+            gas_token_address,
+            relayer_id,
+            enable_gas_station,
         } => {
             let chain = crate::chains::resolve_chain(&chain);
             let raw_amt = resolve_send_amount(
@@ -313,6 +350,9 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                 from.as_deref(),
                 contract_token.as_deref(),
                 force,
+                gas_token_address.as_deref(),
+                relayer_id.as_deref(),
+                enable_gas_station,
             )
             .await
         }
@@ -378,6 +418,9 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                 force,
             )
             .await
+        }
+        WalletCommand::GasStation { command } => {
+            super::gas_station::execute(command).await
         }
     }
 }

@@ -1,0 +1,54 @@
+**/node_modules/*
+
+# 根目录下的文件夹
+/dist/*
+/build/*
+/types/*
+/docs/*
+
+# . 开头的文件夹
+.*
+**/.*/*
+
+# 脚本相关
+scripts/**
+
+# 配置相关
+commitlint.config.js
+okt.config.js
+okt-scripts.config.js
+babelConfig.js
+swagger.config.js
+ssr.custom.config.js
+docg.config.js
+jest.config.js
+okt-monitor.config.js
+
+# 单测
+**/coverage*/*
+**/__data__/* 
+/tests/**
+
+# _mock __mock 开头的数据 mock 文件夹
+**/*mock*/*
+
+**/*demo*/*
+
+# monitor 开头的所有文件
+**/monitor*.*
+
+# SDK
+**/__sdk__/*
+**/_sdk*/*
+
+# 模板api 相关
+/src/apis/*
+**/__api__/*
+ont_type.ts
+
+# 其他
+**/fonts/*
+iconfont.js
+*.d.ts
+**/__text__/*
+**/__config__/*

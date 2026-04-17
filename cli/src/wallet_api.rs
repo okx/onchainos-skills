@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use reqwest::Client;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 
 /// Structured error for non-zero API response codes.
@@ -220,6 +220,50 @@ pub struct UnsignedInfoResponse {
     pub encoding: String,
     #[serde(default, deserialize_with = "nullable_string")]
     pub jito_unsigned_tx: String,
+    // ── Gas Station fields ──
+    #[serde(default)]
+    pub gas_station_used: bool,
+    #[serde(default)]
+    pub gas_station_first_time_prompt: bool,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub service_charge: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub service_charge_symbol: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub service_charge_fee_token_address: String,
+    #[serde(default)]
+    pub need_update7702: bool,
+    #[serde(default)]
+    pub gas_station_token_list: Vec<GasStationToken>,
+    #[serde(default)]
+    pub has_pending_tx: bool,
+    #[serde(default)]
+    pub insufficient_all: bool,
+    #[serde(default)]
+    pub auto_selected_token: bool,
+    #[serde(default)]
+    pub gas_station_disabled: bool,
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GasStationToken {
+    #[serde(default)]
+    pub fee_coin_id: u64,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub symbol: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub fee_token_address: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub service_charge: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub balance: String,
+    #[serde(default)]
+    pub sufficient: bool,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub relayer_id: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub context: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -596,6 +640,11 @@ impl WalletApiClient {
         aa_dex_token_amount: Option<&str>,
         jito_unsigned_tx: Option<&str>,
         trace_headers: Option<&[(&str, &str)]>,
+        // Gas Station params
+        enable_gas_station: Option<bool>,
+        gas_token_address: Option<&str>,
+        relayer_id: Option<&str>,
+        revoke_eip7702: Option<bool>,
     ) -> Result<UnsignedInfoResponse> {
         let mut body = json!({
             "chainPath": chain_path,
@@ -625,6 +674,19 @@ impl WalletApiClient {
         }
         if let Some(jito_tx) = jito_unsigned_tx {
             body["jitoUnsignedTx"] = Value::String(jito_tx.to_string());
+        }
+        // Gas Station params
+        if let Some(true) = enable_gas_station {
+            body["enableGasStation"] = json!(true);
+        }
+        if let Some(addr) = gas_token_address {
+            body["gasTokenAddress"] = Value::String(addr.to_string());
+        }
+        if let Some(rid) = relayer_id {
+            body["relayerId"] = Value::String(rid.to_string());
+        }
+        if let Some(true) = revoke_eip7702 {
+            body["revokeEip7702"] = json!(true);
         }
         let data = self
             .post_authed_with_headers(
@@ -674,6 +736,44 @@ impl WalletApiClient {
         let resp: BroadcastResponse =
             serde_json::from_value(item.clone()).context("broadcast: failed to parse response")?;
         Ok(resp)
+    }
+
+    // ── Gas Station management APIs ────────────────────────────────
+
+    /// POST /priapi/v5/wallet/agentic/gas-station/update-default-token
+    pub async fn gas_station_update_default_token(
+        &self,
+        access_token: &str,
+        chain_index: &str,
+        gas_token_address: &str,
+    ) -> Result<Value> {
+        let body = json!({
+            "chainIndex": chain_index,
+            "gasTokenAddress": gas_token_address,
+        });
+        self.post_authed(
+            "/priapi/v5/wallet/agentic/gas-station/update-default-token",
+            access_token,
+            &body,
+        )
+        .await
+    }
+
+    /// POST /priapi/v5/wallet/agentic/gas-station/revoke-7702
+    pub async fn gas_station_revoke_7702(
+        &self,
+        access_token: &str,
+        chain_index: &str,
+    ) -> Result<Value> {
+        let body = json!({
+            "chainIndex": chain_index,
+        });
+        self.post_authed(
+            "/priapi/v5/wallet/agentic/gas-station/revoke-7702",
+            access_token,
+            &body,
+        )
+        .await
     }
 }
 

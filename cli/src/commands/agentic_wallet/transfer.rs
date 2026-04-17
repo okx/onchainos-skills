@@ -81,7 +81,7 @@ async fn sign_and_broadcast(
     is_contract_call: bool,
     mev_protection: bool,
     force: bool,
-) -> Result<String> {
+) -> Result<crate::wallet_api::BroadcastResponse> {
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][sign_and_broadcast] enter: chain={}, from={:?}, to={}, value={}, contractAddr={:?}, inputData={}, unsignedTx={}, gasLimit={:?}, mev={}",
@@ -201,6 +201,10 @@ async fn sign_and_broadcast(
             tx.aa_dex_token_amount,
             tx.jito_unsigned_tx,
             trace_ref,
+            None, // enable_gas_station
+            None, // gas_token_address
+            None, // relayer_id
+            None, // revoke_eip7702
         )
         .await
         .map_err(format_api_error)?;
@@ -331,16 +335,17 @@ async fn sign_and_broadcast(
     }
     if cfg!(feature = "debug-log") {
         eprintln!(
-            "[DEBUG][sign_and_broadcast] === END SUCCESS: txHash={}",
-            broadcast_resp.tx_hash
+            "[DEBUG][sign_and_broadcast] === END SUCCESS: txHash={}, orderId={}",
+            broadcast_resp.tx_hash, broadcast_resp.order_id
         );
     }
-    Ok(broadcast_resp.tx_hash)
+    Ok(broadcast_resp)
 }
 
 // ── send ─────────────────────────────────────────────────────────────
 
 /// onchainos wallet send
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn cmd_send(
     amt: &str,
     recipient: &str,
@@ -348,13 +353,177 @@ pub(super) async fn cmd_send(
     from: Option<&str>,
     contract_token: Option<&str>,
     force: bool,
+    gas_token_address: Option<&str>,
+    relayer_id: Option<&str>,
+    enable_gas_station: bool,
 ) -> Result<()> {
     validate_amount(amt)?;
     if recipient.is_empty() || chain.is_empty() {
         bail!("recipient and chain are required");
     }
 
-    let tx_hash = sign_and_broadcast(
+    // ── Gas Station second-phase call: user already selected token ──
+    if gas_token_address.is_some() || enable_gas_station {
+        return gas_station_send(
+            amt,
+            recipient,
+            chain,
+            from,
+            contract_token,
+            force,
+            gas_token_address,
+            relayer_id,
+            enable_gas_station,
+        )
+        .await;
+    }
+
+    // ── First-phase call: let backend decide ──
+    let access_token =
+        crate::commands::agentic_wallet::auth::ensure_tokens_refreshed().await?;
+    let wallets = crate::wallet_store::load_wallets()?
+        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+    let chain_entry = super::chain::get_chain_by_real_chain_index(chain)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("unsupported chain: {}", chain))?;
+    let chain_name = chain_entry["chainName"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing chainName"))?;
+    let (account_id, addr_info) = resolve_address(&wallets, from, chain_name)?;
+    let chain_index_num: u64 = addr_info.chain_index.parse().unwrap_or(1);
+
+    let session = crate::wallet_store::load_session()?
+        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+    let session_cert = &session.session_cert;
+
+    let client = crate::wallet_api::WalletApiClient::new()?;
+    // TEMPORARY: debug_dump — 联调后删除 unsigned_req 定义和 debug_dump::dump 调用
+    let unsigned_req = json!({
+        "chainPath": addr_info.chain_path,
+        "chainIndex": chain_index_num,
+        "fromAddr": addr_info.address,
+        "toAddr": recipient,
+        "amount": amt,
+        "contractAddr": contract_token,
+    });
+    let unsigned = client
+        .pre_transaction_unsigned_info(
+            &access_token,
+            &addr_info.chain_path,
+            chain_index_num,
+            &addr_info.address,
+            recipient,
+            amt,
+            contract_token,
+            session_cert,
+            None, None, None, None, None, None, None,
+            None, // enable_gas_station
+            None, // gas_token_address
+            None, // relayer_id
+            None, // revoke_eip7702
+        )
+        .await
+        .map_err(format_api_error)?;
+    super::debug_dump::dump("01-unsignedInfo-first", &unsigned_req, &json!({
+        "gasStationUsed": unsigned.gas_station_used,
+        "gasStationFirstTimePrompt": unsigned.gas_station_first_time_prompt,
+        "hash": &unsigned.hash,
+        "authHashFor7702": &unsigned.auth_hash_for7702,
+        "signType": &unsigned.sign_type,
+        "hasPendingTx": unsigned.has_pending_tx,
+        "insufficientAll": unsigned.insufficient_all,
+        "autoSelectedToken": unsigned.auto_selected_token,
+        "serviceCharge": &unsigned.service_charge,
+        "serviceChargeSymbol": &unsigned.service_charge_symbol,
+        "needUpdate7702": unsigned.need_update7702,
+        "gasStationTokenList": &unsigned.gas_station_token_list,
+        "executeResult": &unsigned.execute_result,
+        "executeErrorMsg": &unsigned.execute_error_msg,
+    }));
+
+    // ── Gas Station decision ──
+    if unsigned.gas_station_used {
+        // Pending tx: blocked
+        if unsigned.has_pending_tx {
+            output::success(json!({
+                "gasStationUsed": true,
+                "hasPendingTx": true,
+            }));
+            return Ok(());
+        }
+        // All tokens insufficient: charge guidance
+        if unsigned.insufficient_all {
+            output::success(json!({
+                "gasStationUsed": true,
+                "insufficientAll": true,
+                "gasStationTokenList": unsigned.gas_station_token_list,
+                "fromAddr": addr_info.address,
+            }));
+            return Ok(());
+        }
+        // Backend auto-selected token (scenario B/D): hash is ready, proceed to sign
+        if !unsigned.hash.is_empty() {
+            let resp = gas_station_sign_and_broadcast(
+                &client,
+                &access_token,
+                &account_id,
+                &addr_info,
+                &session,
+                &unsigned,
+                force,
+            )
+            .await?;
+            output::success(json!({
+                "txHash": resp.tx_hash,
+                "orderId": resp.order_id,
+                "gasStationUsed": true,
+                "autoSelectedToken": unsigned.auto_selected_token,
+                "serviceCharge": unsigned.service_charge,
+                "serviceChargeSymbol": unsigned.service_charge_symbol,
+                "gasStationTokenList": unsigned.gas_station_token_list,
+            }));
+            return Ok(());
+        }
+        // Need user to choose token (scenario A/C): CliConfirming
+        let token_list_str = unsigned
+            .gas_station_token_list
+            .iter()
+            .filter(|t| t.sufficient)
+            .enumerate()
+            .map(|(i, t)| format!("{}. {} (balance: {}, fee: {})", i + 1, t.symbol, t.balance, t.service_charge))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let message = if unsigned.gas_station_first_time_prompt {
+            // Scene A: first time enable
+            format!(
+                "Your native token balance is insufficient to pay gas. \
+                 You can enable Gas Station to pay gas with stablecoins.\n\
+                 Available tokens:\n{}\n\
+                 Choose a token to enable Gas Station and pay gas for this transaction.",
+                token_list_str
+            )
+        } else {
+            // Scene C: default token insufficient
+            format!(
+                "Your default gas token has insufficient balance. \
+                 Choose an alternative token to pay gas for this transaction:\n{}",
+                token_list_str
+            )
+        };
+
+        let next = format!(
+            "Re-run the same wallet send command with --gas-token-address <chosen_token_address> --relayer-id <relayer_id>{}. \
+             Token addresses and relayer IDs from the list above: {}",
+            if unsigned.gas_station_first_time_prompt { " --enable-gas-station" } else { "" },
+            serde_json::to_string(&unsigned.gas_station_token_list).unwrap_or_default()
+        );
+
+        return Err(crate::output::CliConfirming { message, next }.into());
+    }
+
+    // ── Not Gas Station: original flow ──
+    let resp = sign_and_broadcast(
         chain,
         from,
         TxParams {
@@ -373,8 +542,199 @@ pub(super) async fn cmd_send(
         force,
     )
     .await?;
-    output::success(json!({ "txHash": tx_hash }));
+    output::success(json!({ "txHash": resp.tx_hash, "orderId": resp.order_id }));
     Ok(())
+}
+
+/// Gas Station second-phase: user selected token, call unsignedInfo with gasTokenAddress
+#[allow(clippy::too_many_arguments)]
+async fn gas_station_send(
+    amt: &str,
+    recipient: &str,
+    chain: &str,
+    from: Option<&str>,
+    contract_token: Option<&str>,
+    force: bool,
+    gas_token_address: Option<&str>,
+    relayer_id: Option<&str>,
+    enable_gas_station: bool,
+) -> Result<()> {
+    let access_token =
+        crate::commands::agentic_wallet::auth::ensure_tokens_refreshed().await?;
+    let wallets = crate::wallet_store::load_wallets()?
+        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+    let chain_entry = super::chain::get_chain_by_real_chain_index(chain)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("unsupported chain: {}", chain))?;
+    let chain_name = chain_entry["chainName"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing chainName"))?;
+    let (_account_id, addr_info) = resolve_address(&wallets, from, chain_name)?;
+    let chain_index_num: u64 = addr_info.chain_index.parse().unwrap_or(1);
+
+    let session = crate::wallet_store::load_session()?
+        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+
+    let client = crate::wallet_api::WalletApiClient::new()?;
+    // TEMPORARY: debug_dump — 联调后删除 unsigned_req 定义和 debug_dump::dump 调用
+    let unsigned_req = json!({
+        "chainPath": addr_info.chain_path,
+        "chainIndex": chain_index_num,
+        "fromAddr": addr_info.address,
+        "toAddr": recipient,
+        "amount": amt,
+        "contractAddr": contract_token,
+        "enableGasStation": enable_gas_station,
+        "gasTokenAddress": gas_token_address,
+        "relayerId": relayer_id,
+    });
+    let unsigned = client
+        .pre_transaction_unsigned_info(
+            &access_token,
+            &addr_info.chain_path,
+            chain_index_num,
+            &addr_info.address,
+            recipient,
+            amt,
+            contract_token,
+            &session.session_cert,
+            None, None, None, None, None, None, None,
+            if enable_gas_station { Some(true) } else { None },
+            gas_token_address,
+            relayer_id,
+            None,
+        )
+        .await
+        .map_err(format_api_error)?;
+    super::debug_dump::dump("02-unsignedInfo-second", &unsigned_req, &json!({
+        "gasStationUsed": unsigned.gas_station_used,
+        "hash": &unsigned.hash,
+        "authHashFor7702": &unsigned.auth_hash_for7702,
+        "signType": &unsigned.sign_type,
+        "serviceCharge": &unsigned.service_charge,
+        "serviceChargeSymbol": &unsigned.service_charge_symbol,
+        "needUpdate7702": unsigned.need_update7702,
+        "executeResult": &unsigned.execute_result,
+        "executeErrorMsg": &unsigned.execute_error_msg,
+    }));
+
+    if !unsigned.gas_station_used {
+        bail!("Gas Station not activated by backend for this transaction");
+    }
+
+    let execute_ok = match &unsigned.execute_result {
+        Value::Bool(b) => *b,
+        Value::Null => true,
+        _ => true,
+    };
+    if !execute_ok {
+        let err_msg = if unsigned.execute_error_msg.is_empty() {
+            "transaction simulation failed".to_string()
+        } else {
+            unsigned.execute_error_msg.clone()
+        };
+        bail!("transaction simulation failed: {}", err_msg);
+    }
+
+    let resp = gas_station_sign_and_broadcast(
+        &client,
+        &access_token,
+        &_account_id,
+        &addr_info,
+        &session,
+        &unsigned,
+        force,
+    )
+    .await?;
+    output::success(json!({
+        "txHash": resp.tx_hash,
+        "orderId": resp.order_id,
+        "gasStationUsed": true,
+        "serviceCharge": unsigned.service_charge,
+        "serviceChargeSymbol": unsigned.service_charge_symbol,
+    }));
+    Ok(())
+}
+
+/// Gas Station: sign 712 hash + 7702 auth hash, build extraData, broadcast.
+/// Signing methods are in sign.rs (sign_gas_station_712 / sign_gas_station_7702).
+async fn gas_station_sign_and_broadcast(
+    client: &crate::wallet_api::WalletApiClient,
+    access_token: &str,
+    account_id: &str,
+    addr_info: &crate::wallet_store::AddressInfo,
+    session: &crate::wallet_store::SessionJson,
+    unsigned: &crate::wallet_api::UnsignedInfoResponse,
+    force: bool,
+) -> Result<crate::wallet_api::BroadcastResponse> {
+    let signing_seed =
+        crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &crate::keyring_store::get("session_key")
+            .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?)?;
+
+    let mut msg_for_sign_map = serde_json::Map::new();
+
+    // Sign 712 hash — same as existing sign_and_broadcast (ed25519_sign_eip191)
+    if !unsigned.hash.is_empty() {
+        let sig = crate::crypto::ed25519_sign_eip191(&unsigned.hash, &signing_seed, "hex")?;
+        msg_for_sign_map.insert("signature".into(), json!(sig));
+    }
+    // Sign 7702 auth hash — self-contained method in sign.rs (loads session + key internally)
+    if !unsigned.auth_hash_for7702.is_empty() {
+        let sig = super::sign::sign_eip7702_auth(&unsigned.auth_hash_for7702)?;
+        msg_for_sign_map.insert("authSignatureFor7702".into(), json!(sig));
+    }
+    if !session.session_cert.is_empty() {
+        msg_for_sign_map.insert("sessionCert".into(), json!(session.session_cert));
+    }
+
+    let msg_for_sign = Value::Object(msg_for_sign_map);
+
+    // Build Gas Station extraData
+    let mut extra_data_obj = if unsigned.extra_data.is_object() {
+        unsigned.extra_data.clone()
+    } else {
+        json!({})
+    };
+    extra_data_obj["checkBalance"] = json!(true);
+    extra_data_obj["uopHash"] = json!(unsigned.uop_hash);
+    extra_data_obj["encoding"] = json!(unsigned.encoding);
+    extra_data_obj["signType"] = json!(unsigned.sign_type);
+    extra_data_obj["msgForSign"] = json!(msg_for_sign);
+    extra_data_obj["paymentType"] = json!("token");
+    // Gas Station: do NOT set txType
+    if force {
+        extra_data_obj["skipWarning"] = json!(true);
+    }
+
+    let extra_data_str =
+        serde_json::to_string(&extra_data_obj).context("failed to serialize extraData")?;
+
+    // TEMPORARY: debug_dump — 联调后删除 broadcast_req 定义和 debug_dump::dump 调用
+    let broadcast_req = json!({
+        "accountId": account_id,
+        "address": addr_info.address,
+        "chainIndex": addr_info.chain_index,
+        "extraData": extra_data_obj,
+    });
+    let broadcast_resp = client
+        .broadcast_transaction(
+            access_token,
+            account_id,
+            &addr_info.address,
+            &addr_info.chain_index,
+            &extra_data_str,
+            None,
+        )
+        .await
+        .map_err(|e| handle_confirming_error(e, force))?;
+    super::debug_dump::dump("03-broadcast", &broadcast_req, &json!({
+        "txHash": &broadcast_resp.tx_hash,
+        "orderId": &broadcast_resp.order_id,
+        "pkgId": &broadcast_resp.pkg_id,
+        "orderType": &broadcast_resp.order_type,
+    }));
+
+    Ok(broadcast_resp)
 }
 
 // ── contract-call ─────────────────────────────────────────────────────
@@ -395,7 +755,7 @@ pub async fn cmd_contract_call(
     jito_unsigned_tx: Option<&str>,
     force: bool,
 ) -> Result<()> {
-    let tx_hash = execute_contract_call(
+    let resp = execute_contract_call(
         to,
         chain,
         amt,
@@ -410,11 +770,11 @@ pub async fn cmd_contract_call(
         force,
     )
     .await?;
-    output::success(json!({ "txHash": tx_hash }));
+    output::success(json!({ "txHash": resp.tx_hash, "orderId": resp.order_id }));
     Ok(())
 }
 
-/// Core contract-call logic: validate → sign → broadcast → return txHash.
+/// Core contract-call logic: validate → sign → broadcast → return BroadcastResponse.
 /// Used by `cmd_contract_call` (CLI entry point) and directly by swap execute.
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_contract_call(
@@ -430,7 +790,7 @@ pub async fn execute_contract_call(
     mev_protection: bool,
     jito_unsigned_tx: Option<&str>,
     force: bool,
-) -> Result<String> {
+) -> Result<crate::wallet_api::BroadcastResponse> {
     if to.is_empty() || chain.is_empty() {
         bail!("to and chain are required");
     }
@@ -621,21 +981,21 @@ mod tests {
 
     #[tokio::test]
     async fn cmd_send_rejects_empty_amt() {
-        let result = cmd_send("", "0xRecipient", "1", None, None, false).await;
+        let result = cmd_send("", "0xRecipient", "1", None, None, false, None, None, false).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("--amount"));
     }
 
     #[tokio::test]
     async fn cmd_send_rejects_decimal_amt() {
-        let result = cmd_send("1.5", "0xRecipient", "1", None, None, false).await;
+        let result = cmd_send("1.5", "0xRecipient", "1", None, None, false, None, None, false).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("--amount"));
     }
 
     #[tokio::test]
     async fn cmd_send_rejects_empty_recipient() {
-        let result = cmd_send("100", "", "1", None, None, false).await;
+        let result = cmd_send("100", "", "1", None, None, false, None, None, false).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -645,7 +1005,7 @@ mod tests {
 
     #[tokio::test]
     async fn cmd_send_rejects_empty_chain() {
-        let result = cmd_send("100", "0xRecipient", "", None, None, false).await;
+        let result = cmd_send("100", "0xRecipient", "", None, None, false, None, None, false).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()

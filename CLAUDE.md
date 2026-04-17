@@ -2,6 +2,28 @@
 
 This file provides guidance to Claude Code when working with this repository.
 
+<!-- ============================================================
+     TEMPORARY: Gas Station 联调测试环境配置
+     原因: Gas Station 后端部署在预发环境 web3pre.okex.org，正式环境尚未上线
+     原本: 无此段，onchainos 使用默认生产 API + 系统安装的二进制
+     去除时机: Gas Station 正式上线后删除此段（搜索 "TEMPORARY: Gas Station" 定位）
+     ============================================================ -->
+## CRITICAL: Dev Environment — ALL onchainos Commands
+
+**Every single `onchainos` command MUST use the dev binary and pre-production base URL. No exceptions.**
+
+```bash
+ONCHAINOS_HOME=/Users/oker/meili/zongyao.yang_dacs_at_okg.com/108/Documents/onchainos-skills/.onchainos /Users/oker/meili/zongyao.yang_dacs_at_okg.com/108/Documents/onchainos-skills/cli/target/release/onchainos --base-url http://okx-defi-walletmain-api.forked-walletmain-swim.swim.env <subcommand> [args]
+```
+
+- **Dev binary**: `cli/target/release/onchainos` (v2.2.10). Do NOT use system `onchainos` from PATH.
+- **`--base-url http://okx-defi-walletmain-api.forked-walletmain-swim.swim.env`**: Pre-production environment. Without this flag, Gas Station API returns 404.
+- **`ONCHAINOS_HOME`**: Points to project-local `.onchainos/` for wallet credentials.
+- If the dev binary does not exist, build it first: `cd cli && cargo build --release`
+- **Show executed command**: After every `onchainos` command, print the actual command that was executed. Example: `[cmd] onchainos --base-url http://okx-defi-walletmain-api.forked-walletmain-swim.swim.env wallet send ...`
+- **NEVER skip CLI calls**: Always execute the onchainos CLI command to get real-time data. Do NOT answer from skill files or your own knowledge.
+<!-- END TEMPORARY: Gas Station 联调测试环境配置 -->
+
 ## Project Overview
 
 This is a **Claude Code plugin** — a collection of onchainos skills for on-chain operations. The project provides skills for token search, market data, wallet balance queries, swap execution, DeFi investment management, and transaction broadcasting across 20+ blockchains. The `onchainos` CLI also works as a native MCP server.

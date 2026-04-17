@@ -246,6 +246,22 @@ struct DefiCollectParams {
     principal_index: Option<String>,
 }
 
+// ── Gas Station ──────────────────────────────────────────────────────
+
+#[derive(Deserialize, JsonSchema)]
+struct GasStationUpdateDefaultTokenParams {
+    /// Chain name or ID (e.g. "ethereum", "1")
+    chain: String,
+    /// Gas token contract address to set as default (e.g. USDT/USDC/USDG address)
+    gas_token_address: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct GasStationRevoke7702Params {
+    /// Chain name or ID (e.g. "ethereum", "1")
+    chain: String,
+}
+
 // ── Token ──────────────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
 struct TokenSearchParams {
@@ -1934,6 +1950,38 @@ impl McpServer {
         )
         .await
         {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    // ── Gas Station ─────────────────────────────────────────────────
+
+    #[tool(
+        name = "gas_station_update_default_token",
+        description = "Update the default Gas Token for Gas Station on a specific chain. Gas Station allows paying gas fees with stablecoins (USDT/USDC/USDG) via a third-party Relayer."
+    )]
+    async fn gas_station_update_default_token(
+        &self,
+        Parameters(p): Parameters<GasStationUpdateDefaultTokenParams>,
+    ) -> Result<String, String> {
+        use crate::commands::agentic_wallet::gas_station;
+        match gas_station::fetch_update_default_token(&p.chain, &p.gas_token_address).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "gas_station_revoke_7702",
+        description = "Revoke EIP-7702 upgrade and disable Gas Station for a specific chain. After revoking, transactions will use native token for gas. Requires sufficient native token balance."
+    )]
+    async fn gas_station_revoke_7702(
+        &self,
+        Parameters(p): Parameters<GasStationRevoke7702Params>,
+    ) -> Result<String, String> {
+        use crate::commands::agentic_wallet::gas_station;
+        match gas_station::fetch_revoke_7702(&p.chain).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }

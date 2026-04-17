@@ -296,7 +296,10 @@ onchainos wallet send \
   --chain <chain> \
   [--from <address>] \
   [--contract-token <address>] \
-  [--force]
+  [--force] \
+  [--gas-token-address <address>] \
+  [--relayer-id <id>] \
+  [--enable-gas-station]
 ```
 
 | Parameter | Type | Required | Description |
@@ -308,12 +311,69 @@ onchainos wallet send \
 | `--from` | string | No | Sender address — defaults to selected account's address on the given chain |
 | `--contract-token` | string | No | Token contract address for ERC-20 / SPL transfers. Omit for native token transfers. |
 | `--force` | bool | No | Skip confirmation prompts from the backend (default false). Use when re-running a command after the user has confirmed a `confirming` response. |
+| `--gas-token-address` | string | No | Gas Station: token contract address to pay gas (from confirming response tokenList). Second-phase call only. |
+| `--relayer-id` | string | No | Gas Station: relayer ID (from confirming response tokenList). Second-phase call only. |
+| `--enable-gas-station` | bool | No | Gas Station: first-time activation flag. Sets gas-token-address as default. Scene A only. |
 
-**Return fields:**
+**Return fields (normal):**
 
 | Field | Type | Description |
 |---|---|---|
 | `txHash` | String | Broadcast transaction hash |
+
+**Return fields (Gas Station auto-selected, Scene B/D):**
+
+| Field | Type | Description |
+|---|---|---|
+| `txHash` | String | Broadcast transaction hash |
+| `gasStationUsed` | Boolean | `true` |
+| `autoSelectedToken` | Boolean | Backend auto-selected the gas token |
+| `serviceCharge` | String | Gas fee amount (integer, multiplied by token decimal) |
+| `serviceChargeSymbol` | String | Gas fee token symbol (e.g. "USDT") |
+
+**Confirming response (Gas Station Scene A/C — exit code 2):**
+
+When native token is insufficient and Gas Station can help, the CLI returns a confirming response with the available token list in the `next` field. See SKILL.md "Gas Station Confirming" section for Agent handling instructions.
+
+**Return fields (Gas Station insufficient, Scene E):**
+
+| Field | Type | Description |
+|---|---|---|
+| `gasStationUsed` | Boolean | `true` |
+| `insufficientAll` | Boolean | `true` — all gas tokens insufficient |
+| `fromAddr` | String | User address for deposit guidance |
+
+---
+
+## D-GS. Gas Station Management Commands
+
+### D-GS1. `onchainos wallet gas-station update-default-token`
+
+Update the default gas payment token for Gas Station on a specific chain.
+
+```bash
+onchainos wallet gas-station update-default-token \
+  --chain <chain> \
+  --gas-token-address <address>
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `--chain` | string | Yes | Chain name or ID (e.g. `ethereum` or `1`) |
+| `--gas-token-address` | string | Yes | Token contract address to set as default gas payment token |
+
+### D-GS2. `onchainos wallet gas-station revoke-7702`
+
+Revoke EIP-7702 upgrade and disable Gas Station for a specific chain. Requires native token balance to pay gas for the revocation transaction.
+
+```bash
+onchainos wallet gas-station revoke-7702 \
+  --chain <chain>
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `--chain` | string | Yes | Chain name or ID (e.g. `ethereum` or `1`) |
 
 ---
 

@@ -1060,7 +1060,7 @@ async fn wallet_contract_call(
     mev_protection: bool,
     jito_unsigned_tx: Option<&str>,
 ) -> Result<Value> {
-    let tx_hash = crate::commands::agentic_wallet::transfer::execute_contract_call(
+    let resp = crate::commands::agentic_wallet::transfer::execute_contract_call(
         to,
         chain,
         amt,
@@ -1075,7 +1075,7 @@ async fn wallet_contract_call(
         false, // force
     )
     .await?;
-    Ok(json!({ "txHash": tx_hash }))
+    Ok(json!({ "txHash": resp.tx_hash, "orderId": resp.order_id }))
 }
 
 /// Extract txHash from `wallet contract-call` output data.

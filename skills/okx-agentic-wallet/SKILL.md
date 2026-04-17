@@ -1,6 +1,6 @@
 ---
 name: okx-agentic-wallet
-description: "Use this skill when the user mentions wallet login, sign in, verify OTP, add wallet, switch account, wallet status, logout, wallet balance, assets, holdings, send tokens, transfer ETH, transfer USDC, pay someone, send crypto, send ERC-20, send SPL, transaction history, recent transactions, tx status, tx detail, order list, call smart contract, interact with contract, execute contract function, send calldata, invoke smart contract, show my addresses, wallet addresses, deposit, receive, receive tokens, receive crypto, receive address, top up, fund my wallet, list accounts, sign message, personal sign, personalSign, eip712, sign data, sign typed data, sign EIP-712, TEE signing, trusted execution environment, export wallet, export mnemonic. Manages the wallet lifecycle: auth (login, OTP verify, account addition, switching, status, logout), authenticated balance queries, wallet address display (grouped by XLayer/EVM/Solana), token transfers (native & ERC-20/SPL), transaction history, smart contract calls, and message signing (personalSign for EVM & Solana, EIP-712 for EVM)."
+description: "Use this skill when the user mentions wallet login, sign in, verify OTP, add wallet, switch account, wallet status, logout, wallet balance, assets, holdings, send tokens, transfer ETH, transfer USDC, pay someone, send crypto, send ERC-20, send SPL, transaction history, recent transactions, tx status, tx detail, order list, call smart contract, interact with contract, execute contract function, send calldata, invoke smart contract, show my addresses, wallet addresses, deposit, receive, receive tokens, receive crypto, receive address, top up, fund my wallet, list accounts, sign message, personal sign, personalSign, eip712, sign data, sign typed data, sign EIP-712, TEE signing, trusted execution environment, export wallet, export mnemonic, gas station, Gas 加油站, 稳定币付 Gas, pay gas with stablecoins, USDT pay gas, USDC pay gas, no ETH for gas, insufficient gas, 没有 ETH 怎么转账, 没有主网币, gas fee too high, use stablecoin for fee, EIP-7702, 7702 upgrade, revoke 7702, 撤销 7702, change default gas token, 修改默认 Gas 代币, gas payment token, relayer, 代付 Gas, enable gas station, 开启加油站, disable gas station, 关闭加油站, 可以用稳定币支付Gas吗. Manages the wallet lifecycle: auth (login, OTP verify, account addition, switching, status, logout), authenticated balance queries, wallet address display (grouped by XLayer/EVM/Solana), token transfers (native & ERC-20/SPL), Gas Station (pay gas with USDT/USDC/USDG via Relayer when native token is insufficient), transaction history, smart contract calls, and message signing (personalSign for EVM & Solana, EIP-712 for EVM)."
 license: MIT
 metadata:
   author: okx
@@ -118,6 +118,26 @@ The `--force` flag MUST ONLY be added when ALL of the following conditions are m
 > | Interact with a smart contract (approve, deposit, withdraw, custom function call…) | `wallet contract-call --chain <chain>` | "Approve USDC for spender", "Call withdraw on contract 0xDef" |
 >
 > If the intent is ambiguous, **always ask the user to clarify** before proceeding. Never guess.
+
+### D-GS — Gas Station
+
+Gas Station allows paying gas fees with stablecoins (USDT/USDC/USDG) when native token balance is insufficient. Activates **automatically** during `wallet send` — no manual trigger needed.
+
+> When `wallet send` returns a Gas Station response (gasStationUsed=true or Confirming with token selection), or the user asks about Gas Station / paying gas with stablecoins / 加油站: read and follow `references/gas-station.md`
+> When the user asks about 7702 upgrade, revoke 7702, or the response contains needUpdate7702/authHashFor7702: read `references/eip7702-upgrade.md`
+
+| # | Command | Description | Auth Required |
+|---|---|---|---|
+| D-GS1 | `onchainos wallet gas-station update-default-token` | Change the default gas payment token for a chain | Yes |
+| D-GS2 | `onchainos wallet gas-station revoke-7702` | Revoke 7702 upgrade and disable Gas Station for a chain | Yes |
+
+<NEVER>
+- **NEVER pass `--gas-token-address`, `--relayer-id`, or `--enable-gas-station` on the FIRST call** to `wallet send`. These are only for the second-phase call after a Confirming response.
+- **NEVER fabricate token addresses or relayer IDs** — always use exact values from the Confirming response.
+- **NEVER proactively suggest Gas Station** when the user has not attempted a transaction.
+</NEVER>
+
+---
 
 ### E — History
 
@@ -337,6 +357,10 @@ When triggered, output the following message (translated to the user's language)
   |---|---|---|
   | OTP | 验证码 | Never use "OTP" in Chinese; in English prefer "verification code" |
   | Policy / Policy Settings | 安全规则 | e.g. "Go to Policy Settings" → "前往安全规则" |
+  | Gas Station | Gas 加油站 | Always use "Gas 加油站" in Chinese, never "加油站" alone (ambiguous) |
+  | service charge / gas fee (Gas Station) | 网络费用 | When paid via Gas Station, display as "网络费用: 0.13 USDT" |
+  | Relayer | Relayer | Keep English in both languages — no Chinese translation |
+  | EIP-7702 upgrade | 7702 升级 | Technical term, keep as-is |
 - **Full chain names**: Always display chains by their full name — never use abbreviations or internal IDs. If unsure, run `onchainos wallet chains` and use the `showName` field.
 - **Friendly Reminder**: This is a self-custody wallet — all on-chain transactions are irreversible.
 - **Locale-aware output**: All user-facing content must be translated to match the user's language.
@@ -363,6 +387,8 @@ When triggered, output the following message (translated to the user's language)
 </NEVER>
 
 ## FAQ
+
+> For Gas Station FAQ (what is it, how it works, 7702 upgrade cost, supported tokens/chains): read `references/gas-station.md` FAQ section.
 
 **Q: The agent cannot autonomously sign and execute transactions — it says local signing is required or asks the user to sign manually. How does signing work?**
 
