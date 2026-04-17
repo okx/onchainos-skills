@@ -1,3 +1,6 @@
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
+
 use anyhow::{bail, Context, Result};
 use base64::Engine;
 use hmac::{Hmac, Mac};
@@ -5,8 +8,64 @@ use reqwest::Client;
 use serde_json::Value;
 use sha2::Sha256;
 
+use crate::payment_cache::{self, PaymentCache};
+
 pub const DEFAULT_BASE_URL: &str = "https://web3.okx.com";
 const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Market API config endpoint — returns `basic`/`premium` path lists plus the
+/// default `accepts` signing parameters. Refreshed at most once per `CONFIG_TTL_SECS`.
+const CONFIG_PATH: &str = "/api/v6/dex/market/config";
+const CONFIG_TTL_SECS: u64 = 3600;
+
+/// Response header the server uses to flip charging state per tier.
+/// Format: `Basic=1;Premium=0` — `1` means pre-sign the next request on that tier.
+const PAYMENT_STATE_HEADER: &str = "ok-web3-openapi-pay";
+
+/// In-memory payment snapshot. Initialised from the on-disk cache
+/// (`~/.onchainos/payment_cache.json`) on first use, refreshed from
+/// `/api/v6/dex/market/config` when the cache is stale, and mutated by
+/// response headers on every request.
+#[derive(Debug, Default)]
+struct PaymentState {
+    basic_paths: HashSet<String>,
+    premium_paths: HashSet<String>,
+    accepts: Option<Value>,
+    basic_charging: bool,
+    premium_charging: bool,
+    /// `true` once we've tried to populate state this process. Prevents
+    /// redundant config fetches across concurrent requests on the same client.
+    config_loaded: bool,
+}
+
+/// A cached 402 response converted into a recoverable error.
+///
+/// `get_with_headers` / `post_with_headers` catch this, sign a proof from
+/// `accepts`, and retry the request once with the payment header attached.
+#[derive(Debug)]
+pub struct PaymentRequired {
+    pub accepts: Value,
+    pub raw_body: Value,
+}
+
+impl std::fmt::Display for PaymentRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "HTTP 402 Payment Required")
+    }
+}
+
+impl std::error::Error for PaymentRequired {}
+
+/// Read the x402 V2 `PAYMENT-REQUIRED` response header (base64-encoded JSON)
+/// and return its `accepts` array, if present. The header is the standard V2
+/// carrier for payment requirements; OKX may also place `accepts` in the body
+/// for convenience — callers should treat this as the preferred source.
+fn extract_payment_required_accepts(headers: &reqwest::header::HeaderMap) -> Option<Value> {
+    let raw = headers.get("payment-required")?.to_str().ok()?;
+    let decoded = base64::engine::general_purpose::STANDARD.decode(raw).ok()?;
+    let payload: Value = serde_json::from_slice(&decoded).ok()?;
+    payload.get("accepts").cloned()
+}
 
 /// Authentication mode for API requests.
 #[derive(Clone)]
@@ -28,6 +87,7 @@ pub struct ApiClient {
     http: Client,
     base_url: String,
     auth: AuthMode,
+    payment: Arc<Mutex<PaymentState>>,
 }
 
 impl ApiClient {
@@ -47,6 +107,7 @@ impl ApiClient {
                 .build()?,
             base_url,
             auth,
+            payment: Arc::new(Mutex::new(PaymentState::default())),
         })
     }
 
@@ -67,6 +128,7 @@ impl ApiClient {
                 .build()?,
             base_url,
             auth,
+            payment: Arc::new(Mutex::new(PaymentState::default())),
         })
     }
 
@@ -380,32 +442,38 @@ impl ApiClient {
     }
 
     /// GET request with automatic auth + optional extra headers.
+    ///
+    /// Wraps the request in the auto-payment flow:
+    /// 1. Ensure payment config is loaded (first request only).
+    /// 2. If the path is currently on a charging tier, pre-sign a payment header.
+    /// 3. Send the request.
+    /// 4. On 402, sign with the accepts returned by the server and retry once.
     pub async fn get_with_headers(
         &self,
         path: &str,
         query: &[(&str, &str)],
         extra_headers: Option<&[(&str, &str)]>,
     ) -> Result<Value> {
-        let (url, request_path) = self.build_get_url_and_request_path(path, query)?;
-        let req = self.http.get(url);
-        let req = match &self.auth {
-            AuthMode::Jwt(token) => Self::apply_jwt(req, token),
-            AuthMode::Ak {
-                api_key,
-                secret_key,
-                passphrase,
-            } => {
-                let timestamp =
-                    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-                let sign = Self::hmac_sign(secret_key, &timestamp, "GET", &request_path, "");
-                Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
-            }
-            AuthMode::Anonymous => Self::apply_anonymous(req),
-        };
-        let req = Self::apply_extra_headers(req, extra_headers);
-
-        let resp = req.send().await.context("request failed")?;
-        self.handle_response(resp).await
+        self.ensure_payment_config().await;
+        let resource = self.resource_url(path);
+        let payment_hdr = self.maybe_sign_payment(path, &resource).await;
+        let result = self
+            .do_get_request(path, query, extra_headers, payment_hdr.as_ref())
+            .await;
+        match result {
+            Ok(data) => Ok(data),
+            Err(e) => match e.downcast::<PaymentRequired>() {
+                Ok(pr) => {
+                    self.update_accepts_cache(&pr.accepts);
+                    let hdr = self
+                        .sign_header_from_accepts(&pr.accepts, &resource)
+                        .await?;
+                    self.do_get_request(path, query, extra_headers, Some(&hdr))
+                        .await
+                }
+                Err(e) => Err(e),
+            },
+        }
     }
 
     /// POST request with automatic auth (JWT or AK).
@@ -415,33 +483,33 @@ impl ApiClient {
     }
 
     /// POST request with automatic auth + optional extra headers.
+    /// Mirrors `get_with_headers`: pre-signs on known-paid paths and retries once on 402.
     pub async fn post_with_headers(
         &self,
         path: &str,
         body: &Value,
         extra_headers: Option<&[(&str, &str)]>,
     ) -> Result<Value> {
-        let body_str = serde_json::to_string(body)?;
-        let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
-        let req = self.http.post(&url).body(body_str.clone());
-        let req = match &self.auth {
-            AuthMode::Jwt(token) => Self::apply_jwt(req, token),
-            AuthMode::Ak {
-                api_key,
-                secret_key,
-                passphrase,
-            } => {
-                let timestamp =
-                    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-                let sign = Self::hmac_sign(secret_key, &timestamp, "POST", path, &body_str);
-                Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
-            }
-            AuthMode::Anonymous => Self::apply_anonymous(req),
-        };
-        let req = Self::apply_extra_headers(req, extra_headers);
-
-        let resp = req.send().await.context("request failed")?;
-        self.handle_response(resp).await
+        self.ensure_payment_config().await;
+        let resource = self.resource_url(path);
+        let payment_hdr = self.maybe_sign_payment(path, &resource).await;
+        let result = self
+            .do_post_request(path, body, extra_headers, payment_hdr.as_ref())
+            .await;
+        match result {
+            Ok(data) => Ok(data),
+            Err(e) => match e.downcast::<PaymentRequired>() {
+                Ok(pr) => {
+                    self.update_accepts_cache(&pr.accepts);
+                    let hdr = self
+                        .sign_header_from_accepts(&pr.accepts, &resource)
+                        .await?;
+                    self.do_post_request(path, body, extra_headers, Some(&hdr))
+                        .await
+                }
+                Err(e) => Err(e),
+            },
+        }
     }
 
     /// Apply optional extra headers to a request builder.
@@ -469,6 +537,13 @@ impl ApiClient {
 
     async fn handle_response(&self, resp: reqwest::Response) -> Result<Value> {
         let status = resp.status();
+
+        // Read charging-state + V2 PAYMENT-REQUIRED headers before consuming
+        // the body so even error responses (402, 5xx, code!=0) still keep our
+        // state in sync and give us access to the accepts payload.
+        self.update_payment_state_from_headers(resp.headers());
+        let header_accepts = extract_payment_required_accepts(resp.headers());
+
         if status.as_u16() == 429 {
             bail!("Rate limited — retry with backoff");
         }
@@ -476,8 +551,18 @@ impl ApiClient {
             bail!("Server error (HTTP {})", status.as_u16());
         }
 
+        // An empty body is legitimate for a standard-compliant 402 — accepts
+        // come from the PAYMENT-REQUIRED header in that case. Otherwise empty
+        // is an error.
         let body_bytes = resp.bytes().await.context("failed to read response body")?;
         if body_bytes.is_empty() {
+            if status.as_u16() == 402 && header_accepts.is_some() {
+                return Err(PaymentRequired {
+                    accepts: header_accepts.unwrap_or(Value::Null),
+                    raw_body: Value::Null,
+                }
+                .into());
+            }
             bail!(
                 "Empty response body (HTTP {}). The requested operation may not be supported for the given parameters.",
                 status.as_u16()
@@ -496,6 +581,20 @@ impl ApiClient {
             }
         };
 
+        // HTTP 402 — return as a typed error so the request wrapper can sign
+        // and retry. Prefer accepts from PAYMENT-REQUIRED header (standard
+        // x402 V2); fall back to the body if absent (OKX convenience layout).
+        if status.as_u16() == 402 {
+            let accepts = header_accepts
+                .or_else(|| body.get("accepts").cloned())
+                .unwrap_or(Value::Null);
+            return Err(PaymentRequired {
+                accepts,
+                raw_body: body,
+            }
+            .into());
+        }
+
         // Handle code as either string "0" or number 0 (some endpoints return numeric)
         let code_ok = match &body["code"] {
             Value::String(s) => s == "0",
@@ -513,6 +612,289 @@ impl ApiClient {
         }
 
         Ok(body["data"].clone())
+    }
+
+    // ── Auto-payment: request helpers ────────────────────────────────────────
+
+    async fn do_get_request(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        extra_headers: Option<&[(&str, &str)]>,
+        payment_hdr: Option<&(&'static str, String)>,
+    ) -> Result<Value> {
+        let (url, request_path) = self.build_get_url_and_request_path(path, query)?;
+        let req = self.http.get(url);
+        let req = match &self.auth {
+            AuthMode::Jwt(token) => Self::apply_jwt(req, token),
+            AuthMode::Ak {
+                api_key,
+                secret_key,
+                passphrase,
+            } => {
+                let timestamp =
+                    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                let sign = Self::hmac_sign(secret_key, &timestamp, "GET", &request_path, "");
+                Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
+            }
+            AuthMode::Anonymous => Self::apply_anonymous(req),
+        };
+        let req = Self::apply_extra_headers(req, extra_headers);
+        let req = Self::apply_payment_header(req, payment_hdr);
+
+        let resp = req.send().await.context("request failed")?;
+        self.handle_response(resp).await
+    }
+
+    async fn do_post_request(
+        &self,
+        path: &str,
+        body: &Value,
+        extra_headers: Option<&[(&str, &str)]>,
+        payment_hdr: Option<&(&'static str, String)>,
+    ) -> Result<Value> {
+        let body_str = serde_json::to_string(body)?;
+        let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
+        let req = self.http.post(&url).body(body_str.clone());
+        let req = match &self.auth {
+            AuthMode::Jwt(token) => Self::apply_jwt(req, token),
+            AuthMode::Ak {
+                api_key,
+                secret_key,
+                passphrase,
+            } => {
+                let timestamp =
+                    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                let sign = Self::hmac_sign(secret_key, &timestamp, "POST", path, &body_str);
+                Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
+            }
+            AuthMode::Anonymous => Self::apply_anonymous(req),
+        };
+        let req = Self::apply_extra_headers(req, extra_headers);
+        let req = Self::apply_payment_header(req, payment_hdr);
+
+        let resp = req.send().await.context("request failed")?;
+        self.handle_response(resp).await
+    }
+
+    fn apply_payment_header(
+        builder: reqwest::RequestBuilder,
+        payment_hdr: Option<&(&'static str, String)>,
+    ) -> reqwest::RequestBuilder {
+        match payment_hdr {
+            Some((name, value)) => builder.header(*name, value.as_str()),
+            None => builder,
+        }
+    }
+
+    // ── Auto-payment: config loading ────────────────────────────────────────
+
+    /// Acquire the payment state lock. If a prior holder panicked, the lock
+    /// is poisoned; we keep going by taking the inner guard — the state is a
+    /// cache and is safe to reuse. Matches the pattern in `wallet_store.rs`
+    /// and `file_keyring.rs`.
+    fn payment_state(&self) -> std::sync::MutexGuard<'_, PaymentState> {
+        self.payment.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Load payment config once per process. Cache file is consulted first;
+    /// a fresh fetch only runs if the cache is missing or older than
+    /// `CONFIG_TTL_SECS`. Failures degrade silently — the 402 fallback in
+    /// `handle_response` will still recover.
+    async fn ensure_payment_config(&self) {
+        if self.payment_state().config_loaded {
+            return;
+        }
+
+        if let Some(cache) = PaymentCache::load() {
+            if !cache.is_expired(CONFIG_TTL_SECS) {
+                let mut state = self.payment_state();
+                state.basic_paths = cache.basic_paths;
+                state.premium_paths = cache.premium_paths;
+                state.accepts = cache.accepts;
+                state.basic_charging = cache.basic_charging;
+                state.premium_charging = cache.premium_charging;
+                state.config_loaded = true;
+                return;
+            }
+        }
+
+        // Mark as loaded eagerly so concurrent requests don't all race to fetch.
+        self.payment_state().config_loaded = true;
+
+        // Fetch /api/v6/dex/market/config. This path itself is not paid, so we
+        // bypass the payment flow and call do_get_request directly. Failures
+        // are logged under debug-log but never surface — 402 fallback handles
+        // the degraded case.
+        match self.do_get_request(CONFIG_PATH, &[], None, None).await {
+            Ok(data) => {
+                self.apply_config_response(&data);
+                let _ = self.flush_payment_cache();
+            }
+            Err(e) => {
+                if cfg!(feature = "debug-log") {
+                    eprintln!("[DEBUG][payment] config fetch failed: {e:#}");
+                }
+            }
+        }
+    }
+
+    fn apply_config_response(&self, data: &Value) {
+        let mut state = self.payment_state();
+        state.basic_paths.clear();
+        state.premium_paths.clear();
+        for u in data["basic"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str())
+        {
+            state.basic_paths.insert(u.to_string());
+        }
+        for u in data["premium"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str())
+        {
+            state.premium_paths.insert(u.to_string());
+        }
+        if let Some(a) = data.get("accepts") {
+            if !a.is_null() {
+                state.accepts = Some(a.clone());
+            }
+        }
+    }
+
+    // ── Auto-payment: header parsing ─────────────────────────────────────────
+
+    /// Update `basic_charging`/`premium_charging` from the
+    /// `ok-web3-openapi-pay: Basic=1;Premium=0` response header. Writes to
+    /// disk only when a flag actually flips — every other request is IO-free.
+    fn update_payment_state_from_headers(&self, headers: &reqwest::header::HeaderMap) {
+        let Some(raw) = headers
+            .get(PAYMENT_STATE_HEADER)
+            .and_then(|v| v.to_str().ok())
+        else {
+            return;
+        };
+        let basic = Self::extract_header_flag(raw, "Basic");
+        let premium = Self::extract_header_flag(raw, "Premium");
+
+        let changed = {
+            let mut state = self.payment_state();
+            let mut changed = false;
+            if let Some(b) = basic {
+                if state.basic_charging != b {
+                    state.basic_charging = b;
+                    changed = true;
+                }
+            }
+            if let Some(p) = premium {
+                if state.premium_charging != p {
+                    state.premium_charging = p;
+                    changed = true;
+                }
+            }
+            changed
+        };
+        if changed {
+            let _ = self.flush_payment_cache();
+        }
+    }
+
+    /// Parse a single `Key=0|1` pair out of the `Key=V;Key=V` header value.
+    fn extract_header_flag(header: &str, key: &str) -> Option<bool> {
+        header.split(';').find_map(|part| {
+            let mut it = part.trim().splitn(2, '=');
+            let k = it.next()?.trim();
+            let v = it.next()?.trim();
+            if k.eq_ignore_ascii_case(key) {
+                match v {
+                    "1" => Some(true),
+                    "0" => Some(false),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        })
+    }
+
+    // ── Auto-payment: signing ───────────────────────────────────────────────
+
+    /// Full URL for `path`, used as the `resource` field in the V2 payment
+    /// header payload.
+    fn resource_url(&self, path: &str) -> String {
+        format!("{}{}", self.base_url.trim_end_matches('/'), path)
+    }
+
+    /// Build a payment header for `path` if we know it's on a charging tier.
+    /// Returns `None` if the path isn't charged, or if signing itself fails
+    /// (e.g. the wallet isn't logged in — the request will then naturally hit
+    /// the 402 fallback below).
+    async fn maybe_sign_payment(
+        &self,
+        path: &str,
+        resource: &str,
+    ) -> Option<(&'static str, String)> {
+        let (needs, accepts) = {
+            let state = self.payment_state();
+            let needs = (state.basic_paths.contains(path) && state.basic_charging)
+                || (state.premium_paths.contains(path) && state.premium_charging);
+            (needs, state.accepts.clone())
+        };
+        if !needs {
+            return None;
+        }
+        let accepts = accepts?;
+        self.sign_header_from_accepts(&accepts, resource).await.ok()
+    }
+
+    /// Sign a V2 payment header from a raw accepts value (from config or from
+    /// a 402 response). OKX openapi follows standard x402 V2 (`PAYMENT-SIGNATURE`).
+    async fn sign_header_from_accepts(
+        &self,
+        accepts: &Value,
+        resource: &str,
+    ) -> Result<(&'static str, String)> {
+        let (proof, selected) =
+            crate::commands::agentic_wallet::payment_flow::sign_payment(accepts, None).await?;
+        crate::commands::agentic_wallet::payment_flow::build_payment_header(
+            &proof,
+            &selected,
+            crate::commands::agentic_wallet::payment_flow::PaymentMode::V2 {
+                resource: resource.to_string(),
+            },
+        )
+    }
+
+    /// Overwrite the in-memory `accepts` with a fresh copy from a 402 response
+    /// and persist. Keeps subsequent requests from needing another round-trip.
+    fn update_accepts_cache(&self, accepts: &Value) {
+        if accepts.is_null() {
+            return;
+        }
+        {
+            let mut state = self.payment_state();
+            state.accepts = Some(accepts.clone());
+        }
+        let _ = self.flush_payment_cache();
+    }
+
+    /// Write the current in-memory state to `~/.onchainos/payment_cache.json`.
+    fn flush_payment_cache(&self) -> Result<()> {
+        let state = self.payment_state();
+        let cache = PaymentCache {
+            basic_paths: state.basic_paths.clone(),
+            premium_paths: state.premium_paths.clone(),
+            accepts: state.accepts.clone(),
+            basic_charging: state.basic_charging,
+            premium_charging: state.premium_charging,
+            updated_at: payment_cache::now_secs(),
+        };
+        drop(state);
+        cache.save()
     }
 }
 

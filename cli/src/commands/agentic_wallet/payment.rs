@@ -2,11 +2,11 @@ use alloy_primitives::{FixedBytes, U256};
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use clap::Subcommand;
-use serde_json::json;
+use serde_json::{json, Value};
 use zeroize::Zeroize;
 
-use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
-use crate::{keyring_store, output, wallet_api::WalletApiClient, wallet_store};
+use crate::commands::agentic_wallet::payment_flow;
+use crate::output;
 
 #[derive(Subcommand)]
 pub enum PaymentCommand {
@@ -46,57 +46,16 @@ struct ResolvedParams {
     domain_version: Option<String>,
 }
 
-/// Select the best entry from the accepts array.
-/// Priority: "exact" > "aggr_deferred" > first entry.
-fn select_accept(accepts: &[serde_json::Value]) -> Result<(serde_json::Value, Option<String>)> {
+/// Parse the accepts JSON for `eip3009-sign` (local signing path).
+/// Always picks the first entry — local signing is always "exact" semantics.
+fn parse_payload_local(raw: &str) -> Result<ResolvedParams> {
+    let accepts: Vec<Value> =
+        serde_json::from_str(raw).context("--accepts must be a valid JSON array")?;
     if accepts.is_empty() {
         bail!("accepts array is empty");
     }
-    // Prefer exact
-    if let Some(entry) = accepts
-        .iter()
-        .find(|a| a["scheme"].as_str() == Some("exact"))
-    {
-        return Ok((entry.clone(), Some("exact".to_string())));
-    }
-    // Then aggr_deferred
-    if let Some(entry) = accepts
-        .iter()
-        .find(|a| a["scheme"].as_str() == Some("aggr_deferred"))
-    {
-        return Ok((entry.clone(), Some("aggr_deferred".to_string())));
-    }
-    // Fallback to first
-    Ok((
-        accepts[0].clone(),
-        accepts[0]["scheme"].as_str().map(|s| s.to_string()),
-    ))
-}
-
-fn parse_payload(raw: &str) -> Result<ResolvedParams> {
-    parse_payload_inner(raw, false)
-}
-
-/// Like `parse_payload` but ignores scheme priority — just picks the first entry.
-/// Used by `eip3009-sign` where local signing is always "exact" semantics.
-fn parse_payload_local(raw: &str) -> Result<ResolvedParams> {
-    parse_payload_inner(raw, true)
-}
-
-fn parse_payload_inner(raw: &str, first_only: bool) -> Result<ResolvedParams> {
-    let accepts: Vec<serde_json::Value> =
-        serde_json::from_str(raw).context("--accepts must be a valid JSON array")?;
-    let (entry, selected_scheme) = if first_only {
-        if accepts.is_empty() {
-            bail!("accepts array is empty");
-        }
-        (
-            accepts[0].clone(),
-            accepts[0]["scheme"].as_str().map(|s| s.to_string()),
-        )
-    } else {
-        select_accept(&accepts)?
-    };
+    let entry = accepts[0].clone();
+    let selected_scheme = entry["scheme"].as_str().map(|s| s.to_string());
     let network = entry["network"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'network' in selected accepts entry"))?
@@ -164,19 +123,7 @@ fn read_private_key() -> Result<String> {
 
 pub async fn execute(cmd: PaymentCommand) -> Result<()> {
     match cmd {
-        PaymentCommand::X402Pay { accepts, from } => {
-            let params = parse_payload(&accepts)?;
-            cmd_pay(
-                &params.network,
-                &params.amount,
-                &params.pay_to,
-                &params.asset,
-                from.as_deref(),
-                params.max_timeout_seconds,
-                params.scheme.as_deref(),
-            )
-            .await
-        }
+        PaymentCommand::X402Pay { accepts, from } => cmd_pay(&accepts, from.as_deref()).await,
         PaymentCommand::Eip3009Sign { accepts } => {
             let params = parse_payload_local(&accepts)?;
             let pk = read_private_key()?;
@@ -219,153 +166,21 @@ fn validate_payment_inputs(amount: &str, pay_to: &str, asset: &str) -> Result<u1
     Ok(parsed_amount)
 }
 
-async fn cmd_pay(
-    network: &str,
-    amount: &str,
-    pay_to: &str,
-    asset: &str,
-    from: Option<&str>,
-    max_timeout_secs: u64,
-    scheme: Option<&str>,
-) -> Result<()> {
-    validate_payment_inputs(amount, pay_to, asset)?;
-
-    let access_token = ensure_tokens_refreshed().await?;
-
-    let real_chain_id = parse_eip155_chain_id(network)?;
-
-    // Resolve realChainIndex → OKX chainIndex
-    let chain_entry = crate::commands::agentic_wallet::chain::get_chain_by_real_chain_index(
-        &real_chain_id.to_string(),
-    )
-    .await?
-    .ok_or_else(|| anyhow!("chain not found for realChainIndex {}", real_chain_id))?;
-    let chain_index = chain_entry["chainIndex"]
-        .as_str()
-        .map(|s| s.to_string())
-        .or_else(|| chain_entry["chainIndex"].as_u64().map(|n| n.to_string()))
-        .ok_or_else(|| anyhow!("missing chainIndex in chain entry"))?;
-    let chain_name = chain_entry["chainName"]
-        .as_str()
-        .ok_or_else(|| anyhow!("missing chainName in chain entry"))?;
-
-    // 1. Build EIP-3009 authorization message
-    let wallets = wallet_store::load_wallets()?
-        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-    let (_acct_id, addr_info) =
-        crate::commands::agentic_wallet::transfer::resolve_address(&wallets, from, chain_name)?;
-    let payer_addr = &addr_info.address;
-    let is_deferred = scheme
-        .map(|s| s.eq_ignore_ascii_case("aggr_deferred"))
-        .unwrap_or(false);
-    let valid_before = if is_deferred {
-        // aggr_deferred: use max uint256 so the authorization never expires
-        U256::MAX.to_string()
-    } else {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs();
-        now.checked_add(max_timeout_secs)
-            .ok_or_else(|| anyhow!("timeout overflow"))?
-            .to_string()
-    };
-    let nonce = {
-        use rand::RngCore;
-        let mut n = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut n);
-        format!("0x{}", hex::encode(n))
-    };
-
-    // Shared EIP-3009 fields used across API calls
-    let base_fields = json!({
-        "chainIndex": chain_index,
-        "from": payer_addr,
-        "to": pay_to,
-        "value": amount,
-        "validAfter": "0",
-        "validBefore": valid_before,
-        "nonce": nonce,
-        "verifyingContract": asset,
+/// Sign an x402 payment authorization and print the proof as JSON.
+/// All crypto happens in `payment_flow::sign_payment`, which is also driven by
+/// the client-level auto-payment flow.
+async fn cmd_pay(accepts_json: &str, from: Option<&str>) -> Result<()> {
+    let accepts: Value =
+        serde_json::from_str(accepts_json).context("--accepts must be a valid JSON array")?;
+    let (proof, _entry) = payment_flow::sign_payment(&accepts, from).await?;
+    let mut out = json!({
+        "signature": proof.signature,
+        "authorization": proof.authorization,
     });
-
-    // 2. Read session data before constructing API client (fail early)
-    let session = wallet_store::load_session()?
-        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-    let encrypted_session_sk = &session.encrypted_session_sk;
-    let session_cert = &session.session_cert;
-    let session_key = keyring_store::get("session_key")
-        .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-
-    let client = WalletApiClient::new()?;
-
-    // 3. Get EIP-3009 unsigned hash
-    let unsigned_hash_resp = client
-        .post_authed(
-            "/priapi/v5/wallet/agentic/pre-transaction/gen-msg-hash",
-            &access_token,
-            &base_fields,
-        )
-        .await
-        .map_err(format_api_error)
-        .context("x402 gen-msg-hash failed")?;
-    let msg_hash = unsigned_hash_resp[0]["msgHash"]
-        .as_str()
-        .ok_or_else(|| anyhow!("missing msgHash in gen-msg-hash response"))?;
-    let domain_hash = unsigned_hash_resp[0]["domainHash"]
-        .as_str()
-        .ok_or_else(|| anyhow!("missing domainHash in gen-msg-hash response"))?;
-
-    // 4. Sign msgHash locally with Ed25519 session key
-    let mut signing_seed =
-        crate::crypto::hpke_decrypt_session_sk(encrypted_session_sk, &session_key)?;
-    let msg_hash_bytes =
-        hex::decode(msg_hash.trim_start_matches("0x")).context("invalid msgHash hex")?;
-    let session_signature = crate::crypto::ed25519_sign(&signing_seed, &msg_hash_bytes)?;
-    signing_seed.zeroize();
-    let session_signature_b64 = B64.encode(&session_signature);
-
-    // Return only the standard x402 EIP-3009 authorization fields
-    let authorization = json!({
-        "from": payer_addr,
-        "to": pay_to,
-        "value": amount,
-        "validAfter": "0",
-        "validBefore": valid_before,
-        "nonce": nonce,
-    });
-
-    if is_deferred {
-        // aggr_deferred scheme: return session-key signature only, skip EOA signing
-        output::success(json!({
-            "signature": session_signature_b64,
-            "authorization": authorization,
-            "sessionCert": session_cert,
-        }));
-    } else {
-        // Exact scheme (default): full EIP-3009 signing via TEE
-        let mut signed_hash_body = base_fields.clone();
-        signed_hash_body["domainHash"] = json!(domain_hash);
-        signed_hash_body["sessionCert"] = json!(session_cert);
-        signed_hash_body["sessionSignature"] = json!(session_signature_b64);
-
-        let signed_hash_resp = client
-            .post_authed(
-                "/priapi/v5/wallet/agentic/pre-transaction/sign-msg",
-                &access_token,
-                &signed_hash_body,
-            )
-            .await
-            .map_err(format_api_error)
-            .context("x402 sign-msg failed")?;
-        let eip3009_signature = signed_hash_resp[0]["signature"]
-            .as_str()
-            .ok_or_else(|| anyhow!("missing signature in sign-msg response"))?;
-
-        output::success(json!({
-            "signature": eip3009_signature,
-            "authorization": authorization,
-        }));
+    if let Some(cert) = proof.session_cert {
+        out["sessionCert"] = json!(cert);
     }
+    output::success(out);
     Ok(())
 }
 
@@ -551,101 +366,50 @@ mod tests {
         command: PaymentCommand,
     }
 
-    // ── select_accept ────────────────────────────────────────────────
+    // ── parse_payload_local (eip3009-sign input parsing) ─────────────
 
     #[test]
-    fn select_accept_prefers_exact() {
-        let accepts: Vec<serde_json::Value> = serde_json::from_str(r#"[
-            {"scheme":"aggr_deferred","network":"eip155:196","amount":"2000000","payTo":"0xABC","asset":"0xDEF"},
-            {"scheme":"exact","network":"eip155:196","amount":"1000000","payTo":"0xABC","asset":"0xDEF"}
-        ]"#).unwrap();
-        let (entry, scheme) = select_accept(&accepts).unwrap();
-        assert_eq!(scheme.as_deref(), Some("exact"));
-        assert_eq!(entry["amount"].as_str().unwrap(), "1000000");
-    }
-
-    #[test]
-    fn select_accept_falls_back_to_aggr_deferred() {
-        let accepts: Vec<serde_json::Value> = serde_json::from_str(r#"[
-            {"scheme":"aggr_deferred","network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}
-        ]"#).unwrap();
-        let (_entry, scheme) = select_accept(&accepts).unwrap();
-        assert_eq!(scheme.as_deref(), Some("aggr_deferred"));
-    }
-
-    #[test]
-    fn select_accept_falls_back_to_first() {
-        let accepts: Vec<serde_json::Value> = serde_json::from_str(
-            r#"[
-            {"network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}
-        ]"#,
-        )
-        .unwrap();
-        let (_entry, scheme) = select_accept(&accepts).unwrap();
-        assert_eq!(scheme, None);
-    }
-
-    #[test]
-    fn select_accept_empty_array() {
-        let accepts: Vec<serde_json::Value> = vec![];
-        assert!(select_accept(&accepts).is_err());
-    }
-
-    // ── parse_payload ─────────────────────────────────────────────────
-
-    #[test]
-    fn parse_payload_prefers_exact() {
+    fn parse_payload_local_picks_first_entry() {
+        // parse_payload_local always picks accepts[0] — scheme priority lives in payment_flow.
         let json = r#"[
             {"scheme":"aggr_deferred","network":"eip155:196","amount":"200","payTo":"0xC","asset":"0xD"},
-            {"scheme":"exact","network":"eip155:1","amount":"100","payTo":"0xA","asset":"0xB","maxTimeoutSeconds":600}
+            {"scheme":"exact","network":"eip155:1","amount":"100","payTo":"0xA","asset":"0xB"}
         ]"#;
-        let p = parse_payload(json).unwrap();
-        assert_eq!(p.scheme.as_deref(), Some("exact"));
-        assert_eq!(p.network, "eip155:1");
-        assert_eq!(p.amount, "100");
-        assert_eq!(p.pay_to, "0xA");
-        assert_eq!(p.asset, "0xB");
-        assert_eq!(p.max_timeout_seconds, 600);
-    }
-
-    #[test]
-    fn parse_payload_falls_back_to_aggr_deferred() {
-        let json = r#"[
-            {"scheme":"aggr_deferred","network":"eip155:196","amount":"200","payTo":"0xC","asset":"0xD"}
-        ]"#;
-        let p = parse_payload(json).unwrap();
+        let p = parse_payload_local(json).unwrap();
         assert_eq!(p.scheme.as_deref(), Some("aggr_deferred"));
         assert_eq!(p.network, "eip155:196");
         assert_eq!(p.amount, "200");
-        assert_eq!(p.pay_to, "0xC");
-        assert_eq!(p.asset, "0xD");
-        assert_eq!(p.max_timeout_seconds, 300); // no maxTimeoutSeconds → default
     }
 
     #[test]
-    fn parse_payload_max_amount_required() {
+    fn parse_payload_local_max_amount_required() {
         let json = r#"[{"scheme":"aggr_deferred","network":"eip155:1","maxAmountRequired":"999","payTo":"0xA","asset":"0xB"}]"#;
-        let p = parse_payload(json).unwrap();
+        let p = parse_payload_local(json).unwrap();
         assert_eq!(p.amount, "999");
     }
 
     #[test]
-    fn parse_payload_numeric_amount() {
+    fn parse_payload_local_numeric_amount() {
         let json =
             r#"[{"scheme":"exact","network":"eip155:1","amount":500,"payTo":"0xA","asset":"0xB"}]"#;
-        let p = parse_payload(json).unwrap();
+        let p = parse_payload_local(json).unwrap();
         assert_eq!(p.amount, "500");
     }
 
     #[test]
-    fn parse_payload_invalid_json() {
-        assert!(parse_payload("not json").is_err());
+    fn parse_payload_local_invalid_json() {
+        assert!(parse_payload_local("not json").is_err());
     }
 
     #[test]
-    fn parse_payload_missing_network() {
+    fn parse_payload_local_missing_network() {
         let json = r#"[{"amount":"100","payTo":"0xA","asset":"0xB"}]"#;
-        assert!(parse_payload(json).is_err());
+        assert!(parse_payload_local(json).is_err());
+    }
+
+    #[test]
+    fn parse_payload_local_empty_array() {
+        assert!(parse_payload_local("[]").is_err());
     }
 
     // ── CLI argument parsing ──────────────────────────────────────────
@@ -697,32 +461,26 @@ mod tests {
     }
 
     #[test]
-    fn cli_eip3009_sign_missing_from() {
-        let json = r#"[{"network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}]"#;
-        let result = TestCli::try_parse_from(["test", "eip3009-sign", "--accepts", json]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn cli_eip3009_sign_missing_accepts() {
+    fn cli_eip3009_sign_rejects_unknown_from_flag() {
+        // Eip3009Sign has no --from flag, so passing it should fail to parse.
         let result = TestCli::try_parse_from(["test", "eip3009-sign", "--from", "0xPayer"]);
         assert!(result.is_err());
     }
 
-    // ── parse_payload with extra (domain) fields ────────────────────
+    // ── parse_payload_local with extra (domain) fields ───────────────
 
     #[test]
-    fn parse_payload_extracts_domain_from_extra() {
+    fn parse_payload_local_extracts_domain_from_extra() {
         let json = r#"[{"scheme":"exact","network":"eip155:8453","amount":"1000000","payTo":"0xA","asset":"0xB","extra":{"name":"USD Coin","version":"2"}}]"#;
-        let p = parse_payload(json).unwrap();
+        let p = parse_payload_local(json).unwrap();
         assert_eq!(p.domain_name.as_deref(), Some("USD Coin"));
         assert_eq!(p.domain_version.as_deref(), Some("2"));
     }
 
     #[test]
-    fn parse_payload_no_extra_returns_none() {
+    fn parse_payload_local_no_extra_returns_none() {
         let json = r#"[{"scheme":"exact","network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}]"#;
-        let p = parse_payload(json).unwrap();
+        let p = parse_payload_local(json).unwrap();
         assert_eq!(p.domain_name, None);
         assert_eq!(p.domain_version, None);
     }
