@@ -1060,6 +1060,7 @@ async fn wallet_contract_call(
         mev_protection,
         jito_unsigned_tx,
         false, // force
+        None,  // tx_source: not cross-chain
     )
     .await?;
     Ok(json!({ "txHash": tx_hash }))

@@ -543,10 +543,11 @@ async fn wallet_contract_call(
         None, // gas_limit
         None, // from
         aa_dex_token_addr,
-        None, // aa_dex_token_amount
+        None,      // aa_dex_token_amount
         mev_protection,
         jito_unsigned_tx,
-        false, // force
+        false,     // force
+        Some("3"), // tx_source: cross-chain bridge
     )
     .await?;
     Ok(json!({ "txHash": tx_hash }))

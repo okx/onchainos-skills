@@ -644,6 +644,7 @@ impl WalletApiClient {
     }
 
     /// POST /priapi/v5/wallet/agentic/pre-transaction/broadcast-transaction
+    #[allow(clippy::too_many_arguments)]
     pub async fn broadcast_transaction(
         &self,
         access_token: &str,
@@ -652,13 +653,17 @@ impl WalletApiClient {
         chain_index: &str,
         extra_data: &str,
         trace_headers: Option<&[(&str, &str)]>,
+        tx_source: Option<&str>,
     ) -> Result<BroadcastResponse> {
-        let body = json!({
+        let mut body = json!({
             "accountId": account_id,
             "address": address,
             "chainIndex": chain_index,
             "extraData": extra_data,
         });
+        if let Some(src) = tx_source {
+            body["txSource"] = json!(src);
+        }
         let data = self
             .post_authed_with_headers(
                 "/priapi/v5/wallet/agentic/pre-transaction/broadcast-transaction",

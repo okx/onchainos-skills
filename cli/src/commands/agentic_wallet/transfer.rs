@@ -79,6 +79,7 @@ async fn sign_and_broadcast(
     is_contract_call: bool,
     mev_protection: bool,
     force: bool,
+    tx_source: Option<&str>,
 ) -> Result<String> {
     if cfg!(feature = "debug-log") {
         eprintln!(
@@ -319,6 +320,7 @@ async fn sign_and_broadcast(
             &addr_info.chain_index,
             &extra_data_str,
             trace_ref_broadcast,
+            tx_source,
         )
         .await
         .map_err(|e| handle_confirming_error(e, force))?;
@@ -374,6 +376,7 @@ pub(super) async fn cmd_send(
         false,
         false,
         force,
+        None, // tx_source: not cross-chain
     )
     .await?;
     output::success(json!({ "txHash": tx_hash }));
@@ -411,6 +414,7 @@ pub async fn cmd_contract_call(
         mev_protection,
         jito_unsigned_tx,
         force,
+        None, // tx_source: not cross-chain
     )
     .await?;
     output::success(json!({ "txHash": tx_hash }));
@@ -433,6 +437,7 @@ pub async fn execute_contract_call(
     mev_protection: bool,
     jito_unsigned_tx: Option<&str>,
     force: bool,
+    tx_source: Option<&str>,
 ) -> Result<String> {
     if to.is_empty() || chain.is_empty() {
         bail!("to and chain are required");
@@ -461,6 +466,7 @@ pub async fn execute_contract_call(
         true,
         mev_protection,
         force,
+        tx_source,
     )
     .await
 }
