@@ -4,7 +4,7 @@ description: "Use this skill for meme/打狗/alpha token research on pump.fun an
 license: MIT
 metadata:
   author: okx
-  version: "2.2.10"
+  version: "2.3.0"
   homepage: "https://web3.okx.com"
 ---
 
