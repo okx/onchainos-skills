@@ -484,6 +484,71 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[test]
+    fn cli_message_eligible_missing_agent_id() {
+        let result = TestCli::try_parse_from([
+            "test", "message-eligible",
+            "--client-agent-id", "c",
+            "--provider-agent-id", "p",
+            "--job-id", "j",
+            "--group-id", "g",
+            "--direction", "client_to_provider",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_message_eligible_missing_client_agent_id() {
+        let result = TestCli::try_parse_from([
+            "test", "message-eligible",
+            "--agent-id", "a",
+            "--provider-agent-id", "p",
+            "--job-id", "j",
+            "--group-id", "g",
+            "--direction", "client_to_provider",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_message_eligible_missing_provider_agent_id() {
+        let result = TestCli::try_parse_from([
+            "test", "message-eligible",
+            "--agent-id", "a",
+            "--client-agent-id", "c",
+            "--job-id", "j",
+            "--group-id", "g",
+            "--direction", "client_to_provider",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_message_eligible_missing_job_id() {
+        let result = TestCli::try_parse_from([
+            "test", "message-eligible",
+            "--agent-id", "a",
+            "--client-agent-id", "c",
+            "--provider-agent-id", "p",
+            "--group-id", "g",
+            "--direction", "client_to_provider",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_message_eligible_missing_group_id() {
+        let result = TestCli::try_parse_from([
+            "test", "message-eligible",
+            "--agent-id", "a",
+            "--client-agent-id", "c",
+            "--provider-agent-id", "p",
+            "--job-id", "j",
+            "--direction", "client_to_provider",
+        ]);
+        assert!(result.is_err());
+    }
+
     // ── System Config CLI parsing ────────────────────────────────────
 
     #[test]
