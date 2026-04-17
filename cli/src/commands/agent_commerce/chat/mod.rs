@@ -163,7 +163,10 @@ pub async fn fetch_upload(
         .text("jobId", job_id.to_string());
 
     let headers = agent_commerce_headers(agent_id);
-    client.post_multipart(UPLOAD_PATH, form, Some(&headers)).await
+    let resp = client
+        .post_multipart_raw(UPLOAD_PATH, form, Some(&headers))
+        .await?;
+    crate::client::handle_agent_commerce_response(resp).await
 }
 
 async fn cmd_upload(
@@ -249,9 +252,10 @@ async fn cmd_download(
 /// agenticId sent as header.
 pub async fn fetch_sensitive_words(client: &ApiClient, agent_id: &str) -> Result<Value> {
     let headers = agent_commerce_headers(agent_id);
-    client
-        .get_with_headers(SENSITIVE_WORDS_PATH, &[], Some(&headers))
-        .await
+    let resp = client
+        .get_with_headers_raw(SENSITIVE_WORDS_PATH, &[], Some(&headers))
+        .await?;
+    crate::client::handle_agent_commerce_response(resp).await
 }
 
 // ── Message Eligible ─────────────────────────────────────────────────
@@ -271,8 +275,8 @@ pub async fn fetch_message_eligible(
     direction: &str,
 ) -> Result<Value> {
     let headers = agent_commerce_headers(agent_id);
-    client
-        .get_with_headers(
+    let resp = client
+        .get_with_headers_raw(
             MESSAGE_ELIGIBLE_PATH,
             &[
                 ("clientAgentId", client_agent_id),
@@ -283,7 +287,8 @@ pub async fn fetch_message_eligible(
             ],
             Some(&headers),
         )
-        .await
+        .await?;
+    crate::client::handle_agent_commerce_response(resp).await
 }
 
 // ── System Config ────────────────────────────────────────────────────
@@ -294,9 +299,10 @@ pub async fn fetch_message_eligible(
 /// agenticId sent as header.
 pub async fn fetch_system_config(client: &ApiClient, agent_id: &str) -> Result<Value> {
     let headers = agent_commerce_headers(agent_id);
-    client
-        .get_with_headers(SYSTEM_CONFIG_PATH, &[], Some(&headers))
-        .await
+    let resp = client
+        .get_with_headers_raw(SYSTEM_CONFIG_PATH, &[], Some(&headers))
+        .await?;
+    crate::client::handle_agent_commerce_response(resp).await
 }
 
 #[cfg(test)]
