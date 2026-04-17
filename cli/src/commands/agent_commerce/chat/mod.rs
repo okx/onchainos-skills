@@ -13,8 +13,8 @@ const MESSAGE_ELIGIBLE_PATH: &str = "/priapi/v1/aieco/im/message/eligible";
 const SYSTEM_CONFIG_PATH: &str = "/priapi/v1/aieco/im/xmtp/system-config";
 
 /// Build the agenticId extra header slice from an agent ID string.
-fn agentic_header(agent_id: &str) -> [(&str, &str); 1] {
-    [("agenticId", agent_id)]
+fn agent_commerce_headers(agent_id: &str) -> [(&str, &str); 2] {
+    [("agenticId", agent_id), ("User-Agent", "onchainos-cli")]
 }
 
 #[derive(Subcommand)]
@@ -162,7 +162,7 @@ pub async fn fetch_upload(
         .part("file", file_part)
         .text("jobId", job_id.to_string());
 
-    let headers = agentic_header(agent_id);
+    let headers = agent_commerce_headers(agent_id);
     client.post_multipart(UPLOAD_PATH, form, Some(&headers)).await
 }
 
@@ -212,7 +212,7 @@ pub async fn fetch_download(
     agent_id: &str,
 ) -> Result<Vec<u8>> {
     let query = [("fileKey", file_key)];
-    let headers = agentic_header(agent_id);
+    let headers = agent_commerce_headers(agent_id);
     client.get_bytes(DOWNLOAD_PATH, &query, Some(&headers)).await
 }
 
@@ -248,7 +248,7 @@ async fn cmd_download(
 /// Returns the sensitive word checklist for A2A risk filtering.
 /// agenticId sent as header.
 pub async fn fetch_sensitive_words(client: &ApiClient, agent_id: &str) -> Result<Value> {
-    let headers = agentic_header(agent_id);
+    let headers = agent_commerce_headers(agent_id);
     client
         .get_with_headers(SENSITIVE_WORDS_PATH, &[], Some(&headers))
         .await
@@ -270,7 +270,7 @@ pub async fn fetch_message_eligible(
     group_id: &str,
     direction: &str,
 ) -> Result<Value> {
-    let headers = agentic_header(agent_id);
+    let headers = agent_commerce_headers(agent_id);
     client
         .get_with_headers(
             MESSAGE_ELIGIBLE_PATH,
@@ -293,7 +293,7 @@ pub async fn fetch_message_eligible(
 /// Returns XMTP system config including system account sender addresses.
 /// agenticId sent as header.
 pub async fn fetch_system_config(client: &ApiClient, agent_id: &str) -> Result<Value> {
-    let headers = agentic_header(agent_id);
+    let headers = agent_commerce_headers(agent_id);
     client
         .get_with_headers(SYSTEM_CONFIG_PATH, &[], Some(&headers))
         .await

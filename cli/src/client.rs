@@ -263,13 +263,9 @@ impl ApiClient {
     /// - `ok-client-version: <version>`
     /// - `Ok-Access-Client-type: agent-cli`
     pub(crate) fn anonymous_headers() -> reqwest::header::HeaderMap {
-        use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, USER_AGENT};
+        use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
         let mut map = HeaderMap::new();
         map.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        map.insert(
-            USER_AGENT,
-            HeaderValue::from_static("onchainos-cli"),
-        );
         map.insert(
             "ok-client-version",
             HeaderValue::from_static(CLIENT_VERSION),
