@@ -372,6 +372,7 @@ fn chat_sub(c: &crate::commands::agent_commerce::chat::ChatCommand) -> &'static 
         ChatCommand::SensitiveWords { .. } => "sensitive-words",
         ChatCommand::MessageEligible { .. } => "message-eligible",
         ChatCommand::SystemConfig { .. } => "system-config",
+        ChatCommand::Heartbeat { .. } => "heartbeat",
     }
 }
 

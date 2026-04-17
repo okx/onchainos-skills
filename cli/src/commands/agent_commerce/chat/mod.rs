@@ -6,6 +6,7 @@ use crate::client::ApiClient;
 use crate::commands::Context as CliContext;
 use crate::output;
 
+const HEARTBEAT_PATH: &str = "/priapi/v5/wallet/agentic/agent-heartbeat";
 const UPLOAD_PATH: &str = "/priapi/v1/aieco/im/attachments/xmtp/encrypted/upload";
 const DOWNLOAD_PATH: &str = "/priapi/v1/aieco/im/attachments/xmtp/encrypted/download";
 const SENSITIVE_WORDS_PATH: &str = "/priapi/v1/aieco/im/risk/a2a/sensitive/word/list";
@@ -90,6 +91,13 @@ pub enum ChatCommand {
         #[arg(long)]
         agent_id: String,
     },
+    /// Send agent heartbeat to report online status
+    #[command(name = "heartbeat")]
+    Heartbeat {
+        /// Chain index (e.g. 1 for Ethereum, 501 for Solana)
+        #[arg(long)]
+        chain_index: u64,
+    },
 }
 
 pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
@@ -135,6 +143,11 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
         ChatCommand::SystemConfig { agent_id } => {
             let client = ctx.client_async().await?;
             output::success(fetch_system_config(&client, &agent_id).await?);
+            Ok(())
+        }
+        ChatCommand::Heartbeat { chain_index } => {
+            let client = ctx.client_async().await?;
+            output::success(fetch_heartbeat(&client, chain_index).await?);
             Ok(())
         }
     }
@@ -303,6 +316,23 @@ pub async fn fetch_system_config(client: &ApiClient, agent_id: &str) -> Result<V
         .get_with_headers_raw(SYSTEM_CONFIG_PATH, &[], Some(&headers))
         .await?;
     crate::client::handle_agent_commerce_response(resp).await
+}
+
+// ── Heartbeat ────────────────────────────────────────────────────────
+// TODO: Confirm with backend team:
+//   1. Is this endpoint ready on beta?
+//   2. Should it also accept agenticId header like other chat commands?
+//   3. Is chainIndex really the only param needed?
+//   4. This endpoint is under /priapi/v5/wallet/agentic/ (wallet namespace),
+//      unlike other chat commands which use /priapi/v1/aieco/im/.
+
+/// POST /priapi/v5/wallet/agentic/agent-heartbeat
+///
+/// Reports agent online status. Server updates lastOnlineTime for the
+/// agent matching the JWT's ownerAddress + chainIndex.
+pub async fn fetch_heartbeat(client: &ApiClient, chain_index: u64) -> Result<Value> {
+    let body = serde_json::json!({ "chainIndex": chain_index });
+    client.post(HEARTBEAT_PATH, &body).await
 }
 
 #[cfg(test)]
@@ -574,6 +604,42 @@ mod tests {
     #[test]
     fn cli_system_config_missing_agent_id() {
         let result = TestCli::try_parse_from(["test", "system-config"]);
+        assert!(result.is_err());
+    }
+
+    // ── Heartbeat CLI parsing ────────────────────────────────────────
+
+    #[test]
+    fn cli_heartbeat_required_args() {
+        let cli = TestCli::parse_from([
+            "test", "heartbeat",
+            "--chain-index", "1",
+        ]);
+        match cli.command {
+            ChatCommand::Heartbeat { chain_index } => {
+                assert_eq!(chain_index, 1);
+            }
+            _ => panic!("expected Heartbeat"),
+        }
+    }
+
+    #[test]
+    fn cli_heartbeat_solana_chain() {
+        let cli = TestCli::parse_from([
+            "test", "heartbeat",
+            "--chain-index", "501",
+        ]);
+        match cli.command {
+            ChatCommand::Heartbeat { chain_index } => {
+                assert_eq!(chain_index, 501);
+            }
+            _ => panic!("expected Heartbeat"),
+        }
+    }
+
+    #[test]
+    fn cli_heartbeat_missing_chain_index() {
+        let result = TestCli::try_parse_from(["test", "heartbeat"]);
         assert!(result.is_err());
     }
 }
