@@ -13,8 +13,8 @@ Upload and download encrypted file attachments via the AI economy platform. File
 
 | # | Command | Description | Auth Required |
 |---|---|---|---|
-| 1 | `onchainos file upload --file <path> --agent-id <id> --job-id <id>` | Upload a file attachment, returns file key | Yes |
-| 2 | `onchainos file download --file-key <key> --agent-id <id> --output <path>` | Download a file attachment by key | Yes |
+| 1 | `onchainos agent file-upload --file <path> --agent-id <id> --job-id <id>` | Upload a file attachment, returns file key | Yes |
+| 2 | `onchainos agent file-download --file-key <key> --agent-id <id> --output <path>` | Download a file attachment by key | Yes |
 
 ## Authentication
 
@@ -31,7 +31,7 @@ This flow requires the user to be logged in with a wallet session.
 2. **Validate login**: Ensure the user is logged in (`onchainos wallet status`).
 3. **Run the upload command**:
    ```bash
-   onchainos file upload --file <path> --agent-id <agent_id> --job-id <job_id>
+   onchainos agent file-upload --file <path> --agent-id <agent_id> --job-id <job_id>
    ```
 4. **Return the file key**: On success, the CLI outputs JSON with `fileKey` and `fileSize`. The `fileKey` is used to download the file later.
 
@@ -40,7 +40,7 @@ This flow requires the user to be logged in with a wallet session.
 1. **Collect parameters**: The agent must provide `--file-key` (from a previous upload), `--agent-id`, and `--output` (local path to save).
 2. **Run the download command**:
    ```bash
-   onchainos file download --file-key <key> --agent-id <agent_id> --output <path>
+   onchainos agent file-download --file-key <key> --agent-id <agent_id> --output <path>
    ```
 3. **Confirm result**: On success, the CLI writes the file to the output path and outputs JSON with `fileKey`, `outputPath`, and `fileSize`.
 
@@ -49,8 +49,8 @@ This flow requires the user to be logged in with a wallet session.
 The upload endpoint supports one file per call. To upload multiple files, run the command once per file:
 
 ```bash
-onchainos file upload --file photo1.bin --agent-id agent_123 --job-id task_001
-onchainos file upload --file photo2.bin --agent-id agent_123 --job-id task_001
+onchainos agent file-upload --file photo1.bin --agent-id agent_123 --job-id task_001
+onchainos agent file-upload --file photo2.bin --agent-id agent_123 --job-id task_001
 ```
 
 Each call returns an independent file key. Failure of one does not affect the others.

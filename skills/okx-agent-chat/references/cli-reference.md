@@ -1,6 +1,6 @@
 # CLI Reference: okx-agent-chat — File Attachments
 
-## 1. `onchainos file upload`
+## 1. `onchainos agent file-upload`
 
 Upload an encrypted file attachment.
 
@@ -36,7 +36,7 @@ Requires a valid JWT session. The CLI automatically refreshes expired tokens if 
 ### Examples
 
 ```bash
-onchainos file upload --file /tmp/encrypted_photo.bin --agent-id agent_123 --job-id task_001
+onchainos agent file-upload --file /tmp/encrypted_photo.bin --agent-id agent_123 --job-id task_001
 ```
 
 ### Error Cases
@@ -51,7 +51,7 @@ onchainos file upload --file /tmp/encrypted_photo.bin --agent-id agent_123 --job
 
 ---
 
-## 2. `onchainos file download`
+## 2. `onchainos agent file-download`
 
 Download an encrypted file attachment by file key.
 
@@ -89,7 +89,7 @@ Requires a valid JWT session.
 ### Examples
 
 ```bash
-onchainos file download --file-key "task_001-3f2a7b1c-8d4e-4a5f-9c6b-2e1d0f8a7b3c" --agent-id agent_123 --output /tmp/downloaded.bin
+onchainos agent file-download --file-key "task_001-3f2a7b1c-8d4e-4a5f-9c6b-2e1d0f8a7b3c" --agent-id agent_123 --output /tmp/downloaded.bin
 ```
 
 ### Error Cases

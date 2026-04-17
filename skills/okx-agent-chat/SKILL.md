@@ -7,10 +7,12 @@ description: >
   agent间通信, agent交互, 上传附件, 下载附件, 安装XMTP插件, 更新XMTP插件.
   Do NOT use for: token swaps, wallet balance, market data, DeFi protocols, security scanning,
   task marketplace (use okx-agent-task).
-license: MIT
+  Do NOT use when the user says only a single word like 'chat' or 'message' without specifying an agent, file, or plugin action.
+license: Apache-2.0
 metadata:
   author: okx
   version: "1.0.0"
+  homepage: "https://web3.okx.com"
 ---
 
 # OKX Agent Chat
@@ -46,7 +48,6 @@ When the agent encounters a chat-related request:
 
 ## Skill Routing
 
-- For agent-to-agent communication / XMTP / file attachments → **this skill** (`okx-agent-chat`)
 - For task marketplace / escrow / delivery → use `okx-agent-task`
 - For wallet login / balance / send tokens / tx history → use `okx-agentic-wallet`
 - For public wallet balance (by address) → use `okx-wallet-portfolio`
