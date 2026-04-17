@@ -4,7 +4,7 @@ description: "Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens
 license: MIT
 metadata:
   author: okx
-  version: "1.2.0"
+  version: "1.3.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -69,7 +69,42 @@ Multiple search results → show name/symbol/CA/chain, ask user to confirm befor
 
 Follow the **Token Address Resolution** section above.
 
-### Step 2 — Collect Missing Parameters
+### Step 2 — Pre-Swap Token Security Scan (Mandatory)
+
+Before quoting or executing a swap, **automatically** run `token-scan` on both the `--from` and `--to` tokens to detect risks. This step is mandatory and must not be skipped.
+
+> **⚠️ Native token handling**: Exclude native tokens (matching any address in the Native Token Addresses table above) — they have no contract address and cannot be scanned.
+> - If one token is native, scan only the non-native token — apply the action for the scanned token's position (buy/sell) as normal.
+> - If both tokens are native (match addresses in the Native Token Addresses table), skip token-scan entirely.
+
+```bash
+# Both non-native:
+onchainos security token-scan --tokens "<chainId>:<fromTokenAddress>,<chainId>:<toTokenAddress>"
+# One native (e.g., selling ETH for PEPE): scan only the non-native token:
+onchainos security token-scan --tokens "<chainId>:<nonNativeTokenAddress>"
+```
+
+> Load `skills/okx-security/references/risk-token-detection.md` for the full risk label catalog and display format.
+
+**Interpret each token's result using the `riskLevel` field from the API response:**
+
+| `riskLevel` | Buy Action (`--to` token) | Sell Action (`--from` token) |
+|---|---|---|
+| **CRITICAL** | **BLOCK** — Refuse to execute swap. Display triggered labels. | **WARN** — Display risk labels, allow sell to continue. |
+| **HIGH** | **PAUSE** — Display risk labels, ask user "Continue? (yes/no)". Only proceed on explicit "yes". | **WARN** — Display risk labels, allow sell to continue. |
+| **MEDIUM** | **WARN** — Display risk labels as info, continue without pause. | **WARN** — Display risk labels as info, continue without pause. |
+| **LOW** | Safe — proceed to Step 3. | Safe — proceed to Step 3. |
+
+> Buy side (`--to`) is stricter: `CRITICAL` blocks the swap, `HIGH` pauses for confirmation. Sell side (`--from`) only warns — allowing the user to exit risky positions.
+>
+> **Multi-token action resolution**: Apply the action matrix independently for each token based on its role (buy/sell column), then enforce the most restrictive resulting action across all tokens. Precedence: `BLOCK > PAUSE > WARN > Safe`. Display risk results for all scanned tokens first. If any token triggers BLOCK, refuse the swap after showing all results and state which token triggered it (e.g., "Buy BLOCKED due to CRITICAL risk on `--to` token `<symbol>`").
+
+**Edge cases:**
+- `isChainSupported: false` → Skip detection for that token, warn "This chain does not support token security scanning", continue.
+- API timeout/failure → Warn "Token security scan temporarily unavailable, please trade with caution", continue (in swap context, token-scan failures auto-continue with a warning to avoid blocking time-sensitive trades — this overrides the general fail-safe's ask-user behavior).
+- `riskLevel` missing, `null`, or unrecognized → Treat as `HIGH` (cautious default). Display: "⚠️ Risk level unavailable or unrecognized — treating as high risk." Apply HIGH-level actions.
+
+### Step 3 — Collect Missing Parameters
 
 - **Chain**: missing → recommend XLayer (`--chain xlayer`, zero gas, fast confirmation).
 - **Amount**: extract human-readable amount from user's request; pass directly as `--readable-amount <amount>`. CLI fetches token decimals and converts to raw units automatically.
@@ -86,20 +121,20 @@ Follow the **Token Address Resolution** section above.
 | 3 | Stablecoin | USDC/USDT/DAI pairs | autoSlippage (ref 0.1%-0.3%) | `average` |
 | 4 | Large Trade | priceImpact >= 10% AND value >= $1,000 AND pair liquidity >= $10,000 | autoSlippage | `average` |
 
-### Step 3 — Quote
+### Step 4 — Quote
 
 ```bash
 onchainos swap quote --from <token address from step1> --to <token address from step1> --readable-amount <amount> --chain <chain>
 ```
 
-Display: expected output, gas, price impact, routing path. Check `isHoneyPot` and `taxRate` — surface to user. Perform MEV risk assessment (see **MEV Protection**).
+Display: expected output, gas, price impact, routing path. If quote returns `taxRate`, display as supplementary info (the primary risk gate is Step 2's token-scan). Note: the CLI also blocks honeypot swaps internally at execute time via `toToken.isHoneyPot` (defense-in-depth, different data source from Step 2's `token-scan`). Perform MEV risk assessment (see **MEV Protection**).
 
-### Step 4 — User Confirmation
+### Step 5 — User Confirmation
 
-- Price impact >5% → warn prominently. Honeypot (buy) → BLOCK.
+- Price impact >5% → warn prominently. (Token risk labels including honeypot already handled in Step 2.)
 - If >10 seconds pass before user confirms, re-fetch quote. If price diff >= slippage → warn and ask for re-confirmation.
 
-### Step 5 — Execute
+### Step 6 — Execute
 
 ```bash
 onchainos swap execute --from <token address from step1> --to <token address from step1> --readable-amount <amount> --chain <chain> --wallet <addr> [--slippage <pct>] [--gas-level <level>] [--mev-protection]
@@ -130,10 +165,10 @@ If `swap execute` returns an error, it may be caused by a preceding approval tra
 
 Enabled only when the user has **explicitly authorized** automated execution. Three mandatory rules:
 1. **Explicit authorization**: User must clearly opt in. Never assume silent mode.
-2. **Risk gate pause**: BLOCK-level risks must halt and notify the user even in silent mode.
+2. **Risk gate pause**: BLOCK-level (`CRITICAL`) risks must halt and notify the user. PAUSE-level (`HIGH`) buy risks must also halt and wait for user confirmation, even in silent mode.
 3. **Execution log**: Log every silent transaction (timestamp, pair, amount, slippage, txHash, status). Present on request or at session end.
 
-### Step 6 — Report Result
+### Step 7 — Report Result
 
 Use business-level language: "Swap complete" / "Approval and swap complete".
 Do NOT say "Transaction confirmed on-chain" / "Successfully broadcast" / "On-chain success".
@@ -147,17 +182,28 @@ Suggest follow-up: explorer link for `swapTxHash`, check new token price, or swa
 
 ## Risk Controls
 
+### Token Risk Labels (via `token-scan` — Step 2)
+
+Pre-swap `token-scan` returns a `riskLevel` field representing the overall token risk. See `skills/okx-security/references/risk-token-detection.md` for the full label catalog.
+
+| `riskLevel` | Buy | Sell | Description |
+|---|---|---|---|
+| CRITICAL | BLOCK | WARN (allow exit) | Honeypot, garbage airdrop, gas-mint scam, tax ≥ 50% |
+| HIGH | PAUSE — require yes/no | WARN | Low liquidity, dumping, rugpull gang, counterfeit, pump, wash trading, liquidity removal, not open-source, tax ≥21%-<50%, etc. |
+| MEDIUM | WARN (info only) | WARN (info only) | Mintable, freeze authority, not renounced, tax >0%-<21% |
+| LOW | PROCEED | PROCEED | No risk labels triggered |
+
+### Other Risk Items
+
 | Risk Item | Buy | Sell | Notes |
 |---|---|---|---|
-| Honeypot (`isHoneyPot=true`) | BLOCK | WARN (allow exit) | Selling allowed for stop-loss scenarios |
-| High tax rate (>10%) | WARN | WARN | Display exact tax rate |
 | No quote available | CANNOT | CANNOT | Token may be unlisted or zero liquidity |
 | Black/flagged address | BLOCK | BLOCK | Address flagged by security services |
-| New token (<24h) | WARN | PROCEED | Extra caution on buy side |
+| New token (<24h) | PAUSE | PROCEED | Extra caution on buy side — require explicit confirmation |
 | Insufficient liquidity | CANNOT | CANNOT | Liquidity too low to execute trade |
 | Token type not supported | CANNOT | CANNOT | Inform user, suggest alternative |
 
-**Legend**: BLOCK = halt, require explicit override · WARN = display warning, ask confirmation · CANNOT = operation impossible · PROCEED = allow with info
+**Legend**: BLOCK = halt, refuse execution · PAUSE = halt, require explicit yes/no · WARN = display warning, continue · CANNOT = operation impossible · PROCEED = allow with info
 
 ### MEV Protection
 
