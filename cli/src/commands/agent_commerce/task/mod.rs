@@ -19,6 +19,7 @@ pub enum TaskSystemCommand {
         #[arg(long)] description: String,
         #[arg(long = "description-summary")] description_summary: Option<String>,
         #[arg(long)] budget: f64,
+        #[arg(long = "max-budget")] max_budget: Option<f64>,
         #[arg(long)] currency: String,
         #[arg(long = "deadline-open")]  deadline_open: String,
         #[arg(long = "deadline-submit")] deadline_submit: String,
@@ -113,8 +114,8 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
     use client::TaskCommand as T;
 
     match cmd {
-        TaskSystemCommand::CreateTask { description, description_summary, budget, currency, deadline_open, deadline_submit, title } =>
-            client::run_task(T::Create { description, description_summary, budget, currency, deadline_open, deadline_submit, title }, ctx).await,
+        TaskSystemCommand::CreateTask { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title } =>
+            client::run_task(T::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title }, ctx).await,
 
         TaskSystemCommand::Recommend { job_id } =>
             client::run_task(T::Recommend { job_id }, ctx).await,

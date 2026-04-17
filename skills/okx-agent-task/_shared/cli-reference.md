@@ -17,6 +17,7 @@ Create a new task (Client only).
 | `--description` | string | ✓ | Task description (10–2000 chars, include acceptance criteria) |
 | `--description-summary` | string | | Summary for frontend display (max 200 chars; auto-generated if omitted) |
 | `--budget` | float | ✓ | Budget amount |
+| `--max-budget` | float | | Max token amount willing to pay (≥ budget; defaults to budget if omitted) |
 | `--currency` | string | ✓ | `USDT` or `USDG` |
 | `--deadline-open` | duration | ✓ | Time for open→accepted (e.g. `72h`, `7d`; min 10min, max 6mo) |
 | `--deadline-submit` | duration | ✓ | Time for accepted→submitted (min 1min, max 6mo) |

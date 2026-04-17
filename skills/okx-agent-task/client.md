@@ -47,9 +47,10 @@ Collect the following fields through conversation. The Agent must extract or gui
 | Title | `title` | **Strictly max 30 chars** | Agent summarises from conversation. **MUST count characters after generating. If >30, shorten immediately** — drop articles, prepositions, use abbreviations (e.g. "EN→CN DeFi WP Translation"). Never present a title >30 chars to the user. |
 | Summary | `description_summary` | Max **200** chars; used for frontend display | Agent summarises from conversation. **After generating, count characters. If >200, shorten** — drop qualifiers and compress phrasing. |
 | Payment token | `currency` | Only **USDT** and **USDG** supported | Guide user to choose; CLI auto-maps symbol to contract address (USDT / USDG). **⚠️ CRITICAL TOKEN RULE — read carefully:** (1) **Accept directly** ONLY when the user writes the exact full word "USDT" or "USDG" — nothing else. (2) **Everything else is AMBIGUOUS** and requires confirmation. The ambiguous list includes but is not limited to: "U", "u", "USD", "刀", "dollar", "美元", "美金", or any amount suffixed with U/u such as "50U", "60U", "100u", "200u", "预算60U". When you see ANY of these: **STOP. Do NOT set `currency`. Do NOT show a confirmation form. You MUST first ask: "请确认支付代币：USDT 还是 USDG？"** and wait for the user's explicit answer before populating the currency field. (3) **Self-check before showing confirmation form**: if `currency` was not confirmed by the user's explicit "USDT"/"USDG" reply, you have a bug — go back and ask.** |
-| Budget amount | `budget` | Numeric; decimal precision max **5** digits | Guide user; suggest historical reference: "Similar tasks typically cost 50–200 USDG" |
-| Accept deadline | `deadline_open` | Min 10 min, max 6 months (Open → Accepted) | Guide user. On timeout: status → Expired |
-| Submit deadline | `deadline_submit` | Min 1 min, max 6 months (Accepted → Submitted) | Guide user. Escrow: timeout → Expired, Client reclaims funds. Non-escrow/x402: timeout → auto Complete |
+| Budget amount | `budget` | Numeric; decimal precision max **5** digits; **max 10,000,000** (hard cap) | Guide user; suggest historical reference: "Similar tasks typically cost 50–200 USDG". **⚠️ DECIMAL CHECK — MUST enforce before showing form:** count the digits after the decimal point. If >5 (e.g. `150.000001` has 6), **STOP — do NOT put the value in the form**. Tell the user: "Budget precision is limited to 5 decimal places. Please adjust the amount." If budget > 10,000,000, reject: "单次任务预算不得超过 10,000,000 USDT/USDG" |
+| Max budget | `max_budget` | Numeric; optional; must ≥ `budget`; same precision & cap rules as `budget` | The maximum token amount the client is willing to pay (used in negotiation). If user provides it, extract; if not provided, default to `budget` value. If max_budget < budget, warn and ask user to correct. Same decimal ≤5 and ≤10,000,000 checks apply. |
+| Accept deadline | `deadline_open` | Min **10 min**, max **6 months** (Open → Accepted) | Guide user. **⚠️ DEADLINE CHECK — enforce before showing form:** if value < 10 min, STOP and tell user "接单截止时间不能少于 10 分钟，请调整". If value > 6 months, STOP and tell user "接单截止时间不能超过 6 个月". On timeout: status → Expired |
+| Submit deadline | `deadline_submit` | Min **1 min**, max **6 months** (Accepted → Submitted) | Guide user. **⚠️ DEADLINE CHECK:** if value < 1 min, STOP and reject. If value > 6 months, STOP and tell user "交付期限不能超过 6 个月". Escrow: timeout → Expired, Client reclaims funds. Non-escrow/x402: timeout → auto Complete |
 | Quality standards | (included in `description`) | Free text; recommended | Guide user to define acceptance criteria, then append to description content |
 
 ### 1.3 Decide
@@ -57,7 +58,7 @@ Collect the following fields through conversation. The Agent must extract or gui
 Core judgement: **Are all required fields present and valid?**
 
 - Missing fields → continue conversation to collect them
-- All fields ready → show confirmation form (Step 5)
+- All fields ready → identity & balance check (Step 6), then show confirmation form (Step 7)
 
 ### 1.4 Execute
 
@@ -68,10 +69,11 @@ Core judgement: **Are all required fields present and valid?**
 | 3 | Compose summary from conversation (max 200 chars) | — | `description_summary` |
 | 4 | Integrate all dialogue into description (max 2000 chars) | — | `description` |
 | 5 | Guide user to set remaining fields: token, budget, deadlines, quality standards | User | All structured fields |
-| 6 | **Pre-form checkpoint**: verify `currency` was set from user's explicit "USDT" or "USDG" — if it came from shorthand ("U"/"60U"/"刀" etc.), you MUST ask to confirm token first. Then present confirmation form — user must approve before proceeding | User | Explicit confirmation |
-| 7 | Call CLI to create task and sign on-chain | Task system | `jobId` + on-chain status Open |
+| 6 | **Identity & Balance check** (silent — Agent/CLI handles, user sees only results): (a) Check current account buyer identity → if buyer, tell user which account will be used and ask to confirm. (b) If current account is NOT a buyer, list all accounts with buyer identity (show account + address + **USDT/USDG balance**) and ask user to pick. (c) If NO account has buyer identity, prompt user to register current account as buyer. (d) For the chosen account, compare its USDT/USDG balance against the task budget — if insufficient, **warn** (e.g. "余额不足，请在上链前充值") but do **NOT** block task creation. | Identity system + Wallet | Confirmed buyer account |
+| 7 | **Pre-form checkpoint**: verify `currency` was set from user's explicit "USDT" or "USDG" — if it came from shorthand ("U"/"60U"/"刀" etc.), you MUST ask to confirm token first. Then present confirmation form — user must approve before proceeding | User | Explicit confirmation |
+| 8 | Call CLI to create task and sign on-chain | Task system | `jobId` + on-chain status Open |
 
-**Step 6 — Confirmation form example** (MUST use Markdown table format):
+**Step 7 — Confirmation form example** (MUST use Markdown table format):
 
 | 字段 | 值 |
 |:--|:--|
@@ -80,6 +82,7 @@ Core judgement: **Are all required fields present and valid?**
 | **描述** | [full conversation content] |
 | **支付代币** | USDT |
 | **预算** | 10 |
+| **最高预算** | 15 |
 | **接单截止** | 72h |
 | **交付期限** | 48h |
 | **验收标准** | Native-level fluency, accurate DeFi terminology, no omissions |
@@ -88,15 +91,15 @@ Core judgement: **Are all required fields present and valid?**
 
 **IMPORTANT**: Always use the Markdown table format above for the confirmation form — do NOT use plain-text key-value pairs or code blocks. Use Chinese field labels (标题/摘要/描述/支付代币/预算/接单截止/交付期限/验收标准) when the conversation is in Chinese, English labels when in English. Keep field labels short (max 4 Chinese characters) so they render on a single line without wrapping.
 
-User confirms → proceed to Step 7.
+User confirms → proceed to Step 8.
 
-**Step 7 — Create task**:
+**Step 8 — Create task**:
 
 ```bash
 onchainos agent create-task \
   --description "Translate 3000-word DeFi whitepaper. Quality: native fluency, accurate terminology, no omissions." \
   --description-summary "Translate a 3000-word DeFi whitepaper with accurate terminology" \
-  --budget 10 --currency USDT \
+  --budget 10 --max-budget 15 --currency USDT \
   --deadline-open 72h --deadline-submit 48h
 ```
 
@@ -112,6 +115,11 @@ Returns: `{ "jobId": "0x...", "uopData": { "uopHash": "0x...", "extraData": {...
 | Description too short (< 10 chars) | "The more detail you provide, the better the Provider match. Could you expand on the requirements?" |
 | Title exceeds 30 chars | Agent re-summarises automatically to fit the limit |
 | Budget decimal exceeds 5 places | "Budget precision is limited to 5 decimal places. Please adjust the amount." |
+| Budget exceeds 10,000,000 | "单次任务预算不得超过 10,000,000 USDT/USDG，请调整金额。" |
+| Accept deadline < 10 min | "接单截止时间不能少于 10 分钟，请调整。" |
+| Accept deadline > 6 months | "接单截止时间不能超过 6 个月，请调整。" |
+| Submit deadline < 1 min | "交付期限不能少于 1 分钟，请调整。" |
+| Submit deadline > 6 months | "交付期限不能超过 6 个月，请调整。" |
 | `createTask` transaction failure | Check gas balance and network status; guide user to retry |
 
 ### 1.6 Exit Condition

@@ -2,6 +2,7 @@ use anyhow::{bail, Result};
 use clap::Subcommand;
 
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
+use crate::commands::agent_commerce::mock_identity::{self as identity, AgentRole, AccountBalance};
 use crate::commands::agent_commerce::task::common::{XLAYER_CHAIN_ID, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME};
 use crate::commands::Context;
 use crate::wallet_api::UnsignedInfoResponse;
@@ -24,12 +25,42 @@ fn parse_duration_secs(s: &str) -> Result<u64> {
     }
 }
 
+/// 单次任务预算上限
+const MAX_BUDGET: f64 = 10_000_000.0;
+
 /// 校验货币符号
 fn validate_currency(currency: &str) -> Result<()> {
     match currency.to_uppercase().as_str() {
         "USDT" | "USDG" => Ok(()),
         other => bail!("不支持的代币: {other}，仅支持 USDT 和 USDG"),
     }
+}
+
+/// 余额不足时输出提示（仅警告，不阻断流程）
+fn warn_insufficient_balance(bal: &AccountBalance, budget: f64, currency: &str) {
+    let available = match currency.to_uppercase().as_str() {
+        "USDT" => bal.usdt,
+        "USDG" => bal.usdg,
+        _ => return,
+    };
+    if available < budget {
+        println!(
+            "⚠ 当前账户 {} 余额不足: {} {} (任务预算 {} {})，请在上链前充值",
+            bal.address, available, currency.to_uppercase(),
+            budget, currency.to_uppercase()
+        );
+    }
+}
+
+/// 校验预算金额
+fn validate_budget(budget: f64) -> Result<()> {
+    if budget <= 0.0 {
+        bail!("预算金额必须大于 0");
+    }
+    if budget > MAX_BUDGET {
+        bail!("单次任务预算不得超过 {} USDT/USDG", MAX_BUDGET as u64);
+    }
+    Ok(())
 }
 
 // ─── task subcommands ──────────────────────────────────────────────────────
@@ -44,6 +75,8 @@ pub enum TaskCommand {
         description_summary: Option<String>,
         #[arg(long)]
         budget: f64,
+        #[arg(long = "max-budget")]
+        max_budget: Option<f64>,
         #[arg(long)]
         currency: String,
         #[arg(long = "deadline-open")]
@@ -249,10 +282,17 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
     match cmd {
         // ── 创建任务 (create → sign → broadcast) ────────────────────────────
         TaskCommand::Create {
-            description, description_summary, budget, currency,
+            description, description_summary, budget, max_budget, currency,
             deadline_open, deadline_submit, title,
         } => {
             validate_currency(&currency)?;
+            validate_budget(budget)?;
+
+            let max_budget_val = max_budget.unwrap_or(budget);
+            if max_budget_val < budget {
+                bail!("--max-budget ({max_budget_val}) 不能小于 --budget ({budget})");
+            }
+            validate_budget(max_budget_val)?;
 
             let open_secs   = parse_duration_secs(&deadline_open)
                 .map_err(|_| anyhow::anyhow!("--deadline-open 格式错误，例如 72h 或 3600"))?;
@@ -263,6 +303,74 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             let summary   = description_summary
                 .unwrap_or_else(|| description.chars().take(200).collect());
 
+            // ── Step 0: 身份检查 + 余额提示 ───────────────────────────
+            let wallets = crate::wallet_store::load_wallets()?
+                .ok_or_else(|| anyhow::anyhow!("未登录，请先执行 onchainos wallet auth"))?;
+
+            let selected_account_id = &wallets.selected_account_id;
+            let (_, selected_addr) = resolve_address(&wallets, None, XLAYER_CHAIN_NAME)?;
+
+            // 0-a: 静默检查当前账户是否已注册买家身份
+            let (account_id, addr_info) = if identity::has_role(
+                selected_account_id,
+                &selected_addr.address,
+                AgentRole::Buyer,
+            ).await? {
+                // 当前账户是买家 → 告知用户并继续
+                println!("✓ 当前账户已具有买家身份 (account: {selected_account_id})");
+
+                // 0-b: 查询当前账户余额，与任务预算对比（仅提示，不强制）
+                let bal = identity::get_account_balance(
+                    selected_account_id, &selected_addr.address,
+                ).await?;
+                warn_insufficient_balance(&bal, budget, &currency);
+
+                (selected_account_id.clone(), selected_addr)
+            } else {
+                // 0-c: 当前账户无买家身份 → 查找其他有买家身份的账户
+                let buyer_accounts = identity::list_accounts_with_role(
+                    &wallets,
+                    XLAYER_CHAIN_NAME,
+                    AgentRole::Buyer,
+                ).await?;
+
+                if buyer_accounts.is_empty() {
+                    // 0-d: 所有账户都没有买家身份 → 提示注册当前账户
+                    println!("当前无任何账户具有买家身份");
+                    println!("正在为当前账户注册买家身份...");
+                    let _agent_id = identity::register_identity(
+                        selected_account_id,
+                        &selected_addr.address,
+                        AgentRole::Buyer,
+                    ).await?;
+                    (selected_account_id.clone(), selected_addr)
+                } else {
+                    // 0-e: 列出有买家身份的账户（附带 USDT/USDG 余额）
+                    let acct_pairs: Vec<(&str, &str)> = buyer_accounts
+                        .iter()
+                        .map(|a| (a.account_id.as_str(), a.address.as_str()))
+                        .collect();
+                    let balances = identity::get_accounts_balance(&acct_pairs).await?;
+
+                    println!("当前账户未注册买家身份，以下账户可用：");
+                    for (i, acct) in buyer_accounts.iter().enumerate() {
+                        let bal = balances.iter().find(|b| b.account_id == acct.account_id);
+                        let (usdt, usdg) = bal
+                            .map(|b| (b.usdt, b.usdg))
+                            .unwrap_or((0.0, 0.0));
+                        println!(
+                            "  {}. account: {}  address: {}  agent: {}  USDT: {}  USDG: {}",
+                            i + 1, acct.account_id, acct.address, acct.agent_id, usdt, usdg
+                        );
+                    }
+                    // CLI 模式下默认使用第一个可用账户
+                    let chosen = &buyer_accounts[0];
+                    println!("使用账户: {} ({})", chosen.account_id, chosen.address);
+                    let (_, addr) = resolve_address(&wallets, Some(&chosen.address), XLAYER_CHAIN_NAME)?;
+                    (chosen.account_id.clone(), addr)
+                }
+            };
+
             // ── Step 1: 生成 calldata (POST /api/v1/task/create) ────────
             let body = serde_json::json!({
                 "title":              title_str,
@@ -270,6 +378,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 "description_summary": summary,
                 "paymentTokenSymbol": currency.to_uppercase(),
                 "paymentTokenAmount": budget.to_string(),
+                "maxPaymentTokenAmount": max_budget_val.to_string(),
                 "chainId":            XLAYER_CHAIN_ID,
                 "expireConfig": {
                     "acceptDeadline":    open_secs,
@@ -298,10 +407,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             // ── Step 2: 签名 uopHash (build_broadcast_body) ─────────────
             let unsigned: UnsignedInfoResponse = serde_json::from_value(uop_data.clone())
                 .map_err(|e| anyhow::anyhow!("解析 uopData 失败: {e}"))?;
-
-            let wallets = crate::wallet_store::load_wallets()?
-                .ok_or_else(|| anyhow::anyhow!("未登录，请先执行 onchainos wallet auth"))?;
-            let (account_id, addr_info) = resolve_address(&wallets, None, XLAYER_CHAIN_NAME)?;
 
             let broadcast_body = build_broadcast_body(
                 &unsigned,
