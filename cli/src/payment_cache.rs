@@ -4,7 +4,7 @@
 //! non-sensitive server-returned data). Written atomically (tmp + rename) so a
 //! mid-write crash cannot corrupt the file.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -13,19 +13,18 @@ use serde_json::Value;
 
 /// Snapshot of the payment config + live charging state.
 ///
-/// - `basic_paths` / `premium_paths`: path sets returned from the market config
-///   endpoint (which routes require payment, by tier).
-/// - `accepts`: signing parameters (scheme, network, asset, payTo, ...) returned
-///   from the same endpoint.
+/// - `endpoints`: path → tier (`"basic"` / `"premium"`) mapping returned from
+///   the market config endpoint. Replaces the legacy `basic_paths` /
+///   `premium_paths` split.
+/// - `accepts`: signing parameters (scheme, network, asset, payTo, tiered
+///   `amount`, ...) returned from the same endpoint.
 /// - `basic_charging` / `premium_charging`: flipped by the
 ///   `ok-web3-openapi-pay: Basic=1;Premium=0` response header. `true` means the
 ///   next request on that tier must be pre-signed.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PaymentCache {
     #[serde(default)]
-    pub basic_paths: HashSet<String>,
-    #[serde(default)]
-    pub premium_paths: HashSet<String>,
+    pub endpoints: HashMap<String, String>,
     #[serde(default)]
     pub accepts: Option<Value>,
     #[serde(default)]
@@ -113,10 +112,12 @@ mod tests {
         std::env::set_var("ONCHAINOS_HOME", &dir);
 
         let cache = PaymentCache {
-            basic_paths: ["/api/v6/dex/market/price".to_string()]
-                .into_iter()
-                .collect(),
-            premium_paths: ["/api/v6/dex/market/k".to_string()].into_iter().collect(),
+            endpoints: [
+                ("/api/v6/dex/market/price".to_string(), "basic".to_string()),
+                ("/api/v6/dex/market/k".to_string(), "premium".to_string()),
+            ]
+            .into_iter()
+            .collect(),
             accepts: Some(serde_json::json!([{"scheme": "exact"}])),
             basic_charging: true,
             premium_charging: false,
@@ -125,8 +126,20 @@ mod tests {
         cache.save().unwrap();
 
         let loaded = PaymentCache::load().unwrap();
-        assert!(loaded.basic_paths.contains("/api/v6/dex/market/price"));
-        assert!(loaded.premium_paths.contains("/api/v6/dex/market/k"));
+        assert_eq!(
+            loaded
+                .endpoints
+                .get("/api/v6/dex/market/price")
+                .map(String::as_str),
+            Some("basic")
+        );
+        assert_eq!(
+            loaded
+                .endpoints
+                .get("/api/v6/dex/market/k")
+                .map(String::as_str),
+            Some("premium")
+        );
         assert!(loaded.basic_charging);
         assert!(!loaded.premium_charging);
         assert_eq!(loaded.updated_at, 1_700_000_000);

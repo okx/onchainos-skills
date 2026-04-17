@@ -19,6 +19,38 @@ use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_
 use crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN;
 use crate::{keyring_store, wallet_api::WalletApiClient, wallet_store};
 
+/// Which pricing tier to sign for. The server's config response groups paths
+/// into `BASIC` / `PREMIUM` tiers, and each accepts entry's `amount` is an
+/// object keyed by these tier names. The caller decides which tier to sign
+/// against based on the path being requested.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaymentTier {
+    Basic,
+    Premium,
+}
+
+impl PaymentTier {
+    /// JSON key used in the `amount` object (e.g. `"basic"` / `"premium"`).
+    pub fn as_key(self) -> &'static str {
+        match self {
+            Self::Basic => "basic",
+            Self::Premium => "premium",
+        }
+    }
+
+    /// Parse from the server tier string (case-insensitive). Returns `None`
+    /// for anything not in `{BASIC, PREMIUM}`.
+    pub fn from_server_str(s: &str) -> Option<Self> {
+        if s.eq_ignore_ascii_case("basic") {
+            Some(Self::Basic)
+        } else if s.eq_ignore_ascii_case("premium") {
+            Some(Self::Premium)
+        } else {
+            None
+        }
+    }
+}
+
 /// Result of signing an x402 payment authorization.
 pub struct PaymentProof {
     /// Base64 EIP-3009 signature (for `exact` scheme) or base64 Ed25519 session
@@ -81,22 +113,55 @@ struct ResolvedEntry {
     scheme: Option<String>,
 }
 
-fn resolve_entry(entry: &Value, scheme: Option<String>) -> Result<ResolvedEntry> {
+/// Extract a minimal-unit amount string from an accepts entry.
+///
+/// Supports three server formats:
+/// - `amount: {"basic": "100", "premium": "500"}` — new tiered schema; requires
+///   `tier` to pick a side.
+/// - `amount: "100"` / `amount: 100` — legacy scalar.
+/// - `maxAmountRequired: "100"` / `maxAmountRequired: 100` — legacy alternate.
+fn resolve_amount(entry: &Value, tier: Option<PaymentTier>) -> Result<String> {
+    if let Some(obj) = entry.get("amount").and_then(|v| v.as_object()) {
+        let tier = tier.ok_or_else(|| {
+            anyhow!(
+                "accepts.amount is a tiered object ({{basic, premium}}) but no tier was specified"
+            )
+        })?;
+        let key = tier.as_key();
+        let val = obj
+            .get(key)
+            .ok_or_else(|| anyhow!("accepts.amount is missing '{}' key", key))?;
+        return match val {
+            Value::String(s) => Ok(s.clone()),
+            Value::Number(n) => Ok(n.to_string()),
+            _ => bail!("accepts.amount.{} must be a string or number", key),
+        };
+    }
+    if let Some(s) = entry.get("amount").and_then(|v| v.as_str()) {
+        return Ok(s.to_string());
+    }
+    if let Some(n) = entry.get("amount").and_then(|v| v.as_u64()) {
+        return Ok(n.to_string());
+    }
+    if let Some(s) = entry.get("maxAmountRequired").and_then(|v| v.as_str()) {
+        return Ok(s.to_string());
+    }
+    if let Some(n) = entry.get("maxAmountRequired").and_then(|v| v.as_u64()) {
+        return Ok(n.to_string());
+    }
+    bail!("missing 'amount' or 'maxAmountRequired' in accepts entry");
+}
+
+fn resolve_entry(
+    entry: &Value,
+    scheme: Option<String>,
+    tier: Option<PaymentTier>,
+) -> Result<ResolvedEntry> {
     let network = entry["network"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'network' in accepts entry"))?
         .to_string();
-    let amount = if let Some(s) = entry.get("amount").and_then(|v| v.as_str()) {
-        s.to_string()
-    } else if let Some(n) = entry.get("amount").and_then(|v| v.as_u64()) {
-        n.to_string()
-    } else if let Some(s) = entry.get("maxAmountRequired").and_then(|v| v.as_str()) {
-        s.to_string()
-    } else if let Some(n) = entry.get("maxAmountRequired").and_then(|v| v.as_u64()) {
-        n.to_string()
-    } else {
-        bail!("missing 'amount' or 'maxAmountRequired' in accepts entry");
-    };
+    let amount = resolve_amount(entry, tier)?;
     let pay_to = entry["payTo"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'payTo' in accepts entry"))?
@@ -119,9 +184,16 @@ fn resolve_entry(entry: &Value, scheme: Option<String>) -> Result<ResolvedEntry>
 /// Sign an x402 payment authorization.
 ///
 /// `accepts` accepts either an array (we select the best entry with
-/// `select_accept`) or a single object (used as-is). Returns the signed proof
-/// and the selected entry so callers can build a header with the right scheme.
-pub async fn sign_payment(accepts: &Value, from: Option<&str>) -> Result<(PaymentProof, Value)> {
+/// `select_accept`) or a single object (used as-is). `tier` picks which amount
+/// to sign when the server returns the new `amount: {basic, premium}` object
+/// schema; for legacy scalar `amount` / `maxAmountRequired` it is ignored.
+/// Returns the signed proof and the selected entry so callers can build a
+/// header with the right scheme.
+pub async fn sign_payment(
+    accepts: &Value,
+    from: Option<&str>,
+    tier: Option<PaymentTier>,
+) -> Result<(PaymentProof, Value)> {
     let (entry, scheme) = match accepts.as_array() {
         Some(arr) => select_accept(arr)?,
         None => (
@@ -129,7 +201,7 @@ pub async fn sign_payment(accepts: &Value, from: Option<&str>) -> Result<(Paymen
             accepts["scheme"].as_str().map(|s| s.to_string()),
         ),
     };
-    let params = resolve_entry(&entry, scheme)?;
+    let params = resolve_entry(&entry, scheme, tier)?;
 
     let access_token = ensure_tokens_refreshed().await?;
     let real_chain_id = parse_eip155_chain_id(&params.network)?;
@@ -386,15 +458,81 @@ mod tests {
     #[test]
     fn resolve_entry_extracts_amount_from_max_amount_required() {
         let v = json!({"network":"eip155:1","maxAmountRequired":"999","payTo":"0xA","asset":"0xB"});
-        let r = resolve_entry(&v, None).unwrap();
+        let r = resolve_entry(&v, None, None).unwrap();
         assert_eq!(r.amount, "999");
     }
 
     #[test]
     fn resolve_entry_default_timeout() {
         let v = json!({"network":"eip155:1","amount":"1","payTo":"0xA","asset":"0xB"});
-        let r = resolve_entry(&v, None).unwrap();
+        let r = resolve_entry(&v, None, None).unwrap();
         assert_eq!(r.max_timeout_seconds, 300);
+    }
+
+    #[test]
+    fn resolve_amount_object_selects_by_tier() {
+        let v = json!({"amount": {"basic": "100", "premium": "500"}});
+        assert_eq!(resolve_amount(&v, Some(PaymentTier::Basic)).unwrap(), "100");
+        assert_eq!(
+            resolve_amount(&v, Some(PaymentTier::Premium)).unwrap(),
+            "500"
+        );
+    }
+
+    #[test]
+    fn resolve_amount_object_requires_tier() {
+        let v = json!({"amount": {"basic": "100", "premium": "500"}});
+        assert!(resolve_amount(&v, None).is_err());
+    }
+
+    #[test]
+    fn resolve_amount_object_missing_key_errors() {
+        let v = json!({"amount": {"basic": "100"}});
+        assert!(resolve_amount(&v, Some(PaymentTier::Premium)).is_err());
+    }
+
+    #[test]
+    fn resolve_amount_scalar_ignores_tier() {
+        let v = json!({"amount": "42"});
+        assert_eq!(resolve_amount(&v, Some(PaymentTier::Basic)).unwrap(), "42");
+        assert_eq!(resolve_amount(&v, None).unwrap(), "42");
+    }
+
+    #[test]
+    fn resolve_amount_number_form() {
+        let v = json!({"amount": 42});
+        assert_eq!(resolve_amount(&v, None).unwrap(), "42");
+    }
+
+    #[test]
+    fn resolve_entry_object_amount_with_tier() {
+        let v = json!({
+            "network": "eip155:196",
+            "amount": {"basic": "100", "premium": "500"},
+            "payTo": "0xA",
+            "asset": "0xB"
+        });
+        let r = resolve_entry(&v, None, Some(PaymentTier::Premium)).unwrap();
+        assert_eq!(r.amount, "500");
+    }
+
+    #[test]
+    fn payment_tier_roundtrip() {
+        assert_eq!(
+            PaymentTier::from_server_str("BASIC"),
+            Some(PaymentTier::Basic)
+        );
+        assert_eq!(
+            PaymentTier::from_server_str("basic"),
+            Some(PaymentTier::Basic)
+        );
+        assert_eq!(
+            PaymentTier::from_server_str("Premium"),
+            Some(PaymentTier::Premium)
+        );
+        assert_eq!(PaymentTier::from_server_str("other"), None);
+        assert_eq!(PaymentTier::Basic.as_key(), "basic");
+        assert_eq!(PaymentTier::Premium.as_key(), "premium");
     }
 
     #[test]

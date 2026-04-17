@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context, Result};
@@ -8,13 +8,15 @@ use reqwest::Client;
 use serde_json::Value;
 use sha2::Sha256;
 
+use crate::commands::agentic_wallet::payment_flow::PaymentTier;
 use crate::payment_cache::{self, PaymentCache};
 
 pub const DEFAULT_BASE_URL: &str = "https://web3.okx.com";
 const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Market API config endpoint — returns `basic`/`premium` path lists plus the
-/// default `accepts` signing parameters. Refreshed at most once per `CONFIG_TTL_SECS`.
+/// Market API config endpoint — returns the path→tier `endpointList` map plus
+/// the default `accepts` signing parameters. Refreshed at most once per
+/// `CONFIG_TTL_SECS`.
 const CONFIG_PATH: &str = "/api/v6/dex/market/config";
 const CONFIG_TTL_SECS: u64 = 3600;
 
@@ -28,8 +30,8 @@ const PAYMENT_STATE_HEADER: &str = "ok-web3-openapi-pay";
 /// response headers on every request.
 #[derive(Debug, Default)]
 struct PaymentState {
-    basic_paths: HashSet<String>,
-    premium_paths: HashSet<String>,
+    /// Path → tier mapping from the server's `endpointList`.
+    endpoints: HashMap<String, PaymentTier>,
     accepts: Option<Value>,
     basic_charging: bool,
     premium_charging: bool,
@@ -465,8 +467,12 @@ impl ApiClient {
             Err(e) => match e.downcast::<PaymentRequired>() {
                 Ok(pr) => {
                     self.update_accepts_cache(&pr.accepts);
+                    // Fall back to Basic if we have no tier mapping — cheapest
+                    // safe default; if the server wanted Premium it will 402
+                    // again and the user sees the error.
+                    let tier = self.tier_for_path(path).unwrap_or(PaymentTier::Basic);
                     let hdr = self
-                        .sign_header_from_accepts(&pr.accepts, &resource)
+                        .sign_header_from_accepts(&pr.accepts, &resource, tier)
                         .await?;
                     self.do_get_request(path, query, extra_headers, Some(&hdr))
                         .await
@@ -501,8 +507,9 @@ impl ApiClient {
             Err(e) => match e.downcast::<PaymentRequired>() {
                 Ok(pr) => {
                     self.update_accepts_cache(&pr.accepts);
+                    let tier = self.tier_for_path(path).unwrap_or(PaymentTier::Basic);
                     let hdr = self
-                        .sign_header_from_accepts(&pr.accepts, &resource)
+                        .sign_header_from_accepts(&pr.accepts, &resource, tier)
                         .await?;
                     self.do_post_request(path, body, extra_headers, Some(&hdr))
                         .await
@@ -709,8 +716,13 @@ impl ApiClient {
         if let Some(cache) = PaymentCache::load() {
             if !cache.is_expired(CONFIG_TTL_SECS) {
                 let mut state = self.payment_state();
-                state.basic_paths = cache.basic_paths;
-                state.premium_paths = cache.premium_paths;
+                state.endpoints = cache
+                    .endpoints
+                    .iter()
+                    .filter_map(|(p, t)| {
+                        PaymentTier::from_server_str(t).map(|tier| (p.clone(), tier))
+                    })
+                    .collect();
                 state.accepts = cache.accepts;
                 state.basic_charging = cache.basic_charging;
                 state.premium_charging = cache.premium_charging;
@@ -741,23 +753,13 @@ impl ApiClient {
 
     fn apply_config_response(&self, data: &Value) {
         let mut state = self.payment_state();
-        state.basic_paths.clear();
-        state.premium_paths.clear();
-        for u in data["basic"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|v| v.as_str())
-        {
-            state.basic_paths.insert(u.to_string());
-        }
-        for u in data["premium"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|v| v.as_str())
-        {
-            state.premium_paths.insert(u.to_string());
+        state.endpoints.clear();
+        if let Some(obj) = data.get("endpointList").and_then(|v| v.as_object()) {
+            for (path, tier_val) in obj {
+                if let Some(tier) = tier_val.as_str().and_then(PaymentTier::from_server_str) {
+                    state.endpoints.insert(path.clone(), tier);
+                }
+            }
         }
         if let Some(a) = data.get("accepts") {
             if !a.is_null() {
@@ -829,6 +831,13 @@ impl ApiClient {
         format!("{}{}", self.base_url.trim_end_matches('/'), path)
     }
 
+    /// Look up the tier for a path from the loaded config. Returns `None`
+    /// if we don't have a mapping (e.g. config failed to load, or the path
+    /// isn't on any paid tier).
+    fn tier_for_path(&self, path: &str) -> Option<PaymentTier> {
+        self.payment_state().endpoints.get(path).copied()
+    }
+
     /// Build a payment header for `path` if we know it's on a charging tier.
     /// Returns `None` if the path isn't charged, or if signing itself fails
     /// (e.g. the wallet isn't logged in — the request will then naturally hit
@@ -838,28 +847,37 @@ impl ApiClient {
         path: &str,
         resource: &str,
     ) -> Option<(&'static str, String)> {
-        let (needs, accepts) = {
+        let (tier, accepts) = {
             let state = self.payment_state();
-            let needs = (state.basic_paths.contains(path) && state.basic_charging)
-                || (state.premium_paths.contains(path) && state.premium_charging);
-            (needs, state.accepts.clone())
+            let tier = state.endpoints.get(path).copied()?;
+            let charging = match tier {
+                PaymentTier::Basic => state.basic_charging,
+                PaymentTier::Premium => state.premium_charging,
+            };
+            if !charging {
+                return None;
+            }
+            (tier, state.accepts.clone())
         };
-        if !needs {
-            return None;
-        }
         let accepts = accepts?;
-        self.sign_header_from_accepts(&accepts, resource).await.ok()
+        self.sign_header_from_accepts(&accepts, resource, tier)
+            .await
+            .ok()
     }
 
     /// Sign a V2 payment header from a raw accepts value (from config or from
     /// a 402 response). OKX openapi follows standard x402 V2 (`PAYMENT-SIGNATURE`).
+    /// `tier` picks which amount to sign when the server returns the tiered
+    /// `amount: {basic, premium}` schema.
     async fn sign_header_from_accepts(
         &self,
         accepts: &Value,
         resource: &str,
+        tier: PaymentTier,
     ) -> Result<(&'static str, String)> {
         let (proof, selected) =
-            crate::commands::agentic_wallet::payment_flow::sign_payment(accepts, None).await?;
+            crate::commands::agentic_wallet::payment_flow::sign_payment(accepts, None, Some(tier))
+                .await?;
         crate::commands::agentic_wallet::payment_flow::build_payment_header(
             &proof,
             &selected,
@@ -886,8 +904,11 @@ impl ApiClient {
     fn flush_payment_cache(&self) -> Result<()> {
         let state = self.payment_state();
         let cache = PaymentCache {
-            basic_paths: state.basic_paths.clone(),
-            premium_paths: state.premium_paths.clone(),
+            endpoints: state
+                .endpoints
+                .iter()
+                .map(|(p, t)| (p.clone(), t.as_key().to_string()))
+                .collect(),
             accepts: state.accepts.clone(),
             basic_charging: state.basic_charging,
             premium_charging: state.premium_charging,
@@ -900,7 +921,7 @@ impl ApiClient {
 
 #[cfg(test)]
 mod tests {
-    use super::ApiClient;
+    use super::{ApiClient, PaymentTier};
 
     /// Set AK credential env vars to dummy test values so ApiClient::new() succeeds.
     fn set_test_credentials() {
@@ -1222,5 +1243,70 @@ mod tests {
             .build_get_url_and_request_path("/api/v6/dex/market/candles", &[])
             .expect("url");
         assert!(url.as_str().starts_with("https://custom.example.com"));
+    }
+
+    // ── Auto-payment config parsing ───────────────────────────────────────────
+
+    #[test]
+    fn apply_config_response_populates_endpoints_from_endpoint_list() {
+        set_test_credentials();
+        let client = ApiClient::new(None).expect("client");
+        let data = serde_json::json!({
+            "endpointList": {
+                "/api/v6/dex/market/trades": "BASIC",
+                "/api/v6/dex/market/memepump/tokenDeveloper": "PREMIUM",
+                "/api/v6/dex/market/ignored": "UNKNOWN"
+            },
+            "accepts": [
+                {"scheme":"exact","network":"eip155:196","amount":{"basic":"100","premium":"500"}}
+            ]
+        });
+        client.apply_config_response(&data);
+
+        let state = client.payment_state();
+        assert_eq!(
+            state.endpoints.get("/api/v6/dex/market/trades").copied(),
+            Some(PaymentTier::Basic)
+        );
+        assert_eq!(
+            state
+                .endpoints
+                .get("/api/v6/dex/market/memepump/tokenDeveloper")
+                .copied(),
+            Some(PaymentTier::Premium)
+        );
+        // Unknown tier strings are dropped silently.
+        assert!(!state.endpoints.contains_key("/api/v6/dex/market/ignored"));
+        assert!(state.accepts.is_some());
+    }
+
+    #[test]
+    fn apply_config_response_tolerates_missing_endpoint_list() {
+        set_test_credentials();
+        let client = ApiClient::new(None).expect("client");
+        let data = serde_json::json!({});
+        client.apply_config_response(&data);
+        assert!(client.payment_state().endpoints.is_empty());
+    }
+
+    #[test]
+    fn tier_for_path_returns_none_when_unknown() {
+        set_test_credentials();
+        let client = ApiClient::new(None).expect("client");
+        assert_eq!(client.tier_for_path("/api/v6/dex/market/unknown"), None);
+    }
+
+    #[test]
+    fn extract_header_flag_parses_mixed_case_and_ignores_unknown() {
+        assert_eq!(
+            ApiClient::extract_header_flag("Basic=1;Premium=0", "basic"),
+            Some(true)
+        );
+        assert_eq!(
+            ApiClient::extract_header_flag("basic=0;Premium=1", "Premium"),
+            Some(true)
+        );
+        assert_eq!(ApiClient::extract_header_flag("Basic=1", "Premium"), None);
+        assert_eq!(ApiClient::extract_header_flag("Basic=maybe", "Basic"), None);
     }
 }

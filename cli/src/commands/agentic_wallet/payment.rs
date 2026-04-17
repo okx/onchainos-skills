@@ -172,7 +172,7 @@ fn validate_payment_inputs(amount: &str, pay_to: &str, asset: &str) -> Result<u1
 async fn cmd_pay(accepts_json: &str, from: Option<&str>) -> Result<()> {
     let accepts: Value =
         serde_json::from_str(accepts_json).context("--accepts must be a valid JSON array")?;
-    let (proof, _entry) = payment_flow::sign_payment(&accepts, from).await?;
+    let (proof, _entry) = payment_flow::sign_payment(&accepts, from, None).await?;
     let mut out = json!({
         "signature": proof.signature,
         "authorization": proof.authorization,
