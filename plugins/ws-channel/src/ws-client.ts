@@ -75,7 +75,11 @@ export class WsMockClient {
     this.ws!.on("message", (data) => {
       try {
         const msg = JSON.parse(data.toString());
-        if (!msg.from) return;
+        if (!msg.from) {
+          // Log WS server errors to aid debugging
+          if (msg.type === "error") console.error(`[ws-channel] WS server error: ${msg.msg ?? JSON.stringify(msg)}`);
+          return;
+        }
         this.handler?.(msg as WsEnvelope);
       } catch (e) {
         console.error("[ws-channel] parse error:", e);
@@ -99,7 +103,10 @@ export class WsMockClient {
     this.ws.on("message", (data) => {
       try {
         const msg = JSON.parse(data.toString());
-        if (!msg.from) return; // skip acks (registered, conversation_joined, error)
+        if (!msg.from) {
+          if (msg.type === "error") console.error(`[ws-channel] WS server error: ${msg.msg ?? JSON.stringify(msg)}`);
+          return;
+        }
         this.handler?.(msg as WsEnvelope);
       } catch (e) {
         console.error("[ws-channel] parse error:", e);
@@ -193,8 +200,8 @@ export class WsMockClient {
     });
   }
 
-  /** Look up the registered role for a given address */
-  lookupAddr(addr: string): Promise<{ addr: string; role: string; metadata: unknown } | null> {
+  /** Look up the registered identity for a given agentId */
+  lookupAddr(agentId: string): Promise<{ agent_id: string; comm_addr: string; role: string; metadata: unknown } | null> {
     return new Promise((resolve, reject) => {
       if (this.ws?.readyState !== WebSocket.OPEN) {
         reject(new Error("[ws-channel] not connected"));
@@ -203,14 +210,15 @@ export class WsMockClient {
       const onMsg = (data: WebSocket.RawData) => {
         try {
           const msg = JSON.parse(data.toString());
-          if (msg.type === "addr_lookup" && msg.addr === addr) {
+          // Server responds with { type: "addr_lookup", agent_id: queried_id, identity: {...} | null }
+          if (msg.type === "addr_lookup" && msg.agent_id === agentId) {
             this.ws!.off("message", onMsg);
             resolve(msg.identity ?? null);
           }
         } catch {}
       };
       this.ws.on("message", onMsg);
-      this.ws.send(JSON.stringify({ action: "LookupAddr", addr }));
+      this.ws.send(JSON.stringify({ action: "LookupAddr", addr: agentId }));
       setTimeout(() => { this.ws?.off("message", onMsg); resolve(null); }, 3000);
     });
   }

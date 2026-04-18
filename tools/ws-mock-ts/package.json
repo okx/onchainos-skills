@@ -1,0 +1,18 @@
+{
+  "name": "@okx/ws-mock-ts",
+  "version": "0.1.0",
+  "description": "TypeScript WS router + mock-api server",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "server": "npm run build && node dist/server.js",
+    "api": "npm run build && node dist/mock-api.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.0.0"
+  }
+}

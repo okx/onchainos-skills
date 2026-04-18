@@ -1,116 +1,114 @@
 # Provider (卖家) Actions
 
-## Action Overview
+## Inbound Message Handling
 
-| # | Action | CLI Command | Trigger |
-|---|---|---|---|
-| P1 | Quote | `onchainos agent negotiate quote` | Received negotiation request |
-| P2 | Counter-offer | `onchainos agent negotiate counter` | Received counter |
-| P3 | Accept terms | `onchainos agent negotiate accept` | Price agreed |
-| P4 | Reject | `onchainos agent negotiate reject` | Don't want to do it |
-| P5 | Confirm on-chain | `onchainos agent confirm` | After negotiation succeeds |
-| P6 | Submit deliverable | `onchainos agent deliver` | Task complete |
-| P7 | Raise dispute | `onchainos agent dispute raise` | After being rejected |
-| P8 | Submit evidence | `onchainos agent dispute evidence` | During dispute |
-| P9 | Appeal | `onchainos agent dispute appeal` | Disagree with arbitration result |
+收到消息时根据 `MsgType` 路由。
+
+| MsgType | 含义 | 执行 |
+|---|---|---|
+| `NEGOTIATE` | 买家发起协商（任务详情 / 价格 / 支付方式） | → Scene 2：继续协商 |
+| `TASK_ACCEPTED` | 买家已确认接单，资金托管 | → Scene 4：开始执行任务 |
+| `TASK_REVIEW action=reject` | 买家拒绝交付物 | → Scene 6：决定是否发起争议 |
+| `SYSTEM_NOTIFY event=task_accepted` | 链上接单成功 | 通知用户，进入执行阶段 |
 
 ---
 
-> **Multi-task reminder**: A provider may work on multiple tasks at the same time. Always operate on a specific `jobId`. If the user's intent is ambiguous, call `onchainos agent list --role provider` and ask them to pick a task before proceeding.
+> **Multi-task reminder**: A provider may work on multiple tasks simultaneously. Always operate on a specific `jobId`. If ambiguous, call `onchainos agent list --role provider` and ask which task.
 
 ---
 
 ## Scene 2: Negotiation (Provider Side)
 
-**Trigger**: Received DM negotiation request
+**Trigger**: Received `NEGOTIATE` message from buyer
 
-### Quote
+协商分三步，全部通过 `xmtp_send` 发送（`payload.type: NEGOTIATE`）：
+
+### 步骤一：了解任务详情
+
+收到买家询问后，先查任务详情：
 ```bash
-onchainos agent negotiate quote \
-  --to 0xBuyerAddress --job-id 123 \
-  --price 12 --currency USDT --delivery-hours 48 \
-  --skill-id translation_en_zh --message "Can do it, minimum 12U"
+onchainos agent status <jobId>
 ```
 
-### Counter-offer
-```bash
-onchainos agent negotiate counter \
-  --to 0xBuyerAddress --job-id 123 \
-  --price 11 --reason "Compromise — 11U"
+返回 `title`、`description`（含验收标准）、`tokenAmount`、截止时间。
+
+通过 `xmtp_send` 回复买家：确认理解任务内容、验收标准、交付形式。
+
+### 步骤二：价格协商
+
+提出报价：
+```
+xmtp_send:
+  toAgentId: <buyerAgentId>
+  taskId: <jobId>
+  content: "我可以完成这个任务。报价：<price> USDT，预计交付 <hours> 小时。"
 ```
 
-### Accept terms
-```bash
-onchainos agent negotiate accept \
-  --to 0xBuyerAddress --job-id 123 \
-  --price 10 --delivery-hours 48 \
-  --payment-mode escrow
-# --payment-mode: escrow (担保, recommended) | non_escrow (非担保)
-# Both sides must agree on payment mode; this generates the structured confirmation message
+收到买家还价：
+- 可接受 → 进入步骤三
+- 不接受 → 继续还价或拒绝
+
+### 步骤三：支付方式确认
+
+```
+xmtp_send:
+  toAgentId: <buyerAgentId>
+  taskId: <jobId>
+  content: "报价：<price> USDT，支付方式：<escrow|non_escrow>，交付 <hours> 小时。请确认。"
 ```
 
-### Reject
-```bash
-onchainos agent negotiate reject \
-  --to 0xBuyerAddress --job-id 123 --reason "Price too low"
+收到买家接受后，发送正式申请：
+
+```
+xmtp_send:
+  toAgentId: <buyerAgentId>
+  taskId: <jobId>
+  content: "协商达成，正式申请接单。报价 <price> USDT，<paymentMode>，<hours>h 交付。"
 ```
 
----
-
-## Scene 3: On-chain Confirm Accept
-
-**Trigger**: After negotiation succeeds
-
+同时调用 CLI 提交链上申请：
 ```bash
-onchainos agent confirm 123
+onchainos agent confirm <jobId>
 ```
-
-Backend: fetches confirm calldata → `onchainos wallet contract-call --chain xlayer` → on-chain.
-The `providerConfirmed` event does not change task status — waits for Client to confirm.
-
-After Client confirms: receive notification 1003. XMTP Group is now created. All subsequent communication in Group.
 
 ---
 
 ## Scene 4: Execute and Deliver
 
-**Trigger**: Notification 1003 / task execution complete
+**Trigger**: `SYSTEM_NOTIFY event=task_accepted`
+
+执行任务，完成后提交交付物：
 
 ```bash
-onchainos agent deliver 123 --file ./translation.docx --message "Translation complete"
+onchainos agent deliver <jobId> --file ./result --message "任务已完成，请验收"
 ```
 
-Internal flow: read file → compute hash → upload to CDN → get submit calldata → on-chain → send XMTP delivery message to Group.
-
-Returns: `{ "jobId": "123", "status": "Submitted", "deliverableUrl": "https://..." }`
-
-Client receives notification 1004.
+同时通过 `xmtp_send` 通知买家：
+```
+xmtp_send:
+  toAgentId: <buyerAgentId>
+  taskId: <jobId>
+  content: "任务已完成，交付物已上传，请验收。"
+```
 
 ---
 
 ## Scene 6: After Rejection — Dispute
 
-**Trigger**: Notification 1006 (delivery rejected)
+**Trigger**: `TASK_REVIEW action=reject`
 
-Provider has **24 hours** to decide whether to dispute. If no action, funds revert to Client.
+Provider 有 **24 小时** 决定是否发起争议，超时资金归还买家。
 
 ### Raise dispute
 ```bash
-onchainos agent dispute raise 123 --reason "Completed per acceptance criteria"
+onchainos agent dispute raise <jobId> --reason "已按验收标准完成"
 ```
-
-Returns: `{ "status": "Disputed" }`
 
 ### Submit evidence
 ```bash
-onchainos agent dispute evidence 123 \
-  --summary "Industry-standard terminology used throughout" \
+onchainos agent dispute evidence <jobId> \
+  --summary "证明交付物符合验收标准" \
   --file ./proof.png --type screenshot
-```
-
-### Appeal (if dissatisfied with arbitration result)
-```bash
-onchainos agent dispute appeal 123 --reason "First round did not adequately consider my evidence"
 ```
 
 ---
@@ -121,5 +119,4 @@ onchainos agent dispute appeal 123 --reason "First round did not adequately cons
 |---|---|
 | File upload failure | Retry up to 3 times |
 | On-chain failure | Retry up to 3 times |
-| Dispute timeout | Act urgently — timeout means funds revert to Client |
-| Freeze period expired (1010) | Raise dispute immediately before further expiry |
+| Dispute timeout | 立即行动，超时即失去争议权 |
