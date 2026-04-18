@@ -32,9 +32,19 @@ function formatMsg(jobId: string, convId: string, msgType: string, text: string)
 
 type NegStep = 0 | 1 | 2 | 3;
 
+/** 从买家消息里提取预算金额，找不到返回默认值 */
+function parseBudget(text: string, fallback = 50): number {
+  const m = text.match(/预算[：:]\s*(\d+(?:\.\d+)?)\s*USDT/i)
+    ?? text.match(/budget.*?(\d+(?:\.\d+)?)\s*USDT/i)
+    ?? text.match(/(\d+(?:\.\d+)?)\s*USDT/i);
+  return m ? parseFloat(m[1]) : fallback;
+}
+
 class SellerSession {
   private step: NegStep = 0;
   private applied = false;
+  private budget = 50;          // 从买家消息解析，默认 50
+  private paymentMode = "escrow";
   private convId: string;
   private jobId: string;
   private reply: (payload: Partial<TaskPayload>) => void;
@@ -61,23 +71,29 @@ class SellerSession {
       return;
     }
 
-    // Step 1: 收到详情 → 报价
+    // Step 1: 收到详情 → 解析预算并报价
     if (this.step === 1 && type === "REPLY") {
+      const text = String(envelope.payload.content ?? "");
+      this.budget = parseBudget(text, 50);
+      // 检测买家指定的支付方式
+      if (/non.escrow|非托管|直接付款/i.test(text)) this.paymentMode = "non_escrow";
       await sleep(2000);
       this.reply({
         type: "TASK_REPLY", jobId: this.jobId,
-        content: formatMsg(this.jobId, this.convId, "TASK_REPLY", "了解了任务详情。我的报价是 100 USDT，交付时间 48 小时，请问可以接受吗？"),
+        content: formatMsg(this.jobId, this.convId, "TASK_REPLY",
+          `了解了任务详情。我接受报价 ${this.budget} USDT，支付方式：${this.paymentMode}，交付时间 24 小时，请问可以吗？`),
       });
       this.step = 2;
       return;
     }
 
-    // Step 2: 价格确认 → 确认支付方式
+    // Step 2: 价格确认 → 给出完整报价（价格 + 支付方式合并，一步完成）
     if (this.step === 2 && type === "REPLY") {
-      await sleep(2000);
+      await sleep(1500);
       this.reply({
         type: "TASK_REPLY", jobId: this.jobId,
-        content: formatMsg(this.jobId, this.convId, "TASK_REPLY", "报价：100 USDT，支付方式：non_escrow，交付时间 48 小时。"),
+        content: formatMsg(this.jobId, this.convId, "TASK_REPLY",
+          `报价：${this.budget} USDT，支付方式：${this.paymentMode}，交付时间 24 小时。`),
       });
       this.step = 3;
       return;
@@ -89,9 +105,10 @@ class SellerSession {
       await sleep(1000);
       this.reply({
         type: "TASK_APPLY", jobId: this.jobId,
-        content: formatMsg(this.jobId, this.convId, "TASK_APPLY", "我正式申请接单，报价 100 USDT，支付方式 non_escrow，交付时间 48 小时。"),
+        content: formatMsg(this.jobId, this.convId, "TASK_APPLY",
+          `我正式申请接单，报价 ${this.budget} USDT，支付方式 ${this.paymentMode}，交付时间 24 小时。`),
       });
-      await callApplyApi(this.jobId).catch((e) =>
+      await callApplyApi(this.jobId, this.budget).catch((e) =>
         console.error(`[seller][api] apply error:`, e),
       );
       return;
@@ -116,11 +133,11 @@ class SellerSession {
 }
 
 // ── mock-api 调用 ─────────────────────────────────────────────────────────────
-async function callApplyApi(jobId: string) {
+async function callApplyApi(jobId: string, priceUsdt: number) {
   const res = await fetch(`${API_BASE_URL}/api/v1/task/${jobId}/apply`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider_address: SELLER_COMM_ADDR, price_usdt: 100 }),
+    body: JSON.stringify({ provider_address: SELLER_COMM_ADDR, price_usdt: priceUsdt }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   console.log(`[seller][api] applied job=${jobId}`);
