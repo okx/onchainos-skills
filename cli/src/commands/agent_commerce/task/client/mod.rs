@@ -163,6 +163,14 @@ pub enum TaskCommand {
     AiEvaluate {
         job_id: String,
     },
+    /// Client manually transfers payment to provider (non-escrow mode)
+    Pay {
+        job_id: String,
+    },
+    /// Client claims refund/reward after arbitration
+    Claim {
+        job_id: String,
+    },
     /// Initialize config
     Config {
         #[command(subcommand)]
@@ -669,6 +677,66 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 bail!("{}", resp["msg"].as_str().unwrap_or("error"));
             }
             println!("✓ 已申请任务 {job_id}，等待买家确认");
+        }
+
+        // ── pay（非担保模式手动转账）──────────────────────────────────────
+        TaskCommand::Pay { job_id } => {
+            // 查询任务详情，获取 Provider 地址、金额、代币
+            let resp: serde_json::Value = http
+                .get(format!("{api}/priapi/v1/aieco/task/{job_id}"))
+                .send().await
+                .map_err(|e| anyhow::anyhow!("无法查询任务详情: {e}"))?
+                .json().await?;
+
+            if resp["code"] != 0 {
+                bail!("查询任务失败: {}", resp["msg"].as_str().unwrap_or("unknown"));
+            }
+
+            let task = &resp["data"]["task"];
+            let status = task["statusStr"].as_str().unwrap_or("");
+            if status != "complete" {
+                bail!("任务状态为 {status}，仅 complete 状态可执行 pay");
+            }
+
+            let provider_addr = task["providerAgentAddress"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("任务详情缺少 providerAgentAddress"))?;
+            let amount = task["tokenAmount"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("任务详情缺少 tokenAmount"))?;
+            let token_symbol = task["paymentTokenSymbol"]
+                .as_str()
+                .unwrap_or("USDT");
+            let token_address = task["tokenAddress"]
+                .as_str()
+                .unwrap_or("");
+
+            println!("非担保任务付款信息：");
+            println!("  Provider: {provider_addr}");
+            println!("  金额:     {amount} {token_symbol}");
+            println!("  链:       xlayer (chainId={})", XLAYER_CHAIN_ID);
+            println!();
+            println!("请执行以下命令完成转账：");
+            if token_address.is_empty() {
+                println!("  onchainos wallet send --readable-amount {amount} --recipient {provider_addr} --chain xlayer");
+            } else {
+                println!("  onchainos wallet send --readable-amount {amount} --recipient {provider_addr} --chain xlayer --contract-token {token_address}");
+            }
+        }
+
+        // ── claim（仲裁奖金领取，单签上链）─────────────────────────────────
+        TaskCommand::Claim { job_id } => {
+            let (account_id, address) = signing::resolve_wallet_for_task(&http, &api, &job_id).await?;
+            let endpoint = format!("{api}/priapi/v1/aieco/task/claim");
+            let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
+            let body = serde_json::json!({ "jobId": job_id });
+
+            let result = signing::task_sign_and_broadcast(
+                &http, &endpoint, &body, &broadcast, &account_id, &address,
+            ).await?;
+
+            println!("✓ 仲裁奖金已领取");
+            println!("  txHash: {}", result.tx_hash);
         }
 
         // ── 待确认/待实现 ─────────────────────────────────────────────────

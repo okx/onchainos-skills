@@ -90,6 +90,12 @@ pub enum TaskSystemCommand {
     #[command(name = "ai-evaluate")]
     AiEvaluate { job_id: String },
 
+    /// Client manually transfers payment to provider (non-escrow mode)
+    Pay { job_id: String },
+
+    /// Client claims refund/reward after arbitration
+    Claim { job_id: String },
+
     /// Task config: init | show
     Config {
         #[command(subcommand)]
@@ -171,6 +177,12 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
 
         TaskSystemCommand::AiEvaluate { job_id } =>
             client::run_task(T::AiEvaluate { job_id }, ctx).await,
+
+        TaskSystemCommand::Pay { job_id } =>
+            client::run_task(T::Pay { job_id }, ctx).await,
+
+        TaskSystemCommand::Claim { job_id } =>
+            client::run_task(T::Claim { job_id }, ctx).await,
 
         TaskSystemCommand::Config { action } =>
             client::run_task(T::Config { action }, ctx).await,
