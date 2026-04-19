@@ -57,8 +57,16 @@ pub enum TaskSystemCommand {
         #[arg(long)] reason: String,
     },
 
-    /// Provider confirms on-chain acceptance
-    Confirm { job_id: String },
+    /// Provider confirms on-chain acceptance (apply + single-sign)
+    Confirm {
+        job_id: String,
+        /// Negotiated tokenAmount (0 = accept original price, >0 = counter-offer)
+        #[arg(long = "token-amount", default_value = "0")] token_amount: String,
+        /// Token symbol, e.g. USDT or USDG (default: read from task)
+        #[arg(long = "token-symbol")] token_symbol: Option<String>,
+        /// Provider agent ID (fallback: env AGENT_ID)
+        #[arg(long = "agent-id")] agent_id: Option<String>,
+    },
 
     /// Provider submits deliverable
     Deliver {
@@ -144,8 +152,8 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
         TaskSystemCommand::RejectApply { job_id, provider, reason } =>
             client::run_task(T::RejectApply { job_id, provider, reason }, ctx).await,
 
-        TaskSystemCommand::Confirm { job_id } =>
-            client::run_task(T::Confirm { job_id }, ctx).await,
+        TaskSystemCommand::Confirm { job_id, token_amount, token_symbol, agent_id } =>
+            client::run_task(T::Confirm { job_id, token_amount, token_symbol, agent_id }, ctx).await,
 
         TaskSystemCommand::Deliver { job_id, file, message } =>
             client::run_task(T::Deliver { job_id, file, message }, ctx).await,

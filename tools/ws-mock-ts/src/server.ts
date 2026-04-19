@@ -107,6 +107,14 @@ wss.on("connection", (ws) => {
 
   ws.on("close", () => {
     for (const addr of myAddrs) registry.delete(addr);
+    // 同时清理该连接注册的 identity，避免断线后身份残留
+    for (const [role, entries] of identities) {
+      const before = entries.length;
+      const filtered = entries.filter(e => !myAddrs.includes(e.comm_addr));
+      identities.set(role, filtered);
+      if (filtered.length < before)
+        console.log(`[server] identity cleanup: role=${role} removed ${before - filtered.length} entries`);
+    }
     if (myAddrs.length) console.log(`[server] disconnected, removed: ${myAddrs.join(", ")}`);
   });
 

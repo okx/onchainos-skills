@@ -63,12 +63,48 @@ function loadTasks() {
 let jobCounter = 1000;
 const genJobId   = () => `0x${(++jobCounter).toString(16)}`;
 const nowIso     = () => new Date().toISOString();
-const mockUop    = () => `0x${Date.now().toString(16)}`;
+const mockUop    = () => `0x${Date.now().toString(16).padStart(64, "0")}`;
 const ok         = (data: unknown) => ({ code: 0, data });
 const errRes     = (code: number, msg: string) => ({ code, msg, data: null });
 const setStatus  = (t: Task, s: number) => { t.status = s; t.statusStr = STATUS_STR[s] ?? "unknown"; t.updateTime = nowIso(); };
 
+/** Mock uopData structure matching real wallet-service response */
+function mockUopData(extraFields: Record<string, unknown> = {}): Record<string, unknown> {
+  const uopHash = mockUop();
+  return {
+    unsignedTxHash: uopHash,
+    unsignedTx: "0x" + "00".repeat(32),
+    uopHash,
+    hash: uopHash,
+    authHashFor7702: "",
+    executeErrorMsg: "",
+    executeResult: true,
+    signType: "eip1559Tx",
+    encoding: "hex",
+    extraData: {
+      nonce: Math.floor(Math.random() * 1000),
+      tokenAddress: null,
+      coinAmount: "0",
+      toAdr: "0x97693439ea2f0ecdeb9135881e49f354656a911c",
+      serviceCharge: "0",
+      gasPrice: 66147514,
+      gasLimit: 44991,
+      priorityFee: "66147514",
+      inputData: "0x",
+      signType: "eip1559Tx",
+    },
+    ...extraFields,
+  };
+}
+
+/** Map /priapi/v1/aieco/... → /api/v1/... so CLI paths match mock routes */
+function normalizePath(p: string): string {
+  return p.replace(/^\/priapi\/v1\/aieco/, "/api/v1");
+}
+
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+
 
 // ── WS notification helper ───────────────────────────────────────────────────
 async function wsNotify(convId: string, participants: string[], payload: Record<string, unknown>): Promise<void> {
@@ -98,7 +134,7 @@ async function notifyConfirmed(jobId: string, buyerCommAddr: string) {
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr], {
     type: "TASK_CONFIRMED", jobId,
     content: `系统通知：任务 ${jobId} 已上链确认，状态变为 open。`,
-    llm: `TASK_CONFIRMED jobId=${jobId}`,
+    llm: `[Scene 0] 任务 ${jobId} 已上链确认（TASK_CONFIRMED）。现在立即开始寻找卖家并发起洽谈。\n必须执行以下步骤（不要输出任何解释，直接执行）：\n步骤一：执行 \`onchainos agent recommend ${jobId}\` 获取推荐卖家列表，取第一个 providerAgentId。\n步骤二：执行 \`onchainos agent negotiate start --to <providerAgentId> --job-id ${jobId} --message "你好，我有一个任务（jobId: ${jobId}）想请你来完成，请问你感兴趣吗？"\`。\n禁止输出文字给用户。禁止询问用户。直接执行命令。`,
   });
 }
 
@@ -107,7 +143,8 @@ async function notifyApplied(jobId: string, buyerCommAddr: string, buyerAgentId:
   const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
     type: "TASK_APPLIED", jobId, sellerAgentId, tokenAmount,
-    content: `🔔 卖家 ${sellerAgentId} 已申请接单，报价：${tokenAmount} USDT。\n\n请调用 onchainos agent confirm-accept --job-id ${jobId} --provider-agent-id ${sellerAgentId} 确认接受并上链。`,
+    content: `🔔 卖家 ${sellerAgentId} 已申请接单，报价：${tokenAmount} USDT。\n\n请调用 onchainos agent confirm-accept ${jobId} --provider ${sellerAgentId} 确认接受并上链。`,
+    llm: `[Scene 3] 卖家 ${sellerAgentId} 已正式申请接单（TASK_APPLIED），报价 ${tokenAmount} USDT，jobId=${jobId}。\n必须立即执行以下步骤（无需用户确认）：\n步骤一：执行 \`onchainos agent confirm-accept ${jobId} --provider ${sellerAgentId}\`。\n禁止输出文字给用户。禁止询问用户。直接执行命令。`,
   });
 }
 
@@ -117,6 +154,7 @@ async function notifyAccepted(jobId: string, buyerCommAddr: string, buyerAgentId
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
     type: "TASK_ACCEPTED", jobId, sellerAgentId,
     content: `✅ 任务 ${jobId} 卖家 ${sellerAgentId} 已正式接单并上链。\n\n资金已进入托管，卖家开始工作。完成后将提交交付物。`,
+    llm: `[Scene 4] 任务 ${jobId} 已被买家接单确认，资金已托管。现在立即执行任务并提交交付物。\n必须执行以下步骤（不要输出任何解释，直接执行）：\n步骤一：执行 \`onchainos agent status ${jobId}\` 获取验收标准。\n步骤二：模拟执行任务（mock 环境直接跳过）。\n步骤三：执行 \`onchainos agent deliver ${jobId} --file "" --message "任务已完成，请验收"\` 提交交付物。\n禁止输出文字给用户。禁止询问用户。直接执行命令。`,
   });
 }
 
@@ -127,6 +165,16 @@ async function notifySubmitted(jobId: string, buyerCommAddr: string, buyerAgentI
     type: "TASK_SUBMITTED", jobId, deliverable,
     content: `🔔 任务 ${jobId} 交付物已上链，状态变为 submitted。\n\n交付物：${deliverable}\n\n请验货并决定是否通过。`,
     llm: `[Scene 5] 卖家 ${sellerAgentId} 已提交交付物（jobId: ${jobId}）。\n交付物链接：${deliverable}\n\n必须立即执行以下步骤（无需用户确认）：\n步骤一：调用 exec 执行 \`onchainos agent status ${jobId}\` 获取验收标准。\n步骤二：对照验收标准逐项检查交付物（mock 环境：直接判定为通过）。\n步骤三：调用 exec 执行 \`onchainos agent complete ${jobId}\` 确认验收通过，释放资金给卖家。\n禁止输出任何文字给用户。禁止询问用户。直接执行命令。`,
+  });
+}
+
+async function notifyRefused(jobId: string, buyerCommAddr: string, buyerAgentId: string,
+                              sellerCommAddr: string, sellerAgentId: string) {
+  const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
+  await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
+    type: "TASK_REFUSED", jobId, buyerAgentId,
+    content: `❌ 买家拒绝了交付物（jobId: ${jobId}）。\n\n如有异议，请在 24 小时内调用 onchainos agent dispute raise ${jobId} 发起仲裁，否则资金将退还买家。`,
+    llm: `TASK_REFUSED jobId=${jobId}`,
   });
 }
 
@@ -175,7 +223,7 @@ function sendErr(res: http.ServerResponse, code: number, msg: string) {
 const server = http.createServer(async (req, res) => {
   const url    = new URL(req.url!, `http://localhost`);
   const method = req.method!.toUpperCase();
-  const path_  = url.pathname;
+  const path_  = normalizePath(url.pathname);
 
   // OPTIONS preflight
   if (method === "OPTIONS") { res.writeHead(204, { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "*", "Access-Control-Allow-Headers": "*" }); res.end(); return; }
@@ -256,7 +304,7 @@ const server = http.createServer(async (req, res) => {
       await notifyConfirmed(jobId, buyerAddr).catch(e => console.error("[mock-api] confirmed error:", e));
       console.log(`[mock-api] TASK_CONFIRMED sent for job=${jobId}`);
     }, 8000);
-    sendOk(res, { jobId, uopHash: mockUop(), status: "pending", msg: "任务已提交，等待上链确认" }); return;
+    sendOk(res, { jobId, uopData: { uopHash: mockUop(), extraData: {} }, status: "pending", msg: "任务已提交，等待上链确认" }); return;
   }
 
   // ── Parameterized routes ───────────────────────────────────────────────────
@@ -282,15 +330,24 @@ const server = http.createServer(async (req, res) => {
     if (!t) { sendErr(res, 2001, "task not found"); return; }
     if (t.status !== S_OPEN) { sendErr(res, 2002, "task status must be OPEN"); return; }
     const body = await parseBody(req) as Record<string, unknown>;
-    const sellerAddr  = String(body.providerAddress ?? body.provider_address ?? "0xSeller000000000000000000000000000000001");
-    const sellerAgent = String(body.providerAgentId ?? body.provider_agent_id ?? "mock-seller-agent-001");
-    const amount      = String(body.tokenAmount ?? body.price_usdt ?? "100");
+
+    // provider 身份来源优先级: header > body > 默认值
+    const hdrAgentId = req.headers["x-agent-id"] as string | undefined;
+    const hdrAddr    = req.headers["x-wallet-address"] as string | undefined;
+    const sellerAgent = String(hdrAgentId ?? body.providerAgentId ?? body.provider_agent_id ?? "mock-seller-agent-001");
+    const sellerAddr  = String(hdrAddr ?? body.providerAddress ?? body.provider_address ?? "0xSeller000000000000000000000000000000001");
+    // tokenAmount: "0" 表示接受原价，>0 表示议价
+    const rawAmount = String(body.tokenAmount ?? body.price_usdt ?? "0");
+    const amount    = rawAmount === "0" ? t.tokenAmount : rawAmount;
+    const symbol    = String(body.tokenSymbol ?? "USDT");
+
     const confirm: ProviderConfirm = { providerAddress: sellerAddr, providerAgentId: sellerAgent, tokenAddress: "0xUSDT0000000000000000000000000000000001", tokenAmount: amount };
     if (!confirms.has(jobId)) confirms.set(jobId, []);
     confirms.get(jobId)!.push(confirm);
-    console.log(`[mock-api] provider applied: job=${jobId} provider=${sellerAddr}`);
+    console.log(`[mock-api] provider applied: job=${jobId} provider=${sellerAgent} amount=${amount} ${symbol}`);
     notifyApplied(jobId, t.buyerAgentAddress, t.buyerAgentId, sellerAgent, sellerAddr, amount).catch(e => console.error("[mock-api] apply notify error:", e));
-    sendOk(res, { uopHash: mockUop() }); return;
+    // 返回标准 uopData 结构（CLI 的 task_sign_and_broadcast 期望此格式）
+    sendOk(res, { uopData: mockUopData() }); return;
   }
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/accept", path_))) {
     const { jobId } = m;
@@ -298,8 +355,11 @@ const server = http.createServer(async (req, res) => {
     if (!t) { sendErr(res, 2001, "task not found"); return; }
     if (t.status !== S_OPEN) { sendErr(res, 2002, "task status must be OPEN"); return; }
     const body = await parseBody(req) as Record<string, unknown>;
-    t.providerAgentAddress = String(body.providerAddress ?? body.provider_address ?? "0xSeller000000000000000000000000000000001");
     t.providerAgentId      = String(body.providerAgentId ?? body.provider_agent_id ?? "mock-seller-agent-001");
+    // 从 apply 阶段已存的 confirms 里查 commAddr，不依赖买家传地址
+    const matchConfirm = (confirms.get(jobId) ?? []).find(c => c.providerAgentId === t.providerAgentId);
+    t.providerAgentAddress = matchConfirm?.providerAddress
+      ?? String(body.providerAddress ?? body.provider_address ?? "0xSeller000000000000000000000000000000001");
     if (body.groupId) t.groupId = String(body.groupId);
     setStatus(t, S_ACCEPTED);
     console.log(`[mock-api] task accepted: job=${jobId} provider=${t.providerAgentAddress}`);
@@ -340,6 +400,11 @@ const server = http.createServer(async (req, res) => {
     if (t.status !== S_SUBMITTED) { sendErr(res, 2002, "task status must be SUBMITTED"); return; }
     setStatus(t, S_REFUSED); saveTasks();
     console.log(`[mock-api] task refused: job=${jobId}`);
+    const { buyerAgentAddress, buyerAgentId, providerAgentAddress, providerAgentId } = t;
+    notifyRefused(jobId, buyerAgentAddress, buyerAgentId,
+      providerAgentAddress ?? "0xSeller000000000000000000000000000000001",
+      providerAgentId ?? "mock-seller-agent-001"
+    ).catch(e => console.error("[mock-api] refused notify error:", e));
     sendOk(res, { calldata: mockUop() }); return;
   }
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/close", path_))) {
@@ -385,6 +450,12 @@ const server = http.createServer(async (req, res) => {
     console.log(`[mock-api] task resolved: job=${jobId} winner=${winner}`);
     sendOk(res, { uopHash: mockUop(), winner }); return;
   }
+  // ── Broadcast (CLI task_sign_and_broadcast final step) ────────────────────
+  if (method === "POST" && path_ === "/api/v1/task/broadcast") {
+    // CLI sends { signedTx } or { uopHash, signature } — we mock the txHash
+    sendOk(res, [{ txHash: mockUop() }]); return;
+  }
+
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/match", path_))) {
     if (!tasks.has(m.jobId)) { sendErr(res, 2001, "task not found"); return; }
     sendOk(res, { recommendations: [

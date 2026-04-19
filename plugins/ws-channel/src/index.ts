@@ -216,7 +216,10 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
       activeSystemPrompt = resolvedSystemPrompt;
 
       // 系统消息类型：直接走 main session，不进 pending 队列
-      const SYSTEM_MSG_TYPES = new Set(["TASK_CONFIRMED", "TASK_ACCEPTED", "TASK_APPLIED"]);
+      // TASK_ACCEPTED / TASK_APPLIED 从 SYSTEM_MSG_TYPES 移除：它们应路由到子 session（P2P conv），
+      // 那里有卖家的协商上下文，agent 才能正确执行 onchainos agent deliver。
+      // handler.ts 中的 TASK_ACCEPTED 特殊块仍会先向 main session 推送只读通知。
+      const SYSTEM_MSG_TYPES = new Set(["TASK_CONFIRMED"]);
 
       client.start(async (envelope) => {
         const convId = envelope.conversation_id;
@@ -262,7 +265,13 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
           return;
         }
 
-        // 4. P2P 消息：active conv → 子 session；新 conv → pending + 通知 main session
+        // 4. P2P 消息：active conv → 子 session；新 conv → 判断是否自动激活
+        //    TASK_INQUIRE：seller 收到买家发起的新协商请求，自动激活子 session（无需 xmtp_accept）
+        if (msgType === "TASK_INQUIRE" && !activeConversations.has(convId)) {
+          ctx.log?.info?.(`[ws-channel] auto-accept TASK_INQUIRE conv=${convId}`);
+          activeConversations.add(convId);
+        }
+
         if (activeConversations.has(convId)) {
           await handleInboundMessage({
             cfg: ctx.cfg,

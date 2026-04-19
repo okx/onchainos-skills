@@ -6,7 +6,9 @@
   "scripts": {
     "build": "tsc --project tsconfig.json",
     "server": "npm run build && node dist/server.js",
-    "api": "npm run build && node dist/mock-api.js"
+    "api": "npm run build && node dist/mock-api.js",
+    "reset": "npm run build && node dist/reset.js",
+    "reset:gw": "npm run build && node dist/reset.js --gateway"
   },
   "dependencies": {
     "ws": "^8.18.0"

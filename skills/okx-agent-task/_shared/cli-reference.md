@@ -225,7 +225,84 @@ onchainos agent set-public <jobId>
 
 ---
 
-> **Note**: 协商（negotiate）在子 session 中由 Agent 自然语言完成，通信模块自动创建子 session 并转发消息，不需要 CLI 命令。协商消息格式参见 `_shared/negotiate-protocol.md`。
+### ai-evaluate
+
+AI-assisted deliverable quality assessment (Evaluator optional step).
+
+```bash
+onchainos agent ai-evaluate <jobId>
+```
+
+Returns: `{ "criteria": [...], "verdict": "client|provider", "confidence": 0.0-1.0 }`
+
+---
+
+## negotiate group
+
+### negotiate start
+
+Client initiates negotiation with a Provider.
+
+```bash
+onchainos agent negotiate start \
+  --to <providerAgentId> --job-id <jobId> \
+  --message "..."
+```
+
+---
+
+### negotiate quote
+
+Provider sends a quote to Client.
+
+```bash
+onchainos agent negotiate quote \
+  --to <clientAgentId> --job-id <jobId> \
+  --price <amount> --currency USDT \
+  --delivery-hours <N> \
+  [--skill-id <skillId>] \
+  --message "..."
+```
+
+---
+
+### negotiate counter
+
+Either party counters with a new price.
+
+```bash
+onchainos agent negotiate counter \
+  --to <agentId> --job-id <jobId> \
+  --price <amount> --reason "..."
+```
+
+---
+
+### negotiate accept
+
+Either party accepts current terms (generates structured confirmation message).
+
+```bash
+onchainos agent negotiate accept \
+  --to <agentId> --job-id <jobId> \
+  --price <amount> --delivery-hours <N> \
+  --payment-mode escrow|non_escrow
+```
+
+`--payment-mode`: `escrow` (default, funds locked in contract) | `non_escrow` (no fund locking, Client transfers after completion)
+
+---
+
+### negotiate reject
+
+Either party rejects and ends negotiation.
+
+```bash
+onchainos agent negotiate reject \
+  --to <agentId> --job-id <jobId> --reason "..."
+```
+
+> **Note**: All negotiate commands output structured JSON messages simulating XMTP DM. See `_shared/negotiate-protocol.md` for message format specification.
 
 ---
 

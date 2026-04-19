@@ -301,16 +301,74 @@ pub async fn handle_apply(
     api: &str,
     job_id: &str,
 ) -> Result<()> {
-    // TODO(provider): 改为 task_sign_and_broadcast 签名上链
-    let resp: serde_json::Value = http
-        .post(format!("{api}/priapi/v1/aieco/task/{job_id}/apply"))
-        .send().await
-        .map_err(|e| anyhow::anyhow!("无法连接后端: {e}"))?
-        .json().await?;
-    if resp["code"] != 0 {
-        bail!("{}", resp["msg"].as_str().unwrap_or("error"));
-    }
+    let (account_id, address) = signing::resolve_wallet(None, None)?;
+    let agent_id = std::env::var("AGENT_ID").unwrap_or_default();
+    let endpoint  = format!("{api}/priapi/v1/aieco/task/{job_id}/apply");
+    let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
+    let body = serde_json::json!({});
+    let result = signing::task_sign_and_broadcast_with_headers(
+        http, &endpoint, &body, &broadcast, &account_id, &address, &agent_id,
+    ).await?;
     println!("✓ 已申请任务 {job_id}，等待买家确认");
+    println!("  txHash: {}", result.tx_hash);
+    Ok(())
+}
+
+/// confirm — Provider 协商完成后提交接单申请（单签）
+///
+/// - `token_amount`: 协商后价格字符串，"0" 表示接受原价
+/// - `token_symbol`: 支付币种（USDT / USDG），为 None 时从任务读取
+pub async fn handle_confirm(
+    http: &reqwest::Client,
+    api: &str,
+    job_id: &str,
+    token_amount: &str,
+    token_symbol: Option<&str>,
+    agent_id: Option<&str>,
+) -> Result<()> {
+    // 若未指定 token_symbol，从任务详情读取
+    let symbol = if let Some(s) = token_symbol {
+        validate_currency(s)?;
+        s.to_uppercase()
+    } else {
+        let task_resp: serde_json::Value = http
+            .get(format!("{api}/priapi/v1/aieco/task/{job_id}"))
+            .send().await
+            .map_err(|e| anyhow::anyhow!("无法连接后端: {e}"))?
+            .json().await?;
+        if task_resp["code"] != 0 {
+            bail!("任务不存在: {job_id}");
+        }
+        task_resp["data"]["task"]["tokenSymbol"]
+            .as_str()
+            .unwrap_or("USDT")
+            .to_string()
+    };
+
+    let amount = token_amount.trim().to_string();
+    let (account_id, address) = signing::resolve_wallet(None, None)?;
+    let agent_id = agent_id
+        .map(|s| s.to_string())
+        .or_else(|| std::env::var("AGENT_ID").ok())
+        .unwrap_or_default();
+    let endpoint  = format!("{api}/priapi/v1/aieco/task/{job_id}/apply");
+    let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
+    let body = serde_json::json!({
+        "tokenSymbol": symbol,
+        "tokenAmount": amount,
+    });
+
+    let result = signing::task_sign_and_broadcast_with_headers(
+        http, &endpoint, &body, &broadcast, &account_id, &address, &agent_id,
+    ).await?;
+
+    println!("✓ 已提交接单申请 jobId={job_id}");
+    if amount != "0" {
+        println!("  议价: {amount} {symbol}");
+    } else {
+        println!("  接受原价: {symbol}");
+    }
+    println!("  txHash: {}", result.tx_hash);
     Ok(())
 }
 

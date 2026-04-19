@@ -82,9 +82,18 @@ pub enum TaskCommand {
         #[arg(long)]
         reason: String,
     },
-    /// Provider confirms on-chain acceptance
+    /// Provider confirms on-chain acceptance (apply + single-sign)
     Confirm {
         job_id: String,
+        /// Negotiated tokenAmount (0 = accept original price, >0 = counter-offer)
+        #[arg(long = "token-amount", default_value = "0")]
+        token_amount: String,
+        /// Token symbol, e.g. USDT or USDG (default: read from task)
+        #[arg(long = "token-symbol")]
+        token_symbol: Option<String>,
+        /// Provider agent ID (fallback: env AGENT_ID)
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
     },
     /// Provider submits deliverable
     Deliver {
@@ -220,11 +229,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             println!("[TODO] reject-apply {job_id} provider={provider} reason={reason} — 待确认需求");
             Ok(())
         }
-        // TODO(provider): 实现 Provider 链上确认签名
-        TaskCommand::Confirm { job_id } => {
-            println!("[TODO(provider)] confirm {job_id}");
-            Ok(())
-        }
+        TaskCommand::Confirm { job_id, token_amount, token_symbol, agent_id } =>
+            onchain::handle_confirm(&http, &api, &job_id, &token_amount, token_symbol.as_deref(), agent_id.as_deref()).await,
         // TODO(provider): 实现文件上传 + submit 签名流程
         TaskCommand::Deliver { job_id, file, message } => {
             println!("[TODO(provider)] deliver {job_id} file={file} msg={message:?}");

@@ -158,6 +158,81 @@ pub async fn task_sign_and_broadcast(
     })
 }
 
+/// Same as [`task_sign_and_broadcast`] but adds `X-Agent-Id` and `X-Wallet-Address` headers.
+#[allow(clippy::too_many_arguments)]
+pub async fn task_sign_and_broadcast_with_headers(
+    http: &reqwest::Client,
+    endpoint_url: &str,
+    request_body: &Value,
+    broadcast_url: &str,
+    account_id: &str,
+    address: &str,
+    agent_id: &str,
+) -> Result<BroadcastResult> {
+    let resp: Value = http
+        .post(endpoint_url)
+        .header("X-Agent-Id", agent_id)
+        .header("X-Wallet-Address", address)
+        .json(request_body)
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("无法连接后端: {e}"))?
+        .json()
+        .await?;
+
+    if resp["code"] != 0 {
+        bail!(
+            "后端返回错误: {}",
+            resp["msg"].as_str().unwrap_or("unknown error")
+        );
+    }
+
+    let uop_data = &resp["data"]["uopData"];
+    if uop_data.is_null() {
+        bail!("后端未返回 uopData，无法签名上链");
+    }
+
+    let unsigned: UnsignedInfoResponse = serde_json::from_value(uop_data.clone())
+        .map_err(|e| anyhow::anyhow!("解析 uopData 失败: {e}"))?;
+
+    let broadcast_body = build_broadcast_body(
+        &unsigned,
+        account_id,
+        address,
+        XLAYER_CHAIN_INDEX,
+        true,
+        false,
+        false,
+    )
+    .await?;
+
+    let bc_resp: Value = http
+        .post(broadcast_url)
+        .json(&broadcast_body)
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("广播失败: {e}"))?
+        .json()
+        .await?;
+
+    if bc_resp["code"] != 0 {
+        bail!(
+            "广播失败: {}",
+            bc_resp["msg"].as_str().unwrap_or("unknown error")
+        );
+    }
+
+    let tx_hash = bc_resp["data"][0]["txHash"]
+        .as_str()
+        .unwrap_or("pending")
+        .to_string();
+
+    Ok(BroadcastResult {
+        api_response: resp,
+        tx_hash,
+    })
+}
+
 /// Dual-sign flow for accept/complete/refuse.
 ///
 /// 1. POST `pre_endpoint_url` with `pre_body` → get digest

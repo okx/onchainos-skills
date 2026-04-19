@@ -155,7 +155,7 @@ After editing any file under `skills/okx-agent-task/` (e.g. `client.md`, `SKILL.
 node -e "
 const fs = require('fs'), path = require('path');
 const src = '/Users/gan/meili/mingtao.gan_dacs_at_okg.com/121/Documents/RustProjects/OKOnchainOS/skills/okx-agent-task/';
-const dst = process.env.HOME + '/.openclaw/skills/okx-agent-task/';
+const dst = process.env.HOME + '/.agents/skills/okx-agent-task/';
 ['SKILL.md','client.md','provider.md','evaluator.md'].forEach(f => {
   fs.writeFileSync(dst+f, fs.readFileSync(src+f));
   console.log('synced', f);
@@ -163,7 +163,8 @@ const dst = process.env.HOME + '/.openclaw/skills/okx-agent-task/';
 "
 ```
 
-> **Why not `npx skills add`**: creates symlinks that openclaw rejects with `symlink-escape`. Use direct file writes instead. No gateway restart needed.
+> **Why not `npx skills add`**: creates symlinks that openclaw rejects with `symlink-escape`. Use direct file writes instead.
+> **Gateway restart required after skill sync**: gateway loads skill files into memory at startup. After syncing skills, run `npm run reset:gw` (in `tools/ws-mock-ts`) to restart gateway and clear sessions.
 
 ### Install CLI Binary After Build
 

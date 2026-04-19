@@ -5,7 +5,7 @@
  *
  * 功能:
  *   - 发布新任务（调用 mock-api POST /api/v1/task/create）
- *   - 自动/手动协商（3 轮）
+ *   - 自动/手动协商（共用 BuyerSession 状态机）
  *   - 自动 confirm-accept（收到 TASK_APPLY）
  *   - 自动 complete（收到 TASK_DELIVER）
  *
@@ -14,22 +14,15 @@
  */
 import http from "node:http";
 import { WsMockClient, WsEnvelope, TaskPayload } from "../../../plugins/ws-channel/src/ws-client.js";
+import {
+  BuyerSession, callAcceptApi, callCompleteApi,
+  BUYER_COMM_ADDR, BUYER_AGENT_ID, WS_URL, API_BASE_URL,
+  formatMsg, sleep, MOCK_TASK,
+} from "./buyer-session.js";
 
-// ── 常量 ─────────────────────────────────────────────────────────────────────
-const BUYER_COMM_ADDR  = "0xBuyer000000000000000000000000000000001";
-const BUYER_AGENT_ID   = "mock-buyer-agent-001";
-const WS_URL           = "ws://127.0.0.1:9000";
-const API_BASE_URL     = "http://127.0.0.1:9001";
-const UI_PORT          = 9003;
+const UI_PORT = 9003;
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
-function formatMsg(jobId: string, convId: string, msgType: string, text: string): string {
-  const sep = "-".repeat(40);
-  return `jobId:  ${jobId}\n来自:   ${BUYER_AGENT_ID} [BUYER]\n类型:   ${msgType}\n会话:   ${convId}\n${sep}\n${text}`;
-}
-
-// ── 状态 ─────────────────────────────────────────────────────────────────────
+// ── display types ──────────────────────────────────────────────────────────────
 interface Message {
   from: "buyer" | "seller" | "system";
   type: string;
@@ -37,15 +30,9 @@ interface Message {
   ts: number;
 }
 
-interface Session {
-  convId: string;
-  jobId: string;
-  step: number;
-  messages: Message[];
-  autoMode: boolean;
-}
-
-const sessions = new Map<string, Session>();
+const sessions   = new Map<string, BuyerSession>();
+const uiMessages = new Map<string, Message[]>();
+const autoModes  = new Map<string, boolean>(); // convId → autoMode, default true
 const sseClients = new Set<http.ServerResponse>();
 
 function pushSSE(event: string, data: unknown) {
@@ -53,98 +40,79 @@ function pushSSE(event: string, data: unknown) {
   for (const res of sseClients) res.write(payload);
 }
 
+function sessionToView(s: BuyerSession) {
+  return {
+    convId: s.convId,
+    jobId: s.jobId,
+    step: s.step,
+    autoMode: autoModes.get(s.convId) ?? true,
+    messages: (uiMessages.get(s.convId) ?? []).slice(-50),
+  };
+}
+
+function recordMsg(convId: string, msg: Message) {
+  let msgs = uiMessages.get(convId);
+  if (!msgs) { msgs = []; uiMessages.set(convId, msgs); }
+  msgs.push(msg);
+}
+
 // ── WS 客户端 ─────────────────────────────────────────────────────────────────
 let client: WsMockClient;
 
 function buyerSend(convId: string, payload: Partial<TaskPayload>) {
-  const session = sessions.get(convId);
-  if (!session) return;
   console.log(`[buyer] → conv=${convId.slice(-20)} type=${payload.type}`);
   client.sendToConv(convId, payload as TaskPayload);
-  session.messages.push({ from: "buyer", type: payload.type!, content: String(payload.content ?? ""), ts: Date.now() });
-  pushSSE("session_updated", sessionToView(session));
+  recordMsg(convId, { from: "buyer", type: payload.type!, content: String(payload.content ?? ""), ts: Date.now() });
+  const s = sessions.get(convId);
+  if (s) pushSSE("session_updated", sessionToView(s));
 }
 
-async function autoReply(session: Session, msgType: string) {
-  if (!session.autoMode) return;
-  const fmt = (t: string, text: string) => formatMsg(session.jobId, session.convId, t, text);
-
-  if (session.step === 0 && msgType === "TASK_REPLY") {
-    await sleep(800);
-    buyerSend(session.convId, {
-      type: "REPLY", jobId: session.jobId,
-      content: fmt("REPLY", "任务标题：开发一个 Python 脚本监控链上交易。\n描述：实时输出以太坊主网大额交易，支持按金额过滤，有完整注释。\n预算：100 USDT。\n验收标准：代码有注释，支持以太坊主网，交付可运行脚本。"),
-    });
-    session.step = 1;
-  } else if (session.step === 1 && msgType === "TASK_REPLY") {
-    await sleep(1500);
-    buyerSend(session.convId, {
-      type: "REPLY", jobId: session.jobId,
-      content: fmt("REPLY", "好的，我接受你的报价 100 USDT，交付时间 48 小时，请继续。"),
-    });
-    session.step = 2;
-  } else if (session.step === 2 && msgType === "TASK_REPLY") {
-    await sleep(1500);
-    buyerSend(session.convId, {
-      type: "REPLY", jobId: session.jobId,
-      content: fmt("REPLY", "确认，我接受报价：100 USDT，支付方式：non_escrow，交付时间 48 小时。请正式提交申请接单。"),
-    });
-    session.step = 3;
-  } else if (session.step === 3 && msgType === "TASK_APPLY") {
-    await sleep(800);
-    await callAcceptApi(session.jobId).catch(console.error);
-    session.step = 4;
-    pushSSE("session_updated", sessionToView(session));
-  } else if (msgType === "TASK_DELIVER" || msgType === "TASK_SUBMITTED") {
-    await sleep(1000);
-    await callCompleteApi(session.jobId).catch(console.error);
-    session.step = 6;
-    pushSSE("session_updated", sessionToView(session));
+async function uiStartNegotiation(jobId: string): Promise<string> {
+  // Find PROVIDER with retries (same logic as headless startNegotiation)
+  let providers: unknown[] = [];
+  for (let attempt = 0; attempt < 5; attempt++) {
+    providers = await client.lookupRole("PROVIDER");
+    if (providers.length > 0) break;
+    console.log(`[buyer] no PROVIDER yet, retrying in 3s... (attempt ${attempt + 1}/5)`);
+    await sleep(3000);
   }
-}
+  if (providers.length === 0) throw new Error("no PROVIDER registered after retries");
 
-async function callAcceptApi(jobId: string) {
-  const res = await fetch(`${API_BASE_URL}/api/v1/task/${jobId}/accept`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider_address: "0xSeller000000000000000000000000000000001", provider_agent_id: "mock-seller-agent-001" }),
-  });
-  if (!res.ok) throw new Error(`accept ${res.status}`);
-  console.log(`[buyer][api] accepted job=${jobId}`);
-}
-
-async function callCompleteApi(jobId: string) {
-  const res = await fetch(`${API_BASE_URL}/api/v1/task/${jobId}/complete`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-  });
-  if (!res.ok) throw new Error(`complete ${res.status}`);
-  console.log(`[buyer][api] completed job=${jobId}`);
-}
-
-async function startNegotiation(jobId: string): Promise<string> {
-  const providers = await client.lookupRole("PROVIDER");
-  if (providers.length === 0) throw new Error("no PROVIDER registered");
-  const seller = providers[0];
-  const sellerAgentId = (seller.metadata as { agent_id?: string })?.agent_id ?? "unknown-seller";
-  const sellerCommAddr = seller.addr;
-
+  const seller = providers[0] as { agent_id: string; comm_addr: string };
+  const sellerAgentId = seller.agent_id ?? "unknown-seller";
+  const sellerCommAddr = seller.comm_addr ?? "";
   const convId = `conv-${jobId}-${BUYER_AGENT_ID}-${sellerAgentId}`;
+  console.log(`[buyer] starting negotiation conv=${convId} seller=${sellerAgentId}`);
+
   client.joinConversation(convId, [BUYER_COMM_ADDR, sellerCommAddr]);
   await sleep(300);
 
-  sessions.set(convId, { convId, jobId, step: 0, messages: [], autoMode: true });
-  pushSSE("new_session", sessionToView(sessions.get(convId)!));
+  // UI-aware reply: sends + records + pushes SSE
+  const reply = (p: Partial<TaskPayload>) => {
+    console.log(`[buyer] → conv=${convId.slice(-30)} type=${p.type}`);
+    client.sendToConv(convId, p as TaskPayload);
+    recordMsg(convId, { from: "buyer", type: p.type!, content: String(p.content ?? ""), ts: Date.now() });
+    const s = sessions.get(convId);
+    if (s) pushSSE("session_updated", sessionToView(s));
+  };
 
-  buyerSend(convId, {
-    type: "TASK_INQUIRE", jobId,
-    content: formatMsg(jobId, convId, "TASK_INQUIRE", `你好，我有一个任务（jobId: ${jobId}）想请你来完成，请问你感兴趣吗？`),
-  });
+  const session = new BuyerSession(
+    convId, jobId, sellerAgentId, sellerCommAddr, reply,
+    () => { pushSSE("session_updated", sessionToView(session)); },
+  );
+  sessions.set(convId, session);
+  uiMessages.set(convId, []);
+  autoModes.set(convId, true);
+  pushSSE("new_session", sessionToView(session));
+
+  const inquireContent = formatMsg(jobId, convId, "TASK_INQUIRE",
+    `你好，我有一个任务（jobId: ${jobId}）想请你来完成，请问你感兴趣吗？`);
+  client.sendToConv(convId, { type: "TASK_INQUIRE", jobId, content: inquireContent });
+  recordMsg(convId, { from: "buyer", type: "TASK_INQUIRE", content: inquireContent, ts: Date.now() });
+  pushSSE("session_updated", sessionToView(session));
+  console.log(`[buyer] TASK_INQUIRE sent → ${sellerAgentId}`);
+
   return convId;
-}
-
-function sessionToView(s: Session) {
-  return { convId: s.convId, jobId: s.jobId, step: s.step, autoMode: s.autoMode, messages: s.messages.slice(-50) };
 }
 
 // ── HTTP 服务 ─────────────────────────────────────────────────────────────────
@@ -160,7 +128,9 @@ const server = http.createServer(async (req, res) => {
       "Access-Control-Allow-Origin": "*",
     });
     sseClients.add(res);
-    for (const s of sessions.values()) res.write(`event: session_updated\ndata: ${JSON.stringify(sessionToView(s))}\n\n`);
+    for (const s of sessions.values()) {
+      res.write(`event: session_updated\ndata: ${JSON.stringify(sessionToView(s))}\n\n`);
+    }
     req.on("close", () => sseClients.delete(res));
     return;
   }
@@ -183,12 +153,14 @@ const server = http.createServer(async (req, res) => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            title: title || "Mock 测试任务",
-            description: description || "开发一个 Python 脚本监控链上交易，实时输出大额交易",
-            tokenAmount: String(budget || 100),
+            title: title || MOCK_TASK.title,
+            description: description || MOCK_TASK.description,
+            tokenAmount: String(budget || MOCK_TASK.budget),
             tokenSymbol: "USDT",
             deadlineOpen: 172800,
             deadlineSubmit: 86400,
+            buyerAgentAddress: BUYER_COMM_ADDR,
+            buyerAgentId: BUYER_AGENT_ID,
           }),
         });
         const data = await apiRes.json() as { data?: { jobId?: string } };
@@ -211,7 +183,7 @@ const server = http.createServer(async (req, res) => {
     req.on("end", async () => {
       try {
         const { jobId } = JSON.parse(body);
-        const convId = await startNegotiation(jobId);
+        const convId = await uiStartNegotiation(jobId);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, convId }));
       } catch (e) {
@@ -232,16 +204,22 @@ const server = http.createServer(async (req, res) => {
         if (!session) { res.writeHead(404); res.end("session not found"); return; }
 
         if (action === "toggle_auto") {
-          session.autoMode = !session.autoMode;
+          autoModes.set(convId, !(autoModes.get(convId) ?? true));
         } else if (action === "send") {
-          buyerSend(convId, { type: "REPLY", jobId: session.jobId, content });
-          session.step = Math.min(session.step + 1, 3);
+          const formatted = formatMsg(session.jobId, session.convId, "REPLY", content);
+          buyerSend(convId, { type: "REPLY", jobId: session.jobId, content: formatted });
         } else if (action === "accept") {
-          await callAcceptApi(session.jobId).catch(console.error);
-          session.step = 4;
+          if (!session.accepted) {
+            session.accepted = true;
+            await callAcceptApi(session.jobId, session.sellerAgentId).catch(console.error);
+            session.step = 4;
+          }
         } else if (action === "complete") {
-          await callCompleteApi(session.jobId).catch(console.error);
-          session.step = 6;
+          if (!session.completed) {
+            session.completed = true;
+            await callCompleteApi(session.jobId).catch(console.error);
+            session.step = 6;
+          }
         }
         pushSSE("session_updated", sessionToView(session));
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -268,11 +246,11 @@ async function main() {
   client = new WsMockClient(WS_URL, BUYER_COMM_ADDR);
   await client.connectAndRegister();
   await client.registerIdentity("REQUESTER", BUYER_AGENT_ID, BUYER_COMM_ADDR);
-  console.log(`✓ 身份已注册: role=REQUESTER agentId=${BUYER_AGENT_ID}`);
+  console.log(`✓ 身份已注册: role=REQUESTER agentId=${BUYER_AGENT_ID} commAddr=${BUYER_COMM_ADDR}`);
 
-  client.start((envelope) => {
+  client.start((envelope: WsEnvelope) => {
     const { conversation_id: convId, from, payload } = envelope;
-    const { type } = payload;
+    const type = String(payload.type ?? "");
     const jobId = String(payload.jobId ?? "");
 
     if (from === BUYER_COMM_ADDR) return;
@@ -281,19 +259,22 @@ async function main() {
     // TASK_CONFIRMED: 自动开始协商
     if (type === "TASK_CONFIRMED" && jobId) {
       console.log(`[buyer] TASK_CONFIRMED jobId=${jobId}，自动启动协商...`);
-      startNegotiation(jobId).catch(console.error);
+      uiStartNegotiation(jobId).catch(console.error);
       return;
     }
 
-    // 路由到 session
     const session = sessions.get(convId);
-    if (!session) return;
+    if (!session) { console.log(`[buyer] unknown conv=${convId.slice(-20)}, ignoring`); return; }
 
+    // Record incoming message for display
     const msgFrom: Message["from"] = from.startsWith("0xMock") ? "system" : "seller";
-    session.messages.push({ from: msgFrom, type, content: String(payload.content ?? ""), ts: Date.now() });
+    recordMsg(convId, { from: msgFrom, type, content: String(payload.content ?? ""), ts: Date.now() });
     pushSSE("session_updated", sessionToView(session));
 
-    autoReply(session, type).catch(console.error);
+    // Delegate to shared BuyerSession state machine if in auto mode
+    if (autoModes.get(convId) !== false) {
+      session.handle(envelope).catch((e) => console.error(`[buyer][session] error:`, e));
+    }
   });
 
   server.listen(UI_PORT, () => {

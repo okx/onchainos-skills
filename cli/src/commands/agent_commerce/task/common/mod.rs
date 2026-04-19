@@ -18,8 +18,8 @@ use crate::commands::Context;
 pub const XLAYER_CHAIN_ID: i32 = 196;
 /// XLayer chain index 字符串形式（用于钱包 API）
 pub const XLAYER_CHAIN_INDEX: &str = "196";
-/// XLayer chain name（用于 wallet_store 地址查找）
-pub const XLAYER_CHAIN_NAME: &str = "xlayer";
+/// XLayer chain name（用于 wallet_store 地址查找，wallets.json 中 chainIndex=196 的 chainName）
+pub const XLAYER_CHAIN_NAME: &str = "okb";
 
 // ─── 支付模式常量 ────────────────────────────────────────────────────────
 
