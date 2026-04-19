@@ -115,10 +115,6 @@ pub enum TaskCommand {
     Apply {
         job_id: String,
     },
-    /// AI-assisted deliverable quality assessment
-    AiEvaluate {
-        job_id: String,
-    },
     /// Client manually transfers payment to provider (non-escrow mode)
     Pay {
         job_id: String,
@@ -296,10 +292,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         // TODO(provider): 实现文件上传 + submit 签名流程
         TaskCommand::Deliver { job_id, file, message } => {
             println!("[TODO(provider)] deliver {job_id} file={file} msg={message:?}");
-            Ok(())
-        }
-        TaskCommand::AiEvaluate { job_id } => {
-            println!("[TODO] ai-evaluate {job_id}");
             Ok(())
         }
         TaskCommand::Config { action } => {

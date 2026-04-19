@@ -87,10 +87,6 @@ pub enum TaskSystemCommand {
     /// Provider applies for a public task
     Apply { job_id: String },
 
-    /// AI-assisted deliverable quality assessment
-    #[command(name = "ai-evaluate")]
-    AiEvaluate { job_id: String },
-
     /// Client manually transfers payment to provider (non-escrow mode)
     Pay { job_id: String },
 
@@ -175,9 +171,6 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
 
         TaskSystemCommand::Apply { job_id } =>
             client::run_task(T::Apply { job_id }, ctx).await,
-
-        TaskSystemCommand::AiEvaluate { job_id } =>
-            client::run_task(T::AiEvaluate { job_id }, ctx).await,
 
         TaskSystemCommand::Pay { job_id } =>
             client::run_task(T::Pay { job_id }, ctx).await,

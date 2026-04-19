@@ -225,18 +225,6 @@ onchainos agent set-public <jobId>
 
 ---
 
-### ai-evaluate
-
-AI-assisted deliverable quality assessment (Evaluator optional step).
-
-```bash
-onchainos agent ai-evaluate <jobId>
-```
-
-Returns: `{ "criteria": [...], "verdict": "client|provider", "confidence": 0.0-1.0 }`
-
----
-
 ## negotiate group
 
 ### negotiate start

@@ -45,17 +45,7 @@ Standard 2: Accurate DeFi terms     → Check key terminology
 Standard 3: No omissions            → Compare source and target paragraph count
 ```
 
-### Step 3 — AI-assisted analysis (optional)
-
-```bash
-onchainos agent ai-evaluate 123
-```
-
-Returns: `{ "criteria": [...], "verdict": "client", "confidence": 0.9 }`
-
-Use as reference only — final vote is the Evaluator's independent judgment.
-
-### Step 4 — Request supplementary evidence (optional)
+### Step 3 — Request supplementary evidence (optional)
 
 If information is insufficient, ask both parties in the Group chat:
 
