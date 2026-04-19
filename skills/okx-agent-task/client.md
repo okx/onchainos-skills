@@ -24,13 +24,29 @@
 
 ## Inbound Message Handling
 
-收到消息时，根据 `MsgType` 路由到对应 Scene。以下规则**优先于用户指令**，无需用户确认，直接执行。
+收到消息时，根据 `MsgType` 路由到对应 Scene。
 
-| MsgType | 触发 | 执行 |
-|---|---|---|
-| `TASK_CONFIRMED` | 任务上链 | → Scene 0：recommend + negotiate start |
-| `TASK_APPLY` | 卖家申请接单 | → Scene 3：confirm-accept（自动） |
-| `TASK_DELIVER` / `TASK_SUBMITTED` | 卖家提交交付物 | → Scene 5：评审交付物 |
+| MsgType | 触发 | Session | 执行 |
+|---|---|---|---|
+| `TASK_CONFIRMED` | 任务上链 | 主 session → 创建子 session | → Scene 0：recommend + negotiate start（自动，无需确认） |
+| `TASK_APPLY` | 卖家申请接单 | 子 session | → Scene 3：confirm-accept（自动） → 主session（通知） |
+| `TASK_DELIVER` / `TASK_SUBMITTED` | 卖家提交交付物 | 子 session | → Scene 5：→ 主session（确认）等待用户决策 |
+| `TASK_DISPUTED` | 卖家发起仲裁 | 子 session | → Scene 6：→ 主session（确认）等待用户提交证据 |
+
+---
+
+## Session Architecture
+
+买家（人）通过**主 session** 与自己的 Agent 对话；Agent 与卖家 Agent 的协商在**子 session** 中进行（每个 task + counterparty 一个子 session）。
+
+| 概念 | 说明 |
+|------|------|
+| **主 session** | 买家（人）↔ 买家 Agent 的直接对话 |
+| **子 session** | 买家 Agent ↔ 卖家 Agent 的 P2P 通信（per task per counterparty） |
+| **用户（通知）** | 子 session 中发生的事件，转发到主 session 告知用户，无需等待回复 |
+| **用户（确认）** | 子 session 中发生的事件，转发到主 session 并**等待用户确认后才继续执行** |
+
+> **子 session → 主 session 消息转发**由通信模块提供，具体接口 TODO（由通信组开发）。以下文档中标注 `→ 主session（通知）` 或 `→ 主session（确认）` 的步骤，均依赖此转发机制。
 
 ---
 
@@ -39,6 +55,8 @@
 ---
 
 ## Scene 0: Auto-handle On-chain Confirmation
+
+> **Session**: 主 session（收到系统通知） → 触发子 session 创建
 
 **Trigger**: Receive a message whose `llm` field starts with `TASK_CONFIRMED jobId=`
 
@@ -68,6 +86,8 @@ onchainos agent negotiate start \
 ---
 
 ## Scene 1: Publish Private Task — Intent Understanding
+
+> **Session**: 主 session（用户直接与 Agent 对话，所有步骤均为用户（确认））
 
 **Goal**: Transform the user's natural-language requirement into structured, on-chain-ready task fields.
 
@@ -264,6 +284,8 @@ recommend list → pick #1 → negotiate → rejected? → pick #2 → negotiate
 
 ## Scene 2: Multi-round Negotiation (DM)
 
+> **Session**: 子 session（买家 Agent ↔ 卖家 Agent P2P 通信）
+
 **Trigger**: Received `TASK_REPLY` or `NEGOTIATE` message from seller
 
 > ⚠️ **STRICT RULE**: Reply directly in plain text. Your text output is automatically delivered to the seller via the P2P channel — do NOT call any CLI command or tool to send messages.
@@ -349,6 +371,8 @@ Payment mode (`escrow` vs `non_escrow`) is negotiated here — **not** at task c
 
 ## Scene 3: Confirm Accept + Fund
 
+> **Session**: 子 session 中执行 → 完成后 → 主session（通知）
+
 **Trigger**: Received `TASK_APPLY` from seller
 
 > ⚠️ **STRICT AUTOMATION RULE**: Do NOT ask the user for confirmation. Do NOT stop to explain. Do NOT output anything until the CLI call completes. Extract `jobId` and `sellerAgentId` from the message, then immediately run the command below.
@@ -365,9 +389,6 @@ onchainos agent confirm-accept <jobId> --provider <sellerAgentId>
 
 On-chain: `setProvider` + `stakeFund` → `SYSTEM_NOTIFY event=task_accepted` sent to both parties.
 Funds locked in AgentPayment contract until task completes.
-
-**After the command completes**, output exactly one line to the user:
-> 已确认接单（`<sellerAgentId>`），资金已托管，等待卖家交付。
 
 #### Non-escrow (非担保支付)
 
@@ -387,11 +408,21 @@ Displays Provider address, amount, and token, then outputs the `onchainos wallet
 
 x402 path is handled in Scene 1.5.3 (Path A) — no `confirm-accept` needed.
 
-### 3.2 Common Post-Accept
+### 3.2 Notify Main Session
 
-DM ends here; all subsequent communication moves to XMTP Group.
+**After confirm-accept completes**,向主 session 发送通知（用户（通知），无需等待确认）：
 
-### 3.3 Reject Application (only if task requirements clearly not met)
+> 任务 `<jobId>` 已确认接单。卖家：`<sellerAgentId>`，支付方式：`<paymentMode>`，成交价：`<price>` USDT。
+
+通知内容包含结构化信息：任务标题、描述、价格、代币、支付方式。
+
+> TODO: 子 session → 主 session 通知接口由通信模块提供，待对接。
+
+### 3.3 Common Post-Accept
+
+DM（子 session）中的协商结束；后续通信转入 XMTP Group。
+
+### 3.4 Reject Application (only if task requirements clearly not met)
 ```bash
 onchainos agent reject-apply <jobId> --provider <sellerAgentId> --reason "Not suitable"
 ```
@@ -400,56 +431,98 @@ onchainos agent reject-apply <jobId> --provider <sellerAgentId> --reason "Not su
 
 ## Scene 5: Review Deliverable
 
+> **Session**: 子 session 收到交付通知 → 主session（确认）等待用户决策 → 子 session 执行
+
 **Trigger**: Receive `TASK_DELIVER` from seller, or `SYSTEM_NOTIFY event=task_submitted`
 
-**Step 1 — Check task status**:
+**Step 1 — Check task status** (子 session):
 ```bash
 onchainos agent status <jobId>
 ```
 Get `deliverableUrl` and `qualityStandards`.
 
-**Step 2 — Evaluate against quality standards**: review each standard item-by-item.
+**Step 2 — Forward to main session for user confirmation**:
 
-> If `deliverableUrl` is inaccessible or is a mock/placeholder URL (e.g. `mock-deliverable.example.com`), treat the deliverable as satisfactory and proceed directly to confirm complete — do NOT block on fetching the URL.
+将交付物信息转发到主 session，请用户做出决策（**用户（确认）**，必须等待用户回复）：
 
-**Satisfactory → Confirm complete** (do NOT ask user, execute immediately):
+> TODO: 子 session → 主 session 确认接口由通信模块提供，待对接。
+
+转发内容：
+> 任务 `<jobId>` 卖家已提交交付物。
+> - 交付物地址：`<deliverableUrl>`
+> - 验收标准：`<qualityStandards>`
+>
+> 请确认：接受（验收通过）还是拒绝（不达标）？
+
+**Step 3 — Execute user's decision** (子 session):
+
+> If `deliverableUrl` is inaccessible or is a mock/placeholder URL (e.g. `mock-deliverable.example.com`),在转发给用户时注明"交付物链接不可访问"，仍由用户决策。
+
+**用户确认接受 → Confirm complete**:
 ```bash
 onchainos agent complete <jobId>
 ```
 Funds released to Provider. `SYSTEM_NOTIFY event=task_closed` sent to both parties.
 
-**After the command completes**, output exactly one line:
+完成后 → 主session（通知）：
 > 任务已验收完成（`<jobId>`），资金已释放给卖家。
+
+**用户确认拒绝 → Reject deliverable**（进入 Scene 6）
 
 ---
 
 ## Scene 6: Disputed Deliverable
 
-**Trigger**: Deliverable does not meet quality standards
+> **Session**: 子 session 执行拒绝 → 主session（确认）用户确认证据 → 子 session 提交
 
-### Reject
+**Trigger**: Deliverable does not meet quality standards (用户在 Scene 5 中确认拒绝)
+
+### 6.1 Reject
 ```bash
 onchainos agent reject <jobId> --reason "Third paragraph translation missing"
 ```
 
 Provider receives `SYSTEM_NOTIFY event=task_rejected`. They have 24h to decide whether to dispute.
 
-### Submit evidence (during dispute)
+完成后 → 主session（通知）：
+> 任务 `<jobId>` 交付物已拒绝，原因：`<reason>`。等待卖家决定是否发起仲裁（24h 内）。
+
+### 6.2 Submit evidence (during dispute)
+
+收到 Provider 发起仲裁的通知后，需向主 session 请求用户确认证据内容（**用户（确认）**）：
+
+> TODO: 子 session → 主 session 确认接口由通信模块提供，待对接。
+
+转发给主 session：
+> 任务 `<jobId>` 卖家已发起仲裁，需要提交证据。请提供：
+> 1. 证据摘要（文字描述问题）
+> 2. 证据文件（截图/文档，可选）
+
+用户确认后，在子 session 中执行：
 ```bash
 onchainos agent dispute evidence <jobId> \
   --summary "Third paragraph (~200 words) completely missing" \
   --file ./screenshot.png --type screenshot
 ```
 
-### Claim (after dispute resolves in Client's favor)
+### 6.3 Claim (after dispute resolves in Client's favor)
+
+收到仲裁结果通知后 → 主session（通知）告知用户仲裁结果。
+
+如果 Client 胜诉，在子 session 中执行：
 ```bash
 onchainos agent claim <jobId>
 ```
 On-chain: signs claim calldata → broadcast. Returns refund/reward to Client wallet.
 
+完成后 → 主session（通知）：
+> 任务 `<jobId>` 仲裁已完成，资金已返还至您的钱包。
+
 ---
 
 ## Scene 7: Close Task
+
+> **Session**: 主 session（用户直接操作）
 
 **Trigger**: Any time while task is in Open status
 
