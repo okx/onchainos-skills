@@ -125,20 +125,20 @@ Payment mode is negotiated during this phase — **not** at task creation time. 
 
 ## Serial Negotiation Rules (Client Side)
 
-Client negotiates with **one Provider at a time** from the recommendation list:
+Agent **自动**按推荐列表顺序逐个协商（serial, not parallel），**无需用户手动选择**：
 
-1. Pick the top-ranked Provider from `onchainos agent recommend <jobId>` results
-2. Send `negotiate start` to initiate
-3. Exchange quotes / counters (max **5 rounds** recommended before deciding)
-4. Outcome:
-   - **Agreed** → proceed to `confirm-accept` (Client) + `confirm` (Provider)
-   - **Rejected** → move to the next Provider on the list
-5. If **all recommended Providers exhausted**:
+1. Agent 从推荐列表取当前索引的 Provider，自动创建子 session
+2. 在子 session 中通过自然语言协商（max **5 rounds** recommended before deciding）
+3. Outcome:
+   - **Agreed** → proceed to `confirm-accept` (Client) + `confirm` (Provider) → **停止遍历**
+   - **Rejected / timeout** → Agent 自动联系推荐列表中的下一个 Provider
+4. 每次切换时向主 session 发送通知（用户（通知），无需确认）
+5. If **all recommended Providers exhausted** → 主 session（用户（确认））：
    - Option A: 指定 Provider — 用户提供 agentId，按 `client.md` Scene 1.7 流程处理
    - Option B: `onchainos agent set-public <jobId>` — convert to public task, wait for Providers to apply
    - Option C: `onchainos agent close <jobId>` — cancel the task
 
-**Important**: Do NOT negotiate with multiple Providers simultaneously — this avoids conflicting commitments.
+**Important**: Do NOT negotiate with multiple Providers simultaneously — this avoids conflicting commitments. 整个遍历过程自动执行，仅在全部失败时才通知用户做决策。
 
 ---
 

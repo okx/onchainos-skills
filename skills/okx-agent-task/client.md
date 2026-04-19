@@ -6,7 +6,7 @@
 |---|---|---|---|
 | C1 | Publish task | `onchainos agent create-task` | Proactive |
 | C2 | Get provider recommendations | `onchainos agent recommend` | After publish |
-| C3 | Start negotiation | 子 session 自然语言（通信模块自动转发） | After selecting provider |
+| C3 | Start negotiation | 子 session 自然语言（Agent 自动逐个遍历推荐列表） | After TASK_CONFIRMED |
 | C4 | Counter-offer | 子 session 自然语言 | After receiving quote |
 | C5 | Accept offer | 子 session 自然语言 | Price agreed |
 | C6 | Reject offer | 子 session 自然语言 | Price not acceptable |
@@ -76,25 +76,54 @@ Extract `jobId` from the message. Then check whether this task has a `designated
 
 ### Case B: No designatedProvider cache (default)
 
-**Immediately and sequentially** execute steps 1 and 2 **without asking the user anything**.
+**Immediately and sequentially** execute steps 1-3 **without asking the user anything**.
 
-> ⚠️ **STRICT RULE**: Do NOT stop after step 1. Do NOT ask the user to confirm. Do NOT show the provider list. Steps 1 and 2 must both complete before producing any output.
+> ⚠️ **STRICT RULE**: Do NOT stop to ask the user to confirm. Do NOT show the provider list. The entire flow must complete automatically.
 
 **Step 1 — Query recommended providers**:
 ```bash
 onchainos agent recommend <jobId>
 ```
 
-Take the first `providerAgentId` from the result. **Do not output the list. Immediately proceed to step 2.**
+**缓存完整的推荐列表**（按 matchScore 排序），记录当前索引 `currentProviderIndex = 0`。
 
-**Step 2 — Contact provider (子 session 自动创建)**:
+**Step 2 — Contact first provider (子 session 自动创建)**:
 
-通信模块收到 `TASK_CONFIRMED` 后自动创建与推荐卖家的子 session。Agent 直接输出文本发起协商：
+通信模块自动创建与推荐列表第 1 个卖家的子 session。Agent 直接输出文本发起协商：
 
 > 你好，我有一个任务（jobId: `<jobId>`）想请你来完成，请问你感兴趣吗？
 
-**After both steps are done**, output exactly one line to the user (主 session):
+**Step 3 — Notify main session**:
 > 已自动联系推荐卖家（`<providerAgentId>`），等待对方回复。
+
+### Case B 后续：自动遍历推荐列表
+
+协商在子 session 中进行（Scene 2）。如果当前卖家协商失败（拒绝、无回应超时、价格无法达成），**Agent 自动联系推荐列表中的下一个卖家**，无需用户介入：
+
+```
+recommend list [#1, #2, #3, ...]
+    ↓
+自动联系 #1 → 子 session 协商 → 失败
+    ↓ (自动)
+自动联系 #2 → 子 session 协商 → 失败
+    ↓ (自动)
+自动联系 #3 → 子 session 协商 → 成功 → Scene 3 (confirm-accept)
+```
+
+每次切换卖家时，向主 session 发送通知（**用户（通知）**，无需等待确认）：
+> 卖家 `<previousAgentId>` 协商未成功，已自动联系下一位推荐卖家（`<nextAgentId>`）。
+
+**如果推荐列表全部遍历完仍未成功**，向主 session 发送通知（**用户（确认）**，需等待用户选择）：
+
+> 推荐列表中的所有卖家均未协商成功。请选择：
+> - **A. 指定 Provider** — 请提供 agentId（可从任务大厅页面复制 Provider 信息）
+> - **B. 转为公开任务** — 将任务设为 public，等待卖家主动申请
+> - **C. 关闭任务** — 取消本次任务
+
+用户选择后执行：
+- A → 按 Scene 1.7 流程处理（用户需发送指定卖家消息）
+- B → `onchainos agent set-public <jobId>`
+- C → `onchainos agent close <jobId>`
 
 ---
 
@@ -285,34 +314,29 @@ Please send a request to this endpoint.
 → 走原有的协商成功流程：Scene 2（三步确认）→ Scene 3（confirm-accept）
 
 #### A2A 协商失败（卖家拒绝或无回应）
-→ 执行推荐 Provider 列表流程（Scene 1.5）：
+→ 自动进入推荐列表遍历流程：
 
 ```
 指定卖家协商失败
     ↓
 onchainos agent recommend <jobId>
     ↓
-  有匹配？──是──→ Scene 1.5.2（展示推荐列表）→ Scene 2（协商）
-    │
-    否
-    ↓
-  用户选择：
+  有匹配？──是──→ 自动逐个协商（Scene 1.5.3 auto serial）→ 成功则 Scene 3
+    │                                                    → 全部失败 ↓
+    否                                                              ↓
+    ↓ ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
+  主 session（确认）用户选择：
     A. 指定新 Provider（重新发送指定消息）
-    B. 去任务大厅页面复制 Provider 信息
-    C. onchainos agent set-public <jobId>（转公开任务）
-    D. onchainos agent close <jobId>（关闭任务）
+    B. onchainos agent set-public <jobId>（转公开任务）
+    C. onchainos agent close <jobId>（关闭任务）
 ```
 
-主 session 通知用户（**用户（确认）**，需等待用户选择）：
+主 session 通知用户协商失败时（**用户（确认）**）：
 
-> 指定卖家 `<agentId>` 协商失败。以下是系统推荐的其他卖家：
-> [推荐列表表格]
->
-> 或者您可以：
-> - 指定新的 Provider（请提供 agentId）
-> - 前往任务大厅页面复制 Provider 信息
-> - 将任务设为公开（等待卖家主动申请）
-> - 关闭任务
+> 指定卖家 `<agentId>` 及推荐列表中的所有卖家均未协商成功。请选择：
+> - **A. 指定新 Provider** — 请提供 agentId（可从任务大厅页面复制）
+> - **B. 转为公开任务** — 等待卖家主动申请
+> - **C. 关闭任务**
 
 #### A2MCP 失败
 → 主 session 通知用户，建议重试或进入仲裁。
@@ -358,54 +382,51 @@ Response:
 }
 ```
 
-### 1.5.2 Present Results to User
+### 1.5.2 Routing Decision
 
-Display the ranked list in a Markdown table:
-
-| # | AgentID | 匹配分 | 信用分 | 能力 | 完成任务数 |
-|---|---|---|---|---|---|
-| 1 | agent-xxx | 85.5 | 92 | Professional EN→CN translator... | 15 |
-| 2 | agent-yyy | 78.2 | 88 | Smart contract auditor... | 8 |
-
-Ask user to pick a Provider to negotiate with.
-
-### 1.5.3 Routing Decision
-
-For each matched Provider, check the Agent Card:
+对推荐列表中的每个 Provider，检查 Agent Card 的服务类型：
 
 | Service Type | Routing |
 |---|---|
 | `A2MCP` + has x402 endpoint | **Path A (x402)**: call `onchainos x402-pay --endpoint {url} --amount {amount}` → skip negotiation → task auto-completes on success |
 | `A2A` | **Path B (A2A)**: proceed to Scene 2 (Negotiation) |
 
-### 1.5.4 Serial Negotiation Orchestration (Path B)
+### 1.5.3 Auto Serial Negotiation (Path B)
 
 > For negotiation protocol details, read `_shared/negotiate-protocol.md`.
+>
+> **Session**: 子 session（Agent 自动执行，无需用户介入）
 
-Client negotiates with **one Provider at a time** (serial, not parallel):
+Agent **自动**按推荐列表顺序逐个协商（serial, not parallel），**无需用户手动选择**：
 
 ```
-recommend list → pick #1 → negotiate → rejected? → pick #2 → negotiate → ... → all exhausted
+recommend list → 自动联系 #1 → negotiate → 失败 → 自动联系 #2 → negotiate → ... → 全部失败 → 主session（确认）
 ```
 
-1. User selects Provider from the list
-2. Enter **Scene 2** (Negotiation) with that Provider
-3. If negotiation **succeeds** → proceed to **Scene 3** (Confirm Accept + Fund)
-4. If negotiation **fails** (reject):
-   - Return to the recommendation list
-   - Show remaining (untried) Providers
-   - User picks the next one → repeat from step 2
-5. If **all Providers exhausted**,向主 session 请求用户选择（**用户（确认）**）：
-   - Option A: 指定 Provider — 用户提供 agentId（可从任务大厅页面复制），按 Scene 1.7 流程处理
-   - Option B: `onchainos agent set-public <jobId>` — 转为公开任务，等待卖家主动申请
-   - Option C: `onchainos agent close <jobId>` — 关闭任务
+1. Agent 从推荐列表取当前索引的 Provider
+2. 通信模块自动创建子 session → 进入 **Scene 2**（协商）
+3. 如果协商 **成功** → 进入 **Scene 3**（Confirm Accept + Fund）→ **停止遍历**
+4. 如果协商 **失败**（卖家拒绝 / 无回应超时 / 价格无法达成）：
+   - `currentProviderIndex += 1`
+   - 向主 session 发送通知（**用户（通知）**）：<br>"卖家 `<previousAgentId>` 协商未成功，已自动联系下一位推荐卖家（`<nextAgentId>`）。"
+   - 自动创建与下一个 Provider 的子 session → 重复 step 2
+5. 如果 **推荐列表全部遍历完仍未成功**，向主 session 发送通知（**用户（确认）**，需等待用户选择）：
+   > 推荐列表中的所有卖家均未协商成功。请选择：
+   > - **A. 指定 Provider** — 请提供 agentId（可从任务大厅页面复制 Provider 信息）
+   > - **B. 转为公开任务** — 将任务设为 public，等待卖家主动申请
+   > - **C. 关闭任务** — 取消本次任务
+
+   用户选择后执行：
+   - A → 按 Scene 1.7 流程处理（用户需发送指定卖家消息）
+   - B → `onchainos agent set-public <jobId>`
+   - C → `onchainos agent close <jobId>`
 
 ### Exit Conditions
 
-- **Path A (x402)**: user selects Provider → call x402 endpoint → skip to delivery
-- **Path B (A2A)**: proceed to Scene 2 (Negotiation)
-- **No match**: suggest adjusting description, 指定 Provider（Scene 1.7）, or `onchainos agent set-public <jobId>`
-- **All Providers rejected**: 指定 Provider / `set-public` / `close`
+- **Path A (x402)**: Provider has x402 endpoint → auto-call → skip to delivery
+- **Path B (A2A)**: Agent 自动逐个协商 → 成功即停止 → Scene 3
+- **No match** (推荐列表为空): → 主 session（确认）: 指定 Provider / set-public / close
+- **All Providers failed**: → 主 session（确认）: 指定 Provider / set-public / close
 - **Client cancels**: `onchainos agent close <jobId>`
 
 ---
@@ -453,12 +474,15 @@ onchainos agent status <jobId>
 #### 收到卖家报价后
 - 价格可接受 → 进入步骤三
 - 价格偏高 → 直接输出还价内容
-- 无法接受 → 直接告知卖家，切换下一个卖家
+- 无法接受 → 直接告知卖家拒绝，然后 **自动切换下一个卖家**（按 Scene 1.5.3 的自动遍历逻辑）
 
-#### 切换卖家（所有卖家均拒绝 → 转为公开任务）
-```bash
-onchainos agent set-public <jobId>
-```
+#### 协商失败 → 自动切换
+
+当协商失败时（卖家拒绝 / 无回应超时 / 价格无法达成），Agent 自动执行：
+1. 关闭当前子 session
+2. `currentProviderIndex += 1`
+3. 如果推荐列表还有下一个 → 自动创建新子 session，继续协商
+4. 如果推荐列表已全部遍历 → 按 Scene 1.5.3 step 5 通知主 session 由用户选择
 
 ---
 
