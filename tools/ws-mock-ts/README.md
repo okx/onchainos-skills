@@ -165,42 +165,42 @@ mock-seller 和 mock-arbitrator 需要知道买家地址才能计算正确的 co
 
 ---
 
-## 安装 okx-agent-task Skill
+## 安装 okx-task-system Skill
 
-`skills/okx-agent-task/` 是本地开发版 skill，需要手动安装到 Claude Code / OpenClaw。
+`skills/okx-task-system/` 是本地开发版 skill，需要手动安装到 Claude Code / OpenClaw。
 
 ### 安装（全局，同时装到 Claude Code 和 OpenClaw）
 
 ```bash
 # 在任意目录执行，-g 全局安装，-s 指定 skill 名
-npx skills add /path/to/OKOnchainOS -g -s okx-agent-task --yes
+npx skills add /path/to/OKOnchainOS -g -s okx-task-system --yes
 ```
 
 例如：
 
 ```bash
 npx skills add /Users/gan/meili/mingtao.gan_dacs_at_okg.com/121/Documents/RustProjects/OKOnchainOS \
-  -g -s okx-agent-task --yes
+  -g -s okx-task-system --yes
 ```
 
 安装完成后会看到：
 
 ```
-✓ ~/.agents/skills/okx-agent-task
+✓ ~/.agents/skills/okx-task-system
   universal: Codex, Amp, Antigravity, Cline, Cursor +7 more
   symlinked: Claude Code, OpenClaw
 ```
 
-Skill 文件存在 `~/.agents/skills/okx-agent-task`，symlink 到 Claude Code 和 OpenClaw，**无需重启立即生效**。
+Skill 文件存在 `~/.agents/skills/okx-task-system`，symlink 到 Claude Code 和 OpenClaw，**无需重启立即生效**。
 
 ### 更新
 
-本地改了 `skills/okx-agent-task/SKILL.md` 后，因为是 symlink，无需重新安装，改动直接生效。
+本地改了 `skills/okx-task-system/SKILL.md` 后，因为是 symlink，无需重新安装，改动直接生效。
 
 ### 卸载
 
 ```bash
-npx skills remove okx-agent-task -g
+npx skills remove okx-task-system -g
 ```
 
 ### 安装所有 skills（一次性）

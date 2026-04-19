@@ -354,6 +354,7 @@ fn task_system_sub(cmd: &crate::commands::agent_commerce::task::TaskSystemComman
         TaskSystemCommand::Negotiate(c) => format!("negotiate {:?}", std::mem::discriminant(c)),
         TaskSystemCommand::Dispute(c)   => format!("dispute {:?}", std::mem::discriminant(c)),
         TaskSystemCommand::Common(c)    => format!("common {:?}", std::mem::discriminant(c)),
+        TaskSystemCommand::Get { .. }   => "get".into(),
     }
 }
 

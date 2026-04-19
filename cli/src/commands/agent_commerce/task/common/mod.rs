@@ -6,7 +6,9 @@
 
 use anyhow::{bail, Result};
 use clap::Subcommand;
+use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
+use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use crate::commands::Context;
 
@@ -23,6 +25,21 @@ pub const XLAYER_CHAIN_NAME: &str = "xlayer";
 
 #[derive(Subcommand)]
 pub enum CommonCommand {
+    /// 查询当前 buyer agent 在 ws-mock 身份系统中的注册信息（ERC-8004）
+    ///
+    /// 示例：
+    ///   onchainos agent get
+    ///   onchainos agent get --ws-url ws://127.0.0.1:9000
+    Get {
+        /// ws-mock server 地址（默认 ws://127.0.0.1:9000）
+        #[arg(long, default_value = "ws://127.0.0.1:9000")]
+        ws_url: String,
+
+        /// 查询指定地址（不传则读 ~/.openclaw/ws-mock-addresses.json 中的 default）
+        #[arg(long)]
+        addr: Option<String>,
+    },
+
     /// 查询任务上下文，输出供大模型使用的结构化自然语言描述
     ///
     /// 示例：
@@ -163,10 +180,72 @@ fn available_actions(role: &str, status: &str, job_id: &str) -> Vec<String> {
 
 pub async fn run(cmd: CommonCommand, _ctx: &Context) -> Result<()> {
     match cmd {
+        CommonCommand::Get { ws_url, addr } => run_get(&ws_url, addr.as_deref()).await,
         CommonCommand::Context { job_id, role, agent_id, address, api_url } => {
             run_context(&job_id, &role, agent_id.as_deref(), address.as_deref(), &api_url).await
         }
     }
+}
+
+async fn run_get(ws_url: &str, addr_override: Option<&str>) -> Result<()> {
+    // 解析要查询的地址
+    let addr = if let Some(a) = addr_override {
+        a.to_string()
+    } else {
+        // 读 ~/.openclaw/ws-mock-addresses.json → {"default": "0x..."}
+        let path = dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("无法获取 HOME 目录"))?
+            .join(".openclaw/ws-mock-addresses.json");
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("读取 {} 失败: {e}\n提示: 先连接 ws-mock 使 openclaw gateway 注册地址", path.display()))?;
+        let v: serde_json::Value = serde_json::from_str(&raw)?;
+        v["default"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("ws-mock-addresses.json 中未找到 default 字段"))?
+            .to_string()
+    };
+
+    // 连接 ws-mock
+    let (mut ws, _) = connect_async(ws_url)
+        .await
+        .map_err(|e| anyhow::anyhow!("无法连接 {ws_url}: {e}\n提示: 先启动 ws-mock server"))?;
+
+    // 发送 LookupAddr
+    let req = serde_json::json!({ "action": "LookupAddr", "addr": addr });
+    ws.send(Message::Text(req.to_string().into())).await?;
+
+    // 等待 addr_lookup 响应（超时 3s）
+    let result = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while let Some(Ok(Message::Text(text))) = ws.next().await {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                if v["type"].as_str() == Some("addr_lookup") {
+                    return Some(v);
+                }
+            }
+        }
+        None
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("LookupAddr 超时（3s），ws-mock server 无响应"))?;
+
+    let resp = result.ok_or_else(|| anyhow::anyhow!("ws-mock 连接关闭，未收到 addr_lookup 响应"))?;
+
+    // 输出结果
+    match resp.get("identity") {
+        Some(identity) if !identity.is_null() => {
+            println!("{}", serde_json::to_string_pretty(identity)?);
+        }
+        _ => {
+            println!("{}", serde_json::json!({
+                "registered": false,
+                "comm_addr": addr,
+                "msg": "该地址在 ws-mock 身份系统中尚未注册（ERC-8004）"
+            }));
+        }
+    }
+
+    let _ = ws.close(None).await;
+    Ok(())
 }
 
 async fn run_context(

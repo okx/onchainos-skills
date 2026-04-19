@@ -112,6 +112,17 @@ pub enum TaskSystemCommand {
     /// Common queries: context lookup for AI agents
     #[command(subcommand)]
     Common(common::CommonCommand),
+
+    /// Get current agent identity from ws-mock identity system (ERC-8004)
+    Get {
+        /// ws-mock server 地址（默认 ws://127.0.0.1:9000）
+        #[arg(long, default_value = "ws://127.0.0.1:9000")]
+        ws_url: String,
+
+        /// 查询指定地址（不传则读 ~/.openclaw/ws-mock-addresses.json 中的 default）
+        #[arg(long)]
+        addr: Option<String>,
+    },
 }
 
 pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
@@ -171,5 +182,8 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
 
         TaskSystemCommand::Common(c) =>
             common::run(c, ctx).await,
+
+        TaskSystemCommand::Get { ws_url, addr } =>
+            common::run(common::CommonCommand::Get { ws_url, addr }, ctx).await,
     }
 }

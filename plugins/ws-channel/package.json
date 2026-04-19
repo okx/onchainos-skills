@@ -1,5 +1,6 @@
 {
   "name": "@okx/ws-channel",
+  "type": "module",
   "version": "0.1.0",
   "description": "WS Mock channel plugin for task system (XMTP placeholder)",
   "openclaw": {
@@ -19,5 +20,8 @@
   "devDependencies": {
     "@types/ws": "^8.5.13",
     "typescript": "^5.0.0"
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json"
   }
 }
