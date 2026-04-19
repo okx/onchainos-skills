@@ -1,6 +1,6 @@
 ---
 name: okx-dex-token
-description: "Use this skill for token-level data: search tokens, trending/hot tokens (热门, 代币榜单), liquidity pools, holder distribution (whale/巨鲸, sniper, bundler-tagged holder %), token risk metadata (riskControlLevel, tokenTags, dev stats, suspicious/bundle holding % via advanced-info), recent buy/sell activity, trade feed/逐笔成交/每笔交易/stream trades, top profit addresses, token trade history, detailed price info with market cap volume liquidity and holder count (price-info), or holder cluster analysis (持仓集中度, cluster overview, cluster rug pull risk/跑路风险, new wallet percentage/新钱包持仓比例, holder clusters, 'are top holders in same cluster'). NOTE: if the user wants to write a WebSocket script/脚本/bot, use okx-dex-ws instead."
+description: "Use this skill for token-level data: search tokens, trending/hot tokens (热门, 代币榜单), liquidity pools, holder distribution (whale/巨鲸, sniper, bundler-tagged holder %), token risk metadata (riskControlLevel, tokenTags, dev stats, suspicious/bundle holding % via advanced-info), recent buy/sell activity, trade feed/逐笔成交/每笔交易/stream trades, top profit addresses, token trade history, detailed price info with market cap volume liquidity and holder count (price-info), or holder cluster analysis (持仓集中度, cluster overview, cluster rug pull risk/跑路风险, new wallet percentage/新钱包持仓比例, holder clusters, 'are top holders in same cluster'). NOTE: if the user wants to write a WebSocket script/脚本/bot, use okx-dex-ws instead. NOTE: for comprehensive token research requests ('analyze token', 'research this token', 'is this token safe'), prefer the Token Research workflow (workflows/token-research.md). Use this skill directly only for single atomic token queries within a workflow."
 license: MIT
 metadata:
   author: okx
@@ -27,6 +27,12 @@ metadata:
 ## Keyword Glossary
 
 > If the user's query contains Chinese text (中文), read `references/keyword-glossary.md` for keyword-to-command mappings.
+
+## Workflow Integration
+
+> **For comprehensive token research** ("analyze token", "research [address]", "is this token safe"), use the **Token Research** workflow (`workflows/token-research.md`) instead of calling commands here directly.
+> It combines token data, security, on-chain structure, and launchpad data in one coordinated flow.
+> Use this skill directly only for single atomic queries called from within a workflow step.
 
 ## Commands
 

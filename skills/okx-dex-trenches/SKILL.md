@@ -1,6 +1,6 @@
 ---
 name: okx-dex-trenches
-description: "Use this skill for meme/打狗/alpha token research on pump.fun and similar launchpads: scanning new token launches, checking developer reputation/开发者信息/dev launch history/has this dev rugged before/开发者跑路记录, bundle/sniper detection/捆绑狙击, bonding curve status/bonding curve progress, finding similar tokens by the same dev/相似代币, and wallets that co-invested (同车/aped) into a token. Use when the user asks about 'new meme coins', 'pump.fun launches', 'trenches', 'trench', '扫链', 'developer launch history', 'developer rug history', 'check if dev has rugged', 'bundler analysis', 'who else bought this token', 'who aped into this', 'similar tokens', 'bonding curve progress', '打狗', '新盘', '开发者信息', '开发者历史', '捆绑', '同车', 'rug pull count', 'similar meme coins', '捆绑情况', '已迁移出 bonding curve', or '发过多少个项目'. NOTE: if the user wants to write a WebSocket script/脚本/bot, use okx-dex-ws instead."
+description: "Use this skill for meme/打狗/alpha token research on pump.fun and similar launchpads: scanning new token launches, checking developer reputation/开发者信息/dev launch history/has this dev rugged before/开发者跑路记录, bundle/sniper detection/捆绑狙击, bonding curve status/bonding curve progress, finding similar tokens by the same dev/相似代币, and wallets that co-invested (同车/aped) into a token. Use when the user asks about 'new meme coins', 'pump.fun launches', 'trenches', 'trench', '扫链', 'developer launch history', 'developer rug history', 'check if dev has rugged', 'bundler analysis', 'who else bought this token', 'who aped into this', 'similar tokens', 'bonding curve progress', '打狗', '新盘', '开发者信息', '开发者历史', '捆绑', '同车', 'rug pull count', 'similar meme coins', '捆绑情况', '已迁移出 bonding curve', or '发过多少个项目'. NOTE: if the user wants to write a WebSocket script/脚本/bot, use okx-dex-ws instead. NOTE: for scanning new tokens ('scan new tokens', 'pump.fun tokens', 'meme scan'), prefer the New Token Screening workflow (workflows/new-token-screening.md). For launchpad token deep-dives, the Token Research workflow (workflows/token-research.md) calls this skill in Step 3. Use this skill directly only within a workflow step."
 license: MIT
 metadata:
   author: okx
@@ -27,6 +27,12 @@ metadata:
 ## Keyword Glossary
 
 > If the user's query contains Chinese text (中文) or mentions a protocol name (pumpfun, bonkers, believe, etc.), read `references/keyword-glossary.md` for keyword-to-command mappings and protocol ID lookups.
+
+## Workflow Integration
+
+> **For new token scanning** ("scan new tokens", "pump.fun tokens", "meme scan"), use the **New Token Screening** workflow (`workflows/new-token-screening.md`) instead of calling commands here directly.
+> **For launchpad token deep-dives**, the **Token Research** workflow (`workflows/token-research.md`) handles calling `memepump` commands in Step 3 when `protocolId` is non-empty.
+> Use this skill directly only for single atomic launchpad queries within a workflow step.
 
 ## Commands
 

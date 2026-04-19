@@ -1,6 +1,6 @@
 ---
 name: okx-dex-swap
-description: "Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens', 'sell tokens', 'exchange crypto', 'convert tokens', 'swap SOL for USDC', 'get a swap quote', 'execute a trade', 'find the best swap route', 'cheapest way to swap', 'optimal swap', 'compare swap rates', 'get swap calldata', 'build unsigned tx', or mentions swapping, trading, buying, selling, or exchanging tokens on XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, or any of 20+ supported chains. Aggregates liquidity from 500+ DEX sources for optimal routing and price. Supports slippage control, price impact protection, and cross-DEX route optimization."
+description: "Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens', 'sell tokens', 'exchange crypto', 'convert tokens', 'swap SOL for USDC', 'get a swap quote', 'execute a trade', 'find the best swap route', 'cheapest way to swap', 'optimal swap', 'compare swap rates', 'get swap calldata', 'build unsigned tx', or mentions swapping, trading, buying, selling, or exchanging tokens on XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, or any of 20+ supported chains. Aggregates liquidity from 500+ DEX sources for optimal routing and price. Supports slippage control, price impact protection, and cross-DEX route optimization. NOTE: for user-facing buy/sell/swap requests, prefer the Safe Swap workflow (workflows/safe-swap.md) which adds pre-trade security checks and MEV protection. Use this skill directly only when invoked from within a workflow."
 license: MIT
 metadata:
   author: okx
@@ -20,6 +20,12 @@ metadata:
 ## Chain Name Support
 
 > Full chain list: `../okx-agentic-wallet/_shared/chain-support.md`. If that file does not exist, read `_shared/chain-support.md` instead.
+
+## Workflow Integration
+
+> **For user-facing buy / sell / swap requests**, use the **Safe Swap** workflow (`workflows/safe-swap.md`) instead of calling this skill directly.
+> It runs pre-trade security checks and MEV protection automatically before executing.
+> Use this skill directly only when called from within a workflow step.
 
 ## Native Token Addresses
 
