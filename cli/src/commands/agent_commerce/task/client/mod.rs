@@ -4,6 +4,7 @@ use clap::Subcommand;
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
 use crate::commands::agent_commerce::mock_identity::{self as identity, AgentRole, AccountBalance};
 use crate::commands::agent_commerce::task::common::{XLAYER_CHAIN_ID, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME};
+use crate::commands::agent_commerce::task::signing;
 use crate::commands::Context;
 use crate::wallet_api::UnsignedInfoResponse;
 
@@ -377,7 +378,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 }
             };
 
-            // ── Step 1: 生成 calldata (POST /api/v1/task/create) ────────
+            // ── Step 1: 生成 calldata (POST /priapi/v1/aieco/task/create) ────────
             let body = serde_json::json!({
                 "title":              title_str,
                 "description":        description,
@@ -395,7 +396,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             });
 
             let resp: serde_json::Value = http
-                .post(format!("{api}/api/v1/task/create"))
+                .post(format!("{api}/priapi/v1/aieco/task/create"))
                 .json(&body)
                 .send().await
                 .map_err(|e| anyhow::anyhow!("无法连接后端: {e}"))?
@@ -427,9 +428,9 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
             println!("✓ 签名完成");
 
-            // ── Step 3: 广播上链 (POST /api/v1/task/broadcast) ──────────
+            // ── Step 3: 广播上链 (POST /priapi/v1/aieco/task/broadcast) ──────────
             let bc_resp: serde_json::Value = http
-                .post(format!("{api}/api/v1/task/broadcast"))
+                .post(format!("{api}/priapi/v1/aieco/task/broadcast"))
                 .json(&broadcast_body)
                 .send().await
                 .map_err(|e| anyhow::anyhow!("广播失败: {e}"))?
@@ -451,7 +452,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         // ── 查询推荐卖家 ────────────────────────────────────────────────────
         TaskCommand::Recommend { job_id } => {
             let resp: serde_json::Value = http
-                .post(format!("{api}/api/v1/task/{job_id}/match"))
+                .post(format!("{api}/priapi/v1/aieco/task/{job_id}/match"))
                 .send().await
                 .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
                 .json().await?;
@@ -477,7 +478,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         // ── 任务状态 ────────────────────────────────────────────────────────
         TaskCommand::Status { job_id } => {
             let resp: serde_json::Value = http
-                .get(format!("{api}/api/v1/task/{job_id}"))
+                .get(format!("{api}/priapi/v1/aieco/task/{job_id}"))
                 .send().await
                 .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
                 .json().await?;
@@ -501,9 +502,9 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::List { role, status, page, limit } => {
             let url = if role.as_deref() == Some("provider") || role.as_deref() == Some("client") {
                 let r = role.as_deref().unwrap_or("client");
-                format!("{api}/api/v1/tasks/my?role={r}&page={page}&page_size={limit}")
+                format!("{api}/priapi/v1/aieco/task/my?role={r}&page={page}&page_size={limit}")
             } else {
-                let mut u = format!("{api}/api/v1/task/list?page={page}&page_size={limit}");
+                let mut u = format!("{api}/priapi/v1/aieco/task/list?page={page}&page_size={limit}");
                 if let Some(s) = &status { u.push_str(&format!("&status={s}")); }
                 u
             };
@@ -527,9 +528,9 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::ConfirmAccept { job_id, provider, payment_mode } => {
             let body = serde_json::json!({ "providerAddress": provider, "providerAgentId": provider });
             let endpoint = if payment_mode == "non_escrow" {
-                format!("{api}/api/v1/task/{job_id}/direct/accept")
+                format!("{api}/priapi/v1/aieco/task/{job_id}/direct/accept")
             } else {
-                format!("{api}/api/v1/task/{job_id}/accept")
+                format!("{api}/priapi/v1/aieco/task/{job_id}/accept")
             };
             let resp: serde_json::Value = http
                 .post(&endpoint)
@@ -547,7 +548,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         // ── complete ────────────────────────────────────────────────────────
         TaskCommand::Complete { job_id } => {
             let resp: serde_json::Value = http
-                .post(format!("{api}/api/v1/task/{job_id}/complete"))
+                .post(format!("{api}/priapi/v1/aieco/task/{job_id}/complete"))
                 .send().await
                 .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
                 .json().await?;
@@ -558,7 +559,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         // ── reject deliverable ──────────────────────────────────────────────
         TaskCommand::Reject { job_id, reason } => {
             let resp: serde_json::Value = http
-                .post(format!("{api}/api/v1/task/{job_id}/refuse"))
+                .post(format!("{api}/priapi/v1/aieco/task/{job_id}/refuse"))
                 .send().await
                 .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
                 .json().await?;
@@ -567,33 +568,41 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             println!("  卖家有 24 小时内可申请仲裁");
         }
 
-        // ── close ───────────────────────────────────────────────────────────
+        // ── close（单签上链）──────────────────────────────────────────────
         TaskCommand::Close { job_id } => {
-            let resp: serde_json::Value = http
-                .post(format!("{api}/api/v1/task/{job_id}/close"))
-                .send().await
-                .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
-                .json().await?;
-            if resp["code"] != 0 { bail!("{}", resp["msg"].as_str().unwrap_or("error")); }
+            let (account_id, address) = signing::resolve_wallet_for_task(&http, &api, &job_id).await?;
+            let endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/close");
+            let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
+            let body = serde_json::json!({});
+
+            let result = signing::task_sign_and_broadcast(
+                &http, &endpoint, &body, &broadcast, &account_id, &address,
+            ).await?;
+
             println!("✓ 任务已关闭，状态 → close");
+            println!("  txHash: {}", result.tx_hash);
         }
 
-        // ── set-public ──────────────────────────────────────────────────────
+        // ── set-public（单签上链）─────────────────────────────────────────
         TaskCommand::SetPublic { job_id } => {
-            let resp: serde_json::Value = http
-                .post(format!("{api}/api/v1/task/{job_id}/setVisibility"))
-                .json(&serde_json::json!({"visibility": 1}))
-                .send().await
-                .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
-                .json().await?;
-            if resp["code"] != 0 { bail!("{}", resp["msg"].as_str().unwrap_or("error")); }
+            let (account_id, address) = signing::resolve_wallet_for_task(&http, &api, &job_id).await?;
+            let endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/setVisibility");
+            let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
+            let body = serde_json::json!({"visibility": 1});
+
+            let result = signing::task_sign_and_broadcast(
+                &http, &endpoint, &body, &broadcast, &account_id, &address,
+            ).await?;
+
             println!("✓ 任务已转为公开，其他卖家可以看到并报名");
+            println!("  txHash: {}", result.tx_hash);
         }
 
-        // ── apply (Provider applies for public task) ───────────────────────
+        // ── apply — TODO(provider): 需改为签名流程 ────────────────────────
         TaskCommand::Apply { job_id } => {
+            // TODO(provider): 改为 task_sign_and_broadcast 签名上链
             let resp: serde_json::Value = http
-                .post(format!("{api}/api/v1/task/{job_id}/apply"))
+                .post(format!("{api}/priapi/v1/aieco/task/{job_id}/apply"))
                 .send().await
                 .map_err(|e| anyhow::anyhow!("无法连接后端: {e}"))?
                 .json().await?;
@@ -603,15 +612,18 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             println!("✓ 已申请任务 {job_id}，等待买家确认");
         }
 
-        // ── 剩余未实现（链上操作，暂 stub）────────────────────────────────
+        // ── 待确认/待实现 ─────────────────────────────────────────────────
+        // 【待确认】Scene 3 C8: Client 拒绝 Provider 接单申请，需求细节/后端接口/是否需链上签名均待确认
         TaskCommand::RejectApply { job_id, provider, reason } =>
-            println!("[stub] reject-apply {job_id} provider={provider} reason={reason}"),
+            println!("[TODO] reject-apply {job_id} provider={provider} reason={reason} — 待确认需求"),
+        // TODO(provider): 实现 Provider 链上确认签名
         TaskCommand::Confirm { job_id } =>
-            println!("[stub] confirm {job_id} (provider on-chain confirm)"),
+            println!("[TODO(provider)] confirm {job_id}"),
+        // TODO(provider): 实现文件上传 + submit 签名流程
         TaskCommand::Deliver { job_id, file, message } =>
-            println!("[stub] deliver {job_id} file={file} msg={message:?}"),
+            println!("[TODO(provider)] deliver {job_id} file={file} msg={message:?}"),
         TaskCommand::AiEvaluate { job_id } =>
-            println!("[stub] ai-evaluate {job_id}"),
+            println!("[TODO] ai-evaluate {job_id}"),
         TaskCommand::Config { action } => match action {
             ConfigAction::Init => println!("[stub] task config init"),
             ConfigAction::Show => println!("TASK_API_URL={}", task_api_url()),
@@ -694,10 +706,15 @@ pub async fn run_negotiate(cmd: NegotiateCommand, _ctx: &Context) -> Result<()> 
 
 pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
     match cmd {
-        DisputeCommand::Raise { .. } => todo!("dispute raise: on-chain + XMTP group notify"),
-        DisputeCommand::Evidence { .. } => todo!("dispute evidence: upload file + XMTP"),
-        DisputeCommand::Info { .. } => todo!("dispute info: fetch dispute state"),
-        DisputeCommand::Vote { .. } => todo!("dispute vote: commit-reveal on-chain"),
-        DisputeCommand::Appeal { .. } => todo!("dispute appeal: on-chain appeal"),
+        // TODO(provider): Provider 发起仲裁，捆绑签名 approve(DisputeManager, 5%) + createDispute(jobId)
+        DisputeCommand::Raise { .. } => todo!("dispute raise"),
+        // TODO(client): Phase 4 实现 — multipart 文件上传（jpg/jpeg/png/gif/webp），无链上签名
+        DisputeCommand::Evidence { .. } => todo!("dispute evidence"),
+        // TODO(client): Phase 4 实现 — GET 只读查询争议详情 + 证据列表
+        DisputeCommand::Info { .. } => todo!("dispute info"),
+        // TODO(evaluator): Commit-Reveal 投票第一步
+        DisputeCommand::Vote { .. } => todo!("dispute vote"),
+        // TODO(provider): Provider 上诉
+        DisputeCommand::Appeal { .. } => todo!("dispute appeal"),
     }
 }

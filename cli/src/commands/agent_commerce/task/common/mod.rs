@@ -261,7 +261,7 @@ async fn run_context(
     }
 
     // 调用后端获取任务详情
-    let url = format!("{api_url}/api/v1/task/{job_id}");
+    let url = format!("{api_url}/priapi/v1/aieco/task/{job_id}");
     let resp = reqwest::get(&url)
         .await
         .map_err(|e| anyhow::anyhow!("无法连接 mock-api（{api_url}）: {e}\n提示: 先启动 ./target/release/mock-api"))?;

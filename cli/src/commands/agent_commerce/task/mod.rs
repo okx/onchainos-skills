@@ -2,6 +2,7 @@ pub mod client;
 pub mod common;
 pub mod evaluator;
 pub mod provider;
+pub mod signing;
 
 use anyhow::Result;
 use clap::Subcommand;
