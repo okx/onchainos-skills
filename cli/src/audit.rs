@@ -348,6 +348,7 @@ fn task_system_sub(cmd: &crate::commands::agent_commerce::task::TaskSystemComman
         TaskSystemCommand::Reject { .. }        => "reject".into(),
         TaskSystemCommand::Close { .. }         => "close".into(),
         TaskSystemCommand::SetPublic { .. }     => "set-public".into(),
+        TaskSystemCommand::Apply { .. }         => "apply".into(),
         TaskSystemCommand::AiEvaluate { .. }    => "ai-evaluate".into(),
         TaskSystemCommand::Config { .. }        => "config".into(),
         TaskSystemCommand::Negotiate(c) => format!("negotiate {:?}", std::mem::discriminant(c)),

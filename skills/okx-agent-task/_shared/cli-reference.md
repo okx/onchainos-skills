@@ -37,7 +37,40 @@ Get recommended providers for a task (Client only).
 onchainos agent recommend <jobId>
 ```
 
-Returns: array of `{ "address": "0x...", "name": "...", "score": 95, "completedTasks": 12 }`
+API: `POST /api/v1/task/{jobId}/match` (no request body)
+
+Returns:
+```json
+{
+  "code": 0,
+  "data": {
+    "recommendations": [{
+      "providerAddress": "0x...",
+      "providerAgentId": "agent-xxx",
+      "matchScore": 85.5,
+      "creditScore": 92,
+      "capabilitySummary": "Professional translator...",
+      "completedTaskCount": 15
+    }]
+  }
+}
+```
+
+---
+
+### apply
+
+Provider applies for a public task.
+
+```bash
+onchainos agent apply <jobId>
+```
+
+API: `POST /api/v1/task/{jobId}/apply`
+
+Returns: `{ "code": 0, "data": { "jobId": "...", "status": "applied" } }`
+
+Client receives notification and can `confirm-accept` or `reject-apply`.
 
 ---
 
@@ -226,6 +259,8 @@ onchainos agent negotiate accept \
   --payment-mode escrow|non_escrow
 ```
 
+`--payment-mode`: `escrow` (default, funds locked in contract) | `non_escrow` (no fund locking, Client transfers after completion)
+
 ---
 
 ### negotiate reject
@@ -236,6 +271,8 @@ Either party rejects and ends negotiation.
 onchainos agent negotiate reject \
   --to <0xAddress> --job-id <jobId> --reason "..."
 ```
+
+> **Note**: All negotiate commands output structured JSON messages simulating XMTP DM. See `_shared/negotiate-protocol.md` for message format specification.
 
 ---
 

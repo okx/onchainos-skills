@@ -45,6 +45,7 @@ pub enum TaskSystemCommand {
     ConfirmAccept {
         job_id: String,
         #[arg(long)] provider: String,
+        #[arg(long = "payment-mode", default_value = "escrow")] payment_mode: String,
     },
 
     /// Client rejects provider application
@@ -80,6 +81,9 @@ pub enum TaskSystemCommand {
     /// Convert private task to public listing
     #[command(name = "set-public")]
     SetPublic { job_id: String },
+
+    /// Provider applies for a public task
+    Apply { job_id: String },
 
     /// AI-assisted deliverable quality assessment
     #[command(name = "ai-evaluate")]
@@ -126,8 +130,8 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
         TaskSystemCommand::List { role, status, page, limit } =>
             client::run_task(T::List { role, status, page, limit }, ctx).await,
 
-        TaskSystemCommand::ConfirmAccept { job_id, provider } =>
-            client::run_task(T::ConfirmAccept { job_id, provider }, ctx).await,
+        TaskSystemCommand::ConfirmAccept { job_id, provider, payment_mode } =>
+            client::run_task(T::ConfirmAccept { job_id, provider, payment_mode }, ctx).await,
 
         TaskSystemCommand::RejectApply { job_id, provider, reason } =>
             client::run_task(T::RejectApply { job_id, provider, reason }, ctx).await,
@@ -149,6 +153,9 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
 
         TaskSystemCommand::SetPublic { job_id } =>
             client::run_task(T::SetPublic { job_id }, ctx).await,
+
+        TaskSystemCommand::Apply { job_id } =>
+            client::run_task(T::Apply { job_id }, ctx).await,
 
         TaskSystemCommand::AiEvaluate { job_id } =>
             client::run_task(T::AiEvaluate { job_id }, ctx).await,

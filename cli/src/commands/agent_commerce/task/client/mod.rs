@@ -110,6 +110,8 @@ pub enum TaskCommand {
         job_id: String,
         #[arg(long)]
         provider: String,
+        #[arg(long = "payment-mode", default_value = "escrow")]
+        payment_mode: String,
     },
     /// Client rejects provider application
     RejectApply {
@@ -147,6 +149,10 @@ pub enum TaskCommand {
     },
     /// Client converts private task to public listing
     SetPublic {
+        job_id: String,
+    },
+    /// Provider applies for a public task
+    Apply {
         job_id: String,
     },
     /// AI-assisted deliverable quality assessment
@@ -518,16 +524,24 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         }
 
         // ── confirm-accept ──────────────────────────────────────────────────
-        TaskCommand::ConfirmAccept { job_id, provider } => {
+        TaskCommand::ConfirmAccept { job_id, provider, payment_mode } => {
             let body = serde_json::json!({ "providerAddress": provider, "providerAgentId": provider });
+            let endpoint = if payment_mode == "non_escrow" {
+                format!("{api}/api/v1/task/{job_id}/direct/accept")
+            } else {
+                format!("{api}/api/v1/task/{job_id}/accept")
+            };
             let resp: serde_json::Value = http
-                .post(format!("{api}/api/v1/task/{job_id}/accept"))
+                .post(&endpoint)
                 .json(&body).send().await
-                .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
+                .map_err(|e| anyhow::anyhow!("无法连接后端: {e}"))?
                 .json().await?;
             if resp["code"] != 0 { bail!("{}", resp["msg"].as_str().unwrap_or("error")); }
-            println!("✓ 已接受卖家 {provider}，任务状态 → accepted");
-            println!("  calldata: {}", resp["data"]["calldata"].as_str().unwrap_or("?"));
+            let mode_label = if payment_mode == "non_escrow" { "非担保" } else { "担保" };
+            println!("✓ 已接受卖家 {provider}（{mode_label}支付），任务状态 → accepted");
+            if payment_mode == "non_escrow" {
+                println!("  注意：任务完成后需手动转账给卖家");
+            }
         }
 
         // ── complete ────────────────────────────────────────────────────────
@@ -576,6 +590,19 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             println!("✓ 任务已转为公开，其他卖家可以看到并报名");
         }
 
+        // ── apply (Provider applies for public task) ───────────────────────
+        TaskCommand::Apply { job_id } => {
+            let resp: serde_json::Value = http
+                .post(format!("{api}/api/v1/task/{job_id}/apply"))
+                .send().await
+                .map_err(|e| anyhow::anyhow!("无法连接后端: {e}"))?
+                .json().await?;
+            if resp["code"] != 0 {
+                bail!("{}", resp["msg"].as_str().unwrap_or("error"));
+            }
+            println!("✓ 已申请任务 {job_id}，等待买家确认");
+        }
+
         // ── 剩余未实现（链上操作，暂 stub）────────────────────────────────
         TaskCommand::RejectApply { job_id, provider, reason } =>
             println!("[stub] reject-apply {job_id} provider={provider} reason={reason}"),
@@ -594,13 +621,75 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 }
 
 pub async fn run_negotiate(cmd: NegotiateCommand, _ctx: &Context) -> Result<()> {
+    // Mock implementation: build structured JSON messages simulating XMTP DM.
+    // TODO: replace with real XMTP message sending when XMTP module is integrated.
+    let now = chrono::Utc::now().to_rfc3339();
+
     match cmd {
-        NegotiateCommand::Start { .. } => todo!("negotiate start: send XMTP DM"),
-        NegotiateCommand::Quote { .. } => todo!("negotiate quote: send quote via XMTP"),
-        NegotiateCommand::Counter { .. } => todo!("negotiate counter: send counter via XMTP"),
-        NegotiateCommand::Accept { .. } => todo!("negotiate accept: send accept + trigger on-chain confirm"),
-        NegotiateCommand::Reject { .. } => todo!("negotiate reject: send reject via XMTP"),
+        NegotiateCommand::Start { to, job_id, message } => {
+            let msg = serde_json::json!({
+                "type": "negotiate:start",
+                "jobId": job_id,
+                "to": to,
+                "message": message,
+                "timestamp": now,
+            });
+            println!("[mock] XMTP DM \u{2192} {to}");
+            println!("{}", serde_json::to_string_pretty(&msg)?);
+        }
+        NegotiateCommand::Quote { to, job_id, price, currency, delivery_hours, skill_id, message } => {
+            let msg = serde_json::json!({
+                "type": "negotiate:quote",
+                "jobId": job_id,
+                "to": to,
+                "price": price,
+                "currency": currency.to_uppercase(),
+                "deliveryHours": delivery_hours,
+                "skillId": skill_id,
+                "message": message,
+                "timestamp": now,
+            });
+            println!("[mock] XMTP DM \u{2192} {to}");
+            println!("{}", serde_json::to_string_pretty(&msg)?);
+        }
+        NegotiateCommand::Counter { to, job_id, price, reason } => {
+            let msg = serde_json::json!({
+                "type": "negotiate:counter",
+                "jobId": job_id,
+                "to": to,
+                "price": price,
+                "reason": reason,
+                "timestamp": now,
+            });
+            println!("[mock] XMTP DM \u{2192} {to}");
+            println!("{}", serde_json::to_string_pretty(&msg)?);
+        }
+        NegotiateCommand::Accept { to, job_id, price, delivery_hours, payment_mode } => {
+            let msg = serde_json::json!({
+                "type": "negotiate:accept",
+                "jobId": job_id,
+                "to": to,
+                "price": price,
+                "deliveryHours": delivery_hours,
+                "paymentMode": payment_mode,
+                "timestamp": now,
+            });
+            println!("[mock] XMTP DM \u{2192} {to}");
+            println!("{}", serde_json::to_string_pretty(&msg)?);
+        }
+        NegotiateCommand::Reject { to, job_id, reason } => {
+            let msg = serde_json::json!({
+                "type": "negotiate:reject",
+                "jobId": job_id,
+                "to": to,
+                "reason": reason,
+                "timestamp": now,
+            });
+            println!("[mock] XMTP DM \u{2192} {to}");
+            println!("{}", serde_json::to_string_pretty(&msg)?);
+        }
     }
+    Ok(())
 }
 
 pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {

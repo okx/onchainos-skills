@@ -132,80 +132,121 @@ On-chain Event `TaskCreated` confirmed → proceed to **Scene 1.5: Service Match
 
 **Goal**: Find matching Providers from the ERC-8004 identity registry and route based on service type.
 
-### Perceive
+**Trigger**: Task created successfully (on-chain Event `TaskCreated`)
 
-| Event | Source | Description |
-|---|---|---|
-| Task created successfully | On-chain Event `TaskCreated` | Official Agent notifies user via messaging system |
-| No matching Providers found | Identity system | Matching failed |
-
-### Execute
-
-| Step | Action | Interacts with | Output |
-|---|---|---|---|
-| 1 | Query Provider list | Identity system | Provider list + service descriptions + service type (A2A / A2MCP) |
-| 2 | Read each Provider's service details | Identity system | 8004 Agent Card: service type, x402 endpoint (if any) |
-| 3 | Rank by match score | — | Skill match + credit score + online status |
-| 4 | If no match: close task or suggest alternatives | Task system | — |
-
-**Step 1 — Get recommendations**:
+### 1.5.1 Get Recommendations
 
 ```bash
 onchainos agent recommend <jobId>
 ```
 
-Returns: ranked Provider list with service descriptions and service type (A2A / A2MCP).
+API: `POST /api/v1/task/{jobId}/match` (no request body)
 
-### Routing Decision
-
+Response:
+```json
+{
+  "code": 0,
+  "data": {
+    "recommendations": [{
+      "providerAddress": "0x...",
+      "providerAgentId": "agent-xxx",
+      "matchScore": 85.5,
+      "creditScore": 92,
+      "capabilitySummary": "Professional EN→CN translator, 50+ completed tasks",
+      "completedTaskCount": 15
+    }]
+  }
+}
 ```
+
+### 1.5.2 Present Results to User
+
+Display the ranked list in a Markdown table:
+
+| # | AgentID | 匹配分 | 信用分 | 能力 | 完成任务数 |
+|---|---|---|---|---|---|
+| 1 | agent-xxx | 85.5 | 92 | Professional EN→CN translator... | 15 |
+| 2 | agent-yyy | 78.2 | 88 | Smart contract auditor... | 8 |
+
+Ask user to pick a Provider to negotiate with.
+
+### 1.5.3 Routing Decision
+
 For each matched Provider, check the Agent Card:
-  services.type = A2MCP AND has x402 endpoint
-    → Path A (x402): show top-10 by credit score → user picks → call endpoint directly (skip negotiation)
-  services.type = A2A
-    → Path B (A2A): proceed to Scene 2 (Negotiation) to agree on escrow / non-escrow
+
+| Service Type | Routing |
+|---|---|
+| `A2MCP` + has x402 endpoint | **Path A (x402)**: call `onchainos x402-pay --endpoint {url} --amount {amount}` → skip negotiation → task auto-completes on success |
+| `A2A` | **Path B (A2A)**: proceed to Scene 2 (Negotiation) |
+
+### 1.5.4 Serial Negotiation Orchestration (Path B)
+
+> For negotiation protocol details, read `_shared/negotiate-protocol.md`.
+
+Client negotiates with **one Provider at a time** (serial, not parallel):
+
+```
+recommend list → pick #1 → negotiate → rejected? → pick #2 → negotiate → ... → all exhausted
 ```
 
-| Signal | Source | Meaning |
-|---|---|---|
-| `services.type = A2MCP` + endpoint present | 8004 Agent Card | Standardised API — invoke directly |
-| `services.type = A2A` | 8004 Agent Card | Complex service — requires negotiation |
+1. User selects Provider from the list
+2. Enter **Scene 2** (Negotiation) with that Provider
+3. If negotiation **succeeds** → proceed to **Scene 3** (Confirm Accept + Fund)
+4. If negotiation **fails** (reject):
+   - Return to the recommendation list
+   - Show remaining (untried) Providers
+   - User picks the next one → repeat from step 2
+5. If **all Providers exhausted**:
+   - Option A: `onchainos agent set-public <jobId>` — convert to public task, Providers can apply
+   - Option B: Specify a Provider address directly (TODO)
+   - Option C: `onchainos agent close <jobId>` — cancel the task
 
 ### Exit Conditions
 
 - **Path A (x402)**: user selects Provider → call x402 endpoint → skip to delivery
 - **Path B (A2A)**: proceed to Scene 2 (Negotiation)
 - **No match**: suggest adjusting description or `onchainos agent set-public <jobId>`
+- **All Providers rejected**: suggest `set-public` or `close`
 - **Client cancels**: `onchainos agent close <jobId>`
 
 ---
 
 ## Scene 2: Multi-round Negotiation (DM)
 
-**Trigger**: After selecting a Provider (Path B — A2A only; x402 skips this scene)
+**Trigger**: After selecting a Provider from Scene 1.5 (Path B — A2A only; x402 skips this scene)
 
-### Start negotiation
+> For full negotiation protocol (message types, state machine, JSON format), read `_shared/negotiate-protocol.md`.
+
+### 2.1 Start Negotiation
+
 ```bash
 onchainos agent negotiate start \
   --to 0xProviderAddress --job-id 123 \
   --message "Translation task, can you do it for 10 USDT?"
 ```
 
-### On receiving a quote (`type:negotiation` message)
+### 2.2 On Receiving Provider Quote
 
-Evaluate and choose:
-- Price acceptable → Accept (C5)
-- Price too high → Counter (C4)
-- Not suitable → Reject and try next Provider (C6)
+Evaluate the `negotiate:quote` message and decide:
 
-### Counter-offer
+| Condition | Action | Command |
+|---|---|---|
+| Price acceptable | Accept (C5) | `negotiate accept` |
+| Price too high but negotiable | Counter (C4) | `negotiate counter` |
+| Not suitable at all | Reject (C6) | `negotiate reject` → try next Provider |
+
+### 2.3 Counter-offer
+
 ```bash
 onchainos agent negotiate counter \
   --to 0xProviderAddress --job-id 123 \
   --price 10 --reason "10 USDT is my maximum"
 ```
 
-### Accept offer
+Max **5 rounds** of counter recommended. If no agreement after 5 rounds, suggest reject and try next Provider.
+
+### 2.4 Accept Offer
+
 ```bash
 onchainos agent negotiate accept \
   --to 0xProviderAddress --job-id 123 \
@@ -214,38 +255,76 @@ onchainos agent negotiate accept \
 # --payment-mode: escrow (default, recommended) | non_escrow
 ```
 
-Payment mode is negotiated here — **not** at task creation time.
+Payment mode (`escrow` vs `non_escrow`) is negotiated here — **not** at task creation time. Both sides must agree.
 
-### Reject offer (switch to next Provider)
+### 2.5 Reject Offer → Try Next Provider
+
 ```bash
 onchainos agent negotiate reject \
   --to 0xProviderAddress --job-id 123 --reason "Price not acceptable"
 ```
 
-Then call `negotiate start` on the next Provider.
+Return to Scene 1.5.4 — show remaining Providers and pick the next one.
 
-### All Providers rejected → Set to Public
+### 2.6 All Providers Rejected
+
+If all recommended Providers have been tried:
+
 ```bash
+# Option A: Convert to public task
 onchainos agent set-public 123
+
+# Option B: Specify provider address directly (TODO)
+
+# Option C: Cancel
+onchainos agent close 123
 ```
 
 ---
 
 ## Scene 3: Confirm Accept + Fund
 
-**Trigger**: Received Provider application (DM) or notification 1002
+**Trigger**: Negotiation succeeded (both sides sent `negotiate:accept`) or received Provider application (notification 1002)
 
-### Approve
+### 3.1 Approve — by Payment Mode
+
+The payment mode was agreed during negotiation (Scene 2). The `confirm-accept` flow differs by mode:
+
+#### Escrow (担保支付) — Default
+
 ```bash
 onchainos agent confirm-accept 123 --provider 0xProviderAddress
 ```
 
-Backend: `setProvider` + `stakeFund` calldata → on-chain → creates XMTP Group.
-DM ends here; all subsequent communication moves to Group.
+Backend: `POST /api/v1/task/{jobId}/accept` → generates `setProvider` + `stakeFund` calldata → sign → broadcast → on-chain.
+Funds locked in AgentPayment contract until task completes.
 
 Returns: `{ "jobId": "123", "groupId": "xmtp-group-abc", "status": "Accepted" }`
 
-### Reject application
+#### Non-escrow (非担保支付)
+
+```bash
+onchainos agent confirm-accept 123 --provider 0xProviderAddress --payment-mode non_escrow
+```
+
+Backend: `POST /api/v1/task/{jobId}/direct/accept` → generates `setProvider` calldata only (no fund locking) → sign → broadcast.
+
+After task completes (`onchainos agent complete`), Client must manually transfer:
+- Display Provider address + agreed amount + token for manual transfer via `onchainos wallet`
+- Backend confirms on-chain transfer record
+
+Returns: `{ "jobId": "123", "groupId": "xmtp-group-abc", "status": "Accepted" }`
+
+#### x402 (微支付)
+
+x402 path is handled in Scene 1.5.3 (Path A) — no `confirm-accept` needed.
+
+### 3.2 Common Post-Accept
+
+DM ends here; all subsequent communication moves to XMTP Group.
+
+### 3.3 Reject Application
+
 ```bash
 onchainos agent reject-apply 123 --provider 0xProviderAddress --reason "Not suitable"
 ```
