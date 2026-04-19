@@ -3,7 +3,10 @@ use clap::Subcommand;
 
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
 use crate::commands::agent_commerce::mock_identity::{self as identity, AgentRole, AccountBalance};
-use crate::commands::agent_commerce::task::common::{XLAYER_CHAIN_ID, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME};
+use crate::commands::agent_commerce::task::common::{
+    PAYMENT_MODE_ESCROW, PAYMENT_MODE_NON_ESCROW,
+    XLAYER_CHAIN_ID, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
+};
 use crate::commands::agent_commerce::task::signing;
 use crate::commands::Context;
 use crate::wallet_api::UnsignedInfoResponse;
@@ -111,7 +114,7 @@ pub enum TaskCommand {
         job_id: String,
         #[arg(long)]
         provider: String,
-        #[arg(long = "payment-mode", default_value = "escrow")]
+        #[arg(long = "payment-mode", default_value = PAYMENT_MODE_ESCROW)]
         payment_mode: String,
     },
     /// Client rejects provider application
@@ -226,7 +229,7 @@ pub enum NegotiateCommand {
         price: f64,
         #[arg(long = "delivery-hours")]
         delivery_hours: u32,
-        #[arg(long = "payment-mode", default_value = "escrow")]
+        #[arg(long = "payment-mode", default_value = PAYMENT_MODE_ESCROW)]
         payment_mode: String,
     },
     /// Either party rejects and ends negotiation
@@ -524,48 +527,104 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             }
         }
 
-        // ── confirm-accept ──────────────────────────────────────────────────
+        // ── confirm-accept（双签/单签上链）─────────────────────────────────
         TaskCommand::ConfirmAccept { job_id, provider, payment_mode } => {
-            let body = serde_json::json!({ "providerAddress": provider, "providerAgentId": provider });
-            let endpoint = if payment_mode == "non_escrow" {
-                format!("{api}/priapi/v1/aieco/task/{job_id}/direct/accept")
-            } else {
-                format!("{api}/priapi/v1/aieco/task/{job_id}/accept")
-            };
-            let resp: serde_json::Value = http
-                .post(&endpoint)
-                .json(&body).send().await
-                .map_err(|e| anyhow::anyhow!("无法连接后端: {e}"))?
-                .json().await?;
-            if resp["code"] != 0 { bail!("{}", resp["msg"].as_str().unwrap_or("error")); }
-            let mode_label = if payment_mode == "non_escrow" { "非担保" } else { "担保" };
-            println!("✓ 已接受卖家 {provider}（{mode_label}支付），任务状态 → accepted");
-            if payment_mode == "non_escrow" {
+            let (account_id, address) = signing::resolve_wallet_for_task(&http, &api, &job_id).await?;
+            let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
+
+            if payment_mode == PAYMENT_MODE_NON_ESCROW {
+                // 非担保：标准单签 direct/accept
+                let endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/direct/accept");
+                let body = serde_json::json!({
+                    "providerAddress": provider,
+                    "providerAgentId": provider,
+                });
+                let result = signing::task_sign_and_broadcast(
+                    &http, &endpoint, &body, &broadcast, &account_id, &address,
+                ).await?;
+                println!("✓ 已接受卖家 {provider}（非担保支付），任务状态 → accepted");
                 println!("  注意：任务完成后需手动转账给卖家");
+                println!("  txHash: {}", result.tx_hash);
+            } else {
+                // 担保：双签 pre-accept → 签 digest → accept → 签 uopHash → broadcast
+                let pre_endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/pre-accept");
+                let main_endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/accept");
+                let pre_body = serde_json::json!({
+                    "providerAddress": provider,
+                    "providerAgentId": provider,
+                });
+                let provider_clone = provider.clone();
+                let result = signing::task_dual_sign_and_broadcast(
+                    &http,
+                    &pre_endpoint,
+                    &pre_body,
+                    &main_endpoint,
+                    move |signature| serde_json::json!({
+                        "providerAddress": provider_clone,
+                        "providerAgentId": provider_clone,
+                        "paymentMode": PAYMENT_MODE_ESCROW,
+                        "signature": signature,  // 【待确认】字段名
+                    }),
+                    &broadcast,
+                    &account_id,
+                    &address,
+                ).await?;
+                println!("✓ 已接受卖家 {provider}（担保支付），任务状态 → accepted");
+                println!("  txHash: {}", result.tx_hash);
             }
         }
 
-        // ── complete ────────────────────────────────────────────────────────
+        // ── complete（双签上链）────────────────────────────────────────────
         TaskCommand::Complete { job_id } => {
-            let resp: serde_json::Value = http
-                .post(format!("{api}/priapi/v1/aieco/task/{job_id}/complete"))
-                .send().await
-                .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
-                .json().await?;
-            if resp["code"] != 0 { bail!("{}", resp["msg"].as_str().unwrap_or("error")); }
+            let (account_id, address) = signing::resolve_wallet_for_task(&http, &api, &job_id).await?;
+            let pre_endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/pre-complete");
+            let main_endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/complete");
+            let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
+            let pre_body = serde_json::json!({});
+
+            let result = signing::task_dual_sign_and_broadcast(
+                &http,
+                &pre_endpoint,
+                &pre_body,
+                &main_endpoint,
+                |signature| serde_json::json!({
+                    "signature": signature,  // 【待确认】字段名
+                }),
+                &broadcast,
+                &account_id,
+                &address,
+            ).await?;
+
             println!("✓ 任务验收通过，状态 → complete，款项已释放");
+            println!("  txHash: {}", result.tx_hash);
         }
 
-        // ── reject deliverable ──────────────────────────────────────────────
+        // ── reject/refuse（双签上链）─────────────────────────────────────
         TaskCommand::Reject { job_id, reason } => {
-            let resp: serde_json::Value = http
-                .post(format!("{api}/priapi/v1/aieco/task/{job_id}/refuse"))
-                .send().await
-                .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
-                .json().await?;
-            if resp["code"] != 0 { bail!("{}", resp["msg"].as_str().unwrap_or("error")); }
+            let (account_id, address) = signing::resolve_wallet_for_task(&http, &api, &job_id).await?;
+            let pre_endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/pre-refuse");
+            let main_endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/refuse");
+            let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
+            let pre_body = serde_json::json!({});
+
+            let reason_clone = reason.clone();
+            let result = signing::task_dual_sign_and_broadcast(
+                &http,
+                &pre_endpoint,
+                &pre_body,
+                &main_endpoint,
+                move |signature| serde_json::json!({
+                    "signature": signature,  // 【待确认】字段名
+                    "reason": reason_clone,
+                }),
+                &broadcast,
+                &account_id,
+                &address,
+            ).await?;
+
             println!("✓ 已拒绝验收（原因：{reason}），状态 → refused");
             println!("  卖家有 24 小时内可申请仲裁");
+            println!("  txHash: {}", result.tx_hash);
         }
 
         // ── close（单签上链）──────────────────────────────────────────────

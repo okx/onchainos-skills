@@ -21,6 +21,13 @@ pub const XLAYER_CHAIN_INDEX: &str = "196";
 /// XLayer chain name（用于 wallet_store 地址查找）
 pub const XLAYER_CHAIN_NAME: &str = "xlayer";
 
+// ─── 支付模式常量 ────────────────────────────────────────────────────────
+
+/// 担保支付：资金锁定在合约中
+pub const PAYMENT_MODE_ESCROW: &str = "escrow";
+/// 非担保支付：任务完成后买家手动转账
+pub const PAYMENT_MODE_NON_ESCROW: &str = "non_escrow";
+
 // ─── CLI 定义 ──────────────────────────────────────────────────────────────
 
 #[derive(Subcommand)]

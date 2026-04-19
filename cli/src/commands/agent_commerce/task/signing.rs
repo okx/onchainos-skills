@@ -167,7 +167,7 @@ pub async fn task_sign_and_broadcast(
 ///
 /// 【待确认】pre-endpoint 返回的 digest 即为 main endpoint 的 signature 入参。
 /// 当后端确认字段名后更新 `digest_field` 参数默认值。
-#[allow(dead_code, clippy::too_many_arguments)] // Phase 2 will use this
+#[allow(clippy::too_many_arguments)]
 pub async fn task_dual_sign_and_broadcast(
     http: &reqwest::Client,
     pre_endpoint_url: &str,
