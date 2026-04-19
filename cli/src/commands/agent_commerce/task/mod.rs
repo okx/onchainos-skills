@@ -1,6 +1,7 @@
 pub mod client;
 pub mod common;
 pub mod evaluator;
+pub mod messaging;
 pub mod provider;
 pub mod signing;
 

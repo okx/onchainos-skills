@@ -7,6 +7,7 @@ use crate::commands::agent_commerce::task::common::{
     PAYMENT_MODE_ESCROW, PAYMENT_MODE_NON_ESCROW,
     XLAYER_CHAIN_ID, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
 };
+use crate::commands::agent_commerce::task::messaging::{self, MessageSender};
 use crate::commands::agent_commerce::task::signing;
 use crate::commands::Context;
 use crate::wallet_api::UnsignedInfoResponse;
@@ -760,8 +761,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 }
 
 pub async fn run_negotiate(cmd: NegotiateCommand, _ctx: &Context) -> Result<()> {
-    // Mock implementation: build structured JSON messages simulating XMTP DM.
-    // TODO: replace with real XMTP message sending when XMTP module is integrated.
+    let sender = messaging::create_sender();
     let now = chrono::Utc::now().to_rfc3339();
 
     match cmd {
@@ -773,8 +773,7 @@ pub async fn run_negotiate(cmd: NegotiateCommand, _ctx: &Context) -> Result<()> 
                 "message": message,
                 "timestamp": now,
             });
-            println!("[mock] XMTP DM \u{2192} {to}");
-            println!("{}", serde_json::to_string_pretty(&msg)?);
+            sender.send_dm(&to, &msg).await?;
         }
         NegotiateCommand::Quote { to, job_id, price, currency, delivery_hours, skill_id, message } => {
             let msg = serde_json::json!({
@@ -788,8 +787,7 @@ pub async fn run_negotiate(cmd: NegotiateCommand, _ctx: &Context) -> Result<()> 
                 "message": message,
                 "timestamp": now,
             });
-            println!("[mock] XMTP DM \u{2192} {to}");
-            println!("{}", serde_json::to_string_pretty(&msg)?);
+            sender.send_dm(&to, &msg).await?;
         }
         NegotiateCommand::Counter { to, job_id, price, reason } => {
             let msg = serde_json::json!({
@@ -800,8 +798,7 @@ pub async fn run_negotiate(cmd: NegotiateCommand, _ctx: &Context) -> Result<()> 
                 "reason": reason,
                 "timestamp": now,
             });
-            println!("[mock] XMTP DM \u{2192} {to}");
-            println!("{}", serde_json::to_string_pretty(&msg)?);
+            sender.send_dm(&to, &msg).await?;
         }
         NegotiateCommand::Accept { to, job_id, price, delivery_hours, payment_mode } => {
             let msg = serde_json::json!({
@@ -813,8 +810,7 @@ pub async fn run_negotiate(cmd: NegotiateCommand, _ctx: &Context) -> Result<()> 
                 "paymentMode": payment_mode,
                 "timestamp": now,
             });
-            println!("[mock] XMTP DM \u{2192} {to}");
-            println!("{}", serde_json::to_string_pretty(&msg)?);
+            sender.send_dm(&to, &msg).await?;
         }
         NegotiateCommand::Reject { to, job_id, reason } => {
             let msg = serde_json::json!({
@@ -824,8 +820,7 @@ pub async fn run_negotiate(cmd: NegotiateCommand, _ctx: &Context) -> Result<()> 
                 "reason": reason,
                 "timestamp": now,
             });
-            println!("[mock] XMTP DM \u{2192} {to}");
-            println!("{}", serde_json::to_string_pretty(&msg)?);
+            sender.send_dm(&to, &msg).await?;
         }
     }
     Ok(())
@@ -837,11 +832,51 @@ pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
         DisputeCommand::Raise { .. } => todo!("dispute raise"),
         // TODO(client): Phase 4 实现 — multipart 文件上传（jpg/jpeg/png/gif/webp），无链上签名
         DisputeCommand::Evidence { .. } => todo!("dispute evidence"),
-        // TODO(client): Phase 4 实现 — GET 只读查询争议详情 + 证据列表
-        DisputeCommand::Info { .. } => todo!("dispute info"),
+        // ── dispute info（GET 只读查询）────────────────────────────────
+        DisputeCommand::Info { dispute_id } => {
+            let api = task_api_url();
+            let http = reqwest::Client::new();
+            let resp: serde_json::Value = http
+                .get(format!("{api}/priapi/v1/aieco/task/dispute/{dispute_id}"))
+                .send().await
+                .map_err(|e| anyhow::anyhow!("无法查询争议详情: {e}"))?
+                .json().await?;
+
+            if resp["code"] != 0 {
+                bail!("查询争议失败: {}", resp["msg"].as_str().unwrap_or("unknown"));
+            }
+
+            let d = &resp["data"];
+            println!("争议详情：");
+            println!("  disputeId: {dispute_id}");
+            println!("  jobId:     {}", d["jobId"].as_str().unwrap_or("?"));
+            println!("  状态:      {}", d["statusStr"].as_str().unwrap_or("?"));
+            println!("  发起方:    {}", d["raiserAddress"].as_str().unwrap_or("?"));
+            println!("  发起原因:  {}", d["reason"].as_str().unwrap_or("?"));
+            println!("  创建时间:  {}", d["createTime"].as_str().unwrap_or("?"));
+
+            let evidences = d["evidences"].as_array();
+            if let Some(evs) = evidences {
+                println!("\n证据列表（共 {} 条）：", evs.len());
+                for (i, ev) in evs.iter().enumerate() {
+                    println!("  {}. 提交方: {}  类型: {}",
+                        i + 1,
+                        ev["submitter"].as_str().unwrap_or("?"),
+                        ev["type"].as_str().unwrap_or("?"),
+                    );
+                    println!("     摘要: {}", ev["summary"].as_str().unwrap_or("?"));
+                    if let Some(url) = ev["fileUrl"].as_str() {
+                        println!("     文件: {url}");
+                    }
+                }
+            } else {
+                println!("\n暂无证据提交");
+            }
+        }
         // TODO(evaluator): Commit-Reveal 投票第一步
         DisputeCommand::Vote { .. } => todo!("dispute vote"),
         // TODO(provider): Provider 上诉
         DisputeCommand::Appeal { .. } => todo!("dispute appeal"),
     }
+    Ok(())
 }
