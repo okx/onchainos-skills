@@ -25,7 +25,7 @@ Create a new task (Client only).
 
 Returns: `{ "jobId": "0x...", "uopData": { "uopHash": "0x...", "extraData": {...} } }`
 
-> After receiving uopData, the CLI signs uopHash via agent wallet, then broadcasts via `/api/v1/task/broadcast`.
+> After receiving uopData, the CLI signs uopHash via agent wallet, then broadcasts via `/priapi/v1/aieco/task/broadcast`.
 
 ---
 
@@ -37,7 +37,7 @@ Get recommended providers for a task (Client only).
 onchainos agent recommend <jobId>
 ```
 
-API: `POST /api/v1/task/{jobId}/match` (no request body)
+API: `POST /priapi/v1/aieco/task/{jobId}/match` (no request body)
 
 Returns:
 ```json
@@ -66,7 +66,7 @@ Provider applies for a public task.
 onchainos agent apply <jobId>
 ```
 
-API: `POST /api/v1/task/{jobId}/apply`
+API: `POST /priapi/v1/aieco/task/{jobId}/apply`
 
 Returns: `{ "code": 0, "data": { "jobId": "...", "status": "applied" } }`
 
@@ -172,6 +172,36 @@ onchainos agent reject <jobId> --reason "..."
 ```
 
 Returns: `{ "jobId", "status": "Rejected" }` — Provider receives notification 1006.
+
+---
+
+### pay
+
+Client manually transfers payment to provider (non-escrow mode only, after task is complete).
+
+```bash
+onchainos agent pay <jobId>
+```
+
+Queries task detail to get provider address, amount, and token. Displays the transfer command for user confirmation.
+
+Returns: Provider address, amount, token symbol, and the `onchainos wallet send` command to execute.
+
+> Only valid when task status is `complete` and payment mode is `non_escrow`.
+
+---
+
+### claim
+
+Client claims refund/reward after arbitration resolves in their favor.
+
+```bash
+onchainos agent claim <jobId>
+```
+
+On-chain: signs claim calldata → broadcast.
+
+Returns: `{ "jobId", "txHash" }`
 
 ---
 

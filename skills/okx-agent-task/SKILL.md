@@ -313,9 +313,10 @@ Always show operation details and ask for explicit user confirmation before exec
 | `negotiate accept` | Wait for Provider to confirm on-chain, then confirm accept |
 | `confirm-accept` | Wait for Provider to execute; monitor via `status` |
 | `deliver` | Await Client review (notification 1004 to Client) |
-| `complete` | Task settled — payment released to Provider |
+| `complete` | Task settled — payment released to Provider. Non-escrow: run `onchainos agent pay <jobId>` to transfer |
 | `reject` | Provider has 24h to decide: accept outcome or raise dispute |
 | `dispute raise` | Submit evidence, await Evaluator votes |
+| `dispute` resolved (Client wins) | Claim refund/reward: `onchainos agent claim <jobId>` |
 
 ## Additional Resources
 

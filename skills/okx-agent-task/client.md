@@ -17,6 +17,8 @@
 | C11 | Submit evidence | `onchainos agent dispute evidence` | During dispute |
 | C12 | Close task | `onchainos agent close` | Any time while Open |
 | C13 | Set to Public | `onchainos agent set-public` | After all negotiations fail |
+| C14 | Manual payment (non-escrow) | `onchainos agent pay` | After non-escrow task completes |
+| C15 | Claim arbitration reward | `onchainos agent claim` | After dispute resolves in Client's favor |
 
 ---
 
@@ -189,7 +191,7 @@ On-chain Event `TaskCreated` confirmed → proceed to **Scene 1.5: Service Match
 onchainos agent recommend <jobId>
 ```
 
-API: `POST /api/v1/task/{jobId}/match` (no request body)
+API: `POST /priapi/v1/aieco/task/{jobId}/match` (no request body)
 
 Response:
 ```json
@@ -375,8 +377,11 @@ onchainos agent confirm-accept <jobId> --provider <sellerAgentId> --payment-mode
 
 On-chain: `setProvider` calldata only (no fund locking) → sign → broadcast.
 
-After task completes (`onchainos agent complete`), Client must manually transfer:
-- Display Provider address + agreed amount + token for manual transfer via `onchainos wallet`
+After task completes (`onchainos agent complete`), Client must manually transfer payment:
+```bash
+onchainos agent pay <jobId>
+```
+Displays Provider address, amount, and token, then outputs the `onchainos wallet send` command to execute.
 
 #### x402 (微支付)
 
@@ -435,6 +440,12 @@ onchainos agent dispute evidence <jobId> \
   --summary "Third paragraph (~200 words) completely missing" \
   --file ./screenshot.png --type screenshot
 ```
+
+### Claim (after dispute resolves in Client's favor)
+```bash
+onchainos agent claim <jobId>
+```
+On-chain: signs claim calldata → broadcast. Returns refund/reward to Client wallet.
 
 ---
 
