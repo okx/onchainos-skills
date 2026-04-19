@@ -60,9 +60,9 @@ pub struct AccountBalance {
 /// TODO: 替换为真实链上查询（ERC-8004 registry）
 pub async fn has_role(account_id: &str, _address: &str, role: AgentRole) -> Result<bool> {
     // Mock: 默认第一个账户有 buyer 身份
-    let mock_buyers = vec!["mock-account-buyer"];
-    let mock_providers = vec!["mock-account-provider"];
-    let mock_evaluators = vec!["mock-account-evaluator"];
+    let mock_buyers = ["mock-account-buyer"];
+    let mock_providers = ["mock-account-provider"];
+    let mock_evaluators = ["mock-account-evaluator"];
 
     let result = match role {
         AgentRole::Buyer => mock_buyers.contains(&account_id),
@@ -111,11 +111,11 @@ pub async fn list_accounts_with_role(
 
     for (account_id, entry) in &wallets.accounts_map {
         for addr in &entry.address_list {
-            if addr.chain_name == chain_name {
-                if has_role(account_id, &addr.address, role).await? {
-                    if let Some(identity) = get_identity(account_id, &addr.address).await? {
-                        result.push(identity);
-                    }
+            if addr.chain_name == chain_name
+                && has_role(account_id, &addr.address, role).await?
+            {
+                if let Some(identity) = get_identity(account_id, &addr.address).await? {
+                    result.push(identity);
                 }
             }
         }

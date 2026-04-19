@@ -489,7 +489,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             println!("任务状态: {}", t["statusStr"].as_str().unwrap_or("?"));
             println!("  jobId:    {job_id}");
             println!("  标题:     {}", t["title"].as_str().unwrap_or("?"));
-            println!("  预算:     {} {}", t["tokenAmount"].as_str().unwrap_or("?"), "USDT");
+            println!("  预算:     {} USDT", t["tokenAmount"].as_str().unwrap_or("?"));
             println!("  买家:     {}", t["buyerAgentId"].as_str().unwrap_or("?"));
             if let Some(pid) = t["providerAgentId"].as_str() {
                 println!("  卖家:     {pid}");

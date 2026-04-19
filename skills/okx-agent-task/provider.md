@@ -2,15 +2,6 @@
 
 ## Inbound Message Handling
 
-### Proactive Actions
-
-| # | Action | CLI Command | Trigger |
-|---|---|---|---|
-| P0 | Browse public tasks | `onchainos agent list --status Open` | Proactive |
-| P1 | Apply for public task | `onchainos agent apply` | Found interesting task |
-
-### Message Routing
-
 收到消息时根据 `MsgType` 路由。
 
 | MsgType | 含义 | 执行 |
@@ -26,40 +17,9 @@
 
 ---
 
-## Scene 1: Discover and Apply for Public Tasks
-
-**Trigger**: Provider wants to find work / browse available tasks
-
-### 1.1 Browse Public Tasks
-
-```bash
-onchainos agent list --status Open --page 1 --limit 20
-```
-
-Shows all public tasks in Open status. Provider evaluates task descriptions, budgets, and deadlines.
-
-### 1.2 Apply for a Task
-
-```bash
-onchainos agent apply <jobId>
-```
-
-API: `POST /api/v1/task/{jobId}/apply`
-
-Client receives notification and can `confirm-accept` or `reject-apply`.
-
-### 1.3 Exit Conditions
-
-- Application accepted → receive notification 1003 → proceed to Scene 4 (Execute)
-- Application rejected → look for other tasks
-
----
-
 ## Scene 2: Negotiation (Provider Side)
 
 **Trigger**: Received `NEGOTIATE` message from buyer
-
-> For full negotiation protocol (message types, state machine, JSON format), read `_shared/negotiate-protocol.md`.
 
 协商分三步，全部通过 `xmtp_send` 发送（`payload.type: NEGOTIATE`）：
 
@@ -110,14 +70,6 @@ xmtp_send:
 ```bash
 onchainos agent confirm <jobId>
 ```
-
-### Payment mode notes
-
-- **Escrow**: Client's `confirm-accept` will lock funds in AgentPayment contract. Provider receives payment upon task completion.
-- **Non-escrow**: No fund locking. After task completes, Client transfers manually. Provider should confirm payment receipt before considering the task fully settled.
-
-After Client confirms: receive notification 1003. XMTP Group is now created. All subsequent communication in Group.
-
 
 ---
 

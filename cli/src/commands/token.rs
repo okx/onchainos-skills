@@ -539,7 +539,7 @@ pub async fn fetch_search(
         let n: u64 = s
             .parse()
             .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
-        anyhow::ensure!(n >= 1 && n <= 100, "--limit must be between 1 and 100, got {n}");
+        anyhow::ensure!((1..=100).contains(&n), "--limit must be between 1 and 100, got {n}");
     }
     let mut params = vec![
         ("chains", resolved_chains.as_str()),
@@ -575,7 +575,7 @@ pub async fn fetch_holders(
         let n: u64 = s
             .parse()
             .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
-        anyhow::ensure!(n >= 1 && n <= 100, "--limit must be between 1 and 100, got {n}");
+        anyhow::ensure!((1..=100).contains(&n), "--limit must be between 1 and 100, got {n}");
     }
     let tag_str = tag_filter.map(|t| t.to_string()).unwrap_or_default();
     let mut params = vec![
@@ -720,7 +720,7 @@ pub async fn fetch_hot_tokens(client: &ApiClient, params: HotTokensParams) -> Re
         let n: u64 = s
             .parse()
             .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
-        anyhow::ensure!(n >= 1 && n <= 100, "--limit must be between 1 and 100, got {n}");
+        anyhow::ensure!((1..=100).contains(&n), "--limit must be between 1 and 100, got {n}");
     }
     let hot_limit = params.limit.unwrap_or_else(|| "20".to_string());
     let hot_cursor = params.cursor;
@@ -859,7 +859,7 @@ pub async fn fetch_top_trader(
         let n: u64 = s
             .parse()
             .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
-        anyhow::ensure!(n >= 1 && n <= 100, "--limit must be between 1 and 100, got {n}");
+        anyhow::ensure!((1..=100).contains(&n), "--limit must be between 1 and 100, got {n}");
     }
     let tag_str = tag_filter.map(|t| t.to_string()).unwrap_or_default();
     let mut params = vec![
