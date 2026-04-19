@@ -37,21 +37,24 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 
 ## Workflows
 
-OnchainOS provides pre-built workflows that compose multiple skills for
-complete operations (token research, daily brief, smart money signals,
-new token screening, wallet analysis, safe swap, portfolio check,
-wallet monitor / ws monitor).
+**For any of the following user intents, read `workflows/INDEX.md` before responding — do not call individual skills directly:**
 
-When a user's request involves multi-step analysis, trading with safety
-checks, or market scanning:
-→ Read `workflows/INDEX.md` to find the matching workflow, then follow the
-  steps in the referenced file.
+| Intent | Trigger examples |
+|--------|-----------------|
+| Token research | "analyze token", "research [address]", "is this token safe" |
+| Market overview | "daily brief", "market overview", "what's the market doing" |
+| Smart money | "what are whales buying", "copy trading signals", "smart money" |
+| New token scan | "scan new tokens", "pump.fun tokens", "meme scan" |
+| Wallet analysis | "analyze wallet", "check this address", "is this wallet worth following" |
+| Buy / sell / swap | "buy X", "sell X", "swap X for Y", "trade X for Y" |
+| Portfolio | "check my holdings", "my portfolio", "my wallet" |
+| Wallet monitor | "watch wallet", "monitor address", "background monitor" |
 
-Always prefer a matching workflow over calling individual skills separately.
+`workflows/INDEX.md` maps each intent to the correct workflow file with step-by-step instructions.
+For Chinese queries, read `workflows/references/keyword-glossary.md` first to resolve the intent.
 
 Safety: follow token risk controls defined in `okx-security` SKILL.md.
-
-For script generation requests, append `--format json` to CLI commands.
+For script requests, append `--format json` to all CLI commands.
 
 ## Scripting & Automation
 
