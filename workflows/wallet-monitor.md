@@ -2,9 +2,13 @@
 
 > Continuously poll wallet activity in-session and alert on new trades. Does not execute trades.
 
+## Keyword Glossary
+
+> If the user's query contains Chinese text, read `references/keyword-glossary.md` for trigger mappings.
+
 ## Triggers
 
-"帮我盯着这个钱包", "监控地址", "watch wallet", "盯着 [address]", "monitor this wallet"
+"watch wallet", "monitor this wallet", "watch [address]", "alert me when this wallet trades"
 
 ## Required Skills
 
@@ -12,11 +16,11 @@ okx-dex-signal, okx-dex-token, okx-security
 
 ## Input
 
-| Param             | Required | Default |
-|-------------------|----------|---------|
-| wallet_addresses  | Yes      | Max 10  |
-| chain             | No       | Auto    |
-| polling_interval  | No       | 60s     |
+| Param            | Required | Default |
+|------------------|----------|---------|
+| wallet_addresses | Yes      | Max 10  |
+| chain            | No       | Auto    |
+| polling_interval | No       | 60s     |
 
 ## Steps
 
@@ -46,18 +50,18 @@ Alert format:
 {Buy/Sell} {symbol} — ${amount}
 Price: ${x}  |  MCap: ${x}
 Honeypot: {Y/N}  |  Tax: {x}/{x}%
-→ "看看 [symbol]"  |  → "用 [amount] [native_token] 买 [symbol]"
+→ "research [symbol]"  |  → "buy [amount] [native_token] of [symbol]"
 ```
 
 Multi-wallet convergence: `[MULTI-WALLET] {n} wallets bought {symbol}`
 
-Exit when user says "停止监控".
+Exit when user says "stop monitoring".
 
 ## Actions
 
-- → "看看 [symbol]" — triggers Token Research
-- → "用 [amount] [native_token] 买 [symbol]" — triggers Safe Swap
-- → "停止监控" — exits the loop
+- → "research [symbol]" — triggers Token Research
+- → "buy [amount] [native_token] of [symbol]" — triggers Safe Swap
+- → "stop monitoring" — exits the loop
 
 ## Follow-up Workflows
 

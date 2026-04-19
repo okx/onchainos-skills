@@ -2,9 +2,13 @@
 
 > Scan Launchpad new tokens, enrich top results with safety and dev data, surface actionable candidates.
 
+## Keyword Glossary
+
+> If the user's query contains Chinese text, read `references/keyword-glossary.md` for trigger mappings.
+
 ## Triggers
 
-"帮我扫新币", "pump.fun有什么", "扫链", "打狗", "scan new tokens", "有什么新币", "memepump新币"
+"scan new tokens", "new token screening", "pump.fun tokens", "what's new on pump.fun", "meme token scan"
 
 ## Required Skills
 
@@ -12,13 +16,13 @@ okx-dex-trenches, okx-security, okx-dex-token
 
 ## Input
 
-| Param                    | Required | Default       |
-|--------------------------|----------|---------------|
-| chain                    | No       | Solana        |
-| protocol                 | No       | All           |
-| min_holders              | No       | CLI default   |
-| min_bonding_percent      | No       | CLI default   |
-| top10_hold_percent_max   | No       | CLI default   |
+| Param                  | Required | Default     |
+|------------------------|----------|-------------|
+| chain                  | No       | Solana      |
+| protocol               | No       | All         |
+| min_holders            | No       | CLI default |
+| min_bonding_percent    | No       | CLI default |
+| top10_hold_percent_max | No       | CLI default |
 
 Filter params are passed through to `memepump tokens` CLI. Users may override via natural language (e.g. "only show tokens with 100+ holders").
 
@@ -63,9 +67,9 @@ NEW TOKENS — {chain} — {timestamp}
 
 ## Actions
 
-- → "看看 [symbol]" — triggers Token Research
-- → "用 [amount] [native_token] 买 [symbol]" — triggers Safe Swap
-- → "查 [symbol] 的 dev 其他项目" — show dev project history
+- → "research [symbol]" — triggers Token Research
+- → "buy [amount] [native_token] of [symbol]" — triggers Safe Swap
+- → "show dev projects for [symbol]" — show dev project history
 
 ## Follow-up Workflows
 

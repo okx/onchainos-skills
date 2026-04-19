@@ -2,9 +2,13 @@
 
 > Configure and start a background WebSocket monitoring session that runs independently of the conversation.
 
+## Keyword Glossary
+
+> If the user's query contains Chinese text, read `references/keyword-glossary.md` for trigger mappings.
+
 ## Triggers
 
-"后台监控", "挂一个ws盯着", "离线监控", "WebSocket监控", "长期盯着这个钱包", "background monitor"
+"background monitor", "offline monitor", "WebSocket monitor", "monitor in background", "long-running wallet watch"
 
 ## Required Skills
 
@@ -12,20 +16,20 @@ okx-dex-ws, okx-dex-token, okx-security
 
 ## Input
 
-| Param             | Required | Default |
-|-------------------|----------|---------|
-| wallet_addresses  | Yes      | Max 10  |
-| chain             | No       | Auto    |
+| Param            | Required | Default |
+|------------------|----------|---------|
+| wallet_addresses | Yes      | Max 10  |
+| chain            | No       | Auto    |
 
 **Difference from W8 (Polling):**
 
-| Aspect        | W8 Polling                     | W9 WebSocket                        |
-|---------------|--------------------------------|-------------------------------------|
-| Runs in       | AI in-session loop             | Background WS session               |
-| AI presence   | Required                       | Not needed after setup              |
-| Latency       | polling_interval (default 60s) | Real-time push                      |
-| Token cost    | Each poll round                | Setup + on-demand poll only         |
-| Best for      | Online, real-time discussion   | Background / offline / scripting    |
+| Aspect       | W8 Polling                     | W9 WebSocket                     |
+|--------------|--------------------------------|----------------------------------|
+| Runs in      | AI in-session loop             | Background WS session            |
+| AI presence  | Required                       | Not needed after setup           |
+| Latency      | polling_interval (default 60s) | Real-time push                   |
+| Token cost   | Each poll round                | Setup + on-demand poll only      |
+| Best for     | Online, real-time discussion   | Background / offline / scripting |
 
 ## Steps
 
@@ -106,9 +110,9 @@ To list all sessions:
 
 ## Actions
 
-- → "看看 [symbol]" — triggers Token Research (for tokens seen in poll events)
-- → "用 [amount] [native_token] 买 [symbol]" — triggers Safe Swap
-- → "停止监控" (`onchainos ws stop --id <session_id>`)
+- → "research [symbol]" — triggers Token Research (for tokens seen in poll events)
+- → "buy [amount] [native_token] of [symbol]" — triggers Safe Swap
+- → "stop monitoring" (`onchainos ws stop --id <session_id>`)
 
 ## Follow-up Workflows
 

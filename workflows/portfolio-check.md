@@ -2,9 +2,13 @@
 
 > Show wallet token balances, total value, and per-token PnL.
 
+## Keyword Glossary
+
+> If the user's query contains Chinese text, read `references/keyword-glossary.md` for trigger mappings.
+
 ## Triggers
 
-"看看我的持仓", "portfolio", "我的钱包", "check my holdings", "我有什么币", "我的资产"
+"portfolio", "check my holdings", "my wallet", "what tokens do I have", "my assets"
 
 ## Required Skills
 
@@ -12,10 +16,10 @@ okx-wallet-portfolio, okx-dex-market, okx-dex-token
 
 ## Input
 
-| Param          | Required | Default          |
-|----------------|----------|------------------|
-| wallet_address | Yes      | —                |
-| chain          | No       | All supported    |
+| Param          | Required | Default       |
+|----------------|----------|---------------|
+| wallet_address | Yes      | —             |
+| chain          | No       | All supported |
 
 ## Steps
 
@@ -57,8 +61,8 @@ Total: ${x}  |  PnL(30d): ${x}  |  Win Rate: {x}%
 
 ## Actions
 
-- → "卖 [symbol]" — triggers Safe Swap
-- → "看看 [symbol]" — triggers Token Research
+- → "sell [symbol]" — triggers Safe Swap
+- → "research [symbol]" — triggers Token Research
 
 ## Follow-up Workflows
 

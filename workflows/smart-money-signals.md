@@ -2,9 +2,13 @@
 
 > Collect smart money buy signals, aggregate by token, then run due diligence on each signal token.
 
+## Keyword Glossary
+
+> If the user's query contains Chinese text, read `references/keyword-glossary.md` for trigger mappings.
+
 ## Triggers
 
-"聪明钱在买什么", "跟单信号", "smart money", "聪明钱信号", "KOL在买什么"
+"smart money", "what are whales buying", "copy trading signals", "what is smart money buying", "KOL buys"
 
 ## Required Skills
 
@@ -65,8 +69,8 @@ Scanned: {n} signal tokens → Top {m} by SM wallet count
 
 ## Actions
 
-- → "看看 [symbol]" — triggers Token Research
-- → "用 [amount] [native_token] 买 [symbol]" — triggers Safe Swap
+- → "research [symbol]" — triggers Token Research
+- → "buy [amount] [native_token] of [symbol]" — triggers Safe Swap
 
 ## Follow-up Workflows
 

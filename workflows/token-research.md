@@ -2,9 +2,13 @@
 
 > Pull price, contract, security, holders, top traders, and smart money signals for any token in one flow.
 
+## Keyword Glossary
+
+> If the user's query contains Chinese text, read `references/keyword-glossary.md` for trigger mappings.
+
 ## Triggers
 
-"帮我看看这个币", "analyze token", "这个币怎么样", "research" + address, "这个币安全吗", "查一下这个代币"
+"analyze token", "research [address]", "is this token safe", "what is this token", "token deep dive"
 
 ## Required Skills
 
@@ -105,9 +109,9 @@ Bundle: {x}%  |  Dev Other Projects: {n} (Survival: {x}%)
 
 ## Actions
 
-- → "用 [amount] [native_token] 买 [symbol]" — triggers Safe Swap
-- → "看聚类列表" / "看同车钱包" — show cluster details
-- → "查 dev 其他项目" — show dev project history
+- → "buy [amount] [native_token] of [symbol]" — triggers Safe Swap
+- → "show cluster list" / "show co-invested wallets" — show cluster details
+- → "show dev projects" — show dev project history
 
 ## Follow-up Workflows
 

@@ -1,15 +1,17 @@
 # OnchainOS Workflow Index
 
+> If the user's query contains Chinese text, read `references/keyword-glossary.md` for trigger mappings.
+
 | User says | Workflow | File |
 |-----------|----------|------|
-| "帮我看看这个币", "analyze token", address + ? | Token Research | `workflows/token-research.md` |
-| "今天市场怎么样", "每日简报", "daily brief" | Daily Brief | `workflows/daily-brief.md` |
-| "聪明钱在买什么", "跟单信号", "smart money" | Smart Money Signals | `workflows/smart-money-signals.md` |
-| "帮我扫新币", "pump.fun有什么", "扫链", "打狗" | New Token Screening | `workflows/new-token-screening.md` |
-| "分析这个钱包", "这个地址怎么样" | Wallet Analysis | `workflows/wallet-analysis.md` |
-| "买X", "卖X", "swap", "用X买Y" | Safe Swap | `workflows/safe-swap.md` |
-| "看看我的持仓", "portfolio" | Portfolio Check | `workflows/portfolio-check.md` |
-| "帮我盯着这个钱包", "监控地址" | Wallet Monitor | `workflows/wallet-monitor.md` |
-| "后台监控", "挂ws盯着", "离线监控", "长期盯着" | Wallet Monitor (WS) | `workflows/wallet-monitor-ws.md` |
+| "analyze token", "research [address]", "is this token safe" | Token Research | `workflows/token-research.md` |
+| "daily brief", "morning brief", "market overview" | Daily Brief | `workflows/daily-brief.md` |
+| "smart money", "what are whales buying", "copy trading signals" | Smart Money Signals | `workflows/smart-money-signals.md` |
+| "scan new tokens", "pump.fun tokens", "meme token scan" | New Token Screening | `workflows/new-token-screening.md` |
+| "analyze wallet", "check this address", "is this wallet worth following" | Wallet Analysis | `workflows/wallet-analysis.md` |
+| "buy [token]", "sell [token]", "swap", "trade [token] for [token]" | Safe Swap | `workflows/safe-swap.md` |
+| "portfolio", "check my holdings", "my wallet" | Portfolio Check | `workflows/portfolio-check.md` |
+| "watch wallet", "monitor this wallet", "watch [address]" | Wallet Monitor | `workflows/wallet-monitor.md` |
+| "background monitor", "offline monitor", "WebSocket monitor" | Wallet Monitor (WS) | `workflows/wallet-monitor-ws.md` |
 
 If no workflow matches, fall back to individual skills.

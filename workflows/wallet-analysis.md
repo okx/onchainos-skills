@@ -2,9 +2,13 @@
 
 > Pull a wallet's performance metrics, trading behavior, current holdings, and recent activity.
 
+## Keyword Glossary
+
+> If the user's query contains Chinese text, read `references/keyword-glossary.md` for trigger mappings.
+
 ## Triggers
 
-"分析这个钱包", "这个地址怎么样", "这个钱包值得跟吗", "这个地址什么风格", "analyze wallet", "check this address"
+"analyze wallet", "check this address", "is this wallet worth following", "what's this wallet's trading style"
 
 ## Required Skills
 
@@ -81,9 +85,9 @@ Time    Token   Action  Amount
 
 ## Actions
 
-- → "盯着 [address]" — triggers Wallet Monitor
-- → "用 [amount] [native_token] 买 [token_they_bought]" — triggers Safe Swap
-- → "看看 [token_they_hold]" — triggers Token Research
+- → "watch [address]" — triggers Wallet Monitor
+- → "buy [amount] [native_token] of [token_they_bought]" — triggers Safe Swap
+- → "research [token_they_hold]" — triggers Token Research
 
 ## Follow-up Workflows
 

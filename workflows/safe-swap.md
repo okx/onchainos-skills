@@ -2,9 +2,13 @@
 
 > Safety check + quote + execute a token swap with MEV protection. Security rules follow okx-security SKILL.md.
 
+## Keyword Glossary
+
+> If the user's query contains Chinese text, read `references/keyword-glossary.md` for trigger mappings.
+
 ## Triggers
 
-"买X", "卖X", "swap", "用X买Y", "帮我买", "sell my X", "buy [token]", "exchange [token]"
+"buy [token]", "sell [token]", "swap", "trade [token] for [token]", "exchange [token]"
 
 ## Required Skills
 
@@ -102,8 +106,8 @@ Tx: {hash}  |  Status: {status}  |  Gas: {x}
 
 ## Actions
 
-- → "盯着这个币" — triggers Wallet Monitor
-- → "看看我的持仓" — triggers Portfolio Check
+- → "watch this token" — triggers Wallet Monitor
+- → "check my portfolio" — triggers Portfolio Check
 
 ## Follow-up Workflows
 

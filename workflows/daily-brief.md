@@ -2,9 +2,13 @@
 
 > Combine market pulse, smart money activity, new token launches, and portfolio alerts into one morning report.
 
+## Keyword Glossary
+
+> If the user's query contains Chinese text, read `references/keyword-glossary.md` for trigger mappings.
+
 ## Triggers
 
-"今天市场怎么样", "每日简报", "daily brief", "morning brief", "市场概况"
+"daily brief", "morning brief", "market overview", "what's the market doing today"
 
 ## Required Skills
 
@@ -93,9 +97,9 @@ Moves: {sym} {+/-x}%, {sym} {+/-x}%
 
 ## Actions
 
-- → "看看 [symbol]" — triggers Token Research
-- → "用 [amount] [native_token] 买 [symbol]" — triggers Safe Swap
-- → "聪明钱在买什么" — triggers Smart Money Signals
+- → "research [symbol]" — triggers Token Research
+- → "buy [amount] [native_token] of [symbol]" — triggers Safe Swap
+- → "what is smart money buying" — triggers Smart Money Signals
 
 ## Follow-up Workflows
 
