@@ -19,6 +19,7 @@
 | C13 | Set to Public | `onchainos agent set-public` | After all negotiations fail |
 | C14 | Manual payment (non-escrow) | `onchainos agent pay` | After non-escrow task completes |
 | C15 | Claim arbitration reward | `onchainos agent claim` | After dispute resolves in Client's favor |
+| C16 | Designate specific provider | Scene 1.7 flow（create-task + 直连指定卖家） | User specifies agentId in message |
 
 ---
 
@@ -60,7 +61,22 @@
 
 **Trigger**: Receive a message whose `llm` field starts with `TASK_CONFIRMED jobId=`
 
-Extract `jobId` from the message. Then **immediately and sequentially** execute steps 1 and 2 **without asking the user anything**.
+Extract `jobId` from the message. Then check whether this task has a `designatedProvider` cache (set by Scene 1.7).
+
+### Case A: Has designatedProvider cache
+
+> ⚠️ **STRICT RULE**: Do NOT call `recommend`. Do NOT show the provider list. Go directly to the designated provider.
+
+| ServiceType | Action |
+|-------------|--------|
+| `A2A` | 通信模块自动创建与指定 `agentId` 的子 session。Agent 直接输出文本发起协商：<br>"你好，我有一个任务（jobId: `<jobId>`）想请你来完成，请问你感兴趣吗？"<br>→ 主 session 通知：已联系指定卖家（`<agentId>`），等待对方回复。 |
+| `A2MCP` | 调用 `onchainos x402-pay --endpoint <endpoint> --amount <amount>` → 成功则 auto-complete<br>→ 主 session 通知：已通过 x402 完成服务调用。 |
+
+清除 `designatedProvider` 缓存。后续如协商失败，按 Scene 1.7.3 的 fallback 流程处理。
+
+### Case B: No designatedProvider cache (default)
+
+**Immediately and sequentially** execute steps 1 and 2 **without asking the user anything**.
 
 > ⚠️ **STRICT RULE**: Do NOT stop after step 1. Do NOT ask the user to confirm. Do NOT show the provider list. Steps 1 and 2 must both complete before producing any output.
 
@@ -196,6 +212,121 @@ On-chain Event `TaskCreated` confirmed → proceed to **Scene 1.5: Service Match
 
 ---
 
+## Scene 1.7: Designated Provider Flow
+
+> **Session**: 主 session（用户指定卖家） → 创建任务 → 子 session（与指定卖家协商）
+
+**Goal**: 买家在主 session 中指定一个具体卖家，系统创建任务后直接与该卖家开启子 session 协商，跳过推荐列表。
+
+**Trigger**: 用户发送以下格式的消息（两种变体）：
+
+**变体 A — A2A（含 Price）**:
+```
+I'd like to use the service provided by Agent <agentId>:
+
+ServiceTitle: <ServiceTitle>
+ServiceType: A2A
+Price: <tokenAmount> <symbol>
+
+Please initiate a direct conversation with this provider to discuss the task details.
+```
+
+**变体 B — A2MCP（含 Endpoint）**:
+```
+I'd like to use the service provided by Agent <agentId>:
+
+ServiceTitle: <ServiceTitle>
+ServiceType: A2MCP
+Endpoint: <endpoint>
+
+Please send a request to this endpoint.
+```
+
+### 1.7.1 Intent Parsing
+
+从用户消息中提取以下字段：
+
+| 字段 | 可变性 | 说明 |
+|------|--------|------|
+| `agentId` | **不可变** — 识别意图时不可修改 | 指定卖家的 Agent ID |
+| `endpoint` | **不可变** — 识别意图时不可修改 | A2MCP 模式的服务端点 |
+| `ServiceTitle` | 可变 — 协商中可变化 | 服务标题 |
+| `ServiceType` | 可变 — 协商中可变化 | `A2A` 或 `A2MCP` |
+| `Price` / `symbol` | 可变 — 协商中可变化 | 期望价格和代币 |
+
+> ⚠️ **不可变字段规则**：`agentId` 和 `endpoint` 在识别意图后不可修改。如果用户后续想更换卖家，必须重新发起指定流程。
+
+### 1.7.2 Execute
+
+**Step 1 — 创建任务**
+
+基于用户消息内容，按 Scene 1 的字段提取规则（1.2）收集任务参数：
+- `description`: 从 `ServiceTitle` + 用户消息推导
+- `budget`: 从 `Price` 提取（A2A 变体）
+- `currency`: 从 `symbol` 提取（需遵守 1.2 中的 TOKEN RULE）
+- 其余必填字段（deadline-open、deadline-submit）如缺失，需引导用户补充
+
+所有必填字段就绪后，按 Scene 1 的 Step 6-8 执行（身份检查 → 确认表单 → create-task）。
+
+> 在 create-task 成功后，缓存 `designatedProvider = { agentId, serviceType, endpoint }` 供 Scene 0 使用。
+
+**Step 2 — 路由（TASK_CONFIRMED 后自动触发）**
+
+当 `TASK_CONFIRMED` 到达时，Scene 0 检测到 `designatedProvider` 缓存：
+
+| ServiceType | 路由 |
+|-------------|------|
+| `A2A` | 跳过 recommend → 直接与指定 `agentId` 创建子 session → 进入 Scene 2（协商） |
+| `A2MCP` | 跳过 recommend → 调用 `onchainos x402-pay --endpoint <endpoint> --amount <amount>` → 成功则自动 complete |
+
+### 1.7.3 Negotiation Outcome Handling
+
+#### A2A 协商成功
+→ 走原有的协商成功流程：Scene 2（三步确认）→ Scene 3（confirm-accept）
+
+#### A2A 协商失败（卖家拒绝或无回应）
+→ 执行推荐 Provider 列表流程（Scene 1.5）：
+
+```
+指定卖家协商失败
+    ↓
+onchainos agent recommend <jobId>
+    ↓
+  有匹配？──是──→ Scene 1.5.2（展示推荐列表）→ Scene 2（协商）
+    │
+    否
+    ↓
+  用户选择：
+    A. 指定新 Provider（重新发送指定消息）
+    B. 去任务大厅页面复制 Provider 信息
+    C. onchainos agent set-public <jobId>（转公开任务）
+    D. onchainos agent close <jobId>（关闭任务）
+```
+
+主 session 通知用户（**用户（确认）**，需等待用户选择）：
+
+> 指定卖家 `<agentId>` 协商失败。以下是系统推荐的其他卖家：
+> [推荐列表表格]
+>
+> 或者您可以：
+> - 指定新的 Provider（请提供 agentId）
+> - 前往任务大厅页面复制 Provider 信息
+> - 将任务设为公开（等待卖家主动申请）
+> - 关闭任务
+
+#### A2MCP 失败
+→ 主 session 通知用户，建议重试或进入仲裁。
+
+### 1.7.4 Exit Conditions
+
+- **A2A 协商成功** → Scene 3（confirm-accept）
+- **A2MCP 成功** → Task complete
+- **协商失败 + 推荐列表有匹配** → Scene 1.5（Service Matching）
+- **协商失败 + 无推荐** → 用户选择：指定新 Provider / 任务大厅 / set-public / close
+- **用户取消** → `onchainos agent close <jobId>`
+
+---
+
 ## Scene 1.5: Service Matching
 
 **Goal**: Find matching Providers from the ERC-8004 identity registry and route based on service type.
@@ -264,17 +395,17 @@ recommend list → pick #1 → negotiate → rejected? → pick #2 → negotiate
    - Return to the recommendation list
    - Show remaining (untried) Providers
    - User picks the next one → repeat from step 2
-5. If **all Providers exhausted**:
-   - Option A: `onchainos agent set-public <jobId>` — convert to public task, Providers can apply
-   - Option B: Specify a Provider address directly (TODO)
-   - Option C: `onchainos agent close <jobId>` — cancel the task
+5. If **all Providers exhausted**,向主 session 请求用户选择（**用户（确认）**）：
+   - Option A: 指定 Provider — 用户提供 agentId（可从任务大厅页面复制），按 Scene 1.7 流程处理
+   - Option B: `onchainos agent set-public <jobId>` — 转为公开任务，等待卖家主动申请
+   - Option C: `onchainos agent close <jobId>` — 关闭任务
 
 ### Exit Conditions
 
 - **Path A (x402)**: user selects Provider → call x402 endpoint → skip to delivery
 - **Path B (A2A)**: proceed to Scene 2 (Negotiation)
-- **No match**: suggest adjusting description or `onchainos agent set-public <jobId>`
-- **All Providers rejected**: suggest `set-public` or `close`
+- **No match**: suggest adjusting description, 指定 Provider（Scene 1.7）, or `onchainos agent set-public <jobId>`
+- **All Providers rejected**: 指定 Provider / `set-public` / `close`
 - **Client cancels**: `onchainos agent close <jobId>`
 
 ---

@@ -134,8 +134,8 @@ Client negotiates with **one Provider at a time** from the recommendation list:
    - **Agreed** → proceed to `confirm-accept` (Client) + `confirm` (Provider)
    - **Rejected** → move to the next Provider on the list
 5. If **all recommended Providers exhausted**:
-   - Option A: `onchainos agent set-public <jobId>` — convert to public task, wait for Providers to apply
-   - Option B: Specify a Provider address directly (TODO — not yet implemented)
+   - Option A: 指定 Provider — 用户提供 agentId，按 `client.md` Scene 1.7 流程处理
+   - Option B: `onchainos agent set-public <jobId>` — convert to public task, wait for Providers to apply
    - Option C: `onchainos agent close <jobId>` — cancel the task
 
 **Important**: Do NOT negotiate with multiple Providers simultaneously — this avoids conflicting commitments.

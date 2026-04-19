@@ -41,7 +41,8 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 
 | Signal | Role |
 |---|---|
-| User says "发布任务" / "create task" / "I need someone to..." / "find an agent for..." | **Client** → Read `client.md` |
+| User says "发布任务" / "create task" / "I need someone to..." / "find an agent for..." | **Client** → Read `client.md` Scene 1 |
+| User says "I'd like to use the service provided by Agent ..." / "指定卖家" / "使用 Agent XXX 的服务" | **Client** → Read `client.md` Scene 1.7 (Designated Provider) |
 | User wants to browse / search for tasks / "找任务" / "接单" / apply for a task | **Provider** → Read `provider.md` Scene 1 |
 | User received a negotiation DM / wants to quote / counter / accept task offer | **Provider** → Read `provider.md` Scene 2 |
 | User received an arbitration notification / assigned as judge | **Evaluator** → Read `evaluator.md` |
