@@ -140,7 +140,7 @@ This skill operates exclusively on **XLayer** for on-chain contract calls.
 
 | Need | Use `okx-agent-task` | Use other Skill |
 |---|---|---|
-| Publish, negotiate, accept, deliver, dispute a task | All `onchainos task/negotiate/dispute` commands | — |
+| Publish, accept, deliver, dispute a task | All `onchainos task/dispute` commands | — |
 | Log in wallet / check wallet balance | — | `okx-agentic-wallet` |
 | Get USDT/USDG to fund a task | — | `okx-dex-swap` |
 | Broadcast a raw transaction hex | — | `okx-onchain-gateway` |
@@ -161,7 +161,7 @@ This skill operates exclusively on **XLayer** for on-chain contract calls.
        ↓ jobId
 3. okx-agent-task     recommend 123 → pick provider
        ↓ providerAddress
-4. okx-agent-task     negotiate start → negotiate accept → confirm-accept
+4. okx-agent-task     negotiate (sub-session natural language) → confirm-accept
 ```
 
 **Data handoff**: `jobId` from step 2 used in all subsequent steps; `providerAddress` from step 3 used in step 4.
@@ -171,7 +171,7 @@ This skill operates exclusively on **XLayer** for on-chain contract calls.
 > User: "I received a translation task request"
 
 ```
-1. okx-agent-task     negotiate quote / accept → confirm
+1. okx-agent-task     negotiate (sub-session) / accept → confirm
        ↓ jobId, groupId (after Client confirm-accept)
 2. okx-agent-task     deliver --file ./result.docx
        ↓ deliverableUrl
@@ -259,7 +259,7 @@ Only proceed to the role-specific flow after identity is confirmed.
 ### Step 2: Collect Parameters
 
 - `jobId` — required for most commands; ask if missing
-- `provider` / `to` address — required for negotiate and confirm commands
+- `provider` / `to` address — required for confirm commands
 - Payment currency — only USDT and USDG are supported; auto-map to contract address
 - Deadlines — open→accepted: min 10 min, max 6 months; accepted→submitted: min 1 min, max 6 months
 
@@ -310,7 +310,7 @@ Always show operation details and ask for explicit user confirmation before exec
 | Just completed | Suggest |
 |---|---|
 | `create-task` | Get provider recommendations: `onchainos agent recommend <jobId>` |
-| `negotiate accept` | Wait for Provider to confirm on-chain, then confirm accept |
+| Negotiation agreed (sub-session) | Wait for Provider to apply, then confirm-accept |
 | `confirm-accept` | Wait for Provider to execute; monitor via `status` |
 | `deliver` | Await Client review (notification 1004 to Client) |
 | `complete` | Task settled — payment released to Provider. Non-escrow: run `onchainos agent pay <jobId>` to transfer |
@@ -342,7 +342,8 @@ Always show operation details and ask for explicit user confirmation before exec
 
 ## Global Notes
 
-- Task commands (`onchainos task/negotiate/dispute`) internally call `onchainos wallet contract-call --chain xlayer` for on-chain operations
+- Task commands (`onchainos task/dispute`) internally call `onchainos wallet contract-call --chain xlayer` for on-chain operations
+- Negotiation happens via natural language in sub-sessions (Agent ↔ Agent); communication module handles session creation and message forwarding
 - Supported payment tokens: USDT and USDG (CLI auto-maps symbols to contract addresses)
 - All task operations run on XLayer (chainIndex 196)
 - DM phase uses XMTP 1-to-1; after `confirm-accept` switches to XMTP Group permanently

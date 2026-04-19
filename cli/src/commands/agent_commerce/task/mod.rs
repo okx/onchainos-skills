@@ -1,7 +1,6 @@
 pub mod client;
 pub mod common;
 pub mod evaluator;
-pub mod messaging;
 pub mod provider;
 pub mod signing;
 
@@ -99,12 +98,6 @@ pub enum TaskSystemCommand {
         action: client::ConfigAction,
     },
 
-    // ── Negotiation (kept as sub-group) ─────────────────────────────────────
-
-    /// Negotiation actions: start, quote, counter, accept, reject
-    #[command(subcommand)]
-    Negotiate(client::NegotiateCommand),
-
     // ── Dispute (kept as sub-group) ──────────────────────────────────────────
 
     /// Dispute actions: raise, evidence, info, vote, appeal
@@ -180,9 +173,6 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
 
         TaskSystemCommand::Config { action } =>
             client::run_task(T::Config { action }, ctx).await,
-
-        TaskSystemCommand::Negotiate(c) =>
-            client::run_negotiate(c, ctx).await,
 
         TaskSystemCommand::Dispute(c) =>
             client::run_dispute(c, ctx).await,

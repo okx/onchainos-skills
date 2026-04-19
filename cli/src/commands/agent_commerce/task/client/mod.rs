@@ -2,12 +2,13 @@
 //!
 //! 业务实现按请求类型拆分：
 //! - `query.rs`     — 只读查询（无签名）
-//! - `write.rs`     — 签名写操作（单签/双签）
-//! - `negotiate.rs` — 协商消息（走 messaging 层）
+//! - `onchain.rs`   — 签名写操作（单签/双签）
 //! - `dispute.rs`   — 仲裁相关
+//!
+//! 协商（negotiate）在子 session 中由 Agent 自然语言完成，
+//! 通信模块自动转发，不需要 CLI 命令。
 
 mod dispute;
-mod negotiate;
 mod query;
 mod onchain;
 
@@ -138,71 +139,6 @@ pub enum ConfigAction {
     Show,
 }
 
-// ─── negotiate subcommands ─────────────────────────────────────────────────
-
-#[derive(Subcommand)]
-pub enum NegotiateCommand {
-    /// Client initiates negotiation with a provider
-    Start {
-        #[arg(long)]
-        to: String,
-        #[arg(long = "job-id")]
-        job_id: String,
-        #[arg(long)]
-        message: String,
-    },
-    /// Provider sends a quote to client
-    Quote {
-        #[arg(long)]
-        to: String,
-        #[arg(long = "job-id")]
-        job_id: String,
-        #[arg(long)]
-        price: f64,
-        #[arg(long)]
-        currency: String,
-        #[arg(long = "delivery-hours")]
-        delivery_hours: u32,
-        #[arg(long = "skill-id")]
-        skill_id: Option<String>,
-        #[arg(long)]
-        message: Option<String>,
-    },
-    /// Either party counters with a new price
-    Counter {
-        #[arg(long)]
-        to: String,
-        #[arg(long = "job-id")]
-        job_id: String,
-        #[arg(long)]
-        price: f64,
-        #[arg(long)]
-        reason: Option<String>,
-    },
-    /// Either party accepts current terms
-    Accept {
-        #[arg(long)]
-        to: String,
-        #[arg(long = "job-id")]
-        job_id: String,
-        #[arg(long)]
-        price: f64,
-        #[arg(long = "delivery-hours")]
-        delivery_hours: u32,
-        #[arg(long = "payment-mode", default_value = PAYMENT_MODE_ESCROW)]
-        payment_mode: String,
-    },
-    /// Either party rejects and ends negotiation
-    Reject {
-        #[arg(long)]
-        to: String,
-        #[arg(long = "job-id")]
-        job_id: String,
-        #[arg(long)]
-        reason: String,
-    },
-}
-
 // ─── dispute subcommands ───────────────────────────────────────────────────
 
 #[derive(Subcommand)]
@@ -302,10 +238,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             Ok(())
         }
     }
-}
-
-pub async fn run_negotiate(cmd: NegotiateCommand, ctx: &Context) -> Result<()> {
-    negotiate::run_negotiate(cmd, ctx).await
 }
 
 pub async fn run_dispute(cmd: DisputeCommand, ctx: &Context) -> Result<()> {

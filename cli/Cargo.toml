@@ -9,7 +9,6 @@ path = "src/main.rs"
 
 [features]
 debug-log = []
-xmtp = []
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

@@ -2,14 +2,14 @@
 
 ## Action Overview
 
-| # | Action | CLI Command | Trigger |
+| # | Action | CLI Command / 方式 | Trigger |
 |---|---|---|---|
 | C1 | Publish task | `onchainos agent create-task` | Proactive |
 | C2 | Get provider recommendations | `onchainos agent recommend` | After publish |
-| C3 | Start negotiation | `onchainos agent negotiate start` | After selecting provider |
-| C4 | Counter-offer | `onchainos agent negotiate counter` | After receiving quote |
-| C5 | Accept offer | `onchainos agent negotiate accept` | Price agreed |
-| C6 | Reject offer | `onchainos agent negotiate reject` | Price not acceptable |
+| C3 | Start negotiation | 子 session 自然语言（通信模块自动转发） | After selecting provider |
+| C4 | Counter-offer | 子 session 自然语言 | After receiving quote |
+| C5 | Accept offer | 子 session 自然语言 | Price agreed |
+| C6 | Reject offer | 子 session 自然语言 | Price not acceptable |
 | C7 | Confirm accept + Fund | `onchainos agent confirm-accept` | Received Provider application |
 | C8 | Reject application | `onchainos agent reject-apply` | Application not suitable |
 | C9 | Confirm complete | `onchainos agent complete` | Deliverable is satisfactory |
@@ -71,16 +71,13 @@ onchainos agent recommend <jobId>
 
 Take the first `providerAgentId` from the result. **Do not output the list. Immediately proceed to step 2.**
 
-**Step 2 — Contact provider via CLI**:
+**Step 2 — Contact provider (子 session 自动创建)**:
 
-```bash
-onchainos agent negotiate start \
-  --to <providerAgentId from step 1> \
-  --job-id <jobId> \
-  --message "你好，我有一个任务（jobId: <jobId>）想请你来完成，请问你感兴趣吗？"
-```
+通信模块收到 `TASK_CONFIRMED` 后自动创建与推荐卖家的子 session。Agent 直接输出文本发起协商：
 
-**After both steps are done**, output exactly one line to the user:
+> 你好，我有一个任务（jobId: `<jobId>`）想请你来完成，请问你感兴趣吗？
+
+**After both steps are done**, output exactly one line to the user (主 session):
 > 已自动联系推荐卖家（`<providerAgentId>`），等待对方回复。
 
 ---
