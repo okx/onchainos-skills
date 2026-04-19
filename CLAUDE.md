@@ -9,6 +9,7 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 ## Architecture
 
 - **skills/** — 13 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **workflows/** — 9 multi-step workflow docs (`INDEX.md` for routing, `TEMPLATE.md` for authoring guide, W1–W9 as `*.md`)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
 - **.mcp.json.example** — MCP server configuration template for Claude Code
@@ -33,6 +34,24 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 | okx-audit-log        | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, provide liquidity, deposit/withdraw from DeFi protocols, claim DeFi rewards across Aave/Lido/PancakeSwap/Kamino/NAVI and hundreds more |
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions, view DeFi portfolio across protocols and chains |
+
+## Workflows
+
+OnchainOS provides pre-built workflows that compose multiple skills for
+complete operations (token research, daily brief, smart money signals,
+new token screening, wallet analysis, safe swap, portfolio check,
+wallet monitor / ws monitor).
+
+When a user's request involves multi-step analysis, trading with safety
+checks, or market scanning:
+→ Read `workflows/INDEX.md` to find the matching workflow, then follow the
+  steps in the referenced file.
+
+Always prefer a matching workflow over calling individual skills separately.
+
+Safety: follow token risk controls defined in `okx-security` SKILL.md.
+
+For script generation requests, append `--format json` to CLI commands.
 
 ## Scripting & Automation
 
