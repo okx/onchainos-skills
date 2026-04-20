@@ -282,6 +282,12 @@ Two possible outcomes:
 
 #### 5b. User confirms authorization
 
+**Quote freshness check (same 10-second rule as Step 4)**: Track the time between the Step 5a `execute` call (which quotes internally) and the user's authorization confirmation. If >10 seconds have passed:
+1. Re-run `cross-chain quote` with the same parameters before proceeding
+2. Compare: new `receiveAmount` vs previous `minimumReceived` (from Step 5a)
+3. If new >= previous minimum → show updated quote summary and continue to `--confirm-approve`
+4. If new < previous minimum → WARN price has dropped, display both old and new amounts, require explicit re-confirmation before proceeding
+
 ```bash
 onchainos cross-chain execute --from <address> --to <address> --from-chain <chain> --to-chain <chain> --readable-amount <amount> --wallet <addr> --confirm-approve [--route-index <n>] [--receive-address <addr>]
 ```
@@ -339,7 +345,9 @@ Handle result:
 
 ### Step 7 -- Report Result
 
-When `action=execute` is returned, display:
+<MUST>
+When `action=execute` is returned, you MUST use the exact template below. Do NOT use tables, do NOT rearrange fields, do NOT omit any line. Fill in every `{placeholder}` from the CLI response. Translate to the user's language per the global language rule.
+</MUST>
 
 ```
 Cross-chain transfer submitted.
@@ -354,7 +362,8 @@ Estimated time: ~{estimatedTime} seconds
 Source TX: {crosschainTxHash}
 Order ID: {orderId}
 
-Check status: onchainos cross-chain status --order-id {orderId}
+Check status: say "check cross-chain status {orderId}" or run:
+onchainos cross-chain status --order-id {orderId}
 ```
 
 Use business-level language. Do NOT say "Transaction confirmed on-chain" or "Broadcast successful" -- the cross-chain transfer is still in progress after source chain broadcast.
@@ -416,14 +425,23 @@ Cross-chain MEV protection is determined by two sources:
 1. `/callData` response `mevConfig.enableMev=true` -> always enable
 2. Bridge protocol is Relay, Mayan, or ButterSwap (these have built-in from-swap functionality) -> enable
 
-Additionally apply chain threshold rules (same as swap):
+Additionally apply chain threshold rules (same as swap). Calculate `txValueUsd = fromTokenAmount × fromTokenPrice`. Enable MEV **only when** `txValueUsd >= threshold` for the source chain. If `txValueUsd < threshold`, do NOT add `--mev-protection`. **Re-evaluate the threshold every time the amount changes** — do NOT carry over `--mev-protection` from a previous command when the user modifies the amount:
 
+<!-- TEMPORARY: thresholds lowered for E8 testing. Restore before release:
 | Chain | Threshold | How to enable |
 |---|---|---|
 | Ethereum | $2,000 | `--mev-protection` |
 | Solana | $1,000 | `--tips <sol_amount>` |
 | BNB Chain | $200 | `--mev-protection` |
 | Base | $200 | `--mev-protection` |
+| Others | No MEV protection available | -- |
+-->
+| Chain | Threshold | How to enable |
+|---|---|---|
+| Ethereum | $5 | `--mev-protection` |
+| Solana | $5 | `--tips <sol_amount>` |
+| BNB Chain | $5 | `--mev-protection` |
+| Base | $5 | `--mev-protection` |
 | Others | No MEV protection available | -- |
 
 If token price unavailable -> enable by default.

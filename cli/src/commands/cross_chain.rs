@@ -884,8 +884,14 @@ async fn cmd_execute(
     };
 
     // Sign & Broadcast by calldataType
+    //
+    // Backend guarantees callData.to is always the correct on-chain target:
+    //   100 (contract call): to = router/bridge contract, data = calldata
+    //   101 (native transfer): to = bridge receiver, value = amount, no data
+    //   110 (ERC20 transfer): to = ERC20 contract, data = transfer calldata, value = 0
     let crosschain_tx_hash = match calldata_type {
-        100 => {
+        100 | 110 => {
+            // Contract call or ERC20 transfer — both use to + data + value
             let to_addr = call_data["to"]
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("missing callData.to"))?;
@@ -910,33 +916,25 @@ async fn cmd_execute(
             .await?;
             extract_tx_hash(&result)?
         }
-        101 | 110 => {
-            // TRANSFER / TRANSFER_TOKEN: use execute_contract_call with transfer params
+        101 => {
+            // Native transfer — to + value, no data
             let to_addr = call_data["to"]
                 .as_str()
-                .or_else(|| call_data["sender"].as_str())
-                .ok_or_else(|| anyhow::anyhow!("missing callData.to/sender for transfer"))?;
-            let value = if let Some(v) = call_data["value"].as_i64() {
+                .ok_or_else(|| anyhow::anyhow!("missing callData.to for transfer"))?;
+            let value_str = if let Some(v) = call_data["value"].as_i64() {
                 v.to_string()
             } else {
                 call_data["value"].as_str().unwrap_or("0").to_string()
             };
-            // For 110 (TRANSFER_TOKEN), pass the ERC20 contract address as aa_dex_token_addr
-            // For 101 (TRANSFER), native token transfer — no contract address needed
-            let aa_dex_token_addr = if calldata_type == 110 {
-                call_data["address"].as_str()
-            } else {
-                None
-            };
             let result = wallet_contract_call(
                 to_addr,
                 &from_chain_index,
-                &value,
-                None, // no input_data for transfer mode
-                None, // no unsigned_tx
+                &value_str,
+                None,
+                None,
                 effective_mev,
-                None, // no jito
-                aa_dex_token_addr,
+                None,
+                None,
             )
             .await?;
             extract_tx_hash(&result)?
