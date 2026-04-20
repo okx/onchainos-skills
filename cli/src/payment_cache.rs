@@ -70,6 +70,17 @@ impl PaymentCache {
     pub fn is_expired(&self, ttl_secs: u64) -> bool {
         now_secs().saturating_sub(self.updated_at) > ttl_secs
     }
+
+    /// Remove the cache file from disk. No-op if it doesn't exist. Called on
+    /// logout so the next session starts without stale charging flags from a
+    /// previous account.
+    pub fn delete() -> Result<()> {
+        let path = Self::cache_path()?;
+        if path.exists() {
+            std::fs::remove_file(&path).context("failed to delete payment_cache.json")?;
+        }
+        Ok(())
+    }
 }
 
 pub fn now_secs() -> u64 {
@@ -159,6 +170,31 @@ mod tests {
             ..Default::default()
         };
         assert!(stale.is_expired(3600));
+    }
+
+    #[test]
+    fn delete_removes_existing_cache_file() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let dir = tmp_home("payment_cache_delete");
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+
+        PaymentCache::default().save().unwrap();
+        let path = dir.join("payment_cache.json");
+        assert!(path.exists());
+
+        PaymentCache::delete().unwrap();
+        assert!(!path.exists());
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn delete_is_noop_when_cache_missing() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let dir = tmp_home("payment_cache_delete_missing");
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+
+        assert!(PaymentCache::delete().is_ok());
+        std::env::remove_var("ONCHAINOS_HOME");
     }
 
     #[test]
