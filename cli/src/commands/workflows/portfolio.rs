@@ -6,10 +6,38 @@ use anyhow::Result;
 use serde_json::{json, Value};
 
 use crate::chains;
+use crate::client::ApiClient;
 use crate::commands::{market, portfolio};
 use crate::output;
 
 use super::{ok_or_null, Context};
+
+pub(crate) async fn fetch_and_assemble(
+    client: &mut ApiClient,
+    address: &str,
+    chains_str: &str,
+    primary_chain_index: &str,
+) -> Result<Value> {
+    // ── Step 1: sequential overview ───────────────────────────────────
+    // time_frame 4 = 1M
+    let balances = ok_or_null(
+        portfolio::fetch_all_balances(client, address, chains_str, None, None).await,
+    );
+    let total_value = ok_or_null(
+        portfolio::fetch_total_value(client, address, chains_str, None, None).await,
+    );
+    let overview = ok_or_null(
+        market::fetch_portfolio_overview(client, primary_chain_index, address, "4").await,
+    );
+
+    Ok(assemble(
+        address,
+        chains_str,
+        balances,
+        total_value,
+        overview,
+    ))
+}
 
 pub async fn run(ctx: &Context, address: &str, chains_arg: Option<String>) -> Result<()> {
     let mut client = ctx.client_async().await?;
@@ -28,25 +56,8 @@ pub async fn run(ctx: &Context, address: &str, chains_arg: Option<String>) -> Re
         .map(|c| chains::resolve_chain(c).to_string())
         .unwrap_or_else(|| "501".to_string());
 
-    // ── Step 1: sequential overview ───────────────────────────────────
-    // time_frame 4 = 1M
-    let balances = ok_or_null(
-        portfolio::fetch_all_balances(&mut client, address, &chains_str, None, None).await,
-    );
-    let total_value = ok_or_null(
-        portfolio::fetch_total_value(&mut client, address, &chains_str, None, None).await,
-    );
-    let overview = ok_or_null(
-        market::fetch_portfolio_overview(&mut client, &primary_chain_index, address, "4").await,
-    );
-
-    output::success(assemble(
-        address,
-        &chains_str,
-        balances,
-        total_value,
-        overview,
-    ));
+    let result = fetch_and_assemble(&mut client, address, &chains_str, &primary_chain_index).await?;
+    output::success(result);
     Ok(())
 }
 

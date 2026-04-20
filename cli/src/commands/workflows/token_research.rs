@@ -11,44 +11,43 @@ use anyhow::Result;
 use serde_json::{json, Value};
 
 use crate::chains;
+use crate::client::ApiClient;
 use crate::commands::{memepump, signal, token};
 use crate::output;
 
 use super::{fetch_token_scan, ok_or_null, Context};
 
-pub async fn run(ctx: &Context, address: &str, chain: Option<String>) -> Result<()> {
-    let mut client = ctx.client_async().await?;
-    let chain_index = chain
-        .as_deref()
-        .map(|c| chains::resolve_chain(c).to_string())
-        .unwrap_or_else(|| ctx.chain_index_or("solana"));
-
+pub(crate) async fn fetch_and_assemble(
+    client: &mut ApiClient,
+    address: &str,
+    chain_index: &str,
+) -> Result<Value> {
     // ── Step 1: core data (sequential) ───────────────────────────────
-    let info = ok_or_null(token::fetch_info(&mut client, address, &chain_index).await);
-    let price = ok_or_null(token::fetch_price_info(&mut client, address, &chain_index).await);
-    let advanced = ok_or_null(token::fetch_advanced_info(&mut client, address, &chain_index).await);
-    let security = fetch_token_scan(&mut client, &chain_index, address).await;
+    let info = ok_or_null(token::fetch_info(client, address, chain_index).await);
+    let price = ok_or_null(token::fetch_price_info(client, address, chain_index).await);
+    let advanced = ok_or_null(token::fetch_advanced_info(client, address, chain_index).await);
+    let security = fetch_token_scan(client, chain_index, address).await;
 
     // ── Step 2: on-chain structure (sequential) ──────────────────────
     let holders = ok_or_null(
-        token::fetch_holders(&mut client, address, &chain_index, None, Some("100"), None).await,
+        token::fetch_holders(client, address, chain_index, None, Some("100"), None).await,
     );
     let cluster = ok_or_null(
         token::fetch_cluster_by_address(
-            &mut client,
+            client,
             "/api/v6/dex/market/token/cluster/overview",
             address,
-            &chain_index,
+            chain_index,
         )
         .await,
     );
     let top_traders = ok_or_null(
-        token::fetch_top_trader(&mut client, address, &chain_index, None, Some("20"), None).await,
+        token::fetch_top_trader(client, address, chain_index, None, Some("20"), None).await,
     );
     let signals = ok_or_null(
         signal::fetch_list(
-            &mut client,
-            &chain_index,
+            client,
+            chain_index,
             None, None, None, None, None,
             Some(address.to_string()),
             None, None, None, None, None, None,
@@ -60,25 +59,25 @@ pub async fn run(ctx: &Context, address: &str, chain: Option<String>) -> Result<
     let launchpad = if is_launchpad_token(&advanced) {
         let details = ok_or_null(
             memepump::fetch_by_address(
-                &mut client, "/api/v6/dex/market/memepump/tokenDetails", address, &chain_index,
+                client, "/api/v6/dex/market/memepump/tokenDetails", address, chain_index,
             )
             .await,
         );
         let dev_info = ok_or_null(
             memepump::fetch_by_address(
-                &mut client, "/api/v6/dex/market/memepump/tokenDevInfo", address, &chain_index,
+                client, "/api/v6/dex/market/memepump/tokenDevInfo", address, chain_index,
             )
             .await,
         );
         let bundle_info = ok_or_null(
             memepump::fetch_by_address(
-                &mut client, "/api/v6/dex/market/memepump/tokenBundleInfo", address, &chain_index,
+                client, "/api/v6/dex/market/memepump/tokenBundleInfo", address, chain_index,
             )
             .await,
         );
         let similar = ok_or_null(
             memepump::fetch_by_address(
-                &mut client, "/api/v6/dex/market/memepump/similarToken", address, &chain_index,
+                client, "/api/v6/dex/market/memepump/similarToken", address, chain_index,
             )
             .await,
         );
@@ -92,9 +91,9 @@ pub async fn run(ctx: &Context, address: &str, chain: Option<String>) -> Result<
         Value::Null
     };
 
-    let result = assemble(
+    assemble(
         address,
-        &chain_index,
+        chain_index,
         info,
         price,
         advanced,
@@ -104,8 +103,17 @@ pub async fn run(ctx: &Context, address: &str, chain: Option<String>) -> Result<
         top_traders,
         signals,
         launchpad,
-    )?;
+    )
+}
 
+pub async fn run(ctx: &Context, address: &str, chain: Option<String>) -> Result<()> {
+    let mut client = ctx.client_async().await?;
+    let chain_index = chain
+        .as_deref()
+        .map(|c| chains::resolve_chain(c).to_string())
+        .unwrap_or_else(|| ctx.chain_index_or("solana"));
+
+    let result = fetch_and_assemble(&mut client, address, &chain_index).await?;
     output::success(result);
     Ok(())
 }

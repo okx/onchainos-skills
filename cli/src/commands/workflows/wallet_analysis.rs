@@ -8,10 +8,54 @@ use anyhow::Result;
 use serde_json::{json, Value};
 
 use crate::chains;
+use crate::client::ApiClient;
 use crate::commands::{market, portfolio, tracker};
 use crate::output;
 
 use super::{ok_or_null, Context};
+
+pub(crate) async fn fetch_and_assemble(
+    client: &mut ApiClient,
+    address: &str,
+    chain_index: &str,
+) -> Result<Value> {
+    // ── Step 1: performance + balances (sequential) ──────────────────
+    // time_frame: 3 = 7D, 4 = 1M
+    let overview_7d = ok_or_null(
+        market::fetch_portfolio_overview(client, chain_index, address, "3").await,
+    );
+    let overview_30d = ok_or_null(
+        market::fetch_portfolio_overview(client, chain_index, address, "4").await,
+    );
+    let balances = ok_or_null(
+        portfolio::fetch_all_balances(client, address, chain_index, None, None).await,
+    );
+
+    // ── Step 2: per-token PnL (sequential) ───────────────────────────
+    let recent_pnl = ok_or_null(
+        market::fetch_portfolio_recent_pnl(client, chain_index, address, None, None).await,
+    );
+
+    // ── Step 3: recent on-chain activity (sequential) ─────────────────
+    let activities = ok_or_null(
+        tracker::fetch_activities(
+            client, "multi_address", Some(address),
+            None, Some(chain_index),
+            None, None, None, None, None, None, None,
+        )
+        .await,
+    );
+
+    Ok(assemble(
+        address,
+        chain_index,
+        overview_7d,
+        overview_30d,
+        balances,
+        recent_pnl,
+        activities,
+    ))
+}
 
 pub async fn run(ctx: &Context, address: &str, chain: Option<String>) -> Result<()> {
     let mut client = ctx.client_async().await?;
@@ -21,42 +65,8 @@ pub async fn run(ctx: &Context, address: &str, chain: Option<String>) -> Result<
         .to_string();
     let chain_index = chains::resolve_chain(&chain_str).to_string();
 
-    // ── Step 1: performance + balances (sequential) ──────────────────
-    // time_frame: 3 = 7D, 4 = 1M
-    let overview_7d = ok_or_null(
-        market::fetch_portfolio_overview(&mut client, &chain_index, address, "3").await,
-    );
-    let overview_30d = ok_or_null(
-        market::fetch_portfolio_overview(&mut client, &chain_index, address, "4").await,
-    );
-    let balances = ok_or_null(
-        portfolio::fetch_all_balances(&mut client, address, &chain_index, None, None).await,
-    );
-
-    // ── Step 2: per-token PnL (sequential) ───────────────────────────
-    let recent_pnl = ok_or_null(
-        market::fetch_portfolio_recent_pnl(&mut client, &chain_index, address, None, None).await,
-    );
-
-    // ── Step 3: recent on-chain activity (sequential) ─────────────────
-    let activities = ok_or_null(
-        tracker::fetch_activities(
-            &mut client, "multi_address", Some(address),
-            None, Some(&chain_index),
-            None, None, None, None, None, None, None,
-        )
-        .await,
-    );
-
-    output::success(assemble(
-        address,
-        &chain_index,
-        overview_7d,
-        overview_30d,
-        balances,
-        recent_pnl,
-        activities,
-    ));
+    let result = fetch_and_assemble(&mut client, address, &chain_index).await?;
+    output::success(result);
     Ok(())
 }
 

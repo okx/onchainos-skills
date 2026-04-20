@@ -9,9 +9,11 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use serde_json::{json, Value};
+use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 
 use crate::chains;
+use crate::client::ApiClient;
 use crate::commands::{memepump, signal, token};
 use crate::output;
 
@@ -20,19 +22,17 @@ use super::token_research::is_launchpad_token;
 
 const TOP_N: usize = 5;
 
-pub async fn run(ctx: &Context, chain: Option<String>) -> Result<()> {
-    let chain_index = chain
-        .as_deref()
-        .map(|c| chains::resolve_chain(c).to_string())
-        .unwrap_or_else(|| ctx.chain_index_or("solana"));
-
+pub(crate) async fn fetch_and_assemble(
+    client: Arc<Mutex<ApiClient>>,
+    chain_index: &str,
+) -> Result<Value> {
     // ── Step 1 ───────────────────────────────────────────────────────
     let raw_signals = {
-        let mut client = ctx.client_async().await?;
+        let mut guard = client.lock().await;
         ok_or_null(
             signal::fetch_list(
-                &mut client,
-                &chain_index,
+                &mut guard,
+                chain_index,
                 None, None, None, None, None, None, None, None, None, None, None, None,
             )
             .await,
@@ -42,12 +42,11 @@ pub async fn run(ctx: &Context, chain: Option<String>) -> Result<()> {
     let top_tokens = extract_top_tokens(&raw_signals, TOP_N);
 
     // ── Step 2: per-token enrichment (parallel, max TOP_N) ───────────
-    let client = Arc::new(tokio::sync::Mutex::new(ctx.client_async().await?));
     let mut set: JoinSet<(String, Value)> = JoinSet::new();
 
     for (token_addr, signal_item) in top_tokens {
         let c = Arc::clone(&client);
-        let ci = chain_index.clone();
+        let ci = chain_index.to_string();
         let addr = token_addr.clone();
         set.spawn(async move {
             let mut guard = c.lock().await;
@@ -93,7 +92,18 @@ pub async fn run(ctx: &Context, chain: Option<String>) -> Result<()> {
         enriched.push(json!({ "address": addr, "data": data }));
     }
 
-    output::success(assemble(&chain_index, raw_signals, enriched));
+    Ok(assemble(chain_index, raw_signals, enriched))
+}
+
+pub async fn run(ctx: &Context, chain: Option<String>) -> Result<()> {
+    let chain_index = chain
+        .as_deref()
+        .map(|c| chains::resolve_chain(c).to_string())
+        .unwrap_or_else(|| ctx.chain_index_or("solana"));
+
+    let client = Arc::new(Mutex::new(ctx.client_async().await?));
+    let result = fetch_and_assemble(client, &chain_index).await?;
+    output::success(result);
     Ok(())
 }
 
