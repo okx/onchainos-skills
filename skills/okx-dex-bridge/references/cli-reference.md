@@ -1,6 +1,6 @@
 # Onchain OS DEX Cross-Chain Swap -- CLI Command Reference
 
-Detailed parameter tables, return field schemas, and usage examples for all 6 cross-chain commands.
+Detailed parameter tables, return field schemas, and usage examples for all 7 cross-chain commands.
 
 ## 1. onchainos cross-chain chains
 
@@ -198,3 +198,37 @@ onchainos cross-chain status --order-id <orderId>
 | `bridgeChildOrderDetailVo.bridgeOrderInfoVo.bridgeName` | String | Bridge protocol name |
 
 **Success condition**: `fromChildOrderDetailVo.status=1` AND `bridgeChildOrderDetailVo.status=1`.
+
+## 7. onchainos cross-chain probe
+
+Probe which common tokens (USDC/USDT/native) can be bridged between two chains. Used as automatic fallback when direct quote returns no routes.
+
+```bash
+onchainos cross-chain probe --from-chain <chain> --to-chain <chain> [--readable-amount <n>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--from-chain` | Yes | - | Source chain name or index |
+| `--to-chain` | Yes | - | Destination chain name or index |
+| `--readable-amount` | No | 100 | Amount for estimation |
+
+**Return fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `fromChain` | String | Source chain index |
+| `toChain` | String | Destination chain index |
+| `readableAmount` | String | Amount used for estimation |
+| `bridgeableTokens` | Array | List of tokens that have bridgeable routes |
+| `bridgeableTokens[].token` | String | Token alias (usdc, usdt, native) |
+| `bridgeableTokens[].fromTokenAddress` | String | Token address on source chain |
+| `bridgeableTokens[].toTokenAddress` | String | Token address on destination chain |
+| `bridgeableTokens[].fromTokenSymbol` | String | Token symbol on source chain |
+| `bridgeableTokens[].toTokenSymbol` | String | Token symbol on destination chain |
+| `bridgeableTokens[].receiveAmount` | String | Best route estimated receive |
+| `bridgeableTokens[].minimumReceived` | String | Best route minimum guaranteed |
+| `bridgeableTokens[].totalFee` | String | Best route total fee (USD) |
+| `bridgeableTokens[].estimatedTime` | String | Best route estimated time (seconds) |
+| `bridgeableTokens[].bridgeName` | String | Best route bridge protocol name |
+| `bridgeableTokens[].routeCount` | Number | Total available routes for this token |

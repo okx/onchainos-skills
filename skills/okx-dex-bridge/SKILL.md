@@ -10,7 +10,7 @@ metadata:
 
 # Onchain OS DEX Cross-Chain Swap
 
-6 commands for cross-chain aggregation — quote, execute (with three modes: check-approve / confirm-approve / skip-approve), calldata-only, and status tracking.
+7 commands for cross-chain aggregation — quote, execute (with three modes: check-approve / confirm-approve / skip-approve), calldata-only, status tracking, and probe (fallback path discovery).
 
 <IMPORTANT>
 All user-facing output (table headers, prompts, warnings, reminders) MUST match the user's input language:
@@ -29,6 +29,7 @@ All user-facing output (table headers, prompts, warnings, reminders) MUST match 
 - **Do NOT show raw CLI error output to the user.** If a command fails, interpret the error and provide a user-friendly message.
 - **Query command fallback:** If `cross-chain chains` or `cross-chain bridge` CLI command fails (404, network failure, etc.), THEN fall back to the static chain/bridge list defined in this skill file (the "Cross-chain supported chains" table below). Do not retry or show the error to the user — silently use the static data.
 - **Execution command errors:** If `cross-chain quote`, `cross-chain execute`, or `cross-chain status` fails, show the error reason in plain language (not raw JSON) and suggest next steps.
+- **Unsupported chain:** If quote returns `该桥链不支持其他业务内部API调用`, tell the user "暂不支持该链" (or English equivalent per language rule). Do not expose the raw error message.
 
 ## Pre-flight Checks
 
@@ -81,7 +82,7 @@ Cross-chain supported chains (14 of 17):
 ## Command Index
 
 <IMPORTANT>
-Only use the 6 subcommands listed below. Do NOT invent commands like `supported-chains`, `list-chains`, `get-bridges`. The CLI will reject unknown subcommands.
+Only use the 7 subcommands listed below. Do NOT invent commands like `supported-chains`, `list-chains`, `get-bridges`. The CLI will reject unknown subcommands.
 </IMPORTANT>
 
 ### 1. `onchainos cross-chain chains`
@@ -91,16 +92,19 @@ Query supported chain pairs. No parameters. **NOT `supported-chains` — the sub
 - **Returns**: chain pair mapping (fromChainId → toChainId list)
 
 ### 2. `onchainos cross-chain bridge`
-Query available bridge protocols. No parameters.
+Query available bridge protocols that are actually in use.
 - **When**: user asks about available bridges
 - **Triggers**: "what bridges are available", "查看跨链桥", "list bridges", "有哪些桥"
-- **Returns**: bridge list with name, type, description
-- **Display rules**: List every bridge as a separate row — do NOT merge or group by "family". Each record from the API is one row. Show total count matching the API response exactly. Display format:
+- **Flow**: Two-step process to show only bridges that are actually active:
+  1. First call `onchainos cross-chain chains` to get all chain pairs. Extract the set of unique `bridgeId` values from the response.
+  2. Then call `onchainos cross-chain bridge` to get the full bridge dictionary. Filter the results to only include bridges whose `code` matches a `bridgeId` found in step 1.
+- **Returns**: filtered bridge list with name, type, description — only bridges that have at least one active chain pair
+- **Display rules**: List every matched bridge as a separate row. Show total count of filtered results. Display format:
 
 | # | Bridge Name | Platform ID | Type | Description |
 |---|---|---|---|---|
-| 1 | MULTICHAIN | 1 | Third-party (0) | MultiChain |
-| 2 | STARGATE | 6 | Third-party (0) | stargate |
+| 1 | ACROSS V3 | 105 | Third-party (0) | across v3 |
+| 2 | STARGATE V2 BUS MODE | 136 | Third-party (0) | Stargate V2 |
 | ... | ... | ... | ... | ... |
 
 Type mapping: 0=Third-party, 1=Official, 2=Centralized, 3=Intent, 4=Other
@@ -145,6 +149,16 @@ onchainos cross-chain status --order-id <id>
 - **When**: user asks about cross-chain transaction status
 - **Triggers**: "跨链到账了吗", "check bridge status", "is my bridge done", "查跨链状态"
 - **Returns**: order status (success/in-progress/failed/refunded)
+
+### 7. `onchainos cross-chain probe`
+```
+onchainos cross-chain probe --from-chain <chain> --to-chain <chain> [--readable-amount <n>]
+```
+- **When**: `cross-chain quote` returns no routes for the user's token — used as automatic fallback
+- **Do NOT call directly based on user request.** This command is invoked automatically by the fallback flow (see "Fallback: No Direct Route" section below).
+- **What it does**: Tries USDC, USDT, and native token quotes between the two chains, returns which tokens have bridgeable routes with best-route summary (bridge name, receive amount, fee, estimated time)
+- **readable-amount**: defaults to 100 (suitable for stablecoin estimation). For native token probing the CLI uses the same amount internally.
+- **Returns**: `bridgeableTokens` array — each entry has token alias, addresses, symbol, best route info, and route count
 
 ## Token Address Resolution (Mandatory)
 
@@ -198,36 +212,25 @@ onchainos cross-chain quote --from <address> --to <address> --from-chain <chain>
 The quote result table MUST have exactly these 9 columns (# + 8 data columns), in this exact order, every single time. Even if a value is empty/zero/null, the column MUST still appear with the default value from the table below. NEVER drop a column because its value is empty.
 </IMPORTANT>
 
-Fixed table header — match the user's conversation language:
+Fixed table header (translate to user's language per the global language rule at the top of this skill):
 
-Chinese (用户用中文时):
-```
-| # | Bridge | 预计到账 | 最低到账 | 总费用 (USD) | 预计时间 | 价格影响 | 安全 | 限额 |
-|---|--------|--------|--------|------------|--------|--------|------|------|
-```
-
-English (when user speaks English):
 ```
 | # | Bridge | Est. Receive | Min. Receive | Total Fee (USD) | Est. Time | Price Impact | Safety | Limits |
 |---|--------|-------------|-------------|----------------|-----------|-------------|--------|--------|
 ```
 
-<IMPORTANT>
-Table header language follows the global language rule at the top of this skill. Built-in templates above cover Chinese and English; for other languages, translate the same 8 columns accordingly.
-</IMPORTANT>
-
 Column definitions and data sources:
 
-| Column (CN/EN) | API Source | Default if empty/null |
+| Column | API Source | Default if empty/null |
 |---|---|---|
 | Bridge | `bridge.bridgeName` | - |
-| 预计到账 / Est. Receive | `receiveAmount` (UI units + symbol) | - |
-| 最低到账 / Min. Receive | `minimumReceived` (UI units + symbol) | - |
-| 总费用 (USD) / Total Fee (USD) | `totalFee` (USD format) | $0.00 |
-| 预计时间 / Est. Time | `estimatedTime` (seconds → human readable) | - |
-| 价格影响 / Price Impact | `valueDiffInfo.diffPercent` (show as %). >10% → WARN | 0% |
-| 安全 / Safety | `commonDexInfo.isHoneypot` (0→"Safe", 1→"Honeypot BLOCK") | Safe |
-| 限额 / Limits | `commonDexInfo.crossMiniAmount` ~ `crossMaxAmount` (source token units) | No limit |
+| Est. Receive | `receiveAmount` (UI units + symbol) | - |
+| Min. Receive | `minimumReceived` (UI units + symbol) | - |
+| Total Fee (USD) | `totalFee` (USD format) | $0.00 |
+| Est. Time | `estimatedTime` (seconds → human readable) | - |
+| Price Impact | `valueDiffInfo.diffPercent` (show as %). >10% → WARN | 0% |
+| Safety | `commonDexInfo.isHoneypot` (0→"Safe", 1→"Honeypot BLOCK") | Safe |
+| Limits | `commonDexInfo.crossMiniAmount` ~ `crossMaxAmount` (source token units) | No limit |
 
 Perform risk checks on each route (see **Risk Controls**).
 
@@ -241,6 +244,39 @@ Authorization is determined by the CLI's `execute` command (default mode), which
 </IMPORTANT>
 
 This combines the quote confirmation and authorize confirmation into **one step**.
+
+### Fallback: No Direct Route
+
+When `cross-chain quote` returns no routes (`pathSelectionRouterList` is empty or API returns an error like "该桥链不支持"), do NOT immediately tell the user "unsupported". Instead, automatically run the probe to discover alternative bridgeable paths:
+
+```bash
+onchainos cross-chain probe --from-chain <fromChainIndex> --to-chain <toChainIndex> --readable-amount <amount>
+```
+
+**If probe returns bridgeable tokens** — display the list and let the user choose:
+
+```
+{tokenSymbol} cannot be bridged directly from {fromChain} to {toChain}. These tokens support cross-chain:
+
+| # | Transit Token | Est. Receive | Bridge Fee (USD) | Est. Time | Bridge |
+|---|--------------|-------------|-----------------|-----------|--------|
+| 1 | USDC         | 99.98 USDC  | $0.48           | ~45s      | ACROSS V3 (3 routes) |
+| 2 | ETH          | 99.94 ETH   | $0.35           | ~2min     | STARGATE V2 (2 routes) |
+
+Pick a transit token. Steps:
+1. Swap {tokenSymbol} to the chosen token on {fromChain}
+2. Bridge the token from {fromChain} to {toChain}
+3. Swap the token to your target asset on {toChain}
+```
+
+Rules:
+- List ALL bridgeable tokens from probe results, sorted by totalFee ascending
+- Show route count per token so user knows there are alternatives
+- Step 3 only shown if the user's final target on the destination chain is different from the transit token
+- After user picks a transit token, guide them through swap → bridge → swap sequentially, using the `okx-dex-swap` and `okx-dex-bridge` skills
+
+**If probe also returns empty** — then truly no path exists:
+> "{tokenSymbol} cannot be bridged from {fromChain} to {toChain}"
 
 ### Step 4 -- User Confirmation
 
@@ -406,7 +442,7 @@ Always provide: orderId + fromTxHash when escalating.
 |---|---|---|
 | Honeypot (`isHoneyPot=true` on destination token) | BLOCK | Cannot sell after buying |
 | High tax rate (>10%) | WARN | Display exact tax rate, ask confirmation |
-| No quote available | CANNOT | Chain pair may not be supported, or token not bridgeable |
+| No quote available | FALLBACK | Run `cross-chain probe` to discover alternative bridgeable tokens (see "Fallback: No Direct Route") |
 | Amount < route minimum (`crossMiniAmount`) | BLOCK | Show minimum and suggest increasing amount |
 | Amount > route maximum (`crossMaxAmount`) | BLOCK | Show maximum and suggest splitting into multiple transactions |
 | All routes exceed limits | CANNOT | No viable route for this amount |
@@ -415,9 +451,9 @@ Always provide: orderId + fromTxHash when escalating.
 | Black/flagged address | BLOCK | Address flagged by security services |
 | isNeedClaim = "1" | BLOCK | Route requires manual redeem on destination chain (not supported this period) |
 | Insufficient source token balance | BLOCK | Show current balance, required amount |
-| Insufficient gas balance | BLOCK | Prompt to deposit native token for gas |
+| Insufficient gas balance | BLOCK | Remind user gas is insufficient |
 
-**Legend**: BLOCK = halt, do not proceed. WARN = display warning, ask confirmation. CANNOT = operation impossible, explain why.
+**Legend**: BLOCK = halt, do not proceed. WARN = display warning, ask confirmation. CANNOT = operation impossible, explain why. FALLBACK = run probe to find alternative paths.
 
 ### MEV Protection
 
@@ -473,7 +509,7 @@ Enabled only when the user has **explicitly authorized** automated execution. Th
 
 ## Additional Resources
 
-`references/cli-reference.md` -- full params, return fields, and examples for all 6 commands.
+`references/cli-reference.md` -- full params, return fields, and examples for all 7 commands.
 
 ## Edge Cases
 

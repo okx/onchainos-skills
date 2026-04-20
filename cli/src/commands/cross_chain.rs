@@ -119,6 +119,19 @@ pub enum CrossChainCommand {
         #[arg(long)]
         order_id: String,
     },
+
+    /// Probe which common tokens (USDC/USDT/native) can be bridged between two chains
+    Probe {
+        /// Source chain (e.g. ethereum, arbitrum)
+        #[arg(long)]
+        from_chain: String,
+        /// Destination chain (e.g. solana, base)
+        #[arg(long)]
+        to_chain: String,
+        /// Human-readable amount for estimation (default: 100)
+        #[arg(long, default_value = "100")]
+        readable_amount: String,
+    },
 }
 
 // ── Public entry point ──────────────────────────────────────────────
@@ -218,6 +231,13 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
         }
         CrossChainCommand::Status { order_id } => {
             output::success(fetch_order_details(&mut client, &order_id).await?);
+        }
+        CrossChainCommand::Probe {
+            from_chain,
+            to_chain,
+            readable_amount,
+        } => {
+            cmd_probe(&mut client, &from_chain, &to_chain, &readable_amount).await?;
         }
     }
     Ok(())
@@ -961,6 +981,86 @@ async fn cmd_execute(
         "calldataType": calldata_type,
     }));
 
+    Ok(())
+}
+
+// ── Probe: try common tokens for bridgeability ────────────────────
+
+async fn cmd_probe(
+    client: &mut ApiClient,
+    from_chain: &str,
+    to_chain: &str,
+    readable_amount: &str,
+) -> Result<()> {
+    let from_chain_index = crate::chains::resolve_chain(from_chain);
+    let to_chain_index = crate::chains::resolve_chain(to_chain);
+
+    // Candidate aliases to try — resolve_token_address handles per-chain mapping
+    let candidates = ["usdc", "usdt", "native"];
+    let mut results = Vec::new();
+    let mut seen_pairs: Vec<(String, String)> = Vec::new();
+
+    for candidate in &candidates {
+        let from_token =
+            crate::commands::swap::resolve_token_address(&from_chain_index, candidate);
+        let to_token =
+            crate::commands::swap::resolve_token_address(&to_chain_index, candidate);
+
+        // Skip if token not mapped on either chain (resolve returns original string unchanged)
+        if from_token == *candidate || to_token == *candidate {
+            continue;
+        }
+
+        // Skip duplicate address pairs (e.g. native on both EVM chains = same 0xeee…)
+        let pair = (from_token.clone(), to_token.clone());
+        if seen_pairs.contains(&pair) {
+            continue;
+        }
+        seen_pairs.push(pair);
+
+        // Try quote — silently skip failures
+        match fetch_quote(
+            client,
+            &from_chain_index,
+            &to_chain_index,
+            &from_token,
+            &to_token,
+            readable_amount,
+            None,
+            "0",
+        )
+        .await
+        {
+            Ok(quote) => {
+                if let Some(routes) = quote["pathSelectionRouterList"].as_array() {
+                    if !routes.is_empty() {
+                        let best = &routes[0];
+                        results.push(json!({
+                            "token": candidate,
+                            "fromTokenAddress": from_token,
+                            "toTokenAddress": to_token,
+                            "fromTokenSymbol": quote["commonDexInfo"]["fromToken"]["tokenSymbol"],
+                            "toTokenSymbol": quote["commonDexInfo"]["toToken"]["tokenSymbol"],
+                            "receiveAmount": best["receiveAmount"],
+                            "minimumReceived": best["minimumReceived"],
+                            "totalFee": best["totalFee"],
+                            "estimatedTime": best["estimatedTime"],
+                            "bridgeName": best["bridge"]["bridgeName"],
+                            "routeCount": routes.len(),
+                        }));
+                    }
+                }
+            }
+            Err(_) => continue,
+        }
+    }
+
+    output::success(json!({
+        "fromChain": from_chain_index,
+        "toChain": to_chain_index,
+        "readableAmount": readable_amount,
+        "bridgeableTokens": results,
+    }));
     Ok(())
 }
 
