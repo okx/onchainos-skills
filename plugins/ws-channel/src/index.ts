@@ -324,21 +324,12 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
             reply: makeReply(convId),
           }));
 
-          // 子 session 处理完毕后，关键系统通知自动推送到主 session（由用户决策）
-          const PUSH_TO_MAIN = new Set(["TASK_REFUSED", "TASK_REJECTED", "TASK_DISPUTED"]);
-          if (PUSH_TO_MAIN.has(msgType) || (msgType === "TASK_COMPLETED" && (envelope.payload as any).arbitration)) {
+          // 子 session 处理完毕后，仅 TASK_REFUSED 需要推送到主 session（由用户决策仲裁/退款）
+          // TASK_DISPUTED / TASK_REJECTED / TASK_COMPLETED 由子 session 按 provider.md 自行处理
+          if (msgType === "TASK_REFUSED") {
             const jobId = envelope.payload.jobId ?? "?";
-            let mainBody: string;
-            if (msgType === "TASK_REFUSED") {
-              mainBody = `[任务通知 - 需要你的决策]\n任务 ${jobId} 被买家拒绝（TASK_REFUSED）\n子 session 会话: ${convId}\n\n请选择：\n1. 发起仲裁 → 请告诉我理由，我会调用 task_relay 转发到子 session 执行\n2. 同意退款 → 我会调用 task_relay 转发到子 session 执行\n\n示例：\"帮我对 ${jobId} 发起仲裁，理由是交付物完全符合验收标准\"`;
-            } else if (msgType === "TASK_DISPUTED") {
-              mainBody = `[任务通知]\n任务 ${jobId} 已进入仲裁（TASK_DISPUTED），等待仲裁者裁决。\n子 session 会话: ${convId}`;
-            } else if (msgType === "TASK_REJECTED") {
-              mainBody = `[任务通知]\n任务 ${jobId} 已终止（TASK_REJECTED），资金已退还买家。\n子 session 会话: ${convId}`;
-            } else {
-              mainBody = `[任务通知]\n任务 ${jobId} 仲裁完成（卖家胜诉），资金已释放。\n子 session 会话: ${convId}`;
-            }
-            ctx.log?.info?.(`[ws-channel] 子 session 处理完毕，推送 ${msgType} 到主 session jobId=${jobId}`);
+            const mainBody = `[任务通知 - 需要你的决策]\n任务 ${jobId} 被买家拒绝（TASK_REFUSED）\n子 session 会话: ${convId}\n\n请选择：\n1. 发起仲裁 → 请告诉我理由\n2. 同意退款\n\n⚠️ 执行方式（按优先级）：\n- 优先调用 task_relay 工具转发到子 session：task_relay(conversationId="${convId}", instruction="发起仲裁，理由：...")\n- 若 task_relay 不可用，直接执行 CLI：onchainos agent dispute raise ${jobId} --reason "理由"\n- 同意退款：onchainos agent agree-refund ${jobId}\n\n后续 TASK_DISPUTED/TASK_REJECTED 通知会自动路由到子 session 处理，不会在主 session 出现。\n\n示例：\"帮我对 ${jobId} 发起仲裁，理由是交付物完全符合验收标准\"`;
+            ctx.log?.info?.(`[ws-channel] 子 session 处理完毕，推送 TASK_REFUSED 到主 session jobId=${jobId}`);
             await enqueueDispatch("main", () => handleInboundMessage({
               cfg: ctx.cfg,
               accountId: account.accountId,
@@ -351,7 +342,7 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
               },
               sessionMode: "main",
               reply: (text) => {
-                ctx.log?.info?.(`[ws-channel] 主 session 收到 ${msgType} 通知后回复: ${text.slice(0, 200)}`);
+                ctx.log?.info?.(`[ws-channel] 主 session 收到 TASK_REFUSED 通知后回复: ${text.slice(0, 200)}`);
               },
             }));
           }

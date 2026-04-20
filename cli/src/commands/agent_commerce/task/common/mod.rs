@@ -161,13 +161,14 @@ fn available_actions(role: &str, status: &str, job_id: &str) -> Vec<String> {
             format!("onchainos agent dispute evidence {job_id} --summary <摘要>  # 提交证据"),
         ],
         ("seller", "open") => vec![
-            format!("onchainos agent confirm {job_id}        # 确认接单（链上）"),
+            format!("onchainos agent apply {job_id} --token-amount <price> --token-symbol USDT --agent-id <agentId>  # 申请接单"),
         ],
         ("seller", "accepted") => vec![
-            format!("onchainos agent deliver {job_id} --file <deliverable>  # 提交交付"),
+            format!("onchainos agent deliver {job_id} --file <deliverable> --message <msg>  # 提交交付"),
         ],
         ("seller", "refused") => vec![
-            format!("onchainos agent dispute raise {job_id} --reason <reason>  # 申请仲裁"),
+            format!("onchainos agent dispute raise {job_id} --reason <reason>  # 发起仲裁"),
+            format!("onchainos agent agree-refund {job_id}  # 同意退款"),
         ],
         ("seller", "disputed") => vec![
             format!("onchainos agent dispute evidence {job_id} --summary <摘要>  # 提交证据"),

@@ -77,7 +77,7 @@ jobId:  <从来源消息提取>
 | TASK_APPLIED | 买家 | 忽略 llm → Scene 3：生成付款单并发送给买家 |
 | TASK_ACCEPTED | 卖家 | 执行 ✅ → Scene 4：开始执行任务并交付 |
 | TASK_SUBMITTED | 买家 | 忽略 llm → Scene 5：告知买家交付物已上链 |
-| TASK_REFUSED | 卖家 | 执行 ✅ → Scene 6：通知主 session，等待用户决定 |
+| TASK_REFUSED | 卖家 | 执行 ✅ → Scene 6：子 session 回复买家，ws-channel 自动推送主 session 等待用户通过 task_relay 转发决策 |
 | TASK_COMPLETED | 双方 | Scene 7：确认完成（含仲裁胜诉场景） |
 | TASK_DISPUTED | 双方 | Scene 6.4：提交证据 |
 | TASK_REJECTED | 双方 | Scene 6.5：任务终止（退款/仲裁败诉） |
@@ -94,10 +94,11 @@ jobId:  <从来源消息提取>
 | `TASK_APPLIED` | 链上申请已提交成功 | → Scene 3：生成付款单，发送给买家 |
 | `TASK_ACCEPTED` | 买家已确认接单，资金托管 | → Scene 4：开始执行任务 |
 | `TASK_SUBMITTED` | 交付物已上链 | → Scene 5：等待买家验收 |
-| `TASK_REFUSED` | 买家拒绝交付物 | → Scene 6：通知主 session，等待用户决定 |
+| `TASK_REFUSED` | 买家拒绝交付物 | → Scene 6：在子 session 回复买家，ws-channel 自动推送到主 session 等待用户决策 |
 | `TASK_COMPLETED` | 买家验收通过 / 超时自动完成 / 仲裁卖家胜诉 | → Scene 7：任务完成 |
-| `TASK_DISPUTED` | 仲裁已发起 | → Scene 6.4：提交证据 |
-| `TASK_REJECTED` | 退款完成 / 仲裁买家胜诉 | → Scene 6.5：任务终止 |
+| `TASK_DISPUTED` | 仲裁已发起 | → Scene 6.4：提交证据（子 session 自行处理） |
+| `TASK_REJECTED` | 退款完成 / 仲裁买家胜诉 | → Scene 6.5：任务终止（子 session 自行处理） |
+| `USER_INSTRUCTION` | 主 session 通过 task_relay 转发的用户指令 | → 解析指令，执行对应 CLI 命令（dispute raise / agree-refund） |
 
 ---
 
@@ -181,7 +182,7 @@ jobId:  0x3ec
 
 **第一步——调用 CLI 提交链上申请（这是触发 TASK_APPLIED 的唯一途径，必须执行）：**
 ```bash
-onchainos agent confirm <jobId> --token-amount <协商价格> --token-symbol <USDT|USDG> --agent-id <你的agentId>
+onchainos agent apply <jobId> --token-amount <协商价格> --token-symbol <USDT|USDG> --agent-id <你的agentId>
 ```
 - `--token-amount`：协商后的价格（不带精度的整数或小数字符串），0 或省略表示接受原价
 - `--token-symbol`：支付币种（USDT 或 USDG），省略则从任务读取
@@ -198,7 +199,7 @@ jobId:  0x3ec
 ----------------------------------------
 协商达成，已提交接单申请。报价 {price} USDT，支付方式 {paymentMode}，{hours}h 交付。等待链上确认。
 
-> ⚠️ 不得只在回复文字里写"类型：TASK_APPLY"——那不会触发任何链上操作。必须实际执行 `onchainos agent confirm <jobId> --token-amount <price> --token-symbol <USDT|USDG> --agent-id <agentId>`。
+> ⚠️ 不得只在回复文字里写"类型：TASK_APPLY"——那不会触发任何链上操作。必须实际执行 `onchainos agent apply <jobId> --token-amount <price> --token-symbol <USDT|USDG> --agent-id <agentId>`。
 
 ---
 
@@ -329,42 +330,36 @@ jobId:  {jobId}
 
 > **重要**：收到 TASK_REFUSED 后，卖家 Agent 不得自行决定仲裁或退款。必须通知主 session 由用户决定。
 
-### 步骤 10：在子 session 通知买家 + 推送主 session
+### 步骤 10：在子 session 通知买家
 
-收到 TASK_REFUSED 后，必须做两件事（缺一不可）：
-
-**第一步——输出 header 格式回复（告知买家已收到拒绝通知）：**
+收到 TASK_REFUSED 后，输出 header 格式回复告知买家：
 
 jobId:  {jobId}
 来自:   {你的 agentId} [PROVIDER]
 类型:   REPLY
 会话:   {convId}
 ----------------------------------------
-已收到买家拒绝通知（TASK_REFUSED）。正在确认后续处理方案。
+已收到买家拒绝通知（TASK_REFUSED）。正在确认后续处理方案，请稍候。
 
-**第二步——调用 notify_main 工具推送到主 session（必须执行，否则用户看不到通知）：**
+> ws-channel 会自动将 TASK_REFUSED 推送到主 session 通知用户，无需 Agent 额外操作。
 
-```
-notify_main(
-  jobId: "<jobId>",
-  conversationId: "<convId>",
-  message: "任务 <jobId> 被买家拒绝（TASK_REFUSED），原因：交付物不符合验收标准。\n请选择：\n1. 发起仲裁（输入理由）\n2. 同意退款"
-)
-```
+### 步骤 11：等待用户决策
 
-> ⚠️ 不调用 notify_main = 用户无法在主 session 看到通知 = 流程卡住。必须调用。
+**ws-channel 自动将 TASK_REFUSED 推送到主 session。** 主 session 展示选项后，用户做出决定。
 
-### 步骤 11：用户决策流回子 session
+**执行方式（按优先级）：**
+1. **优先 task_relay**：调用 `task_relay(conversationId="<子 session 会话 ID>", instruction="发起仲裁，理由：...")` 转发到子 session 执行
+2. **fallback 直接执行 CLI**：若 task_relay 工具不可用，主 session 可直接执行 CLI 命令：
+   - 发起仲裁：`onchainos agent dispute raise <jobId> --reason "<理由>"`
+   - 同意退款：`onchainos agent agree-refund <jobId>`
 
-**等待用户通过主 session 下达指令后再执行对应操作。** Provider 有 24 小时决定，超时资金归还买家。
+> 无论哪种方式，后续 TASK_DISPUTED / TASK_REJECTED 链上通知都会自动路由到子 session 处理（提交证据、确认终止等），不会在主 session 出现。
 
-用户指令通过 task_relay 工具从主 session 转发到子 session，格式为 `[用户指令] <指令内容>`。收到后按指令内容执行：
-- 包含"仲裁"或"dispute" → 步骤 13（Scene 6.3）
-- 包含"退款"或"refund"或"agree" → 步骤 12（Scene 6.2）
+**子 session 收到 USER_INSTRUCTION（task_relay 转发）后：** 解析指令内容，执行步骤 12 或步骤 13。Provider 有 24 小时决定，超时资金归还买家。
 
 ### 步骤 12（Scene 6.2）：同意退款 → TASK_REJECTED
 
-收到用户同意退款指令后，执行：
+收到用户同意退款指令（USER_INSTRUCTION 或主 session 转发）后，执行：
 
 ```bash
 onchainos agent agree-refund <jobId>
@@ -385,7 +380,7 @@ jobId:  {jobId}
 
 ### 步骤 13（Scene 6.3）：发起仲裁
 
-收到用户仲裁指令后，执行：
+收到用户仲裁指令（USER_INSTRUCTION 或主 session 转发）后，执行：
 
 ```bash
 onchainos agent dispute raise <jobId> --reason "<用户提供的理由或默认：已按验收标准完成>"
@@ -465,7 +460,7 @@ jobId:  {jobId}
 |---|------|----------|----------|-------|
 | 1 | 协商（了解任务、价格、支付方式） | NEGOTIATE / REPLY from buyer | 无（纯文本协商） | Scene 2 |
 | 2 | 拒绝（协商不成功） | 协商失败 | 无（纯文本拒绝） | Scene 2 |
-| 3 | 申请接单 | 协商达成 | `onchainos agent confirm <jobId> --token-amount <price> --token-symbol <symbol> --agent-id <agentId>` | Scene 2 |
+| 3 | 申请接单 | 协商达成 | `onchainos agent apply <jobId> --token-amount <price> --token-symbol <symbol> --agent-id <agentId>` | Scene 2 |
 | 4 | 等待 TASK_APPLIED | 链上确认 | 无 | Scene 3 |
 | 5 | 生成付款单，发送给买家 | TASK_APPLIED | `onchainos agent payment <jobId>` | Scene 3 |
 | 6 | 等待 TASK_ACCEPTED，开始工作 | TASK_ACCEPTED | 无（纯文本确认） | Scene 4 |
@@ -473,7 +468,7 @@ jobId:  {jobId}
 | 8 | 发送交付链接 | TASK_SUBMITTED | 无（纯文本通知） | Scene 5 |
 | 9 | 任务完成 | TASK_COMPLETED | 无（纯文本确认） | Scene 7 |
 | 10 | 买家拒绝 → 通知主 session | TASK_REFUSED | 无（通知主 session 等待用户指令） | Scene 6 |
-| 11 | 用户决策流回子 session | 用户指令 | 无 | Scene 6 |
+| 11 | 等待用户决策 | 用户指令 | 用户直接执行 CLI | Scene 6 |
 | 12 | 同意退款 → 等待 TASK_REJECTED | 用户指令 | `onchainos agent agree-refund <jobId>` | Scene 6.2 |
 | 13 | 发起仲裁 | 用户指令 | `onchainos agent dispute raise <jobId> --reason "<reason>"` | Scene 6.3 |
 | 14 | 收到 TASK_DISPUTED → 提交证据 | TASK_DISPUTED | `onchainos agent dispute evidence <jobId> --summary "<summary>"` | Scene 6.4 |

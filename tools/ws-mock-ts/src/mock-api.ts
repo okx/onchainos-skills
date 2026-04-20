@@ -642,7 +642,7 @@ const server = http.createServer(async (req, res) => {
     const body = await parseBody(req) as Record<string, unknown>;
     const text = String(body.text ?? body.summary ?? "");
     console.log(`[mock-api] evidence uploaded: job=${jobId} text="${text.slice(0, 80)}"`);
-    sendOk(res, null); return;
+    sendOk(res, { uopData: mockUopData() }); return;
   }
   // ── Broadcast (CLI task_sign_and_broadcast final step) ────────────────────
   if (method === "POST" && path_ === "/api/v1/task/broadcast") {

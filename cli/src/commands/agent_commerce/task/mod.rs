@@ -75,6 +75,30 @@ pub enum TaskSystemCommand {
     SetPublic { job_id: String },
 
 
+    /// Provider applies for a task (apply API → sign → broadcast)
+    Apply {
+        job_id: String,
+        #[arg(long = "token-amount", default_value = "0")]
+        token_amount: String,
+        #[arg(long = "token-symbol", default_value = "USDT")]
+        token_symbol: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+
+    /// Provider submits deliverable (submit API → sign → broadcast)
+    Deliver {
+        job_id: String,
+        #[arg(long, default_value = "")]
+        file: String,
+        #[arg(long, default_value = "任务已完成，请验收")]
+        message: String,
+    },
+
+    /// Provider agrees to refund (agreeRefund API → sign → broadcast)
+    #[command(name = "agree-refund")]
+    AgreeRefund { job_id: String },
+
     /// Provider generates payment invoice after TASK_APPLIED
     Payment { job_id: String },
 
@@ -92,9 +116,9 @@ pub enum TaskSystemCommand {
 
     // ── Dispute (kept as sub-group) ──────────────────────────────────────────
 
-    /// Dispute actions: evidence, info
+    /// Dispute actions: raise, evidence, info
     #[command(subcommand)]
-    Dispute(client::DisputeCommand),
+    Dispute(provider::DisputeCommand),
 
     // ── Common ───────────────────────────────────────────────────────────────
 
@@ -150,6 +174,15 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
             client::run_task(T::SetPublic { job_id }, ctx).await,
 
 
+        TaskSystemCommand::Apply { job_id, token_amount, token_symbol, agent_id } =>
+            provider::run_provider(provider::ProviderCommand::Apply { job_id, token_amount, token_symbol, agent_id }, ctx).await,
+
+        TaskSystemCommand::Deliver { job_id, file, message } =>
+            provider::run_provider(provider::ProviderCommand::Deliver { job_id, file, message }, ctx).await,
+
+        TaskSystemCommand::AgreeRefund { job_id } =>
+            provider::run_provider(provider::ProviderCommand::AgreeRefund { job_id }, ctx).await,
+
         TaskSystemCommand::Payment { job_id } =>
             client::run_task(T::Payment { job_id }, ctx).await,
 
@@ -164,7 +197,7 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
             client::run_task(T::Config { action }, ctx).await,
 
         TaskSystemCommand::Dispute(c) =>
-            client::run_dispute(c, ctx).await,
+            provider::run_dispute(c, ctx).await,
 
         TaskSystemCommand::Common(c) =>
             common::run(c, ctx).await,

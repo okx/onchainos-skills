@@ -129,6 +129,62 @@ class SellerSession {
       });
       return;
     }
+
+    // TASK_REFUSED → 自动发起仲裁（模拟卖家不同意退款）
+    if (type === "TASK_REFUSED") {
+      console.log(`[seller][session] TASK_REFUSED job=${this.jobId}, auto-disputing in 5s...`);
+      this.reply({
+        type: "REPLY", jobId: this.jobId,
+        content: formatMsg(this.jobId, this.convId, "REPLY", "已收到拒绝通知，我认为交付物符合验收标准，正在发起仲裁。"),
+      });
+      await sleep(5000);
+      await callDisputeApi(this.jobId, "交付物完全符合验收标准").catch((e) =>
+        console.error(`[seller][api] dispute error:`, e),
+      );
+      return;
+    }
+
+    // TASK_DISPUTED → 自动提交证据
+    if (type === "TASK_DISPUTED") {
+      console.log(`[seller][session] TASK_DISPUTED job=${this.jobId}, submitting evidence in 3s...`);
+      this.reply({
+        type: "REPLY", jobId: this.jobId,
+        content: formatMsg(this.jobId, this.convId, "REPLY", "仲裁已发起，正在提交证据。"),
+      });
+      await sleep(3000);
+      await callEvidenceApi(this.jobId, "交付物已按验收标准完成，包含完整代码和注释").catch((e) =>
+        console.error(`[seller][api] evidence error:`, e),
+      );
+      this.reply({
+        type: "REPLY", jobId: this.jobId,
+        content: formatMsg(this.jobId, this.convId, "REPLY", "证据已提交，等待仲裁者裁决。"),
+      });
+      return;
+    }
+
+    // TASK_REJECTED → 仲裁结果（买家胜诉），任务终止
+    if (type === "TASK_REJECTED") {
+      const arb = Boolean((envelope.payload as any).arbitration);
+      console.log(`[seller][session] TASK_REJECTED job=${this.jobId} arbitration=${arb}`);
+      this.reply({
+        type: "REPLY", jobId: this.jobId,
+        content: formatMsg(this.jobId, this.convId, "REPLY", "任务已终止（TASK_REJECTED），资金已退还买家。"),
+      });
+      return;
+    }
+
+    // TASK_COMPLETED（含仲裁胜诉）→ 任务完成
+    if (type === "TASK_COMPLETED") {
+      const arb = Boolean((envelope.payload as any).arbitration);
+      console.log(`[seller][session] TASK_COMPLETED job=${this.jobId} arbitration=${arb}`);
+      this.reply({
+        type: "REPLY", jobId: this.jobId,
+        content: formatMsg(this.jobId, this.convId, "REPLY", arb
+          ? "仲裁结果：卖家胜诉，资金已释放。感谢合作。"
+          : "任务已完成，资金已释放。感谢合作。"),
+      });
+      return;
+    }
   }
 }
 
@@ -151,6 +207,26 @@ async function callSubmitApi(jobId: string, deliverableUrl: string) {
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   console.log(`[seller][api] submitted job=${jobId}`);
+}
+
+async function callDisputeApi(jobId: string, reason: string) {
+  const res = await fetch(`${API_BASE_URL}/api/v1/task/${jobId}/dispute`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  console.log(`[seller][api] disputed job=${jobId}`);
+}
+
+async function callEvidenceApi(jobId: string, summary: string) {
+  const res = await fetch(`${API_BASE_URL}/api/v1/task/${jobId}/evidence`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: summary }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  console.log(`[seller][api] evidence submitted job=${jobId}`);
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────

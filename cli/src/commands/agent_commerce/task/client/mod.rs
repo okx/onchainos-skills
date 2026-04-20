@@ -7,7 +7,6 @@
 //! - `accept.rs`       — 确认接单 + Fund（场景3）
 //! - `complete.rs`     — 确认完成（场景5）
 //! - `refuse.rs`       — 拒绝交付物（场景6）
-//! - `evidence.rs`     — 提交证据（场景8）
 //! - `close.rs`        — 关单（场景7）+ 领取仲裁奖金
 //! - `changepublic.rs` — 设为 Public（场景8）
 //! - `judge.rs`        — 评价卖家（场景9，身份系统 CLI）
@@ -20,7 +19,6 @@ mod changepublic;
 mod close;
 mod complete;
 mod create;
-mod evidence;
 mod judge;
 mod negotiate;
 mod query;
@@ -115,10 +113,6 @@ pub enum TaskCommand {
     SetPublic {
         job_id: String,
     },
-    /// Provider applies for a public task
-    Apply {
-        job_id: String,
-    },
     /// Provider generates payment invoice after TASK_APPLIED
     Payment {
         job_id: String,
@@ -148,26 +142,6 @@ pub enum ConfigAction {
     Init,
     /// Show current configuration
     Show,
-}
-
-// ─── dispute subcommands ───────────────────────────────────────────────────
-
-#[derive(Subcommand)]
-pub enum DisputeCommand {
-    /// Either party submits evidence during dispute
-    Evidence {
-        job_id: String,
-        #[arg(long)]
-        summary: String,
-        #[arg(long)]
-        file: Option<String>,
-        #[arg(long = "type")]
-        evidence_type: Option<String>,
-    },
-    /// Retrieves dispute details
-    Info {
-        dispute_id: String,
-    },
 }
 
 // ─── 路由分发 ──────────────────────────────────────────────────────────────
@@ -220,8 +194,4 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             Ok(())
         }
     }
-}
-
-pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
-    evidence::run_evidence(cmd).await
 }
