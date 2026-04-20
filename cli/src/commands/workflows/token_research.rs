@@ -17,64 +17,76 @@ use crate::output;
 use super::{fetch_token_scan, ok_or_null, Context};
 
 pub async fn run(ctx: &Context, address: &str, chain: Option<String>) -> Result<()> {
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
     let chain_index = chain
         .as_deref()
         .map(|c| chains::resolve_chain(c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("solana"));
 
-    // ── Step 1: core data (parallel) ─────────────────────────────────
-    let (info_res, price_res, advanced_res, security) = tokio::join!(
-        token::fetch_info(&client, address, &chain_index),
-        token::fetch_price_info(&client, address, &chain_index),
-        token::fetch_advanced_info(&client, address, &chain_index),
-        fetch_token_scan(&client, &chain_index, address),
+    // ── Step 1: core data (sequential) ───────────────────────────────
+    let info = ok_or_null(token::fetch_info(&mut client, address, &chain_index).await);
+    let price = ok_or_null(token::fetch_price_info(&mut client, address, &chain_index).await);
+    let advanced = ok_or_null(token::fetch_advanced_info(&mut client, address, &chain_index).await);
+    let security = fetch_token_scan(&mut client, &chain_index, address).await;
+
+    // ── Step 2: on-chain structure (sequential) ──────────────────────
+    let holders = ok_or_null(
+        token::fetch_holders(&mut client, address, &chain_index, None, Some("100"), None).await,
     );
-
-    let info = ok_or_null(info_res);
-    let price = ok_or_null(price_res);
-    let advanced = ok_or_null(advanced_res);
-
-    // ── Step 2: on-chain structure (parallel) ────────────────────────
-    let (holders, cluster, top_traders, signals) = tokio::join!(
-        token::fetch_holders(&client, address, &chain_index, None, Some("100"), None),
+    let cluster = ok_or_null(
         token::fetch_cluster_by_address(
-            &client,
+            &mut client,
             "/api/v6/dex/market/token/cluster/overview",
             address,
             &chain_index,
-        ),
-        token::fetch_top_trader(&client, address, &chain_index, None, Some("20"), None),
+        )
+        .await,
+    );
+    let top_traders = ok_or_null(
+        token::fetch_top_trader(&mut client, address, &chain_index, None, Some("20"), None).await,
+    );
+    let signals = ok_or_null(
         signal::fetch_list(
-            &client,
+            &mut client,
             &chain_index,
             None, None, None, None, None,
             Some(address.to_string()),
             None, None, None, None, None, None,
-        ),
+        )
+        .await,
     );
 
     // ── Step 3: launchpad supplement (conditional) ───────────────────
     let launchpad = if is_launchpad_token(&advanced) {
-        let (details, dev_info, bundle_info, similar) = tokio::join!(
+        let details = ok_or_null(
             memepump::fetch_by_address(
-                &client, "/api/v6/dex/market/memepump/tokenDetails", address, &chain_index,
-            ),
+                &mut client, "/api/v6/dex/market/memepump/tokenDetails", address, &chain_index,
+            )
+            .await,
+        );
+        let dev_info = ok_or_null(
             memepump::fetch_by_address(
-                &client, "/api/v6/dex/market/memepump/tokenDevInfo", address, &chain_index,
-            ),
+                &mut client, "/api/v6/dex/market/memepump/tokenDevInfo", address, &chain_index,
+            )
+            .await,
+        );
+        let bundle_info = ok_or_null(
             memepump::fetch_by_address(
-                &client, "/api/v6/dex/market/memepump/tokenBundleInfo", address, &chain_index,
-            ),
+                &mut client, "/api/v6/dex/market/memepump/tokenBundleInfo", address, &chain_index,
+            )
+            .await,
+        );
+        let similar = ok_or_null(
             memepump::fetch_by_address(
-                &client, "/api/v6/dex/market/memepump/similarToken", address, &chain_index,
-            ),
+                &mut client, "/api/v6/dex/market/memepump/similarToken", address, &chain_index,
+            )
+            .await,
         );
         json!({
-            "tokenDetails":  ok_or_null(details),
-            "devInfo":       ok_or_null(dev_info),
-            "bundleInfo":    ok_or_null(bundle_info),
-            "similarTokens": ok_or_null(similar),
+            "tokenDetails":  details,
+            "devInfo":       dev_info,
+            "bundleInfo":    bundle_info,
+            "similarTokens": similar,
         })
     } else {
         Value::Null
@@ -87,10 +99,10 @@ pub async fn run(ctx: &Context, address: &str, chain: Option<String>) -> Result<
         price,
         advanced,
         security,
-        ok_or_null(holders),
-        ok_or_null(cluster),
-        ok_or_null(top_traders),
-        ok_or_null(signals),
+        holders,
+        cluster,
+        top_traders,
+        signals,
         launchpad,
     )?;
 

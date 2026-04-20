@@ -1,6 +1,6 @@
 /// W7 — Portfolio Check
 ///
-/// Step 1 (parallel): all balances + total value + 30d portfolio overview
+/// Step 1 (sequential): all balances + total value + 30d portfolio overview
 ///   partial failures: field null, rest continues
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -12,7 +12,7 @@ use crate::output;
 use super::{ok_or_null, Context};
 
 pub async fn run(ctx: &Context, address: &str, chains_arg: Option<String>) -> Result<()> {
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
 
     let chains_str = chains_arg.unwrap_or_else(|| {
         ctx.chain_override
@@ -28,20 +28,24 @@ pub async fn run(ctx: &Context, address: &str, chains_arg: Option<String>) -> Re
         .map(|c| chains::resolve_chain(c).to_string())
         .unwrap_or_else(|| "501".to_string());
 
-    // ── Step 1: parallel overview ─────────────────────────────────────
+    // ── Step 1: sequential overview ───────────────────────────────────
     // time_frame 4 = 1M
-    let (balances, total_value, overview) = tokio::join!(
-        portfolio::fetch_all_balances(&client, address, &chains_str, None, None),
-        portfolio::fetch_total_value(&client, address, &chains_str, None, None),
-        market::fetch_portfolio_overview(&client, &primary_chain_index, address, "4"),
+    let balances = ok_or_null(
+        portfolio::fetch_all_balances(&mut client, address, &chains_str, None, None).await,
+    );
+    let total_value = ok_or_null(
+        portfolio::fetch_total_value(&mut client, address, &chains_str, None, None).await,
+    );
+    let overview = ok_or_null(
+        market::fetch_portfolio_overview(&mut client, &primary_chain_index, address, "4").await,
     );
 
     output::success(assemble(
         address,
         &chains_str,
-        ok_or_null(balances),
-        ok_or_null(total_value),
-        ok_or_null(overview),
+        balances,
+        total_value,
+        overview,
     ));
     Ok(())
 }

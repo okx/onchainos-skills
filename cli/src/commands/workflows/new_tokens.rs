@@ -4,6 +4,8 @@
 ///   API failure: token_list null, Step 2 skipped entirely, returns gracefully
 /// Step 2: parallel safety + dev enrichment for top 10 results
 ///   individual sub-call failures: field null, rest continues
+use std::sync::Arc;
+
 use anyhow::Result;
 use serde_json::{json, Value};
 use tokio::task::JoinSet;
@@ -17,7 +19,6 @@ use super::{fetch_token_scan, ok_or_null, Context};
 const ENRICH_TOP_N: usize = 10;
 
 pub async fn run(ctx: &Context, chain: Option<String>, stage: Option<String>) -> Result<()> {
-    let client = ctx.client_async().await?;
     let chain_str = chain
         .as_deref()
         .unwrap_or_else(|| ctx.chain_override.as_deref().unwrap_or("solana"))
@@ -26,41 +27,50 @@ pub async fn run(ctx: &Context, chain: Option<String>, stage: Option<String>) ->
     let stage_str = stage.unwrap_or_else(|| "MIGRATED".to_string());
 
     // ── Step 1: fetch launchpad token list ───────────────────────────
-    let token_list = ok_or_null(
-        client
-            .get(
-                "/api/v6/dex/market/memepump/tokenList",
-                &[("chainIndex", chain_index.as_str()), ("stage", stage_str.as_str())],
-            )
-            .await,
-    );
+    let token_list = {
+        let mut client = ctx.client_async().await?;
+        ok_or_null(
+            client
+                .get(
+                    "/api/v6/dex/market/memepump/tokenList",
+                    &[("chainIndex", chain_index.as_str()), ("stage", stage_str.as_str())],
+                )
+                .await,
+        )
+    };
 
     let top_tokens = extract_top_tokens(&token_list, ENRICH_TOP_N);
 
     // ── Step 2: parallel enrichment (skipped when list empty) ────────
+    let client = Arc::new(tokio::sync::Mutex::new(ctx.client_async().await?));
     let mut set: JoinSet<(String, Value)> = JoinSet::new();
 
     for (token_addr, token_item) in top_tokens {
-        let c = client.clone();
+        let c = Arc::clone(&client);
         let ci = chain_index.clone();
         let addr = token_addr.clone();
         set.spawn(async move {
-            let (security, advanced, dev_info, bundle_info) = tokio::join!(
-                fetch_token_scan(&c, &ci, &addr),
-                token::fetch_advanced_info(&c, &addr, &ci),
+            let mut guard = c.lock().await;
+            let security = fetch_token_scan(&mut guard, &ci, &addr).await;
+            let advanced = ok_or_null(token::fetch_advanced_info(&mut guard, &addr, &ci).await);
+            let dev_info = ok_or_null(
                 memepump::fetch_by_address(
-                    &c, "/api/v6/dex/market/memepump/tokenDevInfo", &addr, &ci,
-                ),
+                    &mut guard, "/api/v6/dex/market/memepump/tokenDevInfo", &addr, &ci,
+                )
+                .await,
+            );
+            let bundle_info = ok_or_null(
                 memepump::fetch_by_address(
-                    &c, "/api/v6/dex/market/memepump/tokenBundleInfo", &addr, &ci,
-                ),
+                    &mut guard, "/api/v6/dex/market/memepump/tokenBundleInfo", &addr, &ci,
+                )
+                .await,
             );
             let enriched = assemble_token_result(
                 token_item,
                 security,
-                ok_or_null(advanced),
-                ok_or_null(dev_info),
-                ok_or_null(bundle_info),
+                advanced,
+                dev_info,
+                bundle_info,
             );
             (addr, enriched)
         });

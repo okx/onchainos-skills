@@ -79,7 +79,7 @@ pub async fn execute(ctx: &Context, cmd: WorkflowCommand) -> Result<()> {
 
 /// Inline single-token security scan — no public function in security module.
 pub async fn fetch_token_scan(
-    client: &ApiClient,
+    client: &mut ApiClient,
     chain_index: &str,
     address: &str,
 ) -> Value {

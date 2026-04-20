@@ -5,6 +5,8 @@
 /// Step 2: per-token parallel due diligence
 ///   individual sub-call failures: field null, rest continues
 ///   launchpad enrichment conditional on protocolId (reuses is_launchpad_token)
+use std::sync::Arc;
+
 use anyhow::Result;
 use serde_json::{json, Value};
 use tokio::task::JoinSet;
@@ -19,51 +21,56 @@ use super::token_research::is_launchpad_token;
 const TOP_N: usize = 5;
 
 pub async fn run(ctx: &Context, chain: Option<String>) -> Result<()> {
-    let client = ctx.client_async().await?;
     let chain_index = chain
         .as_deref()
         .map(|c| chains::resolve_chain(c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("solana"));
 
     // ── Step 1 ───────────────────────────────────────────────────────
-    let raw_signals = ok_or_null(
-        signal::fetch_list(
-            &client,
-            &chain_index,
-            None, None, None, None, None, None, None, None, None, None, None, None,
+    let raw_signals = {
+        let mut client = ctx.client_async().await?;
+        ok_or_null(
+            signal::fetch_list(
+                &mut client,
+                &chain_index,
+                None, None, None, None, None, None, None, None, None, None, None, None,
+            )
+            .await,
         )
-        .await,
-    );
+    };
 
     let top_tokens = extract_top_tokens(&raw_signals, TOP_N);
 
     // ── Step 2: per-token enrichment (parallel, max TOP_N) ───────────
+    let client = Arc::new(tokio::sync::Mutex::new(ctx.client_async().await?));
     let mut set: JoinSet<(String, Value)> = JoinSet::new();
 
     for (token_addr, signal_item) in top_tokens {
-        let c = client.clone();
+        let c = Arc::clone(&client);
         let ci = chain_index.clone();
         let addr = token_addr.clone();
         set.spawn(async move {
-            let (price, advanced, security) = tokio::join!(
-                token::fetch_price_info(&c, &addr, &ci),
-                token::fetch_advanced_info(&c, &addr, &ci),
-                fetch_token_scan(&c, &ci, &addr),
-            );
-            let advanced_val = ok_or_null(advanced);
+            let mut guard = c.lock().await;
+            let price = ok_or_null(token::fetch_price_info(&mut guard, &addr, &ci).await);
+            let advanced_val = ok_or_null(token::fetch_advanced_info(&mut guard, &addr, &ci).await);
+            let security = fetch_token_scan(&mut guard, &ci, &addr).await;
 
             let launchpad = if is_launchpad_token(&advanced_val) {
-                let (dev_info, bundle_info) = tokio::join!(
+                let dev_info = ok_or_null(
                     memepump::fetch_by_address(
-                        &c, "/api/v6/dex/market/memepump/tokenDevInfo", &addr, &ci,
-                    ),
+                        &mut guard, "/api/v6/dex/market/memepump/tokenDevInfo", &addr, &ci,
+                    )
+                    .await,
+                );
+                let bundle_info = ok_or_null(
                     memepump::fetch_by_address(
-                        &c, "/api/v6/dex/market/memepump/tokenBundleInfo", &addr, &ci,
-                    ),
+                        &mut guard, "/api/v6/dex/market/memepump/tokenBundleInfo", &addr, &ci,
+                    )
+                    .await,
                 );
                 json!({
-                    "devInfo":    ok_or_null(dev_info),
-                    "bundleInfo": ok_or_null(bundle_info),
+                    "devInfo":    dev_info,
+                    "bundleInfo": bundle_info,
                 })
             } else {
                 Value::Null
@@ -71,7 +78,7 @@ pub async fn run(ctx: &Context, chain: Option<String>) -> Result<()> {
 
             let enriched = assemble_token_result(
                 signal_item,
-                ok_or_null(price),
+                price,
                 advanced_val,
                 security,
                 launchpad,
