@@ -26,7 +26,7 @@ pub async fn handle_reject(
         &pre_body,
         &main_endpoint,
         move |signature| serde_json::json!({
-            "signature": signature,  // 【待确认】字段名
+            "signature": signature,
             "reason": reason_owned,
         }),
         &broadcast,

@@ -178,13 +178,10 @@ pub async fn task_sign_and_broadcast_with_headers(
 
 /// Dual-sign flow for accept/complete/refuse.
 ///
-/// 1. POST `pre_endpoint_url` with `pre_body` → get digest
+/// 1. POST `pre_endpoint_url` with `pre_body` + identity headers → get digest
 /// 2. Sign digest with session key → signature
-/// 3. POST `main_endpoint_url` with body built by `main_body_builder(signature)` → uopData
+/// 3. POST `main_endpoint_url` with body built by `main_body_builder(signature)` + identity headers → uopData
 /// 4. Sign uopHash → broadcast
-///
-/// 【待确认】pre-endpoint 返回的 digest 即为 main endpoint 的 signature 入参。
-/// 当后端确认字段名后更新 `digest_field` 参数默认值。
 #[allow(clippy::too_many_arguments)]
 pub async fn task_dual_sign_and_broadcast(
     http: &reqwest::Client,
@@ -197,9 +194,11 @@ pub async fn task_dual_sign_and_broadcast(
     address: &str,
     agent_id: &str,
 ) -> Result<BroadcastResult> {
-    // Step 1: Call pre-endpoint → get digest
+    // Step 1: Call pre-endpoint with identity headers → get digest
     let pre_resp: Value = http
         .post(pre_endpoint_url)
+        .header("X-Agent-Id", agent_id)
+        .header("X-Wallet-Address", address)
         .json(pre_body)
         .send()
         .await
@@ -214,7 +213,6 @@ pub async fn task_dual_sign_and_broadcast(
         );
     }
 
-    // 【待确认】digest 字段名，当前假设为 "digest"
     let digest = pre_resp["data"]["digest"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("pre-sign 未返回 digest 字段"))?;

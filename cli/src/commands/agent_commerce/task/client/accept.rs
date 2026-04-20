@@ -49,7 +49,7 @@ pub async fn handle_confirm_accept(
                 "providerAddress": provider_owned,
                 "providerAgentId": provider_owned,
                 "paymentMode": PAYMENT_MODE_ESCROW,
-                "signature": signature,  // 【待确认】字段名
+                "signature": signature,
             }),
             &broadcast,
             &account_id,
