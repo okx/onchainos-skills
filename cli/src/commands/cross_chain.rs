@@ -124,13 +124,13 @@ pub enum CrossChainCommand {
 // ── Public entry point ──────────────────────────────────────────────
 
 pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
     match cmd {
         CrossChainCommand::Chains => {
-            output::success(fetch_chain_pairs(&client).await?);
+            output::success(fetch_chain_pairs(&mut client).await?);
         }
         CrossChainCommand::Bridge => {
-            output::success(fetch_bridges(&client).await?);
+            output::success(fetch_bridges(&mut client).await?);
         }
         CrossChainCommand::Quote {
             from,
@@ -148,7 +148,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             let to_token = crate::commands::swap::resolve_token_address(&to_chain_index, &to);
             output::success(
                 fetch_quote(
-                    &client,
+                    &mut client,
                     &from_chain_index,
                     &to_chain_index,
                     &from_token,
@@ -176,7 +176,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             skip_approve,
         } => {
             cmd_execute(
-                &client,
+                &mut client,
                 &from,
                 &to,
                 &from_chain,
@@ -204,7 +204,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             route_index,
         } => {
             cmd_calldata(
-                &client,
+                &mut client,
                 &from,
                 &to,
                 &from_chain,
@@ -217,7 +217,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             .await?;
         }
         CrossChainCommand::Status { order_id } => {
-            output::success(fetch_order_details(&client, &order_id).await?);
+            output::success(fetch_order_details(&mut client, &order_id).await?);
         }
     }
     Ok(())
@@ -230,12 +230,12 @@ mod tests {
     #[tokio::test]
     #[ignore = "manual integration test against pre-production order/update"]
     async fn forged_order_update_returns_error() {
-        let client = crate::client::ApiClient::new_async(None)
+        let mut client = crate::client::ApiClient::new_async(None)
             .await
             .expect("create client");
 
         let result = fetch_order_update(
-            &client,
+            &mut client,
             "99999999999999999",
             "0x1111111111111111111111111111111111111111111111111111111111111111",
         )
@@ -326,14 +326,14 @@ mod tests {
 // ── API call functions ──────────────────────────────────────────────
 
 /// POST /chainPair/list — Get supported chain pairs
-async fn fetch_chain_pairs(client: &ApiClient) -> Result<Value> {
+async fn fetch_chain_pairs(client: &mut ApiClient) -> Result<Value> {
     client
         .post(&format!("{}/chainPair/list", BRIDGE_API_PREFIX), &json!({}))
         .await
 }
 
 /// GET /dict/get?className=BridgeSwapEnum — Get bridge protocols
-async fn fetch_bridges(client: &ApiClient) -> Result<Value> {
+async fn fetch_bridges(client: &mut ApiClient) -> Result<Value> {
     client
         .get(
             &format!("{}/dict/get", BRIDGE_API_PREFIX),
@@ -345,7 +345,7 @@ async fn fetch_bridges(client: &ApiClient) -> Result<Value> {
 /// POST /quote — Get cross-chain quote
 #[allow(clippy::too_many_arguments)]
 async fn fetch_quote(
-    client: &ApiClient,
+    client: &mut ApiClient,
     from_chain_index: &str,
     to_chain_index: &str,
     from_token: &str,
@@ -381,7 +381,7 @@ async fn fetch_quote(
 
 /// POST /callData — Get unsigned transaction data
 async fn fetch_call_data(
-    client: &ApiClient,
+    client: &mut ApiClient,
     quote_param: &Value,
     quote_result: &Value,
     user_wallet: &str,
@@ -402,7 +402,7 @@ async fn fetch_call_data(
 
 /// POST /contract — Get approve/router contract addresses (fallback when dynamicApproveAddress is null)
 async fn fetch_contract(
-    client: &ApiClient,
+    client: &mut ApiClient,
     bridge_id: i64,
     from_chain_id: i64,
     from_token: &str,
@@ -425,7 +425,7 @@ async fn fetch_contract(
 
 /// POST /order/save — Save order, returns orderId
 async fn fetch_order_save(
-    client: &ApiClient,
+    client: &mut ApiClient,
     quote_param: &Value,
     quote_result: &Value,
     user_wallet: &str,
@@ -445,7 +445,7 @@ async fn fetch_order_save(
 }
 
 /// POST /order/update — Update order with txHash
-async fn fetch_order_update(client: &ApiClient, order_id: &str, tx_hash: &str) -> Result<Value> {
+async fn fetch_order_update(client: &mut ApiClient, order_id: &str, tx_hash: &str) -> Result<Value> {
     client
         .post(
             &format!("{}/order/update", BRIDGE_API_PREFIX),
@@ -458,7 +458,7 @@ async fn fetch_order_update(client: &ApiClient, order_id: &str, tx_hash: &str) -
 }
 
 /// GET /order/details — Query order status
-async fn fetch_order_details(client: &ApiClient, order_id: &str) -> Result<Value> {
+async fn fetch_order_details(client: &mut ApiClient, order_id: &str) -> Result<Value> {
     client
         .get(
             &format!("{}/order/details", BRIDGE_API_PREFIX),
@@ -471,7 +471,7 @@ async fn fetch_order_details(client: &ApiClient, order_id: &str) -> Result<Value
 
 /// Get spender address: prefer dynamicApproveAddress from quote, fallback to /contract
 async fn resolve_spender(
-    client: &ApiClient,
+    client: &mut ApiClient,
     route: &Value,
     from_chain_index: &str,
     to_chain_index: &str,
@@ -564,7 +564,7 @@ fn extract_tx_hash(data: &Value) -> Result<String> {
 
 #[allow(clippy::too_many_arguments)]
 async fn cmd_calldata(
-    client: &ApiClient,
+    client: &mut ApiClient,
     from: &str,
     to: &str,
     from_chain: &str,
@@ -636,7 +636,7 @@ async fn cmd_calldata(
 
 #[allow(clippy::too_many_arguments)]
 async fn cmd_execute(
-    client: &ApiClient,
+    client: &mut ApiClient,
     from: &str,
     to: &str,
     from_chain: &str,
@@ -971,7 +971,7 @@ async fn cmd_execute(
 /// Check that the wallet has sufficient balance of the source token on the source chain.
 /// Returns Ok(()) if sufficient, or bails with a clear error message.
 async fn check_balance(
-    client: &ApiClient,
+    client: &mut ApiClient,
     wallet: &str,
     chain_index: &str,
     token_address: &str,
