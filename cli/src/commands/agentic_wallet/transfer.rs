@@ -285,6 +285,9 @@ async fn sign_and_broadcast(
     if force {
         extra_data_obj["skipWarning"] = json!(true);
     }
+    if let Some(src) = tx_source {
+        extra_data_obj["txSource"] = json!(src);
+    }
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][sign_and_broadcast] Step 10: extraData={}",
@@ -322,7 +325,6 @@ async fn sign_and_broadcast(
             &addr_info.chain_index,
             &extra_data_str,
             trace_ref_broadcast,
-            tx_source,
         )
         .await
         .map_err(|e| handle_confirming_error(e, force))?;
