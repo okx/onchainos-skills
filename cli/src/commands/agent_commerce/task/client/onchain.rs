@@ -241,13 +241,13 @@ pub async fn handle_close(
     api: &str,
     job_id: &str,
 ) -> Result<()> {
-    let (account_id, address) = signing::resolve_wallet_for_task(http, api, job_id).await?;
+    let (account_id, address, agent_id) = signing::resolve_wallet_and_agent_for_task(http, api, job_id).await?;
     let endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/close");
     let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
     let body = serde_json::json!({});
 
-    let result = signing::task_sign_and_broadcast(
-        http, &endpoint, &body, &broadcast, &account_id, &address,
+    let result = signing::task_sign_and_broadcast_with_headers(
+        http, &endpoint, &body, &broadcast, &account_id, &address, &agent_id,
     ).await?;
 
     println!("✓ 任务已关闭，状态 → close");
@@ -261,13 +261,13 @@ pub async fn handle_set_public(
     api: &str,
     job_id: &str,
 ) -> Result<()> {
-    let (account_id, address) = signing::resolve_wallet_for_task(http, api, job_id).await?;
+    let (account_id, address, agent_id) = signing::resolve_wallet_and_agent_for_task(http, api, job_id).await?;
     let endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/setVisibility");
     let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
     let body = serde_json::json!({"visibility": 1});
 
-    let result = signing::task_sign_and_broadcast(
-        http, &endpoint, &body, &broadcast, &account_id, &address,
+    let result = signing::task_sign_and_broadcast_with_headers(
+        http, &endpoint, &body, &broadcast, &account_id, &address, &agent_id,
     ).await?;
 
     println!("✓ 任务已转为公开，其他卖家可以看到并报名");
@@ -281,13 +281,13 @@ pub async fn handle_claim(
     api: &str,
     job_id: &str,
 ) -> Result<()> {
-    let (account_id, address) = signing::resolve_wallet_for_task(http, api, job_id).await?;
+    let (account_id, address, agent_id) = signing::resolve_wallet_and_agent_for_task(http, api, job_id).await?;
     let endpoint = format!("{api}/priapi/v1/aieco/task/claim");
     let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
     let body = serde_json::json!({ "jobId": job_id });
 
-    let result = signing::task_sign_and_broadcast(
-        http, &endpoint, &body, &broadcast, &account_id, &address,
+    let result = signing::task_sign_and_broadcast_with_headers(
+        http, &endpoint, &body, &broadcast, &account_id, &address, &agent_id,
     ).await?;
 
     println!("✓ 仲裁奖金已领取");
@@ -382,7 +382,7 @@ pub async fn handle_confirm_accept(
     provider: &str,
     payment_mode: &str,
 ) -> Result<()> {
-    let (account_id, address) = signing::resolve_wallet_for_task(http, api, job_id).await?;
+    let (account_id, address, agent_id) = signing::resolve_wallet_and_agent_for_task(http, api, job_id).await?;
     let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
 
     if payment_mode == PAYMENT_MODE_NON_ESCROW {
@@ -392,8 +392,8 @@ pub async fn handle_confirm_accept(
             "providerAddress": provider,
             "providerAgentId": provider,
         });
-        let result = signing::task_sign_and_broadcast(
-            http, &endpoint, &body, &broadcast, &account_id, &address,
+        let result = signing::task_sign_and_broadcast_with_headers(
+            http, &endpoint, &body, &broadcast, &account_id, &address, &agent_id,
         ).await?;
         println!("✓ 已接受卖家 {provider}（非担保支付），任务状态 → accepted");
         println!("  注意：任务完成后需手动转账给卖家");
@@ -421,6 +421,7 @@ pub async fn handle_confirm_accept(
             &broadcast,
             &account_id,
             &address,
+            &agent_id,
         ).await?;
         println!("✓ 已接受卖家 {provider}（担保支付），任务状态 → accepted");
         println!("  txHash: {}", result.tx_hash);
@@ -434,7 +435,7 @@ pub async fn handle_complete(
     api: &str,
     job_id: &str,
 ) -> Result<()> {
-    let (account_id, address) = signing::resolve_wallet_for_task(http, api, job_id).await?;
+    let (account_id, address, agent_id) = signing::resolve_wallet_and_agent_for_task(http, api, job_id).await?;
     let pre_endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/pre-complete");
     let main_endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/complete");
     let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
@@ -451,6 +452,7 @@ pub async fn handle_complete(
         &broadcast,
         &account_id,
         &address,
+        &agent_id,
     ).await?;
 
     println!("✓ 任务验收通过，状态 → complete，款项已释放");
@@ -465,7 +467,7 @@ pub async fn handle_reject(
     job_id: &str,
     reason: &str,
 ) -> Result<()> {
-    let (account_id, address) = signing::resolve_wallet_for_task(http, api, job_id).await?;
+    let (account_id, address, agent_id) = signing::resolve_wallet_and_agent_for_task(http, api, job_id).await?;
     let pre_endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/pre-refuse");
     let main_endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/refuse");
     let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
@@ -484,6 +486,7 @@ pub async fn handle_reject(
         &broadcast,
         &account_id,
         &address,
+        &agent_id,
     ).await?;
 
     println!("✓ 已拒绝验收（原因：{reason}），状态 → refused");

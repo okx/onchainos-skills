@@ -3,7 +3,7 @@
 //! Provides reusable sign-and-broadcast helpers for task CLI commands.
 //! All on-chain write operations go through one of these flows:
 //!
-//! - [`task_sign_and_broadcast`] — standard single-sign (close, setVisibility, apply, claim, etc.)
+//! - [`task_sign_and_broadcast_with_headers`] — single-sign with X-Agent-Id / X-Wallet-Address headers
 //! - [`task_dual_sign_and_broadcast`] — dual-sign for accept/complete/refuse
 //!   (pre-endpoint → sign digest → main endpoint → sign uopHash → broadcast)
 
@@ -54,6 +54,18 @@ pub async fn resolve_wallet_for_task(
     api_base: &str,
     job_id: &str,
 ) -> Result<(String, String)> {
+    let (account_id, address, _) = resolve_wallet_and_agent_for_task(http, api_base, job_id).await?;
+    Ok((account_id, address))
+}
+
+/// Query task detail to resolve the buyer's wallet **and** agentId for signing.
+///
+/// Returns `(account_id, address, buyer_agent_id)`.
+pub async fn resolve_wallet_and_agent_for_task(
+    http: &reqwest::Client,
+    api_base: &str,
+    job_id: &str,
+) -> Result<(String, String, String)> {
     let url = format!("{api_base}/priapi/v1/aieco/task/{job_id}");
     let resp: Value = http
         .get(&url)
@@ -75,90 +87,21 @@ pub async fn resolve_wallet_for_task(
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("任务详情缺少 buyerAgentAddress 字段"))?;
 
-    resolve_wallet(None, Some(buyer_address))
-}
-
-/// Standard single-sign flow for task write operations.
-///
-/// 1. POST `endpoint_url` with `request_body` → response containing `uopData`
-/// 2. Sign uopHash via `build_broadcast_body`
-/// 3. POST `broadcast_url` → tx_hash
-///
-/// Used by: close, setVisibility, apply, claim, direct/accept, etc.
-pub async fn task_sign_and_broadcast(
-    http: &reqwest::Client,
-    endpoint_url: &str,
-    request_body: &Value,
-    broadcast_url: &str,
-    account_id: &str,
-    address: &str,
-) -> Result<BroadcastResult> {
-    // Step 1: Call task backend → get uopData
-    let resp: Value = http
-        .post(endpoint_url)
-        .json(request_body)
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("无法连接后端: {e}"))?
-        .json()
-        .await?;
-
-    if resp["code"] != 0 {
-        bail!(
-            "后端返回错误: {}",
-            resp["msg"].as_str().unwrap_or("unknown error")
-        );
-    }
-
-    let uop_data = &resp["data"]["uopData"];
-    if uop_data.is_null() {
-        bail!("后端未返回 uopData，无法签名上链");
-    }
-
-    // Step 2: Sign uopHash
-    let unsigned: UnsignedInfoResponse = serde_json::from_value(uop_data.clone())
-        .map_err(|e| anyhow::anyhow!("解析 uopData 失败: {e}"))?;
-
-    let broadcast_body = build_broadcast_body(
-        &unsigned,
-        account_id,
-        address,
-        XLAYER_CHAIN_INDEX,
-        true,  // is_contract_call
-        false, // mev_protection
-        false, // force
-    )
-    .await?;
-
-    // Step 3: Broadcast
-    let bc_resp: Value = http
-        .post(broadcast_url)
-        .json(&broadcast_body)
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("广播失败: {e}"))?
-        .json()
-        .await?;
-
-    if bc_resp["code"] != 0 {
-        bail!(
-            "广播失败: {}",
-            bc_resp["msg"].as_str().unwrap_or("unknown error")
-        );
-    }
-
-    let tx_hash = bc_resp["data"][0]["txHash"]
+    let buyer_agent_id = task["buyerAgentId"]
         .as_str()
-        .unwrap_or("pending")
+        .unwrap_or("")
         .to_string();
 
-    Ok(BroadcastResult {
-        api_response: resp,
-        tx_hash,
-    })
+    let (account_id, address) = resolve_wallet(None, Some(buyer_address))?;
+    Ok((account_id, address, buyer_agent_id))
 }
 
-/// Same as [`task_sign_and_broadcast`] but adds `X-Agent-Id` and `X-Wallet-Address` headers.
+/// Standard single-sign flow for task write operations (with identity headers).
+///
+/// 1. POST `endpoint_url` with `request_body` + `X-Agent-Id` / `X-Wallet-Address` headers
+///    → response containing `uopData`
+/// 2. Sign uopHash via `build_broadcast_body`
+/// 3. POST `broadcast_url` → tx_hash
 #[allow(clippy::too_many_arguments)]
 pub async fn task_sign_and_broadcast_with_headers(
     http: &reqwest::Client,
@@ -252,6 +195,7 @@ pub async fn task_dual_sign_and_broadcast(
     broadcast_url: &str,
     account_id: &str,
     address: &str,
+    agent_id: &str,
 ) -> Result<BroadcastResult> {
     // Step 1: Call pre-endpoint → get digest
     let pre_resp: Value = http
@@ -290,13 +234,14 @@ pub async fn task_dual_sign_and_broadcast(
     let main_body = main_body_builder(&signature);
 
     // Reuse single-sign flow for the rest (main endpoint → sign uopHash → broadcast)
-    task_sign_and_broadcast(
+    task_sign_and_broadcast_with_headers(
         http,
         main_endpoint_url,
         &main_body,
         broadcast_url,
         account_id,
         address,
+        agent_id,
     )
     .await
 }
