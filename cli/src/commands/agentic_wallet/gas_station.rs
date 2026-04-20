@@ -34,10 +34,16 @@ pub async fn fetch_update_default_token(chain: &str, gas_token_address: &str) ->
         "chainIndex": &chain_index,
         "gasTokenAddress": gas_token_address,
     });
-    let data = client
+    let data = match client
         .gas_station_update_default_token(&access_token, &chain_index, gas_token_address)
         .await
-        .map_err(format_api_error)?;
+    {
+        Ok(v) => v,
+        Err(e) => {
+            super::debug_dump::dump_error("04-update-default-token", &req, &format!("{e:#}"));
+            return Err(format_api_error(e));
+        }
+    };
     super::debug_dump::dump("04-update-default-token", &req, &data);
     Ok(data)
 }
@@ -48,10 +54,16 @@ pub async fn fetch_revoke_7702(chain: &str) -> Result<Value> {
     let chain_index = crate::chains::resolve_chain(chain);
     let client = WalletApiClient::new()?;
     let req = serde_json::json!({ "chainIndex": &chain_index });
-    let data = client
+    let data = match client
         .gas_station_revoke_7702(&access_token, &chain_index)
         .await
-        .map_err(format_api_error)?;
+    {
+        Ok(v) => v,
+        Err(e) => {
+            super::debug_dump::dump_error("05-revoke-7702", &req, &format!("{e:#}"));
+            return Err(format_api_error(e));
+        }
+    };
     super::debug_dump::dump("05-revoke-7702", &req, &data);
     Ok(data)
 }

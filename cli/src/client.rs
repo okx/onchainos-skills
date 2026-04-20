@@ -172,7 +172,10 @@ impl ApiClient {
     /// Inline JWT refresh — avoids circular dependency with WalletApiClient.
     /// Calls /priapi/v5/wallet/agentic/auth/refresh and stores the new tokens.
     async fn refresh_jwt_inline(refresh_token: &str) -> Result<String> {
-        let base_url = option_env!("OKX_BASE_URL").unwrap_or(DEFAULT_BASE_URL);
+        let base_url = std::env::var("OKX_BASE_URL")
+            .ok()
+            .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
+            .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
         let url = format!("{}/priapi/v5/wallet/agentic/auth/refresh", base_url);
         let body = serde_json::json!({ "refreshToken": refresh_token });
 

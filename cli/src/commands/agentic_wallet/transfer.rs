@@ -205,6 +205,7 @@ async fn sign_and_broadcast(
             None, // gas_token_address
             None, // relayer_id
             None, // revoke_eip7702
+            None, // eip7702_auth_session_signature
         )
         .await
         .map_err(format_api_error)?;
@@ -356,7 +357,17 @@ pub(super) async fn cmd_send(
     gas_token_address: Option<&str>,
     relayer_id: Option<&str>,
     enable_gas_station: bool,
+    revoke_eip7702: bool,
+    eip7702_auth_session_sig: Option<&str>,
 ) -> Result<()> {
+    // Revoke 不需要金额，提前路由
+    if revoke_eip7702 {
+        if chain.is_empty() {
+            bail!("chain is required for revoke-eip7702");
+        }
+        return revoke_eip7702_send(chain, from, recipient, eip7702_auth_session_sig).await;
+    }
+
     validate_amount(amt)?;
     if recipient.is_empty() || chain.is_empty() {
         bail!("recipient and chain are required");
@@ -406,7 +417,7 @@ pub(super) async fn cmd_send(
         "amount": amt,
         "contractAddr": contract_token,
     });
-    let unsigned = client
+    let unsigned = match client
         .pre_transaction_unsigned_info(
             &access_token,
             &addr_info.chain_path,
@@ -421,9 +432,17 @@ pub(super) async fn cmd_send(
             None, // gas_token_address
             None, // relayer_id
             None, // revoke_eip7702
+            None, // eip7702_auth_session_signature
         )
         .await
-        .map_err(format_api_error)?;
+    {
+        Ok(v) => v,
+        Err(e) => {
+            // TEMPORARY: debug_dump — 记录失败的第一次 unsignedInfo
+            super::debug_dump::dump_error("01-unsignedInfo-first", &unsigned_req, &format!("{e:#}"));
+            return Err(format_api_error(e));
+        }
+    };
     super::debug_dump::dump("01-unsignedInfo-first", &unsigned_req, &json!({
         "gasStationUsed": unsigned.gas_station_used,
         "gasStationFirstTimePrompt": unsigned.gas_station_first_time_prompt,
@@ -471,6 +490,9 @@ pub(super) async fn cmd_send(
                 &session,
                 &unsigned,
                 force,
+                recipient,
+                amt,
+                contract_token,
             )
             .await?;
             output::success(json!({
@@ -497,27 +519,39 @@ pub(super) async fn cmd_send(
         let message = if unsigned.gas_station_first_time_prompt {
             // Scene A: first time enable
             format!(
-                "Your native token balance is insufficient to pay gas. \
-                 You can enable Gas Station to pay gas with stablecoins.\n\
-                 Available tokens:\n{}\n\
-                 Choose a token to enable Gas Station and pay gas for this transaction.",
+                "Your native token balance is insufficient to pay gas. You can enable Gas Station to pay gas with stablecoins.\n\
+                 \nAvailable tokens:\n{}\n\
+                 \nOptions:\n\
+                 1. Enable and set a default token: choose a token above, future transactions will use it automatically.\n\
+                 2. Enable without setting default: system will auto-select the token with highest balance each time.",
                 token_list_str
             )
         } else {
             // Scene C: default token insufficient
             format!(
-                "Your default gas token has insufficient balance. \
-                 Choose an alternative token to pay gas for this transaction:\n{}",
+                "Your default gas token has insufficient balance. Choose an alternative token to pay gas:\n{}\n\
+                 \nOptions:\n\
+                 1. Use for this transaction only (default token unchanged).\n\
+                 2. Use and update as new default token.",
                 token_list_str
             )
         };
 
-        let next = format!(
-            "Re-run the same wallet send command with --gas-token-address <chosen_token_address> --relayer-id <relayer_id>{}. \
-             Token addresses and relayer IDs from the list above: {}",
-            if unsigned.gas_station_first_time_prompt { " --enable-gas-station" } else { "" },
-            serde_json::to_string(&unsigned.gas_station_token_list).unwrap_or_default()
-        );
+        let next = if unsigned.gas_station_first_time_prompt {
+            format!(
+                "Option 1 (enable + set default): --gas-token-address <addr> --relayer-id <id> --enable-gas-station\n\
+                 Option 2 (enable, no default): --enable-gas-station\n\
+                 Token list: {}",
+                serde_json::to_string(&unsigned.gas_station_token_list).unwrap_or_default()
+            )
+        } else {
+            format!(
+                "Option 1 (this time only): --gas-token-address <addr> --relayer-id <id>\n\
+                 Option 2 (use + update default): --gas-token-address <addr> --relayer-id <id>, then run: wallet gas-station update-default-token --chain <chain> --gas-token-address <addr>\n\
+                 Token list: {}",
+                serde_json::to_string(&unsigned.gas_station_token_list).unwrap_or_default()
+            )
+        };
 
         return Err(crate::output::CliConfirming { message, next }.into());
     }
@@ -588,7 +622,7 @@ async fn gas_station_send(
         "gasTokenAddress": gas_token_address,
         "relayerId": relayer_id,
     });
-    let unsigned = client
+    let unsigned = match client
         .pre_transaction_unsigned_info(
             &access_token,
             &addr_info.chain_path,
@@ -602,10 +636,18 @@ async fn gas_station_send(
             if enable_gas_station { Some(true) } else { None },
             gas_token_address,
             relayer_id,
-            None,
+            None, // revoke_eip7702
+            None, // eip7702_auth_session_signature
         )
         .await
-        .map_err(format_api_error)?;
+    {
+        Ok(v) => v,
+        Err(e) => {
+            // TEMPORARY: debug_dump — 记录失败的第二次 unsignedInfo
+            super::debug_dump::dump_error("02-unsignedInfo-second", &unsigned_req, &format!("{e:#}"));
+            return Err(format_api_error(e));
+        }
+    };
     super::debug_dump::dump("02-unsignedInfo-second", &unsigned_req, &json!({
         "gasStationUsed": unsigned.gas_station_used,
         "hash": &unsigned.hash,
@@ -613,9 +655,13 @@ async fn gas_station_send(
         "signType": &unsigned.sign_type,
         "serviceCharge": &unsigned.service_charge,
         "serviceChargeSymbol": &unsigned.service_charge_symbol,
+        "serviceChargeFeeTokenAddress": &unsigned.service_charge_fee_token_address,
         "needUpdate7702": unsigned.need_update7702,
+        "contractNonce": &unsigned.contract_nonce,
+        "eoaNonce": &unsigned.eoa_nonce,
         "executeResult": &unsigned.execute_result,
         "executeErrorMsg": &unsigned.execute_error_msg,
+        "extraData": &unsigned.extra_data,
     }));
 
     if !unsigned.gas_station_used {
@@ -644,6 +690,9 @@ async fn gas_station_send(
         &session,
         &unsigned,
         force,
+        recipient,
+        amt,
+        contract_token,
     )
     .await?;
     output::success(json!({
@@ -656,9 +705,128 @@ async fn gas_station_send(
     Ok(())
 }
 
-/// Gas Station: sign 712 hash + 7702 auth hash, build extraData, broadcast.
-/// Signing methods are in sign.rs (sign_gas_station_712 / sign_gas_station_7702).
-async fn gas_station_sign_and_broadcast(
+// ── Gas Station broadcast helpers ────────────────────────────────────
+//
+// Two distinct broadcast flows:
+//
+// Flow 1: gs_broadcast_with_7702_upgrade (needUpdate7702=true)
+//   First-time Gas Station — upgrades wallet to 7702 + executes transaction in one broadcast.
+//   Signs both 712 hash and 7702 authHash. Passes nonce(eoaNonce), user7702Data.
+//   After this succeeds, wallet is upgraded; subsequent txs use Flow 2.
+//
+// Flow 2: gs_broadcast_transaction (needUpdate7702=false)
+//   Normal Gas Station — wallet already upgraded to 7702, just executes transaction.
+//   Signs only 712 hash. No nonce/user7702Data/authSignatureFor7702.
+
+/// Gas Station msgForSign: 只签 hash(712) + 可选 authHashFor7702
+/// 不包含 unsignedTxHash/sessionSignature（那是 Normal EOA 的路径）
+fn gs_build_msg_for_sign(
+    unsigned: &crate::wallet_api::UnsignedInfoResponse,
+    session: &crate::wallet_store::SessionJson,
+    signing_seed: &[u8],
+    include_7702: bool,
+) -> Result<Value> {
+    let mut m = serde_json::Map::new();
+
+    let signing_seed_b64 = base64::engine::general_purpose::STANDARD.encode(signing_seed);
+
+    // 签 hash (712) → signature + sessionSignature
+    if !unsigned.hash.is_empty() {
+        let sig = crate::crypto::ed25519_sign_eip191(&unsigned.hash, signing_seed, "hex")?;
+        m.insert("signature".into(), json!(sig));
+        // sessionSignature: 与线上一致，ed25519_sign_encoded(hash)
+        let session_sig = crate::crypto::ed25519_sign_encoded(
+            &unsigned.hash,
+            &signing_seed_b64,
+            &unsigned.encoding,
+        )?;
+        m.insert("sessionSignature".into(), json!(session_sig));
+    }
+    // 签 authHashFor7702 → authSignatureFor7702（仅 7702 升级流程）
+    if include_7702 && !unsigned.auth_hash_for7702.is_empty() {
+        let sig = crate::crypto::ed25519_sign_hex(&unsigned.auth_hash_for7702, &signing_seed_b64)?;
+        m.insert("authSignatureFor7702".into(), json!(sig));
+    }
+    // sessionCert
+    if !session.session_cert.is_empty() {
+        m.insert("sessionCert".into(), json!(session.session_cert));
+    }
+    Ok(Value::Object(m))
+}
+
+/// Build the base extraData: master fields + Gas Station fields.
+/// Gas Station fields are layered on top of the normal broadcast structure.
+#[allow(clippy::too_many_arguments)]
+fn gs_build_extra_data(
+    unsigned: &crate::wallet_api::UnsignedInfoResponse,
+    msg_for_sign: &Value,
+    to_addr: &str,
+    coin_amount: &str,
+    token_address: Option<&str>,
+    force: bool,
+    include_7702: bool,
+) -> Value {
+    // Start from unsignedInfo.extraData (backend passthrough)
+    let mut ed = if unsigned.extra_data.is_object() {
+        unsigned.extra_data.clone()
+    } else {
+        json!({})
+    };
+
+    // ── Master base fields (same as sign_and_broadcast) ──
+    ed["checkBalance"] = json!(true);
+    ed["uopHash"] = json!(unsigned.uop_hash);
+    ed["encoding"] = json!(unsigned.encoding);
+    ed["signType"] = json!(unsigned.sign_type);
+    ed["msgForSign"] = msg_for_sign.clone();
+    ed["txType"] = json!(2);
+    ed["paymentType"] = json!("token");
+    if force {
+        ed["skipWarning"] = json!(true);
+    }
+
+    // ── Gas Station specific fields ──
+    // 交易信息
+    ed["toAdr"] = json!(to_addr);
+    ed["coinAmount"] = json!(coin_amount);
+    if let Some(ta) = token_address {
+        ed["tokenAddress"] = json!(ta);
+    }
+    // Gas 手续费
+    ed["serviceCharge"] = json!(unsigned.service_charge);
+    ed["feeTokenAddress"] = json!(unsigned.service_charge_fee_token_address);
+    // 合约 nonce
+    if !unsigned.contract_nonce.is_null() {
+        ed["contractNonce"] = unsigned.contract_nonce.clone();
+    }
+    // relayerId + context: 从 tokenList 中匹配选中的 token
+    if let Some(selected) = unsigned.gas_station_token_list.iter().find(|t| {
+        t.fee_token_address == unsigned.service_charge_fee_token_address
+    }) {
+        ed["relayerId"] = json!(selected.relayer_id);
+        ed["context"] = json!(selected.context);
+    }
+    // user712Data: 每次 Gas Station 交易都透传
+    if !unsigned.user712_data.is_null() {
+        ed["user712Data"] = unsigned.user712_data.clone();
+    }
+
+    // ── 7702 upgrade only fields ──
+    if include_7702 {
+        if !unsigned.eoa_nonce.is_empty() {
+            ed["nonce"] = json!(unsigned.eoa_nonce);
+        }
+        if !unsigned.user7702_data.is_null() {
+            ed["user7702Data"] = unsigned.user7702_data.clone();
+        }
+    }
+
+    ed
+}
+
+/// Flow 1: 首次 Gas Station — 升级 7702 + 交易（needUpdate7702=true）
+#[allow(clippy::too_many_arguments)]
+async fn gs_broadcast_with_7702_upgrade(
     client: &crate::wallet_api::WalletApiClient,
     access_token: &str,
     account_id: &str,
@@ -666,57 +834,64 @@ async fn gas_station_sign_and_broadcast(
     session: &crate::wallet_store::SessionJson,
     unsigned: &crate::wallet_api::UnsignedInfoResponse,
     force: bool,
+    to_addr: &str,
+    coin_amount: &str,
+    token_address: Option<&str>,
 ) -> Result<crate::wallet_api::BroadcastResponse> {
     let signing_seed =
         crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &crate::keyring_store::get("session_key")
             .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?)?;
 
-    let mut msg_for_sign_map = serde_json::Map::new();
+    let msg_for_sign = gs_build_msg_for_sign(unsigned, session, &signing_seed, true)?;
+    let extra_data_obj = gs_build_extra_data(unsigned, &msg_for_sign, to_addr, coin_amount, token_address, force, true);
 
-    // Sign 712 hash — same as existing sign_and_broadcast (ed25519_sign_eip191)
-    if !unsigned.hash.is_empty() {
-        let sig = crate::crypto::ed25519_sign_eip191(&unsigned.hash, &signing_seed, "hex")?;
-        msg_for_sign_map.insert("signature".into(), json!(sig));
-    }
-    // Sign 7702 auth hash — self-contained method in sign.rs (loads session + key internally)
-    if !unsigned.auth_hash_for7702.is_empty() {
-        let sig = super::sign::sign_eip7702_auth(&unsigned.auth_hash_for7702)?;
-        msg_for_sign_map.insert("authSignatureFor7702".into(), json!(sig));
-    }
-    if !session.session_cert.is_empty() {
-        msg_for_sign_map.insert("sessionCert".into(), json!(session.session_cert));
-    }
+    gs_do_broadcast(client, access_token, account_id, addr_info, &extra_data_obj, force).await
+}
 
-    let msg_for_sign = Value::Object(msg_for_sign_map);
+/// Flow 2: 后续 Gas Station 交易（needUpdate7702=false，已升级 7702）
+#[allow(clippy::too_many_arguments)]
+async fn gs_broadcast_transaction(
+    client: &crate::wallet_api::WalletApiClient,
+    access_token: &str,
+    account_id: &str,
+    addr_info: &crate::wallet_store::AddressInfo,
+    session: &crate::wallet_store::SessionJson,
+    unsigned: &crate::wallet_api::UnsignedInfoResponse,
+    force: bool,
+    to_addr: &str,
+    coin_amount: &str,
+    token_address: Option<&str>,
+) -> Result<crate::wallet_api::BroadcastResponse> {
+    let signing_seed =
+        crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &crate::keyring_store::get("session_key")
+            .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?)?;
 
-    // Build Gas Station extraData
-    let mut extra_data_obj = if unsigned.extra_data.is_object() {
-        unsigned.extra_data.clone()
-    } else {
-        json!({})
-    };
-    extra_data_obj["checkBalance"] = json!(true);
-    extra_data_obj["uopHash"] = json!(unsigned.uop_hash);
-    extra_data_obj["encoding"] = json!(unsigned.encoding);
-    extra_data_obj["signType"] = json!(unsigned.sign_type);
-    extra_data_obj["msgForSign"] = json!(msg_for_sign);
-    extra_data_obj["paymentType"] = json!("token");
-    // Gas Station: do NOT set txType
-    if force {
-        extra_data_obj["skipWarning"] = json!(true);
-    }
+    let msg_for_sign = gs_build_msg_for_sign(unsigned, session, &signing_seed, false)?;
+    let extra_data_obj = gs_build_extra_data(unsigned, &msg_for_sign, to_addr, coin_amount, token_address, force, false);
 
+    gs_do_broadcast(client, access_token, account_id, addr_info, &extra_data_obj, force).await
+}
+
+/// Gas Station broadcast 公共发送逻辑 + debug dump
+async fn gs_do_broadcast(
+    client: &crate::wallet_api::WalletApiClient,
+    access_token: &str,
+    account_id: &str,
+    addr_info: &crate::wallet_store::AddressInfo,
+    extra_data_obj: &Value,
+    force: bool,
+) -> Result<crate::wallet_api::BroadcastResponse> {
     let extra_data_str =
-        serde_json::to_string(&extra_data_obj).context("failed to serialize extraData")?;
+        serde_json::to_string(extra_data_obj).context("failed to serialize extraData")?;
 
-    // TEMPORARY: debug_dump — 联调后删除 broadcast_req 定义和 debug_dump::dump 调用
+    // TEMPORARY: debug_dump
     let broadcast_req = json!({
         "accountId": account_id,
         "address": addr_info.address,
         "chainIndex": addr_info.chain_index,
         "extraData": extra_data_obj,
     });
-    let broadcast_resp = client
+    let broadcast_resp = match client
         .broadcast_transaction(
             access_token,
             account_id,
@@ -726,7 +901,13 @@ async fn gas_station_sign_and_broadcast(
             None,
         )
         .await
-        .map_err(|e| handle_confirming_error(e, force))?;
+    {
+        Ok(v) => v,
+        Err(e) => {
+            super::debug_dump::dump_error("03-broadcast", &broadcast_req, &format!("{e:#}"));
+            return Err(handle_confirming_error(e, force));
+        }
+    };
     super::debug_dump::dump("03-broadcast", &broadcast_req, &json!({
         "txHash": &broadcast_resp.tx_hash,
         "orderId": &broadcast_resp.order_id,
@@ -735,6 +916,189 @@ async fn gas_station_sign_and_broadcast(
     }));
 
     Ok(broadcast_resp)
+}
+
+/// Gas Station: 根据 needUpdate7702 路由到对应的 broadcast 流程
+#[allow(clippy::too_many_arguments)]
+async fn gas_station_sign_and_broadcast(
+    client: &crate::wallet_api::WalletApiClient,
+    access_token: &str,
+    account_id: &str,
+    addr_info: &crate::wallet_store::AddressInfo,
+    session: &crate::wallet_store::SessionJson,
+    unsigned: &crate::wallet_api::UnsignedInfoResponse,
+    force: bool,
+    to_addr: &str,
+    coin_amount: &str,
+    token_address: Option<&str>,
+) -> Result<crate::wallet_api::BroadcastResponse> {
+    if unsigned.need_update7702 {
+        gs_broadcast_with_7702_upgrade(
+            client, access_token, account_id, addr_info, session, unsigned,
+            force, to_addr, coin_amount, token_address,
+        ).await
+    } else {
+        gs_broadcast_transaction(
+            client, access_token, account_id, addr_info, session, unsigned,
+            force, to_addr, coin_amount, token_address,
+        ).await
+    }
+}
+
+// ── revoke EIP-7702 ──────────────────────────────────────────────────
+
+/// Revoke EIP-7702: two-round flow via unsignedInfo(revokeEip7702=true).
+///
+/// Round 1 (no eip7702_auth_session_sig):
+///   unsignedInfo(revokeEip7702=true) → returns authHashFor7702
+///   CLI outputs authHash for agent/user to sign with session key
+///
+/// Round 2 (with eip7702_auth_session_sig):
+///   unsignedInfo(revokeEip7702=true, eip7702AuthSessionSignature=sig)
+///   → returns unsignedTxHash + unsignedTx
+///   → CLI signs unsignedTxHash (Normal EOA path) → broadcast
+async fn revoke_eip7702_send(
+    chain: &str,
+    from: Option<&str>,
+    to_addr: &str,
+    eip7702_auth_session_sig: Option<&str>,
+) -> Result<()> {
+    let access_token =
+        crate::commands::agentic_wallet::auth::ensure_tokens_refreshed().await?;
+    let wallets = crate::wallet_store::load_wallets()?
+        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+    let chain_entry = super::chain::get_chain_by_real_chain_index(chain)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("unsupported chain: {}", chain))?;
+    let chain_name = chain_entry["chainName"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing chainName"))?;
+    let (_account_id, addr_info) = resolve_address(&wallets, from, chain_name)?;
+    let chain_index_num: u64 = addr_info.chain_index.parse().unwrap_or(1);
+
+    let session = crate::wallet_store::load_session()?
+        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+
+    let client = crate::wallet_api::WalletApiClient::new()?;
+
+    if let Some(auth_sig) = eip7702_auth_session_sig {
+        // ── Round 2: pass session signature → get unsignedTxHash → Normal EOA broadcast ──
+        let req = json!({
+            "chainPath": addr_info.chain_path,
+            "chainIndex": chain_index_num,
+            "fromAddr": addr_info.address,
+            "toAddr": to_addr,
+            "revokeEip7702": true,
+            "eip7702AuthSessionSignature": auth_sig,
+        });
+        let unsigned = match client
+            .pre_transaction_unsigned_info(
+                &access_token,
+                &addr_info.chain_path,
+                chain_index_num,
+                &addr_info.address,
+                to_addr,
+                "0",
+                None,
+                &session.session_cert,
+                None, None, None, None, None, None, None,
+                None, None, None,
+                Some(true), // revoke_eip7702
+                Some(auth_sig), // eip7702_auth_session_signature (Round 2)
+            )
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                super::debug_dump::dump_error("05-revoke-7702-round2", &req, &format!("{e:#}"));
+                return Err(format_api_error(e));
+            }
+        };
+        super::debug_dump::dump("05-revoke-7702-round2", &req, &json!({
+            "unsignedTxHash": &unsigned.unsigned_tx_hash,
+            "unsignedTx": &unsigned.unsigned_tx,
+            "signType": &unsigned.sign_type,
+            "gasStationDisabled": unsigned.gas_station_disabled,
+            "extraData": &unsigned.extra_data,
+        }));
+
+        if unsigned.unsigned_tx_hash.is_empty() {
+            bail!("Revoke Round 2: backend did not return unsignedTxHash");
+        }
+
+        // Normal EOA sign + broadcast (same as master sign_and_broadcast)
+        let resp = sign_and_broadcast(
+            chain,
+            from,
+            TxParams {
+                to_addr,
+                value: "0",
+                contract_addr: None,
+                input_data: None,
+                unsigned_tx: Some(&unsigned.unsigned_tx),
+                gas_limit: None,
+                aa_dex_token_addr: None,
+                aa_dex_token_amount: None,
+                jito_unsigned_tx: None,
+            },
+            false,
+            false,
+            false,
+        )
+        .await?;
+        output::success(json!({
+            "txHash": resp.tx_hash,
+            "orderId": resp.order_id,
+            "gasStationDisabled": true,
+        }));
+    } else {
+        // ── Round 1: get authHashFor7702 for CLI to sign ──
+        let req = json!({
+            "chainPath": addr_info.chain_path,
+            "chainIndex": chain_index_num,
+            "fromAddr": addr_info.address,
+            "toAddr": to_addr,
+            "revokeEip7702": true,
+        });
+        let unsigned = match client
+            .pre_transaction_unsigned_info(
+                &access_token,
+                &addr_info.chain_path,
+                chain_index_num,
+                &addr_info.address,
+                to_addr,
+                "0",
+                None,
+                &session.session_cert,
+                None, None, None, None, None, None, None,
+                None, None, None,
+                Some(true), // revoke_eip7702
+                None, // eip7702_auth_session_signature (Round 1 不传)
+            )
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                super::debug_dump::dump_error("05-revoke-7702-round1", &req, &format!("{e:#}"));
+                return Err(format_api_error(e));
+            }
+        };
+        super::debug_dump::dump("05-revoke-7702-round1", &req, &json!({
+            "authHashFor7702": &unsigned.auth_hash_for7702,
+            "signType": &unsigned.sign_type,
+            "gasStationDisabled": unsigned.gas_station_disabled,
+            "executeResult": &unsigned.execute_result,
+            "executeErrorMsg": &unsigned.execute_error_msg,
+        }));
+
+        output::success(json!({
+            "authHashFor7702": unsigned.auth_hash_for7702,
+            "signType": unsigned.sign_type,
+            "gasStationDisabled": unsigned.gas_station_disabled,
+            "executeErrorMsg": unsigned.execute_error_msg,
+        }));
+    }
+    Ok(())
 }
 
 // ── contract-call ─────────────────────────────────────────────────────
@@ -981,21 +1345,21 @@ mod tests {
 
     #[tokio::test]
     async fn cmd_send_rejects_empty_amt() {
-        let result = cmd_send("", "0xRecipient", "1", None, None, false, None, None, false).await;
+        let result = cmd_send("", "0xRecipient", "1", None, None, false, None, None, false, false, None).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("--amount"));
     }
 
     #[tokio::test]
     async fn cmd_send_rejects_decimal_amt() {
-        let result = cmd_send("1.5", "0xRecipient", "1", None, None, false, None, None, false).await;
+        let result = cmd_send("1.5", "0xRecipient", "1", None, None, false, None, None, false, false, None).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("--amount"));
     }
 
     #[tokio::test]
     async fn cmd_send_rejects_empty_recipient() {
-        let result = cmd_send("100", "", "1", None, None, false, None, None, false).await;
+        let result = cmd_send("100", "", "1", None, None, false, None, None, false, false, None).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -1005,7 +1369,7 @@ mod tests {
 
     #[tokio::test]
     async fn cmd_send_rejects_empty_chain() {
-        let result = cmd_send("100", "0xRecipient", "", None, None, false, None, None, false).await;
+        let result = cmd_send("100", "0xRecipient", "", None, None, false, None, None, false, false, None).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()

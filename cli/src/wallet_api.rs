@@ -72,6 +72,30 @@ where
     }
 }
 
+fn nullable_bool<'de, D>(deserializer: D) -> std::result::Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = Value::deserialize(deserializer)?;
+    match v {
+        Value::Null => Ok(false),
+        Value::Bool(b) => Ok(b),
+        other => Err(serde::de::Error::custom(format!(
+            "expected bool or null, got {}",
+            other
+        ))),
+    }
+}
+
+fn nullable_vec<'de, D, T>(deserializer: D) -> std::result::Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let v: Option<Vec<T>> = Option::deserialize(deserializer)?;
+    Ok(v.unwrap_or_default())
+}
+
 /// Build a URL-encoded query string from key-value pairs, filtering out empty values.
 fn build_query_string(query: &[(&str, &str)]) -> String {
     let filtered: Vec<(&str, &str)> = query
@@ -221,9 +245,9 @@ pub struct UnsignedInfoResponse {
     #[serde(default, deserialize_with = "nullable_string")]
     pub jito_unsigned_tx: String,
     // ── Gas Station fields ──
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_bool")]
     pub gas_station_used: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_bool")]
     pub gas_station_first_time_prompt: bool,
     #[serde(default, deserialize_with = "nullable_string")]
     pub service_charge: String,
@@ -231,18 +255,26 @@ pub struct UnsignedInfoResponse {
     pub service_charge_symbol: String,
     #[serde(default, deserialize_with = "nullable_string")]
     pub service_charge_fee_token_address: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_bool")]
     pub need_update7702: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_vec")]
     pub gas_station_token_list: Vec<GasStationToken>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_bool")]
     pub has_pending_tx: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_bool")]
     pub insufficient_all: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_bool")]
     pub auto_selected_token: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_bool")]
     pub gas_station_disabled: bool,
+    #[serde(default)]
+    pub contract_nonce: Value,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub eoa_nonce: String,
+    #[serde(default)]
+    pub user712_data: Value,
+    #[serde(default)]
+    pub user7702_data: Value,
 }
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
@@ -258,7 +290,7 @@ pub struct GasStationToken {
     pub service_charge: String,
     #[serde(default, deserialize_with = "nullable_string")]
     pub balance: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_bool")]
     pub sufficient: bool,
     #[serde(default, deserialize_with = "nullable_string")]
     pub relayer_id: String,
@@ -281,8 +313,9 @@ pub struct BroadcastResponse {
 
 impl WalletApiClient {
     pub fn new() -> Result<Self> {
-        let base_url = option_env!("OKX_BASE_URL")
-            .map(|s| s.to_string())
+        let base_url = std::env::var("OKX_BASE_URL")
+            .ok()
+            .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
             .unwrap_or_else(|| crate::client::DEFAULT_BASE_URL.to_string());
 
         Ok(Self {
@@ -359,13 +392,28 @@ impl WalletApiClient {
 
     async fn handle_response(&self, resp: reqwest::Response) -> Result<Value> {
         let status = resp.status();
-        if status.as_u16() >= 500 {
-            bail!("Wallet API server error (HTTP {})", status.as_u16());
+        // TEMPORARY: Gas Station 联调 — 收集完整原始响应
+        let raw_text = resp.text().await.context("failed to read response body")?;
+        // 记录最后一次原始响应，方便排查
+        if let Ok(home) = crate::home::onchainos_home() {
+            let debug_dir = home.join("gas-station-debug");
+            let _ = std::fs::create_dir_all(&debug_dir);
+            let _ = std::fs::write(
+                debug_dir.join("_last-raw-response.json"),
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "ts": chrono::Utc::now().to_rfc3339(),
+                    "httpStatus": status.as_u16(),
+                    "rawBody": &raw_text,
+                }))
+                .unwrap_or_default(),
+            );
         }
 
-        let body: Value = resp
-            .json()
-            .await
+        if status.as_u16() >= 500 {
+            bail!("Wallet API server error (HTTP {}): {}", status.as_u16(), &raw_text);
+        }
+
+        let body: Value = serde_json::from_str(&raw_text)
             .context("failed to parse wallet API response")?;
 
         // Handle code as either string "0" or number 0
@@ -645,6 +693,7 @@ impl WalletApiClient {
         gas_token_address: Option<&str>,
         relayer_id: Option<&str>,
         revoke_eip7702: Option<bool>,
+        eip7702_auth_session_signature: Option<&str>,
     ) -> Result<UnsignedInfoResponse> {
         let mut body = json!({
             "chainPath": chain_path,
@@ -688,6 +737,9 @@ impl WalletApiClient {
         if let Some(true) = revoke_eip7702 {
             body["revokeEip7702"] = json!(true);
         }
+        if let Some(sig) = eip7702_auth_session_signature {
+            body["eip7702AuthSessionSignature"] = Value::String(sig.to_string());
+        }
         let data = self
             .post_authed_with_headers(
                 "/priapi/v5/wallet/agentic/pre-transaction/unsignedInfo",
@@ -700,6 +752,15 @@ impl WalletApiClient {
             .as_array()
             .context("unsignedInfo: expected data to be an array")?;
         let item = arr.first().context("unsignedInfo: data array is empty")?;
+        // TEMPORARY: dump 完整的 unsignedInfo 原始响应（含所有字段，不只是 struct 解析的）
+        if let Ok(home) = crate::home::onchainos_home() {
+            let debug_dir = home.join("gas-station-debug");
+            let _ = std::fs::create_dir_all(&debug_dir);
+            let _ = std::fs::write(
+                debug_dir.join("_last-unsignedInfo-raw.json"),
+                serde_json::to_string_pretty(item).unwrap_or_default(),
+            );
+        }
         let resp: UnsignedInfoResponse = serde_json::from_value(item.clone())
             .context("unsignedInfo: failed to parse response")?;
         Ok(resp)
