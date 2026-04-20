@@ -5,6 +5,8 @@ use reqwest::Client;
 use serde_json::Value;
 use sha2::Sha256;
 
+use crate::doh::DohManager;
+
 pub const DEFAULT_BASE_URL: &str = "https://web3.okx.com";
 const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -23,11 +25,11 @@ enum AuthMode {
     Anonymous,
 }
 
-#[derive(Clone)]
 pub struct ApiClient {
     http: Client,
     base_url: String,
     auth: AuthMode,
+    doh: DohManager,
 }
 
 impl ApiClient {
@@ -41,12 +43,23 @@ impl ApiClient {
             .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
 
+        let custom = base_url_override.is_some() || option_env!("OKX_BASE_URL").is_some();
+        let mut doh = DohManager::new("web3.okx.com", &base_url, custom);
+        doh.prepare();
+
+        let mut builder = Client::builder().timeout(std::time::Duration::from_secs(10));
+        if let Some((host, addr)) = doh.resolve_override() {
+            builder = builder.resolve(&host, addr);
+        }
+        if doh.is_proxy() {
+            builder = builder.user_agent(doh.doh_user_agent());
+        }
+
         Ok(Self {
-            http: Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
-                .build()?,
+            http: builder.build()?,
             base_url,
             auth,
+            doh,
         })
     }
 
@@ -61,12 +74,24 @@ impl ApiClient {
             .map(|s| s.to_string())
             .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
+
+        let custom = base_url_override.is_some() || option_env!("OKX_BASE_URL").is_some();
+        let mut doh = DohManager::new("web3.okx.com", &base_url, custom);
+        doh.prepare();
+
+        let mut builder = Client::builder().timeout(std::time::Duration::from_secs(10));
+        if let Some((host, addr)) = doh.resolve_override() {
+            builder = builder.resolve(&host, addr);
+        }
+        if doh.is_proxy() {
+            builder = builder.user_agent(doh.doh_user_agent());
+        }
+
         Ok(Self {
-            http: Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
-                .build()?,
+            http: builder.build()?,
             base_url,
             auth,
+            doh,
         })
     }
 
@@ -347,6 +372,24 @@ impl ApiClient {
         builder.headers(Self::ak_headers(api_key, passphrase, timestamp, sign))
     }
 
+    fn rebuild_http_client(&mut self) -> Result<()> {
+        let mut builder = Client::builder()
+            .timeout(std::time::Duration::from_secs(10));
+        if let Some((host, addr)) = self.doh.resolve_override() {
+            builder = builder.resolve(&host, addr);
+        }
+        if self.doh.is_proxy() {
+            builder = builder.user_agent(self.doh.doh_user_agent());
+        }
+        self.http = builder.build()?;
+        Ok(())
+    }
+
+    fn effective_base_url(&self) -> String {
+        self.doh.proxy_base_url()
+            .unwrap_or_else(|| self.base_url.clone())
+    }
+
     fn build_get_url_and_request_path(
         &self,
         path: &str,
@@ -358,8 +401,9 @@ impl ApiClient {
             .copied()
             .collect();
 
+        let effective = self.effective_base_url();
         let mut url =
-            reqwest::Url::parse(&format!("{}{}", self.base_url.trim_end_matches('/'), path))?;
+            reqwest::Url::parse(&format!("{}{}", effective.trim_end_matches('/'), path))?;
 
         if !filtered.is_empty() {
             url.query_pairs_mut().extend_pairs(filtered.iter().copied());
@@ -369,60 +413,121 @@ impl ApiClient {
             .query()
             .map(|query| format!("?{}", query))
             .unwrap_or_default();
+        // request_path uses original path (no proxy host) — used for HMAC signing
         let request_path = format!("{}{}", path, query_string);
 
         Ok((url, request_path))
     }
 
     /// GET request with automatic auth (JWT or AK).
-    pub async fn get(&self, path: &str, query: &[(&str, &str)]) -> Result<Value> {
+    pub async fn get(&mut self, path: &str, query: &[(&str, &str)]) -> Result<Value> {
         self.get_with_headers(path, query, None).await
     }
 
     /// GET request with automatic auth + optional extra headers.
-    pub async fn get_with_headers(
-        &self,
-        path: &str,
-        query: &[(&str, &str)],
-        extra_headers: Option<&[(&str, &str)]>,
-    ) -> Result<Value> {
-        let (url, request_path) = self.build_get_url_and_request_path(path, query)?;
-        let req = self.http.get(url);
-        let req = match &self.auth {
-            AuthMode::Jwt(token) => Self::apply_jwt(req, token),
-            AuthMode::Ak {
-                api_key,
-                secret_key,
-                passphrase,
-            } => {
-                let timestamp =
-                    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-                let sign = Self::hmac_sign(secret_key, &timestamp, "GET", &request_path, "");
-                Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
-            }
-            AuthMode::Anonymous => Self::apply_anonymous(req),
-        };
-        let req = Self::apply_extra_headers(req, extra_headers);
+    pub fn get_with_headers<'a>(
+        &'a mut self,
+        path: &'a str,
+        query: &'a [(&'a str, &'a str)],
+        extra_headers: Option<&'a [(&'a str, &'a str)]>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        Box::pin(async move {
+            let (url, request_path) = self.build_get_url_and_request_path(path, query)?;
+            let req = self.http.get(url);
+            let req = match &self.auth {
+                AuthMode::Jwt(token) => Self::apply_jwt(req, token),
+                AuthMode::Ak {
+                    api_key,
+                    secret_key,
+                    passphrase,
+                } => {
+                    let timestamp =
+                        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                    let sign = Self::hmac_sign(secret_key, &timestamp, "GET", &request_path, "");
+                    Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
+                }
+                AuthMode::Anonymous => Self::apply_anonymous(req),
+            };
+            let req = Self::apply_extra_headers(req, extra_headers);
 
-        let resp = req.send().await.context("request failed")?;
-        self.handle_response(resp).await
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                        // Rebuild the entire request with potentially new URL
+                        return self.get_with_headers(path, query, extra_headers).await;
+                    }
+                    return Err(e).context("Network unavailable — check your connection and try again");
+                }
+                Err(e) => return Err(e).context("request failed"),
+            };
+            self.doh.cache_direct_if_needed();
+            self.handle_response(resp).await
+        })
     }
 
-    /// POST request with automatic auth (JWT or AK).
+    /// POST request with automatic auth (JWT or AK). Retries after DoH failover.
     /// Signature uses path only (no query string) + JSON body string.
-    pub async fn post(&self, path: &str, body: &Value) -> Result<Value> {
+    pub async fn post(&mut self, path: &str, body: &Value) -> Result<Value> {
         self.post_with_headers(path, body, None).await
     }
 
     /// POST request with automatic auth + optional extra headers.
-    pub async fn post_with_headers(
-        &self,
+    /// Retries once after DoH failover (safe for idempotent endpoints).
+    pub fn post_with_headers<'a>(
+        &'a mut self,
+        path: &'a str,
+        body: &'a Value,
+        extra_headers: Option<&'a [(&'a str, &'a str)]>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        Box::pin(async move {
+            let body_str = serde_json::to_string(body)?;
+            let effective = self.effective_base_url();
+            let url = format!("{}{}", effective.trim_end_matches('/'), path);
+            let req = self.http.post(&url).body(body_str.clone());
+            let req = match &self.auth {
+                AuthMode::Jwt(token) => Self::apply_jwt(req, token),
+                AuthMode::Ak {
+                    api_key,
+                    secret_key,
+                    passphrase,
+                } => {
+                    let timestamp =
+                        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                    let sign = Self::hmac_sign(secret_key, &timestamp, "POST", path, &body_str);
+                    Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
+                }
+                AuthMode::Anonymous => Self::apply_anonymous(req),
+            };
+            let req = Self::apply_extra_headers(req, extra_headers);
+
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                        return self.post_with_headers(path, body, extra_headers).await;
+                    }
+                    return Err(e).context("Network unavailable — check your connection and try again");
+                }
+                Err(e) => return Err(e).context("request failed"),
+            };
+            self.doh.cache_direct_if_needed();
+            self.handle_response(resp).await
+        })
+    }
+
+    /// POST request with no DoH retry — use only for broadcast-transaction.
+    pub async fn post_no_retry_with_headers(
+        &mut self,
         path: &str,
         body: &Value,
         extra_headers: Option<&[(&str, &str)]>,
     ) -> Result<Value> {
         let body_str = serde_json::to_string(body)?;
-        let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
+        let effective = self.effective_base_url();
+        let url = format!("{}{}", effective.trim_end_matches('/'), path);
         let req = self.http.post(&url).body(body_str.clone());
         let req = match &self.auth {
             AuthMode::Jwt(token) => Self::apply_jwt(req, token),
@@ -440,7 +545,18 @@ impl ApiClient {
         };
         let req = Self::apply_extra_headers(req, extra_headers);
 
-        let resp = req.send().await.context("request failed")?;
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) if e.is_connect() || e.is_timeout() => {
+                let _ = self.doh.handle_failure().await;
+                if self.doh.is_proxy() {
+                    let _ = self.rebuild_http_client();
+                }
+                return Err(e).context("Network error during broadcast — transaction was NOT sent. Safe to retry the same command.");
+            }
+            Err(e) => return Err(e).context("request failed"),
+        };
+        self.doh.cache_direct_if_needed();
         self.handle_response(resp).await
     }
 

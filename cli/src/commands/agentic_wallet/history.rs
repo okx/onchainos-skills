@@ -52,7 +52,7 @@ pub(super) async fn cmd_history(
         _ => String::new(),
     };
 
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
 
     if let Some(tx_hash_val) = tx_hash {
         // ── Detail mode: --tx-hash present → /order/detail ──

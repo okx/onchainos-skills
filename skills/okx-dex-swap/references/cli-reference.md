@@ -105,7 +105,7 @@ onchainos swap quote --from <address> --to <address> --readable-amount <amount> 
 One-shot swap: quote → approve (if needed) → sign → broadcast → txHash. Honeypot and price impact >10% are blocked internally.
 
 ```bash
-onchainos swap execute --from <address> --to <address> --readable-amount <amount> --chain <chain> --wallet <address> [--slippage <pct>] [--gas-level <level>] [--swap-mode <mode>] [--mev-protection] [--tips <sol_amount>]
+onchainos swap execute --from <address> --to <address> --readable-amount <amount> --chain <chain> --wallet <address> [--slippage <pct>] [--gas-level <level>] [--swap-mode <mode>] [--mev-protection] [--tips <lamports>] [--max-auto-slippage <pct>]
 ```
 
 | Param | Required | Default | Description |
@@ -120,7 +120,8 @@ onchainos swap execute --from <address> --to <address> --readable-amount <amount
 | `--gas-level` | No | `average` | Gas priority: `slow`, `average`, `fast` |
 | `--swap-mode` | No | `exactIn` | `exactIn` or `exactOut` |
 | `--mev-protection` | No | - | Enable MEV protection (EVM chains: Ethereum, BSC, Base) |
-| `--tips` | No | - | Jito tips in SOL for MEV protection (Solana only, e.g. `0.001`). Mutually exclusive with `computeUnitPrice`. |
+| `--tips` | No | - | Jito tips in lamports for MEV protection (Solana only, positive integer, e.g. `1000` = 0.000001 SOL). Mutually exclusive with `computeUnitPrice`. |
+| `--max-auto-slippage` | No | - | Upper bound for autoSlippage in percent (e.g. `"3"` for 3%). Only applies when `--slippage` is omitted (i.e. autoSlippage is active). Has no effect if `--slippage` is passed explicitly. |
 
 **Return fields**:
 
@@ -159,7 +160,7 @@ onchainos swap liquidity --chain xlayer
 Calldata only — returns unsigned transaction data. Does NOT sign or broadcast.
 
 ```bash
-onchainos swap swap --from <address> --to <address> --readable-amount <amount> --chain <chain> --wallet <address> [--slippage <pct>] [--swap-mode <mode>] [--tips <sol_amount>]
+onchainos swap swap --from <address> --to <address> --readable-amount <amount> --chain <chain> --wallet <address> [--slippage <pct>] [--swap-mode <mode>] [--tips <lamports>] [--max-auto-slippage <pct>]
 ```
 
 | Param | Required | Default | Description |
@@ -172,7 +173,8 @@ onchainos swap swap --from <address> --to <address> --readable-amount <amount> -
 | `--wallet` | Yes | - | User's wallet address |
 | `--slippage` | No | autoSlippage | Slippage tolerance in percent (e.g., `"1"` for 1%). Omit to use autoSlippage. |
 | `--swap-mode` | No | `exactIn` | `exactIn` or `exactOut` |
-| `--tips` | No | - | Jito tips in SOL for MEV protection (Solana only, e.g. `0.001`). Jito calldata embedded in returned tx data. |
+| `--tips` | No | - | Jito tips in lamports for MEV protection (Solana only, positive integer, e.g. `1000` = 0.000001 SOL). Jito calldata embedded in returned tx data. |
+| `--max-auto-slippage` | No | - | Upper bound for autoSlippage in percent (e.g. `"3"` for 3%). Only applies when `--slippage` is omitted (i.e. autoSlippage is active). Has no effect if `--slippage` is passed explicitly. |
 
 **Return fields**:
 

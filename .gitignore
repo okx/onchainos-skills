@@ -53,6 +53,9 @@ yarn-error.log*
 .cursorrules
 .cursorignore
 
+# Superpowers generated docs (local only)
+docs/superpowers/
+
 
 .zigbuild-cache/
 

@@ -122,7 +122,7 @@ pub enum MarketCommand {
 }
 
 pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
     match cmd {
         MarketCommand::Price { address, chain } => {
             let address = address.trim().to_string();
@@ -132,7 +132,7 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            let result = fetch_price(&client, &address, &chain_index).await?;
+            let result = fetch_price(&mut client, &address, &chain_index).await?;
             if result.as_array().is_some_and(|a| a.is_empty()) {
                 anyhow::bail!(
                     "No price data found for address {} on chain {}. Verify the token address is valid on this chain.",
@@ -146,7 +146,7 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
             let default_chain = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_prices(&client, &tokens, &default_chain).await?);
+            output::success(fetch_prices(&mut client, &tokens, &default_chain).await?);
         }
         MarketCommand::Kline {
             address,
@@ -157,13 +157,13 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_kline(&client, &address, &chain_index, &bar, limit).await?);
+            output::success(fetch_kline(&mut client, &address, &chain_index, &bar, limit).await?);
         }
         MarketCommand::Index { address, chain } => {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_index(&client, &address, &chain_index).await?);
+            output::success(fetch_index(&mut client, &address, &chain_index).await?);
         }
         MarketCommand::PortfolioSupportedChains => {
             portfolio_supported_chains(ctx).await?;
@@ -219,14 +219,14 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
 }
 
 /// POST /api/v6/dex/market/price — body is JSON array
-pub async fn fetch_price(client: &ApiClient, address: &str, chain_index: &str) -> Result<Value> {
+pub async fn fetch_price(client: &mut ApiClient, address: &str, chain_index: &str) -> Result<Value> {
     let body = json!([{"chainIndex": chain_index, "tokenContractAddress": address}]);
     client.post("/api/v6/dex/market/price", &body).await
 }
 
 /// POST /api/v6/dex/market/price — batch query
 pub async fn fetch_prices(
-    client: &ApiClient,
+    client: &mut ApiClient,
     tokens: &str,
     default_chain_index: &str,
 ) -> Result<Value> {
@@ -279,7 +279,7 @@ fn kline_to_named_objects(data: Value) -> Value {
 
 /// GET /api/v6/dex/market/candles — returns named objects (transformed from raw arrays).
 pub async fn fetch_kline(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
     bar: &str,
@@ -301,27 +301,27 @@ pub async fn fetch_kline(
 }
 
 /// POST /api/v6/dex/index/current-price — body is JSON array
-pub async fn fetch_index(client: &ApiClient, address: &str, chain_index: &str) -> Result<Value> {
+pub async fn fetch_index(client: &mut ApiClient, address: &str, chain_index: &str) -> Result<Value> {
     let body = json!([{"chainIndex": chain_index, "tokenContractAddress": address}]);
     client.post("/api/v6/dex/index/current-price", &body).await
 }
 
 /// GET /api/v6/dex/market/portfolio/supported/chain
-pub async fn fetch_portfolio_supported_chains(client: &ApiClient) -> Result<Value> {
+pub async fn fetch_portfolio_supported_chains(client: &mut ApiClient) -> Result<Value> {
     client
         .get("/api/v6/dex/market/portfolio/supported/chain", &[])
         .await
 }
 
 async fn portfolio_supported_chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client_async().await?;
-    output::success(fetch_portfolio_supported_chains(&client).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_portfolio_supported_chains(&mut client).await?);
     Ok(())
 }
 
 /// GET /api/v6/dex/market/portfolio/overview
 pub async fn fetch_portfolio_overview(
-    client: &ApiClient,
+    client: &mut ApiClient,
     chain_index: &str,
     address: &str,
     time_frame: &str,
@@ -345,15 +345,15 @@ async fn portfolio_overview(
     time_frame: &str,
 ) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain);
-    let client = ctx.client_async().await?;
-    output::success(fetch_portfolio_overview(&client, &chain_index, address, time_frame).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_portfolio_overview(&mut client, &chain_index, address, time_frame).await?);
     Ok(())
 }
 
 /// GET /api/v6/dex/market/portfolio/dex-history
 #[allow(clippy::too_many_arguments)]
 pub async fn fetch_portfolio_dex_history(
-    client: &ApiClient,
+    client: &mut ApiClient,
     chain_index: &str,
     address: &str,
     begin: &str,
@@ -399,10 +399,10 @@ async fn portfolio_dex_history(
     tx_type: Option<&str>,
 ) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain);
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
     output::success(
         fetch_portfolio_dex_history(
-            &client,
+            &mut client,
             &chain_index,
             address,
             begin,
@@ -419,7 +419,7 @@ async fn portfolio_dex_history(
 
 /// GET /api/v6/dex/market/portfolio/recent-pnl
 pub async fn fetch_portfolio_recent_pnl(
-    client: &ApiClient,
+    client: &mut ApiClient,
     chain_index: &str,
     address: &str,
     limit: Option<&str>,
@@ -446,16 +446,16 @@ async fn portfolio_recent_pnl(
     cursor: Option<&str>,
 ) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain);
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
     output::success(
-        fetch_portfolio_recent_pnl(&client, &chain_index, address, limit, cursor).await?,
+        fetch_portfolio_recent_pnl(&mut client, &chain_index, address, limit, cursor).await?,
     );
     Ok(())
 }
 
 /// GET /api/v6/dex/market/portfolio/token/latest-pnl
 pub async fn fetch_portfolio_token_pnl(
-    client: &ApiClient,
+    client: &mut ApiClient,
     chain_index: &str,
     address: &str,
     token: &str,
@@ -474,7 +474,7 @@ pub async fn fetch_portfolio_token_pnl(
 
 async fn portfolio_token_pnl(ctx: &Context, address: &str, chain: &str, token: &str) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain);
-    let client = ctx.client_async().await?;
-    output::success(fetch_portfolio_token_pnl(&client, &chain_index, address, token).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_portfolio_token_pnl(&mut client, &chain_index, address, token).await?);
     Ok(())
 }

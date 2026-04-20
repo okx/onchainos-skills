@@ -296,7 +296,7 @@ async fn cmd_pay(
     let session_key = keyring_store::get("session_key")
         .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
 
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
 
     // 3. Get EIP-3009 unsigned hash
     let unsigned_hash_resp = client
