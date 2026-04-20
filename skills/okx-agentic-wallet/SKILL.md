@@ -123,18 +123,19 @@ The `--force` flag MUST ONLY be added when ALL of the following conditions are m
 
 Gas Station allows paying gas fees with stablecoins (USDT/USDC/USDG) when native token balance is insufficient. Activates **automatically** during `wallet send` — no manual trigger needed.
 
-> When `wallet send` returns a Gas Station response (gasStationUsed=true or Confirming with token selection), or the user asks about Gas Station / paying gas with stablecoins / 加油站: read and follow `references/gas-station.md`
-> When the user asks about 7702 upgrade, revoke 7702, or the response contains needUpdate7702/authHashFor7702: read `references/eip7702-upgrade.md`
+> When `wallet send` returns a Gas Station response (gasStationUsed=true or Confirming with token selection), or the user asks about Gas Station / paying gas with stablecoins / 加油站 / 开启 or 关闭 Gas Station / 撤销 7702 / 取消授权: read and follow `references/gas-station.md`
+> For internal 7702 signing/upgrade flow details (only when response contains needUpdate7702/authHashFor7702): read `references/eip7702-upgrade.md`. **Do NOT expose 7702 concept to end users in your output.**
 
 | # | Command | Description | Auth Required |
 |---|---|---|---|
 | D-GS1 | `onchainos wallet gas-station update-default-token` | Change the default gas payment token for a chain | Yes |
-| D-GS2 | `onchainos wallet gas-station revoke-7702` | Revoke 7702 upgrade and disable Gas Station for a chain | Yes |
+| D-GS2 | `onchainos wallet gas-station disable` | Disable Gas Station for a chain (DB flag only, on-chain 7702 delegation preserved) | Yes |
 
 <NEVER>
 - **NEVER pass `--gas-token-address`, `--relayer-id`, or `--enable-gas-station` on the FIRST call** to `wallet send`. These are only for the second-phase call after a Confirming response.
 - **NEVER fabricate token addresses or relayer IDs** — always use exact values from the Confirming response.
 - **NEVER proactively suggest Gas Station** when the user has not attempted a transaction.
+- **NEVER output "撤销 7702" / "取消 7702 授权" / "revoke 7702" / "cancel 7702 upgrade" / "EIP-7702" to the user.** 统一口径: 只说"开启 Gas Station / 关闭 Gas Station" (EN: "enable/disable Gas Station"). Users may input these phrases — recognize as intent, but respond with unified vocabulary. Do NOT expose 7702 as a separate concept.
 </NEVER>
 
 ---
@@ -357,10 +358,11 @@ When triggered, output the following message (translated to the user's language)
   |---|---|---|
   | OTP | 验证码 | Never use "OTP" in Chinese; in English prefer "verification code" |
   | Policy / Policy Settings | 安全规则 | e.g. "Go to Policy Settings" → "前往安全规则" |
-  | Gas Station | Gas 加油站 | Always use "Gas 加油站" in Chinese, never "加油站" alone (ambiguous) |
+  | Gas Station | Gas 加油站 / Gas Station | Chinese 可用"Gas 加油站"或"Gas Station"，不要只说"加油站"（歧义）|
   | service charge / gas fee (Gas Station) | 网络费用 | When paid via Gas Station, display as "网络费用: 0.13 USDT" |
   | Relayer | Relayer | Keep English in both languages — no Chinese translation |
-  | EIP-7702 upgrade | 7702 升级 | Technical term, keep as-is |
+  | EIP-7702 / 7702 授权 / 取消授权 | 不对用户暴露 | 内部技术术语，不向用户输出。用户问"撤销 7702"/"取消授权" → 统一用"关闭 Gas Station"回应 |
+  | enable/disable Gas Station | 开启 / 关闭 Gas Station | 管理 Gas Station 状态的唯一用户可见术语 |
 - **Full chain names**: Always display chains by their full name — never use abbreviations or internal IDs. If unsure, run `onchainos wallet chains` and use the `showName` field.
 - **Friendly Reminder**: This is a self-custody wallet — all on-chain transactions are irreversible.
 - **Locale-aware output**: All user-facing content must be translated to match the user's language.
@@ -388,7 +390,7 @@ When triggered, output the following message (translated to the user's language)
 
 ## FAQ
 
-> For Gas Station FAQ (what is it, how it works, 7702 upgrade cost, supported tokens/chains): read `references/gas-station.md` FAQ section.
+> For Gas Station FAQ (what is it, how it works, supported tokens/chains, open/close flow): read `references/gas-station.md` FAQ section.
 
 **Q: The agent cannot autonomously sign and execute transactions — it says local signing is required or asks the user to sign manually. How does signing work?**
 

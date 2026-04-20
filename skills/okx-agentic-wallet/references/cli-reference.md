@@ -362,12 +362,12 @@ onchainos wallet gas-station update-default-token \
 | `--chain` | string | Yes | Chain name or ID (e.g. `ethereum` or `1`) |
 | `--gas-token-address` | string | Yes | Token contract address to set as default gas payment token |
 
-### D-GS2. `onchainos wallet gas-station revoke-7702`
+### D-GS2. `onchainos wallet gas-station disable`
 
-Revoke EIP-7702 upgrade and disable Gas Station for a specific chain. Requires native token balance to pay gas for the revocation transaction.
+Disable Gas Station for a specific chain. **DB flag only, no on-chain action.** The on-chain 7702 delegation is preserved, so re-enabling later does not require a new 7702 upgrade. `default_gas_token_address` is also preserved.
 
 ```bash
-onchainos wallet gas-station revoke-7702 \
+onchainos wallet gas-station disable \
   --chain <chain>
 ```
 

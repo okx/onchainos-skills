@@ -466,7 +466,6 @@ fn wallet_sub(c: &WalletCommand) -> &'static str {
         WalletCommand::ContractCall { .. } => "contract-call",
         WalletCommand::SignMessage { .. } => "sign-message",
         WalletCommand::GasStation { .. } => "gas-station",
-        WalletCommand::DebugSignGs { .. } => "debug-sign-gs",
     }
 }
 

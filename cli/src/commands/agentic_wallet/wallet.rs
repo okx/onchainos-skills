@@ -87,21 +87,6 @@ pub enum WalletCommand {
         /// Enable Gas Station (first-time activation, sets gasTokenAddress as default)
         #[arg(long, default_value_t = false)]
         enable_gas_station: bool,
-        /// Revoke EIP-7702 delegation (sends revokeEip7702=true to unsignedInfo)
-        #[arg(long, default_value_t = false)]
-        revoke_eip7702: bool,
-        /// Revoke Round 2: CLI session signature of authHashFor7702 (Base64, from Round 1)
-        #[arg(long)]
-        eip7702_auth_session_sig: Option<String>,
-    },
-    /// TEMPORARY: debug sign Gas Station hashes
-    DebugSignGs {
-        /// 712 hash to sign
-        #[arg(long)]
-        hash: String,
-        /// 7702 auth hash to sign (optional)
-        #[arg(long)]
-        auth_hash: Option<String>,
     },
     /// Query transaction history or detail
     History {
@@ -211,8 +196,9 @@ pub enum GasStationCommand {
         #[arg(long)]
         gas_token_address: String,
     },
-    /// Revoke EIP-7702 upgrade and disable Gas Station for a chain
-    Revoke7702 {
+    /// Disable Gas Station for a chain (DB flag only, no on-chain action).
+    /// The 7702 delegation remains on-chain, so re-enabling later does NOT require a new upgrade.
+    Disable {
         /// Chain name or ID (e.g. "ethereum" or "1")
         #[arg(long)]
         chain: String,
@@ -349,21 +335,15 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             gas_token_address,
             relayer_id,
             enable_gas_station,
-            revoke_eip7702,
-            eip7702_auth_session_sig,
         } => {
             let chain = crate::chains::resolve_chain(&chain);
-            let raw_amt = if revoke_eip7702 {
-                "0".to_string() // revoke 不需要金额
-            } else {
-                resolve_send_amount(
-                    amt.as_deref(),
-                    readable_amount.as_deref(),
-                    contract_token.as_deref(),
-                    &chain,
-                )
-                .await?
-            };
+            let raw_amt = resolve_send_amount(
+                amt.as_deref(),
+                readable_amount.as_deref(),
+                contract_token.as_deref(),
+                &chain,
+            )
+            .await?;
             super::transfer::cmd_send(
                 &raw_amt,
                 &recipient,
@@ -374,14 +354,8 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                 gas_token_address.as_deref(),
                 relayer_id.as_deref(),
                 enable_gas_station,
-                revoke_eip7702,
-                eip7702_auth_session_sig.as_deref(),
             )
             .await
-        }
-        WalletCommand::DebugSignGs { hash, auth_hash } => {
-            super::sign::debug_sign_gs_hashes(&hash, auth_hash.as_deref())?;
-            Ok(())
         }
         WalletCommand::History {
             account_id,

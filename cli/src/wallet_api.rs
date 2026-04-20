@@ -692,8 +692,6 @@ impl WalletApiClient {
         enable_gas_station: Option<bool>,
         gas_token_address: Option<&str>,
         relayer_id: Option<&str>,
-        revoke_eip7702: Option<bool>,
-        eip7702_auth_session_signature: Option<&str>,
     ) -> Result<UnsignedInfoResponse> {
         let mut body = json!({
             "chainPath": chain_path,
@@ -733,12 +731,6 @@ impl WalletApiClient {
         }
         if let Some(rid) = relayer_id {
             body["relayerId"] = Value::String(rid.to_string());
-        }
-        if let Some(true) = revoke_eip7702 {
-            body["revokeEip7702"] = json!(true);
-        }
-        if let Some(sig) = eip7702_auth_session_signature {
-            body["eip7702AuthSessionSignature"] = Value::String(sig.to_string());
         }
         let data = self
             .post_authed_with_headers(
@@ -820,8 +812,9 @@ impl WalletApiClient {
         .await
     }
 
-    /// POST /priapi/v5/wallet/agentic/gas-station/revoke-7702
-    pub async fn gas_station_revoke_7702(
+    /// POST /priapi/v5/wallet/agentic/gas-station/disable
+    /// Disable Gas Station (DB flag only, no on-chain action).
+    pub async fn gas_station_disable(
         &self,
         access_token: &str,
         chain_index: &str,
@@ -830,7 +823,7 @@ impl WalletApiClient {
             "chainIndex": chain_index,
         });
         self.post_authed(
-            "/priapi/v5/wallet/agentic/gas-station/revoke-7702",
+            "/priapi/v5/wallet/agentic/gas-station/disable",
             access_token,
             &body,
         )

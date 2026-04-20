@@ -383,38 +383,6 @@ pub fn sign_eip7702_auth(auth_hash: &str) -> Result<String> {
     Ok(signature)
 }
 
-/// TEMPORARY: debug 签名 — 对给定的 hash 产生 Gas Station 场景需要的所有签名
-pub fn debug_sign_gs_hashes(hash_712: &str, auth_hash_7702: Option<&str>) -> Result<()> {
-    let session = wallet_store::load_session()?
-        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-    let session_key = keyring_store::get("session_key")
-        .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-
-    let signing_seed =
-        crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &session_key)?;
-    let signing_seed_b64 = B64.encode(signing_seed.as_slice());
-
-    // signature: ed25519_sign_eip191(hash)
-    let signature = crate::crypto::ed25519_sign_eip191(hash_712, &signing_seed, "hex")?;
-    // sessionSignature: ed25519_sign_encoded(hash)
-    let session_signature = crate::crypto::ed25519_sign_encoded(hash_712, &signing_seed_b64, "hex")?;
-
-    println!("=== Gas Station 签名结果 ===");
-    println!("hash (712): {}", hash_712);
-    println!("signature: {}", signature);
-    println!("sessionSignature: {}", session_signature);
-    println!("sessionCert: {}", session.session_cert);
-
-    if let Some(auth_hash) = auth_hash_7702 {
-        let auth_sig = crate::crypto::ed25519_sign_hex(auth_hash, &signing_seed_b64)?;
-        println!();
-        println!("authHashFor7702: {}", auth_hash);
-        println!("authSignatureFor7702: {}", auth_sig);
-    }
-
-    Ok(())
-}
-
 // ── helpers ──────────────────────────────────────────────────────────
 
 /// Encode message: base58 for Solana (chain "501"), raw passthrough for EVM chains.

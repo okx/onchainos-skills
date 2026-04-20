@@ -17,8 +17,8 @@ pub async fn execute(cmd: GasStationCommand) -> Result<()> {
             output::success(data);
             Ok(())
         }
-        GasStationCommand::Revoke7702 { chain } => {
-            let data = fetch_revoke_7702(&chain).await?;
+        GasStationCommand::Disable { chain } => {
+            let data = fetch_disable(&chain).await?;
             output::success(data);
             Ok(())
         }
@@ -48,22 +48,23 @@ pub async fn fetch_update_default_token(chain: &str, gas_token_address: &str) ->
     Ok(data)
 }
 
-/// Public fetch function for MCP and CLI
-pub async fn fetch_revoke_7702(chain: &str) -> Result<Value> {
+/// Disable Gas Station for a chain. DB flag only, no on-chain action.
+/// The 7702 delegation on-chain is preserved, so re-enabling later skips 7702 upgrade.
+pub async fn fetch_disable(chain: &str) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let chain_index = crate::chains::resolve_chain(chain);
     let client = WalletApiClient::new()?;
     let req = serde_json::json!({ "chainIndex": &chain_index });
     let data = match client
-        .gas_station_revoke_7702(&access_token, &chain_index)
+        .gas_station_disable(&access_token, &chain_index)
         .await
     {
         Ok(v) => v,
         Err(e) => {
-            super::debug_dump::dump_error("05-revoke-7702", &req, &format!("{e:#}"));
+            super::debug_dump::dump_error("05-disable", &req, &format!("{e:#}"));
             return Err(format_api_error(e));
         }
     };
-    super::debug_dump::dump("05-revoke-7702", &req, &data);
+    super::debug_dump::dump("05-disable", &req, &data);
     Ok(data)
 }

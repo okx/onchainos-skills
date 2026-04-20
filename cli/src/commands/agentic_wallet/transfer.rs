@@ -204,8 +204,6 @@ async fn sign_and_broadcast(
             None, // enable_gas_station
             None, // gas_token_address
             None, // relayer_id
-            None, // revoke_eip7702
-            None, // eip7702_auth_session_signature
         )
         .await
         .map_err(format_api_error)?;
@@ -357,17 +355,7 @@ pub(super) async fn cmd_send(
     gas_token_address: Option<&str>,
     relayer_id: Option<&str>,
     enable_gas_station: bool,
-    revoke_eip7702: bool,
-    eip7702_auth_session_sig: Option<&str>,
 ) -> Result<()> {
-    // Revoke 不需要金额，提前路由
-    if revoke_eip7702 {
-        if chain.is_empty() {
-            bail!("chain is required for revoke-eip7702");
-        }
-        return revoke_eip7702_send(chain, from, recipient, eip7702_auth_session_sig).await;
-    }
-
     validate_amount(amt)?;
     if recipient.is_empty() || chain.is_empty() {
         bail!("recipient and chain are required");
@@ -431,8 +419,6 @@ pub(super) async fn cmd_send(
             None, // enable_gas_station
             None, // gas_token_address
             None, // relayer_id
-            None, // revoke_eip7702
-            None, // eip7702_auth_session_signature
         )
         .await
     {
@@ -636,8 +622,6 @@ async fn gas_station_send(
             if enable_gas_station { Some(true) } else { None },
             gas_token_address,
             relayer_id,
-            None, // revoke_eip7702
-            None, // eip7702_auth_session_signature
         )
         .await
     {
@@ -945,162 +929,6 @@ async fn gas_station_sign_and_broadcast(
     }
 }
 
-// ── revoke EIP-7702 ──────────────────────────────────────────────────
-
-/// Revoke EIP-7702: two-round flow via unsignedInfo(revokeEip7702=true).
-///
-/// Round 1 (no eip7702_auth_session_sig):
-///   unsignedInfo(revokeEip7702=true) → returns authHashFor7702
-///   CLI outputs authHash for agent/user to sign with session key
-///
-/// Round 2 (with eip7702_auth_session_sig):
-///   unsignedInfo(revokeEip7702=true, eip7702AuthSessionSignature=sig)
-///   → returns unsignedTxHash + unsignedTx
-///   → CLI signs unsignedTxHash (Normal EOA path) → broadcast
-async fn revoke_eip7702_send(
-    chain: &str,
-    from: Option<&str>,
-    to_addr: &str,
-    eip7702_auth_session_sig: Option<&str>,
-) -> Result<()> {
-    let access_token =
-        crate::commands::agentic_wallet::auth::ensure_tokens_refreshed().await?;
-    let wallets = crate::wallet_store::load_wallets()?
-        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-    let chain_entry = super::chain::get_chain_by_real_chain_index(chain)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("unsupported chain: {}", chain))?;
-    let chain_name = chain_entry["chainName"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("missing chainName"))?;
-    let (_account_id, addr_info) = resolve_address(&wallets, from, chain_name)?;
-    let chain_index_num: u64 = addr_info.chain_index.parse().unwrap_or(1);
-
-    let session = crate::wallet_store::load_session()?
-        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-
-    let client = crate::wallet_api::WalletApiClient::new()?;
-
-    if let Some(auth_sig) = eip7702_auth_session_sig {
-        // ── Round 2: pass session signature → get unsignedTxHash → Normal EOA broadcast ──
-        let req = json!({
-            "chainPath": addr_info.chain_path,
-            "chainIndex": chain_index_num,
-            "fromAddr": addr_info.address,
-            "toAddr": to_addr,
-            "revokeEip7702": true,
-            "eip7702AuthSessionSignature": auth_sig,
-        });
-        let unsigned = match client
-            .pre_transaction_unsigned_info(
-                &access_token,
-                &addr_info.chain_path,
-                chain_index_num,
-                &addr_info.address,
-                to_addr,
-                "0",
-                None,
-                &session.session_cert,
-                None, None, None, None, None, None, None,
-                None, None, None,
-                Some(true), // revoke_eip7702
-                Some(auth_sig), // eip7702_auth_session_signature (Round 2)
-            )
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                super::debug_dump::dump_error("05-revoke-7702-round2", &req, &format!("{e:#}"));
-                return Err(format_api_error(e));
-            }
-        };
-        super::debug_dump::dump("05-revoke-7702-round2", &req, &json!({
-            "unsignedTxHash": &unsigned.unsigned_tx_hash,
-            "unsignedTx": &unsigned.unsigned_tx,
-            "signType": &unsigned.sign_type,
-            "gasStationDisabled": unsigned.gas_station_disabled,
-            "extraData": &unsigned.extra_data,
-        }));
-
-        if unsigned.unsigned_tx_hash.is_empty() {
-            bail!("Revoke Round 2: backend did not return unsignedTxHash");
-        }
-
-        // Normal EOA sign + broadcast (same as master sign_and_broadcast)
-        let resp = sign_and_broadcast(
-            chain,
-            from,
-            TxParams {
-                to_addr,
-                value: "0",
-                contract_addr: None,
-                input_data: None,
-                unsigned_tx: Some(&unsigned.unsigned_tx),
-                gas_limit: None,
-                aa_dex_token_addr: None,
-                aa_dex_token_amount: None,
-                jito_unsigned_tx: None,
-            },
-            false,
-            false,
-            false,
-        )
-        .await?;
-        output::success(json!({
-            "txHash": resp.tx_hash,
-            "orderId": resp.order_id,
-            "gasStationDisabled": true,
-        }));
-    } else {
-        // ── Round 1: get authHashFor7702 for CLI to sign ──
-        let req = json!({
-            "chainPath": addr_info.chain_path,
-            "chainIndex": chain_index_num,
-            "fromAddr": addr_info.address,
-            "toAddr": to_addr,
-            "revokeEip7702": true,
-        });
-        let unsigned = match client
-            .pre_transaction_unsigned_info(
-                &access_token,
-                &addr_info.chain_path,
-                chain_index_num,
-                &addr_info.address,
-                to_addr,
-                "0",
-                None,
-                &session.session_cert,
-                None, None, None, None, None, None, None,
-                None, None, None,
-                Some(true), // revoke_eip7702
-                None, // eip7702_auth_session_signature (Round 1 不传)
-            )
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                super::debug_dump::dump_error("05-revoke-7702-round1", &req, &format!("{e:#}"));
-                return Err(format_api_error(e));
-            }
-        };
-        super::debug_dump::dump("05-revoke-7702-round1", &req, &json!({
-            "authHashFor7702": &unsigned.auth_hash_for7702,
-            "signType": &unsigned.sign_type,
-            "gasStationDisabled": unsigned.gas_station_disabled,
-            "executeResult": &unsigned.execute_result,
-            "executeErrorMsg": &unsigned.execute_error_msg,
-        }));
-
-        output::success(json!({
-            "authHashFor7702": unsigned.auth_hash_for7702,
-            "signType": unsigned.sign_type,
-            "gasStationDisabled": unsigned.gas_station_disabled,
-            "executeErrorMsg": unsigned.execute_error_msg,
-        }));
-    }
-    Ok(())
-}
-
 // ── contract-call ─────────────────────────────────────────────────────
 
 /// onchainos wallet contract-call
@@ -1345,21 +1173,21 @@ mod tests {
 
     #[tokio::test]
     async fn cmd_send_rejects_empty_amt() {
-        let result = cmd_send("", "0xRecipient", "1", None, None, false, None, None, false, false, None).await;
+        let result = cmd_send("", "0xRecipient", "1", None, None, false, None, None, false).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("--amount"));
     }
 
     #[tokio::test]
     async fn cmd_send_rejects_decimal_amt() {
-        let result = cmd_send("1.5", "0xRecipient", "1", None, None, false, None, None, false, false, None).await;
+        let result = cmd_send("1.5", "0xRecipient", "1", None, None, false, None, None, false).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("--amount"));
     }
 
     #[tokio::test]
     async fn cmd_send_rejects_empty_recipient() {
-        let result = cmd_send("100", "", "1", None, None, false, None, None, false, false, None).await;
+        let result = cmd_send("100", "", "1", None, None, false, None, None, false).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -1369,7 +1197,7 @@ mod tests {
 
     #[tokio::test]
     async fn cmd_send_rejects_empty_chain() {
-        let result = cmd_send("100", "0xRecipient", "", None, None, false, None, None, false, false, None).await;
+        let result = cmd_send("100", "0xRecipient", "", None, None, false, None, None, false).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()

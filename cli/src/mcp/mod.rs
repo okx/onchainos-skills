@@ -257,7 +257,7 @@ struct GasStationUpdateDefaultTokenParams {
 }
 
 #[derive(Deserialize, JsonSchema)]
-struct GasStationRevoke7702Params {
+struct GasStationDisableParams {
     /// Chain name or ID (e.g. "ethereum", "1")
     chain: String,
 }
@@ -1973,15 +1973,15 @@ impl McpServer {
     }
 
     #[tool(
-        name = "gas_station_revoke_7702",
-        description = "Revoke EIP-7702 upgrade and disable Gas Station for a specific chain. After revoking, transactions will use native token for gas. Requires sufficient native token balance."
+        name = "gas_station_disable",
+        description = "Disable Gas Station for a specific chain (DB flag only, no on-chain action). The 7702 delegation on-chain is preserved, so re-enabling later does not require a new upgrade. To switch default gas token, use gas_station_update_default_token instead."
     )]
-    async fn gas_station_revoke_7702(
+    async fn gas_station_disable(
         &self,
-        Parameters(p): Parameters<GasStationRevoke7702Params>,
+        Parameters(p): Parameters<GasStationDisableParams>,
     ) -> Result<String, String> {
         use crate::commands::agentic_wallet::gas_station;
-        match gas_station::fetch_revoke_7702(&p.chain).await {
+        match gas_station::fetch_disable(&p.chain).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
