@@ -510,13 +510,13 @@ impl ApiClient {
             Ok(data) => Ok(data),
             Err(e) => match e.downcast::<PaymentRequired>() {
                 Ok(pr) => {
-                    self.update_accepts_cache(&pr.accepts);
+                    let accepts = self.resolve_retry_accepts(&pr)?;
                     // Fall back to Basic if we have no tier mapping — cheapest
                     // safe default; if the server wanted Premium it will 402
                     // again and the user sees the error.
                     let tier = self.tier_for_path(path).unwrap_or(PaymentTier::Basic);
                     let hdr = self
-                        .sign_header_from_accepts(&pr.accepts, &resource, tier)
+                        .sign_header_from_accepts(&accepts, &resource, tier)
                         .await?;
                     self.do_get_request(path, query, extra_headers, Some(&hdr))
                         .await
@@ -551,10 +551,10 @@ impl ApiClient {
             Ok(data) => Ok(data),
             Err(e) => match e.downcast::<PaymentRequired>() {
                 Ok(pr) => {
-                    self.update_accepts_cache(&pr.accepts);
+                    let accepts = self.resolve_retry_accepts(&pr)?;
                     let tier = self.tier_for_path(path).unwrap_or(PaymentTier::Basic);
                     let hdr = self
-                        .sign_header_from_accepts(&pr.accepts, &resource, tier)
+                        .sign_header_from_accepts(&accepts, &resource, tier)
                         .await?;
                     self.do_post_request(path, body, extra_headers, Some(&hdr))
                         .await
@@ -649,12 +649,11 @@ impl ApiClient {
             bail!("Server error (HTTP {})", status.as_u16());
         }
 
-        // An empty body is legitimate for a standard-compliant 402 — accepts
-        // come from the PAYMENT-REQUIRED header in that case. Otherwise empty
-        // is an error.
+        // 402 may come with an empty body — accepts resolved from header or
+        // cached config upstream. Other empty bodies are still an error.
         let body_bytes = resp.bytes().await.context("failed to read response body")?;
         if body_bytes.is_empty() {
-            if status.as_u16() == 402 && header_accepts.is_some() {
+            if status.as_u16() == 402 {
                 return Err(PaymentRequired {
                     accepts: header_accepts.unwrap_or(Value::Null),
                     raw_body: Value::Null,
@@ -1009,6 +1008,25 @@ impl ApiClient {
         )
     }
 
+    /// Pick the `accepts` to sign with on a 402 retry. Prefer fresh accepts
+    /// from the 402 response (x402 V2 header or body); fall back to the
+    /// cached `accepts` loaded from `/api/v6/dex/market/config` when the
+    /// server returned an empty 402 (OKX openapi style). Errors only when
+    /// neither source has anything — the retry is hopeless in that case.
+    fn resolve_retry_accepts(&self, pr: &PaymentRequired) -> Result<Value> {
+        if !pr.accepts.is_null() {
+            self.update_accepts_cache(&pr.accepts);
+            return Ok(pr.accepts.clone());
+        }
+        self.payment_state().accepts.clone().ok_or_else(|| {
+            anyhow::anyhow!(
+                "HTTP 402 but no payment requirements available — response had no \
+                 accepts and no cached config. Retry after /api/v6/dex/market/config \
+                 becomes reachable."
+            )
+        })
+    }
+
     /// Overwrite the in-memory `accepts` with a fresh copy from a 402 response
     /// and persist. Keeps subsequent requests from needing another round-trip.
     fn update_accepts_cache(&self, accepts: &Value) {
@@ -1043,7 +1061,8 @@ impl ApiClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{ApiClient, PaymentTier};
+    use super::{ApiClient, PaymentRequired, PaymentTier};
+    use serde_json::Value;
 
     /// Set AK credential env vars to dummy test values so ApiClient::new() succeeds.
     fn set_test_credentials() {
@@ -1416,6 +1435,51 @@ mod tests {
         set_test_credentials();
         let client = ApiClient::new(None).expect("client");
         assert_eq!(client.tier_for_path("/api/v6/dex/market/unknown"), None);
+    }
+
+    #[test]
+    fn resolve_retry_accepts_prefers_fresh_accepts_and_updates_cache() {
+        set_test_credentials();
+        let client = ApiClient::new(None).expect("client");
+        let fresh = serde_json::json!([
+            {"scheme":"exact","network":"eip155:196","amount":{"basic":"200"}}
+        ]);
+        let pr = PaymentRequired {
+            accepts: fresh.clone(),
+            raw_body: Value::Null,
+        };
+        let got = client.resolve_retry_accepts(&pr).expect("accepts");
+        assert_eq!(got, fresh);
+        // Fresh accepts should be written into the state cache.
+        assert_eq!(client.payment_state().accepts.as_ref(), Some(&fresh));
+    }
+
+    #[test]
+    fn resolve_retry_accepts_falls_back_to_cached_when_response_empty() {
+        set_test_credentials();
+        let client = ApiClient::new(None).expect("client");
+        let cached = serde_json::json!([
+            {"scheme":"exact","network":"eip155:196","amount":{"basic":"100"}}
+        ]);
+        client.apply_config_response(&serde_json::json!({ "accepts": cached.clone() }));
+
+        let pr = PaymentRequired {
+            accepts: Value::Null,
+            raw_body: Value::Null,
+        };
+        let got = client.resolve_retry_accepts(&pr).expect("cached accepts");
+        assert_eq!(got, cached);
+    }
+
+    #[test]
+    fn resolve_retry_accepts_errors_when_both_sources_empty() {
+        set_test_credentials();
+        let client = ApiClient::new(None).expect("client");
+        let pr = PaymentRequired {
+            accepts: Value::Null,
+            raw_body: Value::Null,
+        };
+        assert!(client.resolve_retry_accepts(&pr).is_err());
     }
 
     #[test]
