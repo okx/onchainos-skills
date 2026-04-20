@@ -9,6 +9,7 @@ use serde_json::Value;
 use sha2::Sha256;
 
 use crate::commands::agentic_wallet::payment_flow::PaymentTier;
+use crate::doh::DohManager;
 use crate::payment_cache::{self, PaymentCache};
 
 pub const DEFAULT_BASE_URL: &str = "https://web3.okx.com";
@@ -84,11 +85,11 @@ enum AuthMode {
     Anonymous,
 }
 
-#[derive(Clone)]
 pub struct ApiClient {
     http: Client,
     base_url: String,
     auth: AuthMode,
+    doh: DohManager,
     payment: Arc<Mutex<PaymentState>>,
 }
 
@@ -103,12 +104,23 @@ impl ApiClient {
             .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
 
+        let custom = base_url_override.is_some() || option_env!("OKX_BASE_URL").is_some();
+        let mut doh = DohManager::new("web3.okx.com", &base_url, custom);
+        doh.prepare();
+
+        let mut builder = Client::builder().timeout(std::time::Duration::from_secs(10));
+        if let Some((host, addr)) = doh.resolve_override() {
+            builder = builder.resolve(&host, addr);
+        }
+        if doh.is_proxy() {
+            builder = builder.user_agent(doh.doh_user_agent());
+        }
+
         Ok(Self {
-            http: Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
-                .build()?,
+            http: builder.build()?,
             base_url,
             auth,
+            doh,
             payment: Arc::new(Mutex::new(PaymentState::default())),
         })
     }
@@ -124,12 +136,24 @@ impl ApiClient {
             .map(|s| s.to_string())
             .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
+
+        let custom = base_url_override.is_some() || option_env!("OKX_BASE_URL").is_some();
+        let mut doh = DohManager::new("web3.okx.com", &base_url, custom);
+        doh.prepare();
+
+        let mut builder = Client::builder().timeout(std::time::Duration::from_secs(10));
+        if let Some((host, addr)) = doh.resolve_override() {
+            builder = builder.resolve(&host, addr);
+        }
+        if doh.is_proxy() {
+            builder = builder.user_agent(doh.doh_user_agent());
+        }
+
         Ok(Self {
-            http: Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
-                .build()?,
+            http: builder.build()?,
             base_url,
             auth,
+            doh,
             payment: Arc::new(Mutex::new(PaymentState::default())),
         })
     }
@@ -411,6 +435,24 @@ impl ApiClient {
         builder.headers(Self::ak_headers(api_key, passphrase, timestamp, sign))
     }
 
+    fn rebuild_http_client(&mut self) -> Result<()> {
+        let mut builder = Client::builder()
+            .timeout(std::time::Duration::from_secs(10));
+        if let Some((host, addr)) = self.doh.resolve_override() {
+            builder = builder.resolve(&host, addr);
+        }
+        if self.doh.is_proxy() {
+            builder = builder.user_agent(self.doh.doh_user_agent());
+        }
+        self.http = builder.build()?;
+        Ok(())
+    }
+
+    fn effective_base_url(&self) -> String {
+        self.doh.proxy_base_url()
+            .unwrap_or_else(|| self.base_url.clone())
+    }
+
     fn build_get_url_and_request_path(
         &self,
         path: &str,
@@ -422,8 +464,9 @@ impl ApiClient {
             .copied()
             .collect();
 
+        let effective = self.effective_base_url();
         let mut url =
-            reqwest::Url::parse(&format!("{}{}", self.base_url.trim_end_matches('/'), path))?;
+            reqwest::Url::parse(&format!("{}{}", effective.trim_end_matches('/'), path))?;
 
         if !filtered.is_empty() {
             url.query_pairs_mut().extend_pairs(filtered.iter().copied());
@@ -433,13 +476,14 @@ impl ApiClient {
             .query()
             .map(|query| format!("?{}", query))
             .unwrap_or_default();
+        // request_path uses original path (no proxy host) — used for HMAC signing
         let request_path = format!("{}{}", path, query_string);
 
         Ok((url, request_path))
     }
 
     /// GET request with automatic auth (JWT or AK).
-    pub async fn get(&self, path: &str, query: &[(&str, &str)]) -> Result<Value> {
+    pub async fn get(&mut self, path: &str, query: &[(&str, &str)]) -> Result<Value> {
         self.get_with_headers(path, query, None).await
     }
 
@@ -448,10 +492,10 @@ impl ApiClient {
     /// Wraps the request in the auto-payment flow:
     /// 1. Ensure payment config is loaded (first request only).
     /// 2. If the path is currently on a charging tier, pre-sign a payment header.
-    /// 3. Send the request.
+    /// 3. Send the request (with DoH failover retry inside `do_get_request`).
     /// 4. On 402, sign with the accepts returned by the server and retry once.
     pub async fn get_with_headers(
-        &self,
+        &mut self,
         path: &str,
         query: &[(&str, &str)],
         extra_headers: Option<&[(&str, &str)]>,
@@ -482,16 +526,17 @@ impl ApiClient {
         }
     }
 
-    /// POST request with automatic auth (JWT or AK).
+    /// POST request with automatic auth (JWT or AK). Retries after DoH failover.
     /// Signature uses path only (no query string) + JSON body string.
-    pub async fn post(&self, path: &str, body: &Value) -> Result<Value> {
+    pub async fn post(&mut self, path: &str, body: &Value) -> Result<Value> {
         self.post_with_headers(path, body, None).await
     }
 
     /// POST request with automatic auth + optional extra headers.
     /// Mirrors `get_with_headers`: pre-signs on known-paid paths and retries once on 402.
+    /// DoH failover retry happens inside `do_post_request`.
     pub async fn post_with_headers(
-        &self,
+        &mut self,
         path: &str,
         body: &Value,
         extra_headers: Option<&[(&str, &str)]>,
@@ -517,6 +562,52 @@ impl ApiClient {
                 Err(e) => Err(e),
             },
         }
+    }
+
+    /// POST request with no DoH retry — use only for broadcast-transaction.
+    /// On network failure, records the failure but does NOT retry, because the
+    /// broadcast may have partially reached the server.
+    pub async fn post_no_retry_with_headers(
+        &mut self,
+        path: &str,
+        body: &Value,
+        extra_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Value> {
+        let body_str = serde_json::to_string(body)?;
+        let effective = self.effective_base_url();
+        let url = format!("{}{}", effective.trim_end_matches('/'), path);
+        let req = self.http.post(&url).body(body_str.clone());
+        let req = match &self.auth {
+            AuthMode::Jwt(token) => Self::apply_jwt(req, token),
+            AuthMode::Ak {
+                api_key,
+                secret_key,
+                passphrase,
+            } => {
+                let timestamp =
+                    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                let sign = Self::hmac_sign(secret_key, &timestamp, "POST", path, &body_str);
+                Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
+            }
+            AuthMode::Anonymous => Self::apply_anonymous(req),
+        };
+        let req = Self::apply_extra_headers(req, extra_headers);
+
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) if e.is_connect() || e.is_timeout() => {
+                let _ = self.doh.handle_failure().await;
+                if self.doh.is_proxy() {
+                    let _ = self.rebuild_http_client();
+                }
+                return Err(e).context(
+                    "Network error during broadcast — transaction was NOT sent. Safe to retry the same command.",
+                );
+            }
+            Err(e) => return Err(e).context("request failed"),
+        };
+        self.doh.cache_direct_if_needed();
+        self.handle_response(resp).await
     }
 
     /// Apply optional extra headers to a request builder.
@@ -623,65 +714,100 @@ impl ApiClient {
 
     // ── Auto-payment: request helpers ────────────────────────────────────────
 
+    /// Issue a GET with DoH failover retry on connect/timeout errors.
+    /// Retries at most once, after `DohManager::handle_failure` finds a
+    /// new proxy node and the HTTP client is rebuilt.
     async fn do_get_request(
-        &self,
+        &mut self,
         path: &str,
         query: &[(&str, &str)],
         extra_headers: Option<&[(&str, &str)]>,
         payment_hdr: Option<&(&'static str, String)>,
     ) -> Result<Value> {
-        let (url, request_path) = self.build_get_url_and_request_path(path, query)?;
-        let req = self.http.get(url);
-        let req = match &self.auth {
-            AuthMode::Jwt(token) => Self::apply_jwt(req, token),
-            AuthMode::Ak {
-                api_key,
-                secret_key,
-                passphrase,
-            } => {
-                let timestamp =
-                    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-                let sign = Self::hmac_sign(secret_key, &timestamp, "GET", &request_path, "");
-                Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
-            }
-            AuthMode::Anonymous => Self::apply_anonymous(req),
-        };
-        let req = Self::apply_extra_headers(req, extra_headers);
-        let req = Self::apply_payment_header(req, payment_hdr);
+        loop {
+            let (url, request_path) = self.build_get_url_and_request_path(path, query)?;
+            let req = self.http.get(url);
+            let req = match &self.auth {
+                AuthMode::Jwt(token) => Self::apply_jwt(req, token),
+                AuthMode::Ak {
+                    api_key,
+                    secret_key,
+                    passphrase,
+                } => {
+                    let timestamp =
+                        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                    let sign = Self::hmac_sign(secret_key, &timestamp, "GET", &request_path, "");
+                    Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
+                }
+                AuthMode::Anonymous => Self::apply_anonymous(req),
+            };
+            let req = Self::apply_extra_headers(req, extra_headers);
+            let req = Self::apply_payment_header(req, payment_hdr);
 
-        let resp = req.send().await.context("request failed")?;
-        self.handle_response(resp).await
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                        continue;
+                    }
+                    return Err(e)
+                        .context("Network unavailable — check your connection and try again");
+                }
+                Err(e) => return Err(e).context("request failed"),
+            };
+            self.doh.cache_direct_if_needed();
+            return self.handle_response(resp).await;
+        }
     }
 
+    /// Issue a POST with DoH failover retry on connect/timeout errors.
+    /// Retries at most once (safe for idempotent endpoints). For
+    /// non-idempotent endpoints like broadcast, use `post_no_retry_with_headers`.
     async fn do_post_request(
-        &self,
+        &mut self,
         path: &str,
         body: &Value,
         extra_headers: Option<&[(&str, &str)]>,
         payment_hdr: Option<&(&'static str, String)>,
     ) -> Result<Value> {
         let body_str = serde_json::to_string(body)?;
-        let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
-        let req = self.http.post(&url).body(body_str.clone());
-        let req = match &self.auth {
-            AuthMode::Jwt(token) => Self::apply_jwt(req, token),
-            AuthMode::Ak {
-                api_key,
-                secret_key,
-                passphrase,
-            } => {
-                let timestamp =
-                    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-                let sign = Self::hmac_sign(secret_key, &timestamp, "POST", path, &body_str);
-                Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
-            }
-            AuthMode::Anonymous => Self::apply_anonymous(req),
-        };
-        let req = Self::apply_extra_headers(req, extra_headers);
-        let req = Self::apply_payment_header(req, payment_hdr);
+        loop {
+            let effective = self.effective_base_url();
+            let url = format!("{}{}", effective.trim_end_matches('/'), path);
+            let req = self.http.post(&url).body(body_str.clone());
+            let req = match &self.auth {
+                AuthMode::Jwt(token) => Self::apply_jwt(req, token),
+                AuthMode::Ak {
+                    api_key,
+                    secret_key,
+                    passphrase,
+                } => {
+                    let timestamp =
+                        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                    let sign = Self::hmac_sign(secret_key, &timestamp, "POST", path, &body_str);
+                    Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
+                }
+                AuthMode::Anonymous => Self::apply_anonymous(req),
+            };
+            let req = Self::apply_extra_headers(req, extra_headers);
+            let req = Self::apply_payment_header(req, payment_hdr);
 
-        let resp = req.send().await.context("request failed")?;
-        self.handle_response(resp).await
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                        continue;
+                    }
+                    return Err(e)
+                        .context("Network unavailable — check your connection and try again");
+                }
+                Err(e) => return Err(e).context("request failed"),
+            };
+            self.doh.cache_direct_if_needed();
+            return self.handle_response(resp).await;
+        }
     }
 
     fn apply_payment_header(
@@ -708,7 +834,7 @@ impl ApiClient {
     /// a fresh fetch only runs if the cache is missing or older than
     /// `CONFIG_TTL_SECS`. Failures degrade silently — the 402 fallback in
     /// `handle_response` will still recover.
-    async fn ensure_payment_config(&self) {
+    async fn ensure_payment_config(&mut self) {
         if self.payment_state().config_loaded {
             return;
         }

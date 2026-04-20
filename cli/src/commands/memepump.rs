@@ -305,10 +305,10 @@ pub async fn execute(ctx: &Context, cmd: MemepumpCommand) -> Result<()> {
             keywords_include,
             keywords_exclude,
         } => {
-            let client = ctx.client_async().await?;
+            let mut client = ctx.client_async().await?;
             output::success(
                 fetch_token_list(
-                    &client,
+                    &mut client,
                     MemepumpTokenListParams {
                         chain,
                         stage: Some(stage),
@@ -477,14 +477,14 @@ pub struct MemepumpTokenListParams {
 }
 
 /// GET /api/v6/dex/market/memepump/supported/chainsProtocol
-pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
+pub async fn fetch_chains(client: &mut ApiClient) -> Result<Value> {
     client
         .get("/api/v6/dex/market/memepump/supported/chainsProtocol", &[])
         .await
 }
 
 /// GET /api/v6/dex/market/memepump/tokenList
-pub async fn fetch_token_list(client: &ApiClient, p: MemepumpTokenListParams) -> Result<Value> {
+pub async fn fetch_token_list(client: &mut ApiClient, p: MemepumpTokenListParams) -> Result<Value> {
     let chain_index = crate::chains::resolve_chain(&p.chain).to_string();
     let stage = p.stage.unwrap_or_else(|| "NEW".to_string());
 
@@ -610,7 +610,7 @@ pub async fn fetch_token_list(client: &ApiClient, p: MemepumpTokenListParams) ->
 
 /// GET /api/v6/dex/market/memepump/tokenDetails
 pub async fn fetch_token_details(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
     wallet_address: &str,
@@ -629,7 +629,7 @@ pub async fn fetch_token_details(
 
 /// GET /api/v6/dex/market/memepump/apedWallet
 pub async fn fetch_aped_wallet(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
     wallet_address: &str,
@@ -648,7 +648,7 @@ pub async fn fetch_aped_wallet(
 
 /// Shared helper for memepump endpoints that take (chainIndex, tokenContractAddress).
 pub async fn fetch_by_address(
-    client: &ApiClient,
+    client: &mut ApiClient,
     path: &str,
     address: &str,
     chain_index: &str,
@@ -667,8 +667,8 @@ pub async fn fetch_by_address(
 // ── CLI wrappers ─────────────────────────────────────────────────────
 
 async fn memepump_chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client_async().await?;
-    output::success(fetch_chains(&client).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_chains(&mut client).await?);
     Ok(())
 }
 
@@ -682,8 +682,8 @@ async fn memepump_token_details(
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("solana"));
     let wallet_address = wallet.unwrap_or_default();
-    let client = ctx.client_async().await?;
-    output::success(fetch_token_details(&client, address, &chain_index, &wallet_address).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_token_details(&mut client, address, &chain_index, &wallet_address).await?);
     Ok(())
 }
 
@@ -697,8 +697,8 @@ async fn memepump_aped_wallet(
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("solana"));
     let wallet_address = wallet.unwrap_or_default();
-    let client = ctx.client_async().await?;
-    output::success(fetch_aped_wallet(&client, address, &chain_index, &wallet_address).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_aped_wallet(&mut client, address, &chain_index, &wallet_address).await?);
     Ok(())
 }
 
@@ -711,7 +711,7 @@ async fn memepump_by_address(
     let chain_index = chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("solana"));
-    let client = ctx.client_async().await?;
-    output::success(fetch_by_address(&client, path, address, &chain_index).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_by_address(&mut client, path, address, &chain_index).await?);
     Ok(())
 }

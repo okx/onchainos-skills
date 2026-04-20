@@ -57,10 +57,10 @@ pub enum PortfolioCommand {
 }
 
 pub async fn execute(ctx: &Context, cmd: PortfolioCommand) -> Result<()> {
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
     match cmd {
         PortfolioCommand::Chains => {
-            output::success(fetch_chains(&client).await?);
+            output::success(fetch_chains(&mut client).await?);
         }
         PortfolioCommand::TotalValue {
             address,
@@ -71,7 +71,7 @@ pub async fn execute(ctx: &Context, cmd: PortfolioCommand) -> Result<()> {
             let er = exclude_risk.map(|b| b.to_string());
             output::success(
                 fetch_total_value(
-                    &client,
+                    &mut client,
                     &address,
                     &chains,
                     asset_type.as_deref(),
@@ -88,7 +88,7 @@ pub async fn execute(ctx: &Context, cmd: PortfolioCommand) -> Result<()> {
         } => {
             output::success(
                 fetch_all_balances(
-                    &client,
+                    &mut client,
                     &address,
                     &chains,
                     exclude_risk.as_deref(),
@@ -103,7 +103,7 @@ pub async fn execute(ctx: &Context, cmd: PortfolioCommand) -> Result<()> {
             exclude_risk,
         } => {
             output::success(
-                fetch_token_balances(&client, &address, &tokens, exclude_risk.as_deref()).await?,
+                fetch_token_balances(&mut client, &address, &tokens, exclude_risk.as_deref()).await?,
             );
         }
     }
@@ -111,13 +111,13 @@ pub async fn execute(ctx: &Context, cmd: PortfolioCommand) -> Result<()> {
 }
 
 /// GET /api/v6/dex/balance/supported/chain
-pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
+pub async fn fetch_chains(client: &mut ApiClient) -> Result<Value> {
     client.get("/api/v6/dex/balance/supported/chain", &[]).await
 }
 
 /// GET /api/v6/dex/balance/total-value-by-address
 pub async fn fetch_total_value(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chains: &str,
     asset_type: Option<&str>,
@@ -140,7 +140,7 @@ pub async fn fetch_total_value(
 
 /// GET /api/v6/dex/balance/all-token-balances-by-address
 pub async fn fetch_all_balances(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chains: &str,
     exclude_risk: Option<&str>,
@@ -166,7 +166,7 @@ pub async fn fetch_all_balances(
 
 /// POST /api/v6/dex/balance/token-balances-by-address
 pub async fn fetch_token_balances(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     tokens: &str,
     exclude_risk: Option<&str>,

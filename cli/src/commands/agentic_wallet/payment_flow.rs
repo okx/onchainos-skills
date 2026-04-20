@@ -253,7 +253,7 @@ pub async fn sign_payment(
     let session_key =
         keyring_store::get("session_key").map_err(|_| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
 
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
 
     let unsigned_hash_resp = client
         .post_authed(
