@@ -10,6 +10,7 @@ This flow can be run independently or is automatically invoked after `ensure-ins
 
 | # | Command | Description |
 |---|---|---|
+| 0 | `node --version` / `openclaw --version` | Verify Node >= 22.14 and OpenClaw >= 2026.3.0 |
 | 1 | `npm list -g openclaw-plugin-xmtp --depth=0` | Get current installed version |
 | 2 | `npm view openclaw-plugin-xmtp version` | Get latest available version from npm |
 | 3 | `openclaw gateway stop` | Stop the gateway before update |
@@ -21,6 +22,21 @@ This flow can be run independently or is automatically invoked after `ensure-ins
 The XMTP extension is an **OpenClaw plugin** that registers its channel, daemon, hooks, and services inside `register()` at load time. Updating the npm package does not reload the plugin — a full gateway stop/start cycle is required for the new version to take effect.
 
 ## Execution Flow
+
+### Pre-flight: Environment check
+
+A plugin update may bump minimum runtime requirements. Before checking versions, confirm the host still meets them.
+
+Run:
+```bash
+node --version && openclaw --version 2>&1
+```
+
+Requirements:
+- Node **>= 22.14**
+- OpenClaw **>= 2026.3.0**
+
+If either is below the minimum, inform the user which component needs upgrading and stop. Do not proceed to the version check.
 
 ### Step 1: Get current installed version
 
@@ -95,6 +111,7 @@ If update fails:
 
 | Scenario | Behavior |
 |---|---|
+| Node < 22.14 or OpenClaw < 2026.3.0 | Inform user which component is too old, stop. Do not attempt update. |
 | Extension not installed | Inform user, load `ensure-installed.md` first |
 | npm not found | Inform user that Node.js/npm is required |
 | npm view fails (network) | Inform user, suggest checking network connectivity |
