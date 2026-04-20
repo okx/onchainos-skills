@@ -63,20 +63,6 @@ pub struct PaymentProof {
     pub session_cert: Option<String>,
 }
 
-/// Which payment header format to emit.
-///
-/// The three variants match the server-side schemes in section 5 of the
-/// "onchainos CLI 自动付费方案" doc.
-#[derive(Clone, Debug)]
-pub enum PaymentMode {
-    /// OKX Web3 open-api header `OK-ACCESS-PAYMENT-PAYLOAD`. Used by Market API.
-    Ak,
-    /// Standard x402 v1 header `X-PAYMENT`.
-    V1,
-    /// Standard x402 v2 header `PAYMENT-SIGNATURE`, scoped to a resource URI.
-    V2 { resource: String },
-}
-
 /// Select the best accepts entry.
 ///
 /// Priority: `exact` > `aggr_deferred` > first entry. Mirrors the selection
@@ -351,7 +337,7 @@ pub async fn sign_payment(
 pub fn build_payment_header(
     proof: &PaymentProof,
     entry: &Value,
-    mode: PaymentMode,
+    resource: &str,
 ) -> Result<(&'static str, String)> {
     let payload_inner = json!({
         "signature": proof.signature,
@@ -359,9 +345,9 @@ pub fn build_payment_header(
     });
 
     // Embed sessionCert into entry.extra for aggr_deferred (server needs it).
-    let mut requirements = entry.clone();
+    let mut accepted = entry.clone();
     if let Some(cert) = &proof.session_cert {
-        if let Some(obj) = requirements.as_object_mut() {
+        if let Some(obj) = accepted.as_object_mut() {
             let extra = obj.entry("extra".to_string()).or_insert_with(|| json!({}));
             if let Some(extra_obj) = extra.as_object_mut() {
                 extra_obj.insert("sessionCert".into(), json!(cert));
@@ -369,48 +355,19 @@ pub fn build_payment_header(
         }
     }
 
-    let (header_name, body) = match mode {
-        PaymentMode::Ak => (
-            "OK-ACCESS-PAYMENT-PAYLOAD",
-            json!({
-                "x402Version": 2,
-                "paymentPayload": {
-                    "x402Version": 2,
-                    "payload": payload_inner,
-                },
-                "paymentRequirements": requirements,
-            }),
-        ),
-        PaymentMode::V2 { resource } => (
-            "PAYMENT-SIGNATURE",
-            json!({
-                "x402Version": 2,
-                "resource": resource,
-                "accepted": requirements,
-                "payload": payload_inner,
-            }),
-        ),
-        PaymentMode::V1 => {
-            let scheme = requirements["scheme"].as_str().unwrap_or("exact");
-            let network = requirements["network"].as_str().unwrap_or("");
-            (
-                "X-PAYMENT",
-                json!({
-                    "x402Version": 1,
-                    "scheme": scheme,
-                    "network": network,
-                    "payload": payload_inner,
-                }),
-            )
-        }
-    };
+    let body = json!({
+        "x402Version": 2,
+        "resource": resource,
+        "accepted": accepted,
+        "payload": payload_inner,
+    });
 
     let encoded = B64.encode(serde_json::to_vec(&body).context("encode payment header body")?);
-    Ok((header_name, encoded))
+    Ok(("PAYMENT-SIGNATURE", encoded))
 }
 
 /// Extract numeric chain ID from a CAIP-2 `eip155:<chainId>` identifier.
-fn parse_eip155_chain_id(network: &str) -> Result<u64> {
+pub(super) fn parse_eip155_chain_id(network: &str) -> Result<u64> {
     let id_str = network.strip_prefix("eip155:").ok_or_else(|| {
         anyhow!(
             "unsupported network format: expected 'eip155:<chainId>', got '{}'",
@@ -536,64 +493,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_eip155_chain_id_happy_path() {
-        assert_eq!(parse_eip155_chain_id("eip155:8453").unwrap(), 8453);
-    }
-
-    #[test]
-    fn parse_eip155_chain_id_missing_prefix_errors() {
-        assert!(parse_eip155_chain_id("1").is_err());
-    }
-
-    #[test]
-    fn build_payment_header_ak_returns_ok_access_payment_payload_header() {
-        let proof = PaymentProof {
-            signature: "sig".into(),
-            authorization: json!({"from":"0xA"}),
-            session_cert: None,
-        };
-        let entry = json!({"scheme":"exact","network":"eip155:1"});
-        let (name, value) = build_payment_header(&proof, &entry, PaymentMode::Ak).unwrap();
-        assert_eq!(name, "OK-ACCESS-PAYMENT-PAYLOAD");
-        let decoded = B64.decode(&value).unwrap();
-        let body: Value = serde_json::from_slice(&decoded).unwrap();
-        assert_eq!(body["x402Version"], 2);
-        assert_eq!(body["paymentPayload"]["payload"]["signature"], "sig");
-        assert_eq!(body["paymentRequirements"]["scheme"], "exact");
-    }
-
-    #[test]
-    fn build_payment_header_v1_returns_x_payment_header() {
-        let proof = PaymentProof {
-            signature: "sig".into(),
-            authorization: json!({}),
-            session_cert: None,
-        };
-        let entry = json!({"scheme":"exact","network":"eip155:8453"});
-        let (name, value) = build_payment_header(&proof, &entry, PaymentMode::V1).unwrap();
-        assert_eq!(name, "X-PAYMENT");
-        let body: Value = serde_json::from_slice(&B64.decode(&value).unwrap()).unwrap();
-        assert_eq!(body["x402Version"], 1);
-        assert_eq!(body["scheme"], "exact");
-        assert_eq!(body["network"], "eip155:8453");
-    }
-
-    #[test]
-    fn build_payment_header_v2_includes_resource() {
+    fn build_payment_header_includes_resource() {
         let proof = PaymentProof {
             signature: "sig".into(),
             authorization: json!({}),
             session_cert: None,
         };
         let entry = json!({"scheme":"exact","network":"eip155:1"});
-        let (name, value) = build_payment_header(
-            &proof,
-            &entry,
-            PaymentMode::V2 {
-                resource: "https://api.example.com/foo".into(),
-            },
-        )
-        .unwrap();
+        let (name, value) =
+            build_payment_header(&proof, &entry, "https://api.example.com/foo").unwrap();
         assert_eq!(name, "PAYMENT-SIGNATURE");
         let body: Value = serde_json::from_slice(&B64.decode(&value).unwrap()).unwrap();
         assert_eq!(body["x402Version"], 2);
@@ -601,18 +509,16 @@ mod tests {
     }
 
     #[test]
-    fn build_payment_header_ak_embeds_session_cert_for_deferred() {
+    fn build_payment_header_embeds_session_cert_for_deferred() {
         let proof = PaymentProof {
             signature: "sig".into(),
             authorization: json!({}),
             session_cert: Some("cert-123".into()),
         };
         let entry = json!({"scheme":"aggr_deferred","network":"eip155:196"});
-        let (_name, value) = build_payment_header(&proof, &entry, PaymentMode::Ak).unwrap();
+        let (_name, value) =
+            build_payment_header(&proof, &entry, "https://api.example.com/foo").unwrap();
         let body: Value = serde_json::from_slice(&B64.decode(&value).unwrap()).unwrap();
-        assert_eq!(
-            body["paymentRequirements"]["extra"]["sessionCert"],
-            "cert-123"
-        );
+        assert_eq!(body["accepted"]["extra"]["sessionCert"], "cert-123");
     }
 }

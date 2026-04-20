@@ -217,7 +217,7 @@ fn cmd_eip3009_sign(
     let from = format!("{:#x}", signer.address());
 
     // ── Derive chain_id from network ─────────────────────────────────
-    let chain_id = parse_eip155_chain_id(network)?;
+    let chain_id = payment_flow::parse_eip155_chain_id(network)?;
 
     // ── Compute validBefore = now + max_timeout_secs ─────────────────
     let now = std::time::SystemTime::now()
@@ -282,22 +282,6 @@ fn is_valid_evm_address(addr: &str) -> bool {
     addr.starts_with("0x") && addr.len() == 42 && addr[2..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
-/// Extract numeric chain ID from a CAIP-2 "eip155:<chainId>" identifier.
-fn parse_eip155_chain_id(network: &str) -> Result<u64> {
-    let id_str = network.strip_prefix("eip155:").ok_or_else(|| {
-        anyhow!(
-            "unsupported network format: expected 'eip155:<chainId>', got '{}'",
-            network
-        )
-    })?;
-    id_str.parse::<u64>().map_err(|_| {
-        anyhow!(
-            "invalid chain ID '{}': must be a valid unsigned integer",
-            id_str
-        )
-    })
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -309,51 +293,57 @@ mod tests {
 
     #[test]
     fn parse_eip155_base() {
-        assert_eq!(parse_eip155_chain_id("eip155:8453").unwrap(), 8453);
+        assert_eq!(
+            payment_flow::parse_eip155_chain_id("eip155:8453").unwrap(),
+            8453
+        );
     }
 
     #[test]
     fn parse_eip155_ethereum() {
-        assert_eq!(parse_eip155_chain_id("eip155:1").unwrap(), 1);
+        assert_eq!(payment_flow::parse_eip155_chain_id("eip155:1").unwrap(), 1);
     }
 
     #[test]
     fn parse_eip155_xlayer() {
-        assert_eq!(parse_eip155_chain_id("eip155:196").unwrap(), 196);
+        assert_eq!(
+            payment_flow::parse_eip155_chain_id("eip155:196").unwrap(),
+            196
+        );
     }
 
     #[test]
     fn parse_eip155_missing_prefix() {
-        let err = parse_eip155_chain_id("8453").unwrap_err();
+        let err = payment_flow::parse_eip155_chain_id("8453").unwrap_err();
         assert!(err.to_string().contains("eip155:"));
     }
 
     #[test]
     fn parse_eip155_wrong_prefix() {
-        let err = parse_eip155_chain_id("solana:101").unwrap_err();
+        let err = payment_flow::parse_eip155_chain_id("solana:101").unwrap_err();
         assert!(err.to_string().contains("eip155:"));
     }
 
     #[test]
     fn parse_eip155_empty() {
-        assert!(parse_eip155_chain_id("").is_err());
+        assert!(payment_flow::parse_eip155_chain_id("").is_err());
     }
 
     #[test]
     fn parse_eip155_non_numeric() {
-        let err = parse_eip155_chain_id("eip155:abc").unwrap_err();
+        let err = payment_flow::parse_eip155_chain_id("eip155:abc").unwrap_err();
         assert!(err.to_string().contains("invalid chain ID"));
     }
 
     #[test]
     fn parse_eip155_negative() {
-        let err = parse_eip155_chain_id("eip155:-1").unwrap_err();
+        let err = payment_flow::parse_eip155_chain_id("eip155:-1").unwrap_err();
         assert!(err.to_string().contains("invalid chain ID"));
     }
 
     #[test]
     fn parse_eip155_overflow() {
-        let err = parse_eip155_chain_id("eip155:99999999999999999999").unwrap_err();
+        let err = payment_flow::parse_eip155_chain_id("eip155:99999999999999999999").unwrap_err();
         assert!(err.to_string().contains("invalid chain ID"));
     }
 

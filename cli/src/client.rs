@@ -879,11 +879,7 @@ impl ApiClient {
             crate::commands::agentic_wallet::payment_flow::sign_payment(accepts, None, Some(tier))
                 .await?;
         crate::commands::agentic_wallet::payment_flow::build_payment_header(
-            &proof,
-            &selected,
-            crate::commands::agentic_wallet::payment_flow::PaymentMode::V2 {
-                resource: resource.to_string(),
-            },
+            &proof, &selected, resource,
         )
     }
 
