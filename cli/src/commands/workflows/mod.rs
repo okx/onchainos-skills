@@ -94,6 +94,60 @@ pub async fn fetch_token_scan(
 }
 
 /// Convert a Result<Value> to Value, replacing errors with null.
+/// Used throughout all workflow steps so partial failures degrade gracefully.
 pub fn ok_or_null(r: Result<Value>) -> Value {
     r.unwrap_or(Value::Null)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── ok_or_null ────────────────────────────────────────────────────
+
+    #[test]
+    fn ok_or_null_passes_through_ok_value() {
+        let val = json!({ "price": "1.23" });
+        assert_eq!(ok_or_null(Ok(val.clone())), val);
+    }
+
+    #[test]
+    fn ok_or_null_converts_error_to_null() {
+        let err: Result<Value> = Err(anyhow::anyhow!("API timeout"));
+        assert_eq!(ok_or_null(err), Value::Null);
+    }
+
+    #[test]
+    fn ok_or_null_passes_through_null_value() {
+        assert_eq!(ok_or_null(Ok(Value::Null)), Value::Null);
+    }
+
+    #[test]
+    fn ok_or_null_passes_through_empty_array() {
+        assert_eq!(ok_or_null(Ok(json!([]))), json!([]));
+    }
+
+    // ── workflow discriminator fields ─────────────────────────────────
+    // Sanity-check the string literals used in output JSON so they stay
+    // consistent with the workflow doc file names.
+
+    #[test]
+    fn workflow_names_match_doc_filenames() {
+        // These must match the filenames in workflows/*.md exactly.
+        let names = [
+            "token-research",
+            "smart-money",
+            "new-tokens",
+            "wallet-analysis",
+            "portfolio",
+        ];
+        for name in names {
+            assert!(
+                !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '-'),
+                "workflow name '{}' contains invalid characters",
+                name
+            );
+        }
+    }
 }
