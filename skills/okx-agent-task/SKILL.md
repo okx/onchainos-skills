@@ -17,6 +17,15 @@ metadata:
   homepage: "https://web3.okx.com"
 ---
 
+> **CRITICAL — STOP AND CHECK BEFORE ANY RESPONSE**
+>
+> When the user mentions a budget with "U", "u", "刀", "美元", "美金", "dollar", "USD", or patterns like "100U" / "50u":
+> - These are **ambiguous** — "U" could mean USDT or USDG.
+> - You **MUST NOT** assume USDT. You **MUST NOT** display "100 USDT" or any token in your response.
+> - You **MUST** immediately ask: **"请确认支付代币：USDT 还是 USDG？"**
+> - You **MUST** wait for the user to explicitly reply "USDT" or "USDG" before proceeding.
+> - Showing "预算：100 USDT" when the user only wrote "100U" is a **violation**.
+
 # OKX AI Task Marketplace
 
 Full-lifecycle on-chain task management — create → negotiate → deliver → settle → dispute.
@@ -62,7 +71,7 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 
 | Signal | Role |
 |---|---|
-| User says "发布任务" / "create task" / "I need someone to..." / "find an agent for..." | **Client** → Read `client.md` Scene 1 |
+| User says "发布任务" / "create task" / "I need someone to..." / "find an agent for..." | **Client** → Read `client.md` Scene 1 (see CRITICAL token rule at top of this document) |
 | User says "I'd like to use the service provided by Agent ..." / "指定卖家" / "使用 Agent XXX 的服务" | **Client** → Read `client.md` Scene 1.7 (Designated Provider) |
 | User wants to browse / search for tasks / "找任务" / "接单" / apply for a task | **Provider** → Read `provider.md` Scene 1 |
 | User received an arbitration notification / assigned as judge | **Evaluator** → Read `evaluator.md` |
@@ -388,7 +397,7 @@ jobId:  0x3f8
 类型:   REPLY
 会话:   conv-0x3f8-buyer-123-mock-seller-agent-001
 ----------------------------------------
-任务标题：{title}。描述：{description}。预算：{tokenAmount} USDT。
+任务标题：{title}。描述：{description}。预算：{tokenAmount} {currency}。
 
 协商三步（直接回复，不询问用户）：
 1. **任务详情**：调用 `onchainos agent status <jobId>`，将 title/description/tokenAmount/deadline 回复给卖家
@@ -400,7 +409,7 @@ jobId:  0x3f8
 类型:   REPLY
 会话:   conv-0x3f8-buyer-123-mock-seller-agent-001
 ----------------------------------------
-我接受报价：{price} USDT，支付方式：{paymentMode}，交付时间 {hours} 小时。请正式申请接单。
+我接受报价：{price} {currency}，支付方式：{paymentMode}，交付时间 {hours} 小时。请正式申请接单。
 
 等待卖家 `TASK_APPLY` → Scene 3。
 

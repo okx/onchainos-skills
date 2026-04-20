@@ -1,3 +1,12 @@
+> **CRITICAL — STOP AND CHECK BEFORE ANY RESPONSE**
+>
+> When the user mentions a budget with "U", "u", "刀", "美元", "美金", "dollar", "USD", or patterns like "100U" / "50u":
+> - These are **ambiguous** — "U" could mean USDT or USDG.
+> - You **MUST NOT** assume USDT. You **MUST NOT** display "100 USDT" or any token in your response.
+> - You **MUST** immediately ask: **"请确认支付代币：USDT 还是 USDG？"**
+> - You **MUST** wait for the user to explicitly reply "USDT" or "USDG" before proceeding.
+> - Showing "预算：100 USDT" when the user only wrote "100U" is a **violation**.
+
 # Client (Buyer) Actions
 
 ## Action Overview
@@ -151,8 +160,8 @@ Collect the following fields through conversation. The Agent must extract or gui
 | Description | `description` | Combine all conversation turns verbatim; max **2000** chars. Backend hashes and uploads to IPFS/OSS; hash goes on-chain. | Integrate raw dialogue content. **After composing, estimate character count. If >2000, warn the user and offer to condense — do NOT silently pass an over-length description to the CLI.** |
 | Title | `title` | **Strictly max 30 chars** | Agent summarises from conversation. **MUST count characters after generating. If >30, shorten immediately** — drop articles, prepositions, use abbreviations (e.g. "EN→CN DeFi WP Translation"). Never present a title >30 chars to the user. |
 | Summary | `description_summary` | Max **200** chars; used for frontend display | Agent summarises from conversation. **After generating, count characters. If >200, shorten** — drop qualifiers and compress phrasing. |
-| Payment token | `currency` | Only **USDT** and **USDG** supported | Guide user to choose; CLI auto-maps symbol to contract address (USDT / USDG). **⚠️ CRITICAL TOKEN RULE — read carefully:** (1) **Accept directly** ONLY when the user writes the exact full word "USDT" or "USDG" — nothing else. (2) **Everything else is AMBIGUOUS** and requires confirmation. The ambiguous list includes but is not limited to: "U", "u", "USD", "刀", "dollar", "美元", "美金", or any amount suffixed with U/u such as "50U", "60U", "100u", "200u", "预算60U". When you see ANY of these: **STOP. Do NOT set `currency`. Do NOT show a confirmation form. You MUST first ask: "请确认支付代币：USDT 还是 USDG？"** and wait for the user's explicit answer before populating the currency field. (3) **Self-check before showing confirmation form**: if `currency` was not confirmed by the user's explicit "USDT"/"USDG" reply, you have a bug — go back and ask.** |
-| Budget amount | `budget` | Numeric; decimal precision max **5** digits; **max 10,000,000** (hard cap) | Guide user; suggest historical reference: "Similar tasks typically cost 50–200 USDG". **⚠️ DECIMAL CHECK — MUST enforce before showing form:** count the digits after the decimal point. If >5 (e.g. `150.000001` has 6), **STOP — do NOT put the value in the form**. Tell the user: "Budget precision is limited to 5 decimal places. Please adjust the amount." If budget > 10,000,000, reject: "单次任务预算不得超过 10,000,000 USDT/USDG" |
+| Payment token | `currency` | Only **USDT** and **USDG** supported | Only accept the exact word "USDT" or "USDG". Any shorthand ("U"/"u"/"刀"/"美元" etc.) is ambiguous — ask user to confirm before setting this field. See CRITICAL rule at top of this document. |
+| Budget amount | `budget` | Numeric; decimal precision max **5** digits; **max 10,000,000** (hard cap) | Extract number from user input. If suffixed with "U"/"u", extract number but leave `currency` unset (see token rule above). Decimal >5 digits → reject. Budget >10,000,000 → reject. |
 | Max budget | `max_budget` | Numeric; optional; must ≥ `budget`; same precision & cap rules as `budget` | The maximum token amount the client is willing to pay (used in negotiation). If user provides it, extract; if not provided, default to `budget` value. If max_budget < budget, warn and ask user to correct. Same decimal ≤5 and ≤10,000,000 checks apply. |
 | Accept deadline | `deadline_open` | Min **10 min**, max **6 months** (Open → Accepted) | Guide user. **⚠️ DEADLINE CHECK — enforce before showing form:** if value < 10 min, STOP and tell user "接单截止时间不能少于 10 分钟，请调整". If value > 6 months, STOP and tell user "接单截止时间不能超过 6 个月". On timeout: status → Expired |
 | Submit deadline | `deadline_submit` | Min **1 min**, max **6 months** (Accepted → Submitted) | Guide user. **⚠️ DEADLINE CHECK:** if value < 1 min, STOP and reject. If value > 6 months, STOP and tell user "交付期限不能超过 6 个月". Escrow: timeout → Expired, Client reclaims funds. Non-escrow/x402: timeout → auto Complete |
@@ -173,9 +182,9 @@ Core judgement: **Are all required fields present and valid?**
 | 2 | Extract title from conversation (max 30 chars) | — | `title` |
 | 3 | Compose summary from conversation (max 200 chars) | — | `description_summary` |
 | 4 | Integrate all dialogue into description (max 2000 chars) | — | `description` |
-| 5 | Guide user to set remaining fields: token, budget, deadlines, quality standards | User | All structured fields |
+| 5 | Guide user to set remaining fields: token, budget, deadlines, quality standards. If token is ambiguous, ask to confirm before proceeding (see CRITICAL rule at top). | User | All structured fields |
 | 6 | **Identity & Balance check** (silent — Agent/CLI handles, user sees only results): (a) Check current account buyer identity → if buyer, tell user which account will be used and ask to confirm. (b) If current account is NOT a buyer, list all accounts with buyer identity (show account + address + **USDT/USDG balance**) and ask user to pick. (c) If NO account has buyer identity, prompt user to register current account as buyer. (d) For the chosen account, compare its USDT/USDG balance against the task budget — if insufficient, **warn** (e.g. "余额不足，请在上链前充值") but do **NOT** block task creation. | Identity system + Wallet | Confirmed buyer account |
-| 7 | **Pre-form checkpoint**: verify `currency` was set from user's explicit "USDT" or "USDG" — if it came from shorthand ("U"/"60U"/"刀" etc.), you MUST ask to confirm token first. Then present confirmation form — user must approve before proceeding | User | Explicit confirmation |
+| 7 | Present confirmation form — user must approve before proceeding | User | Explicit confirmation |
 | 8 | Call CLI to create task and sign on-chain | Task system | `jobId` + on-chain status Open |
 
 **Step 7 — Confirmation form example** (MUST use Markdown table format):
@@ -185,7 +194,7 @@ Core judgement: **Are all required fields present and valid?**
 | **标题** | Translate DeFi whitepaper (3k words) |
 | **摘要** | Translate a 3000-word DeFi whitepaper from English to Chinese with accurate terminology |
 | **描述** | [full conversation content] |
-| **支付代币** | USDT |
+| **支付代币** | ⚠️ 必须由用户明确指定 USDT 或 USDG（如果用户只写了"U"/"刀"等模糊表述，此处留空，先问用户） |
 | **预算** | 10 |
 | **最高预算** | 15 |
 | **接单截止** | 72h |
@@ -195,6 +204,7 @@ Core judgement: **Are all required fields present and valid?**
 > 确认无误？确认后我立即上链创建任务。
 
 **IMPORTANT**: Always use the Markdown table format above for the confirmation form — do NOT use plain-text key-value pairs or code blocks. Use Chinese field labels (标题/摘要/描述/支付代币/预算/接单截止/交付期限/验收标准) when the conversation is in Chinese, English labels when in English. Keep field labels short (max 4 Chinese characters) so they render on a single line without wrapping.
+**IMPORTANT**: The 支付代币 field MUST come from the user's explicit words "USDT" or "USDG". If the user wrote "U"/"u"/"刀"/"美元"/"美金"/"dollar"/"USD" or amount+U (e.g. "100U"), do NOT fill in any token — ask "请确认支付代币：USDT 还是 USDG？" first.
 
 User confirms → proceed to Step 8.
 
@@ -292,7 +302,7 @@ Please send a request to this endpoint.
 基于用户消息内容，按 Scene 1 的字段提取规则（1.2）收集任务参数：
 - `description`: 从 `ServiceTitle` + 用户消息推导
 - `budget`: 从 `Price` 提取（A2A 变体）
-- `currency`: 从 `symbol` 提取（需遵守 1.2 中的 TOKEN RULE）
+- `currency`: 从 `symbol` 提取（仅接受明确的 "USDT" 或 "USDG"）
 - 其余必填字段（deadline-open、deadline-submit）如缺失，需引导用户补充
 
 所有必填字段就绪后，按 Scene 1 的 Step 6-8 执行（身份检查 → 确认表单 → create-task）。
@@ -469,7 +479,7 @@ onchainos agent status <jobId>
 
 直接输出给卖家的报价回复，例如：
 
-> 这个任务预算是 50 USDT，请问你能接受吗？
+> 这个任务预算是 50 {currency}，请问你能接受吗？
 
 #### 收到卖家报价后
 - 价格可接受 → 进入步骤三
@@ -515,7 +525,7 @@ Payment mode (`escrow` vs `non_escrow`) is negotiated here — **not** at task c
 
 直接输出告知卖家协商结果，请其正式提交申请，例如：
 
-> 我接受报价：`<price>` USDT，支付方式：`<paymentMode>`，交付时间 `<deliveryHours>` 小时。请正式申请接单。
+> 我接受报价：`<price>` `<currency>`，支付方式：`<paymentMode>`，交付时间 `<deliveryHours>` 小时。请正式申请接单。
 
 等待卖家发送 `TASK_APPLY` → 进入 Scene 3。
 
@@ -564,7 +574,7 @@ x402 path is handled in Scene 1.5.3 (Path A) — no `confirm-accept` needed.
 
 **After confirm-accept completes**,向主 session 发送通知（用户（通知），无需等待确认）：
 
-> 任务 `<jobId>` 已确认接单。卖家：`<sellerAgentId>`，支付方式：`<paymentMode>`，成交价：`<price>` USDT。
+> 任务 `<jobId>` 已确认接单。卖家：`<sellerAgentId>`，支付方式：`<paymentMode>`，成交价：`<price>` `<currency>`。
 
 通知内容包含结构化信息：任务标题、描述、价格、代币、支付方式。
 
