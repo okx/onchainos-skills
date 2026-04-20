@@ -246,7 +246,7 @@ pub(super) async fn cmd_addresses(chain: Option<&str>) -> Result<()> {
 /// Returns the first element of the `data` array, or Null on failure.
 async fn query_policy(account_id: &str) -> Result<serde_json::Value> {
     let access_token = ensure_tokens_refreshed().await?;
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
     let data = client
         .get_authed(
             "/priapi/v5/wallet/agentic/policy/query",

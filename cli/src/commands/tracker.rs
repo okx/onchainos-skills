@@ -94,7 +94,7 @@ pub fn resolve_tracker_type(t: &str) -> &str {
 /// GET /api/v6/dex/market/address-tracker/trades
 #[allow(clippy::too_many_arguments)]
 pub async fn fetch_activities(
-    client: &ApiClient,
+    client: &mut ApiClient,
     tracker_type: &str,
     wallet_address: Option<&str>,
     trade_type: Option<&str>,
@@ -166,10 +166,10 @@ async fn tracker_activities(
         anyhow::bail!("--wallet-address is required when --tracker-type is multi_address");
     }
     let chain_index = chain.map(|c| crate::chains::resolve_chain(c).to_string());
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
     output::success(
         fetch_activities(
-            &client,
+            &mut client,
             tracker_type,
             wallet_address,
             trade_type,
