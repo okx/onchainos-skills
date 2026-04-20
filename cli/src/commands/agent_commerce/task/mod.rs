@@ -100,6 +100,10 @@ pub enum TaskSystemCommand {
     /// Client claims refund/reward after arbitration
     Claim { job_id: String },
 
+    /// Client agrees to refund after dispute
+    #[command(name = "agree-refund")]
+    AgreeRefund { job_id: String },
+
     /// Task config: init | show
     Config {
         #[command(subcommand)]
@@ -178,6 +182,9 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
 
         TaskSystemCommand::Claim { job_id } =>
             client::run_task(T::Claim { job_id }, ctx).await,
+
+        TaskSystemCommand::AgreeRefund { job_id } =>
+            client::run_task(T::AgreeRefund { job_id }, ctx).await,
 
         TaskSystemCommand::Config { action } =>
             client::run_task(T::Config { action }, ctx).await,

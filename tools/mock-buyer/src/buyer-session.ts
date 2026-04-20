@@ -44,6 +44,19 @@ export async function callCompleteApi(jobId: string) {
   console.log(`[buyer][api] completed job=${jobId}`);
 }
 
+export async function callRefuseApi(jobId: string) {
+  const res = await fetch(`${API_BASE_URL}/api/v1/task/${jobId}/refuse`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason: "交付物不符合验收标准" }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  console.log(`[buyer][api] refused job=${jobId}`);
+}
+
+/** 环境变量 MOCK_BUYER_MODE=refuse 时，买家收到交付物后拒绝而非接受 */
+export const BUYER_MODE = (process.env.MOCK_BUYER_MODE ?? "complete") as "complete" | "refuse";
+
 // ── BuyerSession 核心状态机 ───────────────────────────────────────────────────
 export class BuyerSession {
   step = 0;
@@ -108,8 +121,8 @@ export class BuyerSession {
       this.step = 3; this.onStateChange?.(); return;
     }
 
-    // 收到 TASK_APPLY / TASK_APPLIED → accept（不限 step，防重复）
-    if ((type === "TASK_APPLY" || type === "TASK_APPLIED") && !this.accepted) {
+    // 收到 TASK_APPLIED（链上确认）→ accept（不限 step，防重复）
+    if (type === "TASK_APPLIED" && !this.accepted) {
       this.accepted = true;
       const agentId = String(payload.sellerAgentId ?? payload.providerAgentId ?? this.sellerAgentId);
       console.log(`[buyer][session] TASK_APPLY received, calling accept API seller=${agentId}...`);
@@ -118,15 +131,44 @@ export class BuyerSession {
       this.step = 4; this.onStateChange?.(); return;
     }
 
-    // TASK_DELIVER / TASK_SUBMITTED → complete（只调一次）
-    if ((type === "TASK_DELIVER" || type === "TASK_SUBMITTED") && !this.completed) {
+    // TASK_SUBMITTED（链上确认）→ complete 或 refuse（根据 BUYER_MODE）
+    if (type === "TASK_SUBMITTED" && !this.completed) {
       this.completed = true;
       const url = String(payload.deliverableUrl ?? "");
-      console.log(`[buyer][session] deliverable received url=${url}, calling complete API...`);
       await sleep(1000);
+      if (BUYER_MODE === "refuse") {
+        console.log(`[buyer][session] deliverable received, REFUSE mode → calling refuse API...`);
+        await callRefuseApi(this.jobId).catch((e) =>
+          console.error(`[buyer][api] refuse error:`, e));
+        this.step = 7; this.onStateChange?.(); return;
+      }
+      console.log(`[buyer][session] deliverable received url=${url}, calling complete API...`);
       await callCompleteApi(this.jobId).catch((e) =>
         console.error(`[buyer][api] complete error:`, e));
       this.step = 6; this.onStateChange?.(); return;
+    }
+
+    // 终态通知（仅记录日志）
+    if (type === "TASK_COMPLETED") {
+      console.log(`[buyer][session] TASK_COMPLETED job=${this.jobId}, flow done ✅`);
+      this.step = 10; this.onStateChange?.(); return;
+    }
+    if (type === "TASK_REFUSED") {
+      console.log(`[buyer][session] TASK_REFUSED confirmed job=${this.jobId}, waiting for seller decision`);
+      this.step = 8; this.onStateChange?.(); return;
+    }
+    if (type === "TASK_AGREEREFUND") {
+      console.log(`[buyer][session] TASK_AGREEREFUND job=${this.jobId}, refund received ✅`);
+      this.step = 10; this.onStateChange?.(); return;
+    }
+    if (type === "TASK_DISPUTED") {
+      console.log(`[buyer][session] TASK_DISPUTED job=${this.jobId}, arbitration started`);
+      this.step = 9; this.onStateChange?.(); return;
+    }
+    if (type === "DISPUTE_RESOLVED") {
+      const winner = String(payload.winner ?? "?");
+      console.log(`[buyer][session] DISPUTE_RESOLVED job=${this.jobId} winner=${winner} ✅`);
+      this.step = 10; this.onStateChange?.(); return;
     }
   }
 }

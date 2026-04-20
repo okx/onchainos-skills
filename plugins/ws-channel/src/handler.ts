@@ -81,10 +81,20 @@ export async function handleInboundMessage(params: {
     return;
   }
 
-  // TASK_ACCEPTED：链上正式接单 → 同时推送到 main session（通知用），再继续走子 session
-  if (envelope.payload.type === "TASK_ACCEPTED") {
+  // 链上状态变更通知：同时推送到 main session（用户感知），再 fall-through 到子 session
+  const NOTIFY_MAIN_TYPES = new Set([
+    "TASK_APPLIED",    // 卖家申请接单
+    "TASK_ACCEPTED",   // 接单成功
+    "TASK_SUBMITTED",  // 交付物已上链
+    "TASK_COMPLETED",  // 验收通过
+    "TASK_REFUSED",    // 买家拒绝交付物 → 用户决定是否仲裁
+    "TASK_AGREEREFUND",// 卖家同意退款
+    "TASK_DISPUTED",   // 进入仲裁
+    "DISPUTE_RESOLVED",// 仲裁结果
+  ]);
+  if (NOTIFY_MAIN_TYPES.has(envelope.payload.type)) {
     const jobId = (envelope.payload as any).jobId ?? envelope.payload.task_id ?? "?";
-    log(`[ws-channel] TASK_ACCEPTED jobId=${jobId}，向 main session 推送接单通知`);
+    log(`[ws-channel] ${envelope.payload.type} jobId=${jobId}，向 main session 推送通知`);
     try {
       const notifyCtx = core.channel.reply.finalizeInboundContext({
         Body: rawBody,
@@ -99,7 +109,7 @@ export async function handleInboundMessage(params: {
         SenderId: "system",
         Provider: "ws-mock",
         Surface: "ws-mock",
-        MessageSid: `notify-accepted-${jobId}-${Date.now()}`,
+        MessageSid: `notify-${envelope.payload.type}-${jobId}-${Date.now()}`,
         Timestamp: Date.now(),
         WasMentioned: true,
         OriginatingChannel: "ws-mock",
@@ -112,14 +122,28 @@ export async function handleInboundMessage(params: {
         dispatcherOptions: { deliver: async (_payload: any) => {} },
       });
     } catch (err) {
-      (core.error ?? console.error)(`[ws-channel] TASK_ACCEPTED notify error: ${String(err)}`);
+      (core.error ?? console.error)(`[ws-channel] ${envelope.payload.type} notify error: ${String(err)}`);
     }
-    // 继续 fall-through，将 TASK_ACCEPTED 投递到子 session
+    // 继续 fall-through，投递到子 session
   }
 
-  // body：优先使用消息自带的 llm 字段
-  const llmField = (envelope.payload as any).llm as string | undefined;
-  const body = llmField ?? rawBody;
+  // 链上状态通知 vs P2P 消息：不同的 body 策略
+  const isChainNotify = NOTIFY_MAIN_TYPES.has(envelope.payload.type);
+  let body: string;
+  if (isChainNotify) {
+    // 链上通知：用 content（通用可读文本），不用 llm（含角色专属指令，对另一方无意义）
+    body = typeof envelope.payload.content === "string" ? envelope.payload.content : rawBody;
+  } else {
+    // P2P 消息：优先使用 llm 字段（机器可读摘要+行动指令）
+    const llmField = (envelope.payload as any).llm as string | undefined;
+    body = llmField ?? rawBody;
+  }
+
+  // sub session P2P 消息：注入 skill 加载指令（链上通知不注入，避免误导）
+  if (sessionMode === "sub" && !isChainNotify) {
+    const skillDirective = `[系统指令] 这是一条任务协商P2P消息。回复前必须先加载 okx-agent-task skill，按 SKILL.md 判断角色（消息含[BUYER]→你是Provider→Read provider.md；含[PROVIDER]→你是Client→Read client.md），严格遵守角色文件中的消息格式和行为规则。不得使用markdown、emoji、代码块。\n\n`;
+    body = skillDirective + body;
+  }
 
   // sessionMode 决定路由：sub → 子 session（P2P），main → main session
   const sessionKey = sessionMode === "sub" ? route.sessionKey : route.mainSessionKey;

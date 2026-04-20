@@ -114,19 +114,19 @@ class SellerSession {
       return;
     }
 
-    // TASK_ACCEPTED → 延迟后交付
+    // TASK_ACCEPTED → 先调 submit API（链上确认），再发 P2P 通知
     if (type === "TASK_ACCEPTED") {
       console.log(`[seller][session] task accepted, delivering in 5s...`);
       await sleep(5000);
       const deliverableUrl = `https://mock-deliverable.example.com/${this.jobId}.html`;
+      await callSubmitApi(this.jobId, deliverableUrl).catch((e) =>
+        console.error(`[seller][api] submit error:`, e),
+      );
       this.reply({
         type: "TASK_DELIVER", jobId: this.jobId,
         content: formatMsg(this.jobId, this.convId, "TASK_DELIVER", "任务已完成，请买家验收。"),
         deliverableUrl,
       });
-      await callSubmitApi(this.jobId, deliverableUrl).catch((e) =>
-        console.error(`[seller][api] submit error:`, e),
-      );
       return;
     }
   }

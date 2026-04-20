@@ -15,7 +15,7 @@
 import http from "node:http";
 import { WsMockClient, WsEnvelope, TaskPayload } from "../../../plugins/ws-channel/src/ws-client.js";
 import {
-  BuyerSession, callAcceptApi, callCompleteApi,
+  BuyerSession, callAcceptApi, callCompleteApi, callRefuseApi,
   BUYER_COMM_ADDR, BUYER_AGENT_ID, WS_URL, API_BASE_URL,
   formatMsg, sleep, MOCK_TASK,
 } from "./buyer-session.js";
@@ -102,7 +102,7 @@ async function uiStartNegotiation(jobId: string): Promise<string> {
   );
   sessions.set(convId, session);
   uiMessages.set(convId, []);
-  autoModes.set(convId, true);
+  autoModes.set(convId, false);
   pushSSE("new_session", sessionToView(session));
 
   const inquireContent = formatMsg(jobId, convId, "TASK_INQUIRE",
@@ -219,6 +219,12 @@ const server = http.createServer(async (req, res) => {
             session.completed = true;
             await callCompleteApi(session.jobId).catch(console.error);
             session.step = 6;
+          }
+        } else if (action === "refuse") {
+          if (!session.completed) {
+            session.completed = true;
+            await callRefuseApi(session.jobId).catch(console.error);
+            session.step = 7;
           }
         }
         pushSSE("session_updated", sessionToView(session));
@@ -369,7 +375,8 @@ button { padding: 5px 11px; border-radius: 6px; border: none; cursor: pointer; f
           <button class="btn-primary" onclick="quickReply(1)">接受报价</button>
           <button class="btn-primary" onclick="quickReply(2)">确认支付方式</button>
           <button class="btn-success" onclick="doAccept()">Confirm Accept</button>
-          <button class="btn-warn" onclick="doComplete()">Complete</button>
+          <button class="btn-success" onclick="doComplete()">Complete</button>
+          <button class="btn-warn" onclick="doRefuse()">Refuse</button>
         </div>
         <div id="input-area">
           <input id="msg-input" type="text" placeholder="自定义消息..." onkeydown="if(event.key==='Enter') sendCustom()" />
@@ -383,7 +390,7 @@ button { padding: 5px 11px; border-radius: 6px; border: none; cursor: pointer; f
 <script>
 let currentConvId = null;
 const sessions = {};
-const STEP_LABELS = ['等待卖家询问','已发任务详情','已接受报价','已确认支付','等待交付','交付中','已完成'];
+const STEP_LABELS = ['等待卖家询问','已发任务详情','已接受报价','已确认支付','等待交付','交付中','已完成','已拒绝','等待仲裁','仲裁中','流程结束'];
 const REPLIES = [
   '任务标题：开发一个 Python 脚本监控链上交易。\\n描述：实时输出以太坊主网大额交易，支持按金额过滤，有完整注释。\\n预算：100 USDT。\\n验收标准：代码有注释，支持以太坊主网，交付可运行脚本。',
   '好的，我接受你的报价 100 USDT，交付时间 48 小时，请继续。',
@@ -428,7 +435,7 @@ function selectSession(convId) {
 function renderConv(s) {
   document.getElementById('conv-title').textContent = s.convId;
   // Step indicator
-  const stepNames = ['询问', '详情', '报价', '支付', 'Apply', 'Accept', 'Done'];
+  const stepNames = ['询问', '详情', '报价', '支付', 'Apply', 'Accept', 'Done', '拒绝', '待仲裁', '仲裁中', '结束'];
   document.getElementById('step-indicator').innerHTML = stepNames.map((n, i) =>
     \`<span class="step-dot \${i < s.step ? 'done' : i === s.step ? 'active' : ''}">\${i+1}</span>\`
   ).join('');
@@ -485,6 +492,11 @@ function doAccept() {
 function doComplete() {
   if (!currentConvId) return;
   fetch('/action', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ convId: currentConvId, action: 'complete' }) });
+}
+
+function doRefuse() {
+  if (!currentConvId) return;
+  fetch('/action', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ convId: currentConvId, action: 'refuse' }) });
 }
 
 function sendCustom() {

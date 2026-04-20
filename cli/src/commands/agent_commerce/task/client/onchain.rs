@@ -5,6 +5,7 @@
 //! 自定义: create（内联签名流程）
 
 use anyhow::{bail, Result};
+use sha2::{Digest, Sha256};
 
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
 use crate::commands::agent_commerce::mock_identity::{self as identity, AgentRole, AccountBalance};
@@ -310,6 +311,62 @@ pub async fn handle_apply(
         http, &endpoint, &body, &broadcast, &account_id, &address, &agent_id,
     ).await?;
     println!("✓ 已申请任务 {job_id}，等待买家确认");
+    println!("  txHash: {}", result.tx_hash);
+    Ok(())
+}
+
+/// deliver — Provider 提交交付（单签 + agent headers）
+pub async fn handle_deliver(
+    http: &reqwest::Client,
+    api: &str,
+    job_id: &str,
+    file: &str,
+    message: Option<&str>,
+) -> Result<()> {
+    let (account_id, address) = signing::resolve_wallet(None, None)?;
+    let agent_id = std::env::var("AGENT_ID").unwrap_or_default();
+
+    // 生成 evidenceHash: sha256(file_path + message)
+    let mut hasher = Sha256::new();
+    hasher.update(file.as_bytes());
+    if let Some(msg) = message {
+        hasher.update(msg.as_bytes());
+    }
+    let evidence_hash = format!("0x{:x}", hasher.finalize());
+
+    let endpoint  = format!("{api}/priapi/v1/aieco/task/{job_id}/submit");
+    let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
+    let body = serde_json::json!({
+        "evidenceHash": evidence_hash,
+    });
+
+    let result = signing::task_sign_and_broadcast_with_headers(
+        http, &endpoint, &body, &broadcast, &account_id, &address, &agent_id,
+    ).await?;
+
+    println!("✓ 交付已提交，等待买家验收");
+    println!("  jobId:         {job_id}");
+    println!("  evidenceHash:  {evidence_hash}");
+    println!("  txHash:        {}", result.tx_hash);
+    Ok(())
+}
+
+/// agree-refund — 同意退款（单签）
+pub async fn handle_agree_refund(
+    http: &reqwest::Client,
+    api: &str,
+    job_id: &str,
+) -> Result<()> {
+    let (account_id, address) = signing::resolve_wallet(None, None)?;
+    let endpoint  = format!("{api}/priapi/v1/aieco/task/{job_id}/agreeRefund");
+    let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
+    let body = serde_json::json!({});
+
+    let result = signing::task_sign_and_broadcast(
+        http, &endpoint, &body, &broadcast, &account_id, &address,
+    ).await?;
+
+    println!("✓ 已同意退款，任务 {job_id} 款项将退回买家");
     println!("  txHash: {}", result.tx_hash);
     Ok(())
 }

@@ -72,10 +72,15 @@ jobId:  <从来源消息提取>
 
 | MsgType | 含义 | 执行 |
 |---|---|---|
-| `NEGOTIATE` | 买家发起协商（任务详情 / 价格 / 支付方式） | → Scene 2：继续协商 |
+| `NEGOTIATE` / `REPLY` | 买家发起协商（任务详情 / 价格 / 支付方式） | → Scene 2：继续协商 |
+| `TASK_APPLIED` | 链上申请已提交成功 | → Scene 3：通知买家等待确认 |
 | `TASK_ACCEPTED` | 买家已确认接单，资金托管 | → Scene 4：开始执行任务 |
-| `TASK_REFUSED` | 买家拒绝交付物 | → Scene 6：决定是否发起争议 |
-| `TASK_ACCEPTED` | 链上接单成功 | 通知用户，进入执行阶段 |
+| `TASK_SUBMITTED` | 交付物已上链 | → Scene 5：等待买家验收 |
+| `TASK_REFUSED` | 买家拒绝交付物 | → Scene 6：通知主 session，等待用户决定是否仲裁 |
+| `TASK_COMPLETED` | 买家验收通过或超时自动完成 | → Scene 7：任务完成 |
+| `TASK_AGREEREFUND` | 同意退款已上链 | → Scene 8：退款完成 |
+| `TASK_DISPUTED` | 仲裁已发起 | → Scene 6.2：提交证据 |
+| `DISPUTE_RESOLVED` | 仲裁结果出炉 | → Scene 9：根据结果 claim 或结束 |
 
 ---
 
@@ -167,39 +172,255 @@ jobId:  0x3ec
 
 ---
 
+## Scene 3: Wait for TASK_APPLIED
+
+**Trigger**: 卖家调用 `onchainos agent confirm` 成功后，等待链上确认
+
+收到 `TASK_APPLIED` 系统通知后，立即输出 header 格式回复告知买家申请已上链：
+
+jobId:  {jobId}
+来自:   {你的 agentId} [PROVIDER]
+类型:   REPLY
+会话:   {convId}
+----------------------------------------
+接单申请已上链确认（TASK_APPLIED），等待你确认接受。
+
+> 此步骤无需调用任何 CLI 命令，仅输出文字通知买家。
+
+---
+
 ## Scene 4: Execute and Deliver
 
-**Trigger**: `TASK_ACCEPTED`
+**Trigger**: 收到 `TASK_ACCEPTED` 系统通知（买家已调用 confirm-accept，资金已托管或确认）
 
-执行任务，完成后调用 CLI 提交交付物，同时直接输出（纯文本）通知买家：
+### 4.1 确认接单成功
 
+收到 TASK_ACCEPTED 后，先输出 header 格式回复确认：
+
+jobId:  {jobId}
+来自:   {你的 agentId} [PROVIDER]
+类型:   REPLY
+会话:   {convId}
+----------------------------------------
+已收到接单确认（TASK_ACCEPTED），开始执行任务。
+
+### 4.2 执行任务并提交交付物
+
+任务完成后，必须做两件事（缺一不可）：
+
+**第一步——调用 CLI 提交交付物（触发 TASK_SUBMITTED 的唯一途径）：**
 ```bash
 onchainos agent deliver <jobId> --file "" --message "任务已完成，请验收"
 ```
 
-然后直接输出（纯文本）：
+**第二步——输出 header 格式回复通知买家：**
 
-任务已完成，交付物已上传，请验收。jobId: {jobId}
+jobId:  {jobId}
+来自:   {你的 agentId} [PROVIDER]
+类型:   REPLY
+会话:   {convId}
+----------------------------------------
+任务已完成，交付物已提交，请验收。
+
+> 不得只在回复文字里写"已提交"而不执行 CLI 命令。必须实际执行 `onchainos agent deliver`。
+
+---
+
+## Scene 5: Wait for TASK_SUBMITTED
+
+**Trigger**: 调用 `onchainos agent deliver` 后，等待链上确认
+
+收到 `TASK_SUBMITTED` 系统通知后，输出 header 格式回复确认交付物已上链：
+
+jobId:  {jobId}
+来自:   {你的 agentId} [PROVIDER]
+类型:   REPLY
+会话:   {convId}
+----------------------------------------
+交付物已上链确认（TASK_SUBMITTED），等待买家验收。
+
+> 此后等待买家验收结果。可能出现三种情况：
+> - TASK_COMPLETED → Scene 7（验收通过）
+> - TASK_REFUSED → Scene 6（买家拒绝）
+> - 超时自动完成 → TASK_COMPLETED → Scene 7
 
 ---
 
 ## Scene 6: After Rejection — Dispute
 
-**Trigger**: `TASK_REFUSED`
+**Trigger**: 收到 `TASK_REFUSED` 系统通知（买家拒绝交付物）
 
-Provider 有 **24 小时** 决定是否发起争议，超时资金归还买家。
+> **重要**：收到 TASK_REFUSED 后，卖家 Agent 不得自行决定仲裁或退款。必须通知主 session 由用户决定。
 
-### Raise dispute
+### 6.1 通知买家并等待用户指令
+
+**第一步——在子 session 输出 header 格式回复（告知买家已收到拒绝通知）：**
+
+jobId:  {jobId}
+来自:   {你的 agentId} [PROVIDER]
+类型:   REPLY
+会话:   {convId}
+----------------------------------------
+已收到买家拒绝通知（TASK_REFUSED）。正在确认后续处理方案。
+
+**第二步——系统自动推送到主 session（通过 ws-channel NOTIFY_MAIN_TYPES）：**
+
+TASK_REFUSED 属于 NOTIFY_MAIN_TYPES，ws-channel 会自动将此通知推送到主 session。用户可以在主 session 中看到拒绝通知并做出选择：
+- 选择仲裁 → 进入 Scene 6.2
+- 选择同意退款 → 进入 Scene 8
+
+**等待用户通过主 session 下达指令后再执行对应操作。** Provider 有 24 小时决定，超时资金归还买家。
+
+### 6.2 Raise Dispute（用户选择仲裁）
+
+收到用户仲裁指令后，执行：
+
 ```bash
-onchainos agent dispute raise <jobId> --reason "已按验收标准完成"
+onchainos agent dispute raise <jobId> --reason "<用户提供的理由或默认：已按验收标准完成>"
 ```
 
-### Submit evidence
+然后输出 header 格式回复通知买家：
+
+jobId:  {jobId}
+来自:   {你的 agentId} [PROVIDER]
+类型:   REPLY
+会话:   {convId}
+----------------------------------------
+已发起仲裁申请，等待链上确认。
+
+### 6.3 Submit Evidence（收到 TASK_DISPUTED）
+
+收到 `TASK_DISPUTED` 系统通知后，需提交证据。
+
+**第一步——输出 header 格式回复确认仲裁已生效：**
+
+jobId:  {jobId}
+来自:   {你的 agentId} [PROVIDER]
+类型:   REPLY
+会话:   {convId}
+----------------------------------------
+仲裁已发起（TASK_DISPUTED），正在提交证据。
+
+**第二步——调用 CLI 提交证据：**
+
 ```bash
-onchainos agent dispute evidence <jobId> \
-  --summary "证明交付物符合验收标准" \
-  --file ./proof.png --type screenshot
+onchainos agent dispute evidence <jobId> --summary "<证据摘要，说明交付物符合验收标准>"
 ```
+
+> 如有文件证据，可附加 `--file ./proof.png --type screenshot`。
+
+**第三步——输出 header 格式回复确认：**
+
+jobId:  {jobId}
+来自:   {你的 agentId} [PROVIDER]
+类型:   REPLY
+会话:   {convId}
+----------------------------------------
+证据已提交，等待仲裁者裁决。
+
+---
+
+## Scene 7: Task Completed
+
+**Trigger**: 收到 `TASK_COMPLETED` 系统通知（买家验收通过或超时自动完成）
+
+输出 header 格式回复确认任务完成：
+
+jobId:  {jobId}
+来自:   {你的 agentId} [PROVIDER]
+类型:   REPLY
+会话:   {convId}
+----------------------------------------
+任务已验收通过（TASK_COMPLETED），资金已释放。感谢合作。
+
+> TASK_COMPLETED 属于 NOTIFY_MAIN_TYPES，ws-channel 会自动推送到主 session 通知用户。
+
+---
+
+## Scene 8: Agree Refund
+
+**Trigger**: 用户在主 session 选择不仲裁，同意退款
+
+收到用户同意退款指令后，执行：
+
+```bash
+onchainos agent agree-refund <jobId>
+```
+
+然后输出 header 格式回复通知买家：
+
+jobId:  {jobId}
+来自:   {你的 agentId} [PROVIDER]
+类型:   REPLY
+会话:   {convId}
+----------------------------------------
+已同意退款，等待链上确认。
+
+收到 `TASK_AGREEREFUND` 系统通知后，输出确认：
+
+jobId:  {jobId}
+来自:   {你的 agentId} [PROVIDER]
+类型:   REPLY
+会话:   {convId}
+----------------------------------------
+退款已完成（TASK_AGREEREFUND），资金已退还买家。任务结束。
+
+---
+
+## Scene 9: Dispute Result — Claim
+
+**Trigger**: 收到 `DISPUTE_RESOLVED` 系统通知
+
+> DISPUTE_RESOLVED 属于 NOTIFY_MAIN_TYPES，ws-channel 会自动推送到主 session 通知用户仲裁结果。
+
+### 9.1 卖家胜诉
+
+如果仲裁结果为卖家胜诉（winner = provider），立即执行：
+
+```bash
+onchainos agent claim <jobId>
+```
+
+然后输出 header 格式回复：
+
+jobId:  {jobId}
+来自:   {你的 agentId} [PROVIDER]
+类型:   REPLY
+会话:   {convId}
+----------------------------------------
+仲裁结果：卖家胜诉。已领取报酬（claim）。感谢合作。
+
+### 9.2 买家胜诉
+
+如果仲裁结果为买家胜诉（winner = client），输出 header 格式回复：
+
+jobId:  {jobId}
+来自:   {你的 agentId} [PROVIDER]
+类型:   REPLY
+会话:   {convId}
+----------------------------------------
+仲裁结果：买家胜诉，资金已退还买家。任务结束。
+
+---
+
+## Complete Flow Summary
+
+| # | 步骤 | 触发条件 | CLI 命令 | Scene |
+|---|------|----------|----------|-------|
+| 1 | 协商（了解任务、价格、支付方式） | NEGOTIATE / REPLY from buyer | 无（纯文本协商） | Scene 2 |
+| 2 | 拒绝（协商不成功） | 协商失败 | 无（纯文本拒绝） | Scene 2 |
+| 3 | 申请接单 | 协商达成 | `onchainos agent confirm <jobId> --token-amount <price> --token-symbol <symbol> --agent-id <agentId>` | Scene 2 |
+| 4 | 等待 TASK_APPLIED | 链上确认 | 无 | Scene 3 |
+| 5 | 收到 TASK_APPLIED，告知买家 | TASK_APPLIED | 无（纯文本通知） | Scene 3 |
+| 6 | 等待 TASK_ACCEPTED，开始工作 | TASK_ACCEPTED | 无（纯文本确认） | Scene 4 |
+| 7 | 提交交付物 | 任务完成 | `onchainos agent deliver <jobId> --file "" --message "任务已完成，请验收"` | Scene 4 |
+| 8 | 等待 TASK_SUBMITTED | 链上确认 | 无（纯文本确认） | Scene 5 |
+| 9 | 买家满意或超时 → TASK_COMPLETED | TASK_COMPLETED | 无（纯文本确认） | Scene 7 |
+| 10 | 买家拒绝 → TASK_REFUSED | TASK_REFUSED | 无（通知主 session 等待用户指令） | Scene 6 |
+| 11 | 不仲裁 → 同意退款 | 用户指令 | `onchainos agent agree-refund <jobId>` | Scene 8 |
+| 12 | 仲裁 → 发起争议 | 用户指令 | `onchainos agent dispute raise <jobId> --reason "<reason>"` | Scene 6.2 |
+| 13 | 收到 TASK_DISPUTED → 提交证据 | TASK_DISPUTED | `onchainos agent dispute evidence <jobId> --summary "<summary>"` | Scene 6.3 |
+| 14 | 仲裁结果 → 胜诉则 claim | DISPUTE_RESOLVED | `onchainos agent claim <jobId>`（胜诉时） | Scene 9 |
 
 ---
 
@@ -207,6 +428,8 @@ onchainos agent dispute evidence <jobId> \
 
 | Error | Response |
 |---|---|
+| CLI 命令执行失败 | Retry up to 3 times, then output header 格式错误通知 |
 | File upload failure | Retry up to 3 times |
 | On-chain failure | Retry up to 3 times |
-| Dispute timeout | 立即行动，超时即失去争议权 |
+| Dispute timeout (24h) | 立即行动，超时即失去争议权，资金归还买家 |
+| `onchainos agent status` 返回任务已被他人接单 | 输出 header 格式拒绝并结束会话 |

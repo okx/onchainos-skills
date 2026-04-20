@@ -133,6 +133,10 @@ pub enum TaskCommand {
     Claim {
         job_id: String,
     },
+    /// Client agrees to refund after dispute
+    AgreeRefund {
+        job_id: String,
+    },
     /// Initialize config
     Config {
         #[command(subcommand)]
@@ -220,6 +224,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             onchain::handle_set_public(&http, &api, &job_id).await,
         TaskCommand::Claim { job_id } =>
             onchain::handle_claim(&http, &api, &job_id).await,
+        TaskCommand::AgreeRefund { job_id } =>
+            onchain::handle_agree_refund(&http, &api, &job_id).await,
         TaskCommand::Apply { job_id } =>
             onchain::handle_apply(&http, &api, &job_id).await,
 
@@ -231,11 +237,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         }
         TaskCommand::Confirm { job_id, token_amount, token_symbol, agent_id } =>
             onchain::handle_confirm(&http, &api, &job_id, &token_amount, token_symbol.as_deref(), agent_id.as_deref()).await,
-        // TODO(provider): 实现文件上传 + submit 签名流程
-        TaskCommand::Deliver { job_id, file, message } => {
-            println!("[TODO(provider)] deliver {job_id} file={file} msg={message:?}");
-            Ok(())
-        }
+        TaskCommand::Deliver { job_id, file, message } =>
+            onchain::handle_deliver(&http, &api, &job_id, &file, message.as_deref()).await,
         TaskCommand::Config { action } => {
             match action {
                 ConfigAction::Init => println!("[stub] task config init"),

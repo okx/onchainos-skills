@@ -413,6 +413,21 @@ fn build_context(
     for a in &actions {
         out.push_str(&format!("- {a}\n"));
     }
+    out.push('\n');
+
+    // ── 必须加载的角色指南 ──────────────────────────────────────────────
+    let skill_file = match role {
+        "buyer"     => "client.md",
+        "seller"    => "provider.md",
+        "evaluator" => "evaluator.md",
+        _           => "",
+    };
+    if !skill_file.is_empty() {
+        out.push_str("【⚠️ 必须立即执行】\n");
+        out.push_str(&format!(
+            "请立即读取角色指南 {skill_file}（与 SKILL.md 同目录），该文件包含完整的协商规则和接单流程。\n"
+        ));
+    }
 
     out
 }

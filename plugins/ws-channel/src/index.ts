@@ -52,25 +52,53 @@ function resolveOrCreateWalletAddr(accountId: string): string {
   return addr;
 }
 
-// 角色系统提示：只声明身份和可用工具，行为规则由 skill 文件（client.md / provider.md）定义
-const ROLE_PRESETS: Record<string, { systemPrompt: (addr: string) => string }> = {
+// 角色系统提示：身份 + skill 加载规则 + 消息格式模板（agent 每轮都能看到）
+function taskSkillRule(role: string, agentId: string): string {
+  const tag = role === "buyer" ? "BUYER" : role === "seller" ? "PROVIDER" : "EVALUATOR";
+  return `
+[最高优先级规则 - 必须在回复前执行]
+收到的消息如果包含以下任何信号: jobId、[BUYER]、[PROVIDER]、TASK_ 开头的类型、任务、协商、接单、交付、仲裁,
+则该消息属于任务上下文, 必须按以下顺序处理, 完成前不得输出任何回复:
+1. 加载 okx-agent-task skill
+2. 按 SKILL.md "How to Determine Your Role" 判断你的角色(消息含[BUYER]标签→你是Provider, 含[PROVIDER]标签→你是Client)
+3. Read 对应角色文件(provider.md / client.md / evaluator.md)
+4. 严格遵守角色文件中的输出格式和行为规则后再回复
+不加载 skill 就直接回复 = 格式错误 = 对方无法解析 = 任务流程中断。
+
+[消息格式模板 - 每条回复必须严格照抄此格式]
+你的每一条文字回复必须以下面的header开头(纯文本, 禁止markdown/代码块/emoji):
+jobId:  {从来源消息的jobId行提取}
+来自:   ${agentId} [${tag}]
+类型:   REPLY
+会话:   {从来源消息的会话行提取}
+----------------------------------------
+{回复正文}
+注意: 上面"来自:"后面是三个空格再接agentId, "类型:"和"会话:"同理。所有冒号都是半角":"不是全角"："。分隔线是40个连字符"-"。`;
+}
+
+const ROLE_PRESETS: Record<string, { systemPrompt: (addr: string, agentId: string) => string }> = {
   generic: {
-    systemPrompt: (addr) => `钱包地址：${addr}
-可用工具：xmtp_send, xmtp_get_pending, xmtp_accept, xmtp_close, xmtp_get_messages, xmtp_upload, xmtp_queue_status, identity_register, identity_lookup`,
+    systemPrompt: (addr, agentId) => `钱包地址: ${addr}
+可用工具: xmtp_send, xmtp_get_pending, xmtp_accept, xmtp_close, xmtp_get_messages, xmtp_upload, xmtp_queue_status, identity_register, identity_lookup
+${taskSkillRule("generic", agentId)}`,
   },
   buyer: {
-    systemPrompt: (addr) => `角色：买家（REQUESTER）
-钱包地址：${addr}`,
+    systemPrompt: (addr, agentId) => `角色: 买家(REQUESTER)
+agentId: ${agentId}
+钱包地址: ${addr}
+${taskSkillRule("buyer", agentId)}`,
   },
   seller: {
-    systemPrompt: (addr) => `角色：卖家（PROVIDER）
-钱包地址：${addr}
-可用工具：xmtp_send, xmtp_get_pending, xmtp_accept, xmtp_close, xmtp_upload`,
+    systemPrompt: (addr, agentId) => `角色: 卖家(PROVIDER)
+agentId: ${agentId}
+钱包地址: ${addr}
+${taskSkillRule("seller", agentId)}`,
   },
   arbitrator: {
-    systemPrompt: (addr) => `角色：仲裁者（EVALUATOR）
-钱包地址：${addr}
-可用工具：xmtp_send, xmtp_get_pending, xmtp_accept, xmtp_close`,
+    systemPrompt: (addr, agentId) => `角色: 仲裁者(EVALUATOR)
+agentId: ${agentId}
+钱包地址: ${addr}
+${taskSkillRule("arbitrator", agentId)}`,
   },
 };
 
@@ -114,6 +142,8 @@ const activeConversations = new Set<string>();
 const messageHistory = new Map<string, MessageRecord[]>();
 /** 当前活跃账户，供工具访问 agentId 等配置 */
 let activeAccount: WsMockAccount | null = null;
+/** 最近一次 sub-session dispatch 的 convId，供 outbound sendText 兜底 */
+let lastDispatchedConvId: string | null = null;
 
 function getDefaultClient(): WsMockClient | undefined {
   return clients.get(normalizeAccountId(DEFAULT_ACCOUNT_ID));
@@ -127,7 +157,7 @@ function resolveAccount(cfg: ClawdbotConfig, accountId?: string | null): WsMockA
   // 显式 walletAddr 优先，否则按 accountId 查/创建（类比生产 SQLite agentId → communicationAddress）
   const walletAddr: string = s.walletAddr || resolveOrCreateWalletAddr(resolvedAccountId);
   const agentId: string = s.agentId || walletAddr;
-  const systemPrompt: string = s.systemPrompt || preset.systemPrompt(walletAddr);
+  const systemPrompt: string = s.systemPrompt || preset.systemPrompt(walletAddr, agentId);
   return {
     accountId: resolvedAccountId,
     walletAddr,
@@ -201,7 +231,7 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
           if (identity?.role) {
             const detectedRole = (identity.role as string).toLowerCase();
             const preset = ROLE_PRESETS[detectedRole];
-            if (preset) resolvedSystemPrompt = s.systemPrompt || preset.systemPrompt(account.walletAddr);
+            if (preset) resolvedSystemPrompt = s.systemPrompt || preset.systemPrompt(account.walletAddr, account.agentId);
             ctx.log?.info?.(`[ws-channel] 自动识别角色: ${detectedRole} | agentId: ${account.agentId}`);
           } else {
             ctx.log?.info?.(`[ws-channel] 身份未注册，使用通用 prompt | agentId: ${account.agentId}`);
@@ -215,11 +245,19 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
       activeCfg = ctx.cfg;
       activeSystemPrompt = resolvedSystemPrompt;
 
-      // 系统消息类型：直接走 main session，不进 pending 队列
-      // TASK_ACCEPTED / TASK_APPLIED 从 SYSTEM_MSG_TYPES 移除：它们应路由到子 session（P2P conv），
-      // 那里有卖家的协商上下文，agent 才能正确执行 onchainos agent deliver。
-      // handler.ts 中的 TASK_ACCEPTED 特殊块仍会先向 main session 推送只读通知。
+      // 仅 TASK_CONFIRMED 走 main session（买家启动流程）
+      // 其余链上通知走子 session（保持 P2P 上下文连贯）
       const SYSTEM_MSG_TYPES = new Set(["TASK_CONFIRMED"]);
+
+      // per-session 串行队列：保证同一 convId 的消息严格按到达顺序处理
+      // 解决 openclaw "queued messages while agent was busy" 导致的乱序问题
+      const dispatchQueues = new Map<string, Promise<void>>();
+      function enqueueDispatch(key: string, fn: () => Promise<void>): Promise<void> {
+        const prev = dispatchQueues.get(key) ?? Promise.resolve();
+        const next = prev.then(fn, fn);
+        dispatchQueues.set(key, next);
+        return next;
+      }
 
       client.start(async (envelope) => {
         const convId = envelope.conversation_id;
@@ -250,9 +288,10 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
           client.sendToConv(cid, { type: "REPLY", content: text });
         };
 
-        // 3. 系统消息 → main session
+        // 3. 仅 TASK_CONFIRMED 走 main session
         if (SYSTEM_MSG_TYPES.has(msgType)) {
-          await handleInboundMessage({
+          ctx.log?.info?.(`[ws-channel] ${msgType} → main session (not sub)`);
+          await enqueueDispatch("main", () => handleInboundMessage({
             cfg: ctx.cfg,
             accountId: account.accountId,
             myAddr: account.walletAddr,
@@ -261,7 +300,7 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
             envelope,
             sessionMode: "main",
             reply: makeReply(convId),
-          });
+          }));
           return;
         }
 
@@ -273,7 +312,8 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
         }
 
         if (activeConversations.has(convId)) {
-          await handleInboundMessage({
+          lastDispatchedConvId = convId;
+          await enqueueDispatch(convId, () => handleInboundMessage({
             cfg: ctx.cfg,
             accountId: account.accountId,
             myAddr: account.walletAddr,
@@ -282,7 +322,7 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
             envelope,
             sessionMode: "sub",
             reply: makeReply(convId),
-          });
+          }));
         } else {
           // 新 conv：存入 pending（带完整 envelope），通知 main session
           const existing = pendingConversations.get(convId);
@@ -333,10 +373,10 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
         return { channel: "ws-mock", messageId: "err-no-client" };
       }
       if (!conversationId) {
-        log(`[ws-channel] sendText: missing conversationId, ctx keys=${Object.keys(ctx as any).join(",")}`);
-        return { channel: "ws-mock", messageId: "err-no-conv" };
+        log(`[ws-channel] sendText: no conversationId, dropping (main session output not forwarded to P2P)`);
+        return { channel: "ws-mock", messageId: "dropped-no-conv" };
       }
-      client.sendToConv(conversationId, { type: "TEXT", content: text });
+      client.sendToConv(conversationId, { type: "REPLY", content: text });
       return { channel: "ws-mock", messageId: `${Date.now()}` };
     },
   },

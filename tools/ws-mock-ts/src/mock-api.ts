@@ -104,10 +104,78 @@ function normalizePath(p: string): string {
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
+// ── Event logs (API requests + WS notifications) ────────────────────────────
+interface EventLog {
+  ts: string;
+  kind: "api" | "ws";
+  method?: string;
+  path?: string;
+  status?: number;
+  jobId?: string;
+  agentId?: string;
+  wsType?: string;
+  convId?: string;
+  detail?: string;
+  reqBody?: unknown;
+  resBody?: unknown;
+  wsPayload?: unknown;
+}
+const eventLogs: EventLog[] = [];
+const MAX_LOGS = 200;
+function pushLog(entry: EventLog) {
+  eventLogs.unshift(entry);
+  if (eventLogs.length > MAX_LOGS) eventLogs.length = MAX_LOGS;
+}
+function logApi(method: string, path: string, status: number, jobId?: string, detail?: string, reqBody?: unknown, resBody?: unknown, agentId?: string) {
+  pushLog({ ts: new Date().toISOString(), kind: "api", method, path, status, jobId, detail, reqBody, resBody, agentId });
+}
+function logWs(wsType: string, jobId: string, convId: string, detail?: string, wsPayload?: unknown) {
+  pushLog({ ts: new Date().toISOString(), kind: "ws", wsType, jobId, convId, detail, wsPayload });
+}
 
+/** 通过 WS LookupRole 查找指定角色的所有 comm_addr */
+async function lookupRoleAddrs(role: string): Promise<string[]> {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(WS_URL);
+    const timer = setTimeout(() => { ws.terminate(); resolve([]); }, 3000);
+    ws.once("open", () => ws.send(JSON.stringify({ action: "LookupRole", role })));
+    ws.on("message", (raw) => {
+      const msg = JSON.parse(raw.toString()) as Record<string, unknown>;
+      if (msg.type === "identity_lookup") {
+        clearTimeout(timer);
+        const agents = msg.agents as Array<{ comm_addr?: string }> | null;
+        ws.close();
+        resolve(agents?.map(i => i.comm_addr).filter(Boolean) as string[] ?? []);
+      }
+    });
+    ws.once("error", () => { clearTimeout(timer); resolve([]); });
+  });
+}
+
+/** 通过 WS LookupAddr 查找 agentId 对应的 comm_addr */
+async function lookupCommAddr(agentId: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(WS_URL);
+    const timer = setTimeout(() => { ws.terminate(); resolve(null); }, 3000);
+    ws.once("open", () => ws.send(JSON.stringify({ action: "LookupAddr", addr: agentId })));
+    ws.on("message", (raw) => {
+      const msg = JSON.parse(raw.toString()) as Record<string, unknown>;
+      if (msg.type === "addr_lookup") {
+        clearTimeout(timer);
+        const identity = msg.identity as { comm_addr?: string } | null;
+        ws.close();
+        resolve(identity?.comm_addr ?? null);
+      }
+    });
+    ws.once("error", () => { clearTimeout(timer); resolve(null); });
+  });
+}
 
 // ── WS notification helper ───────────────────────────────────────────────────
 async function wsNotify(convId: string, participants: string[], payload: Record<string, unknown>): Promise<void> {
+  const wsType = String(payload.type ?? "?");
+  const jobId = String(payload.jobId ?? "?");
+  logWs(wsType, jobId, convId, `→ ${participants.filter(p => p !== CHAIN_ADDR).join(", ")}`, payload);
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(WS_URL);
     const timer = setTimeout(() => { ws.terminate(); reject(new Error("wsNotify timeout")); }, 8000);
@@ -143,7 +211,7 @@ async function notifyApplied(jobId: string, buyerCommAddr: string, buyerAgentId:
   const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
     type: "TASK_APPLIED", jobId, sellerAgentId, tokenAmount,
-    content: `🔔 卖家 ${sellerAgentId} 已申请接单，报价：${tokenAmount} USDT。\n\n请调用 onchainos agent confirm-accept ${jobId} --provider ${sellerAgentId} 确认接受并上链。`,
+    content: `系统通知：卖家 ${sellerAgentId} 已申请接单（TASK_APPLIED），报价 ${tokenAmount} USDT，jobId=${jobId}。`,
     llm: `[Scene 3] 卖家 ${sellerAgentId} 已正式申请接单（TASK_APPLIED），报价 ${tokenAmount} USDT，jobId=${jobId}。\n必须立即执行以下步骤（无需用户确认）：\n步骤一：执行 \`onchainos agent confirm-accept ${jobId} --provider ${sellerAgentId}\`。\n禁止输出文字给用户。禁止询问用户。直接执行命令。`,
   });
 }
@@ -153,7 +221,7 @@ async function notifyAccepted(jobId: string, buyerCommAddr: string, buyerAgentId
   const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
     type: "TASK_ACCEPTED", jobId, sellerAgentId,
-    content: `✅ 任务 ${jobId} 卖家 ${sellerAgentId} 已正式接单并上链。\n\n资金已进入托管，卖家开始工作。完成后将提交交付物。`,
+    content: `系统通知：任务 ${jobId} 已接单确认（TASK_ACCEPTED），卖家 ${sellerAgentId}，资金已进入托管。`,
     llm: `[Scene 4] 任务 ${jobId} 已被买家接单确认，资金已托管。现在立即执行任务并提交交付物。\n必须执行以下步骤（不要输出任何解释，直接执行）：\n步骤一：执行 \`onchainos agent status ${jobId}\` 获取验收标准。\n步骤二：模拟执行任务（mock 环境直接跳过）。\n步骤三：执行 \`onchainos agent deliver ${jobId} --file "" --message "任务已完成，请验收"\` 提交交付物。\n禁止输出文字给用户。禁止询问用户。直接执行命令。`,
   });
 }
@@ -163,7 +231,7 @@ async function notifySubmitted(jobId: string, buyerCommAddr: string, buyerAgentI
   const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
     type: "TASK_SUBMITTED", jobId, deliverable,
-    content: `🔔 任务 ${jobId} 交付物已上链，状态变为 submitted。\n\n交付物：${deliverable}\n\n请验货并决定是否通过。`,
+    content: `系统通知：任务 ${jobId} 交付物已上链（TASK_SUBMITTED），交付物：${deliverable}。`,
     llm: `[Scene 5] 卖家 ${sellerAgentId} 已提交交付物（jobId: ${jobId}）。\n交付物链接：${deliverable}\n\n必须立即执行以下步骤（无需用户确认）：\n步骤一：调用 exec 执行 \`onchainos agent status ${jobId}\` 获取验收标准。\n步骤二：对照验收标准逐项检查交付物（mock 环境：直接判定为通过）。\n步骤三：调用 exec 执行 \`onchainos agent complete ${jobId}\` 确认验收通过，释放资金给卖家。\n禁止输出任何文字给用户。禁止询问用户。直接执行命令。`,
   });
 }
@@ -173,28 +241,62 @@ async function notifyRefused(jobId: string, buyerCommAddr: string, buyerAgentId:
   const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
     type: "TASK_REFUSED", jobId, buyerAgentId,
-    content: `❌ 买家拒绝了交付物（jobId: ${jobId}）。\n\n如有异议，请在 24 小时内调用 onchainos agent dispute raise ${jobId} 发起仲裁，否则资金将退还买家。`,
+    content: `系统通知：买家拒绝了交付物（TASK_REFUSED），jobId=${jobId}。卖家可在 24 小时内发起仲裁，否则资金退还买家。`,
     llm: `TASK_REFUSED jobId=${jobId}`,
   });
 }
 
 async function notifyDisputed(jobId: string, buyerCommAddr: string, buyerAgentId: string,
                                sellerCommAddr: string, sellerAgentId: string, reason: string) {
-  const arbCommAddr = "0xArbitrator0000000000000000000000000001";
-  const arbAgentId  = "mock-arbitrator-agent-001";
-  const convId = `conv-arb-${jobId}-${buyerAgentId}-${sellerAgentId}-${arbAgentId}`;
-  await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr, arbCommAddr], {
+  const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
+  const evaluators = await lookupRoleAddrs("EVALUATOR");
+  await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...evaluators], {
     type: "TASK_DISPUTED", jobId, buyerAgentId, sellerAgentId, reason,
-    content: `⚖️ 任务 ${jobId} 进入仲裁。\n买家拒绝验收，卖家申诉：${reason}\n\n请仲裁者查阅证据后裁决。`,
+    content: `系统通知：任务 ${jobId} 进入仲裁（TASK_DISPUTED）。卖家申诉理由：${reason}。`,
+  });
+}
+
+async function notifyCompleted(jobId: string, buyerCommAddr: string, buyerAgentId: string,
+                               sellerCommAddr: string, sellerAgentId: string) {
+  const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
+  await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
+    type: "TASK_COMPLETED", jobId, sellerAgentId,
+    content: `系统通知：任务 ${jobId} 已验收通过（TASK_COMPLETED），资金已释放给卖家 ${sellerAgentId}。`,
+    llm: `[Scene 7] 任务 ${jobId} 买家已验收通过（TASK_COMPLETED），资金已释放。任务圆满完成。`,
+  });
+}
+
+async function notifyAgreeRefund(jobId: string, buyerCommAddr: string, buyerAgentId: string,
+                                  sellerCommAddr: string, sellerAgentId: string) {
+  const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
+  await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
+    type: "TASK_AGREEREFUND", jobId, sellerAgentId,
+    content: `系统通知：卖家 ${sellerAgentId} 同意退款（TASK_AGREEREFUND），任务 ${jobId} 资金已退还买家。`,
+    llm: `任务 ${jobId} 卖家同意退款（TASK_AGREEREFUND），资金已退还买家。任务结束。`,
+  });
+}
+
+async function notifyDisputeResolved(jobId: string, buyerCommAddr: string, buyerAgentId: string,
+                                      sellerCommAddr: string, sellerAgentId: string, winner: string) {
+  const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
+  const winnerLabel = winner === "provider" ? `卖家 ${sellerAgentId}` : `买家 ${buyerAgentId}`;
+  const evaluators = await lookupRoleAddrs("EVALUATOR");
+  await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...evaluators], {
+    type: "DISPUTE_RESOLVED", jobId, winner, sellerAgentId, buyerAgentId,
+    content: `系统通知：任务 ${jobId} 仲裁完成（DISPUTE_RESOLVED），${winnerLabel} 胜诉。${winner === "provider" ? "资金判给卖家。" : "资金已退还买家。"}`,
+    llm: winner === "provider"
+      ? `[Scene 11] 仲裁结果：卖家胜诉（DISPUTE_RESOLVED）。立即执行 \`onchainos agent claim ${jobId}\` 领取报酬。`
+      : `仲裁结果：买家胜诉（DISPUTE_RESOLVED），资金已退还买家。任务结束。`,
   });
 }
 
 // ── Route helpers ─────────────────────────────────────────────────────────────
 function parseBody(req: http.IncomingMessage): Promise<unknown> {
+  if ((req as any)._parsedBody !== undefined) return Promise.resolve((req as any)._parsedBody);
   return new Promise((resolve) => {
     let body = "";
     req.on("data", (c: Buffer) => (body += c.toString()));
-    req.on("end", () => { try { resolve(JSON.parse(body)); } catch { resolve({}); } });
+    req.on("end", () => { try { const p = JSON.parse(body); (req as any)._parsedBody = p; resolve(p); } catch { (req as any)._parsedBody = {}; resolve({}); } });
   });
 }
 
@@ -210,6 +312,7 @@ function matchPath(pattern: string, pathname: string): Record<string, string> | 
 }
 
 function send(res: http.ServerResponse, status: number, body: unknown) {
+  (res as any)._logBody = body;
   const json = JSON.stringify(body);
   res.writeHead(status, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
   res.end(json);
@@ -228,11 +331,52 @@ const server = http.createServer(async (req, res) => {
   // OPTIONS preflight
   if (method === "OPTIONS") { res.writeHead(204, { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "*", "Access-Control-Allow-Headers": "*" }); res.end(); return; }
 
+  // ── Pre-parse body for logging ─────────────────────────────────────────────
+  if (method === "POST" || method === "PUT") {
+    await parseBody(req);
+  }
+
+  // ── API request logging (fire after response completes) ──────────────────
+  if ((path_.startsWith("/api/v1/") && path_ !== "/api/v1/logs" && path_ !== "/api/v1/tasks/all") || path_.startsWith("/ui/notify/")) {
+    res.on("finish", () => {
+      const reqBody = (req as any)._parsedBody as Record<string, unknown> | undefined;
+      const resBody = (res as any)._logBody;
+      const agentId = String(reqBody?.buyerAgentId ?? reqBody?.provider_agent_id ?? reqBody?.agentId ?? "");
+      if (path_.startsWith("/ui/notify/")) {
+        const parts = path_.split("/");
+        const jobId = parts[4];
+        const t = tasks.get(jobId);
+        const who = t ? (t.buyerAgentId || t.providerAgentId || "") : "";
+        logApi(method, path_, res.statusCode, jobId, `ui:${parts[3]}`, reqBody, resBody, who || undefined);
+      } else {
+        const jobMatch = path_.match(/task\/(0x[0-9a-f]+)/i);
+        const jobId = jobMatch?.[1];
+        let who = agentId;
+        if (!who && jobId) {
+          const t = tasks.get(jobId);
+          if (t) {
+            const action = path_.split("/").pop();
+            who = (action === "apply" || action === "submit") ? (t.providerAgentId ?? "") : (t.buyerAgentId ?? "");
+          }
+        }
+        logApi(method, path_, res.statusCode, jobId, path_.split("/").pop(), reqBody, resBody, who || undefined);
+      }
+    });
+  }
+
   // ── Dashboard ──────────────────────────────────────────────────────────────
   if (method === "GET" && (path_ === "/" || path_ === "/index.html")) {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(DASHBOARD_HTML);
     return;
+  }
+
+  // ── Event logs API ─────────────────────────────────────────────────────────
+  if (method === "GET" && path_ === "/api/v1/logs") {
+    const kind = url.searchParams.get("kind");
+    const limit = Math.min(Number(url.searchParams.get("limit") ?? 100), MAX_LOGS);
+    const filtered = kind ? eventLogs.filter(e => e.kind === kind) : eventLogs;
+    sendOk(res, { logs: filtered.slice(0, limit) }); return;
   }
 
   // ── Static routes ──────────────────────────────────────────────────────────
@@ -341,11 +485,17 @@ const server = http.createServer(async (req, res) => {
     const amount    = rawAmount === "0" ? t.tokenAmount : rawAmount;
     const symbol    = String(body.tokenSymbol ?? "USDT");
 
+    // 通过 agentId 查找 WS 通信地址，找不到则回退到钱包地址
+    const sellerCommAddr = await lookupCommAddr(sellerAgent) ?? sellerAddr;
+    console.log(`[mock-api] provider applied: job=${jobId} provider=${sellerAgent} walletAddr=${sellerAddr} commAddr=${sellerCommAddr} amount=${amount} ${symbol}`);
+
     const confirm: ProviderConfirm = { providerAddress: sellerAddr, providerAgentId: sellerAgent, tokenAddress: "0xUSDT0000000000000000000000000000000001", tokenAmount: amount };
     if (!confirms.has(jobId)) confirms.set(jobId, []);
     confirms.get(jobId)!.push(confirm);
-    console.log(`[mock-api] provider applied: job=${jobId} provider=${sellerAgent} amount=${amount} ${symbol}`);
-    notifyApplied(jobId, t.buyerAgentAddress, t.buyerAgentId, sellerAgent, sellerAddr, amount).catch(e => console.error("[mock-api] apply notify error:", e));
+    // 延迟发送通知，模拟链上确认时间，确保 agent 的文本回复先到达买家
+    sleep(8000).then(() =>
+      notifyApplied(jobId, t.buyerAgentAddress, t.buyerAgentId, sellerAgent, sellerCommAddr, amount)
+    ).catch(e => console.error("[mock-api] apply notify error:", e));
     // 返回标准 uopData 结构（CLI 的 task_sign_and_broadcast 期望此格式）
     sendOk(res, { uopData: mockUopData() }); return;
   }
@@ -363,11 +513,12 @@ const server = http.createServer(async (req, res) => {
     if (body.groupId) t.groupId = String(body.groupId);
     setStatus(t, S_ACCEPTED);
     console.log(`[mock-api] task accepted: job=${jobId} provider=${t.providerAgentAddress}`);
-    const { buyerAgentAddress, buyerAgentId, providerAgentAddress, providerAgentId } = t;
+    const { buyerAgentAddress, buyerAgentId, providerAgentId } = t;
     setTimeout(async () => {
-      await notifyAccepted(jobId, buyerAgentAddress, buyerAgentId, providerAgentAddress!, providerAgentId!).catch(e => console.error("[mock-api] accepted notify error:", e));
+      const sellerComm = await lookupCommAddr(providerAgentId!) ?? t.providerAgentAddress!;
+      await notifyAccepted(jobId, buyerAgentAddress, buyerAgentId, sellerComm, providerAgentId!).catch(e => console.error("[mock-api] accepted notify error:", e));
     }, 5000);
-    sendOk(res, { calldata: mockUop() }); return;
+    sendOk(res, { uopData: mockUopData() }); return;
   }
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/submit", path_))) {
     const { jobId } = m;
@@ -378,20 +529,26 @@ const server = http.createServer(async (req, res) => {
     const deliverable = String(body.deliverable ?? body.deliverable_url ?? `https://mock-deliverable.example.com/${jobId}.html`);
     setStatus(t, S_SUBMITTED);
     console.log(`[mock-api] task submitted: job=${jobId}`);
-    const { buyerAgentAddress, buyerAgentId, providerAgentId, providerAgentAddress } = t;
+    const { buyerAgentAddress, buyerAgentId, providerAgentId } = t;
     setTimeout(async () => {
-      await notifySubmitted(jobId, buyerAgentAddress, buyerAgentId, providerAgentId!, providerAgentAddress!, deliverable).catch(e => console.error("[mock-api] submit notify error:", e));
+      const sellerComm = await lookupCommAddr(providerAgentId!) ?? t.providerAgentAddress!;
+      await notifySubmitted(jobId, buyerAgentAddress, buyerAgentId, providerAgentId!, sellerComm, deliverable).catch(e => console.error("[mock-api] submit notify error:", e));
     }, 3000);
-    sendOk(res, { uopHash: mockUop(), status: "pending", msg: "交付物已提交，等待上链确认" }); return;
+    sendOk(res, { uopData: mockUopData(), status: "pending", msg: "交付物已提交，等待上链确认" }); return;
   }
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/complete", path_))) {
     const { jobId } = m;
     const t = tasks.get(jobId);
     if (!t) { sendErr(res, 2001, "task not found"); return; }
-    if (t.status !== S_SUBMITTED && t.status !== S_ACCEPTED) { sendErr(res, 2002, "task status must be SUBMITTED or ACCEPTED"); return; }
+    if (t.status !== S_SUBMITTED) { sendErr(res, 2002, "task status must be SUBMITTED"); return; }
     setStatus(t, S_COMPLETE); saveTasks();
     console.log(`[mock-api] task completed: job=${jobId}`);
-    sendOk(res, { calldata: mockUop() }); return;
+    const { buyerAgentAddress: ba, buyerAgentId: bi, providerAgentId: pi } = t;
+    setTimeout(async () => {
+      const sellerComm = await lookupCommAddr(pi!) ?? t.providerAgentAddress!;
+      await notifyCompleted(jobId, ba, bi, sellerComm, pi!).catch(e => console.error("[mock-api] completed notify error:", e));
+    }, 3000);
+    sendOk(res, { uopData: mockUopData() }); return;
   }
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/refuse", path_))) {
     const { jobId } = m;
@@ -400,12 +557,12 @@ const server = http.createServer(async (req, res) => {
     if (t.status !== S_SUBMITTED) { sendErr(res, 2002, "task status must be SUBMITTED"); return; }
     setStatus(t, S_REFUSED); saveTasks();
     console.log(`[mock-api] task refused: job=${jobId}`);
-    const { buyerAgentAddress, buyerAgentId, providerAgentAddress, providerAgentId } = t;
-    notifyRefused(jobId, buyerAgentAddress, buyerAgentId,
-      providerAgentAddress ?? "0xSeller000000000000000000000000000000001",
-      providerAgentId ?? "mock-seller-agent-001"
-    ).catch(e => console.error("[mock-api] refused notify error:", e));
-    sendOk(res, { calldata: mockUop() }); return;
+    const pid = t.providerAgentId ?? "mock-seller-agent-001";
+    (async () => {
+      const sellerComm = await lookupCommAddr(pid) ?? t.providerAgentAddress ?? "0xSeller000000000000000000000000000000001";
+      await notifyRefused(jobId, t.buyerAgentAddress, t.buyerAgentId, sellerComm, pid);
+    })().catch(e => console.error("[mock-api] refused notify error:", e));
+    sendOk(res, { uopData: mockUopData() }); return;
   }
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/close", path_))) {
     const { jobId } = m;
@@ -414,7 +571,7 @@ const server = http.createServer(async (req, res) => {
     if (t.status !== S_OPEN) { sendErr(res, 2002, "task status must be OPEN"); return; }
     setStatus(t, S_CLOSE); saveTasks();
     console.log(`[mock-api] task closed: job=${jobId}`);
-    sendOk(res, { uop: mockUop() }); return;
+    sendOk(res, { uopData: mockUopData() }); return;
   }
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/setVisibility", path_))) {
     const { jobId } = m;
@@ -423,7 +580,7 @@ const server = http.createServer(async (req, res) => {
     if (t.status !== S_OPEN) { sendErr(res, 2002, "task status must be OPEN"); return; }
     const body = await parseBody(req) as Record<string, unknown>;
     t.openType = Number(body.visibility ?? 1); t.updateTime = nowIso();
-    sendOk(res, { uop: mockUop() }); return;
+    sendOk(res, { uopData: mockUopData() }); return;
   }
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/dispute", path_))) {
     const { jobId } = m;
@@ -434,10 +591,12 @@ const server = http.createServer(async (req, res) => {
     const reason = String(body.reason ?? "");
     setStatus(t, S_DISPUTED); saveTasks();
     console.log(`[mock-api] task disputed: job=${jobId} reason=${reason}`);
-    const { buyerAgentAddress, buyerAgentId, providerAgentAddress, providerAgentId } = t;
-    notifyDisputed(jobId, buyerAgentAddress, buyerAgentId, providerAgentAddress ?? "0xSeller000000000000000000000000000000001", providerAgentId ?? "mock-seller-agent-001", reason)
-      .catch(e => console.error("[mock-api] dispute notify error:", e));
-    sendOk(res, { uopHash: mockUop() }); return;
+    const pid2 = t.providerAgentId ?? "mock-seller-agent-001";
+    (async () => {
+      const sellerComm = await lookupCommAddr(pid2) ?? t.providerAgentAddress ?? "0xSeller000000000000000000000000000000001";
+      await notifyDisputed(jobId, t.buyerAgentAddress, t.buyerAgentId, sellerComm, pid2, reason);
+    })().catch(e => console.error("[mock-api] dispute notify error:", e));
+    sendOk(res, { uopData: mockUopData() }); return;
   }
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/resolve", path_))) {
     const { jobId } = m;
@@ -446,9 +605,39 @@ const server = http.createServer(async (req, res) => {
     if (t.status !== S_DISPUTED) { sendErr(res, 2002, "task status must be DISPUTED"); return; }
     const body = await parseBody(req) as Record<string, unknown>;
     const winner = String(body.winner ?? "buyer");
-    setStatus(t, S_COMPLETE); saveTasks();
-    console.log(`[mock-api] task resolved: job=${jobId} winner=${winner}`);
-    sendOk(res, { uopHash: mockUop(), winner }); return;
+    const finalStatus = winner === "provider" ? S_COMPLETE : 6 /* REJECTED */;
+    setStatus(t, finalStatus); saveTasks();
+    console.log(`[mock-api] task resolved: job=${jobId} winner=${winner} status=${STATUS_STR[finalStatus]}`);
+    const { buyerAgentAddress: ba3, buyerAgentId: bi3, providerAgentId: pi3 } = t;
+    setTimeout(async () => {
+      const sellerComm = await lookupCommAddr(pi3!) ?? t.providerAgentAddress!;
+      await notifyDisputeResolved(jobId, ba3, bi3, sellerComm, pi3!, winner).catch(e => console.error("[mock-api] resolve notify error:", e));
+    }, 3000);
+    sendOk(res, { uopData: mockUopData(), winner }); return;
+  }
+  if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/agreeRefund", path_))) {
+    const { jobId } = m;
+    const t = tasks.get(jobId);
+    if (!t) { sendErr(res, 2001, "task not found"); return; }
+    if (t.status !== S_REFUSED) { sendErr(res, 2002, "task status must be REFUSED"); return; }
+    setStatus(t, 6 /* REJECTED */); saveTasks();
+    console.log(`[mock-api] task agreeRefund: job=${jobId}`);
+    const { buyerAgentAddress: ba4, buyerAgentId: bi4, providerAgentId: pi4 } = t;
+    (async () => {
+      const sellerComm = await lookupCommAddr(pi4!) ?? t.providerAgentAddress!;
+      await notifyAgreeRefund(jobId, ba4, bi4, sellerComm, pi4!);
+    })().catch(e => console.error("[mock-api] agreeRefund notify error:", e));
+    sendOk(res, { uopData: mockUopData() }); return;
+  }
+  if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/evidence", path_))) {
+    const { jobId } = m;
+    const t = tasks.get(jobId);
+    if (!t) { sendErr(res, 2001, "task not found"); return; }
+    if (t.status !== S_DISPUTED) { sendErr(res, 2002, "task status must be DISPUTED"); return; }
+    const body = await parseBody(req) as Record<string, unknown>;
+    const text = String(body.text ?? body.summary ?? "");
+    console.log(`[mock-api] evidence uploaded: job=${jobId} text="${text.slice(0, 80)}"`);
+    sendOk(res, null); return;
   }
   // ── Broadcast (CLI task_sign_and_broadcast final step) ────────────────────
   if (method === "POST" && path_ === "/api/v1/task/broadcast") {
@@ -503,6 +692,24 @@ const server = http.createServer(async (req, res) => {
     const si = t.providerAgentId ?? "mock-seller-agent-001";
     notifyDisputed(m.jobId, t.buyerAgentAddress, t.buyerAgentId, sa, si, "手动触发仲裁通知").catch(console.error);
     sendOk(res, { triggered: "TASK_DISPUTED", jobId: m.jobId }); return;
+  }
+  if (method === "POST" && (m = matchPath("/ui/notify/completed/:jobId", path_))) {
+    const t = tasks.get(m.jobId);
+    if (!t) { sendErr(res, 2001, "task not found"); return; }
+    const si = t.providerAgentId ?? "mock-seller-agent-001";
+    const sa = t.providerAgentAddress ?? "0xSeller000000000000000000000000000000001";
+    notifyCompleted(m.jobId, t.buyerAgentAddress, t.buyerAgentId, sa, si).catch(console.error);
+    sendOk(res, { triggered: "TASK_COMPLETED", jobId: m.jobId }); return;
+  }
+  if (method === "POST" && (m = matchPath("/ui/notify/resolved/:jobId", path_))) {
+    const t = tasks.get(m.jobId);
+    if (!t) { sendErr(res, 2001, "task not found"); return; }
+    const body = await parseBody(req) as Record<string, unknown>;
+    const winner = String(body.winner ?? "provider");
+    const si = t.providerAgentId ?? "mock-seller-agent-001";
+    const sa = t.providerAgentAddress ?? "0xSeller000000000000000000000000000000001";
+    notifyDisputeResolved(m.jobId, t.buyerAgentAddress, t.buyerAgentId, sa, si, winner).catch(console.error);
+    sendOk(res, { triggered: "DISPUTE_RESOLVED", jobId: m.jobId, winner }); return;
   }
 
   res.writeHead(404); res.end("not found");
@@ -567,11 +774,27 @@ tr:hover td{background:#161b22}
 .method{font-weight:bold;min-width:36px;font-size:11px}
 .get{color:#3fb950}.post{color:#ffa657}.delete{color:#f85149}
 .path{color:#8b949e;word-break:break-all}
-#log{background:#0d1117;border:1px solid #21262d;border-radius:4px;padding:8px;
-  max-height:220px;overflow-y:auto;font-size:11px}
-.log-line{padding:1px 0;color:#8b949e}
-.log-line .ts{color:#58a6ff;margin-right:6px}
-.log-line .ok{color:#3fb950}.log-line .err{color:#f85149}
+.log-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+.log-box{background:#0d1117;border:1px solid #21262d;border-radius:4px;padding:8px;
+  max-height:260px;overflow-y:auto;font-size:11px}
+.log-row{padding:2px 0;color:#8b949e;border-bottom:1px solid #161b22;display:flex;gap:6px;flex-wrap:wrap}
+.log-row .ts{color:#484f58;min-width:70px}
+.log-row .tag{padding:0 4px;border-radius:3px;font-size:10px;font-weight:bold}
+.log-row .t-get{background:#0d2818;color:#3fb950}.log-row .t-post{background:#2d1800;color:#ffa657}
+.log-row .t-delete{background:#3a1a1a;color:#f85149}
+.log-row .t-ws{background:#1c1c3a;color:#bc8cff}
+.log-row .job{color:#79c0ff}.log-row .detail{color:#8b949e}
+.log-row .s-ok{color:#3fb950}.log-row .s-err{color:#f85149}
+.log-row.clickable{cursor:pointer}.log-row.clickable:hover{background:#1c2230}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;align-items:center;justify-content:center}
+.modal-overlay.show{display:flex}
+.modal{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;max-width:720px;width:92%;max-height:82vh;overflow-y:auto}
+.modal h3{color:#58a6ff;font-size:13px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center}
+.modal pre{background:#0d1117;border:1px solid #21262d;border-radius:4px;padding:10px;font-size:11px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;color:#c9d1d9;margin-bottom:10px;max-height:300px;overflow-y:auto}
+.modal label{color:#8b949e;font-size:10px;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px;margin-top:8px}
+.modal .close-btn{cursor:pointer;background:none;border:1px solid #30363d;border-radius:4px;color:#8b949e;padding:2px 10px;font-family:monospace;font-size:11px}
+.modal .close-btn:hover{color:#c9d1d9;border-color:#58a6ff}
+.modal .meta{color:#58a6ff;font-size:12px;margin-bottom:4px}
 .status-bar{display:flex;gap:16px;font-size:11px;color:#8b949e;margin-bottom:12px}
 .status-bar span{display:flex;align-items:center;gap:4px}
 .dot{width:7px;height:7px;border-radius:50%;background:#3fb950}
@@ -622,19 +845,84 @@ tr:hover td{background:#161b22}
       <li><span class="method post" style="color:#ff7b72">POST</span><span class="path">/ui/notify/disputed/:id</span></li>
     </ul>
   </div>
-  <div class="panel">
-    <h2>通知日志</h2>
-    <div id="log"></div>
   </div>
 </div>
+<div class="log-grid">
+  <div class="panel">
+    <h2>API 请求记录</h2>
+    <div id="api-log" class="log-box"></div>
+  </div>
+  <div class="panel">
+    <h2>WS 系统通知</h2>
+    <div id="ws-log" class="log-box"></div>
+  </div>
+</div>
+<div id="detail-modal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="modal">
+    <h3><span id="detail-title">请求详情</span><button class="close-btn" onclick="document.getElementById('detail-modal').classList.remove('show')">ESC</button></h3>
+    <div id="detail-content"></div>
+  </div>
 </div>
 <script>
-const log = (msg, ok=true) => {
-  const el = document.getElementById('log');
-  const ts = new Date().toLocaleTimeString('zh',{hour12:false});
-  const cls = ok ? 'ok' : 'err';
-  el.innerHTML = \`<div class="log-line"><span class="ts">\${ts}</span><span class="\${cls}">\${msg}</span></div>\` + el.innerHTML;
-};
+document.addEventListener('keydown',e=>{if(e.key==='Escape')document.getElementById('detail-modal').classList.remove('show');});
+let apiLogsData=[], wsLogsData=[];
+function fmtTs(iso) { if(!iso) return ''; try { const d=new Date(iso); return [d.getHours(),d.getMinutes(),d.getSeconds()].map(n=>String(n).padStart(2,'0')).join(':'); } catch(e) { return iso; } }
+function renderApiLog(logs) {
+  return logs.map((e,i) => {
+    const m = (e.method||'GET').toUpperCase();
+    const cls = m==='GET'?'t-get':m==='POST'?'t-post':'t-delete';
+    const scode = (e.status||0) < 400 ? 's-ok' : 's-err';
+    const hasBody = e.reqBody || e.resBody;
+    const agent = e.agentId ? \`<span style="color:#d2a8ff">\${e.agentId}</span>\` : '';
+    return \`<div class="log-row\${hasBody?' clickable':''}" \${hasBody?'onclick="showDetail(\\'api\\','+i+')"':''}><span class="ts">\${fmtTs(e.ts)}</span><span class="tag \${cls}">\${m}</span><span class="\${scode}">\${e.status}</span><span class="job">\${e.jobId||''}</span>\${agent}<span class="detail">\${e.path||''}</span></div>\`;
+  }).join('');
+}
+function renderWsLog(logs) {
+  return logs.map((e,i) => {
+    const hasPayload = !!e.wsPayload;
+    return \`<div class="log-row\${hasPayload?' clickable':''}" \${hasPayload?'onclick="showDetail(\\'ws\\','+i+')"':''}><span class="ts">\${fmtTs(e.ts)}</span><span class="tag t-ws">\${e.wsType||'?'}</span><span class="job">\${e.jobId||''}</span><span class="detail">\${e.detail||''}</span></div>\`;
+  }).join('');
+}
+function esc(s) { const d=document.createElement('div');d.textContent=s;return d.innerHTML; }
+function showDetail(kind,index) {
+  const e = kind==='api' ? apiLogsData[index] : wsLogsData[index];
+  if(!e) return;
+  const modal = document.getElementById('detail-modal');
+  const title = document.getElementById('detail-title');
+  const content = document.getElementById('detail-content');
+  let html = '';
+  if(kind==='api') {
+    title.textContent = \`\${e.method} \${e.path}  [\${e.status}]\`;
+    html += \`<div class="meta">\${e.ts}  |  jobId: \${e.jobId||'-'}</div>\`;
+    if(e.reqBody && Object.keys(e.reqBody).length) {
+      html += \`<label>Request Body</label><pre>\${esc(JSON.stringify(e.reqBody,null,2))}</pre>\`;
+    }
+    html += \`<label>Response Body</label><pre>\${esc(JSON.stringify(e.resBody,null,2))}</pre>\`;
+  } else {
+    title.textContent = \`WS: \${e.wsType}\`;
+    html += \`<div class="meta">\${e.ts}  |  jobId: \${e.jobId||'-'}  |  conv: \${e.convId||'-'}</div>\`;
+    html += \`<label>Detail</label><pre>\${esc(e.detail||'-')}</pre>\`;
+    if(e.wsPayload) {
+      html += \`<label>WS Payload</label><pre>\${esc(JSON.stringify(e.wsPayload,null,2))}</pre>\`;
+    }
+  }
+  content.innerHTML = html;
+  modal.classList.add('show');
+}
+async function loadLogs() {
+  try {
+    const [apiRes, wsRes] = await Promise.all([
+      fetch('/api/v1/logs?kind=api&limit=50'),
+      fetch('/api/v1/logs?kind=ws&limit=50')
+    ]);
+    const apiData = await apiRes.json();
+    const wsData = await wsRes.json();
+    apiLogsData = apiData.data?.logs || [];
+    wsLogsData = wsData.data?.logs || [];
+    document.getElementById('api-log').innerHTML = apiLogsData.length ? renderApiLog(apiLogsData) : '<div class="log-row">暂无请求</div>';
+    document.getElementById('ws-log').innerHTML = wsLogsData.length ? renderWsLog(wsLogsData) : '<div class="log-row">暂无通知</div>';
+  } catch(e) {}
+}
 const statusBadge = s => {
   const cls = {'open':'s-open','accepted':'s-accepted','submitted':'s-submitted',
     'complete':'s-complete','close':'s-close','refused':'s-refused',
@@ -677,9 +965,8 @@ async function uiNotify(type, jobId, body={}) {
   try {
     const res = await fetch(\`/ui/notify/\${type}/\${jobId}\`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const data = await res.json();
-    if (data.code === 0) { log(\`✓ \${type} → \${jobId}\`); loadTasks(); }
-    else { log(\`✗ \${type} → \${jobId}: \${data.msg}\`, false); }
-  } catch(e) { log(\`✗ \${type} error: \${e}\`, false); }
+    loadTasks(); loadLogs();
+  } catch(e) {}
 }
 const sendConfirmed = id => uiNotify('confirmed', id);
 const sendApplied   = id => uiNotify('applied',   id);
@@ -689,12 +976,11 @@ const sendDisputed  = id => uiNotify('disputed',  id);
 async function resetAll() {
   if (!confirm('确认重置所有任务？')) return;
   const res = await fetch('/api/v1/reset', {method:'DELETE'});
-  const data = await res.json();
-  log(\`reset: \${JSON.stringify(data.data)}\`);
-  loadTasks();
+  await res.json();
+  loadTasks(); loadLogs();
 }
-loadTasks();
-setInterval(loadTasks, 3000);
+loadTasks(); loadLogs();
+setInterval(() => { loadTasks(); loadLogs(); }, 3000);
 </script>
 </body>
 </html>`;

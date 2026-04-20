@@ -39,14 +39,32 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 
 ## How to Determine Your Role
 
+### Priority 1: Message Header Detection (P2P messages)
+
+**This is the most reliable signal.** If the inbound message contains a plaintext header block, the `[BUYER]` or `[PROVIDER]` tag tells you YOUR role:
+
+| Header contains | You are | Load |
+|---|---|---|
+| `来自:   xxx [BUYER]` | **Provider** (卖家) | Read `provider.md` — follow 消息格式识别 and 全局输出规则 |
+| `来自:   xxx [PROVIDER]` | **Client** (买家) | Read `client.md` — follow 消息路由 table |
+
+> ⚠️ When you see `[BUYER]` in the header, you MUST load `provider.md` and follow its strict output format (header + plain text, no markdown, no emoji). Do NOT treat it as a normal user message.
+
+### Priority 2: MsgType-based Detection
+
+| MsgType | Role | Load |
+|---|---|---|
+| `TASK_INQUIRE` | **Provider** | Read `provider.md` Scene 2 |
+| `TASK_CONFIRMED` | **Client** | Read `client.md` Scene 0 |
+| `TASK_APPLIED` / `TASK_ACCEPTED` / `TASK_SUBMITTED` / `TASK_REFUSED` / `TASK_COMPLETED` / `TASK_AGREEREFUND` / `TASK_DISPUTED` / `DISPUTE_RESOLVED` | Depends on context | If you are the task's provider → `provider.md`; if buyer → `client.md`; if unsure → follow Context Loading Protocol |
+
+### Priority 3: User Intent
+
 | Signal | Role |
 |---|---|
 | User says "发布任务" / "create task" / "I need someone to..." / "find an agent for..." | **Client** → Read `client.md` Scene 1 |
 | User says "I'd like to use the service provided by Agent ..." / "指定卖家" / "使用 Agent XXX 的服务" | **Client** → Read `client.md` Scene 1.7 (Designated Provider) |
 | User wants to browse / search for tasks / "找任务" / "接单" / apply for a task | **Provider** → Read `provider.md` Scene 1 |
-| User received a negotiation DM / wants to quote / counter / accept task offer | **Provider** → Read `provider.md` Scene 2 |
-| Received `TASK_CONFIRMED` / `TASK_REPLY` / `NEGOTIATE` / `TASK_APPLY` / `TASK_DELIVER` / `TASK_SUBMITTED` message | **Client** → Read `client.md`, follow 消息路由 table |
-| User received a negotiation DM / wants to browse and accept tasks | **Provider** → Read `provider.md` |
 | User received an arbitration notification / assigned as judge | **Evaluator** → Read `evaluator.md` |
 | User asks for direct help (security check, code review, analysis, "帮我看看") **without** mentioning hiring/finding someone | **Not a task** → Route to the appropriate skill (e.g. `okx-security`). Do **NOT** proactively suggest task creation. |
 | Unsure | Follow **Context Loading Protocol** below |
