@@ -18,6 +18,7 @@ ONCHAINOS_HOME=/Users/oker/meili/zongyao.yang_dacs_at_okg.com/108/Documents/onch
 - **Debug output**: Before the first `onchainos` command each session, print version info: `[onchainos] v2.2.8 (dev) | https://web3pre.okex.org`
 - **Show executed command**: After every `onchainos` command, print the actual command that was executed. Example: `[cmd] onchainos --base-url https://web3pre.okex.org cross-chain bridge`
 - **NEVER skip CLI calls**: When a user asks about chains, bridges, quotes, or any on-chain data, you MUST execute the onchainos CLI command to get real-time data. Do NOT answer from skill files, static documentation, or your own knowledge. The CLI returns live API data which may differ from documentation.
+- **Login**: Test/pre-production environments do NOT support API Key (AK) login. When `--base-url` points to a non-production URL (anything other than `web3.okx.com`), always use email login (`onchainos wallet login <email>`). If the user asks to use AK login in a test environment, warn them that AK is only available on production and prompt for email instead.
 <!-- 测试环境配置结束 -->
 
 ## Project Overview
