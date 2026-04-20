@@ -43,6 +43,10 @@ pub enum AgentCommand {
     #[command(name = "feedback-list")]
     FeedbackList(identity::FeedbackListArgs),
 
+    /// 用 keyUuid + signing_seed 代签任意 message（xmtp 等场景），不走广播
+    #[command(name = "xmtp-sign")]
+    XmtpSign(identity::XmtpSignArgs),
+
     // Task system
     /// Create a new task (Client)
     #[command(name = "create-task")]
@@ -165,6 +169,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::ServiceList(args) => identity::service_list(args, ctx).await,
         AgentCommand::FeedbackSubmit(args) => identity::feedback_submit(args, ctx).await,
         AgentCommand::FeedbackList(args) => identity::feedback_list(args, ctx).await,
+        AgentCommand::XmtpSign(args) => identity::xmtp_sign(args, ctx).await,
 
         AgentCommand::CreateTask {
             description,

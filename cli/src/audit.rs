@@ -346,6 +346,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::ServiceList { .. } => "service-list".into(),
         AgentCommand::FeedbackSubmit { .. } => "feedback-submit".into(),
         AgentCommand::FeedbackList { .. } => "feedback-list".into(),
+        AgentCommand::XmtpSign { .. } => "xmtp-sign".into(),
         AgentCommand::CreateTask { .. } => "create-task".into(),
         AgentCommand::Recommend { .. } => "recommend".into(),
         AgentCommand::Status { .. } => "status".into(),
