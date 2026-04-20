@@ -1,8 +1,69 @@
 # OKX DeFi — CLI Command Reference
 
-Detailed parameter tables, return field schemas, and usage examples for all 10 DeFi commands.
+Detailed parameter tables, return field schemas, and usage examples for all 15 DeFi commands.
 
-## 1. onchainos defi list
+## 1. onchainos defi support-chains
+
+Get all chains currently supported by DeFi products.
+
+```bash
+onchainos defi support-chains
+```
+
+No parameters.
+
+**Return fields** (array):
+
+| Field | Type | Description |
+|---|---|---|
+| `chainIndex` | String | Chain ID (e.g. `"1"` = Ethereum, `"56"` = BSC) |
+| `network` | String | Network identifier (e.g. `"ETH"`, `"BSC"`, `"POLYGON"`) |
+
+**Example output:**
+
+```json
+[
+  {"chainIndex": "1", "network": "ETH"},
+  {"chainIndex": "56", "network": "BSC"},
+  {"chainIndex": "137", "network": "POLYGON"},
+  {"chainIndex": "42161", "network": "ARBITRUM"},
+  {"chainIndex": "8453", "network": "BASE"}
+]
+```
+
+---
+
+## 2. onchainos defi support-platforms
+
+Get all DeFi platforms and their product counts.
+
+```bash
+onchainos defi support-platforms
+```
+
+No parameters.
+
+**Return fields** (array):
+
+| Field | Type | Description |
+|---|---|---|
+| `analysisPlatformId` | String | Platform ID (used in `--platform-id` for other commands) |
+| `platformName` | String | Platform display name (e.g. `"Aave V3"`, `"Lido"`) |
+| `investmentCount` | Integer | Number of products on this platform |
+
+**Example output:**
+
+```json
+[
+  {"analysisPlatformId": "10", "platformName": "Aave V3", "investmentCount": 68},
+  {"analysisPlatformId": "20", "platformName": "Lido", "investmentCount": 1},
+  {"analysisPlatformId": "30", "platformName": "PancakeSwap V3", "investmentCount": 120}
+]
+```
+
+---
+
+## 3. onchainos defi list
 
 List all DeFi products by APY (no filters, paginated).
 
@@ -20,7 +81,7 @@ onchainos defi list [--page-num <n>]
 
 ---
 
-## 2. onchainos defi search
+## 4. onchainos defi search
 
 Search DeFi products across chains (earn, pools, lending).
 
@@ -62,7 +123,7 @@ onchainos defi search --token <tokens> [--platform <names>] [--chain <chain>] [-
 
 ---
 
-## 3. onchainos defi detail
+## 5. onchainos defi detail
 
 Get full product details and live APY.
 
@@ -114,7 +175,7 @@ onchainos defi detail --investment-id <id>
 
 ---
 
-## 4. onchainos defi prepare
+## 6. onchainos defi prepare
 
 Get pre-investment info: accepted tokens, V3 tick parameters.
 
@@ -158,7 +219,7 @@ onchainos defi prepare --investment-id <id>
 
 ---
 
-## 5. onchainos defi deposit
+## 7. onchainos defi deposit
 
 Generate calldata to enter a DeFi position (subscribe, add liquidity, borrow).
 
@@ -225,7 +286,7 @@ onchainos defi deposit \
 
 ---
 
-## 6. onchainos defi redeem
+## 8. onchainos defi redeem
 
 Generate calldata to exit a DeFi position (redeem, remove liquidity, repay).
 
@@ -277,7 +338,7 @@ Common `callDataType` patterns for redeem:
 
 ---
 
-## 7. onchainos defi claim
+## 9. onchainos defi claim
 
 Generate calldata to claim DeFi rewards.
 
@@ -319,7 +380,7 @@ onchainos defi claim \
 
 ---
 
-## 8. onchainos defi calculate-entry
+## 10. onchainos defi calculate-entry
 
 Calculate exact token amounts needed for V3 pool entry based on input token and amount. **Must be called after `defi prepare` for V3 pools.**
 
@@ -358,7 +419,7 @@ onchainos defi calculate-entry \
 
 ---
 
-## 9. onchainos defi positions
+## 11. onchainos defi positions
 
 Get user DeFi holdings overview across protocols and chains.
 
@@ -387,7 +448,7 @@ onchainos defi positions --address <address> --chains <chains>
 
 ---
 
-## 10. onchainos defi position-detail
+## 12. onchainos defi position-detail
 
 Get detailed DeFi holdings for a specific protocol.
 
@@ -436,6 +497,148 @@ onchainos defi position-detail \
 | `8` | Locked |
 | `9` | Deposit |
 | `10` | Vesting |
+
+---
+
+## 13. onchainos defi rate-chart
+
+Get historical APY chart data for a DeFi product.
+
+```bash
+onchainos defi rate-chart --investment-id <id> [--time-range <range>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--investment-id` | Yes | — | Investment ID from `defi search` results |
+| `--time-range` | No | `WEEK` | Time range: `DAY` (V3 Pool only), `WEEK`, `MONTH`, `SEASON` (3 months), `YEAR` |
+
+**Return fields** (array):
+
+| Field | Type | Description |
+|---|---|---|
+| `timestamp` | String | Timestamp in milliseconds |
+| `rate` | String | APY (base rate + mining rewards) |
+| `bonusRate` | String | Extra reward APY (OKX Bonus / Merkl etc.) |
+| `limitValue` | Integer | Extreme value marker: `1` = peak, `-1` = trough, `null` = normal |
+| `totalReward` | String | Total fee + bonus reward for this period |
+
+**Example:**
+
+```bash
+onchainos defi rate-chart --investment-id 9502 --time-range MONTH
+```
+
+```json
+[
+  {"timestamp": "1741737600000", "rate": "0.0312", "bonusRate": "0.0045", "limitValue": 1, "totalReward": "0.0357"},
+  {"timestamp": "1741651200000", "rate": "0.0298", "bonusRate": "0.0045", "limitValue": null, "totalReward": "0.0343"}
+]
+```
+
+---
+
+## 14. onchainos defi tvl-chart
+
+Get historical TVL chart data for a DeFi product.
+
+```bash
+onchainos defi tvl-chart --investment-id <id> [--time-range <range>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--investment-id` | Yes | — | Investment ID from `defi search` results |
+| `--time-range` | No | `WEEK` | Time range: `DAY` (V3 Pool only), `WEEK`, `MONTH`, `SEASON` (3 months), `YEAR` |
+
+**Return fields** (`data` object):
+
+| Field | Type | Description |
+|---|---|---|
+| `chartVos[]` | Array | TVL data points |
+| `chartVos[].timestamp` | String | Timestamp in milliseconds |
+| `chartVos[].tvl` | String | TVL value in USD |
+| `chartVos[].limitValue` | Integer | Extreme value marker: `1` = peak, `-1` = trough, `null` = normal |
+| `text` | String | Chart description text (may be null) |
+
+**Example:**
+
+```bash
+onchainos defi tvl-chart --investment-id 124 --time-range YEAR
+```
+
+```json
+{
+  "chartVos": [
+    {"timestamp": "1741737600000", "tvl": "523847291.45", "limitValue": 1},
+    {"timestamp": "1741651200000", "tvl": "498312044.78", "limitValue": null},
+    {"timestamp": "1741564800000", "tvl": "480125367.22", "limitValue": -1}
+  ],
+  "text": null
+}
+```
+
+---
+
+## 15. onchainos defi depth-price-chart
+
+Get V3 Pool liquidity depth distribution or price history chart. **V3 Pool only.**
+
+```bash
+onchainos defi depth-price-chart --investment-id <id> [--chart-type <type>] [--time-range <range>]
+```
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `--investment-id` | Yes | — | Investment ID (must be a V3 Pool product) |
+| `--chart-type` | No | `DEPTH` | Chart type: `DEPTH` (liquidity per tick) or `PRICE` (historical token0/token1 prices) |
+| `--time-range` | No | `DAY` | Time range, **only for PRICE mode**: `DAY` (default), `WEEK`. Ignored in DEPTH mode |
+
+**Return fields — DEPTH mode** (array):
+
+| Field | Type | Description |
+|---|---|---|
+| `tick` | Integer | Tick index |
+| `liquidity` | String | Total liquidity at this tick |
+| `liquidityNet` | String | Net liquidity change at this tick |
+| `token0Price` | String | Token0 price at this tick |
+| `token1Price` | String | Token1 price at this tick |
+
+**Return fields — PRICE mode** (array):
+
+| Field | Type | Description |
+|---|---|---|
+| `token0Price` | String | Historical token0 price |
+| `token1Price` | String | Historical token1 price |
+| `timestamp` | Long | Timestamp in milliseconds |
+
+> **Note**: `--time-range` is only used in PRICE mode. DEPTH mode always returns the current liquidity snapshot — passing `--time-range` has no effect.
+
+**Examples:**
+
+```bash
+# Depth chart — see liquidity concentration to pick tick range (no time-range needed)
+onchainos defi depth-price-chart --investment-id 1589649169
+
+# Price history — see token0/token1 relative price over past week
+onchainos defi depth-price-chart --investment-id 1589649169 --chart-type PRICE --time-range WEEK
+```
+
+Depth response:
+```json
+[
+  {"tick": -32932, "liquidity": "1234567890123456", "liquidityNet": "500000000000000", "token0Price": "0.9985", "token1Price": "1.0015"},
+  {"tick": -32931, "liquidity": "1234567890123456", "liquidityNet": "0", "token0Price": "0.9986", "token1Price": "1.0014"}
+]
+```
+
+Price response:
+```json
+[
+  {"token0Price": "0.9985", "token1Price": "1.0015", "timestamp": 1741737600000},
+  {"token0Price": "0.9990", "token1Price": "1.0010", "timestamp": 1741651200000}
+]
+```
 
 ---
 

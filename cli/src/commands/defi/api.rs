@@ -5,9 +5,23 @@ use crate::client::ApiClient;
 
 use super::helpers::convert_minimal_to_decimal;
 
+/// GET /api/v6/defi/product/supported-chains
+pub async fn fetch_chains(client: &mut ApiClient) -> Result<Value> {
+    client
+        .get("/api/v6/defi/product/supported-chains", &[])
+        .await
+}
+
+/// GET /api/v6/defi/product/supported-platforms
+pub async fn fetch_protocols(client: &mut ApiClient) -> Result<Value> {
+    client
+        .get("/api/v6/defi/product/supported-platforms", &[])
+        .await
+}
+
 /// POST /api/v6/defi/product/search
 pub async fn fetch_search(
-    client: &ApiClient,
+    client: &mut ApiClient,
     token: Option<&str>,
     platform: Option<&str>,
     chain_index: Option<&str>,
@@ -36,7 +50,7 @@ pub async fn fetch_search(
 }
 
 /// GET /api/v6/defi/product/detail
-pub async fn fetch_detail(client: &ApiClient, investment_id: &str) -> Result<Value> {
+pub async fn fetch_detail(client: &mut ApiClient, investment_id: &str) -> Result<Value> {
     client
         .get(
             "/api/v6/defi/product/detail",
@@ -46,7 +60,7 @@ pub async fn fetch_detail(client: &ApiClient, investment_id: &str) -> Result<Val
 }
 
 /// POST /api/v6/defi/product/detail/prepare
-pub async fn fetch_prepare(client: &ApiClient, investment_id: &str) -> Result<Value> {
+pub async fn fetch_prepare(client: &mut ApiClient, investment_id: &str) -> Result<Value> {
     let body = json!({ "investmentId": investment_id });
     client
         .post("/api/v6/defi/product/detail/prepare", &body)
@@ -56,7 +70,7 @@ pub async fn fetch_prepare(client: &ApiClient, investment_id: &str) -> Result<Va
 /// POST /api/v6/defi/transaction/enter
 #[allow(clippy::too_many_arguments)]
 pub async fn fetch_enter(
-    client: &ApiClient,
+    client: &mut ApiClient,
     investment_id: &str,
     address: &str,
     user_input: &str,
@@ -95,7 +109,7 @@ pub async fn fetch_enter(
 /// POST /api/v6/defi/transaction/exit
 #[allow(clippy::too_many_arguments)]
 pub async fn fetch_exit(
-    client: &ApiClient,
+    client: &mut ApiClient,
     product_id: &str,
     chain_index: &str,
     wallet: &str,
@@ -151,7 +165,7 @@ pub async fn fetch_exit(
 /// POST /api/v6/defi/transaction/claim
 #[allow(clippy::too_many_arguments)]
 pub async fn fetch_claim(
-    client: &ApiClient,
+    client: &mut ApiClient,
     wallet: &str,
     chain_index: &str,
     reward_type: &str,
@@ -192,7 +206,7 @@ pub async fn fetch_claim(
 /// POST /api/v6/defi/calculator/enter/info
 #[allow(clippy::too_many_arguments)]
 pub async fn fetch_calculate_entry(
-    client: &ApiClient,
+    client: &mut ApiClient,
     investment_id: &str,
     address: &str,
     input_token_address: &str,
@@ -219,8 +233,53 @@ pub async fn fetch_calculate_entry(
         .await
 }
 
+/// GET /api/v6/defi/product/rate/chart
+pub async fn fetch_rate_chart(
+    client: &mut ApiClient,
+    investment_id: &str,
+    time_range: Option<&str>,
+) -> Result<Value> {
+    let mut params = vec![("investmentId", investment_id)];
+    if let Some(tr) = time_range {
+        params.push(("timeRange", tr));
+    }
+    client.get("/api/v6/defi/product/rate/chart", &params).await
+}
+
+/// GET /api/v6/defi/product/tvl/chart
+pub async fn fetch_tvl_chart(
+    client: &mut ApiClient,
+    investment_id: &str,
+    time_range: Option<&str>,
+) -> Result<Value> {
+    let mut params = vec![("investmentId", investment_id)];
+    if let Some(tr) = time_range {
+        params.push(("timeRange", tr));
+    }
+    client.get("/api/v6/defi/product/tvl/chart", &params).await
+}
+
+/// GET /api/v6/defi/product/depth-price/chart
+pub async fn fetch_depth_price_chart(
+    client: &mut ApiClient,
+    investment_id: &str,
+    chart_type: Option<&str>,
+    time_range: Option<&str>,
+) -> Result<Value> {
+    let mut params = vec![("investmentId", investment_id)];
+    if let Some(ct) = chart_type {
+        params.push(("chartType", ct));
+    }
+    if let Some(tr) = time_range {
+        params.push(("timeRange", tr));
+    }
+    client
+        .get("/api/v6/defi/product/depth-price/chart", &params)
+        .await
+}
+
 /// POST /api/v6/defi/user/asset/platform/list
-pub async fn fetch_positions(client: &ApiClient, wallet: &str, chains: &str) -> Result<Value> {
+pub async fn fetch_positions(client: &mut ApiClient, wallet: &str, chains: &str) -> Result<Value> {
     let wallet_list: Vec<Value> = chains
         .split(',')
         .map(|c| {
@@ -240,7 +299,7 @@ pub async fn fetch_positions(client: &ApiClient, wallet: &str, chains: &str) -> 
 
 /// POST /api/v6/defi/user/asset/platform/detail
 pub async fn fetch_position_detail(
-    client: &ApiClient,
+    client: &mut ApiClient,
     wallet: &str,
     chain_index: &str,
     platform_id: &str,

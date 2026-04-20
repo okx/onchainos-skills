@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Subcommand;
 
 #[derive(Subcommand)]
@@ -30,7 +30,7 @@ pub enum WalletCommand {
     Status,
     /// Show wallet addresses grouped by chain category (XLayer, EVM, Solana)
     Addresses {
-        /// Filter by chain ID (e.g. "1" for Ethereum, "501" for Solana, "196" for XLayer)
+        /// Chain name or ID (e.g. "ethereum" or "1", "solana" or "501", "xlayer" or "196")
         #[arg(long)]
         chain: Option<String>,
     },
@@ -43,7 +43,7 @@ pub enum WalletCommand {
         /// Query all accounts' assets (uses accountId list)
         #[arg(long)]
         all: bool,
-        /// Filter by chain ID (e.g. "1" for Ethereum, "501" for Solana, "196" for XLayer)
+        /// Chain name or ID (e.g. "ethereum" or "1", "solana" or "501", "xlayer" or "196")
         #[arg(long)]
         chain: Option<String>,
         /// Filter by token contract address. Requires --chain.
@@ -56,13 +56,16 @@ pub enum WalletCommand {
     },
     /// Send a transaction (native or token transfer)
     Send {
-        /// Amount in minimal units — whole number, no decimals (e.g. "100000000000000000" for 0.1 ETH)
-        #[arg(long)]
-        amt: String,
+        /// Amount in minimal units — whole number, no decimals (e.g. "100000000000000000" for 0.1 ETH). Mutually exclusive with --readable-amount.
+        #[arg(long, conflicts_with = "readable_amount")]
+        amt: Option<String>,
+        /// Human-readable amount (e.g. "1.5" for 1.5 USDC). CLI fetches token decimals and converts automatically. Mutually exclusive with --amt.
+        #[arg(long, conflicts_with = "amt")]
+        readable_amount: Option<String>,
         /// Recipient address
         #[arg(long)]
-        receipt: String,
-        /// Chain ID (e.g. "1" for Ethereum, "501" for Solana, "56" for BSC)
+        recipient: String,
+        /// Chain name or ID (e.g. "ethereum" or "1", "solana" or "501", "bsc" or "56")
         #[arg(long)]
         chain: String,
         /// Sender address (optional — defaults to selectedAccountId)
@@ -80,7 +83,7 @@ pub enum WalletCommand {
         /// Account ID (defaults to current selectedAccountId)
         #[arg(long)]
         account_id: Option<String>,
-        /// Chain ID (e.g. "1" for Ethereum, "501" for Solana). Resolved to chainIndex internally.
+        /// Chain name or ID (e.g. "ethereum" or "1", "solana" or "501"). Resolved to chainIndex internally.
         #[arg(long)]
         chain: Option<String>,
         /// Address (required when --tx-hash is present for detail query)
@@ -116,7 +119,7 @@ pub enum WalletCommand {
         /// Message to sign (arbitrary string for personal, JSON string for eip712)
         #[arg(long)]
         message: String,
-        /// Chain ID (e.g. "1" for Ethereum, "501" for Solana, "56" for BSC)
+        /// Chain name or ID (e.g. "ethereum" or "1", "solana" or "501", "bsc" or "56")
         #[arg(long)]
         chain: String,
         /// Sender address (the address whose private key is used to sign)
@@ -131,7 +134,7 @@ pub enum WalletCommand {
         /// Contract address to interact with
         #[arg(long)]
         to: String,
-        /// Chain ID (e.g. "1" for Ethereum, "501" for Solana, "56" for BSC)
+        /// Chain name or ID (e.g. "ethereum" or "1", "solana" or "501", "bsc" or "56")
         #[arg(long)]
         chain: String,
         /// Native token amount in minimal units — whole number, no decimals (default "0")
@@ -167,6 +170,102 @@ pub enum WalletCommand {
     },
 }
 
+/// Resolve the effective raw amount for `wallet send`.
+/// - `--amt` → validate (no decimals, non-zero) and return as-is
+/// - `--readable-amount` + native token → use hardcoded chain decimals
+/// - `--readable-amount` + ERC-20/SPL → fetch token decimals via token info API
+async fn resolve_send_amount(
+    amt: Option<&str>,
+    readable_amount: Option<&str>,
+    contract_token: Option<&str>,
+    chain: &str,
+) -> Result<String> {
+    if let Some(raw) = amt {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            bail!("--amt must not be empty");
+        }
+        if raw.contains('.') {
+            bail!("--amt must be a whole number in minimal units (no decimals)");
+        }
+        if !raw.chars().all(|c| c.is_ascii_digit()) {
+            bail!(
+                "--amt must be a whole number in minimal units, got \"{}\"",
+                raw
+            );
+        }
+        if raw.chars().all(|c| c == '0') {
+            bail!("--amt must be greater than zero");
+        }
+        if raw.starts_with('0') {
+            bail!("--amt must not have leading zeros, got \"{}\"", raw);
+        }
+        return Ok(raw.to_string());
+    }
+
+    if let Some(readable) = readable_amount {
+        let readable = readable.trim();
+        if readable.is_empty() {
+            bail!("--readable-amount must not be empty");
+        }
+
+        let decimal: u32 = match contract_token {
+            None => {
+                // Native token — decimals are fixed per chain
+                match chain {
+                    "501" => 9, // SOL (lamports)
+                    "784" => 9, // SUI (MIST)
+                    _ => 18,    // All EVM native tokens (ETH, BNB, MATIC, OKB, AVAX, …)
+                }
+            }
+            Some(token_addr) => {
+                // ERC-20 / SPL — fetch decimals from token info API
+                let mut client = crate::client::ApiClient::new(None).map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to create API client to fetch token decimals: {}. \
+                         Use --amt with raw minimal units instead.",
+                        e
+                    )
+                })?;
+                let info = crate::commands::token::fetch_info(&mut client, token_addr, chain)
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "Failed to fetch token decimals for {}: {}. \
+                             Use --amt with raw minimal units instead.",
+                            token_addr,
+                            e
+                        )
+                    })?;
+                let info_arr = info.as_array().filter(|a| !a.is_empty()).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Token not found for address {} on chain {}. \
+                         Verify the address is correct. Use --amt with raw minimal units instead.",
+                        token_addr,
+                        chain
+                    )
+                })?;
+                match &info_arr[0]["decimal"] {
+                    serde_json::Value::String(s) => s.parse().map_err(|_| {
+                        anyhow::anyhow!("Invalid decimal value \"{}\" for token {}", s, token_addr)
+                    })?,
+                    serde_json::Value::Number(n) => n.as_u64().ok_or_else(|| {
+                        anyhow::anyhow!("Invalid decimal value for token {}", token_addr)
+                    })? as u32,
+                    _ => bail!(
+                        "Token decimal not found for {}. Use --amt with raw minimal units instead.",
+                        token_addr
+                    ),
+                }
+            }
+        };
+
+        return crate::commands::swap::readable_to_minimal_str(readable, decimal);
+    }
+
+    bail!("Either --amt or --readable-amount is required")
+}
+
 pub async fn execute(command: WalletCommand) -> Result<()> {
     match command {
         WalletCommand::Login {
@@ -192,15 +291,24 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
         }
         WalletCommand::Send {
             amt,
-            receipt,
+            readable_amount,
+            recipient,
             chain,
             from,
             contract_token,
             force,
         } => {
+            let chain = crate::chains::resolve_chain(&chain);
+            let raw_amt = resolve_send_amount(
+                amt.as_deref(),
+                readable_amount.as_deref(),
+                contract_token.as_deref(),
+                &chain,
+            )
+            .await?;
             super::transfer::cmd_send(
-                &amt,
-                &receipt,
+                &raw_amt,
+                &recipient,
                 &chain,
                 from.as_deref(),
                 contract_token.as_deref(),

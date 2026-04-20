@@ -20,7 +20,7 @@ struct TokenInfo<'a> {
 /// High-level invest: route to V3 or standard based on investType
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn cmd_invest(
-    client: &ApiClient,
+    client: &mut ApiClient,
     investment_id: &str,
     address: &str,
     token: &str,
@@ -109,6 +109,20 @@ pub(crate) async fn cmd_invest(
         (json, change, None, None)
     };
 
+    // 5.5 Slippage guard
+    let slippage_val: f64 = slippage.parse().unwrap_or(0.0);
+    if slippage_val > 0.2 {
+        bail!(
+            "Slippage {:.1}% exceeds maximum allowed 20%. Reduce --slippage and retry.",
+            slippage_val * 100.0
+        );
+    } else if slippage_val > 0.1 {
+        eprintln!(
+            "⚠️  WARNING: Slippage tolerance is {:.1}% (> 10%). High slippage may result in significant value loss.",
+            slippage_val * 100.0
+        );
+    }
+
     // 6. Call fetch_enter
     let mut result = fetch_enter(
         client,
@@ -156,7 +170,7 @@ fn invest_standard(primary_token: &TokenInfo, amount: &str) -> Result<InvestResu
 
 #[allow(clippy::too_many_arguments)]
 async fn invest_v3(
-    client: &ApiClient,
+    client: &mut ApiClient,
     investment_id: &str,
     address: &str,
     primary_token: &TokenInfo<'_>,
@@ -218,7 +232,7 @@ async fn invest_v3(
 /// V3 single-token entry: user provides one token, API calculates the other
 #[allow(clippy::too_many_arguments)]
 async fn invest_v3_single(
-    client: &ApiClient,
+    client: &mut ApiClient,
     investment_id: &str,
     address: &str,
     primary_token: &TokenInfo<'_>,
@@ -273,7 +287,7 @@ async fn invest_v3_single(
 /// V3 dual-token entry: user provides both tokens, CLI rebalances to pool ratio
 #[allow(clippy::too_many_arguments)]
 async fn invest_v3_dual(
-    client: &ApiClient,
+    client: &mut ApiClient,
     investment_id: &str,
     address: &str,
     primary_token: &TokenInfo<'_>,
@@ -591,7 +605,7 @@ fn append_warnings(result: &mut Value, detail: &Value) {
 /// High-level withdraw: resolve position, build exit calldata
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn cmd_withdraw(
-    client: &ApiClient,
+    client: &mut ApiClient,
     investment_id: &str,
     address: &str,
     chain: &str,
@@ -602,6 +616,15 @@ pub(crate) async fn cmd_withdraw(
     platform_id: Option<&str>,
 ) -> Result<JsonValue> {
     let chain_index = crate::chains::resolve_chain(chain);
+
+    // Slippage warning for withdraw
+    let slippage_val: f64 = slippage.parse().unwrap_or(0.0);
+    if slippage_val > 0.1 {
+        eprintln!(
+            "⚠️  WARNING: Slippage tolerance is {:.1}% (> 10%). High slippage may result in significant value loss.",
+            slippage_val * 100.0
+        );
+    }
 
     // Check if redemption is supported
     let detail = fetch_detail(client, investment_id).await?;
@@ -820,8 +843,7 @@ fn find_token_in_market_list(
                         .unwrap_or_default();
                     if iid == investment_id {
                         // Token info is inside assetsTokenList[0], not at item top level
-                        if let Some(assets) =
-                            item.get("assetsTokenList").and_then(|v| v.as_array())
+                        if let Some(assets) = item.get("assetsTokenList").and_then(|v| v.as_array())
                         {
                             if let Some(token) = assets.first() {
                                 return Some(extract_position_token(token));
@@ -871,7 +893,7 @@ fn extract_position_token(token: &JsonValue) -> PositionTokenInfo {
 /// High-level collect: auto-build expectOutputList, claim rewards
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn cmd_collect(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain: &str,
     reward_type: &str,
@@ -916,53 +938,50 @@ pub(crate) async fn cmd_collect(
 
     // 2. Auto-build expectOutputList from position-detail
     // V3_FEE and UNLOCKED_PRINCIPAL never need expectOutputList — backend resolves internally
-    let expect_output: Option<String> =
-        if reward_type == "V3_FEE" || reward_type == "UNLOCKED_PRINCIPAL" {
-            None
-        } else if let Some(platform_id_str) = platform_id {
-            let auto = extract_expect_output(
-                client,
-                address,
-                &chain_index,
-                platform_id_str,
-                reward_type,
-                investment_id,
-            )
-            .await
-            .map_err(|e| {
-                anyhow::anyhow!("Failed to fetch reward info from position-detail: {}", e)
-            })?;
+    let expect_output: Option<String> = if reward_type == "V3_FEE"
+        || reward_type == "UNLOCKED_PRINCIPAL"
+    {
+        None
+    } else if let Some(platform_id_str) = platform_id {
+        let auto = extract_expect_output(
+            client,
+            address,
+            &chain_index,
+            platform_id_str,
+            reward_type,
+            investment_id,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to fetch reward info from position-detail: {}", e))?;
 
-            // Zero reward check
-            if let Some(ref eo) = auto {
-                let tokens: Vec<Value> = serde_json::from_str(eo).unwrap_or_default();
-                if tokens.is_empty() {
-                    bail!("No rewards found for {} in position-detail.", reward_type);
-                }
-                let all_zero = tokens.iter().all(|t| {
-                    let reward_amount =
-                        t.get("coinAmount").and_then(|v| v.as_str()).unwrap_or("0");
-                    reward_amount == "0"
-                        || reward_amount.is_empty()
-                        || reward_amount.chars().all(|c| c == '0' || c == '.')
-                });
-                if all_zero {
-                    bail!(
-                        "No rewards available. All reward amounts are zero for {}.",
-                        reward_type
-                    );
-                }
-            } else {
-                bail!("No reward tokens found for {} in position-detail. Verify investment-id and platform-id.", reward_type);
+        // Zero reward check
+        if let Some(ref eo) = auto {
+            let tokens: Vec<Value> = serde_json::from_str(eo).unwrap_or_default();
+            if tokens.is_empty() {
+                bail!("No rewards found for {} in position-detail.", reward_type);
             }
-            auto
+            let all_zero = tokens.iter().all(|t| {
+                let reward_amount = t.get("coinAmount").and_then(|v| v.as_str()).unwrap_or("0");
+                reward_amount == "0"
+                    || reward_amount.is_empty()
+                    || reward_amount.chars().all(|c| c == '0' || c == '.')
+            });
+            if all_zero {
+                bail!(
+                    "No rewards available. All reward amounts are zero for {}.",
+                    reward_type
+                );
+            }
         } else {
-            bail!(
-                "--platform-id is required for {} to auto-build expectOutputList.",
-                reward_type
-            );
-        };
-
+            bail!("No reward tokens found for {} in position-detail. Verify investment-id and platform-id.", reward_type);
+        }
+        auto
+    } else {
+        bail!(
+            "--platform-id is required for {} to auto-build expectOutputList.",
+            reward_type
+        );
+    };
 
     // API: investmentId and analysisPlatformId cannot both be specified.
     // When investment_id is present (V3_FEE, UNLOCKED_PRINCIPAL, REWARD_INVESTMENT),

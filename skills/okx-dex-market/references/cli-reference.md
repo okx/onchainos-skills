@@ -1,6 +1,6 @@
 # Onchain OS DEX Market — CLI Command Reference
 
-Detailed parameter tables, return field schemas, and usage examples for all 10 market commands.
+Detailed parameter tables, return field schemas, and usage examples for all 9 market commands.
 
 ## 1. onchainos market price
 
@@ -126,7 +126,7 @@ onchainos market portfolio-overview --address <address> --chain <chain> --time-f
 |---|---|---|---|
 | `--address` | Yes | - | Wallet address |
 | `--chain` | Yes | - | Chain name or ID (e.g. `ethereum`, `solana`) |
-| `--time-frame` | Yes | - | Statistical range: `1`=1D, `2`=3D, `3`=7D, `4`=1M, `5`=3M |
+| `--time-frame` | No | `4` | Statistical range: `1`=1D, `2`=3D, `3`=7D, `4`=1M, `5`=3M |
 
 **Return fields**:
 
@@ -293,61 +293,3 @@ onchainos market portfolio-dex-history --address <wallet> --chain ethereum \
 # -> Display paginated DEX transaction list
 ```
 
----
-
-## 10. onchainos market address-tracker-activities
-
-Get latest DEX activities for tracked addresses. Supports smart money, KOL, or custom multi-address tracking, with filters for trade type, chain, volume, market cap, liquidity, and holder count.
-
-```bash
-onchainos market address-tracker-activities --tracker-type <type> [options]
-```
-
-| Param | Required | Default | Description |
-|---|---|---|---|
-| `--tracker-type` | Yes | - | Tracker type: `smart_money` (or `1`) = platform smart money; `kol` (or `2`) = platform Top 100 KOL addresses; `multi_address` (or `3`) = custom addresses |
-| `--wallet-address` | Conditional | - | Required when `--tracker-type multi_address`. Comma-separated wallet addresses, max 20 |
-| `--trade-type` | No | `0` (all) | Trade direction: `0`=all, `1`=buy, `2`=sell |
-| `--chain` | No | all chains | Chain filter (e.g., `ethereum`, `solana`, `bsc`, `base`, `xlayer`) |
-| `--min-volume` | No | - | Minimum trade volume (USD) |
-| `--max-volume` | No | - | Maximum trade volume (USD) |
-| `--min-holders` | No | - | Minimum number of holding addresses |
-| `--min-market-cap` | No | - | Minimum market cap (USD) |
-| `--max-market-cap` | No | - | Maximum market cap (USD) |
-| `--min-liquidity` | No | - | Minimum liquidity (USD) |
-| `--max-liquidity` | No | - | Maximum liquidity (USD) |
-
-**Return fields** (inside `trades` array):
-
-| Field | Type | Description |
-|---|---|---|
-| `txHash` | String | Transaction hash |
-| `walletAddress` | String | Wallet address of the transaction |
-| `quoteTokenSymbol` | String | Pricing token symbol (mainnet native token) |
-| `quoteTokenAmount` | String | Amount of pricing token traded |
-| `tokenSymbol` | String | Trading token symbol |
-| `tokenContractAddress` | String | Trading token contract address |
-| `chainIndex` | String | Chain identifier where the trading token is located |
-| `tokenPrice` | String | Trading price of the token (USD) |
-| `marketCap` | String | Market cap at the transaction price (USD) |
-| `realizedPnlUsd` | String | Realized PnL of the trading token (USD) |
-| `tradeType` | String | Trade direction: `1`=buy, `2`=sell |
-| `tradeTime` | String | Transaction time (Unix milliseconds) |
-| `trackerType` | Array\<String\> | Tracker type tags for this trade; values: `"1"`=smart_money, `"2"`=kol, `"3"`=multi_address. May contain multiple values if the address matches more than one tracker type. |
-
-**Examples**:
-
-```bash
-# Latest trades by platform smart money (all chains)
-onchainos market address-tracker-activities --tracker-type smart_money
-
-# Latest buys by KOL addresses on Solana
-onchainos market address-tracker-activities --tracker-type kol --chain solana --trade-type 1
-
-# Latest trades for custom wallet addresses
-onchainos market address-tracker-activities --tracker-type multi_address \
-  --wallet-address 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045,0xab5801a7d398351b8be11c439e05c5b3259aec9b
-
-# Smart money buys with volume filter
-onchainos market address-tracker-activities --tracker-type smart_money --trade-type 1 --min-volume 10000
-```

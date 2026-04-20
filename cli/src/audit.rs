@@ -324,9 +324,11 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Wallet { command } => format!("wallet {}", wallet_sub(command)),
         Commands::Security { command } => format!("security {}", security_sub(command)),
         Commands::Leaderboard { command } => format!("leaderboard {}", leaderboard_sub(command)),
+        Commands::Tracker { command } => format!("tracker {}", tracker_sub(command)),
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
         Commands::Competition { command } => format!("competition {}", competition_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
+        Commands::Ws { command } => format!("ws {}", ws_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
     }
 }
@@ -334,10 +336,10 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
 use crate::commands::agentic_wallet::payment::PaymentCommand;
 use crate::commands::agentic_wallet::wallet::WalletCommand;
 use crate::commands::{
-    competition::CompetitionCommand, defi::DefiCommand, gateway::GatewayCommand,
-    leaderboard::LeaderboardCommand, market::MarketCommand, memepump::MemepumpCommand,
-    portfolio::PortfolioCommand, security::SecurityCommand, signal::SignalCommand,
-    swap::SwapCommand, token::TokenCommand,
+    defi::DefiCommand, gateway::GatewayCommand, leaderboard::LeaderboardCommand,
+    market::MarketCommand, memepump::MemepumpCommand, portfolio::PortfolioCommand,
+    security::SecurityCommand, signal::SignalCommand, swap::SwapCommand, token::TokenCommand,
+    tracker::TrackerCommand, competition::CompetitionCommand,
 };
 
 fn market_sub(c: &MarketCommand) -> &'static str {
@@ -351,7 +353,6 @@ fn market_sub(c: &MarketCommand) -> &'static str {
         MarketCommand::PortfolioDexHistory { .. } => "portfolio-dex-history",
         MarketCommand::PortfolioRecentPnl { .. } => "portfolio-recent-pnl",
         MarketCommand::PortfolioTokenPnl { .. } => "portfolio-token-pnl",
-        MarketCommand::AddressTrackerActivities { .. } => "address-tracker-activities",
     }
 }
 
@@ -359,6 +360,25 @@ fn signal_sub(c: &SignalCommand) -> &'static str {
     match c {
         SignalCommand::Chains => "chains",
         SignalCommand::List { .. } => "list",
+    }
+}
+
+fn tracker_sub(c: &TrackerCommand) -> &'static str {
+    match c {
+        TrackerCommand::Activities { .. } => "activities",
+    }
+}
+
+fn ws_sub(c: &crate::commands::ws::WsCommand) -> &'static str {
+    use crate::commands::ws::WsCommand;
+    match c {
+        WsCommand::Channels => "channels",
+        WsCommand::ChannelInfo { .. } => "channel-info",
+        WsCommand::Start { .. } => "start",
+        WsCommand::Poll { .. } => "poll",
+        WsCommand::Stop { .. } => "stop",
+        WsCommand::List => "list",
+        WsCommand::RunDaemon { .. } => "run-daemon",
     }
 }
 
@@ -386,7 +406,6 @@ fn token_sub(c: &TokenCommand) -> &'static str {
         TokenCommand::Search { .. } => "search",
         TokenCommand::Info { .. } => "info",
         TokenCommand::Holders { .. } => "holders",
-        TokenCommand::Trending { .. } => "trending",
         TokenCommand::PriceInfo { .. } => "price-info",
         TokenCommand::Liquidity { .. } => "liquidity",
         TokenCommand::HotTokens { .. } => "hot-tokens",
@@ -463,11 +482,14 @@ fn security_sub(c: &SecurityCommand) -> &'static str {
 fn payment_sub(c: &PaymentCommand) -> &'static str {
     match c {
         PaymentCommand::X402Pay { .. } => "x402-pay",
+        PaymentCommand::Eip3009Sign { .. } => "eip3009-sign",
     }
 }
 
 fn defi_sub(c: &DefiCommand) -> &'static str {
     match c {
+        DefiCommand::SupportChains => "support-chains",
+        DefiCommand::SupportPlatforms => "support-platforms",
         DefiCommand::List { .. } => "list",
         DefiCommand::Search { .. } => "search",
         DefiCommand::Detail { .. } => "detail",
@@ -476,6 +498,9 @@ fn defi_sub(c: &DefiCommand) -> &'static str {
         DefiCommand::Redeem { .. } => "redeem",
         DefiCommand::Claim { .. } => "claim",
         DefiCommand::CalculateEntry { .. } => "calculate-entry",
+        DefiCommand::RateChart { .. } => "rate-chart",
+        DefiCommand::TvlChart { .. } => "tvl-chart",
+        DefiCommand::DepthPriceChart { .. } => "depth-price-chart",
         DefiCommand::Invest { .. } => "invest",
         DefiCommand::Withdraw { .. } => "withdraw",
         DefiCommand::Collect { .. } => "collect",

@@ -82,6 +82,7 @@ async fn resolve_chain_and_address(chain: &str, from: &str) -> Result<(String, S
 // ── personalSign ─────────────────────────────────────────────────────
 
 async fn personal_sign(message: &str, chain: &str, from: &str, force: bool) -> Result<()> {
+    let chain: &str = &crate::chains::resolve_chain(chain);
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][personal_sign] enter: chain={}, from={}",
@@ -139,7 +140,7 @@ async fn personal_sign(message: &str, chain: &str, from: &str, force: bool) -> R
             // Pad odd-length hex so that hex::decode won't fail
             // e.g. "0x123" → "0x0123"
             let hex_part = &message[2..];
-            if hex_part.len() % 2 != 0 {
+            if !hex_part.len().is_multiple_of(2) {
                 (format!("0x0{hex_part}"), "hex")
             } else {
                 (message.to_string(), "hex")
@@ -169,7 +170,7 @@ async fn personal_sign(message: &str, chain: &str, from: &str, force: bool) -> R
     }
 
     // Call sign-msg API
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
     let mut body = json!({
         "chainIndex": chain_index,
         "from": from_address,
@@ -211,6 +212,7 @@ async fn personal_sign(message: &str, chain: &str, from: &str, force: bool) -> R
 // ── eip712 ───────────────────────────────────────────────────────────
 
 async fn eip712_sign(message: &str, chain: &str, from: &str, force: bool) -> Result<()> {
+    let chain: &str = &crate::chains::resolve_chain(chain);
     if chain == "501" {
         bail!("eip712 signing is not supported on Solana (chain 501)");
     }
@@ -243,7 +245,7 @@ async fn eip712_sign(message: &str, chain: &str, from: &str, force: bool) -> Res
         );
     }
 
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
 
     // Step 1: gen-msg-hash
     let gen_hash_body = json!({

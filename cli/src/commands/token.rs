@@ -17,6 +17,12 @@ pub enum TokenCommand {
         /// Chains to search (comma-separated, e.g. "ethereum,solana"). Defaults to global --chain if set, otherwise "1,501"
         #[arg(long)]
         chains: Option<String>,
+        /// Number of results per page (default: 20, max: 100)
+        #[arg(long)]
+        limit: Option<String>,
+        /// Pagination cursor — pass the cursor from the last item of the previous page; omit for first page
+        #[arg(long)]
+        cursor: Option<String>,
     },
     /// Get token basic info (name, symbol, decimals, logo)
     Info {
@@ -38,18 +44,12 @@ pub enum TokenCommand {
         /// Filter by holder tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler
         #[arg(long)]
         tag_filter: Option<u8>,
-    },
-    /// Get trending / top tokens
-    Trending {
-        /// Chains (comma-separated). Defaults to global --chain if set, otherwise "1,501"
+        /// Number of results per page (default: 20, max: 100)
         #[arg(long)]
-        chains: Option<String>,
-        /// Sort by: 2=price change, 5=volume, 6=market cap
-        #[arg(long, default_value = "5")]
-        sort_by: String,
-        /// Time frame: 1=5min, 2=1h, 3=4h, 4=24h
-        #[arg(long, default_value = "4")]
-        time_frame: String,
+        limit: Option<String>,
+        /// Pagination cursor — pass the cursor from the last item of the previous page; omit for first page
+        #[arg(long)]
+        cursor: Option<String>,
     },
     /// Get detailed price info (price, market cap, liquidity, volume, 24h change)
     PriceInfo {
@@ -199,6 +199,12 @@ pub enum TokenCommand {
         /// Freeze filter (true/false, default: true)
         #[arg(long)]
         is_freeze: Option<String>,
+        /// Number of results per page (default: 20, max: 100)
+        #[arg(long)]
+        limit: Option<String>,
+        /// Pagination cursor — pass the cursor from the last item of the previous page; omit for first page
+        #[arg(long)]
+        cursor: Option<String>,
     },
     /// Get advanced token info (risk, creator, dev stats, holder concentration)
     AdvancedInfo {
@@ -220,6 +226,12 @@ pub enum TokenCommand {
         /// Filter by trader tag: 1=KOL, 2=Developer, 3=Smart Money, 4=Whale, 5=Fresh Wallet, 6=Insider, 7=Sniper, 8=Suspicious Phishing, 9=Bundler
         #[arg(long)]
         tag_filter: Option<u8>,
+        /// Number of results per page (default: 20, max: 100)
+        #[arg(long)]
+        limit: Option<String>,
+        /// Pagination cursor — pass the cursor from the last item of the previous page; omit for first page
+        #[arg(long)]
+        cursor: Option<String>,
     },
     /// Get token trade history on DEX, with optional tag and wallet filters
     Trades {
@@ -274,52 +286,68 @@ pub enum TokenCommand {
 }
 
 pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
     match cmd {
-        TokenCommand::Search { query, chains } => {
+        TokenCommand::Search {
+            query,
+            chains,
+            limit,
+            cursor,
+        } => {
             if query.trim().is_empty() {
                 anyhow::bail!("Parameter --query cannot be empty");
             }
             let resolved_chains = ctx.resolve_chains_or(chains, "1,501");
-            output::success(fetch_search(&client, &query, &resolved_chains).await?);
+            output::success(
+                fetch_search(
+                    &mut client,
+                    &query,
+                    &resolved_chains,
+                    limit.as_deref(),
+                    cursor.as_deref(),
+                )
+                .await?,
+            );
         }
         TokenCommand::Info { address, chain } => {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_info(&client, &address, &chain_index).await?);
+            output::success(fetch_info(&mut client, &address, &chain_index).await?);
         }
         TokenCommand::Holders {
             address,
             chain,
             tag_filter,
+            limit,
+            cursor,
         } => {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_holders(&client, &address, &chain_index, tag_filter).await?);
-        }
-        TokenCommand::Trending {
-            chains,
-            sort_by,
-            time_frame,
-        } => {
-            let resolved_chains = ctx.resolve_chains_or(chains, "1,501");
             output::success(
-                fetch_trending(&client, &resolved_chains, &sort_by, &time_frame).await?,
+                fetch_holders(
+                    &mut client,
+                    &address,
+                    &chain_index,
+                    tag_filter,
+                    limit.as_deref(),
+                    cursor.as_deref(),
+                )
+                .await?,
             );
         }
         TokenCommand::PriceInfo { address, chain } => {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_price_info(&client, &address, &chain_index).await?);
+            output::success(fetch_price_info(&mut client, &address, &chain_index).await?);
         }
         TokenCommand::Liquidity { address, chain } => {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_liquidity(&client, &address, &chain_index).await?);
+            output::success(fetch_liquidity(&mut client, &address, &chain_index).await?);
         }
         TokenCommand::HotTokens {
             ranking_type,
@@ -364,10 +392,12 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             is_lp_burnt,
             is_mint,
             is_freeze,
+            limit,
+            cursor,
         } => {
             output::success(
                 fetch_hot_tokens(
-                    &client,
+                    &mut client,
                     HotTokensParams {
                         ranking_type,
                         chain,
@@ -411,6 +441,8 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
                         is_lp_burnt,
                         is_mint,
                         is_freeze,
+                        limit,
+                        cursor,
                     },
                 )
                 .await?,
@@ -420,17 +452,29 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_advanced_info(&client, &address, &chain_index).await?);
+            output::success(fetch_advanced_info(&mut client, &address, &chain_index).await?);
         }
         TokenCommand::TopTrader {
             address,
             chain,
             tag_filter,
+            limit,
+            cursor,
         } => {
             let chain_index = chain
                 .map(|c| crate::chains::resolve_chain(&c).to_string())
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-            output::success(fetch_top_trader(&client, &address, &chain_index, tag_filter).await?);
+            output::success(
+                fetch_top_trader(
+                    &mut client,
+                    &address,
+                    &chain_index,
+                    tag_filter,
+                    limit.as_deref(),
+                    cursor.as_deref(),
+                )
+                .await?,
+            );
         }
         TokenCommand::Trades {
             address,
@@ -444,7 +488,7 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
                 .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
             output::success(
                 fetch_token_trades(
-                    &client,
+                    &mut client,
                     &address,
                     &chain_index,
                     limit,
@@ -483,18 +527,35 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
 }
 
 /// GET /api/v6/dex/market/token/search
-pub async fn fetch_search(client: &ApiClient, query: &str, chains: &str) -> Result<Value> {
+pub async fn fetch_search(
+    client: &mut ApiClient,
+    query: &str,
+    chains: &str,
+    limit: Option<&str>,
+    cursor: Option<&str>,
+) -> Result<Value> {
     let resolved_chains = crate::chains::resolve_chains(chains);
+    if let Some(s) = limit {
+        let n: u64 = s
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
+        anyhow::ensure!(n >= 1 && n <= 100, "--limit must be between 1 and 100, got {n}");
+    }
+    let mut params = vec![
+        ("chains", resolved_chains.as_str()),
+        ("search", query),
+        ("limit", limit.unwrap_or("20")),
+    ];
+    if let Some(c) = cursor {
+        params.push(("cursor", c));
+    }
     client
-        .get(
-            "/api/v6/dex/market/token/search",
-            &[("chains", resolved_chains.as_str()), ("search", query)],
-        )
+        .get("/api/v6/dex/market/token/search", &params)
         .await
 }
 
 /// POST /api/v6/dex/market/token/basic-info — body is JSON array
-pub async fn fetch_info(client: &ApiClient, address: &str, chain_index: &str) -> Result<Value> {
+pub async fn fetch_info(client: &mut ApiClient, address: &str, chain_index: &str) -> Result<Value> {
     let body = json!([{"chainIndex": chain_index, "tokenContractAddress": address}]);
     client
         .post("/api/v6/dex/market/token/basic-info", &body)
@@ -503,47 +564,37 @@ pub async fn fetch_info(client: &ApiClient, address: &str, chain_index: &str) ->
 
 /// GET /api/v6/dex/market/token/holder
 pub async fn fetch_holders(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
     tag_filter: Option<u8>,
+    limit: Option<&str>,
+    cursor: Option<&str>,
 ) -> Result<Value> {
+    if let Some(s) = limit {
+        let n: u64 = s
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
+        anyhow::ensure!(n >= 1 && n <= 100, "--limit must be between 1 and 100, got {n}");
+    }
     let tag_str = tag_filter.map(|t| t.to_string()).unwrap_or_default();
+    let mut params = vec![
+        ("chainIndex", chain_index),
+        ("tokenContractAddress", address),
+        ("tagFilter", tag_str.as_str()),
+        ("limit", limit.unwrap_or("20")),
+    ];
+    if let Some(c) = cursor {
+        params.push(("cursor", c));
+    }
     client
-        .get(
-            "/api/v6/dex/market/token/holder",
-            &[
-                ("chainIndex", chain_index),
-                ("tokenContractAddress", address),
-                ("tagFilter", tag_str.as_str()),
-            ],
-        )
-        .await
-}
-
-/// GET /api/v6/dex/market/token/toplist
-pub async fn fetch_trending(
-    client: &ApiClient,
-    chains: &str,
-    sort_by: &str,
-    time_frame: &str,
-) -> Result<Value> {
-    let resolved_chains = crate::chains::resolve_chains(chains);
-    client
-        .get(
-            "/api/v6/dex/market/token/toplist",
-            &[
-                ("chains", resolved_chains.as_str()),
-                ("sortBy", sort_by),
-                ("timeFrame", time_frame),
-            ],
-        )
+        .get("/api/v6/dex/market/token/holder", &params)
         .await
 }
 
 /// GET /api/v6/dex/market/token/top-liquidity — top 5 liquidity pools for a token
 pub async fn fetch_liquidity(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
 ) -> Result<Value> {
@@ -560,7 +611,7 @@ pub async fn fetch_liquidity(
 
 /// POST /api/v6/dex/market/price-info — body is JSON array
 pub async fn fetch_price_info(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
 ) -> Result<Value> {
@@ -569,7 +620,7 @@ pub async fn fetch_price_info(
 }
 
 /// Parameters for the hot token list query.
-#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[derive(serde::Deserialize, schemars::JsonSchema, Default)]
 pub struct HotTokensParams {
     /// Ranking type: 4=Trending (token score), 5=Xmentioned (Twitter mentions)
     pub ranking_type: String,
@@ -657,10 +708,22 @@ pub struct HotTokensParams {
     pub is_mint: Option<String>,
     /// Freeze filter (true/false)
     pub is_freeze: Option<String>,
+    /// Number of results per page (default: 20, max: 100). Use cursor for pagination.
+    pub limit: Option<String>,
+    /// Pagination cursor. Pass the cursor value from the last item of the previous response to fetch the next page. Omit for first page.
+    pub cursor: Option<String>,
 }
 
 /// GET /api/v6/dex/market/token/hot-token — hot token list by trending score or X mentions
-pub async fn fetch_hot_tokens(client: &ApiClient, params: HotTokensParams) -> Result<Value> {
+pub async fn fetch_hot_tokens(client: &mut ApiClient, params: HotTokensParams) -> Result<Value> {
+    if let Some(ref s) = params.limit {
+        let n: u64 = s
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
+        anyhow::ensure!(n >= 1 && n <= 100, "--limit must be between 1 and 100, got {n}");
+    }
+    let hot_limit = params.limit.unwrap_or_else(|| "20".to_string());
+    let hot_cursor = params.cursor;
     let chain_index = params
         .chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
@@ -707,66 +770,68 @@ pub async fn fetch_hot_tokens(client: &ApiClient, params: HotTokensParams) -> Re
     let is_mint = params.is_mint.unwrap_or_default();
     let is_freeze = params.is_freeze.unwrap_or_default();
 
+    let mut req_params = vec![
+        ("rankingType", params.ranking_type.as_str()),
+        ("chainIndex", chain_index.as_str()),
+        ("rankBy", rank_by.as_str()),
+        ("rankingTimeFrame", time_frame.as_str()),
+        ("riskFilter", risk_filter.as_str()),
+        ("stableTokenFilter", stable_token_filter.as_str()),
+        ("protocolId", project_id.as_str()),
+        ("priceChangePercentMin", price_change_min.as_str()),
+        ("priceChangePercentMax", price_change_max.as_str()),
+        ("volumeMin", volume_min.as_str()),
+        ("volumeMax", volume_max.as_str()),
+        ("tradeAmountMin", transaction_min.as_str()),
+        ("tradeAmountMax", transaction_max.as_str()),
+        ("txsMin", txs_min.as_str()),
+        ("txsMax", txs_max.as_str()),
+        ("uniqueTraderMin", unique_trader_min.as_str()),
+        ("uniqueTraderMax", unique_trader_max.as_str()),
+        ("marketCapMin", market_cap_min.as_str()),
+        ("marketCapMax", market_cap_max.as_str()),
+        ("liquidityMin", liquidity_min.as_str()),
+        ("liquidityMax", liquidity_max.as_str()),
+        ("holdersMin", holders_min.as_str()),
+        ("holdersMax", holders_max.as_str()),
+        ("inflowUsdMin", inflow_min.as_str()),
+        ("inflowUsdMax", inflow_max.as_str()),
+        ("fdvMin", fdv_min.as_str()),
+        ("fdvMax", fdv_max.as_str()),
+        ("mentionedCountMin", mentioned_count_min.as_str()),
+        ("mentionedCountMax", mentioned_count_max.as_str()),
+        ("socialScoreMin", social_score_min.as_str()),
+        ("socialScoreMax", social_score_max.as_str()),
+        ("top10HoldPercentMin", top10_hold_percent_min.as_str()),
+        ("top10HoldPercentMax", top10_hold_percent_max.as_str()),
+        ("devHoldPercentMin", dev_hold_percent_min.as_str()),
+        ("devHoldPercentMax", dev_hold_percent_max.as_str()),
+        ("bundleHoldPercentMin", bundle_hold_percent_min.as_str()),
+        ("bundleHoldPercentMax", bundle_hold_percent_max.as_str()),
+        (
+            "suspiciousHoldPercentMin",
+            suspicious_hold_percent_min.as_str(),
+        ),
+        (
+            "suspiciousHoldPercentMax",
+            suspicious_hold_percent_max.as_str(),
+        ),
+        ("isLpBurnt", is_lp_burnt.as_str()),
+        ("isMint", is_mint.as_str()),
+        ("isFreeze", is_freeze.as_str()),
+        ("limit", hot_limit.as_str()),
+    ];
+    if let Some(ref c) = hot_cursor {
+        req_params.push(("cursor", c.as_str()));
+    }
     client
-        .get(
-            "/api/v6/dex/market/token/hot-token",
-            &[
-                ("rankingType", params.ranking_type.as_str()),
-                ("chainIndex", chain_index.as_str()),
-                ("rankBy", rank_by.as_str()),
-                ("rankingTimeFrame", time_frame.as_str()),
-                ("riskFilter", risk_filter.as_str()),
-                ("stableTokenFilter", stable_token_filter.as_str()),
-                ("protocolId", project_id.as_str()),
-                ("priceChangePercentMin", price_change_min.as_str()),
-                ("priceChangePercentMax", price_change_max.as_str()),
-                ("volumeMin", volume_min.as_str()),
-                ("volumeMax", volume_max.as_str()),
-                ("tradeAmountMin", transaction_min.as_str()),
-                ("tradeAmountMax", transaction_max.as_str()),
-                ("txsMin", txs_min.as_str()),
-                ("txsMax", txs_max.as_str()),
-                ("uniqueTraderMin", unique_trader_min.as_str()),
-                ("uniqueTraderMax", unique_trader_max.as_str()),
-                ("marketCapMin", market_cap_min.as_str()),
-                ("marketCapMax", market_cap_max.as_str()),
-                ("liquidityMin", liquidity_min.as_str()),
-                ("liquidityMax", liquidity_max.as_str()),
-                ("holdersMin", holders_min.as_str()),
-                ("holdersMax", holders_max.as_str()),
-                ("inflowUsdMin", inflow_min.as_str()),
-                ("inflowUsdMax", inflow_max.as_str()),
-                ("fdvMin", fdv_min.as_str()),
-                ("fdvMax", fdv_max.as_str()),
-                ("mentionedCountMin", mentioned_count_min.as_str()),
-                ("mentionedCountMax", mentioned_count_max.as_str()),
-                ("socialScoreMin", social_score_min.as_str()),
-                ("socialScoreMax", social_score_max.as_str()),
-                ("top10HoldPercentMin", top10_hold_percent_min.as_str()),
-                ("top10HoldPercentMax", top10_hold_percent_max.as_str()),
-                ("devHoldPercentMin", dev_hold_percent_min.as_str()),
-                ("devHoldPercentMax", dev_hold_percent_max.as_str()),
-                ("bundleHoldPercentMin", bundle_hold_percent_min.as_str()),
-                ("bundleHoldPercentMax", bundle_hold_percent_max.as_str()),
-                (
-                    "suspiciousHoldPercentMin",
-                    suspicious_hold_percent_min.as_str(),
-                ),
-                (
-                    "suspiciousHoldPercentMax",
-                    suspicious_hold_percent_max.as_str(),
-                ),
-                ("isLpBurnt", is_lp_burnt.as_str()),
-                ("isMint", is_mint.as_str()),
-                ("isFreeze", is_freeze.as_str()),
-            ],
-        )
+        .get("/api/v6/dex/market/token/hot-token", &req_params)
         .await
 }
 
 /// GET /api/v6/dex/market/token/advanced-info
 pub async fn fetch_advanced_info(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
 ) -> Result<Value> {
@@ -783,27 +848,37 @@ pub async fn fetch_advanced_info(
 
 /// GET /api/v6/dex/market/token/top-trader
 pub async fn fetch_top_trader(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
     tag_filter: Option<u8>,
+    limit: Option<&str>,
+    cursor: Option<&str>,
 ) -> Result<Value> {
+    if let Some(s) = limit {
+        let n: u64 = s
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
+        anyhow::ensure!(n >= 1 && n <= 100, "--limit must be between 1 and 100, got {n}");
+    }
     let tag_str = tag_filter.map(|t| t.to_string()).unwrap_or_default();
+    let mut params = vec![
+        ("chainIndex", chain_index),
+        ("tokenContractAddress", address),
+        ("tagFilter", tag_str.as_str()),
+        ("limit", limit.unwrap_or("20")),
+    ];
+    if let Some(c) = cursor {
+        params.push(("cursor", c));
+    }
     client
-        .get(
-            "/api/v6/dex/market/token/top-trader",
-            &[
-                ("chainIndex", chain_index),
-                ("tokenContractAddress", address),
-                ("tagFilter", &tag_str),
-            ],
-        )
+        .get("/api/v6/dex/market/token/top-trader", &params)
         .await
 }
 
 /// GET /api/v6/dex/market/trades — token trade history
 pub async fn fetch_token_trades(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
     limit: u32,
@@ -837,27 +912,27 @@ async fn cluster_by_address(
     let chain_index = chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-    let client = ctx.client_async().await?;
-    output::success(fetch_cluster_by_address(&client, path, address, &chain_index).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_cluster_by_address(&mut client, path, address, &chain_index).await?);
     Ok(())
 }
 
 /// GET /api/v6/dex/market/token/cluster/supported/chain — no parameters
-pub async fn fetch_cluster_supported_chains(client: &ApiClient) -> Result<Value> {
+pub async fn fetch_cluster_supported_chains(client: &mut ApiClient) -> Result<Value> {
     client
         .get("/api/v6/dex/market/token/cluster/supported/chain", &[])
         .await
 }
 
 async fn cluster_supported_chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client_async().await?;
-    output::success(fetch_cluster_supported_chains(&client).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_cluster_supported_chains(&mut client).await?);
     Ok(())
 }
 
 /// GET /api/v6/dex/market/token/cluster/overview or /cluster/list
 pub async fn fetch_cluster_by_address(
-    client: &ApiClient,
+    client: &mut ApiClient,
     path: &str,
     address: &str,
     chain_index: &str,
@@ -875,7 +950,7 @@ pub async fn fetch_cluster_by_address(
 
 /// GET /api/v6/dex/market/token/cluster/top-holders
 pub async fn fetch_cluster_top_holders(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
     range_filter: &str,
@@ -901,7 +976,7 @@ async fn cluster_top_holders(
     let chain_index = chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
-    let client = ctx.client_async().await?;
-    output::success(fetch_cluster_top_holders(&client, address, &chain_index, range_filter).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_cluster_top_holders(&mut client, address, &chain_index, range_filter).await?);
     Ok(())
 }

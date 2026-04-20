@@ -1,7 +1,7 @@
 ---
 name: okx-defi-portfolio
 description: "Use this skill to 'check my DeFi positions', 'view DeFi holdings', 'show my DeFi portfolio', 'what DeFi am I invested in', 'show my staking positions', 'show my lending positions', 'DeFi balance', 'DeFi 持仓', '查看DeFi持仓', '我的DeFi资产', '持仓详情', '持仓列表', or mentions viewing DeFi holdings, positions, portfolio across protocols. Covers positions overview and per-protocol position detail. Do NOT use for deposit/redeem/claim operations — use okx-defi-invest. Do NOT use for wallet token balances — use okx-wallet-portfolio. Do NOT use for DEX spot swaps — use okx-dex-swap."
-license: Apache-2.0
+license: MIT
 metadata:
   author: okx
   version: "1.0.5"
@@ -38,8 +38,10 @@ onchainos defi position-detail \
 
 | # | Command | Description |
 |---|---------|-------------|
-| 1 | `onchainos defi positions --address <addr> --chains <chains>` | Get user DeFi holdings overview |
-| 2 | `onchainos defi position-detail --address <addr> --chain <chain> --platform-id <id>` | Get detailed holdings for a protocol |
+| 1 | `onchainos defi support-chains` | Get supported chains for DeFi |
+| 2 | `onchainos defi support-platforms` | Get supported platforms for DeFi |
+| 3 | `onchainos defi positions --address <addr> --chains <chains>` | Get user DeFi holdings overview |
+| 4 | `onchainos defi position-detail --address <addr> --chain <chain> --platform-id <id>` | Get detailed holdings for a protocol |
 
 ## Chain Support
 
@@ -141,6 +143,20 @@ Rules:
 - Type: map investType → Supply/Borrow/Stake/Farm/Pool etc; pending rewards row uses `Pending`
 - **Health rate**: show separately below the table with warning if `healthRate < 1.5`
 
+#### V3 Pool Positions — Extra Fields
+
+For V3 Pool positions (`positionList` present), show an additional section per position:
+
+| tokenId | Status | Range | tickLower | tickUpper |
+|---------|--------|-------|-----------|-----------|
+| 93828 | ACTIVE | 0.892 – 0.992 USDC/DAI | -33500 | -30450 |
+
+- `tokenId`: from `positionList[].tokenId`
+- `positionStatus`: `ACTIVE` or `INACTIVE`
+- `range`: from `positionList[].range`
+- `tickLower` / `tickUpper`: from `positionList[].rangeInfo.tickLower` / `rangeInfo.tickUpper`
+- These fields are critical for V3 operations (add liquidity, withdraw, collect V3 fees)
+
 ## investType Reference
 
 | investType | Description |
@@ -162,6 +178,7 @@ Rules:
 |----------------|---------|
 | `defi positions` | 1. View detail → `defi position-detail`  2. Redeem → `okx-defi-invest`  3. Claim rewards → `okx-defi-invest` |
 | `defi position-detail` | 1. Redeem position → use `okx-defi-invest` with `investmentId` from table  2. Claim rewards → use `okx-defi-invest`  3. Add more → use `okx-defi-invest` |
+| `defi position-detail` (V3 Pool) | 1. View depth chart → `defi depth-price-chart --investment-id <id>` (via `okx-defi-invest`)  2. View price history → `defi depth-price-chart --investment-id <id> --chart-type PRICE` |
 
 ## Global Notes
 

@@ -1,7 +1,7 @@
 ---
 name: okx-defi-invest
-description: "Use this skill to 'invest in DeFi', 'earn yield on USDC', 'deposit into Aave', 'stake ETH on Lido', 'search DeFi products', 'find best APY', 'redeem my DeFi position', 'withdraw from lending', 'claim DeFi rewards', 'borrow USDC', 'repay loan', 'add liquidity to Uniswap V3', 'remove liquidity', or mentions DeFi investing, yield farming, lending, borrowing, staking, liquidity pools, APY/APR across Ethereum, BSC, Avalanche, Sui, Solana, and other supported chains. Supports Aave, Lido, Compound, PancakeSwap, Uniswap, NAVI, Kamino, BENQI, and more. Do NOT use for DEX spot swaps — use okx-dex-swap. Do NOT use for token prices or market data — use okx-dex-market. Do NOT use for wallet token balances — use okx-wallet-portfolio. Do NOT use for viewing DeFi positions/holdings only — use okx-defi-portfolio."
-license: Apache-2.0
+description: "Use this skill to 'invest in DeFi', 'earn yield on USDC', 'deposit into Aave', 'stake ETH on Lido', 'search DeFi products', 'find best APY', 'redeem my DeFi position', 'withdraw from lending', 'claim DeFi rewards', 'borrow USDC', 'repay loan', 'add liquidity to Uniswap V3', 'remove liquidity', 'show APY history', 'TVL chart', 'V3 depth chart', 'V3 price history', or mentions DeFi investing, yield farming, lending, borrowing, staking, liquidity pools, APY/TVL trends, V3 depth/price charts. Do NOT use for DEX swaps (okx-dex-swap), token prices (okx-dex-market), wallet balances (okx-wallet-portfolio), or viewing positions only (okx-defi-portfolio)."
+license: MIT
 metadata:
   author: okx
   version: "2.0.0"
@@ -28,14 +28,19 @@ For CLI parameter details, see [references/cli-reference.md](references/cli-refe
 
 | # | Command | Description |
 |---|---------|-------------|
-| 1 | `defi list` | List top DeFi products by APY |
-| 2 | `defi search --token <tokens> [--platform <names>] [--chain <chain>] [--product-group <group>]` | Search DeFi products |
-| 3 | `defi detail --investment-id <id>` | Get full product details |
-| 4 | `defi invest --investment-id <id> --address <addr> --token <symbol_or_addr> --amount <minimal_units> [--chain <chain>] [--slippage <pct>] [--tick-lower <n>] [--tick-upper <n>] [--token-id <nft>]` | One-step deposit (CLI handles prepare + precision + calldata) |
-| 5 | `defi withdraw --investment-id <id> --address <addr> --chain <chain> [--ratio <0-1>] [--amount <minimal_units>] [--token-id <nft>] [--platform-id <pid>] [--slippage <pct>]` | One-step withdrawal (CLI handles position lookup + calldata) |
-| 6 | `defi collect --address <addr> --chain <chain> --reward-type <type> [--investment-id <id>] [--platform-id <pid>] [--token-id <nft>] [--principal-index <idx>]` | One-step reward claim (CLI handles reward check + calldata) |
-| 7 | `defi positions --address <addr> --chains <chains>` | List DeFi positions by platform |
-| 8 | `defi position-detail --address <addr> --chain <chain> --platform-id <pid>` | Get detailed position info |
+| 1 | `defi support-chains` | Get supported chains for DeFi |
+| 2 | `defi support-platforms` | Get supported platforms for DeFi |
+| 3 | `defi list` | List top DeFi products by APY |
+| 4 | `defi search --token <tokens> [--platform <names>] [--chain <chain>] [--product-group <group>]` | Search DeFi products |
+| 5 | `defi detail --investment-id <id>` | Get full product details |
+| 6 | `defi invest --investment-id <id> --address <addr> --token <symbol_or_addr> --amount <minimal_units> [--chain <chain>] [--slippage <pct>] [--tick-lower <n>] [--tick-upper <n>] [--token-id <nft>]` | One-step deposit (CLI handles prepare + precision + calldata) |
+| 7 | `defi withdraw --investment-id <id> --address <addr> --chain <chain> [--ratio <0-1>] [--amount <minimal_units>] [--token-id <nft>] [--platform-id <pid>] [--slippage <pct>]` | One-step withdrawal (CLI handles position lookup + calldata) |
+| 8 | `defi collect --address <addr> --chain <chain> --reward-type <type> [--investment-id <id>] [--platform-id <pid>] [--token-id <nft>] [--principal-index <idx>]` | One-step reward claim (CLI handles reward check + calldata) |
+| 9 | `defi positions --address <addr> --chains <chains>` | List DeFi positions by platform |
+| 10 | `defi position-detail --address <addr> --chain <chain> --platform-id <pid>` | Get detailed position info |
+| 11 | `defi rate-chart --investment-id <id> [--time-range <range>]` | Historical APY chart data |
+| 12 | `defi tvl-chart --investment-id <id> [--time-range <range>]` | Historical TVL chart data |
+| 13 | `defi depth-price-chart --investment-id <id> [--chart-type <type>] [--time-range <range>]` | V3 Pool depth or price history chart |
 
 ## Investment Types
 
@@ -125,12 +130,48 @@ Rules:
 ```
 1. defi search --token USDT --platform PancakeSwap --chain bsc --product-group DEX_POOL
 2. defi detail --investment-id <id>
-3. Ask user for amount and tick range
-4. Check wallet balance (okx-wallet-portfolio) → if insufficient, warn user and stop
-5. defi invest --investment-id <id> --address <addr> --token USDT --amount 100000000 --range 5
+3. (Optional) defi depth-price-chart --investment-id <id>
+   → show liquidity depth distribution to help user pick tick range
+4. Ask user for amount and tick range
+5. Check wallet balance (okx-wallet-portfolio) → if insufficient, warn user and stop
+6. defi invest --investment-id <id> --address <addr> --token USDT --amount 100000000 --range 5
    → CLI handles calculate-entry internally, returns calldata
-6. User signs and broadcasts
+7. User signs and broadcasts
 ```
+
+### View Chart Data
+
+Use chart commands to analyze product trends before investing or to monitor existing positions.
+
+**APY History** — check yield trend before depositing:
+```
+defi rate-chart --investment-id <id> --time-range MONTH
+```
+- Time ranges: `WEEK` (default), `MONTH`, `SEASON` (3 months), `YEAR`. `DAY` is V3 Pool only.
+- Returns: `timestamp`, `rate` (APY), `bonusRate` (extra rewards), `limitValue` (1=peak, -1=trough).
+
+**TVL History** — evaluate pool size stability:
+```
+defi tvl-chart --investment-id <id> --time-range SEASON
+```
+- Time ranges: same as rate-chart.
+- Returns: `chartVos[]` with `timestamp`, `tvl` (USD), `limitValue`.
+
+**V3 Depth Chart** — see liquidity concentration to pick optimal tick range:
+```
+defi depth-price-chart --investment-id <id>
+```
+- Returns: `tick`, `liquidity`, `liquidityNet`, `token0Price`, `token1Price` per tick.
+- No `--time-range` parameter — DEPTH mode always returns current snapshot.
+- Use this before V3 Pool deposit to identify where liquidity is concentrated and choose `tickLower`/`tickUpper` accordingly.
+
+**V3 Price History** — see historical relative price between token0 and token1:
+```
+defi depth-price-chart --investment-id <id> --chart-type PRICE --time-range WEEK
+```
+- Chart types: `DEPTH` (default), `PRICE`.
+- `--time-range` only applies to PRICE mode: `DAY` (default), `WEEK`.
+- Returns: `token0Price`, `token1Price`, `timestamp` per data point.
 
 ### Step 3: Sign & Broadcast Calldata
 
@@ -223,7 +264,8 @@ onchainos wallet contract-call \
 | Just completed | Suggest |
 |----------------|---------|
 | `defi list` / `defi search` | View details → `defi detail`, or start deposit flow |
-| `defi detail` | Proceed → `defi invest`, or compare → `defi search` |
+| `defi detail` | Check trends → `defi rate-chart` / `defi tvl-chart`, or proceed → `defi invest` |
+| `defi detail` (V3 Pool) | View depth → `defi depth-price-chart`, check price history → `defi depth-price-chart --chart-type PRICE` |
 | `defi invest` success | View positions → `okx-defi-portfolio`, or search more |
 | `defi withdraw` success | Check positions → `okx-defi-portfolio`, or check balance → `okx-wallet-portfolio` |
 | `defi collect` success | Check positions → `okx-defi-portfolio`, or swap rewards → `okx-dex-swap` |

@@ -56,7 +56,7 @@ pub(super) fn get_sol_address<'a>(wallets: &'a WalletsJson, account_id: &str) ->
 ///
 /// On refresh, calls `account/list` + `account/address/list` and persists to wallets.json.
 async fn ensure_wallet_accounts_fresh(
-    client: &WalletApiClient,
+    client: &mut WalletApiClient,
     access_token: &str,
     wallets: &mut WalletsJson,
     force: bool,
@@ -357,7 +357,7 @@ pub(super) async fn cmd_balance(
         );
     }
 
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
 
     // ── Scenario 1: All accounts (--all) ────────────────────────────
     if all {
@@ -447,7 +447,7 @@ pub(super) async fn cmd_balance(
         };
         let chain_entry = super::chain::get_chain_by_real_chain_index(c)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("unknown chain: {c}"))?;
+            .ok_or_else(|| anyhow::anyhow!("unsupported chain: {c}"))?;
         if cfg!(feature = "debug-log") {
             eprintln!(
                 "[DEBUG][cmd_balance] scenario=token-address, chain_entry={}",
@@ -498,7 +498,7 @@ pub(super) async fn cmd_balance(
     if let Some(c) = chain {
         let chain_entry = super::chain::get_chain_by_real_chain_index(c)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("unknown chain: {c}"))?;
+            .ok_or_else(|| anyhow::anyhow!("unsupported chain: {c}"))?;
         if cfg!(feature = "debug-log") {
             eprintln!(
                 "[DEBUG][cmd_balance] scenario=chain, chain_entry={}",
@@ -552,7 +552,7 @@ pub(super) async fn cmd_balance(
         eprintln!("[DEBUG][cmd_balance] scenario=default (no flags)");
     }
 
-    ensure_wallet_accounts_fresh(&client, &access_token, &mut wallets, force).await?;
+    ensure_wallet_accounts_fresh(&mut client, &access_token, &mut wallets, force).await?;
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][cmd_balance] scenario=default, after ensure_wallet_accounts_fresh: accounts_count={}, accounts_map_count={}",

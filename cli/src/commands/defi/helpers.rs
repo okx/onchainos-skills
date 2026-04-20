@@ -113,7 +113,7 @@ pub(super) fn decimal_to_minimal_str(amount: &str, precision: u32) -> String {
 /// Try to auto-build expectOutputList from position-detail for the given reward type.
 /// Returns None silently on any error or when no matching tokens are found.
 pub async fn extract_expect_output(
-    client: &ApiClient,
+    client: &mut ApiClient,
     wallet: &str,
     chain_index: &str,
     platform_id: &str,
@@ -220,9 +220,8 @@ pub async fn extract_expect_output(
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("");
                                 if rt == reward_type {
-                                    if let Some(base) = reward
-                                        .get("baseDefiTokenInfos")
-                                        .and_then(|v| v.as_array())
+                                    if let Some(base) =
+                                        reward.get("baseDefiTokenInfos").and_then(|v| v.as_array())
                                     {
                                         for t in base {
                                             tokens.push(json!({
@@ -264,9 +263,8 @@ pub async fn extract_expect_output(
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("");
                                 if rt == reward_type {
-                                    if let Some(base) = reward
-                                        .get("baseDefiTokenInfos")
-                                        .and_then(|v| v.as_array())
+                                    if let Some(base) =
+                                        reward.get("baseDefiTokenInfos").and_then(|v| v.as_array())
                                     {
                                         for t in base {
                                             tokens.push(json!({

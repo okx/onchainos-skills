@@ -1,16 +1,16 @@
 ---
 name: okx-dex-swap
-description: "Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens', 'sell tokens', 'exchange crypto', 'convert tokens', 'swap SOL for USDC', 'get a swap quote', 'execute a trade', 'find the best swap route', 'cheapest way to swap', 'optimal swap', 'compare swap rates', '换币', '买币', '卖币', '兑换', '交易', '代币兑换', '最优路径', '滑点', or mentions swapping, trading, buying, selling, or exchanging tokens on XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, or any of 20+ supported chains. Aggregates liquidity from 500+ DEX sources for optimal routing and price. Supports slippage control, price impact protection, and cross-DEX route optimization."
+description: "Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens', 'sell tokens', 'exchange crypto', 'convert tokens', 'swap SOL for USDC', 'get a swap quote', 'execute a trade', 'find the best swap route', 'cheapest way to swap', 'optimal swap', 'compare swap rates', 'get swap calldata', 'build unsigned tx', or mentions swapping, trading, buying, selling, or exchanging tokens on XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, or any of 20+ supported chains. Aggregates liquidity from 500+ DEX sources for optimal routing and price. Supports slippage control, price impact protection, and cross-DEX route optimization."
 license: MIT
 metadata:
   author: okx
-  version: "1.1.0"
+  version: "1.3.0"
   homepage: "https://web3.okx.com"
 ---
 
 # Onchain OS DEX Swap
 
-5 commands for multi-chain swap aggregation — quote, approve, and one-shot execute.
+6 commands for multi-chain swap aggregation — quote, approve, one-shot execute, and calldata-only swap.
 
 ## Pre-flight Checks
 
@@ -43,8 +43,10 @@ metadata:
 | 1 | `onchainos swap chains` | Get supported chains for DEX aggregator |
 | 2 | `onchainos swap liquidity --chain <chain>` | Get available liquidity sources on a chain |
 | 3 | `onchainos swap approve --token ... --amount ... --chain ...` | Get ERC-20 approval transaction data (advanced/manual use) |
-| 4 | `onchainos swap quote --from ... --to ... --amount ... --chain ...` | Get swap quote (read-only price estimate). **No `--slippage` param**. |
-| 5 | `onchainos swap execute --from ... --to ... --amount ... --chain ... --wallet ... [--slippage <pct>] [--gas-level <level>] [--mev-protection]` | **One-shot swap**: quote → approve (if needed) → swap → sign & broadcast → txHash. |
+| 4 | `onchainos swap quote --from ... --to ... --readable-amount ... --chain ...` | Get swap quote (read-only price estimate). **No `--slippage` param**. |
+| 5 | `onchainos swap execute --from ... --to ... --readable-amount ... --chain ... --wallet ... [--slippage <pct>] [--gas-level <level>] [--mev-protection]` | **One-shot swap**: quote → approve (if needed) → swap → sign & broadcast → txHash. |
+| 6 | `onchainos swap swap --from ... --to ... --readable-amount ... --chain ... --wallet ... [--slippage <pct>]` | **Calldata only**: returns unsigned tx data. Does NOT sign or broadcast. |
+
 
 ## Token Address Resolution (Mandatory)
 
@@ -67,11 +69,46 @@ Multiple search results → show name/symbol/CA/chain, ask user to confirm befor
 
 Follow the **Token Address Resolution** section above.
 
-### Step 2 — Collect Missing Parameters
+### Step 2 — Pre-Swap Token Security Scan (Mandatory)
+
+Before quoting or executing a swap, **automatically** run `token-scan` on both the `--from` and `--to` tokens to detect risks. This step is mandatory and must not be skipped.
+
+> **⚠️ Native token handling**: Exclude native tokens (matching any address in the Native Token Addresses table above) — they have no contract address and cannot be scanned.
+> - If one token is native, scan only the non-native token — apply the action for the scanned token's position (buy/sell) as normal.
+> - If both tokens are native (match addresses in the Native Token Addresses table), skip token-scan entirely.
+
+```bash
+# Both non-native:
+onchainos security token-scan --tokens "<chainId>:<fromTokenAddress>,<chainId>:<toTokenAddress>"
+# One native (e.g., selling ETH for PEPE): scan only the non-native token:
+onchainos security token-scan --tokens "<chainId>:<nonNativeTokenAddress>"
+```
+
+> Load `skills/okx-security/references/risk-token-detection.md` for the full risk label catalog and display format.
+
+**Interpret each token's result using the `riskLevel` field from the API response:**
+
+| `riskLevel` | Buy Action (`--to` token) | Sell Action (`--from` token) |
+|---|---|---|
+| **CRITICAL** | **BLOCK** — Refuse to execute swap. Display triggered labels. | **WARN** — Display risk labels, allow sell to continue. |
+| **HIGH** | **PAUSE** — Display risk labels, ask user "Continue? (yes/no)". Only proceed on explicit "yes". | **WARN** — Display risk labels, allow sell to continue. |
+| **MEDIUM** | **WARN** — Display risk labels as info, continue without pause. | **WARN** — Display risk labels as info, continue without pause. |
+| **LOW** | Safe — proceed to Step 3. | Safe — proceed to Step 3. |
+
+> Buy side (`--to`) is stricter: `CRITICAL` blocks the swap, `HIGH` pauses for confirmation. Sell side (`--from`) only warns — allowing the user to exit risky positions.
+>
+> **Multi-token action resolution**: Apply the action matrix independently for each token based on its role (buy/sell column), then enforce the most restrictive resulting action across all tokens. Precedence: `BLOCK > PAUSE > WARN > Safe`. Display risk results for all scanned tokens first. If any token triggers BLOCK, refuse the swap after showing all results and state which token triggered it (e.g., "Buy BLOCKED due to CRITICAL risk on `--to` token `<symbol>`").
+
+**Edge cases:**
+- `isChainSupported: false` → Skip detection for that token, warn "This chain does not support token security scanning", continue.
+- API timeout/failure → Warn "Token security scan temporarily unavailable, please trade with caution", continue (in swap context, token-scan failures auto-continue with a warning to avoid blocking time-sensitive trades — this overrides the general fail-safe's ask-user behavior).
+- `riskLevel` missing, `null`, or unrecognized → Treat as `HIGH` (cautious default). Display: "⚠️ Risk level unavailable or unrecognized — treating as high risk." Apply HIGH-level actions.
+
+### Step 3 — Collect Missing Parameters
 
 - **Chain**: missing → recommend XLayer (`--chain xlayer`, zero gas, fast confirmation).
-- **Amount**: ask user; convert to minimal units (wei/lamports).
-- **Slippage**: omit to use autoSlippage. Pass `--slippage <value>` only if user explicitly requests. Never pass `--slippage` to `swap quote`.
+- **Amount**: extract human-readable amount from user's request; pass directly as `--readable-amount <amount>`. CLI fetches token decimals and converts to raw units automatically.
+- **Slippage**: omit to use autoSlippage. Pass `--slippage <value>` only if user explicitly requests. Never pass `--slippage` to `swap quote`. Use `--max-auto-slippage <pct>` to cap the autoSlippage upper bound (e.g. `"3"` caps at 3%); only meaningful when `--slippage` is omitted.
 - **Gas level**: default `average`. Use `fast` for meme/time-sensitive trades.
 - **Wallet**: run `onchainos wallet status`. Not logged in → `onchainos wallet login`. Single account → use active address. Multiple accounts → list and ask user to choose.
 
@@ -84,23 +121,23 @@ Follow the **Token Address Resolution** section above.
 | 3 | Stablecoin | USDC/USDT/DAI pairs | autoSlippage (ref 0.1%-0.3%) | `average` |
 | 4 | Large Trade | priceImpact >= 10% AND value >= $1,000 AND pair liquidity >= $10,000 | autoSlippage | `average` |
 
-### Step 3 — Quote
+### Step 4 — Quote
 
 ```bash
-onchainos swap quote --from <token address from step1> --to <token address from step1> --amount <minimal_units> --chain <chain>
+onchainos swap quote --from <token address from step1> --to <token address from step1> --readable-amount <amount> --chain <chain>
 ```
 
-Display: expected output, gas, price impact, routing path. Check `isHoneyPot` and `taxRate` — surface to user. Perform MEV risk assessment (see **MEV Protection**).
+Display: expected output, gas, price impact, routing path. If quote returns `taxRate`, display as supplementary info (the primary risk gate is Step 2's token-scan). Note: the CLI also blocks honeypot swaps internally at execute time via `toToken.isHoneyPot` (defense-in-depth, different data source from Step 2's `token-scan`). Perform MEV risk assessment (see **MEV Protection**).
 
-### Step 4 — User Confirmation
+### Step 5 — User Confirmation
 
-- Price impact >5% → warn prominently. Honeypot (buy) → BLOCK.
+- Price impact >5% → warn prominently. (Token risk labels including honeypot already handled in Step 2.)
 - If >10 seconds pass before user confirms, re-fetch quote. If price diff >= slippage → warn and ask for re-confirmation.
 
-### Step 5 — Execute
+### Step 6 — Execute
 
 ```bash
-onchainos swap execute --from <token address from step1> --to <token address from step1> --amount <minimal_units> --chain <chain> --wallet <addr> [--slippage <pct>] [--gas-level <level>] [--mev-protection]
+onchainos swap execute --from <token address from step1> --to <token address from step1> --readable-amount <amount> --chain <chain> --wallet <addr> [--slippage <pct>] [--gas-level <level>] [--mev-protection]
 ```
 
 CLI handles approve (if needed) + sign + broadcast internally.
@@ -121,16 +158,17 @@ If `swap execute` returns an error, it may be caused by a preceding approval tra
 | Other EVM | ~10 s (conservative default) |
 
 2. **Inform the user**: e.g. "Swap failed, possibly due to a pending approval — waiting for on-chain confirmation before retrying."
-3. **Retry** the same `swap execute` command **once**. If the retry also fails, do **not** retry again — surface the error to the user directly.
+3. **Non-recoverable errors (82000, 51006)**: Token is dead, rugged, or has no liquidity — retrying may not help. Do **not** retry after 5 consecutive errors for the same (wallet, fromToken, toToken). Run `token advanced-info`; warn if `devRugPullTokenCount > 0` or `tokenTags` contains `lowLiquidity`.
+4. **All other errors**: Retry once. If retry also fails, surface the error directly.
 
 #### Silent / Automated Mode
 
 Enabled only when the user has **explicitly authorized** automated execution. Three mandatory rules:
 1. **Explicit authorization**: User must clearly opt in. Never assume silent mode.
-2. **Risk gate pause**: BLOCK-level risks must halt and notify the user even in silent mode.
+2. **Risk gate pause**: BLOCK-level (`CRITICAL`) risks must halt and notify the user. PAUSE-level (`HIGH`) buy risks must also halt and wait for user confirmation, even in silent mode.
 3. **Execution log**: Log every silent transaction (timestamp, pair, amount, slippage, txHash, status). Present on request or at session end.
 
-### Step 6 — Report Result
+### Step 7 — Report Result
 
 Use business-level language: "Swap complete" / "Approval and swap complete".
 Do NOT say "Transaction confirmed on-chain" / "Successfully broadcast" / "On-chain success".
@@ -140,21 +178,32 @@ Suggest follow-up: explorer link for `swapTxHash`, check new token price, or swa
 
 ## Additional Resources
 
-`references/cli-reference.md` — full params, return fields, and examples for all 5 commands.
+`references/cli-reference.md` — full params, return fields, and examples for all 6 commands.
 
 ## Risk Controls
 
+### Token Risk Labels (via `token-scan` — Step 2)
+
+Pre-swap `token-scan` returns a `riskLevel` field representing the overall token risk. See `skills/okx-security/references/risk-token-detection.md` for the full label catalog.
+
+| `riskLevel` | Buy | Sell | Description |
+|---|---|---|---|
+| CRITICAL | BLOCK | WARN (allow exit) | Honeypot, garbage airdrop, gas-mint scam, tax ≥ 50% |
+| HIGH | PAUSE — require yes/no | WARN | Low liquidity, dumping, rugpull gang, counterfeit, pump, wash trading, liquidity removal, not open-source, tax ≥21%-<50%, etc. |
+| MEDIUM | WARN (info only) | WARN (info only) | Mintable, freeze authority, not renounced, tax >0%-<21% |
+| LOW | PROCEED | PROCEED | No risk labels triggered |
+
+### Other Risk Items
+
 | Risk Item | Buy | Sell | Notes |
 |---|---|---|---|
-| Honeypot (`isHoneyPot=true`) | BLOCK | WARN (allow exit) | Selling allowed for stop-loss scenarios |
-| High tax rate (>10%) | WARN | WARN | Display exact tax rate |
 | No quote available | CANNOT | CANNOT | Token may be unlisted or zero liquidity |
 | Black/flagged address | BLOCK | BLOCK | Address flagged by security services |
-| New token (<24h) | WARN | PROCEED | Extra caution on buy side |
+| New token (<24h) | PAUSE | PROCEED | Extra caution on buy side — require explicit confirmation |
 | Insufficient liquidity | CANNOT | CANNOT | Liquidity too low to execute trade |
 | Token type not supported | CANNOT | CANNOT | Inform user, suggest alternative |
 
-**Legend**: BLOCK = halt, require explicit override · WARN = display warning, ask confirmation · CANNOT = operation impossible · PROCEED = allow with info
+**Legend**: BLOCK = halt, refuse execution · PAUSE = halt, require explicit yes/no · WARN = display warning, continue · CANNOT = operation impossible · PROCEED = allow with info
 
 ### MEV Protection
 
@@ -168,7 +217,7 @@ If `toTokenPrice` or `fromTokenPrice` unavailable/0 → enable by default.
 | Chain | MEV Protection | Threshold | How to enable |
 |---|---|---|---|
 | Ethereum | Yes | $2,000 | `onchainos swap execute --mev-protection` |
-| Solana | Yes | $1,000 | `onchainos swap execute --tips <sol_amount>` (0.0000000001–2 SOL); CLI auto-applies Jito calldata |
+| Solana | Yes | $1,000 | `onchainos swap execute --tips <lamports>` (positive integer, e.g. `1000` = 0.000001 SOL); CLI auto-applies Jito calldata |
 | BNB Chain | Yes | $200 | `onchainos swap execute --mev-protection` |
 | Base | Yes | $200 | `onchainos swap execute --mev-protection` |
 | Others | No | — | — |
@@ -182,7 +231,7 @@ Pass `--mev-protection` (EVM) or `--tips` (Solana) to `swap execute`.
 ## Amount Display Rules
 
 - **Display** input/output amounts to the user in UI units (`1.5 ETH`, `3,200 USDC`)
-- **CLI `--amount` parameter** always uses **minimal units** (wei/lamports): `1 USDC` = `"1000000"` (6 decimals), `1 ETH` = `"1000000000000000000"` (18 decimals), `1 SOL` = `"1000000000"` (9 decimals). Convert before calling any swap command.
+- **CLI `--readable-amount`** accepts human-readable amounts (`"1.5"`, `"100"`); CLI converts to minimal units automatically. Use `--amount` only when passing raw minimal units explicitly.
 - Gas fees in USD
 - `minReceiveAmount` in both UI units and USD
 - Price impact as percentage

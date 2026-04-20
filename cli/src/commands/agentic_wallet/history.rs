@@ -39,10 +39,10 @@ pub(super) async fn cmd_history(
 
     // Resolve realChainIndex → chainIndex
     let chain_index = match chain {
-        Some(id) if !id.is_empty() => {
-            let entry = super::chain::get_chain_by_real_chain_index(id)
+        Some(input) if !input.is_empty() => {
+            let entry = super::chain::get_chain_by_real_chain_index(input)
                 .await?
-                .ok_or_else(|| anyhow::anyhow!("unsupported chain: {id}"))?;
+                .ok_or_else(|| anyhow::anyhow!("unsupported chain: {input}"))?;
             entry["chainIndex"]
                 .as_str()
                 .map(|s| s.to_string())
@@ -52,7 +52,7 @@ pub(super) async fn cmd_history(
         _ => String::new(),
     };
 
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
 
     if let Some(tx_hash_val) = tx_hash {
         // ── Detail mode: --tx-hash present → /order/detail ──

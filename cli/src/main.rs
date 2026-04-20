@@ -6,12 +6,15 @@ mod client;
 mod commands;
 mod config;
 pub mod crypto;
+mod doh;
+mod file_keyring;
 mod home;
 mod keyring_store;
 mod mcp;
 mod output;
 mod wallet_api;
 mod wallet_store;
+mod watch;
 
 use clap::{Parser, Subcommand};
 
@@ -101,6 +104,15 @@ pub enum Commands {
     Competition {
         #[command(subcommand)]
         command: commands::competition::CompetitionCommand,
+    /// Address tracker: REST activities for KOL / smart money / custom address activity
+    Tracker {
+        #[command(subcommand)]
+        command: commands::tracker::TrackerCommand,
+    },
+    /// Real-time WebSocket subscriptions for DEX data
+    Ws {
+        #[command(subcommand)]
+        command: commands::ws::WsCommand,
     },
     /// DeFi product discovery, investment, redemption, and portfolio
     Defi {
@@ -152,6 +164,7 @@ async fn run() {
         Commands::Signal { command } => commands::signal::execute(&ctx, command).await,
         Commands::Memepump { command } => commands::memepump::execute(&ctx, *command).await,
         Commands::Leaderboard { command } => commands::leaderboard::execute(&ctx, command).await,
+        Commands::Tracker { command } => commands::tracker::execute(&ctx, command).await,
         Commands::Token { command } => commands::token::execute(&ctx, *command).await,
         Commands::Swap { command } => commands::swap::execute(&ctx, command).await,
         Commands::Gateway { command } => commands::gateway::execute(&ctx, command).await,
@@ -164,6 +177,7 @@ async fn run() {
             commands::competition::execute(command).await
         }
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
+        Commands::Ws { command } => commands::ws::execute(command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
     };
 
