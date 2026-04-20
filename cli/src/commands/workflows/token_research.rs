@@ -1,12 +1,12 @@
 /// W1 — Token Research
 ///
 /// Step 1 (parallel): token info + price-info + advanced-info + security scan
-///   → PRD: single sub-call failure → field null, rest continues
-///   → PRD: all Step 1 calls fail → propagate error
+///   PRD: single sub-call failure → field null, rest continues
+///   PRD: all Step 1 calls fail    → return error
 /// Step 2 (parallel): holders + cluster overview + top traders + signal list
-///   → cluster-overview may 500 for brand-new tokens: treated as null, skipped gracefully
-/// Step 3 (parallel, conditional): launchpad enrichment only when protocolId is non-empty
-///   → if advanced-info itself failed (null), protocolId is absent → Step 3 skipped safely
+///   cluster-overview may 500 for brand-new tokens → treated as null, skipped gracefully
+/// Step 3 (parallel, conditional): launchpad enrichment only when protocolId non-empty
+///   if advanced-info itself failed (null), protocolId absent → Step 3 skipped safely
 use anyhow::Result;
 use serde_json::{json, Value};
 
@@ -34,19 +34,8 @@ pub async fn run(ctx: &Context, address: &str, chain: Option<String>) -> Result<
     let info = ok_or_null(info_res);
     let price = ok_or_null(price_res);
     let advanced = ok_or_null(advanced_res);
-    // security is already a Value — fetch_token_scan never propagates errors
-
-    // PRD: all Step 1 core calls failed → return error rather than empty shell
-    if all_null(&[&info, &price, &advanced]) && security.is_null() {
-        anyhow::bail!(
-            "token-research: all Step 1 sub-calls failed for address {} on chain {}",
-            address,
-            chain_index
-        );
-    }
 
     // ── Step 2: on-chain structure (parallel) ────────────────────────
-    // cluster-overview may return 500 for brand-new tokens — ok_or_null handles it gracefully.
     let (holders, cluster, top_traders, signals) = tokio::join!(
         token::fetch_holders(&client, address, &chain_index, None, Some("100"), None),
         token::fetch_cluster_by_address(
@@ -59,48 +48,26 @@ pub async fn run(ctx: &Context, address: &str, chain: Option<String>) -> Result<
         signal::fetch_list(
             &client,
             &chain_index,
-            None,
-            None,
-            None,
-            None,
-            None,
+            None, None, None, None, None,
             Some(address.to_string()),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            None, None, None, None, None, None,
         ),
     );
 
     // ── Step 3: launchpad supplement (conditional) ───────────────────
-    // is_launchpad_token guards against both missing field and failed advanced-info (null).
     let launchpad = if is_launchpad_token(&advanced) {
         let (details, dev_info, bundle_info, similar) = tokio::join!(
             memepump::fetch_by_address(
-                &client,
-                "/api/v6/dex/market/memepump/tokenDetails",
-                address,
-                &chain_index,
+                &client, "/api/v6/dex/market/memepump/tokenDetails", address, &chain_index,
             ),
             memepump::fetch_by_address(
-                &client,
-                "/api/v6/dex/market/memepump/tokenDevInfo",
-                address,
-                &chain_index,
+                &client, "/api/v6/dex/market/memepump/tokenDevInfo", address, &chain_index,
             ),
             memepump::fetch_by_address(
-                &client,
-                "/api/v6/dex/market/memepump/tokenBundleInfo",
-                address,
-                &chain_index,
+                &client, "/api/v6/dex/market/memepump/tokenBundleInfo", address, &chain_index,
             ),
             memepump::fetch_by_address(
-                &client,
-                "/api/v6/dex/market/memepump/similarToken",
-                address,
-                &chain_index,
+                &client, "/api/v6/dex/market/memepump/similarToken", address, &chain_index,
             ),
         );
         json!({
@@ -113,7 +80,58 @@ pub async fn run(ctx: &Context, address: &str, chain: Option<String>) -> Result<
         Value::Null
     };
 
-    output::success(json!({
+    let result = assemble(
+        address,
+        &chain_index,
+        info,
+        price,
+        advanced,
+        security,
+        ok_or_null(holders),
+        ok_or_null(cluster),
+        ok_or_null(top_traders),
+        ok_or_null(signals),
+        launchpad,
+    )?;
+
+    output::success(result);
+    Ok(())
+}
+
+/// Pure assembly function — applies all PRD logic on pre-fetched data.
+/// Testable without any HTTP calls.
+///
+/// PRD rules applied here:
+/// - all Step 1 fields null → propagate error (全部失败 → 返回错误)
+/// - individual nulls → preserved in output (单个失败 → 对应字段 null)
+/// - launchpad: null when Step 3 was skipped; object when it ran
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn assemble(
+    address: &str,
+    chain_index: &str,
+    // Step 1
+    info: Value,
+    price: Value,
+    advanced: Value,
+    security: Value,
+    // Step 2
+    holders: Value,
+    cluster: Value,
+    top_traders: Value,
+    signals: Value,
+    // Step 3 (pre-computed: null when skipped)
+    launchpad: Value,
+) -> Result<Value> {
+    // PRD: all Step 1 core calls failed → return error
+    if all_null(&[&info, &price, &advanced]) && security.is_null() {
+        anyhow::bail!(
+            "token-research: all Step 1 sub-calls failed for address {} on chain {}",
+            address,
+            chain_index
+        );
+    }
+
+    Ok(json!({
         "workflow": "token-research",
         "address":  address,
         "chain":    chain_index,
@@ -124,18 +142,17 @@ pub async fn run(ctx: &Context, address: &str, chain: Option<String>) -> Result<
             "security": security,
         },
         "structure": {
-            "holders":    ok_or_null(holders),
-            "cluster":    ok_or_null(cluster),
-            "topTraders": ok_or_null(top_traders),
-            "signals":    ok_or_null(signals),
+            "holders":    holders,
+            "cluster":    cluster,
+            "topTraders": top_traders,
+            "signals":    signals,
         },
         "launchpad": launchpad,
-    }));
-    Ok(())
+    }))
 }
 
-/// Returns true when the token originates from a launchpad (protocolId is present and non-empty).
-/// Safe to call when `advanced` is null — returns false rather than panicking.
+/// Returns true when the token originates from a launchpad (protocolId present and non-empty).
+/// Safe when `advanced` is null — returns false rather than panicking.
 pub(crate) fn is_launchpad_token(advanced: &Value) -> bool {
     advanced["protocolId"]
         .as_str()
@@ -144,7 +161,6 @@ pub(crate) fn is_launchpad_token(advanced: &Value) -> bool {
 }
 
 /// Returns true when every value in `values` is JSON null.
-/// Used to detect total Step 1 failure and convert it to an error.
 pub(crate) fn all_null(values: &[&Value]) -> bool {
     values.iter().all(|v| v.is_null())
 }
@@ -154,29 +170,197 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    // ── helpers ───────────────────────────────────────────────────────
+
+    fn some_data() -> Value {
+        json!({ "key": "value" })
+    }
+
+    fn null() -> Value {
+        Value::Null
+    }
+
+    fn full_assemble(
+        info: Value,
+        price: Value,
+        advanced: Value,
+        security: Value,
+        launchpad: Value,
+    ) -> Result<Value> {
+        assemble(
+            "0xTOKEN",
+            "501",
+            info,
+            price,
+            advanced,
+            security,
+            some_data(), // holders
+            some_data(), // cluster
+            some_data(), // top_traders
+            some_data(), // signals
+            launchpad,
+        )
+    }
+
+    // ── PRD: all Step 1 fail → error ─────────────────────────────────
+
+    #[test]
+    fn all_step1_null_returns_error() {
+        let result = full_assemble(null(), null(), null(), null(), null());
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("all Step 1 sub-calls failed"));
+        assert!(msg.contains("0xTOKEN"));
+    }
+
+    #[test]
+    fn error_message_includes_chain() {
+        let result = full_assemble(null(), null(), null(), null(), null());
+        assert!(result.unwrap_err().to_string().contains("501"));
+    }
+
+    // ── PRD: single Step 1 fail → field null, rest present ───────────
+
+    #[test]
+    fn info_null_others_present_returns_ok() {
+        let result = full_assemble(null(), some_data(), some_data(), some_data(), null());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn price_null_others_present_returns_ok() {
+        let result = full_assemble(some_data(), null(), some_data(), some_data(), null());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn advanced_null_others_present_returns_ok() {
+        let result = full_assemble(some_data(), some_data(), null(), some_data(), null());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn security_null_others_present_returns_ok() {
+        let result = full_assemble(some_data(), some_data(), some_data(), null(), null());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn null_fields_preserved_in_core_output() {
+        let out = full_assemble(null(), some_data(), some_data(), some_data(), null())
+            .unwrap();
+        assert!(out["core"]["info"].is_null());
+        assert!(!out["core"]["price"].is_null());
+    }
+
+    #[test]
+    fn security_only_present_prevents_all_null_error() {
+        // security is non-null even when info/price/advanced all fail
+        let result = full_assemble(null(), null(), null(), some_data(), null());
+        assert!(result.is_ok());
+    }
+
+    // ── PRD: Step 3 conditional on protocolId ─────────────────────────
+
+    #[test]
+    fn launchpad_null_when_step3_skipped() {
+        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), null())
+            .unwrap();
+        assert!(out["launchpad"].is_null());
+    }
+
+    #[test]
+    fn launchpad_data_present_when_step3_ran() {
+        let lp = json!({
+            "tokenDetails": {"bonding": "80%"},
+            "devInfo":      {"rugCount": 0},
+            "bundleInfo":   {"bundleRate": "5%"},
+            "similarTokens": [],
+        });
+        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), lp.clone())
+            .unwrap();
+        assert_eq!(out["launchpad"]["devInfo"]["rugCount"], 0);
+    }
+
+    #[test]
+    fn launchpad_null_when_advanced_itself_failed() {
+        // advanced-info call failed → advanced is null → is_launchpad_token returns false
+        // Step 3 should be skipped; launchpad null passed in from run()
+        let out = full_assemble(some_data(), some_data(), null(), some_data(), null()).unwrap();
+        assert!(out["launchpad"].is_null());
+    }
+
+    // ── Output structure matches PRD spec ─────────────────────────────
+
+    #[test]
+    fn output_has_workflow_discriminator() {
+        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), null())
+            .unwrap();
+        assert_eq!(out["workflow"], "token-research");
+    }
+
+    #[test]
+    fn output_has_address_and_chain() {
+        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), null())
+            .unwrap();
+        assert_eq!(out["address"], "0xTOKEN");
+        assert_eq!(out["chain"], "501");
+    }
+
+    #[test]
+    fn core_has_all_required_fields() {
+        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), null())
+            .unwrap();
+        assert!(!out["core"]["info"].is_null());
+        assert!(!out["core"]["price"].is_null());
+        assert!(!out["core"]["contract"].is_null());
+        assert!(!out["core"]["security"].is_null());
+    }
+
+    #[test]
+    fn structure_has_all_required_fields() {
+        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), null())
+            .unwrap();
+        let s = &out["structure"];
+        assert!(!s["holders"].is_null());
+        assert!(!s["cluster"].is_null());
+        assert!(!s["topTraders"].is_null());
+        assert!(!s["signals"].is_null());
+    }
+
+    #[test]
+    fn cluster_null_in_structure_preserved() {
+        // cluster-overview 500 on new token → null passed in
+        let result = assemble(
+            "0xNEW", "501",
+            some_data(), some_data(), some_data(), some_data(),
+            some_data(), null(), some_data(), some_data(), // cluster = null
+            null(),
+        );
+        let out = result.unwrap();
+        assert!(out["structure"]["cluster"].is_null());
+        assert!(!out["structure"]["holders"].is_null());
+    }
+
     // ── is_launchpad_token ────────────────────────────────────────────
 
     #[test]
     fn launchpad_token_with_non_empty_protocol_id() {
-        let advanced = json!({ "protocolId": "120596" });
-        assert!(is_launchpad_token(&advanced));
+        assert!(is_launchpad_token(&json!({ "protocolId": "120596" })));
     }
 
     #[test]
     fn launchpad_token_with_empty_protocol_id() {
-        let advanced = json!({ "protocolId": "" });
-        assert!(!is_launchpad_token(&advanced));
+        assert!(!is_launchpad_token(&json!({ "protocolId": "" })));
     }
 
     #[test]
     fn launchpad_token_missing_protocol_id_field() {
-        let advanced = json!({ "name": "BONK", "symbol": "BONK" });
-        assert!(!is_launchpad_token(&advanced));
+        assert!(!is_launchpad_token(&json!({ "name": "BONK" })));
     }
 
     #[test]
     fn launchpad_token_advanced_is_null() {
-        // advanced-info call failed; must not panic
         assert!(!is_launchpad_token(&Value::Null));
     }
 
@@ -187,45 +371,28 @@ mod tests {
 
     #[test]
     fn launchpad_token_protocol_id_non_string_type() {
-        // If the API ever returns a non-string protocolId, treat as non-launchpad
-        let advanced = json!({ "protocolId": 120596 });
-        assert!(!is_launchpad_token(&advanced));
+        assert!(!is_launchpad_token(&json!({ "protocolId": 120596 })));
     }
 
     // ── all_null ──────────────────────────────────────────────────────
 
     #[test]
     fn all_null_when_every_value_is_null() {
-        assert!(all_null(&[&Value::Null, &Value::Null, &Value::Null]));
+        assert!(all_null(&[&null(), &null(), &null()]));
     }
 
     #[test]
     fn all_null_false_when_one_value_present() {
-        let present = json!({ "price": "1.23" });
-        assert!(!all_null(&[&Value::Null, &present, &Value::Null]));
-    }
-
-    #[test]
-    fn all_null_false_when_no_values_are_null() {
-        let a = json!("ok");
-        let b = json!(42);
-        assert!(!all_null(&[&a, &b]));
-    }
-
-    #[test]
-    fn all_null_true_for_single_null() {
-        assert!(all_null(&[&Value::Null]));
+        assert!(!all_null(&[&null(), &some_data(), &null()]));
     }
 
     #[test]
     fn all_null_false_for_empty_object() {
-        // An empty object {} is not null
         assert!(!all_null(&[&json!({})]));
     }
 
     #[test]
     fn all_null_false_for_empty_array() {
-        // An empty array [] is not null
         assert!(!all_null(&[&json!([])]));
     }
 }

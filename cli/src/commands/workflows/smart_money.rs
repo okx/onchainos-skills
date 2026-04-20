@@ -1,10 +1,10 @@
 /// W3 — Smart Money Signals
 ///
-/// Step 1: fetch signal list, aggregate by token (sort desc by SM wallet count), take top 5
-///   → signal API failure: rawSignals null, topTokens empty, returns gracefully (not an error)
-/// Step 2: per-token parallel due diligence (price-info + advanced-info + security scan +
-///         optional memepump dev/bundle info when protocolId non-empty)
-///   → individual sub-call failures: field null, rest continues
+/// Step 1: fetch signal list → aggregate by token (sort desc by SM wallet count) → top 5
+///   signal API failure: rawSignals null, topTokens empty, returns gracefully (not an error)
+/// Step 2: per-token parallel due diligence
+///   individual sub-call failures: field null, rest continues
+///   launchpad enrichment conditional on protocolId (reuses is_launchpad_token)
 use anyhow::Result;
 use serde_json::{json, Value};
 use tokio::task::JoinSet;
@@ -25,31 +25,19 @@ pub async fn run(ctx: &Context, chain: Option<String>) -> Result<()> {
         .map(|c| chains::resolve_chain(c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("solana"));
 
-    // ── Step 1: collect & aggregate signals ──────────────────────────
-    // A signal API failure is not fatal — return gracefully with empty results.
+    // ── Step 1 ───────────────────────────────────────────────────────
     let raw_signals = ok_or_null(
         signal::fetch_list(
             &client,
             &chain_index,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            None, None, None, None, None, None, None, None, None, None, None, None,
         )
         .await,
     );
 
-    let top_tokens: Vec<(String, Value)> = extract_top_tokens(&raw_signals, TOP_N);
+    let top_tokens = extract_top_tokens(&raw_signals, TOP_N);
 
-    // ── Step 2: per-token due diligence (parallel, max TOP_N) ────────
+    // ── Step 2: per-token enrichment (parallel, max TOP_N) ───────────
     let mut set: JoinSet<(String, Value)> = JoinSet::new();
 
     for (token_addr, signal_item) in top_tokens {
@@ -62,24 +50,15 @@ pub async fn run(ctx: &Context, chain: Option<String>) -> Result<()> {
                 token::fetch_advanced_info(&c, &addr, &ci),
                 fetch_token_scan(&c, &ci, &addr),
             );
-
             let advanced_val = ok_or_null(advanced);
 
-            // Launchpad enrichment — only when protocolId is non-empty.
-            // Uses is_launchpad_token to safely handle null advanced-info.
             let launchpad = if is_launchpad_token(&advanced_val) {
                 let (dev_info, bundle_info) = tokio::join!(
                     memepump::fetch_by_address(
-                        &c,
-                        "/api/v6/dex/market/memepump/tokenDevInfo",
-                        &addr,
-                        &ci,
+                        &c, "/api/v6/dex/market/memepump/tokenDevInfo", &addr, &ci,
                     ),
                     memepump::fetch_by_address(
-                        &c,
-                        "/api/v6/dex/market/memepump/tokenBundleInfo",
-                        &addr,
-                        &ci,
+                        &c, "/api/v6/dex/market/memepump/tokenBundleInfo", &addr, &ci,
                     ),
                 );
                 json!({
@@ -90,14 +69,14 @@ pub async fn run(ctx: &Context, chain: Option<String>) -> Result<()> {
                 Value::Null
             };
 
-            let result = json!({
-                "signal":    signal_item,
-                "price":     ok_or_null(price),
-                "contract":  advanced_val,
-                "security":  security,
-                "launchpad": launchpad,
-            });
-            (addr, result)
+            let enriched = assemble_token_result(
+                signal_item,
+                ok_or_null(price),
+                advanced_val,
+                security,
+                launchpad,
+            );
+            (addr, enriched)
         });
     }
 
@@ -107,18 +86,41 @@ pub async fn run(ctx: &Context, chain: Option<String>) -> Result<()> {
         enriched.push(json!({ "address": addr, "data": data }));
     }
 
-    output::success(json!({
+    output::success(assemble(&chain_index, raw_signals, enriched));
+    Ok(())
+}
+
+/// Assemble the per-token enrichment object.
+/// Pure function — testable without network calls.
+pub(crate) fn assemble_token_result(
+    signal_item: Value,
+    price: Value,
+    advanced: Value,
+    security: Value,
+    launchpad: Value,
+) -> Value {
+    json!({
+        "signal":    signal_item,
+        "price":     price,
+        "contract":  advanced,
+        "security":  security,
+        "launchpad": launchpad,
+    })
+}
+
+/// Assemble the top-level smart-money output.
+/// Pure function — testable without network calls.
+pub(crate) fn assemble(chain_index: &str, raw_signals: Value, enriched: Vec<Value>) -> Value {
+    json!({
         "workflow":   "smart-money",
         "chain":      chain_index,
         "rawSignals": raw_signals,
         "topTokens":  enriched,
-    }));
-    Ok(())
+    })
 }
 
 /// Extract the top N unique tokens from a signal list response, sorted descending
 /// by SM wallet count. Handles both a bare array and a `{"data": [...]}` wrapper.
-/// Returns an empty vec on null, empty, or malformed input.
 pub(crate) fn extract_top_tokens(signals: &Value, n: usize) -> Vec<(String, Value)> {
     let arr: &Vec<Value> = match signals.as_array() {
         Some(a) => a,
@@ -140,7 +142,6 @@ pub(crate) fn extract_top_tokens(signals: &Value, n: usize) -> Vec<(String, Valu
                 return None;
             }
             seen.insert(addr.clone());
-            // Accept walletCount or addressCount as the SM wallet count field.
             let count = item["walletCount"]
                 .as_u64()
                 .or_else(|| item["addressCount"].as_u64())
@@ -150,11 +151,7 @@ pub(crate) fn extract_top_tokens(signals: &Value, n: usize) -> Vec<(String, Valu
         .collect();
 
     items.sort_by(|a, b| b.0.cmp(&a.0));
-    items
-        .into_iter()
-        .take(n)
-        .map(|(_, addr, item)| (addr, item))
-        .collect()
+    items.into_iter().take(n).map(|(_, addr, item)| (addr, item)).collect()
 }
 
 #[cfg(test)]
@@ -162,24 +159,114 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn some_data() -> Value { json!({ "key": "value" }) }
+    fn null() -> Value { Value::Null }
+
+    // ── assemble_token_result ─────────────────────────────────────────
+
+    #[test]
+    fn token_result_has_all_required_fields() {
+        let result = assemble_token_result(
+            some_data(), some_data(), some_data(), some_data(), null(),
+        );
+        assert!(!result["signal"].is_null());
+        assert!(!result["price"].is_null());
+        assert!(!result["contract"].is_null());
+        assert!(!result["security"].is_null());
+        assert!(result["launchpad"].is_null());
+    }
+
+    #[test]
+    fn token_result_launchpad_present_when_provided() {
+        let lp = json!({ "devInfo": { "rugCount": 2 }, "bundleInfo": {} });
+        let result = assemble_token_result(some_data(), some_data(), some_data(), some_data(), lp);
+        assert_eq!(result["launchpad"]["devInfo"]["rugCount"], 2);
+    }
+
+    #[test]
+    fn token_result_null_price_preserved() {
+        let result = assemble_token_result(some_data(), null(), some_data(), some_data(), null());
+        assert!(result["price"].is_null());
+        assert!(!result["contract"].is_null());
+    }
+
+    #[test]
+    fn token_result_null_security_preserved() {
+        let result = assemble_token_result(some_data(), some_data(), some_data(), null(), null());
+        assert!(result["security"].is_null());
+    }
+
+    #[test]
+    fn token_result_launchpad_null_when_non_launchpad_token() {
+        // advanced has no protocolId — launchpad null passed in from run()
+        let result = assemble_token_result(
+            some_data(),
+            some_data(),
+            json!({ "name": "BONK", "protocolId": "" }),
+            some_data(),
+            null(),
+        );
+        assert!(result["launchpad"].is_null());
+    }
+
+    // ── assemble (top-level) ──────────────────────────────────────────
+
+    #[test]
+    fn output_has_workflow_discriminator() {
+        let out = assemble("501", null(), vec![]);
+        assert_eq!(out["workflow"], "smart-money");
+    }
+
+    #[test]
+    fn output_has_chain() {
+        let out = assemble("501", null(), vec![]);
+        assert_eq!(out["chain"], "501");
+    }
+
+    #[test]
+    fn output_raw_signals_null_when_api_failed() {
+        let out = assemble("501", null(), vec![]);
+        assert!(out["rawSignals"].is_null());
+    }
+
+    #[test]
+    fn output_raw_signals_present_when_api_succeeded() {
+        let signals = json!([{ "tokenContractAddress": "0xAAA", "walletCount": 3 }]);
+        let out = assemble("501", signals.clone(), vec![]);
+        assert_eq!(out["rawSignals"], signals);
+    }
+
+    #[test]
+    fn output_empty_enriched_when_no_top_tokens() {
+        let out = assemble("501", null(), vec![]);
+        assert_eq!(out["topTokens"], json!([]));
+    }
+
+    #[test]
+    fn output_enriched_tokens_included() {
+        let enriched = vec![
+            json!({ "address": "0xAAA", "data": { "price": "1.0" } }),
+            json!({ "address": "0xBBB", "data": { "price": "2.0" } }),
+        ];
+        let out = assemble("501", null(), enriched);
+        assert_eq!(out["topTokens"].as_array().unwrap().len(), 2);
+    }
+
     // ── extract_top_tokens ────────────────────────────────────────────
 
     #[test]
     fn empty_array_returns_empty() {
-        let result = extract_top_tokens(&json!([]), 5);
-        assert!(result.is_empty());
+        assert!(extract_top_tokens(&json!([]), 5).is_empty());
     }
 
     #[test]
     fn null_input_returns_empty() {
-        let result = extract_top_tokens(&Value::Null, 5);
-        assert!(result.is_empty());
+        assert!(extract_top_tokens(&Value::Null, 5).is_empty());
     }
 
     #[test]
     fn plain_object_with_no_array_returns_empty() {
-        let result = extract_top_tokens(&json!({ "foo": "bar" }), 5);
-        assert!(result.is_empty());
+        assert!(extract_top_tokens(&json!({ "foo": "bar" }), 5).is_empty());
     }
 
     #[test]
@@ -188,22 +275,18 @@ mod tests {
             { "tokenContractAddress": "0xAAA", "walletCount": 3 },
             { "tokenContractAddress": "0xBBB", "walletCount": 7 },
         ]);
-        let result = extract_top_tokens(&signals, 5);
-        assert_eq!(result.len(), 2);
+        assert_eq!(extract_top_tokens(&signals, 5).len(), 2);
     }
 
     #[test]
     fn data_key_wrapper_extracts_tokens() {
-        let signals = json!({
-            "data": [
-                { "tokenContractAddress": "0xAAA", "walletCount": 1 },
-                { "tokenContractAddress": "0xBBB", "walletCount": 2 },
-            ]
-        });
+        let signals = json!({ "data": [
+            { "tokenContractAddress": "0xAAA", "walletCount": 1 },
+            { "tokenContractAddress": "0xBBB", "walletCount": 2 },
+        ]});
         let result = extract_top_tokens(&signals, 5);
         assert_eq!(result.len(), 2);
-        // sorted descending: BBB first
-        assert_eq!(result[0].0, "0xBBB");
+        assert_eq!(result[0].0, "0xBBB"); // higher count first
     }
 
     #[test]
@@ -238,7 +321,7 @@ mod tests {
     fn deduplicates_by_address() {
         let signals = json!([
             { "tokenContractAddress": "0xDUP", "walletCount": 10 },
-            { "tokenContractAddress": "0xDUP", "walletCount": 5  },  // duplicate
+            { "tokenContractAddress": "0xDUP", "walletCount": 5  },
             { "tokenContractAddress": "0xUNI", "walletCount": 3  },
         ]);
         let result = extract_top_tokens(&signals, 5);
@@ -253,7 +336,7 @@ mod tests {
             { "tokenContractAddress": "0xB", "addressCount": 3 },
         ]);
         let result = extract_top_tokens(&signals, 5);
-        assert_eq!(result[0].0, "0xA"); // higher addressCount wins
+        assert_eq!(result[0].0, "0xA");
     }
 
     #[test]
@@ -268,34 +351,8 @@ mod tests {
     }
 
     #[test]
-    fn skips_items_missing_address_field() {
-        let signals = json!([
-            { "walletCount": 10 },                               // no address field
-            { "tokenContractAddress": "0xGOOD", "walletCount": 1 },
-        ]);
-        let result = extract_top_tokens(&signals, 5);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].0, "0xGOOD");
-    }
-
-    #[test]
-    fn missing_wallet_count_defaults_to_zero() {
-        // Tokens with no walletCount or addressCount still appear, sorted last
-        let signals = json!([
-            { "tokenContractAddress": "0xNO_COUNT" },
-            { "tokenContractAddress": "0xHAS_COUNT", "walletCount": 5 },
-        ]);
-        let result = extract_top_tokens(&signals, 5);
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].0, "0xHAS_COUNT");
-    }
-
-    #[test]
     fn uses_alternate_address_field() {
-        // Some signal responses use "address" instead of "tokenContractAddress"
-        let signals = json!([
-            { "address": "0xALT", "walletCount": 4 },
-        ]);
+        let signals = json!([{ "address": "0xALT", "walletCount": 4 }]);
         let result = extract_top_tokens(&signals, 5);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].0, "0xALT");

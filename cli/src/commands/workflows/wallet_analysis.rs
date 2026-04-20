@@ -1,10 +1,11 @@
 /// W5 — Wallet Analysis
 ///
 /// Step 1 (parallel): portfolio overview 7d + 30d + all balances
+///   partial failures: field null, rest continues (no "all fail → error" rule in PRD for W5)
 /// Step 2 (sequential): recent token-level PnL
-/// Step 3 (sequential): most recent trades via tracker activities
+/// Step 3 (sequential): recent on-chain activity via tracker
 use anyhow::Result;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::chains;
 use crate::commands::{market, portfolio, tracker};
@@ -28,41 +29,167 @@ pub async fn run(ctx: &Context, address: &str, chain: Option<String>) -> Result<
         portfolio::fetch_all_balances(&client, address, &chain_index, None, None),
     );
 
-    // ── Step 2: per-token PnL (sequential) ──────────────────────────
+    // ── Step 2: per-token PnL (sequential) ───────────────────────────
     let recent_pnl = ok_or_null(
         market::fetch_portfolio_recent_pnl(&client, &chain_index, address, None, None).await,
     );
 
-    // ── Step 3: recent on-chain activity (sequential) ────────────────
+    // ── Step 3: recent on-chain activity (sequential) ─────────────────
     let activities = ok_or_null(
         tracker::fetch_activities(
-            &client,
-            "multi_address",
-            Some(address),
-            None,
-            Some(&chain_index),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &client, "multi_address", Some(address),
+            None, Some(&chain_index),
+            None, None, None, None, None, None, None,
         )
         .await,
     );
 
-    output::success(json!({
+    output::success(assemble(
+        address,
+        &chain_index,
+        ok_or_null(overview_7d),
+        ok_or_null(overview_30d),
+        ok_or_null(balances),
+        recent_pnl,
+        activities,
+    ));
+    Ok(())
+}
+
+/// Assemble wallet-analysis output from pre-fetched data.
+/// Pure function — testable without network calls.
+pub(crate) fn assemble(
+    address: &str,
+    chain_index: &str,
+    overview_7d: Value,
+    overview_30d: Value,
+    balances: Value,
+    recent_pnl: Value,
+    activities: Value,
+) -> Value {
+    json!({
         "workflow": "wallet-analysis",
         "address":  address,
         "chain":    chain_index,
         "performance": {
-            "7d":  ok_or_null(overview_7d),
-            "30d": ok_or_null(overview_30d),
+            "7d":  overview_7d,
+            "30d": overview_30d,
         },
-        "balances":    ok_or_null(balances),
-        "recentPnl":   recent_pnl,
-        "activities":  activities,
-    }));
-    Ok(())
+        "balances":   balances,
+        "recentPnl":  recent_pnl,
+        "activities": activities,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn some_data() -> Value { json!({ "pnl": "100" }) }
+    fn null() -> Value { Value::Null }
+
+    fn full_assemble(
+        overview_7d: Value,
+        overview_30d: Value,
+        balances: Value,
+        recent_pnl: Value,
+        activities: Value,
+    ) -> Value {
+        assemble("0xWALLET", "501", overview_7d, overview_30d, balances, recent_pnl, activities)
+    }
+
+    // ── Output structure ──────────────────────────────────────────────
+
+    #[test]
+    fn output_has_workflow_discriminator() {
+        let out = full_assemble(null(), null(), null(), null(), null());
+        assert_eq!(out["workflow"], "wallet-analysis");
+    }
+
+    #[test]
+    fn output_has_address_and_chain() {
+        let out = full_assemble(null(), null(), null(), null(), null());
+        assert_eq!(out["address"], "0xWALLET");
+        assert_eq!(out["chain"], "501");
+    }
+
+    #[test]
+    fn output_has_performance_nested_under_7d_and_30d() {
+        let out = full_assemble(some_data(), some_data(), null(), null(), null());
+        assert!(!out["performance"]["7d"].is_null());
+        assert!(!out["performance"]["30d"].is_null());
+    }
+
+    #[test]
+    fn output_has_balances_recent_pnl_activities() {
+        let out = full_assemble(null(), null(), some_data(), some_data(), some_data());
+        assert!(!out["balances"].is_null());
+        assert!(!out["recentPnl"].is_null());
+        assert!(!out["activities"].is_null());
+    }
+
+    // ── PRD: partial failures → null fields, rest continues ──────────
+
+    #[test]
+    fn overview_7d_null_others_present() {
+        let out = full_assemble(null(), some_data(), some_data(), some_data(), some_data());
+        assert!(out["performance"]["7d"].is_null());
+        assert!(!out["performance"]["30d"].is_null());
+    }
+
+    #[test]
+    fn overview_30d_null_others_present() {
+        let out = full_assemble(some_data(), null(), some_data(), some_data(), some_data());
+        assert!(out["performance"]["30d"].is_null());
+        assert!(!out["performance"]["7d"].is_null());
+    }
+
+    #[test]
+    fn balances_null_other_steps_still_present() {
+        let out = full_assemble(some_data(), some_data(), null(), some_data(), some_data());
+        assert!(out["balances"].is_null());
+        assert!(!out["recentPnl"].is_null());
+        assert!(!out["activities"].is_null());
+    }
+
+    #[test]
+    fn recent_pnl_null_activities_still_present() {
+        let out = full_assemble(some_data(), some_data(), some_data(), null(), some_data());
+        assert!(out["recentPnl"].is_null());
+        assert!(!out["activities"].is_null());
+    }
+
+    #[test]
+    fn activities_null_pnl_still_present() {
+        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), null());
+        assert!(out["activities"].is_null());
+        assert!(!out["recentPnl"].is_null());
+    }
+
+    #[test]
+    fn all_null_still_returns_ok_not_error() {
+        // W5 has no "all fail → error" rule in the PRD — partial data is still useful
+        let out = full_assemble(null(), null(), null(), null(), null());
+        assert_eq!(out["workflow"], "wallet-analysis");
+        assert!(out["performance"]["7d"].is_null());
+        assert!(out["balances"].is_null());
+        assert!(out["activities"].is_null());
+    }
+
+    // ── Data values preserved exactly ─────────────────────────────────
+
+    #[test]
+    fn overview_data_preserved() {
+        let data = json!({ "winRate": "75%", "pnl": "1200" });
+        let out = full_assemble(data.clone(), null(), null(), null(), null());
+        assert_eq!(out["performance"]["7d"]["winRate"], "75%");
+    }
+
+    #[test]
+    fn activities_data_preserved() {
+        let acts = json!([{ "action": "buy", "token": "BONK", "amount": "500" }]);
+        let out = full_assemble(null(), null(), null(), null(), acts);
+        assert_eq!(out["activities"][0]["action"], "buy");
+    }
 }
