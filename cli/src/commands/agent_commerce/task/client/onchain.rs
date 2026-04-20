@@ -357,13 +357,13 @@ pub async fn handle_agree_refund(
     api: &str,
     job_id: &str,
 ) -> Result<()> {
-    let (account_id, address) = signing::resolve_wallet(None, None)?;
+    let (account_id, address, agent_id) = signing::resolve_wallet_and_agent_for_task(http, api, job_id).await?;
     let endpoint  = format!("{api}/priapi/v1/aieco/task/{job_id}/agreeRefund");
     let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
     let body = serde_json::json!({});
 
-    let result = signing::task_sign_and_broadcast(
-        http, &endpoint, &body, &broadcast, &account_id, &address,
+    let result = signing::task_sign_and_broadcast_with_headers(
+        http, &endpoint, &body, &broadcast, &account_id, &address, &agent_id,
     ).await?;
 
     println!("✓ 已同意退款，任务 {job_id} 款项将退回买家");
