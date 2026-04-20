@@ -14,6 +14,12 @@ pub mod tokens {
     pub const ETH_WETH: &str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
     // Wrapped SOL on Solana (for market data; swaps use native address)
     pub const SOL_WSOL: &str = "So11111111111111111111111111111111111111112";
+    // BONK on Solana — high-volume, non-launchpad token
+    pub const SOL_BONK: &str = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263";
+    // USDC on Solana
+    pub const SOL_USDC: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+    // Ethereum vitalik.eth — well-known wallet for portfolio/analysis tests
+    pub const ETH_VITALIK: &str = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
 }
 
 /// Build a `Command` for the `onchainos` binary.
