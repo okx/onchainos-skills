@@ -1,16 +1,31 @@
 //! Client 端任务命令 — 枚举定义 + 路由分发
 //!
-//! 业务实现按请求类型拆分：
-//! - `query.rs`     — 只读查询（无签名）
-//! - `onchain.rs`   — 签名写操作（单签/双签）
-//! - `dispute.rs`   — 仲裁相关
+//! 按买家动作划分文件：
+//! - `create.rs`       — 发布任务（场景1）
+//! - `recommend.rs`    — 获取推荐卖家（场景1）
+//! - `negotiate.rs`    — 协商（场景2，Agent 子 session）
+//! - `accept.rs`       — 确认接单 + Fund（场景3）
+//! - `complete.rs`     — 确认完成（场景5）
+//! - `refuse.rs`       — 拒绝交付物（场景6）
+//! - `evidence.rs`     — 提交证据（场景8）
+//! - `close.rs`        — 关单（场景7）+ 领取仲裁奖金
+//! - `changepublic.rs` — 设为 Public（场景8）
+//! - `judge.rs`        — 评价卖家（场景9，身份系统 CLI）
 //!
-//! 协商（negotiate）在子 session 中由 Agent 自然语言完成，
-//! 通信模块自动转发，不需要 CLI 命令。
+//! 通用：
+//! - `query.rs`        — 只读查询（status、list、pay）
 
-mod dispute;
+mod accept;
+mod changepublic;
+mod close;
+mod complete;
+mod create;
+mod evidence;
+mod judge;
+mod negotiate;
 mod query;
-mod onchain;
+mod recommend;
+mod refuse;
 
 use anyhow::Result;
 use clap::Subcommand;
@@ -82,27 +97,6 @@ pub enum TaskCommand {
         #[arg(long)]
         reason: String,
     },
-    /// Provider confirms on-chain acceptance (apply + single-sign)
-    Confirm {
-        job_id: String,
-        /// Negotiated tokenAmount (0 = accept original price, >0 = counter-offer)
-        #[arg(long = "token-amount", default_value = "0")]
-        token_amount: String,
-        /// Token symbol, e.g. USDT or USDG (default: read from task)
-        #[arg(long = "token-symbol")]
-        token_symbol: Option<String>,
-        /// Provider agent ID (fallback: env AGENT_ID)
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-    },
-    /// Provider submits deliverable
-    Deliver {
-        job_id: String,
-        #[arg(long)]
-        file: String,
-        #[arg(long)]
-        message: Option<String>,
-    },
     /// Client confirms task complete and releases payment
     Complete {
         job_id: String,
@@ -121,10 +115,6 @@ pub enum TaskCommand {
     SetPublic {
         job_id: String,
     },
-    /// Provider applies for a public task
-    Apply {
-        job_id: String,
-    },
     /// Client manually transfers payment to provider (non-escrow mode)
     Pay {
         job_id: String,
@@ -133,8 +123,8 @@ pub enum TaskCommand {
     Claim {
         job_id: String,
     },
-    /// Client agrees to refund after dispute
-    AgreeRefund {
+    /// Rate the provider after task completion
+    Judge {
         job_id: String,
     },
     /// Initialize config
@@ -156,12 +146,6 @@ pub enum ConfigAction {
 
 #[derive(Subcommand)]
 pub enum DisputeCommand {
-    /// Provider raises a dispute after client rejects deliverable
-    Raise {
-        job_id: String,
-        #[arg(long)]
-        reason: String,
-    },
     /// Either party submits evidence during dispute
     Evidence {
         job_id: String,
@@ -172,23 +156,9 @@ pub enum DisputeCommand {
         #[arg(long = "type")]
         evidence_type: Option<String>,
     },
-    /// Evaluator retrieves dispute details
+    /// Retrieves dispute details
     Info {
         dispute_id: String,
-    },
-    /// Evaluator votes on dispute outcome
-    Vote {
-        dispute_id: String,
-        #[arg(long)]
-        side: u8,
-        #[arg(long)]
-        reason: String,
-    },
-    /// Either party appeals the arbitration result
-    Appeal {
-        job_id: String,
-        #[arg(long)]
-        reason: String,
     },
 }
 
@@ -199,9 +169,27 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
     let http = reqwest::Client::new();
 
     match cmd {
-        // ── 只读查询 → query.rs ──────────────────────────────────────
+        // ── 买家动作 ─────────────────────────────────────────────
+        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title } =>
+            create::handle_create(&http, &api, description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title).await,
         TaskCommand::Recommend { job_id } =>
-            query::handle_recommend(&http, &api, &job_id).await,
+            recommend::handle_recommend(&http, &api, &job_id).await,
+        TaskCommand::ConfirmAccept { job_id, provider, payment_mode } =>
+            accept::handle_confirm_accept(&http, &api, &job_id, &provider, &payment_mode).await,
+        TaskCommand::Complete { job_id } =>
+            complete::handle_complete(&http, &api, &job_id).await,
+        TaskCommand::Reject { job_id, reason } =>
+            refuse::handle_reject(&http, &api, &job_id, &reason).await,
+        TaskCommand::Close { job_id } =>
+            close::handle_close(&http, &api, &job_id).await,
+        TaskCommand::SetPublic { job_id } =>
+            changepublic::handle_set_public(&http, &api, &job_id).await,
+        TaskCommand::Claim { job_id } =>
+            close::handle_claim(&http, &api, &job_id).await,
+        TaskCommand::Judge { job_id } =>
+            judge::handle_judge(&http, &api, &job_id).await,
+
+        // ── 只读查询 ─────────────────────────────────────────────
         TaskCommand::Status { job_id } =>
             query::handle_status(&http, &api, &job_id).await,
         TaskCommand::List { role, status, page, limit } =>
@@ -209,36 +197,11 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::Pay { job_id } =>
             query::handle_pay(&http, &api, &job_id).await,
 
-        // ── 签名写操作 → write.rs ────────────────────────────────────
-        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title } =>
-            onchain::handle_create(&http, &api, description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title).await,
-        TaskCommand::ConfirmAccept { job_id, provider, payment_mode } =>
-            onchain::handle_confirm_accept(&http, &api, &job_id, &provider, &payment_mode).await,
-        TaskCommand::Complete { job_id } =>
-            onchain::handle_complete(&http, &api, &job_id).await,
-        TaskCommand::Reject { job_id, reason } =>
-            onchain::handle_reject(&http, &api, &job_id, &reason).await,
-        TaskCommand::Close { job_id } =>
-            onchain::handle_close(&http, &api, &job_id).await,
-        TaskCommand::SetPublic { job_id } =>
-            onchain::handle_set_public(&http, &api, &job_id).await,
-        TaskCommand::Claim { job_id } =>
-            onchain::handle_claim(&http, &api, &job_id).await,
-        TaskCommand::AgreeRefund { job_id } =>
-            onchain::handle_agree_refund(&http, &api, &job_id).await,
-        TaskCommand::Apply { job_id } =>
-            onchain::handle_apply(&http, &api, &job_id).await,
-
-        // ── 占位实现 ─────────────────────────────────────────────────
-        // 【待确认】Scene 3 C8: Client 拒绝 Provider 接单申请
+        // ── 占位实现 ─────────────────────────────────────────────
         TaskCommand::RejectApply { job_id, provider, reason } => {
             println!("[TODO] reject-apply {job_id} provider={provider} reason={reason} — 待确认需求");
             Ok(())
         }
-        TaskCommand::Confirm { job_id, token_amount, token_symbol, agent_id } =>
-            onchain::handle_confirm(&http, &api, &job_id, &token_amount, token_symbol.as_deref(), agent_id.as_deref()).await,
-        TaskCommand::Deliver { job_id, file, message } =>
-            onchain::handle_deliver(&http, &api, &job_id, &file, message.as_deref()).await,
         TaskCommand::Config { action } => {
             match action {
                 ConfigAction::Init => println!("[stub] task config init"),
@@ -249,6 +212,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
     }
 }
 
-pub async fn run_dispute(cmd: DisputeCommand, ctx: &Context) -> Result<()> {
-    dispute::run_dispute(cmd, ctx).await
+pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
+    evidence::run_evidence(cmd).await
 }

@@ -57,23 +57,6 @@ pub enum TaskSystemCommand {
         #[arg(long)] reason: String,
     },
 
-    /// Provider confirms on-chain acceptance (apply + single-sign)
-    Confirm {
-        job_id: String,
-        /// Negotiated tokenAmount (0 = accept original price, >0 = counter-offer)
-        #[arg(long = "token-amount", default_value = "0")] token_amount: String,
-        /// Token symbol, e.g. USDT or USDG (default: read from task)
-        #[arg(long = "token-symbol")] token_symbol: Option<String>,
-        /// Provider agent ID (fallback: env AGENT_ID)
-        #[arg(long = "agent-id")] agent_id: Option<String>,
-    },
-
-    /// Provider submits deliverable
-    Deliver {
-        job_id: String,
-        #[arg(long)] file: String,
-        #[arg(long)] message: Option<String>,
-    },
 
     /// Client confirms task complete and releases payment
     Complete { job_id: String },
@@ -91,18 +74,12 @@ pub enum TaskSystemCommand {
     #[command(name = "set-public")]
     SetPublic { job_id: String },
 
-    /// Provider applies for a public task
-    Apply { job_id: String },
 
     /// Client manually transfers payment to provider (non-escrow mode)
     Pay { job_id: String },
 
     /// Client claims refund/reward after arbitration
     Claim { job_id: String },
-
-    /// Client agrees to refund after dispute
-    #[command(name = "agree-refund")]
-    AgreeRefund { job_id: String },
 
     /// Task config: init | show
     Config {
@@ -112,7 +89,7 @@ pub enum TaskSystemCommand {
 
     // ── Dispute (kept as sub-group) ──────────────────────────────────────────
 
-    /// Dispute actions: raise, evidence, info, vote, appeal
+    /// Dispute actions: evidence, info
     #[command(subcommand)]
     Dispute(client::DisputeCommand),
 
@@ -156,11 +133,6 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
         TaskSystemCommand::RejectApply { job_id, provider, reason } =>
             client::run_task(T::RejectApply { job_id, provider, reason }, ctx).await,
 
-        TaskSystemCommand::Confirm { job_id, token_amount, token_symbol, agent_id } =>
-            client::run_task(T::Confirm { job_id, token_amount, token_symbol, agent_id }, ctx).await,
-
-        TaskSystemCommand::Deliver { job_id, file, message } =>
-            client::run_task(T::Deliver { job_id, file, message }, ctx).await,
 
         TaskSystemCommand::Complete { job_id } =>
             client::run_task(T::Complete { job_id }, ctx).await,
@@ -174,8 +146,6 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
         TaskSystemCommand::SetPublic { job_id } =>
             client::run_task(T::SetPublic { job_id }, ctx).await,
 
-        TaskSystemCommand::Apply { job_id } =>
-            client::run_task(T::Apply { job_id }, ctx).await,
 
         TaskSystemCommand::Pay { job_id } =>
             client::run_task(T::Pay { job_id }, ctx).await,
@@ -183,8 +153,6 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
         TaskSystemCommand::Claim { job_id } =>
             client::run_task(T::Claim { job_id }, ctx).await,
 
-        TaskSystemCommand::AgreeRefund { job_id } =>
-            client::run_task(T::AgreeRefund { job_id }, ctx).await,
 
         TaskSystemCommand::Config { action } =>
             client::run_task(T::Config { action }, ctx).await,
