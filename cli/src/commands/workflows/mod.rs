@@ -1,0 +1,99 @@
+pub mod new_tokens;
+pub mod portfolio;
+pub mod smart_money;
+pub mod token_research;
+pub mod wallet_analysis;
+
+use anyhow::Result;
+use clap::Subcommand;
+use serde_json::Value;
+
+use super::Context;
+use crate::client::ApiClient;
+
+#[derive(Subcommand)]
+pub enum WorkflowCommand {
+    /// W1: Full token due diligence — price, security, holders, signals, optional launchpad
+    TokenResearch {
+        /// Token contract address
+        #[arg(long)]
+        address: String,
+        /// Chain (e.g. solana, ethereum, base). Auto-detects from global --chain if omitted.
+        #[arg(long)]
+        chain: Option<String>,
+    },
+
+    /// W3: Smart money signals — aggregate signals by token, run per-token due diligence
+    SmartMoney {
+        /// Chain (defaults to solana)
+        #[arg(long)]
+        chain: Option<String>,
+    },
+
+    /// W4: New token screening — MIGRATED launchpad scan + safety enrichment for top 10
+    NewTokens {
+        /// Chain (defaults to solana)
+        #[arg(long)]
+        chain: Option<String>,
+        /// Launchpad stage: MIGRATED (default) or MIGRATING
+        #[arg(long)]
+        stage: Option<String>,
+    },
+
+    /// W5: Wallet analysis — 7d/30d performance, trading behaviour, recent activity
+    WalletAnalysis {
+        /// Wallet address to analyse
+        #[arg(long)]
+        address: String,
+        /// Chain (defaults to solana)
+        #[arg(long)]
+        chain: Option<String>,
+    },
+
+    /// W7: Portfolio check — balances, total value, 30d PnL overview
+    Portfolio {
+        /// Wallet address
+        #[arg(long)]
+        address: String,
+        /// Comma-separated chains (defaults to all supported)
+        #[arg(long)]
+        chains: Option<String>,
+    },
+}
+
+pub async fn execute(ctx: &Context, cmd: WorkflowCommand) -> Result<()> {
+    match cmd {
+        WorkflowCommand::TokenResearch { address, chain } => {
+            token_research::run(ctx, &address, chain).await
+        }
+        WorkflowCommand::SmartMoney { chain } => smart_money::run(ctx, chain).await,
+        WorkflowCommand::NewTokens { chain, stage } => new_tokens::run(ctx, chain, stage).await,
+        WorkflowCommand::WalletAnalysis { address, chain } => {
+            wallet_analysis::run(ctx, &address, chain).await
+        }
+        WorkflowCommand::Portfolio { address, chains } => {
+            portfolio::run(ctx, &address, chains).await
+        }
+    }
+}
+
+/// Inline single-token security scan — no public function in security module.
+pub async fn fetch_token_scan(
+    client: &ApiClient,
+    chain_index: &str,
+    address: &str,
+) -> Value {
+    let body = serde_json::json!({
+        "source": "onchain_os_cli",
+        "tokenList": [{"chainId": chain_index, "contractAddress": address}]
+    });
+    client
+        .post("/api/v6/security/token-scan", &body)
+        .await
+        .unwrap_or(Value::Null)
+}
+
+/// Convert a Result<Value> to Value, replacing errors with null.
+pub fn ok_or_null(r: Result<Value>) -> Value {
+    r.unwrap_or(Value::Null)
+}
