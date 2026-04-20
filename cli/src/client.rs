@@ -839,19 +839,7 @@ impl ApiClient {
         }
 
         if let Some(cache) = PaymentCache::load() {
-            if !cache.is_expired(CONFIG_TTL_SECS) {
-                let mut state = self.payment_state();
-                state.endpoints = cache
-                    .endpoints
-                    .iter()
-                    .filter_map(|(p, t)| {
-                        PaymentTier::from_server_str(t).map(|tier| (p.clone(), tier))
-                    })
-                    .collect();
-                state.accepts = cache.accepts;
-                state.basic_charging = cache.basic_charging;
-                state.premium_charging = cache.premium_charging;
-                state.config_loaded = true;
+            if self.restore_from_cache(cache) {
                 return;
             }
         }
@@ -874,6 +862,28 @@ impl ApiClient {
                 }
             }
         }
+    }
+
+    /// Seed in-memory state from a disk cache. Charging flags are always
+    /// restored (they track the last server response header, independent of
+    /// config TTL); `endpoints`/`accepts` are restored only when the cache
+    /// isn't expired. Returns `true` if the config portion was fresh enough
+    /// to skip the remote fetch.
+    fn restore_from_cache(&self, cache: PaymentCache) -> bool {
+        let mut state = self.payment_state();
+        state.basic_charging = cache.basic_charging;
+        state.premium_charging = cache.premium_charging;
+        if cache.is_expired(CONFIG_TTL_SECS) {
+            return false;
+        }
+        state.endpoints = cache
+            .endpoints
+            .into_iter()
+            .filter_map(|(p, t)| PaymentTier::from_server_str(&t).map(|tier| (p, tier)))
+            .collect();
+        state.accepts = cache.accepts;
+        state.config_loaded = true;
+        true
     }
 
     fn apply_config_response(&self, data: &Value) {
@@ -1061,7 +1071,7 @@ impl ApiClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{ApiClient, PaymentRequired, PaymentTier};
+    use super::{ApiClient, PaymentCache, PaymentRequired, PaymentTier};
     use serde_json::Value;
 
     /// Set AK credential env vars to dummy test values so ApiClient::new() succeeds.
@@ -1428,6 +1438,59 @@ mod tests {
         let data = serde_json::json!({});
         client.apply_config_response(&data);
         assert!(client.payment_state().endpoints.is_empty());
+    }
+
+    #[test]
+    fn restore_from_cache_preserves_charging_flags_when_expired() {
+        set_test_credentials();
+        let client = ApiClient::new(None).expect("client");
+        let cache = PaymentCache {
+            endpoints: [("/api/v6/dex/market/price".to_string(), "basic".to_string())]
+                .into_iter()
+                .collect(),
+            accepts: Some(serde_json::json!([{"scheme": "exact"}])),
+            basic_charging: true,
+            premium_charging: true,
+            // Stale enough to be expired at any sane TTL.
+            updated_at: 0,
+        };
+        let fresh = client.restore_from_cache(cache);
+        assert!(!fresh, "expired cache should not satisfy config freshness");
+        let state = client.payment_state();
+        // Charging flags survive.
+        assert!(state.basic_charging);
+        assert!(state.premium_charging);
+        // Config portion (endpoints/accepts) is left untouched so the fetch
+        // path below refreshes them from the server.
+        assert!(state.endpoints.is_empty());
+        assert!(state.accepts.is_none());
+        assert!(!state.config_loaded);
+    }
+
+    #[test]
+    fn restore_from_cache_loads_full_state_when_fresh() {
+        set_test_credentials();
+        let client = ApiClient::new(None).expect("client");
+        let cache = PaymentCache {
+            endpoints: [("/api/v6/dex/market/price".to_string(), "basic".to_string())]
+                .into_iter()
+                .collect(),
+            accepts: Some(serde_json::json!([{"scheme": "exact"}])),
+            basic_charging: true,
+            premium_charging: false,
+            updated_at: crate::payment_cache::now_secs(),
+        };
+        let fresh = client.restore_from_cache(cache);
+        assert!(fresh);
+        let state = client.payment_state();
+        assert!(state.basic_charging);
+        assert!(!state.premium_charging);
+        assert_eq!(
+            state.endpoints.get("/api/v6/dex/market/price").copied(),
+            Some(PaymentTier::Basic)
+        );
+        assert!(state.accepts.is_some());
+        assert!(state.config_loaded);
     }
 
     #[test]
