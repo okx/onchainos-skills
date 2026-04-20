@@ -9,7 +9,6 @@
 mod common;
 
 use common::{assert_ok_and_extract_data, onchainos, run_with_retry};
-use serde_json::Value;
 
 // ── well-known addresses used across tests ───────────────────────────────────
 
