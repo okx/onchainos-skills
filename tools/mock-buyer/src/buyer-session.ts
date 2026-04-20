@@ -157,18 +157,15 @@ export class BuyerSession {
       console.log(`[buyer][session] TASK_REFUSED confirmed job=${this.jobId}, waiting for seller decision`);
       this.step = 8; this.onStateChange?.(); return;
     }
-    if (type === "TASK_AGREEREFUND") {
-      console.log(`[buyer][session] TASK_AGREEREFUND job=${this.jobId}, refund received ✅`);
+    if (type === "TASK_REJECTED") {
+      const reason = String(payload.reason ?? "");
+      const isArb = Boolean(payload.arbitration);
+      console.log(`[buyer][session] TASK_REJECTED job=${this.jobId} arbitration=${isArb} reason=${reason}, refund received ✅`);
       this.step = 10; this.onStateChange?.(); return;
     }
     if (type === "TASK_DISPUTED") {
       console.log(`[buyer][session] TASK_DISPUTED job=${this.jobId}, arbitration started`);
       this.step = 9; this.onStateChange?.(); return;
-    }
-    if (type === "DISPUTE_RESOLVED") {
-      const winner = String(payload.winner ?? "?");
-      console.log(`[buyer][session] DISPUTE_RESOLVED job=${this.jobId} winner=${winner} ✅`);
-      this.step = 10; this.onStateChange?.(); return;
     }
   }
 }

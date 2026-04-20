@@ -323,6 +323,38 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
             sessionMode: "sub",
             reply: makeReply(convId),
           }));
+
+          // 子 session 处理完毕后，关键系统通知自动推送到主 session（由用户决策）
+          const PUSH_TO_MAIN = new Set(["TASK_REFUSED", "TASK_REJECTED", "TASK_DISPUTED"]);
+          if (PUSH_TO_MAIN.has(msgType) || (msgType === "TASK_COMPLETED" && (envelope.payload as any).arbitration)) {
+            const jobId = envelope.payload.jobId ?? "?";
+            let mainBody: string;
+            if (msgType === "TASK_REFUSED") {
+              mainBody = `[任务通知 - 需要你的决策]\n任务 ${jobId} 被买家拒绝（TASK_REFUSED）\n子 session 会话: ${convId}\n\n请选择：\n1. 发起仲裁 → 请告诉我理由，我会调用 task_relay 转发到子 session 执行\n2. 同意退款 → 我会调用 task_relay 转发到子 session 执行\n\n示例：\"帮我对 ${jobId} 发起仲裁，理由是交付物完全符合验收标准\"`;
+            } else if (msgType === "TASK_DISPUTED") {
+              mainBody = `[任务通知]\n任务 ${jobId} 已进入仲裁（TASK_DISPUTED），等待仲裁者裁决。\n子 session 会话: ${convId}`;
+            } else if (msgType === "TASK_REJECTED") {
+              mainBody = `[任务通知]\n任务 ${jobId} 已终止（TASK_REJECTED），资金已退还买家。\n子 session 会话: ${convId}`;
+            } else {
+              mainBody = `[任务通知]\n任务 ${jobId} 仲裁完成（卖家胜诉），资金已释放。\n子 session 会话: ${convId}`;
+            }
+            ctx.log?.info?.(`[ws-channel] 子 session 处理完毕，推送 ${msgType} 到主 session jobId=${jobId}`);
+            await enqueueDispatch("main", () => handleInboundMessage({
+              cfg: ctx.cfg,
+              accountId: account.accountId,
+              myAddr: account.walletAddr,
+              myAgentId: account.agentId,
+              systemPrompt: resolvedSystemPrompt,
+              envelope: {
+                ...envelope,
+                payload: { ...envelope.payload, type: "TASK_STATUS_NOTIFY", content: mainBody, llm: mainBody },
+              },
+              sessionMode: "main",
+              reply: (text) => {
+                ctx.log?.info?.(`[ws-channel] 主 session 收到 ${msgType} 通知后回复: ${text.slice(0, 200)}`);
+              },
+            }));
+          }
         } else {
           // 新 conv：存入 pending（带完整 envelope），通知 main session
           const existing = pendingConversations.get(convId);
@@ -755,7 +787,124 @@ function registerTools(api: OpenClawPluginApi): void {
     },
   }));
 
-  console.log("[ws-channel] 已注册 XMTP mock tools: xmtp_send, xmtp_get_pending, xmtp_accept, xmtp_close, xmtp_get_messages, xmtp_upload, xmtp_queue_status, xmtp_start_conversation, register_address, identity_register, identity_lookup");
+  // ── notify_main ──────────────────────────────────────────────────────────
+  // 子 session agent 调用此工具，将任务状态通知推送到主 session（由用户决策）
+  api.registerTool((_ctx) => ({
+    name: "notify_main",
+    label: "Notify Main Session",
+    description: "子 session 调用：将任务状态通知推送到主 session，由用户做决策。典型场景：收到 TASK_REFUSED 后通知主 session 用户选择仲裁或退款。",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        jobId: { type: "string", description: "任务 ID" },
+        conversationId: { type: "string", description: "当前子 session 的会话 ID" },
+        message: { type: "string", description: "推送给主 session 的通知内容（描述发生了什么、用户可选操作）" },
+      },
+      required: ["jobId", "conversationId", "message"],
+    },
+    async execute(_toolCallId: string, params: unknown) {
+      const p = params as { jobId: string; conversationId: string; message: string };
+      if (!activeCfg || !activeAccount) {
+        return toolResult({ error: "gateway 配置未就绪" });
+      }
+      const core = getRuntime() as any;
+      const route = core.channel.routing.resolveAgentRoute({
+        cfg: activeCfg,
+        channel: "ws-mock",
+        accountId: activeAccount.accountId,
+        peer: { kind: "direct", id: p.conversationId },
+      });
+      const notifyBody = `[子 session 任务通知 - 需要用户决策]\n${p.message}\n\njobId: ${p.jobId}\n子 session 会话: ${p.conversationId}\n\n用户做出决定后，调用 task_relay 工具将指令转发回子 session：\ntask_relay(conversationId="${p.conversationId}", instruction="<用户指令>")`;
+      try {
+        const notifyCtx = core.channel.reply.finalizeInboundContext({
+          Body: notifyBody, RawBody: notifyBody, CommandBody: notifyBody,
+          From: `ws-mock:sub-session`, To: `ws-mock:${activeAccount.walletAddr}`,
+          SessionKey: route.mainSessionKey,
+          AccountId: route.accountId,
+          ChatType: "direct",
+          SenderName: "task-subsession", SenderId: "task-subsession",
+          Provider: "ws-mock", Surface: "ws-mock",
+          MessageSid: `notify-main-${p.jobId}-${Date.now()}`,
+          Timestamp: Date.now(),
+          WasMentioned: true,
+          OriginatingChannel: "ws-mock",
+          OriginatingTo: `ws-mock:${activeAccount.walletAddr}`,
+          MsgType: "TASK_STATUS_NOTIFY",
+          ...(activeSystemPrompt ? { SystemPrompt: activeSystemPrompt } : {}),
+        });
+        await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+          ctx: notifyCtx,
+          cfg: activeCfg,
+          dispatcherOptions: {
+            deliver: async (payload: any) => {
+              if (payload.text) {
+                console.log(`[ws-channel] main session ack notify_main: ${payload.text.slice(0, 200)}`);
+              }
+            },
+          },
+        });
+        return toolResult({ status: "notified", jobId: p.jobId });
+      } catch (e) {
+        return toolResult({ error: String(e) });
+      }
+    },
+  }));
+
+  // ── task_relay ──────────────────────────────────────────────────────────────
+  // 主 session agent 调用此工具，将用户指令转发到子 session 执行
+  api.registerTool((_ctx) => ({
+    name: "task_relay",
+    label: "Task Relay to Sub-Session",
+    description: "主 session 调用：将用户指令转发到指定任务的子 session 执行。用户在主 session 做出决策（如发起仲裁或同意退款）后，调用此工具将指令路由到子 session，由子 session 执行对应的链上操作。",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        conversationId: { type: "string", description: "目标子 session 的会话 ID (从 notify_main 通知中获取)" },
+        instruction: { type: "string", description: "用户指令（如：发起仲裁，理由：交付物符合验收标准）" },
+      },
+      required: ["conversationId", "instruction"],
+    },
+    async execute(_toolCallId: string, params: unknown) {
+      const p = params as { conversationId: string; instruction: string };
+      if (!activeCfg || !activeAccount) {
+        return toolResult({ error: "gateway 配置未就绪" });
+      }
+
+      console.log(`[ws-channel] task_relay: dispatching to conv=${p.conversationId} instruction=${p.instruction.slice(0, 80)}`);
+
+      const client = getDefaultClient();
+      const replyFn = (text: string) => {
+        console.log(`[ws-channel] task_relay reply conv:${p.conversationId} content=${JSON.stringify(text.slice(0, 200))}`);
+        if (client) client.sendToConv(p.conversationId, { type: "REPLY", content: text });
+      };
+
+      try {
+        await handleInboundMessage({
+          cfg: activeCfg,
+          accountId: activeAccount.accountId,
+          myAddr: activeAccount.walletAddr,
+          myAgentId: activeAccount.agentId,
+          systemPrompt: activeSystemPrompt,
+          envelope: {
+            conversation_id: p.conversationId,
+            from: "main-session-user",
+            payload: {
+              type: "USER_INSTRUCTION",
+              content: `[用户指令] 你是 PROVIDER（卖家），按 provider.md 步骤 11 执行以下操作：${p.instruction}`,
+              jobId: "",
+            },
+          },
+          sessionMode: "sub",
+          reply: replyFn,
+        });
+        return toolResult({ status: "dispatched", conversationId: p.conversationId });
+      } catch (e) {
+        return toolResult({ error: String(e) });
+      }
+    },
+  }));
+
+  console.log("[ws-channel] 已注册 XMTP mock tools: xmtp_send, xmtp_get_pending, xmtp_accept, xmtp_close, xmtp_get_messages, xmtp_upload, xmtp_queue_status, xmtp_start_conversation, register_address, identity_register, identity_lookup, notify_main, task_relay");
 }
 
 const plugin = {

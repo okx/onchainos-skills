@@ -266,28 +266,33 @@ async function notifyCompleted(jobId: string, buyerCommAddr: string, buyerAgentI
   });
 }
 
-async function notifyAgreeRefund(jobId: string, buyerCommAddr: string, buyerAgentId: string,
-                                  sellerCommAddr: string, sellerAgentId: string) {
+async function notifyRejected(jobId: string, buyerCommAddr: string, buyerAgentId: string,
+                              sellerCommAddr: string, sellerAgentId: string, reason: string) {
   const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
-    type: "TASK_AGREEREFUND", jobId, sellerAgentId,
-    content: `系统通知：卖家 ${sellerAgentId} 同意退款（TASK_AGREEREFUND），任务 ${jobId} 资金已退还买家。`,
-    llm: `任务 ${jobId} 卖家同意退款（TASK_AGREEREFUND），资金已退还买家。任务结束。`,
+    type: "TASK_REJECTED", jobId, sellerAgentId, reason,
+    content: `系统通知：任务 ${jobId} 已终止（TASK_REJECTED），原因：${reason}。资金已退还买家。`,
+    llm: `[系统通知] 任务 ${jobId} 已终止（TASK_REJECTED），原因：${reason}。资金已退还买家。任务结束。`,
   });
 }
 
-async function notifyDisputeResolved(jobId: string, buyerCommAddr: string, buyerAgentId: string,
-                                      sellerCommAddr: string, sellerAgentId: string, winner: string) {
+async function notifyArbitrationResult(jobId: string, buyerCommAddr: string, buyerAgentId: string,
+                                        sellerCommAddr: string, sellerAgentId: string, winner: string) {
   const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
-  const winnerLabel = winner === "provider" ? `卖家 ${sellerAgentId}` : `买家 ${buyerAgentId}`;
   const evaluators = await lookupRoleAddrs("EVALUATOR");
-  await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...evaluators], {
-    type: "DISPUTE_RESOLVED", jobId, winner, sellerAgentId, buyerAgentId,
-    content: `系统通知：任务 ${jobId} 仲裁完成（DISPUTE_RESOLVED），${winnerLabel} 胜诉。${winner === "provider" ? "资金判给卖家。" : "资金已退还买家。"}`,
-    llm: winner === "provider"
-      ? `[Scene 11] 仲裁结果：卖家胜诉（DISPUTE_RESOLVED）。立即执行 \`onchainos agent claim ${jobId}\` 领取报酬。`
-      : `仲裁结果：买家胜诉（DISPUTE_RESOLVED），资金已退还买家。任务结束。`,
-  });
+  if (winner === "provider") {
+    await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...evaluators], {
+      type: "TASK_COMPLETED", jobId, sellerAgentId, buyerAgentId, arbitration: true,
+      content: `系统通知：任务 ${jobId} 仲裁完成，卖家 ${sellerAgentId} 胜诉（TASK_COMPLETED）。资金判给卖家。`,
+      llm: `[系统通知] 仲裁结果：卖家胜诉（TASK_COMPLETED），任务 ${jobId} 资金已释放给卖家。`,
+    });
+  } else {
+    await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...evaluators], {
+      type: "TASK_REJECTED", jobId, sellerAgentId, buyerAgentId, arbitration: true,
+      content: `系统通知：任务 ${jobId} 仲裁完成，买家 ${buyerAgentId} 胜诉（TASK_REJECTED）。资金已退还买家。`,
+      llm: `[系统通知] 仲裁结果：买家胜诉（TASK_REJECTED），任务 ${jobId} 资金已退还买家。任务结束。`,
+    });
+  }
 }
 
 // ── Route helpers ─────────────────────────────────────────────────────────────
@@ -611,7 +616,7 @@ const server = http.createServer(async (req, res) => {
     const { buyerAgentAddress: ba3, buyerAgentId: bi3, providerAgentId: pi3 } = t;
     setTimeout(async () => {
       const sellerComm = await lookupCommAddr(pi3!) ?? t.providerAgentAddress!;
-      await notifyDisputeResolved(jobId, ba3, bi3, sellerComm, pi3!, winner).catch(e => console.error("[mock-api] resolve notify error:", e));
+      await notifyArbitrationResult(jobId, ba3, bi3, sellerComm, pi3!, winner).catch(e => console.error("[mock-api] resolve notify error:", e));
     }, 3000);
     sendOk(res, { uopData: mockUopData(), winner }); return;
   }
@@ -625,7 +630,7 @@ const server = http.createServer(async (req, res) => {
     const { buyerAgentAddress: ba4, buyerAgentId: bi4, providerAgentId: pi4 } = t;
     (async () => {
       const sellerComm = await lookupCommAddr(pi4!) ?? t.providerAgentAddress!;
-      await notifyAgreeRefund(jobId, ba4, bi4, sellerComm, pi4!);
+      await notifyRejected(jobId, ba4, bi4, sellerComm, pi4!, "卖家同意退款");
     })().catch(e => console.error("[mock-api] agreeRefund notify error:", e));
     sendOk(res, { uopData: mockUopData() }); return;
   }
@@ -708,8 +713,8 @@ const server = http.createServer(async (req, res) => {
     const winner = String(body.winner ?? "provider");
     const si = t.providerAgentId ?? "mock-seller-agent-001";
     const sa = t.providerAgentAddress ?? "0xSeller000000000000000000000000000000001";
-    notifyDisputeResolved(m.jobId, t.buyerAgentAddress, t.buyerAgentId, sa, si, winner).catch(console.error);
-    sendOk(res, { triggered: "DISPUTE_RESOLVED", jobId: m.jobId, winner }); return;
+    notifyArbitrationResult(m.jobId, t.buyerAgentAddress, t.buyerAgentId, sa, si, winner).catch(console.error);
+    sendOk(res, { triggered: winner === "provider" ? "TASK_COMPLETED" : "TASK_REJECTED", jobId: m.jobId, winner }); return;
   }
 
   res.writeHead(404); res.end("not found");

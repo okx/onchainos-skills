@@ -65,7 +65,7 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 |---|---|---|
 | `TASK_INQUIRE` | **Provider** | Read `provider.md` Scene 2 |
 | `TASK_CONFIRMED` | **Client** | Read `client.md` Scene 0 |
-| `TASK_APPLIED` / `TASK_ACCEPTED` / `TASK_SUBMITTED` / `TASK_REFUSED` / `TASK_COMPLETED` / `TASK_AGREEREFUND` / `TASK_DISPUTED` / `DISPUTE_RESOLVED` | Depends on context | If you are the task's provider → `provider.md`; if buyer → `client.md`; if unsure → follow Context Loading Protocol |
+| `TASK_APPLIED` / `TASK_ACCEPTED` / `TASK_SUBMITTED` / `TASK_REFUSED` / `TASK_COMPLETED` / `TASK_REJECTED` / `TASK_DISPUTED` / `DISPUTE_ASSIGNED` | Depends on context | If you are the task's provider → `provider.md`; if buyer → `client.md`; if evaluator → `evaluator.md`; if unsure → follow Context Loading Protocol |
 
 ### Priority 3: User Intent
 
@@ -139,22 +139,23 @@ Output says: 你是买家，task-001 是你发布的合约审计任务，状态 
 
 ## System Notification → Action Mapping
 
-When the user receives a system notification, route them to the correct action:
+When the agent receives a system notification, route to the correct role file and scene.
 
-| code | Notification | Recipient | Action |
+**Key**: "执行" = must call CLI command; "忽略 llm" = do not execute the llm directive, only output text or record state; "—" = not received.
+
+| Notification | 买家 Client (`client.md`) | 卖家 Provider (`provider.md`) | 仲裁者 Evaluator (`evaluator.md`) |
 |---|---|---|---|
-| 1001 | `TASK_CONFIRMED` — task on-chain | Client | → `client.md` Scene 0: auto recommend + negotiate (no user input needed) |
-| 1002 | Provider confirmed | Client | → `client.md` Scene 3: Confirm accept + Fund |
-| 1003 | Task accepted | Provider | → `provider.md` Scene 4: Start execution |
-| 1004 | Deliverable submitted | Client | → `client.md` Scene 5: Review |
-| 1005 | Accepted (complete) | Provider | Task done |
-| 1006 | Rejected | Provider | → `provider.md` Scene 6: Decide on dispute |
-| 1007 | Dispute raised | All | → Each role's Scene 6 |
-| 1008 | Dispute result | All | View result |
-| 1009 | Task expired | Both | No action |
-| 1010 | Freeze period ended | Provider | → `provider.md`: raise dispute ASAP |
-| 1011 | Set to Public | Client | Wait for Provider to contact |
-| 1012 | Session closed | Other Providers | Already accepted by someone else |
+| `TASK_CONFIRMED` | **执行** → Scene 0：auto recommend + xmtp_send 发起协商 | — | — |
+| `TASK_APPLIED` | **执行** → Scene 3：调用 `confirm-accept` 确认接单+托管资金 | **忽略 llm** → Scene 3：输出文字告知买家申请已上链 | — |
+| `TASK_ACCEPTED` | **忽略 llm** → 记录状态，等待卖家交付 | **执行** → Scene 4：开始执行任务，调用 `deliver` + `submit` 提交交付物 | — |
+| `TASK_SUBMITTED` | **执行** → Scene 5：验收交付物，调用 `complete`（通过）或 `reject`（拒绝） | **忽略 llm** → Scene 5：输出文字确认交付物已上链，等待买家验收 | — |
+| `TASK_COMPLETED` | Scene 7：任务完成，通知用户 | Scene 7：输出确认，资金已释放 | — |
+| `TASK_REFUSED` | **忽略 llm** → 记录状态，等待卖家决定 | **执行** → Scene 6：通知主 session，等待用户决定仲裁或退款 | — |
+| `TASK_DISPUTED` | Scene 6：等待用户提交证据 | Scene 6.3：提交证据 | — |
+| `DISPUTE_ASSIGNED` | — | — | **执行** → Scene 6：审阅证据，调用 `dispute vote` 投票 |
+| `TASK_REJECTED` | 退款完成，资金已退还买家 | — | — |
+
+> **Routing rule**: Only `TASK_CONFIRMED` goes to main session. All other notifications are delivered to the sub session (P2P conversation) where the skill's role filtering determines action.
 
 ## Chain Support
 

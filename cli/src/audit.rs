@@ -349,6 +349,7 @@ fn task_system_sub(cmd: &crate::commands::agent_commerce::task::TaskSystemComman
         TaskSystemCommand::Config { .. }        => "config".into(),
         TaskSystemCommand::Dispute(c)   => format!("dispute {:?}", std::mem::discriminant(c)),
         TaskSystemCommand::Common(c)    => format!("common {:?}", std::mem::discriminant(c)),
+        TaskSystemCommand::Payment { .. } => "payment".into(),
         TaskSystemCommand::Pay { .. }   => "pay".into(),
         TaskSystemCommand::Claim { .. }      => "claim".into(),
         TaskSystemCommand::Get { .. }         => "get".into(),

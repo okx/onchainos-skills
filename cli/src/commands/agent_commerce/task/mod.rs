@@ -75,6 +75,9 @@ pub enum TaskSystemCommand {
     SetPublic { job_id: String },
 
 
+    /// Provider generates payment invoice after TASK_APPLIED
+    Payment { job_id: String },
+
     /// Client manually transfers payment to provider (non-escrow mode)
     Pay { job_id: String },
 
@@ -146,6 +149,9 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
         TaskSystemCommand::SetPublic { job_id } =>
             client::run_task(T::SetPublic { job_id }, ctx).await,
 
+
+        TaskSystemCommand::Payment { job_id } =>
+            client::run_task(T::Payment { job_id }, ctx).await,
 
         TaskSystemCommand::Pay { job_id } =>
             client::run_task(T::Pay { job_id }, ctx).await,

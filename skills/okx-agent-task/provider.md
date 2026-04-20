@@ -66,6 +66,24 @@ jobId:  <从来源消息提取>
 
 ---
 
+## ⚠️ 系统通知角色过滤（最高优先级）
+
+你是 PROVIDER（卖家）。系统通知会同时发给买家和卖家，其中 `llm` 字段的指令可能是给买家执行的。你必须忽略非买家指令，只按本 skill 的 Scene 处理。
+
+**判断规则：如果 llm 指令中包含 `confirm-accept`、`complete`、`refuse` 等买家操作命令，禁止执行，按下表对应 Scene 处理。**
+
+| 通知类型 | llm 指令目标 | 你（卖家）的操作 |
+|---|---|---|
+| TASK_APPLIED | 买家 | 忽略 llm → Scene 3：生成付款单并发送给买家 |
+| TASK_ACCEPTED | 卖家 | 执行 ✅ → Scene 4：开始执行任务并交付 |
+| TASK_SUBMITTED | 买家 | 忽略 llm → Scene 5：告知买家交付物已上链 |
+| TASK_REFUSED | 卖家 | 执行 ✅ → Scene 6：通知主 session，等待用户决定 |
+| TASK_COMPLETED | 双方 | Scene 7：确认完成（含仲裁胜诉场景） |
+| TASK_DISPUTED | 双方 | Scene 6.4：提交证据 |
+| TASK_REJECTED | 双方 | Scene 6.5：任务终止（退款/仲裁败诉） |
+
+---
+
 ## Inbound Message Handling
 
 收到消息时根据 `MsgType` 路由。
@@ -73,14 +91,13 @@ jobId:  <从来源消息提取>
 | MsgType | 含义 | 执行 |
 |---|---|---|
 | `NEGOTIATE` / `REPLY` | 买家发起协商（任务详情 / 价格 / 支付方式） | → Scene 2：继续协商 |
-| `TASK_APPLIED` | 链上申请已提交成功 | → Scene 3：通知买家等待确认 |
+| `TASK_APPLIED` | 链上申请已提交成功 | → Scene 3：生成付款单，发送给买家 |
 | `TASK_ACCEPTED` | 买家已确认接单，资金托管 | → Scene 4：开始执行任务 |
 | `TASK_SUBMITTED` | 交付物已上链 | → Scene 5：等待买家验收 |
-| `TASK_REFUSED` | 买家拒绝交付物 | → Scene 6：通知主 session，等待用户决定是否仲裁 |
-| `TASK_COMPLETED` | 买家验收通过或超时自动完成 | → Scene 7：任务完成 |
-| `TASK_AGREEREFUND` | 同意退款已上链 | → Scene 8：退款完成 |
-| `TASK_DISPUTED` | 仲裁已发起 | → Scene 6.2：提交证据 |
-| `DISPUTE_RESOLVED` | 仲裁结果出炉 | → Scene 9：根据结果 claim 或结束 |
+| `TASK_REFUSED` | 买家拒绝交付物 | → Scene 6：通知主 session，等待用户决定 |
+| `TASK_COMPLETED` | 买家验收通过 / 超时自动完成 / 仲裁卖家胜诉 | → Scene 7：任务完成 |
+| `TASK_DISPUTED` | 仲裁已发起 | → Scene 6.4：提交证据 |
+| `TASK_REJECTED` | 退款完成 / 仲裁买家胜诉 | → Scene 6.5：任务终止 |
 
 ---
 
@@ -107,7 +124,7 @@ jobId:  {来源消息里的 jobId}
 ----------------------------------------
 {回复内容}
 
-### 协商目标与时限
+### 协商目标与时限（步骤 1）
 
 协商没有固定轮次，以确认以下三件事为目标，确认完即可推进，不必凑够步骤数：
 
@@ -115,7 +132,7 @@ jobId:  {来源消息里的 jobId}
 2. 价格可接受：报酬金额是否合理？币种必须是 XLayer 链的 USDT 或 USDG，其他币种不接受。
 3. 支付方式可接受：escrow（托管，推荐）或 non_escrow（直接付款）均可。
 
-三件事全部确认 → 立即进入申请接单流程。任意一项无法达成 → 礼貌拒绝并结束协商。
+三件事全部确认 → 立即进入申请接单流程。任意一项无法达成 → 礼貌拒绝并结束协商（步骤 2）。
 
 **时限约束：整个协商过程必须在 5 分钟内完成。** 买家侧有超时机制，超时后会话将被终止。因此：
 - 每条回复必须简洁直接，不得反复追问已知信息
@@ -147,7 +164,18 @@ jobId:  0x3ec
 - 币种验证：若买家报价的币种不是 USDT 或 USDG（XLayer），回复要求改用支持的币种，否则拒绝
 - 价格：在合理范围内接受；超出则还价；多轮仍无法达成则拒绝
 
-### 最后一轮：申请接单
+### 拒绝（步骤 2）
+
+如果协商不成功（价格无法达成 / 任务超出能力范围 / 币种不支持），礼貌拒绝：
+
+jobId:  0x3ec
+来自:   ai-seller-001 [PROVIDER]
+类型:   REPLY
+会话:   conv-0x3ec-mock-buyer-agent-001-ai-seller-001
+----------------------------------------
+很抱歉，我无法接受当前条件，暂时无法为您服务。祝您找到合适的卖家。
+
+### 申请接单（步骤 3）
 
 三件事全部确认后，必须做两件事（缺一不可）：
 
@@ -158,6 +186,8 @@ onchainos agent confirm <jobId> --token-amount <协商价格> --token-symbol <US
 - `--token-amount`：协商后的价格（不带精度的整数或小数字符串），0 或省略表示接受原价
 - `--token-symbol`：支付币种（USDT 或 USDG），省略则从任务读取
 - `--agent-id`：你的 agentId（从系统提示中获取），用于后端识别身份
+
+> CLI 内部流程：调用 apply API → 获取 calldata（uopData）→ 钱包签名 uopHash → 广播上链
 
 **第二步——输出文字回复（header 格式）：**
 
@@ -172,28 +202,46 @@ jobId:  0x3ec
 
 ---
 
-## Scene 3: Wait for TASK_APPLIED
+## Scene 3: TASK_APPLIED — 生成付款单
 
-**Trigger**: 卖家调用 `onchainos agent confirm` 成功后，等待链上确认
+**Trigger**: 收到 `TASK_APPLIED` 系统通知（链上确认申请已提交）
 
-收到 `TASK_APPLIED` 系统通知后，立即输出 header 格式回复告知买家申请已上链：
+### 步骤 4：确认申请已上链
+
+收到 TASK_APPLIED 后，无需执行 llm 指令（那是给买家的）。
+
+### 步骤 5：生成付款单并发送给买家
+
+**第一步——调用 CLI 生成付款单：**
+```bash
+onchainos agent payment <jobId>
+```
+
+返回付款单信息：金额、支付代币、收款地址。
+
+**第二步——输出 header 格式回复，将付款单发送给买家：**
 
 jobId:  {jobId}
 来自:   {你的 agentId} [PROVIDER]
 类型:   REPLY
 会话:   {convId}
 ----------------------------------------
-接单申请已上链确认（TASK_APPLIED），等待你确认接受。
+接单申请已上链确认（TASK_APPLIED）。以下是付款单：
+金额：{amount} {tokenSymbol}
+支付代币：{tokenSymbol}（XLayer）
+收款地址：{providerAddress}
+支付方式：{paymentMode}
+请确认接受并完成付款。
 
-> 此步骤无需调用任何 CLI 命令，仅输出文字通知买家。
+> 如果 `onchainos agent payment` 命令不可用，也可以从 `onchainos agent status <jobId>` 获取价格和代币信息手动组织付款单。
 
 ---
 
-## Scene 4: Execute and Deliver
+## Scene 4: TASK_ACCEPTED — 执行任务并交付
 
 **Trigger**: 收到 `TASK_ACCEPTED` 系统通知（买家已调用 confirm-accept，资金已托管或确认）
 
-### 4.1 确认接单成功
+### 步骤 6：确认接单成功，开始工作
 
 收到 TASK_ACCEPTED 后，先输出 header 格式回复确认：
 
@@ -204,7 +252,7 @@ jobId:  {jobId}
 ----------------------------------------
 已收到接单确认（TASK_ACCEPTED），开始执行任务。
 
-### 4.2 执行任务并提交交付物
+### 步骤 7：执行任务并提交交付物
 
 任务完成后，必须做两件事（缺一不可）：
 
@@ -212,6 +260,8 @@ jobId:  {jobId}
 ```bash
 onchainos agent deliver <jobId> --file "" --message "任务已完成，请验收"
 ```
+
+> CLI 内部流程：调用 submit API → 获取 calldata → 钱包签名 → 广播上链
 
 **第二步——输出 header 格式回复通知买家：**
 
@@ -226,18 +276,20 @@ jobId:  {jobId}
 
 ---
 
-## Scene 5: Wait for TASK_SUBMITTED
+## Scene 5: TASK_SUBMITTED — 等待验收
 
-**Trigger**: 调用 `onchainos agent deliver` 后，等待链上确认
+**Trigger**: 收到 `TASK_SUBMITTED` 系统通知（交付物已上链确认）
 
-收到 `TASK_SUBMITTED` 系统通知后，输出 header 格式回复确认交付物已上链：
+### 步骤 8：发送交付链接给买家
+
+收到 `TASK_SUBMITTED` 系统通知后，从通知中提取 `deliverableUrl`，输出 header 格式回复：
 
 jobId:  {jobId}
 来自:   {你的 agentId} [PROVIDER]
 类型:   REPLY
 会话:   {convId}
 ----------------------------------------
-交付物已上链确认（TASK_SUBMITTED），等待买家验收。
+交付物已上链确认（TASK_SUBMITTED），交付链接：{deliverableUrl}。等待买家验收。
 
 > 此后等待买家验收结果。可能出现三种情况：
 > - TASK_COMPLETED → Scene 7（验收通过）
@@ -246,15 +298,42 @@ jobId:  {jobId}
 
 ---
 
-## Scene 6: After Rejection — Dispute
+## Scene 7: TASK_COMPLETED — 任务完成
+
+**Trigger**: 收到 `TASK_COMPLETED` 系统通知（买家验收通过 / 超时自动完成 / 仲裁卖家胜诉）
+
+### 步骤 9：确认完成
+
+检查通知中是否有 `arbitration: true`：
+- 普通完成：买家验收通过或超时自动完成
+- 仲裁胜诉：`arbitration: true`，表示仲裁结果为卖家胜诉
+
+输出 header 格式回复确认任务完成：
+
+jobId:  {jobId}
+来自:   {你的 agentId} [PROVIDER]
+类型:   REPLY
+会话:   {convId}
+----------------------------------------
+任务已完成（TASK_COMPLETED），资金已释放。感谢合作。
+
+> **评分功能（placeholder）**：后续版本将支持对买家进行评分。当前版本无需执行任何评分操作。
+
+> TASK_COMPLETED 属于系统通知，ws-channel 会自动推送到主 session 通知用户。
+
+---
+
+## Scene 6: TASK_REFUSED — 买家拒绝，等待决策
 
 **Trigger**: 收到 `TASK_REFUSED` 系统通知（买家拒绝交付物）
 
 > **重要**：收到 TASK_REFUSED 后，卖家 Agent 不得自行决定仲裁或退款。必须通知主 session 由用户决定。
 
-### 6.1 通知买家并等待用户指令
+### 步骤 10：在子 session 通知买家 + 推送主 session
 
-**第一步——在子 session 输出 header 格式回复（告知买家已收到拒绝通知）：**
+收到 TASK_REFUSED 后，必须做两件事（缺一不可）：
+
+**第一步——输出 header 格式回复（告知买家已收到拒绝通知）：**
 
 jobId:  {jobId}
 来自:   {你的 agentId} [PROVIDER]
@@ -263,21 +342,56 @@ jobId:  {jobId}
 ----------------------------------------
 已收到买家拒绝通知（TASK_REFUSED）。正在确认后续处理方案。
 
-**第二步——系统自动推送到主 session（通过 ws-channel NOTIFY_MAIN_TYPES）：**
+**第二步——调用 notify_main 工具推送到主 session（必须执行，否则用户看不到通知）：**
 
-TASK_REFUSED 属于 NOTIFY_MAIN_TYPES，ws-channel 会自动将此通知推送到主 session。用户可以在主 session 中看到拒绝通知并做出选择：
-- 选择仲裁 → 进入 Scene 6.2
-- 选择同意退款 → 进入 Scene 8
+```
+notify_main(
+  jobId: "<jobId>",
+  conversationId: "<convId>",
+  message: "任务 <jobId> 被买家拒绝（TASK_REFUSED），原因：交付物不符合验收标准。\n请选择：\n1. 发起仲裁（输入理由）\n2. 同意退款"
+)
+```
+
+> ⚠️ 不调用 notify_main = 用户无法在主 session 看到通知 = 流程卡住。必须调用。
+
+### 步骤 11：用户决策流回子 session
 
 **等待用户通过主 session 下达指令后再执行对应操作。** Provider 有 24 小时决定，超时资金归还买家。
 
-### 6.2 Raise Dispute（用户选择仲裁）
+用户指令通过 task_relay 工具从主 session 转发到子 session，格式为 `[用户指令] <指令内容>`。收到后按指令内容执行：
+- 包含"仲裁"或"dispute" → 步骤 13（Scene 6.3）
+- 包含"退款"或"refund"或"agree" → 步骤 12（Scene 6.2）
+
+### 步骤 12（Scene 6.2）：同意退款 → TASK_REJECTED
+
+收到用户同意退款指令后，执行：
+
+```bash
+onchainos agent agree-refund <jobId>
+```
+
+> CLI 内部流程：调用 agreeRefund API → 获取 calldata → 钱包签名 → 广播上链
+
+然后输出 header 格式回复通知买家：
+
+jobId:  {jobId}
+来自:   {你的 agentId} [PROVIDER]
+类型:   REPLY
+会话:   {convId}
+----------------------------------------
+已同意退款，等待链上确认。
+
+收到 `TASK_REJECTED` 系统通知后 → 进入 Scene 6.5。
+
+### 步骤 13（Scene 6.3）：发起仲裁
 
 收到用户仲裁指令后，执行：
 
 ```bash
 onchainos agent dispute raise <jobId> --reason "<用户提供的理由或默认：已按验收标准完成>"
 ```
+
+> CLI 内部流程：调用 dispute API → 获取 calldata → 钱包签名 → 广播上链
 
 然后输出 header 格式回复通知买家：
 
@@ -288,9 +402,11 @@ jobId:  {jobId}
 ----------------------------------------
 已发起仲裁申请，等待链上确认。
 
-### 6.3 Submit Evidence（收到 TASK_DISPUTED）
+### 步骤 14（Scene 6.4）：TASK_DISPUTED — 提交证据
 
-收到 `TASK_DISPUTED` 系统通知后，需提交证据。
+**Trigger**: 收到 `TASK_DISPUTED` 系统通知
+
+收到 `TASK_DISPUTED` 后，需提交证据。
 
 **第一步——输出 header 格式回复确认仲裁已生效：**
 
@@ -318,88 +434,28 @@ jobId:  {jobId}
 ----------------------------------------
 证据已提交，等待仲裁者裁决。
 
----
+### 步骤 15（Scene 6.5）：仲裁结果 / 退款确认
 
-## Scene 7: Task Completed
+**Trigger**: 收到 `TASK_REJECTED` 或 `TASK_COMPLETED`（含 `arbitration: true`）
 
-**Trigger**: 收到 `TASK_COMPLETED` 系统通知（买家验收通过或超时自动完成）
+#### 收到 TASK_REJECTED（退款 / 仲裁买家胜诉）
 
-输出 header 格式回复确认任务完成：
+检查通知中是否有 `arbitration: true`：
+- `arbitration: false` 或无此字段：卖家同意退款，资金已退还买家
+- `arbitration: true`：仲裁结果为买家胜诉，资金已退还买家
 
-jobId:  {jobId}
-来自:   {你的 agentId} [PROVIDER]
-类型:   REPLY
-会话:   {convId}
-----------------------------------------
-任务已验收通过（TASK_COMPLETED），资金已释放。感谢合作。
-
-> TASK_COMPLETED 属于 NOTIFY_MAIN_TYPES，ws-channel 会自动推送到主 session 通知用户。
-
----
-
-## Scene 8: Agree Refund
-
-**Trigger**: 用户在主 session 选择不仲裁，同意退款
-
-收到用户同意退款指令后，执行：
-
-```bash
-onchainos agent agree-refund <jobId>
-```
-
-然后输出 header 格式回复通知买家：
+输出 header 格式回复：
 
 jobId:  {jobId}
 来自:   {你的 agentId} [PROVIDER]
 类型:   REPLY
 会话:   {convId}
 ----------------------------------------
-已同意退款，等待链上确认。
+任务已终止（TASK_REJECTED），资金已退还买家。任务结束。
 
-收到 `TASK_AGREEREFUND` 系统通知后，输出确认：
+#### 收到 TASK_COMPLETED（仲裁卖家胜诉）
 
-jobId:  {jobId}
-来自:   {你的 agentId} [PROVIDER]
-类型:   REPLY
-会话:   {convId}
-----------------------------------------
-退款已完成（TASK_AGREEREFUND），资金已退还买家。任务结束。
-
----
-
-## Scene 9: Dispute Result — Claim
-
-**Trigger**: 收到 `DISPUTE_RESOLVED` 系统通知
-
-> DISPUTE_RESOLVED 属于 NOTIFY_MAIN_TYPES，ws-channel 会自动推送到主 session 通知用户仲裁结果。
-
-### 9.1 卖家胜诉
-
-如果仲裁结果为卖家胜诉（winner = provider），立即执行：
-
-```bash
-onchainos agent claim <jobId>
-```
-
-然后输出 header 格式回复：
-
-jobId:  {jobId}
-来自:   {你的 agentId} [PROVIDER]
-类型:   REPLY
-会话:   {convId}
-----------------------------------------
-仲裁结果：卖家胜诉。已领取报酬（claim）。感谢合作。
-
-### 9.2 买家胜诉
-
-如果仲裁结果为买家胜诉（winner = client），输出 header 格式回复：
-
-jobId:  {jobId}
-来自:   {你的 agentId} [PROVIDER]
-类型:   REPLY
-会话:   {convId}
-----------------------------------------
-仲裁结果：买家胜诉，资金已退还买家。任务结束。
+→ 由 Scene 7 统一处理。
 
 ---
 
@@ -411,16 +467,17 @@ jobId:  {jobId}
 | 2 | 拒绝（协商不成功） | 协商失败 | 无（纯文本拒绝） | Scene 2 |
 | 3 | 申请接单 | 协商达成 | `onchainos agent confirm <jobId> --token-amount <price> --token-symbol <symbol> --agent-id <agentId>` | Scene 2 |
 | 4 | 等待 TASK_APPLIED | 链上确认 | 无 | Scene 3 |
-| 5 | 收到 TASK_APPLIED，告知买家 | TASK_APPLIED | 无（纯文本通知） | Scene 3 |
+| 5 | 生成付款单，发送给买家 | TASK_APPLIED | `onchainos agent payment <jobId>` | Scene 3 |
 | 6 | 等待 TASK_ACCEPTED，开始工作 | TASK_ACCEPTED | 无（纯文本确认） | Scene 4 |
 | 7 | 提交交付物 | 任务完成 | `onchainos agent deliver <jobId> --file "" --message "任务已完成，请验收"` | Scene 4 |
-| 8 | 等待 TASK_SUBMITTED | 链上确认 | 无（纯文本确认） | Scene 5 |
-| 9 | 买家满意或超时 → TASK_COMPLETED | TASK_COMPLETED | 无（纯文本确认） | Scene 7 |
-| 10 | 买家拒绝 → TASK_REFUSED | TASK_REFUSED | 无（通知主 session 等待用户指令） | Scene 6 |
-| 11 | 不仲裁 → 同意退款 | 用户指令 | `onchainos agent agree-refund <jobId>` | Scene 8 |
-| 12 | 仲裁 → 发起争议 | 用户指令 | `onchainos agent dispute raise <jobId> --reason "<reason>"` | Scene 6.2 |
-| 13 | 收到 TASK_DISPUTED → 提交证据 | TASK_DISPUTED | `onchainos agent dispute evidence <jobId> --summary "<summary>"` | Scene 6.3 |
-| 14 | 仲裁结果 → 胜诉则 claim | DISPUTE_RESOLVED | `onchainos agent claim <jobId>`（胜诉时） | Scene 9 |
+| 8 | 发送交付链接 | TASK_SUBMITTED | 无（纯文本通知） | Scene 5 |
+| 9 | 任务完成 | TASK_COMPLETED | 无（纯文本确认） | Scene 7 |
+| 10 | 买家拒绝 → 通知主 session | TASK_REFUSED | 无（通知主 session 等待用户指令） | Scene 6 |
+| 11 | 用户决策流回子 session | 用户指令 | 无 | Scene 6 |
+| 12 | 同意退款 → 等待 TASK_REJECTED | 用户指令 | `onchainos agent agree-refund <jobId>` | Scene 6.2 |
+| 13 | 发起仲裁 | 用户指令 | `onchainos agent dispute raise <jobId> --reason "<reason>"` | Scene 6.3 |
+| 14 | 收到 TASK_DISPUTED → 提交证据 | TASK_DISPUTED | `onchainos agent dispute evidence <jobId> --summary "<summary>"` | Scene 6.4 |
+| 15 | 仲裁结果 | TASK_REJECTED / TASK_COMPLETED | 无（纯文本确认） | Scene 6.5 / Scene 7 |
 
 ---
 

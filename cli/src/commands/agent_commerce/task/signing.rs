@@ -96,6 +96,31 @@ pub async fn resolve_wallet_and_agent_for_task(
     Ok((account_id, address, buyer_agent_id))
 }
 
+/// Standard single-sign flow for task write operations (without identity headers).
+///
+/// Thin wrapper around [`task_sign_and_broadcast_with_headers`] that passes
+/// an empty `agent_id`. Used by operations where no agent identity is needed
+/// (e.g. dispute raise, agree-refund).
+pub async fn task_sign_and_broadcast(
+    http: &reqwest::Client,
+    endpoint_url: &str,
+    request_body: &Value,
+    broadcast_url: &str,
+    account_id: &str,
+    address: &str,
+) -> Result<BroadcastResult> {
+    task_sign_and_broadcast_with_headers(
+        http,
+        endpoint_url,
+        request_body,
+        broadcast_url,
+        account_id,
+        address,
+        "",
+    )
+    .await
+}
+
 /// Standard single-sign flow for task write operations (with identity headers).
 ///
 /// 1. POST `endpoint_url` with `request_body` + `X-Agent-Id` / `X-Wallet-Address` headers

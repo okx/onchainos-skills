@@ -115,6 +115,14 @@ pub enum TaskCommand {
     SetPublic {
         job_id: String,
     },
+    /// Provider applies for a public task
+    Apply {
+        job_id: String,
+    },
+    /// Provider generates payment invoice after TASK_APPLIED
+    Payment {
+        job_id: String,
+    },
     /// Client manually transfers payment to provider (non-escrow mode)
     Pay {
         job_id: String,
@@ -194,6 +202,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             query::handle_status(&http, &api, &job_id).await,
         TaskCommand::List { role, status, page, limit } =>
             query::handle_list(&http, &api, role.as_deref(), status.as_deref(), page, limit).await,
+        TaskCommand::Payment { job_id } =>
+            query::handle_payment(&http, &api, &job_id).await,
         TaskCommand::Pay { job_id } =>
             query::handle_pay(&http, &api, &job_id).await,
 

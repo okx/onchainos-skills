@@ -68,6 +68,39 @@ pub async fn handle_list(
     Ok(())
 }
 
+/// 生成付款单（Provider 在 TASK_APPLIED 后发送给买家）
+pub async fn handle_payment(
+    http: &reqwest::Client,
+    api: &str,
+    job_id: &str,
+) -> Result<()> {
+    let resp: serde_json::Value = http
+        .get(format!("{api}/priapi/v1/aieco/task/{job_id}"))
+        .send().await
+        .map_err(|e| anyhow::anyhow!("无法查询任务详情: {e}"))?
+        .json().await?;
+
+    if resp["code"] != 0 {
+        bail!("查询任务失败: {}", resp["msg"].as_str().unwrap_or("unknown"));
+    }
+
+    let task = &resp["data"]["task"];
+    let amount = task["tokenAmount"].as_str().unwrap_or("?");
+    let token_symbol = task["paymentTokenSymbol"].as_str().unwrap_or("USDT");
+    let provider_addr = task["providerAgentAddress"].as_str().unwrap_or("?");
+    let payment_type = task["paymentType"].as_i64().unwrap_or(0);
+    let payment_mode = if payment_type == 1 { "non_escrow" } else { "escrow" };
+
+    println!("付款单（Invoice）");
+    println!("  jobId:     {job_id}");
+    println!("  金额:      {amount} {token_symbol}");
+    println!("  支付代币:   {token_symbol}（XLayer）");
+    println!("  收款地址:   {provider_addr}");
+    println!("  支付方式:   {payment_mode}");
+    println!("  链:        xlayer (chainId={})", XLAYER_CHAIN_ID);
+    Ok(())
+}
+
 /// 非担保模式手动转账（展示转账命令）
 pub async fn handle_pay(
     http: &reqwest::Client,
