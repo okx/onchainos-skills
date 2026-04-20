@@ -27,6 +27,35 @@ pub const XLAYER_CHAIN_NAME: &str = "okb";
 pub const PAYMENT_MODE_ESCROW: &str = "escrow";
 /// 非担保支付：任务完成后买家手动转账
 pub const PAYMENT_MODE_NON_ESCROW: &str = "non_escrow";
+/// x402 按需微支付
+pub const PAYMENT_MODE_X402: &str = "x402";
+
+// ─── 支付模式 int ↔ str 映射 ────────────────────────────────────────────
+
+/// 后端 paymentMode int 值
+pub const PAYMENT_MODE_INT_ESCROW: i32 = 0;
+pub const PAYMENT_MODE_INT_DIRECT: i32 = 1;
+pub const PAYMENT_MODE_INT_X402: i32 = 2;
+
+/// str → int（用于 setPaymentMode 接口）
+pub fn payment_mode_to_int(mode: &str) -> i32 {
+    match mode {
+        PAYMENT_MODE_ESCROW | "0" => PAYMENT_MODE_INT_ESCROW,
+        PAYMENT_MODE_NON_ESCROW | "direct" | "1" => PAYMENT_MODE_INT_DIRECT,
+        PAYMENT_MODE_X402 | "2" => PAYMENT_MODE_INT_X402,
+        _ => PAYMENT_MODE_INT_ESCROW,
+    }
+}
+
+/// int → str（用于展示）
+pub fn payment_mode_to_str(mode: i32) -> &'static str {
+    match mode {
+        PAYMENT_MODE_INT_ESCROW => PAYMENT_MODE_ESCROW,
+        PAYMENT_MODE_INT_DIRECT => PAYMENT_MODE_NON_ESCROW,
+        PAYMENT_MODE_INT_X402 => PAYMENT_MODE_X402,
+        _ => PAYMENT_MODE_ESCROW,
+    }
+}
 
 // ─── CLI 定义 ──────────────────────────────────────────────────────────────
 

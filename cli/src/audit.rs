@@ -348,6 +348,7 @@ fn task_system_sub(cmd: &crate::commands::agent_commerce::task::TaskSystemComman
         TaskSystemCommand::SetPublic { .. }     => "set-public".into(),
         TaskSystemCommand::Config { .. }        => "config".into(),
         TaskSystemCommand::Dispute(c)   => format!("dispute {:?}", std::mem::discriminant(c)),
+        TaskSystemCommand::BuyerDispute(c) => format!("buyer-dispute {:?}", std::mem::discriminant(c)),
         TaskSystemCommand::Common(c)    => format!("common {:?}", std::mem::discriminant(c)),
         TaskSystemCommand::Apply { .. }   => "apply".into(),
         TaskSystemCommand::Deliver { .. } => "deliver".into(),

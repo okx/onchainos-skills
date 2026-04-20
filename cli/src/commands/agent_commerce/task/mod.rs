@@ -116,9 +116,13 @@ pub enum TaskSystemCommand {
 
     // ── Dispute (kept as sub-group) ──────────────────────────────────────────
 
-    /// Dispute actions: raise, evidence, info
+    /// Dispute actions (provider): raise, evidence, info
     #[command(subcommand)]
     Dispute(provider::DisputeCommand),
+
+    /// Dispute actions (buyer): evidence, info
+    #[command(name = "buyer-dispute", subcommand)]
+    BuyerDispute(client::BuyerDisputeCommand),
 
     // ── Common ───────────────────────────────────────────────────────────────
 
@@ -198,6 +202,9 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
 
         TaskSystemCommand::Dispute(c) =>
             provider::run_dispute(c, ctx).await,
+
+        TaskSystemCommand::BuyerDispute(c) =>
+            client::run_buyer_dispute(c, ctx).await,
 
         TaskSystemCommand::Common(c) =>
             common::run(c, ctx).await,
