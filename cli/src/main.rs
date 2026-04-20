@@ -97,6 +97,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::agentic_wallet::payment::PaymentCommand,
     },
+    /// Trading competition: list, join, rank, claim rewards (Agentic Wallet exclusive)
+    Competition {
+        #[command(subcommand)]
+        command: commands::competition::CompetitionCommand,
+    },
     /// DeFi product discovery, investment, redemption, and portfolio
     Defi {
         #[command(subcommand)]
@@ -155,6 +160,9 @@ async fn run() {
         Commands::Wallet { command } => commands::agentic_wallet::wallet::execute(command).await,
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
+        Commands::Competition { command } => {
+            commands::competition::execute(command).await
+        }
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
     };

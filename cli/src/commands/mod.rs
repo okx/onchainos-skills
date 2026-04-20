@@ -1,4 +1,5 @@
 pub mod agentic_wallet;
+pub mod competition;
 pub mod defi;
 pub mod gateway;
 pub mod leaderboard;

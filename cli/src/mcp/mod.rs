@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::client::ApiClient;
 use crate::commands::{
-    defi, gateway, leaderboard, market, memepump, portfolio, signal, swap, token,
+    competition, defi, gateway, leaderboard, market, memepump, portfolio, signal, swap, token,
 };
 
 // ── DeFi ──────────────────────────────────────────────────────────────
@@ -554,6 +554,59 @@ struct ClusterTopHoldersParams {
     chain: Option<String>,
     /// Holder rank tier: 1 = top 10, 2 = top 50, 3 = top 100
     range_filter: String,
+}
+
+// ── Competition ─────────────────────────────────────────────────────────
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionListParams {
+    /// Page size (default 10)
+    page_size: Option<u32>,
+    /// Page number starting from 1 (default 1)
+    page_num: Option<u32>,
+    /// Status filter: 3=active, 4=ended (omit for all)
+    status: Option<u32>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionIdParams {
+    /// Activity ID
+    activity_id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionRankParams {
+    /// Activity ID
+    activity_id: String,
+    /// User wallet address
+    wallet: String,
+    /// Sort type: 5=volume, 7=realized PnL, 8=boost token volume (default 5)
+    sort_type: Option<i32>,
+    /// Max leaderboard entries (default 20, max 100)
+    limit: Option<u32>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionUserStatusParams {
+    /// Activity ID
+    activity_id: String,
+    /// User wallet address
+    wallet: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionJoinParams {
+    /// Activity ID
+    activity_id: String,
+    /// EVM wallet address to register (nickname auto-set to "Agentic....{last4}")
+    wallet: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionClaimParams {
+    /// Activity ID
+    activity_id: String,
+    /// Winning wallet address
+    wallet: String,
 }
 
 // ── Gateway ────────────────────────────────────────────────────────────
@@ -1791,6 +1844,99 @@ impl McpServer {
         )
         .await
         {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "competition_list",
+        description = "List Agentic Wallet exclusive trading competitions. Returns name, rewards, chain, start/end time."
+    )]
+    async fn competition_list(
+        &self,
+        Parameters(p): Parameters<CompetitionListParams>,
+    ) -> Result<String, String> {
+        match competition::cmd_list_mcp(
+            p.page_size.unwrap_or(10),
+            p.page_num.unwrap_or(1),
+            p.status,
+        ) {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "competition_detail",
+        description = "Get trading competition details: rules, prize pool distribution, participation requirements, timeline."
+    )]
+    async fn competition_detail(
+        &self,
+        Parameters(p): Parameters<CompetitionIdParams>,
+    ) -> Result<String, String> {
+        match competition::cmd_detail_mcp(&p.activity_id) {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "competition_rank",
+        description = "Get trading competition leaderboard and user's current rank, estimated reward, and distance to next tier."
+    )]
+    async fn competition_rank(
+        &self,
+        Parameters(p): Parameters<CompetitionRankParams>,
+    ) -> Result<String, String> {
+        match competition::cmd_rank_mcp(
+            &p.activity_id,
+            &p.wallet,
+            p.sort_type.unwrap_or(5),
+            p.limit.unwrap_or(20),
+        ) {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "competition_user_status",
+        description = "Check user's competition participation status and reward eligibility (joinStatus, rewardStatus)."
+    )]
+    async fn competition_user_status(
+        &self,
+        Parameters(p): Parameters<CompetitionUserStatusParams>,
+    ) -> Result<String, String> {
+        match competition::cmd_user_status_mcp(&p.activity_id, &p.wallet) {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "competition_join",
+        description = "Register user for a trading competition. Requires wallet login. Nickname auto-set to 'Agentic....{last4 of address}'."
+    )]
+    async fn competition_join(
+        &self,
+        Parameters(p): Parameters<CompetitionJoinParams>,
+    ) -> Result<String, String> {
+        match competition::cmd_join_mcp(&p.activity_id, &p.wallet) {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "competition_claim",
+        description = "Fetch on-chain reward calldata after competition ends. Returns array of calldata to broadcast via gateway_broadcast. Requires wallet login."
+    )]
+    async fn competition_claim(
+        &self,
+        Parameters(p): Parameters<CompetitionClaimParams>,
+    ) -> Result<String, String> {
+        match competition::cmd_claim_mcp(&p.activity_id, &p.wallet) {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
