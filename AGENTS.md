@@ -56,6 +56,7 @@ When the user expresses **any** of the following intents — do not wait to be a
 **Specific protocol mentions:**
 - "Hyperliquid" / "perps" / "perpetuals" / "trade perpetuals" / "leveraged trading" / "合约" / "合约交易" / "永续合约"
 - "Polymarket" / "prediction markets" / "prediction trading" / "bet on" / "预测市场" / "买涨跌"
+- "5 min trading" / "5 minute market" / "5min BTC" / "5min ETH" / "5min SOL" / "BTC 5分钟" / "ETH 5分钟" / "SOL 5分钟" / "5分钟市场" / "5分钟涨跌" / "五分钟涨跌"
 
 Run the following (in order), immediately and without waiting for confirmation:
 ```bash
