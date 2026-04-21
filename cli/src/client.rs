@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context, Result};
@@ -10,7 +10,9 @@ use sha2::Sha256;
 
 use crate::commands::agentic_wallet::payment_flow::PaymentTier;
 use crate::doh::DohManager;
+use crate::output::CliConfirming;
 use crate::payment_cache::{self, PaymentCache};
+use crate::payment_notify::{self, Flag, NotifyInput, UserType};
 
 pub const DEFAULT_BASE_URL: &str = "https://web3.okx.com";
 const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -39,6 +41,26 @@ struct PaymentState {
     /// `true` once we've tried to populate state this process. Prevents
     /// redundant config fetches across concurrent requests on the same client.
     config_loaded: bool,
+
+    // ── Notification state (mirrored in PaymentCache) ───────────────────
+    /// Parsed from the `UserType=` field of `ok-web3-openapi-pay`.
+    user_type: Option<UserType>,
+    /// Unix seconds. From `/config`'s `graceExpiresAt`; `None` means the
+    /// caller should fall back to `payment_notify::fallback_grace_expires_at()`.
+    grace_expires_at: Option<i64>,
+    /// Per-event dedupe — persisted so the prompt fires at most once per
+    /// account lifetime (cache is cleared on logout).
+    intro_shown: bool,
+    grace_shown: bool,
+    basic_over_shown: bool,
+    premium_over_shown: bool,
+
+    /// Transient (not persisted) — tiers whose `*_over_shown` flipped to
+    /// true during the most recent `handle_response` cycle. The 402
+    /// retry wrapper reads this to decide whether to block with a
+    /// `CliConfirming` error (first-time charging, user must re-run) or
+    /// auto-sign as usual. Cleared at the top of every `handle_response`.
+    pending_over_quota_tiers: HashSet<PaymentTier>,
 }
 
 /// A cached 402 response converted into a recoverable error.
@@ -58,6 +80,18 @@ impl std::fmt::Display for PaymentRequired {
 }
 
 impl std::error::Error for PaymentRequired {}
+
+/// Build the `CliConfirming` used on the first request that flips a tier
+/// from free to charging. Leaves `message` / `next` empty — all semantic
+/// info (which tier, payment options) is carried by the paired
+/// `OVER_QUOTA` notification in the response; the skill renders the
+/// user-facing copy from that alone.
+fn first_charge_confirming() -> CliConfirming {
+    CliConfirming {
+        message: String::new(),
+        next: String::new(),
+    }
+}
 
 /// Read the x402 V2 `PAYMENT-REQUIRED` response header (base64-encoded JSON)
 /// and return its `accepts` array, if present. The header is the standard V2
@@ -510,6 +544,9 @@ impl ApiClient {
             Ok(data) => Ok(data),
             Err(e) => match e.downcast::<PaymentRequired>() {
                 Ok(pr) => {
+                    if self.consume_pending_confirmation(path) {
+                        return Err(first_charge_confirming().into());
+                    }
                     let accepts = self.resolve_retry_accepts(&pr)?;
                     // Fall back to Basic if we have no tier mapping — cheapest
                     // safe default; if the server wanted Premium it will 402
@@ -551,6 +588,9 @@ impl ApiClient {
             Ok(data) => Ok(data),
             Err(e) => match e.downcast::<PaymentRequired>() {
                 Ok(pr) => {
+                    if self.consume_pending_confirmation(path) {
+                        return Err(first_charge_confirming().into());
+                    }
                     let accepts = self.resolve_retry_accepts(&pr)?;
                     let tier = self.tier_for_path(path).unwrap_or(PaymentTier::Basic);
                     let hdr = self
@@ -636,11 +676,23 @@ impl ApiClient {
     async fn handle_response(&self, resp: reqwest::Response) -> Result<Value> {
         let status = resp.status();
 
+        // Drop transient dispatch state from the previous request so the
+        // 402 retry wrapper only sees flips emitted *this* response.
+        self.payment_state().pending_over_quota_tiers.clear();
+
         // Read charging-state + V2 PAYMENT-REQUIRED headers before consuming
         // the body so even error responses (402, 5xx, code!=0) still keep our
         // state in sync and give us access to the accepts payload.
         self.update_payment_state_from_headers(resp.headers());
         let header_accepts = extract_payment_required_accepts(resp.headers());
+        // Pre-stash accepts from the V2 header (when present) into state
+        // so `dispatch_notifications` can embed them in OVER_QUOTA event
+        // payloads. `resolve_retry_accepts` will refresh again on the
+        // retry path if it also sees fresh accepts.
+        if let Some(ref a) = header_accepts {
+            self.update_accepts_cache(a);
+        }
+        self.dispatch_notifications();
 
         if status.as_u16() == 429 {
             bail!("Rate limited — retry with backoff");
@@ -878,15 +930,21 @@ impl ApiClient {
         }
     }
 
-    /// Seed in-memory state from a disk cache. Charging flags are always
-    /// restored (they track the last server response header, independent of
-    /// config TTL); `endpoints`/`accepts` are restored only when the cache
-    /// isn't expired. Returns `true` if the config portion was fresh enough
-    /// to skip the remote fetch.
+    /// Seed in-memory state from a disk cache. Charging flags +
+    /// `user_type` + notification `shown` flags are always restored (they
+    /// track per-user server signals, independent of config TTL);
+    /// `endpoints`/`accepts`/`graceExpiresAt`/`docsUrl` are restored only
+    /// when the cache isn't expired. Returns `true` if the config portion
+    /// was fresh enough to skip the remote fetch.
     fn restore_from_cache(&self, cache: PaymentCache) -> bool {
         let mut state = self.payment_state();
         state.basic_charging = cache.basic_charging;
         state.premium_charging = cache.premium_charging;
+        state.user_type = cache.user_type;
+        state.intro_shown = cache.intro_shown;
+        state.grace_shown = cache.grace_shown;
+        state.basic_over_shown = cache.basic_over_shown;
+        state.premium_over_shown = cache.premium_over_shown;
         if cache.is_expired(CONFIG_TTL_SECS) {
             return false;
         }
@@ -903,6 +961,7 @@ impl ApiClient {
             .filter_map(|(p, t)| PaymentTier::from_server_str(&t).map(|tier| (p, tier)))
             .collect();
         state.accepts = cache.accepts;
+        state.grace_expires_at = cache.grace_expires_at;
         state.config_loaded = true;
         true
     }
@@ -922,13 +981,19 @@ impl ApiClient {
                 state.accepts = Some(a.clone());
             }
         }
+        if let Some(s) = data.get("graceExpiresAt").and_then(|v| v.as_str()) {
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+                state.grace_expires_at = Some(dt.timestamp());
+            }
+        }
     }
 
     // ── Auto-payment: header parsing ─────────────────────────────────────────
 
-    /// Update `basic_charging`/`premium_charging` from the
-    /// `ok-web3-openapi-pay: Basic=1;Premium=0` response header. Writes to
-    /// disk only when a flag actually flips — every other request is IO-free.
+    /// Update `basic_charging`/`premium_charging`/`user_type` from the
+    /// `ok-web3-openapi-pay: Basic=1;Premium=0;UserType=1` response header.
+    /// Writes to disk only when a flag actually flips — every other
+    /// request is IO-free.
     fn update_payment_state_from_headers(&self, headers: &reqwest::header::HeaderMap) {
         let Some(raw) = headers
             .get(PAYMENT_STATE_HEADER)
@@ -938,6 +1003,8 @@ impl ApiClient {
         };
         let basic = Self::extract_header_flag(raw, "Basic");
         let premium = Self::extract_header_flag(raw, "Premium");
+        let user_type = Self::extract_header_value(raw, "UserType")
+            .and_then(UserType::from_header_value);
 
         let changed = {
             let mut state = self.payment_state();
@@ -945,12 +1012,28 @@ impl ApiClient {
             if let Some(b) = basic {
                 if state.basic_charging != b {
                     state.basic_charging = b;
+                    // Reset the one-shot over-quota marker when the tier
+                    // goes back to free, so the next free→charging
+                    // transition re-emits the notification and forces
+                    // another confirming step.
+                    if !b {
+                        state.basic_over_shown = false;
+                    }
                     changed = true;
                 }
             }
             if let Some(p) = premium {
                 if state.premium_charging != p {
                     state.premium_charging = p;
+                    if !p {
+                        state.premium_over_shown = false;
+                    }
+                    changed = true;
+                }
+            }
+            if let Some(ut) = user_type {
+                if state.user_type != Some(ut) {
+                    state.user_type = Some(ut);
                     changed = true;
                 }
             }
@@ -963,16 +1046,21 @@ impl ApiClient {
 
     /// Parse a single `Key=0|1` pair out of the `Key=V;Key=V` header value.
     fn extract_header_flag(header: &str, key: &str) -> Option<bool> {
+        match Self::extract_header_value(header, key)? {
+            "1" => Some(true),
+            "0" => Some(false),
+            _ => None,
+        }
+    }
+
+    /// Return the raw string value for `Key=VALUE` in a `Key=V;Key=V` header.
+    fn extract_header_value<'a>(header: &'a str, key: &str) -> Option<&'a str> {
         header.split(';').find_map(|part| {
             let mut it = part.trim().splitn(2, '=');
             let k = it.next()?.trim();
             let v = it.next()?.trim();
             if k.eq_ignore_ascii_case(key) {
-                match v {
-                    "1" => Some(true),
-                    "0" => Some(false),
-                    _ => None,
-                }
+                Some(v)
             } else {
                 None
             }
@@ -1084,9 +1172,92 @@ impl ApiClient {
             basic_charging: state.basic_charging,
             premium_charging: state.premium_charging,
             updated_at: payment_cache::now_secs(),
+            user_type: state.user_type,
+            grace_expires_at: state.grace_expires_at,
+            intro_shown: state.intro_shown,
+            grace_shown: state.grace_shown,
+            basic_over_shown: state.basic_over_shown,
+            premium_over_shown: state.premium_over_shown,
         };
         drop(state);
         cache.save()
+    }
+
+    /// Emit notification events for any triggers that fired on this
+    /// response. Pure decision logic lives in `payment_notify`; this
+    /// wrapper handles the lock dance, pushes events onto the
+    /// process-global buffer (drained into the CLI / MCP response
+    /// envelope later), and persists the dedupe flags so each event
+    /// fires at most once per account lifetime.
+    fn dispatch_notifications(&self) {
+        if std::env::var("ONCHAINOS_QUIET").as_deref() == Ok("1") {
+            return;
+        }
+        let now = chrono::Utc::now().timestamp();
+        let input = {
+            let state = self.payment_state();
+            NotifyInput {
+                user_type: state.user_type,
+                grace_expires_at: state
+                    .grace_expires_at
+                    .unwrap_or_else(payment_notify::fallback_grace_expires_at),
+                basic_charging: state.basic_charging,
+                premium_charging: state.premium_charging,
+                intro_shown: state.intro_shown,
+                grace_shown: state.grace_shown,
+                basic_over_shown: state.basic_over_shown,
+                premium_over_shown: state.premium_over_shown,
+                accepts: state.accepts.clone(),
+            }
+        };
+        let events = payment_notify::compute_events(&input, now);
+        if events.is_empty() {
+            return;
+        }
+        {
+            let mut state = self.payment_state();
+            for (event, flag) in events {
+                payment_notify::push_event(event);
+                match flag {
+                    Flag::Grace => state.grace_shown = true,
+                    Flag::Intro => state.intro_shown = true,
+                    Flag::BasicOver => {
+                        state.basic_over_shown = true;
+                        state.pending_over_quota_tiers.insert(PaymentTier::Basic);
+                    }
+                    Flag::PremiumOver => {
+                        state.premium_over_shown = true;
+                        state.pending_over_quota_tiers.insert(PaymentTier::Premium);
+                    }
+                }
+            }
+        }
+        let _ = self.flush_payment_cache();
+    }
+
+    /// Check whether a tier just flipped to charging on this response.
+    /// Used by the 402 retry wrapper to short-circuit signing so the
+    /// user has a chance to see the `OVER_QUOTA` notification and
+    /// re-run the command before any actual payment happens.
+    ///
+    /// Two cases resolve to "yes, block":
+    /// 1. We know the path's tier and it's in `pending_over_quota_tiers`
+    ///    → consume that entry and block.
+    /// 2. We don't know the path's tier yet (`/config` not fetched
+    ///    because charging was only just observed *this* request) but
+    ///    the pending set is non-empty → block conservatively and
+    ///    drain the set. On the re-run `/config` will have been
+    ///    fetched and the tier-specific path works normally.
+    fn consume_pending_confirmation(&self, path: &str) -> bool {
+        let mut state = self.payment_state();
+        if let Some(tier) = state.endpoints.get(path).copied() {
+            return state.pending_over_quota_tiers.remove(&tier);
+        }
+        if !state.pending_over_quota_tiers.is_empty() {
+            state.pending_over_quota_tiers.clear();
+            return true;
+        }
+        false
     }
 }
 
@@ -1474,6 +1645,7 @@ mod tests {
             premium_charging: true,
             // Stale enough to be expired at any sane TTL.
             updated_at: 0,
+            ..Default::default()
         };
         let fresh = client.restore_from_cache(cache);
         assert!(!fresh, "expired cache should not satisfy config freshness");
@@ -1500,6 +1672,7 @@ mod tests {
             basic_charging: true,
             premium_charging: false,
             updated_at: crate::payment_cache::now_secs(),
+            ..Default::default()
         };
         let fresh = client.restore_from_cache(cache);
         assert!(fresh);
@@ -1519,6 +1692,54 @@ mod tests {
         set_test_credentials();
         let client = ApiClient::new(None).expect("client");
         assert_eq!(client.tier_for_path("/api/v6/dex/market/unknown"), None);
+    }
+
+    #[test]
+    fn consume_pending_confirmation_returns_true_then_clears() {
+        set_test_credentials();
+        let client = ApiClient::new(None).expect("client");
+        // Seed endpoints so the tier lookup succeeds.
+        client.apply_config_response(&serde_json::json!({
+            "endpointList": { "/api/v6/dex/market/price": "BASIC" },
+            "accepts": [{"scheme":"exact"}]
+        }));
+        // Simulate dispatch adding the tier to the pending set.
+        client
+            .payment_state()
+            .pending_over_quota_tiers
+            .insert(PaymentTier::Basic);
+
+        assert!(client.consume_pending_confirmation("/api/v6/dex/market/price"));
+        // Second call should be false — pending set is one-shot.
+        assert!(!client.consume_pending_confirmation("/api/v6/dex/market/price"));
+    }
+
+    #[test]
+    fn consume_pending_confirmation_falls_back_when_endpoints_empty() {
+        // First-flip race: /config has not been fetched yet, so endpoints
+        // is empty. We should still block confirming based on the pending
+        // set alone, otherwise the first paid request signs with the
+        // wrong tier and the user never sees the notification.
+        set_test_credentials();
+        let client = ApiClient::new(None).expect("client");
+        client
+            .payment_state()
+            .pending_over_quota_tiers
+            .insert(PaymentTier::Premium);
+
+        assert!(client.consume_pending_confirmation("/api/v6/dex/market/price-info"));
+        // Set is drained after a successful block.
+        assert!(client.payment_state().pending_over_quota_tiers.is_empty());
+        // Second call returns false — one-shot.
+        assert!(!client.consume_pending_confirmation("/api/v6/dex/market/price-info"));
+    }
+
+    #[test]
+    fn consume_pending_confirmation_returns_false_when_nothing_pending() {
+        set_test_credentials();
+        let client = ApiClient::new(None).expect("client");
+        // Empty pending set, empty endpoints → nothing to confirm.
+        assert!(!client.consume_pending_confirmation("/api/v6/dex/market/whatever"));
     }
 
     #[test]

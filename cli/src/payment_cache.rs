@@ -11,6 +11,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::payment_notify::UserType;
+
 /// Snapshot of the payment config + live charging state.
 ///
 /// - `endpoints`: path → tier (`"basic"` / `"premium"`) mapping returned from
@@ -34,6 +36,22 @@ pub struct PaymentCache {
     /// Unix seconds when this snapshot was written.
     #[serde(default)]
     pub updated_at: u64,
+
+    // ── Notification state ───────────────────────────────────────────────
+    /// `1`→New, `0`→Old from the `UserType=` header field.
+    #[serde(default)]
+    pub user_type: Option<UserType>,
+    /// Unix seconds, from `/config` or fallback constant.
+    #[serde(default)]
+    pub grace_expires_at: Option<i64>,
+    #[serde(default)]
+    pub intro_shown: bool,
+    #[serde(default)]
+    pub grace_shown: bool,
+    #[serde(default)]
+    pub basic_over_shown: bool,
+    #[serde(default)]
+    pub premium_over_shown: bool,
 }
 
 impl PaymentCache {
@@ -133,6 +151,7 @@ mod tests {
             basic_charging: true,
             premium_charging: false,
             updated_at: 1_700_000_000,
+            ..Default::default()
         };
         cache.save().unwrap();
 

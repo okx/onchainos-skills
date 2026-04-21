@@ -23,7 +23,7 @@ use crate::{keyring_store, wallet_api::WalletApiClient, wallet_store};
 /// into `BASIC` / `PREMIUM` tiers, and each accepts entry's `amount` is an
 /// object keyed by these tier names. The caller decides which tier to sign
 /// against based on the path being requested.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PaymentTier {
     Basic,
     Premium,

@@ -13,6 +13,7 @@ mod keyring_store;
 mod mcp;
 mod output;
 mod payment_cache;
+mod payment_notify;
 mod wallet_api;
 mod wallet_store;
 mod watch;
