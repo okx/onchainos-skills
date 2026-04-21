@@ -8,6 +8,7 @@ pub mod memepump;
 pub mod portfolio;
 pub mod security;
 pub mod signal;
+pub mod skills;
 pub mod swap;
 pub mod token;
 pub mod tracker;

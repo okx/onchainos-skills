@@ -331,6 +331,14 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Workflow { command } => format!("workflow {}", workflow_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
         Commands::CrossChain { .. } => "cross-chain".to_string(),
+        Commands::Skills { command } => format!("skills {}", skills_sub(command)),
+    }
+}
+
+fn skills_sub(c: &crate::commands::skills::SkillsCommand) -> &'static str {
+    use crate::commands::skills::SkillsCommand;
+    match c {
+        SkillsCommand::Check { .. } => "check",
     }
 }
 
