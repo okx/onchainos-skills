@@ -335,10 +335,13 @@ async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
     let url = if let Some(url) = data.get("url").and_then(Value::as_str) {
         url.to_string()
     } else if let Some(first) = data.as_array().and_then(|arr| arr.first()) {
-        first
-            .as_str()
-            .map(ToOwned::to_owned)
-            .ok_or_else(|| anyhow!("upload response missing url"))?
+        if let Some(url) = first.get("url").and_then(Value::as_str) {
+            url.to_string()
+        } else if let Some(url) = first.as_str() {
+            url.to_string()
+        } else {
+            bail!("upload response missing url");
+        }
     } else {
         bail!("upload response missing url");
     };
