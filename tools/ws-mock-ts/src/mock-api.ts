@@ -721,6 +721,22 @@ const server = http.createServer(async (req, res) => {
     sendOk(res, { triggered: winner === "provider" ? "TASK_COMPLETED" : "TASK_REJECTED", jobId: m.jobId, winner }); return;
   }
 
+  // ── x402 pay (mock) ──────────────────────────────────────────────────────
+  if (method === "POST" && path_ === "/api/v1/x402/pay") {
+    const body = await parseBody(req) as Record<string, unknown>;
+    const jobId = String(body.jobId ?? "");
+    const endpoint = String(body.endpoint ?? "");
+    const amount = Number(body.amount ?? 0);
+    if (!jobId) { sendErr(res, 4000, "missing jobId"); return; }
+    const t = tasks.get(jobId);
+    if (!t) { sendErr(res, 2001, "task not found"); return; }
+    t.status = S_SUBMITTED; t.statusStr = "submitted"; t.updateTime = new Date().toISOString();
+    saveTasks();
+    console.log(`[mock-api] x402 pay: jobId=${jobId} endpoint=${endpoint} amount=${amount} → status=submitted`);
+    sendOk(res, { jobId, endpoint, amount, receipt: `x402-receipt-${Date.now()}`, status: "paid" });
+    return;
+  }
+
   res.writeHead(404); res.end("not found");
 });
 

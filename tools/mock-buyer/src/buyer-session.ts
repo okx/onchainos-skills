@@ -57,6 +57,24 @@ export async function callRefuseApi(jobId: string) {
 /** 环境变量 MOCK_BUYER_MODE=refuse 时，买家收到交付物后拒绝而非接受 */
 export const BUYER_MODE = (process.env.MOCK_BUYER_MODE ?? "complete") as "complete" | "refuse";
 
+/** 环境变量 MOCK_PAYMENT_MODE=escrow|non_escrow，控制协商中的支付方式文本 */
+export const PAYMENT_MODE = (process.env.MOCK_PAYMENT_MODE ?? "escrow") as "escrow" | "non_escrow";
+
+/** 环境变量 MOCK_TASK_TYPE=a2a|x402，x402 模式跳过协商直接调用 API */
+export const TASK_TYPE = (process.env.MOCK_TASK_TYPE ?? "a2a") as "a2a" | "x402";
+
+export async function callX402PayApi(jobId: string) {
+  const res = await fetch(`${API_BASE_URL}/api/v1/x402/pay`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jobId, endpoint: `https://mock-x402.example.com/eth-price`, amount: 5 }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json() as Record<string, unknown>;
+  console.log(`[buyer][api] x402 pay completed job=${jobId}`);
+  return data;
+}
+
 // ── BuyerSession 核心状态机 ───────────────────────────────────────────────────
 export class BuyerSession {
   step = 0;
@@ -116,7 +134,7 @@ export class BuyerSession {
       this.reply({
         type: "REPLY", jobId: this.jobId,
         content: formatMsg(this.jobId, this.convId, "REPLY",
-          "确认，我接受报价：100 USDT，支付方式：non_escrow，交付时间 24 小时。请正式提交申请接单。"),
+          `确认，我接受报价：${MOCK_TASK.budget} USDT，支付方式：${PAYMENT_MODE}，交付时间 24 小时。请正式提交申请接单。`),
       });
       this.step = 3; this.onStateChange?.(); return;
     }
