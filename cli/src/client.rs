@@ -685,14 +685,11 @@ impl ApiClient {
         // state in sync and give us access to the accepts payload.
         self.update_payment_state_from_headers(resp.headers());
         let header_accepts = extract_payment_required_accepts(resp.headers());
-        // Pre-stash accepts from the V2 header (when present) into state
-        // so `dispatch_notifications` can embed them in OVER_QUOTA event
-        // payloads. `resolve_retry_accepts` will refresh again on the
-        // retry path if it also sees fresh accepts.
-        if let Some(ref a) = header_accepts {
-            self.update_accepts_cache(a);
-        }
-        self.dispatch_notifications();
+        // 402 responses carry tier-specific accepts — feed them transiently
+        // into notification dispatch, but never persist. Only `/config`
+        // returns accepts with all tiers in one entry, and only that source
+        // is allowed to write `payment_cache.accepts`.
+        self.dispatch_notifications(header_accepts.as_ref());
 
         if status.as_u16() == 429 {
             bail!("Rate limited — retry with backoff");
@@ -1132,9 +1129,12 @@ impl ApiClient {
     /// cached `accepts` loaded from `/api/v6/dex/market/config` when the
     /// server returned an empty 402 (OKX openapi style). Errors only when
     /// neither source has anything — the retry is hopeless in that case.
+    ///
+    /// Never caches `pr.accepts`: a single 402 carries only the caller's
+    /// tier, so persisting it would overwrite the tier-aware map from
+    /// `/config` and break the other tier's pre-sign amount.
     fn resolve_retry_accepts(&self, pr: &PaymentRequired) -> Result<Value> {
         if !pr.accepts.is_null() {
-            self.update_accepts_cache(&pr.accepts);
             return Ok(pr.accepts.clone());
         }
         self.payment_state().accepts.clone().ok_or_else(|| {
@@ -1144,19 +1144,6 @@ impl ApiClient {
                  becomes reachable."
             )
         })
-    }
-
-    /// Overwrite the in-memory `accepts` with a fresh copy from a 402 response
-    /// and persist. Keeps subsequent requests from needing another round-trip.
-    fn update_accepts_cache(&self, accepts: &Value) {
-        if accepts.is_null() {
-            return;
-        }
-        {
-            let mut state = self.payment_state();
-            state.accepts = Some(accepts.clone());
-        }
-        let _ = self.flush_payment_cache();
     }
 
     /// Write the current in-memory state to `~/.onchainos/payment_cache.json`.
@@ -1189,7 +1176,7 @@ impl ApiClient {
     /// process-global buffer (drained into the CLI / MCP response
     /// envelope later), and persists the dedupe flags so each event
     /// fires at most once per account lifetime.
-    fn dispatch_notifications(&self) {
+    fn dispatch_notifications(&self, header_accepts: Option<&Value>) {
         if std::env::var("ONCHAINOS_QUIET").as_deref() == Ok("1") {
             return;
         }
@@ -1207,7 +1194,7 @@ impl ApiClient {
                 grace_shown: state.grace_shown,
                 basic_over_shown: state.basic_over_shown,
                 premium_over_shown: state.premium_over_shown,
-                accepts: state.accepts.clone(),
+                accepts: header_accepts.cloned().or_else(|| state.accepts.clone()),
             }
         };
         let events = payment_notify::compute_events(&input, now);
@@ -1743,7 +1730,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_retry_accepts_prefers_fresh_accepts_and_updates_cache() {
+    fn resolve_retry_accepts_returns_fresh_without_touching_cache() {
         set_test_credentials();
         let client = ApiClient::new(None).expect("client");
         let fresh = serde_json::json!([
@@ -1755,8 +1742,9 @@ mod tests {
         };
         let got = client.resolve_retry_accepts(&pr).expect("accepts");
         assert_eq!(got, fresh);
-        // Fresh accepts should be written into the state cache.
-        assert_eq!(client.payment_state().accepts.as_ref(), Some(&fresh));
+        // 402 accepts carry a single tier — they must not overwrite the
+        // tier-aware map persisted from `/config`.
+        assert!(client.payment_state().accepts.is_none());
     }
 
     #[test]
