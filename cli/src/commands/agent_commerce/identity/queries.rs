@@ -1,6 +1,6 @@
 //! Read-only agent commands and their query assembly:
 //! - `agent get`         → `GET /agent-list`
-//! - `agent search`      → `GET /agent/cli-search`
+//! - `agent search`      → `GET /search/cli-search`
 //! - `agent service-list`→ `GET /agent/services`
 //! - `agent feedback-list`→ `GET /agent/reviews`
 //!
@@ -140,7 +140,7 @@ async fn search_impl(args: &SearchArgs, ctx: &Context) -> Result<Value> {
 
     eprintln!(
         "[agent-identity] search request: url={} access_token_len={} access_token_prefix={} query={:?}",
-        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/cli-search", &query_refs),
+        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/search/cli-search", &query_refs),
         access_token.len(),
         redact_token_for_debug(&access_token),
         query_refs,
@@ -148,7 +148,7 @@ async fn search_impl(args: &SearchArgs, ctx: &Context) -> Result<Value> {
 
     let result = client
         .get_authed(
-            "/priapi/v5/wallet/agentic/agent/cli-search",
+            "/priapi/v5/wallet/agentic/search/cli-search",
             &access_token,
             &query_refs,
         )
