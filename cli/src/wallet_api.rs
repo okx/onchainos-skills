@@ -774,6 +774,23 @@ impl WalletApiClient {
         Ok(resp)
     }
 
+    /// POST /priapi/v5/wallet/agentic/pre-transaction/report-plugin-info
+    pub async fn report_plugin_info(
+        &mut self,
+        access_token: &str,
+        plugin_parameter: &str,
+    ) -> Result<Value> {
+        let body = json!({
+            "pluginParameter": plugin_parameter,
+        });
+        self.post_authed(
+            "/priapi/v5/wallet/agentic/pre-transaction/report-plugin-info",
+            access_token,
+            &body,
+        )
+            .await
+    }
+
     /// POST /priapi/v5/wallet/agentic/pre-transaction/broadcast-transaction
     pub async fn broadcast_transaction(
         &mut self,
