@@ -83,6 +83,9 @@ pub enum CrossChainCommand {
         /// Skip allowance check, execute trade directly (after approval confirmed)
         #[arg(long, default_value_t = false, conflicts_with = "confirm_approve")]
         skip_approve: bool,
+        /// Force execution: skip backend risk warnings (bypass 81362). Use only after user confirms.
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
 
     /// Get calldata only — does NOT sign or broadcast (for manual use)
@@ -242,6 +245,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             tips,
             confirm_approve,
             skip_approve,
+            force,
         } => {
             cmd_execute(
                 &mut client,
@@ -258,6 +262,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
                 tips.as_deref(),
                 confirm_approve,
                 skip_approve,
+                force,
             )
             .await?;
         }
@@ -819,6 +824,7 @@ async fn wallet_contract_call(
     mev_protection: bool,
     jito_unsigned_tx: Option<&str>,
     aa_dex_token_addr: Option<&str>,
+    force: bool,
 ) -> Result<Value> {
     let tx_hash = crate::commands::agentic_wallet::transfer::execute_contract_call(
         to,
@@ -832,7 +838,7 @@ async fn wallet_contract_call(
         None,      // aa_dex_token_amount
         mev_protection,
         jito_unsigned_tx,
-        false,     // force
+        force,
         Some("3"), // tx_source: cross-chain bridge
     )
     .await?;
@@ -938,6 +944,7 @@ async fn cmd_execute(
     _tips: Option<&str>,
     confirm_approve: bool,
     skip_approve: bool,
+    force: bool,
 ) -> Result<()> {
     let from_chain_index = crate::chains::resolve_chain(from_chain);
     let to_chain_index = crate::chains::resolve_chain(to_chain);
@@ -1053,6 +1060,7 @@ async fn cmd_execute(
                 false,
                 None,
                 None,
+                force,
             )
             .await?;
             extract_tx_hash(&revoke_result)?;
@@ -1069,6 +1077,7 @@ async fn cmd_execute(
             false,
             None,
             None,
+            force,
         )
         .await?;
         let approve_tx_hash = extract_tx_hash(&approve_result)?;
@@ -1197,6 +1206,7 @@ async fn cmd_execute(
                 effective_mev,
                 None,
                 None,
+                force,
             )
             .await?;
             extract_tx_hash(&result)?
@@ -1220,6 +1230,7 @@ async fn cmd_execute(
                 effective_mev,
                 None,
                 None,
+                force,
             )
             .await?;
             extract_tx_hash(&result)?

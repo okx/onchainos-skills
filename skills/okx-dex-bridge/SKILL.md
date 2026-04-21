@@ -27,6 +27,10 @@ All user-facing output (table headers, prompts, warnings, reminders) MUST match 
 - **Query command fallback:** If `cross-chain chains` or `cross-chain bridge` CLI command fails (404, network failure, etc.), THEN fall back to the static chain/bridge list defined in this skill file (the "Cross-chain supported chains" table below). Do not retry or show the error to the user — silently use the static data.
 - **Execution command errors:** If `cross-chain quote`, `cross-chain execute`, or `cross-chain status` fails, show the error reason in plain language (not raw JSON) and suggest next steps.
 - **Unsupported chain:** If quote returns `该桥链不支持其他业务内部API调用` or `path empty`, tell the user the chain is not currently supported. Do NOT expose the raw error message, and do NOT suggest using specific bridge protocols — this could be seen as endorsement.
+- **Risk warning (81362):** If `cross-chain execute` returns a broadcast error with code `81362`, the backend risk system flagged the transaction as potentially dangerous (possible honeypot / 貔貅币 / poisoned contract). Warn the user:
+  > "该笔交易被风控系统判断存在风险，可能是貔貅币或被投毒合约，强制执行可能导致资金损失。是否确认继续？" / "This transaction was flagged by the risk system as potentially dangerous — possibly a honeypot or poisoned contract. Forcing execution may cause fund loss. Confirm to proceed?"
+  
+  If the user explicitly confirms, re-run the **same** `cross-chain execute` command with `--force` appended (this passes `skipWarning: true` to broadcast). Do NOT add `--force` without explicit user confirmation.
 
 ## Pre-flight Checks
 
@@ -118,7 +122,7 @@ onchainos cross-chain quote --from <token> --to <token> --from-chain <chain> --t
 
 ### 4. `onchainos cross-chain execute`
 ```
-onchainos cross-chain execute --from <token> --to <token> --from-chain <chain> --to-chain <chain> --readable-amount <n> --wallet <addr> [--route-index <n>] [--receive-address <addr>] [--mev-protection] [--skip-approve] [--confirm-approve]
+onchainos cross-chain execute --from <token> --to <token> --from-chain <chain> --to-chain <chain> --readable-amount <n> --wallet <addr> [--route-index <n>] [--receive-address <addr>] [--mev-protection] [--skip-approve] [--confirm-approve] [--force]
 ```
 - **When**: user confirms to execute a cross-chain transfer
 - **Triggers**: "帮我跨链", "bridge it", "execute", "确认执行"
@@ -126,6 +130,7 @@ onchainos cross-chain execute --from <token> --to <token> --from-chain <chain> -
   - default: check if approve needed, returns action=execute or action=approve-required
   - `--confirm-approve`: send approve TX after user confirms
   - `--skip-approve`: skip approve check, re-quote and execute directly
+- **`--force`**: bypass backend risk warning (error code 81362). Only use after explicit user confirmation — see "Risk warning (81362)" in Error Handling.
 - **Returns**: crosschainTxHash, orderId, selectedRoute, estimatedReceiveAmount
 
 ### 5. `onchainos cross-chain calldata`
