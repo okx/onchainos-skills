@@ -129,7 +129,7 @@ onchainos cross-chain quote --from <address> --to <address> --from-chain <chain>
 Execute cross-chain transaction. Three modes controlled by `--skip-approve` / `--confirm-approve`.
 
 ```bash
-onchainos cross-chain execute --from <address> --to <address> --from-chain <chain> --to-chain <chain> --readable-amount <amount> --wallet <addr> [--receive-address <addr>] [--route-index <n>] [--mev-protection] [--tips <sol>] [--skip-approve] [--confirm-approve]
+onchainos cross-chain execute --from <address> --to <address> --from-chain <chain> --to-chain <chain> --readable-amount <amount> --wallet <addr> [--receive-address <addr>] [--route-index <n>] [--mev-protection] [--skip-approve] [--confirm-approve]
 ```
 
 | Param | Required | Default | Description |
@@ -142,9 +142,7 @@ onchainos cross-chain execute --from <address> --to <address> --from-chain <chai
 | `--wallet` | Yes | - | User wallet address |
 | `--receive-address` | No | wallet | Destination chain receive address |
 | `--route-index` | No | `0` | Route index from quote (0=recommended) |
-| `--gas-level` | No | `average` | Gas priority (reserved, currently unused) |
 | `--mev-protection` | No | `false` | Enable MEV protection (EVM) |
-| `--tips` | No | - | Solana Jito tips (reserved, currently unused) |
 | `--skip-approve` | No | `false` | Skip allowance check, execute trade directly |
 | `--confirm-approve` | No | `false` | Execute approval (after user confirms) |
 

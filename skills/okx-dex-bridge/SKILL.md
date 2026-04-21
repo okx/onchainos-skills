@@ -132,7 +132,6 @@ Follow the **Token Address Resolution** section above. Resolve `--from` using `-
 - **Cross-chain address format check**: When source and destination chains belong to different address families, the default wallet address may not be valid on the destination chain. Before calling quote, check if from-chain and to-chain use the same address format. If not, remind the user:
   > "Source and destination chains use different address formats. Please provide a receive address on the destination chain."
   BLOCK and wait for the user to provide a valid `--receive-address` before proceeding.
-- **Gas level**: default `average`. Currently not consumed by CLI (CLI parameter reserved for future use).
 - **Route**: default index 0 (recommended). Only pass `--route-index` if user explicitly selects a different bridge.
 - **Wallet**: run `onchainos wallet status`. Not logged in -> `onchainos wallet login`.
 
@@ -391,9 +390,9 @@ Additionally apply chain threshold rules (same as swap). Calculate `txValueUsd =
 | Chain | Threshold | How to enable |
 |---|---|---|
 | Ethereum | $2,000 | `--mev-protection` |
-| Solana | $1,000 | `--tips <sol_amount>` |
 | BNB Chain | $200 | `--mev-protection` |
 | Base | $200 | `--mev-protection` |
+| Solana | -- | Not yet wired |
 | Others | No MEV protection available | -- |
 
 If token price unavailable -> enable by default.

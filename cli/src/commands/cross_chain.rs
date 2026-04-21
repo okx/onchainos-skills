@@ -68,15 +68,9 @@ pub enum CrossChainCommand {
         /// Route index from quote result (default: 0 = recommended)
         #[arg(long, default_value_t = 0)]
         route_index: usize,
-        /// Gas priority: slow, average, fast
-        #[arg(long, default_value = "average")]
-        gas_level: String,
         /// Enable MEV protection (EVM chains)
         #[arg(long, default_value_t = false)]
         mev_protection: bool,
-        /// Jito tips in SOL for Solana MEV protection
-        #[arg(long)]
-        tips: Option<String>,
         /// Confirm and execute token approval (after user confirms)
         #[arg(long, default_value_t = false, conflicts_with = "skip_approve")]
         confirm_approve: bool,
@@ -240,9 +234,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             wallet,
             receive_address,
             route_index,
-            gas_level,
             mev_protection,
-            tips,
             confirm_approve,
             skip_approve,
             force,
@@ -257,9 +249,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
                 &wallet,
                 receive_address.as_deref(),
                 route_index,
-                &gas_level,
                 mev_protection,
-                tips.as_deref(),
                 confirm_approve,
                 skip_approve,
                 force,
@@ -872,9 +862,7 @@ async fn cmd_execute(
     wallet: &str,
     receive_address: Option<&str>,
     route_index: usize,
-    _gas_level: &str,
     mev_protection: bool,
-    _tips: Option<&str>,
     confirm_approve: bool,
     skip_approve: bool,
     force: bool,
