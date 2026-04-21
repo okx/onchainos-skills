@@ -170,8 +170,7 @@ Enabled only when the user has **explicitly authorized** automated execution. Th
 
 ### Step 7 — Report Result
 
-Use business-level language: "Swap complete" / "Approval and swap complete".
-Do NOT say "Transaction confirmed on-chain" / "Successfully broadcast" / "On-chain success".
+IMPORTANT: Report as **broadcast successful**. Use wording like "Swap transaction broadcast — final on-chain result pending". Do NOT say "Swap complete" / "Swap successful" / "On-chain success" — broadcast does not guarantee the tx lands or succeeds on-chain. Tell the user to check the explorer link for final status.
 
 Suggest follow-up: explorer link for `swapTxHash`, check new token price, or swap again.
 
