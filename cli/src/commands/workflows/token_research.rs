@@ -1,11 +1,12 @@
 /// W1 — Token Research
 ///
-/// Step 1 (parallel): token info + price-info + advanced-info + security scan
+/// Step 1: delegates to token::fetch_report() — the PRD §3.1 composite command
+///   (token info + price-info + advanced-info + security scan in one call)
 ///   PRD: single sub-call failure → field null, rest continues
 ///   PRD: all Step 1 calls fail    → return error
-/// Step 2 (parallel): holders + cluster overview + top traders + signal list
+/// Step 2 (sequential): holders + cluster overview + top traders + signal list
 ///   cluster-overview may 500 for brand-new tokens → treated as null, skipped gracefully
-/// Step 3 (parallel, conditional): launchpad enrichment only when protocolId non-empty
+/// Step 3 (sequential, conditional): launchpad enrichment only when protocolId non-empty
 ///   if advanced-info itself failed (null), protocolId absent → Step 3 skipped safely
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -15,18 +16,21 @@ use crate::client::ApiClient;
 use crate::commands::{memepump, signal, token};
 use crate::output;
 
-use super::{fetch_token_scan, ok_or_null, Context};
+use super::{ok_or_null, Context};
 
 pub(crate) async fn fetch_and_assemble(
     client: &mut ApiClient,
     address: &str,
     chain_index: &str,
 ) -> Result<Value> {
-    // ── Step 1: core data (sequential) ───────────────────────────────
-    let info = ok_or_null(token::fetch_info(client, address, chain_index).await);
-    let price = ok_or_null(token::fetch_price_info(client, address, chain_index).await);
-    let advanced = ok_or_null(token::fetch_advanced_info(client, address, chain_index).await);
-    let security = fetch_token_scan(client, chain_index, address).await;
+    // ── Step 1: core data via token report composite command ──────────
+    let report = token::fetch_report(client, address, chain_index).await?;
+
+    // Extract individual values for Step 3 condition check and assemble()
+    let info     = report["info"].clone();
+    let price    = report["priceInfo"].clone();
+    let advanced = report["advancedInfo"].clone();
+    let security = report["security"].clone();
 
     // ── Step 2: on-chain structure (sequential) ──────────────────────
     let holders = ok_or_null(
