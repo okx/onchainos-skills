@@ -24,26 +24,28 @@ Returns map `fromChainId → toChainId → [chainPair]`. Chain pair validation i
 
 ## 2. onchainos cross-chain bridge
 
-Get available bridge protocols. No parameters required.
+Get available bridge protocols. No parameters required. Returns only bridges that have at least one active chain-pair configured (server-side aggregation via `/bridge/list`, added 2026-04-21).
 
 ```bash
 onchainos cross-chain bridge
 ```
 
-**Per bridge entry fields**:
+**Per bridge entry fields** (from `BridgeSwapEnum`):
 
 | Field | Type | Description |
 |---|---|---|
 | `code` | Number | **Bridge protocol ID** — same value space as `bridgeId` in `cross-chain chains` |
-| `_name` | String | Internal bridge name (e.g. `MULTICHAIN`, `CBRIDGE`) |
-| `showName` | String | Display name (may be empty — fall back to `_name`) |
-| `desc` | String | Description |
-| `type` | Number | Bridge category (0=Third-party, 1=Official, 2=Centralized, 3=Intent, 4=Other) |
+| `name` | String | Bridge short name/identifier (e.g. `stargate`, `wanchain`) |
+| `desc` | String | Bridge description/longer name |
+| `displayName` | String? | Display name (may be empty — fall back to `desc` or `name`) |
+| `type` | Number | Bridge category: `0`=Third-party, `1`=Official, `2`=Centralized |
 | `platformId` | Number | Platform ID |
-| `officialBridge` / `thirdPartBridge` / `centralizedBridge` | Boolean | Classification flags |
-| `bridgeLogoUrl` | String? | Optional logo URL |
+| `chainId` | Number? | Bound chain ID (only set for official bridges) |
+| `logoUrl` | String? | Logo URL |
+| `sort` | Number | Display sort order |
+| `flag` | Number | Status flag |
 
-**Filtering rule**: when Skill needs the list of bridges actually usable for user's chain pair, collect `bridgeId` values from `cross-chain chains` output and filter bridge list by `code ∈ {bridgeIds}`. (CLI already does this internally — only bridges with active chain pairs are returned.)
+> Notes: bridges defined in DB but missing from `BridgeSwapEnum` are filtered out server-side. Bridges whose `chainPair` cache is empty do not appear.
 
 ## 3. onchainos cross-chain quote
 

@@ -80,7 +80,7 @@ Only use the 7 subcommands listed below. Do NOT invent commands like `supported-
 | # | Command | Description |
 |---|---|---|
 | 1 | `onchainos cross-chain chains` | Query supported chain pairs. No params. Returns fromChainId → toChainId mapping. |
-| 2 | `onchainos cross-chain bridge` | Query available bridge protocols. No params. CLI filters to bridges with active chain pairs. |
+| 2 | `onchainos cross-chain bridge` | Query available bridge protocols. No params. Backend returns only configured bridges with active chain-pair cache (`/bridge/list`). |
 | 3 | `onchainos cross-chain quote --from ... --to ... --from-chain ... --to-chain ... --readable-amount <n> [--sort <0\|1\|2>] [--receive-address ...]` | Get cross-chain quote. `--sort`: 0=cheapest (default), 1=fastest, 2=max output. |
 | 4 | `onchainos cross-chain execute --from ... --to ... --from-chain ... --to-chain ... --readable-amount <n> --wallet <addr> [--route-index <n>] [--receive-address ...] [--mev-protection] [--skip-approve] [--confirm-approve] [--force]` | Execute cross-chain. Three modes: default (auto detect approve), `--confirm-approve` (send approve TX), `--skip-approve` (skip check + re-quote). `--force` bypasses risk warning 81362 only after explicit user confirmation. |
 | 5 | `onchainos cross-chain calldata --from ... --to ... --from-chain ... --to-chain ... --readable-amount <n> --wallet <addr>` | Return unsigned calldata only. Does NOT sign or broadcast. Display `data` field in full — never truncate. |

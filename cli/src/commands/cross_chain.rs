@@ -537,57 +537,14 @@ pub async fn fetch_chain_pairs(client: &mut ApiClient) -> Result<Value> {
         .await
 }
 
-/// Extract unique bridgeIds from chainPair/list response.
-/// Structure: Map<fromChainId, Map<toChainId, List<{bridgeId, ...}>>>
-fn extract_bridge_ids(pairs: &Value) -> std::collections::HashSet<i64> {
-    let mut ids = std::collections::HashSet::new();
-    let entries = pairs
-        .as_object()
-        .into_iter()
-        .flat_map(|m| m.values())
-        .filter_map(|v| v.as_object())
-        .flat_map(|m| m.values())
-        .filter_map(|v| v.as_array())
-        .flatten();
-    for entry in entries {
-        if let Some(id) = entry["bridgeId"].as_i64() {
-            ids.insert(id);
-        }
-    }
-    ids
-}
-
 /// Get active bridge protocols.
-/// Two-step: fetch chainPair/list to collect active bridgeIds, then
-/// fetch dict/get and filter to only return bridges with active pairs.
+/// Single-call: backend endpoint `/bridge/list` (added 2026-04-21) aggregates
+/// bridges from chainPair cache and returns only configured bridges.
+/// Server-side handles filtering — no client-side join needed.
 pub async fn fetch_bridges(client: &mut ApiClient) -> Result<Value> {
-    // 1. Get all chain pairs and extract unique bridgeIds
-    let pairs = client
-        .post(&format!("{}/chainPair/list", BRIDGE_API_PREFIX), &json!({}))
-        .await?;
-    let active_ids = extract_bridge_ids(&pairs);
-
-    // 2. Get full bridge dict and filter
-    let all_bridges = client
-        .get(
-            &format!("{}/dict/get", BRIDGE_API_PREFIX),
-            &[("className", "BridgeSwapEnum")],
-        )
-        .await?;
-    if let Some(arr) = all_bridges.as_array() {
-        let filtered: Vec<&Value> = arr
-            .iter()
-            .filter(|b| {
-                b["code"]
-                    .as_i64()
-                    .map(|c| active_ids.contains(&c))
-                    .unwrap_or(false)
-            })
-            .collect();
-        Ok(serde_json::json!(filtered))
-    } else {
-        Ok(all_bridges)
-    }
+    client
+        .post(&format!("{}/bridge/list", BRIDGE_API_PREFIX), &json!({}))
+        .await
 }
 
 /// POST /quote — Get cross-chain quote
