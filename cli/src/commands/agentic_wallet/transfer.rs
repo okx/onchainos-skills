@@ -395,7 +395,7 @@ pub(super) async fn cmd_send(
         .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
     let session_cert = &session.session_cert;
 
-    let client = crate::wallet_api::WalletApiClient::new()?;
+    let mut client = crate::wallet_api::WalletApiClient::new()?;
     // TEMPORARY: debug_dump — 联调后删除 unsigned_req 定义和 debug_dump::dump 调用
     let unsigned_req = json!({
         "chainPath": addr_info.chain_path,
@@ -469,7 +469,7 @@ pub(super) async fn cmd_send(
         // Backend auto-selected token (scenario B/D): hash is ready, proceed to sign
         if !unsigned.hash.is_empty() {
             let resp = gas_station_sign_and_broadcast(
-                &client,
+                &mut client,
                 &access_token,
                 &account_id,
                 &addr_info,
@@ -595,7 +595,7 @@ async fn gas_station_send(
     let session = crate::wallet_store::load_session()?
         .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
 
-    let client = crate::wallet_api::WalletApiClient::new()?;
+    let mut client = crate::wallet_api::WalletApiClient::new()?;
     // TEMPORARY: debug_dump — 联调后删除 unsigned_req 定义和 debug_dump::dump 调用
     let unsigned_req = json!({
         "chainPath": addr_info.chain_path,
@@ -667,7 +667,7 @@ async fn gas_station_send(
     }
 
     let resp = gas_station_sign_and_broadcast(
-        &client,
+        &mut client,
         &access_token,
         &_account_id,
         &addr_info,
@@ -811,7 +811,7 @@ fn gs_build_extra_data(
 /// Flow 1: 首次 Gas Station — 升级 7702 + 交易（needUpdate7702=true）
 #[allow(clippy::too_many_arguments)]
 async fn gs_broadcast_with_7702_upgrade(
-    client: &crate::wallet_api::WalletApiClient,
+    client: &mut crate::wallet_api::WalletApiClient,
     access_token: &str,
     account_id: &str,
     addr_info: &crate::wallet_store::AddressInfo,
@@ -835,7 +835,7 @@ async fn gs_broadcast_with_7702_upgrade(
 /// Flow 2: 后续 Gas Station 交易（needUpdate7702=false，已升级 7702）
 #[allow(clippy::too_many_arguments)]
 async fn gs_broadcast_transaction(
-    client: &crate::wallet_api::WalletApiClient,
+    client: &mut crate::wallet_api::WalletApiClient,
     access_token: &str,
     account_id: &str,
     addr_info: &crate::wallet_store::AddressInfo,
@@ -858,7 +858,7 @@ async fn gs_broadcast_transaction(
 
 /// Gas Station broadcast 公共发送逻辑 + debug dump
 async fn gs_do_broadcast(
-    client: &crate::wallet_api::WalletApiClient,
+    client: &mut crate::wallet_api::WalletApiClient,
     access_token: &str,
     account_id: &str,
     addr_info: &crate::wallet_store::AddressInfo,
@@ -905,7 +905,7 @@ async fn gs_do_broadcast(
 /// Gas Station: 根据 needUpdate7702 路由到对应的 broadcast 流程
 #[allow(clippy::too_many_arguments)]
 async fn gas_station_sign_and_broadcast(
-    client: &crate::wallet_api::WalletApiClient,
+    client: &mut crate::wallet_api::WalletApiClient,
     access_token: &str,
     account_id: &str,
     addr_info: &crate::wallet_store::AddressInfo,

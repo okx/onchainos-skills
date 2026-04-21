@@ -926,7 +926,7 @@ impl WalletApiClient {
 
     /// POST /priapi/v5/wallet/agentic/gas-station/update-default-token
     pub async fn gas_station_update_default_token(
-        &self,
+        &mut self,
         access_token: &str,
         chain_index: &str,
         gas_token_address: &str,
@@ -946,7 +946,7 @@ impl WalletApiClient {
     /// POST /priapi/v5/wallet/agentic/gas-station/disable
     /// Disable Gas Station (DB flag only, no on-chain action).
     pub async fn gas_station_disable(
-        &self,
+        &mut self,
         access_token: &str,
         chain_index: &str,
     ) -> Result<Value> {

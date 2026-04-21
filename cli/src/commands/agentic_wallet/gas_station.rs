@@ -29,7 +29,7 @@ pub async fn execute(cmd: GasStationCommand) -> Result<()> {
 pub async fn fetch_update_default_token(chain: &str, gas_token_address: &str) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let chain_index = crate::chains::resolve_chain(chain);
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
     let req = serde_json::json!({
         "chainIndex": &chain_index,
         "gasTokenAddress": gas_token_address,
@@ -53,7 +53,7 @@ pub async fn fetch_update_default_token(chain: &str, gas_token_address: &str) ->
 pub async fn fetch_disable(chain: &str) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let chain_index = crate::chains::resolve_chain(chain);
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
     let req = serde_json::json!({ "chainIndex": &chain_index });
     let data = match client
         .gas_station_disable(&access_token, &chain_index)
