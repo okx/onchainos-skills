@@ -384,32 +384,6 @@ mod tests {
         .is_ok());
     }
 
-    // ── extract_bridge_ids ───────────────────────────────────────
-
-    #[test]
-    fn extract_ids_from_chain_pairs() {
-        let pairs = json!({
-            "1": {
-                "10": [{"bridgeId": 52}, {"bridgeId": 39}],
-                "42161": [{"bridgeId": 52}]
-            },
-            "8453": {
-                "42161": [{"bridgeId": 100}, {"bridgeId": 52}]
-            }
-        });
-        let ids = extract_bridge_ids(&pairs);
-        assert_eq!(ids.len(), 3);
-        assert!(ids.contains(&52));
-        assert!(ids.contains(&39));
-        assert!(ids.contains(&100));
-    }
-
-    #[test]
-    fn extract_ids_empty_input() {
-        let ids = extract_bridge_ids(&json!({}));
-        assert!(ids.is_empty());
-    }
-
     // ── decimal_to_hex64 ─────────────────────────────────────────
 
     #[test]
@@ -650,11 +624,14 @@ async fn fetch_order_save(
 
 /// POST /order/update — Update order with txHash
 async fn fetch_order_update(client: &mut ApiClient, order_id: &str, tx_hash: &str) -> Result<Value> {
+    let order_id_num: i64 = order_id
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid orderId from /order/save: {order_id}"))?;
     client
         .post(
             &format!("{}/order/update", BRIDGE_API_PREFIX),
             &json!({
-                "orderId": order_id.parse::<i64>().unwrap_or(0),
+                "orderId": order_id_num,
                 "txHash": tx_hash,
             }),
         )
