@@ -405,6 +405,26 @@ mod tests {
         assert!(ids.is_empty());
     }
 
+    // ── decimal_to_hex64 ─────────────────────────────────────────
+
+    #[test]
+    fn hex64_zero() {
+        assert_eq!(decimal_to_hex64("0"), "0".repeat(64));
+    }
+
+    #[test]
+    fn hex64_small_number() {
+        let result = decimal_to_hex64("5500000");
+        assert_eq!(result, format!("{:0>64x}", 5500000u128));
+    }
+
+    #[test]
+    fn hex64_uint256_max() {
+        let max = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+        let result = decimal_to_hex64(max);
+        assert_eq!(result, "f".repeat(64));
+    }
+
     // ── Integration tests (manual) ──────────────────────────────
 
     #[tokio::test]
@@ -734,14 +754,57 @@ async fn resolve_spender(
 
 // ── Helper: build approve calldata ──────────────────────────────────
 
-/// Construct ERC20 approve(spender, amount) calldata hex
+/// Construct ERC20 approve(spender, amount) calldata hex.
+/// Handles uint256 range via string-based hex conversion (u128 overflows for MaxUint256).
 fn build_approve_calldata(spender: &str, amount_raw: &str) -> String {
     let spender_clean = spender.trim_start_matches("0x").to_lowercase();
-    let amount_hex = format!("{:0>64x}", amount_raw.parse::<u128>().unwrap_or(0));
+    let amount_hex = decimal_to_hex64(amount_raw);
     format!(
         "0x095ea7b3{:0>64}{}",
         spender_clean, amount_hex
     )
+}
+
+/// Convert a decimal string to a zero-padded 64-char hex string.
+/// Supports full uint256 range by iterating digit-by-digit.
+fn decimal_to_hex64(decimal: &str) -> String {
+    if decimal == "0" {
+        return "0".repeat(64);
+    }
+    // Try u128 first (covers most cases)
+    if let Ok(v) = decimal.parse::<u128>() {
+        return format!("{:0>64x}", v);
+    }
+    // Fallback: manual base conversion for values > u128::MAX
+    let mut bytes = vec![0u8; 32]; // 256 bits
+    let mut dec_digits: Vec<u8> = decimal.bytes().map(|b| b - b'0').collect();
+    let mut bit_pos = 0;
+    while !dec_digits.is_empty() && bit_pos < 256 {
+        let remainder = div_decimal_by_2(&mut dec_digits);
+        if remainder == 1 {
+            bytes[31 - bit_pos / 8] |= 1 << (bit_pos % 8);
+        }
+        bit_pos += 1;
+        // Remove leading zeros
+        while dec_digits.first() == Some(&0) && dec_digits.len() > 1 {
+            dec_digits.remove(0);
+        }
+        if dec_digits == [0] {
+            break;
+        }
+    }
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Divide a decimal digit array by 2, return remainder (0 or 1).
+fn div_decimal_by_2(digits: &mut [u8]) -> u8 {
+    let mut carry = 0u8;
+    for d in digits.iter_mut() {
+        let val = carry * 10 + *d;
+        *d = val / 2;
+        carry = val % 2;
+    }
+    carry
 }
 
 // ── Helper: wallet contract-call wrapper ────────────────────────────
@@ -1083,7 +1146,7 @@ async fn cmd_execute(
 
     let calldata_type = calldata_result["calldataType"]
         .as_i64()
-        .unwrap_or(100);
+        .ok_or_else(|| anyhow::anyhow!("missing calldataType in /callData response"))?;
     let call_data = &calldata_result["callData"];
     let enable_mev = calldata_result["mevConfig"]["enableMev"]
         .as_bool()
@@ -1165,12 +1228,15 @@ async fn cmd_execute(
     };
 
     // Order Update
+    let mut order_update_warning: Option<String> = None;
     if crosschain_tx_hash != "pending" {
-        let _ = fetch_order_update(client, &order_id, &crosschain_tx_hash).await;
+        if let Err(e) = fetch_order_update(client, &order_id, &crosschain_tx_hash).await {
+            order_update_warning = Some(format!("{e:#}"));
+        }
     }
 
     // Output action=execute
-    output::success(json!({
+    let mut result = json!({
         "action": "execute",
         "orderId": order_id,
         "crosschainTxHash": crosschain_tx_hash,
@@ -1181,7 +1247,11 @@ async fn cmd_execute(
         "totalFee": total_fee,
         "estimatedTime": estimated_time,
         "calldataType": calldata_type,
-    }));
+    });
+    if let Some(warning) = order_update_warning {
+        result["orderUpdateWarning"] = json!(warning);
+    }
+    output::success(result);
 
     Ok(())
 }
