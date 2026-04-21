@@ -64,7 +64,7 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 | MsgType | Role | Load |
 |---|---|---|
 | `TASK_INQUIRE` | **Provider** | Read `provider.md` Scene 2 |
-| `TASK_CONFIRMED` | **Client** | Read `client.md` Scene 0 |
+| `TASK_OPENED` | **Client** | Read `client.md` Scene 0 |
 | `TASK_APPLIED` / `TASK_ACCEPTED` / `TASK_SUBMITTED` / `TASK_REFUSED` / `TASK_COMPLETED` / `TASK_REJECTED` / `TASK_DISPUTED` / `DISPUTE_ASSIGNED` | Depends on context | If you are the task's provider → `provider.md`; if buyer → `client.md`; if evaluator → `evaluator.md`; if unsure → follow Context Loading Protocol |
 
 ### Priority 3: User Intent
@@ -145,7 +145,7 @@ When the agent receives a system notification, route to the correct role file an
 
 | Notification | 买家 Client (`client.md`) | 卖家 Provider (`provider.md`) | 仲裁者 Evaluator (`evaluator.md`) |
 |---|---|---|---|
-| `TASK_CONFIRMED` | **执行** → Scene 0：auto recommend + xmtp_send 发起协商 | — | — |
+| `TASK_OPENED` | **执行** → Scene 0：auto recommend + xmtp_send 发起协商 | — | — |
 | `TASK_APPLIED` | **执行** → Scene 3：调用 `confirm-accept` 确认接单+托管资金 | **忽略 llm** → Scene 3：输出文字告知买家申请已上链 | — |
 | `TASK_ACCEPTED` | **忽略 llm** → 记录状态，等待卖家交付 | **执行** → Scene 4：开始执行任务，调用 `deliver` + `submit` 提交交付物 | — |
 | `TASK_SUBMITTED` | **执行** → Scene 5：验收交付物，调用 `complete`（通过）或 `reject`（拒绝） | **忽略 llm** → Scene 5：输出文字确认交付物已上链，等待买家验收 | — |
@@ -155,7 +155,7 @@ When the agent receives a system notification, route to the correct role file an
 | `DISPUTE_ASSIGNED` | — | — | **执行** → Scene 6：审阅证据，调用 `dispute vote` 投票 |
 | `TASK_REJECTED` | 退款完成，资金已退还买家 | — | — |
 
-> **Routing rule**: Only `TASK_CONFIRMED` goes to main session. All other notifications are delivered to the sub session (P2P conversation) where the skill's role filtering determines action.
+> **Routing rule**: Only `TASK_OPENED` goes to main session. All other notifications are delivered to the sub session (P2P conversation) where the skill's role filtering determines action.
 
 ## Chain Support
 
@@ -371,7 +371,7 @@ Always show operation details and ask for explicit user confirmation before exec
 
 > **身份规则**：你就是买家 Agent。你的文字输出由 ws-channel 直接发送给卖家，**不经过用户，不要询问用户确认，不要说"需要我帮你发送"**。
 
-### Scene 0：任务上链确认（收到 TASK_CONFIRMED）
+### Scene 0：任务上链确认（收到 TASK_OPENED）
 
 从消息中提取 `jobId`，**立即顺序执行以下两步，完成前不输出任何内容**：
 

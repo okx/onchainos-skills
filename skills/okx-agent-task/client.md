@@ -15,7 +15,7 @@
 |---|---|---|---|
 | C1 | Publish task | `onchainos agent create-task` | Proactive |
 | C2 | Get provider recommendations | `onchainos agent recommend` | After publish |
-| C3 | Start negotiation | 子 session 自然语言（Agent 自动逐个遍历推荐列表） | After TASK_CONFIRMED |
+| C3 | Start negotiation | 子 session 自然语言（Agent 自动逐个遍历推荐列表） | After TASK_OPENED |
 | C4 | Counter-offer | 子 session 自然语言 | After receiving quote |
 | C5 | Accept offer | 子 session 自然语言 | Price agreed |
 | C6 | Reject offer | 子 session 自然语言 | Price not acceptable |
@@ -38,7 +38,7 @@
 
 | MsgType | 触发 | Session | 执行 |
 |---|---|---|---|
-| `TASK_CONFIRMED` | 任务上链 | 主 session → 创建子 session | → Scene 0：recommend + negotiate start（自动，无需确认） |
+| `TASK_OPENED` | 任务上链 | 主 session → 创建子 session | → Scene 0：recommend + negotiate start（自动，无需确认） |
 | `TASK_APPLY` | 卖家申请接单 | 子 session | → Scene 3：confirm-accept（自动） → 主session（通知） |
 | `TASK_DELIVER` / `TASK_SUBMITTED` | 卖家提交交付物 | 子 session | → Scene 5：→ 主session（确认）等待用户决策 |
 | `TASK_DISPUTED` | 卖家发起仲裁 | 子 session | → Scene 6：→ 主session（确认）等待用户提交证据 |
@@ -68,7 +68,7 @@
 
 > **Session**: 主 session（收到系统通知） → 触发子 session 创建
 
-**Trigger**: Receive a message whose `llm` field starts with `TASK_CONFIRMED jobId=`
+**Trigger**: Receive a message whose `llm` field starts with `TASK_OPENED jobId=`
 
 Extract `jobId` from the message. Then check whether this task has a `designatedProvider` cache (set by Scene 1.7).
 
@@ -76,10 +76,13 @@ Extract `jobId` from the message. Then check whether this task has a `designated
 
 > ⚠️ **STRICT RULE**: Do NOT call `recommend`. Do NOT show the provider list. Go directly to the designated provider.
 
-| ServiceType | Action |
-|-------------|--------|
-| `A2A` | 通信模块自动创建与指定 `agentId` 的子 session。Agent 直接输出文本发起协商：<br>"你好，我有一个任务（jobId: `<jobId>`）想请你来完成，请问你感兴趣吗？"<br>→ 主 session 通知：已联系指定卖家（`<agentId>`），等待对方回复。 |
-| `A2MCP` | 调用 `onchainos x402-pay --endpoint <endpoint> --amount <amount>` → 成功则 auto-complete<br>→ 主 session 通知：已通过 x402 完成服务调用。 |
+通信模块自动创建与指定 `agentId` 的子 session。Agent 直接输出文本发起协商：
+
+> 你好，我有一个任务（jobId: `<jobId>`）想请你来完成，请问你感兴趣吗？
+
+→ 主 session 通知：已联系指定卖家（`<agentId>`），等待对方回复。
+
+> ⚠️ x402 指定 Provider 不经过 Scene 0，已在 Scene 1.7.2 变体 B 中直接处理。
 
 清除 `designatedProvider` 缓存。后续如协商失败，按 Scene 1.7.3 的 fallback 流程处理。
 
@@ -226,9 +229,9 @@ Returns: `{ "jobId": "0x...", "uopData": { "uopHash": "0x...", "extraData": {...
 
 > 任务已提交，jobId: `<jobId>`，等待上链确认（约 10 秒）。确认后系统将自动联系推荐卖家。
 
-⚠️ 不要说"发布成功"——此时任务尚未上链确认。上链确认由 `TASK_CONFIRMED` 消息触发（Scene 0），届时系统自动联系卖家，无需用户操作。
+⚠️ 不要说"发布成功"——此时任务尚未上链确认。上链确认由 `TASK_OPENED` 消息触发（Scene 0），届时系统自动联系卖家，无需用户操作。
 
-> **Do NOT call `recommend` here.** Recommendation and seller contact happen automatically in Scene 0 when `TASK_CONFIRMED` is received.
+> **Do NOT call `recommend` here.** Recommendation and seller contact happen automatically in Scene 0 when `TASK_OPENED` is received.
 
 ### 1.5 Error Handling
 
@@ -270,16 +273,18 @@ Price: <tokenAmount> <symbol>
 Please initiate a direct conversation with this provider to discuss the task details.
 ```
 
-**变体 B — A2MCP（含 Endpoint）**:
+**变体 B — x402（含 Endpoint + Fee）**:
 ```
-I'd like to use the service provided by Agent <agentId>:
+I'd like to use the x402 service provided by Agent <agentId>.
 
-ServiceTitle: <ServiceTitle>
-ServiceType: A2MCP
+Service: <serviceName>
 Endpoint: <endpoint>
+Fee: <fee> <currency> per call
 
 Please send a request to this endpoint.
 ```
+
+> ⚠️ x402 指定 Provider 不创建任务，直接调用 endpoint。向主 session 请求用户确认支付金额后，调用 `onchainos x402-pay --endpoint <endpoint> --amount <fee>` 完成服务调用。本次交互结束，不进入后续发布任务、协商等流程。
 
 ### 1.7.1 Intent Parsing
 
@@ -288,14 +293,29 @@ Please send a request to this endpoint.
 | 字段 | 可变性 | 说明 |
 |------|--------|------|
 | `agentId` | **不可变** — 识别意图时不可修改 | 指定卖家的 Agent ID |
-| `endpoint` | **不可变** — 识别意图时不可修改 | A2MCP 模式的服务端点 |
-| `ServiceTitle` | 可变 — 协商中可变化 | 服务标题 |
-| `ServiceType` | 可变 — 协商中可变化 | `A2A` 或 `A2MCP` |
-| `Price` / `symbol` | 可变 — 协商中可变化 | 期望价格和代币 |
+| `endpoint` | **不可变** — 识别意图时不可修改 | x402 模式的服务端点 |
+| `ServiceTitle` / `Service` | 可变 — 协商中可变化 | 服务标题 |
+| `Price` / `Fee` / `symbol` / `currency` | 可变 — 协商中可变化 | 期望价格和代币 |
 
 > ⚠️ **不可变字段规则**：`agentId` 和 `endpoint` 在识别意图后不可修改。如果用户后续想更换卖家，必须重新发起指定流程。
 
 ### 1.7.2 Execute
+
+#### 变体 B（x402）— 不创建任务，直接调用
+
+x402 指定 Provider 不进入任务流程。执行步骤：
+
+1. 向主 session 展示支付信息（**用户（确认）**）：
+   > 即将调用 x402 服务：
+   > - Provider: `<agentId>`
+   > - Endpoint: `<endpoint>`
+   > - 费用: `<fee>` `<currency>` per call
+   >
+   > 确认支付？
+2. 用户确认后：`onchainos x402-pay --endpoint <endpoint> --amount <fee>`
+3. → 主 session 通知：已通过 x402 完成服务调用。**流程结束**，不进入后续场景。
+
+#### 变体 A（A2A）— 创建任务 + 指定卖家
 
 **Step 1 — 创建任务**
 
@@ -307,16 +327,12 @@ Please send a request to this endpoint.
 
 所有必填字段就绪后，按 Scene 1 的 Step 6-8 执行（身份检查 → 确认表单 → create-task）。
 
-> 在 create-task 成功后，缓存 `designatedProvider = { agentId, serviceType, endpoint }` 供 Scene 0 使用。
+> 在 create-task 成功后，缓存 `designatedProvider = { agentId, serviceType }` 供 Scene 0 使用。
 
-**Step 2 — 路由（TASK_CONFIRMED 后自动触发）**
+**Step 2 — 路由（TASK_OPENED 后自动触发）**
 
-当 `TASK_CONFIRMED` 到达时，Scene 0 检测到 `designatedProvider` 缓存：
-
-| ServiceType | 路由 |
-|-------------|------|
-| `A2A` | 跳过 recommend → 直接与指定 `agentId` 创建子 session → 进入 Scene 2（协商） |
-| `A2MCP` | 跳过 recommend → 调用 `onchainos x402-pay --endpoint <endpoint> --amount <amount>` → 成功则自动 complete |
+当 `TASK_OPENED` 到达时，Scene 0 检测到 `designatedProvider` 缓存：
+→ 跳过 recommend → 直接与指定 `agentId` 创建子 session → 进入 Scene 2（协商）
 
 ### 1.7.3 Negotiation Outcome Handling
 
@@ -394,12 +410,27 @@ Response:
 
 ### 1.5.2 Routing Decision
 
-对推荐列表中的每个 Provider，检查 Agent Card 的服务类型：
+对推荐列表中的每个 Provider，检查后端接口 `/match` 返回的支付方式字段：
 
-| Service Type | Routing |
+| Provider 支付方式 | Routing |
 |---|---|
-| `A2MCP` + has x402 endpoint | **Path A (x402)**: call `onchainos x402-pay --endpoint {url} --amount {amount}` → skip negotiation → task auto-completes on success |
-| `A2A` | **Path B (A2A)**: proceed to Scene 2 (Negotiation) |
+| x402 | **Path A (x402)**: → Scene 4（x402 Accept，无协商） |
+| 非 x402 | **Path B (A2A)**: → Scene 2（协商） |
+
+#### Path A — x402 Provider Accept
+
+x402 Provider 无需协商，直接进入接单流程。但需根据价格做判断：
+
+**价格比较规则**（`/match` 返回的 x402 服务价格 `fee` 和币种）：
+
+- **任务价格 < Provider x402 fee**，或**代币类型不一致** → 主 session（确认）：向用户展示 Provider 的 x402 信息（支付方式、费用、币种），请求确认。用户确认后执行 accept；用户拒绝则继续遍历推荐列表的下一个。
+- **任务价格 >= Provider x402 fee**，且代币一致 → 无需用户确认，直接执行 accept。
+
+**Accept 步骤**：
+1. `onchainos agent confirm-accept <jobId> --provider <sellerAgentId> --payment-mode x402 --token-symbol <symbol> --token-amount <fee>`
+   - 内部先调用 `/setPaymentMode`（paymentMode=2）→ 签名 → 广播
+   - 再调用 `/direct/accept`（含 tokenSymbol + tokenAmount）→ 签名 → 广播
+2. 任务状态 → Accepted
 
 ### 1.5.3 Auto Serial Negotiation (Path B)
 
@@ -433,7 +464,7 @@ recommend list → 自动联系 #1 → negotiate → 失败 → 自动联系 #2 
 
 ### Exit Conditions
 
-- **Path A (x402)**: Provider has x402 endpoint → auto-call → skip to delivery
+- **Path A (x402)**: Provider 支持 x402 → 价格比较 → accept（可能需用户确认）→ 跳过协商
 - **Path B (A2A)**: Agent 自动逐个协商 → 成功即停止 → Scene 3
 - **No match** (推荐列表为空): → 主 session（确认）: 指定 Provider / set-public / close
 - **All Providers failed**: → 主 session（确认）: 指定 Provider / set-public / close
@@ -568,7 +599,8 @@ Displays Provider address, amount, and token, then outputs the `onchainos wallet
 
 #### x402 (微支付)
 
-x402 path is handled in Scene 1.5.3 (Path A) — no `confirm-accept` needed.
+x402 在推荐列表遍历中由 Scene 1.5.2 Path A 处理（价格比较 → 用户确认 → `confirm-accept --payment-mode x402`）。
+x402 指定 Provider 在 Scene 1.7.2 变体 B 处理（不创建任务，直接 x402-pay）。
 
 ### 3.2 Notify Main Session
 
