@@ -9,9 +9,9 @@
 //! - `utils`     — stateless helpers (HTTP client, logging, parsing)
 //! - `signing`   — signing seed + Erc8004Payload + broadcast
 //! - `queries`   — read-side commands (get / search / service-list /
-//!                 feedback-list) plus update's pre-fetch
+//!   feedback-list) plus update's pre-fetch
 //! - `mutations` — write-side commands (create / update / activate /
-//!                 deactivate / upload / feedback-submit / xmtp-sign)
+//!   deactivate / upload / feedback-submit / xmtp-sign)
 //!
 //! Dependency direction: `models` ← `utils` ← `signing` ← `queries` /
 //! `mutations` ← `mod.rs`.

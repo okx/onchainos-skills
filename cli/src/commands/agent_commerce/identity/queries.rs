@@ -172,7 +172,7 @@ async fn service_list_impl(args: &ServiceListArgs, ctx: &Context) -> Result<Valu
     let access_token = ensure_tokens_refreshed().await?;
     let client = wallet_client(ctx)?;
     let agent_id = resolve_agent_id(&args.agent_id, &args.agent_id_flag)?;
-    let query = vec![("agentId".to_string(), agent_id.to_string())];
+    let query = [("agentId".to_string(), agent_id.to_string())];
     let query_refs: Vec<(&str, &str)> = query
         .iter()
         .map(|(key, value)| (key.as_str(), value.as_str()))
@@ -287,7 +287,7 @@ pub(super) async fn fetch_agent_for_update(
     let client = wallet_client(ctx)?;
     // Product spec: agent-list identifies the user via JWT and returns all agents
     // owned by that user; `from` is never needed even when filtering by agentIds.
-    let query = vec![
+    let query = [
         ("chainIndex".to_string(), XLAYER_CHAIN_INDEX.to_string()),
         ("agentIds".to_string(), agent_id.to_string()),
         ("page".to_string(), "1".to_string()),
