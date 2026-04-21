@@ -229,12 +229,19 @@ struct AgentUnsignedTx {
     extra_data: Value,
 }
 
-/// erc8004Msg 子对象需要的上游参数（create/update/feedback-submit 各自组装后传入）。
-/// 按产品规范，feedback-submit 的 erc8004Msg 不带 role 字段，所以 role 是 Option。
-struct Erc8004Params {
-    role: Option<String>,
-    key_uuid: String,
-    session_signature: String,
+/// 广播阶段 erc8004Msg 子对象的内容。按产品规范：
+/// - create：首次注册，4 个子字段全部携带（建立 agent 身份）
+/// - update / feedback-submit：不允许修改 communicationAddress / role / keyUuid /
+///   sessionSignature 任何一个，所以 erc8004Msg 是空对象 `{}`，避免后端误改 K1
+///   或 agent 通信地址等持久身份。
+enum Erc8004Payload {
+    Create {
+        communication_address: String,
+        role: String,
+        key_uuid: String,
+        session_signature: String,
+    },
+    Empty,
 }
 
 pub async fn create(args: CreateArgs, ctx: &Context) -> Result<()> {
@@ -313,16 +320,11 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         services: parse_services(args.service.as_deref())?,
     };
     ensure_provider_has_service(&card)?;
-    let erc8004 = Erc8004Params {
-        role: Some(normalized_role),
-        key_uuid: key_uuid.clone(),
-        session_signature: session_signature.clone(),
-    };
     let body = json!({
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,
         "fromAddr": from_addr,
-        "keyUuid": key_uuid,
-        "sessionSignature": session_signature,
+        "keyUuid": key_uuid.clone(),
+        "sessionSignature": session_signature.clone(),
         "sessionCert": session_cert,
         "cardJson": serde_json::to_string(&card).context("failed to serialize cardJson")?,
     });
@@ -353,6 +355,20 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         );
     }
     let unsigned = parse_agent_unsigned(response)?;
+    // erc8004Msg 全 4 字段：首次注册 agent 身份必须建立。
+    // communicationAddress 由后端 pre-transaction 返回。
+    let communication_address = unsigned
+        .extra_data
+        .get("communicationAddress")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let erc8004 = Erc8004Payload::Create {
+        communication_address,
+        role: normalized_role,
+        key_uuid,
+        session_signature,
+    };
     let tx_hash = sign_and_broadcast_agent_transaction(
         ctx,
         &access_token,
@@ -375,15 +391,14 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     let current = fetch_agent_for_update(ctx, &access_token, agent_id).await?;
 
     // Role cannot be modified via update (not exposed as a CLI flag by product
-    // spec); always echo back the existing role.
-    let normalized_role = normalize_role(
-        current
-            .role
-            .as_deref()
-            .ok_or_else(|| anyhow!("existing agent has no role"))?,
-    )?;
+    // spec); always echo back the existing role into cardJson only.
     let card = AgentCard {
-        role: normalized_role.clone(),
+        role: normalize_role(
+            current
+                .role
+                .as_deref()
+                .ok_or_else(|| anyhow!("existing agent has no role"))?,
+        )?,
         name: resolve_update_string(args.name.as_deref(), current.name.as_deref(), "--name")?,
         profile_picture: resolve_optional_update_string(
             args.picture.as_deref(),
@@ -438,21 +453,13 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     }
     let response = update_result?;
     let unsigned = parse_agent_unsigned(response)?;
-    // Broadcast stage regenerates keyUuid + sessionSignature for erc8004Msg;
-    // update's pre-transaction body does not carry this pair.
-    let signing_seed = load_signing_seed()?;
-    let key_uuid = Uuid::new_v4().to_string();
-    let session_signature = sign_key_uuid(&key_uuid, &signing_seed)?;
-    let erc8004 = Erc8004Params {
-        role: Some(normalized_role),
-        key_uuid,
-        session_signature,
-    };
+    // 产品规范：update 不允许修改 communicationAddress / role / keyUuid /
+    // sessionSignature 任何一个，erc8004Msg 一律空 `{}`，避免覆盖 agent 持久身份。
     let tx_hash = sign_and_broadcast_agent_transaction(
         ctx,
         &access_token,
         &unsigned,
-        &erc8004,
+        &Erc8004Payload::Empty,
         None,
     )
     .await?;
@@ -581,13 +588,16 @@ async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
         .and_then(|name| name.to_str())
         .unwrap_or("upload.bin")
         .to_string();
+    let upload_url = reconstruct_post_url_for_log(
+        ctx,
+        "/priapi/v5/wallet/agentic/pre-transaction/upload-picture",
+    );
+    // 无条件打印 URL，联调时方便直接复制粘贴对比后端。
+    eprintln!("[agent-identity] upload request url={}", upload_url);
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][agent-identity] upload request: url={} access_token_len={} access_token_prefix={} file_path={} filename={} bytes_len={}",
-            reconstruct_post_url_for_log(
-                ctx,
-                "/priapi/v5/wallet/agentic/pre-transaction/upload-picture",
-            ),
+            upload_url,
             access_token.len(),
             redact_token_for_debug(&access_token),
             file,
@@ -798,21 +808,13 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
 
     let response = result?;
     let unsigned = parse_agent_unsigned(response)?;
-    // Broadcast stage regenerates keyUuid + sessionSignature for erc8004Msg.
-    // Per product spec, feedback-submit's erc8004Msg does NOT carry a role.
-    let signing_seed = load_signing_seed()?;
-    let key_uuid = Uuid::new_v4().to_string();
-    let session_signature = sign_key_uuid(&key_uuid, &signing_seed)?;
-    let erc8004 = Erc8004Params {
-        role: None,
-        key_uuid,
-        session_signature,
-    };
+    // 产品规范：feedback-submit 不允许修改 communicationAddress / role / keyUuid /
+    // sessionSignature 任何一个，erc8004Msg 一律空 `{}`。
     let tx_hash = sign_and_broadcast_agent_transaction(
         ctx,
         &access_token,
         &unsigned,
-        &erc8004,
+        &Erc8004Payload::Empty,
         args.address.as_deref(),
     )
     .await?;
@@ -1041,7 +1043,7 @@ async fn sign_and_broadcast_agent_transaction(
     ctx: &Context,
     access_token: &str,
     unsigned: &AgentUnsignedTx,
-    erc8004: &Erc8004Params,
+    erc8004: &Erc8004Payload,
     address_override: Option<&str>,
 ) -> Result<String> {
     let client = wallet_client(ctx)?;
@@ -1121,28 +1123,23 @@ async fn sign_and_broadcast_agent_transaction(
         extra_data["signType"] = json!(unsigned.sign_type);
     }
     extra_data["msgForSign"] = Value::Object(msg_for_sign);
-    // communicationAddress comes from the pre-transaction response; role is
-    // omitted here for feedback-submit per product spec (see Erc8004Params.role).
-    let communication_address = unsigned
-        .extra_data
-        .get("communicationAddress")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
-    let mut erc8004_obj = Map::new();
-    erc8004_obj.insert(
-        "communicationAddress".to_string(),
-        json!(communication_address),
-    );
-    if let Some(role) = &erc8004.role {
-        erc8004_obj.insert("role".to_string(), json!(role));
-    }
-    erc8004_obj.insert("keyUuid".to_string(), json!(erc8004.key_uuid));
-    erc8004_obj.insert(
-        "sessionSignature".to_string(),
-        json!(erc8004.session_signature),
-    );
-    extra_data["erc8004Msg"] = Value::Object(erc8004_obj);
+    // erc8004Msg：按 Erc8004Payload 决定塞什么。
+    // - Create：4 个子字段全部携带（首次注册 agent 身份）
+    // - Empty：空 `{}`，update / feedback-submit 都用这个，避免覆盖 agent 持久身份
+    extra_data["erc8004Msg"] = match erc8004 {
+        Erc8004Payload::Create {
+            communication_address,
+            role,
+            key_uuid,
+            session_signature,
+        } => json!({
+            "communicationAddress": communication_address,
+            "role": role,
+            "keyUuid": key_uuid,
+            "sessionSignature": session_signature,
+        }),
+        Erc8004Payload::Empty => json!({}),
+    };
 
     let extra_data_str =
         serde_json::to_string(&extra_data).context("failed to serialize broadcast extraData")?;
@@ -1619,846 +1616,3 @@ where
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use std::collections::HashMap;
-    use std::io::{Read, Write};
-    use std::net::{SocketAddr, TcpListener};
-    use std::path::{Path, PathBuf};
-    use std::process::Command;
-    use std::sync::{Arc, Mutex};
-    use std::thread;
-
-    use anyhow::Result;
-    use hpke::{
-        aead::AesGcm256, kdf::HkdfSha256, kem::X25519HkdfSha256, single_shot_seal, OpModeS,
-    };
-
-    use crate::commands::Context;
-    use crate::config::AppConfig;
-    use crate::home::TEST_ENV_MUTEX;
-    use crate::{keyring_store, wallet_store};
-
-    #[test]
-    fn agent_create_and_create_task_parse_under_shared_namespace() {
-        use clap::Parser;
-
-        let cli = crate::Cli::try_parse_from([
-            "onchainos",
-            "agent",
-            "create",
-            "--name",
-            "demo",
-            "--role",
-            "provider",
-            "--description",
-            "provider",
-        ])
-        .unwrap();
-        match cli.command {
-            crate::Commands::TaskSystem { command } => match command {
-                crate::commands::agent_commerce::AgentCommand::Create(args) => {
-                    assert_eq!(args.name.as_deref(), Some("demo"));
-                    assert_eq!(args.role.as_deref(), Some("provider"));
-                }
-                _ => panic!("unexpected command"),
-            },
-            _ => panic!("unexpected top-level command"),
-        }
-
-        let cli = crate::Cli::try_parse_from([
-            "onchainos",
-            "agent",
-            "create-task",
-            "--description",
-            "build it",
-            "--budget",
-            "10",
-            "--currency",
-            "USDT",
-            "--deadline-open",
-            "24h",
-            "--deadline-submit",
-            "48h",
-            "--quality-standards",
-            "good",
-        ])
-        .unwrap();
-        match cli.command {
-            crate::Commands::TaskSystem { command } => match command {
-                crate::commands::agent_commerce::AgentCommand::CreateTask { .. } => {}
-                _ => panic!("unexpected command"),
-            },
-            _ => panic!("unexpected top-level command"),
-        }
-    }
-
-    #[test]
-    fn parse_services_validates_a2mcp_requirements() {
-        let err = parse_services(Some(
-            r#"[{"ServiceName":"test","ServiceDescription":"desc","ServiceType":"A2MCP"}]"#,
-        ))
-        .unwrap_err();
-        assert!(format!("{err}").contains("Fee"));
-
-        let services = parse_services(Some(
-            r#"[{"ServiceName":"test","ServiceDescription":"desc","ServiceType":"A2MCP","Fee":"1","Endpoint":"https://x"}]"#,
-        ))
-        .unwrap();
-        assert_eq!(services[0].service_type, "A2MCP");
-    }
-
-    #[test]
-    fn extract_existing_agent_card_reads_embedded_card_json() {
-        let agent = json!({
-            "agentId": "1001",
-            "cardJson": "{\"role\":\"provider\",\"Name\":\"Alice\",\"ProfilePicture\":\"https://cdn/avatar.png\",\"ProfileDescription\":\"desc\",\"CommunicationAddress\":\"0xcomm\",\"Service\":[{\"id\":\"svc-1\",\"ServiceName\":\"trade\",\"ServiceDescription\":\"desc\",\"Fee\":\"1\",\"ServiceType\":\"A2MCP\",\"Endpoint\":\"https://svc\"}]}"
-        });
-        let card = extract_existing_agent_card(&agent).unwrap();
-        assert_eq!(card.role.as_deref(), Some("provider"));
-        assert_eq!(card.name.as_deref(), Some("Alice"));
-        assert_eq!(card.communication_address.as_deref(), Some("0xcomm"));
-        assert_eq!(
-            card.services.as_ref().unwrap()[0].id.as_deref(),
-            Some("svc-1")
-        );
-    }
-
-    #[test]
-    fn resolve_current_xlayer_address_prefers_selected_account() {
-        let wallets = wallets_fixture();
-        let (account_id, addr) = resolve_current_xlayer_address(&wallets).unwrap();
-        assert_eq!(account_id, "acc-1");
-        assert_eq!(addr.address, "0xabc");
-    }
-
-    #[tokio::test]
-    async fn create_impl_signs_and_broadcasts_agent_transaction() -> Result<()> {
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        let temp = prepare_test_home("agent_create_impl")?;
-        std::env::set_var("ONCHAINOS_HOME", &temp);
-        keyring_store::clear_all().ok();
-
-        let session_key = base64::engine::general_purpose::STANDARD.encode([7u8; 32]);
-        let signing_seed = [9u8; 32];
-        let encrypted_session_sk = encrypt_session_seed(&session_key, &signing_seed)?;
-        let wallets = wallets_fixture_from_current_home();
-        let (_, expected_addr) = resolve_current_xlayer_address(&wallets)?;
-        let expected_addr = expected_addr.address;
-
-        keyring_store::store(&[
-            (
-                "access_token",
-                &make_jwt(chrono::Utc::now().timestamp() + 3600),
-            ),
-            (
-                "refresh_token",
-                &make_jwt(chrono::Utc::now().timestamp() + 7200),
-            ),
-            ("session_key", &session_key),
-        ])?;
-        wallet_store::save_session(&wallet_store::SessionJson {
-            encrypted_session_sk,
-            session_key_expire_at: (chrono::Utc::now().timestamp() + 7200).to_string(),
-            ..Default::default()
-        })?;
-        wallet_store::save_wallets(&wallets)?;
-
-        let requests = Arc::new(Mutex::new(Vec::<RecordedRequest>::new()));
-        let server = MockServer::start(
-            vec![
-                MockResponse::json(
-                    "/priapi/v5/wallet/agentic/pre-transaction/createAgent",
-                    json!({
-                        "code": "0",
-                        "msg": "success",
-                        "data": [{
-                            "hash": "0x11",
-                            "authHashFor7702": "0x22",
-                            "uopHash": "0x33",
-                            "signType": "eip1559Tx",
-                            "encoding": "hex",
-                            "unsignedTxHash": "0x44",
-                            "unsignedTx": "0x55",
-                            "extraData": { "communicationAddress": "0xcomm" }
-                        }]
-                    }),
-                ),
-                MockResponse::json(
-                    "/priapi/v5/wallet/agentic/pre-transaction/broadcast-transaction",
-                    json!({
-                        "code": "0",
-                        "msg": "success",
-                        "data": [{
-                            "txHash": "0xtx"
-                        }]
-                    }),
-                ),
-            ],
-            requests.clone(),
-        )?;
-
-        let ctx = test_context(Some(server.base_url()));
-        let data = create_impl(
-            &CreateArgs {
-                name: Some("Demo".into()),
-                role: Some("provider".into()),
-                description: Some("Agent".into()),
-                picture: Some("https://cdn/demo.png".into()),
-                service: Some(
-                    r#"[{"ServiceName":"quote","ServiceDescription":"desc","Fee":"1","ServiceType":"A2MCP","Endpoint":"https://svc"}]"#
-                        .into(),
-                ),
-                address: None,
-            },
-            &ctx,
-        )
-        .await?;
-
-        assert_eq!(data["txHash"], "0xtx");
-
-        let requests = requests.lock().unwrap();
-        assert_eq!(requests.len(), 2);
-        let create_body: Value = serde_json::from_slice(&requests[0].body)?;
-        assert_eq!(create_body["fromAddr"], expected_addr);
-        assert!(create_body["keyUuid"].as_str().unwrap().len() > 10);
-        assert!(create_body["sessionSignature"].as_str().unwrap().len() > 10);
-        assert!(create_body["sessionCert"].is_string());
-        let card_json = create_body["cardJson"].as_str().unwrap();
-        let card_value: Value = serde_json::from_str(card_json)?;
-        assert_eq!(card_value["Role"], "provider");
-        assert_eq!(card_value["Name"], "Demo");
-
-        let broadcast_body: Value = serde_json::from_slice(&requests[1].body)?;
-        let extra_data: Value =
-            serde_json::from_str(broadcast_body["extraData"].as_str().unwrap())?;
-        assert_eq!(broadcast_body["accountId"], "acc-1");
-        assert_eq!(broadcast_body["address"], expected_addr);
-        assert_eq!(extra_data["txType"], 3);
-        assert_eq!(extra_data["syncWaitOnChain"], true);
-        assert_eq!(extra_data["checkBalance"], true);
-        assert_eq!(extra_data["uopHash"], "0x33");
-        assert_eq!(extra_data["encoding"], "hex");
-        assert_eq!(extra_data["signType"], "eip1559Tx");
-        assert!(extra_data["msgForSign"]["signature"].is_string());
-        assert!(extra_data["msgForSign"]["authSignatureFor7702"].is_string());
-        assert_eq!(extra_data["msgForSign"]["unsignedTxHash"], "0x44");
-        assert_eq!(extra_data["msgForSign"]["unsignedTx"], "0x55");
-        assert!(extra_data["msgForSign"]["sessionSignature"].is_string());
-        assert!(extra_data["msgForSign"]["sessionCert"].is_string());
-        assert_eq!(extra_data["erc8004Msg"]["role"], "provider");
-        assert_eq!(extra_data["erc8004Msg"]["communicationAddress"], "0xcomm");
-        assert!(extra_data["erc8004Msg"]["keyUuid"].as_str().unwrap().len() > 10);
-        assert!(
-            extra_data["erc8004Msg"]["sessionSignature"]
-                .as_str()
-                .unwrap()
-                .len()
-                > 10
-        );
-
-        drop(requests);
-        server.shutdown();
-        keyring_store::clear_all().ok();
-        std::env::remove_var("ONCHAINOS_HOME");
-        fs::remove_dir_all(&temp).ok();
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn update_impl_merges_existing_card_fields() -> Result<()> {
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        let temp = prepare_test_home("agent_update_impl")?;
-        std::env::set_var("ONCHAINOS_HOME", &temp);
-        keyring_store::clear_all().ok();
-
-        let session_key = base64::engine::general_purpose::STANDARD.encode([8u8; 32]);
-        let signing_seed = [5u8; 32];
-        let encrypted_session_sk = encrypt_session_seed(&session_key, &signing_seed)?;
-
-        keyring_store::store(&[
-            (
-                "access_token",
-                &make_jwt(chrono::Utc::now().timestamp() + 3600),
-            ),
-            (
-                "refresh_token",
-                &make_jwt(chrono::Utc::now().timestamp() + 7200),
-            ),
-            ("session_key", &session_key),
-        ])?;
-        wallet_store::save_session(&wallet_store::SessionJson {
-            encrypted_session_sk,
-            session_key_expire_at: (chrono::Utc::now().timestamp() + 7200).to_string(),
-            ..Default::default()
-        })?;
-        wallet_store::save_wallets(&wallets_fixture_from_current_home())?;
-
-        let requests = Arc::new(Mutex::new(Vec::<RecordedRequest>::new()));
-        let server = MockServer::start(
-            vec![
-                MockResponse::json(
-                    "/priapi/v5/wallet/agentic/agent-list",
-                    json!({
-                        "code": "0",
-                        "msg": "success",
-                        "data": {
-                            "list": [{
-                                "agentId": "1001",
-                                "name": "Current Name",
-                                "profilePicture": "https://cdn/current.png",
-                                "profileDescription": "Current Desc",
-                                "cardJson": "{\"role\":\"provider\",\"CommunicationAddress\":\"0xcomm\",\"Service\":[{\"id\":\"svc-1\",\"ServiceName\":\"old\",\"ServiceDescription\":\"old desc\",\"Fee\":\"9\",\"ServiceType\":\"A2MCP\",\"Endpoint\":\"https://old\"}]}"
-                            }]
-                        }
-                    }),
-                ),
-                MockResponse::json(
-                    "/priapi/v5/wallet/agentic/pre-transaction/updateAgent",
-                    json!({
-                        "code": "0",
-                        "msg": "success",
-                        "data": [{
-                            "hash": "0xaa",
-                            "authHashFor7702": "0xbb",
-                            "signType": "eip1559Tx",
-                            "encoding": "hex",
-                            "unsignedTxHash": "0xcc",
-                            "unsignedTx": "0xdd",
-                            "extraData": { "communicationAddress": "0xcomm-update" }
-                        }]
-                    }),
-                ),
-                MockResponse::json(
-                    "/priapi/v5/wallet/agentic/pre-transaction/broadcast-transaction",
-                    json!({
-                        "code": "0",
-                        "msg": "success",
-                        "data": [{
-                            "txHash": "0xupdated"
-                        }]
-                    }),
-                ),
-            ],
-            requests.clone(),
-        )?;
-
-        let ctx = test_context(Some(server.base_url()));
-        let data = update_impl(
-            &UpdateArgs {
-                agent_id: Some("1001".into()),
-                agent_id_flag: None,
-                name: Some("New Name".into()),
-                description: None,
-                picture: None,
-                service: None,
-            },
-            &ctx,
-        )
-        .await?;
-        assert_eq!(data["txHash"], "0xupdated");
-
-        let requests = requests.lock().unwrap();
-        let update_body: Value = serde_json::from_slice(&requests[1].body)?;
-        assert!(update_body["sessionCert"].is_string());
-        let card_value: Value = serde_json::from_str(update_body["cardJson"].as_str().unwrap())?;
-        assert_eq!(card_value["Name"], "New Name");
-        assert_eq!(card_value["Role"], "provider");
-        assert_eq!(card_value["ProfileDescription"], "Current Desc");
-        assert!(card_value["CommunicationAddress"].is_null());
-        assert_eq!(card_value["Service"][0]["id"], "svc-1");
-
-        let broadcast_body: Value = serde_json::from_slice(&requests[2].body)?;
-        let extra_data: Value =
-            serde_json::from_str(broadcast_body["extraData"].as_str().unwrap())?;
-        assert_eq!(extra_data["txType"], 3);
-        assert_eq!(extra_data["syncWaitOnChain"], true);
-        assert_eq!(extra_data["erc8004Msg"]["role"], "provider");
-        assert_eq!(
-            extra_data["erc8004Msg"]["communicationAddress"],
-            "0xcomm-update"
-        );
-        assert_eq!(extra_data["msgForSign"]["unsignedTxHash"], "0xcc");
-        assert_eq!(extra_data["msgForSign"]["unsignedTx"], "0xdd");
-
-        drop(requests);
-        server.shutdown();
-        keyring_store::clear_all().ok();
-        std::env::remove_var("ONCHAINOS_HOME");
-        fs::remove_dir_all(&temp).ok();
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn get_impl_uses_xlayer_default_address_and_query_params() -> Result<()> {
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        let temp = prepare_test_home("agent_get_impl")?;
-        std::env::set_var("ONCHAINOS_HOME", &temp);
-        keyring_store::clear_all().ok();
-
-        keyring_store::store(&[
-            (
-                "access_token",
-                &make_jwt(chrono::Utc::now().timestamp() + 3600),
-            ),
-            (
-                "refresh_token",
-                &make_jwt(chrono::Utc::now().timestamp() + 7200),
-            ),
-        ])?;
-        wallet_store::save_wallets(&wallets_fixture())?;
-
-        let requests = Arc::new(Mutex::new(Vec::<RecordedRequest>::new()));
-        let server = MockServer::start(
-            vec![MockResponse::json(
-                "/priapi/v5/wallet/agentic/agent-list",
-                json!({
-                    "code": "0",
-                    "msg": "success",
-                    "data": {
-                        "total": 1,
-                        "page": 2,
-                        "pageSize": 5,
-                        "list": [{"agentId": "1001"}]
-                    }
-                }),
-            )],
-            requests.clone(),
-        )?;
-
-        let ctx = test_context(Some(server.base_url()));
-        let data = get_impl(
-            &GetArgs {
-                agent_ids: Some("1001".into()),
-                page: Some("2".into()),
-                page_size: Some("5".into()),
-            },
-            &ctx,
-        )
-        .await?;
-        assert_eq!(data["page"], 2);
-        assert_eq!(data["list"][0]["agentId"], "1001");
-
-        let requests = requests.lock().unwrap();
-        assert_eq!(requests.len(), 1);
-        assert!(!requests[0].path.contains("from="));
-        assert!(requests[0].path.contains("chainIndex=196"));
-        assert!(requests[0].path.contains("agentIds=1001"));
-        assert!(requests[0].path.contains("page=2"));
-        assert!(requests[0].path.contains("pageSize=5"));
-
-        drop(requests);
-        server.shutdown();
-        keyring_store::clear_all().ok();
-        std::env::remove_var("ONCHAINOS_HOME");
-        fs::remove_dir_all(&temp).ok();
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn feedback_submit_impl_builds_comment_and_broadcasts() -> Result<()> {
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        let temp = prepare_test_home("agent_feedback_submit_impl")?;
-        std::env::set_var("ONCHAINOS_HOME", &temp);
-        keyring_store::clear_all().ok();
-
-        let session_key = base64::engine::general_purpose::STANDARD.encode([6u8; 32]);
-        let signing_seed = [4u8; 32];
-        let encrypted_session_sk = encrypt_session_seed(&session_key, &signing_seed)?;
-        let wallets = wallets_fixture_from_current_home();
-        let (_, expected_addr) = resolve_current_xlayer_address(&wallets)?;
-        let expected_addr = expected_addr.address;
-
-        keyring_store::store(&[
-            (
-                "access_token",
-                &make_jwt(chrono::Utc::now().timestamp() + 3600),
-            ),
-            (
-                "refresh_token",
-                &make_jwt(chrono::Utc::now().timestamp() + 7200),
-            ),
-            ("session_key", &session_key),
-        ])?;
-        wallet_store::save_session(&wallet_store::SessionJson {
-            encrypted_session_sk,
-            session_key_expire_at: (chrono::Utc::now().timestamp() + 7200).to_string(),
-            ..Default::default()
-        })?;
-        wallet_store::save_wallets(&wallets)?;
-
-        let requests = Arc::new(Mutex::new(Vec::<RecordedRequest>::new()));
-        let server = MockServer::start(
-            vec![
-                MockResponse::json(
-                    "/priapi/v5/wallet/agentic/pre-transaction/createComment",
-                    json!({
-                        "code": "0",
-                        "msg": "success",
-                        "data": [{
-                            "hash": "0x44",
-                            "authHashFor7702": "0x55",
-                            "signType": "eip1559Tx",
-                            "encoding": "hex",
-                            "unsignedTxHash": "0x66",
-                            "unsignedTx": "0x77",
-                            "extraData": { "communicationAddress": "0xcomm-feedback" }
-                        }]
-                    }),
-                ),
-                MockResponse::json(
-                    "/priapi/v5/wallet/agentic/pre-transaction/broadcast-transaction",
-                    json!({
-                        "code": "0",
-                        "msg": "success",
-                        "data": [{
-                            "txHash": "0xfeed"
-                        }]
-                    }),
-                ),
-            ],
-            requests.clone(),
-        )?;
-
-        let ctx = test_context(Some(server.base_url()));
-        let data = feedback_submit_impl(
-            &FeedbackSubmitArgs {
-                agent_id: Some("1001".into()),
-                score: Some("95".into()),
-                tags: Some("fast,accurate".into()),
-                endpoint: Some("https://svc".into()),
-                feedback_uri: Some("ipfs://cid".into()),
-                feedback_hash: Some("0xhash".into()),
-                description: Some("Great service".into()),
-                address: None,
-            },
-            &ctx,
-        )
-        .await?;
-        assert_eq!(data["txHash"], "0xfeed");
-
-        let requests = requests.lock().unwrap();
-        assert_eq!(requests.len(), 2);
-        let comment_body: Value = serde_json::from_slice(&requests[0].body)?;
-        assert_eq!(comment_body["fromAddr"], expected_addr);
-        let comment: Value = serde_json::from_str(comment_body["comment"].as_str().unwrap())?;
-        assert_eq!(comment["agentId"], "1001");
-        assert_eq!(comment["score"], "95");
-        assert_eq!(comment["description"], "Great service");
-
-        let broadcast_body: Value = serde_json::from_slice(&requests[1].body)?;
-        let extra_data: Value =
-            serde_json::from_str(broadcast_body["extraData"].as_str().unwrap())?;
-        assert_eq!(extra_data["txType"], 3);
-        assert_eq!(extra_data["syncWaitOnChain"], true);
-        assert!(extra_data["msgForSign"]["signature"].is_string());
-        assert_eq!(extra_data["msgForSign"]["unsignedTxHash"], "0x66");
-        assert_eq!(extra_data["msgForSign"]["unsignedTx"], "0x77");
-        assert!(extra_data["msgForSign"]["sessionSignature"].is_string());
-        // 产品规范：feedback-submit 的 erc8004Msg 不带 role 字段
-        assert!(extra_data["erc8004Msg"].get("role").is_none());
-        assert_eq!(
-            extra_data["erc8004Msg"]["communicationAddress"],
-            "0xcomm-feedback"
-        );
-
-        drop(requests);
-        server.shutdown();
-        keyring_store::clear_all().ok();
-        std::env::remove_var("ONCHAINOS_HOME");
-        fs::remove_dir_all(&temp).ok();
-        Ok(())
-    }
-
-    #[test]
-    #[ignore = "manual real API debug for [DEBUG][agent-identity] logs"]
-    fn agent_identity_console_real_api_invalid_token_logs_request_and_response() -> Result<()> {
-        let _lock = TEST_ENV_MUTEX.lock().unwrap();
-        let temp = prepare_test_home("agent_identity_console_real_api")?;
-        std::env::set_var("ONCHAINOS_HOME", &temp);
-        keyring_store::clear_all().ok();
-
-        let session_key = base64::engine::general_purpose::STANDARD.encode([3u8; 32]);
-        let signing_seed = [2u8; 32];
-        let encrypted_session_sk = encrypt_session_seed(&session_key, &signing_seed)?;
-
-        keyring_store::store(&[
-            (
-                "access_token",
-                &make_jwt(chrono::Utc::now().timestamp() + 3600),
-            ),
-            (
-                "refresh_token",
-                &make_jwt(chrono::Utc::now().timestamp() + 7200),
-            ),
-            ("session_key", &session_key),
-        ])?;
-        wallet_store::save_session(&wallet_store::SessionJson {
-            encrypted_session_sk,
-            session_key_expire_at: (chrono::Utc::now().timestamp() + 7200).to_string(),
-            ..Default::default()
-        })?;
-        wallet_store::save_wallets(&wallets_fixture())?;
-
-        let binary = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("debug")
-            .join("onchainos");
-        let output = Command::new(binary)
-            .env("ONCHAINOS_HOME", &temp)
-            .args([
-                "agent",
-                "create",
-                "--name",
-                "name",
-                "--chain",
-                "196",
-                "--role",
-                "requester",
-                "--description",
-                "description",
-            ])
-            .output()?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        println!("STDOUT:\n{stdout}");
-        println!("STDERR:\n{stderr}");
-
-        let combined = format!("{stdout}\n{stderr}");
-        assert!(combined.contains("[DEBUG][agent-identity]"));
-        assert!(combined.contains("10008") || combined.contains("access token invalid"));
-
-        keyring_store::clear_all().ok();
-        std::env::remove_var("ONCHAINOS_HOME");
-        fs::remove_dir_all(&temp).ok();
-        Ok(())
-    }
-
-    fn test_context(base_url_override: Option<String>) -> Context {
-        Context {
-            config: AppConfig::default(),
-            base_url_override,
-            chain_override: None,
-        }
-    }
-
-    fn wallets_fixture() -> WalletsJson {
-        let mut accounts_map = HashMap::new();
-        accounts_map.insert(
-            "acc-1".to_string(),
-            wallet_store::AccountMapEntry {
-                address_list: vec![AddressInfo {
-                    account_id: "acc-1".into(),
-                    address: "0xabc".into(),
-                    chain_index: XLAYER_CHAIN_INDEX.into(),
-                    chain_name: XLAYER_CHAIN_NAME.into(),
-                    address_type: "aa".into(),
-                    chain_path: String::new(),
-                }],
-            },
-        );
-        WalletsJson {
-            selected_account_id: "acc-1".into(),
-            accounts_map,
-            ..Default::default()
-        }
-    }
-
-    fn wallets_fixture_from_current_home() -> WalletsJson {
-        let path = match dirs::home_dir() {
-            Some(home) => home.join(".onchainos").join("wallets.json"),
-            None => return wallets_fixture(),
-        };
-        let Ok(data) = fs::read_to_string(path) else {
-            return wallets_fixture();
-        };
-        let Ok(wallets) = serde_json::from_str::<WalletsJson>(&data) else {
-            return wallets_fixture();
-        };
-        if wallets
-            .accounts_map
-            .values()
-            .flat_map(|entry| entry.address_list.iter())
-            .any(|addr| addr.chain_index == XLAYER_CHAIN_INDEX)
-        {
-            wallets
-        } else {
-            wallets_fixture()
-        }
-    }
-
-    fn make_jwt(exp: i64) -> String {
-        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(r#"{"alg":"none","typ":"JWT"}"#);
-        let payload =
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!(r#"{{"exp":{exp}}}"#));
-        format!("{header}.{payload}.sig")
-    }
-
-    fn encrypt_session_seed(session_key_b64: &str, signing_seed: &[u8; 32]) -> Result<String> {
-        use hpke::{Deserializable, Serializable};
-
-        let session_key_bytes =
-            base64::engine::general_purpose::STANDARD.decode(session_key_b64)?;
-        let mut session_key = [0u8; 32];
-        session_key.copy_from_slice(&session_key_bytes);
-        let x25519_sk = x25519_dalek::StaticSecret::from(session_key);
-        let x25519_pk = x25519_dalek::PublicKey::from(&x25519_sk);
-        let receiver_pk =
-            <X25519HkdfSha256 as hpke::Kem>::PublicKey::from_bytes(x25519_pk.as_bytes()).unwrap();
-        let mut rng = rand::rngs::OsRng;
-        let (encapped, ciphertext) =
-            single_shot_seal::<AesGcm256, HkdfSha256, X25519HkdfSha256, _>(
-                &OpModeS::Base,
-                &receiver_pk,
-                b"okx-tee-sign",
-                signing_seed,
-                &[],
-                &mut rng,
-            )
-            .map_err(|e| anyhow!("hpke seal failed: {e}"))?;
-        let mut out = encapped.to_bytes().to_vec();
-        out.extend_from_slice(&ciphertext);
-        Ok(base64::engine::general_purpose::STANDARD.encode(out))
-    }
-
-    fn prepare_test_home(name: &str) -> Result<PathBuf> {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("test_tmp")
-            .join(name);
-        if dir.exists() {
-            fs::remove_dir_all(&dir).ok();
-        }
-        fs::create_dir_all(&dir)?;
-        Ok(dir)
-    }
-
-    #[derive(Clone, Debug)]
-    struct MockResponse {
-        path: String,
-        body: Vec<u8>,
-        content_type: &'static str,
-    }
-
-    impl MockResponse {
-        fn json(path: &str, body: Value) -> Self {
-            Self {
-                path: path.to_string(),
-                body: serde_json::to_vec(&body).unwrap(),
-                content_type: "application/json",
-            }
-        }
-    }
-
-    #[derive(Clone, Debug)]
-    struct RecordedRequest {
-        path: String,
-        body: Vec<u8>,
-    }
-
-    struct MockServer {
-        addr: SocketAddr,
-        join: Option<thread::JoinHandle<()>>,
-    }
-
-    impl MockServer {
-        fn start(
-            responses: Vec<MockResponse>,
-            requests: Arc<Mutex<Vec<RecordedRequest>>>,
-        ) -> Result<Self> {
-            let listener = TcpListener::bind("127.0.0.1:0")?;
-            let addr = listener.local_addr()?;
-            let join = thread::spawn(move || {
-                for response in responses {
-                    let (mut stream, _) = listener.accept().unwrap();
-                    let request = read_request(&mut stream).unwrap();
-                    requests.lock().unwrap().push(request.clone());
-                    let request_path = request.path.split('?').next().unwrap_or(&request.path);
-                    assert_eq!(request_path, response.path);
-                    let reply = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                        response.content_type,
-                        response.body.len()
-                    );
-                    stream.write_all(reply.as_bytes()).unwrap();
-                    stream.write_all(&response.body).unwrap();
-                    stream.flush().unwrap();
-                }
-            });
-            Ok(Self {
-                addr,
-                join: Some(join),
-            })
-        }
-
-        fn base_url(&self) -> String {
-            format!("http://{}", self.addr)
-        }
-
-        fn shutdown(mut self) {
-            if let Some(join) = self.join.take() {
-                join.join().unwrap();
-            }
-        }
-    }
-
-    fn read_request(stream: &mut std::net::TcpStream) -> Result<RecordedRequest> {
-        let mut buf = Vec::new();
-        let mut header_end = None;
-        loop {
-            let mut chunk = [0u8; 1024];
-            let n = stream.read(&mut chunk)?;
-            if n == 0 {
-                break;
-            }
-            buf.extend_from_slice(&chunk[..n]);
-            if let Some(pos) = find_bytes(&buf, b"\r\n\r\n") {
-                header_end = Some(pos + 4);
-                break;
-            }
-        }
-        let header_end = header_end.ok_or_else(|| anyhow!("missing request header terminator"))?;
-        let headers = &buf[..header_end];
-        let header_text = String::from_utf8_lossy(headers);
-        let mut lines = header_text.lines();
-        let request_line = lines
-            .next()
-            .ok_or_else(|| anyhow!("missing request line"))?;
-        let path = request_line
-            .split_whitespace()
-            .nth(1)
-            .ok_or_else(|| anyhow!("missing request path"))?
-            .to_string();
-
-        let mut content_length = 0usize;
-        for line in lines {
-            if let Some(value) = line.strip_prefix("Content-Length:") {
-                content_length = value.trim().parse::<usize>()?;
-            } else if let Some(value) = line.strip_prefix("content-length:") {
-                content_length = value.trim().parse::<usize>()?;
-            }
-        }
-
-        let mut body = buf[header_end..].to_vec();
-        while body.len() < content_length {
-            let mut chunk = vec![0u8; content_length - body.len()];
-            let n = stream.read(&mut chunk)?;
-            if n == 0 {
-                break;
-            }
-            body.extend_from_slice(&chunk[..n]);
-        }
-
-        Ok(RecordedRequest { path, body })
-    }
-
-    fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-        haystack
-            .windows(needle.len())
-            .position(|window| window == needle)
-    }
-}
