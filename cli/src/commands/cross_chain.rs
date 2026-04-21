@@ -134,6 +134,57 @@ pub enum CrossChainCommand {
     },
 }
 
+// ── Local validation helpers ───────────────────────────────────────
+
+/// Validate readable-amount is a positive number.
+fn validate_amount(readable_amount: &str) -> Result<()> {
+    let amt: f64 = readable_amount
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid readable-amount: \"{}\"", readable_amount))?;
+    if amt <= 0.0 {
+        bail!("readable-amount must be greater than 0");
+    }
+    Ok(())
+}
+
+/// Validate order-id is a non-empty numeric string.
+fn validate_order_id(order_id: &str) -> Result<()> {
+    if order_id.is_empty() || !order_id.chars().all(|c| c.is_ascii_digit()) {
+        bail!(
+            "invalid order-id: \"{}\". Order ID must be a numeric string.",
+            order_id
+        );
+    }
+    Ok(())
+}
+
+/// Check that receive-address matches the destination chain's address family.
+/// Returns an error if the address format clearly mismatches the chain.
+fn validate_receive_address(receive_address: &str, to_chain_index: &str) -> Result<()> {
+    let to_family = crate::chains::chain_family(to_chain_index);
+    let addr_looks_evm = receive_address.starts_with("0x") && receive_address.len() == 42;
+    let addr_looks_solana = !receive_address.starts_with("0x")
+        && receive_address.len() >= 32
+        && receive_address.len() <= 44
+        && receive_address.chars().all(|c| c.is_alphanumeric());
+
+    match to_family {
+        "solana" if addr_looks_evm => {
+            bail!(
+                "receive-address looks like an EVM address, but destination chain is Solana. \
+                 Please provide a Solana address."
+            );
+        }
+        "evm" if addr_looks_solana && !addr_looks_evm => {
+            bail!(
+                "receive-address looks like a Solana address, but destination chain is EVM. \
+                 Please provide an EVM address (0x...)."
+            );
+        }
+        _ => Ok(()),
+    }
+}
+
 // ── Public entry point ──────────────────────────────────────────────
 
 pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
@@ -154,8 +205,12 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             receive_address,
             sort,
         } => {
+            validate_amount(&readable_amount)?;
             let from_chain_index = crate::chains::resolve_chain(&from_chain);
             let to_chain_index = crate::chains::resolve_chain(&to_chain);
+            if let Some(ref addr) = receive_address {
+                validate_receive_address(addr, &to_chain_index)?;
+            }
             let from_token =
                 crate::commands::swap::resolve_token_address(&from_chain_index, &from);
             let to_token = crate::commands::swap::resolve_token_address(&to_chain_index, &to);
@@ -230,6 +285,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             .await?;
         }
         CrossChainCommand::Status { order_id } => {
+            validate_order_id(&order_id)?;
             output::success(fetch_order_details(&mut client, &order_id).await?);
         }
         CrossChainCommand::Probe {
@@ -246,6 +302,110 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── validate_amount ────────────────────────────────────────────
+
+    #[test]
+    fn amount_positive_ok() {
+        assert!(validate_amount("10").is_ok());
+        assert!(validate_amount("0.001").is_ok());
+    }
+
+    #[test]
+    fn amount_zero_rejected() {
+        assert!(validate_amount("0").is_err());
+    }
+
+    #[test]
+    fn amount_negative_rejected() {
+        assert!(validate_amount("-1").is_err());
+    }
+
+    #[test]
+    fn amount_non_numeric_rejected() {
+        assert!(validate_amount("abc").is_err());
+        assert!(validate_amount("").is_err());
+    }
+
+    // ── validate_order_id ────────────────────────────────────────
+
+    #[test]
+    fn order_id_numeric_ok() {
+        assert!(validate_order_id("17109522093792128").is_ok());
+    }
+
+    #[test]
+    fn order_id_non_numeric_rejected() {
+        assert!(validate_order_id("abc-invalid").is_err());
+        assert!(validate_order_id("123abc").is_err());
+        assert!(validate_order_id("").is_err());
+    }
+
+    // ── validate_receive_address ─────────────────────────────────
+
+    #[test]
+    fn evm_addr_to_evm_chain_ok() {
+        assert!(validate_receive_address(
+            "0x896f4edd6601eda7d12f077a35e1cdf2898282ce",
+            "42161" // Arbitrum
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn evm_addr_to_solana_rejected() {
+        assert!(validate_receive_address(
+            "0x896f4edd6601eda7d12f077a35e1cdf2898282ce",
+            "501" // Solana
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn solana_addr_to_evm_rejected() {
+        assert!(validate_receive_address(
+            "5EDUCQDeVmaGohSAJYQ8mwe4hZMXgDzS4X2Si3Zh3cL5",
+            "8453" // Base
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn solana_addr_to_solana_ok() {
+        assert!(validate_receive_address(
+            "5EDUCQDeVmaGohSAJYQ8mwe4hZMXgDzS4X2Si3Zh3cL5",
+            "501"
+        )
+        .is_ok());
+    }
+
+    // ── extract_bridge_ids ───────────────────────────────────────
+
+    #[test]
+    fn extract_ids_from_chain_pairs() {
+        let pairs = json!({
+            "1": {
+                "10": [{"bridgeId": 52}, {"bridgeId": 39}],
+                "42161": [{"bridgeId": 52}]
+            },
+            "8453": {
+                "42161": [{"bridgeId": 100}, {"bridgeId": 52}]
+            }
+        });
+        let ids = extract_bridge_ids(&pairs);
+        assert_eq!(ids.len(), 3);
+        assert!(ids.contains(&52));
+        assert!(ids.contains(&39));
+        assert!(ids.contains(&100));
+    }
+
+    #[test]
+    fn extract_ids_empty_input() {
+        let ids = extract_bridge_ids(&json!({}));
+        assert!(ids.is_empty());
+    }
+
+    // ── Integration tests (manual) ──────────────────────────────
 
     #[tokio::test]
     #[ignore = "manual integration test against pre-production order/update"]
@@ -277,7 +437,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "manual integration test against pre-production order/save + forged order/update"]
     async fn order_save_then_forged_update_returns_error() {
-        let client = crate::client::ApiClient::new_async(None)
+        let mut client = crate::client::ApiClient::new_async(None)
             .await
             .expect("create client");
 
@@ -306,7 +466,7 @@ mod tests {
         quote_for_order["pathSelectionRouterList"] = json!([selected]);
 
         let order_id_val = fetch_order_save(
-            &client,
+            &mut client,
             &quote_param,
             &quote_for_order,
             "0xf290d284ef50d6ad0b97dd67221e59c05c97dfbc",
@@ -322,7 +482,7 @@ mod tests {
         };
 
         let result = fetch_order_update(
-            &client,
+            &mut client,
             &order_id,
             "0x2222222222222222222222222222222222222222222222222222222222222222",
         )
@@ -346,25 +506,68 @@ mod tests {
 // ── API call functions ──────────────────────────────────────────────
 
 /// POST /chainPair/list — Get supported chain pairs
-async fn fetch_chain_pairs(client: &mut ApiClient) -> Result<Value> {
+pub async fn fetch_chain_pairs(client: &mut ApiClient) -> Result<Value> {
     client
         .post(&format!("{}/chainPair/list", BRIDGE_API_PREFIX), &json!({}))
         .await
 }
 
-/// GET /dict/get?className=BridgeSwapEnum — Get bridge protocols
-async fn fetch_bridges(client: &mut ApiClient) -> Result<Value> {
-    client
+/// Extract unique bridgeIds from chainPair/list response.
+/// Structure: Map<fromChainId, Map<toChainId, List<{bridgeId, ...}>>>
+fn extract_bridge_ids(pairs: &Value) -> std::collections::HashSet<i64> {
+    let mut ids = std::collections::HashSet::new();
+    let entries = pairs
+        .as_object()
+        .into_iter()
+        .flat_map(|m| m.values())
+        .filter_map(|v| v.as_object())
+        .flat_map(|m| m.values())
+        .filter_map(|v| v.as_array())
+        .flatten();
+    for entry in entries {
+        if let Some(id) = entry["bridgeId"].as_i64() {
+            ids.insert(id);
+        }
+    }
+    ids
+}
+
+/// Get active bridge protocols.
+/// Two-step: fetch chainPair/list to collect active bridgeIds, then
+/// fetch dict/get and filter to only return bridges with active pairs.
+pub async fn fetch_bridges(client: &mut ApiClient) -> Result<Value> {
+    // 1. Get all chain pairs and extract unique bridgeIds
+    let pairs = client
+        .post(&format!("{}/chainPair/list", BRIDGE_API_PREFIX), &json!({}))
+        .await?;
+    let active_ids = extract_bridge_ids(&pairs);
+
+    // 2. Get full bridge dict and filter
+    let all_bridges = client
         .get(
             &format!("{}/dict/get", BRIDGE_API_PREFIX),
             &[("className", "BridgeSwapEnum")],
         )
-        .await
+        .await?;
+    if let Some(arr) = all_bridges.as_array() {
+        let filtered: Vec<&Value> = arr
+            .iter()
+            .filter(|b| {
+                b["code"]
+                    .as_i64()
+                    .map(|c| active_ids.contains(&c))
+                    .unwrap_or(false)
+            })
+            .collect();
+        Ok(serde_json::json!(filtered))
+    } else {
+        Ok(all_bridges)
+    }
 }
 
 /// POST /quote — Get cross-chain quote
 #[allow(clippy::too_many_arguments)]
-async fn fetch_quote(
+pub async fn fetch_quote(
     client: &mut ApiClient,
     from_chain_index: &str,
     to_chain_index: &str,
@@ -478,7 +681,7 @@ async fn fetch_order_update(client: &mut ApiClient, order_id: &str, tx_hash: &st
 }
 
 /// GET /order/details — Query order status
-async fn fetch_order_details(client: &mut ApiClient, order_id: &str) -> Result<Value> {
+pub async fn fetch_order_details(client: &mut ApiClient, order_id: &str) -> Result<Value> {
     client
         .get(
             &format!("{}/order/details", BRIDGE_API_PREFIX),
@@ -594,11 +797,13 @@ async fn cmd_calldata(
     receive_address: Option<&str>,
     route_index: usize,
 ) -> Result<()> {
+    validate_amount(readable_amount)?;
     let from_chain_index = crate::chains::resolve_chain(from_chain);
     let to_chain_index = crate::chains::resolve_chain(to_chain);
     let from_token = crate::commands::swap::resolve_token_address(&from_chain_index, from);
     let to_token = crate::commands::swap::resolve_token_address(&to_chain_index, to);
     let receive_wallet = receive_address.unwrap_or(wallet);
+    validate_receive_address(receive_wallet, &to_chain_index)?;
 
     // 1. Quote
     let quote_param = json!({
@@ -679,11 +884,8 @@ async fn cmd_execute(
     let _ = gas_level;
 
     // ── 0. Local validation ─────────────────────────────────────────
-    // Zero amount check
-    let amt_f64: f64 = readable_amount.parse().unwrap_or(0.0);
-    if amt_f64 <= 0.0 {
-        bail!("readable-amount must be greater than 0");
-    }
+    validate_amount(readable_amount)?;
+    validate_receive_address(receive_wallet, &to_chain_index)?;
 
     // Balance pre-check
     check_balance(client, wallet, &from_chain_index, &from_token, from, readable_amount).await?;

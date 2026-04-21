@@ -2,25 +2,6 @@
 
 This file provides guidance to Claude Code when working with this repository.
 
-<!-- 测试环境配置（正式版本删除此段） -->
-## CRITICAL: Dev Environment — ALL onchainos Commands
-
-**Every single `onchainos` command MUST use the dev binary and pre-production base URL. No exceptions.**
-
-```bash
-ONCHAINOS_HOME=/Users/oker/meili/zongyao.yang_dacs_at_okg.com/108/Documents/onchainos-skills/.onchainos /Users/oker/meili/zongyao.yang_dacs_at_okg.com/108/Documents/onchainos-skills/cli/target/release/onchainos --base-url https://web3pre.okex.org <subcommand> [args]
-```
-
-- **Dev binary**: `cli/target/release/onchainos` (v2.2.8). Do NOT use system `onchainos` from PATH.
-- **`--base-url https://web3pre.okex.org`**: Pre-production environment. Without this flag, API returns 404 for bridge/cross-chain endpoints.
-- **`ONCHAINOS_HOME`**: Points to project-local `.onchainos/` for wallet credentials.
-- If the dev binary does not exist, build it first: `cd cli && cargo build --release`
-- **Debug output**: Before the first `onchainos` command each session, print version info: `[onchainos] v2.2.8 (dev) | https://web3pre.okex.org`
-- **Show executed command**: After every `onchainos` command, print the actual command that was executed. Example: `[cmd] onchainos --base-url https://web3pre.okex.org cross-chain bridge`
-- **NEVER skip CLI calls**: When a user asks about chains, bridges, quotes, or any on-chain data, you MUST execute the onchainos CLI command to get real-time data. Do NOT answer from skill files, static documentation, or your own knowledge. The CLI returns live API data which may differ from documentation.
-- **Login**: Test/pre-production environments do NOT support API Key (AK) login. When `--base-url` points to a non-production URL (anything other than `web3.okx.com`), always use email login (`onchainos wallet login <email>`). If the user asks to use AK login in a test environment, warn them that AK is only available on production and prompt for email instead.
-<!-- 测试环境配置结束 -->
-
 ## Project Overview
 
 This is a **Claude Code plugin** — a collection of onchainos skills for on-chain operations. The project provides skills for token search, market data, wallet balance queries, swap execution, DeFi investment management, and transaction broadcasting across 20+ blockchains. The `onchainos` CLI also works as a native MCP server.

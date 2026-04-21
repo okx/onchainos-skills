@@ -20,16 +20,13 @@ All user-facing output (table headers, prompts, warnings, reminders) MUST match 
 - Cannot determine → default to English
 </IMPORTANT>
 
-- Dev version: 2.2.8 (verify with `--version`)
-- If the binary does not exist, run `cd /Users/oker/meili/zongyao.yang_dacs_at_okg.com/108/Documents/onchainos-skills/cli && cargo build --release` first.
-
 ## Error Handling
 
 - **Always attempt the CLI command first.** Never skip CLI and go directly to static data. The CLI returns real-time data from the API.
 - **Do NOT show raw CLI error output to the user.** If a command fails, interpret the error and provide a user-friendly message.
 - **Query command fallback:** If `cross-chain chains` or `cross-chain bridge` CLI command fails (404, network failure, etc.), THEN fall back to the static chain/bridge list defined in this skill file (the "Cross-chain supported chains" table below). Do not retry or show the error to the user — silently use the static data.
 - **Execution command errors:** If `cross-chain quote`, `cross-chain execute`, or `cross-chain status` fails, show the error reason in plain language (not raw JSON) and suggest next steps.
-- **Unsupported chain:** If quote returns `该桥链不支持其他业务内部API调用`, tell the user "暂不支持该链" (or English equivalent per language rule). Do not expose the raw error message.
+- **Unsupported chain:** If quote returns `该桥链不支持其他业务内部API调用` or `path empty`, tell the user the chain is not currently supported. Do NOT expose the raw error message, and do NOT suggest using specific bridge protocols — this could be seen as endorsement.
 
 ## Pre-flight Checks
 
@@ -92,13 +89,10 @@ Query supported chain pairs. No parameters. **NOT `supported-chains` — the sub
 - **Returns**: chain pair mapping (fromChainId → toChainId list)
 
 ### 2. `onchainos cross-chain bridge`
-Query available bridge protocols that are actually in use.
+Query available bridge protocols. No parameters. CLI internally filters to only return bridges with active chain pairs.
 - **When**: user asks about available bridges
 - **Triggers**: "what bridges are available", "查看跨链桥", "list bridges", "有哪些桥"
-- **Flow**: Two-step process to show only bridges that are actually active:
-  1. First call `onchainos cross-chain chains` to get all chain pairs. Extract the set of unique `bridgeId` values from the response.
-  2. Then call `onchainos cross-chain bridge` to get the full bridge dictionary. Filter the results to only include bridges whose `code` matches a `bridgeId` found in step 1.
-- **Returns**: filtered bridge list with name, type, description — only bridges that have at least one active chain pair
+- **Returns**: filtered bridge list — only bridges that have at least one active chain pair
 - **Display rules**: List every matched bridge as a separate row. Show total count of filtered results. Display format:
 
 | # | Bridge Name | Platform ID | Type | Description |
@@ -198,6 +192,9 @@ Follow the **Token Address Resolution** section above. Resolve `--from` using `-
   2. Display both addresses in the confirmation summary: "发送地址: {wallet} / 收款地址: {wallet}"
   3. Remind user: "未指定收款地址，默认使用当前钱包地址" (or English equivalent per language rule)
   If user specifies `--receive-address` different from wallet -> WARN and require explicit re-confirmation. **Wrong destination address = permanent fund loss.**
+- **Cross-chain address format check**: When source and destination chains belong to different address families, the default wallet address may not be valid on the destination chain. Before calling quote, check if from-chain and to-chain use the same address format. If not, remind the user:
+  > "Source and destination chains use different address formats. Please provide a receive address on the destination chain."
+  BLOCK and wait for the user to provide a valid `--receive-address` before proceeding.
 - **Gas level**: default `average`. Currently not consumed by CLI (CLI parameter reserved for future use).
 - **Route**: default index 0 (recommended). Only pass `--route-index` if user explicitly selects a different bridge.
 - **Wallet**: run `onchainos wallet status`. Not logged in -> `onchainos wallet login`.
@@ -234,8 +231,9 @@ Column definitions and data sources:
 
 Perform risk checks on each route (see **Risk Controls**).
 
-After displaying the quote table, prompt user to confirm execution:
-> "确认执行跨链？" / "Confirm cross-chain execution?"
+After displaying the quote table:
+- Recommend the best route (route #1 by default) with a brief reason (e.g. lowest fee, fastest, best receive amount). Do NOT just pick a bridge by name — explain why it is recommended.
+- Let the user choose which route to execute. Prompt for confirmation.
 
 <IMPORTANT>
 Do NOT check authorization status at the Skill/quote level. The quote API's `dexMultiTokenAllowanceOut.amount` may be cached and not reflect the actual on-chain allowance. The `needApprove` field is unreliable and MUST NOT be used for any decision.
@@ -258,10 +256,10 @@ onchainos cross-chain probe --from-chain <fromChainIndex> --to-chain <toChainInd
 ```
 {tokenSymbol} cannot be bridged directly from {fromChain} to {toChain}. These tokens support cross-chain:
 
-| # | Transit Token | Est. Receive | Bridge Fee (USD) | Est. Time | Bridge |
-|---|--------------|-------------|-----------------|-----------|--------|
-| 1 | USDC         | 99.98 USDC  | $0.48           | ~45s      | ACROSS V3 (3 routes) |
-| 2 | ETH          | 99.94 ETH   | $0.35           | ~2min     | STARGATE V2 (2 routes) |
+| # | Transit Token | Est. Receive | Fee (USD) | Est. Time | Routes |
+|---|--------------|-------------|-----------|-----------|--------|
+| 1 | USDC         | 99.98 USDC  | $0.48     | ~45s      | 3      |
+| 2 | ETH          | 99.94 ETH   | $0.35     | ~2min     | 2      |
 
 Pick a transit token. Steps:
 1. Swap {tokenSymbol} to the chosen token on {fromChain}
@@ -271,7 +269,7 @@ Pick a transit token. Steps:
 
 Rules:
 - List ALL bridgeable tokens from probe results, sorted by totalFee ascending
-- Show route count per token so user knows there are alternatives
+- Show route count per token
 - Step 3 only shown if the user's final target on the destination chain is different from the transit token
 - After user picks a transit token, guide them through swap → bridge → swap sequentially, using the `okx-dex-swap` and `okx-dex-bridge` skills
 
@@ -463,21 +461,12 @@ Cross-chain MEV protection is determined by two sources:
 
 Additionally apply chain threshold rules (same as swap). Calculate `txValueUsd = fromTokenAmount × fromTokenPrice`. Enable MEV **only when** `txValueUsd >= threshold` for the source chain. If `txValueUsd < threshold`, do NOT add `--mev-protection`. **Re-evaluate the threshold every time the amount changes** — do NOT carry over `--mev-protection` from a previous command when the user modifies the amount:
 
-<!-- TEMPORARY: thresholds lowered for E8 testing. Restore before release:
 | Chain | Threshold | How to enable |
 |---|---|---|
 | Ethereum | $2,000 | `--mev-protection` |
 | Solana | $1,000 | `--tips <sol_amount>` |
 | BNB Chain | $200 | `--mev-protection` |
 | Base | $200 | `--mev-protection` |
-| Others | No MEV protection available | -- |
--->
-| Chain | Threshold | How to enable |
-|---|---|---|
-| Ethereum | $5 | `--mev-protection` |
-| Solana | $5 | `--tips <sol_amount>` |
-| BNB Chain | $5 | `--mev-protection` |
-| Base | $5 | `--mev-protection` |
 | Others | No MEV protection available | -- |
 
 If token price unavailable -> enable by default.

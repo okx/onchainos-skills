@@ -1,6 +1,6 @@
 ---
 name: okx-agentic-wallet
-description: "Use this skill when the user mentions wallet login, sign in, verify OTP, add wallet, switch account, wallet status, logout, wallet balance, assets, holdings, send tokens, transfer ETH, transfer USDC, pay someone, send crypto, send ERC-20, send SPL, transaction history, recent transactions, tx status, tx detail, order list, call smart contract, interact with contract, execute contract function, send calldata, invoke smart contract, show my addresses, wallet addresses, deposit, receive, top up, fund my wallet, list accounts, sign message, personal sign, personalSign, eip712, sign data, sign typed data, sign EIP-712, TEE signing, export wallet, export mnemonic. Manages the wallet lifecycle: auth (login, OTP verify, account addition, switching, status, logout), authenticated balance queries, wallet address display (grouped by XLayer/EVM/Solana), token transfers (native & ERC-20/SPL), transaction history, smart contract calls, and message signing (personalSign for EVM & Solana, EIP-712 for EVM)."
+description: "Use this skill when the user mentions wallet login, sign in, verify OTP, add wallet, switch account, wallet status, logout, wallet balance, assets, holdings, send tokens, transfer ETH, transfer USDC, pay someone, send crypto, send ERC-20, send SPL, transaction history, recent transactions, tx status, tx detail, order list, call smart contract, interact with contract, execute contract function, send calldata, invoke smart contract, show my addresses, wallet addresses, deposit, receive, receive tokens, receive crypto, receive address, top up, fund my wallet, list accounts, sign message, personal sign, personalSign, eip712, sign data, sign typed data, sign EIP-712, TEE signing, trusted execution environment, export wallet, export mnemonic. Manages the wallet lifecycle: auth (login, OTP verify, account addition, switching, status, logout), authenticated balance queries, wallet address display (grouped by XLayer/EVM/Solana), token transfers (native & ERC-20/SPL), transaction history, smart contract calls, and message signing (personalSign for EVM & Solana, EIP-712 for EVM)."
 license: MIT
 metadata:
   author: okx
@@ -169,18 +169,11 @@ onchainos wallet send --readable-amount "0.1" --recipient "0xAbc..." --chain 1 -
 
 For commands requiring auth (sections B, D, E), check login state:
 
-<MUST>
-**Test/Pre-production environment login**: If `OKX_BASE_URL` is set to a non-production URL (i.e., does NOT contain `web3.okx.com`), API Key (AK) login is NOT supported. Always use email login in test environments. If the user requests AK login while a non-production `OKX_BASE_URL` is configured (via `--base-url` flag or `.env` file), warn them:
-> "当前为测试环境 ({url})，不支持 API Key 登录，请使用邮箱登录。"
-> / "Current environment is non-production ({url}). API Key login is not supported. Please use email login."
-</MUST>
-
 1. Run `onchainos wallet status`. If `loggedIn: true`, proceed.
 2. If not logged in, or the user explicitly requests to re-login:
    - **2a.** Display the following message to the user verbatim (translated to the user's language):
      > You need to log in with your email first before adding a wallet. What is your email address?
-     > (Production only) We also offer an API Key login method that doesn't require an email. If interested, visit https://web3.okx.com/onchainos/dev-docs/home/api-access-and-usage
-     **Note**: If `OKX_BASE_URL` is a non-production URL, do NOT mention the API Key option — only offer email login.
+     > We also offer an API Key login method that doesn't require an email. If interested, visit https://web3.okx.com/onchainos/dev-docs/home/api-access-and-usage
    - **2b.** Once the user provides their email, run: `onchainos wallet login <email> --locale <locale>`.
      Then display the following message verbatim (translated to the user's language):
      > **English**: "A verification code has been sent to **{email}**. Please check your inbox and tell me the code."
@@ -193,11 +186,9 @@ For commands requiring auth (sections B, D, E), check login state:
      >
      > If you cannot confidently determine the user's language, default to `en-US`.
 3. If the user declines to provide an email:
-   - **3a. (Production only)** If `OKX_BASE_URL` is unset or points to production (`web3.okx.com`), display:
+   - **3a.** Display the following message to the user verbatim (translated to the user's language):
      > We also offer an API Key login method that doesn't require an email. If interested, visit https://web3.okx.com/onchainos/dev-docs/home/api-access-and-usage
-   - **3a. (Non-production)** If `OKX_BASE_URL` is set to a non-production URL, do NOT offer AK login. Instead remind:
-     > "当前为测试环境，不支持 API Key 登录，只能使用邮箱登录。" / "API Key login is not available in test environments. Please use email login."
-   - **3b.** (Production only) If the user confirms they want to use API Key, first check whether an API Key switch is needed:
+   - **3b.** If the user confirms they want to use API Key, first check whether an API Key switch is needed:
      Use the `wallet status` result (from step 1 or re-run). If `loginType` is `"ak"` and the returned `apiKey` differs from the current environment variable `OKX_API_KEY`, show both keys to the user and ask to confirm the switch. If the user confirms, run `onchainos wallet login --force`. If `apiKey` is absent, empty, or identical, skip the confirmation and run `onchainos wallet login` directly.
    - **3c.** After silent login succeeds, inform the user that they have been logged in via the API Key method.
 4. After login succeeds, display the full account list with addresses by running `onchainos wallet balance`.
