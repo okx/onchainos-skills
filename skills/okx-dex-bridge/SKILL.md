@@ -293,13 +293,13 @@ Stop polling when txStatus = success or failed, or after 30 attempts (60 seconds
 
 Handle result:
 
-- **Success** -> check elapsed time since the original quote (Step 3):
-  - **≤10 seconds since quote**: auto-proceed to Step 5c (`execute --skip-approve`)
-  - **>10 seconds since quote**: quote is stale. You MUST:
+- **Success** -> check elapsed time since the **last user-confirmed quote** (Step 5b's re-quote if it ran, otherwise Step 5a's internal quote, otherwise Step 3):
+  - **≤10 seconds since that quote**: auto-proceed to Step 5c (`execute --skip-approve`)
+  - **>10 seconds since that quote**: the confirmed quote is stale. You MUST:
     1. Re-run `cross-chain quote` with the same parameters to get fresh pricing
     2. Show the updated quote to the user
-    3. If new `receiveAmount` >= original `minimumReceived` → ask user to confirm and proceed
-    4. If new `receiveAmount` < original `minimumReceived` → WARN price has dropped, ask user to re-confirm before executing
+    3. If new `receiveAmount` >= last-confirmed `minimumReceived` → ask user to confirm and proceed
+    4. If new `receiveAmount` < last-confirmed `minimumReceived` → WARN price has dropped, ask user to re-confirm before executing
 - **Failed** -> inform user: "Authorization transaction failed. Check gas balance or try again later."
 - **Timeout** (30 attempts) -> inform user: "Authorization confirmation timed out. The transaction may still be pending. Use `wallet history --tx-hash {approveTxHash}` to check status."
 
@@ -413,7 +413,7 @@ If token price unavailable -> enable by default.
 - **exactIn only**: cross-chain always uses exactIn mode. User specifies source amount, destination amount is determined by the bridge protocol. Do NOT attempt exactOut.
 - **No slippage parameter**: cross-chain slippage is managed internally by bridge protocols. Never pass `--slippage`. The `minimumReceived` in the quote is the hard guarantee floor.
 - **EVM addresses must be all lowercase** — both in CLI parameters (`--from` / `--to` / `--receive-address`) AND when displaying to the user. If the user provides a mixed-case EVM address, convert it to all lowercase immediately and display the lowercase version. Solana addresses are case-sensitive — keep as-is.
-- **Quote freshness**: If >10 seconds pass between quote and execute, re-fetch quote. Compare new `receiveAmount` with previous `minimumReceived`. If new < previous minimum -> warn and re-confirm.
+- **Quote freshness (rolling baseline)**: Every comparison uses the **last user-confirmed quote** as the baseline (Step 3 → Step 4 re-quote → Step 5a internal quote → Step 5b re-quote → Step 6 re-quote, whichever is the most recent). If >10 seconds pass since that baseline, re-fetch quote and compare new `receiveAmount` with the baseline's `minimumReceived`. If new < baseline minimum → warn and re-confirm. Once the user confirms a fresh quote, it becomes the new baseline for the next step.
 - **Non-atomic**: Cross-chain transfers are NOT atomic. Once the source chain transaction is broadcast, the transfer is in progress. Funds may be in transit for seconds to minutes. Do not tell the user "transaction complete" until status confirms destination arrival.
 - **API fallback**: If CLI is unavailable, call the OKX DEX Cross-Chain API directly. Full API reference: https://web3.okx.com/onchainos/dev-docs/trade/cross-chain-api-reference. Prefer CLI when available.
 
