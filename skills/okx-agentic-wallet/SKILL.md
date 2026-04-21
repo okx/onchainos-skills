@@ -267,6 +267,17 @@ NEVER execute unlimited token approvals.
 
 ---
 
+## Portal URL Resolution
+
+Policy and Wallet Export links depend on `loginType` (from `wallet status`, or the `login` / `verify` response). Whenever guidance below uses `{policy_url}` or `{export_url}`, substitute using this table:
+
+| `loginType` | `{policy_url}` | `{export_url}` |
+|---|---|---|
+| `email` | `https://web3.okx.com/portfolio/agentic-wallet-policy` | `https://web3.okx.com` |
+| `ak` | `https://web3.okx.com/onchainos/dev-portal` | `https://web3.okx.com/onchainos/dev-portal` |
+
+If `loginType` is unknown, run `onchainos wallet status` first. Any other `loginType` → fall back to the `email` row. The "hover over profile → Export Wallet" navigation hint applies to `email` only.
+
 ## Agent Policy Guidance
 
 > Policy configuration **must be completed by the user on the Web portal**. The Agent only detects the scenario, provides guidance, and gives the jump link.
@@ -290,16 +301,16 @@ Handled in Authentication step 5
 
 ### New account via `wallet add`
 
-After a successful `wallet add`, **MUST** output the following message (translated to the user's language):
+After a successful `wallet add`, **MUST** output the following message (translated to the user's language; resolve `{policy_url}` per "Portal URL Resolution"):
 
-> New account created. You can configure spending limits and transfer whitelist in Policy Settings → https://web3.okx.com/portfolio/agentic-wallet-policy
+> New account created. You can configure spending limits and transfer whitelist in Policy Settings → {policy_url}
 
 ### User asks about Policy
 
 e.g., "How do I set a spending limit?", "What's my daily limit?", "How to configure whitelist?"
-- Run `onchainos wallet status` and check the `policy` field.
-- **`policy` is null or all flags are false**: explain what Policy offers (per-tx limit, daily transfer/trade limit, transfer whitelist) and provide the link: `https://web3.okx.com/portfolio/agentic-wallet-policy`
-- **Any flag is true**: display the current settings (limits, used amounts) and provide the same link for modifications.
+- Run `onchainos wallet status` and check the `policy` field. Resolve `{policy_url}` per "Portal URL Resolution" using the same `loginType`.
+- **`policy` is null or all flags are false**: explain what Policy offers (per-tx limit, daily transfer/trade limit, transfer whitelist) and provide the link: `{policy_url}`
+- **Any flag is true**: display the current settings (limits, used amounts) and provide `{policy_url}` for modifications.
 
 ---
 
@@ -311,9 +322,12 @@ e.g., "How do I set a spending limit?", "What's my daily limit?", "How to config
 
 e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I import my wallet into a hardware wallet?"
 
-When triggered, output the following message (translated to the user's language):
+When triggered, output the following message (translated to the user's language; resolve `{export_url}` per "Portal URL Resolution"):
 
-> Wallet export must be completed on the Web portal. Please note: once the export is complete, your current wallet will be permanently unbound from your email, and the Agent will no longer be able to operate this wallet. The system will automatically create a new empty wallet for your account. Before exporting, please transfer your assets to a safe address and stop any running strategies. [Go to Wallet Export → https://web3.okx.com]
+> Wallet export must be completed on the Web portal. Please note: once the export is complete, your current wallet will be permanently unbound from your email, and the Agent will no longer be able to operate this wallet. The system will automatically create a new empty wallet for your account. Before exporting, please transfer your assets to a safe address and stop any running strategies. [Go to Wallet Export → {export_url}]
+
+If `loginType` is `email`, also append this navigation hint:
+
 > Log in to your Agentic Wallet, then hover over your profile in the top-right corner and select "Export Wallet" from the dropdown menu.
 
 ---
