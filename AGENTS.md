@@ -42,7 +42,7 @@ Skills are **building blocks**. Use them directly only for operations not covere
 
 ### Workflow-Covered Skills (Building Blocks)
 
-Invoked by workflows internally — **do not call directly** for user requests matching a workflow trigger above:
+Invoked by workflows internally for multi-step operations:
 
 | Skill | Used By Workflows |
 |-------|------------------|

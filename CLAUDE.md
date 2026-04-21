@@ -59,7 +59,7 @@ No corresponding workflow — always invoke these directly:
 
 ### Workflow-Covered Skills (Building Blocks)
 
-Invoked by workflows internally — **do not call directly** in response to user requests that match a workflow trigger above:
+Invoked by workflows internally for multi-step operations:
 
 | Skill | Used By Workflows |
 |-------|------------------|
