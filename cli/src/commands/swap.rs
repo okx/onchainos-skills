@@ -1734,11 +1734,11 @@ mod tests {
         let with_zero = format!("{}0", "A".repeat(31));
         assert!(validate_address_for_chain("501", &with_zero, "from").is_err());
         // 'O' is not in base58 alphabet
-        let with_O = format!("{}O", "A".repeat(31));
-        assert!(validate_address_for_chain("501", &with_O, "from").is_err());
+        let with_o_upper = format!("{}O", "A".repeat(31));
+        assert!(validate_address_for_chain("501", &with_o_upper, "from").is_err());
         // 'I' is not in base58 alphabet
-        let with_I = format!("{}I", "A".repeat(31));
-        assert!(validate_address_for_chain("501", &with_I, "from").is_err());
+        let with_i_upper = format!("{}I", "A".repeat(31));
+        assert!(validate_address_for_chain("501", &with_i_upper, "from").is_err());
         // 'l' is not in base58 alphabet
         let with_l = format!("{}l", "A".repeat(31));
         assert!(validate_address_for_chain("501", &with_l, "from").is_err());
