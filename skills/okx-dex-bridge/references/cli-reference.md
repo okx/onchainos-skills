@@ -30,23 +30,61 @@ Get available bridge protocols. No parameters required. Returns only bridges tha
 onchainos cross-chain bridge
 ```
 
-**Response**: `data` is a flat array of bridge enum names (strings). No metadata fields.
+**Per bridge entry fields**:
 
-Example:
+| Field | Type | Description |
+|---|---|---|
+| `code` | Number | **Bridge protocol ID** — same value space as `bridgeId` in `cross-chain chains` |
+| `_name` | String | Enum name (e.g. `STARGATE_V2_BUS_MODE`) |
+| `showName` | String | Display name (e.g. `STARGATE V2 BUS MODE`) — preferred for user display |
+| `desc` | String | Description / longer name (e.g. `Stargate V2`) |
+| `type` | Number | Bridge category: `0`=Third-party, `1`=Official, `2`=Centralized, `3`=Intent, `4`=Other |
+| `platformId` | Number | Platform ID |
+| `thirdPartBridge` / `officialBridge` / `centralizedBridge` | Boolean | Classification flags (alternative to `type`) |
+| `bridgeLogoUrl` | String | Logo URL — **do not display in terminal output** (terminal cannot render images) |
+| `privateAssetPrefix` | String | Asset prefix used internally |
+| `requireOtherNativeFee` | Boolean | Requires non-native fee token |
+| `hasShadowToken` | Number | `0` / `1` — internal flag |
+| `openApiCode` | Number | Open API code |
+
+**Example response** (5 bridges, truncated for brevity):
 ```json
 {
   "ok": true,
   "data": [
-    "STARGATE_V2_BUS_MODE",
-    "STARGATE_V2_TAXI_MODE",
-    "GAS_ZIP",
-    "RELAY",
-    "ACROSS_V3"
+    {
+      "_name": "STARGATE_V2_BUS_MODE",
+      "showName": "STARGATE V2 BUS MODE",
+      "desc": "Stargate V2",
+      "code": 39,
+      "type": 0,
+      "platformId": 136,
+      "thirdPartBridge": true,
+      "officialBridge": false,
+      "centralizedBridge": false
+    }
   ]
 }
 ```
 
-Each string is the `BridgeSwapEnum` enum name. To cross-reference numeric IDs (`bridgeId` used in `cross-chain chains`), use `cross-chain quote` — returned `pathSelectionRouterList[i].bridge.bridgeName` / `bridge.bridgeId` carry the numeric mapping per route.
+**Display format**: Agent MUST render the bridge list as a table with exactly these 4 columns (translate headers to user's language):
+
+```
+| # | Bridge | Description | Type |
+|---|--------|-------------|------|
+| 1 | STARGATE V2 BUS MODE | Stargate V2 | Third-party |
+| 2 | STARGATE V2 TAXI MODE | Stargate V2 Taxi Mode | Third-party |
+| 3 | GAS ZIP | Gas Zip | Third-party |
+| 4 | RELAY | relay | Other |
+| 5 | ACROSS V3 | across v3 | Third-party |
+```
+
+Column sources:
+- `Bridge` = `showName`
+- `Description` = `desc`
+- `Type` = `type` mapped to label: `0`→Third-party, `1`→Official, `2`→Centralized, `3`→Intent, `4`→Other
+
+Do NOT include `code` / `platformId` / `bridgeLogoUrl` / other ID fields in the display.
 
 > Notes: bridges defined in DB but missing from `BridgeSwapEnum` are filtered out server-side. Bridges whose `chainPair` cache is empty do not appear.
 
