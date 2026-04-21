@@ -24,33 +24,22 @@ For script requests, append `--format json` to all CLI commands.
 
 ## Available Skills
 
-Skills are **building blocks**. Use them directly only for operations not covered by a workflow above.
-
-### Direct-Use Skills
-
-| Skill | Purpose | Use When |
-|-------|---------|----------|
+| Skill | Purpose | When to Use |
+|-------|---------|-------------|
 | okx-agentic-wallet | Wallet auth, authenticated balance, send tokens, tx history, contract call | User wants to log in, check balance, send tokens, or view tx history |
+| okx-wallet-portfolio | Public address balance, token holdings, portfolio value | User asks about wallet holdings or token balances for a specific address |
 | okx-security | DApp/URL phishing detection, tx pre-execution scan, signature safety, approval management | User asks about DApp/URL safety, tx scan, signature safety, or token approvals |
-| okx-dex-swap | DEX swap execution | User wants to swap, trade, buy, or sell tokens |
-| okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, or manage DeFi positions |
-| okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions across protocols |
+| okx-dex-market | Prices, charts, index prices, wallet PnL | User asks for token prices, K-line data, or wallet PnL analysis |
+| okx-dex-signal | Smart money / KOL / whale tracking, buy signals, leaderboard | User asks what smart money/whales/KOLs are buying or wants signal alerts |
+| okx-dex-trenches | Meme/pump.fun token scanning, dev reputation, bundle detection | User asks about new meme launches, dev reputation, or bundle analysis |
 | okx-dex-ws | Real-time WebSocket monitoring and scripting | User wants a WS script or real-time on-chain data stream |
+| okx-dex-swap | DEX swap execution | User wants to swap, trade, buy, or sell tokens |
+| okx-dex-token | Token search, metadata, rankings, liquidity, holders, top traders, cluster analysis | User searches for tokens, wants rankings, holder info, or cluster analysis |
 | okx-onchain-gateway | Gas estimation, tx simulation, broadcasting | User wants to broadcast a tx, estimate gas, or check tx status |
 | okx-x402-payment | x402 payment authorization | User encounters HTTP 402 or mentions x402 |
+| okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, or manage DeFi positions |
+| okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions across protocols |
 | okx-audit-log | Audit log export and troubleshooting | User wants command history, debug info, or audit log |
-
-### Workflow-Covered Skills (Building Blocks)
-
-Invoked by workflows internally for multi-step operations:
-
-| Skill | Used By Workflows |
-|-------|------------------|
-| okx-dex-token | Token Research, Daily Brief, Smart Money Signals, New Token Screening, Portfolio Check |
-| okx-dex-market | Daily Brief, Wallet Analysis, Portfolio Check |
-| okx-dex-signal | Smart Money Signals, Daily Brief, Wallet Analysis, Wallet Monitor |
-| okx-dex-trenches | New Token Screening, Token Research (launchpad), Smart Money Signals, Daily Brief |
-| okx-wallet-portfolio | Portfolio Check, Daily Brief, Wallet Analysis |
 
 ## Architecture
 
