@@ -47,14 +47,6 @@ class ArbSession {
         ? "交付物未完全满足验收标准，支持买家拒绝验收，资金退还买家。"
         : "交付物符合验收标准，买家拒绝理由不充分，资金释放给卖家。";
 
-      this.reply({
-        type: "TASK_RESOLVE",
-        jobId: this.jobId,
-        winner: this.verdict,
-        reason,
-        content: `⚖️ 仲裁结果：${this.verdict === "buyer" ? "买家" : "卖家"}胜\n裁决理由：${reason}`,
-      });
-
       await callResolveApi(this.jobId, this.verdict, reason).catch((e) =>
         console.error(`[arb][api] resolve error:`, e),
       );

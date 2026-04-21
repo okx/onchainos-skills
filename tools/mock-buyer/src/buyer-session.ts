@@ -106,7 +106,7 @@ export class BuyerSession {
       this.reply({
         type: "REPLY", jobId: this.jobId,
         content: formatMsg(this.jobId, this.convId, "REPLY",
-          "好的，我接受你的报价 100 USDT，交付时间 48 小时，请继续。"),
+          "好的，我接受你的报价 100 USDT，交付时间 24 小时，请继续。"),
       });
       this.step = 2; this.onStateChange?.(); return;
     }
@@ -116,7 +116,7 @@ export class BuyerSession {
       this.reply({
         type: "REPLY", jobId: this.jobId,
         content: formatMsg(this.jobId, this.convId, "REPLY",
-          "确认，我接受报价：100 USDT，支付方式：non_escrow，交付时间 48 小时。请正式提交申请接单。"),
+          "确认，我接受报价：100 USDT，支付方式：non_escrow，交付时间 24 小时。请正式提交申请接单。"),
       });
       this.step = 3; this.onStateChange?.(); return;
     }

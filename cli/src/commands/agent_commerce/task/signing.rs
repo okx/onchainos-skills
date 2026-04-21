@@ -130,6 +130,57 @@ pub async fn resolve_wallet_and_agent_for_provider(
     Ok((account_id, address, provider_agent_id))
 }
 
+/// 签名 uopData + 广播上链（纯签名广播，不含 API 请求）
+///
+/// 接收后端返回的 `uopData`，签名后广播到链上，返回 txHash。
+/// API 请求由调用方通过 `TaskApiClient` 完成。
+pub async fn sign_uop_and_broadcast(
+    http: &reqwest::Client,
+    broadcast_url: &str,
+    uop_data: &Value,
+    account_id: &str,
+    address: &str,
+) -> Result<String> {
+    if uop_data.is_null() {
+        bail!("后端未返回 uopData，无法签名上链");
+    }
+
+    let unsigned: UnsignedInfoResponse = serde_json::from_value(uop_data.clone())
+        .map_err(|e| anyhow::anyhow!("解析 uopData 失败: {e}"))?;
+
+    let broadcast_body = build_broadcast_body(
+        &unsigned,
+        account_id,
+        address,
+        XLAYER_CHAIN_INDEX,
+        true,
+        false,
+        false,
+    )
+    .await?;
+
+    let bc_resp: Value = http
+        .post(broadcast_url)
+        .json(&broadcast_body)
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("广播失败: {e}"))?
+        .json()
+        .await?;
+
+    if bc_resp["code"] != 0 {
+        bail!(
+            "广播失败: {}",
+            bc_resp["msg"].as_str().unwrap_or("unknown error")
+        );
+    }
+
+    Ok(bc_resp["data"][0]["txHash"]
+        .as_str()
+        .unwrap_or("pending")
+        .to_string())
+}
+
 /// Standard single-sign flow for task write operations (without identity headers).
 ///
 /// Thin wrapper around [`task_sign_and_broadcast_with_headers`] that passes
