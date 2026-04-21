@@ -697,10 +697,10 @@ mod tests {
     }
 
     #[test]
-    fn cli_eip3009_sign_no_from_required() {
+    fn cli_eip3009_sign_missing_from() {
         let json = r#"[{"network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}]"#;
         let result = TestCli::try_parse_from(["test", "eip3009-sign", "--accepts", json]);
-        assert!(result.is_ok(), "eip3009-sign should parse without --from");
+        assert!(result.is_err());
     }
 
     #[test]

@@ -44,7 +44,7 @@ Do NOT show raw error code. Display:
 - If repeated failures, check if token has non-standard approval behavior
 
 ### Approval confirmation timeout
-- 50 poll attempts exhausted without terminal status
+- 30 poll attempts exhausted without terminal status
 - Transaction may still be pending in mempool
 - Suggest: `onchainos wallet history --tx-hash <approveTxHash>` to manually check
 - For EVM: if stuck, user can submit a 0-value transaction with the same nonce to cancel

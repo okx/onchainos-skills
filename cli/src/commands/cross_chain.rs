@@ -600,7 +600,7 @@ pub async fn fetch_quote(
     to_token: &str,
     amount: &str,
     receive_address: Option<&str>,
-    sort: &str,
+    _sort: &str,
 ) -> Result<Value> {
     let mut dex_quote_param = json!({
         "chainId": from_chain_index,
@@ -616,8 +616,7 @@ pub async fn fetch_quote(
         dex_quote_param["userWalletAddress"] = json!(addr);
         dex_quote_param["receiveWalletAddress"] = json!(addr);
     }
-    // sort is used at Skill layer to pick route, not sent to API
-    let _ = sort;
+    // _sort is used at Skill layer to pick route, not sent to API
 
     client
         .post(
@@ -939,7 +938,7 @@ async fn cmd_execute(
     wallet: &str,
     receive_address: Option<&str>,
     route_index: usize,
-    gas_level: &str,
+    _gas_level: &str,
     mev_protection: bool,
     _tips: Option<&str>,
     confirm_approve: bool,
@@ -951,7 +950,6 @@ async fn cmd_execute(
     let from_token = crate::commands::swap::resolve_token_address(&from_chain_index, from);
     let to_token = crate::commands::swap::resolve_token_address(&to_chain_index, to);
     let receive_wallet = receive_address.unwrap_or(wallet);
-    let _ = gas_level;
 
     // ── 0. Local validation ─────────────────────────────────────────
     validate_amount(readable_amount)?;

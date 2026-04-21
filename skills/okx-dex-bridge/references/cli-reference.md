@@ -10,7 +10,17 @@ Get supported chain pairs for cross-chain. No parameters required.
 onchainos cross-chain chains
 ```
 
-Returns map of supported chain pairs. For display only -- chain pair validation is done by `/quote` (unsupported pairs return an error).
+Returns map `fromChainId → toChainId → [chainPair]`. Chain pair validation is done by `/quote` (unsupported pairs return an error).
+
+**Per chain-pair entry fields** (relevant subset):
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | Number | Chain-pair record ID |
+| `bridgeId` | Number | **Bridge protocol ID** — maps to `code` in `cross-chain bridge` response |
+| `fromChainId` / `toChainId` | Number | Chain indices (e.g. `1`, `8453`) |
+| `originFromChain` / `originToChain` | String | Human-readable chain names |
+| `isQuoteEnable` / `isInnerApiEnable` | Number | `1`=enabled — used by CLI to filter active pairs |
 
 ## 2. onchainos cross-chain bridge
 
@@ -20,7 +30,20 @@ Get available bridge protocols. No parameters required.
 onchainos cross-chain bridge
 ```
 
-Returns bridge list with `_name`, `code`, `type`. `bridgeType` is for internal use -- do not display or filter by it.
+**Per bridge entry fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `code` | Number | **Bridge protocol ID** — same value space as `bridgeId` in `cross-chain chains` |
+| `_name` | String | Internal bridge name (e.g. `MULTICHAIN`, `CBRIDGE`) |
+| `showName` | String | Display name (may be empty — fall back to `_name`) |
+| `desc` | String | Description |
+| `type` | Number | Bridge category (0=Third-party, 1=Official, 2=Centralized, 3=Intent, 4=Other) |
+| `platformId` | Number | Platform ID |
+| `officialBridge` / `thirdPartBridge` / `centralizedBridge` | Boolean | Classification flags |
+| `bridgeLogoUrl` | String? | Optional logo URL |
+
+**Filtering rule**: when Skill needs the list of bridges actually usable for user's chain pair, collect `bridgeId` values from `cross-chain chains` output and filter bridge list by `code ∈ {bridgeIds}`. (CLI already does this internally — only bridges with active chain pairs are returned.)
 
 ## 3. onchainos cross-chain quote
 

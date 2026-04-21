@@ -12,25 +12,14 @@ metadata:
 
 7 commands for cross-chain aggregation — quote, execute (with three modes: check-approve / confirm-approve / skip-approve), calldata-only, status tracking, and probe (fallback path discovery).
 
-<IMPORTANT>
-All user-facing output (table headers, prompts, warnings, reminders) MUST match the user's input language:
-- 中文输入 → 中文输出
-- English input → English output
-- Other languages → translate to that language
-- Cannot determine → default to English
-</IMPORTANT>
-
 ## Error Handling
 
 - **Always attempt the CLI command first.** Never skip CLI and go directly to static data. The CLI returns real-time data from the API.
 - **Do NOT show raw CLI error output to the user.** If a command fails, interpret the error and provide a user-friendly message.
 - **Query command fallback:** If `cross-chain chains` or `cross-chain bridge` CLI command fails (404, network failure, etc.), THEN fall back to the static chain/bridge list defined in this skill file (the "Cross-chain supported chains" table below). Do not retry or show the error to the user — silently use the static data.
 - **Execution command errors:** If `cross-chain quote`, `cross-chain execute`, or `cross-chain status` fails, show the error reason in plain language (not raw JSON) and suggest next steps.
-- **Unsupported chain:** If quote returns `该桥链不支持其他业务内部API调用` or `path empty`, tell the user the chain is not currently supported. Do NOT expose the raw error message, and do NOT suggest using specific bridge protocols — this could be seen as endorsement.
-- **Risk warning (81362):** If `cross-chain execute` returns a broadcast error with code `81362`, the backend risk system flagged the transaction as potentially dangerous (possible honeypot / 貔貅币 / poisoned contract). Warn the user:
-  > "该笔交易被风控系统判断存在风险，可能是貔貅币或被投毒合约，强制执行可能导致资金损失。是否确认继续？" / "This transaction was flagged by the risk system as potentially dangerous — possibly a honeypot or poisoned contract. Forcing execution may cause fund loss. Confirm to proceed?"
-  
-  If the user explicitly confirms, re-run the **same** `cross-chain execute` command with `--force` appended (this passes `skipWarning: true` to broadcast). Do NOT add `--force` without explicit user confirmation.
+- **Unsupported chain:** If quote returns a "bridge chain not supported" error or `path empty`, tell the user the chain is not currently supported. Do NOT expose the raw error message, and do NOT suggest using specific bridge protocols — this could be seen as endorsement.
+- **Risk warning (81362):** If `cross-chain execute` returns a broadcast error with code `81362`, the backend risk system flagged the transaction as potentially dangerous (possible honeypot or poisoned contract). Warn the user that the transaction was flagged as potentially dangerous and forcing execution may cause fund loss; ask for explicit confirmation. If the user explicitly confirms, re-run the **same** `cross-chain execute` command with `--force` appended (this passes `skipWarning: true` to broadcast). Do NOT add `--force` without explicit user confirmation.
 
 ## Pre-flight Checks
 
@@ -41,7 +30,7 @@ All user-facing output (table headers, prompts, warnings, reminders) MUST match 
 > Full chain list: `../okx-agentic-wallet/_shared/chain-support.md`. If that file does not exist, read `_shared/chain-support.md` instead.
 
 <IMPORTANT>
-CLI `--from-chain` and `--to-chain` only accept numeric chainIndex (e.g. `1`, `8453`, `42161`). Chain names like `ethereum`, `base`, `arbitrum` will cause `unknown chain` errors. Always look up the chainIndex from the table below before calling any CLI command.
+CLI `--from-chain` and `--to-chain` accept both numeric chainIndex (e.g. `1`, `8453`, `42161`) and common chain names (`ethereum`, `base`, `arbitrum`, `bsc`, `polygon`, `optimism`, `xlayer`, `avalanche`, `linea`, `scroll`, `zksync`, `solana`). **Exceptions**: Sonic (146) and Blast (81457) are supported for cross-chain but their names are not resolved — pass their numeric chainIndex directly.
 </IMPORTANT>
 
 Cross-chain supported chains (14 of 17):
@@ -86,78 +75,19 @@ Cross-chain supported chains (14 of 17):
 Only use the 7 subcommands listed below. Do NOT invent commands like `supported-chains`, `list-chains`, `get-bridges`. The CLI will reject unknown subcommands.
 </IMPORTANT>
 
-### 1. `onchainos cross-chain chains`
-Query supported chain pairs. No parameters. **NOT `supported-chains` — the subcommand is `chains`.**
-- **When**: user asks about supported chains/networks, or before quote to verify a chain pair
-- **Triggers**: "which chains support cross-chain", "supported chains", "supported-chains", "跨链支持哪些链", "available networks", "哪些链可以跨链"
-- **Returns**: chain pair mapping (fromChainId → toChainId list)
+> For full parameter tables, return field schemas, and usage examples, see [cli-reference.md](references/cli-reference.md).
 
-### 2. `onchainos cross-chain bridge`
-Query available bridge protocols. No parameters. CLI internally filters to only return bridges with active chain pairs.
-- **When**: user asks about available bridges
-- **Triggers**: "what bridges are available", "查看跨链桥", "list bridges", "有哪些桥"
-- **Returns**: filtered bridge list — only bridges that have at least one active chain pair
-- **Display rules**: List every matched bridge as a separate row. Show total count of filtered results. Display format:
+| # | Command | Description |
+|---|---|---|
+| 1 | `onchainos cross-chain chains` | Query supported chain pairs. No params. Returns fromChainId → toChainId mapping. |
+| 2 | `onchainos cross-chain bridge` | Query available bridge protocols. No params. CLI filters to bridges with active chain pairs. |
+| 3 | `onchainos cross-chain quote --from ... --to ... --from-chain ... --to-chain ... --readable-amount <n> [--sort <0\|1\|2>] [--receive-address ...]` | Get cross-chain quote. `--sort`: 0=cheapest (default), 1=fastest, 2=max output. |
+| 4 | `onchainos cross-chain execute --from ... --to ... --from-chain ... --to-chain ... --readable-amount <n> --wallet <addr> [--route-index <n>] [--receive-address ...] [--mev-protection] [--skip-approve] [--confirm-approve] [--force]` | Execute cross-chain. Three modes: default (auto detect approve), `--confirm-approve` (send approve TX), `--skip-approve` (skip check + re-quote). `--force` bypasses risk warning 81362 only after explicit user confirmation. |
+| 5 | `onchainos cross-chain calldata --from ... --to ... --from-chain ... --to-chain ... --readable-amount <n> --wallet <addr>` | Return unsigned calldata only. Does NOT sign or broadcast. Display `data` field in full — never truncate. |
+| 6 | `onchainos cross-chain status --order-id <id>` | Query cross-chain order status (success / in-progress / failed / refunded). |
+| 7 | `onchainos cross-chain probe --from-chain ... --to-chain ... [--readable-amount <n>]` | Fallback: probe USDC/USDT/native routes between two chains. Invoked automatically by the fallback flow — do NOT call directly based on user request. |
 
-| # | Bridge Name | Platform ID | Type | Description |
-|---|---|---|---|---|
-| 1 | ACROSS V3 | 105 | Third-party (0) | across v3 |
-| 2 | STARGATE V2 BUS MODE | 136 | Third-party (0) | Stargate V2 |
-| ... | ... | ... | ... | ... |
-
-Type mapping: 0=Third-party, 1=Official, 2=Centralized, 3=Intent, 4=Other
-
-### 3. `onchainos cross-chain quote`
-```
-onchainos cross-chain quote --from <token> --to <token> --from-chain <chain> --to-chain <chain> --readable-amount <n> [--receive-address <addr>] [--sort <0|1|2>]
-```
-- **When**: user asks for a cross-chain quote, price, or fee estimate
-- **Triggers**: "跨链报价", "bridge quote", "how much to bridge", "跨链手续费"
-- **sort** — map user's intent to the correct value:
-  - `0` = optimal/cheapest (default). Keywords: "cheapest", "lowest fee", "最便宜", "手续费最低", "最优"
-  - `1` = fastest. Keywords: "fastest", "quickest", "最快", "速度优先"
-  - `2` = max output. Keywords: "max output", "most received", "到账最多", "收到最多"
-  - If no preference stated, omit the flag (API defaults to 0)
-- **Returns**: routes with receiveAmount, minimumReceived, fees, estimatedTime, crossMiniAmount/crossMaxAmount
-
-### 4. `onchainos cross-chain execute`
-```
-onchainos cross-chain execute --from <token> --to <token> --from-chain <chain> --to-chain <chain> --readable-amount <n> --wallet <addr> [--route-index <n>] [--receive-address <addr>] [--mev-protection] [--skip-approve] [--confirm-approve] [--force]
-```
-- **When**: user confirms to execute a cross-chain transfer
-- **Triggers**: "帮我跨链", "bridge it", "execute", "确认执行"
-- **Three modes**:
-  - default: check if approve needed, returns action=execute or action=approve-required
-  - `--confirm-approve`: send approve TX after user confirms
-  - `--skip-approve`: skip approve check, re-quote and execute directly
-- **`--force`**: bypass backend risk warning (error code 81362). Only use after explicit user confirmation — see "Risk warning (81362)" in Error Handling.
-- **Returns**: crosschainTxHash, orderId, selectedRoute, estimatedReceiveAmount
-
-### 5. `onchainos cross-chain calldata`
-```
-onchainos cross-chain calldata --from <token> --to <token> --from-chain <chain> --to-chain <chain> --readable-amount <n> --wallet <addr>
-```
-- **When**: user wants unsigned tx data only, for external signing
-- **Returns**: raw calldata. Does NOT sign or broadcast.
-- **IMPORTANT**: The `data` field (calldata hex) MUST be displayed in full, never truncated or abbreviated. Users need the complete hex string to sign externally (MetaMask, ethers.js, etc.). Show all fields completely: from, to, value, gas, maxFeePerGas, maxPriorityFeePerGas, data.
-
-### 6. `onchainos cross-chain status`
-```
-onchainos cross-chain status --order-id <id>
-```
-- **When**: user asks about cross-chain transaction status
-- **Triggers**: "跨链到账了吗", "check bridge status", "is my bridge done", "查跨链状态"
-- **Returns**: order status (success/in-progress/failed/refunded)
-
-### 7. `onchainos cross-chain probe`
-```
-onchainos cross-chain probe --from-chain <chain> --to-chain <chain> [--readable-amount <n>]
-```
-- **When**: `cross-chain quote` returns no routes for the user's token — used as automatic fallback
-- **Do NOT call directly based on user request.** This command is invoked automatically by the fallback flow (see "Fallback: No Direct Route" section below).
-- **What it does**: Tries USDC, USDT, and native token quotes between the two chains, returns which tokens have bridgeable routes with best-route summary (bridge name, receive amount, fee, estimated time)
-- **readable-amount**: defaults to 100 (suitable for stablecoin estimation). For native token probing the CLI uses the same amount internally.
-- **Returns**: `bridgeableTokens` array — each entry has token alias, addresses, symbol, best route info, and route count
+**Bridge type mapping** (for command 2 results): 0=Third-party, 1=Official, 2=Centralized, 3=Intent, 4=Other
 
 ## Token Address Resolution (Mandatory)
 
@@ -167,7 +97,7 @@ Never guess or hardcode token CAs -- same symbol has different addresses per cha
 Acceptable CA sources (in order):
 1. **CLI TOKEN_MAP** (pass directly as `--from`/`--to`): native: `sol eth bnb okb matic pol avax ftm trx sui`; stablecoins: `usdc usdt dai`; wrapped: `weth wbtc wbnb wmatic`
 2. `onchainos token search --query <symbol> --chains <chain>` -- for all other symbols. Search on the CORRECT chain (--from-chain for source, --to-chain for destination).
-3. User provides full CA directly — if the address is an EVM contract address with mixed case, you MUST: (a) immediately convert to all lowercase, (b) only ever display the lowercase version (never show the original mixed-case), (c) remind the user (in their language per the global language rule): CN: "EVM 合约地址需要全小写，已为您转换" / EN: "EVM contract addresses must be all lowercase — converted for you."
+3. User provides full CA directly — if the address is an EVM contract address with mixed case, you MUST: (a) immediately convert to all lowercase, (b) only ever display the lowercase version (never show the original mixed-case), (c) remind the user (in their language per the global language rule): "EVM contract addresses must be all lowercase — converted for you."
 
 After `token search`, you MUST show results and wait for user confirmation before proceeding:
 - **Multiple results** → display a numbered list with name, symbol, contract address, chain, and market cap. Ask user to pick one. Do NOT auto-select the highest market cap or "most likely" token.
@@ -194,8 +124,8 @@ Follow the **Token Address Resolution** section above. Resolve `--from` using `-
 - **Slippage**: Do NOT pass `--slippage`. Cross-chain slippage is managed internally by bridge protocols. The quote's `minimumReceived` is the hard floor -- below this the transaction auto-reverts.
 - **Receive address**: defaults to current wallet. When no receive address is specified:
   1. Use the current wallet address as both sender and receiver
-  2. Display both addresses in the confirmation summary: "发送地址: {wallet} / 收款地址: {wallet}"
-  3. Remind user: "未指定收款地址，默认使用当前钱包地址" (or English equivalent per language rule)
+  2. Display both addresses in the confirmation summary: "Sender: {wallet} / Receiver: {wallet}"
+  3. Remind user: "No receive address specified — using current wallet address by default." (translate to user's language per global rule)
   If user specifies `--receive-address` different from wallet -> WARN and require explicit re-confirmation. **Wrong destination address = permanent fund loss.**
 - **Cross-chain address format check**: When source and destination chains belong to different address families, the default wallet address may not be valid on the destination chain. Before calling quote, check if from-chain and to-chain use the same address format. If not, remind the user:
   > "Source and destination chains use different address formats. Please provide a receive address on the destination chain."
@@ -250,7 +180,7 @@ This combines the quote confirmation and authorize confirmation into **one step*
 
 ### Fallback: No Direct Route
 
-When `cross-chain quote` returns no routes (`pathSelectionRouterList` is empty or API returns an error like "该桥链不支持"), do NOT immediately tell the user "unsupported". Instead, automatically run the probe to discover alternative bridgeable paths:
+When `cross-chain quote` returns no routes (`pathSelectionRouterList` is empty or API returns a "bridge chain not supported" error), do NOT immediately tell the user "unsupported". Instead, automatically run the probe to discover alternative bridgeable paths:
 
 ```bash
 onchainos cross-chain probe --from-chain <fromChainIndex> --to-chain <toChainIndex> --readable-amount <amount>
@@ -314,10 +244,9 @@ onchainos cross-chain execute --from <address> --to <address> --from-chain <chai
 Two possible outcomes:
 - **action=execute**: Allowance was sufficient, trade completed. Show result (see Step 7).
 - **action=approve-required**: Allowance insufficient. CLI returns authorization details. Inform user:
-  > "跨链桥需要先授权 {bridgeName} 合约操作您的 {readableAmount} {tokenSymbol}（默认授权本次交易数量）。如需变更授权数量，请回复具体数量，如"授权 100 USDC"或"授权无限额度"。确认授权？"
-  > / "Bridge requires authorization for {bridgeName} to access {readableAmount} {tokenSymbol} (default: this transaction amount). To change, reply with a specific amount, e.g. 'authorize 100 USDC' or 'authorize unlimited'. Confirm?"
+  > "Bridge requires authorization for {bridgeName} to access {readableAmount} {tokenSymbol} (default: this transaction amount). To change, reply with a specific amount, e.g. 'authorize 100 USDC' or 'authorize unlimited'. Confirm?"
   
-  If user specifies a custom amount → use that amount. If user says "unlimited" / "无限" → use MaxUint256. If user declines → stop.
+  Translate to user's language per the global rule. If user specifies a custom amount → use that amount. If user indicates "unlimited" → use MaxUint256. If user declines → stop.
 
 #### 5b. User confirms authorization
 
@@ -332,18 +261,9 @@ onchainos cross-chain execute --from <address> --to <address> --from-chain <chai
 ```
 
 Returns **action=approved** with `approveTxHash`. Display to user:
-> "授权交易已提交: {approveTxHash}"
-> / "Authorization TX submitted: {approveTxHash}"
+> "Authorization TX submitted: {approveTxHash}" (translate to user's language per global rule)
 
 Proceed to Step 6 (approval polling).
-
-#### 5c. After approval confirmed → execute trade
-
-```bash
-onchainos cross-chain execute --from <address> --to <address> --from-chain <chain> --to-chain <chain> --readable-amount <amount> --wallet <addr> --skip-approve [--route-index <n>] [--receive-address <addr>] [--mev-protection]
-```
-
-Returns **action=execute** with fresh quote + trade result. This mode re-quotes internally for fresh pricing. Show result (see Step 7).
 
 #### 5c. After approval confirmed → execute trade
 
@@ -363,10 +283,10 @@ Execute a single bash command with a polling loop:
 for i in $(seq 1 30); do sleep 2 && ONCHAINOS_HOME=... onchainos --base-url ... wallet history --tx-hash <approveTxHash> --chain <fromChainIndex> --address <walletAddress>; done
 ```
 
-After **each** poll iteration, report progress to the user in plain language (never show raw JSON):
-- Not yet confirmed: "第 {n} 次确认，未授权成功" / "Check #{n}: authorization not yet confirmed"
-- Confirmed: "第 {n} 次确认，已授权成功" / "Check #{n}: authorization confirmed"
-- Failed: "第 {n} 次确认，授权失败" / "Check #{n}: authorization failed"
+After **each** poll iteration, report progress to the user in plain language (never show raw JSON; translate to user's language per global rule):
+- Not yet confirmed: "Check #{n}: authorization not yet confirmed"
+- Confirmed: "Check #{n}: authorization confirmed"
+- Failed: "Check #{n}: authorization failed"
 
 Stop polling when txStatus = success or failed, or after 30 attempts (60 seconds timeout).
 
