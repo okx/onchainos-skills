@@ -18,7 +18,7 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 
 ## Workflows
 
-**For any of the following user intents, read `workflows/INDEX.md` before responding — do not call individual skills directly:**
+**For any of the following user intents, read `workflows/INDEX.md` before responding:**
 
 | Intent | Trigger examples |
 |--------|-----------------|

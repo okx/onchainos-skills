@@ -4,7 +4,7 @@ This is an **onchainos skill + workflow collection** providing 14 skills and 8 p
 
 ## Workflows (Primary Routing)
 
-**For any of the following user intents, read `workflows/INDEX.md` before responding — do not call individual skills directly:**
+**For any of the following user intents, read `workflows/INDEX.md` before responding:**
 
 | Intent | Trigger examples |
 |--------|-----------------|
