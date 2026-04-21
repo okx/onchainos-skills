@@ -10,6 +10,8 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
+pub mod network;
+
 use crate::commands::Context;
 
 // ─── 链常量 ──────────────────────────────────────────────────────────────

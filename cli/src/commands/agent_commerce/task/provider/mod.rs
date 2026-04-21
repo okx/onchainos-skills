@@ -14,11 +14,8 @@ mod evidence;
 use anyhow::Result;
 use clap::Subcommand;
 
+use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::Context;
-
-fn task_api_url() -> String {
-    std::env::var("TASK_API_URL").unwrap_or_else(|_| "http://127.0.0.1:9001".to_string())
-}
 
 // ─── provider subcommands ─────────────────────────────────────────────────
 
@@ -77,19 +74,19 @@ pub enum DisputeCommand {
 // ─── 路由分发 ─────────────────────────────────────────────────────────────
 
 pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
-    let api = task_api_url();
-    let http = reqwest::Client::new();
+    let client = TaskApiClient::new();
 
     match cmd {
         ProviderCommand::Apply { job_id, token_amount, token_symbol, agent_id } =>
-            apply::handle_apply(&http, &api, &job_id, &token_amount, &token_symbol, &agent_id).await,
+            apply::handle_apply(&client, &job_id, &token_amount, &token_symbol, &agent_id).await,
         ProviderCommand::Deliver { job_id, file, message } =>
-            deliver::handle_deliver(&http, &api, &job_id, &file, &message).await,
+            deliver::handle_deliver(&client, &job_id, &file, &message).await,
         ProviderCommand::AgreeRefund { job_id } =>
-            agreerefund::handle_agree_refund(&http, &api, &job_id).await,
+            agreerefund::handle_agree_refund(&client, &job_id).await,
     }
 }
 
 pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
-    evidence::run_evidence(cmd).await
+    let client = TaskApiClient::new();
+    evidence::run_evidence(cmd, &client).await
 }

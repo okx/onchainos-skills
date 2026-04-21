@@ -4,30 +4,35 @@
 
 use anyhow::Result;
 
+use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-/// deliver — 提交交付物（单签：submit API → calldata → 签名 → 广播）
+/// deliver — 提交交付物
+///
+/// 1. POST submit API（带身份头）→ 获取 uopData
+/// 2. 签名 uopData + 广播上链
 pub async fn handle_deliver(
-    http: &reqwest::Client,
-    api: &str,
+    client: &TaskApiClient,
     job_id: &str,
     file: &str,
     message: &str,
 ) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_provider(http, api, job_id).await?;
-    let endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/submit");
-    let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
+        signing::resolve_wallet_and_agent_for_provider(client.http(), client.base_url(), job_id).await?;
     let body = serde_json::json!({
         "deliverable": file,
         "message": message,
     });
 
-    let result = signing::task_sign_and_broadcast_with_headers(
-        http, &endpoint, &body, &broadcast, &account_id, &address, &agent_id,
+    let resp = client.post_with_identity(
+        &client.endpoint(job_id, "submit"), &body, &agent_id, &address,
+    ).await?;
+
+    let tx_hash = signing::sign_uop_and_broadcast(
+        client.http(), &client.broadcast_url(), &resp["data"]["uopData"], &account_id, &address,
     ).await?;
 
     println!("✓ 交付物已提交，等待链上确认（TASK_SUBMITTED）");
-    println!("  txHash: {}", result.tx_hash);
+    println!("  txHash: {tx_hash}");
     Ok(())
 }

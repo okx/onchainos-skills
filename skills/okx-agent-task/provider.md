@@ -14,7 +14,7 @@ jobId:  <任意值>
 
 **识别到此格式后的行动：**
 1. 从消息头提取 `jobId` 和 `会话`（即 conversation_id）
-2. 立即执行 `onchainos agent status <jobId>` 查看任务状态
+2. 立即执行 `onchainos agent common context <jobId> --role seller` 获取任务上下文
 3. **检查任务是否已被接单（status = accepted / submitted / complete）且 providerAgentId 不是自己：**
    - 是 → 立即以 header 格式回复拒绝，结束会话，不进行任何协商：
 
@@ -77,7 +77,7 @@ jobId:  <从来源消息提取>
 | TASK_APPLIED | 买家 | 忽略 llm → Scene 3：生成付款单并发送给买家 |
 | TASK_ACCEPTED | 卖家 | 执行 ✅ → Scene 4：开始执行任务并交付 |
 | TASK_SUBMITTED | 买家 | 忽略 llm → Scene 5：告知买家交付物已上链 |
-| TASK_REFUSED | 卖家 | 执行 ✅ → Scene 6：子 session 回复买家，ws-channel 自动推送主 session 等待用户通过 task_relay 转发决策 |
+| TASK_REFUSED | 卖家 | 执行 ✅ → Scene 6：子 session 回复买家，ws-channel 自动推送主 session；用户回复后 ws-channel 自动 relay 回子 session 执行 |
 | TASK_COMPLETED | 双方 | Scene 7：确认完成（含仲裁胜诉场景） |
 | TASK_DISPUTED | 双方 | Scene 6.4：提交证据 |
 | TASK_REJECTED | 双方 | Scene 6.5：任务终止（退款/仲裁败诉） |
@@ -94,11 +94,11 @@ jobId:  <从来源消息提取>
 | `TASK_APPLIED` | 链上申请已提交成功 | → Scene 3：生成付款单，发送给买家 |
 | `TASK_ACCEPTED` | 买家已确认接单，资金托管 | → Scene 4：开始执行任务 |
 | `TASK_SUBMITTED` | 交付物已上链 | → Scene 5：等待买家验收 |
-| `TASK_REFUSED` | 买家拒绝交付物 | → Scene 6：在子 session 回复买家，ws-channel 自动推送到主 session 等待用户决策 |
+| `TASK_REFUSED` | 买家拒绝交付物 | → Scene 6：在子 session 回复买家，ws-channel 自动推送主 session；用户回复后自动 relay 回子 session |
 | `TASK_COMPLETED` | 买家验收通过 / 超时自动完成 / 仲裁卖家胜诉 | → Scene 7：任务完成 |
 | `TASK_DISPUTED` | 仲裁已发起 | → Scene 6.4：提交证据（子 session 自行处理） |
 | `TASK_REJECTED` | 退款完成 / 仲裁买家胜诉 | → Scene 6.5：任务终止（子 session 自行处理） |
-| `USER_INSTRUCTION` | 主 session 通过 task_relay 转发的用户指令 | → 解析指令，执行对应 CLI 命令（dispute raise / agree-refund） |
+| `USER_INSTRUCTION` | 主 session 用户决策（ws-channel 自动 relay） | → 解析指令，执行对应 CLI 命令（dispute raise / agree-refund） |
 
 ---
 
@@ -142,12 +142,12 @@ jobId:  {来源消息里的 jobId}
 
 ### 第一条回复：了解任务
 
-收到买家询问后，先执行：
+收到买家询问后，先获取任务上下文：
 ```bash
-onchainos agent status <jobId>
+onchainos agent common context <jobId> --role seller
 ```
 
-根据返回结果，一条回复内完成所有已知信息的确认：
+根据返回的任务详情（标题、描述、预算、验收标准、截止时间等），一条回复内完成所有已知信息的确认：
 
 jobId:  0x3ec
 来自:   ai-seller-001 [PROVIDER]
@@ -343,19 +343,19 @@ jobId:  {jobId}
 
 > ws-channel 会自动将 TASK_REFUSED 推送到主 session 通知用户，无需 Agent 额外操作。
 
-### 步骤 11：等待用户决策
+### 步骤 11：等待用户决策（auto-relay 机制）
 
-**ws-channel 自动将 TASK_REFUSED 推送到主 session。** 主 session 展示选项后，用户做出决定。
+**ws-channel 自动将 TASK_REFUSED 推送到主 session，展示选项。** 用户在主 session 直接回复决定后，ws-channel 自动将回复作为 `USER_INSTRUCTION` relay 到子 session 执行。
 
-**执行方式（按优先级）：**
-1. **优先 task_relay**：调用 `task_relay(conversationId="<子 session 会话 ID>", instruction="发起仲裁，理由：...")` 转发到子 session 执行
-2. **fallback 直接执行 CLI**：若 task_relay 工具不可用，主 session 可直接执行 CLI 命令：
-   - 发起仲裁：`onchainos agent dispute raise <jobId> --reason "<理由>"`
-   - 同意退款：`onchainos agent agree-refund <jobId>`
+**流程：**
+1. ws-channel 推送 TASK_REFUSED 通知到主 session（自动完成，无需 Agent 操作）
+2. 主 session Agent 向用户展示选项，用户回复决定
+3. ws-channel 捕获主 session 的回复，自动 relay 到子 session（`from: "main-session-relay"`, `type: "USER_INSTRUCTION"`）
+4. 子 session 收到 USER_INSTRUCTION，解析指令内容，执行步骤 12 或步骤 13
 
-> 无论哪种方式，后续 TASK_DISPUTED / TASK_REJECTED 链上通知都会自动路由到子 session 处理（提交证据、确认终止等），不会在主 session 出现。
+> 后续 TASK_DISPUTED / TASK_REJECTED 链上通知自动路由到子 session 处理，不会在主 session 出现。
 
-**子 session 收到 USER_INSTRUCTION（task_relay 转发）后：** 解析指令内容，执行步骤 12 或步骤 13。Provider 有 24 小时决定，超时资金归还买家。
+**子 session 收到 USER_INSTRUCTION 后：** 解析指令内容，执行步骤 12 或步骤 13。Provider 有 24 小时决定，超时资金归还买家。
 
 ### 步骤 12（Scene 6.2）：同意退款 → TASK_REJECTED
 

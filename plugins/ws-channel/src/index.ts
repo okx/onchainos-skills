@@ -324,12 +324,44 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
             reply: makeReply(convId),
           }));
 
-          // 子 session 处理完毕后，仅 TASK_REFUSED 需要推送到主 session（由用户决策仲裁/退款）
-          // TASK_DISPUTED / TASK_REJECTED / TASK_COMPLETED 由子 session 按 provider.md 自行处理
+          // TASK_ACCEPTED：推送到主 session 通知用户，不需要处理
+          if (msgType === "TASK_ACCEPTED") {
+            const jobId = envelope.payload.jobId ?? "?";
+            const mainBody = `[任务进度通知]\n任务 ${jobId}：买家已确认接单，资金已托管，开始执行任务（TASK_ACCEPTED）`;
+            ctx.log?.info?.(`[ws-channel] 推送 TASK_ACCEPTED 到主 session jobId=${jobId}`);
+            await enqueueDispatch("main", () => handleInboundMessage({
+              cfg: ctx.cfg,
+              accountId: account.accountId,
+              myAddr: account.walletAddr,
+              myAgentId: account.agentId,
+              systemPrompt: resolvedSystemPrompt,
+              envelope: {
+                ...envelope,
+                payload: { ...envelope.payload, type: "TASK_STATUS_NOTIFY", content: mainBody, llm: mainBody },
+              },
+              sessionMode: "main",
+              reply: () => {},
+            }));
+          }
+
+          // TASK_REFUSED：需要用户决策，回复自动 relay 回子 session
           if (msgType === "TASK_REFUSED") {
             const jobId = envelope.payload.jobId ?? "?";
-            const mainBody = `[任务通知 - 需要你的决策]\n任务 ${jobId} 被买家拒绝（TASK_REFUSED）\n子 session 会话: ${convId}\n\n请选择：\n1. 发起仲裁 → 请告诉我理由\n2. 同意退款\n\n⚠️ 执行方式（按优先级）：\n- 优先调用 task_relay 工具转发到子 session：task_relay(conversationId="${convId}", instruction="发起仲裁，理由：...")\n- 若 task_relay 不可用，直接执行 CLI：onchainos agent dispute raise ${jobId} --reason "理由"\n- 同意退款：onchainos agent agree-refund ${jobId}\n\n后续 TASK_DISPUTED/TASK_REJECTED 通知会自动路由到子 session 处理，不会在主 session 出现。\n\n示例：\"帮我对 ${jobId} 发起仲裁，理由是交付物完全符合验收标准\"`;
-            ctx.log?.info?.(`[ws-channel] 子 session 处理完毕，推送 TASK_REFUSED 到主 session jobId=${jobId}`);
+            const apiBase = process.env.TASK_API_URL ?? "http://127.0.0.1:9001";
+            let taskContext = "";
+            try {
+              const r = await fetch(`${apiBase}/api/v1/task/${jobId}`);
+              if (r.ok) {
+                const d = (await r.json()) as any;
+                const t = d?.data?.task;
+                if (t) {
+                  taskContext = `\n任务详情：\n- 标题：${t.title ?? "无"}\n- 描述：${t.description ?? "无"}\n- 预算：${t.tokenAmount ?? "?"} ${t.tokenSymbol ?? "USDT"}\n- 状态：${t.statusStr ?? "refused"}\n- 拒绝原因：${t.refuseReason ?? "买家未提供具体原因"}\n`;
+                }
+              }
+            } catch {}
+            const mainBody = `[任务通知 - 需要你的决策]\n任务 ${jobId} 被买家拒绝（TASK_REFUSED）${taskContext}\n请选择并直接回复你的决定（不要询问更多信息，直接决策）：\n1. 发起仲裁 → 回复"发起仲裁，理由是<你的理由>"（如果你认为交付物符合要求）\n2. 同意退款 → 回复"同意退款"\n\n你的回复会自动转发到子 session 执行对应链上操作。不要说"需要更多信息"，请直接做决定。`;
+            ctx.log?.info?.(`[ws-channel] 推送 TASK_REFUSED 到主 session jobId=${jobId}`);
+            let relayed = false;
             await enqueueDispatch("main", () => handleInboundMessage({
               cfg: ctx.cfg,
               accountId: account.accountId,
@@ -342,7 +374,28 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
               },
               sessionMode: "main",
               reply: (text) => {
-                ctx.log?.info?.(`[ws-channel] 主 session 收到 TASK_REFUSED 通知后回复: ${text.slice(0, 200)}`);
+                ctx.log?.info?.(`[ws-channel] 主 session 决策: ${text.slice(0, 200)}`);
+                if (relayed) return;
+                relayed = true;
+                ctx.log?.info?.(`[ws-channel] auto-relay → 子 session conv=${convId}`);
+                enqueueDispatch(convId, () => handleInboundMessage({
+                  cfg: ctx.cfg,
+                  accountId: account.accountId,
+                  myAddr: account.walletAddr,
+                  myAgentId: account.agentId,
+                  systemPrompt: resolvedSystemPrompt,
+                  envelope: {
+                    conversation_id: convId,
+                    from: "main-session-relay",
+                    payload: {
+                      type: "USER_INSTRUCTION",
+                      content: `[主 session 用户决策 - 请立即执行]\n${text}`,
+                      jobId: jobId,
+                    },
+                  },
+                  sessionMode: "sub",
+                  reply: makeReply(convId),
+                }));
               },
             }));
           }
