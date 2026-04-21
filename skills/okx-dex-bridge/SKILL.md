@@ -1,6 +1,6 @@
 ---
 name: okx-dex-bridge
-description: "Use this skill to 'bridge tokens', 'cross-chain swap', 'cross chain swap', 'cross-chain transfer', 'cross chain transfer', 'transfer tokens across chains', 'bridge ETH to Arbitrum', 'bridge USDC to Base', 'send USDC from Ethereum to BSC', 'move assets between chains', 'move tokens to another chain', 'transfer to another network', 'cross-chain bridge quote', 'cross chain quote', 'bridge quote', 'find best bridge route', 'cheapest bridge', 'fastest bridge', 'fastest cross-chain transfer', 'compare bridge fees', 'bridge fee', 'build bridge tx', 'get bridge calldata', 'check cross-chain status', 'check bridge status', 'track bridge transaction', 'bridge transaction status', 'did my bridge arrive', 'which chains support cross-chain', 'which chains support cross chain', 'which chains support bridging', 'supported bridge chains', 'available bridge protocols', 'what bridges are available', 'list bridges', 'show bridges', 'bridge from ETH', 'bridge to Arbitrum', 'bridge to Solana', 'bridge to Base', 'bridge to BSC', 'bridge to Polygon', 'bridge to Optimism', '跨链', '跨链兑换', '跨链桥', '桥接', '桥接代币', '转账到另一条链', '转到另一个链', '跨链报价', '跨链费用', '最优跨链路线', '跨链手续费', '跨链到账时间', '跨链状态', '跨链状态查询', '跨链到账了吗', '跨链支持哪些链', '跨链支持哪些网络', '哪些链可以跨链', '哪些链支持跨链', '查看跨链支持的链', '有哪些桥可以用', '有哪些桥', '查看跨链桥列表', '跨链桥列表', '从ETH跨到', '跨到Arbitrum', '跨到Base', '跨到BSC', '跨到OP', '跨到SOL', '跨个链', '帮我跨链', '我要跨链', or mentions bridging, cross-chain, cross chain, bridge protocols, bridge fees, bridge status, or transferring tokens between different blockchains/networks. Routes through multiple bridge protocols (Stargate, Across, Relay, Gas.zip) for optimal cross-chain execution. Supports bridge fee comparison, destination address specification, approval management, and full lifecycle status tracking until fund arrival on destination chain."
+description: "Use this skill to bridge tokens, cross-chain swap/transfer, move assets between chains, get cross-chain quotes, compare bridge fees, find the cheapest/fastest route, build bridge calldata, check bridge status, track a cross-chain transaction, list supported chains or bridge protocols, or when the user mentions bridging ETH/USDC/tokens from one chain (Ethereum, BSC, Polygon, Arbitrum, Base, Optimism, Solana, etc.) to another. Routes through multiple bridge protocols (Stargate, Across, Relay, Gas.zip) for optimal execution. Supports fee comparison, destination address specification, approval management, and full lifecycle status tracking until fund arrival."
 license: MIT
 metadata:
   author: okx
@@ -23,7 +23,9 @@ metadata:
 
 ## Pre-flight Checks
 
-> Read `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
+<MUST>
+> Before the first `onchainos` command this session, read and follow: `../okx-agentic-wallet/_shared/preflight.md`. If that file does not exist, read `_shared/preflight.md` instead.
+</MUST>
 
 ## Chain Name Support
 
