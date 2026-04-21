@@ -381,11 +381,13 @@ Always provide: orderId + fromTxHash when escalating.
 
 ### MEV Protection
 
-Cross-chain MEV protection is determined by two sources:
-1. `/callData` response `mevConfig.enableMev=true` -> always enable
-2. Bridge protocol is Relay, Mayan, or ButterSwap (these have built-in from-swap functionality) -> enable
+Cross-chain MEV protection is decided by three rules, evaluated in order. The **first matching rule wins** — stop once one applies.
 
-Additionally apply chain threshold rules (same as swap). Calculate `txValueUsd = fromTokenAmount × fromTokenPrice`. Enable MEV **only when** `txValueUsd >= threshold` for the source chain. If `txValueUsd < threshold`, do NOT add `--mev-protection`. **Re-evaluate the threshold every time the amount changes** — do NOT carry over `--mev-protection` from a previous command when the user modifies the amount:
+1. **Backend override**: if `/callData` response contains `mevConfig.enableMev=true`, MEV is forced on by the server (some bridges require MEV routing). Always pass `--mev-protection`; skip rules 2 and 3.
+2. **Bridge protocol**: if the selected bridge is Relay, Mayan, or ButterSwap (these have built-in from-swap functionality), pass `--mev-protection`; skip rule 3.
+3. **Chain threshold**: otherwise calculate `txValueUsd = fromTokenAmount × fromTokenPrice` and pass `--mev-protection` **only when** `txValueUsd >= threshold` for the source chain (table below). If `txValueUsd < threshold`, do NOT add `--mev-protection`.
+
+**Re-evaluate every time the amount changes** — do NOT carry over `--mev-protection` from a previous command when the user modifies the amount.
 
 | Chain | Threshold | How to enable |
 |---|---|---|
