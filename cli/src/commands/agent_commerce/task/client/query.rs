@@ -1,31 +1,22 @@
 //! 只读查询命令（无链上签名）
 //!
-//! status, list, pay
+//! status, list, payment, pay
 
 use anyhow::{bail, Result};
 
+use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::XLAYER_CHAIN_ID;
 
 /// 查询任务状态
-pub async fn handle_status(
-    http: &reqwest::Client,
-    api: &str,
-    job_id: &str,
-) -> Result<()> {
-    let resp: serde_json::Value = http
-        .get(format!("{api}/priapi/v1/aieco/task/{job_id}"))
-        .send().await
-        .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
-        .json().await?;
+pub async fn handle_status(client: &TaskApiClient, job_id: &str) -> Result<()> {
+    let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
+    let resp = client.get(&url).await?;
 
-    if resp["code"] != 0 {
-        bail!("任务不存在: {job_id}");
-    }
     let t = &resp["data"]["task"];
+    let token_sym = t["paymentTokenSymbol"].as_str().unwrap_or("USDT");
     println!("任务状态: {}", t["statusStr"].as_str().unwrap_or("?"));
     println!("  jobId:    {job_id}");
     println!("  标题:     {}", t["title"].as_str().unwrap_or("?"));
-    let token_sym = t["paymentTokenSymbol"].as_str().unwrap_or("USDT");
     println!("  预算:     {} {}", t["tokenAmount"].as_str().unwrap_or("?"), token_sym);
     println!("  买家:     {}", t["buyerAgentId"].as_str().unwrap_or("?"));
     if let Some(pid) = t["providerAgentId"].as_str() {
@@ -37,24 +28,23 @@ pub async fn handle_status(
 
 /// 任务列表
 pub async fn handle_list(
-    http: &reqwest::Client,
-    api: &str,
+    client: &TaskApiClient,
     role: Option<&str>,
     status: Option<&str>,
     page: u32,
     limit: u32,
 ) -> Result<()> {
+    let base = client.base_url();
     let url = if role == Some("provider") || role == Some("client") {
         let r = role.unwrap_or("client");
-        format!("{api}/priapi/v1/aieco/task/my?role={r}&page={page}&page_size={limit}")
+        format!("{base}/priapi/v1/aieco/task/my?role={r}&page={page}&page_size={limit}")
     } else {
-        let mut u = format!("{api}/priapi/v1/aieco/task/list?page={page}&page_size={limit}");
+        let mut u = format!("{base}/priapi/v1/aieco/task/list?page={page}&page_size={limit}");
         if let Some(s) = status { u.push_str(&format!("&status={s}")); }
         u
     };
-    let resp: serde_json::Value = http.get(&url).send().await
-        .map_err(|e| anyhow::anyhow!("无法连接 mock-api: {e}"))?
-        .json().await?;
+
+    let resp = client.get(&url).await?;
     let tasks = resp["data"]["list"].as_array().cloned().unwrap_or_default();
     let total = resp["data"]["total"].as_u64().unwrap_or(0);
     println!("任务列表（共 {total} 个，第 {page} 页）：");
@@ -72,20 +62,9 @@ pub async fn handle_list(
 }
 
 /// 生成付款单（Provider 在 TASK_APPLIED 后发送给买家）
-pub async fn handle_payment(
-    http: &reqwest::Client,
-    api: &str,
-    job_id: &str,
-) -> Result<()> {
-    let resp: serde_json::Value = http
-        .get(format!("{api}/priapi/v1/aieco/task/{job_id}"))
-        .send().await
-        .map_err(|e| anyhow::anyhow!("无法查询任务详情: {e}"))?
-        .json().await?;
-
-    if resp["code"] != 0 {
-        bail!("查询任务失败: {}", resp["msg"].as_str().unwrap_or("unknown"));
-    }
+pub async fn handle_payment(client: &TaskApiClient, job_id: &str) -> Result<()> {
+    let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
+    let resp = client.get(&url).await?;
 
     let task = &resp["data"]["task"];
     let amount = task["tokenAmount"].as_str().unwrap_or("?");
@@ -109,20 +88,9 @@ pub async fn handle_payment(
 }
 
 /// 非担保模式手动转账（展示转账命令）
-pub async fn handle_pay(
-    http: &reqwest::Client,
-    api: &str,
-    job_id: &str,
-) -> Result<()> {
-    let resp: serde_json::Value = http
-        .get(format!("{api}/priapi/v1/aieco/task/{job_id}"))
-        .send().await
-        .map_err(|e| anyhow::anyhow!("无法查询任务详情: {e}"))?
-        .json().await?;
-
-    if resp["code"] != 0 {
-        bail!("查询任务失败: {}", resp["msg"].as_str().unwrap_or("unknown"));
-    }
+pub async fn handle_pay(client: &TaskApiClient, job_id: &str) -> Result<()> {
+    let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
+    let resp = client.get(&url).await?;
 
     let task = &resp["data"]["task"];
     let status = task["statusStr"].as_str().unwrap_or("");

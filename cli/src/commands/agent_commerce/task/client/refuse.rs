@@ -4,32 +4,29 @@
 
 use anyhow::Result;
 
+use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
 /// reject/refuse — 拒绝验收
 pub async fn handle_reject(
-    http: &reqwest::Client,
-    api: &str,
+    client: &TaskApiClient,
     job_id: &str,
     reason: &str,
 ) -> Result<()> {
-    let (account_id, address, agent_id) = signing::resolve_wallet_and_agent_for_task(http, api, job_id).await?;
-    let pre_endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/pre-refuse");
-    let main_endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/refuse");
-    let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
-    let pre_body = serde_json::json!({});
+    let (account_id, address, agent_id) =
+        signing::resolve_wallet_and_agent_for_task(client.http(), client.base_url(), job_id).await?;
 
     let reason_owned = reason.to_string();
     let result = signing::task_dual_sign_and_broadcast(
-        http,
-        &pre_endpoint,
-        &pre_body,
-        &main_endpoint,
+        client.http(),
+        &client.endpoint(job_id, "pre-refuse"),
+        &serde_json::json!({}),
+        &client.endpoint(job_id, "refuse"),
         move |signature| serde_json::json!({
             "signature": signature,
             "reason": reason_owned,
         }),
-        &broadcast,
+        &client.broadcast_url(),
         &account_id,
         &address,
         &agent_id,

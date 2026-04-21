@@ -7,10 +7,11 @@
 
 use anyhow::Result;
 
+use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+
 /// 评价卖家（TODO: 对接身份系统 CLI）
 pub async fn handle_judge(
-    _http: &reqwest::Client,
-    _api: &str,
+    _client: &TaskApiClient,
     _job_id: &str,
 ) -> Result<()> {
     // TODO(identity): 对接身份系统 CLI 的评价接口

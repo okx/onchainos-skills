@@ -3,59 +3,41 @@
 //! - evidence: 提交证据（/evidence/upload → calldata → 签名 → 广播）
 //! - info: 查询争议详情（GET 只读）
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 
 use super::BuyerDisputeCommand;
+use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-fn task_api_url() -> String {
-    std::env::var("TASK_API_URL").unwrap_or_else(|_| "http://127.0.0.1:9001".to_string())
-}
-
-pub async fn run_buyer_dispute(cmd: BuyerDisputeCommand) -> Result<()> {
-    let api = task_api_url();
-    let http = reqwest::Client::new();
-
+pub async fn run_buyer_dispute(cmd: BuyerDisputeCommand, client: &TaskApiClient) -> Result<()> {
     match cmd {
         // ── evidence（提交证据：/evidence/upload → calldata → 签名 → 广播）
         BuyerDisputeCommand::Evidence {
             job_id, summary, ..
         } => {
             let (account_id, address, agent_id) =
-                signing::resolve_wallet_and_agent_for_task(&http, &api, &job_id).await?;
-            let endpoint =
-                format!("{api}/priapi/v1/aieco/task/{job_id}/evidence/upload");
-            let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
-            let body = serde_json::json!({ "text": summary });
+                signing::resolve_wallet_and_agent_for_task(client.http(), client.base_url(), &job_id).await?;
 
-            let result = signing::task_sign_and_broadcast_with_headers(
-                &http, &endpoint, &body, &broadcast, &account_id, &address, &agent_id,
-            )
-            .await?;
+            let resp = client.post_with_identity(
+                &client.endpoint(&job_id, "evidence/upload"),
+                &serde_json::json!({ "text": summary }),
+                &agent_id,
+                &address,
+            ).await?;
+
+            let tx_hash = signing::sign_uop_and_broadcast(
+                client.http(), &client.broadcast_url(), &resp["data"]["uopData"], &account_id, &address,
+            ).await?;
 
             println!("✓ 证据已提交");
             println!("  jobId:  {job_id}");
             println!("  摘要:   {summary}");
-            println!("  txHash: {}", result.tx_hash);
+            println!("  txHash: {tx_hash}");
         }
         // ── info（GET 只读查询）
         BuyerDisputeCommand::Info { dispute_id } => {
-            let resp: serde_json::Value = http
-                .get(format!(
-                    "{api}/priapi/v1/aieco/task/dispute/{dispute_id}"
-                ))
-                .send()
-                .await
-                .map_err(|e| anyhow::anyhow!("无法查询争议详情: {e}"))?
-                .json()
-                .await?;
-
-            if resp["code"] != 0 {
-                bail!(
-                    "查询争议失败: {}",
-                    resp["msg"].as_str().unwrap_or("unknown")
-                );
-            }
+            let url = format!("{}/priapi/v1/aieco/task/dispute/{dispute_id}", client.base_url());
+            let resp = client.get(&url).await?;
 
             let d = &resp["data"];
             println!("争议详情：");

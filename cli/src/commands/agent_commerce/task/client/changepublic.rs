@@ -4,24 +4,26 @@
 
 use anyhow::Result;
 
+use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
 /// set-public — 转为公开任务
-pub async fn handle_set_public(
-    http: &reqwest::Client,
-    api: &str,
-    job_id: &str,
-) -> Result<()> {
-    let (account_id, address, agent_id) = signing::resolve_wallet_and_agent_for_task(http, api, job_id).await?;
-    let endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/setVisibility");
-    let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
-    let body = serde_json::json!({"visibility": 1});
+pub async fn handle_set_public(client: &TaskApiClient, job_id: &str) -> Result<()> {
+    let (account_id, address, agent_id) =
+        signing::resolve_wallet_and_agent_for_task(client.http(), client.base_url(), job_id).await?;
 
-    let result = signing::task_sign_and_broadcast_with_headers(
-        http, &endpoint, &body, &broadcast, &account_id, &address, &agent_id,
+    let resp = client.post_with_identity(
+        &client.endpoint(job_id, "setVisibility"),
+        &serde_json::json!({"visibility": 1}),
+        &agent_id,
+        &address,
+    ).await?;
+
+    let tx_hash = signing::sign_uop_and_broadcast(
+        client.http(), &client.broadcast_url(), &resp["data"]["uopData"], &account_id, &address,
     ).await?;
 
     println!("✓ 任务已转为公开，其他卖家可以看到并报名");
-    println!("  txHash: {}", result.tx_hash);
+    println!("  txHash: {tx_hash}");
     Ok(())
 }

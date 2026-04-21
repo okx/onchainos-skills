@@ -6,38 +6,32 @@
 //! - escrow: pre-complete(712) → 签 digest → complete → 签 uopHash → broadcast
 //! - non-escrow: 展示账单 → /direct/complete 单签 → broadcast
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 
+use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::PAYMENT_MODE_INT_ESCROW;
 use crate::commands::agent_commerce::task::signing;
 
 /// complete — 验收通过
-pub async fn handle_complete(
-    http: &reqwest::Client,
-    api: &str,
-    job_id: &str,
-) -> Result<()> {
+pub async fn handle_complete(client: &TaskApiClient, job_id: &str) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(http, api, job_id).await?;
-    let broadcast = format!("{api}/priapi/v1/aieco/task/broadcast");
+        signing::resolve_wallet_and_agent_for_task(client.http(), client.base_url(), job_id).await?;
 
     // 查询任务详情获取 paymentMode
-    let task = query_task(http, api, job_id).await?;
+    let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
+    let resp = client.get(&url).await?;
+    let task = &resp["data"]["task"];
     let payment_mode = task["paymentType"].as_i64().unwrap_or(0) as i32;
 
     if payment_mode == PAYMENT_MODE_INT_ESCROW {
         // ── 担保：双签 pre-complete → complete ──────────────────────
-        let pre_endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/pre-complete");
-        let main_endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/complete");
-        let pre_body = serde_json::json!({});
-
         let result = signing::task_dual_sign_and_broadcast(
-            http,
-            &pre_endpoint,
-            &pre_body,
-            &main_endpoint,
+            client.http(),
+            &client.endpoint(job_id, "pre-complete"),
+            &serde_json::json!({}),
+            &client.endpoint(job_id, "complete"),
             |signature| serde_json::json!({ "signature": signature }),
-            &broadcast,
+            &client.broadcast_url(),
             &account_id,
             &address,
             &agent_id,
@@ -58,42 +52,21 @@ pub async fn handle_complete(
         println!("  链:       XLayer (chainId=196)");
         println!("──────────────────────────────────────");
 
-        let endpoint = format!("{api}/priapi/v1/aieco/task/{job_id}/direct/complete");
-        let body = serde_json::json!({});
+        let resp = client.post_with_identity(
+            &client.endpoint(job_id, "direct/complete"),
+            &serde_json::json!({}),
+            &agent_id,
+            &address,
+        ).await?;
 
-        let result = signing::task_sign_and_broadcast_with_headers(
-            http, &endpoint, &body, &broadcast, &account_id, &address, &agent_id,
-        )
-        .await?;
+        let tx_hash = signing::sign_uop_and_broadcast(
+            client.http(), &client.broadcast_url(), &resp["data"]["uopData"], &account_id, &address,
+        ).await?;
 
         println!("✓ 任务验收通过（非担保），状态 → complete");
         println!("  请完成转账: onchainos agent pay {job_id}");
-        println!("  txHash: {}", result.tx_hash);
+        println!("  txHash: {tx_hash}");
     }
 
     Ok(())
-}
-
-/// 查询任务详情，返回 task 对象
-async fn query_task(
-    http: &reqwest::Client,
-    api: &str,
-    job_id: &str,
-) -> Result<serde_json::Value> {
-    let resp: serde_json::Value = http
-        .get(format!("{api}/priapi/v1/aieco/task/{job_id}"))
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("无法查询任务详情: {e}"))?
-        .json()
-        .await?;
-
-    if resp["code"] != 0 {
-        bail!(
-            "查询任务失败: {}",
-            resp["msg"].as_str().unwrap_or("unknown")
-        );
-    }
-
-    Ok(resp["data"]["task"].clone())
 }

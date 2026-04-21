@@ -29,14 +29,9 @@ mod refuse;
 use anyhow::Result;
 use clap::Subcommand;
 
+use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::PAYMENT_MODE_ESCROW;
 use crate::commands::Context;
-
-// ─── 公共函数 ────────────────────────────────────────────────────────────
-
-fn task_api_url() -> String {
-    std::env::var("TASK_API_URL").unwrap_or_else(|_| "http://127.0.0.1:9001".to_string())
-}
 
 // ─── task subcommands ──────────────────────────────────────────────────────
 
@@ -64,6 +59,12 @@ pub enum TaskCommand {
     /// Get recommended providers for a task
     Recommend {
         job_id: String,
+        /// Show next provider (advance index) from cached list
+        #[arg(long)]
+        next: bool,
+        /// Show current provider from cached list
+        #[arg(long)]
+        current: bool,
     },
     /// Get current task status
     Status {
@@ -174,39 +175,45 @@ pub enum BuyerDisputeCommand {
 // ─── 路由分发 ──────────────────────────────────────────────────────────────
 
 pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
-    let api = task_api_url();
-    let http = reqwest::Client::new();
+    let client = TaskApiClient::new();
 
     match cmd {
         // ── 买家动作 ─────────────────────────────────────────────
         TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title } =>
-            create::handle_create(&http, &api, description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title).await,
-        TaskCommand::Recommend { job_id } =>
-            recommend::handle_recommend(&http, &api, &job_id).await,
+            create::handle_create(&client, description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title).await,
+        TaskCommand::Recommend { job_id, next, current } => {
+            if next {
+                recommend::handle_recommend_next(&job_id)
+            } else if current {
+                recommend::handle_recommend_current(&job_id)
+            } else {
+                recommend::handle_recommend(&client, &job_id).await
+            }
+        }
         TaskCommand::ConfirmAccept { job_id, provider, payment_mode, token_symbol, token_amount } =>
-            accept::handle_confirm_accept(&http, &api, &job_id, &provider, &payment_mode, token_symbol.as_deref(), token_amount.as_deref()).await,
+            accept::handle_confirm_accept(&client, &job_id, &provider, &payment_mode, token_symbol.as_deref(), token_amount.as_deref()).await,
         TaskCommand::Complete { job_id } =>
-            complete::handle_complete(&http, &api, &job_id).await,
+            complete::handle_complete(&client, &job_id).await,
         TaskCommand::Reject { job_id, reason } =>
-            refuse::handle_reject(&http, &api, &job_id, &reason).await,
+            refuse::handle_reject(&client, &job_id, &reason).await,
         TaskCommand::Close { job_id } =>
-            close::handle_close(&http, &api, &job_id).await,
+            close::handle_close(&client, &job_id).await,
         TaskCommand::SetPublic { job_id } =>
-            changepublic::handle_set_public(&http, &api, &job_id).await,
+            changepublic::handle_set_public(&client, &job_id).await,
         TaskCommand::Claim { job_id } =>
-            close::handle_claim(&http, &api, &job_id).await,
+            close::handle_claim(&client, &job_id).await,
         TaskCommand::Judge { job_id } =>
-            judge::handle_judge(&http, &api, &job_id).await,
+            judge::handle_judge(&client, &job_id).await,
 
         // ── 只读查询 ─────────────────────────────────────────────
         TaskCommand::Status { job_id } =>
-            query::handle_status(&http, &api, &job_id).await,
+            query::handle_status(&client, &job_id).await,
         TaskCommand::List { role, status, page, limit } =>
-            query::handle_list(&http, &api, role.as_deref(), status.as_deref(), page, limit).await,
+            query::handle_list(&client, role.as_deref(), status.as_deref(), page, limit).await,
         TaskCommand::Payment { job_id } =>
-            query::handle_payment(&http, &api, &job_id).await,
+            query::handle_payment(&client, &job_id).await,
         TaskCommand::Pay { job_id } =>
-            query::handle_pay(&http, &api, &job_id).await,
+            query::handle_pay(&client, &job_id).await,
 
         // ── 占位实现 ─────────────────────────────────────────────
         TaskCommand::RejectApply { job_id, provider, reason } => {
@@ -216,7 +223,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::Config { action } => {
             match action {
                 ConfigAction::Init => println!("[stub] task config init"),
-                ConfigAction::Show => println!("TASK_API_URL={}", task_api_url()),
+                ConfigAction::Show => println!("TASK_API_URL={}", client.base_url()),
             }
             Ok(())
         }
@@ -224,5 +231,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 }
 
 pub async fn run_buyer_dispute(cmd: BuyerDisputeCommand, _ctx: &Context) -> Result<()> {
-    evidence::run_buyer_dispute(cmd).await
+    let client = TaskApiClient::new();
+    evidence::run_buyer_dispute(cmd, &client).await
 }

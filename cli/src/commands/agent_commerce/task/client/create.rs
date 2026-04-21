@@ -6,6 +6,7 @@ use anyhow::{bail, Result};
 
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
 use crate::commands::agent_commerce::mock_identity::{self as identity, AgentRole, AccountBalance};
+use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{
     XLAYER_CHAIN_ID, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
 };
@@ -67,8 +68,7 @@ fn warn_insufficient_balance(bal: &AccountBalance, budget: f64, currency: &str) 
 
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_create(
-    http: &reqwest::Client,
-    api: &str,
+    client: &TaskApiClient,
     description: String,
     description_summary: Option<String>,
     budget: f64,
@@ -174,8 +174,9 @@ pub async fn handle_create(
         "visibility":         0
     });
 
-    let resp: serde_json::Value = http
-        .post(format!("{api}/priapi/v1/aieco/task/create"))
+    let create_url = format!("{}/priapi/v1/aieco/task/create", client.base_url());
+    let resp: serde_json::Value = client.http()
+        .post(&create_url)
         .json(&body)
         .send().await
         .map_err(|e| anyhow::anyhow!("无法连接后端: {e}"))?
@@ -208,8 +209,8 @@ pub async fn handle_create(
     println!("✓ 签名完成");
 
     // ── Step 3: 广播上链 ──────────
-    let bc_resp: serde_json::Value = http
-        .post(format!("{api}/priapi/v1/aieco/task/broadcast"))
+    let bc_resp: serde_json::Value = client.http()
+        .post(client.broadcast_url())
         .json(&broadcast_body)
         .send().await
         .map_err(|e| anyhow::anyhow!("广播失败: {e}"))?
