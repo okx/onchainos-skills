@@ -27,8 +27,8 @@ use super::args::{
 use super::models::{AgentCard, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_INDEX_NUM};
 use super::queries::fetch_agent_for_update;
 use super::signing::{
-    load_session_cert, load_signing_seed, resolve_xlayer_signing_account,
-    sign_and_broadcast_agent_transaction, sign_key_uuid, Erc8004Payload,
+    build_erc8004_overlay, load_session_cert, load_signing_seed, resolve_xlayer_signing_account,
+    sign_and_broadcast_agent_transaction, sign_key_uuid,
 };
 use super::utils::{
     ensure_provider_has_service, normalize_role, parse_agent_unsigned, parse_services,
@@ -81,7 +81,8 @@ pub async fn xmtp_sign(args: XmtpSignArgs, ctx: &Context) -> Result<()> {
 async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let client = wallet_client(ctx)?;
-    let (_account_id, from_addr) = resolve_xlayer_signing_account(args.address.as_deref())?;
+    let (_account_id, addr_info) = resolve_xlayer_signing_account(args.address.as_deref())?;
+    let from_addr = addr_info.address.clone();
     let signing_seed = load_signing_seed()?;
     let session_cert = load_session_cert()?;
     let key_uuid = Uuid::new_v4().to_string();
@@ -101,7 +102,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,
         "fromAddr": from_addr,
         "keyUuid": key_uuid.clone(),
-        "sessionSignature": session_signature.clone(),
+        "sessionSignature": session_signature,
         "sessionCert": session_cert,
         "cardJson": serde_json::to_string(&card).context("failed to serialize cardJson")?,
     });
@@ -128,25 +129,20 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
             .unwrap_or_else(|_| "<serialize failed>".to_string())
     );
     let unsigned = parse_agent_unsigned(response)?;
-    // erc8004Msg 全 4 字段：首次注册 agent 身份必须建立。
-    // communicationAddress 由后端 pre-transaction 返回。
+    // erc8004Msg 三个字段：communicationAddress 由后端 pre-transaction 返回；
+    // role / keyUuid 是本次 create 客户端持有的值。sessionSignature 已不再
+    // 进 erc8004Msg（保留在请求体里）。
     let communication_address = unsigned
         .extra_data
         .get("communicationAddress")
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    let erc8004 = Erc8004Payload::Create {
-        communication_address,
-        role: normalized_role,
-        key_uuid,
-        session_signature,
-    };
+    let overlay = build_erc8004_overlay(&communication_address, &normalized_role, &key_uuid);
     let tx_hash = sign_and_broadcast_agent_transaction(
-        ctx,
         &access_token,
         &unsigned,
-        &erc8004,
+        overlay,
         args.address.as_deref(),
     )
     .await?;
@@ -224,16 +220,10 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     }
     let response = update_result?;
     let unsigned = parse_agent_unsigned(response)?;
-    // 产品规范：update 不允许修改 communicationAddress / role / keyUuid /
-    // sessionSignature 任何一个，erc8004Msg 一律空 `{}`，避免覆盖 agent 持久身份。
-    let tx_hash = sign_and_broadcast_agent_transaction(
-        ctx,
-        &access_token,
-        &unsigned,
-        &Erc8004Payload::Empty,
-        None,
-    )
-    .await?;
+    // 产品规范：update 客户端没有 erc8004Msg 子字段（communicationAddress 不可
+    // 修改，role / keyUuid / sessionSignature 也不在 update 请求体里），所以
+    // 整个 erc8004Msg 不写入广播 extraData。
+    let tx_hash = sign_and_broadcast_agent_transaction(&access_token, &unsigned, None, None).await?;
     Ok(json!({ "txHash": tx_hash }))
 }
 
@@ -353,7 +343,8 @@ async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
 async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let client = wallet_client(ctx)?;
-    let (_account_id, from_addr) = resolve_xlayer_signing_account(args.address.as_deref())?;
+    let (_account_id, addr_info) = resolve_xlayer_signing_account(args.address.as_deref())?;
+    let from_addr = addr_info.address.clone();
     let score = parse_u32_arg(
         Some(require_non_empty(args.score.as_deref(), "--score")?),
         "--score",
@@ -407,13 +398,13 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
 
     let response = result?;
     let unsigned = parse_agent_unsigned(response)?;
-    // 产品规范：feedback-submit 不允许修改 communicationAddress / role / keyUuid /
-    // sessionSignature 任何一个，erc8004Msg 一律空 `{}`。
+    // 产品规范：feedback-submit 客户端没有 erc8004Msg 子字段（role 不用，
+    // keyUuid / sessionSignature 也不在 feedback 请求体里），整体不写入广播
+    // extraData。
     let tx_hash = sign_and_broadcast_agent_transaction(
-        ctx,
         &access_token,
         &unsigned,
-        &Erc8004Payload::Empty,
+        None,
         args.address.as_deref(),
     )
     .await?;

@@ -7,9 +7,9 @@ use anyhow::{anyhow, bail, Context as _, Result};
 use serde_json::Value;
 
 use crate::commands::Context;
-use crate::wallet_api::WalletApiClient;
+use crate::wallet_api::{UnsignedInfoResponse, WalletApiClient};
 
-use super::models::{AgentCard, AgentService, AgentUnsignedTx};
+use super::models::{AgentCard, AgentService};
 
 // ─── HTTP client ──────────────────────────────────────────────────────────
 
@@ -88,7 +88,7 @@ pub(super) fn normalize_singleton_object(data: Value) -> Value {
     }
 }
 
-pub(super) fn parse_agent_unsigned(data: Value) -> Result<AgentUnsignedTx> {
+pub(super) fn parse_agent_unsigned(data: Value) -> Result<UnsignedInfoResponse> {
     let item = data
         .as_array()
         .and_then(|arr| arr.first())

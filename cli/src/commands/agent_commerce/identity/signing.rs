@@ -1,57 +1,39 @@
-//! Signing, broadcasting, and XLayer wallet address resolution for identity
-//! mutations. Owns `Erc8004Payload` (broadcast-only strategy) and the
-//! single `sign_and_broadcast_agent_transaction` entry point that every
-//! write command funnels through.
+//! Signing helpers for identity mutations and the thin broadcast wrapper
+//! that delegates to `agentic_wallet::broadcast::broadcast_unsigned`. The
+//! only identity-specific behaviour at broadcast time is the optional
+//! `erc8004Msg` overlay; everything else (msgForSign / extraData / 81362
+//! handling) is shared with wallet transfer.
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{anyhow, bail, Result};
 use base64::Engine;
 use serde_json::{json, Map, Value};
 
-use crate::commands::agentic_wallet::auth::format_api_error;
-use crate::commands::Context;
+use crate::commands::agentic_wallet::broadcast::{broadcast_unsigned, BroadcastCtx};
 use crate::keyring_store;
+use crate::wallet_api::UnsignedInfoResponse;
 use crate::wallet_store::{self, AddressInfo, WalletsJson};
 
-use super::models::{AgentUnsignedTx, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME};
-use super::utils::{
-    reconstruct_post_url_for_log, redact_token_for_debug, wallet_client,
-};
-
-// ─── erc8004Msg payload ───────────────────────────────────────────────────
-
-/// 广播阶段 erc8004Msg 子对象的内容。按产品规范：
-/// - create：首次注册，4 个子字段全部携带（建立 agent 身份）
-/// - update / feedback-submit：不允许修改 communicationAddress / role / keyUuid /
-///   sessionSignature 任何一个，所以 erc8004Msg 是空对象 `{}`，避免后端误改 K1
-///   或 agent 通信地址等持久身份。
-pub(super) enum Erc8004Payload {
-    Create {
-        communication_address: String,
-        role: String,
-        key_uuid: String,
-        session_signature: String,
-    },
-    Empty,
-}
+use super::models::{XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME};
 
 // ─── Wallet address resolution ────────────────────────────────────────────
 
-pub(super) fn resolve_xlayer_signing_account(address: Option<&str>) -> Result<(String, String)> {
+pub(super) fn resolve_xlayer_signing_account(
+    address: Option<&str>,
+) -> Result<(String, AddressInfo)> {
     let wallets = wallet_store::load_wallets()?
         .ok_or_else(|| anyhow!("no XLayer address found in current account"))?;
     if let Some(address) = address.filter(|value| !value.trim().is_empty()) {
         for (account_id, entry) in &wallets.accounts_map {
             for addr in &entry.address_list {
                 if is_xlayer_address(addr) && addr.address.eq_ignore_ascii_case(address.trim()) {
-                    return Ok((account_id.clone(), addr.address.clone()));
+                    return Ok((account_id.clone(), addr.clone()));
                 }
             }
         }
         bail!("no XLayer address found in current account");
     }
 
-    let (account_id, addr_info) = resolve_current_xlayer_address(&wallets)?;
-    Ok((account_id, addr_info.address))
+    resolve_current_xlayer_address(&wallets)
 }
 
 fn resolve_current_xlayer_address(wallets: &WalletsJson) -> Result<(String, AddressInfo)> {
@@ -108,7 +90,7 @@ pub(super) fn sign_key_uuid(key_uuid: &str, signing_seed: &[u8; 32]) -> Result<S
         "[agent-identity] sign_key_uuid: keyUuid={} keyUuid_utf8_bytes_hex={} signed_bytes_len={} signing_pubkey_hex={}",
         key_uuid,
         hex::encode(key_uuid.as_bytes()),
-        key_uuid.as_bytes().len(),
+        key_uuid.len(),
         ed25519_pubkey_hex(signing_seed),
     );
     Ok(signature)
@@ -120,151 +102,66 @@ fn ed25519_pubkey_hex(signing_seed: &[u8; 32]) -> String {
     hex::encode(sk.verifying_key().to_bytes())
 }
 
+// ─── erc8004Msg overlay ───────────────────────────────────────────────────
+
+/// 按产品规范 build 出 `erc8004Msg` 对象。空字段不写；整体若为空则返回 None
+/// （让上层不要把 `erc8004Msg` 写进 extraData）。当前只有 `agent create` 会
+/// 产出非空的 overlay；`update` / `feedback-submit` 都传 None。
+pub(super) fn build_erc8004_overlay(
+    communication_address: &str,
+    role: &str,
+    key_uuid: &str,
+) -> Option<Map<String, Value>> {
+    let mut inner = Map::new();
+    if !communication_address.is_empty() {
+        inner.insert(
+            "communicationAddress".into(),
+            json!(communication_address),
+        );
+    }
+    if !role.is_empty() {
+        inner.insert("role".into(), json!(role));
+    }
+    if !key_uuid.is_empty() {
+        inner.insert("keyUuid".into(), json!(key_uuid));
+    }
+    if inner.is_empty() {
+        return None;
+    }
+    let mut overlay = Map::new();
+    overlay.insert("erc8004Msg".into(), Value::Object(inner));
+    Some(overlay)
+}
+
 // ─── Broadcast ────────────────────────────────────────────────────────────
 
 pub(super) async fn sign_and_broadcast_agent_transaction(
-    ctx: &Context,
     access_token: &str,
-    unsigned: &AgentUnsignedTx,
-    erc8004: &Erc8004Payload,
+    unsigned: &UnsignedInfoResponse,
+    extra_data_overlay: Option<Map<String, Value>>,
     address_override: Option<&str>,
 ) -> Result<String> {
-    let client = wallet_client(ctx)?;
-    let (account_id, from_addr) = resolve_xlayer_signing_account(address_override)?;
+    let (account_id, addr_info) = resolve_xlayer_signing_account(address_override)?;
     let session = wallet_store::load_session()?
         .ok_or_else(|| anyhow!("session expired, please login again: onchainos wallet login"))?;
     let session_key = keyring_store::get("session_key")
         .map_err(|_| anyhow!("session expired, please login again: onchainos wallet login"))?;
     let signing_seed =
         crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &session_key)?;
-    let signing_seed_b64 = base64::engine::general_purpose::STANDARD.encode(signing_seed);
     let session_cert = session.session_cert;
-    if session_cert.is_empty() {
-        bail!("session cert missing, please login again: onchainos wallet login");
-    }
-    if unsigned.hash.is_empty()
-        && unsigned.auth_hash_for7702.is_empty()
-        && unsigned.unsigned_tx_hash.is_empty()
-    {
-        bail!("pre-transaction response missing signable hashes");
-    }
 
-    // msgForSign follows transfer.rs's conditional-insert rules: each hash field
-    // is only signed+populated when present, sessionCert is always included.
-    let mut msg_for_sign = Map::new();
-    if !unsigned.hash.is_empty() {
-        msg_for_sign.insert(
-            "signature".to_string(),
-            json!(crate::crypto::ed25519_sign_eip191(
-                &unsigned.hash,
-                &signing_seed,
-                "hex"
-            )?),
-        );
-    }
-    if !unsigned.auth_hash_for7702.is_empty() {
-        msg_for_sign.insert(
-            "authSignatureFor7702".to_string(),
-            json!(crate::crypto::ed25519_sign_hex(
-                &unsigned.auth_hash_for7702,
-                &signing_seed_b64
-            )?),
-        );
-    }
-    if !unsigned.unsigned_tx_hash.is_empty() {
-        msg_for_sign.insert(
-            "unsignedTxHash".to_string(),
-            json!(unsigned.unsigned_tx_hash),
-        );
-        msg_for_sign.insert(
-            "sessionSignature".to_string(),
-            json!(crate::crypto::ed25519_sign_encoded(
-                &unsigned.unsigned_tx_hash,
-                &signing_seed_b64,
-                &unsigned.encoding,
-            )?),
-        );
-    }
-    if !unsigned.unsigned_tx.is_empty() {
-        msg_for_sign.insert("unsignedTx".to_string(), json!(unsigned.unsigned_tx));
-    }
-    msg_for_sign.insert("sessionCert".to_string(), json!(session_cert));
-
-    let mut extra_data = if unsigned.extra_data.is_object() {
-        unsigned.extra_data.clone()
-    } else {
-        json!({})
-    };
-    extra_data["txType"] = json!(3);
-    extra_data["syncWaitOnChain"] = json!(true);
-    extra_data["checkBalance"] = json!(true);
-    extra_data["uopHash"] = json!(unsigned.uop_hash);
-    if !unsigned.encoding.is_empty() {
-        extra_data["encoding"] = json!(unsigned.encoding);
-    }
-    if !unsigned.sign_type.is_empty() {
-        extra_data["signType"] = json!(unsigned.sign_type);
-    }
-    extra_data["msgForSign"] = Value::Object(msg_for_sign);
-    // erc8004Msg：按 Erc8004Payload 决定塞什么。
-    // - Create：4 个子字段全部携带（首次注册 agent 身份）
-    // - Empty：空 `{}`，update / feedback-submit 都用这个，避免覆盖 agent 持久身份
-    extra_data["erc8004Msg"] = match erc8004 {
-        Erc8004Payload::Create {
-            communication_address,
-            role,
-            key_uuid,
-            session_signature,
-        } => json!({
-            "communicationAddress": communication_address,
-            "role": role,
-            "keyUuid": key_uuid,
-            "sessionSignature": session_signature,
-        }),
-        Erc8004Payload::Empty => json!({}),
-    };
-
-    let extra_data_str =
-        serde_json::to_string(&extra_data).context("failed to serialize broadcast extraData")?;
-
-    eprintln!(
-        "[agent-identity] broadcast request prepared: \
-         url={} access_token_len={} access_token_prefix={} \
-         accountId={} address={} chainIndex={} extraData={}",
-        reconstruct_post_url_for_log(
-            ctx,
-            "/priapi/v5/wallet/agentic/pre-transaction/broadcast-transaction",
-        ),
-        access_token.len(),
-        redact_token_for_debug(access_token),
-        account_id,
-        from_addr,
-        XLAYER_CHAIN_INDEX,
-        extra_data_str,
-    );
-
-    let resp_result = client
-        .broadcast_transaction(
-            access_token,
-            &account_id,
-            &from_addr,
-            XLAYER_CHAIN_INDEX,
-            &extra_data_str,
-            None,
-        )
-        .await;
-
-    match &resp_result {
-        Ok(r) => eprintln!(
-            "[agent-identity] broadcast response ok: txHash={} pkgId={} orderId={} orderType={}",
-            r.tx_hash, r.pkg_id, r.order_id, r.order_type
-        ),
-        Err(e) => eprintln!("[agent-identity] broadcast response err: {:#}", e),
-    }
-
-    let resp = resp_result.map_err(format_api_error)?;
-    if resp.tx_hash.is_empty() {
-        bail!("broadcast response missing txHash");
-    }
-    Ok(resp.tx_hash)
+    broadcast_unsigned(BroadcastCtx {
+        access_token,
+        account_id: &account_id,
+        addr_info: &addr_info,
+        session_cert: &session_cert,
+        signing_seed: &signing_seed,
+        unsigned,
+        is_contract_call: true,
+        mev_protection: false,
+        force: false,
+        extra_data_overlay,
+        trace_headers: None,
+    })
+    .await
 }
