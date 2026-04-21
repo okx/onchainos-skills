@@ -105,18 +105,16 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         "sessionCert": session_cert,
         "cardJson": serde_json::to_string(&card).context("failed to serialize cardJson")?,
     });
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][agent-identity] create request: url={} access_token_len={} access_token_prefix={} body={}",
-            reconstruct_post_url_for_log(
-                ctx,
-                "/priapi/v5/wallet/agentic/pre-transaction/createAgent",
-            ),
-            access_token.len(),
-            redact_token_for_debug(&access_token),
-            serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string())
-        );
-    }
+    eprintln!(
+        "[agent-identity] create request: url={} access_token_len={} access_token_prefix={} body={}",
+        reconstruct_post_url_for_log(
+            ctx,
+            "/priapi/v5/wallet/agentic/pre-transaction/createAgent",
+        ),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string())
+    );
     let response = client
         .post_authed(
             "/priapi/v5/wallet/agentic/pre-transaction/createAgent",
@@ -124,13 +122,11 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
             &body,
         )
         .await?;
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][agent-identity] create response: {}",
-            serde_json::to_string(&response)
-                .unwrap_or_else(|_| "<serialize failed>".to_string())
-        );
-    }
+    eprintln!(
+        "[agent-identity] create response: {}",
+        serde_json::to_string(&response)
+            .unwrap_or_else(|_| "<serialize failed>".to_string())
+    );
     let unsigned = parse_agent_unsigned(response)?;
     // erc8004Msg 全 4 字段：首次注册 agent 身份必须建立。
     // communicationAddress 由后端 pre-transaction 返回。
@@ -201,18 +197,16 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
         "sessionCert": session_cert,
         "cardJson": serde_json::to_string(&card).context("failed to serialize cardJson")?,
     });
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][agent-identity] update request: url={} access_token_len={} access_token_prefix={} body={}",
-            reconstruct_post_url_for_log(
-                ctx,
-                "/priapi/v5/wallet/agentic/pre-transaction/updateAgent",
-            ),
-            access_token.len(),
-            redact_token_for_debug(&access_token),
-            serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string()),
-        );
-    }
+    eprintln!(
+        "[agent-identity] update request: url={} access_token_len={} access_token_prefix={} body={}",
+        reconstruct_post_url_for_log(
+            ctx,
+            "/priapi/v5/wallet/agentic/pre-transaction/updateAgent",
+        ),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string()),
+    );
     let update_result = client
         .post_authed(
             "/priapi/v5/wallet/agentic/pre-transaction/updateAgent",
@@ -220,15 +214,13 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
             &body,
         )
         .await;
-    if cfg!(feature = "debug-log") {
-        match &update_result {
-            Ok(data) => eprintln!(
-                "[DEBUG][agent-identity] update response: {}",
-                serde_json::to_string(data)
-                    .unwrap_or_else(|_| "<serialize failed>".to_string())
-            ),
-            Err(e) => eprintln!("[DEBUG][agent-identity] update response err: {:#}", e),
-        }
+    match &update_result {
+        Ok(data) => eprintln!(
+            "[agent-identity] update response: {}",
+            serde_json::to_string(data)
+                .unwrap_or_else(|_| "<serialize failed>".to_string())
+        ),
+        Err(e) => eprintln!("[agent-identity] update response err: {:#}", e),
     }
     let response = update_result?;
     let unsigned = parse_agent_unsigned(response)?;
@@ -265,15 +257,13 @@ async fn agent_status_impl(args: &AgentStatusArgs, status: u32, ctx: &Context) -
         "status": status,
     });
 
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][agent-identity] agent-status request: url={} access_token_len={} access_token_prefix={} body={}",
-            reconstruct_post_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent-status"),
-            access_token.len(),
-            redact_token_for_debug(&access_token),
-            serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string()),
-        );
-    }
+    eprintln!(
+        "[agent-identity] agent-status request: url={} access_token_len={} access_token_prefix={} body={}",
+        reconstruct_post_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent-status"),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string()),
+    );
 
     let result = client
         .post_authed(
@@ -283,15 +273,13 @@ async fn agent_status_impl(args: &AgentStatusArgs, status: u32, ctx: &Context) -
         )
         .await;
 
-    if cfg!(feature = "debug-log") {
-        match &result {
-            Ok(data) => eprintln!(
-                "[DEBUG][agent-identity] agent-status response: {}",
-                serde_json::to_string(data)
-                    .unwrap_or_else(|_| "<serialize failed>".to_string())
-            ),
-            Err(e) => eprintln!("[DEBUG][agent-identity] agent-status response err: {:#}", e),
-        }
+    match &result {
+        Ok(data) => eprintln!(
+            "[agent-identity] agent-status response: {}",
+            serde_json::to_string(data)
+                .unwrap_or_else(|_| "<serialize failed>".to_string())
+        ),
+        Err(e) => eprintln!("[agent-identity] agent-status response err: {:#}", e),
     }
 
     result.map_err(format_api_error)?;
@@ -314,19 +302,15 @@ async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
         ctx,
         "/priapi/v5/wallet/agentic/pre-transaction/upload-picture",
     );
-    // 无条件打印 URL，联调时方便直接复制粘贴对比后端。
-    eprintln!("[agent-identity] upload request url={}", upload_url);
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][agent-identity] upload request: url={} access_token_len={} access_token_prefix={} file_path={} filename={} bytes_len={}",
-            upload_url,
-            access_token.len(),
-            redact_token_for_debug(&access_token),
-            file,
-            filename,
-            bytes.len(),
-        );
-    }
+    eprintln!(
+        "[agent-identity] upload request: url={} access_token_len={} access_token_prefix={} file_path={} filename={} bytes_len={}",
+        upload_url,
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        file,
+        filename,
+        bytes.len(),
+    );
     let part = reqwest::multipart::Part::bytes(bytes).file_name(filename);
     let form = reqwest::multipart::Form::new().part("file", part);
     let result = client
@@ -337,15 +321,13 @@ async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
         )
         .await;
 
-    if cfg!(feature = "debug-log") {
-        match &result {
-            Ok(data) => eprintln!(
-                "[DEBUG][agent-identity] upload response: {}",
-                serde_json::to_string(data)
-                    .unwrap_or_else(|_| "<serialize failed>".to_string())
-            ),
-            Err(e) => eprintln!("[DEBUG][agent-identity] upload response err: {:#}", e),
-        }
+    match &result {
+        Ok(data) => eprintln!(
+            "[agent-identity] upload response: {}",
+            serde_json::to_string(data)
+                .unwrap_or_else(|_| "<serialize failed>".to_string())
+        ),
+        Err(e) => eprintln!("[agent-identity] upload response err: {:#}", e),
     }
 
     let data = result?;
@@ -392,18 +374,16 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
         "comment": serde_json::to_string(&comment).context("failed to serialize comment")?,
     });
 
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][agent-identity] feedback-submit request: url={} access_token_len={} access_token_prefix={} body={}",
-            reconstruct_post_url_for_log(
-                ctx,
-                "/priapi/v5/wallet/agentic/pre-transaction/createComment",
-            ),
-            access_token.len(),
-            redact_token_for_debug(&access_token),
-            serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string()),
-        );
-    }
+    eprintln!(
+        "[agent-identity] feedback-submit request: url={} access_token_len={} access_token_prefix={} body={}",
+        reconstruct_post_url_for_log(
+            ctx,
+            "/priapi/v5/wallet/agentic/pre-transaction/createComment",
+        ),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string()),
+    );
 
     let result = client
         .post_authed(
@@ -413,15 +393,13 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
         )
         .await;
 
-    if cfg!(feature = "debug-log") {
-        match &result {
-            Ok(data) => eprintln!(
-                "[DEBUG][agent-identity] feedback-submit response: {}",
-                serde_json::to_string(data)
-                    .unwrap_or_else(|_| "<serialize failed>".to_string())
-            ),
-            Err(e) => eprintln!("[DEBUG][agent-identity] feedback-submit response err: {:#}", e),
-        }
+    match &result {
+        Ok(data) => eprintln!(
+            "[agent-identity] feedback-submit response: {}",
+            serde_json::to_string(data)
+                .unwrap_or_else(|_| "<serialize failed>".to_string())
+        ),
+        Err(e) => eprintln!("[agent-identity] feedback-submit response err: {:#}", e),
     }
 
     let response = result?;
@@ -466,18 +444,16 @@ async fn xmtp_sign_impl(args: &XmtpSignArgs, ctx: &Context) -> Result<Value> {
         "message": message,
     });
 
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][agent-identity] xmtp-sign request: url={} access_token_len={} access_token_prefix={} body={}",
-            reconstruct_post_url_for_log(
-                ctx,
-                "/priapi/v5/wallet/agentic/pre-transaction/sign-msg",
-            ),
-            access_token.len(),
-            redact_token_for_debug(&access_token),
-            serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string()),
-        );
-    }
+    eprintln!(
+        "[agent-identity] xmtp-sign request: url={} access_token_len={} access_token_prefix={} body={}",
+        reconstruct_post_url_for_log(
+            ctx,
+            "/priapi/v5/wallet/agentic/pre-transaction/sign-msg",
+        ),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        serde_json::to_string(&body).unwrap_or_else(|_| "<serialize failed>".to_string()),
+    );
 
     let result = client
         .post_authed(
@@ -487,15 +463,13 @@ async fn xmtp_sign_impl(args: &XmtpSignArgs, ctx: &Context) -> Result<Value> {
         )
         .await;
 
-    if cfg!(feature = "debug-log") {
-        match &result {
-            Ok(data) => eprintln!(
-                "[DEBUG][agent-identity] xmtp-sign response: {}",
-                serde_json::to_string(data)
-                    .unwrap_or_else(|_| "<serialize failed>".to_string())
-            ),
-            Err(e) => eprintln!("[DEBUG][agent-identity] xmtp-sign response err: {:#}", e),
-        }
+    match &result {
+        Ok(data) => eprintln!(
+            "[agent-identity] xmtp-sign response: {}",
+            serde_json::to_string(data)
+                .unwrap_or_else(|_| "<serialize failed>".to_string())
+        ),
+        Err(e) => eprintln!("[agent-identity] xmtp-sign response err: {:#}", e),
     }
 
     let data = result.map_err(format_api_error)?;

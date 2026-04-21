@@ -104,15 +104,13 @@ pub(super) fn load_session_cert() -> Result<String> {
 pub(super) fn sign_key_uuid(key_uuid: &str, signing_seed: &[u8; 32]) -> Result<String> {
     let sig_bytes = crate::crypto::ed25519_sign(signing_seed, key_uuid.as_bytes())?;
     let signature = base64::engine::general_purpose::STANDARD.encode(&sig_bytes);
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][agent-identity] sign_key_uuid: keyUuid={} keyUuid_utf8_bytes_hex={} signed_bytes_len={} signing_pubkey_hex={}",
-            key_uuid,
-            hex::encode(key_uuid.as_bytes()),
-            key_uuid.as_bytes().len(),
-            ed25519_pubkey_hex(signing_seed),
-        );
-    }
+    eprintln!(
+        "[agent-identity] sign_key_uuid: keyUuid={} keyUuid_utf8_bytes_hex={} signed_bytes_len={} signing_pubkey_hex={}",
+        key_uuid,
+        hex::encode(key_uuid.as_bytes()),
+        key_uuid.as_bytes().len(),
+        ed25519_pubkey_hex(signing_seed),
+    );
     Ok(signature)
 }
 
@@ -229,23 +227,21 @@ pub(super) async fn sign_and_broadcast_agent_transaction(
     let extra_data_str =
         serde_json::to_string(&extra_data).context("failed to serialize broadcast extraData")?;
 
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][agent-identity] broadcast request prepared: \
-             url={} access_token_len={} access_token_prefix={} \
-             accountId={} address={} chainIndex={} extraData={}",
-            reconstruct_post_url_for_log(
-                ctx,
-                "/priapi/v5/wallet/agentic/pre-transaction/broadcast-transaction",
-            ),
-            access_token.len(),
-            redact_token_for_debug(access_token),
-            account_id,
-            from_addr,
-            XLAYER_CHAIN_INDEX,
-            extra_data_str,
-        );
-    }
+    eprintln!(
+        "[agent-identity] broadcast request prepared: \
+         url={} access_token_len={} access_token_prefix={} \
+         accountId={} address={} chainIndex={} extraData={}",
+        reconstruct_post_url_for_log(
+            ctx,
+            "/priapi/v5/wallet/agentic/pre-transaction/broadcast-transaction",
+        ),
+        access_token.len(),
+        redact_token_for_debug(access_token),
+        account_id,
+        from_addr,
+        XLAYER_CHAIN_INDEX,
+        extra_data_str,
+    );
 
     let resp_result = client
         .broadcast_transaction(
@@ -258,14 +254,12 @@ pub(super) async fn sign_and_broadcast_agent_transaction(
         )
         .await;
 
-    if cfg!(feature = "debug-log") {
-        match &resp_result {
-            Ok(r) => eprintln!(
-                "[DEBUG][agent-identity] broadcast response ok: txHash={} pkgId={} orderId={} orderType={}",
-                r.tx_hash, r.pkg_id, r.order_id, r.order_type
-            ),
-            Err(e) => eprintln!("[DEBUG][agent-identity] broadcast response err: {:#}", e),
-        }
+    match &resp_result {
+        Ok(r) => eprintln!(
+            "[agent-identity] broadcast response ok: txHash={} pkgId={} orderId={} orderType={}",
+            r.tx_hash, r.pkg_id, r.order_id, r.order_type
+        ),
+        Err(e) => eprintln!("[agent-identity] broadcast response err: {:#}", e),
     }
 
     let resp = resp_result.map_err(format_api_error)?;

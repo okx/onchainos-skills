@@ -76,15 +76,13 @@ async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
 
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][agent-identity] get request: url={} access_token_len={} access_token_prefix={} query={:?}",
-            reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent-list", &query_refs),
-            access_token.len(),
-            redact_token_for_debug(&access_token),
-            query_refs,
-        );
-    }
+    eprintln!(
+        "[agent-identity] get request: url={} access_token_len={} access_token_prefix={} query={:?}",
+        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent-list", &query_refs),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        query_refs,
+    );
 
     let result = client
         .get_authed(
@@ -94,15 +92,13 @@ async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
         )
         .await;
 
-    if cfg!(feature = "debug-log") {
-        match &result {
-            Ok(data) => eprintln!(
-                "[DEBUG][agent-identity] get response: {}",
-                serde_json::to_string(data)
-                    .unwrap_or_else(|_| "<serialize failed>".to_string())
-            ),
-            Err(e) => eprintln!("[DEBUG][agent-identity] get response err: {:#}", e),
-        }
+    match &result {
+        Ok(data) => eprintln!(
+            "[agent-identity] get response: {}",
+            serde_json::to_string(data)
+                .unwrap_or_else(|_| "<serialize failed>".to_string())
+        ),
+        Err(e) => eprintln!("[agent-identity] get response err: {:#}", e),
     }
 
     Ok(normalize_singleton_object(result?))
@@ -142,15 +138,13 @@ async fn search_impl(args: &SearchArgs, ctx: &Context) -> Result<Value> {
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
 
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][agent-identity] search request: url={} access_token_len={} access_token_prefix={} query={:?}",
-            reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/cli-search", &query_refs),
-            access_token.len(),
-            redact_token_for_debug(&access_token),
-            query_refs,
-        );
-    }
+    eprintln!(
+        "[agent-identity] search request: url={} access_token_len={} access_token_prefix={} query={:?}",
+        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/cli-search", &query_refs),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        query_refs,
+    );
 
     let result = client
         .get_authed(
@@ -160,15 +154,13 @@ async fn search_impl(args: &SearchArgs, ctx: &Context) -> Result<Value> {
         )
         .await;
 
-    if cfg!(feature = "debug-log") {
-        match &result {
-            Ok(data) => eprintln!(
-                "[DEBUG][agent-identity] search response: {}",
-                serde_json::to_string(data)
-                    .unwrap_or_else(|_| "<serialize failed>".to_string())
-            ),
-            Err(e) => eprintln!("[DEBUG][agent-identity] search response err: {:#}", e),
-        }
+    match &result {
+        Ok(data) => eprintln!(
+            "[agent-identity] search response: {}",
+            serde_json::to_string(data)
+                .unwrap_or_else(|_| "<serialize failed>".to_string())
+        ),
+        Err(e) => eprintln!("[agent-identity] search response err: {:#}", e),
     }
 
     Ok(normalize_singleton_object(result?))
@@ -186,15 +178,13 @@ async fn service_list_impl(args: &ServiceListArgs, ctx: &Context) -> Result<Valu
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
 
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][agent-identity] service-list request: url={} access_token_len={} access_token_prefix={} query={:?}",
-            reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/services", &query_refs),
-            access_token.len(),
-            redact_token_for_debug(&access_token),
-            query_refs,
-        );
-    }
+    eprintln!(
+        "[agent-identity] service-list request: url={} access_token_len={} access_token_prefix={} query={:?}",
+        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/services", &query_refs),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        query_refs,
+    );
 
     let result = client
         .get_authed(
@@ -204,15 +194,13 @@ async fn service_list_impl(args: &ServiceListArgs, ctx: &Context) -> Result<Valu
         )
         .await;
 
-    if cfg!(feature = "debug-log") {
-        match &result {
-            Ok(data) => eprintln!(
-                "[DEBUG][agent-identity] service-list response: {}",
-                serde_json::to_string(data)
-                    .unwrap_or_else(|_| "<serialize failed>".to_string())
-            ),
-            Err(e) => eprintln!("[DEBUG][agent-identity] service-list response err: {:#}", e),
-        }
+    match &result {
+        Ok(data) => eprintln!(
+            "[agent-identity] service-list response: {}",
+            serde_json::to_string(data)
+                .unwrap_or_else(|_| "<serialize failed>".to_string())
+        ),
+        Err(e) => eprintln!("[agent-identity] service-list response err: {:#}", e),
     }
 
     result
@@ -256,15 +244,13 @@ async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Va
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
 
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][agent-identity] feedback-list request: url={} access_token_len={} access_token_prefix={} query={:?}",
-            reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/reviews", &query_refs),
-            access_token.len(),
-            redact_token_for_debug(&access_token),
-            query_refs,
-        );
-    }
+    eprintln!(
+        "[agent-identity] feedback-list request: url={} access_token_len={} access_token_prefix={} query={:?}",
+        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/reviews", &query_refs),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        query_refs,
+    );
 
     let result = client
         .get_authed(
@@ -274,15 +260,13 @@ async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Va
         )
         .await;
 
-    if cfg!(feature = "debug-log") {
-        match &result {
-            Ok(data) => eprintln!(
-                "[DEBUG][agent-identity] feedback-list response: {}",
-                serde_json::to_string(data)
-                    .unwrap_or_else(|_| "<serialize failed>".to_string())
-            ),
-            Err(e) => eprintln!("[DEBUG][agent-identity] feedback-list response err: {:#}", e),
-        }
+    match &result {
+        Ok(data) => eprintln!(
+            "[agent-identity] feedback-list response: {}",
+            serde_json::to_string(data)
+                .unwrap_or_else(|_| "<serialize failed>".to_string())
+        ),
+        Err(e) => eprintln!("[agent-identity] feedback-list response err: {:#}", e),
     }
 
     Ok(normalize_singleton_object(result?))
@@ -315,15 +299,13 @@ pub(super) async fn fetch_agent_for_update(
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
 
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][agent-identity] update.fetch-agent request: url={} access_token_len={} access_token_prefix={} query={:?}",
-            reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent-list", &query_refs),
-            access_token.len(),
-            redact_token_for_debug(access_token),
-            query_refs,
-        );
-    }
+    eprintln!(
+        "[agent-identity] update.fetch-agent request: url={} access_token_len={} access_token_prefix={} query={:?}",
+        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent-list", &query_refs),
+        access_token.len(),
+        redact_token_for_debug(access_token),
+        query_refs,
+    );
 
     let fetch_result = client
         .get_authed(
@@ -333,15 +315,13 @@ pub(super) async fn fetch_agent_for_update(
         )
         .await;
 
-    if cfg!(feature = "debug-log") {
-        match &fetch_result {
-            Ok(data) => eprintln!(
-                "[DEBUG][agent-identity] update.fetch-agent response: {}",
-                serde_json::to_string(data)
-                    .unwrap_or_else(|_| "<serialize failed>".to_string())
-            ),
-            Err(e) => eprintln!("[DEBUG][agent-identity] update.fetch-agent response err: {:#}", e),
-        }
+    match &fetch_result {
+        Ok(data) => eprintln!(
+            "[agent-identity] update.fetch-agent response: {}",
+            serde_json::to_string(data)
+                .unwrap_or_else(|_| "<serialize failed>".to_string())
+        ),
+        Err(e) => eprintln!("[agent-identity] update.fetch-agent response err: {:#}", e),
     }
 
     let data = normalize_singleton_object(fetch_result?);
