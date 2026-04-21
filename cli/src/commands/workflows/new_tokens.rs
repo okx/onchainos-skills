@@ -4,11 +4,8 @@
 ///   API failure: token_list null, Step 2 skipped entirely, returns gracefully
 /// Step 2: parallel safety + dev enrichment for top 10 results
 ///   individual sub-call failures: field null, rest continues
-use std::sync::Arc;
-
 use anyhow::Result;
 use serde_json::{json, Value};
-use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 
 use crate::chains;
@@ -16,59 +13,56 @@ use crate::client::ApiClient;
 use crate::commands::{memepump, token};
 use crate::output;
 
-use super::{fetch_token_scan, ok_or_null, Context};
+use super::{ok_or_null, Context};
 
 const ENRICH_TOP_N: usize = 10;
 
 pub(crate) async fn fetch_and_assemble(
-    client: Arc<Mutex<ApiClient>>,
+    client: &mut ApiClient,
     chain_index: &str,
     stage: &str,
 ) -> Result<Value> {
     // ── Step 1: fetch launchpad token list ───────────────────────────
-    let token_list = {
-        let mut guard = client.lock().await;
-        ok_or_null(
-            guard
-                .get(
-                    "/api/v6/dex/market/memepump/tokenList",
-                    &[("chainIndex", chain_index), ("stage", stage)],
-                )
-                .await,
-        )
-    };
+    let token_list = ok_or_null(
+        client
+            .get(
+                "/api/v6/dex/market/memepump/tokenList",
+                &[("chainIndex", chain_index), ("stage", stage)],
+            )
+            .await,
+    );
 
     let top_tokens = extract_top_tokens(&token_list, ENRICH_TOP_N);
 
-    // ── Step 2: parallel enrichment (skipped when list empty) ────────
+    // ── Step 2: parallel enrichment — each task owns its own ApiClient clone ──
     let mut set: JoinSet<(String, Value)> = JoinSet::new();
 
     for (token_addr, token_item) in top_tokens {
-        let c = Arc::clone(&client);
+        let mut c = client.clone();
         let ci = chain_index.to_string();
         let addr = token_addr.clone();
         set.spawn(async move {
-            let mut guard = c.lock().await;
-            let security = fetch_token_scan(&mut guard, &ci, &addr).await;
-            let advanced = ok_or_null(token::fetch_advanced_info(&mut guard, &addr, &ci).await);
-            let dev_info = ok_or_null(
+            let (mut c1, mut c2, mut c3) = (c.clone(), c.clone(), c.clone());
+            let sec_body = serde_json::json!({
+                "source": "onchain_os_cli",
+                "tokenList": [{ "chainId": ci, "contractAddress": addr }]
+            });
+            let (security, advanced, dev_info, bundle_info) = tokio::join!(
+                c.post("/api/v6/security/token-scan", &sec_body),
+                token::fetch_advanced_info(&mut c1, &addr, &ci),
                 memepump::fetch_by_address(
-                    &mut guard, "/api/v6/dex/market/memepump/tokenDevInfo", &addr, &ci,
-                )
-                .await,
-            );
-            let bundle_info = ok_or_null(
+                    &mut c2, "/api/v6/dex/market/memepump/tokenDevInfo", &addr, &ci,
+                ),
                 memepump::fetch_by_address(
-                    &mut guard, "/api/v6/dex/market/memepump/tokenBundleInfo", &addr, &ci,
-                )
-                .await,
+                    &mut c3, "/api/v6/dex/market/memepump/tokenBundleInfo", &addr, &ci,
+                ),
             );
             let enriched = assemble_token_result(
                 token_item,
-                security,
-                advanced,
-                dev_info,
-                bundle_info,
+                security.unwrap_or(Value::Null),
+                ok_or_null(advanced),
+                ok_or_null(dev_info),
+                ok_or_null(bundle_info),
             );
             (addr, enriched)
         });
@@ -91,8 +85,8 @@ pub async fn run(ctx: &Context, chain: Option<String>, stage: Option<String>) ->
     let chain_index = chains::resolve_chain(&chain_str).to_string();
     let stage_str = stage.unwrap_or_else(|| "MIGRATED".to_string());
 
-    let client = Arc::new(Mutex::new(ctx.client_async().await?));
-    let result = fetch_and_assemble(client, &chain_index, &stage_str).await?;
+    let mut client = ctx.client_async().await?;
+    let result = fetch_and_assemble(&mut client, &chain_index, &stage_str).await?;
     output::success(result);
     Ok(())
 }

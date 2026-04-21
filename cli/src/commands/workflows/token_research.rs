@@ -4,9 +4,9 @@
 ///   (token info + price-info + advanced-info + security scan in one call)
 ///   PRD: single sub-call failure → field null, rest continues
 ///   PRD: all Step 1 calls fail    → return error
-/// Step 2 (sequential): holders + cluster overview + top traders + signal list
+/// Step 2 (parallel): holders + cluster overview + top traders + signal list
 ///   cluster-overview may 500 for brand-new tokens → treated as null, skipped gracefully
-/// Step 3 (sequential, conditional): launchpad enrichment only when protocolId non-empty
+/// Step 3 (parallel, conditional): launchpad enrichment only when protocolId non-empty
 ///   if advanced-info itself failed (null), protocolId absent → Step 3 skipped safely
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -32,64 +32,52 @@ pub(crate) async fn fetch_and_assemble(
     let advanced = report["advancedInfo"].clone();
     let security = report["security"].clone();
 
-    // ── Step 2: on-chain structure (sequential) ──────────────────────
-    let holders = ok_or_null(
-        token::fetch_holders(client, address, chain_index, None, Some("100"), None).await,
-    );
-    let cluster = ok_or_null(
+    // ── Step 2: on-chain structure (parallel) ───────────────────────
+    let (mut c1, mut c2, mut c3) = (client.clone(), client.clone(), client.clone());
+    let addr = address.to_string();
+    let (holders, cluster, top_traders, signals) = tokio::join!(
+        token::fetch_holders(client, address, chain_index, None, Some("100"), None),
         token::fetch_cluster_by_address(
-            client,
+            &mut c1,
             "/api/v6/dex/market/token/cluster/overview",
             address,
             chain_index,
-        )
-        .await,
-    );
-    let top_traders = ok_or_null(
-        token::fetch_top_trader(client, address, chain_index, None, Some("20"), None).await,
-    );
-    let signals = ok_or_null(
+        ),
+        token::fetch_top_trader(&mut c2, address, chain_index, None, Some("20"), None),
         signal::fetch_list(
-            client,
-            chain_index,
+            &mut c3, chain_index,
             None, None, None, None, None,
-            Some(address.to_string()),
+            Some(addr),
             None, None, None, None, None, None,
-        )
-        .await,
+        ),
     );
+    let holders    = ok_or_null(holders);
+    let cluster    = ok_or_null(cluster);
+    let top_traders = ok_or_null(top_traders);
+    let signals    = ok_or_null(signals);
 
-    // ── Step 3: launchpad supplement (conditional) ───────────────────
+    // ── Step 3: launchpad supplement (parallel, conditional) ─────────
     let launchpad = if is_launchpad_token(&advanced) {
-        let details = ok_or_null(
+        let (mut c4, mut c5, mut c6) = (client.clone(), client.clone(), client.clone());
+        let (details, dev_info, bundle_info, similar) = tokio::join!(
             memepump::fetch_by_address(
                 client, "/api/v6/dex/market/memepump/tokenDetails", address, chain_index,
-            )
-            .await,
-        );
-        let dev_info = ok_or_null(
+            ),
             memepump::fetch_by_address(
-                client, "/api/v6/dex/market/memepump/tokenDevInfo", address, chain_index,
-            )
-            .await,
-        );
-        let bundle_info = ok_or_null(
+                &mut c4, "/api/v6/dex/market/memepump/tokenDevInfo", address, chain_index,
+            ),
             memepump::fetch_by_address(
-                client, "/api/v6/dex/market/memepump/tokenBundleInfo", address, chain_index,
-            )
-            .await,
-        );
-        let similar = ok_or_null(
+                &mut c5, "/api/v6/dex/market/memepump/tokenBundleInfo", address, chain_index,
+            ),
             memepump::fetch_by_address(
-                client, "/api/v6/dex/market/memepump/similarToken", address, chain_index,
-            )
-            .await,
+                &mut c6, "/api/v6/dex/market/memepump/similarToken", address, chain_index,
+            ),
         );
         json!({
-            "tokenDetails":  details,
-            "devInfo":       dev_info,
-            "bundleInfo":    bundle_info,
-            "similarTokens": similar,
+            "tokenDetails":  ok_or_null(details),
+            "devInfo":       ok_or_null(dev_info),
+            "bundleInfo":    ok_or_null(bundle_info),
+            "similarTokens": ok_or_null(similar),
         })
     } else {
         Value::Null

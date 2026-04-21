@@ -1411,22 +1411,27 @@ pub async fn fetch_safe_quote(
 ) -> Result<serde_json::Value> {
     use crate::commands::token;
 
-    // Resolve readable amount → raw minimal units (needs token info fetch)
+    // Resolve readable amount first (sequential — needs token decimals from client)
     let raw_amount = resolve_amount_arg(client, None, Some(readable_amount), from, chain_index).await?;
 
-    // Security scan on the destination token
+    // Three clones for truly parallel security scan + contract info + quote
+    let (mut c1, mut c2) = (client.clone(), client.clone());
     let sec_body = serde_json::json!({
         "source": "onchain_os_cli",
         "tokenList": [{ "chainId": chain_index, "contractAddress": to }]
     });
-    let security = client.post("/api/v6/security/token-scan", &sec_body).await.ok();
-
-    // Contract info on the destination token
-    let advanced = token::fetch_advanced_info(client, to, chain_index).await.ok();
-
-    // Swap quote
+    let sec_body2 = sec_body.clone();
     let swap_mode = slippage.map(|_| "").unwrap_or("");
-    let quote = fetch_quote(client, chain_index, from, to, &raw_amount, swap_mode).await.ok();
+
+    let (security, advanced, quote) = tokio::join!(
+        client.post("/api/v6/security/token-scan", &sec_body2),
+        token::fetch_advanced_info(&mut c1, to, chain_index),
+        fetch_quote(&mut c2, chain_index, from, to, &raw_amount, swap_mode),
+    );
+
+    let security = security.ok();
+    let advanced = advanced.ok();
+    let quote    = quote.ok();
 
     Ok(serde_json::json!({
         "chain":       chain_index,

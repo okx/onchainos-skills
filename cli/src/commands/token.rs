@@ -1004,16 +1004,28 @@ async fn cluster_top_holders(
 /// Error handling: single sub-call failure → that field is null, rest continue.
 ///                 All sub-calls fail → returns error.
 pub async fn fetch_report(client: &mut ApiClient, address: &str, chain_index: &str) -> Result<serde_json::Value> {
-    let info     = fetch_info(client, address, chain_index).await.ok();
-    let price    = fetch_price_info(client, address, chain_index).await.ok();
-    let advanced = fetch_advanced_info(client, address, chain_index).await.ok();
+    // Four clones — each future gets exclusive ownership of its own ApiClient.
+    // tokio::join! polls all four concurrently; HTTP I/O is truly parallel via
+    // the shared reqwest::Client connection pool (Arc-backed).
+    let (mut c1, mut c2, mut c3) = (client.clone(), client.clone(), client.clone());
 
-    // Inline security token-scan (no public function in security module)
     let sec_body = serde_json::json!({
         "source": "onchain_os_cli",
         "tokenList": [{ "chainId": chain_index, "contractAddress": address }]
     });
-    let security = client.post("/api/v6/security/token-scan", &sec_body).await.ok();
+    let sec_body2 = sec_body.clone();
+
+    let (info, price, advanced, security) = tokio::join!(
+        fetch_info(client, address, chain_index),
+        fetch_price_info(&mut c1, address, chain_index),
+        fetch_advanced_info(&mut c2, address, chain_index),
+        c3.post("/api/v6/security/token-scan", &sec_body2),
+    );
+
+    let info     = info.ok();
+    let price    = price.ok();
+    let advanced = advanced.ok();
+    let security = security.ok();
 
     // All failed → return error per PRD spec
     if info.is_none() && price.is_none() && advanced.is_none() && security.is_none() {

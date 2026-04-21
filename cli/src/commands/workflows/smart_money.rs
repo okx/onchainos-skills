@@ -5,11 +5,8 @@
 /// Step 2: per-token parallel due diligence
 ///   individual sub-call failures: field null, rest continues
 ///   launchpad enrichment conditional on protocolId (reuses is_launchpad_token)
-use std::sync::Arc;
-
 use anyhow::Result;
 use serde_json::{json, Value};
-use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 
 use crate::chains;
@@ -23,65 +20,59 @@ use super::token_research::is_launchpad_token;
 const TOP_N: usize = 5;
 
 pub(crate) async fn fetch_and_assemble(
-    client: Arc<Mutex<ApiClient>>,
+    client: &mut ApiClient,
     chain_index: &str,
 ) -> Result<Value> {
     // ── Step 1 ───────────────────────────────────────────────────────
-    let raw_signals = {
-        let mut guard = client.lock().await;
-        ok_or_null(
-            signal::fetch_list(
-                &mut guard,
-                chain_index,
-                None, None, None, None, None, None, None, None, None, None, None, None,
-            )
-            .await,
+    let raw_signals = ok_or_null(
+        signal::fetch_list(
+            client, chain_index,
+            None, None, None, None, None, None, None, None, None, None, None, None,
         )
-    };
+        .await,
+    );
 
     let top_tokens = extract_top_tokens(&raw_signals, TOP_N);
 
     // ── Step 2: per-token enrichment (parallel, max TOP_N) ───────────
+    // Each spawned task gets its own ApiClient clone — true HTTP parallelism.
     let mut set: JoinSet<(String, Value)> = JoinSet::new();
 
     for (token_addr, signal_item) in top_tokens {
-        let c = Arc::clone(&client);
+        let mut c = client.clone();
         let ci = chain_index.to_string();
         let addr = token_addr.clone();
         set.spawn(async move {
-            let mut guard = c.lock().await;
-            let price = ok_or_null(token::fetch_price_info(&mut guard, &addr, &ci).await);
-            let advanced_val = ok_or_null(token::fetch_advanced_info(&mut guard, &addr, &ci).await);
-            let security = fetch_token_scan(&mut guard, &ci, &addr).await;
+            let (mut c1, mut c2) = (c.clone(), c.clone());
+            let sec_body = serde_json::json!({
+                "source": "onchain_os_cli",
+                "tokenList": [{ "chainId": ci, "contractAddress": addr }]
+            });
+            let (price, advanced_val, security) = tokio::join!(
+                token::fetch_price_info(&mut c, &addr, &ci),
+                token::fetch_advanced_info(&mut c1, &addr, &ci),
+                c2.post("/api/v6/security/token-scan", &sec_body),
+            );
+            let price = ok_or_null(price);
+            let advanced_val = ok_or_null(advanced_val);
+            let security = security.unwrap_or(Value::Null);
 
             let launchpad = if is_launchpad_token(&advanced_val) {
-                let dev_info = ok_or_null(
+                let (mut d1, mut d2) = (c.clone(), c.clone());
+                let (dev_info, bundle_info) = tokio::join!(
                     memepump::fetch_by_address(
-                        &mut guard, "/api/v6/dex/market/memepump/tokenDevInfo", &addr, &ci,
-                    )
-                    .await,
-                );
-                let bundle_info = ok_or_null(
+                        &mut d1, "/api/v6/dex/market/memepump/tokenDevInfo", &addr, &ci,
+                    ),
                     memepump::fetch_by_address(
-                        &mut guard, "/api/v6/dex/market/memepump/tokenBundleInfo", &addr, &ci,
-                    )
-                    .await,
+                        &mut d2, "/api/v6/dex/market/memepump/tokenBundleInfo", &addr, &ci,
+                    ),
                 );
-                json!({
-                    "devInfo":    dev_info,
-                    "bundleInfo": bundle_info,
-                })
+                json!({ "devInfo": ok_or_null(dev_info), "bundleInfo": ok_or_null(bundle_info) })
             } else {
                 Value::Null
             };
 
-            let enriched = assemble_token_result(
-                signal_item,
-                price,
-                advanced_val,
-                security,
-                launchpad,
-            );
+            let enriched = assemble_token_result(signal_item, price, advanced_val, security, launchpad);
             (addr, enriched)
         });
     }
@@ -101,8 +92,8 @@ pub async fn run(ctx: &Context, chain: Option<String>) -> Result<()> {
         .map(|c| chains::resolve_chain(c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("solana"));
 
-    let client = Arc::new(Mutex::new(ctx.client_async().await?));
-    let result = fetch_and_assemble(client, &chain_index).await?;
+    let mut client = ctx.client_async().await?;
+    let result = fetch_and_assemble(&mut client, &chain_index).await?;
     output::success(result);
     Ok(())
 }

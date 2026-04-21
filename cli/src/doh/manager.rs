@@ -3,6 +3,7 @@ use std::net::{IpAddr, SocketAddr};
 use super::types::{DohCacheEntry, DohMode, DohNode, FailedNode};
 use super::{binary, cache};
 
+#[derive(Clone)]
 pub struct DohManager {
     domain: String,
     original_base_url: String,

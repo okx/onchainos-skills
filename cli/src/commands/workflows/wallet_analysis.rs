@@ -1,6 +1,6 @@
 /// W5 — Wallet Analysis
 ///
-/// Step 1 (sequential): portfolio overview 7d + 30d + all balances
+/// Step 1 (parallel): portfolio overview 7d + 30d + all balances
 ///   partial failures: field null, rest continues (no "all fail → error" rule in PRD for W5)
 /// Step 2 (sequential): recent token-level PnL
 /// Step 3 (sequential): recent on-chain activity via tracker
@@ -19,17 +19,17 @@ pub(crate) async fn fetch_and_assemble(
     address: &str,
     chain_index: &str,
 ) -> Result<Value> {
-    // ── Step 1: performance + balances (sequential) ──────────────────
+    // ── Step 1: performance + balances (parallel) ────────────────────
     // time_frame: 3 = 7D, 4 = 1M
-    let overview_7d = ok_or_null(
-        market::fetch_portfolio_overview(client, chain_index, address, "3").await,
+    let (mut c1, mut c2) = (client.clone(), client.clone());
+    let (overview_7d, overview_30d, balances) = tokio::join!(
+        market::fetch_portfolio_overview(client, chain_index, address, "3"),
+        market::fetch_portfolio_overview(&mut c1, chain_index, address, "4"),
+        portfolio::fetch_all_balances(&mut c2, address, chain_index, None, None),
     );
-    let overview_30d = ok_or_null(
-        market::fetch_portfolio_overview(client, chain_index, address, "4").await,
-    );
-    let balances = ok_or_null(
-        portfolio::fetch_all_balances(client, address, chain_index, None, None).await,
-    );
+    let overview_7d  = ok_or_null(overview_7d);
+    let overview_30d = ok_or_null(overview_30d);
+    let balances     = ok_or_null(balances);
 
     // ── Step 2: per-token PnL (sequential) ───────────────────────────
     let recent_pnl = ok_or_null(

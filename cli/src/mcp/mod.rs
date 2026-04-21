@@ -2032,7 +2032,7 @@ impl McpServer {
             .map(|c| crate::chains::resolve_chain(c).to_string())
             .unwrap_or_else(|| crate::chains::resolve_chain("solana").to_string());
         match workflows::smart_money::fetch_and_assemble(
-            Arc::clone(&self.client),
+            &mut *self.client.lock().await,
             &chain_index,
         )
         .await
@@ -2060,7 +2060,7 @@ impl McpServer {
             .unwrap_or_else(|| crate::chains::resolve_chain("solana").to_string());
         let stage = p.stage.unwrap_or_else(|| "MIGRATED".to_string());
         match workflows::new_tokens::fetch_and_assemble(
-            Arc::clone(&self.client),
+            &mut *self.client.lock().await,
             &chain_index,
             &stage,
         )
