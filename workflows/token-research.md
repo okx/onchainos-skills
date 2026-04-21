@@ -61,7 +61,7 @@ onchainos token top-trader --address <addr> --chain <chain>
 onchainos signal list --chain <chain> --token-address <addr>
 ```
 
-> `token holders` returns Top 100 (no `--limit`). `cluster-overview` may 500 for brand-new tokens — skip gracefully if unavailable.
+> `token holders` defaults to 20 results; pass `--limit 100` for top 100. `cluster-overview` may 500 for brand-new tokens — skip gracefully if unavailable.
 
 Present: holder count, Top 10 holding %, tag distribution (SM / Whale / Insider), linked cluster groups + supply %, top trader PnL breakdown (profitable / losing / holding / exited), SM signal wallet count
 

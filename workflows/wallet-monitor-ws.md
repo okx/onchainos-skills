@@ -50,10 +50,10 @@ Present: available channels, subscription parameters for address-tracker-activit
 onchainos ws start \
   --channel address-tracker-activity \
   --wallet-addresses "<addr1>,<addr2>" \
-  --chain <chain>
+  --chain-index <chainIndex>
 ```
 
-> `--wallet-addresses` takes comma-separated values (max 200). Do not use `--params` JSON.
+> `--wallet-addresses` takes comma-separated values (max 200). `--chain-index` accepts comma-separated chain indexes (e.g. `501` for Solana, `1` for Ethereum). Do not use `--params` JSON.
 
 Present: session ID, subscription confirmation
 
