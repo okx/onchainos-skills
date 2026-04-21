@@ -57,6 +57,10 @@ function loadTasks() {
     for (const [k, v] of Object.entries(obj)) tasks.set(k, v);
     console.log(`[mock-api] loaded ${tasks.size} task(s) from ${PERSIST_PATH}`);
   } catch { /* first run */ }
+  for (const k of tasks.keys()) {
+    const n = parseInt(k, 16) || 0;
+    if (n > jobCounter) jobCounter = n;
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

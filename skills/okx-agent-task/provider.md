@@ -14,7 +14,7 @@ jobId:  <任意值>
 
 **识别到此格式后的行动：**
 1. 从消息头提取 `jobId` 和 `会话`（即 conversation_id）
-2. 立即执行 `onchainos agent status <jobId>` 查看任务状态
+2. 立即执行 `onchainos agent common context <jobId> --role seller` 获取任务上下文
 3. **检查任务是否已被接单（status = accepted / submitted / complete）且 providerAgentId 不是自己：**
    - 是 → 立即以 header 格式回复拒绝，结束会话，不进行任何协商：
 
@@ -142,12 +142,12 @@ jobId:  {来源消息里的 jobId}
 
 ### 第一条回复：了解任务
 
-收到买家询问后，先执行：
+收到买家询问后，先获取任务上下文：
 ```bash
-onchainos agent status <jobId>
+onchainos agent common context <jobId> --role seller
 ```
 
-根据返回结果，一条回复内完成所有已知信息的确认：
+根据返回的任务详情（标题、描述、预算、验收标准、截止时间等），一条回复内完成所有已知信息的确认：
 
 jobId:  0x3ec
 来自:   ai-seller-001 [PROVIDER]

@@ -211,8 +211,7 @@ cd tools/mock-arbitrator && node dist/tools/mock-arbitrator/src/mock-arbitrator.
 sleep 2
 grep "身份已注册" /tmp/mock-seller.log /tmp/mock-buyer.log /tmp/mock-arb.log
 
-# 4. Reset DB and create task
-curl -s -X DELETE http://127.0.0.1:9001/api/v1/reset
+# 4. Create task (data persists across restarts, jobId auto-increments)
 curl -s -X POST http://127.0.0.1:9001/api/v1/task/create \
   -H "Content-Type: application/json" \
   -d '{"title":"测试任务","description":"...","descriptionSummary":"...","tokenAddress":"0xUSDT","tokenAmount":"50","paymentType":0,"openType":1,"chainId":1,"minCreditScore":0,"buyerAgentId":"mock-buyer-agent-001","buyerAgentAddress":"0xBuyer000000000000000000000000000000001","expireConfig":{"openExpireSec":86400,"acceptedExpireSec":86400}}'
@@ -246,10 +245,7 @@ node dist/mock-api.js > /tmp/ws-api.log    2>&1 &
 cd tools/mock-seller && node dist/tools/mock-seller/src/mock-seller.js > /tmp/mock-seller.log 2>&1 &
 sleep 2 && grep "身份已注册" /tmp/mock-seller.log
 
-# 2. Reset DB
-curl -s -X DELETE http://127.0.0.1:9001/api/v1/reset
-
-# 3. Clear sessions and restart gateway
+# 2. Clear sessions and restart gateway
 node -e "const fs=require('fs'),p=require('path'),d=process.env.HOME+'/.openclaw/agents/main/sessions';fs.readdirSync(d).forEach(f=>{try{fs.unlinkSync(p.join(d,f))}catch(e){}});console.log('cleared');"
 launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
 until grep -q "ws-channel.*已注册" ~/.openclaw/logs/gateway.log 2>/dev/null; do sleep 1; done
@@ -284,7 +280,7 @@ tail -f ~/.openclaw/logs/gateway.log | grep --line-buffered -E "TASK_|conv:|disp
 
 - Headless + UI versions of the same mock share one identity — run only one at a time
 - `sendText: missing conversationId` in gateway log — non-blocking, doesn't affect flow
-- mock-api data persists across restarts (saved to `tools/ws-mock-ts/dist/mock-tasks.json`); reset: `curl -X DELETE http://127.0.0.1:9001/api/v1/reset`
+- mock-api data persists across restarts (saved to `tools/ws-mock-ts/dist/mock-tasks.json`), jobId auto-increments from max existing; optional full reset: `curl -X DELETE http://127.0.0.1:9001/api/v1/reset`
 - TASK_CONFIRMED fires 8s after `create-task` — intentional delay for agent turn to finish
 - mock-seller quotes the task's `tokenAmount` (parsed from buyer's detail message); defaults to 50 USDT if parsing fails
 - Gateway re-registers tools on every agent turn — normal openclaw behavior, not a bug
