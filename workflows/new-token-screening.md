@@ -26,6 +26,14 @@ okx-dex-trenches, okx-security, okx-dex-token
 
 Filter params are passed through to `memepump tokens` CLI. Users may override via natural language (e.g. "only show tokens with 100+ holders").
 
+## CLI
+
+Run the complete workflow in one command:
+
+```
+onchainos workflow new-tokens [--chain <chain>] [--stage MIGRATED|MIGRATING]
+```
+
 ## Steps
 
 ### Step 1 — Fetch [required] (sequential)

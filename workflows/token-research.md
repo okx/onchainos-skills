@@ -21,6 +21,14 @@ okx-dex-token, okx-security, okx-dex-swap, okx-dex-signal, okx-dex-trenches
 | token_address | Yes      | —           |
 | chain         | No       | Auto-detect |
 
+## CLI
+
+Run the complete workflow in one command:
+
+```
+onchainos workflow token-research --address <addr> [--chain <chain>]
+```
+
 ## Steps
 
 ### Step 1 — Core data [required] (parallel)

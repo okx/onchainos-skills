@@ -21,6 +21,14 @@ okx-wallet-portfolio, okx-dex-market, okx-dex-token
 | wallet_address | Yes      | —             |
 | chain          | No       | All supported |
 
+## CLI
+
+Run the complete workflow in one command:
+
+```
+onchainos workflow portfolio --address <addr> [--chains <chains>]
+```
+
 ## Steps
 
 ### Step 1 — Overview [required] (parallel)

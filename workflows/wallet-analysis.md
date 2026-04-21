@@ -21,6 +21,14 @@ okx-dex-market, okx-wallet-portfolio, okx-dex-signal
 | wallet_address | Yes      | —           |
 | chain          | No       | Auto-detect |
 
+## CLI
+
+Run the complete workflow in one command:
+
+```
+onchainos workflow wallet-analysis --address <addr> [--chain <chain>]
+```
+
 ## Steps
 
 ### Step 1 — Performance [required] (parallel)

@@ -20,6 +20,14 @@ okx-dex-signal, okx-dex-token, okx-dex-trenches, okx-security
 |-------|----------|---------|
 | chain | No       | Solana  |
 
+## CLI
+
+Run the complete workflow in one command:
+
+```
+onchainos workflow smart-money [--chain <chain>]
+```
+
 ## Steps
 
 ### Step 1 — Collect signals [required] (sequential)
