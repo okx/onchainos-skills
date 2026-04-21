@@ -321,7 +321,8 @@ impl WalletApiClient {
             .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
             .unwrap_or_else(|| crate::client::DEFAULT_BASE_URL.to_string());
 
-        let custom = option_env!("OKX_BASE_URL").is_some();
+        let custom = std::env::var("OKX_BASE_URL").is_ok()
+            || option_env!("OKX_BASE_URL").is_some();
         let mut doh = DohManager::new("web3.okx.com", &base_url, custom);
         doh.prepare();
 

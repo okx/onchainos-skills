@@ -69,6 +69,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::swap::SwapCommand,
     },
+    /// Cross-chain bridge swap
+    #[command(name = "cross-chain")]
+    CrossChain {
+        #[command(subcommand)]
+        command: commands::cross_chain::CrossChainCommand,
+    },
     /// On-chain gateway
     Gateway {
         #[command(subcommand)]
@@ -168,6 +174,7 @@ async fn run() {
         Commands::Tracker { command } => commands::tracker::execute(&ctx, command).await,
         Commands::Token { command } => commands::token::execute(&ctx, *command).await,
         Commands::Swap { command } => commands::swap::execute(&ctx, command).await,
+        Commands::CrossChain { command } => commands::cross_chain::execute(&ctx, command).await,
         Commands::Gateway { command } => commands::gateway::execute(&ctx, command).await,
         Commands::Portfolio { command } => commands::portfolio::execute(&ctx, command).await,
         Commands::Mcp { .. } => unreachable!("handled above"),
