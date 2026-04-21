@@ -329,6 +329,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
+        Commands::CrossChain { .. } => "cross-chain".to_string(),
     }
 }
 
