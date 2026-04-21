@@ -78,7 +78,7 @@ async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
 
     eprintln!(
         "[agent-identity] get request: url={} access_token_len={} access_token_prefix={} query={:?}",
-        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent-list", &query_refs),
+        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/agent-list", &query_refs),
         access_token.len(),
         redact_token_for_debug(&access_token),
         query_refs,
@@ -86,7 +86,7 @@ async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
 
     let result = client
         .get_authed(
-            "/priapi/v5/wallet/agentic/agent-list",
+            "/priapi/v5/wallet/agentic/agent/agent-list",
             &access_token,
             &query_refs,
         )
@@ -301,7 +301,7 @@ pub(super) async fn fetch_agent_for_update(
 
     eprintln!(
         "[agent-identity] update.fetch-agent request: url={} access_token_len={} access_token_prefix={} query={:?}",
-        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent-list", &query_refs),
+        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/agent-list", &query_refs),
         access_token.len(),
         redact_token_for_debug(access_token),
         query_refs,
@@ -309,7 +309,7 @@ pub(super) async fn fetch_agent_for_update(
 
     let fetch_result = client
         .get_authed(
-            "/priapi/v5/wallet/agentic/agent-list",
+            "/priapi/v5/wallet/agentic/agent/agent-list",
             access_token,
             &query_refs,
         )

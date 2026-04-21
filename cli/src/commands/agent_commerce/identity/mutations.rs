@@ -110,7 +110,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         "[agent-identity] create request: url={} access_token_len={} access_token_prefix={} body={}",
         reconstruct_post_url_for_log(
             ctx,
-            "/priapi/v5/wallet/agentic/pre-transaction/createAgent",
+            "/priapi/v5/wallet/agentic/pre-transaction/create-agent",
         ),
         access_token.len(),
         redact_token_for_debug(&access_token),
@@ -118,7 +118,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
     );
     let response = client
         .post_authed(
-            "/priapi/v5/wallet/agentic/pre-transaction/createAgent",
+            "/priapi/v5/wallet/agentic/pre-transaction/create-agent",
             &access_token,
             &body,
         )
@@ -138,7 +138,11 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    let overlay = build_erc8004_overlay(&communication_address, &normalized_role, &key_uuid);
+    let overlay = build_erc8004_overlay(&[
+        ("communicationAddress", &communication_address),
+        ("role", &normalized_role),
+        ("keyUuid", &key_uuid),
+    ]);
     let tx_hash = sign_and_broadcast_agent_transaction(
         &access_token,
         &unsigned,
@@ -197,7 +201,7 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
         "[agent-identity] update request: url={} access_token_len={} access_token_prefix={} body={}",
         reconstruct_post_url_for_log(
             ctx,
-            "/priapi/v5/wallet/agentic/pre-transaction/updateAgent",
+            "/priapi/v5/wallet/agentic/pre-transaction/update-agent",
         ),
         access_token.len(),
         redact_token_for_debug(&access_token),
@@ -205,7 +209,7 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     );
     let update_result = client
         .post_authed(
-            "/priapi/v5/wallet/agentic/pre-transaction/updateAgent",
+            "/priapi/v5/wallet/agentic/pre-transaction/update-agent",
             &access_token,
             &body,
         )
@@ -343,8 +347,9 @@ async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
 async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let client = wallet_client(ctx)?;
-    let (_account_id, addr_info) = resolve_xlayer_signing_account(args.address.as_deref())?;
-    let from_addr = addr_info.address.clone();
+    // --agent-id / --creator-id / --score 必填；--description / --task-id 选填。
+    let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?.to_string();
+    let creator_id = require_non_empty(args.creator_id.as_deref(), "--creator-id")?.to_string();
     let score = parse_u32_arg(
         Some(require_non_empty(args.score.as_deref(), "--score")?),
         "--score",
@@ -353,18 +358,18 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
         Some(100),
         false,
     )?;
+    let feedback_desc = trim_or_empty(args.description.as_deref());
+    let task_id = trim_or_empty(args.task_id.as_deref());
+
+    // 请求体：新后端 create-comment 只需要 chainIndex + comment（fromAddr 已不再
+    // 带）。本地 XLayer 地址解析仍然要做，结果只给下一步广播用。
     let comment = json!({
-        "agentId": require_non_empty(args.agent_id.as_deref(), "--agent-id")?,
-        "score": score.to_string(),
-        "tags": trim_or_empty(args.tags.as_deref()),
-        "endpoint": trim_or_empty(args.endpoint.as_deref()),
-        "feedbackURI": trim_or_empty(args.feedback_uri.as_deref()),
-        "feedbackHash": trim_or_empty(args.feedback_hash.as_deref()),
-        "description": trim_or_empty(args.description.as_deref()),
+        "agentId": agent_id,
+        "value": score.to_string(),
+        "feedbackDesc": feedback_desc,
     });
     let body = json!({
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,
-        "fromAddr": from_addr,
         "comment": serde_json::to_string(&comment).context("failed to serialize comment")?,
     });
 
@@ -372,7 +377,7 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
         "[agent-identity] feedback-submit request: url={} access_token_len={} access_token_prefix={} body={}",
         reconstruct_post_url_for_log(
             ctx,
-            "/priapi/v5/wallet/agentic/pre-transaction/createComment",
+            "/priapi/v5/wallet/agentic/pre-transaction/create-comment",
         ),
         access_token.len(),
         redact_token_for_debug(&access_token),
@@ -381,7 +386,7 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
 
     let result = client
         .post_authed(
-            "/priapi/v5/wallet/agentic/pre-transaction/createComment",
+            "/priapi/v5/wallet/agentic/pre-transaction/create-comment",
             &access_token,
             &body,
         )
@@ -398,14 +403,18 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
 
     let response = result?;
     let unsigned = parse_agent_unsigned(response)?;
-    // 产品规范：feedback-submit 客户端没有 erc8004Msg 子字段（role 不用，
-    // keyUuid / sessionSignature 也不在 feedback 请求体里），整体不写入广播
-    // extraData。
+    // erc8004Msg：feedBackAgentId 必填（来自 --creator-id），taskId 选填。空值
+    // 由 build_erc8004_overlay 过滤，所以 taskId 空串不会写进 erc8004Msg。
+    let overlay = build_erc8004_overlay(&[
+        ("taskId", &task_id),
+        ("feedBackAgentId", &creator_id),
+    ]);
+    // --address 已从 CLI 去掉；广播走默认 XLayer 地址（当前选中账号）。
     let tx_hash = sign_and_broadcast_agent_transaction(
         &access_token,
         &unsigned,
+        overlay,
         None,
-        args.address.as_deref(),
     )
     .await?;
     Ok(json!({ "txHash": tx_hash }))

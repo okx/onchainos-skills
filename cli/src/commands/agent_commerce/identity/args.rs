@@ -87,22 +87,21 @@ pub struct ServiceListArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct FeedbackSubmitArgs {
+    /// 必填：被评价的 agent id，进 create-comment 请求体 `comment.agentId`。
     #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
+    /// 必填：评价发起方的 agent id，进广播 `extraData.erc8004Msg.feedBackAgentId`。
+    #[arg(long = "creator-id")]
+    pub creator_id: Option<String>,
+    /// 必填：0-100 的整数分数，进 create-comment 请求体 `comment.value`。
     #[arg(long)]
     pub score: Option<String>,
-    #[arg(long)]
-    pub tags: Option<String>,
-    #[arg(long)]
-    pub endpoint: Option<String>,
-    #[arg(long = "feedback-uri")]
-    pub feedback_uri: Option<String>,
-    #[arg(long = "feedback-hash")]
-    pub feedback_hash: Option<String>,
+    /// 选填：文字评价，进 create-comment 请求体 `comment.feedbackDesc`。
     #[arg(long)]
     pub description: Option<String>,
-    #[arg(long)]
-    pub address: Option<String>,
+    /// 选填：taskId，进广播 `extraData.erc8004Msg.taskId`；为空则不写入。
+    #[arg(long = "task-id")]
+    pub task_id: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]

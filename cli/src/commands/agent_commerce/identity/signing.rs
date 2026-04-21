@@ -104,26 +104,19 @@ fn ed25519_pubkey_hex(signing_seed: &[u8; 32]) -> String {
 
 // ─── erc8004Msg overlay ───────────────────────────────────────────────────
 
-/// 按产品规范 build 出 `erc8004Msg` 对象。空字段不写；整体若为空则返回 None
-/// （让上层不要把 `erc8004Msg` 写进 extraData）。当前只有 `agent create` 会
-/// 产出非空的 overlay；`update` / `feedback-submit` 都传 None。
-pub(super) fn build_erc8004_overlay(
-    communication_address: &str,
-    role: &str,
-    key_uuid: &str,
-) -> Option<Map<String, Value>> {
+/// 按产品规范 build 出 `erc8004Msg` overlay。空字段不写入；整体若空则返回
+/// None（让上层把 `erc8004Msg` 整个从 extraData 里省略）。
+///
+/// 各命令当前的子字段集合（都遵循"空则不写"）：
+/// - `agent create`         → communicationAddress / role / keyUuid
+/// - `agent update`         → 无（一律传 `&[]`）
+/// - `agent feedback-submit`→ taskId / feedBackAgentId
+pub(super) fn build_erc8004_overlay(fields: &[(&str, &str)]) -> Option<Map<String, Value>> {
     let mut inner = Map::new();
-    if !communication_address.is_empty() {
-        inner.insert(
-            "communicationAddress".into(),
-            json!(communication_address),
-        );
-    }
-    if !role.is_empty() {
-        inner.insert("role".into(), json!(role));
-    }
-    if !key_uuid.is_empty() {
-        inner.insert("keyUuid".into(), json!(key_uuid));
+    for (key, value) in fields {
+        if !value.is_empty() {
+            inner.insert((*key).into(), json!(value));
+        }
     }
     if inner.is_empty() {
         return None;
