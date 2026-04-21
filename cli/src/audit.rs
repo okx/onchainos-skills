@@ -416,6 +416,7 @@ fn token_sub(c: &TokenCommand) -> &'static str {
         TokenCommand::ClusterTopHolders { .. } => "cluster-top-holders",
         TokenCommand::ClusterList { .. } => "cluster-list",
         TokenCommand::ClusterSupportedChains => "cluster-supported-chains",
+        TokenCommand::Report { .. } => "report",
     }
 }
 
@@ -426,6 +427,7 @@ fn swap_sub(c: &SwapCommand) -> &'static str {
         SwapCommand::Approve { .. } => "approve",
         SwapCommand::CheckApprovals { .. } => "check-approvals",
         SwapCommand::Chains => "chains",
+        SwapCommand::SafeQuote { .. } => "safe-quote",
         SwapCommand::Liquidity { .. } => "liquidity",
         SwapCommand::Execute { .. } => "execute",
     }

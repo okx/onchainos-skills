@@ -283,6 +283,18 @@ pub enum TokenCommand {
     },
     /// Get supported chains for holder cluster analysis
     ClusterSupportedChains,
+
+    /// Composite: token info + price-info + advanced-info + security scan in one call.
+    /// Equivalent to running all 4 sub-commands in parallel.
+    /// PRD Section 3.1: onchainos token report
+    Report {
+        /// Token contract address
+        #[arg(long)]
+        address: String,
+        /// Chain (e.g. solana, ethereum). Defaults to global --chain or ethereum.
+        #[arg(long)]
+        chain: Option<String>,
+    },
 }
 
 pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
@@ -522,6 +534,12 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             .await?;
         }
         TokenCommand::ClusterSupportedChains => cluster_supported_chains(ctx).await?,
+        TokenCommand::Report { address, chain } => {
+            let chain_index = chain
+                .map(|c| crate::chains::resolve_chain(&c).to_string())
+                .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+            output::success(fetch_report(&mut client, &address, &chain_index).await?);
+        }
     }
     Ok(())
 }
@@ -979,4 +997,38 @@ async fn cluster_top_holders(
     let mut client = ctx.client_async().await?;
     output::success(fetch_cluster_top_holders(&mut client, address, &chain_index, range_filter).await?);
     Ok(())
+}
+
+/// Composite command: runs token info + price-info + advanced-info + security scan.
+/// PRD Section 3.1 — `onchainos token report`
+/// Error handling: single sub-call failure → that field is null, rest continue.
+///                 All sub-calls fail → returns error.
+pub async fn fetch_report(client: &mut ApiClient, address: &str, chain_index: &str) -> Result<serde_json::Value> {
+    let info     = fetch_info(client, address, chain_index).await.ok();
+    let price    = fetch_price_info(client, address, chain_index).await.ok();
+    let advanced = fetch_advanced_info(client, address, chain_index).await.ok();
+
+    // Inline security token-scan (no public function in security module)
+    let sec_body = serde_json::json!({
+        "source": "onchain_os_cli",
+        "tokenList": [{ "chainId": chain_index, "contractAddress": address }]
+    });
+    let security = client.post("/api/v6/security/token-scan", &sec_body).await.ok();
+
+    // All failed → return error per PRD spec
+    if info.is_none() && price.is_none() && advanced.is_none() && security.is_none() {
+        anyhow::bail!(
+            "token report: all sub-calls failed for address {} on chain {}",
+            address, chain_index
+        );
+    }
+
+    Ok(serde_json::json!({
+        "address":     address,
+        "chain":       chain_index,
+        "info":        info,
+        "priceInfo":   price,
+        "advancedInfo": advanced,
+        "security":    security,
+    }))
 }

@@ -29,6 +29,9 @@ okx-security, okx-dex-token, okx-dex-swap, okx-onchain-gateway
 
 ### Step 1 — Pre-trade data [required] (parallel)
 
+**Before running**, ask the user: *"Do you want a transaction simulation as well? (shows expected asset changes before executing)"*
+If yes, include Step 3 simulation commands alongside the pre-trade data in this step.
+
 Prefer composite command if available:
 
 ```
@@ -54,7 +57,9 @@ Display all Step 1 data. Apply risk controls per `okx-security` SKILL.md:
 - **WARN**: show risk data, wait for explicit user confirmation
 - **PASS**: display data and continue
 
-### Step 3 — Simulate [recommended] (conditional: user requests simulation)
+### Step 3 — Simulate [recommended] (conditional: user requested at Step 1)
+
+Run alongside Step 1 if user said yes, or on-demand after Step 2 if user asks.
 
 ```
 onchainos gateway simulate --from <wallet> --to <contract> --data <calldata> --chain <chain>
