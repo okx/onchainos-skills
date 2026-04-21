@@ -80,25 +80,36 @@ Tell OpenCode:
 Fetch and follow instructions from https://raw.githubusercontent.com/okx/onchainos-skills/refs/heads/main/.opencode/INSTALL.md
 ```
 
-## Skill Workflows
+## Workflows
 
-The skills work together in typical DeFi flows:
+8 pre-built workflow orchestrations in `workflows/` compose multiple skills into complete operations. The agent reads `workflows/INDEX.md` to route requests, then follows the step-by-step instructions in the matched workflow file.
 
-**Search and Buy**: `okx-dex-token` (find token) -> `okx-wallet-portfolio` (check funds) -> `okx-dex-swap` (execute trade)
+| Workflow | What it does | CLI command |
+|----------|-------------|-------------|
+| **Token Research** | Price, security, holders, cluster, smart money signals, optional launchpad deep-dive | `onchainos workflow token-research --address <addr>` |
+| **Daily Brief** | Market pulse + smart money + new token activity + portfolio alerts | — |
+| **Smart Money Signals** | SM signal list aggregated by token + per-token due diligence | `onchainos workflow smart-money` |
+| **New Token Screening** | MIGRATED launchpad scan + safety & dev enrichment for top 10 | `onchainos workflow new-tokens` |
+| **Wallet Analysis** | 7d/30d PnL, trading behaviour, recent on-chain activity | `onchainos workflow wallet-analysis --address <addr>` |
+| **Portfolio Check** | Balances, total value, 30d PnL overview | `onchainos workflow portfolio --address <addr>` |
+| **Wallet Monitor** | In-session polling — alert on new trades from watched wallets | — |
+| **Wallet Monitor (WS)** | Background WebSocket session for offline wallet monitoring | — |
 
-**Portfolio Overview**: `okx-wallet-portfolio` (holdings) -> `okx-dex-token` (enrich with analytics) -> `okx-dex-market` (price charts)
+### Composite CLI commands
 
-**Market Research**: `okx-dex-token` (trending/rankings) -> `okx-dex-market` (candles/history) -> `okx-dex-swap` (trade)
+Single commands that replace multiple individual tool calls:
 
-**Swap and Broadcast**: `okx-dex-swap` (get tx data) -> sign locally -> `okx-onchain-gateway` (broadcast) -> `okx-onchain-gateway` (track order)
+```bash
+# Token report: info + price + advanced-info + security scan (parallel)
+onchainos token report --address <addr> --chain solana
 
-**Pre-flight Check**: `okx-onchain-gateway` (estimate gas) -> `okx-onchain-gateway` (simulate tx) -> `okx-onchain-gateway` (broadcast) -> `okx-onchain-gateway` (track order)
-
-**Full Trading Flow**: `okx-dex-token` (search) -> `okx-dex-market` (price/chart) -> `okx-wallet-portfolio` (check balance) -> `okx-dex-swap` (get tx) -> `okx-onchain-gateway` (simulate + broadcast + track)
-
-**Leaderboard → Research → Trade**: `okx-dex-signal` (top traders by PnL/win rate) -> `okx-dex-token` (token analytics) -> `okx-dex-swap` (execute trade)
-
-**Follow Smart Money**: `okx-dex-signal` (KOL/smart money buys) -> `okx-dex-token` (token details + holder cluster) -> `okx-dex-market` (price chart) -> `okx-dex-swap` (trade)
+# Full workflow commands
+onchainos workflow token-research --address <addr> [--chain solana]
+onchainos workflow smart-money [--chain solana]
+onchainos workflow new-tokens [--chain solana] [--stage MIGRATED]
+onchainos workflow wallet-analysis --address <addr> [--chain ethereum]
+onchainos workflow portfolio --address <addr> [--chains ethereum,solana]
+```
 
 ## Install CLI
 
