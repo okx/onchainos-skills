@@ -357,7 +357,10 @@ pub fn build_payment_header(
 
     let body = json!({
         "x402Version": 2,
-        "resource": resource,
+        "resource": {
+            "url": resource,
+            "mimeType": "application/json",
+        },
         "accepted": accepted,
         "payload": payload_inner,
     });
@@ -505,7 +508,8 @@ mod tests {
         assert_eq!(name, "PAYMENT-SIGNATURE");
         let body: Value = serde_json::from_slice(&B64.decode(&value).unwrap()).unwrap();
         assert_eq!(body["x402Version"], 2);
-        assert_eq!(body["resource"], "https://api.example.com/foo");
+        assert_eq!(body["resource"]["url"], "https://api.example.com/foo");
+        assert_eq!(body["resource"]["mimeType"], "application/json");
     }
 
     #[test]
