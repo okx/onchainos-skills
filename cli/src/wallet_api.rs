@@ -324,14 +324,12 @@ impl WalletApiClient {
         })
     }
 
-    /// POST with Bearer accessToken (for create / list / refresh / x402).
     /// Retries once after DoH failover.
     pub async fn post_authed(&mut self, path: &str, access_token: &str, body: &Value) -> Result<Value> {
         self.post_authed_with_headers(path, access_token, body, None)
             .await
     }
 
-    /// POST with Bearer accessToken + optional extra headers.
     /// Retries once after DoH failover.
     pub fn post_authed_with_headers<'a>(
         &'a mut self,
@@ -383,7 +381,6 @@ impl WalletApiClient {
         })
     }
 
-    /// POST with Bearer accessToken — no DoH retry. Use only for broadcast-transaction.
     async fn post_authed_no_retry_with_headers(
         &mut self,
         path: &str,
@@ -466,7 +463,6 @@ impl WalletApiClient {
         Ok(body["data"].clone())
     }
 
-    /// GET with Bearer accessToken + query params.
     pub fn get_authed<'a>(
         &'a mut self,
         path: &'a str,
