@@ -28,7 +28,11 @@ pub enum TaskSystemCommand {
     },
 
     /// Get recommended providers for a task
-    Recommend { job_id: String },
+    Recommend {
+        job_id: String,
+        #[arg(long)] next: bool,
+        #[arg(long)] current: bool,
+    },
 
     /// Get current task status
     Status { job_id: String },
@@ -151,8 +155,8 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
         TaskSystemCommand::CreateTask { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title } =>
             client::run_task(T::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title }, ctx).await,
 
-        TaskSystemCommand::Recommend { job_id } =>
-            client::run_task(T::Recommend { job_id }, ctx).await,
+        TaskSystemCommand::Recommend { job_id, next, current } =>
+            client::run_task(T::Recommend { job_id, next, current }, ctx).await,
 
         TaskSystemCommand::Status { job_id } =>
             client::run_task(T::Status { job_id }, ctx).await,
