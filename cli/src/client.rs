@@ -829,10 +829,12 @@ impl ApiClient {
         self.payment.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Load payment config once per process. Cache file is consulted first;
-    /// a fresh fetch only runs if the cache is missing or older than
-    /// `CONFIG_TTL_SECS`. Failures degrade silently — the 402 fallback in
-    /// `handle_response` will still recover.
+    /// Lazily load payment config. Only fetches `/config` from the network
+    /// when the server has signalled charging (via `ok-web3-openapi-pay`);
+    /// during all-free periods the 402 fallback in `handle_response`
+    /// recovers any paid request for free, so a fresh config map is not
+    /// needed. Cache file is consulted on the way in to restore the last
+    /// known charging flags and (if fresh) the endpoint→tier map.
     async fn ensure_payment_config(&mut self) {
         if self.payment_state().config_loaded {
             return;
@@ -842,6 +844,18 @@ impl ApiClient {
             if self.restore_from_cache(cache) {
                 return;
             }
+        }
+
+        // Defer the network fetch until we have reason to pre-sign. If no
+        // tier is charging, `maybe_sign_payment` would short-circuit to
+        // None anyway; once a response header flips a flag, the next
+        // request re-enters this function and triggers the fetch.
+        let any_charging = {
+            let s = self.payment_state();
+            s.basic_charging || s.premium_charging
+        };
+        if !any_charging {
+            return;
         }
 
         // Mark as loaded eagerly so concurrent requests don't all race to fetch.
@@ -874,6 +888,13 @@ impl ApiClient {
         state.basic_charging = cache.basic_charging;
         state.premium_charging = cache.premium_charging;
         if cache.is_expired(CONFIG_TTL_SECS) {
+            return false;
+        }
+        let accepts_empty = match &cache.accepts {
+            None => true,
+            Some(v) => v.is_null() || v.as_array().is_some_and(|a| a.is_empty()),
+        };
+        if cache.endpoints.is_empty() || accepts_empty {
             return false;
         }
         state.endpoints = cache
