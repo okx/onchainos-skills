@@ -21,12 +21,6 @@ metadata:
 
 > Full chain list: `../okx-agentic-wallet/_shared/chain-support.md`. If that file does not exist, read `_shared/chain-support.md` instead.
 
-## Workflow Integration
-
-> **For user-facing buy / sell / swap requests**, use the **Safe Swap** workflow (`workflows/safe-swap.md`) instead of calling this skill directly.
-> It runs pre-trade security checks and MEV protection automatically before executing.
-> Use this skill directly only when called from within a workflow step.
-
 ## Native Token Addresses
 
 <IMPORTANT>

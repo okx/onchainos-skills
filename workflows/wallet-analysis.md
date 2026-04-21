@@ -85,10 +85,5 @@ Time    Token   Action  Amount
 
 ## Actions
 
-- → "watch [address]" — triggers Wallet Monitor
-- → "buy [amount] [native_token] of [token_they_bought]" — triggers Safe Swap
-- → "research [token_they_hold]" — triggers Token Research
-
-## Follow-up Workflows
-
-Wallet Monitor (`workflows/wallet-monitor.md`), Token Research (`workflows/token-research.md`), Safe Swap (`workflows/safe-swap.md`)
+- → "watch [address]" — Wallet Monitor (`workflows/wallet-monitor.md`)
+- → "research [token_they_hold]" — Token Research (`workflows/token-research.md`)

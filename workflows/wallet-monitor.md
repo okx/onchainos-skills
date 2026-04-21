@@ -59,10 +59,5 @@ Exit when user says "stop monitoring".
 
 ## Actions
 
-- → "research [symbol]" — triggers Token Research
-- → "buy [amount] [native_token] of [symbol]" — triggers Safe Swap
+- → "research [symbol]" — Token Research (`workflows/token-research.md`)
 - → "stop monitoring" — exits the loop
-
-## Follow-up Workflows
-
-Token Research (`workflows/token-research.md`), Safe Swap (`workflows/safe-swap.md`)

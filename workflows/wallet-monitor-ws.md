@@ -110,10 +110,5 @@ To list all sessions:
 
 ## Actions
 
-- → "research [symbol]" — triggers Token Research (for tokens seen in poll events)
-- → "buy [amount] [native_token] of [symbol]" — triggers Safe Swap
+- → "research [symbol]" — Token Research (`workflows/token-research.md`) (for tokens seen in poll events)
 - → "stop monitoring" (`onchainos ws stop --id <session_id>`)
-
-## Follow-up Workflows
-
-Token Research (`workflows/token-research.md`), Safe Swap (`workflows/safe-swap.md`)

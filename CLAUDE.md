@@ -51,8 +51,9 @@ No corresponding workflow — always invoke these directly:
 | okx-security | DApp/URL phishing detection, tx pre-execution scan, signature safety, approval management | User asks about DApp/URL safety, wants to scan a specific tx or signature, or manage token approvals |
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, deposit/withdraw from DeFi protocols, claim DeFi rewards |
 | okx-defi-portfolio | DeFi positions and holdings | User wants to check DeFi positions across protocols |
+| okx-dex-swap | DEX swap execution | User wants to swap, trade, buy, or sell tokens |
 | okx-dex-ws | Real-time WebSocket monitoring and scripting | User wants to write a WS script or monitor real-time on-chain data via custom bot |
-| okx-onchain-gateway | Transaction broadcasting and tracking | User wants to broadcast a tx, estimate gas, or check tx status outside of a swap flow |
+| okx-onchain-gateway | Transaction broadcasting and tracking | User wants to broadcast a tx, estimate gas, or check tx status |
 | okx-x402-payment | x402 payment authorization | User encounters HTTP 402 or mentions x402 / pay for access |
 | okx-audit-log | Audit log export and troubleshooting | User wants to view command history, debug errors, or export audit log |
 
@@ -63,7 +64,6 @@ Invoked by workflows internally — **do not call directly** in response to user
 | Skill | Used By Workflows |
 |-------|------------------|
 | okx-dex-token | Token Research, Daily Brief, Smart Money Signals, New Token Screening, Portfolio Check |
-| okx-dex-swap | Safe Swap |
 | okx-dex-market | Daily Brief, Wallet Analysis, Portfolio Check |
 | okx-dex-signal | Smart Money Signals, Daily Brief, Wallet Analysis, Wallet Monitor |
 | okx-dex-trenches | New Token Screening, Token Research (launchpad), Smart Money Signals, Daily Brief |

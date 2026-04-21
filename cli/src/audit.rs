@@ -427,7 +427,6 @@ fn swap_sub(c: &SwapCommand) -> &'static str {
         SwapCommand::Approve { .. } => "approve",
         SwapCommand::CheckApprovals { .. } => "check-approvals",
         SwapCommand::Chains => "chains",
-        SwapCommand::SafeQuote { .. } => "safe-quote",
         SwapCommand::Liquidity { .. } => "liquidity",
         SwapCommand::Execute { .. } => "execute",
     }

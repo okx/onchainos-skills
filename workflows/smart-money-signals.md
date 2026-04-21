@@ -69,9 +69,4 @@ Scanned: {n} signal tokens → Top {m} by SM wallet count
 
 ## Actions
 
-- → "research [symbol]" — triggers Token Research
-- → "buy [amount] [native_token] of [symbol]" — triggers Safe Swap
-
-## Follow-up Workflows
-
-Token Research (`workflows/token-research.md`), Safe Swap (`workflows/safe-swap.md`)
+- → "research [symbol]" — Token Research (`workflows/token-research.md`)

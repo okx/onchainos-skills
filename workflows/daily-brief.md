@@ -97,10 +97,5 @@ Moves: {sym} {+/-x}%, {sym} {+/-x}%
 
 ## Actions
 
-- → "research [symbol]" — triggers Token Research
-- → "buy [amount] [native_token] of [symbol]" — triggers Safe Swap
-- → "what is smart money buying" — triggers Smart Money Signals
-
-## Follow-up Workflows
-
-Token Research (`workflows/token-research.md`), Smart Money Signals (`workflows/smart-money-signals.md`), Safe Swap (`workflows/safe-swap.md`)
+- → "research [symbol]" — Token Research (`workflows/token-research.md`)
+- → "what is smart money buying" — Smart Money Signals (`workflows/smart-money-signals.md`)

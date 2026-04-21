@@ -109,10 +109,6 @@ Bundle: {x}%  |  Dev Other Projects: {n} (Survival: {x}%)
 
 ## Actions
 
-- → "buy [amount] [native_token] of [symbol]" — triggers Safe Swap
 - → "show cluster list" / "show co-invested wallets" — show cluster details
 - → "show dev projects" — show dev project history
-
-## Follow-up Workflows
-
-Safe Swap (`workflows/safe-swap.md`), Wallet Monitor (`workflows/wallet-monitor.md`)
+- → "watch this token" — Wallet Monitor (`workflows/wallet-monitor.md`)

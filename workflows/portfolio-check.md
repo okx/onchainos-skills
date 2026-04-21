@@ -61,9 +61,4 @@ Total: ${x}  |  PnL(30d): ${x}  |  Win Rate: {x}%
 
 ## Actions
 
-- → "sell [symbol]" — triggers Safe Swap
-- → "research [symbol]" — triggers Token Research
-
-## Follow-up Workflows
-
-Safe Swap (`workflows/safe-swap.md`), Token Research (`workflows/token-research.md`)
+- → "research [symbol]" — Token Research (`workflows/token-research.md`)

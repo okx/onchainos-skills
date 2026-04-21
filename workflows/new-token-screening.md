@@ -67,10 +67,5 @@ NEW TOKENS — {chain} — {timestamp}
 
 ## Actions
 
-- → "research [symbol]" — triggers Token Research
-- → "buy [amount] [native_token] of [symbol]" — triggers Safe Swap
+- → "research [symbol]" — Token Research (`workflows/token-research.md`)
 - → "show dev projects for [symbol]" — show dev project history
-
-## Follow-up Workflows
-
-Token Research (`workflows/token-research.md`), Safe Swap (`workflows/safe-swap.md`)
