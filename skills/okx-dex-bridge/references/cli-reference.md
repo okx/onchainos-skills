@@ -30,20 +30,23 @@ Get available bridge protocols. No parameters required. Returns only bridges tha
 onchainos cross-chain bridge
 ```
 
-**Per bridge entry fields** (from `BridgeSwapEnum`):
+**Response**: `data` is a flat array of bridge enum names (strings). No metadata fields.
 
-| Field | Type | Description |
-|---|---|---|
-| `code` | Number | **Bridge protocol ID** — same value space as `bridgeId` in `cross-chain chains` |
-| `name` | String | Bridge short name/identifier (e.g. `stargate`, `wanchain`) |
-| `desc` | String | Bridge description/longer name |
-| `displayName` | String? | Display name (may be empty — fall back to `desc` or `name`) |
-| `type` | Number | Bridge category: `0`=Third-party, `1`=Official, `2`=Centralized |
-| `platformId` | Number | Platform ID |
-| `chainId` | Number? | Bound chain ID (only set for official bridges) |
-| `logoUrl` | String? | Logo URL |
-| `sort` | Number | Display sort order |
-| `flag` | Number | Status flag |
+Example:
+```json
+{
+  "ok": true,
+  "data": [
+    "STARGATE_V2_BUS_MODE",
+    "STARGATE_V2_TAXI_MODE",
+    "GAS_ZIP",
+    "RELAY",
+    "ACROSS_V3"
+  ]
+}
+```
+
+Each string is the `BridgeSwapEnum` enum name. To cross-reference numeric IDs (`bridgeId` used in `cross-chain chains`), use `cross-chain quote` — returned `pathSelectionRouterList[i].bridge.bridgeName` / `bridge.bridgeId` carry the numeric mapping per route.
 
 > Notes: bridges defined in DB but missing from `BridgeSwapEnum` are filtered out server-side. Bridges whose `chainPair` cache is empty do not appear.
 

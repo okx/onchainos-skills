@@ -618,6 +618,12 @@ impl ApiClient {
             }
         };
 
+        // Some endpoints return bare arrays without the {code, msg, data} envelope.
+        // In that case, pass the array through as the data payload.
+        if body.is_array() {
+            return Ok(body);
+        }
+
         // Handle code as either string "0" or number 0 (some endpoints return numeric)
         let code_ok = match &body["code"] {
             Value::String(s) => s == "0",
