@@ -124,7 +124,7 @@ onchainos memepump token-details --address <address> [--chain <chain>]
 | `name` | String | Token name |
 | `logoUrl` | String | Token logo URL |
 | `creatorAddress` | String | Token creator wallet address |
-| `createdTimestamp` | String | Creation timestamp (Unix ms) |
+| `createdTimestamp` | String | Creation timestamp (Unix ms); `null` if token was created less than 2 s ago |
 | `migratedBeginTimestamp` | String | Migration start timestamp (Unix ms, empty if not migrating) |
 | `migratedEndTimestamp` | String | Migration end timestamp (Unix ms, empty if not migrated) |
 | `market.marketCapUsd` | String | Market cap in USD |
