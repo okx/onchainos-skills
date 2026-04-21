@@ -47,6 +47,8 @@ pub enum TaskSystemCommand {
         job_id: String,
         #[arg(long)] provider: String,
         #[arg(long = "payment-mode", default_value = "escrow")] payment_mode: String,
+        #[arg(long = "token-symbol")] token_symbol: Option<String>,
+        #[arg(long = "token-amount")] token_amount: Option<String>,
     },
 
     /// Client rejects provider application
@@ -158,8 +160,8 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
         TaskSystemCommand::List { role, status, page, limit } =>
             client::run_task(T::List { role, status, page, limit }, ctx).await,
 
-        TaskSystemCommand::ConfirmAccept { job_id, provider, payment_mode } =>
-            client::run_task(T::ConfirmAccept { job_id, provider, payment_mode }, ctx).await,
+        TaskSystemCommand::ConfirmAccept { job_id, provider, payment_mode, token_symbol, token_amount } =>
+            client::run_task(T::ConfirmAccept { job_id, provider, payment_mode, token_symbol, token_amount }, ctx).await,
 
         TaskSystemCommand::RejectApply { job_id, provider, reason } =>
             client::run_task(T::RejectApply { job_id, provider, reason }, ctx).await,

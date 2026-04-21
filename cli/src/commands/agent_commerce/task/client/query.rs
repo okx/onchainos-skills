@@ -25,7 +25,8 @@ pub async fn handle_status(
     println!("任务状态: {}", t["statusStr"].as_str().unwrap_or("?"));
     println!("  jobId:    {job_id}");
     println!("  标题:     {}", t["title"].as_str().unwrap_or("?"));
-    println!("  预算:     {} USDT", t["tokenAmount"].as_str().unwrap_or("?"));
+    let token_sym = t["paymentTokenSymbol"].as_str().unwrap_or("USDT");
+    println!("  预算:     {} {}", t["tokenAmount"].as_str().unwrap_or("?"), token_sym);
     println!("  买家:     {}", t["buyerAgentId"].as_str().unwrap_or("?"));
     if let Some(pid) = t["providerAgentId"].as_str() {
         println!("  卖家:     {pid}");
@@ -58,10 +59,12 @@ pub async fn handle_list(
     let total = resp["data"]["total"].as_u64().unwrap_or(0);
     println!("任务列表（共 {total} 个，第 {page} 页）：");
     for t in &tasks {
-        println!("  [{}] {} — {} USDT",
+        let sym = t["paymentTokenSymbol"].as_str().unwrap_or("USDT");
+        println!("  [{}] {} — {} {}",
             t["statusStr"].as_str().unwrap_or("?"),
             t["jobId"].as_str().unwrap_or("?"),
             t["tokenAmount"].as_str().unwrap_or("?"),
+            sym,
         );
         println!("       {}", t["title"].as_str().unwrap_or("?"));
     }
@@ -89,7 +92,11 @@ pub async fn handle_payment(
     let token_symbol = task["paymentTokenSymbol"].as_str().unwrap_or("USDT");
     let provider_addr = task["providerAgentAddress"].as_str().unwrap_or("?");
     let payment_type = task["paymentType"].as_i64().unwrap_or(0);
-    let payment_mode = if payment_type == 1 { "non_escrow" } else { "escrow" };
+    let payment_mode = match payment_type {
+        1 => "non_escrow",
+        2 => "x402",
+        _ => "escrow",
+    };
 
     println!("付款单（Invoice）");
     println!("  jobId:     {job_id}");

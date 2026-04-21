@@ -87,6 +87,12 @@ pub enum TaskCommand {
         provider: String,
         #[arg(long = "payment-mode", default_value = PAYMENT_MODE_ESCROW)]
         payment_mode: String,
+        /// Token symbol (required for x402, e.g. USDT)
+        #[arg(long = "token-symbol")]
+        token_symbol: Option<String>,
+        /// Token amount (required for x402, e.g. 50)
+        #[arg(long = "token-amount")]
+        token_amount: Option<String>,
     },
     /// Client rejects provider application
     RejectApply {
@@ -177,8 +183,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             create::handle_create(&http, &api, description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title).await,
         TaskCommand::Recommend { job_id } =>
             recommend::handle_recommend(&http, &api, &job_id).await,
-        TaskCommand::ConfirmAccept { job_id, provider, payment_mode } =>
-            accept::handle_confirm_accept(&http, &api, &job_id, &provider, &payment_mode).await,
+        TaskCommand::ConfirmAccept { job_id, provider, payment_mode, token_symbol, token_amount } =>
+            accept::handle_confirm_accept(&http, &api, &job_id, &provider, &payment_mode, token_symbol.as_deref(), token_amount.as_deref()).await,
         TaskCommand::Complete { job_id } =>
             complete::handle_complete(&http, &api, &job_id).await,
         TaskCommand::Reject { job_id, reason } =>
