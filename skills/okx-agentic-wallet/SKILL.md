@@ -172,7 +172,7 @@ onchainos wallet send --readable-amount "0.1" --recipient "0xAbc..." --chain 1 -
 
 ### Template: Wallet Export
 
-> Wallet export must be completed on the Web portal. Please note: once the export is complete, your current wallet will be permanently unbound from your email, and the Agent will no longer be able to operate this wallet. The system will automatically create a new empty wallet for your account. Before exporting, please transfer your assets to a safe address and stop any running strategies. [Go to Wallet Export → {export_url}]
+> Wallet export must be completed on the Web portal. Please note: once the export is complete, your current wallet will be permanently unbound from your email, and the Agent will no longer be able to operate this wallet. The system will automatically create a new empty wallet for your account. Before exporting, please transfer your assets to a safe address and stop any running strategies. Go to Wallet Export → {export_url}
 >
 > {export_hint}
 
@@ -183,7 +183,7 @@ onchainos wallet send --readable-amount "0.1" --recipient "0xAbc..." --chain 1 -
 
 ### Template: Policy Settings
 
-> You can set per-transaction and daily limits for trades and transfers, as well as a transfer whitelist, to prevent excessive operations or transfers to unauthorized addresses. [Go to Policy Setting → {policy_url}]
+> You can set per-transaction and daily limits for trades and transfers, as well as a transfer whitelist, to prevent excessive operations or transfers to unauthorized addresses. Go to Policy Setting → {policy_url}
 >
 > {policy_hint}
 
