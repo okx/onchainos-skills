@@ -13,6 +13,23 @@ use serde_json::Value;
 
 use crate::payment_notify::UserType;
 
+/// User-selected default payment asset. When set, `payment_flow::select_accept`
+/// prefers entries matching `(asset, network)` before falling back to the
+/// scheme-priority rule.
+///
+/// `name` is display-only (e.g. `"USDT"`) and never used for matching —
+/// same symbol on different chains is not the same asset.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PaymentDefault {
+    /// EVM token contract address, e.g. `"0xUSDG"`.
+    pub asset: String,
+    /// CAIP-2 network identifier, e.g. `"eip155:196"`.
+    pub network: String,
+    /// Display name, e.g. `"USDT"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
 /// Snapshot of the payment config + live charging state.
 ///
 /// - `endpoints`: path → tier (`"basic"` / `"premium"`) mapping returned from
@@ -52,6 +69,11 @@ pub struct PaymentCache {
     pub basic_over_shown: bool,
     #[serde(default)]
     pub premium_over_shown: bool,
+
+    /// User-selected default payment asset. Cleared on logout (via
+    /// `PaymentCache::delete`) so the preference never crosses accounts.
+    #[serde(default)]
+    pub default_asset: Option<PaymentDefault>,
 }
 
 impl PaymentCache {
@@ -173,6 +195,32 @@ mod tests {
         assert!(loaded.basic_charging);
         assert!(!loaded.premium_charging);
         assert_eq!(loaded.updated_at, 1_700_000_000);
+
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn default_asset_roundtrips() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let dir = tmp_home("payment_cache_default_asset");
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+
+        let cache = PaymentCache {
+            default_asset: Some(PaymentDefault {
+                asset: "0xUSDG".to_string(),
+                network: "eip155:196".to_string(),
+                name: Some("USDG".to_string()),
+            }),
+            updated_at: 1_700_000_000,
+            ..Default::default()
+        };
+        cache.save().unwrap();
+
+        let loaded = PaymentCache::load().unwrap();
+        let def = loaded.default_asset.expect("default_asset persisted");
+        assert_eq!(def.asset, "0xUSDG");
+        assert_eq!(def.network, "eip155:196");
+        assert_eq!(def.name.as_deref(), Some("USDG"));
 
         std::env::remove_var("ONCHAINOS_HOME");
     }

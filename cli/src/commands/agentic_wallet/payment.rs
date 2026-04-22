@@ -30,6 +30,31 @@ pub enum PaymentCommand {
         #[arg(long)]
         accepts: String,
     },
+    /// Manage the default payment asset used when the server offers multiple options.
+    Default {
+        #[command(subcommand)]
+        action: DefaultAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum DefaultAction {
+    /// Save an asset + chain as the default; used first when matching `accepts`.
+    Set {
+        /// EVM token contract address, e.g. 0xUSDG
+        #[arg(long)]
+        asset: String,
+        /// Numeric EVM chain id, e.g. "1" (Ethereum), "196" (X Layer), "8453" (Base)
+        #[arg(long)]
+        chain: String,
+        /// Display name shown in notifications, e.g. "USDT"
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Show the saved default payment asset (if any).
+    Get,
+    /// Clear the saved default payment asset.
+    Unset,
 }
 
 /// Resolved parameters extracted from the accepts array.
@@ -142,6 +167,91 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
                 domain_version,
             )
         }
+        PaymentCommand::Default { action } => cmd_default(action),
+    }
+}
+
+/// Convert a numeric EVM chain id (e.g. `"196"`) to CAIP-2 form
+/// (`"eip155:196"`) for storage. Only plain decimal integers are
+/// accepted — chain names (`"xlayer"`) and pre-formed CAIP-2 strings
+/// (`"eip155:196"`) are rejected. Non-EVM chain ids are rejected too
+/// (x402 payments are EIP-712 signed).
+fn chain_id_to_caip2(input: &str) -> Result<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        bail!("--chain must not be empty");
+    }
+    let n: u64 = trimmed.parse().with_context(|| {
+        format!(
+            "--chain must be a numeric chain id (e.g. \"1\" for Ethereum, \
+             \"196\" for X Layer), got: {input}"
+        )
+    })?;
+    if matches!(n, 195 | 501 | 607 | 784) {
+        bail!("x402 payments are EVM-only; chain id {n} is not supported");
+    }
+    Ok(format!("eip155:{n}"))
+}
+
+/// Extract the numeric chain id from a CAIP-2 `eip155:<id>` string for
+/// display. Returns an empty string if the prefix is missing (never
+/// happens for values written by `chain_id_to_caip2`).
+fn caip2_to_chain_id(caip2: &str) -> String {
+    caip2.strip_prefix("eip155:").unwrap_or(caip2).to_string()
+}
+
+fn cmd_default(action: DefaultAction) -> Result<()> {
+    use crate::payment_cache::{PaymentCache, PaymentDefault};
+
+    match action {
+        DefaultAction::Set {
+            asset,
+            chain,
+            name,
+        } => {
+            let asset = asset.trim().to_string();
+            if !is_valid_evm_address(&asset) {
+                bail!("--asset must be a valid EVM address (0x + 40 hex chars)");
+            }
+            let chain = chain.trim().to_string();
+            let network = chain_id_to_caip2(&chain)?;
+            let name = name
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+
+            let mut cache = PaymentCache::load().unwrap_or_default();
+            cache.default_asset = Some(PaymentDefault {
+                asset: asset.clone(),
+                network,
+                name: name.clone(),
+            });
+            cache.save().context("failed to save payment cache")?;
+            output::success(json!({
+                "asset": asset,
+                "chain": chain,
+                "name": name,
+            }));
+            Ok(())
+        }
+        DefaultAction::Get => {
+            let cache = PaymentCache::load().unwrap_or_default();
+            match cache.default_asset {
+                Some(d) => output::success(json!({
+                    "asset": d.asset,
+                    "chain": caip2_to_chain_id(&d.network),
+                    "name": d.name,
+                })),
+                None => output::success_empty(),
+            }
+            Ok(())
+        }
+        DefaultAction::Unset => {
+            let mut cache = PaymentCache::load().unwrap_or_default();
+            cache.default_asset = None;
+            cache.save().context("failed to save payment cache")?;
+            output::success_empty();
+            Ok(())
+        }
     }
 }
 
@@ -167,12 +277,15 @@ fn validate_payment_inputs(amount: &str, pay_to: &str, asset: &str) -> Result<u1
 }
 
 /// Sign an x402 payment authorization and print the proof as JSON.
-/// All crypto happens in `payment_flow::sign_payment`, which is also driven by
-/// the client-level auto-payment flow.
+/// All crypto happens in `payment_flow::sign_payment_with_preference`. Passes
+/// `None` for the preference so the user's saved default asset does NOT
+/// influence which accepts entry gets signed — this command signs exactly
+/// what the caller supplied via `--accepts`.
 async fn cmd_pay(accepts_json: &str, from: Option<&str>) -> Result<()> {
     let accepts: Value =
         serde_json::from_str(accepts_json).context("--accepts must be a valid JSON array")?;
-    let (proof, _entry) = payment_flow::sign_payment(&accepts, from, None).await?;
+    let (proof, _entry) =
+        payment_flow::sign_payment_with_preference(&accepts, from, None, None).await?;
     let mut out = json!({
         "signature": proof.signature,
         "authorization": proof.authorization,
@@ -455,6 +568,94 @@ mod tests {
         // Eip3009Sign has no --from flag, so passing it should fail to parse.
         let result = TestCli::try_parse_from(["test", "eip3009-sign", "--from", "0xPayer"]);
         assert!(result.is_err());
+    }
+
+    // ── default subcommand CLI parsing ────────────────────────────────
+
+    #[test]
+    fn cli_default_set_passes_numeric_chain_through() {
+        let cli = TestCli::parse_from([
+            "test",
+            "default",
+            "set",
+            "--asset",
+            "0x1234567890123456789012345678901234567890",
+            "--chain",
+            "196",
+            "--name",
+            "USDG",
+        ]);
+        match cli.command {
+            PaymentCommand::Default {
+                action:
+                    DefaultAction::Set {
+                        asset,
+                        chain,
+                        name,
+                    },
+            } => {
+                assert_eq!(asset, "0x1234567890123456789012345678901234567890");
+                assert_eq!(chain, "196");
+                assert_eq!(name.as_deref(), Some("USDG"));
+            }
+            _ => panic!("expected Default::Set"),
+        }
+    }
+
+    #[test]
+    fn cli_default_get_and_unset_parse() {
+        let cli = TestCli::parse_from(["test", "default", "get"]);
+        assert!(matches!(
+            cli.command,
+            PaymentCommand::Default {
+                action: DefaultAction::Get
+            }
+        ));
+        let cli = TestCli::parse_from(["test", "default", "unset"]);
+        assert!(matches!(
+            cli.command,
+            PaymentCommand::Default {
+                action: DefaultAction::Unset
+            }
+        ));
+    }
+
+    // ── chain_id_to_caip2 / caip2_to_chain_id ─────────────────────────
+
+    #[test]
+    fn chain_id_to_caip2_accepts_numeric_evm_ids() {
+        assert_eq!(chain_id_to_caip2("196").unwrap(), "eip155:196");
+        assert_eq!(chain_id_to_caip2("1").unwrap(), "eip155:1");
+        assert_eq!(chain_id_to_caip2("  8453  ").unwrap(), "eip155:8453");
+    }
+
+    #[test]
+    fn chain_id_to_caip2_rejects_non_numeric_inputs() {
+        assert!(chain_id_to_caip2("xlayer").is_err());
+        assert!(chain_id_to_caip2("ethereum").is_err());
+        // Pre-formed CAIP-2 is rejected: only plain chain id is accepted.
+        assert!(chain_id_to_caip2("eip155:196").is_err());
+    }
+
+    #[test]
+    fn chain_id_to_caip2_rejects_non_evm_chains() {
+        assert!(chain_id_to_caip2("195").is_err()); // TRON
+        assert!(chain_id_to_caip2("501").is_err()); // Solana
+        assert!(chain_id_to_caip2("607").is_err()); // TON
+        assert!(chain_id_to_caip2("784").is_err()); // SUI
+    }
+
+    #[test]
+    fn chain_id_to_caip2_rejects_empty_and_negative() {
+        assert!(chain_id_to_caip2("").is_err());
+        assert!(chain_id_to_caip2("   ").is_err());
+        assert!(chain_id_to_caip2("-1").is_err());
+    }
+
+    #[test]
+    fn caip2_to_chain_id_strips_prefix() {
+        assert_eq!(caip2_to_chain_id("eip155:196"), "196");
+        assert_eq!(caip2_to_chain_id("eip155:1"), "1");
     }
 
     // ── parse_payload_local with extra (domain) fields ───────────────

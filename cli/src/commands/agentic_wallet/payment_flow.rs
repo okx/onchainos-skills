@@ -66,12 +66,32 @@ pub struct PaymentProof {
 
 /// Select the best accepts entry.
 ///
-/// Priority: `exact` > `aggr_deferred` > first entry. Mirrors the selection
-/// used by the manual `x402-pay` command so auto-payment and manual runs pick
-/// the same scheme.
+/// If the user has saved a default payment asset (via
+/// `onchainos payment default set`), prefers any entry whose
+/// `(asset, network)` matches it. Otherwise falls back to scheme priority:
+/// `exact` > `aggr_deferred` > first entry.
 pub fn select_accept(accepts: &[Value]) -> Result<(Value, Option<String>)> {
+    let preferred = crate::payment_cache::PaymentCache::load().and_then(|c| c.default_asset);
+    select_accept_with_preference(accepts, preferred.as_ref())
+}
+
+/// Pure selection logic — exposed for direct testing without touching the
+/// on-disk payment cache.
+pub fn select_accept_with_preference(
+    accepts: &[Value],
+    preferred: Option<&crate::payment_cache::PaymentDefault>,
+) -> Result<(Value, Option<String>)> {
     if accepts.is_empty() {
         bail!("accepts array is empty");
+    }
+    if let Some(pref) = preferred {
+        if let Some(e) = accepts.iter().find(|a| {
+            a["asset"].as_str() == Some(pref.asset.as_str())
+                && a["network"].as_str() == Some(pref.network.as_str())
+        }) {
+            let scheme = e["scheme"].as_str().map(String::from);
+            return Ok((e.clone(), scheme));
+        }
     }
     if let Some(e) = accepts
         .iter()
@@ -168,7 +188,10 @@ fn resolve_entry(
     })
 }
 
-/// Sign an x402 payment authorization.
+/// Sign an x402 payment authorization. Applies the user's saved default
+/// payment asset (via `onchainos payment default set`) when the
+/// `accepts` array contains a matching entry — used by the auto-payment
+/// flow so the user's configured preference wins over scheme priority.
 ///
 /// `accepts` accepts either an array (we select the best entry with
 /// `select_accept`) or a single object (used as-is). `tier` picks which amount
@@ -181,8 +204,22 @@ pub async fn sign_payment(
     from: Option<&str>,
     tier: Option<PaymentTier>,
 ) -> Result<(PaymentProof, Value)> {
+    let preferred = crate::payment_cache::PaymentCache::load().and_then(|c| c.default_asset);
+    sign_payment_with_preference(accepts, from, tier, preferred.as_ref()).await
+}
+
+/// Variant of `sign_payment` that signs exactly what the caller's
+/// `accepts` says, without consulting the saved default asset. Used by
+/// the manual `onchainos payment x402-pay` command so the user-supplied
+/// `--accepts` isn't silently reordered by a stored preference.
+pub async fn sign_payment_with_preference(
+    accepts: &Value,
+    from: Option<&str>,
+    tier: Option<PaymentTier>,
+    preferred: Option<&crate::payment_cache::PaymentDefault>,
+) -> Result<(PaymentProof, Value)> {
     let (mut entry, scheme) = match accepts.as_array() {
-        Some(arr) => select_accept(arr)?,
+        Some(arr) => select_accept_with_preference(arr, preferred)?,
         None => (
             accepts.clone(),
             accepts["scheme"].as_str().map(|s| s.to_string()),
@@ -405,7 +442,7 @@ mod tests {
         ]"#,
         )
         .unwrap();
-        let (_entry, scheme) = select_accept(&accepts).unwrap();
+        let (_entry, scheme) = select_accept_with_preference(&accepts, None).unwrap();
         assert_eq!(scheme.as_deref(), Some("exact"));
     }
 
@@ -413,13 +450,75 @@ mod tests {
     fn select_accept_falls_back_to_aggr_deferred() {
         let accepts: Vec<Value> =
             serde_json::from_str(r#"[{"scheme":"aggr_deferred","network":"eip155:1"}]"#).unwrap();
-        let (_entry, scheme) = select_accept(&accepts).unwrap();
+        let (_entry, scheme) = select_accept_with_preference(&accepts, None).unwrap();
         assert_eq!(scheme.as_deref(), Some("aggr_deferred"));
     }
 
     #[test]
     fn select_accept_empty_array_errors() {
-        assert!(select_accept(&[]).is_err());
+        assert!(select_accept_with_preference(&[], None).is_err());
+    }
+
+    #[test]
+    fn select_accept_preference_wins_over_scheme_priority() {
+        // Two entries: one is exact (scheme priority), one matches the
+        // user's default asset. Preference should pick the latter even
+        // though it's aggr_deferred.
+        let accepts: Vec<Value> = serde_json::from_str(
+            r#"[
+                {"scheme":"exact","network":"eip155:196","asset":"0xUSDG","payTo":"0xP"},
+                {"scheme":"aggr_deferred","network":"eip155:196","asset":"0xUSDT","payTo":"0xP"}
+            ]"#,
+        )
+        .unwrap();
+        let pref = crate::payment_cache::PaymentDefault {
+            asset: "0xUSDT".to_string(),
+            network: "eip155:196".to_string(),
+            name: Some("USDT".to_string()),
+        };
+        let (entry, scheme) = select_accept_with_preference(&accepts, Some(&pref)).unwrap();
+        assert_eq!(entry["asset"].as_str(), Some("0xUSDT"));
+        assert_eq!(scheme.as_deref(), Some("aggr_deferred"));
+    }
+
+    #[test]
+    fn select_accept_preference_falls_back_when_no_match() {
+        // Preference asks for an asset not in the accepts list — fall
+        // back to the existing scheme-priority rule.
+        let accepts: Vec<Value> = serde_json::from_str(
+            r#"[
+                {"scheme":"aggr_deferred","network":"eip155:1","asset":"0xUSDC","payTo":"0xP"},
+                {"scheme":"exact","network":"eip155:1","asset":"0xDAI","payTo":"0xP"}
+            ]"#,
+        )
+        .unwrap();
+        let pref = crate::payment_cache::PaymentDefault {
+            asset: "0xUSDT".to_string(),
+            network: "eip155:196".to_string(),
+            name: None,
+        };
+        let (entry, scheme) = select_accept_with_preference(&accepts, Some(&pref)).unwrap();
+        assert_eq!(entry["asset"].as_str(), Some("0xDAI"));
+        assert_eq!(scheme.as_deref(), Some("exact"));
+    }
+
+    #[test]
+    fn select_accept_preference_requires_both_asset_and_network_match() {
+        // Same asset on a different network — not a match.
+        let accepts: Vec<Value> = serde_json::from_str(
+            r#"[
+                {"scheme":"exact","network":"eip155:1","asset":"0xUSDT","payTo":"0xP"}
+            ]"#,
+        )
+        .unwrap();
+        let pref = crate::payment_cache::PaymentDefault {
+            asset: "0xUSDT".to_string(),
+            network: "eip155:196".to_string(),
+            name: None,
+        };
+        let (entry, scheme) = select_accept_with_preference(&accepts, Some(&pref)).unwrap();
+        assert_eq!(entry["network"].as_str(), Some("eip155:1"));
+        assert_eq!(scheme.as_deref(), Some("exact"));
     }
 
     #[test]

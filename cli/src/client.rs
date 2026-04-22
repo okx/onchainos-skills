@@ -1124,15 +1124,17 @@ impl ApiClient {
         )
     }
 
-    /// Pick the `accepts` to sign with on a 402 retry. Prefer fresh accepts
-    /// from the 402 response (x402 V2 header or body); fall back to the
-    /// cached `accepts` loaded from `/api/v6/dex/market/config` when the
-    /// server returned an empty 402 (OKX openapi style). Errors only when
-    /// neither source has anything — the retry is hopeless in that case.
+    /// Pick the `accepts` to sign with on a 402 retry. Prefers fresh
+    /// accepts from the 402 response (x402 V2 header or body); falls
+    /// back to the cached `accepts` loaded from
+    /// `/api/v6/dex/market/config` when the server returned an empty
+    /// 402 (OKX OpenAPI style). Returns an error only when neither
+    /// source has anything — at that point the retry cannot succeed.
     ///
-    /// Never caches `pr.accepts`: a single 402 carries only the caller's
-    /// tier, so persisting it would overwrite the tier-aware map from
-    /// `/config` and break the other tier's pre-sign amount.
+    /// Never caches `pr.accepts`: a single 402 response carries only
+    /// the caller's tier, so persisting it would overwrite the
+    /// tier-aware map from `/config` and break the other tier's
+    /// pre-signed amount.
     fn resolve_retry_accepts(&self, pr: &PaymentRequired) -> Result<Value> {
         if !pr.accepts.is_null() {
             return Ok(pr.accepts.clone());
@@ -1147,7 +1149,11 @@ impl ApiClient {
     }
 
     /// Write the current in-memory state to `~/.onchainos/payment_cache.json`.
+    /// Preserves `default_asset` from the existing cache — it's owned by the
+    /// user via `onchainos payment default`, not by this client, and must
+    /// survive server-state flushes.
     fn flush_payment_cache(&self) -> Result<()> {
+        let default_asset = PaymentCache::load().and_then(|c| c.default_asset);
         let state = self.payment_state();
         let cache = PaymentCache {
             endpoints: state
@@ -1165,6 +1171,7 @@ impl ApiClient {
             grace_shown: state.grace_shown,
             basic_over_shown: state.basic_over_shown,
             premium_over_shown: state.premium_over_shown,
+            default_asset,
         };
         drop(state);
         cache.save()
