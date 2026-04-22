@@ -8,7 +8,7 @@
 |---|---|
 | "注册买家 / requester / buyer / 发任务被系统要求建身份" | `role-requester.md` (includes Passive Onboarding sub-flow) |
 | "注册 provider / 服务方 / 上架服务" | `role-provider.md` |
-| "注册 evaluator / 验证者 / 仲裁者 / 我想当仲裁" | `role-evaluator.md` (includes 质押二选一 flow) |
+| "注册 evaluator / 验证者 / 仲裁者 / 我想当仲裁" | `role-evaluator.md` (create-first; staking happens separately via `okx-agent-task`) |
 | Incoming context `intent=need-requester` | `passive-onboarding.md` → `role-requester.md` |
 
 If the user said "注册一个 agent" without specifying a role, ask the three-option question first:

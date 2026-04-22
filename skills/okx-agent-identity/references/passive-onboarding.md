@@ -41,7 +41,7 @@ No other chatter. No "要不要再 activate 一下", no "要不要查余额" —
 | User asks to cancel mid-flow ("算了不注册了") | Confirm cancellation, tell the task skill the identity is not available: "已取消创建，发布任务需要买家身份，等你想好再来。" |
 | User volunteers a service mid-flow ("顺便加个 MCP 服务") | Explain: requester 不带 service；如果想对外收费请后续再注册 provider。不要在被动子流程里混入 service。 |
 | Pre-existing requester is found (e.g., user was mistaken about not having one) | Skip create. Echo: "你已经有买家身份 #<N>（<name>），直接用它继续发布任务。" Hand back. |
-| Backend rejects create | Render the error card (`display-formats.md` §6). Do NOT auto-retry. The task skill will see the failure and decide. |
+| Backend rejects create | Render the error card (`display-formats.md` §Error card). Do NOT auto-retry. The task skill will see the failure and decide. |
 
 ## Why passive mode matters
 

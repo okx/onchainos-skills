@@ -1,7 +1,14 @@
 # okx-agent-identity — CLI Reference
 
-> Source of truth: `cli/src/commands/agent_commerce/identity/args.rs` + `utils.rs`.
-> All parameter names and error strings below must mirror the code; update this file when CLI changes.
+> Source of truth:
+> - Parameter names, accepted enum values, and CLI-enforced argument behavior must mirror
+>   `cli/src/commands/agent_commerce/identity/args.rs`, `utils.rs`, and `queries.rs`.
+> - Error handling in this file is a summary only:
+>   - exact CLI `bail!` strings → `troubleshooting.md` §1
+>   - backend-originated / keyword-matched errors → `troubleshooting.md` §2
+>   - skill-side guards (not emitted by the CLI) → `troubleshooting.md` §3
+> Update this file when CLI parameters or enums change; update `troubleshooting.md` when error
+> classification or raw strings change.
 >
 > The skill exposes **10** commands. `onchainos agent xmtp-sign` is a low-level primitive and is intentionally not listed — do not suggest it to users.
 
@@ -37,7 +44,7 @@ onchainos agent create \
   --service '[{"ServiceName":"TVL Query","ServiceDescription":"Query protocol TVL by chain","ServiceType":"A2MCP","Fee":"10","Endpoint":"https://api.example.com/mcp"}]'
 ```
 
-**Example — evaluator (OKB stake must be confirmed beforehand):**
+**Example — evaluator (create is unconditional; staking is a separate post-create step):**
 ```bash
 onchainos agent create \
   --role evaluator \
@@ -57,13 +64,7 @@ onchainos agent create \
 }
 ```
 
-**Common failures** (exact strings from `cli/src/commands/agent_commerce/identity/*.rs`; see `troubleshooting.md` §1 for translations):
-- `invalid value for --role: <value>` — role outside requester/provider/evaluator/aliases.
-- `provider agents require at least one service; provide --service` — no `--service`.
-- `missing required field in --service: ServiceName` / `ServiceDescription` — empty field in JSON.
-- `missing required field in --service for A2MCP: Fee` / `Endpoint` — A2MCP without Fee/Endpoint.
-- `invalid ServiceType in --service: <value>` — type not in {A2MCP, A2A}.
-- `session expired, please login again: onchainos wallet login` — `wallet login` first.
+**Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match). Do not duplicate the list here — `troubleshooting.md` is the single source of truth.
 
 ---
 
@@ -93,9 +94,7 @@ onchainos agent update 42 --picture "https://cdn.example.com/u/new.png"
 
 **Return (JSON):** same shape as `agent get` detail for the updated agent.
 
-**Common failures:**
-- `agent not found` → bad `<agentId>` or the agent does not belong to the caller.
-- *No "no updatable field supplied" error from the CLI* — if the skill sends a card with only `AgentId` (no field changed), the CLI will dispatch the request and the backend outcome is undefined. The skill must block this case locally; see the skill-side rule in the section header above.
+**Errors:** see `troubleshooting.md` §1 (CLI exact), §2 (backend-originated, keyword match), and §3 (skill-side guards). Note: "At least one field must change on update" is a skill-side guard, not a CLI error.
 
 ---
 
@@ -129,8 +128,7 @@ onchainos agent get --page 2 --page-size 50
 }
 ```
 
-**Common failures:**
-- `session expired, please login again` → `wallet login`.
+**Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).
 
 ---
 
@@ -149,9 +147,7 @@ onchainos agent activate 42
 
 **Return:** `{ "agentId": 42, "status": "active", "txHash": "0x…" }`.
 
-**Common failures:**
-- `agent not found` → bad id.
-- `agent already active` → no-op; inform user and skip re-sending.
+**Errors:** see `troubleshooting.md` §2 (backend-originated, keyword match).
 
 ---
 
@@ -170,9 +166,7 @@ onchainos agent deactivate 42
 
 **Return:** `{ "agentId": 42, "status": "inactive", "txHash": "0x…" }`.
 
-**Common failures:**
-- `agent already inactive` → no-op.
-- `cannot deactivate: pending settlements` → there is an open task using this agent; resolve via `okx-agent-task` first.
+**Errors:** see `troubleshooting.md` §2 (backend-originated, keyword match).
 
 ---
 
@@ -191,10 +185,7 @@ onchainos agent upload ./avatar.png
 
 **Return:** `{ "url": "https://cdn.example.com/u/<hash>.png" }`.
 
-**Common failures** (upload is in `mutations.rs:282-337`, NOT an `upload.rs`):
-- `failed to read file: <path>` — path wrong or not accessible (raw from `mutations.rs:286` via `fs::read` context).
-- `upload response missing url` — successful upload but backend omitted the URL (`mutations.rs:334/337`).
-- Backend-originated: if the backend rejects a MIME type, its message is surfaced verbatim — do NOT hard-code a `unsupported media type` string, there is no such CLI bail!.
+**Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match). Upload handler lives in `mutations.rs:282-337`, not `upload.rs`.
 
 ---
 
@@ -226,8 +217,7 @@ Filter splitting rules and more examples → `search-query-split.md`.
 
 **Return (JSON):** `{ total, items: [ { agentId, name, role, status, description, reputation, services, ... } ] }`.
 
-**Common failures:**
-- `missing required parameter: --query` → empty `--query` (raw from `utils.rs:190` via `require_non_empty`).
+**Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).
 
 ---
 
@@ -255,8 +245,7 @@ onchainos agent service-list 42
 }
 ```
 
-**Common failures:**
-- `agent not found` → bad id.
+**Errors:** see `troubleshooting.md` §2 (backend-originated, keyword match).
 
 ---
 
@@ -286,10 +275,7 @@ onchainos agent feedback-submit \
 
 **Return:** `{ "agentId": 42, "creatorId": 88, "score": 85, "txHash": "0x…" }`.
 
-**Common failures:**
-- `score out of range` → not 0–100 integer.
-- `self-rating not allowed` → `--agent-id == --creator-id`.
-- `creator agent not owned by caller` → `--creator-id` is someone else's agent.
+**Errors:** see `troubleshooting.md` §2 (backend-originated, keyword match) and §3 (skill-side guards).
 
 ---
 
@@ -336,6 +322,4 @@ onchainos agent feedback-list 42 --sort-by time_desc --page 1 --page-size 10
 }
 ```
 
-**Common failures:**
-- `agent not found` → bad id.
-- `invalid value for --sort-by: <value>` → value outside `{time_desc, score_desc}`; re-map via the table above.
+**Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).

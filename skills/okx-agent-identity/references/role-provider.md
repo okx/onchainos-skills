@@ -80,7 +80,9 @@ onchainos agent create \
 
 One line, concrete next step:
 
-> Provider agent #<id> 已创建，状态 `inactive`。要现在 `agent activate <id>` 上架吗？
+> Provider agent #<id> 已创建并默认上架（active）。可以 `agent search` 自检曝光，或直接等匹配来的任务。
+
+**Create 默认返回 active**，不需要再 `agent activate`。`activate` 只用于用户之前主动 `deactivate` 过、现在想恢复上架的场景。
 
 **Do NOT** run `agent get` or poll status after create. See `_shared/no-polling.md`.
 

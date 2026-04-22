@@ -44,6 +44,7 @@ If you encounter a string that isn't in either table, surface the raw message in
 | `agent already active` | "Agent 已经是 active 状态，无需再次 activate" | No-op; show detail card. |
 | `agent already inactive` | "Agent 已经是 inactive 状态" | No-op; show detail card. |
 | `pending settlements` / `cannot deactivate` | "有未完结的任务引用这个 agent，需要先去 `okx-agent-task` 处理完" | Hand off to `okx-agent-task`. |
+| `stake` / `staking` / `insufficient` / `质押` (**not expected** on `agent create --role evaluator` — `create` doesn't consume the stake; if it ever appears it's a backend anomaly) | "后端返回了和质押相关的报错。这不是正常的 create 失败路径 —— agent 注册本身不需要质押。" | Surface the raw message verbatim in the error card footer; point the user at `/skills/okx-agent-task/evaluator.md` for the staking flow; do NOT cache drafts or invent a resume keyword. |
 | `score out of range` | "分数要在 0-100 之间的整数" | Return to `feedback-guide.md` step 3. |
 | `self-rating not allowed` | "不能给自己的 agent 打分" | Return to `feedback-guide.md` step 1 (target). |
 | `creator agent not owned by caller` | "`--creator-id` 必须是你自己的 agent id" | Return to `feedback-guide.md` step 2 (re-resolve). |

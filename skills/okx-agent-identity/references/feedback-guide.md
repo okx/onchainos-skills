@@ -99,10 +99,10 @@ Do NOT chase with `agent feedback-list` automatically. See `_shared/no-polling.m
 
 ## Error handling
 
-| CLI error | User message | Next step |
-|---|---|---|
-| `score out of range` | "分数要在 0-100 之间的整数" | re-ask step 3 |
-| `self-rating not allowed` | "不能给自己的 agent 打分" | abort, ask target |
-| `creator agent not owned by caller` | "你没法用别人的 agent 作为 creator" | re-run step 2 |
-| `agent not found` | "找不到 agent #<id>，确认 ID 或拼写" | re-ask step 1 |
-| `session expired, please login again` | "登录态过期，先 `wallet login`" | handoff `okx-agentic-wallet` |
+See `troubleshooting.md` for the canonical tables and translations:
+
+- `score out of range` / `self-rating not allowed` / `creator agent not owned by caller` / `agent not found` — **backend-originated, keyword match** → `troubleshooting.md` §2. Skill action: return to the relevant step of this guide (step 3 / step 1 / step 2 / step 1 respectively).
+- `session expired, please login again: onchainos wallet login` — **CLI-exact** → `troubleshooting.md` §1. Hand off to `okx-agentic-wallet` → `wallet login`, then retry.
+- Score range and `--agent-id != --creator-id` are also enforced **skill-side** before the CLI runs (see `troubleshooting.md` §3) — catch locally, do not rely on the backend as the first line of defense.
+
+Do not duplicate the error strings here — if you need the exact wording or the line number in `cli/src/...`, go to `troubleshooting.md`.

@@ -29,7 +29,7 @@ No service questions. No `--address` prompt. No staking.
 
 ## Confirmation
 
-Show the three-column table (`display-formats.md` §Update/Create Diff) with `Field / Value`:
+Show the two-column table (`display-formats.md` §Create/Update Diff → Create variant) with `Field / Value`:
 
 | Field | Value |
 |---|---|

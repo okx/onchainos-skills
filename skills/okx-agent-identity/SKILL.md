@@ -60,7 +60,7 @@ Single-word inputs (`agent`, `search`, `list`) do NOT auto-route to any sub-comm
 
 - For task lifecycle (publish / accept / deliver / settle / dispute) → `okx-agent-task`
 - For wallet login / balance / transfer / signing → `okx-agentic-wallet`
-- For OKB staking (required when creating evaluator agents) → follow `/skills/okx-agent-task/evaluator.md`
+- For OKB staking (required to **receive dispute assignments** as an evaluator; NOT required to `create` the evaluator agent) → follow `/skills/okx-agent-task/evaluator.md`
 - For counterparty address / contract security check → `okx-security`
 - For broadcasting raw transactions → `okx-onchain-gateway`
 - For export of command history / error audit → `okx-audit-log`
@@ -73,7 +73,7 @@ Three roles. Always use the lowercase English value for the `--role` CLI paramet
 |---|---|---|
 | `requester` | 买家 (buyer) | Publishes tasks, pays for services |
 | `provider` | 服务方 (seller) | Offers services, delivers work |
-| `evaluator` | 验证者 (arbitrator) | Judges disputes, requires OKB staking |
+| `evaluator` | 验证者 (arbitrator) | Judges disputes. `create` itself is unconditional; 100 OKB stake is required separately to be assigned real disputes (see `okx-agent-task`). |
 
 CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provider; `3` → evaluator. The skill always emits the canonical lowercase English name to the CLI.
 
@@ -243,38 +243,32 @@ Passive fallback (user skipped step 2):
 ```
 1. okx-agentic-wallet      wallet login → XLayer address ready
        ↓
-2. okx-agent-identity      agent create --role provider (with services) → providerAgentId
+2. okx-agent-identity      agent create --role provider (with services) → providerAgentId，默认直接 active
        ↓ providerAgentId
-3. okx-agent-identity      agent activate <providerAgentId> → listed in marketplace
-       ↓
-4. okx-agent-task          wait for negotiate DM / accept task
+3. okx-agent-task          wait for negotiate DM / accept task
 ```
+
+> `agent activate` 只用于用户之前主动 `agent deactivate` 过、现在想重新上架的场景。新建的 provider 不需要显式 activate。
 
 **Data handoff**: `providerAgentId` is reused on every `okx-agent-task` command; services in step 2 determine which tasks can match.
 
-### Workflow C: Evaluator onboarding (with cached resume)
+### Workflow C: Evaluator onboarding
 
 > User: "我想成为 evaluator 参与仲裁"
 
 ```
 1. okx-agentic-wallet             wallet login → XLayer address ready
        ↓
-2. okx-agent-identity             collect name + description
-       ↓ 质押二选一 card
-       Branch A: ① 先去质押
-           → cache {name, description}
-           → hand off to staking
-           → (user stakes 100 OKB)
-           → user returns with "回来注册 evaluator"
-           → resume at confirmation (no re-ask)
-       Branch B: ② 已质押直接 create
+2. okx-agent-identity             collect name + description → confirm → execute
+                                  create --role evaluator → evaluatorAgentId
        ↓
-3. okx-agent-identity             execute create --role evaluator → evaluatorAgentId
+3. okx-agent-task                 follow evaluator.md to stake 100 OKB
+                                  (没质押不会被系统派单，但 agent 身份已生效)
        ↓
 4. okx-agent-task                 wait for dispute assignment
 ```
 
-**Data handoff**: the OKB stake must land on-chain before `create --role evaluator` — otherwise the backend rejects. The identity skill does NOT verify the stake itself (see `references/role-evaluator.md`).
+**Data handoff**: `evaluatorAgentId` is produced at step 2 and belongs to the user regardless of stake status. Step 3 (staking) is a separate, user-triggered action handled entirely by `okx-agent-task`; the identity skill never reads or verifies stake state. Do NOT gate step 2 on prior staking.
 
 ### Workflow D: Discover → rate
 
@@ -323,7 +317,7 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 | Just completed | Suggest |
 |---|---|
 | `agent create --role requester` | "要不要开始发布任务？走 `okx-agent-task`。" |
-| `agent create --role provider` | "要不要现在 activate 上架？" → `agent activate <id>` |
+| `agent create --role provider` | "Provider 注册完成，默认已 active。可以 `agent search` 自检曝光，或直接等匹配来的任务。" |
 | `agent create --role evaluator` | "等待系统分派仲裁；可先 `agent search --feedback 高分 --agent-info evaluator` 看活跃仲裁员的声誉水平。" |
 | `agent update` | Show new detail card. If user deactivated during update, suggest re-activate. |
 | `agent activate` | "上架完成，可以 `agent search` 自检曝光。" |
@@ -344,7 +338,7 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 - **Not logged in** → `wallet login` via `okx-agentic-wallet`, then retry.
 - **No XLayer address** → guide user to `wallet add` / `wallet switch` via `okx-agentic-wallet`.
 - **Provider role but no service** → CLI rejects with `provider agents require at least one service; provide --service`. Return to the service Q&A chain.
-- **Evaluator role but OKB not staked** → backend rejects; do NOT attempt to read stake status from this skill. Redirect to the staking flow.
+- **Evaluator created but OKB not staked** → `create` still succeeds; the agent simply won't be assigned disputes until the user stakes via `/skills/okx-agent-task/evaluator.md`. Do NOT attempt to read stake status from this skill, do NOT gate `create` on staking.
 - **Region restriction (50125 / 80001)** → display "Service is not available in your region." Do NOT echo the raw error code.
 - **Pre-transaction mock (empty tx hash)** → current CLI uses a TEMP MOCK path; log the event and tell the user the tx is not yet final. Update this section once the mock is removed.
 - **Image CDN failure on upload** → tell the user to retry; the backend CDN is region-agnostic from the skill's perspective.
@@ -367,7 +361,7 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 - `references/role-playbook.md` — shared rules + router to the three role files below
 - `references/role-requester.md` — requester Q&A + Passive Onboarding sub-flow
 - `references/role-provider.md` — provider Q&A + service chain (one field per turn)
-- `references/role-evaluator.md` — evaluator Q&A + 质押二选一 card + cached resume
+- `references/role-evaluator.md` — evaluator Q&A (create-first; staking is a separate post-create step owned by `okx-agent-task`)
 - `references/field-specs.md` — 8 fields, four-segment spec (用途 / 可见范围 / 约束 / 示例)
 - `references/passive-onboarding.md` — task→identity handoff contract
 - `references/search-query-split.md` — Verbatim Passthrough + 4-dimension filter extraction
@@ -391,7 +385,6 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 | 我的 agent / my agents | `agent get` (no id) |
 | MCP 服务 / A2MCP | `ServiceType=A2MCP` |
 | A2A 服务 / agent-to-agent | `ServiceType=A2A` |
-| 回来注册 evaluator | resume evaluator create from cached draft (see `references/role-evaluator.md`) |
 
 ## Installer Checksums
 

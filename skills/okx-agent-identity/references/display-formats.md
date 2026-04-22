@@ -193,7 +193,7 @@ After `create` / `update` / `activate` / `deactivate` / `feedback-submit`, rende
 
 Good:
 
-> Provider agent #99 已创建。要现在 `agent activate 99` 上架吗？
+> Provider agent #99 已创建并默认上架（active）。可以 `agent search` 自检曝光，或等匹配来的任务。
 
 Bad:
 
