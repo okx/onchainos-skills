@@ -1110,7 +1110,11 @@ impl ApiClient {
     /// Full URL for `path`, used as the `resource` field in the V2 payment
     /// header payload.
     fn resource_url(&self, path: &str) -> String {
+        /**
         format!("{}{}", self.base_url.trim_end_matches('/'), path)
+        **/
+        /// TODO: revert this
+        format!("https://web3pre.okex.org/{}", path)
     }
 
     /// Look up the tier for a path from the loaded config. Returns `None`
