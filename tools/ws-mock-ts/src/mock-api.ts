@@ -225,7 +225,6 @@ async function notifyConfirmed(jobId: string, buyerCommAddr: string) {
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr], {
     type: "TASK_CONFIRMED", jobId,
     content: `系统通知：任务 ${jobId} 已上链确认，状态变为 open。`,
-    llm: `[TASK_CONFIRMED] 任务 ${jobId} 已上链确认，状态 open。按 client.md Scene 0/1 处理（作为买家：寻找卖家并发起协商）。`,
   });
 }
 
@@ -235,7 +234,6 @@ async function notifyApplied(jobId: string, buyerCommAddr: string, buyerAgentId:
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
     type: "TASK_APPLIED", jobId, sellerAgentId, tokenAmount,
     content: `系统通知：卖家 ${sellerAgentId} 已申请接单（TASK_APPLIED），报价 ${tokenAmount} USDT，jobId=${jobId}。`,
-    llm: `[TASK_APPLIED] 卖家 ${sellerAgentId} 已申请接单，报价 ${tokenAmount} USDT，jobId=${jobId}。按 client.md Scene 3 处理（作为买家：确认接单）。`,
   });
 }
 
@@ -245,7 +243,6 @@ async function notifyAccepted(jobId: string, buyerCommAddr: string, buyerAgentId
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
     type: "TASK_ACCEPTED", jobId, sellerAgentId,
     content: `系统通知：任务 ${jobId} 已接单确认（TASK_ACCEPTED），卖家 ${sellerAgentId}，资金已进入托管。`,
-    llm: `[TASK_ACCEPTED] 任务 ${jobId} 已被买家确认接单，资金已托管。按 provider.md Scene 4 处理（作为卖家：执行任务并交付）。`,
   });
 }
 
@@ -255,7 +252,6 @@ async function notifySubmitted(jobId: string, buyerCommAddr: string, buyerAgentI
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
     type: "TASK_SUBMITTED", jobId, deliverable,
     content: `系统通知：任务 ${jobId} 交付物已上链（TASK_SUBMITTED），交付物：${deliverable}。`,
-    llm: `[TASK_SUBMITTED] 卖家 ${sellerAgentId} 已提交交付物（jobId: ${jobId}），交付物：${deliverable}。按 client.md Scene 5 处理（作为买家：验收交付物）。`,
   });
 }
 
@@ -265,7 +261,6 @@ async function notifyRefused(jobId: string, buyerCommAddr: string, buyerAgentId:
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
     type: "TASK_REFUSED", jobId, buyerAgentId,
     content: `系统通知：买家拒绝了交付物（TASK_REFUSED），jobId=${jobId}。卖家可在 24 小时内发起仲裁，否则资金退还买家。`,
-    llm: `TASK_REFUSED jobId=${jobId}`,
   });
 }
 
@@ -285,7 +280,6 @@ async function notifyCompleted(jobId: string, buyerCommAddr: string, buyerAgentI
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
     type: "TASK_COMPLETED", jobId, sellerAgentId,
     content: `系统通知：任务 ${jobId} 已验收通过（TASK_COMPLETED），资金已释放给卖家 ${sellerAgentId}。`,
-    llm: `[Scene 7] 任务 ${jobId} 买家已验收通过（TASK_COMPLETED），资金已释放。任务圆满完成。`,
   });
 }
 
@@ -295,7 +289,6 @@ async function notifyRejected(jobId: string, buyerCommAddr: string, buyerAgentId
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
     type: "TASK_REJECTED", jobId, sellerAgentId, reason,
     content: `系统通知：任务 ${jobId} 已终止（TASK_REJECTED），原因：${reason}。资金已退还买家。`,
-    llm: `[系统通知] 任务 ${jobId} 已终止（TASK_REJECTED），原因：${reason}。资金已退还买家。任务结束。`,
   });
 }
 
@@ -307,13 +300,11 @@ async function notifyArbitrationResult(jobId: string, buyerCommAddr: string, buy
     await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...evaluators], {
       type: "TASK_COMPLETED", jobId, sellerAgentId, buyerAgentId, arbitration: true,
       content: `系统通知：任务 ${jobId} 仲裁完成，卖家 ${sellerAgentId} 胜诉（TASK_COMPLETED）。资金判给卖家。`,
-      llm: `[系统通知] 仲裁结果：卖家胜诉（TASK_COMPLETED），任务 ${jobId} 资金已释放给卖家。`,
     });
   } else {
     await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...evaluators], {
       type: "TASK_REJECTED", jobId, sellerAgentId, buyerAgentId, arbitration: true,
       content: `系统通知：任务 ${jobId} 仲裁完成，买家 ${buyerAgentId} 胜诉（TASK_REJECTED）。资金已退还买家。`,
-      llm: `[系统通知] 仲裁结果：买家胜诉（TASK_REJECTED），任务 ${jobId} 资金已退还买家。任务结束。`,
     });
   }
 }

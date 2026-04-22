@@ -54,7 +54,7 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 
 | Header contains | You are | Load |
 |---|---|---|
-| `来自:   xxx [BUYER]` | **Provider** (卖家) | Read `provider.md` — follow 消息格式识别 and 全局输出规则 |
+| `来自:   xxx [BUYER]` | **Provider** (卖家) | Read `provider.md` — follow §1 触发识别 and §2 全局输出规则 |
 | `来自:   xxx [PROVIDER]` | **Client** (买家) | Read `client.md` — follow 消息路由 table |
 
 > ⚠️ When you see `[BUYER]` in the header, you MUST load `provider.md` and follow its strict output format (header + plain text, no markdown, no emoji). Do NOT treat it as a normal user message.
@@ -63,9 +63,9 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 
 | MsgType | Role | Load |
 |---|---|---|
-| `TASK_INQUIRE` | **Provider** | Read `provider.md` Scene 2 |
+| `TASK_INQUIRE` | **Provider** | Read `provider.md` — follow §3 协商阶段 |
 | `TASK_OPENED` | **Client** | Read `client.md` Scene 0 |
-| `TASK_APPLIED` / `TASK_ACCEPTED` / `TASK_SUBMITTED` / `TASK_REFUSED` / `TASK_COMPLETED` / `TASK_REJECTED` / `TASK_DISPUTED` / `DISPUTE_ASSIGNED` | Depends on context | If you are the task's provider → `provider.md`; if buyer → `client.md`; if evaluator → `evaluator.md`; if unsure → follow Context Loading Protocol |
+| `TASK_APPLIED` / `TASK_ACCEPTED` / `TASK_SUBMITTED` / `TASK_REFUSED` / `TASK_COMPLETED` / `TASK_REJECTED` / `TASK_DISPUTED` / `DISPUTE_ASSIGNED` | Depends on context | If provider → `provider.md` §4（调 `next-action` 获取步骤）; if buyer → `client.md`; if evaluator → `evaluator.md`; if unsure → follow Context Loading Protocol |
 
 ### Priority 3: User Intent
 
@@ -146,16 +146,19 @@ When the agent receives a system notification, route to the correct role file an
 | Notification | 买家 Client (`client.md`) | 卖家 Provider (`provider.md`) | 仲裁者 Evaluator (`evaluator.md`) |
 |---|---|---|---|
 | `TASK_OPENED` | **执行** → Scene 0：auto recommend + xmtp_send 发起协商 | — | — |
-| `TASK_APPLIED` | **执行** → Scene 3：调用 `confirm-accept` 确认接单+托管资金 | **忽略 llm** → Scene 3：输出文字告知买家申请已上链 | — |
-| `TASK_ACCEPTED` | **忽略 llm** → 记录状态，等待卖家交付 | **执行** → Scene 4：开始执行任务，调用 `deliver` + `submit` 提交交付物 | — |
-| `TASK_SUBMITTED` | **执行** → Scene 5：验收交付物，调用 `complete`（通过）或 `reject`（拒绝） | **忽略 llm** → Scene 5：输出文字确认交付物已上链，等待买家验收 | — |
-| `TASK_COMPLETED` | Scene 7：任务完成，通知用户 | Scene 7：输出确认，资金已释放 | — |
-| `TASK_REFUSED` | **忽略 llm** → 记录状态，等待卖家决定 | **执行** → Scene 6：通知主 session，等待用户决定仲裁或退款 | — |
-| `TASK_DISPUTED` | Scene 6：等待用户提交证据 | Scene 6.3：提交证据 | — |
+| `TASK_APPLIED` | **执行** → Scene 3：调用 `confirm-accept` 确认接单+托管资金 | **忽略 llm** → 调 `next-action --jobStatus TASK_APPLIED` | — |
+| `TASK_ACCEPTED` | **忽略 llm** → 记录状态，等待卖家交付 | **执行** → 调 `next-action --jobStatus TASK_ACCEPTED`（会先推送接单通知到主 session，再执行 deliver） | — |
+| `TASK_SUBMITTED` | **执行** → Scene 5：验收交付物，调用 `complete`（通过）或 `reject`（拒绝） | **忽略 llm** → 调 `next-action --jobStatus TASK_SUBMITTED` | — |
+| `TASK_COMPLETED` | Scene 7：任务完成，通知用户 | 调 `next-action --jobStatus TASK_COMPLETED` | — |
+| `TASK_REFUSED` | **忽略 llm** → 记录状态，等待卖家决定 | **执行** → 调 `next-action --jobStatus TASK_REFUSED`（会调 `notify_main` 让用户决策仲裁/退款） | — |
+| `TASK_DISPUTED` | Scene 6：等待用户提交证据 | 调 `next-action --jobStatus TASK_DISPUTED` | — |
 | `DISPUTE_ASSIGNED` | — | — | **执行** → Scene 6：审阅证据，调用 `dispute vote` 投票 |
-| `TASK_REJECTED` | 退款完成，资金已退还买家 | — | — |
+| `TASK_REJECTED` | 退款完成，资金已退还买家 | 调 `next-action --jobStatus TASK_REJECTED` | — |
 
-> **Routing rule**: Only `TASK_OPENED` goes to main session. All other notifications are delivered to the sub session (P2P conversation) where the skill's role filtering determines action.
+> **Routing rule**:
+> - `TASK_OPENED` → main session（由 ws-channel 默认推送）
+> - 其他 TASK_* → sub session（由 skill 内的角色过滤决定动作）
+> - Provider 在 sub session 按 `next-action` 输出，可能会**主动调 `notify_main` 工具**将关键进展（如 TASK_ACCEPTED 接单成功、TASK_REFUSED 需决策）推送到主 session。此推送由 agent 行为驱动，不属于 ws-channel 默认路由。
 
 ## Chain Support
 
@@ -217,14 +220,14 @@ This skill operates exclusively on **XLayer** for on-chain contract calls.
 > User: "I received a translation task request"
 
 ```
-1. okx-agent-task     negotiate (sub-session) / accept → confirm
-       ↓ jobId, groupId (after Client confirm-accept)
-2. okx-agent-task     deliver --file ./result.docx
-       ↓ deliverableUrl
-3. okx-agent-task     (await complete notification 1005)
+1. Receive TASK_INQUIRE → provider.md §3 协商 → onchainos agent apply
+       ↓ TASK_APPLIED → TASK_ACCEPTED
+2. Each TASK_* notification → onchainos agent next-action --role provider → follow output
+       ↓ eventual: onchainos agent deliver → TASK_SUBMITTED
+3. Await TASK_COMPLETED（资金释放）
 ```
 
-**Data handoff**: `groupId` from step 1 used for Group messaging; `deliverableUrl` confirmed on-chain.
+**Data handoff**: 每条系统通知都带 `jobId`；每次处理都用同一个 jobId 从 `next-action` 获取下一步。
 
 ### Workflow C: Dispute Resolution
 

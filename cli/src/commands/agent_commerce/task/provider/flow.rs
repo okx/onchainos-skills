@@ -39,15 +39,25 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前状态】TASK_ACCEPTED（买家已确认接单，资金托管）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作（严格顺序，不得跳步）】\n\n\
-             **Step 1 — 必须先调用 notify_main 工具，通知主 session 接单成功：**\n\
+             **Step 1 — 调用工具名为 `notify_main` 的自定义工具（⚠️ 禁止使用 `sessions_send` / `xmtp_send` / 任何其他消息工具），通知主 session 接单成功：**\n\n\
+             工具调用：\n\
              ```\n\
-             notify_main(\n\
-             \x20\x20jobId=\"{job_id}\",\n\
-             \x20\x20conversationId=\"<来源消息的'会话:'行的值>\",\n\
-             \x20\x20message=\"[接单成功通知] 任务 {job_id} 已完成接单\\n- 标题：<title>\\n- 描述：<description>\\n- 协商价格：<amount> <tokenSymbol>\\n- 支付方式：<mode>\\n- 卖家 AgentID：{agent_id}\\n\\n资金已托管，开始执行任务。\"\n\
-             )\n\
+             tool: notify_main      ← 必须是这个名字，不是其他\n\
+             arguments:\n\
+             \x20\x20jobId: \"{job_id}\"\n\
+             \x20\x20conversationId: \"<来源消息'会话:'行的值>\"\n\
+             \x20\x20message: |\n\
+             \x20\x20\x20\x20[接单成功通知] 任务 {job_id} 已完成接单\n\
+             \x20\x20\x20\x20- 标题：<title>\n\
+             \x20\x20\x20\x20- 描述：<description>\n\
+             \x20\x20\x20\x20- 协商价格：<amount> <tokenSymbol>\n\
+             \x20\x20\x20\x20- 支付方式：<mode>\n\
+             \x20\x20\x20\x20- 卖家 AgentID：{agent_id}\n\
+             \x20\x20\x20\x20\n\
+             \x20\x20\x20\x20资金已托管，开始执行任务。\n\
              ```\n\
              字段值从 `onchainos agent common context {job_id} --role seller` 输出中提取。\n\n\
+             ⚠️ **如果找不到 `notify_main` 工具，直接跳到 Step 2**（不要用其他工具顶替）。`sessions_send` 不是本项目的工具，调它没用。\n\n\
              **Step 2 — 向买家输出 header 格式回复确认：**\n\n\
              {header_template}\n\
              已收到接单确认（TASK_ACCEPTED），开始执行任务。\n\n\
@@ -83,13 +93,16 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 1 — 向买家输出 header 格式回复：**\n\n\
              {header_template}\n\
              已收到买家拒绝通知（TASK_REFUSED）。正在确认后续处理方案，请稍候。\n\n\
-             **Step 2 — 调用 notify_main 把决策请求推给主 session 用户：**\n\
+             **Step 2 — 调用工具名为 `notify_main` 的自定义工具（⚠️ 禁止 `sessions_send` 等其他名字），把决策请求推给主 session 用户：**\n\n\
              ```\n\
-             notify_main(\n\
-             \x20\x20jobId=\"{job_id}\",\n\
-             \x20\x20conversationId=\"<子 session 会话 ID>\",\n\
-             \x20\x20message=\"任务 {job_id} 被买家拒绝。请用户选择：\\n1. 发起仲裁 → 回复'发起仲裁，理由是<理由>'\\n2. 同意退款 → 回复'同意退款'\"\n\
-             )\n\
+             tool: notify_main\n\
+             arguments:\n\
+             \x20\x20jobId: \"{job_id}\"\n\
+             \x20\x20conversationId: \"<子 session 会话 ID>\"\n\
+             \x20\x20message: |\n\
+             \x20\x20\x20\x20任务 {job_id} 被买家拒绝。请用户选择：\n\
+             \x20\x20\x20\x201. 发起仲裁 → 回复'发起仲裁，理由是<理由>'\n\
+             \x20\x20\x20\x202. 同意退款 → 回复'同意退款'\n\
              ```\n\n\
              **Step 3 — 等待主 session 用户决策（ws-channel 自动 relay 回子 session）。**\n\n\
              收到 USER_INSTRUCTION 后再次调用 next-action（传入用户决定的 DISPUTE_RAISE / AGREE_REFUND）。\n\n\
