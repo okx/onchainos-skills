@@ -118,7 +118,7 @@ Welcome to Market API. Your monthly free quota has been allocated:
 - Basic endpoints: {basicFreeQuota}
 - Premium endpoints: {premiumFreeQuota}
 
-Once exceeded, per-call pricing applies (Basic {basicUnitPrice}/call, Premium {premiumUnitPrice}/call). After you log in, the CLI will sign automatically when charging kicks in — no manual steps required. We recommend keeping a USDT balance on X Layer ahead of time to avoid service interruption.
+Once exceeded, per-call pricing applies (Basic {basicUnitPrice}/call, Premium {premiumUnitPrice}/call). After you log in, the CLI will sign automatically when charging kicks in — no manual steps required. We recommend keeping a balance of a supported payment asset on X Layer ahead of time — you'll be asked to pick one when the CLI first charges, so service stays uninterrupted.
 
 Full rules → [Pricing documentation]({docUrl})
 ```
@@ -150,7 +150,7 @@ Your {graceDays}-day free grace period has ended, and Market API has entered the
 - Basic endpoints: {basicFreeQuota}
 - Premium endpoints: {premiumFreeQuota}
 
-Once exceeded, per-call pricing applies (Basic {basicUnitPrice}/call, Premium {premiumUnitPrice}/call). After you log in, the CLI will sign automatically when charging kicks in. We recommend keeping a USDT balance on X Layer to ensure uninterrupted service.
+Once exceeded, per-call pricing applies (Basic {basicUnitPrice}/call, Premium {premiumUnitPrice}/call). After you log in, the CLI will sign automatically when charging kicks in. We recommend keeping a balance of a supported payment asset on X Layer — you'll be asked to pick one when the CLI first charges, so service stays uninterrupted.
 
 Full rules → [Pricing documentation]({docUrl})
 ```
