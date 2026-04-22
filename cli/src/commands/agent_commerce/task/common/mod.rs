@@ -10,6 +10,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
+pub mod dispute_upload;
 pub mod network;
 
 use crate::commands::Context;

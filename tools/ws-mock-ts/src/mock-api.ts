@@ -39,6 +39,25 @@ interface ProviderConfirm {
 const tasks    = new Map<string, Task>();
 const confirms = new Map<string, ProviderConfirm[]>();
 
+// Dispute store (by disputeId)
+interface DisputeEvidence {
+  submitter: string;
+  type: string;
+  summary: string;
+  fileUrl?: string;
+}
+interface DisputeRecord {
+  disputeId: string;
+  jobId: string;
+  statusStr: string;
+  raiserAddress: string;
+  reason: string;
+  createTime: string;
+  evidences: DisputeEvidence[];
+}
+const disputes = new Map<string, DisputeRecord>();
+let disputeCounter = 1;
+
 // ── Persistence ───────────────────────────────────────────────────────────────
 const PERSIST_PATH = process.env.MOCK_API_DB ??
   path.join(path.dirname(new URL(import.meta.url).pathname), "mock-tasks.json");
@@ -303,9 +322,20 @@ async function notifyArbitrationResult(jobId: string, buyerCommAddr: string, buy
 function parseBody(req: http.IncomingMessage): Promise<unknown> {
   if ((req as any)._parsedBody !== undefined) return Promise.resolve((req as any)._parsedBody);
   return new Promise((resolve) => {
-    let body = "";
-    req.on("data", (c: Buffer) => (body += c.toString()));
-    req.on("end", () => { try { const p = JSON.parse(body); (req as any)._parsedBody = p; resolve(p); } catch { (req as any)._parsedBody = {}; resolve({}); } });
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => {
+      const buf = Buffer.concat(chunks);
+      (req as any)._rawBody = buf;
+      try {
+        const p = JSON.parse(buf.toString("utf8"));
+        (req as any)._parsedBody = p;
+        resolve(p);
+      } catch {
+        (req as any)._parsedBody = {};
+        resolve({});
+      }
+    });
   });
 }
 
@@ -495,6 +525,12 @@ const server = http.createServer(async (req, res) => {
     sendOk(res, c ? { confirmed: true, ...c } : { confirmed: false, providerAddress: null, providerAgentId: null, tokenAddress: null, tokenAmount: null });
     return;
   }
+  // GET dispute info（必须在 /api/v1/task/:jobId 之前匹配，否则 "dispute" 会被当成 jobId）
+  if (method === "GET" && (m = matchPath("/api/v1/task/dispute/:disputeId", path_))) {
+    const d = disputes.get(m.disputeId);
+    if (!d) { sendErr(res, 2001, "dispute not found"); return; }
+    sendOk(res, d); return;
+  }
   if (method === "GET" && (m = matchPath("/api/v1/task/:jobId", path_))) {
     const t = tasks.get(m.jobId);
     if (!t) { sendErr(res, 2001, "task not found"); return; }
@@ -622,7 +658,17 @@ const server = http.createServer(async (req, res) => {
     const body = await parseBody(req) as Record<string, unknown>;
     const reason = String(body.reason ?? "");
     setStatus(t, S_DISPUTED); saveTasks();
-    console.log(`[mock-api] task disputed: job=${jobId} reason=${reason}`);
+    // Create dispute record
+    const disputeId = `dispute-${disputeCounter++}`;
+    const raiser = String(req.headers["x-wallet-address"] ?? t.providerAgentAddress ?? "");
+    disputes.set(disputeId, {
+      disputeId, jobId,
+      statusStr: "disputed",
+      raiserAddress: raiser,
+      reason, createTime: nowIso(),
+      evidences: [],
+    });
+    console.log(`[mock-api] task disputed: job=${jobId} disputeId=${disputeId} reason=${reason}`);
     const pid2 = t.providerAgentId ?? "mock-seller-agent-001";
     (async () => {
       const sellerComm = await lookupCommAddr(pid2) ?? t.providerAgentAddress ?? "0xSeller000000000000000000000000000000001";
@@ -661,6 +707,36 @@ const server = http.createServer(async (req, res) => {
     })().catch(e => console.error("[mock-api] agreeRefund notify error:", e));
     sendOk(res, { uopData: mockUopData() }); return;
   }
+  // multipart/form-data 链下证据上传（必须在 /evidence 之前匹配）
+  if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/evidence/upload", path_))) {
+    const { jobId } = m;
+    const t = tasks.get(jobId);
+    if (!t) { sendErr(res, 2001, "task not found"); return; }
+    if (t.status !== S_DISPUTED) { sendErr(res, 2002, "task status must be DISPUTED"); return; }
+
+    // 简易 multipart 解析：从预解析的 _rawBody 里提取 text 字段和 images 的 filename 列表
+    const rawBuf = ((req as any)._rawBody as Buffer) ?? Buffer.alloc(0);
+    const raw = rawBuf.toString("latin1");
+    const textMatch = raw.match(/name="text"\r?\n\r?\n([\s\S]*?)\r?\n--/);
+    const text = textMatch ? Buffer.from(textMatch[1], "latin1").toString("utf8") : "";
+    const imageMatches = [...raw.matchAll(/name="images"; filename="([^"]+)"/g)];
+    const imageFiles = imageMatches.map(mm => mm[1]);
+
+    if (!text && imageFiles.length === 0) {
+      sendErr(res, 1001, "text or images required"); return;
+    }
+
+    const submitter = String(req.headers["x-wallet-address"] ?? "");
+    const dispute = [...disputes.values()].filter(d => d.jobId === jobId).pop();
+    if (dispute) {
+      if (text) dispute.evidences.push({ submitter, type: "text", summary: text });
+      for (const f of imageFiles) {
+        dispute.evidences.push({ submitter, type: "image", summary: `(image) ${f}`, fileUrl: `https://mock-cdn.example.com/evidence/${jobId}/${f}` });
+      }
+    }
+    console.log(`[mock-api] evidence uploaded (multipart): job=${jobId} text="${text.slice(0, 60)}" images=${imageFiles.length}`);
+    sendOk(res, null); return;
+  }
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/evidence", path_))) {
     const { jobId } = m;
     const t = tasks.get(jobId);
@@ -668,6 +744,12 @@ const server = http.createServer(async (req, res) => {
     if (t.status !== S_DISPUTED) { sendErr(res, 2002, "task status must be DISPUTED"); return; }
     const body = await parseBody(req) as Record<string, unknown>;
     const text = String(body.text ?? body.summary ?? "");
+    const submitter = String(req.headers["x-wallet-address"] ?? "");
+    // Append to latest dispute for this job
+    const dispute = [...disputes.values()].filter(d => d.jobId === jobId).pop();
+    if (dispute) {
+      dispute.evidences.push({ submitter, type: "text", summary: text });
+    }
     console.log(`[mock-api] evidence uploaded: job=${jobId} text="${text.slice(0, 80)}"`);
     sendOk(res, { uopData: mockUopData() }); return;
   }

@@ -88,6 +88,35 @@ impl TaskApiClient {
         Ok(resp)
     }
 
+    /// POST multipart/form-data + 身份头 + code 校验（用于 /evidence/upload 等文件上传端点）
+    pub async fn multipart_post_with_identity(
+        &self,
+        url: &str,
+        form: reqwest::multipart::Form,
+        agent_id: &str,
+        address: &str,
+    ) -> Result<Value> {
+        let resp: Value = self
+            .api
+            .http()
+            .post(url)
+            .header("X-Agent-Id", agent_id)
+            .header("X-Wallet-Address", address)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("HTTP POST (multipart) 失败: {e}"))?
+            .json()
+            .await?;
+        if resp["code"] != 0 {
+            bail!(
+                "请求失败: {}",
+                resp["msg"].as_str().unwrap_or("unknown error")
+            );
+        }
+        Ok(resp)
+    }
+
     /// POST JSON + 身份头（X-Agent-Id / X-Wallet-Address）+ code 校验
     pub async fn post_with_identity(
         &self,
