@@ -34,22 +34,39 @@ Print the filled copy once, then display `data` as usual.
   "notifications": [{
     "code": "MARKET_API_*_OVER_QUOTA",
     "data": {
-      "tier": "basic",
-      "payment": [{
-        "amount": "100",
-        "asset": "0x4ae4...2dc8",
-        "network": "eip155:196",
-        "payTo": "0xfa00...92a1b",
-        "extra": { "name": "USDG" },
-        "maxTimeoutSeconds": 86400
-      }]
+      "tier": "premium",
+      "payment": [
+        {
+          "amount": "0.0005",
+          "asset": "0xUSDG",
+          "name": "USDG",
+          "network": "X Layer",
+          "chainId": 196,
+          "payTo": "0xPAYTO"
+        },
+        {
+          "amount": "0.0005",
+          "asset": "0xUSDT",
+          "name": "USDT",
+          "network": "X Layer",
+          "chainId": 196,
+          "payTo": "0xPAYTO"
+        }
+      ]
     }
   }]
 }
 ```
 
-**Never auto-retry.** Show the filled copy, wait for explicit user confirmation,
-then rerun the exact same command (CLI will auto-sign on the second call).
+Each `payment[]` entry is already display-ready: `amount` is a decimal string (not
+minimal units), `network` is the chain's human-readable name (falls back to the
+raw CAIP-2 string on chain-cache miss), and `chainId` is the numeric EVM chain id
+the `onchainos payment default set` CLI expects.
+
+**Never auto-retry.** When `payment[]` contains more than one option, the user
+must first pick a preferred asset (see step 3 below). Once a default is saved
+(or if only one option is offered), rerun the exact same command — the CLI will
+auto-sign the matching accepts entry on the second call.
 
 ---
 
@@ -64,9 +81,24 @@ Before formatting the CLI result:
 3. **If `confirming: true` is present on the envelope**:
    - Do NOT auto-retry.
    - Present the filled copy to the user.
-   - Wait for explicit confirmation ("yes" / "proceed" / "确认").
-   - On confirmation → rerun the exact same command verbatim.
-   - On refusal → stop and acknowledge.
+   - **If `notifications[].data.payment[]` has ≥ 2 entries**, render them as a
+     numbered token list — one line per entry — using `name`, `amount`, and
+     `network` (e.g. `1. USDG  0.0005  X Layer`). Always append a final line
+     `0. Cancel — don't pay, abort this request`. Ask the user to pick one.
+     - If the user picks a numbered asset (or replies with an asset name):
+       - Run `onchainos payment default set --asset <entry.asset> --chain <entry.chainId> --name <entry.name>` to persist the choice.
+       - Then rerun the original command verbatim. The CLI matches the saved
+         default against the 402 `accepts` and auto-signs that entry.
+     - If the user picks `0` (or otherwise refuses in free text):
+       - Do NOT call `payment default set`. Do NOT rerun. Stop and acknowledge.
+   - **If `payment[]` has exactly one entry**, skip the token list — just ask
+     the user to confirm (`yes` / `proceed` / `确认`) or cancel (`0` / `no`).
+     On confirmation rerun the original command and the CLI auto-signs the
+     sole option; on cancel, stop and acknowledge.
+   - The saved default persists across commands until the user runs
+     `onchainos payment default unset` or picks a new asset on a future
+     OVER_QUOTA event, so the selection prompt only fires once per user
+     preference change, not once per over-quota hit.
 4. **Otherwise**:
    - Print the filled copy once.
    - Then display `data` normally.
@@ -134,12 +166,25 @@ Full rules → [Pricing documentation]({docUrl})
 ```
 Your {tier} free quota has been used up, and this request has been paused.
 
-- Further calls will be billed per call ({tier} {unitPrice}/call); the CLI is ready to sign automatically
-- Rerun the original command to continue — the system will pay and return the result automatically
-- We recommend keeping enough USDT in your X Layer wallet to avoid transaction failures
+Per-call pricing ({tier} {unitPrice}/call) is now in effect. Please pick which asset you'd like to pay with — the CLI will save it as your default and auto-sign future payments:
+
+{paymentOptions}
+0. Cancel — don't pay, abort this request
+
+Reply with the number (or asset name) to continue, or `0` to cancel. We recommend keeping enough of your chosen asset in the matching chain wallet to avoid transaction failures.
 ```
 
-**Placeholders**: `{tier}`, `{unitPrice}`
+**Placeholders**: `{tier}`, `{unitPrice}`, `{paymentOptions}`
+
+If the user picks a numbered asset, run:
+
+```
+onchainos payment default set --asset <ASSET_ADDRESS> --chain <CHAIN_ID> --name <NAME>
+```
+
+then rerun the original command. If the user picks `0` (or otherwise refuses),
+stop — do NOT call `payment default set`, do NOT rerun. If `payment[]` has only
+one entry, skip the selection and just ask for `yes` / `0` before rerunning.
 
 ---
 
@@ -150,12 +195,25 @@ Your {tier} free quota has been used up, and this request has been paused.
 ```
 Your {tier} free quota for this month has been used up (the first overage after the grace period), and this request has been paused.
 
-- Further calls will be billed per call ({tier} {unitPrice}/call); the CLI is ready to sign automatically
-- Rerun the original command to continue — the system will pay and return the result automatically
-- We recommend keeping enough USDT in your X Layer wallet to avoid transaction failures
+Per-call pricing ({tier} {unitPrice}/call) is now in effect. Please pick which asset you'd like to pay with — the CLI will save it as your default and auto-sign future payments:
+
+{paymentOptions}
+0. Cancel — don't pay, abort this request
+
+Reply with the number (or asset name) to continue, or `0` to cancel. We recommend keeping enough of your chosen asset in the matching chain wallet to avoid transaction failures.
 ```
 
-**Placeholders**: `{tier}`, `{unitPrice}`
+**Placeholders**: `{tier}`, `{unitPrice}`, `{paymentOptions}`
+
+If the user picks a numbered asset, run:
+
+```
+onchainos payment default set --asset <ASSET_ADDRESS> --chain <CHAIN_ID> --name <NAME>
+```
+
+then rerun the original command. If the user picks `0` (or otherwise refuses),
+stop — do NOT call `payment default set`, do NOT rerun. If `payment[]` has only
+one entry, skip the selection and just ask for `yes` / `0` before rerunning.
 
 ---
 
@@ -179,6 +237,7 @@ Your {tier} free quota for this month has been used up (the first overage after 
 | `{graceExpiresAt}` | `notifications[].data.graceExpiresAt` | #2 | Server gap — currently `data = {}` for `OLD_USER_GRACE`. Fall back to the string `2026.5.31` until the backend ships this field. |
 | `{tier}` | `notifications[].data.tier` | #4, #5 | `basic` / `premium`; capitalize first letter on display (`Basic` / `Premium`) |
 | `{unitPrice}` | Derived from `{tier}` | #4, #5 | `basic` → use `{basicUnitPrice}` value / `premium` → use `{premiumUnitPrice}` value |
+| `{paymentOptions}` | `notifications[].data.payment[]` | #4, #5 | Render as a numbered list, one entry per line starting at `1`: `<idx>. <name>  <amount>  <network>` (e.g. `1. USDG  0.0005  X Layer`). Each entry carries `asset` / `chainId` / `name` — feed those into the `--asset` / `--chain` / `--name` flags of `onchainos payment default set` after the user picks. The copy itself always appends a trailing `0. Cancel — don't pay, abort this request` line after this placeholder, so do NOT include `0.` inside `{paymentOptions}` — picking `0` means refusal (no `payment default set`, no rerun). |
 
 ---
 
