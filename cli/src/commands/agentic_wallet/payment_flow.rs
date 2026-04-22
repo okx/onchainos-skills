@@ -180,7 +180,7 @@ pub async fn sign_payment(
     from: Option<&str>,
     tier: Option<PaymentTier>,
 ) -> Result<(PaymentProof, Value)> {
-    let (entry, scheme) = match accepts.as_array() {
+    let (mut entry, scheme) = match accepts.as_array() {
         Some(arr) => select_accept(arr)?,
         None => (
             accepts.clone(),
@@ -188,6 +188,12 @@ pub async fn sign_payment(
         ),
     };
     let params = resolve_entry(&entry, scheme, tier)?;
+    // `/config` returns `amount` as a tiered object `{"basic": "100", "premium": "500"}`,
+    // but x402 V2 requires the `accepted.amount` embedded in the header to be a
+    // scalar string. Collapse to the tier we're signing for.
+    if entry.get("amount").map(Value::is_object).unwrap_or(false) {
+        entry["amount"] = json!(params.amount);
+    }
 
     let access_token = ensure_tokens_refreshed().await?;
     let real_chain_id = parse_eip155_chain_id(&params.network)?;
