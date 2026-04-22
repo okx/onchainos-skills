@@ -18,10 +18,10 @@ const BINARY_NAME: &str = "okx-pilot";
 ///   3. static.coinall.ltd        — Coinall CDN
 ///   4. okg-pub-hk OSS            — Aliyun OSS fallback (different path prefix)
 const CDN_SOURCES: &[&str] = &[
-    "https://static.jingyunyilian.com/upgradeapp/tools/doh",
-    "https://static.okx.com/upgradeapp/tools/doh",
-    "https://static.coinall.ltd/upgradeapp/tools/doh",
-    "https://okg-pub-hk.oss-cn-hongkong.aliyuncs.com/upgradeapp/tools/doh",
+    "https://static.jingyunyilian.com/upgradeapp/tools/pilot",
+    "https://static.okx.com/upgradeapp/tools/pilot",
+    "https://static.coinall.ltd/upgradeapp/tools/pilot",
+    "https://okg-pub-hk.oss-cn-hongkong.aliyuncs.com/upgradeapp/tools/pilot",
 ];
 
 /// Returns the platform-specific binary filename (adds .exe on Windows).
