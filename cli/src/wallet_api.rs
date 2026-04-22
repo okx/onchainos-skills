@@ -240,9 +240,14 @@ pub struct BroadcastResponse {
 
 impl WalletApiClient {
     pub fn new() -> Result<Self> {
+        Self::with_base_url(None)
+    }
+
+    pub fn with_base_url(base_url_override: Option<&str>) -> Result<Self> {
         let base_url = std::env::var("OKX_BASE_URL")
             .ok()
             .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
+            .or_else(|| base_url_override.map(|s| s.to_string()))
             .unwrap_or_else(|| crate::client::DEFAULT_BASE_URL.to_string());
 
         let custom = std::env::var("OKX_BASE_URL").is_ok()
@@ -426,6 +431,29 @@ impl WalletApiClient {
             Err(e) => return Err(e).context("request failed"),
         };
         self.doh.cache_direct_if_needed();
+        self.handle_response(resp).await
+    }
+
+    /// POST multipart/form-data with Bearer accessToken.
+    pub async fn post_authed_multipart(
+        &self,
+        path: &str,
+        access_token: &str,
+        form: reqwest::multipart::Form,
+    ) -> Result<Value> {
+        let url = format!("{}{}", self.base_url, path);
+
+        let mut headers = crate::client::ApiClient::jwt_headers(access_token);
+        headers.remove(reqwest::header::CONTENT_TYPE);
+
+        let resp = self
+            .http
+            .post(&url)
+            .headers(headers)
+            .multipart(form)
+            .send()
+            .await
+            .context("wallet API request failed")?;
         self.handle_response(resp).await
     }
 

@@ -128,7 +128,7 @@ pub enum Commands {
     #[command(name = "agent")]
     TaskSystem {
         #[command(subcommand)]
-        command: commands::agent_commerce::task::TaskSystemCommand,
+        command: commands::agent_commerce::AgentCommand,
     },
 }
 
@@ -192,7 +192,7 @@ async fn run() {
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Ws { command } => commands::ws::execute(command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
-        Commands::TaskSystem { command } => commands::agent_commerce::task::run(command, &ctx).await,
+        Commands::TaskSystem { command } => commands::agent_commerce::run(command, &ctx).await,
     };
 
     let elapsed = start.elapsed();

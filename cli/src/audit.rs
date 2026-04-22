@@ -329,31 +329,42 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
-        Commands::TaskSystem { command } => format!("agent {}", task_system_sub(command)),
+        Commands::TaskSystem { command } => format!("agent {}", agent_sub(command)),
         Commands::CrossChain { .. } => "cross-chain".to_string(),
     }
 }
 
-fn task_system_sub(cmd: &crate::commands::agent_commerce::task::TaskSystemCommand) -> String {
-    use crate::commands::agent_commerce::task::TaskSystemCommand;
+fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
+    use crate::commands::agent_commerce::AgentCommand;
     match cmd {
-        TaskSystemCommand::CreateTask { .. }    => "create-task".into(),
-        TaskSystemCommand::Recommend { .. }     => "recommend".into(),
-        TaskSystemCommand::Status { .. }        => "status".into(),
-        TaskSystemCommand::List { .. }          => "list".into(),
-        TaskSystemCommand::ConfirmAccept { .. } => "confirm-accept".into(),
-        TaskSystemCommand::RejectApply { .. }   => "reject-apply".into(),
-        TaskSystemCommand::Confirm { .. }       => "confirm".into(),
-        TaskSystemCommand::Deliver { .. }       => "deliver".into(),
-        TaskSystemCommand::Complete { .. }      => "complete".into(),
-        TaskSystemCommand::Reject { .. }        => "reject".into(),
-        TaskSystemCommand::Close { .. }         => "close".into(),
-        TaskSystemCommand::SetPublic { .. }     => "set-public".into(),
-        TaskSystemCommand::AiEvaluate { .. }    => "ai-evaluate".into(),
-        TaskSystemCommand::Config { .. }        => "config".into(),
-        TaskSystemCommand::Negotiate(c) => format!("negotiate {:?}", std::mem::discriminant(c)),
-        TaskSystemCommand::Dispute(c)   => format!("dispute {:?}", std::mem::discriminant(c)),
-        TaskSystemCommand::Common(c)    => format!("common {:?}", std::mem::discriminant(c)),
+        AgentCommand::Create { .. } => "create".into(),
+        AgentCommand::Update { .. } => "update".into(),
+        AgentCommand::Get { .. } => "get".into(),
+        AgentCommand::Activate { .. } => "activate".into(),
+        AgentCommand::Deactivate { .. } => "deactivate".into(),
+        AgentCommand::Upload { .. } => "upload".into(),
+        AgentCommand::Search { .. } => "search".into(),
+        AgentCommand::ServiceList { .. } => "service-list".into(),
+        AgentCommand::FeedbackSubmit { .. } => "feedback-submit".into(),
+        AgentCommand::FeedbackList { .. } => "feedback-list".into(),
+        AgentCommand::XmtpSign { .. } => "xmtp-sign".into(),
+        AgentCommand::CreateTask { .. } => "create-task".into(),
+        AgentCommand::Recommend { .. } => "recommend".into(),
+        AgentCommand::Status { .. } => "status".into(),
+        AgentCommand::List { .. } => "list".into(),
+        AgentCommand::ConfirmAccept { .. } => "confirm-accept".into(),
+        AgentCommand::RejectApply { .. } => "reject-apply".into(),
+        AgentCommand::Confirm { .. } => "confirm".into(),
+        AgentCommand::Deliver { .. } => "deliver".into(),
+        AgentCommand::Complete { .. } => "complete".into(),
+        AgentCommand::Reject { .. } => "reject".into(),
+        AgentCommand::Close { .. } => "close".into(),
+        AgentCommand::SetPublic { .. } => "set-public".into(),
+        AgentCommand::AiEvaluate { .. } => "ai-evaluate".into(),
+        AgentCommand::Config { .. } => "config".into(),
+        AgentCommand::Negotiate(c) => format!("negotiate {:?}", std::mem::discriminant(c)),
+        AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),
+        AgentCommand::Common(c) => format!("common {:?}", std::mem::discriminant(c)),
     }
 }
 
