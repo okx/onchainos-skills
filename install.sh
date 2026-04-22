@@ -323,7 +323,9 @@ main
 # ── Install plugin-store skill ───────────────────────────────
 # Bundled with onchainos so the agent can discover and install DeFi plugins
 # immediately after onchainos setup — without a separate install step.
-# No --global flag: matches how onchainos-skills itself is installed (auto-detects scope).
+# --global ensures plugin-store lands in ~/.agents/skills/ regardless of the
+# working directory when the installer is piped via curl, consistent with how
+# onchainos-skills itself is installed globally.
 if command -v npx >/dev/null 2>&1; then
-  npx skills add okx/plugin-store --skill plugin-store --yes 2>/dev/null || true
+  npx skills add okx/plugin-store --skill plugin-store --yes --global 2>/dev/null || true
 fi
