@@ -75,7 +75,14 @@ pub struct PaymentRequired {
 
 impl std::fmt::Display for PaymentRequired {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "HTTP 402 Payment Required")
+        // Surface the server-side reason (e.g. `insufficient_balance`)
+        // when the retried request 402s again and this error bubbles
+        // out to the user. The first 402 is caught and consumed by the
+        // retry wrapper, so the Display impl only matters post-retry.
+        match self.raw_body.get("error").and_then(|v| v.as_str()) {
+            Some(err) => write!(f, "HTTP 402 Payment Required: {err}"),
+            None => write!(f, "HTTP 402 Payment Required"),
+        }
     }
 }
 
@@ -1801,6 +1808,27 @@ mod tests {
             raw_body: Value::Null,
         };
         assert!(client.resolve_retry_accepts(&pr).is_err());
+    }
+
+    #[test]
+    fn payment_required_display_includes_body_error_field() {
+        let pr = PaymentRequired {
+            accepts: Value::Null,
+            raw_body: serde_json::json!({ "error": "insufficient_balance" }),
+        };
+        assert_eq!(
+            pr.to_string(),
+            "HTTP 402 Payment Required: insufficient_balance"
+        );
+    }
+
+    #[test]
+    fn payment_required_display_falls_back_when_no_error_field() {
+        let pr = PaymentRequired {
+            accepts: Value::Null,
+            raw_body: Value::Null,
+        };
+        assert_eq!(pr.to_string(), "HTTP 402 Payment Required");
     }
 
     #[test]
