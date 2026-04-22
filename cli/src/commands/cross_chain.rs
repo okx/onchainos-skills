@@ -763,6 +763,9 @@ async fn wallet_contract_call(
         jito_unsigned_tx,
         force,
         Some("3"), // tx_source: cross-chain bridge
+        None,      // gas_token_address
+        None,      // relayer_id
+        false,     // enable_gas_station
     )
     .await?;
     Ok(json!({ "txHash": resp.tx_hash, "orderId": resp.order_id }))

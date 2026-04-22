@@ -2074,6 +2074,21 @@ impl McpServer {
     }
 
     #[tool(
+        name = "gas_station_enable",
+        description = "Enable Gas Station for a specific chain (DB flag only, no on-chain action). Requires that 7702 delegation already exists on-chain (set earlier via the first-time Gas Station flow). If the chain was never delegated, backend returns a msg in the response body explaining that a first-time enable via wallet send is required."
+    )]
+    async fn gas_station_enable(
+        &self,
+        Parameters(p): Parameters<GasStationDisableParams>,
+    ) -> Result<String, String> {
+        use crate::commands::agentic_wallet::gas_station;
+        match gas_station::fetch_update(&p.chain, true).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
         name = "gas_station_disable",
         description = "Disable Gas Station for a specific chain (DB flag only, no on-chain action). The 7702 delegation on-chain is preserved, so re-enabling later does not require a new upgrade. To switch default gas token, use gas_station_update_default_token instead."
     )]
@@ -2082,7 +2097,7 @@ impl McpServer {
         Parameters(p): Parameters<GasStationDisableParams>,
     ) -> Result<String, String> {
         use crate::commands::agentic_wallet::gas_station;
-        match gas_station::fetch_disable(&p.chain).await {
+        match gas_station::fetch_update(&p.chain, false).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }

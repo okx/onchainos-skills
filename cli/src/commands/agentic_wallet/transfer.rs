@@ -67,6 +67,10 @@ struct TxParams<'a> {
     aa_dex_token_addr: Option<&'a str>,
     aa_dex_token_amount: Option<&'a str>,
     jito_unsigned_tx: Option<&'a str>,
+    // Gas Station params (Phase 2 execution)
+    gas_token_address: Option<&'a str>,
+    relayer_id: Option<&'a str>,
+    enable_gas_station: bool,
 }
 
 /// Shared flow: resolve wallet → unsignedInfo → sign → broadcast → output txHash.
@@ -202,9 +206,9 @@ async fn sign_and_broadcast(
             tx.aa_dex_token_amount,
             tx.jito_unsigned_tx,
             trace_ref,
-            None, // enable_gas_station
-            None, // gas_token_address
-            None, // relayer_id
+            if tx.enable_gas_station { Some(true) } else { None },
+            tx.gas_token_address,
+            tx.relayer_id,
         )
         .await
         .map_err(format_api_error)?;
@@ -229,6 +233,63 @@ async fn sign_and_broadcast(
         bail!("transaction simulation failed: {}", err_msg);
     }
 
+    // Gas Station guard（contract-call 等非 GS 分发路径走这里）：
+    // backend 两阶段协议——Phase 1 诊断只返 gasStationStatus + tokenList，所有 hash 字段为空；
+    // Phase 2 执行（带 enableGasStation=true + gasTokenAddress + relayerId）才返签名材料。
+    // 这里拦住 Phase 1 诊断响应，防止 CLI 用空 msgForSign 发 broadcast 拿到 81358。
+    if unsigned.gas_station_used {
+        if unsigned.has_pending_tx {
+            bail!(
+                "Gas Station has a pending transaction. Wait for it to complete, or run \
+                 `wallet gas-station disable --chain <chain>` to use native token path."
+            );
+        }
+        if unsigned.insufficient_all {
+            bail!(
+                "Gas Station cannot proceed — all supported tokens (USDT/USDC/USDG) are \
+                 below the service charge. Top up at: {}",
+                addr_info.address
+            );
+        }
+        if unsigned.hash.is_empty()
+            && unsigned.eip712_message_hash.is_empty()
+            && unsigned.unsigned_tx_hash.is_empty()
+        {
+            // Phase 1 diagnostic response: backend is waiting for the CLI to re-invoke the
+            // command with `--gas-token-address <addr> --relayer-id <id>` (and
+            // `--enable-gas-station` for first-time activation or re-enable) so it can call
+            // wallet.callData712() and return the 712 message hash for signing.
+            let token_list_str = unsigned
+                .gas_station_token_list
+                .iter()
+                .filter(|t| t.sufficient)
+                .enumerate()
+                .map(|(i, t)| {
+                    format!(
+                        "{}. {} (balance: {}, fee: {})",
+                        i + 1,
+                        t.symbol,
+                        t.balance,
+                        t.service_charge
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let message = format!(
+                "Gas Station is active on this chain. Choose a token to pay gas:\n{}\n\n\
+                 Re-run the command with `--gas-token-address <addr> --relayer-id <id>` \
+                 (add `--enable-gas-station` if the status is FIRST_TIME_PROMPT or REENABLE_ONLY).",
+                token_list_str
+            );
+            let next = format!(
+                "Token list: {}",
+                serde_json::to_string(&unsigned.gas_station_token_list).unwrap_or_default()
+            );
+            return Err(crate::output::CliConfirming { message, next }.into());
+        }
+        // Phase 2 响应（hash / eip712MessageHash / unsignedTxHash 之一非空）继续走下面的正常签名流程。
+    }
+
     let signing_seed = crate::crypto::hpke_decrypt_session_sk(&encrypted_session_sk, &session_key)?;
     let signing_seed_b64 = base64::engine::general_purpose::STANDARD.encode(signing_seed);
 
@@ -249,6 +310,16 @@ async fn sign_and_broadcast(
             &unsigned.encoding,
         )?;
         msg_for_sign_map.insert("unsignedTxHash".into(), json!(&unsigned.unsigned_tx_hash));
+        msg_for_sign_map.insert("sessionSignature".into(), json!(sig));
+    }
+    // eip712MessageHash: 712 hash，TEE session 场景。算法跟 unsigned_tx_hash→sessionSignature 一致
+    // （ed25519_sign_encoded），结果写入 sessionSignature 字段。
+    if !unsigned.eip712_message_hash.is_empty() {
+        let sig = crate::crypto::ed25519_sign_encoded(
+            &unsigned.eip712_message_hash,
+            &signing_seed_b64,
+            &unsigned.encoding,
+        )?;
         msg_for_sign_map.insert("sessionSignature".into(), json!(sig));
     }
     if !unsigned.unsigned_tx.is_empty() {
@@ -450,100 +521,40 @@ pub(super) async fn cmd_send(
         "executeErrorMsg": &unsigned.execute_error_msg,
     }));
 
-    // ── Gas Station decision ──
+    // ── Gas Station dispatch（两阶段协议） ──
+    // 第一次调用（本次）= Phase 1 诊断：backend 只返 gasStationStatus + tokenList，
+    // hash / eip712MessageHash / authHashFor7702 等故意全 null；
+    // 第二次调用需要带 enableGasStation=true + gasTokenAddress + relayerId，backend 才返完整签名数据。
+    // 因此判断走哪个分支：看 backend 有没有返任何可签字段。
     if unsigned.gas_station_used {
-        // Pending tx: blocked
+        // 终结类状态：直接告知用户
         if unsigned.has_pending_tx {
-            output::success(json!({
-                "gasStationUsed": true,
-                "hasPendingTx": true,
-            }));
-            return Ok(());
+            return handle_gs_pending_tx();
         }
-        // All tokens insufficient: charge guidance
         if unsigned.insufficient_all {
-            output::success(json!({
-                "gasStationUsed": true,
-                "insufficientAll": true,
-                "gasStationTokenList": unsigned.gas_station_token_list,
-                "fromAddr": addr_info.address,
-            }));
-            return Ok(());
+            return handle_gs_insufficient_all(&unsigned, &addr_info.address);
         }
-        // Backend auto-selected token (scenario B/D): hash is ready, proceed to sign
-        if !unsigned.hash.is_empty() {
-            let resp = gas_station_sign_and_broadcast(
-                &mut client,
-                &access_token,
-                &account_id,
-                &addr_info,
-                &session,
-                &unsigned,
-                force,
-                recipient,
-                amt,
-                contract_token,
+        // Phase 2 响应：backend 返了签名材料，直接签广播
+        if !unsigned.hash.is_empty()
+            || !unsigned.eip712_message_hash.is_empty()
+            || !unsigned.unsigned_tx_hash.is_empty()
+        {
+            return handle_gs_auto_sign_broadcast(
+                &mut client, &access_token, &account_id, &addr_info, &session,
+                &unsigned, force, recipient, amt, contract_token,
             )
-            .await?;
-            output::success(json!({
-                "txHash": resp.tx_hash,
-                "orderId": resp.order_id,
-                "gasStationUsed": true,
-                "autoSelectedToken": unsigned.auto_selected_token,
-                "serviceCharge": unsigned.service_charge,
-                "serviceChargeSymbol": unsigned.service_charge_symbol,
-                "gasStationTokenList": unsigned.gas_station_token_list,
-            }));
-            return Ok(());
+            .await;
         }
-        // Need user to choose token (scenario A/C): CliConfirming
-        let token_list_str = unsigned
-            .gas_station_token_list
-            .iter()
-            .filter(|t| t.sufficient)
-            .enumerate()
-            .map(|(i, t)| format!("{}. {} (balance: {}, fee: {})", i + 1, t.symbol, t.balance, t.service_charge))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let message = if unsigned.gas_station_first_time_prompt {
-            // Scene A: first time enable
-            format!(
-                "Your native token balance is insufficient to pay gas. You can enable Gas Station to pay gas with stablecoins.\n\
-                 \nAvailable tokens:\n{}\n\
-                 \nOptions:\n\
-                 1. Enable and set a default token: choose a token above, future transactions will use it automatically.\n\
-                 2. Enable without setting default: system will auto-select the token with highest balance each time.",
-                token_list_str
-            )
-        } else {
-            // Scene C: default token insufficient
-            format!(
-                "Your default gas token has insufficient balance. Choose an alternative token to pay gas:\n{}\n\
-                 \nOptions:\n\
-                 1. Use for this transaction only (default token unchanged).\n\
-                 2. Use and update as new default token.",
-                token_list_str
-            )
-        };
-
-        let next = if unsigned.gas_station_first_time_prompt {
-            format!(
-                "Option 1 (enable + set default): --gas-token-address <addr> --relayer-id <id> --enable-gas-station\n\
-                 Option 2 (enable, no default): --enable-gas-station\n\
-                 Token list: {}",
-                serde_json::to_string(&unsigned.gas_station_token_list).unwrap_or_default()
-            )
-        } else {
-            format!(
-                "Option 1 (this time only): --gas-token-address <addr> --relayer-id <id>\n\
-                 Option 2 (use + update default): --gas-token-address <addr> --relayer-id <id>, then run: wallet gas-station update-default-token --chain <chain> --gas-token-address <addr>\n\
-                 Token list: {}",
-                serde_json::to_string(&unsigned.gas_station_token_list).unwrap_or_default()
-            )
-        };
-
-        return Err(crate::output::CliConfirming { message, next }.into());
+        // Phase 1 诊断响应：让用户从 tokenList 选 token
+        // FIRST_TIME_PROMPT / REENABLE_ONLY 都需要带 enableGasStation=true 再调
+        // READY_TO_USE + hash=null（Scene C 默认 token 不够）只需选备选 token，不带 enableGasStation
+        if unsigned.gas_station_first_time_prompt
+            || unsigned.gs_status() == crate::wallet_api::GasStationStatus::FirstTimePrompt
+            || unsigned.gs_status() == crate::wallet_api::GasStationStatus::ReenableOnly
+        {
+            return handle_gs_first_time_prompt(&unsigned);
+        }
+        return handle_gs_default_token_insufficient(&unsigned);
     }
 
     // ── Not Gas Station: original flow ──
@@ -560,6 +571,9 @@ pub(super) async fn cmd_send(
             aa_dex_token_addr: None,
             aa_dex_token_amount: None,
             jito_unsigned_tx: None,
+            gas_token_address: None,
+            relayer_id: None,
+            enable_gas_station: false,
         },
         false,
         false,
@@ -707,8 +721,8 @@ async fn gas_station_send(
 //   Normal Gas Station — wallet already upgraded to 7702, just executes transaction.
 //   Signs only 712 hash. No nonce/user7702Data/authSignatureFor7702.
 
-/// Gas Station msgForSign: 只签 hash(712) + 可选 authHashFor7702
-/// 不包含 unsignedTxHash/sessionSignature（那是 Normal EOA 的路径）
+/// Gas Station msgForSign: TEE 场景（sessionSignature）+ 7702 升级时附带 authSignatureFor7702。
+/// 不写入 signature（那是 Pay 场景的 EIP-191 签，GS 走 TEE 不走 Pay）。
 fn gs_build_msg_for_sign(
     unsigned: &crate::wallet_api::UnsignedInfoResponse,
     session: &crate::wallet_store::SessionJson,
@@ -719,11 +733,18 @@ fn gs_build_msg_for_sign(
 
     let signing_seed_b64 = base64::engine::general_purpose::STANDARD.encode(signing_seed);
 
-    // 签 hash (712) → signature + sessionSignature
-    if !unsigned.hash.is_empty() {
-        let sig = crate::crypto::ed25519_sign_eip191(&unsigned.hash, signing_seed, "hex")?;
-        m.insert("signature".into(), json!(sig));
-        // sessionSignature: 与线上一致，ed25519_sign_encoded(hash)
+    // eip712_message_hash 非空 → ed25519_sign_encoded（TEE 场景标准算法，跟 unsigned_tx_hash→sessionSignature 一致），
+    // 结果写入 sessionSignature。
+    if !unsigned.eip712_message_hash.is_empty() {
+        let session_sig = crate::crypto::ed25519_sign_encoded(
+            &unsigned.eip712_message_hash,
+            &signing_seed_b64,
+            &unsigned.encoding,
+        )?;
+        m.insert("sessionSignature".into(), json!(session_sig));
+    }
+    // 向后兼容旧字段 hash（新后端不再返）
+    if !unsigned.hash.is_empty() && unsigned.eip712_message_hash.is_empty() {
         let session_sig = crate::crypto::ed25519_sign_encoded(
             &unsigned.hash,
             &signing_seed_b64,
@@ -785,8 +806,8 @@ fn gs_build_extra_data(
     ed["serviceCharge"] = json!(unsigned.service_charge);
     ed["feeTokenAddress"] = json!(unsigned.service_charge_fee_token_address);
     // 合约 nonce
-    if !unsigned.contract_nonce.is_null() {
-        ed["contractNonce"] = unsigned.contract_nonce.clone();
+    if !unsigned.contract_nonce.is_empty() {
+        ed["contractNonce"] = json!(unsigned.contract_nonce);
     }
     // relayerId + context: 从 tokenList 中匹配选中的 token
     if let Some(selected) = unsigned.gas_station_token_list.iter().find(|t| {
@@ -934,6 +955,119 @@ async fn gas_station_sign_and_broadcast(
     }
 }
 
+// ── Gas Station status handlers（对齐 review.md Section 0） ─────────────────
+
+/// HAS_PENDING_TX: 有 pending 交易，拦截不继续
+fn handle_gs_pending_tx() -> Result<()> {
+    output::success(json!({
+        "gasStationUsed": true,
+        "hasPendingTx": true,
+    }));
+    Ok(())
+}
+
+/// INSUFFICIENT_ALL: 所有 gas token 不足，引导充值
+fn handle_gs_insufficient_all(
+    unsigned: &crate::wallet_api::UnsignedInfoResponse,
+    from_addr: &str,
+) -> Result<()> {
+    output::success(json!({
+        "gasStationUsed": true,
+        "insufficientAll": true,
+        "gasStationTokenList": unsigned.gas_station_token_list,
+        "fromAddr": from_addr,
+    }));
+    Ok(())
+}
+
+/// Build sufficient-token list string for CliConfirming messages
+fn format_sufficient_tokens(unsigned: &crate::wallet_api::UnsignedInfoResponse) -> String {
+    unsigned
+        .gas_station_token_list
+        .iter()
+        .filter(|t| t.sufficient)
+        .enumerate()
+        .map(|(i, t)| format!("{}. {} (balance: {}, fee: {})", i + 1, t.symbol, t.balance, t.service_charge))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// FIRST_TIME_PROMPT: 首次启用，需要用户确认选 token（Scene A）
+fn handle_gs_first_time_prompt(
+    unsigned: &crate::wallet_api::UnsignedInfoResponse,
+) -> Result<()> {
+    let token_list_str = format_sufficient_tokens(unsigned);
+    let message = format!(
+        "Your native token balance is insufficient to pay gas. You can enable Gas Station to pay gas with stablecoins.\n\
+         \nAvailable tokens:\n{}\n\
+         \nThree options:\n\
+         1. Enable and set a default token: choose a token above, future transactions will use it automatically.\n\
+         2. Enable without setting default: system will auto-select the token with highest balance each time.\n\
+         3. Do NOT enable Gas Station: terminate this flow. Top up native token and try again.",
+        token_list_str
+    );
+    let next = format!(
+        "Option 1 (enable + set default): --gas-token-address <addr> --relayer-id <id> --enable-gas-station\n\
+         Option 2 (enable, no default): --enable-gas-station\n\
+         Option 3 (do NOT enable): skip re-run, tell user to top up native token\n\
+         Token list: {}",
+        serde_json::to_string(&unsigned.gas_station_token_list).unwrap_or_default()
+    );
+    Err(crate::output::CliConfirming { message, next }.into())
+}
+
+/// READY_TO_USE 但默认 token 不足（Scene C）：展示备选 token 让用户改选
+fn handle_gs_default_token_insufficient(
+    unsigned: &crate::wallet_api::UnsignedInfoResponse,
+) -> Result<()> {
+    let token_list_str = format_sufficient_tokens(unsigned);
+    let message = format!(
+        "Your default gas token has insufficient balance. Choose an alternative token to pay gas:\n{}\n\
+         \nOptions:\n\
+         1. Use for this transaction only (default token unchanged).\n\
+         2. Use and update as new default token.",
+        token_list_str
+    );
+    let next = format!(
+        "Option 1 (this time only): --gas-token-address <addr> --relayer-id <id>\n\
+         Option 2 (use + update default): --gas-token-address <addr> --relayer-id <id>, then run: wallet gas-station update-default-token --chain <chain> --gas-token-address <addr>\n\
+         Token list: {}",
+        serde_json::to_string(&unsigned.gas_station_token_list).unwrap_or_default()
+    );
+    Err(crate::output::CliConfirming { message, next }.into())
+}
+
+/// PENDING_UPGRADE / REENABLE_ONLY / READY_TO_USE（默认 token 充足）：后端已给 hash，直接签+广播
+#[allow(clippy::too_many_arguments)]
+async fn handle_gs_auto_sign_broadcast(
+    client: &mut crate::wallet_api::WalletApiClient,
+    access_token: &str,
+    account_id: &str,
+    addr_info: &crate::wallet_store::AddressInfo,
+    session: &crate::wallet_store::SessionJson,
+    unsigned: &crate::wallet_api::UnsignedInfoResponse,
+    force: bool,
+    recipient: &str,
+    amt: &str,
+    contract_token: Option<&str>,
+) -> Result<()> {
+    let resp = gas_station_sign_and_broadcast(
+        client, access_token, account_id, addr_info, session, unsigned,
+        force, recipient, amt, contract_token,
+    )
+    .await?;
+    output::success(json!({
+        "txHash": resp.tx_hash,
+        "orderId": resp.order_id,
+        "gasStationUsed": true,
+        "autoSelectedToken": unsigned.auto_selected_token,
+        "serviceCharge": unsigned.service_charge,
+        "serviceChargeSymbol": unsigned.service_charge_symbol,
+        "gasStationTokenList": unsigned.gas_station_token_list,
+    }));
+    Ok(())
+}
+
 // ── contract-call ─────────────────────────────────────────────────────
 
 /// onchainos wallet contract-call
@@ -951,6 +1085,9 @@ pub async fn cmd_contract_call(
     mev_protection: bool,
     jito_unsigned_tx: Option<&str>,
     force: bool,
+    gas_token_address: Option<&str>,
+    relayer_id: Option<&str>,
+    enable_gas_station: bool,
 ) -> Result<()> {
     let resp = execute_contract_call(
         to,
@@ -966,6 +1103,9 @@ pub async fn cmd_contract_call(
         jito_unsigned_tx,
         force,
         None, // tx_source: not cross-chain
+        gas_token_address,
+        relayer_id,
+        enable_gas_station,
     )
     .await?;
     output::success(json!({ "txHash": resp.tx_hash, "orderId": resp.order_id }));
@@ -989,6 +1129,9 @@ pub async fn execute_contract_call(
     jito_unsigned_tx: Option<&str>,
     force: bool,
     tx_source: Option<&str>,
+    gas_token_address: Option<&str>,
+    relayer_id: Option<&str>,
+    enable_gas_station: bool,
 ) -> Result<crate::wallet_api::BroadcastResponse> {
     if to.is_empty() || chain.is_empty() {
         bail!("to and chain are required");
@@ -1011,6 +1154,9 @@ pub async fn execute_contract_call(
             aa_dex_token_addr,
             aa_dex_token_amount,
             jito_unsigned_tx,
+            gas_token_address,
+            relayer_id,
+            enable_gas_station,
         },
         true,
         mev_protection,
@@ -1230,6 +1376,9 @@ mod tests {
             false,
             None,
             false,
+            None,
+            None,
+            false,
         )
         .await;
         assert!(result.is_err());
@@ -1252,6 +1401,9 @@ mod tests {
             None,
             None,
             false,
+            None,
+            false,
+            None,
             None,
             false,
         )
@@ -1278,6 +1430,9 @@ mod tests {
             false,
             None,
             false,
+            None,
+            None,
+            false,
         )
         .await;
         assert!(result.is_err());
@@ -1287,7 +1442,8 @@ mod tests {
     #[tokio::test]
     async fn cmd_contract_call_rejects_missing_input_and_unsigned() {
         let result = cmd_contract_call(
-            "0xTo", "1", "0", None, None, None, None, None, None, false, None, false,
+            "0xTo", "1", "0", None, None, None, None, None, None, false, None, false, None, None,
+            false,
         )
         .await;
         assert!(result.is_err());

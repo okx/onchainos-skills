@@ -126,7 +126,8 @@ Pay gas with stablecoins (USDT/USDC/USDG) when native token is insufficient. Act
 | # | Command | Description | Auth Required |
 |---|---|---|---|
 | D-GS1 | `onchainos wallet gas-station update-default-token` | Change the default gas payment token for a chain | Yes |
-| D-GS2 | `onchainos wallet gas-station disable` | Disable Gas Station (DB flag only; on-chain 7702 delegation preserved) | Yes |
+| D-GS2 | `onchainos wallet gas-station enable` | Enable Gas Station (DB flag only; requires 7702 delegation already on-chain). First-time activation still happens through `wallet send`. | Yes |
+| D-GS3 | `onchainos wallet gas-station disable` | Disable Gas Station (DB flag only; on-chain 7702 delegation preserved) | Yes |
 
 <MUST>
 **Load `references/gas-station.md`** when any of these happen:

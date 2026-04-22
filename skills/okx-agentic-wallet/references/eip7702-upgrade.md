@@ -120,8 +120,8 @@ When 7702 is triggered outside of Gas Station send (e.g., standalone upgrade req
 
 | Case | Detection | Response |
 |---|---|---|
-| Upgrade in progress | `hasPendingTx: true` from unsignedInfo | "A previous transaction (including 7702 upgrade) is still processing. Please wait." |
-| Upgraded by third party | Backend returns gasStationUsed=false | Backend detects incompatible 7702 delegation and falls back to normal flow. If user asks, explain: "Your wallet has a 7702 delegation from another service that is not compatible with Gas Station." |
-| Re-enable shortcut | state `REENABLE_ONLY` returned (DB disabled + on-chain delegated) | No 7702 upgrade, no token selection — just flips DB flag. CLI re-enables silently. |
+| Upgrade in progress | `gasStationStatus="HAS_PENDING_TX"` + `hasPendingTx: true` | Use PRD wording: "当前有一笔交易正在处理中，暂时无法通过 Gas 加油站支付 Gas。请等待该笔交易完成后重试，或充值主网币后继续转账。" Do NOT mention "7702 upgrade" to the user — the pending is opaque from user's perspective. |
+| Incompatible on-chain wallet state | Backend returns `gasStationStatus="NOT_APPLICABLE"` + `gasStationUsed=false` on a supported chain where Gas Station should otherwise apply | Backend detects incompatible on-chain wallet state and falls back to normal flow. If user asks, respond: "Gas Station is not available for your wallet on this chain. Please use native tokens to pay gas." Do NOT explain "7702 delegation" to the user. |
+| Re-enable shortcut | `gasStationStatus="REENABLE_ONLY"` returned (DB disabled + on-chain already delegated) | No on-chain upgrade, no token selection — CLI re-enables silently via the auto-path handler. User-facing: treat like a normal Gas Station send (show `serviceCharge` + `orderId`). Do NOT expose "7702" / "delegation" to the user. |
 | User asks "what is 7702" / "EIP-7702 是什么" | User **actively** asks (not Agent-initiated) | 可以简短解释：是一个让钱包支持用稳定币付 Gas 的底层协议升级，首次开启 Gas Station 时会自动完成。但 Agent **不主动**提 7702，避免技术概念干扰。 |
 | User asks "how to revoke" / "取消授权" / "撤销 7702" | User inquiry | **不用"撤销"口径回答**。直接说："可以随时关闭 Gas Station，切换回主网币支付 Gas。" 引导到 `disable`。不提 7702、不提"授权"。 |

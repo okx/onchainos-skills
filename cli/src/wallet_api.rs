@@ -220,6 +220,42 @@ struct AddressListData {
     accounts: Vec<AddressListAccountItem>,
 }
 
+/// Gas Station status enum（对齐后端 gasStationStatus 字段和 review.md Section 0）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GasStationStatus {
+    /// 主币转账 / 不支持链，不走 GS
+    NotApplicable,
+    /// DB 无记录 + 链上未委托，需用户选 token 首次启用
+    FirstTimePrompt,
+    /// 链上未委托，签 712 + 7702 auth 做首次升级
+    PendingUpgrade,
+    /// DB disable + 链上已委托，仅重新打开 DB 开关
+    ReenableOnly,
+    /// DB enabled + 链上已委托，稳态正常代付（需根据 hash 是否为空判断默认 token 是否足够）
+    ReadyToUse,
+    /// 所有 gas token 余额不足
+    InsufficientAll,
+    /// 有 pending 交易阻塞
+    HasPendingTx,
+    /// 枚举未知或为空（兼容旧后端走 fallback 路径）
+    Unknown,
+}
+
+impl GasStationStatus {
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "NOT_APPLICABLE" => Self::NotApplicable,
+            "FIRST_TIME_PROMPT" => Self::FirstTimePrompt,
+            "PENDING_UPGRADE" => Self::PendingUpgrade,
+            "REENABLE_ONLY" => Self::ReenableOnly,
+            "READY_TO_USE" => Self::ReadyToUse,
+            "INSUFFICIENT_ALL" => Self::InsufficientAll,
+            "HAS_PENDING_TX" => Self::HasPendingTx,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnsignedInfoResponse {
@@ -247,6 +283,9 @@ pub struct UnsignedInfoResponse {
     pub encoding: String,
     #[serde(default, deserialize_with = "nullable_string")]
     pub jito_unsigned_tx: String,
+    /// backend 返的 712 message hash（contract-call 等场景）；非空时客户端需 ed25519_sign_encoded 算 sessionSignature
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub eip712_message_hash: String,
     // ── Gas Station fields ──
     #[serde(default, deserialize_with = "nullable_bool")]
     pub gas_station_used: bool,
@@ -270,14 +309,23 @@ pub struct UnsignedInfoResponse {
     pub auto_selected_token: bool,
     #[serde(default, deserialize_with = "nullable_bool")]
     pub gas_station_disabled: bool,
-    #[serde(default)]
-    pub contract_nonce: Value,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub gas_station_status: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub contract_nonce: String,
     #[serde(default, deserialize_with = "nullable_string")]
     pub eoa_nonce: String,
     #[serde(default)]
     pub user712_data: Value,
     #[serde(default)]
     pub user7702_data: Value,
+}
+
+impl UnsignedInfoResponse {
+    /// 解析后端返回的 gasStationStatus 字符串为枚举
+    pub fn gs_status(&self) -> GasStationStatus {
+        GasStationStatus::parse(&self.gas_station_status)
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
@@ -424,6 +472,39 @@ impl WalletApiClient {
                 eprintln!("[DEBUG][post_authed] url_path={}", &url);
             }
 
+            // TEMPORARY: 50026 排查 — dump 完整 URL + 请求路径 + 请求体。
+            // 两处落盘：`_last-raw-request.json`（覆盖，看最新）
+            // 和 `history/<ts>-req-<path>.json`（不覆盖，history 目录超过 1h 的旧文件每次写入时清理）。
+            // 去除时机：50026 定位结束后回滚（搜索 "50026 排查"）。
+            eprintln!("[REQ] POST {}", &url);
+            if let Ok(home) = crate::home::onchainos_home() {
+                let debug_dir = home.join("gas-station-debug");
+                let _ = std::fs::create_dir_all(&debug_dir);
+                let payload = serde_json::to_string_pretty(&serde_json::json!({
+                    "ts": chrono::Utc::now().to_rfc3339(),
+                    "url": &url,
+                    "path": path,
+                    "body": body,
+                }))
+                .unwrap_or_default();
+                let _ = std::fs::write(debug_dir.join("_last-raw-request.json"), &payload);
+                let hist_dir = debug_dir.join("history");
+                if std::fs::create_dir_all(&hist_dir).is_ok() {
+                    crate::commands::agentic_wallet::debug_dump::cleanup_old(&hist_dir);
+                    let slug: String = path
+                        .trim_start_matches('/')
+                        .chars()
+                        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+                        .collect();
+                    let fname = format!(
+                        "{}-req-{}.json",
+                        chrono::Utc::now().format("%Y%m%dT%H%M%S%6fZ"),
+                        slug
+                    );
+                    let _ = std::fs::write(hist_dir.join(fname), &payload);
+                }
+            }
+
             let mut headers = crate::client::ApiClient::jwt_headers(access_token);
             if let Some(extra) = extra_headers {
                 for (k, v) in extra {
@@ -474,6 +555,43 @@ impl WalletApiClient {
             eprintln!("[DEBUG][post_authed_no_retry] url_path={}", &url);
         }
 
+        // TEMPORARY: debug dump — broadcast 专用路径也补 request 落盘，和 post_authed_with_headers 保持一致。
+        // 两处落盘：_last-raw-request.json（覆盖）+ history/<ts>-req-<path>.json（保留 1h）
+        eprintln!("[REQ] POST {}", &url);
+        if let Ok(home) = crate::home::onchainos_home() {
+            let debug_dir = home.join("gas-station-debug");
+            let _ = std::fs::create_dir_all(&debug_dir);
+            let payload = serde_json::to_string_pretty(&serde_json::json!({
+                "ts": chrono::Utc::now().to_rfc3339(),
+                "url": &url,
+                "path": path,
+                "body": body,
+            }))
+            .unwrap_or_default();
+            let _ = std::fs::write(debug_dir.join("_last-raw-request.json"), &payload);
+            let hist_dir = debug_dir.join("history");
+            if std::fs::create_dir_all(&hist_dir).is_ok() {
+                crate::commands::agentic_wallet::debug_dump::cleanup_old(&hist_dir);
+                let slug: String = path
+                    .trim_start_matches('/')
+                    .chars()
+                    .map(|c| {
+                        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
+                    .collect();
+                let fname = format!(
+                    "{}-req-{}.json",
+                    chrono::Utc::now().format("%Y%m%dT%H%M%S%6fZ"),
+                    slug
+                );
+                let _ = std::fs::write(hist_dir.join(fname), &payload);
+            }
+        }
+
         let mut headers = crate::client::ApiClient::jwt_headers(access_token);
         if let Some(extra) = extra_headers {
             for (k, v) in extra {
@@ -510,21 +628,48 @@ impl WalletApiClient {
 
     async fn handle_response(&self, resp: reqwest::Response) -> Result<Value> {
         let status = resp.status();
-        // TEMPORARY: Gas Station 联调 — 收集完整原始响应
+        let url_str = resp.url().to_string();
+        // TEMPORARY: Gas Station 联调 — 收集完整原始响应。
+        // 两处落盘：_last-raw-response.json（覆盖）+ history/<ts>-res-<path>.json（保留 1h）
         let raw_text = resp.text().await.context("failed to read response body")?;
-        // 记录最后一次原始响应，方便排查
         if let Ok(home) = crate::home::onchainos_home() {
             let debug_dir = home.join("gas-station-debug");
             let _ = std::fs::create_dir_all(&debug_dir);
-            let _ = std::fs::write(
-                debug_dir.join("_last-raw-response.json"),
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "ts": chrono::Utc::now().to_rfc3339(),
-                    "httpStatus": status.as_u16(),
-                    "rawBody": &raw_text,
-                }))
-                .unwrap_or_default(),
-            );
+            let payload = serde_json::to_string_pretty(&serde_json::json!({
+                "ts": chrono::Utc::now().to_rfc3339(),
+                "url": &url_str,
+                "httpStatus": status.as_u16(),
+                "rawBody": &raw_text,
+            }))
+            .unwrap_or_default();
+            let _ = std::fs::write(debug_dir.join("_last-raw-response.json"), &payload);
+            let hist_dir = debug_dir.join("history");
+            if std::fs::create_dir_all(&hist_dir).is_ok() {
+                crate::commands::agentic_wallet::debug_dump::cleanup_old(&hist_dir);
+                // 从 URL 里抽 path 作 slug
+                let path_slug: String = url_str
+                    .split("/priapi/")
+                    .nth(1)
+                    .unwrap_or("unknown")
+                    .split('?')
+                    .next()
+                    .unwrap_or("unknown")
+                    .chars()
+                    .map(|c| {
+                        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
+                    .collect();
+                let fname = format!(
+                    "{}-res-{}.json",
+                    chrono::Utc::now().format("%Y%m%dT%H%M%S%6fZ"),
+                    path_slug
+                );
+                let _ = std::fs::write(hist_dir.join(fname), &payload);
+            }
         }
 
         if status.as_u16() >= 500 {
@@ -931,10 +1076,12 @@ impl WalletApiClient {
         access_token: &str,
         chain_index: &str,
         gas_token_address: &str,
+        from_addr: &str,
     ) -> Result<Value> {
         let body = json!({
             "chainIndex": chain_index,
             "gasTokenAddress": gas_token_address,
+            "fromAddr": from_addr,
         });
         self.post_authed(
             "/priapi/v5/wallet/agentic/gas-station/update-default-token",
@@ -944,18 +1091,27 @@ impl WalletApiClient {
         .await
     }
 
-    /// POST /priapi/v5/wallet/agentic/gas-station/disable
-    /// Disable Gas Station (DB flag only, no on-chain action).
-    pub async fn gas_station_disable(
+    /// POST /priapi/v5/wallet/agentic/gas-station/update
+    /// Flip Gas Station DB flag (enabled=true / false), no on-chain action.
+    /// `from_addr` is required by backend when `enabled=true`; disable (`enabled=false`)
+    /// does not need it. On-chain 7702 delegation is preserved on disable; re-enable
+    /// requires 7702 already present (backend returns msg in body if not).
+    pub async fn gas_station_update(
         &mut self,
         access_token: &str,
         chain_index: &str,
+        enable: bool,
+        from_addr: Option<&str>,
     ) -> Result<Value> {
-        let body = json!({
+        let mut body = json!({
             "chainIndex": chain_index,
+            "enabled": enable,
         });
+        if let Some(addr) = from_addr {
+            body["fromAddr"] = Value::String(addr.to_string());
+        }
         self.post_authed(
-            "/priapi/v5/wallet/agentic/gas-station/disable",
+            "/priapi/v5/wallet/agentic/gas-station/update",
             access_token,
             &body,
         )

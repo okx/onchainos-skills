@@ -313,7 +313,7 @@ onchainos wallet send \
 | `--force` | bool | No | Skip confirmation prompts from the backend (default false). Use when re-running a command after the user has confirmed a `confirming` response. |
 | `--gas-token-address` | string | No | Gas Station: token contract address to pay gas (from confirming response tokenList). Second-phase call only. |
 | `--relayer-id` | string | No | Gas Station: relayer ID (from confirming response tokenList). Second-phase call only. |
-| `--enable-gas-station` | bool | No | Gas Station: first-time activation flag. Sets gas-token-address as default. Scene A only. |
+| `--enable-gas-station` | bool | No | Gas Station: first-time activation flag. When `--gas-token-address` is also given, sets it as default (Scene A option 1). When passed alone, enables without a default (Scene A option 2, backend auto-picks highest-balance token). |
 
 **Return fields (normal):**
 
@@ -321,27 +321,47 @@ onchainos wallet send \
 |---|---|---|
 | `txHash` | String | Broadcast transaction hash |
 
-**Return fields (Gas Station auto-selected, Scene B/D):**
+**Return fields (Gas Station auto-path — gasStationStatus ∈ {READY_TO_USE / PENDING_UPGRADE / REENABLE_ONLY} with hash non-empty):**
 
 | Field | Type | Description |
 |---|---|---|
-| `txHash` | String | Broadcast transaction hash |
+| `txHash` | String | Broadcast transaction hash (may be empty; relayer returns async) |
+| `orderId` | String | Order ID for async status query via `wallet history --chain <chain> --order-id <id>` (routes to `/order/detail`) |
 | `gasStationUsed` | Boolean | `true` |
+| `gasStationStatus` | String | Enum: READY_TO_USE / PENDING_UPGRADE / REENABLE_ONLY |
 | `autoSelectedToken` | Boolean | Backend auto-selected the gas token |
 | `serviceCharge` | String | Gas fee amount (integer, multiplied by token decimal) |
 | `serviceChargeSymbol` | String | Gas fee token symbol (e.g. "USDT") |
 
-**Confirming response (Gas Station Scene A/C — exit code 2):**
+**Confirming response (Gas Station FIRST_TIME_PROMPT or READY_TO_USE with default-insufficient — exit code 2):**
 
-When native token is insufficient and Gas Station can help, the CLI returns a confirming response with the available token list in the `next` field. See SKILL.md "Gas Station Confirming" section for Agent handling instructions.
+When Gas Station needs user input, the CLI returns a confirming response with the available token list in the `next` field. The `message` body distinguishes the two subcases:
+- FIRST_TIME_PROMPT (Scene A) — first-time enable, 3-option decision tree
+- READY_TO_USE with empty hash (Scene C) — default insufficient, 2-question decision tree
 
-**Return fields (Gas Station insufficient, Scene E):**
+See `references/gas-station.md` Step 2 for Agent handling instructions.
+
+**Return fields (Gas Station INSUFFICIENT_ALL):**
 
 | Field | Type | Description |
 |---|---|---|
 | `gasStationUsed` | Boolean | `true` |
+| `gasStationStatus` | String | `"INSUFFICIENT_ALL"` |
 | `insufficientAll` | Boolean | `true` — all gas tokens insufficient |
+| `gasStationTokenList` | Array | All items with `sufficient: false` |
 | `fromAddr` | String | User address for deposit guidance |
+
+**Return fields (Gas Station HAS_PENDING_TX):**
+
+| Field | Type | Description |
+|---|---|---|
+| `gasStationUsed` | Boolean | `true` |
+| `gasStationStatus` | String | `"HAS_PENDING_TX"` |
+| `hasPendingTx` | Boolean | `true` — a previous Gas Station tx is still pending |
+
+**Return fields (not routed through Gas Station — gasStationStatus=NOT_APPLICABLE):**
+
+Same as regular `wallet send` output (`txHash` / `orderId`). `gasStationUsed=false`.
 
 ---
 
@@ -362,7 +382,20 @@ onchainos wallet gas-station update-default-token \
 | `--chain` | string | Yes | Chain name or ID (e.g. `ethereum` or `1`) |
 | `--gas-token-address` | string | Yes | Token contract address to set as default gas payment token |
 
-### D-GS2. `onchainos wallet gas-station disable`
+### D-GS2. `onchainos wallet gas-station enable`
+
+Enable Gas Station for a specific chain. **DB flag only, no on-chain action.** Requires 7702 delegation already present on-chain — first-time activation happens via `wallet send` (the first ERC-20 send bundles the 7702 upgrade with the first Gas Station broadcast). If the chain has never been delegated, backend returns a msg in the response body — surface it to the user.
+
+```bash
+onchainos wallet gas-station enable \
+  --chain <chain>
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `--chain` | string | Yes | Chain name or ID (e.g. `ethereum` or `1`) |
+
+### D-GS3. `onchainos wallet gas-station disable`
 
 Disable Gas Station for a specific chain. **DB flag only, no on-chain action.** The on-chain 7702 delegation is preserved, so re-enabling later does not require a new 7702 upgrade. `default_gas_token_address` is also preserved.
 
@@ -379,9 +412,13 @@ onchainos wallet gas-station disable \
 
 ## E. History Command (2 modes)
 
-### E1. List Mode (no `--tx-hash`)
+Routing:
+- If any of `--tx-hash` / `--order-id` / `--uop-hash` is provided → **Detail mode** → `/priapi/v5/wallet/agentic/order/detail` (precise single record)
+- Otherwise → **List mode** → `/priapi/v5/wallet/agentic/order/list` (browse paged list)
 
-Browse the transaction order list for the current or specified account.
+### E1. List Mode (browse paged list)
+
+Browse the transaction order list for the current or specified account. Use when the user wants to see recent transactions without knowing a specific identifier.
 
 ```bash
 onchainos wallet history \
@@ -390,9 +427,7 @@ onchainos wallet history \
   [--begin <ms_timestamp>] \
   [--end <ms_timestamp>] \
   [--page-num <cursor>] \
-  [--limit <n>] \
-  [--order-id <id>] \
-  [--uop-hash <hash>]
+  [--limit <n>]
 ```
 
 | Parameter | Type | Required | Description |
@@ -403,8 +438,8 @@ onchainos wallet history \
 | `--end` | string | No | End time filter (millisecond timestamp) |
 | `--page-num` | string | No | Page cursor for pagination |
 | `--limit` | string | No | Number of results per page |
-| `--order-id` | string | No | Filter by specific order ID |
-| `--uop-hash` | string | No | Filter by user operation hash |
+
+> Note: `--order-id` / `--tx-hash` / `--uop-hash` are **not** accepted in list mode — providing any of them routes to detail mode automatically.
 
 **Return fields:**
 
@@ -469,28 +504,41 @@ onchainos wallet history \
 }
 ```
 
-### E2. Detail Mode (with `--tx-hash`)
+### E2. Detail Mode (single order lookup)
 
-Look up a specific transaction by its hash.
+Look up a specific transaction by any of: `--order-id`, `--tx-hash`, or `--uop-hash`. Triggered whenever **any** of those flags is present.
+
+**Preferred for Gas Station**: right after a GS broadcast, the user has the `orderId` but `txHash` is returned asynchronously by the relayer — use `--order-id` to poll status without waiting for the hash.
 
 ```bash
+# Query by orderId (recommended right after broadcast)
 onchainos wallet history \
-  --tx-hash <hash> \
   --chain <chain> \
-  --address <addr> \
-  [--account-id <id>] \
-  [--order-id <id>] \
-  [--uop-hash <hash>]
+  --order-id <id> \
+  [--account-id <id>]
+
+# Query by txHash (once relayer returns hash / for non-GS transactions)
+onchainos wallet history \
+  --chain <chain> \
+  --tx-hash <hash> \
+  [--address <addr>] \
+  [--account-id <id>]
+
+# Query by user-operation hash
+onchainos wallet history \
+  --chain <chain> \
+  --uop-hash <hash> \
+  [--account-id <id>]
 ```
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `--tx-hash` | string | Yes | Transaction hash to look up |
 | `--chain` | string | Yes | Chain name or numeric ID where the transaction occurred (e.g. `ethereum` or `1`, `solana` or `501`) |
-| `--address` | string | Yes | Wallet address that sent/received the transaction |
+| `--order-id` | string | No* | Order ID returned by broadcast. Any one of `--order-id` / `--tx-hash` / `--uop-hash` must be provided to enter detail mode. |
+| `--tx-hash` | string | No* | Transaction hash (may not be available yet for GS transactions — prefer `--order-id` in that case) |
+| `--uop-hash` | string | No* | User operation hash |
+| `--address` | string | No | Wallet address hint (optional; backend filters by identifier above) |
 | `--account-id` | string | No | Account ID. Defaults to the currently selected account. |
-| `--order-id` | string | No | Order ID filter |
-| `--uop-hash` | string | No | User operation hash filter |
 
 **Return fields (detail mode):**
 
