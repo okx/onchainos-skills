@@ -134,12 +134,12 @@ onchainos memepump token-details --address <address> [--chain <chain>]
 | `market.sellTxCount1h` | String | 1-hour sell transaction count |
 | `bondingPercent` | String | Bonding curve progress (0-100) |
 | `tags.top10HoldingsPercent` | String | Top 10 holders percentage (0-100) |
-| `tags.devHoldingsPercent` | String \| null | Dev holdings percentage (0-100); `null` if token is <2 s old (not yet computed) |
-| `tags.insidersPercent` | String \| null | Insiders percentage (0-100); `null` if token is <2 s old (not yet computed) |
-| `tags.bundlersPercent` | String \| null | Bundlers percentage (0-100); `null` if token is <2 s old (not yet computed) |
-| `tags.snipersPercent` | String \| null | Snipers percentage (0-100); `null` if token is <2 s old (not yet computed) |
-| `tags.freshWalletsPercent` | String \| null | Fresh wallets percentage (0-100); `null` if token is <2 s old (not yet computed) |
-| `tags.suspectedPhishingWalletPercent` | String \| null | Phishing wallet percentage (0-100); `null` if token is <2 s old (not yet computed) |
+| `tags.devHoldingsPercent` | String \| null | Dev holdings percentage (0-100); `null` if token is < 2s old |
+| `tags.insidersPercent` | String \| null | Insiders percentage (0-100); `null` if token is < 2s old |
+| `tags.bundlersPercent` | String \| null | Bundlers percentage (0-100); `null` if token is < 2s old |
+| `tags.snipersPercent` | String \| null | Snipers percentage (0-100); `null` if token is < 2s old |
+| `tags.freshWalletsPercent` | String \| null | Fresh wallets percentage (0-100); `null` if token is < 2s old |
+| `tags.suspectedPhishingWalletPercent` | String \| null | Phishing wallet percentage (0-100); `null` if token is < 2s old |
 | `tags.totalHolders` | String | Total holder count |
 | `social.x` | String | X (Twitter) URL |
 | `social.telegram` | String | Telegram URL |
