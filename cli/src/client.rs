@@ -647,7 +647,7 @@ impl ApiClient {
             Err(e) => return Err(e).context("request failed"),
         };
         self.doh.cache_direct_if_needed();
-        self.handle_response(resp).await
+        self.handle_response(path, resp).await
     }
 
     /// Apply optional extra headers to a request builder.
@@ -673,7 +673,7 @@ impl ApiClient {
         }
     }
 
-    async fn handle_response(&self, resp: reqwest::Response) -> Result<Value> {
+    async fn handle_response(&mut self, path: &str, resp: reqwest::Response) -> Result<Value> {
         let status = resp.status();
 
         // Drop transient dispatch state from the previous request so the
@@ -685,11 +685,34 @@ impl ApiClient {
         // state in sync and give us access to the accepts payload.
         self.update_payment_state_from_headers(resp.headers());
         let header_accepts = extract_payment_required_accepts(resp.headers());
-        // 402 responses carry tier-specific accepts — feed them transiently
-        // into notification dispatch, but never persist. Only `/config`
-        // returns accepts with all tiers in one entry, and only that source
-        // is allowed to write `payment_cache.accepts`.
-        self.dispatch_notifications(header_accepts.as_ref());
+
+        // `/config` is an internal fetch path: its response still
+        // updates charging flags via headers above, but we never
+        // dispatch user-facing notifications for it (it's not in the
+        // tier map, so `path_tier` would be None and the fallback
+        // would wrongly emit both tiers). The outer request's
+        // `handle_response` dispatches once `endpoints` is populated.
+        if path != CONFIG_PATH {
+            // If charging just flipped on but `endpoints` is still
+            // empty (`/config` was skipped at request time because
+            // nothing was charging yet), fetch `/config` inline so
+            // `dispatch_notifications` has a valid `path_tier` and
+            // only emits OVER_QUOTA for the tier this path maps to.
+            // Box::pin breaks the async recursion cycle:
+            // handle_response → ensure_payment_config → do_get_request
+            // → handle_response (short-circuits for /config).
+            let needs_config = {
+                let s = self.payment_state();
+                s.endpoints.is_empty() && (s.basic_charging || s.premium_charging)
+            };
+            if needs_config {
+                Box::pin(self.ensure_payment_config()).await;
+            }
+            // 402 responses carry tier-specific accepts — feed them
+            // transiently into notification dispatch, but never
+            // persist. Only `/config` writes `payment_cache.accepts`.
+            self.dispatch_notifications(path, header_accepts.as_ref());
+        }
 
         if status.as_u16() == 429 {
             bail!("Rate limited — retry with backoff");
@@ -805,7 +828,7 @@ impl ApiClient {
                 Err(e) => return Err(e).context("request failed"),
             };
             self.doh.cache_direct_if_needed();
-            return self.handle_response(resp).await;
+            return self.handle_response(path, resp).await;
         }
     }
 
@@ -854,7 +877,7 @@ impl ApiClient {
                 Err(e) => return Err(e).context("request failed"),
             };
             self.doh.cache_direct_if_needed();
-            return self.handle_response(resp).await;
+            return self.handle_response(path, resp).await;
         }
     }
 
@@ -1183,10 +1206,7 @@ impl ApiClient {
     /// process-global buffer (drained into the CLI / MCP response
     /// envelope later), and persists the dedupe flags so each event
     /// fires at most once per account lifetime.
-    fn dispatch_notifications(&self, header_accepts: Option<&Value>) {
-        if std::env::var("ONCHAINOS_QUIET").as_deref() == Ok("1") {
-            return;
-        }
+    fn dispatch_notifications(&self, path: &str, header_accepts: Option<&Value>) {
         let now = chrono::Utc::now().timestamp();
         let input = {
             let state = self.payment_state();
@@ -1202,6 +1222,7 @@ impl ApiClient {
                 basic_over_shown: state.basic_over_shown,
                 premium_over_shown: state.premium_over_shown,
                 accepts: header_accepts.cloned().or_else(|| state.accepts.clone()),
+                path_tier: state.endpoints.get(path).copied(),
             }
         };
         let events = payment_notify::compute_events(&input, now);

@@ -154,6 +154,14 @@ pub struct NotifyInput {
     /// amount, payTo, ...) to over-quota events so the skill can
     /// render exactly what the user is about to pay.
     pub accepts: Option<serde_json::Value>,
+    /// Tier that the current request path maps to. When `Some`, the
+    /// over-quota event is only emitted for the matching tier — the
+    /// other tier's shown flag is left untouched so its first real
+    /// use will still surface an `OVER_QUOTA` + `confirming`. When
+    /// `None` (path not yet in the endpoints map, typically before
+    /// `/config` has been fetched), we fall back to emitting every
+    /// charging tier that hasn't been shown yet.
+    pub path_tier: Option<PaymentTier>,
 }
 
 /// Format a Unix-seconds timestamp as an RFC3339 UTC string. Returns an
@@ -242,10 +250,16 @@ pub fn compute_events(input: &NotifyInput, now: i64) -> Vec<(Event, Flag)> {
         }
     };
 
-    if input.basic_charging && !input.basic_over_shown {
+    let matches_path = |tier: PaymentTier| -> bool {
+        match input.path_tier {
+            Some(t) => t == tier,
+            None => true,
+        }
+    };
+    if input.basic_charging && !input.basic_over_shown && matches_path(PaymentTier::Basic) {
         events.push((over_quota(PaymentTier::Basic), Flag::BasicOver));
     }
-    if input.premium_charging && !input.premium_over_shown {
+    if input.premium_charging && !input.premium_over_shown && matches_path(PaymentTier::Premium) {
         events.push((over_quota(PaymentTier::Premium), Flag::PremiumOver));
     }
 
@@ -362,6 +376,7 @@ mod tests {
             basic_over_shown: false,
             premium_over_shown: false,
             accepts: None,
+            path_tier: None,
         }
     }
 
@@ -665,6 +680,44 @@ mod tests {
         assert!(amount_minimal_to_display("").is_none());
         assert!(amount_minimal_to_display("abc").is_none());
         assert!(amount_minimal_to_display("-100").is_none());
+    }
+
+    #[test]
+    fn path_tier_filters_over_quota_to_matching_tier_only() {
+        // Both tiers flipped to charging this response, but the current
+        // request path is Basic — we should emit exactly one OVER_QUOTA
+        // for Basic and leave the Premium shown flag untouched.
+        let mut i = base();
+        i.user_type = Some(UserType::New);
+        i.intro_shown = true;
+        i.basic_charging = true;
+        i.premium_charging = true;
+        i.path_tier = Some(PaymentTier::Basic);
+        let events = compute_events(&i, 0);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1, Flag::BasicOver);
+
+        // Now the same response but the path is Premium.
+        i.path_tier = Some(PaymentTier::Premium);
+        let events = compute_events(&i, 0);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1, Flag::PremiumOver);
+    }
+
+    #[test]
+    fn path_tier_none_falls_back_to_emit_all_charging_tiers() {
+        // Fallback for pre-/config requests where the endpoint map is
+        // still empty — preserves the original "fire both" behavior.
+        let mut i = base();
+        i.user_type = Some(UserType::New);
+        i.intro_shown = true;
+        i.basic_charging = true;
+        i.premium_charging = true;
+        i.path_tier = None;
+        let events = compute_events(&i, 0);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].1, Flag::BasicOver);
+        assert_eq!(events[1].1, Flag::PremiumOver);
     }
 
     #[test]
