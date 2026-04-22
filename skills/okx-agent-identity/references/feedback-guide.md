@@ -54,17 +54,21 @@ Walk this ladder in order:
 
 ### Step 5 — Final confirmation
 
-```
-确认：
-  你（creator #88 requester MyBuyer）
-  要给 #42 (DeFi Analyzer, provider) 打 85 分
-  评价: "交付及时、数据准确"
-  task-id: 0xabc...03e8
+Render a 2-column table (not a bash blob). Follow `display-formats.md` §Create/Update Diff style:
 
-确认无误回复 "执行"。
-```
+| Field | Value |
+|---|---|
+| creator | #88 requester MyBuyer (你) |
+| target | #42 DeFi Analyzer (provider) |
+| score | 85 / 100 |
+| description | "交付及时、数据准确" |
+| task-id | 0xabc…03e8 |
 
-### Step 6 — Execute
+> 确认无误回复 "执行"。
+
+**Do NOT show the bash command in the confirmation card.** Render it only if the user explicitly asks "把命令给我看".
+
+### Step 6 — Execute (maintainer reference — not shown to user)
 
 ```bash
 onchainos agent feedback-submit \
@@ -77,10 +81,11 @@ onchainos agent feedback-submit \
 
 ### Step 7 — Post-success
 
-Render confirmation and suggest:
+Render the detail outcome and offer exactly **one** next-step suggestion — not a menu (see `display-formats.md` §8):
 
-- "要不要看看 #<target> 的最新评分分布？执行 `agent feedback-list <target> --sort-by newest`。"
-- If the rating was based on a task: "要去 `okx-agent-task` 确认那笔任务已经 complete 吗？"
+> 已给 #<target> 打 <score> 分。要不要看看 #<target> 的最新评分分布？执行 `agent feedback-list <target> --sort-by newest`。
+
+Do NOT chase with `agent feedback-list` automatically. See `_shared/no-polling.md`.
 
 ---
 

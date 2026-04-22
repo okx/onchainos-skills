@@ -34,8 +34,9 @@ All strings in the first column are raw `bail!` messages emitted by `cli/src/com
 
 ## General handling principles
 
-1. **Translate, don't parrot.** Always show the user the 中文 friendly version; the raw CLI message goes into the footer of the error card (`display-formats.md` §6) for debuggability.
+1. **Translate, don't parrot.** Always show the user the 中文 friendly version; the raw CLI message goes into the footer of the error card (`display-formats.md` §7) for debuggability.
 2. **Recover, don't abort.** For every row above, there is a concrete "回到哪一步" action. Keep the user in the flow.
-3. **Do not retry silently** for business errors (4xx-class). Report to the user and ask.
-4. **Retry once** for transient 5xx/network errors. If it fails a second time, surface the error and move on.
-5. **Update this file** the moment `cli/src/commands/agent_commerce/identity/**` changes a `bail!` string — otherwise translations will silently rot.
+3. **Do not retry silently** for business errors (4xx-class). Render the error card and stop — the user decides the next step. See `_shared/no-polling.md`.
+4. **Retry once** for transient 5xx/network errors. If it fails a second time, surface the error and move on. Never loop.
+5. **Do not chase failures with a `get`.** If `activate` fails, do NOT run `agent get` to "see what happened" — the error message is authoritative. Render the card and wait.
+6. **Update this file** the moment `cli/src/commands/agent_commerce/identity/**` changes a `bail!` string — otherwise translations will silently rot.

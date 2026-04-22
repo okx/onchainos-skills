@@ -1,166 +1,73 @@
-# Role Playbook — `agent create` by Role
+# Role Playbook — Router + Shared Rules
 
-Three branches: `requester` / `provider` / `evaluator`. Every branch ends with the same outer loop:
+> Entry point for `agent create`. This file is intentionally thin: it routes to the three role-specific files and spells out the rules that apply to all of them. Read the matching role file for the full Q&A chain.
 
-1. Confirm the collected fields in one summary message.
-2. Show the exact CLI command about to run.
-3. Ask for explicit "执行" / "yes" before running.
-4. On success, render the detail card (see `display-formats.md`) and offer the next-step suggestion from the SKILL.md Suggest Next Steps table.
+## Route to the right role file
 
-> Never prefill `--role`. Never accept JSON service arrays dumped by the user — always walk the step-by-step Q&A.
-
----
-
-## A. requester (买家)
-
-**Goal:** register a buyer identity. No services.
-
-### Q&A chain
-
-| # | Prompt | Validation | Next on failure |
-|---|---|---|---|
-| 1 | "起个 agent 名字吧（显示给其他 agent 看的，例如 `MyBuyer`）" | non-empty, ≤ 64 chars | re-ask |
-| 2 | "描述一下这个 agent 的用途，一两句就行" | non-empty, ≤ 500 chars | re-ask |
-| 3 | (optional) "要上传头像吗？" → branch to `avatar-upload.md` | — | skip → default backend avatar |
-
-Do NOT ask for a service. Do NOT ask for `--address`. Do NOT ask about staking.
-
-### Good / bad cases
-
-| User input | Action |
+| User intent | Read |
 |---|---|
-| "叫 Alice" | `--name "Alice"` then prompt for description. |
-| "描述你自己来一个吧" | Reject polite deferral — explain the description is shown publicly to counterparties, then ask one more time with an example: "可以是 `做 DeFi 研究，经常雇佣数据服务`" |
-| "我要一个 buyer 叫 Alice，做 DeFi 研究" | Extract `name=Alice` + `description=做 DeFi 研究` in one turn; still confirm before execute. |
-| "service 是 ..." | Politely ignore — explain requesters do not declare services; services belong to providers. |
+| "注册买家 / requester / buyer / 发任务被系统要求建身份" | `role-requester.md` (includes Passive Onboarding sub-flow) |
+| "注册 provider / 服务方 / 上架服务" | `role-provider.md` |
+| "注册 evaluator / 验证者 / 仲裁者 / 我想当仲裁" | `role-evaluator.md` (includes 质押二选一 flow) |
+| Incoming context `intent=need-requester` | `passive-onboarding.md` → `role-requester.md` |
 
-### Execute
+If the user said "注册一个 agent" without specifying a role, ask the three-option question first:
 
-```bash
-onchainos agent create \
-  --role requester \
-  --name "<name>" \
-  --description "<description>" \
-  [--picture "<url>"]
-```
+> "你要注册哪种身份？买家 (requester) / 服务方 (provider) / 验证者 (evaluator)？"
 
-### Post-success suggestion
+Do NOT default. Do NOT guess from the name / description fields.
 
-> "注册完成，agent #<id> 已生效。要不要开始发布任务？走 `okx-agent-task` 的 `create-task` 流程。"
+## Field prompts
 
----
+All eight fields (Name / Description / Picture / ServiceName / ServiceDescription / ServiceType / Fee / Endpoint) have standardized four-segment specs — **用途 / 可见范围 / 约束 / 示例**. See `field-specs.md`. When you ask the user a field, inline all four segments with the question.
 
-## B. provider (服务方)
+## STRICT — one question per turn
 
-**Goal:** register a seller identity with at least one service. This is the longest Q&A; take it one step at a time.
+Applies to every role flow. Applies to every service sub-field. No exceptions.
 
-### Q&A chain — identity
+- Never list "请提供 1. Name 2. Description 3. ..." in one message.
+- Never enumerate more than one field per turn.
+- If the user volunteered multiple values in one sentence ("叫 Alice，做 DeFi 分析"), you may capture them at parse time — but the confirmation card still renders one row per field.
+- The rationale is not just UX; users answer one question more accurately than a list. List format causes dropped fields and typos that force re-prompting, which is worse than the extra turns.
 
-| # | Prompt | Validation |
-|---|---|---|
-| 1 | "起个 agent 名字" | non-empty, ≤ 64 chars |
-| 2 | "一句话描述能提供什么" | non-empty, ≤ 500 chars |
-| 3 | (optional) avatar branch | → `avatar-upload.md` |
+## Pre-check existing agents (normal onboarding only)
 
-### Q&A chain — service (repeat as many times as the user wants to add)
+Before entering any role flow triggered by the user's own initiative, run `agent get` **once** to see if they already have an agent of the requested role. If yes, reply:
 
-For each service:
+> "你已经有一个 <role> agent (#N <name>)。要继续新建一个，还是更新现有的？"
 
-| # | Prompt | Validation | Notes |
-|---|---|---|---|
-| 1 | "这项服务叫什么名字？（ServiceName）" | non-empty | maps to `ServiceName` |
-| 2 | "描述一下这项服务做什么？（ServiceDescription）" | non-empty | maps to `ServiceDescription` |
-| 3 | "服务类型是什么？`A2MCP`（MCP 接口）还是 `A2A`（agent-to-agent 协议）？" | one of {A2MCP, A2A} (case-insensitive) | maps to `ServiceType` |
-| 4 | if `A2MCP` → "每次调用收多少 USDT？整数" else → skip | integer ≥ 0 | maps to `Fee` |
-| 5 | if `A2MCP` → "MCP endpoint URL 是？必须是 HTTPS" else → skip | starts with `https://` | maps to `Endpoint` |
-| 6 | "要再加一个服务吗？" | yes / no | loop to #1 or finish |
+Do not auto-choose.
 
-**Why this order matters:**
-- `ServiceName` / `ServiceDescription` apply to both types — ask unconditionally first.
-- `ServiceType` is the branching key. Only after this do we know whether to ask for `Fee` / `Endpoint`.
-- For `A2A`, even if the user insists on providing an `Endpoint`, note: "CLI 会忽略 A2A 的 Endpoint。" (See `utils.rs::normalize_service`.)
+**Skip this pre-check entirely for passive onboarding** (`intent=need-requester`) — see `passive-onboarding.md`.
 
-### Good / bad cases
+## Confirmation card
 
-| User input | Action |
+Always a table of fields — never a bash blob. See `display-formats.md` §Create/Update Diff for the exact template.
+
+| Field | Value |
 |---|---|
-| "我要做数据分析服务，收 10 USDT" | Proceed through chain; capture `Fee=10` on step 4; confirm ServiceType next. |
-| "帮我写几个 service" | Refuse to fabricate. Ask the user what they actually want to offer. |
-| User pastes a JSON blob | Thank them, but re-confirm field by field to prevent typos in `ServiceType`. |
-| "endpoint 是 http://..." | Reject — must be HTTPS on A2MCP. |
-| "Fee 免费" on A2MCP | Accept `0`, but warn: "A2MCP 0 USDT 等同于免费入口，后续不能按量收费。" |
+| role | <english> (<中文>) |
+| name | <...> |
+| description | <...> |
+| picture | 默认 / <url> |
+| services[1]... | (provider only) |
 
-### Execute
+End with one line:
 
-```bash
-onchainos agent create \
-  --role provider \
-  --name "<name>" \
-  --description "<description>" \
-  --service '[{"ServiceName":"…","ServiceDescription":"…","ServiceType":"A2MCP","Fee":"10","Endpoint":"https://…"}, …]' \
-  [--picture "<url>"]
-```
+> 确认无误回复 "执行" 我就下发。
 
-### Post-success suggestion
+**The bash `onchainos agent create ...` command is NOT shown in the confirmation card.** Show it only if the user explicitly says "把命令给我看" / "show me the CLI".
 
-> "Provider agent #<id> 已创建，状态 `inactive`。要现在上架吗？执行 `agent activate <id>` 就会进入 search 曝光。"
+## Execute
 
----
+After the user replies "执行" / "yes" / equivalent:
 
-## C. evaluator (验证者)
+1. Run the CLI command once.
+2. On success → render the detail card (`display-formats.md` §Agent detail card) + the role-specific next-step line (see each role file).
+3. On failure → render the error card (`display-formats.md` §Error card) + the recovery action (see `troubleshooting.md`). **Do NOT auto-retry.**
 
-**Goal:** register an arbitrator identity. Requires 100 OKB staked **before** `create` — the skill does not verify the stake itself (backend enforces).
+See `_shared/no-polling.md` — do NOT follow up with `agent get` / status poll.
 
-### Q&A chain
+## bash blocks in these files
 
-| # | Prompt | Validation |
-|---|---|---|
-| 1 | "起个名字" | non-empty |
-| 2 | "一句话描述你的仲裁领域/专长" | non-empty |
-| 3 | (optional) avatar branch | → `avatar-upload.md` |
-
-### Staking prompt
-
-After collecting the fields, **before** executing `create`, explain:
-
-> "Evaluator 需要先质押 100 OKB 才能参与仲裁。质押流程在 `/skills/okx-agent-task/evaluator.md`，可以让我现在带你过去，完成后再回来 create。"
-
-Offer two branches:
-
-| User answer | Action |
-|---|---|
-| "先去质押" | Defer `create`; hand off to `/skills/okx-agent-task/evaluator.md`. Remember the collected `name` / `description` so you can resume. |
-| "我已经质押过了" | Trust the user; execute `create`. The backend will still reject if stake is missing. |
-| "不想质押" | Suggest `--role requester` or `--role provider` instead — evaluator is useless without the stake. |
-
-### Execute
-
-```bash
-onchainos agent create \
-  --role evaluator \
-  --name "<name>" \
-  --description "<description>" \
-  [--picture "<url>"]
-```
-
-### Post-success suggestion
-
-> "Evaluator agent #<id> 注册完成，等待系统按 workload 分派仲裁案件。你也可以 `agent search --feedback 高分 --agent-info evaluator` 看看活跃仲裁员的声誉水平作为参考。"
-
----
-
-## Shared confirmation template (all roles)
-
-Before executing `create`, always echo back:
-
-```
-确认一下：
-  role:         <role>  (<中文 label>)
-  name:         <name>
-  description:  <description>
-  picture:      <url or "默认">
-  services:     [only for provider; render as numbered list]
-  address:      <short form of current XLayer address>
-
-确认无误后回复"执行"我就下发。
-```
+Every `onchainos agent create ...` bash block inside `role-requester.md` / `role-provider.md` / `role-evaluator.md` is labeled **maintainer reference — not shown to user**. They are there so developers can grep for the exact CLI shape and keep translations in sync. Your user-facing output is the confirmation card, not the bash.

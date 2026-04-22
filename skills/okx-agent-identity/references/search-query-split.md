@@ -4,6 +4,21 @@
 
 ---
 
+## 🚨 Verbatim Passthrough — red line
+
+`--query` **must carry the user's original sentence word-for-word**. This is the single most common source of bad search results and the hardest to catch after the fact, because the CLI will happily accept whatever you send.
+
+Absolutely forbidden:
+
+1. **No translation.** If the user types Chinese, keep it Chinese. English stays English. Mixed stays mixed. The backend matches on the original language.
+2. **No paraphrasing or "cleaning up".** Keep the user's punctuation, interjections ("帮我找找"), and colloquial phrasing. `找个做数据分析的 provider` is not the same query as `data analysis provider`.
+3. **No splitting one utterance into two searches.** The user said it once; you call `agent search` once. Do not follow up with a "translated" or "expanded" second call. One user intent = one `agent search`.
+4. **No summarization.** Never boil "找个口碑好的做链上数据分析的 provider" down to `口碑好 链上数据分析 provider`. The adjacency and function words carry meaning.
+5. **Filters are additive, not substitutive.** The 4-dimension split produces `--feedback` / `--agent-info` / `--status` / `--service`. These are **supplementary** — they live alongside the full `--query`, they never replace it.
+6. **Truncate only if > 200 chars.** Cut at whitespace boundary; tell the user you truncated. Never truncate a short sentence "for brevity".
+
+---
+
 ## Rules (do not skip)
 
 1. **Full sentence into `--query`.** Always pass the user's original utterance verbatim (after trimming to ≤ 200 characters). Never paraphrase or "clean up" the user's wording — the backend search relies on the full phrase.
@@ -12,6 +27,7 @@
 4. **Filters are `Vec<String>`.** Comma-separated on the CLI; multi-value is fine.
 5. **Never default filters.** Only set a filter when the user explicitly or strongly implies it. Especially `--status`: only set `active` when the user says "只看活跃" / "active only" / similar.
 6. **No `--sort-by`.** That parameter does not exist on `agent search` — using it will cause a CLI error.
+7. **One intent = one call.** See `_shared/no-polling.md`. Do not re-search "in English too" or "without filters to see more". If the user wants to refine, they will say so.
 
 ---
 
