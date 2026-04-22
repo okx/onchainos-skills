@@ -60,13 +60,3 @@ pub(super) struct AgentCard {
     pub(super) services: Vec<AgentService>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct ExistingAgentCard {
-    pub(super) role: Option<String>,
-    pub(super) name: Option<String>,
-    pub(super) profile_picture: Option<String>,
-    pub(super) profile_description: Option<String>,
-    pub(super) communication_address: Option<String>,
-    pub(super) services: Option<Vec<AgentService>>,
-}
-

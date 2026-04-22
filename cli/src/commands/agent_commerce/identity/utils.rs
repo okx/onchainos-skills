@@ -195,50 +195,11 @@ pub(super) fn trim_or_empty(value: Option<&str>) -> String {
     value.unwrap_or("").trim().to_string()
 }
 
-pub(super) fn resolve_update_string(
-    new_value: Option<&str>,
-    current_value: Option<&str>,
-    flag: &str,
-) -> Result<String> {
-    if let Some(value) = new_value {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            bail!("missing required parameter: {flag}");
-        }
-        return Ok(trimmed.to_string());
-    }
-    if let Some(value) = current_value {
-        return Ok(value.to_string());
-    }
-    bail!("missing required parameter: {flag}")
-}
-
-pub(super) fn resolve_optional_update_string(
-    new_value: Option<&str>,
-    current_value: Option<&str>,
-) -> String {
-    if let Some(value) = new_value {
-        value.trim().to_string()
-    } else {
-        current_value.unwrap_or("").to_string()
-    }
-}
-
 pub(super) fn ensure_provider_has_service(card: &AgentCard) -> Result<()> {
     if card.role == "provider" && card.services.is_empty() {
         bail!("provider agents require at least one service; provide --service");
     }
     Ok(())
-}
-
-pub(super) fn resolve_update_services(
-    new_value: Option<&str>,
-    current_value: Option<&Vec<AgentService>>,
-) -> Result<Vec<AgentService>> {
-    if new_value.is_some() {
-        return parse_services(new_value);
-    }
-    Ok(current_value.cloned().unwrap_or_default())
 }
 
 pub(super) fn parse_u32_arg(

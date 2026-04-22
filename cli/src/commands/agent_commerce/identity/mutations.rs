@@ -25,7 +25,6 @@ use super::args::{
     AgentStatusArgs, CreateArgs, FeedbackSubmitArgs, UpdateArgs, UploadArgs, XmtpSignArgs,
 };
 use super::models::{AgentCard, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_INDEX_NUM};
-use super::queries::fetch_agent_for_update;
 use super::signing::{
     build_erc8004_overlay, load_session_cert, load_signing_seed, resolve_xlayer_signing_account,
     sign_and_broadcast_agent_transaction, sign_key_uuid,
@@ -33,8 +32,7 @@ use super::signing::{
 use super::utils::{
     ensure_provider_has_service, normalize_role, parse_agent_unsigned, parse_services,
     parse_u32_arg, reconstruct_post_url_for_log, redact_token_for_debug, require_non_empty,
-    resolve_agent_id, resolve_optional_update_string, resolve_update_services,
-    resolve_update_string, trim_or_empty, wallet_client,
+    resolve_agent_id, trim_or_empty, wallet_client,
 };
 
 // ─── Public command entry points ──────────────────────────────────────────
@@ -161,41 +159,40 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     let agent_id = resolve_agent_id(&args.agent_id, &args.agent_id_flag)?;
     let session_cert = load_session_cert()?;
 
-    // Product spec: update is full overwrite — fields not passed must be echoed back
-    // from the existing agent, so always fetch current state first.
-    let current = fetch_agent_for_update(ctx, &access_token, agent_id).await?;
+    // 产品规范：update 不允许修改 role / CommunicationAddress，所以都不写进
+    // cardJson。其它字段只写用户本次传进来的——没传就不带；是否保留旧值由
+    // 服务端决定。CLI 不再预先 GET /agent/agent-list 回填，那一步由上层 skill
+    // 按需指引用户完成。
+    //
+    // agentId 放进 cardJson（后端按 cardJson.AgentId 识别目标），请求体顶层
+    // 不带。注意 key 是 PascalCase 的 `AgentId`，和 cardJson 里其他字段一致。
+    let mut card = serde_json::Map::new();
+    card.insert("AgentId".into(), json!(agent_id));
+    let name = trim_or_empty(args.name.as_deref());
+    if !name.is_empty() {
+        card.insert("Name".into(), json!(name));
+    }
+    let description = trim_or_empty(args.description.as_deref());
+    if !description.is_empty() {
+        card.insert("ProfileDescription".into(), json!(description));
+    }
+    let picture = trim_or_empty(args.picture.as_deref());
+    if !picture.is_empty() {
+        card.insert("ProfilePicture".into(), json!(picture));
+    }
+    if args.service.is_some() {
+        let services = parse_services(args.service.as_deref())?;
+        card.insert(
+            "Service".into(),
+            serde_json::to_value(&services).context("failed to serialize Service list")?,
+        );
+    }
 
-    // Role cannot be modified via update (not exposed as a CLI flag by product
-    // spec); always echo back the existing role into cardJson only.
-    let card = AgentCard {
-        role: normalize_role(
-            current
-                .role
-                .as_deref()
-                .ok_or_else(|| anyhow!("existing agent has no role"))?,
-        )?,
-        name: resolve_update_string(args.name.as_deref(), current.name.as_deref(), "--name")?,
-        profile_picture: resolve_optional_update_string(
-            args.picture.as_deref(),
-            current.profile_picture.as_deref(),
-        ),
-        profile_description: resolve_update_string(
-            args.description.as_deref(),
-            current.profile_description.as_deref(),
-            "--description",
-        )?,
-        // Product spec: update is not allowed to modify CommunicationAddress, so the
-        // field is intentionally omitted from cardJson (skip_serializing_if = is_none).
-        // fromAddr is likewise handled server-side by agentId and not sent here.
-        communication_address: None,
-        services: resolve_update_services(args.service.as_deref(), current.services.as_ref())?,
-    };
-    ensure_provider_has_service(&card)?;
     let body = json!({
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,
-        "agentId": agent_id,
         "sessionCert": session_cert,
-        "cardJson": serde_json::to_string(&card).context("failed to serialize cardJson")?,
+        "cardJson": serde_json::to_string(&Value::Object(card))
+            .context("failed to serialize cardJson")?,
     });
     eprintln!(
         "[agent-identity] update request: url={} access_token_len={} access_token_prefix={} body={}",
@@ -360,9 +357,10 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
     )?;
     let feedback_desc = trim_or_empty(args.description.as_deref());
     let task_id = trim_or_empty(args.task_id.as_deref());
+    let session_cert = load_session_cert()?;
 
-    // 请求体：新后端 create-comment 只需要 chainIndex + comment（fromAddr 已不再
-    // 带）。本地 XLayer 地址解析仍然要做，结果只给下一步广播用。
+    // 请求体：create-comment 需要 chainIndex + sessionCert + comment（fromAddr
+    // 已不再带）。本地 XLayer 地址解析仍然要做，结果只给下一步广播用。
     let comment = json!({
         "agentId": agent_id,
         "value": score.to_string(),
@@ -370,6 +368,7 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
     });
     let body = json!({
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,
+        "sessionCert": session_cert,
         "comment": serde_json::to_string(&comment).context("failed to serialize comment")?,
     });
 
