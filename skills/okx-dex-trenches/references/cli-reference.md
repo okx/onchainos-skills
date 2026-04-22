@@ -124,7 +124,7 @@ onchainos memepump token-details --address <address> [--chain <chain>]
 | `name` | String | Token name |
 | `logoUrl` | String | Token logo URL |
 | `creatorAddress` | String | Token creator wallet address |
-| `createdTimestamp` | String | Creation timestamp (Unix ms); `null` if token was created less than 2 s ago |
+| `createdTimestamp` | String | Creation timestamp (Unix ms) |
 | `migratedBeginTimestamp` | String | Migration start timestamp (Unix ms, empty if not migrating) |
 | `migratedEndTimestamp` | String | Migration end timestamp (Unix ms, empty if not migrated) |
 | `market.marketCapUsd` | String | Market cap in USD |
@@ -134,12 +134,12 @@ onchainos memepump token-details --address <address> [--chain <chain>]
 | `market.sellTxCount1h` | String | 1-hour sell transaction count |
 | `bondingPercent` | String | Bonding curve progress (0-100) |
 | `tags.top10HoldingsPercent` | String | Top 10 holders percentage (0-100) |
-| `tags.devHoldingsPercent` | String | Dev holdings percentage (0-100) |
-| `tags.insidersPercent` | String | Insiders percentage (0-100) |
-| `tags.bundlersPercent` | String | Bundlers percentage (0-100) |
-| `tags.snipersPercent` | String | Snipers percentage (0-100) |
-| `tags.freshWalletsPercent` | String | Fresh wallets percentage (0-100) |
-| `tags.suspectedPhishingWalletPercent` | String | Phishing wallet percentage (0-100) |
+| `tags.devHoldingsPercent` | String \| null | Dev holdings percentage (0-100); `null` if token is <2 s old (not yet computed) |
+| `tags.insidersPercent` | String \| null | Insiders percentage (0-100); `null` if token is <2 s old (not yet computed) |
+| `tags.bundlersPercent` | String \| null | Bundlers percentage (0-100); `null` if token is <2 s old (not yet computed) |
+| `tags.snipersPercent` | String \| null | Snipers percentage (0-100); `null` if token is <2 s old (not yet computed) |
+| `tags.freshWalletsPercent` | String \| null | Fresh wallets percentage (0-100); `null` if token is <2 s old (not yet computed) |
+| `tags.suspectedPhishingWalletPercent` | String \| null | Phishing wallet percentage (0-100); `null` if token is <2 s old (not yet computed) |
 | `tags.totalHolders` | String | Total holder count |
 | `social.x` | String | X (Twitter) URL |
 | `social.telegram` | String | Telegram URL |
