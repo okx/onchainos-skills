@@ -564,8 +564,14 @@ mod tests {
     }
 
     #[test]
-    fn cli_eip3009_sign_rejects_unknown_from_flag() {
-        // Eip3009Sign has no --from flag, so passing it should fail to parse.
+    fn cli_eip3009_sign_no_from_required() {
+        let json = r#"[{"network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}]"#;
+        let result = TestCli::try_parse_from(["test", "eip3009-sign", "--accepts", json]);
+        assert!(result.is_ok(), "eip3009-sign should parse without --from");
+    }
+
+    #[test]
+    fn cli_eip3009_sign_missing_accepts() {
         let result = TestCli::try_parse_from(["test", "eip3009-sign", "--from", "0xPayer"]);
         assert!(result.is_err());
     }

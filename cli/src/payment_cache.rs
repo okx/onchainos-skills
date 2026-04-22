@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::payment_notify::UserType;
+use crate::payment_notify::{TierState, UserType};
 
 /// User-selected default payment asset. When set, `payment_flow::select_accept`
 /// prefers entries matching `(asset, network)` before falling back to the
@@ -37,9 +37,9 @@ pub struct PaymentDefault {
 ///   `premium_paths` split.
 /// - `accepts`: signing parameters (scheme, network, asset, payTo, tiered
 ///   `amount`, ...) returned from the same endpoint.
-/// - `basic_charging` / `premium_charging`: flipped by the
-///   `ok-web3-openapi-pay: Basic=1;Premium=0` response header. `true` means the
-///   next request on that tier must be pre-signed.
+/// - `basic_state` / `premium_state`: per-tier lifecycle, advanced by the
+///   `ok-web3-openapi-pay: Basic=1;Premium=0` header and by OVER_QUOTA
+///   notifications. Only `charging_confirmed` allows auto pre-signing.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PaymentCache {
     #[serde(default)]
@@ -47,9 +47,9 @@ pub struct PaymentCache {
     #[serde(default)]
     pub accepts: Option<Value>,
     #[serde(default)]
-    pub basic_charging: bool,
+    pub basic_state: TierState,
     #[serde(default)]
-    pub premium_charging: bool,
+    pub premium_state: TierState,
     /// Unix seconds when this snapshot was written.
     #[serde(default)]
     pub updated_at: u64,
@@ -65,10 +65,6 @@ pub struct PaymentCache {
     pub intro_shown: bool,
     #[serde(default)]
     pub grace_shown: bool,
-    #[serde(default)]
-    pub basic_over_shown: bool,
-    #[serde(default)]
-    pub premium_over_shown: bool,
 
     /// User-selected default payment asset. Cleared on logout (via
     /// `PaymentCache::delete`) so the preference never crosses accounts.
@@ -170,8 +166,8 @@ mod tests {
             .into_iter()
             .collect(),
             accepts: Some(serde_json::json!([{"scheme": "exact"}])),
-            basic_charging: true,
-            premium_charging: false,
+            basic_state: TierState::ChargingConfirmed,
+            premium_state: TierState::Free,
             updated_at: 1_700_000_000,
             ..Default::default()
         };
@@ -192,8 +188,8 @@ mod tests {
                 .map(String::as_str),
             Some("premium")
         );
-        assert!(loaded.basic_charging);
-        assert!(!loaded.premium_charging);
+        assert_eq!(loaded.basic_state, TierState::ChargingConfirmed);
+        assert_eq!(loaded.premium_state, TierState::Free);
         assert_eq!(loaded.updated_at, 1_700_000_000);
 
         std::env::remove_var("ONCHAINOS_HOME");
