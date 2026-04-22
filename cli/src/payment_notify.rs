@@ -75,6 +75,51 @@ impl UserType {
     }
 }
 
+/// Per-tier payment lifecycle. `maybe_sign_payment` pre-signs only on
+/// `ChargingConfirmed`, so the `Unconfirmed` step forces one 402 →
+/// `confirming` round-trip per charging window. Header `X=0` collapses
+/// to `Free`, erasing prior confirmation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TierState {
+    #[default]
+    Free,
+    ChargingUnconfirmed,
+    ChargingConfirmed,
+}
+
+impl TierState {
+    /// `true` when the server is billing this tier (either before or
+    /// after the user has seen the confirmation prompt).
+    pub fn is_charging(self) -> bool {
+        matches!(self, Self::ChargingUnconfirmed | Self::ChargingConfirmed)
+    }
+
+    /// `true` exactly on the one state that should emit OVER_QUOTA and
+    /// block pre-sign.
+    pub fn is_unconfirmed(self) -> bool {
+        matches!(self, Self::ChargingUnconfirmed)
+    }
+
+    /// `true` only after the user has seen the OVER_QUOTA notification
+    /// for this charging window.
+    pub fn is_confirmed(self) -> bool {
+        matches!(self, Self::ChargingConfirmed)
+    }
+
+    /// Fold a `Basic=0|1` / `Premium=0|1` bit from `ok-web3-openapi-pay`
+    /// into the existing state. Only `Free → ChargingUnconfirmed` carries
+    /// new information — an already-charging tier keeps its confirmation
+    /// status across refresh pings.
+    pub fn apply_header_flag(self, charging: bool) -> Self {
+        match (charging, self) {
+            (false, _) => Self::Free,
+            (true, Self::Free) => Self::ChargingUnconfirmed,
+            (true, s) => s,
+        }
+    }
+}
+
 /// Dedupe flag — identifies which persisted "shown" bit to flip after
 /// the corresponding event has been emitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,24 +188,17 @@ pub enum Event {
 pub struct NotifyInput {
     pub user_type: Option<UserType>,
     pub grace_expires_at: i64,
-    pub basic_charging: bool,
-    pub premium_charging: bool,
+    pub basic_state: TierState,
+    pub premium_state: TierState,
     pub intro_shown: bool,
     pub grace_shown: bool,
-    pub basic_over_shown: bool,
-    pub premium_over_shown: bool,
-    /// Latest `accepts` array known to the client (from `/config` or
-    /// the most recent 402). Used to attach payment details (asset,
-    /// amount, payTo, ...) to over-quota events so the skill can
-    /// render exactly what the user is about to pay.
+    /// Signing params (asset, amount, payTo, ...) attached to
+    /// over-quota events. Prefers this response's `PAYMENT-REQUIRED`
+    /// header when present, else the cached `/config` value.
     pub accepts: Option<serde_json::Value>,
-    /// Tier that the current request path maps to. When `Some`, the
-    /// over-quota event is only emitted for the matching tier — the
-    /// other tier's shown flag is left untouched so its first real
-    /// use will still surface an `OVER_QUOTA` + `confirming`. When
-    /// `None` (path not yet in the endpoints map, typically before
-    /// `/config` has been fetched), we fall back to emitting every
-    /// charging tier that hasn't been shown yet.
+    /// Tier of the current request path. `Some` emits OVER_QUOTA only
+    /// for the matching tier; `None` (endpoints map not yet loaded)
+    /// emits for every unconfirmed tier.
     pub path_tier: Option<PaymentTier>,
 }
 
@@ -256,10 +294,10 @@ pub fn compute_events(input: &NotifyInput, now: i64) -> Vec<(Event, Flag)> {
             None => true,
         }
     };
-    if input.basic_charging && !input.basic_over_shown && matches_path(PaymentTier::Basic) {
+    if input.basic_state.is_unconfirmed() && matches_path(PaymentTier::Basic) {
         events.push((over_quota(PaymentTier::Basic), Flag::BasicOver));
     }
-    if input.premium_charging && !input.premium_over_shown && matches_path(PaymentTier::Premium) {
+    if input.premium_state.is_unconfirmed() && matches_path(PaymentTier::Premium) {
         events.push((over_quota(PaymentTier::Premium), Flag::PremiumOver));
     }
 
@@ -369,12 +407,10 @@ mod tests {
         NotifyInput {
             user_type: None,
             grace_expires_at: fallback_grace_expires_at(),
-            basic_charging: false,
-            premium_charging: false,
+            basic_state: TierState::Free,
+            premium_state: TierState::Free,
             intro_shown: false,
             grace_shown: false,
-            basic_over_shown: false,
-            premium_over_shown: false,
             accepts: None,
             path_tier: None,
         }
@@ -452,7 +488,7 @@ mod tests {
         let mut i = base();
         i.user_type = Some(UserType::Old);
         i.grace_shown = true;
-        i.basic_charging = true;
+        i.basic_state = TierState::ChargingUnconfirmed;
         let events = compute_events(&i, 0);
         assert!(events.is_empty());
     }
@@ -474,7 +510,7 @@ mod tests {
         let mut i = base();
         i.user_type = Some(UserType::New);
         i.intro_shown = true;
-        i.basic_charging = true;
+        i.basic_state = TierState::ChargingUnconfirmed;
         let events = compute_events(&i, 0);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1, Flag::BasicOver);
@@ -525,8 +561,8 @@ mod tests {
     fn new_user_intro_and_both_tier_over_quota_at_once() {
         let mut i = base();
         i.user_type = Some(UserType::New);
-        i.basic_charging = true;
-        i.premium_charging = true;
+        i.basic_state = TierState::ChargingUnconfirmed;
+        i.premium_state = TierState::ChargingUnconfirmed;
         let events = compute_events(&i, 0);
         assert_eq!(events.len(), 3);
         assert_eq!(events[0].1, Flag::Intro);
@@ -540,7 +576,7 @@ mod tests {
         i.user_type = Some(UserType::Old);
         i.intro_shown = true;
         i.grace_shown = true;
-        i.basic_charging = true;
+        i.basic_state = TierState::ChargingUnconfirmed;
         let now = i.grace_expires_at + 1;
         let events = compute_events(&i, now);
         assert_eq!(events.len(), 1);
@@ -555,8 +591,7 @@ mod tests {
         let mut i = base();
         i.user_type = Some(UserType::New);
         i.intro_shown = true;
-        i.basic_over_shown = true;
-        i.basic_charging = true;
+        i.basic_state = TierState::ChargingConfirmed;
         let events = compute_events(&i, 0);
         assert!(events.is_empty());
     }
@@ -566,8 +601,8 @@ mod tests {
         let mut i = base();
         i.user_type = Some(UserType::New);
         i.intro_shown = true;
-        i.basic_over_shown = true;
-        i.premium_charging = true;
+        i.basic_state = TierState::ChargingConfirmed;
+        i.premium_state = TierState::ChargingUnconfirmed;
         let events = compute_events(&i, 0);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1, Flag::PremiumOver);
@@ -578,29 +613,28 @@ mod tests {
     }
 
     #[test]
-    fn over_quota_re_fires_after_shown_is_reset() {
-        // Lifecycle: charging flips on → event fires → user re-runs
-        // (shown=true, ack implicit) → server drops back to free (caller
-        // resets shown=false) → charging flips on again → event MUST fire
-        // again to force another confirming step.
+    fn over_quota_re_fires_after_state_resets_to_free() {
+        // Lifecycle: Free → ChargingUnconfirmed (event fires) →
+        // ChargingConfirmed (caller transitions after push) → Free
+        // (header drops back) → ChargingUnconfirmed again (header
+        // re-flips) → event MUST fire again.
         let mut i = base();
         i.user_type = Some(UserType::New);
         i.intro_shown = true;
-        i.basic_charging = true;
+        i.basic_state = TierState::ChargingUnconfirmed;
         // First transition.
         let events = compute_events(&i, 0);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1, Flag::BasicOver);
-        // Simulate: caller flipped basic_over_shown to true after firing.
-        i.basic_over_shown = true;
+        // Simulate: caller advanced Unconfirmed → Confirmed after firing.
+        i.basic_state = TierState::ChargingConfirmed;
         // Steady charging-true: no repeat.
         let events = compute_events(&i, 0);
         assert!(events.is_empty());
-        // Server drops back to free → caller resets shown.
-        i.basic_charging = false;
-        i.basic_over_shown = false;
+        // Server drops back to free → header resets state to Free.
+        i.basic_state = TierState::Free;
         // Server re-flips to charging.
-        i.basic_charging = true;
+        i.basic_state = TierState::ChargingUnconfirmed;
         let events = compute_events(&i, 0);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1, Flag::BasicOver);
@@ -611,7 +645,7 @@ mod tests {
         let mut i = base();
         i.user_type = Some(UserType::New);
         i.intro_shown = true;
-        i.basic_charging = true;
+        i.basic_state = TierState::ChargingUnconfirmed;
         i.accepts = Some(sample_accepts());
 
         let events = compute_events(&i, 0);
@@ -648,7 +682,7 @@ mod tests {
         let mut i = base();
         i.user_type = Some(UserType::New);
         i.intro_shown = true;
-        i.premium_charging = true;
+        i.premium_state = TierState::ChargingUnconfirmed;
         i.accepts = Some(serde_json::json!([
             // Flat amount — applies to both tiers.
             { "amount": "500", "asset": "0xFLAT", "network": "n", "payTo": "p" },
@@ -686,12 +720,13 @@ mod tests {
     fn path_tier_filters_over_quota_to_matching_tier_only() {
         // Both tiers flipped to charging this response, but the current
         // request path is Basic — we should emit exactly one OVER_QUOTA
-        // for Basic and leave the Premium shown flag untouched.
+        // for Basic and leave Premium in ChargingUnconfirmed so its next
+        // real use still prompts.
         let mut i = base();
         i.user_type = Some(UserType::New);
         i.intro_shown = true;
-        i.basic_charging = true;
-        i.premium_charging = true;
+        i.basic_state = TierState::ChargingUnconfirmed;
+        i.premium_state = TierState::ChargingUnconfirmed;
         i.path_tier = Some(PaymentTier::Basic);
         let events = compute_events(&i, 0);
         assert_eq!(events.len(), 1);
@@ -711,8 +746,8 @@ mod tests {
         let mut i = base();
         i.user_type = Some(UserType::New);
         i.intro_shown = true;
-        i.basic_charging = true;
-        i.premium_charging = true;
+        i.basic_state = TierState::ChargingUnconfirmed;
+        i.premium_state = TierState::ChargingUnconfirmed;
         i.path_tier = None;
         let events = compute_events(&i, 0);
         assert_eq!(events.len(), 2);
@@ -725,7 +760,7 @@ mod tests {
         let mut i = base();
         i.user_type = Some(UserType::New);
         i.intro_shown = true;
-        i.basic_charging = true;
+        i.basic_state = TierState::ChargingUnconfirmed;
         // i.accepts stays None
         let events = compute_events(&i, 0);
         assert_eq!(events.len(), 1);
