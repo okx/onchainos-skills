@@ -8,21 +8,31 @@ use super::Context;
 use crate::client::ApiClient;
 use crate::output;
 
-/// Tokens created less than this many milliseconds ago have their
-/// `createdTimestamp` field replaced with `null` to avoid surfacing
-/// an unreliable/zero value for brand-new launches.
+/// Tokens created less than this many milliseconds ago may have unreliable
+/// holder/risk tag data — zero values are not yet meaningful.
 const NEW_TOKEN_THRESHOLD_MS: u64 = 2_000;
 
-/// If the token was created within `NEW_TOKEN_THRESHOLD_MS`, set its
-/// `createdTimestamp` field to `null`.  All other fields are left intact.
-fn nullify_created_timestamp_if_new(token: &mut Value) {
+/// Tag fields whose zero value is unreliable for brand-new tokens.
+const UNRELIABLE_ZERO_TAGS: &[&str] = &[
+    "bundlersPercent",
+    "devHoldingsPercent",
+    "freshWalletsPercent",
+    "insidersPercent",
+    "snipersPercent",
+    "suspectedPhishingWalletPercent",
+];
+
+/// If the token was created within `NEW_TOKEN_THRESHOLD_MS`, replace any
+/// zero value in the unreliable tag fields with `null` — a zero at this age
+/// means "not yet computed", not "genuinely zero".
+fn nullify_zero_tags_if_new(token: &mut Value) {
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| u64::try_from(d.as_millis()).unwrap_or(0))
         .unwrap_or(0);
 
     if now_ms == 0 {
-        // Clock error — skip nullification to avoid false-positives on all tokens.
+        // Clock error — skip to avoid false-positives.
         return;
     }
 
@@ -35,9 +45,22 @@ fn nullify_created_timestamp_if_new(token: &mut Value) {
         })
         .unwrap_or(0);
 
-    if created_ms > 0 && now_ms.saturating_sub(created_ms) < NEW_TOKEN_THRESHOLD_MS {
-        if let Some(obj) = token.as_object_mut() {
-            obj.insert("createdTimestamp".to_string(), Value::Null);
+    if created_ms == 0 || now_ms.saturating_sub(created_ms) >= NEW_TOKEN_THRESHOLD_MS {
+        return;
+    }
+
+    if let Some(tags) = token.get_mut("tags").and_then(|t| t.as_object_mut()) {
+        for field in UNRELIABLE_ZERO_TAGS {
+            let is_zero = tags
+                .get(*field)
+                .map(|v| {
+                    v.as_str().map(|s| s == "0").unwrap_or(false)
+                        || v.as_f64().map(|n| n == 0.0).unwrap_or(false)
+                })
+                .unwrap_or(false);
+            if is_zero {
+                tags.insert((*field).to_string(), Value::Null);
+            }
         }
     }
 }
@@ -645,7 +668,7 @@ pub async fn fetch_token_list(client: &ApiClient, p: MemepumpTokenListParams) ->
 
     if let Some(tokens) = data.as_array_mut() {
         for token in tokens.iter_mut() {
-            nullify_created_timestamp_if_new(token);
+            nullify_zero_tags_if_new(token);
         }
     }
 
@@ -670,7 +693,7 @@ pub async fn fetch_token_details(
         )
         .await?;
 
-    nullify_created_timestamp_if_new(&mut data);
+    nullify_zero_tags_if_new(&mut data);
 
     Ok(data)
 }
@@ -778,59 +801,87 @@ mod tests {
             .unwrap_or(0)
     }
 
-    /// A token created 1 second ago is within the 2 s threshold — its
-    /// `createdTimestamp` must become `null`.
-    #[test]
-    fn nullify_when_token_is_within_threshold() {
-        let created_ms = now_ms().saturating_sub(1_000); // 1 s ago
-        let mut token = json!({ "createdTimestamp": created_ms.to_string(), "symbol": "TEST" });
-        nullify_created_timestamp_if_new(&mut token);
-        assert!(
-            token["createdTimestamp"].is_null(),
-            "expected null for token created 1 s ago, got: {}",
-            token["createdTimestamp"]
-        );
-        // Other fields must be untouched
-        assert_eq!(token["symbol"], "TEST");
+    fn new_token(created_ms: u64) -> Value {
+        json!({
+            "createdTimestamp": created_ms.to_string(),
+            "symbol": "TEST",
+            "tags": {
+                "bundlersPercent": "0",
+                "devHoldingsPercent": "0",
+                "freshWalletsPercent": "0",
+                "insidersPercent": "0",
+                "snipersPercent": "0",
+                "suspectedPhishingWalletPercent": "0",
+                "top10HoldingsPercent": "12.5",
+                "totalHolders": "4"
+            }
+        })
     }
 
-    /// A token created 5 seconds ago is outside the threshold — its
-    /// `createdTimestamp` must be left as-is.
+    /// Token created 1 s ago — all zero tag fields must become null.
     #[test]
-    fn no_nullify_when_token_is_outside_threshold() {
-        let created_ms = now_ms().saturating_sub(5_000); // 5 s ago
-        let mut token = json!({ "createdTimestamp": created_ms.to_string(), "symbol": "OLD" });
-        nullify_created_timestamp_if_new(&mut token);
-        assert!(
-            !token["createdTimestamp"].is_null(),
-            "expected non-null for token created 5 s ago, got: {}",
-            token["createdTimestamp"]
-        );
+    fn zero_tags_nullified_within_threshold() {
+        let mut token = new_token(now_ms().saturating_sub(1_000));
+        nullify_zero_tags_if_new(&mut token);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert!(
+                token["tags"][field].is_null(),
+                "{field} should be null for brand-new token, got: {}",
+                token["tags"][field]
+            );
+        }
+        // Non-zero and non-tag fields must be untouched
+        assert_eq!(token["tags"]["top10HoldingsPercent"], "12.5");
+        assert_eq!(token["tags"]["totalHolders"], "4");
+        assert_eq!(token["createdTimestamp"], (now_ms().saturating_sub(1_000)).to_string());
     }
 
-    /// A token with `createdTimestamp` of 0 (missing / unknown) must not be
-    /// nullified — 0 is treated as "no timestamp available".
+    /// Token created 5 s ago — zero tag fields must NOT be nullified.
     #[test]
-    fn no_nullify_when_created_timestamp_is_zero() {
-        let mut token = json!({ "createdTimestamp": "0", "symbol": "ZERO" });
-        nullify_created_timestamp_if_new(&mut token);
-        assert_eq!(
-            token["createdTimestamp"], "0",
-            "zero timestamp must not be nullified"
-        );
+    fn zero_tags_not_nullified_outside_threshold() {
+        let mut token = new_token(now_ms().saturating_sub(5_000));
+        nullify_zero_tags_if_new(&mut token);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert_eq!(
+                token["tags"][field], "0",
+                "{field} should stay '0' for older token"
+            );
+        }
     }
 
-    /// Numeric (non-string) `createdTimestamp` within the threshold must also
-    /// be nullified — the API sometimes returns a number instead of a string.
+    /// Token with createdTimestamp "0" (unknown) — tags must not be touched.
     #[test]
-    fn nullify_numeric_created_timestamp_within_threshold() {
-        let created_ms = now_ms().saturating_sub(500); // 0.5 s ago
-        let mut token = json!({ "createdTimestamp": created_ms, "symbol": "NUM" });
-        nullify_created_timestamp_if_new(&mut token);
-        assert!(
-            token["createdTimestamp"].is_null(),
-            "expected null for numeric timestamp 0.5 s ago, got: {}",
-            token["createdTimestamp"]
-        );
+    fn zero_tags_not_nullified_when_created_timestamp_is_zero() {
+        let mut token = new_token(0);
+        nullify_zero_tags_if_new(&mut token);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert_eq!(
+                token["tags"][field], "0",
+                "{field} should stay '0' when createdTimestamp is unknown"
+            );
+        }
+    }
+
+    /// Non-zero tag values within threshold must NOT be nullified.
+    #[test]
+    fn non_zero_tags_not_nullified_within_threshold() {
+        let created_ms = now_ms().saturating_sub(500);
+        let mut token = json!({
+            "createdTimestamp": created_ms.to_string(),
+            "symbol": "TEST",
+            "tags": {
+                "bundlersPercent": "5.5",
+                "devHoldingsPercent": "10.0",
+                "freshWalletsPercent": "0",
+                "insidersPercent": "0",
+                "snipersPercent": "0",
+                "suspectedPhishingWalletPercent": "0",
+                "totalHolders": "8"
+            }
+        });
+        nullify_zero_tags_if_new(&mut token);
+        assert_eq!(token["tags"]["bundlersPercent"], "5.5", "non-zero must be untouched");
+        assert_eq!(token["tags"]["devHoldingsPercent"], "10.0", "non-zero must be untouched");
+        assert!(token["tags"]["freshWalletsPercent"].is_null(), "zero must be null");
     }
 }
