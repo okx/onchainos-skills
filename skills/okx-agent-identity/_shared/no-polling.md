@@ -10,7 +10,7 @@ One user intent = one CLI call. Show the result. Wait for the user to say what's
 
 1. **No silent "look before leap".** After a successful `create` / `update` / `activate` / `deactivate` / `feedback-submit`, do NOT chase it with a `get` to "confirm it landed". The command's own response is authoritative.
 2. **No status polling.** Never `sleep` and re-query. Never loop `agent get` to watch a status transition.
-3. **No automatic retry on business errors.** If the CLI returns a 4xx-class failure (invalid field, validation, `provider agents require at least one service`, etc.), render the error card from `display-formats.md` §6 and stop. The user decides the next step.
+3. **No automatic retry on business errors.** If the CLI returns a 4xx-class failure (invalid field, validation, `provider agents require at least one service; provide --service`, etc.), render the error card from `display-formats.md` §6 and stop. The user decides the next step.
 4. **No speculative side-queries.** Do not run `wallet status` / `agent get` / `agent search` "just to be safe" before the user's actual command. Pre-flight checks in `_shared/preflight.md` happen once per session; after that, trust the state.
 5. **No splitting one ask into many CLI calls** unless the user's wording clearly asks for multiple operations ("把 #42 下架再改个头像" is two commands; "改头像" is one).
 

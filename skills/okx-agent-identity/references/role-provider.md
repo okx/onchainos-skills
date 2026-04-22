@@ -86,4 +86,4 @@ One line, concrete next step:
 
 ## Error recovery
 
-If `provider agents require at least one service` surfaces, return to Phase 2 S1. If `missing required field in --service: ServiceName` surfaces, return to the specific step (see `troubleshooting.md`). Never silently retry with a filler value.
+If `provider agents require at least one service; provide --service` surfaces, return to Phase 2 S1. If `missing required field in --service: ServiceName` surfaces, return to the specific step (see `troubleshooting.md`). Never silently retry with a filler value.

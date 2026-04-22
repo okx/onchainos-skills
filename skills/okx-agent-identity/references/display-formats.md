@@ -171,11 +171,11 @@ Rules:
 
 Single-line summary, then `原因`, then `下一步`, then the raw CLI message for developer grep.
 
-> ❌ **创建失败：provider agents require at least one service**
+> ❌ **创建失败：provider role 缺少 service**
 > 原因：你选择了 provider role 但没有提供 service。
 > 下一步：补充至少 1 个 service（MCP endpoint 或 A2A），我重新帮你执行。
 >
-> `raw: provider agents require at least one service — src: mutations.rs`
+> `raw: provider agents require at least one service; provide --service — src: utils.rs:200`
 
 Rules:
 

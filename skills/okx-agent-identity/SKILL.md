@@ -343,7 +343,7 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 
 - **Not logged in** → `wallet login` via `okx-agentic-wallet`, then retry.
 - **No XLayer address** → guide user to `wallet add` / `wallet switch` via `okx-agentic-wallet`.
-- **Provider role but no service** → CLI rejects with `provider agents require at least one service`. Return to the service Q&A chain.
+- **Provider role but no service** → CLI rejects with `provider agents require at least one service; provide --service`. Return to the service Q&A chain.
 - **Evaluator role but OKB not staked** → backend rejects; do NOT attempt to read stake status from this skill. Redirect to the staking flow.
 - **Region restriction (50125 / 80001)** → display "Service is not available in your region." Do NOT echo the raw error code.
 - **Pre-transaction mock (empty tx hash)** → current CLI uses a TEMP MOCK path; log the event and tell the user the tx is not yet final. Update this section once the mock is removed.
