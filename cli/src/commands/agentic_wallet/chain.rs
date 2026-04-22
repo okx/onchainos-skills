@@ -98,6 +98,14 @@ pub async fn get_chain_by_real_chain_index(input: &str) -> Result<Option<Value>>
     }))
 }
 
+/// Force-refresh the chain cache from the remote API, bypassing TTL.
+/// Errors are ignored so callers are not disrupted.
+pub(crate) async fn force_refresh_chain_cache() {
+    if let Ok(chains) = fetch_chains_from_api().await {
+        let _ = wallet_store::set_chain_cache(chains);
+    }
+}
+
 /// Fetch the supported chain list from the remote API.
 async fn fetch_chains_from_api() -> Result<Vec<Value>> {
     let mut client = WalletApiClient::new()?;
@@ -122,9 +130,7 @@ pub async fn ensure_chain_cache_fresh() {
     {
         return; // still fresh
     }
-    if let Ok(chains) = fetch_chains_from_api().await {
-        let _ = wallet_store::set_chain_cache(chains);
-    }
+    force_refresh_chain_cache().await;
 }
 
 #[cfg(test)]

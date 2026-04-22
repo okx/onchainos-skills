@@ -40,6 +40,7 @@ pub fn resolve_chain(name: &str) -> String {
         "linea" => "59144".to_string(),
         "scroll" => "534352".to_string(),
         "zksync" => "324".to_string(),
+        "tempo" => "4217".to_string(),
         // If already a numeric chain ID, pass through
         _ => name.to_string(),
     }
