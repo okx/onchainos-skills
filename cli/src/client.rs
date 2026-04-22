@@ -36,9 +36,9 @@ struct PaymentState {
     /// Path → tier mapping from the server's `endpointList`.
     endpoints: HashMap<String, PaymentTier>,
     accepts: Option<Value>,
-    /// Per-tier lifecycle. `Free → ChargingUnconfirmed` fires OVER_QUOTA
-    /// and blocks pre-sign; `→ ChargingConfirmed` after the user sees
-    /// the notification, which is what unlocks auto pre-signing.
+    /// Per-tier lifecycle. Only `payment default set` advances
+    /// `Unconfirmed → Confirmed`; a canceled prompt keeps the tier
+    /// unconfirmed so the next request re-fires OVER_QUOTA.
     basic_state: TierState,
     premium_state: TierState,
     /// `true` once we've tried to populate state this process. Prevents
@@ -1110,11 +1110,7 @@ impl ApiClient {
     /// Full URL for `path`, used as the `resource` field in the V2 payment
     /// header payload.
     fn resource_url(&self, path: &str) -> String {
-        /**
         format!("{}{}", self.base_url.trim_end_matches('/'), path)
-        **/
-        /// TODO: revert this
-        format!("https://web3pre.okex.org{}", path)
     }
 
     /// Look up the tier for a path from the loaded config. Returns `None`
@@ -1227,12 +1223,17 @@ impl ApiClient {
 
     /// Emit notification events for any triggers that fired on this
     /// response. Pure decision logic lives in `payment_notify`; this
-    /// wrapper handles the lock dance, pushes events onto the
-    /// process-global buffer (drained into the CLI / MCP response
-    /// envelope later), and persists the dedupe flags so each event
-    /// fires at most once per account lifetime.
+    /// wrapper handles the lock dance and persists dedupe flags.
+    ///
+    /// OVER_QUOTA always fires on an unconfirmed tier. When a default
+    /// asset is saved, `payment[]` is narrowed to that one entry so
+    /// the skill shows yes/no instead of the picker; the prompt still
+    /// blocks — only `payment default set` advances the tier state.
     fn dispatch_notifications(&self, path: &str, header_accepts: Option<&Value>) {
         let now = chrono::Utc::now().timestamp();
+        let preferred_asset = PaymentCache::load()
+            .and_then(|c| c.default_asset)
+            .map(|d| (d.asset, d.network));
         let input = {
             let state = self.payment_state();
             NotifyInput {
@@ -1246,6 +1247,7 @@ impl ApiClient {
                 grace_shown: state.grace_shown,
                 accepts: header_accepts.cloned().or_else(|| state.accepts.clone()),
                 path_tier: state.endpoints.get(path).copied(),
+                preferred_asset,
             }
         };
         let events = payment_notify::compute_events(&input, now);
@@ -1260,11 +1262,9 @@ impl ApiClient {
                     Flag::Grace => state.grace_shown = true,
                     Flag::Intro => state.intro_shown = true,
                     Flag::BasicOver => {
-                        state.basic_state = TierState::ChargingConfirmed;
                         state.pending_over_quota_tiers.insert(PaymentTier::Basic);
                     }
                     Flag::PremiumOver => {
-                        state.premium_state = TierState::ChargingConfirmed;
                         state.pending_over_quota_tiers.insert(PaymentTier::Premium);
                     }
                 }
@@ -1859,5 +1859,138 @@ mod tests {
         );
         assert_eq!(ApiClient::extract_header_flag("Basic=1", "Premium"), None);
         assert_eq!(ApiClient::extract_header_flag("Basic=maybe", "Basic"), None);
+    }
+
+    // ── dispatch_notifications: default-asset gating ────────────────────
+
+    fn seed_cache_with_default(
+        sub: &str,
+        default_asset: Option<crate::payment_cache::PaymentDefault>,
+    ) -> std::path::PathBuf {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join(sub);
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir).ok();
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+        if default_asset.is_some() {
+            let cache = PaymentCache {
+                default_asset,
+                ..Default::default()
+            };
+            cache.save().unwrap();
+        }
+        dir
+    }
+
+    fn sample_default() -> crate::payment_cache::PaymentDefault {
+        crate::payment_cache::PaymentDefault {
+            asset: "0xUSDG".into(),
+            network: "eip155:196".into(),
+            name: Some("USDG".into()),
+        }
+    }
+
+    #[test]
+    fn dispatch_without_default_keeps_tier_unconfirmed_and_marks_pending() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let _dir = seed_cache_with_default("client_dispatch_no_default", None);
+        crate::payment_notify::drain_events();
+
+        set_test_credentials();
+        let client = ApiClient::new(None).expect("client");
+        client.apply_config_response(&serde_json::json!({
+            "endpointList": { "/api/v6/dex/market/price": "BASIC" },
+            "accepts": [{"scheme":"exact","network":"eip155:196","asset":"0xUSDG","payTo":"0xP","amount":{"basic":"100"}}],
+        }));
+        client.payment_state().user_type = Some(super::UserType::New);
+        client.payment_state().intro_shown = true;
+        client.payment_state().basic_state = TierState::ChargingUnconfirmed;
+
+        client.dispatch_notifications("/api/v6/dex/market/price", None);
+
+        let state = client.payment_state();
+        assert_eq!(state.basic_state, TierState::ChargingUnconfirmed);
+        assert!(state.pending_over_quota_tiers.contains(&PaymentTier::Basic));
+        drop(state);
+
+        let drained = crate::payment_notify::drain_events();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0]["code"], "MARKET_API_NEW_USER_OVER_QUOTA");
+
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn dispatch_with_default_filters_payment_to_saved_default_and_still_blocks() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let _dir = seed_cache_with_default("client_dispatch_with_default", Some(sample_default()));
+        crate::payment_notify::drain_events();
+
+        set_test_credentials();
+        let client = ApiClient::new(None).expect("client");
+        client.apply_config_response(&serde_json::json!({
+            "endpointList": { "/api/v6/dex/market/price-info": "PREMIUM" },
+            "accepts": [
+                {"scheme":"exact","network":"eip155:196","asset":"0xUSDG","payTo":"0xP",
+                 "amount":{"basic":"100","premium":"500"},"extra":{"name":"USDG"}},
+                {"scheme":"exact","network":"eip155:196","asset":"0xUSDT","payTo":"0xP",
+                 "amount":{"basic":"100","premium":"500"},"extra":{"name":"USDT"}},
+            ],
+        }));
+        client.payment_state().user_type = Some(super::UserType::New);
+        client.payment_state().intro_shown = true;
+        client.payment_state().premium_state = TierState::ChargingUnconfirmed;
+
+        client.dispatch_notifications("/api/v6/dex/market/price-info", None);
+
+        // State must NOT auto-advance — cancel re-prompts next request.
+        let state = client.payment_state();
+        assert_eq!(state.premium_state, TierState::ChargingUnconfirmed);
+        assert!(state.pending_over_quota_tiers.contains(&PaymentTier::Premium));
+        drop(state);
+
+        let drained = crate::payment_notify::drain_events();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0]["code"], "MARKET_API_NEW_USER_OVER_QUOTA");
+        let payment = drained[0]["data"]["payment"]
+            .as_array()
+            .expect("payment array");
+        assert_eq!(
+            payment.len(),
+            1,
+            "payment list must be narrowed to the saved default"
+        );
+        assert_eq!(payment[0]["asset"], "0xUSDG");
+
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn dispatch_with_default_still_emits_intro_event() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let _dir = seed_cache_with_default("client_dispatch_intro_with_default", Some(sample_default()));
+        crate::payment_notify::drain_events();
+
+        set_test_credentials();
+        let client = ApiClient::new(None).expect("client");
+        client.apply_config_response(&serde_json::json!({
+            "endpointList": { "/api/v6/dex/market/price": "BASIC" },
+            "accepts": [{"scheme":"exact","network":"eip155:196","asset":"0xUSDG","payTo":"0xP","amount":{"basic":"100"}}],
+        }));
+        client.payment_state().user_type = Some(super::UserType::New);
+
+        client.dispatch_notifications("/api/v6/dex/market/price", None);
+
+        let drained = crate::payment_notify::drain_events();
+        let codes: Vec<&str> = drained.iter().filter_map(|e| e["code"].as_str()).collect();
+        assert!(codes.contains(&"MARKET_API_NEW_USER_INTRO"));
+        // Basic is still Free (no header flipped it), so no OVER_QUOTA here.
+        assert!(!codes.contains(&"MARKET_API_NEW_USER_OVER_QUOTA"));
+
+        std::env::remove_var("ONCHAINOS_HOME");
     }
 }

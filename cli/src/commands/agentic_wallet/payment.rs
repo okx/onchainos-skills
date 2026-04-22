@@ -50,6 +50,12 @@ pub enum DefaultAction {
         /// Display name shown in notifications, e.g. "USDT"
         #[arg(long)]
         name: Option<String>,
+        /// Tier the user just confirmed: `basic` or `premium`. Skills
+        /// pass this from the OVER_QUOTA `notifications[].data.tier` so
+        /// only the acknowledged tier advances to `ChargingConfirmed`.
+        /// Omit for manual invocations that don't act on a prompt.
+        #[arg(long)]
+        tier: Option<String>,
     },
     /// Show the saved default payment asset (if any).
     Get,
@@ -201,13 +207,16 @@ fn caip2_to_chain_id(caip2: &str) -> String {
 }
 
 fn cmd_default(action: DefaultAction) -> Result<()> {
+    use crate::commands::agentic_wallet::payment_flow::PaymentTier;
     use crate::payment_cache::{PaymentCache, PaymentDefault};
+    use crate::payment_notify::TierState;
 
     match action {
         DefaultAction::Set {
             asset,
             chain,
             name,
+            tier,
         } => {
             let asset = asset.trim().to_string();
             if !is_valid_evm_address(&asset) {
@@ -218,6 +227,13 @@ fn cmd_default(action: DefaultAction) -> Result<()> {
             let name = name
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
+            let tier = match tier.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                Some(s) => Some(
+                    PaymentTier::from_server_str(s)
+                        .ok_or_else(|| anyhow!("--tier must be `basic` or `premium`"))?,
+                ),
+                None => None,
+            };
 
             let mut cache = PaymentCache::load().unwrap_or_default();
             cache.default_asset = Some(PaymentDefault {
@@ -225,6 +241,18 @@ fn cmd_default(action: DefaultAction) -> Result<()> {
                 network,
                 name: name.clone(),
             });
+            // Explicit consent promotes only the tier the user just
+            // confirmed — untagged calls (manual use) never change
+            // state, so a pending prompt on another tier still fires.
+            if let Some(t) = tier {
+                let slot = match t {
+                    PaymentTier::Basic => &mut cache.basic_state,
+                    PaymentTier::Premium => &mut cache.premium_state,
+                };
+                if *slot == TierState::ChargingUnconfirmed {
+                    *slot = TierState::ChargingConfirmed;
+                }
+            }
             cache.save().context("failed to save payment cache")?;
             output::success(json!({
                 "asset": asset,
@@ -598,11 +626,13 @@ mod tests {
                         asset,
                         chain,
                         name,
+                        tier,
                     },
             } => {
                 assert_eq!(asset, "0x1234567890123456789012345678901234567890");
                 assert_eq!(chain, "196");
                 assert_eq!(name.as_deref(), Some("USDG"));
+                assert_eq!(tier, None);
             }
             _ => panic!("expected Default::Set"),
         }
@@ -680,5 +710,103 @@ mod tests {
         let p = parse_payload_local(json).unwrap();
         assert_eq!(p.domain_name, None);
         assert_eq!(p.domain_version, None);
+    }
+
+    // ── default set advances pending tiers to confirmed ──────────────
+
+    fn tmp_home(sub: &str) -> std::path::PathBuf {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join(sub);
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir).ok();
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn default_set_with_tier_basic_promotes_only_basic() {
+        use crate::payment_cache::PaymentCache;
+        use crate::payment_notify::TierState;
+
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let dir = tmp_home("payment_default_set_tier_basic");
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+
+        let seed = PaymentCache {
+            basic_state: TierState::ChargingUnconfirmed,
+            premium_state: TierState::ChargingUnconfirmed,
+            ..Default::default()
+        };
+        seed.save().unwrap();
+
+        cmd_default(DefaultAction::Set {
+            asset: "0x1234567890123456789012345678901234567890".into(),
+            chain: "196".into(),
+            name: Some("USDG".into()),
+            tier: Some("basic".into()),
+        })
+        .expect("cmd_default set succeeds");
+
+        let loaded = PaymentCache::load().expect("cache written");
+        assert_eq!(loaded.basic_state, TierState::ChargingConfirmed);
+        assert_eq!(
+            loaded.premium_state,
+            TierState::ChargingUnconfirmed,
+            "premium must stay Unconfirmed so its prompt still fires"
+        );
+
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn default_set_without_tier_leaves_all_states_untouched() {
+        use crate::payment_cache::PaymentCache;
+        use crate::payment_notify::TierState;
+
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let dir = tmp_home("payment_default_set_no_tier");
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+
+        let seed = PaymentCache {
+            basic_state: TierState::ChargingUnconfirmed,
+            premium_state: TierState::ChargingUnconfirmed,
+            ..Default::default()
+        };
+        seed.save().unwrap();
+
+        cmd_default(DefaultAction::Set {
+            asset: "0x1234567890123456789012345678901234567890".into(),
+            chain: "196".into(),
+            name: None,
+            tier: None,
+        })
+        .expect("cmd_default set succeeds");
+
+        let loaded = PaymentCache::load().expect("cache written");
+        assert_eq!(loaded.basic_state, TierState::ChargingUnconfirmed);
+        assert_eq!(loaded.premium_state, TierState::ChargingUnconfirmed);
+
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn default_set_rejects_unknown_tier() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let dir = tmp_home("payment_default_set_bad_tier");
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+
+        let err = cmd_default(DefaultAction::Set {
+            asset: "0x1234567890123456789012345678901234567890".into(),
+            chain: "196".into(),
+            name: None,
+            tier: Some("gold".into()),
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("basic"));
+
+        std::env::remove_var("ONCHAINOS_HOME");
     }
 }

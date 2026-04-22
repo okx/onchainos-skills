@@ -86,19 +86,22 @@ Before formatting the CLI result:
      `network` (e.g. `1. USDG  0.0005  X Layer`). Always append a final line
      `0. Cancel — don't pay, abort this request`. Ask the user to pick one.
      - If the user picks a numbered asset (or replies with an asset name):
-       - Run `onchainos payment default set --asset <entry.asset> --chain <entry.chainId> --name <entry.name>` to persist the choice.
+       - Run `onchainos payment default set --asset <entry.asset> --chain <entry.chainId> --name <entry.name> --tier <notifications[].data.tier>` to persist the choice and record consent for this tier.
        - Then rerun the original command verbatim. The CLI matches the saved
          default against the 402 `accepts` and auto-signs that entry.
      - If the user picks `0` (or otherwise refuses in free text):
        - Do NOT call `payment default set`. Do NOT rerun. Stop and acknowledge.
    - **If `payment[]` has exactly one entry**, skip the token list — just ask
      the user to confirm (`yes` / `proceed` / `确认`) or cancel (`0` / `no`).
-     On confirmation rerun the original command and the CLI auto-signs the
-     sole option; on cancel, stop and acknowledge.
-   - The saved default persists across commands until the user runs
+     On confirmation, still run `onchainos payment default set --asset <entry.asset> --chain <entry.chainId> --name <entry.name> --tier <notifications[].data.tier>` — re-saving the existing default is idempotent; the `--tier` flag is what promotes the tier from `charging_unconfirmed` to `charging_confirmed`. Then rerun the original command; the CLI auto-signs the sole option. On cancel, stop and acknowledge — do NOT run `payment default set`, so the next request re-prompts.
+   - `--tier` is mandatory whenever you are acting on an OVER_QUOTA
+     notification (only the named tier is promoted). The saved default
+     asset persists across commands until the user runs
      `onchainos payment default unset` or picks a new asset on a future
-     OVER_QUOTA event, so the selection prompt only fires once per user
-     preference change, not once per over-quota hit.
+     OVER_QUOTA event, so the asset picker only fires once per user
+     preference change. The yes/no confirm, however, fires on every tier
+     that first enters charging — so Basic and Premium each get one
+     active acknowledgement, even if the same default applies to both.
 4. **Otherwise**:
    - Print the filled copy once.
    - Then display `data` normally.
@@ -176,15 +179,16 @@ Reply with the number (or asset name) to continue, or `0` to cancel. We recommen
 
 **Placeholders**: `{tier}`, `{unitPrice}`, `{paymentOptions}`
 
-If the user picks a numbered asset, run:
+If the user picks a numbered asset (or confirms yes in the single-entry case), run:
 
 ```
-onchainos payment default set --asset <ASSET_ADDRESS> --chain <CHAIN_ID> --name <NAME>
+onchainos payment default set --asset <ASSET_ADDRESS> --chain <CHAIN_ID> --name <NAME> --tier <TIER>
 ```
 
-then rerun the original command. If the user picks `0` (or otherwise refuses),
-stop — do NOT call `payment default set`, do NOT rerun. If `payment[]` has only
-one entry, skip the selection and just ask for `yes` / `0` before rerunning.
+where `<TIER>` is `notifications[].data.tier`. Then rerun the original command.
+If the user picks `0` (or otherwise refuses), stop — do NOT call `payment
+default set`, do NOT rerun. If `payment[]` has only one entry, skip the
+selection and just ask for `yes` / `0` before rerunning.
 
 ---
 
@@ -205,15 +209,16 @@ Reply with the number (or asset name) to continue, or `0` to cancel. We recommen
 
 **Placeholders**: `{tier}`, `{unitPrice}`, `{paymentOptions}`
 
-If the user picks a numbered asset, run:
+If the user picks a numbered asset (or confirms yes in the single-entry case), run:
 
 ```
-onchainos payment default set --asset <ASSET_ADDRESS> --chain <CHAIN_ID> --name <NAME>
+onchainos payment default set --asset <ASSET_ADDRESS> --chain <CHAIN_ID> --name <NAME> --tier <TIER>
 ```
 
-then rerun the original command. If the user picks `0` (or otherwise refuses),
-stop — do NOT call `payment default set`, do NOT rerun. If `payment[]` has only
-one entry, skip the selection and just ask for `yes` / `0` before rerunning.
+where `<TIER>` is `notifications[].data.tier`. Then rerun the original command.
+If the user picks `0` (or otherwise refuses), stop — do NOT call `payment
+default set`, do NOT rerun. If `payment[]` has only one entry, skip the
+selection and just ask for `yes` / `0` before rerunning.
 
 ---
 

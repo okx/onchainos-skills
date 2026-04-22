@@ -200,6 +200,10 @@ pub struct NotifyInput {
     /// for the matching tier; `None` (endpoints map not yet loaded)
     /// emits for every unconfirmed tier.
     pub path_tier: Option<PaymentTier>,
+    /// `(asset, network)` of the user's saved default. When a matching
+    /// accepts entry exists, OVER_QUOTA's `payment[]` is narrowed to
+    /// just that entry so the skill shows yes/no instead of the picker.
+    pub preferred_asset: Option<(String, String)>,
 }
 
 /// Format a Unix-seconds timestamp as an RFC3339 UTC string. Returns an
@@ -280,7 +284,9 @@ pub fn compute_events(input: &NotifyInput, now: i64) -> Vec<(Event, Flag)> {
         let payment = input
             .accepts
             .as_ref()
-            .map(|a| payment_options_for_tier(a, tier))
+            .map(|a| {
+                payment_options_for_tier(a, tier, input.preferred_asset.as_ref())
+            })
             .unwrap_or_default();
         match user_type {
             UserType::New => Event::NewUserOverQuota { tier, payment },
@@ -308,17 +314,37 @@ pub fn compute_events(input: &NotifyInput, now: i64) -> Vec<(Event, Flag)> {
 /// skill. Each surviving entry is reduced to a fixed five-field shape:
 /// `{amount, asset, name, network, payTo}`. Entries whose `amount` is a
 /// tiered object but doesn't carry the requested tier are dropped.
+///
+/// A non-empty `preferred` match narrows the result to that one entry
+/// (yes/no path); zero matches fall back to the full list.
 fn payment_options_for_tier(
     accepts: &serde_json::Value,
     tier: PaymentTier,
+    preferred: Option<&(String, String)>,
 ) -> Vec<serde_json::Value> {
     let tier_key = tier.as_key();
     let Some(arr) = accepts.as_array() else {
         return Vec::new();
     };
-    arr.iter()
+    let all: Vec<serde_json::Value> = arr
+        .iter()
         .filter_map(|entry| transform_payment_entry(entry, tier_key))
-        .collect()
+        .collect();
+    if let Some((asset, network_caip2)) = preferred {
+        let filtered: Vec<serde_json::Value> = arr
+            .iter()
+            .filter(|entry| {
+                entry.get("asset").and_then(|v| v.as_str()) == Some(asset.as_str())
+                    && entry.get("network").and_then(|v| v.as_str())
+                        == Some(network_caip2.as_str())
+            })
+            .filter_map(|entry| transform_payment_entry(entry, tier_key))
+            .collect();
+        if !filtered.is_empty() {
+            return filtered;
+        }
+    }
+    all
 }
 
 /// Per-entry projection. Picks the tier-resolved amount, renders it as
@@ -413,6 +439,7 @@ mod tests {
             grace_shown: false,
             accepts: None,
             path_tier: None,
+            preferred_asset: None,
         }
     }
 
