@@ -83,7 +83,7 @@ onchainos agent feedback-submit \
 
 Render the detail outcome and offer exactly **one** next-step suggestion — not a menu (see `display-formats.md` §8):
 
-> 已给 #<target> 打 <score> 分。要不要看看 #<target> 的最新评分分布？执行 `agent feedback-list <target> --sort-by newest`。
+> 已给 #<target> 打 <score> 分。要不要看看 #<target> 的最新评分分布？执行 `agent feedback-list <target> --sort-by time_desc`（按时间倒序）；想看分数最高的改 `score_desc`。用户说的中文排序意图按 `cli-reference.md` §10 的映射表转换。
 
 Do NOT chase with `agent feedback-list` automatically. See `_shared/no-polling.md`.
 

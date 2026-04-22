@@ -57,27 +57,29 @@ onchainos agent create \
 }
 ```
 
-**Common failures:**
-- `invalid value for --role` → role outside requester/provider/evaluator/aliases.
-- `provider agents require at least one service` → no `--service`.
-- `missing required field in --service: ServiceName` / `ServiceDescription` → empty field in JSON.
-- `missing required field in --service for A2MCP: Fee` / `Endpoint` → A2MCP without Fee/Endpoint.
-- `invalid ServiceType in --service` → type not in {A2MCP, A2A}.
-- `session expired, please login again` → `wallet login` first.
+**Common failures** (exact strings from `cli/src/commands/agent_commerce/identity/*.rs`; see `troubleshooting.md` §1 for translations):
+- `invalid value for --role: <value>` — role outside requester/provider/evaluator/aliases.
+- `provider agents require at least one service; provide --service` — no `--service`.
+- `missing required field in --service: ServiceName` / `ServiceDescription` — empty field in JSON.
+- `missing required field in --service for A2MCP: Fee` / `Endpoint` — A2MCP without Fee/Endpoint.
+- `invalid ServiceType in --service: <value>` — type not in {A2MCP, A2A}.
+- `session expired, please login again: onchainos wallet login` — `wallet login` first.
 
 ---
 
 ## 2. `onchainos agent update <agentId>`
 
-Update fields on an existing agent. At least one of `--name`, `--description`, `--picture`, `--service` must be supplied.
+Update fields on an existing agent.
+
+> ⚠️ **Skill-side rule (not CLI-enforced):** at least one of `--name`, `--description`, `--picture`, `--service` must actually change. The CLI itself does NOT validate this — `mutations.rs:156-228` will happily send a card containing only `AgentId`. The skill must refuse to call `update` when no field changed; otherwise the backend behavior is undefined.
 
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
 | `<agentId>` | ✓ | integer | Positional; the agent to edit. |
-| `--name` | at least one | string | |
-| `--description` | at least one | string | |
-| `--picture` | at least one | URL string | |
-| `--service` | at least one | JSON array string | Full replacement — supply the complete service list, not a diff. |
+| `--name` | at least one (skill rule) | string | See note above — CLI does not enforce. |
+| `--description` | at least one (skill rule) | string | See note above — CLI does not enforce. |
+| `--picture` | at least one (skill rule) | URL string | See note above — CLI does not enforce. |
+| `--service` | at least one (skill rule) | JSON array string | Full replacement — supply the complete service list, not a diff. See note above — CLI does not enforce. |
 
 **Example — change description only:**
 ```bash
@@ -92,8 +94,8 @@ onchainos agent update 42 --picture "https://cdn.example.com/u/new.png"
 **Return (JSON):** same shape as `agent get` detail for the updated agent.
 
 **Common failures:**
-- `no updatable field supplied` → zero optional params.
 - `agent not found` → bad `<agentId>` or the agent does not belong to the caller.
+- *No "no updatable field supplied" error from the CLI* — if the skill sends a card with only `AgentId` (no field changed), the CLI will dispatch the request and the backend outcome is undefined. The skill must block this case locally; see the skill-side rule in the section header above.
 
 ---
 
@@ -189,9 +191,10 @@ onchainos agent upload ./avatar.png
 
 **Return:** `{ "url": "https://cdn.example.com/u/<hash>.png" }`.
 
-**Common failures:**
-- `file not found` → path wrong or not accessible.
-- `unsupported media type` → backend rejects the MIME type; retry with PNG / JPEG / WebP.
+**Common failures** (upload is in `mutations.rs:282-337`, NOT an `upload.rs`):
+- `failed to read file: <path>` — path wrong or not accessible (raw from `mutations.rs:286` via `fs::read` context).
+- `upload response missing url` — successful upload but backend omitted the URL (`mutations.rs:334/337`).
+- Backend-originated: if the backend rejects a MIME type, its message is surfaced verbatim — do NOT hard-code a `unsupported media type` string, there is no such CLI bail!.
 
 ---
 
@@ -201,7 +204,7 @@ Discover agents by semantic query + optional filter dimensions.
 
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
-| `--query` | ✓ | string (≤ 200 chars) | User's full sentence verbatim. Truncate if longer. |
+| `--query` | ✓ | string | User's full sentence verbatim. CLI does not enforce a length cap (`queries.rs:105-108` only validates non-empty). |
 | `--feedback` | ✗ | `Vec<String>` (comma-separated) | Reputation keywords (e.g., "高分", "好评"). |
 | `--agent-info` | ✗ | `Vec<String>` | Role / domain keywords (e.g., "provider", "数据分析"). |
 | `--status` | ✗ | `Vec<String>` | Activity state; use `active` when user says "只看活跃的". |
@@ -224,8 +227,7 @@ Filter splitting rules and more examples → `search-query-split.md`.
 **Return (JSON):** `{ total, items: [ { agentId, name, role, status, description, reputation, services, ... } ] }`.
 
 **Common failures:**
-- `query is required` → empty `--query`.
-- `query too long, truncated to 200 chars` → informational warning, results still returned.
+- `missing required parameter: --query` → empty `--query` (raw from `utils.rs:190` via `require_non_empty`).
 
 ---
 
@@ -300,11 +302,26 @@ Read the reputation history of a specific agent.
 | `<agentId>` | ✓ | integer | Positional. |
 | `--page` | ✗ | integer (default 1) | |
 | `--page-size` | ✗ | integer (default 20) | |
-| `--sort-by` | ✗ | `newest` \| `highest` \| `lowest` | Applies only here — NOT on `agent search`. |
+| `--sort-by` | ✗ | `time_desc` \| `score_desc` | Applies only here — NOT on `agent search`. No default at the CLI level; when omitted, the parameter is not sent and the backend picks its own default. |
+
+> **Enum source of truth:** `cli/src/commands/agent_commerce/identity/queries.rs:231-235`. If the CLI enum changes, update every doc that references `--sort-by` in this skill.
+
+### Natural-language → `--sort-by` mapping (skill-side)
+
+Users never type `time_desc`. The skill translates:
+
+| User phrasing | `--sort-by` value |
+|---|---|
+| "最新 / 最近 / latest / newest / 按时间排序" | `time_desc` |
+| "最高分 / 分数最高 / 高分优先 / highest score / top rated" | `score_desc` |
+| "最低分 / 分数最低 / lowest / 差评优先" | **Not supported.** Tell the user only `time_desc` / `score_desc` are accepted; offer `score_desc` then let them page to the tail, or leave `--sort-by` off entirely. |
+| Unclear / not mentioned | Omit `--sort-by` — backend picks a default. |
+
+If the user explicitly says a raw value outside the enum, the CLI will bail with `invalid value for --sort-by: <value>`; return to this mapping.
 
 **Example:**
 ```bash
-onchainos agent feedback-list 42 --sort-by newest --page 1 --page-size 10
+onchainos agent feedback-list 42 --sort-by time_desc --page 1 --page-size 10
 ```
 
 **Return:**
@@ -321,4 +338,4 @@ onchainos agent feedback-list 42 --sort-by newest --page 1 --page-size 10
 
 **Common failures:**
 - `agent not found` → bad id.
-- `invalid sort-by` → value outside the allowed set.
+- `invalid value for --sort-by: <value>` → value outside `{time_desc, score_desc}`; re-map via the table above.

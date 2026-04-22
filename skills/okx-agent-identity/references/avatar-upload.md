@@ -62,7 +62,7 @@ If the user already has a URL (e.g., "用这个 twitter 头像 https://..."), tr
 
 ## Validation
 
-- **MIME type** — backend accepts PNG / JPEG / WebP; other types return `unsupported media type`. On that error, retry once after converting, or tell the user.
+- **MIME type** — backend is known to accept PNG / JPEG / WebP; other types are likely rejected with a backend-originated error (exact wording is not a CLI `bail!` and may drift — do NOT hard-code). On rejection, ask the user to convert to PNG / JPEG / WebP and retry.
 - **File size** — no explicit limit in the CLI; if backend rejects with a size error, ask the user to downscale (≤ 2 MB is a safe default).
 - **URL shape** — must be HTTPS. Anything else: "头像链接必须是 https:// 开头。"
 - **CDN availability** — the CDN is considered globally available; do not advise the user to switch region.

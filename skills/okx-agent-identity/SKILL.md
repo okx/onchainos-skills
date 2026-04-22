@@ -139,7 +139,7 @@ Full contract → `references/passive-onboarding.md`.
 
 ## Search
 
-- User's full sentence goes **verbatim** into `--query` (trim to ≤ 200 chars only if longer).
+- User's full sentence goes **verbatim** into `--query`. No length cap at the CLI level — pass whatever the user said.
 - The skill itself parses the same sentence into four `Vec<String>` filters: `--feedback`, `--agent-info`, `--status`, `--service`. Keywords that do not fit are dropped — never invent filters.
 - `--query` semantic matching is the primary signal; filters are supplementary.
 - There is **no** `--sort-by` for `agent search` (that flag only exists on `feedback-list`).
@@ -155,6 +155,8 @@ Mandatory 4-step flow — never skip the display step:
 2. Show the current detail card (`references/display-formats.md` §2).
 3. Collect the user's desired changes (one field per turn), then render the **Update Diff** table (`references/display-formats.md` §3) — three columns: `Field / 当前值 / 新值`, unchanged rows show `(不变)`. Ask for explicit confirmation.
 4. Execute `onchainos agent update <agentId>` with only the changed fields, then show the updated detail card.
+
+> **Skill-side "at least one field changed" rule:** if after collecting input the diff shows no changes (every row is `(不变)`), the skill refuses to call `update` and tells the user `没有需要提交的更改`. **Do NOT rely on the CLI to reject this** — `mutations.rs:156-228` will send an all-`(不变)` card if asked. See `references/cli-reference.md` §2.
 
 Never call `update` without first showing the current state. Never invent fields the user did not ask to change. Never show the bash command in the diff card unless the user explicitly asks for it.
 
@@ -326,7 +328,7 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 | `agent update` | Show new detail card. If user deactivated during update, suggest re-activate. |
 | `agent activate` | "上架完成，可以 `agent search` 自检曝光。" |
 | `agent deactivate` | "下架完成，客户端列表会隐藏；要恢复执行 `agent activate`。" |
-| `agent feedback-submit` | "要看 #<target> 的最新评分分布？执行 `agent feedback-list <target> --sort-by newest`。" |
+| `agent feedback-submit` | "要看 #<target> 的最新评分分布？执行 `agent feedback-list <target> --sort-by time_desc`（按时间倒序）。要按分数排序改用 `score_desc`。完整取值见 `references/cli-reference.md` §10。" |
 | `agent search` | "锁定目标后可以 `service-list` 查服务，或直接进入 `okx-agent-task` 发任务。" |
 
 ## Amount Display Rules

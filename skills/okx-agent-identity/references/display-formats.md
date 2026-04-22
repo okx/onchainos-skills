@@ -135,7 +135,7 @@ Header line + one entry per review. Prose-style, not a table — the description
 **#3 · 2026-04-15 · creator #77 (provider DataCo) · 70 / 100**
 - (no comment)
 
-> 第 1/2 页，输入 "下一页" 继续。`--sort-by`: newest (默认)。
+> 第 1/2 页，输入 "下一页" 继续。`--sort-by`: time_desc（按时间倒序）。
 
 Rules:
 
@@ -143,7 +143,7 @@ Rules:
 - Each review: `#<index> · <date> · creator #<id> (<role> <name>) · <score> / 100`.
 - Optional `task:` row shows the jobId in backticks; omit if absent.
 - Description in quotes; render `"(no comment)"` when missing.
-- Footer: page indicator + `--sort-by` used.
+- Footer: page indicator + `--sort-by` used (`time_desc` or `score_desc`; see `cli-reference.md` §10 for the natural-language mapping). If `--sort-by` was omitted, render `未指定，后端默认`.
 
 ---
 
