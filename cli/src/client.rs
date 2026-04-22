@@ -1114,7 +1114,7 @@ impl ApiClient {
         format!("{}{}", self.base_url.trim_end_matches('/'), path)
         **/
         /// TODO: revert this
-        format!("https://web3pre.okex.org/{}", path)
+        format!("https://web3pre.okex.org{}", path)
     }
 
     /// Look up the tier for a path from the loaded config. Returns `None`
