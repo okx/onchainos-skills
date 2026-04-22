@@ -13,7 +13,8 @@ use tokio::sync::Mutex;
 
 use crate::client::ApiClient;
 use crate::commands::{
-    defi, gateway, leaderboard, market, memepump, portfolio, signal, swap, token, tracker,
+    cross_chain, defi, gateway, leaderboard, market, memepump, portfolio, signal, swap, token,
+    tracker,
 };
 
 // ── DeFi ──────────────────────────────────────────────────────────────
@@ -480,7 +481,7 @@ struct SwapSwapParams {
     gas_level: Option<String>,
     /// Swap mode: exactIn (default) or exactOut
     swap_mode: Option<String>,
-    /// Jito tips in lamports for Solana MEV protection (positive integer, e.g. `1000` = 0.000001 SOL)
+    /// Jito tips in SOL for Solana MEV protection (range: 0.0000000001–2)
     tips: Option<String>,
     /// Max auto slippage percent cap when autoSlippage is enabled (e.g. "0.5")
     max_auto_slippage: Option<String>,
@@ -637,6 +638,31 @@ struct GatewayOrdersParams {
     chain: String,
     /// Specific order ID from broadcast response (optional)
     order_id: Option<String>,
+}
+
+// ── Cross-Chain ──────────────────────────────────────────────────────
+#[derive(Deserialize, JsonSchema)]
+struct CrossChainQuoteParams {
+    /// Source token contract address or alias (e.g. "usdc", "eth", "0x...")
+    from: String,
+    /// Destination token contract address or alias
+    to: String,
+    /// Source chain name (e.g. "ethereum", "arbitrum", "base")
+    from_chain: String,
+    /// Destination chain name (e.g. "optimism", "solana")
+    to_chain: String,
+    /// Human-readable amount (e.g. "10" for 10 USDC)
+    readable_amount: String,
+    /// Receive address on destination chain (optional, defaults to user wallet)
+    receive_address: Option<String>,
+    /// Sort preference: 0=optimal (default), 1=fastest, 2=max output
+    sort: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CrossChainStatusParams {
+    /// Order ID returned by cross-chain execute
+    order_id: String,
 }
 
 #[derive(Clone)]
@@ -1701,6 +1727,78 @@ impl McpServer {
     }
 
     // ── DeFi: Support Chains / Platforms ──────────────────────────────
+
+    // ── Cross-Chain ────────────────────────────────────────────────────
+
+    #[tool(
+        name = "cross_chain_chains",
+        description = "Get supported chain pairs for cross-chain bridge swaps"
+    )]
+    async fn cross_chain_chains(&self) -> Result<String, String> {
+        match cross_chain::fetch_chain_pairs(&mut *self.client.lock().await).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "cross_chain_bridges",
+        description = "Get available bridge protocols for cross-chain swaps"
+    )]
+    async fn cross_chain_bridges(&self) -> Result<String, String> {
+        match cross_chain::fetch_bridges(&mut *self.client.lock().await).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "cross_chain_quote",
+        description = "Get cross-chain bridge quote: routes, fees, estimated time, minimum received"
+    )]
+    async fn cross_chain_quote(
+        &self,
+        Parameters(p): Parameters<CrossChainQuoteParams>,
+    ) -> Result<String, String> {
+        let from_chain_index = crate::chains::resolve_chain(&p.from_chain);
+        let to_chain_index = crate::chains::resolve_chain(&p.to_chain);
+        let from_token =
+            crate::commands::swap::resolve_token_address(&from_chain_index, &p.from);
+        let to_token =
+            crate::commands::swap::resolve_token_address(&to_chain_index, &p.to);
+        let sort = p.sort.as_deref().unwrap_or("0");
+        match cross_chain::fetch_quote(
+            &mut *self.client.lock().await,
+            &from_chain_index,
+            &to_chain_index,
+            &from_token,
+            &to_token,
+            &p.readable_amount,
+            p.receive_address.as_deref(),
+            sort,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "cross_chain_status",
+        description = "Query cross-chain order status by order ID"
+    )]
+    async fn cross_chain_status(
+        &self,
+        Parameters(p): Parameters<CrossChainStatusParams>,
+    ) -> Result<String, String> {
+        match cross_chain::fetch_order_details(&mut *self.client.lock().await, &p.order_id).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    // ── DeFi ─────────────────────────────────────────────────────────
 
     #[tool(
         name = "defi_support_chains",
