@@ -165,6 +165,33 @@ onchainos wallet send --readable-amount "0.1" --recipient "0xAbc..." --chain 1
 # 2. User confirms → re-run with --force
 onchainos wallet send --readable-amount "0.1" --recipient "0xAbc..." --chain 1 --force
 ```
+
+## User-Facing Message Templates
+
+**IMPORTANT**: Several sections below instruct the Agent to output the **Wallet Export template** or the **Policy Settings template**. When triggered, print the matching template verbatim (translated to the user's language). The link and trailing navigation sentence are chosen by `loginType` (from `wallet status`, or the `login` / `verify` response). If `loginType` is unknown, run `onchainos wallet status` first; treat any unrecognized value as `email`.
+
+### Template: Wallet Export
+
+> Wallet export must be completed on the Web portal. Please note: once the export is complete, your current wallet will be permanently unbound from your email, and the Agent will no longer be able to operate this wallet. The system will automatically create a new empty wallet for your account. Before exporting, please transfer your assets to a safe address and stop any running strategies. [Go to Wallet Export → {export_url}]
+>
+> {export_hint}
+
+| `loginType` | `{export_url}` | `{export_hint}` |
+|---|---|---|
+| `email` | `https://web3.okx.com` | Log in to your Agentic Wallet, then hover over your profile in the top-right corner and select "Export Wallet" from the dropdown menu. |
+| `ak` | `https://web3.okx.com/zh-hans/onchainos/dev-portal` | Log in the Developer Portal using a plugin wallet or the OKX Wallet App that manages your API Key, and click Agentic Wallet → Wallet Export. |
+
+### Template: Policy Settings
+
+> You can set per-transaction and daily limits for trades and transfers, as well as a transfer whitelist, to prevent excessive operations or transfers to unauthorized addresses. [Go to Policy Setting → {policy_url}]
+>
+> {policy_hint}
+
+| `loginType` | `{policy_url}` | `{policy_hint}` |
+|---|---|---|
+| `email` | `https://web3.okx.com/portfolio/agentic-wallet-policy` | Log in to your Agentic Wallet, then hover over your profile in the top-right corner and select "Policy Setting" from the dropdown menu. |
+| `ak` | `https://web3.okx.com/zh-hans/onchainos/dev-portal` | Log in with the EOA wallet that created the Agentic Wallet and open the OKX Web3 Dev platform, and click on the Agentic Wallet - Policy Setting in the upper right corner to set security rules. |
+
 ## Authentication
 
 For commands requiring auth (sections B, D, E), check login state:
@@ -192,7 +219,7 @@ For commands requiring auth (sections B, D, E), check login state:
      Use the `wallet status` result (from step 1 or re-run). If `loginType` is `"ak"` and the returned `apiKey` differs from the current environment variable `OKX_API_KEY`, show both keys to the user and ask to confirm the switch. If the user confirms, run `onchainos wallet login --force`. If `apiKey` is absent, empty, or identical, skip the confirmation and run `onchainos wallet login` directly.
    - **3c.** After silent login succeeds, inform the user that they have been logged in via the API Key method.
 4. After login succeeds, display the full account list with addresses by running `onchainos wallet balance`.
-5. **New user check**: If the `wallet verify` or `wallet login` response contains `"isNew": true`, read and follow `references/new-user-guide.md` to display the new-user guidance. If `"isNew": false`, skip this step.
+5. **New user check**: If the `wallet verify` or `wallet login` response contains `"isNew": true`, output the **Policy Settings template** followed by the **Wallet Export template** (see "User-Facing Message Templates"). If `"isNew": false`, skip this step.
 
 
 > **After successful login**: a wallet account is created automatically — never call `wallet add` unless the user is already logged in and explicitly requests an additional account.
@@ -267,17 +294,6 @@ NEVER execute unlimited token approvals.
 
 ---
 
-## Portal URL Resolution
-
-Policy and Wallet Export links depend on `loginType` (from `wallet status`, or the `login` / `verify` response). Whenever guidance below uses `{policy_url}` or `{export_url}`, substitute using this table:
-
-| `loginType` | `{policy_url}` | `{export_url}` |
-|---|---|---|
-| `email` | `https://web3.okx.com/portfolio/agentic-wallet-policy` | `https://web3.okx.com` |
-| `ak` | `https://web3.okx.com/onchainos/dev-portal` | `https://web3.okx.com/onchainos/dev-portal` |
-
-If `loginType` is unknown, run `onchainos wallet status` first. Any other `loginType` → fall back to the `email` row. The "hover over profile → Export Wallet" navigation hint applies to `email` only.
-
 ## Agent Policy Guidance
 
 > Policy configuration **must be completed by the user on the Web portal**. The Agent only detects the scenario, provides guidance, and gives the jump link.
@@ -301,16 +317,14 @@ Handled in Authentication step 5
 
 ### New account via `wallet add`
 
-After a successful `wallet add`, **MUST** output the following message (translated to the user's language; resolve `{policy_url}` per "Portal URL Resolution"):
-
-> New account created. You can configure spending limits and transfer whitelist in Policy Settings → {policy_url}
+After a successful `wallet add`, **MUST** output the **Policy Settings template** (see "User-Facing Message Templates"), prefixed with a short line such as "New account created.".
 
 ### User asks about Policy
 
 e.g., "How do I set a spending limit?", "What's my daily limit?", "How to configure whitelist?"
-- Run `onchainos wallet status` and check the `policy` field. Resolve `{policy_url}` per "Portal URL Resolution" using the same `loginType`.
-- **`policy` is null or all flags are false**: explain what Policy offers (per-tx limit, daily transfer/trade limit, transfer whitelist) and provide the link: `{policy_url}`
-- **Any flag is true**: display the current settings (limits, used amounts) and provide `{policy_url}` for modifications.
+- Run `onchainos wallet status` and check the `policy` field.
+- If any flag is true, first display the current settings (limits, used amounts).
+- Then output the **Policy Settings template** (see "User-Facing Message Templates").
 
 ---
 
@@ -322,13 +336,7 @@ e.g., "How do I set a spending limit?", "What's my daily limit?", "How to config
 
 e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I import my wallet into a hardware wallet?"
 
-When triggered, output the following message (translated to the user's language; resolve `{export_url}` per "Portal URL Resolution"):
-
-> Wallet export must be completed on the Web portal. Please note: once the export is complete, your current wallet will be permanently unbound from your email, and the Agent will no longer be able to operate this wallet. The system will automatically create a new empty wallet for your account. Before exporting, please transfer your assets to a safe address and stop any running strategies. [Go to Wallet Export → {export_url}]
-
-If `loginType` is `email`, also append this navigation hint:
-
-> Log in to your Agentic Wallet, then hover over your profile in the top-right corner and select "Export Wallet" from the dropdown menu.
+When triggered, output the **Wallet Export template** (see "User-Facing Message Templates").
 
 ---
 
