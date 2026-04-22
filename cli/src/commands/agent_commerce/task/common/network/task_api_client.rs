@@ -19,8 +19,12 @@ pub struct TaskApiClient {
 
 impl TaskApiClient {
     pub fn new() -> Self {
+        Self::with_base_url(task_api_url())
+    }
+
+    pub fn with_base_url(base_url: String) -> Self {
         Self {
-            api: ApiClient::new(task_api_url()),
+            api: ApiClient::new(base_url),
         }
     }
 

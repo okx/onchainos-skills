@@ -324,26 +324,6 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
             reply: makeReply(convId),
           }));
 
-          // TASK_ACCEPTED：推送到主 session 通知用户，不需要处理
-          if (msgType === "TASK_ACCEPTED") {
-            const jobId = envelope.payload.jobId ?? "?";
-            const mainBody = `[任务进度通知]\n任务 ${jobId}：买家已确认接单，资金已托管，开始执行任务（TASK_ACCEPTED）`;
-            ctx.log?.info?.(`[ws-channel] 推送 TASK_ACCEPTED 到主 session jobId=${jobId}`);
-            await enqueueDispatch("main", () => handleInboundMessage({
-              cfg: ctx.cfg,
-              accountId: account.accountId,
-              myAddr: account.walletAddr,
-              myAgentId: account.agentId,
-              systemPrompt: resolvedSystemPrompt,
-              envelope: {
-                ...envelope,
-                payload: { ...envelope.payload, type: "TASK_STATUS_NOTIFY", content: mainBody, llm: mainBody },
-              },
-              sessionMode: "main",
-              reply: () => {},
-            }));
-          }
-
           // TASK_REFUSED：需要用户决策，回复自动 relay 回子 session
           if (msgType === "TASK_REFUSED") {
             const jobId = envelope.payload.jobId ?? "?";

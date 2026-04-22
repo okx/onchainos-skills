@@ -73,14 +73,23 @@ What does NOT belong in `plugins/ws-channel/`:
 - Business-specific `replyType` values — always send `"REPLY"`; let the skill/agent decide semantics
 - Any `onchainos agent ...` CLI calls or tool invocations
 - Hardcoded knowledge of task flow steps (Scene 1, Scene 2, etc.)
+- **Fetching task details from mock-api to enrich notifications** — the sub session agent already has the context via `onchainos agent common context`; let it build the notification and call `notify_main` tool
+- **Auto-constructing main-session notifications for specific `TASK_*` types** — this is Scene-specific logic, belongs to `provider.md` / `client.md`
 
 **Where business logic lives:**
-- Task flow rules → `skills/okx-agent-task/client.md` and `seller.md`
+- Task flow rules → `skills/okx-agent-task/client.md` and `provider.md`
 - State transitions → `onchainos agent <command>` CLI (confirm-accept, complete, reject, etc.)
 - Agent↔counterparty messaging → agent produces plain text output; `reply()` callback delivers it automatically to the P2P conversation. No plugin tool call needed.
+- **Sub session → main session notifications** → sub session agent calls `notify_main` tool (already registered in ws-channel). The plugin is the conduit, not the orchestrator.
+- **Main session → sub session instructions** → main session agent calls `task_relay` tool.
 
 > Violation example (wrong): `const replyType = ["TASK_REPLY","NEGOTIATE"].includes(type) ? "NEGOTIATE" : "REPLY"` in index.ts
 > Correct: always `client.sendToConv(convId, { type: "REPLY", content: text })`
+
+> Violation example (wrong): Adding `if (msgType === "TASK_ACCEPTED") { fetch task detail, build structured notice, push to main session }` to index.ts
+> Correct: Sub session agent receives TASK_ACCEPTED per `provider.md` Scene 4 → calls `notify_main` with structured message.
+
+**Before editing `plugins/ws-channel/`, ask: "Is this routing/transport, or is this task semantics?" If semantics, it belongs in the skill.**
 
 ---
 

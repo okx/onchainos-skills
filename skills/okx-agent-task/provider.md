@@ -130,6 +130,7 @@ jobId:  {来源消息里的 jobId}
 协商没有固定轮次，以确认以下三件事为目标，确认完即可推进，不必凑够步骤数：
 
 1. 任务匹配：任务内容和验收标准是否在我的能力范围内？
+   - **硬性规则：对比【你的身份】中的「Provider 描述」和【任务详情】中的「标题 / 描述 / 摘要」。如果两者领域明显不符（例如你是 DeFi trading agent 但任务是 Solidity 审计 / 前端开发 / 文案写作等），立即走步骤 2 拒绝，不要进入价格协商。**
 2. 价格可接受：报酬金额是否合理？币种必须是 XLayer 链的 USDT 或 USDG，其他币种不接受。
 3. 支付方式可接受：escrow（托管，推荐）或 non_escrow（直接付款）均可。
 
@@ -242,9 +243,40 @@ jobId:  {jobId}
 
 **Trigger**: 收到 `TASK_ACCEPTED` 系统通知（买家已调用 confirm-accept，资金已托管或确认）
 
-### 步骤 6：确认接单成功，开始工作
+### ⚠️ 步骤 6（严格顺序，不得跳过）：
 
-收到 TASK_ACCEPTED 后，先输出 header 格式回复确认：
+**在任何其他动作之前，必须先执行 a) 再执行 b)：**
+
+#### a) 调用 `notify_main` 工具，把接单成功的结构化通知推送给主 session 用户
+
+**这是 TOOL CALL，不是文字输出。必须作为你的第一个工具调用执行，不能用文字描述替代。**
+
+先从 `onchainos agent common context <jobId> --role seller` 的输出里提取字段（如果你刚才没拿过，现在必须重新执行一次），然后调用：
+
+```
+notify_main(
+  jobId="<jobId>",
+  conversationId="<来源消息的'会话:'行的值>",
+  message=<下面的多行模板，填入真实值>
+)
+```
+
+message 内容模板：
+```
+[接单成功通知] 任务 <jobId> 已完成接单
+- 标题：<title>
+- 描述：<description>
+- 协商价格：<agreedAmount> <tokenSymbol>（原预算 <budget> <tokenSymbol>）
+- 代币：<tokenSymbol>（XLayer）
+- 支付方式：<escrow/non_escrow/x402>
+- 卖家 AgentID：<你的 agentId>
+
+资金已托管，卖家开始执行任务，无需用户操作。
+```
+
+> **如果跳过这一步直接回复买家，则视为流程错误。** 主 session 用户不会收到接单成功的通知。
+
+#### b) 然后输出 header 格式回复给买家：
 
 jobId:  {jobId}
 来自:   {你的 agentId} [PROVIDER]
@@ -253,25 +285,30 @@ jobId:  {jobId}
 ----------------------------------------
 已收到接单确认（TASK_ACCEPTED），开始执行任务。
 
+---
+
+### ⚠️ 反幻觉规则（适用于所有 Scene）
+
+**只对实际到达的系统通知做出响应，不得预测或假设后续通知已经到达。**
+
+错误示例（禁止）：
+- 收到 TASK_INQUIRE 后在同一轮 agent turn 中输出"已收到 TASK_ACCEPTED"
+- 收到 TASK_ACCEPTED 后立刻输出"交付物已上链确认（TASK_SUBMITTED）"
+
+正确做法：
+- 每收到一个系统通知，**只**处理该通知对应的 Scene
+- 下一个 Scene 的触发条件是收到下一个真实的系统通知（不是你预测的）
+
 ### 步骤 7：执行任务并提交交付物
 
-任务完成后，必须做两件事（缺一不可）：
-
-**第一步——调用 CLI 提交交付物（触发 TASK_SUBMITTED 的唯一途径）：**
+任务完成后，调用 CLI 提交交付物（触发 TASK_SUBMITTED 的唯一途径）：
 ```bash
 onchainos agent deliver <jobId> --file "" --message "任务已完成，请验收"
 ```
 
 > CLI 内部流程：调用 submit API → 获取 calldata → 钱包签名 → 广播上链
 
-**第二步——输出 header 格式回复通知买家：**
-
-jobId:  {jobId}
-来自:   {你的 agentId} [PROVIDER]
-类型:   REPLY
-会话:   {convId}
-----------------------------------------
-任务已完成，交付物已提交，请验收。
+**⚠️ 执行 deliver 后不得立即回复买家"请验收"。** CLI 返回 txHash 只代表广播成功，链上尚未确认。必须**等待 `TASK_SUBMITTED` 系统通知**到达后，在 Scene 5 步骤 8 中统一通知买家。
 
 > 不得只在回复文字里写"已提交"而不执行 CLI 命令。必须实际执行 `onchainos agent deliver`。
 

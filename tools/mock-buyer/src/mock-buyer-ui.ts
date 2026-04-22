@@ -67,7 +67,7 @@ function buyerSend(convId: string, payload: Partial<TaskPayload>) {
   if (s) pushSSE("session_updated", sessionToView(s));
 }
 
-async function uiStartNegotiation(jobId: string): Promise<string> {
+async function uiStartNegotiation(jobId: string, sellerAgentIdArg?: string): Promise<string> {
   // Find PROVIDER with retries (same logic as headless startNegotiation)
   let providers: unknown[] = [];
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -78,7 +78,10 @@ async function uiStartNegotiation(jobId: string): Promise<string> {
   }
   if (providers.length === 0) throw new Error("no PROVIDER registered after retries");
 
-  const seller = providers[0] as { agent_id: string; comm_addr: string };
+  const seller = (sellerAgentIdArg
+    ? providers.find((p: any) => p.agent_id === sellerAgentIdArg)
+    : providers[0]) as { agent_id: string; comm_addr: string } | undefined;
+  if (!seller) throw new Error(`seller ${sellerAgentIdArg} not registered`);
   const sellerAgentId = seller.agent_id ?? "unknown-seller";
   const sellerCommAddr = seller.comm_addr ?? "";
   const convId = `conv-${jobId}-${BUYER_AGENT_ID}-${sellerAgentId}`;
@@ -176,20 +179,47 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // POST /start-negotiation  { jobId }
+  // POST /start-negotiation  { jobId, sellerAgentId? }
   if (url.pathname === "/start-negotiation" && req.method === "POST") {
     let body = "";
     req.on("data", (c) => (body += c));
     req.on("end", async () => {
       try {
-        const { jobId } = JSON.parse(body);
-        const convId = await uiStartNegotiation(jobId);
+        const { jobId, sellerAgentId } = JSON.parse(body);
+        const convId = await uiStartNegotiation(jobId, sellerAgentId);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, convId }));
       } catch (e) {
         res.writeHead(400); res.end(String(e));
       }
     });
+    return;
+  }
+
+  // GET /my-tasks → 本 buyer 创建的任务列表
+  if (url.pathname === "/my-tasks" && req.method === "GET") {
+    try {
+      const r = await fetch(`${API_BASE_URL}/api/v1/tasks/all`);
+      const d = (await r.json()) as any;
+      const all = d?.data?.list ?? [];
+      const mine = all.filter((t: any) => t.buyerAgentId === BUYER_AGENT_ID);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, list: mine }));
+    } catch (e) {
+      res.writeHead(500); res.end(String(e));
+    }
+    return;
+  }
+
+  // GET /sellers → 已注册的 PROVIDER 列表
+  if (url.pathname === "/sellers" && req.method === "GET") {
+    try {
+      const providers = await client.lookupRole("PROVIDER");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, list: providers }));
+    } catch (e) {
+      res.writeHead(500); res.end(String(e));
+    }
     return;
   }
 
@@ -262,10 +292,10 @@ async function main() {
     if (from === BUYER_COMM_ADDR) return;
     console.log(`[buyer] ← conv=${convId.slice(-20)} from=${from.slice(0, 20)} type=${type}`);
 
-    // TASK_CONFIRMED: 自动开始协商
+    // TASK_CONFIRMED: 只记录日志，不自动协商；用户需点击左侧任务/卖家手动触发
     if (type === "TASK_CONFIRMED" && jobId) {
-      console.log(`[buyer] TASK_CONFIRMED jobId=${jobId}，自动启动协商...`);
-      uiStartNegotiation(jobId).catch(console.error);
+      console.log(`[buyer] TASK_CONFIRMED jobId=${jobId}，等待用户手动选择卖家...`);
+      pushSSE("tasks_refresh", {});
       return;
     }
 
@@ -309,12 +339,26 @@ body { font-family: monospace; background: #0d1117; color: #c9d1d9; display: fle
 #create-form input[name=budget] { width: 70px; }
 #create-form input[name=jobId] { width: 120px; }
 #workspace { display: flex; flex: 1; overflow: hidden; }
-#sidebar { width: 240px; border-right: 1px solid #30363d; overflow-y: auto; display: flex; flex-direction: column; }
-#sidebar h2 { padding: 10px 14px; font-size: 12px; color: #8b949e; border-bottom: 1px solid #30363d; }
-.session-item { padding: 10px 14px; cursor: pointer; border-bottom: 1px solid #21262d; }
-.session-item:hover, .session-item.active { background: #161b22; }
+#sidebar { width: 280px; border-right: 1px solid #30363d; overflow-y: auto; display: flex; flex-direction: column; }
+#sidebar h2 { padding: 8px 14px; font-size: 11px; color: #8b949e; border-bottom: 1px solid #30363d; text-transform: uppercase; letter-spacing: .05em; background: #0d1117; position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; align-items: center; }
+.sidebar-section { border-bottom: 2px solid #30363d; }
+.task-item, .seller-item, .session-item { padding: 8px 14px; cursor: pointer; border-bottom: 1px solid #21262d; font-size: 11px; }
+.task-item:hover, .seller-item:hover, .session-item:hover { background: #161b22; }
+.task-item.selected, .seller-item.selected, .session-item.active { background: #1f3a5f; border-left: 2px solid #58a6ff; }
+.task-item .tid, .seller-item .sid { color: #58a6ff; font-weight: bold; }
+.task-item .title { color: #c9d1d9; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-item .meta, .seller-item .meta { color: #8b949e; font-size: 10px; margin-top: 2px; }
+.task-item .status { display: inline-block; padding: 0 5px; border-radius: 8px; font-size: 9px; margin-top: 2px; }
+.s-open { background: #1c3a4a; color: #79c0ff; }
+.s-accepted { background: #12372a; color: #3fb950; }
+.s-submitted { background: #3a2d00; color: #e3b341; }
+.s-complete { background: #0d2818; color: #56d364; }
+.s-refused { background: #3a1a1a; color: #f85149; }
+.s-init { background: #1c1c2c; color: #8b949e; }
 .session-item .job { font-size: 11px; color: #58a6ff; }
 .session-item .step { font-size: 11px; color: #8b949e; margin-top: 2px; display: flex; align-items: center; gap: 6px; }
+.empty-hint { padding: 12px 14px; color: #484f58; font-size: 11px; text-align: center; }
+.hint-bar { padding: 6px 14px; font-size: 11px; color: #e3b341; background: #2d2000; border-bottom: 1px solid #30363d; }
 .badge { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 10px; }
 .badge.auto { background: #1a4731; color: #3fb950; }
 .badge.manual { background: #3d1f00; color: #f0883e; }
@@ -350,15 +394,23 @@ button { padding: 5px 11px; border-radius: 6px; border: none; cursor: pointer; f
     <input name="title" placeholder="任务标题 (可选)" />
     <input name="budget" placeholder="预算" value="100" />
     <button class="btn-primary" onclick="createTask()">发布任务</button>
-    <span style="color:#8b949e;font-size:12px">或手动:</span>
-    <input name="jobId" placeholder="jobId (e.g. 0x3e9)" />
-    <button class="btn-neutral" onclick="startManual()">联系卖家</button>
   </div>
 </div>
 <div id="workspace">
   <div id="sidebar">
-    <h2>Sessions</h2>
-    <div id="session-list"></div>
+    <div class="sidebar-section">
+      <h2>我的任务 <span id="tasks-count" style="color:#58a6ff">0</span></h2>
+      <div id="task-list"><div class="empty-hint">暂无任务，请点击"发布任务"</div></div>
+    </div>
+    <div class="sidebar-section">
+      <h2>已注册卖家 <span id="sellers-count" style="color:#58a6ff">0</span> <button class="btn-neutral" onclick="loadSellers()" style="padding:1px 6px;font-size:10px">↻</button></h2>
+      <div id="hint-bar" class="hint-bar" style="display:none">选择左上任务后，点击卖家发起协商</div>
+      <div id="seller-list"><div class="empty-hint">加载中...</div></div>
+    </div>
+    <div class="sidebar-section">
+      <h2>会话 <span id="sessions-count" style="color:#58a6ff">0</span></h2>
+      <div id="session-list"></div>
+    </div>
   </div>
   <div id="main">
     <div id="empty">发布任务或输入 jobId 以开始</div>
@@ -389,7 +441,10 @@ button { padding: 5px 11px; border-radius: 6px; border: none; cursor: pointer; f
 
 <script>
 let currentConvId = null;
+let selectedJobId = null;
 const sessions = {};
+let tasksList = [];
+let sellersList = [];
 const STEP_LABELS = ['等待卖家询问','已发任务详情','已接受报价','已确认支付','等待交付','交付中','已完成','已拒绝','等待仲裁','仲裁中','流程结束'];
 const REPLIES = [
   '任务标题：开发一个 Python 脚本监控链上交易。\\n描述：实时输出以太坊主网大额交易，支持按金额过滤，有完整注释。\\n预算：100 USDT。\\n验收标准：代码有注释，支持以太坊主网，交付可运行脚本。',
@@ -401,19 +456,22 @@ const es = new EventSource('/events');
 es.addEventListener('new_session', e => {
   const s = JSON.parse(e.data);
   sessions[s.convId] = s;
-  renderSidebar();
+  renderSessions();
   if (!currentConvId) selectSession(s.convId);
 });
 es.addEventListener('session_updated', e => {
   const s = JSON.parse(e.data);
   sessions[s.convId] = s;
-  renderSidebar();
+  renderSessions();
   if (currentConvId === s.convId) renderConv(s);
 });
+es.addEventListener('tasks_refresh', () => { loadTasks(); });
 
-function renderSidebar() {
+function renderSessions() {
   const list = document.getElementById('session-list');
-  list.innerHTML = Object.values(sessions).map(s => \`
+  const arr = Object.values(sessions);
+  document.getElementById('sessions-count').textContent = arr.length;
+  list.innerHTML = arr.length ? arr.map(s => \`
     <div class="session-item \${s.convId === currentConvId ? 'active' : ''}" onclick="selectSession('\${s.convId}')">
       <div class="job">jobId: \${s.jobId || '?'}</div>
       <div class="step">
@@ -421,7 +479,76 @@ function renderSidebar() {
         <span class="badge \${s.autoMode ? 'auto' : 'manual'}">\${s.autoMode ? '自动' : '手动'}</span>
       </div>
     </div>
-  \`).join('');
+  \`).join('') : '<div class="empty-hint">暂无会话</div>';
+}
+
+function renderTasks() {
+  document.getElementById('tasks-count').textContent = tasksList.length;
+  const el = document.getElementById('task-list');
+  if (!tasksList.length) { el.innerHTML = '<div class="empty-hint">暂无任务</div>'; return; }
+  el.innerHTML = tasksList.map(t => {
+    const statusCls = 's-' + (t.statusStr || 'init');
+    const selected = t.jobId === selectedJobId ? ' selected' : '';
+    return \`<div class="task-item\${selected}" onclick="selectTask('\${t.jobId}')">
+      <div class="tid">\${t.jobId}</div>
+      <div class="title" title="\${escHtml(t.title||'')}">\${escHtml(t.title||'')}</div>
+      <div class="meta">预算: \${t.tokenAmount||'?'} USDT · <span class="status \${statusCls}">\${t.statusStr||'init'}</span></div>
+    </div>\`;
+  }).join('');
+}
+
+function renderSellers() {
+  document.getElementById('sellers-count').textContent = sellersList.length;
+  document.getElementById('hint-bar').style.display = selectedJobId ? 'block' : 'none';
+  document.getElementById('hint-bar').textContent = selectedJobId
+    ? '已选中 ' + selectedJobId + '，点击下方卖家发起协商'
+    : '';
+  const el = document.getElementById('seller-list');
+  if (!sellersList.length) { el.innerHTML = '<div class="empty-hint">暂无已注册卖家</div>'; return; }
+  el.innerHTML = sellersList.map(s => {
+    const disabled = !selectedJobId;
+    return \`<div class="seller-item" style="\${disabled?'opacity:.5;cursor:not-allowed':''}" onclick="\${disabled?'':\`contactSeller('\${s.agent_id}')\`}">
+      <div class="sid">\${s.agent_id}</div>
+      <div class="meta">\${(s.comm_addr||'').slice(0,18)}...</div>
+    </div>\`;
+  }).join('');
+}
+
+function selectTask(jobId) {
+  selectedJobId = jobId;
+  renderTasks();
+  renderSellers();
+}
+
+async function contactSeller(sellerAgentId) {
+  if (!selectedJobId) { alert('请先选择一个任务'); return; }
+  try {
+    const res = await fetch('/start-negotiation', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ jobId: selectedJobId, sellerAgentId })
+    });
+    const data = await res.json();
+    if (!data.ok) alert('失败: ' + JSON.stringify(data));
+  } catch (e) { alert('错误: ' + e.message); }
+}
+
+async function loadTasks() {
+  try {
+    const r = await fetch('/my-tasks');
+    const d = await r.json();
+    tasksList = (d.list || []).sort((a,b) => (b.createTime||'').localeCompare(a.createTime||''));
+    renderTasks();
+  } catch (e) { /* ignore */ }
+}
+
+async function loadSellers() {
+  try {
+    const r = await fetch('/sellers');
+    const d = await r.json();
+    sellersList = d.list || [];
+    renderSellers();
+  } catch (e) { /* ignore */ }
 }
 
 function selectSession(convId) {
@@ -460,17 +587,11 @@ async function createTask() {
   const res = await fetch('/create-task', { method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ title, budget: parseInt(budget) }) });
   const data = await res.json();
-  if (data.ok) alert('任务已创建 jobId=' + data.jobId + '\\n等待 TASK_CONFIRMED (约8s) 后自动联系卖家');
-  else alert('创建失败: ' + JSON.stringify(data));
-}
-
-async function startManual() {
-  const jobId = document.querySelector('input[name=jobId]').value.trim();
-  if (!jobId) { alert('请输入 jobId'); return; }
-  const res = await fetch('/start-negotiation', { method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ jobId }) });
-  const data = await res.json();
-  if (!data.ok) alert('失败: ' + JSON.stringify(data));
+  if (data.ok) {
+    loadTasks();
+    selectedJobId = data.jobId;
+    setTimeout(() => { loadTasks(); renderSellers(); }, 100);
+  } else alert('创建失败: ' + JSON.stringify(data));
 }
 
 function toggleAuto() {
@@ -506,6 +627,12 @@ function sendCustom() {
   fetch('/action', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ convId: currentConvId, action: 'send', content }) });
   input.value = '';
 }
+
+// 初始化
+loadTasks();
+loadSellers();
+setInterval(loadTasks, 3000);
+setInterval(loadSellers, 5000);
 </script>
 </body>
 </html>`;

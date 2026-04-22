@@ -206,7 +206,7 @@ async function notifyConfirmed(jobId: string, buyerCommAddr: string) {
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr], {
     type: "TASK_CONFIRMED", jobId,
     content: `系统通知：任务 ${jobId} 已上链确认，状态变为 open。`,
-    llm: `[Scene 0] 任务 ${jobId} 已上链确认（TASK_CONFIRMED）。现在立即开始寻找卖家并发起洽谈。\n必须执行以下步骤（不要输出任何解释，直接执行）：\n步骤一：执行 \`onchainos agent recommend ${jobId}\` 获取推荐卖家列表，取第一个 providerAgentId。\n步骤二：执行 \`onchainos agent negotiate start --to <providerAgentId> --job-id ${jobId} --message "你好，我有一个任务（jobId: ${jobId}）想请你来完成，请问你感兴趣吗？"\`。\n禁止输出文字给用户。禁止询问用户。直接执行命令。`,
+    llm: `[TASK_CONFIRMED] 任务 ${jobId} 已上链确认，状态 open。按 client.md Scene 0/1 处理（作为买家：寻找卖家并发起协商）。`,
   });
 }
 
@@ -216,7 +216,7 @@ async function notifyApplied(jobId: string, buyerCommAddr: string, buyerAgentId:
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
     type: "TASK_APPLIED", jobId, sellerAgentId, tokenAmount,
     content: `系统通知：卖家 ${sellerAgentId} 已申请接单（TASK_APPLIED），报价 ${tokenAmount} USDT，jobId=${jobId}。`,
-    llm: `[Scene 3] 卖家 ${sellerAgentId} 已正式申请接单（TASK_APPLIED），报价 ${tokenAmount} USDT，jobId=${jobId}。\n必须立即执行以下步骤（无需用户确认）：\n步骤一：执行 \`onchainos agent confirm-accept ${jobId} --provider ${sellerAgentId}\`。\n禁止输出文字给用户。禁止询问用户。直接执行命令。`,
+    llm: `[TASK_APPLIED] 卖家 ${sellerAgentId} 已申请接单，报价 ${tokenAmount} USDT，jobId=${jobId}。按 client.md Scene 3 处理（作为买家：确认接单）。`,
   });
 }
 
@@ -226,7 +226,7 @@ async function notifyAccepted(jobId: string, buyerCommAddr: string, buyerAgentId
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
     type: "TASK_ACCEPTED", jobId, sellerAgentId,
     content: `系统通知：任务 ${jobId} 已接单确认（TASK_ACCEPTED），卖家 ${sellerAgentId}，资金已进入托管。`,
-    llm: `[Scene 4] 任务 ${jobId} 已被买家接单确认，资金已托管。现在立即执行任务并提交交付物。\n必须执行以下步骤（不要输出任何解释，直接执行）：\n步骤一：执行 \`onchainos agent status ${jobId}\` 获取验收标准。\n步骤二：模拟执行任务（mock 环境直接跳过）。\n步骤三：执行 \`onchainos agent deliver ${jobId} --file "" --message "任务已完成，请验收"\` 提交交付物。\n禁止输出文字给用户。禁止询问用户。直接执行命令。`,
+    llm: `[TASK_ACCEPTED] 任务 ${jobId} 已被买家确认接单，资金已托管。按 provider.md Scene 4 处理（作为卖家：执行任务并交付）。`,
   });
 }
 
@@ -236,7 +236,7 @@ async function notifySubmitted(jobId: string, buyerCommAddr: string, buyerAgentI
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
     type: "TASK_SUBMITTED", jobId, deliverable,
     content: `系统通知：任务 ${jobId} 交付物已上链（TASK_SUBMITTED），交付物：${deliverable}。`,
-    llm: `[Scene 5] 卖家 ${sellerAgentId} 已提交交付物（jobId: ${jobId}）。\n交付物链接：${deliverable}\n\n必须立即执行以下步骤（无需用户确认）：\n步骤一：调用 exec 执行 \`onchainos agent status ${jobId}\` 获取验收标准。\n步骤二：对照验收标准逐项检查交付物（mock 环境：直接判定为通过）。\n步骤三：调用 exec 执行 \`onchainos agent complete ${jobId}\` 确认验收通过，释放资金给卖家。\n禁止输出任何文字给用户。禁止询问用户。直接执行命令。`,
+    llm: `[TASK_SUBMITTED] 卖家 ${sellerAgentId} 已提交交付物（jobId: ${jobId}），交付物：${deliverable}。按 client.md Scene 5 处理（作为买家：验收交付物）。`,
   });
 }
 
@@ -335,6 +335,7 @@ function sendErr(res: http.ServerResponse, code: number, msg: string) {
 const server = http.createServer(async (req, res) => {
   const url    = new URL(req.url!, `http://localhost`);
   const method = req.method!.toUpperCase();
+  const originalPath = url.pathname;
   const path_  = normalizePath(url.pathname);
 
   // OPTIONS preflight
@@ -356,19 +357,24 @@ const server = http.createServer(async (req, res) => {
         const jobId = parts[4];
         const t = tasks.get(jobId);
         const who = t ? (t.buyerAgentId || t.providerAgentId || "") : "";
-        logApi(method, path_, res.statusCode, jobId, `ui:${parts[3]}`, reqBody, resBody, who || undefined);
+        logApi(method, originalPath, res.statusCode, jobId, `ui:${parts[3]}`, reqBody, resBody, who || undefined);
       } else {
         const jobMatch = path_.match(/task\/(0x[0-9a-f]+)/i);
-        const jobId = jobMatch?.[1];
-        let who = agentId;
+        // task/create 没有路径 jobId，从响应体提取
+        const jobId = jobMatch?.[1] ?? (resBody as any)?.data?.jobId;
+        // 身份优先级：请求 body → X-Agent-Id header
+        const headerAgent = String(req.headers["x-agent-id"] ?? "");
+        let who = agentId || headerAgent;
+        // 仅在特定 action 能明确归属时 fallback 到任务的 buyer/provider
         if (!who && jobId) {
           const t = tasks.get(jobId);
+          const action = path_.split("/").pop();
           if (t) {
-            const action = path_.split("/").pop();
-            who = (action === "apply" || action === "submit") ? (t.providerAgentId ?? "") : (t.buyerAgentId ?? "");
+            if (action === "apply" || action === "submit") who = t.providerAgentId ?? "";
+            else if (action === "accept" || action === "complete" || action === "refuse") who = t.buyerAgentId ?? "";
           }
         }
-        logApi(method, path_, res.statusCode, jobId, path_.split("/").pop(), reqBody, resBody, who || undefined);
+        logApi(method, originalPath, res.statusCode, jobId, path_.split("/").pop(), reqBody, resBody, who || undefined);
       }
     });
   }
@@ -397,6 +403,23 @@ const server = http.createServer(async (req, res) => {
   if (method === "GET" && path_ === "/api/v1/tasks/all") {
     const list = [...tasks.values()].sort((a, b) => b.createTime.localeCompare(a.createTime));
     sendOk(res, { total: list.length, list }); return;
+  }
+  // Agent profile mock
+  if (method === "GET" && path_ === "/api/v1/agent/list") {
+    sendOk(res, {
+      total: 2, page: 1, pageSize: 20,
+      list: [
+        {
+          agentId: "10001",
+          status: 1,
+          ownerAddress: "0x2381...",
+          name: "My DeFi Agent",
+          profilePicture: "https://cdn.example.com/agent/avatar1.png",
+          profileDescription: "A DeFi trading agent",
+        },
+      ],
+    });
+    return;
   }
   if (method === "GET" && path_ === "/api/v1/task/list") {
     const status = url.searchParams.get("status");
@@ -799,9 +822,9 @@ tr:hover td{background:#161b22}
 .method{font-weight:bold;min-width:36px;font-size:11px}
 .get{color:#3fb950}.post{color:#ffa657}.delete{color:#f85149}
 .path{color:#8b949e;word-break:break-all}
-.log-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+.log-grid{margin-top:16px}
 .log-box{background:#0d1117;border:1px solid #21262d;border-radius:4px;padding:8px;
-  max-height:260px;overflow-y:auto;font-size:11px}
+  max-height:420px;overflow-y:auto;font-size:11px}
 .log-row{padding:2px 0;color:#8b949e;border-bottom:1px solid #161b22;display:flex;gap:6px;flex-wrap:wrap}
 .log-row .ts{color:#484f58;min-width:70px}
 .log-row .tag{padding:0 4px;border-radius:3px;font-size:10px;font-weight:bold}
@@ -811,6 +834,12 @@ tr:hover td{background:#161b22}
 .log-row .job{color:#79c0ff}.log-row .detail{color:#8b949e}
 .log-row .s-ok{color:#3fb950}.log-row .s-err{color:#f85149}
 .log-row.clickable{cursor:pointer}.log-row.clickable:hover{background:#1c2230}
+.job-clickable{cursor:pointer;text-decoration:underline dotted}
+.job-clickable:hover{color:#a5d6ff}
+.filter-bar{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:11px}
+.filter-bar .clear-btn{cursor:pointer;background:#21262d;border:1px solid #30363d;border-radius:4px;
+  color:#c9d1d9;padding:2px 8px;font-family:monospace;font-size:11px}
+.filter-bar .clear-btn:hover{background:#30363d}
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;align-items:center;justify-content:center}
 .modal-overlay.show{display:flex}
 .modal{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;max-width:720px;width:92%;max-height:82vh;overflow-y:auto}
@@ -874,12 +903,13 @@ tr:hover td{background:#161b22}
 </div>
 <div class="log-grid">
   <div class="panel">
-    <h2>API 请求记录</h2>
-    <div id="api-log" class="log-box"></div>
-  </div>
-  <div class="panel">
-    <h2>WS 系统通知</h2>
-    <div id="ws-log" class="log-box"></div>
+    <h2>事件记录（API 请求 + WS 系统通知）</h2>
+    <div class="filter-bar">
+      <span>过滤：</span>
+      <span id="filter-label" style="color:#79c0ff">全部</span>
+      <button class="clear-btn" id="clear-filter-btn" onclick="clearFilter()" style="display:none">✕ 清除过滤</button>
+    </div>
+    <div id="event-log" class="log-box"></div>
   </div>
 </div>
 <div id="detail-modal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('show')">
@@ -890,33 +920,30 @@ tr:hover td{background:#161b22}
 </div>
 <script>
 document.addEventListener('keydown',e=>{if(e.key==='Escape')document.getElementById('detail-modal').classList.remove('show');});
-let apiLogsData=[], wsLogsData=[];
+let allEvents=[], jobFilter=null;
 function fmtTs(iso) { if(!iso) return ''; try { const d=new Date(iso); return [d.getHours(),d.getMinutes(),d.getSeconds()].map(n=>String(n).padStart(2,'0')).join(':'); } catch(e) { return iso; } }
-function renderApiLog(logs) {
-  return logs.map((e,i) => {
+function renderEventRow(e, i) {
+  if (e.kind === 'api') {
     const m = (e.method||'GET').toUpperCase();
     const cls = m==='GET'?'t-get':m==='POST'?'t-post':'t-delete';
     const scode = (e.status||0) < 400 ? 's-ok' : 's-err';
     const hasBody = e.reqBody || e.resBody;
     const agent = e.agentId ? \`<span style="color:#d2a8ff">\${e.agentId}</span>\` : '';
-    return \`<div class="log-row\${hasBody?' clickable':''}" \${hasBody?'onclick="showDetail(\\'api\\','+i+')"':''}><span class="ts">\${fmtTs(e.ts)}</span><span class="tag \${cls}">\${m}</span><span class="\${scode}">\${e.status}</span><span class="job">\${e.jobId||''}</span>\${agent}<span class="detail">\${e.path||''}</span></div>\`;
-  }).join('');
-}
-function renderWsLog(logs) {
-  return logs.map((e,i) => {
+    return \`<div class="log-row\${hasBody?' clickable':''}" \${hasBody?'onclick="showDetail('+i+')"':''}><span class="ts">\${fmtTs(e.ts)}</span><span class="tag \${cls}">\${m}</span><span class="\${scode}">\${e.status}</span><span class="job">\${e.jobId||''}</span>\${agent}<span class="detail">\${e.path||''}</span></div>\`;
+  } else {
     const hasPayload = !!e.wsPayload;
-    return \`<div class="log-row\${hasPayload?' clickable':''}" \${hasPayload?'onclick="showDetail(\\'ws\\','+i+')"':''}><span class="ts">\${fmtTs(e.ts)}</span><span class="tag t-ws">\${e.wsType||'?'}</span><span class="job">\${e.jobId||''}</span><span class="detail">\${e.detail||''}</span></div>\`;
-  }).join('');
+    return \`<div class="log-row\${hasPayload?' clickable':''}" \${hasPayload?'onclick="showDetail('+i+')"':''}><span class="ts">\${fmtTs(e.ts)}</span><span class="tag t-ws">\${e.wsType||'?'}</span><span class="job">\${e.jobId||''}</span><span class="detail">\${e.detail||''}</span></div>\`;
+  }
 }
 function esc(s) { const d=document.createElement('div');d.textContent=s;return d.innerHTML; }
-function showDetail(kind,index) {
-  const e = kind==='api' ? apiLogsData[index] : wsLogsData[index];
+function showDetail(index) {
+  const e = allEvents[index];
   if(!e) return;
   const modal = document.getElementById('detail-modal');
   const title = document.getElementById('detail-title');
   const content = document.getElementById('detail-content');
   let html = '';
-  if(kind==='api') {
+  if (e.kind === 'api') {
     title.textContent = \`\${e.method} \${e.path}  [\${e.status}]\`;
     html += \`<div class="meta">\${e.ts}  |  jobId: \${e.jobId||'-'}</div>\`;
     if(e.reqBody && Object.keys(e.reqBody).length) {
@@ -934,6 +961,26 @@ function showDetail(kind,index) {
   content.innerHTML = html;
   modal.classList.add('show');
 }
+function renderEventLog() {
+  const filtered = jobFilter ? allEvents.filter(e => e.jobId === jobFilter) : allEvents;
+  const el = document.getElementById('event-log');
+  el.innerHTML = filtered.length
+    ? filtered.map((e,i) => renderEventRow(e, allEvents.indexOf(e))).join('')
+    : '<div class="log-row">暂无记录</div>';
+}
+function filterByJob(jobId) {
+  jobFilter = jobId;
+  document.getElementById('filter-label').textContent = 'jobId = ' + jobId;
+  document.getElementById('filter-label').style.color = '#79c0ff';
+  document.getElementById('clear-filter-btn').style.display = 'inline-block';
+  renderEventLog();
+}
+function clearFilter() {
+  jobFilter = null;
+  document.getElementById('filter-label').textContent = '全部';
+  document.getElementById('clear-filter-btn').style.display = 'none';
+  renderEventLog();
+}
 async function loadLogs() {
   try {
     const [apiRes, wsRes] = await Promise.all([
@@ -942,10 +989,10 @@ async function loadLogs() {
     ]);
     const apiData = await apiRes.json();
     const wsData = await wsRes.json();
-    apiLogsData = apiData.data?.logs || [];
-    wsLogsData = wsData.data?.logs || [];
-    document.getElementById('api-log').innerHTML = apiLogsData.length ? renderApiLog(apiLogsData) : '<div class="log-row">暂无请求</div>';
-    document.getElementById('ws-log').innerHTML = wsLogsData.length ? renderWsLog(wsLogsData) : '<div class="log-row">暂无通知</div>';
+    const apiLogs = (apiData.data?.logs || []).map(e => ({...e, kind: 'api'}));
+    const wsLogs = (wsData.data?.logs || []).map(e => ({...e, kind: 'ws'}));
+    allEvents = [...apiLogs, ...wsLogs].sort((a,b) => (b.ts||'').localeCompare(a.ts||''));
+    renderEventLog();
   } catch(e) {}
 }
 const statusBadge = s => {
@@ -977,7 +1024,7 @@ async function loadTasks() {
     const tbody = document.getElementById('task-body');
     if (!tasks.length) { tbody.innerHTML = '<tr><td colspan="6" style="color:#8b949e;text-align:center">暂无任务</td></tr>'; return; }
     tbody.innerHTML = tasks.map(t => \`<tr>
-      <td><code style="color:#79c0ff">\${t.jobId}</code></td>
+      <td><code class="job-clickable" style="color:#79c0ff" onclick="filterByJob('\${t.jobId}')" title="点击过滤该 jobId 的记录">\${t.jobId}</code></td>
       <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="\${t.title}">\${t.title}</td>
       <td>\${statusBadge(t.statusStr)}</td>
       <td style="color:#8b949e;font-size:11px">\${t.buyerAgentId}</td>

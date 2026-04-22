@@ -148,6 +148,53 @@ struct TaskDetail {
     update_time: Option<String>,
 }
 
+// ─── Agent 资料响应结构 ───────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentListResp {
+    code: Option<String>,
+    data: Option<AgentListData>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentListData {
+    list: Vec<AgentProfile>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AgentProfile {
+    #[allow(dead_code)]
+    agent_id: Option<String>,
+    name: Option<String>,
+    profile_description: Option<String>,
+}
+
+/// [MOCK] 查询 agent 资料（name / profileDescription）
+///
+/// TODO: 替换为真实后端接口。当前返回 mock 数据。
+async fn fetch_agent_profile(_agent_id: &str, api_url: &str) -> Option<AgentProfile> {
+    let url = format!("{api_url}/priapi/v1/aieco/agent/list");
+    let resp: Result<AgentListResp, _> = match reqwest::get(&url).await {
+        Ok(r) => r.json().await,
+        Err(_) => return Some(mock_profile()),
+    };
+    match resp {
+        Ok(r) if r.code.as_deref() == Some("0") => r.data.and_then(|d| d.list.into_iter().next()),
+        _ => Some(mock_profile()),
+    }
+}
+
+fn mock_profile() -> AgentProfile {
+    AgentProfile {
+        agent_id: Some("10001".to_string()),
+        name: Some("My DeFi Agent".to_string()),
+        profile_description: Some("A DeFi trading agent".to_string()),
+    }
+}
+
 // ─── 状态说明 ──────────────────────────────────────────────────────────────
 
 fn status_desc(s: &str) -> &str {
@@ -299,25 +346,30 @@ async fn run_context(
         bail!("--role 必须是 buyer / seller / evaluator");
     }
 
-    // 调用后端获取任务详情
+    // 调用后端获取任务详情（带身份 header，便于 mock-api 日志区分调用方）
+    let client = network::task_api_client::TaskApiClient::with_base_url(api_url.to_string());
     let url = format!("{api_url}/priapi/v1/aieco/task/{job_id}");
-    let resp = reqwest::get(&url)
+    let resp_val = client
+        .get_with_identity(&url, agent_id.unwrap_or(""), address.unwrap_or(""))
         .await
-        .map_err(|e| anyhow::anyhow!("无法连接 mock-api（{api_url}）: {e}\n提示: 先启动 ./target/release/mock-api"))?;
+        .map_err(|e| anyhow::anyhow!("无法获取任务详情（{api_url}）: {e}"))?;
 
-    let body: TaskResp = resp.json().await
+    let body: TaskResp = serde_json::from_value(resp_val)
         .map_err(|e| anyhow::anyhow!("解析响应失败: {e}"))?;
-
-    if body.code != 0 {
-        bail!("后端错误 code={}: {}", body.code, body.msg.unwrap_or_default());
-    }
 
     let task = body.data
         .ok_or_else(|| anyhow::anyhow!("响应中无 data 字段"))?
         .task;
 
+    // 卖家额外拉取 agent 资料（name / profileDescription）
+    let profile = if role == "seller" {
+        fetch_agent_profile(agent_id.unwrap_or(""), api_url).await
+    } else {
+        None
+    };
+
     // 生成上下文
-    let ctx_text = build_context(&task, role, agent_id, address);
+    let ctx_text = build_context(&task, role, agent_id, address, profile.as_ref());
     println!("{ctx_text}");
     Ok(())
 }
@@ -327,6 +379,7 @@ fn build_context(
     role: &str,
     agent_id: Option<&str>,
     address: Option<&str>,
+    profile: Option<&AgentProfile>,
 ) -> String {
     let mut out = String::with_capacity(1024);
 
@@ -351,6 +404,14 @@ fn build_context(
     }
     if let Some(addr) = address {
         out.push_str(&format!("- 钱包地址：{addr}\n"));
+    }
+    if let Some(p) = profile {
+        if let Some(n) = &p.name {
+            out.push_str(&format!("- 名称：{n}\n"));
+        }
+        if let Some(d) = &p.profile_description {
+            out.push_str(&format!("- Provider 描述：{d}\n"));
+        }
     }
     out.push('\n');
 
@@ -438,6 +499,34 @@ fn build_context(
         out.push_str(&format!("- 聊天会话ID：{gid}\n"));
     }
     out.push('\n');
+
+    // ── 专业匹配检查（仅卖家 + open 状态 + 有 profile） ───────────────────
+    if role == "seller" && status_raw == "open" {
+        if let Some(p) = profile {
+            if let Some(desc) = &p.profile_description {
+                out.push_str("【⚠️ 第一步：专业匹配检查（必做，不得跳过）】\n");
+                out.push_str(&format!("- 你的 Provider 描述：{desc}\n"));
+                out.push_str(&format!("- 任务标题：{}\n", task.title));
+                out.push_str(&format!("- 任务描述：{}\n", task.description));
+                out.push_str("\n");
+                out.push_str("判断：上述「Provider 描述」和「任务领域」是否匹配？\n");
+                out.push_str("- 匹配（同一专业领域）→ 进入下方「可执行操作」继续协商\n");
+                out.push_str("- 不匹配（领域明显不同，如 DeFi trading vs 合约审计 / 前端 / 文案）→ **必须拒绝**：\n");
+                out.push_str("  1. 以 header 格式回复拒绝消息（示例如下）\n");
+                out.push_str("  2. **禁止**执行 onchainos agent apply 或任何后续操作\n\n");
+                out.push_str("拒绝回复模板（必须包含 header）：\n");
+                out.push_str(&format!("jobId:  {}\n", task.job_id));
+                out.push_str("来自:   <你的 agentId> [PROVIDER]\n");
+                out.push_str("类型:   REPLY\n");
+                out.push_str("会话:   <来源消息的会话 ID>\n");
+                out.push_str("----------------------------------------\n");
+                out.push_str(&format!(
+                    "抱歉，此任务（{}）超出我的专业领域（{}），无法承接。祝您找到合适的卖家。\n\n",
+                    task.title, desc
+                ));
+            }
+        }
+    }
 
     // ── 可执行操作 ────────────────────────────────────────────────────────
     let actions = available_actions(role, status_raw, &task.job_id);
