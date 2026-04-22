@@ -80,6 +80,7 @@ async fn sign_and_broadcast(
     is_contract_call: bool,
     mev_protection: bool,
     force: bool,
+    tx_source: Option<&str>,
 ) -> Result<String> {
     if cfg!(feature = "debug-log") {
         eprintln!(
@@ -156,7 +157,7 @@ async fn sign_and_broadcast(
         validate_non_negative_integer(aa_amount, "aa-dex-token-amount")?;
     }
 
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
     // Only read swap trace ID from cache for contract calls (swap flow)
     let cached_tid = if is_contract_call {
         crate::wallet_store::get_swap_trace_id().ok().flatten()
@@ -233,6 +234,12 @@ async fn sign_and_broadcast(
         Some(trace_headers_broadcast.as_slice())
     };
 
+    let extra_data_overlay = tx_source.map(|src| {
+        let mut map = serde_json::Map::new();
+        map.insert("txSource".into(), json!(src));
+        map
+    });
+
     let tx_hash = broadcast_unsigned(BroadcastCtx {
         access_token: &access_token,
         account_id: &account_id,
@@ -243,7 +250,7 @@ async fn sign_and_broadcast(
         is_contract_call,
         mev_protection,
         force,
-        extra_data_overlay: None,
+        extra_data_overlay,
         trace_headers: trace_ref_broadcast,
     })
     .await?;
@@ -288,6 +295,7 @@ pub(super) async fn cmd_send(
         false,
         false,
         force,
+        None, // tx_source: not cross-chain
     )
     .await?;
     output::success(json!({ "txHash": tx_hash }));
@@ -325,6 +333,7 @@ pub async fn cmd_contract_call(
         mev_protection,
         jito_unsigned_tx,
         force,
+        None, // tx_source: not cross-chain
     )
     .await?;
     output::success(json!({ "txHash": tx_hash }));
@@ -347,6 +356,7 @@ pub async fn execute_contract_call(
     mev_protection: bool,
     jito_unsigned_tx: Option<&str>,
     force: bool,
+    tx_source: Option<&str>,
 ) -> Result<String> {
     if to.is_empty() || chain.is_empty() {
         bail!("to and chain are required");
@@ -373,6 +383,7 @@ pub async fn execute_contract_call(
         true,
         mev_protection,
         force,
+        tx_source,
     )
     .await
 }

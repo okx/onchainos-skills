@@ -78,7 +78,7 @@ pub async fn xmtp_sign(args: XmtpSignArgs, ctx: &Context) -> Result<()> {
 
 async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
-    let client = wallet_client(ctx)?;
+    let mut client = wallet_client(ctx)?;
     let (_account_id, addr_info) = resolve_xlayer_signing_account(args.address.as_deref())?;
     let from_addr = addr_info.address.clone();
     let signing_seed = load_signing_seed()?;
@@ -155,7 +155,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
 
 async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
-    let client = wallet_client(ctx)?;
+    let mut client = wallet_client(ctx)?;
     let agent_id = resolve_agent_id(&args.agent_id, &args.agent_id_flag)?;
     let session_cert = load_session_cert()?;
 
@@ -240,7 +240,7 @@ async fn deactivate_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<()> {
 
 async fn agent_status_impl(args: &AgentStatusArgs, status: u32, ctx: &Context) -> Result<()> {
     let access_token = ensure_tokens_refreshed().await?;
-    let client = wallet_client(ctx)?;
+    let mut client = wallet_client(ctx)?;
     let agent_id = resolve_agent_id(&args.agent_id, &args.agent_id_flag)?;
     let body = json!({
         "agentId": agent_id,
@@ -343,7 +343,7 @@ async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
 
 async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
-    let client = wallet_client(ctx)?;
+    let mut client = wallet_client(ctx)?;
     // --agent-id / --creator-id / --score 必填；--description / --task-id 选填。
     let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?.to_string();
     let creator_id = require_non_empty(args.creator_id.as_deref(), "--creator-id")?.to_string();
@@ -426,7 +426,7 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
 /// 后端返回 signature 后透传给用户。不走广播。
 async fn xmtp_sign_impl(args: &XmtpSignArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
-    let client = wallet_client(ctx)?;
+    let mut client = wallet_client(ctx)?;
 
     let key_uuid = require_non_empty(args.key_uuid.as_deref(), "--key-uuid")?;
     let message = require_non_empty(args.message.as_deref(), "--message")?;

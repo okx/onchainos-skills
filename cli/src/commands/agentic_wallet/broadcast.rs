@@ -142,7 +142,7 @@ pub(crate) async fn broadcast_unsigned(ctx: BroadcastCtx<'_>) -> Result<String> 
     let extra_data_str =
         serde_json::to_string(&extra_data_obj).context("failed to serialize extraData")?;
 
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
     let broadcast_resp = client
         .broadcast_transaction(
             access_token,

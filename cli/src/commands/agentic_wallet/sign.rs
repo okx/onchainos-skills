@@ -170,7 +170,7 @@ async fn personal_sign(message: &str, chain: &str, from: &str, force: bool) -> R
     }
 
     // Call sign-msg API
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
     let mut body = json!({
         "chainIndex": chain_index,
         "from": from_address,
@@ -245,7 +245,7 @@ async fn eip712_sign(message: &str, chain: &str, from: &str, force: bool) -> Res
         );
     }
 
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
 
     // Step 1: gen-msg-hash
     let gen_hash_body = json!({

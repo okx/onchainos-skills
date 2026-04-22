@@ -61,7 +61,7 @@ pub enum SwapCommand {
         /// Swap mode: exactIn or exactOut
         #[arg(long, default_value = "exactIn")]
         swap_mode: String,
-        /// Jito tips in SOL for Solana MEV protection (range: 0.0000000001–2). Response includes signatureData for jitoCalldata.
+        /// Jito tips in lamports for Solana MEV protection (positive integer, e.g. `1000` = 0.000001 SOL). Response includes signatureData for jitoCalldata.
         #[arg(long)]
         tips: Option<String>,
         /// Max auto slippage percent cap when autoSlippage is enabled (e.g. "0.5" for 0.5%)
@@ -132,7 +132,7 @@ pub enum SwapCommand {
         /// Swap mode: exactIn or exactOut
         #[arg(long, default_value = "exactIn")]
         swap_mode: String,
-        /// Jito tips in SOL for Solana MEV protection
+        /// Jito tips in lamports for Solana MEV protection (positive integer, e.g. `1000` = 0.000001 SOL)
         #[arg(long)]
         tips: Option<String>,
         /// Max auto slippage percent cap
@@ -145,7 +145,7 @@ pub enum SwapCommand {
 }
 
 pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
     match cmd {
         SwapCommand::Quote {
             from,
@@ -158,7 +158,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
             let raw_amount = resolve_amount_arg(
-                &client,
+                &mut client,
                 amount.as_deref(),
                 readable_amount.as_deref(),
                 &from,
@@ -166,7 +166,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             )
             .await?;
             output::success(
-                fetch_quote(&client, &chain_index, &from, &to, &raw_amount, &swap_mode).await?,
+                fetch_quote(&mut client, &chain_index, &from, &to, &raw_amount, &swap_mode).await?,
             );
         }
         SwapCommand::Swap {
@@ -185,7 +185,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
             let raw_amount = resolve_amount_arg(
-                &client,
+                &mut client,
                 amount.as_deref(),
                 readable_amount.as_deref(),
                 &from,
@@ -194,7 +194,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             .await?;
             output::success(
                 fetch_swap(
-                    &client,
+                    &mut client,
                     &chain_index,
                     &from,
                     &to,
@@ -216,7 +216,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
-            output::success(fetch_approve(&client, &chain_index, &token, &amount).await?);
+            output::success(fetch_approve(&mut client, &chain_index, &token, &amount).await?);
         }
         SwapCommand::CheckApprovals {
             chain,
@@ -226,17 +226,17 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(
-                fetch_check_approvals(&client, &chain_index, &address, &token, spender.as_deref())
+                fetch_check_approvals(&mut client, &chain_index, &address, &token, spender.as_deref())
                     .await?,
             );
         }
         SwapCommand::Chains => {
-            output::success(fetch_chains(&client).await?);
+            output::success(fetch_chains(&mut client).await?);
         }
         SwapCommand::Liquidity { chain } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
-            output::success(fetch_liquidity(&client, &chain_index).await?);
+            output::success(fetch_liquidity(&mut client, &chain_index).await?);
         }
         SwapCommand::Execute {
             from,
@@ -255,7 +255,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
             let raw_amount = resolve_amount_arg(
-                &client,
+                &mut client,
                 amount.as_deref(),
                 readable_amount.as_deref(),
                 &from,
@@ -263,7 +263,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             )
             .await?;
             cmd_execute(
-                &client,
+                &mut client,
                 &from,
                 &to,
                 &raw_amount,
@@ -428,7 +428,7 @@ static TOKEN_MAP: LazyLock<HashMap<&str, HashMap<&str, &str>>> = LazyLock::new(|
 
 /// Resolve a token address using the chain-specific mapping table.
 /// Matching is case-insensitive. If no match is found, returns the original value unchanged.
-fn resolve_token_address(chain_index: &str, token: &str) -> String {
+pub(crate) fn resolve_token_address(chain_index: &str, token: &str) -> String {
     let key = token.to_ascii_lowercase();
     if let Some(chain_map) = TOKEN_MAP.get(chain_index) {
         if let Some(&resolved) = chain_map.get(key.as_str()) {
@@ -539,7 +539,7 @@ pub(crate) fn readable_to_minimal_str(amount: &str, decimal: u32) -> Result<Stri
 /// Resolve the effective raw amount from either --amount (raw) or --readable-amount (human-readable).
 /// If --readable-amount is given, fetches token decimals via token info and converts.
 async fn resolve_amount_arg(
-    client: &ApiClient,
+    client: &mut ApiClient,
     amount: Option<&str>,
     readable_amount: Option<&str>,
     from: &str,
@@ -751,7 +751,7 @@ pub(crate) fn validate_non_negative_integer(value: &str, label: &str) -> Result<
 
 /// GET /api/v6/dex/aggregator/quote
 pub async fn fetch_quote(
-    client: &ApiClient,
+    client: &mut ApiClient,
     chain_index: &str,
     from: &str,
     to: &str,
@@ -814,7 +814,7 @@ pub async fn fetch_quote(
 /// GET /api/v6/dex/aggregator/swap
 #[allow(clippy::too_many_arguments)]
 pub async fn fetch_swap(
-    client: &ApiClient,
+    client: &mut ApiClient,
     chain_index: &str,
     from: &str,
     to: &str,
@@ -937,7 +937,7 @@ fn validate_approve_amount(amount: &str) -> Result<()> {
 
 /// GET /api/v6/dex/aggregator/approve-transaction
 pub async fn fetch_approve(
-    client: &ApiClient,
+    client: &mut ApiClient,
     chain_index: &str,
     token: &str,
     amount: &str,
@@ -977,7 +977,7 @@ pub async fn fetch_approve(
 
 /// POST /api/v6/dex/pre-transaction/check-approvals
 pub async fn fetch_check_approvals(
-    client: &ApiClient,
+    client: &mut ApiClient,
     chain_index: &str,
     address: &str,
     token: &str,
@@ -1014,7 +1014,7 @@ pub async fn fetch_check_approvals(
 }
 
 /// GET /api/v6/dex/aggregator/supported/chain
-pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
+pub async fn fetch_chains(client: &mut ApiClient) -> Result<Value> {
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG][fetch_chains] fetching supported chains");
     }
@@ -1028,7 +1028,7 @@ pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
 }
 
 /// GET /api/v6/dex/aggregator/get-liquidity
-pub async fn fetch_liquidity(client: &ApiClient, chain_index: &str) -> Result<Value> {
+pub async fn fetch_liquidity(client: &mut ApiClient, chain_index: &str) -> Result<Value> {
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG][fetch_liquidity] chain_index={}", chain_index);
     }
@@ -1073,6 +1073,7 @@ async fn wallet_contract_call(
         mev_protection,
         jito_unsigned_tx,
         false, // force
+        None,  // tx_source: not cross-chain
     )
     .await?;
     Ok(json!({ "txHash": tx_hash }))
@@ -1088,7 +1089,7 @@ fn extract_tx_hash(data: &Value) -> Result<String> {
 
 #[allow(clippy::too_many_arguments)]
 async fn cmd_execute(
-    client: &ApiClient,
+    client: &mut ApiClient,
     from_token: &str,
     to_token: &str,
     amount: &str,
@@ -1354,7 +1355,7 @@ fn extract_approve_calldata(approve_data: &Value) -> Result<String> {
 
 /// Compare allowance (spendable) against required amount.
 /// Both are decimal strings in minimal units. Returns true if allowance < amount.
-fn is_allowance_insufficient(spendable: &str, amount: &str) -> bool {
+pub(crate) fn is_allowance_insufficient(spendable: &str, amount: &str) -> bool {
     // If spendable is very long (uint256 max approval = 78 digits), treat as sufficient.
     // This avoids u128 overflow for unlimited approvals.
     if spendable.len() > 38 {

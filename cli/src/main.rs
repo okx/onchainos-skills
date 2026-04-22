@@ -6,6 +6,7 @@ mod client;
 mod commands;
 mod config;
 pub mod crypto;
+mod doh;
 mod file_keyring;
 mod home;
 mod keyring_store;
@@ -67,6 +68,12 @@ pub enum Commands {
     Swap {
         #[command(subcommand)]
         command: commands::swap::SwapCommand,
+    },
+    /// Cross-chain bridge swap
+    #[command(name = "cross-chain")]
+    CrossChain {
+        #[command(subcommand)]
+        command: commands::cross_chain::CrossChainCommand,
     },
     /// On-chain gateway
     Gateway {
@@ -143,6 +150,12 @@ async fn run() {
 
     let cli = Cli::parse();
 
+    // Propagate --base-url to env so WalletApiClient, ApiClient::new(None),
+    // and refresh_jwt_inline pick it up at runtime.
+    if let Some(ref url) = cli.base_url {
+        std::env::set_var("OKX_BASE_URL", url);
+    }
+
     // MCP server runs indefinitely — skip audit for it (MCP tools log individually).
     if matches!(cli.command, Commands::Mcp { .. }) {
         if let Commands::Mcp { base_url } = cli.command {
@@ -169,6 +182,7 @@ async fn run() {
         Commands::Tracker { command } => commands::tracker::execute(&ctx, command).await,
         Commands::Token { command } => commands::token::execute(&ctx, *command).await,
         Commands::Swap { command } => commands::swap::execute(&ctx, command).await,
+        Commands::CrossChain { command } => commands::cross_chain::execute(&ctx, command).await,
         Commands::Gateway { command } => commands::gateway::execute(&ctx, command).await,
         Commands::Portfolio { command } => commands::portfolio::execute(&ctx, command).await,
         Commands::Mcp { .. } => unreachable!("handled above"),

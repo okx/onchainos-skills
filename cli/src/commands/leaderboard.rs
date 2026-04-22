@@ -90,15 +90,15 @@ pub async fn execute(ctx: &Context, cmd: LeaderboardCommand) -> Result<()> {
 }
 
 /// GET /api/v6/dex/market/leaderboard/supported/chain — no parameters
-pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
+pub async fn fetch_chains(client: &mut ApiClient) -> Result<Value> {
     client
         .get("/api/v6/dex/market/leaderboard/supported/chain", &[])
         .await
 }
 
 async fn supported_chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client_async().await?;
-    output::success(fetch_chains(&client).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_chains(&mut client).await?);
     Ok(())
 }
 
@@ -119,7 +119,7 @@ pub fn resolve_leaderboard_wallet_type(wallet_type: String) -> String {
 /// GET /api/v6/dex/market/leaderboard/list — top trader leaderboard with optional filters
 #[allow(clippy::too_many_arguments)]
 pub async fn fetch_list(
-    client: &ApiClient,
+    client: &mut ApiClient,
     chain_index: &str,
     time_frame: &str,
     sort_by: &str,
@@ -187,13 +187,13 @@ async fn leaderboard_list(
     max_tx_volume: Option<String>,
 ) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain).to_string();
-    let client = ctx.client_async().await?;
+    let mut client = ctx.client_async().await?;
 
     let wallet_type_resolved = wallet_type.map(resolve_leaderboard_wallet_type);
 
     output::success(
         fetch_list(
-            &client,
+            &mut client,
             &chain_index,
             time_frame,
             sort_by,

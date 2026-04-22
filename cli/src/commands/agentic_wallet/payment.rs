@@ -296,7 +296,7 @@ async fn cmd_pay(
     let session_key = keyring_store::get("session_key")
         .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
 
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
 
     // 3. Get EIP-3009 unsigned hash
     let unsigned_hash_resp = client
@@ -697,10 +697,10 @@ mod tests {
     }
 
     #[test]
-    fn cli_eip3009_sign_missing_from() {
+    fn cli_eip3009_sign_no_from_required() {
         let json = r#"[{"network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}]"#;
         let result = TestCli::try_parse_from(["test", "eip3009-sign", "--accepts", json]);
-        assert!(result.is_err());
+        assert!(result.is_ok(), "eip3009-sign should parse without --from");
     }
 
     #[test]

@@ -45,7 +45,7 @@ pub async fn feedback_list(args: FeedbackListArgs, ctx: &Context) -> Result<()> 
 
 async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
-    let client = wallet_client(ctx)?;
+    let mut client = wallet_client(ctx)?;
 
     // Product spec: agent-list identifies the user via JWT; `from` is never needed.
     // page / pageSize 是选填——用户没传就不塞 query，让后端使用自身默认。
@@ -104,7 +104,7 @@ async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
 
 async fn search_impl(args: &SearchArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
-    let client = wallet_client(ctx)?;
+    let mut client = wallet_client(ctx)?;
     let query_text = require_non_empty(args.query.as_deref(), "--query")?;
 
     // query 必填；page / pageSize / 多值过滤字段按文档都是选填，用户没传就不塞
@@ -166,7 +166,7 @@ async fn search_impl(args: &SearchArgs, ctx: &Context) -> Result<Value> {
 
 async fn service_list_impl(args: &ServiceListArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
-    let client = wallet_client(ctx)?;
+    let mut client = wallet_client(ctx)?;
     let agent_id = resolve_agent_id(&args.agent_id, &args.agent_id_flag)?;
     let query = [("agentId".to_string(), agent_id.to_string())];
     let query_refs: Vec<(&str, &str)> = query
@@ -206,7 +206,7 @@ async fn service_list_impl(args: &ServiceListArgs, ctx: &Context) -> Result<Valu
 
 async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
-    let client = wallet_client(ctx)?;
+    let mut client = wallet_client(ctx)?;
 
     // agentId 必填；page / pageSize / sortBy 按文档都是选填，用户没传就不塞，让后端用自身默认
     let mut query = vec![(
