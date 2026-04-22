@@ -6,7 +6,7 @@ This is an **onchainos skill collection** providing 14 skills for on-chain opera
 
 | Skill | Purpose | When to Use |
 |-------|---------|-------------|
-| okx-agentic-wallet | Wallet lifecycle: auth, balance (authenticated), portfolio PnL, send, history, contract call; proactive DeFi plugin onboarding | User wants to log in, check balance, view PnL, send tokens, view tx history, or call contracts; user is new / just installed onchainos / wants to get started / asks what they can do / mentions Hyperliquid, Polymarket, DeFi, perps, prediction markets, or plugins |
+| okx-agentic-wallet | Wallet lifecycle: auth, balance (authenticated), portfolio PnL, send, history, contract call | User wants to log in, check balance, view PnL, send tokens, view tx history, or call contracts |
 | okx-wallet-portfolio | Public address balance, token holdings, portfolio value | User asks about wallet holdings, token balances, portfolio value across chains by providing a specific address |
 | okx-security | Security scanning: token risk, DApp phishing, tx pre-execution, signature safety, approval management | User wants to check if a token/DApp/tx/signature is safe, honeypot check, phishing detection, approve safety, or view/manage token approvals |
 | okx-dex-market | Prices, charts, index prices, wallet PnL | User asks for token prices, K-line data, index/aggregate prices, wallet PnL analysis |
