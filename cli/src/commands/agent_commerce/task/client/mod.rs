@@ -25,6 +25,7 @@ mod negotiate;
 mod query;
 mod recommend;
 mod refuse;
+mod x402_flow;
 
 use anyhow::Result;
 use clap::Subcommand;
@@ -88,12 +89,6 @@ pub enum TaskCommand {
         provider: String,
         #[arg(long = "payment-mode", default_value = PAYMENT_MODE_ESCROW)]
         payment_mode: String,
-        /// Token symbol (required for x402, e.g. USDT)
-        #[arg(long = "token-symbol")]
-        token_symbol: Option<String>,
-        /// Token amount (required for x402, e.g. 50)
-        #[arg(long = "token-amount")]
-        token_amount: Option<String>,
     },
     /// Client rejects provider application
     RejectApply {
@@ -190,8 +185,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 recommend::handle_recommend(&client, &job_id).await
             }
         }
-        TaskCommand::ConfirmAccept { job_id, provider, payment_mode, token_symbol, token_amount } =>
-            accept::handle_confirm_accept(&client, &job_id, &provider, &payment_mode, token_symbol.as_deref(), token_amount.as_deref()).await,
+        TaskCommand::ConfirmAccept { job_id, provider, payment_mode } =>
+            accept::handle_confirm_accept(&client, &job_id, &provider, &payment_mode).await,
         TaskCommand::Complete { job_id } =>
             complete::handle_complete(&client, &job_id).await,
         TaskCommand::Reject { job_id, reason } =>

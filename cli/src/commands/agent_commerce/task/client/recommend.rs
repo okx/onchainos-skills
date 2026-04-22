@@ -28,12 +28,29 @@ pub async fn handle_recommend(client: &TaskApiClient, job_id: &str) -> Result<()
 
     // 构造 ProviderInfo 列表并缓存
     let providers: Vec<negotiate::ProviderInfo> = recs.iter().map(|r| {
+        let services: Vec<negotiate::ServiceInfo> = r["services"].as_array()
+            .map(|arr| arr.iter().map(|s| negotiate::ServiceInfo {
+                service_id: s["serviceId"].as_str().unwrap_or("").to_string(),
+                service_name: s["serviceName"].as_str().unwrap_or("").to_string(),
+                service_description: s["serviceDescription"].as_str().unwrap_or("").to_string(),
+                service_type: s["serviceType"].as_str().unwrap_or("").to_string(),
+                endpoint: s["endpoint"].as_str().unwrap_or("").to_string(),
+                sort_order: s["sortOrder"].as_i64().unwrap_or(0),
+                fee_amount: s["feeAmount"].as_f64().unwrap_or(0.0),
+                fee_token_symbol: s["feeTokenSymbol"].as_str().unwrap_or("").to_string(),
+                fee_token: s["feeToken"].as_str().unwrap_or("").to_string(),
+            }).collect())
+            .unwrap_or_default();
+
         negotiate::ProviderInfo {
             provider_address: r["providerAddress"].as_str().unwrap_or("").to_string(),
             provider_agent_id: r["providerAgentId"].as_str().unwrap_or("").to_string(),
             match_score: r["matchScore"].as_f64().unwrap_or(0.0),
             credit_score: r["creditScore"].as_i64().unwrap_or(0),
             capability_summary: r["capabilitySummary"].as_str().unwrap_or("").to_string(),
+            completed_task_count: r["completedTaskCount"].as_i64().unwrap_or(0),
+            support_a2mcp: r["supportA2MCP"].as_bool().unwrap_or(false),
+            services,
         }
     }).collect();
 
@@ -80,9 +97,25 @@ pub fn handle_recommend_next(job_id: &str) -> Result<()> {
 }
 
 fn print_provider(index: usize, p: &negotiate::ProviderInfo) {
-    println!("  {}. AgentID: {}  匹配分: {}  信用分: {}",
-        index + 1, p.provider_agent_id, p.match_score, p.credit_score,
+    println!("  {}. AgentID: {}  匹配分: {}  信用分: {}  已完成: {}",
+        index + 1, p.provider_agent_id, p.match_score, p.credit_score, p.completed_task_count,
     );
     println!("     能力: {}", p.capability_summary);
     println!("     地址: {}", p.provider_address);
+    if p.support_a2mcp {
+        println!("     支付方式: x402");
+    } else {
+        println!("     支付方式: escrow/direct");
+    }
+    if !p.services.is_empty() {
+        println!("     服务 ({}):", p.services.len());
+        for svc in &p.services {
+            println!("       - [{}] {} ({})", svc.service_type, svc.service_name, svc.service_id);
+            if svc.fee_amount > 0.0 {
+                let sym = if svc.fee_token_symbol.is_empty() { &svc.fee_token } else { &svc.fee_token_symbol };
+                println!("         费用: {} {}", svc.fee_amount, sym);
+            }
+            println!("         endpoint: {}", svc.endpoint);
+        }
+    }
 }

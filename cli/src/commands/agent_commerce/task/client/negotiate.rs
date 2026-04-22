@@ -17,6 +17,37 @@ pub struct ProviderInfo {
     pub match_score: f64,
     pub credit_score: i64,
     pub capability_summary: String,
+    pub completed_task_count: i64,
+    /// true = x402 支付方式，false = escrow/direct
+    #[serde(default)]
+    pub support_a2mcp: bool,
+    #[serde(default)]
+    pub services: Vec<ServiceInfo>,
+}
+
+/// Provider 提供的服务信息（从 /match 接口 services[] 返回）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceInfo {
+    pub service_id: String,
+    pub service_name: String,
+    #[serde(default)]
+    pub service_description: String,
+    /// 服务类型，如 "A2A"
+    pub service_type: String,
+    /// 服务端点 URL
+    pub endpoint: String,
+    #[serde(default)]
+    pub sort_order: i64,
+    /// 费用金额
+    #[serde(default)]
+    pub fee_amount: f64,
+    /// 费用 token symbol（如 "USDT"）
+    #[serde(default)]
+    pub fee_token_symbol: String,
+    /// 费用 token 合约地址
+    #[serde(default)]
+    pub fee_token: String,
 }
 
 /// 协商状态

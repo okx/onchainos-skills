@@ -284,7 +284,7 @@ Fee: <fee> <currency> per call
 Please send a request to this endpoint.
 ```
 
-> ⚠️ x402 指定 Provider 不创建任务，直接调用 endpoint。向主 session 请求用户确认支付金额后，调用 `onchainos x402-pay --endpoint <endpoint> --amount <fee>` 完成服务调用。本次交互结束，不进入后续发布任务、协商等流程。
+> ⚠️ x402 指定 Provider 不创建任务，直接调用 endpoint。流程：请求 `<endpoint>` → 收到 HTTP 402 → 解码 accepts 数组 → 向主 session 展示支付信息请求用户确认 → 用户确认后调用 `onchainos payment x402-pay --accepts '<accepts array JSON>'` 签名 → 组装 payment header 重放原始请求。完整流程参考 `okx-x402-payment` skill。本次交互结束，不进入后续发布任务、协商等流程。
 
 ### 1.7.1 Intent Parsing
 
@@ -305,15 +305,23 @@ Please send a request to this endpoint.
 
 x402 指定 Provider 不进入任务流程。执行步骤：
 
-1. 向主 session 展示支付信息（**用户（确认）**）：
+1. 请求 `<endpoint>` → 收到 HTTP 402 响应
+2. 解码 402 payload，提取 `accepts` 数组（v2: `PAYMENT-REQUIRED` header base64 解码；v1: response body）
+3. 向主 session 展示支付信息（**用户（确认）**）：
    > 即将调用 x402 服务：
    > - Provider: `<agentId>`
    > - Endpoint: `<endpoint>`
-   > - 费用: `<fee>` `<currency>` per call
+   > - Network: `<chain name>` (`<accepts[0].network>`)
+   > - Token: `<token symbol>` (`<accepts[0].asset>`)
+   > - 费用: `<human-readable amount>` `<currency>` per call
+   > - 收款地址: `<accepts[0].payTo>`
    >
    > 确认支付？
-2. 用户确认后：`onchainos x402-pay --endpoint <endpoint> --amount <fee>`
-3. → 主 session 通知：已通过 x402 完成服务调用。**流程结束**，不进入后续场景。
+4. 用户确认后签名：`onchainos payment x402-pay --accepts '<JSON.stringify(accepts)>'`
+5. 组装 payment header（v2: `PAYMENT-SIGNATURE`；v1: `X-PAYMENT`），重放原始请求至 `<endpoint>`
+6. → 主 session 通知：已通过 x402 完成服务调用，返回结果。**流程结束**，不进入后续场景。
+
+> 完整的 x402 协议流程（402 解码、签名、header 组装、v1/v2 差异）参考 `okx-x402-payment` skill。
 
 #### 变体 A（A2A）— 创建任务 + 指定卖家
 
@@ -421,16 +429,19 @@ Response:
 
 x402 Provider 无需协商，直接进入接单流程。但需根据价格做判断：
 
-**价格比较规则**（`/match` 返回的 x402 服务价格 `fee` 和币种）：
+**价格比较规则**（`/match` 返回的 x402 服务价格 `fee`、币种 `currency`、端点 `endpoint`，待确认字段名）：
 
 - **任务价格 < Provider x402 fee**，或**代币类型不一致** → 主 session（确认）：向用户展示 Provider 的 x402 信息（支付方式、费用、币种），请求确认。用户确认后执行 accept；用户拒绝则继续遍历推荐列表的下一个。
 - **任务价格 >= Provider x402 fee**，且代币一致 → 无需用户确认，直接执行 accept。
 
-**Accept 步骤**：
-1. `onchainos agent confirm-accept <jobId> --provider <sellerAgentId> --payment-mode x402 --token-symbol <symbol> --token-amount <fee>`
-   - 内部先调用 `/setPaymentMode`（paymentMode=2）→ 签名 → 广播
-   - 再调用 `/direct/accept`（含 tokenSymbol + tokenAmount）→ 签名 → 广播
-2. 任务状态 → Accepted
+**Accept + x402 支付步骤**：
+1. `onchainos agent confirm-accept <jobId> --provider <sellerAgentId> --payment-mode x402 --token-symbol <symbol> --token-amount <fee> --endpoint <endpoint>`
+   - **Step 1**: 调用 `/setPaymentMode`（paymentMode=2）→ 签名 → 广播
+   - **Step 2**: 调用 `/direct/accept`（含 tokenSymbol + tokenAmount）→ 签名 → 广播
+   - **Step 3**: 调用 x402 支付 — 请求 `<endpoint>` → 收到 HTTP 402 → 调用 `onchainos payment x402-pay --accepts '<accepts JSON>'` 签名 → 组装 payment header → 重放原始请求
+2. 任务状态 → Accepted，x402 服务调用完成
+
+> x402 没有协商步骤。如果卖家支付方式不是 x402，执行后续协商流程（Path B）。
 
 ### 1.5.3 Auto Serial Negotiation (Path B)
 
@@ -599,8 +610,8 @@ Displays Provider address, amount, and token, then outputs the `onchainos wallet
 
 #### x402 (微支付)
 
-x402 在推荐列表遍历中由 Scene 1.5.2 Path A 处理（价格比较 → 用户确认 → `confirm-accept --payment-mode x402`）。
-x402 指定 Provider 在 Scene 1.7.2 变体 B 处理（不创建任务，直接 x402-pay）。
+x402 在推荐列表遍历中由 Scene 1.5.2 Path A 处理（价格比较 → 用户确认 → `confirm-accept --payment-mode x402 --endpoint <ep>` → 链上 accept + x402 支付一步完成）。
+x402 指定 Provider 在 Scene 1.7.2 变体 B 处理（不创建任务，直接请求 endpoint → 402 → `onchainos payment x402-pay` → 重放）。
 
 ### 3.2 Notify Main Session
 
