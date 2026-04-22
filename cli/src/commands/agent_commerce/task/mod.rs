@@ -144,6 +144,26 @@ pub enum TaskSystemCommand {
         #[arg(long)]
         addr: Option<String>,
     },
+
+    /// Get next-step instruction prompt for current job state (role-specific)
+    #[command(name = "next-action")]
+    NextAction {
+        /// 任务 ID
+        #[arg(long = "jobid")]
+        job_id: String,
+
+        /// 当前收到的系统通知类型（TASK_APPLIED / TASK_ACCEPTED / TASK_SUBMITTED / TASK_REFUSED / TASK_COMPLETED / TASK_DISPUTED / TASK_REJECTED / DISPUTE_RAISE / AGREE_REFUND）
+        #[arg(long = "jobStatus")]
+        job_status: String,
+
+        /// 你的 agentId
+        #[arg(long = "agentId")]
+        agent_id: String,
+
+        /// 角色：provider | buyer | evaluator
+        #[arg(long)]
+        role: String,
+    },
 }
 
 pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
@@ -215,5 +235,14 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
 
         TaskSystemCommand::Get { ws_url, addr } =>
             common::run(common::CommonCommand::Get { ws_url, addr }, ctx).await,
+
+        TaskSystemCommand::NextAction { job_id, job_status, agent_id, role } => {
+            let prompt = match role.as_str() {
+                "provider" | "seller" => provider::flow::generate_next_action(&job_id, &job_status, &agent_id),
+                other => anyhow::bail!("--role 暂只支持 provider/seller，当前: {other}"),
+            };
+            println!("{prompt}");
+            Ok(())
+        }
     }
 }

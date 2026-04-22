@@ -17,6 +17,7 @@ mod deliver;
 mod dispute_evidence;
 mod dispute_info;
 mod dispute_raise;
+pub mod flow;
 
 use anyhow::Result;
 use clap::Subcommand;
