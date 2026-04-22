@@ -272,8 +272,9 @@ fn payment_options_for_tier(
 /// Per-entry projection. Picks the tier-resolved amount, renders it as
 /// a display decimal with `DISPLAY_DECIMALS` fractional digits, hoists
 /// `extra.name` to `name`, resolves `network` from CAIP-2 to its chain
-/// `showName` (falls back to the raw CAIP-2 on cache miss), and drops
-/// everything else (`scheme`, `maxTimeoutSeconds`, `extra.*`).
+/// `showName` (falls back to the raw CAIP-2 on cache miss), parses the
+/// numeric `chainId` from the CAIP-2 string, and drops everything else
+/// (`scheme`, `maxTimeoutSeconds`, `extra.*`).
 fn transform_payment_entry(
     entry: &serde_json::Value,
     tier_key: &str,
@@ -291,11 +292,13 @@ fn transform_payment_entry(
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_string();
-    let network = obj
-        .get("network")
-        .and_then(|v| v.as_str())
-        .map(display_network)
-        .unwrap_or_default();
+    let network_raw = obj.get("network").and_then(|v| v.as_str()).unwrap_or("");
+    let chain_id = parse_eip155_chain_id(network_raw).ok();
+    let network = if network_raw.is_empty() {
+        String::new()
+    } else {
+        display_network(network_raw)
+    };
     let asset = obj.get("asset").cloned().unwrap_or(serde_json::Value::Null);
     let pay_to = obj.get("payTo").cloned().unwrap_or(serde_json::Value::Null);
     Some(serde_json::json!({
@@ -303,6 +306,7 @@ fn transform_payment_entry(
         "asset": asset,
         "name": name,
         "network": network,
+        "chainId": chain_id,
         "payTo": pay_to,
     }))
 }
@@ -607,6 +611,8 @@ mod tests {
         assert_eq!(payment[0]["asset"], "0xUSDG");
         assert_eq!(payment[0]["name"], "USDG");
         assert_eq!(payment[0]["payTo"], "0xPAYTO");
+        // chainId parsed from CAIP-2 `eip155:196`.
+        assert_eq!(payment[0]["chainId"], 196);
         // Network resolves via chain cache to showName; falls back to
         // raw CAIP-2 when the cache is missing (test environments).
         let net = payment[0]["network"].as_str().unwrap();
@@ -643,6 +649,8 @@ mod tests {
         assert_eq!(payment[0]["asset"], "0xFLAT");
         // "500" minimal → "0.0005" display (6 decimals).
         assert_eq!(payment[0]["amount"], "0.0005");
+        // Non-CAIP-2 network → chainId is null.
+        assert!(payment[0]["chainId"].is_null());
     }
 
     #[test]
