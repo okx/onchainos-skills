@@ -508,7 +508,7 @@ fn build_context(
                 out.push_str(&format!("- 你的 Provider 描述：{desc}\n"));
                 out.push_str(&format!("- 任务标题：{}\n", task.title));
                 out.push_str(&format!("- 任务描述：{}\n", task.description));
-                out.push_str("\n");
+                out.push('\n');
                 out.push_str("判断：上述「Provider 描述」和「任务领域」是否匹配？\n");
                 out.push_str("- 匹配（同一专业领域）→ 进入下方「可执行操作」继续协商\n");
                 out.push_str("- 不匹配（领域明显不同，如 DeFi trading vs 合约审计 / 前端 / 文案）→ **必须拒绝**：\n");

@@ -37,7 +37,8 @@ pub async fn handle_confirm_accept(
     ).await?;
 
     signing::sign_uop_and_broadcast(
-        client.http(), &client.broadcast_url(), &resp["data"]["uopData"], &account_id, &address,
+        client, &resp["data"]["uopData"], &account_id, &address,
+        signing::BizContext::TaskAccept,
     ).await?;
     println!("✓ 支付方式已设置: {payment_mode} ({mode_int})");
 
@@ -51,7 +52,7 @@ pub async fn handle_confirm_accept(
             });
             let provider_owned = provider.to_string();
             let result = signing::task_dual_sign_and_broadcast(
-                client.http(),
+                client,
                 &client.endpoint(job_id, "pre-accept"),
                 &pre_body,
                 &client.endpoint(job_id, "accept"),
@@ -60,10 +61,10 @@ pub async fn handle_confirm_accept(
                     "providerAgentId": provider_owned,
                     "signature": signature,
                 }),
-                &client.broadcast_url(),
                 &account_id,
                 &address,
                 &agent_id,
+                signing::BizContext::TaskAccept,
             )
             .await?;
             println!("✓ 已接受卖家 {provider}（担保支付），资金已托管");
@@ -83,7 +84,8 @@ pub async fn handle_confirm_accept(
             ).await?;
 
             let tx_hash = signing::sign_uop_and_broadcast(
-                client.http(), &client.broadcast_url(), &resp["data"]["uopData"], &account_id, &address,
+                client, &resp["data"]["uopData"], &account_id, &address,
+                signing::BizContext::TaskAccept,
             ).await?;
             println!("✓ 已接受卖家 {provider}（非担保支付），状态 → accepted");
             println!("  txHash: {tx_hash}");
@@ -109,7 +111,8 @@ pub async fn handle_confirm_accept(
             ).await?;
 
             let tx_hash = signing::sign_uop_and_broadcast(
-                client.http(), &client.broadcast_url(), &resp["data"]["uopData"], &account_id, &address,
+                client, &resp["data"]["uopData"], &account_id, &address,
+                signing::BizContext::TaskAccept,
             ).await?;
             println!("✓ 已接受卖家 {provider}（x402 支付），金额: {amt} {sym}");
             println!("  txHash: {tx_hash}");

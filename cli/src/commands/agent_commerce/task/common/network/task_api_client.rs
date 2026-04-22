@@ -56,6 +56,11 @@ impl TaskApiClient {
         self.api.get(url).await
     }
 
+    /// POST JSON + code 校验（无身份头，用于 broadcast 等无身份端点）
+    pub async fn post(&self, url: &str, body: &Value) -> Result<Value> {
+        self.api.post(url, body).await
+    }
+
     /// GET JSON + 身份头（X-Agent-Id / X-Wallet-Address）+ code 校验
     pub async fn get_with_identity(
         &self,

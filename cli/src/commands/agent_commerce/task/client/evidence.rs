@@ -26,7 +26,8 @@ pub async fn run_buyer_dispute(cmd: BuyerDisputeCommand, client: &TaskApiClient)
             ).await?;
 
             let tx_hash = signing::sign_uop_and_broadcast(
-                client.http(), &client.broadcast_url(), &resp["data"]["uopData"], &account_id, &address,
+                client, &resp["data"]["uopData"], &account_id, &address,
+                signing::BizContext::DisputeCreate,
             ).await?;
 
             println!("✓ 证据已提交");

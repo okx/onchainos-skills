@@ -20,7 +20,8 @@ pub async fn handle_set_public(client: &TaskApiClient, job_id: &str) -> Result<(
     ).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(
-        client.http(), &client.broadcast_url(), &resp["data"]["uopData"], &account_id, &address,
+        client, &resp["data"]["uopData"], &account_id, &address,
+        signing::BizContext::TaskCreate,
     ).await?;
 
     println!("✓ 任务已转为公开，其他卖家可以看到并报名");

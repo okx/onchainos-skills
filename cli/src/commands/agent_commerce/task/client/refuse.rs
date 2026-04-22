@@ -18,7 +18,7 @@ pub async fn handle_reject(
 
     let reason_owned = reason.to_string();
     let result = signing::task_dual_sign_and_broadcast(
-        client.http(),
+        client,
         &client.endpoint(job_id, "pre-refuse"),
         &serde_json::json!({}),
         &client.endpoint(job_id, "refuse"),
@@ -26,10 +26,10 @@ pub async fn handle_reject(
             "signature": signature,
             "reason": reason_owned,
         }),
-        &client.broadcast_url(),
         &account_id,
         &address,
         &agent_id,
+        signing::BizContext::TaskRefuse,
     ).await?;
 
     println!("✓ 已拒绝验收（原因：{reason}），状态 → refused");

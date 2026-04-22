@@ -26,15 +26,15 @@ pub async fn handle_complete(client: &TaskApiClient, job_id: &str) -> Result<()>
     if payment_mode == PAYMENT_MODE_INT_ESCROW {
         // ── 担保：双签 pre-complete → complete ──────────────────────
         let result = signing::task_dual_sign_and_broadcast(
-            client.http(),
+            client,
             &client.endpoint(job_id, "pre-complete"),
             &serde_json::json!({}),
             &client.endpoint(job_id, "complete"),
             |signature| serde_json::json!({ "signature": signature }),
-            &client.broadcast_url(),
             &account_id,
             &address,
             &agent_id,
+            signing::BizContext::TaskComplete,
         )
         .await?;
 
@@ -60,7 +60,8 @@ pub async fn handle_complete(client: &TaskApiClient, job_id: &str) -> Result<()>
         ).await?;
 
         let tx_hash = signing::sign_uop_and_broadcast(
-            client.http(), &client.broadcast_url(), &resp["data"]["uopData"], &account_id, &address,
+            client, &resp["data"]["uopData"], &account_id, &address,
+            signing::BizContext::TaskComplete,
         ).await?;
 
         println!("✓ 任务验收通过（非担保），状态 → complete");
