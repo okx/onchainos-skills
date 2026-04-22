@@ -763,3 +763,74 @@ async fn memepump_by_address(
     output::success(fetch_by_address(&client, path, address, &chain_index).await?);
     Ok(())
 }
+
+// ─── unit tests ──────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn now_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| u64::try_from(d.as_millis()).unwrap_or(0))
+            .unwrap_or(0)
+    }
+
+    /// A token created 1 second ago is within the 2 s threshold — its
+    /// `createdTimestamp` must become `null`.
+    #[test]
+    fn nullify_when_token_is_within_threshold() {
+        let created_ms = now_ms().saturating_sub(1_000); // 1 s ago
+        let mut token = json!({ "createdTimestamp": created_ms.to_string(), "symbol": "TEST" });
+        nullify_created_timestamp_if_new(&mut token);
+        assert!(
+            token["createdTimestamp"].is_null(),
+            "expected null for token created 1 s ago, got: {}",
+            token["createdTimestamp"]
+        );
+        // Other fields must be untouched
+        assert_eq!(token["symbol"], "TEST");
+    }
+
+    /// A token created 5 seconds ago is outside the threshold — its
+    /// `createdTimestamp` must be left as-is.
+    #[test]
+    fn no_nullify_when_token_is_outside_threshold() {
+        let created_ms = now_ms().saturating_sub(5_000); // 5 s ago
+        let mut token = json!({ "createdTimestamp": created_ms.to_string(), "symbol": "OLD" });
+        nullify_created_timestamp_if_new(&mut token);
+        assert!(
+            !token["createdTimestamp"].is_null(),
+            "expected non-null for token created 5 s ago, got: {}",
+            token["createdTimestamp"]
+        );
+    }
+
+    /// A token with `createdTimestamp` of 0 (missing / unknown) must not be
+    /// nullified — 0 is treated as "no timestamp available".
+    #[test]
+    fn no_nullify_when_created_timestamp_is_zero() {
+        let mut token = json!({ "createdTimestamp": "0", "symbol": "ZERO" });
+        nullify_created_timestamp_if_new(&mut token);
+        assert_eq!(
+            token["createdTimestamp"], "0",
+            "zero timestamp must not be nullified"
+        );
+    }
+
+    /// Numeric (non-string) `createdTimestamp` within the threshold must also
+    /// be nullified — the API sometimes returns a number instead of a string.
+    #[test]
+    fn nullify_numeric_created_timestamp_within_threshold() {
+        let created_ms = now_ms().saturating_sub(500); // 0.5 s ago
+        let mut token = json!({ "createdTimestamp": created_ms, "symbol": "NUM" });
+        nullify_created_timestamp_if_new(&mut token);
+        assert!(
+            token["createdTimestamp"].is_null(),
+            "expected null for numeric timestamp 0.5 s ago, got: {}",
+            token["createdTimestamp"]
+        );
+    }
+}
