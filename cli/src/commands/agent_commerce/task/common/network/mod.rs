@@ -15,10 +15,17 @@ pub struct ApiClient {
 
 impl ApiClient {
     pub fn new(base_url: String) -> Self {
-        Self {
-            http: reqwest::Client::new(),
-            base_url,
-        }
+        let headers = crate::keyring_store::get_opt("access_token")
+            .filter(|t| !t.is_empty())
+            .map(|token| crate::client::ApiClient::jwt_headers(&token))
+            .unwrap_or_default();
+
+        let http = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .expect("failed to build HTTP client");
+
+        Self { http, base_url }
     }
 
     pub fn http(&self) -> &reqwest::Client {
