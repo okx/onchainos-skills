@@ -1,5 +1,6 @@
 pub mod agent_commerce;
 pub mod agentic_wallet;
+pub mod cross_chain;
 pub mod defi;
 pub mod gateway;
 pub mod leaderboard;

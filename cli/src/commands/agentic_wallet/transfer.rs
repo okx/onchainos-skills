@@ -81,6 +81,7 @@ async fn sign_and_broadcast(
     is_contract_call: bool,
     mev_protection: bool,
     force: bool,
+    tx_source: Option<&str>,
 ) -> Result<String> {
     if cfg!(feature = "debug-log") {
         eprintln!(
@@ -157,7 +158,7 @@ async fn sign_and_broadcast(
         validate_non_negative_integer(aa_amount, "aa-dex-token-amount")?;
     }
 
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
     // Only read swap trace ID from cache for contract calls (swap flow)
     let cached_tid = if is_contract_call {
         crate::wallet_store::get_swap_trace_id().ok().flatten()
@@ -284,6 +285,9 @@ async fn sign_and_broadcast(
     if force {
         extra_data_obj["skipWarning"] = json!(true);
     }
+    if let Some(src) = tx_source {
+        extra_data_obj["txSource"] = json!(src);
+    }
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][sign_and_broadcast] Step 10: extraData={}",
@@ -371,6 +375,7 @@ pub(super) async fn cmd_send(
         false,
         false,
         force,
+        None, // tx_source: not cross-chain
     )
     .await?;
     output::success(json!({ "txHash": tx_hash }));
@@ -408,6 +413,7 @@ pub async fn cmd_contract_call(
         mev_protection,
         jito_unsigned_tx,
         force,
+        None, // tx_source: not cross-chain
     )
     .await?;
     output::success(json!({ "txHash": tx_hash }));
@@ -430,6 +436,7 @@ pub async fn execute_contract_call(
     mev_protection: bool,
     jito_unsigned_tx: Option<&str>,
     force: bool,
+    tx_source: Option<&str>,
 ) -> Result<String> {
     if to.is_empty() || chain.is_empty() {
         bail!("to and chain are required");
@@ -456,6 +463,7 @@ pub async fn execute_contract_call(
         true,
         mev_protection,
         force,
+        tx_source,
     )
     .await
 }

@@ -330,6 +330,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
         Commands::TaskSystem { command } => format!("agent {}", task_system_sub(command)),
+        Commands::CrossChain { .. } => "cross-chain".to_string(),
     }
 }
 
