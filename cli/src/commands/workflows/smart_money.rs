@@ -149,6 +149,10 @@ pub(crate) fn assemble(chain_index: &str, raw_signals: Value, enriched: Vec<Valu
 /// counts, the item with the highest count wins. This avoids a subtle bug
 /// where a lower count could silently override a higher one if the API
 /// re-emitted the same token within one response.
+///
+/// Sort is stable by (walletCount desc, address asc): ties on count break on
+/// address so output order is fully deterministic across runs (HashMap
+/// iteration order is randomised).
 pub(crate) fn extract_top_tokens(signals: &Value, n: usize) -> Vec<(String, Value)> {
     let arr: &Vec<Value> = match signals.as_array() {
         Some(a) => a,
@@ -191,7 +195,9 @@ pub(crate) fn extract_top_tokens(signals: &Value, n: usize) -> Vec<(String, Valu
         .map(|(addr, (count, item))| (count, addr, item))
         .collect();
 
-    items.sort_by(|a, b| b.0.cmp(&a.0));
+    // Primary: descending walletCount. Secondary: ascending address (stable tiebreaker
+    // so the output order does not depend on HashMap iteration order).
+    items.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
     items.into_iter().take(n).map(|(_, addr, item)| (addr, item)).collect()
 }
 
@@ -412,5 +418,23 @@ mod tests {
         let result = extract_top_tokens(&signals, 5);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].0, "0xALT");
+    }
+
+    #[test]
+    fn tied_counts_sort_deterministically_by_address_asc() {
+        // All four tokens share the same walletCount. The output order must be
+        // deterministic (ascending address); HashMap iteration order is not.
+        let signals = json!([
+            { "tokenContractAddress": "0xCCC", "walletCount": 10 },
+            { "tokenContractAddress": "0xAAA", "walletCount": 10 },
+            { "tokenContractAddress": "0xDDD", "walletCount": 10 },
+            { "tokenContractAddress": "0xBBB", "walletCount": 10 },
+        ]);
+        let result = extract_top_tokens(&signals, 4);
+        assert_eq!(result.len(), 4);
+        assert_eq!(result[0].0, "0xAAA");
+        assert_eq!(result[1].0, "0xBBB");
+        assert_eq!(result[2].0, "0xCCC");
+        assert_eq!(result[3].0, "0xDDD");
     }
 }
