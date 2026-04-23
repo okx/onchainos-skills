@@ -4,7 +4,7 @@ description: "Use this skill for smart-money/whale/KOL/大户 activity tracking,
 license: MIT
 metadata:
   author: okx
-  version: "2.4.0"
+  version: "1.0.4"
   homepage: "https://web3.okx.com"
 ---
 
@@ -27,6 +27,12 @@ metadata:
 ## Keyword Glossary
 
 > If the user's query contains Chinese text (中文), read `references/keyword-glossary.md` for keyword-to-command mappings.
+
+## Workflow Integration
+
+> **For user-facing smart money requests** ("what are whales buying", "copy trading signals", "smart money"), use the **Smart Money Signals** workflow (`workflows/smart-money-signals.md`) instead of calling commands here directly.
+> It aggregates signals by token and runs per-token due diligence automatically.
+> Use this skill directly only for single atomic tracker or signal queries within a workflow step.
 
 ## Commands
 

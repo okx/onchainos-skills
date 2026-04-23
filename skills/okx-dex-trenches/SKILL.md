@@ -4,7 +4,7 @@ description: "Use this skill for meme/打狗/alpha token research on pump.fun an
 license: MIT
 metadata:
   author: okx
-  version: "2.4.0"
+  version: "1.0.4"
   homepage: "https://web3.okx.com"
 ---
 
@@ -27,6 +27,12 @@ metadata:
 ## Keyword Glossary
 
 > If the user's query contains Chinese text (中文) or mentions a protocol name (pumpfun, bonkers, believe, etc.), read `references/keyword-glossary.md` for keyword-to-command mappings and protocol ID lookups.
+
+## Workflow Integration
+
+> **For new token scanning** ("scan new tokens", "pump.fun tokens", "meme scan"), use the **New Token Screening** workflow (`workflows/new-token-screening.md`) instead of calling commands here directly.
+> **For launchpad token deep-dives**, the **Token Research** workflow (`workflows/token-research.md`) handles calling `memepump` commands in Step 3 when `protocolId` is non-empty.
+> Use this skill directly only for single atomic launchpad queries within a workflow step.
 
 ## Commands
 

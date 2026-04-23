@@ -4,7 +4,7 @@ description: "Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens
 license: MIT
 metadata:
   author: okx
-  version: "2.4.0"
+  version: "1.3.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -216,7 +216,7 @@ If `toTokenPrice` or `fromTokenPrice` unavailable/0 → enable by default.
 | Chain | MEV Protection | Threshold | How to enable |
 |---|---|---|---|
 | Ethereum | Yes | $2,000 | `onchainos swap execute --mev-protection` |
-| Solana | Yes | $1,000 | `onchainos swap execute --tips <lamports>` (positive integer, e.g. `1000` = 0.000001 SOL); CLI auto-applies Jito calldata |
+| Solana | Yes | $1,000 | `onchainos swap execute --tips <sol_amount>` (0.0000000001–2 SOL); CLI auto-applies Jito calldata |
 | BNB Chain | Yes | $200 | `onchainos swap execute --mev-protection` |
 | Base | Yes | $200 | `onchainos swap execute --mev-protection` |
 | Others | No | — | — |
