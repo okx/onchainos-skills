@@ -1,6 +1,5 @@
-use anyhow::{bail, Context, Result};
-use base64::Engine;
-use serde_json::{json, Value};
+use anyhow::{bail, Result};
+use serde_json::json;
 
 use crate::commands::swap::{
     validate_address_for_chain, validate_amount, validate_non_negative_integer,
@@ -11,7 +10,7 @@ use crate::wallet_api::{UnsignedInfoResponse, WalletApiClient};
 use crate::wallet_store::{self, AddressInfo, WalletsJson};
 
 use super::auth::{ensure_tokens_refreshed, format_api_error};
-use super::common::handle_confirming_error;
+use super::broadcast::{broadcast_unsigned, BroadcastCtx};
 
 // ── resolve_address ───────────────────────────────────────────────────
 
@@ -160,6 +159,7 @@ async fn sign_and_broadcast(
     is_contract_call: bool,
     mev_protection: bool,
     force: bool,
+    tx_source: Option<&str>,
 ) -> Result<String> {
     if cfg!(feature = "debug-log") {
         eprintln!(
@@ -236,7 +236,7 @@ async fn sign_and_broadcast(
         validate_non_negative_integer(aa_amount, "aa-dex-token-amount")?;
     }
 
-    let client = WalletApiClient::new()?;
+    let mut client = WalletApiClient::new()?;
     // Only read swap trace ID from cache for contract calls (swap flow)
     let cached_tid = if is_contract_call {
         crate::wallet_store::get_swap_trace_id().ok().flatten()
@@ -290,35 +290,7 @@ async fn sign_and_broadcast(
         );
     }
 
-    let exec_ok = match &unsigned.execute_result {
-        Value::Bool(b) => *b,
-        Value::Null => true,
-        _ => true,
-    };
-    if !exec_ok {
-        let err_msg = if unsigned.execute_error_msg.is_empty() {
-            "transaction simulation failed".to_string()
-        } else {
-            unsigned.execute_error_msg.clone()
-        };
-        bail!("transaction simulation failed: {}", err_msg);
-    }
-
-    let extra_data_str = sign_and_build_extra_data(
-        &unsigned,
-        &session_cert,
-        &encrypted_session_sk,
-        &session_key,
-        is_contract_call,
-        mev_protection,
-        force,
-    )?;
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][sign_and_broadcast] Step 10: extraData={}",
-            extra_data_str
-        );
-    }
+    let signing_seed = crate::crypto::hpke_decrypt_session_sk(&encrypted_session_sk, &session_key)?;
 
     let ts_broadcast = chrono::Utc::now().timestamp_millis().to_string();
     let trace_headers_broadcast: Vec<(&str, &str)> = if let Some(ref tid) = cached_tid {
@@ -340,29 +312,33 @@ async fn sign_and_broadcast(
         }
         Some(trace_headers_broadcast.as_slice())
     };
-    let broadcast_resp = client
-        .broadcast_transaction(
-            &access_token,
-            &account_id,
-            &addr_info.address,
-            &addr_info.chain_index,
-            &extra_data_str,
-            trace_ref_broadcast,
-        )
-        .await
-        .map_err(|e| handle_confirming_error(e, force))?;
+
+    let extra_data_overlay = tx_source.map(|src| {
+        let mut map = serde_json::Map::new();
+        map.insert("txSource".into(), json!(src));
+        map
+    });
+
+    let tx_hash = broadcast_unsigned(BroadcastCtx {
+        access_token: &access_token,
+        account_id: &account_id,
+        addr_info: &addr_info,
+        session_cert: &session_cert,
+        signing_seed: &signing_seed,
+        unsigned: &unsigned,
+        is_contract_call,
+        mev_protection,
+        force,
+        extra_data_overlay,
+        trace_headers: trace_ref_broadcast,
+    })
+    .await?;
 
     // Clear cached swap trace ID after successful broadcast (contract calls only)
     if is_contract_call {
         let _ = crate::wallet_store::clear_swap_trace_id();
     }
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][sign_and_broadcast] === END SUCCESS: txHash={}",
-            broadcast_resp.tx_hash
-        );
-    }
-    Ok(broadcast_resp.tx_hash)
+    Ok(tx_hash)
 }
 
 // ── build_broadcast_body ─────────────────────────────────────────────
@@ -444,6 +420,7 @@ pub(super) async fn cmd_send(
         false,
         false,
         force,
+        None, // tx_source: not cross-chain
     )
     .await?;
     output::success(json!({ "txHash": tx_hash }));
@@ -481,6 +458,7 @@ pub async fn cmd_contract_call(
         mev_protection,
         jito_unsigned_tx,
         force,
+        None, // tx_source: not cross-chain
     )
     .await?;
     output::success(json!({ "txHash": tx_hash }));
@@ -503,6 +481,7 @@ pub async fn execute_contract_call(
     mev_protection: bool,
     jito_unsigned_tx: Option<&str>,
     force: bool,
+    tx_source: Option<&str>,
 ) -> Result<String> {
     if to.is_empty() || chain.is_empty() {
         bail!("to and chain are required");
@@ -529,6 +508,7 @@ pub async fn execute_contract_call(
         true,
         mev_protection,
         force,
+        tx_source,
     )
     .await
 }
@@ -540,6 +520,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
+    use crate::commands::agentic_wallet::common::handle_confirming_error;
     use crate::wallet_store::{AccountMapEntry, AddressInfo, WalletsJson};
 
     fn make_test_wallets() -> WalletsJson {

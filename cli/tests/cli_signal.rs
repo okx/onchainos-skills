@@ -9,7 +9,7 @@
 
 mod common;
 
-use common::{assert_ok_and_extract_data, onchainos, run_with_retry};
+use common::{assert_limit, assert_ok_and_extract_data, extract_items, onchainos, run_with_retry};
 use predicates::prelude::*;
 use serde_json::Value;
 
@@ -36,6 +36,10 @@ fn assert_tracker_trade_fields(entry: &Value) {
 }
 
 /// Extract the trades array from either a flat array or `{ "trades": [...] }` response.
+///
+/// `tracker activities` has a stricter contract than the signal/token list
+/// endpoints (always array or `{trades: [...]}`), so this stays local rather
+/// than going through `common::extract_items`'s broader key probe.
 fn extract_trades(data: Value) -> Vec<Value> {
     if let Some(arr) = data.as_array() {
         arr.clone()
@@ -236,4 +240,79 @@ fn signal_list_missing_chain_fails() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
+}
+
+// ─── pagination (limit / cursor) ────────────────────────────────────
+
+#[test]
+fn signal_list_with_limit() {
+    // Intentionally lenient: ETH signal list density can dip under the
+    // `--limit 3` bound on sparse days, unlike the `token` equivalents
+    // (USDC search, hot-tokens, USDC holders, WSOL top-traders) which are
+    // reliably dense and therefore use `assert_limit_non_empty`. Using
+    // `assert_limit_non_empty` here would flake on quiet periods for what
+    // is functionally a pagination-semantics test, not a density test.
+    let output = run_with_retry(&["signal", "list", "--chain", "ethereum", "--limit", "3"]);
+    let data = assert_ok_and_extract_data(&output);
+    assert_limit(&data, 3, "signals");
+}
+
+#[test]
+fn signal_list_cursor_pagination() {
+    // Intentionally lenient (same rationale as `signal_list_with_limit`):
+    // ETH signal density fluctuates, so page 1 / page 2 may legitimately
+    // be empty or terminal on quiet days. The strict cursor test lives on
+    // the token side (`token_search_cursor_pagination`, USDC fixture),
+    // which has the dense fixture this one lacks. We still hard-assert
+    // cursor non-overlap *when* page 2 returns rows — skipping only the
+    // setup preconditions, never the actual advancement check.
+    // Page 1
+    let page1 = run_with_retry(&["signal", "list", "--chain", "ethereum", "--limit", "2"]);
+    let items1 = extract_items(&assert_ok_and_extract_data(&page1));
+    if items1.is_empty() {
+        eprintln!("signal_list_cursor_pagination: page 1 returned no items — skipping");
+        return;
+    }
+    // Extract cursor from last item
+    let cursor = items1
+        .last()
+        .and_then(|v| v.get("cursor"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+    if cursor.is_empty() {
+        eprintln!("signal_list_cursor_pagination: last item has no cursor — skipping");
+        return;
+    }
+    // Collect page 1 cursors for overlap check
+    let cursors1: Vec<String> = items1
+        .iter()
+        .filter_map(|v| v.get("cursor").and_then(|c| c.as_str()).map(str::to_string))
+        .collect();
+    // Page 2
+    let page2 = run_with_retry(&[
+        "signal", "list", "--chain", "ethereum", "--limit", "2", "--cursor", cursor,
+    ]);
+    let items2 = extract_items(&assert_ok_and_extract_data(&page2));
+    // A non-empty cursor on page 1's last item does not always imply page 2
+    // has rows — some backends emit an end-cursor sentinel on the terminal
+    // row. Skip the overlap check in that case rather than flake.
+    if items2.is_empty() {
+        eprintln!("signal_list_cursor_pagination: page 2 empty despite non-empty cursor — skipping overlap check");
+        return;
+    }
+    // Assert no overlap — page 2 items must have different cursors from page 1
+    let mut checked = 0usize;
+    for item in &items2 {
+        if let Some(c) = item.get("cursor").and_then(|c| c.as_str()) {
+            assert!(
+                !cursors1.iter().any(|x| x == c),
+                "cursor {c} appeared in both page 1 and page 2 — pagination is not advancing"
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked > 0,
+        "page 2 returned items but none had cursors to compare"
+    );
 }

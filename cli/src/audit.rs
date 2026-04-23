@@ -328,39 +328,44 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
+        Commands::Workflow { command } => format!("workflow {}", workflow_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
-        Commands::TaskSystem { command } => format!("agent {}", task_system_sub(command)),
+        Commands::TaskSystem { command } => format!("agent {}", agent_sub(command)),
+        Commands::CrossChain { .. } => "cross-chain".to_string(),
     }
 }
 
-fn task_system_sub(cmd: &crate::commands::agent_commerce::task::TaskSystemCommand) -> String {
-    use crate::commands::agent_commerce::task::TaskSystemCommand;
+fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
+    use crate::commands::agent_commerce::AgentCommand;
     match cmd {
-        TaskSystemCommand::CreateTask { .. }    => "create-task".into(),
-        TaskSystemCommand::Recommend { .. }     => "recommend".into(),
-        TaskSystemCommand::RecommendTask { .. } => "recommend-task".into(),
-        TaskSystemCommand::ContactBuyer { .. } => "contact-buyer".into(),
-        TaskSystemCommand::Status { .. }        => "status".into(),
-        TaskSystemCommand::List { .. }          => "list".into(),
-        TaskSystemCommand::ConfirmAccept { .. } => "confirm-accept".into(),
-        TaskSystemCommand::RejectApply { .. }   => "reject-apply".into(),
-        TaskSystemCommand::Complete { .. }      => "complete".into(),
-        TaskSystemCommand::Reject { .. }        => "reject".into(),
-        TaskSystemCommand::Close { .. }         => "close".into(),
-        TaskSystemCommand::SetPublic { .. }     => "set-public".into(),
-        TaskSystemCommand::Config { .. }        => "config".into(),
-        TaskSystemCommand::Dispute(c)   => format!("dispute {:?}", std::mem::discriminant(c)),
-        TaskSystemCommand::BuyerDispute(c) => format!("buyer-dispute {:?}", std::mem::discriminant(c)),
-        TaskSystemCommand::Common(c)    => format!("common {:?}", std::mem::discriminant(c)),
-        TaskSystemCommand::Apply { .. }   => "apply".into(),
-        TaskSystemCommand::Deliver { .. } => "deliver".into(),
-        TaskSystemCommand::AgreeRefund { .. } => "agree-refund".into(),
-        TaskSystemCommand::Payment { .. } => "payment".into(),
-        TaskSystemCommand::GetPayment { .. } => "get-payment".into(),
-        TaskSystemCommand::Pay { .. }   => "pay".into(),
-        TaskSystemCommand::Claim { .. }      => "claim".into(),
-        TaskSystemCommand::Get { .. }         => "get".into(),
-        TaskSystemCommand::NextAction { .. } => "next-action".into(),
+        AgentCommand::Create { .. } => "create".into(),
+        AgentCommand::Update { .. } => "update".into(),
+        AgentCommand::Get { .. } => "get".into(),
+        AgentCommand::Activate { .. } => "activate".into(),
+        AgentCommand::Deactivate { .. } => "deactivate".into(),
+        AgentCommand::Upload { .. } => "upload".into(),
+        AgentCommand::Search { .. } => "search".into(),
+        AgentCommand::ServiceList { .. } => "service-list".into(),
+        AgentCommand::FeedbackSubmit { .. } => "feedback-submit".into(),
+        AgentCommand::FeedbackList { .. } => "feedback-list".into(),
+        AgentCommand::XmtpSign { .. } => "xmtp-sign".into(),
+        AgentCommand::CreateTask { .. } => "create-task".into(),
+        AgentCommand::Recommend { .. } => "recommend".into(),
+        AgentCommand::Status { .. } => "status".into(),
+        AgentCommand::List { .. } => "list".into(),
+        AgentCommand::ConfirmAccept { .. } => "confirm-accept".into(),
+        AgentCommand::RejectApply { .. } => "reject-apply".into(),
+        AgentCommand::Confirm { .. } => "confirm".into(),
+        AgentCommand::Deliver { .. } => "deliver".into(),
+        AgentCommand::Complete { .. } => "complete".into(),
+        AgentCommand::Reject { .. } => "reject".into(),
+        AgentCommand::Close { .. } => "close".into(),
+        AgentCommand::SetPublic { .. } => "set-public".into(),
+        AgentCommand::AiEvaluate { .. } => "ai-evaluate".into(),
+        AgentCommand::Config { .. } => "config".into(),
+        AgentCommand::Negotiate(c) => format!("negotiate {:?}", std::mem::discriminant(c)),
+        AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),
+        AgentCommand::Common(c) => format!("common {:?}", std::mem::discriminant(c)),
     }
 }
 
@@ -447,6 +452,7 @@ fn token_sub(c: &TokenCommand) -> &'static str {
         TokenCommand::ClusterTopHolders { .. } => "cluster-top-holders",
         TokenCommand::ClusterList { .. } => "cluster-list",
         TokenCommand::ClusterSupportedChains => "cluster-supported-chains",
+        TokenCommand::Report { .. } => "report",
     }
 }
 
@@ -497,6 +503,7 @@ fn wallet_sub(c: &WalletCommand) -> &'static str {
         WalletCommand::History { .. } => "history",
         WalletCommand::ContractCall { .. } => "contract-call",
         WalletCommand::SignMessage { .. } => "sign-message",
+        WalletCommand::ReportPluginInfo { .. } => "report-plugin-info",
     }
 }
 
@@ -514,6 +521,17 @@ fn payment_sub(c: &PaymentCommand) -> &'static str {
     match c {
         PaymentCommand::X402Pay { .. } => "x402-pay",
         PaymentCommand::Eip3009Sign { .. } => "eip3009-sign",
+    }
+}
+
+fn workflow_sub(c: &crate::commands::workflows::WorkflowCommand) -> &'static str {
+    use crate::commands::workflows::WorkflowCommand;
+    match c {
+        WorkflowCommand::TokenResearch { .. } => "token-research",
+        WorkflowCommand::SmartMoney { .. } => "smart-money",
+        WorkflowCommand::NewTokens { .. } => "new-tokens",
+        WorkflowCommand::WalletAnalysis { .. } => "wallet-analysis",
+        WorkflowCommand::Portfolio { .. } => "portfolio",
     }
 }
 
