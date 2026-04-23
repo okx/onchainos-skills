@@ -269,7 +269,8 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
         TaskSystemCommand::NextAction { job_id, job_status, agent_id, role } => {
             let prompt = match role.as_str() {
                 "provider" | "seller" => provider::flow::generate_next_action(&job_id, &job_status, &agent_id),
-                other => anyhow::bail!("--role 暂只支持 provider/seller，当前: {other}"),
+                "buyer" | "client" => client::flow::generate_next_action(&job_id, &job_status, &agent_id),
+                other => anyhow::bail!("--role 暂只支持 provider/seller/buyer/client，当前: {other}"),
             };
             println!("{prompt}");
             Ok(())
