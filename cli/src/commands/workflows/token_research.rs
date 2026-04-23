@@ -98,14 +98,79 @@ pub(crate) async fn fetch_and_assemble(
     )
 }
 
-pub async fn run(ctx: &Context, address: &str, chain: Option<String>) -> Result<()> {
+/// Search tokens by symbol/name and return the top 5 matches for user selection.
+/// Output includes a numbered list so the calling agent can present choices.
+pub async fn search_and_select(
+    client: &mut ApiClient,
+    query: &str,
+    chain_index: &str,
+) -> Result<Value> {
+    let results = token::fetch_search(client, query, chain_index, Some("5"), None).await?;
+    let items = results.as_array().cloned().unwrap_or_default();
+
+    if items.is_empty() {
+        anyhow::bail!(
+            "token-research: no tokens found for query '{}' on chain {}",
+            query,
+            chain_index
+        );
+    }
+
+    let candidates: Vec<Value> = items
+        .into_iter()
+        .enumerate()
+        .map(|(i, t)| {
+            json!({
+                "index": i + 1,
+                "symbol": t.get("tokenSymbol").or_else(|| t.get("symbol")).cloned().unwrap_or(Value::Null),
+                "name": t.get("tokenName").or_else(|| t.get("name")).cloned().unwrap_or(Value::Null),
+                "address": t.get("tokenContractAddress").or_else(|| t.get("address")).cloned().unwrap_or(Value::Null),
+                "chain": t.get("chainIndex").or_else(|| t.get("chain")).cloned().unwrap_or(Value::Null),
+                "price": t.get("price").cloned().unwrap_or(Value::Null),
+                "marketCap": t.get("marketCap").cloned().unwrap_or(Value::Null),
+                "logoUrl": t.get("logoUrl").cloned().unwrap_or(Value::Null),
+            })
+        })
+        .collect();
+
+    Ok(json!({
+        "workflow": "token-research",
+        "step": "select-token",
+        "query": query,
+        "message": "Multiple tokens found. Please select one by number (1-5) to continue the full research workflow.",
+        "candidates": candidates,
+    }))
+}
+
+pub async fn run(
+    ctx: &Context,
+    address: Option<&str>,
+    query: Option<&str>,
+    chain: Option<String>,
+) -> Result<()> {
+    anyhow::ensure!(
+        address.is_some() || query.is_some(),
+        "token-research requires --address or --query"
+    );
+
     let mut client = ctx.client_async().await?;
     let chain_index = chain
         .as_deref()
         .map(|c| chains::resolve_chain(c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("solana"));
 
-    let result = fetch_and_assemble(&mut client, address, &chain_index).await?;
+    // If query is provided (symbol/name), do a search and return candidates for selection
+    if let Some(q) = query {
+        if address.is_none() {
+            let result = search_and_select(&mut client, q, &chain_index).await?;
+            output::success(result);
+            return Ok(());
+        }
+    }
+
+    // Direct address path — run the full workflow
+    let addr = address.unwrap();
+    let result = fetch_and_assemble(&mut client, addr, &chain_index).await?;
     output::success(result);
     Ok(())
 }

@@ -12,11 +12,17 @@ use super::Context;
 
 #[derive(Subcommand)]
 pub enum WorkflowCommand {
-    /// W1: Full token due diligence — price, security, holders, signals, optional launchpad
+    /// W1: Full token due diligence — price, security, holders, signals, optional launchpad.
+    /// Accepts either --address (contract address) or --query (symbol/name search).
+    /// When --query is used, returns top 5 search results for user selection.
     TokenResearch {
-        /// Token contract address
+        /// Token contract address (use this OR --query)
         #[arg(long)]
-        address: String,
+        address: Option<String>,
+        /// Token symbol or name to search (use this OR --address).
+        /// Returns top 5 matches for selection before running the full workflow.
+        #[arg(long)]
+        query: Option<String>,
         /// Chain (e.g. solana, ethereum, base). Auto-detects from global --chain if omitted.
         #[arg(long)]
         chain: Option<String>,
@@ -62,8 +68,8 @@ pub enum WorkflowCommand {
 
 pub async fn execute(ctx: &Context, cmd: WorkflowCommand) -> Result<()> {
     match cmd {
-        WorkflowCommand::TokenResearch { address, chain } => {
-            token_research::run(ctx, &address, chain).await
+        WorkflowCommand::TokenResearch { address, query, chain } => {
+            token_research::run(ctx, address.as_deref(), query.as_deref(), chain).await
         }
         WorkflowCommand::SmartMoney { chain } => smart_money::run(ctx, chain).await,
         WorkflowCommand::NewTokens { chain, stage } => new_tokens::run(ctx, chain, stage).await,

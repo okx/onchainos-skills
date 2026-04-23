@@ -644,8 +644,12 @@ struct GatewayOrdersParams {
 
 #[derive(Deserialize, JsonSchema)]
 struct WorkflowTokenResearchParams {
-    /// Token contract address
-    address: String,
+    /// Token contract address (use this OR query)
+    address: Option<String>,
+    /// Token symbol or name to search (use this OR address).
+    /// When provided without address, returns top 5 search results for user selection.
+    /// After user selects, call again with the chosen address.
+    query: Option<String>,
     /// Chain name (e.g. "solana", "ethereum"). Defaults to solana if omitted.
     chain: Option<String>,
 }
@@ -2086,8 +2090,10 @@ impl McpServer {
         name = "workflow_token_research",
         description = "W1 — Full token due diligence in one call: price, contract, security scan, \
             holder distribution, cluster overview, top traders, smart money signals. \
-            Step 3 adds launchpad enrichment (dev info, bundle rate, similar tokens) \
-            automatically when the token has a non-empty protocolId. \
+            Accepts either 'address' (contract address) or 'query' (symbol/name). \
+            When 'query' is used without 'address', returns top 5 search results — \
+            present them to the user and call again with the chosen address. \
+            Step 3 adds launchpad enrichment automatically when protocolId is non-empty. \
             Returns structured JSON with core / structure / launchpad blocks. \
             Error if all Step 1 sub-calls fail."
     )]
@@ -2100,9 +2106,29 @@ impl McpServer {
             .as_deref()
             .map(|c| crate::chains::resolve_chain(c).to_string())
             .unwrap_or_else(|| crate::chains::resolve_chain("solana").to_string());
+
+        // Symbol/name search path — return candidates for user selection
+        if p.address.is_none() {
+            let query = p.query.as_deref().ok_or_else(|| {
+                "Either 'address' or 'query' is required".to_string()
+            })?;
+            return match workflows::token_research::search_and_select(
+                &mut *self.client.lock().await,
+                query,
+                &chain_index,
+            )
+            .await
+            {
+                Ok(data) => ok(data),
+                Err(e) => err(e),
+            };
+        }
+
+        // Direct address path — full workflow
+        let address = p.address.as_deref().unwrap();
         match workflows::token_research::fetch_and_assemble(
             &mut *self.client.lock().await,
-            &p.address,
+            address,
             &chain_index,
         )
         .await

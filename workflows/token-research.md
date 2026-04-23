@@ -18,18 +18,37 @@ okx-dex-token, okx-security, okx-dex-swap, okx-dex-signal, okx-dex-trenches
 
 | Param         | Required | Default     |
 |---------------|----------|-------------|
-| token_address | Yes      | —           |
+| token_address | One of address or query required | — |
+| query         | One of address or query required | — |
 | chain         | No       | Auto-detect |
 
 ## CLI
 
-Run the complete workflow in one command:
+Run with a contract address:
 
 ```
 onchainos workflow token-research --address <addr> [--chain <chain>]
 ```
 
+Run with a token symbol or name (returns top 5 matches for selection):
+
+```
+onchainos workflow token-research --query <symbol> [--chain <chain>]
+```
+
+When `--query` is used, the CLI returns up to 5 search results with index, symbol, name, address, chain, price, and market cap. The agent should present these to the user, let them pick one, then re-invoke with `--address` using the selected token's address.
+
 ## Steps
+
+### Step 0 — Token resolution [conditional: --query provided]
+
+If the user provided a symbol/name instead of a contract address:
+
+```
+onchainos workflow token-research --query <symbol> --chain <chain>
+```
+
+Present the top 5 results to the user in a numbered list. Once the user selects a token, continue from Step 1 with the selected address.
 
 ### Step 1 — Core data [required] (parallel)
 
