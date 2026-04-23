@@ -105,9 +105,10 @@ fn nullify_zero_tags_if_new(token: &mut Value, received_at_ms: u64) {
 
 /// Apply `nullify_zero_tags_if_new` across the response shapes we've seen
 /// from the memepump endpoints: a bare array, a bare token object, or an
-/// object wrapping the payload under one of `list` / `data` / `items`
-/// (matching the keys the test extractors probe, so a backend shape change
-/// cannot silently turn the feature into a no-op).
+/// object wrapping the payload under one of `list` / `data` / `items` /
+/// `signals` (matching the keys the shared test extractor probes, so a
+/// backend shape change cannot silently turn the feature into a no-op
+/// while tests still pass).
 ///
 /// The wrapper key can hold either an array of tokens or a single token
 /// object; both are walked.
@@ -118,7 +119,7 @@ fn apply_nullify_to_response(data: &mut Value, received_at_ms: u64) {
         }
         return;
     }
-    for key in ["list", "data", "items"] {
+    for key in ["list", "data", "items", "signals"] {
         if let Some(wrapped) = data.get_mut(key) {
             if let Some(arr) = wrapped.as_array_mut() {
                 for token in arr.iter_mut() {
@@ -1074,6 +1075,23 @@ mod tests {
             assert!(
                 data["items"][0]["tags"][field].is_null(),
                 "{field} should be null inside {{ items: [...] }} wrapper"
+            );
+        }
+    }
+
+    /// `signals` wrapper is new in this commit — added to keep prod key
+    /// coverage in lockstep with `common::extract_items` (which already
+    /// probes this key for signal-list tests).
+    #[test]
+    fn apply_nullify_to_response_walks_signals_wrapper() {
+        let received_at = now_ms();
+        let created_ms = received_at.saturating_sub(500);
+        let mut data = json!({ "signals": [new_token(created_ms)] });
+        apply_nullify_to_response(&mut data, received_at);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert!(
+                data["signals"][0]["tags"][field].is_null(),
+                "{field} should be null inside {{ signals: [...] }} wrapper"
             );
         }
     }
