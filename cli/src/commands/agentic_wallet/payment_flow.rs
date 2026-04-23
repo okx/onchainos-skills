@@ -422,32 +422,66 @@ pub async fn sign_payment_with_preference(
 /// Sign an x402 payment authorization locally using a hex private key
 /// (`EVM_PRIVATE_KEY`), without touching the wallet session or TEE.
 ///
-/// Shares scheme selection + amount resolution with the TEE path via
-/// `prepare_resolved_entry`, but deliberately passes `preferred = None`:
-/// if the user saved a `payment default` for an asset that only offers
-/// `aggr_deferred`, honoring it here would lead to a scheme we can't
-/// sign locally. Skipping preferred lets us always pick the `exact`
-/// entry when one exists, and fail fast otherwise.
+/// Signs exactly what `accepts` carries — does NOT consult the saved
+/// default asset. Used by the manual `payment eip3009-sign` command,
+/// which inherits `x402-pay`'s "sign what --accepts says" contract so
+/// the caller's supplied entry isn't silently reordered by a stored
+/// preference.
 ///
-/// Returns `(PaymentProof, Value)` with `session_cert = None`, matching
-/// the TEE `exact` branch so the downstream `build_payment_header` path
-/// is identical.
+/// Auto-payment (`sign_payment_auto`) calls
+/// `sign_payment_local_with_preference` directly instead so the user's
+/// saved default applies to the unauthenticated flow just like it does
+/// to the TEE path.
 pub async fn sign_payment_local(
     accepts: &Value,
     tier: Option<PaymentTier>,
 ) -> Result<(PaymentProof, Value)> {
+    sign_payment_local_with_preference(accepts, tier, None).await
+}
+
+/// Variant of `sign_payment_local` that honors a saved default payment
+/// asset when one is supplied.
+///
+/// Shares scheme selection + amount resolution with the TEE path via
+/// `prepare_resolved_entry`. If `preferred` matches an accepts entry
+/// whose scheme is `aggr_deferred` (a scheme we can't sign locally),
+/// this falls back to scheme priority to pick any available `exact`
+/// entry rather than failing — so the saved default wins when possible,
+/// but never blocks progress when the only matching offering is a
+/// scheme we can't use.
+///
+/// Returns `(PaymentProof, Value)` with `session_cert = None`, matching
+/// the TEE `exact` branch so the downstream `build_payment_header` path
+/// is identical.
+pub async fn sign_payment_local_with_preference(
+    accepts: &Value,
+    tier: Option<PaymentTier>,
+    preferred: Option<&crate::payment_cache::PaymentDefault>,
+) -> Result<(PaymentProof, Value)> {
     use alloy_primitives::FixedBytes;
     use alloy_signer_local::PrivateKeySigner;
 
-    // `preferred = None`: see doc above.
-    let (entry, params) = prepare_resolved_entry(accepts, tier, None)?;
+    let is_deferred = |s: &Option<String>| {
+        s.as_deref()
+            .map(|v| v.eq_ignore_ascii_case("aggr_deferred"))
+            .unwrap_or(false)
+    };
 
-    if params
-        .scheme
-        .as_deref()
-        .map(|s| s.eq_ignore_ascii_case("aggr_deferred"))
-        .unwrap_or(false)
-    {
+    // First pass honors the saved default. If that picks an
+    // aggr_deferred-only entry (either because the default points at one,
+    // or because the server only offered aggr_deferred for that asset),
+    // retry without the preference so scheme priority finds any exact
+    // entry elsewhere in `accepts`.
+    let (entry, params) = {
+        let (e, p) = prepare_resolved_entry(accepts, tier, preferred)?;
+        if is_deferred(&p.scheme) && preferred.is_some() {
+            prepare_resolved_entry(accepts, tier, None)?
+        } else {
+            (e, p)
+        }
+    };
+
+    if is_deferred(&params.scheme) {
         bail!(
             "local private-key signing requires an 'exact' scheme accepts entry, \
              but the server only offered 'aggr_deferred' (session key required). \
@@ -560,7 +594,14 @@ pub async fn sign_payment_auto(
         sign_payment(accepts, None, tier).await
     } else {
         warn_local_signing_once();
-        sign_payment_local(accepts, tier).await
+        // Mirror the TEE path: auto-payment honors the user's saved
+        // default asset (via `onchainos payment default set`) in both
+        // signing modes. `sign_payment_local_with_preference` handles
+        // the aggr_deferred-only fallback so a default that can't be
+        // signed locally doesn't block the request.
+        let preferred =
+            crate::payment_cache::PaymentCache::load().and_then(|c| c.default_asset);
+        sign_payment_local_with_preference(accepts, tier, preferred.as_ref()).await
     }
 }
 
@@ -999,13 +1040,167 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sign_payment_local_with_preference_honors_default_matching_exact() {
+        // Two exact entries, different assets. Without preferred, scheme
+        // priority picks the first exact. With preferred pointing at the
+        // second, the saved default wins.
+        let accepts = json!([
+            {
+                "scheme": "exact",
+                "network": "eip155:196",
+                "amount": "100",
+                "payTo": "0x1111111111111111111111111111111111111111",
+                "asset": "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "maxTimeoutSeconds": 300,
+                "extra": {"name": "USDG", "version": "1"}
+            },
+            {
+                "scheme": "exact",
+                "network": "eip155:196",
+                "amount": "200",
+                "payTo": "0x1111111111111111111111111111111111111111",
+                "asset": "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+                "maxTimeoutSeconds": 300,
+                "extra": {"name": "USDT", "version": "1"}
+            }
+        ]);
+        let preferred = crate::payment_cache::PaymentDefault {
+            asset: "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB".into(),
+            network: "eip155:196".into(),
+            name: Some("USDT".into()),
+        };
+
+        std::env::set_var("EVM_PRIVATE_KEY", TEST_PK);
+        let (_proof, entry) =
+            sign_payment_local_with_preference(&accepts, None, Some(&preferred))
+                .await
+                .unwrap();
+        std::env::remove_var("EVM_PRIVATE_KEY");
+        assert_eq!(
+            entry["asset"].as_str(),
+            Some("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
+            "saved default asset should win over accepts[0]"
+        );
+        assert_eq!(entry["scheme"].as_str(), Some("exact"));
+    }
+
+    #[tokio::test]
+    async fn sign_payment_local_with_preference_falls_back_when_default_is_aggr_deferred_only() {
+        // The preferred asset is offered only as aggr_deferred (which we
+        // can't sign locally); a different asset is offered as exact.
+        // Local signing should fall back and pick the exact entry rather
+        // than failing — the default is a preference, not a hard
+        // requirement, when the matching offering is unusable.
+        let accepts = json!([
+            {
+                "scheme": "aggr_deferred",
+                "network": "eip155:196",
+                "amount": "100",
+                "payTo": "0x1111111111111111111111111111111111111111",
+                "asset": "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "maxTimeoutSeconds": 300,
+                "extra": {"name": "USDG", "version": "1"}
+            },
+            {
+                "scheme": "exact",
+                "network": "eip155:196",
+                "amount": "200",
+                "payTo": "0x1111111111111111111111111111111111111111",
+                "asset": "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+                "maxTimeoutSeconds": 300,
+                "extra": {"name": "USDT", "version": "1"}
+            }
+        ]);
+        let preferred = crate::payment_cache::PaymentDefault {
+            asset: "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
+            network: "eip155:196".into(),
+            name: Some("USDG".into()),
+        };
+
+        std::env::set_var("EVM_PRIVATE_KEY", TEST_PK);
+        let (_proof, entry) =
+            sign_payment_local_with_preference(&accepts, None, Some(&preferred))
+                .await
+                .unwrap();
+        std::env::remove_var("EVM_PRIVATE_KEY");
+        assert_eq!(entry["scheme"].as_str(), Some("exact"));
+        assert_eq!(
+            entry["asset"].as_str(),
+            Some("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
+            "should fall back to USDT/exact when USDG only offers aggr_deferred"
+        );
+    }
+
+    #[tokio::test]
+    async fn sign_payment_auto_local_path_applies_saved_default_asset() {
+        // End-to-end check: unauthenticated (no wallets.json) but a
+        // default asset is saved in the payment cache. The auto path
+        // must pick that entry instead of accepts[0].
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join("sign_payment_auto_default");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+        std::env::set_var("EVM_PRIVATE_KEY", TEST_PK);
+
+        // Seed a default asset pointing at USDT.
+        let cache = crate::payment_cache::PaymentCache {
+            default_asset: Some(crate::payment_cache::PaymentDefault {
+                asset: "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB".into(),
+                network: "eip155:196".into(),
+                name: Some("USDT".into()),
+            }),
+            ..Default::default()
+        };
+        cache.save().unwrap();
+
+        let accepts = json!([
+            {
+                "scheme": "exact",
+                "network": "eip155:196",
+                "amount": "100",
+                "payTo": "0x1111111111111111111111111111111111111111",
+                "asset": "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "maxTimeoutSeconds": 300,
+                "extra": {"name": "USDG", "version": "1"}
+            },
+            {
+                "scheme": "exact",
+                "network": "eip155:196",
+                "amount": "200",
+                "payTo": "0x1111111111111111111111111111111111111111",
+                "asset": "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+                "maxTimeoutSeconds": 300,
+                "extra": {"name": "USDT", "version": "1"}
+            }
+        ]);
+        let (_proof, entry) = sign_payment_auto(&accepts, None).await.unwrap();
+
+        std::env::remove_var("ONCHAINOS_HOME");
+        std::env::remove_var("EVM_PRIVATE_KEY");
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(
+            entry["asset"].as_str(),
+            Some("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
+            "auto-payment local branch must honor the saved default asset"
+        );
+    }
+
+    #[tokio::test]
     async fn sign_payment_local_picks_exact_when_both_schemes_present() {
         // Even when aggr_deferred appears first in the array (and would be
         // the natural "first entry" fallback), sign_payment_local should
         // select the exact entry. This locks in scheme-priority behavior
-        // for the local path. The separate guarantee that a user-saved
-        // preferred asset is ignored is structural — the implementation
-        // passes `preferred = None` to prepare_resolved_entry unconditionally.
+        // for the manual-command variant, which passes `preferred = None`
+        // down to `sign_payment_local_with_preference` unconditionally so
+        // it signs exactly what the caller supplied via `--accepts`.
         let accepts = json!([
             {
                 "scheme": "aggr_deferred",
