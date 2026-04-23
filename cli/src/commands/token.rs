@@ -637,6 +637,20 @@ pub async fn fetch_price_info(
     client.post("/api/v6/dex/market/price-info", &body).await
 }
 
+/// POST /api/v6/security/token-scan — single-token scan helper shared by
+/// `token report` and the workflow layer. Any future schema change lands here.
+pub async fn fetch_security(
+    client: &mut ApiClient,
+    address: &str,
+    chain_index: &str,
+) -> Result<Value> {
+    let body = json!({
+        "source": "onchain_os_cli",
+        "tokenList": [{ "chainId": chain_index, "contractAddress": address }]
+    });
+    client.post("/api/v6/security/token-scan", &body).await
+}
+
 /// Parameters for the hot token list query.
 #[derive(serde::Deserialize, schemars::JsonSchema, Default)]
 pub struct HotTokensParams {
@@ -1009,16 +1023,11 @@ pub async fn fetch_report(client: &mut ApiClient, address: &str, chain_index: &s
     // the shared reqwest::Client connection pool (Arc-backed).
     let (mut c1, mut c2, mut c3) = (client.clone(), client.clone(), client.clone());
 
-    let sec_body = serde_json::json!({
-        "source": "onchain_os_cli",
-        "tokenList": [{ "chainId": chain_index, "contractAddress": address }]
-    });
-
     let (info, price, advanced, security) = tokio::join!(
         fetch_info(client, address, chain_index),
         fetch_price_info(&mut c1, address, chain_index),
         fetch_advanced_info(&mut c2, address, chain_index),
-        c3.post("/api/v6/security/token-scan", &sec_body),
+        fetch_security(&mut c3, address, chain_index),
     );
 
     let info     = info.ok();
