@@ -74,7 +74,7 @@ Chinese variant:
 | 名字 | <...> |
 | 描述 | <...> |
 | 头像 | 默认 / 已上传 |
-| services[1]... | (provider 专属) |
+| 服务[1] 名称 / 描述 / 类型 / 价格 / 接口地址 | (仅 provider 有) |
 
 End with: `确认无误回复 "执行" 我就下发。`
 
@@ -86,7 +86,7 @@ English variant:
 | Name | <...> |
 | Description | <...> |
 | Picture | default / uploaded |
-| services[1]... | (provider only) |
+| Service [1] Name / Description / Type / Fee / Endpoint | (provider only) |
 
 End with: `Reply "execute" to run it.`
 

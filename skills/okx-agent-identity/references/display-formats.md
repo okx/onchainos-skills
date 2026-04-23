@@ -88,7 +88,7 @@ Rules:
 - Render `Role` using the user-language label: `买家 / 服务方 / 验证者` ↔ `requester / provider / evaluator`.
 - Render `Status` using the user-language label: `已上架 / 已下架` ↔ `active / inactive`.
 - Short-form address: `0x` + first 4 + `…` + last 4 hex chars. Show the full address only when the user asks.
-- Services — one row per service, numbered `[N]`, single-line format `ServiceName — Type, Price, Endpoint`. For A2A, use `free` / `free (per-call pricing off-chain)` (user language) instead of Fee and drop the Endpoint (CLI clears it anyway).
+- Services — one row per service, numbered `[N]`, single-line format. The **name value** (what the user typed, e.g. `TVL Query`) stays verbatim; the following descriptor uses user-language words: Chinese `名称 — 类型, 价格, 接口地址`-style reading order, English `Name — Type, Fee, Endpoint`-style reading order. In practice the single-line format is `<ServiceName> — <Type>, <Fee or 免费/free>, <Endpoint>`. For A2A, use `免费（链外按次计价）` / `free (per-call pricing off-chain)` in the user's language instead of Fee and drop the Endpoint (CLI clears it anyway).
 - `txHash` row present only when the command produced a tx (absent on read-only commands).
 - `Agent ID` row: follow the `#<id>` placeholder rule at the top of this file — omit the row entirely if the id is not available yet (e.g. fresh `create` response), don't render `#` alone.
 
@@ -100,7 +100,7 @@ Used before executing any write that modifies fields (`create`, `update`). Three
 
 ### Create variant (no current values to compare)
 
-Render ONE language variant based on user language. Do NOT render `provider (服务方)` style bilingual — see §Language matching.
+Render ONE language variant based on user language. Do NOT render bilingual labels like `provider (服务方)` or mix Chinese field labels with English service-field labels — see §Language matching.
 
 Chinese variant:
 
@@ -110,10 +110,10 @@ Chinese variant:
 | 名字 | DeFi Analyzer |
 | 描述 | 链上数据分析与收益模拟。 |
 | 头像 | 默认 |
-| services[1] ServiceName | TVL Query |
-| services[1] ServiceType | A2MCP |
-| services[1] Fee | 10 USDT |
-| services[1] Endpoint | https://api.example.com/mcp |
+| 服务[1] 名称 | TVL Query |
+| 服务[1] 类型 | A2MCP |
+| 服务[1] 价格 | 10 USDT |
+| 服务[1] 接口地址 | https://api.example.com/mcp |
 
 English variant:
 
@@ -123,12 +123,22 @@ English variant:
 | Name | DeFi Analyzer |
 | Description | On-chain data analysis and yield simulation. |
 | Picture | default |
-| services[1] ServiceName | TVL Query |
-| services[1] ServiceType | A2MCP |
-| services[1] Fee | 10 USDT |
-| services[1] Endpoint | https://api.example.com/mcp |
+| Service [1] Name | TVL Query |
+| Service [1] Type | A2MCP |
+| Service [1] Fee | 10 USDT |
+| Service [1] Endpoint | https://api.example.com/mcp |
 
-Service keys (`services[N] ServiceName` etc.) stay verbatim regardless of language — they map 1:1 to the `--service` JSON schema.
+Service-field label mapping (user-facing labels ↔ CLI JSON keys the skill sends to `--service`):
+
+| CLI JSON key | 中文标签 | English label |
+|---|---|---|
+| `ServiceName` | 名称 | Name |
+| `ServiceDescription` | 描述 | Description |
+| `ServiceType` | 类型 | Type |
+| `Fee` | 价格 | Fee |
+| `Endpoint` | 接口地址 | Endpoint |
+
+The JSON keys on the right of this mapping stay unchanged in the actual `--service` JSON payload; only the user-facing labels in cards / Q&A prompts are localized.
 
 ### Update variant (diff)
 
@@ -139,9 +149,9 @@ Chinese variant:
 | 名字 | DeFi Analyzer | (不变) |
 | 描述 | 链上数据分析。 | **链上数据分析与收益模拟。** |
 | 头像 | <旧 URL> | **<新 URL>** |
-| services[1] Fee | 10 USDT | (不变) |
+| 服务[1] 价格 | 10 USDT | (不变) |
 
-> 确认后回复 "执行" 我就下发。`--service` 整体替换，但语义上只有 services[1] Fee 以外的字段是一样的。
+> 确认后回复 "执行" 我就下发。`--service` 整体替换，但本次只有 服务[1] 价格 以外的字段保持不变。
 
 English variant:
 
@@ -150,15 +160,15 @@ English variant:
 | Name | DeFi Analyzer | (unchanged) |
 | Description | On-chain data analysis. | **On-chain data analysis with yield simulation.** |
 | Picture | <old URL> | **<new URL>** |
-| services[1] Fee | 10 USDT | (unchanged) |
+| Service [1] Fee | 10 USDT | (unchanged) |
 
-> Reply "execute" to run it. `--service` replaces the whole list, but semantically only services[1] Fee is the intended change here.
+> Reply "execute" to run it. `--service` replaces the whole list, but the only intended change here is Service [1] Fee; other fields are kept identical.
 
 Rules:
 
 - **Three columns for update**: label them `字段 / 当前值 / 新值` or `Field / Current / New` to match user language. Unchanged rows show `(不变)` / `(unchanged)` in the new-value column — never empty, never repeated value.
 - Changed rows: bold the new-value cell so the diff reads at a glance.
-- For `services[i]`, always list all sub-fields of each service — easy to spot accidental drops.
+- For each service entry, always list all sub-fields — easy to spot accidental drops. Localize the service-field labels per the mapping table above.
 - **Do NOT show the bash command in this card.** If the user asks "把命令给我看", render it as a separate code block afterward; otherwise omit.
 - End every diff card with exactly one line: `确认后回复 "执行" 我就下发。`
 

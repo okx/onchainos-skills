@@ -71,9 +71,11 @@ The provider's `--service` is a JSON array whose elements have the fields below.
 
 ## How to deliver these in Q&A
 
-When prompting the user, inline the four segments **in the user's language only** — users skim and pick the ones they need. Example for `ServiceName` when the user is typing Chinese:
+When prompting the user, inline the four segments **in the user's language only** — users skim and pick the ones they need. Do NOT expose the CLI JSON key (`ServiceName` etc.) in the prompt — that's internal schema, it only belongs in the raw bash command (which the user sees only if they ask).
 
-> **这项服务叫什么名字？（ServiceName）**
+Example for the service-name field when the user is typing Chinese:
+
+> **这项服务叫什么名字？**
 > - 用途：买家搜索第一眼看到的标题。
 > - 可见：上链公开。
 > - 请注意：非空，简短，≤ 64 字符。
@@ -81,10 +83,10 @@ When prompting the user, inline the four segments **in the user's language only*
 
 Same field when the user is typing English:
 
-> **What's the name of this service? (ServiceName)**
+> **What's the name of this service?**
 > - Purpose: the title buyers see first in search results.
 > - Visibility: on-chain public.
 > - Please note: non-empty, short, ≤ 64 chars.
 > - Example: `TVL Query` / `Whale Alert`.
 
-Do NOT cram multiple fields into one message. Do NOT mix languages in the same message. One field per turn is the hard rule from `role-playbook.md`.
+Do NOT cram multiple fields into one message. Do NOT mix languages in the same message. Do NOT leak the CLI JSON key (`ServiceName` / `ServiceType` / `Fee` / `Endpoint` / …) into the user-visible prompt — localize the label (`名称 / 类型 / 价格 / 接口地址` or `Name / Type / Fee / Endpoint`) instead. One field per turn is the hard rule from `role-playbook.md`.

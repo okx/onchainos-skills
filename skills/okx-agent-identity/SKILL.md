@@ -344,6 +344,7 @@ Every user-facing string the skill renders must match the user's language. Detec
 
 - CLI flag names (`--role`, `--agent-id`, `--creator-id`, `--sort-by`, `--service`, …).
 - Enum / canonical values sent to the CLI (`requester`, `provider`, `evaluator`, `A2MCP`, `A2A`, `time_desc`, `score_desc`, `active`, `inactive` when used as the `--status` value).
+- **JSON schema keys inside the actual `--service` payload** (`ServiceName`, `ServiceDescription`, `ServiceType`, `Fee`, `Endpoint`) — these get sent to the CLI and `utils.rs::normalize_service` matches them exactly. **BUT their user-facing labels in cards and Q&A prompts ARE localized**: Chinese renders `服务[N] 名称 / 描述 / 类型 / 价格 / 接口地址`; English renders `Service [N] Name / Description / Type / Fee / Endpoint`. The schema key only shows up in the raw bash command (which we only render when the user explicitly asks).
 - On-chain primitives: addresses (`0x…`), transaction hashes, agent IDs (`#42`), score numbers (`85 / 100`), token symbols (`USDT`, `OKB`).
 - Bash commands the user asked to see.
 
