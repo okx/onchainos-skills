@@ -804,13 +804,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn now_ms() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| u64::try_from(d.as_millis()).unwrap_or(0))
-            .unwrap_or(0)
-    }
-
     fn new_token(created_ms: u64) -> Value {
         json!({
             "createdTimestamp": created_ms.to_string(),
