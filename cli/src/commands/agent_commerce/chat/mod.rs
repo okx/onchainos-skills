@@ -319,17 +319,17 @@ pub async fn fetch_system_config(client: &ApiClient, agent_id: &str) -> Result<V
 }
 
 // ── Heartbeat ────────────────────────────────────────────────────────
-// TODO: Confirm with backend team:
-//   1. Is this endpoint ready on beta?
-//   2. Should it also accept agenticId header like other chat commands?
-//   3. Is chainIndex really the only param needed?
-//   4. This endpoint is under /priapi/v5/wallet/agentic/ (wallet namespace),
-//      unlike other chat commands which use /priapi/v1/aieco/im/.
+// TODO: Confirm if endpoint is ready on beta for testing.
+// Note: This endpoint is under /priapi/v5/wallet/agentic/ (wallet namespace),
+//       unlike other chat commands which use /priapi/v1/aieco/im/.
+//       No agenticId header needed — userId is extracted from JWT server-side.
 
 /// POST /priapi/v5/wallet/agentic/agent-heartbeat
 ///
-/// Reports agent online status. Server updates lastOnlineTime for the
-/// agent matching the JWT's ownerAddress + chainIndex.
+/// Reports online status for all agents owned by the current user on the
+/// given chain. Server resolves userId from JWT, finds all addresses and
+/// their agents, and batch-updates lastOnlineTime. Always returns success
+/// even if the user has no addresses or agents.
 pub async fn fetch_heartbeat(client: &ApiClient, chain_index: u64) -> Result<Value> {
     let body = serde_json::json!({ "chainIndex": chain_index });
     client.post(HEARTBEAT_PATH, &body).await
