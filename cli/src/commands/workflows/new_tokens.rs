@@ -23,9 +23,11 @@ pub(crate) async fn fetch_and_assemble(
     chain_index: &str,
     stage: &str,
 ) -> Result<Value> {
+    // Accept any case (`migrated`, `MIGRATING`, …) — normalise once at the boundary.
+    let stage_norm = stage.to_ascii_uppercase();
     anyhow::ensure!(
-        VALID_STAGES.contains(&stage),
-        "--stage must be one of {:?}, got: {stage}",
+        VALID_STAGES.contains(&stage_norm.as_str()),
+        "--stage must be one of {:?} (case-insensitive), got: {stage}",
         VALID_STAGES
     );
 
@@ -34,7 +36,7 @@ pub(crate) async fn fetch_and_assemble(
         client
             .get(
                 "/api/v6/dex/market/memepump/tokenList",
-                &[("chainIndex", chain_index), ("stage", stage)],
+                &[("chainIndex", chain_index), ("stage", stage_norm.as_str())],
             )
             .await,
     );
@@ -96,7 +98,7 @@ pub(crate) async fn fetch_and_assemble(
         })
         .collect();
 
-    Ok(assemble(chain_index, stage, token_list, results))
+    Ok(assemble(chain_index, stage_norm.as_str(), token_list, results))
 }
 
 pub async fn run(ctx: &Context, chain: Option<String>, stage: Option<String>) -> Result<()> {
@@ -150,6 +152,12 @@ pub(crate) fn assemble(
 /// Extract top N token entries from a memepump token list response.
 /// Handles both bare arrays and `{"data": [...]}` wrappers.
 /// Returns empty vec on null/empty/malformed input → Step 2 is then skipped.
+///
+/// Dedupes by address (first occurrence wins). API-returned ordering is
+/// preserved for non-duplicates. If the memepump API ever emits the same
+/// address twice, we drop the later rows rather than spawning duplicate
+/// enrichment tasks whose results would silently overwrite each other via
+/// `results_by_addr`.
 pub(crate) fn extract_top_tokens(list: &Value, n: usize) -> Vec<(String, Value)> {
     let arr: &Vec<Value> = match list.as_array() {
         Some(a) => a,
@@ -159,17 +167,25 @@ pub(crate) fn extract_top_tokens(list: &Value, n: usize) -> Vec<(String, Value)>
         },
     };
 
-    arr.iter()
-        .filter_map(|item| {
-            let addr = item["tokenContractAddress"]
-                .as_str()
-                .or_else(|| item["address"].as_str())?
-                .to_string();
-            if addr.is_empty() { return None; }
-            Some((addr, item.clone()))
-        })
-        .take(n)
-        .collect()
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<(String, Value)> = Vec::with_capacity(n);
+    for item in arr {
+        let addr = match item["tokenContractAddress"]
+            .as_str()
+            .or_else(|| item["address"].as_str())
+        {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => continue,
+        };
+        if !seen.insert(addr.clone()) {
+            continue;
+        }
+        out.push((addr, item.clone()));
+        if out.len() == n {
+            break;
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -371,5 +387,22 @@ mod tests {
         let result = extract_top_tokens(&list, 10);
         assert_eq!(result[0].1["symbol"], "TKN");
         assert_eq!(result[0].1["marketCap"], "1000000");
+    }
+
+    #[test]
+    fn dedupes_by_address_keeps_first_occurrence() {
+        // If the memepump API ever emits the same address twice, we keep the
+        // first occurrence and drop the rest so enrichment task count matches
+        // the emitted output count.
+        let list = json!([
+            { "tokenContractAddress": "0xDUP", "symbol": "FIRST" },
+            { "tokenContractAddress": "0xOTH", "symbol": "OTHER" },
+            { "tokenContractAddress": "0xDUP", "symbol": "SECOND" },
+        ]);
+        let result = extract_top_tokens(&list, 10);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].0, "0xDUP");
+        assert_eq!(result[0].1["symbol"], "FIRST"); // first occurrence wins
+        assert_eq!(result[1].0, "0xOTH");
     }
 }
