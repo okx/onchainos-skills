@@ -295,13 +295,23 @@ fn signal_list_cursor_pagination() {
         "signal", "list", "--chain", "ethereum", "--limit", "2", "--cursor", cursor,
     ]);
     let items2 = extract_signals(assert_ok_and_extract_data(&page2));
+    assert!(
+        !items2.is_empty(),
+        "page 2 returned empty despite non-empty cursor from page 1 — pagination may be broken"
+    );
     // Assert no overlap — page 2 items must have different cursors from page 1
+    let mut checked = 0usize;
     for item in &items2 {
         if let Some(c) = item.get("cursor").and_then(|c| c.as_str()) {
             assert!(
                 !cursors1.iter().any(|x| x == c),
                 "cursor {c} appeared in both page 1 and page 2 — pagination is not advancing"
             );
+            checked += 1;
         }
     }
+    assert!(
+        checked > 0,
+        "page 2 returned items but none had cursors to compare"
+    );
 }
