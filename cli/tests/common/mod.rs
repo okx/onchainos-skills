@@ -67,3 +67,42 @@ pub fn run_with_retry(args: &[&str]) -> std::process::Output {
     }
     onchainos().args(args).output().expect("failed to execute")
 }
+
+/// Extract a list of items from either a flat array or an object whose body
+/// carries the list under one of the common wrapper keys (`list` / `data` /
+/// `items` / `signals`). Keeping one extractor shared across signal and token
+/// tests means a new wrapper shape is a one-line change, not a sweep.
+pub fn extract_items(data: &Value) -> Vec<Value> {
+    if let Some(arr) = data.as_array() {
+        return arr.clone();
+    }
+    for key in ["list", "data", "items", "signals"] {
+        if let Some(arr) = data.get(key).and_then(|v| v.as_array()) {
+            return arr.clone();
+        }
+    }
+    Vec::new()
+}
+
+/// Assert that the response carries at most `limit` items, accepting either
+/// a flat array or a `{ list/data/items/signals: [...] }` wrapper.
+///
+/// If the response is an object with no recognised list key (e.g. an empty
+/// envelope), the bound is vacuously satisfied — we only require the shape
+/// to be array-or-object. This keeps tests consistent across endpoints that
+/// sometimes return bare arrays and sometimes return wrapped lists.
+pub fn assert_limit(data: &Value, limit: usize, label: &str) {
+    let items = extract_items(data);
+    if items.is_empty() {
+        assert!(
+            data.is_array() || data.is_object(),
+            "expected array or object for {label}: {data}"
+        );
+        return;
+    }
+    assert!(
+        items.len() <= limit,
+        "expected at most {limit} {label}, got {}",
+        items.len()
+    );
+}
