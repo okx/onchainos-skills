@@ -328,8 +328,10 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
+        Commands::Workflow { command } => format!("workflow {}", workflow_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
         Commands::Agent { command } => format!("agent {}", agent_sub(command)),
+        Commands::CrossChain { .. } => "cross-chain".to_string(),
     }
 }
 
@@ -338,29 +340,40 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
     match cmd {
         AgentCommand::Task(c) => format!("task {}", task_system_sub(c)),
         AgentCommand::Chat(c) => format!("chat {}", chat_sub(c)),
+        AgentCommand::Create(_) => "create".into(),
+        AgentCommand::Update(_) => "update".into(),
+        AgentCommand::Get(_) => "get".into(),
+        AgentCommand::Activate(_) => "activate".into(),
+        AgentCommand::Deactivate(_) => "deactivate".into(),
+        AgentCommand::Upload(_) => "upload".into(),
+        AgentCommand::Search(_) => "search".into(),
+        AgentCommand::ServiceList(_) => "service-list".into(),
+        AgentCommand::FeedbackSubmit(_) => "feedback-submit".into(),
+        AgentCommand::FeedbackList(_) => "feedback-list".into(),
+        AgentCommand::XmtpSign(_) => "xmtp-sign".into(),
     }
 }
 
-fn task_system_sub(cmd: &crate::commands::agent_commerce::task::TaskSystemCommand) -> String {
+fn task_system_sub(c: &crate::commands::agent_commerce::task::TaskSystemCommand) -> &'static str {
     use crate::commands::agent_commerce::task::TaskSystemCommand;
-    match cmd {
-        TaskSystemCommand::CreateTask { .. }    => "create-task".into(),
-        TaskSystemCommand::Recommend { .. }     => "recommend".into(),
-        TaskSystemCommand::Status { .. }        => "status".into(),
-        TaskSystemCommand::List { .. }          => "list".into(),
-        TaskSystemCommand::ConfirmAccept { .. } => "confirm-accept".into(),
-        TaskSystemCommand::RejectApply { .. }   => "reject-apply".into(),
-        TaskSystemCommand::Confirm { .. }       => "confirm".into(),
-        TaskSystemCommand::Deliver { .. }       => "deliver".into(),
-        TaskSystemCommand::Complete { .. }      => "complete".into(),
-        TaskSystemCommand::Reject { .. }        => "reject".into(),
-        TaskSystemCommand::Close { .. }         => "close".into(),
-        TaskSystemCommand::SetPublic { .. }     => "set-public".into(),
-        TaskSystemCommand::AiEvaluate { .. }    => "ai-evaluate".into(),
-        TaskSystemCommand::Config { .. }        => "config".into(),
-        TaskSystemCommand::Negotiate(c) => format!("negotiate {:?}", std::mem::discriminant(c)),
-        TaskSystemCommand::Dispute(c)   => format!("dispute {:?}", std::mem::discriminant(c)),
-        TaskSystemCommand::Common(c)    => format!("common {:?}", std::mem::discriminant(c)),
+    match c {
+        TaskSystemCommand::CreateTask { .. } => "create-task",
+        TaskSystemCommand::Recommend { .. } => "recommend",
+        TaskSystemCommand::Status { .. } => "status",
+        TaskSystemCommand::List { .. } => "list",
+        TaskSystemCommand::ConfirmAccept { .. } => "confirm-accept",
+        TaskSystemCommand::RejectApply { .. } => "reject-apply",
+        TaskSystemCommand::Confirm { .. } => "confirm",
+        TaskSystemCommand::Deliver { .. } => "deliver",
+        TaskSystemCommand::Complete { .. } => "complete",
+        TaskSystemCommand::Reject { .. } => "reject",
+        TaskSystemCommand::Close { .. } => "close",
+        TaskSystemCommand::SetPublic { .. } => "set-public",
+        TaskSystemCommand::AiEvaluate { .. } => "ai-evaluate",
+        TaskSystemCommand::Config { .. } => "config",
+        TaskSystemCommand::Negotiate(_) => "negotiate",
+        TaskSystemCommand::Dispute(_) => "dispute",
+        TaskSystemCommand::Common(_) => "common",
     }
 }
 
@@ -459,6 +472,7 @@ fn token_sub(c: &TokenCommand) -> &'static str {
         TokenCommand::ClusterTopHolders { .. } => "cluster-top-holders",
         TokenCommand::ClusterList { .. } => "cluster-list",
         TokenCommand::ClusterSupportedChains => "cluster-supported-chains",
+        TokenCommand::Report { .. } => "report",
     }
 }
 
@@ -509,6 +523,7 @@ fn wallet_sub(c: &WalletCommand) -> &'static str {
         WalletCommand::History { .. } => "history",
         WalletCommand::ContractCall { .. } => "contract-call",
         WalletCommand::SignMessage { .. } => "sign-message",
+        WalletCommand::ReportPluginInfo { .. } => "report-plugin-info",
     }
 }
 
@@ -526,6 +541,17 @@ fn payment_sub(c: &PaymentCommand) -> &'static str {
     match c {
         PaymentCommand::X402Pay { .. } => "x402-pay",
         PaymentCommand::Eip3009Sign { .. } => "eip3009-sign",
+    }
+}
+
+fn workflow_sub(c: &crate::commands::workflows::WorkflowCommand) -> &'static str {
+    use crate::commands::workflows::WorkflowCommand;
+    match c {
+        WorkflowCommand::TokenResearch { .. } => "token-research",
+        WorkflowCommand::SmartMoney { .. } => "smart-money",
+        WorkflowCommand::NewTokens { .. } => "new-tokens",
+        WorkflowCommand::WalletAnalysis { .. } => "wallet-analysis",
+        WorkflowCommand::Portfolio { .. } => "portfolio",
     }
 }
 

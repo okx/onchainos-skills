@@ -146,8 +146,8 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
             Ok(())
         }
         ChatCommand::Heartbeat { chain_index } => {
-            let client = ctx.client_async().await?;
-            output::success(fetch_heartbeat(&client, chain_index).await?);
+            let mut client = ctx.client_async().await?;
+            output::success(fetch_heartbeat(&mut client, chain_index).await?);
             Ok(())
         }
     }
@@ -330,7 +330,7 @@ pub async fn fetch_system_config(client: &ApiClient, agent_id: &str) -> Result<V
 /// given chain. Server resolves userId from JWT, finds all addresses and
 /// their agents, and batch-updates lastOnlineTime. Always returns success
 /// even if the user has no addresses or agents.
-pub async fn fetch_heartbeat(client: &ApiClient, chain_index: u64) -> Result<Value> {
+pub async fn fetch_heartbeat(client: &mut ApiClient, chain_index: u64) -> Result<Value> {
     let body = serde_json::json!({ "chainIndex": chain_index });
     client.post(HEARTBEAT_PATH, &body).await
 }

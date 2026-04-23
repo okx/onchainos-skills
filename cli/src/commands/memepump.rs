@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use anyhow::Result;
 use clap::Subcommand;
 use serde_json::Value;
@@ -5,6 +7,136 @@ use serde_json::Value;
 use super::Context;
 use crate::client::ApiClient;
 use crate::output;
+
+/// Tokens created less than this many milliseconds ago may have unreliable
+/// holder/risk tag data — zero values are not yet meaningful.
+///
+/// Measured from `now_ms()` *after* the API response returns, so network
+/// latency eats into the window. Under multi-second roundtrips this can
+/// become effectively inert; widen here if we start seeing that in the wild.
+const NEW_TOKEN_THRESHOLD_MS: u64 = 2_000;
+
+/// Tag fields whose zero value is unreliable for brand-new tokens.
+const UNRELIABLE_ZERO_TAGS: &[&str] = &[
+    "bundlersPercent",
+    "devHoldingsPercent",
+    "freshWalletsPercent",
+    "insidersPercent",
+    "snipersPercent",
+    "suspectedPhishingWalletPercent",
+];
+
+/// Capture the current time in milliseconds. Call this immediately after a
+/// successful API response so all tokens in the same batch share the same
+/// reference time.
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(0))
+        .unwrap_or(0)
+}
+
+/// True if `v` represents a numeric zero.
+///
+/// Parser-based: any string that `f64::from_str` accepts and equals `0.0`
+/// qualifies (e.g. `"0"`, `"0.0"`, `"0.00"`, `" 0 "`, `"0e0"`, `"-0"`,
+/// `"+0"`). JSON numeric `0` / `0.0` also qualifies. Non-numeric strings
+/// (`""`, `"null"`, garbage) are treated as non-zero so we never nullify
+/// an unparseable value.
+fn is_numeric_zero(v: &Value) -> bool {
+    if let Some(s) = v.as_str() {
+        return s.trim().parse::<f64>().map(|n| n == 0.0).unwrap_or(false);
+    }
+    v.as_f64().map(|n| n == 0.0).unwrap_or(false)
+}
+
+/// If the token was created within `NEW_TOKEN_THRESHOLD_MS` of `received_at_ms`,
+/// replace any zero value in the unreliable tag fields with `null` — a zero at
+/// this age means "not yet computed", not "genuinely zero".
+///
+/// `received_at_ms` should be captured immediately after the API response
+/// returns so all tokens in the same batch share the same reference time.
+///
+/// `createdTimestamp` is expected in **milliseconds since Unix epoch**. If the
+/// upstream ever starts returning seconds the age computation will wildly
+/// exceed the threshold and the helper becomes a silent no-op — if that
+/// happens, normalise the unit before calling this function.
+///
+/// Scope: only applied by callers whose responses carry `tags.*Percent` fields
+/// for freshly-minted tokens — currently `fetch_token_list` and
+/// `fetch_token_details`. If a future endpoint returns the same shape for new
+/// tokens (e.g. `similarToken`), apply this helper there too; otherwise stale
+/// "0" values can leak back in.
+fn nullify_zero_tags_if_new(token: &mut Value, received_at_ms: u64) {
+    if received_at_ms == 0 {
+        // Clock error — skip to avoid false-positives.
+        return;
+    }
+
+    let created_ms = token
+        .get("createdTimestamp")
+        .and_then(|v| {
+            v.as_str()
+                .and_then(|s| s.parse::<u64>().ok())
+                .or_else(|| v.as_u64())
+        })
+        .unwrap_or(0);
+
+    // `created_ms == 0` means "unknown/missing" here (memepump tokens are not
+    // minted at the Unix epoch). `created_ms > received_at_ms` guards clock
+    // skew — if the server's timestamp leads our wall clock the age signal is
+    // unreliable, so leave tags as-is instead of nulling legitimate "0" values
+    // on older tokens.
+    if created_ms == 0
+        || created_ms > received_at_ms
+        || received_at_ms - created_ms >= NEW_TOKEN_THRESHOLD_MS
+    {
+        return;
+    }
+
+    if let Some(tags) = token.get_mut("tags").and_then(|t| t.as_object_mut()) {
+        for field in UNRELIABLE_ZERO_TAGS {
+            if tags.get(*field).is_some_and(is_numeric_zero) {
+                tags.insert((*field).to_string(), Value::Null);
+            }
+        }
+    }
+}
+
+/// Apply `nullify_zero_tags_if_new` across the response shapes we've seen
+/// from the memepump endpoints: a bare array, a bare token object, or an
+/// object wrapping the payload under one of `list` / `data` / `items` /
+/// `signals` (matching the keys the shared test extractor probes, so a
+/// backend shape change cannot silently turn the feature into a no-op
+/// while tests still pass).
+///
+/// The wrapper key can hold either an array of tokens or a single token
+/// object; both are walked.
+fn apply_nullify_to_response(data: &mut Value, received_at_ms: u64) {
+    if let Some(arr) = data.as_array_mut() {
+        for token in arr.iter_mut() {
+            nullify_zero_tags_if_new(token, received_at_ms);
+        }
+        return;
+    }
+    for key in ["list", "data", "items", "signals"] {
+        if let Some(wrapped) = data.get_mut(key) {
+            if let Some(arr) = wrapped.as_array_mut() {
+                for token in arr.iter_mut() {
+                    nullify_zero_tags_if_new(token, received_at_ms);
+                }
+                return;
+            }
+            if wrapped.is_object() {
+                nullify_zero_tags_if_new(wrapped, received_at_ms);
+                return;
+            }
+        }
+    }
+    if data.is_object() {
+        nullify_zero_tags_if_new(data, received_at_ms);
+    }
+}
 
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
@@ -305,10 +437,10 @@ pub async fn execute(ctx: &Context, cmd: MemepumpCommand) -> Result<()> {
             keywords_include,
             keywords_exclude,
         } => {
-            let client = ctx.client_async().await?;
+            let mut client = ctx.client_async().await?;
             output::success(
                 fetch_token_list(
-                    &client,
+                    &mut client,
                     MemepumpTokenListParams {
                         chain,
                         stage: Some(stage),
@@ -477,14 +609,14 @@ pub struct MemepumpTokenListParams {
 }
 
 /// GET /api/v6/dex/market/memepump/supported/chainsProtocol
-pub async fn fetch_chains(client: &ApiClient) -> Result<Value> {
+pub async fn fetch_chains(client: &mut ApiClient) -> Result<Value> {
     client
         .get("/api/v6/dex/market/memepump/supported/chainsProtocol", &[])
         .await
 }
 
 /// GET /api/v6/dex/market/memepump/tokenList
-pub async fn fetch_token_list(client: &ApiClient, p: MemepumpTokenListParams) -> Result<Value> {
+pub async fn fetch_token_list(client: &mut ApiClient, p: MemepumpTokenListParams) -> Result<Value> {
     let chain_index = crate::chains::resolve_chain(&p.chain).to_string();
     let stage = p.stage.unwrap_or_else(|| "NEW".to_string());
 
@@ -543,7 +675,7 @@ pub async fn fetch_token_list(client: &ApiClient, p: MemepumpTokenListParams) ->
     let kw_include = p.keywords_include.unwrap_or_default();
     let kw_exclude = p.keywords_exclude.unwrap_or_default();
 
-    client
+    let mut data = client
         .get(
             "/api/v6/dex/market/memepump/tokenList",
             &[
@@ -605,17 +737,22 @@ pub async fn fetch_token_list(client: &ApiClient, p: MemepumpTokenListParams) ->
                 ("keywordsExclude", &kw_exclude),
             ],
         )
-        .await
+        .await?;
+    let received_at = now_ms();
+
+    apply_nullify_to_response(&mut data, received_at);
+
+    Ok(data)
 }
 
 /// GET /api/v6/dex/market/memepump/tokenDetails
 pub async fn fetch_token_details(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
     wallet_address: &str,
 ) -> Result<Value> {
-    client
+    let mut data = client
         .get(
             "/api/v6/dex/market/memepump/tokenDetails",
             &[
@@ -624,12 +761,17 @@ pub async fn fetch_token_details(
                 ("walletAddress", wallet_address),
             ],
         )
-        .await
+        .await?;
+    let received_at = now_ms();
+
+    apply_nullify_to_response(&mut data, received_at);
+
+    Ok(data)
 }
 
 /// GET /api/v6/dex/market/memepump/apedWallet
 pub async fn fetch_aped_wallet(
-    client: &ApiClient,
+    client: &mut ApiClient,
     address: &str,
     chain_index: &str,
     wallet_address: &str,
@@ -648,7 +790,7 @@ pub async fn fetch_aped_wallet(
 
 /// Shared helper for memepump endpoints that take (chainIndex, tokenContractAddress).
 pub async fn fetch_by_address(
-    client: &ApiClient,
+    client: &mut ApiClient,
     path: &str,
     address: &str,
     chain_index: &str,
@@ -667,8 +809,8 @@ pub async fn fetch_by_address(
 // ── CLI wrappers ─────────────────────────────────────────────────────
 
 async fn memepump_chains(ctx: &Context) -> Result<()> {
-    let client = ctx.client_async().await?;
-    output::success(fetch_chains(&client).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_chains(&mut client).await?);
     Ok(())
 }
 
@@ -682,8 +824,8 @@ async fn memepump_token_details(
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("solana"));
     let wallet_address = wallet.unwrap_or_default();
-    let client = ctx.client_async().await?;
-    output::success(fetch_token_details(&client, address, &chain_index, &wallet_address).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_token_details(&mut client, address, &chain_index, &wallet_address).await?);
     Ok(())
 }
 
@@ -697,8 +839,8 @@ async fn memepump_aped_wallet(
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("solana"));
     let wallet_address = wallet.unwrap_or_default();
-    let client = ctx.client_async().await?;
-    output::success(fetch_aped_wallet(&client, address, &chain_index, &wallet_address).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_aped_wallet(&mut client, address, &chain_index, &wallet_address).await?);
     Ok(())
 }
 
@@ -711,7 +853,246 @@ async fn memepump_by_address(
     let chain_index = chain
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("solana"));
-    let client = ctx.client_async().await?;
-    output::success(fetch_by_address(&client, path, address, &chain_index).await?);
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_by_address(&mut client, path, address, &chain_index).await?);
     Ok(())
+}
+
+// ─── unit tests ──────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn new_token(created_ms: u64) -> Value {
+        json!({
+            "createdTimestamp": created_ms.to_string(),
+            "symbol": "TEST",
+            "tags": {
+                "bundlersPercent": "0",
+                "devHoldingsPercent": "0",
+                "freshWalletsPercent": "0",
+                "insidersPercent": "0",
+                "snipersPercent": "0",
+                "suspectedPhishingWalletPercent": "0",
+                "top10HoldingsPercent": "12.5",
+                "totalHolders": "4"
+            }
+        })
+    }
+
+    /// Token created 1 s ago — all zero tag fields must become null.
+    #[test]
+    fn zero_tags_nullified_within_threshold() {
+        let received_at = now_ms();
+        let created_ms = received_at.saturating_sub(1_000);
+        let mut token = new_token(created_ms);
+        nullify_zero_tags_if_new(&mut token, received_at);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert!(
+                token["tags"][field].is_null(),
+                "{field} should be null for brand-new token, got: {}",
+                token["tags"][field]
+            );
+        }
+        // Non-zero and non-tag fields must be untouched
+        assert_eq!(token["tags"]["top10HoldingsPercent"], "12.5");
+        assert_eq!(token["tags"]["totalHolders"], "4");
+        assert_eq!(token["createdTimestamp"], created_ms.to_string());
+    }
+
+    /// Token created 5 s ago — zero tag fields must NOT be nullified.
+    #[test]
+    fn zero_tags_not_nullified_outside_threshold() {
+        let received_at = now_ms();
+        let mut token = new_token(received_at.saturating_sub(5_000));
+        nullify_zero_tags_if_new(&mut token, received_at);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert_eq!(
+                token["tags"][field], "0",
+                "{field} should stay '0' for older token"
+            );
+        }
+    }
+
+    /// Token with createdTimestamp "0" (unknown) — tags must not be touched.
+    #[test]
+    fn zero_tags_not_nullified_when_created_timestamp_is_zero() {
+        let received_at = now_ms();
+        let mut token = new_token(0);
+        nullify_zero_tags_if_new(&mut token, received_at);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert_eq!(
+                token["tags"][field], "0",
+                "{field} should stay '0' when createdTimestamp is unknown"
+            );
+        }
+    }
+
+    /// Clock skew: createdTimestamp is ahead of received_at (e.g. server clock
+    /// leads client). We cannot trust the age signal — tags must stay as-is so
+    /// legitimate "0" values on older tokens aren't wrongly nullified.
+    #[test]
+    fn zero_tags_not_nullified_when_created_timestamp_is_in_future() {
+        let received_at = now_ms();
+        let mut token = new_token(received_at + 10_000);
+        nullify_zero_tags_if_new(&mut token, received_at);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert_eq!(
+                token["tags"][field], "0",
+                "{field} should stay '0' under clock skew (created_ms > received_at)"
+            );
+        }
+    }
+
+    /// Non-zero tag values within threshold must NOT be nullified.
+    #[test]
+    fn non_zero_tags_not_nullified_within_threshold() {
+        let received_at = now_ms();
+        let created_ms = received_at.saturating_sub(500);
+        let mut token = json!({
+            "createdTimestamp": created_ms.to_string(),
+            "symbol": "TEST",
+            "tags": {
+                "bundlersPercent": "5.5",
+                "devHoldingsPercent": "10.0",
+                "freshWalletsPercent": "0",
+                "insidersPercent": "0",
+                "snipersPercent": "0",
+                "suspectedPhishingWalletPercent": "0",
+                "totalHolders": "8"
+            }
+        });
+        nullify_zero_tags_if_new(&mut token, received_at);
+        assert_eq!(token["tags"]["bundlersPercent"], "5.5", "non-zero must be untouched");
+        assert_eq!(token["tags"]["devHoldingsPercent"], "10.0", "non-zero must be untouched");
+        assert!(token["tags"]["freshWalletsPercent"].is_null(), "zero must be null");
+    }
+
+    /// `is_numeric_zero` must match every zero-ish string shape seen in the
+    /// wild: plain "0", decimal "0.0", padded "0.00", leading whitespace, and
+    /// raw JSON numbers. Non-numeric strings stay non-zero (never nullified).
+    #[test]
+    fn is_numeric_zero_handles_common_string_shapes() {
+        for v in [json!("0"), json!("0.0"), json!("0.00"), json!(" 0 "), json!(0), json!(0.0)] {
+            assert!(is_numeric_zero(&v), "{v} should be zero");
+        }
+        for v in [json!("1"), json!("0.01"), json!(""), json!("null"), json!(1.5), json!(null)] {
+            assert!(!is_numeric_zero(&v), "{v} should NOT be zero");
+        }
+    }
+
+    /// Backend sends "0.0" (not exact "0") — must still nullify.
+    #[test]
+    fn zero_tags_nullified_for_decimal_zero_string() {
+        let received_at = now_ms();
+        let created_ms = received_at.saturating_sub(500);
+        let mut token = json!({
+            "createdTimestamp": created_ms.to_string(),
+            "tags": {
+                "bundlersPercent": "0.0",
+                "devHoldingsPercent": "0.00",
+                "freshWalletsPercent": "0",
+                "insidersPercent": "0",
+                "snipersPercent": "0",
+                "suspectedPhishingWalletPercent": "0"
+            }
+        });
+        nullify_zero_tags_if_new(&mut token, received_at);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert!(
+                token["tags"][field].is_null(),
+                "{field} should be null for decimal-zero backend string"
+            );
+        }
+    }
+
+    /// `apply_nullify_to_response` must walk a `{ list: [...] }` wrapper as
+    /// well as a bare array / bare object, so a backend shape change does not
+    /// silently turn the feature into a no-op.
+    #[test]
+    fn apply_nullify_to_response_walks_nested_list_shape() {
+        let received_at = now_ms();
+        let created_ms = received_at.saturating_sub(500);
+        let mut data = json!({
+            "list": [new_token(created_ms)],
+            "total": 1
+        });
+        apply_nullify_to_response(&mut data, received_at);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert!(
+                data["list"][0]["tags"][field].is_null(),
+                "{field} should be null inside {{ list: [...] }} wrapper"
+            );
+        }
+    }
+
+    /// Bare-array response shape (the `fetch_token_list` default) must also
+    /// be walked — regression guard for the flat-array path.
+    #[test]
+    fn apply_nullify_to_response_walks_bare_array() {
+        let received_at = now_ms();
+        let created_ms = received_at.saturating_sub(500);
+        let mut data = Value::Array(vec![new_token(created_ms)]);
+        apply_nullify_to_response(&mut data, received_at);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert!(
+                data[0]["tags"][field].is_null(),
+                "{field} should be null inside bare array"
+            );
+        }
+    }
+
+    /// Wrapper key carrying a *single-object* token (not an array) — this is
+    /// the `{ data: { ...token... } }` shape `fetch_token_details` can return
+    /// under some backend modes. Before the fix the helper fell through to
+    /// the bare-object branch on the outer wrapper and silently no-op'd.
+    #[test]
+    fn apply_nullify_to_response_walks_single_object_under_wrapper_key() {
+        let received_at = now_ms();
+        let created_ms = received_at.saturating_sub(500);
+        let mut data = json!({ "data": new_token(created_ms) });
+        apply_nullify_to_response(&mut data, received_at);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert!(
+                data["data"]["tags"][field].is_null(),
+                "{field} should be null inside {{ data: {{ ...token... }} }} wrapper"
+            );
+        }
+    }
+
+    /// `items` is one of the wrapper keys the test extractors probe — ensure
+    /// `apply_nullify_to_response` does the same so shape drift cannot silently
+    /// turn the feature off while tests still pass.
+    #[test]
+    fn apply_nullify_to_response_walks_items_wrapper() {
+        let received_at = now_ms();
+        let created_ms = received_at.saturating_sub(500);
+        let mut data = json!({ "items": [new_token(created_ms)] });
+        apply_nullify_to_response(&mut data, received_at);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert!(
+                data["items"][0]["tags"][field].is_null(),
+                "{field} should be null inside {{ items: [...] }} wrapper"
+            );
+        }
+    }
+
+    /// `signals` wrapper is new in this commit — added to keep prod key
+    /// coverage in lockstep with `common::extract_items` (which already
+    /// probes this key for signal-list tests).
+    #[test]
+    fn apply_nullify_to_response_walks_signals_wrapper() {
+        let received_at = now_ms();
+        let created_ms = received_at.saturating_sub(500);
+        let mut data = json!({ "signals": [new_token(created_ms)] });
+        apply_nullify_to_response(&mut data, received_at);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert!(
+                data["signals"][0]["tags"][field].is_null(),
+                "{field} should be null inside {{ signals: [...] }} wrapper"
+            );
+        }
+    }
 }

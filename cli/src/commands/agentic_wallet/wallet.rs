@@ -129,6 +129,12 @@ pub enum WalletCommand {
         #[arg(long, default_value_t = false)]
         force: bool,
     },
+    /// Report plugin info
+    ReportPluginInfo {
+        /// Plugin parameter payload to report
+        #[arg(long)]
+        plugin_parameter: String,
+    },
     /// Call a smart contract (EVM inputData or SOL unsigned tx)
     ContractCall {
         /// Contract address to interact with
@@ -220,14 +226,14 @@ async fn resolve_send_amount(
             }
             Some(token_addr) => {
                 // ERC-20 / SPL — fetch decimals from token info API
-                let client = crate::client::ApiClient::new(None).map_err(|e| {
+                let mut client = crate::client::ApiClient::new(None).map_err(|e| {
                     anyhow::anyhow!(
                         "Failed to create API client to fetch token decimals: {}. \
                          Use --amt with raw minimal units instead.",
                         e
                     )
                 })?;
-                let info = crate::commands::token::fetch_info(&client, token_addr, chain)
+                let info = crate::commands::token::fetch_info(&mut client, token_addr, chain)
                     .await
                     .map_err(|e| {
                         anyhow::anyhow!(
@@ -341,6 +347,9 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                 uop_hash.as_deref(),
             )
             .await
+        }
+        WalletCommand::ReportPluginInfo { plugin_parameter } => {
+            super::plugin::cmd_report_plugin_info(&plugin_parameter).await
         }
         WalletCommand::SignMessage {
             r#type,

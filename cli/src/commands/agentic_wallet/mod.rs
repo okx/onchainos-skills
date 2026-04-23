@@ -1,10 +1,12 @@
 pub mod account;
 pub mod auth;
 pub mod balance;
+pub mod broadcast;
 pub mod chain;
 pub mod common;
 pub mod history;
 pub mod payment;
+pub mod plugin;
 pub mod sign;
 pub mod transfer;
 pub mod wallet;

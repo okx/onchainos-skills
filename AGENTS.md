@@ -1,6 +1,26 @@
-# onchainos Skills — Agent Instructions
+# onchainos — Agent Instructions
 
-This is an **onchainos skill collection** providing 15 skills for on-chain operations across 20+ blockchains.
+This is an **onchainos skill + workflow collection** providing 18 skills and pre-built workflows for on-chain operations across 20+ blockchains.
+
+## Workflows (Primary Routing)
+
+**For any of the following user intents, read `workflows/INDEX.md` before responding:**
+
+| Intent | Trigger examples |
+|--------|-----------------|
+| Token research | "analyse token", "research [address]", "is this token safe" |
+| Market overview | "daily brief", "market overview", "what's the market doing" |
+| Smart money | "what are whales buying", "copy trading signals", "smart money" |
+| New token scan | "scan new tokens", "pump.fun tokens", "meme scan" |
+| Wallet analysis | "analyse wallet", "check this address", "is this wallet worth following" |
+| Portfolio | "check my holdings", "my portfolio", "my wallet" |
+| Wallet monitor | "watch wallet", "monitor address", "background monitor" |
+
+`workflows/INDEX.md` maps each intent to the correct workflow file.
+For Chinese queries, read `workflows/references/keyword-glossary.md` first.
+
+Safety: follow token risk controls defined in `okx-security` SKILL.md.
+For script requests, append `--format json` to all CLI commands.
 
 ## Available Skills
 
@@ -20,23 +40,25 @@ This is an **onchainos skill collection** providing 15 skills for on-chain opera
 | okx-audit-log | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, provide liquidity, deposit/withdraw from DeFi protocols |
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions, view DeFi portfolio across protocols and chains |
+| okx-dex-bridge | Cross-chain bridge swap: quote, execute, approve, status tracking | User wants to bridge tokens, cross-chain swap, transfer assets between chains |
+| okx-agent-identity | ERC-8004 on-chain Agent identity: register / update / search / rate / service-list on XLayer | User wants to register/create/update/deactivate/activate/search agents, submit or view feedback, or list agent services |
 | okx-agent-chat | Agent-to-agent communication: XMTP plugin management, encrypted file attachments | Agent needs to communicate with another agent, upload/download file attachments, install/update XMTP plugin |
+| okx-agent-task | Agent task marketplace: publish, accept, deliver, dispute, AI-evaluate jobs | User wants to publish a task / accept a job / deliver work / confirm or reject completion / open a dispute |
 
 ## Architecture
 
-- **skills/** — 15 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **skills/** — 18 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **workflows/** — Pre-built workflow docs (`INDEX.md` for routing, `TEMPLATE.md` for authoring guide)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
-- **.mcp.json.example** — MCP server configuration template
-- **.github/workflows/** — CI/CD pipeline (`release.yml`: tag-triggered build for 9 platforms → GitHub Release)
-- **install.sh** — One-line installer for macOS / Linux (`curl | sh`)
 
-## Skill Discovery
+## CLI Composite Commands
 
-Each skill in `skills/` contains a `SKILL.md` with:
-
-- YAML frontmatter (name, description, metadata)
-- Full CLI command reference with parameters and response schemas
-- Usage examples (bash)
-- Cross-skill workflow documentation
-- Edge cases and error handling
+| Command | What it does |
+|---------|-------------|
+| `onchainos token report --address <addr>` | Token info + price + advanced-info + security scan in one parallel call |
+| `onchainos workflow token-research --address <addr>` | Full token research: core data + holders + cluster + signals + optional launchpad |
+| `onchainos workflow smart-money` | Smart money signals: signal list + per-token due diligence |
+| `onchainos workflow new-tokens` | New token screening: MIGRATED token scan + safety enrichment |
+| `onchainos workflow wallet-analysis --address <addr>` | Wallet analysis: performance + behaviour + recent activity |
+| `onchainos workflow portfolio --address <addr>` | Portfolio check: balances + total value + PnL overview |
