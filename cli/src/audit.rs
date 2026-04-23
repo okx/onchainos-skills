@@ -338,34 +338,48 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
 fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
     use crate::commands::agent_commerce::AgentCommand;
     match cmd {
-        AgentCommand::Create { .. } => "create".into(),
-        AgentCommand::Update { .. } => "update".into(),
-        AgentCommand::Get { .. } => "get".into(),
-        AgentCommand::Activate { .. } => "activate".into(),
-        AgentCommand::Deactivate { .. } => "deactivate".into(),
-        AgentCommand::Upload { .. } => "upload".into(),
-        AgentCommand::Search { .. } => "search".into(),
-        AgentCommand::ServiceList { .. } => "service-list".into(),
-        AgentCommand::FeedbackSubmit { .. } => "feedback-submit".into(),
-        AgentCommand::FeedbackList { .. } => "feedback-list".into(),
-        AgentCommand::XmtpSign { .. } => "xmtp-sign".into(),
+        // Identity
+        AgentCommand::Create(_) => "create".into(),
+        AgentCommand::Update(_) => "update".into(),
+        AgentCommand::Get(_) => "get".into(),
+        AgentCommand::Activate(_) => "activate".into(),
+        AgentCommand::Deactivate(_) => "deactivate".into(),
+        AgentCommand::Upload(_) => "upload".into(),
+        AgentCommand::Search(_) => "search".into(),
+        AgentCommand::ServiceList(_) => "service-list".into(),
+        AgentCommand::FeedbackSubmit(_) => "feedback-submit".into(),
+        AgentCommand::FeedbackList(_) => "feedback-list".into(),
+        AgentCommand::XmtpSign(_) => "xmtp-sign".into(),
+
+        // Task (client)
         AgentCommand::CreateTask { .. } => "create-task".into(),
         AgentCommand::Recommend { .. } => "recommend".into(),
         AgentCommand::Status { .. } => "status".into(),
         AgentCommand::List { .. } => "list".into(),
         AgentCommand::ConfirmAccept { .. } => "confirm-accept".into(),
         AgentCommand::RejectApply { .. } => "reject-apply".into(),
-        AgentCommand::Confirm { .. } => "confirm".into(),
-        AgentCommand::Deliver { .. } => "deliver".into(),
         AgentCommand::Complete { .. } => "complete".into(),
         AgentCommand::Reject { .. } => "reject".into(),
         AgentCommand::Close { .. } => "close".into(),
         AgentCommand::SetPublic { .. } => "set-public".into(),
-        AgentCommand::AiEvaluate { .. } => "ai-evaluate".into(),
+        AgentCommand::Payment { .. } => "payment".into(),
+        AgentCommand::Pay { .. } => "pay".into(),
+        AgentCommand::Claim { .. } => "claim".into(),
+
+        // Task (provider)
+        AgentCommand::RecommendTask { .. } => "recommend-task".into(),
+        AgentCommand::ContactBuyer { .. } => "contact-buyer".into(),
+        AgentCommand::Apply { .. } => "apply".into(),
+        AgentCommand::Deliver { .. } => "deliver".into(),
+        AgentCommand::AgreeRefund { .. } => "agree-refund".into(),
+        AgentCommand::GetPayment { .. } => "get-payment".into(),
+
+        // Sub-groups
         AgentCommand::Config { .. } => "config".into(),
-        AgentCommand::Negotiate(c) => format!("negotiate {:?}", std::mem::discriminant(c)),
         AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),
+        AgentCommand::BuyerDispute(c) => format!("buyer-dispute {:?}", std::mem::discriminant(c)),
         AgentCommand::Common(c) => format!("common {:?}", std::mem::discriminant(c)),
+        AgentCommand::NextAction { .. } => "next-action".into(),
     }
 }
 
