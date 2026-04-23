@@ -786,7 +786,7 @@ impl WalletApiClient {
             access_token,
             &body,
         )
-            .await
+        .await
     }
 
     /// POST /priapi/v5/wallet/agentic/pre-transaction/broadcast-transaction

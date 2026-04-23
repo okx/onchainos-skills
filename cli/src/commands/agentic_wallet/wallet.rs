@@ -132,7 +132,7 @@ pub enum WalletCommand {
     /// Report plugin info
     ReportPluginInfo {
         /// Plugin parameter payload to report
-        #[arg(long, default_value = "")]
+        #[arg(long)]
         plugin_parameter: String,
     },
     /// Call a smart contract (EVM inputData or SOL unsigned tx)
