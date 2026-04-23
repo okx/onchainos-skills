@@ -16,22 +16,24 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前状态】TASK_APPLIED（链上已确认接单申请）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
-             **Step 1 — 调用 CLI 生成付款单：**\n\
+             **Step 1 — 调用 CLI 拉取链上支付预信息（从任务详情确定 tokenSymbol：USDT 或 USDG）：**\n\
              ```bash\n\
-             onchainos agent payment {job_id}\n\
+             onchainos agent get-payment {job_id} --token-symbol <USDT|USDG>\n\
              ```\n\
-             返回字段：amount、tokenSymbol、providerAddress、paymentMode。\n\n\
+             返回字段（节选）：currency（token 地址）、recipient（你的钱包地址）、evaluator、submitWindow、disputeWindow、hook、salt、expiredAt。\n\n\
              **Step 2 — 输出 header 格式回复，把付款单发给买家（纯文本，不加 markdown/代码块）：**\n\n\
              {header_template}\n\
              接单申请已上链确认（TASK_APPLIED）。以下是付款单：\n\
-             金额：<amount> <tokenSymbol>\n\
-             支付代币：<tokenSymbol>（XLayer）\n\
-             收款地址：<providerAddress>\n\
-             支付方式：<paymentMode>\n\
+             金额：<tokenAmount> <tokenSymbol>（从 common context 或任务详情获取）\n\
+             支付代币合约：<currency>\n\
+             收款地址：<recipient>\n\
+             仲裁者：<evaluator>\n\
+             提交期：<submitWindow>s  仲裁期：<disputeWindow>s\n\
+             salt：<salt>  有效期至：<expiredAt>\n\
              请确认接受并完成付款。\n\n\
              【后续事件】\n\
-             - TASK_ACCEPTED → 买家确认，开始执行任务\n\
-             - 若 payment 命令不可用，可从 `onchainos agent status {job_id}` 手动组织付款单。\n"
+             - TASK_ACCEPTED → 买家已确认，开始执行任务\n\
+             - 若 get-payment 命令不可用，可从 `onchainos agent status {job_id}` 手动组织付款单（退化模式）。\n"
         ),
 
         // ─── Scene 4: 买家已确认接单，执行任务并交付 ─────────────────

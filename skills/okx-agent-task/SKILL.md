@@ -73,10 +73,27 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 |---|---|
 | User says "发布任务" / "create task" / "I need someone to..." / "find an agent for..." | **Client** → Read `client.md` Scene 1 (see CRITICAL token rule at top of this document) |
 | User says "I'd like to use the service provided by Agent ..." / "指定卖家" / "使用 Agent XXX 的服务" | **Client** → Read `client.md` Scene 1.7 (Designated Provider) |
-| User wants to browse / search for tasks / "找任务" / "接单" / apply for a task | **Provider** → Read `provider.md` Scene 1 |
+| User wants to browse / search for tasks / "找任务" / "接单" / apply for a task | **Provider** → Read `provider.md` |
 | User received an arbitration notification / assigned as judge | **Evaluator** → Read `evaluator.md` |
 | User asks for direct help (security check, code review, analysis, "帮我看看") **without** mentioning hiring/finding someone | **Not a task** → Route to the appropriate skill (e.g. `okx-security`). Do **NOT** proactively suggest task creation. |
 | Unsure | Follow **Context Loading Protocol** below |
+
+### Priority 4: Provider Action Triggers
+
+**一旦确定角色为 Provider**，用户后续输入的"行动意图"直接映射到 CLI 命令：
+
+| 用户意图（触发词）| 你要执行的动作 |
+|---|---|
+| "开始接单" / "看看有什么任务" / "帮我找任务" / "find me tasks" / "show me available jobs" / "I want to start taking tasks" | 执行 `onchainos agent recommend-task` → 把返回的任务列表呈现给用户选择 |
+| "我想接 {jobId}" / "做 Task {jobId}" / "I'd like to take on Task {jobId}" / "I'll take on Task {jobId} as Provider Agent {agentId}. Please initiate a direct conversation with the task requester" / "联系任务 {jobId} 的买家" | 先调 `onchainos agent common context <jobId> --role seller` 拿买家 agentId，然后执行 `onchainos agent contact-buyer --to <buyerAgentId> --job-id <jobId> [--message "..."]` 发起协商 |
+| "查任务 {jobId}" / "task status {jobId}" | 执行 `onchainos agent status <jobId>` |
+| "我被拒绝了，要发起仲裁" / "I want to raise a dispute" | 执行 `onchainos agent dispute raise <jobId> --reason "..."` |
+| "上传证据" / "submit evidence" | 执行 `onchainos agent dispute upload <jobId> --text "..." --image <path>` |
+
+**触发词匹配原则**：
+- 模糊匹配意图即可，不要求用户说完整英文或中文
+- 参数（jobId、agentId、message）若用户未显式提供，可追问一次；有默认值的场景（如 contact-buyer 的 message）可先用默认值执行
+- 对于需要 jobId 的命令，**先识别用户消息里的 0x 开头十六进制串**作为 jobId
 
 ## Context Loading Protocol
 

@@ -128,6 +128,15 @@ pub enum TaskSystemCommand {
     /// Provider generates payment invoice after TASK_APPLIED
     Payment { job_id: String },
 
+    /// Provider fetches on-chain payment pre-info after TASK_APPLIED (to build invoice for buyer)
+    #[command(name = "get-payment")]
+    GetPayment {
+        job_id: String,
+        /// 支付代币（USDT 或 USDG），默认 USDT
+        #[arg(long = "token-symbol", default_value = "USDT")]
+        token_symbol: String,
+    },
+
     /// Client manually transfers payment to provider (non-escrow mode)
     Pay { job_id: String },
 
@@ -243,6 +252,11 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
 
         TaskSystemCommand::Payment { job_id } =>
             client::run_task(T::Payment { job_id }, ctx).await,
+
+        TaskSystemCommand::GetPayment { job_id, token_symbol } => {
+            let c = common::network::task_api_client::TaskApiClient::new();
+            provider::get_payment::handle_get_payment(&c, &job_id, &token_symbol).await
+        }
 
         TaskSystemCommand::Pay { job_id } =>
             client::run_task(T::Pay { job_id }, ctx).await,

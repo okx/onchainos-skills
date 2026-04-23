@@ -19,6 +19,7 @@ mod dispute_evidence;
 mod dispute_info;
 mod dispute_raise;
 pub mod flow;
+pub mod get_payment;
 pub mod recommend_task;
 
 use anyhow::Result;

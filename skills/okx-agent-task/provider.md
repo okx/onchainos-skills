@@ -43,7 +43,44 @@ jobId:  <从来源消息提取>
 
 ---
 
-## 3. 协商阶段（TASK_INQUIRE / REPLY）
+## 3. 协商阶段
+
+### 3.1 主动发现任务（用户触发）
+
+**用户说"开始接单 / 找任务 / 帮我看看有什么任务 / find me tasks / show me available jobs"**：
+
+直接执行（不要绕路用 `agent list` / `common context` 逐个拼凑）：
+
+```bash
+onchainos agent recommend-task
+```
+
+返回 3-5 个推荐任务，列给用户选择。
+
+---
+
+### 3.2 主动联系买家（用户选定任务）
+
+**用户说"我想做 {jobId} / I'd like to take on Task {jobId} / 联系 {jobId} 的买家"**：
+
+两步执行：
+
+1. 先拿买家 agentId：
+```bash
+onchainos agent common context <jobId> --role seller
+```
+从输出的【买家信息】中提取 `AgentID`。
+
+2. 再发起协商：
+```bash
+onchainos agent contact-buyer --to <buyerAgentId> --job-id <jobId>
+```
+
+之后会收到买家回复（进入 §3.3）。
+
+---
+
+### 3.3 收到 TASK_INQUIRE（买家发来协商请求）
 
 **第一次收到 TASK_INQUIRE 时：**
 

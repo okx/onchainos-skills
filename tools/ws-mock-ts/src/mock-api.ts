@@ -527,6 +527,34 @@ const server = http.createServer(async (req, res) => {
     if (!t) { sendErr(res, 2001, "task not found"); return; }
     sendOk(res, { task: t }); return;
   }
+  // Buyer 获取支付预信息（confirm-accept 前准备链上参数）
+  if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/prePayTaskInfo", path_))) {
+    const { jobId } = m;
+    const t = tasks.get(jobId);
+    if (!t) { sendErr(res, 2001, "task not found"); return; }
+    const body = await parseBody(req) as Record<string, unknown>;
+    const tokenSymbol = String(body.tokenSymbol ?? "USDT").toUpperCase();
+    const currencyMap: Record<string, string> = {
+      USDT: "0xUSDT0000000000000000000000000000000001",
+      USDG: "0xUSDG0000000000000000000000000000000001",
+    };
+    const providerAddr = t.providerAgentAddress ?? "0xSeller000000000000000000000000000000001";
+    sendOk(res, {
+      currency: currencyMap[tokenSymbol] ?? currencyMap.USDT,
+      recipient: providerAddr,
+      receiver: providerAddr,
+      evaluator: "0x1234567890abcdef1234567890abcdef12345678",
+      submitWindow: "86400",
+      disputeWindow: "172800",
+      evaluateWindow: "86400",
+      completedWindow: "259200",
+      hook: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+      hookData: "0x",
+      salt: jobId,
+      expiredAt: String(Math.floor(Date.now() / 1000) + 86400),
+    });
+    return;
+  }
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/apply", path_))) {
     const { jobId } = m;
     const t = tasks.get(jobId);
