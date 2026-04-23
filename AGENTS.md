@@ -44,7 +44,7 @@ For script requests, append `--format json` to all CLI commands.
 ## Architecture
 
 - **skills/** — 14 onchainos CLI skill definitions (`SKILL.md` with YAML frontmatter + CLI command reference)
-- **workflows/** — 8 pre-built workflow docs (`INDEX.md` for routing, W1–W8 as `*.md`)
+- **workflows/** — 8 pre-built workflow docs (`INDEX.md` for routing; workflows are W1, W2, W3, W4, W5, W7, W8, W9 — W6 safe-swap was removed)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
 
