@@ -10,7 +10,7 @@ use crate::commands::agent_commerce::task::signing;
 /// set-public — 转为公开任务
 pub async fn handle_set_public(client: &TaskApiClient, job_id: &str) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client.http(), client.base_url(), job_id).await?;
+        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
 
     let resp = client.post_with_identity(
         &client.endpoint(job_id, "setVisibility"),

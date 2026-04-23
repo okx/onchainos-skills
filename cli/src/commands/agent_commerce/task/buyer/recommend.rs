@@ -6,7 +6,7 @@
 //! - --next：从本地状态推进到下一个 provider 并返回
 //! - --current：返回当前 index 的 provider（不推进）
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 
 use super::negotiate;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
@@ -14,15 +14,7 @@ use crate::commands::agent_commerce::task::common::network::task_api_client::Tas
 /// 查询推荐卖家（默认模式：调用 API + 缓存）
 pub async fn handle_recommend(client: &TaskApiClient, job_id: &str) -> Result<()> {
     let url = client.endpoint(job_id, "match");
-    let resp: serde_json::Value = client.http()
-        .post(&url)
-        .send().await
-        .map_err(|e| anyhow::anyhow!("无法连接后端: {e}"))?
-        .json().await?;
-
-    if resp["code"] != 0 {
-        bail!("{}", resp["msg"].as_str().unwrap_or("error"));
-    }
+    let resp = client.post(&url, &serde_json::json!({})).await?;
     let recs = resp["data"]["recommendations"].as_array()
         .cloned().unwrap_or_default();
 

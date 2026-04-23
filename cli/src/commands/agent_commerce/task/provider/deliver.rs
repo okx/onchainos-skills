@@ -18,7 +18,7 @@ pub async fn handle_deliver(
     message: &str,
 ) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_provider(client.http(), client.base_url(), job_id).await?;
+        signing::resolve_wallet_and_agent_for_provider(client, job_id).await?;
     let body = serde_json::json!({
         "deliverable": file,
         "message": message,

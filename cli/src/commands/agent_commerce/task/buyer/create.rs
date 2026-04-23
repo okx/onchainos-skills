@@ -175,16 +175,7 @@ pub async fn handle_create(
     });
 
     let create_url = format!("{}/priapi/v1/aieco/task/create", client.base_url());
-    let resp: serde_json::Value = client.http()
-        .post(&create_url)
-        .json(&body)
-        .send().await
-        .map_err(|e| anyhow::anyhow!("无法连接后端: {e}"))?
-        .json().await?;
-
-    if resp["code"] != 0 {
-        bail!("创建失败: {}", resp["msg"].as_str().unwrap_or("unknown"));
-    }
+    let resp = client.post(&create_url, &body).await?;
 
     let job_id = resp["data"]["jobId"].as_str().unwrap_or("?").to_string();
     let uop_data = &resp["data"]["uopData"];
@@ -209,17 +200,7 @@ pub async fn handle_create(
     println!("✓ 签名完成");
 
     // ── Step 3: 广播上链 ──────────
-    let bc_resp: serde_json::Value = client.http()
-        .post(client.broadcast_url())
-        .json(&broadcast_body)
-        .send().await
-        .map_err(|e| anyhow::anyhow!("广播失败: {e}"))?
-        .json().await?;
-
-    if bc_resp["code"] != 0 {
-        bail!("广播失败: {}", bc_resp["msg"].as_str().unwrap_or("unknown"));
-    }
-
+    let bc_resp = client.post(&client.broadcast_url(), &broadcast_body).await?;
     let tx_hash = bc_resp["data"][0]["txHash"].as_str().unwrap_or("pending");
     println!("✓ 任务已上链");
     println!("  jobId:  {job_id}");

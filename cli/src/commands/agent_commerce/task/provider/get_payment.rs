@@ -14,7 +14,7 @@ pub async fn handle_get_payment(
     token_symbol: &str,
 ) -> Result<()> {
     let (_, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_provider(client.http(), client.base_url(), job_id).await?;
+        signing::resolve_wallet_and_agent_for_provider(client, job_id).await?;
 
     let body = serde_json::json!({ "tokenSymbol": token_symbol });
     let resp = client

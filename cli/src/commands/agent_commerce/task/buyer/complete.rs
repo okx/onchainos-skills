@@ -15,7 +15,7 @@ use crate::commands::agent_commerce::task::signing;
 /// complete — 验收通过
 pub async fn handle_complete(client: &TaskApiClient, job_id: &str) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client.http(), client.base_url(), job_id).await?;
+        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
 
     // 查询任务详情获取 paymentMode
     let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());

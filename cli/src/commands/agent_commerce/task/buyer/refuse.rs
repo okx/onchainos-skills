@@ -14,7 +14,7 @@ pub async fn handle_reject(
     reason: &str,
 ) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client.http(), client.base_url(), job_id).await?;
+        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
 
     let reason_owned = reason.to_string();
     let result = signing::task_dual_sign_and_broadcast(

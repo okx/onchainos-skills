@@ -23,7 +23,7 @@ pub async fn handle_confirm_accept(
     payment_mode: &str,
 ) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client.http(), client.base_url(), job_id).await?;
+        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
 
     // ── Step 1: setPaymentMode（单签 + 广播上链）──────────────────────
     let mode_int = common::payment_mode_to_int(payment_mode);

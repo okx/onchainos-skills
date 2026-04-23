@@ -11,7 +11,7 @@ use crate::commands::agent_commerce::task::signing;
 /// close — 关闭任务
 pub async fn handle_close(client: &TaskApiClient, job_id: &str) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client.http(), client.base_url(), job_id).await?;
+        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
 
     let resp = client.post_with_identity(
         &client.endpoint(job_id, "close"),
@@ -33,7 +33,7 @@ pub async fn handle_close(client: &TaskApiClient, job_id: &str) -> Result<()> {
 /// claim — 仲裁奖金领取
 pub async fn handle_claim(client: &TaskApiClient, job_id: &str) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client.http(), client.base_url(), job_id).await?;
+        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
 
     let resp = client.post_with_identity(
         &client.endpoint(job_id, "claim"),

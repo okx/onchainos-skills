@@ -65,25 +65,11 @@ pub fn resolve_wallet(
 ///
 /// Returns `(account_id, address, buyer_agent_id)`.
 pub async fn resolve_wallet_and_agent_for_task(
-    http: &reqwest::Client,
-    api_base: &str,
+    client: &TaskApiClient,
     job_id: &str,
 ) -> Result<(String, String, String)> {
-    let url = format!("{api_base}/priapi/v1/aieco/task/{job_id}");
-    let resp: Value = http
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("无法查询任务详情: {e}"))?
-        .json()
-        .await?;
-
-    if resp["code"] != 0 {
-        bail!(
-            "查询任务失败: {}",
-            resp["msg"].as_str().unwrap_or("unknown error")
-        );
-    }
+    let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
+    let resp = client.get(&url).await?;
 
     let task = &resp["data"]["task"];
     let buyer_address = task["buyerAgentAddress"]
@@ -103,25 +89,11 @@ pub async fn resolve_wallet_and_agent_for_task(
 ///
 /// Returns `(account_id, address, provider_agent_id)`.
 pub async fn resolve_wallet_and_agent_for_provider(
-    http: &reqwest::Client,
-    api_base: &str,
+    client: &TaskApiClient,
     job_id: &str,
 ) -> Result<(String, String, String)> {
-    let url = format!("{api_base}/priapi/v1/aieco/task/{job_id}");
-    let resp: Value = http
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("无法查询任务详情: {e}"))?
-        .json()
-        .await?;
-
-    if resp["code"] != 0 {
-        bail!(
-            "查询任务失败: {}",
-            resp["msg"].as_str().unwrap_or("unknown error")
-        );
-    }
+    let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
+    let resp = client.get(&url).await?;
 
     let task = &resp["data"]["task"];
     let provider_agent_id = task["providerAgentId"]
