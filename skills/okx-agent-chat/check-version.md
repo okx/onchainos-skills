@@ -1,20 +1,18 @@
 # Check XMTP Plugin Version
 
-Check whether a newer version of the XMTP plugin (`openclaw-plugin-xmtp`) is available. If an update exists, ask the user whether to update. After updating, restart the openclaw gateway.
+Check whether a newer version of the XMTP plugin (`openclaw-a2a-chat-extension`) is available. If an update exists, ask the user whether to update. After updating, restart the openclaw gateway.
 
 This flow can be run independently or is automatically invoked after `ensure-installed.md`.
-
-> **TODO**: Confirm the npm package name is `openclaw-plugin-xmtp`. Update if different.
 
 ## Command Index
 
 | # | Command | Description |
 |---|---|---|
 | 0 | `node --version` / `openclaw --version` | Verify Node >= 22.14 and OpenClaw >= 2026.3.0 |
-| 1 | `npm list -g openclaw-plugin-xmtp --depth=0` | Get current installed version |
-| 2 | `npm view openclaw-plugin-xmtp version` | Get latest available version from npm |
+| 1 | `npm list -g openclaw-a2a-chat-extension --depth=0` | Get current installed version |
+| 2 | `npm view openclaw-a2a-chat-extension version` | Get latest available version from npm |
 | 3 | `openclaw gateway stop` | Stop the gateway before update |
-| 4 | `npm install -g openclaw-plugin-xmtp@latest` | Update to latest version |
+| 4 | `npm install -g openclaw-a2a-chat-extension@latest` | Update to latest version |
 | 5 | `openclaw gateway start` | Start the gateway after update |
 
 ## Why Gateway Restart Is Required
@@ -42,10 +40,10 @@ If either is below the minimum, inform the user which component needs upgrading 
 
 Run:
 ```bash
-npm list -g openclaw-plugin-xmtp --depth=0 2>/dev/null
+npm list -g openclaw-a2a-chat-extension --depth=0 2>/dev/null
 ```
 
-Extract the installed version number from the output (e.g., `openclaw-plugin-xmtp@1.0.0`).
+Extract the installed version number from the output (e.g., `openclaw-a2a-chat-extension@1.0.0`).
 
 - If not installed → inform the user and load `ensure-installed.md` first. Stop.
 
@@ -53,7 +51,7 @@ Extract the installed version number from the output (e.g., `openclaw-plugin-xmt
 
 Run:
 ```bash
-npm view openclaw-plugin-xmtp version
+npm view openclaw-a2a-chat-extension version
 ```
 
 This returns the latest published version on npm.
@@ -88,7 +86,7 @@ openclaw gateway stop
 
 Then update:
 ```bash
-npm install -g openclaw-plugin-xmtp@latest
+npm install -g openclaw-a2a-chat-extension@latest
 ```
 
 If update succeeds:

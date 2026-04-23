@@ -1,10 +1,8 @@
 # Ensure XMTP Plugin Installed
 
-**Mandatory safeguard** — run this every time the agent needs to communicate with another agent, initiate agent commerce, or use XMTP messaging. Verifies environment prerequisites, upgrades device scope, installs the XMTP plugin (`openclaw-plugin-xmtp`) if missing, and injects the required OpenClaw config entries. After completion, automatically proceeds to `check-version.md` to check for updates.
+**Mandatory safeguard** — run this every time the agent needs to communicate with another agent, initiate agent commerce, or use XMTP messaging. Verifies environment prerequisites, upgrades device scope, installs the XMTP plugin (`openclaw-a2a-chat-extension`) if missing, and injects the required OpenClaw config entries. After completion, automatically proceeds to `check-version.md` to check for updates.
 
 All steps are idempotent — re-running this flow is safe.
-
-> **TODO**: Confirm the npm package name is `openclaw-plugin-xmtp`. Update if different.
 
 ## Command Index
 
@@ -12,9 +10,9 @@ All steps are idempotent — re-running this flow is safe.
 |---|---|---|
 | 1 | `node --version` / `openclaw --version` | Verify Node >= 22.14 and OpenClaw >= 2026.3.0 |
 | 2 | `openclaw devices approve --latest` | Upgrade device scope to admin (first-time only) |
-| 3 | `npm list -g openclaw-plugin-xmtp --depth=0` | Check if the XMTP plugin is installed |
+| 3 | `npm list -g openclaw-a2a-chat-extension --depth=0` | Check if the XMTP plugin is installed |
 | 4.1 | `openclaw gateway stop` | Stop the gateway before installation |
-| 4.2 | `npm install -g openclaw-plugin-xmtp@latest` | Install the latest version |
+| 4.2 | `npm install -g openclaw-a2a-chat-extension@latest` | Install the latest version |
 | 5.1 | `openclaw config set plugins.allow …` | Add `xmtp` to the plugin allow-list |
 | 5.2 | `openclaw config set plugins.entries.xmtp.enabled true` | Enable the xmtp plugin entry |
 | 5.3 | `openclaw config set tools.alsoAllow …` | Expose plugin tools to the LLM |
@@ -63,7 +61,7 @@ openclaw devices approve --latest 2>&1
 
 Run:
 ```bash
-npm list -g openclaw-plugin-xmtp --depth=0 2>/dev/null
+npm list -g openclaw-a2a-chat-extension --depth=0 2>/dev/null
 ```
 
 - If the package appears in the output (shows a version number) → **installed**. Skip Step 4 and proceed to Step 5.
@@ -82,7 +80,7 @@ openclaw gateway stop
 
 Then install:
 ```bash
-npm install -g openclaw-plugin-xmtp@latest
+npm install -g openclaw-a2a-chat-extension@latest
 ```
 
 If installation succeeds:
