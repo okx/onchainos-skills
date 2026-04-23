@@ -102,7 +102,7 @@ The skills work together in typical DeFi flows:
 
 ## Workflows
 
-8 pre-built workflow orchestrations in `workflows/` compose multiple skills into complete operations. The agent reads `workflows/INDEX.md` to route requests, then follows the step-by-step instructions in the matched workflow file.
+Pre-built workflow orchestrations in `workflows/` compose multiple skills into complete operations. The agent reads `workflows/INDEX.md` to route requests, then follows the step-by-step instructions in the matched workflow file.
 
 | Workflow | What it does | CLI command |
 |----------|-------------|-------------|

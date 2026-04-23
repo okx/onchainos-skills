@@ -1,6 +1,6 @@
 # onchainos — Agent Instructions
 
-This is an **onchainos skill + workflow collection** providing 14 skills and 8 pre-built workflows for on-chain operations across 20+ blockchains.
+This is an **onchainos skill + workflow collection** providing 14 skills and pre-built workflows for on-chain operations across 20+ blockchains.
 
 ## Workflows (Primary Routing)
 
@@ -44,7 +44,7 @@ For script requests, append `--format json` to all CLI commands.
 ## Architecture
 
 - **skills/** — 14 onchainos CLI skill definitions (`SKILL.md` with YAML frontmatter + CLI command reference)
-- **workflows/** — 8 pre-built workflow docs (`INDEX.md` for routing; workflows are W1, W2, W3, W4, W5, W7, W8, W9 — W6 safe-swap was removed)
+- **workflows/** — Pre-built workflow docs (`INDEX.md` for routing, `TEMPLATE.md` for authoring guide)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
 
@@ -53,8 +53,8 @@ For script requests, append `--format json` to all CLI commands.
 | Command | What it does |
 |---------|-------------|
 | `onchainos token report --address <addr>` | Token info + price + advanced-info + security scan in one parallel call |
-| `onchainos workflow token-research --address <addr>` | Full W1 workflow: core data + holders + cluster + signals + optional launchpad |
-| `onchainos workflow smart-money` | W3: signal list + per-token due diligence |
-| `onchainos workflow new-tokens` | W4: MIGRATED token scan + safety enrichment |
-| `onchainos workflow wallet-analysis --address <addr>` | W5: performance + behaviour + recent activity |
-| `onchainos workflow portfolio --address <addr>` | W7: balances + total value + PnL overview |
+| `onchainos workflow token-research --address <addr>` | Full token research: core data + holders + cluster + signals + optional launchpad |
+| `onchainos workflow smart-money` | Smart money signals: signal list + per-token due diligence |
+| `onchainos workflow new-tokens` | New token screening: MIGRATED token scan + safety enrichment |
+| `onchainos workflow wallet-analysis --address <addr>` | Wallet analysis: performance + behaviour + recent activity |
+| `onchainos workflow portfolio --address <addr>` | Portfolio check: balances + total value + PnL overview |

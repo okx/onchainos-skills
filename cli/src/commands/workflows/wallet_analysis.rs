@@ -1,7 +1,7 @@
 /// Wallet Analysis
 ///
 /// Step 1 (parallel): portfolio overview 7d + 30d + all balances
-///   partial failures: field null, rest continues (no "all fail → error" rule in PRD for W5)
+///   partial failures: field null, rest continues (no "all fail → error" rule for wallet analysis)
 /// Step 2 (sequential): recent token-level PnL
 /// Step 3 (sequential): recent on-chain activity via tracker
 use anyhow::Result;

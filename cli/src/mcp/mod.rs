@@ -2199,7 +2199,7 @@ impl McpServer {
         description = "Wallet performance, behaviour, and recent activity in one call. \
             Fetches 7d and 30d portfolio overview, all token balances, recent per-token PnL, \
             and latest on-chain activity via the address tracker. \
-            Partial failures return null for that field; no all-fail error rule for W5."
+            Partial failures return null for that field; no all-fail error rule."
     )]
     async fn workflow_wallet_analysis(
         &self,
