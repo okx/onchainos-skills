@@ -20,7 +20,7 @@ pub async fn handle_dispute_evidence(
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["data"]["uopData"], &account_id, &address,
-        signing::BizContext::DisputeCreate,
+        job_id, signing::BizContext::DisputeCreate,
     ).await?;
 
     println!("✓ 证据已提交");

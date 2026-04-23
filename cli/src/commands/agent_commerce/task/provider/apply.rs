@@ -30,7 +30,7 @@ pub async fn handle_apply(
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["data"]["uopData"], &account_id, &address,
-        signing::BizContext::TaskSubmit,
+        job_id, signing::BizContext::TaskSubmit,
     ).await?;
 
     println!("✓ 已提交接单申请（apply），等待链上确认（TASK_APPLIED）");

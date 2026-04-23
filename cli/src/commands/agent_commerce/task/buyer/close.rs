@@ -22,7 +22,7 @@ pub async fn handle_close(client: &TaskApiClient, job_id: &str) -> Result<()> {
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["data"]["uopData"], &account_id, &address,
-        signing::BizContext::TaskRefuse,
+        job_id, signing::BizContext::TaskRefuse,
     ).await?;
 
     println!("✓ 任务已关闭，状态 → close");
@@ -44,7 +44,7 @@ pub async fn handle_claim(client: &TaskApiClient, job_id: &str) -> Result<()> {
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["data"]["uopData"], &account_id, &address,
-        signing::BizContext::ClaimRewards,
+        job_id, signing::BizContext::ClaimRewards,
     ).await?;
 
     println!("✓ 仲裁奖金已领取");

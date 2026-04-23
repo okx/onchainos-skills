@@ -20,7 +20,7 @@ pub async fn handle_dispute_raise(
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["data"]["uopData"], &account_id, &address,
-        signing::BizContext::DisputeCreate,
+        job_id, signing::BizContext::DisputeCreate,
     ).await?;
 
     println!("✓ 已发起仲裁，等待链上确认（TASK_DISPUTED）");

@@ -34,6 +34,7 @@ pub async fn handle_complete(client: &TaskApiClient, job_id: &str) -> Result<()>
             &account_id,
             &address,
             &agent_id,
+            job_id,
             signing::BizContext::TaskComplete,
         )
         .await?;
@@ -61,7 +62,7 @@ pub async fn handle_complete(client: &TaskApiClient, job_id: &str) -> Result<()>
 
         let tx_hash = signing::sign_uop_and_broadcast(
             client, &resp["data"]["uopData"], &account_id, &address,
-            signing::BizContext::TaskComplete,
+            job_id, signing::BizContext::TaskComplete,
         ).await?;
 
         println!("✓ 任务验收通过（非担保），状态 → complete");

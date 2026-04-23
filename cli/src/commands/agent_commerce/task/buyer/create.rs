@@ -186,7 +186,7 @@ pub async fn handle_create(
     let unsigned: UnsignedInfoResponse = serde_json::from_value(uop_data.clone())
         .map_err(|e| anyhow::anyhow!("解析 uopData 失败: {e}"))?;
 
-    let broadcast_body = build_broadcast_body(
+    let mut broadcast_body = build_broadcast_body(
         &unsigned,
         &account_id,
         &addr_info.address,
@@ -196,6 +196,10 @@ pub async fn handle_create(
         false,
     )
     .await?;
+    broadcast_body["bizContext"] = serde_json::json!({
+        "jobId": job_id,
+        "bizType": 1,
+    });
 
     println!("✓ 签名完成");
 

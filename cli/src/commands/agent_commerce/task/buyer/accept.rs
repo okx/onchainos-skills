@@ -36,7 +36,7 @@ pub async fn handle_confirm_accept(
 
     signing::sign_uop_and_broadcast(
         client, &resp["data"]["uopData"], &account_id, &address,
-        signing::BizContext::TaskAccept,
+        job_id, signing::BizContext::TaskAccept,
     ).await?;
     println!("✓ 支付方式已设置: {payment_mode} ({mode_int})");
 
@@ -62,6 +62,7 @@ pub async fn handle_confirm_accept(
                 &account_id,
                 &address,
                 &agent_id,
+                job_id,
                 signing::BizContext::TaskAccept,
             )
             .await?;
@@ -83,7 +84,7 @@ pub async fn handle_confirm_accept(
 
             let tx_hash = signing::sign_uop_and_broadcast(
                 client, &resp["data"]["uopData"], &account_id, &address,
-                signing::BizContext::TaskAccept,
+                job_id, signing::BizContext::TaskAccept,
             ).await?;
             println!("✓ 已接受卖家 {provider}（非担保支付），状态 → accepted");
             println!("  txHash: {tx_hash}");
@@ -137,7 +138,7 @@ pub async fn handle_confirm_accept(
 
             let tx_hash = signing::sign_uop_and_broadcast(
                 client, &resp["data"]["uopData"], &account_id, &address,
-                signing::BizContext::TaskAccept,
+                job_id, signing::BizContext::TaskAccept,
             ).await?;
             println!("✓ 已接受卖家 {provider}（x402 支付），金额: {amt} {sym}");
             println!("  txHash: {tx_hash}");

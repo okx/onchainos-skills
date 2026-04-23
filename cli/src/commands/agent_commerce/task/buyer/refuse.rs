@@ -29,6 +29,7 @@ pub async fn handle_reject(
         &account_id,
         &address,
         &agent_id,
+        job_id,
         signing::BizContext::TaskRefuse,
     ).await?;
 

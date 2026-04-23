@@ -116,6 +116,7 @@ pub async fn sign_uop_and_broadcast(
     uop_data: &Value,
     account_id: &str,
     address: &str,
+    job_id: &str,
     biz_context: BizContext,
 ) -> Result<String> {
     if uop_data.is_null() {
@@ -135,7 +136,10 @@ pub async fn sign_uop_and_broadcast(
         false,
     )
     .await?;
-    broadcast_body["bizContext"] = serde_json::json!(biz_context as i32);
+    broadcast_body["bizContext"] = serde_json::json!({
+        "jobId": job_id,
+        "bizType": biz_context as i32,
+    });
 
     let bc_resp = client.post(&client.broadcast_url(), &broadcast_body).await
         .map_err(|e| anyhow::anyhow!("广播失败: {e}"))?;
@@ -162,6 +166,7 @@ pub async fn task_dual_sign_and_broadcast(
     account_id: &str,
     address: &str,
     agent_id: &str,
+    job_id: &str,
     biz_context: BizContext,
 ) -> Result<BroadcastResult> {
     // Step 1: POST pre-endpoint with identity headers → digest
@@ -190,7 +195,7 @@ pub async fn task_dual_sign_and_broadcast(
 
     // Step 4: Sign uopHash + broadcast
     let tx_hash = sign_uop_and_broadcast(
-        client, &main_resp["data"]["uopData"], account_id, address, biz_context,
+        client, &main_resp["data"]["uopData"], account_id, address, job_id, biz_context,
     ).await?;
 
     Ok(BroadcastResult { api_response: main_resp, tx_hash })
