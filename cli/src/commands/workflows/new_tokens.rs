@@ -100,11 +100,10 @@ pub(crate) async fn fetch_and_assemble(
 }
 
 pub async fn run(ctx: &Context, chain: Option<String>, stage: Option<String>) -> Result<()> {
-    let chain_str = chain
+    let chain_index = chain
         .as_deref()
-        .unwrap_or_else(|| ctx.chain_override.as_deref().unwrap_or("solana"))
-        .to_string();
-    let chain_index = chains::resolve_chain(&chain_str).to_string();
+        .map(|c| chains::resolve_chain(c).to_string())
+        .unwrap_or_else(|| ctx.chain_index_or("solana"));
     let stage_str = stage.unwrap_or_else(|| "MIGRATED".to_string());
 
     let mut client = ctx.client_async().await?;
