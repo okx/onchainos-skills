@@ -16,15 +16,25 @@ pub(crate) async fn fetch_and_assemble(
     client: &mut ApiClient,
     address: &str,
     chains_str: &str,
-    primary_chain_index: &str,
 ) -> Result<Value> {
+    // For portfolio overview we need a single chainIndex — use the first
+    // resolved chain. `.filter(!empty)` guards against empty input
+    // (`"".split(',').next()` returns `Some("")`, not `None`), falling back
+    // to the Solana default instead of producing `chainIndex == ""`.
+    let primary_chain_index = chains_str
+        .split(',')
+        .next()
+        .filter(|s| !s.is_empty())
+        .map(|c| chains::resolve_chain(c).to_string())
+        .unwrap_or_else(|| "501".to_string());
+
     // ── Step 1: parallel overview ─────────────────────────────────────
     // time_frame 4 = 1M
     let (mut c1, mut c2) = (client.clone(), client.clone());
     let (balances, total_value, overview) = tokio::join!(
         portfolio::fetch_all_balances(client, address, chains_str, None, None),
         portfolio::fetch_total_value(&mut c1, address, chains_str, None, None),
-        market::fetch_portfolio_overview(&mut c2, primary_chain_index, address, "4"),
+        market::fetch_portfolio_overview(&mut c2, &primary_chain_index, address, "4"),
     );
     let balances    = ok_or_null(balances);
     let total_value = ok_or_null(total_value);
@@ -44,14 +54,7 @@ pub async fn run(ctx: &Context, address: &str, chains_arg: Option<String>) -> Re
 
     let chains_str = ctx.resolve_chains_or(chains_arg, "1,501");
 
-    // For portfolio overview we need a single chainIndex — use the first resolved chain.
-    let primary_chain_index = chains_str
-        .split(',')
-        .next()
-        .map(|c| chains::resolve_chain(c).to_string())
-        .unwrap_or_else(|| "501".to_string());
-
-    let result = fetch_and_assemble(&mut client, address, &chains_str, &primary_chain_index).await?;
+    let result = fetch_and_assemble(&mut client, address, &chains_str).await?;
     output::success(result);
     Ok(())
 }
