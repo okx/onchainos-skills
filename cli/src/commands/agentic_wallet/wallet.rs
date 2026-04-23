@@ -129,7 +129,7 @@ pub enum WalletCommand {
         #[arg(long, default_value_t = false)]
         force: bool,
     },
-    /// Report plugin info (POST /priapi/v5/wallet/agentic/pre-transaction/report-plugin-info)
+    /// Report plugin info
     ReportPluginInfo {
         /// Plugin parameter payload to report
         #[arg(long, default_value = "")]
