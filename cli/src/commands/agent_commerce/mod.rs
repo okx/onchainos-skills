@@ -174,20 +174,20 @@ pub enum AgentCommand {
         token_symbol: String,
     },
 
+    /// Client claims auto-refund after seller timeout
+    #[command(name = "claim-auto-refund")]
+    ClaimAutoRefund { job_id: String },
+
     // ── Task system (sub-groups) ────────────────────────────────────────────
     /// Task config: init | show
     Config {
         #[command(subcommand)]
-        action: task::client::ConfigAction,
+        action: task::buyer::ConfigAction,
     },
 
     /// Dispute actions (provider): raise, evidence, info, upload
     #[command(subcommand)]
     Dispute(task::provider::DisputeCommand),
-
-    /// Dispute actions (buyer): evidence, info
-    #[command(name = "buyer-dispute", subcommand)]
-    BuyerDispute(task::client::BuyerDisputeCommand),
 
     /// Common queries: context lookup for AI agents
     #[command(subcommand)]
@@ -204,7 +204,7 @@ pub enum AgentCommand {
 }
 
 pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
-    use task::client::TaskCommand as T;
+    use task::buyer::TaskCommand as T;
 
     match cmd {
         // ── Identity ────────────────────────────────────────────────
@@ -224,7 +224,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::CreateTask {
             description, description_summary, budget, max_budget, currency,
             deadline_open, deadline_submit, title,
-        } => task::client::run_task(
+        } => task::buyer::run_task(
             T::Create {
                 description, description_summary, budget, max_budget, currency,
                 deadline_open, deadline_submit, title,
@@ -232,40 +232,43 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         ).await,
 
         AgentCommand::Recommend { job_id, next, current } =>
-            task::client::run_task(T::Recommend { job_id, next, current }, ctx).await,
+            task::buyer::run_task(T::Recommend { job_id, next, current }, ctx).await,
 
         AgentCommand::Status { job_id } =>
-            task::client::run_task(T::Status { job_id }, ctx).await,
+            task::buyer::run_task(T::Status { job_id }, ctx).await,
 
         AgentCommand::List { role, status, page, limit } =>
-            task::client::run_task(T::List { role, status, page, limit }, ctx).await,
+            task::buyer::run_task(T::List { role, status, page, limit }, ctx).await,
 
         AgentCommand::ConfirmAccept { job_id, provider, payment_mode } =>
-            task::client::run_task(T::ConfirmAccept { job_id, provider, payment_mode }, ctx).await,
+            task::buyer::run_task(T::ConfirmAccept { job_id, provider, payment_mode }, ctx).await,
 
         AgentCommand::RejectApply { job_id, provider, reason } =>
-            task::client::run_task(T::RejectApply { job_id, provider, reason }, ctx).await,
+            task::buyer::run_task(T::RejectApply { job_id, provider, reason }, ctx).await,
 
         AgentCommand::Complete { job_id } =>
-            task::client::run_task(T::Complete { job_id }, ctx).await,
+            task::buyer::run_task(T::Complete { job_id }, ctx).await,
 
         AgentCommand::Reject { job_id, reason } =>
-            task::client::run_task(T::Reject { job_id, reason }, ctx).await,
+            task::buyer::run_task(T::Reject { job_id, reason }, ctx).await,
 
         AgentCommand::Close { job_id } =>
-            task::client::run_task(T::Close { job_id }, ctx).await,
+            task::buyer::run_task(T::Close { job_id }, ctx).await,
 
         AgentCommand::SetPublic { job_id } =>
-            task::client::run_task(T::SetPublic { job_id }, ctx).await,
+            task::buyer::run_task(T::SetPublic { job_id }, ctx).await,
 
         AgentCommand::Payment { job_id } =>
-            task::client::run_task(T::Payment { job_id }, ctx).await,
+            task::buyer::run_task(T::Payment { job_id }, ctx).await,
 
         AgentCommand::Pay { job_id } =>
-            task::client::run_task(T::Pay { job_id }, ctx).await,
+            task::buyer::run_task(T::Pay { job_id }, ctx).await,
 
         AgentCommand::Claim { job_id } =>
-            task::client::run_task(T::Claim { job_id }, ctx).await,
+            task::buyer::run_task(T::Claim { job_id }, ctx).await,
+
+        AgentCommand::ClaimAutoRefund { job_id } =>
+            task::buyer::run_task(T::ClaimAutoRefund { job_id }, ctx).await,
 
         // ── Provider task commands ──────────────────────────────────
         AgentCommand::RecommendTask { agent_id } => {
@@ -302,13 +305,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         // ── Sub-groups ──────────────────────────────────────────────
         AgentCommand::Config { action } =>
-            task::client::run_task(T::Config { action }, ctx).await,
+            task::buyer::run_task(T::Config { action }, ctx).await,
 
         AgentCommand::Dispute(c) =>
             task::provider::run_dispute(c, ctx).await,
-
-        AgentCommand::BuyerDispute(c) =>
-            task::client::run_buyer_dispute(c, ctx).await,
 
         AgentCommand::Common(c) =>
             task::common::run(c, ctx).await,
@@ -318,7 +318,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 "provider" | "seller" =>
                     task::provider::flow::generate_next_action(&job_id, &job_status, &agent_id),
                 "buyer" | "client" =>
-                    task::client::flow::generate_next_action(&job_id, &job_status, &agent_id),
+                    task::buyer::flow::generate_next_action(&job_id, &job_status, &agent_id),
                 other => anyhow::bail!("--role 必须是 provider/seller/buyer/client，当前: {other}"),
             };
             println!("{prompt}");

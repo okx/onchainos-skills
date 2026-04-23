@@ -351,7 +351,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::FeedbackList(_) => "feedback-list".into(),
         AgentCommand::XmtpSign(_) => "xmtp-sign".into(),
 
-        // Task (client)
+        // Task (buyer)
         AgentCommand::CreateTask { .. } => "create-task".into(),
         AgentCommand::Recommend { .. } => "recommend".into(),
         AgentCommand::Status { .. } => "status".into(),
@@ -365,6 +365,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Payment { .. } => "payment".into(),
         AgentCommand::Pay { .. } => "pay".into(),
         AgentCommand::Claim { .. } => "claim".into(),
+        AgentCommand::ClaimAutoRefund { .. } => "claim-auto-refund".into(),
 
         // Task (provider)
         AgentCommand::RecommendTask { .. } => "recommend-task".into(),
@@ -378,7 +379,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         // Sub-groups
         AgentCommand::Config { .. } => "config".into(),
         AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),
-        AgentCommand::BuyerDispute(c) => format!("buyer-dispute {:?}", std::mem::discriminant(c)),
         AgentCommand::Common(c) => format!("common {:?}", std::mem::discriminant(c)),
         AgentCommand::NextAction { .. } => "next-action".into(),
     }

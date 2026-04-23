@@ -107,10 +107,10 @@ What does NOT belong in `plugins/ws-channel/`:
 - Any `onchainos agent ...` CLI calls or tool invocations
 - Hardcoded knowledge of task flow steps (Scene 1, Scene 2, etc.)
 - **Fetching task details from mock-api to enrich notifications** — the sub session agent already has the context via `onchainos agent common context`; let it build the notification and call `notify_main` tool
-- **Auto-constructing main-session notifications for specific `TASK_*` types** — this is Scene-specific logic, belongs to `provider.md` / `client.md`
+- **Auto-constructing main-session notifications for specific `TASK_*` types** — this is Scene-specific logic, belongs to `provider.md` / `buyer.md`
 
 **Where business logic lives:**
-- Task flow rules → `skills/okx-agent-task/client.md` and `provider.md`
+- Task flow rules → `skills/okx-agent-task/buyer.md` and `provider.md`
 - State transitions → `onchainos agent <command>` CLI (confirm-accept, complete, reject, etc.)
 - Agent↔counterparty messaging → agent produces plain text output; `reply()` callback delivers it automatically to the P2P conversation. No plugin tool call needed.
 - **Sub session → main session notifications** → sub session agent calls `notify_main` tool (already registered in ws-channel). The plugin is the conduit, not the orchestrator.
@@ -191,14 +191,14 @@ const dst = '/Users/gan/openclaw-plugins/ws-channel/src/';
 
 ### Sync Skills After Edit
 
-After editing any file under `skills/okx-agent-task/` (e.g. `client.md`, `SKILL.md`):
+After editing any file under `skills/okx-agent-task/` (e.g. `buyer.md`, `SKILL.md`):
 
 ```bash
 node -e "
 const fs = require('fs'), path = require('path');
 const src = '/Users/gan/meili/mingtao.gan_dacs_at_okg.com/121/Documents/RustProjects/OKOnchainOS/skills/okx-agent-task/';
 const dst = process.env.HOME + '/.agents/skills/okx-agent-task/';
-['SKILL.md','client.md','provider.md','evaluator.md'].forEach(f => {
+['SKILL.md','buyer.md','provider.md','evaluator.md'].forEach(f => {
   fs.writeFileSync(dst+f, fs.readFileSync(src+f));
   console.log('synced', f);
 });

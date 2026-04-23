@@ -37,27 +37,21 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前状态】TASK_APPLIED（卖家已链上申请接单，消息含卖家账单信息）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
-             **Step 1 — 修改支付方式（所有模式都需要）：**\n\
-             调用 `/priapi/v1/aieco/task/{job_id}/setPaymentMode`，入参：\n\
-             - 0 = escrow（担保）\n\
-             - 1 = direct（非担保）\n\
-             - 2 = x402\n\
-             签名并广播上链。\n\n\
-             **Step 2 — 按支付方式分别处理：**\n\n\
+             **Step 1 — 通知主 session（用户（确认））：**\n\
+             卖家已申请接单，请确认支付方式（escrow/non_escrow/x402）并确认接单。\n\n\
+             **Step 2 — 用户确认后，确认接单（命令自动处理 setPaymentMode + accept 签名上链）：**\n\n\
              ▸ **担保支付（escrow，默认）：**\n\
-             1. 调用 `/priapi/v1/aieco/task/{job_id}/pre-accept` 获取 calldata\n\
-             2. 钱包签名 calldata\n\
-             3. 调用 `/priapi/v1/aieco/task/{job_id}/accept`，签名结果广播上链\n\
-             4. 调用【支付模块】进行担保支付（TODO）\n\
-             → 任务状态变为 Accepted\n\n\
+             ```bash\n\
+             onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode escrow\n\
+             ```\n\n\
              ▸ **非担保支付（non_escrow）：**\n\
-             1. 调用 `/priapi/v1/aieco/task/{job_id}/direct/accept` 生成 calldata\n\
-             2. 签名 → 广播上链 → 任务状态变为 Accepted\n\
-             3. 调用 `/priapi/v1/aieco/task/{job_id}` 获取卖家账单信息（收款地址+金额+代币）\n\
-             4. 通知主 session（用户（确认））展示账单，请用户确认转账\n\
-             5. 用户确认后调用【支付模块】进行非担保支付（TODO）\n\n\
+             ```bash\n\
+             onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode non_escrow\n\
+             ```\n\n\
              ▸ **x402：**\n\
-             按 x402 支付流程处理（见 Scene 4）。\n\n\
+             ```bash\n\
+             onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode x402\n\
+             ```\n\n\
              **Step 3 — 向卖家输出 header 格式回复：**\n\n\
              {header_template}\n\
              已确认接单，等待你开始执行任务。\n\n\
@@ -104,19 +98,18 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\n\
              **Step 3 — 根据用户决策执行（按支付方式分别处理）：**\n\n\
              ▸ **担保支付（escrow）— 可接受或拒绝：**\n\
-             - 用户接受：\n\
-               1. 调用 `/priapi/v1/aieco/task/{job_id}/pre-complete`（712标准）获取 calldata\n\
-               2. 钱包签名 calldata\n\
-               3. 调用 `/priapi/v1/aieco/task/{job_id}/complete`，广播上链\n\
-               → 任务状态变为 Complete，合约自动释放资金\n\
-             - 用户拒绝：\n\
-               1. 调用 `/priapi/v1/aieco/task/{job_id}/pre-refuse`（712标准）获取 calldata\n\
-               2. 钱包签名 calldata\n\
-               3. 调用 `/priapi/v1/aieco/task/{job_id}/refuse`，广播上链\n\
-               → 任务状态变为 Refuse，进入仲裁/退款流程\n\n\
+             - 用户接受（验收通过，释放资金）：\n\
+               ```bash\n\
+               onchainos agent complete {job_id}\n\
+               ```\n\
+             - 用户拒绝（不达标，进入仲裁/退款流程）：\n\
+               ```bash\n\
+               onchainos agent reject {job_id} --reason \"<拒绝原因>\"\n\
+               ```\n\n\
              ▸ **非担保支付（non_escrow）— 只能接受，不能拒绝：**\n\
-             调用 `/priapi/v1/aieco/task/{job_id}/direct/complete`\n\
-             → 任务状态变为 Complete\n\n\
+             ```bash\n\
+             onchainos agent complete {job_id}\n\
+             ```\n\n\
              【后续事件】\n\
              - TASK_COMPLETED → 任务完成\n\
              - TASK_REFUSED → 等待卖家决定（仲裁/退款）（仅 escrow）\n"
@@ -157,7 +150,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x201. 证据摘要（文字描述问题）\n\
              \x20\x20\x20\x202. 证据文件（截图/文档，可选）\n\
              ```\n\n\
-             **Step 2 — 用户提供证据后，上传链下证据：**\n\
+             **Step 2 — 用户提供证据后，上传链下证据（买卖双方共用，自动识别角色）：**\n\
              ```bash\n\
              onchainos agent dispute upload {job_id} --text \"<证据摘要>\" --image <图片路径>\n\
              ```\n\
@@ -174,7 +167,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         "DISPUTE_EVIDENCE" => format!(
             "【当前动作】提交买家仲裁证据\n\
              【角色】买家（Client）\n\n\
-             **Step 1 — 上传链下证据：**\n\
+             **Step 1 — 上传链下证据（买卖双方共用，自动识别角色）：**\n\
              ```bash\n\
              onchainos agent dispute upload {job_id} --text \"<证据摘要>\" --image <图片路径>\n\
              ```\n\
@@ -194,8 +187,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              任务已完成（TASK_COMPLETED），感谢合作。\n\n\
              **Step 2 — 通知主 session（用户（通知））：**\n\
              任务 {job_id} 已验收完成。\n\n\
-             **Step 3 — 引导评价卖家（TODO）：**\n\
-             收到 TASK_COMPLETED 时，引导买家对卖家进行评价（调用身份模块，待确认）。\n\n\
+             **Step 3 — 评价卖家：**\n\
+             ```bash\n\
+             onchainos agent judge {job_id}\n\
+             ```\n\n\
              【流程结束】子 session 可以关闭。\n"
         ),
 
@@ -240,6 +235,36 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\n\
              **Step 2 — 通知主 session（用户（通知））：**\n\
              任务 {job_id} 已转为公开任务，等待卖家主动申请。\n"
+        ),
+
+        // ─── 卖家未提交交付物超时 ─────────────────────────────────────
+        "submit_expired" | "SUBMIT_EXPIRED" => format!(
+            "【系统通知】卖家提交交付物超时\n\
+             【角色】买家（Client）\n\n\
+             卖家未在规定期限内提交交付物，你可以申请自动退款。\n\n\
+             **Step 1 — 通知主 session（用户确认）：**\n\
+             任务 {job_id} 的卖家未在截止时间前提交交付物，是否申请自动退款？\n\n\
+             **Step 2 — 用户确认后，领取自动退款：**\n\
+             ```bash\n\
+             onchainos agent claim-auto-refund {job_id}\n\
+             ```\n\n\
+             **Step 3 — 通知主 session（用户（通知））：**\n\
+             任务 {job_id} 已申请自动退款，资金将退回你的账户。\n"
+        ),
+
+        // ─── 买家拒绝后卖家仲裁超时 ─────────────────────────────────
+        "refuse_expired" | "REFUSE_EXPIRED" => format!(
+            "【系统通知】卖家仲裁超时\n\
+             【角色】买家（Client）\n\n\
+             你拒绝交付物后，卖家未在规定期限内发起仲裁，你可以申请自动退款。\n\n\
+             **Step 1 — 通知主 session（用户确认）：**\n\
+             任务 {job_id} 的卖家在你拒绝交付物后未及时发起仲裁，是否申请自动退款？\n\n\
+             **Step 2 — 用户确认后，领取自动退款：**\n\
+             ```bash\n\
+             onchainos agent claim-auto-refund {job_id}\n\
+             ```\n\n\
+             **Step 3 — 通知主 session（用户（通知））：**\n\
+             任务 {job_id} 已申请自动退款，资金将退回你的账户。\n"
         ),
 
         // ─── 未知类型兜底 ───────────────────────────────────────────

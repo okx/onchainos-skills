@@ -16,10 +16,10 @@
 
 mod accept;
 mod changepublic;
+mod claim_auto_refund;
 mod close;
 mod complete;
 mod create;
-mod evidence;
 pub mod flow;
 mod judge;
 mod negotiate;
@@ -129,6 +129,10 @@ pub enum TaskCommand {
     Claim {
         job_id: String,
     },
+    /// Client claims auto-refund after seller timeout (submit_expired / refuse_expired)
+    ClaimAutoRefund {
+        job_id: String,
+    },
     /// Rate the provider after task completion
     Judge {
         job_id: String,
@@ -146,26 +150,6 @@ pub enum ConfigAction {
     Init,
     /// Show current configuration
     Show,
-}
-
-// ─── buyer dispute subcommands ────────────────────────────────────────────
-
-#[derive(Subcommand)]
-pub enum BuyerDisputeCommand {
-    /// Buyer submits evidence during dispute
-    Evidence {
-        job_id: String,
-        #[arg(long)]
-        summary: String,
-        #[arg(long)]
-        file: Option<String>,
-        #[arg(long = "type")]
-        evidence_type: Option<String>,
-    },
-    /// Retrieves dispute details
-    Info {
-        dispute_id: String,
-    },
 }
 
 // ─── 路由分发 ──────────────────────────────────────────────────────────────
@@ -198,6 +182,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             changepublic::handle_set_public(&client, &job_id).await,
         TaskCommand::Claim { job_id } =>
             close::handle_claim(&client, &job_id).await,
+        TaskCommand::ClaimAutoRefund { job_id } =>
+            claim_auto_refund::handle_claim_auto_refund(&client, &job_id).await,
         TaskCommand::Judge { job_id } =>
             judge::handle_judge(&client, &job_id).await,
 
@@ -226,7 +212,3 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
     }
 }
 
-pub async fn run_buyer_dispute(cmd: BuyerDisputeCommand, _ctx: &Context) -> Result<()> {
-    let client = TaskApiClient::new();
-    evidence::run_buyer_dispute(cmd, &client).await
-}
