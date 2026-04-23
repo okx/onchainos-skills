@@ -338,6 +338,8 @@ fn task_system_sub(cmd: &crate::commands::agent_commerce::task::TaskSystemComman
     match cmd {
         TaskSystemCommand::CreateTask { .. }    => "create-task".into(),
         TaskSystemCommand::Recommend { .. }     => "recommend".into(),
+        TaskSystemCommand::RecommendTask { .. } => "recommend-task".into(),
+        TaskSystemCommand::ContactBuyer { .. } => "contact-buyer".into(),
         TaskSystemCommand::Status { .. }        => "status".into(),
         TaskSystemCommand::List { .. }          => "list".into(),
         TaskSystemCommand::ConfirmAccept { .. } => "confirm-accept".into(),

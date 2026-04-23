@@ -13,11 +13,13 @@
 
 mod agreerefund;
 mod apply;
+pub mod contact_buyer;
 mod deliver;
 mod dispute_evidence;
 mod dispute_info;
 mod dispute_raise;
 pub mod flow;
+pub mod recommend_task;
 
 use anyhow::Result;
 use clap::Subcommand;

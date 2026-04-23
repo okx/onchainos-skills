@@ -750,6 +750,24 @@ const server = http.createServer(async (req, res) => {
     sendOk(res, [{ txHash: mockUop() }]); return;
   }
 
+  // Provider 主动拉取推荐的 Public 任务（必须在 /api/v1/task/:jobId/match 之前匹配）
+  if (method === "POST" && path_ === "/api/v1/task/job/match") {
+    const openPublic = [...tasks.values()].filter(
+      (t) => t.status === S_OPEN && t.openType === 1,
+    );
+    const picks = openPublic.slice(0, 5).map((t) => ({
+      jobId: t.jobId,
+      title: t.title,
+      description: t.description,
+      tokenAddress: t.tokenAddress,
+      tokenAmount: t.tokenAmount,
+      minCreditScore: t.minCreditScore ?? 0,
+      createTime: t.createTime,
+    }));
+    sendOk(res, { tasks: picks });
+    return;
+  }
+
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/match", path_))) {
     if (!tasks.has(m.jobId)) { sendErr(res, 2001, "task not found"); return; }
     sendOk(res, { recommendations: [

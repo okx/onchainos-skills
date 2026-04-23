@@ -34,6 +34,28 @@ pub enum TaskSystemCommand {
         #[arg(long)] current: bool,
     },
 
+    /// Provider fetches recommended Public tasks matching their skill
+    #[command(name = "recommend-task")]
+    RecommendTask {
+        /// Provider agent id（可选，默认从钱包身份推导）
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+
+    /// Provider initiates contact with a buyer (xmtp, placeholder)
+    #[command(name = "contact-buyer")]
+    ContactBuyer {
+        /// 买家 agentId
+        #[arg(long = "to")]
+        to_agent_id: String,
+        /// 任务 ID
+        #[arg(long = "job-id")]
+        job_id: String,
+        /// 自定义消息（可选，默认询问详情）
+        #[arg(long)]
+        message: Option<String>,
+    },
+
     /// Get current task status
     Status { job_id: String },
 
@@ -175,6 +197,14 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
 
         TaskSystemCommand::Recommend { job_id, next, current } =>
             client::run_task(T::Recommend { job_id, next, current }, ctx).await,
+
+        TaskSystemCommand::RecommendTask { agent_id } => {
+            let c = common::network::task_api_client::TaskApiClient::new();
+            provider::recommend_task::handle_recommend_task(&c, agent_id.as_deref()).await
+        }
+
+        TaskSystemCommand::ContactBuyer { to_agent_id, job_id, message } =>
+            provider::contact_buyer::handle_contact_buyer(&to_agent_id, &job_id, message.as_deref()).await,
 
         TaskSystemCommand::Status { job_id } =>
             client::run_task(T::Status { job_id }, ctx).await,
