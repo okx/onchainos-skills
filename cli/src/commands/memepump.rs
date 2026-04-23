@@ -10,6 +10,10 @@ use crate::output;
 
 /// Tokens created less than this many milliseconds ago may have unreliable
 /// holder/risk tag data — zero values are not yet meaningful.
+///
+/// Measured from `now_ms()` *after* the API response returns, so network
+/// latency eats into the window. Under multi-second roundtrips this can
+/// become effectively inert; widen here if we start seeing that in the wild.
 const NEW_TOKEN_THRESHOLD_MS: u64 = 2_000;
 
 /// Tag fields whose zero value is unreliable for brand-new tokens.
@@ -32,10 +36,13 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// True if `v` represents a numeric zero — matches `"0"`, `"0.0"`, `"0.00"`,
-/// leading/trailing whitespace, or a JSON number `0`/`0.0`. Non-numeric
-/// strings (empty, `"null"`, garbage) are treated as non-zero so we never
-/// nullify an unparseable value.
+/// True if `v` represents a numeric zero.
+///
+/// Parser-based: any string that `f64::from_str` accepts and equals `0.0`
+/// qualifies (e.g. `"0"`, `"0.0"`, `"0.00"`, `" 0 "`, `"0e0"`, `"-0"`,
+/// `"+0"`). JSON numeric `0` / `0.0` also qualifies. Non-numeric strings
+/// (`""`, `"null"`, garbage) are treated as non-zero so we never nullify
+/// an unparseable value.
 fn is_numeric_zero(v: &Value) -> bool {
     if let Some(s) = v.as_str() {
         return s.trim().parse::<f64>().map(|n| n == 0.0).unwrap_or(false);
@@ -75,13 +82,11 @@ fn nullify_zero_tags_if_new(token: &mut Value, received_at_ms: u64) {
         })
         .unwrap_or(0);
 
-    // Guard against clock skew: if the server's createdTimestamp is ahead of
-    // our wall clock, the age signal is unreliable — leave tags as-is instead
-    // of nulling legitimate "0" values on older tokens.
-    //
     // `created_ms == 0` means "unknown/missing" here (memepump tokens are not
-    // minted at the Unix epoch), so we also bail out on that sentinel rather
-    // than treat it as a 56-year-old token.
+    // minted at the Unix epoch). `created_ms > received_at_ms` guards clock
+    // skew — if the server's timestamp leads our wall clock the age signal is
+    // unreliable, so leave tags as-is instead of nulling legitimate "0" values
+    // on older tokens.
     if created_ms == 0
         || created_ms > received_at_ms
         || received_at_ms - created_ms >= NEW_TOKEN_THRESHOLD_MS
@@ -98,11 +103,14 @@ fn nullify_zero_tags_if_new(token: &mut Value, received_at_ms: u64) {
     }
 }
 
-/// Apply `nullify_zero_tags_if_new` across the common response shapes we've
-/// seen from the memepump endpoints: a bare token object, a bare array, or
-/// an object wrapping the list under `list` / `data`. This keeps the caller
-/// a one-liner and means a backend shape change to a wrapped variant does
-/// not silently turn the feature into a no-op.
+/// Apply `nullify_zero_tags_if_new` across the response shapes we've seen
+/// from the memepump endpoints: a bare array, a bare token object, or an
+/// object wrapping the payload under one of `list` / `data` / `items`
+/// (matching the keys the test extractors probe, so a backend shape change
+/// cannot silently turn the feature into a no-op).
+///
+/// The wrapper key can hold either an array of tokens or a single token
+/// object; both are walked.
 fn apply_nullify_to_response(data: &mut Value, received_at_ms: u64) {
     if let Some(arr) = data.as_array_mut() {
         for token in arr.iter_mut() {
@@ -110,12 +118,18 @@ fn apply_nullify_to_response(data: &mut Value, received_at_ms: u64) {
         }
         return;
     }
-    for key in ["list", "data"] {
-        if let Some(arr) = data.get_mut(key).and_then(|v| v.as_array_mut()) {
-            for token in arr.iter_mut() {
-                nullify_zero_tags_if_new(token, received_at_ms);
+    for key in ["list", "data", "items"] {
+        if let Some(wrapped) = data.get_mut(key) {
+            if let Some(arr) = wrapped.as_array_mut() {
+                for token in arr.iter_mut() {
+                    nullify_zero_tags_if_new(token, received_at_ms);
+                }
+                return;
             }
-            return;
+            if wrapped.is_object() {
+                nullify_zero_tags_if_new(wrapped, received_at_ms);
+                return;
+            }
         }
     }
     if data.is_object() {
@@ -1025,6 +1039,41 @@ mod tests {
             assert!(
                 data[0]["tags"][field].is_null(),
                 "{field} should be null inside bare array"
+            );
+        }
+    }
+
+    /// Wrapper key carrying a *single-object* token (not an array) — this is
+    /// the `{ data: { ...token... } }` shape `fetch_token_details` can return
+    /// under some backend modes. Before the fix the helper fell through to
+    /// the bare-object branch on the outer wrapper and silently no-op'd.
+    #[test]
+    fn apply_nullify_to_response_walks_single_object_under_wrapper_key() {
+        let received_at = now_ms();
+        let created_ms = received_at.saturating_sub(500);
+        let mut data = json!({ "data": new_token(created_ms) });
+        apply_nullify_to_response(&mut data, received_at);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert!(
+                data["data"]["tags"][field].is_null(),
+                "{field} should be null inside {{ data: {{ ...token... }} }} wrapper"
+            );
+        }
+    }
+
+    /// `items` is one of the wrapper keys the test extractors probe — ensure
+    /// `apply_nullify_to_response` does the same so shape drift cannot silently
+    /// turn the feature off while tests still pass.
+    #[test]
+    fn apply_nullify_to_response_walks_items_wrapper() {
+        let received_at = now_ms();
+        let created_ms = received_at.saturating_sub(500);
+        let mut data = json!({ "items": [new_token(created_ms)] });
+        apply_nullify_to_response(&mut data, received_at);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert!(
+                data["items"][0]["tags"][field].is_null(),
+                "{field} should be null inside {{ items: [...] }} wrapper"
             );
         }
     }
