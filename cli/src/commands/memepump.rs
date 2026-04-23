@@ -53,7 +53,13 @@ fn nullify_zero_tags_if_new(token: &mut Value, received_at_ms: u64) {
         })
         .unwrap_or(0);
 
-    if created_ms == 0 || received_at_ms.saturating_sub(created_ms) >= NEW_TOKEN_THRESHOLD_MS {
+    // Guard against clock skew: if the server's createdTimestamp is ahead of
+    // our wall clock, the age signal is unreliable — leave tags as-is instead
+    // of nulling legitimate "0" values on older tokens.
+    if created_ms == 0
+        || created_ms > received_at_ms
+        || received_at_ms - created_ms >= NEW_TOKEN_THRESHOLD_MS
+    {
         return;
     }
 
@@ -865,6 +871,22 @@ mod tests {
             assert_eq!(
                 token["tags"][field], "0",
                 "{field} should stay '0' when createdTimestamp is unknown"
+            );
+        }
+    }
+
+    /// Clock skew: createdTimestamp is ahead of received_at (e.g. server clock
+    /// leads client). We cannot trust the age signal — tags must stay as-is so
+    /// legitimate "0" values on older tokens aren't wrongly nullified.
+    #[test]
+    fn zero_tags_not_nullified_when_created_timestamp_is_in_future() {
+        let received_at = now_ms();
+        let mut token = new_token(received_at + 10_000);
+        nullify_zero_tags_if_new(&mut token, received_at);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert_eq!(
+                token["tags"][field], "0",
+                "{field} should stay '0' under clock skew (created_ms > received_at)"
             );
         }
     }
