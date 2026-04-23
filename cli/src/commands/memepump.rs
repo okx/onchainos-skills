@@ -32,12 +32,28 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// True if `v` represents a numeric zero — matches `"0"`, `"0.0"`, `"0.00"`,
+/// leading/trailing whitespace, or a JSON number `0`/`0.0`. Non-numeric
+/// strings (empty, `"null"`, garbage) are treated as non-zero so we never
+/// nullify an unparseable value.
+fn is_numeric_zero(v: &Value) -> bool {
+    if let Some(s) = v.as_str() {
+        return s.trim().parse::<f64>().map(|n| n == 0.0).unwrap_or(false);
+    }
+    v.as_f64().map(|n| n == 0.0).unwrap_or(false)
+}
+
 /// If the token was created within `NEW_TOKEN_THRESHOLD_MS` of `received_at_ms`,
 /// replace any zero value in the unreliable tag fields with `null` — a zero at
 /// this age means "not yet computed", not "genuinely zero".
 ///
 /// `received_at_ms` should be captured immediately after the API response
 /// returns so all tokens in the same batch share the same reference time.
+///
+/// `createdTimestamp` is expected in **milliseconds since Unix epoch**. If the
+/// upstream ever starts returning seconds the age computation will wildly
+/// exceed the threshold and the helper becomes a silent no-op — if that
+/// happens, normalise the unit before calling this function.
 ///
 /// Scope: only applied by callers whose responses carry `tags.*Percent` fields
 /// for freshly-minted tokens — currently `fetch_token_list` and
@@ -62,6 +78,10 @@ fn nullify_zero_tags_if_new(token: &mut Value, received_at_ms: u64) {
     // Guard against clock skew: if the server's createdTimestamp is ahead of
     // our wall clock, the age signal is unreliable — leave tags as-is instead
     // of nulling legitimate "0" values on older tokens.
+    //
+    // `created_ms == 0` means "unknown/missing" here (memepump tokens are not
+    // minted at the Unix epoch), so we also bail out on that sentinel rather
+    // than treat it as a 56-year-old token.
     if created_ms == 0
         || created_ms > received_at_ms
         || received_at_ms - created_ms >= NEW_TOKEN_THRESHOLD_MS
@@ -71,17 +91,35 @@ fn nullify_zero_tags_if_new(token: &mut Value, received_at_ms: u64) {
 
     if let Some(tags) = token.get_mut("tags").and_then(|t| t.as_object_mut()) {
         for field in UNRELIABLE_ZERO_TAGS {
-            let is_zero = tags
-                .get(*field)
-                .map(|v| {
-                    v.as_str().map(|s| s == "0").unwrap_or(false)
-                        || v.as_f64().map(|n| n == 0.0).unwrap_or(false)
-                })
-                .unwrap_or(false);
-            if is_zero {
+            if tags.get(*field).is_some_and(is_numeric_zero) {
                 tags.insert((*field).to_string(), Value::Null);
             }
         }
+    }
+}
+
+/// Apply `nullify_zero_tags_if_new` across the common response shapes we've
+/// seen from the memepump endpoints: a bare token object, a bare array, or
+/// an object wrapping the list under `list` / `data`. This keeps the caller
+/// a one-liner and means a backend shape change to a wrapped variant does
+/// not silently turn the feature into a no-op.
+fn apply_nullify_to_response(data: &mut Value, received_at_ms: u64) {
+    if let Some(arr) = data.as_array_mut() {
+        for token in arr.iter_mut() {
+            nullify_zero_tags_if_new(token, received_at_ms);
+        }
+        return;
+    }
+    for key in ["list", "data"] {
+        if let Some(arr) = data.get_mut(key).and_then(|v| v.as_array_mut()) {
+            for token in arr.iter_mut() {
+                nullify_zero_tags_if_new(token, received_at_ms);
+            }
+            return;
+        }
+    }
+    if data.is_object() {
+        nullify_zero_tags_if_new(data, received_at_ms);
     }
 }
 
@@ -687,11 +725,7 @@ pub async fn fetch_token_list(client: &ApiClient, p: MemepumpTokenListParams) ->
         .await?;
     let received_at = now_ms();
 
-    if let Some(tokens) = data.as_array_mut() {
-        for token in tokens.iter_mut() {
-            nullify_zero_tags_if_new(token, received_at);
-        }
-    }
+    apply_nullify_to_response(&mut data, received_at);
 
     Ok(data)
 }
@@ -715,7 +749,7 @@ pub async fn fetch_token_details(
         .await?;
     let received_at = now_ms();
 
-    nullify_zero_tags_if_new(&mut data, received_at);
+    apply_nullify_to_response(&mut data, received_at);
 
     Ok(data)
 }
@@ -919,5 +953,79 @@ mod tests {
         assert_eq!(token["tags"]["bundlersPercent"], "5.5", "non-zero must be untouched");
         assert_eq!(token["tags"]["devHoldingsPercent"], "10.0", "non-zero must be untouched");
         assert!(token["tags"]["freshWalletsPercent"].is_null(), "zero must be null");
+    }
+
+    /// `is_numeric_zero` must match every zero-ish string shape seen in the
+    /// wild: plain "0", decimal "0.0", padded "0.00", leading whitespace, and
+    /// raw JSON numbers. Non-numeric strings stay non-zero (never nullified).
+    #[test]
+    fn is_numeric_zero_handles_common_string_shapes() {
+        for v in [json!("0"), json!("0.0"), json!("0.00"), json!(" 0 "), json!(0), json!(0.0)] {
+            assert!(is_numeric_zero(&v), "{v} should be zero");
+        }
+        for v in [json!("1"), json!("0.01"), json!(""), json!("null"), json!(1.5), json!(null)] {
+            assert!(!is_numeric_zero(&v), "{v} should NOT be zero");
+        }
+    }
+
+    /// Backend sends "0.0" (not exact "0") — must still nullify.
+    #[test]
+    fn zero_tags_nullified_for_decimal_zero_string() {
+        let received_at = now_ms();
+        let created_ms = received_at.saturating_sub(500);
+        let mut token = json!({
+            "createdTimestamp": created_ms.to_string(),
+            "tags": {
+                "bundlersPercent": "0.0",
+                "devHoldingsPercent": "0.00",
+                "freshWalletsPercent": "0",
+                "insidersPercent": "0",
+                "snipersPercent": "0",
+                "suspectedPhishingWalletPercent": "0"
+            }
+        });
+        nullify_zero_tags_if_new(&mut token, received_at);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert!(
+                token["tags"][field].is_null(),
+                "{field} should be null for decimal-zero backend string"
+            );
+        }
+    }
+
+    /// `apply_nullify_to_response` must walk a `{ list: [...] }` wrapper as
+    /// well as a bare array / bare object, so a backend shape change does not
+    /// silently turn the feature into a no-op.
+    #[test]
+    fn apply_nullify_to_response_walks_nested_list_shape() {
+        let received_at = now_ms();
+        let created_ms = received_at.saturating_sub(500);
+        let mut data = json!({
+            "list": [new_token(created_ms)],
+            "total": 1
+        });
+        apply_nullify_to_response(&mut data, received_at);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert!(
+                data["list"][0]["tags"][field].is_null(),
+                "{field} should be null inside {{ list: [...] }} wrapper"
+            );
+        }
+    }
+
+    /// Bare-array response shape (the `fetch_token_list` default) must also
+    /// be walked — regression guard for the flat-array path.
+    #[test]
+    fn apply_nullify_to_response_walks_bare_array() {
+        let received_at = now_ms();
+        let created_ms = received_at.saturating_sub(500);
+        let mut data = Value::Array(vec![new_token(created_ms)]);
+        apply_nullify_to_response(&mut data, received_at);
+        for field in UNRELIABLE_ZERO_TAGS {
+            assert!(
+                data[0]["tags"][field].is_null(),
+                "{field} should be null inside bare array"
+            );
+        }
     }
 }
