@@ -1186,11 +1186,12 @@ impl ApiClient {
     }
 
     /// Write the current in-memory state to `~/.onchainos/payment_cache.json`.
-    /// Preserves `default_asset` from the existing cache — it's owned by the
-    /// user via `onchainos payment default`, not by this client, and must
-    /// survive server-state flushes.
+    /// Preserves `default_asset` and `local_signing_warned` from disk —
+    /// both are owned outside this client and must survive state flushes.
     fn flush_payment_cache(&self) -> Result<()> {
-        let default_asset = PaymentCache::load().and_then(|c| c.default_asset);
+        let (default_asset, local_signing_warned) = PaymentCache::load()
+            .map(|c| (c.default_asset, c.local_signing_warned))
+            .unwrap_or_default();
         let state = self.payment_state();
         let cache = PaymentCache {
             endpoints: state
@@ -1206,6 +1207,7 @@ impl ApiClient {
             intro_shown: state.intro_shown,
             grace_shown: state.grace_shown,
             default_asset,
+            local_signing_warned,
         };
         drop(state);
         cache.save()

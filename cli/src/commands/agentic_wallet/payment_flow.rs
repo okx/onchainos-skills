@@ -589,7 +589,7 @@ pub async fn sign_payment_auto(
     accepts: &Value,
     tier: Option<PaymentTier>,
 ) -> Result<(PaymentProof, Value)> {
-    let logged_in = crate::wallet_store::load_wallets()?.is_some();
+    let logged_in = wallet_store::load_wallets()?.is_some();
     if logged_in {
         sign_payment(accepts, None, tier).await
     } else {
@@ -611,18 +611,25 @@ pub async fn sign_payment_auto(
 fn write_local_signing_warning<W: std::io::Write>(w: &mut W) {
     let _ = writeln!(
         w,
-        "[onchainos] Wallet not logged in — signing x402 payments with local \
-         EVM_PRIVATE_KEY. The private key stays on this machine but is NOT \
-         protected by TEE. Run `onchainos wallet login` to switch to TEE signing."
+        "[onchainos] x402 signed locally with EVM_PRIVATE_KEY (NOT protected by TEE); \
+         run `onchainos wallet login` for TEE signing."
     );
 }
 
-/// Prints the local-signing disclaimer at most once per process.
+/// Prints the local-signing disclaimer once per cache lifetime.
+/// `Once` dedupes in-process; `PaymentCache.local_signing_warned`
+/// dedupes across subprocess invocations. Resets on logout.
 fn warn_local_signing_once() {
     use std::sync::Once;
     static WARN: Once = Once::new();
     WARN.call_once(|| {
+        let mut cache = crate::payment_cache::PaymentCache::load().unwrap_or_default();
+        if cache.local_signing_warned {
+            return;
+        }
         write_local_signing_warning(&mut std::io::stderr());
+        cache.local_signing_warned = true;
+        let _ = cache.save();
     });
 }
 

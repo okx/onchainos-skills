@@ -67,6 +67,11 @@ pub struct PaymentCache {
     /// `PaymentCache::delete`) so the preference never crosses accounts.
     #[serde(default)]
     pub default_asset: Option<PaymentDefault>,
+
+    /// Cross-process dedupe for the local-signing disclaimer. Reset on
+    /// logout so a new account sees the warning once.
+    #[serde(default)]
+    pub local_signing_warned: bool,
 }
 
 impl PaymentCache {
