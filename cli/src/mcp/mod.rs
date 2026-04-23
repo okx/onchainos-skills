@@ -646,7 +646,7 @@ struct GatewayOrdersParams {
 struct WorkflowTokenResearchParams {
     /// Token contract address
     address: String,
-    /// Chain name (e.g. "solana", "ethereum"). Auto-detects from global config if omitted.
+    /// Chain name (e.g. "solana", "ethereum"). Defaults to solana if omitted.
     chain: Option<String>,
 }
 
@@ -2109,7 +2109,12 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<WorkflowPortfolioParams>,
     ) -> Result<String, String> {
-        let chains_str = p.chains.unwrap_or_else(|| "1,501".to_string());
+        // Resolve chain names to indices up-front so the output's `chains` field
+        // is always in indexed form ("1,501") regardless of whether the caller
+        // sent names ("ethereum,solana") or indices — matches CLI output shape.
+        let chains_str = crate::chains::resolve_chains(
+            &p.chains.unwrap_or_else(|| "1,501".to_string()),
+        );
         let primary_chain_index = chains_str
             .split(',')
             .next()
