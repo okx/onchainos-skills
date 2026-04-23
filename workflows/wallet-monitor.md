@@ -22,6 +22,10 @@ okx-dex-signal, okx-dex-token, okx-security
 | chain            | No       | Auto    |
 | polling_interval | No       | 60s     |
 
+## CLI
+
+Agent-orchestrated — no single CLI composite. The workflow is a polling loop with conditional per-event enrichment, so a composite command would need streaming output and stateful diffing across ticks. For a background WebSocket session use the ws-based variant (`workflows/wallet-monitor-ws.md`).
+
 ## Steps
 
 ### Step 1 — Setup [required] (sequential)
