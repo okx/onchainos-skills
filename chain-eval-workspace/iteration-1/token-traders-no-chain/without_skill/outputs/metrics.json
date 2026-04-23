@@ -1,9 +1,0 @@
-{
-  "tool_calls": {},
-  "total_tool_calls": 0,
-  "total_steps": 1,
-  "files_created": ["response.txt"],
-  "errors_encountered": 0,
-  "output_chars": 2842,
-  "transcript_chars": 2842
-}
