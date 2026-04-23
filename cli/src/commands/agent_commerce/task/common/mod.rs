@@ -25,6 +25,15 @@ pub const XLAYER_CHAIN_INDEX: &str = "196";
 /// XLayer chain name（用于 wallet_store 地址查找，wallets.json 中 chainIndex=196 的 chainName）
 pub const XLAYER_CHAIN_NAME: &str = "okb";
 
+// ─── Agent 角色常量（身份模块 API role 字段值）────────────────────────────
+
+/// 买家 / 需求方（requestor）
+pub const AGENT_ROLE_BUYER: i64 = 1;
+/// 卖家 / 服务方（provider）
+pub const AGENT_ROLE_PROVIDER: i64 = 2;
+/// 仲裁者（evaluator）
+pub const AGENT_ROLE_EVALUATOR: i64 = 3;
+
 // ─── 支付模式常量 ────────────────────────────────────────────────────────
 
 /// 担保支付：资金锁定在合约中

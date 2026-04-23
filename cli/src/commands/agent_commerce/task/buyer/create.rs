@@ -1,14 +1,18 @@
 //! 发布任务（自定义签名流程）
 //!
 //! 买家动作：发布任务 — onchainos task create
+//!
+//! 身份校验：通过调用身份模块 CLI（`onchainos agent get`）检查当前用户
+//! 是否拥有买家身份（role=1），再执行任务发布流程。
 
 use anyhow::{bail, Result};
+use tokio::process::Command;
 
+use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
-use crate::commands::agent_commerce::mock_identity::{self as identity, AgentRole, AccountBalance};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{
-    XLAYER_CHAIN_ID, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
+    AGENT_ROLE_BUYER, XLAYER_CHAIN_ID, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
 };
 use crate::wallet_api::UnsignedInfoResponse;
 
@@ -48,19 +52,101 @@ fn validate_budget(budget: f64) -> Result<()> {
     Ok(())
 }
 
-/// 余额不足时输出提示（仅警告，不阻断流程）
-fn warn_insufficient_balance(bal: &AccountBalance, budget: f64, currency: &str) {
-    let available = match currency.to_uppercase().as_str() {
-        "USDT" => bal.usdt,
-        "USDG" => bal.usdg,
+// ─── 身份校验 ────────────────────────────────────────────────────────────
+
+/// 调用身份模块 CLI（`onchainos agent get`）获取当前用户的 Agent 列表，
+/// 返回第一个 role=AGENT_ROLE_BUYER（买家/requestor）的 (agentId, ownerAddress)。
+async fn resolve_buyer_agent() -> Result<(String, String)> {
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("无法获取当前可执行文件路径: {e}"))?;
+
+    let output = Command::new(&exe)
+        .args(["agent", "get"])
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("调用 `onchainos agent get` 失败: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("身份查询失败（`onchainos agent get` 退出码 {}）: {stderr}", output.status);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|e| anyhow::anyhow!("解析 agent get 输出失败: {e}"))?;
+
+    if !parsed["ok"].as_bool().unwrap_or(false) {
+        let err_msg = parsed["error"].as_str().unwrap_or("未知错误");
+        bail!("身份查询失败: {err_msg}");
+    }
+
+    // data.list[] 中查找 role=AGENT_ROLE_BUYER（买家/requestor）的 Agent
+    let list = parsed["data"]["list"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("未查到任何 Agent 身份，请先执行 onchainos agent create --role requestor 注册买家身份"))?;
+
+    for agent in list {
+        if agent["role"].as_i64() == Some(AGENT_ROLE_BUYER) {
+            let agent_id = agent["agentId"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("Agent 缺少 agentId 字段"))?
+                .to_string();
+            let owner_address = agent["ownerAddress"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+            return Ok((agent_id, owner_address));
+        }
+    }
+
+    bail!("当前账户没有买家（requestor）身份，请先执行 onchainos agent create --role requestor 注册");
+}
+
+// ─── 余额预检 ────────────────────────────────────────────────────────────
+
+/// 调用 `onchainos wallet balance` 查询当前账户余额，
+/// 若指定代币余额不足则发出警告（不阻断流程，合约层会做最终校验）。
+async fn warn_if_insufficient_balance(budget: f64, currency: &str) {
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    let output = match Command::new(&exe)
+        .args(["wallet", "balance"])
+        .output()
+        .await
+    {
+        Ok(o) if o.status.success() => o,
         _ => return,
     };
-    if available < budget {
-        println!(
-            "⚠ 当前账户 {} 余额不足: {} {} (任务预算 {} {})，请在上链前充值",
-            bal.address, available, currency.to_uppercase(),
-            budget, currency.to_uppercase()
-        );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = match serde_json::from_str(&stdout) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    // 遍历 data.details[].tokenAssets[] 查找匹配代币的余额
+    let currency_upper = currency.to_uppercase();
+    if let Some(details) = parsed["data"]["details"].as_array() {
+        for detail in details {
+            if let Some(assets) = detail["tokenAssets"].as_array() {
+                for asset in assets {
+                    let symbol = asset["tokenSymbol"].as_str().unwrap_or("");
+                    if symbol.to_uppercase() == currency_upper {
+                        let balance_str = asset["balance"].as_str().unwrap_or("0");
+                        let balance: f64 = balance_str.parse().unwrap_or(0.0);
+                        if balance < budget {
+                            eprintln!(
+                                "⚠️  余额不足提醒：当前 {symbol} 余额为 {balance}，任务预算 {budget} {currency_upper}，请确保发布后账户有足够资金完成托管支付"
+                            );
+                        }
+                        return;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -96,68 +182,30 @@ pub async fn handle_create(
     let summary = description_summary
         .unwrap_or_else(|| description.chars().take(200).collect());
 
-    // ── Step 0: 身份检查 + 余额提示 ───────────────────────────
+    // ── Pre-check: 登录态有效性 ──────────────────────
+    // 先在主进程校验一次 token，若已过期立即报错，
+    // 避免后续子进程各自触发 relogin 导致多次 OTP 发送。
+    ensure_tokens_refreshed().await
+        .map_err(|e| anyhow::anyhow!("登录态已失效，请先执行 onchainos wallet login: {e}"))?;
+
+    // ── Step 0: 校验买家身份 ──────────────────────────
+    let (buyer_agent_id, _buyer_owner_address) = resolve_buyer_agent().await?;
+    eprintln!("[task-create] 买家身份校验通过 (agentId: {buyer_agent_id})");
+
+    // ── Step 0.5: 余额预检（警告，不阻断）──────────────
+    warn_if_insufficient_balance(budget, &currency).await;
+
+    // ── Step 0.6: 解析钱包地址 ───────────────────────────
     let wallets = crate::wallet_store::load_wallets()?
         .ok_or_else(|| anyhow::anyhow!("未登录，请先执行 onchainos wallet auth"))?;
 
     let selected_account_id = &wallets.selected_account_id;
     let (_, selected_addr) = resolve_address(&wallets, None, XLAYER_CHAIN_NAME)?;
 
-    let (account_id, addr_info) = if identity::has_role(
-        selected_account_id,
-        &selected_addr.address,
-        AgentRole::Buyer,
-    ).await? {
-        println!("✓ 当前账户已具有买家身份 (account: {selected_account_id})");
+    let account_id = selected_account_id.clone();
+    let addr_info = selected_addr;
 
-        let bal = identity::get_account_balance(
-            selected_account_id, &selected_addr.address,
-        ).await?;
-        warn_insufficient_balance(&bal, budget, &currency);
-
-        (selected_account_id.clone(), selected_addr)
-    } else {
-        let buyer_accounts = identity::list_accounts_with_role(
-            &wallets,
-            XLAYER_CHAIN_NAME,
-            AgentRole::Buyer,
-        ).await?;
-
-        if buyer_accounts.is_empty() {
-            println!("当前无任何账户具有买家身份");
-            println!("正在为当前账户注册买家身份...");
-            let _agent_id = identity::register_identity(
-                selected_account_id,
-                &selected_addr.address,
-                AgentRole::Buyer,
-            ).await?;
-            (selected_account_id.clone(), selected_addr)
-        } else {
-            let acct_pairs: Vec<(&str, &str)> = buyer_accounts
-                .iter()
-                .map(|a| (a.account_id.as_str(), a.address.as_str()))
-                .collect();
-            let balances = identity::get_accounts_balance(&acct_pairs).await?;
-
-            println!("当前账户未注册买家身份，以下账户可用：");
-            for (i, acct) in buyer_accounts.iter().enumerate() {
-                let bal = balances.iter().find(|b| b.account_id == acct.account_id);
-                let (usdt, usdg) = bal
-                    .map(|b| (b.usdt, b.usdg))
-                    .unwrap_or((0.0, 0.0));
-                println!(
-                    "  {}. account: {}  address: {}  agent: {}  USDT: {}  USDG: {}",
-                    i + 1, acct.account_id, acct.address, acct.agent_id, usdt, usdg
-                );
-            }
-            let chosen = &buyer_accounts[0];
-            println!("使用账户: {} ({})", chosen.account_id, chosen.address);
-            let (_, addr) = resolve_address(&wallets, Some(&chosen.address), XLAYER_CHAIN_NAME)?;
-            (chosen.account_id.clone(), addr)
-        }
-    };
-
-    // ── Step 1: 生成 calldata ────────
+    // ── Step 1: 生成 calldata ────────────────────────
     let body = serde_json::json!({
         "title":              title_str,
         "description":        description,
