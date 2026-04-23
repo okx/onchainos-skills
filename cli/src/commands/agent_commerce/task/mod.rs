@@ -159,10 +159,6 @@ pub enum TaskSystemCommand {
     #[command(subcommand)]
     Dispute(provider::DisputeCommand),
 
-    /// Dispute actions (buyer): evidence, info
-    #[command(name = "buyer-dispute", subcommand)]
-    BuyerDispute(client::BuyerDisputeCommand),
-
     // ── Common ───────────────────────────────────────────────────────────────
 
     /// Common queries: context lookup for AI agents
@@ -277,9 +273,6 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
 
         TaskSystemCommand::Dispute(c) =>
             provider::run_dispute(c, ctx).await,
-
-        TaskSystemCommand::BuyerDispute(c) =>
-            client::run_buyer_dispute(c, ctx).await,
 
         TaskSystemCommand::Common(c) =>
             common::run(c, ctx).await,

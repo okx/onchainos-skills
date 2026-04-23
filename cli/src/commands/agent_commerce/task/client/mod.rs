@@ -20,7 +20,6 @@ mod claim_auto_refund;
 mod close;
 mod complete;
 mod create;
-mod evidence;
 pub mod flow;
 mod judge;
 mod negotiate;
@@ -153,26 +152,6 @@ pub enum ConfigAction {
     Show,
 }
 
-// ─── buyer dispute subcommands ────────────────────────────────────────────
-
-#[derive(Subcommand)]
-pub enum BuyerDisputeCommand {
-    /// Buyer submits evidence during dispute
-    Evidence {
-        job_id: String,
-        #[arg(long)]
-        summary: String,
-        #[arg(long)]
-        file: Option<String>,
-        #[arg(long = "type")]
-        evidence_type: Option<String>,
-    },
-    /// Retrieves dispute details
-    Info {
-        dispute_id: String,
-    },
-}
-
 // ─── 路由分发 ──────────────────────────────────────────────────────────────
 
 pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
@@ -233,7 +212,3 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
     }
 }
 
-pub async fn run_buyer_dispute(cmd: BuyerDisputeCommand, _ctx: &Context) -> Result<()> {
-    let client = TaskApiClient::new();
-    evidence::run_buyer_dispute(cmd, &client).await
-}

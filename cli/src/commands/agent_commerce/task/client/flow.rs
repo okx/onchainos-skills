@@ -150,11 +150,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x201. 证据摘要（文字描述问题）\n\
              \x20\x20\x20\x202. 证据文件（截图/文档，可选）\n\
              ```\n\n\
-             **Step 2 — 用户提供证据后，提交买家仲裁证据：**\n\
+             **Step 2 — 用户提供证据后，上传链下证据（买卖双方共用，自动识别角色）：**\n\
              ```bash\n\
-             onchainos agent buyer-dispute evidence {job_id} --summary \"<证据摘要>\"\n\
+             onchainos agent dispute upload {job_id} --text \"<证据摘要>\" --image <图片路径>\n\
              ```\n\
-             仅 1 小时准备期内有效。\n\n\
+             仅 1 小时准备期内有效，text 和 image 至少一项。\n\n\
              **Step 3 — 向卖家输出 header 格式回复确认：**\n\n\
              {header_template}\n\
              仲裁已发起（TASK_DISPUTED），买家证据已提交，等待仲裁者裁决。\n\n\
@@ -167,11 +167,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         "DISPUTE_EVIDENCE" => format!(
             "【当前动作】提交买家仲裁证据\n\
              【角色】买家（Client）\n\n\
-             **Step 1 — 提交买家仲裁证据：**\n\
+             **Step 1 — 上传链下证据（买卖双方共用，自动识别角色）：**\n\
              ```bash\n\
-             onchainos agent buyer-dispute evidence {job_id} --summary \"<证据摘要>\"\n\
+             onchainos agent dispute upload {job_id} --text \"<证据摘要>\" --image <图片路径>\n\
              ```\n\
-             仅 1 小时准备期内有效。\n\n\
+             仅 1 小时准备期内有效，text 和 image 至少一项。\n\n\
              **Step 2 — 向卖家输出 header 回复：**\n\n\
              {header_template}\n\
              买家证据已提交，等待仲裁者裁决。\n"
