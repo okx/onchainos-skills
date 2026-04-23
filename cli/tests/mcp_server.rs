@@ -209,10 +209,10 @@ fn mcp_tools_list_returns_all_tools() {
     let mut client = McpClient::start();
     let tools = client.list_tools();
 
-    // Verify minimum tool count (50 as of current implementation)
+    // Verify minimum tool count (includes 5 workflow tools added in feat/workflows)
     assert!(
-        tools.len() >= 48,
-        "expected at least 40 tools, got {}: {:?}",
+        tools.len() >= 53,
+        "expected at least 53 tools, got {}: {:?}",
         tools.len(),
         tools
     );
@@ -237,6 +237,12 @@ fn mcp_tools_list_returns_all_tools() {
         "token_cluster_overview",
         "token_cluster_top_holders",
         "token_cluster_list",
+        // Workflow tools
+        "workflow_token_research",
+        "workflow_smart_money",
+        "workflow_new_tokens",
+        "workflow_wallet_analysis",
+        "workflow_portfolio",
     ];
     for name in expected {
         assert!(
@@ -534,4 +540,185 @@ fn mcp_multiple_calls_on_same_connection() {
         success_count >= 1,
         "all calls rate-limited; cannot verify connection reuse"
     );
+}
+
+// ── Workflow tools ─────────────────────────────────────────────────────────────
+
+#[test]
+fn mcp_workflow_token_research_returns_ok() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "workflow_token_research",
+        json!({ "address": common::tokens::SOL_BONK, "chain": "solana" }),
+    );
+    if result.is_rate_limited() { return; }
+    assert!(!result.is_error, "tool returned error: {}", result.content);
+}
+
+#[test]
+fn mcp_workflow_token_research_has_discriminator() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "workflow_token_research",
+        json!({ "address": common::tokens::SOL_BONK, "chain": "solana" }),
+    );
+    if result.is_rate_limited() { return; }
+    let data = result.api_data();
+    assert_eq!(data["workflow"], "token-research");
+}
+
+#[test]
+fn mcp_workflow_token_research_has_core_and_structure() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "workflow_token_research",
+        json!({ "address": common::tokens::SOL_BONK, "chain": "solana" }),
+    );
+    if result.is_rate_limited() { return; }
+    let data = result.api_data();
+    assert!(!data["core"].is_null(), "core block missing");
+    assert!(!data["structure"].is_null(), "structure block missing");
+    assert!(data.get("launchpad").is_some(), "launchpad field missing");
+}
+
+#[test]
+fn mcp_workflow_token_research_non_launchpad_null_launchpad() {
+    // BONK is not a pump.fun token — Step 3 skipped, launchpad must be null
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "workflow_token_research",
+        json!({ "address": common::tokens::SOL_BONK, "chain": "solana" }),
+    );
+    if result.is_rate_limited() { return; }
+    let data = result.api_data();
+    assert!(
+        data["launchpad"].is_null(),
+        "expected null launchpad for non-launchpad token, got: {}",
+        data["launchpad"]
+    );
+}
+
+#[test]
+fn mcp_workflow_token_research_missing_address_is_error() {
+    let mut client = McpClient::start();
+    // Omitting required `address` field — server should return isError=true
+    let id = client.next_id;
+    client.next_id += 1;
+    client.send(&json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "tools/call",
+        "params": { "name": "workflow_token_research", "arguments": { "chain": "solana" } }
+    }));
+    let resp = client.recv();
+    // Either a JSON-RPC error or isError=true in result
+    let is_err = resp.get("error").is_some()
+        || resp["result"]["isError"].as_bool().unwrap_or(false);
+    assert!(is_err, "expected error for missing address, got: {resp}");
+}
+
+#[test]
+fn mcp_workflow_smart_money_returns_ok() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "workflow_smart_money",
+        json!({ "chain": "solana" }),
+    );
+    if result.is_rate_limited() { return; }
+    assert!(!result.is_error, "tool returned error: {}", result.content);
+}
+
+#[test]
+fn mcp_workflow_smart_money_has_discriminator_and_top_tokens() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "workflow_smart_money",
+        json!({ "chain": "solana" }),
+    );
+    if result.is_rate_limited() { return; }
+    let data = result.api_data();
+    assert_eq!(data["workflow"], "smart-money");
+    assert!(data["topTokens"].is_array(), "topTokens must be array: {data}");
+    assert!(data.get("rawSignals").is_some(), "rawSignals field missing");
+}
+
+#[test]
+fn mcp_workflow_new_tokens_returns_ok() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "workflow_new_tokens",
+        json!({ "chain": "solana", "stage": "MIGRATED" }),
+    );
+    if result.is_rate_limited() { return; }
+    assert!(!result.is_error, "tool returned error: {}", result.content);
+}
+
+#[test]
+fn mcp_workflow_new_tokens_has_discriminator_stage_enriched() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "workflow_new_tokens",
+        json!({ "chain": "solana", "stage": "MIGRATED" }),
+    );
+    if result.is_rate_limited() { return; }
+    let data = result.api_data();
+    assert_eq!(data["workflow"], "new-tokens");
+    assert_eq!(data["stage"], "MIGRATED");
+    assert!(data["enriched"].is_array(), "enriched must be array: {data}");
+}
+
+#[test]
+fn mcp_workflow_wallet_analysis_returns_ok() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "workflow_wallet_analysis",
+        json!({ "address": common::tokens::ETH_VITALIK, "chain": "ethereum" }),
+    );
+    if result.is_rate_limited() { return; }
+    assert!(!result.is_error, "tool returned error: {}", result.content);
+}
+
+#[test]
+fn mcp_workflow_wallet_analysis_has_discriminator_and_performance() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "workflow_wallet_analysis",
+        json!({ "address": common::tokens::ETH_VITALIK, "chain": "ethereum" }),
+    );
+    if result.is_rate_limited() { return; }
+    let data = result.api_data();
+    assert_eq!(data["workflow"], "wallet-analysis");
+    assert_eq!(data["address"], common::tokens::ETH_VITALIK);
+    assert!(data["performance"].get("7d").is_some(), "performance.7d missing");
+    assert!(data["performance"].get("30d").is_some(), "performance.30d missing");
+    assert!(data.get("balances").is_some(), "balances field missing");
+    assert!(data.get("recentPnl").is_some(), "recentPnl field missing");
+    assert!(data.get("activities").is_some(), "activities field missing");
+}
+
+#[test]
+fn mcp_workflow_portfolio_returns_ok() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "workflow_portfolio",
+        json!({ "address": common::tokens::ETH_VITALIK, "chains": "ethereum" }),
+    );
+    if result.is_rate_limited() { return; }
+    assert!(!result.is_error, "tool returned error: {}", result.content);
+}
+
+#[test]
+fn mcp_workflow_portfolio_has_discriminator_and_required_fields() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "workflow_portfolio",
+        json!({ "address": common::tokens::ETH_VITALIK, "chains": "ethereum" }),
+    );
+    if result.is_rate_limited() { return; }
+    let data = result.api_data();
+    assert_eq!(data["workflow"], "portfolio");
+    assert_eq!(data["address"], common::tokens::ETH_VITALIK);
+    assert!(data.get("balances").is_some(), "balances field missing");
+    assert!(data.get("totalValue").is_some(), "totalValue field missing");
+    assert!(data.get("overview").is_some(), "overview field missing");
 }

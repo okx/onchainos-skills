@@ -121,6 +121,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::defi::DefiCommand,
     },
+    /// Multi-step workflow commands that chain API calls for complete operations
+    Workflow {
+        #[command(subcommand)]
+        command: Box<commands::workflows::WorkflowCommand>,
+    },
+
     /// Upgrade onchainos to the latest version
     Upgrade(commands::upgrade::UpgradeArgs),
 
@@ -191,6 +197,7 @@ async fn run() {
         Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Ws { command } => commands::ws::execute(command).await,
+        Commands::Workflow { command } => commands::workflows::execute(&ctx, *command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
         Commands::TaskSystem { command } => commands::agent_commerce::run(command, &ctx).await,
     };

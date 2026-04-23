@@ -328,6 +328,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
+        Commands::Workflow { command } => format!("workflow {}", workflow_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
         Commands::TaskSystem { command } => format!("agent {}", agent_sub(command)),
         Commands::CrossChain { .. } => "cross-chain".to_string(),
@@ -451,6 +452,7 @@ fn token_sub(c: &TokenCommand) -> &'static str {
         TokenCommand::ClusterTopHolders { .. } => "cluster-top-holders",
         TokenCommand::ClusterList { .. } => "cluster-list",
         TokenCommand::ClusterSupportedChains => "cluster-supported-chains",
+        TokenCommand::Report { .. } => "report",
     }
 }
 
@@ -501,6 +503,7 @@ fn wallet_sub(c: &WalletCommand) -> &'static str {
         WalletCommand::History { .. } => "history",
         WalletCommand::ContractCall { .. } => "contract-call",
         WalletCommand::SignMessage { .. } => "sign-message",
+        WalletCommand::ReportPluginInfo { .. } => "report-plugin-info",
     }
 }
 
@@ -518,6 +521,17 @@ fn payment_sub(c: &PaymentCommand) -> &'static str {
     match c {
         PaymentCommand::X402Pay { .. } => "x402-pay",
         PaymentCommand::Eip3009Sign { .. } => "eip3009-sign",
+    }
+}
+
+fn workflow_sub(c: &crate::commands::workflows::WorkflowCommand) -> &'static str {
+    use crate::commands::workflows::WorkflowCommand;
+    match c {
+        WorkflowCommand::TokenResearch { .. } => "token-research",
+        WorkflowCommand::SmartMoney { .. } => "smart-money",
+        WorkflowCommand::NewTokens { .. } => "new-tokens",
+        WorkflowCommand::WalletAnalysis { .. } => "wallet-analysis",
+        WorkflowCommand::Portfolio { .. } => "portfolio",
     }
 }
 

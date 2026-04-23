@@ -9,11 +9,32 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 ## Architecture
 
 - **skills/** — 17 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **workflows/** — Pre-built multi-step workflow docs (`INDEX.md` for routing, `TEMPLATE.md` for authoring guide)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
 - **.mcp.json.example** — MCP server configuration template for Claude Code
 - **.github/workflows/** — CI/CD pipeline (`release.yml`: tag-triggered build for 9 platforms → GitHub Release)
 - **install.sh** — One-line installer for macOS / Linux (`curl | sh`)
+
+## Workflows
+
+**For any of the following user intents, read `workflows/INDEX.md` before responding:**
+
+| Intent | Trigger examples |
+|--------|-----------------|
+| Token research | "analyze token", "research [address]", "is this token safe" |
+| Market overview | "daily brief", "market overview", "what's the market doing" |
+| Smart money | "what are whales buying", "copy trading signals", "smart money" |
+| New token scan | "scan new tokens", "pump.fun tokens", "meme scan" |
+| Wallet analysis | "analyze wallet", "check this address", "is this wallet worth following" |
+| Portfolio | "check my holdings", "my portfolio", "my wallet" |
+| Wallet monitor | "watch wallet", "monitor address", "background monitor" |
+
+`workflows/INDEX.md` maps each intent to the correct workflow file with step-by-step instructions.
+For Chinese queries, read `workflows/references/keyword-glossary.md` first to resolve the intent.
+
+Safety: follow token risk controls defined in `okx-security` SKILL.md.
+For script requests, append `--format json` to all CLI commands.
 
 ## Available Skills
 
