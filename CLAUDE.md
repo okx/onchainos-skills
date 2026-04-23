@@ -8,7 +8,7 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 
 ## Architecture
 
-- **skills/** — 13 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **skills/** — 14 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
 - **workflows/** — 8 multi-step workflow docs (`INDEX.md` for routing, `TEMPLATE.md` for authoring guide)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
@@ -27,7 +27,6 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 | Smart money | "what are whales buying", "copy trading signals", "smart money" |
 | New token scan | "scan new tokens", "pump.fun tokens", "meme scan" |
 | Wallet analysis | "analyze wallet", "check this address", "is this wallet worth following" |
-| Buy / sell / swap | "buy X", "sell X", "swap X for Y", "trade X for Y" |
 | Portfolio | "check my holdings", "my portfolio", "my wallet" |
 | Wallet monitor | "watch wallet", "monitor address", "background monitor" |
 
