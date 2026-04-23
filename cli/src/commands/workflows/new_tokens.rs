@@ -1,4 +1,4 @@
-/// W4 — New Token Screening
+/// New Token Screening
 ///
 /// Step 1: fetch MIGRATED launchpad tokens
 ///   API failure: token_list null, Step 2 skipped entirely, returns gracefully

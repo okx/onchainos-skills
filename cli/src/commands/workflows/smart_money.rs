@@ -1,4 +1,4 @@
-/// W3 — Smart Money Signals
+/// Smart Money Signals
 ///
 /// Step 1: fetch signal list → aggregate by token (sort desc by SM wallet count) → top 5
 ///   signal API failure: rawSignals null, topTokens empty, returns gracefully (not an error)

@@ -1,4 +1,4 @@
-/// W7 — Portfolio Check
+/// Portfolio Check
 ///
 /// Step 1 (parallel): all balances + total value + 30d portfolio overview
 ///   partial failures: field null, rest continues
@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn all_null_returns_valid_shell() {
-        // No "all fail → error" rule for W7 — return valid output with null fields
+        // No "all fail → error" rule for portfolio — return valid output with null fields
         let out = full_assemble(null(), null(), null());
         assert_eq!(out["workflow"], "portfolio");
         assert!(out["balances"].is_null());

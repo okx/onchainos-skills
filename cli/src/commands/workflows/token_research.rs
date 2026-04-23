@@ -1,4 +1,4 @@
-/// W1 — Token Research
+/// Token Research
 ///
 /// Step 1: delegates to token::fetch_report() — the PRD §3.1 composite command
 ///   (token info + price-info + advanced-info + security scan in one call)

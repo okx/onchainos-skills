@@ -1,4 +1,4 @@
-/// W5 — Wallet Analysis
+/// Wallet Analysis
 ///
 /// Step 1 (parallel): portfolio overview 7d + 30d + all balances
 ///   partial failures: field null, rest continues (no "all fail → error" rule in PRD for W5)
@@ -183,7 +183,7 @@ mod tests {
 
     #[test]
     fn all_null_still_returns_ok_not_error() {
-        // W5 has no "all fail → error" rule in the PRD — partial data is still useful
+        // Wallet analysis has no "all fail → error" rule in the PRD — partial data is still useful
         let out = full_assemble(null(), null(), null(), null(), null());
         assert_eq!(out["workflow"], "wallet-analysis");
         assert!(out["performance"]["7d"].is_null());

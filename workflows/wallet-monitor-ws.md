@@ -21,9 +21,9 @@ okx-dex-ws, okx-dex-token, okx-security
 | wallet_addresses | Yes      | Max 10  |
 | chain            | No       | Auto    |
 
-**Difference from W8 (Polling):**
+**Difference from Polling:**
 
-| Aspect       | W8 Polling                     | W9 WebSocket                     |
+| Aspect       | Polling                        | WebSocket                        |
 |--------------|--------------------------------|----------------------------------|
 | Runs in      | AI in-session loop             | Background WS session            |
 | AI presence  | Required                       | Not needed after setup           |

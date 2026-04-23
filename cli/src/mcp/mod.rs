@@ -2088,7 +2088,7 @@ impl McpServer {
 
     #[tool(
         name = "workflow_token_research",
-        description = "W1 — Full token due diligence in one call: price, contract, security scan, \
+        description = "Full token due diligence in one call: price, contract, security scan, \
             holder distribution, cluster overview, top traders, smart money signals. \
             Accepts either 'address' (contract address) or 'query' (symbol/name). \
             When 'query' is used without 'address', returns top 5 search results — \
@@ -2140,7 +2140,7 @@ impl McpServer {
 
     #[tool(
         name = "workflow_smart_money",
-        description = "W3 — Smart money signals aggregated and enriched in one call. \
+        description = "Smart money signals aggregated and enriched in one call. \
             Fetches the signal list, groups by token, takes the top 5 by SM wallet count, \
             then runs per-token due diligence (price, security, contract, optional launchpad). \
             Signal API failure returns gracefully with empty topTokens."
@@ -2167,7 +2167,7 @@ impl McpServer {
 
     #[tool(
         name = "workflow_new_tokens",
-        description = "W4 — Launchpad new token screening in one call. \
+        description = "Launchpad new token screening in one call. \
             Fetches MIGRATED (default) or MIGRATING tokens, then enriches the top 10 \
             with security scan, contract info, dev history, and bundle rate in parallel. \
             Token list API failure returns gracefully with empty enriched list."
@@ -2196,7 +2196,7 @@ impl McpServer {
 
     #[tool(
         name = "workflow_wallet_analysis",
-        description = "W5 — Wallet performance, behaviour, and recent activity in one call. \
+        description = "Wallet performance, behaviour, and recent activity in one call. \
             Fetches 7d and 30d portfolio overview, all token balances, recent per-token PnL, \
             and latest on-chain activity via the address tracker. \
             Partial failures return null for that field; no all-fail error rule for W5."
@@ -2224,7 +2224,7 @@ impl McpServer {
 
     #[tool(
         name = "workflow_portfolio",
-        description = "W7 — Wallet portfolio snapshot in one call: all token balances, \
+        description = "Wallet portfolio snapshot in one call: all token balances, \
             total value, and 30d PnL overview. \
             Partial failures return null for that field."
     )]

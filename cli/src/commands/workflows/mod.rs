@@ -12,7 +12,7 @@ use super::Context;
 
 #[derive(Subcommand)]
 pub enum WorkflowCommand {
-    /// W1: Full token due diligence — price, security, holders, signals, optional launchpad.
+    /// Full token due diligence — price, security, holders, signals, optional launchpad.
     /// Accepts either --address (contract address) or --query (symbol/name search).
     /// When --query is used, returns top 5 search results for user selection.
     TokenResearch {
@@ -28,14 +28,14 @@ pub enum WorkflowCommand {
         chain: Option<String>,
     },
 
-    /// W3: Smart money signals — aggregate signals by token, run per-token due diligence
+    /// Smart money signals — aggregate signals by token, run per-token due diligence
     SmartMoney {
         /// Chain (defaults to solana)
         #[arg(long)]
         chain: Option<String>,
     },
 
-    /// W4: New token screening — MIGRATED launchpad scan + safety enrichment for top 10
+    /// New token screening — MIGRATED launchpad scan + safety enrichment for top 10
     NewTokens {
         /// Chain (defaults to solana)
         #[arg(long)]
@@ -45,7 +45,7 @@ pub enum WorkflowCommand {
         stage: Option<String>,
     },
 
-    /// W5: Wallet analysis — 7d/30d performance, trading behaviour, recent activity
+    /// Wallet analysis — 7d/30d performance, trading behaviour, recent activity
     WalletAnalysis {
         /// Wallet address to analyse
         #[arg(long)]
@@ -55,7 +55,7 @@ pub enum WorkflowCommand {
         chain: Option<String>,
     },
 
-    /// W7: Portfolio check — balances, total value, 30d PnL overview
+    /// Portfolio check — balances, total value, 30d PnL overview
     Portfolio {
         /// Wallet address
         #[arg(long)]
