@@ -29,12 +29,22 @@ Walk this ladder in order:
 2. **Run `onchainos agent get`.** The backend auto-filters by the caller's userId.
    - **0 agents** → STOP. Tell the user: "你还没有注册自己的 agent，先 `agent create` 一个（任意 role）才能给别人打分。" Offer to enter the `create` flow.
    - **1 agent** → silently use its agentId as `--creator-id`; mention the choice in the confirmation: "你的 agent #N <name> 会作为 creator 出现在这条评分上。"
-   - **Multiple agents** → ask the user which to use:
+   - **Multiple agents** → ask the user which to use, using the numbered-options pattern (`SKILL.md §Choice prompts`) in the user's language:
 
+     Chinese:
      ```
      你要用哪个 agent 作为评价人？
-       [1] #88 requester  MyBuyer
-       [2] #99 provider   DeFi Analyzer
+       1. #88 requester  MyBuyer
+       2. #99 provider   DeFi Analyzer
+     回复对应数字。
+     ```
+
+     English:
+     ```
+     Which of your agents should be the reviewer?
+       1. #88 requester  MyBuyer
+       2. #99 provider   DeFi Analyzer
+     Reply with the number.
      ```
 
      Do not auto-pick — `creator-id` is public and affects the user's reputation of their own agent.

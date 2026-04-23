@@ -48,13 +48,25 @@ Before entering any role flow triggered by the user's own initiative, run `agent
 
 ### provider（可多开）
 
-两条路都允许，问用户选哪条：
+两条路都允许。用编号选项问（参考 `SKILL.md §Choice prompts`）：
 
-> 中文："你已经有一个 provider 身份 #<N>（<name>）。这次是再开一个新的 provider，还是修改现有这个？"
->
-> English: "You already have a provider identity #<N> (<name>). Do you want to register a new provider, or update this existing one?"
+中文：
+```
+你已经有一个 provider 身份 #<N>（<name>）。这次是：
+  1. 再开一个新的 provider（同一个地址可多开）
+  2. 修改现有这个的描述 / 头像 / 服务
+回复 1 或 2。
+```
 
-Do not auto-choose for provider.
+English:
+```
+You already have a provider identity #<N> (<name>). What would you like to do?
+  1. Register a new provider (multiple providers per address are allowed)
+  2. Update the existing one (description / picture / services)
+Reply 1 or 2.
+```
+
+Do not auto-choose for provider. Don't silently default.
 
 ### Language
 

@@ -50,7 +50,7 @@ Task-lifecycle phrases belong to `okx-agent-task`, not here. The following phras
 | 接单 / 接任务 / 接一单 / accept task / take a job | `okx-agent-task` |
 | 交付 / 验收 / 还价 / deliver / dispute / negotiate | `okx-agent-task` |
 | 仲裁一下这单 / 发起仲裁 / open a dispute | `okx-agent-task` |
-| 我要当仲裁者（但不提身份/注册） | ambiguous — ask once: "你是想注册成为仲裁者身份（→ 身份注册），还是对某笔任务发起仲裁（→ 任务仲裁）？" |
+| 我要当仲裁者（但不提身份/注册） | ambiguous — ask once using the numbered pattern (§Choice prompts). Chinese: `你是想：\n  1. 注册成为仲裁者身份（身份注册流程）\n  2. 对某笔任务发起仲裁（任务仲裁流程）\n回复 1 或 2。` / English: `Do you want to:\n  1. Register as an evaluator identity\n  2. Open a dispute on a specific task\nReply 1 or 2.` Route to `okx-agent-identity` on `1`, `okx-agent-task` on `2`. |
 
 "仲裁" **only** activates this skill when it co-occurs with identity context words: `注册 / 身份 / 成为仲裁者 / register evaluator`. Bare "仲裁一下这单" is a task dispute — route to `okx-agent-task`.
 
@@ -116,7 +116,24 @@ Full parameter tables, examples, and return schemas → `references/cli-referenc
 
 Four gates, in order. **Never skip a gate, never combine gates into one message.**
 
-1. **Ask role.** Must answer. Do NOT default. Phrasing: "你要注册哪种身份？买家 (requester) / 服务方 (provider) / 验证者 (evaluator)？"
+1. **Ask role.** Must answer. Do NOT default. Use the numbered-options pattern (see §Choice prompts), in the user's language.
+   - 中文：
+     ```
+     你要注册哪种身份？
+       1. 买家（requester）— 发任务、付费买服务
+       2. 服务方（provider）— 提供服务、接订单
+       3. 验证者（evaluator）— 仲裁任务争议
+     回复数字 1/2/3。
+     ```
+   - English:
+     ```
+     Which identity do you want to register?
+       1. requester — publishes tasks, pays for services
+       2. provider — offers services, delivers work
+       3. evaluator — arbitrates task disputes
+     Reply with a number: 1/2/3.
+     ```
+   Also accept a written role name as a fallback. CLI accepts `1`/`2`/`3` directly as `--role` aliases, so the numeric reply can be passed through.
 2. **Pre-check existing agents** (skip for passive onboarding). Run `onchainos agent get` once.
    - **requester / evaluator**: unique per address. If the user already has one of this role, do **NOT** offer to create a new one — tell them they already have it and point to `update`. Do not enter the create flow.
    - **provider**: may have multiple. If the user already has one, ask them to choose: register another new provider, or update the existing one.
@@ -359,6 +376,51 @@ Every user-facing string the skill renders must match the user's language. Detec
 - Never mix languages in a single message to the user.
 - Never translate the user's own words back to them in a different language (e.g. don't echo "`天气小明`" as "Weather Xiaoming").
 - Never force a language the user did not use.
+
+## Choice prompts (numbered options)
+
+Whenever the user has to pick from a **bounded set of 2–5 options**, render them as a numbered list and accept the number as the reply. Open-ended fields (Name, Description, Fee amount, Description for feedback) stay free-text. Never ask "A or B?" as prose when you could render "1. A / 2. B".
+
+### Template (Chinese)
+
+```
+<一句话提问>
+  1. <选项 1 的标签> — <一行解释，可选>
+  2. <选项 2 的标签> — <一行解释，可选>
+  3. <选项 3 的标签> — <一行解释，可选>
+回复数字 1/2/3。
+```
+
+### Template (English)
+
+```
+<One-line question>
+  1. <Option 1 label> — <one-line explanation, optional>
+  2. <Option 2 label> — <one-line explanation, optional>
+  3. <Option 3 label> — <one-line explanation, optional>
+Reply with a number: 1/2/3.
+```
+
+### Rules
+
+- **Also accept the canonical spelling** as a fallback: if user replies `A2MCP` instead of `1`, accept it. But the **primary ask is numeric**.
+- **Map the number before sending to the CLI.** CLI enums accept: `--role` accepts numeric aliases (`1`/`2`/`3` — `utils.rs:162-165`), so you can pass the number straight through. `ServiceType` and other enums do NOT have numeric aliases — the skill must translate `1→A2MCP`, `2→A2A` locally before invoking the CLI. Never send a raw `1` / `2` to a flag that doesn't accept it.
+- **One question per turn.** Even with numbered options the question is one turn (see `_shared/no-polling.md` and `role-playbook.md` one-question rule).
+- **Don't use numbered options for open-ended fields.** Name, description, fee amount, feedback description — these are free-form.
+- **Don't force a menu for "what's next".** Post-success suggestions (§8 of `display-formats.md`) are always a single line, never a menu (see the Bad example in §8).
+- If the user replies with something outside the enumeration (`HTTP`, `都可以`, `随便`), politely re-ask the numbered list once; never silently pick a default.
+
+### Where this pattern is used
+
+| Scenario | Location |
+|---|---|
+| Role selection on `create` | `SKILL.md §Core Flow` gate 1 |
+| Arbitrator intent disambiguation | `SKILL.md §Negative Triggers` |
+| Existing provider pre-check (new vs update) | `references/role-playbook.md §Pre-check` |
+| ServiceType (A2MCP vs A2A) | `references/role-provider.md` Phase 2 S3 |
+| "Add another service?" loop gate | `references/role-provider.md` Phase 2 S6 |
+| Avatar upload path (attachments / generate / skip) | `references/avatar-upload.md` §Policy |
+| Which of my agents to use as feedback `--creator-id` | `references/feedback-guide.md` Step 2 |
 
 ## Amount Display Rules
 

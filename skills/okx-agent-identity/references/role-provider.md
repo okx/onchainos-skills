@@ -28,10 +28,10 @@ Chinese Q&A:
 |---|---|---|---|
 | S1 | 这项服务叫什么名字？ | non-empty | `ServiceName` |
 | S2 | 详细介绍一下这项服务。 | non-empty | `ServiceDescription` |
-| S3 | 这项服务的类型是 A2MCP（MCP 接口，按次付费）还是 A2A（agent-to-agent 协议，链外议价）？ | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `ServiceType` |
+| S3 | 使用编号选项（`SKILL.md §Choice prompts`）：<br>`这项服务是哪种类型？`<br>&nbsp;&nbsp;`1. A2MCP — 标准 MCP 接口，按次付费`<br>&nbsp;&nbsp;`2. A2A — agent-to-agent 协议，链外议价`<br>`回复 1 或 2。`<br>收到数字后**在 skill 层映射** `1→A2MCP` / `2→A2A` 再下发；CLI 没有数字别名，直接传 `1` 会 bail `invalid ServiceType`。用户直接写 `A2MCP` / `A2A` 也接受。 | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `ServiceType` |
 | S4 | if `A2MCP` → "每次调用收多少 USDT？（整数）" ; if `A2A` → skip | integer ≥ 0 | `Fee` |
 | S5 | if `A2MCP` → "MCP 接口地址是什么？必须 https:// 开头。" ; if `A2A` → skip | starts with `https://` | `Endpoint` (A2A 即使用户给了 CLI 也会清掉，见 `utils.rs::normalize_service`) |
-| S6 | "还要再加一项服务吗？（可选）" | yes → loop back to S1; no → exit | — |
+| S6 | 使用编号选项：<br>`还要再加一项服务吗？`<br>&nbsp;&nbsp;`1. 再加一项`<br>&nbsp;&nbsp;`2. 不加了，到此为止`<br>`回复 1 或 2。`<br>`1` → loop back to S1；`2` → exit. | reply 1 or 2 | — |
 
 English Q&A:
 
@@ -39,10 +39,10 @@ English Q&A:
 |---|---|---|---|
 | S1 | What's the name of this service? | non-empty | `ServiceName` |
 | S2 | Describe this service. | non-empty | `ServiceDescription` |
-| S3 | Is this service A2MCP (MCP interface, pay-per-call) or A2A (agent-to-agent protocol, off-chain pricing)? | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `ServiceType` |
+| S3 | Use the numbered-options pattern (`SKILL.md §Choice prompts`):<br>`Which type is this service?`<br>&nbsp;&nbsp;`1. A2MCP — standard MCP interface, pay-per-call`<br>&nbsp;&nbsp;`2. A2A — agent-to-agent protocol, off-chain pricing`<br>`Reply 1 or 2.`<br>Once user replies, **map in skill** `1→A2MCP` / `2→A2A` before invoking the CLI — the CLI has no numeric alias and sending raw `1` bails with `invalid ServiceType`. Writing `A2MCP` / `A2A` directly is also accepted. | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `ServiceType` |
 | S4 | if A2MCP → "Price per call in USDT? (integer)" ; if A2A → skip | integer ≥ 0 | `Fee` |
 | S5 | if A2MCP → "What's the MCP endpoint URL? Must start with https://." ; if A2A → skip | starts with `https://` | `Endpoint` (for A2A the CLI clears this even if supplied — `utils.rs::normalize_service`) |
-| S6 | "Want to add another service? (optional)" | yes → loop back to S1; no → exit | — |
+| S6 | Numbered options:<br>`Want to add another service?`<br>&nbsp;&nbsp;`1. Add another`<br>&nbsp;&nbsp;`2. No more, finish here`<br>`Reply 1 or 2.`<br>`1` → loop back to S1; `2` → exit. | reply 1 or 2 | — |
 
 After each service is collected, echo back a one-line summary in the user's language before asking S6:
 - 中文：`已记录 服务[1]：TVL Query（A2MCP，10 USDT，https://…）。`
@@ -58,7 +58,7 @@ After each service is collected, echo back a one-line summary in the user's lang
 | "endpoint 是 http://..." | Reject. Ask for HTTPS. |
 | "A2MCP Fee 免费" | Accept `0` but warn: "A2MCP 0 USDT 等同于免费入口，后续不能再按量收费。" |
 | User answers multiple service fields in one sentence | Parse what you can, but next turn still asks the remaining fields individually. |
-| "服务类型 HTTP" | Reject politely, re-ask with the two options (A2MCP / A2A) and one-line explanation each. |
+| "服务类型 HTTP" / "service type HTTP" | Reject politely and re-render the S3 numbered prompt verbatim (see `SKILL.md §Choice prompts`) — do not fabricate a new phrasing. |
 
 ## Confirmation
 

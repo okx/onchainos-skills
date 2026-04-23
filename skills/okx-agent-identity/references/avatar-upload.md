@@ -16,13 +16,39 @@ The right path depends on the runtime. Do not force the user down a path their e
 
 1. **Detect the runtime first.** If the session has an attachment facility (Claude Code attachments, editor drag-drop), allow "user-provided image". If it is a terminal-only chat, do not ask the user for a path.
 2. **Default to "skip".** If the user doesn't bring up avatar, do not prompt for one; create/update succeeds with a backend-assigned default image.
-3. **When prompting, match the user's language and offer the right options for the runtime:**
-   - Claude Code (attachments supported):
-     - 中文："要设置头像吗？可以直接发一张图片给我（推荐 1:1 方图，PNG/JPEG/WebP），我帮你上传；或者我用关键词生成一张；也可以跳过用默认图。"
-     - English: "Want to set an avatar? Send me an image (1:1 square recommended, PNG/JPEG/WebP) and I'll handle the upload; or I can generate one from keywords; or skip to use the default."
-   - Terminal (no attachments): offer only two options — generate from keywords, or skip.
-     - 中文："当前环境没法直接收图。要我用关键词生成一张（推荐 1:1 方图），还是跳过用默认图？"
-     - English: "I can't receive attachments in this environment. Want me to generate one from keywords (1:1 square recommended), or skip to the default?"
+3. **When prompting, match the user's language and use the numbered-options pattern (`SKILL.md §Choice prompts`):**
+   - Claude Code (attachments supported) — 3 options:
+     - 中文：
+       ```
+       要设置头像吗？
+         1. 发一张图片给我，我帮你上传（推荐 1:1 方图，PNG/JPEG/WebP）
+         2. 用关键词让我生成一张
+         3. 跳过，用默认图
+       回复 1/2/3。
+       ```
+     - English:
+       ```
+       Want to set an avatar?
+         1. Send me an image and I'll handle the upload (1:1 square recommended, PNG/JPEG/WebP)
+         2. Generate one from keywords
+         3. Skip, use the default
+       Reply 1/2/3.
+       ```
+   - Terminal (no attachments) — only 2 options (local upload won't work here):
+     - 中文：
+       ```
+       当前环境没法直接收图。你可以：
+         1. 用关键词让我生成一张（推荐 1:1 方图）
+         2. 跳过，用默认图
+       回复 1 或 2。
+       ```
+     - English:
+       ```
+       I can't receive attachments in this environment. You can:
+         1. Generate one from keywords (1:1 square recommended)
+         2. Skip, use the default
+       Reply 1 or 2.
+       ```
 4. **AI-generation requires explicit prompt.** Do not invent image content. Ask the user in their language: "你希望头像长什么样？几个关键词就够。" / "Describe the avatar — a few keywords is enough."
 5. **Upload result is stored as a URL and passed as `--picture`.** Do not re-upload an already-uploaded image. Do not tell the user about URLs unless they ask.
 6. **Aspect ratio guidance.** When the user sends a non-1:1 image, accept it and upload anyway — do not reject or demand re-crop. But when *proactively* recommending dimensions, say "1:1 方图 / 1:1 square" rather than a specific pixel size like 512×512 (the backend does not enforce 512, and pixel specifics date quickly).
@@ -58,9 +84,10 @@ Skill:
 
 ```
 User: "上传个头像"
-Skill: "当前环境没法直接收图。要我用关键词生成一张（推荐 1:1 方图），还是跳过用默认图？"
-  - "生成" / "generate" → ask keywords → image-gen → upload → URL (silently)
-  - "跳过" / "skip" → proceed without --picture
+Skill: (render the 2-option numbered prompt — see Policy §3, Terminal variant)
+  - User replies "1" / "生成" / "generate" → ask keywords → image-gen → upload → URL (silently)
+  - User replies "2" / "跳过" / "skip" → proceed without --picture
+  - Anything else → re-render the numbered prompt once; never silently default.
 ```
 
 ## User-provided URL
