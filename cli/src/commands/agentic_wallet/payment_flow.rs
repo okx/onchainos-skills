@@ -52,7 +52,41 @@ impl PaymentTier {
     }
 }
 
+/// Read `EVM_PRIVATE_KEY` from the environment, falling back to
+/// `~/.onchainos/.env`.
+///
+/// The error message explicitly mentions both remediation paths
+/// (login OR configure `EVM_PRIVATE_KEY`) because this function is the
+/// tripwire for the auto-payment local-sign fallback when the wallet
+/// isn't logged in.
+pub(crate) fn read_private_key() -> Result<String> {
+    std::env::var("EVM_PRIVATE_KEY").or_else(|_| {
+        let env_path = crate::home::onchainos_home()?.join(".env");
+        let content = std::fs::read_to_string(&env_path).with_context(|| {
+            format!(
+                "Wallet not logged in and no EVM_PRIVATE_KEY configured. \
+                 Either run `onchainos wallet login`, or create {} with \
+                 a line `EVM_PRIVATE_KEY=0x<hex_key>`.",
+                env_path.display()
+            )
+        })?;
+        for line in content.lines() {
+            let line = line.trim();
+            if let Some(val) = line.strip_prefix("EVM_PRIVATE_KEY=") {
+                if !val.is_empty() {
+                    return Ok(val.to_string());
+                }
+            }
+        }
+        Err(anyhow!(
+            "EVM_PRIVATE_KEY not found in {}",
+            env_path.display()
+        ))
+    })
+}
+
 /// Result of signing an x402 payment authorization.
+#[derive(Debug)]
 pub struct PaymentProof {
     /// Base64 EIP-3009 signature (for `exact` scheme) or base64 Ed25519 session
     /// signature (for `aggr_deferred` scheme).
@@ -111,13 +145,13 @@ pub fn select_accept_with_preference(
     ))
 }
 
-struct ResolvedEntry {
-    network: String,
-    amount: String,
-    pay_to: String,
-    asset: String,
-    max_timeout_seconds: u64,
-    scheme: Option<String>,
+pub(crate) struct ResolvedEntry {
+    pub(crate) network: String,
+    pub(crate) amount: String,
+    pub(crate) pay_to: String,
+    pub(crate) asset: String,
+    pub(crate) max_timeout_seconds: u64,
+    pub(crate) scheme: Option<String>,
 }
 
 /// Extract a minimal-unit amount string from an accepts entry.
@@ -208,6 +242,33 @@ pub async fn sign_payment(
     sign_payment_with_preference(accepts, from, tier, preferred.as_ref()).await
 }
 
+/// Pick the accepts entry (via scheme priority or user's saved default),
+/// resolve it to concrete fields, and collapse any tiered `amount` object
+/// (`{"basic": "100", "premium": "500"}`) to a scalar string.
+///
+/// Returns `(entry, params)`:
+/// - `entry`: the selected accepts object with `amount` normalized to a scalar.
+///   Callers embed this in the V2 payment header as `accepted`.
+/// - `params`: typed fields extracted from the entry for signing.
+pub(crate) fn prepare_resolved_entry(
+    accepts: &Value,
+    tier: Option<PaymentTier>,
+    preferred: Option<&crate::payment_cache::PaymentDefault>,
+) -> Result<(Value, ResolvedEntry)> {
+    let (mut entry, scheme) = match accepts.as_array() {
+        Some(arr) => select_accept_with_preference(arr, preferred)?,
+        None => (
+            accepts.clone(),
+            accepts["scheme"].as_str().map(|s| s.to_string()),
+        ),
+    };
+    let params = resolve_entry(&entry, scheme, tier)?;
+    if entry.get("amount").map(Value::is_object).unwrap_or(false) {
+        entry["amount"] = json!(params.amount);
+    }
+    Ok((entry, params))
+}
+
 /// Variant of `sign_payment` that signs exactly what the caller's
 /// `accepts` says, without consulting the saved default asset. Used by
 /// the manual `onchainos payment x402-pay` command so the user-supplied
@@ -218,20 +279,7 @@ pub async fn sign_payment_with_preference(
     tier: Option<PaymentTier>,
     preferred: Option<&crate::payment_cache::PaymentDefault>,
 ) -> Result<(PaymentProof, Value)> {
-    let (mut entry, scheme) = match accepts.as_array() {
-        Some(arr) => select_accept_with_preference(arr, preferred)?,
-        None => (
-            accepts.clone(),
-            accepts["scheme"].as_str().map(|s| s.to_string()),
-        ),
-    };
-    let params = resolve_entry(&entry, scheme, tier)?;
-    // `/config` returns `amount` as a tiered object `{"basic": "100", "premium": "500"}`,
-    // but x402 V2 requires the `accepted.amount` embedded in the header to be a
-    // scalar string. Collapse to the tier we're signing for.
-    if entry.get("amount").map(Value::is_object).unwrap_or(false) {
-        entry["amount"] = json!(params.amount);
-    }
+    let (entry, params) = prepare_resolved_entry(accepts, tier, preferred)?;
 
     let access_token = ensure_tokens_refreshed().await?;
     let real_chain_id = parse_eip155_chain_id(&params.network)?;
@@ -369,6 +417,172 @@ pub async fn sign_payment_with_preference(
             entry,
         ))
     }
+}
+
+/// Sign an x402 payment authorization locally using a hex private key
+/// (`EVM_PRIVATE_KEY`), without touching the wallet session or TEE.
+///
+/// Shares scheme selection + amount resolution with the TEE path via
+/// `prepare_resolved_entry`, but deliberately passes `preferred = None`:
+/// if the user saved a `payment default` for an asset that only offers
+/// `aggr_deferred`, honoring it here would lead to a scheme we can't
+/// sign locally. Skipping preferred lets us always pick the `exact`
+/// entry when one exists, and fail fast otherwise.
+///
+/// Returns `(PaymentProof, Value)` with `session_cert = None`, matching
+/// the TEE `exact` branch so the downstream `build_payment_header` path
+/// is identical.
+pub async fn sign_payment_local(
+    accepts: &Value,
+    tier: Option<PaymentTier>,
+) -> Result<(PaymentProof, Value)> {
+    use alloy_primitives::FixedBytes;
+    use alloy_signer_local::PrivateKeySigner;
+
+    // `preferred = None`: see doc above.
+    let (entry, params) = prepare_resolved_entry(accepts, tier, None)?;
+
+    if params
+        .scheme
+        .as_deref()
+        .map(|s| s.eq_ignore_ascii_case("aggr_deferred"))
+        .unwrap_or(false)
+    {
+        bail!(
+            "local private-key signing requires an 'exact' scheme accepts entry, \
+             but the server only offered 'aggr_deferred' (session key required). \
+             Run `onchainos wallet login` to enable TEE signing."
+        );
+    }
+
+    // EIP-712 domain is on the selected entry's `extra`, not in ResolvedEntry.
+    let domain_name = entry["extra"]["name"].as_str().ok_or_else(|| {
+        anyhow!("missing 'extra.name' (EIP-712 domain name) in accepts entry")
+    })?;
+    let domain_version = entry["extra"]["version"].as_str().unwrap_or("2");
+
+    let pk_hex = read_private_key()?;
+    let pk_trimmed = pk_hex.trim();
+    let pk_clean = pk_trimmed.strip_prefix("0x").unwrap_or(pk_trimmed);
+    let mut pk_bytes =
+        hex::decode(pk_clean).context("EVM_PRIVATE_KEY is not valid hex")?;
+    if pk_bytes.len() != 32 {
+        bail!(
+            "EVM_PRIVATE_KEY must be 32 bytes (64 hex chars), got {}",
+            pk_bytes.len()
+        );
+    }
+    let signer = PrivateKeySigner::from_slice(&pk_bytes)
+        .map_err(|e| anyhow!("invalid secp256k1 private key: {e}"))?;
+    let from = format!("{:#x}", signer.address());
+
+    let chain_id = parse_eip155_chain_id(&params.network)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let valid_before = now
+        .checked_add(params.max_timeout_seconds)
+        .ok_or_else(|| anyhow!("timeout overflow"))?;
+    let nonce_bytes = {
+        use rand::RngCore;
+        let mut n = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut n);
+        n
+    };
+
+    let auth = crate::crypto::TransferWithAuthorization {
+        from: from.parse().context("derived address is not valid EVM hex")?,
+        to: params
+            .pay_to
+            .parse()
+            .context("payTo is not a valid EVM address")?,
+        value: U256::from_str_radix(&params.amount, 10)
+            .map_err(|e| anyhow!("amount not a valid integer: {e}"))?,
+        validAfter: U256::ZERO,
+        validBefore: U256::from(valid_before),
+        nonce: FixedBytes::from(nonce_bytes),
+    };
+    let domain = crate::crypto::Eip3009DomainParams {
+        name: domain_name.to_string(),
+        version: domain_version.to_string(),
+        chain_id,
+        verifying_contract: params
+            .asset
+            .parse()
+            .context("asset is not a valid EVM address")?,
+    };
+
+    let sig_b64 = crate::crypto::eip3009_sign(&auth, &domain, &pk_bytes)?;
+    pk_bytes.zeroize();
+
+    // Match TEE exact path output: 0x-prefixed hex, 65 bytes.
+    let sig_bytes = B64
+        .decode(&sig_b64)
+        .context("unexpected base64 decode error from eip3009_sign")?;
+    let signature = format!("0x{}", hex::encode(&sig_bytes));
+    let authorization = json!({
+        "from": from,
+        "to": &params.pay_to,
+        "value": &params.amount,
+        "validAfter": "0",
+        "validBefore": valid_before.to_string(),
+        "nonce": format!("0x{}", hex::encode(nonce_bytes)),
+    });
+
+    Ok((
+        PaymentProof {
+            signature,
+            authorization,
+            session_cert: None,
+        },
+        entry,
+    ))
+}
+
+/// Dispatch to TEE signing if the wallet is logged in, otherwise
+/// fall back to local private-key signing.
+///
+/// "Logged in" is defined as `wallets.json` existing — this matches
+/// `security.rs`'s existing precheck and keeps the fallback strictly
+/// additive. Session-expiry cases (wallets.json present but session
+/// revoked) surface the TEE error path unchanged so users are prompted
+/// to re-login instead of silently being re-routed to a different
+/// signing address.
+///
+/// Prints a one-shot stderr warning the first time the local branch
+/// runs in a process.
+pub async fn sign_payment_auto(
+    accepts: &Value,
+    tier: Option<PaymentTier>,
+) -> Result<(PaymentProof, Value)> {
+    let logged_in = crate::wallet_store::load_wallets()?.is_some();
+    if logged_in {
+        sign_payment(accepts, None, tier).await
+    } else {
+        warn_local_signing_once();
+        sign_payment_local(accepts, tier).await
+    }
+}
+
+/// Writes the local-signing disclaimer to the given sink. Separated from
+/// the `Once`-gated public entry point so tests can assert the text
+/// deterministically.
+fn write_local_signing_warning<W: std::io::Write>(w: &mut W) {
+    let _ = writeln!(
+        w,
+        "[onchainos] Wallet not logged in — signing x402 payments with local \
+         EVM_PRIVATE_KEY. The private key stays on this machine but is NOT \
+         protected by TEE. Run `onchainos wallet login` to switch to TEE signing."
+    );
+}
+
+/// Prints the local-signing disclaimer at most once per process.
+fn warn_local_signing_once() {
+    use std::sync::Once;
+    static WARN: Once = Once::new();
+    WARN.call_once(|| {
+        write_local_signing_warning(&mut std::io::stderr());
+    });
 }
 
 /// Build the base64-encoded payment header for the chosen mode.
@@ -630,5 +844,232 @@ mod tests {
             build_payment_header(&proof, &entry, "https://api.example.com/foo").unwrap();
         let body: Value = serde_json::from_slice(&B64.decode(&value).unwrap()).unwrap();
         assert_eq!(body["accepted"]["extra"]["sessionCert"], "cert-123");
+    }
+
+    #[test]
+    fn read_private_key_reads_from_env_var() {
+        // The env var is checked first, so this doesn't need a temp home.
+        // Use a scoped SetEnv guard pattern to restore state regardless of outcome.
+        struct EnvGuard(&'static str, Option<String>);
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                match &self.1 {
+                    Some(v) => std::env::set_var(self.0, v),
+                    None => std::env::remove_var(self.0),
+                }
+            }
+        }
+        let prev = std::env::var("EVM_PRIVATE_KEY").ok();
+        let _guard = EnvGuard("EVM_PRIVATE_KEY", prev);
+        std::env::set_var(
+            "EVM_PRIVATE_KEY",
+            "0x1111111111111111111111111111111111111111111111111111111111111111",
+        );
+        let got = read_private_key().unwrap();
+        assert_eq!(
+            got,
+            "0x1111111111111111111111111111111111111111111111111111111111111111"
+        );
+    }
+
+    /// Test helper — setting/restoring EVM_PRIVATE_KEY around a block.
+    /// Duplicated from Task 2's EnvGuard pattern so each test is
+    /// self-contained (no cross-test ordering dependencies).
+    #[allow(dead_code)]
+    fn with_pk_env<F: FnOnce()>(pk_hex: &str, f: F) {
+        struct Guard(&'static str, Option<String>);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                match &self.1 {
+                    Some(v) => std::env::set_var(self.0, v),
+                    None => std::env::remove_var(self.0),
+                }
+            }
+        }
+        let prev = std::env::var("EVM_PRIVATE_KEY").ok();
+        let _g = Guard("EVM_PRIVATE_KEY", prev);
+        std::env::set_var("EVM_PRIVATE_KEY", pk_hex);
+        f();
+    }
+
+    const TEST_PK: &str =
+        "0x1111111111111111111111111111111111111111111111111111111111111111";
+    // secp256k1 address derived from TEST_PK (lowercased hex, 0x-prefixed)
+    const TEST_PK_ADDR: &str = "0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a";
+
+    #[tokio::test]
+    async fn sign_payment_auto_uses_local_when_no_wallets_json() {
+        // Serialize access to process-wide env vars.
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join("sign_payment_auto_local");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+        std::env::set_var("EVM_PRIVATE_KEY", TEST_PK);
+
+        let accepts = json!([{
+            "scheme": "exact",
+            "network": "eip155:196",
+            "amount": "1",
+            "payTo": "0x1111111111111111111111111111111111111111",
+            "asset": "0x2222222222222222222222222222222222222222",
+            "maxTimeoutSeconds": 300,
+            "extra": {"name": "USDG", "version": "1"}
+        }]);
+        let (proof, entry) = sign_payment_auto(&accepts, None).await.unwrap();
+
+        std::env::remove_var("ONCHAINOS_HOME");
+        std::env::remove_var("EVM_PRIVATE_KEY");
+        std::fs::remove_dir_all(&dir).ok();
+
+        // Hallmarks of the local path:
+        assert!(proof.session_cert.is_none());
+        assert!(proof.signature.starts_with("0x"));
+        assert_eq!(entry["scheme"].as_str(), Some("exact"));
+        assert_eq!(proof.authorization["from"].as_str(), Some(TEST_PK_ADDR));
+    }
+
+    #[test]
+    fn write_local_signing_warning_contains_key_phrases() {
+        let mut buf = Vec::new();
+        write_local_signing_warning(&mut buf);
+        let text = String::from_utf8(buf).unwrap();
+        assert!(text.contains("EVM_PRIVATE_KEY"), "missing key env var name: {text}");
+        assert!(text.contains("NOT protected by TEE"), "missing TEE disclaimer: {text}");
+        assert!(text.contains("wallet login"), "missing recovery hint: {text}");
+    }
+
+    #[tokio::test]
+    async fn sign_payment_local_produces_exact_scheme_proof() {
+        with_pk_env(TEST_PK, || {});
+        let accepts = json!([{
+            "scheme": "exact",
+            "network": "eip155:196",
+            "amount": "1000000",
+            "payTo": "0x1111111111111111111111111111111111111111",
+            "asset": "0x2222222222222222222222222222222222222222",
+            "maxTimeoutSeconds": 300,
+            "extra": {"name": "USDG", "version": "1"}
+        }]);
+        std::env::set_var("EVM_PRIVATE_KEY", TEST_PK);
+        let (proof, entry) = sign_payment_local(&accepts, None).await.unwrap();
+        std::env::remove_var("EVM_PRIVATE_KEY");
+
+        // Signature shape: 0x + 130 hex chars (65 bytes r||s||v).
+        assert!(proof.signature.starts_with("0x"));
+        assert_eq!(proof.signature.len(), 2 + 130);
+        assert!(proof.session_cert.is_none());
+        assert_eq!(proof.authorization["from"].as_str(), Some(TEST_PK_ADDR));
+        assert_eq!(
+            proof.authorization["to"].as_str(),
+            Some("0x1111111111111111111111111111111111111111")
+        );
+        assert_eq!(proof.authorization["value"].as_str(), Some("1000000"));
+        assert_eq!(proof.authorization["validAfter"].as_str(), Some("0"));
+        // selected entry is the exact entry
+        assert_eq!(entry["scheme"].as_str(), Some("exact"));
+    }
+
+    #[tokio::test]
+    async fn sign_payment_local_rejects_aggr_deferred_only() {
+        let accepts = json!([{
+            "scheme": "aggr_deferred",
+            "network": "eip155:196",
+            "amount": "1000000",
+            "payTo": "0x1111111111111111111111111111111111111111",
+            "asset": "0x2222222222222222222222222222222222222222",
+            "maxTimeoutSeconds": 300,
+            "extra": {"name": "USDG", "version": "1"}
+        }]);
+        std::env::set_var("EVM_PRIVATE_KEY", TEST_PK);
+        let err = sign_payment_local(&accepts, None).await.unwrap_err();
+        std::env::remove_var("EVM_PRIVATE_KEY");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("aggr_deferred") || msg.contains("exact"),
+            "unexpected error message: {msg}"
+        );
+        assert!(msg.contains("wallet login"), "error should suggest login: {msg}");
+    }
+
+    #[tokio::test]
+    async fn sign_payment_local_picks_exact_when_both_schemes_present() {
+        // Even when aggr_deferred appears first in the array (and would be
+        // the natural "first entry" fallback), sign_payment_local should
+        // select the exact entry. This locks in scheme-priority behavior
+        // for the local path. The separate guarantee that a user-saved
+        // preferred asset is ignored is structural — the implementation
+        // passes `preferred = None` to prepare_resolved_entry unconditionally.
+        let accepts = json!([
+            {
+                "scheme": "aggr_deferred",
+                "network": "eip155:196",
+                "amount": "200",
+                "payTo": "0x1111111111111111111111111111111111111111",
+                "asset": "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+                "maxTimeoutSeconds": 300,
+                "extra": {"name": "USDT", "version": "1"}
+            },
+            {
+                "scheme": "exact",
+                "network": "eip155:196",
+                "amount": "100",
+                "payTo": "0x1111111111111111111111111111111111111111",
+                "asset": "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "maxTimeoutSeconds": 300,
+                "extra": {"name": "USDG", "version": "1"}
+            }
+        ]);
+
+        std::env::set_var("EVM_PRIVATE_KEY", TEST_PK);
+        let (_proof, entry) = sign_payment_local(&accepts, None).await.unwrap();
+        std::env::remove_var("EVM_PRIVATE_KEY");
+        assert_eq!(entry["scheme"].as_str(), Some("exact"));
+        assert_eq!(
+            entry["asset"].as_str(),
+            Some("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+        );
+    }
+
+    #[test]
+    fn prepare_resolved_entry_selects_exact_and_collapses_tier_amount() {
+        // accepts with both schemes; tiered amount object; no preferred.
+        let accepts = json!([
+            {
+                "scheme": "aggr_deferred",
+                "network": "eip155:196",
+                "amount": {"basic": "100", "premium": "500"},
+                "payTo": "0x1111111111111111111111111111111111111111",
+                "asset": "0x2222222222222222222222222222222222222222",
+                "maxTimeoutSeconds": 300,
+                "extra": {"name": "USDG", "version": "1"}
+            },
+            {
+                "scheme": "exact",
+                "network": "eip155:196",
+                "amount": {"basic": "100", "premium": "500"},
+                "payTo": "0x1111111111111111111111111111111111111111",
+                "asset": "0x2222222222222222222222222222222222222222",
+                "maxTimeoutSeconds": 300,
+                "extra": {"name": "USDG", "version": "1"}
+            }
+        ]);
+        let (entry, params) =
+            prepare_resolved_entry(&accepts, Some(PaymentTier::Basic), None).unwrap();
+        // scheme priority picks exact
+        assert_eq!(entry["scheme"].as_str(), Some("exact"));
+        assert_eq!(params.scheme.as_deref(), Some("exact"));
+        // tier amount collapsed to scalar
+        assert_eq!(params.amount, "100");
+        assert_eq!(entry["amount"].as_str(), Some("100"));
+        // other resolved params pass through
+        assert_eq!(params.network, "eip155:196");
+        assert_eq!(params.max_timeout_seconds, 300);
     }
 }

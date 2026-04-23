@@ -1163,7 +1163,7 @@ impl ApiClient {
         tier: PaymentTier,
     ) -> Result<(&'static str, String)> {
         let (proof, selected) =
-            crate::commands::agentic_wallet::payment_flow::sign_payment(accepts, None, Some(tier))
+            crate::commands::agentic_wallet::payment_flow::sign_payment_auto(accepts, Some(tier))
                 .await?;
         crate::commands::agentic_wallet::payment_flow::build_payment_header(
             &proof, &selected, resource,
