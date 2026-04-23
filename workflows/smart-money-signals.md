@@ -36,7 +36,7 @@ onchainos workflow smart-money [--chain <chain>]
 onchainos signal list --chain <chain>
 ```
 
-Aggregate by token: count distinct SM wallet addresses per token, sort descending by wallet count, take top 5–10.
+Aggregate by token: count distinct SM wallet addresses per token, sort descending by wallet count, take top 5.
 
 Present: token list with SM wallet count per token
 
