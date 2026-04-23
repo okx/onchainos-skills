@@ -107,8 +107,8 @@ All mock components are TypeScript (Node.js). No Rust build needed.
 | mock-seller-ui | `cd tools/mock-seller && npm run ui` | http://9002 | Provider with web UI (manual control) — cannot run alongside headless |
 | mock-buyer | `cd tools/mock-buyer && npm start` | — | Headless buyer: waits for TASK_CONFIRMED, auto-negotiates, auto-accepts, auto-completes |
 | mock-buyer-ui | `cd tools/mock-buyer && npm run ui` | http://9003 | Buyer with web UI — cannot run alongside headless |
-| mock-arbitrator | `cd tools/mock-arbitrator && npm start` | — | Headless evaluator: receives TASK_DISPUTED, resolves buyer-wins after 5s |
-| mock-arbitrator-ui | `cd tools/mock-arbitrator && npm run ui` | http://9004 | Evaluator with web UI (manual vote) — cannot run alongside headless |
+| mock-evaluator | `cd tools/mock-evaluator && npm start` | — | Headless evaluator: receives TASK_DISPUTED, resolves buyer-wins after 5s |
+| mock-evaluator-ui | `cd tools/mock-evaluator && npm run ui` | http://9004 | Evaluator with web UI (manual vote) — cannot run alongside headless |
 | openclaw gateway | `launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway` | http://18789 | AI buyer agent, loads ws-channel plugin |
 | ws-channel plugin | `~/openclaw-plugins/ws-channel/src/index.ts` | — | Routes WS messages to openclaw agent sessions |
 
@@ -132,7 +132,7 @@ CLI binary:       ~/.local/bin/onchainos
 cd tools/ws-mock-ts  && npm install && npm run build
 cd tools/mock-seller && npm install && npm run build
 cd tools/mock-buyer  && npm install && npm run build
-cd tools/mock-arbitrator && npm install && npm run build
+cd tools/mock-evaluator && npm install && npm run build
 ```
 
 ### Permission Rule
@@ -203,7 +203,7 @@ console.log('removed', n, 'sessions');
 
 ### Full E2E Test: mock-only (no openclaw)
 
-Tests the complete buyer↔seller↔arbitrator flow without the AI agent.
+Tests the complete buyer↔seller↔evaluator flow without the AI agent.
 
 ```bash
 # 1. Start infrastructure
@@ -214,7 +214,7 @@ node dist/mock-api.js > /tmp/ws-api.log     2>&1 &
 # 2. Start headless mocks
 cd tools/mock-seller     && node dist/tools/mock-seller/src/mock-seller.js         > /tmp/mock-seller.log 2>&1 &
 cd tools/mock-buyer      && node dist/tools/mock-buyer/src/mock-buyer.js           > /tmp/mock-buyer.log  2>&1 &
-cd tools/mock-arbitrator && node dist/tools/mock-arbitrator/src/mock-arbitrator.js > /tmp/mock-arb.log    2>&1 &
+cd tools/mock-evaluator && node dist/tools/mock-evaluator/src/mock-evaluator.js > /tmp/mock-arb.log    2>&1 &
 
 # 3. Verify registrations
 sleep 2

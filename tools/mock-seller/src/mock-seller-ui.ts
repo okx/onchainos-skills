@@ -41,6 +41,8 @@ interface Session {
 const sessions = new Map<string, Session>();
 // SSE 客户端列表（浏览器订阅）
 const sseClients = new Set<http.ServerResponse>();
+// 新会话的默认模式(全局,可通过 UI 切换)
+let defaultAutoMode = true;
 
 function pushSSE(event: string, data: unknown) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -109,6 +111,16 @@ async function callSubmitApi(jobId: string, url: string) {
   console.log(`[seller][api] submitted job=${jobId}`);
 }
 
+async function callDisputeApi(jobId: string, reason: string) {
+  const res = await fetch(`${API_BASE_URL}/api/v1/task/${jobId}/dispute`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
+  if (!res.ok) throw new Error(`dispute ${res.status}`);
+  const data = await res.json() as { data?: { disputeId?: string } };
+  console.log(`[seller][api] dispute raised job=${jobId} disputeId=${data.data?.disputeId ?? "?"}`);
+}
+
 function sessionToView(s: Session) {
   return { convId: s.convId, jobId: s.jobId, step: s.step, autoMode: s.autoMode, messages: s.messages.slice(-50) };
 }
@@ -139,6 +151,29 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // GET /default-mode
+  if (url.pathname === "/default-mode" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ defaultAutoMode }));
+    return;
+  }
+
+  // POST /default-mode { autoMode: bool }
+  if (url.pathname === "/default-mode" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      try {
+        const { autoMode } = JSON.parse(body);
+        defaultAutoMode = !!autoMode;
+        console.log(`[seller] 默认模式切换为: ${defaultAutoMode ? "⚡ 自动" : "🖐 手动"}`);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, defaultAutoMode }));
+      } catch (e) { res.writeHead(400); res.end(String(e)); }
+    });
+    return;
+  }
+
   // POST /action  { convId, action, content? }
   if (url.pathname === "/action" && req.method === "POST") {
     let body = "";
@@ -163,6 +198,10 @@ const server = http.createServer(async (req, res) => {
           sellerSend(convId, { type: "TASK_DELIVER", jobId: session.jobId, content: content || "任务已完成，请买家验收。", deliverableUrl: delivUrl });
           session.step = 5;
           await callSubmitApi(session.jobId, delivUrl).catch(console.error);
+        } else if (action === "dispute_raise") {
+          const reason = content || "买家拒绝验收，卖家不认可，申请仲裁";
+          await callDisputeApi(session.jobId, reason).catch(console.error);
+          session.step = 6;
         }
         pushSSE("session_updated", sessionToView(session));
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -200,7 +239,7 @@ async function main() {
     console.log(`[seller] ← conv=${convId.slice(-20)} from=${from.slice(0, 20)} type=${type}`);
 
     if (!sessions.has(convId)) {
-      sessions.set(convId, { convId, jobId, step: 0, messages: [], autoMode: true });
+      sessions.set(convId, { convId, jobId, step: 0, messages: [], autoMode: defaultAutoMode });
       pushSSE("new_session", sessionToView(sessions.get(convId)!));
     }
     const session = sessions.get(convId)!;
@@ -253,6 +292,7 @@ button { padding: 6px 12px; border-radius: 6px; border: none; cursor: pointer; f
 .btn-reply { background: #1f6feb; color: white; }
 .btn-apply { background: #1a4731; color: #3fb950; }
 .btn-deliver { background: #3d1f00; color: #f0883e; }
+.btn-dispute { background: #3a1c00; color: #ffa657; }
 #input-area { display: flex; gap: 8px; }
 #msg-input { flex: 1; background: #161b22; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-family: monospace; }
 #empty { flex: 1; display: flex; align-items: center; justify-content: center; color: #30363d; font-size: 14px; }
@@ -261,6 +301,11 @@ button { padding: 6px 12px; border-radius: 6px; border: none; cursor: pointer; f
 <body>
 <div id="sidebar">
   <h2>Sessions</h2>
+  <div style="padding: 10px 16px; border-bottom: 1px solid #30363d; font-size: 11px; color: #8b949e;">
+    新会话默认:<br>
+    <label style="cursor:pointer;margin-right:8px"><input type="radio" name="def-mode" value="auto" onchange="setDefaultMode(true)" checked> ⚡ 自动</label>
+    <label style="cursor:pointer"><input type="radio" name="def-mode" value="manual" onchange="setDefaultMode(false)"> 🖐 手动</label>
+  </div>
   <div id="session-list"></div>
 </div>
 <div id="main">
@@ -279,6 +324,7 @@ button { padding: 6px 12px; border-radius: 6px; border: none; cursor: pointer; f
         <button class="btn-reply" onclick="quickAction('send', '报价：100 USDT，支付方式：non_escrow，交付时间 48 小时。')">确认支付</button>
         <button class="btn-apply" onclick="quickAction('apply', '')">TASK_APPLY</button>
         <button class="btn-deliver" onclick="quickAction('deliver', '')">TASK_DELIVER</button>
+        <button class="btn-dispute" onclick="quickAction('dispute_raise', '')">⚖️ Dispute Raise</button>
       </div>
       <div id="input-area">
         <input id="msg-input" type="text" placeholder="自定义消息内容..." onkeydown="if(event.key==='Enter') sendCustom()">
@@ -359,6 +405,16 @@ function sendCustom() {
   fetch('/action', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ convId: currentConvId, action: 'send', content }) });
   input.value = '';
 }
+
+function setDefaultMode(autoMode) {
+  fetch('/default-mode', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ autoMode }) });
+}
+
+fetch('/default-mode').then(r => r.json()).then(d => {
+  const val = d.defaultAutoMode ? 'auto' : 'manual';
+  const el = document.querySelector('input[name="def-mode"][value="' + val + '"]');
+  if (el) el.checked = true;
+});
 </script>
 </body>
 </html>`;

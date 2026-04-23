@@ -1,9 +1,10 @@
 /**
- * mock-arbitrator-ui: 带 Web 界面的仲裁者 mock
+ * mock-evaluator-ui: 带 Web 界面的仲裁员 mock
  *
  * 启动后打开 http://localhost:9004
  *
- * 架构：每个 convId 一个 ArbSession（收到 TASK_DISPUTED → 在同 convId 内回复 TASK_RESOLVE）
+ * 架构：每个 convId 一个 EvalSession（收到 TASK_DISPUTED → commit vote → sleep 1s → reveal vote）
+ * mock-api 在最后一个 reveal 后广播 TASK_RESOLVED + REWARD_CLAIMABLE 系统通知。
  * 自动模式：5s 后自动裁决
  * 手动模式：UI 点击"买家胜"/"卖家胜"按钮
  *
@@ -13,8 +14,8 @@
 import http from "node:http";
 import { WsMockClient, WsEnvelope, TaskPayload } from "../../../plugins/ws-channel/src/ws-client.js";
 
-const ARB_COMM_ADDR = "0xArbitrator0000000000000000000000000001";
-const ARB_AGENT_ID  = "mock-arbitrator-agent-001";
+const EVAL_COMM_ADDR = "0xEvaluator00000000000000000000000000001";
+const EVAL_AGENT_ID  = "mock-evaluator-agent-001";
 const WS_URL        = "ws://127.0.0.1:9000";
 const API_BASE_URL  = "http://127.0.0.1:9001";
 const UI_PORT       = 9004;
@@ -22,24 +23,27 @@ const UI_PORT       = 9004;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 // ── 状态 ─────────────────────────────────────────────────────────────────────
-interface ArbMessage {
-  from: "system" | "arb" | "other";
+interface EvalMessage {
+  from: "system" | "eval" | "other";
   type: string;
   content: string;
   ts: number;
 }
 
-interface ArbSessionState {
+interface EvalSessionState {
   convId: string;
   jobId: string;
+  disputeId?: string;
+  phase: "prep" | "committed" | "revealed";
   resolved: boolean;
   verdict?: "buyer" | "seller";
   reason?: string;
   autoMode: boolean;
-  messages: ArbMessage[];
+  messages: EvalMessage[];
 }
 
-const sessions = new Map<string, ArbSessionState>();
+const sessions = new Map<string, EvalSessionState>();     // convId → session
+const jobToConv = new Map<string, string>();              // jobId → dispute convId
 const sseClients = new Set<http.ServerResponse>();
 
 function pushSSE(event: string, data: unknown) {
@@ -47,10 +51,12 @@ function pushSSE(event: string, data: unknown) {
   for (const res of sseClients) res.write(payload);
 }
 
-function sessionToView(s: ArbSessionState) {
+function sessionToView(s: EvalSessionState) {
   return {
     convId: s.convId,
     jobId: s.jobId,
+    disputeId: s.disputeId,
+    phase: s.phase,
     resolved: s.resolved,
     verdict: s.verdict,
     autoMode: s.autoMode,
@@ -61,49 +67,67 @@ function sessionToView(s: ArbSessionState) {
 // ── WS 客户端 ─────────────────────────────────────────────────────────────────
 let client: WsMockClient;
 
-function arbSend(convId: string, payload: Partial<TaskPayload>) {
-  const s = sessions.get(convId);
-  if (!s) return;
-  console.log(`[arb] → conv=${convId.slice(-20)} type=${payload.type}`);
-  client.sendToConv(convId, payload as TaskPayload);
-  s.messages.push({ from: "arb", type: payload.type!, content: String(payload.content ?? ""), ts: Date.now() });
-  pushSSE("session_updated", sessionToView(s));
-}
+const EVAL_VOTER_ADDR = "0xEvaluator00000000000000000000000000001";
 
-async function doResolve(convId: string, verdict: "buyer" | "seller", reason?: string) {
-  const s = sessions.get(convId);
-  if (!s || s.resolved) return;
-  s.resolved = true;
-  s.verdict = verdict;
-  s.reason = reason;
-
-  const defaultReason = verdict === "buyer"
+function buildReason(verdict: "buyer" | "seller"): string {
+  return verdict === "buyer"
     ? "交付物未完全满足验收标准，支持买家拒绝验收，资金退还买家。"
     : "交付物符合验收标准，买家拒绝理由不充分，资金释放给卖家。";
-  const finalReason = reason || defaultReason;
-
-  arbSend(convId, {
-    type: "TASK_RESOLVE",
-    jobId: s.jobId,
-    winner: verdict,
-    reason: finalReason,
-    content: `⚖️ 仲裁结果：${verdict === "buyer" ? "买家" : "卖家"}胜\n裁决理由：${finalReason}`,
-  });
-
-  await callResolveApi(s.jobId, verdict, finalReason).catch((e) =>
-    console.error(`[arb][api] resolve error:`, e),
-  );
-  pushSSE("session_updated", sessionToView(s));
 }
 
-async function callResolveApi(jobId: string, winner: string, reason: string) {
-  const res = await fetch(`${API_BASE_URL}/api/v1/task/${jobId}/resolve`, {
+// 记录用户/自动模式选择的裁决,不立刻提交;等 EVIDENCE_CLOSED 事件到达再 commit。
+function setVerdict(convId: string, verdict: "buyer" | "seller", reason?: string) {
+  const s = sessions.get(convId);
+  if (!s || s.resolved) return;
+  s.verdict = verdict;
+  s.reason = reason ?? buildReason(verdict);
+  pushSSE("session_updated", sessionToView(s));
+  // 如果 EVIDENCE_CLOSED 已经来过(极端时序),立即 commit
+  // (mock-api 现在先发 TASK_DISPUTED 再 setTimeout 发 EVIDENCE_CLOSED,通常不会提前)
+}
+
+async function commitIfReady(s: EvalSessionState): Promise<void> {
+  if (s.phase !== "prep" || !s.verdict) return;
+  const vote: 1 | 2 = s.verdict === "seller" ? 1 : 2;
+  try {
+    await callCommitVote(s.jobId, vote, s.reason ?? buildReason(s.verdict));
+    s.phase = "committed";
+    pushSSE("session_updated", sessionToView(s));
+  } catch (e) {
+    console.error(`[eval][api] commit error:`, e);
+  }
+}
+
+async function revealIfCommitted(s: EvalSessionState): Promise<void> {
+  if (s.phase !== "committed") return;
+  try {
+    await callRevealVote(s.jobId);
+    s.phase = "revealed";
+    s.resolved = true;
+    pushSSE("session_updated", sessionToView(s));
+  } catch (e) {
+    console.error(`[eval][api] reveal error:`, e);
+  }
+}
+
+async function callCommitVote(jobId: string, vote: 1 | 2, reason: string) {
+  const res = await fetch(`${API_BASE_URL}/api/v1/task/${jobId}/vote/commit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ winner, reason }),
+    body: JSON.stringify({ vote, reason, voter: EVAL_VOTER_ADDR }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  console.log(`[arb][api] resolved job=${jobId} winner=${winner}`);
+  console.log(`[eval][api] committed job=${jobId} vote=${vote}`);
+}
+
+async function callRevealVote(jobId: string) {
+  const res = await fetch(`${API_BASE_URL}/api/v1/task/${jobId}/vote/reveal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ voter: EVAL_VOTER_ADDR }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  console.log(`[eval][api] revealed job=${jobId}`);
 }
 
 // ── HTTP 服务 ─────────────────────────────────────────────────────────────────
@@ -145,7 +169,9 @@ const server = http.createServer(async (req, res) => {
           s.autoMode = !s.autoMode;
           pushSSE("session_updated", sessionToView(s));
         } else if (action === "resolve") {
-          await doResolve(convId, verdict as "buyer" | "seller", reason);
+          // 手动模式:用户点击买家/卖家胜 → 设裁决;如已到 EVIDENCE_CLOSED 会在下一刻 commit
+          setVerdict(convId, verdict as "buyer" | "seller", reason);
+          await commitIfReady(s);
         }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true }));
@@ -167,34 +193,59 @@ const server = http.createServer(async (req, res) => {
 
 // ── main ──────────────────────────────────────────────────────────────────────
 async function main() {
-  client = new WsMockClient(WS_URL, ARB_COMM_ADDR);
+  client = new WsMockClient(WS_URL, EVAL_COMM_ADDR);
   await client.connectAndRegister();
-  await client.registerIdentity("EVALUATOR", ARB_AGENT_ID, ARB_COMM_ADDR);
-  console.log(`✓ 身份已注册: role=EVALUATOR agentId=${ARB_AGENT_ID}`);
+  await client.registerIdentity("EVALUATOR", EVAL_AGENT_ID, EVAL_COMM_ADDR);
+  console.log(`✓ 身份已注册: role=EVALUATOR agentId=${EVAL_AGENT_ID}`);
 
   client.start((envelope: WsEnvelope) => {
     const { conversation_id: convId, from, payload } = envelope;
     const { type } = payload;
     const jobId = String(payload.jobId ?? "");
+    const disputeId = String(payload.disputeId ?? "");
 
-    if (from === ARB_COMM_ADDR) return;
-    console.log(`[arb] ← conv=${convId.slice(-20)} from=${from.slice(0, 20)} type=${type}`);
+    if (from === EVAL_COMM_ADDR) return;
+    console.log(`[eval] ← conv=${convId.slice(-20)} from=${from.slice(0, 20)} type=${type}`);
 
-    // 创建 session（按 convId）
-    if (!sessions.has(convId)) {
-      const s: ArbSessionState = { convId, jobId, resolved: false, autoMode: true, messages: [] };
+    // 非 TASK_DISPUTED 的事件到达时,把消息挂到已存在的 dispute session(按 jobId 查)
+    const disputeConvId = type === "TASK_DISPUTED" ? convId : jobToConv.get(jobId);
+    if (!disputeConvId) return;  // 未见过此 jobId 的 dispute,忽略
+
+    if (type === "TASK_DISPUTED" && !sessions.has(convId)) {
+      const s: EvalSessionState = {
+        convId, jobId, disputeId,
+        phase: "prep", resolved: false, autoMode: true, messages: [],
+      };
       sessions.set(convId, s);
+      jobToConv.set(jobId, convId);
       pushSSE("new_session", sessionToView(s));
     }
 
-    const s = sessions.get(convId)!;
-    const msgFrom: ArbMessage["from"] = from.startsWith("0xMock") ? "system" : "other";
+    const s = sessions.get(disputeConvId);
+    if (!s) return;
+    const msgFrom: EvalMessage["from"] = from.startsWith("0xMock") ? "system" : "other";
     s.messages.push({ from: msgFrom, type, content: String(payload.content ?? ""), ts: Date.now() });
     pushSSE("session_updated", sessionToView(s));
 
-    // 收到 TASK_DISPUTED → 自动裁决
-    if (type === "TASK_DISPUTED" && s.autoMode && !s.resolved) {
-      sleep(5000).then(() => doResolve(convId, "buyer")).catch(console.error);
+    switch (type) {
+      case "TASK_DISPUTED": {
+        // auto 模式:5s 模拟审查后登记默认裁决(commit 仍由 EVIDENCE_CLOSED 触发)
+        if (s.autoMode && !s.verdict) {
+          sleep(5000).then(() => {
+            setVerdict(disputeConvId, "buyer");
+            commitIfReady(s).catch(console.error);
+          }).catch(console.error);
+        }
+        return;
+      }
+      case "EVIDENCE_CLOSED": {
+        commitIfReady(s).catch(console.error);
+        return;
+      }
+      case "REVEAL_WINDOW_OPEN": {
+        revealIfCommitted(s).catch(console.error);
+        return;
+      }
     }
   });
 
@@ -212,7 +263,7 @@ const HTML = `<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
-<title>Mock Arbitrator</title>
+<title>Mock Evaluator</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: monospace; background: #0d1117; color: #c9d1d9; display: flex; height: 100vh; overflow: hidden; }
@@ -326,7 +377,7 @@ function renderConv(s) {
   const msgs = document.getElementById('messages');
   msgs.innerHTML = s.messages.map(m => \`
     <div class="msg \${m.from}">
-      <div class="meta">\${m.from === 'arb' ? '仲裁者' : m.from === 'system' ? '系统' : '参与方'} · \${m.type} · \${new Date(m.ts).toLocaleTimeString()}</div>
+      <div class="meta">\${m.from === 'eval' ? '仲裁者' : m.from === 'system' ? '系统' : '参与方'} · \${m.type} · \${new Date(m.ts).toLocaleTimeString()}</div>
       \${escHtml(m.content)}
     </div>
   \`).join('');

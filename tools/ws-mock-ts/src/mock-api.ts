@@ -5,6 +5,7 @@
 import http from "node:http";
 import fs   from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { WebSocket } from "ws";
 
 const API_PORT  = 9001;
@@ -35,28 +36,30 @@ interface ProviderConfirm {
   providerAddress: string; providerAgentId: string;
   tokenAddress: string; tokenAmount: string;
 }
+interface DisputeEvidence {
+  from: "client" | "provider"; summary: string; url?: string; level: "S"|"A"|"B"|"C"|"D";
+}
+interface DisputeVote { side: 1 | 2; reason: string; voter: string; at: string; }
+interface VoterCommit {
+  vote: 1 | 2; salt: string; reason: string;
+  committedAt: string; revealedAt?: string;
+}
+interface Dispute {
+  disputeId: string; jobId: string; round: number;
+  clientReason: string; providerReason: string;
+  qualityStandards: string; deliverableUrl: string;
+  evidences: DisputeEvidence[];
+  voterCommits: Record<string, VoterCommit>;
+  votes: DisputeVote[];
+  verdict: "client" | "provider" | null;
+  createTime: string;
+  evidenceClosedAt: string | null;  // EVIDENCE_CLOSED 触发时写入(证据封期结束)
+  resolvedAt: string | null;
+}
 
 const tasks    = new Map<string, Task>();
 const confirms = new Map<string, ProviderConfirm[]>();
-
-// Dispute store (by disputeId)
-interface DisputeEvidence {
-  submitter: string;
-  type: string;
-  summary: string;
-  fileUrl?: string;
-}
-interface DisputeRecord {
-  disputeId: string;
-  jobId: string;
-  statusStr: string;
-  raiserAddress: string;
-  reason: string;
-  createTime: string;
-  evidences: DisputeEvidence[];
-}
-const disputes = new Map<string, DisputeRecord>();
-let disputeCounter = 1;
+const disputes = new Map<string, Dispute>();
 
 // ── Persistence ───────────────────────────────────────────────────────────────
 const PERSIST_PATH = process.env.MOCK_API_DB ??
@@ -264,13 +267,106 @@ async function notifyRefused(jobId: string, buyerCommAddr: string, buyerAgentId:
   });
 }
 
-async function notifyDisputed(jobId: string, buyerCommAddr: string, buyerAgentId: string,
+// 查询 ws-mock identity registry 里所有 EVALUATOR 角色的 comm_addr
+async function lookupEvaluators(): Promise<Array<{ agent_id: string; comm_addr: string }>> {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(WS_URL);
+    const timer = setTimeout(() => { ws.terminate(); resolve([]); }, 3000);
+    ws.once("open", () => ws.send(JSON.stringify({ action: "Register", addr: `${CHAIN_ADDR}-lookup-${Date.now()}` })));
+    ws.on("message", (raw) => {
+      const msg = JSON.parse(raw.toString()) as Record<string, unknown>;
+      if (msg.type === "registered") {
+        ws.send(JSON.stringify({ action: "LookupRole", role: "EVALUATOR" }));
+      } else if (msg.type === "identity_lookup") {
+        const agents = (msg.agents as Array<{ agent_id: string; comm_addr: string }>) ?? [];
+        clearTimeout(timer); ws.close(); resolve(agents);
+      }
+    });
+    ws.once("error", () => { clearTimeout(timer); resolve([]); });
+  });
+}
+
+// Commit/Reveal tx 回执与窗口事件。真后端:commit tx 上链后 xmtp 推 vote_committed;
+// commit 窗口结束时推"可以 reveal"信号;reveal tx 上链后推 vote_revealed。
+// mock:commit 成功立即推 VOTE_COMMITTED,3s 后推 REVEAL_WINDOW_OPEN,reveal 成功推 VOTE_REVEALED。
+const EVIDENCE_CLOSED_DELAY_MS = Number(process.env.MOCK_EVIDENCE_CLOSED_MS ?? 3000);
+const REVEAL_WINDOW_DELAY_MS   = Number(process.env.MOCK_REVEAL_WINDOW_MS   ?? 3000);
+
+async function notifyEvidenceClosed(jobId: string, disputeId: string, evaluatorAddrs: string[]) {
+  const convId = `conv-evidence-closed-${jobId}`;
+  const participants = Array.from(new Set([CHAIN_ADDR, ...evaluatorAddrs]));
+  await wsNotify(convId, participants, {
+    type: "EVIDENCE_CLOSED", jobId, disputeId,
+    content: `📎 证据封存 (disputeId=${disputeId})。投票者可开始 commit。`,
+  }).catch(e => console.error("[mock-api] evidence_closed notify error:", e));
+}
+
+async function notifyVoteCommitted(jobId: string, disputeId: string, voter: string) {
+  const convId = `conv-vote-committed-${jobId}-${voter}`;
+  await wsNotify(convId, [CHAIN_ADDR, voter], {
+    type: "VOTE_COMMITTED", jobId, disputeId, voter, status: "success",
+    content: `📝 投票承诺已上链 (disputeId=${disputeId})。等待 reveal 窗口开启。`,
+  }).catch(e => console.error("[mock-api] vote_committed notify error:", e));
+}
+
+async function notifyRevealWindowOpen(jobId: string, disputeId: string, voter: string) {
+  const convId = `conv-reveal-open-${jobId}-${voter}`;
+  await wsNotify(convId, [CHAIN_ADDR, voter], {
+    type: "REVEAL_WINDOW_OPEN", jobId, disputeId, voter,
+    content: `🔓 Reveal 窗口开启 (disputeId=${disputeId})。请调用 onchainos agent dispute reveal ${disputeId}。`,
+  }).catch(e => console.error("[mock-api] reveal_window_open notify error:", e));
+}
+
+async function notifyVoteRevealed(jobId: string, disputeId: string, voter: string) {
+  const convId = `conv-vote-revealed-${jobId}-${voter}`;
+  await wsNotify(convId, [CHAIN_ADDR, voter], {
+    type: "VOTE_REVEALED", jobId, disputeId, voter, status: "success",
+    content: `✅ 投票披露已上链 (disputeId=${disputeId})。`,
+  }).catch(e => console.error("[mock-api] vote_revealed notify error:", e));
+}
+
+// 结算广播:dispute_resolved → Client + Provider; reward_claimable → Client + Provider + Evaluator
+async function broadcastSettlement(t: Task, winner: "buyer" | "seller", disputeId?: string) {
+  const buyerCommAddr = t.buyerAgentAddress;
+  const sellerCommAddr = t.providerAgentAddress ?? "0xSeller000000000000000000000000000000001";
+  const evaluators = await lookupEvaluators();
+  const evalAddrs = Array.from(new Set(evaluators.map(e => e.comm_addr)));
+  const allEvalAddrs = evalAddrs.length > 0 ? evalAddrs : ["0xEvaluator00000000000000000000000000001"];
+
+  // dispute_resolved:告知买卖双方仲裁结果
+  const resolvedConvId = `conv-task-resolved-${t.jobId}`;
+  const resolvedParticipants = [CHAIN_ADDR, buyerCommAddr, sellerCommAddr];
+  await wsNotify(resolvedConvId, resolvedParticipants, {
+    type: "TASK_RESOLVED", jobId: t.jobId, disputeId: disputeId ?? null, winner,
+    content: `⚖️ 任务 ${t.jobId} 仲裁结果:${winner === "buyer" ? "买家胜,资金退回" : "卖家胜,资金释放"}。`,
+  }).catch(e => console.error("[mock-api] dispute_resolved notify error:", e));
+
+  // reward_claimable:所有相关方(含仲裁者)都可调 claim
+  const claimConvId = `conv-reward-claimable-${t.jobId}`;
+  const claimParticipants = Array.from(new Set([CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...allEvalAddrs]));
+  await wsNotify(claimConvId, claimParticipants, {
+    type: "REWARD_CLAIMABLE", jobId: t.jobId, disputeId: disputeId ?? null,
+    content: `💰 任务 ${t.jobId} 结算完成,奖金可领取。请调用 onchainos agent claim ${t.jobId}。`,
+  }).catch(e => console.error("[mock-api] reward_claimable notify error:", e));
+}
+
+async function notifyDisputed(jobId: string, disputeId: string, buyerCommAddr: string, buyerAgentId: string,
                                sellerCommAddr: string, sellerAgentId: string, reason: string) {
-  const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
-  const evaluators = await lookupRoleAddrs("EVALUATOR");
-  await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...evaluators], {
-    type: "TASK_DISPUTED", jobId, buyerAgentId, sellerAgentId, reason,
-    content: `系统通知：任务 ${jobId} 进入仲裁（TASK_DISPUTED）。卖家申诉理由：${reason}。`,
+  // 动态查询所有已注册的 EVALUATOR，把他们都放进参与者列表(广播给所有仲裁候选)
+  const evaluators = await lookupEvaluators();
+  // 去重:同一 comm_addr 的重复注册(来自 openclaw 多次重连)只算一个
+  const evalAddrs = Array.from(new Set(evaluators.map(e => e.comm_addr)));
+  const fallbackEval = "0xEvaluator00000000000000000000000000001";
+  const evalAgentId  = "mock-evaluator-agent-001";
+  // 兜底:若没有任何 EVALUATOR 注册(服务还没起），仍发给默认 mock-evaluator 地址
+  const allEvalAddrs = evalAddrs.length > 0 ? evalAddrs : [fallbackEval];
+  const convId = `conv-arb-${jobId}-${buyerAgentId}-${sellerAgentId}-${evalAgentId}`;
+  const participants = Array.from(new Set([CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...allEvalAddrs]));
+  console.log(`[mock-api] dispute broadcast: evaluators=${allEvalAddrs.length} convId=${convId}`);
+  await wsNotify(convId, participants, {
+    type: "TASK_DISPUTED", jobId, disputeId, buyerAgentId, sellerAgentId, reason,
+    content: `⚖️ 任务 ${jobId} 进入仲裁 (disputeId=${disputeId})。\n买家拒绝验收，卖家申诉：${reason}\n\n请仲裁者查阅证据后裁决。`,
+    llm: `TASK_DISPUTED jobId=${jobId} disputeId=${disputeId} reason=${reason}`,
   });
 }
 
@@ -676,41 +772,176 @@ const server = http.createServer(async (req, res) => {
     if (t.status !== S_REFUSED) { sendErr(res, 2002, "task status must be REFUSED"); return; }
     const body = await parseBody(req) as Record<string, unknown>;
     const reason = String(body.reason ?? "");
+    // 生成 disputeId（简化:确定性公式 d-{jobId}-r{round}）
+    const existingRounds = [...disputes.values()].filter(d => d.jobId === jobId).length;
+    const round = existingRounds + 1;
+    const disputeId = `d-${jobId}-r${round}`;
+    const dispute: Dispute = {
+      disputeId, jobId, round,
+      clientReason: "买家拒绝验收,未满足验收标准",
+      providerReason: reason,
+      qualityStandards: t.description.split("验收标准：")[1] ?? "未明确验收标准",
+      deliverableUrl: `https://mock-deliverable.example.com/${jobId}.html`,
+      evidences: [
+        { from: "client", summary: "买家认为交付物未满足验收标准", level: "C" },
+        { from: "provider", summary: "卖家声称交付物符合协商约定", level: "C" },
+      ],
+      voterCommits: {},
+      votes: [],
+      verdict: null,
+      createTime: nowIso(),
+      evidenceClosedAt: null,
+      resolvedAt: null,
+    };
+    disputes.set(disputeId, dispute);
     setStatus(t, S_DISPUTED); saveTasks();
-    // Create dispute record
-    const disputeId = `dispute-${disputeCounter++}`;
-    const raiser = String(req.headers["x-wallet-address"] ?? t.providerAgentAddress ?? "");
-    disputes.set(disputeId, {
-      disputeId, jobId,
-      statusStr: "disputed",
-      raiserAddress: raiser,
-      reason, createTime: nowIso(),
-      evidences: [],
-    });
     console.log(`[mock-api] task disputed: job=${jobId} disputeId=${disputeId} reason=${reason}`);
-    const pid2 = t.providerAgentId ?? "mock-seller-agent-001";
-    (async () => {
-      const sellerComm = await lookupCommAddr(pid2) ?? t.providerAgentAddress ?? "0xSeller000000000000000000000000000000001";
-      await notifyDisputed(jobId, t.buyerAgentAddress, t.buyerAgentId, sellerComm, pid2, reason);
-    })().catch(e => console.error("[mock-api] dispute notify error:", e));
-    sendOk(res, { uopData: mockUopData() }); return;
+    const { buyerAgentAddress, buyerAgentId, providerAgentAddress, providerAgentId } = t;
+    notifyDisputed(jobId, disputeId, buyerAgentAddress, buyerAgentId, providerAgentAddress ?? "0xSeller000000000000000000000000000000001", providerAgentId ?? "mock-seller-agent-001", reason)
+      .catch(e => console.error("[mock-api] dispute notify error:", e));
+    // 模拟 1H 证据准备期结束:查出 evaluator 候选,推 EVIDENCE_CLOSED + 标记 evidenceClosedAt
+    setTimeout(async () => {
+      const evaluators = await lookupEvaluators();
+      const evalAddrs = Array.from(new Set(evaluators.map(e => e.comm_addr)));
+      const targets = evalAddrs.length > 0 ? evalAddrs : ["0xEvaluator00000000000000000000000000001"];
+      dispute.evidenceClosedAt = nowIso();
+      notifyEvidenceClosed(jobId, disputeId, targets);
+    }, EVIDENCE_CLOSED_DELAY_MS);
+    sendOk(res, { uopHash: mockUop(), disputeId }); return;
   }
-  if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/resolve", path_))) {
+  // 仲裁证据:文本 + 图片清单(真后端 /priapi/v1/aieco/task/{jobId}/evidence)
+  if (method === "GET" && (m = matchPath("/api/v1/task/:jobId/evidence", path_))) {
     const { jobId } = m;
     const t = tasks.get(jobId);
     if (!t) { sendErr(res, 2001, "task not found"); return; }
-    if (t.status !== S_DISPUTED) { sendErr(res, 2002, "task status must be DISPUTED"); return; }
+    const dispute = [...disputes.values()].find(d => d.jobId === jobId);
+    if (!dispute) { sendErr(res, 2001, "dispute not found"); return; }
+    const qs = t.description.split("验收标准：")[1] ?? dispute.qualityStandards;
+    sendOk(res, {
+      jobId,
+      disputeId: dispute.disputeId,
+      round: dispute.round,
+      qualityStandards: qs,
+      clientReason: dispute.clientReason,
+      providerReason: dispute.providerReason,
+      deliverableUrl: dispute.deliverableUrl,
+      evidences: [
+        { from: "client",   kind: "text",  content: "买家证据文字:交付物未完全满足验收标准,缺少单元测试。", level: "C" },
+        { from: "client",   kind: "image", name: "client-screenshot.png",  level: "C" },
+        { from: "provider", kind: "text",  content: "卖家证据文字:交付物符合协商约定,已附带完整文档。", level: "C" },
+        { from: "provider", kind: "image", name: "provider-delivery.png",  level: "C" },
+      ],
+    });
+    return;
+  }
+  // 证据图片下载(真后端 /priapi/v1/aieco/task/{jobId}/evidence/download)
+  if (method === "GET" && (m = matchPath("/api/v1/task/:jobId/evidence/download", path_))) {
+    const { jobId } = m;
+    if (!tasks.has(jobId)) { sendErr(res, 2001, "task not found"); return; }
+    const name = url.searchParams.get("name");
+    if (!name) { sendErr(res, 1001, "name required"); return; }
+    // mock:返回 1x1 透明 PNG(67 bytes)
+    const MOCK_PNG = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    res.writeHead(200, {
+      "Content-Type": "image/png",
+      "Content-Disposition": `attachment; filename="${name}"`,
+      "Access-Control-Allow-Origin": "*",
+    });
+    res.end(MOCK_PNG);
+    return;
+  }
+  // Commit-Reveal Phase 1:提交投票承诺(后端生成 salt,mock 真后端都这样)
+  // evaluator CLI 走 signing flow:X-Wallet-Address = voter;返回 uopData 供 CLI 签名广播
+  if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/vote/commit", path_))) {
+    const { jobId } = m;
+    const dispute = [...disputes.values()].find(d => d.jobId === jobId && !d.resolvedAt);
+    if (!dispute) { sendErr(res, 2001, "active dispute not found"); return; }
+    if (!dispute.evidenceClosedAt) { sendErr(res, 2002, "evidence period not closed"); return; }
     const body = await parseBody(req) as Record<string, unknown>;
-    const winner = String(body.winner ?? "buyer");
-    const finalStatus = winner === "provider" ? S_COMPLETE : 6 /* REJECTED */;
-    setStatus(t, finalStatus); saveTasks();
-    console.log(`[mock-api] task resolved: job=${jobId} winner=${winner} status=${STATUS_STR[finalStatus]}`);
-    const { buyerAgentAddress: ba3, buyerAgentId: bi3, providerAgentId: pi3 } = t;
-    setTimeout(async () => {
-      const sellerComm = await lookupCommAddr(pi3!) ?? t.providerAgentAddress!;
-      await notifyArbitrationResult(jobId, ba3, bi3, sellerComm, pi3!, winner).catch(e => console.error("[mock-api] resolve notify error:", e));
-    }, 3000);
-    sendOk(res, { uopData: mockUopData(), winner }); return;
+    const vote = Number(body.vote);
+    if (vote !== 1 && vote !== 2) { sendErr(res, 1001, "vote must be 1 (provider) or 2 (client)"); return; }
+    const reason = String(body.reason ?? "");
+    if (!reason) { sendErr(res, 1001, "reason required"); return; }
+    // voter = header 优先（CLI 带身份头），回退到 body.voter（老 mock 调用）
+    const voter = String(req.headers["x-wallet-address"] ?? body.voter ?? "evaluator-unknown");
+    if (dispute.voterCommits[voter]) { sendErr(res, 2002, "voter has already committed"); return; }
+    const salt = crypto.randomBytes(16).toString("hex");
+    const commitHash = "0x" + crypto.createHash("sha256")
+      .update(`${dispute.disputeId}|${vote}|${salt}`).digest("hex");
+    dispute.voterCommits[voter] = {
+      vote: vote as 1 | 2, salt, reason, committedAt: nowIso(),
+    };
+    console.log(`[mock-api] vote committed: disputeId=${dispute.disputeId} voter=${voter} vote=${vote}`);
+    // tx 回执:VOTE_COMMITTED 立即推(真后端是 commit tx 上链后)
+    notifyVoteCommitted(jobId, dispute.disputeId, voter);
+    // 模拟 commit 窗口结束:REVEAL_WINDOW_OPEN 延后推(真后端 18H,mock 3s 可调)
+    setTimeout(() => { notifyRevealWindowOpen(jobId, dispute.disputeId, voter); }, REVEAL_WINDOW_DELAY_MS);
+    sendOk(res, { uopData: mockUopData(), disputeId: dispute.disputeId, commitHash }); return;
+  }
+  // Commit-Reveal Phase 2:披露承诺。后端用存下来的 {vote, salt} 调 revealVote
+  if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/vote/reveal", path_))) {
+    const { jobId } = m;
+    const dispute = [...disputes.values()].find(d => d.jobId === jobId && !d.resolvedAt);
+    if (!dispute) { sendErr(res, 2001, "active dispute not found"); return; }
+    const body = await parseBody(req) as Record<string, unknown>;
+    const voter = String(req.headers["x-wallet-address"] ?? body.voter ?? "evaluator-unknown");
+    const commit = dispute.voterCommits[voter];
+    if (!commit) { sendErr(res, 2002, "voter has not committed"); return; }
+    if (commit.revealedAt) { sendErr(res, 2002, "voter has already revealed"); return; }
+    commit.revealedAt = nowIso();
+    dispute.votes.push({ side: commit.vote, reason: commit.reason, voter, at: commit.revealedAt });
+    console.log(`[mock-api] vote revealed: disputeId=${dispute.disputeId} voter=${voter} vote=${commit.vote}`);
+    // tx 回执:VOTE_REVEALED
+    notifyVoteRevealed(jobId, dispute.disputeId, voter);
+    // mock 简化:单投票者,reveal 完就结算
+    const allCommitters = Object.keys(dispute.voterCommits);
+    const allRevealed = allCommitters.every(v => dispute.voterCommits[v].revealedAt);
+    let settled = false;
+    let winner: "buyer" | "seller" | undefined;
+    if (allRevealed) {
+      winner = commit.vote === 1 ? "seller" : "buyer";
+      dispute.verdict = commit.vote === 1 ? "provider" : "client";
+      dispute.resolvedAt = nowIso();
+      const t = tasks.get(dispute.jobId);
+      if (t && t.status === S_DISPUTED) {
+        setStatus(t, S_COMPLETE); saveTasks();
+        broadcastSettlement(t, winner, dispute.disputeId)
+          .catch(e => console.error("[mock-api] settlement broadcast error:", e));
+      }
+      settled = true;
+      console.log(`[mock-api] dispute settled: disputeId=${dispute.disputeId} winner=${winner}`);
+    }
+    sendOk(res, {
+      uopData: mockUopData(), disputeId: dispute.disputeId,
+      revealedVote: commit.vote, settled,
+      ...(settled ? { winner, verdict: dispute.verdict } : {}),
+    });
+    return;
+  }
+  // Read-only:查询指定 voter 是否可以进入 reveal 阶段
+  // voter 从 query 参数或 X-Wallet-Address header 读取
+  if (method === "GET" && (m = matchPath("/api/v1/task/:jobId/vote/canReveal", path_))) {
+    const { jobId } = m;
+    const dispute = [...disputes.values()].find(d => d.jobId === jobId && !d.resolvedAt);
+    if (!dispute) { sendErr(res, 2001, "active dispute not found"); return; }
+    const voter = url.searchParams.get("voter")
+      ?? String(req.headers["x-wallet-address"] ?? "");
+    if (!voter) { sendErr(res, 1001, "voter required"); return; }
+    const commit = dispute.voterCommits[voter];
+    if (!commit) { sendOk(res, { canReveal: false, reason: "not committed" }); return; }
+    if (commit.revealedAt) { sendOk(res, { canReveal: false, reason: "already revealed" }); return; }
+    // mock 简化:committed 即可 reveal。真后端此处门控 commit 窗口是否结束。
+    sendOk(res, { canReveal: true, reason: "ok" }); return;
+  }
+  if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/claim", path_))) {
+    const t = tasks.get(m.jobId);
+    if (!t) { sendErr(res, 2001, "task not found"); return; }
+    const claimer = String(req.headers["x-wallet-address"] ?? "unknown");
+    console.log(`[mock-api] reward claim: job=${m.jobId} claimer=${claimer}`);
+    sendOk(res, { uopData: mockUopData(), jobId: m.jobId, amount: t.tokenAmount, currency: "USDT", msg: "奖金已领取(mock stub)" }); return;
   }
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/agreeRefund", path_))) {
     const { jobId } = m;
@@ -746,11 +977,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     const submitter = String(req.headers["x-wallet-address"] ?? "");
+    const from: "client" | "provider" = submitter.toLowerCase() === (t.providerAgentAddress ?? "").toLowerCase()
+      ? "provider" : "client";
     const dispute = [...disputes.values()].filter(d => d.jobId === jobId).pop();
     if (dispute) {
-      if (text) dispute.evidences.push({ submitter, type: "text", summary: text });
+      if (text) dispute.evidences.push({ from, summary: text, level: "C" });
       for (const f of imageFiles) {
-        dispute.evidences.push({ submitter, type: "image", summary: `(image) ${f}`, fileUrl: `https://mock-cdn.example.com/evidence/${jobId}/${f}` });
+        dispute.evidences.push({ from, summary: `(image) ${f}`, url: `https://mock-cdn.example.com/evidence/${jobId}/${f}`, level: "C" });
       }
     }
     console.log(`[mock-api] evidence uploaded (multipart): job=${jobId} text="${text.slice(0, 60)}" images=${imageFiles.length}`);
@@ -764,10 +997,12 @@ const server = http.createServer(async (req, res) => {
     const body = await parseBody(req) as Record<string, unknown>;
     const text = String(body.text ?? body.summary ?? "");
     const submitter = String(req.headers["x-wallet-address"] ?? "");
+    const from: "client" | "provider" = submitter.toLowerCase() === (t.providerAgentAddress ?? "").toLowerCase()
+      ? "provider" : "client";
     // Append to latest dispute for this job
     const dispute = [...disputes.values()].filter(d => d.jobId === jobId).pop();
     if (dispute) {
-      dispute.evidences.push({ submitter, type: "text", summary: text });
+      dispute.evidences.push({ from, summary: text, level: "C" });
     }
     console.log(`[mock-api] evidence uploaded: job=${jobId} text="${text.slice(0, 80)}"`);
     sendOk(res, { uopData: mockUopData() }); return;
@@ -837,12 +1072,33 @@ const server = http.createServer(async (req, res) => {
     sendOk(res, { triggered: "TASK_SUBMITTED", jobId: m.jobId, deliverable }); return;
   }
   if (method === "POST" && (m = matchPath("/ui/notify/disputed/:jobId", path_))) {
-    const t = tasks.get(m.jobId);
+    const jobId = m.jobId;
+    const t = tasks.get(jobId);
     if (!t) { sendErr(res, 2001, "task not found"); return; }
     const sa = t.providerAgentAddress ?? "0xSeller000000000000000000000000000000001";
     const si = t.providerAgentId ?? "mock-seller-agent-001";
-    notifyDisputed(m.jobId, t.buyerAgentAddress, t.buyerAgentId, sa, si, "手动触发仲裁通知").catch(console.error);
-    sendOk(res, { triggered: "TASK_DISPUTED", jobId: m.jobId }); return;
+    // 若无现有 dispute 记录,创建一条(方便 UI 手动触发场景)
+    const existingRounds = [...disputes.values()].filter(d => d.jobId === jobId).length;
+    const round = existingRounds + 1;
+    const disputeId = `d-${jobId}-r${round}`;
+    if (!disputes.has(disputeId)) {
+      disputes.set(disputeId, {
+        disputeId, jobId, round,
+        clientReason: "手动触发:买家拒绝验收",
+        providerReason: "手动触发仲裁通知",
+        qualityStandards: t.description.split("验收标准：")[1] ?? "未明确验收标准",
+        deliverableUrl: `https://mock-deliverable.example.com/${jobId}.html`,
+        evidences: [],
+        voterCommits: {},
+        votes: [],
+        verdict: null,
+        createTime: nowIso(),
+        evidenceClosedAt: null,
+        resolvedAt: null,
+      });
+    }
+    notifyDisputed(jobId, disputeId, t.buyerAgentAddress, t.buyerAgentId, sa, si, "手动触发仲裁通知").catch(console.error);
+    sendOk(res, { triggered: "TASK_DISPUTED", jobId, disputeId }); return;
   }
   if (method === "POST" && (m = matchPath("/ui/notify/completed/:jobId", path_))) {
     const t = tasks.get(m.jobId);
@@ -1003,7 +1259,11 @@ tr:hover td{background:#161b22}
       <li><span class="method post">POST</span><span class="path">/api/v1/task/:id/complete</span></li>
       <li><span class="method post">POST</span><span class="path">/api/v1/task/:id/refuse</span></li>
       <li><span class="method post">POST</span><span class="path">/api/v1/task/:id/dispute</span></li>
-      <li><span class="method post">POST</span><span class="path">/api/v1/task/:id/resolve</span></li>
+      <li><span class="method get">GET</span><span class="path">/api/v1/task/:id/evidence</span></li>
+      <li><span class="method get">GET</span><span class="path">/api/v1/task/:id/evidence/download?name=</span></li>
+      <li><span class="method post">POST</span><span class="path">/api/v1/task/:id/vote/commit</span></li>
+      <li><span class="method post">POST</span><span class="path">/api/v1/task/:id/vote/reveal</span></li>
+      <li><span class="method get">GET</span><span class="path">/api/v1/task/:id/vote/canReveal?voter=</span></li>
       <li><span class="method post">POST</span><span class="path">/api/v1/task/:id/match</span></li>
       <li><span class="method get">GET</span><span class="path">/api/v1/task/:id</span></li>
       <li><span class="method get">GET</span><span class="path">/api/v1/tasks/my</span></li>

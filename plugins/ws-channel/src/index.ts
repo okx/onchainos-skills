@@ -94,11 +94,11 @@ agentId: ${agentId}
 钱包地址: ${addr}
 ${taskSkillRule("seller", agentId)}`,
   },
-  arbitrator: {
+  evaluator: {
     systemPrompt: (addr, agentId) => `角色: 仲裁者(EVALUATOR)
 agentId: ${agentId}
 钱包地址: ${addr}
-${taskSkillRule("arbitrator", agentId)}`,
+${taskSkillRule("evaluator", agentId)}`,
   },
 };
 
@@ -214,7 +214,7 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
       // 若 config 未指定 role，连上后从服务端查角色
       let resolvedSystemPrompt = account.systemPrompt;
       const roleToErc: Record<string, string> = {
-        buyer: "REQUESTER", seller: "PROVIDER", arbitrator: "EVALUATOR",
+        buyer: "REQUESTER", seller: "PROVIDER", evaluator: "EVALUATOR",
       };
       try {
         await client.connectAndRegister();
@@ -245,9 +245,16 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
       activeCfg = ctx.cfg;
       activeSystemPrompt = resolvedSystemPrompt;
 
-      // 仅 TASK_CONFIRMED 走 main session（买家启动流程）
-      // 其余链上通知走子 session（保持 P2P 上下文连贯）
-      const SYSTEM_MSG_TYPES = new Set(["TASK_CONFIRMED"]);
+      // 系统消息类型：走 main session
+      // TASK_CONFIRMED 启动买家流程；其余 evaluator 阶段事件（WBW-11885）直达 main session
+      const SYSTEM_MSG_TYPES = new Set([
+        "TASK_CONFIRMED",
+        // 仲裁阶段事件(evaluator):证据封期结束 / commit tx 回执 / reveal 窗口 / reveal tx 回执 / 最终结算 / 奖励可领取
+        "EVIDENCE_CLOSED", "VOTE_COMMITTED", "REVEAL_WINDOW_OPEN", "VOTE_REVEALED",
+        "TASK_RESOLVED", "REWARD_CLAIMABLE",
+      ]);
+      // 走 sub session 的消息类型：自动激活 conv（每个 dispute 一个独立子会话,分析过程不打扰 main）
+      const SUB_SESSION_TYPES = new Set(["TASK_DISPUTED"]);
 
       // per-session 串行队列：保证同一 convId 的消息严格按到达顺序处理
       // 解决 openclaw "queued messages while agent was busy" 导致的乱序问题
@@ -299,6 +306,25 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
             systemPrompt: resolvedSystemPrompt,
             envelope,
             sessionMode: "main",
+            reply: makeReply(convId),
+          }));
+          return;
+        }
+
+        // 3.5 sub-session 自动激活类消息(如 TASK_DISPUTED): 自动激活 conv,分析在子会话进行,不打扰 main
+        if (SUB_SESSION_TYPES.has(msgType)) {
+          if (!activeConversations.has(convId)) {
+            ctx.log?.info?.(`[ws-channel] sub-session auto-activate conv=${convId} type=${msgType}`);
+            activeConversations.add(convId);
+          }
+          await enqueueDispatch(convId, () => handleInboundMessage({
+            cfg: ctx.cfg,
+            accountId: account.accountId,
+            myAddr: account.walletAddr,
+            myAgentId: account.agentId,
+            systemPrompt: resolvedSystemPrompt,
+            envelope,
+            sessionMode: "sub",
             reply: makeReply(convId),
           }));
           return;
@@ -701,7 +727,7 @@ function registerTools(api: OpenClawPluginApi): void {
         filename: { type: "string", description: "文件名" },
         mimeType: { type: "string", description: "MIME 类型，如 text/html、image/png" },
         data: { type: "string", description: "base64 编码的文件内容" },
-        purpose: { type: "string", enum: ["deliverable", "arbitration", "attachment"], description: "用途" },
+        purpose: { type: "string", enum: ["deliverable", "dispute", "attachment"], description: "用途" },
       },
       required: ["filename", "mimeType", "data"],
     },
@@ -928,7 +954,76 @@ function registerTools(api: OpenClawPluginApi): void {
     },
   }));
 
-  console.log("[ws-channel] 已注册 XMTP mock tools: xmtp_send, xmtp_get_pending, xmtp_accept, xmtp_close, xmtp_get_messages, xmtp_upload, xmtp_queue_status, xmtp_start_conversation, register_address, identity_register, identity_lookup, notify_main, task_relay");
+  // ── escalate_to_main ─────────────────────────────────────────────────────
+  // 通用机制（WBW-11885）：任意 sub session 完成后台工作、需要用户决定时调用，把请求弹到 main session。
+  // topic 用于 main session agent 区分这是哪一类决策(dispute / approval / ...)
+  api.registerTool((_ctx) => ({
+    name: "escalate_to_main",
+    label: "Escalate Decision To Main Session",
+    description: "Sub session agent 完成后台分析后调用,把需要用户决定的请求弹到主会话。userMessage 给用户看,agentInstructions 给 main session agent 看(SystemPrompt),topic 标识场景类型(如 dispute / approval),context 里放本场景特有 ID(如 disputeId/jobId)用于 agent 引用。",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        topic: { type: "string", description: "决策场景类型,例如 'dispute'(仲裁投票)、'approval'(审批) 等。main session 的 skill 按 topic 路由到具体处理逻辑。" },
+        userMessage: { type: "string", description: "给用户看的文本(建议+理由+回复选项)。应包含场景关键词(如仲裁场景含'仲裁'/'dispute'/'投票')以触发 skill 加载。不要包含 CLI 命令。" },
+        agentInstructions: { type: "string", description: "只给 main session agent 看的指令(放进 SystemPrompt)。包含场景所需 ID、CLI 映射、回复解析规则等。" },
+        context: { type: "object", description: "场景上下文键值对,例如 {disputeId, jobId} 用于仲裁。会序列化到日志和消息 ID,用于追踪和去重。", additionalProperties: true },
+      },
+      required: ["topic", "userMessage", "agentInstructions"],
+    },
+    async execute(_toolCallId: string, params: unknown) {
+      const p = params as { topic: string; userMessage: string; agentInstructions: string; context?: Record<string, unknown> };
+      const account = activeAccount;
+      const cfg = activeCfg;
+      if (!account || !cfg) return toolResult({ error: "no active account/cfg; plugin not initialized" });
+      const core = getRuntime() as any;
+      const ctxKey = JSON.stringify(p.context ?? {});
+      try {
+        const route = core.channel.routing.resolveAgentRoute({
+          cfg, channel: "ws-mock", accountId: account.accountId,
+          peer: { kind: "direct", id: `sub-decision-${p.topic}-${ctxKey}` },
+        });
+        // topic 同时编码进 Body 顶部,便于 skill 关键词匹配 + 可读日志
+        const bodyWithTopic = `[topic: ${p.topic}]\n\n${p.userMessage}`;
+        const ctxPayload = core.channel.reply.finalizeInboundContext({
+          Body: bodyWithTopic,
+          RawBody: bodyWithTopic,
+          CommandBody: bodyWithTopic,
+          From: `ws-mock:sub-session`,
+          To: `ws-mock:${account.walletAddr}`,
+          SessionKey: route.mainSessionKey,
+          AccountId: route.accountId,
+          ChatType: "direct",
+          SenderName: "sub-session",
+          SenderId: "sub-session",
+          Provider: "ws-mock",
+          Surface: "ws-mock",
+          MessageSid: `sub-decision-${p.topic}-${Date.now()}`,
+          Timestamp: Date.now(),
+          WasMentioned: true,
+          OriginatingChannel: "ws-mock",
+          OriginatingTo: `ws-mock:${account.walletAddr}`,
+          MsgType: "SUB_DECISION_REQUEST",
+          SystemPrompt: `[topic=${p.topic}] ${p.agentInstructions}`,
+        });
+        await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+          ctx: ctxPayload, cfg,
+          dispatcherOptions: {
+            deliver: async (payload: any) => {
+              if (payload.text) {
+                (core.log ?? console.log)(`[ws-channel] main session ack escalation [${p.topic}]: ${payload.text.slice(0, 100)}`);
+              }
+            },
+          },
+        });
+        return toolResult({ escalated: true, topic: p.topic, context: p.context ?? {} });
+      } catch (e) {
+        return toolResult({ error: String(e) });
+      }
+    },
+  }));
+
+  console.log("[ws-channel] 已注册 XMTP mock tools: xmtp_send, xmtp_get_pending, xmtp_accept, xmtp_close, xmtp_get_messages, xmtp_upload, xmtp_queue_status, xmtp_start_conversation, register_address, identity_register, identity_lookup, notify_main, task_relay, escalate_to_main");
 }
 
 const plugin = {

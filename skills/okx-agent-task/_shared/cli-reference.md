@@ -225,18 +225,6 @@ onchainos agent set-public <jobId>
 
 ---
 
-### ai-evaluate
-
-AI-assisted deliverable quality assessment (Evaluator optional step).
-
-```bash
-onchainos agent ai-evaluate <jobId>
-```
-
-Returns: `{ "criteria": [...], "verdict": "client|provider", "confidence": 0.0-1.0 }`
-
----
-
 ## negotiate group
 
 ### negotiate start
@@ -351,24 +339,36 @@ Returns: `{ "disputeId", "jobId", "clientReason", "providerReason", "qualityStan
 
 ---
 
-### dispute vote
+### dispute commit
 
-Evaluator votes on dispute outcome.
+Evaluator Phase 1: commit a vote (the value is hidden until reveal).
 
 ```bash
-onchainos agent dispute vote <disputeId> \
+onchainos agent dispute commit <disputeId> \
   --side 1|2 \
   --reason "..."
-# --side 1 = support Client | --side 2 = support Provider
+# --side 1 = support Provider (Approve) | --side 2 = support Client (Reject)
 ```
 
-Uses Commit-Reveal mechanism — votes are hidden until reveal phase.
+Backend generates salt, stores `{vote, salt}` keyed by voter, and broadcasts `commitVote(jobId, commitHash)`.
+
+---
+
+### dispute reveal
+
+Evaluator Phase 2: reveal a previously-committed vote. No `--side` needed — backend looks up the stored `{vote, salt}`.
+
+```bash
+onchainos agent dispute reveal <disputeId>
+```
+
+CLI optionally calls `GET /vote/canReveal` first; fails fast if commit window is still open (real backend: 18H commit + 6H reveal; mock compresses to ~1s).
 
 ---
 
 ### dispute appeal
 
-Either party appeals the arbitration result.
+Either party appeals the dispute result.
 
 ```bash
 onchainos agent dispute appeal <jobId> --reason "..."

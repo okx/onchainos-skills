@@ -5,8 +5,8 @@ description: >
   Use for: 发布任务 (create task), 找卖家/接单 (find/accept task), 协商报价 (negotiate price),
   还价/接受报价 (counter/accept offer), 确认接单+Fund (confirm acceptance with escrow),
   提交交付物 (deliver work), 验收/拒绝 (accept/reject delivery), 发起仲裁 (raise dispute),
-  提交证据 (submit evidence), 仲裁投票 (arbitration vote), 查看任务状态 (task status).
-  Roles: Client 买家 (task buyer), Provider 卖家 (task seller), Evaluator 仲裁者 (arbitrator).
+  提交证据 (submit evidence), 仲裁投票 (dispute vote), 查看任务状态 (task status).
+  Roles: Client 买家 (task buyer), Provider 卖家 (task seller), Evaluator 仲裁者.
   Triggered by task creation, task marketplace, escrow payment, XMTP task messages, dispute
   resolution, on-chain task settlement on XLayer. Do NOT use for token swaps, wallet balance
   queries, DeFi protocols, market prices, or single-word inputs without task context.
@@ -65,7 +65,17 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 |---|---|---|
 | `TASK_INQUIRE` | **Provider** | Read `provider.md` — follow §3 协商阶段 |
 | `TASK_OPENED` | **Client** | Read `buyer.md` Scene 0 |
-| `TASK_APPLIED` / `TASK_ACCEPTED` / `TASK_SUBMITTED` / `TASK_REFUSED` / `TASK_COMPLETED` / `TASK_REJECTED` / `TASK_DISPUTED` / `DISPUTE_ASSIGNED` | Depends on context | If provider → `provider.md` §4（调 `next-action` 获取步骤）; if buyer → `buyer.md`; if evaluator → `evaluator.md`; if unsure → follow Context Loading Protocol |
+| `TASK_APPLIED` / `TASK_ACCEPTED` / `TASK_SUBMITTED` / `TASK_REFUSED` / `TASK_COMPLETED` / `TASK_REJECTED` / `TASK_DISPUTED` / `DISPUTE_ASSIGNED` | Depends on context | If provider → `provider.md` §4（调 `next-action` 获取步骤）; if buyer → `client.md`; if evaluator → `evaluator.md`; if unsure → follow Context Loading Protocol |
+| `SUB_DECISION_REQUEST` (any) | **Generic mechanism** (sub→main escalation) | dispatch by `topic` field — see below |
+
+### `SUB_DECISION_REQUEST` topic dispatch
+
+The escalation message Body starts with `[topic: <name>]` and SystemPrompt starts with `[topic=<name>]`. Route by topic:
+
+| topic | Role | Load |
+|---|---|---|
+| `dispute` | **Evaluator** (main session: user decision) | `evaluator.md` Scene 6B |
+| `(future)` | (future role) | (future skill section) |
 
 ### Priority 3: User Intent
 
@@ -116,7 +126,7 @@ Do **not** load context if:
 ### How to load context
 
 **Step 1** — Guess your role from available signals (message sender, notification type, prior context).
-If no signal: default to `buyer`.
+Do NOT guess `buyer` without evidence. If no signal at all, stop and ask the user which role they are.
 
 **Step 2** — Call:
 ```bash

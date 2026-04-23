@@ -361,6 +361,7 @@ fn task_system_sub(cmd: &crate::commands::agent_commerce::task::TaskSystemComman
         TaskSystemCommand::ClaimAutoRefund { .. } => "claim-auto-refund".into(),
         TaskSystemCommand::Get { .. }         => "get".into(),
         TaskSystemCommand::NextAction { .. } => "next-action".into(),
+        TaskSystemCommand::Evaluator(c)      => format!("evaluator {:?}", std::mem::discriminant(c)),
     }
 }
 

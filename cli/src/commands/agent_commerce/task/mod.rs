@@ -100,7 +100,6 @@ pub enum TaskSystemCommand {
     #[command(name = "set-public")]
     SetPublic { job_id: String },
 
-
     /// Provider applies for a task (apply API → sign → broadcast)
     Apply {
         job_id: String,
@@ -158,6 +157,10 @@ pub enum TaskSystemCommand {
     /// Dispute actions (provider): raise, evidence, info
     #[command(subcommand)]
     Dispute(provider::DisputeCommand),
+
+    /// Evaluator actions (commit-reveal arbitration): info, commit, reveal, claim
+    #[command(subcommand)]
+    Evaluator(evaluator::EvaluatorCommand),
 
     // ── Common ───────────────────────────────────────────────────────────────
 
@@ -240,7 +243,6 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
         TaskSystemCommand::SetPublic { job_id } =>
             buyer::run_task(T::SetPublic { job_id }, ctx).await,
 
-
         TaskSystemCommand::Apply { job_id, token_amount, token_symbol, agent_id } =>
             provider::run_provider(provider::ProviderCommand::Apply { job_id, token_amount, token_symbol, agent_id }, ctx).await,
 
@@ -267,12 +269,14 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
         TaskSystemCommand::ClaimAutoRefund { job_id } =>
             buyer::run_task(T::ClaimAutoRefund { job_id }, ctx).await,
 
-
         TaskSystemCommand::Config { action } =>
             buyer::run_task(T::Config { action }, ctx).await,
 
         TaskSystemCommand::Dispute(c) =>
             provider::run_dispute(c, ctx).await,
+
+        TaskSystemCommand::Evaluator(c) =>
+            evaluator::run(c, ctx).await,
 
         TaskSystemCommand::Common(c) =>
             common::run(c, ctx).await,
