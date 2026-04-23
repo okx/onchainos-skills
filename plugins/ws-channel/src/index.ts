@@ -246,15 +246,16 @@ export const wsMockPlugin: ChannelPlugin<WsMockAccount> = {
       activeSystemPrompt = resolvedSystemPrompt;
 
       // 系统消息类型：走 main session
-      // TASK_CONFIRMED 启动买家流程；其余 evaluator 阶段事件（WBW-11885）直达 main session
+      // 只保留 TASK_CONFIRMED（启动买家主流程）。evaluator 的所有仲裁事件都走 sub session：
+      // EVIDENCE_CLOSED 激活 sub（SUB_SESSION_TYPES 里），后续 REVEAL_WINDOW_OPEN / TASK_RESOLVED /
+      // REWARD_CLAIMABLE 由 mock-api 发到同一个 dispute conv，自动命中 activeConversations 继续在 sub。
       const SYSTEM_MSG_TYPES = new Set([
         "TASK_CONFIRMED",
-        // 仲裁阶段事件(evaluator):证据封期结束 / commit tx 回执 / reveal 窗口 / reveal tx 回执 / 最终结算 / 奖励可领取
-        "EVIDENCE_CLOSED", "VOTE_COMMITTED", "REVEAL_WINDOW_OPEN", "VOTE_REVEALED",
-        "TASK_RESOLVED", "REWARD_CLAIMABLE",
       ]);
-      // 走 sub session 的消息类型：自动激活 conv（每个 dispute 一个独立子会话,分析过程不打扰 main）
-      const SUB_SESSION_TYPES = new Set(["TASK_DISPUTED"]);
+      // 走 sub session 的消息类型：触发"分析流水线"的事件（每个 dispute 一个独立子会话，
+      // 拉证据/评估/推荐的脏活在 sub 里做，通过 notify_main / escalate_to_main 把结果推给用户）。
+      // EVIDENCE_CLOSED = evaluator 生命周期入口；之后的事件复用同一 sub conv，无需再加入此集合。
+      const SUB_SESSION_TYPES = new Set(["EVIDENCE_CLOSED"]);
 
       // per-session 串行队列：保证同一 convId 的消息严格按到达顺序处理
       // 解决 openclaw "queued messages while agent was busy" 导致的乱序问题

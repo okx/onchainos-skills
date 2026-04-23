@@ -292,11 +292,20 @@ async function lookupEvaluators(): Promise<Array<{ agent_id: string; comm_addr: 
 const EVIDENCE_CLOSED_DELAY_MS = Number(process.env.MOCK_EVIDENCE_CLOSED_MS ?? 3000);
 const REVEAL_WINDOW_DELAY_MS   = Number(process.env.MOCK_REVEAL_WINDOW_MS   ?? 3000);
 
-async function notifyEvidenceClosed(jobId: string, disputeId: string, evaluatorAddrs: string[]) {
-  const convId = `conv-evidence-closed-${jobId}`;
+// 所有 evaluator 生命周期事件共用同一个 dispute sub session conv（= notifyDisputed 用的 convId）。
+// 这样 EVIDENCE_CLOSED 激活 sub session 后，后续 REVEAL / RESOLVED / CLAIMABLE 自动复用同一 sub，
+// 在里面拉 context、跑 CLI、notify_main → 用户只在主 session 看到干净的最终通知。
+const MOCK_EVAL_AGENT_ID = "mock-evaluator-agent-001";
+function disputeConvId(t: Task): string {
+  const sellerAgentId = t.providerAgentId ?? "mock-seller-agent-001";
+  return `conv-arb-${t.jobId}-${t.buyerAgentId}-${sellerAgentId}-${MOCK_EVAL_AGENT_ID}`;
+}
+
+async function notifyEvidenceClosed(t: Task, disputeId: string, evaluatorAddrs: string[]) {
+  const convId = disputeConvId(t);
   const participants = Array.from(new Set([CHAIN_ADDR, ...evaluatorAddrs]));
   await wsNotify(convId, participants, {
-    type: "EVIDENCE_CLOSED", jobId, disputeId,
+    type: "EVIDENCE_CLOSED", jobId: t.jobId, disputeId,
     content: `📎 证据封存 (disputeId=${disputeId})。投票者可开始 commit。`,
   }).catch(e => console.error("[mock-api] evidence_closed notify error:", e));
 }
@@ -309,11 +318,12 @@ async function notifyVoteCommitted(jobId: string, disputeId: string, voter: stri
   }).catch(e => console.error("[mock-api] vote_committed notify error:", e));
 }
 
-async function notifyRevealWindowOpen(jobId: string, disputeId: string, voter: string) {
-  const convId = `conv-reveal-open-${jobId}-${voter}`;
-  await wsNotify(convId, [CHAIN_ADDR, voter], {
-    type: "REVEAL_WINDOW_OPEN", jobId, disputeId, voter,
-    content: `🔓 Reveal 窗口开启 (disputeId=${disputeId})。请调用 onchainos agent dispute reveal ${disputeId}。`,
+async function notifyRevealWindowOpen(t: Task, disputeId: string, evaluatorAddrs: string[]) {
+  const convId = disputeConvId(t);
+  const participants = Array.from(new Set([CHAIN_ADDR, ...evaluatorAddrs]));
+  await wsNotify(convId, participants, {
+    type: "REVEAL_WINDOW_OPEN", jobId: t.jobId, disputeId,
+    content: `🔓 Reveal 窗口开启 (disputeId=${disputeId})。投票者可 reveal。`,
   }).catch(e => console.error("[mock-api] reveal_window_open notify error:", e));
 }
 
@@ -325,28 +335,24 @@ async function notifyVoteRevealed(jobId: string, disputeId: string, voter: strin
   }).catch(e => console.error("[mock-api] vote_revealed notify error:", e));
 }
 
-// 结算广播:dispute_resolved → Client + Provider; reward_claimable → Client + Provider + Evaluator
+// 结算广播:TASK_RESOLVED + REWARD_CLAIMABLE 都发到 dispute sub session conv，
+// 让 evaluator sub session 在同一个会话里接着跑 "拉 context → notify_main" 流程。
+// 买家/卖家的仲裁结果通知走 notifyArbitrationResult（TASK_COMPLETED / TASK_REJECTED）。
 async function broadcastSettlement(t: Task, winner: "buyer" | "seller", disputeId?: string) {
-  const buyerCommAddr = t.buyerAgentAddress;
-  const sellerCommAddr = t.providerAgentAddress ?? "0xSeller000000000000000000000000000000001";
   const evaluators = await lookupEvaluators();
   const evalAddrs = Array.from(new Set(evaluators.map(e => e.comm_addr)));
   const allEvalAddrs = evalAddrs.length > 0 ? evalAddrs : ["0xEvaluator00000000000000000000000000001"];
+  const convId = disputeConvId(t);
+  const participants = Array.from(new Set([CHAIN_ADDR, ...allEvalAddrs]));
 
-  // dispute_resolved:告知买卖双方仲裁结果
-  const resolvedConvId = `conv-task-resolved-${t.jobId}`;
-  const resolvedParticipants = [CHAIN_ADDR, buyerCommAddr, sellerCommAddr];
-  await wsNotify(resolvedConvId, resolvedParticipants, {
+  await wsNotify(convId, participants, {
     type: "TASK_RESOLVED", jobId: t.jobId, disputeId: disputeId ?? null, winner,
     content: `⚖️ 任务 ${t.jobId} 仲裁结果:${winner === "buyer" ? "买家胜,资金退回" : "卖家胜,资金释放"}。`,
-  }).catch(e => console.error("[mock-api] dispute_resolved notify error:", e));
+  }).catch(e => console.error("[mock-api] task_resolved notify error:", e));
 
-  // reward_claimable:所有相关方(含仲裁者)都可调 claim
-  const claimConvId = `conv-reward-claimable-${t.jobId}`;
-  const claimParticipants = Array.from(new Set([CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...allEvalAddrs]));
-  await wsNotify(claimConvId, claimParticipants, {
+  await wsNotify(convId, participants, {
     type: "REWARD_CLAIMABLE", jobId: t.jobId, disputeId: disputeId ?? null,
-    content: `💰 任务 ${t.jobId} 结算完成,奖金可领取。请调用 onchainos agent claim ${t.jobId}。`,
+    content: `💰 任务 ${t.jobId} 结算完成,奖金可领取。`,
   }).catch(e => console.error("[mock-api] reward_claimable notify error:", e));
 }
 
@@ -805,7 +811,7 @@ const server = http.createServer(async (req, res) => {
       const evalAddrs = Array.from(new Set(evaluators.map(e => e.comm_addr)));
       const targets = evalAddrs.length > 0 ? evalAddrs : ["0xEvaluator00000000000000000000000000001"];
       dispute.evidenceClosedAt = nowIso();
-      notifyEvidenceClosed(jobId, disputeId, targets);
+      notifyEvidenceClosed(t, disputeId, targets);
     }, EVIDENCE_CLOSED_DELAY_MS);
     sendOk(res, { uopHash: mockUop(), disputeId }); return;
   }
@@ -863,8 +869,9 @@ const server = http.createServer(async (req, res) => {
     const body = await parseBody(req) as Record<string, unknown>;
     const vote = Number(body.vote);
     if (vote !== 1 && vote !== 2) { sendErr(res, 1001, "vote must be 1 (provider) or 2 (client)"); return; }
+    // 真后端（Lark §11175）commit body 仅 `{ vote }`，reason 不在 API schema。
+    // mock 这里仍保留字段占位（可选），方便做本地分析/dashboard 显示，但不强制。
     const reason = String(body.reason ?? "");
-    if (!reason) { sendErr(res, 1001, "reason required"); return; }
     // voter = header 优先（CLI 带身份头），回退到 body.voter（老 mock 调用）
     const voter = String(req.headers["x-wallet-address"] ?? body.voter ?? "evaluator-unknown");
     if (dispute.voterCommits[voter]) { sendErr(res, 2002, "voter has already committed"); return; }
@@ -877,11 +884,21 @@ const server = http.createServer(async (req, res) => {
     console.log(`[mock-api] vote committed: disputeId=${dispute.disputeId} voter=${voter} vote=${vote}`);
     // tx 回执:VOTE_COMMITTED 立即推(真后端是 commit tx 上链后)
     notifyVoteCommitted(jobId, dispute.disputeId, voter);
-    // 模拟 commit 窗口结束:REVEAL_WINDOW_OPEN 延后推(真后端 18H,mock 3s 可调)
-    setTimeout(() => { notifyRevealWindowOpen(jobId, dispute.disputeId, voter); }, REVEAL_WINDOW_DELAY_MS);
+    // 模拟 commit 窗口结束:REVEAL_WINDOW_OPEN 延后推(真后端 18H,mock 3s 可调)。
+    // 发送到 dispute sub session conv，让 evaluator sub session 复用同一会话跑 reveal。
+    setTimeout(async () => {
+      const t2 = tasks.get(jobId);
+      if (!t2) return;
+      const evaluators = await lookupEvaluators();
+      const evalAddrs = Array.from(new Set(evaluators.map(e => e.comm_addr)));
+      const targets = evalAddrs.length > 0 ? evalAddrs : [voter];
+      notifyRevealWindowOpen(t2, dispute.disputeId, targets);
+    }, REVEAL_WINDOW_DELAY_MS);
     sendOk(res, { uopData: mockUopData(), disputeId: dispute.disputeId, commitHash }); return;
   }
-  // Commit-Reveal Phase 2:披露承诺。后端用存下来的 {vote, salt} 调 revealVote
+  // Commit-Reveal Phase 2:披露承诺。按真后端 spec（Lark §11348），voter 传入 vote，
+  // 后端从 task_dispute_voter 读 salt，组装 revealVote(jobId, vote, salt) calldata。
+  // mock 这里做一致性校验：body.vote 必须与 commit 时存的 vote 相同，否则模拟链上 revert。
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/vote/reveal", path_))) {
     const { jobId } = m;
     const dispute = [...disputes.values()].find(d => d.jobId === jobId && !d.resolvedAt);
@@ -891,6 +908,15 @@ const server = http.createServer(async (req, res) => {
     const commit = dispute.voterCommits[voter];
     if (!commit) { sendErr(res, 2002, "voter has not committed"); return; }
     if (commit.revealedAt) { sendErr(res, 2002, "voter has already revealed"); return; }
+    // 校验 reveal vote 与 commit vote 一致（真后端靠链上 commitHash 比对，mock 直接查表）
+    const revealVote = Number(body.vote);
+    if (revealVote !== 1 && revealVote !== 2) {
+      sendErr(res, 1001, "vote must be 1 (provider) or 2 (client)"); return;
+    }
+    if (revealVote !== commit.vote) {
+      sendErr(res, 2012, `reveal vote (${revealVote}) does not match commit vote (${commit.vote}); on-chain commitHash would not verify`);
+      return;
+    }
     commit.revealedAt = nowIso();
     dispute.votes.push({ side: commit.vote, reason: commit.reason, voter, at: commit.revealedAt });
     console.log(`[mock-api] vote revealed: disputeId=${dispute.disputeId} voter=${voter} vote=${commit.vote}`);

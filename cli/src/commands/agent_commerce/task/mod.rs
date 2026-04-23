@@ -186,7 +186,7 @@ pub enum TaskSystemCommand {
         #[arg(long = "jobid")]
         job_id: String,
 
-        /// 当前收到的系统通知类型（TASK_APPLIED / TASK_ACCEPTED / TASK_SUBMITTED / TASK_REFUSED / TASK_COMPLETED / TASK_DISPUTED / TASK_REJECTED / DISPUTE_RAISE / AGREE_REFUND）
+        /// 当前收到的系统通知类型（provider/buyer: TASK_APPLIED / TASK_ACCEPTED / TASK_SUBMITTED / TASK_REFUSED / TASK_COMPLETED / TASK_DISPUTED / TASK_REJECTED / DISPUTE_RAISE / AGREE_REFUND；evaluator: EVIDENCE_CLOSED / REVEAL_WINDOW_OPEN / TASK_RESOLVED / REWARD_CLAIMABLE）
         #[arg(long = "jobStatus")]
         job_status: String,
 
@@ -288,7 +288,8 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
             let prompt = match role.as_str() {
                 "provider" | "seller" => provider::flow::generate_next_action(&job_id, &job_status, &agent_id),
                 "buyer" | "client" => buyer::flow::generate_next_action(&job_id, &job_status, &agent_id),
-                other => anyhow::bail!("--role 暂只支持 provider/seller/buyer/client，当前: {other}"),
+                "evaluator" => evaluator::flow::generate_next_action(&job_id, &job_status, &agent_id),
+                other => anyhow::bail!("--role 暂只支持 provider/seller/buyer/client/evaluator，当前: {other}"),
             };
             println!("{prompt}");
             Ok(())

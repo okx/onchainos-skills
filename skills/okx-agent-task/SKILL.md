@@ -178,8 +178,9 @@ When the agent receives a system notification, route to the correct role file an
 | `TASK_SUBMITTED` | **执行** → Scene 5：验收交付物，调用 `complete`（通过）或 `reject`（拒绝） | **忽略 llm** → 调 `next-action --jobStatus TASK_SUBMITTED` | — |
 | `TASK_COMPLETED` | Scene 7：任务完成，通知用户 | 调 `next-action --jobStatus TASK_COMPLETED` | — |
 | `TASK_REFUSED` | **忽略 llm** → 记录状态，等待卖家决定 | **执行** → 调 `next-action --jobStatus TASK_REFUSED`（会调 `notify_main` 让用户决策仲裁/退款） | — |
-| `TASK_DISPUTED` | Scene 6：等待用户提交证据 | 调 `next-action --jobStatus TASK_DISPUTED` | — |
-| `DISPUTE_ASSIGNED` | — | — | **执行** → Scene 6：审阅证据，调用 `dispute vote` 投票 |
+| `TASK_DISPUTED` | Scene 6：等待用户提交证据 | 调 `next-action --jobStatus TASK_DISPUTED` | — （evaluator 不响应此事件，改由 `EVIDENCE_CLOSED` 触发）|
+| `EVIDENCE_CLOSED` | — | — | **执行** → 调 `next-action --jobStatus EVIDENCE_CLOSED --role evaluator`（sub session 激活、静默分析 → `escalate_to_main`）|
+| `REVEAL_WINDOW_OPEN` / `TASK_RESOLVED` / `REWARD_CLAIMABLE` | — | — | **执行** → 调 `next-action --jobStatus <type> --role evaluator`（同一 dispute sub session 续用：sub 里跑 CLI → `notify_main` 推结果给主 session）|
 | `TASK_REJECTED` | 退款完成，资金已退还买家 | 调 `next-action --jobStatus TASK_REJECTED` | — |
 
 > **Routing rule**:
