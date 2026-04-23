@@ -39,7 +39,8 @@ Print the filled copy once, then display `data` as usual.
         {
           "amount": "0.0005",
           "asset": "0xUSDG",
-          "name": "USDG",
+          "name": "Global Dollar",
+          "symbol": "USDG",
           "network": "X Layer",
           "chainId": 196,
           "payTo": "0xPAYTO",
@@ -48,7 +49,8 @@ Print the filled copy once, then display `data` as usual.
         {
           "amount": "0.0005",
           "asset": "0xUSDT",
-          "name": "USDT",
+          "name": "Tether USD",
+          "symbol": "USDT",
           "network": "X Layer",
           "chainId": 196,
           "payTo": "0xPAYTO",
@@ -63,7 +65,11 @@ Print the filled copy once, then display `data` as usual.
 Each `payment[]` entry is already display-ready: `amount` is a decimal string (not
 minimal units), `network` is the chain's human-readable name (falls back to the
 raw CAIP-2 string on chain-cache miss), and `chainId` is the numeric EVM chain id
-the `onchainos payment default set` CLI expects. `isDefault` flags the entry
+the `onchainos payment default set` CLI expects. `name` carries the full
+human-readable asset name (e.g. "Global Dollar"); `symbol` is the short ticker
+(e.g. "USDG"). Older servers only returned the ticker in `name` and leave
+`symbol` as `""` — render `<symbol> (<name>)` when both are present and
+differ, otherwise fall back to `<name>` alone. `isDefault` flags the entry
 whose `(asset, network)` matches the user's saved default (at most one per
 list); when no default is saved, every entry is `false`.
 
@@ -88,21 +94,25 @@ Before formatting the CLI result:
    - Do NOT auto-retry.
    - Present the filled copy to the user.
    - **If `notifications[].data.payment[]` has ≥ 2 entries**, render them as a
-     numbered token list — one line per entry — using `name`, `amount`, and
-     `network` (e.g. `1. USDG  0.0005  X Layer`). If an entry has
+     numbered token list — one line per entry — using the asset label
+     (`<symbol> (<name>)` when both are present and differ, else just `<name>`),
+     `amount`, and `network`
+     (e.g. `1. USDG (Global Dollar)  0.0005  X Layer` with both fields, or
+     `1. USDG  0.0005  X Layer` on a legacy server). If an entry has
      `isDefault: true`, append ` (default)` to that line so the user sees
-     which asset will be reused if they pick it (e.g. `2. USDT  0.0005  X Layer  (default)`).
+     which asset will be reused if they pick it
+     (e.g. `2. USDT (Tether USD)  0.0005  X Layer  (default)`).
      Always append a final line
      `0. Cancel — don't pay, abort this request`. Ask the user to pick one.
      - If the user picks a numbered asset (or replies with an asset name):
-       - Run `onchainos payment default set --asset <entry.asset> --chain <entry.chainId> --name <entry.name> --tier <notifications[].data.tier>` to persist the choice and record consent for this tier.
+       - Run `onchainos payment default set --asset <entry.asset> --chain <entry.chainId> --name <entry.symbol_or_name> --tier <notifications[].data.tier>` to persist the choice and record consent for this tier. For `--name`, prefer `entry.symbol` (the ticker) when non-empty, else fall back to `entry.name` — this keeps the saved default's display label short and recognizable.
        - Then rerun the original command verbatim. The CLI matches the saved
          default against the 402 `accepts` and auto-signs that entry.
      - If the user picks `0` (or otherwise refuses in free text):
        - Do NOT call `payment default set`. Do NOT rerun. Stop and acknowledge.
    - **If `payment[]` has exactly one entry**, skip the token list — just ask
      the user to confirm (`yes` / `proceed` / `确认`) or cancel (`0` / `no`).
-     On confirmation, still run `onchainos payment default set --asset <entry.asset> --chain <entry.chainId> --name <entry.name> --tier <notifications[].data.tier>` — re-saving the existing default is idempotent; the `--tier` flag is what promotes the tier from `charging_unconfirmed` to `charging_confirmed`. Then rerun the original command; the CLI auto-signs the sole option. On cancel, stop and acknowledge — do NOT run `payment default set`, so the next request re-prompts.
+     On confirmation, still run `onchainos payment default set --asset <entry.asset> --chain <entry.chainId> --name <entry.symbol_or_name> --tier <notifications[].data.tier>` (same `symbol`-then-`name` fallback as above) — re-saving the existing default is idempotent; the `--tier` flag is what promotes the tier from `charging_unconfirmed` to `charging_confirmed`. Then rerun the original command; the CLI auto-signs the sole option. On cancel, stop and acknowledge — do NOT run `payment default set`, so the next request re-prompts.
    - `--tier` is mandatory whenever you are acting on an OVER_QUOTA
      notification (only the named tier is promoted). The saved default
      asset persists across commands until the user runs
@@ -251,7 +261,7 @@ selection and just ask for `yes` / `0` before rerunning.
 | `{graceExpiresAt}` | `notifications[].data.graceExpiresAt` | #2 | Server gap — currently `data = {}` for `OLD_USER_GRACE`. Fall back to the string `2026.5.31` until the backend ships this field. |
 | `{tier}` | `notifications[].data.tier` | #4, #5 | `basic` / `premium`; capitalize first letter on display (`Basic` / `Premium`) |
 | `{unitPrice}` | Derived from `{tier}` | #4, #5 | `basic` → use `{basicUnitPrice}` value / `premium` → use `{premiumUnitPrice}` value |
-| `{paymentOptions}` | `notifications[].data.payment[]` | #4, #5 | Render as a numbered list, one entry per line starting at `1`: `<idx>. <name>  <amount>  <network>` (e.g. `1. USDG  0.0005  X Layer`). If an entry has `isDefault: true`, append ` (default)` to that line to highlight the user's saved preference (e.g. `2. USDT  0.0005  X Layer  (default)`). Each entry carries `asset` / `chainId` / `name` — feed those into the `--asset` / `--chain` / `--name` flags of `onchainos payment default set` after the user picks. The copy itself always appends a trailing `0. Cancel — don't pay, abort this request` line after this placeholder, so do NOT include `0.` inside `{paymentOptions}` — picking `0` means refusal (no `payment default set`, no rerun). |
+| `{paymentOptions}` | `notifications[].data.payment[]` | #4, #5 | Render as a numbered list, one entry per line starting at `1`: `<idx>. <label>  <amount>  <network>`, where `<label>` is `<symbol> (<name>)` when both are present and differ, else just `<name>` (e.g. `1. USDG (Global Dollar)  0.0005  X Layer`, or legacy `1. USDG  0.0005  X Layer`). If an entry has `isDefault: true`, append ` (default)` to that line to highlight the user's saved preference (e.g. `2. USDT (Tether USD)  0.0005  X Layer  (default)`). Each entry carries `asset` / `chainId` / `symbol` / `name` — feed those into the `--asset` / `--chain` / `--name` flags of `onchainos payment default set` after the user picks (`--name` should be `symbol` when non-empty, else `name`). The copy itself always appends a trailing `0. Cancel — don't pay, abort this request` line after this placeholder, so do NOT include `0.` inside `{paymentOptions}` — picking `0` means refusal (no `payment default set`, no rerun). |
 
 ---
 

@@ -357,12 +357,20 @@ fn transform_payment_entry(
         _ => return None,
     };
     let amount = amount_minimal_to_display(&raw_amount)?;
-    let name = obj
-        .get("extra")
-        .and_then(|e| e.get("name"))
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
+    // `extra.name` carries the full human-readable asset name (e.g.
+    // "Global Dollar"); `extra.symbol` carries the short ticker (e.g.
+    // "USDG"). Older servers only returned the ticker in `extra.name`,
+    // so we pass both through and let the skill render `<symbol> (<name>)`
+    // when they differ, or fall back to `<name>` alone otherwise.
+    let extra_str = |key: &str| -> String {
+        obj.get("extra")
+            .and_then(|e| e.get(key))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    let name = extra_str("name");
+    let symbol = extra_str("symbol");
     let network_raw = obj.get("network").and_then(|v| v.as_str()).unwrap_or("");
     let chain_id = parse_eip155_chain_id(network_raw).ok();
     let network = if network_raw.is_empty() {
@@ -376,6 +384,7 @@ fn transform_payment_entry(
         "amount": amount,
         "asset": asset,
         "name": name,
+        "symbol": symbol,
         "network": network,
         "chainId": chain_id,
         "payTo": pay_to,
@@ -696,9 +705,46 @@ mod tests {
         assert!(payment[0].get("maxTimeoutSeconds").is_none());
         // No preferred_asset → every entry is isDefault: false.
         assert_eq!(payment[0]["isDefault"], false);
+        // sample_accepts has extra.name only (no symbol): symbol stays "".
+        assert_eq!(payment[0]["symbol"], "");
         assert_eq!(payment[1]["asset"], "0xUSDT");
         assert_eq!(payment[1]["name"], "USDT");
+        assert_eq!(payment[1]["symbol"], "");
         assert_eq!(payment[1]["isDefault"], false);
+    }
+
+    #[test]
+    fn over_quota_payload_passes_through_extra_symbol() {
+        // New server shape: extra carries both `name` (full human name)
+        // and `symbol` (ticker). Both must surface on the payment entry
+        // so the skill can render `<symbol> (<name>)` in the picker.
+        let accepts = serde_json::json!([{
+            "amount": {"basic": "100", "premium": "500"},
+            "asset": "0xUSDG",
+            "network": "eip155:196",
+            "payTo": "0xPAYTO",
+            "extra": {
+                "name": "Global Dollar",
+                "symbol": "USDG",
+                "transferMethod": "eip3009",
+                "version": "1"
+            },
+            "scheme": "exact",
+            "maxTimeoutSeconds": 86400
+        }]);
+        let mut i = base();
+        i.user_type = Some(UserType::New);
+        i.intro_shown = true;
+        i.basic_state = TierState::ChargingUnconfirmed;
+        i.accepts = Some(accepts);
+
+        let events = compute_events(&i, 0);
+        let Event::NewUserOverQuota { payment, .. } = &events[0].0 else {
+            panic!("expected NewUserOverQuota variant");
+        };
+        assert_eq!(payment.len(), 1);
+        assert_eq!(payment[0]["name"], "Global Dollar");
+        assert_eq!(payment[0]["symbol"], "USDG");
     }
 
     #[test]
