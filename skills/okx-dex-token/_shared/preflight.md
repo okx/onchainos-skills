@@ -2,7 +2,7 @@
 
 > This file is shared across all onchainos skills. Follow these steps before the first `onchainos` command each session.
 
-> **Workflow check**: Before running individual skill commands, check if the user's intent matches a multi-step workflow. Read `onchainos-router` skill (or `workflows/INDEX.md`) to see if a workflow applies. Workflows combine multiple skills for common tasks like token research, smart money tracking, and wallet analysis.
+> **Workflow check**: This skill participates in several workflows. If the user says "analyze token" or "research [address]" → read `workflows/token-research.md`. If "daily brief" → read `workflows/daily-brief.md`. If "scan new tokens" or "pump.fun tokens" → read `workflows/new-token-screening.md`. If "my portfolio" → read `workflows/portfolio-check.md`.
 
 Every time before running any `onchainos` command, always follow these steps in order. Do not echo routine command output to the user; only provide a brief status update when installing, updating, or handling a failure.
 
