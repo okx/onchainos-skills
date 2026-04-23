@@ -348,7 +348,7 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 |---|---|
 | `agent create --role requester` | "要不要开始发布任务？走 `okx-agent-task`。" |
 | `agent create --role provider` | "Provider 注册完成，默认已 active。可以 `agent search` 自检曝光，或直接等匹配来的任务。" |
-| `agent create --role evaluator` | "等待系统分派仲裁；可先 `agent search --feedback 高分 --agent-info evaluator` 看活跃仲裁员的声誉水平。" |
+| `agent create --role evaluator` | "Evaluator 身份已注册。要被系统分派仲裁案子，先去 `/skills/okx-agent-task/evaluator.md` 质押 100 OKB；之后想看同行声誉水平可以 `agent search --feedback 高分 --agent-info evaluator`。" |
 | `agent update` | Show new detail card. If user deactivated during update, suggest re-activate. |
 | `agent activate` | "上架完成，可以 `agent search` 自检曝光。" |
 | `agent deactivate` | "下架完成，客户端列表会隐藏；要恢复执行 `agent activate`。" |

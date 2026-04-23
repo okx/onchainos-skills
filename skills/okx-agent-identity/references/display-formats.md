@@ -207,27 +207,38 @@ Rules:
 
 ## 4. Service list — `agent service-list <agentId>`
 
-Header line + one block per service. Use a compact bullet-style with aligned labels, not a table — services tend to have long descriptions and endpoints that break table rendering.
+Header blockquote + a single Markdown pipe table, per the top-level table convention. 6 columns: `#` / 名称 / 类型 / 价格 / Endpoint / 描述 (Chinese) or `#` / Name / Type / Fee / Endpoint / Description (English). Pick ONE language variant based on user language; never render bilingual.
 
-> Agent #42 — DeFi Analyzer (provider) 的服务：
+Chinese variant:
 
-**[1] TVL Query**
-- 类型：`A2MCP`
-- 价格：`10 USDT / 次`
-- Endpoint：`https://api.example.com/mcp`
-- 描述：Query protocol TVL by chain.
+> Agent #42 — DeFi Analyzer (服务方) 的服务：
 
-**[2] Yield Check**
-- 类型：`A2A`
-- 价格：`free (per-call pricing off-chain)`
-- 描述：Compare yields across Aave / Lido / Compound.
+| # | 名称 | 类型 | 价格 | Endpoint | 描述 |
+|---|---|---|---|---|---|
+| 1 | TVL Query | A2MCP | 10 USDT | `https://api.example.com/mcp` | 按链查询协议 TVL。 |
+| 2 | Yield Check | A2A | 免费 | — | 比较 Aave / Lido / Compound 的收益。 |
+
+English variant:
+
+> Agent #42 — DeFi Analyzer (provider) services:
+
+| # | Name | Type | Fee | Endpoint | Description |
+|---|---|---|---|---|---|
+| 1 | TVL Query | A2MCP | 10 USDT | `https://api.example.com/mcp` | Query protocol TVL by chain. |
+| 2 | Yield Check | A2A | free | — | Compare yields across Aave / Lido / Compound. |
 
 Rules:
 
-- Number services starting at `[1]`.
-- Header: `Agent #<id> — <name> (<role>) 的服务：` as a blockquote.
-- For A2A, omit the `Endpoint` line (CLI clears it).
-- Indent sub-fields with `-`; keep the label column aligned by using identical-width labels (类型 / 价格 / Endpoint / 描述).
+- **Pipe table, not bullet blocks.** Matches the top-level "every table is a Markdown pipe table" convention (line 5 of this file). The previous bullet-style block format was wrong — switched to pipe table for consistency with §1 / §2 / §6.
+- Number services in the `#` column starting at `1` (no `[N]` brackets — the column header already tells the reader it's an index).
+- Header line before the table: `Agent #<id> — <name> (<role>) 的服务：` / `Agent #<id> — <name> (<role>) services:` as a blockquote. Role label follows `SKILL.md §Language Matching`.
+- **A2A row**: render `免费` / `free` in the `价格` / `Fee` column, and `—` (em dash) in the `Endpoint` column to keep column alignment. The CLI clears A2A endpoints regardless, so there's no real value to show.
+- **Values are rendered verbatim from the backend.** If the backend returns non-standard values (e.g. `serviceType: "query"` instead of `A2MCP` / `A2A`; `Fee` in `ETH` rather than `USDT`; endpoints in odd shapes), show them as-is in the table — do not sanitize or normalize to expected enums. Append a footnote blockquote below the table when you notice the shape diverges from the local `--service` schema:
+  > 注：此结果字段结构与本地 provider schema 不完全一致（例如 `serviceType=query`、按 ETH 计价），更像后端 demo 或示例数据 — 接入前请人工核验 endpoint 与结算条款。
+  > Note: the field shape here diverges from the local `--service` schema (e.g. `serviceType=query`, priced in ETH). This looks like backend demo / example data — verify the endpoint and settlement terms manually before integrating.
+  Only append this footnote **when you actually observe a shape mismatch**; omit it when everything matches the expected schema.
+- Long descriptions (> ~80 chars) can be truncated with `…` to keep row height manageable; keep the first sentence intact. Do NOT auto-translate the description — render whatever language the provider wrote.
+- Wrap URLs in backticks so markdown doesn't auto-link them mid-cell (some renderers break the table layout when they wrap an unrendered URL).
 
 ---
 
