@@ -16,6 +16,7 @@
 
 mod accept;
 mod changepublic;
+mod claim_auto_refund;
 mod close;
 mod complete;
 mod create;
@@ -129,6 +130,10 @@ pub enum TaskCommand {
     Claim {
         job_id: String,
     },
+    /// Client claims auto-refund after seller timeout (submit_expired / refuse_expired)
+    ClaimAutoRefund {
+        job_id: String,
+    },
     /// Rate the provider after task completion
     Judge {
         job_id: String,
@@ -198,6 +203,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             changepublic::handle_set_public(&client, &job_id).await,
         TaskCommand::Claim { job_id } =>
             close::handle_claim(&client, &job_id).await,
+        TaskCommand::ClaimAutoRefund { job_id } =>
+            claim_auto_refund::handle_claim_auto_refund(&client, &job_id).await,
         TaskCommand::Judge { job_id } =>
             judge::handle_judge(&client, &job_id).await,
 

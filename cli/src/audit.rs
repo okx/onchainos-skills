@@ -359,6 +359,7 @@ fn task_system_sub(cmd: &crate::commands::agent_commerce::task::TaskSystemComman
         TaskSystemCommand::GetPayment { .. } => "get-payment".into(),
         TaskSystemCommand::Pay { .. }   => "pay".into(),
         TaskSystemCommand::Claim { .. }      => "claim".into(),
+        TaskSystemCommand::ClaimAutoRefund { .. } => "claim-auto-refund".into(),
         TaskSystemCommand::Get { .. }         => "get".into(),
         TaskSystemCommand::NextAction { .. } => "next-action".into(),
     }

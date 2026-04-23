@@ -143,6 +143,10 @@ pub enum TaskSystemCommand {
     /// Client claims refund/reward after arbitration
     Claim { job_id: String },
 
+    /// Client claims auto-refund after seller timeout
+    #[command(name = "claim-auto-refund")]
+    ClaimAutoRefund { job_id: String },
+
     /// Task config: init | show
     Config {
         #[command(subcommand)]
@@ -263,6 +267,9 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
 
         TaskSystemCommand::Claim { job_id } =>
             client::run_task(T::Claim { job_id }, ctx).await,
+
+        TaskSystemCommand::ClaimAutoRefund { job_id } =>
+            client::run_task(T::ClaimAutoRefund { job_id }, ctx).await,
 
 
         TaskSystemCommand::Config { action } =>
