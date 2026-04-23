@@ -38,6 +38,12 @@ fn now_ms() -> u64 {
 ///
 /// `received_at_ms` should be captured immediately after the API response
 /// returns so all tokens in the same batch share the same reference time.
+///
+/// Scope: only applied by callers whose responses carry `tags.*Percent` fields
+/// for freshly-minted tokens — currently `fetch_token_list` and
+/// `fetch_token_details`. If a future endpoint returns the same shape for new
+/// tokens (e.g. `similarToken`), apply this helper there too; otherwise stale
+/// "0" values can leak back in.
 fn nullify_zero_tags_if_new(token: &mut Value, received_at_ms: u64) {
     if received_at_ms == 0 {
         // Clock error — skip to avoid false-positives.
