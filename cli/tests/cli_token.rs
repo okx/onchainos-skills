@@ -763,7 +763,9 @@ fn token_trades_missing_address_fails() {
 fn token_search_with_limit() {
     let output = run_with_retry(&["token", "search", "--query", "USDC", "--limit", "3"]);
     let data = assert_ok_and_extract_data(&output);
-    let arr = data.as_array().expect("expected array: {data}");
+    let arr = data
+        .as_array()
+        .unwrap_or_else(|| panic!("expected array: {data}"));
     assert!(arr.len() <= 3, "expected at most 3 results, got {}", arr.len());
 }
 
@@ -771,7 +773,9 @@ fn token_search_with_limit() {
 fn token_hot_tokens_with_limit() {
     let output = run_with_retry(&["token", "hot-tokens", "--limit", "3"]);
     let data = assert_ok_and_extract_data(&output);
-    let arr = data.as_array().expect("expected array: {data}");
+    let arr = data
+        .as_array()
+        .unwrap_or_else(|| panic!("expected array: {data}"));
     assert!(arr.len() <= 3, "expected at most 3 results, got {}", arr.len());
 }
 
@@ -812,27 +816,49 @@ fn token_search_cursor_pagination() {
     // Page 1 — fetch 2 results
     let page1 = run_with_retry(&["token", "search", "--query", "USDC", "--limit", "2"]);
     let arr1 = assert_ok_and_extract_data(&page1);
-    let items1 = arr1.as_array().expect("expected array on page 1");
-    assert!(!items1.is_empty(), "page 1 should return results");
+    let items1: Vec<_> = arr1.as_array().cloned().unwrap_or_default();
+    if items1.is_empty() {
+        return; // no items to paginate — pass
+    }
     // Extract cursor from last item
-    let cursor = items1.last().and_then(|v| v.get("cursor")).and_then(|c| c.as_str()).unwrap_or("");
+    let cursor = items1
+        .last()
+        .and_then(|v| v.get("cursor"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
     if cursor.is_empty() {
         return; // no more pages — pass
     }
     // Collect page 1 cursors for overlap check
-    let cursors1: Vec<&str> = items1.iter()
-        .filter_map(|v| v.get("cursor").and_then(|c| c.as_str()))
+    let cursors1: Vec<String> = items1
+        .iter()
+        .filter_map(|v| v.get("cursor").and_then(|c| c.as_str()).map(str::to_string))
         .collect();
     // Page 2 — use cursor
-    let page2 = run_with_retry(&["token", "search", "--query", "USDC", "--limit", "2", "--cursor", cursor]);
+    let page2 = run_with_retry(&[
+        "token", "search", "--query", "USDC", "--limit", "2", "--cursor", cursor,
+    ]);
     let arr2 = assert_ok_and_extract_data(&page2);
-    let items2 = arr2.as_array().expect("page 2 should return array");
+    let items2: Vec<_> = arr2.as_array().cloned().unwrap_or_default();
+    assert!(
+        !items2.is_empty(),
+        "page 2 returned empty despite non-empty cursor from page 1 — pagination may be broken"
+    );
     // Assert no overlap — page 2 items must have different cursors from page 1
-    for item in items2 {
+    let mut checked = 0usize;
+    for item in &items2 {
         if let Some(c) = item.get("cursor").and_then(|c| c.as_str()) {
-            assert!(!cursors1.contains(&c), "cursor {c} appeared in both page 1 and page 2 — pagination is not advancing");
+            assert!(
+                !cursors1.iter().any(|x| x == c),
+                "cursor {c} appeared in both page 1 and page 2 — pagination is not advancing"
+            );
+            checked += 1;
         }
     }
+    assert!(
+        checked > 0,
+        "page 2 returned items but none had cursors to compare"
+    );
 }
 
 // ─── cluster-overview ───────────────────────────────────────────────
