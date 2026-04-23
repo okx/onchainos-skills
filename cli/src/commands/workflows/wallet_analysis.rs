@@ -71,6 +71,7 @@ pub async fn run(ctx: &Context, address: &str, chain: Option<String>) -> Result<
 
 /// Assemble wallet-analysis output from pre-fetched data.
 /// Pure function — testable without network calls.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn assemble(
     address: &str,
     chain_index: &str,
