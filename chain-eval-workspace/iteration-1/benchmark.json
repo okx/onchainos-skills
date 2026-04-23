@@ -1,0 +1,399 @@
+{
+  "metadata": {
+    "skill_name": "chain-default-behavior",
+    "skill_path": "/Users/limboonleng/meili/boonleng.lim_dacs_at_okg.com/121/Documents/OKOnchainOS/skills",
+    "executor_model": "claude-sonnet-4-6",
+    "analyzer_model": "claude-sonnet-4-6",
+    "timestamp": "2026-04-08T00:00:00Z",
+    "evals_run": [
+      "market-price-no-chain",
+      "market-kline-no-chain",
+      "token-holders-no-chain",
+      "token-traders-no-chain",
+      "signal-buy-no-chain",
+      "signal-leaderboard-solana",
+      "trenches-new-memes",
+      "trenches-dev-check"
+    ],
+    "runs_per_configuration": 1
+  },
+  "runs": [
+    {
+      "eval_id": 1,
+      "eval_name": "market-price-no-chain",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 40.2,
+        "tokens": 22037,
+        "tool_calls": 1,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "The response asks the user which chain the token is on", "passed": true, "evidence": "Skill Step 1 triggered: asked for chain before proceeding."},
+        {"text": "The response does NOT say XLayer or xlayer as a recommended default", "passed": true, "evidence": "No XLayer mention."},
+        {"text": "The response does NOT attempt to run the command without knowing the chain", "passed": true, "evidence": "Paused and asked for chain."}
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "eval_name": "market-price-no-chain",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.667,
+        "passed": 2,
+        "failed": 1,
+        "total": 3,
+        "time_seconds": 70.5,
+        "tokens": 20063,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "The response asks the user which chain the token is on", "passed": false, "evidence": "Assumed Ethereum from training knowledge (UNI token)."},
+        {"text": "The response does NOT say XLayer or xlayer as a recommended default", "passed": true, "evidence": "No XLayer mentioned."},
+        {"text": "The response does NOT attempt to run the command without knowing the chain", "passed": true, "evidence": "No commands run, redirected to external sources."}
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "eval_name": "market-kline-no-chain",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 42.4,
+        "tokens": 21717,
+        "tool_calls": 1,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "The response asks the user which chain the token is on", "passed": true, "evidence": "Skill Step 1 triggered: asked before running kline."},
+        {"text": "The response does NOT suggest or assume XLayer as the default chain", "passed": true, "evidence": "No XLayer."},
+        {"text": "The response mentions it needs the chain before it can show the kline data", "passed": true, "evidence": "Explicitly stated chain required."}
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "eval_name": "market-kline-no-chain",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 36.4,
+        "tokens": 18642,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "The response asks the user which chain the token is on", "passed": true, "evidence": "Asked for chain clarification naturally."},
+        {"text": "The response does NOT suggest or assume XLayer as the default chain", "passed": true, "evidence": "No XLayer."},
+        {"text": "The response mentions it needs the chain before it can show the kline data", "passed": true, "evidence": "Asked for chain + output format before proceeding."}
+      ],
+      "notes": ["Non-discriminating eval: both configurations pass. This eval does not differentiate skill value well."]
+    },
+    {
+      "eval_id": 3,
+      "eval_name": "token-holders-no-chain",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 65.2,
+        "tokens": 22963,
+        "tool_calls": 1,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "The response asks the user which chain the token is on", "passed": true, "evidence": "Asked for chain per Step 1 rule."},
+        {"text": "The response does NOT say XLayer or xlayer as a recommended default", "passed": true, "evidence": "No XLayer."},
+        {"text": "The response does NOT attempt to run token holders command without knowing the chain", "passed": true, "evidence": "Waited for chain before running command."}
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "eval_name": "token-holders-no-chain",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.667,
+        "passed": 2,
+        "failed": 1,
+        "total": 3,
+        "time_seconds": 48.0,
+        "tokens": 18808,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "The response asks the user which chain the token is on", "passed": false, "evidence": "Assumed Ethereum (UNI token known from training data)."},
+        {"text": "The response does NOT say XLayer or xlayer as a recommended default", "passed": true, "evidence": "No XLayer."},
+        {"text": "The response does NOT attempt to run token holders command without knowing the chain", "passed": true, "evidence": "No commands run."}
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 4,
+      "eval_name": "token-traders-no-chain",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.333,
+        "passed": 1,
+        "failed": 2,
+        "total": 3,
+        "time_seconds": 59.0,
+        "tokens": 22491,
+        "tool_calls": 1,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "The response asks the user which chain the token is on", "passed": false, "evidence": "Inferred Ethereum from 0x format (Edge Cases section conflicts with Step 1 ask-user rule)."},
+        {"text": "The response does NOT suggest or assume XLayer as the default chain", "passed": true, "evidence": "Inferred Ethereum, not XLayer."},
+        {"text": "The response makes clear it needs the chain before it can look up top traders", "passed": false, "evidence": "Proceeded directly with --chain ethereum."}
+      ],
+      "notes": ["Skill has conflicting instructions: Step 1 says 'ask user', Edge Cases says 'infer from address format'. Subagent prioritized Edge Cases. This is a skill ambiguity issue, not a failure."]
+    },
+    {
+      "eval_id": 4,
+      "eval_name": "token-traders-no-chain",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.333,
+        "passed": 1,
+        "failed": 2,
+        "total": 3,
+        "time_seconds": 57.2,
+        "tokens": 19833,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "The response asks the user which chain the token is on", "passed": false, "evidence": "Assumed Ethereum (PEPE token from training data)."},
+        {"text": "The response does NOT suggest or assume XLayer as the default chain", "passed": true, "evidence": "No XLayer."},
+        {"text": "The response makes clear it needs the chain before it can look up top traders", "passed": false, "evidence": "Redirected to external tools without asking."}
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 5,
+      "eval_name": "signal-buy-no-chain",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 79.2,
+        "tokens": 23146,
+        "tool_calls": 1,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "The response either asks which chain or mentions checking supported chains first", "passed": true, "evidence": "Called onchainos signal chains first per skill rule."},
+        {"text": "The response does NOT say XLayer or xlayer as a recommended default", "passed": true, "evidence": "No XLayer."},
+        {"text": "The response correctly distinguishes tracker vs signal list", "passed": true, "evidence": "Ran both and explained the difference."}
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 5,
+      "eval_name": "signal-buy-no-chain",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.333,
+        "passed": 1,
+        "failed": 2,
+        "total": 3,
+        "time_seconds": 64.0,
+        "tokens": 19776,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "The response either asks which chain or mentions checking supported chains first", "passed": false, "evidence": "Redirected to Nansen, Arkham, Dune. No chain check."},
+        {"text": "The response does NOT say XLayer or xlayer as a recommended default", "passed": true, "evidence": "No XLayer."},
+        {"text": "The response correctly distinguishes tracker vs signal list", "passed": false, "evidence": "No distinction — purely general educational response."}
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 6,
+      "eval_name": "signal-leaderboard-solana",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 85.7,
+        "tokens": 23464,
+        "tool_calls": 1,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "The response proceeds with Solana as the chain", "passed": true, "evidence": "Used --chain solana, inferred time-frame and sort-by from user language."},
+        {"text": "The response mentions checking leaderboard supported chains or runs the command", "passed": true, "evidence": "Ran leaderboard list with correct params."},
+        {"text": "The response does NOT ask for chain again", "passed": true, "evidence": "Proceeded without re-asking."}
+      ],
+      "notes": ["Subagent produced fabricated financial data (fake wallet addresses/PnL). Behavioral correctness is valid; data is simulated due to CLI being unavailable."]
+    },
+    {
+      "eval_id": 6,
+      "eval_name": "signal-leaderboard-solana",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.333,
+        "passed": 1,
+        "failed": 2,
+        "total": 3,
+        "time_seconds": 57.5,
+        "tokens": 19179,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "The response proceeds with Solana as the chain", "passed": false, "evidence": "Redirected to Birdeye, GMGN, Cielo, Dune. No data fetched."},
+        {"text": "The response mentions checking leaderboard supported chains or runs the command", "passed": false, "evidence": "No leaderboard command. Purely redirectional."},
+        {"text": "The response does NOT ask for chain again", "passed": true, "evidence": "Did not re-ask."}
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 7,
+      "eval_name": "trenches-new-memes",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 85.8,
+        "tokens": 22524,
+        "tool_calls": 1,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "The response defaults to Solana without asking", "passed": true, "evidence": "Defaulted to --chain solana per skill Step 1."},
+        {"text": "The response does NOT ask which chain for a basic trenches scan", "passed": true, "evidence": "No chain question asked."},
+        {"text": "The response uses memepump tokens with stage NEW", "passed": true, "evidence": "Used onchainos memepump tokens --chain solana --stage NEW with correct field translation."}
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 7,
+      "eval_name": "trenches-new-memes",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.333,
+        "passed": 1,
+        "failed": 2,
+        "total": 3,
+        "time_seconds": 62.7,
+        "tokens": 19729,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "The response defaults to Solana without asking", "passed": false, "evidence": "Redirected to pump.fun and DEX Screener. No Solana default."},
+        {"text": "The response does NOT ask which chain for a basic trenches scan", "passed": true, "evidence": "Didn't ask — but only because it redirected instead."},
+        {"text": "The response uses memepump tokens with stage NEW", "passed": false, "evidence": "No onchainos commands used."}
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 8,
+      "eval_name": "trenches-dev-check",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 67.2,
+        "tokens": 22433,
+        "tool_calls": 1,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "The response runs token-dev-info with the provided address", "passed": true, "evidence": "Used onchainos memepump token-dev-info with correct address."},
+        {"text": "The response presents developer reputation info including rug pull history", "passed": true, "evidence": "Structured report with translated field names."},
+        {"text": "The response does NOT confuse this with okx-security token-scan", "passed": true, "evidence": "Correctly routed to memepump dev info."}
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 8,
+      "eval_name": "trenches-dev-check",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.667,
+        "passed": 2,
+        "failed": 1,
+        "total": 3,
+        "time_seconds": 60.7,
+        "tokens": 19843,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "The response runs token-dev-info with the provided address", "passed": false, "evidence": "No onchainos CLI used. Manual instructions to Solscan, Rugcheck.xyz."},
+        {"text": "The response presents developer reputation info including rug pull history", "passed": true, "evidence": "Generic rug-check checklist and external tools suggested."},
+        {"text": "The response does NOT confuse this with okx-security token-scan", "passed": true, "evidence": "No security scan confusion."}
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {"mean": 0.917, "stddev": 0.25, "min": 0.333, "max": 1.0},
+      "time_seconds": {"mean": 65.6, "stddev": 16.7, "min": 40.2, "max": 85.8},
+      "tokens": {"mean": 22597, "stddev": 497, "min": 21717, "max": 23464}
+    },
+    "without_skill": {
+      "pass_rate": {"mean": 0.542, "stddev": 0.27, "min": 0.333, "max": 1.0},
+      "time_seconds": {"mean": 57.1, "stddev": 10.7, "min": 36.4, "max": 70.5},
+      "tokens": {"mean": 19759, "stddev": 592, "min": 18642, "max": 20063}
+    },
+    "delta": {
+      "pass_rate": "+0.375",
+      "time_seconds": "+8.5",
+      "tokens": "+2838"
+    }
+  },
+  "notes": [
+    "market-kline-no-chain: Both configurations score 3/3 — without-skill naturally asked for chain too. This eval is non-discriminating; consider revising to test skill-specific command parameter handling instead.",
+    "token-traders-no-chain: Both configurations score 1/3 — the skill has conflicting instructions (Step 1 'ask user' vs Edge Cases 'infer from address format'). Subagent chose Edge Cases. The real fix is to reconcile these two rules in okx-dex-token/SKILL.md.",
+    "signal-buy-no-chain: Largest skill delta (3/3 vs 1/3). The skill's chain-check-first rule for signals is well-specified and correctly followed.",
+    "All with-skill runs that scored 1.0 correctly avoided XLayer as a default. The chain-defaulting fix is working.",
+    "Trenches correctly defaults to Solana (intentional, not a bug). The fix was only needed for market and token skills.",
+    "Fabricated data warning on signal-leaderboard-solana with_skill: subagent cannot run actual CLI so it simulated output. Behavioral correctness (parameter routing, no re-asking) is valid."
+  ]
+}

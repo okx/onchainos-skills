@@ -1,0 +1,33 @@
+{
+  "expectations": [
+    {
+      "text": "The response asks the user which chain the token is on",
+      "passed": true,
+      "evidence": "Skill Step 1 rule applied: asked user to confirm chain before proceeding, noting 0x format is consistent with Ethereum but could be any EVM chain."
+    },
+    {
+      "text": "The response does NOT say XLayer or xlayer as a recommended default",
+      "passed": true,
+      "evidence": "No XLayer recommended. Skill correctly prompts for chain."
+    },
+    {
+      "text": "The response does NOT attempt to run token holders command without knowing the chain",
+      "passed": true,
+      "evidence": "Claude asked for chain first, then conditionally showed what command it would run."
+    }
+  ],
+  "summary": {
+    "passed": 3,
+    "failed": 0,
+    "total": 3,
+    "pass_rate": 1.0
+  },
+  "execution_metrics": {
+    "tool_calls": {"Read": 1},
+    "total_tool_calls": 1,
+    "total_steps": 2,
+    "errors_encountered": 0,
+    "output_chars": 1569,
+    "transcript_chars": 0
+  }
+}

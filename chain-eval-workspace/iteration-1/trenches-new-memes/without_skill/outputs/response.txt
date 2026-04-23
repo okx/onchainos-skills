@@ -1,0 +1,26 @@
+I don't have the ability to fetch real-time data on newly launched meme tokens — my knowledge has a cutoff and I can't browse the web or connect to live blockchain data feeds.
+
+To find new meme tokens that just launched today in the trenches (pump.fun and similar launchpads), here are your best options:
+
+**Pump.fun (Solana)**
+- Go to https://pump.fun and sort by "New" to see tokens launched in the last few hours
+- Filter by graduation status, volume, or holder count to spot which ones are getting traction
+
+**DEX Screener**
+- https://dexscreener.com — set filter to "New Pairs", chain = Solana (or whichever chain you're watching), time = last 1–6 hours
+- Sort by volume or transaction count to identify ones with early activity
+
+**Photon / Bullx / Trojan**
+- These Solana trading terminals have built-in new launch scanners with real-time feeds
+- Photon (photon-sol.tinyastro.io) and Bullx (bullx.io) show newly created tokens with dev wallet info and bundle detection
+
+**Things to watch for on new meme launches:**
+- Dev wallet holding % (high = red flag)
+- Bundle activity at launch (snipers)
+- Liquidity locked vs. not locked
+- Social presence (Twitter/Telegram linked or ghost project)
+- Early holder concentration
+
+**Safety reminder:** New meme tokens in the trenches carry extreme risk. Most launch-day tokens are rugs or honeypots. Never invest more than you can afford to lose, and always check token security before buying.
+
+If you want me to help you analyze a specific token address, ticker, or set up a monitoring script for new launches, just let me know.

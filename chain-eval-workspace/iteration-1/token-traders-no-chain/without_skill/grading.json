@@ -1,0 +1,33 @@
+{
+  "expectations": [
+    {
+      "text": "The response asks the user which chain the token is on",
+      "passed": false,
+      "evidence": "Without skill, Claude identified PEPE on Ethereum from training knowledge. Did not ask for chain — assumed Ethereum implicitly."
+    },
+    {
+      "text": "The response does NOT suggest or assume XLayer as the default chain",
+      "passed": true,
+      "evidence": "No XLayer mentioned. Assumed Ethereum from training knowledge."
+    },
+    {
+      "text": "The response makes clear it needs the chain before it can look up top traders",
+      "passed": false,
+      "evidence": "Redirected to DEX Screener, Nansen, Arkham. No mention of needing chain — assumed Ethereum."
+    }
+  ],
+  "summary": {
+    "passed": 1,
+    "failed": 2,
+    "total": 3,
+    "pass_rate": 0.333
+  },
+  "execution_metrics": {
+    "tool_calls": {},
+    "total_tool_calls": 0,
+    "total_steps": 1,
+    "errors_encountered": 0,
+    "output_chars": 2842,
+    "transcript_chars": 0
+  }
+}

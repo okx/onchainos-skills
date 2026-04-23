@@ -1,0 +1,60 @@
+I don't have real-time access to on-chain data, so I can't pull a live leaderboard of top Solana traders by PnL for the last 7 days. However, here are the best ways to find this information:
+
+## Options to Find Top Solana Traders (Last 7 Days, by PnL)
+
+### 1. On-Chain Analytics Platforms
+
+**Birdeye (birdeye.so)**
+- Go to https://birdeye.so/leaderboard
+- Filter by chain: Solana
+- Sort by PnL (7D)
+- Shows realized + unrealized PnL with wallet addresses
+
+**Cielo Finance (app.cielo.finance)**
+- Leaderboard at https://app.cielo.finance/leaderboard
+- Supports Solana, sortable by 7-day PnL
+- Includes trade count, win rate, and top tokens traded
+
+**GMGN (gmgn.ai)**
+- Smart money and whale tracker
+- Filter by Solana, time window: 7D
+- Ranks by profit in USD
+
+**Dune Analytics (dune.com)**
+- Search for community dashboards: "Solana top traders PnL"
+- Example query: https://dune.com/discover/content/relevant?q=solana+trader+pnl
+- Community-built dashboards updated frequently
+
+### 2. DEX-Specific Leaderboards
+
+**Jupiter (jup.ag)**
+- Some DEX aggregators display top traders by volume/PnL
+
+**Raydium / Orca**
+- Individual DEX stats pages may show top liquidity providers and traders
+
+### 3. Data APIs (for programmatic access)
+
+If you want to build your own leaderboard:
+- **Helius API** (helius.dev) — transaction history and wallet analytics on Solana
+- **Solana Beach** (solanabeach.io) — validator and wallet explorer
+- **Flipside Crypto** (flipsidecrypto.xyz) — SQL-based on-chain queries
+
+### What "Top Trader by PnL" Typically Means
+
+| Metric | Description |
+|--------|-------------|
+| Realized PnL | Profit locked in by selling tokens |
+| Unrealized PnL | Paper gains on current holdings |
+| Win Rate | % of trades that were profitable |
+| Volume | Total USD value traded |
+| ROI % | Return on capital deployed |
+
+### Caveats
+
+- On-chain PnL calculations vary by platform (cost-basis method, token pricing source, etc.)
+- Some "top" wallets may be wash traders or bots
+- Leaderboards typically reflect DEX activity only — CEX trades are off-chain and not visible
+- A 7-day window can be heavily influenced by short-term market volatility
+
+For the most up-to-date live leaderboard, I'd recommend heading directly to **Birdeye** or **GMGN** — both have excellent Solana trader leaderboards with 7-day filters.

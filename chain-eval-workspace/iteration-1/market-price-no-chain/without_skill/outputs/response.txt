@@ -1,0 +1,18 @@
+The token address 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984 is the contract address for **UNI (Uniswap's governance token)** on the Ethereum mainnet.
+
+However, I don't have access to real-time market data, so I cannot give you the current live price. My knowledge has a cutoff date and I cannot fetch live on-chain or exchange data.
+
+To get the current price of UNI, you can check any of the following sources:
+
+1. **CoinGecko**: https://www.coingecko.com/en/coins/uniswap
+2. **CoinMarketCap**: https://coinmarketcap.com/currencies/uniswap/
+3. **Uniswap App**: https://app.uniswap.org/
+4. **Etherscan Token Tracker**: https://etherscan.io/token/0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984
+5. **DEX Aggregators** like 1inch or Paraswap
+
+A few things worth noting:
+- You did not specify a blockchain, but this address is well-known as an **Ethereum (ERC-20)** token.
+- The same address on other EVM-compatible chains (e.g., Polygon, Arbitrum) may or may not correspond to the same token — always verify the chain context.
+- For real-time price data programmatically, consider using the CoinGecko API, CoinMarketCap API, or an on-chain price oracle like Chainlink or Uniswap v3's TWAP.
+
+If you need live price lookups integrated into your workflow, a tool with on-chain data access (such as a DEX market data skill) would be required.

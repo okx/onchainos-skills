@@ -1,4 +1,5 @@
 pub mod agentic_wallet;
+pub mod cross_chain;
 pub mod defi;
 pub mod gateway;
 pub mod leaderboard;
@@ -11,6 +12,7 @@ pub mod swap;
 pub mod token;
 pub mod tracker;
 pub mod upgrade;
+pub mod workflows;
 pub mod ws;
 
 use crate::chains;

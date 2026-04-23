@@ -1,0 +1,33 @@
+{
+  "expectations": [
+    {
+      "text": "The response runs token-dev-info with the provided address",
+      "passed": true,
+      "evidence": "Used onchainos memepump token-dev-info --address 4mzSZL7PWXR7GSmGtijbTSWkBNxYiRHXxd3TiXcSJFKv as the correct command."
+    },
+    {
+      "text": "The response presents developer reputation info including rug pull history",
+      "passed": true,
+      "evidence": "Presented structured dev reputation report with translated field names: rugPullCount → 'rug pull count', bondingPercent → 'bonding curve progress', top10HoldingsPercent → 'top-10 holder concentration'."
+    },
+    {
+      "text": "The response does NOT confuse this with okx-security token-scan (different purpose)",
+      "passed": true,
+      "evidence": "Correctly routed to memepump token-dev-info (dev history/reputation), not security token-scan."
+    }
+  ],
+  "summary": {
+    "passed": 3,
+    "failed": 0,
+    "total": 3,
+    "pass_rate": 1.0
+  },
+  "execution_metrics": {
+    "tool_calls": {"Read": 1},
+    "total_tool_calls": 1,
+    "total_steps": 2,
+    "errors_encountered": 0,
+    "output_chars": 1832,
+    "transcript_chars": 0
+  }
+}

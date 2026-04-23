@@ -1,0 +1,33 @@
+{
+  "expectations": [
+    {
+      "text": "The response either asks which chain the user wants signals for, OR mentions it will check supported chains first",
+      "passed": false,
+      "evidence": "Without skill, Claude redirected to Nansen, Arkham, Dune Analytics, Birdeye, Whale Alert. No chain check or chain question."
+    },
+    {
+      "text": "The response does NOT say XLayer or xlayer as a recommended default",
+      "passed": true,
+      "evidence": "No XLayer mentioned."
+    },
+    {
+      "text": "The response correctly distinguishes between tracker (transaction feed) vs signal list (aggregated alerts)",
+      "passed": false,
+      "evidence": "No distinction made. Response was purely educational/redirectional about smart money tracking in general."
+    }
+  ],
+  "summary": {
+    "passed": 1,
+    "failed": 2,
+    "total": 3,
+    "pass_rate": 0.333
+  },
+  "execution_metrics": {
+    "tool_calls": {},
+    "total_tool_calls": 0,
+    "total_steps": 1,
+    "errors_encountered": 0,
+    "output_chars": 2231,
+    "transcript_chars": 0
+  }
+}

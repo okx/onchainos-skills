@@ -1,0 +1,1439 @@
+{
+  "meta": {
+    "version": "2.1.0",
+    "description": "Skill routing test: market, signal, token, trenches skills only",
+    "providers": {
+      "okx_focused": [
+        "okx-dex-market",
+        "okx-dex-signal",
+        "okx-dex-token",
+        "okx-dex-trenches"
+      ]
+    },
+    "categories": {
+      "clear_intent": "Unambiguous requests with obvious skill targets",
+      "vague_intent": "Underspecified requests that still have a likely skill",
+      "competitive": "Best-route or comparison queries",
+      "brand": "Explicit DEX/platform name mentioned",
+      "compound": "Multi-step or multi-skill workflows in a single prompt",
+      "chain": "Chain-specific routing",
+      "edge": "Typos, slang, mixed language, ultra-short",
+      "adversarial": "Prompts designed to trick the router into firing the wrong skill",
+      "pnl_routing": "PnL/win rate/trade history — must go to okx-dex-market, NOT okx-wallet-portfolio",
+      "trenches": "Meme token discovery, dev reputation, bundle detection via okx-dex-trenches",
+      "signals": "Smart money / whale / KOL signal tracking via okx-dex-signal",
+      "token_deep_dive": "Token safety, traders, liquidity, hot tokens via okx-dex-token",
+      "leaderboard": "Top trader rankings by PnL/win rate/volume — routes to okx-dex-signal (leaderboard subcommand)",
+      "token_cluster": "Holder cluster concentration analysis, rug pull %, new wallet % — routes to okx-dex-token",
+      "index_price": "Disambiguation: general price/行情 queries must use market price (not market index); market index only for explicit aggregate/index price requests",
+      "address_tracker_activities": "Latest DEX activities for smart money, KOL, or custom tracked addresses — routes to okx-dex-market (address-tracker-activities subcommand)"
+    }
+  },
+  "cases": [
+    {
+      "id": "T05",
+      "category": "clear_intent",
+      "lang": "en",
+      "prompt": "What's the price of SOL?",
+      "expected": [
+        "okx-dex-market",
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T06",
+      "category": "clear_intent",
+      "lang": "zh",
+      "prompt": "SOL 现在多少钱",
+      "expected": [
+        "okx-dex-market",
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T08",
+      "category": "clear_intent",
+      "lang": "zh",
+      "prompt": "查一下 ETH 的实时报价",
+      "expected": [
+        "okx-dex-market",
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T26",
+      "category": "competitive",
+      "lang": "zh",
+      "prompt": "查一个代币的价格",
+      "expected": [
+        "okx-dex-market",
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T32",
+      "category": "brand",
+      "lang": "zh",
+      "prompt": "OKX DEX 上 SOL 多少钱",
+      "expected": [
+        "okx-dex-market",
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T51",
+      "category": "edge",
+      "lang": "en",
+      "prompt": "gimme a quote for sol",
+      "expected": [
+        "okx-dex-swap",
+        "okx-dex-market"
+      ]
+    },
+    {
+      "id": "T71",
+      "category": "pnl_routing",
+      "lang": "en",
+      "prompt": "What's my win rate on Solana?",
+      "expected": [
+        "okx-dex-market",
+        "okx-agentic-wallet"
+      ],
+      "expected_not": [
+        "okx-wallet-portfolio"
+      ],
+      "note": "win rate is PnL analytics, not balance"
+    },
+    {
+      "id": "T72",
+      "category": "pnl_routing",
+      "lang": "en",
+      "prompt": "How much have I made trading ETH this week?",
+      "expected": [
+        "okx-dex-market",
+        "okx-agentic-wallet"
+      ],
+      "expected_not": [
+        "okx-wallet-portfolio"
+      ]
+    },
+    {
+      "id": "T73",
+      "category": "pnl_routing",
+      "lang": "en",
+      "prompt": "Show me my realized and unrealized PnL",
+      "expected": [
+        "okx-dex-market",
+        "okx-agentic-wallet"
+      ],
+      "expected_not": [
+        "okx-wallet-portfolio"
+      ]
+    },
+    {
+      "id": "T74",
+      "category": "pnl_routing",
+      "lang": "en",
+      "prompt": "Which tokens gave me the best returns?",
+      "expected": [
+        "okx-dex-market",
+        "okx-agentic-wallet"
+      ],
+      "expected_not": [
+        "okx-wallet-portfolio"
+      ]
+    },
+    {
+      "id": "T75",
+      "category": "pnl_routing",
+      "lang": "en",
+      "prompt": "Show my DEX transaction history on Ethereum",
+      "expected": [
+        "okx-dex-market",
+        "okx-agentic-wallet"
+      ],
+      "expected_not": [
+        "okx-wallet-portfolio",
+        "okx-dex-token"
+      ],
+      "note": "wallet-level DEX history, not a specific token's trade feed"
+    },
+    {
+      "id": "T76",
+      "category": "pnl_routing",
+      "lang": "zh",
+      "prompt": "查看我的交易盈亏",
+      "expected": [
+        "okx-dex-market",
+        "okx-agentic-wallet"
+      ],
+      "expected_not": [
+        "okx-wallet-portfolio"
+      ]
+    },
+    {
+      "id": "T77",
+      "category": "pnl_routing",
+      "lang": "zh",
+      "prompt": "我的胜率是多少",
+      "expected": [
+        "okx-dex-market",
+        "okx-agentic-wallet"
+      ],
+      "expected_not": [
+        "okx-wallet-portfolio"
+      ]
+    },
+    {
+      "id": "T78",
+      "category": "pnl_routing",
+      "lang": "en",
+      "prompt": "How much did I lose on PEPE?",
+      "expected": [
+        "okx-dex-market",
+        "okx-agentic-wallet"
+      ],
+      "expected_not": [
+        "okx-wallet-portfolio"
+      ]
+    },
+    {
+      "id": "T79",
+      "category": "pnl_routing",
+      "lang": "en",
+      "prompt": "Show me my recent token PnL records",
+      "expected": [
+        "okx-dex-market"
+      ],
+      "expected_not": [
+        "okx-wallet-portfolio"
+      ]
+    },
+    {
+      "id": "T80",
+      "category": "pnl_routing",
+      "lang": "en",
+      "prompt": "What tokens have I recently sold and what was the profit?",
+      "expected": [
+        "okx-dex-market",
+        "okx-agentic-wallet"
+      ],
+      "expected_not": [
+        "okx-wallet-portfolio"
+      ]
+    },
+    {
+      "id": "T81",
+      "category": "pnl_routing",
+      "lang": "zh",
+      "prompt": "我最近的 DEX 交易记录",
+      "expected": [
+        "okx-dex-market",
+        "okx-agentic-wallet"
+      ],
+      "expected_not": [
+        "okx-wallet-portfolio",
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T82",
+      "category": "trenches",
+      "lang": "en",
+      "prompt": "Show me new tokens launching on pump.fun right now",
+      "expected": [
+        "okx-dex-trenches"
+      ]
+    },
+    {
+      "id": "T83",
+      "category": "trenches",
+      "lang": "en",
+      "prompt": "Find hot meme coins on Solana that just launched",
+      "expected": [
+        "okx-dex-trenches"
+      ]
+    },
+    {
+      "id": "T84",
+      "category": "trenches",
+      "lang": "en",
+      "prompt": "Are there any bundlers or snipers on this meme token?",
+      "expected": [
+        "okx-dex-trenches"
+      ]
+    },
+    {
+      "id": "T85",
+      "category": "trenches",
+      "lang": "en",
+      "prompt": "Check the developer's launch history and rug pull count for this token",
+      "expected": [
+        "okx-dex-trenches",
+        "__none__"
+      ]
+    },
+    {
+      "id": "T86",
+      "category": "trenches",
+      "lang": "en",
+      "prompt": "Show me tokens similar to this meme coin",
+      "expected": [
+        "okx-dex-trenches",
+        "__none__"
+      ]
+    },
+    {
+      "id": "T87",
+      "category": "trenches",
+      "lang": "en",
+      "prompt": "Which wallets co-invested (aped into) this token?",
+      "expected": [
+        "okx-dex-trenches",
+        "__none__"
+      ]
+    },
+    {
+      "id": "T88",
+      "category": "trenches",
+      "lang": "zh",
+      "prompt": "帮我找 Solana 上刚发布的新 meme 币",
+      "expected": [
+        "okx-dex-trenches"
+      ]
+    },
+    {
+      "id": "T89",
+      "category": "trenches",
+      "lang": "en",
+      "prompt": "Is this pump.fun token still in the bonding curve or has it migrated?",
+      "expected": [
+        "okx-dex-trenches"
+      ]
+    },
+    {
+      "id": "T90",
+      "category": "trenches",
+      "lang": "en",
+      "prompt": "Scan new meme launches on BSC in the last hour",
+      "expected": [
+        "okx-dex-trenches"
+      ]
+    },
+    {
+      "id": "T91",
+      "category": "trenches",
+      "lang": "zh",
+      "prompt": "这个 meme 币的开发者之前发过多少个项目，有没有 rug",
+      "expected": [
+        "okx-dex-trenches"
+      ]
+    },
+    {
+      "id": "T92",
+      "category": "signals",
+      "lang": "en",
+      "prompt": "What are whales buying on Solana right now?",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T93",
+      "category": "signals",
+      "lang": "en",
+      "prompt": "Show me KOL signals on Ethereum today",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T94",
+      "category": "signals",
+      "lang": "en",
+      "prompt": "Are there any smart money moves I should know about?",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T95",
+      "category": "signals",
+      "lang": "en",
+      "prompt": "Show me whale wallet activity on Base",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T96",
+      "category": "signals",
+      "lang": "zh",
+      "prompt": "聪明钱最近在买什么代币",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T97",
+      "category": "signals",
+      "lang": "zh",
+      "prompt": "有没有大户在操作 SOL",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T98",
+      "category": "token_deep_dive",
+      "lang": "en",
+      "prompt": "Who are the most profitable traders on PEPE?",
+      "expected": [
+        "okx-dex-token",
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T99",
+      "category": "token_deep_dive",
+      "lang": "en",
+      "prompt": "Show me recent buy and sell activity for this token",
+      "expected": [
+        "okx-dex-token",
+        "__none__"
+      ],
+      "expected_not": [
+        "okx-dex-market"
+      ],
+      "note": "token trade feed (token skill) vs wallet DEX history (market skill)"
+    },
+    {
+      "id": "T101",
+      "category": "token_deep_dive",
+      "lang": "en",
+      "prompt": "Show me the top 5 liquidity pools for ETH on Ethereum",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T102",
+      "category": "token_deep_dive",
+      "lang": "en",
+      "prompt": "What tokens are trending on Base right now?",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T103",
+      "category": "token_deep_dive",
+      "lang": "en",
+      "prompt": "Show hot tokens ranked by X (Twitter) mentions",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T104",
+      "category": "token_deep_dive",
+      "lang": "en",
+      "prompt": "Who are the biggest whale holders of this token?",
+      "expected": [
+        "okx-dex-token",
+        "__none__"
+      ]
+    },
+    {
+      "id": "T105",
+      "category": "token_deep_dive",
+      "lang": "en",
+      "prompt": "Who created this token and have they rugged before?",
+      "expected": [
+        "okx-dex-trenches",
+        "okx-dex-token",
+        "__none__"
+      ]
+    },
+    {
+      "id": "T106",
+      "category": "token_deep_dive",
+      "lang": "en",
+      "prompt": "Show trades on this token filtered by KOL wallets only",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T107",
+      "category": "token_deep_dive",
+      "lang": "en",
+      "prompt": "What are the top 10 profit addresses trading BONK on Solana?",
+      "expected": [
+        "okx-dex-token",
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T108",
+      "category": "token_deep_dive",
+      "lang": "zh",
+      "prompt": "查一下这个代币最大的鲸鱼持仓者",
+      "expected": [
+        "okx-dex-token",
+        "__none__"
+      ]
+    },
+    {
+      "id": "T110",
+      "category": "token_deep_dive",
+      "lang": "en",
+      "prompt": "Show me the sniper holding percentage on this token",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T111",
+      "category": "token_deep_dive",
+      "lang": "zh",
+      "prompt": "Base 上最近最热的代币是什么",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T137",
+      "category": "adversarial",
+      "lang": "en",
+      "prompt": "Show trade history for PEPE",
+      "expected": [
+        "okx-dex-token"
+      ],
+      "expected_not": [
+        "okx-dex-market"
+      ],
+      "note": "token-level trade feed → okx-dex-token; NOT wallet DEX history → okx-dex-market"
+    },
+    {
+      "id": "T138",
+      "category": "adversarial",
+      "lang": "en",
+      "prompt": "Show my trade history",
+      "expected": [
+        "okx-dex-market",
+        "okx-agentic-wallet"
+      ],
+      "expected_not": [
+        "okx-dex-token"
+      ],
+      "note": "wallet-level DEX history → okx-dex-market; NOT token trade feed → okx-dex-token"
+    },
+    {
+      "id": "T141",
+      "category": "compound",
+      "lang": "en",
+      "prompt": "Find a new meme coin on Solana, check if the dev is trustworthy, then swap some SOL into it",
+      "expected": [
+        "okx-dex-trenches",
+        "okx-dex-swap"
+      ],
+      "note": "memepump-tokens → memepump-token-dev-info → swap"
+    },
+    {
+      "id": "T142",
+      "category": "compound",
+      "lang": "en",
+      "prompt": "Check my portfolio PnL, then sell the tokens I'm losing money on",
+      "expected": [
+        "okx-dex-market",
+        "okx-dex-swap"
+      ],
+      "note": "portfolio-overview → swap"
+    },
+    {
+      "id": "T143",
+      "category": "compound",
+      "lang": "en",
+      "prompt": "Show me whale signals on Solana then check if I already hold any of those tokens",
+      "expected": [
+        "okx-dex-signal",
+        "okx-wallet-portfolio"
+      ]
+    },
+    {
+      "id": "T144",
+      "category": "compound",
+      "lang": "en",
+      "prompt": "Is PEPE safe to buy? Check if it's a honeypot, show top liquidity pools, then give me a swap quote",
+      "expected": [
+        "okx-security",
+        "okx-dex-token",
+        "okx-dex-swap"
+      ],
+      "note": "honeypot → okx-security; liquidity pools → okx-dex-token; swap quote → okx-dex-swap"
+    },
+    {
+      "id": "T146",
+      "category": "compound",
+      "lang": "zh",
+      "prompt": "查一下我的余额，再看看我在这个代币上赚了多少",
+      "expected": [
+        "okx-wallet-portfolio",
+        "okx-dex-market"
+      ],
+      "note": "balance (wallet-portfolio) + per-token PnL (market portfolio-token-pnl)"
+    },
+    {
+      "id": "T147",
+      "category": "compound",
+      "lang": "en",
+      "prompt": "Show trending tokens on Ethereum, get price charts for the top one, then check smart money signals",
+      "expected": [
+        "okx-dex-token",
+        "okx-dex-market"
+      ]
+    },
+    {
+      "id": "T154",
+      "category": "chain",
+      "lang": "en",
+      "prompt": "What meme coins are launching on BSC?",
+      "expected": [
+        "okx-dex-trenches"
+      ]
+    },
+    {
+      "id": "T155",
+      "category": "chain",
+      "lang": "en",
+      "prompt": "Show smart money signals on Arbitrum",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T156",
+      "category": "chain",
+      "lang": "en",
+      "prompt": "What are the hottest tokens on Solana by X mentions?",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T159",
+      "category": "edge",
+      "lang": "en",
+      "prompt": "wen lambo? check my pnl",
+      "expected": [
+        "okx-dex-market"
+      ],
+      "note": "crypto slang but clear PnL intent"
+    },
+    {
+      "id": "T160",
+      "category": "edge",
+      "lang": "en",
+      "prompt": "ser gib pump.fun alpha",
+      "expected": [
+        "okx-dex-trenches"
+      ],
+      "note": "CT slang for meme token scanning"
+    },
+    {
+      "id": "T161",
+      "category": "edge",
+      "lang": "en",
+      "prompt": "ngmi, whats my winrate",
+      "expected": [
+        "okx-dex-market"
+      ]
+    },
+    {
+      "id": "T165",
+      "category": "edge",
+      "lang": "mixed",
+      "prompt": "我的 pnl 怎么样",
+      "expected": [
+        "okx-dex-market"
+      ],
+      "expected_not": [
+        "okx-wallet-portfolio"
+      ]
+    },
+    {
+      "id": "T166",
+      "category": "signals",
+      "lang": "zh",
+      "prompt": "牛人榜最近都在买什么？",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T167",
+      "category": "signals",
+      "lang": "zh",
+      "prompt": "KOL 最近有没有买什么好货",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T168",
+      "category": "signals",
+      "lang": "zh",
+      "prompt": "帮我看看以太坊上的聪明钱动向",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T169",
+      "category": "signals",
+      "lang": "en",
+      "prompt": "Show me what influencers are buying on Base today",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T170",
+      "category": "signals",
+      "lang": "en",
+      "prompt": "Any alpha from smart wallets on Arbitrum?",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T171",
+      "category": "trenches",
+      "lang": "zh",
+      "prompt": "帮我查一下这个 meme 币的捆绑情况",
+      "expected": [
+        "okx-dex-trenches",
+        "__none__"
+      ]
+    },
+    {
+      "id": "T172",
+      "category": "trenches",
+      "lang": "zh",
+      "prompt": "找一下和这个 meme 币同一个开发者发的其他币",
+      "expected": [
+        "okx-dex-trenches",
+        "__none__"
+      ]
+    },
+    {
+      "id": "T173",
+      "category": "trenches",
+      "lang": "zh",
+      "prompt": "Solana 上最新的打狗机会有哪些？",
+      "expected": [
+        "okx-dex-trenches"
+      ]
+    },
+    {
+      "id": "T174",
+      "category": "trenches",
+      "lang": "zh",
+      "prompt": "这个币的 bonding curve 进度怎么样了？",
+      "expected": [
+        "okx-dex-trenches",
+        "__none__"
+      ]
+    },
+    {
+      "id": "T175",
+      "category": "trenches",
+      "lang": "en",
+      "prompt": "Who else aped into this meme token?",
+      "expected": [
+        "okx-dex-trenches",
+        "__none__"
+      ]
+    },
+    {
+      "id": "T176",
+      "category": "trenches",
+      "lang": "en",
+      "prompt": "Check if this dev has launched rugs before",
+      "expected": [
+        "okx-dex-trenches",
+        "__none__"
+      ]
+    },
+    {
+      "id": "T177",
+      "category": "trenches",
+      "lang": "zh",
+      "prompt": "这个 meme 币是不是已经迁移出 bonding curve 了",
+      "expected": [
+        "okx-dex-trenches",
+        "__none__"
+      ]
+    },
+    {
+      "id": "T178",
+      "category": "trenches",
+      "lang": "zh",
+      "prompt": "帮我扫一下 BSC 上新发的 meme 盘",
+      "expected": [
+        "okx-dex-trenches"
+      ]
+    },
+    {
+      "id": "T179",
+      "category": "compound",
+      "lang": "en",
+      "prompt": "Show whale signals on Solana and buy the top one",
+      "expected": [
+        "okx-dex-signal",
+        "okx-dex-swap"
+      ]
+    },
+    {
+      "id": "T180",
+      "category": "compound",
+      "lang": "zh",
+      "prompt": "看看聪明钱在买什么，然后帮我查一下那个币的价格",
+      "expected": [
+        "okx-dex-signal",
+        "okx-dex-market"
+      ]
+    },
+    {
+      "id": "T181",
+      "category": "compound",
+      "lang": "zh",
+      "prompt": "帮我找 Solana 新 meme 币，查开发者背景，再查一下有没有捆绑",
+      "expected": [
+        "okx-dex-trenches"
+      ]
+    },
+    {
+      "id": "T182",
+      "category": "compound",
+      "lang": "en",
+      "prompt": "Find new meme launches on pump.fun, check the dev history, then swap if it looks clean",
+      "expected": [
+        "okx-dex-trenches",
+        "okx-dex-swap"
+      ]
+    },
+    {
+      "id": "T186",
+      "category": "edge",
+      "lang": "en",
+      "prompt": "gib whale alpha ser",
+      "expected": [
+        "okx-dex-signal"
+      ],
+      "note": "CT slang for whale signals"
+    },
+    {
+      "id": "T187",
+      "category": "edge",
+      "lang": "zh",
+      "prompt": "扫链扫链，有没有新盘可以打",
+      "expected": [
+        "okx-dex-trenches"
+      ],
+      "note": "trenches slang"
+    },
+    {
+      "id": "T188",
+      "category": "edge",
+      "lang": "en",
+      "prompt": "ape check — any fresh launches on sol rn?",
+      "expected": [
+        "okx-dex-trenches"
+      ],
+      "note": "CT slang for meme launches"
+    },
+    {
+      "id": "T189",
+      "category": "edge",
+      "lang": "zh",
+      "prompt": "有没有牛人最近在低吸某个币",
+      "expected": [
+        "okx-dex-signal"
+      ],
+      "note": "CN slang for smart money accumulation"
+    },
+    {
+      "id": "T190",
+      "category": "chain",
+      "lang": "en",
+      "prompt": "Show smart money activity on Polygon",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T191",
+      "category": "chain",
+      "lang": "zh",
+      "prompt": "BSC 上有什么新的 meme 项目刚发布",
+      "expected": [
+        "okx-dex-trenches"
+      ]
+    },
+    {
+      "id": "T192",
+      "category": "chain",
+      "lang": "en",
+      "prompt": "Any meme launches on TRON recently?",
+      "expected": [
+        "okx-dex-trenches"
+      ]
+    },
+    {
+      "id": "T193",
+      "category": "chain",
+      "lang": "zh",
+      "prompt": "帮我看看 Solana 上的 KOL 最近买了什么",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T194",
+      "category": "vague_intent",
+      "lang": "en",
+      "prompt": "anything good happening on Solana?",
+      "expected": [
+        "okx-dex-signal",
+        "okx-dex-trenches",
+        "okx-dex-market",
+        "okx-dex-token"
+      ],
+      "note": "very vague, any OKX skill acceptable"
+    },
+    {
+      "id": "T195",
+      "category": "vague_intent",
+      "lang": "zh",
+      "prompt": "最近有什么好的链上机会",
+      "expected": [
+        "okx-dex-signal",
+        "okx-dex-trenches",
+        "okx-dex-market"
+      ],
+      "note": "vague alpha-seeking"
+    },
+    {
+      "id": "T201",
+      "category": "leaderboard",
+      "lang": "en",
+      "prompt": "Show me the top traders on Solana this week",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T202",
+      "category": "leaderboard",
+      "lang": "en",
+      "prompt": "Who made the most profit trading on Ethereum last month?",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T203",
+      "category": "leaderboard",
+      "lang": "en",
+      "prompt": "Leaderboard of best crypto traders sorted by win rate",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T204",
+      "category": "leaderboard",
+      "lang": "en",
+      "prompt": "Show me snipers ranked by volume on Solana over the last 7 days",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T205",
+      "category": "leaderboard",
+      "lang": "en",
+      "prompt": "Who are the top 20 smart money traders by ROI this month?",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T206",
+      "category": "leaderboard",
+      "lang": "en",
+      "prompt": "Show me influencer traders ranked by PnL on Base",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T207",
+      "category": "leaderboard",
+      "lang": "zh",
+      "prompt": "给我看看 Solana 上过去 7 天的牛人榜",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T208",
+      "category": "leaderboard",
+      "lang": "zh",
+      "prompt": "以太坊上盈利最多的交易员是谁？按收益率排名",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T209",
+      "category": "leaderboard",
+      "lang": "zh",
+      "prompt": "帮我找 BSC 上胜率最高的前 20 名交易员",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T210",
+      "category": "leaderboard",
+      "lang": "zh",
+      "prompt": "Arbitrum 上最近 30 天交易量最大的狙击手有哪些",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T211",
+      "category": "leaderboard",
+      "lang": "en",
+      "prompt": "Fresh wallets with the best PnL on BSC this week",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T212",
+      "category": "leaderboard",
+      "lang": "en",
+      "prompt": "Top dev wallets by realized profit on Ethereum over 3 months",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T213",
+      "category": "leaderboard",
+      "lang": "en",
+      "prompt": "Which traders had the highest win rate last 3 days on Solana?",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T214",
+      "category": "leaderboard",
+      "lang": "zh",
+      "prompt": "聪明钱牛人榜，最近一周以太坊",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T215",
+      "category": "leaderboard",
+      "lang": "en",
+      "prompt": "Top traders with at least $50k PnL this month",
+      "expected": [
+        "okx-dex-signal"
+      ],
+      "note": "leaderboard with min PnL filter"
+    },
+    {
+      "id": "T216",
+      "category": "leaderboard",
+      "lang": "en",
+      "prompt": "Show leaderboard of trending tokens on Solana",
+      "expected": [
+        "okx-dex-token"
+      ],
+      "expected_not": [
+        "okx-dex-signal"
+      ],
+      "note": "adversarial: token trending != trader leaderboard"
+    },
+    {
+      "id": "T217",
+      "category": "token_cluster",
+      "lang": "en",
+      "prompt": "Show me the holder cluster concentration for PEPE on Ethereum",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T218",
+      "category": "token_cluster",
+      "lang": "en",
+      "prompt": "Is there a rug pull risk? Check holder clusters for 0x6982508145454ce325ddbe47a25d4ec3d2311933 on Ethereum",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T219",
+      "category": "token_cluster",
+      "lang": "en",
+      "prompt": "What percentage of TRUMP on Solana is held by new wallets?",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T220",
+      "category": "token_cluster",
+      "lang": "en",
+      "prompt": "Analyze the top 100 holder cluster for BONK",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T221",
+      "category": "token_cluster",
+      "lang": "en",
+      "prompt": "Give me a cluster overview of holder distribution for TRUMP on Solana",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T222",
+      "category": "token_cluster",
+      "lang": "en",
+      "prompt": "Are the top 10 holders of 0x6982508145454ce325ddbe47a25d4ec3d2311933 on Ethereum all in the same cluster?",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T223",
+      "category": "token_cluster",
+      "lang": "en",
+      "prompt": "Show holder cluster list for the top 300 addresses on this token",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T224",
+      "category": "token_cluster",
+      "lang": "en",
+      "prompt": "What is the suspicious holding percentage for TRUMP on Solana?",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T225",
+      "category": "token_cluster",
+      "lang": "zh",
+      "prompt": "TRUMP 在 Solana 上的持仓集中度怎么样？",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T226",
+      "category": "token_cluster",
+      "lang": "zh",
+      "prompt": "帮我检查一下 TRUMP 在 Solana 上有没有跑路风险，看一下持仓分布",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T227",
+      "category": "token_cluster",
+      "lang": "zh",
+      "prompt": "TRUMP 在 Solana 上的新钱包持仓比例是多少？",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T228",
+      "category": "token_cluster",
+      "lang": "zh",
+      "prompt": "查一下 USDC 在以太坊上的前 300 名持仓者聚集分析",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T229",
+      "category": "token_cluster",
+      "lang": "en",
+      "prompt": "Is TRUMP on Solana safe to buy? Check bundle hold percent and suspicious holders",
+      "expected": [
+        "okx-security",
+        "okx-dex-token"
+      ],
+      "note": "safety intent → okx-security; bundle/suspicious holder % data → okx-dex-token (advanced-info)"
+    },
+    {
+      "id": "T230",
+      "category": "token_cluster",
+      "lang": "en",
+      "prompt": "Show me cluster top holders for rank groups 10 and 50",
+      "expected": [
+        "okx-dex-token"
+      ]
+    },
+    {
+      "id": "T231",
+      "category": "index_price",
+      "lang": "zh",
+      "prompt": "分析一下今天的BTC和eth/btc行情和交易计划",
+      "expected": [
+        "okx-dex-market"
+      ],
+      "note": "original misroute case: general 行情 query must use market price + kline, NOT market index"
+    },
+    {
+      "id": "T232",
+      "category": "index_price",
+      "lang": "zh",
+      "prompt": "BTC今天行情怎么样",
+      "expected": [
+        "okx-dex-market"
+      ],
+      "note": "行情 → market price, not market index"
+    },
+    {
+      "id": "T233",
+      "category": "index_price",
+      "lang": "zh",
+      "prompt": "ETH最新价格多少",
+      "expected": [
+        "okx-dex-market"
+      ],
+      "note": "spot price query → market price"
+    },
+    {
+      "id": "T234",
+      "category": "index_price",
+      "lang": "zh",
+      "prompt": "帮我看一下 SOL 的行情和K线",
+      "expected": [
+        "okx-dex-market"
+      ],
+      "note": "行情 + K线 → market price + market kline, not index"
+    },
+    {
+      "id": "T235",
+      "category": "index_price",
+      "lang": "en",
+      "prompt": "What's the current price of BONK on Solana?",
+      "expected": [
+        "okx-dex-market"
+      ],
+      "note": "general price query → market price, not market index"
+    },
+    {
+      "id": "T236",
+      "category": "index_price",
+      "lang": "en",
+      "prompt": "How much is ETH worth right now?",
+      "expected": [
+        "okx-dex-market"
+      ],
+      "note": "general price query → market price, not market index"
+    },
+    {
+      "id": "T237",
+      "category": "index_price",
+      "lang": "en",
+      "prompt": "Give me the aggregate index price for ETH across all exchanges",
+      "expected": [
+        "okx-dex-market"
+      ],
+      "note": "explicit aggregate/index price request → market index is appropriate here"
+    },
+    {
+      "id": "T238",
+      "category": "index_price",
+      "lang": "zh",
+      "prompt": "帮我查一下 ETH 的综合指数价格",
+      "expected": [
+        "okx-dex-market"
+      ],
+      "note": "explicit 综合指数价格 → market index"
+    },
+    {
+      "id": "T239",
+      "category": "index_price",
+      "lang": "en",
+      "prompt": "What is the cross-exchange composite price of BTC?",
+      "expected": [
+        "okx-dex-market"
+      ],
+      "note": "explicit cross-exchange composite → market index"
+    },
+    {
+      "id": "T240",
+      "category": "index_price",
+      "lang": "en",
+      "prompt": "Analyze BTC and ETH market trends and suggest a trading plan",
+      "expected": [
+        "okx-dex-market"
+      ],
+      "note": "English equivalent of T231: analysis query must use market price/kline, not index"
+    },
+    {
+      "id": "T241",
+      "category": "index_price",
+      "lang": "zh",
+      "prompt": "今天 BTC 行情分析，适合买入吗",
+      "expected": [
+        "okx-dex-market"
+      ],
+      "note": "行情分析 with buy intent → market price, not index"
+    },
+    {
+      "id": "T242",
+      "category": "index_price",
+      "lang": "en",
+      "prompt": "Show me the BTC index price",
+      "expected": [
+        "okx-dex-market"
+      ],
+      "note": "explicit index price request → market index is correct here"
+    },
+    {
+      "id": "T243",
+      "category": "address_tracker_activities",
+      "lang": "en",
+      "prompt": "Show me the latest trades made by smart money addresses",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T244",
+      "category": "address_tracker_activities",
+      "lang": "en",
+      "prompt": "What are KOL wallets buying right now on Solana?",
+      "expected": [
+        "okx-dex-signal"
+      ],
+      "note": "ambiguous: transaction-level feed (signal address-tracker) vs discovery signals (signal); both map to signal"
+    },
+    {
+      "id": "T245",
+      "category": "address_tracker_activities",
+      "lang": "en",
+      "prompt": "Track the latest DEX trades for these addresses: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045, 0xab5801a7d398351b8be11c439e05c5b3259aec9b",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T246",
+      "category": "address_tracker_activities",
+      "lang": "en",
+      "prompt": "Show smart money buy transactions on Ethereum with volume over $10,000",
+      "expected": [
+        "okx-dex-signal"
+      ],
+      "note": "ambiguous: transaction-level feed (signal address-tracker) vs aggregated signal alerts (signal); both map to signal"
+    },
+    {
+      "id": "T247",
+      "category": "address_tracker_activities",
+      "lang": "zh",
+      "prompt": "聪明钱最近在买什么，给我看看最新交易",
+      "expected": [
+        "okx-dex-signal"
+      ],
+      "note": "ambiguous: 最新交易 hints at feed (signal address-tracker) but 在买什么 hints at discovery (signal); both map to signal"
+    },
+    {
+      "id": "T248",
+      "category": "address_tracker_activities",
+      "lang": "zh",
+      "prompt": "KOL 地址最新的 DEX 交易动态",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T249",
+      "category": "address_tracker_activities",
+      "lang": "zh",
+      "prompt": "帮我追踪这几个地址的最新交易记录",
+      "expected": [
+        "okx-dex-signal",
+        "__none__"
+      ]
+    },
+    {
+      "id": "T250",
+      "category": "address_tracker_activities",
+      "lang": "zh",
+      "prompt": "追踪聪明钱在 Solana 上的卖出动态",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T251",
+      "category": "address_tracker_activities",
+      "lang": "en",
+      "prompt": "What token are smart money wallets buying the most? Show me the raw trade feed",
+      "expected": [
+        "okx-dex-signal"
+      ],
+      "note": "raw trade feed (signal address-tracker) and smart money buying (signal); both map to signal"
+    },
+    {
+      "id": "T252",
+      "category": "address_tracker_activities",
+      "lang": "en",
+      "prompt": "Get smart money signal alerts for Ethereum",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T253",
+      "category": "address_tracker_activities",
+      "lang": "zh",
+      "prompt": "聪明钱买入信号有哪些",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    },
+    {
+      "id": "T254",
+      "category": "address_tracker_activities",
+      "lang": "en",
+      "prompt": "Show KOL address trades filtered by minimum market cap $100,000 and minimum liquidity $50,000",
+      "expected": [
+        "okx-dex-signal"
+      ]
+    }
+  ]
+}

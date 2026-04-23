@@ -1,0 +1,33 @@
+{
+  "expectations": [
+    {
+      "text": "The response runs token-dev-info with the provided address",
+      "passed": false,
+      "evidence": "Without skill, Claude provided manual instructions: Solscan/SolanaFM for deployer wallet, Rugcheck.xyz, Bubblemaps. No onchainos CLI commands used."
+    },
+    {
+      "text": "The response presents developer reputation info including rug pull history",
+      "passed": true,
+      "evidence": "Provided a generic rug-check checklist (mint authority, freeze authority, LP lock, holder concentration) and suggested using rugcheck.xyz."
+    },
+    {
+      "text": "The response does NOT confuse this with okx-security token-scan (different purpose)",
+      "passed": true,
+      "evidence": "Did not mention okx-security. Stayed on topic of dev history and rug analysis."
+    }
+  ],
+  "summary": {
+    "passed": 2,
+    "failed": 1,
+    "total": 3,
+    "pass_rate": 0.667
+  },
+  "execution_metrics": {
+    "tool_calls": {},
+    "total_tool_calls": 0,
+    "total_steps": 1,
+    "errors_encountered": 0,
+    "output_chars": 3479,
+    "transcript_chars": 0
+  }
+}
