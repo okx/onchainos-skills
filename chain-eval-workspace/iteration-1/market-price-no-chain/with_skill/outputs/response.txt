@@ -1,5 +1,0 @@
-I can look up the current price for that token address. Before I do, could you let me know which blockchain this token is on?
-
-The address `0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984` looks like an EVM address — it could be on Ethereum, BNB Chain, Polygon, Arbitrum, Optimism, or another EVM-compatible chain.
-
-Which chain would you like me to query the price on?

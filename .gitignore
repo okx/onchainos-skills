@@ -67,3 +67,13 @@ run.sh
 test-cases.json
 
 evals/
+
+# Local workspace artifacts
+chain-eval-workspace/
+reports/
+docs/
+skills/_docs/
+skills.zip
+install-skills.sh
+market-test-cases.json
+cli/src/commands/enums.rs
