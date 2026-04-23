@@ -4,46 +4,8 @@
 
 mod common;
 
-use common::{assert_ok_and_extract_data, onchainos, run_with_retry, tokens};
+use common::{assert_limit, assert_ok_and_extract_data, extract_items, onchainos, run_with_retry, tokens};
 use predicates::prelude::*;
-use serde_json::Value;
-
-/// Extract a list of items from either a flat array or an object whose body
-/// carries the list under one of the common keys (`list` / `data` / `items`
-/// / `signals`). Mirrors `extract_signals` in `cli_signal.rs` — used by the
-/// cursor-pagination test so a `{ list: [...] }` response shape does not
-/// silently early-return as a false pass.
-fn extract_items(data: &Value) -> Vec<Value> {
-    if let Some(arr) = data.as_array() {
-        return arr.clone();
-    }
-    for key in ["list", "data", "items", "signals"] {
-        if let Some(arr) = data.get(key).and_then(|v| v.as_array()) {
-            return arr.clone();
-        }
-    }
-    Vec::new()
-}
-
-/// Assert that an items list has at most `limit` elements, accepting either
-/// a flat array or a `{ list/data/items: [...] }` wrapper. Siblings like
-/// `token_holders_with_limit` already accept both shapes — this keeps the
-/// stricter search/hot-tokens tests consistent with that pattern.
-fn assert_limit(data: &Value, limit: usize, label: &str) {
-    let items = extract_items(data);
-    if items.is_empty() {
-        assert!(
-            data.is_array() || data.is_object(),
-            "expected array or object for {label}: {data}"
-        );
-        return;
-    }
-    assert!(
-        items.len() <= limit,
-        "expected at most {limit} {label}, got {}",
-        items.len()
-    );
-}
 
 // ─── search ─────────────────────────────────────────────────────────
 
@@ -820,11 +782,7 @@ fn token_holders_with_limit() {
         "--limit", "3",
     ]);
     let data = assert_ok_and_extract_data(&output);
-    if let Some(arr) = data.as_array() {
-        assert!(arr.len() <= 3, "expected at most 3 holders, got {}", arr.len());
-    } else {
-        assert!(data.is_object(), "expected array or object: {data}");
-    }
+    assert_limit(&data, 3, "holders");
 }
 
 #[test]
@@ -836,11 +794,7 @@ fn token_top_trader_with_limit() {
         "--limit", "3",
     ]);
     let data = assert_ok_and_extract_data(&output);
-    if let Some(arr) = data.as_array() {
-        assert!(arr.len() <= 3, "expected at most 3 traders, got {}", arr.len());
-    } else {
-        assert!(data.is_object(), "expected array or object: {data}");
-    }
+    assert_limit(&data, 3, "top traders");
 }
 
 #[test]
@@ -849,7 +803,8 @@ fn token_search_cursor_pagination() {
     let page1 = run_with_retry(&["token", "search", "--query", "USDC", "--limit", "2"]);
     let items1 = extract_items(&assert_ok_and_extract_data(&page1));
     if items1.is_empty() {
-        return; // no items to paginate — pass
+        eprintln!("token_search_cursor_pagination: page 1 returned no items — skipping");
+        return;
     }
     // Extract cursor from last item
     let cursor = items1
@@ -858,7 +813,8 @@ fn token_search_cursor_pagination() {
         .and_then(|c| c.as_str())
         .unwrap_or("");
     if cursor.is_empty() {
-        return; // no more pages — pass
+        eprintln!("token_search_cursor_pagination: last item has no cursor — skipping");
+        return;
     }
     // Collect page 1 cursors for overlap check
     let cursors1: Vec<String> = items1
