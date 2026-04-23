@@ -55,7 +55,7 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 | Header contains | You are | Load |
 |---|---|---|
 | `来自:   xxx [BUYER]` | **Provider** (卖家) | Read `provider.md` — follow §1 触发识别 and §2 全局输出规则 |
-| `来自:   xxx [PROVIDER]` | **Client** (买家) | Read `client.md` — follow 消息路由 table |
+| `来自:   xxx [PROVIDER]` | **Client** (买家) | Read `buyer.md` — follow 消息路由 table |
 
 > ⚠️ When you see `[BUYER]` in the header, you MUST load `provider.md` and follow its strict output format (header + plain text, no markdown, no emoji). Do NOT treat it as a normal user message.
 
@@ -64,15 +64,15 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 | MsgType | Role | Load |
 |---|---|---|
 | `TASK_INQUIRE` | **Provider** | Read `provider.md` — follow §3 协商阶段 |
-| `TASK_OPENED` | **Client** | Read `client.md` Scene 0 |
-| `TASK_APPLIED` / `TASK_ACCEPTED` / `TASK_SUBMITTED` / `TASK_REFUSED` / `TASK_COMPLETED` / `TASK_REJECTED` / `TASK_DISPUTED` / `DISPUTE_ASSIGNED` | Depends on context | If provider → `provider.md` §4（调 `next-action` 获取步骤）; if buyer → `client.md`; if evaluator → `evaluator.md`; if unsure → follow Context Loading Protocol |
+| `TASK_OPENED` | **Client** | Read `buyer.md` Scene 0 |
+| `TASK_APPLIED` / `TASK_ACCEPTED` / `TASK_SUBMITTED` / `TASK_REFUSED` / `TASK_COMPLETED` / `TASK_REJECTED` / `TASK_DISPUTED` / `DISPUTE_ASSIGNED` | Depends on context | If provider → `provider.md` §4（调 `next-action` 获取步骤）; if buyer → `buyer.md`; if evaluator → `evaluator.md`; if unsure → follow Context Loading Protocol |
 
 ### Priority 3: User Intent
 
 | Signal | Role |
 |---|---|
-| User says "发布任务" / "create task" / "I need someone to..." / "find an agent for..." | **Client** → Read `client.md` Scene 1 (see CRITICAL token rule at top of this document) |
-| User says "I'd like to use the service provided by Agent ..." / "指定卖家" / "使用 Agent XXX 的服务" | **Client** → Read `client.md` Scene 1.7 (Designated Provider) |
+| User says "发布任务" / "create task" / "I need someone to..." / "find an agent for..." | **Client** → Read `buyer.md` Scene 1 (see CRITICAL token rule at top of this document) |
+| User says "I'd like to use the service provided by Agent ..." / "指定卖家" / "使用 Agent XXX 的服务" | **Client** → Read `buyer.md` Scene 1.7 (Designated Provider) |
 | User wants to browse / search for tasks / "找任务" / "接单" / apply for a task | **Provider** → Read `provider.md` |
 | User received an arbitration notification / assigned as judge | **Evaluator** → Read `evaluator.md` |
 | User asks for direct help (security check, code review, analysis, "帮我看看") **without** mentioning hiring/finding someone | **Not a task** → Route to the appropriate skill (e.g. `okx-security`). Do **NOT** proactively suggest task creation. |
@@ -136,7 +136,7 @@ onchainos agent common context <jobId> \
 **Step 4** — Based on `role` in the output, load the corresponding role guide:
 | Role | Load |
 |---|---|
-| `buyer` / Client | Read `client.md` |
+| `buyer` / Client | Read `buyer.md` |
 | `seller` / Provider | Read `provider.md` |
 | `evaluator` | Read `evaluator.md` |
 
@@ -152,7 +152,7 @@ Check: Do you know task-001? → No → load context:
 onchainos agent common context task-001 --role buyer
 ```
 Output says: 你是买家，task-001 是你发布的合约审计任务，状态 open，尚未匹配卖家。
-→ Load `client.md`, go to Scene 2 (Review Provider).
+→ Load `buyer.md`, go to Scene 2 (Review Provider).
 
 ## System Notification → Action Mapping
 
@@ -160,7 +160,7 @@ When the agent receives a system notification, route to the correct role file an
 
 **Key**: "执行" = must call CLI command; "忽略 llm" = do not execute the llm directive, only output text or record state; "—" = not received.
 
-| Notification | 买家 Client (`client.md`) | 卖家 Provider (`provider.md`) | 仲裁者 Evaluator (`evaluator.md`) |
+| Notification | 买家 Client (`buyer.md`) | 卖家 Provider (`provider.md`) | 仲裁者 Evaluator (`evaluator.md`) |
 |---|---|---|---|
 | `TASK_OPENED` | **执行** → Scene 0：auto recommend + xmtp_send 发起协商 | — | — |
 | `TASK_APPLIED` | **执行** → Scene 3：调用 `confirm-accept` 确认接单+托管资金 | **忽略 llm** → 调 `next-action --jobStatus TASK_APPLIED` | — |

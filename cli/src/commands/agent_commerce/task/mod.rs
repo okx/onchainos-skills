@@ -1,4 +1,4 @@
-pub mod client;
+pub mod buyer;
 pub mod common;
 pub mod evaluator;
 pub mod provider;
@@ -150,7 +150,7 @@ pub enum TaskSystemCommand {
     /// Task config: init | show
     Config {
         #[command(subcommand)]
-        action: client::ConfigAction,
+        action: buyer::ConfigAction,
     },
 
     // ── Dispute (kept as sub-group) ──────────────────────────────────────────
@@ -198,14 +198,14 @@ pub enum TaskSystemCommand {
 }
 
 pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
-    use client::TaskCommand as T;
+    use buyer::TaskCommand as T;
 
     match cmd {
         TaskSystemCommand::CreateTask { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title } =>
-            client::run_task(T::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title }, ctx).await,
+            buyer::run_task(T::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title }, ctx).await,
 
         TaskSystemCommand::Recommend { job_id, next, current } =>
-            client::run_task(T::Recommend { job_id, next, current }, ctx).await,
+            buyer::run_task(T::Recommend { job_id, next, current }, ctx).await,
 
         TaskSystemCommand::RecommendTask { agent_id } => {
             let c = common::network::task_api_client::TaskApiClient::new();
@@ -216,29 +216,29 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
             provider::contact_buyer::handle_contact_buyer(&to_agent_id, &job_id, message.as_deref()).await,
 
         TaskSystemCommand::Status { job_id } =>
-            client::run_task(T::Status { job_id }, ctx).await,
+            buyer::run_task(T::Status { job_id }, ctx).await,
 
         TaskSystemCommand::List { role, status, page, limit } =>
-            client::run_task(T::List { role, status, page, limit }, ctx).await,
+            buyer::run_task(T::List { role, status, page, limit }, ctx).await,
 
         TaskSystemCommand::ConfirmAccept { job_id, provider, payment_mode } =>
-            client::run_task(T::ConfirmAccept { job_id, provider, payment_mode }, ctx).await,
+            buyer::run_task(T::ConfirmAccept { job_id, provider, payment_mode }, ctx).await,
 
         TaskSystemCommand::RejectApply { job_id, provider, reason } =>
-            client::run_task(T::RejectApply { job_id, provider, reason }, ctx).await,
+            buyer::run_task(T::RejectApply { job_id, provider, reason }, ctx).await,
 
 
         TaskSystemCommand::Complete { job_id } =>
-            client::run_task(T::Complete { job_id }, ctx).await,
+            buyer::run_task(T::Complete { job_id }, ctx).await,
 
         TaskSystemCommand::Reject { job_id, reason } =>
-            client::run_task(T::Reject { job_id, reason }, ctx).await,
+            buyer::run_task(T::Reject { job_id, reason }, ctx).await,
 
         TaskSystemCommand::Close { job_id } =>
-            client::run_task(T::Close { job_id }, ctx).await,
+            buyer::run_task(T::Close { job_id }, ctx).await,
 
         TaskSystemCommand::SetPublic { job_id } =>
-            client::run_task(T::SetPublic { job_id }, ctx).await,
+            buyer::run_task(T::SetPublic { job_id }, ctx).await,
 
 
         TaskSystemCommand::Apply { job_id, token_amount, token_symbol, agent_id } =>
@@ -251,7 +251,7 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
             provider::run_provider(provider::ProviderCommand::AgreeRefund { job_id }, ctx).await,
 
         TaskSystemCommand::Payment { job_id } =>
-            client::run_task(T::Payment { job_id }, ctx).await,
+            buyer::run_task(T::Payment { job_id }, ctx).await,
 
         TaskSystemCommand::GetPayment { job_id, token_symbol } => {
             let c = common::network::task_api_client::TaskApiClient::new();
@@ -259,17 +259,17 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
         }
 
         TaskSystemCommand::Pay { job_id } =>
-            client::run_task(T::Pay { job_id }, ctx).await,
+            buyer::run_task(T::Pay { job_id }, ctx).await,
 
         TaskSystemCommand::Claim { job_id } =>
-            client::run_task(T::Claim { job_id }, ctx).await,
+            buyer::run_task(T::Claim { job_id }, ctx).await,
 
         TaskSystemCommand::ClaimAutoRefund { job_id } =>
-            client::run_task(T::ClaimAutoRefund { job_id }, ctx).await,
+            buyer::run_task(T::ClaimAutoRefund { job_id }, ctx).await,
 
 
         TaskSystemCommand::Config { action } =>
-            client::run_task(T::Config { action }, ctx).await,
+            buyer::run_task(T::Config { action }, ctx).await,
 
         TaskSystemCommand::Dispute(c) =>
             provider::run_dispute(c, ctx).await,
@@ -283,7 +283,7 @@ pub async fn run(cmd: TaskSystemCommand, ctx: &Context) -> Result<()> {
         TaskSystemCommand::NextAction { job_id, job_status, agent_id, role } => {
             let prompt = match role.as_str() {
                 "provider" | "seller" => provider::flow::generate_next_action(&job_id, &job_status, &agent_id),
-                "buyer" | "client" => client::flow::generate_next_action(&job_id, &job_status, &agent_id),
+                "buyer" | "client" => buyer::flow::generate_next_action(&job_id, &job_status, &agent_id),
                 other => anyhow::bail!("--role 暂只支持 provider/seller/buyer/client，当前: {other}"),
             };
             println!("{prompt}");

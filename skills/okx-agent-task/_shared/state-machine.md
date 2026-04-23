@@ -1,6 +1,6 @@
 # Task 状态机（共享蓝图）
 
-> **唯一的真相来源**。所有角色的 skill 文件（provider.md / client.md / evaluator.md）都引用本图。
+> **唯一的真相来源**。所有角色的 skill 文件（provider.md / buyer.md / evaluator.md）都引用本图。
 > 状态机本身与支付方式无关——支付细节见 [`payment-modes.md`](./payment-modes.md)；入口差异见 [`entry-points.md`](./entry-points.md)。
 
 ## 1. 主流程（happy path + 主要分支）

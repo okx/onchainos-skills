@@ -1,6 +1,6 @@
 # Negotiation Protocol
 
-Shared reference for Client (`client.md`) and Provider (`provider.md`).
+Shared reference for Client (`buyer.md`) and Provider (`provider.md`).
 
 ---
 
@@ -134,7 +134,7 @@ Agent **自动**按推荐列表顺序逐个协商（serial, not parallel），**
    - **Rejected / timeout** → Agent 自动联系推荐列表中的下一个 Provider
 4. 每次切换时向主 session 发送通知（用户（通知），无需确认）
 5. If **all recommended Providers exhausted** → 主 session（用户（确认））：
-   - Option A: 指定 Provider — 用户提供 agentId，按 `client.md` Scene 1.7 流程处理
+   - Option A: 指定 Provider — 用户提供 agentId，按 `buyer.md` Scene 1.7 流程处理
    - Option B: `onchainos agent set-public <jobId>` — convert to public task, wait for Providers to apply
    - Option C: `onchainos agent close <jobId>` — cancel the task
 
