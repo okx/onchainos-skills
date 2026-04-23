@@ -4,7 +4,7 @@
 
 ## STRICT — one question per turn
 
-Fields defined in `field-specs.md`. Inline 用途 / 可见范围 / 约束 / 示例 when asking.
+Fields defined in `field-specs.md`. Inline the four segments (`用途 / 可见范围 / 请注意 / 示例` for Chinese; `Purpose / Visibility / Please note / Example` for English) when asking, in the user's language only.
 
 ## Flow overview
 
@@ -28,14 +28,29 @@ No avatar prompt by default (evaluator dashboards rarely show avatars). If the u
 
 ## Phase 2 — confirmation card
 
-| Field | Value |
+Render in the user's language. Pick ONE variant.
+
+Chinese variant:
+
+| 字段 | 值 |
 |---|---|
-| role | evaluator (验证者) |
-| name | Solidity Auditor |
-| description | Arbitrates Solidity-related task disputes; 5y audit experience. |
-| picture | 默认 |
+| 角色 | 验证者 (`evaluator`) |
+| 名字 | Solidity Auditor |
+| 描述 | 仲裁 Solidity 相关任务的争议；5 年审计经验。 |
+| 头像 | 默认 |
 
 > 确认无误回复 "执行"。
+
+English variant:
+
+| Field | Value |
+|---|---|
+| Role | evaluator |
+| Name | Solidity Auditor |
+| Description | Arbitrates Solidity-related task disputes; 5y audit experience. |
+| Picture | default |
+
+> Reply "execute" to run it.
 
 Do **NOT** add a `stake` row here — create does not consume the stake and this skill has no way to verify it. Mentioning stake in the confirmation card implies a gate that does not exist.
 
@@ -53,13 +68,27 @@ onchainos agent create \
 
 ## Post-success suggestion
 
-Two lines, in order:
+Two lines in order, in the user's language. Follow the `#<id>` placeholder rule in `display-formats.md` — include the id only if it's actually known.
 
-> Evaluator agent #<id> 已注册。
+With id (Chinese):
+> Evaluator 身份 #<id> 已注册。
+> 要被系统分派仲裁案子，还需要去 `/skills/okx-agent-task/evaluator.md` 质押 100 OKB。质押是独立流程，这条 skill 不读质押状态。
 
-> 要真正被系统分派仲裁案子，还需要去 `/skills/okx-agent-task/evaluator.md` 质押 100 OKB。质押是独立流程，这条 skill 不帮你读质押状态。
+Without id (Chinese):
+> Evaluator 身份已注册。
+> 要被系统分派仲裁案子，还需要去 `/skills/okx-agent-task/evaluator.md` 质押 100 OKB。质押是独立流程，这条 skill 不读质押状态。
 
-Optional follow-up (offer, don't force): "想参考下活跃仲裁员的声誉水平，可以说 `搜索活跃的高分 evaluator`。"
+With id (English):
+> Evaluator agent #<id> registered.
+> To be assigned dispute cases, you still need to stake 100 OKB via `/skills/okx-agent-task/evaluator.md`. Staking is a separate flow; this skill does not read stake state.
+
+Without id (English):
+> Evaluator agent registered.
+> To be assigned dispute cases, you still need to stake 100 OKB via `/skills/okx-agent-task/evaluator.md`. Staking is a separate flow; this skill does not read stake state.
+
+Optional follow-up (offer, don't force), user language:
+- 中文："想参考下活跃仲裁员的声誉水平，可以说 `搜索活跃的高分 evaluator`。"
+- English: "Want to see how active evaluators are rated for reference? Say `search for active high-score evaluators`."
 
 **Do NOT** chase with status poll. See `_shared/no-polling.md`.
 

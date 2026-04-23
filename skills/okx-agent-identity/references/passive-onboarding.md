@@ -28,11 +28,14 @@ When entering passive mode, announce it in one line so the user isn't confused a
 
 > "发布任务需要先有一个买家身份。我帮你快速建一个（两个问题就好），完成后直接回到发任务的流程。"
 
-After success:
+After success — one line in the user's language, following the `#<id>` placeholder rule in `display-formats.md`. Include the id and name only when pre-check resolved them; otherwise omit gracefully.
 
-> "已为你创建买家身份 #<N>（<name>）。现在继续发布任务。"
+With id (Chinese): "已为你创建买家身份 #<N>（<name>）。现在继续发布任务。"
+Without id (Chinese): "已为你创建买家身份。现在继续发布任务。"
+With id (English): "Requester identity #<N> (<name>) created. Resuming the task-publish flow."
+Without id (English): "Requester identity created. Resuming the task-publish flow."
 
-No other chatter. No "要不要再 activate 一下", no "要不要查余额" — any extra question breaks the handoff.
+No other chatter. No "要不要再 activate 一下" / "want to activate it too?", no "要不要查余额" / "want to check your balance?" — any extra question breaks the handoff.
 
 ## Edge cases
 
@@ -40,7 +43,7 @@ No other chatter. No "要不要再 activate 一下", no "要不要查余额" —
 |---|---|
 | User asks to cancel mid-flow ("算了不注册了") | Confirm cancellation, tell the task skill the identity is not available: "已取消创建，发布任务需要买家身份，等你想好再来。" |
 | User volunteers a service mid-flow ("顺便加个 MCP 服务") | Explain: requester 不带 service；如果想对外收费请后续再注册 provider。不要在被动子流程里混入 service。 |
-| Pre-existing requester is found (e.g., user was mistaken about not having one) | Skip create. Echo: "你已经有买家身份 #<N>（<name>），直接用它继续发布任务。" Hand back. |
+| Pre-existing requester is found (e.g., user was mistaken about not having one) | Skip create. Echo in user's language: Chinese "你已经有买家身份 #<N>（<name>），直接用它继续发布任务。" / English "You already have requester identity #<N> (<name>) — using it to continue publishing the task." Hand back. |
 | Backend rejects create | Render the error card (`display-formats.md` §Error card). Do NOT auto-retry. The task skill will see the failure and decide. |
 
 ## Why passive mode matters

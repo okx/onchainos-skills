@@ -117,14 +117,17 @@ Full parameter tables, examples, and return schemas → `references/cli-referenc
 Four gates, in order. **Never skip a gate, never combine gates into one message.**
 
 1. **Ask role.** Must answer. Do NOT default. Phrasing: "你要注册哪种身份？买家 (requester) / 服务方 (provider) / 验证者 (evaluator)？"
-2. **Pre-check existing agents** (skip for passive onboarding). Run `onchainos agent get` once. If the user already has an agent of the same role, ask: "你已经有一个 <role> agent (#N)，要继续新建还是修改现有的？"
+2. **Pre-check existing agents** (skip for passive onboarding). Run `onchainos agent get` once.
+   - **requester / evaluator**: unique per address. If the user already has one of this role, do **NOT** offer to create a new one — tell them they already have it and point to `update`. Do not enter the create flow.
+   - **provider**: may have multiple. If the user already has one, ask them to choose: register another new provider, or update the existing one.
+   - Full wording (both languages) and passive-onboarding exception in `references/role-playbook.md §Pre-check`.
 3. **Role-specific Q&A**, one field per turn. Load the matching file:
    - requester → `references/role-requester.md` (+ Passive Onboarding sub-flow inside)
    - provider → `references/role-provider.md`
    - evaluator → `references/role-evaluator.md`
 4. **Confirmation card** (field table, see `references/display-formats.md` §3). Never show the raw bash here. Execute only after the user replies "执行" / "yes" / similar.
 
-Field definitions (用途 / 可见范围 / 约束 / 示例) live in `references/field-specs.md`. Inline the four segments when asking the user.
+Field definitions live in `references/field-specs.md`. Inline the four segments (`用途 / 可见范围 / 请注意 / 示例` for Chinese; `Purpose / Visibility / Please note / Example` for English) in the user's language only when asking.
 
 ## Passive Onboarding (entry from `okx-agent-task`)
 
@@ -325,6 +328,37 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 | `agent feedback-submit` | "要看 #<target> 的最新评分分布？执行 `agent feedback-list <target> --sort-by time_desc`（按时间倒序）。要按分数排序改用 `score_desc`。完整取值见 `references/cli-reference.md` §10。" |
 | `agent search` | "锁定目标后可以 `service-list` 查服务，或直接进入 `okx-agent-task` 发任务。" |
 
+## Language Matching
+
+Every user-facing string the skill renders must match the user's language. Detect language from the user's most recent non-technical message; when genuinely ambiguous, default to the language used in their first message of the conversation.
+
+### What adapts to the user's language
+
+- Field labels in confirmation cards, detail cards, diff cards, search results, service lists, feedback lists (e.g. `角色 / 名字 / 描述 / 状态 / 地址 / 头像 / 服务 / 信誉 / 交易哈希` vs `Role / Name / Description / Status / Address / Picture / Services / Reputation / txHash`).
+- Status words (`已上架 / 已下架` vs `active / inactive`; `买家 / 服务方 / 验证者` vs `requester / provider / evaluator` only when used as a human-readable label — the CLI value stays English, see below).
+- Field spec segments (`用途 / 可见范围 / 请注意 / 示例` vs `Purpose / Visibility / Please note / Example`).
+- Questions, confirmations, next-step suggestions, error translations, tips, examples.
+- Search query passthrough: keep the user's original wording in `--query` verbatim (see `references/search-query-split.md`).
+
+### What stays verbatim regardless of user language
+
+- CLI flag names (`--role`, `--agent-id`, `--creator-id`, `--sort-by`, `--service`, …).
+- Enum / canonical values sent to the CLI (`requester`, `provider`, `evaluator`, `A2MCP`, `A2A`, `time_desc`, `score_desc`, `active`, `inactive` when used as the `--status` value).
+- On-chain primitives: addresses (`0x…`), transaction hashes, agent IDs (`#42`), score numbers (`85 / 100`), token symbols (`USDT`, `OKB`).
+- Bash commands the user asked to see.
+
+### Bilingual mapping tips
+
+- When rendering role inline in a detail card, use the single form that matches the user's language: Chinese users see `验证者`, English users see `evaluator`. Do NOT render `evaluator (验证者)` bilingual — that's leftover from an earlier spec.
+- When rendering status, same rule: Chinese `已上架`, English `active`. Never mix.
+- A shared exception: inside the confirmation card for `create`, the `role` row may show the CLI value plus user-language label once (e.g. `role | evaluator` for English; `角色 | 验证者` for Chinese) so the user can see what the CLI will receive.
+
+### Do not
+
+- Never mix languages in a single message to the user.
+- Never translate the user's own words back to them in a different language (e.g. don't echo "`天气小明`" as "Weather Xiaoming").
+- Never force a language the user did not use.
+
 ## Amount Display Rules
 
 - Service `Fee` is an **integer USDT string** at the CLI layer — always show the user the human-readable form "`N USDT`" (e.g., `10 USDT`). Never show raw minimal token units.
@@ -341,7 +375,7 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 - **Evaluator created but OKB not staked** → `create` still succeeds; the agent simply won't be assigned disputes until the user stakes via `/skills/okx-agent-task/evaluator.md`. Do NOT attempt to read stake status from this skill, do NOT gate `create` on staking.
 - **Region restriction (50125 / 80001)** → display "Service is not available in your region." Do NOT echo the raw error code.
 - **Pre-transaction mock (empty tx hash)** → current CLI uses a TEMP MOCK path; log the event and tell the user the tx is not yet final. Update this section once the mock is removed.
-- **Image CDN failure on upload** → tell the user to retry; the backend CDN is region-agnostic from the skill's perspective.
+- **Image upload failure** → tell the user to retry; the image service is globally available. Never mention "CDN" to the user — see `references/avatar-upload.md`.
 - **Feedback target is self** → backend rejects; pre-check `--agent-id != --creator-id` and inform the user.
 - **Single-word input** (`agent`, `search`, etc.) → do NOT auto-route; ask the user what they want to do.
 
@@ -362,7 +396,7 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 - `references/role-requester.md` — requester Q&A + Passive Onboarding sub-flow
 - `references/role-provider.md` — provider Q&A + service chain (one field per turn)
 - `references/role-evaluator.md` — evaluator Q&A (create-first; staking is a separate post-create step owned by `okx-agent-task`)
-- `references/field-specs.md` — 8 fields, four-segment spec (用途 / 可见范围 / 约束 / 示例)
+- `references/field-specs.md` — 8 fields, four-segment spec (`用途 / 可见范围 / 请注意 / 示例` ↔ `Purpose / Visibility / Please note / Example`) with language-matching rule
 - `references/passive-onboarding.md` — task→identity handoff contract
 - `references/search-query-split.md` — Verbatim Passthrough + 4-dimension filter extraction
 - `references/feedback-guide.md` — `--creator-id` resolution and submission etiquette

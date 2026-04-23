@@ -6,7 +6,7 @@
 
 No listing "请提供 1. name 2. description 3. ServiceName ...". Every field, including every service sub-field, is a separate turn.
 
-Field definitions (用途 / 可见范围 / 约束 / 示例) live in `field-specs.md`. Inline them with the prompt so the user doesn't need to read a separate file to answer.
+Field definitions live in `field-specs.md`. Inline the four segments (`用途 / 可见范围 / 请注意 / 示例` for Chinese; `Purpose / Visibility / Please note / Example` for English) in the user's language only, so they don't need to read a separate file to answer.
 
 ## Phase 1 — identity Q&A
 
@@ -45,16 +45,18 @@ For each service, ask the fields in this exact order. The reason: `ServiceName` 
 
 ## Confirmation
 
-Two-column table (`display-formats.md` §Update/Create Diff), services numbered inline:
+Two-column table (`display-formats.md` §Create/Update Diff), services numbered inline. Render in the user's language — pick ONE variant.
 
-| Field | Value |
+Chinese variant:
+
+| 字段 | 值 |
 |---|---|
-| role | provider (服务方) |
-| name | DeFi Analyzer |
-| description | On-chain data analysis and yield simulation. |
-| picture | 默认 |
+| 角色 | 服务方 (`provider`) |
+| 名字 | DeFi Analyzer |
+| 描述 | 链上数据分析与收益模拟。 |
+| 头像 | 默认 |
 | services[1] ServiceName | TVL Query |
-| services[1] ServiceDescription | Query protocol TVL by chain via MCP. |
+| services[1] ServiceDescription | 通过 MCP 按链查询协议 TVL。 |
 | services[1] ServiceType | A2MCP |
 | services[1] Fee | 10 USDT |
 | services[1] Endpoint | https://api.example.com/mcp |
@@ -63,7 +65,27 @@ Two-column table (`display-formats.md` §Update/Create Diff), services numbered 
 
 > 确认无误回复 "执行" 我就下发。
 
-**Do NOT show bash** in the confirmation card. Only render the bash command if the user explicitly asks "把命令给我看".
+English variant:
+
+| Field | Value |
+|---|---|
+| Role | provider |
+| Name | DeFi Analyzer |
+| Description | On-chain data analysis and yield simulation. |
+| Picture | default |
+| services[1] ServiceName | TVL Query |
+| services[1] ServiceDescription | Query protocol TVL by chain via MCP. |
+| services[1] ServiceType | A2MCP |
+| services[1] Fee | 10 USDT |
+| services[1] Endpoint | https://api.example.com/mcp |
+| services[2] ServiceName | Yield Check |
+| services[2] ServiceType | A2A |
+
+> Reply "execute" to run it.
+
+Service keys (`services[N] ServiceName` etc.) stay verbatim regardless of language — they map 1:1 to the `--service` JSON schema and translating them would confuse what's sent to the CLI.
+
+**Do NOT show bash** in the confirmation card. Only render the bash command if the user explicitly asks ("把命令给我看" / "show me the CLI").
 
 ## Execute (maintainer reference — not shown to user)
 
@@ -80,9 +102,14 @@ onchainos agent create \
 
 One line, concrete next step:
 
-> Provider agent #<id> 已创建并默认上架（active）。可以 `agent search` 自检曝光，或直接等匹配来的任务。
+One-line next step, in the user's language. Follow the `#<id>` placeholder rule in `display-formats.md` — include the id only when it's actually known.
 
-**Create 默认返回 active**，不需要再 `agent activate`。`activate` 只用于用户之前主动 `deactivate` 过、现在想恢复上架的场景。
+With id (Chinese): "Provider 身份 #<id> 已创建并默认上架（已上架）。可以 `agent search` 自检曝光，或直接等匹配来的任务。"
+Without id (Chinese): "Provider 身份已创建并默认上架（已上架）。可以 `agent search` 自检曝光，或直接等匹配来的任务。"
+With id (English): "Provider agent #<id> created and active by default. Run `agent search` to sanity-check exposure, or wait for matching tasks."
+Without id (English): "Provider agent created and active by default. Run `agent search` to sanity-check exposure, or wait for matching tasks."
+
+**Create 默认返回 active** / **Create returns active by default**，不需要再 `agent activate`。`activate` 只用于用户之前主动 `deactivate` 过、现在想恢复上架的场景。 `activate` is only for users who previously `deactivate`'d and want to re-publish.
 
 **Do NOT** run `agent get` or poll status after create. See `_shared/no-polling.md`.
 

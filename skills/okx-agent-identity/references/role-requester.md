@@ -6,7 +6,7 @@
 
 Every field is asked in its own message. Never list "请提供 1. Name 2. Description 3. ...". If the user volunteered multiple values in one sentence, you may capture them, but the confirmation table still renders each field on its own row.
 
-Field definitions live in `field-specs.md`. When prompting, inline the four segments (用途 / 可见范围 / 约束 / 示例).
+Field definitions live in `field-specs.md`. When prompting, inline the four segments (`用途 / 可见范围 / 请注意 / 示例` for Chinese users; `Purpose / Visibility / Please note / Example` for English users) in the user's language only.
 
 ## Standard Q&A chain
 
@@ -29,18 +29,31 @@ No service questions. No `--address` prompt. No staking.
 
 ## Confirmation
 
-Show the two-column table (`display-formats.md` §Create/Update Diff → Create variant) with `Field / Value`:
+Show the two-column table (`display-formats.md` §Create/Update Diff → Create variant) in the user's language. Render ONE variant — never bilingual.
 
-| Field | Value |
+Chinese variant:
+
+| 字段 | 值 |
 |---|---|
-| role | requester (买家) |
-| name | Alice |
-| description | 做 DeFi 研究，经常雇佣数据服务 |
-| picture | 默认 |
+| 角色 | 买家 (`requester`) |
+| 名字 | Alice |
+| 描述 | 做 DeFi 研究，经常雇佣数据服务 |
+| 头像 | 默认 |
 
 > 确认无误回复 "执行" 我就下发。
 
-**Do NOT show the bash command** unless the user explicitly asks "把命令给我看". Confirmation cards are field-only.
+English variant:
+
+| Field | Value |
+|---|---|
+| Role | requester |
+| Name | Alice |
+| Description | Independent DeFi researcher, frequently buys data services. |
+| Picture | default |
+
+> Reply "execute" to run it.
+
+**Do NOT show the bash command** unless the user explicitly asks ("把命令给我看" / "show me the CLI"). Confirmation cards are field-only.
 
 ## Execute (maintainer reference — not shown to user)
 
@@ -54,9 +67,17 @@ onchainos agent create \
 
 ## Post-success suggestion
 
-Single-line next step:
+Single-line next step, in the user's language. Follow the `#<id>` placeholder rule in `display-formats.md` (top) — if the id is known from pre-check, include it; otherwise omit.
 
-> 注册完成，agent #<id> 已生效。要不要去 `okx-agent-task` 发布任务？
+With known id (from pre-check `agent get` lookup), Chinese:
+> 注册完成，买家身份 #<id> 已生效。要不要去 `okx-agent-task` 发布任务？
+
+Without id (current CLI only returns txHash), Chinese:
+> 买家身份已注册。要不要去 `okx-agent-task` 发布任务？
+
+English equivalents:
+> Requester identity #<id> is live. Want to head to `okx-agent-task` to publish a task?
+> Requester identity registered. Want to head to `okx-agent-task` to publish a task?
 
 **Do NOT** chase with `agent get` / status poll. See `_shared/no-polling.md`.
 
@@ -83,11 +104,20 @@ Keep these:
 
 Return control to the caller. The response to the user contains:
 
-1. The detail card of the new requester agent.
-2. One line: "已为你创建买家身份 #<id>。现在继续回到发布任务的流程。"
+1. The detail card of the new requester agent (follow §Language matching + `#<id>` rule — omit the Agent ID row if the id isn't available yet).
+2. One line, in the user's language. With id available:
+   - 中文："已为你创建买家身份 #<id>。现在继续回到发布任务的流程。"
+   - English: "Requester identity #<id> created for you. Resuming the task-publish flow."
+3. One line, without id:
+   - 中文："已为你创建买家身份。现在继续回到发布任务的流程。"
+   - English: "Requester identity created. Resuming the task-publish flow."
 
-Do NOT ask "要不要发任务" — the task skill already has the pending intent; it will resume.
+Do NOT ask "要不要发任务" / "want to publish a task?" — the task skill already has the pending intent; it will resume.
 
 ### When user already has a requester
 
-If a pre-existing requester agent happens to be found (e.g., the user returns mid-flow), **skip create**. Echo: "你已经有买家身份 #<N>（<name>），直接用它继续发布任务。" and hand back.
+If a pre-existing requester agent happens to be found (e.g., the user returns mid-flow), **skip create** (requester is unique per address — see `role-playbook.md §Pre-check`). Echo in the user's language:
+- 中文："你已经有买家身份 #<N>（<name>），直接用它继续发布任务。"
+- English: "You already have requester identity #<N> (<name>) — using it to continue publishing the task."
+
+Hand back.
