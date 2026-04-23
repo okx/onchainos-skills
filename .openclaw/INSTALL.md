@@ -15,18 +15,21 @@ Enable onchainos skills in OpenClaw via native skill discovery. Just clone, syml
    git clone https://github.com/okx/onchainos-skills ~/.openclaw/onchainos-skills
    ```
 
-2. **Create the skills symlink:**
+2. **Create the skills and workflows symlinks:**
 
    ```bash
-   mkdir -p ~/.agents/skills
+   mkdir -p ~/.agents/skills ~/.agents/workflows
    ln -s ~/.openclaw/onchainos-skills/skills ~/.agents/skills/onchainos-skills
+   ln -s ~/.openclaw/onchainos-skills/workflows ~/.agents/workflows/onchainos-workflows
    ```
 
    **Windows (PowerShell):**
 
    ```powershell
    New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.agents\skills"
+   New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.agents\workflows"
    cmd /c mklink /J "$env:USERPROFILE\.agents\skills\onchainos-skills" "$env:USERPROFILE\.openclaw\onchainos-skills\skills"
+   cmd /c mklink /J "$env:USERPROFILE\.agents\workflows\onchainos-workflows" "$env:USERPROFILE\.openclaw\onchainos-skills\workflows"
    ```
 
 3. **Restart OpenClaw** (quit and relaunch) to discover the skills.

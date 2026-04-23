@@ -24,14 +24,16 @@ rm -f ~/.config/opencode/plugins/onchainos-skills.js
 ln -s ~/.config/opencode/onchainos-skills/.opencode/plugins/onchainos-skills.js ~/.config/opencode/plugins/onchainos-skills.js
 ```
 
-### 3. Symlink Skills
+### 3. Symlink Skills and Workflows
 
-Create a symlink so OpenCode's native skill tool discovers the onchainos skills:
+Create symlinks so OpenCode's native skill tool discovers the onchainos skills and workflows:
 
 ```bash
-mkdir -p ~/.config/opencode/skills
+mkdir -p ~/.config/opencode/skills ~/.config/opencode/workflows
 rm -rf ~/.config/opencode/skills/onchainos-skills
+rm -rf ~/.config/opencode/workflows/onchainos-workflows
 ln -s ~/.config/opencode/onchainos-skills/skills ~/.config/opencode/skills/onchainos-skills
+ln -s ~/.config/opencode/onchainos-skills/workflows ~/.config/opencode/workflows/onchainos-workflows
 ```
 
 ### 4. Restart OpenCode

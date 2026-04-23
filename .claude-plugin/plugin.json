@@ -2,7 +2,8 @@
   "name": "onchainos-skills",
   "version": "1.0.0",
   "skills": [
-    "./skills/"
+    "./skills/",
+    "./workflows/"
   ],
   "keywords": [
     "skills",
