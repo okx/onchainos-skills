@@ -2235,19 +2235,15 @@ impl McpServer {
         // Resolve chain names to indices up-front so the output's `chains` field
         // is always in indexed form ("1,501") regardless of whether the caller
         // sent names ("ethereum,solana") or indices — matches CLI output shape.
+        // `fetch_and_assemble` derives `primary_chain_index` internally so the
+        // MCP and CLI entry points cannot drift.
         let chains_str = crate::chains::resolve_chains(
             &p.chains.unwrap_or_else(|| "1,501".to_string()),
         );
-        let primary_chain_index = chains_str
-            .split(',')
-            .next()
-            .map(|c| crate::chains::resolve_chain(c).to_string())
-            .unwrap_or_else(|| "501".to_string());
         match workflows::portfolio::fetch_and_assemble(
             &mut *self.client.lock().await,
             &p.address,
             &chains_str,
-            &primary_chain_index,
         )
         .await
         {

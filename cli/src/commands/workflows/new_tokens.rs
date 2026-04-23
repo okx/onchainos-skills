@@ -25,9 +25,11 @@ pub(crate) async fn fetch_and_assemble(
 ) -> Result<Value> {
     // Accept any case (`migrated`, `MIGRATING`, …) — normalise once at the boundary.
     let stage_norm = stage.to_ascii_uppercase();
+    // Message says `stage` (not `--stage`) so it reads cleanly for both CLI
+    // and MCP callers; the MCP handler exposes this as a field, not a flag.
     anyhow::ensure!(
         VALID_STAGES.contains(&stage_norm.as_str()),
-        "--stage must be one of {:?} (case-insensitive), got: {stage}",
+        "stage must be one of {:?} (case-insensitive), got: {stage}",
         VALID_STAGES
     );
 
@@ -57,12 +59,8 @@ pub(crate) async fn fetch_and_assemble(
         let addr = token_addr.clone();
         set.spawn(async move {
             let (mut c1, mut c2, mut c3) = (c.clone(), c.clone(), c.clone());
-            let sec_body = serde_json::json!({
-                "source": "onchain_os_cli",
-                "tokenList": [{ "chainId": ci, "contractAddress": addr }]
-            });
             let (security, advanced, dev_info, bundle_info) = tokio::join!(
-                c.post("/api/v6/security/token-scan", &sec_body),
+                token::fetch_security(&mut c, &addr, &ci),
                 token::fetch_advanced_info(&mut c1, &addr, &ci),
                 memepump::fetch_by_address(
                     &mut c2, "/api/v6/dex/market/memepump/tokenDevInfo", &addr, &ci,
@@ -85,8 +83,12 @@ pub(crate) async fn fetch_and_assemble(
     let mut results_by_addr: std::collections::HashMap<String, Value> =
         std::collections::HashMap::new();
     while let Some(join_res) = set.join_next().await {
-        let (addr, data) = join_res?;
-        results_by_addr.insert(addr, data);
+        // On JoinError (task panic/cancel) skip the entry — every other
+        // completed enrichment is preserved. Matches the null-on-failure
+        // spirit of `ok_or_null` used inside the task body.
+        if let Ok((addr, data)) = join_res {
+            results_by_addr.insert(addr, data);
+        }
     }
 
     let results: Vec<Value> = ordered_addrs

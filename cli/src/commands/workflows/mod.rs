@@ -124,6 +124,7 @@ mod tests {
     #[test]
     fn workflow_names_match_doc_filenames() {
         // These must match the filenames in workflows/*.md exactly.
+        // `CARGO_MANIFEST_DIR` points at `cli/`, so the docs live one level up.
         let names = [
             "token-research",
             "smart-money",
@@ -131,11 +132,17 @@ mod tests {
             "wallet-analysis",
             "portfolio",
         ];
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
         for name in names {
+            let path = std::path::Path::new(manifest_dir)
+                .join("..")
+                .join("workflows")
+                .join(format!("{name}.md"));
             assert!(
-                !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '-'),
-                "workflow name '{}' contains invalid characters",
-                name
+                path.exists(),
+                "workflow doc file missing: {} (expected at {})",
+                name,
+                path.display()
             );
         }
     }

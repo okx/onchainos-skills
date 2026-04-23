@@ -14,8 +14,8 @@ use crate::client::ApiClient;
 use crate::commands::{memepump, signal, token};
 use crate::output;
 
-use super::{ok_or_null, Context};
 use super::token_research::is_launchpad_token;
+use super::{ok_or_null, Context};
 
 const TOP_N: usize = 5;
 
@@ -49,14 +49,10 @@ pub(crate) async fn fetch_and_assemble(
         let addr = token_addr.clone();
         set.spawn(async move {
             let (mut c1, mut c2) = (c.clone(), c.clone());
-            let sec_body = serde_json::json!({
-                "source": "onchain_os_cli",
-                "tokenList": [{ "chainId": ci, "contractAddress": addr }]
-            });
             let (price, advanced_val, security) = tokio::join!(
                 token::fetch_price_info(&mut c, &addr, &ci),
                 token::fetch_advanced_info(&mut c1, &addr, &ci),
-                c2.post("/api/v6/security/token-scan", &sec_body),
+                token::fetch_security(&mut c2, &addr, &ci),
             );
             let price = ok_or_null(price);
             let advanced_val = ok_or_null(advanced_val);
@@ -85,8 +81,12 @@ pub(crate) async fn fetch_and_assemble(
     let mut results_by_addr: std::collections::HashMap<String, Value> =
         std::collections::HashMap::new();
     while let Some(join_res) = set.join_next().await {
-        let (addr, data) = join_res?;
-        results_by_addr.insert(addr, data);
+        // On JoinError (task panic/cancel) skip that entry — every other
+        // completed enrichment is preserved. Matches the null-on-failure
+        // spirit of `ok_or_null` used inside the task body.
+        if let Ok((addr, data)) = join_res {
+            results_by_addr.insert(addr, data);
+        }
     }
 
     let enriched: Vec<Value> = ordered_addrs
