@@ -144,6 +144,11 @@ pub(crate) fn assemble(chain_index: &str, raw_signals: Value, enriched: Vec<Valu
 
 /// Extract the top N unique tokens from a signal list response, sorted descending
 /// by SM wallet count. Handles both a bare array and a `{"data": [...]}` wrapper.
+///
+/// Dedupe semantics: if the same address appears multiple times with different
+/// counts, the item with the highest count wins. This avoids a subtle bug
+/// where a lower count could silently override a higher one if the API
+/// re-emitted the same token within one response.
 pub(crate) fn extract_top_tokens(signals: &Value, n: usize) -> Vec<(String, Value)> {
     let arr: &Vec<Value> = match signals.as_array() {
         Some(a) => a,
@@ -153,24 +158,37 @@ pub(crate) fn extract_top_tokens(signals: &Value, n: usize) -> Vec<(String, Valu
         },
     };
 
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut items: Vec<(u64, String, Value)> = arr
-        .iter()
-        .filter_map(|item| {
-            let addr = item["tokenContractAddress"]
-                .as_str()
-                .or_else(|| item["address"].as_str())?
-                .to_string();
-            if addr.is_empty() || seen.contains(&addr) {
-                return None;
-            }
-            seen.insert(addr.clone());
-            let count = item["walletCount"]
-                .as_u64()
-                .or_else(|| item["addressCount"].as_u64())
-                .unwrap_or(0);
-            Some((count, addr, item.clone()))
-        })
+    let mut by_addr: std::collections::HashMap<String, (u64, Value)> =
+        std::collections::HashMap::new();
+
+    for item in arr {
+        let Some(addr) = item["tokenContractAddress"]
+            .as_str()
+            .or_else(|| item["address"].as_str())
+        else {
+            continue;
+        };
+        if addr.is_empty() {
+            continue;
+        }
+        let count = item["walletCount"]
+            .as_u64()
+            .or_else(|| item["addressCount"].as_u64())
+            .unwrap_or(0);
+        by_addr
+            .entry(addr.to_string())
+            .and_modify(|(c, existing)| {
+                if count > *c {
+                    *c = count;
+                    *existing = item.clone();
+                }
+            })
+            .or_insert_with(|| (count, item.clone()));
+    }
+
+    let mut items: Vec<(u64, String, Value)> = by_addr
+        .into_iter()
+        .map(|(addr, (count, item))| (count, addr, item))
         .collect();
 
     items.sort_by(|a, b| b.0.cmp(&a.0));
@@ -350,6 +368,21 @@ mod tests {
         let result = extract_top_tokens(&signals, 5);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].0, "0xDUP");
+    }
+
+    #[test]
+    fn duplicate_address_keeps_max_count_regardless_of_order() {
+        // If the lower-count row appears first, the max-count row must still win.
+        let signals = json!([
+            { "tokenContractAddress": "0xDUP", "walletCount": 5  },
+            { "tokenContractAddress": "0xDUP", "walletCount": 99 },
+            { "tokenContractAddress": "0xOTH", "walletCount": 10 },
+        ]);
+        let result = extract_top_tokens(&signals, 5);
+        assert_eq!(result.len(), 2);
+        // 0xDUP should be first (count 99, not 5)
+        assert_eq!(result[0].0, "0xDUP");
+        assert_eq!(result[1].0, "0xOTH");
     }
 
     #[test]
