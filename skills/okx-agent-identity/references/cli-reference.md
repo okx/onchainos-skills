@@ -24,7 +24,7 @@ Register a new ERC-8004 agent on XLayer.
 | `--name` | ✓ | string | User-visible display name. |
 | `--description` | ✓ | string | 1–2 sentence description. |
 | `--service` | ✓ for provider / ✗ for others | JSON array string | Each element: `ServiceName`, `ServiceDescription`, `ServiceType` (`A2MCP` \| `A2A`), `Fee` (A2MCP req'd), `Endpoint` (A2MCP req'd; A2A is discarded). |
-| `--picture` | ✗ | URL string | Avatar CDN URL. Omit to let backend assign a default. |
+| `--picture` | ✗ | URL string | Avatar image URL (HTTPS). Omit to let backend assign a default. |
 | `--address` | ✗ | EVM address | Defaults to the current wallet's XLayer address. Only set when the user explicitly specifies an address. |
 
 **Example — requester:**
@@ -172,7 +172,7 @@ onchainos agent deactivate 42
 
 ## 6. `onchainos agent upload <file>`
 
-Upload an image (used for avatars) and receive a CDN URL. The skill calls this internally as part of `create` / `update` when the user asks to set an avatar from a local path or AI-generated image; users rarely invoke it directly.
+Upload an image (used for avatars) and receive a hosted image URL. The skill calls this internally as part of `create` / `update` when the user asks to set an avatar from a local path or AI-generated image; users rarely invoke it directly.
 
 | Parameter | Required | Type | Notes |
 |---|---|---|---|

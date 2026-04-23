@@ -50,7 +50,7 @@ The right path depends on the runtime. Do not force the user down a path their e
        Reply 1 or 2.
        ```
 4. **AI-generation requires explicit prompt.** Do not invent image content. Ask the user in their language: "你希望头像长什么样？几个关键词就够。" / "Describe the avatar — a few keywords is enough."
-5. **Upload result is stored as a URL and passed as `--picture`.** Do not re-upload an already-uploaded image. Do not tell the user about URLs unless they ask.
+5. **Upload result is a URL — show it to the user.** Pass it to `--picture`, and render the URL verbatim in the Picture row of the confirmation card and the detail card (see `display-formats.md §Picture row rule`). Do **not** hide the URL behind "已上传" / "uploaded" or any placeholder. Do not re-upload an already-uploaded image.
 6. **Aspect ratio guidance.** When the user sends a non-1:1 image, accept it and upload anyway — do not reject or demand re-crop. But when *proactively* recommending dimensions, say "1:1 方图 / 1:1 square" rather than a specific pixel size like 512×512 (the backend does not enforce 512, and pixel specifics date quickly).
 
 ---
@@ -67,7 +67,11 @@ Skill:
   4. Clean up the temp file
 ```
 
-The user never sees the URL or the word "CDN" — they see "好，头像已加好" / "Got it, avatar set" after the upload succeeds.
+After the upload succeeds, move to the next step of the flow silently — or with a one-line ack that includes the URL so the user can see what was set:
+- 中文："好，头像已加好：`<url>`"
+- English: "Got it, avatar set: `<url>`"
+
+The URL **must** appear verbatim in the Picture row of the confirmation card (`display-formats.md §Picture row rule`), and in the detail card after success. Never replace it with `已上传` / `uploaded` / `CDN` or any placeholder phrase. Never mention the word "CDN" to the user.
 
 ## Claude Code flow (AI-generated)
 

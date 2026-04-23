@@ -13,6 +13,12 @@
 2. Otherwise, omit the id entirely and use wording that doesn't need it — e.g. "身份已注册，agent id 待后续接口返回" / "Agent created; agent id will be available once the hash→info endpoint ships."
 3. Never invent an id. Never render `# `, `#<id>`, or `#?` to the user.
 
+**Picture row rule.** In any card that has a `头像` / `Picture` row (confirmation card, detail card, diff card), the value column must be one of:
+1. The **actual URL verbatim** — when the user supplied a link directly or when `agent upload` returned a URL. Example: `https://img.example.com/u/abc.png`.
+2. The literal string `默认` (Chinese) / `default` (English) — when the user chose to skip and backend will assign a default.
+
+Never use placeholder / filler phrases like `已上传` / `uploaded` / `已加好` / `CDN` / `图片已保存`. These leak implementation detail and force the user to click through an extra step to see what avatar is actually set. The URL goes directly in the cell. Diff cards showing a picture change render the old URL in the `当前值` / `Current` column and the new URL in the `新值` / `New` column, both verbatim.
+
 ---
 
 ## 1. Agent list — `agent get` (no `--agent-ids`)

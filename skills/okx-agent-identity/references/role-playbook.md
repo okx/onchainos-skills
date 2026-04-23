@@ -96,7 +96,7 @@ Chinese variant:
 | 角色 | 服务方 (`provider`) |
 | 名字 | <...> |
 | 描述 | <...> |
-| 头像 | 默认 / 已上传 |
+| 头像 | 默认 — 若用户上传了图片或给了链接，这里**直接贴实际 URL**（例：`https://…/abc.png`），不要写 "已上传" / "uploaded" / 提到 "CDN" 等占位词。 |
 | 服务[1] 名称 / 描述 / 类型 / 价格 / 接口地址 | (仅 provider 有) |
 
 End with: `确认无误回复 "执行" 我就下发。`
@@ -108,7 +108,7 @@ English variant:
 | Role | provider |
 | Name | <...> |
 | Description | <...> |
-| Picture | default / uploaded |
+| Picture | default — if the user uploaded an image or supplied a link, render the **actual URL verbatim** here (e.g. `https://…/abc.png`). Never write "uploaded" / "已上传" / mention "CDN" as a placeholder. |
 | Service [1] Name / Description / Type / Fee / Endpoint | (provider only) |
 
 End with: `Reply "execute" to run it.`
