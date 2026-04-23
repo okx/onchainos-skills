@@ -82,7 +82,8 @@ CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provide
 | User says | Go to |
 |---|---|
 | 注册 / 上架 agent / register agent | §Core Flow: agent create (role-driven) |
-| 我有哪些 agent / 看我的 agent / 看 #N 详情 | `agent get` → `references/display-formats.md` |
+| 我有哪些 agent / 看我的 agent | `agent get`（列表模式，不带 `--agent-ids`）→ `references/display-formats.md §1` |
+| 看 #N 详情 / detail #N | `agent get --agent-ids <N>` **一次**，渲染 `display-formats.md §2`（响应已含 services + reputation 聚合，**绝不 chain** `service-list` / `feedback-list`），再出 `§Post-detail prompt` 问用户要不要看评价 |
 | 改描述 / 改头像 / 更新 agent | §Update (get → show → confirm → execute) |
 | 下架 agent | `agent deactivate <agentId>` |
 | 上架 agent | `agent activate <agentId>` |
@@ -353,6 +354,7 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 | `agent deactivate` | "下架完成，客户端列表会隐藏；要恢复执行 `agent activate`。" |
 | `agent feedback-submit` | "要看 #<target> 的最新评分分布？执行 `agent feedback-list <target> --sort-by time_desc`（按时间倒序）。要按分数排序改用 `score_desc`。完整取值见 `references/cli-reference.md` §10。" |
 | `agent search` | "锁定目标后可以 `service-list` 查服务，或直接进入 `okx-agent-task` 发任务。" |
+| `agent get --agent-ids <id>` (single-agent detail) | Render `display-formats.md §2` (services + reputation already in the response). Then render the `§Post-detail prompt` — numbered options asking "要看评价吗？/ Want to see reviews?". **Do NOT** auto-run `service-list` or `feedback-list`. Only pull `feedback-list` when user replies `1`. |
 
 ## Language Matching
 

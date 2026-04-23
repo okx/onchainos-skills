@@ -97,6 +97,31 @@ Rules:
 - Services — one row per service, numbered `[N]`, single-line format. The **name value** (what the user typed, e.g. `TVL Query`) stays verbatim; the following descriptor uses user-language words: Chinese `名称 — 类型, 价格, 接口地址`-style reading order, English `Name — Type, Fee, Endpoint`-style reading order. In practice the single-line format is `<ServiceName> — <Type>, <Fee or 免费/free>, <Endpoint>`. For A2A, use `免费（链外按次计价）` / `free (per-call pricing off-chain)` in the user's language instead of Fee and drop the Endpoint (CLI clears it anyway).
 - `txHash` row present only when the command produced a tx (absent on read-only commands).
 - `Agent ID` row: follow the `#<id>` placeholder rule at the top of this file — omit the row entirely if the id is not available yet (e.g. fresh `create` response), don't render `#` alone.
+- **Single source of data — no chain calls.** All rows above (including Services and Reputation aggregate) come from the **one** `agent get --agent-ids <id>` response (`items[0]` — see `cli-reference.md §3` return schema: `{ agentId, name, role, status, description, picture, address, services: [...], reputation: { score, count } }`). Do **NOT** chain `agent service-list <id>` to "populate" the Services rows — they're already in the response. Do **NOT** chain `agent feedback-list <id>` to "populate" the Reputation row — the aggregate `{ score, count }` is already there; individual review entries belong to a separate, user-triggered request (see §Post-detail prompt below).
+
+### Post-detail prompt (after rendering §2)
+
+After the detail card is rendered from a single-agent `agent get`, offer **one** numbered-options prompt asking whether to continue — do not auto-run anything. Follow `SKILL.md §Choice prompts` + user language:
+
+Chinese:
+```
+要继续看这个 agent 的评价详情吗？
+  1. 要，拉评价列表
+  2. 不用了
+回复 1 或 2。
+```
+
+English:
+```
+Want to see this agent's review details?
+  1. Yes, pull the review list
+  2. No, I'm good
+Reply 1 or 2.
+```
+
+- On `1`: run `agent feedback-list <id>` once and render §5 (feedback list).
+- On `2`: stop. No further calls.
+- No other side-queries. `service-list` is **never** triggered from this prompt — services are already shown in the detail card.
 
 ---
 
