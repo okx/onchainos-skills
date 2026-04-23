@@ -10,7 +10,7 @@ This plugin provides 15 skills and pre-built workflows for on-chain operations a
 
 ## Workflow Routing
 
-For any of the following user intents, read `${CLAUDE_PLUGIN_ROOT}/workflows/INDEX.md` before responding:
+For any of the following user intents, read `workflows/INDEX.md` before responding:
 
 | Intent | Trigger examples | Workflow file |
 |--------|-----------------|---------------|
@@ -23,7 +23,7 @@ For any of the following user intents, read `${CLAUDE_PLUGIN_ROOT}/workflows/IND
 | Wallet monitor | "watch wallet", "monitor address" | `workflows/wallet-monitor.md` |
 | Background monitor | "background monitor", "offline monitor", "WebSocket monitor" | `workflows/wallet-monitor-ws.md` |
 
-For Chinese queries, read `${CLAUDE_PLUGIN_ROOT}/workflows/references/keyword-glossary.md` first to resolve the intent.
+For Chinese queries, read `workflows/references/keyword-glossary.md` first to resolve the intent.
 
 Safety: follow token risk controls defined in `okx-security` SKILL.md.
 For script requests, append `--format json` to all CLI commands.
