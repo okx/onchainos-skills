@@ -14,7 +14,7 @@ use crate::client::ApiClient;
 use crate::commands::{memepump, signal, token};
 use crate::output;
 
-use super::{fetch_token_scan, ok_or_null, Context};
+use super::{ok_or_null, Context};
 use super::token_research::is_launchpad_token;
 
 const TOP_N: usize = 5;
@@ -33,6 +33,11 @@ pub(crate) async fn fetch_and_assemble(
     );
 
     let top_tokens = extract_top_tokens(&raw_signals, TOP_N);
+
+    // Preserve the deliberate descending-walletCount order from extract_top_tokens.
+    // JoinSet::join_next yields in task-completion order, so we key results by
+    // address and rebuild the output vec in the original `top_tokens` order.
+    let ordered_addrs: Vec<String> = top_tokens.iter().map(|(a, _)| a.clone()).collect();
 
     // ── Step 2: per-token enrichment (parallel, max TOP_N) ───────────
     // Each spawned task gets its own ApiClient clone — true HTTP parallelism.
@@ -55,7 +60,7 @@ pub(crate) async fn fetch_and_assemble(
             );
             let price = ok_or_null(price);
             let advanced_val = ok_or_null(advanced_val);
-            let security = security.unwrap_or(Value::Null);
+            let security = ok_or_null(security);
 
             let launchpad = if is_launchpad_token(&advanced_val) {
                 let (mut d1, mut d2) = (c.clone(), c.clone());
@@ -77,11 +82,21 @@ pub(crate) async fn fetch_and_assemble(
         });
     }
 
-    let mut enriched: Vec<Value> = Vec::new();
+    let mut results_by_addr: std::collections::HashMap<String, Value> =
+        std::collections::HashMap::new();
     while let Some(join_res) = set.join_next().await {
         let (addr, data) = join_res?;
-        enriched.push(json!({ "address": addr, "data": data }));
+        results_by_addr.insert(addr, data);
     }
+
+    let enriched: Vec<Value> = ordered_addrs
+        .into_iter()
+        .filter_map(|addr| {
+            results_by_addr
+                .remove(&addr)
+                .map(|data| json!({ "address": addr, "data": data }))
+        })
+        .collect();
 
     Ok(assemble(chain_index, raw_signals, enriched))
 }
