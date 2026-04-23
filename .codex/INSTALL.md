@@ -15,21 +15,18 @@ Enable onchainos skills in Codex via native skill discovery. Just clone, symlink
    git clone https://github.com/okx/onchainos-skills ~/.codex/onchainos-skills
    ```
 
-2. **Create the skills and workflows symlinks:**
+2. **Create the skills symlink:**
 
    ```bash
-   mkdir -p ~/.agents/skills ~/.agents/workflows
+   mkdir -p ~/.agents/skills
    ln -s ~/.codex/onchainos-skills/skills ~/.agents/skills/onchainos-skills
-   ln -s ~/.codex/onchainos-skills/workflows ~/.agents/workflows/onchainos-workflows
    ```
 
    **Windows (PowerShell):**
 
    ```powershell
    New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.agents\skills"
-   New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.agents\workflows"
    cmd /c mklink /J "$env:USERPROFILE\.agents\skills\onchainos-skills" "$env:USERPROFILE\.codex\onchainos-skills\skills"
-   cmd /c mklink /J "$env:USERPROFILE\.agents\workflows\onchainos-workflows" "$env:USERPROFILE\.codex\onchainos-skills\workflows"
    ```
 
 3. **Restart Codex** (quit and relaunch the CLI) to discover the skills.

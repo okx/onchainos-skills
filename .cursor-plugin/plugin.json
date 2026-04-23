@@ -22,5 +22,5 @@
     "broadcast",
     "transaction"
   ],
-  "skills": ["./skills/", "./workflows/"]
+  "skills": ["./skills/"]
 }
