@@ -8,7 +8,7 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 
 ## Architecture
 
-- **skills/** — 13 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **skills/** — 14 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
 - **workflows/** — 8 multi-step workflow docs (`INDEX.md` for routing, `TEMPLATE.md` for authoring guide)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
@@ -39,33 +39,43 @@ For script requests, append `--format json` to all CLI commands.
 
 ## Available Skills
 
-| Skill | Purpose | When to Use |
-|-------|---------|-------------|
-| okx-agentic-wallet | Wallet auth, authenticated balance, send tokens, tx history, contract call | User wants to log in, check balance, send tokens, or view tx history |
-| okx-wallet-portfolio | Public address balance, token holdings, portfolio value | User asks about wallet holdings or token balances for a specific address |
-| okx-security | DApp/URL phishing detection, tx pre-execution scan, signature safety, approval management | User asks about DApp/URL safety, tx scan, signature safety, or token approvals |
-| okx-dex-market | Prices, charts, index prices, wallet PnL | User asks for token prices, K-line data, or wallet PnL analysis |
-| okx-dex-signal | Smart money / KOL / whale tracking, buy signals, leaderboard | User asks what smart money/whales/KOLs are buying or wants signal alerts |
-| okx-dex-trenches | Meme/pump.fun token scanning, dev reputation, bundle detection | User asks about new meme launches, dev reputation, or bundle analysis |
-| okx-dex-ws | Real-time WebSocket monitoring and scripting | User wants a WS script or real-time on-chain data stream |
-| okx-dex-swap | DEX swap execution | User wants to swap, trade, buy, or sell tokens |
-| okx-dex-token | Token search, metadata, rankings, liquidity, holders, top traders, cluster analysis | User searches for tokens, wants rankings, holder info, or cluster analysis |
-| okx-onchain-gateway | Transaction broadcasting and tracking | User wants to broadcast a tx, estimate gas, or check tx status |
-| okx-x402-payment | x402 payment authorization | User encounters HTTP 402 or mentions x402 / pay for access |
-| okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, deposit/withdraw from DeFi protocols, claim DeFi rewards |
-| okx-defi-portfolio | DeFi positions and holdings | User wants to check DeFi positions across protocols |
-| okx-audit-log | Audit log export and troubleshooting | User wants to view command history, debug errors, or export audit log |
+| Skill                | Purpose | When to Use |
+|----------------------|---------|-------------|
+| okx-agentic-wallet   | Wallet lifecycle: auth, balance (authenticated), portfolio PnL, send, history, contract call | User wants to log in, check balance, view PnL, send tokens, view tx history, or call contracts |
+| okx-wallet-portfolio | Public address balance: total value, all tokens, specific tokens | User asks about wallet holdings, token balances, portfolio value across chains |
+| okx-security         | Security scanning: token risk, DApp phishing, tx pre-execution, signature safety, approval management | User wants to check if a token/DApp/tx/signature is safe, honeypot check, phishing detection, approve safety, or view/manage token approvals |
+| okx-dex-market       | Prices, charts, index prices, wallet PnL | User asks for token prices, K-line data, index/aggregate prices, wallet PnL analysis |
+| okx-dex-signal       | Smart money / KOL / whale tracking, buy signals, leaderboard | User asks what smart money/whales/KOLs are buying, wants buy signal alerts, top traders |
+| okx-dex-trenches     | Meme/pump.fun token scanning, trenches | User asks about new meme launches, dev reputation, bundle detection, meme sniping / chain scanning / new launches, or mentions trench/trenches |
+| okx-dex-ws           | Real-time WebSocket monitoring (`onchainos ws` CLI) and scripting for all DEX channels | User wants real-time on-chain data (price, candle, trades, signals, wallet tracking, meme scanning) via CLI monitoring or custom WS script |
+| okx-dex-swap         | DEX swap execution | User wants to swap/trade/buy/sell tokens |
+| okx-dex-token        | Token search, liquidity, hot tokens, advanced info, holders, top traders, trade history, holder cluster analysis | User searches for tokens, wants rankings, liquidity pools, holder info, top traders, filtered trade history, or holder cluster concentration |
+| okx-onchain-gateway  | Transaction broadcasting and tracking | User wants to broadcast tx, estimate gas, simulate tx, check tx status |
+| okx-x402-payment     | Sign x402 payment authorization via TEE for payment-gated resources | User encounters HTTP 402, wants to pay for a payment-gated API, or mentions x402 / pay for access |
+| okx-audit-log        | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
+| okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, provide liquidity, deposit/withdraw from DeFi protocols, claim DeFi rewards across Aave/Lido/PancakeSwap/Kamino/NAVI and hundreds more |
+| okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions, view DeFi portfolio across protocols and chains |
+| okx-dex-bridge | Cross-chain bridge swap: quote, execute, approve, status tracking | User wants to bridge tokens, cross-chain swap, transfer assets between chains |
+
+## IMPORTANT: Always Load Skill Before Executing Commands
+
+**Before running ANY `onchainos` CLI command, you MUST first read the corresponding skill's SKILL.md to get the exact command syntax.** Do NOT guess subcommand names — each skill defines its own Command Index with the exact subcommands available. Guessing leads to `unrecognized subcommand` errors.
+
+Routing:
+- User mentions bridge/cross-chain/supported chains → read `skills/okx-dex-bridge/SKILL.md` first
+- User mentions swap/buy/sell/trade → read `skills/okx-dex-swap/SKILL.md` first
+- User mentions wallet/balance/transfer/login → read `skills/okx-agentic-wallet/SKILL.md` first
 
 ## Scripting & Automation
 
 When a user asks to write a script, automate trading, build a trading bot, or use "OKX API" / "OKX DEX API" for any on-chain automation:
 - **Do NOT search online for OKX public APIs** — `onchainos` already wraps all relevant on-chain capabilities
 - Always use `onchainos` CLI commands as the building block (subprocess calls, MCP tool invocations, etc.)
-- Route to the relevant skill based on what the user wants to automate: swap → `okx-dex-swap`, market data → `okx-dex-market`, signals → `okx-dex-signal`, token data → `okx-dex-token`, portfolio → `okx-wallet-portfolio`, meme scanning → `okx-dex-trenches`
+- Route to the relevant skill based on what the user wants to automate: swap → `okx-dex-swap`, cross-chain/bridge → `okx-dex-bridge`, market data → `okx-dex-market`, signals → `okx-dex-signal`, token data → `okx-dex-token`, portfolio → `okx-wallet-portfolio`, meme scanning → `okx-dex-trenches`
 
 ### WebSocket / Real-time Data
 
-When a user asks about real-time on-chain data, WebSocket monitoring, or writing a WS script/脚本/bot, load **`okx-dex-ws`**. It supports two approaches:
+When a user asks about real-time on-chain data, WebSocket monitoring, or writing a WS script/bot, load **`okx-dex-ws`**. It supports two approaches:
 - **CLI** (`onchainos ws start/poll/stop`) — quick monitoring, 9 channels across signal/market/token/trenches
 - **Custom script** — full WS protocol docs for Python/Node/Rust bots
 

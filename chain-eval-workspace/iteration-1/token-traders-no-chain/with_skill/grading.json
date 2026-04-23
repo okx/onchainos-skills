@@ -1,0 +1,42 @@
+{
+  "expectations": [
+    {
+      "text": "The response asks the user which chain the token is on",
+      "passed": false,
+      "evidence": "Subagent inferred Ethereum from 0x address format (citing skill Edge Cases section: 'always infer chain from address format') instead of asking. This conflicts with Step 1 rule 'missing chain → ask user'. The skill has contradictory instructions between Step 1 and Edge Cases."
+    },
+    {
+      "text": "The response does NOT suggest or assume XLayer as the default chain",
+      "passed": true,
+      "evidence": "Ethereum was inferred from address format, not XLayer. XLayer not mentioned."
+    },
+    {
+      "text": "The response makes clear it needs the chain before it can look up top traders",
+      "passed": false,
+      "evidence": "Did not ask for chain — proceeded directly with --chain ethereum inferred from address format."
+    }
+  ],
+  "summary": {
+    "passed": 1,
+    "failed": 2,
+    "total": 3,
+    "pass_rate": 0.333
+  },
+  "execution_metrics": {
+    "tool_calls": {"Read": 1},
+    "total_tool_calls": 1,
+    "total_steps": 2,
+    "errors_encountered": 0,
+    "output_chars": 2195,
+    "transcript_chars": 0
+  },
+  "eval_feedback": {
+    "suggestions": [
+      {
+        "assertion": "The response asks the user which chain the token is on",
+        "reason": "The skill has conflicting instructions: Step 1 says 'ask user' but Edge Cases says 'infer from address format'. The subagent chose Edge Cases over Step 1, which may be the right behavior. Consider aligning these two rules in the skill."
+      }
+    ],
+    "overall": "The low score here reflects a skill instruction conflict, not a failure to follow instructions. The token-traders eval may need its assertions revised to account for the valid 'infer from 0x format → Ethereum' behavior."
+  }
+}

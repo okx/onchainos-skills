@@ -1,0 +1,40 @@
+I'd like to pull up the hourly K-line chart for that token — before I do, I need one piece of information:
+
+**Which chain is this token on?**
+
+The address `0x6982508145454Ce325dDbE47a25d4ec3d2311933` looks like an EVM address. Common options include:
+- Ethereum
+- BNB Chain (BSC)
+- Base
+- Polygon
+- Arbitrum
+- Optimism
+
+Could you confirm the chain? That way I can fetch the correct candlestick data for the last 7 days.
+
+---
+
+*(Once you confirm the chain, here's what I'll do:)*
+
+I'll run the K-line command for the hourly bar (`1H`) covering the last 7 days:
+
+```
+onchainos market kline \
+  --address 0x6982508145454ce325ddbe47a25d4ec3d2311933 \
+  --chain <confirmed-chain> \
+  --bar 1H \
+  --limit 168
+```
+
+*(Note: EVM contract addresses are normalized to lowercase.)*
+
+The results will be presented as a candlestick table with the following columns:
+
+| Time | Open | High | Low | Close | Volume | Volume (USD) | Status |
+|------|------|------|-----|-------|--------|--------------|--------|
+| ...  | ...  | ...  | ... | ...   | ...    | ...          | Completed / Incomplete |
+
+After reviewing the chart, you might also want to:
+- Check detailed token info and holder distribution
+- See the top traders for this token
+- Execute a swap based on what you see in the chart

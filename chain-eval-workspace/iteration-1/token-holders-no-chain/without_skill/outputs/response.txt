@@ -1,0 +1,28 @@
+The address 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984 is the contract address for UNI (Uniswap's governance token) on the Ethereum mainnet.
+
+I don't have real-time access to blockchain data, so I cannot fetch live holder rankings directly. However, here is what I can tell you based on my training data:
+
+**Token: UNI (Uniswap)**
+- Network: Ethereum mainnet
+- Contract: 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984
+- Total supply: 1,000,000,000 UNI
+
+**Historically known large holders / categories:**
+
+1. **Uniswap Governance / Treasury** — The largest single holder is the Uniswap governance treasury contract, which holds a significant portion of the total supply designated for community governance and grants.
+
+2. **Uniswap Labs (team & investors)** — A portion was allocated to the Uniswap team and early investors, subject to 4-year vesting schedules. These tokens are held in vesting contracts.
+
+3. **Community Airdrop recipients** — 15% of the total supply (150,000,000 UNI) was airdropped to historical users of the protocol in September 2020.
+
+4. **Centralized exchanges** — Large exchanges such as Binance, Coinbase, and others typically hold significant amounts on behalf of their users in their hot and cold wallets.
+
+5. **DeFi protocols and liquidity pools** — Various DeFi protocols that integrate UNI hold tokens in their contracts (e.g., Uniswap liquidity pools, lending protocols like Aave or Compound).
+
+**To get real-time, accurate top holder data, you can:**
+
+- Use a blockchain explorer like **Etherscan**: https://etherscan.io/token/0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984#balances
+- Use on-chain analytics platforms like **Arkham Intelligence**, **Nansen**, or **Dune Analytics**
+- Query the Ethereum chain directly using an RPC provider and the ERC-20 Transfer event logs
+
+Would you like help interpreting holder data once you retrieve it, or do you need help querying this on-chain?

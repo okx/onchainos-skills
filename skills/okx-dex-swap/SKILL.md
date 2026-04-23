@@ -170,8 +170,7 @@ Enabled only when the user has **explicitly authorized** automated execution. Th
 
 ### Step 7 — Report Result
 
-Use business-level language: "Swap complete" / "Approval and swap complete".
-Do NOT say "Transaction confirmed on-chain" / "Successfully broadcast" / "On-chain success".
+IMPORTANT: Report as **broadcast successful**. Use wording like "Swap transaction broadcast — final on-chain result pending". Do NOT say "Swap complete" / "Swap successful" / "On-chain success" — broadcast does not guarantee the tx lands or succeeds on-chain. Tell the user to check the explorer link for final status.
 
 Suggest follow-up: explorer link for `swapTxHash`, check new token price, or swap again.
 
@@ -217,7 +216,7 @@ If `toTokenPrice` or `fromTokenPrice` unavailable/0 → enable by default.
 | Chain | MEV Protection | Threshold | How to enable |
 |---|---|---|---|
 | Ethereum | Yes | $2,000 | `onchainos swap execute --mev-protection` |
-| Solana | Yes | $1,000 | `onchainos swap execute --tips <lamports>` (positive integer, e.g. `1000` = 0.000001 SOL); CLI auto-applies Jito calldata |
+| Solana | Yes | $1,000 | `onchainos swap execute --tips <sol_amount>` (0.0000000001–2 SOL); CLI auto-applies Jito calldata |
 | BNB Chain | Yes | $200 | `onchainos swap execute --mev-protection` |
 | Base | Yes | $200 | `onchainos swap execute --mev-protection` |
 | Others | No | — | — |
