@@ -73,3 +73,67 @@ pub fn run_with_retry(args: &[&str]) -> std::process::Output {
     }
     onchainos().args(args).output().expect("failed to execute")
 }
+
+/// Extract a list of items from either a flat array or an object whose body
+/// carries the list under one of the common wrapper keys (`list` / `data` /
+/// `items` / `signals`). Keeping one extractor shared across signal and token
+/// tests means a new wrapper shape is a one-line change, not a sweep.
+pub fn extract_items(data: &Value) -> Vec<Value> {
+    if let Some(arr) = data.as_array() {
+        return arr.clone();
+    }
+    for key in ["list", "data", "items", "signals"] {
+        if let Some(arr) = data.get(key).and_then(|v| v.as_array()) {
+            return arr.clone();
+        }
+    }
+    Vec::new()
+}
+
+/// Assert that the response carries at most `limit` items, accepting either
+/// a flat array or a `{ list/data/items/signals: [...] }` wrapper.
+///
+/// If the response is an object with no recognised list key (e.g. an empty
+/// envelope), the bound is vacuously satisfied — we only require the shape
+/// to be array-or-object. This keeps tests consistent across endpoints that
+/// sometimes return bare arrays and sometimes return wrapped lists.
+///
+/// For fixtures that are known to always return data, prefer
+/// `assert_limit_non_empty` so a silent backend regression (empty list under
+/// `--limit N`) is a hard failure rather than a vacuous pass.
+pub fn assert_limit(data: &Value, limit: usize, label: &str) {
+    let items = extract_items(data);
+    if items.is_empty() {
+        assert!(
+            data.is_array() || data.is_object(),
+            "expected array or object for {label}: {data}"
+        );
+        return;
+    }
+    assert!(
+        items.len() <= limit,
+        "expected at most {limit} {label}, got {}",
+        items.len()
+    );
+}
+
+/// Like `assert_limit`, but requires the extracted list to be non-empty.
+///
+/// Use for fixtures that are known to always return data (e.g. USDC holders
+/// on ethereum, WSOL top traders on solana, USDC cross-chain search, default
+/// hot tokens). With the lenient variant, an empty list under `--limit N`
+/// silently passes — a regression that ignores `--limit` would not be caught.
+/// This variant hard-fails the test so the assertion actually proves the
+/// page-size bound is being applied.
+pub fn assert_limit_non_empty(data: &Value, limit: usize, label: &str) {
+    let items = extract_items(data);
+    assert!(
+        !items.is_empty(),
+        "expected non-empty {label} — fixture must return > 0 rows to prove --limit is applied; got: {data}"
+    );
+    assert!(
+        items.len() <= limit,
+        "expected at most {limit} {label}, got {}",
+        items.len()
+    );
+}
