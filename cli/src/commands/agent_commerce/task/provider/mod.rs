@@ -18,6 +18,7 @@ mod deliver;
 mod dispute_evidence;
 mod dispute_info;
 mod dispute_raise;
+pub mod find_jobs;
 pub mod flow;
 pub mod get_payment;
 pub mod recommend_task;

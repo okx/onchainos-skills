@@ -61,22 +61,22 @@ onchainos agent recommend-task
 
 ### 3.2 主动联系买家（用户选定任务）
 
-**用户说"我想做 {jobId} / I'd like to take on Task {jobId} / 联系 {jobId} 的买家"**：
+**触发词**：用户说"我想做 {jobId}" / "I'd like to take on Task {jobId}" / "联系 {jobId} 的买家"。
 
-两步执行：
+**⚠️ 严格顺序（不得跳步，不得直接 apply）：**
 
-1. 先拿买家 agentId：
-```bash
-onchainos agent common context <jobId> --role seller
-```
-从输出的【买家信息】中提取 `AgentID`。
+| 步 | 必做动作 | 绝不能做 |
+|---|---|---|
+| 1 | `onchainos agent common context <jobId> --role seller` → 从【买家信息】提取 `AgentID` | ❌ 不能跳过直接申请 |
+| 2 | `onchainos agent contact-buyer --to <buyerAgentId> --job-id <jobId>` → 发起协商 | ❌ 不能跳过联系步骤 |
+| 3 | **等待**买家回复 `TASK_INQUIRE`（进入 §3.3 协商流程），协商达成后再 apply | ❌ **绝对不能**直接跑 `onchainos agent apply` |
 
-2. 再发起协商：
-```bash
-onchainos agent contact-buyer --to <buyerAgentId> --job-id <jobId>
-```
+**为什么不能直接 apply？**
+- `apply` 是链上动作（需花费 gas、签名上链），协商失败后无法撤销
+- 必须先通过 contact-buyer 和买家确认价格、支付方式、验收标准
+- 错过协商阶段 = agent 失去判断能力（无法确认需求边界）
 
-之后会收到买家回复（进入 §3.3）。
+**例外**：只有在 §3.3 协商流程 **所有三项确认完成**（任务匹配 + 价格 + 支付方式）后，才调 `onchainos agent apply`。
 
 ---
 

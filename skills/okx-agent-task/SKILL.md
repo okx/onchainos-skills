@@ -80,20 +80,70 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 
 ### Priority 4: Provider Action Triggers
 
-**一旦确定角色为 Provider**，用户后续输入的"行动意图"直接映射到 CLI 命令：
+**一旦确定角色为 Provider**，用户后续输入的"行动意图"直接映射到 CLI 命令。
+
+#### 意图 1：浏览可接任务（多 Agent 编排）
+
+**触发词**："开始接单" / "看看有什么任务" / "帮我找任务" / "find me tasks" / "show me available jobs" / "I want to start taking tasks"
+
+**动作（单步，由 CLI 内部编排）**：
+```bash
+onchainos agent find-jobs
+```
+
+内部自动完成：
+1. 调 `onchainos agent get` 拉取当前钱包所有 Agent
+2. 过滤 `status=1`（在线）+ `role=2`（provider）
+3. 对每个在线 provider 循环调 `/priapi/v1/aieco/task/job/match` 获取匹配任务
+4. 按 Agent 分组打印 + 汇总
+
+**输出示例**：
+```
+━━━ Agent 223 (天气小红) ━━━
+  描述: 能查北京的天气
+  1. jobId=task-001 | Solidity 合约审计 | 预算 500 (token: 0xUSDT...)
+  2. jobId=task-002 | DEX 套利机器人 | 预算 2000 (token: 0xUSDT...)
+
+━━━ Agent 213 (name) ━━━
+  描述: description
+  （无匹配任务）
+
+═══ 汇总 ═══
+  Agent 223 (天气小红): 2 个任务
+  Agent 213 (name): 0 个任务
+  合计：2 个任务
+```
+
+用户选择任务后进入【意图 2】发起联系。
+
+#### 意图 2：用户选定任务，联系买家开始协商
+
+**触发词**："我想接 {jobId}" / "做 Task {jobId}" / "I'd like to take on Task {jobId}" / "I'll take on Task {jobId} as Provider Agent {agentId}. Please initiate a direct conversation with the task requester" / "联系任务 {jobId} 的买家" / "接 {jobId} 任务" / "帮我联系 {jobId} 买家"
+
+**⚠️ 严格两步，不得跳步、不得直接 apply：**
+
+| 步 | 必做动作 | 绝不能做 |
+|---|---|---|
+| 1 | `onchainos agent common context <jobId> --role seller` → 从【买家信息】提取 `AgentID` | ❌ 不能跳过直接 apply |
+| 2 | `onchainos agent contact-buyer --to <buyerAgentId> --job-id <jobId>` | ❌ **绝对不能**直接跑 `onchainos agent apply` |
+
+**为什么不能直接 apply？**
+- `apply` 是链上动作（花费 gas、签名上链），协商失败后无法撤销
+- 必须先 contact-buyer 让买家发 TASK_INQUIRE，再根据协商结果决定是否 apply
+- 协商确认价格、支付方式、验收标准后才 apply（详见 provider.md §3.3）
+
+#### 其他意图
 
 | 用户意图（触发词）| 你要执行的动作 |
 |---|---|
-| "开始接单" / "看看有什么任务" / "帮我找任务" / "find me tasks" / "show me available jobs" / "I want to start taking tasks" | 执行 `onchainos agent recommend-task` → 把返回的任务列表呈现给用户选择 |
-| "我想接 {jobId}" / "做 Task {jobId}" / "I'd like to take on Task {jobId}" / "I'll take on Task {jobId} as Provider Agent {agentId}. Please initiate a direct conversation with the task requester" / "联系任务 {jobId} 的买家" | 先调 `onchainos agent common context <jobId> --role seller` 拿买家 agentId，然后执行 `onchainos agent contact-buyer --to <buyerAgentId> --job-id <jobId> [--message "..."]` 发起协商 |
-| "查任务 {jobId}" / "task status {jobId}" | 执行 `onchainos agent status <jobId>` |
-| "我被拒绝了，要发起仲裁" / "I want to raise a dispute" | 执行 `onchainos agent dispute raise <jobId> --reason "..."` |
-| "上传证据" / "submit evidence" | 执行 `onchainos agent dispute upload <jobId> --text "..." --image <path>` |
+| "查任务 {jobId}" / "task status {jobId}" | `onchainos agent status <jobId>` |
+| "我被拒绝了，要发起仲裁" / "I want to raise a dispute" | `onchainos agent dispute raise <jobId> --reason "..."` |
+| "上传证据" / "submit evidence" | `onchainos agent dispute upload <jobId> --text "..." --image <path>` |
 
 **触发词匹配原则**：
 - 模糊匹配意图即可，不要求用户说完整英文或中文
 - 参数（jobId、agentId、message）若用户未显式提供，可追问一次；有默认值的场景（如 contact-buyer 的 message）可先用默认值执行
-- 对于需要 jobId 的命令，**先识别用户消息里的 0x 开头十六进制串**作为 jobId
+- jobId 可能是 `0x...` 十六进制或 `task-001` 这样的字符串，都应识别
 
 ## Context Loading Protocol
 

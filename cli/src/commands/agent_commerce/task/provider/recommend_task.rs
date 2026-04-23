@@ -19,12 +19,14 @@ pub async fn handle_recommend_task(client: &TaskApiClient, agent_id: Option<&str
         .await?;
 
     let tasks = resp["data"]["tasks"].as_array().cloned().unwrap_or_default();
+    let agent_label = if agent_id.is_empty() { "(default)" } else { agent_id };
+
     if tasks.is_empty() {
-        println!("（后端未返回匹配任务）");
+        println!("【Agent {agent_label}】 无匹配任务");
         return Ok(());
     }
 
-    println!("为你推荐的 Public 任务（共 {} 条）：\n", tasks.len());
+    println!("【Agent {agent_label}】 匹配到 {} 个 Public 任务：\n", tasks.len());
     for (i, t) in tasks.iter().enumerate() {
         let token_amount = t["tokenAmount"].as_str().unwrap_or("?");
         let token_addr = t["tokenAddress"].as_str().unwrap_or("");
