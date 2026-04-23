@@ -12,6 +12,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 pub mod dispute_upload;
 pub mod network;
+pub mod rate_agent;
 
 use crate::commands::Context;
 

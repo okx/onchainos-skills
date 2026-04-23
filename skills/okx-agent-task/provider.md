@@ -92,7 +92,7 @@ onchainos agent recommend-task
 **协商目标**（一条回复内尽量一次确认完）：
 - 任务内容和验收标准是否在能力范围内
 - 价格可接受（币种必须是 XLayer 的 USDT 或 USDG）
-- 支付方式可接受（escrow / non_escrow / x402）
+- 支付方式可接受（escrow / non_escrow）
 
 三项全确认 → 调用：
 ```bash
