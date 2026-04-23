@@ -21,6 +21,10 @@ okx-dex-token, okx-dex-market, okx-dex-signal, okx-dex-trenches, okx-wallet-port
 | chain          | No       | Solana  |
 | wallet_address | No       | —       |
 
+## CLI
+
+Agent-orchestrated — no single CLI composite. The workflow spans four cross-skill steps whose outputs are meant to be summarised in prose; the agent runs the atomic commands in each step directly.
+
 ## Steps
 
 ### Step 1 — Market pulse [required] (parallel)
