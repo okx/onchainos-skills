@@ -222,6 +222,35 @@ install_binary() {
   echo "Installed ${BINARY} ${tag} to ${INSTALL_DIR}/${BINARY}"
 }
 
+# ── Workflow sync ────────────────────────────────────────────
+sync_workflows() {
+  tag="$1"
+  workflows_dir="$CACHE_DIR/workflows"
+  workflows_url="https://github.com/${REPO}/archive/refs/tags/${tag}.tar.gz"
+
+  echo "Syncing workflows (${tag})..."
+
+  tmpdir=$(mktemp -d)
+  trap 'rm -rf "$tmpdir"' EXIT
+
+  curl -sSL "$workflows_url" -o "$tmpdir/archive.tar.gz"
+
+  # Extract only the workflows/ directory from the archive
+  tar -xzf "$tmpdir/archive.tar.gz" -C "$tmpdir" --strip-components=1 "onchainos-skills-${tag#v}/workflows" 2>/dev/null || \
+    tar -xzf "$tmpdir/archive.tar.gz" -C "$tmpdir" --strip-components=1 "*/workflows" 2>/dev/null
+
+  if [ -d "$tmpdir/workflows" ]; then
+    rm -rf "$workflows_dir"
+    mkdir -p "$CACHE_DIR"
+    mv "$tmpdir/workflows" "$workflows_dir"
+    echo "Workflows synced to ${workflows_dir}"
+  else
+    echo "Warning: could not extract workflows from archive (non-fatal)" >&2
+  fi
+
+  rm -rf "$tmpdir"
+}
+
 # ── PATH setup ───────────────────────────────────────────────
 ensure_in_path() {
   # Check if INSTALL_DIR is already in PATH
@@ -314,6 +343,7 @@ main() {
   fi
 
   install_binary "v${target_ver}"
+  sync_workflows "v${target_ver}"
   write_cache
   ensure_in_path
 }

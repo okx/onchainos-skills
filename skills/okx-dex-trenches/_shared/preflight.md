@@ -2,7 +2,7 @@
 
 > This file is shared across all onchainos skills. Follow these steps before the first `onchainos` command each session.
 
-> **Workflow check**: This skill participates in several workflows. If the user says "scan new tokens" or "meme token scan" → read `workflows/new-token-screening.md`. If "smart money" or "what are whales buying" → read `workflows/smart-money-signals.md`. If "daily brief" → read `workflows/daily-brief.md`.
+> **Workflow check**: This skill participates in several workflows. If the user says "scan new tokens" or "meme token scan" → read `~/.onchainos/workflows/new-token-screening.md`. If "smart money" or "what are whales buying" → read `~/.onchainos/workflows/smart-money-signals.md`. If "daily brief" → read `~/.onchainos/workflows/daily-brief.md`.
 
 Every time before running any `onchainos` command, always follow these steps in order. Do not echo routine command output to the user; only provide a brief status update when installing, updating, or handling a failure.
 

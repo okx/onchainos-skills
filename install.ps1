@@ -191,6 +191,46 @@ The downloaded file may have been tampered with. Aborting.
     }
 }
 
+# ── Workflow sync ────────────────────────────────────────────
+function Sync-Workflows {
+    param([string]$Tag)
+
+    $workflowsDir = Join-Path $CACHE_DIR "workflows"
+    $archiveUrl = "https://github.com/${REPO}/archive/refs/tags/${Tag}.zip"
+
+    Write-Host "Syncing workflows (${Tag})..."
+
+    $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+    New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+
+    try {
+        $archivePath = Join-Path $tmpDir "archive.zip"
+        Invoke-WebRequest -Uri $archiveUrl -OutFile $archivePath -UseBasicParsing
+
+        Expand-Archive -Path $archivePath -DestinationPath $tmpDir -Force
+
+        # Find the extracted workflows directory
+        $extracted = Get-ChildItem -Path $tmpDir -Directory | Where-Object { $_.Name -like "onchainos-skills-*" } | Select-Object -First 1
+        if ($extracted) {
+            $srcWorkflows = Join-Path $extracted.FullName "workflows"
+            if (Test-Path $srcWorkflows) {
+                if (Test-Path $workflowsDir) { Remove-Item -Path $workflowsDir -Recurse -Force }
+                if (-not (Test-Path $CACHE_DIR)) { New-Item -ItemType Directory -Path $CACHE_DIR -Force | Out-Null }
+                Move-Item -Path $srcWorkflows -Destination $workflowsDir -Force
+                Write-Host "Workflows synced to ${workflowsDir}"
+            } else {
+                Write-Host "Warning: no workflows directory found in archive (non-fatal)" -ForegroundColor Yellow
+            }
+        }
+    }
+    catch {
+        Write-Host "Warning: could not sync workflows ($($_.Exception.Message)) (non-fatal)" -ForegroundColor Yellow
+    }
+    finally {
+        Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # ── PATH setup ───────────────────────────────────────────────
 function Add-ToPath {
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -252,6 +292,7 @@ function Main {
     }
 
     Install-Binary -Tag "v${targetVer}"
+    Sync-Workflows -Tag "v${targetVer}"
     Write-Cache
     Add-ToPath
 }

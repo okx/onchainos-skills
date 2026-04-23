@@ -10,20 +10,20 @@ This plugin provides 15 skills and pre-built workflows for on-chain operations a
 
 ## Workflow Routing
 
-For any of the following user intents, read `workflows/INDEX.md` before responding:
+For any of the following user intents, read `~/.onchainos/workflows/INDEX.md` before responding:
 
 | Intent | Trigger examples | Workflow file |
 |--------|-----------------|---------------|
-| Token research | "analyse token", "research [address]", "is this token safe" | `workflows/token-research.md` |
-| Market overview | "daily brief", "market overview", "what's the market doing" | `workflows/daily-brief.md` |
-| Smart money | "what are whales buying", "copy trading signals", "smart money" | `workflows/smart-money-signals.md` |
-| New token scan | "scan new tokens", "pump.fun tokens", "meme scan" | `workflows/new-token-screening.md` |
-| Wallet analysis | "analyse wallet", "check this address", "is this wallet worth following" | `workflows/wallet-analysis.md` |
-| Portfolio | "check my holdings", "my portfolio", "my wallet" | `workflows/portfolio-check.md` |
-| Wallet monitor | "watch wallet", "monitor address" | `workflows/wallet-monitor.md` |
-| Background monitor | "background monitor", "offline monitor", "WebSocket monitor" | `workflows/wallet-monitor-ws.md` |
+| Token research | "analyse token", "research [address]", "is this token safe" | `~/.onchainos/workflows/token-research.md` |
+| Market overview | "daily brief", "market overview", "what's the market doing" | `~/.onchainos/workflows/daily-brief.md` |
+| Smart money | "what are whales buying", "copy trading signals", "smart money" | `~/.onchainos/workflows/smart-money-signals.md` |
+| New token scan | "scan new tokens", "pump.fun tokens", "meme scan" | `~/.onchainos/workflows/new-token-screening.md` |
+| Wallet analysis | "analyse wallet", "check this address", "is this wallet worth following" | `~/.onchainos/workflows/wallet-analysis.md` |
+| Portfolio | "check my holdings", "my portfolio", "my wallet" | `~/.onchainos/workflows/portfolio-check.md` |
+| Wallet monitor | "watch wallet", "monitor address" | `~/.onchainos/workflows/wallet-monitor.md` |
+| Background monitor | "background monitor", "offline monitor", "WebSocket monitor" | `~/.onchainos/workflows/wallet-monitor-ws.md` |
 
-For Chinese queries, read `workflows/references/keyword-glossary.md` first to resolve the intent.
+For Chinese queries, read `~/.onchainos/workflows/references/keyword-glossary.md` first to resolve the intent.
 
 Safety: follow token risk controls defined in `okx-security` SKILL.md.
 For script requests, append `--format json` to all CLI commands.

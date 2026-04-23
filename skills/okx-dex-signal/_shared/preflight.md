@@ -2,7 +2,7 @@
 
 > This file is shared across all onchainos skills. Follow these steps before the first `onchainos` command each session.
 
-> **Workflow check**: This skill participates in several workflows. If the user says "smart money" or "what are whales buying" → read `workflows/smart-money-signals.md`. If "daily brief" → read `workflows/daily-brief.md`. If "analyze token" or "research [address]" → read `workflows/token-research.md`. If "analyze wallet" → read `workflows/wallet-analysis.md`. If "watch wallet" or "monitor address" → read `workflows/wallet-monitor.md`.
+> **Workflow check**: This skill participates in several workflows. If the user says "smart money" or "what are whales buying" → read `~/.onchainos/workflows/smart-money-signals.md`. If "daily brief" → read `~/.onchainos/workflows/daily-brief.md`. If "analyze token" or "research [address]" → read `~/.onchainos/workflows/token-research.md`. If "analyze wallet" → read `~/.onchainos/workflows/wallet-analysis.md`. If "watch wallet" or "monitor address" → read `~/.onchainos/workflows/wallet-monitor.md`.
 
 Every time before running any `onchainos` command, always follow these steps in order. Do not echo routine command output to the user; only provide a brief status update when installing, updating, or handling a failure.
 
