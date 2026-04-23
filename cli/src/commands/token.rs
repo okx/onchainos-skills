@@ -1013,13 +1013,12 @@ pub async fn fetch_report(client: &mut ApiClient, address: &str, chain_index: &s
         "source": "onchain_os_cli",
         "tokenList": [{ "chainId": chain_index, "contractAddress": address }]
     });
-    let sec_body2 = sec_body.clone();
 
     let (info, price, advanced, security) = tokio::join!(
         fetch_info(client, address, chain_index),
         fetch_price_info(&mut c1, address, chain_index),
         fetch_advanced_info(&mut c2, address, chain_index),
-        c3.post("/api/v6/security/token-scan", &sec_body2),
+        c3.post("/api/v6/security/token-scan", &sec_body),
     );
 
     let info     = info.ok();
