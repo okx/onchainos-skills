@@ -59,11 +59,10 @@ pub(crate) async fn fetch_and_assemble(
 
 pub async fn run(ctx: &Context, address: &str, chain: Option<String>) -> Result<()> {
     let mut client = ctx.client_async().await?;
-    let chain_str = chain
+    let chain_index = chain
         .as_deref()
-        .unwrap_or_else(|| ctx.chain_override.as_deref().unwrap_or("solana"))
-        .to_string();
-    let chain_index = chains::resolve_chain(&chain_str).to_string();
+        .map(|c| chains::resolve_chain(c).to_string())
+        .unwrap_or_else(|| ctx.chain_index_or("solana"));
 
     let result = fetch_and_assemble(&mut client, address, &chain_index).await?;
     output::success(result);
