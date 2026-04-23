@@ -246,6 +246,12 @@ fn signal_list_missing_chain_fails() {
 
 #[test]
 fn signal_list_with_limit() {
+    // Intentionally lenient: ETH signal list density can dip under the
+    // `--limit 3` bound on sparse days, unlike the `token` equivalents
+    // (USDC search, hot-tokens, USDC holders, WSOL top-traders) which are
+    // reliably dense and therefore use `assert_limit_non_empty`. Using
+    // `assert_limit_non_empty` here would flake on quiet periods for what
+    // is functionally a pagination-semantics test, not a density test.
     let output = run_with_retry(&["signal", "list", "--chain", "ethereum", "--limit", "3"]);
     let data = assert_ok_and_extract_data(&output);
     assert_limit(&data, 3, "signals");
@@ -253,6 +259,13 @@ fn signal_list_with_limit() {
 
 #[test]
 fn signal_list_cursor_pagination() {
+    // Intentionally lenient (same rationale as `signal_list_with_limit`):
+    // ETH signal density fluctuates, so page 1 / page 2 may legitimately
+    // be empty or terminal on quiet days. The strict cursor test lives on
+    // the token side (`token_search_cursor_pagination`, USDC fixture),
+    // which has the dense fixture this one lacks. We still hard-assert
+    // cursor non-overlap *when* page 2 returns rows — skipping only the
+    // setup preconditions, never the actual advancement check.
     // Page 1
     let page1 = run_with_retry(&["signal", "list", "--chain", "ethereum", "--limit", "2"]);
     let items1 = extract_items(&assert_ok_and_extract_data(&page1));
