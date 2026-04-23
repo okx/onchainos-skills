@@ -48,9 +48,6 @@ struct PaymentState {
     // ── Notification state (mirrored in PaymentCache) ───────────────────
     /// Parsed from the `UserType=` field of `ok-web3-openapi-pay`.
     user_type: Option<UserType>,
-    /// Unix seconds. From `/config`'s `graceExpiresAt`; `None` means the
-    /// caller should fall back to `payment_notify::fallback_grace_expires_at()`.
-    grace_expires_at: Option<i64>,
     /// Per-event dedupe — persisted so the prompt fires at most once per
     /// account lifetime (cache is cleared on logout).
     intro_shown: bool,
@@ -975,9 +972,9 @@ impl ApiClient {
     /// Seed in-memory state from a disk cache. Charging flags +
     /// `user_type` + notification `shown` flags are always restored (they
     /// track per-user server signals, independent of config TTL);
-    /// `endpoints`/`accepts`/`graceExpiresAt`/`docsUrl` are restored only
-    /// when the cache isn't expired. Returns `true` if the config portion
-    /// was fresh enough to skip the remote fetch.
+    /// `endpoints`/`accepts` are restored only when the cache isn't
+    /// expired. Returns `true` if the config portion was fresh enough to
+    /// skip the remote fetch.
     fn restore_from_cache(&self, cache: PaymentCache) -> bool {
         let mut state = self.payment_state();
         state.basic_state = cache.basic_state;
@@ -1001,7 +998,6 @@ impl ApiClient {
             .filter_map(|(p, t)| PaymentTier::from_server_str(&t).map(|tier| (p, tier)))
             .collect();
         state.accepts = cache.accepts;
-        state.grace_expires_at = cache.grace_expires_at;
         state.config_loaded = true;
         true
     }
@@ -1019,11 +1015,6 @@ impl ApiClient {
         if let Some(a) = data.get("accepts") {
             if !a.is_null() {
                 state.accepts = Some(a.clone());
-            }
-        }
-        if let Some(s) = data.get("graceExpiresAt").and_then(|v| v.as_str()) {
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
-                state.grace_expires_at = Some(dt.timestamp());
             }
         }
     }
@@ -1212,7 +1203,6 @@ impl ApiClient {
             premium_state: state.premium_state,
             updated_at: payment_cache::now_secs(),
             user_type: state.user_type,
-            grace_expires_at: state.grace_expires_at,
             intro_shown: state.intro_shown,
             grace_shown: state.grace_shown,
             default_asset,
@@ -1231,7 +1221,6 @@ impl ApiClient {
     /// the list itself is never narrowed, and the prompt still blocks —
     /// only `payment default set` advances the tier state.
     fn dispatch_notifications(&self, path: &str, header_accepts: Option<&Value>) {
-        let now = chrono::Utc::now().timestamp();
         let preferred_asset = PaymentCache::load()
             .and_then(|c| c.default_asset)
             .map(|d| (d.asset, d.network));
@@ -1239,9 +1228,7 @@ impl ApiClient {
             let state = self.payment_state();
             NotifyInput {
                 user_type: state.user_type,
-                grace_expires_at: state
-                    .grace_expires_at
-                    .unwrap_or_else(payment_notify::fallback_grace_expires_at),
+                grace_expires_at: payment_notify::grace_expires_at(),
                 basic_state: state.basic_state,
                 premium_state: state.premium_state,
                 intro_shown: state.intro_shown,
@@ -1251,7 +1238,7 @@ impl ApiClient {
                 preferred_asset,
             }
         };
-        let events = payment_notify::compute_events(&input, now);
+        let events = payment_notify::compute_events(&input);
         if events.is_empty() {
             return;
         }

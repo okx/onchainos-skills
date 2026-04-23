@@ -58,9 +58,6 @@ pub struct PaymentCache {
     /// `1`→New, `0`→Old from the `UserType=` header field.
     #[serde(default)]
     pub user_type: Option<UserType>,
-    /// Unix seconds, from `/config` or fallback constant.
-    #[serde(default)]
-    pub grace_expires_at: Option<i64>,
     #[serde(default)]
     pub intro_shown: bool,
     #[serde(default)]

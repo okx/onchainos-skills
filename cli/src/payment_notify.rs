@@ -30,7 +30,7 @@ const DISPLAY_DECIMALS: usize = 6;
 pub const BASIC_FREE_QUOTA: u64 = 1000000;
 pub const PREMIUM_FREE_QUOTA: u64 = 100000;
 pub const GRACE_DAYS: u32 = 30;
-pub const DOC_URL: &str = "";
+pub const DOC_URL: &str = "https://web3.okx.com/onchainos/dev-docs/market/market-api-fee";
 
 /// Process-global buffer of notification events emitted by `ApiClient`
 /// during a request. Drained by the CLI output layer (`output::success`
@@ -216,21 +216,18 @@ fn format_rfc3339_utc(unix_secs: i64) -> String {
         .unwrap_or_default()
 }
 
-/// Fallback grace expiry used before the server's `/config` response
-/// lands. 2026-05-31T00:00:00Z.
-pub fn fallback_grace_expires_at() -> i64 {
+/// Grace expiry for old users: 2026-05-31T00:00:00Z. Global constant —
+/// the server doesn't return this, so every old user gets the same
+/// cutoff.
+pub fn grace_expires_at() -> i64 {
     DateTime::parse_from_rfc3339("2026-05-31T00:00:00Z")
         .expect("hardcoded RFC3339 literal")
         .timestamp()
 }
 
-/// Decide which notifications should fire on this response. Returns one
-/// `(Event, Flag)` pair per event, in intended print order. The caller
-/// is responsible for flipping the flag and persisting.
-///
-/// There are exactly 5 event variants, mapping 1:1 to the 5 user-facing
-/// states the skill renders — CLI only identifies which state the user
-/// just entered; all copy lives in the skill.
+/// Decide which notifications fire on this response. Returns `(Event,
+/// Flag)` pairs in print order; caller persists the flags. Copy lives in
+/// the skill — CLI only names the state.
 ///
 /// | User type | Window     | Quota       | Variant                            |
 /// |-----------|------------|-------------|------------------------------------|
@@ -239,14 +236,14 @@ pub fn fallback_grace_expires_at() -> i64 {
 /// | Old       | in grace   | —           | `Event::OldUserGrace`              |
 /// | Old       | post grace | within      | `Event::OldUserPostGraceIntro`     |
 /// | Old       | post grace | over (tier) | `Event::OldUserPostGraceOverQuota` |
-///
-/// Old users in grace never emit intro or over-quota events — grace wins.
-pub fn compute_events(input: &NotifyInput, now: i64) -> Vec<(Event, Flag)> {
+pub fn compute_events(input: &NotifyInput) -> Vec<(Event, Flag)> {
     let mut events = Vec::new();
     let Some(user_type) = input.user_type else {
         return events;
     };
-    let in_grace = matches!(user_type, UserType::Old) && now < input.grace_expires_at;
+    let in_grace = matches!(user_type, UserType::Old)
+        && input.basic_state == TierState::Free
+        && input.premium_state == TierState::Free;
 
     if in_grace {
         if !input.grace_shown {
@@ -435,7 +432,7 @@ mod tests {
     fn base() -> NotifyInput {
         NotifyInput {
             user_type: None,
-            grace_expires_at: fallback_grace_expires_at(),
+            grace_expires_at: grace_expires_at(),
             basic_state: TierState::Free,
             premium_state: TierState::Free,
             intro_shown: false,
@@ -470,18 +467,18 @@ mod tests {
     }
 
     #[test]
-    fn fallback_grace_is_2026_05_31_utc() {
+    fn grace_expires_at_is_2026_05_31_utc() {
         use chrono::TimeZone;
         let expected = Utc
             .with_ymd_and_hms(2026, 5, 31, 0, 0, 0)
             .unwrap()
             .timestamp();
-        assert_eq!(fallback_grace_expires_at(), expected);
+        assert_eq!(grace_expires_at(), expected);
     }
 
     #[test]
     fn no_events_when_user_type_unknown() {
-        assert!(compute_events(&base(), 0).is_empty());
+        assert!(compute_events(&base()).is_empty());
     }
 
     #[test]
@@ -497,7 +494,7 @@ mod tests {
     fn new_user_first_request_emits_intro() {
         let mut i = base();
         i.user_type = Some(UserType::New);
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1, Flag::Intro);
         assert!(matches!(events[0].0, Event::NewUserIntro { .. }));
@@ -507,29 +504,43 @@ mod tests {
     fn old_user_in_grace_emits_grace_only() {
         let mut i = base();
         i.user_type = Some(UserType::Old);
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1, Flag::Grace);
         assert!(matches!(events[0].0, Event::OldUserGrace { .. }));
     }
 
     #[test]
-    fn old_user_in_grace_suppresses_over_quota_even_if_charging_flag_set() {
+    fn old_user_with_charging_flag_emits_over_quota_not_grace() {
+        // Regression: server may flip a tier to charging before the
+        // calendar grace cutoff. `in_grace` is decided by tier state, not
+        // by the clock, so the user sees intro + OVER_QUOTA (and the 402
+        // retry wrapper can block the first auto-sign) instead of being
+        // silently charged while the grace notice masks the event.
         let mut i = base();
         i.user_type = Some(UserType::Old);
-        i.grace_shown = true;
         i.basic_state = TierState::ChargingUnconfirmed;
-        let events = compute_events(&i, 0);
-        assert!(events.is_empty());
+        let events = compute_events(&i);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].1, Flag::Intro);
+        assert!(matches!(events[0].0, Event::OldUserPostGraceIntro { .. }));
+        assert_eq!(events[1].1, Flag::BasicOver);
+        assert!(matches!(
+            events[1].0,
+            Event::OldUserPostGraceOverQuota { tier: PaymentTier::Basic, .. }
+        ));
     }
 
     #[test]
     fn old_user_post_grace_emits_post_grace_intro() {
+        // "Post grace" here means a tier is charging (even if it was
+        // already confirmed in a prior window). Intro fires once; no
+        // OVER_QUOTA because Confirmed != Unconfirmed.
         let mut i = base();
         i.user_type = Some(UserType::Old);
         i.grace_shown = true;
-        let now = i.grace_expires_at + 1;
-        let events = compute_events(&i, now);
+        i.basic_state = TierState::ChargingConfirmed;
+        let events = compute_events(&i);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1, Flag::Intro);
         assert!(matches!(events[0].0, Event::OldUserPostGraceIntro { .. }));
@@ -541,7 +552,7 @@ mod tests {
         i.user_type = Some(UserType::New);
         i.intro_shown = true;
         i.basic_state = TierState::ChargingUnconfirmed;
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1, Flag::BasicOver);
         assert!(matches!(
@@ -554,7 +565,7 @@ mod tests {
     fn intro_event_serializes_with_camelcase_fields() {
         let mut i = base();
         i.user_type = Some(UserType::New);
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         assert_eq!(events.len(), 1);
         // Adjacently tagged: { "code": "...", "data": { ... camelCase fields } }.
         let v = serde_json::to_value(&events[0].0).unwrap();
@@ -574,7 +585,7 @@ mod tests {
             .with_ymd_and_hms(2026, 6, 1, 0, 0, 0)
             .unwrap()
             .timestamp();
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         assert_eq!(events.len(), 1);
         let v = serde_json::to_value(&events[0].0).unwrap();
         assert_eq!(v["code"], "MARKET_API_OLD_USER_GRACE");
@@ -593,7 +604,7 @@ mod tests {
         i.user_type = Some(UserType::New);
         i.basic_state = TierState::ChargingUnconfirmed;
         i.premium_state = TierState::ChargingUnconfirmed;
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         assert_eq!(events.len(), 3);
         assert_eq!(events[0].1, Flag::Intro);
         assert_eq!(events[1].1, Flag::BasicOver);
@@ -607,8 +618,7 @@ mod tests {
         i.intro_shown = true;
         i.grace_shown = true;
         i.basic_state = TierState::ChargingUnconfirmed;
-        let now = i.grace_expires_at + 1;
-        let events = compute_events(&i, now);
+        let events = compute_events(&i);
         assert_eq!(events.len(), 1);
         assert!(matches!(
             events[0].0,
@@ -622,7 +632,7 @@ mod tests {
         i.user_type = Some(UserType::New);
         i.intro_shown = true;
         i.basic_state = TierState::ChargingConfirmed;
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         assert!(events.is_empty());
     }
 
@@ -633,7 +643,7 @@ mod tests {
         i.intro_shown = true;
         i.basic_state = TierState::ChargingConfirmed;
         i.premium_state = TierState::ChargingUnconfirmed;
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1, Flag::PremiumOver);
         assert!(matches!(
@@ -653,19 +663,19 @@ mod tests {
         i.intro_shown = true;
         i.basic_state = TierState::ChargingUnconfirmed;
         // First transition.
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1, Flag::BasicOver);
         // Simulate: caller advanced Unconfirmed → Confirmed after firing.
         i.basic_state = TierState::ChargingConfirmed;
         // Steady charging-true: no repeat.
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         assert!(events.is_empty());
         // Server drops back to free → header resets state to Free.
         i.basic_state = TierState::Free;
         // Server re-flips to charging.
         i.basic_state = TierState::ChargingUnconfirmed;
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1, Flag::BasicOver);
     }
@@ -678,7 +688,7 @@ mod tests {
         i.basic_state = TierState::ChargingUnconfirmed;
         i.accepts = Some(sample_accepts());
 
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         assert_eq!(events.len(), 1);
         let Event::NewUserOverQuota { tier, payment } = &events[0].0 else {
             panic!("expected NewUserOverQuota variant");
@@ -738,7 +748,7 @@ mod tests {
         i.basic_state = TierState::ChargingUnconfirmed;
         i.accepts = Some(accepts);
 
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         let Event::NewUserOverQuota { payment, .. } = &events[0].0 else {
             panic!("expected NewUserOverQuota variant");
         };
@@ -758,7 +768,7 @@ mod tests {
         i.accepts = Some(sample_accepts());
         i.preferred_asset = Some(("0xUSDT".to_string(), "eip155:196".to_string()));
 
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         let Event::NewUserOverQuota { payment, .. } = &events[0].0 else {
             panic!("expected NewUserOverQuota variant");
         };
@@ -780,7 +790,7 @@ mod tests {
         i.accepts = Some(sample_accepts());
         i.preferred_asset = Some(("0xUNKNOWN".to_string(), "eip155:196".to_string()));
 
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         let Event::NewUserOverQuota { payment, .. } = &events[0].0 else {
             panic!("expected NewUserOverQuota variant");
         };
@@ -801,7 +811,7 @@ mod tests {
             // Tiered object missing the premium key — should be dropped.
             { "amount": { "basic": "100" }, "asset": "0xBASIC_ONLY" },
         ]));
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         assert_eq!(events.len(), 1);
         let Event::NewUserOverQuota { payment, .. } = &events[0].0 else {
             panic!("expected NewUserOverQuota variant");
@@ -840,13 +850,13 @@ mod tests {
         i.basic_state = TierState::ChargingUnconfirmed;
         i.premium_state = TierState::ChargingUnconfirmed;
         i.path_tier = Some(PaymentTier::Basic);
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1, Flag::BasicOver);
 
         // Now the same response but the path is Premium.
         i.path_tier = Some(PaymentTier::Premium);
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1, Flag::PremiumOver);
     }
@@ -861,7 +871,7 @@ mod tests {
         i.basic_state = TierState::ChargingUnconfirmed;
         i.premium_state = TierState::ChargingUnconfirmed;
         i.path_tier = None;
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].1, Flag::BasicOver);
         assert_eq!(events[1].1, Flag::PremiumOver);
@@ -874,7 +884,7 @@ mod tests {
         i.intro_shown = true;
         i.basic_state = TierState::ChargingUnconfirmed;
         // i.accepts stays None
-        let events = compute_events(&i, 0);
+        let events = compute_events(&i);
         assert_eq!(events.len(), 1);
         let Event::NewUserOverQuota { tier, payment } = &events[0].0 else {
             panic!("expected NewUserOverQuota variant");
