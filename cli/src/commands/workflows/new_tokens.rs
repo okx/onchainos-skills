@@ -16,12 +16,19 @@ use crate::output;
 use super::{ok_or_null, Context};
 
 const ENRICH_TOP_N: usize = 10;
+const VALID_STAGES: &[&str] = &["MIGRATED", "MIGRATING"];
 
 pub(crate) async fn fetch_and_assemble(
     client: &mut ApiClient,
     chain_index: &str,
     stage: &str,
 ) -> Result<Value> {
+    anyhow::ensure!(
+        VALID_STAGES.contains(&stage),
+        "--stage must be one of {:?}, got: {stage}",
+        VALID_STAGES
+    );
+
     // ── Step 1: fetch launchpad token list ───────────────────────────
     let token_list = ok_or_null(
         client
@@ -33,6 +40,11 @@ pub(crate) async fn fetch_and_assemble(
     );
 
     let top_tokens = extract_top_tokens(&token_list, ENRICH_TOP_N);
+
+    // Preserve the API-returned order from `top_tokens`. `JoinSet::join_next`
+    // yields in task-completion order, so we key results by address and
+    // rebuild the output vec in the original order.
+    let ordered_addrs: Vec<String> = top_tokens.iter().map(|(a, _)| a.clone()).collect();
 
     // ── Step 2: parallel enrichment — each task owns its own ApiClient clone ──
     let mut set: JoinSet<(String, Value)> = JoinSet::new();
@@ -59,7 +71,7 @@ pub(crate) async fn fetch_and_assemble(
             );
             let enriched = assemble_token_result(
                 token_item,
-                security.unwrap_or(Value::Null),
+                ok_or_null(security),
                 ok_or_null(advanced),
                 ok_or_null(dev_info),
                 ok_or_null(bundle_info),
@@ -68,11 +80,21 @@ pub(crate) async fn fetch_and_assemble(
         });
     }
 
-    let mut results: Vec<Value> = Vec::new();
+    let mut results_by_addr: std::collections::HashMap<String, Value> =
+        std::collections::HashMap::new();
     while let Some(join_res) = set.join_next().await {
         let (addr, data) = join_res?;
-        results.push(json!({ "address": addr, "data": data }));
+        results_by_addr.insert(addr, data);
     }
+
+    let results: Vec<Value> = ordered_addrs
+        .into_iter()
+        .filter_map(|addr| {
+            results_by_addr
+                .remove(&addr)
+                .map(|data| json!({ "address": addr, "data": data }))
+        })
+        .collect();
 
     Ok(assemble(chain_index, stage, token_list, results))
 }
