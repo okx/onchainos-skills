@@ -6,6 +6,44 @@ mod common;
 
 use common::{assert_ok_and_extract_data, onchainos, run_with_retry, tokens};
 use predicates::prelude::*;
+use serde_json::Value;
+
+/// Extract a list of items from either a flat array or an object whose body
+/// carries the list under one of the common keys (`list` / `data` / `items`
+/// / `signals`). Mirrors `extract_signals` in `cli_signal.rs` — used by the
+/// cursor-pagination test so a `{ list: [...] }` response shape does not
+/// silently early-return as a false pass.
+fn extract_items(data: &Value) -> Vec<Value> {
+    if let Some(arr) = data.as_array() {
+        return arr.clone();
+    }
+    for key in ["list", "data", "items", "signals"] {
+        if let Some(arr) = data.get(key).and_then(|v| v.as_array()) {
+            return arr.clone();
+        }
+    }
+    Vec::new()
+}
+
+/// Assert that an items list has at most `limit` elements, accepting either
+/// a flat array or a `{ list/data/items: [...] }` wrapper. Siblings like
+/// `token_holders_with_limit` already accept both shapes — this keeps the
+/// stricter search/hot-tokens tests consistent with that pattern.
+fn assert_limit(data: &Value, limit: usize, label: &str) {
+    let items = extract_items(data);
+    if items.is_empty() {
+        assert!(
+            data.is_array() || data.is_object(),
+            "expected array or object for {label}: {data}"
+        );
+        return;
+    }
+    assert!(
+        items.len() <= limit,
+        "expected at most {limit} {label}, got {}",
+        items.len()
+    );
+}
 
 // ─── search ─────────────────────────────────────────────────────────
 
@@ -763,20 +801,14 @@ fn token_trades_missing_address_fails() {
 fn token_search_with_limit() {
     let output = run_with_retry(&["token", "search", "--query", "USDC", "--limit", "3"]);
     let data = assert_ok_and_extract_data(&output);
-    let arr = data
-        .as_array()
-        .unwrap_or_else(|| panic!("expected array: {data}"));
-    assert!(arr.len() <= 3, "expected at most 3 results, got {}", arr.len());
+    assert_limit(&data, 3, "search results");
 }
 
 #[test]
 fn token_hot_tokens_with_limit() {
     let output = run_with_retry(&["token", "hot-tokens", "--limit", "3"]);
     let data = assert_ok_and_extract_data(&output);
-    let arr = data
-        .as_array()
-        .unwrap_or_else(|| panic!("expected array: {data}"));
-    assert!(arr.len() <= 3, "expected at most 3 results, got {}", arr.len());
+    assert_limit(&data, 3, "hot tokens");
 }
 
 #[test]
@@ -815,8 +847,7 @@ fn token_top_trader_with_limit() {
 fn token_search_cursor_pagination() {
     // Page 1 — fetch 2 results
     let page1 = run_with_retry(&["token", "search", "--query", "USDC", "--limit", "2"]);
-    let arr1 = assert_ok_and_extract_data(&page1);
-    let items1: Vec<_> = arr1.as_array().cloned().unwrap_or_default();
+    let items1 = extract_items(&assert_ok_and_extract_data(&page1));
     if items1.is_empty() {
         return; // no items to paginate — pass
     }
@@ -838,8 +869,7 @@ fn token_search_cursor_pagination() {
     let page2 = run_with_retry(&[
         "token", "search", "--query", "USDC", "--limit", "2", "--cursor", cursor,
     ]);
-    let arr2 = assert_ok_and_extract_data(&page2);
-    let items2: Vec<_> = arr2.as_array().cloned().unwrap_or_default();
+    let items2 = extract_items(&assert_ok_and_extract_data(&page2));
     assert!(
         !items2.is_empty(),
         "page 2 returned empty despite non-empty cursor from page 1 — pagination may be broken"
