@@ -200,9 +200,10 @@ pub struct NotifyInput {
     /// for the matching tier; `None` (endpoints map not yet loaded)
     /// emits for every unconfirmed tier.
     pub path_tier: Option<PaymentTier>,
-    /// `(asset, network)` of the user's saved default. When a matching
-    /// accepts entry exists, OVER_QUOTA's `payment[]` is narrowed to
-    /// just that entry so the skill shows yes/no instead of the picker.
+    /// `(asset, network)` of the user's saved default. Used only to mark
+    /// the matching entry in OVER_QUOTA's `payment[]` with
+    /// `isDefault: true` so the skill can highlight it in the picker;
+    /// the list itself is never narrowed.
     pub preferred_asset: Option<(String, String)>,
 }
 
@@ -311,12 +312,13 @@ pub fn compute_events(input: &NotifyInput, now: i64) -> Vec<(Event, Flag)> {
 }
 
 /// Project the `accepts` array into the display-ready form used by the
-/// skill. Each surviving entry is reduced to a fixed five-field shape:
-/// `{amount, asset, name, network, payTo}`. Entries whose `amount` is a
-/// tiered object but doesn't carry the requested tier are dropped.
+/// skill. Each surviving entry is reduced to a fixed six-field shape:
+/// `{amount, asset, name, network, payTo, isDefault}`. Entries whose
+/// `amount` is a tiered object but doesn't carry the requested tier are
+/// dropped.
 ///
-/// A non-empty `preferred` match narrows the result to that one entry
-/// (yes/no path); zero matches fall back to the full list.
+/// `preferred` never filters — it only flips `isDefault: true` on the
+/// matching entry so the skill can highlight it in the picker.
 fn payment_options_for_tier(
     accepts: &serde_json::Value,
     tier: PaymentTier,
@@ -326,25 +328,15 @@ fn payment_options_for_tier(
     let Some(arr) = accepts.as_array() else {
         return Vec::new();
     };
-    let all: Vec<serde_json::Value> = arr
-        .iter()
-        .filter_map(|entry| transform_payment_entry(entry, tier_key))
-        .collect();
-    if let Some((asset, network_caip2)) = preferred {
-        let filtered: Vec<serde_json::Value> = arr
-            .iter()
-            .filter(|entry| {
+    arr.iter()
+        .filter_map(|entry| {
+            let is_default = preferred.is_some_and(|(asset, network)| {
                 entry.get("asset").and_then(|v| v.as_str()) == Some(asset.as_str())
-                    && entry.get("network").and_then(|v| v.as_str())
-                        == Some(network_caip2.as_str())
-            })
-            .filter_map(|entry| transform_payment_entry(entry, tier_key))
-            .collect();
-        if !filtered.is_empty() {
-            return filtered;
-        }
-    }
-    all
+                    && entry.get("network").and_then(|v| v.as_str()) == Some(network.as_str())
+            });
+            transform_payment_entry(entry, tier_key, is_default)
+        })
+        .collect()
 }
 
 /// Per-entry projection. Picks the tier-resolved amount, renders it as
@@ -356,6 +348,7 @@ fn payment_options_for_tier(
 fn transform_payment_entry(
     entry: &serde_json::Value,
     tier_key: &str,
+    is_default: bool,
 ) -> Option<serde_json::Value> {
     let obj = entry.as_object()?;
     let raw_amount = match obj.get("amount")? {
@@ -386,6 +379,7 @@ fn transform_payment_entry(
         "network": network,
         "chainId": chain_id,
         "payTo": pay_to,
+        "isDefault": is_default,
     }))
 }
 
@@ -700,8 +694,53 @@ mod tests {
         assert!(payment[0].get("extra").is_none());
         assert!(payment[0].get("scheme").is_none());
         assert!(payment[0].get("maxTimeoutSeconds").is_none());
+        // No preferred_asset → every entry is isDefault: false.
+        assert_eq!(payment[0]["isDefault"], false);
         assert_eq!(payment[1]["asset"], "0xUSDT");
         assert_eq!(payment[1]["name"], "USDT");
+        assert_eq!(payment[1]["isDefault"], false);
+    }
+
+    #[test]
+    fn over_quota_payload_marks_matching_preferred_as_default() {
+        // With a saved default, the picker list stays full (2 entries)
+        // but only the matching (asset, network) carries isDefault:true.
+        let mut i = base();
+        i.user_type = Some(UserType::New);
+        i.intro_shown = true;
+        i.basic_state = TierState::ChargingUnconfirmed;
+        i.accepts = Some(sample_accepts());
+        i.preferred_asset = Some(("0xUSDT".to_string(), "eip155:196".to_string()));
+
+        let events = compute_events(&i, 0);
+        let Event::NewUserOverQuota { payment, .. } = &events[0].0 else {
+            panic!("expected NewUserOverQuota variant");
+        };
+        assert_eq!(payment.len(), 2, "picker list is never narrowed");
+        assert_eq!(payment[0]["asset"], "0xUSDG");
+        assert_eq!(payment[0]["isDefault"], false);
+        assert_eq!(payment[1]["asset"], "0xUSDT");
+        assert_eq!(payment[1]["isDefault"], true);
+    }
+
+    #[test]
+    fn over_quota_payload_preferred_without_match_marks_none_as_default() {
+        // Saved default doesn't correspond to any accepts entry (e.g.
+        // server dropped that asset) → every entry stays isDefault:false.
+        let mut i = base();
+        i.user_type = Some(UserType::New);
+        i.intro_shown = true;
+        i.basic_state = TierState::ChargingUnconfirmed;
+        i.accepts = Some(sample_accepts());
+        i.preferred_asset = Some(("0xUNKNOWN".to_string(), "eip155:196".to_string()));
+
+        let events = compute_events(&i, 0);
+        let Event::NewUserOverQuota { payment, .. } = &events[0].0 else {
+            panic!("expected NewUserOverQuota variant");
+        };
+        assert_eq!(payment.len(), 2);
+        assert_eq!(payment[0]["isDefault"], false);
+        assert_eq!(payment[1]["isDefault"], false);
     }
 
     #[test]

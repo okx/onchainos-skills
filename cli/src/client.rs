@@ -1226,9 +1226,10 @@ impl ApiClient {
     /// wrapper handles the lock dance and persists dedupe flags.
     ///
     /// OVER_QUOTA always fires on an unconfirmed tier. When a default
-    /// asset is saved, `payment[]` is narrowed to that one entry so
-    /// the skill shows yes/no instead of the picker; the prompt still
-    /// blocks — only `payment default set` advances the tier state.
+    /// asset is saved, the matching entry in `payment[]` carries
+    /// `isDefault: true` so the skill can highlight it in the picker;
+    /// the list itself is never narrowed, and the prompt still blocks —
+    /// only `payment default set` advances the tier state.
     fn dispatch_notifications(&self, path: &str, header_accepts: Option<&Value>) {
         let now = chrono::Utc::now().timestamp();
         let preferred_asset = PaymentCache::load()
@@ -1925,7 +1926,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_with_default_filters_payment_to_saved_default_and_still_blocks() {
+    fn dispatch_with_default_marks_saved_default_and_still_blocks() {
         let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
         let _dir = seed_cache_with_default("client_dispatch_with_default", Some(sample_default()));
         crate::payment_notify::drain_events();
@@ -1961,10 +1962,18 @@ mod tests {
             .expect("payment array");
         assert_eq!(
             payment.len(),
-            1,
-            "payment list must be narrowed to the saved default"
+            2,
+            "picker list is never narrowed, even with a saved default"
         );
-        assert_eq!(payment[0]["asset"], "0xUSDG");
+        // Saved default is USDG → that row carries isDefault:true; the
+        // non-matching USDT row is isDefault:false.
+        let (usdg, usdt): (Vec<_>, Vec<_>) = payment
+            .iter()
+            .partition(|e| e["asset"] == "0xUSDG");
+        assert_eq!(usdg.len(), 1);
+        assert_eq!(usdt.len(), 1);
+        assert_eq!(usdg[0]["isDefault"], true);
+        assert_eq!(usdt[0]["isDefault"], false);
 
         std::env::remove_var("ONCHAINOS_HOME");
     }
