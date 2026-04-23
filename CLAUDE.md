@@ -27,7 +27,6 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 | Smart money | "what are whales buying", "copy trading signals", "smart money" |
 | New token scan | "scan new tokens", "pump.fun tokens", "meme scan" |
 | Wallet analysis | "analyze wallet", "check this address", "is this wallet worth following" |
-| Buy / sell / swap | "buy X", "sell X", "swap X for Y", "trade X for Y" |
 | Portfolio | "check my holdings", "my portfolio", "my wallet" |
 | Wallet monitor | "watch wallet", "monitor address", "background monitor" |
 

@@ -14,7 +14,7 @@ use crate::client::ApiClient;
 use crate::commands::{memepump, signal, token};
 use crate::output;
 
-use super::{fetch_token_scan, ok_or_null, Context};
+use super::{ok_or_null, Context};
 use super::token_research::is_launchpad_token;
 
 const TOP_N: usize = 5;
@@ -33,6 +33,11 @@ pub(crate) async fn fetch_and_assemble(
     );
 
     let top_tokens = extract_top_tokens(&raw_signals, TOP_N);
+
+    // Preserve the deliberate descending-walletCount order from extract_top_tokens.
+    // JoinSet::join_next yields in task-completion order, so we key results by
+    // address and rebuild the output vec in the original `top_tokens` order.
+    let ordered_addrs: Vec<String> = top_tokens.iter().map(|(a, _)| a.clone()).collect();
 
     // ── Step 2: per-token enrichment (parallel, max TOP_N) ───────────
     // Each spawned task gets its own ApiClient clone — true HTTP parallelism.
@@ -55,7 +60,7 @@ pub(crate) async fn fetch_and_assemble(
             );
             let price = ok_or_null(price);
             let advanced_val = ok_or_null(advanced_val);
-            let security = security.unwrap_or(Value::Null);
+            let security = ok_or_null(security);
 
             let launchpad = if is_launchpad_token(&advanced_val) {
                 let (mut d1, mut d2) = (c.clone(), c.clone());
@@ -77,11 +82,21 @@ pub(crate) async fn fetch_and_assemble(
         });
     }
 
-    let mut enriched: Vec<Value> = Vec::new();
+    let mut results_by_addr: std::collections::HashMap<String, Value> =
+        std::collections::HashMap::new();
     while let Some(join_res) = set.join_next().await {
         let (addr, data) = join_res?;
-        enriched.push(json!({ "address": addr, "data": data }));
+        results_by_addr.insert(addr, data);
     }
+
+    let enriched: Vec<Value> = ordered_addrs
+        .into_iter()
+        .filter_map(|addr| {
+            results_by_addr
+                .remove(&addr)
+                .map(|data| json!({ "address": addr, "data": data }))
+        })
+        .collect();
 
     Ok(assemble(chain_index, raw_signals, enriched))
 }
@@ -129,6 +144,15 @@ pub(crate) fn assemble(chain_index: &str, raw_signals: Value, enriched: Vec<Valu
 
 /// Extract the top N unique tokens from a signal list response, sorted descending
 /// by SM wallet count. Handles both a bare array and a `{"data": [...]}` wrapper.
+///
+/// Dedupe semantics: if the same address appears multiple times with different
+/// counts, the item with the highest count wins. This avoids a subtle bug
+/// where a lower count could silently override a higher one if the API
+/// re-emitted the same token within one response.
+///
+/// Sort is stable by (walletCount desc, address asc): ties on count break on
+/// address so output order is fully deterministic across runs (HashMap
+/// iteration order is randomised).
 pub(crate) fn extract_top_tokens(signals: &Value, n: usize) -> Vec<(String, Value)> {
     let arr: &Vec<Value> = match signals.as_array() {
         Some(a) => a,
@@ -138,27 +162,42 @@ pub(crate) fn extract_top_tokens(signals: &Value, n: usize) -> Vec<(String, Valu
         },
     };
 
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut items: Vec<(u64, String, Value)> = arr
-        .iter()
-        .filter_map(|item| {
-            let addr = item["tokenContractAddress"]
-                .as_str()
-                .or_else(|| item["address"].as_str())?
-                .to_string();
-            if addr.is_empty() || seen.contains(&addr) {
-                return None;
-            }
-            seen.insert(addr.clone());
-            let count = item["walletCount"]
-                .as_u64()
-                .or_else(|| item["addressCount"].as_u64())
-                .unwrap_or(0);
-            Some((count, addr, item.clone()))
-        })
+    let mut by_addr: std::collections::HashMap<String, (u64, Value)> =
+        std::collections::HashMap::new();
+
+    for item in arr {
+        let Some(addr) = item["tokenContractAddress"]
+            .as_str()
+            .or_else(|| item["address"].as_str())
+        else {
+            continue;
+        };
+        if addr.is_empty() {
+            continue;
+        }
+        let count = item["walletCount"]
+            .as_u64()
+            .or_else(|| item["addressCount"].as_u64())
+            .unwrap_or(0);
+        by_addr
+            .entry(addr.to_string())
+            .and_modify(|(c, existing)| {
+                if count > *c {
+                    *c = count;
+                    *existing = item.clone();
+                }
+            })
+            .or_insert_with(|| (count, item.clone()));
+    }
+
+    let mut items: Vec<(u64, String, Value)> = by_addr
+        .into_iter()
+        .map(|(addr, (count, item))| (count, addr, item))
         .collect();
 
-    items.sort_by(|a, b| b.0.cmp(&a.0));
+    // Primary: descending walletCount. Secondary: ascending address (stable tiebreaker
+    // so the output order does not depend on HashMap iteration order).
+    items.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
     items.into_iter().take(n).map(|(_, addr, item)| (addr, item)).collect()
 }
 
@@ -338,6 +377,21 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_address_keeps_max_count_regardless_of_order() {
+        // If the lower-count row appears first, the max-count row must still win.
+        let signals = json!([
+            { "tokenContractAddress": "0xDUP", "walletCount": 5  },
+            { "tokenContractAddress": "0xDUP", "walletCount": 99 },
+            { "tokenContractAddress": "0xOTH", "walletCount": 10 },
+        ]);
+        let result = extract_top_tokens(&signals, 5);
+        assert_eq!(result.len(), 2);
+        // 0xDUP should be first (count 99, not 5)
+        assert_eq!(result[0].0, "0xDUP");
+        assert_eq!(result[1].0, "0xOTH");
+    }
+
+    #[test]
     fn falls_back_to_address_count_field() {
         let signals = json!([
             { "tokenContractAddress": "0xA", "addressCount": 8 },
@@ -364,5 +418,23 @@ mod tests {
         let result = extract_top_tokens(&signals, 5);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].0, "0xALT");
+    }
+
+    #[test]
+    fn tied_counts_sort_deterministically_by_address_asc() {
+        // All four tokens share the same walletCount. The output order must be
+        // deterministic (ascending address); HashMap iteration order is not.
+        let signals = json!([
+            { "tokenContractAddress": "0xCCC", "walletCount": 10 },
+            { "tokenContractAddress": "0xAAA", "walletCount": 10 },
+            { "tokenContractAddress": "0xDDD", "walletCount": 10 },
+            { "tokenContractAddress": "0xBBB", "walletCount": 10 },
+        ]);
+        let result = extract_top_tokens(&signals, 4);
+        assert_eq!(result.len(), 4);
+        assert_eq!(result[0].0, "0xAAA");
+        assert_eq!(result[1].0, "0xBBB");
+        assert_eq!(result[2].0, "0xCCC");
+        assert_eq!(result[3].0, "0xDDD");
     }
 }

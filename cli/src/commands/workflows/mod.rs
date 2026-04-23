@@ -9,7 +9,6 @@ use clap::Subcommand;
 use serde_json::Value;
 
 use super::Context;
-use crate::client::ApiClient;
 
 #[derive(Subcommand)]
 pub enum WorkflowCommand {
@@ -75,22 +74,6 @@ pub async fn execute(ctx: &Context, cmd: WorkflowCommand) -> Result<()> {
             portfolio::run(ctx, &address, chains).await
         }
     }
-}
-
-/// Inline single-token security scan — no public function in security module.
-pub async fn fetch_token_scan(
-    client: &mut ApiClient,
-    chain_index: &str,
-    address: &str,
-) -> Value {
-    let body = serde_json::json!({
-        "source": "onchain_os_cli",
-        "tokenList": [{"chainId": chain_index, "contractAddress": address}]
-    });
-    client
-        .post("/api/v6/security/token-scan", &body)
-        .await
-        .unwrap_or(Value::Null)
 }
 
 /// Convert a Result<Value> to Value, replacing errors with null.

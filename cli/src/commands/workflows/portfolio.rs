@@ -42,12 +42,7 @@ pub(crate) async fn fetch_and_assemble(
 pub async fn run(ctx: &Context, address: &str, chains_arg: Option<String>) -> Result<()> {
     let mut client = ctx.client_async().await?;
 
-    let chains_str = chains_arg.unwrap_or_else(|| {
-        ctx.chain_override
-            .as_ref()
-            .map(|c| chains::resolve_chain(c).to_string())
-            .unwrap_or_else(|| "1,501".to_string())
-    });
+    let chains_str = ctx.resolve_chains_or(chains_arg, "1,501");
 
     // For portfolio overview we need a single chainIndex — use the first resolved chain.
     let primary_chain_index = chains_str

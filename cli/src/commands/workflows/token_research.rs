@@ -134,7 +134,12 @@ pub(crate) fn assemble(
     // Step 3 (pre-computed: null when skipped)
     launchpad: Value,
 ) -> Result<Value> {
-    // PRD: all Step 1 core calls failed → return error
+    // PRD: all Step 1 core calls failed → return error.
+    //
+    // Note: unreachable via fetch_and_assemble — token::fetch_report already
+    // bails with the same all-fail error, so by the time we get here all four
+    // fields cannot be null together. Kept as a defence-in-depth check for
+    // unit tests and any direct callers of assemble().
     if all_null(&[&info, &price, &advanced]) && security.is_null() {
         anyhow::bail!(
             "token-research: all Step 1 sub-calls failed for address {} on chain {}",
