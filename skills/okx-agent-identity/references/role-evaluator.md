@@ -19,10 +19,36 @@ No pre-create staking gate. No cached-resume flow. Registration is cheap; stakin
 
 ## Phase 1 — identity Q&A
 
-| Turn | Ask | Validation |
-|---|---|---|
-| 1 | `Name` | non-empty, ≤ 64 chars |
-| 2 | `Description` — "一句话描述你的仲裁领域/专长" | non-empty, ≤ 500 chars |
+### Phase preview (render BEFORE Q1)
+
+Once role is `evaluator` and pre-check passed (evaluator is unique per address — if found, hand off to `update` per `role-playbook.md §Pre-check`), render a short declarative preview, then start Q1.
+
+Chinese:
+```
+好，开始新 evaluator 的 create 流程。接下来会收集以下基本信息：
+  1. 名称
+  2. 描述
+（evaluator 默认不问头像；想设头像直接说。）
+```
+
+English:
+```
+Got it — starting a new evaluator create. We'll collect:
+  1. Name
+  2. Description
+(No avatar prompt by default; just say so if you want to set one.)
+```
+
+Preview is declarative; Q1 follows after a blank line.
+
+### Q&A
+
+Questions labelled `Q1：` / `Q1:`. Each Q inlines the four-segment field spec from `field-specs.md` in the user's language only. Skip any Q whose field was already captured via `SKILL.md §One-shot capture`.
+
+| Q | Chinese prompt | English prompt | Validation |
+|---|---|---|---|
+| Q1 | `Q1：你要注册的 evaluator 叫什么名字？` + 4 segments | `Q1: What's the name of this evaluator?` + 4 segments | non-empty, ≤ 64 chars |
+| Q2 | `Q2：用一句话描述你的仲裁领域或专长。` + 4 segments | `Q2: Describe your arbitration domain or expertise in a sentence.` + 4 segments | non-empty, ≤ 500 chars |
 
 No avatar prompt by default (evaluator dashboards rarely show avatars). If the user brings it up, branch to `avatar-upload.md`.
 

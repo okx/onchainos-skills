@@ -18,9 +18,10 @@ When you detect `intent=need-requester` (either from an explicit context field, 
 1. **Skip role selection.** Role is fixed as `requester`.
 2. **Skip the "check existing agents" pre-step.** The handoff implied none exist — if one does show up later (e.g., user returns mid-flow), short-circuit without creating.
 3. **Skip the picture prompt.** Use backend default.
-4. **Ask only two fields**: `name`, `description`, one per turn (see `field-specs.md`).
-5. **Execute** `create --role requester` with the minimum flags.
-6. **Hand back** — do NOT offer a follow-up like "要不要发任务？"; `okx-agent-task` already has that intent queued.
+4. **Skip the phase preview.** Passive mode is deliberately lean — the two-question flow is short enough that a preamble would add more noise than signal. Go straight to Q1. (This diverges from the normal requester flow in `role-requester.md §Phase preview`; that's intentional.)
+5. **Ask only two fields**: `name`, `description`, one per turn using the `Q1：` / `Q1:` label convention (see `field-specs.md`).
+6. **Execute** `create --role requester` with the minimum flags.
+7. **Hand back** — do NOT offer a follow-up like "要不要发任务？"; `okx-agent-task` already has that intent queued.
 
 ## Messages to the user
 

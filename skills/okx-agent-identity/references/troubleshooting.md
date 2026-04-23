@@ -17,11 +17,11 @@ If you encounter a string that isn't in either table, surface the raw message in
 | `no XLayer address found in current account` | `signing.rs:33/42` | "当前账号没有 XLayer 地址" | Hand off to `okx-agentic-wallet` → `wallet add` / `wallet switch`. |
 | `missing required parameter: agentId` | `utils.rs:184` | "这个命令必须带 agent id" | Ask the user which agent; run `agent get` if needed. |
 | `missing required parameter: <flag>` | `utils.rs:190` | "参数 `<flag>` 不能留空" | Re-ask that specific field. |
-| `missing required field in --service: ServiceName` | `utils.rs:136` | "服务名不能留空" | Return to role-playbook `provider` service Q&A, step S1. |
-| `missing required field in --service: ServiceDescription` | `utils.rs:139` | "服务描述不能留空" | Return to role-playbook `provider` service Q&A, step S2. |
-| `missing required field in --service for A2MCP: Fee` | `utils.rs:148` | "A2MCP 服务必须给 Fee（USDT 整数）" | Return to role-playbook service Q&A step S4 (A2MCP branch). |
-| `missing required field in --service for A2MCP: Endpoint` | `utils.rs:151` | "A2MCP 服务必须给 endpoint（HTTPS URL）" | Return to role-playbook service Q&A step S5 (A2MCP branch). |
-| `invalid ServiceType in --service: <value>` | `utils.rs:154` | "服务类型必须是 A2MCP 或 A2A" | Return to role-playbook service Q&A step S3. |
+| `missing required field in --service: ServiceName` | `utils.rs:136` | "服务名不能留空" | Return to `role-provider.md` Phase 2 per-service Q1 (ServiceName). |
+| `missing required field in --service: ServiceDescription` | `utils.rs:139` | "服务描述不能留空" | Return to `role-provider.md` Phase 2 per-service Q2 (ServiceDescription). |
+| `missing required field in --service for A2MCP: Fee` | `utils.rs:148` | "A2MCP 服务必须给 Fee（USDT 整数）" | Return to `role-provider.md` Phase 2 per-service Q4 (A2MCP branch). |
+| `missing required field in --service for A2MCP: Endpoint` | `utils.rs:151` | "A2MCP 服务必须给 endpoint（HTTPS URL）" | Return to `role-provider.md` Phase 2 per-service Q5 (A2MCP branch). |
+| `invalid ServiceType in --service: <value>` | `utils.rs:154` | "服务类型必须是 A2MCP 或 A2A" | Return to `role-provider.md` Phase 2 per-service Q3 (numbered prompt). |
 | `invalid value for --role: <value>` | `utils.rs:165` | "role 只能是 requester / provider / evaluator 之一" | Return to role selection (SKILL.md §Core Flow). |
 | `invalid value for <flag>: expected integer` | `utils.rs:219` | "`<flag>` 要填整数" | Re-ask that field. |
 | `invalid value for <flag>: must be >= <min>` | `utils.rs:222` | "`<flag>` 最小值是 `<min>`" | Re-ask that field. |

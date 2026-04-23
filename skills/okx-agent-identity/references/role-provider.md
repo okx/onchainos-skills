@@ -10,41 +10,105 @@ Field definitions live in `field-specs.md`. Inline the four segments (`用途 / 
 
 ## Phase 1 — identity Q&A
 
-| Turn | Ask | Validation |
-|---|---|---|
-| 1 | `Name` | non-empty, ≤ 64 chars |
-| 2 | `Description` | non-empty, ≤ 500 chars |
-| 3 | (optional) `Picture` → branch to `avatar-upload.md` | — |
+### Phase 1 preview (render BEFORE Q1)
+
+Once role is `provider` and pre-check resolved (either "no existing provider" or user chose "1. 再开一个新的 provider" on the pre-check numbered prompt), render the Phase-1 preview, then start Q1.
+
+Chinese:
+```
+好，开始新 provider 的 create 流程。先收集身份基本信息：
+  1. 名称
+  2. 描述
+  3. 头像（可选）
+（服务列表会在身份信息确认后再继续收集。）
+```
+
+English:
+```
+Got it — starting a new provider create. First we'll collect identity info:
+  1. Name
+  2. Description
+  3. Picture (optional)
+(The service list is collected after identity is confirmed.)
+```
+
+The preview is declarative; Q1 follows after a blank line. See `role-playbook.md §STRICT — Preview ≠ multi-field ask`.
+
+### Q&A
+
+Questions labelled `Q1：` / `Q1:`. Each Q inlines the four-segment field spec from `field-specs.md` in the user's language only. Skip any Q whose field was already captured via §One-shot capture.
+
+| Q | Chinese prompt | English prompt | Validation |
+|---|---|---|---|
+| Q1 | `Q1：这个 provider 叫什么名字？` + 4 segments | `Q1: What's the name of this provider?` + 4 segments | non-empty, ≤ 64 chars |
+| Q2 | `Q2：用一句话描述这个 provider。` + 4 segments | `Q2: Describe this provider in a sentence.` + 4 segments | non-empty, ≤ 500 chars |
+| Q3 | `Q3：要设置头像吗？` + Choice prompt (see `avatar-upload.md`) | `Q3: Want to set an avatar?` + Choice prompt | — |
+
+**Strict phase boundary**: Phase 1 only captures `name` / `description` / `picture`. Even if the user mentions service info ("收 10 USDT"), do NOT capture it here — see `SKILL.md §One-shot capture rule 4`.
+
+After Q3 answered, render the Phase-1 confirmation card (identity only, no service rows yet — but note: that is **not** the final `create` — final confirmation happens after Phase 2). Or alternatively, hold identity in-memory and show one combined confirmation at the end of Phase 2. **This skill does the latter**: one final confirmation card after all services are collected. Phase-1 end transitions directly to Phase-2 preview.
 
 ## Phase 2 — service Q&A (loop once per service)
 
+### Phase 2 preview (render BEFORE the first service's Q1)
+
+Once Phase 1 is complete, render the Phase-2 preview **once** (not repeated for subsequent services in the loop). Then start service[1]'s Q1.
+
+Chinese:
+```
+身份信息收到。接下来为这个 provider 添加服务，每条服务会问：
+  1. 名称
+  2. 描述
+  3. 类型（A2MCP 或 A2A）
+  4. 价格（仅 A2MCP）
+  5. 接口地址（仅 A2MCP）
+加完一条后会问是否继续加下一条。可以加一条或多条。
+```
+
+English:
+```
+Identity info captured. Next we'll add services for this provider. For each service we'll ask:
+  1. Name
+  2. Description
+  3. Type (A2MCP or A2A)
+  4. Fee (A2MCP only)
+  5. Endpoint (A2MCP only)
+After each service we'll ask whether to add another. One or more services, your choice.
+```
+
+Preview is declarative, not imperative — see `role-playbook.md §STRICT`.
+
+### Per-service Q&A
+
 For each service, ask the fields in this exact order. The reason: name + description apply to both types, so they come first; type is the branching switch; fee + endpoint are only needed for A2MCP.
+
+Questions inside each service iteration are labelled `Q1：` / `Q2：` / … / `Q5：` (reset per iteration). The preamble for service `[N]` ("接下来是服务[N]：" / "Now service [N]:") contextualizes which service is being collected. Q6 is the loop gate and uses the numbered-options pattern (not a "Q" label).
 
 The **Ask column below shows what the skill says to the user, in user language**. The **Maps to column shows the CLI JSON key** that the collected value lands under in the `--service` payload — that stays English and unchanged regardless of user language.
 
-Chinese Q&A:
+Chinese per-service Q&A (render `接下来是服务[N]：` as a one-line preamble before Q1):
 
-| Turn | 问用户 | Validation | Maps to (JSON key) |
+| Step | 问用户 (label and prompt) | Validation | Maps to (JSON key) |
 |---|---|---|---|
-| S1 | 这项服务叫什么名字？ | non-empty | `ServiceName` |
-| S2 | 详细介绍一下这项服务。 | non-empty | `ServiceDescription` |
-| S3 | 使用编号选项（`SKILL.md §Choice prompts`）：<br>`这项服务是哪种类型？`<br>&nbsp;&nbsp;`1. A2MCP — 标准 MCP 接口，按次付费`<br>&nbsp;&nbsp;`2. A2A — agent-to-agent 协议，链外议价`<br>`回复 1 或 2。`<br>收到数字后**在 skill 层映射** `1→A2MCP` / `2→A2A` 再下发；CLI 没有数字别名，直接传 `1` 会 bail `invalid ServiceType`。用户直接写 `A2MCP` / `A2A` 也接受。 | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `ServiceType` |
-| S4 | if `A2MCP` → "每次调用收多少 USDT？（整数）" ; if `A2A` → skip | integer ≥ 0 | `Fee` |
-| S5 | if `A2MCP` → "MCP 接口地址是什么？必须 https:// 开头。" ; if `A2A` → skip | starts with `https://` | `Endpoint` (A2A 即使用户给了 CLI 也会清掉，见 `utils.rs::normalize_service`) |
-| S6 | 使用编号选项：<br>`还要再加一项服务吗？`<br>&nbsp;&nbsp;`1. 再加一项`<br>&nbsp;&nbsp;`2. 不加了，到此为止`<br>`回复 1 或 2。`<br>`1` → loop back to S1；`2` → exit. | reply 1 or 2 | — |
+| Q1 | `Q1：这个服务叫什么名字？` + 4 segments (see `field-specs.md`) | non-empty, ≤ 64 chars | `ServiceName` |
+| Q2 | `Q2：详细介绍一下这项服务。` + 4 segments | non-empty, ≤ 500 chars | `ServiceDescription` |
+| Q3 | `Q3：这项服务是哪种类型？` + numbered-options (`SKILL.md §Choice prompts`):<br>&nbsp;&nbsp;`1. A2MCP — 标准 MCP 接口，按次付费`<br>&nbsp;&nbsp;`2. A2A — agent-to-agent 协议，链外议价`<br>`回复 1 或 2。`<br>收到数字后**在 skill 层映射** `1→A2MCP` / `2→A2A` 再下发；CLI 没有数字别名，直接传 `1` 会 bail `invalid ServiceType`。用户直接写 `A2MCP` / `A2A` 也接受。 | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `ServiceType` |
+| Q4 | if `A2MCP` → `Q4：每次调用收多少 USDT？（整数）` + 4 segments ; if `A2A` → skip | integer ≥ 0 | `Fee` |
+| Q5 | if `A2MCP` → `Q5：MCP 接口地址是什么？必须 https:// 开头。` + 4 segments ; if `A2A` → skip | starts with `https://` | `Endpoint` (A2A 即使用户给了 CLI 也会清掉，见 `utils.rs::normalize_service`) |
+| Loop gate | Numbered-options prompt (no `Q` label, it's a flow switch):<br>`还要再加一项服务吗？`<br>&nbsp;&nbsp;`1. 再加一项`<br>&nbsp;&nbsp;`2. 不加了，到此为止`<br>`回复 1 或 2。` | reply 1 or 2 | — |
 
-English Q&A:
+English per-service Q&A (render `Now service [N]:` as a one-line preamble before Q1):
 
-| Turn | Ask the user | Validation | Maps to (JSON key) |
+| Step | Ask the user (label and prompt) | Validation | Maps to (JSON key) |
 |---|---|---|---|
-| S1 | What's the name of this service? | non-empty | `ServiceName` |
-| S2 | Describe this service. | non-empty | `ServiceDescription` |
-| S3 | Use the numbered-options pattern (`SKILL.md §Choice prompts`):<br>`Which type is this service?`<br>&nbsp;&nbsp;`1. A2MCP — standard MCP interface, pay-per-call`<br>&nbsp;&nbsp;`2. A2A — agent-to-agent protocol, off-chain pricing`<br>`Reply 1 or 2.`<br>Once user replies, **map in skill** `1→A2MCP` / `2→A2A` before invoking the CLI — the CLI has no numeric alias and sending raw `1` bails with `invalid ServiceType`. Writing `A2MCP` / `A2A` directly is also accepted. | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `ServiceType` |
-| S4 | if A2MCP → "Price per call in USDT? (integer)" ; if A2A → skip | integer ≥ 0 | `Fee` |
-| S5 | if A2MCP → "What's the MCP endpoint URL? Must start with https://." ; if A2A → skip | starts with `https://` | `Endpoint` (for A2A the CLI clears this even if supplied — `utils.rs::normalize_service`) |
-| S6 | Numbered options:<br>`Want to add another service?`<br>&nbsp;&nbsp;`1. Add another`<br>&nbsp;&nbsp;`2. No more, finish here`<br>`Reply 1 or 2.`<br>`1` → loop back to S1; `2` → exit. | reply 1 or 2 | — |
+| Q1 | `Q1: What's the name of this service?` + 4 segments | non-empty, ≤ 64 chars | `ServiceName` |
+| Q2 | `Q2: Describe this service.` + 4 segments | non-empty, ≤ 500 chars | `ServiceDescription` |
+| Q3 | `Q3: Which type is this service?` + numbered-options:<br>&nbsp;&nbsp;`1. A2MCP — standard MCP interface, pay-per-call`<br>&nbsp;&nbsp;`2. A2A — agent-to-agent protocol, off-chain pricing`<br>`Reply 1 or 2.`<br>Once user replies, **map in skill** `1→A2MCP` / `2→A2A` before invoking the CLI — the CLI has no numeric alias and sending raw `1` bails with `invalid ServiceType`. Writing `A2MCP` / `A2A` directly is also accepted. | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `ServiceType` |
+| Q4 | if A2MCP → `Q4: Price per call in USDT? (integer)` + 4 segments ; if A2A → skip | integer ≥ 0 | `Fee` |
+| Q5 | if A2MCP → `Q5: What's the MCP endpoint URL? Must start with https://.` + 4 segments ; if A2A → skip | starts with `https://` | `Endpoint` (for A2A the CLI clears this even if supplied — `utils.rs::normalize_service`) |
+| Loop gate | Numbered-options prompt:<br>`Want to add another service?`<br>&nbsp;&nbsp;`1. Add another`<br>&nbsp;&nbsp;`2. No more, finish here`<br>`Reply 1 or 2.` | reply 1 or 2 | — |
 
-After each service is collected, echo back a one-line summary in the user's language before asking S6:
+After each service is collected, echo back a one-line summary in the user's language before the loop gate:
 - 中文：`已记录 服务[1]：TVL Query（A2MCP，10 USDT，https://…）。`
 - English: `Recorded Service [1]: TVL Query (A2MCP, 10 USDT, https://…).`
 
@@ -52,13 +116,14 @@ After each service is collected, echo back a one-line summary in the user's lang
 
 | User input | Action |
 |---|---|
-| "我要做数据分析服务，收 10 USDT" | Enter phase 2; capture `Fee=10` when S4 comes; still confirm `ServiceType` at S3 first. |
+| "我要做数据分析服务，收 10 USDT"（**在 Phase 1 说的**） | Do **NOT** capture `Fee=10` at Phase 1 — phase boundary is strict (`SKILL.md §One-shot capture` rule 4). Continue Phase 1 Q&A; when Phase 2 starts fresh, ask Q3 (ServiceType) first, then Q4 (Fee) where the user can re-supply 10 if still relevant. |
+| "我要做数据分析服务，收 10 USDT"（**在 Phase 2 的某条服务中说的**） | Capture `Fee=10` when Q4 asks it; still confirm `ServiceType` at Q3 first. |
 | "帮我写几个 service" | Refuse to fabricate. Ask what they actually want to offer. |
 | User pastes JSON blob | Thank them, but re-confirm **field by field** — typos in `ServiceType` are the #1 cause of create failures. Do not pipe JSON straight to the CLI. |
 | "endpoint 是 http://..." | Reject. Ask for HTTPS. |
 | "A2MCP Fee 免费" | Accept `0` but warn: "A2MCP 0 USDT 等同于免费入口，后续不能再按量收费。" |
 | User answers multiple service fields in one sentence | Parse what you can, but next turn still asks the remaining fields individually. |
-| "服务类型 HTTP" / "service type HTTP" | Reject politely and re-render the S3 numbered prompt verbatim (see `SKILL.md §Choice prompts`) — do not fabricate a new phrasing. |
+| "服务类型 HTTP" / "service type HTTP" | Reject politely and re-render the Q3 numbered prompt verbatim (see `SKILL.md §Choice prompts`) — do not fabricate a new phrasing. |
 
 ## Confirmation
 
@@ -132,4 +197,4 @@ Without id (English): "Provider agent created and active by default. Run `agent 
 
 ## Error recovery
 
-If `provider agents require at least one service; provide --service` surfaces, return to Phase 2 S1. If `missing required field in --service: ServiceName` surfaces, return to the specific step (see `troubleshooting.md`). Never silently retry with a filler value.
+If `provider agents require at least one service; provide --service` surfaces, return to Phase 2 Q1 of service[1]. If `missing required field in --service: ServiceName` surfaces, return to the specific Q (see `troubleshooting.md`). Never silently retry with a filler value.

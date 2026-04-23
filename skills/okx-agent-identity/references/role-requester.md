@@ -8,13 +8,37 @@ Every field is asked in its own message. Never list "请提供 1. Name 2. Descri
 
 Field definitions live in `field-specs.md`. When prompting, inline the four segments (`用途 / 可见范围 / 请注意 / 示例` for Chinese users; `Purpose / Visibility / Please note / Example` for English users) in the user's language only.
 
+## Phase preview (render BEFORE Q1)
+
+Once role is confirmed as `requester` and pre-check passed (requester is unique per address — if found, hand off to `update` per `role-playbook.md §Pre-check`), render a short declarative preview, then start Q1.
+
+Chinese:
+```
+好，开始新 requester 的 create 流程。接下来会收集以下基本信息：
+  1. 名称
+  2. 描述
+  3. 头像（可选）
+```
+
+English:
+```
+Got it — starting a new requester create. We'll collect:
+  1. Name
+  2. Description
+  3. Picture (optional)
+```
+
+The preview is **declarative**, not imperative — it describes what's next but does NOT ask for all three at once. See `role-playbook.md §STRICT — Preview ≠ multi-field ask`. Immediately follow the preview with a blank line and `Q1：` / `Q1:`.
+
 ## Standard Q&A chain
 
-| Turn | Ask | Validation | On failure |
-|---|---|---|---|
-| 1 | `Name` (see `field-specs.md`) | non-empty, ≤ 64 chars | re-ask once with a shorter example |
-| 2 | `Description` (see `field-specs.md`) | non-empty, ≤ 500 chars | re-ask with a concrete example |
-| 3 | (optional) `Picture` — "要上传头像吗？" branch to `avatar-upload.md` | — | skip → backend default avatar |
+Questions are labelled `Q1：` / `Q1:` (Chinese / English) in the message to the user. Each Q inlines the four-segment field spec from `field-specs.md` in the user's language only. If §One-shot capture already captured a field, **silently skip that Q** and move to the next.
+
+| Q | Chinese prompt | English prompt | Validation | On failure |
+|---|---|---|---|---|
+| Q1 | `Q1：这个 requester 叫什么名字？` + 4 segments | `Q1: What's the name of this requester?` + 4 segments | non-empty, ≤ 64 chars | re-ask once with a shorter example |
+| Q2 | `Q2：用一句话描述这个 requester。` + 4 segments | `Q2: Describe this requester in a sentence.` + 4 segments | non-empty, ≤ 500 chars | re-ask with a concrete example |
+| Q3 | `Q3：要设置头像吗？` + Choice prompt (see `avatar-upload.md`) | `Q3: Want to set an avatar?` + Choice prompt | — | skip → backend default avatar |
 
 No service questions. No `--address` prompt. No staking.
 
@@ -92,12 +116,13 @@ Skip these normally-required steps:
 - Do **not** ask for `--role` — it's fixed as `requester`.
 - Do **not** pre-check existing agents — the handoff already implied none exist.
 - Do **not** ask for `picture` — use backend default.
+- Do **not** render the Phase preview — passive mode is deliberately lean, go straight to Q1 (see `passive-onboarding.md`).
 
 Keep these:
 
-- Ask `name` (turn 1).
-- Ask `description` (turn 2).
-- Show confirmation table (still field-per-row).
+- Ask `name` as `Q1：` / `Q1:`.
+- Ask `description` as `Q2：` / `Q2:`.
+- Show confirmation table (still field-per-row, still mandatory).
 - Execute.
 
 ### After success

@@ -142,7 +142,16 @@ Four gates, in order. **Never skip a gate, never combine gates into one message.
    - requester → `references/role-requester.md` (+ Passive Onboarding sub-flow inside)
    - provider → `references/role-provider.md`
    - evaluator → `references/role-evaluator.md`
-4. **Confirmation card** (field table, see `references/display-formats.md` §3). Never show the raw bash here. Execute only after the user replies "执行" / "yes" / similar.
+
+   Two things happen in this gate, in order:
+
+   **3a. Phase preamble (preview).** Before the first `Q1`, render a short preview telling the user which fields this phase will collect. The preview is a **declarative statement** of "here's what we'll cover", **NOT** an imperative "please provide 1. X 2. Y 3. Z" (which is banned by `role-playbook.md §STRICT`). Passive onboarding (`intent=need-requester`) skips this preview entirely — see `references/passive-onboarding.md`.
+
+   **3b. Sequential Q&A.** Questions are labelled `Q1：` / `Q2：` / `Q3：` (Chinese) or `Q1:` / `Q2:` / `Q3:` (English). Each Q still follows the "one field per turn" rule. If the user already supplied a field value in an earlier turn (e.g., in their initial request), **silently skip that Q** and move to the next unfilled one — see §One-shot capture.
+
+   For provider, after Phase 1 (identity) completes, Phase 2 (service loop) renders its own preview once at the top, then Q1–Q5 per service iteration.
+
+4. **Confirmation card** (field table, see `references/display-formats.md` §3). Mandatory — even when the user supplied every field in one shot, the confirmation card still renders before CLI invocation. Never show the raw bash here. Execute only after the user replies "执行" / "execute" / "yes" / similar.
 
 Field definitions live in `references/field-specs.md`. Inline the four segments (`用途 / 可见范围 / 请注意 / 示例` for Chinese; `Purpose / Visibility / Please note / Example` for English) in the user's language only when asking.
 
@@ -421,6 +430,41 @@ Reply with a number: 1/2/3.
 | "Add another service?" loop gate | `references/role-provider.md` Phase 2 S6 |
 | Avatar upload path (attachments / generate / skip) | `references/avatar-upload.md` §Policy |
 | Which of my agents to use as feedback `--creator-id` | `references/feedback-guide.md` Step 2 |
+
+## One-shot capture (silent support for users who dump everything at once)
+
+Some users type their whole request in one turn: "注册一个 provider 叫 Alice，描述是做 DeFi 研究，用默认头像". The skill **silently accepts** this — it does NOT tell the user "you can type everything at once" (that just adds noise). It just captures what was unambiguous and skips straight to the next unfilled question or the confirmation card.
+
+### Rules
+
+1. **Silent, not advertised.** Never say "你也可以一次性输入". The preview + step-by-step Q&A remains the default surface. One-shot is a fast path users discover naturally.
+2. **Capture only unambiguous values.** If the utterance clearly separates fields (explicit labels like "名字:Alice，描述:..."; or natural phrasings the skill is confident about like "叫 Alice，做 DeFi 研究"), capture them. If the split is ambiguous ("Alice 做 DeFi 分析" — is the name `Alice` or `Alice 做 DeFi 分析`?), **capture only the clearly-unambiguous part**; leave the ambiguous field for the normal Q.
+3. **Skip answered Q's silently.** In Q1…QN, if Q_k's field is already captured, don't ask Q_k — go directly to Q_(k+1). Don't echo "name is already Alice, next is description" — just move on. The confirmation card will show everything at the end; that's where the user verifies.
+4. **Phase boundary is strict.** Identity-phase capture does **NOT** reach into service-phase fields. If the user said "provider 叫 Alice 做数据分析，收 10 USDT" during Phase 1:
+   - Capture `name=Alice` (or ask if ambiguous — see rule 2).
+   - **Do NOT** capture Fee=10 or any service field. The "10 USDT" is discarded from the Phase-1 parse. When Phase 2 starts, ask Q1 fresh; the user can re-supply the fee then.
+   - Rationale: service field structure is complex (ServiceType decides whether Fee/Endpoint are asked), cross-phase parse has many misfire modes.
+5. **All fields captured → skip straight to confirmation.** If the one-shot utterance covered every required field for the role (identity for requester/evaluator; identity + at least one complete service for provider — but see rule 4, so provider never gets here from identity phase alone), render the confirmation card directly. The confirmation card is still mandatory (see §Core Flow gate 4).
+6. **Confirmation-step ambiguity.** When rendering the confirmation card after one-shot capture, if any captured value was edge-case (whitespace, punctuation, bracketed optionals), show the value verbatim and let the user reject during confirmation. Do not "clean up" silently.
+7. **One-shot + numbered choice combo.** If the user's one-shot utterance includes a choice field (e.g., "Type: A2MCP"), accept it. If they used the label instead of the number ("A2A 类型"), also accept. But when asking a choice question that the user hasn't answered yet, still use the numbered-options pattern (see §Choice prompts).
+
+### Worked examples
+
+**Example A — partial one-shot, requester:**
+> User: "注册一个买家叫 Alice"
+Skill captures `role=requester`, `name=Alice`. Preview → skips Q1 (name already set) → Q2: description → Q3: picture → confirmation.
+
+**Example B — full one-shot, requester:**
+> User: "注册一个买家，名字 Alice，描述做 DeFi 研究，不要头像"
+Skill captures `role=requester`, `name=Alice`, `description=做 DeFi 研究`, `picture=skip`. Preview → all Q's skipped → confirmation card directly.
+
+**Example C — ambiguous split:**
+> User: "provider 叫 Alice 做 DeFi 分析师"
+Name could be `Alice` or `Alice 做 DeFi 分析师`. Skill captures `role=provider` only (unambiguous), leaves name + description for normal Q&A. Preview → Q1 name → Q2 description → ...
+
+**Example D — cross-phase leakage (strict rejection):**
+> User: "provider 叫 Alice，做 DeFi 分析，收 10 USDT"
+Phase-1 capture: `name=Alice`, `description=做 DeFi 分析`. **Fee=10 is discarded.** Preview → Q3 picture → identity confirmation → Phase 2 starts → its own preview → service Q1 (name) fresh.
 
 ## Amount Display Rules
 

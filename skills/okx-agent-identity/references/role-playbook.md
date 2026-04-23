@@ -25,10 +25,21 @@ All eight fields (Name / Description / Picture / ServiceName / ServiceDescriptio
 
 Applies to every role flow. Applies to every service sub-field. No exceptions.
 
-- Never list "请提供 1. Name 2. Description 3. ..." in one message.
-- Never enumerate more than one field per turn.
-- If the user volunteered multiple values in one sentence ("叫 Alice，做 DeFi 分析"), you may capture them at parse time — but the confirmation card still renders one row per field.
+- Never list "请提供 1. Name 2. Description 3. ..." / "Please provide 1. Name 2. Description 3. ..." in one message as an **imperative ask**.
+- Never enumerate more than one field per turn in an **asking** message.
+- If the user volunteered multiple values in one sentence ("叫 Alice，做 DeFi 分析"), you may capture them at parse time (see `SKILL.md §One-shot capture`) — but the confirmation card still renders one row per field, and any still-unanswered fields are still asked one at a time.
 - The rationale is not just UX; users answer one question more accurately than a list. List format causes dropped fields and typos that force re-prompting, which is worse than the extra turns.
+
+### Preview ≠ multi-field ask
+
+Showing a **declarative preview** at the start of each phase ("接下来会问你：名称、描述、头像（可选）。" / "Next we'll collect: Name, Description, Picture (optional).") is **allowed and encouraged** — it sets expectations and lets users decide whether to one-shot. Previews are statements, not asks; they are always followed by a single `Q1：` / `Q1:` asking exactly one field.
+
+The distinction is verb mood:
+
+- ❌ Banned (imperative, multi-field): "请提供 1. 名称 2. 描述 3. 头像" / "Please provide: 1. Name 2. Description 3. Picture"
+- ✅ Allowed (declarative preamble + single Q): "接下来会收集：名称、描述、头像（可选）。\n\nQ1：这个 provider 叫什么名字？" / "Next we'll collect: Name, Description, Picture (optional).\n\nQ1: What's the name of this provider?"
+
+If in doubt: the preamble describes what will happen; the Q asks for exactly one thing.
 
 ## Pre-check existing agents (normal onboarding only)
 
