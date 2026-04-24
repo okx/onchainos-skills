@@ -372,6 +372,7 @@ main() {
 
   install_binary "v${target_ver}"
   sync_workflows "v${target_ver}"
+  rm -f "$CACHE_DIR/checksums.txt"
   write_cache
   ensure_in_path
 }
