@@ -7,18 +7,10 @@ use clap::Subcommand;
 
 use crate::commands::Context;
 
-/// Top-level agent commerce subcommands.
-/// Flattens task and chat sub-enums; inlines identity commands
-/// (identity exposes per-op Args structs instead of a single command enum).
+/// Shared `agent` namespace for task-system and identity commands.
 #[derive(Subcommand)]
 pub enum AgentCommand {
-    #[command(flatten)]
-    Task(task::TaskSystemCommand),
-
-    #[command(flatten)]
-    Chat(chat::ChatCommand),
-
-    // ── Identity ────────────────────────────────────────────────────────
+    // Identity
     /// Register a new Agent identity
     Create(identity::CreateArgs),
 
@@ -55,12 +47,179 @@ pub enum AgentCommand {
     /// 用 keyUuid + signing_seed 代签任意 message（xmtp 等场景），不走广播
     #[command(name = "xmtp-sign")]
     XmtpSign(identity::XmtpSignArgs),
+
+    // Task system
+    /// Create a new task (Client)
+    #[command(name = "create-task")]
+    CreateTask {
+        #[arg(long)]
+        description: String,
+        #[arg(long)]
+        budget: f64,
+        #[arg(long)]
+        currency: String,
+        #[arg(long = "deadline-open")]
+        deadline_open: String,
+        #[arg(long = "deadline-submit")]
+        deadline_submit: String,
+        #[arg(long = "quality-standards")]
+        quality_standards: String,
+        #[arg(long)]
+        title: Option<String>,
+    },
+
+    /// Get recommended providers for a task
+    Recommend { job_id: String },
+
+    /// Get current task status
+    Status { job_id: String },
+
+    /// List tasks
+    List {
+        #[arg(long)]
+        role: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long, default_value = "1")]
+        page: u32,
+        #[arg(long, default_value = "20")]
+        limit: u32,
+    },
+
+    /// Client confirms provider and stakes funds into escrow
+    #[command(name = "confirm-accept")]
+    ConfirmAccept {
+        job_id: String,
+        #[arg(long)]
+        provider: String,
+    },
+
+    /// Client rejects provider application
+    #[command(name = "reject-apply")]
+    RejectApply {
+        job_id: String,
+        #[arg(long)]
+        provider: String,
+        #[arg(long)]
+        reason: String,
+    },
+
+    /// Provider confirms on-chain acceptance
+    Confirm { job_id: String },
+
+    /// Provider submits deliverable
+    Deliver {
+        job_id: String,
+        #[arg(long)]
+        file: String,
+        #[arg(long)]
+        message: Option<String>,
+    },
+
+    /// Client confirms task complete and releases payment
+    Complete { job_id: String },
+
+    /// Client rejects deliverable
+    Reject {
+        job_id: String,
+        #[arg(long)]
+        reason: String,
+    },
+
+    /// Client closes task (only valid while Open)
+    Close { job_id: String },
+
+    /// Convert private task to public listing
+    #[command(name = "set-public")]
+    SetPublic { job_id: String },
+
+    /// AI-assisted deliverable quality assessment
+    #[command(name = "ai-evaluate")]
+    AiEvaluate { job_id: String },
+
+    /// Task config: init | show
+    Config {
+        #[command(subcommand)]
+        action: task::client::ConfigAction,
+    },
+
+    /// Negotiation actions: start, quote, counter, accept, reject
+    #[command(subcommand)]
+    Negotiate(task::client::NegotiateCommand),
+
+    /// Dispute actions: raise, evidence, info, vote, appeal
+    #[command(subcommand)]
+    Dispute(task::client::DisputeCommand),
+
+    /// Common queries: context lookup for AI agents
+    #[command(subcommand)]
+    Common(task::common::CommonCommand),
+
+    // Chat
+    /// Upload an encrypted file attachment and receive a file key
+    #[command(name = "file-upload")]
+    FileUpload {
+        #[arg(long)]
+        file: String,
+        #[arg(long)]
+        agent_id: String,
+        #[arg(long)]
+        job_id: String,
+    },
+
+    /// Download an encrypted file attachment by file key
+    #[command(name = "file-download")]
+    FileDownload {
+        #[arg(long)]
+        file_key: String,
+        #[arg(long)]
+        agent_id: String,
+        #[arg(long)]
+        output: String,
+    },
+
+    /// Get sensitive word list for A2A risk filtering
+    #[command(name = "sensitive-words")]
+    SensitiveWords {
+        #[arg(long)]
+        agent_id: String,
+    },
+
+    /// Check if a message is eligible to be sent
+    #[command(name = "message-eligible")]
+    MessageEligible {
+        #[arg(long)]
+        agent_id: String,
+        #[arg(long)]
+        client_agent_id: String,
+        #[arg(long)]
+        provider_agent_id: String,
+        #[arg(long)]
+        job_id: String,
+        #[arg(long)]
+        group_id: String,
+        #[arg(long)]
+        direction: String,
+    },
+
+    /// Get XMTP system config (system account addresses)
+    #[command(name = "system-config")]
+    SystemConfig {
+        #[arg(long)]
+        agent_id: String,
+    },
+
+    /// Send agent heartbeat to report online status
+    Heartbeat {
+        #[arg(long)]
+        chain_index: u64,
+    },
 }
 
 pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
+    use task::client::TaskCommand as T;
+
     match cmd {
-        AgentCommand::Task(c) => task::run(c, ctx).await,
-        AgentCommand::Chat(c) => chat::run(c, ctx).await,
         AgentCommand::Create(args) => identity::create(args, ctx).await,
         AgentCommand::Update(args) => identity::update(args, ctx).await,
         AgentCommand::Get(args) => identity::get(args, ctx).await,
@@ -72,5 +231,164 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::FeedbackSubmit(args) => identity::feedback_submit(args, ctx).await,
         AgentCommand::FeedbackList(args) => identity::feedback_list(args, ctx).await,
         AgentCommand::XmtpSign(args) => identity::xmtp_sign(args, ctx).await,
+
+        AgentCommand::CreateTask {
+            description,
+            budget,
+            currency,
+            deadline_open,
+            deadline_submit,
+            quality_standards,
+            title,
+        } => {
+            task::client::run_task(
+                T::Create {
+                    description,
+                    budget,
+                    currency,
+                    deadline_open,
+                    deadline_submit,
+                    quality_standards,
+                    title,
+                },
+                ctx,
+            )
+            .await
+        }
+        AgentCommand::Recommend { job_id } => {
+            task::client::run_task(T::Recommend { job_id }, ctx).await
+        }
+        AgentCommand::Status { job_id } => task::client::run_task(T::Status { job_id }, ctx).await,
+        AgentCommand::List {
+            role,
+            status,
+            page,
+            limit,
+        } => {
+            task::client::run_task(
+                T::List {
+                    role,
+                    status,
+                    page,
+                    limit,
+                },
+                ctx,
+            )
+            .await
+        }
+        AgentCommand::ConfirmAccept { job_id, provider } => {
+            task::client::run_task(T::ConfirmAccept { job_id, provider }, ctx).await
+        }
+        AgentCommand::RejectApply {
+            job_id,
+            provider,
+            reason,
+        } => {
+            task::client::run_task(
+                T::RejectApply {
+                    job_id,
+                    provider,
+                    reason,
+                },
+                ctx,
+            )
+            .await
+        }
+        AgentCommand::Confirm { job_id } => {
+            task::client::run_task(T::Confirm { job_id }, ctx).await
+        }
+        AgentCommand::Deliver {
+            job_id,
+            file,
+            message,
+        } => {
+            task::client::run_task(
+                T::Deliver {
+                    job_id,
+                    file,
+                    message,
+                },
+                ctx,
+            )
+            .await
+        }
+        AgentCommand::Complete { job_id } => {
+            task::client::run_task(T::Complete { job_id }, ctx).await
+        }
+        AgentCommand::Reject { job_id, reason } => {
+            task::client::run_task(T::Reject { job_id, reason }, ctx).await
+        }
+        AgentCommand::Close { job_id } => task::client::run_task(T::Close { job_id }, ctx).await,
+        AgentCommand::SetPublic { job_id } => {
+            task::client::run_task(T::SetPublic { job_id }, ctx).await
+        }
+        AgentCommand::AiEvaluate { job_id } => {
+            task::client::run_task(T::AiEvaluate { job_id }, ctx).await
+        }
+        AgentCommand::Config { action } => task::client::run_task(T::Config { action }, ctx).await,
+        AgentCommand::Negotiate(c) => task::client::run_negotiate(c, ctx).await,
+        AgentCommand::Dispute(c) => task::client::run_dispute(c, ctx).await,
+        AgentCommand::Common(c) => task::common::run(c, ctx).await,
+
+        AgentCommand::FileUpload {
+            file,
+            agent_id,
+            job_id,
+        } => {
+            chat::run(
+                chat::ChatCommand::FileUpload {
+                    file,
+                    agent_id,
+                    job_id,
+                },
+                ctx,
+            )
+            .await
+        }
+        AgentCommand::FileDownload {
+            file_key,
+            agent_id,
+            output,
+        } => {
+            chat::run(
+                chat::ChatCommand::FileDownload {
+                    file_key,
+                    agent_id,
+                    output,
+                },
+                ctx,
+            )
+            .await
+        }
+        AgentCommand::SensitiveWords { agent_id } => {
+            chat::run(chat::ChatCommand::SensitiveWords { agent_id }, ctx).await
+        }
+        AgentCommand::MessageEligible {
+            agent_id,
+            client_agent_id,
+            provider_agent_id,
+            job_id,
+            group_id,
+            direction,
+        } => {
+            chat::run(
+                chat::ChatCommand::MessageEligible {
+                    agent_id,
+                    client_agent_id,
+                    provider_agent_id,
+                    job_id,
+                    group_id,
+                    direction,
+                },
+                ctx,
+            )
+            .await
+        }
+        AgentCommand::SystemConfig { agent_id } => {
+            chat::run(chat::ChatCommand::SystemConfig { agent_id }, ctx).await
+        }
+        AgentCommand::Heartbeat { chain_index } => {
+            chat::run(chat::ChatCommand::Heartbeat { chain_index }, ctx).await
+        }
     }
 }

@@ -1,5 +1,4 @@
 use anyhow::{bail, Context, Result};
-use clap::Subcommand;
 use serde_json::Value;
 
 use crate::client::ApiClient;
@@ -18,84 +17,33 @@ fn agent_commerce_headers(agent_id: &str) -> [(&str, &str); 2] {
     [("agenticId", agent_id), ("User-Agent", "onchainos-cli")]
 }
 
-#[derive(Subcommand)]
+/// Internal dispatch enum for chat commands — reshaped from `AgentCommand` variants.
 pub enum ChatCommand {
-    /// Upload an encrypted file attachment and receive a file key
-    #[command(name = "file-upload")]
     FileUpload {
-        /// Path to the local file to upload
-        #[arg(long)]
         file: String,
-
-        /// Agent ID (sent as agenticId header)
-        #[arg(long)]
         agent_id: String,
-
-        /// Job ID
-        #[arg(long)]
         job_id: String,
     },
-    /// Download an encrypted file attachment by file key
-    #[command(name = "file-download")]
     FileDownload {
-        /// File key returned from upload
-        #[arg(long)]
         file_key: String,
-
-        /// Agent ID (sent as agenticId header)
-        #[arg(long)]
         agent_id: String,
-
-        /// Output file path to write the downloaded bytes
-        #[arg(long)]
         output: String,
     },
-    /// Get sensitive word list for A2A risk filtering
-    #[command(name = "sensitive-words")]
     SensitiveWords {
-        /// Agent ID (sent as agenticId header)
-        #[arg(long)]
         agent_id: String,
     },
-    /// Check if a message is eligible to be sent
-    #[command(name = "message-eligible")]
     MessageEligible {
-        /// Agent ID (sent as agenticId header)
-        #[arg(long)]
         agent_id: String,
-
-        /// Client agent ID
-        #[arg(long)]
         client_agent_id: String,
-
-        /// Provider agent ID
-        #[arg(long)]
         provider_agent_id: String,
-
-        /// Job ID
-        #[arg(long)]
         job_id: String,
-
-        /// Group ID
-        #[arg(long)]
         group_id: String,
-
-        /// Direction: client_to_provider or provider_to_client
-        #[arg(long)]
         direction: String,
     },
-    /// Get XMTP system config (system account addresses)
-    #[command(name = "system-config")]
     SystemConfig {
-        /// Agent ID (sent as agenticId header)
-        #[arg(long)]
         agent_id: String,
     },
-    /// Send agent heartbeat to report online status
-    #[command(name = "heartbeat")]
     Heartbeat {
-        /// Chain index (e.g. 1 for Ethereum, 501 for Solana)
-        #[arg(long)]
         chain_index: u64,
     },
 }
@@ -335,311 +283,3 @@ pub async fn fetch_heartbeat(client: &mut ApiClient, chain_index: u64) -> Result
     client.post(HEARTBEAT_PATH, &body).await
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use clap::Parser;
-
-    #[derive(Parser)]
-    struct TestCli {
-        #[command(subcommand)]
-        command: ChatCommand,
-    }
-
-    // ── Upload CLI parsing ───────────────────────────────────────────
-
-    #[test]
-    fn cli_upload_all_required_args() {
-        let cli = TestCli::parse_from([
-            "test", "file-upload",
-            "--file", "/tmp/test.bin",
-            "--agent-id", "agent_123",
-            "--job-id", "task_001",
-        ]);
-        match cli.command {
-            ChatCommand::FileUpload { file, agent_id, job_id } => {
-                assert_eq!(file, "/tmp/test.bin");
-                assert_eq!(agent_id, "agent_123");
-                assert_eq!(job_id, "task_001");
-            }
-            _ => panic!("expected FileUpload"),
-        }
-    }
-
-    #[test]
-    fn cli_upload_missing_file() {
-        let result = TestCli::try_parse_from([
-            "test", "file-upload",
-            "--agent-id", "agent_123",
-            "--job-id", "task_001",
-        ]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn cli_upload_missing_agent_id() {
-        let result = TestCli::try_parse_from([
-            "test", "file-upload",
-            "--file", "/tmp/test.bin",
-            "--job-id", "task_001",
-        ]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn cli_upload_missing_job_id() {
-        let result = TestCli::try_parse_from([
-            "test", "file-upload",
-            "--file", "/tmp/test.bin",
-            "--agent-id", "agent_123",
-        ]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn cli_upload_no_args() {
-        let result = TestCli::try_parse_from(["test", "file-upload"]);
-        assert!(result.is_err());
-    }
-
-    // ── Download CLI parsing ─────────────────────────────────────────
-
-    #[test]
-    fn cli_download_all_required_args() {
-        let cli = TestCli::parse_from([
-            "test", "file-download",
-            "--file-key", "task_001-abc123",
-            "--agent-id", "agent_123",
-            "--output", "/tmp/downloaded.bin",
-        ]);
-        match cli.command {
-            ChatCommand::FileDownload { file_key, agent_id, output } => {
-                assert_eq!(file_key, "task_001-abc123");
-                assert_eq!(agent_id, "agent_123");
-                assert_eq!(output, "/tmp/downloaded.bin");
-            }
-            _ => panic!("expected FileDownload"),
-        }
-    }
-
-    #[test]
-    fn cli_download_missing_file_key() {
-        let result = TestCli::try_parse_from([
-            "test", "file-download",
-            "--agent-id", "agent_123",
-            "--output", "/tmp/out.bin",
-        ]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn cli_download_missing_agent_id() {
-        let result = TestCli::try_parse_from([
-            "test", "file-download",
-            "--file-key", "abc",
-            "--output", "/tmp/out.bin",
-        ]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn cli_download_missing_output() {
-        let result = TestCli::try_parse_from([
-            "test", "file-download",
-            "--file-key", "abc",
-            "--agent-id", "agent_123",
-        ]);
-        assert!(result.is_err());
-    }
-
-    // ── Sensitive Words CLI parsing ──────────────────────────────────
-
-    #[test]
-    fn cli_sensitive_words_required_args() {
-        let cli = TestCli::parse_from([
-            "test", "sensitive-words",
-            "--agent-id", "agent_123",
-        ]);
-        match cli.command {
-            ChatCommand::SensitiveWords { agent_id } => {
-                assert_eq!(agent_id, "agent_123");
-            }
-            _ => panic!("expected SensitiveWords"),
-        }
-    }
-
-    #[test]
-    fn cli_sensitive_words_missing_agent_id() {
-        let result = TestCli::try_parse_from(["test", "sensitive-words"]);
-        assert!(result.is_err());
-    }
-
-    // ── Message Eligible CLI parsing ─────────────────────────────────
-
-    #[test]
-    fn cli_message_eligible_all_required_args() {
-        let cli = TestCli::parse_from([
-            "test", "message-eligible",
-            "--agent-id", "agent_1",
-            "--client-agent-id", "client_1",
-            "--provider-agent-id", "provider_1",
-            "--job-id", "task_001",
-            "--group-id", "group_1",
-            "--direction", "client_to_provider",
-        ]);
-        match cli.command {
-            ChatCommand::MessageEligible {
-                agent_id,
-                client_agent_id,
-                provider_agent_id,
-                job_id,
-                group_id,
-                direction,
-            } => {
-                assert_eq!(agent_id, "agent_1");
-                assert_eq!(client_agent_id, "client_1");
-                assert_eq!(provider_agent_id, "provider_1");
-                assert_eq!(job_id, "task_001");
-                assert_eq!(group_id, "group_1");
-                assert_eq!(direction, "client_to_provider");
-            }
-            _ => panic!("expected MessageEligible"),
-        }
-    }
-
-    #[test]
-    fn cli_message_eligible_missing_direction() {
-        let result = TestCli::try_parse_from([
-            "test", "message-eligible",
-            "--agent-id", "a",
-            "--client-agent-id", "c",
-            "--provider-agent-id", "p",
-            "--job-id", "j",
-            "--group-id", "g",
-        ]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn cli_message_eligible_missing_agent_id() {
-        let result = TestCli::try_parse_from([
-            "test", "message-eligible",
-            "--client-agent-id", "c",
-            "--provider-agent-id", "p",
-            "--job-id", "j",
-            "--group-id", "g",
-            "--direction", "client_to_provider",
-        ]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn cli_message_eligible_missing_client_agent_id() {
-        let result = TestCli::try_parse_from([
-            "test", "message-eligible",
-            "--agent-id", "a",
-            "--provider-agent-id", "p",
-            "--job-id", "j",
-            "--group-id", "g",
-            "--direction", "client_to_provider",
-        ]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn cli_message_eligible_missing_provider_agent_id() {
-        let result = TestCli::try_parse_from([
-            "test", "message-eligible",
-            "--agent-id", "a",
-            "--client-agent-id", "c",
-            "--job-id", "j",
-            "--group-id", "g",
-            "--direction", "client_to_provider",
-        ]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn cli_message_eligible_missing_job_id() {
-        let result = TestCli::try_parse_from([
-            "test", "message-eligible",
-            "--agent-id", "a",
-            "--client-agent-id", "c",
-            "--provider-agent-id", "p",
-            "--group-id", "g",
-            "--direction", "client_to_provider",
-        ]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn cli_message_eligible_missing_group_id() {
-        let result = TestCli::try_parse_from([
-            "test", "message-eligible",
-            "--agent-id", "a",
-            "--client-agent-id", "c",
-            "--provider-agent-id", "p",
-            "--job-id", "j",
-            "--direction", "client_to_provider",
-        ]);
-        assert!(result.is_err());
-    }
-
-    // ── System Config CLI parsing ────────────────────────────────────
-
-    #[test]
-    fn cli_system_config_required_args() {
-        let cli = TestCli::parse_from([
-            "test", "system-config",
-            "--agent-id", "agent_123",
-        ]);
-        match cli.command {
-            ChatCommand::SystemConfig { agent_id } => {
-                assert_eq!(agent_id, "agent_123");
-            }
-            _ => panic!("expected SystemConfig"),
-        }
-    }
-
-    #[test]
-    fn cli_system_config_missing_agent_id() {
-        let result = TestCli::try_parse_from(["test", "system-config"]);
-        assert!(result.is_err());
-    }
-
-    // ── Heartbeat CLI parsing ────────────────────────────────────────
-
-    #[test]
-    fn cli_heartbeat_required_args() {
-        let cli = TestCli::parse_from([
-            "test", "heartbeat",
-            "--chain-index", "1",
-        ]);
-        match cli.command {
-            ChatCommand::Heartbeat { chain_index } => {
-                assert_eq!(chain_index, 1);
-            }
-            _ => panic!("expected Heartbeat"),
-        }
-    }
-
-    #[test]
-    fn cli_heartbeat_solana_chain() {
-        let cli = TestCli::parse_from([
-            "test", "heartbeat",
-            "--chain-index", "501",
-        ]);
-        match cli.command {
-            ChatCommand::Heartbeat { chain_index } => {
-                assert_eq!(chain_index, 501);
-            }
-            _ => panic!("expected Heartbeat"),
-        }
-    }
-
-    #[test]
-    fn cli_heartbeat_missing_chain_index() {
-        let result = TestCli::try_parse_from(["test", "heartbeat"]);
-        assert!(result.is_err());
-    }
-}

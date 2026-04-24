@@ -330,7 +330,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
         Commands::Workflow { command } => format!("workflow {}", workflow_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
-        Commands::Agent { command } => format!("agent {}", agent_sub(command)),
+        Commands::TaskSystem { command } => format!("agent {}", agent_sub(command)),
         Commands::CrossChain { .. } => "cross-chain".to_string(),
     }
 }
@@ -338,54 +338,40 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
 fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
     use crate::commands::agent_commerce::AgentCommand;
     match cmd {
-        AgentCommand::Task(c) => format!("task {}", task_system_sub(c)),
-        AgentCommand::Chat(c) => format!("chat {}", chat_sub(c)),
-        AgentCommand::Create(_) => "create".into(),
-        AgentCommand::Update(_) => "update".into(),
-        AgentCommand::Get(_) => "get".into(),
-        AgentCommand::Activate(_) => "activate".into(),
-        AgentCommand::Deactivate(_) => "deactivate".into(),
-        AgentCommand::Upload(_) => "upload".into(),
-        AgentCommand::Search(_) => "search".into(),
-        AgentCommand::ServiceList(_) => "service-list".into(),
-        AgentCommand::FeedbackSubmit(_) => "feedback-submit".into(),
-        AgentCommand::FeedbackList(_) => "feedback-list".into(),
-        AgentCommand::XmtpSign(_) => "xmtp-sign".into(),
-    }
-}
-
-fn task_system_sub(c: &crate::commands::agent_commerce::task::TaskSystemCommand) -> &'static str {
-    use crate::commands::agent_commerce::task::TaskSystemCommand;
-    match c {
-        TaskSystemCommand::CreateTask { .. } => "create-task",
-        TaskSystemCommand::Recommend { .. } => "recommend",
-        TaskSystemCommand::Status { .. } => "status",
-        TaskSystemCommand::List { .. } => "list",
-        TaskSystemCommand::ConfirmAccept { .. } => "confirm-accept",
-        TaskSystemCommand::RejectApply { .. } => "reject-apply",
-        TaskSystemCommand::Confirm { .. } => "confirm",
-        TaskSystemCommand::Deliver { .. } => "deliver",
-        TaskSystemCommand::Complete { .. } => "complete",
-        TaskSystemCommand::Reject { .. } => "reject",
-        TaskSystemCommand::Close { .. } => "close",
-        TaskSystemCommand::SetPublic { .. } => "set-public",
-        TaskSystemCommand::AiEvaluate { .. } => "ai-evaluate",
-        TaskSystemCommand::Config { .. } => "config",
-        TaskSystemCommand::Negotiate(_) => "negotiate",
-        TaskSystemCommand::Dispute(_) => "dispute",
-        TaskSystemCommand::Common(_) => "common",
-    }
-}
-
-fn chat_sub(c: &crate::commands::agent_commerce::chat::ChatCommand) -> &'static str {
-    use crate::commands::agent_commerce::chat::ChatCommand;
-    match c {
-        ChatCommand::FileUpload { .. } => "file-upload",
-        ChatCommand::FileDownload { .. } => "file-download",
-        ChatCommand::SensitiveWords { .. } => "sensitive-words",
-        ChatCommand::MessageEligible { .. } => "message-eligible",
-        ChatCommand::SystemConfig { .. } => "system-config",
-        ChatCommand::Heartbeat { .. } => "heartbeat",
+        AgentCommand::Create { .. } => "create".into(),
+        AgentCommand::Update { .. } => "update".into(),
+        AgentCommand::Get { .. } => "get".into(),
+        AgentCommand::Activate { .. } => "activate".into(),
+        AgentCommand::Deactivate { .. } => "deactivate".into(),
+        AgentCommand::Upload { .. } => "upload".into(),
+        AgentCommand::Search { .. } => "search".into(),
+        AgentCommand::ServiceList { .. } => "service-list".into(),
+        AgentCommand::FeedbackSubmit { .. } => "feedback-submit".into(),
+        AgentCommand::FeedbackList { .. } => "feedback-list".into(),
+        AgentCommand::XmtpSign { .. } => "xmtp-sign".into(),
+        AgentCommand::CreateTask { .. } => "create-task".into(),
+        AgentCommand::Recommend { .. } => "recommend".into(),
+        AgentCommand::Status { .. } => "status".into(),
+        AgentCommand::List { .. } => "list".into(),
+        AgentCommand::ConfirmAccept { .. } => "confirm-accept".into(),
+        AgentCommand::RejectApply { .. } => "reject-apply".into(),
+        AgentCommand::Confirm { .. } => "confirm".into(),
+        AgentCommand::Deliver { .. } => "deliver".into(),
+        AgentCommand::Complete { .. } => "complete".into(),
+        AgentCommand::Reject { .. } => "reject".into(),
+        AgentCommand::Close { .. } => "close".into(),
+        AgentCommand::SetPublic { .. } => "set-public".into(),
+        AgentCommand::AiEvaluate { .. } => "ai-evaluate".into(),
+        AgentCommand::Config { .. } => "config".into(),
+        AgentCommand::Negotiate(c) => format!("negotiate {:?}", std::mem::discriminant(c)),
+        AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),
+        AgentCommand::Common(c) => format!("common {:?}", std::mem::discriminant(c)),
+        AgentCommand::FileUpload { .. } => "file-upload".into(),
+        AgentCommand::FileDownload { .. } => "file-download".into(),
+        AgentCommand::SensitiveWords { .. } => "sensitive-words".into(),
+        AgentCommand::MessageEligible { .. } => "message-eligible".into(),
+        AgentCommand::SystemConfig { .. } => "system-config".into(),
+        AgentCommand::Heartbeat { .. } => "heartbeat".into(),
     }
 }
 
