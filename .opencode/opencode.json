@@ -2,13 +2,10 @@
   "$schema": "https://opencode.ai/config.json",
   "instructions": [
     "AGENTS.md",
+    "skills/okx-wallet-portfolio/SKILL.md",
     "skills/okx-dex-market/SKILL.md",
-    "skills/okx-dex-signal/SKILL.md",
     "skills/okx-dex-swap/SKILL.md",
     "skills/okx-dex-token/SKILL.md",
-    "skills/okx-dex-trenches/SKILL.md",
-    "skills/okx-onchain-gateway/SKILL.md",
-    "skills/okx-wallet-portfolio/SKILL.md",
-    "skills/onchainos-router/SKILL.md"
+    "skills/okx-onchain-gateway/SKILL.md"
   ]
 }

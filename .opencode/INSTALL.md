@@ -48,10 +48,8 @@ Verify by asking: `"check my ETH balance"` or `"what's the price of SOL?"`
 |-------|-------------|
 | `okx-wallet-portfolio` | Check wallet balance, token holdings, portfolio value |
 | `okx-dex-market` | Token prices, K-line charts, trade history |
-| `okx-dex-signal` | Smart-money / whale / KOL tracking, aggregated buy signals, leaderboards |
 | `okx-dex-swap` | Swap/trade/buy/sell tokens on-chain |
 | `okx-dex-token` | Search tokens, trending rankings, holder analysis |
-| `okx-dex-trenches` | Meme / pump.fun launch research, dev reputation, bundler analysis |
 | `okx-onchain-gateway` | Gas estimation, transaction simulation, broadcasting, order tracking |
 
 ### Loading a Skill Manually
