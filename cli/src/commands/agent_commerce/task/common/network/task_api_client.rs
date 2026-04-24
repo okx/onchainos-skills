@@ -113,20 +113,18 @@ impl TaskApiClient {
             .await
     }
 
-    /// POST multipart/form-data + JWT → 返回 data
-    ///
-    /// 注意：WalletApiClient 的 post_authed_multipart 不支持 extra_headers，
-    /// 因此 agent_id / address 暂未注入。
+    /// POST multipart/form-data + JWT + 身份头（X-Agent-Id / X-Wallet-Address）
     pub async fn multipart_post_with_identity(
         &mut self,
         path: &str,
         form: reqwest::multipart::Form,
-        _agent_id: &str,
-        _address: &str,
+        agent_id: &str,
+        address: &str,
     ) -> Result<Value> {
         let token = get_access_token().await;
+        let headers = [("X-Agent-Id", agent_id), ("X-Wallet-Address", address)];
         self.wallet
-            .post_authed_multipart(path, &token, form)
+            .post_authed_multipart_with_headers(path, &token, form, Some(&headers))
             .await
     }
 }

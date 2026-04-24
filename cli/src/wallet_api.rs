@@ -457,6 +457,44 @@ impl WalletApiClient {
         self.handle_response(resp).await
     }
 
+    /// POST multipart/form-data with Bearer accessToken + 可选附加 header
+    /// （例如 task 模块需要的 `X-Agent-Id` / `X-Wallet-Address`）。
+    ///
+    /// extra_headers 在 `Content-Type` 被移除之后合并，避免误覆盖 Authorization。
+    pub async fn post_authed_multipart_with_headers(
+        &self,
+        path: &str,
+        access_token: &str,
+        form: reqwest::multipart::Form,
+        extra_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Value> {
+        let url = format!("{}{}", self.base_url, path);
+
+        let mut headers = crate::client::ApiClient::jwt_headers(access_token);
+        headers.remove(reqwest::header::CONTENT_TYPE);
+
+        if let Some(extra) = extra_headers {
+            for (k, v) in extra {
+                if let (Ok(name), Ok(val)) = (
+                    reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(v),
+                ) {
+                    headers.insert(name, val);
+                }
+            }
+        }
+
+        let resp = self
+            .http
+            .post(&url)
+            .headers(headers)
+            .multipart(form)
+            .send()
+            .await
+            .context("wallet API request failed")?;
+        self.handle_response(resp).await
+    }
+
     async fn handle_response(&self, resp: reqwest::Response) -> Result<Value> {
         let status = resp.status();
         if status.as_u16() >= 500 {
@@ -1198,5 +1236,56 @@ mod tests {
         assert_eq!(resp.accounts[1].addresses.len(), 2);
         assert_eq!(resp.accounts[1].addresses[0].chain_index, "56");
         assert_eq!(resp.accounts[1].addresses[1].chain_index, "501");
+    }
+
+    #[tokio::test]
+    async fn post_authed_multipart_with_headers_injects_identity_headers() {
+        use std::io::{Read, Write};
+        use std::sync::{Arc, Mutex};
+
+        // 随机端口的本地 TCP listener，捕获一次原始 HTTP 请求
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(false).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let captured = Arc::new(Mutex::new(String::new()));
+        let captured_clone = captured.clone();
+
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = vec![0u8; 16_384];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            *captured_clone.lock().unwrap() = String::from_utf8_lossy(&buf[..n]).to_string();
+            let body = br#"{"code":0,"data":null,"msg":""}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(resp.as_bytes());
+            let _ = stream.write_all(body);
+        });
+
+        // 隔离环境变量：OKX_BASE_URL 优先级最高，测试时要清掉
+        std::env::remove_var("OKX_BASE_URL");
+        let client = WalletApiClient::with_base_url(Some(&format!("http://127.0.0.1:{port}")))
+            .expect("build client");
+        let form = reqwest::multipart::Form::new().text("text", "hello-evidence");
+        let extra = [("X-Agent-Id", "agent-test-1"), ("X-Wallet-Address", "0xDEADBEEF")];
+        let _ = client
+            .post_authed_multipart_with_headers("/priapi/v1/aieco/task/0x1/evidence/upload", "fake_token", form, Some(&extra))
+            .await;
+
+        server.join().expect("listener thread");
+        let req = captured.lock().unwrap().clone();
+        assert!(req.contains("authorization: Bearer fake_token") || req.contains("Authorization: Bearer fake_token"),
+            "missing Authorization header:\n{req}");
+        assert!(req.contains("x-agent-id: agent-test-1") || req.contains("X-Agent-Id: agent-test-1"),
+            "missing X-Agent-Id header:\n{req}");
+        assert!(req.contains("x-wallet-address: 0xDEADBEEF") || req.contains("X-Wallet-Address: 0xDEADBEEF"),
+            "missing X-Wallet-Address header:\n{req}");
+        assert!(req.to_lowercase().contains("multipart/form-data"),
+            "expected multipart/form-data content-type:\n{req}");
+        // json Content-Type 必须已被移除，不能同时出现
+        assert!(!req.to_lowercase().contains("content-type: application/json"),
+            "application/json content-type should have been stripped:\n{req}");
     }
 }
