@@ -96,42 +96,6 @@ CI uses `-D warnings` (warnings as errors). Run `cargo clippy` before pushing. C
 
 ---
 
-## Architectural Rule: ws-channel is Transport-Only
-
-**`plugins/ws-channel/` is a pure transport layer. Never add business logic here.**
-
-What belongs in `plugins/ws-channel/`:
-- WebSocket connection management and message framing
-- Routing inbound WS messages to openclaw agent sessions
-- Forwarding agent text output back to the correct P2P conversation via `reply()`
-- Session key resolution (main session vs. P2P session)
-
-What does NOT belong in `plugins/ws-channel/`:
-- Message type branching beyond session routing (e.g. `if type === "NEGOTIATE" do X`)
-- Task state machine logic (who applied, who accepted, when to complete)
-- Business-specific `replyType` values — always send `"REPLY"`; let the skill/agent decide semantics
-- Any `onchainos agent ...` CLI calls or tool invocations
-- Hardcoded knowledge of task flow steps (Scene 1, Scene 2, etc.)
-- **Fetching task details from mock-api to enrich notifications** — the sub session agent already has the context via `onchainos agent common context`; let it build the notification and call `notify_main` tool
-- **Auto-constructing main-session notifications for specific `TASK_*` types** — this is Scene-specific logic, belongs to `provider.md` / `buyer.md`
-
-**Where business logic lives:**
-- Task flow rules → `skills/okx-agent-task/buyer.md` and `provider.md`
-- State transitions → `onchainos agent <command>` CLI (confirm-accept, complete, reject, etc.)
-- Agent↔counterparty messaging → agent produces plain text output; `reply()` callback delivers it automatically to the P2P conversation. No plugin tool call needed.
-- **Sub session → main session notifications** → sub session agent calls `notify_main` tool (already registered in ws-channel). The plugin is the conduit, not the orchestrator.
-- **Main session → sub session instructions** → main session agent calls `task_relay` tool.
-
-> Violation example (wrong): `const replyType = ["TASK_REPLY","NEGOTIATE"].includes(type) ? "NEGOTIATE" : "REPLY"` in index.ts
-> Correct: always `client.sendToConv(convId, { type: "REPLY", content: text })`
-
-> Violation example (wrong): Adding `if (msgType === "TASK_ACCEPTED") { fetch task detail, build structured notice, push to main session }` to index.ts
-> Correct: Sub session agent receives TASK_ACCEPTED per `provider.md` Scene 4 → calls `notify_main` with structured message.
-
-**Before editing `plugins/ws-channel/`, ask: "Is this routing/transport, or is this task semantics?" If semantics, it belongs in the skill.**
-
----
-
 ## Task System E2E Testing
 
 All mock components are TypeScript (Node.js). No Rust build needed.
@@ -148,16 +112,13 @@ All mock components are TypeScript (Node.js). No Rust build needed.
 | mock-buyer-ui | `cd tools/mock-buyer && npm run ui` | http://9003 | Buyer with web UI — cannot run alongside headless |
 | mock-evaluator | `cd tools/mock-evaluator && npm start` | — | Headless evaluator: receives TASK_DISPUTED, resolves buyer-wins after 5s |
 | mock-evaluator-ui | `cd tools/mock-evaluator && npm run ui` | http://9004 | Evaluator with web UI (manual vote) — cannot run alongside headless |
-| openclaw gateway | `launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway` | http://18789 | AI buyer agent, loads ws-channel plugin |
-| ws-channel plugin | `~/openclaw-plugins/ws-channel/src/index.ts` | — | Routes WS messages to openclaw agent sessions |
+| openclaw gateway | `launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway` | http://18789 | AI buyer agent (connects via XMTP channel, not ws-mock) |
 
 > **Headless vs UI**: Each mock registers the same identity address. Running both at once causes the server to route all messages to whichever connected last. Use one or the other.
 
 ### Key Paths
 
 ```
-Source plugin:    plugins/ws-channel/src/*.ts          ← edit here
-Deployed plugin:  ~/openclaw-plugins/ws-channel/src/   ← gateway loads this
 Gateway log:      ~/.openclaw/logs/gateway.log
 Sessions dir:     ~/.openclaw/agents/main/sessions/
 WS server src:    tools/ws-mock-ts/src/server.ts
@@ -176,24 +137,8 @@ cd tools/mock-evaluator && npm install && npm run build
 
 ### Permission Rule
 
-`cp`, `rsync`, Write tool all fail with EPERM on `~/openclaw-plugins/` and `~/.openclaw/`.
+`cp`, `rsync`, Write tool all fail with EPERM on `~/.openclaw/`.
 **Always use `node -e "require('fs').writeFileSync(...)"` to write to those paths.**
-
-### Sync Plugin After Edit
-
-After editing `plugins/ws-channel/src/*.ts`:
-
-```bash
-node -e "
-const fs = require('fs');
-const src = '/Users/gan/meili/mingtao.gan_dacs_at_okg.com/121/Documents/RustProjects/OKOnchainOS/plugins/ws-channel/src/';
-const dst = '/Users/gan/openclaw-plugins/ws-channel/src/';
-['index.ts','handler.ts','ws-client.ts','runtime.ts'].forEach(f => {
-  fs.writeFileSync(dst+f, fs.readFileSync(src+f));
-  console.log('synced', f);
-});
-"
-```
 
 ### Sync Skills After Edit
 
@@ -280,49 +225,6 @@ tail -f /tmp/mock-buyer.log
 +25s  seller sends TASK_DELIVER + calls submit API → TASK_SUBMITTED
 +26s  buyer calls complete API → status = complete ✅
 ```
-
-### Full E2E Test: real openclaw agent (AI buyer)
-
-Uses the openclaw AI agent as buyer instead of mock-buyer.
-
-```bash
-# 1. Start infrastructure (same as above, but NO mock-buyer)
-cd tools/ws-mock-ts
-node dist/server.js   > /tmp/ws-server.log 2>&1 &
-node dist/mock-api.js > /tmp/ws-api.log    2>&1 &
-cd tools/mock-seller && node dist/tools/mock-seller/src/mock-seller.js > /tmp/mock-seller.log 2>&1 &
-sleep 2 && grep "身份已注册" /tmp/mock-seller.log
-
-# 2. Clear sessions and restart gateway
-node -e "const fs=require('fs'),p=require('path'),d=process.env.HOME+'/.openclaw/agents/main/sessions';fs.readdirSync(d).forEach(f=>{try{fs.unlinkSync(p.join(d,f))}catch(e){}});console.log('cleared');"
-launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
-until grep -q "ws-channel.*已注册" ~/.openclaw/logs/gateway.log 2>/dev/null; do sleep 1; done
-echo "gateway ready"
-
-# 4. Send task creation message (natural language)
-openclaw agent --agent main -m "帮我发布一个任务：开发一个 Python 脚本，实时监控以太坊主网上金额大于 10 万 USDT 的转账并输出到终端。质量标准：代码有注释，支持以太坊主网，可直接运行。预算 50 USDT，卖家接受期限 48 小时，交付期限 24 小时。"
-
-# 5. Watch gateway log
-tail -f ~/.openclaw/logs/gateway.log | grep --line-buffered -E "TASK_|conv:|dispatch|CLI echo"
-```
-
-**Expected gateway log sequence**:
-```
-[ws-channel] TASK_CONFIRMED jobId=0x... → 触发 main session agent turn
-[ws-mock] CLI echo: activating conv conv-{jobId}-buyer-123-mock-seller-agent-001 type=TASK_INQUIRE
-[ws-channel] conv:conv-{jobId}-... from:0xSeller... type:TASK_REPLY      ← seller asks for details
-[ws-channel] dispatch 完成 (replies=1 mode=sub)                           ← agent sends task details
-[ws-channel] conv:conv-{jobId}-... from:0xSeller... type:TASK_REPLY      ← seller quotes price
-[ws-channel] dispatch 完成 (replies=1 mode=sub)                           ← agent accepts/negotiates
-[ws-channel] conv:conv-{jobId}-... from:0xSeller... type:TASK_APPLY
-[ws-channel] conv:conv-{jobId}-... from:0xMockChain... type:TASK_APPLIED  mode:main
-[ws-channel] conv:conv-{jobId}-... from:0xMockChain... type:TASK_ACCEPTED mode:main
-[ws-channel] TASK_ACCEPTED jobId=... → 向 main session 推送接单通知
-[ws-channel] conv:conv-{jobId}-... from:0xSeller... type:TASK_DELIVER
-[ws-channel] conv:conv-{jobId}-... from:0xMockChain... type:TASK_SUBMITTED
-```
-
-**Key invariant**: all messages must be on the same `conv-{jobId}-buyer-123-mock-seller-agent-001`. Two different conv_ids = regression.
 
 ### Known Issues / Notes
 

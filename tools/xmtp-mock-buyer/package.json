@@ -1,0 +1,20 @@
+{
+  "name": "@okx/xmtp-mock-buyer",
+  "version": "0.1.0",
+  "description": "Minimal XMTP buyer CLI — connect to XMTP dev network, send/receive plain-text messages. For local E2E against openclaw XMTP channel.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "start": "npm run build && node dist/index.js",
+    "ui": "npm run build && ROLE=buyer node dist/index-ui.js"
+  },
+  "dependencies": {
+    "@xmtp/agent-sdk": "^1.0.0",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
+  }
+}

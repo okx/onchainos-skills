@@ -2,9 +2,10 @@
  * Mock API Server — TypeScript port of mock_api.rs
  * Port: 9001  Dashboard: http://127.0.0.1:9001
  */
-import http from "node:http";
-import fs   from "node:fs";
-import path from "node:path";
+import http   from "node:http";
+import https  from "node:https";
+import fs     from "node:fs";
+import path   from "node:path";
 import crypto from "node:crypto";
 import { WebSocket } from "ws";
 
@@ -64,6 +65,75 @@ const disputes = new Map<string, Dispute>();
 // ── Persistence ───────────────────────────────────────────────────────────────
 const PERSIST_PATH = process.env.MOCK_API_DB ??
   path.join(path.dirname(new URL(import.meta.url).pathname), "mock-tasks.json");
+
+// ── Static data fixtures (identity APIs) ─────────────────────────────────────
+// 请求时重新读盘，支持热改 JSON 不用重启。放在 ../data/ 便于单独维护。
+const DATA_DIR = process.env.MOCK_DATA_DIR ??
+  path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "data");
+function loadJsonFixture<T>(filename: string, fallback: T): T {
+  try {
+    const fp = path.join(DATA_DIR, filename);
+    return JSON.parse(fs.readFileSync(fp, "utf8")) as T;
+  } catch (e) {
+    console.error(`[mock-api] 读取 ${filename} 失败:`, (e as Error).message);
+    return fallback;
+  }
+}
+
+// ── Upstream proxy（没命中 mock 路由的请求透传给真实后端）─────────────────────
+// 通过 MOCK_PROXY_UPSTREAM 环境变量覆盖。默认打到 forked-walletmain test env。
+// 适用于：auth/login, auth/refresh, wallet/balance 等"真实就好"的接口。
+// 设成空字符串（MOCK_PROXY_UPSTREAM=）就退回到纯 mock（未匹配 → 404）。
+const UPSTREAM_URL = process.env.MOCK_PROXY_UPSTREAM ??
+  "http://okx-defi-walletmain-api.forked-walletmain-swim.swim.env";
+
+function proxyToUpstream(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  originalPath: string,
+  urlSearch: string,
+): void {
+  if (!UPSTREAM_URL) {
+    res.writeHead(404); res.end("not found"); return;
+  }
+  let up: URL;
+  try { up = new URL(UPSTREAM_URL); }
+  catch {
+    console.error(`[proxy] invalid MOCK_PROXY_UPSTREAM: ${UPSTREAM_URL}`);
+    res.writeHead(502); res.end("bad upstream config"); return;
+  }
+  const lib = up.protocol === "https:" ? https : http;
+  const forwardHeaders = { ...req.headers, host: up.host };
+  // Host 要改成 upstream 的，不然后端可能按 127.0.0.1 路由/鉴权
+  const opts: http.RequestOptions = {
+    protocol: up.protocol,
+    hostname: up.hostname,
+    port: up.port || (up.protocol === "https:" ? 443 : 80),
+    method: req.method,
+    path: originalPath + (urlSearch || ""),
+    headers: forwardHeaders,
+  };
+  console.log(`[proxy] ${req.method} ${originalPath}${urlSearch || ""} → ${up.host}`);
+  const upReq = lib.request(opts, (upRes) => {
+    res.writeHead(upRes.statusCode ?? 502, upRes.headers);
+    upRes.pipe(res);
+  });
+  upReq.on("error", (e: Error) => {
+    console.error(`[proxy] upstream error: ${e.message}`);
+    if (!res.headersSent) {
+      res.writeHead(502, { "Content-Type": "application/json" });
+    }
+    res.end(JSON.stringify({ code: -1, msg: `upstream unreachable: ${e.message}` }));
+  });
+  const raw = (req as any)._rawBody as Buffer | undefined;
+  if (raw && raw.length > 0) {
+    upReq.end(raw);
+  } else if (req.method === "POST" || req.method === "PUT") {
+    upReq.end(); // 空 body 也要显式 end
+  } else {
+    upReq.end();
+  }
+}
 
 function saveTasks() {
   try {
@@ -514,6 +584,36 @@ const server = http.createServer(async (req, res) => {
     const limit = Math.min(Number(url.searchParams.get("limit") ?? 100), MAX_LOGS);
     const filtered = kind ? eventLogs.filter(e => e.kind === kind) : eventLogs;
     sendOk(res, { logs: filtered.slice(0, limit) }); return;
+  }
+
+  // ── Identity APIs (priapi/v5/wallet/agentic/*) ─────────────────────────────
+  // 其他 priapi/v5/wallet/agentic/* 路由（auth/init、auth/verify、auth/refresh 等）
+  // 没命中 mock 则由末尾的 proxyToUpstream() 透传到真实后端。
+  // 对应 cli/src/commands/agent_commerce/identity/queries.rs 的 get() 入口
+  // GET /priapi/v5/wallet/agentic/agent/agent-list
+  //   query: chainIndex (忽略) / agentIdList="209,213" (逗号分隔) / page / pageSize
+  //   返回 {code:0, data:[{list, page, pageSize, total}]} —— 外层数组是后端真实格式
+  if (method === "GET" && path_ === "/priapi/v5/wallet/agentic/agent/agent-list") {
+    const agentIdListRaw = url.searchParams.get("agentIdList") ?? "";
+    const page = Math.max(1, Number(url.searchParams.get("page") ?? 1) || 1);
+    const pageSize = Math.max(1, Number(url.searchParams.get("pageSize") ?? 20) || 20);
+
+    const agents = loadJsonFixture<any[]>("agents.json", []);
+    let filtered = agents;
+    if (agentIdListRaw) {
+      const wanted = new Set(
+        agentIdListRaw.split(",").map(s => s.trim()).filter(Boolean),
+      );
+      filtered = agents.filter(a => wanted.has(String(a.agentId)));
+    }
+    const total = filtered.length;
+    const start = (page - 1) * pageSize;
+    const list = filtered.slice(start, start + pageSize);
+    console.log(
+      `[mock-api] agent-list: agentIdList="${agentIdListRaw}" page=${page} pageSize=${pageSize} → ${list.length}/${total}`,
+    );
+    sendOk(res, [{ list, page, pageSize, total }]);
+    return;
   }
 
   // ── Static routes ──────────────────────────────────────────────────────────
@@ -1179,7 +1279,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  res.writeHead(404); res.end("not found");
+  // 未匹配任何 mock 路由 —— 转发到真实后端（UPSTREAM_URL）
+  proxyToUpstream(req, res, originalPath, url.search);
 });
 
 // ── Seed tasks ────────────────────────────────────────────────────────────────
