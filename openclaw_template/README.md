@@ -7,7 +7,7 @@ A general-purpose [OpenClaw](https://openclaw.ai) agent template powered by [OKX
 ## Quick start
 
 1. Clone or fork this template
-2. Run `bash setup.sh` — installs the `onchainos` CLI and fetches skills + workflows from GitHub
+2. Run `bash setup.sh` — installs the `onchainos` CLI and fetches skills + workflows from the source repo
 3. Start an OpenClaw session — the agent is ready
 
 All read-only research works immediately with no login. To enable trading, run `onchainos wallet login` inside a session.
@@ -37,7 +37,7 @@ All read-only research works immediately with no login. To enable trading, run `
 
 ```
 openclaw_template/
-├── setup.sh                      # Installs onchainos CLI + fetches skills & workflows from GitHub
+├── setup.sh                      # Installs onchainos CLI + fetches skills & workflows from the source repo
 ├── README.md                     # This file
 ├── SECURITY.md
 ├── pinata/                       # Pinata-specific files
@@ -57,7 +57,7 @@ openclaw_template/
         └── scan-bot-example.py   # Sample Python script demonstrating onchainos CLI scripting
 ```
 
-Skills and workflows are fetched from [okx/onchainos-skills](https://github.com/okx/onchainos-skills) at deploy time — always the latest version.
+Skills and workflows are fetched from the onchainos-skills source repo at deploy time — always the latest version.
 
 ## Platform-specific deployment
 

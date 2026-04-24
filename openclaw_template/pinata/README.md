@@ -62,7 +62,7 @@ Follow the prompts (email + OTP). Once logged in, say "Buy 0.1 SOL of BONK" — 
 
 ```
 ├── manifest.json                 # Pinata template manifest
-├── setup.sh                      # Installs onchainos CLI + fetches skills & workflows from GitHub
+├── setup.sh                      # Installs onchainos CLI + fetches skills & workflows from the source repo
 ├── README.md
 ├── SECURITY.md
 └── workspace/
@@ -79,7 +79,7 @@ Follow the prompts (email + OTP). Once logged in, say "Buy 0.1 SOL of BONK" — 
         └── scan-bot-example.py   # Sample Python script demonstrating onchainos CLI scripting
 ```
 
-Skills and workflows are fetched from [okx/onchainos-skills](https://github.com/okx/onchainos-skills) at deploy time by `setup.sh` — always the latest version.
+Skills and workflows are fetched from the onchainos-skills source repo at deploy time by `setup.sh` — always the latest version.
 
 ## Skills
 

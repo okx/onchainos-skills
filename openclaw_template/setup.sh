@@ -1,7 +1,7 @@
 #!/bin/bash
 # onchainos — Pinata template build script
 # 1. Installs the onchainos CLI binary
-# 2. Downloads the latest skills + workflows from GitHub (git preferred, curl fallback)
+# 2. Downloads the latest skills + workflows from the source repo (git preferred, curl fallback)
 # 3. Symlinks skills into OpenClaw's discovery path
 # 4. Symlinks workflows into the workspace
 # Runs once during the build phase; no action needed from the user.
@@ -19,7 +19,7 @@ export PATH="$HOME/.local/bin:$PATH"
 echo "[onchainos] Verifying installation..."
 onchainos --version
 
-# ── 2. Download latest skills + workflows from GitHub ────────────────────────
+# ── 2. Download latest skills + workflows from source repo ────────────────────────
 # Single source of truth: okx/onchainos-skills contains skills/ and workflows/
 # Prefers git (supports incremental updates) with curl+tar fallback.
 
