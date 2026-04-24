@@ -129,10 +129,10 @@ mod tests {
         // `CARGO_MANIFEST_DIR` points at `cli/`, so the docs live one level up.
         let names = [
             "token-research",
-            "smart-money",
-            "new-tokens",
+            "smart-money-signals",
+            "new-token-screening",
             "wallet-analysis",
-            "portfolio",
+            "portfolio-check",
         ];
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
         for name in names {
