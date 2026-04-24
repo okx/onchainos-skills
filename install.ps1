@@ -197,7 +197,7 @@ function Sync-Workflows {
 
     $workflowsDir = Join-Path $CACHE_DIR "workflows"
     $workflowsUrl = "https://github.com/${REPO}/releases/download/${Tag}/workflows.tar.gz"
-    $checksumsUrl = "https://github.com/${REPO}/releases/download/${Tag}/checksums.txt"
+    $checksumsUrl = "https://github.com/${REPO}/releases/download/${Tag}/workflows-checksums.txt"
 
     Write-Host "Syncing workflows (${Tag})..."
 
