@@ -459,13 +459,11 @@ impl WalletApiClient {
             .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
             .unwrap_or_else(|| crate::client::DEFAULT_BASE_URL.to_string());
 
-        let custom = std::env::var("OKX_BASE_URL").is_ok()
-            || option_env!("OKX_BASE_URL").is_some();
+        let custom = std::env::var("OKX_BASE_URL").is_ok() || option_env!("OKX_BASE_URL").is_some();
         let mut doh = DohManager::new("web3.okx.com", &base_url, custom);
         doh.prepare();
 
-        let mut builder = Client::builder()
-            .timeout(std::time::Duration::from_secs(30));
+        let mut builder = Client::builder().timeout(std::time::Duration::from_secs(30));
         if let Some((host, addr)) = doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
@@ -481,8 +479,7 @@ impl WalletApiClient {
     }
 
     fn rebuild_http_client(&mut self) -> Result<()> {
-        let mut builder = Client::builder()
-            .timeout(std::time::Duration::from_secs(30));
+        let mut builder = Client::builder().timeout(std::time::Duration::from_secs(30));
         if let Some((host, addr)) = self.doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
@@ -494,7 +491,8 @@ impl WalletApiClient {
     }
 
     fn effective_base_url(&self) -> String {
-        self.doh.proxy_base_url()
+        self.doh
+            .proxy_base_url()
             .unwrap_or_else(|| self.base_url.clone())
     }
 
@@ -529,7 +527,8 @@ impl WalletApiClient {
                         self.rebuild_http_client()?;
                         return self.post_public(path, body).await;
                     }
-                    return Err(e).context("Network unavailable — check your connection and try again");
+                    return Err(e)
+                        .context("Network unavailable — check your connection and try again");
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
@@ -539,7 +538,12 @@ impl WalletApiClient {
     }
 
     /// Retries once after DoH failover.
-    pub async fn post_authed(&mut self, path: &str, access_token: &str, body: &Value) -> Result<Value> {
+    pub async fn post_authed(
+        &mut self,
+        path: &str,
+        access_token: &str,
+        body: &Value,
+    ) -> Result<Value> {
         self.post_authed_with_headers(path, access_token, body, None)
             .await
     }
@@ -584,9 +588,12 @@ impl WalletApiClient {
                 Err(e) if e.is_connect() || e.is_timeout() => {
                     if self.doh.handle_failure().await {
                         self.rebuild_http_client()?;
-                        return self.post_authed_with_headers(path, access_token, body, extra_headers).await;
+                        return self
+                            .post_authed_with_headers(path, access_token, body, extra_headers)
+                            .await;
                     }
-                    return Err(e).context("Network unavailable — check your connection and try again");
+                    return Err(e)
+                        .context("Network unavailable — check your connection and try again");
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
@@ -686,7 +693,12 @@ impl WalletApiClient {
         Box::pin(async move {
             let query_string = build_query_string(query);
             let effective = self.effective_base_url();
-            let url = format!("{}{}{}", effective.trim_end_matches('/'), path, query_string);
+            let url = format!(
+                "{}{}{}",
+                effective.trim_end_matches('/'),
+                path,
+                query_string
+            );
             let resp = match self
                 .http
                 .get(&url)
@@ -700,7 +712,8 @@ impl WalletApiClient {
                         self.rebuild_http_client()?;
                         return self.get_authed(path, access_token, query).await;
                     }
-                    return Err(e).context("Network unavailable — check your connection and try again");
+                    return Err(e)
+                        .context("Network unavailable — check your connection and try again");
                 }
                 Err(e) => return Err(e).context("request failed"),
             };

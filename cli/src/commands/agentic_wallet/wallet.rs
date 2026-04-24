@@ -196,6 +196,12 @@ pub enum WalletCommand {
         /// Enable Gas Station (first-time activation or re-enable, sets gasTokenAddress as default)
         #[arg(long, default_value_t = false)]
         enable_gas_station: bool,
+        /// Transaction category for broadcast (agentBizType), e.g. "dex", "defi", "dapp"
+        #[arg(long)]
+        biz_type: Option<String>,
+        /// Strategy / skill name used for this call (agentSkillName)
+        #[arg(long)]
+        strategy: Option<String>,
     },
     /// Gas Station management commands
     GasStation {
@@ -436,6 +442,8 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             gas_token_address,
             relayer_id,
             enable_gas_station,
+            biz_type,
+            strategy,
         } => {
             super::transfer::cmd_contract_call(
                 &to,
@@ -453,6 +461,8 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                 gas_token_address.as_deref(),
                 relayer_id.as_deref(),
                 enable_gas_station,
+                biz_type.as_deref(),
+                strategy.as_deref(),
             )
             .await
         }

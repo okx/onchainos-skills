@@ -383,8 +383,7 @@ impl ApiClient {
     }
 
     fn rebuild_http_client(&mut self) -> Result<()> {
-        let mut builder = Client::builder()
-            .timeout(std::time::Duration::from_secs(10));
+        let mut builder = Client::builder().timeout(std::time::Duration::from_secs(10));
         if let Some((host, addr)) = self.doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
@@ -396,7 +395,8 @@ impl ApiClient {
     }
 
     fn effective_base_url(&self) -> String {
-        self.doh.proxy_base_url()
+        self.doh
+            .proxy_base_url()
             .unwrap_or_else(|| self.base_url.clone())
     }
 
@@ -412,8 +412,7 @@ impl ApiClient {
             .collect();
 
         let effective = self.effective_base_url();
-        let mut url =
-            reqwest::Url::parse(&format!("{}{}", effective.trim_end_matches('/'), path))?;
+        let mut url = reqwest::Url::parse(&format!("{}{}", effective.trim_end_matches('/'), path))?;
 
         if !filtered.is_empty() {
             url.query_pairs_mut().extend_pairs(filtered.iter().copied());
@@ -468,7 +467,8 @@ impl ApiClient {
                         // Rebuild the entire request with potentially new URL
                         return self.get_with_headers(path, query, extra_headers).await;
                     }
-                    return Err(e).context("Network unavailable — check your connection and try again");
+                    return Err(e)
+                        .context("Network unavailable — check your connection and try again");
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
@@ -519,7 +519,8 @@ impl ApiClient {
                         self.rebuild_http_client()?;
                         return self.post_with_headers(path, body, extra_headers).await;
                     }
-                    return Err(e).context("Network unavailable — check your connection and try again");
+                    return Err(e)
+                        .context("Network unavailable — check your connection and try again");
                 }
                 Err(e) => return Err(e).context("request failed"),
             };
