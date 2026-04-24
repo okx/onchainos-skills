@@ -490,19 +490,19 @@ pub async fn sign_payment_local_with_preference(
     }
 
     // EIP-712 domain is on the selected entry's `extra`, not in ResolvedEntry.
-    let domain_name = entry["extra"]["name"].as_str().ok_or_else(|| {
-        anyhow!("missing 'extra.name' (EIP-712 domain name) in accepts entry")
-    })?;
+    let domain_name = entry["extra"]["name"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing 'extra.name' (EIP-712 domain name) in accepts entry"))?;
     let domain_version = entry["extra"]["version"].as_str().unwrap_or("2");
 
-    // `Zeroizing<String>` wipes the raw hex key on drop so the `String` heap
-    // allocation doesn't outlive this function. `pk_bytes` is zeroized
-    // explicitly below once the signer has copied what it needs.
+    // `Zeroizing<String>` / `Zeroizing<Vec<u8>>` wipe the raw key material
+    // on drop, covering every exit path — including the `bail!` below if
+    // the decoded key is the wrong length.
     let pk_hex = Zeroizing::new(read_private_key()?);
     let pk_trimmed = pk_hex.trim();
     let pk_clean = pk_trimmed.strip_prefix("0x").unwrap_or(pk_trimmed);
-    let mut pk_bytes =
-        hex::decode(pk_clean).context("EVM_PRIVATE_KEY is not valid hex")?;
+    let pk_bytes =
+        Zeroizing::new(hex::decode(pk_clean).context("EVM_PRIVATE_KEY is not valid hex")?);
     if pk_bytes.len() != 32 {
         bail!(
             "EVM_PRIVATE_KEY must be 32 bytes (64 hex chars), got {}",
@@ -528,7 +528,9 @@ pub async fn sign_payment_local_with_preference(
     };
 
     let auth = crate::crypto::TransferWithAuthorization {
-        from: from.parse().context("derived address is not valid EVM hex")?,
+        from: from
+            .parse()
+            .context("derived address is not valid EVM hex")?,
         to: params
             .pay_to
             .parse()
@@ -550,7 +552,7 @@ pub async fn sign_payment_local_with_preference(
     };
 
     let sig_b64 = crate::crypto::eip3009_sign(&auth, &domain, &pk_bytes)?;
-    pk_bytes.zeroize();
+    // pk_bytes drops here (Zeroizing wipes the Vec<u8> contents).
 
     // Match TEE exact path output: 0x-prefixed hex, 65 bytes.
     let sig_bytes = B64
@@ -602,8 +604,7 @@ pub async fn sign_payment_auto(
         // signing modes. `sign_payment_local_with_preference` handles
         // the aggr_deferred-only fallback so a default that can't be
         // signed locally doesn't block the request.
-        let preferred =
-            crate::payment_cache::PaymentCache::load().and_then(|c| c.default_asset);
+        let preferred = crate::payment_cache::PaymentCache::load().and_then(|c| c.default_asset);
         sign_payment_local_with_preference(accepts, tier, preferred.as_ref()).await
     }
 }
@@ -943,8 +944,7 @@ mod tests {
         f();
     }
 
-    const TEST_PK: &str =
-        "0x1111111111111111111111111111111111111111111111111111111111111111";
+    const TEST_PK: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
     // secp256k1 address derived from TEST_PK (lowercased hex, 0x-prefixed)
     const TEST_PK_ADDR: &str = "0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a";
 
@@ -991,9 +991,18 @@ mod tests {
         let mut buf = Vec::new();
         write_local_signing_warning(&mut buf);
         let text = String::from_utf8(buf).unwrap();
-        assert!(text.contains("EVM_PRIVATE_KEY"), "missing key env var name: {text}");
-        assert!(text.contains("NOT protected by TEE"), "missing TEE disclaimer: {text}");
-        assert!(text.contains("wallet login"), "missing recovery hint: {text}");
+        assert!(
+            text.contains("EVM_PRIVATE_KEY"),
+            "missing key env var name: {text}"
+        );
+        assert!(
+            text.contains("NOT protected by TEE"),
+            "missing TEE disclaimer: {text}"
+        );
+        assert!(
+            text.contains("wallet login"),
+            "missing recovery hint: {text}"
+        );
     }
 
     #[tokio::test]
@@ -1046,7 +1055,10 @@ mod tests {
             msg.contains("aggr_deferred") || msg.contains("exact"),
             "unexpected error message: {msg}"
         );
-        assert!(msg.contains("wallet login"), "error should suggest login: {msg}");
+        assert!(
+            msg.contains("wallet login"),
+            "error should suggest login: {msg}"
+        );
     }
 
     #[tokio::test]
@@ -1081,10 +1093,9 @@ mod tests {
         };
 
         std::env::set_var("EVM_PRIVATE_KEY", TEST_PK);
-        let (_proof, entry) =
-            sign_payment_local_with_preference(&accepts, None, Some(&preferred))
-                .await
-                .unwrap();
+        let (_proof, entry) = sign_payment_local_with_preference(&accepts, None, Some(&preferred))
+            .await
+            .unwrap();
         std::env::remove_var("EVM_PRIVATE_KEY");
         assert_eq!(
             entry["asset"].as_str(),
@@ -1128,10 +1139,9 @@ mod tests {
         };
 
         std::env::set_var("EVM_PRIVATE_KEY", TEST_PK);
-        let (_proof, entry) =
-            sign_payment_local_with_preference(&accepts, None, Some(&preferred))
-                .await
-                .unwrap();
+        let (_proof, entry) = sign_payment_local_with_preference(&accepts, None, Some(&preferred))
+            .await
+            .unwrap();
         std::env::remove_var("EVM_PRIVATE_KEY");
         assert_eq!(entry["scheme"].as_str(), Some("exact"));
         assert_eq!(

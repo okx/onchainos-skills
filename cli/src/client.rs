@@ -495,8 +495,7 @@ impl ApiClient {
     }
 
     fn rebuild_http_client(&mut self) -> Result<()> {
-        let mut builder = Client::builder()
-            .timeout(std::time::Duration::from_secs(10));
+        let mut builder = Client::builder().timeout(std::time::Duration::from_secs(10));
         if let Some((host, addr)) = self.doh.resolve_override() {
             builder = builder.resolve(&host, addr);
         }
@@ -508,7 +507,8 @@ impl ApiClient {
     }
 
     fn effective_base_url(&self) -> String {
-        self.doh.proxy_base_url()
+        self.doh
+            .proxy_base_url()
             .unwrap_or_else(|| self.base_url.clone())
     }
 
@@ -524,8 +524,7 @@ impl ApiClient {
             .collect();
 
         let effective = self.effective_base_url();
-        let mut url =
-            reqwest::Url::parse(&format!("{}{}", effective.trim_end_matches('/'), path))?;
+        let mut url = reqwest::Url::parse(&format!("{}{}", effective.trim_end_matches('/'), path))?;
 
         if !filtered.is_empty() {
             url.query_pairs_mut().extend_pairs(filtered.iter().copied());
@@ -703,6 +702,13 @@ impl ApiClient {
 
         // Drop transient dispatch state from the previous request so the
         // 402 retry wrapper only sees flips emitted *this* response.
+        //
+        // Safe to clear unconditionally at the top, including the inlined
+        // `/config` fetch path: `pending_over_quota_tiers` is *only*
+        // populated by `dispatch_notifications`, which runs strictly
+        // after this point and is skipped when `path == CONFIG_PATH`
+        // (see `if path != CONFIG_PATH` below). So the set cannot carry
+        // `/config`-attributed entries forward.
         self.payment_state().pending_over_quota_tiers.clear();
 
         // Read charging-state + V2 PAYMENT-REQUIRED headers before consuming
@@ -959,15 +965,24 @@ impl ApiClient {
     /// needed. Cache file is consulted on the way in to restore the last
     /// known charging flags and (if fresh) the endpoint→tier map.
     async fn ensure_payment_config(&mut self) {
-        // Re-entrancy guard. `handle_response` → `ensure_payment_config`
-        // → `do_get_request(/config)` → `handle_response` loops back
-        // here; the `CONFIG_PATH` short-circuit in `handle_response`
-        // plus the eager `config_loaded = true` flip below should
-        // prevent re-entry, but assert it explicitly in debug builds so
-        // future edits don't silently break the invariant.
+        // The `if config_loaded { return }` guard below is the load-bearing
+        // idempotency guarantee — safe for any repeat call regardless of
+        // path.
+        //
+        // The `debug_assert!` is a narrower developer-mode tripwire for
+        // the *charging-path re-entry* scenario: once we reach the
+        // fetch, we set `config_loaded = true` eagerly (line ~1002)
+        // *before* calling `do_get_request(CONFIG_PATH)`, which recurses
+        // back through `handle_response` → (today, short-circuited by
+        // `CONFIG_PATH` guard) → `ensure_payment_config`. If a future
+        // edit removes that short-circuit, the re-entered call would
+        // hit this assert instead of silently double-fetching. In the
+        // non-charging early-return path we never set the flag and
+        // never recurse, so the assert is trivially true there.
         debug_assert!(
             !self.payment_state().config_loaded,
-            "ensure_payment_config invoked re-entrantly"
+            "ensure_payment_config re-entered after eager config_loaded flip — \
+             the CONFIG_PATH short-circuit in handle_response was likely removed"
         );
         if self.payment_state().config_loaded {
             return;
@@ -1084,8 +1099,8 @@ impl ApiClient {
         };
         let basic = Self::extract_header_flag(raw, "Basic");
         let premium = Self::extract_header_flag(raw, "Premium");
-        let user_type = Self::extract_header_value(raw, "UserType")
-            .and_then(UserType::from_header_value);
+        let user_type =
+            Self::extract_header_value(raw, "UserType").and_then(UserType::from_header_value);
 
         let changed = {
             let mut state = self.payment_state();
@@ -1144,6 +1159,14 @@ impl ApiClient {
 
     /// Full URL for `path`, used as the `resource` field in the V2 payment
     /// header payload.
+    ///
+    /// Intentionally uses `self.base_url` (the canonical public origin)
+    /// rather than `effective_base_url()`. Under DoH failover the client
+    /// actually hits a proxy host, but `resource` is the *logical*
+    /// identifier the server signs against — it must match the public
+    /// URL regardless of which proxy the request transited. Using the
+    /// proxy URL here would make signatures invalid whenever DoH kicks
+    /// in.
     fn resource_url(&self, path: &str) -> String {
         format!("{}{}", self.base_url.trim_end_matches('/'), path)
     }
@@ -1286,6 +1309,7 @@ impl ApiClient {
             NotifyInput {
                 user_type: state.user_type,
                 grace_expires_at: payment_notify::grace_expires_at(),
+                now: payment_cache::now_secs() as i64,
                 basic_state: state.basic_state,
                 premium_state: state.premium_state,
                 intro_shown: state.intro_shown,
@@ -1995,7 +2019,9 @@ mod tests {
         // State must NOT auto-advance — cancel re-prompts next request.
         let state = client.payment_state();
         assert_eq!(state.premium_state, TierState::ChargingUnconfirmed);
-        assert!(state.pending_over_quota_tiers.contains(&PaymentTier::Premium));
+        assert!(state
+            .pending_over_quota_tiers
+            .contains(&PaymentTier::Premium));
         drop(state);
 
         let drained = crate::payment_notify::drain_events();
@@ -2011,9 +2037,7 @@ mod tests {
         );
         // Saved default is USDG → that row carries isDefault:true; the
         // non-matching USDT row is isDefault:false.
-        let (usdg, usdt): (Vec<_>, Vec<_>) = payment
-            .iter()
-            .partition(|e| e["asset"] == "0xUSDG");
+        let (usdg, usdt): (Vec<_>, Vec<_>) = payment.iter().partition(|e| e["asset"] == "0xUSDG");
         assert_eq!(usdg.len(), 1);
         assert_eq!(usdt.len(), 1);
         assert_eq!(usdg[0]["isDefault"], true);
@@ -2025,7 +2049,8 @@ mod tests {
     #[test]
     fn dispatch_with_default_still_emits_intro_event() {
         let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
-        let _dir = seed_cache_with_default("client_dispatch_intro_with_default", Some(sample_default()));
+        let _dir =
+            seed_cache_with_default("client_dispatch_intro_with_default", Some(sample_default()));
         crate::payment_notify::drain_events();
 
         set_test_credentials();

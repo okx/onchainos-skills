@@ -188,6 +188,12 @@ pub enum Event {
 pub struct NotifyInput {
     pub user_type: Option<UserType>,
     pub grace_expires_at: i64,
+    /// Unix seconds "now" passed in by the caller. Kept on the input
+    /// (rather than read via `now_secs()` inside `compute_events`) so
+    /// the function remains a pure decision of its inputs — tests can
+    /// set `now` deterministically alongside `grace_expires_at`, and
+    /// the clock dependency is visible at the construction site.
+    pub now: i64,
     pub basic_state: TierState,
     pub premium_state: TierState,
     pub intro_shown: bool,
@@ -246,12 +252,12 @@ pub fn compute_events(input: &NotifyInput) -> Vec<(Event, Flag)> {
     // suspenders case where the dedupe cache has been deleted *after*
     // the grace window closed: without it, a Free/Free snapshot from a
     // post-grace Old user would replay `OldUserGrace` instead of
-    // `OldUserPostGraceIntro`.
-    let now = crate::payment_cache::now_secs() as i64;
+    // `OldUserPostGraceIntro`. `input.now` is caller-provided so this
+    // function stays pure.
     let in_grace = matches!(user_type, UserType::Old)
         && input.basic_state == TierState::Free
         && input.premium_state == TierState::Free
-        && now < input.grace_expires_at;
+        && input.now < input.grace_expires_at;
 
     if in_grace {
         if !input.grace_shown {
@@ -290,9 +296,7 @@ pub fn compute_events(input: &NotifyInput) -> Vec<(Event, Flag)> {
         let payment = input
             .accepts
             .as_ref()
-            .map(|a| {
-                payment_options_for_tier(a, tier, input.preferred_asset.as_ref())
-            })
+            .map(|a| payment_options_for_tier(a, tier, input.preferred_asset.as_ref()))
             .unwrap_or_default();
         match user_type {
             UserType::New => Event::NewUserOverQuota { tier, payment },
@@ -437,16 +441,18 @@ fn display_network(caip2: &str) -> String {
 mod tests {
     use super::*;
 
+    // Fixed "now" used by every `base()` test — tests are stable
+    // regardless of wall clock. `grace_expires_at` defaults to
+    // `TEST_NOW + 1y` so the "in grace" path is active by default;
+    // tests that exercise the post-grace path override both fields
+    // with their own relative arithmetic.
+    const TEST_NOW: i64 = 1_700_000_000; // 2023-11-14T22:13:20Z — arbitrary fixed point
+
     fn base() -> NotifyInput {
-        // Use a far-future cutoff so unit tests don't implicitly become
-        // time-bombs once the real 2026-05-31 grace window passes. Tests
-        // that specifically verify the production constant override this
-        // field explicitly (`grace_event_serializes_grace_expires_at_as_rfc3339`,
-        // `grace_expires_at_is_2026_05_31_utc`).
-        let far_future = crate::payment_cache::now_secs() as i64 + 365 * 24 * 3600;
         NotifyInput {
             user_type: None,
-            grace_expires_at: far_future,
+            grace_expires_at: TEST_NOW + 365 * 24 * 3600,
+            now: TEST_NOW,
             basic_state: TierState::Free,
             premium_state: TierState::Free,
             intro_shown: false,
@@ -534,7 +540,7 @@ mod tests {
         // fallthrough so the user sees `OldUserPostGraceIntro` instead.
         let mut i = base();
         i.user_type = Some(UserType::Old);
-        i.grace_expires_at = crate::payment_cache::now_secs() as i64 - 24 * 3600;
+        i.grace_expires_at = i.now - 24 * 3600;
         let events = compute_events(&i);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1, Flag::Intro);
@@ -558,7 +564,10 @@ mod tests {
         assert_eq!(events[1].1, Flag::BasicOver);
         assert!(matches!(
             events[1].0,
-            Event::OldUserPostGraceOverQuota { tier: PaymentTier::Basic, .. }
+            Event::OldUserPostGraceOverQuota {
+                tier: PaymentTier::Basic,
+                ..
+            }
         ));
     }
 
@@ -588,7 +597,10 @@ mod tests {
         assert_eq!(events[0].1, Flag::BasicOver);
         assert!(matches!(
             events[0].0,
-            Event::NewUserOverQuota { tier: PaymentTier::Basic, .. }
+            Event::NewUserOverQuota {
+                tier: PaymentTier::Basic,
+                ..
+            }
         ));
     }
 
@@ -653,7 +665,10 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(matches!(
             events[0].0,
-            Event::OldUserPostGraceOverQuota { tier: PaymentTier::Basic, .. }
+            Event::OldUserPostGraceOverQuota {
+                tier: PaymentTier::Basic,
+                ..
+            }
         ));
     }
 
@@ -679,7 +694,10 @@ mod tests {
         assert_eq!(events[0].1, Flag::PremiumOver);
         assert!(matches!(
             events[0].0,
-            Event::NewUserOverQuota { tier: PaymentTier::Premium, .. }
+            Event::NewUserOverQuota {
+                tier: PaymentTier::Premium,
+                ..
+            }
         ));
     }
 
@@ -863,7 +881,10 @@ mod tests {
         assert_eq!(amount_minimal_to_display("1000000").unwrap(), "1");
         assert_eq!(amount_minimal_to_display("0").unwrap(), "0");
         assert_eq!(amount_minimal_to_display("10").unwrap(), "0.00001");
-        assert_eq!(amount_minimal_to_display("123456789").unwrap(), "123.456789");
+        assert_eq!(
+            amount_minimal_to_display("123456789").unwrap(),
+            "123.456789"
+        );
         assert!(amount_minimal_to_display("").is_none());
         assert!(amount_minimal_to_display("abc").is_none());
         assert!(amount_minimal_to_display("-100").is_none());
