@@ -965,6 +965,17 @@ impl ApiClient {
     /// needed. Cache file is consulted on the way in to restore the last
     /// known charging flags and (if fresh) the endpoint→tier map.
     async fn ensure_payment_config(&mut self) {
+        // The `if config_loaded { return }` guard below is the
+        // load-bearing idempotency guarantee — it covers both the
+        // warm-cache second call (`restore_from_cache` flips
+        // `config_loaded = true`) and the charging-path re-entry
+        // scenario (we set `config_loaded = true` eagerly before
+        // `do_get_request(CONFIG_PATH)`, which recurses back through
+        // `handle_response` → short-circuit on `CONFIG_PATH` →
+        // `ensure_payment_config`). If a future edit removes the
+        // `CONFIG_PATH` short-circuit in `handle_response`, the
+        // re-entered call still lands on this guard and returns
+        // harmlessly instead of double-fetching.
         if self.payment_state().config_loaded {
             return;
         }
