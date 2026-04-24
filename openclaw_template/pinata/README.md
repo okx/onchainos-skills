@@ -104,7 +104,6 @@ Skills and workflows are fetched from [okx/onchainos-skills](https://github.com/
 
 - [OKX OnchainOS](https://web3.okx.com/onchainos)
 - [Developer Portal](https://web3.okx.com/onchain-os/dev-portal)
-- [GitHub](https://github.com/okx/onchainos-skills)
 
 ## License
 

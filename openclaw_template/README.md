@@ -79,7 +79,6 @@ The agent uses built-in sandbox keys by default (rate-limited). For production-g
 
 - [OKX OnchainOS](https://web3.okx.com/onchainos)
 - [Developer Portal](https://web3.okx.com/onchain-os/dev-portal)
-- [Skills & CLI Source](https://github.com/okx/onchainos-skills)
 - [OpenClaw](https://openclaw.ai)
 
 ## License
