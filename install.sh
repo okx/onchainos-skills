@@ -230,47 +230,48 @@ install_binary() {
 sync_workflows() {
   tag="$1"
   workflows_dir="$CACHE_DIR/workflows"
-  workflows_url="https://github.com/${REPO}/archive/refs/tags/${tag}.tar.gz"
+  workflows_url="https://github.com/${REPO}/releases/download/${tag}/workflows.tar.gz"
+  checksums_url="https://github.com/${REPO}/releases/download/${tag}/checksums.txt"
 
   echo "Syncing workflows (${tag})..."
 
   tmpdir=$(mktemp -d)
 
-  # GitHub source archives expand to <reponame>-<version-without-v>/.
-  # Extract the whole archive, then glob for the workflows dir — this is
-  # resilient to repo renames (mirrors install.ps1 behaviour).
-  # Fail soft — workflow sync is non-fatal.
-  if ! curl -sSL --max-time 60 "$workflows_url" -o "$tmpdir/archive.tar.gz"; then
-    echo "Warning: could not download workflows archive (non-fatal)" >&2
+  if ! curl -sSL --max-time 30 "$workflows_url" -o "$tmpdir/workflows.tar.gz"; then
+    echo "Warning: could not download workflows (non-fatal)" >&2
     rm -rf "$tmpdir"
     return 0
   fi
 
-  if ! tar -xzf "$tmpdir/archive.tar.gz" -C "$tmpdir" 2>/dev/null; then
-    echo "Warning: could not extract workflows archive (non-fatal)" >&2
-    rm -rf "$tmpdir"
-    return 0
-  fi
-
-  # Locate the extracted top-level directory via glob (e.g. onchainos-skills-1.0.5).
-  extracted=""
-  for d in "$tmpdir"/*/; do
-    if [ -d "${d}workflows" ]; then
-      extracted="${d%/}"
-      break
+  # Verify checksum
+  if curl -sSL --max-time 10 "$checksums_url" -o "$tmpdir/checksums.txt" 2>/dev/null; then
+    expected_hash=$(grep "workflows.tar.gz" "$tmpdir/checksums.txt" | awk '{print $1}')
+    if [ -n "$expected_hash" ]; then
+      if command -v sha256sum >/dev/null 2>&1; then
+        actual_hash=$(sha256sum "$tmpdir/workflows.tar.gz" | awk '{print $1}')
+      elif command -v shasum >/dev/null 2>&1; then
+        actual_hash=$(shasum -a 256 "$tmpdir/workflows.tar.gz" | awk '{print $1}')
+      fi
+      if [ -n "$actual_hash" ] && [ "$actual_hash" != "$expected_hash" ]; then
+        echo "Warning: workflows checksum mismatch — skipping (non-fatal)" >&2
+        rm -rf "$tmpdir"
+        return 0
+      fi
     fi
-  done
+  fi
 
-  if [ -z "$extracted" ] || [ ! -d "$extracted/workflows" ]; then
-    echo "Warning: no workflows directory found in archive (non-fatal)" >&2
+  if ! tar -xzf "$tmpdir/workflows.tar.gz" -C "$tmpdir" 2>/dev/null; then
+    echo "Warning: could not extract workflows (non-fatal)" >&2
     rm -rf "$tmpdir"
     return 0
   fi
 
-  rm -rf "$workflows_dir"
-  mkdir -p "$CACHE_DIR"
-  mv "$extracted/workflows" "$workflows_dir"
-  echo "Workflows synced to ${workflows_dir}"
+  if [ -d "$tmpdir/workflows" ]; then
+    rm -rf "$workflows_dir"
+    mkdir -p "$CACHE_DIR"
+    mv "$tmpdir/workflows" "$workflows_dir"
+    echo "Workflows synced to ${workflows_dir}"
+  fi
 
   rm -rf "$tmpdir"
 }

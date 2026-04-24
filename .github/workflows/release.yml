@@ -336,8 +336,14 @@ jobs:
         with:
           merge-multiple: true
 
+      - name: Package workflows
+        run: tar -czf workflows.tar.gz workflows/
+
       - name: Generate installer checksums
         run: sha256sum install.sh install.ps1 > installer-checksums.txt
+
+      - name: Add workflows checksum to checksums.txt
+        run: sha256sum workflows.tar.gz >> checksums.txt
 
       - name: List all release artifacts
         run: ls -lh && echo "---" && cat checksums.txt && echo "---" && cat installer-checksums.txt
@@ -352,3 +358,4 @@ jobs:
             ${{ env.BIN_NAME }}-*
             checksums.txt
             installer-checksums.txt
+            workflows.tar.gz

@@ -196,7 +196,8 @@ function Sync-Workflows {
     param([string]$Tag)
 
     $workflowsDir = Join-Path $CACHE_DIR "workflows"
-    $archiveUrl = "https://github.com/${REPO}/archive/refs/tags/${Tag}.zip"
+    $workflowsUrl = "https://github.com/${REPO}/releases/download/${Tag}/workflows.tar.gz"
+    $checksumsUrl = "https://github.com/${REPO}/releases/download/${Tag}/checksums.txt"
 
     Write-Host "Syncing workflows (${Tag})..."
 
@@ -204,23 +205,34 @@ function Sync-Workflows {
     New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
 
     try {
-        $archivePath = Join-Path $tmpDir "archive.zip"
-        Invoke-WebRequest -Uri $archiveUrl -OutFile $archivePath -UseBasicParsing
+        $archivePath = Join-Path $tmpDir "workflows.tar.gz"
+        Invoke-WebRequest -Uri $workflowsUrl -OutFile $archivePath -UseBasicParsing -TimeoutSec 30
 
-        Expand-Archive -Path $archivePath -DestinationPath $tmpDir -Force
-
-        # Find the extracted workflows directory
-        $extracted = Get-ChildItem -Path $tmpDir -Directory | Where-Object { $_.Name -like "onchainos-skills-*" } | Select-Object -First 1
-        if ($extracted) {
-            $srcWorkflows = Join-Path $extracted.FullName "workflows"
-            if (Test-Path $srcWorkflows) {
-                if (Test-Path $workflowsDir) { Remove-Item -Path $workflowsDir -Recurse -Force }
-                if (-not (Test-Path $CACHE_DIR)) { New-Item -ItemType Directory -Path $CACHE_DIR -Force | Out-Null }
-                Move-Item -Path $srcWorkflows -Destination $workflowsDir -Force
-                Write-Host "Workflows synced to ${workflowsDir}"
-            } else {
-                Write-Host "Warning: no workflows directory found in archive (non-fatal)" -ForegroundColor Yellow
+        # Verify checksum
+        try {
+            $checksumsPath = Join-Path $tmpDir "checksums.txt"
+            Invoke-WebRequest -Uri $checksumsUrl -OutFile $checksumsPath -UseBasicParsing -TimeoutSec 10
+            $expectedLine = Get-Content $checksumsPath | Where-Object { $_ -match "workflows.tar.gz" } | Select-Object -First 1
+            if ($expectedLine) {
+                $expectedHash = ($expectedLine -split "\s+")[0]
+                $actualHash = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLower()
+                if ($actualHash -ne $expectedHash) {
+                    Write-Host "Warning: workflows checksum mismatch — skipping (non-fatal)" -ForegroundColor Yellow
+                    return
+                }
             }
+        } catch {
+            # Checksum verification failed — continue anyway
+        }
+
+        tar -xzf $archivePath -C $tmpDir 2>$null
+
+        $srcWorkflows = Join-Path $tmpDir "workflows"
+        if (Test-Path $srcWorkflows) {
+            if (Test-Path $workflowsDir) { Remove-Item -Path $workflowsDir -Recurse -Force }
+            if (-not (Test-Path $CACHE_DIR)) { New-Item -ItemType Directory -Path $CACHE_DIR -Force | Out-Null }
+            Move-Item -Path $srcWorkflows -Destination $workflowsDir -Force
+            Write-Host "Workflows synced to ${workflowsDir}"
         }
     }
     catch {
