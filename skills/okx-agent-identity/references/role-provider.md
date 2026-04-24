@@ -90,22 +90,22 @@ Chinese per-service Q&A (render `接下来是服务[N]：` as a one-line preambl
 
 | Step | 问用户 (label and prompt) | Validation | Maps to (JSON key) |
 |---|---|---|---|
-| Q1 | `Q1：这个服务叫什么名字？` + 4 segments (see `field-specs.md`) | non-empty, ≤ 64 chars | `ServiceName` |
-| Q2 | `Q2：详细介绍一下这项服务。` + 4 segments | non-empty, ≤ 500 chars | `ServiceDescription` |
-| Q3 | `Q3：这项服务是哪种类型？` + numbered-options (`SKILL.md §Choice prompts`):<br>&nbsp;&nbsp;`1. A2MCP — 标准 MCP 接口，按次付费`<br>&nbsp;&nbsp;`2. A2A — agent-to-agent 协议，链外议价`<br>`回复 1 或 2。`<br>收到数字后**在 skill 层映射** `1→A2MCP` / `2→A2A` 再下发；CLI 没有数字别名，直接传 `1` 会 bail `invalid ServiceType`。用户直接写 `A2MCP` / `A2A` 也接受。 | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `ServiceType` |
-| Q4 | if `A2MCP` → `Q4：每次调用收多少 USDT？（整数）` + 4 segments ; if `A2A` → skip | integer ≥ 0 | `Fee` |
-| Q5 | if `A2MCP` → `Q5：MCP 接口地址是什么？必须 https:// 开头。` + 4 segments ; if `A2A` → skip | starts with `https://` | `Endpoint` (A2A 即使用户给了 CLI 也会清掉，见 `utils.rs::normalize_service`) |
+| Q1 | `Q1：这个服务叫什么名字？` + 4 segments (see `field-specs.md`) | non-empty, ≤ 64 chars | `name` |
+| Q2 | `Q2：详细介绍一下这项服务。` + 4 segments | non-empty, ≤ 500 chars | `servicedescription` |
+| Q3 | `Q3：这项服务是哪种类型？` + numbered-options (`SKILL.md §Choice prompts`):<br>&nbsp;&nbsp;`1. A2MCP — 标准 MCP 接口，按次付费`<br>&nbsp;&nbsp;`2. A2A — agent-to-agent 协议，链外议价`<br>`回复 1 或 2。`<br>收到数字后**在 skill 层映射** `1→A2MCP` / `2→A2A` 再下发；CLI 没有数字别名，直接传 `1` 会 bail `invalid servicetype`。用户直接写 `A2MCP` / `A2A` 也接受。 | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `servicetype` |
+| Q4 | if `A2MCP` → `Q4：每次调用收多少 USDT？（整数）` + 4 segments ; if `A2A` → skip | integer ≥ 0 | `fee` |
+| Q5 | if `A2MCP` → `Q5：MCP 接口地址是什么？必须 https:// 开头。` + 4 segments ; if `A2A` → skip | starts with `https://` | `endpoint` (A2A 即使用户给了 CLI 也会清掉，见 `utils.rs::normalize_service`) |
 | Loop gate | Numbered-options prompt (no `Q` label, it's a flow switch):<br>`还要再加一项服务吗？`<br>&nbsp;&nbsp;`1. 再加一项`<br>&nbsp;&nbsp;`2. 不加了，到此为止`<br>`回复 1 或 2。` | reply 1 or 2 | — |
 
 English per-service Q&A (render `Now service [N]:` as a one-line preamble before Q1):
 
 | Step | Ask the user (label and prompt) | Validation | Maps to (JSON key) |
 |---|---|---|---|
-| Q1 | `Q1: What's the name of this service?` + 4 segments | non-empty, ≤ 64 chars | `ServiceName` |
-| Q2 | `Q2: Describe this service.` + 4 segments | non-empty, ≤ 500 chars | `ServiceDescription` |
-| Q3 | `Q3: Which type is this service?` + numbered-options:<br>&nbsp;&nbsp;`1. A2MCP — standard MCP interface, pay-per-call`<br>&nbsp;&nbsp;`2. A2A — agent-to-agent protocol, off-chain pricing`<br>`Reply 1 or 2.`<br>Once user replies, **map in skill** `1→A2MCP` / `2→A2A` before invoking the CLI — the CLI has no numeric alias and sending raw `1` bails with `invalid ServiceType`. Writing `A2MCP` / `A2A` directly is also accepted. | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `ServiceType` |
-| Q4 | if A2MCP → `Q4: Price per call in USDT? (integer)` + 4 segments ; if A2A → skip | integer ≥ 0 | `Fee` |
-| Q5 | if A2MCP → `Q5: What's the MCP endpoint URL? Must start with https://.` + 4 segments ; if A2A → skip | starts with `https://` | `Endpoint` (for A2A the CLI clears this even if supplied — `utils.rs::normalize_service`) |
+| Q1 | `Q1: What's the name of this service?` + 4 segments | non-empty, ≤ 64 chars | `name` |
+| Q2 | `Q2: Describe this service.` + 4 segments | non-empty, ≤ 500 chars | `servicedescription` |
+| Q3 | `Q3: Which type is this service?` + numbered-options:<br>&nbsp;&nbsp;`1. A2MCP — standard MCP interface, pay-per-call`<br>&nbsp;&nbsp;`2. A2A — agent-to-agent protocol, off-chain pricing`<br>`Reply 1 or 2.`<br>Once user replies, **map in skill** `1→A2MCP` / `2→A2A` before invoking the CLI — the CLI has no numeric alias and sending raw `1` bails with `invalid servicetype`. Writing `A2MCP` / `A2A` directly is also accepted. | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `servicetype` |
+| Q4 | if A2MCP → `Q4: Price per call in USDT? (integer)` + 4 segments ; if A2A → skip | integer ≥ 0 | `fee` |
+| Q5 | if A2MCP → `Q5: What's the MCP endpoint URL? Must start with https://.` + 4 segments ; if A2A → skip | starts with `https://` | `endpoint` (for A2A the CLI clears this even if supplied — `utils.rs::normalize_service`) |
 | Loop gate | Numbered-options prompt:<br>`Want to add another service?`<br>&nbsp;&nbsp;`1. Add another`<br>&nbsp;&nbsp;`2. No more, finish here`<br>`Reply 1 or 2.` | reply 1 or 2 | — |
 
 After each service is collected, echo back a one-line summary in the user's language before the loop gate:
@@ -116,10 +116,10 @@ After each service is collected, echo back a one-line summary in the user's lang
 
 | User input | Action |
 |---|---|
-| "我要做数据分析服务，收 10 USDT"（**在 Phase 1 说的**） | Do **NOT** capture `Fee=10` at Phase 1 — phase boundary is strict (`SKILL.md §One-shot capture` rule 4). Continue Phase 1 Q&A; when Phase 2 starts fresh, ask Q3 (ServiceType) first, then Q4 (Fee) where the user can re-supply 10 if still relevant. |
-| "我要做数据分析服务，收 10 USDT"（**在 Phase 2 的某条服务中说的**） | Capture `Fee=10` when Q4 asks it; still confirm `ServiceType` at Q3 first. |
+| "我要做数据分析服务，收 10 USDT"（**在 Phase 1 说的**） | Do **NOT** capture `fee=10` at Phase 1 — phase boundary is strict (`SKILL.md §One-shot capture` rule 4). Continue Phase 1 Q&A; when Phase 2 starts fresh, ask Q3 (`servicetype`) first, then Q4 (`fee`) where the user can re-supply 10 if still relevant. |
+| "我要做数据分析服务，收 10 USDT"（**在 Phase 2 的某条服务中说的**） | Capture `fee=10` when Q4 asks it; still confirm `servicetype` at Q3 first. |
 | "帮我写几个 service" | Refuse to fabricate. Ask what they actually want to offer. |
-| User pastes JSON blob | Thank them, but re-confirm **field by field** — typos in `ServiceType` are the #1 cause of create failures. Do not pipe JSON straight to the CLI. |
+| User pastes JSON blob | Thank them, but re-confirm **field by field** — typos in `servicetype` are the #1 cause of create failures. Do not pipe JSON straight to the CLI. |
 | "endpoint 是 http://..." | Reject. Ask for HTTPS. |
 | "A2MCP Fee 免费" | Accept `0` but warn: "A2MCP 0 USDT 等同于免费入口，后续不能再按量收费。" |
 | User answers multiple service fields in one sentence | Parse what you can, but next turn still asks the remaining fields individually. |
@@ -165,7 +165,7 @@ English variant:
 
 > Reply "execute" to run it.
 
-Service-field **labels in the card** are localized (see mapping table in `display-formats.md §Create/Update Diff`: `名称 / 描述 / 类型 / 价格 / 接口地址` ↔ `Name / Description / Type / Fee / Endpoint`). The **JSON keys actually sent to the CLI** (`ServiceName` / `ServiceDescription` / `ServiceType` / `Fee` / `Endpoint`) stay unchanged — they only show up in the raw bash command, which we render only if the user explicitly asks.
+Service-field **labels in the card** are localized (see mapping table in `display-formats.md §Create/Update Diff`: `名称 / 描述 / 类型 / 价格 / 接口地址` ↔ `Name / Description / Type / Fee / Endpoint`). The **JSON keys actually sent to the CLI** (`name` / `servicedescription` / `servicetype` / `fee` / `endpoint`) are lowercase schema per `models.rs::AgentService` — they only show up in the raw bash command, which we render only if the user explicitly asks.
 
 **Do NOT show bash** in the confirmation card. Only render the bash command if the user explicitly asks ("把命令给我看" / "show me the CLI").
 
@@ -176,7 +176,7 @@ onchainos agent create \
   --role provider \
   --name "<name>" \
   --description "<description>" \
-  --service '[{"ServiceName":"…","ServiceDescription":"…","ServiceType":"A2MCP","Fee":"10","Endpoint":"https://…"}, …]' \
+  --service '[{"name":"…","servicedescription":"…","servicetype":"A2MCP","fee":"10","endpoint":"https://…"}, …]' \
   [--picture "<url>"]
 ```
 
@@ -197,4 +197,4 @@ Without id (English): "Provider agent created and active by default. Run `agent 
 
 ## Error recovery
 
-If `provider agents require at least one service; provide --service` surfaces, return to Phase 2 Q1 of service[1]. If `missing required field in --service: ServiceName` surfaces, return to the specific Q (see `troubleshooting.md`). Never silently retry with a filler value.
+If `provider agents require at least one service; provide --service` surfaces, return to Phase 2 Q1 of service[1]. If `missing required field in --service: name` surfaces, return to the specific Q (see `troubleshooting.md`). Never silently retry with a filler value.

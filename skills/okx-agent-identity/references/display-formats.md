@@ -163,13 +163,13 @@ Service-field label mapping (user-facing labels ↔ CLI JSON keys the skill send
 
 | CLI JSON key | 中文标签 | English label |
 |---|---|---|
-| `ServiceName` | 名称 | Name |
-| `ServiceDescription` | 描述 | Description |
-| `ServiceType` | 类型 | Type |
-| `Fee` | 价格 | Fee |
-| `Endpoint` | 接口地址 | Endpoint |
+| `name` | 名称 | Name |
+| `servicedescription` | 描述 | Description |
+| `servicetype` | 类型 | Type |
+| `fee` | 价格 | Fee |
+| `endpoint` | 接口地址 | Endpoint |
 
-The JSON keys on the right of this mapping stay unchanged in the actual `--service` JSON payload; only the user-facing labels in cards / Q&A prompts are localized.
+Left column is the exact JSON key sent on the wire inside the `--service` payload (new lowercase schema). The middle / right columns are the user-facing labels rendered in cards and Q&A prompts — keep those localized and never leak the raw JSON key into user-visible text.
 
 ### Update variant (diff)
 

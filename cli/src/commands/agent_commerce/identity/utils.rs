@@ -133,25 +133,25 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
         .filter(|value| !value.is_empty());
 
     if service.service_name.is_empty() {
-        bail!("missing required field in --service: ServiceName");
+        bail!("missing required field in --service: name");
     }
     if service.service_description.is_empty() {
-        bail!("missing required field in --service: ServiceDescription");
+        bail!("missing required field in --service: servicedescription");
     }
     match service.service_type.as_str() {
         "A2A" => {
-            // Product spec: A2A services do not have an Endpoint field.
+            // Product spec: A2A services do not have an endpoint field.
             service.endpoint = None;
         }
         "A2MCP" => {
             if service.fee.is_empty() {
-                bail!("missing required field in --service for A2MCP: Fee");
+                bail!("missing required field in --service for A2MCP: fee");
             }
             if service.endpoint.is_none() {
-                bail!("missing required field in --service for A2MCP: Endpoint");
+                bail!("missing required field in --service for A2MCP: endpoint");
             }
         }
-        other => bail!("invalid ServiceType in --service: {other}"),
+        other => bail!("invalid servicetype in --service: {other}"),
     }
 
     Ok(service)
