@@ -10,7 +10,7 @@ A general-purpose [OpenClaw](https://openclaw.ai) agent template powered by [OKX
 2. Run `bash setup.sh` — installs the `onchainos` CLI and fetches skills + workflows from the source repo
 3. Start an OpenClaw session — the agent is ready
 
-All read-only research works immediately with no login. To enable trading, run `onchainos wallet login` inside a session.
+To enable trading, run `onchainos wallet login` inside a session.
 
 ## What you can do
 

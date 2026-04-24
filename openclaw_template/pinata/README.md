@@ -36,7 +36,7 @@ Solana, Ethereum, Base, BSC, Arbitrum, Polygon, XLayer, Sui, TON, and 60+ others
 
 1. Select this template in the Pinata Agent Template Store
 2. Click **Deploy** — `setup.sh` installs the `onchainos` CLI and links all skills automatically
-3. Start chatting — all read-only research works immediately with no login
+3. Start chatting — the agent is ready
 
 ### Optional: OKX API credentials
 

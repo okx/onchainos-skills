@@ -27,7 +27,7 @@ Run `onchainos wallet status`.
 
 > Welcome to onchainos ⛓️
 >
-> Everything is set up — **read-only features work immediately**.
+> Everything is set up and ready to go.
 >
 > **Workflows** — multi-step operations, just say what you want:
 > - 🔍 "Research this token: `<address>`" — price, security, holders, smart money signals
