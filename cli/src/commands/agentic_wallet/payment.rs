@@ -64,10 +64,9 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
     match cmd {
         PaymentCommand::X402Pay { accepts, from } => cmd_pay(&accepts, from.as_deref()).await,
         PaymentCommand::Eip3009Sign { accepts } => {
-            let accepts_val: Value = serde_json::from_str(&accepts)
-                .context("--accepts must be a valid JSON array")?;
-            let (proof, _entry) =
-                payment_flow::sign_payment_local(&accepts_val, None).await?;
+            let accepts_val: Value =
+                serde_json::from_str(&accepts).context("--accepts must be a valid JSON array")?;
+            let (proof, _entry) = payment_flow::sign_payment_local(&accepts_val, None).await?;
             output::success(json!({
                 "signature": proof.signature,
                 "authorization": proof.authorization,
@@ -125,9 +124,7 @@ fn cmd_default(action: DefaultAction) -> Result<()> {
             }
             let chain = chain.trim().to_string();
             let network = chain_id_to_caip2(&chain)?;
-            let name = name
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
+            let name = name.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
             let tier = match tier.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
                 Some(s) => Some(
                     PaymentTier::from_server_str(s)

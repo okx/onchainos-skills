@@ -103,9 +103,7 @@ pub async fn get_chain_by_real_chain_index(input: &str) -> Result<Option<Value>>
 /// stale display names are still informative, and the notification path
 /// must not block on a chain-list refresh.
 pub fn show_name_for_real_id_sync(real_chain_id: u64) -> Option<String> {
-    let cached = wallet_store::get_chain_cache(i64::MAX)
-        .ok()
-        .flatten()?;
+    let cached = wallet_store::get_chain_cache(i64::MAX).ok().flatten()?;
     let target = real_chain_id.to_string();
     cached.chains.into_iter().find_map(|c| {
         let real = c.get("realChainIndex").and_then(|v| {

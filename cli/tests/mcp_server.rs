@@ -551,7 +551,9 @@ fn mcp_workflow_token_research_returns_ok() {
         "workflow_token_research",
         json!({ "address": common::tokens::SOL_BONK, "chain": "solana" }),
     );
-    if result.is_rate_limited() { return; }
+    if result.is_rate_limited() {
+        return;
+    }
     assert!(!result.is_error, "tool returned error: {}", result.content);
 }
 
@@ -562,7 +564,9 @@ fn mcp_workflow_token_research_has_discriminator() {
         "workflow_token_research",
         json!({ "address": common::tokens::SOL_BONK, "chain": "solana" }),
     );
-    if result.is_rate_limited() { return; }
+    if result.is_rate_limited() {
+        return;
+    }
     let data = result.api_data();
     assert_eq!(data["workflow"], "token-research");
 }
@@ -574,7 +578,9 @@ fn mcp_workflow_token_research_has_core_and_structure() {
         "workflow_token_research",
         json!({ "address": common::tokens::SOL_BONK, "chain": "solana" }),
     );
-    if result.is_rate_limited() { return; }
+    if result.is_rate_limited() {
+        return;
+    }
     let data = result.api_data();
     assert!(!data["core"].is_null(), "core block missing");
     assert!(!data["structure"].is_null(), "structure block missing");
@@ -589,7 +595,9 @@ fn mcp_workflow_token_research_non_launchpad_null_launchpad() {
         "workflow_token_research",
         json!({ "address": common::tokens::SOL_BONK, "chain": "solana" }),
     );
-    if result.is_rate_limited() { return; }
+    if result.is_rate_limited() {
+        return;
+    }
     let data = result.api_data();
     assert!(
         data["launchpad"].is_null(),
@@ -612,33 +620,34 @@ fn mcp_workflow_token_research_missing_address_is_error() {
     }));
     let resp = client.recv();
     // Either a JSON-RPC error or isError=true in result
-    let is_err = resp.get("error").is_some()
-        || resp["result"]["isError"].as_bool().unwrap_or(false);
+    let is_err =
+        resp.get("error").is_some() || resp["result"]["isError"].as_bool().unwrap_or(false);
     assert!(is_err, "expected error for missing address, got: {resp}");
 }
 
 #[test]
 fn mcp_workflow_smart_money_returns_ok() {
     let mut client = McpClient::start();
-    let result = client.call_tool(
-        "workflow_smart_money",
-        json!({ "chain": "solana" }),
-    );
-    if result.is_rate_limited() { return; }
+    let result = client.call_tool("workflow_smart_money", json!({ "chain": "solana" }));
+    if result.is_rate_limited() {
+        return;
+    }
     assert!(!result.is_error, "tool returned error: {}", result.content);
 }
 
 #[test]
 fn mcp_workflow_smart_money_has_discriminator_and_top_tokens() {
     let mut client = McpClient::start();
-    let result = client.call_tool(
-        "workflow_smart_money",
-        json!({ "chain": "solana" }),
-    );
-    if result.is_rate_limited() { return; }
+    let result = client.call_tool("workflow_smart_money", json!({ "chain": "solana" }));
+    if result.is_rate_limited() {
+        return;
+    }
     let data = result.api_data();
     assert_eq!(data["workflow"], "smart-money");
-    assert!(data["topTokens"].is_array(), "topTokens must be array: {data}");
+    assert!(
+        data["topTokens"].is_array(),
+        "topTokens must be array: {data}"
+    );
     assert!(data.get("rawSignals").is_some(), "rawSignals field missing");
 }
 
@@ -649,7 +658,9 @@ fn mcp_workflow_new_tokens_returns_ok() {
         "workflow_new_tokens",
         json!({ "chain": "solana", "stage": "MIGRATED" }),
     );
-    if result.is_rate_limited() { return; }
+    if result.is_rate_limited() {
+        return;
+    }
     assert!(!result.is_error, "tool returned error: {}", result.content);
 }
 
@@ -660,11 +671,16 @@ fn mcp_workflow_new_tokens_has_discriminator_stage_enriched() {
         "workflow_new_tokens",
         json!({ "chain": "solana", "stage": "MIGRATED" }),
     );
-    if result.is_rate_limited() { return; }
+    if result.is_rate_limited() {
+        return;
+    }
     let data = result.api_data();
     assert_eq!(data["workflow"], "new-tokens");
     assert_eq!(data["stage"], "MIGRATED");
-    assert!(data["enriched"].is_array(), "enriched must be array: {data}");
+    assert!(
+        data["enriched"].is_array(),
+        "enriched must be array: {data}"
+    );
 }
 
 #[test]
@@ -674,7 +690,9 @@ fn mcp_workflow_wallet_analysis_returns_ok() {
         "workflow_wallet_analysis",
         json!({ "address": common::tokens::ETH_VITALIK, "chain": "ethereum" }),
     );
-    if result.is_rate_limited() { return; }
+    if result.is_rate_limited() {
+        return;
+    }
     assert!(!result.is_error, "tool returned error: {}", result.content);
 }
 
@@ -685,12 +703,20 @@ fn mcp_workflow_wallet_analysis_has_discriminator_and_performance() {
         "workflow_wallet_analysis",
         json!({ "address": common::tokens::ETH_VITALIK, "chain": "ethereum" }),
     );
-    if result.is_rate_limited() { return; }
+    if result.is_rate_limited() {
+        return;
+    }
     let data = result.api_data();
     assert_eq!(data["workflow"], "wallet-analysis");
     assert_eq!(data["address"], common::tokens::ETH_VITALIK);
-    assert!(data["performance"].get("7d").is_some(), "performance.7d missing");
-    assert!(data["performance"].get("30d").is_some(), "performance.30d missing");
+    assert!(
+        data["performance"].get("7d").is_some(),
+        "performance.7d missing"
+    );
+    assert!(
+        data["performance"].get("30d").is_some(),
+        "performance.30d missing"
+    );
     assert!(data.get("balances").is_some(), "balances field missing");
     assert!(data.get("recentPnl").is_some(), "recentPnl field missing");
     assert!(data.get("activities").is_some(), "activities field missing");
@@ -703,7 +729,9 @@ fn mcp_workflow_portfolio_returns_ok() {
         "workflow_portfolio",
         json!({ "address": common::tokens::ETH_VITALIK, "chains": "ethereum" }),
     );
-    if result.is_rate_limited() { return; }
+    if result.is_rate_limited() {
+        return;
+    }
     assert!(!result.is_error, "tool returned error: {}", result.content);
 }
 
@@ -714,7 +742,9 @@ fn mcp_workflow_portfolio_has_discriminator_and_required_fields() {
         "workflow_portfolio",
         json!({ "address": common::tokens::ETH_VITALIK, "chains": "ethereum" }),
     );
-    if result.is_rate_limited() { return; }
+    if result.is_rate_limited() {
+        return;
+    }
     let data = result.api_data();
     assert_eq!(data["workflow"], "portfolio");
     assert_eq!(data["address"], common::tokens::ETH_VITALIK);

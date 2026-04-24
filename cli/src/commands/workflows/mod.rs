@@ -68,9 +68,11 @@ pub enum WorkflowCommand {
 
 pub async fn execute(ctx: &Context, cmd: WorkflowCommand) -> Result<()> {
     match cmd {
-        WorkflowCommand::TokenResearch { address, query, chain } => {
-            token_research::run(ctx, address.as_deref(), query.as_deref(), chain).await
-        }
+        WorkflowCommand::TokenResearch {
+            address,
+            query,
+            chain,
+        } => token_research::run(ctx, address.as_deref(), query.as_deref(), chain).await,
         WorkflowCommand::SmartMoney { chain } => smart_money::run(ctx, chain).await,
         WorkflowCommand::NewTokens { chain, stage } => new_tokens::run(ctx, chain, stage).await,
         WorkflowCommand::WalletAnalysis { address, chain } => {

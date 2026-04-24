@@ -75,8 +75,6 @@ fn write_cache_inner(domain: &str, entry: &DohCacheEntry) -> Option<()> {
     Some(())
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;

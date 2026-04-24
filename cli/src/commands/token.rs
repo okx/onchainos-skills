@@ -570,9 +570,7 @@ pub async fn fetch_search(
     if let Some(c) = cursor {
         params.push(("cursor", c));
     }
-    client
-        .get("/api/v6/dex/market/token/search", &params)
-        .await
+    client.get("/api/v6/dex/market/token/search", &params).await
 }
 
 /// POST /api/v6/dex/market/token/basic-info — body is JSON array
@@ -611,9 +609,7 @@ pub async fn fetch_holders(
     if let Some(c) = cursor {
         params.push(("cursor", c));
     }
-    client
-        .get("/api/v6/dex/market/token/holder", &params)
-        .await
+    client.get("/api/v6/dex/market/token/holder", &params).await
 }
 
 /// GET /api/v6/dex/market/token/top-liquidity — top 5 liquidity pools for a token
@@ -1021,7 +1017,9 @@ async fn cluster_top_holders(
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
     let mut client = ctx.client_async().await?;
-    output::success(fetch_cluster_top_holders(&mut client, address, &chain_index, range_filter).await?);
+    output::success(
+        fetch_cluster_top_holders(&mut client, address, &chain_index, range_filter).await?,
+    );
     Ok(())
 }
 
@@ -1029,7 +1027,11 @@ async fn cluster_top_holders(
 /// PRD Section 3.1 — `onchainos token report`
 /// Error handling: single sub-call failure → that field is null, rest continue.
 ///                 All sub-calls fail → returns error.
-pub async fn fetch_report(client: &mut ApiClient, address: &str, chain_index: &str) -> Result<serde_json::Value> {
+pub async fn fetch_report(
+    client: &mut ApiClient,
+    address: &str,
+    chain_index: &str,
+) -> Result<serde_json::Value> {
     // Four clones — each future gets exclusive ownership of its own ApiClient.
     // tokio::join! polls all four concurrently; HTTP I/O is truly parallel via
     // the shared reqwest::Client connection pool (Arc-backed).
@@ -1042,8 +1044,8 @@ pub async fn fetch_report(client: &mut ApiClient, address: &str, chain_index: &s
         fetch_security(&mut c3, address, chain_index),
     );
 
-    let info     = info.ok();
-    let price    = price.ok();
+    let info = info.ok();
+    let price = price.ok();
     let advanced = advanced.ok();
     let security = security.ok();
 
@@ -1051,7 +1053,8 @@ pub async fn fetch_report(client: &mut ApiClient, address: &str, chain_index: &s
     if info.is_none() && price.is_none() && advanced.is_none() && security.is_none() {
         anyhow::bail!(
             "token report: all sub-calls failed for address {} on chain {}",
-            address, chain_index
+            address,
+            chain_index
         );
     }
 

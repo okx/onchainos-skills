@@ -27,8 +27,8 @@ pub(crate) async fn fetch_and_assemble(
     let report = token::fetch_report(client, address, chain_index).await?;
 
     // Extract individual values for Step 3 condition check and assemble()
-    let info     = report["info"].clone();
-    let price    = report["priceInfo"].clone();
+    let info = report["info"].clone();
+    let price = report["priceInfo"].clone();
     let advanced = report["advancedInfo"].clone();
     let security = report["security"].clone();
 
@@ -45,32 +45,54 @@ pub(crate) async fn fetch_and_assemble(
         ),
         token::fetch_top_trader(&mut c2, address, chain_index, None, Some("20"), None),
         signal::fetch_list(
-            &mut c3, chain_index,
-            None, None, None, None, None,
+            &mut c3,
+            chain_index,
+            None,
+            None,
+            None,
+            None,
+            None,
             Some(addr),
-            None, None, None, None, None, None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         ),
     );
-    let holders    = ok_or_null(holders);
-    let cluster    = ok_or_null(cluster);
+    let holders = ok_or_null(holders);
+    let cluster = ok_or_null(cluster);
     let top_traders = ok_or_null(top_traders);
-    let signals    = ok_or_null(signals);
+    let signals = ok_or_null(signals);
 
     // ── Step 3: launchpad supplement (parallel, conditional) ─────────
     let launchpad = if is_launchpad_token(&advanced) {
         let (mut c4, mut c5, mut c6) = (client.clone(), client.clone(), client.clone());
         let (details, dev_info, bundle_info, similar) = tokio::join!(
             memepump::fetch_by_address(
-                client, "/api/v6/dex/market/memepump/tokenDetails", address, chain_index,
+                client,
+                "/api/v6/dex/market/memepump/tokenDetails",
+                address,
+                chain_index,
             ),
             memepump::fetch_by_address(
-                &mut c4, "/api/v6/dex/market/memepump/tokenDevInfo", address, chain_index,
+                &mut c4,
+                "/api/v6/dex/market/memepump/tokenDevInfo",
+                address,
+                chain_index,
             ),
             memepump::fetch_by_address(
-                &mut c5, "/api/v6/dex/market/memepump/tokenBundleInfo", address, chain_index,
+                &mut c5,
+                "/api/v6/dex/market/memepump/tokenBundleInfo",
+                address,
+                chain_index,
             ),
             memepump::fetch_by_address(
-                &mut c6, "/api/v6/dex/market/memepump/similarToken", address, chain_index,
+                &mut c6,
+                "/api/v6/dex/market/memepump/similarToken",
+                address,
+                chain_index,
             ),
         );
         json!({
@@ -329,8 +351,7 @@ mod tests {
 
     #[test]
     fn null_fields_preserved_in_core_output() {
-        let out = full_assemble(null(), some_data(), some_data(), some_data(), null())
-            .unwrap();
+        let out = full_assemble(null(), some_data(), some_data(), some_data(), null()).unwrap();
         assert!(out["core"]["info"].is_null());
         assert!(!out["core"]["price"].is_null());
     }
@@ -346,8 +367,8 @@ mod tests {
 
     #[test]
     fn launchpad_null_when_step3_skipped() {
-        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), null())
-            .unwrap();
+        let out =
+            full_assemble(some_data(), some_data(), some_data(), some_data(), null()).unwrap();
         assert!(out["launchpad"].is_null());
     }
 
@@ -359,8 +380,14 @@ mod tests {
             "bundleInfo":   {"bundleRate": "5%"},
             "similarTokens": [],
         });
-        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), lp.clone())
-            .unwrap();
+        let out = full_assemble(
+            some_data(),
+            some_data(),
+            some_data(),
+            some_data(),
+            lp.clone(),
+        )
+        .unwrap();
         assert_eq!(out["launchpad"]["devInfo"]["rugCount"], 0);
     }
 
@@ -376,23 +403,23 @@ mod tests {
 
     #[test]
     fn output_has_workflow_discriminator() {
-        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), null())
-            .unwrap();
+        let out =
+            full_assemble(some_data(), some_data(), some_data(), some_data(), null()).unwrap();
         assert_eq!(out["workflow"], "token-research");
     }
 
     #[test]
     fn output_has_address_and_chain() {
-        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), null())
-            .unwrap();
+        let out =
+            full_assemble(some_data(), some_data(), some_data(), some_data(), null()).unwrap();
         assert_eq!(out["address"], "0xTOKEN");
         assert_eq!(out["chain"], "501");
     }
 
     #[test]
     fn core_has_all_required_fields() {
-        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), null())
-            .unwrap();
+        let out =
+            full_assemble(some_data(), some_data(), some_data(), some_data(), null()).unwrap();
         assert!(!out["core"]["info"].is_null());
         assert!(!out["core"]["price"].is_null());
         assert!(!out["core"]["contract"].is_null());
@@ -401,8 +428,8 @@ mod tests {
 
     #[test]
     fn structure_has_all_required_fields() {
-        let out = full_assemble(some_data(), some_data(), some_data(), some_data(), null())
-            .unwrap();
+        let out =
+            full_assemble(some_data(), some_data(), some_data(), some_data(), null()).unwrap();
         let s = &out["structure"];
         assert!(!s["holders"].is_null());
         assert!(!s["cluster"].is_null());
@@ -414,9 +441,16 @@ mod tests {
     fn cluster_null_in_structure_preserved() {
         // cluster-overview 500 on new token → null passed in
         let result = assemble(
-            "0xNEW", "501",
-            some_data(), some_data(), some_data(), some_data(),
-            some_data(), null(), some_data(), some_data(), // cluster = null
+            "0xNEW",
+            "501",
+            some_data(),
+            some_data(),
+            some_data(),
+            some_data(),
+            some_data(),
+            null(),
+            some_data(),
+            some_data(), // cluster = null
             null(),
         );
         let out = result.unwrap();
