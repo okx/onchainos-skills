@@ -1,15 +1,20 @@
 ---
 name: okx-agent-task
 description: >
-  Publishes, negotiates, delivers, and settles on-chain tasks in the OKX AI Task Marketplace.
+  Publishes, negotiates, delivers, and settles on-chain tasks in the OKX AI Task Marketplace,
+  AND handles evaluator staking onboarding handoff from okx-agent-identity.
   Use for: 发布任务 (create task), 找卖家/接单 (find/accept task), 协商报价 (negotiate price),
   还价/接受报价 (counter/accept offer), 确认接单+Fund (confirm acceptance with escrow),
   提交交付物 (deliver work), 验收/拒绝 (accept/reject delivery), 发起仲裁 (raise dispute),
-  提交证据 (submit evidence), 仲裁投票 (dispute vote), 查看任务状态 (task status).
+  提交证据 (submit evidence), 仲裁投票 (dispute vote), 查看任务状态 (task status),
+  evaluator 质押 (stake onboarding after evaluator identity registration).
   Roles: Client 买家 (task buyer), Provider 卖家 (task seller), Evaluator 仲裁者.
   Triggered by task creation, task marketplace, escrow payment, XMTP task messages, dispute
-  resolution, on-chain task settlement on XLayer. Do NOT use for token swaps, wallet balance
-  queries, DeFi protocols, market prices, or single-word inputs without task context.
+  resolution, on-chain task settlement on XLayer, AND evaluator staking handoff from
+  okx-agent-identity (phrases like "Evaluator 身份已注册", "要被系统分派仲裁案子",
+  "follow evaluator.md", "/skills/okx-agent-task/evaluator.md", "请继续质押流程",
+  "stake to become evaluator"). Do NOT use for token swaps, wallet balance queries,
+  DeFi protocols, market prices, or single-word inputs without task context.
 license: Apache-2.0
 metadata:
   author: okx
@@ -85,7 +90,7 @@ The escalation message Body starts with `[topic: <name>]` and SystemPrompt start
 | User says "I'd like to use the service provided by Agent ..." / "指定卖家" / "使用 Agent XXX 的服务" | **Client** → Read `buyer.md` Scene 1.7 (Designated Provider) |
 | User wants to browse / search for tasks / "找任务" / "接单" / apply for a task | **Provider** → Read `provider.md` |
 | User received an arbitration notification / assigned as judge | **Evaluator** → Read `evaluator.md` |
-| **Handoff from identity / registration skill**：用户刚在身份系统完成 evaluator 注册，上下文里出现 "已注册为 evaluator" / "请继续质押流程" / "stake to become evaluator" / "质押成为仲裁者" 等交接信号（身份 skill 不传金额，由本 skill 自行决定默认值并请用户确认）| **Evaluator** → Read `evaluator.md` §1.5 Onboarding（默认 100 OKB → 展示给用户等确认 → 再跑 stake CLI） |
+| **Handoff from okx-agent-identity** — 上一轮（同轮链式或前一轮）出现任一信号：`Evaluator 身份已注册` / `Evaluator 身份 #<id> 已注册` / `要被系统分派仲裁案子` / `follow evaluator.md` / `/skills/okx-agent-task/evaluator.md` / `请继续质押流程` / `已注册为 evaluator` / `evaluator 身份注册完成` / `质押成为仲裁者` / `stake to become evaluator` / `evaluator onboarding stake`（身份 skill 不传金额，由本 skill 自行决定默认值并请用户确认）| **Evaluator (stake onboarding)** → Read `evaluator.md` §1.5 Onboarding（默认 100 OKB → 展示给用户等确认 → 再跑 stake CLI） |
 | User asks for direct help (security check, code review, analysis, "帮我看看") **without** mentioning hiring/finding someone | **Not a task** → Route to the appropriate skill (e.g. `okx-security`). Do **NOT** proactively suggest task creation. |
 | Unsure | Follow **Context Loading Protocol** below |
 

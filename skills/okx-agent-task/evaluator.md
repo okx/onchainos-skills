@@ -32,11 +32,37 @@
 
 ### 识别条件
 
-上下文里满足以下任一项即进入本场景：
+两条路径都要能触发：
 
-- 文本里包含 "质押" / "stake" / "请继续质押流程" / "已注册为 evaluator"
-- 前一步 skill 的输出摘要里出现 "evaluator 身份注册完成" 之类的信号
-- 用户主动说 "我要质押成为仲裁者" / "stake to become evaluator"
+- **同轮链式**：身份 skill 的输出就在当前 turn 的先前内容里，agent 直接继续进本场景（用户会一次性看到身份注册成功 + 质押确认提示）
+- **跨轮触发**：身份 skill 输出后 turn 已结束，用户下一轮回一句话（通常是短确认）才进入
+
+#### A. 身份 skill handoff 信号（出现在当前或上一轮的 agent 输出里，任一项命中即可）
+
+- `Evaluator 身份已注册` / `Evaluator 身份 #<id> 已注册`
+- `要被系统分派仲裁案子`
+- `follow evaluator.md`
+- `/skills/okx-agent-task/evaluator.md`（路径字符串出现在上一轮输出里）
+- `已注册为 evaluator` / `evaluator 身份注册完成` / `请继续质押流程`
+- English: `stake to become evaluator`, `evaluator onboarding stake`
+
+> ⚠️ 身份 skill **不会提供质押数量**。金额完全由本 skill 决定（Step 1 默认值；未来从后端拉）。不要把 "100 OKB" / 任何具体数字当作路由关键词——即使上一轮出现了数字也不作为匹配条件。
+
+#### B. 用户意图信号（当前 turn 用户输入，跨轮路径用）
+
+- `我要质押` / `质押成为仲裁者` / `帮我质押` / `去质押`
+- English: `let's stake` / `stake now` / `proceed with staking`
+- **短确认仅在 A 之后才算**：`好` / `继续` / `ok` / `go` / `嗯` / `yes` / `好的` / `确认` —— 只有上一轮明确有 A 信号时才激活。**没有前置 A 信号的短确认不激活本场景。**
+
+> 同轮链式路径下，B 不必要——当前 turn 先前输出里有 A 信号就足以激活，直接跑 Step 1 → Step 2，不要等用户输入。
+
+#### C. 反误触保护
+
+不激活的情况：
+
+- 和 evaluator 身份/质押无关的 staking 提及（DeFi staking、其他链的 validator staking、代币质押产品）
+- 用户只是*询问*质押相关信息而非要执行（"质押多少钱？"/"质押有什么风险？" → 直接回答问题，不跳进本场景）
+- 当前会话里 Step 4 已经跑过一次——不要重复激活
 
 ### 动作（严格顺序）
 
