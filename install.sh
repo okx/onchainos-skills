@@ -224,10 +224,11 @@ install_binary() {
 
 # ── Workflow sync ────────────────────────────────────────────
 sync_workflows() {
-  tag="$1"
-  workflows_dir="$CACHE_DIR/workflows"
-  workflows_url="https://github.com/${REPO}/releases/download/${tag}/workflows.tar.gz"
-  checksums_url="https://github.com/${REPO}/releases/download/${tag}/workflows-checksums.txt"
+  local tag="$1"
+  local workflows_dir="$CACHE_DIR/workflows"
+  local tmpdir actual_hash expected_hash
+  local workflows_url="https://github.com/${REPO}/releases/download/${tag}/workflows.tar.gz"
+  local checksums_url="https://github.com/${REPO}/releases/download/${tag}/workflows-checksums.txt"
 
   echo "Syncing workflows (${tag})..."
 
