@@ -338,9 +338,9 @@ if command -v npx >/dev/null 2>&1; then
   if [ "$_ps_installed" = false ]; then
     echo "Installed plugin-store."
     echo ""
-    echo "Restart Claude Code (or open a new session) to activate plugin-store."
-    echo "Then ask: 'Show me available DeFi plugins'"
-    echo "or mention a protocol by name — Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho."
+    echo "In Claude Code: log in with your wallet — plugin-store activates automatically."
+    echo "In a new session: restart Claude Code to load plugin-store, then mention"
+    echo "a protocol by name — Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho."
   fi
 else
   echo ""
