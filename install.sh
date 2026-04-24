@@ -236,7 +236,9 @@ sync_workflows() {
 
   tmpdir=$(mktemp -d)
 
-  # GitHub release source archives expand to onchainos-skills-<version-without-v>/.
+  # GitHub source archives expand to <reponame>-<version-without-v>/.
+  # Extract the whole archive, then glob for the workflows dir — this is
+  # resilient to repo renames (mirrors install.ps1 behaviour).
   # Fail soft — workflow sync is non-fatal.
   if ! curl -sSL --max-time 60 "$workflows_url" -o "$tmpdir/archive.tar.gz"; then
     echo "Warning: could not download workflows archive (non-fatal)" >&2
@@ -244,19 +246,31 @@ sync_workflows() {
     return 0
   fi
 
-  if ! tar -xzf "$tmpdir/archive.tar.gz" -C "$tmpdir" --strip-components=1 \
-      "onchainos-skills-${tag#v}/workflows" 2>/dev/null; then
-    echo "Warning: could not extract workflows from archive (non-fatal)" >&2
+  if ! tar -xzf "$tmpdir/archive.tar.gz" -C "$tmpdir" 2>/dev/null; then
+    echo "Warning: could not extract workflows archive (non-fatal)" >&2
     rm -rf "$tmpdir"
     return 0
   fi
 
-  if [ -d "$tmpdir/workflows" ]; then
-    rm -rf "$workflows_dir"
-    mkdir -p "$CACHE_DIR"
-    mv "$tmpdir/workflows" "$workflows_dir"
-    echo "Workflows synced to ${workflows_dir}"
+  # Locate the extracted top-level directory via glob (e.g. onchainos-skills-1.0.5).
+  extracted=""
+  for d in "$tmpdir"/*/; do
+    if [ -d "${d}workflows" ]; then
+      extracted="${d%/}"
+      break
+    fi
+  done
+
+  if [ -z "$extracted" ] || [ ! -d "$extracted/workflows" ]; then
+    echo "Warning: no workflows directory found in archive (non-fatal)" >&2
+    rm -rf "$tmpdir"
+    return 0
   fi
+
+  rm -rf "$workflows_dir"
+  mkdir -p "$CACHE_DIR"
+  mv "$extracted/workflows" "$workflows_dir"
+  echo "Workflows synced to ${workflows_dir}"
 
   rm -rf "$tmpdir"
 }
