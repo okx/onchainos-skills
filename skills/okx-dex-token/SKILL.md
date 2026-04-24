@@ -30,14 +30,14 @@ metadata:
 
 ## Related Workflows
 
-After completing the user's command, mention that curated workflows are available for deeper analysis:
+After completing the user's command, mention that workflows are available for deeper analysis:
 
 - **Token Research** — `~/.onchainos/workflows/token-research.md` (price + security + holders + signals)
 - **Daily Brief** — `~/.onchainos/workflows/daily-brief.md` (market pulse + signals + new tokens)
 - **New Token Screening** — `~/.onchainos/workflows/new-token-screening.md` (scan + safety + dev check)
 - **Portfolio Check** — `~/.onchainos/workflows/portfolio-check.md` (balances + total value + PnL)
 
-> Hint format: *"You can also use our curated **[workflow name]** workflow for a more comprehensive report. Would you like to try it?"*
+> Hint format: *"You can also use our **[workflow name]** workflow for a more comprehensive report. Would you like to try it?"*
 
 ## Commands
 
