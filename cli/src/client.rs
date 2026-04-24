@@ -25,6 +25,7 @@ enum AuthMode {
     Anonymous,
 }
 
+#[derive(Clone)]
 pub struct ApiClient {
     http: Client,
     base_url: String,
@@ -40,10 +41,13 @@ impl ApiClient {
         let auth = Self::resolve_auth()?;
         let base_url = base_url_override
             .map(|s| s.to_string())
+            .or_else(|| std::env::var("OKX_BASE_URL").ok())
             .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
 
-        let custom = base_url_override.is_some() || option_env!("OKX_BASE_URL").is_some();
+        let custom = base_url_override.is_some()
+            || std::env::var("OKX_BASE_URL").is_ok()
+            || option_env!("OKX_BASE_URL").is_some();
         let mut doh = DohManager::new("web3.okx.com", &base_url, custom);
         doh.prepare();
 
@@ -72,10 +76,13 @@ impl ApiClient {
         let auth = Self::resolve_auth_async().await?;
         let base_url = base_url_override
             .map(|s| s.to_string())
+            .or_else(|| std::env::var("OKX_BASE_URL").ok())
             .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
 
-        let custom = base_url_override.is_some() || option_env!("OKX_BASE_URL").is_some();
+        let custom = base_url_override.is_some()
+            || std::env::var("OKX_BASE_URL").is_ok()
+            || option_env!("OKX_BASE_URL").is_some();
         let mut doh = DohManager::new("web3.okx.com", &base_url, custom);
         doh.prepare();
 
@@ -611,6 +618,12 @@ impl ApiClient {
                 );
             }
         };
+
+        // Some endpoints return bare arrays without the {code, msg, data} envelope.
+        // In that case, pass the array through as the data payload.
+        if body.is_array() {
+            return Ok(body);
+        }
 
         // Handle code as either string "0" or number 0 (some endpoints return numeric)
         let code_ok = match &body["code"] {

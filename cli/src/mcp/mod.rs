@@ -13,7 +13,8 @@ use tokio::sync::Mutex;
 
 use crate::client::ApiClient;
 use crate::commands::{
-    defi, gateway, leaderboard, market, memepump, portfolio, signal, swap, token, tracker, competition,
+    cross_chain, defi, gateway, leaderboard, market, memepump, portfolio, signal, swap, token,
+    tracker, workflows, competition,
 };
 
 // ── DeFi ──────────────────────────────────────────────────────────────
@@ -480,7 +481,7 @@ struct SwapSwapParams {
     gas_level: Option<String>,
     /// Swap mode: exactIn (default) or exactOut
     swap_mode: Option<String>,
-    /// Jito tips in lamports for Solana MEV protection (positive integer, e.g. `1000` = 0.000001 SOL)
+    /// Jito tips in SOL for Solana MEV protection (range: 0.0000000001–2)
     tips: Option<String>,
     /// Max auto slippage percent cap when autoSlippage is enabled (e.g. "0.5")
     max_auto_slippage: Option<String>,
@@ -690,6 +691,75 @@ struct GatewayOrdersParams {
     chain: String,
     /// Specific order ID from broadcast response (optional)
     order_id: Option<String>,
+}
+
+// ── Workflow params ────────────────────────────────────────────────────────────
+
+#[derive(Deserialize, JsonSchema)]
+struct WorkflowTokenResearchParams {
+    /// Token contract address (use this OR query)
+    address: Option<String>,
+    /// Token symbol or name to search (use this OR address).
+    /// When provided without address, returns top 5 search results for user selection.
+    /// After user selects, call again with the chosen address.
+    query: Option<String>,
+    /// Chain name (e.g. "solana", "ethereum"). Defaults to solana if omitted.
+    chain: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct WorkflowSmartMoneyParams {
+    /// Chain name (e.g. "solana", "ethereum"). Defaults to solana.
+    chain: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct WorkflowNewTokensParams {
+    /// Chain name (e.g. "solana"). Defaults to solana.
+    chain: Option<String>,
+    /// Launchpad stage: "MIGRATED" (default) or "MIGRATING"
+    stage: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct WorkflowWalletAnalysisParams {
+    /// Wallet address to analyse
+    address: String,
+    /// Chain name (e.g. "solana", "ethereum"). Defaults to solana.
+    chain: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct WorkflowPortfolioParams {
+    /// Wallet address
+    address: String,
+    /// Comma-separated chain names or indexes (e.g. "ethereum,solana"). Defaults to "1,501".
+    chains: Option<String>,
+}
+
+// ── Cross-Chain ──────────────────────────────────────────────────────
+#[derive(Deserialize, JsonSchema)]
+struct CrossChainQuoteParams {
+    /// Source token contract address or alias (e.g. "usdc", "eth", "0x...")
+    from: String,
+    /// Destination token contract address or alias
+    to: String,
+    /// Source chain name (e.g. "ethereum", "arbitrum", "base")
+    from_chain: String,
+    /// Destination chain name (e.g. "optimism", "solana")
+    to_chain: String,
+    /// Human-readable amount (e.g. "10" for 10 USDC)
+    readable_amount: String,
+    /// Receive address on destination chain (optional, defaults to user wallet)
+    receive_address: Option<String>,
+    /// Sort preference: 0=optimal (default), 1=fastest, 2=max output
+    sort: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CrossChainStatusParams {
+    /// Order ID returned by cross-chain execute
+    order_id: String,
 }
 
 #[derive(Clone)]
@@ -1755,6 +1825,78 @@ impl McpServer {
 
     // ── DeFi: Support Chains / Platforms ──────────────────────────────
 
+    // ── Cross-Chain ────────────────────────────────────────────────────
+
+    #[tool(
+        name = "cross_chain_chains",
+        description = "Get supported chain pairs for cross-chain bridge swaps"
+    )]
+    async fn cross_chain_chains(&self) -> Result<String, String> {
+        match cross_chain::fetch_chain_pairs(&mut *self.client.lock().await).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "cross_chain_bridges",
+        description = "Get available bridge protocols for cross-chain swaps"
+    )]
+    async fn cross_chain_bridges(&self) -> Result<String, String> {
+        match cross_chain::fetch_bridges(&mut *self.client.lock().await).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "cross_chain_quote",
+        description = "Get cross-chain bridge quote: routes, fees, estimated time, minimum received"
+    )]
+    async fn cross_chain_quote(
+        &self,
+        Parameters(p): Parameters<CrossChainQuoteParams>,
+    ) -> Result<String, String> {
+        let from_chain_index = crate::chains::resolve_chain(&p.from_chain);
+        let to_chain_index = crate::chains::resolve_chain(&p.to_chain);
+        let from_token =
+            crate::commands::swap::resolve_token_address(&from_chain_index, &p.from);
+        let to_token =
+            crate::commands::swap::resolve_token_address(&to_chain_index, &p.to);
+        let sort = p.sort.as_deref().unwrap_or("0");
+        match cross_chain::fetch_quote(
+            &mut *self.client.lock().await,
+            &from_chain_index,
+            &to_chain_index,
+            &from_token,
+            &to_token,
+            &p.readable_amount,
+            p.receive_address.as_deref(),
+            sort,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "cross_chain_status",
+        description = "Query cross-chain order status by order ID"
+    )]
+    async fn cross_chain_status(
+        &self,
+        Parameters(p): Parameters<CrossChainStatusParams>,
+    ) -> Result<String, String> {
+        match cross_chain::fetch_order_details(&mut *self.client.lock().await, &p.order_id).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    // ── DeFi ─────────────────────────────────────────────────────────
+
     #[tool(
         name = "defi_support_chains",
         description = "Get supported chains for DeFi operations"
@@ -2080,6 +2222,174 @@ impl McpServer {
             p.platform_id.as_deref(),
             p.token_id.as_deref(),
             p.principal_index.as_deref(),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    // ── Workflows ──────────────────────────────────────────────────────────────
+
+    #[tool(
+        name = "workflow_token_research",
+        description = "Full token due diligence in one call: price, contract, security scan, \
+            holder distribution, cluster overview, top traders, smart money signals. \
+            Accepts either 'address' (contract address) or 'query' (symbol/name). \
+            When 'query' is used without 'address', returns top 5 search results — \
+            present them to the user and call again with the chosen address. \
+            Step 3 adds launchpad enrichment automatically when protocolId is non-empty. \
+            Returns structured JSON with core / structure / launchpad blocks. \
+            Error if all Step 1 sub-calls fail."
+    )]
+    async fn workflow_token_research(
+        &self,
+        Parameters(p): Parameters<WorkflowTokenResearchParams>,
+    ) -> Result<String, String> {
+        let chain_index = p
+            .chain
+            .as_deref()
+            .map(|c| crate::chains::resolve_chain(c).to_string())
+            .unwrap_or_else(|| crate::chains::resolve_chain("solana").to_string());
+
+        // Symbol/name search path — return candidates for user selection
+        if p.address.is_none() {
+            let query = p.query.as_deref().ok_or_else(|| {
+                "Either 'address' or 'query' is required".to_string()
+            })?;
+            return match workflows::token_research::search_and_select(
+                &mut *self.client.lock().await,
+                query,
+                &chain_index,
+            )
+            .await
+            {
+                Ok(data) => ok(data),
+                Err(e) => err(e),
+            };
+        }
+
+        // Direct address path — full workflow
+        let address = p.address.as_deref().unwrap();
+        match workflows::token_research::fetch_and_assemble(
+            &mut *self.client.lock().await,
+            address,
+            &chain_index,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "workflow_smart_money",
+        description = "Smart money signals aggregated and enriched in one call. \
+            Fetches the signal list, groups by token, takes the top 5 by SM wallet count, \
+            then runs per-token due diligence (price, security, contract, optional launchpad). \
+            Signal API failure returns gracefully with empty topTokens."
+    )]
+    async fn workflow_smart_money(
+        &self,
+        Parameters(p): Parameters<WorkflowSmartMoneyParams>,
+    ) -> Result<String, String> {
+        let chain_index = p
+            .chain
+            .as_deref()
+            .map(|c| crate::chains::resolve_chain(c).to_string())
+            .unwrap_or_else(|| crate::chains::resolve_chain("solana").to_string());
+        match workflows::smart_money::fetch_and_assemble(
+            &mut *self.client.lock().await,
+            &chain_index,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "workflow_new_tokens",
+        description = "Launchpad new token screening in one call. \
+            Fetches MIGRATED (default) or MIGRATING tokens, then enriches the top 10 \
+            with security scan, contract info, dev history, and bundle rate in parallel. \
+            Token list API failure returns gracefully with empty enriched list."
+    )]
+    async fn workflow_new_tokens(
+        &self,
+        Parameters(p): Parameters<WorkflowNewTokensParams>,
+    ) -> Result<String, String> {
+        let chain_index = p
+            .chain
+            .as_deref()
+            .map(|c| crate::chains::resolve_chain(c).to_string())
+            .unwrap_or_else(|| crate::chains::resolve_chain("solana").to_string());
+        let stage = p.stage.unwrap_or_else(|| "MIGRATED".to_string());
+        match workflows::new_tokens::fetch_and_assemble(
+            &mut *self.client.lock().await,
+            &chain_index,
+            &stage,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "workflow_wallet_analysis",
+        description = "Wallet performance, behaviour, and recent activity in one call. \
+            Fetches 7d and 30d portfolio overview, all token balances, recent per-token PnL, \
+            and latest on-chain activity via the address tracker. \
+            Partial failures return null for that field; no all-fail error rule."
+    )]
+    async fn workflow_wallet_analysis(
+        &self,
+        Parameters(p): Parameters<WorkflowWalletAnalysisParams>,
+    ) -> Result<String, String> {
+        let chain_index = p
+            .chain
+            .as_deref()
+            .map(|c| crate::chains::resolve_chain(c).to_string())
+            .unwrap_or_else(|| crate::chains::resolve_chain("solana").to_string());
+        match workflows::wallet_analysis::fetch_and_assemble(
+            &mut *self.client.lock().await,
+            &p.address,
+            &chain_index,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "workflow_portfolio",
+        description = "Wallet portfolio snapshot in one call: all token balances, \
+            total value, and 30d PnL overview. \
+            Partial failures return null for that field."
+    )]
+    async fn workflow_portfolio(
+        &self,
+        Parameters(p): Parameters<WorkflowPortfolioParams>,
+    ) -> Result<String, String> {
+        // Resolve chain names to indices up-front so the output's `chains` field
+        // is always in indexed form ("1,501") regardless of whether the caller
+        // sent names ("ethereum,solana") or indices — matches CLI output shape.
+        // `fetch_and_assemble` derives `primary_chain_index` internally so the
+        // MCP and CLI entry points cannot drift.
+        let chains_str = crate::chains::resolve_chains(
+            &p.chains.unwrap_or_else(|| "1,501".to_string()),
+        );
+        match workflows::portfolio::fetch_and_assemble(
+            &mut *self.client.lock().await,
+            &p.address,
+            &chains_str,
         )
         .await
         {

@@ -122,11 +122,21 @@ Map `chainId` to chain name using `onchainos wallet chains`. Report: token symbo
 
 ## Status Codes
 
+### `--status` filter parameter (input only)
+
+| Value | Meaning |
+|-------|---------|
+| 0 | Active competitions (进行中) |
+| 1 | Ended competitions (已结束) |
+| 2 | All competitions (全部) |
+| omit | Same as 2 (all) |
+
+### Response field values
+
 | Field | Value | Meaning |
 |-------|-------|---------|
-| status | 0 | Competition active (进行中) |
-| status | 1 | Competition ended (已结束) |
-| status | 2 | All (全部) |
+| status | 3 | Competition active (进行中) |
+| status | 4 | Competition ended (已结束) |
 | joinStatus | 0 | Not joined |
 | joinStatus | 1 | Joined |
 | rewardStatus | 0 | Not won |

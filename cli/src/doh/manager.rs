@@ -3,6 +3,20 @@ use std::net::{IpAddr, SocketAddr};
 use super::types::{DohCacheEntry, DohMode, DohNode, FailedNode};
 use super::{binary, cache};
 
+/// Per-request DoH failover state.
+///
+/// Clone semantics: each clone carries its own copy of `mode`, `node`,
+/// `retried`, and `resolved_ip`. This enables `ApiClient: Clone` and true
+/// parallel HTTP via `tokio::join!` / `JoinSet` without serialising on a
+/// shared mutex guard.
+///
+/// Trade-off on a cold DoH cache: if the first-run network is unreliable,
+/// N parallel clones may each independently probe for a proxy node before
+/// any of them writes the cache file. The redundancy is bounded — once the
+/// first task writes the cache, subsequent runs skip the probe entirely.
+/// For the current workflow fan-out (≤10 parallel clones) the extra probe
+/// cost is preferable to serialising the entire HTTP path behind a mutex.
+#[derive(Clone)]
 pub struct DohManager {
     domain: String,
     original_base_url: String,

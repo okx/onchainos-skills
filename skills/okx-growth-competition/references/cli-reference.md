@@ -14,7 +14,7 @@ onchainos competition list [--status <3|4>] [--page-size <n>] [--page-num <n>]
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--status` | int | — | 3=active, 4=ended; omit for all |
+| `--status` | int | — | 0=active, 1=ended, 2=all; omit for all |
 | `--page-size` | int | 10 | Results per page |
 | `--page-num` | int | 1 | Page number (1-based) |
 
@@ -87,6 +87,9 @@ onchainos competition rank --activity-id <id> --wallet <addr> --sort-type <type>
 {
   "ok": true,
   "data": {
+    "agenticActivity": true,
+    "totalRewardToken": "1000000",
+    "rewardTokenSymbol": "HIPPO",
     "myRankInfo": {
       "currentRank": 42,
       "nickName": "Agentic...abcd",
@@ -96,13 +99,18 @@ onchainos competition rank --activity-id <id> --wallet <addr> --sort-type <type>
       "rewardUnit": "HIPPO"
     },
     "allRankInfos": [ ... ],
-    "rankUpdateTime": 1743001200,
-    "sortType": 5
+    "rankUpdateTime": 1774359000638
   }
 }
 ```
 
 `format`: 1=number, 2=percentage, 3=token amount with unit
+
+`rankUpdateTime`: milliseconds (13-digit timestamp)
+
+`agenticActivity`: true = Agentic Wallet exclusive competition
+
+`luckyRewardAmount`: per-tab lucky reward token amount (in each tab config object)
 
 ---
 

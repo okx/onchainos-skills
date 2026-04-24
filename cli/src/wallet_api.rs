@@ -240,11 +240,13 @@ pub struct BroadcastResponse {
 
 impl WalletApiClient {
     pub fn new() -> Result<Self> {
-        let base_url = option_env!("OKX_BASE_URL")
-            .map(|s| s.to_string())
+        let base_url = std::env::var("OKX_BASE_URL")
+            .ok()
+            .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
             .unwrap_or_else(|| crate::client::DEFAULT_BASE_URL.to_string());
 
-        let custom = option_env!("OKX_BASE_URL").is_some();
+        let custom = std::env::var("OKX_BASE_URL").is_ok()
+            || option_env!("OKX_BASE_URL").is_some();
         let mut doh = DohManager::new("web3.okx.com", &base_url, custom);
         doh.prepare();
 
@@ -322,14 +324,12 @@ impl WalletApiClient {
         })
     }
 
-    /// POST with Bearer accessToken (for create / list / refresh / x402).
     /// Retries once after DoH failover.
     pub async fn post_authed(&mut self, path: &str, access_token: &str, body: &Value) -> Result<Value> {
         self.post_authed_with_headers(path, access_token, body, None)
             .await
     }
 
-    /// POST with Bearer accessToken + optional extra headers.
     /// Retries once after DoH failover.
     pub fn post_authed_with_headers<'a>(
         &'a mut self,
@@ -381,7 +381,6 @@ impl WalletApiClient {
         })
     }
 
-    /// POST with Bearer accessToken — no DoH retry. Use only for broadcast-transaction.
     async fn post_authed_no_retry_with_headers(
         &mut self,
         path: &str,
@@ -464,7 +463,6 @@ impl WalletApiClient {
         Ok(body["data"].clone())
     }
 
-    /// GET with Bearer accessToken + query params.
     pub fn get_authed<'a>(
         &'a mut self,
         path: &'a str,
@@ -774,6 +772,23 @@ impl WalletApiClient {
         Ok(resp)
     }
 
+    /// POST /priapi/v5/wallet/agentic/pre-transaction/report-plugin-info
+    pub async fn report_plugin_info(
+        &mut self,
+        access_token: &str,
+        plugin_parameter: &str,
+    ) -> Result<Value> {
+        let body = json!({
+            "pluginParameter": plugin_parameter,
+        });
+        self.post_authed(
+            "/priapi/v5/wallet/agentic/pre-transaction/report-plugin-info",
+            access_token,
+            &body,
+        )
+        .await
+    }
+
     /// POST /priapi/v5/wallet/agentic/pre-transaction/broadcast-transaction
     pub async fn broadcast_transaction(
         &mut self,
@@ -1004,7 +1019,6 @@ mod tests {
                 "accessToken": "at",
                 "apiKey": "ak",
                 "passphrase": "pp",
-                "secretKey": "sk",
                 "teeId": "t",
                 "sessionCert": "c",
                 "encryptedSessionSk": "e",
@@ -1052,7 +1066,6 @@ mod tests {
             "accessToken": "at",
             "apiKey": "ak",
             "passphrase": "pp",
-            "secretKey": "sk",
             "teeId": "t",
             "sessionCert": "c",
             "encryptedSessionSk": "e",
