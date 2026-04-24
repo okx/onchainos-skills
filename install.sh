@@ -220,10 +220,6 @@ install_binary() {
   chmod +x "$INSTALL_DIR/$BINARY"
 
   echo "Installed ${BINARY} ${tag} to ${INSTALL_DIR}/${BINARY}"
-
-  # Clean up tmpdir explicitly on success so the EXIT trap doesn't leak it
-  # when a later function reassigns $tmpdir.
-  rm -rf "$tmpdir"
 }
 
 # ── Workflow sync ────────────────────────────────────────────
