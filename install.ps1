@@ -230,6 +230,10 @@ function Sync-Workflows {
         }
 
         tar -xzf "$archivePath" -C "$tmpDir" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Warning: could not extract workflows (non-fatal)" -ForegroundColor Yellow
+            return
+        }
 
         $srcWorkflows = Join-Path $tmpDir "workflows"
         if (Test-Path $srcWorkflows) {

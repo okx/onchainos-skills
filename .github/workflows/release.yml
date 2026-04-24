@@ -337,7 +337,9 @@ jobs:
           merge-multiple: true
 
       - name: Package workflows
-        run: tar -czf workflows.tar.gz workflows/
+        run: |
+          test -d workflows/ || { echo "::error::workflows/ directory missing"; exit 1; }
+          tar -czf workflows.tar.gz workflows/
 
       - name: Generate installer checksums
         run: sha256sum install.sh install.ps1 > installer-checksums.txt

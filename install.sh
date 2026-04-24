@@ -232,22 +232,24 @@ sync_workflows() {
   echo "Syncing workflows (${tag})..."
 
   tmpdir=$(mktemp -d)
-  trap 'rm -rf "$tmpdir"' EXIT
 
   if ! curl -sSL --max-time 30 "$workflows_url" -o "$tmpdir/workflows.tar.gz"; then
     echo "Warning: could not download workflows (non-fatal)" >&2
+    rm -rf "$tmpdir"
     return 0
   fi
 
   # Verify checksum — fail closed: skip install if verification cannot complete
   if ! curl -sSL --max-time 10 "$checksums_url" -o "$tmpdir/workflows-checksums.txt" 2>/dev/null; then
     echo "Warning: could not download workflows checksum — skipping (non-fatal)" >&2
+    rm -rf "$tmpdir"
     return 0
   fi
 
   expected_hash=$(grep "workflows.tar.gz" "$tmpdir/workflows-checksums.txt" | awk '{print $1}')
   if [ -z "$expected_hash" ]; then
     echo "Warning: no checksum found for workflows.tar.gz — skipping (non-fatal)" >&2
+    rm -rf "$tmpdir"
     return 0
   fi
 
@@ -260,16 +262,19 @@ sync_workflows() {
 
   if [ -z "$actual_hash" ]; then
     echo "Warning: no sha256 tool found — skipping workflow install (non-fatal)" >&2
+    rm -rf "$tmpdir"
     return 0
   fi
 
   if [ "$actual_hash" != "$expected_hash" ]; then
     echo "Warning: workflows checksum mismatch — skipping (non-fatal)" >&2
+    rm -rf "$tmpdir"
     return 0
   fi
 
   if ! tar -xzf "$tmpdir/workflows.tar.gz" -C "$tmpdir"; then
     echo "Warning: could not extract workflows (non-fatal)" >&2
+    rm -rf "$tmpdir"
     return 0
   fi
 
@@ -279,6 +284,8 @@ sync_workflows() {
     mv "$tmpdir/workflows" "$workflows_dir"
     echo "Workflows synced to ${workflows_dir}"
   fi
+
+  rm -rf "$tmpdir"
 }
 
 # ── PATH setup ───────────────────────────────────────────────
