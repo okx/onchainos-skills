@@ -526,25 +526,25 @@ onchainos wallet contract-call \
   [--mev-protection] \
   [--jito-unsigned-tx <jito_base58_tx>] \
   [--biz-type <biz_type>] \
-  [--strategy <skill_name>] \
+  [--strategy <strategy>] \
   [--force]
 ```
 
-| Parameter | Type | Required | Description |
+| Parameter | Type | Required | Description                                                                                                                                     |
 |---|---|---|---|
-| `--to` | string | Yes | Contract address to interact with |
-| `--chain` | string | Yes | Chain name or numeric ID (e.g. `ethereum` or `1`, `solana` or `501`, `bsc` or `56`) |
-| `--amt` | string | No | Native token amount in minimal units — whole number, no decimals (default "0"). See SKILL.md `--amt` section for conversion rules. |
-| `--input-data` | string | Conditional | EVM call data (hex-encoded, e.g. "0xa9059cbb..."). **Required for EVM chains.** |
-| `--unsigned-tx` | string | Conditional | Solana unsigned transaction data (base58). **Required for Solana.** |
-| `--gas-limit` | string | No | Gas limit override (EVM only). If omitted, the CLI estimates gas automatically. |
-| `--from` | string | No | Sender address — defaults to the selected account's address on the given chain. |
-| `--aa-dex-token-addr` | string | No | AA DEX token contract address (for AA DEX interactions). |
-| `--aa-dex-token-amount` | string | No | AA DEX token amount (for AA DEX interactions). |
-| `--mev-protection` | bool | No | Enable MEV protection (default false). Supported on Ethereum, BSC, Base, and Solana. On Solana, `--jito-unsigned-tx` is also required. |
-| `--jito-unsigned-tx` | string | No | Jito unsigned transaction data (base58) for Solana MEV protection. **Required when `--mev-protection` is used on Solana.** |
-| `--biz-type` | string | No | Transaction category forwarded to broadcast as `agentBizType` (e.g. `dex`, `defi`, `dapp`). Omitted from the request when not provided. |
-| `--strategy` | string | No | Strategy / skill name forwarded to broadcast as `agentSkillName`. Omitted from the request when not provided. |
+| `--to` | string | Yes | Contract address to interact with                                                                                                               |
+| `--chain` | string | Yes | Chain name or numeric ID (e.g. `ethereum` or `1`, `solana` or `501`, `bsc` or `56`)                                                             |
+| `--amt` | string | No | Native token amount in minimal units — whole number, no decimals (default "0"). See SKILL.md `--amt` section for conversion rules.              |
+| `--input-data` | string | Conditional | EVM call data (hex-encoded, e.g. "0xa9059cbb..."). **Required for EVM chains.**                                                                 |
+| `--unsigned-tx` | string | Conditional | Solana unsigned transaction data (base58). **Required for Solana.**                                                                             |
+| `--gas-limit` | string | No | Gas limit override (EVM only). If omitted, the CLI estimates gas automatically.                                                                 |
+| `--from` | string | No | Sender address — defaults to the selected account's address on the given chain.                                                                 |
+| `--aa-dex-token-addr` | string | No | AA DEX token contract address (for AA DEX interactions).                                                                                        |
+| `--aa-dex-token-amount` | string | No | AA DEX token amount (for AA DEX interactions).                                                                                                  |
+| `--mev-protection` | bool | No | Enable MEV protection (default false). Supported on Ethereum, BSC, Base, and Solana. On Solana, `--jito-unsigned-tx` is also required.          |
+| `--jito-unsigned-tx` | string | No | Jito unsigned transaction data (base58) for Solana MEV protection. **Required when `--mev-protection` is used on Solana.**                      |
+| `--biz-type` | string | No | Transaction category (`transfer`,`dex`, `defi`, `dapp`)                                                                                         |
+| `--strategy` | string | No | Strategy name                                                                                                                                   |
 | `--force` | bool | No | Skip confirmation prompts from the backend (default false). Use when re-running a command after the user has confirmed a `confirming` response. |
 
 > Either `--input-data` (EVM) or `--unsigned-tx` (Solana) must be provided. The CLI will fail if neither is present.
