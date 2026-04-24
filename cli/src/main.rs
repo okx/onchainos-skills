@@ -16,6 +16,9 @@ mod wallet_api;
 mod wallet_store;
 mod watch;
 
+#[cfg(test)]
+mod test_helpers;
+
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -149,8 +152,7 @@ async fn run() {
 
     let cli = Cli::parse();
 
-    // Propagate --base-url to env so WalletApiClient, ApiClient::new(None),
-    // and refresh_jwt_inline pick it up at runtime.
+    // Propagate --base-url to env so WalletApiClient and refresh_jwt_inline pick it up.
     if let Some(ref url) = cli.base_url {
         std::env::set_var("OKX_BASE_URL", url);
     }

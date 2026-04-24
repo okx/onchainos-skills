@@ -250,6 +250,22 @@ struct DefiCollectParams {
     principal_index: Option<String>,
 }
 
+// ── Gas Station ──────────────────────────────────────────────────────
+
+#[derive(Deserialize, JsonSchema)]
+struct GasStationUpdateDefaultTokenParams {
+    /// Chain name or ID (e.g. "ethereum", "1")
+    chain: String,
+    /// Gas token contract address to set as default (e.g. USDT/USDC/USDG address)
+    gas_token_address: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct GasStationDisableParams {
+    /// Chain name or ID (e.g. "ethereum", "1")
+    chain: String,
+}
+
 // ── Token ──────────────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
 struct TokenSearchParams {
@@ -2147,6 +2163,53 @@ impl McpServer {
         )
         .await
         {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    // ── Gas Station ─────────────────────────────────────────────────
+
+    #[tool(
+        name = "gas_station_update_default_token",
+        description = "Update the default Gas Token for Gas Station on a specific chain. Gas Station allows paying gas fees with stablecoins (USDT/USDC/USDG) via a third-party Relayer."
+    )]
+    async fn gas_station_update_default_token(
+        &self,
+        Parameters(p): Parameters<GasStationUpdateDefaultTokenParams>,
+    ) -> Result<String, String> {
+        use crate::commands::agentic_wallet::gas_station;
+        match gas_station::fetch_update_default_token(&p.chain, &p.gas_token_address).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "gas_station_enable",
+        description = "Enable Gas Station for a specific chain (DB flag only, no on-chain action). Requires that 7702 delegation already exists on-chain (set earlier via the first-time Gas Station flow). If the chain was never delegated, backend returns a msg in the response body explaining that a first-time enable via wallet send is required."
+    )]
+    async fn gas_station_enable(
+        &self,
+        Parameters(p): Parameters<GasStationDisableParams>,
+    ) -> Result<String, String> {
+        use crate::commands::agentic_wallet::gas_station;
+        match gas_station::fetch_update(&p.chain, true).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "gas_station_disable",
+        description = "Disable Gas Station for a specific chain (DB flag only, no on-chain action). The 7702 delegation on-chain is preserved, so re-enabling later does not require a new upgrade. To switch default gas token, use gas_station_update_default_token instead."
+    )]
+    async fn gas_station_disable(
+        &self,
+        Parameters(p): Parameters<GasStationDisableParams>,
+    ) -> Result<String, String> {
+        use crate::commands::agentic_wallet::gas_station;
+        match gas_station::fetch_update(&p.chain, false).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }

@@ -141,6 +141,16 @@ pub enum SwapCommand {
         /// Enable MEV protection
         #[arg(long, default_value_t = false)]
         mev_protection: bool,
+        /// Gas token contract address for Gas Station payment (from tokenList).
+        /// Applied to both approve and swap transactions when set.
+        #[arg(long)]
+        gas_token_address: Option<String>,
+        /// Relayer ID for Gas Station (from tokenList). Must be paired with --gas-token-address.
+        #[arg(long)]
+        relayer_id: Option<String>,
+        /// Enable Gas Station first-time activation or re-enable. Pins --gas-token-address as default.
+        #[arg(long, default_value_t = false)]
+        enable_gas_station: bool,
     },
 }
 
@@ -265,6 +275,9 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             tips,
             max_auto_slippage,
             mev_protection,
+            gas_token_address,
+            relayer_id,
+            enable_gas_station,
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
@@ -289,6 +302,9 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
                 tips.as_deref(),
                 max_auto_slippage.as_deref(),
                 mev_protection,
+                gas_token_address.as_deref(),
+                relayer_id.as_deref(),
+                enable_gas_station,
             )
             .await?;
         }
@@ -1070,8 +1086,11 @@ async fn wallet_contract_call(
     aa_dex_token_amount: Option<&str>,
     mev_protection: bool,
     jito_unsigned_tx: Option<&str>,
+    gas_token_address: Option<&str>,
+    relayer_id: Option<&str>,
+    enable_gas_station: bool,
 ) -> Result<Value> {
-    let tx_hash = crate::commands::agentic_wallet::transfer::execute_contract_call(
+    let resp = crate::commands::agentic_wallet::transfer::execute_contract_call(
         to,
         chain,
         amt,
@@ -1083,13 +1102,16 @@ async fn wallet_contract_call(
         aa_dex_token_amount,
         mev_protection,
         jito_unsigned_tx,
-        false,       // force
-        None,        // tx_source: not cross-chain
-        Some("dex"), // agent_biz_type: swap flow
-        None,        // agent_skill_name: not applicable
+        false, // force
+        Some("dex"), // tx_source / agentBizType: swap route
+        gas_token_address,
+        relayer_id,
+        enable_gas_station,
+        Some("dex"), // agent_biz_type
+        None,        // agent_skill_name
     )
     .await?;
-    Ok(json!({ "txHash": tx_hash }))
+    Ok(json!({ "txHash": resp.tx_hash, "orderId": resp.order_id }))
 }
 
 /// Extract txHash from `wallet contract-call` output data.
@@ -1098,6 +1120,17 @@ fn extract_tx_hash(data: &Value) -> Result<String> {
         .as_str()
         .map(|s| s.to_string())
         .ok_or_else(|| anyhow::anyhow!("missing txHash in contract-call output"))
+}
+
+/// Extract (txHash, orderId) from `wallet contract-call` output data. orderId
+/// may be empty for non-Gas-Station broadcasts; only txHash is required.
+fn extract_tx_hash_and_order_id(data: &Value) -> Result<(String, String)> {
+    let tx_hash = data["txHash"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("missing txHash in contract-call output"))?;
+    let order_id = data["orderId"].as_str().unwrap_or("").to_string();
+    Ok((tx_hash, order_id))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1114,6 +1147,9 @@ async fn cmd_execute(
     tips: Option<&str>,
     max_auto_slippage: Option<&str>,
     mev_protection: bool,
+    gas_token_address: Option<&str>,
+    relayer_id: Option<&str>,
+    enable_gas_station: bool,
 ) -> Result<()> {
     use crate::chains;
 
@@ -1125,6 +1161,11 @@ async fn cmd_execute(
     validate_swap_params(&chain_index, &from_token, &to_token)?;
     let is_from_native = from_token.eq_ignore_ascii_case(native_addr);
 
+    // Gas Station `enableGasStation=true` must only fire on the FIRST gas-consuming
+    // tx of this flow (revoke / approve / swap, whichever runs first). After that,
+    // the account is activated — subsequent txs only need gasTokenAddress + relayerId.
+    let mut gs_enable_remaining = enable_gas_station;
+
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][cmd_execute] from_token={}, to_token={}, amount={}, chain={} (chain_index={}, family={}), wallet={}, slippage={:?}, gas_level={}, swap_mode={}, tips={:?}, max_auto_slippage={:?}, mev_protection={}",
@@ -1134,6 +1175,7 @@ async fn cmd_execute(
 
     // ── 1. Approve (EVM + non-native only) ──────────────────────────
     let mut approve_tx_hash: Option<String> = None;
+    let mut approve_order_id: Option<String> = None;
 
     if family == "evm" && !is_from_native {
         // Fetch approve-transaction first to get dexContractAddress (spender) and calldata
@@ -1189,6 +1231,7 @@ async fn cmd_execute(
                 let revoke_data = fetch_approve(client, &chain_index, &from_token, "0").await?;
                 let revoke_calldata = extract_approve_calldata(&revoke_data)?;
 
+                let gs_enable_this_call = std::mem::replace(&mut gs_enable_remaining, false);
                 let result = wallet_contract_call(
                     &from_token,
                     &chain_index,
@@ -1200,6 +1243,9 @@ async fn cmd_execute(
                     None,
                     false,
                     None,
+                    gas_token_address,
+                    relayer_id,
+                    gs_enable_this_call,
                 )
                 .await?;
                 // We don't need the revoke txHash in output, just ensure it succeeded
@@ -1210,6 +1256,7 @@ async fn cmd_execute(
                 eprintln!("[swap execute] approving token...");
             }
             // Reuse the approve calldata already fetched above
+            let gs_enable_this_call = std::mem::replace(&mut gs_enable_remaining, false);
             let result = wallet_contract_call(
                 &from_token,
                 &chain_index,
@@ -1221,9 +1268,16 @@ async fn cmd_execute(
                 None,
                 false,
                 None,
+                gas_token_address,
+                relayer_id,
+                gs_enable_this_call,
             )
             .await?;
-            approve_tx_hash = Some(extract_tx_hash(&result)?);
+            let (tx_hash, order_id) = extract_tx_hash_and_order_id(&result)?;
+            approve_tx_hash = Some(tx_hash);
+            if !order_id.is_empty() {
+                approve_order_id = Some(order_id);
+            }
         }
     }
 
@@ -1257,7 +1311,7 @@ async fn cmd_execute(
     let tx = &swap_result["tx"];
 
     // ── 5. Sign & broadcast swap tx via wallet contract-call ─────────
-    let swap_tx_hash = if family == "solana" {
+    let (swap_tx_hash, swap_order_id) = if family == "solana" {
         let unsigned_tx = tx["data"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing tx.data (unsigned tx) in swap response"))?;
@@ -1267,6 +1321,7 @@ async fn cmd_execute(
         let jito_tx = swap_result["jitoCalldata"].as_str();
         let effective_mev = jito_tx.is_some() || mev_protection;
 
+        let gs_enable_this_call = std::mem::replace(&mut gs_enable_remaining, false);
         let result = wallet_contract_call(
             to_addr,
             &chain_index,
@@ -1278,9 +1333,12 @@ async fn cmd_execute(
             None,
             effective_mev,
             jito_tx,
+            gas_token_address,
+            relayer_id,
+            gs_enable_this_call,
         )
         .await?;
-        extract_tx_hash(&result)?
+        extract_tx_hash_and_order_id(&result)?
     } else {
         let to_addr = tx["to"]
             .as_str()
@@ -1305,6 +1363,7 @@ async fn cmd_execute(
             (None, None)
         };
 
+        let gs_enable_this_call = std::mem::replace(&mut gs_enable_remaining, false);
         let result = wallet_contract_call(
             to_addr,
             &chain_index,
@@ -1316,9 +1375,12 @@ async fn cmd_execute(
             aa_amount,
             mev_protection,
             None,
+            gas_token_address,
+            relayer_id,
+            gs_enable_this_call,
         )
         .await?;
-        extract_tx_hash(&result)?
+        extract_tx_hash_and_order_id(&result)?
     };
 
     // ── 6. Output ────────────────────────────────────────────────────
@@ -1329,7 +1391,7 @@ async fn cmd_execute(
         );
     }
     let router_result = &swap_result["routerResult"];
-    output::success(json!({
+    let mut out = json!({
         "approveTxHash": approve_tx_hash,
         "swapTxHash": swap_tx_hash,
         "fromToken": router_result["fromToken"],
@@ -1338,7 +1400,16 @@ async fn cmd_execute(
         "toAmount": router_result["toTokenAmount"],
         "priceImpact": router_result["priceImpactPercent"],
         "gasUsed": router_result["estimateGasFee"],
-    }));
+    });
+    // Only emit orderId fields when Gas Station was actually used (non-empty).
+    // Normal (native-gas) swaps return empty orderId and shouldn't pollute output.
+    if let Some(ref oid) = approve_order_id {
+        out["approveOrderId"] = json!(oid);
+    }
+    if !swap_order_id.is_empty() {
+        out["swapOrderId"] = json!(swap_order_id);
+    }
+    output::success(out);
 
     Ok(())
 }
@@ -1875,5 +1946,48 @@ mod tests {
         assert!(err.to_string().contains("--gas-limit"));
         let err2 = validate_non_negative_integer("-1", "aa-dex-token-amount").unwrap_err();
         assert!(err2.to_string().contains("--aa-dex-token-amount"));
+    }
+
+    // ── extract_tx_hash_and_order_id (Gas Station orderId propagation) ──
+
+    #[test]
+    fn extract_tx_hash_and_order_id_both_present() {
+        let data = json!({ "txHash": "0xabc", "orderId": "ord_123" });
+        let (tx_hash, order_id) = extract_tx_hash_and_order_id(&data).unwrap();
+        assert_eq!(tx_hash, "0xabc");
+        assert_eq!(order_id, "ord_123");
+    }
+
+    #[test]
+    fn extract_tx_hash_and_order_id_order_id_optional() {
+        // Non-Gas-Station path: orderId is absent → defaults to empty string, no error.
+        let data = json!({ "txHash": "0xabc" });
+        let (tx_hash, order_id) = extract_tx_hash_and_order_id(&data).unwrap();
+        assert_eq!(tx_hash, "0xabc");
+        assert_eq!(order_id, "");
+    }
+
+    #[test]
+    fn extract_tx_hash_and_order_id_order_id_empty_string() {
+        // Backend may return empty orderId explicitly for non-GS broadcasts.
+        let data = json!({ "txHash": "0xabc", "orderId": "" });
+        let (tx_hash, order_id) = extract_tx_hash_and_order_id(&data).unwrap();
+        assert_eq!(tx_hash, "0xabc");
+        assert_eq!(order_id, "");
+    }
+
+    #[test]
+    fn extract_tx_hash_and_order_id_empty_tx_hash_still_ok() {
+        // GS async: txHash is empty string but present; orderId carries the state.
+        let data = json!({ "txHash": "", "orderId": "ord_async" });
+        let (tx_hash, order_id) = extract_tx_hash_and_order_id(&data).unwrap();
+        assert_eq!(tx_hash, "");
+        assert_eq!(order_id, "ord_async");
+    }
+
+    #[test]
+    fn extract_tx_hash_and_order_id_errors_when_tx_hash_missing() {
+        let data = json!({ "orderId": "ord_123" });
+        assert!(extract_tx_hash_and_order_id(&data).is_err());
     }
 }

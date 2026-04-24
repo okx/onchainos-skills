@@ -468,6 +468,7 @@ fn wallet_sub(c: &WalletCommand) -> &'static str {
         WalletCommand::History { .. } => "history",
         WalletCommand::ContractCall { .. } => "contract-call",
         WalletCommand::SignMessage { .. } => "sign-message",
+        WalletCommand::GasStation { .. } => "gas-station",
         WalletCommand::ReportPluginInfo { .. } => "report-plugin-info",
     }
 }

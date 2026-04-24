@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code when working with this repository.
 
+## Dev Environment
+
+- **Dev binary**: `cli/target/release/onchainos`. If it does not exist, build it first: `cd cli && cargo build --release`.
+- **`ONCHAINOS_HOME`**: Points to project-local `.onchainos/` for wallet credentials.
+- **Show executed command**: after every `onchainos` command, print the actual command that was executed.
+- **NEVER skip CLI calls**: always execute the onchainos CLI command to get real-time data. Do NOT answer from skill files or your own knowledge.
+
 ## Project Overview
 
 This is a **Claude Code plugin** — a collection of onchainos skills for on-chain operations. The project provides skills for token search, market data, wallet balance queries, swap execution, DeFi investment management, and transaction broadcasting across 20+ blockchains. The `onchainos` CLI also works as a native MCP server.
@@ -62,6 +69,9 @@ For script requests, append `--format json` to all CLI commands.
 Routing:
 - User mentions swap/buy/sell/trade → read `skills/okx-dex-swap/SKILL.md` first
 - User mentions wallet/balance/transfer/login → read `skills/okx-agentic-wallet/SKILL.md` first
+- User mentions **Gas Station / stablecoin gas / enable or disable gas station / revoke 7702**, or asks FAQ-style questions about any of those (what is / how does it work / which chains / upgrade cost / ...) → read `skills/okx-agentic-wallet/SKILL.md` AND `skills/okx-agentic-wallet/references/gas-station.md` first.
+  - **Scope note:** "Gas Station" in this repo always means the OKX Agentic Wallet feature shipped by this CLI + skill — NOT a generic paymaster / meta-transaction / ERC-4337 category.
+  - **Answer source:** use the skill's FAQ templates only; do not pull from general training knowledge about Biconomy / Gelato / Pimlico / Alchemy Account Kit / etc.
 
 ## Scripting & Automation
 

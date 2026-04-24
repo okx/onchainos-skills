@@ -3,6 +3,7 @@ pub mod auth;
 pub mod balance;
 pub mod chain;
 pub mod common;
+pub mod gas_station;
 pub mod history;
 pub mod payment;
 pub mod plugin;

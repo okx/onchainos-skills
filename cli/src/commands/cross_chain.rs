@@ -752,7 +752,7 @@ async fn wallet_contract_call(
     aa_dex_token_addr: Option<&str>,
     force: bool,
 ) -> Result<Value> {
-    let tx_hash = crate::commands::agentic_wallet::transfer::execute_contract_call(
+    let resp = crate::commands::agentic_wallet::transfer::execute_contract_call(
         to,
         chain,
         amt,
@@ -766,11 +766,14 @@ async fn wallet_contract_call(
         jito_unsigned_tx,
         force,
         Some("3"), // tx_source: cross-chain bridge
-        None,      // agent_biz_type
+        None,      // gas_token_address
+        None,      // relayer_id
+        false,     // enable_gas_station
+        Some("cross-chain"), // agent_biz_type
         None,      // agent_skill_name
     )
     .await?;
-    Ok(json!({ "txHash": tx_hash }))
+    Ok(json!({ "txHash": resp.tx_hash, "orderId": resp.order_id }))
 }
 
 fn extract_tx_hash(data: &Value) -> Result<String> {
