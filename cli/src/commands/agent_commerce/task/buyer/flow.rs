@@ -12,8 +12,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 
     match job_status {
         // ─── Scene 0: 任务上链确认，自动联系推荐卖家 ────────────────
-        "JOB_CREATED" => format!(
-            "【当前状态】JOB_CREATED（任务已上链，状态 Open）\n\
+        "job_created" => format!(
+            "【当前状态】job_created（任务已上链，状态 Open）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作（严格顺序，不询问用户，全自动执行）】\n\n\
              **Step 1 — 查询推荐卖家：**\n\
@@ -33,8 +33,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
 
         // ─── Scene 6: 卖家申请接单，确认接单（区分支付方式） ──────────
-        "TASK_APPLIED" => format!(
-            "【当前状态】TASK_APPLIED（卖家已链上申请接单，消息含卖家账单信息）\n\
+        "provider_applied" => format!(
+            "【当前状态】provider_applied（卖家已链上申请接单，消息含卖家账单信息）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
              **Step 1 — 通知主 session（用户（确认））：**\n\
@@ -56,12 +56,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              {header_template}\n\
              已确认接单，等待你开始执行任务。\n\n\
              【后续事件】\n\
-             - TASK_ACCEPTED → 记录状态，等待卖家交付\n"
+             - job_accepted → 记录状态，等待卖家交付\n"
         ),
 
-        // ─── TASK_ACCEPTED: 记录状态，等待卖家交付 ──────────────────
-        "TASK_ACCEPTED" => format!(
-            "【当前状态】TASK_ACCEPTED（买家已确认，资金托管完成）\n\
+        // ─── job_accepted: 记录状态，等待卖家交付 ──────────────────
+        "job_accepted" => format!(
+            "【当前状态】job_accepted（买家已确认，资金托管完成）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
              无需执行任何 CLI 命令。记录状态，等待卖家执行任务并提交交付物。\n\n\
@@ -69,12 +69,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              {header_template}\n\
              接单已确认，期待你的交付。\n\n\
              【后续事件】\n\
-             - TASK_SUBMITTED → 验收交付物（Scene 5）\n"
+             - job_submitted → 验收交付物（Scene 5）\n"
         ),
 
         // ─── Scene 7: 卖家提交交付物，验收（区分支付方式） ─────────────
-        "TASK_SUBMITTED" => format!(
-            "【当前状态】TASK_SUBMITTED（卖家已提交交付物）\n\
+        "job_submitted" => format!(
+            "【当前状态】job_submitted（卖家已提交交付物）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 查询交付物详情：**\n\
@@ -111,30 +111,30 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              onchainos agent complete {job_id}\n\
              ```\n\n\
              【后续事件】\n\
-             - TASK_COMPLETED → 任务完成\n\
-             - TASK_REFUSED → 等待卖家决定（仲裁/退款）（仅 escrow）\n"
+             - job_completed → 任务完成\n\
+             - job_refused → 等待卖家决定（仲裁/退款）（仅 escrow）\n"
         ),
 
-        // ─── TASK_REFUSED: 买家已拒绝，等待卖家决策 ─────────────────
-        "TASK_REFUSED" => format!(
-            "【当前状态】TASK_REFUSED（买家已拒绝交付物，等待卖家决定）\n\
+        // ─── job_refused: 买家已拒绝，等待卖家决策 ─────────────────
+        "job_refused" => format!(
+            "【当前状态】job_refused（买家已拒绝交付物，等待卖家决定）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
              无需执行 CLI 命令。卖家有 24h 决定：\n\
-             - 发起仲裁 → 你将收到 TASK_DISPUTED\n\
-             - 同意退款 → 你将收到 TASK_REJECTED\n\
-             - 24h 超时 → 系统自动退款，你将收到 TASK_REJECTED\n\n\
+             - 发起仲裁 → 你将收到 job_disputed\n\
+             - 同意退款 → 你将收到 confirm_refund\n\
+             - 24h 超时 → 系统自动退款，你将收到 confirm_refund\n\n\
              向卖家输出 header 格式回复：\n\n\
              {header_template}\n\
              交付物已拒绝，等待你的后续处理。\n\n\
              【后续事件】\n\
-             - TASK_DISPUTED → 提交买家证据（Scene 6）\n\
-             - TASK_REJECTED → 退款完成\n"
+             - job_disputed → 提交买家证据（Scene 6）\n\
+             - confirm_refund → 退款完成\n"
         ),
 
         // ─── Scene 6: 仲裁已发起，提交买家证据 ─────────────────────
-        "TASK_DISPUTED" => format!(
-            "【当前状态】TASK_DISPUTED（仲裁已发起）\n\
+        "job_disputed" => format!(
+            "【当前状态】job_disputed（仲裁已发起）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 通知主 session 请求用户提供证据（用户（确认））：**\n\
@@ -157,10 +157,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              仅 1 小时准备期内有效，text 和 image 至少一项。\n\n\
              **Step 3 — 向卖家输出 header 格式回复确认：**\n\n\
              {header_template}\n\
-             仲裁已发起（TASK_DISPUTED），买家证据已提交，等待仲裁者裁决。\n\n\
+             仲裁已发起（job_disputed），买家证据已提交，等待仲裁者裁决。\n\n\
              【后续事件】\n\
-             - TASK_COMPLETED → 仲裁卖家胜诉，任务完成\n\
-             - TASK_REJECTED → 仲裁买家胜诉，退款\n"
+             - job_completed → 仲裁卖家胜诉，任务完成\n\
+             - confirm_refund → 仲裁买家胜诉，退款\n"
         ),
 
         // ─── DISPUTE_EVIDENCE: 用户提供了证据，执行上传 ─────────────
@@ -178,13 +178,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
 
         // ─── 任务完成 ─────────────────────────────────────────────────
-        "TASK_COMPLETED" => format!(
-            "【当前状态】TASK_COMPLETED（任务完成）\n\
+        "job_completed" => format!(
+            "【当前状态】job_completed（任务完成）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
              **Step 1 — 向卖家输出 header 格式回复：**\n\n\
              {header_template}\n\
-             任务已完成（TASK_COMPLETED），感谢合作。\n\n\
+             任务已完成（job_completed），感谢合作。\n\n\
              **Step 2 — 通知主 session（用户（通知））：**\n\
              任务 {job_id} 已验收完成。\n\n\
              **Step 3 — 评价卖家：**\n\
@@ -194,23 +194,92 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【流程结束】子 session 可以关闭。\n"
         ),
 
-        // ─── 任务终止（退款 / 仲裁买家胜诉） ────────────────────────
-        "TASK_REJECTED" => format!(
-            "【当前状态】TASK_REJECTED（任务终止，资金退还买家）\n\
+        // ─── 仲裁结束（DisputeSettled） ─────────────────────────────
+        "dispute_resolved" => format!(
+            "【当前状态】dispute_resolved（仲裁已裁决）\n\
              【角色】买家（Client）\n\n\
-             【你的下一步动作】\n\n\
-             **Step 1 — 检查是否需要 claim：**\n\
-             如果通知中 `arbitration: true`（仲裁买家胜诉），调用：\n\
+             【你的下一步动作（严格顺序）】\n\n\
+             **Step 1 — 查询可领取代币及奖励：**\n\
+             ```bash\n\
+             onchainos agent status {job_id}\n\
+             ```\n\
+             检查 claimable 字段，确认是否有可领取的退款/奖励。\n\n\
+             **Step 2 — 领取退款/奖金（如有 claimable）：**\n\
              ```bash\n\
              onchainos agent claim {job_id}\n\
              ```\n\
              签名 claim calldata → 广播，退款/奖金到账。\n\n\
-             **Step 2 — 向卖家输出 header 格式回复：**\n\n\
+             **Step 3 — 向卖家输出 header 格式回复：**\n\n\
              {header_template}\n\
-             任务已终止（TASK_REJECTED），资金已退还。\n\n\
-             **Step 3 — 通知主 session（用户（通知））：**\n\
-             任务 {job_id} 已终止，资金已返还至您的钱包。\n\n\
+             仲裁已裁决（dispute_resolved），资金已处理。\n\n\
+             **Step 4 — 通知主 session（用户（通知））：**\n\
+             任务 {job_id} 仲裁已结束，请检查钱包余额。\n\n\
              【流程结束】子 session 可以关闭。\n"
+        ),
+
+        // ─── 卖家同意退款（TODO: 后端尚未定义此 event，暂用 confirm_refund）
+        "confirm_refund" => format!(
+            "【当前状态】confirm_refund（卖家同意退款，任务终止）\n\
+             【角色】买家（Client）\n\n\
+             【你的下一步动作】\n\n\
+             **Step 1 — 向卖家输出 header 格式回复：**\n\n\
+             {header_template}\n\
+             卖家已同意退款（confirm_refund），资金已退还。\n\n\
+             **Step 2 — 通知主 session（用户（通知））：**\n\
+             任务 {job_id} 卖家已同意退款，资金已返还至您的钱包。\n\n\
+             【流程结束】子 session 可以关闭。\n"
+        ),
+
+        // ─── 任务超时（OPEN→EXPIRED 或 ACCEPTED→EXPIRED）──────────
+        "job_expired" => format!(
+            "【当前状态】job_expired（任务超时，无人接单或卖家未提交）\n\
+             【角色】买家（Client）\n\n\
+             【你的下一步动作】\n\n\
+             **Step 1 — 通知主 session（用户（确认））：**\n\
+             任务 {job_id} 已超时（accept 截止前未接单 或 submit 截止前未提交），是否关闭任务回收资金？\n\n\
+             **Step 2 — 用户确认后，关闭任务回收资金：**\n\
+             ```bash\n\
+             onchainos agent close {job_id}\n\
+             ```\n\n\
+             【后续事件】\n\
+             - job_closed → 关闭完成，资金已回收\n"
+        ),
+
+        // ─── 任务已关闭（close tx 结果）─────────────────────────────
+        "job_closed" => format!(
+            "【当前状态】job_closed（任务已关闭）\n\
+             【角色】买家（Client）\n\n\
+             【你的下一步动作】\n\n\
+             **Step 1 — 通知主 session（用户（通知））：**\n\
+             任务 {job_id} 已关闭，资金已回收。\n\n\
+             检查 payload 中 status 字段：\n\
+             - success → 任务已关闭\n\
+             - failed → 关闭失败，按 errorCode 重试\n\n\
+             【流程结束】子 session 可以关闭。\n"
+        ),
+
+        // ─── 可见性切换结果（setVisibility tx 结果）───────────────────
+        "job_visibility_changed" => format!(
+            "【当前状态】job_visibility_changed（公开/私有切换已上链）\n\
+             【角色】买家（Client）\n\n\
+             【你的下一步动作】\n\n\
+             检查 payload 中 status 字段：\n\
+             - success → 公开/私有切换已生效\n\
+             - failed → 切换失败，按 errorCode 重试\n\n\
+             **通知主 session（用户（通知））：**\n\
+             任务 {job_id} 可见性已更新。\n"
+        ),
+
+        // ─── 支付模式切换结果（setPaymentMode tx 结果）────────────────
+        "job_payment_mode_changed" => format!(
+            "【当前状态】job_payment_mode_changed（支付模式切换已上链）\n\
+             【角色】买家（Client）\n\n\
+             【你的下一步动作】\n\n\
+             检查 payload 中 status 字段：\n\
+             - success → 支付模式已切换\n\
+             - failed → 切换失败，按 errorCode 重试\n\n\
+             **通知主 session（用户（通知））：**\n\
+             任务 {job_id} 支付模式已更新。\n"
         ),
 
         // ─── 关闭任务（仅 Open 状态可用） ───────────────────────────

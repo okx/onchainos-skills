@@ -117,7 +117,7 @@ pub enum TaskCommand {
     SetPublic {
         job_id: String,
     },
-    /// Provider generates payment invoice after TASK_APPLIED
+    /// Provider generates payment invoice after provider_applied
     Payment {
         job_id: String,
     },

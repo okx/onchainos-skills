@@ -21,7 +21,7 @@ pub async fn handle_set_public(client: &TaskApiClient, job_id: &str) -> Result<(
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["data"]["uopData"], &account_id, &address,
-        job_id, signing::BizContext::TaskCreate,
+        job_id, signing::BizContext::JobSetVisibility,
     ).await?;
 
     println!("✓ 任务已转为公开，其他卖家可以看到并报名");

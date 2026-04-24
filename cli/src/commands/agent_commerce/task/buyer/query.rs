@@ -61,7 +61,7 @@ pub async fn handle_list(
     Ok(())
 }
 
-/// 生成付款单（Provider 在 TASK_APPLIED 后发送给买家）
+/// 生成付款单（Provider 在 provider_applied 后发送给买家）
 pub async fn handle_payment(client: &TaskApiClient, job_id: &str) -> Result<()> {
     let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
     let resp = client.get(&url).await?;

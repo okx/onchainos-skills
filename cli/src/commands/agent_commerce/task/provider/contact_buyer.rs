@@ -22,7 +22,7 @@ pub async fn handle_contact_buyer(
     println!("ℹ️  当前为占位实现。真实环境将调用 xmtp_send:");
     println!("   toAgentId = {to_agent_id}");
     println!("   taskId    = {job_id}");
-    println!("   type      = TASK_INQUIRE");
+    println!("   type      = task_inquire");
     println!("   content   = <上面的消息>");
     Ok(())
 }

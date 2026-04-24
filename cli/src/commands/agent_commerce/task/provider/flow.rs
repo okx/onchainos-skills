@@ -12,8 +12,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 
     match job_status {
         // ─── Scene 3: 接单申请已上链，生成付款单给买家 ────────────────
-        "TASK_APPLIED" => format!(
-            "【当前状态】TASK_APPLIED（链上已确认接单申请）\n\
+        "provider_applied" => format!(
+            "【当前状态】provider_applied（链上已确认接单申请）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
              **Step 1 — 调用 CLI 拉取链上支付预信息（从任务详情确定 tokenSymbol：USDT 或 USDG）：**\n\
@@ -23,7 +23,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              返回字段（节选）：currency（token 地址）、recipient（你的钱包地址）、evaluator、submitWindow、disputeWindow、hook、salt、expiredAt。\n\n\
              **Step 2 — 输出 header 格式回复，把付款单发给买家（纯文本，不加 markdown/代码块）：**\n\n\
              {header_template}\n\
-             接单申请已上链确认（TASK_APPLIED）。以下是付款单：\n\
+             接单申请已上链确认（provider_applied）。以下是付款单：\n\
              金额：<tokenAmount> <tokenSymbol>（从 common context 或任务详情获取）\n\
              支付代币合约：<currency>\n\
              收款地址：<recipient>\n\
@@ -32,13 +32,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              salt：<salt>  有效期至：<expiredAt>\n\
              请确认接受并完成付款。\n\n\
              【后续事件】\n\
-             - TASK_ACCEPTED → 买家已确认，开始执行任务\n\
+             - job_accepted → 买家已确认，开始执行任务\n\
              - 若 get-payment 命令不可用，可从 `onchainos agent status {job_id}` 手动组织付款单（退化模式）。\n"
         ),
 
         // ─── Scene 4: 买家已确认接单，执行任务并交付 ─────────────────
-        "TASK_ACCEPTED" => format!(
-            "【当前状态】TASK_ACCEPTED（买家已确认接单，资金托管）\n\
+        "job_accepted" => format!(
+            "【当前状态】job_accepted（买家已确认接单，资金托管）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作（严格顺序，不得跳步）】\n\n\
              **Step 1 — 调用工具名为 `notify_main` 的自定义工具（⚠️ 禁止使用 `sessions_send` / `xmtp_send` / 任何其他消息工具），通知主 session 接单成功：**\n\n\
@@ -62,39 +62,39 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ **如果找不到 `notify_main` 工具，直接跳到 Step 2**（不要用其他工具顶替）。`sessions_send` 不是本项目的工具，调它没用。\n\n\
              **Step 2 — 向买家输出 header 格式回复确认：**\n\n\
              {header_template}\n\
-             已收到接单确认（TASK_ACCEPTED），开始执行任务。\n\n\
+             已收到接单确认（job_accepted），开始执行任务。\n\n\
              **Step 3 — 执行任务（mock 环境可直接跳过），完成后调用 CLI 提交交付物：**\n\
              ```bash\n\
              onchainos agent deliver {job_id} --file \"\" --message \"任务已完成，请验收\"\n\
              ```\n\
              CLI 内部：POST submit API → 签名 uopHash → 广播上链。\n\n\
-             【⚠️ 重要】执行 deliver 后不得立即回复买家'请验收'，必须等 TASK_SUBMITTED 通知再回复。\n\n\
+             【⚠️ 重要】执行 deliver 后不得立即回复买家'请验收'，必须等 job_submitted 通知再回复。\n\n\
              【后续事件】\n\
-             - TASK_SUBMITTED → 交付物已上链，再次调用 next-action 获取下一步\n"
+             - job_submitted → 交付物已上链，再次调用 next-action 获取下一步\n"
         ),
 
         // ─── Scene 5: 交付物已上链，通知买家验收 ─────────────────────
-        "TASK_SUBMITTED" => format!(
-            "【当前状态】TASK_SUBMITTED（交付物已上链确认）\n\
+        "job_submitted" => format!(
+            "【当前状态】job_submitted（交付物已上链确认）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
-             从 TASK_SUBMITTED 通知的 payload 中提取 deliverableUrl（字段 `deliverable`），\n\
+             从 job_submitted 通知的 payload 中提取 deliverableUrl（字段 `deliverable`），\n\
              输出 header 格式回复告诉买家验收：\n\n\
              {header_template}\n\
-             交付物已上链确认（TASK_SUBMITTED），交付链接：<deliverableUrl>。等待买家验收。\n\n\
+             交付物已上链确认（job_submitted），交付链接：<deliverableUrl>。等待买家验收。\n\n\
              【后续事件】\n\
-             - TASK_COMPLETED → 验收通过，调用 next-action 获取收尾步骤\n\
-             - TASK_REFUSED   → 买家拒绝，调用 next-action 获取处理步骤\n"
+             - job_completed → 验收通过，调用 next-action 获取收尾步骤\n\
+             - job_refused   → 买家拒绝，调用 next-action 获取处理步骤\n"
         ),
 
         // ─── Scene 6: 买家拒绝交付物 ─────────────────────────────────
-        "TASK_REFUSED" => format!(
-            "【当前状态】TASK_REFUSED（买家拒绝交付物）\n\
+        "job_refused" => format!(
+            "【当前状态】job_refused（买家拒绝交付物）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 向买家输出 header 格式回复：**\n\n\
              {header_template}\n\
-             已收到买家拒绝通知（TASK_REFUSED）。正在确认后续处理方案，请稍候。\n\n\
+             已收到买家拒绝通知（job_refused）。正在确认后续处理方案，请稍候。\n\n\
              **Step 2 — 调用工具名为 `notify_main` 的自定义工具（⚠️ 禁止 `sessions_send` 等其他名字），把决策请求推给主 session 用户：**\n\n\
              ```\n\
              tool: notify_main\n\
@@ -119,17 +119,17 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```bash\n\
              onchainos agent dispute raise {job_id} --reason \"<用户提供的理由或默认：已按验收标准完成>\"\n\
              ```\n\n\
-             **Step 2 — 收到 TASK_DISPUTED 通知后，上传链下证据：**\n\
+             **Step 2 — 收到 job_disputed 通知后，上传链下证据：**\n\
              ```bash\n\
              onchainos agent dispute upload {job_id} --text \"<证据摘要>\" --image <图片路径>\n\
              ```\n\
              仅 1 小时准备期内有效，text 和 image 至少一项。\n\n\
              **Step 3 — 向买家输出 header 回复：**\n\n\
              {header_template}\n\
-             已发起仲裁（TASK_DISPUTED），等待仲裁员裁决。\n\n\
+             已发起仲裁（job_disputed），等待仲裁员裁决。\n\n\
              【后续事件】\n\
-             - TASK_COMPLETED（仲裁胜诉）\n\
-             - TASK_REJECTED（仲裁败诉）\n"
+             - job_completed（仲裁胜诉）\n\
+             - dispute_resolved（仲裁败诉）\n"
         ),
 
         // ─── Scene 6.2: 用户决定同意退款 ─────────────────────────────
@@ -142,34 +142,45 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\n\
              **Step 2 — 向买家输出 header 回复：**\n\n\
              {header_template}\n\
-             已同意退款，等待链上确认（TASK_REJECTED）。\n"
+             已同意退款，等待链上确认（confirm_refund）。\n"
         ),
 
         // ─── Scene 7: 任务完成（验收通过 / 仲裁胜诉） ────────────────
-        "TASK_COMPLETED" => format!(
-            "【当前状态】TASK_COMPLETED（任务完成，资金已释放）\n\
+        "job_completed" => format!(
+            "【当前状态】job_completed（任务完成，资金已释放）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
              向买家输出 header 格式回复：\n\n\
              {header_template}\n\
-             任务已完成（TASK_COMPLETED），资金已释放。感谢合作。\n\n\
+             任务已完成（job_completed），资金已释放。感谢合作。\n\n\
              【流程结束】子 session 可以关闭。\n"
         ),
 
-        // ─── Scene 6.5: 任务终止（退款 / 仲裁败诉） ──────────────────
-        "TASK_REJECTED" => format!(
-            "【当前状态】TASK_REJECTED（任务终止，资金退还买家）\n\
+        // ─── Scene 6.5a: 仲裁败诉（资金退还买家） ────────────────────
+        "dispute_resolved" => format!(
+            "【当前状态】dispute_resolved（仲裁已裁决，资金退还买家）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
              向买家输出 header 格式回复：\n\n\
              {header_template}\n\
-             任务已终止（TASK_REJECTED），资金已退还买家。\n\n\
+             仲裁已裁决（dispute_resolved），资金已退还买家。\n\n\
+             【流程结束】子 session 可以关闭。\n"
+        ),
+
+        // ─── Scene 6.5b: 卖家同意退款（TODO: 后端尚未定义此 event）───
+        "confirm_refund" => format!(
+            "【当前状态】confirm_refund（卖家已同意退款，资金退还买家）\n\
+             【角色】卖家（Provider）\n\n\
+             【你的下一步动作】\n\n\
+             向买家输出 header 格式回复：\n\n\
+             {header_template}\n\
+             已同意退款（confirm_refund），资金已退还买家。\n\n\
              【流程结束】子 session 可以关闭。\n"
         ),
 
         // ─── Scene 6.4: 仲裁进行中，提交证据 ─────────────────────────
-        "TASK_DISPUTED" => format!(
-            "【当前状态】TASK_DISPUTED（仲裁已发起）\n\
+        "job_disputed" => format!(
+            "【当前状态】job_disputed（仲裁已发起）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
              在 1 小时准备期内上传链下证据（多次可重复）：\n\
@@ -177,8 +188,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              onchainos agent dispute upload {job_id} --text \"<证据摘要>\" --image <图片>\n\
              ```\n\n\
              【后续事件】\n\
-             - TASK_COMPLETED → 胜诉\n\
-             - TASK_REJECTED  → 败诉\n"
+             - job_completed → 胜诉\n\
+             - dispute_resolved → 败诉\n"
         ),
 
         // ─── 未知类型兜底 ─────────────────────────────────────────────

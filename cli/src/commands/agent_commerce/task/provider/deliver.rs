@@ -30,10 +30,10 @@ pub async fn handle_deliver(
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["data"]["uopData"], &account_id, &address,
-        job_id, signing::BizContext::TaskSubmit,
+        job_id, signing::BizContext::JobSubmit,
     ).await?;
 
-    println!("✓ 交付物已提交，等待链上确认（TASK_SUBMITTED）");
+    println!("✓ 交付物已提交，等待链上确认（job_submitted）");
     println!("  txHash: {tx_hash}");
     Ok(())
 }

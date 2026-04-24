@@ -1,6 +1,6 @@
 //! 获取支付预信息（prePayTaskInfo）
 //!
-//! 卖家在 TASK_APPLIED 后调用，拿到链上支付参数（recipient / evaluator / hook / windows 等），
+//! 卖家在 provider_applied 后调用，拿到链上支付参数（recipient / evaluator / hook / windows 等），
 //! 组装付款单发给买家。对应后端 `POST /priapi/v1/aieco/task/{jobId}/prePayTaskInfo`。
 
 use anyhow::Result;

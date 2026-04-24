@@ -30,7 +30,7 @@ pub async fn handle_reject(
         &address,
         &agent_id,
         job_id,
-        signing::BizContext::TaskRefuse,
+        signing::BizContext::JobRefuse,
     ).await?;
 
     println!("✓ 已拒绝验收（原因：{reason}），状态 → refused");

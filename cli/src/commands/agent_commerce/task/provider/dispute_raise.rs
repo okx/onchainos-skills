@@ -23,7 +23,7 @@ pub async fn handle_dispute_raise(
         job_id, signing::BizContext::DisputeCreate,
     ).await?;
 
-    println!("✓ 已发起仲裁，等待链上确认（TASK_DISPUTED）");
+    println!("✓ 已发起仲裁，等待链上确认（job_disputed）");
     println!("  原因: {reason}");
     println!("  txHash: {tx_hash}");
     Ok(())

@@ -25,19 +25,30 @@ pub struct BroadcastResult {
 }
 
 /// Business context for broadcast — 后端据此区分业务场景做额外校验/记账。
+///
+/// 枚举值对齐后端接口文档 bizType 定义（bizType=6 不存在，已跳过）。
 #[repr(i32)]
 #[derive(Debug, Clone, Copy)]
 pub enum BizContext {
-    TaskCreate    = 1,
-    DisputeCreate = 2,
-    VoteCommit    = 3,
-    VoteReveal    = 4,
-    ClaimRewards  = 5,
-    Staking       = 6,
-    TaskAccept    = 7,
-    TaskSubmit    = 8,
-    TaskComplete  = 9,
-    TaskRefuse    = 10,
+    JobCreate         = 1,
+    DisputeCreate     = 2,
+    VoteCommit        = 3,
+    VoteReveal        = 4,
+    ClaimRewards      = 5,
+    // 6 is skipped in backend spec
+    JobAccept         = 7,
+    JobSubmit         = 8,
+    JobComplete       = 9,
+    JobRefuse         = 10,
+    Stake             = 11,
+    UnstakeRequest    = 12,
+    UnstakeClaim      = 13,
+    UnstakeCancel     = 14,
+    JobApply          = 15,
+    JobClose          = 16,
+    JobSetVisibility  = 17,
+    JobSetPaymentMode = 18,
+    StakeIncrease     = 19,
 }
 
 /// Resolve wallet account_id and address for XLayer.
