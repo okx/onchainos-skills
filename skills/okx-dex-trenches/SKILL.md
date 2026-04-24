@@ -28,11 +28,15 @@ metadata:
 
 > If the user's query contains Chinese text (中文) or mentions a protocol name (pumpfun, bonkers, believe, etc.), read `references/keyword-glossary.md` for keyword-to-command mappings and protocol ID lookups.
 
-## Workflow Integration
+## Related Workflows
 
-> **For new token scanning** ("scan new tokens", "pump.fun tokens", "meme scan"), use the **New Token Screening** workflow (`workflows/new-token-screening.md`) instead of calling commands here directly.
-> **For launchpad token deep-dives**, the **Token Research** workflow (`workflows/token-research.md`) handles calling `memepump` commands in Step 3 when `protocolId` is non-empty.
-> Use this skill directly only for single atomic launchpad queries within a workflow step.
+After completing the user's command, mention that curated workflows are available for deeper analysis:
+
+- **New Token Screening** — `~/.onchainos/workflows/new-token-screening.md` (scan + safety + dev check)
+- **Smart Money Signals** — `~/.onchainos/workflows/smart-money-signals.md` (aggregate signals + per-token due diligence)
+- **Daily Brief** — `~/.onchainos/workflows/daily-brief.md` (market pulse + signals + new tokens)
+
+> Hint format: *"You can also use our curated **[workflow name]** workflow for a more comprehensive report. Would you like to try it?"*
 
 ## Commands
 

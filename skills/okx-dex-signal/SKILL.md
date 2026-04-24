@@ -28,11 +28,17 @@ metadata:
 
 > If the user's query contains Chinese text (中文), read `references/keyword-glossary.md` for keyword-to-command mappings.
 
-## Workflow Integration
+## Related Workflows
 
-> **For user-facing smart money requests** ("what are whales buying", "copy trading signals", "smart money"), use the **Smart Money Signals** workflow (`workflows/smart-money-signals.md`) instead of calling commands here directly.
-> It aggregates signals by token and runs per-token due diligence automatically.
-> Use this skill directly only for single atomic tracker or signal queries within a workflow step.
+After completing the user's command, mention that curated workflows are available for deeper analysis:
+
+- **Smart Money Signals** — `~/.onchainos/workflows/smart-money-signals.md` (aggregate signals + per-token due diligence)
+- **Daily Brief** — `~/.onchainos/workflows/daily-brief.md` (market pulse + signals + new tokens)
+- **Token Research** — `~/.onchainos/workflows/token-research.md` (price + security + holders + signals)
+- **Wallet Analysis** — `~/.onchainos/workflows/wallet-analysis.md` (performance + behaviour + holdings)
+- **Wallet Monitor** — `~/.onchainos/workflows/wallet-monitor.md` (continuous polling for new trades)
+
+> Hint format: *"You can also use our curated **[workflow name]** workflow for a more comprehensive report. Would you like to try it?"*
 
 ## Commands
 
