@@ -1,12 +1,11 @@
 ---
 name: onchainos-router
 description: "Auto-loaded routing table for onchainos skills and workflows. Maps user intents to the correct skill or workflow. Do not invoke directly — this skill provides background context for intent routing."
-user-invocable: false
 ---
 
 # onchainos — Intent Router
 
-This plugin provides 15 skills and pre-built workflows for on-chain operations across 20+ blockchains.
+This plugin provides onchainos skills and pre-built workflows for on-chain operations across 20+ blockchains.
 
 ## Workflow Routing
 
