@@ -1,6 +1,6 @@
 # Role: evaluator (验证者)
 
-> Registers an arbitrator identity. `create` itself does not require the OKB stake — the backend accepts the registration regardless. Staking 100 OKB is what makes the evaluator eligible to be assigned to real disputes; that flow lives in `/skills/okx-agent-task/evaluator.md`. This skill never verifies or reads stake state.
+> Registers an arbitrator identity. `create` itself does not require the stake — the backend accepts the registration regardless. A separate stake is what makes the evaluator eligible to be assigned to real disputes; that flow (and the current amount) lives in `/skills/okx-agent-task/evaluator.md`. On successful create, this skill **hands off to that skill in the same turn** (see §Post-success suggestion) — do not stop between create success and stake confirmation. This skill never verifies or reads stake state, and never hardcodes the amount.
 
 ## STRICT — one question per turn
 
@@ -12,10 +12,10 @@ Fields defined in `field-specs.md`. Inline the four segments (`用途 / 可见�
 1. Ask name
 2. Ask description
 3. Confirmation card → execute create
-4. Post-success card + 一行引导：去质押 100 OKB 才能接仲裁派单
+4. Post-success card (two visible lines) + same-turn handoff to `okx-agent-task/evaluator.md`
 ```
 
-No pre-create staking gate. No cached-resume flow. Registration is cheap; staking is a deliberate later step the user triggers from `okx-agent-task`.
+No pre-create staking gate. No cached-resume flow. Registration is cheap; the post-success card hands off to `okx-agent-task` in the same turn, and the user confirms the stake in their next turn.
 
 ## Phase 1 — identity Q&A
 
@@ -94,29 +94,39 @@ onchainos agent create \
 
 ## Post-success suggestion
 
-Two lines in order, in the user's language. Follow the `#<id>` placeholder rule in `display-formats.md` — include the id only if it's actually known.
+Render **two visible lines** in the user's language (one of the four variants below), then follow the **agent directive** block (internal — not rendered to the user). Follow the `#<id>` placeholder rule in `display-formats.md` — include the id only if it's actually known.
+
+### Visible lines (four variants)
 
 With id (Chinese):
 > Evaluator 身份 #<id> 已注册。
-> 要被系统分派仲裁案子，还需要去 `/skills/okx-agent-task/evaluator.md` 质押 100 OKB。质押是独立流程，这条 skill 不读质押状态。
+> 要被系统分派仲裁案子还需要完成质押。
 
 Without id (Chinese):
 > Evaluator 身份已注册。
-> 要被系统分派仲裁案子，还需要去 `/skills/okx-agent-task/evaluator.md` 质押 100 OKB。质押是独立流程，这条 skill 不读质押状态。
+> 要被系统分派仲裁案子还需要完成质押。
 
 With id (English):
 > Evaluator agent #<id> registered.
-> To be assigned dispute cases, you still need to stake 100 OKB via `/skills/okx-agent-task/evaluator.md`. Staking is a separate flow; this skill does not read stake state.
+> A separate stake is still required before you can be assigned disputes.
 
 Without id (English):
 > Evaluator agent registered.
-> To be assigned dispute cases, you still need to stake 100 OKB via `/skills/okx-agent-task/evaluator.md`. Staking is a separate flow; this skill does not read stake state.
+> A separate stake is still required before you can be assigned disputes.
 
-Optional follow-up (offer, don't force), user language:
-- 中文："想参考下活跃仲裁员的声誉水平，可以说 `搜索活跃的高分 evaluator`。"
-- English: "Want to see how active evaluators are rated for reference? Say `search for active high-score evaluators`."
+Do NOT mention the `okx-agent-task/evaluator.md` path to the user in the visible lines, and do NOT state a stake amount — the same-turn handoff below will take the user directly into that skill's own prompt, which owns both the path and the amount.
 
-**Do NOT** chase with status poll. See `_shared/no-polling.md`.
+### Agent directive (internal — do NOT render to the user)
+
+After emitting the two visible lines above, **do not stop the turn**. In the same response, load `/skills/okx-agent-task/evaluator.md` and continue with its `When to Activate → Step 1 → Step 2`; render its staking confirmation card as the next part of the same response. The stake amount is owned by that skill — the identity skill does not pass one.
+
+**Skip the handoff** (render visible lines only, then stop) if the user has already declined staking in this conversation — see §Good / bad cases row "不想质押".
+
+This is the documented exception to `SKILL.md §Step 4`'s "Stop. Wait for the user." rule; see that section for the carve-out.
+
+---
+
+**Do NOT** chase with status poll (that is about querying chain state — different from the same-turn handoff above, which just loads the next skill's prompt). See `_shared/no-polling.md`.
 
 ## Error recovery
 

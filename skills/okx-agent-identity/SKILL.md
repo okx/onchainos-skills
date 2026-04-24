@@ -73,7 +73,7 @@ Three roles. Always use the lowercase English value for the `--role` CLI paramet
 |---|---|---|
 | `requester` | 买家 (buyer) | Publishes tasks, pays for services |
 | `provider` | 服务方 (seller) | Offers services, delivers work |
-| `evaluator` | 验证者 (arbitrator) | Judges disputes. `create` itself is unconditional; 100 OKB stake is required separately to be assigned real disputes (see `okx-agent-task`). |
+| `evaluator` | 验证者 (arbitrator) | Judges disputes. `create` itself is unconditional; a separate stake via `okx-agent-task` is required to be assigned real disputes. |
 
 CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provider; `3` → evaluator. The skill always emits the canonical lowercase English name to the CLI.
 
@@ -291,14 +291,15 @@ Passive fallback (user skipped step 2):
        ↓
 2. okx-agent-identity             collect name + description → confirm → execute
                                   create --role evaluator → evaluatorAgentId
+       ↓ (same turn — no user reply between 2 and 3)
+3. okx-agent-task                 load evaluator.md in the same response
+                                  → When to Activate → Step 1 → Step 2
+                                  → render stake confirmation inline
        ↓
-3. okx-agent-task                 follow evaluator.md to stake 100 OKB
-                                  (没质押不会被系统派单，但 agent 身份已生效)
-       ↓
-4. okx-agent-task                 wait for dispute assignment
+4. okx-agent-task                 user confirms stake next turn → eligible for assignment
 ```
 
-**Data handoff**: `evaluatorAgentId` is produced at step 2 and belongs to the user regardless of stake status. Step 3 (staking) is a separate, user-triggered action handled entirely by `okx-agent-task`; the identity skill never reads or verifies stake state. Do NOT gate step 2 on prior staking.
+**Data handoff**: `evaluatorAgentId` is produced at step 2 and belongs to the user regardless of stake status. Step 2 → step 3 is a **same-turn handoff**: after create succeeds, render the two visible post-success lines (see `role-evaluator.md §Post-success`) and then immediately load `okx-agent-task/evaluator.md` inside the same response — do not stop between them. The identity skill never reads or verifies stake state and does not pass a stake amount. Do NOT gate step 2 on prior staking. Exception: if the user has explicitly declined staking earlier in the conversation, render the visible lines only and stop.
 
 ### Workflow D: Discover → rate
 
@@ -341,6 +342,7 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 - Render the detail card (success) or the error card (failure), following `references/display-formats.md`.
 - Attach exactly **one** next-step suggestion line (Suggest Next Steps table below).
 - Stop. Wait for the user. No status polling, no auto-retry, no speculative side-query.
+- **Exception — evaluator create → stake (same-turn handoff)**: after `agent create --role evaluator` succeeds, render the two visible post-success lines from `role-evaluator.md §Post-success`, then immediately load `/skills/okx-agent-task/evaluator.md` and continue with its `When to Activate → Step 1 → Step 2` inside the same response. Do **not** stop; do **not** wait for the user. This is the only same-turn chain allowed from this skill — it exists because registration and staking form a single onboarding intent for evaluators. Skip the handoff (render visible lines only, then stop) if the user has explicitly declined staking earlier in the conversation — see `role-evaluator.md §Good / bad cases`.
 
 ### Suggest Next Steps
 
@@ -348,7 +350,7 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 |---|---|
 | `agent create --role requester` | "要不要开始发布任务？走 `okx-agent-task`。" |
 | `agent create --role provider` | "Provider 注册完成，默认已 active。可以 `agent search` 自检曝光，或直接等匹配来的任务。" |
-| `agent create --role evaluator` | "Evaluator 身份已注册。要被系统分派仲裁案子，先去 `/skills/okx-agent-task/evaluator.md` 质押 100 OKB；之后想看同行声誉水平可以 `agent search --feedback 高分 --agent-info evaluator`。" |
+| `agent create --role evaluator` | Render two visible lines ("Evaluator 身份 #<id> 已注册。" + "要被系统分派仲裁案子还需要完成质押。" — English variants in `role-evaluator.md`), then **same-turn handoff** to `okx-agent-task/evaluator.md` (`When to Activate → Step 1 → Step 2`) inside the same response; do not stop. See `role-evaluator.md §Post-success` for full templates and §Step 4 Exception above for the carve-out. |
 | `agent update` | Show new detail card. If user deactivated during update, suggest re-activate. |
 | `agent activate` | "上架完成，可以 `agent search` 自检曝光。" |
 | `agent deactivate` | "下架完成，客户端列表会隐藏；要恢复执行 `agent activate`。" |
@@ -472,7 +474,7 @@ Phase-1 capture: `name=Alice`, `description=做 DeFi 分析`. **Fee=10 is discar
 
 - Service `Fee` is an **integer USDT string** at the CLI layer — always show the user the human-readable form "`N USDT`" (e.g., `10 USDT`). Never show raw minimal token units.
 - Service `Fee` is only meaningful for `A2MCP` services. For `A2A`, display "free" or "inline (per-call pricing off-chain)" — the CLI-stored value is informational.
-- OKB staking amount for evaluator is **100 OKB**; always show the token symbol. Do not quote USD value (it fluctuates).
+- Evaluator stake amount is owned by `okx-agent-task` and may change; **never hardcode the amount** in this skill's copy. Just point users to the staking flow at `/skills/okx-agent-task/evaluator.md`.
 - EVM contract / agent addresses must be displayed all lowercase.
 - Scores are integers 0–100; display as "85 / 100".
 
