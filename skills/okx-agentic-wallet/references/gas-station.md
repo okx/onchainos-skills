@@ -2,23 +2,26 @@
 
 Gas Station enables paying gas fees with stablecoins (USDT/USDC/USDG) when the user lacks native tokens. It uses EIP-7702 to upgrade the wallet and a third-party Relayer to pay gas on behalf of the user.
 
-**Supported chains (11 EVM chains)**: Ethereum, BNB Chain, Base, Arbitrum One, Polygon, Optimism, Conflux eSpace, Linea, Scroll, Monad, Sonic EVM.
+**Supported chains (12 EVM chains)**: Ethereum, BNB Smart Chain (BSC), Base, Polygon, Arbitrum One, Optimism, Linea, Monad, Scroll, Sonic, Conflux eSpace, X Layer.
+
+Gas Station is **EVM-only**. Non-EVM chains (Solana, Sui, Bitcoin, Ton, Tron, …) are **not supported** — never list them as supported even if the user mentions them.
 
 **Supported gas tokens per chain**:
 
 | Chain | USDT | USDC | USDG |
 |---|---|---|---|
 | Ethereum | ✓ | ✓ | ✓ |
-| BNB Chain | ✓ | ✓ | |
+| BNB Smart Chain (BSC) | ✓ | ✓ | |
 | Base | ✓ | ✓ | |
-| Arbitrum One | ✓ | ✓ | |
 | Polygon | ✓ | ✓ | |
+| Arbitrum One | ✓ | ✓ | |
 | Optimism | ✓ | ✓ | |
-| Conflux eSpace | ✓ | ✓ | |
 | Linea | ✓ | ✓ | |
-| Scroll | ✓ | ✓ | |
 | Monad | ✓ | ✓ | |
-| Sonic EVM | | ✓ | |
+| Scroll | ✓ | ✓ | |
+| Sonic | | ✓ | |
+| Conflux eSpace | ✓ | ✓ | |
+| X Layer | ✓ | ✓ | |
 
 Always derive the actual set from `gasStationTokenList` in the Phase 1 response (the backend-authoritative list per chain). The table above is a reference for FAQ replies.
 
@@ -139,7 +142,7 @@ Your {native_symbol} balance isn't enough to pay gas. You have two ways to proce
 1. Top up {native_symbol} and pay gas with the native token.
 2. Enable Gas Station to pay gas directly with a stablecoin.
 
-About Gas Station: Gas Station aggregates third-party Relayer services, automatically compares rates and picks the best, and pays gas on your behalf. You can pay with USDT, USDC, or USDG — no need to hold {native_symbol}, BNB, or other native tokens. Learn more: https://web3.okx.com/zh-hans/learn/wallet-gas-station
+About Gas Station: Gas Station aggregates third-party Relayer services, automatically compares rates and picks the best, and pays gas on your behalf. You can pay with USDT, USDC, or USDG — no need to hold {native_symbol}, BNB, or other native tokens. Learn more: https://web3.okx.com/learn/wallet-gas-station
 - Once enabled, when your native balance is insufficient the system will automatically pay gas with a stablecoin — no further confirmation needed.
 - By default the system uses the stablecoin with the highest balance. You can also pin a specific token as the default gas token for each transaction. Stablecoins supported on this chain: {supported_tokens_on_chain}.
 
@@ -725,17 +728,26 @@ Gas Station aggregates third-party payment services, automatically compares thei
 
 Supported networks and stablecoins:
 - Ethereum: USDT, USDC, USDG
-- BNB Chain, Base, Arbitrum One, Polygon, Optimism, Conflux eSpace, Linea, Scroll, Monad: USDT, USDC
-- Sonic EVM: USDC
+- BNB Smart Chain (BSC), Base, Polygon, Arbitrum One, Optimism, Linea, Monad, Scroll, Conflux eSpace, X Layer: USDT, USDC
+- Sonic: USDC
 
-Learn more: https://web3.okx.com/zh-hans/learn/wallet-gas-station
+Learn more: https://web3.okx.com/learn/wallet-gas-station
 ```
 
 ### Q: How does Gas Station work?
 
+<MUST>
+**Verbatim answer — reproduce the three numbered steps and the supported-chains line exactly. Translate to the user's language at output time; the structure and every sentence stays.**
+
 ```
-Gas Station lets a third-party service pay the native-token gas for you on chain. Within the same transaction, your chosen stablecoin automatically repays that service. The result: you pay gas in stablecoins without ever holding native tokens.
+Here's how Gas Station works under the hood:
+1. Your wallet is upgraded to a smart contract wallet via EIP-7702, giving it the ability to pay gas with ERC-20 tokens.
+2. A third-party Relayer service pays the native-token gas required on chain on your behalf.
+3. In the same transaction, your chosen stablecoin automatically repays the Relayer.
+
+Supported chains: Ethereum, BNB Smart Chain (BSC), Base, Polygon, Arbitrum One, Optimism, Linea, Monad, Scroll, Sonic, Conflux eSpace, and X Layer.
 ```
+</MUST>
 
 ### Q: Does enabling Gas Station cost extra?
 
