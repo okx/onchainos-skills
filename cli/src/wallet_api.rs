@@ -220,24 +220,24 @@ struct AddressListData {
     accounts: Vec<AddressListAccountItem>,
 }
 
-/// Gas Station status enum（对齐后端 gasStationStatus 字段和 review.md Section 0）
+/// Gas Station status enum (mirrors the backend `gasStationStatus` field; see review.md Section 0).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GasStationStatus {
-    /// 主币转账 / 不支持链，不走 GS
+    /// Native-token transfer or unsupported chain — Gas Station is not used for this tx.
     NotApplicable,
-    /// DB 无记录 + 链上未委托，需用户选 token 首次启用
+    /// DB has no record + chain not delegated — user must pick a token to enable for the first time.
     FirstTimePrompt,
-    /// 链上未委托，签 712 + 7702 auth 做首次升级
+    /// Chain not delegated — sign 712 + 7702 auth to perform the first-time upgrade.
     PendingUpgrade,
-    /// DB disable + 链上已委托，仅重新打开 DB 开关
+    /// DB disabled + chain already delegated — flip the DB flag only; no on-chain action.
     ReenableOnly,
-    /// DB enabled + 链上已委托，稳态正常代付（需根据 hash 是否为空判断默认 token 是否足够）
+    /// DB enabled + chain already delegated — steady-state path; check whether `hash` is empty to decide if the default token covers this tx.
     ReadyToUse,
-    /// 所有 gas token 余额不足
+    /// None of the Gas Station stablecoins has enough balance to cover the gas fee.
     InsufficientAll,
-    /// 有 pending 交易阻塞
+    /// A pending Gas Station transaction is blocking this one.
     HasPendingTx,
-    /// 枚举未知或为空（兼容旧后端走 fallback 路径）
+    /// Enum value is unknown or empty — compatibility fallback for older backends.
     Unknown,
 }
 

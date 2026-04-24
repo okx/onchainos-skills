@@ -1103,11 +1103,11 @@ async fn wallet_contract_call(
         mev_protection,
         jito_unsigned_tx,
         false, // force
-        Some("dex"), // tx_source / agentBizType: swap route
+        None,  // tx_source: not cross-chain
         gas_token_address,
         relayer_id,
         enable_gas_station,
-        Some("dex"), // agent_biz_type
+        Some("dex"), // agent_biz_type: swap flow
         None,        // agent_skill_name
     )
     .await?;
