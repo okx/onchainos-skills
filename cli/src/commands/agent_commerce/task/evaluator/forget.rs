@@ -5,7 +5,7 @@ use crate::commands::agent_commerce::task::signing;
 use crate::commands::Context;
 
 /// Delete the locally-cached commit record for a settled dispute.
-/// Invoked by the `TASK_RESOLVED` flow step — dispute is terminal, the `{disputeId, side}`
+/// Invoked by the `dispute_resolved` / `round_failed` flow step — dispute round is terminal, the `{disputeId, side}`
 /// record is no longer needed. Idempotent: reports 0 removed if nothing matched.
 pub async fn run_forget(dispute_id: String, _ctx: &Context) -> Result<()> {
     let (_, address) = signing::resolve_wallet(None, None)?;

@@ -85,6 +85,7 @@ The escalation message Body starts with `[topic: <name>]` and SystemPrompt start
 | User says "I'd like to use the service provided by Agent ..." / "指定卖家" / "使用 Agent XXX 的服务" | **Client** → Read `buyer.md` Scene 1.7 (Designated Provider) |
 | User wants to browse / search for tasks / "找任务" / "接单" / apply for a task | **Provider** → Read `provider.md` |
 | User received an arbitration notification / assigned as judge | **Evaluator** → Read `evaluator.md` |
+| **Handoff from identity / registration skill**：用户刚在身份系统完成 evaluator 注册，上下文里出现 "已注册为 evaluator" / "请继续质押流程" / "stake to become evaluator" / "质押成为仲裁者" 等交接信号（身份 skill 不传金额，由本 skill 自行决定默认值并请用户确认）| **Evaluator** → Read `evaluator.md` §1.5 Onboarding（默认 100 OKB → 展示给用户等确认 → 再跑 stake CLI） |
 | User asks for direct help (security check, code review, analysis, "帮我看看") **without** mentioning hiring/finding someone | **Not a task** → Route to the appropriate skill (e.g. `okx-security`). Do **NOT** proactively suggest task creation. |
 | Unsure | Follow **Context Loading Protocol** below |
 
@@ -178,9 +179,9 @@ When the agent receives a system notification, route to the correct role file an
 | `TASK_SUBMITTED` | **执行** → Scene 5：验收交付物，调用 `complete`（通过）或 `reject`（拒绝） | **忽略 llm** → 调 `next-action --jobStatus TASK_SUBMITTED` | — |
 | `TASK_COMPLETED` | Scene 7：任务完成，通知用户 | 调 `next-action --jobStatus TASK_COMPLETED` | — |
 | `TASK_REFUSED` | **忽略 llm** → 记录状态，等待卖家决定 | **执行** → 调 `next-action --jobStatus TASK_REFUSED`（会调 `notify_main` 让用户决策仲裁/退款） | — |
-| `TASK_DISPUTED` | Scene 6：等待用户提交证据 | 调 `next-action --jobStatus TASK_DISPUTED` | — （evaluator 不响应此事件，改由 `EVIDENCE_CLOSED` 触发）|
-| `EVIDENCE_CLOSED` | — | — | **执行** → 调 `next-action --jobStatus EVIDENCE_CLOSED --role evaluator`（sub session 激活、静默分析 → `escalate_to_main`）|
-| `REVEAL_WINDOW_OPEN` / `TASK_RESOLVED` / `REWARD_CLAIMABLE` | — | — | **执行** → 调 `next-action --jobStatus <type> --role evaluator`（同一 dispute sub session 续用：sub 里跑 CLI → `notify_main` 推结果给主 session）|
+| `TASK_DISPUTED` | Scene 6：等待用户提交证据 | 调 `next-action --jobStatus TASK_DISPUTED` | — （evaluator 不响应此事件，改由 `evaluator_selected` 触发）|
+| `evaluator_selected` | — | — | **执行** → 调 `next-action --jobStatus evaluator_selected --role evaluator`（sub session 激活、静默分析 → `escalate_to_main`）|
+| `reveal_started` / `dispute_resolved` / `round_failed` / `slashed` / `reward_claimed` | — | — | **执行** → 调 `next-action --jobStatus <type> --role evaluator`（同一 dispute sub session 续用：sub 里跑 CLI → `notify_main` 推结果给主 session）|
 | `TASK_REJECTED` | 退款完成，资金已退还买家 | 调 `next-action --jobStatus TASK_REJECTED` | — |
 
 > **Routing rule**:

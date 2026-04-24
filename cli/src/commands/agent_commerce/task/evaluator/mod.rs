@@ -10,6 +10,7 @@ pub mod flow;
 mod helpers;
 mod info;
 mod reveal;
+mod stake;
 
 use anyhow::Result;
 use clap::Subcommand;
@@ -37,9 +38,16 @@ pub enum EvaluatorCommand {
     },
     /// Claim reward after task/dispute resolved
     Claim { job_id: String },
-    /// Delete the local commit record for a settled dispute (called on TASK_RESOLVED,
-    /// idempotent). Dispute is terminal — {vote, salt} is no longer needed client-side.
+    /// Delete the local commit record for a settled dispute (called on dispute_resolved /
+    /// round_failed, idempotent). Round is terminal — {vote, salt} is no longer needed client-side.
     Forget { dispute_id: String },
+    /// Stake OKB to become an active evaluator (onboarding handoff from identity skill).
+    /// Requires the current wallet's agentId to already be registered with evaluator role
+    /// (identity=2). First-time stake: amount >= 100 OKB; top-up has no minimum.
+    Stake {
+        #[arg(long)]
+        amount: String,
+    },
 }
 
 pub async fn run(cmd: EvaluatorCommand, ctx: &Context) -> Result<()> {
@@ -51,5 +59,6 @@ pub async fn run(cmd: EvaluatorCommand, ctx: &Context) -> Result<()> {
             reveal::run_reveal(dispute_id, side, ctx).await,
         EvaluatorCommand::Claim { job_id } => claim::run_claim(job_id, ctx).await,
         EvaluatorCommand::Forget { dispute_id } => forget::run_forget(dispute_id, ctx).await,
+        EvaluatorCommand::Stake { amount } => stake::run_stake(amount, ctx).await,
     }
 }

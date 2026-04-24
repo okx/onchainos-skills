@@ -83,7 +83,10 @@ export async function handleInboundMessage(params: {
 
   const SYSTEM_NOTIFY_TYPES = new Set([
     "TASK_APPLIED", "TASK_ACCEPTED", "TASK_SUBMITTED", "TASK_COMPLETED",
-    "TASK_REFUSED", "TASK_REJECTED", "TASK_DISPUTED", "DISPUTE_ASSIGNED",
+    "TASK_REFUSED", "TASK_REJECTED", "TASK_DISPUTED",
+    // evaluator 事件（对齐 Lark 设计文档 event 枚举）
+    "evaluator_selected", "reveal_started", "dispute_resolved",
+    "round_failed", "slashed", "reward_claimed",
   ]);
 
   let body: string = rawBody;

@@ -186,7 +186,7 @@ pub enum TaskSystemCommand {
         #[arg(long = "jobid")]
         job_id: String,
 
-        /// 当前收到的系统通知类型（provider/buyer: TASK_APPLIED / TASK_ACCEPTED / TASK_SUBMITTED / TASK_REFUSED / TASK_COMPLETED / TASK_DISPUTED / TASK_REJECTED / DISPUTE_RAISE / AGREE_REFUND；evaluator: EVIDENCE_CLOSED / REVEAL_WINDOW_OPEN / TASK_RESOLVED / REWARD_CLAIMABLE）
+        /// 当前收到的系统通知类型（provider/buyer: TASK_APPLIED / TASK_ACCEPTED / TASK_SUBMITTED / TASK_REFUSED / TASK_COMPLETED / TASK_DISPUTED / TASK_REJECTED / DISPUTE_RAISE / AGREE_REFUND；evaluator: evaluator_selected / reveal_started / dispute_resolved / round_failed / slashed / reward_claimed）
         #[arg(long = "jobStatus")]
         job_status: String,
 

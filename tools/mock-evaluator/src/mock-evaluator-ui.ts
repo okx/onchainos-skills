@@ -3,8 +3,8 @@
  *
  * 启动后打开 http://localhost:9004
  *
- * 架构：每个 convId 一个 EvalSession（收到 TASK_DISPUTED → commit vote → sleep 1s → reveal vote）
- * mock-api 在最后一个 reveal 后广播 TASK_RESOLVED + REWARD_CLAIMABLE 系统通知。
+ * 架构：每个 convId 一个 EvalSession（TASK_DISPUTED 登记 → evaluator_selected 触发 commit → reveal_started 触发 reveal）
+ * mock-api 在最后一个 reveal 后广播 dispute_resolved + reward_claimed 系统通知（事件名对齐 Lark 设计文档）。
  * 自动模式：5s 后自动裁决
  * 手动模式：UI 点击"买家胜"/"卖家胜"按钮
  *
@@ -75,15 +75,15 @@ function buildReason(verdict: "buyer" | "seller"): string {
     : "交付物符合验收标准，买家拒绝理由不充分，资金释放给卖家。";
 }
 
-// 记录用户/自动模式选择的裁决,不立刻提交;等 EVIDENCE_CLOSED 事件到达再 commit。
+// 记录用户/自动模式选择的裁决,不立刻提交;等 evaluator_selected 事件到达再 commit。
 function setVerdict(convId: string, verdict: "buyer" | "seller", reason?: string) {
   const s = sessions.get(convId);
   if (!s || s.resolved) return;
   s.verdict = verdict;
   s.reason = reason ?? buildReason(verdict);
   pushSSE("session_updated", sessionToView(s));
-  // 如果 EVIDENCE_CLOSED 已经来过(极端时序),立即 commit
-  // (mock-api 现在先发 TASK_DISPUTED 再 setTimeout 发 EVIDENCE_CLOSED,通常不会提前)
+  // 如果 evaluator_selected 已经来过(极端时序),立即 commit
+  // (mock-api 先发 TASK_DISPUTED 再 setTimeout 发 evaluator_selected,通常不会提前)
 }
 
 async function commitIfReady(s: EvalSessionState): Promise<void> {
@@ -169,7 +169,7 @@ const server = http.createServer(async (req, res) => {
           s.autoMode = !s.autoMode;
           pushSSE("session_updated", sessionToView(s));
         } else if (action === "resolve") {
-          // 手动模式:用户点击买家/卖家胜 → 设裁决;如已到 EVIDENCE_CLOSED 会在下一刻 commit
+          // 手动模式:用户点击买家/卖家胜 → 设裁决;如已到 evaluator_selected 会在下一刻 commit
           setVerdict(convId, verdict as "buyer" | "seller", reason);
           await commitIfReady(s);
         }
@@ -229,7 +229,7 @@ async function main() {
 
     switch (type) {
       case "TASK_DISPUTED": {
-        // auto 模式:5s 模拟审查后登记默认裁决(commit 仍由 EVIDENCE_CLOSED 触发)
+        // auto 模式:5s 模拟审查后登记默认裁决(commit 仍由 evaluator_selected 触发)
         if (s.autoMode && !s.verdict) {
           sleep(5000).then(() => {
             setVerdict(disputeConvId, "buyer");
@@ -238,11 +238,11 @@ async function main() {
         }
         return;
       }
-      case "EVIDENCE_CLOSED": {
+      case "evaluator_selected": {
         commitIfReady(s).catch(console.error);
         return;
       }
-      case "REVEAL_WINDOW_OPEN": {
+      case "reveal_started": {
         revealIfCommitted(s).catch(console.error);
         return;
       }

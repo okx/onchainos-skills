@@ -61,7 +61,7 @@ pub async fn run_commit(dispute_id: String, side: u8, _ctx: &Context) -> Result<
     }
     println!("  txHash:     {tx_hash}");
     println!(
-        "next: on REVEAL_WINDOW_OPEN run `onchainos agent evaluator reveal {dispute_id}` \
+        "next: on reveal_started run `onchainos agent evaluator reveal {dispute_id}` \
          (CLI auto-resolves side={side} from local store; pass `--side {side}` to override)"
     );
     Ok(())

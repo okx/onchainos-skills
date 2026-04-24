@@ -1,14 +1,16 @@
 /**
  * TypeScript mock evaluator (headless)
  *
- * 事件驱动仲裁流程(对齐文档 §7):
- *   TASK_DISPUTED          → 记录 verdict,等证据封期结束
- *   EVIDENCE_CLOSED        → 调 /vote/commit
- *   VOTE_COMMITTED         → (日志)commit tx 已回执
- *   REVEAL_WINDOW_OPEN     → 调 /vote/reveal
- *   VOTE_REVEALED          → (日志)reveal tx 已回执
- *   TASK_RESOLVED          → (日志)最终裁决广播
- *   REWARD_CLAIMABLE       → (日志)可领奖
+ * 事件驱动仲裁流程(事件名对齐 Lark 设计文档 event 枚举):
+ *   TASK_DISPUTED          → 记录 verdict,等被选为陪审
+ *   evaluator_selected     → 调 /vote/commit (VotersSelected 上链,CommitPhase 已开)
+ *   vote_committed         → (日志)commit tx 已回执
+ *   reveal_started         → 调 /vote/reveal (RevealStarted 上链)
+ *   vote_revealed          → (日志)reveal tx 已回执
+ *   dispute_resolved       → (日志)最终裁决广播
+ *   round_failed           → (日志)本轮无效,等下一轮
+ *   slashed                → (日志)stake 被罚没
+ *   reward_claimed         → (日志)奖励已入账
  *
  * Vote 语义:1=Approve(Provider/seller wins), 2=Reject(Client/buyer wins)。
  *
@@ -93,7 +95,7 @@ async function main() {
   await client.connectAndRegister();
   await client.registerIdentity("EVALUATOR", EVAL_AGENT_ID, EVAL_COMM_ADDR);
   console.log(`✓ 身份已注册: role=EVALUATOR agentId=${EVAL_AGENT_ID}`);
-  console.log(`[eval] 无头模式,默认裁决=${DEFAULT_VERDICT},等待 TASK_DISPUTED...\n`);
+  console.log(`[eval] 无头模式,默认裁决=${DEFAULT_VERDICT},等待 evaluator_selected...\n`);
 
   client.start((envelope: WsEnvelope) => {
     const { from, payload } = envelope;
@@ -114,23 +116,25 @@ async function main() {
             reason: buildReason(verdict),
             phase: "prep",
           });
-          console.log(`[eval] recorded dispute job=${jobId} verdict=${verdict}; 等证据期结束...`);
+          console.log(`[eval] recorded dispute job=${jobId} verdict=${verdict}; 等 evaluator_selected...`);
         }
         return;
       }
-      case "EVIDENCE_CLOSED": {
+      case "evaluator_selected": {
         commitIfPrep(jobId);
         return;
       }
-      case "REVEAL_WINDOW_OPEN": {
+      case "reveal_started": {
         revealIfCommitted(jobId);
         return;
       }
-      case "VOTE_COMMITTED":
-      case "VOTE_REVEALED":
-      case "TASK_RESOLVED":
-      case "REWARD_CLAIMABLE":
-        // 回执/结算:仅日志(上面已打印)
+      case "vote_committed":
+      case "vote_revealed":
+      case "dispute_resolved":
+      case "round_failed":
+      case "slashed":
+      case "reward_claimed":
+        // 回执/结算/罚没:仅日志(上面已打印)
         return;
       default:
         return;

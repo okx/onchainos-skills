@@ -71,8 +71,8 @@ pub fn load_latest(dispute_id: &str, voter: &str) -> Result<Option<StoredCommit>
     Ok(latest)
 }
 
-/// Remove all entries matching `(dispute_id, voter)`. Called on TASK_RESOLVED to reclaim
-/// space and remove stale records — dispute is terminal, no more reveal possible.
+/// Remove all entries matching `(dispute_id, voter)`. Called on dispute_resolved / round_failed
+/// to reclaim space and remove stale records — round is terminal, no more reveal possible.
 /// Returns the number of entries removed. Idempotent (0 if no match or file missing).
 ///
 /// Implementation: rewrite the file in place (tmp + rename for atomicity). File is small

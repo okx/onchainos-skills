@@ -53,7 +53,7 @@ interface Dispute {
   votes: DisputeVote[];
   verdict: "client" | "provider" | null;
   createTime: string;
-  evidenceClosedAt: string | null;  // EVIDENCE_CLOSED 触发时写入(证据封期结束)
+  commitPhaseStartedAt: string | null;  // evaluator_selected 触发时写入(VotersSelected 上链,CommitPhase 开始)
   resolvedAt: string | null;
 }
 
@@ -286,58 +286,62 @@ async function lookupEvaluators(): Promise<Array<{ agent_id: string; comm_addr: 
   });
 }
 
-// Commit/Reveal tx 回执与窗口事件。真后端:commit tx 上链后 xmtp 推 vote_committed;
-// commit 窗口结束时推"可以 reveal"信号;reveal tx 上链后推 vote_revealed。
-// mock:commit 成功立即推 VOTE_COMMITTED,3s 后推 REVEAL_WINDOW_OPEN,reveal 成功推 VOTE_REVEALED。
-const EVIDENCE_CLOSED_DELAY_MS = Number(process.env.MOCK_EVIDENCE_CLOSED_MS ?? 3000);
-const REVEAL_WINDOW_DELAY_MS   = Number(process.env.MOCK_REVEAL_WINDOW_MS   ?? 3000);
+// Commit/Reveal tx 回执与窗口事件。事件名对齐 Lark 设计文档 event 枚举：
+// VotersSelected 上链 → evaluator_selected（evaluator 被选中，CommitPhase 已开）
+// commit tx 上链 → vote_committed；RevealStarted 上链 → reveal_started
+// reveal tx 上链 → vote_revealed；DisputeSettled 上链 → dispute_resolved
+// DisputeInvalidated → round_failed；VoterStaking.Slashed → slashed
+// claimRewards tx 上链 → reward_claimed
+const EVALUATOR_SELECTED_DELAY_MS = Number(process.env.MOCK_EVALUATOR_SELECTED_MS ?? 3000);
+const REVEAL_WINDOW_DELAY_MS      = Number(process.env.MOCK_REVEAL_WINDOW_MS      ?? 3000);
 
 // 所有 evaluator 生命周期事件共用同一个 dispute sub session conv（= notifyDisputed 用的 convId）。
-// 这样 EVIDENCE_CLOSED 激活 sub session 后，后续 REVEAL / RESOLVED / CLAIMABLE 自动复用同一 sub，
-// 在里面拉 context、跑 CLI、notify_main → 用户只在主 session 看到干净的最终通知。
+// evaluator_selected 激活 sub session 后，后续 reveal_started / dispute_resolved / reward_claimed
+// 自动复用同一 sub，在里面拉 context、跑 CLI、notify_main → 用户只在主 session 看到干净的最终通知。
 const MOCK_EVAL_AGENT_ID = "mock-evaluator-agent-001";
 function disputeConvId(t: Task): string {
   const sellerAgentId = t.providerAgentId ?? "mock-seller-agent-001";
   return `conv-arb-${t.jobId}-${t.buyerAgentId}-${sellerAgentId}-${MOCK_EVAL_AGENT_ID}`;
 }
 
-async function notifyEvidenceClosed(t: Task, disputeId: string, evaluatorAddrs: string[]) {
+async function notifyEvaluatorSelected(t: Task, disputeId: string, evaluatorAddrs: string[]) {
   const convId = disputeConvId(t);
   const participants = Array.from(new Set([CHAIN_ADDR, ...evaluatorAddrs]));
   await wsNotify(convId, participants, {
-    type: "EVIDENCE_CLOSED", jobId: t.jobId, disputeId,
-    content: `📎 证据封存 (disputeId=${disputeId})。投票者可开始 commit。`,
-  }).catch(e => console.error("[mock-api] evidence_closed notify error:", e));
+    type: "evaluator_selected", jobId: t.jobId, disputeId,
+    content: `⚖️ 你被选为本轮陪审 (disputeId=${disputeId})。CommitPhase 已开，请查证据 + commit vote。`,
+  }).catch(e => console.error("[mock-api] evaluator_selected notify error:", e));
 }
 
 async function notifyVoteCommitted(jobId: string, disputeId: string, voter: string) {
   const convId = `conv-vote-committed-${jobId}-${voter}`;
   await wsNotify(convId, [CHAIN_ADDR, voter], {
-    type: "VOTE_COMMITTED", jobId, disputeId, voter, status: "success",
+    type: "vote_committed", jobId, disputeId, voter, status: "success",
     content: `📝 投票承诺已上链 (disputeId=${disputeId})。等待 reveal 窗口开启。`,
   }).catch(e => console.error("[mock-api] vote_committed notify error:", e));
 }
 
-async function notifyRevealWindowOpen(t: Task, disputeId: string, evaluatorAddrs: string[]) {
+async function notifyRevealStarted(t: Task, disputeId: string, evaluatorAddrs: string[]) {
   const convId = disputeConvId(t);
   const participants = Array.from(new Set([CHAIN_ADDR, ...evaluatorAddrs]));
   await wsNotify(convId, participants, {
-    type: "REVEAL_WINDOW_OPEN", jobId: t.jobId, disputeId,
+    type: "reveal_started", jobId: t.jobId, disputeId,
     content: `🔓 Reveal 窗口开启 (disputeId=${disputeId})。投票者可 reveal。`,
-  }).catch(e => console.error("[mock-api] reveal_window_open notify error:", e));
+  }).catch(e => console.error("[mock-api] reveal_started notify error:", e));
 }
 
 async function notifyVoteRevealed(jobId: string, disputeId: string, voter: string) {
   const convId = `conv-vote-revealed-${jobId}-${voter}`;
   await wsNotify(convId, [CHAIN_ADDR, voter], {
-    type: "VOTE_REVEALED", jobId, disputeId, voter, status: "success",
+    type: "vote_revealed", jobId, disputeId, voter, status: "success",
     content: `✅ 投票披露已上链 (disputeId=${disputeId})。`,
   }).catch(e => console.error("[mock-api] vote_revealed notify error:", e));
 }
 
-// 结算广播:TASK_RESOLVED + REWARD_CLAIMABLE 都发到 dispute sub session conv，
-// 让 evaluator sub session 在同一个会话里接着跑 "拉 context → notify_main" 流程。
+// 结算广播:dispute_resolved + reward_claimed 都发到 dispute sub session conv，
+// 让 evaluator sub session 在同一个会话里接着跑 "拉 context → claim → notify_main" 流程。
 // 买家/卖家的仲裁结果通知走 notifyArbitrationResult（TASK_COMPLETED / TASK_REJECTED）。
+// dispute_resolved = DisputeSettled 上链；reward_claimed = claimRewards tx 回执（mock 直接一并广播）。
 async function broadcastSettlement(t: Task, winner: "buyer" | "seller", disputeId?: string) {
   const evaluators = await lookupEvaluators();
   const evalAddrs = Array.from(new Set(evaluators.map(e => e.comm_addr)));
@@ -346,14 +350,14 @@ async function broadcastSettlement(t: Task, winner: "buyer" | "seller", disputeI
   const participants = Array.from(new Set([CHAIN_ADDR, ...allEvalAddrs]));
 
   await wsNotify(convId, participants, {
-    type: "TASK_RESOLVED", jobId: t.jobId, disputeId: disputeId ?? null, winner,
+    type: "dispute_resolved", jobId: t.jobId, disputeId: disputeId ?? null, winner,
     content: `⚖️ 任务 ${t.jobId} 仲裁结果:${winner === "buyer" ? "买家胜,资金退回" : "卖家胜,资金释放"}。`,
-  }).catch(e => console.error("[mock-api] task_resolved notify error:", e));
+  }).catch(e => console.error("[mock-api] dispute_resolved notify error:", e));
 
   await wsNotify(convId, participants, {
-    type: "REWARD_CLAIMABLE", jobId: t.jobId, disputeId: disputeId ?? null,
-    content: `💰 任务 ${t.jobId} 结算完成,奖金可领取。`,
-  }).catch(e => console.error("[mock-api] reward_claimable notify error:", e));
+    type: "reward_claimed", jobId: t.jobId, disputeId: disputeId ?? null, status: "success",
+    content: `💰 任务 ${t.jobId} 结算完成,奖金已入账。`,
+  }).catch(e => console.error("[mock-api] reward_claimed notify error:", e));
 }
 
 async function notifyDisputed(jobId: string, disputeId: string, buyerCommAddr: string, buyerAgentId: string,
@@ -796,7 +800,7 @@ const server = http.createServer(async (req, res) => {
       votes: [],
       verdict: null,
       createTime: nowIso(),
-      evidenceClosedAt: null,
+      commitPhaseStartedAt: null,
       resolvedAt: null,
     };
     disputes.set(disputeId, dispute);
@@ -805,14 +809,14 @@ const server = http.createServer(async (req, res) => {
     const { buyerAgentAddress, buyerAgentId, providerAgentAddress, providerAgentId } = t;
     notifyDisputed(jobId, disputeId, buyerAgentAddress, buyerAgentId, providerAgentAddress ?? "0xSeller000000000000000000000000000000001", providerAgentId ?? "mock-seller-agent-001", reason)
       .catch(e => console.error("[mock-api] dispute notify error:", e));
-    // 模拟 1H 证据准备期结束:查出 evaluator 候选,推 EVIDENCE_CLOSED + 标记 evidenceClosedAt
+    // 模拟 Preparation → VoterSelection → CommitPhase:查出 evaluator 候选,推 evaluator_selected + 标记 commitPhaseStartedAt
     setTimeout(async () => {
       const evaluators = await lookupEvaluators();
       const evalAddrs = Array.from(new Set(evaluators.map(e => e.comm_addr)));
       const targets = evalAddrs.length > 0 ? evalAddrs : ["0xEvaluator00000000000000000000000000001"];
-      dispute.evidenceClosedAt = nowIso();
-      notifyEvidenceClosed(t, disputeId, targets);
-    }, EVIDENCE_CLOSED_DELAY_MS);
+      dispute.commitPhaseStartedAt = nowIso();
+      notifyEvaluatorSelected(t, disputeId, targets);
+    }, EVALUATOR_SELECTED_DELAY_MS);
     sendOk(res, { uopHash: mockUop(), disputeId }); return;
   }
   // 仲裁证据:文本 + 图片清单(真后端 /priapi/v1/aieco/task/{jobId}/evidence)
@@ -865,7 +869,7 @@ const server = http.createServer(async (req, res) => {
     const { jobId } = m;
     const dispute = [...disputes.values()].find(d => d.jobId === jobId && !d.resolvedAt);
     if (!dispute) { sendErr(res, 2001, "active dispute not found"); return; }
-    if (!dispute.evidenceClosedAt) { sendErr(res, 2002, "evidence period not closed"); return; }
+    if (!dispute.commitPhaseStartedAt) { sendErr(res, 2002, "commit phase not started (voters not yet selected)"); return; }
     const body = await parseBody(req) as Record<string, unknown>;
     const vote = Number(body.vote);
     if (vote !== 1 && vote !== 2) { sendErr(res, 1001, "vote must be 1 (provider) or 2 (client)"); return; }
@@ -882,9 +886,9 @@ const server = http.createServer(async (req, res) => {
       vote: vote as 1 | 2, salt, reason, committedAt: nowIso(),
     };
     console.log(`[mock-api] vote committed: disputeId=${dispute.disputeId} voter=${voter} vote=${vote}`);
-    // tx 回执:VOTE_COMMITTED 立即推(真后端是 commit tx 上链后)
+    // tx 回执:vote_committed 立即推(真后端是 commit tx 上链后)
     notifyVoteCommitted(jobId, dispute.disputeId, voter);
-    // 模拟 commit 窗口结束:REVEAL_WINDOW_OPEN 延后推(真后端 18H,mock 3s 可调)。
+    // 模拟 commit 窗口结束:reveal_started 延后推(真后端 18H,mock 3s 可调)。
     // 发送到 dispute sub session conv，让 evaluator sub session 复用同一会话跑 reveal。
     setTimeout(async () => {
       const t2 = tasks.get(jobId);
@@ -892,7 +896,7 @@ const server = http.createServer(async (req, res) => {
       const evaluators = await lookupEvaluators();
       const evalAddrs = Array.from(new Set(evaluators.map(e => e.comm_addr)));
       const targets = evalAddrs.length > 0 ? evalAddrs : [voter];
-      notifyRevealWindowOpen(t2, dispute.disputeId, targets);
+      notifyRevealStarted(t2, dispute.disputeId, targets);
     }, REVEAL_WINDOW_DELAY_MS);
     sendOk(res, { uopData: mockUopData(), disputeId: dispute.disputeId, commitHash }); return;
   }
@@ -920,7 +924,7 @@ const server = http.createServer(async (req, res) => {
     commit.revealedAt = nowIso();
     dispute.votes.push({ side: commit.vote, reason: commit.reason, voter, at: commit.revealedAt });
     console.log(`[mock-api] vote revealed: disputeId=${dispute.disputeId} voter=${voter} vote=${commit.vote}`);
-    // tx 回执:VOTE_REVEALED
+    // tx 回执:vote_revealed
     notifyVoteRevealed(jobId, dispute.disputeId, voter);
     // mock 简化:单投票者,reveal 完就结算
     const allCommitters = Object.keys(dispute.voterCommits);
@@ -1039,6 +1043,25 @@ const server = http.createServer(async (req, res) => {
     sendOk(res, [{ txHash: mockUop() }]); return;
   }
 
+  // ── Staking: evaluator onboarding (Lark §8.2 /staking/stake) ──────────────
+  // agentId 从 X-Agent-Id header 获取；amount 是 OKB UI 单位（string，不带精度）。
+  // 真后端返回仅 uopHash（文档 §8.2 示例），但 CLI 走通用 sign_uop_and_broadcast 需要
+  // uopData（UnsignedInfoResponse）。mock 这里按 CLI 约定返回 {uopData, uopHash}。
+  if (method === "POST" && path_ === "/api/v1/task/staking/stake") {
+    const agentId = String(req.headers["x-agent-id"] ?? "");
+    if (!agentId) { sendErr(res, 4000, "X-Agent-Id header required"); return; }
+    const body = await parseBody(req) as Record<string, unknown>;
+    const amountStr = String(body.amount ?? "");
+    const amount = Number(amountStr);
+    if (!amountStr || !Number.isFinite(amount) || amount <= 0) {
+      sendErr(res, 1001, "amount must be positive OKB number (UI unit, no precision)"); return;
+    }
+    // 首次质押最低 100 OKB（mock 不区分首次/补充，统一要求）
+    if (amount < 100) { sendErr(res, 1001, "first stake amount must be >= 100 OKB"); return; }
+    console.log(`[mock-api] staking/stake: agentId=${agentId} amount=${amountStr} OKB`);
+    sendOk(res, { uopData: mockUopData() }); return;
+  }
+
   // Provider 主动拉取推荐的 Public 任务（必须在 /api/v1/task/:jobId/match 之前匹配）
   if (method === "POST" && path_ === "/api/v1/task/job/match") {
     const openPublic = [...tasks.values()].filter(
@@ -1119,7 +1142,7 @@ const server = http.createServer(async (req, res) => {
         votes: [],
         verdict: null,
         createTime: nowIso(),
-        evidenceClosedAt: null,
+        commitPhaseStartedAt: null,
         resolvedAt: null,
       });
     }

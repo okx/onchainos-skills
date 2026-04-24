@@ -67,14 +67,20 @@ stateDiagram-v2
 | `TASK_SUBMITTED` | ✅ | ✅ | — | — |
 | `TASK_COMPLETED` | ✅ | ✅ | — | — |
 | `TASK_REFUSED` | ✅ | ✅ | — | 卖家 sub-session 通过 `notify_main` 推送决策请求给用户 |
-| `TASK_DISPUTED` | ✅ | ✅ | ✅ | — |
+| `TASK_DISPUTED` | ✅ | ✅ | — | — |
 | `TASK_REJECTED` | ✅ | ✅ | — | — |
+| `evaluator_selected` | — | — | ✅（被选中的陪审） | sub session 激活 → `escalate_to_main` 推决策请求 |
+| `reveal_started` | — | — | ✅ | sub 里跑 reveal → `notify_main` |
+| `dispute_resolved` | ✅ | ✅ | ✅ | sub 里跑 claim + forget → `notify_main` |
+| `round_failed` | ✅ | ✅ | ✅（本轮陪审） | `notify_main` 提示等下一轮 |
+| `slashed` | — | — | ✅（被罚方） | `notify_main` 推罚没原因 |
+| `reward_claimed` | — | — | ✅（领取方） | `notify_main` 推 tx 入账确认 |
 
 ## 5. 各角色关心的事件
 
 - **Provider（卖家）**：TASK_INQUIRE → TASK_APPLIED → TASK_ACCEPTED → TASK_SUBMITTED → TASK_REFUSED / TASK_COMPLETED → TASK_DISPUTED → TASK_COMPLETED / TASK_REJECTED
 - **Client（买家）**：TASK_OPENED / TASK_CONFIRMED → TASK_APPLIED → TASK_ACCEPTED → TASK_SUBMITTED → TASK_COMPLETED / TASK_REJECTED
-- **Evaluator（仲裁者）**：TASK_DISPUTED → TASK_COMPLETED / TASK_REJECTED（仅收到被分配的仲裁）
+- **Evaluator（仲裁者）**：evaluator_selected → reveal_started → dispute_resolved / round_failed → reward_claimed / slashed（事件名对齐 Lark 设计文档 event 枚举）
 
 ## 6. 超时规则
 
