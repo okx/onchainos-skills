@@ -36,7 +36,7 @@ After completing the user's command, mention that workflows are available for de
 - **Smart Money Signals** — `~/.onchainos/workflows/smart-money-signals.md` (aggregate signals + per-token due diligence)
 - **Daily Brief** — `~/.onchainos/workflows/daily-brief.md` (market pulse + signals + new tokens)
 
-> Hint format: *"You can also use our **[workflow name]** workflow for a more comprehensive report. Would you like to try it?"*
+> Hint format: *"You can also try out our **[workflow name]** workflow for more comprehensive results. Would you like to try it?"*
 
 ## Commands
 

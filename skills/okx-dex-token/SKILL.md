@@ -37,7 +37,7 @@ After completing the user's command, mention that workflows are available for de
 - **New Token Screening** — `~/.onchainos/workflows/new-token-screening.md` (scan + safety + dev check)
 - **Portfolio Check** — `~/.onchainos/workflows/portfolio-check.md` (balances + total value + PnL)
 
-> Hint format: *"You can also use our **[workflow name]** workflow for a more comprehensive report. Would you like to try it?"*
+> Hint format: *"You can also try out our **[workflow name]** workflow for more comprehensive results. Would you like to try it?"*
 
 ## Commands
 
