@@ -148,9 +148,15 @@ async fn resolve_agent_by_role(role_code: i64, role_label: &str) -> Result<(Stri
         bail!("身份查询失败: {err_msg}");
     }
 
-    let list = parsed["data"]["list"]
-        .as_array()
-        .ok_or_else(|| anyhow::anyhow!("未查到任何 Agent 身份，请先注册 {role_label} 身份"))?;
+    // 后端 data 兼容两种形态：object `{list: [...]}` 或 array `[{list: [...]}]`。
+    // 对齐 provider/find_jobs.rs 的兜底逻辑，避免环境差异导致身份解析炸掉。
+    let data = &parsed["data"];
+    let list = if data.is_array() {
+        data.get(0).and_then(|v| v.get("list")).and_then(Value::as_array)
+    } else {
+        data["list"].as_array()
+    }
+    .ok_or_else(|| anyhow::anyhow!("未查到任何 Agent 身份，请先注册 {role_label} 身份"))?;
 
     for agent in list {
         if agent["role"].as_i64() == Some(role_code) {
