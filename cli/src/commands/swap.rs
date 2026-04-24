@@ -61,7 +61,7 @@ pub enum SwapCommand {
         /// Swap mode: exactIn or exactOut
         #[arg(long, default_value = "exactIn")]
         swap_mode: String,
-        /// Jito tips in lamports for Solana MEV protection (positive integer, e.g. `1000` = 0.000001 SOL). Response includes signatureData for jitoCalldata.
+        /// Jito tips in SOL for Solana MEV protection (range: 0.0000000001–2). Response includes signatureData for jitoCalldata.
         #[arg(long)]
         tips: Option<String>,
         /// Max auto slippage percent cap when autoSlippage is enabled (e.g. "0.5" for 0.5%)
@@ -132,7 +132,7 @@ pub enum SwapCommand {
         /// Swap mode: exactIn or exactOut
         #[arg(long, default_value = "exactIn")]
         swap_mode: String,
-        /// Jito tips in lamports for Solana MEV protection (positive integer, e.g. `1000` = 0.000001 SOL)
+        /// Jito tips in SOL for Solana MEV protection (range: 0.0000000001–2)
         #[arg(long)]
         tips: Option<String>,
         /// Max auto slippage percent cap
@@ -712,17 +712,17 @@ fn validate_tips(tips: &str) -> Result<()> {
     if tips.is_empty() {
         bail!("--tips must not be empty");
     }
-    if !tips.chars().all(|c| c.is_ascii_digit()) {
+    let val: f64 = tips
+        .parse()
+        .map_err(|_| anyhow::anyhow!("--tips must be a number in SOL, got \"{}\"", tips))?;
+    if val < 1e-10 {
         bail!(
-            "--tips must be a positive integer greater than 0, got \"{}\"",
+            "--tips must be at least 0.0000000001 SOL, got \"{}\"",
             tips
         );
     }
-    if tips.chars().all(|c| c == '0') {
-        bail!("--tips must be greater than 0");
-    }
-    if tips.starts_with('0') && tips.len() > 1 {
-        bail!("--tips must not have leading zeros, got \"{}\"", tips);
+    if val > 2.0 {
+        bail!("--tips must be at most 2 SOL, got \"{}\"", tips);
     }
     Ok(())
 }
@@ -1798,30 +1798,26 @@ mod tests {
 
     #[test]
     fn test_validate_tips_valid() {
+        assert!(validate_tips("0.0000000001").is_ok());
+        assert!(validate_tips("0.001").is_ok());
         assert!(validate_tips("1").is_ok());
-        assert!(validate_tips("100").is_ok());
-        assert!(validate_tips("999999").is_ok());
+        assert!(validate_tips("2").is_ok());
     }
 
     #[test]
-    fn test_validate_tips_rejects_zero() {
+    fn test_validate_tips_rejects_out_of_range() {
         assert!(validate_tips("0").is_err());
-        assert!(validate_tips("000").is_err());
+        assert!(validate_tips("0.00000000001").is_err()); // below minimum
+        assert!(validate_tips("2.0000000001").is_err()); // above maximum
+        assert!(validate_tips("3").is_err());
     }
 
     #[test]
     fn test_validate_tips_rejects_non_numeric() {
         assert!(validate_tips("abc").is_err());
-        assert!(validate_tips("1.5").is_err());
         assert!(validate_tips("-1").is_err());
         assert!(validate_tips("").is_err());
         assert!(validate_tips("  ").is_err());
-    }
-
-    #[test]
-    fn test_validate_tips_rejects_leading_zeros() {
-        assert!(validate_tips("01").is_err());
-        assert!(validate_tips("007").is_err());
     }
 
     #[test]

@@ -125,6 +125,7 @@ enum AuthMode {
     Anonymous,
 }
 
+#[derive(Clone)]
 pub struct ApiClient {
     http: Client,
     base_url: String,

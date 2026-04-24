@@ -34,6 +34,12 @@ Some endpoints in this skill may require x402 payment after free quota is exhaus
 
 > If the user's query contains Chinese text (中文), read `references/keyword-glossary.md` for keyword-to-command mappings.
 
+## Workflow Integration
+
+> **For comprehensive token research** ("analyze token", "research [address]", "is this token safe"), use the **Token Research** workflow (`workflows/token-research.md`) instead of calling commands here directly.
+> It combines token data, security, on-chain structure, and launchpad data in one coordinated flow.
+> Use this skill directly only for single atomic queries called from within a workflow step.
+
 ## Commands
 
 | # | Command | Use When |

@@ -6,6 +6,7 @@ pub mod common;
 pub mod history;
 pub mod payment;
 pub mod payment_flow;
+pub mod plugin;
 pub mod sign;
 pub mod transfer;
 pub mod wallet;

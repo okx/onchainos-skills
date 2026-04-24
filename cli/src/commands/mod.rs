@@ -12,6 +12,7 @@ pub mod swap;
 pub mod token;
 pub mod tracker;
 pub mod upgrade;
+pub mod workflows;
 pub mod ws;
 
 use crate::chains;

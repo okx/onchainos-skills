@@ -129,6 +129,12 @@ pub enum WalletCommand {
         #[arg(long, default_value_t = false)]
         force: bool,
     },
+    /// Report plugin info
+    ReportPluginInfo {
+        /// Plugin parameter payload to report
+        #[arg(long)]
+        plugin_parameter: String,
+    },
     /// Call a smart contract (EVM inputData or SOL unsigned tx)
     ContractCall {
         /// Contract address to interact with
@@ -341,6 +347,9 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                 uop_hash.as_deref(),
             )
             .await
+        }
+        WalletCommand::ReportPluginInfo { plugin_parameter } => {
+            super::plugin::cmd_report_plugin_info(&plugin_parameter).await
         }
         WalletCommand::SignMessage {
             r#type,

@@ -4,7 +4,10 @@
 
 mod common;
 
-use common::{assert_ok_and_extract_data, onchainos, run_with_retry, tokens};
+use common::{
+    assert_limit_non_empty, assert_ok_and_extract_data, extract_items, onchainos, run_with_retry,
+    tokens,
+};
 use predicates::prelude::*;
 
 // ─── search ─────────────────────────────────────────────────────────
@@ -755,6 +758,109 @@ fn token_trades_missing_address_fails() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
+}
+
+// ─── pagination (limit / cursor) ────────────────────────────────────
+
+#[test]
+fn token_search_with_limit() {
+    // `USDC` on default chains (ethereum + solana) reliably returns many
+    // rows — using the strict helper so a regression that ignores --limit
+    // fails the test instead of vacuously passing on an empty list.
+    let output = run_with_retry(&["token", "search", "--query", "USDC", "--limit", "3"]);
+    let data = assert_ok_and_extract_data(&output);
+    assert_limit_non_empty(&data, 3, "search results");
+}
+
+#[test]
+fn token_hot_tokens_with_limit() {
+    // Default hot-tokens list is always populated.
+    let output = run_with_retry(&["token", "hot-tokens", "--limit", "3"]);
+    let data = assert_ok_and_extract_data(&output);
+    assert_limit_non_empty(&data, 3, "hot tokens");
+}
+
+#[test]
+fn token_holders_with_limit() {
+    // ETH USDC has millions of holders — strict assert guarantees --limit
+    // is actually being applied rather than silently returning an empty
+    // list that vacuously satisfies the bound.
+    let output = run_with_retry(&[
+        "token", "holders",
+        "--address", tokens::ETH_USDC,
+        "--chain", "ethereum",
+        "--limit", "3",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert_limit_non_empty(&data, 3, "holders");
+}
+
+#[test]
+fn token_top_trader_with_limit() {
+    // Wrapped SOL has many top traders on solana — strict assert.
+    let output = run_with_retry(&[
+        "token", "top-trader",
+        "--address", tokens::SOL_WSOL,
+        "--chain", "solana",
+        "--limit", "3",
+    ]);
+    let data = assert_ok_and_extract_data(&output);
+    assert_limit_non_empty(&data, 3, "top traders");
+}
+
+#[test]
+fn token_search_cursor_pagination() {
+    // Fixture: `USDC` on default chains (1,501) reliably returns many more
+    // than 2 USDC-variant tokens. Page 1 at --limit 2 is therefore
+    // guaranteed non-terminal, and page 2 is guaranteed non-empty — so we
+    // can hard-assert both rather than silently skipping. A regression to
+    // a terminal first page or a broken cursor becomes a test failure.
+    const LIMIT: usize = 2;
+    let page1 = run_with_retry(&[
+        "token", "search", "--query", "USDC", "--limit", &LIMIT.to_string(),
+    ]);
+    let items1 = extract_items(&assert_ok_and_extract_data(&page1));
+    assert_eq!(
+        items1.len(),
+        LIMIT,
+        "page 1 must return exactly --limit={LIMIT} items for a non-terminal fixture; got {}",
+        items1.len()
+    );
+    let cursor = items1
+        .last()
+        .and_then(|v| v.get("cursor"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+    assert!(
+        !cursor.is_empty(),
+        "last item on page 1 must carry a non-empty cursor for a non-terminal fixture"
+    );
+    let cursors1: Vec<String> = items1
+        .iter()
+        .filter_map(|v| v.get("cursor").and_then(|c| c.as_str()).map(str::to_string))
+        .collect();
+    let page2 = run_with_retry(&[
+        "token", "search", "--query", "USDC", "--limit", &LIMIT.to_string(), "--cursor", cursor,
+    ]);
+    let items2 = extract_items(&assert_ok_and_extract_data(&page2));
+    assert!(
+        !items2.is_empty(),
+        "page 2 must not be empty for a non-terminal fixture — pagination did not advance"
+    );
+    let mut checked = 0usize;
+    for item in &items2 {
+        if let Some(c) = item.get("cursor").and_then(|c| c.as_str()) {
+            assert!(
+                !cursors1.iter().any(|x| x == c),
+                "cursor {c} appeared in both page 1 and page 2 — pagination is not advancing"
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked > 0,
+        "page 2 returned items but none had cursors to compare"
+    );
 }
 
 // ─── cluster-overview ───────────────────────────────────────────────

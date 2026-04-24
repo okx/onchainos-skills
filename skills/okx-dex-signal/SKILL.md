@@ -34,6 +34,12 @@ Some endpoints in this skill may require x402 payment after free quota is exhaus
 
 > If the user's query contains Chinese text (中文), read `references/keyword-glossary.md` for keyword-to-command mappings.
 
+## Workflow Integration
+
+> **For user-facing smart money requests** ("what are whales buying", "copy trading signals", "smart money"), use the **Smart Money Signals** workflow (`workflows/smart-money-signals.md`) instead of calling commands here directly.
+> It aggregates signals by token and runs per-token due diligence automatically.
+> Use this skill directly only for single atomic tracker or signal queries within a workflow step.
+
 ## Commands
 
 | # | Command | Use When |
