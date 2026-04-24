@@ -37,11 +37,10 @@ All read-only research works immediately with no login. To enable trading, run `
 
 ```
 openclaw_template/
-├── setup.sh                      # Installs onchainos CLI + fetches skills & workflows from the source repo
 ├── README.md                     # This file
-├── SECURITY.md
 ├── pinata/                       # Pinata-specific files
 │   ├── manifest.json             # Pinata Agent Template Store manifest
+│   ├── setup.sh                  # Installs onchainos CLI + fetches skills & workflows
 │   └── README.md                 # Pinata deployment guide
 └── workspace/
     ├── SOUL.md                   # Agent personality, values, tone, boundaries
