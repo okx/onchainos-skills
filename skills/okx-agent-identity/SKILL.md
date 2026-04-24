@@ -50,7 +50,7 @@ Task-lifecycle phrases belong to `okx-agent-task`, not here. The following phras
 | 接单 / 接任务 / 接一单 / accept task / take a job | `okx-agent-task` |
 | 交付 / 验收 / 还价 / deliver / dispute / negotiate | `okx-agent-task` |
 | 仲裁一下这单 / 发起仲裁 / open a dispute | `okx-agent-task` |
-| 我要当仲裁者（但不提身份/注册） | ambiguous — ask once: "你是想注册成为仲裁者身份（→ 身份注册），还是对某笔任务发起仲裁（→ 任务仲裁）？" |
+| 我要当仲裁者（但不提身份/注册） | ambiguous — ask once using the numbered pattern (§Choice prompts). Chinese: `你是想：\n  1. 注册成为仲裁者身份（身份注册流程）\n  2. 对某笔任务发起仲裁（任务仲裁流程）\n回复 1 或 2。` / English: `Do you want to:\n  1. Register as an evaluator identity\n  2. Open a dispute on a specific task\nReply 1 or 2.` Route to `okx-agent-identity` on `1`, `okx-agent-task` on `2`. |
 
 "仲裁" **only** activates this skill when it co-occurs with identity context words: `注册 / 身份 / 成为仲裁者 / register evaluator`. Bare "仲裁一下这单" is a task dispute — route to `okx-agent-task`.
 
@@ -60,7 +60,7 @@ Single-word inputs (`agent`, `search`, `list`) do NOT auto-route to any sub-comm
 
 - For task lifecycle (publish / accept / deliver / settle / dispute) → `okx-agent-task`
 - For wallet login / balance / transfer / signing → `okx-agentic-wallet`
-- For OKB staking (required when creating evaluator agents) → follow `/skills/okx-agent-task/evaluator.md`
+- For OKB staking (required to **receive dispute assignments** as an evaluator; NOT required to `create` the evaluator agent) → follow `/skills/okx-agent-task/evaluator.md`
 - For counterparty address / contract security check → `okx-security`
 - For broadcasting raw transactions → `okx-onchain-gateway`
 - For export of command history / error audit → `okx-audit-log`
@@ -73,7 +73,7 @@ Three roles. Always use the lowercase English value for the `--role` CLI paramet
 |---|---|---|
 | `requester` | 买家 (buyer) | Publishes tasks, pays for services |
 | `provider` | 服务方 (seller) | Offers services, delivers work |
-| `evaluator` | 验证者 (arbitrator) | Judges disputes, requires OKB staking |
+| `evaluator` | 验证者 (arbitrator) | Judges disputes. `create` itself is unconditional; 100 OKB stake is required separately to be assigned real disputes (see `okx-agent-task`). |
 
 CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provider; `3` → evaluator. The skill always emits the canonical lowercase English name to the CLI.
 
@@ -82,7 +82,8 @@ CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provide
 | User says | Go to |
 |---|---|
 | 注册 / 上架 agent / register agent | §Core Flow: agent create (role-driven) |
-| 我有哪些 agent / 看我的 agent / 看 #N 详情 | `agent get` → `references/display-formats.md` |
+| 我有哪些 agent / 看我的 agent | `agent get`（列表模式，不带 `--agent-ids`）→ `references/display-formats.md §1` |
+| 看 #N 详情 / detail #N | `agent get --agent-ids <N>` **一次**，渲染 `display-formats.md §2`（响应已含 services + reputation 聚合，**绝不 chain** `service-list` / `feedback-list`），再出 `§Post-detail prompt` 问用户要不要看评价 |
 | 改描述 / 改头像 / 更新 agent | §Update (get → show → confirm → execute) |
 | 下架 agent | `agent deactivate <agentId>` |
 | 上架 agent | `agent activate <agentId>` |
@@ -116,15 +117,44 @@ Full parameter tables, examples, and return schemas → `references/cli-referenc
 
 Four gates, in order. **Never skip a gate, never combine gates into one message.**
 
-1. **Ask role.** Must answer. Do NOT default. Phrasing: "你要注册哪种身份？买家 (requester) / 服务方 (provider) / 验证者 (evaluator)？"
-2. **Pre-check existing agents** (skip for passive onboarding). Run `onchainos agent get` once. If the user already has an agent of the same role, ask: "你已经有一个 <role> agent (#N)，要继续新建还是修改现有的？"
+1. **Ask role.** Must answer. Do NOT default. Use the numbered-options pattern (see §Choice prompts), in the user's language.
+   - 中文：
+     ```
+     你要注册哪种身份？
+       1. 买家（requester）— 发任务、付费买服务
+       2. 服务方（provider）— 提供服务、接订单
+       3. 验证者（evaluator）— 仲裁任务争议
+     回复数字 1/2/3。
+     ```
+   - English:
+     ```
+     Which identity do you want to register?
+       1. requester — publishes tasks, pays for services
+       2. provider — offers services, delivers work
+       3. evaluator — arbitrates task disputes
+     Reply with a number: 1/2/3.
+     ```
+   Also accept a written role name as a fallback. CLI accepts `1`/`2`/`3` directly as `--role` aliases, so the numeric reply can be passed through.
+2. **Pre-check existing agents** (skip for passive onboarding). Run `onchainos agent get` once.
+   - **requester / evaluator**: unique per address. If the user already has one of this role, do **NOT** offer to create a new one — tell them they already have it and point to `update`. Do not enter the create flow.
+   - **provider**: may have multiple. If the user already has one, ask them to choose: register another new provider, or update the existing one.
+   - Full wording (both languages) and passive-onboarding exception in `references/role-playbook.md §Pre-check`.
 3. **Role-specific Q&A**, one field per turn. Load the matching file:
    - requester → `references/role-requester.md` (+ Passive Onboarding sub-flow inside)
    - provider → `references/role-provider.md`
    - evaluator → `references/role-evaluator.md`
-4. **Confirmation card** (field table, see `references/display-formats.md` §3). Never show the raw bash here. Execute only after the user replies "执行" / "yes" / similar.
 
-Field definitions (用途 / 可见范围 / 约束 / 示例) live in `references/field-specs.md`. Inline the four segments when asking the user.
+   Two things happen in this gate, in order:
+
+   **3a. Phase preamble (preview).** Before the first `Q1`, render a short preview telling the user which fields this phase will collect. The preview is a **declarative statement** of "here's what we'll cover", **NOT** an imperative "please provide 1. X 2. Y 3. Z" (which is banned by `role-playbook.md §STRICT`). Passive onboarding (`intent=need-requester`) skips this preview entirely — see `references/passive-onboarding.md`.
+
+   **3b. Sequential Q&A.** Questions are labelled `Q1：` / `Q2：` / `Q3：` (Chinese) or `Q1:` / `Q2:` / `Q3:` (English). Each Q still follows the "one field per turn" rule. If the user already supplied a field value in an earlier turn (e.g., in their initial request), **silently skip that Q** and move to the next unfilled one — see §One-shot capture.
+
+   For provider, after Phase 1 (identity) completes, Phase 2 (service loop) renders its own preview once at the top, then Q1–Q5 per service iteration.
+
+4. **Confirmation card** (field table, see `references/display-formats.md` §3). Mandatory — even when the user supplied every field in one shot, the confirmation card still renders before CLI invocation. Never show the raw bash here. Execute only after the user replies "执行" / "execute" / "yes" / similar.
+
+Field definitions live in `references/field-specs.md`. Inline the four segments (`用途 / 可见范围 / 请注意 / 示例` for Chinese; `Purpose / Visibility / Please note / Example` for English) in the user's language only when asking.
 
 ## Passive Onboarding (entry from `okx-agent-task`)
 
@@ -139,7 +169,7 @@ Full contract → `references/passive-onboarding.md`.
 
 ## Search
 
-- User's full sentence goes **verbatim** into `--query` (trim to ≤ 200 chars only if longer).
+- User's full sentence goes **verbatim** into `--query`. No length cap at the CLI level — pass whatever the user said.
 - The skill itself parses the same sentence into four `Vec<String>` filters: `--feedback`, `--agent-info`, `--status`, `--service`. Keywords that do not fit are dropped — never invent filters.
 - `--query` semantic matching is the primary signal; filters are supplementary.
 - There is **no** `--sort-by` for `agent search` (that flag only exists on `feedback-list`).
@@ -155,6 +185,8 @@ Mandatory 4-step flow — never skip the display step:
 2. Show the current detail card (`references/display-formats.md` §2).
 3. Collect the user's desired changes (one field per turn), then render the **Update Diff** table (`references/display-formats.md` §3) — three columns: `Field / 当前值 / 新值`, unchanged rows show `(不变)`. Ask for explicit confirmation.
 4. Execute `onchainos agent update <agentId>` with only the changed fields, then show the updated detail card.
+
+> **Skill-side "at least one field changed" rule:** if after collecting input the diff shows no changes (every row is `(不变)`), the skill refuses to call `update` and tells the user `没有需要提交的更改`. **Do NOT rely on the CLI to reject this** — `mutations.rs:156-228` will send an all-`(不变)` card if asked. See `references/cli-reference.md` §2.
 
 Never call `update` without first showing the current state. Never invent fields the user did not ask to change. Never show the bash command in the diff card unless the user explicitly asks for it.
 
@@ -241,38 +273,32 @@ Passive fallback (user skipped step 2):
 ```
 1. okx-agentic-wallet      wallet login → XLayer address ready
        ↓
-2. okx-agent-identity      agent create --role provider (with services) → providerAgentId
+2. okx-agent-identity      agent create --role provider (with services) → providerAgentId，默认直接 active
        ↓ providerAgentId
-3. okx-agent-identity      agent activate <providerAgentId> → listed in marketplace
-       ↓
-4. okx-agent-task          wait for negotiate DM / accept task
+3. okx-agent-task          wait for negotiate DM / accept task
 ```
+
+> `agent activate` 只用于用户之前主动 `agent deactivate` 过、现在想重新上架的场景。新建的 provider 不需要显式 activate。
 
 **Data handoff**: `providerAgentId` is reused on every `okx-agent-task` command; services in step 2 determine which tasks can match.
 
-### Workflow C: Evaluator onboarding (with cached resume)
+### Workflow C: Evaluator onboarding
 
 > User: "我想成为 evaluator 参与仲裁"
 
 ```
 1. okx-agentic-wallet             wallet login → XLayer address ready
        ↓
-2. okx-agent-identity             collect name + description
-       ↓ 质押二选一 card
-       Branch A: ① 先去质押
-           → cache {name, description}
-           → hand off to staking
-           → (user stakes 100 OKB)
-           → user returns with "回来注册 evaluator"
-           → resume at confirmation (no re-ask)
-       Branch B: ② 已质押直接 create
+2. okx-agent-identity             collect name + description → confirm → execute
+                                  create --role evaluator → evaluatorAgentId
        ↓
-3. okx-agent-identity             execute create --role evaluator → evaluatorAgentId
+3. okx-agent-task                 follow evaluator.md to stake 100 OKB
+                                  (没质押不会被系统派单，但 agent 身份已生效)
        ↓
 4. okx-agent-task                 wait for dispute assignment
 ```
 
-**Data handoff**: the OKB stake must land on-chain before `create --role evaluator` — otherwise the backend rejects. The identity skill does NOT verify the stake itself (see `references/role-evaluator.md`).
+**Data handoff**: `evaluatorAgentId` is produced at step 2 and belongs to the user regardless of stake status. Step 3 (staking) is a separate, user-triggered action handled entirely by `okx-agent-task`; the identity skill never reads or verifies stake state. Do NOT gate step 2 on prior staking.
 
 ### Workflow D: Discover → rate
 
@@ -321,13 +347,126 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 | Just completed | Suggest |
 |---|---|
 | `agent create --role requester` | "要不要开始发布任务？走 `okx-agent-task`。" |
-| `agent create --role provider` | "要不要现在 activate 上架？" → `agent activate <id>` |
-| `agent create --role evaluator` | "等待系统分派仲裁；可先 `agent search --feedback 高分 --agent-info evaluator` 看活跃仲裁员的声誉水平。" |
+| `agent create --role provider` | "Provider 注册完成，默认已 active。可以 `agent search` 自检曝光，或直接等匹配来的任务。" |
+| `agent create --role evaluator` | "Evaluator 身份已注册。要被系统分派仲裁案子，先去 `/skills/okx-agent-task/evaluator.md` 质押 100 OKB；之后想看同行声誉水平可以 `agent search --feedback 高分 --agent-info evaluator`。" |
 | `agent update` | Show new detail card. If user deactivated during update, suggest re-activate. |
 | `agent activate` | "上架完成，可以 `agent search` 自检曝光。" |
 | `agent deactivate` | "下架完成，客户端列表会隐藏；要恢复执行 `agent activate`。" |
-| `agent feedback-submit` | "要看 #<target> 的最新评分分布？执行 `agent feedback-list <target> --sort-by newest`。" |
+| `agent feedback-submit` | "要看 #<target> 的最新评分分布？执行 `agent feedback-list <target> --sort-by time_desc`（按时间倒序）。要按分数排序改用 `score_desc`。完整取值见 `references/cli-reference.md` §10。" |
 | `agent search` | "锁定目标后可以 `service-list` 查服务，或直接进入 `okx-agent-task` 发任务。" |
+| `agent get --agent-ids <id>` (single-agent detail) | Render `display-formats.md §2` (services + reputation already in the response). Then render the `§Post-detail prompt` — numbered options asking "要看评价吗？/ Want to see reviews?". **Do NOT** auto-run `service-list` or `feedback-list`. Only pull `feedback-list` when user replies `1`. |
+
+## Language Matching
+
+Every user-facing string the skill renders must match the user's language. Detect language from the user's most recent non-technical message; when genuinely ambiguous, default to the language used in their first message of the conversation.
+
+### What adapts to the user's language
+
+- Field labels in confirmation cards, detail cards, diff cards, search results, service lists, feedback lists (e.g. `角色 / 名字 / 描述 / 状态 / 地址 / 头像 / 服务 / 信誉 / 交易哈希` vs `Role / Name / Description / Status / Address / Picture / Services / Reputation / txHash`).
+- Status words (`已上架 / 已下架` vs `active / inactive`; `买家 / 服务方 / 验证者` vs `requester / provider / evaluator` only when used as a human-readable label — the CLI value stays English, see below).
+- Field spec segments (`用途 / 可见范围 / 请注意 / 示例` vs `Purpose / Visibility / Please note / Example`).
+- Questions, confirmations, next-step suggestions, error translations, tips, examples.
+- Search query passthrough: keep the user's original wording in `--query` verbatim (see `references/search-query-split.md`).
+
+### What stays verbatim regardless of user language
+
+- CLI flag names (`--role`, `--agent-id`, `--creator-id`, `--sort-by`, `--service`, …).
+- Enum / canonical values sent to the CLI (`requester`, `provider`, `evaluator`, `A2MCP`, `A2A`, `time_desc`, `score_desc`, `active`, `inactive` when used as the `--status` value).
+- **JSON schema keys inside the actual `--service` payload** (`ServiceName`, `ServiceDescription`, `ServiceType`, `Fee`, `Endpoint`) — these get sent to the CLI and `utils.rs::normalize_service` matches them exactly. **BUT their user-facing labels in cards and Q&A prompts ARE localized**: Chinese renders `服务[N] 名称 / 描述 / 类型 / 价格 / 接口地址`; English renders `Service [N] Name / Description / Type / Fee / Endpoint`. The schema key only shows up in the raw bash command (which we only render when the user explicitly asks).
+- On-chain primitives: addresses (`0x…`), transaction hashes, agent IDs (`#42`), score numbers (`85 / 100`), token symbols (`USDT`, `OKB`).
+- Bash commands the user asked to see.
+
+### Bilingual mapping tips
+
+- When rendering role inline in a detail card, use the single form that matches the user's language: Chinese users see `验证者`, English users see `evaluator`. Do NOT render `evaluator (验证者)` bilingual — that's leftover from an earlier spec.
+- When rendering status, same rule: Chinese `已上架`, English `active`. Never mix.
+- A shared exception: inside the confirmation card for `create`, the `role` row may show the CLI value plus user-language label once (e.g. `role | evaluator` for English; `角色 | 验证者` for Chinese) so the user can see what the CLI will receive.
+
+### Do not
+
+- Never mix languages in a single message to the user.
+- Never translate the user's own words back to them in a different language (e.g. don't echo "`天气小明`" as "Weather Xiaoming").
+- Never force a language the user did not use.
+
+## Choice prompts (numbered options)
+
+Whenever the user has to pick from a **bounded set of 2–5 options**, render them as a numbered list and accept the number as the reply. Open-ended fields (Name, Description, Fee amount, Description for feedback) stay free-text. Never ask "A or B?" as prose when you could render "1. A / 2. B".
+
+### Template (Chinese)
+
+```
+<一句话提问>
+  1. <选项 1 的标签> — <一行解释，可选>
+  2. <选项 2 的标签> — <一行解释，可选>
+  3. <选项 3 的标签> — <一行解释，可选>
+回复数字 1/2/3。
+```
+
+### Template (English)
+
+```
+<One-line question>
+  1. <Option 1 label> — <one-line explanation, optional>
+  2. <Option 2 label> — <one-line explanation, optional>
+  3. <Option 3 label> — <one-line explanation, optional>
+Reply with a number: 1/2/3.
+```
+
+### Rules
+
+- **Also accept the canonical spelling** as a fallback: if user replies `A2MCP` instead of `1`, accept it. But the **primary ask is numeric**.
+- **Map the number before sending to the CLI.** CLI enums accept: `--role` accepts numeric aliases (`1`/`2`/`3` — `utils.rs:162-165`), so you can pass the number straight through. `ServiceType` and other enums do NOT have numeric aliases — the skill must translate `1→A2MCP`, `2→A2A` locally before invoking the CLI. Never send a raw `1` / `2` to a flag that doesn't accept it.
+- **One question per turn.** Even with numbered options the question is one turn (see `_shared/no-polling.md` and `role-playbook.md` one-question rule).
+- **Don't use numbered options for open-ended fields.** Name, description, fee amount, feedback description — these are free-form.
+- **Don't force a menu for "what's next".** Post-success suggestions (§8 of `display-formats.md`) are always a single line, never a menu (see the Bad example in §8).
+- If the user replies with something outside the enumeration (`HTTP`, `都可以`, `随便`), politely re-ask the numbered list once; never silently pick a default.
+
+### Where this pattern is used
+
+| Scenario | Location |
+|---|---|
+| Role selection on `create` | `SKILL.md §Core Flow` gate 1 |
+| Arbitrator intent disambiguation | `SKILL.md §Negative Triggers` |
+| Existing provider pre-check (new vs update) | `references/role-playbook.md §Pre-check` |
+| ServiceType (A2MCP vs A2A) | `references/role-provider.md` Phase 2 S3 |
+| "Add another service?" loop gate | `references/role-provider.md` Phase 2 S6 |
+| Avatar upload path (attachments / generate / skip) | `references/avatar-upload.md` §Policy |
+| Which of my agents to use as feedback `--creator-id` | `references/feedback-guide.md` Step 2 |
+
+## One-shot capture (silent support for users who dump everything at once)
+
+Some users type their whole request in one turn: "注册一个 provider 叫 Alice，描述是做 DeFi 研究，用默认头像". The skill **silently accepts** this — it does NOT tell the user "you can type everything at once" (that just adds noise). It just captures what was unambiguous and skips straight to the next unfilled question or the confirmation card.
+
+### Rules
+
+1. **Silent, not advertised.** Never say "你也可以一次性输入". The preview + step-by-step Q&A remains the default surface. One-shot is a fast path users discover naturally.
+2. **Capture only unambiguous values.** If the utterance clearly separates fields (explicit labels like "名字:Alice，描述:..."; or natural phrasings the skill is confident about like "叫 Alice，做 DeFi 研究"), capture them. If the split is ambiguous ("Alice 做 DeFi 分析" — is the name `Alice` or `Alice 做 DeFi 分析`?), **capture only the clearly-unambiguous part**; leave the ambiguous field for the normal Q.
+3. **Skip answered Q's silently.** In Q1…QN, if Q_k's field is already captured, don't ask Q_k — go directly to Q_(k+1). Don't echo "name is already Alice, next is description" — just move on. The confirmation card will show everything at the end; that's where the user verifies.
+4. **Phase boundary is strict.** Identity-phase capture does **NOT** reach into service-phase fields. If the user said "provider 叫 Alice 做数据分析，收 10 USDT" during Phase 1:
+   - Capture `name=Alice` (or ask if ambiguous — see rule 2).
+   - **Do NOT** capture Fee=10 or any service field. The "10 USDT" is discarded from the Phase-1 parse. When Phase 2 starts, ask Q1 fresh; the user can re-supply the fee then.
+   - Rationale: service field structure is complex (ServiceType decides whether Fee/Endpoint are asked), cross-phase parse has many misfire modes.
+5. **All fields captured → skip straight to confirmation.** If the one-shot utterance covered every required field for the role (identity for requester/evaluator; identity + at least one complete service for provider — but see rule 4, so provider never gets here from identity phase alone), render the confirmation card directly. The confirmation card is still mandatory (see §Core Flow gate 4).
+6. **Confirmation-step ambiguity.** When rendering the confirmation card after one-shot capture, if any captured value was edge-case (whitespace, punctuation, bracketed optionals), show the value verbatim and let the user reject during confirmation. Do not "clean up" silently.
+7. **One-shot + numbered choice combo.** If the user's one-shot utterance includes a choice field (e.g., "Type: A2MCP"), accept it. If they used the label instead of the number ("A2A 类型"), also accept. But when asking a choice question that the user hasn't answered yet, still use the numbered-options pattern (see §Choice prompts).
+
+### Worked examples
+
+**Example A — partial one-shot, requester:**
+> User: "注册一个买家叫 Alice"
+Skill captures `role=requester`, `name=Alice`. Preview → skips Q1 (name already set) → Q2: description → Q3: picture → confirmation.
+
+**Example B — full one-shot, requester:**
+> User: "注册一个买家，名字 Alice，描述做 DeFi 研究，不要头像"
+Skill captures `role=requester`, `name=Alice`, `description=做 DeFi 研究`, `picture=skip`. Preview → all Q's skipped → confirmation card directly.
+
+**Example C — ambiguous split:**
+> User: "provider 叫 Alice 做 DeFi 分析师"
+Name could be `Alice` or `Alice 做 DeFi 分析师`. Skill captures `role=provider` only (unambiguous), leaves name + description for normal Q&A. Preview → Q1 name → Q2 description → ...
+
+**Example D — cross-phase leakage (strict rejection):**
+> User: "provider 叫 Alice，做 DeFi 分析，收 10 USDT"
+Phase-1 capture: `name=Alice`, `description=做 DeFi 分析`. **Fee=10 is discarded.** Preview → Q3 picture → identity confirmation → Phase 2 starts → its own preview → service Q1 (name) fresh.
 
 ## Amount Display Rules
 
@@ -341,11 +480,11 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 
 - **Not logged in** → `wallet login` via `okx-agentic-wallet`, then retry.
 - **No XLayer address** → guide user to `wallet add` / `wallet switch` via `okx-agentic-wallet`.
-- **Provider role but no service** → CLI rejects with `provider agents require at least one service`. Return to the service Q&A chain.
-- **Evaluator role but OKB not staked** → backend rejects; do NOT attempt to read stake status from this skill. Redirect to the staking flow.
+- **Provider role but no service** → CLI rejects with `provider agents require at least one service; provide --service`. Return to the service Q&A chain.
+- **Evaluator created but OKB not staked** → `create` still succeeds; the agent simply won't be assigned disputes until the user stakes via `/skills/okx-agent-task/evaluator.md`. Do NOT attempt to read stake status from this skill, do NOT gate `create` on staking.
 - **Region restriction (50125 / 80001)** → display "Service is not available in your region." Do NOT echo the raw error code.
 - **Pre-transaction mock (empty tx hash)** → current CLI uses a TEMP MOCK path; log the event and tell the user the tx is not yet final. Update this section once the mock is removed.
-- **Image CDN failure on upload** → tell the user to retry; the backend CDN is region-agnostic from the skill's perspective.
+- **Image upload failure** → tell the user to retry; the image service is globally available. Never mention "CDN" to the user — see `references/avatar-upload.md`.
 - **Feedback target is self** → backend rejects; pre-check `--agent-id != --creator-id` and inform the user.
 - **Single-word input** (`agent`, `search`, etc.) → do NOT auto-route; ask the user what they want to do.
 
@@ -365,8 +504,8 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 - `references/role-playbook.md` — shared rules + router to the three role files below
 - `references/role-requester.md` — requester Q&A + Passive Onboarding sub-flow
 - `references/role-provider.md` — provider Q&A + service chain (one field per turn)
-- `references/role-evaluator.md` — evaluator Q&A + 质押二选一 card + cached resume
-- `references/field-specs.md` — 8 fields, four-segment spec (用途 / 可见范围 / 约束 / 示例)
+- `references/role-evaluator.md` — evaluator Q&A (create-first; staking is a separate post-create step owned by `okx-agent-task`)
+- `references/field-specs.md` — 8 fields, four-segment spec (`用途 / 可见范围 / 请注意 / 示例` ↔ `Purpose / Visibility / Please note / Example`) with language-matching rule
 - `references/passive-onboarding.md` — task→identity handoff contract
 - `references/search-query-split.md` — Verbatim Passthrough + 4-dimension filter extraction
 - `references/feedback-guide.md` — `--creator-id` resolution and submission etiquette
@@ -389,7 +528,6 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 | 我的 agent / my agents | `agent get` (no id) |
 | MCP 服务 / A2MCP | `ServiceType=A2MCP` |
 | A2A 服务 / agent-to-agent | `ServiceType=A2A` |
-| 回来注册 evaluator | resume evaluator create from cached draft (see `references/role-evaluator.md`) |
 
 ## Installer Checksums
 

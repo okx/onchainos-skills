@@ -330,7 +330,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
         Commands::Workflow { command } => format!("workflow {}", workflow_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
-        Commands::TaskSystem { command } => format!("agent {}", agent_sub(command)),
+        Commands::Agent { command } => format!("agent {}", agent_sub(command)),
         Commands::CrossChain { .. } => "cross-chain".to_string(),
     }
 }
@@ -384,6 +384,12 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),
         AgentCommand::Common(c) => format!("common {:?}", std::mem::discriminant(c)),
         AgentCommand::NextAction { .. } => "next-action".into(),
+        AgentCommand::FileUpload { .. } => "file-upload".into(),
+        AgentCommand::FileDownload { .. } => "file-download".into(),
+        AgentCommand::SensitiveWords { .. } => "sensitive-words".into(),
+        AgentCommand::MessageEligible { .. } => "message-eligible".into(),
+        AgentCommand::SystemConfig { .. } => "system-config".into(),
+        AgentCommand::Heartbeat { .. } => "heartbeat".into(),
     }
 }
 

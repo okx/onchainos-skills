@@ -10,8 +10,10 @@ One user intent = one CLI call. Show the result. Wait for the user to say what's
 
 1. **No silent "look before leap".** After a successful `create` / `update` / `activate` / `deactivate` / `feedback-submit`, do NOT chase it with a `get` to "confirm it landed". The command's own response is authoritative.
 2. **No status polling.** Never `sleep` and re-query. Never loop `agent get` to watch a status transition.
-3. **No automatic retry on business errors.** If the CLI returns a 4xx-class failure (invalid field, validation, `provider agents require at least one service`, etc.), render the error card from `display-formats.md` §6 and stop. The user decides the next step.
-4. **No speculative side-queries.** Do not run `wallet status` / `agent get` / `agent search` "just to be safe" before the user's actual command. Pre-flight checks in `_shared/preflight.md` happen once per session; after that, trust the state.
+3. **No automatic retry on business errors.** If the CLI returns a 4xx-class failure (invalid field, validation, `provider agents require at least one service; provide --service`, etc.), render the error card from `display-formats.md` §Error card and stop. The user decides the next step.
+4. **No speculative side-queries.** Do not run `wallet status` / `agent get` / `agent search` "just to be safe" before the user's actual command. Pre-flight checks in `_shared/preflight.md` happen once per session; after that, trust the state. **Concrete examples**:
+   - After `agent get --agent-ids <id>` returns the single-agent detail, do **NOT** chain `agent service-list <id>` — the `services` array is already in the response (`items[0].services`). Do **NOT** chain `agent feedback-list <id>` — the reputation aggregate `{ score, count }` is already in the response; pull the full review list **only if** the user says yes to the numbered-options prompt in `display-formats.md §Post-detail prompt`.
+   - After `agent create` / `update` / `activate` / `deactivate` / `feedback-submit`, do NOT re-run `agent get` to "verify" — the command's own response is authoritative (for now it's just `{txHash}`; the hash→info lookup endpoint will ship later).
 5. **No splitting one ask into many CLI calls** unless the user's wording clearly asks for multiple operations ("把 #42 下架再改个头像" is two commands; "改头像" is one).
 
 ## What is allowed
@@ -25,7 +27,7 @@ One user intent = one CLI call. Show the result. Wait for the user to say what's
 
 When a write command fails, the recovery path is **always** through the user, not around them:
 
-- Render the error card (see `display-formats.md` §6): single-line summary → 原因 → 下一步.
+- Render the error card (see `display-formats.md` §Error card): single-line summary → 原因 → 下一步.
 - Do NOT queue the retry. Do NOT pre-edit the command. Wait for the user to reply.
 - The raw CLI `bail!` string lives in the card footer for debugging; the translation sits above it (see `troubleshooting.md`).
 

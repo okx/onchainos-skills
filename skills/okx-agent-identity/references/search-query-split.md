@@ -15,13 +15,13 @@ Absolutely forbidden:
 3. **No splitting one utterance into two searches.** The user said it once; you call `agent search` once. Do not follow up with a "translated" or "expanded" second call. One user intent = one `agent search`.
 4. **No summarization.** Never boil "找个口碑好的做链上数据分析的 provider" down to `口碑好 链上数据分析 provider`. The adjacency and function words carry meaning.
 5. **Filters are additive, not substitutive.** The 4-dimension split produces `--feedback` / `--agent-info` / `--status` / `--service`. These are **supplementary** — they live alongside the full `--query`, they never replace it.
-6. **Truncate only if > 200 chars.** Cut at whitespace boundary; tell the user you truncated. Never truncate a short sentence "for brevity".
+6. **No automatic truncation.** The CLI passes `--query` through verbatim (see `queries.rs:105-108`) and neither the CLI nor any known backend contract imposes a length cap from the skill's perspective. Do NOT silently cut the query to a "safe" length — that contradicts the verbatim rule above. If the backend ever rejects an over-long query, surface that error; do not pre-guess.
 
 ---
 
 ## Rules (do not skip)
 
-1. **Full sentence into `--query`.** Always pass the user's original utterance verbatim (after trimming to ≤ 200 characters). Never paraphrase or "clean up" the user's wording — the backend search relies on the full phrase.
+1. **Full sentence into `--query`.** Always pass the user's original utterance verbatim. Never paraphrase, summarize, or "clean up" — the backend search relies on the full phrase. No length cap at the CLI level.
 2. **Skill splits into four filter dimensions — do not ask the user to split.** The user speaks naturally; the skill parses.
 3. **Drop keywords that don't fit.** If a keyword doesn't map into one of the four filters, discard it silently. Do NOT invent a filter value.
 4. **Filters are `Vec<String>`.** Comma-separated on the CLI; multi-value is fine.
@@ -107,9 +107,9 @@ User: `find a highly-rated evaluator with DeFi experience`
 --agent-info="evaluator,DeFi"
 ```
 
-### Example 7 — over 200 chars
+### Example 7 — very long query
 
-User pastes a 500-char rant. Truncate the `--query` to 200 chars (cut at a whitespace boundary if possible) and warn: "我截取了你描述的前 200 个字符用于搜索，完整语义可能会丢失，要拆成多次搜索吗？"
+User pastes a 500-char rant. Send it verbatim; do not pre-truncate. If the backend returns an error like "query too long" or similar, surface the backend message to the user and ask whether they want to shorten — do not auto-shorten.
 
 ---
 
@@ -131,4 +131,4 @@ The splitting is done by the LLM itself — there is no external parser. Keep th
 3. Drop everything else.
 4. Render the command, confirm with the user, then execute.
 
-If the user explicitly wants a filter you cannot extract cleanly ("我想按最近的评价量排序"), tell them that dimension isn't supported on `agent search` and suggest `feedback-list <agentId>` with `--sort-by newest` after picking the target.
+If the user explicitly wants a filter you cannot extract cleanly ("我想按最近的评价量排序"), tell them that dimension isn't supported on `agent search` and suggest `feedback-list <agentId>` with `--sort-by time_desc` (按时间倒序) or `score_desc` (按分数倒序) after picking the target. Full natural-language mapping → `cli-reference.md` §10.

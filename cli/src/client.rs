@@ -474,6 +474,107 @@ impl ApiClient {
         })
     }
 
+    /// GET variant that returns the raw `reqwest::Response` without calling `handle_response`.
+    /// Callers are expected to run their own response handler (e.g. `handle_agent_commerce_response`).
+    pub async fn get_with_headers_raw(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        extra_headers: Option<&[(&str, &str)]>,
+    ) -> Result<reqwest::Response> {
+        let (url, request_path) = self.build_get_url_and_request_path(path, query)?;
+        let req = self.http.get(url);
+        let req = match &self.auth {
+            AuthMode::Jwt(token) => Self::apply_jwt(req, token),
+            AuthMode::Ak {
+                api_key,
+                secret_key,
+                passphrase,
+            } => {
+                let timestamp =
+                    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                let sign = Self::hmac_sign(secret_key, &timestamp, "GET", &request_path, "");
+                Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
+            }
+            AuthMode::Anonymous => Self::apply_anonymous(req),
+        };
+        let req = Self::apply_extra_headers(req, extra_headers);
+
+        req.send().await.context("request failed")
+    }
+
+    /// GET request that returns raw bytes instead of parsed JSON.
+    /// Used for binary downloads (e.g. file attachments).
+    pub async fn get_bytes(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        extra_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Vec<u8>> {
+        let (url, request_path) = self.build_get_url_and_request_path(path, query)?;
+        let req = self.http.get(url);
+        let req = match &self.auth {
+            AuthMode::Jwt(token) => Self::apply_jwt(req, token),
+            AuthMode::Ak {
+                api_key,
+                secret_key,
+                passphrase,
+            } => {
+                let timestamp =
+                    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                let sign = Self::hmac_sign(secret_key, &timestamp, "GET", &request_path, "");
+                Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
+            }
+            AuthMode::Anonymous => Self::apply_anonymous(req),
+        };
+        let req = Self::apply_extra_headers(req, extra_headers);
+
+        let resp = req
+            .timeout(std::time::Duration::from_secs(60))
+            .send()
+            .await
+            .context("request failed")?;
+
+        let status = resp.status();
+        if status.as_u16() >= 400 {
+            bail!("download failed (HTTP {})", status.as_u16());
+        }
+
+        // Check if the response is a JSON error disguised as 200.
+        // The download endpoint may return HTTP 200 with a JSON error body
+        // (e.g. {"code": 130100021, "msg": "file not found"}) instead of
+        // a proper 4xx status code.
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if content_type.contains("application/json") {
+            let body: Value = resp.json().await.context("failed to parse error response")?;
+            let code_ok = match &body["code"] {
+                Value::String(s) => s == "0",
+                Value::Number(n) => n.as_i64() == Some(0),
+                _ => false,
+            };
+            if !code_ok {
+                let code_str = match &body["code"] {
+                    Value::String(s) => s.clone(),
+                    Value::Number(n) => n.to_string(),
+                    other => other.to_string(),
+                };
+                let msg = body["msg"].as_str().unwrap_or("unknown error");
+                bail!("download failed (code={}): {}", code_str, msg);
+            }
+            // If code is 0 but content-type is JSON, something unexpected — return empty
+            return Ok(Vec::new());
+        }
+
+        resp.bytes()
+            .await
+            .map(|b| b.to_vec())
+            .context("failed to read response bytes")
+    }
+
     /// POST request with automatic auth (JWT or AK). Retries after DoH failover.
     /// Signature uses path only (no query string) + JSON body string.
     pub async fn post(&mut self, path: &str, body: &Value) -> Result<Value> {
@@ -567,6 +668,106 @@ impl ApiClient {
         self.handle_response(resp).await
     }
 
+    /// POST multipart form data with automatic auth (JWT or AK).
+    /// Signature uses path only (no query string) with empty body string.
+    ///
+    /// Auth headers are built manually without Content-Type because reqwest
+    /// must set its own multipart/form-data boundary header automatically.
+    pub async fn post_multipart(
+        &self,
+        path: &str,
+        form: reqwest::multipart::Form,
+        extra_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Value> {
+        let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
+        let req = self.http.post(&url);
+
+        // Build auth headers, then remove Content-Type so reqwest can set
+        // the correct multipart/form-data boundary.
+        let mut headers = match &self.auth {
+            AuthMode::Jwt(token) => Self::jwt_headers(token),
+            AuthMode::Ak {
+                api_key,
+                secret_key,
+                passphrase,
+            } => {
+                let timestamp =
+                    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                let sign = Self::hmac_sign(secret_key, &timestamp, "POST", path, "");
+                Self::ak_headers(api_key, passphrase, &timestamp, &sign)
+            }
+            AuthMode::Anonymous => Self::anonymous_headers(),
+        };
+        headers.remove(reqwest::header::CONTENT_TYPE);
+
+        // Add extra headers (e.g. agenticId) to the header map directly
+        if let Some(extra) = extra_headers {
+            for (k, v) in extra {
+                if let (Ok(name), Ok(val)) = (
+                    reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(v),
+                ) {
+                    headers.insert(name, val);
+                }
+            }
+        }
+
+        let resp = req
+            .headers(headers)
+            .timeout(std::time::Duration::from_secs(60))
+            .multipart(form)
+            .send()
+            .await
+            .context("request failed")?;
+        self.handle_response(resp).await
+    }
+
+    /// Multipart POST variant that returns the raw `reqwest::Response` without
+    /// calling `handle_response`. Callers run their own handler.
+    pub async fn post_multipart_raw(
+        &self,
+        path: &str,
+        form: reqwest::multipart::Form,
+        extra_headers: Option<&[(&str, &str)]>,
+    ) -> Result<reqwest::Response> {
+        let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
+        let req = self.http.post(&url);
+
+        let mut headers = match &self.auth {
+            AuthMode::Jwt(token) => Self::jwt_headers(token),
+            AuthMode::Ak {
+                api_key,
+                secret_key,
+                passphrase,
+            } => {
+                let timestamp =
+                    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                let sign = Self::hmac_sign(secret_key, &timestamp, "POST", path, "");
+                Self::ak_headers(api_key, passphrase, &timestamp, &sign)
+            }
+            AuthMode::Anonymous => Self::anonymous_headers(),
+        };
+        headers.remove(reqwest::header::CONTENT_TYPE);
+
+        if let Some(extra) = extra_headers {
+            for (k, v) in extra {
+                if let (Ok(name), Ok(val)) = (
+                    reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(v),
+                ) {
+                    headers.insert(name, val);
+                }
+            }
+        }
+
+        req.headers(headers)
+            .timeout(std::time::Duration::from_secs(60))
+            .multipart(form)
+            .send()
+            .await
+            .context("request failed")
+    }
+
     /// Apply optional extra headers to a request builder.
     fn apply_extra_headers(
         builder: reqwest::RequestBuilder,
@@ -643,6 +844,105 @@ impl ApiClient {
 
         Ok(body["data"].clone())
     }
+}
+
+/// Response handler for agent-commerce chat endpoints.
+///
+/// Differs from `ApiClient::handle_response` in that it always reads and
+/// parses the response body — even for HTTP 5xx — so the backend's
+/// structured `{code, msg, detailMsg}` envelope reaches the caller. The
+/// backend uses HTTP 5xx for business-layer validation errors (e.g. file
+/// size limits) with real content in the body; discarding that body hides
+/// the actual error code from users.
+pub(crate) async fn handle_agent_commerce_response(
+    resp: reqwest::Response,
+) -> Result<Value> {
+    let status = resp.status().as_u16();
+
+    // Detect gateway-origin responses via the Server header (set by OpenResty/nginx,
+    // not by the backend application). Must be checked before the body is consumed.
+    let is_gateway = resp
+        .headers()
+        .get(reqwest::header::SERVER)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| {
+            let s = s.to_lowercase();
+            s.contains("openresty") || s.contains("nginx")
+        })
+        .unwrap_or(false);
+
+    let body_bytes = resp.bytes().await.context("failed to read response body")?;
+
+    let parsed: Option<Value> = if body_bytes.is_empty() {
+        None
+    } else {
+        serde_json::from_slice(&body_bytes).ok()
+    };
+
+    // Success: HTTP 2xx + business code "0" (string or number).
+    if (200..300).contains(&status) {
+        if let Some(ref body) = parsed {
+            let code_ok = matches!(&body["code"], Value::String(s) if s == "0")
+                || matches!(&body["code"], Value::Number(n) if n.as_i64() == Some(0));
+            if code_ok {
+                return Ok(body["data"].clone());
+            }
+        }
+    }
+
+    // Gateway-layer rejection — no backend envelope expected; produce a friendly
+    // status-specific message so users can distinguish infra-layer from business-layer errors.
+    if is_gateway {
+        let reason = match status {
+            413 => "payload too large",
+            429 => "rate limited",
+            502 => "bad gateway (backend unreachable)",
+            503 => "service unavailable",
+            504 => "gateway timeout",
+            _ => "gateway rejected request",
+        };
+        bail!("Gateway error (HTTP {}): {}", status, reason);
+    }
+
+    // Backend-layer error — surface the full {backend_code, msg, detailMsg} envelope.
+    if let Some(ref body) = parsed {
+        let backend_code = match &body["code"] {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            _ => "null".into(),
+        };
+        let msg = body["msg"].as_str().unwrap_or("unknown error");
+        let detail = body["detailMsg"].as_str().unwrap_or("");
+        if !detail.is_empty() {
+            bail!(
+                "API error (HTTP {}, backend_code={}): {} — {}",
+                status,
+                backend_code,
+                msg,
+                detail
+            );
+        }
+        bail!(
+            "API error (HTTP {}, backend_code={}): {}",
+            status,
+            backend_code,
+            msg
+        );
+    }
+
+    // Non-JSON / empty body fallbacks.
+    if status == 429 {
+        bail!("Rate limited — retry with backoff (HTTP 429)");
+    }
+    if status >= 500 {
+        bail!("Server error (HTTP {})", status);
+    }
+    if body_bytes.is_empty() {
+        bail!("Empty response body (HTTP {})", status);
+    }
+    let text = String::from_utf8_lossy(&body_bytes);
+    let trimmed: String = text.trim().chars().take(500).collect();
+    bail!("HTTP {}: {}", status, trimmed)
 }
 
 #[cfg(test)]

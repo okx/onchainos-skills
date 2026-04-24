@@ -4,11 +4,11 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-This is a **Claude Code plugin** — a collection of onchainos skills for on-chain operations. The project provides skills for token search, market data, wallet balance queries, swap execution, DeFi investment management, and transaction broadcasting across 20+ blockchains. The `onchainos` CLI also works as a native MCP server.
+This is a **Claude Code plugin** — a collection of onchainos skills for on-chain operations. The project provides skills for token search, market data, wallet balance queries, swap execution, DeFi investment management, transaction broadcasting, and ERC-8004 on-chain agent identity across 20+ blockchains. The `onchainos` CLI also works as a native MCP server.
 
 ## Architecture
 
-- **skills/** — 17 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **skills/** — 18 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
 - **workflows/** — Pre-built multi-step workflow docs (`INDEX.md` for routing, `TEMPLATE.md` for authoring guide)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
@@ -56,6 +56,7 @@ For script requests, append `--format json` to all CLI commands.
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions, view DeFi portfolio across protocols and chains |
 | okx-dex-bridge | Cross-chain bridge swap: quote, execute, approve, status tracking | User wants to bridge tokens, cross-chain swap, transfer assets between chains |
 | okx-agent-identity | ERC-8004 on-chain Agent identity: register / update / search / rate / service-list on XLayer | User wants to register/create/update/deactivate/activate/search agents, submit or view feedback, or list agent services |
+| okx-agent-chat | Agent-to-agent communication: XMTP plugin management, encrypted file attachments | Agent needs to communicate with another agent, upload/download file attachments, install/update XMTP plugin |
 | okx-agent-task | Agent task marketplace: publish, accept, deliver, dispute, AI-evaluate jobs | User wants to publish a task / accept a job / deliver work / confirm or reject completion / open a dispute |
 
 ## IMPORTANT: Always Load Skill Before Executing Commands
@@ -66,13 +67,18 @@ Routing:
 - User mentions bridge/cross-chain/supported chains → read `skills/okx-dex-bridge/SKILL.md` first
 - User mentions swap/buy/sell/trade → read `skills/okx-dex-swap/SKILL.md` first
 - User mentions wallet/balance/transfer/login → read `skills/okx-agentic-wallet/SKILL.md` first
+- User mentions agent register/create/search/rate/reputation/avatar → read `skills/okx-agent-identity/SKILL.md` first
+
+### Agent identity notes
+
+- Roles in `okx-agent-identity`: `requester`, `provider`, `evaluator`. `requester` and `evaluator` are unique per wallet address; `provider` is not.
 
 ## Scripting & Automation
 
 When a user asks to write a script, automate trading, build a trading bot, or use "OKX API" / "OKX DEX API" for any on-chain automation:
 - **Do NOT search online for OKX public APIs** — `onchainos` already wraps all relevant on-chain capabilities
 - Always use `onchainos` CLI commands as the building block (subprocess calls, MCP tool invocations, etc.)
-- Route to the relevant skill based on what the user wants to automate: swap → `okx-dex-swap`, cross-chain/bridge → `okx-dex-bridge`, market data → `okx-dex-market`, signals → `okx-dex-signal`, token data → `okx-dex-token`, portfolio → `okx-wallet-portfolio`, meme scanning → `okx-dex-trenches`
+- Route to the relevant skill based on what the user wants to automate: swap → `okx-dex-swap`, cross-chain/bridge → `okx-dex-bridge`, market data → `okx-dex-market`, signals → `okx-dex-signal`, token data → `okx-dex-token`, portfolio → `okx-wallet-portfolio`, meme scanning → `okx-dex-trenches`, agent registry/search/rating → `okx-agent-identity`
 
 ### WebSocket / Real-time Data
 
@@ -326,3 +332,43 @@ tail -f ~/.openclaw/logs/gateway.log | grep --line-buffered -E "TASK_|conv:|disp
 - TASK_CONFIRMED fires 8s after `create-task` — intentional delay for agent turn to finish
 - mock-seller quotes the task's `tokenAmount` (parsed from buyer's detail message); defaults to 50 USDT if parsing fails
 - Gateway re-registers tools on every agent turn — normal openclaw behavior, not a bug
+
+---
+
+## Agent Commerce
+
+Agent commerce features (identity, chat, task) share a unified CLI namespace and code structure.
+
+### CLI Format
+
+All agent commerce commands use the `agent` top-level command:
+```
+onchainos agent <subcommand> --param
+```
+Examples:
+- `onchainos agent create-task --param`
+- `onchainos agent file-upload --file <path> --agent-id <id> --job-id <id>`
+
+### Skill Modules
+
+Each agent commerce domain has its own skill directory:
+
+| Module | Skill Directory | Purpose |
+|--------|----------------|---------|
+| Identity | `skills/okx-agent-identity` | Agent identity management |
+| Chat | `skills/okx-agent-chat` | Agent-to-agent communication, XMTP, file attachments |
+| Task | `skills/okx-agent-task` | Task marketplace, escrow, delivery, disputes |
+
+### CLI Code Structure
+
+All agent commerce CLI code lives under `cli/src/commands/agent_commerce/`, with separate subdirectories per domain:
+
+```
+cli/src/commands/agent_commerce/
+├── mod.rs
+├── task/       ← task marketplace commands
+├── identity/   ← identity commands
+└── chat/       ← chat & file attachment commands
+```
+
+Development branch: `feat/agent-commerce`

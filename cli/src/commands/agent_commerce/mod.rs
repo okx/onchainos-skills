@@ -1,3 +1,4 @@
+pub mod chat;
 pub mod identity;
 pub mod task;
 
@@ -220,6 +221,66 @@ pub enum AgentCommand {
         #[arg(long = "task-id")]
         task_id: Option<String>,
     },
+
+    // Chat
+    /// Upload an encrypted file attachment and receive a file key
+    #[command(name = "file-upload")]
+    FileUpload {
+        #[arg(long)]
+        file: String,
+        #[arg(long)]
+        agent_id: String,
+        #[arg(long)]
+        job_id: String,
+    },
+
+    /// Download an encrypted file attachment by file key
+    #[command(name = "file-download")]
+    FileDownload {
+        #[arg(long)]
+        file_key: String,
+        #[arg(long)]
+        agent_id: String,
+        #[arg(long)]
+        output: String,
+    },
+
+    /// Get sensitive word list for A2A risk filtering
+    #[command(name = "sensitive-words")]
+    SensitiveWords {
+        #[arg(long)]
+        agent_id: String,
+    },
+
+    /// Check if a message is eligible to be sent
+    #[command(name = "message-eligible")]
+    MessageEligible {
+        #[arg(long)]
+        agent_id: String,
+        #[arg(long)]
+        client_agent_id: String,
+        #[arg(long)]
+        provider_agent_id: String,
+        #[arg(long)]
+        job_id: String,
+        #[arg(long)]
+        group_id: String,
+        #[arg(long)]
+        direction: String,
+    },
+
+    /// Get XMTP system config (system account addresses)
+    #[command(name = "system-config")]
+    SystemConfig {
+        #[arg(long)]
+        agent_id: String,
+    },
+
+    /// Send agent heartbeat to report online status
+    Heartbeat {
+        #[arg(long)]
+        chain_index: u64,
+    },
 }
 
 pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
@@ -349,5 +410,29 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 &agent_id, &creator_id, &score,
                 description.as_deref(), task_id.as_deref(),
             ).await,
+
+        // ── Chat (XMTP attachments + risk/eligibility + system config + heartbeat) ──
+        AgentCommand::FileUpload { file, agent_id, job_id } =>
+            chat::run(chat::ChatCommand::FileUpload { file, agent_id, job_id }, ctx).await,
+
+        AgentCommand::FileDownload { file_key, agent_id, output } =>
+            chat::run(chat::ChatCommand::FileDownload { file_key, agent_id, output }, ctx).await,
+
+        AgentCommand::SensitiveWords { agent_id } =>
+            chat::run(chat::ChatCommand::SensitiveWords { agent_id }, ctx).await,
+
+        AgentCommand::MessageEligible { agent_id, client_agent_id, provider_agent_id, job_id, group_id, direction } =>
+            chat::run(
+                chat::ChatCommand::MessageEligible {
+                    agent_id, client_agent_id, provider_agent_id, job_id, group_id, direction,
+                },
+                ctx,
+            ).await,
+
+        AgentCommand::SystemConfig { agent_id } =>
+            chat::run(chat::ChatCommand::SystemConfig { agent_id }, ctx).await,
+
+        AgentCommand::Heartbeat { chain_index } =>
+            chat::run(chat::ChatCommand::Heartbeat { chain_index }, ctx).await,
     }
 }
