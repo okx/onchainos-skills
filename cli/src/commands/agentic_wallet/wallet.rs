@@ -173,6 +173,12 @@ pub enum WalletCommand {
         /// Force execution: skip confirmation prompts from the backend
         #[arg(long, default_value_t = false)]
         force: bool,
+        /// Transaction category for broadcast (agentBizType), e.g. "dex", "defi", "dapp"
+        #[arg(long)]
+        biz_type: Option<String>,
+        /// Strategy / skill name used for this call (agentSkillName)
+        #[arg(long)]
+        strategy: Option<String>,
     },
 }
 
@@ -371,6 +377,8 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             mev_protection,
             jito_unsigned_tx,
             force,
+            biz_type,
+            strategy,
         } => {
             super::transfer::cmd_contract_call(
                 &to,
@@ -385,6 +393,8 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                 mev_protection,
                 jito_unsigned_tx.as_deref(),
                 force,
+                biz_type.as_deref(),
+                strategy.as_deref(),
             )
             .await
         }

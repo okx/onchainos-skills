@@ -525,6 +525,8 @@ onchainos wallet contract-call \
   [--aa-dex-token-amount <amount>] \
   [--mev-protection] \
   [--jito-unsigned-tx <jito_base58_tx>] \
+  [--biz-type <biz_type>] \
+  [--strategy <skill_name>] \
   [--force]
 ```
 
@@ -541,6 +543,8 @@ onchainos wallet contract-call \
 | `--aa-dex-token-amount` | string | No | AA DEX token amount (for AA DEX interactions). |
 | `--mev-protection` | bool | No | Enable MEV protection (default false). Supported on Ethereum, BSC, Base, and Solana. On Solana, `--jito-unsigned-tx` is also required. |
 | `--jito-unsigned-tx` | string | No | Jito unsigned transaction data (base58) for Solana MEV protection. **Required when `--mev-protection` is used on Solana.** |
+| `--biz-type` | string | No | Transaction category forwarded to broadcast as `agentBizType` (e.g. `dex`, `defi`, `dapp`). Omitted from the request when not provided. |
+| `--strategy` | string | No | Strategy / skill name forwarded to broadcast as `agentSkillName`. Omitted from the request when not provided. |
 | `--force` | bool | No | Skip confirmation prompts from the backend (default false). Use when re-running a command after the user has confirmed a `confirming` response. |
 
 > Either `--input-data` (EVM) or `--unsigned-tx` (Solana) must be provided. The CLI will fail if neither is present.
