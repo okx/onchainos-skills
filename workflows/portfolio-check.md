@@ -71,4 +71,4 @@ Total: ${x}  |  PnL(30d): ${x}  |  Win Rate: {x}%
 
 ## Actions
 
-- → "research [symbol]" — Token Research (`workflows/token-research.md`)
+- → "research [symbol]" — Token Research (`token-research.md`)
