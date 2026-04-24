@@ -87,7 +87,7 @@ pub struct ServiceListArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct FeedbackSubmitArgs {
-    /// 必填：被评价的 agent id，进 create-comment 请求体 `comment.agentId`。
+    /// 必填：被评价的 agent id，进 create-comment 请求体 `comment.agentid`。
     #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
     /// 必填：评价发起方的 agent id，进广播 `extraData.erc8004Msg.feedBackAgentId`。
@@ -96,7 +96,7 @@ pub struct FeedbackSubmitArgs {
     /// 必填：0-100 的整数分数，进 create-comment 请求体 `comment.value`。
     #[arg(long)]
     pub score: Option<String>,
-    /// 选填：文字评价，进 create-comment 请求体 `comment.feedbackDesc`。
+    /// 选填：文字评价，进 create-comment 请求体 `comment.comment`。
     #[arg(long)]
     pub description: Option<String>,
     /// 选填：taskId，进广播 `extraData.erc8004Msg.taskId`；为空则不写入。

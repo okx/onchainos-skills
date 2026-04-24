@@ -165,12 +165,14 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     // 按需指引用户完成。
     //
     // agentId 放进 cardJson（后端按 cardJson.AgentId 识别目标），请求体顶层
-    // 不带。注意 key 是 PascalCase 的 `AgentId`，和 cardJson 里其他字段一致。
+    // 不带。AgentId 保持 PascalCase 不在本次 spec 改名范围；name / image /
+    // services 走新 lowercase schema；ProfileDescription 亦未在 spec 中点名，
+    // 故保留原 PascalCase。
     let mut card = serde_json::Map::new();
     card.insert("AgentId".into(), json!(agent_id));
     let name = trim_or_empty(args.name.as_deref());
     if !name.is_empty() {
-        card.insert("Name".into(), json!(name));
+        card.insert("name".into(), json!(name));
     }
     let description = trim_or_empty(args.description.as_deref());
     if !description.is_empty() {
@@ -178,13 +180,13 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     }
     let picture = trim_or_empty(args.picture.as_deref());
     if !picture.is_empty() {
-        card.insert("ProfilePicture".into(), json!(picture));
+        card.insert("image".into(), json!(picture));
     }
     if args.service.is_some() {
         let services = parse_services(args.service.as_deref())?;
         card.insert(
-            "Service".into(),
-            serde_json::to_value(&services).context("failed to serialize Service list")?,
+            "services".into(),
+            serde_json::to_value(&services).context("failed to serialize services list")?,
         );
     }
 
@@ -364,10 +366,12 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
     // 广播 extraData.erc8004Msg.feedBackAgentId 同源（均来自 --creator-id），
     // 但在请求体里放在顶层（和 chainIndex 同级），不进 comment 子对象。
     // 本地 XLayer 地址解析仍然要做，结果只给下一步广播用。
+    // 注意：comment 子对象里的 "comment" 字段就是原来的 feedbackDesc，
+    // 与外层 body.comment（序列化后的 JSON 字符串）同名但是不同层级，别混淆。
     let comment = json!({
-        "agentId": agent_id,
+        "agentid": agent_id,
         "value": score.to_string(),
-        "feedbackDesc": feedback_desc,
+        "comment": feedback_desc,
     });
     let body = json!({
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,

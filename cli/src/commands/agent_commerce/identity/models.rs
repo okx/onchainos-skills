@@ -12,32 +12,17 @@ pub(super) const XLAYER_CHAIN_NAME: &str = "XLayer";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) struct AgentService {
-    #[serde(
-        rename = "id",
-        default,
-        alias = "id",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
     pub(super) id: Option<String>,
-    #[serde(
-        rename = "ServiceDescription",
-        alias = "ServiceDescription",
-        alias = "serviceDescription"
-    )]
+    #[serde(rename = "servicedescription")]
     pub(super) service_description: String,
-    #[serde(rename = "ServiceName", alias = "ServiceName", alias = "serviceName")]
+    #[serde(rename = "name")]
     pub(super) service_name: String,
-    #[serde(rename = "Fee", default, alias = "Fee", alias = "fee")]
+    #[serde(rename = "fee", default)]
     pub(super) fee: String,
-    #[serde(rename = "ServiceType", alias = "ServiceType", alias = "serviceType")]
+    #[serde(rename = "servicetype")]
     pub(super) service_type: String,
-    #[serde(
-        rename = "Endpoint",
-        default,
-        alias = "Endpoint",
-        alias = "endpoint",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "endpoint", default, skip_serializing_if = "Option::is_none")]
     pub(super) endpoint: Option<String>,
 }
 
@@ -45,9 +30,9 @@ pub(super) struct AgentService {
 pub(super) struct AgentCard {
     #[serde(rename = "Role")]
     pub(super) role: String,
-    #[serde(rename = "Name")]
+    #[serde(rename = "name")]
     pub(super) name: String,
-    #[serde(rename = "ProfilePicture")]
+    #[serde(rename = "image")]
     pub(super) profile_picture: String,
     #[serde(rename = "ProfileDescription")]
     pub(super) profile_description: String,
@@ -56,7 +41,7 @@ pub(super) struct AgentCard {
         skip_serializing_if = "Option::is_none"
     )]
     pub(super) communication_address: Option<String>,
-    #[serde(rename = "Service")]
+    #[serde(rename = "services")]
     pub(super) services: Vec<AgentService>,
 }
 

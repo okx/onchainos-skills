@@ -19,7 +19,7 @@ Do NOT default. Do NOT guess from the name / description fields.
 
 ## Field prompts
 
-All eight fields (Name / Description / Picture / ServiceName / ServiceDescription / ServiceType / Fee / Endpoint) have standardized four-segment specs — **用途 / 可见范围 / 请注意 / 示例** (Chinese) or **Purpose / Visibility / Please note / Example** (English). See `field-specs.md`. When you ask the user a field, inline all four segments with the question in the user's language only (never mix languages in one message).
+All eight fields (Name / Description / Picture / `name` / `servicedescription` / `servicetype` / `fee` / `endpoint`) have standardized four-segment specs — **用途 / 可见范围 / 请注意 / 示例** (Chinese) or **Purpose / Visibility / Please note / Example** (English). See `field-specs.md`. When you ask the user a field, inline all four segments with the question in the user's language only (never mix languages in one message).
 
 ## STRICT — one question per turn
 
