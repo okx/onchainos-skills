@@ -323,9 +323,28 @@ main
 # ── Install plugin-store skill ───────────────────────────────
 # Bundled with onchainos so the agent can discover and install DeFi plugins
 # immediately after onchainos setup — without a separate install step.
-# --global ensures plugin-store lands in ~/.agents/skills/ regardless of the
+# --global ensures plugin-store lands in ~/.claude/skills/ regardless of the
 # working directory when the installer is piped via curl, consistent with how
 # onchainos-skills itself is installed globally.
 if command -v npx >/dev/null 2>&1; then
+  # Track whether this is a new install so we only print the restart prompt once.
+  _ps_installed=false
+  [ -f "$HOME/.claude/skills/plugin-store/SKILL.md" ] && _ps_installed=true
+
+  echo ""
+  echo "Installing plugin-store skill..."
   npx skills add okx/plugin-store --skill plugin-store --yes --global 2>/dev/null || true
+
+  if [ "$_ps_installed" = false ]; then
+    echo "Installed plugin-store."
+    echo ""
+    echo "Restart Claude Code (or open a new session) to activate plugin-store."
+    echo "Then ask: 'Show me available DeFi plugins'"
+    echo "or mention a protocol by name — Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho."
+  fi
+else
+  echo ""
+  echo "Note: npx not found — plugin-store skill was not installed."
+  echo "To install later, run:"
+  echo "  npx skills add okx/plugin-store --skill plugin-store --yes --global"
 fi
