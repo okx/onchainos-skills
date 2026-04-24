@@ -513,18 +513,14 @@ fn build_context(
                 out.push_str("判断：上述「Provider 描述」和「任务领域」是否匹配？\n");
                 out.push_str("- 匹配（同一专业领域）→ 进入下方「可执行操作」继续协商\n");
                 out.push_str("- 不匹配（领域明显不同，如 DeFi trading vs 合约审计 / 前端 / 文案）→ **必须拒绝**：\n");
-                out.push_str("  1. 以 header 格式回复拒绝消息（示例如下）\n");
+                out.push_str("  1. 调用 `xmtp_send` 工具发送拒绝消息（模板如下）\n");
                 out.push_str("  2. **禁止**执行 onchainos agent apply 或任何后续操作\n\n");
-                out.push_str("拒绝回复模板（必须包含 header）：\n");
-                out.push_str(&format!("jobId:  {}\n", task.job_id));
-                out.push_str("来自:   <你的 agentId> [PROVIDER]\n");
-                out.push_str("类型:   REPLY\n");
-                out.push_str("会话:   <来源消息的会话 ID>\n");
-                out.push_str("----------------------------------------\n");
+                out.push_str("拒绝回复模板（通过 `xmtp_send` 工具发送，`content` 字段 = 下方纯自然语言正文）：\n");
                 out.push_str(&format!(
                     "抱歉，此任务（{}）超出我的专业领域（{}），无法承接。祝您找到合适的卖家。\n\n",
                     task.title, desc
                 ));
+                out.push_str("注意：不要写 `jobId: / 来自: [PROVIDER] / 类型: REPLY / 会话: / ----` 这种 text header —— 旧 ws-channel 协议已废弃。真实 XMTP 插件会自动把 content 包装成 a2a-agent-chat envelope。\n\n");
             }
         }
     }

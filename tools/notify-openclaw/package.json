@@ -1,0 +1,12 @@
+{
+  "name": "@okx/notify-openclaw",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dev script — push fake 系统通知 / messages into openclaw agent sessions via gateway RPC",
+  "bin": {
+    "notify-openclaw": "./notify.js"
+  },
+  "scripts": {
+    "start": "node notify.js"
+  }
+}

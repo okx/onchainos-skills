@@ -28,6 +28,9 @@ const OWN_AGENT_PROFILE_DESC    = process.env.OWN_AGENT_PROFILE_DESC ?? "";
 const OWN_AGENT_PROFILE_PICTURE = process.env.OWN_AGENT_PROFILE_PICTURE ?? "";
 const OWN_AGENT_ROLE            = process.env.OWN_AGENT_ROLE ?? "";   // 1=buyer, 2=seller
 
+// mock-api 的地址（仅 buyer 端用，seller 端不调任务创建）
+const MOCK_API_URL = process.env.MOCK_API_URL ?? "http://127.0.0.1:9001";
+
 interface Msg {
   dir: "in" | "out";
   content: string;
@@ -244,37 +247,126 @@ async function main() {
       return;
     }
 
-    // POST /new-dm {peer, content}
+    // POST /new-dm {peer, content, jobId?}
+    // jobId 存在 → 创建 Group（groupName=a2a-<jobId>，对齐 openclaw xmtp_start_conversation 协议）
+    // jobId 缺省 → 退化到 DM（适合纯文本调试）
     if (req.method === "POST" && url.pathname === "/new-dm") {
       try {
-        const body = JSON.parse(await readBody()) as { peer?: string; content?: string };
+        const body = JSON.parse(await readBody()) as { peer?: string; content?: string; jobId?: string };
         if (!body.peer) { sendJson(400, { error: "peer required (address or inboxId)" }); return; }
         const isAddr = body.peer.startsWith("0x") && body.peer.length === 42;
-        const conv = isAddr
-          ? await agent.client.conversations.newDmWithIdentifier({
-              identifier: body.peer,
-              identifierKind: IdentifierKind.Ethereum,
-            })
-          : await agent.client.conversations.newDm(body.peer);
+        const jobId = body.jobId ?? process.env.DEFAULT_JOB_ID ?? "";
+
+        let conv: any;
+        if (jobId) {
+          // 建 Group —— 插件把 group 消息解析成 a2a-agent-chat envelope 走任务流程
+          if (isAddr) {
+            conv = await (agent.client.conversations as any).newGroupWithIdentifiers(
+              [{ identifier: body.peer, identifierKind: IdentifierKind.Ethereum }],
+              { groupName: `a2a-${jobId}` },
+            );
+          } else {
+            conv = await (agent.client.conversations as any).newGroup(
+              [body.peer],
+              { groupName: `a2a-${jobId}` },
+            );
+          }
+          console.log(`${TAG} 创建 Group: groupId=${conv.id} jobId=${jobId} peer=${body.peer}`);
+        } else {
+          conv = isAddr
+            ? await agent.client.conversations.newDmWithIdentifier({
+                identifier: body.peer,
+                identifierKind: IdentifierKind.Ethereum,
+              })
+            : await agent.client.conversations.newDm(body.peer);
+          console.log(`${TAG} 创建 DM: convId=${conv.id} peer=${body.peer}`);
+        }
+        // 缓存会话上下文，供后续发送时自动填回 envelope
+        const ctxRec = convCtxMap.get(conv.id) ?? {};
+        if (jobId) ctxRec.jobId = jobId;
+        ctxRec.peerAddr = body.peer;
+        // 对 Group，groupId = conv.id；对 DM，此字段为空
+        ctxRec.groupId = jobId ? conv.id : "";
+        convCtxMap.set(conv.id, ctxRec);
+
         if (body.content) {
-          // 首条消息也 wrap envelope；peer 已知，groupId/jobId 暂无，留空
           const envelope = buildEnvelope({
             content: body.content,
             peerAddr: body.peer,
-            groupId:  process.env.DEFAULT_GROUP_ID ?? "",
-            jobId:    process.env.DEFAULT_JOB_ID ?? "",
+            groupId:  ctxRec.groupId ?? "",
+            jobId,
             myAddress,
           });
           const payload = JSON.stringify(envelope);
           await conv.send(payload);
           recordMsg(conv.id, { dir: "out", content: payload, sender: myInboxId, ts: Date.now() });
         } else {
-          // Ensure the conversation shows up even before any message is sent
           if (!conversations.has(conv.id)) conversations.set(conv.id, []);
         }
         sendJson(200, { ok: true, convId: conv.id });
       } catch (e: any) {
         sendJson(500, { error: String(e?.message ?? e) });
+      }
+      return;
+    }
+
+    // POST /create-task {title, budget, currency?}  —— 调 mock-api 创建任务
+    if (req.method === "POST" && url.pathname === "/create-task") {
+      try {
+        const body = JSON.parse(await readBody()) as { title?: string; budget?: string; currency?: string };
+        if (!body.title || !body.budget) { sendJson(400, { error: "title + budget required" }); return; }
+        const tokenSymbol = (body.currency ?? "USDT").toUpperCase();
+        const tokenAddress = tokenSymbol === "USDG"
+          ? "0xUSDG0000000000000000000000000000000001"
+          : "0xUSDT0000000000000000000000000000000001";
+        const apiBody = {
+          title: body.title,
+          description: body.title,
+          descriptionSummary: body.title,
+          tokenAddress,
+          tokenAmount: body.budget,
+          paymentType: 0,
+          openType: 1,
+          chainId: 1,
+          minCreditScore: 0,
+          buyerAgentId: OWN_AGENT_ID,
+          buyerAgentAddress: myAddress,
+          expireConfig: { openExpireSec: 86400, acceptedExpireSec: 86400 },
+        };
+        const up = await fetch(`${MOCK_API_URL}/api/v1/task/create`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(apiBody),
+        });
+        const data = await up.json() as any;
+        if (data.code !== 0 && data.code !== "0") {
+          sendJson(500, { error: data.msg ?? "task create failed" });
+          return;
+        }
+        sendJson(200, { ok: true, jobId: data.data?.jobId, raw: data });
+      } catch (e: any) {
+        sendJson(500, { error: String(e?.message ?? e) });
+      }
+      return;
+    }
+
+    // GET /sellers  —— 查 agent-list，筛 role=2 + status=1
+    if (req.method === "GET" && url.pathname === "/sellers") {
+      try {
+        const up = await fetch(`${MOCK_API_URL}/priapi/v5/wallet/agentic/agent/agent-list?chainIndex=196`);
+        const data = await up.json() as any;
+        const list: any[] = data?.data?.[0]?.list ?? [];
+        const sellers = list
+          .filter((a) => a.role === 2 && a.status === 1)
+          .map((a) => ({
+            agentId:  a.agentId,
+            name:     a.name,
+            commAddr: a.communicationAddress,
+            desc:     a.profileDescription,
+          }));
+        sendJson(200, { sellers });
+      } catch (e: any) {
+        sendJson(500, { error: String(e?.message ?? e), sellers: [] });
       }
       return;
     }
@@ -308,6 +400,22 @@ body { font-family: ui-monospace, monospace; background: #0d1117; color: #c9d1d9
 #newdm input[name=init] { width: 200px; }
 #newdm button { background: #238636; border: none; color: white; padding: 5px 12px; border-radius: 5px; cursor: pointer; font-size: 12px; }
 #newdm button:hover { background: #2ea043; }
+#create-task { display: none; align-items: center; gap: 6px; font-size: 12px; }
+#create-task input { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 5px 8px; border-radius: 5px; font-family: inherit; }
+#create-task input[name=title]  { width: 200px; }
+#create-task input[name=budget] { width: 70px; }
+#create-task button { background: #1f6feb; border: none; color: white; padding: 5px 12px; border-radius: 5px; cursor: pointer; font-size: 12px; }
+#create-task button:hover { background: #388bfd; }
+#current-task { display: inline-block; color: #3fb950; font-size: 11px; margin-left: 8px; }
+.sidebar-section { border-bottom: 2px solid #30363d; }
+#sellers-section { display: none; }
+#sellers-section h2 { display: flex; align-items: center; justify-content: space-between; }
+#sellers-section button.refresh { background: #21262d; border: none; color: #c9d1d9; padding: 1px 6px; border-radius: 4px; font-size: 10px; cursor: pointer; }
+.seller-item { padding: 8px 14px; cursor: pointer; border-bottom: 1px solid #21262d; font-size: 11px; }
+.seller-item:hover { background: #161b22; }
+.seller-item .sid { color: #58a6ff; font-weight: bold; }
+.seller-item .desc { color: #c9d1d9; font-size: 10px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seller-item .addr { color: #8b949e; font-size: 10px; margin-top: 2px; }
 #workspace { display: flex; flex: 1; overflow: hidden; }
 #sidebar { width: 280px; border-right: 1px solid #30363d; overflow-y: auto; }
 #sidebar h2 { padding: 8px 14px; font-size: 11px; color: #8b949e; border-bottom: 1px solid #30363d; text-transform: uppercase; letter-spacing: .05em; position: sticky; top: 0; background: #0d1117; }
@@ -353,6 +461,13 @@ body { font-family: ui-monospace, monospace; background: #0d1117; color: #c9d1d9
   <div class="meta">agentId: <b id="me-agent">—</b></div>
   <div class="meta">inbox: <b id="me-inbox">—</b></div>
   <div class="meta">addr: <b id="me-addr">—</b></div>
+  <form id="create-task">
+    <input name="title" placeholder="任务标题" />
+    <input name="budget" placeholder="预算" value="100" />
+    <span style="color:#8b949e">USDT</span>
+    <button type="submit">发布任务</button>
+    <span id="current-task"></span>
+  </form>
   <form id="newdm">
     <input name="peer" placeholder="对端 address / inboxId" />
     <input name="init" placeholder="首条消息（可选）" />
@@ -361,9 +476,15 @@ body { font-family: ui-monospace, monospace; background: #0d1117; color: #c9d1d9
 </div>
 <div id="workspace">
   <div id="sidebar">
-    <h2>会话</h2>
-    <div id="conv-list">
-      <div class="empty-hint">还没有会话。发起 New DM 或等对方先来消息。</div>
+    <div id="sellers-section" class="sidebar-section">
+      <h2>可接任务的卖家 <button class="refresh" id="btn-refresh-sellers">↻</button></h2>
+      <div id="seller-list"><div class="empty-hint">加载中…</div></div>
+    </div>
+    <div class="sidebar-section">
+      <h2>会话</h2>
+      <div id="conv-list">
+        <div class="empty-hint">还没有会话。发起 New DM 或等对方先来消息。</div>
+      </div>
     </div>
   </div>
   <div id="main">
@@ -395,7 +516,7 @@ body { font-family: ui-monospace, monospace; background: #0d1117; color: #c9d1d9
   </div>
 </div>
 <script>
-const state = { me: null, convs: new Map(), activeConvId: null };
+const state = { me: null, convs: new Map(), activeConvId: null, currentJobId: "", currentTaskTitle: "", currentTaskBudget: "" };
 const $ = (id) => document.getElementById(id);
 
 // 协议消息预设 —— 发送到 XMTP 对端后，由 openclaw skill 解析 + 触发链上动作
@@ -473,6 +594,15 @@ function renderSidebar() {
   }
 }
 
+function prettifyIfJson(s) {
+  // 尝试把 JSON 字符串展开成缩进格式；失败就原样返回。
+  try {
+    const parsed = JSON.parse(s);
+    if (parsed && typeof parsed === "object") return JSON.stringify(parsed, null, 2);
+  } catch {}
+  return s;
+}
+
 function renderMessages(convId) {
   const c = state.convs.get(convId);
   const box = $("messages");
@@ -482,7 +612,7 @@ function renderMessages(convId) {
     const who = m.dir === "out" ? state.me.myInboxId.slice(0, 8) + "(me)" : m.sender.slice(0, 12) + "…";
     return '<div class="msg ' + m.dir + '">' +
       '<div class="meta">' + who + ' · ' + time + '</div>' +
-      escapeHtml(m.content) +
+      escapeHtml(prettifyIfJson(m.content)) +
       '</div>';
   }).join("");
   box.scrollTop = box.scrollHeight;
@@ -538,6 +668,7 @@ ev.addEventListener("hello", (e) => {
   $("me-inbox").textContent = info.myInboxId.slice(0, 16) + "…";
   $("me-addr").textContent = info.myAddress;
   $("title").textContent = "XMTP Mock (" + info.role + ")";
+  toggleBuyerUI(info.role);
   refreshState();
 });
 ev.addEventListener("message", (e) => {
@@ -593,6 +724,82 @@ $("newdm").addEventListener("submit", async (e) => {
   await refreshState();
   await selectConv(data.convId);
 });
+
+// ── Buyer-only: 发布任务 + 联系卖家 ─────────────────────────────────
+$("create-task").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const title = form.title.value.trim();
+  const budget = form.budget.value.trim();
+  if (!title || !budget) { alert("title + budget required"); return; }
+  const resp = await fetch("/create-task", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, budget, currency: "USDT" }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) { alert("发布失败: " + (data.error || resp.status)); return; }
+  state.currentJobId = data.jobId;
+  state.currentTaskTitle = title;
+  state.currentTaskBudget = budget;
+  $("current-task").textContent = "jobId: " + data.jobId + " (" + title + ", " + budget + " USDT)";
+  form.title.value = "";
+  loadSellers();
+});
+
+async function loadSellers() {
+  try {
+    const resp = await fetch("/sellers");
+    const data = await resp.json();
+    const list = $("seller-list");
+    const sellers = data.sellers || [];
+    if (sellers.length === 0) {
+      list.innerHTML = '<div class="empty-hint">没有 role=2 的在线卖家</div>';
+      return;
+    }
+    list.innerHTML = sellers.map(s =>
+      '<div class="seller-item" data-addr="' + s.commAddr + '">' +
+      '<div class="sid">' + s.agentId + ' (' + escapeHtml(s.name) + ')</div>' +
+      '<div class="desc">' + escapeHtml(s.desc || '') + '</div>' +
+      '<div class="addr">' + s.commAddr.slice(0, 10) + '…' + s.commAddr.slice(-6) + '</div>' +
+      '</div>'
+    ).join("");
+    for (const el of list.querySelectorAll(".seller-item")) {
+      el.addEventListener("click", () => contactSeller(el.getAttribute("data-addr")));
+    }
+  } catch (e) {
+    $("seller-list").innerHTML = '<div class="empty-hint">加载失败: ' + e + '</div>';
+  }
+}
+
+async function contactSeller(addr) {
+  if (!state.currentJobId) {
+    alert('请先发布任务');
+    return;
+  }
+  const content = "你好，我有一个任务（jobId: " + state.currentJobId +
+    "，标题: " + state.currentTaskTitle +
+    "，预算: " + state.currentTaskBudget + " USDT），请问你感兴趣吗？";
+  const resp = await fetch("/new-dm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ peer: addr, content, jobId: state.currentJobId }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) { alert("联系失败: " + (data.error || resp.status)); return; }
+  await refreshState();
+  await selectConv(data.convId);
+}
+
+$("btn-refresh-sellers").addEventListener("click", loadSellers);
+
+// 仅在 buyer 角色下显示"发布任务"表单和卖家列表
+function toggleBuyerUI(role) {
+  const showBuyer = role === "buyer";
+  $("create-task").style.display = showBuyer ? "flex" : "none";
+  $("sellers-section").style.display = showBuyer ? "block" : "none";
+  if (showBuyer) loadSellers();
+}
 </script>
 </body>
 </html>`;

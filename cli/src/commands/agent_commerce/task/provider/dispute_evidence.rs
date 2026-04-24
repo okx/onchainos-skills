@@ -27,5 +27,9 @@ pub async fn handle_dispute_evidence(
     println!("  jobId:  {job_id}");
     println!("  摘要:   {summary}");
     println!("  txHash: {tx_hash}");
+    println!();
+    println!("⚠️  证据提交后无需主动通知对方：");
+    println!("    - 禁止立即调 `xmtp_send` 告诉对方 \"证据已提交\"");
+    println!("    - 仲裁者会自动拉取链上证据进行裁决，无需通过 XMTP 提醒");
     Ok(())
 }

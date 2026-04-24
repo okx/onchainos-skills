@@ -80,6 +80,154 @@ function loadJsonFixture<T>(filename: string, fallback: T): T {
   }
 }
 
+// ── Openclaw system-notification bridge ─────────────────────────────────────
+// 模拟"链事件监听后端"：task 状态变化后，通过 openclaw gateway RPC `sessions.send`
+// 往 agent 的 sub session 塞一条"系统通知"，触发 agent LLM 按 provider.md / buyer.md
+// 流程响应。sessionKey 的定位方式：读 ~/.openclaw/agents/main/sessions/sessions.json，
+// 按 jobId 匹配，再按 my= 地址区分 seller / buyer。
+import { createRequire } from "node:module";
+const requireFromEsm = createRequire(import.meta.url);
+
+let _GatewayClient: any = null;
+let _gatewayInitTried = false;
+function loadGatewayClient(): any {
+  if (_gatewayInitTried) return _GatewayClient;
+  _gatewayInitTried = true;
+  const candidates = [
+    "/opt/homebrew/lib/node_modules/openclaw/dist/plugin-sdk/gateway-runtime.js",
+    "/usr/local/lib/node_modules/openclaw/dist/plugin-sdk/gateway-runtime.js",
+  ];
+  for (const p of candidates) {
+    try {
+      _GatewayClient = requireFromEsm(p).GatewayClient;
+      console.log(`[notify-openclaw] GatewayClient loaded from ${p}`);
+      return _GatewayClient;
+    } catch (e) {
+      // 继续下一个候选路径
+    }
+  }
+  console.log("[notify-openclaw] GatewayClient not found in global paths; notifications disabled");
+  return null;
+}
+
+function findSessionKeyForJob(jobId: string, myAddress?: string): string | null {
+  try {
+    const p = path.join(
+      process.env.HOME ?? "",
+      ".openclaw/agents/main/sessions/sessions.json",
+    );
+    if (!fs.existsSync(p)) return null;
+    const sessions = JSON.parse(fs.readFileSync(p, "utf8")) as Record<string, unknown>;
+    for (const key of Object.keys(sessions)) {
+      const idx = key.indexOf("okx-xmtp:");
+      if (idx < 0) continue;
+      const qs = new URLSearchParams(key.slice(idx + "okx-xmtp:".length));
+      if (qs.get("job") !== jobId) continue;
+      if (myAddress) {
+        const my = (qs.get("my") ?? "").toLowerCase();
+        if (my !== myAddress.toLowerCase()) continue;
+      }
+      return key;
+    }
+  } catch (err) {
+    console.log(
+      "[notify-openclaw] sessions.json read error:",
+      (err as Error).message,
+    );
+  }
+  return null;
+}
+
+async function callGatewaySessionsSend(sessionKey: string, message: string): Promise<void> {
+  const GC = loadGatewayClient();
+  if (!GC) throw new Error("GatewayClient not available");
+  const { randomUUID } = await import("node:crypto");
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let stopped = false;
+    const stop = (err?: unknown) => {
+      if (settled) return;
+      settled = true;
+      if (err) reject(err instanceof Error ? err : new Error(String(err)));
+      else resolve();
+    };
+    const client: any = new GC({
+      instanceId: randomUUID(),
+      clientName: "gateway-client",
+      clientDisplayName: "mock-api:notify",
+      mode: "backend",
+      role: "operator",
+      scopes: ["operator.admin"],
+      minProtocol: 3,
+      maxProtocol: 3,
+      onHelloOk: async () => {
+        try {
+          await client.request(
+            "sessions.send",
+            { key: sessionKey, message, idempotencyKey: randomUUID() },
+            { timeoutMs: 10_000 },
+          );
+          stopped = true;
+          try { client.stop(); } catch { /* ignore */ }
+          stop();
+        } catch (err) {
+          stopped = true;
+          try { client.stop(); } catch { /* ignore */ }
+          stop(err);
+        }
+      },
+      onClose: (code: number, reason: string) => {
+        if (stopped) return;
+        stop(new Error(`gateway closed (${code}): ${reason || "no reason"}`));
+      },
+      onConnectError: (err: unknown) => {
+        if (settled) return;
+        stop(err);
+      },
+    });
+    setTimeout(() => {
+      if (settled) return;
+      try { client.stop(); } catch { /* ignore */ }
+      stop(new Error("notify-openclaw: gateway timeout"));
+    }, 10_000);
+    client.start();
+  });
+}
+
+/** 触发一条"系统通知"到 agent 的 sub session。Fire-and-forget，失败仅记日志。 */
+function notifyOpenclawAsync(args: {
+  jobId: string;
+  jobStatus: string;
+  myAddress?: string;   // 按 my= 地址过滤；传 seller/buyer 其中一方的 commAddr
+  extra?: string;       // 附加信息拼到消息末尾（如 "tokenAmount=100 tokenSymbol=USDT"）
+  delayMs?: number;     // 延迟发送（默认 3s，模拟链上确认耗时）
+}): void {
+  const delay = args.delayMs ?? 3_000;
+  setTimeout(() => {
+    void (async () => {
+      try {
+        const sessionKey = findSessionKeyForJob(args.jobId, args.myAddress);
+        if (!sessionKey) {
+          console.log(
+            `[notify-openclaw] skip: jobId=${args.jobId} status=${args.jobStatus} my=${args.myAddress ?? "?"} 没找到 session`,
+          );
+          return;
+        }
+        const message = `[系统通知] ${args.jobStatus} jobId=${args.jobId}${args.extra ? " " + args.extra : ""}`;
+        await callGatewaySessionsSend(sessionKey, message);
+        console.log(
+          `[notify-openclaw] ✓ ${args.jobStatus} jobId=${args.jobId} → ${sessionKey.slice(0, 70)}…`,
+        );
+      } catch (err) {
+        console.log(
+          `[notify-openclaw] ✗ ${args.jobStatus} jobId=${args.jobId}:`,
+          (err as Error).message ?? err,
+        );
+      }
+    })();
+  }, delay);
+}
+
 // ── Upstream proxy（没命中 mock 路由的请求透传给真实后端）─────────────────────
 // 通过 MOCK_PROXY_UPSTREAM 环境变量覆盖。默认打到 forked-walletmain test env。
 // 适用于：auth/login, auth/refresh, wallet/balance 等"真实就好"的接口。
@@ -149,15 +297,18 @@ function loadTasks() {
     for (const [k, v] of Object.entries(obj)) tasks.set(k, v);
     console.log(`[mock-api] loaded ${tasks.size} task(s) from ${PERSIST_PATH}`);
   } catch { /* first run */ }
+  // 从已有 jobId 里找最大的十进制 ID（仅 10 进制计数）。
+  // 旧的 0x 前缀 jobId 继续保留可查询，但不参与计数。
   for (const k of tasks.keys()) {
-    const n = parseInt(k, 16) || 0;
+    if (k.startsWith("0x")) continue;
+    const n = parseInt(k, 10) || 0;
     if (n > jobCounter) jobCounter = n;
   }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-let jobCounter = 1000;
-const genJobId   = () => `0x${(++jobCounter).toString(16)}`;
+let jobCounter = 100;                              // 起始；下一个任务会从 101 开始
+const genJobId   = () => String(++jobCounter);     // "123" 纯十进制
 const nowIso     = () => new Date().toISOString();
 const mockUop    = () => `0x${Date.now().toString(16).padStart(64, "0")}`;
 const ok         = (data: unknown) => ({ code: 0, data });
@@ -784,6 +935,15 @@ const server = http.createServer(async (req, res) => {
     sleep(8000).then(() =>
       notifyApplied(jobId, t.buyerAgentAddress, t.buyerAgentId, sellerAgent, sellerCommAddr, amount)
     ).catch(e => console.error("[mock-api] apply notify error:", e));
+    // 同时通过 openclaw gateway RPC 推一条"系统通知"到卖家的 sub session，
+    // 让卖家 agent 按 provider.md §4 + flow.rs provider_applied 流程响应。
+    notifyOpenclawAsync({
+      jobId,
+      jobStatus: "provider_applied",
+      myAddress: sellerCommAddr,
+      extra: `tokenAmount=${amount} tokenSymbol=${symbol}`,
+      delayMs: 3_000,
+    });
     // 返回标准 uopData 结构（CLI 的 task_sign_and_broadcast 期望此格式）
     sendOk(res, { uopData: mockUopData() }); return;
   }

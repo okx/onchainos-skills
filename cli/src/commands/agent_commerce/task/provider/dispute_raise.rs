@@ -26,5 +26,11 @@ pub async fn handle_dispute_raise(
     println!("✓ 已发起仲裁，等待链上确认（job_disputed）");
     println!("  原因: {reason}");
     println!("  txHash: {tx_hash}");
+    println!();
+    println!("⚠️  下一步由系统通知驱动，不要主动给买家发消息：");
+    println!("    - 禁止立即调 `xmtp_send` 告诉买家 \"已发起仲裁\" 等文字");
+    println!("    - 链上确认后会收到 `job_disputed` 系统通知");
+    println!("    - 收到通知后再调 `onchainos agent next-action --jobid {job_id} --jobStatus job_disputed --role provider`，");
+    println!("      按输出提示上传证据 / 通知对方");
     Ok(())
 }

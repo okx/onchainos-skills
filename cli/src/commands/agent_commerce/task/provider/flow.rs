@@ -6,9 +6,18 @@
 
 /// 根据 jobStatus 生成 provider 下一步动作的结构化提示词
 pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> String {
-    let header_template = format!(
-        "jobId:  {job_id}\n来自:   {agent_id} [PROVIDER]\n类型:   REPLY\n会话:   <来源消息的'会话:'行的值>\n----------------------------------------"
+    // P2P 消息走 `xmtp_send` 工具（真实 XMTP 插件提供）。
+    // 会话信息（sessionKey / toXmtpAddress / groupId / jobId）由当前 XMTP 子 session 自动解析，
+    // agent 只需填 `content` 字段。旧的 text-header 格式（`jobId: / 来自: [PROVIDER] / 类型: REPLY / 会话: / ----`）
+    // 已废弃，不要再输出。
+    let xmtp_hint = format!(
+        "⚠️ 两步必做（不能跳第 1 步）：\n\
+         1) 先调 `session_status` 工具拿到当前子 session 的 `sessionKey` 字段，等 tool_result 返回\n\
+         2) 再调 `xmtp_send` 工具，参数 `sessionKey`=上面拿到的值，`content`=下面这段纯自然语言正文（不要写 text header，不要包代码块）。\n\
+         当前 session 关联 jobId={job_id}，我方 agentId={agent_id}。content 如下："
     );
+    // 兼容变量名 —— 仍叫 header_template 让下方插值点少改一轮
+    let header_template = &xmtp_hint;
 
     match job_status {
         // ─── Scene 3: 接单申请已上链，生成付款单给买家 ────────────────
@@ -21,7 +30,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              onchainos agent get-payment {job_id} --token-symbol <USDT|USDG>\n\
              ```\n\
              返回字段（节选）：currency（token 地址）、recipient（你的钱包地址）、evaluator、submitWindow、disputeWindow、hook、salt、expiredAt。\n\n\
-             **Step 2 — 输出 header 格式回复，把付款单发给买家（纯文本，不加 markdown/代码块）：**\n\n\
+             **Step 2 — 调用 `xmtp_send` 工具发送消息，把付款单发给买家（纯文本，不加 markdown/代码块）：**\n\n\
              {header_template}\n\
              接单申请已上链确认（provider_applied）。以下是付款单：\n\
              金额：<tokenAmount> <tokenSymbol>（从 common context 或任务详情获取）\n\
@@ -60,7 +69,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\
              字段值从 `onchainos agent common context {job_id} --role seller` 输出中提取。\n\n\
              ⚠️ **如果找不到 `notify_main` 工具，直接跳到 Step 2**（不要用其他工具顶替）。`sessions_send` 不是本项目的工具，调它没用。\n\n\
-             **Step 2 — 向买家输出 header 格式回复确认：**\n\n\
+             **Step 2 — 向买家调用 `xmtp_send` 工具发送消息确认：**\n\n\
              {header_template}\n\
              已收到接单确认（job_accepted），开始执行任务。\n\n\
              **Step 3 — 执行任务（mock 环境可直接跳过），完成后调用 CLI 提交交付物：**\n\
@@ -79,7 +88,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
              从 job_submitted 通知的 payload 中提取 deliverableUrl（字段 `deliverable`），\n\
-             输出 header 格式回复告诉买家验收：\n\n\
+             调用 `xmtp_send` 工具发送消息告诉买家验收：\n\n\
              {header_template}\n\
              交付物已上链确认（job_submitted），交付链接：<deliverableUrl>。等待买家验收。\n\n\
              【后续事件】\n\
@@ -92,7 +101,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前状态】job_refused（买家拒绝交付物）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作（严格顺序）】\n\n\
-             **Step 1 — 向买家输出 header 格式回复：**\n\n\
+             **Step 1 — 向买家调用 `xmtp_send` 工具发送消息：**\n\n\
              {header_template}\n\
              已收到买家拒绝通知（job_refused）。正在确认后续处理方案，请稍候。\n\n\
              **Step 2 — 调用工具名为 `notify_main` 的自定义工具（⚠️ 禁止 `sessions_send` 等其他名字），把决策请求推给主 session 用户：**\n\n\
@@ -124,7 +133,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              onchainos agent dispute upload {job_id} --text \"<证据摘要>\" --image <图片路径>\n\
              ```\n\
              仅 1 小时准备期内有效，text 和 image 至少一项。\n\n\
-             **Step 3 — 向买家输出 header 回复：**\n\n\
+             **Step 3 — 调用 `xmtp_send` 工具向买家发送：**\n\n\
              {header_template}\n\
              已发起仲裁（job_disputed），等待仲裁员裁决。\n\n\
              【后续事件】\n\
@@ -140,7 +149,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```bash\n\
              onchainos agent agree-refund {job_id}\n\
              ```\n\n\
-             **Step 2 — 向买家输出 header 回复：**\n\n\
+             **Step 2 — 调用 `xmtp_send` 工具向买家发送：**\n\n\
              {header_template}\n\
              已同意退款，等待链上确认（confirm_refund）。\n"
         ),
@@ -150,7 +159,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前状态】job_completed（任务完成，资金已释放）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
-             向买家输出 header 格式回复：\n\n\
+             向买家调用 `xmtp_send` 工具发送消息：\n\n\
              {header_template}\n\
              任务已完成（job_completed），资金已释放。感谢合作。\n\n\
              【流程结束】子 session 可以关闭。\n"
@@ -161,7 +170,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前状态】dispute_resolved（仲裁已裁决，资金退还买家）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
-             向买家输出 header 格式回复：\n\n\
+             向买家调用 `xmtp_send` 工具发送消息：\n\n\
              {header_template}\n\
              仲裁已裁决（dispute_resolved），资金已退还买家。\n\n\
              【流程结束】子 session 可以关闭。\n"
@@ -172,7 +181,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前状态】confirm_refund（卖家已同意退款，资金退还买家）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
-             向买家输出 header 格式回复：\n\n\
+             向买家调用 `xmtp_send` 工具发送消息：\n\n\
              {header_template}\n\
              已同意退款（confirm_refund），资金已退还买家。\n\n\
              【流程结束】子 session 可以关闭。\n"

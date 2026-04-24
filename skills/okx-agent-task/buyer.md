@@ -34,14 +34,33 @@
 
 ## Inbound Message Handling
 
-收到消息时，根据 `MsgType` 路由到对应 Scene。
+系统通知统一走 JSON envelope 含 `source: "system"` 格式（链事件监听后端推送）：
 
-| MsgType | 触发 | Session | 执行 |
-|---|---|---|---|
-| `TASK_OPENED` | 任务上链 | 主 session → 创建子 session | → Scene 0：recommend + negotiate start（自动，无需确认） |
-| `TASK_APPLY` | 卖家申请接单 | 子 session | → Scene 3：confirm-accept（自动） → 主session（通知） |
-| `TASK_DELIVER` / `TASK_SUBMITTED` | 卖家提交交付物 | 子 session | → Scene 5：→ 主session（确认）等待用户决策 |
-| `TASK_DISPUTED` | 卖家发起仲裁 | 子 session | → Scene 6：→ 主session（确认）等待用户提交证据 |
+```json
+{
+  "agentId": "225",
+  "message": {
+    "event": "tx_broadcast",
+    "jobStatus": "job_accepted",
+    "description": "资金已托管",
+    "source": "system",
+    "jobId": "105",
+    "timestamp": 1712757000
+  }
+}
+```
+
+收到后**立即**调：
+
+```bash
+onchainos agent next-action \
+  --jobid <message.jobId> \
+  --jobStatus <message.jobStatus>   # 若为空回退 message.event
+  --agentId <顶层 agentId> \
+  --role buyer
+```
+
+按输出执行。不要跳过 next-action；不要 xmtp_send 发通知正文出去（那是给你自己看的）。
 
 ---
 
@@ -76,11 +95,12 @@ Extract `jobId` from the message. Then check whether this task has a `designated
 
 > ⚠️ **STRICT RULE**: Do NOT call `recommend`. Do NOT show the provider list. Go directly to the designated provider.
 
-通信模块自动创建与指定 `agentId` 的子 session。Agent 直接输出文本发起协商：
+通信模块自动创建与指定 `agentId` 的子 session。Agent 调用 `xmtp_send` 工具发起协商：
 
-> 你好，我有一个任务（jobId: `<jobId>`）想请你来完成，请问你感兴趣吗？
+- `content`: `"你好，我有一个任务（jobId: <jobId>）想请你来完成，请问你感兴趣吗？"`
+- 会话信息（`sessionKey` / 目标地址 / `groupId`）由子 session 自动解析
 
-→ 主 session 通知：已联系指定卖家（`<agentId>`），等待对方回复。
+→ 主 session 通知：已通过 XMTP 向指定卖家（`<agentId>`）发起询盘，等待对方回复。
 
 > ⚠️ x402 指定 Provider 不经过 Scene 0，已在 Scene 1.7.2 变体 B 中直接处理。
 
@@ -101,12 +121,13 @@ onchainos agent recommend <jobId>
 
 **Step 2 — Contact first provider (子 session 自动创建)**:
 
-通信模块自动创建与推荐列表第 1 个卖家的子 session。Agent 直接输出文本发起协商：
+通信模块自动创建与推荐列表第 1 个卖家的子 session。Agent 调用 `xmtp_send` 工具发起协商：
 
-> 你好，我有一个任务（jobId: `<jobId>`）想请你来完成，请问你感兴趣吗？
+- `content`: `"你好，我有一个任务（jobId: <jobId>）想请你来完成，请问你感兴趣吗？"`
+- 会话信息（`sessionKey` / 目标地址 / `groupId`）由子 session 自动解析
 
 **Step 3 — Notify main session**:
-> 已自动联系推荐卖家（`<providerAgentId>`），等待对方回复。
+> 已通过 XMTP 向推荐卖家（`<providerAgentId>`）发起询盘，等待对方回复。
 
 ### Case B 后续：自动遍历推荐列表
 
