@@ -2228,7 +2228,10 @@ impl McpServer {
         }
 
         // Direct address path — full workflow
-        let address = p.address.as_deref().unwrap();
+        let address = p
+            .address
+            .as_deref()
+            .expect("address is Some after is_none() early-return guard above");
         match workflows::token_research::fetch_and_assemble(
             &mut *self.client.lock().await,
             address,

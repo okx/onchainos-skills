@@ -1016,9 +1016,15 @@ impl ApiClient {
         match self.do_get_request(CONFIG_PATH, &[], None, None).await {
             Ok(data) => {
                 self.apply_config_response(&data);
-                let _ = self.flush_payment_cache();
+                self.try_flush_payment_cache();
             }
             Err(e) => {
+                // Roll back the eager guard so a transient network failure
+                // doesn't silently disable auto-sign for the rest of this
+                // process. The 402 retry wrapper still rescues in-flight
+                // requests; the next call re-enters this function and
+                // re-attempts the fetch.
+                self.payment_state().config_loaded = false;
                 if cfg!(feature = "debug-log") {
                     eprintln!("[DEBUG][payment] config fetch failed: {e:#}");
                 }
@@ -1128,7 +1134,7 @@ impl ApiClient {
             changed
         };
         if changed {
-            let _ = self.flush_payment_cache();
+            self.try_flush_payment_cache();
         }
     }
 
@@ -1252,6 +1258,19 @@ impl ApiClient {
         })
     }
 
+    /// Best-effort wrapper around `flush_payment_cache`. Swallows the
+    /// `Err` (debug-logged behind the feature flag) so callers on the
+    /// response hot path don't need to decide whether a cache-write
+    /// failure should block the user's request. Use this at every site
+    /// where "I would have `let _ =`'d it" is the honest answer.
+    fn try_flush_payment_cache(&self) {
+        if let Err(e) = self.flush_payment_cache() {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][payment] payment_cache flush failed: {e:#}");
+            }
+        }
+    }
+
     /// Write the current in-memory state to `~/.onchainos/payment_cache.json`.
     ///
     /// Before writing, re-read `default_asset` / `local_signing_warned` from
@@ -1339,7 +1358,7 @@ impl ApiClient {
                 }
             }
         }
-        let _ = self.flush_payment_cache();
+        self.try_flush_payment_cache();
     }
 
     /// Check whether a tier just flipped to charging on this response.

@@ -21,6 +21,15 @@ use crate::commands::agentic_wallet::payment_flow::{parse_eip155_chain_id, Payme
 /// Hardcoded fractional precision used to render `amount` as a display
 /// decimal. Placeholder until per-asset decimals land on the `/config`
 /// / `accepts` schema.
+///
+/// NOTE: assumes 6-decimal stables (USDC / USDT). Non-stable payment
+/// assets — ETH (18), BNB (18), SOL (9), etc. — will render the wrong
+/// amount. Today the Market API only bills in USDC/USDT so this is
+/// correct in practice; widening the set of accepted assets requires
+/// fixing this first.
+///
+/// TODO(yinman): switch to per-asset decimals once the server surfaces
+/// them on `accepts.extra.decimals` (or equivalent).
 const DISPLAY_DECIMALS: usize = 6;
 
 // ── Pricing constants (CLI-side, filled in later) ───────────────────────
@@ -38,10 +47,17 @@ pub const DOC_URL: &str = "https://web3.okx.com/onchainos/dev-docs/market/market
 /// `dispatch_notifications` rather than stderr so that Claude always
 /// receives the notice in-band with the data, regardless of how the
 /// CLI is invoked (subprocess, MCP stdio, etc.).
+///
+/// TEST CONTRACT: `PENDING` is process-global. Tests that either push
+/// events via `dispatch_notifications` or assert on `drain_events()`
+/// must drain before and after the call under test, or tag the test
+/// with `#[serial_test::serial]` — otherwise a concurrent test case
+/// will see foreign events or lose its own to another `drain_events`.
 static PENDING: Mutex<Vec<serde_json::Value>> = Mutex::new(Vec::new());
 
 /// Push a notification event onto the global buffer. Called from the
-/// response handler once per unique (deduped) event.
+/// response handler once per unique (deduped) event. See the `PENDING`
+/// doc comment for the test-isolation contract.
 pub fn push_event(event: Event) {
     if let (Ok(mut g), Ok(v)) = (PENDING.lock(), serde_json::to_value(&event)) {
         g.push(v);
@@ -225,6 +241,11 @@ fn format_rfc3339_utc(unix_secs: i64) -> String {
 /// Grace expiry for old users: 2026-05-31T00:00:00Z. Global constant —
 /// the server doesn't return this, so every old user gets the same
 /// cutoff.
+// TODO(yinman, due 2026-06-01): Market API grace window ends on
+// 2026-05-31. After that date, old users transition to `post-grace`
+// pricing and `Event::OldUserGrace` is unreachable — revisit this
+// constant and the `OldUserGrace` arm in `compute_events`. If the
+// product team extends the window, bump the literal here.
 pub fn grace_expires_at() -> i64 {
     DateTime::parse_from_rfc3339("2026-05-31T00:00:00Z")
         .expect("hardcoded RFC3339 literal")

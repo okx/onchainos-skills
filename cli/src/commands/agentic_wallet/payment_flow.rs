@@ -604,6 +604,14 @@ pub async fn sign_payment_auto(
         // signing modes. `sign_payment_local_with_preference` handles
         // the aggr_deferred-only fallback so a default that can't be
         // signed locally doesn't block the request.
+        //
+        // Note: the local-sign branch ends up calling `PaymentCache::load()`
+        // up to three times (this `preferred` read, `warn_local_signing_once`
+        // via its cache dedupe, and `sign_payment_local_with_preference`).
+        // Not consolidated: the branch runs at most once per 402, cache IO
+        // is cheap (~10s of µs), and any TOCTOU on `default_asset` is
+        // benign (worst case: signing picks the pre-set asset). Revisit
+        // only if profiling flags this path.
         let preferred = crate::payment_cache::PaymentCache::load().and_then(|c| c.default_asset);
         sign_payment_local_with_preference(accepts, tier, preferred.as_ref()).await
     }
