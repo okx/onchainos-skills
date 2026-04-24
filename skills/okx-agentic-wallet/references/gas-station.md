@@ -134,42 +134,53 @@ Backend has already signaled this is a GS-eligible path (status = `FIRST_TIME_PR
 **User-facing template (Scene A — verbatim). Do NOT paraphrase the body text. Only substitute the bracketed slots.** Translate the template to the user's language at output time; the structure and every sentence stays.
 
 ```
-Your {native_symbol} balance on {chain_display_name} isn't enough to pay gas. You have two ways to proceed:
+Your {native_symbol} balance isn't enough to pay gas. You have two ways to proceed:
 
 1. Top up {native_symbol} and pay gas with the native token.
-2. Enable Gas Station to pay gas with a stablecoin.
+2. Enable Gas Station to pay gas directly with a stablecoin.
 
 About Gas Station: Gas Station aggregates third-party Relayer services, automatically compares rates and picks the best, and pays gas on your behalf. You can pay with USDT, USDC, or USDG — no need to hold {native_symbol}, BNB, or other native tokens. Learn more: https://web3.okx.com/zh-hans/learn/wallet-gas-station
-
-After enabling:
-- When your native balance is insufficient, the system will automatically pay gas with the stablecoin you pick — no further prompt.
-- The system prefers the stablecoin with the highest balance by default. You can pin a specific token as this chain's default gas token.
+- Once enabled, when your native balance is insufficient the system will automatically pay gas with a stablecoin — no further confirmation needed.
+- By default the system uses the stablecoin with the highest balance. You can also pin a specific token as the default gas token for each transaction. Stablecoins supported on this chain: {supported_tokens_on_chain}.
 
 Stablecoins supported on {chain_display_name}: {supported_tokens_on_chain}.
 
-Please pick one:
-  1. No, don't enable — top up {native_symbol} at {fromAddr}.
-  2. Yes, enable Gas Station and use {tokenList[0].symbol} to pay gas (pinned as default).
-  3. Yes, enable Gas Station and use {tokenList[1].symbol} to pay gas (pinned as default).
-  ... (one option per `sufficient=true` entry in `gasStationTokenList`, starting from 2)
-
-Is that OK?
+Do you confirm enabling Gas Station and paying this transaction's gas with a stablecoin?
 ```
+
+**User response parsing (natural language, not numbered picks)**
+
+Users reply conversationally — parse what they said, don't force them into an option number:
+
+| User says (examples) | Interpretation | CLI action |
+|---|---|---|
+| "No", "取消", "先不开启", "算了充 {native_symbol} 吧" | Decline | Do NOT re-run. Tell user balance is insufficient for gas, ask them to top up {native_symbol} at `{fromAddr}`. Terminate. |
+| "Yes" / "开启" / "确认开启" (no specific token named) | Confirm, no explicit default | Re-run `wallet send --enable-gas-station --gas-token-address <addr> --relayer-id <id>` using the **first `sufficient=true` entry** from `gasStationTokenList` (backend-ordered). That token gets pinned as default. |
+| "确认，预设 USDT 作为 Gas" / "yes, use USDT" / "use {token} as default" | Confirm + pin specific token | Re-run with that token's `feeTokenAddress` / `relayerId`. Pinned as default. |
+| Ambiguous or names a token not in tokenList | Ask to clarify | Re-prompt once with the token list. Do not guess. |
 
 **Slot fills**
 - `{chain_display_name}`: full chain name (Ethereum, BNB Chain, Base, etc.).
 - `{native_symbol}`: the chain's native token symbol (ETH, BNB, MATIC, etc.).
 - `{supported_tokens_on_chain}`: comma-separated symbols of every entry in `gasStationTokenList` (regardless of `sufficient`), reflecting what this chain supports (e.g. "USDT, USDC, USDG" on Ethereum; "USDC" on Sonic EVM).
-- `{tokenList[N].symbol}`: per `sufficient=true` entries from `gasStationTokenList`, in backend order.
 - `{fromAddr}`: the user's address on this chain.
 
-**Never** modify the template body. Never drop the academy link. Never drop the "after enabling" bullets. Never drop the supported-tokens line.
+**Never** modify the template body. Never drop the academy link. Never drop the two bullets. Never drop the supported-tokens line. Never reduce the prompt to a bare "yes/no?" without the education paragraph.
 </MUST>
 
-| Pick | CLI action |
-|---|---|
-| `1` | Do NOT re-run. Tell user balance is insufficient for gas, top up {native_symbol} at `{fromAddr}`. Terminate. |
-| `N` for N ≥ 2 | `wallet send --enable-gas-station --gas-token-address <addr> --relayer-id <id>` with the picked token (tokenList[N-2]). |
+**Post-success echo template (verbatim after the Phase 2 broadcast returns successfully)**
+
+<MUST>
+After `wallet send` completes successfully via Gas Station in Scene A, the Agent MUST echo back a confirmation to the user using this template (translated to the user's language, structure verbatim):
+
+```
+Gas Station enabled. This transaction will use {chosen_token} to pay gas. Future transactions on {chain_display_name} will automatically use {chosen_token} when the native balance is low — no further prompt.
+```
+
+Slot fills: `{chosen_token}` = the stablecoin the user picked (symbol); `{chain_display_name}` = full chain name. If the user did not name a token and the system auto-picked the first sufficient entry, substitute that token's symbol.
+
+**Never** drop the "automatically use … no further prompt" sentence — it sets the right expectation so the user isn't surprised by the silent behavior next time.
+</MUST>
 
 **Key semantics**
 
