@@ -50,9 +50,10 @@ pub const DOC_URL: &str = "https://web3.okx.com/onchainos/dev-docs/market/market
 ///
 /// TEST CONTRACT: `PENDING` is process-global. Tests that either push
 /// events via `dispatch_notifications` or assert on `drain_events()`
-/// must drain before and after the call under test, or tag the test
-/// with `#[serial_test::serial]` — otherwise a concurrent test case
-/// will see foreign events or lose its own to another `drain_events`.
+/// must hold `crate::home::TEST_ENV_MUTEX` (the same mutex the
+/// `dispatch_*` tests in `client.rs` use) for the duration of the
+/// push/drain pair — otherwise a concurrent test case will see foreign
+/// events or lose its own to another `drain_events`.
 static PENDING: Mutex<Vec<serde_json::Value>> = Mutex::new(Vec::new());
 
 /// Push a notification event onto the global buffer. Called from the
@@ -972,6 +973,11 @@ mod tests {
 
     #[test]
     fn push_and_drain_events_round_trip() {
+        // Serialize against the `dispatch_notifications` tests in
+        // `client.rs` that also push into `PENDING`. Reusing their
+        // `TEST_ENV_MUTEX` keeps the set of mutexes small; see the
+        // `PENDING` TEST CONTRACT doc comment.
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
         drain_events();
         push_event(Event::NewUserIntro {
             basic_free_quota: BASIC_FREE_QUOTA,

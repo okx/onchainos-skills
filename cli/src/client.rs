@@ -965,25 +965,6 @@ impl ApiClient {
     /// needed. Cache file is consulted on the way in to restore the last
     /// known charging flags and (if fresh) the endpoint→tier map.
     async fn ensure_payment_config(&mut self) {
-        // The `if config_loaded { return }` guard below is the load-bearing
-        // idempotency guarantee — safe for any repeat call regardless of
-        // path.
-        //
-        // The `debug_assert!` is a narrower developer-mode tripwire for
-        // the *charging-path re-entry* scenario: once we reach the
-        // fetch, we set `config_loaded = true` eagerly (line ~1002)
-        // *before* calling `do_get_request(CONFIG_PATH)`, which recurses
-        // back through `handle_response` → (today, short-circuited by
-        // `CONFIG_PATH` guard) → `ensure_payment_config`. If a future
-        // edit removes that short-circuit, the re-entered call would
-        // hit this assert instead of silently double-fetching. In the
-        // non-charging early-return path we never set the flag and
-        // never recurse, so the assert is trivially true there.
-        debug_assert!(
-            !self.payment_state().config_loaded,
-            "ensure_payment_config re-entered after eager config_loaded flip — \
-             the CONFIG_PATH short-circuit in handle_response was likely removed"
-        );
         if self.payment_state().config_loaded {
             return;
         }
@@ -1374,6 +1355,14 @@ impl ApiClient {
     ///    the pending set is non-empty → block conservatively and
     ///    drain the set. On the re-run `/config` will have been
     ///    fetched and the tier-specific path works normally.
+    ///
+    /// Case-2 race: if `/config` hasn't loaded yet and both tiers
+    /// flip to `ChargingUnconfirmed` in the same response, the first
+    /// matching request drains all pending entries. Not a data loss —
+    /// the un-consumed tier is still `ChargingUnconfirmed`, so the
+    /// next request for it re-enters `dispatch_notifications`,
+    /// re-pushes the tier into `pending_over_quota_tiers`, and the
+    /// user re-confirms.
     fn consume_pending_confirmation(&self, path: &str) -> bool {
         let mut state = self.payment_state();
         if let Some(tier) = state.endpoints.get(path).copied() {
@@ -2032,6 +2021,11 @@ mod tests {
         client.payment_state().user_type = Some(super::UserType::New);
         client.payment_state().intro_shown = true;
         client.payment_state().premium_state = TierState::ChargingUnconfirmed;
+        // `dispatch_notifications` reads the preferred asset from
+        // `state.default_asset`, which is seeded by `restore_from_cache`.
+        // This test bypasses `ensure_payment_config`, so mirror that
+        // restore step manually.
+        client.payment_state().default_asset = Some(sample_default());
 
         client.dispatch_notifications("/api/v6/dex/market/price-info", None);
 

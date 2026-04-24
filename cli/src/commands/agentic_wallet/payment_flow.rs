@@ -594,25 +594,17 @@ pub async fn sign_payment_auto(
     accepts: &Value,
     tier: Option<PaymentTier>,
 ) -> Result<(PaymentProof, Value)> {
+    // Read the saved default asset once and pass it into both branches.
+    // The TEE branch would otherwise reload it inside `sign_payment`,
+    // opening a TOCTOU where a concurrent `payment default set` writes
+    // between the two reads and the signed asset diverges from what
+    // the user was shown.
+    let preferred = crate::payment_cache::PaymentCache::load().and_then(|c| c.default_asset);
     let logged_in = wallet_store::load_wallets()?.is_some();
     if logged_in {
-        sign_payment(accepts, None, tier).await
+        sign_payment_with_preference(accepts, None, tier, preferred.as_ref()).await
     } else {
         warn_local_signing_once();
-        // Mirror the TEE path: auto-payment honors the user's saved
-        // default asset (via `onchainos payment default set`) in both
-        // signing modes. `sign_payment_local_with_preference` handles
-        // the aggr_deferred-only fallback so a default that can't be
-        // signed locally doesn't block the request.
-        //
-        // Note: the local-sign branch ends up calling `PaymentCache::load()`
-        // up to three times (this `preferred` read, `warn_local_signing_once`
-        // via its cache dedupe, and `sign_payment_local_with_preference`).
-        // Not consolidated: the branch runs at most once per 402, cache IO
-        // is cheap (~10s of µs), and any TOCTOU on `default_asset` is
-        // benign (worst case: signing picks the pre-set asset). Revisit
-        // only if profiling flags this path.
-        let preferred = crate::payment_cache::PaymentCache::load().and_then(|c| c.default_asset);
         sign_payment_local_with_preference(accepts, tier, preferred.as_ref()).await
     }
 }
