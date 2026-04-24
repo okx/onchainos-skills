@@ -215,6 +215,10 @@ install_binary() {
 
   echo "Checksum verified."
 
+  # Save checksums.txt for reuse by sync_workflows
+  mkdir -p "$CACHE_DIR"
+  cp "$tmpdir/checksums.txt" "$CACHE_DIR/checksums.txt"
+
   mkdir -p "$INSTALL_DIR"
   mv "$tmpdir/$binary_name" "$INSTALL_DIR/$BINARY"
   chmod +x "$INSTALL_DIR/$BINARY"
@@ -231,7 +235,6 @@ sync_workflows() {
   tag="$1"
   workflows_dir="$CACHE_DIR/workflows"
   workflows_url="https://github.com/${REPO}/releases/download/${tag}/workflows.tar.gz"
-  checksums_url="https://github.com/${REPO}/releases/download/${tag}/checksums.txt"
 
   echo "Syncing workflows (${tag})..."
 
@@ -243,9 +246,9 @@ sync_workflows() {
     return 0
   fi
 
-  # Verify checksum
-  if curl -sSL --max-time 10 "$checksums_url" -o "$tmpdir/checksums.txt" 2>/dev/null; then
-    expected_hash=$(grep "workflows.tar.gz" "$tmpdir/checksums.txt" | awk '{print $1}')
+  # Verify checksum (reuse checksums.txt saved by install_binary)
+  if [ -f "$CACHE_DIR/checksums.txt" ]; then
+    expected_hash=$(grep "workflows.tar.gz" "$CACHE_DIR/checksums.txt" | awk '{print $1}')
     if [ -n "$expected_hash" ]; then
       if command -v sha256sum >/dev/null 2>&1; then
         actual_hash=$(sha256sum "$tmpdir/workflows.tar.gz" | awk '{print $1}')
