@@ -349,11 +349,10 @@ async fn run_context(
         bail!("--role 必须是 buyer / seller / evaluator");
     }
 
-    // 调用后端获取任务详情（带身份 header，便于 mock-api 日志区分调用方）
+    // 调用后端获取任务详情
     let mut client = network::task_api_client::TaskApiClient::with_base_url(api_url.to_string());
-    let url = format!("{api_url}/priapi/v1/aieco/task/{job_id}");
     let resp_val = client
-        .get_with_identity(&url, agent_id.unwrap_or(""), address.unwrap_or(""))
+        .get(&client.task_path(job_id))
         .await
         .map_err(|e| anyhow::anyhow!("无法获取任务详情（{api_url}）: {e}"))?;
 

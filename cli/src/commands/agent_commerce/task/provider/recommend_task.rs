@@ -13,9 +13,8 @@ pub async fn handle_recommend_task(client: &mut TaskApiClient, agent_id: Option<
     let (_, address) = signing::resolve_wallet(None, None)?;
     let agent_id = agent_id.unwrap_or("");
 
-    let url = format!("{}/priapi/v1/aieco/task/job/match", client.base_url());
     let resp = client
-        .post_with_identity(&url, &serde_json::json!({}), agent_id, &address)
+        .post_with_identity("/priapi/v1/aieco/task/job/match", &serde_json::json!({}), agent_id, &address)
         .await?;
 
     let tasks = resp["tasks"].as_array().cloned().unwrap_or_default();

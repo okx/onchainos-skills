@@ -110,8 +110,7 @@ pub async fn handle_confirm_accept(
             }
 
             // 检查 feeTokenSymbol 与任务创建时 currency 是否一致
-            let task_url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
-            let task_resp = client.get(&task_url).await?;
+            let task_resp = client.get(&client.task_path(job_id)).await?;
             let task_currency = task_resp["task"]["paymentTokenSymbol"]
                 .as_str().unwrap_or("");
             if !task_currency.is_empty() && !task_currency.eq_ignore_ascii_case(sym) {

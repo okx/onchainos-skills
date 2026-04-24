@@ -222,8 +222,7 @@ pub async fn handle_create(
         "visibility":         0
     });
 
-    let create_url = format!("{}/priapi/v1/aieco/task/create", client.base_url());
-    let resp = client.post(&create_url, &body).await?;
+    let resp = client.post("/priapi/v1/aieco/task/create", &body).await?;
 
     let job_id = resp["jobId"].as_str().unwrap_or("?").to_string();
     let uop_data = &resp["uopData"];
@@ -252,7 +251,7 @@ pub async fn handle_create(
     println!("✓ 签名完成");
 
     // ── Step 3: 广播上链 ──────────
-    let bc_resp = client.post(&client.broadcast_url(), &broadcast_body).await?;
+    let bc_resp = client.post(client.broadcast_path(), &broadcast_body).await?;
     let tx_hash = bc_resp[0]["txHash"].as_str().unwrap_or("pending");
     println!("✓ 任务已上链");
     println!("  jobId:  {job_id}");

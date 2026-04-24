@@ -68,12 +68,8 @@ pub async fn handle_upload_evidence(
         form = form.part("images", part);
     }
 
-    let url = format!(
-        "{}/priapi/v1/aieco/task/{}/evidence/upload",
-        client.base_url(),
-        job_id,
-    );
-    client.multipart_post_with_identity(&url, form, agent_id, address).await?;
+    let path = client.endpoint(job_id, "evidence/upload");
+    client.multipart_post_with_identity(&path, form, agent_id, address).await?;
 
     println!("✓ 证据已上传（链下，1h 准备期内生效）");
     println!("  jobId:  {job_id}");

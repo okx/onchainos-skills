@@ -18,8 +18,7 @@ pub async fn handle_complete(client: &mut TaskApiClient, job_id: &str) -> Result
         signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
 
     // 查询任务详情获取 paymentMode
-    let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
-    let resp = client.get(&url).await?;
+    let resp = client.get(&client.task_path(job_id)).await?;
     let task = &resp["task"];
     let payment_mode = task["paymentType"].as_i64().unwrap_or(0) as i32;
 

@@ -122,8 +122,7 @@ pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
         DisputeCommand::Upload { job_id, text, images } => {
             // 自动识别角色：比对当前钱包地址和 task 的 buyer/provider 地址
             let (_, address) = signing::resolve_wallet(None, None)?;
-            let url = format!("{}/priapi/v1/aieco/task/{}", client.base_url(), &job_id);
-            let resp = client.get(&url).await?;
+            let resp = client.get(&client.task_path(&job_id)).await?;
             let task = &resp["task"];
             let buyer_addr = task["buyerAgentAddress"].as_str().unwrap_or("");
             let provider_addr = task["providerAgentAddress"].as_str().unwrap_or("");

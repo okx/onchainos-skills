@@ -133,9 +133,8 @@ async fn fetch_tasks_for_agent(
     agent_id: &str,
     address: &str,
 ) -> Result<Vec<Value>> {
-    let url = format!("{}/priapi/v1/aieco/task/job/match", client.base_url());
     let resp = client
-        .post_with_identity(&url, &serde_json::json!({}), agent_id, address)
+        .post_with_identity("/priapi/v1/aieco/task/job/match", &serde_json::json!({}), agent_id, address)
         .await?;
     Ok(resp["tasks"].as_array().cloned().unwrap_or_default())
 }

@@ -79,8 +79,7 @@ pub async fn resolve_wallet_and_agent_for_task(
     client: &mut TaskApiClient,
     job_id: &str,
 ) -> Result<(String, String, String)> {
-    let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
-    let resp = client.get(&url).await?;
+    let resp = client.get(&client.task_path(job_id)).await?;
 
     let task = &resp["task"];
     let buyer_address = task["buyerAgentAddress"]
@@ -103,8 +102,7 @@ pub async fn resolve_wallet_and_agent_for_provider(
     client: &mut TaskApiClient,
     job_id: &str,
 ) -> Result<(String, String, String)> {
-    let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
-    let resp = client.get(&url).await?;
+    let resp = client.get(&client.task_path(job_id)).await?;
 
     let task = &resp["task"];
     let provider_agent_id = task["providerAgentId"]
@@ -152,7 +150,7 @@ pub async fn sign_uop_and_broadcast(
         "bizType": biz_context as i32,
     });
 
-    let bc_resp = client.post(&client.broadcast_url(), &broadcast_body).await
+    let bc_resp = client.post(client.broadcast_path(), &broadcast_body).await
         .map_err(|e| anyhow::anyhow!("广播失败: {e}"))?;
 
     Ok(bc_resp[0]["txHash"]

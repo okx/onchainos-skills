@@ -9,8 +9,7 @@ use crate::commands::agent_commerce::task::common::XLAYER_CHAIN_ID;
 
 /// 查询任务状态
 pub async fn handle_status(client: &mut TaskApiClient, job_id: &str) -> Result<()> {
-    let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
-    let resp = client.get(&url).await?;
+    let resp = client.get(&client.task_path(job_id)).await?;
 
     let t = &resp["task"];
     let token_sym = t["paymentTokenSymbol"].as_str().unwrap_or("USDT");
@@ -34,17 +33,16 @@ pub async fn handle_list(
     page: u32,
     limit: u32,
 ) -> Result<()> {
-    let base = client.base_url();
-    let url = if role == Some("provider") || role == Some("client") {
+    let path = if role == Some("provider") || role == Some("client") {
         let r = role.unwrap_or("client");
-        format!("{base}/priapi/v1/aieco/task/my?role={r}&page={page}&page_size={limit}")
+        format!("/priapi/v1/aieco/task/my?role={r}&page={page}&page_size={limit}")
     } else {
-        let mut u = format!("{base}/priapi/v1/aieco/task/list?page={page}&page_size={limit}");
-        if let Some(s) = status { u.push_str(&format!("&status={s}")); }
-        u
+        let mut p = format!("/priapi/v1/aieco/task/list?page={page}&page_size={limit}");
+        if let Some(s) = status { p.push_str(&format!("&status={s}")); }
+        p
     };
 
-    let resp = client.get(&url).await?;
+    let resp = client.get(&path).await?;
     let tasks = resp["list"].as_array().cloned().unwrap_or_default();
     let total = resp["total"].as_u64().unwrap_or(0);
     println!("任务列表（共 {total} 个，第 {page} 页）：");
@@ -63,8 +61,7 @@ pub async fn handle_list(
 
 /// 生成付款单（Provider 在 provider_applied 后发送给买家）
 pub async fn handle_payment(client: &mut TaskApiClient, job_id: &str) -> Result<()> {
-    let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
-    let resp = client.get(&url).await?;
+    let resp = client.get(&client.task_path(job_id)).await?;
 
     let task = &resp["task"];
     let amount = task["tokenAmount"].as_str().unwrap_or("?");
@@ -89,8 +86,7 @@ pub async fn handle_payment(client: &mut TaskApiClient, job_id: &str) -> Result<
 
 /// 非担保模式手动转账（展示转账命令）
 pub async fn handle_pay(client: &mut TaskApiClient, job_id: &str) -> Result<()> {
-    let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
-    let resp = client.get(&url).await?;
+    let resp = client.get(&client.task_path(job_id)).await?;
 
     let task = &resp["task"];
     let status = task["statusStr"].as_str().unwrap_or("");
