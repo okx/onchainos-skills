@@ -16,11 +16,32 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 ## Architecture
 
 - **skills/** — 14 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **workflows/** — Pre-built multi-step workflow docs (`INDEX.md` for routing, `TEMPLATE.md` for authoring guide)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
 - **.mcp.json.example** — MCP server configuration template for Claude Code
 - **.github/workflows/** — CI/CD pipeline (`release.yml`: tag-triggered build for 9 platforms → GitHub Release)
 - **install.sh** — One-line installer for macOS / Linux (`curl | sh`)
+
+## Workflows
+
+**For any of the following user intents, read `workflows/INDEX.md` before responding:**
+
+| Intent | Trigger examples |
+|--------|-----------------|
+| Token research | "analyze token", "research [address]", "is this token safe" |
+| Market overview | "daily brief", "market overview", "what's the market doing" |
+| Smart money | "what are whales buying", "copy trading signals", "smart money" |
+| New token scan | "scan new tokens", "pump.fun tokens", "meme scan" |
+| Wallet analysis | "analyze wallet", "check this address", "is this wallet worth following" |
+| Portfolio | "check my holdings", "my portfolio", "my wallet" |
+| Wallet monitor | "watch wallet", "monitor address", "background monitor" |
+
+`workflows/INDEX.md` maps each intent to the correct workflow file with step-by-step instructions.
+For Chinese queries, read `workflows/references/keyword-glossary.md` first to resolve the intent.
+
+Safety: follow token risk controls defined in `okx-security` SKILL.md.
+For script requests, append `--format json` to all CLI commands.
 
 ## Available Skills
 
@@ -40,14 +61,12 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 | okx-audit-log        | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, provide liquidity, deposit/withdraw from DeFi protocols, claim DeFi rewards across Aave/Lido/PancakeSwap/Kamino/NAVI and hundreds more |
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions, view DeFi portfolio across protocols and chains |
-| okx-dex-bridge | Cross-chain bridge swap: quote, execute, approve, status tracking | User wants to bridge tokens, cross-chain swap, transfer assets between chains |
 
 ## IMPORTANT: Always Load Skill Before Executing Commands
 
 **Before running ANY `onchainos` CLI command, you MUST first read the corresponding skill's SKILL.md to get the exact command syntax.** Do NOT guess subcommand names — each skill defines its own Command Index with the exact subcommands available. Guessing leads to `unrecognized subcommand` errors.
 
 Routing:
-- User mentions bridge/cross-chain/supported chains → read `skills/okx-dex-bridge/SKILL.md` first
 - User mentions swap/buy/sell/trade → read `skills/okx-dex-swap/SKILL.md` first
 - User mentions wallet/balance/transfer/login → read `skills/okx-agentic-wallet/SKILL.md` first
 - User mentions **Gas Station / stablecoin gas / enable or disable gas station / revoke 7702**, or asks FAQ-style questions about any of those (what is / how does it work / which chains / upgrade cost / ...) → read `skills/okx-agentic-wallet/SKILL.md` AND `skills/okx-agentic-wallet/references/gas-station.md` first.
@@ -59,7 +78,7 @@ Routing:
 When a user asks to write a script, automate trading, build a trading bot, or use "OKX API" / "OKX DEX API" for any on-chain automation:
 - **Do NOT search online for OKX public APIs** — `onchainos` already wraps all relevant on-chain capabilities
 - Always use `onchainos` CLI commands as the building block (subprocess calls, MCP tool invocations, etc.)
-- Route to the relevant skill based on what the user wants to automate: swap → `okx-dex-swap`, cross-chain/bridge → `okx-dex-bridge`, market data → `okx-dex-market`, signals → `okx-dex-signal`, token data → `okx-dex-token`, portfolio → `okx-wallet-portfolio`, meme scanning → `okx-dex-trenches`
+- Route to the relevant skill based on what the user wants to automate: swap → `okx-dex-swap`, market data → `okx-dex-market`, signals → `okx-dex-signal`, token data → `okx-dex-token`, portfolio → `okx-wallet-portfolio`, meme scanning → `okx-dex-trenches`
 
 ### WebSocket / Real-time Data
 
