@@ -2,7 +2,7 @@
 
 > This file is shared across all onchainos skills. Follow these steps before the first `onchainos` command each session.
 
-> **Workflow check**: Before running commands, check if the user's intent matches a multi-step workflow. Read `~/.onchainos/workflows/INDEX.md` to determine if a workflow applies.
+> **Workflow check**: Before running commands, check if the user's intent matches a multi-step workflow. Read `~/.onchainos/workflows/INDEX.md` to determine if a workflow applies. If the user explicitly asks for a specific skill command or says "just [action]" (e.g., "just check the price"), skip the workflow and run the skill directly.
 
 Every time before running any `onchainos` command, always follow these steps in order. Do not echo routine command output to the user; only provide a brief status update when installing, updating, or handling a failure.
 
