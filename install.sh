@@ -220,6 +220,10 @@ install_binary() {
   chmod +x "$INSTALL_DIR/$BINARY"
 
   echo "Installed ${BINARY} ${tag} to ${INSTALL_DIR}/${BINARY}"
+
+  # Clean up tmpdir explicitly on success so the EXIT trap doesn't leak it
+  # when a later function reassigns $tmpdir.
+  rm -rf "$tmpdir"
 }
 
 # ── Workflow sync ────────────────────────────────────────────
@@ -231,21 +235,27 @@ sync_workflows() {
   echo "Syncing workflows (${tag})..."
 
   tmpdir=$(mktemp -d)
-  trap 'rm -rf "$tmpdir"' EXIT
 
-  curl -sSL "$workflows_url" -o "$tmpdir/archive.tar.gz"
+  # GitHub release source archives expand to onchainos-skills-<version-without-v>/.
+  # Fail soft — workflow sync is non-fatal.
+  if ! curl -sSL --max-time 60 "$workflows_url" -o "$tmpdir/archive.tar.gz"; then
+    echo "Warning: could not download workflows archive (non-fatal)" >&2
+    rm -rf "$tmpdir"
+    return 0
+  fi
 
-  # Extract only the workflows/ directory from the archive
-  tar -xzf "$tmpdir/archive.tar.gz" -C "$tmpdir" --strip-components=1 "onchainos-skills-${tag#v}/workflows" 2>/dev/null || \
-    tar -xzf "$tmpdir/archive.tar.gz" -C "$tmpdir" --strip-components=1 "*/workflows" 2>/dev/null
+  if ! tar -xzf "$tmpdir/archive.tar.gz" -C "$tmpdir" --strip-components=1 \
+      "onchainos-skills-${tag#v}/workflows" 2>/dev/null; then
+    echo "Warning: could not extract workflows from archive (non-fatal)" >&2
+    rm -rf "$tmpdir"
+    return 0
+  fi
 
   if [ -d "$tmpdir/workflows" ]; then
     rm -rf "$workflows_dir"
     mkdir -p "$CACHE_DIR"
     mv "$tmpdir/workflows" "$workflows_dir"
     echo "Workflows synced to ${workflows_dir}"
-  else
-    echo "Warning: could not extract workflows from archive (non-fatal)" >&2
   fi
 
   rm -rf "$tmpdir"
