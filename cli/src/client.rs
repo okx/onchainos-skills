@@ -11,7 +11,7 @@ use sha2::Sha256;
 use crate::commands::agentic_wallet::payment_flow::PaymentTier;
 use crate::doh::DohManager;
 use crate::output::CliConfirming;
-use crate::payment_cache::{self, PaymentCache};
+use crate::payment_cache::{self, PaymentCache, PaymentDefault};
 use crate::payment_notify::{self, Flag, NotifyInput, TierState, UserType};
 
 pub const DEFAULT_BASE_URL: &str = "https://web3.okx.com";
@@ -60,6 +60,18 @@ struct PaymentState {
     /// must re-run) or auto-sign as usual. Cleared at the top of every
     /// `handle_response`.
     pending_over_quota_tiers: HashSet<PaymentTier>,
+
+    // ── Mirror of cross-process PaymentCache fields ─────────────────────
+    /// User-selected default payment asset. Written only by
+    /// `payment default set|unset` (a separate CLI process); this
+    /// client mirrors it from disk in `restore_from_cache` /
+    /// `flush_payment_cache` so the per-response notification
+    /// dispatcher can read it without a disk round-trip.
+    default_asset: Option<PaymentDefault>,
+    /// Dedupe for the local-signing disclaimer — persisted in the
+    /// on-disk cache so a sibling process writing the warning still
+    /// survives our next flush.
+    local_signing_warned: bool,
 }
 
 /// A cached 402 response converted into a recoverable error.
@@ -764,15 +776,14 @@ impl ApiClient {
             }
         };
 
-        // Some endpoints return bare arrays without the {code, msg, data} envelope.
-        // In that case, pass the array through as the data payload.
-        if body.is_array() {
-            return Ok(body);
-        }
-
         // HTTP 402 — return as a typed error so the request wrapper can sign
-        // and retry. Prefer accepts from PAYMENT-REQUIRED header (standard
-        // x402 V2); fall back to the body if absent (OKX convenience layout).
+        // and retry. Must run *before* the bare-array short-circuit below:
+        // a paid endpoint that normally returns `[...]` may also return an
+        // array-shaped 402 body, and we'd otherwise silently treat that as
+        // success.
+        //
+        // Prefer accepts from the PAYMENT-REQUIRED header (standard x402 V2);
+        // fall back to the body if absent (OKX convenience layout).
         if status.as_u16() == 402 {
             let accepts = header_accepts
                 .or_else(|| body.get("accepts").cloned())
@@ -782,6 +793,12 @@ impl ApiClient {
                 raw_body: body,
             }
             .into());
+        }
+
+        // Some endpoints return bare arrays without the {code, msg, data} envelope.
+        // In that case, pass the array through as the data payload.
+        if body.is_array() {
+            return Ok(body);
         }
 
         // Handle code as either string "0" or number 0 (some endpoints return numeric)
@@ -806,8 +823,19 @@ impl ApiClient {
     // ── Auto-payment: request helpers ────────────────────────────────────────
 
     /// Issue a GET with DoH failover retry on connect/timeout errors.
-    /// Retries at most once, after `DohManager::handle_failure` finds a
-    /// new proxy node and the HTTP client is rebuilt.
+    ///
+    /// Loops through the DoH proxy pool: each connect/timeout failure
+    /// calls `DohManager::handle_failure`, which picks the next untried
+    /// proxy node (adding the current one to an `exclude` list inside
+    /// the cache) and rebuilds the HTTP client. Termination is bounded
+    /// by the proxy pool itself — once `exec_doh_binary` returns
+    /// `None` (all nodes exhausted) or CNAME resolution fails,
+    /// `handle_failure` sets `retried = true` and returns `false`,
+    /// breaking the loop.
+    ///
+    /// Mirrors the tail-recursive implementation on master
+    /// (`get_with_headers` / `post_with_headers`); the iterative form
+    /// was adopted when retry moved into this shared helper.
     async fn do_get_request(
         &mut self,
         path: &str,
@@ -853,8 +881,11 @@ impl ApiClient {
     }
 
     /// Issue a POST with DoH failover retry on connect/timeout errors.
-    /// Retries at most once (safe for idempotent endpoints). For
-    /// non-idempotent endpoints like broadcast, use `post_no_retry_with_headers`.
+    ///
+    /// Safe for idempotent endpoints. Termination follows the same
+    /// contract as `do_get_request` — bounded by the DoH proxy pool
+    /// rather than by iteration count. For non-idempotent endpoints
+    /// like transaction broadcast, use `post_no_retry_with_headers`.
     async fn do_post_request(
         &mut self,
         path: &str,
@@ -928,6 +959,16 @@ impl ApiClient {
     /// needed. Cache file is consulted on the way in to restore the last
     /// known charging flags and (if fresh) the endpoint→tier map.
     async fn ensure_payment_config(&mut self) {
+        // Re-entrancy guard. `handle_response` → `ensure_payment_config`
+        // → `do_get_request(/config)` → `handle_response` loops back
+        // here; the `CONFIG_PATH` short-circuit in `handle_response`
+        // plus the eager `config_loaded = true` flip below should
+        // prevent re-entry, but assert it explicitly in debug builds so
+        // future edits don't silently break the invariant.
+        debug_assert!(
+            !self.payment_state().config_loaded,
+            "ensure_payment_config invoked re-entrantly"
+        );
         if self.payment_state().config_loaded {
             return;
         }
@@ -983,6 +1024,8 @@ impl ApiClient {
         state.user_type = cache.user_type;
         state.intro_shown = cache.intro_shown;
         state.grace_shown = cache.grace_shown;
+        state.default_asset = cache.default_asset.clone();
+        state.local_signing_warned = cache.local_signing_warned;
         if cache.is_expired(CONFIG_TTL_SECS) {
             return false;
         }
@@ -1187,13 +1230,17 @@ impl ApiClient {
     }
 
     /// Write the current in-memory state to `~/.onchainos/payment_cache.json`.
-    /// Preserves `default_asset` and `local_signing_warned` from disk —
-    /// both are owned outside this client and must survive state flushes.
+    ///
+    /// Before writing, re-read `default_asset` / `local_signing_warned` from
+    /// disk so concurrent edits by a sibling CLI process (e.g.
+    /// `payment default set`) are not clobbered. Both fields are also
+    /// mirrored back into `PaymentState`, which keeps the hot path
+    /// (`dispatch_notifications`) free of disk IO.
     fn flush_payment_cache(&self) -> Result<()> {
-        let (default_asset, local_signing_warned) = PaymentCache::load()
-            .map(|c| (c.default_asset, c.local_signing_warned))
-            .unwrap_or_default();
-        let state = self.payment_state();
+        let disk = PaymentCache::load().unwrap_or_default();
+        let mut state = self.payment_state();
+        state.default_asset = disk.default_asset.clone();
+        state.local_signing_warned = disk.local_signing_warned;
         let cache = PaymentCache {
             endpoints: state
                 .endpoints
@@ -1207,8 +1254,8 @@ impl ApiClient {
             user_type: state.user_type,
             intro_shown: state.intro_shown,
             grace_shown: state.grace_shown,
-            default_asset,
-            local_signing_warned,
+            default_asset: disk.default_asset,
+            local_signing_warned: disk.local_signing_warned,
         };
         drop(state);
         cache.save()
@@ -1224,11 +1271,18 @@ impl ApiClient {
     /// the list itself is never narrowed, and the prompt still blocks —
     /// only `payment default set` advances the tier state.
     fn dispatch_notifications(&self, path: &str, header_accepts: Option<&Value>) {
-        let preferred_asset = PaymentCache::load()
-            .and_then(|c| c.default_asset)
-            .map(|d| (d.asset, d.network));
         let input = {
             let state = self.payment_state();
+            // `compute_events` short-circuits when `user_type` is unset, so
+            // bail before building `NotifyInput` on the common cold-start
+            // request (no `ok-web3-openapi-pay` header seen yet).
+            if state.user_type.is_none() {
+                return;
+            }
+            let preferred_asset = state
+                .default_asset
+                .as_ref()
+                .map(|d| (d.asset.clone(), d.network.clone()));
             NotifyInput {
                 user_type: state.user_type,
                 grace_expires_at: payment_notify::grace_expires_at(),

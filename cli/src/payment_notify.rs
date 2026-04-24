@@ -241,9 +241,17 @@ pub fn compute_events(input: &NotifyInput) -> Vec<(Event, Flag)> {
     let Some(user_type) = input.user_type else {
         return events;
     };
+    // Server signals drive the normal path (both tiers Free for an Old
+    // user = still in grace). The explicit clock guard is a belt for the
+    // suspenders case where the dedupe cache has been deleted *after*
+    // the grace window closed: without it, a Free/Free snapshot from a
+    // post-grace Old user would replay `OldUserGrace` instead of
+    // `OldUserPostGraceIntro`.
+    let now = crate::payment_cache::now_secs() as i64;
     let in_grace = matches!(user_type, UserType::Old)
         && input.basic_state == TierState::Free
-        && input.premium_state == TierState::Free;
+        && input.premium_state == TierState::Free
+        && now < input.grace_expires_at;
 
     if in_grace {
         if !input.grace_shown {
@@ -430,9 +438,15 @@ mod tests {
     use super::*;
 
     fn base() -> NotifyInput {
+        // Use a far-future cutoff so unit tests don't implicitly become
+        // time-bombs once the real 2026-05-31 grace window passes. Tests
+        // that specifically verify the production constant override this
+        // field explicitly (`grace_event_serializes_grace_expires_at_as_rfc3339`,
+        // `grace_expires_at_is_2026_05_31_utc`).
+        let far_future = crate::payment_cache::now_secs() as i64 + 365 * 24 * 3600;
         NotifyInput {
             user_type: None,
-            grace_expires_at: grace_expires_at(),
+            grace_expires_at: far_future,
             basic_state: TierState::Free,
             premium_state: TierState::Free,
             intro_shown: false,
@@ -508,6 +522,23 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1, Flag::Grace);
         assert!(matches!(events[0].0, Event::OldUserGrace { .. }));
+    }
+
+    #[test]
+    fn old_user_free_free_post_grace_cutoff_falls_through_to_post_grace_intro() {
+        // Edge case the review bot flagged: an Old user whose
+        // `grace_shown` flag has been reset (cache deleted) and whose
+        // tier state still reports Free/Free (server hasn't flipped
+        // charging yet) — post the calendar cutoff, we must NOT replay
+        // the grace notice. The clock guard on `in_grace` forces the
+        // fallthrough so the user sees `OldUserPostGraceIntro` instead.
+        let mut i = base();
+        i.user_type = Some(UserType::Old);
+        i.grace_expires_at = crate::payment_cache::now_secs() as i64 - 24 * 3600;
+        let events = compute_events(&i);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1, Flag::Intro);
+        assert!(matches!(events[0].0, Event::OldUserPostGraceIntro { .. }));
     }
 
     #[test]

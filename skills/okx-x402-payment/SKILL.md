@@ -1,6 +1,6 @@
 ---
 name: okx-x402-payment
-description: "Use this skill ONLY for EXTERNAL / third-party x402 payment-gated resources (arbitrary websites or APIs outside of onchainos). Trigger only when the user explicitly mentions 'x402' or 'sign x402 payment' for a non-onchainos URL / resource. If the user mentions 'onchainos', 'market', 'token', 'signal', 'trenches', 'memepump', or any /api/v6/dex/market path in their request — DO NOT use this skill; route to okx-dex-market / okx-dex-token / okx-dex-signal / okx-dex-trenches respectively (those skills own Market API payment handling end-to-end). Primary path signs via TEE with a wallet session (JWT) — recommended. Fallback path allows local EIP-3009 signing with the user's own private key only when the user explicitly opts in (key stays local but is not TEE-protected). Returns the payment proof (signature + authorization) that the caller can attach as a payment header to access the resource. Do NOT use for swap or token transfers — use okx-dex-swap. Do NOT use for wallet balance or portfolio queries — use okx-agentic-wallet or okx-wallet-portfolio. Do NOT use for security scanning — use okx-security. Do NOT use for transaction broadcasting — use okx-onchain-gateway. Do NOT use for general programming questions."
+description: "Sign an x402 payment authorization for an EXTERNAL / third-party payment-gated resource. Use only when the user explicitly mentions 'x402' (or 'sign x402 payment') for a non-onchainos URL. See Routing below for when NOT to use this skill."
 license: MIT
 metadata:
   author: okx
@@ -18,15 +18,19 @@ Sign an [x402](https://x402.org) payment authorization and return the payment pr
 
 ## Skill Routing
 
-- For querying authenticated wallet balance / send tokens / tx history → use `okx-agentic-wallet`
-- For querying public wallet balance (by address) → use `okx-wallet-portfolio`
-- For token swaps / trades / buy / sell → use `okx-dex-swap`
-- For token search / metadata / rankings / holder info / cluster analysis → use `okx-dex-token`
-- For token prices / K-line charts / wallet PnL / address tracker activities → use `okx-dex-market`
-- For smart money / whale / KOL signals / leaderboard → use `okx-dex-signal`
-- For meme / pump.fun token scanning → use `okx-dex-trenches`
-- For transaction broadcasting / gas estimation → use `okx-onchain-gateway`
-- For security scanning (token / DApp / tx / signature) → use `okx-security`
+This skill only covers **third-party / external** x402-gated resources. If the request mentions `onchainos`, any `/api/v6/dex/market/*` path, or fits one of the intents below, route to the corresponding skill instead — those own Market API payment handling end-to-end:
+
+| Intent                                                                    | Use skill              |
+|---------------------------------------------------------------------------|------------------------|
+| Token prices / K-line charts / wallet PnL / address tracker activities    | `okx-dex-market`       |
+| Token search / metadata / rankings / holder info / cluster analysis       | `okx-dex-token`        |
+| Smart money / whale / KOL signals / leaderboard                           | `okx-dex-signal`       |
+| Meme / pump.fun token scanning                                            | `okx-dex-trenches`     |
+| Token swaps / trades / buy / sell                                         | `okx-dex-swap`         |
+| Authenticated wallet balance / send tokens / tx history                   | `okx-agentic-wallet`   |
+| Public wallet balance (by address)                                        | `okx-wallet-portfolio` |
+| Transaction broadcasting / gas estimation                                 | `okx-onchain-gateway`  |
+| Security scanning (token / DApp / tx / signature)                         | `okx-security`         |
 
 ## Chain Name Support
 

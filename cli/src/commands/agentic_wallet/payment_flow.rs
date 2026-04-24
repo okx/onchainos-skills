@@ -13,7 +13,7 @@ use alloy_primitives::U256;
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde_json::{json, Value};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
 use crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN;
@@ -495,7 +495,10 @@ pub async fn sign_payment_local_with_preference(
     })?;
     let domain_version = entry["extra"]["version"].as_str().unwrap_or("2");
 
-    let pk_hex = read_private_key()?;
+    // `Zeroizing<String>` wipes the raw hex key on drop so the `String` heap
+    // allocation doesn't outlive this function. `pk_bytes` is zeroized
+    // explicitly below once the signer has copied what it needs.
+    let pk_hex = Zeroizing::new(read_private_key()?);
     let pk_trimmed = pk_hex.trim();
     let pk_clean = pk_trimmed.strip_prefix("0x").unwrap_or(pk_trimmed);
     let mut pk_bytes =
@@ -1135,6 +1138,55 @@ mod tests {
             entry["asset"].as_str(),
             Some("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
             "should fall back to USDT/exact when USDG only offers aggr_deferred"
+        );
+    }
+
+    #[tokio::test]
+    async fn sign_payment_local_with_preference_bails_when_every_entry_is_aggr_deferred() {
+        // `preferred` points at an asset the server only offers as
+        // `aggr_deferred`, and there is no other `exact` entry to fall
+        // back to — local signing cannot proceed and must bail with a
+        // message pointing the user at `wallet login` (TEE signing).
+        let accepts = json!([
+            {
+                "scheme": "aggr_deferred",
+                "network": "eip155:196",
+                "amount": "100",
+                "payTo": "0x1111111111111111111111111111111111111111",
+                "asset": "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "maxTimeoutSeconds": 300,
+                "extra": {"name": "USDG", "version": "1"}
+            },
+            {
+                "scheme": "aggr_deferred",
+                "network": "eip155:196",
+                "amount": "200",
+                "payTo": "0x1111111111111111111111111111111111111111",
+                "asset": "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+                "maxTimeoutSeconds": 300,
+                "extra": {"name": "USDT", "version": "1"}
+            }
+        ]);
+        let preferred = crate::payment_cache::PaymentDefault {
+            asset: "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
+            network: "eip155:196".into(),
+            name: Some("USDG".into()),
+        };
+
+        std::env::set_var("EVM_PRIVATE_KEY", TEST_PK);
+        let err = sign_payment_local_with_preference(&accepts, None, Some(&preferred))
+            .await
+            .unwrap_err();
+        std::env::remove_var("EVM_PRIVATE_KEY");
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("aggr_deferred"),
+            "expected bail message to name the unsupported scheme: {msg}"
+        );
+        assert!(
+            msg.contains("wallet login"),
+            "expected bail message to point at TEE signing: {msg}"
         );
     }
 
