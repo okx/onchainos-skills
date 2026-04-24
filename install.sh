@@ -239,21 +239,37 @@ sync_workflows() {
     return 0
   fi
 
-  # Verify checksum
-  if curl -sSL --max-time 10 "$checksums_url" -o "$tmpdir/workflows-checksums.txt" 2>/dev/null; then
-    expected_hash=$(grep "workflows.tar.gz" "$tmpdir/workflows-checksums.txt" | awk '{print $1}')
-    if [ -n "$expected_hash" ]; then
-      if command -v sha256sum >/dev/null 2>&1; then
-        actual_hash=$(sha256sum "$tmpdir/workflows.tar.gz" | awk '{print $1}')
-      elif command -v shasum >/dev/null 2>&1; then
-        actual_hash=$(shasum -a 256 "$tmpdir/workflows.tar.gz" | awk '{print $1}')
-      fi
-      if [ -n "$actual_hash" ] && [ "$actual_hash" != "$expected_hash" ]; then
-        echo "Warning: workflows checksum mismatch — skipping (non-fatal)" >&2
-        rm -rf "$tmpdir"
-        return 0
-      fi
-    fi
+  # Verify checksum — fail closed: skip install if verification cannot complete
+  if ! curl -sSL --max-time 10 "$checksums_url" -o "$tmpdir/workflows-checksums.txt" 2>/dev/null; then
+    echo "Warning: could not download workflows checksum — skipping (non-fatal)" >&2
+    rm -rf "$tmpdir"
+    return 0
+  fi
+
+  expected_hash=$(grep "workflows.tar.gz" "$tmpdir/workflows-checksums.txt" | awk '{print $1}')
+  if [ -z "$expected_hash" ]; then
+    echo "Warning: no checksum found for workflows.tar.gz — skipping (non-fatal)" >&2
+    rm -rf "$tmpdir"
+    return 0
+  fi
+
+  actual_hash=""
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual_hash=$(sha256sum "$tmpdir/workflows.tar.gz" | awk '{print $1}')
+  elif command -v shasum >/dev/null 2>&1; then
+    actual_hash=$(shasum -a 256 "$tmpdir/workflows.tar.gz" | awk '{print $1}')
+  fi
+
+  if [ -z "$actual_hash" ]; then
+    echo "Warning: no sha256 tool found — skipping workflow install (non-fatal)" >&2
+    rm -rf "$tmpdir"
+    return 0
+  fi
+
+  if [ "$actual_hash" != "$expected_hash" ]; then
+    echo "Warning: workflows checksum mismatch — skipping (non-fatal)" >&2
+    rm -rf "$tmpdir"
+    return 0
   fi
 
   if ! tar -xzf "$tmpdir/workflows.tar.gz" -C "$tmpdir" 2>/dev/null; then
@@ -327,6 +343,10 @@ main() {
     target_ver=$(get_latest_version_with_beta)
 
     if [ "$local_ver" = "$target_ver" ]; then
+      # Binary is current — but ensure workflows exist
+      if [ ! -d "$CACHE_DIR/workflows" ]; then
+        sync_workflows "v${local_ver}"
+      fi
       write_cache
       return 0
     fi
@@ -335,6 +355,10 @@ main() {
 
     # Fast path: binary exists and was checked recently — skip API call
     if [ -n "$local_ver" ] && is_cache_fresh; then
+      # Ensure workflows exist even on cache-hit fast path
+      if [ ! -d "$CACHE_DIR/workflows" ]; then
+        sync_workflows "v${local_ver}"
+      fi
       return 0
     fi
 
@@ -344,7 +368,10 @@ main() {
       # Not installed — install latest stable
       target_ver="$latest_stable"
     elif [ "$local_ver" = "$latest_stable" ]; then
-      # Already on exact latest stable
+      # Already on exact latest stable — but ensure workflows exist
+      if [ ! -d "$CACHE_DIR/workflows" ]; then
+        sync_workflows "v${local_ver}"
+      fi
       write_cache
       return 0
     else
@@ -353,6 +380,9 @@ main() {
         target_ver="$latest_stable"
       else
         # Local is same or newer (e.g., on a beta ahead of stable)
+        if [ ! -d "$CACHE_DIR/workflows" ]; then
+          sync_workflows "v${local_ver}"
+        fi
         write_cache
         return 0
       fi

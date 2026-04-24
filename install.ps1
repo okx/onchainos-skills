@@ -208,21 +208,25 @@ function Sync-Workflows {
         $archivePath = Join-Path $tmpDir "workflows.tar.gz"
         Invoke-WebRequest -Uri $workflowsUrl -OutFile $archivePath -UseBasicParsing -TimeoutSec 30
 
-        # Verify checksum
+        # Verify checksum — fail closed: skip install if verification cannot complete
+        $checksumsPath = Join-Path $tmpDir "workflows-checksums.txt"
         try {
-            $checksumsPath = Join-Path $tmpDir "checksums.txt"
             Invoke-WebRequest -Uri $checksumsUrl -OutFile $checksumsPath -UseBasicParsing -TimeoutSec 10
-            $expectedLine = Get-Content $checksumsPath | Where-Object { $_ -match "workflows.tar.gz" } | Select-Object -First 1
-            if ($expectedLine) {
-                $expectedHash = ($expectedLine -split "\s+")[0]
-                $actualHash = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLower()
-                if ($actualHash -ne $expectedHash) {
-                    Write-Host "Warning: workflows checksum mismatch — skipping (non-fatal)" -ForegroundColor Yellow
-                    return
-                }
-            }
         } catch {
-            # Checksum verification failed — continue anyway
+            Write-Host "Warning: could not download workflows checksum — skipping (non-fatal)" -ForegroundColor Yellow
+            return
+        }
+
+        $expectedLine = Get-Content $checksumsPath | Where-Object { $_ -match "workflows.tar.gz" } | Select-Object -First 1
+        if (-not $expectedLine) {
+            Write-Host "Warning: no checksum found for workflows.tar.gz — skipping (non-fatal)" -ForegroundColor Yellow
+            return
+        }
+        $expectedHash = ($expectedLine -split "\s+")[0]
+        $actualHash = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLower()
+        if ($actualHash -ne $expectedHash) {
+            Write-Host "Warning: workflows checksum mismatch — skipping (non-fatal)" -ForegroundColor Yellow
+            return
         }
 
         tar -xzf $archivePath -C $tmpDir 2>$null
@@ -269,6 +273,8 @@ function Main {
         $targetVer = Get-LatestVersionWithBeta
 
         if ($localVer -eq $targetVer) {
+            $wfDir = Join-Path $CACHE_DIR "workflows"
+            if (-not (Test-Path $wfDir)) { Sync-Workflows -Tag "v${localVer}" }
             Write-Cache
             return
         }
@@ -276,7 +282,11 @@ function Main {
         # ── Stable mode ──
 
         # Fast path: binary exists and was checked recently — skip API call
-        if ($localVer -and (Test-CacheFresh)) { return }
+        if ($localVer -and (Test-CacheFresh)) {
+            $wfDir = Join-Path $CACHE_DIR "workflows"
+            if (-not (Test-Path $wfDir)) { Sync-Workflows -Tag "v${localVer}" }
+            return
+        }
 
         $latestStable = Get-LatestStableVersion
 
@@ -285,6 +295,8 @@ function Main {
             $targetVer = $latestStable
         } elseif ($localVer -eq $latestStable) {
             # Already on exact latest stable
+            $wfDir = Join-Path $CACHE_DIR "workflows"
+            if (-not (Test-Path $wfDir)) { Sync-Workflows -Tag "v${localVer}" }
             Write-Cache
             return
         } else {
@@ -293,6 +305,8 @@ function Main {
                 $targetVer = $latestStable
             } else {
                 # Local is same or newer (e.g., on a beta ahead of stable)
+                $wfDir = Join-Path $CACHE_DIR "workflows"
+                if (-not (Test-Path $wfDir)) { Sync-Workflows -Tag "v${localVer}" }
                 Write-Cache
                 return
             }
