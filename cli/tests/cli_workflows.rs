@@ -15,9 +15,12 @@ use common::{assert_ok_and_extract_data, onchainos, run_with_retry, tokens};
 #[test]
 fn workflow_token_research_returns_ok() {
     let output = run_with_retry(&[
-        "workflow", "token-research",
-        "--address", tokens::SOL_BONK,
-        "--chain", "solana",
+        "workflow",
+        "token-research",
+        "--address",
+        tokens::SOL_BONK,
+        "--chain",
+        "solana",
     ]);
     assert_ok_and_extract_data(&output);
 }
@@ -25,20 +28,29 @@ fn workflow_token_research_returns_ok() {
 #[test]
 fn workflow_token_research_has_workflow_discriminator() {
     let output = run_with_retry(&[
-        "workflow", "token-research",
-        "--address", tokens::SOL_BONK,
-        "--chain", "solana",
+        "workflow",
+        "token-research",
+        "--address",
+        tokens::SOL_BONK,
+        "--chain",
+        "solana",
     ]);
     let data = assert_ok_and_extract_data(&output);
-    assert_eq!(data["workflow"], "token-research", "missing workflow discriminator");
+    assert_eq!(
+        data["workflow"], "token-research",
+        "missing workflow discriminator"
+    );
 }
 
 #[test]
 fn workflow_token_research_has_core_fields() {
     let output = run_with_retry(&[
-        "workflow", "token-research",
-        "--address", tokens::SOL_BONK,
-        "--chain", "solana",
+        "workflow",
+        "token-research",
+        "--address",
+        tokens::SOL_BONK,
+        "--chain",
+        "solana",
     ]);
     let data = assert_ok_and_extract_data(&output);
     let core = &data["core"];
@@ -47,15 +59,21 @@ fn workflow_token_research_has_core_fields() {
     let has_any = ["info", "price", "contract", "security"]
         .iter()
         .any(|f| !core[f].is_null());
-    assert!(has_any, "all core fields null — expected at least one to succeed: {core}");
+    assert!(
+        has_any,
+        "all core fields null — expected at least one to succeed: {core}"
+    );
 }
 
 #[test]
 fn workflow_token_research_has_structure_block() {
     let output = run_with_retry(&[
-        "workflow", "token-research",
-        "--address", tokens::SOL_BONK,
-        "--chain", "solana",
+        "workflow",
+        "token-research",
+        "--address",
+        tokens::SOL_BONK,
+        "--chain",
+        "solana",
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(!data["structure"].is_null(), "structure block missing");
@@ -65,9 +83,12 @@ fn workflow_token_research_has_structure_block() {
 fn workflow_token_research_non_launchpad_has_null_launchpad() {
     // BONK is not a pump.fun token — Step 3 should be skipped
     let output = run_with_retry(&[
-        "workflow", "token-research",
-        "--address", tokens::SOL_BONK,
-        "--chain", "solana",
+        "workflow",
+        "token-research",
+        "--address",
+        tokens::SOL_BONK,
+        "--chain",
+        "solana",
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
@@ -80,9 +101,12 @@ fn workflow_token_research_non_launchpad_has_null_launchpad() {
 #[test]
 fn workflow_token_research_address_and_chain_in_output() {
     let output = run_with_retry(&[
-        "workflow", "token-research",
-        "--address", tokens::SOL_USDC,
-        "--chain", "solana",
+        "workflow",
+        "token-research",
+        "--address",
+        tokens::SOL_USDC,
+        "--chain",
+        "solana",
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert_eq!(data["address"], tokens::SOL_USDC);
@@ -143,13 +167,19 @@ fn workflow_smart_money_top_tokens_have_required_fields() {
         return; // no signals available — skip field validation
     }
     for token in tokens {
-        assert!(token.get("address").is_some(), "token entry missing 'address'");
+        assert!(
+            token.get("address").is_some(),
+            "token entry missing 'address'"
+        );
         let d = &token["data"];
         assert!(d.get("signal").is_some(), "token data missing 'signal'");
         assert!(d.get("price").is_some(), "token data missing 'price'");
         assert!(d.get("contract").is_some(), "token data missing 'contract'");
         assert!(d.get("security").is_some(), "token data missing 'security'");
-        assert!(d.get("launchpad").is_some(), "token data missing 'launchpad'");
+        assert!(
+            d.get("launchpad").is_some(),
+            "token data missing 'launchpad'"
+        );
     }
 }
 
@@ -158,19 +188,19 @@ fn workflow_smart_money_top_tokens_have_required_fields() {
 #[test]
 fn workflow_new_tokens_returns_ok() {
     let output = run_with_retry(&[
-        "workflow", "new-tokens",
-        "--chain", "solana",
-        "--stage", "MIGRATED",
+        "workflow",
+        "new-tokens",
+        "--chain",
+        "solana",
+        "--stage",
+        "MIGRATED",
     ]);
     assert_ok_and_extract_data(&output);
 }
 
 #[test]
 fn workflow_new_tokens_has_workflow_discriminator() {
-    let output = run_with_retry(&[
-        "workflow", "new-tokens",
-        "--chain", "solana",
-    ]);
+    let output = run_with_retry(&["workflow", "new-tokens", "--chain", "solana"]);
     let data = assert_ok_and_extract_data(&output);
     assert_eq!(data["workflow"], "new-tokens");
 }
@@ -178,9 +208,12 @@ fn workflow_new_tokens_has_workflow_discriminator() {
 #[test]
 fn workflow_new_tokens_has_stage_field() {
     let output = run_with_retry(&[
-        "workflow", "new-tokens",
-        "--chain", "solana",
-        "--stage", "MIGRATED",
+        "workflow",
+        "new-tokens",
+        "--chain",
+        "solana",
+        "--stage",
+        "MIGRATED",
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert_eq!(data["stage"], "MIGRATED");
@@ -188,10 +221,7 @@ fn workflow_new_tokens_has_stage_field() {
 
 #[test]
 fn workflow_new_tokens_has_enriched_array() {
-    let output = run_with_retry(&[
-        "workflow", "new-tokens",
-        "--chain", "solana",
-    ]);
+    let output = run_with_retry(&["workflow", "new-tokens", "--chain", "solana"]);
     let data = assert_ok_and_extract_data(&output);
     assert!(
         data["enriched"].is_array(),
@@ -203,9 +233,12 @@ fn workflow_new_tokens_has_enriched_array() {
 #[test]
 fn workflow_new_tokens_enriched_items_have_required_fields() {
     let output = run_with_retry(&[
-        "workflow", "new-tokens",
-        "--chain", "solana",
-        "--stage", "MIGRATED",
+        "workflow",
+        "new-tokens",
+        "--chain",
+        "solana",
+        "--stage",
+        "MIGRATED",
     ]);
     let data = assert_ok_and_extract_data(&output);
     let enriched = data["enriched"].as_array().unwrap();
@@ -213,13 +246,28 @@ fn workflow_new_tokens_enriched_items_have_required_fields() {
         return; // no migrated tokens in window — skip field validation
     }
     for item in enriched {
-        assert!(item.get("address").is_some(), "enriched item missing 'address'");
+        assert!(
+            item.get("address").is_some(),
+            "enriched item missing 'address'"
+        );
         let d = &item["data"];
         assert!(d.get("token").is_some(), "enriched data missing 'token'");
-        assert!(d.get("security").is_some(), "enriched data missing 'security'");
-        assert!(d.get("contract").is_some(), "enriched data missing 'contract'");
-        assert!(d.get("devInfo").is_some(), "enriched data missing 'devInfo'");
-        assert!(d.get("bundleInfo").is_some(), "enriched data missing 'bundleInfo'");
+        assert!(
+            d.get("security").is_some(),
+            "enriched data missing 'security'"
+        );
+        assert!(
+            d.get("contract").is_some(),
+            "enriched data missing 'contract'"
+        );
+        assert!(
+            d.get("devInfo").is_some(),
+            "enriched data missing 'devInfo'"
+        );
+        assert!(
+            d.get("bundleInfo").is_some(),
+            "enriched data missing 'bundleInfo'"
+        );
     }
 }
 
@@ -228,9 +276,12 @@ fn workflow_new_tokens_enriched_items_have_required_fields() {
 #[test]
 fn workflow_wallet_analysis_returns_ok() {
     let output = run_with_retry(&[
-        "workflow", "wallet-analysis",
-        "--address", tokens::ETH_VITALIK,
-        "--chain", "ethereum",
+        "workflow",
+        "wallet-analysis",
+        "--address",
+        tokens::ETH_VITALIK,
+        "--chain",
+        "ethereum",
     ]);
     assert_ok_and_extract_data(&output);
 }
@@ -238,9 +289,12 @@ fn workflow_wallet_analysis_returns_ok() {
 #[test]
 fn workflow_wallet_analysis_has_workflow_discriminator() {
     let output = run_with_retry(&[
-        "workflow", "wallet-analysis",
-        "--address", tokens::ETH_VITALIK,
-        "--chain", "ethereum",
+        "workflow",
+        "wallet-analysis",
+        "--address",
+        tokens::ETH_VITALIK,
+        "--chain",
+        "ethereum",
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert_eq!(data["workflow"], "wallet-analysis");
@@ -249,9 +303,12 @@ fn workflow_wallet_analysis_has_workflow_discriminator() {
 #[test]
 fn workflow_wallet_analysis_has_performance_block() {
     let output = run_with_retry(&[
-        "workflow", "wallet-analysis",
-        "--address", tokens::ETH_VITALIK,
-        "--chain", "ethereum",
+        "workflow",
+        "wallet-analysis",
+        "--address",
+        tokens::ETH_VITALIK,
+        "--chain",
+        "ethereum",
     ]);
     let data = assert_ok_and_extract_data(&output);
     let perf = &data["performance"];
@@ -263,9 +320,12 @@ fn workflow_wallet_analysis_has_performance_block() {
 #[test]
 fn workflow_wallet_analysis_has_address_and_chain() {
     let output = run_with_retry(&[
-        "workflow", "wallet-analysis",
-        "--address", tokens::ETH_VITALIK,
-        "--chain", "ethereum",
+        "workflow",
+        "wallet-analysis",
+        "--address",
+        tokens::ETH_VITALIK,
+        "--chain",
+        "ethereum",
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert_eq!(data["address"], tokens::ETH_VITALIK);
@@ -275,9 +335,12 @@ fn workflow_wallet_analysis_has_address_and_chain() {
 #[test]
 fn workflow_wallet_analysis_has_balances_pnl_activities() {
     let output = run_with_retry(&[
-        "workflow", "wallet-analysis",
-        "--address", tokens::ETH_VITALIK,
-        "--chain", "ethereum",
+        "workflow",
+        "wallet-analysis",
+        "--address",
+        tokens::ETH_VITALIK,
+        "--chain",
+        "ethereum",
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.get("balances").is_some(), "balances field missing");
@@ -297,19 +360,13 @@ fn workflow_wallet_analysis_missing_address_fails() {
 
 #[test]
 fn workflow_portfolio_returns_ok() {
-    let output = run_with_retry(&[
-        "workflow", "portfolio",
-        "--address", tokens::ETH_VITALIK,
-    ]);
+    let output = run_with_retry(&["workflow", "portfolio", "--address", tokens::ETH_VITALIK]);
     assert_ok_and_extract_data(&output);
 }
 
 #[test]
 fn workflow_portfolio_has_workflow_discriminator() {
-    let output = run_with_retry(&[
-        "workflow", "portfolio",
-        "--address", tokens::ETH_VITALIK,
-    ]);
+    let output = run_with_retry(&["workflow", "portfolio", "--address", tokens::ETH_VITALIK]);
     let data = assert_ok_and_extract_data(&output);
     assert_eq!(data["workflow"], "portfolio");
 }
@@ -317,9 +374,12 @@ fn workflow_portfolio_has_workflow_discriminator() {
 #[test]
 fn workflow_portfolio_has_address_and_chains() {
     let output = run_with_retry(&[
-        "workflow", "portfolio",
-        "--address", tokens::ETH_VITALIK,
-        "--chains", "ethereum",
+        "workflow",
+        "portfolio",
+        "--address",
+        tokens::ETH_VITALIK,
+        "--chains",
+        "ethereum",
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert_eq!(data["address"], tokens::ETH_VITALIK);
@@ -329,9 +389,12 @@ fn workflow_portfolio_has_address_and_chains() {
 #[test]
 fn workflow_portfolio_has_balances_total_value_overview() {
     let output = run_with_retry(&[
-        "workflow", "portfolio",
-        "--address", tokens::ETH_VITALIK,
-        "--chains", "ethereum",
+        "workflow",
+        "portfolio",
+        "--address",
+        tokens::ETH_VITALIK,
+        "--chains",
+        "ethereum",
     ]);
     let data = assert_ok_and_extract_data(&output);
     assert!(data.get("balances").is_some(), "balances field missing");
@@ -359,8 +422,5 @@ fn workflow_unknown_subcommand_fails() {
 
 #[test]
 fn workflow_with_no_subcommand_prints_help() {
-    onchainos()
-        .args(["workflow"])
-        .assert()
-        .failure(); // clap exits non-zero when no subcommand given
+    onchainos().args(["workflow"]).assert().failure(); // clap exits non-zero when no subcommand given
 }

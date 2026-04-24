@@ -77,11 +77,10 @@ fn cdn_platform() -> Option<&'static str> {
 /// Tries each CDN source in order. For each source: fetches checksum.json,
 /// downloads the binary, verifies sha256, then writes atomically.
 pub async fn download_binary() -> Result<()> {
-    let platform = cdn_platform()
-        .ok_or_else(|| anyhow::anyhow!("unsupported platform for doh binary"))?;
+    let platform =
+        cdn_platform().ok_or_else(|| anyhow::anyhow!("unsupported platform for doh binary"))?;
 
-    let dest = binary_path()
-        .ok_or_else(|| anyhow::anyhow!("cannot determine binary path"))?;
+    let dest = binary_path().ok_or_else(|| anyhow::anyhow!("cannot determine binary path"))?;
 
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
@@ -249,10 +248,7 @@ mod tests {
         let path = binary_path().expect("should return Some");
         assert_eq!(
             path,
-            PathBuf::from(format!(
-                "/tmp/test_onchainos_doh/bin/{}",
-                binary_filename()
-            ))
+            PathBuf::from(format!("/tmp/test_onchainos_doh/bin/{}", binary_filename()))
         );
         std::env::remove_var("ONCHAINOS_HOME");
     }

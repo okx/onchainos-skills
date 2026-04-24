@@ -19,15 +19,24 @@ use super::{ok_or_null, Context};
 
 const TOP_N: usize = 5;
 
-pub(crate) async fn fetch_and_assemble(
-    client: &mut ApiClient,
-    chain_index: &str,
-) -> Result<Value> {
+pub(crate) async fn fetch_and_assemble(client: &mut ApiClient, chain_index: &str) -> Result<Value> {
     // ── Step 1 ───────────────────────────────────────────────────────
     let raw_signals = ok_or_null(
         signal::fetch_list(
-            client, chain_index,
-            None, None, None, None, None, None, None, None, None, None, None, None,
+            client,
+            chain_index,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )
         .await,
     );
@@ -62,10 +71,16 @@ pub(crate) async fn fetch_and_assemble(
                 let (mut d1, mut d2) = (c.clone(), c.clone());
                 let (dev_info, bundle_info) = tokio::join!(
                     memepump::fetch_by_address(
-                        &mut d1, "/api/v6/dex/market/memepump/tokenDevInfo", &addr, &ci,
+                        &mut d1,
+                        "/api/v6/dex/market/memepump/tokenDevInfo",
+                        &addr,
+                        &ci,
                     ),
                     memepump::fetch_by_address(
-                        &mut d2, "/api/v6/dex/market/memepump/tokenBundleInfo", &addr, &ci,
+                        &mut d2,
+                        "/api/v6/dex/market/memepump/tokenBundleInfo",
+                        &addr,
+                        &ci,
                     ),
                 );
                 json!({ "devInfo": ok_or_null(dev_info), "bundleInfo": ok_or_null(bundle_info) })
@@ -73,7 +88,8 @@ pub(crate) async fn fetch_and_assemble(
                 Value::Null
             };
 
-            let enriched = assemble_token_result(signal_item, price, advanced_val, security, launchpad);
+            let enriched =
+                assemble_token_result(signal_item, price, advanced_val, security, launchpad);
             (addr, enriched)
         });
     }
@@ -198,7 +214,11 @@ pub(crate) fn extract_top_tokens(signals: &Value, n: usize) -> Vec<(String, Valu
     // Primary: descending walletCount. Secondary: ascending address (stable tiebreaker
     // so the output order does not depend on HashMap iteration order).
     items.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-    items.into_iter().take(n).map(|(_, addr, item)| (addr, item)).collect()
+    items
+        .into_iter()
+        .take(n)
+        .map(|(_, addr, item)| (addr, item))
+        .collect()
 }
 
 #[cfg(test)]
@@ -206,16 +226,19 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn some_data() -> Value { json!({ "key": "value" }) }
-    fn null() -> Value { Value::Null }
+    fn some_data() -> Value {
+        json!({ "key": "value" })
+    }
+    fn null() -> Value {
+        Value::Null
+    }
 
     // ── assemble_token_result ─────────────────────────────────────────
 
     #[test]
     fn token_result_has_all_required_fields() {
-        let result = assemble_token_result(
-            some_data(), some_data(), some_data(), some_data(), null(),
-        );
+        let result =
+            assemble_token_result(some_data(), some_data(), some_data(), some_data(), null());
         assert!(!result["signal"].is_null());
         assert!(!result["price"].is_null());
         assert!(!result["contract"].is_null());
