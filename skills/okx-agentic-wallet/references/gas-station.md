@@ -216,41 +216,49 @@ State meaning: the user enabled Gas Station previously and completed the on-chai
 **User-facing template (Scene B' — verbatim). Do NOT paraphrase the body text. Only substitute the bracketed slots.** Translate the template to the user's language at output time; the structure and every sentence stays.
 
 ```
-Gas Station is currently disabled on {chain_display_name}. You have two ways to proceed:
+Gas Station is currently disabled on {chain_display_name}, so your {native_symbol} balance isn't enough to pay gas. You have two ways to proceed:
 
 1. Top up {native_symbol} and pay gas with the native token (keep Gas Station disabled).
 2. Re-enable Gas Station to pay gas with a stablecoin again.
 
-After re-enabling:
-- Your previously picked gas token will be overwritten by the one you choose below.
-- When your native balance is insufficient, the system will automatically use the picked stablecoin — no further prompt.
+Your previous default gas token was {prev_token_symbol_or_none}.
+- Re-enabling with a different stablecoin will overwrite the previous default.
+- Once re-enabled, when your native balance is insufficient the system will automatically use the picked stablecoin — no further confirmation needed.
 
-Stablecoins supported on {chain_display_name}: {supported_tokens_on_chain}. Your previous default was {prev_token_symbol_or_none}.
+Stablecoins supported on {chain_display_name}: {supported_tokens_on_chain}.
 
-Please pick one:
-  1. No — keep Gas Station disabled; top up {native_symbol} at {fromAddr}.
-  2. Yes, re-enable Gas Station and use {tokenList[0].symbol} to pay gas (pinned as the new default).
-  3. Yes, re-enable Gas Station and use {tokenList[1].symbol} to pay gas (pinned as the new default).
-  ... (one option per `sufficient=true` entry, starting from 2)
-
-Is that OK?
+Do you confirm re-enabling Gas Station and paying this transaction's gas with a stablecoin?
 ```
 
+**User response parsing (natural language)**
+
+| User says (examples) | Interpretation | CLI action |
+|---|---|---|
+| "No", "不开启", "先充 {native_symbol}" | Decline | Do NOT re-run. Tell user to top up {native_symbol} at `{fromAddr}` (or switch chain / account). Terminate. |
+| "Yes" / "确认再开" (no token named) | Re-enable, keep the previous default if any | Re-run `wallet send --enable-gas-station --gas-token-address <prev> --relayer-id <prev_relayer>` using the previous default's row from `gasStationTokenList` if `sufficient=true`; otherwise fall back to the first `sufficient=true` entry. Surface which token was used in the success reply. |
+| "确认，用 USDT" / "yes, switch to USDC" | Re-enable + overwrite default | Re-run with that token's `feeTokenAddress` / `relayerId`. Backend overwrites the previous default. |
+| Ambiguous or names a token not in tokenList | Ask to clarify | Re-prompt once with the supported stablecoins. Do not guess. |
+
 **Slot fills**
-- `{chain_display_name}`, `{native_symbol}`, `{supported_tokens_on_chain}`, `{tokenList[N].symbol}`, `{fromAddr}`: same as Scene A.
+- `{chain_display_name}`, `{native_symbol}`, `{supported_tokens_on_chain}`, `{fromAddr}`: same as Scene A.
 - `{prev_token_symbol_or_none}`: symbol of the token whose address matches `defaultGasTokenAddress` in the response; if `defaultGasTokenAddress` is empty, render "none saved".
 
-Never modify the template body. Never drop the "after re-enabling" bullets. Never drop the supported-tokens line. Never surface "7702" / "delegation" / "on-chain" — only "disable / re-enable Gas Station" and "stablecoin to pay gas".
+Never modify the template body. Never drop the "Your previous default…" line. Never drop the two bullets. Never drop the supported-tokens line. Never surface "7702" / "delegation" / "on-chain" — only "disable / re-enable Gas Station" and "stablecoin to pay gas".
 </MUST>
 
-| Pick | CLI action |
-|---|---|
-| `1` | Do NOT re-run. Tell user to top up {native_symbol} at `{fromAddr}`, or switch chain / account. Terminate. |
-| `N` for N ≥ 2 | `wallet send --enable-gas-station --gas-token-address <addr> --relayer-id <id>` with the picked token. Backend re-enables Gas Station and overwrites the previous default with the picked token. |
+**Post-success echo template (verbatim after the Phase 2 broadcast returns successfully)**
 
-No on-chain action is required — the Phase 2 response for this state carries only transaction signing material (no activation signing), since the chain is already delegated. After success, tell the user: "Gas Station re-enabled. Gas fee: {serviceCharge} {serviceChargeSymbol}. orderId: {orderId}."
+<MUST>
+After `wallet send` completes successfully via Gas Station in Scene B', the Agent MUST echo back a confirmation to the user using this template (translated to the user's language, structure verbatim):
 
-The response carries `defaultGasTokenAddress` (the user's previous default) — the Agent MAY surface it in the prompt header as context (e.g., "previously you used {prev_token}"), but the decision is still a single pick from the options above.
+```
+Gas Station re-enabled. This transaction will use {chosen_token} to pay gas. Future transactions on {chain_display_name} will automatically use {chosen_token} when the native balance is low — no further prompt.
+```
+
+If `{chosen_token}` differs from the previous default, prepend one short sentence: "The default gas token was updated from {prev_token_symbol_or_none} to {chosen_token}."
+</MUST>
+
+No on-chain action is required — the Phase 2 response for this state carries only transaction signing material (no activation signing), since the chain is already delegated.
 
 #### Scene C — READY_TO_USE with default token insufficient (or no default + multiple sufficient tokens)
 
