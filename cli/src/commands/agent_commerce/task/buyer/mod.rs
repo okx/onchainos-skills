@@ -155,47 +155,47 @@ pub enum ConfigAction {
 // ─── 路由分发 ──────────────────────────────────────────────────────────────
 
 pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
-    let client = TaskApiClient::new();
+    let mut client = TaskApiClient::new();
 
     match cmd {
         // ── 买家动作 ─────────────────────────────────────────────
         TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title } =>
-            create::handle_create(&client, description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title).await,
+            create::handle_create(&mut client, description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title).await,
         TaskCommand::Recommend { job_id, next, current } => {
             if next {
                 recommend::handle_recommend_next(&job_id)
             } else if current {
                 recommend::handle_recommend_current(&job_id)
             } else {
-                recommend::handle_recommend(&client, &job_id).await
+                recommend::handle_recommend(&mut client, &job_id).await
             }
         }
         TaskCommand::ConfirmAccept { job_id, provider, payment_mode } =>
-            accept::handle_confirm_accept(&client, &job_id, &provider, &payment_mode).await,
+            accept::handle_confirm_accept(&mut client, &job_id, &provider, &payment_mode).await,
         TaskCommand::Complete { job_id } =>
-            complete::handle_complete(&client, &job_id).await,
+            complete::handle_complete(&mut client, &job_id).await,
         TaskCommand::Reject { job_id, reason } =>
-            refuse::handle_reject(&client, &job_id, &reason).await,
+            refuse::handle_reject(&mut client, &job_id, &reason).await,
         TaskCommand::Close { job_id } =>
-            close::handle_close(&client, &job_id).await,
+            close::handle_close(&mut client, &job_id).await,
         TaskCommand::SetPublic { job_id } =>
-            changepublic::handle_set_public(&client, &job_id).await,
+            changepublic::handle_set_public(&mut client, &job_id).await,
         TaskCommand::Claim { job_id } =>
-            close::handle_claim(&client, &job_id).await,
+            close::handle_claim(&mut client, &job_id).await,
         TaskCommand::ClaimAutoRefund { job_id } =>
-            claim_auto_refund::handle_claim_auto_refund(&client, &job_id).await,
+            claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await,
         TaskCommand::Judge { job_id } =>
-            judge::handle_judge(&client, &job_id).await,
+            judge::handle_judge(&mut client, &job_id).await,
 
         // ── 只读查询 ─────────────────────────────────────────────
         TaskCommand::Status { job_id } =>
-            query::handle_status(&client, &job_id).await,
+            query::handle_status(&mut client, &job_id).await,
         TaskCommand::List { role, status, page, limit } =>
-            query::handle_list(&client, role.as_deref(), status.as_deref(), page, limit).await,
+            query::handle_list(&mut client, role.as_deref(), status.as_deref(), page, limit).await,
         TaskCommand::Payment { job_id } =>
-            query::handle_payment(&client, &job_id).await,
+            query::handle_payment(&mut client, &job_id).await,
         TaskCommand::Pay { job_id } =>
-            query::handle_pay(&client, &job_id).await,
+            query::handle_pay(&mut client, &job_id).await,
 
         // ── 占位实现 ─────────────────────────────────────────────
         TaskCommand::RejectApply { job_id, provider, reason } => {

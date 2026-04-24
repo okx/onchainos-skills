@@ -9,7 +9,7 @@ use crate::commands::agent_commerce::task::signing;
 
 /// reject/refuse — 拒绝验收
 pub async fn handle_reject(
-    client: &TaskApiClient,
+    client: &mut TaskApiClient,
     job_id: &str,
     reason: &str,
 ) -> Result<()> {

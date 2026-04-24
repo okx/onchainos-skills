@@ -120,14 +120,6 @@ pub enum CommonCommand {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct TaskResp {
-    code: i32,
-    data: Option<TaskRespData>,
-    msg: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct TaskRespData {
     task: TaskDetail,
 }
@@ -358,19 +350,18 @@ async fn run_context(
     }
 
     // 调用后端获取任务详情（带身份 header，便于 mock-api 日志区分调用方）
-    let client = network::task_api_client::TaskApiClient::with_base_url(api_url.to_string());
+    let mut client = network::task_api_client::TaskApiClient::with_base_url(api_url.to_string());
     let url = format!("{api_url}/priapi/v1/aieco/task/{job_id}");
     let resp_val = client
         .get_with_identity(&url, agent_id.unwrap_or(""), address.unwrap_or(""))
         .await
         .map_err(|e| anyhow::anyhow!("无法获取任务详情（{api_url}）: {e}"))?;
 
-    let body: TaskResp = serde_json::from_value(resp_val)
+    // WalletApiClient 返回 body["data"]，即 {"task": {...}}
+    let resp_data: TaskRespData = serde_json::from_value(resp_val)
         .map_err(|e| anyhow::anyhow!("解析响应失败: {e}"))?;
 
-    let task = body.data
-        .ok_or_else(|| anyhow::anyhow!("响应中无 data 字段"))?
-        .task;
+    let task = resp_data.task;
 
     // 卖家额外拉取 agent 资料（name / profileDescription）
     let profile = if role == "seller" {

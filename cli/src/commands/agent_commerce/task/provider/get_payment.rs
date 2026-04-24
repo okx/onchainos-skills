@@ -9,7 +9,7 @@ use crate::commands::agent_commerce::task::common::network::task_api_client::Tas
 use crate::commands::agent_commerce::task::signing;
 
 pub async fn handle_get_payment(
-    client: &TaskApiClient,
+    client: &mut TaskApiClient,
     job_id: &str,
     token_symbol: &str,
 ) -> Result<()> {
@@ -26,7 +26,7 @@ pub async fn handle_get_payment(
         )
         .await?;
 
-    let d = &resp["data"];
+    let d = &resp;
     println!("支付预信息（prePayTaskInfo）：");
     println!("  jobId:            {job_id}");
     println!("  tokenSymbol:      {token_symbol}");

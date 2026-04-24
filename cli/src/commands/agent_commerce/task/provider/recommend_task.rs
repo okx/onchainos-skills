@@ -9,7 +9,7 @@ use anyhow::Result;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-pub async fn handle_recommend_task(client: &TaskApiClient, agent_id: Option<&str>) -> Result<()> {
+pub async fn handle_recommend_task(client: &mut TaskApiClient, agent_id: Option<&str>) -> Result<()> {
     let (_, address) = signing::resolve_wallet(None, None)?;
     let agent_id = agent_id.unwrap_or("");
 
@@ -18,7 +18,7 @@ pub async fn handle_recommend_task(client: &TaskApiClient, agent_id: Option<&str
         .post_with_identity(&url, &serde_json::json!({}), agent_id, &address)
         .await?;
 
-    let tasks = resp["data"]["tasks"].as_array().cloned().unwrap_or_default();
+    let tasks = resp["tasks"].as_array().cloned().unwrap_or_default();
     let agent_label = if agent_id.is_empty() { "(default)" } else { agent_id };
 
     if tasks.is_empty() {

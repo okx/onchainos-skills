@@ -352,8 +352,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         // ── Provider task commands ──────────────────────────────────
         AgentCommand::RecommendTask { agent_id } => {
-            let c = task::common::network::task_api_client::TaskApiClient::new();
-            task::provider::recommend_task::handle_recommend_task(&c, agent_id.as_deref()).await
+            let mut c = task::common::network::task_api_client::TaskApiClient::new();
+            task::provider::recommend_task::handle_recommend_task(&mut c, agent_id.as_deref()).await
         }
 
         AgentCommand::FindJobs =>
@@ -379,8 +379,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             ).await,
 
         AgentCommand::GetPayment { job_id, token_symbol } => {
-            let c = task::common::network::task_api_client::TaskApiClient::new();
-            task::provider::get_payment::handle_get_payment(&c, &job_id, &token_symbol).await
+            let mut c = task::common::network::task_api_client::TaskApiClient::new();
+            task::provider::get_payment::handle_get_payment(&mut c, &job_id, &token_symbol).await
         }
 
         // ── Sub-groups ──────────────────────────────────────────────

@@ -8,11 +8,11 @@ use crate::commands::agent_commerce::task::common::network::task_api_client::Tas
 use crate::commands::agent_commerce::task::common::XLAYER_CHAIN_ID;
 
 /// 查询任务状态
-pub async fn handle_status(client: &TaskApiClient, job_id: &str) -> Result<()> {
+pub async fn handle_status(client: &mut TaskApiClient, job_id: &str) -> Result<()> {
     let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
     let resp = client.get(&url).await?;
 
-    let t = &resp["data"]["task"];
+    let t = &resp["task"];
     let token_sym = t["paymentTokenSymbol"].as_str().unwrap_or("USDT");
     println!("任务状态: {}", t["statusStr"].as_str().unwrap_or("?"));
     println!("  jobId:    {job_id}");
@@ -28,7 +28,7 @@ pub async fn handle_status(client: &TaskApiClient, job_id: &str) -> Result<()> {
 
 /// 任务列表
 pub async fn handle_list(
-    client: &TaskApiClient,
+    client: &mut TaskApiClient,
     role: Option<&str>,
     status: Option<&str>,
     page: u32,
@@ -45,8 +45,8 @@ pub async fn handle_list(
     };
 
     let resp = client.get(&url).await?;
-    let tasks = resp["data"]["list"].as_array().cloned().unwrap_or_default();
-    let total = resp["data"]["total"].as_u64().unwrap_or(0);
+    let tasks = resp["list"].as_array().cloned().unwrap_or_default();
+    let total = resp["total"].as_u64().unwrap_or(0);
     println!("任务列表（共 {total} 个，第 {page} 页）：");
     for t in &tasks {
         let sym = t["paymentTokenSymbol"].as_str().unwrap_or("USDT");
@@ -62,11 +62,11 @@ pub async fn handle_list(
 }
 
 /// 生成付款单（Provider 在 provider_applied 后发送给买家）
-pub async fn handle_payment(client: &TaskApiClient, job_id: &str) -> Result<()> {
+pub async fn handle_payment(client: &mut TaskApiClient, job_id: &str) -> Result<()> {
     let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
     let resp = client.get(&url).await?;
 
-    let task = &resp["data"]["task"];
+    let task = &resp["task"];
     let amount = task["tokenAmount"].as_str().unwrap_or("?");
     let token_symbol = task["paymentTokenSymbol"].as_str().unwrap_or("USDT");
     let provider_addr = task["providerAgentAddress"].as_str().unwrap_or("?");
@@ -88,11 +88,11 @@ pub async fn handle_payment(client: &TaskApiClient, job_id: &str) -> Result<()> 
 }
 
 /// 非担保模式手动转账（展示转账命令）
-pub async fn handle_pay(client: &TaskApiClient, job_id: &str) -> Result<()> {
+pub async fn handle_pay(client: &mut TaskApiClient, job_id: &str) -> Result<()> {
     let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
     let resp = client.get(&url).await?;
 
-    let task = &resp["data"]["task"];
+    let task = &resp["task"];
     let status = task["statusStr"].as_str().unwrap_or("");
     if status != "complete" {
         bail!("任务状态为 {status}，仅 complete 状态可执行 pay");

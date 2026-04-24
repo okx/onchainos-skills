@@ -20,7 +20,7 @@ const ALLOWED_IMG_EXTS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp"];
 /// - 买家：`signing::resolve_wallet_and_agent_for_task`
 /// - 卖家：`signing::resolve_wallet_and_agent_for_provider`
 pub async fn handle_upload_evidence(
-    client: &TaskApiClient,
+    client: &mut TaskApiClient,
     job_id: &str,
     agent_id: &str,
     address: &str,
@@ -28,7 +28,7 @@ pub async fn handle_upload_evidence(
     image_paths: &[String],
 ) -> Result<()> {
     // 至少一个字段必须提供
-    if text.map_or(true, str::is_empty) && image_paths.is_empty() {
+    if text.is_none_or(str::is_empty) && image_paths.is_empty() {
         bail!("必须提供 --text 或 --image 之一");
     }
 

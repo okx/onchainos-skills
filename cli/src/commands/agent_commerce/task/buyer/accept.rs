@@ -17,7 +17,7 @@ use crate::commands::agent_commerce::task::signing;
 
 /// confirm-accept — 确认接受卖家
 pub async fn handle_confirm_accept(
-    client: &TaskApiClient,
+    client: &mut TaskApiClient,
     job_id: &str,
     provider: &str,
     payment_mode: &str,
@@ -35,7 +35,7 @@ pub async fn handle_confirm_accept(
     ).await?;
 
     signing::sign_uop_and_broadcast(
-        client, &resp["data"]["uopData"], &account_id, &address,
+        client, &resp["uopData"], &account_id, &address,
         job_id, signing::BizContext::JobAccept,
     ).await?;
     println!("✓ 支付方式已设置: {payment_mode} ({mode_int})");
@@ -83,7 +83,7 @@ pub async fn handle_confirm_accept(
             ).await?;
 
             let tx_hash = signing::sign_uop_and_broadcast(
-                client, &resp["data"]["uopData"], &account_id, &address,
+                client, &resp["uopData"], &account_id, &address,
                 job_id, signing::BizContext::JobAccept,
             ).await?;
             println!("✓ 已接受卖家 {provider}（非担保支付），状态 → accepted");
@@ -112,7 +112,7 @@ pub async fn handle_confirm_accept(
             // 检查 feeTokenSymbol 与任务创建时 currency 是否一致
             let task_url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
             let task_resp = client.get(&task_url).await?;
-            let task_currency = task_resp["data"]["task"]["paymentTokenSymbol"]
+            let task_currency = task_resp["task"]["paymentTokenSymbol"]
                 .as_str().unwrap_or("");
             if !task_currency.is_empty() && !task_currency.eq_ignore_ascii_case(sym) {
                 println!("⚠ 注意：Provider 要求的支付币种 ({sym}) 与任务发布时的币种 ({task_currency}) 不同");
@@ -137,7 +137,7 @@ pub async fn handle_confirm_accept(
             ).await?;
 
             let tx_hash = signing::sign_uop_and_broadcast(
-                client, &resp["data"]["uopData"], &account_id, &address,
+                client, &resp["uopData"], &account_id, &address,
                 job_id, signing::BizContext::JobAccept,
             ).await?;
             println!("✓ 已接受卖家 {provider}（x402 支付），金额: {amt} {sym}");

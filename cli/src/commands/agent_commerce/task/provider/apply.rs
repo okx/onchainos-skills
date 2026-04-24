@@ -12,7 +12,7 @@ use crate::commands::agent_commerce::task::signing;
 /// 1. POST apply API（带身份头）→ 获取 uopData
 /// 2. 签名 uopData + 广播上链
 pub async fn handle_apply(
-    client: &TaskApiClient,
+    client: &mut TaskApiClient,
     job_id: &str,
     token_amount: &str,
     token_symbol: &str,
@@ -29,7 +29,7 @@ pub async fn handle_apply(
     ).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(
-        client, &resp["data"]["uopData"], &account_id, &address,
+        client, &resp["uopData"], &account_id, &address,
         job_id, signing::BizContext::JobApply,
     ).await?;
 

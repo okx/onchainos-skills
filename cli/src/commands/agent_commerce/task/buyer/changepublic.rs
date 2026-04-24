@@ -8,7 +8,7 @@ use crate::commands::agent_commerce::task::common::network::task_api_client::Tas
 use crate::commands::agent_commerce::task::signing;
 
 /// set-public — 转为公开任务
-pub async fn handle_set_public(client: &TaskApiClient, job_id: &str) -> Result<()> {
+pub async fn handle_set_public(client: &mut TaskApiClient, job_id: &str) -> Result<()> {
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
 
@@ -20,7 +20,7 @@ pub async fn handle_set_public(client: &TaskApiClient, job_id: &str) -> Result<(
     ).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(
-        client, &resp["data"]["uopData"], &account_id, &address,
+        client, &resp["uopData"], &account_id, &address,
         job_id, signing::BizContext::JobSetVisibility,
     ).await?;
 

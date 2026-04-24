@@ -11,7 +11,7 @@ use crate::commands::agent_commerce::task::common::network::task_api_client::Tas
 
 /// 评价卖家（TODO: 对接身份系统 CLI）
 pub async fn handle_judge(
-    _client: &TaskApiClient,
+    _client: &mut TaskApiClient,
     _job_id: &str,
 ) -> Result<()> {
     // TODO(identity): 对接身份系统 CLI 的评价接口

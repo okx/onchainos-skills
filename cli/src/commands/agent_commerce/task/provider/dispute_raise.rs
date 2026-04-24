@@ -6,7 +6,7 @@ use crate::commands::agent_commerce::task::common::network::task_api_client::Tas
 use crate::commands::agent_commerce::task::signing;
 
 pub async fn handle_dispute_raise(
-    client: &TaskApiClient,
+    client: &mut TaskApiClient,
     job_id: &str,
     reason: &str,
 ) -> Result<()> {
@@ -19,7 +19,7 @@ pub async fn handle_dispute_raise(
     ).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(
-        client, &resp["data"]["uopData"], &account_id, &address,
+        client, &resp["uopData"], &account_id, &address,
         job_id, signing::BizContext::DisputeCreate,
     ).await?;
 

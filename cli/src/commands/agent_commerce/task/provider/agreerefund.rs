@@ -12,7 +12,7 @@ use crate::commands::agent_commerce::task::signing;
 /// 1. POST agreeRefund API（带身份头）→ 获取 uopData
 /// 2. 签名 uopData + 广播上链
 pub async fn handle_agree_refund(
-    client: &TaskApiClient,
+    client: &mut TaskApiClient,
     job_id: &str,
 ) -> Result<()> {
     let (account_id, address, agent_id) =
@@ -24,7 +24,7 @@ pub async fn handle_agree_refund(
     ).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(
-        client, &resp["data"]["uopData"], &account_id, &address,
+        client, &resp["uopData"], &account_id, &address,
         job_id, signing::BizContext::JobRefuse,
     ).await?;
 

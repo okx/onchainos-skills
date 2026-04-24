@@ -13,14 +13,14 @@ use crate::commands::agent_commerce::task::common::PAYMENT_MODE_INT_ESCROW;
 use crate::commands::agent_commerce::task::signing;
 
 /// complete — 验收通过
-pub async fn handle_complete(client: &TaskApiClient, job_id: &str) -> Result<()> {
+pub async fn handle_complete(client: &mut TaskApiClient, job_id: &str) -> Result<()> {
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
 
     // 查询任务详情获取 paymentMode
     let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
     let resp = client.get(&url).await?;
-    let task = &resp["data"]["task"];
+    let task = &resp["task"];
     let payment_mode = task["paymentType"].as_i64().unwrap_or(0) as i32;
 
     if payment_mode == PAYMENT_MODE_INT_ESCROW {
@@ -61,7 +61,7 @@ pub async fn handle_complete(client: &TaskApiClient, job_id: &str) -> Result<()>
         ).await?;
 
         let tx_hash = signing::sign_uop_and_broadcast(
-            client, &resp["data"]["uopData"], &account_id, &address,
+            client, &resp["uopData"], &account_id, &address,
             job_id, signing::BizContext::JobComplete,
         ).await?;
 

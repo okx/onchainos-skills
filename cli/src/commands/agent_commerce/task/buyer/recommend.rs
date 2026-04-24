@@ -12,10 +12,10 @@ use super::negotiate;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 
 /// 查询推荐卖家（默认模式：调用 API + 缓存）
-pub async fn handle_recommend(client: &TaskApiClient, job_id: &str) -> Result<()> {
+pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str) -> Result<()> {
     let url = client.endpoint(job_id, "match");
     let resp = client.post(&url, &serde_json::json!({})).await?;
-    let recs = resp["data"]["recommendations"].as_array()
+    let recs = resp["recommendations"].as_array()
         .cloned().unwrap_or_default();
 
     // 构造 ProviderInfo 列表并缓存

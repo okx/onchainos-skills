@@ -5,10 +5,10 @@ use serde_json::Value;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 
-pub async fn handle_dispute_info(client: &TaskApiClient, dispute_id: &str) -> Result<()> {
+pub async fn handle_dispute_info(client: &mut TaskApiClient, dispute_id: &str) -> Result<()> {
     let url = format!("{}/priapi/v1/aieco/task/dispute/{}", client.base_url(), dispute_id);
     let resp = client.get(&url).await?;
-    print_dispute_info(dispute_id, &resp["data"]);
+    print_dispute_info(dispute_id, &resp);
     Ok(())
 }
 

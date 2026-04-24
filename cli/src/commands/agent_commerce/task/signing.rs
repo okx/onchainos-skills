@@ -76,13 +76,13 @@ pub fn resolve_wallet(
 ///
 /// Returns `(account_id, address, buyer_agent_id)`.
 pub async fn resolve_wallet_and_agent_for_task(
-    client: &TaskApiClient,
+    client: &mut TaskApiClient,
     job_id: &str,
 ) -> Result<(String, String, String)> {
     let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
     let resp = client.get(&url).await?;
 
-    let task = &resp["data"]["task"];
+    let task = &resp["task"];
     let buyer_address = task["buyerAgentAddress"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("任务详情缺少 buyerAgentAddress 字段"))?;
@@ -100,13 +100,13 @@ pub async fn resolve_wallet_and_agent_for_task(
 ///
 /// Returns `(account_id, address, provider_agent_id)`.
 pub async fn resolve_wallet_and_agent_for_provider(
-    client: &TaskApiClient,
+    client: &mut TaskApiClient,
     job_id: &str,
 ) -> Result<(String, String, String)> {
     let url = format!("{}/priapi/v1/aieco/task/{job_id}", client.base_url());
     let resp = client.get(&url).await?;
 
-    let task = &resp["data"]["task"];
+    let task = &resp["task"];
     let provider_agent_id = task["providerAgentId"]
         .as_str()
         .unwrap_or("")
@@ -123,7 +123,7 @@ pub async fn resolve_wallet_and_agent_for_provider(
 ///
 /// `biz_context` 标记业务场景（TaskAccept / DisputeCreate 等），随广播请求发送供后端区分。
 pub async fn sign_uop_and_broadcast(
-    client: &TaskApiClient,
+    client: &mut TaskApiClient,
     uop_data: &Value,
     account_id: &str,
     address: &str,
@@ -155,7 +155,7 @@ pub async fn sign_uop_and_broadcast(
     let bc_resp = client.post(&client.broadcast_url(), &broadcast_body).await
         .map_err(|e| anyhow::anyhow!("广播失败: {e}"))?;
 
-    Ok(bc_resp["data"][0]["txHash"]
+    Ok(bc_resp[0]["txHash"]
         .as_str()
         .unwrap_or("pending")
         .to_string())
@@ -169,7 +169,7 @@ pub async fn sign_uop_and_broadcast(
 /// 4. Sign uopHash + broadcast → tx_hash
 #[allow(clippy::too_many_arguments)]
 pub async fn task_dual_sign_and_broadcast(
-    client: &TaskApiClient,
+    client: &mut TaskApiClient,
     pre_endpoint_url: &str,
     pre_body: &Value,
     main_endpoint_url: &str,
@@ -184,7 +184,7 @@ pub async fn task_dual_sign_and_broadcast(
     let pre_resp = client.post_with_identity(pre_endpoint_url, pre_body, agent_id, address).await
         .map_err(|e| anyhow::anyhow!("pre-sign 请求失败: {e}"))?;
 
-    let digest = pre_resp["data"]["digest"]
+    let digest = pre_resp["digest"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("pre-sign 未返回 digest 字段"))?;
 
@@ -206,7 +206,7 @@ pub async fn task_dual_sign_and_broadcast(
 
     // Step 4: Sign uopHash + broadcast
     let tx_hash = sign_uop_and_broadcast(
-        client, &main_resp["data"]["uopData"], account_id, address, job_id, biz_context,
+        client, &main_resp["uopData"], account_id, address, job_id, biz_context,
     ).await?;
 
     Ok(BroadcastResult { api_response: main_resp, tx_hash })

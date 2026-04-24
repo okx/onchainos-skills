@@ -98,33 +98,33 @@ pub enum DisputeCommand {
 // ─── 路由分发 ─────────────────────────────────────────────────────────────
 
 pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
-    let client = TaskApiClient::new();
+    let mut client = TaskApiClient::new();
 
     match cmd {
         ProviderCommand::Apply { job_id, token_amount, token_symbol, agent_id } =>
-            apply::handle_apply(&client, &job_id, &token_amount, &token_symbol, &agent_id).await,
+            apply::handle_apply(&mut client, &job_id, &token_amount, &token_symbol, &agent_id).await,
         ProviderCommand::Deliver { job_id, file, message } =>
-            deliver::handle_deliver(&client, &job_id, &file, &message).await,
+            deliver::handle_deliver(&mut client, &job_id, &file, &message).await,
         ProviderCommand::AgreeRefund { job_id } =>
-            agreerefund::handle_agree_refund(&client, &job_id).await,
+            agreerefund::handle_agree_refund(&mut client, &job_id).await,
     }
 }
 
 pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
-    let client = TaskApiClient::new();
+    let mut client = TaskApiClient::new();
     match cmd {
         DisputeCommand::Raise { job_id, reason } =>
-            dispute_raise::handle_dispute_raise(&client, &job_id, &reason).await,
+            dispute_raise::handle_dispute_raise(&mut client, &job_id, &reason).await,
         DisputeCommand::Evidence { job_id, summary, .. } =>
-            dispute_evidence::handle_dispute_evidence(&client, &job_id, &summary).await,
+            dispute_evidence::handle_dispute_evidence(&mut client, &job_id, &summary).await,
         DisputeCommand::Info { dispute_id } =>
-            dispute_info::handle_dispute_info(&client, &dispute_id).await,
+            dispute_info::handle_dispute_info(&mut client, &dispute_id).await,
         DisputeCommand::Upload { job_id, text, images } => {
             // 自动识别角色：比对当前钱包地址和 task 的 buyer/provider 地址
             let (_, address) = signing::resolve_wallet(None, None)?;
             let url = format!("{}/priapi/v1/aieco/task/{}", client.base_url(), &job_id);
             let resp = client.get(&url).await?;
-            let task = &resp["data"]["task"];
+            let task = &resp["task"];
             let buyer_addr = task["buyerAgentAddress"].as_str().unwrap_or("");
             let provider_addr = task["providerAgentAddress"].as_str().unwrap_or("");
             let agent_id = if address.eq_ignore_ascii_case(buyer_addr) {
@@ -135,7 +135,7 @@ pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
                 anyhow::bail!("当前钱包 {address} 不是任务 {job_id} 的买家或卖家")
             };
             dispute_upload::handle_upload_evidence(
-                &client, &job_id, &agent_id, &address, text.as_deref(), &images,
+                &mut client, &job_id, &agent_id, &address, text.as_deref(), &images,
             ).await
         }
     }

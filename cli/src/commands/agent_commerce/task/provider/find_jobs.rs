@@ -44,7 +44,7 @@ pub async fn handle_find_jobs() -> Result<()> {
     println!("发现 {} 个在线 Provider Agent，开始为每个匹配任务...\n", online_providers.len());
 
     // Step 3: 对每个 online provider agent 调 recommend-task
-    let task_client = TaskApiClient::new();
+    let mut task_client = TaskApiClient::new();
     let (_, address) = signing::resolve_wallet(None, None)?;
     let mut total_tasks = 0usize;
     let mut summary: Vec<(String, String, usize)> = Vec::new();
@@ -57,7 +57,7 @@ pub async fn handle_find_jobs() -> Result<()> {
         println!("━━━ Agent {agent_id} ({name}) ━━━");
         println!("  描述: {desc}");
 
-        match fetch_tasks_for_agent(&task_client, agent_id, &address).await {
+        match fetch_tasks_for_agent(&mut task_client, agent_id, &address).await {
             Ok(tasks) => {
                 print_tasks(&tasks);
                 total_tasks += tasks.len();
@@ -129,7 +129,7 @@ async fn invoke_agent_get() -> Result<Vec<Value>> {
 
 /// 对指定 agent 调 recommend-task 接口
 async fn fetch_tasks_for_agent(
-    client: &TaskApiClient,
+    client: &mut TaskApiClient,
     agent_id: &str,
     address: &str,
 ) -> Result<Vec<Value>> {
@@ -137,7 +137,7 @@ async fn fetch_tasks_for_agent(
     let resp = client
         .post_with_identity(&url, &serde_json::json!({}), agent_id, address)
         .await?;
-    Ok(resp["data"]["tasks"].as_array().cloned().unwrap_or_default())
+    Ok(resp["tasks"].as_array().cloned().unwrap_or_default())
 }
 
 fn print_tasks(tasks: &[Value]) {

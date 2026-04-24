@@ -154,7 +154,7 @@ async fn warn_if_insufficient_balance(budget: f64, currency: &str) {
 
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_create(
-    client: &TaskApiClient,
+    client: &mut TaskApiClient,
     description: String,
     description_summary: Option<String>,
     budget: f64,
@@ -225,8 +225,8 @@ pub async fn handle_create(
     let create_url = format!("{}/priapi/v1/aieco/task/create", client.base_url());
     let resp = client.post(&create_url, &body).await?;
 
-    let job_id = resp["data"]["jobId"].as_str().unwrap_or("?").to_string();
-    let uop_data = &resp["data"]["uopData"];
+    let job_id = resp["jobId"].as_str().unwrap_or("?").to_string();
+    let uop_data = &resp["uopData"];
 
     println!("✓ Calldata 已生成 (jobId: {job_id})");
 
@@ -253,7 +253,7 @@ pub async fn handle_create(
 
     // ── Step 3: 广播上链 ──────────
     let bc_resp = client.post(&client.broadcast_url(), &broadcast_body).await?;
-    let tx_hash = bc_resp["data"][0]["txHash"].as_str().unwrap_or("pending");
+    let tx_hash = bc_resp[0]["txHash"].as_str().unwrap_or("pending");
     println!("✓ 任务已上链");
     println!("  jobId:  {job_id}");
     println!("  txHash: {tx_hash}");
