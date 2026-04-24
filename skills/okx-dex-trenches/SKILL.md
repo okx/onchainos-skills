@@ -30,11 +30,14 @@ metadata:
 
 ## Related Workflows
 
-After completing the user's command, mention that workflows are available for deeper analysis:
+When one of the following commands is used, show the related workflow hint after displaying results:
 
-- **New Token Screening** — `~/.onchainos/workflows/new-token-screening.md` (scan + safety + dev check)
-- **Smart Money Signals** — `~/.onchainos/workflows/smart-money-signals.md` (aggregate signals + per-token due diligence)
-- **Daily Brief** — `~/.onchainos/workflows/daily-brief.md` (market pulse + signals + new tokens)
+| Command | Workflow | File |
+|---------|----------|------|
+| `memepump tokens` | New Token Screening | `~/.onchainos/workflows/new-token-screening.md` |
+| `memepump tokens --stage MIGRATED` | Daily Brief | `~/.onchainos/workflows/daily-brief.md` |
+| `memepump token-dev-info`, `memepump token-bundle-info` | Smart Money Signals | `~/.onchainos/workflows/smart-money-signals.md` |
+| `memepump token-details`, `memepump token-dev-info`, `memepump token-bundle-info` | Token Research | `~/.onchainos/workflows/token-research.md` |
 
 > Hint format: *"You can also try out our **[workflow name]** workflow for more comprehensive results. Would you like to try it?"*
 

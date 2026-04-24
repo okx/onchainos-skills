@@ -30,13 +30,15 @@ metadata:
 
 ## Related Workflows
 
-After completing the user's command, mention that workflows are available for deeper analysis:
+When one of the following commands is used, show the related workflow hint after displaying results:
 
-- **Smart Money Signals** — `~/.onchainos/workflows/smart-money-signals.md` (aggregate signals + per-token due diligence)
-- **Daily Brief** — `~/.onchainos/workflows/daily-brief.md` (market pulse + signals + new tokens)
-- **Token Research** — `~/.onchainos/workflows/token-research.md` (price + security + holders + signals)
-- **Wallet Analysis** — `~/.onchainos/workflows/wallet-analysis.md` (performance + behaviour + holdings)
-- **Wallet Monitor** — `~/.onchainos/workflows/wallet-monitor.md` (continuous polling for new trades)
+| Command | Workflow | File |
+|---------|----------|------|
+| `signal list` | Smart Money Signals | `~/.onchainos/workflows/smart-money-signals.md` |
+| `signal list` | Daily Brief | `~/.onchainos/workflows/daily-brief.md` |
+| `signal list --token-address` | Token Research | `~/.onchainos/workflows/token-research.md` |
+| `tracker activities` | Wallet Analysis | `~/.onchainos/workflows/wallet-analysis.md` |
+| `tracker activities` | Wallet Monitor | `~/.onchainos/workflows/wallet-monitor.md` |
 
 > Hint format: *"You can also try out our **[workflow name]** workflow for more comprehensive results. Would you like to try it?"*
 

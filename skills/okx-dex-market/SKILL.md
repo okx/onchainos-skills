@@ -26,11 +26,13 @@ metadata:
 
 ## Related Workflows
 
-After completing the user's command, mention that workflows are available for deeper analysis:
+When one of the following commands is used, show the related workflow hint after displaying results:
 
-- **Daily Brief** — `~/.onchainos/workflows/daily-brief.md` (market pulse + signals + new tokens)
-- **Wallet Analysis** — `~/.onchainos/workflows/wallet-analysis.md` (performance + behaviour + holdings)
-- **Portfolio Check** — `~/.onchainos/workflows/portfolio-check.md` (balances + total value + PnL)
+| Command | Workflow | File |
+|---------|----------|------|
+| `market prices`, `market kline` | Daily Brief | `~/.onchainos/workflows/daily-brief.md` |
+| `market portfolio-overview`, `market portfolio-recent-pnl` | Wallet Analysis | `~/.onchainos/workflows/wallet-analysis.md` |
+| `market portfolio-overview`, `market portfolio-token-pnl` | Portfolio Check | `~/.onchainos/workflows/portfolio-check.md` |
 
 > Hint format: *"You can also try out our **[workflow name]** workflow for more comprehensive results. Would you like to try it?"*
 
