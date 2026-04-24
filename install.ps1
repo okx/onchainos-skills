@@ -229,7 +229,7 @@ function Sync-Workflows {
             return
         }
 
-        tar -xzf $archivePath -C $tmpDir 2>$null
+        tar -xzf "$archivePath" -C "$tmpDir" 2>$null
 
         $srcWorkflows = Join-Path $tmpDir "workflows"
         if (Test-Path $srcWorkflows) {
