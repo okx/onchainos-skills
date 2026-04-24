@@ -825,7 +825,9 @@ async fn memepump_token_details(
         .unwrap_or_else(|| ctx.chain_index_or("solana"));
     let wallet_address = wallet.unwrap_or_default();
     let mut client = ctx.client_async().await?;
-    output::success(fetch_token_details(&mut client, address, &chain_index, &wallet_address).await?);
+    output::success(
+        fetch_token_details(&mut client, address, &chain_index, &wallet_address).await?,
+    );
     Ok(())
 }
 
@@ -965,9 +967,18 @@ mod tests {
             }
         });
         nullify_zero_tags_if_new(&mut token, received_at);
-        assert_eq!(token["tags"]["bundlersPercent"], "5.5", "non-zero must be untouched");
-        assert_eq!(token["tags"]["devHoldingsPercent"], "10.0", "non-zero must be untouched");
-        assert!(token["tags"]["freshWalletsPercent"].is_null(), "zero must be null");
+        assert_eq!(
+            token["tags"]["bundlersPercent"], "5.5",
+            "non-zero must be untouched"
+        );
+        assert_eq!(
+            token["tags"]["devHoldingsPercent"], "10.0",
+            "non-zero must be untouched"
+        );
+        assert!(
+            token["tags"]["freshWalletsPercent"].is_null(),
+            "zero must be null"
+        );
     }
 
     /// `is_numeric_zero` must match every zero-ish string shape seen in the
@@ -975,10 +986,24 @@ mod tests {
     /// raw JSON numbers. Non-numeric strings stay non-zero (never nullified).
     #[test]
     fn is_numeric_zero_handles_common_string_shapes() {
-        for v in [json!("0"), json!("0.0"), json!("0.00"), json!(" 0 "), json!(0), json!(0.0)] {
+        for v in [
+            json!("0"),
+            json!("0.0"),
+            json!("0.00"),
+            json!(" 0 "),
+            json!(0),
+            json!(0.0),
+        ] {
             assert!(is_numeric_zero(&v), "{v} should be zero");
         }
-        for v in [json!("1"), json!("0.01"), json!(""), json!("null"), json!(1.5), json!(null)] {
+        for v in [
+            json!("1"),
+            json!("0.01"),
+            json!(""),
+            json!("null"),
+            json!(1.5),
+            json!(null),
+        ] {
             assert!(!is_numeric_zero(&v), "{v} should NOT be zero");
         }
     }

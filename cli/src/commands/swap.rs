@@ -166,7 +166,15 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             )
             .await?;
             output::success(
-                fetch_quote(&mut client, &chain_index, &from, &to, &raw_amount, &swap_mode).await?,
+                fetch_quote(
+                    &mut client,
+                    &chain_index,
+                    &from,
+                    &to,
+                    &raw_amount,
+                    &swap_mode,
+                )
+                .await?,
             );
         }
         SwapCommand::Swap {
@@ -226,8 +234,14 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(
-                fetch_check_approvals(&mut client, &chain_index, &address, &token, spender.as_deref())
-                    .await?,
+                fetch_check_approvals(
+                    &mut client,
+                    &chain_index,
+                    &address,
+                    &token,
+                    spender.as_deref(),
+                )
+                .await?,
             );
         }
         SwapCommand::Chains => {
@@ -716,10 +730,7 @@ fn validate_tips(tips: &str) -> Result<()> {
         .parse()
         .map_err(|_| anyhow::anyhow!("--tips must be a number in SOL, got \"{}\"", tips))?;
     if val < 1e-10 {
-        bail!(
-            "--tips must be at least 0.0000000001 SOL, got \"{}\"",
-            tips
-        );
+        bail!("--tips must be at least 0.0000000001 SOL, got \"{}\"", tips);
     }
     if val > 2.0 {
         bail!("--tips must be at most 2 SOL, got \"{}\"", tips);
@@ -1072,8 +1083,10 @@ async fn wallet_contract_call(
         aa_dex_token_amount,
         mev_protection,
         jito_unsigned_tx,
-        false, // force
-        None,  // tx_source: not cross-chain
+        false,       // force
+        None,        // tx_source: not cross-chain
+        Some("dex"), // agent_biz_type: swap flow
+        None,        // agent_skill_name: not applicable
     )
     .await?;
     Ok(json!({ "txHash": tx_hash }))

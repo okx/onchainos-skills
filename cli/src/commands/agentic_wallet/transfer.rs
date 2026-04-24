@@ -74,6 +74,9 @@ struct TxParams<'a> {
 /// `mev_protection`: when true, passes `isMEV: true` to the broadcast API (supported on ETH, BSC, Base).
 /// `chain`: the realChainIndex (standard chain ID, e.g. "1" for Ethereum, "501" for Solana).
 /// `force`: when true, passes `skipWarning: true` in extraData and bypasses confirmation prompts.
+/// `agent_biz_type`: transaction category for broadcast (e.g. "transfer", "dex", "defi", "dapp").
+/// `agent_skill_name`: strategy / skill name the caller is using.
+#[allow(clippy::too_many_arguments)]
 async fn sign_and_broadcast(
     chain: &str,
     from: Option<&str>,
@@ -82,15 +85,19 @@ async fn sign_and_broadcast(
     mev_protection: bool,
     force: bool,
     tx_source: Option<&str>,
+    agent_biz_type: Option<&str>,
+    agent_skill_name: Option<&str>,
 ) -> Result<String> {
     if cfg!(feature = "debug-log") {
         eprintln!(
-            "[DEBUG][sign_and_broadcast] enter: chain={}, from={:?}, to={}, value={}, contractAddr={:?}, inputData={}, unsignedTx={}, gasLimit={:?}, mev={}",
+            "[DEBUG][sign_and_broadcast] enter: chain={}, from={:?}, to={}, value={}, contractAddr={:?}, inputData={}, unsignedTx={}, gasLimit={:?}, mev={}, agentBizType={:?}, agentSkillName={:?}",
             chain, from, tx.to_addr, tx.value, tx.contract_addr,
             tx.input_data.map(|s| format!("{}...({})", &s[..s.len().min(20)], s.len())).unwrap_or_else(|| "None".into()),
             tx.unsigned_tx.map(|s| format!("{}...({})", &s[..s.len().min(20)], s.len())).unwrap_or_else(|| "None".into()),
             tx.gas_limit,
             mev_protection,
+            agent_biz_type,
+            agent_skill_name,
         );
     }
 
@@ -288,6 +295,12 @@ async fn sign_and_broadcast(
     if let Some(src) = tx_source {
         extra_data_obj["txSource"] = json!(src);
     }
+    if let Some(bt) = agent_biz_type {
+        extra_data_obj["agentBizType"] = json!(bt);
+    }
+    if let Some(sk) = agent_skill_name {
+        extra_data_obj["agentSkillName"] = json!(sk);
+    }
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][sign_and_broadcast] Step 10: extraData={}",
@@ -376,6 +389,8 @@ pub(super) async fn cmd_send(
         false,
         force,
         None, // tx_source: not cross-chain
+        Some("transfer"),
+        None, // agent_skill_name: not applicable for plain transfers
     )
     .await?;
     output::success(json!({ "txHash": tx_hash }));
@@ -399,6 +414,8 @@ pub async fn cmd_contract_call(
     mev_protection: bool,
     jito_unsigned_tx: Option<&str>,
     force: bool,
+    biz_type: Option<&str>,
+    strategy: Option<&str>,
 ) -> Result<()> {
     let tx_hash = execute_contract_call(
         to,
@@ -414,6 +431,8 @@ pub async fn cmd_contract_call(
         jito_unsigned_tx,
         force,
         None, // tx_source: not cross-chain
+        biz_type,
+        strategy,
     )
     .await?;
     output::success(json!({ "txHash": tx_hash }));
@@ -437,6 +456,8 @@ pub async fn execute_contract_call(
     jito_unsigned_tx: Option<&str>,
     force: bool,
     tx_source: Option<&str>,
+    agent_biz_type: Option<&str>,
+    agent_skill_name: Option<&str>,
 ) -> Result<String> {
     if to.is_empty() || chain.is_empty() {
         bail!("to and chain are required");
@@ -464,6 +485,8 @@ pub async fn execute_contract_call(
         mev_protection,
         force,
         tx_source,
+        agent_biz_type,
+        agent_skill_name,
     )
     .await
 }
@@ -678,6 +701,8 @@ mod tests {
             false,
             None,
             false,
+            None,
+            None,
         )
         .await;
         assert!(result.is_err());
@@ -702,6 +727,8 @@ mod tests {
             false,
             None,
             false,
+            None,
+            None,
         )
         .await;
         assert!(result.is_err());
@@ -726,6 +753,8 @@ mod tests {
             false,
             None,
             false,
+            None,
+            None,
         )
         .await;
         assert!(result.is_err());
@@ -735,7 +764,7 @@ mod tests {
     #[tokio::test]
     async fn cmd_contract_call_rejects_missing_input_and_unsigned() {
         let result = cmd_contract_call(
-            "0xTo", "1", "0", None, None, None, None, None, None, false, None, false,
+            "0xTo", "1", "0", None, None, None, None, None, None, false, None, false, None, None,
         )
         .await;
         assert!(result.is_err());

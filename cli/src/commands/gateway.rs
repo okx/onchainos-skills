@@ -97,8 +97,15 @@ pub async fn execute(ctx: &Context, cmd: GatewayCommand) -> Result<()> {
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(
-                fetch_gas_limit(&mut client, &chain_index, &from, &to, &amount, data.as_deref())
-                    .await?,
+                fetch_gas_limit(
+                    &mut client,
+                    &chain_index,
+                    &from,
+                    &to,
+                    &amount,
+                    data.as_deref(),
+                )
+                .await?,
             );
         }
         GatewayCommand::Simulate {
@@ -121,8 +128,14 @@ pub async fn execute(ctx: &Context, cmd: GatewayCommand) -> Result<()> {
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             output::success(
-                fetch_broadcast(&mut client, &chain_index, &signed_tx, &address, mev_protection)
-                    .await?,
+                fetch_broadcast(
+                    &mut client,
+                    &chain_index,
+                    &signed_tx,
+                    &address,
+                    mev_protection,
+                )
+                .await?,
             );
         }
         GatewayCommand::Orders {
