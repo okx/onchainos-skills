@@ -189,6 +189,10 @@ pub enum AgentCommand {
     #[command(subcommand)]
     Dispute(task::provider::DisputeCommand),
 
+    /// Evaluator actions (arbitrator): info, commit, reveal, claim, forget, stake
+    #[command(subcommand)]
+    Evaluator(task::evaluator::EvaluatorCommand),
+
     /// Common queries: context lookup for AI agents
     #[command(subcommand)]
     Common(task::common::CommonCommand),
@@ -390,6 +394,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Dispute(c) =>
             task::provider::run_dispute(c, ctx).await,
 
+        AgentCommand::Evaluator(c) =>
+            task::evaluator::run(c, ctx).await,
+
         AgentCommand::Common(c) =>
             task::common::run(c, ctx).await,
 
@@ -399,7 +406,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     task::provider::flow::generate_next_action(&job_id, &job_status, &agent_id),
                 "buyer" | "client" =>
                     task::buyer::flow::generate_next_action(&job_id, &job_status, &agent_id),
-                other => anyhow::bail!("--role 必须是 provider/seller/buyer/client，当前: {other}"),
+                "evaluator" =>
+                    task::evaluator::flow::generate_next_action(&job_id, &job_status, &agent_id),
+                other => anyhow::bail!("--role 必须是 provider/seller/buyer/client/evaluator，当前: {other}"),
             };
             println!("{prompt}");
             Ok(())

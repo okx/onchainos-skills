@@ -1,0 +1,18 @@
+{
+  "name": "@okx/mock-evaluator",
+  "version": "0.1.0",
+  "description": "Mock evaluator (dispute arbiter) agent for task system E2E testing",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "start": "npm run build && node dist/tools/mock-evaluator/src/mock-evaluator.js",
+    "ui": "npm run build && node dist/tools/mock-evaluator/src/mock-evaluator-ui.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.0.0"
+  }
+}

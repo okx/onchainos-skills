@@ -382,6 +382,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         // Sub-groups
         AgentCommand::Config { .. } => "config".into(),
         AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),
+        AgentCommand::Evaluator(c) => format!("evaluator {:?}", std::mem::discriminant(c)),
         AgentCommand::Common(c) => format!("common {:?}", std::mem::discriminant(c)),
         AgentCommand::NextAction { .. } => "next-action".into(),
         AgentCommand::FileUpload { .. } => "file-upload".into(),

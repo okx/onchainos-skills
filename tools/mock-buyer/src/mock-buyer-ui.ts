@@ -34,6 +34,8 @@ const sessions   = new Map<string, BuyerSession>();
 const uiMessages = new Map<string, Message[]>();
 const autoModes  = new Map<string, boolean>(); // convId → autoMode, default true
 const sseClients = new Set<http.ServerResponse>();
+// 新会话的默认 autoMode（全局，可通过 UI 切换）
+let defaultAutoMode = false;
 
 function pushSSE(event: string, data: unknown) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -105,7 +107,7 @@ async function uiStartNegotiation(jobId: string, sellerAgentIdArg?: string): Pro
   );
   sessions.set(convId, session);
   uiMessages.set(convId, []);
-  autoModes.set(convId, false);
+  autoModes.set(convId, defaultAutoMode);
   pushSSE("new_session", sessionToView(session));
 
   const inquireContent = formatMsg(jobId, convId, "TASK_INQUIRE",
@@ -142,6 +144,29 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/sessions" && req.method === "GET") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify([...sessions.values()].map(sessionToView)));
+    return;
+  }
+
+  // GET /default-mode → 返回当前新会话默认 autoMode
+  if (url.pathname === "/default-mode" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ defaultAutoMode }));
+    return;
+  }
+
+  // POST /default-mode { autoMode: bool } → 切换新会话默认 autoMode
+  if (url.pathname === "/default-mode" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      try {
+        const { autoMode } = JSON.parse(body);
+        defaultAutoMode = !!autoMode;
+        console.log(`[buyer] 默认模式切换为: ${defaultAutoMode ? "⚡ 自动" : "🖐 手动"}`);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, defaultAutoMode }));
+      } catch (e) { res.writeHead(400); res.end(String(e)); }
+    });
     return;
   }
 
@@ -409,6 +434,11 @@ button { padding: 5px 11px; border-radius: 6px; border: none; cursor: pointer; f
     </div>
     <div class="sidebar-section">
       <h2>会话 <span id="sessions-count" style="color:#58a6ff">0</span></h2>
+      <div style="padding: 6px 0 8px; font-size: 11px; color: #8b949e;">
+        新会话默认:
+        <label style="cursor:pointer;margin-left:6px"><input type="radio" name="def-mode" value="auto" onchange="setDefaultMode(true)"> ⚡ 自动</label>
+        <label style="cursor:pointer;margin-left:4px"><input type="radio" name="def-mode" value="manual" onchange="setDefaultMode(false)" checked> 🖐 手动</label>
+      </div>
       <div id="session-list"></div>
     </div>
   </div>
@@ -628,7 +658,16 @@ function sendCustom() {
   input.value = '';
 }
 
+function setDefaultMode(autoMode) {
+  fetch('/default-mode', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ autoMode }) });
+}
+
 // 初始化
+fetch('/default-mode').then(r => r.json()).then(d => {
+  const val = d.defaultAutoMode ? 'auto' : 'manual';
+  const el = document.querySelector(\`input[name="def-mode"][value="\${val}"]\`);
+  if (el) el.checked = true;
+}).catch(() => {});
 loadTasks();
 loadSellers();
 setInterval(loadTasks, 3000);

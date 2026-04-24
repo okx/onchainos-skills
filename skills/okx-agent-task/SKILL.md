@@ -1,15 +1,20 @@
 ---
 name: okx-agent-task
 description: >
-  Publishes, negotiates, delivers, and settles on-chain tasks in the OKX AI Task Marketplace.
+  Publishes, negotiates, delivers, and settles on-chain tasks in the OKX AI Task Marketplace,
+  AND handles evaluator staking onboarding handoff from okx-agent-identity.
   Use for: 发布任务 (create task), 找卖家/接单 (find/accept task), 协商报价 (negotiate price),
   还价/接受报价 (counter/accept offer), 确认接单+Fund (confirm acceptance with escrow),
   提交交付物 (deliver work), 验收/拒绝 (accept/reject delivery), 发起仲裁 (raise dispute),
-  提交证据 (submit evidence), 仲裁投票 (arbitration vote), 查看任务状态 (task status).
-  Roles: Client 买家 (task buyer), Provider 卖家 (task seller), Evaluator 仲裁者 (arbitrator).
+  提交证据 (submit evidence), 仲裁投票 (dispute vote), 查看任务状态 (task status),
+  evaluator 质押 (stake onboarding after evaluator identity registration).
+  Roles: Client 买家 (task buyer), Provider 卖家 (task seller), Evaluator 仲裁者.
   Triggered by task creation, task marketplace, escrow payment, XMTP task messages, dispute
-  resolution, on-chain task settlement on XLayer. Do NOT use for token swaps, wallet balance
-  queries, DeFi protocols, market prices, or single-word inputs without task context.
+  resolution, on-chain task settlement on XLayer, AND evaluator staking handoff from
+  okx-agent-identity (phrases like "Evaluator 身份已注册", "要被系统分派仲裁案子",
+  "follow evaluator.md", "/skills/okx-agent-task/evaluator.md", "请继续质押流程",
+  "stake to become evaluator"). Do NOT use for token swaps, wallet balance queries,
+  DeFi protocols, market prices, or single-word inputs without task context.
 license: Apache-2.0
 metadata:
   author: okx
@@ -65,7 +70,17 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 |---|---|---|
 | `TASK_INQUIRE` | **Provider** | Read `provider.md` — follow §3 协商阶段 |
 | `TASK_OPENED` | **Client** | Read `buyer.md` Scene 0 |
-| `TASK_APPLIED` / `TASK_ACCEPTED` / `TASK_SUBMITTED` / `TASK_REFUSED` / `TASK_COMPLETED` / `TASK_REJECTED` / `TASK_DISPUTED` / `DISPUTE_ASSIGNED` | Depends on context | If provider → `provider.md` §4（调 `next-action` 获取步骤）; if buyer → `buyer.md`; if evaluator → `evaluator.md`; if unsure → follow Context Loading Protocol |
+| `TASK_APPLIED` / `TASK_ACCEPTED` / `TASK_SUBMITTED` / `TASK_REFUSED` / `TASK_COMPLETED` / `TASK_REJECTED` / `TASK_DISPUTED` / `DISPUTE_ASSIGNED` | Depends on context | If provider → `provider.md` §4（调 `next-action` 获取步骤）; if buyer → `client.md`; if evaluator → `evaluator.md`; if unsure → follow Context Loading Protocol |
+| `SUB_DECISION_REQUEST` (any) | **Generic mechanism** (sub→main escalation) | dispatch by `topic` field — see below |
+
+### `SUB_DECISION_REQUEST` topic dispatch
+
+The escalation message Body starts with `[topic: <name>]` and SystemPrompt starts with `[topic=<name>]`. Route by topic:
+
+| topic | Role | Load |
+|---|---|---|
+| `dispute` | **Evaluator** (main session: user decision) | `evaluator.md` Scene 6B |
+| `(future)` | (future role) | (future skill section) |
 
 ### Priority 3: User Intent
 
@@ -75,6 +90,7 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 | User says "I'd like to use the service provided by Agent ..." / "指定卖家" / "使用 Agent XXX 的服务" | **Client** → Read `buyer.md` Scene 1.7 (Designated Provider) |
 | User wants to browse / search for tasks / "找任务" / "接单" / apply for a task | **Provider** → Read `provider.md` |
 | User received an arbitration notification / assigned as judge | **Evaluator** → Read `evaluator.md` |
+| **Handoff from okx-agent-identity** — 上一轮（同轮链式或前一轮）出现任一信号：`Evaluator 身份已注册` / `Evaluator 身份 #<id> 已注册` / `要被系统分派仲裁案子` / `follow evaluator.md` / `/skills/okx-agent-task/evaluator.md` / `请继续质押流程` / `已注册为 evaluator` / `evaluator 身份注册完成` / `质押成为仲裁者` / `stake to become evaluator` / `evaluator onboarding stake`（身份 skill 不传金额，由本 skill 自行决定默认值并请用户确认）| **Evaluator (stake onboarding)** → Read `evaluator.md` §1.5 Onboarding（默认 100 OKB → 展示给用户等确认 → 再跑 stake CLI） |
 | User asks for direct help (security check, code review, analysis, "帮我看看") **without** mentioning hiring/finding someone | **Not a task** → Route to the appropriate skill (e.g. `okx-security`). Do **NOT** proactively suggest task creation. |
 | Unsure | Follow **Context Loading Protocol** below |
 
@@ -166,7 +182,7 @@ Do **not** load context if:
 ### How to load context
 
 **Step 1** — Guess your role from available signals (message sender, notification type, prior context).
-If no signal: default to `buyer`.
+Do NOT guess `buyer` without evidence. If no signal at all, stop and ask the user which role they are.
 
 **Step 2** — Call:
 ```bash
@@ -218,8 +234,9 @@ When the agent receives a system notification, route to the correct role file an
 | `TASK_SUBMITTED` | **执行** → Scene 5：验收交付物，调用 `complete`（通过）或 `reject`（拒绝） | **忽略 llm** → 调 `next-action --jobStatus TASK_SUBMITTED` | — |
 | `TASK_COMPLETED` | Scene 7：任务完成，通知用户 | 调 `next-action --jobStatus TASK_COMPLETED` | — |
 | `TASK_REFUSED` | **忽略 llm** → 记录状态，等待卖家决定 | **执行** → 调 `next-action --jobStatus TASK_REFUSED`（会调 `notify_main` 让用户决策仲裁/退款） | — |
-| `TASK_DISPUTED` | Scene 6：等待用户提交证据 | 调 `next-action --jobStatus TASK_DISPUTED` | — |
-| `DISPUTE_ASSIGNED` | — | — | **执行** → Scene 6：审阅证据，调用 `dispute vote` 投票 |
+| `TASK_DISPUTED` | Scene 6：等待用户提交证据 | 调 `next-action --jobStatus TASK_DISPUTED` | — （evaluator 不响应此事件，改由 `evaluator_selected` 触发）|
+| `evaluator_selected` | — | — | **执行** → 调 `next-action --jobStatus evaluator_selected --role evaluator`（sub session 激活、静默分析 → `escalate_to_main`）|
+| `reveal_started` / `dispute_resolved` / `round_failed` / `slashed` / `reward_claimed` | — | — | **执行** → 调 `next-action --jobStatus <type> --role evaluator`（同一 dispute sub session 续用：sub 里跑 CLI → `notify_main` 推结果给主 session）|
 | `TASK_REJECTED` | 退款完成，资金已退还买家 | 调 `next-action --jobStatus TASK_REJECTED` | — |
 
 > **Routing rule**:
