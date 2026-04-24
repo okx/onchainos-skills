@@ -12,7 +12,7 @@
 
 ## Required Skills
 
-okx-dex-token, okx-security, okx-dex-swap, okx-dex-signal, okx-dex-trenches
+okx-dex-token, okx-security, okx-dex-signal, okx-dex-trenches
 
 ## Input
 
