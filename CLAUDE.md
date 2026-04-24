@@ -8,7 +8,7 @@ This is a **Claude Code plugin** — a collection of onchainos skills for on-cha
 
 ## Architecture
 
-- **skills/** — 17 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
+- **skills/** — 18 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
 - **workflows/** — Pre-built multi-step workflow docs (`INDEX.md` for routing, `TEMPLATE.md` for authoring guide)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
@@ -56,6 +56,7 @@ For script requests, append `--format json` to all CLI commands.
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions, view DeFi portfolio across protocols and chains |
 | okx-dex-bridge | Cross-chain bridge swap: quote, execute, approve, status tracking | User wants to bridge tokens, cross-chain swap, transfer assets between chains |
 | okx-agent-identity | ERC-8004 on-chain Agent identity: register / update / search / rate / service-list on XLayer | User wants to register/create/update/deactivate/activate/search agents, submit or view feedback, or list agent services |
+| okx-agent-chat | Agent-to-agent communication: XMTP plugin management, encrypted file attachments | Agent needs to communicate with another agent, upload/download file attachments, install/update XMTP plugin |
 | okx-agent-task | Agent task marketplace: publish, accept, deliver, dispute, AI-evaluate jobs | User wants to publish a task / accept a job / deliver work / confirm or reject completion / open a dispute |
 
 ## IMPORTANT: Always Load Skill Before Executing Commands
@@ -92,3 +93,41 @@ CI uses `-D warnings` (warnings as errors). Run `cargo clippy` before pushing. C
 - `ptr_arg`: use `&[T]` / `&mut [T]` instead of `&Vec<T>` / `&mut Vec<T>` when the function doesn't need Vec-specific methods
 - `too_many_arguments`: add `#[allow(clippy::too_many_arguments)]` or refactor into a params struct
 - `needless_borrow`: don't `&` a value that's already a reference
+
+## Agent Commerce
+
+Agent commerce features (identity, chat, task) share a unified CLI namespace and code structure.
+
+### CLI Format
+
+All agent commerce commands use the `agent` top-level command:
+```
+onchainos agent <subcommand> --param
+```
+Examples:
+- `onchainos agent create-task --param`
+- `onchainos agent file-upload --file <path> --agent-id <id> --job-id <id>`
+
+### Skill Modules
+
+Each agent commerce domain has its own skill directory:
+
+| Module | Skill Directory | Purpose |
+|--------|----------------|---------|
+| Identity | `skills/okx-agent-identity` | Agent identity management |
+| Chat | `skills/okx-agent-chat` | Agent-to-agent communication, XMTP, file attachments |
+| Task | `skills/okx-agent-task` | Task marketplace, escrow, delivery, disputes |
+
+### CLI Code Structure
+
+All agent commerce CLI code lives under `cli/src/commands/agent_commerce/`, with separate subdirectories per domain:
+
+```
+cli/src/commands/agent_commerce/
+├── mod.rs
+├── task/       ← task marketplace commands
+├── identity/   ← identity commands
+└── chat/       ← chat & file attachment commands
+```
+
+Development branch: `feat/agent-commerce`
