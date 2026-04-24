@@ -41,7 +41,6 @@ For script requests, append `--format json` to all CLI commands.
 | okx-dex-ws | User wants a WebSocket script or real-time on-chain data stream |
 | okx-dex-swap | User wants to swap, trade, buy, or sell tokens |
 | okx-dex-token | User searches for tokens, wants rankings, holder info, liquidity, or cluster analysis |
-| okx-dex-bridge | User wants to bridge tokens or do a cross-chain swap/transfer |
 | okx-onchain-gateway | User wants to broadcast a tx, estimate gas, simulate tx, or check tx status |
 | okx-x402-payment | User encounters HTTP 402 or mentions x402 payment |
 | okx-defi-invest | User wants to earn yield, stake, deposit, withdraw, or claim DeFi rewards |
