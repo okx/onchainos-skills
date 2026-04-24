@@ -3,7 +3,7 @@
  *
  * 启动后打开 http://localhost:9004
  *
- * 架构：每个 convId 一个 ArbSession（收到 TASK_DISPUTED → 在同 convId 内回复 TASK_RESOLVE）
+ * 架构：每个 convId 一个 ArbSession（收到 job_disputed → 在同 convId 内回复 TASK_RESOLVE）
  * 自动模式：5s 后自动裁决
  * 手动模式：UI 点击"买家胜"/"卖家胜"按钮
  *
@@ -192,8 +192,8 @@ async function main() {
     s.messages.push({ from: msgFrom, type, content: String(payload.content ?? ""), ts: Date.now() });
     pushSSE("session_updated", sessionToView(s));
 
-    // 收到 TASK_DISPUTED → 自动裁决
-    if (type === "TASK_DISPUTED" && s.autoMode && !s.resolved) {
+    // 收到 job_disputed → 自动裁决
+    if (type === "job_disputed" && s.autoMode && !s.resolved) {
       sleep(5000).then(() => doResolve(convId, "buyer")).catch(console.error);
     }
   });

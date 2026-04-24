@@ -28,7 +28,7 @@ function formatMsg(jobId: string, convId: string, msgType: string, text: string)
 // step 1 → 收到 REPLY             → 报价           → step 2
 // step 2 → 收到 REPLY             → 确认支付方式    → step 3
 // step 3 → 收到 REPLY             → 发 TASK_APPLY   → applied
-// applied → 收到 TASK_ACCEPTED    → 延迟后发 TASK_DELIVER
+// applied → 收到 job_accepted     → 延迟后发 TASK_DELIVER
 
 type NegStep = 0 | 1 | 2 | 3;
 
@@ -114,8 +114,8 @@ class SellerSession {
       return;
     }
 
-    // TASK_ACCEPTED → 先调 submit API（链上确认），再发 P2P 通知
-    if (type === "TASK_ACCEPTED") {
+    // job_accepted → 先调 submit API（链上确认），再发 P2P 通知
+    if (type === "job_accepted") {
       console.log(`[seller][session] task accepted, delivering in 5s...`);
       await sleep(5000);
       const deliverableUrl = `https://mock-deliverable.example.com/${this.jobId}.html`;
@@ -130,9 +130,9 @@ class SellerSession {
       return;
     }
 
-    // TASK_REFUSED → 自动发起仲裁（模拟卖家不同意退款）
-    if (type === "TASK_REFUSED") {
-      console.log(`[seller][session] TASK_REFUSED job=${this.jobId}, auto-disputing in 5s...`);
+    // job_refused → 自动发起仲裁（模拟卖家不同意退款）
+    if (type === "job_refused") {
+      console.log(`[seller][session] job_refused job=${this.jobId}, auto-disputing in 5s...`);
       this.reply({
         type: "REPLY", jobId: this.jobId,
         content: formatMsg(this.jobId, this.convId, "REPLY", "已收到拒绝通知，我认为交付物符合验收标准，正在发起仲裁。"),
@@ -144,9 +144,9 @@ class SellerSession {
       return;
     }
 
-    // TASK_DISPUTED → 自动提交证据
-    if (type === "TASK_DISPUTED") {
-      console.log(`[seller][session] TASK_DISPUTED job=${this.jobId}, submitting evidence in 3s...`);
+    // job_disputed → 自动提交证据
+    if (type === "job_disputed") {
+      console.log(`[seller][session] job_disputed job=${this.jobId}, submitting evidence in 3s...`);
       this.reply({
         type: "REPLY", jobId: this.jobId,
         content: formatMsg(this.jobId, this.convId, "REPLY", "仲裁已发起，正在提交证据。"),
@@ -162,26 +162,35 @@ class SellerSession {
       return;
     }
 
-    // TASK_REJECTED → 仲裁结果（买家胜诉），任务终止
-    if (type === "TASK_REJECTED") {
-      const arb = Boolean((envelope.payload as any).arbitration);
-      console.log(`[seller][session] TASK_REJECTED job=${this.jobId} arbitration=${arb}`);
+    // dispute_resolved → 仲裁结果
+    if (type === "dispute_resolved") {
+      const winner = String((envelope.payload as any).winner ?? "");
+      console.log(`[seller][session] dispute_resolved job=${this.jobId} winner=${winner}`);
       this.reply({
         type: "REPLY", jobId: this.jobId,
-        content: formatMsg(this.jobId, this.convId, "REPLY", "任务已终止（TASK_REJECTED），资金已退还买家。"),
+        content: formatMsg(this.jobId, this.convId, "REPLY", winner === "provider"
+          ? "仲裁结果：卖家胜诉，资金已释放。感谢合作。"
+          : "仲裁结果：买家胜诉，资金已退还买家。"),
       });
       return;
     }
 
-    // TASK_COMPLETED（含仲裁胜诉）→ 任务完成
-    if (type === "TASK_COMPLETED") {
-      const arb = Boolean((envelope.payload as any).arbitration);
-      console.log(`[seller][session] TASK_COMPLETED job=${this.jobId} arbitration=${arb}`);
+    // confirm_refund → 卖家同意退款
+    if (type === "confirm_refund") {
+      console.log(`[seller][session] confirm_refund job=${this.jobId}`);
       this.reply({
         type: "REPLY", jobId: this.jobId,
-        content: formatMsg(this.jobId, this.convId, "REPLY", arb
-          ? "仲裁结果：卖家胜诉，资金已释放。感谢合作。"
-          : "任务已完成，资金已释放。感谢合作。"),
+        content: formatMsg(this.jobId, this.convId, "REPLY", "已同意退款，资金已退还买家。"),
+      });
+      return;
+    }
+
+    // job_completed → 任务完成
+    if (type === "job_completed") {
+      console.log(`[seller][session] job_completed job=${this.jobId}`);
+      this.reply({
+        type: "REPLY", jobId: this.jobId,
+        content: formatMsg(this.jobId, this.convId, "REPLY", "任务已完成，资金已释放。感谢合作。"),
       });
       return;
     }
@@ -247,7 +256,7 @@ async function main() {
     const jobId = String(payload.jobId ?? "");
 
     // 忽略链上系统通知和自己的回显
-    if (type === "TASK_CONFIRMED") return;
+    if (type === "job_created") return;
     if (from === SELLER_COMM_ADDR) return;
 
     console.log(`[seller] ← conv=${convId.slice(-30)} from=${from.slice(0, 20)} type=${type}`);

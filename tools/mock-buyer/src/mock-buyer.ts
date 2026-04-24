@@ -6,7 +6,7 @@ async function main() {
   await client.connectAndRegister();
   await client.registerIdentity("REQUESTER", BUYER_AGENT_ID, BUYER_COMM_ADDR);
   console.log(`✓ 身份已注册: role=REQUESTER agentId=${BUYER_AGENT_ID} commAddr=${BUYER_COMM_ADDR}`);
-  console.log(`[buyer] 无头模式运行中 taskType=${TASK_TYPE} paymentMode=${PAYMENT_MODE}，等待 TASK_CONFIRMED...\n`);
+  console.log(`[buyer] 无头模式运行中 taskType=${TASK_TYPE} paymentMode=${PAYMENT_MODE}，等待 job_created...\n`);
 
   const sessions = new Map<string, BuyerSession>();
 
@@ -28,9 +28,9 @@ async function main() {
     if (from === BUYER_COMM_ADDR) return;
     console.log(`[buyer] ← conv=${convId.slice(-30)} from=${from.slice(0, 20)} type=${type}`);
 
-    if (type === "TASK_CONFIRMED" && jobId) {
+    if (type === "job_created" && jobId) {
       if (TASK_TYPE === "x402") {
-        console.log(`[buyer] TASK_CONFIRMED jobId=${jobId}，x402 模式 → 跳过协商，直接支付...`);
+        console.log(`[buyer] job_created jobId=${jobId}，x402 模式 → 跳过协商，直接支付...`);
         (async () => {
           await callX402PayApi(jobId);
           await callCompleteApi(jobId);
@@ -38,7 +38,7 @@ async function main() {
         })().catch(console.error);
         return;
       }
-      console.log(`[buyer] TASK_CONFIRMED jobId=${jobId}，启动协商...`);
+      console.log(`[buyer] job_created jobId=${jobId}，启动协商...`);
       startNegotiation(client, jobId, sessions).catch(console.error);
       return;
     }

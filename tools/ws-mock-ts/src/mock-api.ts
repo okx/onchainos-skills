@@ -223,7 +223,7 @@ async function wsNotify(convId: string, participants: string[], payload: Record<
 async function notifyConfirmed(jobId: string, buyerCommAddr: string) {
   const convId = `conv-task-confirmed-${jobId}`;
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr], {
-    type: "TASK_CONFIRMED", jobId,
+    type: "job_created", jobId,
     content: `系统通知：任务 ${jobId} 已上链确认，状态变为 open。`,
   });
 }
@@ -232,8 +232,8 @@ async function notifyApplied(jobId: string, buyerCommAddr: string, buyerAgentId:
                               sellerAgentId: string, sellerCommAddr: string, tokenAmount: string) {
   const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
-    type: "TASK_APPLIED", jobId, sellerAgentId, tokenAmount,
-    content: `系统通知：卖家 ${sellerAgentId} 已申请接单（TASK_APPLIED），报价 ${tokenAmount} USDT，jobId=${jobId}。`,
+    type: "provider_applied", jobId, sellerAgentId, tokenAmount,
+    content: `系统通知：卖家 ${sellerAgentId} 已申请接单（provider_applied），报价 ${tokenAmount} USDT，jobId=${jobId}。`,
   });
 }
 
@@ -241,8 +241,8 @@ async function notifyAccepted(jobId: string, buyerCommAddr: string, buyerAgentId
                                sellerCommAddr: string, sellerAgentId: string) {
   const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
-    type: "TASK_ACCEPTED", jobId, sellerAgentId,
-    content: `系统通知：任务 ${jobId} 已接单确认（TASK_ACCEPTED），卖家 ${sellerAgentId}，资金已进入托管。`,
+    type: "job_accepted", jobId, sellerAgentId,
+    content: `系统通知：任务 ${jobId} 已接单确认（job_accepted），卖家 ${sellerAgentId}，资金已进入托管。`,
   });
 }
 
@@ -250,8 +250,8 @@ async function notifySubmitted(jobId: string, buyerCommAddr: string, buyerAgentI
                                 sellerAgentId: string, sellerCommAddr: string, deliverable: string) {
   const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
-    type: "TASK_SUBMITTED", jobId, deliverable,
-    content: `系统通知：任务 ${jobId} 交付物已上链（TASK_SUBMITTED），交付物：${deliverable}。`,
+    type: "job_submitted", jobId, deliverable,
+    content: `系统通知：任务 ${jobId} 交付物已上链（job_submitted），交付物：${deliverable}。`,
   });
 }
 
@@ -259,8 +259,8 @@ async function notifyRefused(jobId: string, buyerCommAddr: string, buyerAgentId:
                               sellerCommAddr: string, sellerAgentId: string) {
   const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
-    type: "TASK_REFUSED", jobId, buyerAgentId,
-    content: `系统通知：买家拒绝了交付物（TASK_REFUSED），jobId=${jobId}。卖家可在 24 小时内发起仲裁，否则资金退还买家。`,
+    type: "job_refused", jobId, buyerAgentId,
+    content: `系统通知：买家拒绝了交付物（job_refused），jobId=${jobId}。卖家可在 24 小时内发起仲裁，否则资金退还买家。`,
   });
 }
 
@@ -269,8 +269,8 @@ async function notifyDisputed(jobId: string, buyerCommAddr: string, buyerAgentId
   const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
   const evaluators = await lookupRoleAddrs("EVALUATOR");
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...evaluators], {
-    type: "TASK_DISPUTED", jobId, buyerAgentId, sellerAgentId, reason,
-    content: `系统通知：任务 ${jobId} 进入仲裁（TASK_DISPUTED）。卖家申诉理由：${reason}。`,
+    type: "job_disputed", jobId, buyerAgentId, sellerAgentId, reason,
+    content: `系统通知：任务 ${jobId} 进入仲裁（job_disputed）。卖家申诉理由：${reason}。`,
   });
 }
 
@@ -278,8 +278,8 @@ async function notifyCompleted(jobId: string, buyerCommAddr: string, buyerAgentI
                                sellerCommAddr: string, sellerAgentId: string) {
   const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
-    type: "TASK_COMPLETED", jobId, sellerAgentId,
-    content: `系统通知：任务 ${jobId} 已验收通过（TASK_COMPLETED），资金已释放给卖家 ${sellerAgentId}。`,
+    type: "job_completed", jobId, sellerAgentId,
+    content: `系统通知：任务 ${jobId} 已验收通过（job_completed），资金已释放给卖家 ${sellerAgentId}。`,
   });
 }
 
@@ -287,8 +287,8 @@ async function notifyRejected(jobId: string, buyerCommAddr: string, buyerAgentId
                               sellerCommAddr: string, sellerAgentId: string, reason: string) {
   const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
-    type: "TASK_REJECTED", jobId, sellerAgentId, reason,
-    content: `系统通知：任务 ${jobId} 已终止（TASK_REJECTED），原因：${reason}。资金已退还买家。`,
+    type: "confirm_refund", jobId, sellerAgentId, reason,
+    content: `系统通知：任务 ${jobId} 卖家同意退款（confirm_refund），原因：${reason}。资金已退还买家。`,
   });
 }
 
@@ -296,17 +296,12 @@ async function notifyArbitrationResult(jobId: string, buyerCommAddr: string, buy
                                         sellerCommAddr: string, sellerAgentId: string, winner: string) {
   const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
   const evaluators = await lookupRoleAddrs("EVALUATOR");
-  if (winner === "provider") {
-    await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...evaluators], {
-      type: "TASK_COMPLETED", jobId, sellerAgentId, buyerAgentId, arbitration: true,
-      content: `系统通知：任务 ${jobId} 仲裁完成，卖家 ${sellerAgentId} 胜诉（TASK_COMPLETED）。资金判给卖家。`,
-    });
-  } else {
-    await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...evaluators], {
-      type: "TASK_REJECTED", jobId, sellerAgentId, buyerAgentId, arbitration: true,
-      content: `系统通知：任务 ${jobId} 仲裁完成，买家 ${buyerAgentId} 胜诉（TASK_REJECTED）。资金已退还买家。`,
-    });
-  }
+  await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...evaluators], {
+    type: "dispute_resolved", jobId, sellerAgentId, buyerAgentId, winner,
+    content: winner === "provider"
+      ? `系统通知：任务 ${jobId} 仲裁完成，卖家 ${sellerAgentId} 胜诉（dispute_resolved）。资金判给卖家。`
+      : `系统通知：任务 ${jobId} 仲裁完成，买家 ${buyerAgentId} 胜诉（dispute_resolved）。资金已退还买家。`,
+  });
 }
 
 // ── Route helpers ─────────────────────────────────────────────────────────────
@@ -497,9 +492,9 @@ const server = http.createServer(async (req, res) => {
     console.log(`[mock-api] task created: ${jobId} "${title}"`);
     const buyerAddr = task.buyerAgentAddress;
     setTimeout(async () => {
-      console.log(`[mock-api] sending TASK_CONFIRMED for job=${jobId}`);
+      console.log(`[mock-api] sending job_created for job=${jobId}`);
       await notifyConfirmed(jobId, buyerAddr).catch(e => console.error("[mock-api] confirmed error:", e));
-      console.log(`[mock-api] TASK_CONFIRMED sent for job=${jobId}`);
+      console.log(`[mock-api] job_created sent for job=${jobId}`);
     }, 8000);
     sendOk(res, { jobId, uopData: { uopHash: mockUop(), extraData: {} }, status: "pending", msg: "任务已提交，等待上链确认" }); return;
   }
@@ -808,15 +803,15 @@ const server = http.createServer(async (req, res) => {
   if (method === "POST" && (m = matchPath("/ui/notify/confirmed/:jobId", path_))) {
     const t = tasks.get(m.jobId);
     if (!t) { sendErr(res, 2001, "task not found"); return; }
-    notifyConfirmed(m.jobId, t.buyerAgentAddress).then(() => console.log(`[mock-api] manual TASK_CONFIRMED sent for job=${m!.jobId}`)).catch(console.error);
-    sendOk(res, { triggered: "TASK_CONFIRMED", jobId: m.jobId }); return;
+    notifyConfirmed(m.jobId, t.buyerAgentAddress).then(() => console.log(`[mock-api] manual job_created sent for job=${m!.jobId}`)).catch(console.error);
+    sendOk(res, { triggered: "job_created", jobId: m.jobId }); return;
   }
   if (method === "POST" && (m = matchPath("/ui/notify/applied/:jobId", path_))) {
     const t = tasks.get(m.jobId);
     if (!t) { sendErr(res, 2001, "task not found"); return; }
     notifyApplied(m.jobId, t.buyerAgentAddress, t.buyerAgentId, "mock-seller-agent-001", "0xSeller000000000000000000000000000000001", "100")
-      .then(() => console.log(`[mock-api] manual TASK_APPLIED sent`)).catch(console.error);
-    sendOk(res, { triggered: "TASK_APPLIED", jobId: m.jobId }); return;
+      .then(() => console.log(`[mock-api] manual provider_applied sent`)).catch(console.error);
+    sendOk(res, { triggered: "provider_applied", jobId: m.jobId }); return;
   }
   if (method === "POST" && (m = matchPath("/ui/notify/accepted/:jobId", path_))) {
     const t = tasks.get(m.jobId);
@@ -824,7 +819,7 @@ const server = http.createServer(async (req, res) => {
     const sa = t.providerAgentAddress ?? "0xSeller000000000000000000000000000000001";
     const si = t.providerAgentId ?? "mock-seller-agent-001";
     notifyAccepted(m.jobId, t.buyerAgentAddress, t.buyerAgentId, sa, si).catch(console.error);
-    sendOk(res, { triggered: "TASK_ACCEPTED", jobId: m.jobId }); return;
+    sendOk(res, { triggered: "job_accepted", jobId: m.jobId }); return;
   }
   if (method === "POST" && (m = matchPath("/ui/notify/submitted/:jobId", path_))) {
     const t = tasks.get(m.jobId);
@@ -834,7 +829,7 @@ const server = http.createServer(async (req, res) => {
     const si = t.providerAgentId ?? "mock-seller-agent-001";
     const sa = t.providerAgentAddress ?? "0xSeller000000000000000000000000000000001";
     notifySubmitted(m.jobId, t.buyerAgentAddress, t.buyerAgentId, si, sa, deliverable).catch(console.error);
-    sendOk(res, { triggered: "TASK_SUBMITTED", jobId: m.jobId, deliverable }); return;
+    sendOk(res, { triggered: "job_submitted", jobId: m.jobId, deliverable }); return;
   }
   if (method === "POST" && (m = matchPath("/ui/notify/disputed/:jobId", path_))) {
     const t = tasks.get(m.jobId);
@@ -842,7 +837,7 @@ const server = http.createServer(async (req, res) => {
     const sa = t.providerAgentAddress ?? "0xSeller000000000000000000000000000000001";
     const si = t.providerAgentId ?? "mock-seller-agent-001";
     notifyDisputed(m.jobId, t.buyerAgentAddress, t.buyerAgentId, sa, si, "手动触发仲裁通知").catch(console.error);
-    sendOk(res, { triggered: "TASK_DISPUTED", jobId: m.jobId }); return;
+    sendOk(res, { triggered: "job_disputed", jobId: m.jobId }); return;
   }
   if (method === "POST" && (m = matchPath("/ui/notify/completed/:jobId", path_))) {
     const t = tasks.get(m.jobId);
@@ -850,7 +845,7 @@ const server = http.createServer(async (req, res) => {
     const si = t.providerAgentId ?? "mock-seller-agent-001";
     const sa = t.providerAgentAddress ?? "0xSeller000000000000000000000000000000001";
     notifyCompleted(m.jobId, t.buyerAgentAddress, t.buyerAgentId, sa, si).catch(console.error);
-    sendOk(res, { triggered: "TASK_COMPLETED", jobId: m.jobId }); return;
+    sendOk(res, { triggered: "job_completed", jobId: m.jobId }); return;
   }
   if (method === "POST" && (m = matchPath("/ui/notify/resolved/:jobId", path_))) {
     const t = tasks.get(m.jobId);
@@ -860,7 +855,7 @@ const server = http.createServer(async (req, res) => {
     const si = t.providerAgentId ?? "mock-seller-agent-001";
     const sa = t.providerAgentAddress ?? "0xSeller000000000000000000000000000000001";
     notifyArbitrationResult(m.jobId, t.buyerAgentAddress, t.buyerAgentId, sa, si, winner).catch(console.error);
-    sendOk(res, { triggered: winner === "provider" ? "TASK_COMPLETED" : "TASK_REJECTED", jobId: m.jobId, winner }); return;
+    sendOk(res, { triggered: "dispute_resolved", jobId: m.jobId, winner }); return;
   }
 
   // ── x402 pay (mock) ──────────────────────────────────────────────────────

@@ -292,9 +292,9 @@ async function main() {
     if (from === BUYER_COMM_ADDR) return;
     console.log(`[buyer] ← conv=${convId.slice(-20)} from=${from.slice(0, 20)} type=${type}`);
 
-    // TASK_CONFIRMED: 只记录日志，不自动协商；用户需点击左侧任务/卖家手动触发
-    if (type === "TASK_CONFIRMED" && jobId) {
-      console.log(`[buyer] TASK_CONFIRMED jobId=${jobId}，等待用户手动选择卖家...`);
+    // job_created: 只记录日志，不自动协商；用户需点击左侧任务/卖家手动触发
+    if (type === "job_created" && jobId) {
+      console.log(`[buyer] job_created jobId=${jobId}，等待用户手动选择卖家...`);
       pushSSE("tasks_refresh", {});
       return;
     }

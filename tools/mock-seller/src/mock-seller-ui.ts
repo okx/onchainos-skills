@@ -82,7 +82,7 @@ async function autoReply(session: Session, msgType: string) {
     sellerSend(session.convId, { type: "TASK_APPLY", jobId: session.jobId, content: fmt("TASK_APPLY", "我正式申请接单，报价 100 USDT，支付方式 non_escrow，交付时间 48 小时。") });
     session.step = 4;
     await callApplyApi(session.jobId).catch(console.error);
-  } else if (msgType === "TASK_ACCEPTED") {
+  } else if (msgType === "job_accepted") {
     await sleep(3000);
     const url = `https://mock-deliverable.example.com/${session.jobId}.html`;
     sellerSend(session.convId, { type: "TASK_DELIVER", jobId: session.jobId, content: fmt("TASK_DELIVER", "任务已完成，请买家验收。"), deliverableUrl: url });
@@ -196,7 +196,7 @@ async function main() {
     const { type } = payload;
     const jobId = String(payload.jobId ?? "");
 
-    if (type === "TASK_CONFIRMED" || from === SELLER_COMM_ADDR) return;
+    if (type === "job_created" || from === SELLER_COMM_ADDR) return;
     console.log(`[seller] ← conv=${convId.slice(-20)} from=${from.slice(0, 20)} type=${type}`);
 
     if (!sessions.has(convId)) {

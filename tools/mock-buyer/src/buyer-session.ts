@@ -139,8 +139,8 @@ export class BuyerSession {
       this.step = 3; this.onStateChange?.(); return;
     }
 
-    // 收到 TASK_APPLIED（链上确认）→ accept（不限 step，防重复）
-    if (type === "TASK_APPLIED" && !this.accepted) {
+    // 收到 provider_applied（链上确认）→ accept（不限 step，防重复）
+    if (type === "provider_applied" && !this.accepted) {
       this.accepted = true;
       const agentId = String(payload.sellerAgentId ?? payload.providerAgentId ?? this.sellerAgentId);
       console.log(`[buyer][session] TASK_APPLY received, calling accept API seller=${agentId}...`);
@@ -149,8 +149,8 @@ export class BuyerSession {
       this.step = 4; this.onStateChange?.(); return;
     }
 
-    // TASK_SUBMITTED（链上确认）→ complete 或 refuse（根据 BUYER_MODE）
-    if (type === "TASK_SUBMITTED" && !this.completed) {
+    // job_submitted（链上确认）→ complete 或 refuse（根据 BUYER_MODE）
+    if (type === "job_submitted" && !this.completed) {
       this.completed = true;
       const url = String(payload.deliverableUrl ?? "");
       await sleep(1000);
@@ -167,22 +167,21 @@ export class BuyerSession {
     }
 
     // 终态通知（仅记录日志）
-    if (type === "TASK_COMPLETED") {
-      console.log(`[buyer][session] TASK_COMPLETED job=${this.jobId}, flow done ✅`);
+    if (type === "job_completed") {
+      console.log(`[buyer][session] job_completed job=${this.jobId}, flow done ✅`);
       this.step = 10; this.onStateChange?.(); return;
     }
-    if (type === "TASK_REFUSED") {
-      console.log(`[buyer][session] TASK_REFUSED confirmed job=${this.jobId}, waiting for seller decision`);
+    if (type === "job_refused") {
+      console.log(`[buyer][session] job_refused confirmed job=${this.jobId}, waiting for seller decision`);
       this.step = 8; this.onStateChange?.(); return;
     }
-    if (type === "TASK_REJECTED") {
-      const reason = String(payload.reason ?? "");
-      const isArb = Boolean(payload.arbitration);
-      console.log(`[buyer][session] TASK_REJECTED job=${this.jobId} arbitration=${isArb} reason=${reason}, refund received ✅`);
+    if (type === "dispute_resolved" || type === "confirm_refund") {
+      const winner = String(payload.winner ?? "");
+      console.log(`[buyer][session] ${type} job=${this.jobId} winner=${winner}, flow ended`);
       this.step = 10; this.onStateChange?.(); return;
     }
-    if (type === "TASK_DISPUTED") {
-      console.log(`[buyer][session] TASK_DISPUTED job=${this.jobId}, arbitration started`);
+    if (type === "job_disputed") {
+      console.log(`[buyer][session] job_disputed job=${this.jobId}, arbitration started`);
       this.step = 9; this.onStateChange?.(); return;
     }
   }

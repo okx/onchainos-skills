@@ -2,7 +2,7 @@
  * TypeScript mock arbitrator (headless)
  *
  * 架构：每个 convId 一个 ArbSession（和系统通知 sub-session 对称）
- * 流程：收到 TASK_DISPUTED → 延迟 5s → 发 TASK_RESOLVE（在同一 convId 内回复）
+ * 流程：收到 job_disputed → 延迟 5s → 调用 resolve API（在同一 convId 内回复）
  *
  * 用法:
  *   cd tools/mock-arbitrator
@@ -39,7 +39,7 @@ class ArbSession {
     if (this.resolved) return;
     const { type } = envelope.payload;
 
-    if (type === "TASK_DISPUTED") {
+    if (type === "job_disputed") {
       this.resolved = true;
       // 延迟 5s 模拟审查
       await sleep(5000);
@@ -70,7 +70,7 @@ async function main() {
   await client.connectAndRegister();
   await client.registerIdentity("EVALUATOR", ARB_AGENT_ID, ARB_COMM_ADDR);
   console.log(`✓ 身份已注册: role=EVALUATOR agentId=${ARB_AGENT_ID}`);
-  console.log(`[arb] 无头模式，默认裁决=${DEFAULT_VERDICT}，等待 TASK_DISPUTED...\n`);
+  console.log(`[arb] 无头模式，默认裁决=${DEFAULT_VERDICT}，等待 job_disputed...\n`);
 
   const sessions = new Map<string, ArbSession>();
 
