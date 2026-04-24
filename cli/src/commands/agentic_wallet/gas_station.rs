@@ -48,22 +48,10 @@ pub async fn fetch_update_default_token(chain: &str, gas_token_address: &str) ->
     let from_addr = addr_info.address;
 
     let mut client = WalletApiClient::new()?;
-    let req = serde_json::json!({
-        "chainIndex": &chain_index,
-        "gasTokenAddress": gas_token_address,
-        "fromAddr": &from_addr,
-    });
-    let data = match client
+    let data = client
         .gas_station_update_default_token(&access_token, &chain_index, gas_token_address, &from_addr)
         .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            super::debug_dump::dump_error("04-update-default-token", &req, &format!("{e:#}"));
-            return Err(format_api_error(e));
-        }
-    };
-    super::debug_dump::dump("04-update-default-token", &req, &data);
+        .map_err(format_api_error)?;
     Ok(data)
 }
 
@@ -74,41 +62,22 @@ pub async fn fetch_update_default_token(chain: &str, gas_token_address: &str) ->
 pub async fn fetch_update(chain: &str, enable: bool) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let chain_index = crate::chains::resolve_chain(chain);
-    // Only `enabled=true` needs fromAddr per backend spec.
-    let from_addr: Option<String> = if enable {
-        let chain_entry = super::chain::get_chain_by_real_chain_index(&chain_index)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("unsupported chain: {chain}"))?;
-        let chain_name = chain_entry["chainName"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("chain entry missing chainName"))?;
-        let wallets = crate::wallet_store::load_wallets()?
-            .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-        let (_, addr_info) = super::transfer::resolve_address(&wallets, None, chain_name)?;
-        Some(addr_info.address)
-    } else {
-        None
-    };
+    // Both enable and disable require fromAddr — backend contract is consistent across both.
+    let chain_entry = super::chain::get_chain_by_real_chain_index(&chain_index)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("unsupported chain: {chain}"))?;
+    let chain_name = chain_entry["chainName"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("chain entry missing chainName"))?;
+    let wallets = crate::wallet_store::load_wallets()?
+        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+    let (_, addr_info) = super::transfer::resolve_address(&wallets, None, chain_name)?;
+    let from_addr = addr_info.address;
 
     let mut client = WalletApiClient::new()?;
-    let mut req_body = serde_json::json!({
-        "chainIndex": &chain_index,
-        "enabled": enable,
-    });
-    if let Some(ref addr) = from_addr {
-        req_body["fromAddr"] = Value::String(addr.clone());
-    }
-    let dump_tag = if enable { "05-enable" } else { "05-disable" };
-    let data = match client
-        .gas_station_update(&access_token, &chain_index, enable, from_addr.as_deref())
+    let data = client
+        .gas_station_update(&access_token, &chain_index, enable, Some(&from_addr))
         .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            super::debug_dump::dump_error(dump_tag, &req_body, &format!("{e:#}"));
-            return Err(format_api_error(e));
-        }
-    };
-    super::debug_dump::dump(dump_tag, &req_body, &data);
+        .map_err(format_api_error)?;
     Ok(data)
 }

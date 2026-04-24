@@ -16,6 +16,9 @@ mod wallet_api;
 mod wallet_store;
 mod watch;
 
+#[cfg(test)]
+mod test_helpers;
+
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]

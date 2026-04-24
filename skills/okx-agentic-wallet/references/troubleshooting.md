@@ -29,23 +29,36 @@
 
 ## Gas Station (`wallet send` with insufficient native token)
 
-Load `references/gas-station.md` for the end-to-end flow. This section covers failure modes and how the Agent should respond.
+Load `references/gas-station.md` for the end-to-end flow and the authoritative `gasStationStatus` state matrix. This section covers failure modes and how the Agent should respond per status.
 
-### First `unsignedInfo` call (Step 1)
+### First `unsignedInfo` call (Step 1) — per `gasStationStatus`
 
-| Edge Case | How to detect | Agent response |
+| gasStationStatus | Detection | Agent / CLI response |
 |---|---|---|
-| Pending Gas Station tx blocks new one | `gasStationStatus="HAS_PENDING_TX"` + `hasPendingTx=true` | Use PRD wording: "当前有一笔交易正在处理中，暂时无法通过 Gas 加油站支付 Gas。请等待该笔交易完成后重试。" Do NOT auto-retry `wallet send` — backend will block again. Once Gas Station is enabled for an account/chain, every subsequent ERC-20 is routed through Gas Station regardless of native-token balance; topping up native tokens does NOT bypass the pending check. To proceed before the pending TTL expires, disable Gas Station via `wallet gas-station disable`. |
-| All stablecoins insufficient | `gasStationStatus="INSUFFICIENT_ALL"` + `insufficientAll=true` + `fromAddr` | "No stablecoin has enough balance to cover the gas fee. Please top up at: {fromAddr}. Accepted: ETH, USDT, USDC, USDG." Do NOT proceed. |
-| Backend auto-selected | `gasStationStatus` ∈ {READY_TO_USE / PENDING_UPGRADE / REENABLE_ONLY} with `hash` non-empty + `autoSelectedToken=true` | Silently broadcast. After success, tell user: "Gas fee: {serviceCharge formatted} {serviceChargeSymbol} (via Gas Station). Transaction submitted. Use orderId {orderId} to query status later." |
-| First-time enable needed (Scene A) | Confirming (exit 2) + `gasStationStatus="FIRST_TIME_PROMPT"` + `gasStationFirstTimePrompt=true` | Walk the 3-option decision tree: (1) Enable + set default → re-run with `--enable-gas-station --gas-token-address --relayer-id`; (2) Enable without default → re-run with `--enable-gas-station` only; (3) Do NOT enable → terminate, tell user to top up native token to `{fromAddr}` and retry. See `gas-station.md` Step 2 Scene A. |
-| Default token insufficient (Scene C) | Confirming (exit 2) + `gasStationStatus="READY_TO_USE"` + `hash` empty + `gasStationFirstTimePrompt=false` | Walk the 2-question decision tree: (1) Pick an alternative token from list; (2) Replace default? — If no → re-run with `--gas-token-address --relayer-id` only (this tx); If yes → same re-run, then call `wallet gas-station update-default-token` after tx completes. See `gas-station.md` Step 2 Scene C. |
-| Relayer single-tx cap exceeded (100,000 U) | Backend silently returns `gasStationUsed=false` for this specific amount | Do NOT proactively explain. Only if user asks "why can't I use stablecoin for this?": "This transaction exceeds the Gas Station single-transaction limit (100,000 U). Please use native tokens or split into multiple transactions." |
-| Unsupported chain | Backend returns `gasStationStatus="NOT_APPLICABLE"` + `gasStationUsed=false` | Gas Station only supports Ethereum, BNB Chain, Base, Polygon, Arbitrum One, Optimism, X Layer. List these only if user asks. |
-| Native token transfer | Backend returns `gasStationStatus="NOT_APPLICABLE"` + `gasStationUsed=false` when no `contract-token` | Gas Station does not cover native token (ETH/BNB) transfers. Only ERC-20 transfers are supported. |
-| Native-token sufficient, Gas Station NOT enabled | Backend returns `gasStationStatus="NOT_APPLICABLE"` on an account/chain with no Gas Station delegation | Normal flow — no Gas Station needed. No special message. Note: once Gas Station is enabled for an account/chain, native-token sufficient does NOT revert to `NOT_APPLICABLE`; the account stays on the Gas Station path until explicitly disabled. |
+| `NOT_APPLICABLE` | `gasStationUsed=false` + normal transfer fields (unsignedTxHash + unsignedTx) | Normal flow — no Gas Station needed, no special messaging. Covers: native-token transfer, unsupported chain, native sufficient + GS disabled. Note: once GS is enabled, a sufficient native balance does **not** cause a revert to NOT_APPLICABLE; the account stays on the GS path until explicitly disabled. |
+| `FIRST_TIME_PROMPT` | Confirming (exit 2) + `gasStationFirstTimePrompt=true` + tokenList returned | Present one combined prompt — `1` decline / `2+` enable and use tokenList[N-2] to pay gas. Backend pins the picked token as the chain's default. `1`: do not re-run, tell the user balance is insufficient for gas at `{fromAddr}`. `N ≥ 2`: re-run `wallet send --enable-gas-station --gas-token-address <addr> --relayer-id <id>` with the picked token. **Never** call `wallet gas-station disable` as a follow-up — that is a different intent. See `gas-station.md` Step 2 Scene A. |
+| `PENDING_UPGRADE` (Phase 1 diagnostic) | Confirming (exit 2); Phase 1 returns tokenList with hash empty (chain not yet delegated) | Same combined prompt as Scene A (`1` decline / `2+` enable and use this token). Phase 2 sends `--enable-gas-station --gas-token-address --relayer-id`; the response carries both transaction and activation signing material, which CLI signs together in one broadcast. See `gas-station.md` Step 2 Scene A'. |
+| `REENABLE_ONLY` (DB disabled + chain delegated) | Phase 1 diagnostic (hash empty) | **Do NOT silently re-enable** — the user explicitly disabled Gas Station, so CLI returns Confirming and asks first. Same combined prompt shape as Scene A (`1` decline / `2+` re-enable and use this token). Backend overwrites the previous default with the picked token. Phase 2 response carries only transaction signing material. See `gas-station.md` Step 2 Scene B'. |
+| `READY_TO_USE` + default matches + sufficient (Scene B) | `autoSelectedToken=true` + `hash` non-empty | **CLI silently completes** Phase 2 + sign + broadcast. Tell the user: "Gas fee: {serviceCharge} {serviceChargeSymbol} (via Gas Station). orderId {orderId}." |
+| `READY_TO_USE` + default insufficient / multiple sufficient (Scene C) | Confirming (exit 2) + `hash` empty + `gasStationFirstTimePrompt=false` | Walk the 2-question dialog: (1) Pick alternative token; (2) Replace default? — No → re-run with `--gas-token-address --relayer-id` only; Yes → same re-run, then call `wallet gas-station update-default-token` after the tx completes. See `gas-station.md` Step 2 Scene C. |
+| `INSUFFICIENT_ALL` | `insufficientAll=true` + `fromAddr` + all tokenList entries `sufficient=false` | Use the authoritative user message in `gas-station.md` Step 1 table `INSUFFICIENT_ALL` row. Do NOT proceed. |
+| `HAS_PENDING_TX` | `hasPendingTx=true` + `gasStationUsed=true` + `autoSelectedToken=false` + `executeResult=true` (no `executeErrorMsg`) | Use the authoritative user message in `gas-station.md` Step 1 table `HAS_PENDING_TX` row. Do NOT auto-retry. |
 
-### Second `unsignedInfo` call (Step 2, after user chose token)
+### Special cases
+
+| Scenario | Detection | Agent response |
+|---|---|---|
+| Relayer single-tx cap exceeded (100,000 U) | Backend silently falls back to `gasStationUsed=false` for that amount | Do not proactively explain. If the user asks "why can't I use stablecoin for this?": "This transaction exceeds the Gas Station single-transaction limit (100,000 U). Please use native tokens or split into multiple transactions." |
+| Native insufficient + stablecoin sufficient, but `wallet send` returned abnormal error (empty error / unexpected code) | User has stablecoins on the same chain that could cover transfer + ~gas fee, but the GS dispatch glitched (backend error / CLI bug) | Tell the user: "Your native token is insufficient, but your {token} balance can pay gas via Gas Station. Want to enable it?" Do NOT default-suggest "top up native" first. Follow Step 2 Scene A. |
+| Native insufficient + GS was previously disabled on this chain | User had run `wallet gas-station disable` earlier and now hits native-insufficient | Tell the user explicitly: "Gas Station is currently disabled on this chain. Re-enabling will let your stablecoin pay gas." Then walk Step 2 Scene A (or B' if backend returns REENABLE_ONLY). |
+| GS transfer blocked by default-gas-token balance while another stablecoin is available on the same chain | Any scenario where the default gas token's balance is the obstacle (cannot cover gas fee, or too tight to cover `transferAmount + gasFee` in the same token), and the account holds another stablecoin on this chain. Also applies when the user explicitly asks "can I switch the gas stablecoin?". | **Suggest switching the gas token first.** Example: "You have {alt_token} {balance} available on this chain — switch the gas payment to {alt_token}?" If yes, run `wallet gas-station update-default-token --chain <chain> --gas-token-address <alt_addr>` then re-issue the transfer. If the user has no alternatives, the fallback is to reduce the transfer amount or top up. **Do not default-suggest "reduce amount" or "top up" when alternative stablecoins are available.** |
+
+### Second `unsignedInfo` call (Step 2, after CLI fills in params)
+
+Phase 2 request params vary by status (see the authoritative matrix in `gas-station.md`):
+- `PENDING_UPGRADE` → `enableGasStation=true + gasTokenAddress + relayerId`; response carries transaction + activation signing material; CLI signs both.
+- `REENABLE_ONLY` → `enableGasStation=true` + `gasTokenAddress` + `relayerId` (user-picked token; backend overwrites previous default); response carries only transaction signing material; CLI signs once.
+- `READY_TO_USE` (Scene B/C) → `gasTokenAddress + relayerId` (no `enable`); response carries only transaction signing material; CLI signs once.
 
 | Edge Case | How to detect | Agent response |
 |---|---|---|
@@ -54,6 +67,8 @@ Load `references/gas-station.md` for the end-to-end flow. This section covers fa
 | Simulation failure (`executeResult=false`) | CLI bails with `transaction simulation failed: <msg>` | Show `<msg>` to user. Do NOT broadcast. Common causes: insufficient token balance for the `amount`, recipient invalid, contract revert. |
 | Balance changed between Step 1 and Step 2 | Second-call returns `insufficientAll` or simulation fails | Rerun Step 1 to get updated `tokenList`. Possible cause: another tx consumed the balance. |
 | `hash` empty on second call | Parse error / backend bug | Surface backend error. Do NOT attempt to sign. |
+| PENDING_UPGRADE Phase 2 missing `--enable-gas-station` | CLI sends `enableGasStation=false` + gasTokenAddress + relayerId; broadcast returns code=10004 (empty msg) | CLI bug — PENDING_UPGRADE must always set `enableGasStation=true`. Retry with the flag added. |
+| broadcast `msgForSign` missing user712 signature | Only `authSignatureFor7702` + `sessionCert` + `sessionSignature`, no user712 signature; backend returns code=81358 "empty signedTx" | CLI bug — when the Phase 2 response includes `eip712MessageHash`, CLI must sign it and attach to `msgForSign`. Verify the branch at [transfer.rs:855](cli/src/commands/agentic_wallet/transfer.rs#L855) is executed. |
 
 ### Broadcast (Step 3, after signing)
 
@@ -62,8 +77,8 @@ Gas Station broadcast is **asynchronous** — `txHash` returns "processing", act
 | Edge Case | How to detect | Agent response |
 |---|---|---|
 | Broadcast returns "processing" | Normal: `orderId` present, `txHash` empty | Tell user: "Transaction submitted via Gas Station. Query status with `wallet history --chain <chain> --order-id <orderId>` in a few minutes." |
-| User asks for `txHash` before broadcast completes | `txHash` empty, only `orderId` | "交易上链中，请稍后查询。" Offer natural-language template ("查订单 {orderId}") plus the CLI command `onchainos wallet history --chain <chain> --order-id <orderId>`. Do NOT invent a hash. |
-| User asks why txHash returns slower than normal tx | After success | "这笔走的是 Gas Station，Hash 会比普通交易稍晚返回。" One sentence only — do not expand into Relayer / 7702 technical details. |
+| User asks for `txHash` before broadcast completes | `txHash` empty, only `orderId` | Tell the user: "The transaction is being confirmed on-chain. Please ask me again in a moment — just say `check order {orderId}`." Never fabricate a hash. Never show the raw CLI command to the user. |
+| User asks why txHash returns slower than normal tx | After success | Reply with one sentence: "This transaction uses Gas Station, so the hash returns slightly later than a regular transaction." Do not expand into relayer / on-chain-setup details. |
 | Relayer timeout (10-min TTL) | `wallet history` shows Failed status with Relayer timeout reason | "This Gas Station transaction did not complete within the 10-minute relay window. Your funds are safe — the stablecoin was not spent. Please retry or top up native tokens." |
 | 7702 upgrade revert during first Gas Station tx | History shows Failed; cannot distinguish upgrade vs execute from response | "The first-time Gas Station transaction failed during on-chain execution. Your funds are intact. Please retry; if it persists, report with the txHash." See `references/eip7702-upgrade.md`. |
 | Broadcast API-level error (code 81362) | Returned as Confirming with warning | Show warning, ask user to confirm. If confirmed, re-run with `--force`. |
@@ -82,9 +97,9 @@ Gas Station broadcast is **asynchronous** — `txHash` returns "processing", act
 | Command | Failure mode | Agent response |
 |---|---|---|
 | `wallet gas-station update-default-token` | API error | Show the error message, do NOT retry automatically. Common causes: invalid token address, chain not supported, user not logged in. |
-| `wallet gas-station disable` | API error | Show the error message, do NOT retry automatically. Note: disable is DB-only; on-chain 7702 delegation is preserved, so re-enabling later is instant (no new upgrade). |
-| User confuses "disable" with "revoke 7702" | User says "撤销 7702" / "revoke 7702" | Agent output must translate to "**关闭 Gas Station** / disable Gas Station". NEVER use "撤销", "revoke", "7702", "授权" in your response. Tell user: "关闭后切换回主网币支付 Gas，随时可重新开启 (链上委托保留，无需重新升级)。" |
-| User wants to fully remove on-chain 7702 delegation | PRD does not expose this operation in current scope | Explain: "当前仅支持关闭 Gas Station（切换回主网币支付 Gas）。如需进一步清理钱包链上状态，请在钱包主端操作。" Do NOT attempt to invent a command. Avoid saying "7702 委托" / "撤销" in the reply. |
+| `wallet gas-station disable` | API error | Show the error message, do NOT retry automatically. (Internal note, Agent-only: disable is DB-only; on-chain state is preserved, so re-enabling later is instant — **never paraphrase this to the user**. For the success wording see `gas-station.md` User-Facing Reply Templates.) |
+| User confuses "disable" with "revoke 7702" | User says "revoke 7702" / "cancel authorization" or equivalent (in any language) | See `gas-station.md` User Intent Recognition row "disable gas station" for the handling, and User-Facing Reply Templates for the reply wording. |
+| User wants to fully remove on-chain delegation | Not exposed by the current CLI | Explain: "The current CLI only disables Gas Station (switches this chain back to native-token gas). For deeper wallet cleanup, please use the main wallet portal." Do not invent a command. Never mention internal mechanism terms — see `gas-station.md` User Intent Recognition MUST block for the ban list. |
 
 ### Blocked scenarios (do NOT proactively mention Gas Station)
 
@@ -99,14 +114,6 @@ Per PRD, when any of these conditions hold, the backend returns `gasStationUsed=
 
 If the user explicitly asks "why can't I use stablecoin?", explain the matching reason. Otherwise stay silent.
 
-### Agent output vocabulary (critical)
+### Agent output vocabulary
 
-<MUST>
-When responding about Gas Station disable / 7702 revocation, the **output** must use only:
-- 中文: "开启 / 关闭 Gas Station"
-- English: "enable / disable Gas Station"
-
-**NEVER output** to the user: "撤销 7702", "取消 7702 授权", "revoke 7702", "cancel 7702 upgrade", "EIP-7702", "7702 升级", "授权", "委托".
-
-Users may **input** any of these phrases — recognize them as intent, but translate your response to the unified vocabulary. 7702 is an internal implementation detail, not user-facing terminology. Exception: if user directly asks "什么是 7702", brief explanation is allowed but note it's an internal mechanism.
-</MUST>
+See `gas-station.md` — "User Intent Recognition" MUST block (above the intent table) for the authoritative vocabulary rules and ban list. Do not duplicate here.

@@ -189,7 +189,7 @@ async fn sign_and_broadcast(
         }
         Some(trace_headers_unsigned.as_slice())
     };
-    let unsigned = client
+    let mut unsigned = client
         .pre_transaction_unsigned_info(
             &access_token,
             &addr_info.chain_path,
@@ -255,39 +255,92 @@ async fn sign_and_broadcast(
             && unsigned.eip712_message_hash.is_empty()
             && unsigned.unsigned_tx_hash.is_empty()
         {
-            // Phase 1 diagnostic response: backend is waiting for the CLI to re-invoke the
-            // command with `--gas-token-address <addr> --relayer-id <id>` (and
-            // `--enable-gas-station` for first-time activation or re-enable) so it can call
-            // wallet.callData712() and return the 712 message hash for signing.
-            let token_list_str = unsigned
-                .gas_station_token_list
-                .iter()
-                .filter(|t| t.sufficient)
-                .enumerate()
-                .map(|(i, t)| {
-                    format!(
-                        "{}. {} (balance: {}, fee: {})",
-                        i + 1,
-                        t.symbol,
-                        t.balance,
-                        t.service_charge
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            let message = format!(
-                "Gas Station is active on this chain. Choose a token to pay gas:\n{}\n\n\
-                 Re-run the command with `--gas-token-address <addr> --relayer-id <id>` \
-                 (add `--enable-gas-station` if the status is FIRST_TIME_PROMPT or REENABLE_ONLY).",
-                token_list_str
-            );
-            let next = format!(
-                "Token list: {}",
-                serde_json::to_string(&unsigned.gas_station_token_list).unwrap_or_default()
-            );
-            return Err(crate::output::CliConfirming { message, next }.into());
+            match classify_gs_phase1(&unsigned) {
+                GsPhase1Decision::FirstTime => {
+                    return Err(build_gs_first_time_prompt(&addr_info, &unsigned));
+                }
+                GsPhase1Decision::Reenable => {
+                    return Err(build_gs_reenable_prompt(&addr_info, &unsigned));
+                }
+                GsPhase1Decision::AutoPick {
+                    fee_token_address,
+                    relayer_id,
+                    needs_enable,
+                } => {
+                    // Scene B: re-issue Phase 2 with the auto-picked token and rebind `unsigned`.
+                    let phase2 = client
+                        .pre_transaction_unsigned_info(
+                            &access_token,
+                            &addr_info.chain_path,
+                            chain_index_num,
+                            &addr_info.address,
+                            tx.to_addr,
+                            tx.value,
+                            tx.contract_addr,
+                            &session_cert,
+                            tx.input_data,
+                            tx.unsigned_tx,
+                            tx.gas_limit,
+                            tx.aa_dex_token_addr,
+                            tx.aa_dex_token_amount,
+                            tx.jito_unsigned_tx,
+                            trace_ref,
+                            if needs_enable { Some(true) } else { None },
+                            Some(&fee_token_address),
+                            Some(&relayer_id),
+                        )
+                        .await
+                        .map_err(format_api_error)?;
+                    unsigned = phase2;
+                }
+                GsPhase1Decision::NeedsUserPick => {
+                    return Err(build_gs_token_selection_prompt(&unsigned));
+                }
+            }
         }
-        // Phase 2 响应（hash / eip712MessageHash / unsignedTxHash 之一非空）继续走下面的正常签名流程。
+        // Phase 2 response (one of hash / eip712MessageHash / unsignedTxHash non-empty) falls
+        // through to the normal signing flow below.
+    }
+
+    // Defensive guard: backend may return a "diagnostic-only" response where every signing-material
+    // field is empty and only gasStationStatus is set. In that case the CLI must not send an empty
+    // msgForSign to broadcast -- the backend TEE would reject it with code=81358 "empty signedTx",
+    // which is unfriendly to the user. Emit an actionable error classified by GasStationStatus.
+    let has_sign_data = !unsigned.hash.is_empty()
+        || !unsigned.eip712_message_hash.is_empty()
+        || !unsigned.unsigned_tx_hash.is_empty()
+        || !unsigned.unsigned_tx.is_empty()
+        || !unsigned.auth_hash_for7702.is_empty()
+        || !unsigned.jito_unsigned_tx.is_empty();
+    if !has_sign_data {
+        use crate::wallet_api::GasStationStatus as GS;
+        match unsigned.gs_status() {
+            GS::FirstTimePrompt | GS::ReenableOnly => bail!(
+                "Gas Station activation required (status: {}), but backend did not return \
+                 a token list. Re-run with `--enable-gas-station --gas-token-address <addr> \
+                 --relayer-id <id>` after picking a token, or first activate Gas Station via \
+                 a small `wallet send` ERC-20 transfer.",
+                unsigned.gas_station_status
+            ),
+            GS::PendingUpgrade => bail!(
+                "Gas Station activation is pending on-chain. Wait ~30s and retry. If this \
+                 persists, the account may be stuck — contact support to reset."
+            ),
+            GS::InsufficientAll => bail!(
+                "Insufficient balance across native token and all Gas Station stablecoins \
+                 (USDT / USDC / USDG). Top up at: {}",
+                addr_info.address
+            ),
+            GS::HasPendingTx => bail!(
+                "A pending Gas Station transaction is blocking this request. Wait for it to \
+                 complete, or run `wallet gas-station disable --chain <chain>` to bypass."
+            ),
+            GS::NotApplicable | GS::ReadyToUse | GS::Unknown => bail!(
+                "Backend returned empty signing materials with gasStationStatus=\"{}\". \
+                 This is unexpected — likely a backend/environment issue.",
+                unsigned.gas_station_status
+            ),
+        }
     }
 
     let signing_seed = crate::crypto::hpke_decrypt_session_sk(&encrypted_session_sk, &session_key)?;
@@ -361,6 +414,15 @@ async fn sign_and_broadcast(
     }
     if let Some(src) = tx_source {
         extra_data_obj["txSource"] = json!(src);
+    }
+    // Gas Station: layer on GS core fields only.
+    // - gs_apply_extra_data_fields: paymentType / serviceCharge / relayerId /
+    //   context / user712Data / user7702Data (for 7702 upgrade).
+    // - toAdr / tokenAddress / coinAmount are NOT written here — aligned with
+    //   master behavior which treats unsignedInfo.extraData as a passthrough
+    //   (backend fills these semantic fields in its response).
+    if unsigned.gas_station_used {
+        gs_apply_extra_data_fields(&mut extra_data_obj, &unsigned, unsigned.need_update7702);
     }
     if cfg!(feature = "debug-log") {
         eprintln!(
@@ -471,16 +533,7 @@ pub(super) async fn cmd_send(
     let session_cert = &session.session_cert;
 
     let mut client = crate::wallet_api::WalletApiClient::new()?;
-    // TEMPORARY: debug_dump — 联调后删除 unsigned_req 定义和 debug_dump::dump 调用
-    let unsigned_req = json!({
-        "chainPath": addr_info.chain_path,
-        "chainIndex": chain_index_num,
-        "fromAddr": addr_info.address,
-        "toAddr": recipient,
-        "amount": amt,
-        "contractAddr": contract_token,
-    });
-    let unsigned = match client
+    let unsigned = client
         .pre_transaction_unsigned_info(
             &access_token,
             &addr_info.chain_path,
@@ -496,43 +549,21 @@ pub(super) async fn cmd_send(
             None, // relayer_id
         )
         .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            // TEMPORARY: debug_dump — 记录失败的第一次 unsignedInfo
-            super::debug_dump::dump_error("01-unsignedInfo-first", &unsigned_req, &format!("{e:#}"));
-            return Err(format_api_error(e));
-        }
-    };
-    super::debug_dump::dump("01-unsignedInfo-first", &unsigned_req, &json!({
-        "gasStationUsed": unsigned.gas_station_used,
-        "gasStationFirstTimePrompt": unsigned.gas_station_first_time_prompt,
-        "hash": &unsigned.hash,
-        "authHashFor7702": &unsigned.auth_hash_for7702,
-        "signType": &unsigned.sign_type,
-        "hasPendingTx": unsigned.has_pending_tx,
-        "insufficientAll": unsigned.insufficient_all,
-        "autoSelectedToken": unsigned.auto_selected_token,
-        "serviceCharge": &unsigned.service_charge,
-        "serviceChargeSymbol": &unsigned.service_charge_symbol,
-        "needUpdate7702": unsigned.need_update7702,
-        "gasStationTokenList": &unsigned.gas_station_token_list,
-        "executeResult": &unsigned.execute_result,
-        "executeErrorMsg": &unsigned.execute_error_msg,
-    }));
+        .map_err(format_api_error)?;
 
-    // ── Gas Station dispatch（两阶段协议） ──
-    // 第一次调用（本次）= Phase 1 诊断：backend 只返 gasStationStatus + tokenList，
-    // hash / eip712MessageHash / authHashFor7702 等故意全 null；
-    // 第二次调用需要带 enableGasStation=true + gasTokenAddress + relayerId，backend 才返完整签名数据。
-    // 因此判断走哪个分支：看 backend 有没有返任何可签字段。
+    // ── Gas Station dispatch (two-phase protocol + client-side Scene B/C decision) ──
+    // Phase 1 diagnostic: backend returns gasStationStatus + gasStationTokenList +
+    // defaultGasTokenAddress with all hash fields null. CLI matches defaultGasTokenAddress
+    // against the token list:
+    //   - hit + sufficient → Scene B: CLI auto-runs Phase 2 with that token + sign + broadcast
+    //   - otherwise → Scene C: return Confirming so the user picks a token
     if unsigned.gas_station_used {
         // 终结类状态：直接告知用户
         if unsigned.has_pending_tx {
-            return handle_gs_pending_tx();
+            return emit_gs_pending_tx_state();
         }
         if unsigned.insufficient_all {
-            return handle_gs_insufficient_all(&unsigned, &addr_info.address);
+            return emit_gs_insufficient_all_state(&unsigned, &addr_info.address);
         }
         // Phase 2 响应：backend 返了签名材料，直接签广播
         if !unsigned.hash.is_empty()
@@ -545,16 +576,35 @@ pub(super) async fn cmd_send(
             )
             .await;
         }
-        // Phase 1 诊断响应：让用户从 tokenList 选 token
-        // FIRST_TIME_PROMPT / REENABLE_ONLY 都需要带 enableGasStation=true 再调
-        // READY_TO_USE + hash=null（Scene C 默认 token 不够）只需选备选 token，不带 enableGasStation
-        if unsigned.gas_station_first_time_prompt
-            || unsigned.gs_status() == crate::wallet_api::GasStationStatus::FirstTimePrompt
-            || unsigned.gs_status() == crate::wallet_api::GasStationStatus::ReenableOnly
-        {
-            return handle_gs_first_time_prompt(&unsigned);
+        match classify_gs_phase1(&unsigned) {
+            GsPhase1Decision::FirstTime => {
+                return Err(build_gs_first_time_prompt(&addr_info, &unsigned));
+            }
+            GsPhase1Decision::Reenable => {
+                return Err(build_gs_reenable_prompt(&addr_info, &unsigned));
+            }
+            GsPhase1Decision::AutoPick {
+                fee_token_address,
+                relayer_id,
+                needs_enable,
+            } => {
+                return gas_station_send(
+                    amt,
+                    recipient,
+                    chain,
+                    from,
+                    contract_token,
+                    force,
+                    Some(&fee_token_address),
+                    Some(&relayer_id),
+                    needs_enable,
+                )
+                .await;
+            }
+            GsPhase1Decision::NeedsUserPick => {
+                return Err(build_gs_token_selection_prompt(&unsigned));
+            }
         }
-        return handle_gs_default_token_insufficient(&unsigned);
     }
 
     // ── Not Gas Station: original flow ──
@@ -615,19 +665,7 @@ async fn gas_station_send(
         .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
 
     let mut client = crate::wallet_api::WalletApiClient::new()?;
-    // TEMPORARY: debug_dump — 联调后删除 unsigned_req 定义和 debug_dump::dump 调用
-    let unsigned_req = json!({
-        "chainPath": addr_info.chain_path,
-        "chainIndex": chain_index_num,
-        "fromAddr": addr_info.address,
-        "toAddr": recipient,
-        "amount": amt,
-        "contractAddr": contract_token,
-        "enableGasStation": enable_gas_station,
-        "gasTokenAddress": gas_token_address,
-        "relayerId": relayer_id,
-    });
-    let unsigned = match client
+    let unsigned = client
         .pre_transaction_unsigned_info(
             &access_token,
             &addr_info.chain_path,
@@ -643,29 +681,7 @@ async fn gas_station_send(
             relayer_id,
         )
         .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            // TEMPORARY: debug_dump — 记录失败的第二次 unsignedInfo
-            super::debug_dump::dump_error("02-unsignedInfo-second", &unsigned_req, &format!("{e:#}"));
-            return Err(format_api_error(e));
-        }
-    };
-    super::debug_dump::dump("02-unsignedInfo-second", &unsigned_req, &json!({
-        "gasStationUsed": unsigned.gas_station_used,
-        "hash": &unsigned.hash,
-        "authHashFor7702": &unsigned.auth_hash_for7702,
-        "signType": &unsigned.sign_type,
-        "serviceCharge": &unsigned.service_charge,
-        "serviceChargeSymbol": &unsigned.service_charge_symbol,
-        "serviceChargeFeeTokenAddress": &unsigned.service_charge_fee_token_address,
-        "needUpdate7702": unsigned.need_update7702,
-        "contractNonce": &unsigned.contract_nonce,
-        "eoaNonce": &unsigned.eoa_nonce,
-        "executeResult": &unsigned.execute_result,
-        "executeErrorMsg": &unsigned.execute_error_msg,
-        "extraData": &unsigned.extra_data,
-    }));
+        .map_err(format_api_error)?;
 
     if !unsigned.gas_station_used {
         bail!("Gas Station not activated by backend for this transaction");
@@ -764,44 +780,25 @@ fn gs_build_msg_for_sign(
     Ok(Value::Object(m))
 }
 
-/// Build the base extraData: master fields + Gas Station fields.
-/// Gas Station fields are layered on top of the normal broadcast structure.
-#[allow(clippy::too_many_arguments)]
-fn gs_build_extra_data(
+/// Layer Gas Station core fields (no transfer semantics) onto an existing
+/// extraData object. Sets paymentType, service charge, contract nonce,
+/// relayer context, user712Data, and optionally nonce + user7702Data for
+/// the 7702 upgrade case.
+///
+/// Does NOT touch `toAdr` / `coinAmount` / `tokenAddress` — those belong to
+/// transfer semantics (wallet send) and do not apply to contract-call.
+/// Wallet-send callers must additionally invoke `gs_apply_transfer_info`.
+///
+/// Does NOT touch `txType` — aligned with master: only wallet-send (non
+/// contract-call) writes txType=2 in `sign_and_broadcast`; contract-call
+/// paths (including GS contract-call) leave it unset for backend to derive.
+fn gs_apply_extra_data_fields(
+    ed: &mut Value,
     unsigned: &crate::wallet_api::UnsignedInfoResponse,
-    msg_for_sign: &Value,
-    to_addr: &str,
-    coin_amount: &str,
-    token_address: Option<&str>,
-    force: bool,
     include_7702: bool,
-) -> Value {
-    // Start from unsignedInfo.extraData (backend passthrough)
-    let mut ed = if unsigned.extra_data.is_object() {
-        unsigned.extra_data.clone()
-    } else {
-        json!({})
-    };
-
-    // ── Master base fields (same as sign_and_broadcast) ──
-    ed["checkBalance"] = json!(true);
-    ed["uopHash"] = json!(unsigned.uop_hash);
-    ed["encoding"] = json!(unsigned.encoding);
-    ed["signType"] = json!(unsigned.sign_type);
-    ed["msgForSign"] = msg_for_sign.clone();
-    ed["txType"] = json!(2);
+) {
     ed["paymentType"] = json!("token");
-    if force {
-        ed["skipWarning"] = json!(true);
-    }
 
-    // ── Gas Station specific fields ──
-    // 交易信息
-    ed["toAdr"] = json!(to_addr);
-    ed["coinAmount"] = json!(coin_amount);
-    if let Some(ta) = token_address {
-        ed["tokenAddress"] = json!(ta);
-    }
     // Gas 手续费
     ed["serviceCharge"] = json!(unsigned.service_charge);
     ed["feeTokenAddress"] = json!(unsigned.service_charge_fee_token_address);
@@ -830,6 +827,72 @@ fn gs_build_extra_data(
             ed["user7702Data"] = unsigned.user7702_data.clone();
         }
     }
+}
+
+/// Layer transaction amount + optional transfer semantics onto an existing
+/// extraData object. Called by both wallet-send GS and contract-call/swap GS
+/// paths to ensure consistent handling of the business amount (`coinAmount`).
+///
+/// - `coin_amount`: always written. Wallet-send passes the transferred amount
+///   (e.g. ERC-20 raw units); contract-call / swap passes `tx.value` (the
+///   native value attached to the call, typically "0" for ERC-20 swaps).
+/// - `to_addr`: written only when `Some`. Wallet-send passes `Some(recipient)`.
+///   Contract-call / swap passes `None` so that the field stays consistent
+///   with master behavior (CLI does not derive it from `tx.contract_addr`,
+///   which equals the call target / router for swap).
+/// - `token_address`: written only when `Some`. Wallet-send passes the ERC-20
+///   contract address; contract-call / swap passes `None` for the same
+///   master-consistency reason.
+#[allow(dead_code)]
+fn gs_apply_transfer_info(
+    ed: &mut Value,
+    to_addr: Option<&str>,
+    coin_amount: &str,
+    token_address: Option<&str>,
+) {
+    if let Some(addr) = to_addr {
+        ed["toAdr"] = json!(addr);
+    }
+    ed["coinAmount"] = json!(coin_amount);
+    if let Some(ta) = token_address {
+        ed["tokenAddress"] = json!(ta);
+    }
+}
+
+/// Build the base extraData: master fields + Gas Station fields.
+/// Gas Station fields are layered on top of the normal broadcast structure.
+#[allow(clippy::too_many_arguments)]
+fn gs_build_extra_data(
+    unsigned: &crate::wallet_api::UnsignedInfoResponse,
+    msg_for_sign: &Value,
+    to_addr: &str,
+    coin_amount: &str,
+    token_address: Option<&str>,
+    force: bool,
+    include_7702: bool,
+) -> Value {
+    // Start from unsignedInfo.extraData (backend passthrough)
+    let mut ed = if unsigned.extra_data.is_object() {
+        unsigned.extra_data.clone()
+    } else {
+        json!({})
+    };
+
+    // ── Master base fields (same as sign_and_broadcast) ──
+    ed["checkBalance"] = json!(true);
+    ed["uopHash"] = json!(unsigned.uop_hash);
+    ed["encoding"] = json!(unsigned.encoding);
+    ed["signType"] = json!(unsigned.sign_type);
+    ed["msgForSign"] = msg_for_sign.clone();
+    if force {
+        ed["skipWarning"] = json!(true);
+    }
+
+    gs_apply_extra_data_fields(&mut ed, unsigned, include_7702);
+    // toAdr / tokenAddress / coinAmount intentionally NOT written — aligned
+    // with master: unsignedInfo.extraData is passthrough, backend owns those
+    // transfer-semantic fields.
+    let _ = (to_addr, coin_amount, token_address);
 
     ed
 }
@@ -894,14 +957,7 @@ async fn gs_do_broadcast(
     let extra_data_str =
         serde_json::to_string(extra_data_obj).context("failed to serialize extraData")?;
 
-    // TEMPORARY: debug_dump
-    let broadcast_req = json!({
-        "accountId": account_id,
-        "address": addr_info.address,
-        "chainIndex": addr_info.chain_index,
-        "extraData": extra_data_obj,
-    });
-    let broadcast_resp = match client
+    let broadcast_resp = client
         .broadcast_transaction(
             access_token,
             account_id,
@@ -911,19 +967,7 @@ async fn gs_do_broadcast(
             None,
         )
         .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            super::debug_dump::dump_error("03-broadcast", &broadcast_req, &format!("{e:#}"));
-            return Err(handle_confirming_error(e, force));
-        }
-    };
-    super::debug_dump::dump("03-broadcast", &broadcast_req, &json!({
-        "txHash": &broadcast_resp.tx_hash,
-        "orderId": &broadcast_resp.order_id,
-        "pkgId": &broadcast_resp.pkg_id,
-        "orderType": &broadcast_resp.order_type,
-    }));
+        .map_err(|e| handle_confirming_error(e, force))?;
 
     Ok(broadcast_resp)
 }
@@ -955,10 +999,15 @@ async fn gas_station_sign_and_broadcast(
     }
 }
 
-// ── Gas Station status handlers（对齐 review.md Section 0） ─────────────────
+// ── Gas Station terminal-state emitters ───────────────────────────────────
+// These are *diagnostic success* from the CLI's perspective — the CLI's Phase 1 call
+// completed and correctly identified a state where the transfer cannot proceed. The Agent
+// reads the JSON flags (`hasPendingTx` / `insufficientAll`) to surface the right passive
+// template to the user; see `skills/okx-agentic-wallet/references/gas-station.md`
+// "Passive Response Templates".
 
-/// HAS_PENDING_TX: 有 pending 交易，拦截不继续
-fn handle_gs_pending_tx() -> Result<()> {
+/// HAS_PENDING_TX: a prior Gas Station tx is still processing; caller cannot proceed.
+fn emit_gs_pending_tx_state() -> Result<()> {
     output::success(json!({
         "gasStationUsed": true,
         "hasPendingTx": true,
@@ -966,8 +1015,10 @@ fn handle_gs_pending_tx() -> Result<()> {
     Ok(())
 }
 
-/// INSUFFICIENT_ALL: 所有 gas token 不足，引导充值
-fn handle_gs_insufficient_all(
+/// INSUFFICIENT_ALL: every supported stablecoin is below the service-charge requirement;
+/// caller must top up. Emits structured state including `fromAddr` so the Agent can render
+/// a top-up hint.
+fn emit_gs_insufficient_all_state(
     unsigned: &crate::wallet_api::UnsignedInfoResponse,
     from_addr: &str,
 ) -> Result<()> {
@@ -978,6 +1029,13 @@ fn handle_gs_insufficient_all(
         "fromAddr": from_addr,
     }));
     Ok(())
+}
+
+/// Serialize the full `gasStationTokenList` as JSON for inclusion in a `CliConfirming.next`
+/// field. Downstream Agents parse this to reconstruct addresses / relayerIds when the user
+/// picks a token.
+fn token_list_json(unsigned: &crate::wallet_api::UnsignedInfoResponse) -> String {
+    serde_json::to_string(&unsigned.gas_station_token_list).unwrap_or_default()
 }
 
 /// Build sufficient-token list string for CliConfirming messages
@@ -992,49 +1050,116 @@ fn format_sufficient_tokens(unsigned: &crate::wallet_api::UnsignedInfoResponse) 
         .join("\n")
 }
 
-/// FIRST_TIME_PROMPT: 首次启用，需要用户确认选 token（Scene A）
-fn handle_gs_first_time_prompt(
+/// FIRST_TIME_PROMPT: first-time enable. Emits a minimal Confirming with enough structured
+/// data for the Agent to render the user-facing prompt via the Scene A template in
+/// `skills/okx-agentic-wallet/references/gas-station.md`. Product copy (education paragraph,
+/// academy link, "after enabling" bullets) lives in the skill — not duplicated here.
+fn build_gs_first_time_prompt(
+    addr_info: &crate::wallet_store::AddressInfo,
     unsigned: &crate::wallet_api::UnsignedInfoResponse,
-) -> Result<()> {
-    let token_list_str = format_sufficient_tokens(unsigned);
+) -> anyhow::Error {
+    let chain_display = crate::chains::chain_display_name(&addr_info.chain_index);
+    let sufficient_summary = format_sufficient_tokens(unsigned);
     let message = format!(
-        "Your native token balance is insufficient to pay gas. You can enable Gas Station to pay gas with stablecoins.\n\
-         \nAvailable tokens:\n{}\n\
-         \nThree options:\n\
-         1. Enable and set a default token: choose a token above, future transactions will use it automatically.\n\
-         2. Enable without setting default: system will auto-select the token with highest balance each time.\n\
-         3. Do NOT enable Gas Station: terminate this flow. Top up native token and try again.",
-        token_list_str
+        "Gas Station first-time setup required on {chain_display}. Render the user-facing prompt via the Scene A template in `skills/okx-agentic-wallet/references/gas-station.md` (do NOT paraphrase). Sufficient stablecoins now:\n{sufficient_summary}"
     );
     let next = format!(
-        "Option 1 (enable + set default): --gas-token-address <addr> --relayer-id <id> --enable-gas-station\n\
-         Option 2 (enable, no default): --enable-gas-station\n\
-         Option 3 (do NOT enable): skip re-run, tell user to top up native token\n\
+        "On user pick `1` (decline): do not re-run; the user must top up native token.\n\
+         On user pick `N` (N >= 2, one per sufficient token above): re-run `wallet send --enable-gas-station --gas-token-address <addr> --relayer-id <id>` with the chosen token.\n\
          Token list: {}",
-        serde_json::to_string(&unsigned.gas_station_token_list).unwrap_or_default()
+        token_list_json(unsigned)
     );
-    Err(crate::output::CliConfirming { message, next }.into())
+    crate::output::CliConfirming { message, next }.into()
 }
 
-/// READY_TO_USE 但默认 token 不足（Scene C）：展示备选 token 让用户改选
-fn handle_gs_default_token_insufficient(
+/// REENABLE_ONLY: Gas Station was explicitly disabled by the user earlier. Backend overwrites
+/// the previous default with the picked token on re-enable. Emits minimal Confirming; user-facing
+/// wording lives in the Scene B' template in gas-station.md.
+fn build_gs_reenable_prompt(
+    addr_info: &crate::wallet_store::AddressInfo,
     unsigned: &crate::wallet_api::UnsignedInfoResponse,
-) -> Result<()> {
-    let token_list_str = format_sufficient_tokens(unsigned);
+) -> anyhow::Error {
+    let chain_display = crate::chains::chain_display_name(&addr_info.chain_index);
+    let sufficient_summary = format_sufficient_tokens(unsigned);
     let message = format!(
-        "Your default gas token has insufficient balance. Choose an alternative token to pay gas:\n{}\n\
-         \nOptions:\n\
-         1. Use for this transaction only (default token unchanged).\n\
-         2. Use and update as new default token.",
-        token_list_str
+        "Gas Station re-enable required on {chain_display} — the user previously disabled it. Render the user-facing prompt via the Scene B' template in `skills/okx-agentic-wallet/references/gas-station.md` (do NOT paraphrase). Previous default gas token address: {prev}. Sufficient stablecoins now:\n{sufficient_summary}",
+        prev = if unsigned.default_gas_token_address.is_empty() {
+            "(none)"
+        } else {
+            &unsigned.default_gas_token_address
+        }
     );
     let next = format!(
-        "Option 1 (this time only): --gas-token-address <addr> --relayer-id <id>\n\
-         Option 2 (use + update default): --gas-token-address <addr> --relayer-id <id>, then run: wallet gas-station update-default-token --chain <chain> --gas-token-address <addr>\n\
+        "On user pick `1` (decline): do not re-run; the user must top up native token.\n\
+         On user pick `N` (N >= 2, one per sufficient token above): re-run `wallet send --enable-gas-station --gas-token-address <addr> --relayer-id <id>` with the chosen token. Backend will overwrite the previous default with the picked token.\n\
          Token list: {}",
-        serde_json::to_string(&unsigned.gas_station_token_list).unwrap_or_default()
+        token_list_json(unsigned)
     );
-    Err(crate::output::CliConfirming { message, next }.into())
+    crate::output::CliConfirming { message, next }.into()
+}
+
+/// Scene C: READY_TO_USE but user input is needed to pick a token. Covers both "default
+/// present but insufficient" and "no default + multiple sufficient tokens". Emits minimal
+/// Confirming; user-facing wording lives in the Scene C template in gas-station.md.
+fn build_gs_token_selection_prompt(
+    unsigned: &crate::wallet_api::UnsignedInfoResponse,
+) -> anyhow::Error {
+    let token_list_str = format_sufficient_tokens(unsigned);
+    let message = format!(
+        "Gas Station needs a token pick on this chain (default is missing or insufficient). Render the user-facing prompt via the Scene C template in `skills/okx-agentic-wallet/references/gas-station.md` (do NOT paraphrase). Sufficient stablecoins now:\n{token_list_str}"
+    );
+    let next = format!(
+        "On user pick (this-time-only option): re-run with `--gas-token-address <addr> --relayer-id <id>`.\n\
+         On user pick (set-as-new-default option): same re-run, then call `wallet gas-station update-default-token --chain <chain> --gas-token-address <addr>` after the tx completes.\n\
+         Token list: {}",
+        token_list_json(unsigned)
+    );
+    crate::output::CliConfirming { message, next }.into()
+}
+
+// ── Gas Station Phase 1 dispatch ───────────────────────────────────────────
+
+/// Outcome of classifying a Phase 1 diagnostic response. Each variant maps to a distinct
+/// Agent/CLI action; see callers for the per-site action (sign_and_broadcast reuses
+/// `unsigned` in-place, cmd_send re-invokes via `gas_station_send`).
+#[derive(Debug)]
+enum GsPhase1Decision {
+    /// `FIRST_TIME_PROMPT`: first-time enable needs explicit user consent.
+    FirstTime,
+    /// `REENABLE_ONLY`: user previously disabled; re-enable needs explicit consent.
+    Reenable,
+    /// Scene B auto-pick: resume silently with this token. `needs_enable` is true when
+    /// the chain still requires 7702 activation (PENDING_UPGRADE).
+    AutoPick {
+        fee_token_address: String,
+        relayer_id: String,
+        needs_enable: bool,
+    },
+    /// Scene C: user must pick a token (default insufficient, or ambiguous fallback).
+    NeedsUserPick,
+}
+
+/// Classify a Phase 1 diagnostic response into the matching Scene. Callers own the action.
+fn classify_gs_phase1(
+    unsigned: &crate::wallet_api::UnsignedInfoResponse,
+) -> GsPhase1Decision {
+    use crate::wallet_api::GasStationStatus as GS;
+    let status = unsigned.gs_status();
+
+    if unsigned.gas_station_first_time_prompt || status == GS::FirstTimePrompt {
+        return GsPhase1Decision::FirstTime;
+    }
+    if status == GS::ReenableOnly {
+        return GsPhase1Decision::Reenable;
+    }
+    match unsigned.auto_pick_gas_token() {
+        Some(token) => GsPhase1Decision::AutoPick {
+            fee_token_address: token.fee_token_address.clone(),
+            relayer_id: token.relayer_id.clone(),
+            needs_enable: status == GS::PendingUpgrade,
+        },
+        None => GsPhase1Decision::NeedsUserPick,
+    }
 }
 
 /// PENDING_UPGRADE / REENABLE_ONLY / READY_TO_USE（默认 token 充足）：后端已给 hash，直接签+广播
@@ -1483,4 +1608,37 @@ mod tests {
         assert!(validate_non_negative_integer("abc", "aa-dex-token-amount").is_err());
         assert!(validate_non_negative_integer("007", "gas-limit").is_err());
     }
+
+    // ── Gas Station user-facing Confirming helpers ──
+
+    use crate::test_helpers::gas_station::{
+        make_token_full as mk_token,
+        make_unsigned_with_tokens as mk_unsigned,
+    };
+
+    #[test]
+    fn format_sufficient_tokens_filters_and_indexes_from_one() {
+        let unsigned = mk_unsigned(
+            "",
+            vec![
+                mk_token("USDT", "0xaaa", "100", "0.13", false), // filtered out
+                mk_token("USDC", "0xbbb", "120", "0.14", true),
+                mk_token("USDG", "0xccc", "50", "0.15", true),
+            ],
+        );
+        let out = format_sufficient_tokens(&unsigned);
+        assert!(out.contains("1. USDC"));
+        assert!(out.contains("2. USDG"));
+        assert!(!out.contains("USDT")); // insufficient token excluded
+    }
+
+    #[test]
+    fn format_sufficient_tokens_empty_when_all_insufficient() {
+        let unsigned = mk_unsigned(
+            "",
+            vec![mk_token("USDT", "0xaaa", "0", "0.13", false)],
+        );
+        assert_eq!(format_sufficient_tokens(&unsigned), "");
+    }
+
 }

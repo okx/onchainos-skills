@@ -384,7 +384,7 @@ onchainos wallet gas-station update-default-token \
 
 ### D-GS2. `onchainos wallet gas-station enable`
 
-Enable Gas Station for a specific chain. **DB flag only, no on-chain action.** Requires 7702 delegation already present on-chain — first-time activation happens via `wallet send` (the first ERC-20 send bundles the 7702 upgrade with the first Gas Station broadcast). If the chain has never been delegated, backend returns a msg in the response body — surface it to the user.
+Turn Gas Station back on for a chain that was previously enabled. (Internal: DB flag flip only, no on-chain action. Requires prior on-chain setup — first-time activation happens via `wallet send` which bundles the setup with the first Gas Station broadcast. If the chain has never been activated, backend returns a msg in the response body — relay the backend msg verbatim, do NOT paraphrase with "7702" / "delegation" / "DB".) See `gas-station.md` User-Facing Reply Templates for user-facing wording.
 
 ```bash
 onchainos wallet gas-station enable \
@@ -397,7 +397,7 @@ onchainos wallet gas-station enable \
 
 ### D-GS3. `onchainos wallet gas-station disable`
 
-Disable Gas Station for a specific chain. **DB flag only, no on-chain action.** The on-chain 7702 delegation is preserved, so re-enabling later does not require a new 7702 upgrade. `default_gas_token_address` is also preserved.
+Turn Gas Station off for a chain; the chain reverts to paying gas with native token. (Internal: DB flag flip only, no on-chain action. On-chain state and `default_gas_token_address` are preserved so re-enabling later is instant.) See `gas-station.md` User-Facing Reply Templates for user-facing wording — **never paraphrase "DB flag" / "7702" / "delegation" into the reply**.
 
 ```bash
 onchainos wallet gas-station disable \

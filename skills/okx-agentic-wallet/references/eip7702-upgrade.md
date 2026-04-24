@@ -81,38 +81,11 @@ When 7702 is triggered outside of Gas Station send (e.g., standalone upgrade req
 
 ---
 
-## Disable Gas Station (关闭 Gas Station)
+## Disable Gas Station
 
-> **统一口径**: 对用户只说"关闭 Gas Station" / "enable/disable Gas Station"。**不要提"撤销 7702"、"取消授权"、"revoke 7702"** — 这些是内部技术术语，不对用户暴露。
+Backend mechanism reference: calling `POST /gas-station/disable` only flips the DB enable flag (`gas_station_enabled = 0`); no on-chain action, existing delegation retained, `default_gas_token_address` retained. Next enable on this chain routes to `REENABLE_ONLY` — instant DB flip, no re-upgrade.
 
-调用 **disable** API (`POST /gas-station/disable`):
-- 仅翻 DB 开关 (`gas_station_enabled = 0`)
-- **不做链上动作**，on-chain 7702 委托保留
-- `default_gas_token_address` 保留
-- 下次开启时如链上已委托 → 状态 `REENABLE_ONLY`，只翻 DB 开关回来，不重新升级
-
-**用户意图映射（输入 → 输出）：**
-
-用户可能说：
-- "取消 gas station 授权" / "撤销 7702" / "取消 7702 升级" / "关闭加油站" / "停用 Gas Station"
-
-<MUST>
-**Agent 响应统一口径**：都映射到"关闭 Gas Station"。示例话术：
-
-> 好的，我来帮你关闭 Ethereum 上的 Gas Station。关闭后交易将切换回主网币支付 Gas，后续可随时重新开启。如果你只是想换一个支付代币，建议用"修改默认 Gas 代币"而不是关闭。是否确认关闭？
-
-**NEVER 输出**：
-- ❌ "撤销 7702 升级"
-- ❌ "取消 7702 授权"
-- ❌ "revoke 7702"
-- ❌ "cancel 7702 upgrade"
-- ❌ 任何提到 "7702"、"授权"、"委托" 的面向用户的说明
-
-**只说**：
-- ✅ "关闭 Gas Station" / "disable Gas Station"
-- ✅ "切换回主网币支付 Gas"
-- ✅ "后续可随时重新开启"
-</MUST>
+For user intent mapping ("revoke 7702" / "cancel authorization" / "turn off gas station" / "disable Gas Station" / equivalents in any language → disable Gas Station), Agent output vocabulary rules, and user-facing reply templates: see `gas-station.md` — **User Intent Recognition** table (row "disable gas station") and **User-Facing Reply Templates (Management Commands)** section. Do not maintain a second copy of the vocabulary bans or reply templates here.
 
 ---
 
@@ -120,7 +93,7 @@ When 7702 is triggered outside of Gas Station send (e.g., standalone upgrade req
 
 | Case | Detection | Response |
 |---|---|---|
-| Upgrade in progress | `gasStationStatus="HAS_PENDING_TX"` + `hasPendingTx: true` | Use PRD wording: "当前有一笔交易正在处理中，暂时无法通过 Gas 加油站支付 Gas。请等待该笔交易完成后重试，或充值主网币后继续转账。" Do NOT mention "7702 upgrade" to the user — the pending is opaque from user's perspective. |
+| Upgrade in progress | `gasStationStatus="HAS_PENDING_TX"` + `hasPendingTx: true` | Use the authoritative user message in `gas-station.md` Step 1 table `HAS_PENDING_TX` row. Do NOT mention 7702 / upgrade to the user — the pending is opaque from the user's perspective. |
 | Incompatible on-chain wallet state | Backend returns `gasStationStatus="NOT_APPLICABLE"` + `gasStationUsed=false` on a supported chain where Gas Station should otherwise apply | Backend detects incompatible on-chain wallet state and falls back to normal flow. If user asks, respond: "Gas Station is not available for your wallet on this chain. Please use native tokens to pay gas." Do NOT explain "7702 delegation" to the user. |
 | Re-enable shortcut | `gasStationStatus="REENABLE_ONLY"` returned (DB disabled + on-chain already delegated) | No on-chain upgrade, no token selection — CLI re-enables silently via the auto-path handler. User-facing: treat like a normal Gas Station send (show `serviceCharge` + `orderId`). Do NOT expose "7702" / "delegation" to the user. |
 | User asks "what is 7702" / "EIP-7702 是什么" | User **actively** asks (not Agent-initiated) | 可以简短解释：是一个让钱包支持用稳定币付 Gas 的底层协议升级，首次开启 Gas Station 时会自动完成。但 Agent **不主动**提 7702，避免技术概念干扰。 |
