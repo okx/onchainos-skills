@@ -12,6 +12,24 @@ const SENSITIVE_WORDS_PATH: &str = "/priapi/v1/aieco/im/risk/a2a/sensitive/word/
 const MESSAGE_ELIGIBLE_PATH: &str = "/priapi/v1/aieco/im/message/eligible";
 const SYSTEM_CONFIG_PATH: &str = "/priapi/v1/aieco/im/xmtp/system-config";
 
+// Swimlane base URLs hardcoded per service boundary.
+// `/priapi/v5/wallet/*`  → walletmain swimlane
+// `/priapi/v1/aieco/im/*` → aiecoxmtp swimlane (IM/XMTP service)
+const WALLET_SWIMLANE_BASE: &str =
+    "http://okx-defi-walletmain-api.forked-walletmain-swim.swim.env";
+const AIECO_SWIMLANE_BASE: &str =
+    "http://okx-defi-wallet-aiecogateway.forked-walletmain-swim.swim.env";
+
+/// Build an ApiClient pinned to the wallet swimlane (used for heartbeat).
+async fn wallet_swimlane_client() -> Result<ApiClient> {
+    ApiClient::new_async(Some(WALLET_SWIMLANE_BASE)).await
+}
+
+/// Build an ApiClient pinned to the aieco/im swimlane (used for all other chat commands).
+async fn aieco_swimlane_client() -> Result<ApiClient> {
+    ApiClient::new_async(Some(AIECO_SWIMLANE_BASE)).await
+}
+
 /// Build the agenticId extra header slice from an agent ID string.
 fn agent_commerce_headers(agent_id: &str) -> [(&str, &str); 2] {
     [("agenticId", agent_id), ("User-Agent", "onchainos-cli")]
@@ -61,7 +79,7 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
             output: output_path,
         } => cmd_download(ctx, &file_key, &agent_id, &output_path).await,
         ChatCommand::SensitiveWords { agent_id } => {
-            let client = ctx.client_async().await?;
+            let client = aieco_swimlane_client().await?;
             output::success(fetch_sensitive_words(&client, &agent_id).await?);
             Ok(())
         }
@@ -73,7 +91,7 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
             group_id,
             direction,
         } => {
-            let client = ctx.client_async().await?;
+            let client = aieco_swimlane_client().await?;
             output::success(
                 fetch_message_eligible(
                     &client,
@@ -89,12 +107,12 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
             Ok(())
         }
         ChatCommand::SystemConfig { agent_id } => {
-            let client = ctx.client_async().await?;
+            let client = aieco_swimlane_client().await?;
             output::success(fetch_system_config(&client, &agent_id).await?);
             Ok(())
         }
         ChatCommand::Heartbeat { chain_index } => {
-            let mut client = ctx.client_async().await?;
+            let mut client = wallet_swimlane_client().await?;
             output::success(fetch_heartbeat(&mut client, chain_index).await?);
             Ok(())
         }
@@ -154,8 +172,9 @@ async fn cmd_upload(
         .unwrap_or("upload")
         .to_string();
 
-    // 3. Upload (ApiClient handles auth internally)
-    let client = ctx.client_async().await?;
+    // 3. Upload (aieco swimlane, ApiClient handles auth internally)
+    let _ = ctx; // ctx retained for signature compat; auth lives in keyring via ApiClient::new_async
+    let client = aieco_swimlane_client().await?;
     let result = fetch_upload(&client, &file_name, data, agent_id, job_id).await?;
 
     // 4. Output result (fileKey, fileSize)
@@ -186,8 +205,9 @@ async fn cmd_download(
     agent_id: &str,
     output_path: &str,
 ) -> Result<()> {
-    // 1. Download bytes
-    let client = ctx.client_async().await?;
+    // 1. Download bytes (aieco swimlane)
+    let _ = ctx;
+    let client = aieco_swimlane_client().await?;
     let bytes = fetch_download(&client, file_key, agent_id).await?;
 
     // 2. Write to output file
