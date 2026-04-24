@@ -237,6 +237,89 @@ tail -f /tmp/mock-buyer.log
 
 ---
 
+## XMTP Mock Tools
+
+两个独立的 **XMTP 客户端**（不走 ws-mock 协议），用于对接 **真实 openclaw XMTP 插件** 做端到端调试。每个跑一条 XMTP 身份（本地私钥），含 CLI 模式 + Web UI 模式（SSE + 内嵌 HTML）。
+
+| 目录 | UI 端口 | 默认角色 | 备注 |
+|---|---|---|---|
+| `tools/xmtp-mock-buyer/` | 9013 | buyer（role=1） | 有"发布任务" + "可接任务的卖家"侧栏 |
+| `tools/xmtp-mock-seller/` | 9014 | seller（role=2） | 仅收发 envelope，无任务创建 |
+
+### 部署位置
+
+源码在仓库 `tools/xmtp-mock-*/`，`node_modules` 各 ~335M。**运行时拷到 `~/xmtp-mocks/` 下**，让 `.env`、XMTP DB (`~/.xmtp-mock-<role>/`) 不污染仓库：
+
+```bash
+node -e "
+const fs=require('fs'),path=require('path');
+const S='/Users/gan/meili/mingtao.gan_dacs_at_okg.com/121/Documents/RustProjects/OKOnchainOS/tools';
+const D=process.env.HOME+'/xmtp-mocks';
+for (const p of ['xmtp-mock-buyer','xmtp-mock-seller']) {
+  for (const f of fs.readdirSync(path.join(S,p,'src'))) fs.copyFileSync(path.join(S,p,'src',f), path.join(D,p,'src',f));
+  for (const f of fs.readdirSync(path.join(S,p,'dist'))) fs.copyFileSync(path.join(S,p,'dist',f), path.join(D,p,'dist',f));
+}
+"
+```
+
+首次建目录：用 `cp -R` 从仓库整目录拷过去（含 node_modules）；之后源码更新只需 rebuild 仓库侧然后同步 `src/ + dist/`。
+
+### 配置（`~/xmtp-mocks/xmtp-mock-<role>/.env`）
+
+```env
+XMTP_WALLET_KEYS=0x...                         # 必填，viem 从此推导地址
+XMTP_ENV=dev                                   # dev / production / local（默认 dev）
+OWN_AGENT_ID=225                               # 与 data/agents.json 里 agentId 一致
+OWN_AGENT_NAME=交易助手
+OWN_AGENT_PROFILE_DESC=帮你看行情和下单
+OWN_AGENT_PROFILE_PICTURE=https://static.okx.com/cdn/wallet/agent/default-avatar.png
+OWN_AGENT_ROLE=1                               # 1=buyer, 2=seller
+MOCK_API_URL=http://127.0.0.1:9001             # 仅 buyer 侧用到（发布任务 / 查卖家）
+```
+
+**身份三处必须对齐**：私钥推导的 ETH 地址 == `data/agents.json` 里该 agent 的 `communicationAddress` == `.env` OWN_AGENT_* 对应的 agent 档案。不一致 → envelope 发出去 sender.role / agentId 对不上实际地址，openclaw 侧会怀疑或丢弃。
+
+### 启动
+
+```bash
+# buyer（任选一个终端）
+cd ~/xmtp-mocks/xmtp-mock-buyer && node --env-file=.env dist/index-ui.js
+
+# seller（另一个终端）
+cd ~/xmtp-mocks/xmtp-mock-seller && node --env-file=.env dist/index-ui.js
+```
+
+浏览器打开 `http://localhost:9013`（buyer）或 `http://localhost:9014`（seller）即可。
+
+### 用法要点
+
+- **buyer UI**：顶栏「发布任务」→ POST `mock-api /api/v1/task/create`；侧栏「可接任务的卖家」→ GET `mock-api agent-list` 过滤 `role=2 && status=1`；点某个卖家 → 自动建 **XMTP Group**（`newGroupWithIdentifiers`，`groupName=a2a-<jobId>`）+ 发 TASK_INQUIRE envelope
+- **seller UI**：接收 buyer / openclaw 发来的 a2a-agent-chat envelope；UI 展示解析后的 JSON（自动缩进）；输入框敲字回车 → 后端 wrap 成 envelope 经 XMTP group 发出
+- **envelope 格式**：`{ msgType: "a2a-agent-chat", content, fromXmtpAddress, toXmtpAddress, groupId, jobId, sender:{ agentId, name, profileDescription, profilePicture, role }, scheme:{...} }` —— 和 openclaw XMTP 插件的 `buildSendEnvelope` 对齐
+- **Group vs DM**：插件只把 **Group 消息** 走 `JSON.parse + jobId 路由` 进任务流程；DM 只纯文本转发。所以 buyer 主动发首条 **必须是 group**（建 group 需要 `jobId` —— UI 里点"联系卖家"会自动拼）
+
+### XMTP installation 配额
+
+- `Agent.create(signer, { dbPath, env })` 首次在某个 dbPath 下启动 = 向 XMTP 网络 **注册一个新 installation**
+- XMTP dev 网络对单一 identity 限 **5 个 installations**；满了要 revoke 旧的
+- 频繁清 `~/.xmtp-mock-<role>/` 下 DB 会快速逼近上限 —— 开发时别没事就删
+
+### 和 ws-mock 系的区别
+
+这套 XMTP mock **只走真实 XMTP 网络**，跟 openclaw XMTP 插件对接。
+`tools/mock-buyer/` / `tools/mock-seller/`（ws-channel 时代的老 mock）仍在，互不影响，但 **ws-channel 插件已删**，它们现在只能给老的 mock-api dashboard 测试用，不能再跟 openclaw 通讯。
+
+### 故障排查
+
+- **XMTP dev 连不上**：国内网络可能要 VPN。看启动终端有没有 `✓ 已连接`
+- **openclaw 收不到消息**：
+  - 确认发的是 **group 消息**（不是 DM）—— 看 UI 终端 `创建 Group: groupId=...` 日志
+  - 查 `~/.openclaw/agents/main/sessions/sessions.json` 里有没有对应 jobId 的 session key
+  - 查 `~/.openclaw/logs/gateway.log` grep `xmtp-sdk` / `<jobId>`
+- **"5 installations exceeded"**：换私钥，或在 XMTP 网络上 revoke 老 installations
+
+---
+
 ## Agent Commerce
 
 Agent commerce features (identity, chat, task) share a unified CLI namespace and code structure.
