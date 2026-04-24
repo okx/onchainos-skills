@@ -52,6 +52,7 @@ yarn-error.log*
 .ai-mat
 .cursorrules
 .cursorignore
+.claude
 
 # Superpowers generated docs (local only)
 docs/superpowers/
@@ -66,44 +67,3 @@ run.sh
 test-cases.json
 
 evals/
-node_modules
-.idea
-.vscode
-.eslintcache
-.stylelintcache
-dist
-coverage
-coverage-increment
-coverage-all
-/generateService
-.local.config.js
-*.lock
-unitest-increment.txt
-.nyc_output
-.VSCodeCounter
-.scannerwork
-.docz
-.cache
-jest-coverage
-e2e/__data__
-e2e/test-results
-e2e/playwright-report
-e2e/json-result
-swagger-report.md
-swagger-lock.json
-.env.development.local
-.env.test.local
-.env.production.local
-e2e/local.e2e.config.js
-e2e/local.e2e.config.ts
-e2e/local.playwright.config.js
-e2e/local.playwright.config.ts
-/mock
-/build
-.docusaurus
-devtool
-**/.claude/*
-!**/.claude/skills/
-.claude/skills/toB-*
-.claude/skills/toC-*
-.claude/skills/global-*
