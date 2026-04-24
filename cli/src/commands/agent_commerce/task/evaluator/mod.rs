@@ -1,7 +1,20 @@
-// Evaluator-only CLI handlers: dispute info, commit, reveal, claim reward,
-// and the full staking lifecycle (stake / increase-stake / request-unstake /
-// claim-unstake / cancel-unstake). Each handler lives in its own file; this
-// module wires the clap surface and dispatches `onchainos agent evaluator <sub>`.
+//! Evaluator 端任务命令 — 枚举定义 + 路由分发
+//!
+//! 按仲裁者动作划分文件：
+//! - `info.rs`            — 拉取证据（只读，含图片下载）
+//! - `commit.rs`          — Commit 投票（commit-reveal 第一阶段）
+//! - `reveal.rs`          — Reveal 投票（第二阶段，带 canReveal 预检）
+//! - `commit_store.rs`    — 本地 `{disputeId, side, salt}` 存档（~/.onchainos/evaluator-commits.jsonl）
+//! - `forget.rs`          — 清理本地 commit 存档（dispute 终结后调用）
+//! - `claim.rs`           — account 级 pull 领取所有已结算奖励
+//! - `claimable.rs`       — 查询账户待领奖励（只读）
+//! - `stake.rs`           — 首次质押（身份 skill 跳转入口）
+//! - `increase_stake.rs`  — 追加质押（top-up / 补齐）
+//! - `unstake.rs`         — 解质押生命周期（request / claim / cancel）
+//!
+//! 辅助：
+//! - `helpers.rs`         — disputeId 解析
+//! - `flow.rs`            — 状态机提示词生成器（供 `next-action --role evaluator` 使用）
 
 mod claim;
 mod claimable;
@@ -41,8 +54,9 @@ pub enum EvaluatorCommand {
         #[arg(long)]
         side: Option<u8>,
     },
-    /// Claim reward after task/dispute resolved
-    Claim { job_id: String },
+    /// Claim reward after task/dispute resolved. Account-level pull — one call drains
+    /// every pending reward across all settled disputes (POST /task/claim, no jobId).
+    Claim,
     /// List account-level claimable rewards across all settled disputes (GET /task/claimable).
     /// Read-only; no tx. Useful when multiple disputes settle concurrently.
     Claimable,
@@ -86,8 +100,8 @@ pub async fn run(cmd: EvaluatorCommand, _ctx: &Context) -> Result<()> {
             commit::handle_commit(&mut client, &dispute_id, side).await,
         EvaluatorCommand::Reveal { dispute_id, side } =>
             reveal::handle_reveal(&mut client, &dispute_id, side).await,
-        EvaluatorCommand::Claim { job_id } =>
-            claim::handle_claim(&mut client, &job_id).await,
+        EvaluatorCommand::Claim =>
+            claim::handle_claim(&mut client).await,
         EvaluatorCommand::Claimable =>
             claimable::handle_claimable(&mut client).await,
         EvaluatorCommand::Forget { dispute_id } =>

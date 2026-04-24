@@ -1,3 +1,5 @@
+//! 清理本地 commit 存档（dispute 终结后调用）— onchainos agent evaluator forget
+
 use anyhow::Result;
 
 use super::commit_store;

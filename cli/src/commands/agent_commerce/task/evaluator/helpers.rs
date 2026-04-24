@@ -1,18 +1,9 @@
+//! Evaluator 本地工具函数
+//!
+//! 目前只负责 disputeId 解析；钱包 / agentId 解析统一走
+//! `signing::resolve_wallet` + `signing::resolve_wallet_and_agent_for_evaluator`。
+
 use anyhow::{bail, Result};
-
-pub(super) fn task_api_url() -> String {
-    std::env::var("TASK_API_URL").unwrap_or_else(|_| "http://127.0.0.1:9001".to_string())
-}
-
-pub(super) fn evaluator_addr() -> String {
-    std::env::var("EVALUATOR_COMM_ADDR")
-        .unwrap_or_else(|_| "0xEvaluator00000000000000000000000000001".to_string())
-}
-
-pub(super) fn evaluator_agent_id() -> String {
-    std::env::var("EVALUATOR_AGENT_ID")
-        .unwrap_or_else(|_| "mock-evaluator-agent-001".to_string())
-}
 
 /// Parse jobId from disputeId like "d-<jobId>-r<round>".
 pub(super) fn parse_job_id(dispute_id: &str) -> Result<String> {

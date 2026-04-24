@@ -1,7 +1,9 @@
+//! 仲裁者 commit 投票（commit-reveal 第一阶段）— onchainos agent evaluator commit
+
 use anyhow::{bail, Result};
 
 use super::commit_store::{self, StoredCommit};
-use super::helpers::{evaluator_agent_id, parse_job_id};
+use super::helpers::parse_job_id;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
@@ -17,8 +19,8 @@ pub async fn handle_commit(client: &mut TaskApiClient, dispute_id: &str, side: u
         bail!("--side must be 1 (provider wins) or 2 (client wins)");
     }
     let job_id = parse_job_id(dispute_id)?;
-    let (account_id, address) = signing::resolve_wallet(None, None)?;
-    let agent_id = evaluator_agent_id();
+    let (account_id, address, agent_id) =
+        signing::resolve_wallet_and_agent_for_evaluator().await?;
 
     let body = serde_json::json!({ "vote": side });
     let path = client.endpoint(&job_id, "vote/commit");

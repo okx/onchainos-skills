@@ -1,6 +1,7 @@
+//! 仲裁者查询待领奖励（只读）— onchainos agent evaluator claimable
+
 use anyhow::Result;
 
-use super::helpers::evaluator_agent_id;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
@@ -13,8 +14,8 @@ use crate::commands::agent_commerce::task::signing;
 ///
 /// 发现有非 0 奖励时，建议用户按 jobId 跑 `evaluator claim <jobId>` 领取。
 pub async fn handle_claimable(client: &mut TaskApiClient) -> Result<()> {
-    let (_account_id, address) = signing::resolve_wallet(None, None)?;
-    let agent_id = evaluator_agent_id();
+    let (_account_id, address, agent_id) =
+        signing::resolve_wallet_and_agent_for_evaluator().await?;
 
     let path = "/priapi/v1/aieco/task/claimable";
     let resp = client.get_with_identity(path, &agent_id, &address).await?;
@@ -46,8 +47,8 @@ pub async fn handle_claimable(client: &mut TaskApiClient) -> Result<()> {
 
     if has_nonzero {
         println!(
-            "\nnext: 对每个有奖励的任务跑 `onchainos agent evaluator claim <jobId>` 领取；\n\
-             成功后会收到 `reward_claimed` 事件确认入账。"
+            "\nnext: 跑 `onchainos agent evaluator claim` 一次性领取所有待领奖励\n\
+             （account 级 pull，无需 jobId）；成功后会收到 `reward_claimed` 事件确认入账。"
         );
     } else {
         println!("\n(当前无待领奖励)");

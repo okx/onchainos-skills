@@ -1,7 +1,9 @@
+//! 仲裁者 reveal 投票（commit-reveal 第二阶段）— onchainos agent evaluator reveal
+
 use anyhow::{bail, Result};
 
 use super::commit_store;
-use super::helpers::{evaluator_agent_id, parse_job_id};
+use super::helpers::parse_job_id;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
@@ -21,8 +23,8 @@ pub async fn handle_reveal(
     side_arg: Option<u8>,
 ) -> Result<()> {
     let job_id = parse_job_id(dispute_id)?;
-    let (account_id, address) = signing::resolve_wallet(None, None)?;
-    let agent_id = evaluator_agent_id();
+    let (account_id, address, agent_id) =
+        signing::resolve_wallet_and_agent_for_evaluator().await?;
 
     // Resolve side: CLI flag > local store > error.
     let stored = commit_store::load_latest(dispute_id, &address).ok().flatten();

@@ -1,6 +1,7 @@
+//! 仲裁者首次质押（身份 skill 跳转入口）— onchainos agent evaluator stake
+
 use anyhow::{bail, Result};
 
-use super::helpers::evaluator_agent_id;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
@@ -12,13 +13,18 @@ use crate::commands::agent_commerce::task::signing;
 /// - Backend bundles approve(VoterStaking, amount) + stake(amount, agentId) as one
 ///   atomic UOP (AA executeBatch), returns uopData for signing.
 ///
+/// PRD 3.1.1 语义：合约层按**累计**校验 `当前地址质押金额 + 本次质押金额 >= 100 OKB`，
+/// 不足则 revert。首次质押场景天然等价于"本次 >= 100"；被 slash 后余额低于 100 时
+/// 追加质押也须一次性补齐到 100。
+///
 /// Error codes:
 ///   4000 — agentId 无效 / 非 evaluator 身份
 ///   2004 — agentId 无 evaluator 身份 (identity=2)
-///   1001 — 首次质押 amount < 100 OKB
+///   1001 — 累计质押 < 最低门槛（当前 100 OKB；合约/后端权威）
 ///
-// TODO(backend-config): 首次质押最低额 100 OKB 当前是后端硬规则；
-// 未来后端 `/staking/config` 上线后，前端应读取 firstStakeMinOkb 并展示给用户。
+// TODO(backend-config): 最低累计质押门槛 100 OKB 当前是合约硬规则；
+// `/staking/config` 上线后读取 `minCumulativeStakeOkb`（字段名待定）替换，
+// 并在 CLI 本地拉 `stakedBalance` 做预检 `stakedBalance + amount < min` → 友好提示。
 // 参见 skills/okx-agent-task/evaluator.md §13。
 pub async fn handle_stake(client: &mut TaskApiClient, amount: &str) -> Result<()> {
     let trimmed = amount.trim();
@@ -29,8 +35,8 @@ pub async fn handle_stake(client: &mut TaskApiClient, amount: &str) -> Result<()
         bail!("--amount 必须是数字（OKB 金额，UI 单位不带精度），got: {trimmed}");
     }
 
-    let (account_id, address) = signing::resolve_wallet(None, None)?;
-    let agent_id = evaluator_agent_id();
+    let (account_id, address, agent_id) =
+        signing::resolve_wallet_and_agent_for_evaluator().await?;
 
     let path = "/priapi/v1/aieco/task/staking/stake";
     let body = serde_json::json!({ "amount": trimmed });

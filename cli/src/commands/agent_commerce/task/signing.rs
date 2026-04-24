@@ -10,10 +10,13 @@
 use anyhow::{bail, Result};
 use base64::engine::{general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::Value;
+use tokio::process::Command;
 
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::common::{XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME};
+use crate::commands::agent_commerce::task::common::{
+    AGENT_ROLE_EVALUATOR, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
+};
 use crate::wallet_api::UnsignedInfoResponse;
 
 /// Return value from sign-and-broadcast helpers.
@@ -112,6 +115,68 @@ pub async fn resolve_wallet_and_agent_for_provider(
 
     let (account_id, address) = resolve_wallet(None, None)?;
     Ok((account_id, address, provider_agent_id))
+}
+
+/// 通过子进程调用 `onchainos agent get` 查询身份列表，挑出首个匹配 `role` 的 Agent。
+///
+/// 返回 `(agent_id, owner_address)`。evaluator / 预创建任务的 buyer 等场景在任务详情
+/// 里查不到自己的 agentId 时使用。
+async fn resolve_agent_by_role(role_code: i64, role_label: &str) -> Result<(String, String)> {
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("无法获取当前可执行文件路径: {e}"))?;
+
+    let output = Command::new(&exe)
+        .args(["agent", "get"])
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("调用 `onchainos agent get` 失败: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "身份查询失败（`onchainos agent get` 退出码 {}）: {stderr}",
+            output.status
+        );
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Value = serde_json::from_str(&stdout)
+        .map_err(|e| anyhow::anyhow!("解析 agent get 输出失败: {e}"))?;
+
+    if !parsed["ok"].as_bool().unwrap_or(false) {
+        let err_msg = parsed["error"].as_str().unwrap_or("未知错误");
+        bail!("身份查询失败: {err_msg}");
+    }
+
+    let list = parsed["data"]["list"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("未查到任何 Agent 身份，请先注册 {role_label} 身份"))?;
+
+    for agent in list {
+        if agent["role"].as_i64() == Some(role_code) {
+            let agent_id = agent["agentId"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("Agent 缺少 agentId 字段"))?
+                .to_string();
+            let owner_address = agent["ownerAddress"].as_str().unwrap_or("").to_string();
+            return Ok((agent_id, owner_address));
+        }
+    }
+
+    bail!("当前账户没有 {role_label} 身份，请先注册")
+}
+
+/// Resolve wallet + evaluator agentId for signing.
+///
+/// 与 `resolve_wallet_and_agent_for_task` / `_for_provider` 对齐 —— evaluator
+/// 不是任务的买卖双方，无法从任务详情读取 agentId，改走子进程 `agent get` 查询。
+///
+/// Returns `(account_id, address, evaluator_agent_id)`.
+pub async fn resolve_wallet_and_agent_for_evaluator() -> Result<(String, String, String)> {
+    let (agent_id, _owner_address) =
+        resolve_agent_by_role(AGENT_ROLE_EVALUATOR, "evaluator（仲裁者）").await?;
+    let (account_id, address) = resolve_wallet(None, None)?;
+    Ok((account_id, address, agent_id))
 }
 
 /// 签名 uopData + 广播上链（纯签名广播，不含 API 请求）
