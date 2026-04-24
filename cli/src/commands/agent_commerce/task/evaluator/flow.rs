@@ -1,11 +1,26 @@
 //! Evaluator（仲裁者）端任务流程驱动器
 //!
 //! 事件命名对齐设计文档（Lark wiki `UumqwSyM5i1AuakBNLClJo9igIb`）的 event 枚举：
-//! evaluator_selected / reveal_started / dispute_resolved / round_failed / slashed / reward_claimed。
+//!
+//! - 仲裁生命周期（动作触发）：evaluator_selected / reveal_started / dispute_resolved /
+//!   round_failed / slashed / reward_claimed
+//! - Staking 生命周期（tx 回执）：staked / stake_increased /
+//!   unstake_requested / unstake_claimed / unstake_cancelled
+//! - 自己的投票 tx 回执（仅记录）：vote_committed / vote_revealed
+//! - 完全忽略：job_disputed
+//!
 //! evaluator 在 `evaluator_selected`（VotersSelected 上链）时即介入——此刻 CommitPhase 已开，
 //! 一次性完成"拉证据 → 分析 → escalate_to_main → 用户回 1/2/skip → 立即 commit"。
 //! 证据上传是链下操作（doc §7.8：No chain event for evidence），不再等"证据封期"信号。
-//! job_disputed / vote_committed / vote_revealed 对 evaluator 不是动作触发点。
+//
+// TODO(backend-config): 本文件生成的文案里包含多处硬编码经济参数：
+//   - evaluator_selected arm: 超时罚 0.3%
+//   - dispute_resolved arm:   少数方罚 1% / 弃权罚 0.3%
+//   - staked arm:             首次最低 100 OKB、errorCode 1001
+//   - unstake_requested arm:  7 天冷却期
+// `/staking/config` 后端端点上线后，这些数字应改由注入的配置值替换，模板用
+// `{slashAbstainBps/100}%` / `{firstStakeMinOkb} OKB` / `{unstakeCooldownSeconds/86400} 天` 等。
+// 参见 skills/okx-agent-task/evaluator.md §13 完整清单。
 
 /// 根据 jobStatus 生成 evaluator 下一步动作的结构化提示词
 pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> String {
@@ -43,7 +58,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              \x20\x20\x20\x20请回复：\n\
              \x20\x20\x20\x20  1       投 Provider 胜\n\
              \x20\x20\x20\x20  2       投 Client 胜\n\
-             \x20\x20\x20\x20  skip    弃权（超时罚 0.5% 质押）\n\
+             \x20\x20\x20\x20  skip    弃权（超时罚 0.3% 质押）\n\
              \x20\x20agentInstructions: |\n\
              \x20\x20\x20\x20You are the Evaluator agent on disputeId=<disputeId> jobId={job_id}.\n\
              \x20\x20\x20\x20recommended side=<1|2>  reason=<Step 3 rationale verbatim>\n\
@@ -53,7 +68,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              \x20\x20\x20\x20  (body 只带 vote；agent rationale 不写入后端，仅保留在 session 记忆里)\n\
              \x20\x20\x20\x20  On success: tell user `已承诺 (committed)，disputeId=<id>，等待 reveal 窗口。`\n\
              \x20\x20\x20\x20  On `voter has already committed`: `本轮已承诺过，跳过重复 commit。`\n\
-             \x20\x20\x20\x20- User reply skip/abstain/弃权 → do NOT commit; reply `已跳过投票。Commit/Reveal 超时会罚 0.5% 质押。`\n\
+             \x20\x20\x20\x20- User reply skip/abstain/弃权 → do NOT commit; reply `已跳过投票。Commit/Reveal 超时会罚 0.3% 质押。`\n\
              \x20\x20\x20\x20- User question → fetch silently:\n\
              \x20\x20\x20\x20    任务详情/验收标准 → onchainos agent status {job_id}\n\
              \x20\x20\x20\x20    证据细节         → onchainos agent evaluator info <disputeId>\n\
@@ -144,7 +159,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              \x20\x20\x20\x20[仲裁结算] 任务『<title>』(jobId={job_id}) 仲裁结算完成：\n\
              \x20\x20\x20\x20- 裁决结果：<Provider 胜诉 | Client 胜诉>（winningSide=<1|2>）\n\
              \x20\x20\x20\x20- 资金处理：<资金已释放给 Provider | 资金已退还 Client>\n\
-             \x20\x20\x20\x20- 您本轮投票：side=<1|2|skip>，<与多数一致（已提交 claim，等待 reward_claimed 确认）| 与多数不一致（被罚 1%）| 弃权（被罚 0.5%）>\n\
+             \x20\x20\x20\x20- 您本轮投票：side=<1|2|skip>，<与多数一致（已提交 claim，等待 reward_claimed 确认）| 与多数不一致（被罚 1%）| 弃权（被罚 0.3%）>\n\
              ```\n\n\
              **Step 6 — 输出一行 sub session 日志后结束：**\n\n\
              > Relayed dispute_resolved to main, winningSide=<1|2>, claim submitted={{true|false}}, store cleaned.\n\n\
@@ -238,12 +253,81 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              【流程结束】此 disputeId 的 evaluator 生命周期完成；后续事件无需响应。\n"
         ),
 
-        // ─── 兜底（含 job_disputed / vote_committed / vote_revealed 等无需动作的事件） ─
+        // ─── 质押生命周期：stake tx 回执 ─────────────────────────────────
+        "staked" => "【当前状态】staked（VoterStaking.Staked 上链，首次质押 tx 结果，main session 侧）\n\
+             【角色】仲裁者（Evaluator）\n\
+             【会话类型】main session — 直接对用户说话（staking 事件不在 dispute 生命周期内，没有 sub 可推）。\n\n\
+             【动作】从 payload 提取 `status`（success / failed）、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
+             【回复用户】按 status 二选一：\n\
+             - success → `质押已生效：+<amount> OKB，txHash=<txHash>。你现在是活跃仲裁者候选，被选入陪审时会收到 evaluator_selected 通知。`\n\
+             - failed  → `质押失败（errorCode=<errorCode>, txHash=<txHash>）。常见错误：4000 agentId 无效 / 2004 无 evaluator 身份 / 1001 金额<100 OKB。请按错误码修正后重试 \\`onchainos agent evaluator stake --amount <N>\\`。`\n\n\
+             【不做】不要预测后续 evaluator_selected（何时被选由合约决定）。\n".to_string(),
+
+        "stake_increased" => "【当前状态】stake_increased（VoterStaking.IncreaseStake 上链，补充质押 tx 结果，main session 侧）\n\
+             【角色】仲裁者（Evaluator）\n\
+             【会话类型】main session — 直接对用户说话。\n\n\
+             【动作】从 payload 提取 `status`、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
+             【回复用户】\n\
+             - success → `追加质押已入账:+<amount> OKB,txHash=<txHash>。你的选中权重相应提升。`\n\
+             - failed  → `追加质押失败（errorCode=<errorCode>, txHash=<txHash>），请按错误码重试 \\`onchainos agent evaluator increase-stake --amount <N>\\`。`\n".to_string(),
+
+        "unstake_requested" => "【当前状态】unstake_requested（VoterStaking.UnstakeRequested 上链，申请解质押 tx 结果，main session 侧）\n\
+             【角色】仲裁者（Evaluator）\n\
+             【会话类型】main session — 直接对用户说话。\n\n\
+             【动作】从 payload 提取 `status`、`amount`、`availableAt`（冷却结束时间，毫秒时间戳）、`txHash`、`errorCode`（若 failed）。\n\n\
+             【回复用户】\n\
+             - success → `解质押申请已受理：-<amount> OKB 进入 7 天冷却期，可领取时间 <availableAt 转本地时间>。到点后跑 \\`onchainos agent evaluator claim-unstake\\` 提走；若想撤销跑 \\`onchainos agent evaluator cancel-unstake\\`（仅冷却期内有效）。`\n\
+             - failed  → `解质押申请失败（errorCode=<errorCode>, txHash=<txHash>）。常见原因：活跃仲裁期间不可解质押 / 已在冷却期 / 余额不足。`\n".to_string(),
+
+        "unstake_claimed" => "【当前状态】unstake_claimed（VoterStaking.UnstakeClaimed 上链，领取解质押 tx 结果，main session 侧）\n\
+             【角色】仲裁者（Evaluator）\n\
+             【会话类型】main session。\n\n\
+             【动作】从 payload 提取 `status`、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
+             【回复用户】\n\
+             - success → `解质押已提走 <amount> OKB，已入钱包，txHash=<txHash>。`\n\
+             - failed  → `领取解质押失败（errorCode=<errorCode>, txHash=<txHash>），请按错误码重试。常见原因：锁定期未满 / 无待解质押。`\n".to_string(),
+
+        "unstake_cancelled" => "【当前状态】unstake_cancelled（VoterStaking.UnstakeCancelled 上链，取消解质押 tx 结果，main session 侧）\n\
+             【角色】仲裁者（Evaluator）\n\
+             【会话类型】main session。\n\n\
+             【动作】从 payload 提取 `status`、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
+             【回复用户】\n\
+             - success → `已取消解质押：<amount> OKB 回到质押状态，txHash=<txHash>。`\n\
+             - failed  → `取消失败（errorCode=<errorCode>, txHash=<txHash>）。常见原因：冷却期已过 / 无待解质押。`\n".to_string(),
+
+        // ─── 自己的投票 tx 回执（sub session 内，仅记录） ────────────────
+        "vote_committed" => format!(
+            "【当前状态】vote_committed（你自己的 commit tx 上链 success，sub session 侧）\n\
+             【角色】仲裁者（Evaluator）\n\
+             【会话类型】⚠️ Sub session — 无用户。这是**确认通知**，不是动作触发点。\n\n\
+             【动作】仅记录。禁止重复 commit（后端会返回 `voter has already committed`）。\n\n\
+             【可选】若要让用户看到 commit 已上链，调 `notify_main` 推一条简短确认：\n\
+             ```\n\
+             tool: notify_main\n\
+             arguments:\n\
+             \x20\x20jobId: \"{job_id}\"\n\
+             \x20\x20conversationId: \"<来源消息'会话:'行的值>\"\n\
+             \x20\x20message: |\n\
+             \x20\x20\x20\x20[仲裁进展] 任务 {job_id} commit tx 已上链，等待 reveal 窗口开启。\n\
+             ```\n\n\
+             【后续事件】等 `reveal_started`（开启 reveal 窗口）→ sub 里跑 `evaluator reveal`。\n"
+        ),
+
+        "vote_revealed" => "【当前状态】vote_revealed（你自己的 reveal tx 上链 success，sub session 侧）\n\
+             【角色】仲裁者（Evaluator）\n\
+             【会话类型】⚠️ Sub session — 无用户。确认通知，非动作触发点。\n\n\
+             【动作】仅记录。\n\n\
+             【可选 notify_main】`[仲裁进展] reveal tx 已上链，等待 dispute_resolved 最终裁决。`\n\n\
+             【后续事件】等 `dispute_resolved` / `round_failed`（结算/失效）→ sub 里跑对应 arm。\n".to_string(),
+
+        // ─── 兜底（含 job_disputed 等对 evaluator 无意义的事件） ────────
         other => format!(
             "【未知或无需动作的状态】{other}\n\
              【说明】\n\
-             - evaluator 仅在 evaluator_selected / reveal_started / dispute_resolved / round_failed / slashed / reward_claimed 介入\n\
-             - job_disputed / vote_committed / vote_revealed 等事件无需动作，仅记录即可\n\n\
+             - evaluator 动作触发事件：evaluator_selected / reveal_started / dispute_resolved / round_failed / slashed / reward_claimed\n\
+             - staking tx 回执：staked / stake_increased / unstake_requested / unstake_claimed / unstake_cancelled\n\
+             - 自己的 tx 回执（仅记录）：vote_committed / vote_revealed\n\
+             - 其他方的事件（完全忽略）：job_disputed\n\n\
              【若确有异常】\n\
              1. 调用 `onchainos agent common context {job_id} --role evaluator` 查看上下文\n\
              2. 不要预测/假设其他通知\n"

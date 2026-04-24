@@ -1,34 +1,27 @@
+//! Evaluator 证据查询
+//!
+//! disputeId 格式: `d-<jobId>-r<round>` — 解析 jobId，GET /evidence，下载图片到本地，
+//! 供多模态 agent 直接读取。统一走 TaskApiClient（和 provider/dispute_info 一致的风格）。
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 
-use super::helpers::{parse_job_id, task_api_url};
-use crate::commands::Context;
+use super::helpers::parse_job_id;
+use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 
 /// E1: fetch dispute evidence (text + images) for the evaluator.
-/// disputeId format: `d-<jobId>-r<round>` — parse jobId, call /evidence;
-/// download image bytes locally so multimodal agents can view them.
-pub async fn run_info(dispute_id: String, _ctx: &Context) -> Result<()> {
-    let job_id = parse_job_id(&dispute_id)?;
-    let api = task_api_url();
-    let client = reqwest::Client::new();
+pub async fn handle_info(client: &mut TaskApiClient, dispute_id: &str) -> Result<()> {
+    let job_id = parse_job_id(dispute_id)?;
 
-    let resp: serde_json::Value = client
-        .get(format!("{api}/api/v1/task/{job_id}/evidence"))
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("cannot reach task backend: {e}"))?
-        .json()
-        .await?;
-    if resp["code"] != 0 {
-        bail!("{}", resp["msg"].as_str().unwrap_or("error"));
-    }
+    // GET /priapi/v1/aieco/task/{jobId}/evidence — 返回 data 层已 unwrap 的 evidence 对象。
+    let path = client.endpoint(&job_id, "evidence");
+    let mut data = client.get(&path).await?;
 
-    let mut data = resp["data"].clone();
     let tmp_dir = std::env::temp_dir()
         .join("onchainos-dispute")
-        .join(&dispute_id);
+        .join(dispute_id);
     fs::create_dir_all(&tmp_dir)?;
 
     if let Some(evs) = data["evidences"].as_array().cloned() {
@@ -37,9 +30,9 @@ pub async fn run_info(dispute_id: String, _ctx: &Context) -> Result<()> {
             let mut ev2 = ev.clone();
             if ev["kind"].as_str() == Some("image") {
                 if let Some(name) = ev["name"].as_str() {
-                    match download_image(&client, &api, &job_id, name, &tmp_dir).await {
-                        Ok(path) => {
-                            ev2["localPath"] = serde_json::Value::String(path.to_string_lossy().into());
+                    match download_image(client, &job_id, name, &tmp_dir).await {
+                        Ok(p) => {
+                            ev2["localPath"] = serde_json::Value::String(p.to_string_lossy().into());
                         }
                         Err(e) => {
                             ev2["downloadError"] = serde_json::Value::String(e.to_string());
@@ -56,23 +49,30 @@ pub async fn run_info(dispute_id: String, _ctx: &Context) -> Result<()> {
     Ok(())
 }
 
+/// 图片下载走裸 reqwest（二进制流，不能经 handle_response 的 JSON 解析）。
+/// 路径对齐真后端：`GET /priapi/v1/aieco/task/{jobId}/evidence/download?name=<...>`。
 async fn download_image(
-    client: &reqwest::Client,
-    api: &str,
+    client: &TaskApiClient,
     job_id: &str,
     name: &str,
     tmp_dir: &Path,
 ) -> Result<PathBuf> {
-    let bytes = client
-        .get(format!("{api}/api/v1/task/{job_id}/evidence/download"))
+    let url = format!(
+        "{}{}/evidence/download",
+        client.base_url().trim_end_matches('/'),
+        client.endpoint(job_id, "").trim_end_matches('/'),
+    );
+    let resp = client
+        .http()
+        .get(&url)
         .query(&[("name", name)])
         .send()
-        .await?
-        .error_for_status()?
-        .bytes()
         .await?;
+    if !resp.status().is_success() {
+        bail!("evidence download failed ({}): {}", resp.status(), url);
+    }
+    let bytes = resp.bytes().await?;
     let path = tmp_dir.join(name);
     fs::write(&path, &bytes)?;
     Ok(path)
 }
-

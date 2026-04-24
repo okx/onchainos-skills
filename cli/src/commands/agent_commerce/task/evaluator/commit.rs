@@ -4,7 +4,6 @@ use super::commit_store::{self, StoredCommit};
 use super::helpers::{evaluator_agent_id, parse_job_id};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
-use crate::commands::Context;
 
 /// E2a: commit a vote. Backend generates salt, stores it in task_dispute_voter keyed by voter,
 /// computes commitHash = keccak256(disputeId, vote, salt), and returns commitVote() calldata.
@@ -13,14 +12,13 @@ use crate::commands::Context;
 /// Request body is strictly `{ vote }` per real API spec (§11175). The evaluator's rationale
 /// is NOT part of this API — it lives in agent session memory and is surfaced to the user via
 /// notify_main / escalate_to_main, not persisted to backend.
-pub async fn run_commit(dispute_id: String, side: u8, _ctx: &Context) -> Result<()> {
+pub async fn handle_commit(client: &mut TaskApiClient, dispute_id: &str, side: u8) -> Result<()> {
     if side != 1 && side != 2 {
         bail!("--side must be 1 (provider wins) or 2 (client wins)");
     }
-    let job_id = parse_job_id(&dispute_id)?;
+    let job_id = parse_job_id(dispute_id)?;
     let (account_id, address) = signing::resolve_wallet(None, None)?;
     let agent_id = evaluator_agent_id();
-    let mut client = TaskApiClient::new();
 
     let body = serde_json::json!({ "vote": side });
     let path = client.endpoint(&job_id, "vote/commit");
@@ -32,18 +30,17 @@ pub async fn run_commit(dispute_id: String, side: u8, _ctx: &Context) -> Result<
     ).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(
-        &mut client, &resp["data"]["uopData"], &account_id, &address,
+        client, &resp["uopData"], &account_id, &address,
         &job_id, signing::BizContext::VoteCommit,
     ).await?;
 
-    let d = &resp["data"];
     let side_label = if side == 1 { "Provider wins (Approve)" } else { "Client wins (Reject)" };
-    let commit_hash = d["commitHash"].as_str().unwrap_or("").to_string();
+    let commit_hash = resp["commitHash"].as_str().unwrap_or("").to_string();
 
     // Persist to ~/.onchainos/evaluator-commits.jsonl so reveal can auto-resolve side
     // even after session/agent context is lost. Best-effort: warn on error, do not fail the command.
     let entry = StoredCommit {
-        dispute_id: dispute_id.clone(),
+        dispute_id: dispute_id.to_string(),
         side,
         voter: address.clone(),
         commit_hash: commit_hash.clone(),

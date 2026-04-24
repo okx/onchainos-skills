@@ -535,22 +535,43 @@ impl WalletApiClient {
         access_token: &'a str,
         query: &'a [(&'a str, &'a str)],
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        self.get_authed_with_headers(path, access_token, query, None)
+    }
+
+    /// GET + JWT + optional extra headers (e.g. X-Agent-Id / X-Wallet-Address).
+    /// Retries once after DoH failover.
+    pub fn get_authed_with_headers<'a>(
+        &'a mut self,
+        path: &'a str,
+        access_token: &'a str,
+        query: &'a [(&'a str, &'a str)],
+        extra_headers: Option<&'a [(&'a str, &'a str)]>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
         Box::pin(async move {
             let query_string = build_query_string(query);
             let effective = self.effective_base_url();
             let url = format!("{}{}{}", effective.trim_end_matches('/'), path, query_string);
-            let resp = match self
-                .http
-                .get(&url)
-                .headers(crate::client::ApiClient::jwt_headers(access_token))
-                .send()
-                .await
-            {
+
+            let mut headers = crate::client::ApiClient::jwt_headers(access_token);
+            if let Some(extra) = extra_headers {
+                for (k, v) in extra {
+                    if let (Ok(name), Ok(val)) = (
+                        reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                        reqwest::header::HeaderValue::from_str(v),
+                    ) {
+                        headers.insert(name, val);
+                    }
+                }
+            }
+
+            let resp = match self.http.get(&url).headers(headers).send().await {
                 Ok(r) => r,
                 Err(e) if e.is_connect() || e.is_timeout() => {
                     if self.doh.handle_failure().await {
                         self.rebuild_http_client()?;
-                        return self.get_authed(path, access_token, query).await;
+                        return self
+                            .get_authed_with_headers(path, access_token, query, extra_headers)
+                            .await;
                     }
                     return Err(e).context("Network unavailable — check your connection and try again");
                 }

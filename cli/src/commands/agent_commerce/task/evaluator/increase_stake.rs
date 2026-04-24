@@ -1,0 +1,54 @@
+use anyhow::{bail, Result};
+
+use super::helpers::evaluator_agent_id;
+use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::signing;
+
+/// Evaluator 补充质押（top-up / 被罚后补齐）。
+///
+/// API: POST /priapi/v1/aieco/task/staking/increaseStake (Lark wiki §12580)
+/// - Body: `{ "amount": "<OKB 金额, UI 单位>" }`（agentId 从 header 读）
+/// - 后端打包 approve(VoterStaking, amount) + increaseStake(amount) 为 atomic UOP
+/// - 无最低金额限制（只要 amount > 0）
+///
+/// Error codes:
+///   4000 — agentId 无效
+///   1001 — amount <= 0
+///   3001 — 合约 ABI 生成失败
+pub async fn handle_increase_stake(client: &mut TaskApiClient, amount: &str) -> Result<()> {
+    let trimmed = amount.trim();
+    if trimmed.is_empty() {
+        bail!("--amount 不能为空（OKB 金额，UI 单位，例如 50）");
+    }
+    if !trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        bail!("--amount 必须是数字（OKB 金额，UI 单位不带精度），got: {trimmed}");
+    }
+
+    let (account_id, address) = signing::resolve_wallet(None, None)?;
+    let agent_id = evaluator_agent_id();
+
+    let path = "/priapi/v1/aieco/task/staking/increaseStake";
+    let body = serde_json::json!({ "amount": trimmed });
+    let resp = client
+        .post_with_identity(path, &body, &agent_id, &address)
+        .await?;
+
+    let tx_hash = signing::sign_uop_and_broadcast(
+        client,
+        &resp["uopData"],
+        &account_id,
+        &address,
+        "",
+        signing::BizContext::StakeIncrease,
+    )
+    .await?;
+
+    println!("increase-stake submitted (agentId={agent_id})");
+    println!("  amount:  +{trimmed} OKB");
+    println!("  voter:   {address}");
+    println!("  txHash:  {tx_hash}");
+    println!(
+        "next: 等待 `stake_increased` 事件（VoterStaking.IncreaseStake 上链）确认追加到位。"
+    );
+    Ok(())
+}

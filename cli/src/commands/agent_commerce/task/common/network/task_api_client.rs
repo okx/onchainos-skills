@@ -92,6 +92,21 @@ impl TaskApiClient {
         self.wallet.get_authed(path, &token, &[]).await
     }
 
+    /// GET + JWT + 身份头（X-Agent-Id / X-Wallet-Address）→ 返回 data。
+    /// 用于需要 evaluator 身份的 GET 端点（canReveal / claimable 等）。
+    pub async fn get_with_identity(
+        &mut self,
+        path: &str,
+        agent_id: &str,
+        address: &str,
+    ) -> Result<Value> {
+        let token = get_access_token().await;
+        let headers = [("X-Agent-Id", agent_id), ("X-Wallet-Address", address)];
+        self.wallet
+            .get_authed_with_headers(path, &token, &[], Some(&headers))
+            .await
+    }
+
     /// POST JSON + JWT → 返回 data
     pub async fn post(&mut self, path: &str, body: &Value) -> Result<Value> {
         let token = get_access_token().await;
