@@ -627,13 +627,21 @@ fn warn_local_signing_once() {
     use std::sync::Once;
     static WARN: Once = Once::new();
     WARN.call_once(|| {
-        let mut cache = crate::payment_cache::PaymentCache::load().unwrap_or_default();
-        if cache.local_signing_warned {
+        let prior = crate::payment_cache::PaymentCache::load().unwrap_or_default();
+        if prior.local_signing_warned {
             return;
         }
         write_local_signing_warning(&mut std::io::stderr());
-        cache.local_signing_warned = true;
-        let _ = cache.save();
+        // Re-read immediately before saving so we only patch the
+        // `local_signing_warned` flag, not the whole struct. A concurrent
+        // `flush_payment_cache` (fired by a response header) may have
+        // written fresh `basic_state` / `premium_state` / `accepts`
+        // between the `prior` load and here — saving `prior` back would
+        // clobber them. Matches the read-modify-write pattern documented
+        // on `flush_payment_cache`.
+        let mut fresh = crate::payment_cache::PaymentCache::load().unwrap_or_default();
+        fresh.local_signing_warned = true;
+        let _ = fresh.save();
     });
 }
 
@@ -924,26 +932,6 @@ mod tests {
         );
     }
 
-    /// Test helper — setting/restoring EVM_PRIVATE_KEY around a block.
-    /// Duplicated from Task 2's EnvGuard pattern so each test is
-    /// self-contained (no cross-test ordering dependencies).
-    #[allow(dead_code)]
-    fn with_pk_env<F: FnOnce()>(pk_hex: &str, f: F) {
-        struct Guard(&'static str, Option<String>);
-        impl Drop for Guard {
-            fn drop(&mut self) {
-                match &self.1 {
-                    Some(v) => std::env::set_var(self.0, v),
-                    None => std::env::remove_var(self.0),
-                }
-            }
-        }
-        let prev = std::env::var("EVM_PRIVATE_KEY").ok();
-        let _g = Guard("EVM_PRIVATE_KEY", prev);
-        std::env::set_var("EVM_PRIVATE_KEY", pk_hex);
-        f();
-    }
-
     const TEST_PK: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
     // secp256k1 address derived from TEST_PK (lowercased hex, 0x-prefixed)
     const TEST_PK_ADDR: &str = "0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a";
@@ -1007,7 +995,9 @@ mod tests {
 
     #[tokio::test]
     async fn sign_payment_local_produces_exact_scheme_proof() {
-        with_pk_env(TEST_PK, || {});
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let accepts = json!([{
             "scheme": "exact",
             "network": "eip155:196",
@@ -1066,6 +1056,9 @@ mod tests {
         // Two exact entries, different assets. Without preferred, scheme
         // priority picks the first exact. With preferred pointing at the
         // second, the saved default wins.
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let accepts = json!([
             {
                 "scheme": "exact",
@@ -1112,6 +1105,9 @@ mod tests {
         // Local signing should fall back and pick the exact entry rather
         // than failing — the default is a preference, not a hard
         // requirement, when the matching offering is unusable.
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let accepts = json!([
             {
                 "scheme": "aggr_deferred",
@@ -1157,6 +1153,9 @@ mod tests {
         // `aggr_deferred`, and there is no other `exact` entry to fall
         // back to — local signing cannot proceed and must bail with a
         // message pointing the user at `wallet login` (TEE signing).
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let accepts = json!([
             {
                 "scheme": "aggr_deferred",
@@ -1270,6 +1269,9 @@ mod tests {
         // for the manual-command variant, which passes `preferred = None`
         // down to `sign_payment_local_with_preference` unconditionally so
         // it signs exactly what the caller supplied via `--accepts`.
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let accepts = json!([
             {
                 "scheme": "aggr_deferred",

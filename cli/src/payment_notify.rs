@@ -27,9 +27,6 @@ use crate::commands::agentic_wallet::payment_flow::{parse_eip155_chain_id, Payme
 /// amount. Today the Market API only bills in USDC/USDT so this is
 /// correct in practice; widening the set of accepted assets requires
 /// fixing this first.
-///
-/// TODO(yinman): switch to per-asset decimals once the server surfaces
-/// them on `accepts.extra.decimals` (or equivalent).
 const DISPLAY_DECIMALS: usize = 6;
 
 // ── Pricing constants (CLI-side, filled in later) ───────────────────────
@@ -242,11 +239,6 @@ fn format_rfc3339_utc(unix_secs: i64) -> String {
 /// Grace expiry for old users: 2026-05-31T00:00:00Z. Global constant —
 /// the server doesn't return this, so every old user gets the same
 /// cutoff.
-// TODO(yinman, due 2026-06-01): Market API grace window ends on
-// 2026-05-31. After that date, old users transition to `post-grace`
-// pricing and `Event::OldUserGrace` is unreachable — revisit this
-// constant and the `OldUserGrace` arm in `compute_events`. If the
-// product team extends the window, bump the literal here.
 pub fn grace_expires_at() -> i64 {
     DateTime::parse_from_rfc3339("2026-05-31T00:00:00Z")
         .expect("hardcoded RFC3339 literal")
