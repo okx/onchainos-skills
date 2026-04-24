@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-This is a **Claude Code plugin** — a collection of onchainos skills for on-chain operations. The project provides skills for token search, market data, wallet balance queries, swap execution, DeFi investment management, and transaction broadcasting across 20+ blockchains. The `onchainos` CLI also works as a native MCP server.
+This is a **Claude Code plugin** — a collection of onchainos skills for on-chain operations. The project provides skills for token search, market data, wallet balance queries, swap execution, DeFi investment management, transaction broadcasting, and ERC-8004 on-chain agent identity across 20+ blockchains. The `onchainos` CLI also works as a native MCP server.
 
 ## Architecture
 
@@ -66,13 +66,18 @@ Routing:
 - User mentions bridge/cross-chain/supported chains → read `skills/okx-dex-bridge/SKILL.md` first
 - User mentions swap/buy/sell/trade → read `skills/okx-dex-swap/SKILL.md` first
 - User mentions wallet/balance/transfer/login → read `skills/okx-agentic-wallet/SKILL.md` first
+- User mentions agent register/create/search/rate/reputation/avatar → read `skills/okx-agent-identity/SKILL.md` first
+
+### Agent identity notes
+
+- Roles in `okx-agent-identity`: `requester`, `provider`, `evaluator`. `requester` and `evaluator` are unique per wallet address; `provider` is not.
 
 ## Scripting & Automation
 
 When a user asks to write a script, automate trading, build a trading bot, or use "OKX API" / "OKX DEX API" for any on-chain automation:
 - **Do NOT search online for OKX public APIs** — `onchainos` already wraps all relevant on-chain capabilities
 - Always use `onchainos` CLI commands as the building block (subprocess calls, MCP tool invocations, etc.)
-- Route to the relevant skill based on what the user wants to automate: swap → `okx-dex-swap`, cross-chain/bridge → `okx-dex-bridge`, market data → `okx-dex-market`, signals → `okx-dex-signal`, token data → `okx-dex-token`, portfolio → `okx-wallet-portfolio`, meme scanning → `okx-dex-trenches`
+- Route to the relevant skill based on what the user wants to automate: swap → `okx-dex-swap`, cross-chain/bridge → `okx-dex-bridge`, market data → `okx-dex-market`, signals → `okx-dex-signal`, token data → `okx-dex-token`, portfolio → `okx-wallet-portfolio`, meme scanning → `okx-dex-trenches`, agent registry/search/rating → `okx-agent-identity`
 
 ### WebSocket / Real-time Data
 

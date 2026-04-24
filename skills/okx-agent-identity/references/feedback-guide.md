@@ -29,12 +29,22 @@ Walk this ladder in order:
 2. **Run `onchainos agent get`.** The backend auto-filters by the caller's userId.
    - **0 agents** → STOP. Tell the user: "你还没有注册自己的 agent，先 `agent create` 一个（任意 role）才能给别人打分。" Offer to enter the `create` flow.
    - **1 agent** → silently use its agentId as `--creator-id`; mention the choice in the confirmation: "你的 agent #N <name> 会作为 creator 出现在这条评分上。"
-   - **Multiple agents** → ask the user which to use:
+   - **Multiple agents** → ask the user which to use, using the numbered-options pattern (`SKILL.md §Choice prompts`) in the user's language:
 
+     Chinese:
      ```
      你要用哪个 agent 作为评价人？
-       [1] #88 requester  MyBuyer
-       [2] #99 provider   DeFi Analyzer
+       1. #88 requester  MyBuyer
+       2. #99 provider   DeFi Analyzer
+     回复对应数字。
+     ```
+
+     English:
+     ```
+     Which of your agents should be the reviewer?
+       1. #88 requester  MyBuyer
+       2. #99 provider   DeFi Analyzer
+     Reply with the number.
      ```
 
      Do not auto-pick — `creator-id` is public and affects the user's reputation of their own agent.
@@ -83,7 +93,7 @@ onchainos agent feedback-submit \
 
 Render the detail outcome and offer exactly **one** next-step suggestion — not a menu (see `display-formats.md` §8):
 
-> 已给 #<target> 打 <score> 分。要不要看看 #<target> 的最新评分分布？执行 `agent feedback-list <target> --sort-by newest`。
+> 已给 #<target> 打 <score> 分。要不要看看 #<target> 的最新评分分布？执行 `agent feedback-list <target> --sort-by time_desc`（按时间倒序）；想看分数最高的改 `score_desc`。用户说的中文排序意图按 `cli-reference.md` §10 的映射表转换。
 
 Do NOT chase with `agent feedback-list` automatically. See `_shared/no-polling.md`.
 
@@ -99,10 +109,10 @@ Do NOT chase with `agent feedback-list` automatically. See `_shared/no-polling.m
 
 ## Error handling
 
-| CLI error | User message | Next step |
-|---|---|---|
-| `score out of range` | "分数要在 0-100 之间的整数" | re-ask step 3 |
-| `self-rating not allowed` | "不能给自己的 agent 打分" | abort, ask target |
-| `creator agent not owned by caller` | "你没法用别人的 agent 作为 creator" | re-run step 2 |
-| `agent not found` | "找不到 agent #<id>，确认 ID 或拼写" | re-ask step 1 |
-| `session expired, please login again` | "登录态过期，先 `wallet login`" | handoff `okx-agentic-wallet` |
+See `troubleshooting.md` for the canonical tables and translations:
+
+- `score out of range` / `self-rating not allowed` / `creator agent not owned by caller` / `agent not found` — **backend-originated, keyword match** → `troubleshooting.md` §2. Skill action: return to the relevant step of this guide (step 3 / step 1 / step 2 / step 1 respectively).
+- `session expired, please login again: onchainos wallet login` — **CLI-exact** → `troubleshooting.md` §1. Hand off to `okx-agentic-wallet` → `wallet login`, then retry.
+- Score range and `--agent-id != --creator-id` are also enforced **skill-side** before the CLI runs (see `troubleshooting.md` §3) — catch locally, do not rely on the backend as the first line of defense.
+
+Do not duplicate the error strings here — if you need the exact wording or the line number in `cli/src/...`, go to `troubleshooting.md`.

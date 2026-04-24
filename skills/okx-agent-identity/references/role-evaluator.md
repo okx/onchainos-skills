@@ -1,78 +1,86 @@
 # Role: evaluator (验证者)
 
-> Registers an arbitrator identity. Requires **100 OKB staked** before `create`. This skill does NOT verify the stake — the backend enforces; `/skills/okx-agent-task/evaluator.md` owns the staking flow.
+> Registers an arbitrator identity. `create` itself does not require the OKB stake — the backend accepts the registration regardless. Staking 100 OKB is what makes the evaluator eligible to be assigned to real disputes; that flow lives in `/skills/okx-agent-task/evaluator.md`. This skill never verifies or reads stake state.
 
 ## STRICT — one question per turn
 
-Fields defined in `field-specs.md`. Inline 用途 / 可见范围 / 约束 / 示例 when asking.
+Fields defined in `field-specs.md`. Inline the four segments (`用途 / 可见范围 / 请注意 / 示例` for Chinese; `Purpose / Visibility / Please note / Example` for English) when asking, in the user's language only.
 
 ## Flow overview
 
 ```
 1. Ask name
 2. Ask description
-3. 质押二选一 card
-     Branch A: "①先去质押"       -> cache fields, hand off to staking, stop here
-     Branch B: "②已质押直接 create" -> confirmation card -> execute
-4. (returning from staking) resume directly at confirmation card
-   — do NOT re-ask name/description
+3. Confirmation card → execute create
+4. Post-success card + 一行引导：去质押 100 OKB 才能接仲裁派单
 ```
+
+No pre-create staking gate. No cached-resume flow. Registration is cheap; staking is a deliberate later step the user triggers from `okx-agent-task`.
 
 ## Phase 1 — identity Q&A
 
-| Turn | Ask | Validation |
-|---|---|---|
-| 1 | `Name` | non-empty, ≤ 64 chars |
-| 2 | `Description` — "一句话描述你的仲裁领域/专长" | non-empty, ≤ 500 chars |
+### Phase preview (render BEFORE Q1)
+
+Once role is `evaluator` and pre-check passed (evaluator is unique per address — if found, hand off to `update` per `role-playbook.md §Pre-check`), render a short declarative preview, then start Q1.
+
+Chinese:
+```
+好，开始新 evaluator 的 create 流程。接下来会收集以下基本信息：
+  1. 名称
+  2. 描述
+（evaluator 默认不问头像；想设头像直接说。）
+```
+
+English:
+```
+Got it — starting a new evaluator create. We'll collect:
+  1. Name
+  2. Description
+(No avatar prompt by default; just say so if you want to set one.)
+```
+
+Preview is declarative; Q1 follows after a blank line.
+
+### Q&A
+
+Questions labelled `Q1：` / `Q1:`. Each Q inlines the four-segment field spec from `field-specs.md` in the user's language only. Skip any Q whose field was already captured via `SKILL.md §One-shot capture`.
+
+| Q | Chinese prompt | English prompt | Validation |
+|---|---|---|---|
+| Q1 | `Q1：你要注册的 evaluator 叫什么名字？` + 4 segments | `Q1: What's the name of this evaluator?` + 4 segments | non-empty, ≤ 64 chars |
+| Q2 | `Q2：用一句话描述你的仲裁领域或专长。` + 4 segments | `Q2: Describe your arbitration domain or expertise in a sentence.` + 4 segments | non-empty, ≤ 500 chars |
 
 No avatar prompt by default (evaluator dashboards rarely show avatars). If the user brings it up, branch to `avatar-upload.md`.
 
-## Phase 2 — 质押二选一 card
+## Phase 2 — confirmation card
 
-After capturing `name` + `description`, render this card exactly:
+Render in the user's language. Pick ONE variant.
 
-```
-Evaluator 需要先质押 100 OKB 才能参与仲裁。
+Chinese variant:
 
-你可以：
-  ① 先去质押  — 我把你刚填的 name / description 暂存，质押完回来说 "回来注册 evaluator"，我直接续上
-  ② 已质押直接 create  — 如果你已经质押过了，我现在就下发
-
-回复 "1" 或 "2"。
-```
-
-### Branch ① — 先去质押
-
-- **Cache** the collected fields in conversation state (you'll recall them when the user comes back). Label the cache so it's obvious: `evaluator-draft: { name: "...", description: "..." }`.
-- Hand off: "质押流程在 `/skills/okx-agent-task/evaluator.md`。完成后说 `回来注册 evaluator` 我续上。"
-- **Do NOT** execute `create`. **Do NOT** poll the staking status — staking is out of this skill's scope.
-
-### Branch ② — 已质押直接 create
-
-- Trust the user's assertion. Go straight to the confirmation card (Phase 3).
-- If the backend rejects with `stake not found` or similar, surface the error card and point them at `/skills/okx-agent-task/evaluator.md`. Do NOT retry automatically.
-
-### Resume keyword — "回来注册 evaluator" / "回来 evaluator" / similar
-
-When the user comes back with this phrasing:
-
-1. Look up the cached `evaluator-draft`.
-2. If cache exists → skip directly to Phase 3 confirmation. **Do NOT re-ask name/description.**
-3. If cache missing (new conversation, context was lost) → say: "上次的 name/description 已经不在上下文了，我们重新问一下。" Restart Phase 1.
-
-## Phase 3 — confirmation
-
-| Field | Value |
+| 字段 | 值 |
 |---|---|
-| role | evaluator (验证者) |
-| name | Solidity Auditor |
-| description | Arbitrates Solidity-related task disputes; 5y audit experience. |
-| picture | 默认 |
-| stake | 100 OKB（用户已确认） |
+| 角色 | 验证者 (`evaluator`) |
+| 名字 | Solidity Auditor |
+| 描述 | 仲裁 Solidity 相关任务的争议；5 年审计经验。 |
+| 头像 | 默认 |
 
 > 确认无误回复 "执行"。
 
-**Do NOT** show the bash command. **Do NOT** show the raw stake tx hash in this card — stake verification is backend's job.
+English variant:
+
+| Field | Value |
+|---|---|
+| Role | evaluator |
+| Name | Solidity Auditor |
+| Description | Arbitrates Solidity-related task disputes; 5y audit experience. |
+| Picture | default |
+
+> Reply "execute" to run it.
+
+Do **NOT** add a `stake` row here — create does not consume the stake and this skill has no way to verify it. Mentioning stake in the confirmation card implies a gate that does not exist.
+
+**Do NOT** show the bash command. **Do NOT** mention OKB or stake tx hashes inside the confirmation card.
 
 ## Execute (maintainer reference — not shown to user)
 
@@ -86,26 +94,47 @@ onchainos agent create \
 
 ## Post-success suggestion
 
-> Evaluator agent #<id> 注册完成，等待系统按 workload 分派仲裁案件。
+Two lines in order, in the user's language. Follow the `#<id>` placeholder rule in `display-formats.md` — include the id only if it's actually known.
 
-Optional: "想看看活跃仲裁员的声誉水平作为参考，可以说 `搜索活跃的高分 evaluator`。"
+With id (Chinese):
+> Evaluator 身份 #<id> 已注册。
+> 要被系统分派仲裁案子，还需要去 `/skills/okx-agent-task/evaluator.md` 质押 100 OKB。质押是独立流程，这条 skill 不读质押状态。
+
+Without id (Chinese):
+> Evaluator 身份已注册。
+> 要被系统分派仲裁案子，还需要去 `/skills/okx-agent-task/evaluator.md` 质押 100 OKB。质押是独立流程，这条 skill 不读质押状态。
+
+With id (English):
+> Evaluator agent #<id> registered.
+> To be assigned dispute cases, you still need to stake 100 OKB via `/skills/okx-agent-task/evaluator.md`. Staking is a separate flow; this skill does not read stake state.
+
+Without id (English):
+> Evaluator agent registered.
+> To be assigned dispute cases, you still need to stake 100 OKB via `/skills/okx-agent-task/evaluator.md`. Staking is a separate flow; this skill does not read stake state.
+
+Optional follow-up (offer, don't force), user language:
+- 中文："想参考下活跃仲裁员的声誉水平，可以说 `搜索活跃的高分 evaluator`。"
+- English: "Want to see how active evaluators are rated for reference? Say `search for active high-score evaluators`."
 
 **Do NOT** chase with status poll. See `_shared/no-polling.md`.
 
 ## Error recovery
 
-| Backend rejection | Skill action |
-|---|---|
-| stake missing / insufficient | Error card → "后端拒绝了，因为质押没到位。先去 `/skills/okx-agent-task/evaluator.md` 确认质押，再回来说 `回来注册 evaluator`。" |
-| session expired | Error card → `okx-agentic-wallet` login handoff. |
-| name / description invalid | Error card → re-ask the offending field (Phase 1). |
+Translations and classifications live in `troubleshooting.md`. This section only records the **evaluator-specific skill actions**:
+
+- **Session expired** (CLI-exact, `troubleshooting.md` §1 row 1): render the error card → hand off to `okx-agentic-wallet` for `wallet login`, then re-run the confirmation card. No cached-resume needed — if the conversation is still alive the name/description are still in scope.
+- **Name / description validation** (there is no CLI bail for these; if the backend rejects, §2 keyword match): re-ask the offending field in Phase 1.
+
+`stake` / `insufficient` keywords are **not expected on create** — create does not consume the stake. If such a rejection ever appears, surface the raw message verbatim and tell the user staking lives in `/skills/okx-agent-task/evaluator.md`. Do not infer a staking gate on create.
+
+Do not invent error strings here — add new rows to `troubleshooting.md` §1 or §2 first, then reference them from this list.
 
 ## Good / bad cases
 
 | User input | Action |
 |---|---|
-| "我想当仲裁者" | Start Phase 1 turn 1 (ask name). Do NOT immediately dump the staking requirement — collect name/description first, then show the 二选一 card. |
-| "我确认已质押" at Phase 2 | Branch ②. Execute confirmation card. |
-| "先去质押" → (later) "回来注册 evaluator" | Branch ① → cache → resume at Phase 3 without re-asking. |
-| "不想质押" | Suggest `requester` or `provider` instead: "evaluator 没有质押就没法分派案子，要不要改注册 `requester` / `provider`？" |
-| User says "帮我查下我质押没" | Decline — this skill doesn't read stake state. Hand off to the staking flow. |
+| "我想当仲裁者" | Start Phase 1 turn 1 (ask name). Do NOT dump the staking requirement up front — it belongs in the post-success message, not as a pre-create gate. |
+| "我还没质押，能先注册吗" | 可以。Proceed with create. In the post-success message, remind them that没质押拿不到仲裁派单。 |
+| "帮我直接质押再注册" | Correct them: 注册在前、质押在后。先完成这里的 create，我再把你引到 `/skills/okx-agent-task/evaluator.md`。 |
+| "不想质押" | Offer: evaluator agent 可以先注册着放在那里，但没质押不会被派单，你可以考虑改注册 `requester` / `provider`，或者保留 evaluator 身份等想好了再质押。 |
+| "帮我查下我质押没" | Decline — this skill doesn't read stake state. Hand off to the staking flow. |

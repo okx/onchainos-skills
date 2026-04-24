@@ -359,8 +359,11 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
     let task_id = trim_or_empty(args.task_id.as_deref());
     let session_cert = load_session_cert()?;
 
-    // 请求体：create-comment 需要 chainIndex + sessionCert + comment（fromAddr
-    // 已不再带）。本地 XLayer 地址解析仍然要做，结果只给下一步广播用。
+    // 请求体：create-comment 需要 chainIndex + sessionCert + feedBackAgentId +
+    // comment（fromAddr 已不再带）。feedBackAgentId 是评价发起方的 agent id，与
+    // 广播 extraData.erc8004Msg.feedBackAgentId 同源（均来自 --creator-id），
+    // 但在请求体里放在顶层（和 chainIndex 同级），不进 comment 子对象。
+    // 本地 XLayer 地址解析仍然要做，结果只给下一步广播用。
     let comment = json!({
         "agentId": agent_id,
         "value": score.to_string(),
@@ -369,6 +372,7 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
     let body = json!({
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,
         "sessionCert": session_cert,
+        "feedBackAgentId": creator_id,
         "comment": serde_json::to_string(&comment).context("failed to serialize comment")?,
     });
 
