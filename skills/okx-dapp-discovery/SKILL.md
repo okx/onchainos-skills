@@ -82,13 +82,16 @@ Morpho, MetaMorpho, Merkl reward.
 Use the `skills` CLI for agent-agnostic detection (works on Claude Code, Codex CLI, OpenCode, OpenClaw, Cursor — wherever `npx skills` is available):
 
 ```bash
-npx skills list 2>/dev/null > /tmp/_skills_list.txt
+# Cache the listing in a variable — no temp file required, portable across
+# macOS / Linux / Windows-Git-Bash / sandboxed environments without /tmp.
+SKILLS_LIST=$(npx skills list 2>/dev/null)
+
 HL_INSTALLED=false; PM_INSTALLED=false; AAVE_INSTALLED=false; PCS_INSTALLED=false; MORPHO_INSTALLED=false
-grep -qE '(^|\s|/)hyperliquid-plugin(\s|$)'    /tmp/_skills_list.txt && HL_INSTALLED=true
-grep -qE '(^|\s|/)polymarket-plugin(\s|$)'     /tmp/_skills_list.txt && PM_INSTALLED=true
-grep -qE '(^|\s|/)aave-v3-plugin(\s|$)'        /tmp/_skills_list.txt && AAVE_INSTALLED=true
-grep -qE '(^|\s|/)pancakeswap-v3-plugin(\s|$)' /tmp/_skills_list.txt && PCS_INSTALLED=true
-grep -qE '(^|\s|/)morpho-plugin(\s|$)'         /tmp/_skills_list.txt && MORPHO_INSTALLED=true
+echo "$SKILLS_LIST" | grep -qE '(^|\s|/)hyperliquid-plugin(\s|$)'    && HL_INSTALLED=true
+echo "$SKILLS_LIST" | grep -qE '(^|\s|/)polymarket-plugin(\s|$)'     && PM_INSTALLED=true
+echo "$SKILLS_LIST" | grep -qE '(^|\s|/)aave-v3-plugin(\s|$)'        && AAVE_INSTALLED=true
+echo "$SKILLS_LIST" | grep -qE '(^|\s|/)pancakeswap-v3-plugin(\s|$)' && PCS_INSTALLED=true
+echo "$SKILLS_LIST" | grep -qE '(^|\s|/)morpho-plugin(\s|$)'         && MORPHO_INSTALLED=true
 ```
 
 > **Known limitation:** the Read step further below uses `$HOME/.claude/skills/` paths, which is Claude-Code-specific. Codex / OpenCode / OpenClaw / Cursor users may need to substitute their agent's skills directory. Tracked as a follow-up against the `skills` CLI to add a `skills info <skill>` subcommand for cross-agent path resolution.
