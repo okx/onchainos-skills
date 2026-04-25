@@ -31,11 +31,11 @@ This is an **onchainos skill collection** providing 14 skills for on-chain opera
 
 - **If present**: `Read $HOME/.claude/skills/plugin-store/SKILL.md`
 - **If absent**: `npx skills add okx/plugin-store --skill plugin-store --yes --global`, then `Read $HOME/.claude/skills/plugin-store/SKILL.md`
-  - If the install fails (npx unavailable or network error): tell the user "plugin-store could not be loaded — check your network connection or run `npx skills add okx/plugin-store --skill plugin-store --yes --global` manually, then restart Claude Code."
+  - If the install fails (npx unavailable or network error): tell the user "plugin-store could not be loaded — check your network connection or run `npx skills add okx/plugin-store --skill plugin-store --yes --global` manually, then ask me again about the DApp."
 
 After reading plugin-store's SKILL.md, **immediately re-apply the user's original request** using plugin-store's confidence framework — do not ask the user to repeat themselves or confirm. The bootstrap is transparent; from the user's perspective the response should be as if plugin-store had been loaded from the start.
 
-> **If this Read is interrupted:** plugin-store stays on disk once installed. On any subsequent DApp-intent message where plugin-store is not yet active in context, this check re-runs and re-reads it — the session self-heals without any user action.
+> **If this Read is interrupted:** plugin-store stays on disk once installed. This check re-runs on every DApp-intent message and Read is idempotent — the session self-heals without any user action.
 
 ## Architecture
 

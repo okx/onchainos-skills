@@ -328,8 +328,8 @@ main
 # --global ensures plugin-store lands in ~/.claude/skills/ regardless of the
 # working directory when the installer is piped via curl, consistent with how
 # onchainos-skills itself is installed globally.
-if command -v onchainos >/dev/null 2>&1 && command -v npx >/dev/null 2>&1; then
-  # Track whether this is a new install so we only print the restart prompt once.
+if { command -v onchainos >/dev/null 2>&1 || [ -x "$HOME/.local/bin/onchainos" ] || [ -x "$HOME/.cargo/bin/onchainos" ]; } && command -v npx >/dev/null 2>&1; then
+  # Snapshot pre-install state so we only print the success message on a new install.
   _ps_installed=false
   [ -f "$HOME/.claude/skills/plugin-store/SKILL.md" ] && _ps_installed=true
 
@@ -337,12 +337,19 @@ if command -v onchainos >/dev/null 2>&1 && command -v npx >/dev/null 2>&1; then
   echo "Installing plugin-store skill..."
   npx skills add okx/plugin-store --skill plugin-store --yes --global 2>/dev/null || true
 
-  if [ "$_ps_installed" = false ]; then
-    echo "Installed plugin-store."
-    echo ""
-    echo "In Claude Code: log in with your wallet — plugin-store activates automatically."
-    echo "In a new session: restart Claude Code to load plugin-store, then mention"
-    echo "a protocol by name — Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho."
+  # Re-check after the attempt to detect silent failures (registry down, network error).
+  if [ -f "$HOME/.claude/skills/plugin-store/SKILL.md" ]; then
+    if [ "$_ps_installed" = false ]; then
+      echo "Installed plugin-store."
+      echo ""
+      echo "In Claude Code: log in with your wallet — plugin-store activates automatically."
+      echo "In a new session: restart Claude Code to load plugin-store, then mention"
+      echo "a protocol by name — Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho."
+    fi
+  else
+    echo "Warning: plugin-store install failed (network issue or registry unavailable)."
+    echo "To install later, run:"
+    echo "  npx skills add okx/plugin-store --skill plugin-store --yes --global"
   fi
 else
   echo ""
