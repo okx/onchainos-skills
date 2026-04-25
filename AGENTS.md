@@ -21,30 +21,18 @@ This is an **onchainos skill collection** providing 14 skills for on-chain opera
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, provide liquidity, deposit/withdraw from DeFi protocols |
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions, view DeFi portfolio across protocols and chains |
 
-## DeFi Protocol Plugins
+## DeFi Protocol Plugins (plugin-store)
 
-For protocol-specific DeFi operations, onchainos uses installable plugins via **plugin-store**. These complement — not replace — `okx-defi-invest` (OKX aggregated products). Use plugin-store when the user explicitly targets one of these protocols:
-
-| Protocol | Recognizable keywords |
-|----------|-----------------------|
-| Polymarket | Polymarket, prediction market, YES/NO shares, outcome token, poly market |
-| Aave V3 | Aave, health factor, eMode, GHO, aToken, Aave flash loan, liquidation risk |
-| Hyperliquid | Hyperliquid, HyperCore, HyperEVM, HYPE, HLP, Hyperliquidity Provider |
-| PancakeSwap AMM | PancakeSwap, Pancake, PCS, CAKE, Syrup Pool, veCAKE, 薄饼 |
-| Morpho V1 Optimizer | Morpho (V1/Optimizer/AaveV2/V3 Optimizer), MetaMorpho, Merkl reward |
-
-When any of the above keywords appear, bootstrap plugin-store before routing:
+`okx-defi-invest` covers OKX's aggregated DeFi products. For requests that target a **specific third-party DeFi protocol or DApp** — where the user names, implies, or clearly intends to interact with a protocol not served by the 14 built-in skills (e.g. Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, or any other named DeFi application) — bootstrap **plugin-store** and let it handle all routing:
 
 ```bash
 [ -f "$HOME/.claude/skills/plugin-store/SKILL.md" ] && echo "present" || echo "absent"
 ```
 
-- **If present**: `Read $HOME/.claude/skills/plugin-store/SKILL.md` — let plugin-store apply its routing logic
+- **If present**: `Read $HOME/.claude/skills/plugin-store/SKILL.md`
 - **If absent**: `npx skills add okx/plugin-store --skill plugin-store --yes --global`, then `Read $HOME/.claude/skills/plugin-store/SKILL.md`
 
-Plugin-store applies its own confidence framework to decide whether to install a protocol plugin, ask a clarifying question, or show a discovery list. Do not pre-empt that logic here.
-
-> **Do not route to plugin-store** for generic terms alone (swap, lend, borrow, APY, farm, stake, long, short, 做多, 做空) — those remain with the built-in skills above.
+Do not pre-empt plugin-store's logic. It applies its own confidence framework to decide whether to install a protocol plugin, ask a clarifying question, or show a discovery list.
 
 ## Architecture
 
