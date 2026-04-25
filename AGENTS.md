@@ -32,7 +32,7 @@ This is an **onchainos skill collection** providing 14 skills for on-chain opera
 - **If present**: `Read $HOME/.claude/skills/plugin-store/SKILL.md`
 - **If absent**: `npx skills add okx/plugin-store --skill plugin-store --yes --global`, then `Read $HOME/.claude/skills/plugin-store/SKILL.md`
 
-Do not pre-empt plugin-store's logic. It applies its own confidence framework to decide whether to install a protocol plugin, ask a clarifying question, or show a discovery list.
+After reading plugin-store's SKILL.md, **immediately re-apply the user's original request** using plugin-store's confidence framework — do not ask the user to repeat themselves or confirm. The bootstrap is transparent; from the user's perspective the response should be as if plugin-store had been loaded from the start.
 
 ## Architecture
 
