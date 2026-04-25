@@ -1,35 +1,48 @@
-# Installing onchainos Skills for Codex
+# Install OKX Onchain OS for Codex
 
-Enable onchainos skills in Codex via native skill discovery. Just clone, symlink.
+Install the official OKX Onchain OS skills into Codex through native skill discovery.
+
+This repository includes reusable skills for token discovery, market data, smart-money signals, wallet and DeFi analysis, swaps, bridge flows, security checks, payments, and transaction workflows.
 
 ## Prerequisites
 
 - Git
-- OKX API credentials from [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal)
+- Codex
+- OKX API credentials from [OKX Onchain OS Developer Portal](https://web3.okx.com/onchainos/dev-portal)
 
-## Installation
+Recommended environment variables:
 
-1. **Clone the repository:**
+```bash
+OKX_API_KEY="your-api-key"
+OKX_SECRET_KEY="your-secret-key"
+OKX_PASSPHRASE="your-passphrase"
+```
+
+Never commit these credentials to git or paste them into logs and chat transcripts.
+
+## Install
+
+1. Clone the repository:
 
    ```bash
    git clone https://github.com/okx/onchainos-skills ~/.codex/onchainos-skills
    ```
 
-2. **Create the skills symlink:**
+2. Symlink the bundled skills into Codex skill discovery:
 
    ```bash
    mkdir -p ~/.agents/skills
    ln -s ~/.codex/onchainos-skills/skills ~/.agents/skills/onchainos-skills
    ```
 
-   **Windows (PowerShell):**
+   Windows (PowerShell):
 
    ```powershell
    New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.agents\skills"
    cmd /c mklink /J "$env:USERPROFILE\.agents\skills\onchainos-skills" "$env:USERPROFILE\.codex\onchainos-skills\skills"
    ```
 
-3. **Restart Codex** (quit and relaunch the CLI) to discover the skills.
+3. Restart Codex so it can discover the new skills.
 
 ## Verify
 
@@ -37,30 +50,57 @@ Enable onchainos skills in Codex via native skill discovery. Just clone, symlink
 ls -la ~/.agents/skills/onchainos-skills
 ```
 
-You should see the five skill directories: `okx-wallet-portfolio`, `okx-dex-market`, `okx-dex-swap`, `okx-dex-token`, `okx-onchain-gateway`.
+You should see the Onchain OS skill set, including categories such as:
 
-## Available Skills
+- `okx-agentic-wallet`
+- `okx-wallet-portfolio`
+- `okx-security`
+- `okx-dex-market`
+- `okx-dex-signal`
+- `okx-dex-swap`
+- `okx-dex-token`
+- `okx-onchain-gateway`
+- `okx-defi-invest`
+- `okx-defi-portfolio`
 
-| Skill | When to Use |
-|-------|-------------|
-| `okx-wallet-portfolio` | Wallet balance, token holdings, portfolio value |
-| `okx-dex-market` | Token prices, K-line charts, trade history |
-| `okx-dex-swap` | Swap / trade / buy / sell tokens on-chain |
-| `okx-dex-token` | Token search, rankings, holder distribution |
-| `okx-onchain-gateway` | Gas estimation, transaction simulation, broadcasting, order tracking |
+## Optional CLI Install
 
-## Updating
+The repository also ships the native `onchainos` CLI and MCP server.
+
+macOS / Linux:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/okx/onchainos-skills/main/install.ps1 | iex
+```
+
+Verify:
+
+```bash
+onchainos --version
+```
+
+## Update
 
 ```bash
 cd ~/.codex/onchainos-skills && git pull
 ```
 
-Skills update instantly through the symlink.
+Updates take effect through the symlink after Codex reloads the skills.
 
-## Uninstalling
+## Uninstall
 
 ```bash
 rm ~/.agents/skills/onchainos-skills
 ```
 
-Optionally delete the clone: `rm -rf ~/.codex/onchainos-skills`.
+Optionally remove the clone:
+
+```bash
+rm -rf ~/.codex/onchainos-skills
+```
