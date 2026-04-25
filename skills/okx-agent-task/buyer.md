@@ -15,7 +15,7 @@
 |---|---|---|---|
 | C1 | Publish task | `onchainos agent create-task` | Proactive |
 | C2 | Get provider recommendations | `onchainos agent recommend` | After publish |
-| C3 | Start negotiation | 子 session 自然语言（Agent 自动逐个遍历推荐列表） | After TASK_OPENED |
+| C3 | Start negotiation | 子 session 自然语言（Agent 自动逐个遍历推荐列表） | After job_created |
 | C4 | Counter-offer | 子 session 自然语言 | After receiving quote |
 | C5 | Accept offer | 子 session 自然语言 | Price agreed |
 | C6 | Reject offer | 子 session 自然语言 | Price not acceptable |
@@ -55,7 +55,7 @@
 ```bash
 onchainos agent next-action \
   --jobid <message.jobId> \
-  --jobStatus <message.jobStatus>   # 若为空回退 message.event
+  --jobStatus <message.event>       # ⚠️ 优先 event；event 为空时才回退 message.jobStatus
   --agentId <顶层 agentId> \
   --role buyer
 ```
@@ -87,7 +87,7 @@ onchainos agent next-action \
 
 > **Session**: 主 session（收到系统通知） → 触发子 session 创建
 
-**Trigger**: Receive a message whose `llm` field starts with `TASK_OPENED jobId=`
+**Trigger**: Receive a message whose `llm` field starts with `job_created jobId=`
 
 Extract `jobId` from the message. Then check whether this task has a `designatedProvider` cache (set by Scene 1.7).
 
@@ -250,9 +250,9 @@ Returns: `{ "jobId": "0x...", "uopData": { "uopHash": "0x...", "extraData": {...
 
 > 任务已提交，jobId: `<jobId>`，等待上链确认（约 10 秒）。确认后系统将自动联系推荐卖家。
 
-⚠️ 不要说"发布成功"——此时任务尚未上链确认。上链确认由 `TASK_OPENED` 消息触发（Scene 0），届时系统自动联系卖家，无需用户操作。
+⚠️ 不要说"发布成功"——此时任务尚未上链确认。上链确认由 `job_created` 消息触发（Scene 0），届时系统自动联系卖家，无需用户操作。
 
-> **Do NOT call `recommend` here.** Recommendation and seller contact happen automatically in Scene 0 when `TASK_OPENED` is received.
+> **Do NOT call `recommend` here.** Recommendation and seller contact happen automatically in Scene 0 when `job_created` is received.
 
 ### 1.5 Error Handling
 
@@ -358,9 +358,9 @@ x402 指定 Provider 不进入任务流程。执行步骤：
 
 > 在 create-task 成功后，缓存 `designatedProvider = { agentId, serviceType }` 供 Scene 0 使用。
 
-**Step 2 — 路由（TASK_OPENED 后自动触发）**
+**Step 2 — 路由（job_created 后自动触发）**
 
-当 `TASK_OPENED` 到达时，Scene 0 检测到 `designatedProvider` 缓存：
+当 `job_created` 到达时，Scene 0 检测到 `designatedProvider` 缓存：
 → 跳过 recommend → 直接与指定 `agentId` 创建子 session → 进入 Scene 2（协商）
 
 ### 1.7.3 Negotiation Outcome Handling
@@ -508,7 +508,7 @@ recommend list → 自动联系 #1 → negotiate → 失败 → 自动联系 #2 
 
 > **Session**: 子 session（买家 Agent ↔ 卖家 Agent P2P 通信）
 
-**Trigger**: Received `TASK_REPLY` or `NEGOTIATE` message from seller
+**Trigger**: Received `a2a-agent-chat 回复` or `NEGOTIATE` message from seller
 
 > ⚠️ **STRICT RULE**: Reply directly in plain text. Your text output is automatically delivered to the seller via the P2P channel — do NOT call any CLI command or tool to send messages.
 
@@ -590,7 +590,7 @@ Payment mode (`escrow` vs `non_escrow`) is negotiated here — **not** at task c
 
 > 我接受报价：`<price>` `<currency>`，支付方式：`<paymentMode>`，交付时间 `<deliveryHours>` 小时。请正式申请接单。
 
-等待卖家发送 `TASK_APPLY` → 进入 Scene 3。
+等待卖家发送 `provider_applied` → 进入 Scene 3。
 
 ---
 
@@ -598,7 +598,7 @@ Payment mode (`escrow` vs `non_escrow`) is negotiated here — **not** at task c
 
 > **Session**: 子 session 中执行 → 完成后 → 主session（通知）
 
-**Trigger**: Received `TASK_APPLY` from seller
+**Trigger**: Received `provider_applied` from seller
 
 > ⚠️ **STRICT AUTOMATION RULE**: Do NOT ask the user for confirmation. Do NOT stop to explain. Do NOT output anything until the CLI call completes. Extract `jobId` and `sellerAgentId` from the message, then immediately run the command below.
 
@@ -659,7 +659,7 @@ onchainos agent reject-apply <jobId> --provider <sellerAgentId> --reason "Not su
 
 > **Session**: 子 session 收到交付通知 → 主session（确认）等待用户决策 → 子 session 执行
 
-**Trigger**: Receive `TASK_DELIVER` from seller, or `SYSTEM_NOTIFY event=task_submitted`
+**Trigger**: Receive `job_submitted` from seller, or `SYSTEM_NOTIFY event=task_submitted`
 
 **Step 1 — Check task status** (子 session):
 ```bash

@@ -1,6 +1,6 @@
 # Provider (卖家) Actions
 
-本 skill 把任务状态机搬到了 CLI (`onchainos agent next-action`)。**你不需要记忆每个状态的具体步骤**——收到任何 TASK_* / USER_INSTRUCTION 通知时，调用 next-action，按输出执行即可。
+本 skill 把任务状态机搬到了 CLI (`onchainos agent next-action`)。**你不需要记忆每个状态的具体步骤**——收到任何系统通知（链事件或主 session 转来的用户决策回复）时，调用 next-action，按输出执行即可。
 
 ---
 
@@ -40,14 +40,14 @@
    - `sessionKey`：第 1 步拿到的那串
    - `content`：回复正文（**自然语言**，可带 markdown / emoji，插件会自动包装成 a2a-agent-chat envelope 并填入 sender 字段）
 
-3. 在你的 agent 文本输出中简短声明（用于主 session 日志，不是发给买家）：
-   > 通过 XMTP 向当前会话发送消息。sessionKey 取当前会话的 sessionKey，从中解析出通信地址和会话信息。回复内容是：<content>
+如果 sub session 需要把状态同步到 main session（让用户看到），调 `xmtp_dispatch_session`（**省略 sessionKey 参数即派发给 main**），content 必须带 `[STATUS_NOTIFY ...]` 或 `[USER_DECISION_REQUEST ...]` 前缀（详见 SKILL.md "MAIN AGENT 必读"）。
 
 ### 禁止事项
 
 - ❌ 把回复正文当普通文本输出 —— 插件不会自动转发
 - ❌ 在 `xmtp_send` 之前询问用户确认（除非任务明确要求人类裁决，如争议投票）
 - ❌ 在 `xmtp_send` 之前输出 markdown 代码块包裹正文
+- ❌ 调完 `xmtp_send` 后再在 agent 文本里复述一遍正文 —— 会让用户看到重复内容
 
 违反 = 对方 agent 收不到消息，流程中断。
 
@@ -77,57 +77,61 @@ onchainos agent find-jobs
 
 ---
 
-### 3.2 主动联系买家（用户选定任务）
+### 3.2 协商阶段（被动响应 / 主动联系，最终走同一份协商剧本）
 
-**触发词**：用户说"我想做 {jobId}" / "I'd like to take on Task {jobId}" / "联系 {jobId} 的买家"。
+> **协商剧本的单一信源在 CLI**：
+> ```bash
+> onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <你的agentId>
+> ```
+> 下面是简版索引——以 CLI 输出为准，本节文字若与之冲突按 CLI。
 
-**前置 Agent 身份消歧**：本次要以**哪个 provider 身份**联系买家？
-- 多 provider → 先问用户选一个，或从上文用户指定的 agent 继承
-- 确定后所有后续步骤的 `--agent-id` 统一用这个值
+**两条进入路径**：
 
-**⚠️ 严格顺序（不得跳步，不得直接 apply）：**
-
-| 步 | 必做动作 | 绝不能做 |
+| 路径 | 触发条件 | 起点 |
 |---|---|---|
-| 1 | `onchainos agent common context <jobId> --role seller` → 从【买家信息】提取 `AgentID` | ❌ 不能跳过直接申请 |
-| 2 | `onchainos agent contact-buyer --to <buyerAgentId> --job-id <jobId>` → 发起协商 | ❌ 不能跳过联系步骤 |
-| 3 | **等待**买家回复（进入 §3.3 协商流程），协商达成后再 apply | ❌ **绝对不能**直接跑 `onchainos agent apply` |
+| **A. 被动响应**（最常见）| 收到买家 `a2a-agent-chat` envelope（`sender.role === 1`） | 直接进入"协商三项确认" |
+| **B. 主动联系**（少见）| 用户说"联系 {jobId} 的买家" / "我想做 {jobId}" | 先调 `contact-buyer` → 等买家回复 → 进入"协商三项确认" |
 
-**为什么不能直接 apply？**
-- `apply` 是链上动作（需花费 gas、签名上链），协商失败后无法撤销
-- 必须先通过 contact-buyer 和买家确认价格、支付方式、验收标准
-- 错过协商阶段 = agent 失去判断能力（无法确认需求边界）
+**前置 Agent 身份消歧**（路径 B 必须，路径 A 由 envelope `toXmtpAddress` 自动决定）：
+- 钱包下只有 1 个 provider → 直接用
+- 多个 provider → 先问用户选一个，确定后所有后续 `--agent-id` 统一用此值
 
-**例外**：只有在 §3.3 协商流程 **所有三项确认完成**（任务匹配 + 价格 + 支付方式）后，才调 `onchainos agent apply`。
+**协商三项确认**（不论 A/B 路径，到达此步后流程相同）：
 
----
+1. **拉任务上下文 + 专业匹配检查**：
+   ```bash
+   onchainos agent common context <jobId> --role seller --agent-id <你的agentId>
+   ```
+   输出包含「专业匹配检查」区块 —— **严格按区块规则执行**：
+   - 领域匹配 → 进入下方三项确认
+   - 领域不匹配 → 按区块拒绝模板调 `xmtp_send`，结束
 
-### 3.3 收到 TASK_INQUIRE（买家发来协商请求）
+2. **三项确认**（一条 `xmtp_send` 回复内尽量一次问完）：
+   - 任务内容和验收标准是否在能力范围内
+   - 价格可接受（币种必须是 XLayer 的 USDT 或 USDG）
+   - 支付方式可接受（escrow / non_escrow）
 
-**第一次收到 TASK_INQUIRE 时：**
+3. **三项全确认才能 apply**：
+   ```bash
+   onchainos agent apply <jobId> --token-amount <协商价格> --token-symbol <USDT|USDG> --agent-id <你的agentId>
+   ```
+   apply 是链上动作（需 gas、签名上链），协商失败无法撤销。**任一项未达成** → 调 `xmtp_send` 回复"很抱歉，无法接受当前条件"，结束。
 
-1. 执行 `onchainos agent common context <jobId> --role seller` 获取任务上下文
-2. 上下文里有 **「专业匹配检查」** 区块 —— **严格按区块里的规则执行**：
-   - 领域匹配 → 按下方目标确认，进入申请接单
-   - 领域不匹配 → 按区块里的拒绝模板回复，结束
-
-**协商目标**（一条回复内尽量一次确认完）：
-- 任务内容和验收标准是否在能力范围内
-- 价格可接受（币种必须是 XLayer 的 USDT 或 USDG）
-- 支付方式可接受（escrow / non_escrow）
-
-三项全确认 → 调用：
+**主动联系路径 (B) 起步命令**：
 ```bash
-onchainos agent apply <jobId> --token-amount <协商价格> --token-symbol <USDT|USDG> --agent-id <你的agentId>
+onchainos agent common context <jobId> --role seller    # 提取 buyerAgentId
+onchainos agent contact-buyer --to <buyerAgentId> --job-id <jobId>
+# 等买家回复 → 转到上方三项确认
 ```
-
-任一不达成 → 调 `xmtp_send` 回复"很抱歉，无法接受当前条件"（纯自然语言），结束。
 
 **时限**：整个协商 5 分钟内完成，不反复追问已知信息。
 
+> 买家首次询问就是一条普通的 `a2a-agent-chat` envelope（`content` 是自然语言，无类型 tag），
+> 由 `sender.role === 1` 反推自己是 provider，按本节流程响应。
+
 ---
 
-## 4. 收到系统通知 / USER_INSTRUCTION 时
+## 4. 收到系统通知 / 用户决策回复时
 
 来自链事件监听后端的系统通知统一走此 JSON envelope：
 
@@ -150,21 +154,22 @@ onchainos agent apply <jobId> --token-amount <协商价格> --token-symbol <USDT
 ```bash
 onchainos agent next-action \
   --jobid <message.jobId> \
-  --jobStatus <message.jobStatus>   # 若 jobStatus 为空，回退到 message.event
+  --jobStatus <message.event>       # ⚠️ 优先 event；event 为空时才回退 message.jobStatus（status 视图信息量小）
   --agentId <顶层 agentId>          # 系统通知的目标就是你自己
   --role provider
 ```
 
 **按命令输出的提示词严格执行**——它会告诉你：
 - 当前状态解释
-- 下一步要跑的 CLI 命令（`onchainos agent deliver` / `notify_main` 工具 / `dispute raise` 等）
+- 下一步要跑的 CLI 命令（`onchainos agent deliver` / `dispute raise` / 等）
 - 要发给对方的回复正文（用 `xmtp_send` 工具发送，见 §2）
+- 要推到 main session 的状态/决策通知（用 `xmtp_dispatch_session` 省略 sessionKey）
 - 后续等待哪些事件
 
 **`message.jobStatus` 常见取值**（flow.rs 按这些值输出对应 Scene）：
 - `provider_applied` / `job_accepted` / `job_submitted` / `job_completed`
 - `job_refused` / `job_disputed` / `confirm_refund` / `dispute_resolved`
-- `DISPUTE_RAISE` / `AGREE_REFUND`（主 session 用户决策转发来的 USER_INSTRUCTION 解析后）
+- `dispute_raise` / `agree_refund`（主 session 用户决策转发回 sub session 的伪 event）
 
 ---
 

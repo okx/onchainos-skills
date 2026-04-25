@@ -118,7 +118,7 @@ pub enum Event {
     /// 拒绝后仲裁截止时间已过（卖家未发起仲裁）
     RefuseExpired,
     /// 后端发的、当前枚举不认识的事件名（也用来承载 user-instruction 伪 event：
-    /// DISPUTE_RAISE / AGREE_REFUND / DISPUTE_EVIDENCE / CLOSE / SET_PUBLIC）
+    /// dispute_raise / agree_refund / dispute_evidence / close / set_public）
     Other(String),
 }
 

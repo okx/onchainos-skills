@@ -13,7 +13,7 @@ use crate::commands::agent_commerce::task::signing;
 ///
 /// Request body is strictly `{ vote }` per real API spec (§11175). The evaluator's rationale
 /// is NOT part of this API — it lives in agent session memory and is surfaced to the user via
-/// notify_main / escalate_to_main, not persisted to backend.
+/// xmtp_dispatch_session（main session 推消息触发 LLM）, not persisted to backend.
 pub async fn handle_commit(client: &mut TaskApiClient, dispute_id: &str, side: u8) -> Result<()> {
     if side != 1 && side != 2 {
         bail!("--side must be 1 (provider wins) or 2 (client wins)");

@@ -65,7 +65,7 @@ xmtp_send:
   content:     <message text shown to counterpart>
   contentType: text
   payload:
-    type:    <NEGOTIATE | TASK_APPLY | TASK_DELIVER>
+    type:    <NEGOTIATE | provider_applied | job_submitted>
     taskId:  <jobId>
     to:      <recipientAgentId>
 ```
@@ -92,13 +92,13 @@ Use until both parties agree on: task details ✓  price ✓  payment mode ✓
 
 ---
 
-### TASK_APPLY
+### provider_applied
 
 Seller formally applies after reaching agreement. Contains final agreed terms.
 
 ```json
 {
-  "type": "TASK_APPLY",
+  "type": "provider_applied",
   "payload": {
     "taskId": "123",
     "price": 50,
@@ -116,13 +116,13 @@ On-chain result triggers `SYSTEM_NOTIFY event=task_accepted` to notify seller.
 
 ---
 
-### TASK_DELIVER
+### job_submitted
 
 Seller submits deliverable for review.
 
 ```json
 {
-  "type": "TASK_DELIVER",
+  "type": "job_submitted",
   "payload": {
     "taskId": "123",
     "deliverableUrl": "https://...",
@@ -143,6 +143,6 @@ On-chain result (`complete` / `reject` / `dispute`) triggers `SYSTEM_NOTIFY` to 
 
 | Phase | Channel | Types in use |
 |---|---|---|
-| Negotiation | XMTP DM | `NEGOTIATE`, `TASK_APPLY` |
-| Execution & delivery | XMTP Group | `TASK_DELIVER` |
+| Negotiation | XMTP DM | `NEGOTIATE`, `provider_applied` |
+| Execution & delivery | XMTP Group | `job_submitted` |
 | System events | XMTP DM or Group | `SYSTEM_NOTIFY` |

@@ -112,7 +112,7 @@ pub enum AgentCommand {
     #[command(name = "set-public")]
     SetPublic { job_id: String },
 
-    /// Provider generates payment invoice after TASK_APPLIED
+    /// Provider generates payment invoice after provider_applied
     Payment { job_id: String },
 
     /// Client manually transfers payment to provider (non-escrow mode)
@@ -166,7 +166,7 @@ pub enum AgentCommand {
     #[command(name = "agree-refund")]
     AgreeRefund { job_id: String },
 
-    /// Provider fetches on-chain payment pre-info after TASK_APPLIED
+    /// Provider fetches on-chain payment pre-info after provider_applied
     #[command(name = "get-payment")]
     GetPayment {
         job_id: String,
@@ -401,6 +401,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::common::run(c, ctx).await,
 
         AgentCommand::NextAction { job_id, job_status, agent_id, role } => {
+            let warning = check_status_freshness(&job_id, &job_status).await;
             let prompt = match role.as_str() {
                 "provider" | "seller" =>
                     task::provider::flow::generate_next_action(&job_id, &job_status, &agent_id),
@@ -410,7 +411,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     task::evaluator::flow::generate_next_action(&job_id, &job_status, &agent_id),
                 other => anyhow::bail!("--role 必须是 provider/seller/buyer/client/evaluator，当前: {other}"),
             };
-            println!("{prompt}");
+            if let Some(w) = warning {
+                println!("{w}{prompt}");
+            } else {
+                println!("{prompt}");
+            }
             Ok(())
         }
 
@@ -444,4 +449,36 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Heartbeat { chain_index } =>
             chat::run(chat::ChatCommand::Heartbeat { chain_index }, ctx).await,
     }
+}
+
+/// 比对 next-action 入参的 jobStatus/event 暗示的 status 与任务真实 statusStr，
+/// 不一致时返回一段 warning 文本（用于 prepend 到剧本输出顶部）。
+///
+/// 触发场景：system event 延迟、之前的 CLI 操作已经把 status 推得更靠前、
+/// 或者 mock 测试中手动选 event 跟实际不一致。
+/// 网络/解析失败时返回 None（不阻塞剧本输出，graceful fallback）。
+async fn check_status_freshness(job_id: &str, job_status_or_event: &str) -> Option<String> {
+    use task::common::network::task_api_client::TaskApiClient;
+    use task::common::state_machine::{parse_status_or_event, status_when_event, Status};
+
+    let event = parse_status_or_event(job_status_or_event);
+    let expected = status_when_event(&event);
+
+    let mut c = TaskApiClient::new();
+    let resp = c.get(&c.task_path(job_id)).await.ok()?;
+    let actual_str = resp.get("task")?.get("statusStr")?.as_str()?.to_string();
+    let actual = Status::parse(&actual_str);
+
+    if actual == expected {
+        return None;
+    }
+    Some(format!(
+        "⚠️  状态可能已脱节（next-action 入参与任务真实状态不一致）\n\
+         - 你传的 jobStatus/event = `{job_status_or_event}`，对应任务状态应为 `{expected_str}`\n\
+         - 但任务 {job_id} 真实 statusStr = `{actual_str}`\n\
+         - 建议：确认 event 是不是过期通知。若想按真实状态走，重调 next-action 并传 `--jobStatus {actual_str}`\n\
+         - 否则下面剧本里某些 CLI 步骤可能会被 mock-api 用 status 校验拒掉\n\n\
+         ─────────────────────────────────────────────────────────────\n\n",
+        expected_str = expected.as_str(),
+    ))
 }

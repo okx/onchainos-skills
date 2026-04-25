@@ -8,24 +8,45 @@ use crate::commands::agent_commerce::task::common::state_machine::Status;
 
 /// Provider 在某 status 下可执行的 CLI 命令清单（用于 `agent common context` 输出末尾的菜单）。
 ///
-/// 跟同文件 `generate_next_action` 的剧本住在一处，方便检查两份是否一致。
+/// 每个 status 列出主动作 + 一行索引指回 `next-action` 完整剧本（
+/// `generate_next_action` 函数同文件，按 status 对应的 entry event 路由）。
+/// 这样 menu 跟剧本不会再脱节——两份从同一个状态机视图衍生。
 pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
+    let next_action_hint = |evt: &str| {
+        format!("onchainos agent next-action --jobid {job_id} --jobStatus {evt} --role provider --agentId <agentId>  # 完整剧本")
+    };
     match status {
         Status::Open => vec![
-            format!("onchainos agent apply {job_id} --token-amount <price> --token-symbol USDT --agent-id <agentId>  # 申请接单"),
+            format!("onchainos agent apply {job_id} --token-amount <price> --token-symbol USDT --agent-id <agentId>  # 申请接单（协商完成后才上链）"),
+            next_action_hint("job_created"),
         ],
         Status::Accepted => vec![
             format!("onchainos agent deliver {job_id} --file <deliverable> --message <msg>  # 提交交付"),
+            next_action_hint("job_accepted"),
+        ],
+        Status::Submitted => vec![
+            "（被动等待）等待买家验收：job_completed → 任务完成；job_refused → 进入仲裁/退款决策".to_string(),
+            next_action_hint("job_submitted"),
         ],
         Status::Refused => vec![
             format!("onchainos agent dispute raise {job_id} --reason <reason>  # 发起仲裁"),
             format!("onchainos agent agree-refund {job_id}  # 同意退款"),
+            next_action_hint("job_refused"),
         ],
         Status::Disputed => vec![
-            format!("onchainos agent dispute evidence {job_id} --summary <摘要>  # 提交证据"),
+            format!("onchainos agent dispute upload {job_id} --text \"<摘要>\" --image <图片>  # 1h 准备期内提交证据"),
+            next_action_hint("job_disputed"),
         ],
-        Status::Submitted | Status::Completed | Status::Refunded | Status::Other(_) => vec![
-            format!("onchainos agent status {job_id}         # 查询最新任务状态"),
+        Status::Completed => vec![
+            "（流程结束）任务完成，资金已释放。子 session 可关闭。".to_string(),
+            next_action_hint("job_completed"),
+        ],
+        Status::Refunded => vec![
+            "（流程结束）资金已退还买家。子 session 可关闭。".to_string(),
+            next_action_hint("confirm_refund"),
+        ],
+        Status::Other(s) => vec![
+            format!("onchainos agent status {job_id}         # 当前状态 `{s}` 不在标准状态机内，先查最新状态"),
         ],
     }
 }
@@ -83,14 +104,16 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前状态】job_accepted（买家已确认接单，资金托管）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作（严格顺序，不得跳步）】\n\n\
-             **Step 1 — 调用工具名为 `notify_main` 的自定义工具（⚠️ 禁止使用 `sessions_send` / `xmtp_send` / 任何其他消息工具），通知主 session 接单成功：**\n\n\
-             工具调用：\n\
+             **Step 1 — 把接单成功通知推到 main session（用户那边）**：\n\n\
+             ⚠️ 你**当前在 sub session**（agent:main:xmtp:group:...&job={job_id}&gid=...），**不是 main session**。\n\
+             必须显式调 `xmtp_dispatch_session` 工具，**省略 sessionKey 参数**（这正是该工具向 main 派发的语义；\n\
+             看工具 description：『可通过 sessionKey 指定目标 session，省略 sessionKey 则发送到 main session』）。\n\n\
+             调用形式：\n\
              ```\n\
-             tool: notify_main      ← 必须是这个名字，不是其他\n\
+             tool: xmtp_dispatch_session\n\
              arguments:\n\
-             \x20\x20jobId: \"{job_id}\"\n\
-             \x20\x20conversationId: \"<来源消息'会话:'行的值>\"\n\
-             \x20\x20message: |\n\
+             \x20\x20content: |\n\
+             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · main agent 不要调任何工具不要再次执行]\n\
              \x20\x20\x20\x20[接单成功通知] 任务 {job_id} 已完成接单\n\
              \x20\x20\x20\x20- 标题：<title>\n\
              \x20\x20\x20\x20- 描述：<description>\n\
@@ -98,11 +121,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20- 支付方式：<mode>\n\
              \x20\x20\x20\x20- 卖家 AgentID：{agent_id}\n\
              \x20\x20\x20\x20\n\
-             \x20\x20\x20\x20资金已托管，开始执行任务。\n\
+             \x20\x20\x20\x20资金已托管，sub session 卖家已开始执行任务。本通知由 sub session 推送，仅作状态同步，main agent 直接展示原文给用户。\n\
              ```\n\
-             字段值从 `onchainos agent common context {job_id} --role seller` 输出中提取。\n\n\
-             ⚠️ **如果找不到 `notify_main` 工具，直接跳到 Step 2**（不要用其他工具顶替）。`sessions_send` 不是本项目的工具，调它没用。\n\n\
-             **Step 2 — 向买家调用 `xmtp_send` 工具发送消息确认：**\n\n\
+             字段值从 `onchainos agent common context {job_id} --role seller --agent-id {agent_id}` 输出中提取。\n\n\
+             ⚠️ **常见错误**：\n\
+             - 把当前会话误判为 main session 而跳过这一步。当前 sessionKey 含 `&job=` 字段就一定是 sub session，不是 main。\n\
+             - 不加 `[STATUS_NOTIFY · 仅展示给用户...]` 前缀 → main agent 会把通知当任务再执行一遍（重复调 deliver / xmtp_send / 等等）。**前缀是必填**。\n\n\
+             **Step 2 — 向买家发 P2P 消息确认（走 xmtp_send 流程）：**\n\n\
              {header_template}\n\
              已收到接单确认（job_accepted），开始执行任务。\n\n\
              **Step 3 — 执行任务（mock 环境可直接跳过），完成后调用 CLI 提交交付物：**\n\
@@ -137,24 +162,25 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 1 — 向买家调用 `xmtp_send` 工具发送消息：**\n\n\
              {header_template}\n\
              已收到买家拒绝通知（job_refused）。正在确认后续处理方案，请稍候。\n\n\
-             **Step 2 — 调用工具名为 `notify_main` 的自定义工具（⚠️ 禁止 `sessions_send` 等其他名字），把决策请求推给主 session 用户：**\n\n\
+             **Step 2 — 把决策请求推到 main session（让用户拍板）**：\n\n\
+             ⚠️ 你**当前在 sub session**，必须显式调 `xmtp_dispatch_session` 工具，**省略 sessionKey 参数**\n\
+             （工具 description：『省略 sessionKey 则发送到 main session』）。\n\n\
              ```\n\
-             tool: notify_main\n\
+             tool: xmtp_dispatch_session\n\
              arguments:\n\
-             \x20\x20jobId: \"{job_id}\"\n\
-             \x20\x20conversationId: \"<子 session 会话 ID>\"\n\
-             \x20\x20message: |\n\
-             \x20\x20\x20\x20任务 {job_id} 被买家拒绝。请用户选择：\n\
+             \x20\x20content: |\n\
+             \x20\x20\x20\x20[USER_DECISION_REQUEST · 仅询问用户 · main agent 不要调任何工具，等用户回复]\n\
+             \x20\x20\x20\x20任务 {job_id} 被买家拒绝。请选择：\n\
              \x20\x20\x20\x201. 发起仲裁 → 回复'发起仲裁，理由是<理由>'\n\
              \x20\x20\x20\x202. 同意退款 → 回复'同意退款'\n\
              ```\n\n\
-             **Step 3 — 等待主 session 用户决策（ws-channel 自动 relay 回子 session）。**\n\n\
-             收到 USER_INSTRUCTION 后再次调用 next-action（传入用户决定的 DISPUTE_RAISE / AGREE_REFUND）。\n\n\
+             **Step 3 — 等待主 session 用户决策（系统自动 relay 回子 session）。**\n\n\
+             收到用户决策回复后再次调用 next-action（传入用户决定的 `dispute_raise` 或 `agree_refund`）。\n\n\
              ⚠️ 24h 内必须决策，否则资金自动退还买家。\n"
         ),
 
         // ─── Scene 6.3: 用户决定发起仲裁（user-instruction 伪 event）───
-        Event::Other(ref s) if s == "DISPUTE_RAISE" => format!(
+        Event::Other(ref s) if s == "dispute_raise" => format!(
             "【当前动作】发起仲裁\n\
              【角色】卖家（Provider）\n\n\
              **Step 1 — 调用 CLI 发起仲裁（上链）：**\n\
@@ -175,7 +201,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
 
         // ─── Scene 6.2: 用户决定同意退款（user-instruction 伪 event）───
-        Event::Other(ref s) if s == "AGREE_REFUND" => format!(
+        Event::Other(ref s) if s == "agree_refund" => format!(
             "【当前动作】同意退款\n\
              【角色】卖家（Provider）\n\n\
              **Step 1 — 调用 CLI（上链）：**\n\
@@ -236,11 +262,35 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 
         // ─── 未知类型兜底 ─────────────────────────────────────────────
         Event::JobCreated => format!(
-            "【当前状态】job_created（任务刚创建上链，等待卖家申请）\n\
+            "【当前状态】job_created（任务上链 / 买家首次询问 a2a-agent-chat）\n\
              【角色】卖家（Provider）\n\n\
-             【你的下一步动作】\n\n\
-             先调 `onchainos agent common context {job_id} --role seller --agent-id {agent_id}` 看完整任务详情，\n\
-             判断「Provider 描述」与任务领域是否匹配。匹配再考虑 `apply`，否则礼貌拒绝。\n"
+             ⚠️ **协商阶段，禁止直接调 `onchainos agent apply`**：apply 是链上动作（需 gas、签名上链），\n\
+             协商失败无法撤销。必须先走完下面 Step 1 / 2 / 3，三项全部确认后再 apply。\n\n\
+             【你的下一步动作（严格顺序）】\n\n\
+             **Step 1 — 拉任务上下文：**\n\
+             ```bash\n\
+             onchainos agent common context {job_id} --role seller --agent-id {agent_id}\n\
+             ```\n\
+             返回里包含【你的身份】（name、profileDescription）+【任务详情】+「专业匹配检查」区块。\n\n\
+             **Step 2 — 专业匹配判断（按 context 输出的「专业匹配检查」区块严格执行）：**\n\
+             - 领域匹配（任务关键词落在你的 profileDescription 范围内）→ 进入 Step 3\n\
+             - 领域不匹配 → 按区块给出的拒绝模板调 `xmtp_send`（纯自然语言，不写 text-header），结束\n\n\
+             **Step 3 — 协商三项确认（一条 xmtp_send 回复内尽量一次问完）：**\n\
+             1) 任务内容和验收标准是否在能力范围内\n\
+             2) 价格可接受（币种必须是 XLayer 的 USDT 或 USDG，看任务详情里的 token 字段）\n\
+             3) 支付方式可接受（escrow / non_escrow，由买家在 confirm-accept 时定）\n\n\
+             两步必做（不能跳第 1 步）：\n\
+             1) 先调 `session_status` 工具拿到当前子 session 的 `sessionKey`\n\
+             2) 再调 `xmtp_send` 工具，参数 `sessionKey`=上面拿到的值，`content`=三项确认的纯自然语言提问\n\n\
+             **Step 4 — 三项全部确认后（且仅在此时）才调 apply：**\n\
+             ```bash\n\
+             onchainos agent apply {job_id} --token-amount <协商价格> --token-symbol <USDT|USDG> --agent-id {agent_id}\n\
+             ```\n\
+             apply 是上链签名动作，CLI 内部完成 unsigned info → sign → broadcast，等链上 provider_applied 通知。\n\n\
+             **任一项未达成** → 调 `xmtp_send` 回复\"很抱歉，无法接受当前条件\"（纯自然语言），结束。\n\n\
+             【时限】整个协商在 5 分钟内完成；不要反复追问已经知道的信息。\n\n\
+             【后续事件】\n\
+             - apply 上链成功 → 收到 `provider_applied` 系统通知 → 再次调 next-action 拿 Scene 3 剧本\n"
         ),
         // ─── buyer 主导的 housekeeping 事件，provider 端基本无需动作 ─────
         Event::JobExpired

@@ -7,8 +7,8 @@
 
 | 入口 | 说明 | 初始事件 |
 |---|---|---|
-| **公开发布（public）** | 买家发 public 任务，广撒网找卖家 | `TASK_CONFIRMED` → buyer 主动联系推荐卖家 → `TASK_INQUIRE`（buyer → provider）|
-| **指定卖家（designated）** | 买家创建任务时指定 `providerAgentId` | `TASK_CONFIRMED` → 直接向指定 provider 发起 `TASK_INQUIRE` |
+| **公开发布（public）** | 买家发 public 任务，广撒网找卖家 | `job_created` → buyer 主动联系推荐卖家 → `a2a-agent-chat 询问`（buyer → provider）|
+| **指定卖家（designated）** | 买家创建任务时指定 `providerAgentId` | `job_created` → 直接向指定 provider 发起 `a2a-agent-chat 询问` |
 | **私有任务（private）** | 买家发 private 任务，仅邀请指定 provider 看到 | 等同 designated |
 
 ## 创建任务时的关键参数
@@ -29,7 +29,7 @@ onchainos agent create-task \
 | `openType` | 1（public）| 0（private）|
 | `designatedProvider` | `null` | `<providerAgentId>` |
 
-## Provider 收到 TASK_INQUIRE 后的判断
+## Provider 收到 a2a-agent-chat 询问 后的判断
 
 **第 1 件事**：调用 `common context <jobId> --role seller` 读取【当前状态】和【任务详情】。
 
@@ -42,12 +42,12 @@ onchainos agent create-task \
 
 | 场景 | buyer 下一步 |
 |---|---|
-| 公开发布 | 等 `TASK_CONFIRMED` → `onchainos agent recommend <jobId>` 获取推荐卖家 → 挑一个 → 发 `TASK_INQUIRE` |
-| 指定卖家 | 等 `TASK_CONFIRMED` → 直接向指定 `providerAgentId` 发 `TASK_INQUIRE`（跳过 recommend）|
+| 公开发布 | 等 `job_created` → `onchainos agent recommend <jobId>` 获取推荐卖家 → 挑一个 → 发 `a2a-agent-chat 询问` |
+| 指定卖家 | 等 `job_created` → 直接向指定 `providerAgentId` 发 `a2a-agent-chat 询问`（跳过 recommend）|
 
 ## 终止规则（入口相关）
 
-- **open 阶段超时** → 自动进入 `rejected`（`TASK_REJECTED`），资金未托管所以不退款
+- **open 阶段超时** → 自动进入 `rejected`（`confirm_refund`），资金未托管所以不退款
 - **buyer 主动关闭**（仅 open 阶段）→ `onchainos agent close <jobId>` → `rejected`
 - 一旦进入 `applied` 之后，就必须走状态机后续流程，不能简单关闭
 

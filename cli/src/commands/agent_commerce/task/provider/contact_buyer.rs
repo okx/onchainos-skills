@@ -1,6 +1,6 @@
 //! 卖家主动联系买家（placeholder）
 //!
-//! TODO: 调用真实 xmtp_send（通过 openclaw runtime / ws-channel 注册的 XMTP mock）。
+//! TODO: 调用真实 xmtp_send（通过 openclaw runtime 注册的 XMTP 插件）。
 //! 当前为占位实现，仅打印意图，便于流程集成测试。
 
 use anyhow::Result;

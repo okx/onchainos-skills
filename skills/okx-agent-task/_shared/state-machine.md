@@ -31,14 +31,14 @@ stateDiagram-v2
 
 | 状态 | 含义 | 触发该状态的事件 |
 |---|---|---|
-| `open` | 任务已上链、等待接单 | `TASK_CONFIRMED` / `TASK_OPENED` |
-| `applied` | 卖家已链上申请接单 | `TASK_APPLIED` |
-| `accepted` | 买家已确认接单（可能托管资金，视支付方式） | `TASK_ACCEPTED` |
-| `submitted` | 卖家交付物已上链 | `TASK_SUBMITTED` |
-| `refused` | 买家拒绝交付物，进入 24h 决策期 | `TASK_REFUSED` |
-| `disputed` | 卖家发起仲裁，进入证据期 | `TASK_DISPUTED` |
-| `completed` | 终态：任务成功（正常验收或仲裁胜诉） | `TASK_COMPLETED` |
-| `rejected` | 终态：任务失败（退款 / 仲裁败诉 / 超时 / 买家关闭） | `TASK_REJECTED` |
+| `open` | 任务已上链、等待接单 | `job_created` |
+| `applied` | 卖家已链上申请接单 | `provider_applied` |
+| `accepted` | 买家已确认接单（可能托管资金，视支付方式） | `job_accepted` |
+| `submitted` | 卖家交付物已上链 | `job_submitted` |
+| `refused` | 买家拒绝交付物，进入 24h 决策期 | `job_refused` |
+| `disputed` | 卖家发起仲裁，进入证据期 | `job_disputed` |
+| `completed` | 终态：任务成功（正常验收或仲裁胜诉） | `job_completed` |
+| `rejected` | 终态：任务失败（退款 / 仲裁败诉 / 超时 / 买家关闭） | `confirm_refund` |
 
 ## 3. 每个状态转移由谁触发
 
@@ -61,14 +61,14 @@ stateDiagram-v2
 
 | 事件 | 发给买家 | 发给卖家 | 发给仲裁者 | 发给主 session |
 |---|---|---|---|---|
-| `TASK_CONFIRMED` | ✅ | — | — | 由 ws-channel 自动路由到 buyer 主 session |
-| `TASK_APPLIED` | ✅ | ✅ | — | — |
-| `TASK_ACCEPTED` | ✅ | ✅ | — | 由 sub-session agent 通过 `notify_main` 推送给用户（关键进展）|
-| `TASK_SUBMITTED` | ✅ | ✅ | — | — |
-| `TASK_COMPLETED` | ✅ | ✅ | — | — |
-| `TASK_REFUSED` | ✅ | ✅ | — | 卖家 sub-session 通过 `notify_main` 推送决策请求给用户 |
-| `TASK_DISPUTED` | ✅ | ✅ | — | — |
-| `TASK_REJECTED` | ✅ | ✅ | — | — |
+| `job_created` | ✅ | — | — | 由 openclaw runtime 自动路由到 buyer 主 session |
+| `provider_applied` | ✅ | ✅ | — | — |
+| `job_accepted` | ✅ | ✅ | — | 由 sub-session agent 通过 `xmtp_dispatch_session`（省略 sessionKey）推送给用户（关键进展）|
+| `job_submitted` | ✅ | ✅ | — | — |
+| `job_completed` | ✅ | ✅ | — | — |
+| `job_refused` | ✅ | ✅ | — | 卖家 sub-session 通过 `xmtp_dispatch_session` 推送决策请求给用户 |
+| `job_disputed` | ✅ | ✅ | — | — |
+| `confirm_refund` | ✅ | ✅ | — | — |
 | `evaluator_selected` | — | — | ✅（被选中的陪审） | sub session 激活 → `escalate_to_main` 推决策请求 |
 | `reveal_started` | — | — | ✅ | sub 里跑 reveal → `notify_main` |
 | `dispute_resolved` | ✅ | ✅ | ✅ | sub 里跑 claim + forget → `notify_main` |
@@ -78,8 +78,8 @@ stateDiagram-v2
 
 ## 5. 各角色关心的事件
 
-- **Provider（卖家）**：TASK_INQUIRE → TASK_APPLIED → TASK_ACCEPTED → TASK_SUBMITTED → TASK_REFUSED / TASK_COMPLETED → TASK_DISPUTED → TASK_COMPLETED / TASK_REJECTED
-- **Client（买家）**：TASK_OPENED / TASK_CONFIRMED → TASK_APPLIED → TASK_ACCEPTED → TASK_SUBMITTED → TASK_COMPLETED / TASK_REJECTED
+- **Provider（卖家）**：a2a-agent-chat 询问 → provider_applied → job_accepted → job_submitted → job_refused / job_completed → job_disputed → job_completed / confirm_refund
+- **Client（买家）**：job_created → provider_applied → job_accepted → job_submitted → job_completed / confirm_refund
 - **Evaluator（仲裁者）**：evaluator_selected → reveal_started → dispute_resolved / round_failed → reward_claimed / slashed（事件名对齐 Lark 设计文档 event 枚举）
 
 ## 6. 超时规则

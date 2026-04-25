@@ -246,6 +246,43 @@ async function fetchJobStatus(jobId: string): Promise<string> {
   return "unknown";
 }
 
+// 把 event 映射到 mock-api `/broadcast` 的 bizType，让 mock-api 帮我们推状态。
+// 不需要 bizType 的事件（provider_applied / dispute_resolved / confirm_refund 等
+// mock-api 不建模或不改 status 的）返回 null —— 不调 broadcast，只 fetch 现状。
+//
+// bizType 枚举对齐 cli/src/commands/agent_commerce/task/signing.rs::BizContext。
+function eventToBizType(event: string): number | null {
+  switch (event) {
+    case "job_accepted":   return 7;   // open → accepted
+    case "job_submitted":  return 8;   // accepted → submitted
+    case "job_completed":  return 9;   // submitted → completed
+    case "job_refused":    return 10;  // submitted → refused
+    case "job_disputed":   return 2;   // refused → disputed
+    case "job_close":      return 16;  // open → close
+    default:               return null;
+  }
+}
+
+// 走 mock-api `/broadcast` 把任务状态推到 event 暗示的下一态。
+// 这是 mock 测试的捷径——绕开"agent 真的跑 confirm-accept/deliver 调 CLI broadcast"
+// 这条真实链路。失败时不阻塞外层流程，只打日志。
+async function advanceTaskStatusViaBroadcast(jobId: string, event: string): Promise<void> {
+  const bizType = eventToBizType(event);
+  if (bizType === null) return;
+  try {
+    const resp = await fetch(`${MOCK_API_URL}/api/v1/task/broadcast`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bizContext: { jobId, bizType } }),
+    });
+    if (!resp.ok) {
+      console.error(`${TAG} [notify] mock-api broadcast 失败: HTTP ${resp.status}`);
+    }
+  } catch (e) {
+    console.error(`${TAG} [notify] mock-api broadcast 异常:`, (e as Error)?.message ?? e);
+  }
+}
+
 // ── SSE ─────────────────────────────────────────────────────────────
 const sseClients = new Set<http.ServerResponse>();
 function pushSSE(event: string, data: unknown) {
@@ -544,6 +581,9 @@ async function main() {
           });
           return;
         }
+        // 先把 mock-api 状态推到 event 暗示的下一态（mock 测试的 shortcut，
+        // 绕开 buyer/seller agent 真的跑 confirm-accept/deliver/complete CLI 这条真实链路）
+        await advanceTaskStatusViaBroadcast(body.jobId, body.event);
         const jobStatus = await fetchJobStatus(body.jobId);
         const message = buildSystemEnvelope({
           agentId: OWN_AGENT_ID || "unknown",

@@ -544,7 +544,7 @@ fn build_context(
                     "抱歉，此任务（{}）超出我的专业领域（{}），无法承接。祝您找到合适的卖家。\n\n",
                     task.title, desc
                 ));
-                out.push_str("注意：不要写 `jobId: / 来自: [PROVIDER] / 类型: REPLY / 会话: / ----` 这种 text header —— 旧 ws-channel 协议已废弃。真实 XMTP 插件会自动把 content 包装成 a2a-agent-chat envelope。\n\n");
+                out.push_str("注意：`content` 是纯自然语言正文，不要加任何 text header（如 `jobId: / 来自: ... / 类型: REPLY` 之类）。XMTP 插件会自动把 content 包装成 a2a-agent-chat envelope。\n\n");
             }
         }
     }

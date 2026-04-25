@@ -45,13 +45,13 @@ onchainos agent deliver <jobId> --file "<url>" --message "<msg>"
 仲裁流程与支付方式无关：
 - raise：`onchainos agent dispute raise <jobId> --reason "..."`
 - 上传链下证据：`onchainos agent dispute upload <jobId> --text "..." --image <path>`
-- evaluator 投票 → TASK_COMPLETED（卖家胜）或 TASK_REJECTED（买家胜）
+- evaluator 投票 → job_completed（卖家胜）或 confirm_refund（买家胜）
 
 **资金结算**：裁决后按支付方式的规则执行（escrow 合约自动、non_escrow 买家手动补偿、x402 已付不涉及）。
 
-## Provider 视角：付款单生成（TASK_APPLIED 后）
+## Provider 视角：付款单生成（provider_applied 后）
 
-卖家在收到 `TASK_APPLIED` 后生成付款单发给买家：
+卖家在收到 `provider_applied` 后生成付款单发给买家：
 
 | 模式 | 付款单内容 |
 |---|---|

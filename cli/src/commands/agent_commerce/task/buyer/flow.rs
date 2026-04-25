@@ -8,24 +8,48 @@ use crate::commands::agent_commerce::task::common::state_machine::Status;
 
 /// Buyer 在某 status 下可执行的 CLI 命令清单（用于 `agent common context` 输出末尾的菜单）。
 ///
-/// 跟同文件 `generate_next_action` 的剧本住在一处，方便检查两份是否一致。
+/// 每个 status 列出主动作 + 一行索引指回 `next-action` 完整剧本（
+/// `generate_next_action` 函数同文件，按 status 对应的 entry event 路由）。
 pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
+    let next_action_hint = |evt: &str| {
+        format!("onchainos agent next-action --jobid {job_id} --jobStatus {evt} --role buyer --agentId <agentId>  # 完整剧本")
+    };
     match status {
         Status::Open => vec![
             format!("onchainos agent recommend {job_id}      # 查看推荐卖家"),
-            format!("onchainos agent confirm-accept {job_id} --provider <addr>  # 接受卖家并注资"),
+            format!("onchainos agent confirm-accept {job_id} --provider <addr> --payment-mode <escrow|non_escrow|x402>  # 接受卖家并注资"),
             format!("onchainos agent close {job_id}          # 关闭任务"),
             format!("onchainos agent set-public {job_id}     # 转为公开任务"),
+            next_action_hint("job_created"),
+        ],
+        Status::Accepted => vec![
+            "（被动等待）卖家执行任务中：job_submitted → 进入验收".to_string(),
+            next_action_hint("job_accepted"),
         ],
         Status::Submitted => vec![
             format!("onchainos agent complete {job_id}       # 验收通过，释放款项"),
-            format!("onchainos agent reject {job_id} --reason <reason>  # 拒绝验收"),
+            format!("onchainos agent reject {job_id} --reason <reason>  # 拒绝验收（仅 escrow）"),
+            next_action_hint("job_submitted"),
+        ],
+        Status::Refused => vec![
+            "（被动等待）卖家 24h 内决策：job_disputed → 进入仲裁举证；confirm_refund → 退款".to_string(),
+            next_action_hint("job_refused"),
         ],
         Status::Disputed => vec![
-            format!("onchainos agent dispute evidence {job_id} --summary <摘要>  # 提交证据"),
+            format!("onchainos agent dispute upload {job_id} --text \"<摘要>\" --image <图片>  # 1h 准备期内提交证据"),
+            next_action_hint("job_disputed"),
         ],
-        Status::Accepted | Status::Refused | Status::Completed | Status::Refunded | Status::Other(_) => vec![
-            format!("onchainos agent status {job_id}         # 查询最新任务状态"),
+        Status::Completed => vec![
+            format!("onchainos agent judge {job_id}          # 评价卖家"),
+            "（流程结束）任务完成。子 session 可关闭。".to_string(),
+            next_action_hint("job_completed"),
+        ],
+        Status::Refunded => vec![
+            "（流程结束）退款已到账。子 session 可关闭。".to_string(),
+            next_action_hint("confirm_refund"),
+        ],
+        Status::Other(s) => vec![
+            format!("onchainos agent status {job_id}         # 当前状态 `{s}` 不在标准状态机内，先查最新状态"),
         ],
     }
 }
@@ -119,20 +143,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              onchainos agent status {job_id}\n\
              ```\n\
              提取 `deliverableUrl`、`qualityStandards` 和 `paymentMode`。\n\n\
-             **Step 2 — 通知主 session 请求用户决策（用户（确认），必须等待回复）：**\n\
-             调用 `notify_main` 工具：\n\
-             ```\n\
-             tool: notify_main\n\
-             arguments:\n\
-             \x20\x20jobId: \"{job_id}\"\n\
-             \x20\x20conversationId: \"<子 session 会话 ID>\"\n\
-             \x20\x20message: |\n\
-             \x20\x20\x20\x20[交付物验收] 任务 {job_id} 卖家已提交交付物。\n\
-             \x20\x20\x20\x20- 交付物地址：<deliverableUrl>\n\
-             \x20\x20\x20\x20- 验收标准：<qualityStandards>\n\
-             \x20\x20\x20\x20\n\
-             \x20\x20\x20\x20请确认：接受（验收通过）还是拒绝（不达标）？\n\
-             ```\n\n\
+             **Step 2 — 通知主 session 请求用户决策**（向 main session 推一条消息触发 LLM/用户回复，**必须等待回复后再执行 Step 3**），内容大致：\n\n\
+             > [交付物验收] 任务 {job_id} 卖家已提交交付物。\n\
+             > - 交付物地址：<deliverableUrl>\n\
+             > - 验收标准：<qualityStandards>\n\
+             >\n\
+             > 请确认：接受（验收通过）还是拒绝（不达标）？\n\n\
              **Step 3 — 根据用户决策执行（按支付方式分别处理）：**\n\n\
              ▸ **担保支付（escrow）— 可接受或拒绝：**\n\
              - 用户接受（验收通过，释放资金）：\n\
@@ -174,19 +190,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前状态】job_disputed（仲裁已发起）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作（严格顺序）】\n\n\
-             **Step 1 — 通知主 session 请求用户提供证据（用户（确认））：**\n\
-             调用 `notify_main` 工具：\n\
-             ```\n\
-             tool: notify_main\n\
-             arguments:\n\
-             \x20\x20jobId: \"{job_id}\"\n\
-             \x20\x20conversationId: \"<子 session 会话 ID>\"\n\
-             \x20\x20message: |\n\
-             \x20\x20\x20\x20[仲裁通知] 任务 {job_id} 卖家已发起仲裁，需要提交证据。\n\
-             \x20\x20\x20\x20请提供：\n\
-             \x20\x20\x20\x201. 证据摘要（文字描述问题）\n\
-             \x20\x20\x20\x202. 证据文件（截图/文档，可选）\n\
-             ```\n\n\
+             **Step 1 — 通知主 session 请求用户提供证据**（向 main session 推消息，**等待回复**），内容大致：\n\n\
+             > [仲裁通知] 任务 {job_id} 卖家已发起仲裁，需要提交证据。\n\
+             > 请提供：\n\
+             > 1. 证据摘要（文字描述问题）\n\
+             > 2. 证据文件（截图/文档，可选）\n\n\
              **Step 2 — 用户提供证据后，上传链下证据（买卖双方共用，自动识别角色）：**\n\
              ```bash\n\
              onchainos agent dispute upload {job_id} --text \"<证据摘要>\" --image <图片路径>\n\
@@ -200,8 +208,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - confirm_refund → 仲裁买家胜诉，退款\n"
         ),
 
-        // ─── DISPUTE_EVIDENCE: 用户提供了证据，执行上传（伪 event）─────
-        Event::Other(ref s) if s == "DISPUTE_EVIDENCE" => format!(
+        // ─── dispute_evidence: 用户提供了证据，执行上传（伪 event）─────
+        Event::Other(ref s) if s == "dispute_evidence" => format!(
             "【当前动作】提交买家仲裁证据\n\
              【角色】买家（Client）\n\n\
              **Step 1 — 上传链下证据（买卖双方共用，自动识别角色）：**\n\
@@ -320,7 +328,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
 
         // ─── 关闭任务（仅 Open 状态可用，user-instruction 伪 event）─────
-        Event::Other(ref s) if s == "CLOSE" => format!(
+        Event::Other(ref s) if s == "close" => format!(
             "【当前动作】关闭任务\n\
              【角色】买家（Client）\n\n\
              **Step 1 — 关闭任务（仅 Open 状态有效）：**\n\
@@ -332,7 +340,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
 
         // ─── 设为公开任务（user-instruction 伪 event）────────────────
-        Event::Other(ref s) if s == "SET_PUBLIC" => format!(
+        Event::Other(ref s) if s == "set_public" => format!(
             "【当前动作】转为公开任务\n\
              【角色】买家（Client）\n\n\
              **Step 1 — 转为公开任务：**\n\

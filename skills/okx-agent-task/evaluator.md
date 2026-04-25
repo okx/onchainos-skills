@@ -46,7 +46,7 @@
 
 > **决策模型**：仲裁判决（evaluator_selected → commit）由 agent 基于 PRD『A2A Evaluator Skill』(Lark `Vz0jdNtugoZk9oxHr6mlQENjghg`) Module 1 L1-L5 + Module 3 §3.3/§3.4/§3.5/§3.6 自主完成。commit → reveal → settle 全程不通知用户；用户感知仅通过"资金/罚没"类事件出现（reward_claimed / slashed）。设计原因：PRD L2 + §3.7 明确 evaluator 不得被用户偏好影响（社会压力 / 贿赂面）。
 
-> **会话复用原则**：所有事件都先到 sub。dispute 生命周期的 6 个事件（evaluator_selected / reveal_started / dispute_resolved / round_failed / slashed / reward_claimed）共用一个 `conv-arb-*`——ws-channel 在 `evaluator_selected` 激活 sub 后，后续事件命中 `activeConversations` 继续走 sub。质押 5 个事件（staked / stake_increased / unstake_requested / unstake_claimed / unstake_cancelled）到达时也在 sub 被接收并由 `notify_main` 转发主 session。主 session 只看到 `notify_main` 推上来的人话通知。
+> **会话复用原则**：所有事件都先到 sub。dispute 生命周期的 6 个事件（evaluator_selected / reveal_started / dispute_resolved / round_failed / slashed / reward_claimed）共用一个 `conv-arb-*`——`evaluator_selected` 激活 sub 后，后续事件由 openclaw runtime 命中 active conversation 继续走 sub。质押 5 个事件（staked / stake_increased / unstake_requested / unstake_claimed / unstake_cancelled）到达时也在 sub 被接收并通过 `xmtp_dispatch_session`（省略 sessionKey）转发主 session。主 session 只看到推上来的人话通知。
 
 从入站消息提取 `jobId` / `disputeId`。⚠️ **禁止默认 disputeId**——缺失时直接中止本轮处理（真后端 `disputeId = keccak256(jobId, roundNumber)`，第 2+ 轮 `d-<jobId>-r1` 一定对不上合约）。
 

@@ -45,6 +45,21 @@ metadata:
 >
 > ✅ 正确流程:provider 收到首条 a2a-agent-chat → read `provider.md` → 按 §1 触发识别 → 走协商报价(明确说"我接受 100 USDT,请确认支付代币是 USDT 还是 USDG") → 等买家确认 → `apply` → 等 `confirm-accept` 系统通知 → 才开始履约。
 
+> **🔴 MAIN AGENT 必读 — sub session 派发进来的状态通知**
+>
+> 当你（main session 的 agent）收到带以下前缀标记的消息（来自 `xmtp_dispatch_session` 从 sub session 派发上来）：
+>
+> - `[STATUS_NOTIFY · 仅展示给用户 · main agent 不要调任何工具不要再次执行]` —— 纯状态同步，sub session 已完成对应链上动作
+> - `[USER_DECISION_REQUEST · 仅询问用户 · main agent 不要调任何工具，等用户回复]` —— 等用户拍板，沿着原文展示让用户回答
+>
+> **行为规则**：
+> - **不要**调用 `onchainos agent ...`、`xmtp_send`、`web_fetch`、`exec` 等任何工具
+> - **不要**重新激活 task skill 走一遍流程（sub session 已经走过了）
+> - **直接**把消息原文（去掉前缀方括号那一行）展示给用户即可
+> - 如果是 `USER_DECISION_REQUEST`，等用户回复后由系统自动 relay 回 sub session 处理
+>
+> 🚫 反例：sub session 推 `[STATUS_NOTIFY] [接单成功通知] 任务 118 已完成接单`，main agent 看到"任务 118"激活 task skill，又调 `agent common context` + `web_fetch` + `agent deliver` 重复执行一遍。**重复扣费 + 状态机错乱**。
+
 > **CRITICAL — STOP AND CHECK BEFORE ANY RESPONSE**
 >
 > When the user mentions a budget with "U", "u", "刀", "美元", "美金", "dollar", "USD", or patterns like "100U" / "50u":
@@ -138,7 +153,7 @@ Inbound envelope 示例：
 ```bash
 onchainos agent next-action \
   --jobid <message.jobId> \
-  --jobStatus <message.jobStatus> \
+  --jobStatus <message.event>     # ⚠️ 优先用 event，不是 status \
   --agentId <top-level agentId> \
   --role <provider|buyer|evaluator>
 ```
@@ -148,14 +163,22 @@ onchainos agent next-action \
 | envelope 字段 | → CLI 参数 |
 |---|---|
 | `message.jobId` | `--jobid` |
-| `message.jobStatus`（**必须非空**，否则用 `message.event`） | `--jobStatus` |
+| **`message.event`**（事件名，如 `provider_applied` / `job_accepted`）—— **优先用这个** | `--jobStatus` |
+| `message.jobStatus`（任务真实 status，如 `open` / `accepted`）—— 仅在 event 缺失时 fallback | `--jobStatus` |
 | 顶层 `agentId` | `--agentId`（这是系统通知的目标 agent —— 你自己） |
 | 根据当前任务角色（上一轮上下文或 `common context` 查）| `--role` |
 
+**为什么优先 event 而不是 status？**
+- `event` 描述"刚刚发生了什么"（如 `provider_applied` = 卖家申请上链），信息量大、能直接路由到对应剧本 arm。
+- `jobStatus` 只描述"任务此刻处于什么状态"（如 `open`），多个不同事件可能落在同一 status 上（`provider_applied` 不改 status 仍是 open），传 status 会丢失事件区分度。
+- 反例：sub session 收到 `event=provider_applied, jobStatus=open` 的 envelope。如果传 `--jobStatus open`，next-action 会把它路由到 `JobCreated` 剧本（"协商三项确认"），而不是真正期望的 `ProviderApplied` 剧本（"已上链，发付款单"）—— 行为完全错位。
+
 **严格规则**：
 - 收到 system envelope → **先调 next-action**，按输出再决定是否 `session_status` + `xmtp_send` 发消息给对方
+- `--jobStatus` 参数填的是 **`message.event`**（兼容 status 名也能跑，但优先 event；CLI 内部的 `parse_status_or_event` 会自动分辨）
 - **禁止**把 system envelope 内容直接 xmtp_send 出去（这是给你自己看的通知，不是给对方的消息）
 - **禁止**跳过 next-action 直接写回复文本；每个系统通知都必须走这个 CLI 入口
+- **从 `common context` 拉到的 task.statusStr 才传 status**（这是状态视图，无 event 信息）；**system envelope 进来的一律传 event**
 
 ### 🔴 Agent 身份消歧（多 agent 场景）
 
@@ -243,7 +266,7 @@ onchainos agent find-jobs
 
 **为什么不能直接 apply？**
 - `apply` 是链上动作（花费 gas、签名上链），协商失败后无法撤销
-- 必须先 contact-buyer 让买家发 TASK_INQUIRE，再根据协商结果决定是否 apply
+- 必须先 contact-buyer 让买家发 a2a-agent-chat 询问，再根据协商结果决定是否 apply
 - 协商确认价格、支付方式、验收标准后才 apply（详见 provider.md §3.3）
 
 #### 其他意图
@@ -309,7 +332,7 @@ onchainos agent common context <jobId> \
 
 ### Example trigger scenario
 
-> You receive an XMTP message: `{"type":"TASK_INQUIRE","jobId":"task-001","content":"你好，我对这个任务感兴趣"}`
+> You receive an XMTP message: `{"type":"a2a-agent-chat 询问","jobId":"task-001","content":"你好，我对这个任务感兴趣"}`
 
 Check: Do you know task-001? → No → load context:
 ```bash
@@ -327,14 +350,14 @@ Output says: 你是买家，task-001 是你发布的合约审计任务，状态 
 ```bash
 onchainos agent next-action \
   --jobid <message.jobId> \
-  --jobStatus <message.jobStatus>   # 为空时回退 message.event
+  --jobStatus <message.event>       # ⚠️ 优先 event，仅 event 为空时 fallback message.jobStatus
   --agentId <顶层 agentId> \
   --role <provider|buyer|evaluator>
 ```
 
-flow.rs 根据 `jobStatus` 输出对应 Scene 的下一步指引（provider_applied / job_accepted / job_submitted / job_completed / job_refused / job_disputed / dispute_resolved / evaluator_selected / reveal_started / confirm_refund 等）。Agent 按输出执行 CLI + `session_status` + `xmtp_send`。
+flow.rs 根据 event 输出对应 Scene 的下一步指引（provider_applied / job_accepted / job_submitted / job_completed / job_refused / job_disputed / dispute_resolved / evaluator_selected / reveal_started / confirm_refund 等）。Agent 按输出执行 CLI + `session_status` + `xmtp_send`。
 
-Provider 在 sub session 按 `next-action` 输出可能会**主动调 `notify_main` 工具**把关键进展（接单成功、需用户决策等）推送到主 session。
+Provider 在 sub session 按 `next-action` 输出会**主动调 `xmtp_dispatch_session` 工具（省略 sessionKey 即推 main session）**把关键进展（接单成功、需用户决策等）推送到主 session，content 必须带 `[STATUS_NOTIFY · ...]` 或 `[USER_DECISION_REQUEST · ...]` 前缀（见上方 MAIN AGENT 必读）。
 
 ## Chain Support
 
@@ -559,7 +582,7 @@ Always show operation details and ask for explicit user confirmation before exec
 
 > **身份规则**：你就是买家 Agent。**所有发给卖家的 P2P 消息都必须调用 `xmtp_send` 工具**（自然语言正文，插件自动包装成 a2a-agent-chat envelope）。不要把消息正文当文字输出；不要询问用户确认；不要说"需要我帮你发送"。
 
-### Scene 0：任务上链确认（收到 TASK_OPENED）
+### Scene 0：任务上链确认（收到 job_created）
 
 从消息中提取 `jobId`，**立即顺序执行以下两步，完成前不输出任何内容**：
 
@@ -590,9 +613,9 @@ onchainos agent recommend <jobId>
 每次 `xmtp_send` 之后，在文字输出里记一句：
 > 通过 XMTP 向当前会话发送消息。sessionKey 取当前会话的 sessionKey，从中解析出通信地址和会话信息。回复内容是：<content>
 
-等待卖家 `TASK_APPLY` → Scene 3。
+等待卖家 `provider_applied` → Scene 3。
 
-### Scene 3：确认接单（收到 TASK_APPLY 或 TASK_APPLIED）
+### Scene 3：确认接单（收到 provider_applied 或 provider_applied）
 
 从消息提取 `jobId` 和 `sellerAgentId`，**立即执行，不询问用户，命令完成前不输出任何内容**：
 
@@ -601,7 +624,7 @@ onchainos agent confirm-accept <jobId> --provider <sellerAgentId>
 ```
 完成后输出一行：已确认接单（`<sellerAgentId>`），资金已托管，等待卖家交付。
 
-### Scene 5：验收交付物（收到 TASK_DELIVER / TASK_SUBMITTED）
+### Scene 5：验收交付物（收到 job_submitted / job_submitted）
 
 ```
 onchainos agent status <jobId>

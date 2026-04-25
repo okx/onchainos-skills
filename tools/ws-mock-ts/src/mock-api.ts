@@ -804,8 +804,8 @@ const server = http.createServer(async (req, res) => {
     t.providerAgentAddress = matchConfirm?.providerAddress
       ?? String(body.providerAddress ?? body.provider_address ?? "0xSeller000000000000000000000000000000001");
     if (body.groupId) t.groupId = String(body.groupId);
-    setStatus(t, S_ACCEPTED);
-    console.log(`[mock-api] task accepted: job=${jobId} provider=${t.providerAgentAddress}`);
+    // 状态推进交给 /broadcast（看 bizType=7 JobAccept），endpoint 只做参数记录
+    console.log(`[mock-api] /accept staged (waiting for broadcast): job=${jobId} provider=${t.providerAgentAddress}`);
     const { buyerAgentAddress, buyerAgentId, providerAgentId } = t;
     setTimeout(async () => {
       const sellerComm = await lookupCommAddr(providerAgentId!) ?? t.providerAgentAddress!;
@@ -820,8 +820,8 @@ const server = http.createServer(async (req, res) => {
     if (t.status !== S_ACCEPTED) { sendErr(res, 2002, "task status must be ACCEPTED"); return; }
     const body = await parseBody(req) as Record<string, unknown>;
     const deliverable = String(body.deliverable ?? body.deliverable_url ?? `https://mock-deliverable.example.com/${jobId}.html`);
-    setStatus(t, S_SUBMITTED);
-    console.log(`[mock-api] task submitted: job=${jobId}`);
+    // 状态推进交给 /broadcast（bizType=8 JobSubmit）
+    console.log(`[mock-api] /submit staged (waiting for broadcast): job=${jobId}`);
     const { buyerAgentAddress, buyerAgentId, providerAgentId } = t;
     setTimeout(async () => {
       const sellerComm = await lookupCommAddr(providerAgentId!) ?? t.providerAgentAddress!;
@@ -834,8 +834,8 @@ const server = http.createServer(async (req, res) => {
     const t = tasks.get(jobId);
     if (!t) { sendErr(res, 2001, "task not found"); return; }
     if (t.status !== S_SUBMITTED) { sendErr(res, 2002, "task status must be SUBMITTED"); return; }
-    setStatus(t, S_COMPLETE); saveTasks();
-    console.log(`[mock-api] task completed: job=${jobId}`);
+    // 状态推进交给 /broadcast（bizType=9 JobComplete）
+    console.log(`[mock-api] /complete staged (waiting for broadcast): job=${jobId}`);
     const { buyerAgentAddress: ba, buyerAgentId: bi, providerAgentId: pi } = t;
     setTimeout(async () => {
       const sellerComm = await lookupCommAddr(pi!) ?? t.providerAgentAddress!;
@@ -848,8 +848,8 @@ const server = http.createServer(async (req, res) => {
     const t = tasks.get(jobId);
     if (!t) { sendErr(res, 2001, "task not found"); return; }
     if (t.status !== S_SUBMITTED) { sendErr(res, 2002, "task status must be SUBMITTED"); return; }
-    setStatus(t, S_REFUSED); saveTasks();
-    console.log(`[mock-api] task refused: job=${jobId}`);
+    // 状态推进交给 /broadcast（bizType=10 JobRefuse）
+    console.log(`[mock-api] /refuse staged (waiting for broadcast): job=${jobId}`);
     const pid = t.providerAgentId ?? "mock-seller-agent-001";
     (async () => {
       const sellerComm = await lookupCommAddr(pid) ?? t.providerAgentAddress ?? "0xSeller000000000000000000000000000000001";
@@ -862,8 +862,8 @@ const server = http.createServer(async (req, res) => {
     const t = tasks.get(jobId);
     if (!t) { sendErr(res, 2001, "task not found"); return; }
     if (t.status !== S_OPEN) { sendErr(res, 2002, "task status must be OPEN"); return; }
-    setStatus(t, S_CLOSE); saveTasks();
-    console.log(`[mock-api] task closed: job=${jobId}`);
+    // 状态推进交给 /broadcast（bizType=16 JobClose）
+    console.log(`[mock-api] /close staged (waiting for broadcast): job=${jobId}`);
     sendOk(res, { uopData: mockUopData() }); return;
   }
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/setVisibility", path_))) {
@@ -904,8 +904,8 @@ const server = http.createServer(async (req, res) => {
       resolvedAt: null,
     };
     disputes.set(disputeId, dispute);
-    setStatus(t, S_DISPUTED); saveTasks();
-    console.log(`[mock-api] task disputed: job=${jobId} disputeId=${disputeId} reason=${reason}`);
+    // 状态推进交给 /broadcast（bizType=2 DisputeCreate）；dispute 记录此处 staged
+    console.log(`[mock-api] /dispute staged (waiting for broadcast): job=${jobId} disputeId=${disputeId} reason=${reason}`);
     const { buyerAgentAddress, buyerAgentId, providerAgentAddress, providerAgentId } = t;
     notifyDisputed(jobId, disputeId, buyerAgentAddress, buyerAgentId, providerAgentAddress ?? "0xSeller000000000000000000000000000000001", providerAgentId ?? "mock-seller-agent-001", reason)
       .catch(e => console.error("[mock-api] dispute notify error:", e));
@@ -1138,8 +1138,44 @@ const server = http.createServer(async (req, res) => {
     sendOk(res, { uopData: mockUopData() }); return;
   }
   // ── Broadcast (CLI task_sign_and_broadcast final step) ────────────────────
+  // 真实链上语义：广播即上链。状态推进集中在这里，按 bizContext.bizType 区分场景。
+  // 之前在 /accept、/submit、/complete、/reject、/close、/dispute/raise 这些
+  // endpoint 内部 setStatus 是错的——那只是链下准备阶段。
   if (method === "POST" && path_ === "/api/v1/task/broadcast") {
-    // CLI sends { signedTx } or { uopHash, signature } — we mock the txHash
+    const body = (req as any)._parsedBody as Record<string, unknown> | undefined;
+    const bizCtx = body?.bizContext as { jobId?: string; bizType?: number } | undefined;
+    if (bizCtx?.jobId && typeof bizCtx?.bizType === "number") {
+      const t = tasks.get(bizCtx.jobId);
+      if (t) {
+        const before = t.statusStr;
+        // BizContext 枚举对齐 cli/src/commands/agent_commerce/task/signing.rs
+        switch (bizCtx.bizType) {
+          case 7:  // JobAccept    : open → accepted
+            if (t.status === S_OPEN)       setStatus(t, S_ACCEPTED);
+            break;
+          case 8:  // JobSubmit    : accepted → submitted
+            if (t.status === S_ACCEPTED)   setStatus(t, S_SUBMITTED);
+            break;
+          case 9:  // JobComplete  : submitted → completed
+            if (t.status === S_SUBMITTED)  setStatus(t, S_COMPLETE);
+            break;
+          case 10: // JobRefuse    : submitted → refused
+            if (t.status === S_SUBMITTED)  setStatus(t, S_REFUSED);
+            break;
+          case 16: // JobClose     : open → close
+            if (t.status === S_OPEN)       setStatus(t, S_CLOSE);
+            break;
+          case 2:  // DisputeCreate: refused → disputed
+            if (t.status === S_REFUSED)    setStatus(t, S_DISPUTED);
+            break;
+          // 其他 bizType（JobApply=15 / SetVisibility=17 / SetPaymentMode=18 / Stake=11/19 / ...）不改 task 状态
+        }
+        if (t.statusStr !== before) {
+          saveTasks();
+          console.log(`[mock-api] broadcast bizType=${bizCtx.bizType} job=${bizCtx.jobId}: ${before} → ${t.statusStr}`);
+        }
+      }
+    }
     sendOk(res, [{ txHash: mockUop() }]); return;
   }
 
