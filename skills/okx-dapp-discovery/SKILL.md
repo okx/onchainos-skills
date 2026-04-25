@@ -146,10 +146,30 @@ Examples that score 50–74:
 - "I want to borrow against my ETH" (Aave or Morpho both plausible)
 - "add liquidity on BNB Chain" (no explicit PancakeSwap mention)
 
-**Rule 5 — All scores < 50 (no protocol signal):**
-Do not install. Show the user the supported DApps and ask which one matches their intent:
+**Rule 5 — Highest score < 50 (no top-5 match):**
 
-> The following third-party DApps are currently routable — let me know which one you'd like to use:
+This skill's per-protocol tables cover 5 DApps with hard-coded routing. When none scores ≥ 50, decide between two sub-rules based on whether the user named *any* recognizable third-party DApp/protocol:
+
+**Rule 5a — User named a recognizable third-party DApp NOT in the top 5** (e.g. Uniswap, Curve, GMX, Lido, Jupiter, Raydium, Compound, ether.fi, Pendle, Maker / Sky, Convex, Velodrome, Aerodrome, Camelot, SushiSwap, Balancer, Kamino, Orca, Meteora, dYdX, Across, LI.FI / Jumper, Mayan, deBridge, etc.):
+
+The top-5 routing didn't match, but a plugin may exist in the broader registry. Install **plugin-store** as a catch-all discovery layer and delegate:
+
+```bash
+npx skills add okx/plugin-store --skill plugin-store --yes --global
+```
+```
+Read file: $HOME/.claude/skills/plugin-store/SKILL.md
+```
+
+> *(Path is Claude Code-specific — see Known Limitations in Step 1.)*
+
+Plugin-store has access to the broader plugin registry (`plugin-store list`) and can install a matching plugin if one exists. Forward the user's original request — the bootstrap is transparent. If plugin-store's registry has no matching plugin either, plugin-store will surface that and offer alternatives.
+
+**Rule 5b — User did NOT name a specific DApp** (purely generic terms only):
+
+Do not install anything. Show the user the supported DApps and ask which one matches their intent:
+
+> The following third-party DApps are currently routable directly — let me know which one you'd like to use:
 >
 > | DApp | What it's for |
 > |------|----------------|
@@ -160,6 +180,8 @@ Do not install. Show the user the supported DApps and ask which one matches thei
 > | **Morpho V1 Optimizer** | Aave/Compound interest-rate optimizer |
 >
 > If your intent is more general — finding the best yield, rebalancing, or claiming rewards across protocols — `okx-defi-invest` (OKX-aggregated DeFi) is a better fit.
+>
+> If you want to use a different DApp not listed above (e.g., Uniswap, Curve, GMX, etc.), name it explicitly and I'll search the broader plugin registry via plugin-store.
 
 ---
 
