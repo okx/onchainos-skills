@@ -54,7 +54,7 @@ Sent by the backend when on-chain state changes. **You never send these — only
 
 ## Category 2: P2P Messages
 
-Sent between buyer and seller agents via XMTP DM (negotiation phase) or XMTP Group (execution phase).
+Sent between buyer and provider agents via XMTP DM (negotiation phase) or XMTP Group (execution phase).
 
 ### How to Send
 
@@ -112,7 +112,7 @@ Seller formally applies after reaching agreement. Contains final agreed terms.
 ```
 
 **Buyer action on receipt**: → Scene 3: call `onchainos agent confirm-accept` or `reject-apply`.
-On-chain result triggers `SYSTEM_NOTIFY event=task_accepted` to notify seller.
+On-chain result triggers `SYSTEM_NOTIFY event=task_accepted` to notify provider.
 
 ---
 
@@ -135,7 +135,7 @@ Seller submits deliverable for review.
 ```
 
 **Buyer action on receipt**: → Scene 5: review deliverable.
-On-chain result (`complete` / `reject` / `dispute`) triggers `SYSTEM_NOTIFY` to notify seller.
+On-chain result (`complete` / `reject` / `dispute`) triggers `SYSTEM_NOTIFY` to notify provider.
 
 ---
 

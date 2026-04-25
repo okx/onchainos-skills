@@ -2,7 +2,7 @@
 //!
 //! 核心命令：`context`
 //! 根据 job_id + 角色，从后端拉取任务详情，生成结构化自然语言上下文，
-//! 供大模型（openclaw buyer/seller/evaluator AI）理解当前任务状态。
+//! 供大模型（openclaw buyer/provider/evaluator AI）理解当前任务状态。
 
 use anyhow::{bail, Result};
 use clap::Subcommand;
@@ -94,12 +94,12 @@ pub enum CommonCommand {
     ///
     /// 示例：
     ///   onchainos agent context task-001 --role buyer
-    ///   onchainos agent context task-001 --role seller --agent-id mock-seller-001
+    ///   onchainos agent context task-001 --role provider --agent-id mock-seller-001
     Context {
         /// 任务 ID（jobId），如 task-001 或 0x1a2b...
         job_id: String,
 
-        /// 调用者角色：buyer | seller | evaluator
+        /// 调用者角色：buyer | provider | evaluator
         #[arg(long, default_value = "buyer")]
         role: String,
 
@@ -281,7 +281,7 @@ fn available_actions(role: &str, status: &str, job_id: &str) -> Vec<String> {
     let status = Status::parse(status);
     match Role::parse(role) {
         Some(Role::Buyer)     => super::buyer::flow::available_actions(&status, job_id),
-        Some(Role::Seller)    => super::provider::flow::available_actions(&status, job_id),
+        Some(Role::Provider)  => super::provider::flow::available_actions(&status, job_id),
         Some(Role::Evaluator) => super::evaluator::flow::available_actions(&status, job_id),
         None => vec![
             format!("onchainos agent status {job_id}         # 查询最新任务状态"),
@@ -369,8 +369,8 @@ async fn run_context(
     api_url: &str,
 ) -> Result<()> {
     // 校验角色
-    if !["buyer", "seller", "evaluator"].contains(&role) {
-        bail!("--role 必须是 buyer / seller / evaluator");
+    if !["buyer", "provider", "evaluator"].contains(&role) {
+        bail!("--role 必须是 buyer / provider / evaluator");
     }
 
     // 调用后端获取任务详情
@@ -387,7 +387,7 @@ async fn run_context(
     let task = resp_data.task;
 
     // 卖家额外拉取 agent 资料（name / profileDescription）
-    let profile = if role == "seller" {
+    let profile = if role == "provider" {
         fetch_agent_profile(agent_id.unwrap_or(""), api_url).await
     } else {
         None
@@ -410,7 +410,7 @@ fn build_context(
 
     let role_cn = match role {
         "buyer"     => "买家（Client）",
-        "seller"    => "卖家（Provider）",
+        "provider"    => "卖家（Provider）",
         "evaluator" => "仲裁者（Evaluator）",
         _           => role,
     };
@@ -526,7 +526,7 @@ fn build_context(
     out.push('\n');
 
     // ── 专业匹配检查（仅卖家 + open 状态 + 有 profile） ───────────────────
-    if role == "seller" && status_raw == "open" {
+    if role == "provider" && status_raw == "open" {
         if let Some(p) = profile {
             if let Some(desc) = &p.profile_description {
                 out.push_str("【⚠️ 第一步：专业匹配检查（必做，不得跳过）】\n");
@@ -560,7 +560,7 @@ fn build_context(
     // ── 必须加载的角色指南 ──────────────────────────────────────────────
     let skill_file = match role {
         "buyer"     => "client.md",
-        "seller"    => "provider.md",
+        "provider"    => "provider.md",
         "evaluator" => "evaluator.md",
         _           => "",
     };

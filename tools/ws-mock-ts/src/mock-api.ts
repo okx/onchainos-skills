@@ -447,9 +447,9 @@ async function notifyDisputed(jobId: string, disputeId: string, buyerCommAddr: s
   const participants = Array.from(new Set([CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...allEvalAddrs]));
   console.log(`[mock-api] dispute broadcast: evaluators=${allEvalAddrs.length} convId=${convId}`);
   await wsNotify(convId, participants, {
-    type: "TASK_DISPUTED", jobId, disputeId, buyerAgentId, sellerAgentId, reason,
+    type: "job_disputed", jobId, disputeId, buyerAgentId, sellerAgentId, reason,
     content: `⚖️ 任务 ${jobId} 进入仲裁 (disputeId=${disputeId})。\n买家拒绝验收，卖家申诉：${reason}\n\n请仲裁者查阅证据后裁决。`,
-    llm: `TASK_DISPUTED jobId=${jobId} disputeId=${disputeId} reason=${reason}`,
+    llm: `job_disputed jobId=${jobId} disputeId=${disputeId} reason=${reason}`,
   });
 }
 
@@ -917,7 +917,8 @@ const server = http.createServer(async (req, res) => {
       dispute.commitPhaseStartedAt = nowIso();
       notifyEvaluatorSelected(t, disputeId, targets);
     }, EVALUATOR_SELECTED_DELAY_MS);
-    sendOk(res, { uopHash: mockUop(), disputeId }); return;
+    // 跟其他 task endpoints 一致返回 uopData(CLI 的 sign_uop_and_broadcast 期望此结构)
+    sendOk(res, { uopData: mockUopData(), disputeId }); return;
   }
   // 仲裁证据:文本 + 图片清单(真后端 /priapi/v1/aieco/task/{jobId}/evidence)
   if (method === "GET" && (m = matchPath("/api/v1/task/:jobId/evidence", path_))) {
@@ -1177,6 +1178,44 @@ const server = http.createServer(async (req, res) => {
       }
     }
     sendOk(res, [{ txHash: mockUop() }]); return;
+  }
+
+  // ── Admin: force task to specific status (mock-only test backdoor) ─────────
+  // 用于"快速跳转到任意状态"测试场景：跳过状态机校验直接 PATCH。
+  // POST /admin/task/:jobId/force-status  body { statusStr, providerAgentAddress?, providerAgentId? }
+  // providerAgent* 可选——force-jump 跳过 /apply 时 task.providerAgent* 为空，导致后续 dispute/upload
+  // 等需要校验钱包归属的 CLI 命令报错。允许调用方一起把这俩 stitch 进去。
+  if (method === "POST" && (m = matchPath("/admin/task/:jobId/force-status", path_))) {
+    const t = tasks.get(m.jobId);
+    if (!t) { sendErr(res, 2001, "task not found"); return; }
+    const body = await parseBody(req) as Record<string, unknown>;
+    const target = String(body?.statusStr ?? "");
+    const statusMap: Record<string, number> = {
+      open: S_OPEN, accepted: S_ACCEPTED, submitted: S_SUBMITTED,
+      refused: S_REFUSED, disputed: S_DISPUTED,
+      complete: S_COMPLETE, completed: S_COMPLETE,
+      rejected: 6, refunded: 6, close: S_CLOSE, expired: 8,
+    };
+    const newStatus = statusMap[target];
+    if (newStatus === undefined) {
+      sendErr(res, 4000, `unknown statusStr: ${target}（accepted: ${Object.keys(statusMap).join("/")}）`);
+      return;
+    }
+    const before = t.statusStr;
+    setStatus(t, newStatus);
+    if (typeof body?.providerAgentAddress === "string" && body.providerAgentAddress) {
+      t.providerAgentAddress = String(body.providerAgentAddress);
+    }
+    if (typeof body?.providerAgentId === "string" && body.providerAgentId) {
+      t.providerAgentId = String(body.providerAgentId);
+    }
+    saveTasks();
+    console.log(`[mock-api] FORCE-STATUS job=${m.jobId}: ${before} → ${t.statusStr}`
+      + (t.providerAgentAddress ? ` provider=${t.providerAgentAddress}/${t.providerAgentId ?? "?"}` : ""));
+    sendOk(res, { jobId: m.jobId, before, after: t.statusStr,
+      providerAgentAddress: t.providerAgentAddress ?? null,
+      providerAgentId: t.providerAgentId ?? null });
+    return;
   }
 
   // ── Staking: evaluator onboarding (Lark §8.2 /staking/stake) ──────────────

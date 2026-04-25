@@ -174,7 +174,7 @@ pub enum AgentCommand {
         token_symbol: String,
     },
 
-    /// Client claims auto-refund after seller timeout
+    /// Client claims auto-refund after provider timeout
     #[command(name = "claim-auto-refund")]
     ClaimAutoRefund { job_id: String },
 
@@ -206,7 +206,7 @@ pub enum AgentCommand {
         #[arg(long)] role: String,
     },
 
-    /// Rate an agent (wraps feedback-submit; usable by buyer/seller/evaluator)
+    /// Rate an agent (wraps feedback-submit; usable by buyer/provider/evaluator)
     #[command(name = "rate-agent")]
     RateAgent {
         /// 被评价的 Agent ID
@@ -409,7 +409,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     task::buyer::flow::generate_next_action(&job_id, &job_status, &agent_id),
                 "evaluator" =>
                     task::evaluator::flow::generate_next_action(&job_id, &job_status, &agent_id),
-                other => anyhow::bail!("--role 必须是 provider/seller/buyer/client/evaluator，当前: {other}"),
+                other => anyhow::bail!("--role 必须是 provider/provider/buyer/client/evaluator，当前: {other}"),
             };
             if let Some(w) = warning {
                 println!("{w}{prompt}");
@@ -461,8 +461,24 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str) -> Opti
     use task::common::network::task_api_client::TaskApiClient;
     use task::common::state_machine::{parse_status_or_event, status_when_event, Status};
 
+    // user-instruction 伪 event 不是链事件，不直接对应 status——它们在某个 status 下被触发
+    // 后才会上链改 status。校验它们的"对应 status"会误报，所以这里直接跳过。
+    const PSEUDO_EVENTS: &[&str] = &[
+        "dispute_raise", "agree_refund", "dispute_evidence",
+        "close", "set_public",
+    ];
+    if PSEUDO_EVENTS.contains(&job_status_or_event) {
+        return None;
+    }
+
     let event = parse_status_or_event(job_status_or_event);
     let expected = status_when_event(&event);
+
+    // 如果 event 解析成 Status::Other("unknown")（即未识别的 Event::Other），
+    // 也跳过校验（避免对不认识的 event 误报）
+    if matches!(expected, Status::Other(ref s) if s == "unknown") {
+        return None;
+    }
 
     let mut c = TaskApiClient::new();
     let resp = c.get(&c.task_path(job_id)).await.ok()?;

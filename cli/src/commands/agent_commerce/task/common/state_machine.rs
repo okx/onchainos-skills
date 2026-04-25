@@ -15,7 +15,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     Buyer,
-    Seller,
+    Provider,
     Evaluator,
 }
 
@@ -23,7 +23,7 @@ impl Role {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "buyer" | "client"            => Some(Role::Buyer),
-            "seller" | "provider"         => Some(Role::Seller),
+            "provider" | "seller"         => Some(Role::Provider),
             "evaluator" | "arbitrator"    => Some(Role::Evaluator),
             _                             => None,
         }
@@ -32,7 +32,7 @@ impl Role {
     pub fn as_canonical_str(&self) -> &'static str {
         match self {
             Role::Buyer     => "buyer",
-            Role::Seller    => "seller",
+            Role::Provider    => "provider",
             Role::Evaluator => "evaluator",
         }
     }
@@ -85,38 +85,81 @@ impl Status {
 // ─── Event ──────────────────────────────────────────────────────────────
 
 /// 系统通知里的 `event` 字段——触发本通知的具体动作。
+/// 完整对齐后端事件枚举（参见 task system 设计文档）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
-    /// 任务创建上链（status 进入 open）
+    // ── 任务主流程 ────────────────────────────────────────────────────
+    /// 任务创建上链（status 进入 open；通知 buyer）
     JobCreated,
-    /// 卖家 apply 上链（status 仍是 open，过场事件）
+    /// 卖家 apply 上链（status 仍是 open，过场事件；通知刚 apply 的 provider）
     ProviderApplied,
-    /// 买家 confirm-accept 上链（status 进入 accepted）
+    /// 买家 confirm-accept 上链（status 进入 accepted；通知 provider）
     JobAccepted,
-    /// 卖家 deliver 上链（status 进入 submitted）
+    /// 卖家 deliver 上链（status 进入 submitted；通知 buyer 验收）
     JobSubmitted,
-    /// 买家 complete 上链（status 进入 completed）
+    /// 买家 complete 上链 / 仲裁 approve（status 进入 completed；通知 provider）
     JobCompleted,
-    /// 买家 reject 上链（status 进入 refused）
+    /// 买家 reject 上链（status 进入 refused；通知 provider 决策仲裁/退款）
     JobRefused,
-    /// 任一方 dispute raise 上链（status 进入 disputed）
+    /// 任一方 dispute raise 上链（status 进入 disputed；通知 buyer + provider 上传证据）
     JobDisputed,
-    /// 卖家 agree-refund 上链（status 进入 refunded）
+    /// **后端无此 event** —— 保留作为内部别名（agree-refund 上链后没专门 event 名，
+    /// 状态变更直接通过 broadcast 推到 refunded）。模型/skill 提到时按"卖家退款"语义处理
     ConfirmRefund,
-    /// 仲裁结果上链（status 进入 completed 或 refunded，看裁决方）
+    /// DisputeSettled 仲裁裁决（status 进入 completed 或 refunded；通知 buyer/provider/voters
+    /// 调 /claimable + /claim 领取奖励）
     DisputeResolved,
-    /// 任务超时（accept 截止前未接单 或 submit 截止前未提交）
+    /// 任务超时（accept 截止前未接单 或 submit 截止前未提交；通知 buyer 关单回收资金）
     JobExpired,
-    /// 关闭任务上链
+    /// TaskMarket.close 上链 / Close tx 结果（通知发起人 client）
     JobClosed,
-    /// 买家切换公开/私有可见性上链
+    /// TaskMarket.setVisibility 上链（通知发起人 client）
     JobVisibilityChanged,
-    /// 买家切换支付模式上链（escrow / non_escrow / x402）
+    /// TaskMarket.setPaymentMode 上链（通知发起人 client）
     JobPaymentModeChanged,
-    /// 提交交付物截止时间已过（卖家未提交）
+
+    // ── 仲裁 lifecycle（evaluator 子状态机）────────────────────────────
+    /// VotersSelected 选出本轮 evaluators（通知被选中的每个 evaluator 调 /vote 提 commit）
+    EvaluatorSelected,
+    /// RevealStarted 上链（commit 阶段结束，reveal 窗口开启；通知本轮已 commit 的 evaluators）
+    RevealStarted,
+    /// evaluator commit tx 上链 success（通知发起 commit 的 evaluator 本人，等 reveal 窗口）
+    VoteCommitted,
+    /// evaluator reveal tx 上链 success（通知发起 reveal 的 evaluator 本人，等 dispute_resolved）
+    VoteRevealed,
+    /// DisputeInvalidated 当前轮失效（票数不足/无人揭示等；通知 buyer/provider/本轮 evaluators 等下一轮）
+    RoundFailed,
+    /// VoterStaking.Slashed 上链被罚没（无 user tx 触发；通知被罚的 evaluator）
+    Slashed,
+
+    // ── 质押 lifecycle（evaluator）────────────────────────────────────
+    /// VoterStaking.Staked 上链（首次质押；通知发起 stake 的 evaluator）
+    Staked,
+    /// VoterStaking.IncreaseStake 上链（追加质押；通知发起 increase 的 evaluator）
+    StakeIncreased,
+    /// VoterStaking.UnstakeRequested 上链（进入冷却期；通知发起 unstake 的 evaluator）
+    UnstakeRequested,
+    /// VoterStaking.UnstakeClaimed 上链（冷却期满已提走；通知发起 claim 的 evaluator）
+    UnstakeClaimed,
+    /// VoterStaking.UnstakeCancelled 上链（冷却期内取消；通知发起 cancel 的 evaluator）
+    UnstakeCancelled,
+    /// claimRewards tx 上链结果（通知领取人 client/provider/evaluator）
+    RewardClaimed,
+
+    // ── 超时事件 ─────────────────────────────────────────────────────
+    /// submit 超时未交付（通知 buyer 调 claimAutoRefund）
     SubmitExpired,
-    /// 拒绝后仲裁截止时间已过（卖家未发起仲裁）
+    /// refuse 后 provider 未发起仲裁超时（通知 buyer 调 claimAutoRefund）
     RefuseExpired,
+    /// review 超时（provider 提交后买家未确认；通知 provider 调 claimAutoComplete）
+    ReviewExpired,
+
+    // ── 截止时间提醒（warn 类，不改 status）────────────────────────────
+    /// 担保支付 accept→submit 快超时提醒（通知 provider 发起 submit）
+    SubmitDeadlineWarn,
+    /// 担保支付 submit→complete 快超时提醒（通知 buyer 发起 complete）
+    ReviewDeadlineWarn,
+
     /// 后端发的、当前枚举不认识的事件名（也用来承载 user-instruction 伪 event：
     /// dispute_raise / agree_refund / dispute_evidence / close / set_public）
     Other(String),
@@ -125,6 +168,7 @@ pub enum Event {
 impl Event {
     pub fn parse(s: &str) -> Self {
         match s {
+            // 任务主流程
             "job_created"               => Event::JobCreated,
             "provider_applied"          => Event::ProviderApplied,
             "job_accepted"              => Event::JobAccepted,
@@ -138,8 +182,27 @@ impl Event {
             "job_closed"                => Event::JobClosed,
             "job_visibility_changed"    => Event::JobVisibilityChanged,
             "job_payment_mode_changed"  => Event::JobPaymentModeChanged,
+            // 仲裁 lifecycle
+            "evaluator_selected"        => Event::EvaluatorSelected,
+            "reveal_started"            => Event::RevealStarted,
+            "vote_committed"            => Event::VoteCommitted,
+            "vote_revealed"             => Event::VoteRevealed,
+            "round_failed"              => Event::RoundFailed,
+            "slashed"                   => Event::Slashed,
+            // 质押 lifecycle
+            "staked"                    => Event::Staked,
+            "stake_increased"           => Event::StakeIncreased,
+            "unstake_requested"         => Event::UnstakeRequested,
+            "unstake_claimed"           => Event::UnstakeClaimed,
+            "unstake_cancelled"         => Event::UnstakeCancelled,
+            "reward_claimed"            => Event::RewardClaimed,
+            // 超时
             "submit_expired"            => Event::SubmitExpired,
             "refuse_expired"            => Event::RefuseExpired,
+            "review_expired"            => Event::ReviewExpired,
+            // 提醒
+            "submit_deadline_warn"      => Event::SubmitDeadlineWarn,
+            "review_deadline_warn"      => Event::ReviewDeadlineWarn,
             other                       => Event::Other(other.to_string()),
         }
     }
@@ -159,8 +222,23 @@ impl Event {
             Event::JobClosed              => "job_closed",
             Event::JobVisibilityChanged   => "job_visibility_changed",
             Event::JobPaymentModeChanged  => "job_payment_mode_changed",
+            Event::EvaluatorSelected      => "evaluator_selected",
+            Event::RevealStarted          => "reveal_started",
+            Event::VoteCommitted          => "vote_committed",
+            Event::VoteRevealed           => "vote_revealed",
+            Event::RoundFailed            => "round_failed",
+            Event::Slashed                => "slashed",
+            Event::Staked                 => "staked",
+            Event::StakeIncreased         => "stake_increased",
+            Event::UnstakeRequested       => "unstake_requested",
+            Event::UnstakeClaimed         => "unstake_claimed",
+            Event::UnstakeCancelled       => "unstake_cancelled",
+            Event::RewardClaimed          => "reward_claimed",
             Event::SubmitExpired          => "submit_expired",
             Event::RefuseExpired          => "refuse_expired",
+            Event::ReviewExpired          => "review_expired",
+            Event::SubmitDeadlineWarn     => "submit_deadline_warn",
+            Event::ReviewDeadlineWarn     => "review_deadline_warn",
             Event::Other(s)               => s.as_str(),
         }
     }
@@ -175,17 +253,29 @@ impl Event {
 /// 单从 event 不能确定，这里默认返回 `Completed`，调用方应优先用 mock-api 实时拉取的 status。
 pub fn status_when_event(e: &Event) -> Status {
     match e {
+        // 主流程
         Event::JobCreated | Event::ProviderApplied                          => Status::Open,
         Event::JobAccepted                                                  => Status::Accepted,
         Event::JobSubmitted                                                 => Status::Submitted,
         Event::JobRefused | Event::SubmitExpired | Event::RefuseExpired     => Status::Refused,
         Event::JobDisputed                                                  => Status::Disputed,
-        Event::JobCompleted                                                 => Status::Completed,
+        Event::JobCompleted | Event::ReviewExpired                          => Status::Completed,
         Event::ConfirmRefund                                                => Status::Refunded,
         Event::DisputeResolved                                              => Status::Completed,
+        // 仲裁子状态机：所有事件都发生在 task=disputed 状态下
+        Event::EvaluatorSelected | Event::RevealStarted
+        | Event::VoteCommitted | Event::VoteRevealed
+        | Event::RoundFailed                                                => Status::Disputed,
+        // 提醒类（不改 status，task 还在原状态）
+        Event::SubmitDeadlineWarn                                           => Status::Accepted,
+        Event::ReviewDeadlineWarn                                           => Status::Submitted,
         // 任务级 housekeeping 事件没有清晰的状态映射，保守用 Other
         Event::JobExpired | Event::JobClosed
         | Event::JobVisibilityChanged | Event::JobPaymentModeChanged       => Status::Other("housekeeping".to_string()),
+        // 质押 / 罚没 / 奖励 lifecycle 跟 task status 解耦
+        Event::Staked | Event::StakeIncreased
+        | Event::UnstakeRequested | Event::UnstakeClaimed | Event::UnstakeCancelled
+        | Event::RewardClaimed | Event::Slashed                             => Status::Other("staking".to_string()),
         Event::Other(_)                                                     => Status::Other("unknown".to_string()),
     }
 }

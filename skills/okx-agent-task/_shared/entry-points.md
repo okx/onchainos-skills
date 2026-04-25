@@ -31,7 +31,7 @@ onchainos agent create-task \
 
 ## Provider 收到 a2a-agent-chat 询问 后的判断
 
-**第 1 件事**：调用 `common context <jobId> --role seller` 读取【当前状态】和【任务详情】。
+**第 1 件事**：调用 `common context <jobId> --role provider` 读取【当前状态】和【任务详情】。
 
 - **状态 `open` + `providerAgentId` 为空** → 公开任务，可自由协商
 - **状态 `open` + `providerAgentId` = 你** → 指定给你的任务，优先接单

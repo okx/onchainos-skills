@@ -604,6 +604,92 @@ async function main() {
       return;
     }
 
+    // POST /quick-jump —— 快速跳转到任意 task status
+    // body: { jobId, peer, status }
+    // 流程: 1) 找/建 Group + 发首条 inquire envelope（让 openclaw 建 sub session）
+    //       2) 调 mock-api /admin/.../force-status 强推 task 到目标 status
+    //       3) 返回让 UI 端等 sub session hydrate 后再调 /notify-openclaw 推 entry event
+    if (req.method === "POST" && url.pathname === "/quick-jump") {
+      try {
+        const body = JSON.parse(await readBody()) as {
+          jobId?: string; peer?: string; status?: string;
+        };
+        if (!body.jobId || !body.peer || !body.status) {
+          sendJson(400, { error: "jobId + peer + status required" }); return;
+        }
+        const { jobId, peer, status } = body;
+
+        // 1) 找/建 Group
+        let convId: string | null = null;
+        for (const [cid, ctx] of convCtxMap) {
+          if (ctx.jobId === jobId) { convId = cid; break; }
+        }
+        let groupCreated = false;
+        if (!convId) {
+          const conv = await (agent.client.conversations as any).newGroupWithIdentifiers(
+            [{ identifier: peer, identifierKind: IdentifierKind.Ethereum }],
+            { groupName: `a2a-${jobId}` },
+          );
+          convId = conv.id;
+          groupCreated = true;
+          console.log(`${TAG} [quick-jump] 创建 Group: groupId=${convId} jobId=${jobId} peer=${peer}`);
+          const ctxRec = convCtxMap.get(conv.id) ?? {};
+          ctxRec.jobId = jobId;
+          ctxRec.peerAddr = peer;
+          ctxRec.groupId = conv.id;
+          convCtxMap.set(conv.id, ctxRec);
+
+          // 发首条 inquire envelope —— openclaw 看到 a2a-agent-chat 才会创建 sub session
+          const content = `你好，我有一个任务（jobId: ${jobId}），快速跳转测试。`;
+          const envelope = buildEnvelope({
+            content, peerAddr: peer, groupId: conv.id, jobId, myAddress,
+          });
+          const payload = JSON.stringify(envelope);
+          await conv.send(payload);
+          recordMsg(conv.id, { dir: "out", content: payload, sender: myInboxId, ts: Date.now() });
+          console.log(`${TAG} [quick-jump] ✓ 首条 envelope 已发，等 openclaw hydrate sub session`);
+        }
+
+        // 2) mock-api force-status
+        // 同时填 providerAgentAddress / providerAgentId（force-jump 跳过 /apply 时这俩字段为空，
+        // 会让 CLI 端 dispute upload 等钱包归属校验报"当前钱包不是任务的买家或卖家"）
+        let providerAgentId: string | undefined;
+        try {
+          const sellersResp = await fetch(`${MOCK_API_URL}/priapi/v5/wallet/agentic/agent/agent-list?chainIndex=196`);
+          const sellersData: any = await sellersResp.json().catch(() => ({}));
+          const sellers = sellersData?.data?.[0]?.list ?? [];
+          const matched = sellers.find((s: any) => String(s.communicationAddress).toLowerCase() === peer.toLowerCase());
+          if (matched) providerAgentId = String(matched.agentId);
+        } catch {/* 查不到 agentId 不致命，让 mock-api fallback 默认值 */}
+        const fsResp = await fetch(`${MOCK_API_URL}/admin/task/${encodeURIComponent(jobId)}/force-status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ statusStr: status, providerAgentAddress: peer, providerAgentId }),
+        });
+        const fsBody: any = await fsResp.json().catch(() => ({}));
+        if (!fsResp.ok) {
+          sendJson(500, {
+            error: `mock-api force-status 失败: ${fsBody?.detailMsg || fsBody?.msg || fsResp.status}`,
+          });
+          return;
+        }
+        const fsData = fsBody?.data ?? {};
+        console.log(`${TAG} [quick-jump] ✓ force-status job=${jobId}: ${fsData.before} → ${fsData.after}`);
+
+        sendJson(200, {
+          ok: true,
+          convId,
+          groupCreated,
+          taskStatus: fsData.after,
+          before: fsData.before,
+        });
+      } catch (e: any) {
+        console.error(`${TAG} [quick-jump] ✗ failed:`, e?.message ?? e);
+        sendJson(500, { error: String(e?.message ?? e) });
+      }
+      return;
+    }
+
     res.writeHead(404); res.end("not found");
   });
 
@@ -750,6 +836,26 @@ body { font-family: ui-monospace, monospace; background: #0d1117; color: #c9d1d9
           </select>
         </label>
         <button id="btn-notify" type="button">发送通知</button>
+      </div>
+    </div>
+
+    <!-- ⚡ 快速跳转到任意状态（测试用：建 group + force-status + 自动推对应 entry event）-->
+    <div id="notify-bar" style="border-top:none;background:#1e1f26;">
+      <div class="bar-title">⚡ 快速跳转到任意状态 (测试用，跳过中间状态)</div>
+      <div class="bar-row">
+        <label>jobId<input id="jump-jobid" type="text" placeholder="如 120" /></label>
+        <label>peer<input id="jump-peer" type="text" style="width:280px;" placeholder="0x... 卖家地址" /></label>
+        <label>目标 status
+          <select id="jump-status">
+            <option value="open">open</option>
+            <option value="accepted">accepted</option>
+            <option value="submitted">submitted</option>
+            <option value="refused">refused</option>
+            <option value="disputed">disputed</option>
+            <option value="completed">completed</option>
+          </select>
+        </label>
+        <button id="btn-jump" type="button">⚡ 跳转</button>
       </div>
     </div>
 
@@ -1084,6 +1190,57 @@ $("btn-notify").addEventListener("click", async () => {
   }
   console.log("[notify-openclaw] ✓ event=" + event, "jobId=" + jobId, "→", data.sessionKey?.slice(0, 60) + "…");
   $("notify-jobid").value = "";
+});
+
+// ⚡ 快速跳转到任意状态：建 group + force-status + 自动延迟推 entry event
+$("btn-jump").addEventListener("click", async () => {
+  const jobId = $("jump-jobid").value.trim();
+  const peer = $("jump-peer").value.trim();
+  const status = $("jump-status").value;
+  if (!jobId || !peer || !status) { alert("jobId / peer / status 都要填"); return; }
+  const btn = $("btn-jump");
+  const origText = btn.textContent;
+  btn.disabled = true; btn.textContent = "跳转中...";
+  try {
+    const resp = await fetch("/quick-jump", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId, peer, status }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { alert("跳转失败: " + (data.error || resp.status)); return; }
+    console.log("[quick-jump] ✓", data);
+
+    // 状态 → 对应 entry event（让 sub session provider 收到通知开始执行剧本）
+    const statusToEvent = {
+      open: "job_created", accepted: "job_accepted", submitted: "job_submitted",
+      refused: "job_refused", disputed: "job_disputed", completed: "job_completed",
+    };
+    const event = statusToEvent[status];
+    if (!event) { return; }
+
+    const wait = data.groupCreated ? 60 : 5;  // group 新建需等 sub session hydrate
+    btn.textContent = "等 " + wait + "s 推 " + event + "…";
+    let remaining = wait;
+    const timer = setInterval(() => { remaining -= 1; if (remaining > 0) btn.textContent = "等 " + remaining + "s 推 " + event + "…"; }, 1000);
+    await new Promise(r => setTimeout(r, wait * 1000));
+    clearInterval(timer);
+
+    btn.textContent = "推送 event…";
+    const ev = await fetch("/notify-openclaw", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId, event }),
+    });
+    const evd = await ev.json();
+    console.log("[quick-jump] " + event + " 推送结果:", evd);
+    if (!ev.ok) { alert("推 " + event + " 失败: " + (evd.error || ev.status)); }
+  } catch (e) {
+    console.error("[quick-jump] 失败:", e);
+    alert("跳转失败: " + (e.message || e));
+  } finally {
+    btn.disabled = false; btn.textContent = origText;
+  }
 });
 
 // 仅在 buyer 角色下显示"发布任务"表单和卖家列表

@@ -72,7 +72,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
     );
     let header_template = &xmtp_hint;
 
-    match parse_status_or_event(job_status) {
+    let event = parse_status_or_event(job_status);
+    match event.clone() {
         // ─── Scene 0: 任务上链确认，自动联系推荐卖家 ────────────────
         Event::JobCreated => format!(
             "【当前状态】job_created（任务已上链，状态 Open）\n\
@@ -379,6 +380,70 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\n\
              **Step 3 — 通知主 session（用户（通知））：**\n\
              任务 {job_id} 已申请自动退款，资金将退回你的账户。\n"
+        ),
+
+        // ─── buyer 自己的截止提醒 ─────────────────────────────────────
+        Event::ReviewDeadlineWarn => format!(
+            "【系统通知】review_deadline_warn（验收截止时间快到了）\n\
+             【角色】买家（Client）\n\n\
+             【你的下一步动作】\n\n\
+             如果对交付物满意，立即调：\n\
+             ```bash\n\
+             onchainos agent complete {job_id}\n\
+             ```\n\
+             如果不满意，调：\n\
+             ```bash\n\
+             onchainos agent reject {job_id} --reason \"<原因>\"\n\
+             ```\n\
+             超时后 provider 可调 claimAutoComplete 自动通过。\n"
+        ),
+
+        // ─── review_expired: 买家未在期限内验收，provider 已 claimAutoComplete ─────
+        Event::ReviewExpired => format!(
+            "【系统通知】review_expired（验收超时，provider 已自动 complete）\n\
+             【角色】买家（Client）\n\n\
+             【建议】task 已自动进入 completed 状态，资金已释放给 provider。\n\
+             子 session 可关闭。\n"
+        ),
+
+        // ─── provider 的截止提醒 — buyer 端无关 ────────────────────────
+        Event::SubmitDeadlineWarn => format!(
+            "【系统通知】submit_deadline_warn（provider 端截止提醒）\n\
+             【角色】买家（Client）\n\n\
+             【建议】静默观察即可，等 provider 提交交付物（job_submitted 通知）后再处理。\n"
+        ),
+
+        // ─── 仲裁子状态机事件 — buyer 在 disputed 状态下关心 dispute_resolved（已有专门 arm）─────
+        Event::EvaluatorSelected
+        | Event::RevealStarted
+        | Event::VoteCommitted
+        | Event::VoteRevealed
+        | Event::RoundFailed => format!(
+            "【系统通知】{event}（仲裁内部事件，evaluator 处理）\n\
+             【角色】买家（Client）\n\n\
+             【建议】静默观察即可。等 `dispute_resolved` 通知到达后再 next-action 处理收尾。\n",
+            event = event.as_str()
+        ),
+
+        // ─── 质押 / 罚没 lifecycle — buyer 不是 evaluator 时无关 ─────
+        Event::Staked
+        | Event::StakeIncreased
+        | Event::UnstakeRequested
+        | Event::UnstakeClaimed
+        | Event::UnstakeCancelled
+        | Event::Slashed => format!(
+            "【系统通知】{event}（evaluator 质押 lifecycle，buyer 无关）\n\
+             【建议】忽略即可。\n",
+            event = event.as_str()
+        ),
+
+        // ─── reward_claimed: buyer 自己的 claim tx 回执（仲裁胜诉退款等） ─────
+        Event::RewardClaimed => format!(
+            "【系统通知】reward_claimed（claimRewards tx 回执）\n\
+             【角色】买家（Client）\n\n\
+             【建议】从 payload 提取 status / amount / txHash。\n\
+             - success → 退款/奖励已到账\n\
+             - failed → 按 errorCode 重试 `onchainos agent claim {job_id}`\n"
         ),
 
         // ─── 未知类型兜底 ───────────────────────────────────────────
