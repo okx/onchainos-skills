@@ -70,11 +70,11 @@ stateDiagram-v2
 | `job_disputed` | ✅ | ✅ | — | — |
 | `confirm_refund` | ✅ | ✅ | — | — |
 | `evaluator_selected` | — | — | ✅（被选中的陪审） | sub session 激活 → `escalate_to_main` 推决策请求 |
-| `reveal_started` | — | — | ✅ | sub 里跑 reveal → `notify_main` |
-| `dispute_resolved` | ✅ | ✅ | ✅ | sub 里跑 claim + forget → `notify_main` |
-| `round_failed` | ✅ | ✅ | ✅（本轮陪审） | `notify_main` 提示等下一轮 |
-| `slashed` | — | — | ✅（被罚方） | `notify_main` 推罚没原因 |
-| `reward_claimed` | — | — | ✅（领取方） | `notify_main` 推 tx 入账确认 |
+| `reveal_started` | — | — | ✅ | sub 里跑 reveal → `xmtp_dispatch_session` |
+| `dispute_resolved` | ✅ | ✅ | ✅ | sub 里跑 claim + forget → `xmtp_dispatch_session` |
+| `round_failed` | ✅ | ✅ | ✅（本轮陪审） | `xmtp_dispatch_session` 提示等下一轮 |
+| `slashed` | — | — | ✅（被罚方） | `xmtp_dispatch_session` 推罚没原因 |
+| `reward_claimed` | — | — | ✅（领取方） | `xmtp_dispatch_session` 推 tx 入账确认 |
 
 ## 5. 各角色关心的事件
 

@@ -13,7 +13,7 @@
  *   npm run ui
  */
 import http from "node:http";
-import { WsMockClient, WsEnvelope, TaskPayload } from "../../../plugins/ws-channel/src/ws-client.js";
+import { WsMockClient, WsEnvelope, TaskPayload } from "./ws-client.js";
 import {
   BuyerSession, callAcceptApi, callCompleteApi, callRefuseApi,
   BUYER_COMM_ADDR, BUYER_AGENT_ID, WS_URL, API_BASE_URL,

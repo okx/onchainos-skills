@@ -234,11 +234,20 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              ```bash\n\
              onchainos agent common context {job_id} --role evaluator\n\
              ```\n\n\
-             **Step 3 — 通知主 session（向 main session 推一条消息，不传 sessionKey）**，内容大致：\n\n\
-             > [Stake 罚没] 任务『<title>』(jobId={job_id})\n\
-             >   - 金额：<amount> OKB\n\
-             >   - 原因：<reason>\n\
-             >   - disputeId：<disputeId>\n\n\
+             **Step 3 — 把罚没通知推到 main session（用户那边）**：\n\n\
+             ⚠️ 你**当前在 sub session**（sessionKey 含 `&job={job_id}` 字段就一定是 sub），**不是 main session**。\n\
+             必须显式调 `xmtp_dispatch_session` 工具，**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 main session』）。\n\n\
+             调用形式：\n\
+             ```\n\
+             tool: xmtp_dispatch_session\n\
+             arguments:\n\
+             \x20\x20content: |\n\
+             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · main agent 不要调任何工具不要再次执行]\n\
+             \x20\x20\x20\x20[Stake 罚没] 任务『<title>』(jobId={job_id})\n\
+             \x20\x20\x20\x20  - 金额：<amount> OKB\n\
+             \x20\x20\x20\x20  - 原因：<reason>\n\
+             \x20\x20\x20\x20  - disputeId：<disputeId>\n\
+             ```\n\n\
              **Step 4 — 输出一行 sub session 日志后结束：**\n\n\
              > Slashed amount=<amount> reason=<reason> relayed.\n"
         ),
@@ -254,9 +263,18 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              ```bash\n\
              onchainos agent common context {job_id} --role evaluator\n\
              ```\n\n\
-             **Step 3 — 通知主 session（向 main session 推一条消息，不传 sessionKey）**，按 status 二选一：\n\n\
-             > success → [仲裁奖励] 任务『<title>』(jobId={job_id}) 奖励已到账 <rewardAmount> OKB，txHash=<txHash>。\n\
-             > failed  → [仲裁奖励失败] 任务『<title>』(jobId={job_id}) claim 失败 (errorCode=<errorCode>, txHash=<txHash>)，请按错误码重试。\n\n\
+             **Step 3 — 把入账/失败通知推到 main session（用户那边）**：\n\n\
+             ⚠️ 你**当前在 sub session**（sessionKey 含 `&job={job_id}` 字段就一定是 sub），**不是 main session**。\n\
+             必须显式调 `xmtp_dispatch_session` 工具，**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 main session』）。\n\n\
+             调用形式（按 status 二选一填 content）：\n\
+             ```\n\
+             tool: xmtp_dispatch_session\n\
+             arguments:\n\
+             \x20\x20content: |\n\
+             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · main agent 不要调任何工具不要再次执行]\n\
+             \x20\x20\x20\x20success → [仲裁奖励] 任务『<title>』(jobId={job_id}) 奖励已到账 <rewardAmount> OKB，txHash=<txHash>。\n\
+             \x20\x20\x20\x20failed  → [仲裁奖励失败] 任务『<title>』(jobId={job_id}) claim 失败 (errorCode=<errorCode>, txHash=<txHash>)，请按错误码重试。\n\
+             ```\n\n\
              **Step 4 — 输出一行 sub session 日志后结束：**\n\n\
              > reward_claimed status=<status> amount=<rewardAmount> relayed.\n\n\
              【流程结束】此 disputeId 的 evaluator 生命周期完成；后续事件无需响应。\n"
@@ -267,45 +285,75 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 从 payload 提取字段 → 通知主 session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`（success / failed）、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】通知主 session（向 main session 推一条消息，不传 sessionKey），按 status 二选一：\n\n\
-             > success → [质押] 质押已生效：+<amount> OKB，txHash=<txHash>。你现在是活跃仲裁者候选，被选入陪审时会收到通知。\n\
-             > failed  → [质押失败] errorCode=<errorCode>, txHash=<txHash>。常见错误：4000 agentId 无效 / 2004 无 evaluator 身份 / 1001 累计质押 < 100 OKB（PRD 3.1.1，合约按 `已有余额 + 本次 >= 100` 校验）。请按错误码修正后重试 `onchainos agent evaluator stake --amount <N>`。\n\n\
+             【Step 2】把质押结果推到 main session（用户那边）：⚠️ 当前 sessionKey 含 `&job=` 字段就一定是 sub，必须显式调 `xmtp_dispatch_session` 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 main session』）。按 status 二选一填 content：\n\n\
+             ```\n\
+             tool: xmtp_dispatch_session\n\
+             arguments:\n\
+             \x20\x20content: |\n\
+             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · main agent 不要调任何工具不要再次执行]\n\
+             \x20\x20\x20\x20success → [质押] 质押已生效：+<amount> OKB，txHash=<txHash>。你现在是活跃仲裁者候选，被选入陪审时会收到通知。\n\
+             \x20\x20\x20\x20failed  → [质押失败] errorCode=<errorCode>, txHash=<txHash>。常见错误：4000 agentId 无效 / 2004 无 evaluator 身份 / 1001 累计质押 < 100 OKB（PRD 3.1.1，合约按 `已有余额 + 本次 >= 100` 校验）。请按错误码修正后重试 `onchainos agent evaluator stake --amount <N>`。\n\
+             ```\n\n\
              【Step 3】输出日志结束：`> staked status=<status> amount=<amount> relayed.`\n".to_string(),
 
         "stake_increased" => "【当前状态】stake_increased（VoterStaking.IncreaseStake 上链，补充质押 tx 结果，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 通知主 session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】通知主 session（向 main session 推一条消息，不传 sessionKey），按 status 二选一：\n\n\
-             > success → [质押] 追加质押已入账：+<amount> OKB，txHash=<txHash>。你的选中权重相应提升。\n\
-             > failed  → [质押失败] 追加质押失败（errorCode=<errorCode>, txHash=<txHash>），请按错误码重试 `onchainos agent evaluator increase-stake --amount <N>`。\n\n\
+             【Step 2】把追加质押结果推到 main session（用户那边）：⚠️ 必须显式调 `xmtp_dispatch_session` 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 main session』）。按 status 二选一填 content：\n\n\
+             ```\n\
+             tool: xmtp_dispatch_session\n\
+             arguments:\n\
+             \x20\x20content: |\n\
+             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · main agent 不要调任何工具不要再次执行]\n\
+             \x20\x20\x20\x20success → [质押] 追加质押已入账：+<amount> OKB，txHash=<txHash>。你的选中权重相应提升。\n\
+             \x20\x20\x20\x20failed  → [质押失败] 追加质押失败（errorCode=<errorCode>, txHash=<txHash>），请按错误码重试 `onchainos agent evaluator increase-stake --amount <N>`。\n\
+             ```\n\n\
              【Step 3】输出日志结束：`> stake_increased status=<status> amount=<amount> relayed.`\n".to_string(),
 
         "unstake_requested" => "【当前状态】unstake_requested（VoterStaking.UnstakeRequested 上链，申请解质押 tx 结果，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 通知主 session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`、`amount`、`availableAt`（冷却结束毫秒时间戳）、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】通知主 session（向 main session 推一条消息，不传 sessionKey；availableAt 转本地时间后展示），按 status 二选一：\n\n\
-             > success → [解质押] 申请已受理：-<amount> OKB 进入 7 天冷却期，可领取时间 <availableAt 本地时间>。到点跑 `onchainos agent evaluator claim-unstake` 提走；想撤销跑 `onchainos agent evaluator cancel-unstake`（仅冷却期内有效）。\n\
-             > failed  → [解质押失败] errorCode=<errorCode>, txHash=<txHash>。常见原因：活跃仲裁期间不可解质押 / 已在冷却期 / 余额不足。\n\n\
+             【Step 2】把申请解质押结果推到 main session（用户那边）：⚠️ 必须显式调 `xmtp_dispatch_session` 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 main session』）；`availableAt` 转本地时间后再填进 content。按 status 二选一填 content：\n\n\
+             ```\n\
+             tool: xmtp_dispatch_session\n\
+             arguments:\n\
+             \x20\x20content: |\n\
+             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · main agent 不要调任何工具不要再次执行]\n\
+             \x20\x20\x20\x20success → [解质押] 申请已受理：-<amount> OKB 进入 7 天冷却期，可领取时间 <availableAt 本地时间>。到点跑 `onchainos agent evaluator claim-unstake` 提走；想撤销跑 `onchainos agent evaluator cancel-unstake`（仅冷却期内有效）。\n\
+             \x20\x20\x20\x20failed  → [解质押失败] errorCode=<errorCode>, txHash=<txHash>。常见原因：活跃仲裁期间不可解质押 / 已在冷却期 / 余额不足。\n\
+             ```\n\n\
              【Step 3】输出日志结束：`> unstake_requested status=<status> amount=<amount> relayed.`\n".to_string(),
 
         "unstake_claimed" => "【当前状态】unstake_claimed（VoterStaking.UnstakeClaimed 上链，领取解质押 tx 结果，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 通知主 session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】通知主 session（向 main session 推一条消息，不传 sessionKey），按 status 二选一：\n\n\
-             > success → [解质押] 已提走 <amount> OKB，已入钱包，txHash=<txHash>。\n\
-             > failed  → [解质押失败] 领取失败（errorCode=<errorCode>, txHash=<txHash>），请按错误码重试。常见原因：锁定期未满 / 无待解质押。\n\n\
+             【Step 2】把领取解质押结果推到 main session（用户那边）：⚠️ 必须显式调 `xmtp_dispatch_session` 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 main session』）。按 status 二选一填 content：\n\n\
+             ```\n\
+             tool: xmtp_dispatch_session\n\
+             arguments:\n\
+             \x20\x20content: |\n\
+             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · main agent 不要调任何工具不要再次执行]\n\
+             \x20\x20\x20\x20success → [解质押] 已提走 <amount> OKB，已入钱包，txHash=<txHash>。\n\
+             \x20\x20\x20\x20failed  → [解质押失败] 领取失败（errorCode=<errorCode>, txHash=<txHash>），请按错误码重试。常见原因：锁定期未满 / 无待解质押。\n\
+             ```\n\n\
              【Step 3】输出日志结束：`> unstake_claimed status=<status> amount=<amount> relayed.`\n".to_string(),
 
         "unstake_cancelled" => "【当前状态】unstake_cancelled（VoterStaking.UnstakeCancelled 上链，取消解质押 tx 结果，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 通知主 session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】通知主 session（向 main session 推一条消息，不传 sessionKey），按 status 二选一：\n\n\
-             > success → [解质押] 已取消：<amount> OKB 回到质押状态，txHash=<txHash>。\n\
-             > failed  → [解质押失败] 取消失败（errorCode=<errorCode>, txHash=<txHash>）。常见原因：冷却期已过 / 无待解质押。\n\n\
+             【Step 2】把取消解质押结果推到 main session（用户那边）：⚠️ 必须显式调 `xmtp_dispatch_session` 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 main session』）。按 status 二选一填 content：\n\n\
+             ```\n\
+             tool: xmtp_dispatch_session\n\
+             arguments:\n\
+             \x20\x20content: |\n\
+             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · main agent 不要调任何工具不要再次执行]\n\
+             \x20\x20\x20\x20success → [解质押] 已取消：<amount> OKB 回到质押状态，txHash=<txHash>。\n\
+             \x20\x20\x20\x20failed  → [解质押失败] 取消失败（errorCode=<errorCode>, txHash=<txHash>）。常见原因：冷却期已过 / 无待解质押。\n\
+             ```\n\n\
              【Step 3】输出日志结束：`> unstake_cancelled status=<status> amount=<amount> relayed.`\n".to_string(),
 
         // ─── 自己的投票 tx 回执 ──────────────────────────────────────────

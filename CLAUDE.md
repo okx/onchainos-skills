@@ -196,9 +196,9 @@ node dist/server.js   > /tmp/ws-server.log  2>&1 &
 node dist/mock-api.js > /tmp/ws-api.log     2>&1 &
 
 # 2. Start headless mocks
-cd tools/mock-seller     && node dist/tools/mock-seller/src/mock-seller.js         > /tmp/mock-seller.log 2>&1 &
-cd tools/mock-buyer      && node dist/tools/mock-buyer/src/mock-buyer.js           > /tmp/mock-buyer.log  2>&1 &
-cd tools/mock-evaluator && node dist/tools/mock-evaluator/src/mock-evaluator.js > /tmp/mock-arb.log    2>&1 &
+cd tools/mock-seller     && node dist/mock-seller.js         > /tmp/mock-seller.log 2>&1 &
+cd tools/mock-buyer      && node dist/mock-buyer.js          > /tmp/mock-buyer.log  2>&1 &
+cd tools/mock-evaluator && node dist/mock-evaluator.js > /tmp/mock-arb.log    2>&1 &
 
 # 3. Verify registrations
 sleep 2

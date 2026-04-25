@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc --project tsconfig.json",
-    "start": "npm run build && node dist/tools/mock-buyer/src/mock-buyer.js",
-    "ui": "npm run build && node dist/tools/mock-buyer/src/mock-buyer-ui.js"
+    "start": "npm run build && node dist/mock-buyer.js",
+    "ui": "npm run build && node dist/mock-buyer-ui.js"
   },
   "dependencies": {
     "ws": "^8.18.0"

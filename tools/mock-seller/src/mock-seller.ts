@@ -4,10 +4,9 @@
  * 每个 convId 独立一个 SellerSession，和买家侧 sub-session 架构对称。
  *
  * 用法:
- *   cd plugins/ws-channel
- *   npx ts-node --esm src/mock-seller.ts
+ *   cd tools/mock-seller && npm start
  */
-import { WsMockClient, WsEnvelope, TaskPayload } from "../../../plugins/ws-channel/src/ws-client.js";
+import { WsMockClient, WsEnvelope, TaskPayload } from "./ws-client.js";
 
 // ── 常量 ─────────────────────────────────────────────────────────────────────
 const SELLER_COMM_ADDR = "0xSeller000000000000000000000000000000001";

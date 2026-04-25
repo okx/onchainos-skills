@@ -20,7 +20,7 @@
  *
  *   VERDICT=seller npm start   # 裁定卖家胜(默认买家胜)
  */
-import { WsMockClient, WsEnvelope } from "../../../plugins/ws-channel/src/ws-client.js";
+import { WsMockClient, WsEnvelope } from "./ws-client.js";
 
 const EVAL_COMM_ADDR = "0xEvaluator00000000000000000000000000001";
 const EVAL_AGENT_ID  = "mock-evaluator-agent-001";
@@ -108,7 +108,8 @@ async function main() {
     if (!jobId) return;
 
     switch (type) {
-      case "TASK_DISPUTED": {
+      case "TASK_DISPUTED":
+      case "task_disputed": {
         if (!states.has(jobId)) {
           const verdict = DEFAULT_VERDICT;
           states.set(jobId, {

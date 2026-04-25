@@ -1,4 +1,4 @@
-import { WsMockClient } from "../../../plugins/ws-channel/src/ws-client.js";
+import { WsMockClient } from "./ws-client.js";
 import { BuyerSession, BUYER_COMM_ADDR, BUYER_AGENT_ID, WS_URL, TASK_TYPE, PAYMENT_MODE, callX402PayApi, callCompleteApi, startNegotiation } from "./buyer-session.js";
 
 async function main() {

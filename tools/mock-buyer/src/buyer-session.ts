@@ -1,7 +1,7 @@
 /**
  * buyer-session.ts — 买家协商核心逻辑（无头和 UI 共用）
  */
-import { WsMockClient, WsEnvelope, TaskPayload } from "../../../plugins/ws-channel/src/ws-client.js";
+import { WsMockClient, WsEnvelope, TaskPayload } from "./ws-client.js";
 
 // ── 常量 ─────────────────────────────────────────────────────────────────────
 export const BUYER_COMM_ADDR = "0xBuyer000000000000000000000000000000001";

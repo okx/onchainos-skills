@@ -7,7 +7,7 @@
  *   npm run mock-seller-ui
  */
 import http from "node:http";
-import { WsMockClient, WsEnvelope, TaskPayload } from "../../../plugins/ws-channel/src/ws-client.js";
+import { WsMockClient, WsEnvelope, TaskPayload } from "./ws-client.js";
 
 const SELLER_COMM_ADDR = "0xSeller000000000000000000000000000000001";
 const SELLER_AGENT_ID  = "mock-seller-agent-001";

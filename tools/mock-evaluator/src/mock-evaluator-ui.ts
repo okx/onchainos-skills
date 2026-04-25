@@ -12,7 +12,7 @@
  *   npm run ui
  */
 import http from "node:http";
-import { WsMockClient, WsEnvelope, TaskPayload } from "../../../plugins/ws-channel/src/ws-client.js";
+import { WsMockClient, WsEnvelope, TaskPayload } from "./ws-client.js";
 
 const EVAL_COMM_ADDR = "0xEvaluator00000000000000000000000000001";
 const EVAL_AGENT_ID  = "mock-evaluator-agent-001";
@@ -207,11 +207,13 @@ async function main() {
     if (from === EVAL_COMM_ADDR) return;
     console.log(`[eval] ← conv=${convId.slice(-20)} from=${from.slice(0, 20)} type=${type}`);
 
-    // 非 TASK_DISPUTED 的事件到达时,把消息挂到已存在的 dispute session(按 jobId 查)
-    const disputeConvId = type === "TASK_DISPUTED" ? convId : jobToConv.get(jobId);
+    // 非 dispute 入口的事件到达时,把消息挂到已存在的 dispute session(按 jobId 查)
+    // 兼容大写 TASK_DISPUTED（mock-api 当前发的）和小写 task_disputed（mingtao.gan rename 方向）
+    const isDisputed = type === "TASK_DISPUTED" || type === "task_disputed";
+    const disputeConvId = isDisputed ? convId : jobToConv.get(jobId);
     if (!disputeConvId) return;  // 未见过此 jobId 的 dispute,忽略
 
-    if (type === "TASK_DISPUTED" && !sessions.has(convId)) {
+    if (isDisputed && !sessions.has(convId)) {
       const s: EvalSessionState = {
         convId, jobId, disputeId,
         phase: "prep", resolved: false, autoMode: true, messages: [],
@@ -228,7 +230,8 @@ async function main() {
     pushSSE("session_updated", sessionToView(s));
 
     switch (type) {
-      case "TASK_DISPUTED": {
+      case "TASK_DISPUTED":
+      case "task_disputed": {
         // auto 模式:5s 模拟审查后登记默认裁决(commit 仍由 evaluator_selected 触发)
         if (s.autoMode && !s.verdict) {
           sleep(5000).then(() => {

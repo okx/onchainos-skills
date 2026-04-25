@@ -14,34 +14,34 @@
 
 | event | 会话 | 含义 |
 |---|---|---|
-| `evaluator_selected` | **sub**（自动创建 `conv-arb-*`，复用整个生命周期） | VotersSelected 上链，CommitPhase 已开。拉证据（含必读图片）→ PRD §3.4/§3.5 评估 → 归约到 vote ∈ {1,2} → `evaluator commit`。**不 notify_main** |
-| `reveal_started` | **sub** | RevealStarted 上链：sub 里跑 `evaluator reveal`。**不 notify_main** |
-| `dispute_resolved` | **sub** | DisputeSettled 上链：sub 里跑 `evaluator claim`（若赢）+ `evaluator forget`。**不 notify_main**（用户感知由后续 reward_claimed / slashed 负责） |
-| `round_failed` | **sub** | DisputeInvalidated 上链：`evaluator forget` 清本地。**不 notify_main**（若被罚由 slashed 负责；若再选中由 evaluator_selected 负责） |
+| `evaluator_selected` | **sub**（自动创建 `conv-arb-*`，复用整个生命周期） | VotersSelected 上链，CommitPhase 已开。拉证据（含必读图片）→ PRD §3.4/§3.5 评估 → 归约到 vote ∈ {1,2} → `evaluator commit`。**不 xmtp_dispatch_session** |
+| `reveal_started` | **sub** | RevealStarted 上链：sub 里跑 `evaluator reveal`。**不 xmtp_dispatch_session** |
+| `dispute_resolved` | **sub** | DisputeSettled 上链：sub 里跑 `evaluator claim`（若赢）+ `evaluator forget`。**不 xmtp_dispatch_session**（用户感知由后续 reward_claimed / slashed 负责） |
+| `round_failed` | **sub** | DisputeInvalidated 上链：`evaluator forget` 清本地。**不 xmtp_dispatch_session**（若被罚由 slashed 负责；若再选中由 evaluator_selected 负责） |
 
-**资金/罚没——sub 处理 + notify_main 推用户**：
-
-| event | 会话 | 含义 |
-|---|---|---|
-| `reward_claimed` | **sub** | claimRewards tx 回执：提取 status / amount / txHash → `notify_main` 推入账或失败给用户 |
-| `slashed` | **sub** | VoterStaking.Slashed 上链：提取 amount / reason / disputeId → `notify_main` 推罚没金额 + 原因给用户 |
-
-**质押生命周期——sub 处理 + notify_main 推用户**：
+**资金/罚没——sub 处理 + xmtp_dispatch_session 推用户**：
 
 | event | 会话 | 含义 |
 |---|---|---|
-| `staked` | **sub** | 首次质押 tx 回执 → `notify_main` 推质押结果 |
-| `stake_increased` | **sub** | 补充质押 tx 回执 → `notify_main` 推入账确认 |
-| `unstake_requested` | **sub** | 申请解质押 tx 回执 → `notify_main` 推冷却期 + `availableAt` |
-| `unstake_claimed` | **sub** | 冷却期结束领取 tx 回执 → `notify_main` 推到账 |
-| `unstake_cancelled` | **sub** | 冷却期内取消 tx 回执 → `notify_main` 推回到质押状态 |
+| `reward_claimed` | **sub** | claimRewards tx 回执：提取 status / amount / txHash → `xmtp_dispatch_session` 推入账或失败给用户 |
+| `slashed` | **sub** | VoterStaking.Slashed 上链：提取 amount / reason / disputeId → `xmtp_dispatch_session` 推罚没金额 + 原因给用户 |
+
+**质押生命周期——sub 处理 + xmtp_dispatch_session 推用户**：
+
+| event | 会话 | 含义 |
+|---|---|---|
+| `staked` | **sub** | 首次质押 tx 回执 → `xmtp_dispatch_session` 推质押结果 |
+| `stake_increased` | **sub** | 补充质押 tx 回执 → `xmtp_dispatch_session` 推入账确认 |
+| `unstake_requested` | **sub** | 申请解质押 tx 回执 → `xmtp_dispatch_session` 推冷却期 + `availableAt` |
+| `unstake_claimed` | **sub** | 冷却期结束领取 tx 回执 → `xmtp_dispatch_session` 推到账 |
+| `unstake_cancelled` | **sub** | 冷却期内取消 tx 回执 → `xmtp_dispatch_session` 推回到质押状态 |
 
 **仅记录/忽略（都不通知用户）**：
 
 | event | 行为 |
 |---|---|
-| `vote_committed` | sub 里静默记录 tx 成功（不 notify_main；commit 是内部决策，用户无需感知） |
-| `vote_revealed` | **完全忽略**，连日志都只写一行（不记录、不 notify_main） |
+| `vote_committed` | sub 里静默记录 tx 成功（不 xmtp_dispatch_session；commit 是内部决策，用户无需感知） |
+| `vote_revealed` | **完全忽略**，连日志都只写一行（不记录、不 xmtp_dispatch_session） |
 | `job_disputed` | 完全忽略（evaluator 不是接收方） |
 
 > **决策模型**：仲裁判决（evaluator_selected → commit）由 agent 基于 PRD『A2A Evaluator Skill』(Lark `Vz0jdNtugoZk9oxHr6mlQENjghg`) Module 1 L1-L5 + Module 3 §3.3/§3.4/§3.5/§3.6 自主完成。commit → reveal → settle 全程不通知用户；用户感知仅通过"资金/罚没"类事件出现（reward_claimed / slashed）。设计原因：PRD L2 + §3.7 明确 evaluator 不得被用户偏好影响（社会压力 / 贿赂面）。
@@ -190,7 +190,7 @@ onchainos agent next-action \
 **按命令输出的提示词严格执行**——它会告诉你：
 - 当前状态解释（sub session，自主闭环）
 - 下一步要跑的 CLI 命令（`evaluator info/commit/reveal/claim`）
-- `notify_main` 工具调用模板（向用户推结果通知）
+- `xmtp_dispatch_session` 工具调用模板（向用户推结果通知）
 - 错误映射与重试次数
 - 后续等待哪些事件
 
@@ -280,7 +280,7 @@ onchainos agent evaluator commit <disputeId> --side <1|2>
 
 ### 3.7 不通知用户
 
-本 arm 完成后**不调用** `notify_main`、**不调用** `escalate_to_main`。用户直到后续 `dispute_resolved` / `slashed` / `reward_claimed` 事件才会被其他 arm 通知到。
+本 arm 完成后**不调用** `xmtp_dispatch_session`、**不调用** `escalate_to_main`。用户直到后续 `dispute_resolved` / `slashed` / `reward_claimed` 事件才会被其他 arm 通知到。
 
 > **为什么不问用户** —— PRD Module 1 L2 #1-#10 + §3.7：用户偏好会引入社会压力、贿赂、情感操控等操控面；仲裁判决必须**只基于证据 + 标准**。这是机制设计的核心约束，不是交互风格。
 
@@ -474,7 +474,7 @@ onchainos agent evaluator commit <disputeId> --side <1|2>
 onchainos agent next-action --jobid <空或jobId> --jobStatus <event> --agentId <你的 agentId> --role evaluator
 ```
 
-flow.rs 对应 arm 会要求你在 sub 侧调用 `notify_main` 把人话通知推到主 session（**禁止 sessions_send / 直接输出给用户**）。`unstake_requested` 注意把 `availableAt` 毫秒时间戳转成本地时间，明确告知"7 天后可领取"。
+flow.rs 对应 arm 会要求你在 sub 侧调用 `xmtp_dispatch_session` 把人话通知推到主 session（**禁止 sessions_send / 直接输出给用户**）。`unstake_requested` 注意把 `availableAt` 毫秒时间戳转成本地时间，明确告知"7 天后可领取"。
 
 ### 12.3 约束
 
