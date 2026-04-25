@@ -1,7 +1,7 @@
 //! Evaluator（仲裁者）端任务流程驱动器
 //!
 //! **所有事件都在 sub session 收到**（openclaw runtime 自动路由到 `conv-arb-*`）。
-//! 事件命名对齐设计文档（Lark wiki `UumqwSyM5i1AuakBNLClJo9igIb`）。
+//! 事件命名对齐后端 event 枚举。
 //!
 //! | 分类 | 事件 | 行为 |
 //! |---|---|---|
@@ -12,14 +12,14 @@
 //! | 其他方事件 | job_disputed | 完全忽略 |
 //!
 //! evaluator 在 `evaluator_selected`（VotersSelected 上链）时即介入——此刻 CommitPhase 已开，
-//! 在 sub session 里**自主闭环**完成 "拉证据（含看图）→ 按 PRD §3.4/§3.5 判决 → 归约到 vote ∈ {{1,2}} → commit"。
+//! 在 sub session 里**自主闭环**完成 "拉证据（含看图）→ 按 决策原则/§3.5 判决 → 归约到 vote ∈ {{1,2}} → commit"。
 //! 判决过程不通知用户；用户感知由后续 dispute_resolved → reward_claimed / slashed 负责。
-//! PRD `Vz0jdNtugoZk9oxHr6mlQENjghg` L2 + §3.7：用户偏好会引入社会压力/贿赂风险，必须隔离。
+//! 评估者规范 L2 + §3.7：用户偏好会引入社会压力/贿赂风险，必须隔离。
 //! 证据上传是链下操作（doc §7.8：No chain event for evidence），不再等"证据封期"信号。
 //
-// TODO(backend-config): 本文件生成的文案里包含多处硬编码经济参数（PRD Lark `Vz0jdNtugoZk9oxHr6mlQENjghg` 附录 A）：
-//   - evaluator_selected arm: 超时罚 0.5%（PRD TIMEOUT_PENALTY_RATE）
-//   - dispute_resolved arm:   少数方罚 1%（PRD MINORITY_PENALTY_RATE）/ 超时罚 0.5%
+// TODO(backend-config): 本文件生成的文案里包含多处硬编码经济参数（评估者规范 附录 A）：
+//   - evaluator_selected arm: 超时罚 0.5%（TIMEOUT_PENALTY_RATE）
+//   - dispute_resolved arm:   少数方罚 1%（MINORITY_PENALTY_RATE）/ 超时罚 0.5%
 //   - staked arm:             首次最低 100 OKB、errorCode 1001
 //   - unstake_requested arm:  7 天冷却期
 // `/staking/config` 后端端点上线后，这些数字应改由注入的配置值替换，模板用
@@ -60,14 +60,14 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> String {
     match job_status {
         // ─── 入口：本轮陪审选出，CommitPhase 已开（sub session 侧，agent 自主闭环） ──
-        // 判决方法论严格对齐 PRD『A2A Evaluator Skill』(Lark docx Vz0jdNtugoZk9oxHr6mlQENjghg)
-        // Module 1 L1-L5 + Module 3 §3.3/§3.4/§3.5/§3.6。V1 合约只接受 vote ∈ {1, 2}，
-        // PRD 的 3 选项按 Step 4.5 归约表压到 1/2。结果不推给用户（不 通知主 session）。
+        // 判决方法论严格对齐评估者规范（誓约 + 决策原则 + Rubric + 证据等级 + 裁决书规范）。
+        // V1 合约只接受 vote ∈ {1, 2}，原生 3 选项按 Step 4.5 归约表压到 1/2。
+        // 结果不推给用户（不 通知主 session）。
         "evaluator_selected" => format!(
             "【当前状态】evaluator_selected（VotersSelected 上链，你是本轮陪审，CommitPhase 已开，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 没有用户，**结果不通知用户**。评估证据 → 直接 commit → 结束。\n\
-             【判决权威】PRD『A2A Evaluator Skill』(Lark `Vz0jdNtugoZk9oxHr6mlQENjghg`) Module 1 L1-L5 + §3.3/§3.4/§3.5/§3.6。冲突以 PRD 为准。\n\n\
+             【判决权威】评估者规范（誓约 L1-L5 + 决策原则 / Rubric / 证据等级 / 裁决书规范）。冲突以本规范为准。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 从入站消息提取 `disputeId` 和 `disputeType`（质量/超时/恶意）。**\n\
              ⚠️ `disputeId` 缺省时直接中止本轮处理，输出 `missing disputeId in payload; abort` 日志结束——真后端 `disputeId = keccak256(jobId, roundNumber)`，第 2+ 轮重选时 `d-{job_id}-r1` 一定对不上合约。\n\
@@ -81,25 +81,25 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              **⚠️ Step 2.5 — 必须实际打开每张图片阅读（最重要，禁止跳过）：**\n\
              - 遍历 `evidences.provider.images[].localPath` 和 `evidences.client.images[].localPath`\n\
              - **逐张调用多模态 read / view 能力读图**——截图里写了什么、展示了什么交付物、时间戳、对话内容，全要实际看过\n\
-             - **禁止**只凭 `texts[]` 或 fileKey 名称猜测图片内容；不看图 = 放弃双方可能最关键的证据 = 违反 PRD L3 义务 #1『必须完整阅读双方提交的所有材料』\n\
-             - 下载失败（有 `downloadError`）的图片记为缺失，按 PRD §2.5『一方未提交视为放弃举证』处理\n\n\
-             **Step 3 — 按 PRD §3.2 材料读取流程构建证据清单：**\n\
+             - **禁止**只凭 `texts[]` 或 fileKey 名称猜测图片内容；不看图 = 放弃双方可能最关键的证据 = 违反 L3 义务 #1『必须完整阅读双方提交的所有材料』\n\
+             - 下载失败（有 `downloadError`）的图片记为缺失，按 举证规则『一方未提交视为放弃举证』处理\n\n\
+             **Step 3 — 按 证据流程 材料读取流程构建证据清单：**\n\
              - ① 完整性：双方各提交了什么文本/图片？缺失什么？\n\
              - ② 任务基线：从 qualityStandards / description 建立\"任务应该是什么样\"\n\
              - ③ 分歧点：对比 clientReason / providerReason 标记双方说法不同的地方\n\
-             - ④ 证据关联：每个分歧点对应哪些证据（文本 + 图片），按 PRD §3.3 打等级 S/A/B/C/D\n\
+             - ④ 证据关联：每个分歧点对应哪些证据（文本 + 图片），按 证据等级 打等级 S/A/B/C/D\n\
              - ⑤ 链上验证：若证据引用链上记录，做交叉验证（S/A 级直接采信；C/D 级需对方承认或交叉佐证）\n\n\
-             **Step 4 — 按 `disputeType` 选对应 Rubric 打分（PRD §3.5），再按 §3.4 决策原则（优先级从高到低：证据为王 > 规格至上 > 举证责任 > 比例原则 > 模糊不利于起草方 > 沟通义务 > 善意推定 > 时间戳权威）收敛到 PRD 原生选项：**\n\
+             **Step 4 — 按 `disputeType` 选对应 Rubric 打分（Rubric），再按 §3.4 决策原则（优先级从高到低：证据为王 > 规格至上 > 举证责任 > 比例原则 > 模糊不利于起草方 > 沟通义务 > 善意推定 > 时间戳权威）收敛到 原生选项：**\n\
              \n\
-             | disputeType | Rubric 权重（满分 100） | PRD 原生选项 |\n\
+             | disputeType | Rubric 权重（满分 100） | 原生选项 |\n\
              |---|---|---|\n\
              | 质量争议 | 规格匹配 40 + 验收达标 30 + 功能正确 20 + 专业标准 10 | 完成 / 部分完成 / 未完成 |\n\
              | 超时争议 | 时间线 35 + 沟通响应 25 + 阻塞依赖 25 + 外部因素 15 | 责任在 Client / 责任在 Provider / 不可抗力 |\n\
              | 恶意行为 | 行为性质 + 证据强度 + 行为模式 + 损害程度（汉隆剃刀：先排除能力不足） | 成立 / 不成立 |\n\
              \n\
-             **Step 4.5 — 归约到 V1 合约的 vote ∈ {{1, 2}}（V1 二元投票强制约束，PRD 3 选项不能直接上链）：**\n\
+             **Step 4.5 — 归约到 V1 合约的 vote ∈ {{1, 2}}（V1 二元投票强制约束，原生 3 选项不能直接上链）：**\n\
              \n\
-             | disputeType | PRD 原生选项 | vote | 语义 |\n\
+             | disputeType | 原生选项 | vote | 语义 |\n\
              |---|---|---|---|\n\
              | 质量 | 完成（总分 ≥ 80） | **1** | Provider 胜，资金全额释放 |\n\
              | 质量 | 部分完成（40-79）/ 未完成（< 40） | **2** | Client 胜，资金退回——V1 无部分结算通道；按 §3.4 原则 #3『举证责任』质量争议由 Client 证明未完成 |\n\
@@ -108,15 +108,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              | 恶意 | 不成立 | **1** | 被举报方无责 |\n\
              | 恶意 | 成立 | **2** | 被举报方违约 |\n\
              \n\
-             ⚠️ 归约规则是硬约束——不得为了\"平衡\"或\"避免争议\"反向归约。PRD §3.4 原则优先于对结果的担忧。\n\n\
-             **Step 5 — 写裁决书（PRD §3.6 + L3 义务 #4『必须在投票前写下完整推理链』）：**\n\
+             ⚠️ 归约规则是硬约束——不得为了\"平衡\"或\"避免争议\"反向归约。决策原则 原则优先于对结果的担忧。\n\n\
+             **Step 5 — 写裁决书（裁决书规范 + L3 义务 #4『必须在投票前写下完整推理链』）：**\n\
              \n\
              在 session 记忆里生成结构化文本（不入链、不推用户，但必须实际产出；用于 L4 递归自检）：\n\
              ```\n\
              争议 ID: <disputeId>\n\
              争议类型: <质量/超时/恶意>\n\
              Rubric 打分: <规格 X/40 + 验收 Y/30 + 功能 Z/20 + 专业 W/10 = 总分 N/100>\n\
-             PRD 原生选项: <完成 | 部分完成 | 未完成 | ...>\n\
+             原生选项: <完成 | 部分完成 | 未完成 | ...>\n\
              V1 vote: <1 | 2>\n\
              事实认定:\n\
              \x20\x201. <基于证据认定的事实>\n\
@@ -124,11 +124,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              证据引用（必须包含图片内容，不能只引用 texts[]）:\n\
              \x20\x20- 事实 1 ← provider/client 的 <图片 localPath 或 texts[i]> (Level <S|A|B|C|D>)\n\
              \x20\x20- ...\n\
-             推理（引用 PRD §3.4 原则编号）:\n\
+             推理（引用 决策原则 原则编号）:\n\
              \x20\x20按原则 #<N>，<推理过程>\n\
-             归约: PRD 原生『<...>』→ V1 vote=<1|2>，依据 Step 4.5 归约表\n\
+             归约: 原生『<...>』→ V1 vote=<1|2>，依据 Step 4.5 归约表\n\
              ```\n\n\
-             **Step 6 — L4 递归自检（PRD Module 1）：出发 commit 前逐项确认，任一未通过回 Step 4 重审：**\n\
+             **Step 6 — L4 递归自检（誓约）：出发 commit 前逐项确认，任一未通过回 Step 4 重审：**\n\
              - □ 我是否完整阅读了双方全部材料（含每张图片）？\n\
              - □ 结论是否由证据推导出来的（而非先有结论再找证据）？\n\
              - □ 把 Client 和 Provider 角色互换，我会做出同样裁决吗？\n\
@@ -142,10 +142,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              失败最多重试 3 次（CRITICAL，commit 窗口关闭即罚 0.5%）。返回 `voter has already committed` 视为成功进入 Step 8。\n\
              body 只带 `vote`；裁决书（Step 5）仅保留在 session 记忆，**不写入后端，不推主 session**。\n\n\
              **Step 8 — 输出一行 sub session 日志后结束本回合。不调用 通知主 session，不通知用户：**\n\n\
-             > Committed dispute=<disputeId> side=<1|2> autonomously per PRD §3.4-§3.6.\n\n\
+             > Committed dispute=<disputeId> side=<1|2> autonomously per 决策原则-§3.6.\n\n\
              【原则】\n\
              - **完全静默**：本 arm 不 escalate_to_main、不 通知主 session；用户只会在后续结算/罚没/奖励事件被通知\n\
-             - **判决权威**：所有打分规则、决策原则、裁决书格式以 PRD `Vz0jdNtugoZk9oxHr6mlQENjghg` 为准\n\
+             - **判决权威**：所有打分规则、决策原则、裁决书格式以 评估者规范 为准\n\
              - **图片必读**：不读图即违反 L3 义务 #1 + §3.1 举证对称；这是本 arm 最重要的执行要求\n\n\
              【后续事件】\n\
              - vote_committed → sub 里仅记录\n\
@@ -173,7 +173,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              - `canReveal=false` → CLI 已预检拒绝，无需重试；等下一个事件（若本轮已结算，会收到 dispute_resolved / round_failed）\n\
              - `already resolved` → 视为成功（本轮已裁决）\n\
              - `voter has not committed` → 本轮未 commit，跳过 reveal 是正常的\n\
-             - 其他失败最多重试 3 次（未 reveal 罚 0.5%，PRD 附录 A TIMEOUT_PENALTY_RATE）\n\n\
+             - 其他失败最多重试 3 次（未 reveal 罚 0.5%，经济参数附录 TIMEOUT_PENALTY_RATE）\n\n\
              【后续事件】dispute_resolved / round_failed / reward_claimed / slashed 会继续在同一 sub session 到达。仅 reward_claimed 和 slashed 会转发到主 session。\n"
                 .to_string(),
 
@@ -292,7 +292,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              \x20\x20content: |\n\
              \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · main agent 不要调任何工具不要再次执行]\n\
              \x20\x20\x20\x20success → [质押] 质押已生效：+<amount> OKB，txHash=<txHash>。你现在是活跃仲裁者候选，被选入陪审时会收到通知。\n\
-             \x20\x20\x20\x20failed  → [质押失败] errorCode=<errorCode>, txHash=<txHash>。常见错误：4000 agentId 无效 / 2004 无 evaluator 身份 / 1001 累计质押 < 100 OKB（PRD 3.1.1，合约按 `已有余额 + 本次 >= 100` 校验）。请按错误码修正后重试 `onchainos agent evaluator stake --amount <N>`。\n\
+             \x20\x20\x20\x20failed  → [质押失败] errorCode=<errorCode>, txHash=<txHash>。常见错误：4000 agentId 无效 / 2004 无 evaluator 身份 / 1001 累计质押 < 100 OKB（累计门槛规则，合约按 `已有余额 + 本次 >= 100` 校验）。请按错误码修正后重试 `onchainos agent evaluator stake --amount <N>`。\n\
              ```\n\n\
              【Step 3】输出日志结束：`> staked status=<status> amount=<amount> relayed.`\n".to_string(),
 

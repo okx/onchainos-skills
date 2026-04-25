@@ -80,7 +80,7 @@ stateDiagram-v2
 
 - **Provider（卖家）**：a2a-agent-chat 询问 → provider_applied → job_accepted → job_submitted → job_refused / job_completed → job_disputed → job_completed / confirm_refund
 - **Client（买家）**：job_created → provider_applied → job_accepted → job_submitted → job_completed / confirm_refund
-- **Evaluator（仲裁者）**：evaluator_selected → reveal_started → dispute_resolved / round_failed → reward_claimed / slashed（事件名对齐 Lark 设计文档 event 枚举）
+- **Evaluator（仲裁者）**：evaluator_selected → reveal_started → dispute_resolved / round_failed → reward_claimed / slashed（事件名对齐后端 event 枚举）
 
 ## 6. 超时规则
 

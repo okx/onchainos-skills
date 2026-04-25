@@ -7,7 +7,7 @@ use crate::commands::agent_commerce::task::signing;
 
 /// Account-level pull claim: one call drains all pending rewards across every settled dispute.
 ///
-/// API: `POST /priapi/v1/aieco/task/claim` with empty body (Lark wiki §7). Returns `claimRewards()`
+/// API: `POST /priapi/v1/aieco/task/claim` with empty body. Returns `claimRewards()`
 /// calldata — no per-token / per-job arguments. Not scoped to a single jobId.
 pub async fn handle_claim(client: &mut TaskApiClient) -> Result<()> {
     let (account_id, address, agent_id) =

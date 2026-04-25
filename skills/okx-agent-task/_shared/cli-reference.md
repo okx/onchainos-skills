@@ -446,7 +446,7 @@ onchainos agent evaluator stake --amount <OKB 数量>
 
 | Flag | Required | Description |
 |---|---|---|
-| `--amount` | ✓ | OKB 金额，UI 单位（不带精度）。PRD 3.1.1 累计门槛 100 OKB |
+| `--amount` | ✓ | OKB 金额，UI 单位（不带精度）。累计门槛 100 OKB |
 
 API: `POST /priapi/v1/aieco/task/staking/stake` → 后端打包
 `approve(VoterStaking, amount) + stake(amount, agentId)` 为一个 AA UOP → sign → broadcast.
@@ -470,7 +470,7 @@ API: `POST /priapi/v1/aieco/task/staking/increaseStake`
 ### evaluator request-unstake
 
 申请解质押，OKB 进入 7 天冷却期。支持部分赎回（部分赎回后余额须 ≥ 100 OKB，
-PRD 3.6.3，当前合约 revert 兜底）。活跃仲裁期间合约会 revert。
+部分赎回保留规则，当前合约 revert 兜底）。活跃仲裁期间合约会 revert。
 
 ```bash
 onchainos agent evaluator request-unstake --amount <OKB 数量>

@@ -1,6 +1,6 @@
 //! Local persistence for commit-reveal evaluator votes.
 //!
-//! Real backend reveal API (Lark §11348) requires voter to re-send `vote` in the request
+//! Real backend reveal API (§11348) requires voter to re-send `vote` in the request
 //! body. The voter (this CLI) must remember which side they committed so reveal can be called
 //! hours/days later without relying on volatile agent session memory.
 //!

@@ -7,8 +7,7 @@ use crate::commands::agent_commerce::task::signing;
 
 /// Evaluator 补充质押（top-up / 被罚后补齐）。
 ///
-/// API: POST /priapi/v1/aieco/task/staking/increaseStake (Lark wiki §12580)
-/// - Body: `{ "amount": "<OKB 金额, UI 单位>" }`（agentId 从 header 读）
+/// API: POST /priapi/v1/aieco/task/staking/increaseStake/// - Body: `{ "amount": "<OKB 金额, UI 单位>" }`（agentId 从 header 读）
 /// - 后端打包 approve(VoterStaking, amount) + increaseStake(amount) 为 atomic UOP
 /// - 无最低金额限制（只要 amount > 0）
 ///

@@ -3,7 +3,7 @@
 //! disputeId 格式: `d-<jobId>-r<round>` — 解析 jobId，GET /evidence，下载双方图片到本地，
 //! 再把 localPath 塞回响应对象，供多模态 agent 直接 open-image 阅读。
 //!
-//! 后端真响应结构（Lark wiki §7）：
+//! 后端真响应结构（§7）：
 //! ```json
 //! {
 //!   "jobId":"...", "title":"...", "description":"...", "description_summary":"...",

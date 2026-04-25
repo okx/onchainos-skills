@@ -7,7 +7,10 @@ import https  from "node:https";
 import fs     from "node:fs";
 import path   from "node:path";
 import crypto from "node:crypto";
+import { createRequire } from "node:module";
 import { WebSocket } from "ws";
+
+const requireFromEsm = createRequire(import.meta.url);
 
 const API_PORT  = 9001;
 const WS_URL    = "ws://127.0.0.1:9000";
@@ -370,11 +373,211 @@ const REVEAL_WINDOW_DELAY_MS      = Number(process.env.MOCK_REVEAL_WINDOW_MS    
 
 // 所有 evaluator 生命周期事件共用同一个 dispute sub session conv（= notifyDisputed 用的 convId）。
 // evaluator_selected 激活 sub session 后，后续 reveal_started / dispute_resolved / reward_claimed
-// 自动复用同一 sub，在里面拉 context、跑 CLI、notify_main → 用户只在主 session 看到干净的最终通知。
+// 自动复用同一 sub，在里面拉 context、跑 CLI、xmtp_dispatch_session → 用户只在主 session 看到干净的最终通知。
 const MOCK_EVAL_AGENT_ID = "mock-evaluator-agent-001";
 function disputeConvId(t: Task): string {
   const sellerAgentId = t.providerAgentId ?? "mock-seller-agent-001";
   return `conv-arb-${t.jobId}-${t.buyerAgentId}-${sellerAgentId}-${MOCK_EVAL_AGENT_ID}`;
+}
+
+// ── Gateway RPC bridge（推 evaluator 系统事件到 openclaw agent sub session）──
+// evaluator 没有 P2P peer 来 bootstrap sub session，所以这里**合成**一个 XMTP-group 形状的
+// sub session key —— 每个 evaluator 钱包地址一个 sub（`gid=<voter>`），收所有 evaluator 事件
+// （dispute / staking / slashed 不分来源），跟 evaluator.md §1 的 sub 路由假设对齐。
+//
+// jobId / disputeId 等上下文写在消息 body 里（不靠 sub key 区分）。
+// fan-out 事件（evaluator_selected / reveal_started 等）由 notifyEvaluatorOpenclawAll 逐个
+// evaluator 推到各自 sub。
+//
+// 仅推 sub，不 fallback main：sub 推不通就是真问题（gateway 拒收 / sub 没人订阅 / sessions.create
+// 没显式调），需要修；不要用 main 静默兜底掩盖。失败时 log 错误，事件就丢一个，等你来排查。
+//
+// 与 ws-mock 路径并行存在：本路径用于"openclaw 接真 evaluator skill"调试，
+// `tools/mock-evaluator/`（headless）那条线仍走 ws-mock。
+//
+// 配置：
+//   MOCK_OPENCLAW_EVAL_NOTIFY=0           关闭整条 gateway 路径
+//   MOCK_OPENCLAW_EVAL_AGENT_ADDR=0x...   pin openclaw 那边 evaluator agent 地址（合成 sub key 的 my= 字段）
+const OPENCLAW_EVAL_NOTIFY = process.env.MOCK_OPENCLAW_EVAL_NOTIFY !== "0";
+// 由 env 写死，或启动时通过 gateway node.list 探测覆盖（见 discoverOpenclawEvalAddr）
+let OPENCLAW_EVAL_AGENT_ADDR = (
+  process.env.MOCK_OPENCLAW_EVAL_AGENT_ADDR ?? "0xOpenclawEval0000000000000000000000000001"
+).toLowerCase();
+
+/// 单一 evaluator sub session key —— 同一 evaluator 收到的**所有事件**都落同一 sub，
+/// 不按事件来源（dispute vs staking）分。jobId/disputeId 等上下文写在消息 body 里。
+/// `gid=<voter>` 让 sub 跟具体 evaluator 钱包地址一一绑定。
+function synthEvaluatorSubKey(voter: string): string {
+  return `agent:main:xmtp:group:okx-xmtp:my=${OPENCLAW_EVAL_AGENT_ADDR}&to=${CHAIN_ADDR.toLowerCase()}&job=evaluator&gid=${voter.toLowerCase()}`;
+}
+
+let _GatewayClient: any = null;
+let _gatewayInitTried = false;
+function loadGatewayClient(): any {
+  if (_gatewayInitTried) return _GatewayClient;
+  _gatewayInitTried = true;
+  const candidates = [
+    "/opt/homebrew/lib/node_modules/openclaw/dist/plugin-sdk/gateway-runtime.js",
+    "/usr/local/lib/node_modules/openclaw/dist/plugin-sdk/gateway-runtime.js",
+  ];
+  for (const p of candidates) {
+    try {
+      _GatewayClient = (requireFromEsm(p) as { GatewayClient: unknown }).GatewayClient;
+      console.log(`[mock-api] [gw] GatewayClient loaded from ${p}`);
+      return _GatewayClient;
+    } catch { /* try next */ }
+  }
+  console.log("[mock-api] [gw] GatewayClient not found; openclaw evaluator notifications disabled");
+  return null;
+}
+
+/// 通用 gateway RPC 封装：单次连接、发一条 RPC、收 result 后 stop。
+async function callGatewayRpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+  const GC = loadGatewayClient();
+  if (!GC) throw new Error("GatewayClient not available");
+  return await new Promise<unknown>((resolve, reject) => {
+    let settled = false;
+    const stop = (err?: unknown, value?: unknown) => {
+      if (settled) return;
+      settled = true;
+      if (err) reject(err instanceof Error ? err : new Error(String(err)));
+      else resolve(value);
+    };
+    const client: any = new GC({
+      instanceId: crypto.randomUUID(),
+      clientName: "gateway-client",
+      clientDisplayName: "mock-api:eval-notify",
+      mode: "backend",
+      role: "operator",
+      scopes: ["operator.admin"],
+      minProtocol: 3,
+      maxProtocol: 3,
+      onHelloOk: async () => {
+        try {
+          const result = await client.request(method, params, { timeoutMs: 10_000 });
+          try { client.stop(); } catch { /* ignore */ }
+          stop(undefined, result);
+        } catch (err) {
+          try { client.stop(); } catch { /* ignore */ }
+          stop(err);
+        }
+      },
+      onClose: (code: number, reason: string) => {
+        if (!settled) stop(new Error(`gateway closed (${code}): ${reason || "no reason"}`));
+      },
+      onConnectError: (err: unknown) => {
+        if (!settled) stop(err);
+      },
+    });
+    setTimeout(() => {
+      if (settled) return;
+      try { client.stop(); } catch { /* ignore */ }
+      stop(new Error("gateway timeout"));
+    }, 10_000);
+    client.start();
+  });
+}
+
+async function callGatewaySessionsSend(sessionKey: string, message: string): Promise<void> {
+  await callGatewayRpc("sessions.send", { key: sessionKey, message, idempotencyKey: crypto.randomUUID() });
+}
+
+/// 调 sessions.create 把 sub session 建出来。schema 实测只需 `{ key }`，
+/// 同 key 重复 create 也返回 ok（gateway 端 idempotent）。
+async function callGatewaySessionsCreate(sessionKey: string): Promise<void> {
+  await callGatewayRpc("sessions.create", { key: sessionKey });
+}
+
+/// 启动时调 node.list / node.describe 看 gateway 暴露的 agent 信息，
+/// 尝试自动学到 openclaw 端 evaluator agent 地址（用于合成 sub key 的 `my=` 字段）。
+/// 用户已经设置 MOCK_OPENCLAW_EVAL_AGENT_ADDR 时跳过；探不到时保持原值。
+async function discoverOpenclawEvalAddr(): Promise<void> {
+  if (process.env.MOCK_OPENCLAW_EVAL_AGENT_ADDR) {
+    console.log(`[mock-api] [gw] eval addr from env: ${OPENCLAW_EVAL_AGENT_ADDR}`);
+    return;
+  }
+  if (!loadGatewayClient()) return;
+  for (const method of ["node.list", "node.describe"]) {
+    try {
+      const result = await callGatewayRpc(method, {}) as unknown;
+      console.log(`[mock-api] [gw] ${method} → ${JSON.stringify(result).slice(0, 400)}`);
+      // 启发式抽 0x… 地址（任意嵌套字段名）
+      const found = JSON.stringify(result).match(/0x[a-fA-F0-9]{40}/);
+      if (found) {
+        OPENCLAW_EVAL_AGENT_ADDR = found[0].toLowerCase();
+        console.log(`[mock-api] [gw] auto-detected eval addr: ${OPENCLAW_EVAL_AGENT_ADDR}`);
+        return;
+      }
+    } catch (e) {
+      console.log(`[mock-api] [gw] ${method} failed: ${(e as Error).message.slice(0, 200)}`);
+    }
+  }
+  console.log(`[mock-api] [gw] eval addr auto-detect inconclusive, keeping placeholder ${OPENCLAW_EVAL_AGENT_ADDR}`);
+}
+
+/**
+ * 把一条 evaluator 系统事件推到 openclaw 的 evaluator sub session（gateway RPC: sessions.send）。
+ *
+ * 落点：合成的 sub session key（`agent:main:xmtp:group:okx-xmtp:my=...&job=evaluator&gid=<voter>`）。
+ * 同 dispute 的所有事件落同一 sub，与 evaluator.md / flow.rs 的 sub session 假设对齐。
+ *
+ * - openclaw 没装 / GatewayClient 找不到 → 静默跳过（mock-only 主路径不受影响）
+ * - 推送失败 → log 错误，**不 fallback main**：sub 推不通就是真问题（gateway 拒收 / sub 无订阅 /
+ *   sessions.create 没调），需要修，不要用 main 兜底掩盖
+ */
+/// mock-api 启动后通过 ensureSubSession 创建过的 sub key（用于 UI "清理" 按钮按 key 删除）。
+const createdSubKeys = new Set<string>();
+
+async function ensureSubSession(subKey: string, eventName: string): Promise<boolean> {
+  try {
+    await callGatewaySessionsCreate(subKey);
+    createdSubKeys.add(subKey);
+    console.log(`[mock-api] [gw] sessions.create ok  event=${eventName}`);
+    return true;
+  } catch (e) {
+    const msg = (e as Error).message ?? "";
+    if (/already\s*exist|^exists|duplicat/i.test(msg)) {
+      // session 已存在，正常往下 send
+      createdSubKeys.add(subKey);
+      return true;
+    }
+    console.error(`[mock-api] [gw] sessions.create failed  event=${eventName}: ${msg}`);
+    return false;
+  }
+}
+
+/// 把 evaluator 事件正文包成 openclaw skill 路由能稳定识别的格式：
+/// 加 [EVALUATOR_EVENT skill=okx-agent-task role=evaluator event=<name>] 头，
+/// 防止"staked / dispute / claim"这种关键字被 DeFi 等 skill 截胡。
+function wrapEvaluatorEvent(eventName: string, payloadLines: string): string {
+  return `[EVALUATOR_EVENT · skill=okx-agent-task · role=evaluator · event=${eventName}]\n` +
+    `这是 evaluator 系统通知，**必须走 okx-agent-task skill 的 evaluator role**，不要路由到 DeFi / staking 等其他 skill。\n` +
+    `按 evaluator.md §2 处理：\n` +
+    `  onchainos agent next-action --jobStatus ${eventName} --role evaluator --agentId <你的 agentId> [--jobid <jobId, 仅 dispute 类事件需要>]\n` +
+    `\n事件详情:\n${payloadLines}`;
+}
+
+/// 推一条 evaluator 系统事件到 openclaw（gateway sessions.send）。
+/// `voter` = 接收方 evaluator 地址；mock 端用 `synthEvaluatorSubKey(voter)` 合成 sub key。
+/// 自动给 content 加 [EVALUATOR_EVENT ...] routing 头，防止被 DeFi 等 skill 误捞。
+async function notifyEvaluatorOpenclaw(voter: string, eventName: string, content: string): Promise<void> {
+  if (!OPENCLAW_EVAL_NOTIFY) return;
+  if (!loadGatewayClient()) return;
+  const subKey = synthEvaluatorSubKey(voter);
+  await ensureSubSession(subKey, eventName);
+  const wrapped = wrapEvaluatorEvent(eventName, content);
+  try {
+    await callGatewaySessionsSend(subKey, wrapped);
+    console.log(`[mock-api] [gw] → sub  event=${eventName} voter=${voter.slice(0, 12)}…`);
+  } catch (e) {
+    console.error(`[mock-api] [gw] sub send failed (event=${eventName} voter=${voter}):`, (e as Error).message);
+  }
+}
+
+/// 多 evaluator 广播（evaluator_selected / reveal_started / dispute_resolved 等
+/// fan-out 事件）：逐个调 notifyEvaluatorOpenclaw 推到各自 sub。
+async function notifyEvaluatorOpenclawAll(targets: string[], eventName: string, content: string): Promise<void> {
+  for (const v of targets) await notifyEvaluatorOpenclaw(v, eventName, content);
 }
 
 async function notifyEvaluatorSelected(t: Task, disputeId: string, evaluatorAddrs: string[]) {
@@ -384,6 +587,8 @@ async function notifyEvaluatorSelected(t: Task, disputeId: string, evaluatorAddr
     type: "evaluator_selected", jobId: t.jobId, disputeId,
     content: `⚖️ 你被选为本轮陪审 (disputeId=${disputeId})。CommitPhase 已开，请查证据 + commit vote。`,
   }).catch(e => console.error("[mock-api] evaluator_selected notify error:", e));
+  await notifyEvaluatorOpenclawAll(evaluatorAddrs, "evaluator_selected",
+    `evaluator_selected jobId=${t.jobId} disputeId=${disputeId} —— VotersSelected 上链，CommitPhase 已开，请按 evaluator.md §3 自主闭环。`);
 }
 
 async function notifyVoteCommitted(jobId: string, disputeId: string, voter: string) {
@@ -392,6 +597,8 @@ async function notifyVoteCommitted(jobId: string, disputeId: string, voter: stri
     type: "vote_committed", jobId, disputeId, voter, status: "success",
     content: `📝 投票承诺已上链 (disputeId=${disputeId})。等待 reveal 窗口开启。`,
   }).catch(e => console.error("[mock-api] vote_committed notify error:", e));
+  await notifyEvaluatorOpenclaw(voter, "vote_committed",
+    `vote_committed jobId=${jobId} disputeId=${disputeId} voter=${voter} status=success`);
 }
 
 async function notifyRevealStarted(t: Task, disputeId: string, evaluatorAddrs: string[]) {
@@ -401,6 +608,8 @@ async function notifyRevealStarted(t: Task, disputeId: string, evaluatorAddrs: s
     type: "reveal_started", jobId: t.jobId, disputeId,
     content: `🔓 Reveal 窗口开启 (disputeId=${disputeId})。投票者可 reveal。`,
   }).catch(e => console.error("[mock-api] reveal_started notify error:", e));
+  await notifyEvaluatorOpenclawAll(evaluatorAddrs, "reveal_started",
+    `reveal_started jobId=${t.jobId} disputeId=${disputeId} —— RevealStarted 上链，reveal 窗口开启。`);
 }
 
 async function notifyVoteRevealed(jobId: string, disputeId: string, voter: string) {
@@ -409,6 +618,8 @@ async function notifyVoteRevealed(jobId: string, disputeId: string, voter: strin
     type: "vote_revealed", jobId, disputeId, voter, status: "success",
     content: `✅ 投票披露已上链 (disputeId=${disputeId})。`,
   }).catch(e => console.error("[mock-api] vote_revealed notify error:", e));
+  await notifyEvaluatorOpenclaw(voter, "vote_revealed",
+    `vote_revealed jobId=${jobId} disputeId=${disputeId} voter=${voter} status=success`);
 }
 
 // 结算广播:dispute_resolved + reward_claimed 都发到 dispute sub session conv，
@@ -431,6 +642,63 @@ async function broadcastSettlement(t: Task, winner: "buyer" | "seller", disputeI
     type: "reward_claimed", jobId: t.jobId, disputeId: disputeId ?? null, status: "success",
     content: `💰 任务 ${t.jobId} 结算完成,奖金已入账。`,
   }).catch(e => console.error("[mock-api] reward_claimed notify error:", e));
+
+  const winnerSide = winner === "buyer" ? "Client(2)" : "Provider(1)";
+  await notifyEvaluatorOpenclawAll(allEvalAddrs, "dispute_resolved",
+    `dispute_resolved jobId=${t.jobId} disputeId=${disputeId ?? "n/a"} winner=${winner} winningSide=${winnerSide} —— DisputeSettled 上链。`);
+  await notifyEvaluatorOpenclawAll(allEvalAddrs, "reward_claimed",
+    `reward_claimed jobId=${t.jobId} disputeId=${disputeId ?? "n/a"} status=success —— claimRewards tx 回执。`);
+}
+
+
+async function notifyRoundFailed(jobId: string, disputeId: string) {
+  const t = tasks.get(jobId);
+  if (!t) return;
+  const evaluators = await lookupRoleAddrs("EVALUATOR");
+  const targets = evaluators.length > 0 ? evaluators : ["0xEvaluator00000000000000000000000000001"];
+  const convId = disputeConvId(t);
+  const participants = Array.from(new Set([CHAIN_ADDR, ...targets]));
+  await wsNotify(convId, participants, {
+    type: "round_failed", jobId, disputeId,
+    content: `❌ 任务 ${jobId} dispute=${disputeId} 本轮失效（票数不足 / 无人揭示 / 全员弃票）。`,
+  }).catch(e => console.error("[mock-api] round_failed notify error:", e));
+  await notifyEvaluatorOpenclawAll(targets, "round_failed",
+    `round_failed jobId=${jobId} disputeId=${disputeId} —— DisputeInvalidated 上链，本轮无效。`);
+}
+
+async function notifySlashed(voter: string, amount: string, reason: string, disputeId: string | null) {
+  const convId = `conv-slashed-${voter}`;
+  await wsNotify(convId, [CHAIN_ADDR, voter], {
+    type: "slashed", voter, amount, reason, disputeId,
+    content: `🔥 voter=${voter.slice(0, 12)}… 被罚 ${amount} OKB（${reason}${disputeId ? ` dispute=${disputeId}` : ""}）。`,
+  }).catch(e => console.error("[mock-api] slashed notify error:", e));
+  const dPart = disputeId ? ` disputeId=${disputeId}` : "";
+  await notifyEvaluatorOpenclaw(voter, "slashed",
+    `slashed voter=${voter} amount=${amount} reason=${reason}${dPart} —— VoterStaking.Slashed 上链。`);
+}
+
+interface StakingLifecyclePayload {
+  amount: string;
+  status: "success" | "failed";
+  txHash: string;
+  errorCode?: string;
+  availableAt?: string;
+}
+
+async function notifyStakingLifecycle(eventName: string, voter: string, p: StakingLifecyclePayload) {
+  const convId = `conv-staking-${voter}`;
+  await wsNotify(convId, [CHAIN_ADDR, voter], {
+    type: eventName, voter, ...p,
+    content: `💰 ${eventName} voter=${voter.slice(0, 12)}… amount=${p.amount} status=${p.status}${p.txHash ? ` tx=${p.txHash}` : ""}`,
+  }).catch(e => console.error(`[mock-api] ${eventName} notify error:`, e));
+  const fields = [
+    `amount=${p.amount}`,
+    `status=${p.status}`,
+    p.txHash ? `txHash=${p.txHash}` : "",
+    p.errorCode ? `errorCode=${p.errorCode}` : "",
+    p.availableAt ? `availableAt=${p.availableAt}` : "",
+  ].filter(Boolean).join(" ");
+  await notifyEvaluatorOpenclaw(voter, eventName, `${eventName} voter=${voter} ${fields}`);
 }
 
 async function notifyDisputed(jobId: string, disputeId: string, buyerCommAddr: string, buyerAgentId: string,
@@ -1343,6 +1611,165 @@ const server = http.createServer(async (req, res) => {
     sendOk(res, { triggered: "dispute_resolved", jobId: m.jobId, winner }); return;
   }
 
+  // ── Evaluator debug UI page ────────────────────────────────────────────────
+  if (method === "GET" && (path_ === "/ui/debug-evaluator" || path_ === "/ui/debug")) {
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(DEBUG_EVALUATOR_HTML);
+    return;
+  }
+  // ── Evaluator config inspect / re-discover ────────────────────────────────
+  if (method === "GET" && path_ === "/ui/eval-config") {
+    sendOk(res, {
+      openclawEvalAgentAddr: OPENCLAW_EVAL_AGENT_ADDR,
+      chainAddr: CHAIN_ADDR.toLowerCase(),
+      sampleSubKey: synthEvaluatorSubKey("<voter>"),
+      gatewayLoaded: !!loadGatewayClient(),
+      openclawNotifyEnabled: OPENCLAW_EVAL_NOTIFY,
+    });
+    return;
+  }
+  if (method === "POST" && path_ === "/ui/eval-config/rediscover") {
+    discoverOpenclawEvalAddr().catch(() => { /* logged inside */ });
+    sendOk(res, { triggered: "discovery", currentAddr: OPENCLAW_EVAL_AGENT_ADDR });
+    return;
+  }
+  // ── 清理 openclaw sessions（按 mock-api 模式扫描并删除）────────────────
+  // 不重启 gateway；只清 mock-api 模式下生成的 sub key（job=<jobId>&gid=d-...-rN
+  // 或 job=staking&gid=<voter>），不动 openclaw 其他业务 session。
+  if (method === "POST" && path_ === "/ui/openclaw/reset-sessions") {
+    if (!loadGatewayClient()) { sendErr(res, 5000, "GatewayClient not loaded"); return; }
+    // 候选 key = 本次 mock-api 跑过程记得的 ∪ 已知 voter（默认 + 注册的 EVALUATOR）的 sub
+    const candidates = new Set<string>(createdSubKeys);
+    const knownVoters = new Set<string>(["0xEvaluator00000000000000000000000000001"]);
+    try {
+      const evaluators = await lookupRoleAddrs("EVALUATOR");
+      for (const v of evaluators) knownVoters.add(v);
+    } catch { /* ignore */ }
+    for (const v of knownVoters) candidates.add(synthEvaluatorSubKey(v));
+
+    let deleted = 0;
+    let notFound = 0;
+    const errors: Array<{ key: string; err: string }> = [];
+    for (const key of candidates) {
+      try {
+        await callGatewayRpc("sessions.delete", { key });
+        createdSubKeys.delete(key);
+        deleted++;
+      } catch (e) {
+        const msg = (e as Error).message ?? "";
+        if (/not\s*found|no such/i.test(msg)) {
+          notFound++;
+        } else {
+          errors.push({ key, err: msg.slice(0, 200) });
+        }
+      }
+    }
+    console.log(`[mock-api] [gw] sessions.delete sweep: candidates=${candidates.size} deleted=${deleted} notFound=${notFound} errors=${errors.length}`);
+    sendOk(res, { candidates: candidates.size, deleted, notFound, errorCount: errors.length, errors });
+    return;
+  }
+  // 列出当前已创建的 sub key（供 UI 显示）
+  if (method === "GET" && path_ === "/ui/openclaw/sub-keys") {
+    sendOk(res, { count: createdSubKeys.size, keys: [...createdSubKeys] });
+    return;
+  }
+
+  // ── Evaluator event dispatch（debug：直接触发任意一个 evaluator 事件）──
+  // POST /ui/notify/evaluator/:event   body 字段按事件类型不同
+  if (method === "POST" && (m = matchPath("/ui/notify/evaluator/:event", path_))) {
+    const event = m.event;
+    const body = await parseBody(req) as Record<string, unknown>;
+    const fallbackEvalAddr = "0xEvaluator00000000000000000000000000001";
+
+    const resolveEvalTargets = async (): Promise<string[]> => {
+      const evals = await lookupRoleAddrs("EVALUATOR");
+      return evals.length > 0 ? evals : [fallbackEvalAddr];
+    };
+
+    switch (event) {
+      // ── 任务仲裁事件（per-job）─────────────────────────────────────────
+      case "evaluator_selected": {
+        const jobId = String(body.jobId ?? "");
+        const t = tasks.get(jobId);
+        if (!t) { sendErr(res, 2001, "task not found"); return; }
+        const disputeId = String(body.disputeId ?? `d-${jobId}-r1`);
+        const targets = await resolveEvalTargets();
+        notifyEvaluatorSelected(t, disputeId, targets).catch(console.error);
+        sendOk(res, { triggered: event, jobId, disputeId }); return;
+      }
+      case "vote_committed": {
+        const jobId = String(body.jobId ?? "");
+        const disputeId = String(body.disputeId ?? `d-${jobId}-r1`);
+        const voter = String(body.voter ?? fallbackEvalAddr);
+        notifyVoteCommitted(jobId, disputeId, voter).catch(console.error);
+        sendOk(res, { triggered: event, jobId, disputeId, voter }); return;
+      }
+      case "reveal_started": {
+        const jobId = String(body.jobId ?? "");
+        const t = tasks.get(jobId);
+        if (!t) { sendErr(res, 2001, "task not found"); return; }
+        const disputeId = String(body.disputeId ?? `d-${jobId}-r1`);
+        const targets = await resolveEvalTargets();
+        notifyRevealStarted(t, disputeId, targets).catch(console.error);
+        sendOk(res, { triggered: event, jobId, disputeId }); return;
+      }
+      case "vote_revealed": {
+        const jobId = String(body.jobId ?? "");
+        const disputeId = String(body.disputeId ?? `d-${jobId}-r1`);
+        const voter = String(body.voter ?? fallbackEvalAddr);
+        notifyVoteRevealed(jobId, disputeId, voter).catch(console.error);
+        sendOk(res, { triggered: event, jobId, disputeId, voter }); return;
+      }
+      case "dispute_resolved": {
+        const jobId = String(body.jobId ?? "");
+        const t = tasks.get(jobId);
+        if (!t) { sendErr(res, 2001, "task not found"); return; }
+        const disputeId = String(body.disputeId ?? `d-${jobId}-r1`);
+        const winner: "buyer" | "seller" = body.winner === "buyer" ? "buyer" : "seller";
+        broadcastSettlement(t, winner, disputeId).catch(console.error);
+        sendOk(res, { triggered: "dispute_resolved+reward_claimed", jobId, disputeId, winner }); return;
+      }
+      case "round_failed": {
+        const jobId = String(body.jobId ?? "");
+        if (!tasks.has(jobId)) { sendErr(res, 2001, "task not found"); return; }
+        const disputeId = String(body.disputeId ?? `d-${jobId}-r1`);
+        notifyRoundFailed(jobId, disputeId).catch(console.error);
+        sendOk(res, { triggered: event, jobId, disputeId }); return;
+      }
+
+      // ── 质押 / 罚没事件（per-evaluator）─────────────────────────────
+      case "slashed": {
+        const voter = String(body.voter ?? fallbackEvalAddr);
+        const amount = String(body.amount ?? "0.5");
+        const reason = String(body.reason ?? "commit_timeout");
+        const disputeId = body.disputeId ? String(body.disputeId) : null;
+        notifySlashed(voter, amount, reason, disputeId).catch(console.error);
+        sendOk(res, { triggered: event, voter, amount, reason, disputeId }); return;
+      }
+      case "staked":
+      case "stake_increased":
+      case "unstake_requested":
+      case "unstake_claimed":
+      case "unstake_cancelled": {
+        const voter = String(body.voter ?? fallbackEvalAddr);
+        const amount = String(body.amount ?? "100");
+        const status: "success" | "failed" = body.status === "failed" ? "failed" : "success";
+        const txHash = String(body.txHash ?? `0xMockTx${crypto.randomBytes(8).toString("hex")}`);
+        const errorCode = body.errorCode ? String(body.errorCode) : undefined;
+        // unstake_requested 默认 7 天后可领（now + 7d ms）
+        const availableAt = body.availableAt
+          ? String(body.availableAt)
+          : (event === "unstake_requested" ? String(Date.now() + 7 * 86_400_000) : undefined);
+        notifyStakingLifecycle(event, voter, { amount, status, txHash, errorCode, availableAt }).catch(console.error);
+        sendOk(res, { triggered: event, voter, amount, status, txHash, errorCode, availableAt }); return;
+      }
+
+      default:
+        sendErr(res, 1001, `unknown evaluator event: ${event}`);
+        return;
+    }
+  }
+
   // ── x402 pay (mock) ──────────────────────────────────────────────────────
   if (method === "POST" && path_ === "/api/v1/x402/pay") {
     const body = await parseBody(req) as Record<string, unknown>;
@@ -1381,6 +1808,8 @@ server.listen(API_PORT, "127.0.0.1", () => {
   console.log(`[mock-api] HTTP server listening on http://127.0.0.1:${API_PORT}`);
   console.log(`[mock-api] task db: ${PERSIST_PATH}`);
   console.log(`[mock-api] 已预置示例任务: task-001 (合约审计), task-002 (套利机器人), task-003 (链上索引)`);
+  // 异步探测 openclaw eval agent 地址，不阻塞 listen
+  discoverOpenclawEvalAddr().catch(e => console.log(`[mock-api] [gw] discover error: ${(e as Error).message}`));
 });
 
 // ── Dashboard HTML ─────────────────────────────────────────────────────────────
@@ -1456,7 +1885,7 @@ tr:hover td{background:#161b22}
 </style>
 </head>
 <body>
-<h1>🔧 Mock API Dashboard <span style="font-size:.75em;color:#8b949e">http://127.0.0.1:9001</span></h1>
+<h1>🔧 Mock API Dashboard <span style="font-size:.75em;color:#8b949e">http://127.0.0.1:9001</span> <a href="/ui/debug-evaluator" style="font-size:.55em;color:#58a6ff;margin-left:12px;text-decoration:none;">⚖️ Evaluator Debug →</a></h1>
 <div class="status-bar">
   <span><span class="dot" id="api-dot"></span>mock-api :9001</span>
   <span><span class="dot" id="ws-dot" style="background:#e3b341"></span>ws-mock :9000</span>
@@ -1657,6 +2086,248 @@ async function resetAll() {
 }
 loadTasks(); loadLogs();
 setInterval(() => { loadTasks(); loadLogs(); }, 3000);
+</script>
+</body>
+</html>`;
+
+// ── Evaluator Debug Console HTML ───────────────────────────────────────────────
+const DEBUG_EVALUATOR_HTML = `<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Evaluator Event Debug</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "SF Mono", monospace; background: #0d1117; color: #c9d1d9; max-width: 980px; margin: 20px auto; padding: 0 20px; }
+  h1 { color: #58a6ff; margin-bottom: 4px; }
+  .lead { color: #8b949e; font-size: 13px; margin-bottom: 24px; }
+  h2 { color: #e3b341; border-bottom: 1px solid #30363d; padding-bottom: 6px; margin-top: 0; font-size: 16px; }
+  .section { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 18px; margin: 18px 0; }
+  label { display: block; margin: 10px 0 4px; font-size: 12px; color: #8b949e; }
+  input, select { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 7px 10px; border-radius: 4px; font-family: inherit; font-size: 12px; width: 100%; }
+  input:focus, select:focus { outline: none; border-color: #58a6ff; }
+  button { background: #238636; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px; margin: 4px 4px 0 0; }
+  button:hover { background: #2ea043; }
+  button.danger { background: #da3633; }
+  button.danger:hover { background: #f85149; }
+  button.warn { background: #9e6a03; }
+  button.warn:hover { background: #bb800f; }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  .btns { margin-top: 14px; display: flex; flex-wrap: wrap; }
+  pre { background: #010409; border: 1px solid #30363d; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 11px; line-height: 1.5; }
+  #log { height: 240px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+  .ok { color: #3fb950; }
+  .err { color: #f85149; }
+  .hint { color: #8b949e; font-size: 11px; margin: 4px 0 0; }
+  .top-link { float: right; font-size: 12px; color: #58a6ff; text-decoration: none; }
+</style>
+</head>
+<body>
+<a class="top-link" href="/">← 主面板</a>
+<h1>⚖️ Evaluator Event Debug Console</h1>
+<p class="lead">手动触发 evaluator 系统事件。事件经 mock-api 同时推到 ws-mock（老 mock-evaluator 收）和 openclaw gateway sub session（真 evaluator skill 收）。</p>
+
+<div class="section">
+  <h2>🔧 Gateway 桥配置</h2>
+  <div id="cfg-display" style="font-size:12px;line-height:1.7"></div>
+  <button onclick="reloadCfg()" style="background:#21262d;color:#c9d1d9;">🔄 重新加载</button>
+  <button onclick="rediscover()" class="warn">🔍 重新探测 openclaw eval 地址（node.list / node.describe）</button>
+  <button onclick="resetOpenclawSessions()" class="danger">🧹 清理 openclaw sessions（sessions.reset RPC）</button>
+  <p class="hint">合成的 sub key 中 <code>my=</code> 默认是 placeholder，启动时尝试通过 <code>node.list</code> 自动探测 openclaw 端 evaluator agent 地址；探不到时建议设 <code>MOCK_OPENCLAW_EVAL_AGENT_ADDR</code> 环境变量再启动。</p>
+</div>
+
+<div class="section">
+  <h2>📋 任务仲裁事件（per-evaluator, 共用 sub key &gid=&lt;voter&gt;）</h2>
+  <div class="row">
+    <div>
+      <label>jobId</label>
+      <input id="job-id" type="text" value="task-001" />
+    </div>
+    <div>
+      <label>disputeId（留空 = d-&lt;jobId&gt;-r1）</label>
+      <input id="dispute-id" type="text" placeholder="d-task-001-r1" />
+    </div>
+  </div>
+  <div class="row">
+    <div>
+      <label>voter address（vote_committed / vote_revealed 用）</label>
+      <input id="job-voter" type="text" value="0xEvaluator00000000000000000000000000001" />
+    </div>
+    <div>
+      <label>winner（dispute_resolved 用）</label>
+      <select id="winner">
+        <option value="seller">seller（provider 胜，资金释放）</option>
+        <option value="buyer">buyer（client 胜，资金退还）</option>
+      </select>
+    </div>
+  </div>
+  <div class="btns">
+    <button onclick="fireJob('evaluator_selected')">evaluator_selected</button>
+    <button onclick="fireJob('vote_committed')">vote_committed</button>
+    <button onclick="fireJob('reveal_started')">reveal_started</button>
+    <button onclick="fireJob('vote_revealed')">vote_revealed</button>
+    <button onclick="fireJob('dispute_resolved')">dispute_resolved + reward_claimed</button>
+    <button class="warn" onclick="fireJob('round_failed')">round_failed</button>
+  </div>
+  <p class="hint">jobId 必须存在于 mock-api（看主面板 task list）。disputeId 不存在时自动按 d-&lt;jobId&gt;-r1 合成。</p>
+</div>
+
+<div class="section">
+  <h2>💰 质押生命周期事件（per-evaluator, 共用 sub key &gid=&lt;voter&gt;）</h2>
+  <label>voter / evaluator address</label>
+  <input id="staking-voter" type="text" value="0xEvaluator00000000000000000000000000001" />
+  <div class="row">
+    <div>
+      <label>amount (OKB, UI 单位)</label>
+      <input id="staking-amount" type="text" value="100" />
+    </div>
+    <div>
+      <label>status</label>
+      <select id="staking-status">
+        <option value="success">success</option>
+        <option value="failed">failed</option>
+      </select>
+    </div>
+  </div>
+  <div class="row">
+    <div>
+      <label>txHash（留空自动生成）</label>
+      <input id="staking-tx" type="text" placeholder="auto" />
+    </div>
+    <div>
+      <label>errorCode（status=failed 时填，例如 1001 / 2004 / 4000）</label>
+      <input id="staking-errcode" type="text" placeholder="例如 1001" />
+    </div>
+  </div>
+  <div class="row">
+    <div>
+      <label>availableAt（unstake_requested，毫秒时间戳；留空 = now + 7d）</label>
+      <input id="staking-availableAt" type="text" placeholder="auto" />
+    </div>
+    <div>
+      <label>reason（slashed 用）</label>
+      <input id="staking-reason" type="text" value="commit_timeout" />
+    </div>
+  </div>
+  <div class="btns">
+    <button onclick="fireStaking('staked')">staked</button>
+    <button onclick="fireStaking('stake_increased')">stake_increased</button>
+    <button onclick="fireStaking('unstake_requested')">unstake_requested</button>
+    <button onclick="fireStaking('unstake_claimed')">unstake_claimed</button>
+    <button onclick="fireStaking('unstake_cancelled')">unstake_cancelled</button>
+    <button class="danger" onclick="fireStaking('slashed')">slashed</button>
+  </div>
+  <p class="hint">slashed 也可以挂在 jobId / disputeId 下（顶部那栏的 disputeId 会自动捎上）。</p>
+</div>
+
+<div class="section">
+  <h2>📜 输出</h2>
+  <button onclick="document.getElementById('log').innerHTML=''" style="background:#21262d;float:right;">清空</button>
+  <pre id="log"></pre>
+</div>
+
+<script>
+function appendLog(line, cls) {
+  const log = document.getElementById('log');
+  const ts = new Date().toLocaleTimeString();
+  const span = document.createElement('span');
+  if (cls) span.className = cls;
+  span.textContent = '[' + ts + '] ' + line + '\\n';
+  log.insertBefore(span, log.firstChild);
+}
+async function fire(event, body) {
+  appendLog('→ ' + event + '  ' + JSON.stringify(body));
+  try {
+    const res = await fetch('/ui/notify/evaluator/' + event, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (data.code === 0) {
+      appendLog('✓ ' + event + '  ' + JSON.stringify(data.data), 'ok');
+    } else {
+      appendLog('✗ ' + event + '  ' + (data.msg || JSON.stringify(data)), 'err');
+    }
+  } catch (e) {
+    appendLog('✗ ' + event + '  fetch error: ' + e.message, 'err');
+  }
+}
+function fireJob(event) {
+  const jobId = document.getElementById('job-id').value.trim();
+  const disputeId = document.getElementById('dispute-id').value.trim() || ('d-' + jobId + '-r1');
+  const voter = document.getElementById('job-voter').value.trim();
+  const winner = document.getElementById('winner').value;
+  fire(event, { jobId, disputeId, voter, winner });
+}
+function fireStaking(event) {
+  const voter = document.getElementById('staking-voter').value.trim();
+  const amount = document.getElementById('staking-amount').value.trim();
+  const status = document.getElementById('staking-status').value;
+  const txHash = document.getElementById('staking-tx').value.trim();
+  const errorCode = document.getElementById('staking-errcode').value.trim();
+  const availableAt = document.getElementById('staking-availableAt').value.trim();
+  const reason = document.getElementById('staking-reason').value.trim();
+  const body = { voter, amount, status };
+  if (txHash) body.txHash = txHash;
+  if (errorCode) body.errorCode = errorCode;
+  if (availableAt) body.availableAt = availableAt;
+  if (event === 'slashed') {
+    body.reason = reason || 'commit_timeout';
+    const did = document.getElementById('dispute-id').value.trim();
+    if (did) body.disputeId = did;
+  }
+  fire(event, body);
+}
+async function reloadCfg() {
+  try {
+    const r = await fetch('/ui/eval-config');
+    const j = await r.json();
+    const d = j.data || {};
+    document.getElementById('cfg-display').innerHTML =
+      '<b>OPENCLAW_EVAL_AGENT_ADDR</b>: <code>' + d.openclawEvalAgentAddr + '</code><br>' +
+      '<b>CHAIN_ADDR</b>: <code>' + d.chainAddr + '</code><br>' +
+      '<b>合成 sub key 示例</b>: <code>' + d.sampleSubKey + '</code><br>' +
+      '<b>GatewayClient</b>: ' + (d.gatewayLoaded ? '<span class="ok">已加载</span>' : '<span class="err">未加载（openclaw 未安装？）</span>') + '<br>' +
+      '<b>OPENCLAW_EVAL_NOTIFY</b>: ' + (d.openclawNotifyEnabled ? 'on' : 'off');
+  } catch (e) {
+    document.getElementById('cfg-display').textContent = 'cfg load error: ' + e.message;
+  }
+}
+async function rediscover() {
+  appendLog('→ rediscover');
+  try {
+    const r = await fetch('/ui/eval-config/rediscover', { method: 'POST' });
+    const j = await r.json();
+    appendLog('✓ rediscover triggered. 看 mock-api log 找 [gw] auto-detected 行；当前地址: ' + (j.data && j.data.currentAddr), 'ok');
+    setTimeout(reloadCfg, 1500);
+  } catch (e) {
+    appendLog('✗ rediscover error: ' + e.message, 'err');
+  }
+}
+async function resetOpenclawSessions() {
+  if (!confirm('扫描并清理 mock-api 模式下生成的 sub session（job=<jobId>&gid=d-...-rN 和 job=staking&gid=<voter>）。不重启 gateway。继续？')) return;
+  appendLog('→ sessions.delete sweep');
+  try {
+    const r = await fetch('/ui/openclaw/reset-sessions', { method: 'POST' });
+    const j = await r.json();
+    if (j.code === 0) {
+      const d = j.data || {};
+      appendLog('✓ candidates=' + d.candidates + ' deleted=' + d.deleted + ' notFound=' + d.notFound + ' errors=' + d.errorCount, 'ok');
+      if (d.errorCount > 0 && d.errors) {
+        for (const e of d.errors.slice(0, 5)) appendLog('  ⚠ ' + e.key.slice(0, 80) + '… → ' + e.err, 'err');
+      }
+    } else {
+      appendLog('✗ reset failed: ' + (j.msg || JSON.stringify(j)), 'err');
+    }
+  } catch (e) {
+    appendLog('✗ reset fetch error: ' + e.message, 'err');
+  }
+}
+reloadCfg();
+appendLog('Ready. mock-api: ' + location.origin);
 </script>
 </body>
 </html>`;

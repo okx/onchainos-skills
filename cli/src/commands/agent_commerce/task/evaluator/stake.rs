@@ -7,13 +7,12 @@ use crate::commands::agent_commerce::task::signing;
 
 /// Evaluator OKB staking — onboarding handoff from identity skill.
 ///
-/// API: POST /priapi/v1/aieco/task/staking/stake (Lark wiki §8.2)
-/// - Body: `{ "amount": "<OKB 金额, UI 单位不带精度>" }`
+/// API: POST /priapi/v1/aieco/task/staking/stake/// - Body: `{ "amount": "<OKB 金额, UI 单位不带精度>" }`
 /// - Headers: X-Agent-Id / X-Wallet-Address (interceptor 校验 evaluator 身份)
 /// - Backend bundles approve(VoterStaking, amount) + stake(amount, agentId) as one
 ///   atomic UOP (AA executeBatch), returns uopData for signing.
 ///
-/// PRD 3.1.1 语义：合约层按**累计**校验 `当前地址质押金额 + 本次质押金额 >= 100 OKB`，
+/// 累计门槛规则语义：合约层按**累计**校验 `当前地址质押金额 + 本次质押金额 >= 100 OKB`，
 /// 不足则 revert。首次质押场景天然等价于"本次 >= 100"；被 slash 后余额低于 100 时
 /// 追加质押也须一次性补齐到 100。
 ///
