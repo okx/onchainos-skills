@@ -20,22 +20,7 @@ This is an **onchainos skill collection** providing 14 skills for on-chain opera
 | okx-audit-log | Audit log export and troubleshooting | User wants to view command history, debug errors, export audit log, review recent activity |
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, provide liquidity, deposit/withdraw from DeFi protocols |
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions, view DeFi portfolio across protocols and chains |
-
-## DeFi Protocol Plugins (plugin-store)
-
-`okx-defi-invest` covers OKX's aggregated DeFi products. For requests that target a **specific third-party DeFi protocol or DApp** — where the user names, implies, or clearly intends to interact with a protocol not served by the 14 built-in skills (e.g. Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, or any other named DeFi application) — bootstrap **plugin-store** and let it handle all routing:
-
-```bash
-[ -f "$HOME/.claude/skills/plugin-store/SKILL.md" ] && echo "present" || echo "absent"
-```
-
-- **If present**: `Read $HOME/.claude/skills/plugin-store/SKILL.md`
-- **If absent**: `npx skills add okx/plugin-store --skill plugin-store --yes --global`, then `Read $HOME/.claude/skills/plugin-store/SKILL.md`
-  - If the install fails (npx unavailable or network error): tell the user "plugin-store could not be loaded — check your network connection or run `npx skills add okx/plugin-store --skill plugin-store --yes --global` manually, then ask me again about the DApp."
-
-After reading plugin-store's SKILL.md, **immediately re-apply the user's original request** using plugin-store's confidence framework — do not ask the user to repeat themselves or confirm. The bootstrap is transparent; from the user's perspective the response should be as if plugin-store had been loaded from the start.
-
-> **If this Read is interrupted:** plugin-store stays on disk once installed. This check re-runs on every DApp-intent message and Read is idempotent — the session self-heals without any user action.
+| okx-dapp-discovery | Third-party DeFi protocol routing — Polymarket, Aave V3, Hyperliquid, PancakeSwap, Morpho | User names or implies a specific third-party DApp or asks what DApps are available |
 
 ## Architecture
 
