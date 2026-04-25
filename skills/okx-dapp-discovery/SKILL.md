@@ -1,6 +1,6 @@
 ---
 name: okx-dapp-discovery
-description: "Use this skill when the user names a specific third-party DeFi DApp/protocol as the destination, or asks to discover available on-chain DApps. The skill applies a confidence framework to detect the matching protocol, installs the corresponding DApp plugin on demand (via `npx skills add okx/plugin-store --skill <plugin-name>`), then routes the user's original prompt directly into that plugin's quickstart. Trigger keywords — DApp discovery: 'what dapps are available', 'any good dapps', 'show me dapps', 'recommend dapps', 'which protocols can I use', '有什么好的dapp', '推荐一些dapp', '有什么好的协议', '有什么DeFi协议', '推荐DeFi项目', '有什么链上应用'. Specific protocols (Polymarket): 'Polymarket', 'poly market', 'prediction market', 'YES shares', 'NO shares', 'outcome token', 'btc 5m', 'btc 五分钟', 'BTC 5分钟涨跌', '预测市场', '事件市场', '买涨跌', '5分钟涨跌', '五分钟涨跌'. Specific protocols (Aave V3): 'Aave', 'Aave V3', 'aToken', 'health factor', 'eMode', 'Efficiency Mode', 'Isolation Mode', 'GHO', 'Aave flash loan', 'liquidationCall'. Specific protocols (Hyperliquid): 'Hyperliquid', 'HyperLiquid', 'HyperCore', 'HyperEVM', 'HYPE', 'HLP', 'Hyperliquidity Provider', 'HIP-3'. Specific protocols (PancakeSwap): 'PancakeSwap', 'Pancake', 'PCS', 'CAKE', 'Syrup Pool', 'IFO', 'BNB Chain AMM', 'V3 LP NFT', '薄饼', 'veCAKE'. Specific protocols (Morpho V1 Optimizer): 'Morpho', 'MetaMorpho', 'Merkl reward'. Plugin management: 'install a plugin', 'uninstall a plugin', 'show installed plugins', '安装Plugin', '卸载Plugin'. Do NOT use for: generic yield/lending/staking verbs without a named DApp (route to okx-defi-invest); DEX swaps without a named DApp (okx-dex-swap); token prices/charts (okx-dex-market); wallet balances (okx-wallet-portfolio); viewing positions (okx-defi-portfolio)."
+description: "Use this skill when the user names a specific third-party DeFi DApp/protocol as the destination, or asks to discover available on-chain DApps. The skill applies a confidence framework to detect the matching protocol, installs the corresponding DApp plugin on demand (via `npx skills add okx/plugin-store --skill <plugin-name> --yes --global`), then routes the user's original prompt directly into that plugin's quickstart. Trigger keywords — DApp discovery: 'what dapps are available', 'any good dapps', 'show me dapps', 'recommend dapps', 'which protocols can I use', '有什么好的dapp', '推荐一些dapp', '有什么好的协议', '有什么DeFi协议', '推荐DeFi项目', '有什么链上应用'. Specific protocols (Polymarket): 'Polymarket', 'poly market', 'prediction market', 'YES shares', 'NO shares', 'outcome token', 'btc 5m', 'btc 五分钟', 'BTC 5分钟涨跌', '预测市场', '事件市场', '买涨跌', '5分钟涨跌', '五分钟涨跌'. Specific protocols (Aave V3): 'Aave', 'Aave V3', 'aToken', 'health factor', 'eMode', 'Efficiency Mode', 'Isolation Mode', 'GHO', 'Aave flash loan', 'liquidationCall'. Specific protocols (Hyperliquid): 'Hyperliquid', 'HyperLiquid', 'HyperCore', 'HyperEVM', 'HYPE', 'HLP', 'Hyperliquidity Provider', 'HIP-3'. Specific protocols (PancakeSwap): 'PancakeSwap', 'Pancake', 'PCS', 'CAKE', 'Syrup Pool', 'IFO', 'BNB Chain AMM', 'V3 LP NFT', '薄饼', 'veCAKE'. Specific protocols (Morpho V1 Optimizer): 'Morpho', 'Merkl reward'. Plugin management: 'install a plugin', 'uninstall a plugin', 'show installed plugins', '安装Plugin', '卸载Plugin'. Do NOT use for: generic yield/lending/staking verbs without a named DApp (route to okx-defi-invest); DEX swaps without a named DApp (okx-dex-swap); token prices/charts (okx-dex-market); wallet balances (okx-wallet-portfolio); viewing positions (okx-defi-portfolio)."
 license: MIT
 metadata:
   author: okx
@@ -71,9 +71,9 @@ PancakeSwap, Pancake, PCS, CAKE, Syrup Pool, IFO, BNB Chain AMM, V3 LP NFT, 薄�
 ### Morpho V1 Optimizer → `morpho-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-Morpho, MetaMorpho, Merkl reward.
+Morpho, Merkl reward, Morpho V1, AaveV2 Optimizer, AaveV3 Optimizer, CompoundV2 Optimizer.
 
-**Do not install for:** Morpho Blue, vault curator, LLTV, market id, allocator, or isolated lending market requests — unless the user explicitly mentions V1, Optimizer, AaveV2/V3 Optimizer, or CompoundV2 Optimizer.
+**Do not install for:** Morpho Blue, MetaMorpho, vault curator, LLTV, market id, allocator, or isolated lending market requests — unless the user explicitly mentions V1, Optimizer, AaveV2/V3 Optimizer, or CompoundV2 Optimizer. (`MetaMorpho` is the Morpho Blue ERC-4626 vault standard, not a V1 Optimizer concept — it does not belong to `morpho-plugin`'s scope.)
 
 ---
 
@@ -94,7 +94,9 @@ echo "$SKILLS_LIST" | grep -qE '(^|\s|/)pancakeswap-v3-plugin(\s|$)' && PCS_INST
 echo "$SKILLS_LIST" | grep -qE '(^|\s|/)morpho-plugin(\s|$)'         && MORPHO_INSTALLED=true
 ```
 
-> **Known limitation:** the Read step further below uses `$HOME/.claude/skills/` paths, which is Claude-Code-specific. Codex / OpenCode / OpenClaw / Cursor users may need to substitute their agent's skills directory. Tracked as a follow-up against the `skills` CLI to add a `skills info <skill>` subcommand for cross-agent path resolution.
+> **Known limitations:**
+> - The Read step further below uses `$HOME/.claude/skills/` paths, which is Claude-Code-specific. Codex / OpenCode / OpenClaw / Cursor users may need to substitute their agent's skills directory. Tracked as a follow-up against the `skills` CLI to add a `skills info <skill>` subcommand for cross-agent path resolution.
+> - The `2>/dev/null` redirect on `npx skills list` silences stderr (intentional — avoids noise on agents where `npx` isn't available). If `npx` itself is broken or missing, the listing returns empty and every DApp will be treated as "not installed". The subsequent install path (`npx skills add … --yes --global`) is idempotent and surfaces the underlying error to the user via the Failure-mode note in Step 2 — do not retry the listing in a loop.
 
 ---
 
@@ -107,6 +109,8 @@ Do **not** re-install. Read the plugin's instructions and execute the user's req
 Read file: $HOME/.claude/skills/<plugin-name>/SKILL.md
 ```
 
+> *(Path is Claude Code-specific — see Known Limitations in Step 1. On Codex / OpenCode / OpenClaw / Cursor, substitute the equivalent skills directory for your agent.)*
+
 Then **immediately re-apply the user's original request** using the plugin's own routing — do not ask the user to repeat themselves. Do not show an install banner or onboarding table.
 
 **Rule 2 — Not installed, exactly one DApp scores ≥ 75:**
@@ -118,6 +122,8 @@ npx skills add okx/plugin-store --skill <plugin-name> --yes --global
 ```
 Read file: $HOME/.claude/skills/<plugin-name>/SKILL.md
 ```
+
+> *(Path is Claude Code-specific — see Known Limitations in Step 1. On Codex / OpenCode / OpenClaw / Cursor, substitute the equivalent skills directory for your agent.)*
 
 Forward the user's original request to that plugin's instructions. The bootstrap should be transparent — the user sees the response as if the plugin had been loaded from session start.
 
