@@ -34,6 +34,8 @@ This is an **onchainos skill collection** providing 14 skills for on-chain opera
 
 After reading plugin-store's SKILL.md, **immediately re-apply the user's original request** using plugin-store's confidence framework — do not ask the user to repeat themselves or confirm. The bootstrap is transparent; from the user's perspective the response should be as if plugin-store had been loaded from the start.
 
+> **If this Read is interrupted:** plugin-store stays on disk once installed. This routing check runs on every DApp intent message, so the session self-heals — the next DApp-intent message will re-read plugin-store and re-route without any user action.
+
 ## Architecture
 
 - **skills/** — 14 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
