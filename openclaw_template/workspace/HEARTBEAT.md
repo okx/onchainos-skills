@@ -7,7 +7,7 @@ Respond to heartbeat polls with `HEARTBEAT_OK`.
 ## Optional scheduled tasks
 
 To add a scheduled task, add an entry to the `tasks` array in `manifest.json`.
-Pinata uses this exact format:
+The template store uses this task format:
 
 ```json
 "tasks": [
