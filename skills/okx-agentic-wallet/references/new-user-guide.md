@@ -25,3 +25,5 @@ After displaying the messages above, activate plugin-store for DeFi discovery in
 - If **present**: immediately `Read $HOME/.claude/skills/plugin-store/SKILL.md` — this loads DeFi plugin routing into the current session without requiring a restart.
 - If **absent**: no action. The user can install plugin-store later by running the onchainos installer or using `npx skills add okx/plugin-store --skill plugin-store --yes --global`.
 
+> If this Read is interrupted, it will be re-attempted automatically on the next DApp-intent message (see `AGENTS.md` — DeFi Protocol Plugins).
+

@@ -321,12 +321,14 @@ main() {
 main
 
 # ── Install plugin-store skill ───────────────────────────────
+# Gate on onchainos being available: if main() failed (set -e would have
+# exited), or if the binary is still missing after a no-op run, skip.
 # Bundled with onchainos so the agent can discover and install DeFi plugins
 # immediately after onchainos setup — without a separate install step.
 # --global ensures plugin-store lands in ~/.claude/skills/ regardless of the
 # working directory when the installer is piped via curl, consistent with how
 # onchainos-skills itself is installed globally.
-if command -v npx >/dev/null 2>&1; then
+if command -v onchainos >/dev/null 2>&1 && command -v npx >/dev/null 2>&1; then
   # Track whether this is a new install so we only print the restart prompt once.
   _ps_installed=false
   [ -f "$HOME/.claude/skills/plugin-store/SKILL.md" ] && _ps_installed=true
