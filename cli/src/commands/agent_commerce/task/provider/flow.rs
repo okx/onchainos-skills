@@ -4,8 +4,40 @@
 //! 目的：把散落在 provider.md 里的 Scene 步骤集中到代码里，让 agent 只需
 //! `exec onchainos agent next-action ...` 拿提示词直接执行，不用推理整份文档。
 
-/// 根据 jobStatus 生成 provider 下一步动作的结构化提示词
+use crate::commands::agent_commerce::task::common::state_machine::Status;
+
+/// Provider 在某 status 下可执行的 CLI 命令清单（用于 `agent common context` 输出末尾的菜单）。
+///
+/// 跟同文件 `generate_next_action` 的剧本住在一处，方便检查两份是否一致。
+pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
+    match status {
+        Status::Open => vec![
+            format!("onchainos agent apply {job_id} --token-amount <price> --token-symbol USDT --agent-id <agentId>  # 申请接单"),
+        ],
+        Status::Accepted => vec![
+            format!("onchainos agent deliver {job_id} --file <deliverable> --message <msg>  # 提交交付"),
+        ],
+        Status::Refused => vec![
+            format!("onchainos agent dispute raise {job_id} --reason <reason>  # 发起仲裁"),
+            format!("onchainos agent agree-refund {job_id}  # 同意退款"),
+        ],
+        Status::Disputed => vec![
+            format!("onchainos agent dispute evidence {job_id} --summary <摘要>  # 提交证据"),
+        ],
+        Status::Submitted | Status::Completed | Status::Refunded | Status::Other(_) => vec![
+            format!("onchainos agent status {job_id}         # 查询最新任务状态"),
+        ],
+    }
+}
+
+/// 根据 jobStatus 生成 provider 下一步动作的结构化提示词。
+///
+/// `job_status` 既能接 event 名（provider_applied / job_accepted / ...），
+/// 也能接 status 名（open / accepted / ...）—— 内部统一通过 state_machine
+/// 解析成 `Event`，看不认识的字符串保留 `Event::Other(s)` 兜底。
 pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> String {
+    use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
+
     // P2P 消息走 `xmtp_send` 工具（真实 XMTP 插件提供）。
     // 会话信息（sessionKey / toXmtpAddress / groupId / jobId）由当前 XMTP 子 session 自动解析，
     // agent 只需填 `content` 字段。旧的 text-header 格式（`jobId: / 来自: [PROVIDER] / 类型: REPLY / 会话: / ----`）
@@ -19,9 +51,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
     // 兼容变量名 —— 仍叫 header_template 让下方插值点少改一轮
     let header_template = &xmtp_hint;
 
-    match job_status {
+    let event = parse_status_or_event(job_status);
+    match event {
         // ─── Scene 3: 接单申请已上链，生成付款单给买家 ────────────────
-        "provider_applied" => format!(
+        Event::ProviderApplied => format!(
             "【当前状态】provider_applied（链上已确认接单申请）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
@@ -46,7 +79,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
 
         // ─── Scene 4: 买家已确认接单，执行任务并交付 ─────────────────
-        "job_accepted" => format!(
+        Event::JobAccepted => format!(
             "【当前状态】job_accepted（买家已确认接单，资金托管）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作（严格顺序，不得跳步）】\n\n\
@@ -83,7 +116,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
 
         // ─── Scene 5: 交付物已上链，通知买家验收 ─────────────────────
-        "job_submitted" => format!(
+        Event::JobSubmitted => format!(
             "【当前状态】job_submitted（交付物已上链确认）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
@@ -97,7 +130,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
 
         // ─── Scene 6: 买家拒绝交付物 ─────────────────────────────────
-        "job_refused" => format!(
+        Event::JobRefused => format!(
             "【当前状态】job_refused（买家拒绝交付物）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作（严格顺序）】\n\n\
@@ -120,8 +153,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ 24h 内必须决策，否则资金自动退还买家。\n"
         ),
 
-        // ─── Scene 6.3: 用户决定发起仲裁 ─────────────────────────────
-        "DISPUTE_RAISE" => format!(
+        // ─── Scene 6.3: 用户决定发起仲裁（user-instruction 伪 event）───
+        Event::Other(ref s) if s == "DISPUTE_RAISE" => format!(
             "【当前动作】发起仲裁\n\
              【角色】卖家（Provider）\n\n\
              **Step 1 — 调用 CLI 发起仲裁（上链）：**\n\
@@ -141,8 +174,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - dispute_resolved（仲裁败诉）\n"
         ),
 
-        // ─── Scene 6.2: 用户决定同意退款 ─────────────────────────────
-        "AGREE_REFUND" => format!(
+        // ─── Scene 6.2: 用户决定同意退款（user-instruction 伪 event）───
+        Event::Other(ref s) if s == "AGREE_REFUND" => format!(
             "【当前动作】同意退款\n\
              【角色】卖家（Provider）\n\n\
              **Step 1 — 调用 CLI（上链）：**\n\
@@ -155,7 +188,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
 
         // ─── Scene 7: 任务完成（验收通过 / 仲裁胜诉） ────────────────
-        "job_completed" => format!(
+        Event::JobCompleted => format!(
             "【当前状态】job_completed（任务完成，资金已释放）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
@@ -166,7 +199,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
 
         // ─── Scene 6.5a: 仲裁败诉（资金退还买家） ────────────────────
-        "dispute_resolved" => format!(
+        Event::DisputeResolved => format!(
             "【当前状态】dispute_resolved（仲裁已裁决，资金退还买家）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
@@ -177,7 +210,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
 
         // ─── Scene 6.5b: 卖家同意退款（TODO: 后端尚未定义此 event）───
-        "confirm_refund" => format!(
+        Event::ConfirmRefund => format!(
             "【当前状态】confirm_refund（卖家已同意退款，资金退还买家）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
@@ -188,7 +221,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
 
         // ─── Scene 6.4: 仲裁进行中，提交证据 ─────────────────────────
-        "job_disputed" => format!(
+        Event::JobDisputed => format!(
             "【当前状态】job_disputed（仲裁已发起）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
@@ -202,7 +235,29 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
 
         // ─── 未知类型兜底 ─────────────────────────────────────────────
-        other => format!(
+        Event::JobCreated => format!(
+            "【当前状态】job_created（任务刚创建上链，等待卖家申请）\n\
+             【角色】卖家（Provider）\n\n\
+             【你的下一步动作】\n\n\
+             先调 `onchainos agent common context {job_id} --role seller --agent-id {agent_id}` 看完整任务详情，\n\
+             判断「Provider 描述」与任务领域是否匹配。匹配再考虑 `apply`，否则礼貌拒绝。\n"
+        ),
+        // ─── buyer 主导的 housekeeping 事件，provider 端基本无需动作 ─────
+        Event::JobExpired
+        | Event::JobClosed
+        | Event::JobVisibilityChanged
+        | Event::JobPaymentModeChanged
+        | Event::SubmitExpired
+        | Event::RefuseExpired => format!(
+            "【系统通知】{event}（buyer 端动作或超时事件）\n\
+             【角色】卖家（Provider）\n\n\
+             【建议】\n\
+             - 静默观察即可，无需主动 xmtp_send\n\
+             - 如需要详细信息，调用 `onchainos agent common context {job_id} --role seller`\n",
+            event = event.as_str()
+        ),
+
+        Event::Other(ref other) => format!(
             "【未知状态】{other}\n\
              【建议】\n\
              1. 调用 `onchainos agent common context {job_id} --role seller` 查看完整上下文\n\

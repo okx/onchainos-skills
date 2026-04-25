@@ -3,11 +3,17 @@
 // 浏览器打开 http://localhost:9013 即可点击收发消息。
 
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
 import { Agent, IdentifierKind } from "@xmtp/agent-sdk";
 import { createUser, createSigner } from "@xmtp/agent-sdk/user";
+
+const requireFromEsm = createRequire(import.meta.url);
 
 type XmtpEnv = "dev" | "production" | "local";
 // 先从脚本所在目录自动识别角色（避免忘设 ROLE 环境变量导致端口 / 日志标签冲突）
@@ -97,6 +103,147 @@ function buildEnvelope(args: {
       sender:          "发送方 agent 身份信息，包含 agentId / name / profileDescription / profilePicture / role（1=buyer, 2=seller）",
     },
   };
+}
+
+// ── Gateway RPC bridge（手动推系统通知到 openclaw agent sub session）─────
+// 复用 openclaw 全局包里的 GatewayClient。用 POST /notify-openclaw 触发。
+let _GatewayClient: any = null;
+let _gatewayInitTried = false;
+function loadGatewayClient(): any {
+  if (_gatewayInitTried) return _GatewayClient;
+  _gatewayInitTried = true;
+  const candidates = [
+    "/opt/homebrew/lib/node_modules/openclaw/dist/plugin-sdk/gateway-runtime.js",
+    "/usr/local/lib/node_modules/openclaw/dist/plugin-sdk/gateway-runtime.js",
+  ];
+  for (const p of candidates) {
+    try {
+      _GatewayClient = requireFromEsm(p).GatewayClient;
+      console.log(`${TAG} [notify] GatewayClient loaded from ${p}`);
+      return _GatewayClient;
+    } catch {}
+  }
+  console.log(`${TAG} [notify] GatewayClient not found; openclaw notifications disabled`);
+  return null;
+}
+
+function findSessionKeyForJob(jobId: string, myAddress?: string): string | null {
+  try {
+    const p = path.join(homedir(), ".openclaw/agents/main/sessions/sessions.json");
+    if (!fs.existsSync(p)) return null;
+    const sessions = JSON.parse(fs.readFileSync(p, "utf8")) as Record<string, unknown>;
+    for (const key of Object.keys(sessions)) {
+      const idx = key.indexOf("okx-xmtp:");
+      if (idx < 0) continue;
+      const qs = new URLSearchParams(key.slice(idx + "okx-xmtp:".length));
+      if (qs.get("job") !== jobId) continue;
+      // sessions.json 是 openclaw 视角：my=<openclaw agent>，to=<对话对端即我们 mock>
+      // 所以按 `to === myAddress`（mock 自己的地址）匹配，找出"openclaw 给我发的那条 session"
+      if (myAddress) {
+        const to = (qs.get("to") ?? "").toLowerCase();
+        if (to !== myAddress.toLowerCase()) continue;
+      }
+      return key;
+    }
+  } catch (err) {
+    console.log(`${TAG} [notify] sessions.json 读取失败:`, (err as Error).message);
+  }
+  return null;
+}
+
+async function callGatewaySessionsSend(sessionKey: string, message: string): Promise<void> {
+  const GC = loadGatewayClient();
+  if (!GC) throw new Error("GatewayClient not available");
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let stopped = false;
+    const stop = (err?: unknown) => {
+      if (settled) return;
+      settled = true;
+      if (err) reject(err instanceof Error ? err : new Error(String(err)));
+      else resolve();
+    };
+    const client: any = new GC({
+      instanceId: randomUUID(),
+      clientName: "gateway-client",
+      clientDisplayName: `${TAG}:notify`,
+      mode: "backend",
+      role: "operator",
+      scopes: ["operator.admin"],
+      minProtocol: 3,
+      maxProtocol: 3,
+      onHelloOk: async () => {
+        try {
+          await client.request(
+            "sessions.send",
+            { key: sessionKey, message, idempotencyKey: randomUUID() },
+            { timeoutMs: 10_000 },
+          );
+          stopped = true;
+          try { client.stop(); } catch {}
+          stop();
+        } catch (err) {
+          stopped = true;
+          try { client.stop(); } catch {}
+          stop(err);
+        }
+      },
+      onClose: (code: number, reason: string) => {
+        if (stopped) return;
+        stop(new Error(`gateway closed (${code}): ${reason || "no reason"}`));
+      },
+      onConnectError: (err: unknown) => {
+        if (settled) return;
+        stop(err);
+      },
+    });
+    setTimeout(() => {
+      if (settled) return;
+      try { client.stop(); } catch {}
+      stop(new Error("gateway timeout"));
+    }, 10_000);
+    client.start();
+  });
+}
+
+// 按 a2a system envelope 拼 message 文本（见 SKILL.md Priority 1.5）
+//
+// 字段语义（不要再搞反！）：
+// - `event`     = 触发本通知的事件名（provider_applied / job_accepted / ...）
+//                 即"这次发生了什么"
+// - `jobStatus` = 任务在状态机里此刻的真实状态（open / accepted / submitted / completed / ...）
+//                 跟 mock-api 的 task.statusStr 一致；不是事件名
+function buildSystemEnvelope(args: {
+  agentId: string;
+  jobId: string;
+  event: string;       // 必填——具体事件
+  jobStatus: string;   // 必填——任务真实状态（caller 应从 mock-api 实时拉）
+  description?: string;
+}): string {
+  return JSON.stringify({
+    agentId: args.agentId,
+    message: {
+      event: args.event,
+      jobStatus: args.jobStatus,
+      description: args.description ?? "",
+      source: "system",
+      jobId: args.jobId,
+      timestamp: Math.floor(Date.now() / 1000),
+    },
+  });
+}
+
+// 实时拉 jobStatus —— 从 mock-api task detail 的 task.statusStr 取
+async function fetchJobStatus(jobId: string): Promise<string> {
+  try {
+    const resp = await fetch(`${MOCK_API_URL}/priapi/v1/aieco/task/${encodeURIComponent(jobId)}`);
+    const body: any = await resp.json();
+    const status = body?.data?.task?.statusStr ?? body?.data?.statusStr ?? body?.statusStr;
+    if (typeof status === "string" && status) return status;
+  } catch (e) {
+    console.error(`${TAG} [notify] 拉 jobStatus 失败:`, (e as Error)?.message ?? e);
+  }
+  return "unknown";
 }
 
 // ── SSE ─────────────────────────────────────────────────────────────
@@ -371,6 +518,45 @@ async function main() {
       return;
     }
 
+    // POST /notify-openclaw —— 手动推系统通知到 openclaw agent session
+    if (req.method === "POST" && url.pathname === "/notify-openclaw") {
+      try {
+        const body = JSON.parse(await readBody()) as {
+          jobId?: string;
+          event?: string;
+          description?: string;
+        };
+        if (!body.jobId || !body.event) {
+          sendJson(400, { error: "jobId + event required" });
+          return;
+        }
+        const sessionKey = findSessionKeyForJob(body.jobId, myAddress);
+        if (!sessionKey) {
+          sendJson(404, {
+            error: `未找到 jobId=${body.jobId} + my=${myAddress} 对应的 session（openclaw 是否已建 group？）`,
+          });
+          return;
+        }
+        const jobStatus = await fetchJobStatus(body.jobId);
+        const message = buildSystemEnvelope({
+          agentId: OWN_AGENT_ID || "unknown",
+          jobId: body.jobId,
+          event: body.event,
+          jobStatus,
+          description: body.description,
+        });
+        await callGatewaySessionsSend(sessionKey, message);
+        console.log(
+          `${TAG} [notify] ✓ event=${body.event} jobStatus=${jobStatus} jobId=${body.jobId} → ${sessionKey.slice(0, 70)}…`,
+        );
+        sendJson(200, { ok: true, sessionKey, message });
+      } catch (e: any) {
+        console.error(`${TAG} [notify] ✗ failed:`, e?.message ?? e);
+        sendJson(500, { error: String(e?.message ?? e) });
+      }
+      return;
+    }
+
     res.writeHead(404); res.end("not found");
   });
 
@@ -447,6 +633,14 @@ body { font-family: ui-monospace, monospace; background: #0d1117; color: #c9d1d9
 #action-toolbar .btn-deliver:hover { background: #4a3a00; }
 #action-toolbar .btn-warn { background: #3d1f00; color: #f0883e; }
 #action-toolbar .btn-warn:hover { background: #5a2f00; }
+#notify-bar { padding: 8px 14px; border-top: 1px solid #30363d; background: #161b22; font-size: 11px; }
+#notify-bar .bar-title { color: #8b949e; margin-bottom: 6px; }
+#notify-bar .bar-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#notify-bar label { display: flex; align-items: center; gap: 4px; color: #8b949e; }
+#notify-bar input, #notify-bar select { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 3px 8px; border-radius: 4px; font-family: inherit; font-size: 11px; }
+#notify-bar input { width: 80px; }
+#notify-bar button { background: #3a2d00; color: #e3b341; border: 1px solid #3a2d00; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 11px; font-family: inherit; }
+#notify-bar button:hover { background: #4a3a00; }
 #input-bar { padding: 10px 14px; border-top: 1px solid #30363d; display: flex; gap: 8px; }
 #input-bar input { flex: 1; background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 8px 12px; border-radius: 5px; font-family: inherit; font-size: 13px; }
 #input-bar input:focus { outline: none; border-color: #58a6ff; }
@@ -490,6 +684,28 @@ body { font-family: ui-monospace, monospace; background: #0d1117; color: #c9d1d9
   <div id="main">
     <div id="conv-header">未选中会话</div>
     <div id="messages"></div>
+
+    <!-- 手动推系统通知（模拟链事件）-->
+    <div id="notify-bar">
+      <div class="bar-title">📡 发送系统通知 (模拟链事件，推进自己 agent 的状态机)</div>
+      <div class="bar-row">
+        <label>jobId<input id="notify-jobid" type="text" placeholder="auto" /></label>
+        <label>event
+          <select id="notify-event">
+            <option value="provider_applied">provider_applied</option>
+            <option value="job_accepted">job_accepted</option>
+            <option value="job_submitted">job_submitted</option>
+            <option value="job_completed">job_completed</option>
+            <option value="job_refused">job_refused</option>
+            <option value="job_disputed">job_disputed</option>
+            <option value="confirm_refund">confirm_refund</option>
+            <option value="dispute_resolved">dispute_resolved</option>
+          </select>
+        </label>
+        <button id="btn-notify" type="button">发送通知</button>
+      </div>
+    </div>
+
     <div id="action-toolbar">
       <!-- Buyer 快捷动作（协商 3 步 + 链上 3 动作）-->
       <div class="btns" id="btns-buyer" style="display:none;">
@@ -792,6 +1008,36 @@ async function contactSeller(addr) {
 }
 
 $("btn-refresh-sellers").addEventListener("click", loadSellers);
+
+// ── 发送系统通知（模拟链事件）─────────────────────────────────────
+$("btn-notify").addEventListener("click", async () => {
+  // jobId 默认来自当前会话 context
+  let jobId = $("notify-jobid").value.trim();
+  if (!jobId && state.activeConvId) {
+    const c = state.convs.get(state.activeConvId);
+    // 从收到的消息里扒 jobId（envelope.jobId）
+    for (const m of (c?.messages || [])) {
+      try {
+        const env = JSON.parse(m.content);
+        if (env && typeof env.jobId === "string" && env.jobId) { jobId = env.jobId; break; }
+      } catch {}
+    }
+  }
+  if (!jobId) { alert("请填 jobId 或先选中一个含 jobId 的会话"); return; }
+  const event = $("notify-event").value;
+  const resp = await fetch("/notify-openclaw", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jobId, event }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) {
+    alert("推送失败: " + (data.error || resp.status));
+    return;
+  }
+  console.log("[notify-openclaw] ✓ event=" + event, "jobId=" + jobId, "→", data.sessionKey?.slice(0, 60) + "…");
+  $("notify-jobid").value = "";
+});
 
 // 仅在 buyer 角色下显示"发布任务"表单和卖家列表
 function toggleBuyerUI(role) {

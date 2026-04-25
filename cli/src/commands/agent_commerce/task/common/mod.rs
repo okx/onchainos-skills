@@ -13,6 +13,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 pub mod dispute_upload;
 pub mod network;
 pub mod rate_agent;
+pub mod state_machine;
 
 use crate::commands::Context;
 
@@ -153,19 +154,6 @@ struct TaskDetail {
 
 // ─── Agent 资料响应结构 ───────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentListResp {
-    code: Option<String>,
-    data: Option<AgentListData>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentListData {
-    list: Vec<AgentProfile>,
-}
-
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct AgentProfile {
@@ -175,27 +163,87 @@ struct AgentProfile {
     profile_description: Option<String>,
 }
 
-/// [MOCK] 查询 agent 资料（name / profileDescription）
+/// 查询指定 agentId 的 agent 资料（name / profileDescription）。
 ///
-/// TODO: 替换为真实后端接口。当前返回 mock 数据。
-async fn fetch_agent_profile(_agent_id: &str, api_url: &str) -> Option<AgentProfile> {
-    let url = format!("{api_url}/priapi/v1/aieco/agent/list");
-    let resp: Result<AgentListResp, _> = match reqwest::get(&url).await {
-        Ok(r) => r.json().await,
-        Err(_) => return Some(mock_profile()),
+/// 直接 spawn `onchainos agent get --agent-ids <id> --base-url <api>` 子进程，
+/// parse stdout —— 不在这里复刻 token / wallet client / URL 拼装逻辑，
+/// `agent get` 自己的实现以后改了，这里自动跟上。
+/// 拿不到就回退到带 agentId 的占位符（不再写死 "My DeFi Agent"）。
+async fn fetch_agent_profile(agent_id: &str, api_url: &str) -> Option<AgentProfile> {
+    let fallback = || AgentProfile {
+        agent_id: Some(agent_id.to_string()),
+        name: Some(format!("Agent {agent_id}")),
+        profile_description: Some("(profile unavailable)".to_string()),
     };
-    match resp {
-        Ok(r) if r.code.as_deref() == Some("0") => r.data.and_then(|d| d.list.into_iter().next()),
-        _ => Some(mock_profile()),
+    if agent_id.is_empty() {
+        return Some(fallback());
     }
-}
 
-fn mock_profile() -> AgentProfile {
-    AgentProfile {
-        agent_id: Some("10001".to_string()),
-        name: Some("My DeFi Agent".to_string()),
-        profile_description: Some("A DeFi trading agent".to_string()),
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[fetch_agent_profile] current_exe 失败: {e}; fallback");
+            return Some(fallback());
+        }
+    };
+
+    // 不传 --base-url；改用 OKX_BASE_URL env 注入，wallet_api 解析时优先读这个，
+    // 跟父进程实际打到的 URL 完全一致（无论父进程 base_url 来源是 flag 还是 env）。
+    let output = match tokio::process::Command::new(&exe)
+        .args(["agent", "get", "--agent-ids", agent_id])
+        .env("OKX_BASE_URL", api_url)
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("[fetch_agent_profile] spawn `agent get` 失败: {e}; fallback");
+            return Some(fallback());
+        }
+    };
+
+    let body: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!(
+                "[fetch_agent_profile] 解析 `agent get` stdout 失败: {e}; raw={}; fallback",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return Some(fallback());
+        }
+    };
+
+    // `agent get` 的输出形状由 output::success 包装：{ ok: true, data: <value> }
+    // 失败时是 { ok: false, error: "..." }
+    if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error message)");
+        eprintln!("[fetch_agent_profile] `agent get` 返回失败: {err}; fallback");
+        return Some(fallback());
     }
+    let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
+
+    // data 是后端真实 shape：[{list, page, pageSize, total}]；
+    // 极少数被 normalize 成单 object 的情况也兼容。
+    let list_val = if let Some(arr) = data.as_array() {
+        arr.first().and_then(|x| x.get("list")).cloned()
+    } else {
+        data.get("list").cloned()
+    };
+    let list_arr = list_val.as_ref().and_then(|v| v.as_array());
+
+    let matched = list_arr.and_then(|arr| {
+        arr.iter()
+            .find(|a| a.get("agentId").and_then(|v| v.as_str()) == Some(agent_id))
+            .map(|a| AgentProfile {
+                agent_id: Some(agent_id.to_string()),
+                name: a.get("name").and_then(|v| v.as_str()).map(String::from),
+                profile_description: a
+                    .get("profileDescription")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+            })
+    });
+    Some(matched.unwrap_or_else(fallback))
 }
 
 // ─── 状态说明 ──────────────────────────────────────────────────────────────
@@ -226,40 +274,16 @@ fn payment_type_desc(pt: i32) -> &'static str {
 }
 
 /// 根据角色 + 任务状态，列出当前可执行的 CLI 操作
+/// 按 role 路由到对应 flow.rs 的 `available_actions`，
+/// single source of truth 留在 buyer/provider/evaluator 各自模块。
 fn available_actions(role: &str, status: &str, job_id: &str) -> Vec<String> {
-    match (role, status) {
-        ("buyer", "open") => vec![
-            format!("onchainos agent recommend {job_id}      # 查看推荐卖家"),
-            format!("onchainos agent confirm-accept {job_id} --provider <addr>  # 接受卖家并注资"),
-            format!("onchainos agent close {job_id}          # 关闭任务"),
-            format!("onchainos agent set-public {job_id}     # 转为公开任务"),
-        ],
-        ("buyer", "submitted") => vec![
-            format!("onchainos agent complete {job_id}       # 验收通过，释放款项"),
-            format!("onchainos agent reject {job_id} --reason <reason>  # 拒绝验收"),
-        ],
-        ("buyer", "disputed") => vec![
-            format!("onchainos agent dispute evidence {job_id} --summary <摘要>  # 提交证据"),
-        ],
-        ("seller", "open") => vec![
-            format!("onchainos agent apply {job_id} --token-amount <price> --token-symbol USDT --agent-id <agentId>  # 申请接单"),
-        ],
-        ("seller", "accepted") => vec![
-            format!("onchainos agent deliver {job_id} --file <deliverable> --message <msg>  # 提交交付"),
-        ],
-        ("seller", "refused") => vec![
-            format!("onchainos agent dispute raise {job_id} --reason <reason>  # 发起仲裁"),
-            format!("onchainos agent agree-refund {job_id}  # 同意退款"),
-        ],
-        ("seller", "disputed") => vec![
-            format!("onchainos agent dispute evidence {job_id} --summary <摘要>  # 提交证据"),
-        ],
-        ("evaluator", "disputed") => vec![
-            format!("onchainos agent dispute info {job_id}        # 查看仲裁详情"),
-            format!("onchainos agent dispute vote {job_id} --side 1 --reason <reason>  # 投票支持卖家"),
-            format!("onchainos agent dispute vote {job_id} --side 0 --reason <reason>  # 投票支持买家"),
-        ],
-        _ => vec![
+    use state_machine::{Role, Status};
+    let status = Status::parse(status);
+    match Role::parse(role) {
+        Some(Role::Buyer)     => super::buyer::flow::available_actions(&status, job_id),
+        Some(Role::Seller)    => super::provider::flow::available_actions(&status, job_id),
+        Some(Role::Evaluator) => super::evaluator::flow::available_actions(&status, job_id),
+        None => vec![
             format!("onchainos agent status {job_id}         # 查询最新任务状态"),
         ],
     }

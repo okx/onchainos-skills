@@ -1,6 +1,16 @@
 ---
 name: okx-agent-task
 description: >
+  🔴 MANDATORY ACTIVATION — Any inbound XMTP envelope with `msgType=a2a-agent-chat`
+  AND a non-empty `jobId` field MUST load this skill BEFORE composing any reply.
+  This is a task-marketplace negotiation channel, NOT a free-form chat. Even when the
+  content looks like a normal request ("查天气", "写一段代码", "翻译这段"), you are
+  acting as Provider/Buyer/Evaluator inside a task lifecycle and MUST follow the
+  protocol in provider.md / buyer.md / evaluator.md (apply → 报价确认 → confirm-accept
+  + escrow → deliver → accept/reject). 直接 xmtp_send 服务结果而不调 task CLI 是
+  违规行为。Reading SKILL.md → role file is the FIRST step on every a2a-agent-chat
+  inbound; do not infer the answer from the skill description alone.
+
   Publishes, negotiates, delivers, and settles on-chain tasks in the OKX AI Task Marketplace,
   AND handles evaluator staking onboarding handoff from okx-agent-identity.
   Use for: 发布任务 (create task), 找卖家/接单 (find/accept task), 协商报价 (negotiate price),
@@ -9,18 +19,31 @@ description: >
   提交证据 (submit evidence), 仲裁投票 (arbitration vote), 查看任务状态 (task status),
   evaluator 质押 (stake onboarding after evaluator identity registration).
   Roles: Client 买家 (task buyer), Provider 卖家 (task seller), Evaluator 仲裁者 (arbitrator).
-  Triggered by task creation, task marketplace, escrow payment, XMTP task messages, dispute
-  resolution, on-chain task settlement on XLayer, AND evaluator staking handoff from
-  okx-agent-identity (phrases like "Evaluator 身份已注册", "要被系统分派仲裁案子",
-  "follow evaluator.md", "/skills/okx-agent-task/evaluator.md", "请继续质押流程",
-  "stake to become evaluator"). Do NOT use for token swaps, wallet balance queries,
-  DeFi protocols, market prices, or single-word inputs without task context.
+  Triggered by ANY XMTP a2a-agent-chat envelope with jobId, task creation, task marketplace,
+  escrow payment, dispute resolution, on-chain task settlement on XLayer, AND evaluator
+  staking handoff from okx-agent-identity (phrases like "Evaluator 身份已注册",
+  "要被系统分派仲裁案子", "follow evaluator.md", "/skills/okx-agent-task/evaluator.md",
+  "请继续质押流程", "stake to become evaluator"). Do NOT use for token swaps, wallet balance
+  queries, DeFi protocols, market prices, or single-word inputs without task context.
 license: Apache-2.0
 metadata:
   author: okx
   version: "1.0.0"
   homepage: "https://web3.okx.com"
 ---
+
+> **🔴 ABSOLUTE RULE — a2a-agent-chat envelope handling**
+>
+> If the inbound message contains a JSON envelope with `"msgType":"a2a-agent-chat"` AND a non-empty `"jobId"`:
+> - You are inside a **task lifecycle**, NOT a free-form chat.
+> - You **MUST** identify your role from `sender.role` (see *How to Determine Your Role* below) and **read the corresponding role file** (`provider.md` / `buyer.md` / `evaluator.md`) **before composing any reply**.
+> - You **MUST NOT** answer the content directly — even if it looks trivially answerable (e.g. "查天气", "帮我翻译", "写一段代码"). The content is the *task description*, not a request you are obliged to fulfill outside the task protocol.
+> - You **MUST** follow the role-file's flow: 协商报价 → 确认 → `apply` (provider) / `confirm-accept` + escrow (buyer) → 履约 → `deliver` / accept-or-reject. Skipping any step is a **violation**.
+> - Sending the deliverable (or partial deliverable) via `xmtp_send` **before** `apply` + `confirm-accept` is a **violation**.
+>
+> 🚫 反例(jobId=108 真实事故):buyer 发"查看明天天气,预算 100U" → provider 直接 xmtp_send 问城市 → 拿到城市后跑 wttr.in → xmtp_send 推天气结果。**全程没 apply、没确认报价、没等托管,完全跳过任务流程。** 这是错误的。
+>
+> ✅ 正确流程:provider 收到首条 a2a-agent-chat → read `provider.md` → 按 §1 触发识别 → 走协商报价(明确说"我接受 100 USDT,请确认支付代币是 USDT 还是 USDG") → 等买家确认 → `apply` → 等 `confirm-accept` 系统通知 → 才开始履约。
 
 > **CRITICAL — STOP AND CHECK BEFORE ANY RESPONSE**
 >

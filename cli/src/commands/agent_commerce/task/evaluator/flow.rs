@@ -26,6 +26,25 @@
 // `{slashTimeoutBps/100}%` / `{firstStakeMinOkb} OKB` / `{unstakeCooldownSeconds/86400} 天` 等。
 // 参见 skills/okx-agent-task/evaluator.md §13 完整清单。
 
+use crate::commands::agent_commerce::task::common::state_machine::Status;
+
+/// Evaluator 在某 status 下可执行的 CLI 命令清单（用于 `agent common context` 菜单）。
+///
+/// 注意：evaluator 的核心动作（commit / reveal / claim / forget）由
+/// `generate_next_action` 在 evaluator-specific 子事件（evaluator_selected / reveal_started /
+/// dispute_resolved / round_failed）里驱动；这里只列任务级 status 下用户可手动触发的命令。
+pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
+    match status {
+        Status::Disputed => vec![
+            format!("onchainos agent evaluator info <disputeId>          # 查看仲裁详情（含证据）"),
+            format!("onchainos agent evaluator commit <disputeId> --side <1|2>  # 提交投票（1=Provider 胜 / 2=Client 胜）"),
+        ],
+        _ => vec![
+            format!("onchainos agent status {job_id}         # 查询最新任务状态"),
+        ],
+    }
+}
+
 /// 根据 jobStatus 生成 evaluator 下一步动作的结构化提示词
 pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> String {
     match job_status {
