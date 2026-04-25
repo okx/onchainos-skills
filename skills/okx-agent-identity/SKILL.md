@@ -73,7 +73,7 @@ Three roles. Always use the lowercase English value for the `--role` CLI paramet
 |---|---|---|
 | `requester` | 买家 (buyer) | Publishes tasks, pays for services |
 | `provider` | 服务方 (seller) | Offers services, delivers work |
-| `evaluator` | 验证者 (arbitrator) | Judges disputes. `create` itself is unconditional; 100 OKB stake is required separately to be assigned real disputes (see `okx-agent-task`). |
+| `evaluator` | 验证者 (arbitrator) | Judges disputes. `create` itself is unconditional; a separate stake via `okx-agent-task` is required to be assigned real disputes. |
 
 CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provider; `3` → evaluator. The skill always emits the canonical lowercase English name to the CLI.
 
@@ -291,14 +291,15 @@ Passive fallback (user skipped step 2):
        ↓
 2. okx-agent-identity             collect name + description → confirm → execute
                                   create --role evaluator → evaluatorAgentId
+       ↓ (same turn — no user reply between 2 and 3)
+3. okx-agent-task                 load evaluator.md in the same response
+                                  → When to Activate → Step 1 → Step 2
+                                  → render stake confirmation inline
        ↓
-3. okx-agent-task                 follow evaluator.md to stake 100 OKB
-                                  (没质押不会被系统派单，但 agent 身份已生效)
-       ↓
-4. okx-agent-task                 wait for dispute assignment
+4. okx-agent-task                 user confirms stake next turn → eligible for assignment
 ```
 
-**Data handoff**: `evaluatorAgentId` is produced at step 2 and belongs to the user regardless of stake status. Step 3 (staking) is a separate, user-triggered action handled entirely by `okx-agent-task`; the identity skill never reads or verifies stake state. Do NOT gate step 2 on prior staking.
+**Data handoff**: `evaluatorAgentId` is produced at step 2 and belongs to the user regardless of stake status. Step 2 → step 3 is a **same-turn handoff**: after create succeeds, render the two visible post-success lines (see `role-evaluator.md §Post-success`) and then immediately load `okx-agent-task/evaluator.md` inside the same response — do not stop between them. The identity skill never reads or verifies stake state and does not pass a stake amount. Do NOT gate step 2 on prior staking. Exception: if the user has explicitly declined staking earlier in the conversation, render the visible lines only and stop.
 
 ### Workflow D: Discover → rate
 
@@ -326,7 +327,7 @@ Use the role-specific Q&A chains (`role-requester.md` / `role-provider.md` / `ro
 
 - `--role` is mandatory on `create`; ask if missing.
 - `<agentId>` is mandatory on `update`, `activate`, `deactivate`, `service-list`, `feedback-list`. If missing, run `agent get` once and let the user pick.
-- `--service` JSON fields — follow the normalization rules: `ServiceName` / `ServiceDescription` / `ServiceType` (`A2MCP` | `A2A`, case-insensitive) required; `Fee` / `Endpoint` required only for `A2MCP`; for `A2A` the CLI discards any `Endpoint` even if supplied.
+- `--service` JSON fields — follow the normalization rules: `name` / `servicedescription` / `servicetype` (`A2MCP` | `A2A`, case-insensitive) required; `fee` / `endpoint` required only for `A2MCP`; for `A2A` the CLI discards any `endpoint` even if supplied.
 - `--address` — do NOT prompt. Default is the current wallet's XLayer address. Only set it when an expert user explicitly says "用 0x… 这个地址签".
 - Never default `--status active` on search — only set it if the user clearly says "只看活跃的".
 
@@ -341,6 +342,7 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 - Render the detail card (success) or the error card (failure), following `references/display-formats.md`.
 - Attach exactly **one** next-step suggestion line (Suggest Next Steps table below).
 - Stop. Wait for the user. No status polling, no auto-retry, no speculative side-query.
+- **Exception — evaluator create → stake (same-turn handoff)**: after `agent create --role evaluator` succeeds, render the two visible post-success lines from `role-evaluator.md §Post-success`, then immediately load `/skills/okx-agent-task/evaluator.md` and continue with its `When to Activate → Step 1 → Step 2` inside the same response. Do **not** stop; do **not** wait for the user. This is the only same-turn chain allowed from this skill — it exists because registration and staking form a single onboarding intent for evaluators. Skip the handoff (render visible lines only, then stop) if the user has explicitly declined staking earlier in the conversation — see `role-evaluator.md §Good / bad cases`.
 
 ### Suggest Next Steps
 
@@ -348,7 +350,7 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 |---|---|
 | `agent create --role requester` | "要不要开始发布任务？走 `okx-agent-task`。" |
 | `agent create --role provider` | "Provider 注册完成，默认已 active。可以 `agent search` 自检曝光，或直接等匹配来的任务。" |
-| `agent create --role evaluator` | "Evaluator 身份已注册。要被系统分派仲裁案子，先去 `/skills/okx-agent-task/evaluator.md` 质押 100 OKB；之后想看同行声誉水平可以 `agent search --feedback 高分 --agent-info evaluator`。" |
+| `agent create --role evaluator` | Render two visible lines ("Evaluator 身份 #<id> 已注册。" + "要被系统分派仲裁案子还需要完成质押。" — English variants in `role-evaluator.md`), then **same-turn handoff** to `okx-agent-task/evaluator.md` (`When to Activate → Step 1 → Step 2`) inside the same response; do not stop. See `role-evaluator.md §Post-success` for full templates and §Step 4 Exception above for the carve-out. |
 | `agent update` | Show new detail card. If user deactivated during update, suggest re-activate. |
 | `agent activate` | "上架完成，可以 `agent search` 自检曝光。" |
 | `agent deactivate` | "下架完成，客户端列表会隐藏；要恢复执行 `agent activate`。" |
@@ -372,7 +374,7 @@ Every user-facing string the skill renders must match the user's language. Detec
 
 - CLI flag names (`--role`, `--agent-id`, `--creator-id`, `--sort-by`, `--service`, …).
 - Enum / canonical values sent to the CLI (`requester`, `provider`, `evaluator`, `A2MCP`, `A2A`, `time_desc`, `score_desc`, `active`, `inactive` when used as the `--status` value).
-- **JSON schema keys inside the actual `--service` payload** (`ServiceName`, `ServiceDescription`, `ServiceType`, `Fee`, `Endpoint`) — these get sent to the CLI and `utils.rs::normalize_service` matches them exactly. **BUT their user-facing labels in cards and Q&A prompts ARE localized**: Chinese renders `服务[N] 名称 / 描述 / 类型 / 价格 / 接口地址`; English renders `Service [N] Name / Description / Type / Fee / Endpoint`. The schema key only shows up in the raw bash command (which we only render when the user explicitly asks).
+- **JSON schema keys inside the actual `--service` payload** (`name`, `servicedescription`, `servicetype`, `fee`, `endpoint`) — these get sent to the CLI and `utils.rs::normalize_service` matches them exactly. **BUT their user-facing labels in cards and Q&A prompts ARE localized**: Chinese renders `服务[N] 名称 / 描述 / 类型 / 价格 / 接口地址`; English renders `Service [N] Name / Description / Type / Fee / Endpoint`. The schema key only shows up in the raw bash command (which we only render when the user explicitly asks).
 - On-chain primitives: addresses (`0x…`), transaction hashes, agent IDs (`#42`), score numbers (`85 / 100`), token symbols (`USDT`, `OKB`).
 - Bash commands the user asked to see.
 
@@ -415,7 +417,7 @@ Reply with a number: 1/2/3.
 ### Rules
 
 - **Also accept the canonical spelling** as a fallback: if user replies `A2MCP` instead of `1`, accept it. But the **primary ask is numeric**.
-- **Map the number before sending to the CLI.** CLI enums accept: `--role` accepts numeric aliases (`1`/`2`/`3` — `utils.rs:162-165`), so you can pass the number straight through. `ServiceType` and other enums do NOT have numeric aliases — the skill must translate `1→A2MCP`, `2→A2A` locally before invoking the CLI. Never send a raw `1` / `2` to a flag that doesn't accept it.
+- **Map the number before sending to the CLI.** CLI enums accept: `--role` accepts numeric aliases (`1`/`2`/`3` — `utils.rs:162-165`), so you can pass the number straight through. `servicetype` and other enums do NOT have numeric aliases — the skill must translate `1→A2MCP`, `2→A2A` locally before invoking the CLI. Never send a raw `1` / `2` to a flag that doesn't accept it.
 - **One question per turn.** Even with numbered options the question is one turn (see `_shared/no-polling.md` and `role-playbook.md` one-question rule).
 - **Don't use numbered options for open-ended fields.** Name, description, fee amount, feedback description — these are free-form.
 - **Don't force a menu for "what's next".** Post-success suggestions (§8 of `display-formats.md`) are always a single line, never a menu (see the Bad example in §8).
@@ -428,7 +430,7 @@ Reply with a number: 1/2/3.
 | Role selection on `create` | `SKILL.md §Core Flow` gate 1 |
 | Arbitrator intent disambiguation | `SKILL.md §Negative Triggers` |
 | Existing provider pre-check (new vs update) | `references/role-playbook.md §Pre-check` |
-| ServiceType (A2MCP vs A2A) | `references/role-provider.md` Phase 2 S3 |
+| servicetype (A2MCP vs A2A) | `references/role-provider.md` Phase 2 S3 |
 | "Add another service?" loop gate | `references/role-provider.md` Phase 2 S6 |
 | Avatar upload path (attachments / generate / skip) | `references/avatar-upload.md` §Policy |
 | Which of my agents to use as feedback `--creator-id` | `references/feedback-guide.md` Step 2 |
@@ -445,7 +447,7 @@ Some users type their whole request in one turn: "注册一个 provider 叫 Alic
 4. **Phase boundary is strict.** Identity-phase capture does **NOT** reach into service-phase fields. If the user said "provider 叫 Alice 做数据分析，收 10 USDT" during Phase 1:
    - Capture `name=Alice` (or ask if ambiguous — see rule 2).
    - **Do NOT** capture Fee=10 or any service field. The "10 USDT" is discarded from the Phase-1 parse. When Phase 2 starts, ask Q1 fresh; the user can re-supply the fee then.
-   - Rationale: service field structure is complex (ServiceType decides whether Fee/Endpoint are asked), cross-phase parse has many misfire modes.
+   - Rationale: service field structure is complex (`servicetype` decides whether `fee`/`endpoint` are asked), cross-phase parse has many misfire modes.
 5. **All fields captured → skip straight to confirmation.** If the one-shot utterance covered every required field for the role (identity for requester/evaluator; identity + at least one complete service for provider — but see rule 4, so provider never gets here from identity phase alone), render the confirmation card directly. The confirmation card is still mandatory (see §Core Flow gate 4).
 6. **Confirmation-step ambiguity.** When rendering the confirmation card after one-shot capture, if any captured value was edge-case (whitespace, punctuation, bracketed optionals), show the value verbatim and let the user reject during confirmation. Do not "clean up" silently.
 7. **One-shot + numbered choice combo.** If the user's one-shot utterance includes a choice field (e.g., "Type: A2MCP"), accept it. If they used the label instead of the number ("A2A 类型"), also accept. But when asking a choice question that the user hasn't answered yet, still use the numbered-options pattern (see §Choice prompts).
@@ -470,9 +472,9 @@ Phase-1 capture: `name=Alice`, `description=做 DeFi 分析`. **Fee=10 is discar
 
 ## Amount Display Rules
 
-- Service `Fee` is an **integer USDT string** at the CLI layer — always show the user the human-readable form "`N USDT`" (e.g., `10 USDT`). Never show raw minimal token units.
-- Service `Fee` is only meaningful for `A2MCP` services. For `A2A`, display "free" or "inline (per-call pricing off-chain)" — the CLI-stored value is informational.
-- OKB staking amount for evaluator is **100 OKB**; always show the token symbol. Do not quote USD value (it fluctuates).
+- Service `fee` is an **integer USDT string** at the CLI layer — always show the user the human-readable form "`N USDT`" (e.g., `10 USDT`). Never show raw minimal token units.
+- Service `fee` is only meaningful for `A2MCP` services. For `A2A`, display "free" or "inline (per-call pricing off-chain)" — the CLI-stored value is informational.
+- Evaluator stake amount is owned by `okx-agent-task` and may change; **never hardcode the amount** in this skill's copy. Just point users to the staking flow at `/skills/okx-agent-task/evaluator.md`.
 - EVM contract / agent addresses must be displayed all lowercase.
 - Scores are integers 0–100; display as "85 / 100".
 
@@ -526,8 +528,8 @@ Phase-1 capture: `name=Alice`, `description=做 DeFi 分析`. **Fee=10 is discar
 | 口碑 / 评价 / rating / reviews | `agent feedback-list` |
 | 打分 / 评分 / rate | `agent feedback-submit` |
 | 我的 agent / my agents | `agent get` (no id) |
-| MCP 服务 / A2MCP | `ServiceType=A2MCP` |
-| A2A 服务 / agent-to-agent | `ServiceType=A2A` |
+| MCP 服务 / A2MCP | `servicetype=A2MCP` |
+| A2A 服务 / agent-to-agent | `servicetype=A2A` |
 
 ## Installer Checksums
 

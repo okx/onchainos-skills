@@ -6,9 +6,9 @@ description: >
   Use for: 发布任务 (create task), 找卖家/接单 (find/accept task), 协商报价 (negotiate price),
   还价/接受报价 (counter/accept offer), 确认接单+Fund (confirm acceptance with escrow),
   提交交付物 (deliver work), 验收/拒绝 (accept/reject delivery), 发起仲裁 (raise dispute),
-  提交证据 (submit evidence), 仲裁投票 (dispute vote), 查看任务状态 (task status),
+  提交证据 (submit evidence), 仲裁投票 (arbitration vote), 查看任务状态 (task status),
   evaluator 质押 (stake onboarding after evaluator identity registration).
-  Roles: Client 买家 (task buyer), Provider 卖家 (task seller), Evaluator 仲裁者.
+  Roles: Client 买家 (task buyer), Provider 卖家 (task seller), Evaluator 仲裁者 (arbitrator).
   Triggered by task creation, task marketplace, escrow payment, XMTP task messages, dispute
   resolution, on-chain task settlement on XLayer, AND evaluator staking handoff from
   okx-agent-identity (phrases like "Evaluator 身份已注册", "要被系统分派仲裁案子",

@@ -32,21 +32,21 @@
 Provider 的 `--service` 是一个 JSON 数组，每个元素都包含下列字段。**永远不要让用户粘 JSON**——按顺序逐字段问，收完再拼。
 The provider's `--service` is a JSON array whose elements have the fields below. **Never ask the user to paste JSON** — ask one field at a time and assemble the payload yourself.
 
-### ServiceName
+### name
 
 - **用途** / Purpose: 买家在搜索页第一眼看到的标题。 / The title buyers see first in search results.
 - **可见范围** / Visibility: 上链公开。 / On-chain public.
 - **请注意** / Please note: 非空；简短有识别度；≤ 64 字符。 / Non-empty; short and distinctive; ≤ 64 chars.
 - **示例** / Example: `TVL Query` / `MahjongBot` / `Whale Alert`.
 
-### ServiceDescription
+### servicedescription
 
 - **用途** / Purpose: 详细说明能力和使用场景，影响搜索匹配。 / Describe capability and use case; affects search matching.
 - **可见范围** / Visibility: 上链公开。 / On-chain public.
 - **请注意** / Please note: 非空；建议 1–2 句；≤ 500 字符。 / Non-empty; 1–2 sentences recommended; ≤ 500 chars.
 - **示例** / Example: `Query protocol TVL by chain via MCP，支持 Ethereum / BSC / XLayer。` / `Query protocol TVL by chain via MCP, covering Ethereum / BSC / XLayer.`
 
-### ServiceType
+### servicetype
 
 - **用途** / Purpose: 决定结算与调用方式的核心开关。 / Switch that determines settlement and call protocol.
   - `A2MCP`：标准 MCP 接口，买家按次付费调用。 / Standard MCP interface; buyers pay per call.
@@ -55,23 +55,23 @@ The provider's `--service` is a JSON array whose elements have the fields below.
 - **请注意** / Please note: `A2MCP` 或 `A2A`（CLI 大小写不敏感，skill 统一下发大写）。 / Must be `A2MCP` or `A2A` (CLI is case-insensitive; the skill always emits uppercase).
 - **示例** / Example: `A2MCP` / `A2A`.
 
-### Fee (A2MCP only)
+### fee (A2MCP only)
 
 - **用途** / Purpose: 每次调用的单价。 / Price per call.
 - **可见范围** / Visibility: 上链公开。 / On-chain public.
 - **请注意** / Please note: USDT 整数字符串；`0` 表示免费引流（后续不能再按量收费）；A2A 不需要这个字段。 / Integer USDT string; `0` means free lead-gen (cannot charge per-call later); A2A does not need this.
 - **示例** / Example: `10` / `5` / `0`.
 
-### Endpoint (A2MCP only)
+### endpoint (A2MCP only)
 
 - **用途** / Purpose: MCP server URL，买家 agent 直接连这里。 / MCP server URL the buyer's agent connects to.
 - **可见范围** / Visibility: 上链公开；需保证 skill 级访问权限。 / On-chain public; ensure skill-level access.
-- **请注意** / Please note: 必须以 `https://` 开头；A2A 即使传了 CLI 也会清掉。 / Must start with `https://`; the CLI discards the value when ServiceType is A2A.
+- **请注意** / Please note: 必须以 `https://` 开头；A2A 即使传了 CLI 也会清掉。 / Must start with `https://`; the CLI discards the value when `servicetype` is A2A.
 - **示例** / Example: `https://api.example.com/mcp` / `https://svc.defi-analyzer.xyz/mcp`.
 
 ## How to deliver these in Q&A
 
-When prompting the user, inline the four segments **in the user's language only** — users skim and pick the ones they need. Do NOT expose the CLI JSON key (`ServiceName` etc.) in the prompt — that's internal schema, it only belongs in the raw bash command (which the user sees only if they ask).
+When prompting the user, inline the four segments **in the user's language only** — users skim and pick the ones they need. Do NOT expose the CLI JSON key (`name` / `servicedescription` / `servicetype` / `fee` / `endpoint`) in the prompt — that's internal schema, it only belongs in the raw bash command (which the user sees only if they ask).
 
 Example for the service-name field when the user is typing Chinese:
 
@@ -89,4 +89,4 @@ Same field when the user is typing English:
 > - Please note: non-empty, short, ≤ 64 chars.
 > - Example: `TVL Query` / `Whale Alert`.
 
-Do NOT cram multiple fields into one message. Do NOT mix languages in the same message. Do NOT leak the CLI JSON key (`ServiceName` / `ServiceType` / `Fee` / `Endpoint` / …) into the user-visible prompt — localize the label (`名称 / 类型 / 价格 / 接口地址` or `Name / Type / Fee / Endpoint`) instead. One field per turn is the hard rule from `role-playbook.md`.
+Do NOT cram multiple fields into one message. Do NOT mix languages in the same message. Do NOT leak the CLI JSON key (`name` / `servicedescription` / `servicetype` / `fee` / `endpoint` / …) into the user-visible prompt — localize the label (`名称 / 描述 / 类型 / 价格 / 接口地址` or `Name / Description / Type / Fee / Endpoint`) instead. One field per turn is the hard rule from `role-playbook.md`.

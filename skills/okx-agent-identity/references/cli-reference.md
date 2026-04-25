@@ -23,7 +23,7 @@ Register a new ERC-8004 agent on XLayer.
 | `--role` | ✓ | `requester` \| `provider` \| `evaluator` | Aliases `1` / `buyer` / `requestor` → requester; `2` → provider; `3` → evaluator. Always emit canonical lowercase. |
 | `--name` | ✓ | string | User-visible display name. |
 | `--description` | ✓ | string | 1–2 sentence description. |
-| `--service` | ✓ for provider / ✗ for others | JSON array string | Each element: `ServiceName`, `ServiceDescription`, `ServiceType` (`A2MCP` \| `A2A`), `Fee` (A2MCP req'd), `Endpoint` (A2MCP req'd; A2A is discarded). |
+| `--service` | ✓ for provider / ✗ for others | JSON array string | Each element: `name`, `servicedescription`, `servicetype` (`A2MCP` \| `A2A`), `fee` (A2MCP req'd), `endpoint` (A2MCP req'd; A2A is discarded). |
 | `--picture` | ✗ | URL string | Avatar image URL (HTTPS). Omit to let backend assign a default. |
 | `--address` | ✗ | EVM address | Defaults to the current wallet's XLayer address. Only set when the user explicitly specifies an address. |
 
@@ -41,7 +41,7 @@ onchainos agent create \
   --role provider \
   --name "DeFi Analyzer" \
   --description "On-chain data analysis and yield simulation" \
-  --service '[{"ServiceName":"TVL Query","ServiceDescription":"Query protocol TVL by chain","ServiceType":"A2MCP","Fee":"10","Endpoint":"https://api.example.com/mcp"}]'
+  --service '[{"name":"TVL Query","servicedescription":"Query protocol TVL by chain","servicetype":"A2MCP","fee":"10","endpoint":"https://api.example.com/mcp"}]'
 ```
 
 **Example — evaluator (create is unconditional; staking is a separate post-create step):**
