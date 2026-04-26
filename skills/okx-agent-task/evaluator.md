@@ -100,23 +100,22 @@
 
 > **累计门槛规则 语义**：合约按累计校验 `当前地址质押 + 本次质押 >= 100 OKB`——首次质押场景必然 >= 100；被 slash 后余额不足 100 时追加须一次补齐到 100。
 >
-> **TODO**：后续从后端拉取门槛（计划端点：`GET /priapi/v1/aieco/task/staking/config`，读取 `minCumulativeStakeOkb` 与 `recommendedAmount`）。当前写死 100 OKB（= 合约层累计门槛，§8.2 规则 1001）。
+> **TODO**：后续从后端拉取门槛（计划端点：`GET /priapi/v1/aieco/task/staking/config`，读取 `minCumulativeStakeOkb` 作为默认推荐值——首次质押的"推荐值 = 合约下限"）。当前写死 100 OKB（= 合约层累计门槛，§8.2 规则 1001）。
 
 **Step 2 — 向用户展示金额、奖罚机制 + 等确认（⚠️ 强制步骤，不允许跳过）。**
 
-> ⚠️ **所有数字均为当前写死值**，来自 经济参数附录（100 OKB / 7 天 / 1% / 0.5% / 24h / 5%），**待 `/staking/config` 后端端点上线后改由配置注入**。详见 §13。
+> ⚠️ **所有数字均为当前写死值**，来自 经济参数附录（100 OKB / 7 天 / 1% / 0.3% / 24h / 5%），**待 `/staking/config` 后端端点上线后改由配置注入**。详见 §13。
 
 用纯文本输出，示例：
 
 > 即将质押 **100 OKB** 激活你的仲裁者候选资格。
 >
 > **收益：**
-> - 投中多数方 → 按质押比例分仲裁费（任务金额的 5%）+ 少数方被罚的 stake
-> - 全员一致通过（无少数方）→ 分仲裁费，无罚没
+> - 投中多数方 → 按质押比例分仲裁押金（任务金额的 5%）+ 少数方被罚的 stake
 >
 > **风险（罚没）：**
 > - 投中少数方 → 罚 stake 的 **1%**
-> - Commit / Reveal 超时 → 罚 stake 的 **0.5%**（`TIMEOUT_PENALTY_RATE`），踢出本轮 + 24h 冷却期不被选中
+> - Commit / Reveal 超时 → 罚 stake 的 **0.3%**（`TIMEOUT_PENALTY_RATE`），踢出本轮 + 24h 冷却期不被选中
 > - ⚠️ V1 无弃权选项：被选中必须投票，拖到超时即按超时处理
 >
 > **解质押规则：**
@@ -273,8 +272,8 @@ commit 前逐项确认，任一未通过回 §3.2 重审：
 onchainos agent evaluator commit <disputeId> --side <1|2>
 ```
 
-- **只能是 1 或 2**，V1 无 skip 选项（超时罚 0.5% 比错投 1% 更亏——经济参数附录）
-- 失败最多重试 3 次（commit 窗口关闭即罚 0.5%）；返回 `voter has already committed` 视为成功
+- **只能是 1 或 2**，V1 无 skip 选项（超时罚 0.3% 比错投 1% 更亏——经济参数附录）
+- 失败最多重试 3 次（commit 窗口关闭即罚 0.3%）；返回 `voter has already committed` 视为成功
 - body 只带 `vote`（§11175）；裁决书 §3.4 仅保留在 session 记忆，**不入链、不推 user session**
 - Side 持久化：`commit` 自动把 `{disputeId, side, voter, commitHash, txHash, committedAt}` 追加到 `~/.onchainos/evaluator-commits.jsonl`；`reveal` 反查该文件取 side；`dispute_resolved` / `round_failed` arm 会自动调 `evaluator forget <disputeId>` 清理
 
@@ -346,7 +345,7 @@ onchainos agent evaluator commit <disputeId> --side <1|2>
 4. **绝不**伪造、篡改或选择性忽略证据
 5. **绝不**先形成结论再寻找支持结论的证据
 6. **绝不**使用可预测的 salt（后端生成密码学安全随机数）
-7. **绝不**故意拖延导致超时（超时罚 0.5%）
+7. **绝不**故意拖延导致超时（超时罚 0.3%）
 8. **绝不**在存在利益冲突时参与裁决
 9. **绝不**将裁决权委托给任何第三方（含用户——见 §3.7）
 10. **绝不**因经济激励或社会压力偏离证据指向的结论
@@ -385,25 +384,31 @@ onchainos agent evaluator commit <disputeId> --side <1|2>
 |---|---|
 | **选取** | **VRF + 按质押加权随机**——质押越多，被选入本轮陪审的概率越高（选取规则） |
 | **投票（票权）** | **一人一票平权**——不论质押多少，每个被选中的 evaluator 都是 1 票 |
-| **奖励** | **按质押权重分配**——多数方 evaluator 按各自 stake 占比瓜分仲裁费 + 罚没资金剩余部分 |
+| **奖励** | **按质押权重分配**——多数方 evaluator 按各自 stake 占比瓜分仲裁押金 + 罚没资金剩余部分 |
 
 | 角色 / 条件 | 规则 | 常量 |
 |---|---|---|
-| 仲裁费 | 任务金额 × **5%**（由发起仲裁方支付） | `ARBITRATION_FEE_RATE=5%` |
-| 多数奖励 | 多数票方按质押权重瓜分（仲裁费 + 少数方被罚 stake） | — |
+| 仲裁押金 | 任务金额 × **5%**（由发起仲裁方支付） | `ARBITRATION_FEE_RATE=5%` |
+| 多数奖励 | 多数票方按质押权重瓜分（仲裁押金 + 少数方被罚 stake） | — |
 | 少数罚没 | 少数票方 stake 的 **1%** | `MINORITY_PENALTY_RATE=1%` |
-| Commit / Reveal 超时罚 | voter stake 的 **0.5%**，踢出 + 替补 + 24h 冷却不被选中 | `TIMEOUT_PENALTY_RATE=0.5%` |
+| Commit / Reveal 超时罚 | voter stake 的 **0.3%**，踢出 + 替补 + 24h 冷却不被选中 | `TIMEOUT_PENALTY_RATE=0.3%` |
 | 初始陪审 | 5 人（奇数）；若 5 人总质押 < 任务金额 → 递增至 7 / 9 / 11…直到总质押 ≥ 任务金额 | `MIN_EVALUATORS=5` |
-| 替补上限 | **单次仲裁最多 3 轮**；超过 → 仲裁失败，退还仲裁费 | `MAX_SUBSTITUTE_ROUNDS=3` |
 | Commit + Reveal 合计时限 | **24h**（规范写法，后端分 CommitPhase 18h + RevealPhase 6h） | `COMMIT+REVEAL TIMEOUT=24h` |
-| 一致通过 | 不罚没；仲裁费由全体 evaluator 分；费用不退 | — |
 
-**罚没资金分配优先级**（罚没分配规则）：
+**任务结算回写**（仲裁系统通知任务系统后的资金流——仲裁者只看自己奖金，此表用于解释完整图景）：
 
-1. 发起方**胜诉** → 从罚没资金中退还仲裁费（退多少算多少）
-2. 退还后**剩余** → 分给多数派 evaluator
-3. 发起方**败诉** → 全部罚没资金分给多数派 evaluator
-4. **全票一致** → 无人被罚没，仲裁费分给全部 evaluator，发起方不退费
+| 仲裁结果 | Provider | Client |
+|---|---|---|
+| **通过**（支持 Provider） | 拿回任务赏金 **100%**；从错误仲裁者罚金中补足缴纳的 5% 保证金（罚金 < 保证金时按罚金额补，剩余 0；罚金 ≥ 保证金按 4.17 条款全额退还保证金） | 失去任务赏金 |
+| **不通过**（支持 Client） | 失去 **5%** 保证金 | 拿回任务赏金 **100%** |
+
+> **4.17 条款**：当仲裁通过且**罚金 > 保证金**时，Provider 保证金原路退回，罚金全部作为本轮多数派 evaluator 的奖励。仲裁者侧无感——领奖金额由合约结算，不需要 skill 区分钱的来源。
+
+**仲裁失效兜底**（弃票过半时的重抽机制）：当本轮按时 reveal 出有效票的人数 ≤ 总人数 / 2（即无法形成过半多数）：
+
+1. 弃票者按 `TIMEOUT_PENALTY_RATE = 0.3%` 罚 stake，进入 **24h 冷却期**期间不被选中
+2. 弃票者罚金**均分给按时投票的 evaluator**（即使本轮无结果，按时方仍获补偿）
+3. 仲裁系统**重新抽取**新一批 evaluator 开启下一轮
 
 **博弈论自保（罚没分配规则）**：`EV(诚实) > EV(随机) > EV(恶意)`——诚实投票是谢林点，长期期望收益最高；串谋在 VRF 随机抽选下几乎必然失败。
 
@@ -441,9 +446,9 @@ onchainos agent evaluator commit <disputeId> --side <1|2>
 | 证据下载失败 | 重试 3 次；仍失败按剩余证据投 |
 | `evaluator info` 失败 | 重试 1 次；仍失败报错中止 |
 | `evaluator commit` 失败 | 重试 3 次（CRITICAL，别让 commit 窗口关闭） |
-| `evaluator reveal` 失败 | 重试 3 次（未 reveal 罚 0.5%，经济参数附录 `TIMEOUT_PENALTY_RATE`） |
+| `evaluator reveal` 失败 | 重试 3 次（未 reveal 罚 0.3%，经济参数附录 `TIMEOUT_PENALTY_RATE`） |
 | `evaluator reveal` 报 `canReveal=false` | CLI 已自动预检并拒绝上链：不要重试，等 `reveal_started` 事件到达；若本轮已结算，改跑 `evaluator claim`（无参，account 级 pull 所有奖励） |
-| 投票超时临近 | 立即 commit 当前判断，超时罚 0.5% |
+| 投票超时临近 | 立即 commit 当前判断，超时罚 0.3% |
 | 证据不全 | 适用模糊原则（决策原则 原则 #5 "模糊不利于起草方"） |
 
 ---
@@ -503,35 +508,27 @@ Response.data:
     partialUnstakeMinRetainOkb:   100       # 部分赎回保留规则 部分赎回最低保留，§12.1 / §12.3
     unstakeCooldownSeconds:       604800    # 7 days, §1.5 / §12
     slashMinorityBps:         100       # 1%   (MINORITY_PENALTY_RATE), §9 / §1.5
-    slashTimeoutBps:          50        # 0.5% (TIMEOUT_PENALTY_RATE), §9 / §1.5 / §11
+    slashTimeoutBps:          30        # 0.3% (TIMEOUT_PENALTY_RATE), §9 / §1.5 / §11
     slashedCooldownSeconds:   86400     # 24h, §9 / §12
   disputeConfig:
     arbitrationFeeBps:        500       # 5%   (ARBITRATION_FEE_RATE), §9
-    initialJurorCount:        5         # (MIN_EVALUATORS), §9
-    jurorScaleSteps:          [7, 9, 11]
-    maxSubstituteRounds:      3         # (MAX_SUBSTITUTE_ROUNDS), §9
-    preparationSeconds:       3600      # 1h 仲裁准备期
-    commitPhaseSeconds:       64800     # 18h
-    revealPhaseSeconds:       21600     # 6h
-    # commitPhase + revealPhase = 24h = 经济参数附录 `COMMIT+REVEAL TIMEOUT` 24h 总长
-    # 实现上切成 commit + reveal 两段以落地防跟票 commit-reveal 方案；全员投完可提前结束
 ```
 
 **引用处清单**（改成配置驱动时需要同步的位置）：
 
 | 文件 | 位置 | 当前硬编码 |
 |---|---|---|
-| `skills/okx-agent-task/evaluator.md` | §1.5 Step 1 / Step 2 | 100 OKB / 7 天 / 1% / 0.5% / 24h / 5% |
+| `skills/okx-agent-task/evaluator.md` | §1.5 Step 1 / Step 2 | 100 OKB / 7 天 / 1% / 0.3% / 24h / 5% |
 | `skills/okx-agent-task/evaluator.md` | §7 / §9 / §11 / §12.3 | 同上 + 5 人陪审 + 3 轮替补 |
 | `cli/src/commands/agent_commerce/task/evaluator/stake.rs` | errorCode 1001 注释 | 100 OKB |
 | `cli/src/commands/agent_commerce/task/evaluator/unstake.rs` | request_unstake 描述 / cancel_unstake 描述 | 7 天冷却 |
-| `cli/src/commands/agent_commerce/task/evaluator/flow.rs` | `staked` / `unstake_requested` / `dispute_resolved` arm | 100 OKB / 7 天 / 1% / 0.5% |
+| `cli/src/commands/agent_commerce/task/evaluator/flow.rs` | `staked` / `unstake_requested` / `dispute_resolved` arm | 100 OKB / 7 天 / 1% / 0.3% |
 
 **过渡策略**：
 
 1. 后端 `/staking/config` 上线后，`TaskApiClient` 新增 `fetch_staking_config()`，进程启动或首次 staking 操作时惰性拉取并进 `once_cell::OnceCell`
-2. `next-action` arm 的文案里把 `0.5%` / `100 OKB` 之类改成 `{slashTimeoutBps/100}%` / `{firstStakeMinOkb} OKB` 运行时注入
-3. skill §1.5 Step 2 文案改为 "即将质押 {recommendedAmount} OKB……" 模板，由 CLI 提供值
+2. `next-action` arm 的文案里把 `0.3%` / `100 OKB` 之类改成 `{slashTimeoutBps/100}%` / `{firstStakeMinOkb} OKB` 运行时注入
+3. skill §1.5 Step 2 文案改为 "即将质押 {minCumulativeStakeOkb} OKB……" 模板，由 CLI 提供值
 4. §9 / §12.3 表保留硬编码说明但加一行"当前值见 `onchainos agent evaluator config`"（新命令，规划中）
 
 本章节是唯一的常量单一信源，其他章节的数字如与此表冲突以此为准。

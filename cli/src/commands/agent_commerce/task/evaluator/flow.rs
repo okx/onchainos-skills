@@ -18,8 +18,8 @@
 //! 证据上传是链下操作（doc §7.8：No chain event for evidence），不再等"证据封期"信号。
 //
 // TODO(backend-config): 本文件生成的文案里包含多处硬编码经济参数（评估者规范 附录 A）：
-//   - evaluator_selected arm: 超时罚 0.5%（TIMEOUT_PENALTY_RATE）
-//   - dispute_resolved arm:   少数方罚 1%（MINORITY_PENALTY_RATE）/ 超时罚 0.5%
+//   - evaluator_selected arm: 超时罚 0.3%（TIMEOUT_PENALTY_RATE）
+//   - dispute_resolved arm:   少数方罚 1%（MINORITY_PENALTY_RATE）/ 超时罚 0.3%
 //   - staked arm:             首次最低 100 OKB、errorCode 1001
 //   - unstake_requested arm:  7 天冷却期
 // `/staking/config` 后端端点上线后，这些数字应改由注入的配置值替换，模板用
@@ -138,8 +138,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              ```bash\n\
              onchainos agent evaluator commit <disputeId> --side <1|2>\n\
              ```\n\
-             ⚠️ **只能是 1 或 2，禁止 skip**（V1 无弃权；拖到超时罚 0.5% 比错投 1% 更亏）。\n\
-             失败最多重试 3 次（CRITICAL，commit 窗口关闭即罚 0.5%）。返回 `voter has already committed` 视为成功进入 Step 8。\n\
+             ⚠️ **只能是 1 或 2，禁止 skip**（V1 无弃权；拖到超时罚 0.3% 比错投 1% 更亏）。\n\
+             失败最多重试 3 次（CRITICAL，commit 窗口关闭即罚 0.3%）。返回 `voter has already committed` 视为成功进入 Step 8。\n\
              body 只带 `vote`；裁决书（Step 5）仅保留在 session 记忆，**不写入后端，不推主 session**。\n\n\
              **Step 8 — 输出一行 sub session 日志后结束本回合。不调用 通知主 session，不通知用户：**\n\n\
              > Committed dispute=<disputeId> side=<1|2> autonomously per 决策原则-§3.6.\n\n\
@@ -173,7 +173,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              - `canReveal=false` → CLI 已预检拒绝，无需重试；等下一个事件（若本轮已结算，会收到 dispute_resolved / round_failed）\n\
              - `already resolved` → 视为成功（本轮已裁决）\n\
              - `voter has not committed` → 本轮未 commit，跳过 reveal 是正常的\n\
-             - 其他失败最多重试 3 次（未 reveal 罚 0.5%，经济参数附录 TIMEOUT_PENALTY_RATE）\n\n\
+             - 其他失败最多重试 3 次（未 reveal 罚 0.3%，经济参数附录 TIMEOUT_PENALTY_RATE）\n\n\
              【后续事件】dispute_resolved / round_failed / reward_claimed / slashed 会继续在同一 sub session 到达。仅 reward_claimed 和 slashed 会转发到主 session。\n"
                 .to_string(),
 
