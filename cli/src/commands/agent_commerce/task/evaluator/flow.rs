@@ -5,9 +5,9 @@
 //!
 //! | 分类 | 事件 | 行为 |
 //! |---|---|---|
-//! | 仲裁自主闭环（不 通知主 session） | evaluator_selected / reveal_started / dispute_resolved / round_failed | sub 里执行 CLI 动作 + 静默结束 |
-//! | 资金/罚没（通知主 session 推用户） | reward_claimed / slashed | sub 提取字段 + 通知主 session 推人话 |
-//! | 质押 tx 回执（通知主 session 推用户） | staked / stake_increased / unstake_requested / unstake_claimed / unstake_cancelled | sub 提取字段 + 通知主 session 推人话 |
+//! | 仲裁自主闭环（不 通知user session） | evaluator_selected / reveal_started / dispute_resolved / round_failed | sub 里执行 CLI 动作 + 静默结束 |
+//! | 资金/罚没（通知user session 推用户） | reward_claimed / slashed | sub 提取字段 + 通知user session 推人话 |
+//! | 质押 tx 回执（通知user session 推用户） | staked / stake_increased / unstake_requested / unstake_claimed / unstake_cancelled | sub 提取字段 + 通知user session 推人话 |
 //! | 自己的投票 tx 回执 | vote_committed（静默记录）/ vote_revealed（完全忽略） | 都不通知用户 |
 //! | 其他方事件 | job_disputed | 完全忽略 |
 //!
@@ -62,7 +62,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
         // ─── 入口：本轮陪审选出，CommitPhase 已开（sub session 侧，agent 自主闭环） ──
         // 判决方法论严格对齐评估者规范（誓约 + 决策原则 + Rubric + 证据等级 + 裁决书规范）。
         // V1 合约只接受 vote ∈ {1, 2}，原生 3 选项按 Step 4.5 归约表压到 1/2。
-        // 结果不推给用户（不 通知主 session）。
+        // 结果不推给用户（不 通知user session）。
         "evaluator_selected" => format!(
             "【当前状态】evaluator_selected（VotersSelected 上链，你是本轮陪审，CommitPhase 已开，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
@@ -140,18 +140,18 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              ```\n\
              ⚠️ **只能是 1 或 2，禁止 skip**（V1 无弃权；拖到超时罚 0.3% 比错投 1% 更亏）。\n\
              失败最多重试 3 次（CRITICAL，commit 窗口关闭即罚 0.3%）。返回 `voter has already committed` 视为成功进入 Step 8。\n\
-             body 只带 `vote`；裁决书（Step 5）仅保留在 session 记忆，**不写入后端，不推主 session**。\n\n\
-             **Step 8 — 输出一行 sub session 日志后结束本回合。不调用 通知主 session，不通知用户：**\n\n\
+             body 只带 `vote`；裁决书（Step 5）仅保留在 session 记忆，**不写入后端，不推user session**。\n\n\
+             **Step 8 — 输出一行 sub session 日志后结束本回合。不调用 通知user session，不通知用户：**\n\n\
              > Committed dispute=<disputeId> side=<1|2> autonomously per 决策原则-§3.6.\n\n\
              【原则】\n\
-             - **完全静默**：本 arm 不 escalate_to_main、不 通知主 session；用户只会在后续结算/罚没/奖励事件被通知\n\
+             - **完全静默**：本 arm 不 escalate_to_main、不 通知user session；用户只会在后续结算/罚没/奖励事件被通知\n\
              - **判决权威**：所有打分规则、决策原则、裁决书格式以 评估者规范 为准\n\
              - **图片必读**：不读图即违反 L3 义务 #1 + §3.1 举证对称；这是本 arm 最重要的执行要求\n\n\
              【后续事件】\n\
              - vote_committed → sub 里仅记录\n\
              - reveal_started → sub 里自动 reveal\n\
-             - dispute_resolved → sub 里自动 claim（若赢）+ forget + 通知主 session\n\
-             - round_failed → sub 里 forget + 通知主 session\n"
+             - dispute_resolved → sub 里自动 claim（若赢）+ forget + 通知user session\n\
+             - round_failed → sub 里 forget + 通知user session\n"
         ),
 
         // ─── reveal 窗口开启（sub session，完全静默） ──────────────────
@@ -167,17 +167,17 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              ⚠️ 不要传 `--side`：CLI 会从 `~/.onchainos/evaluator-commits.jsonl`（commit 时自动写入）查出当时的 side，再发给后端。\n\
              \x20只有当你明确知道 commit 时投的 side 且 local store 被清空时，才显式传 `--side <1|2>` 覆盖。\n\
              \x20传错会让链上 commitHash 验签失败 → 合约 revert。\n\n\
-             **Step 2 — 输出一行 sub session 日志后结束。禁止调用 通知主 session：**\n\n\
+             **Step 2 — 输出一行 sub session 日志后结束。禁止调用 通知user session：**\n\n\
              > Revealed dispute=<disputeId> side=<1|2> autonomously.\n\n\
              【错误映射】\n\
              - `canReveal=false` → CLI 已预检拒绝，无需重试；等下一个事件（若本轮已结算，会收到 dispute_resolved / round_failed）\n\
              - `already resolved` → 视为成功（本轮已裁决）\n\
              - `voter has not committed` → 本轮未 commit，跳过 reveal 是正常的\n\
              - 其他失败最多重试 3 次（未 reveal 罚 0.3%，经济参数附录 TIMEOUT_PENALTY_RATE）\n\n\
-             【后续事件】dispute_resolved / round_failed / reward_claimed / slashed 会继续在同一 sub session 到达。仅 reward_claimed 和 slashed 会转发到主 session。\n"
+             【后续事件】dispute_resolved / round_failed / reward_claimed / slashed 会继续在同一 sub session 到达。仅 reward_claimed 和 slashed 会转发到user session。\n"
                 .to_string(),
 
-        // ─── 结算完成（sub 静默处理；入账/罚没通过后续 reward_claimed / slashed 事件再推主 session） ─
+        // ─── 结算完成（sub 静默处理；入账/罚没通过后续 reward_claimed / slashed 事件再推user session） ─
         "dispute_resolved" =>
             "【当前状态】dispute_resolved（DisputeSettled 上链，仲裁结算完成，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
@@ -189,22 +189,22 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              onchainos agent evaluator claim\n\
              ```\n\
              ⚠️ 无参命令：account 级 pull 模式，一次把所有已结算 dispute 的待领奖励一起领出来（后端 `POST /task/claim`，空 body）。\n\
-             失败最多重试 3 次。真正的入账确认会通过稍后到达的 `reward_claimed` 事件告知用户（那个 arm 会 通知主 session）。\n\
+             失败最多重试 3 次。真正的入账确认会通过稍后到达的 `reward_claimed` 事件告知用户（那个 arm 会 通知user session）。\n\
              若 `yourVote` 与多数不一致 / 为空，跳过 claim（不会有奖励，可能会收到 slashed 事件）。\n\n\
              **Step 3 — 清理本地 commit 存档（dispute 已终结，{vote, salt} 不再需要）：**\n\
              ```bash\n\
              onchainos agent evaluator forget <disputeId>\n\
              ```\n\
              幂等——若无记录也只会报 \"already clean\"，不会失败。\n\n\
-             **Step 4 — 输出一行 sub session 日志后结束。禁止调用 通知主 session：**\n\n\
+             **Step 4 — 输出一行 sub session 日志后结束。禁止调用 通知user session：**\n\n\
              > Settled dispute=<disputeId> winningSide=<1|2> yourVote=<1|2> claim_submitted={true|false} store_cleaned.\n\n\
              【后续事件】\n\
-             - reward_claimed（claim tx 回执）→ 另一个 arm，会 通知主 session 推入账/失败给用户\n\
-             - slashed（被罚通知）→ 另一个 arm，会 通知主 session 推罚没金额+原因给用户\n\
+             - reward_claimed（claim tx 回执）→ 另一个 arm，会 通知user session 推入账/失败给用户\n\
+             - slashed（被罚通知）→ 另一个 arm，会 通知user session 推罚没金额+原因给用户\n\
              本 arm 到这里结束，**不抢这两个 arm 的通知职责**。\n"
                 .to_string(),
 
-        // ─── 本轮失效（sub 静默处理；若被罚会通过 slashed arm 再推主 session） ──
+        // ─── 本轮失效（sub 静默处理；若被罚会通过 slashed arm 再推user session） ──
         "round_failed" =>
             "【当前状态】round_failed（DisputeInvalidated 上链，本轮无效：票数不足 / 无人揭示 / 全员弃票）\n\
              【角色】仲裁者（Evaluator）\n\
@@ -215,10 +215,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              onchainos agent evaluator forget <disputeId>\n\
              ```\n\
              幂等——若无记录也只会报 \"already clean\"，不会失败。\n\n\
-             **Step 2 — 输出一行 sub session 日志后结束。禁止调用 通知主 session：**\n\n\
+             **Step 2 — 输出一行 sub session 日志后结束。禁止调用 通知user session：**\n\n\
              > round_failed disputeId=<disputeId> store cleaned; awaiting next round.\n\n\
              【后续事件】\n\
-             - 若被罚（未 commit / 未 reveal / 弃票）→ slashed arm 会 通知主 session 告知用户\n\
+             - 若被罚（未 commit / 未 reveal / 弃票）→ slashed arm 会 通知user session 告知用户\n\
              - 若再次被选中 → evaluator_selected 会在新 disputeId 上到达（roundNumber++）\n\
              否则本流程对你终止。\n"
                 .to_string(),
@@ -280,10 +280,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              【流程结束】此 disputeId 的 evaluator 生命周期完成；后续事件无需响应。\n"
         ),
 
-        // ─── 质押生命周期：sub 收到 → 通知主 session 推人话给用户 ─────────────────
+        // ─── 质押生命周期：sub 收到 → 通知user session 推人话给用户 ─────────────────
         "staked" => "【当前状态】staked（VoterStaking.Staked 上链，首次质押 tx 结果，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ Sub session — 从 payload 提取字段 → 通知主 session 推人话给用户。\n\n\
+             【会话类型】⚠️ Sub session — 从 payload 提取字段 → 通知user session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`（success / failed）、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
              【Step 2】把质押结果推到 user session（用户那边）：⚠️ 当前 sessionKey 含 `&job=` 字段就一定是 sub，必须显式调 `xmtp_dispatch_session` 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。按 status 二选一填 content：\n\n\
              ```\n\
@@ -298,7 +298,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
 
         "stake_increased" => "【当前状态】stake_increased（VoterStaking.IncreaseStake 上链，补充质押 tx 结果，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ Sub session — 通知主 session 推人话给用户。\n\n\
+             【会话类型】⚠️ Sub session — 通知user session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
              【Step 2】把追加质押结果推到 user session（用户那边）：⚠️ 必须显式调 `xmtp_dispatch_session` 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。按 status 二选一填 content：\n\n\
              ```\n\
@@ -313,7 +313,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
 
         "unstake_requested" => "【当前状态】unstake_requested（VoterStaking.UnstakeRequested 上链，申请解质押 tx 结果，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ Sub session — 通知主 session 推人话给用户。\n\n\
+             【会话类型】⚠️ Sub session — 通知user session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`、`amount`、`availableAt`（冷却结束毫秒时间戳）、`txHash`、`errorCode`（若 failed）。\n\n\
              【Step 2】把申请解质押结果推到 user session（用户那边）：⚠️ 必须显式调 `xmtp_dispatch_session` 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）；`availableAt` 转本地时间后再填进 content。按 status 二选一填 content：\n\n\
              ```\n\
@@ -328,7 +328,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
 
         "unstake_claimed" => "【当前状态】unstake_claimed（VoterStaking.UnstakeClaimed 上链，领取解质押 tx 结果，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ Sub session — 通知主 session 推人话给用户。\n\n\
+             【会话类型】⚠️ Sub session — 通知user session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
              【Step 2】把领取解质押结果推到 user session（用户那边）：⚠️ 必须显式调 `xmtp_dispatch_session` 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。按 status 二选一填 content：\n\n\
              ```\n\
@@ -343,7 +343,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
 
         "unstake_cancelled" => "【当前状态】unstake_cancelled（VoterStaking.UnstakeCancelled 上链，取消解质押 tx 结果，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ Sub session — 通知主 session 推人话给用户。\n\n\
+             【会话类型】⚠️ Sub session — 通知user session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
              【Step 2】把取消解质押结果推到 user session（用户那边）：⚠️ 必须显式调 `xmtp_dispatch_session` 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。按 status 二选一填 content：\n\n\
              ```\n\
@@ -360,28 +360,24 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
         "vote_committed" => "【当前状态】vote_committed（你自己的 commit tx 上链 success，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 无用户。这是**确认通知**，不是动作触发点。\n\n\
-             【动作】仅记录 tx 成功状态；禁止重复 commit（后端会返回 `voter has already committed`）。**不调用 通知主 session，不通知用户**——commit 是 agent 内部决策过程，用户感知由后续 dispute_resolved → reward_claimed / slashed 负责。\n\n\
+             【动作】仅记录 tx 成功状态；禁止重复 commit（后端会返回 `voter has already committed`）。**不调用 通知user session，不通知用户**——commit 是 agent 内部决策过程，用户感知由后续 dispute_resolved → reward_claimed / slashed 负责。\n\n\
              【输出】一行日志后结束：`> vote_committed recorded (silent).`\n\n\
              【后续事件】等 `reveal_started`（开启 reveal 窗口）→ sub 里跑 `evaluator reveal`。\n".to_string(),
 
         "vote_revealed" => "【当前状态】vote_revealed（你自己的 reveal tx 上链 success，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — **完全忽略**，不记录不通知。\n\n\
-             【动作】无——输出一行日志 `> vote_revealed ignored.` 后结束。禁止 通知主 session。reveal 成功的用户感知由后续 dispute_resolved → reward_claimed / slashed 负责。\n\n\
+             【动作】无——输出一行日志 `> vote_revealed ignored.` 后结束。禁止 通知user session。reveal 成功的用户感知由后续 dispute_resolved → reward_claimed / slashed 负责。\n\n\
              【后续事件】等 `dispute_resolved` / `round_failed`（结算/失效）→ sub 里跑对应 arm。\n".to_string(),
 
-        // ─── 兜底（含 job_disputed 等对 evaluator 无意义的事件） ────────
+        // ─── 兜底：未知事件静默丢弃 ─────────────────────────────────
+        // evaluator 事件集由后端 / 链事件枚举闭合，"未知" 只意味着 CLI 没跟上后端枚举——
+        // 此时 agent 也没有逻辑去处理它（拉 context 也帮不上）。直接一行 trace 留痕即可，
+        // 真正的修复是开发者补 arm。
         other => format!(
-            "【未知或无需动作的状态】{other}\n\
-             【说明（所有事件都在 sub session 收到）】\n\
-             - 仲裁自主闭环（sub 处理，不 通知主 session）：evaluator_selected / reveal_started / dispute_resolved / round_failed\n\
-             - 资金/罚没相关（sub 处理 + 通知主 session 推用户）：reward_claimed / slashed\n\
-             - 质押 tx 回执（sub 处理 + 通知主 session 推用户）：staked / stake_increased / unstake_requested / unstake_claimed / unstake_cancelled\n\
-             - 自己的 tx 回执：vote_committed（静默记录）/ vote_revealed（完全忽略）\n\
-             - 其他方的事件（完全忽略）：job_disputed\n\n\
-             【若确有异常】\n\
-             1. 调用 `onchainos agent common context {job_id} --role evaluator` 查看上下文\n\
-             2. 不要预测/假设其他通知\n"
+            "【未知事件】{other}（jobId={job_id}）—— evaluator 不响应。\n\
+             【动作】无——输出一行日志 `> unknown event={other} at jobId={job_id} ignored.` 后结束。\n\
+             禁止 通知user session、禁止拉 context、禁止猜测其他通知。\n"
         ),
     }
 }
