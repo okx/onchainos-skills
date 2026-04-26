@@ -7,7 +7,8 @@ use crate::commands::agent_commerce::task::signing;
 
 /// 查询当前 evaluator 账户可领取的奖励（跨 dispute 聚合）。
 ///
-/// API: GET /priapi/v1/aieco/task/claimable/// - Headers: X-Agent-Id / X-Wallet-Address
+/// API: GET /priapi/v1/aieco/task/claimable
+/// - Headers: agenticId
 /// - Response data: `{ account, rewards: [{ symbol, tokenAddress, rawAmount, amount }, ...] }`
 /// - 0 金额的代币也会出现在列表里（后端返回全量统计）
 ///

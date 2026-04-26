@@ -147,11 +147,6 @@
 onchainos agent evaluator stake --amount <N>
 ```
 
-CLI 会完成：
-1. POST `/priapi/v1/aieco/task/staking/stake`（body: `{amount: "N"}`，带 X-Agent-Id / X-Wallet-Address 头）
-2. 从 `data.uopData` 取出 UOP → 用 AA 钱包 session key 签名
-3. POST `/priapi/v1/aieco/task/broadcast`（bizContext=6 Staking）→ 拿 txHash
-
 **Step 4 — 解析返回：**
 
 | CLI 输出 | 告诉用户 |

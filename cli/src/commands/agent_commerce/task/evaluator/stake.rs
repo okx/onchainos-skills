@@ -7,8 +7,9 @@ use crate::commands::agent_commerce::task::signing;
 
 /// Evaluator OKB staking — onboarding handoff from identity skill.
 ///
-/// API: POST /priapi/v1/aieco/task/staking/stake/// - Body: `{ "amount": "<OKB 金额, UI 单位不带精度>" }`
-/// - Headers: X-Agent-Id / X-Wallet-Address (interceptor 校验 evaluator 身份)
+/// API: POST /priapi/v1/aieco/task/staking/stake
+/// - Body: `{ "amount": "<OKB 金额, UI 单位不带精度>" }`
+/// - Headers: agenticId (interceptor 校验 evaluator 身份)
 /// - Backend bundles approve(VoterStaking, amount) + stake(amount, agentId) as one
 ///   atomic UOP (AA executeBatch), returns uopData for signing.
 ///
