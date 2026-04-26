@@ -371,13 +371,28 @@ async function lookupEvaluators(): Promise<Array<{ agent_id: string; comm_addr: 
 const EVALUATOR_SELECTED_DELAY_MS = Number(process.env.MOCK_EVALUATOR_SELECTED_MS ?? 3000);
 const REVEAL_WINDOW_DELAY_MS      = Number(process.env.MOCK_REVEAL_WINDOW_MS      ?? 3000);
 
-// 所有 evaluator 生命周期事件共用同一个 dispute sub session conv（= notifyDisputed 用的 convId）。
-// evaluator_selected 激活 sub session 后，后续 reveal_started / dispute_resolved / reward_claimed
-// 自动复用同一 sub，在里面拉 context、跑 CLI、xmtp_dispatch_session → 用户只在主 session 看到干净的最终通知。
+// evaluator 生命周期事件统一通过 notifyEvaluatorOpenclaw[All] 直推到合成的 evaluator sub session
+// （key 见 synthEvaluatorSubKey），不再走 ws conv 广播——避免 ws-channel 找不到 conv 对应 sub
+// 而 fallback 升级到 main session（之前的 BUG）。
 const MOCK_EVAL_AGENT_ID = "mock-evaluator-agent-001";
-function disputeConvId(t: Task): string {
-  const sellerAgentId = t.providerAgentId ?? "mock-seller-agent-001";
-  return `conv-arb-${t.jobId}-${t.buyerAgentId}-${sellerAgentId}-${MOCK_EVAL_AGENT_ID}`;
+
+// ── voter 解析 ────────────────────────────────────────────────────────────
+// CLI 在 evaluator 的 GET 端点（canReveal / claimable）只发 `agenticId` 头（=agent_id），
+// 在 commit/reveal 等签名流程里既发 `X-Wallet-Address` 也发 `agenticId`。
+// 这里统一一个解析函数：优先用 wallet 地址；只拿到 agenticId 就到 agents.json 反查 ownerAddress。
+function resolveVoter(req: http.IncomingMessage, urlObj: URL): string | null {
+  const hdrAddr = req.headers["x-wallet-address"];
+  if (hdrAddr) return String(hdrAddr).toLowerCase();
+  const queryVoter = urlObj.searchParams.get("voter");
+  if (queryVoter) return queryVoter.toLowerCase();
+  const agentic = req.headers["agenticid"] ?? req.headers["x-agent-id"];
+  if (agentic) {
+    const wanted = String(agentic);
+    const agents = loadJsonFixture<any[]>("agents.json", []);
+    const hit = agents.find(a => String(a.agentId) === wanted);
+    if (hit?.ownerAddress) return String(hit.ownerAddress).toLowerCase();
+  }
+  return null;
 }
 
 // ── Gateway RPC bridge（推 evaluator 系统事件到 openclaw agent sub session）──
@@ -546,28 +561,59 @@ async function ensureSubSession(subKey: string, eventName: string): Promise<bool
   }
 }
 
-/// 把 evaluator 事件正文包成 openclaw skill 路由能稳定识别的格式：
-/// 加 [EVALUATOR_EVENT skill=okx-agent-task role=evaluator event=<name>] 头，
-/// 防止"staked / dispute / claim"这种关键字被 DeFi 等 skill 截胡。
-function wrapEvaluatorEvent(eventName: string, payloadLines: string): string {
-  return `[EVALUATOR_EVENT · skill=okx-agent-task · role=evaluator · event=${eventName}]\n` +
-    `这是 evaluator 系统通知，**必须走 okx-agent-task skill 的 evaluator role**，不要路由到 DeFi / staking 等其他 skill。\n` +
-    `按 evaluator.md §2 处理：\n` +
-    `  onchainos agent next-action --jobStatus ${eventName} --role evaluator --agentId <你的 agentId> [--jobid <jobId, 仅 dispute 类事件需要>]\n` +
-    `\n事件详情:\n${payloadLines}`;
+type EvaluatorEventFields = Record<string, string | number | boolean | null>;
+
+/// 构造 evaluator 链事件 envelope（chain → sub），形态对齐 buyer/provider：
+/// `{agentId, message:{event, jobStatus, description, source:"system", jobId, timestamp, ...fields}}`。
+/// 事件特定字段（disputeId / voter / amount / txHash 等）以扩展形式合并进 message。
+function buildEvaluatorEnvelope(
+  voter: string,
+  eventName: string,
+  description: string,
+  jobId: string | null,
+  fields: EvaluatorEventFields = {},
+): unknown {
+  return {
+    agentId: voter,
+    message: {
+      event: eventName,
+      jobStatus: "",
+      description,
+      source: "system",
+      jobId,
+      timestamp: Math.floor(Date.now() / 1000),
+      ...fields,
+    },
+  };
 }
 
 /// 推一条 evaluator 系统事件到 openclaw（gateway sessions.send）。
 /// `voter` = 接收方 evaluator 地址；mock 端用 `synthEvaluatorSubKey(voter)` 合成 sub key。
-/// 自动给 content 加 [EVALUATOR_EVENT ...] routing 头，防止被 DeFi 等 skill 误捞。
-async function notifyEvaluatorOpenclaw(voter: string, eventName: string, content: string): Promise<void> {
+/// envelope 形态对齐 buyer/provider 的 `{agentId, message:{...}}` JSON。
+async function notifyEvaluatorOpenclaw(
+  voter: string,
+  eventName: string,
+  description: string,
+  jobId: string | null,
+  fields: EvaluatorEventFields = {},
+): Promise<void> {
   if (!OPENCLAW_EVAL_NOTIFY) return;
   if (!loadGatewayClient()) return;
   const subKey = synthEvaluatorSubKey(voter);
   await ensureSubSession(subKey, eventName);
-  const wrapped = wrapEvaluatorEvent(eventName, content);
+  const envelope = buildEvaluatorEnvelope(voter, eventName, description, jobId, fields);
+  // 直接把 raw JSON envelope 推给 sub session 时，部分 LLM（glm-4.5-air 等）会忽略
+  // SKILL.md 的 activation 描述、把它当作普通文本总结一段——而不是激活 okx-agent-task
+  // skill 调 next-action。所以这里在 envelope 前面拼一行硬指令前缀，把"必须激活 skill +
+  // 立即调 next-action + 不得文字总结"写死在消息正文里，让 agent 没法绕开。
+  const jobIdForCli = jobId ?? "<jobId>";
+  const directive =
+    `[TASK_LIFECYCLE_EVENT · sub session 必须激活 okx-agent-task skill (\`~/.openclaw/skills/okx-agent-task/SKILL.md\`) · 立即执行 ` +
+    `\`onchainos agent next-action --jobid ${jobIdForCli} --jobStatus ${eventName} --role evaluator --agentId ${voter}\` ` +
+    `拿剧本后严格按剧本执行 · 禁止用文字总结/复述本消息内容 · 禁止当成普通通知回复用户]`;
+  const payload = `${directive}\n${JSON.stringify(envelope)}`;
   try {
-    await callGatewaySessionsSend(subKey, wrapped);
+    await callGatewaySessionsSend(subKey, payload);
     console.log(`[mock-api] [gw] → sub  event=${eventName} voter=${voter.slice(0, 12)}…`);
   } catch (e) {
     console.error(`[mock-api] [gw] sub send failed (event=${eventName} voter=${voter}):`, (e as Error).message);
@@ -576,50 +622,54 @@ async function notifyEvaluatorOpenclaw(voter: string, eventName: string, content
 
 /// 多 evaluator 广播（evaluator_selected / reveal_started / dispute_resolved 等
 /// fan-out 事件）：逐个调 notifyEvaluatorOpenclaw 推到各自 sub。
-async function notifyEvaluatorOpenclawAll(targets: string[], eventName: string, content: string): Promise<void> {
-  for (const v of targets) await notifyEvaluatorOpenclaw(v, eventName, content);
+async function notifyEvaluatorOpenclawAll(
+  targets: string[],
+  eventName: string,
+  description: string,
+  jobId: string | null,
+  fields: EvaluatorEventFields = {},
+): Promise<void> {
+  for (const v of targets) await notifyEvaluatorOpenclaw(v, eventName, description, jobId, fields);
 }
 
 async function notifyEvaluatorSelected(t: Task, disputeId: string, evaluatorAddrs: string[]) {
-  const convId = disputeConvId(t);
-  const participants = Array.from(new Set([CHAIN_ADDR, ...evaluatorAddrs]));
-  await wsNotify(convId, participants, {
-    type: "evaluator_selected", jobId: t.jobId, disputeId,
-    content: `⚖️ 你被选为本轮陪审 (disputeId=${disputeId})。CommitPhase 已开，请查证据 + commit vote。`,
-  }).catch(e => console.error("[mock-api] evaluator_selected notify error:", e));
-  await notifyEvaluatorOpenclawAll(evaluatorAddrs, "evaluator_selected",
-    `evaluator_selected jobId=${t.jobId} disputeId=${disputeId} —— VotersSelected 上链，CommitPhase 已开，请按 evaluator.md §3 自主闭环。`);
+  await notifyEvaluatorOpenclawAll(
+    evaluatorAddrs,
+    "evaluator_selected",
+    `VotersSelected 上链，CommitPhase 已开，evaluator 进入本轮陪审。`,
+    t.jobId,
+    { disputeId },
+  );
 }
 
 async function notifyVoteCommitted(jobId: string, disputeId: string, voter: string) {
-  const convId = `conv-vote-committed-${jobId}-${voter}`;
-  await wsNotify(convId, [CHAIN_ADDR, voter], {
-    type: "vote_committed", jobId, disputeId, voter, status: "success",
-    content: `📝 投票承诺已上链 (disputeId=${disputeId})。等待 reveal 窗口开启。`,
-  }).catch(e => console.error("[mock-api] vote_committed notify error:", e));
-  await notifyEvaluatorOpenclaw(voter, "vote_committed",
-    `vote_committed jobId=${jobId} disputeId=${disputeId} voter=${voter} status=success`);
+  await notifyEvaluatorOpenclaw(
+    voter,
+    "vote_committed",
+    `commit tx 上链 success。`,
+    jobId,
+    { disputeId, voter, status: "success" },
+  );
 }
 
 async function notifyRevealStarted(t: Task, disputeId: string, evaluatorAddrs: string[]) {
-  const convId = disputeConvId(t);
-  const participants = Array.from(new Set([CHAIN_ADDR, ...evaluatorAddrs]));
-  await wsNotify(convId, participants, {
-    type: "reveal_started", jobId: t.jobId, disputeId,
-    content: `🔓 Reveal 窗口开启 (disputeId=${disputeId})。投票者可 reveal。`,
-  }).catch(e => console.error("[mock-api] reveal_started notify error:", e));
-  await notifyEvaluatorOpenclawAll(evaluatorAddrs, "reveal_started",
-    `reveal_started jobId=${t.jobId} disputeId=${disputeId} —— RevealStarted 上链，reveal 窗口开启。`);
+  await notifyEvaluatorOpenclawAll(
+    evaluatorAddrs,
+    "reveal_started",
+    `RevealStarted 上链，reveal 窗口开启。`,
+    t.jobId,
+    { disputeId },
+  );
 }
 
 async function notifyVoteRevealed(jobId: string, disputeId: string, voter: string) {
-  const convId = `conv-vote-revealed-${jobId}-${voter}`;
-  await wsNotify(convId, [CHAIN_ADDR, voter], {
-    type: "vote_revealed", jobId, disputeId, voter, status: "success",
-    content: `✅ 投票披露已上链 (disputeId=${disputeId})。`,
-  }).catch(e => console.error("[mock-api] vote_revealed notify error:", e));
-  await notifyEvaluatorOpenclaw(voter, "vote_revealed",
-    `vote_revealed jobId=${jobId} disputeId=${disputeId} voter=${voter} status=success`);
+  await notifyEvaluatorOpenclaw(
+    voter,
+    "vote_revealed",
+    `reveal tx 上链 success。`,
+    jobId,
+    { disputeId, voter, status: "success" },
+  );
 }
 
 // 结算广播:dispute_resolved + reward_claimed 都发到 dispute sub session conv，
@@ -630,24 +680,22 @@ async function broadcastSettlement(t: Task, winner: "buyer" | "seller", disputeI
   const evaluators = await lookupEvaluators();
   const evalAddrs = Array.from(new Set(evaluators.map(e => e.comm_addr)));
   const allEvalAddrs = evalAddrs.length > 0 ? evalAddrs : ["0xEvaluator00000000000000000000000000001"];
-  const convId = disputeConvId(t);
-  const participants = Array.from(new Set([CHAIN_ADDR, ...allEvalAddrs]));
-
-  await wsNotify(convId, participants, {
-    type: "dispute_resolved", jobId: t.jobId, disputeId: disputeId ?? null, winner,
-    content: `⚖️ 任务 ${t.jobId} 仲裁结果:${winner === "buyer" ? "买家胜,资金退回" : "卖家胜,资金释放"}。`,
-  }).catch(e => console.error("[mock-api] dispute_resolved notify error:", e));
-
-  await wsNotify(convId, participants, {
-    type: "reward_claimed", jobId: t.jobId, disputeId: disputeId ?? null, status: "success",
-    content: `💰 任务 ${t.jobId} 结算完成,奖金已入账。`,
-  }).catch(e => console.error("[mock-api] reward_claimed notify error:", e));
 
   const winnerSide = winner === "buyer" ? "Client(2)" : "Provider(1)";
-  await notifyEvaluatorOpenclawAll(allEvalAddrs, "dispute_resolved",
-    `dispute_resolved jobId=${t.jobId} disputeId=${disputeId ?? "n/a"} winner=${winner} winningSide=${winnerSide} —— DisputeSettled 上链。`);
-  await notifyEvaluatorOpenclawAll(allEvalAddrs, "reward_claimed",
-    `reward_claimed jobId=${t.jobId} disputeId=${disputeId ?? "n/a"} status=success —— claimRewards tx 回执。`);
+  await notifyEvaluatorOpenclawAll(
+    allEvalAddrs,
+    "dispute_resolved",
+    `DisputeSettled 上链，仲裁结算完成。winner=${winner}.`,
+    t.jobId,
+    { disputeId: disputeId ?? null, winner, winningSide: winnerSide },
+  );
+  await notifyEvaluatorOpenclawAll(
+    allEvalAddrs,
+    "reward_claimed",
+    `claimRewards tx 回执 — 奖金已入账。`,
+    t.jobId,
+    { disputeId: disputeId ?? null, status: "success" },
+  );
 }
 
 
@@ -656,25 +704,23 @@ async function notifyRoundFailed(jobId: string, disputeId: string) {
   if (!t) return;
   const evaluators = await lookupRoleAddrs("EVALUATOR");
   const targets = evaluators.length > 0 ? evaluators : ["0xEvaluator00000000000000000000000000001"];
-  const convId = disputeConvId(t);
-  const participants = Array.from(new Set([CHAIN_ADDR, ...targets]));
-  await wsNotify(convId, participants, {
-    type: "round_failed", jobId, disputeId,
-    content: `❌ 任务 ${jobId} dispute=${disputeId} 本轮失效（票数不足 / 无人揭示 / 全员弃票）。`,
-  }).catch(e => console.error("[mock-api] round_failed notify error:", e));
-  await notifyEvaluatorOpenclawAll(targets, "round_failed",
-    `round_failed jobId=${jobId} disputeId=${disputeId} —— DisputeInvalidated 上链，本轮无效。`);
+  await notifyEvaluatorOpenclawAll(
+    targets,
+    "round_failed",
+    `DisputeInvalidated 上链，本轮无效（票数不足 / 全员弃票）。`,
+    jobId,
+    { disputeId },
+  );
 }
 
 async function notifySlashed(voter: string, amount: string, reason: string, disputeId: string | null) {
-  const convId = `conv-slashed-${voter}`;
-  await wsNotify(convId, [CHAIN_ADDR, voter], {
-    type: "slashed", voter, amount, reason, disputeId,
-    content: `🔥 voter=${voter.slice(0, 12)}… 被罚 ${amount} OKB（${reason}${disputeId ? ` dispute=${disputeId}` : ""}）。`,
-  }).catch(e => console.error("[mock-api] slashed notify error:", e));
-  const dPart = disputeId ? ` disputeId=${disputeId}` : "";
-  await notifyEvaluatorOpenclaw(voter, "slashed",
-    `slashed voter=${voter} amount=${amount} reason=${reason}${dPart} —— VoterStaking.Slashed 上链。`);
+  await notifyEvaluatorOpenclaw(
+    voter,
+    "slashed",
+    `VoterStaking.Slashed 上链 — voter 被罚没 ${amount} OKB (${reason})。`,
+    null,
+    { voter, amount, reason, disputeId: disputeId ?? null },
+  );
 }
 
 interface StakingLifecyclePayload {
@@ -686,35 +732,29 @@ interface StakingLifecyclePayload {
 }
 
 async function notifyStakingLifecycle(eventName: string, voter: string, p: StakingLifecyclePayload) {
-  const convId = `conv-staking-${voter}`;
-  await wsNotify(convId, [CHAIN_ADDR, voter], {
-    type: eventName, voter, ...p,
-    content: `💰 ${eventName} voter=${voter.slice(0, 12)}… amount=${p.amount} status=${p.status}${p.txHash ? ` tx=${p.txHash}` : ""}`,
-  }).catch(e => console.error(`[mock-api] ${eventName} notify error:`, e));
-  const fields = [
-    `amount=${p.amount}`,
-    `status=${p.status}`,
-    p.txHash ? `txHash=${p.txHash}` : "",
-    p.errorCode ? `errorCode=${p.errorCode}` : "",
-    p.availableAt ? `availableAt=${p.availableAt}` : "",
-  ].filter(Boolean).join(" ");
-  await notifyEvaluatorOpenclaw(voter, eventName, `${eventName} voter=${voter} ${fields}`);
+  const fields: EvaluatorEventFields = {
+    voter,
+    amount: p.amount,
+    status: p.status,
+    txHash: p.txHash,
+    ...(p.errorCode ? { errorCode: p.errorCode } : {}),
+    ...(p.availableAt ? { availableAt: p.availableAt } : {}),
+  };
+  await notifyEvaluatorOpenclaw(
+    voter,
+    eventName,
+    `VoterStaking.${eventName} tx 回执 — amount=${p.amount} status=${p.status}.`,
+    null,
+    fields,
+  );
 }
 
 async function notifyDisputed(jobId: string, disputeId: string, buyerCommAddr: string, buyerAgentId: string,
                                sellerCommAddr: string, sellerAgentId: string, reason: string) {
-  // 动态查询所有已注册的 EVALUATOR，把他们都放进参与者列表(广播给所有仲裁候选)
-  const evaluators = await lookupEvaluators();
-  // 去重:同一 comm_addr 的重复注册(来自 openclaw 多次重连)只算一个
-  const evalAddrs = Array.from(new Set(evaluators.map(e => e.comm_addr)));
-  const fallbackEval = "0xEvaluator00000000000000000000000000001";
-  const evalAgentId  = "mock-evaluator-agent-001";
-  // 兜底:若没有任何 EVALUATOR 注册(服务还没起），仍发给默认 mock-evaluator 地址
-  const allEvalAddrs = evalAddrs.length > 0 ? evalAddrs : [fallbackEval];
-  const convId = `conv-arb-${jobId}-${buyerAgentId}-${sellerAgentId}-${evalAgentId}`;
-  const participants = Array.from(new Set([CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...allEvalAddrs]));
-  console.log(`[mock-api] dispute broadcast: evaluators=${allEvalAddrs.length} convId=${convId}`);
-  await wsNotify(convId, participants, {
+  // job_disputed 只通知 buyer/seller。evaluator 在 VotersSelected 后通过 evaluator_selected
+  // 单独通知（走 notifyEvaluatorOpenclawAll，命中正确的 evaluator sub session）。
+  const convId = `conv-arb-${jobId}-${buyerAgentId}-${sellerAgentId}-${MOCK_EVAL_AGENT_ID}`;
+  await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
     type: "job_disputed", jobId, disputeId, buyerAgentId, sellerAgentId, reason,
     content: `⚖️ 任务 ${jobId} 进入仲裁 (disputeId=${disputeId})。\n买家拒绝验收，卖家申诉：${reason}\n\n请仲裁者查阅证据后裁决。`,
     llm: `job_disputed jobId=${jobId} disputeId=${disputeId} reason=${reason}`,
@@ -741,12 +781,13 @@ async function notifyRejected(jobId: string, buyerCommAddr: string, buyerAgentId
 
 async function notifyArbitrationResult(jobId: string, buyerCommAddr: string, buyerAgentId: string,
                                         sellerCommAddr: string, sellerAgentId: string, winner: string) {
+  // 仲裁结果只通知 buyer/seller（dispute_resolved 给双方看结果）。evaluator 走
+  // broadcastSettlement 的 notifyEvaluatorOpenclawAll，命中各自 sub session。
   const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
-  const evaluators = await lookupRoleAddrs("EVALUATOR");
   // jobStatus 字段告知 sub agent 谁赢：provider 赢 → complete；buyer 赢 → rejected。
   // 状态机 Status::parse 接受 "complete"/"rejected" 别名（spec 用 Completed/Rejected）。
   const jobStatus = winner === "provider" ? "complete" : "rejected";
-  await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...evaluators], {
+  await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr], {
     type: "dispute_resolved", jobId, jobStatus, sellerAgentId, buyerAgentId, winner,
     content: winner === "provider"
       ? `系统通知：任务 ${jobId} 仲裁完成，卖家 ${sellerAgentId} 胜诉（dispute_resolved，jobStatus=complete）。资金判给卖家。`
@@ -997,6 +1038,32 @@ const server = http.createServer(async (req, res) => {
     if (!d) { sendErr(res, 2001, "dispute not found"); return; }
     sendOk(res, d); return;
   }
+  // 必须在 /api/v1/task/:jobId 通配匹配之前——否则 :jobId=claimable 会被吞掉。
+  if (method === "GET" && path_ === "/api/v1/task/claimable") {
+    const agentId = String(req.headers["agenticid"] ?? req.headers["x-agent-id"] ?? "");
+    const account = (resolveVoter(req, url) ?? "0x0000000000000000000000000000000000000000").toLowerCase();
+    let usdtReward = 0;
+    for (const d of disputes.values()) {
+      if (!d.resolvedAt) continue;
+      const winningVote = d.verdict === "provider" ? 1 : d.verdict === "client" ? 2 : null;
+      if (!winningVote) continue;
+      const commit = d.voterCommits[account];
+      if (commit?.vote === winningVote) usdtReward += 1;
+    }
+    console.log(`[mock-api] claimable: agentId=${agentId} account=${account} usdt=${usdtReward}`);
+    sendOk(res, {
+      account,
+      rewards: [
+        {
+          symbol: "USDT",
+          tokenAddress: "0xUSDT0000000000000000000000000000000001",
+          rawAmount: String(usdtReward * 10 ** 6),
+          amount: usdtReward.toString(),
+        },
+      ],
+    });
+    return;
+  }
   if (method === "GET" && (m = matchPath("/api/v1/task/:jobId", path_))) {
     const t = tasks.get(m.jobId);
     if (!t) { sendErr(res, 2001, "task not found"); return; }
@@ -1217,11 +1284,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   // 证据图片下载(真后端 /priapi/v1/aieco/task/{jobId}/evidence/download)
+  // CLI 用 ?fileKey=<...>（cli/.../evaluator/info.rs:download_image），name= 是老兼容路径。
   if (method === "GET" && (m = matchPath("/api/v1/task/:jobId/evidence/download", path_))) {
     const { jobId } = m;
     if (!tasks.has(jobId)) { sendErr(res, 2001, "task not found"); return; }
-    const name = url.searchParams.get("name");
-    if (!name) { sendErr(res, 1001, "name required"); return; }
+    const name = url.searchParams.get("fileKey") ?? url.searchParams.get("name");
+    if (!name) { sendErr(res, 1001, "fileKey required"); return; }
     // mock:返回 1x1 透明 PNG(67 bytes)
     const MOCK_PNG = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
@@ -1248,8 +1316,8 @@ const server = http.createServer(async (req, res) => {
     // 真后端（Lark §11175）commit body 仅 `{ vote }`，reason 不在 API schema。
     // mock 这里仍保留字段占位（可选），方便做本地分析/dashboard 显示，但不强制。
     const reason = String(body.reason ?? "");
-    // voter = header 优先（CLI 带身份头），回退到 body.voter（老 mock 调用）
-    const voter = String(req.headers["x-wallet-address"] ?? body.voter ?? "evaluator-unknown");
+    // voter 解析：X-Wallet-Address > query voter > agenticId 反查 agents.json > body.voter（老 mock 调用）
+    const voter = (resolveVoter(req, url) ?? String(body.voter ?? "")).toLowerCase() || "evaluator-unknown";
     if (dispute.voterCommits[voter]) { sendErr(res, 2002, "voter has already committed"); return; }
     const salt = crypto.randomBytes(16).toString("hex");
     const commitHash = "0x" + crypto.createHash("sha256")
@@ -1280,7 +1348,7 @@ const server = http.createServer(async (req, res) => {
     const dispute = [...disputes.values()].find(d => d.jobId === jobId && !d.resolvedAt);
     if (!dispute) { sendErr(res, 2001, "active dispute not found"); return; }
     const body = await parseBody(req) as Record<string, unknown>;
-    const voter = String(req.headers["x-wallet-address"] ?? body.voter ?? "evaluator-unknown");
+    const voter = (resolveVoter(req, url) ?? String(body.voter ?? "")).toLowerCase() || "evaluator-unknown";
     const commit = dispute.voterCommits[voter];
     if (!commit) { sendErr(res, 2002, "voter has not committed"); return; }
     if (commit.revealedAt) { sendErr(res, 2002, "voter has already revealed"); return; }
@@ -1329,9 +1397,8 @@ const server = http.createServer(async (req, res) => {
     const { jobId } = m;
     const dispute = [...disputes.values()].find(d => d.jobId === jobId && !d.resolvedAt);
     if (!dispute) { sendErr(res, 2001, "active dispute not found"); return; }
-    const voter = url.searchParams.get("voter")
-      ?? String(req.headers["x-wallet-address"] ?? "");
-    if (!voter) { sendErr(res, 1001, "voter required"); return; }
+    const voter = resolveVoter(req, url);
+    if (!voter) { sendErr(res, 1001, "voter required (send X-Wallet-Address / agenticId / ?voter=)"); return; }
     const commit = dispute.voterCommits[voter];
     if (!commit) { sendOk(res, { canReveal: false, reason: "not committed" }); return; }
     if (commit.revealedAt) { sendOk(res, { canReveal: false, reason: "already revealed" }); return; }
@@ -1341,7 +1408,7 @@ const server = http.createServer(async (req, res) => {
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/claim", path_))) {
     const t = tasks.get(m.jobId);
     if (!t) { sendErr(res, 2001, "task not found"); return; }
-    const claimer = String(req.headers["x-wallet-address"] ?? "unknown");
+    const claimer = (resolveVoter(req, url) ?? "unknown").toLowerCase();
     console.log(`[mock-api] reward claim: job=${m.jobId} claimer=${claimer}`);
     sendOk(res, { uopData: mockUopData(), jobId: m.jobId, amount: t.tokenAmount, currency: "USDT", msg: "奖金已领取(mock stub)" }); return;
   }
@@ -1505,6 +1572,29 @@ const server = http.createServer(async (req, res) => {
     // 首次质押最低 100 OKB（mock 不区分首次/补充，统一要求）
     if (amount < 100) { sendErr(res, 1001, "first stake amount must be >= 100 OKB"); return; }
     console.log(`[mock-api] staking/stake: agentId=${agentId} amount=${amountStr} OKB`);
+    sendOk(res, { uopData: mockUopData() }); return;
+  }
+  // 追加质押 / 申请解质押 / 领取解质押 / 取消解质押 —— 都不强校验业务前提（active dispute /
+  // 冷却期 / 余额），只产 uopData 让 CLI 签完路。链事件回执通过 debug UI 触发。
+  if (method === "POST" && (
+    path_ === "/api/v1/task/staking/increaseStake" ||
+    path_ === "/api/v1/task/staking/requestUnstake" ||
+    path_ === "/api/v1/task/staking/claimUnstake" ||
+    path_ === "/api/v1/task/staking/cancelUnstake"
+  )) {
+    const action = path_.split("/").pop()!;
+    const agentId = String(req.headers["x-agent-id"] ?? req.headers["agenticid"] ?? "");
+    if (!agentId) { sendErr(res, 4000, "X-Agent-Id / agenticId header required"); return; }
+    const body = await parseBody(req) as Record<string, unknown>;
+    console.log(`[mock-api] staking/${action}: agentId=${agentId} body=${JSON.stringify(body)}`);
+    sendOk(res, { uopData: mockUopData() }); return;
+  }
+
+  // ── Evaluator 仲裁奖励 — account 级 pull（GET claimable 路由在 /:jobId 之前已注册）──
+  if (method === "POST" && path_ === "/api/v1/task/claim") {
+    const agentId = String(req.headers["agenticid"] ?? req.headers["x-agent-id"] ?? "");
+    const claimer = (resolveVoter(req, url) ?? "unknown").toLowerCase();
+    console.log(`[mock-api] account claim: agentId=${agentId} claimer=${claimer}`);
     sendOk(res, { uopData: mockUopData() }); return;
   }
 
@@ -1677,6 +1767,44 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Debug-UI 用：跳过 buyer/provider 协商 + dispute raise 等前置流程，直接把 task
+  // 推到 disputed 状态并打一条 dispute 记录骨架（双方 mock 证据），让后续 evaluator
+  // info / commit / reveal / dispute_resolved 整条链路在 debug 单点触发下能连起来。
+  // 真链路径不会经过这里——`/api/v1/task/:jobId/dispute` 才是正经 dispute 入口。
+  // 幂等：同 disputeId 重复调用直接返回已有记录。
+  function ensureDisputeForDebug(t: Task, disputeId: string): Dispute {
+    const existing = disputes.get(disputeId);
+    if (existing) return existing;
+
+    if (t.status !== S_DISPUTED) {
+      setStatus(t, S_DISPUTED);
+      saveTasks();
+    }
+    const roundMatch = /-r(\d+)$/.exec(disputeId);
+    const round = roundMatch ? Number(roundMatch[1]) : 1;
+
+    const dispute: Dispute = {
+      disputeId, jobId: t.jobId, round,
+      clientReason: "买家拒绝验收，认为交付物未满足验收标准（debug-mock）",
+      providerReason: "卖家声称交付物符合协商约定（debug-mock）",
+      qualityStandards: t.description.split("验收标准：")[1] ?? "未明确验收标准",
+      deliverableUrl: `https://mock-deliverable.example.com/${t.jobId}.html`,
+      evidences: [
+        { from: "client",   summary: "买家证据：交付物缺少单元测试",   level: "C" },
+        { from: "provider", summary: "卖家证据：已附带完整文档与代码", level: "C" },
+      ],
+      voterCommits: {},
+      votes: [],
+      verdict: null,
+      createTime: nowIso(),
+      commitPhaseStartedAt: null,
+      resolvedAt: null,
+    };
+    disputes.set(disputeId, dispute);
+    console.log(`[mock-api] [debug] dispute auto-staged: jobId=${t.jobId} disputeId=${disputeId} round=${round} (task pushed to disputed)`);
+    return dispute;
+  }
+
   // ── Evaluator event dispatch（debug：直接触发任意一个 evaluator 事件）──
   // POST /ui/notify/evaluator/:event   body 字段按事件类型不同
   if (method === "POST" && (m = matchPath("/ui/notify/evaluator/:event", path_))) {
@@ -1696,13 +1824,18 @@ const server = http.createServer(async (req, res) => {
         const t = tasks.get(jobId);
         if (!t) { sendErr(res, 2001, "task not found"); return; }
         const disputeId = String(body.disputeId ?? `d-${jobId}-r1`);
+        const dispute = ensureDisputeForDebug(t, disputeId);
+        if (!dispute.commitPhaseStartedAt) dispute.commitPhaseStartedAt = nowIso();
         const targets = await resolveEvalTargets();
         notifyEvaluatorSelected(t, disputeId, targets).catch(console.error);
         sendOk(res, { triggered: event, jobId, disputeId }); return;
       }
       case "vote_committed": {
         const jobId = String(body.jobId ?? "");
+        const t = tasks.get(jobId);
+        if (!t) { sendErr(res, 2001, "task not found"); return; }
         const disputeId = String(body.disputeId ?? `d-${jobId}-r1`);
+        ensureDisputeForDebug(t, disputeId);
         const voter = String(body.voter ?? fallbackEvalAddr);
         notifyVoteCommitted(jobId, disputeId, voter).catch(console.error);
         sendOk(res, { triggered: event, jobId, disputeId, voter }); return;
@@ -1712,13 +1845,17 @@ const server = http.createServer(async (req, res) => {
         const t = tasks.get(jobId);
         if (!t) { sendErr(res, 2001, "task not found"); return; }
         const disputeId = String(body.disputeId ?? `d-${jobId}-r1`);
+        ensureDisputeForDebug(t, disputeId);
         const targets = await resolveEvalTargets();
         notifyRevealStarted(t, disputeId, targets).catch(console.error);
         sendOk(res, { triggered: event, jobId, disputeId }); return;
       }
       case "vote_revealed": {
         const jobId = String(body.jobId ?? "");
+        const t = tasks.get(jobId);
+        if (!t) { sendErr(res, 2001, "task not found"); return; }
         const disputeId = String(body.disputeId ?? `d-${jobId}-r1`);
+        ensureDisputeForDebug(t, disputeId);
         const voter = String(body.voter ?? fallbackEvalAddr);
         notifyVoteRevealed(jobId, disputeId, voter).catch(console.error);
         sendOk(res, { triggered: event, jobId, disputeId, voter }); return;
@@ -1728,14 +1865,21 @@ const server = http.createServer(async (req, res) => {
         const t = tasks.get(jobId);
         if (!t) { sendErr(res, 2001, "task not found"); return; }
         const disputeId = String(body.disputeId ?? `d-${jobId}-r1`);
+        const dispute = ensureDisputeForDebug(t, disputeId);
         const winner: "buyer" | "seller" = body.winner === "buyer" ? "buyer" : "seller";
+        // 标记本轮裁决完成 + 把 task 推到终态，跟正常 reveal 路径行为一致
+        dispute.verdict = winner === "seller" ? "provider" : "client";
+        dispute.resolvedAt = nowIso();
+        if (t.status === S_DISPUTED) { setStatus(t, S_COMPLETE); saveTasks(); }
         broadcastSettlement(t, winner, disputeId).catch(console.error);
         sendOk(res, { triggered: "dispute_resolved+reward_claimed", jobId, disputeId, winner }); return;
       }
       case "round_failed": {
         const jobId = String(body.jobId ?? "");
-        if (!tasks.has(jobId)) { sendErr(res, 2001, "task not found"); return; }
+        const t = tasks.get(jobId);
+        if (!t) { sendErr(res, 2001, "task not found"); return; }
         const disputeId = String(body.disputeId ?? `d-${jobId}-r1`);
+        ensureDisputeForDebug(t, disputeId);
         notifyRoundFailed(jobId, disputeId).catch(console.error);
         sendOk(res, { triggered: event, jobId, disputeId }); return;
       }

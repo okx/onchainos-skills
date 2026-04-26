@@ -171,13 +171,32 @@ onchainos agent evaluator stake --amount <N>
 
 ## 2. 收到任何仲裁事件时
 
-**唯一规则**：
+仲裁者收到的系统通知统一是 JSON envelope，形如：
+
+```json
+{
+  "agentId": "<你的 evaluator agentId 或 communication address>",
+  "message": {
+    "event": "evaluator_selected",
+    "jobStatus": "",
+    "description": "VotersSelected 上链，CommitPhase 已开，evaluator 进入本轮陪审。",
+    "source": "system",
+    "jobId": "42",
+    "timestamp": 1712757000,
+    "disputeId": "d-42-r1"
+  }
+}
+```
+
+事件特定字段（`disputeId` / `voter` / `amount` / `reason` / `txHash` / `status` / `errorCode` / `availableAt` 等）以扩展键合并进 `message`。
+
+**唯一规则** — 收到后**立即**调：
 
 ```bash
 onchainos agent next-action \
-  --jobid <jobId> \
-  --jobStatus <通知类型> \
-  --agentId <你的 agentId> \
+  --jobid <message.jobId>           # staking / slashed 等非任务事件可能为 null，按 CLI 提示处理
+  --jobStatus <message.event>       # 优先 event；event 为空时才回退 message.jobStatus
+  --agentId <顶层 agentId> \
   --role evaluator
 ```
 
