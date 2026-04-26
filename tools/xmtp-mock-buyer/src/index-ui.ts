@@ -362,7 +362,10 @@ async function main() {
 
     // Static HTML
     if (url.pathname === "/" || url.pathname === "/index.html") {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+      });
       res.end(HTML);
       return;
     }
@@ -501,15 +504,17 @@ async function main() {
       return;
     }
 
-    // POST /create-task {title, budget, currency?}  —— 调 mock-api 创建任务
+    // POST /create-task {title, budget, currency?, visibility?}  —— 调 mock-api 创建任务
     if (req.method === "POST" && url.pathname === "/create-task") {
       try {
-        const body = JSON.parse(await readBody()) as { title?: string; budget?: string; currency?: string };
+        const body = JSON.parse(await readBody()) as { title?: string; budget?: string; currency?: string; visibility?: string };
         if (!body.title || !body.budget) { sendJson(400, { error: "title + budget required" }); return; }
         const tokenSymbol = (body.currency ?? "USDT").toUpperCase();
         const tokenAddress = tokenSymbol === "USDG"
           ? "0xUSDG0000000000000000000000000000000001"
           : "0xUSDT0000000000000000000000000000000001";
+        // visibility: "public" → openType=1（卖家可在 /job/match 看到）；"private" → openType=0（仅指定 provider 可见）
+        const openType = body.visibility === "private" ? 0 : 1;
         const apiBody = {
           title: body.title,
           description: body.title,
@@ -517,7 +522,7 @@ async function main() {
           tokenAddress,
           tokenAmount: body.budget,
           paymentType: 0,
-          openType: 1,
+          openType,
           chainId: 1,
           minCreditScore: 0,
           buyerAgentId: OWN_AGENT_ID,
@@ -809,13 +814,12 @@ body { font-family: ui-monospace, monospace; background: #0d1117; color: #c9d1d9
     <input name="title" placeholder="任务标题" />
     <input name="budget" placeholder="预算" value="100" />
     <span style="color:#8b949e">USDT</span>
+    <select name="visibility" style="background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:5px 8px;border-radius:5px;font-family:inherit;">
+      <option value="private" selected>私有（仅指定卖家）</option>
+      <option value="public">公开（任何卖家可接）</option>
+    </select>
     <button type="submit">发布任务</button>
     <span id="current-task"></span>
-  </form>
-  <form id="newdm">
-    <input name="peer" placeholder="对端 address / inboxId" />
-    <input name="init" placeholder="首条消息（可选）" />
-    <button type="submit">+ New DM</button>
   </form>
 </div>
 <div id="workspace">
@@ -827,7 +831,7 @@ body { font-family: ui-monospace, monospace; background: #0d1117; color: #c9d1d9
     <div class="sidebar-section">
       <h2>会话</h2>
       <div id="conv-list">
-        <div class="empty-hint">还没有会话。发起 New DM 或等对方先来消息。</div>
+        <div class="empty-hint">还没有会话。发布任务后从侧栏选卖家联系，或等对方先来消息。</div>
       </div>
     </div>
   </div>
@@ -966,7 +970,7 @@ wireToolbar();
 function renderSidebar() {
   const list = $("conv-list");
   if (state.convs.size === 0) {
-    list.innerHTML = '<div class="empty-hint">还没有会话。发起 New DM 或等对方先来消息。</div>';
+    list.innerHTML = '<div class="empty-hint">还没有会话。发布任务后从侧栏选卖家联系，或等对方先来消息。</div>';
     return;
   }
   const items = [];
@@ -1094,40 +1098,18 @@ async function send() {
   }
 }
 
-// New DM
-$("newdm").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const form = e.target;
-  const peer = form.peer.value.trim();
-  const init = form.init.value.trim();
-  if (!peer) return;
-  const resp = await fetch("/new-dm", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ peer, content: init || undefined }),
-  });
-  const data = await resp.json();
-  if (!resp.ok) {
-    alert("新建 DM 失败: " + (data.error || resp.status));
-    return;
-  }
-  form.peer.value = "";
-  form.init.value = "";
-  await refreshState();
-  await selectConv(data.convId);
-});
-
 // ── Buyer-only: 发布任务 + 联系卖家 ─────────────────────────────────
 $("create-task").addEventListener("submit", async (e) => {
   e.preventDefault();
   const form = e.target;
   const title = form.title.value.trim();
   const budget = form.budget.value.trim();
+  const visibility = form.visibility.value || "public";
   if (!title || !budget) { alert("title + budget required"); return; }
   const resp = await fetch("/create-task", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title, budget, currency: "USDT" }),
+    body: JSON.stringify({ title, budget, currency: "USDT", visibility }),
   });
   const data = await resp.json();
   if (!resp.ok) { alert("发布失败: " + (data.error || resp.status)); return; }

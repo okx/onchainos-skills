@@ -870,7 +870,7 @@ const server = http.createServer(async (req, res) => {
         // task/create 没有路径 jobId，从响应体提取
         const jobId = jobMatch?.[1] ?? (resBody as any)?.data?.jobId;
         // 身份优先级：请求 body → X-Agent-Id header
-        const headerAgent = String(req.headers["x-agent-id"] ?? "");
+        const headerAgent = String((req.headers["agenticid"] ?? req.headers["x-agent-id"]) ?? "");
         let who = agentId || headerAgent;
         // 仅在特定 action 能明确归属时 fallback 到任务的 buyer/provider
         if (!who && jobId) {
@@ -997,7 +997,7 @@ const server = http.createServer(async (req, res) => {
       tokenAddress:  String(body.paymentTokenAddress ?? "0xUSDT0000000000000000000000000000000001"),
       tokenAmount:   String(body.paymentTokenAmount ?? body.tokenAmount ?? "100"),
       paymentType:   body.paymentType != null ? Number(body.paymentType) : null,
-      openType:      Number(body.visibility ?? 0),
+      openType:      Number(body.openType ?? body.visibility ?? 0),
       status: S_OPEN, statusStr: "open",
       chainId:       Number(body.chainId ?? 196),
       minCreditScore: body.minCreditScore != null ? Number(body.minCreditScore) : null,
@@ -1105,7 +1105,7 @@ const server = http.createServer(async (req, res) => {
     const body = await parseBody(req) as Record<string, unknown>;
 
     // provider 身份来源优先级: header > body > 默认值
-    const hdrAgentId = req.headers["x-agent-id"] as string | undefined;
+    const hdrAgentId = (req.headers["agenticid"] ?? req.headers["x-agent-id"]) as string | undefined;
     const hdrAddr    = req.headers["x-wallet-address"] as string | undefined;
     const sellerAgent = String(hdrAgentId ?? body.providerAgentId ?? body.provider_agent_id ?? "mock-seller-agent-001");
     const sellerAddr  = String(hdrAddr ?? body.providerAddress ?? body.provider_address ?? "0xSeller000000000000000000000000000000001");
@@ -1561,7 +1561,7 @@ const server = http.createServer(async (req, res) => {
   // 真后端返回仅 uopHash（文档 §8.2 示例），但 CLI 走通用 sign_uop_and_broadcast 需要
   // uopData（UnsignedInfoResponse）。mock 这里按 CLI 约定返回 {uopData, uopHash}。
   if (method === "POST" && path_ === "/api/v1/task/staking/stake") {
-    const agentId = String(req.headers["x-agent-id"] ?? "");
+    const agentId = String((req.headers["agenticid"] ?? req.headers["x-agent-id"]) ?? "");
     if (!agentId) { sendErr(res, 4000, "X-Agent-Id header required"); return; }
     const body = await parseBody(req) as Record<string, unknown>;
     const amountStr = String(body.amount ?? "");
@@ -1599,10 +1599,11 @@ const server = http.createServer(async (req, res) => {
   }
 
   // Provider 主动拉取推荐的 Public 任务（必须在 /api/v1/task/:jobId/match 之前匹配）
+  // 按 createTime 倒序，返回最新 5 个 status=open + openType=1（public）的任务。
   if (method === "POST" && path_ === "/api/v1/task/job/match") {
-    const openPublic = [...tasks.values()].filter(
-      (t) => t.status === S_OPEN && t.openType === 1,
-    );
+    const openPublic = [...tasks.values()]
+      .filter((t) => t.status === S_OPEN && t.openType === 1)
+      .sort((a, b) => (b.createTime ?? "").localeCompare(a.createTime ?? ""));
     const picks = openPublic.slice(0, 5).map((t) => ({
       jobId: t.jobId,
       title: t.title,

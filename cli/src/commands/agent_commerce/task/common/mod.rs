@@ -535,7 +535,7 @@ fn build_context(
                 out.push_str(&format!("- 任务描述：{}\n", task.description));
                 out.push('\n');
                 out.push_str("判断：上述「Provider 描述」和「任务领域」是否匹配？\n");
-                out.push_str("- 匹配（同一专业领域）→ 进入下方「可执行操作」继续协商\n");
+                out.push_str("- 匹配（同一专业领域）→ 进入下方「按可见性分流」继续协商\n");
                 out.push_str("- 不匹配（领域明显不同，如 DeFi trading vs 合约审计 / 前端 / 文案）→ **必须拒绝**：\n");
                 out.push_str("  1. 调用 `xmtp_send` 工具发送拒绝消息（模板如下）\n");
                 out.push_str("  2. **禁止**执行 onchainos agent apply 或任何后续操作\n\n");
@@ -546,6 +546,33 @@ fn build_context(
                 ));
                 out.push_str("注意：`content` 是纯自然语言正文，不要加任何 text header（如 `jobId: / 来自: ... / 类型: REPLY` 之类）。XMTP 插件会自动把 content 包装成 a2a-agent-chat envelope。\n\n");
             }
+        }
+
+        // 专业匹配通过后，按 task.openType 给不同动作引导
+        let buyer_id = task.buyer_agent_id.as_deref().unwrap_or("<task.buyerAgentId>");
+        let agent_id_hint = profile.and_then(|p| p.agent_id.as_deref()).unwrap_or("<你的agentId>");
+        out.push_str("【⚠️ 第二步：按可见性分流（匹配通过才走这里）】\n\n");
+        if task.open_type == Some(1) {
+            // 公开任务 → provider 主动建群
+            out.push_str("当前任务**可见性 = 公开（Public）** → 你需要**主动联系买家发起协商**：\n\n");
+            out.push_str("1. 调 `xmtp_start_conversation` 工具建群 + 创建 sub session（机制见 SKILL.md §Session 通信契约 §6 路径 7）：\n");
+            out.push_str(&format!(
+                "   - 参数：`myAgentId={agent_id_hint}`，`toAgentId={buyer_id}`（买家 agentId），`jobId={}`\n",
+                task.job_id
+            ));
+            out.push_str("   - 成功返回 `sessionKey` + `xmtpGroupId`\n");
+            out.push_str("2. 调 `session_status` 拿当前 sub session 的 `sessionKey`\n");
+            out.push_str("3. 调 `xmtp_send`（参数 `sessionKey` = 第 2 步那串，`content` = 协商三项确认提问）\n\n");
+            out.push_str("协商三项（一条 `xmtp_send` 一次问完）：\n");
+            out.push_str("  1) 任务内容和验收标准是否在能力范围内\n");
+            out.push_str("  2) 价格 / 币种 USDT or USDG\n");
+            out.push_str("  3) 支付方式（escrow / non_escrow）\n\n");
+        } else {
+            // 私有任务 → provider 被动等买家先来
+            out.push_str("当前任务**可见性 = 私有（Private）** → 你**不要主动建群**：\n\n");
+            out.push_str("- 私有任务由买家选定 provider，必须**等买家先发** a2a-agent-chat envelope（你才有联系对方的入口）\n");
+            out.push_str("- 收到买家首条 inquire 后，按上面「专业匹配检查」走，匹配通过则在已有 sub session 里 `xmtp_send` 回协商三项\n");
+            out.push_str("- **禁止**调 `xmtp_start_conversation` 主动建群——私有任务没有这个权限\n\n");
         }
     }
 

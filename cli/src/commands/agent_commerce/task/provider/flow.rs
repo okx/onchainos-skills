@@ -229,7 +229,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
              \x20\x20\x20\x20\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
-             【流程结束】跑完 Step 1-2 → 子 session 可以关闭。\n"
+             **Step 3 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §6 路径 5）：\n\
+             1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段\n\
+             2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串\n\
+             删除后本 sub session 不再接收任何消息——任务完整结束。\n"
         ),
 
         // ─── Scene 6.5: 仲裁裁决（胜诉/败诉两个分支由 inbound envelope 的 jobStatus 字段区分） ─
@@ -266,18 +269,24 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（jobStatus=rejected）\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n\
-             【流程结束】跑完对应分支 Step 1-2 → 子 session 可以关闭。\n"
+             **Step 3（两个分支都要做）— 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §6 路径 5）：\n\
+             1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段\n\
+             2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串\n\
+             删除后本 sub session 不再接收任何消息——仲裁流程完整结束。\n"
         ),
 
         // ─── Scene 6.5b: 卖家同意退款（TODO: 后端尚未定义此 event）───
         Event::ConfirmRefund => format!(
             "【当前状态】confirm_refund（卖家已同意退款，资金退还买家）\n\
              【角色】卖家（Provider）\n\n\
-             【你的下一步动作】\n\n\
-             向买家调用 `xmtp_send` 工具发送消息：\n\n\
+             【你的下一步动作（严格顺序）】\n\n\
+             **Step 1 — 给买家发收尾**：\n\n\
              {header_template}\n\
              已同意退款（confirm_refund），资金已退还买家。\n\n\
-             【流程结束】子 session 可以关闭。\n"
+             **Step 2 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §6 路径 5）：\n\
+             1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段\n\
+             2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串\n\
+             删除后本 sub session 不再接收任何消息——退款流程完整结束。\n"
         ),
 
         // ─── Scene 6.4: 仲裁已上链，需用户提供证据 ───────────────────
@@ -329,24 +338,35 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 
         // ─── 未知类型兜底 ─────────────────────────────────────────────
         Event::JobCreated => format!(
-            "【当前状态】job_created（任务上链 / 买家首次询问 a2a-agent-chat）\n\
+            "【当前状态】job_created（任务上链）\n\
              【角色】卖家（Provider）\n\n\
              ⚠️ **协商阶段，禁止直接调 `onchainos agent apply`**：apply 是链上动作（需 gas、签名上链），\n\
-             协商失败无法撤销。必须先走完下面 Step 1 / 2 / 3，三项全部确认后再 apply。\n\n\
+             协商失败无法撤销。必须先走完下方协商三项全部确认后再 apply。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 拉任务上下文：**\n\
              ```bash\n\
              onchainos agent common context {job_id} --role provider --agent-id {agent_id}\n\
              ```\n\
-             返回里包含【你的身份】（name、profileDescription）+【任务详情】+「专业匹配检查」区块。\n\n\
-             **Step 2 — 专业匹配判断（按 context 输出的「专业匹配检查」区块严格执行）：**\n\
-             - 领域匹配（任务关键词落在你的 profileDescription 范围内）→ 进入 Step 3\n\
-             - 领域不匹配 → 按区块给出的拒绝模板调 `xmtp_send`（纯自然语言，不写 text-header），结束\n\n\
-             **Step 3 — 协商三项确认（一条 xmtp_send 回复内尽量一次问完）：**\n\
+             返回里包含【你的身份】（name、profileDescription）+【任务详情】（含「可见性」字段）+「专业匹配检查」区块。\n\n\
+             **Step 2 — 按可见性 + 专业匹配分流**：\n\n\
+             ━━━━━━━━━ 分支 A：可见性 = 公开（Public，openType=1）—— 主动联系买家 ━━━━━━━━━\n\n\
+             A-Step 1：调 `xmtp_start_conversation` 工具建群 + 创建 sub session：\n\
+             \x20\x20参数：myAgentId={agent_id}，toAgentId=<task.buyerAgentId>（从 context 拿），jobId={job_id}\n\
+             \x20\x20成功返回 sessionKey + xmtpGroupId。\n\n\
+             A-Step 2：用 `xmtp_send` 给买家发协商三项确认（见 Step 3 模板）。\n\n\
+             ━━━━━━━━━ 分支 B：可见性 = 私有（Private，openType=0）—— 被动等待 ━━━━━━━━━\n\n\
+             B-Step 1：**不要主动建群**。等买家先 a2a-agent-chat envelope 到达（buyer 才有指定 provider 的权限）。\n\
+             \x20\x20本轮 turn 结束，等下一条 inbound 进来再走 Step 3 协商三项确认。\n\
+             \x20\x20（如果你已在某条 inbound a2a-agent-chat 触发的 sub session 里，跳过 B-Step 1，直接进 Step 3。）\n\n\
+             ━━━━━━━━━ 共同：专业匹配判断 ━━━━━━━━━\n\n\
+             看 context 里「专业匹配检查」区块：\n\
+             - 领域匹配 → 进入 Step 3（私有任务等买家先来；公开任务是你 A-Step 2 主动发）\n\
+             - 领域不匹配 → 按区块给出的拒绝模板调 `xmtp_send`（纯自然语言），结束\n\n\
+             **Step 3 — 协商三项确认（一条 `xmtp_send` 内尽量一次问完）：**\n\
              1) 任务内容和验收标准是否在能力范围内\n\
              2) 价格可接受（币种必须是 XLayer 的 USDT 或 USDG，看任务详情里的 token 字段）\n\
              3) 支付方式可接受（escrow / non_escrow，由买家在 confirm-accept 时定）\n\
-             → 用 `xmtp_send` 给买家发提问（机制见 SKILL.md §Session 通信契约）。\n\n\
+             → 用 `xmtp_send` 给买家发提问（机制见 SKILL.md §Session 通信契约 §6 路径 4）。\n\n\
              **Step 4 — 三项全部确认后（且仅在此时）才调 apply：**\n\
              ```bash\n\
              onchainos agent apply {job_id} --token-amount <协商价格> --token-symbol <USDT|USDG> --agent-id {agent_id}\n\

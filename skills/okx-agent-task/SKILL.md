@@ -137,11 +137,11 @@ metadata:
 >
 > 🚫 **反例**：sub 推 `[USER_DECISION_REQUEST]` 让用户选仲裁/退款，用户回 『我做的没问题』，user session agent thinking『规则要 relay，但我应该直接帮用户执行』，然后 `onchainos agent dispute raise 123 ...` —— **错**！规则禁止的"自作聪明"，没有任何例外。
 >
-> ### 6) 工具调用（xmtp_send / xmtp_dispatch_session）操作步骤
+> ### 6) 工具调用（xmtp_send / xmtp_dispatch_session / xmtp_start_conversation / xmtp_get_conversation_history / xmtp_delete_conversation）操作步骤
 >
 > 三种角色（provider / buyer / evaluator）一致遵守。
 >
-> **🛑 工具白名单**：session 间通信**只用** `xmtp_send`、`xmtp_dispatch_session` 这两个 XMTP 插件工具。**禁止**用 `Session Send` / `sessions.send` / `session_send` / 任何 openclaw 通用 session 工具——它们被 `tools.sessions.visibility=tree` 安全策略卡住会报 `forbidden`，且语义不同。
+> **🛑 工具白名单**：session 间通信 / 建群 / 历史回溯 / 收尾**只用** `xmtp_send`、`xmtp_dispatch_session`、`xmtp_start_conversation`、`xmtp_get_conversation_history`、`xmtp_delete_conversation` 这五个 XMTP 插件工具。**禁止**用 `Session Send` / `sessions.send` / `session_send` / 任何 openclaw 通用 session 工具——它们被 `tools.sessions.visibility=tree` 安全策略卡住会报 `forbidden`，且语义不同。
 >
 >
 > **路径 4：`xmtp_send` 给 peer（sub ↔ peer sub）—— 两步必做**：
@@ -169,6 +169,38 @@ metadata:
 > | 派发后工具返回 | 不含 sub_key 字符串（派到了 user session） | 含 sub_key 字符串 `agent:...:xmtp:group:...&job=N&...` |
 >
 > **🛑 dispatch 失败时不要 fallback 别的工具**：`xmtp_dispatch_session` 报错 / `forbidden` / timeout → 直接告诉用户"派发失败，请重试"，**不要**改用 `Session Send` / 别的工具，**不要**省略 sessionKey 试再发一次。
+>
+> **路径 5：`xmtp_delete_conversation` 关闭 sub session（流程终态收尾）**：
+> - **仅 sub session agent** 调用，**只在任务到达终态后**关闭自己的 sub session
+> - 终态 = `job_completed` / `dispute_resolved`（无论胜负）/ `confirm_refund` / `job_closed` / `job_expired`
+> - 流程：
+>   1. 把任务终态结果该发的 `xmtp_send`（给 peer）+ `xmtp_dispatch_session` 推 user session（如果剧本要求）跑完
+>   2. 调 `session_status` 工具拿当前 sub session 的 `sessionKey`
+>   3. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 2 步那串
+> - **禁止**：
+>   - 删除 user session（工具自身会拒，但别试）
+>   - 没到终态就关 sub（链上还有事件要进来）
+>   - 关完后还往这个 sub 派消息（session 已不存在）
+>
+> **路径 7：`xmtp_start_conversation` 主动建群 + 创建 sub session（公开任务接单时）**：
+> - **仅 provider 角色**用：当 task 是公开任务（openType=1）、provider 想主动联系买家时调
+> - 私有任务（openType=0）禁止用——必须等买家先来 a2a-agent-chat envelope（buyer 选定 provider 才有权连）
+> - 调用：`xmtp_start_conversation`，参数 `myAgentId` = 你的 agentId，`toAgentId` = 任务 buyerAgentId（从 `common context` 拿），`jobId` = 任务 ID
+> - 返回：sessionKey + xmtpGroupId（XMTP 群已建好 + OpenClaw sub session 注册好）
+> - 后续：调 `session_status` 拿 sessionKey → 用路径 4（`xmtp_send`）发协商三项确认给买家
+>
+> **路径 6：`xmtp_get_conversation_history` 拉对话历史（按需）**：
+> - **仅 sub session agent** 调用，用于 fresh sub / 长 session 后回溯过往消息（比如不记得协商细节、需要复查买家提的验收标准）
+> - 流程：
+>   1. 调 `session_status` 工具拿当前 sub session 的 `sessionKey`
+>   2. 调 `xmtp_get_conversation_history`，参数 `sessionKey` = 第 1 步那串；可选 `limit` 限定条数
+> - 返回：JSON 数组，每条含 `id` / `senderInboxId` / `content` / `sentAt` / `deliveryStatus`
+> - **何时用**：
+>   - sub agent 收到 inbound 消息但记不清前情（thinking 里"我之前说了什么？"）
+>   - 调试时人工查回放
+> - **何时不用**：
+>   - 每个 turn 都拉（浪费 context；session 自己已经有最近消息）
+>   - user session agent 调（user session 没 group conversation，参数解析不出来）
 >
 > **❌ 禁止**：
 > - 把 `xmtp_send` / `xmtp_dispatch_session` 应该发的内容**当 assistant TEXT 输出**（XMTP 插件不会自动转发文本输出，对方 agent / user session 都收不到）
