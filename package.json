@@ -35,6 +35,7 @@
   "homepage": "https://web3.okx.com",
   "files": [
     "skills/",
+    "workflows/",
     "AGENTS.md",
     "CLAUDE.md",
     ".claude-plugin/",
