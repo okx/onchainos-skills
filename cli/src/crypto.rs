@@ -280,6 +280,47 @@ pub fn eip3009_sign(
     Ok(base64::engine::general_purpose::STANDARD.encode(&sig))
 }
 
+// ── EIP-3009 (Receive With Authorization) ──────────────────────────────
+//
+// Same field shape as TransferWithAuthorization, but the EIP-712 type name
+// differs ("ReceiveWithAuthorization") which yields a different typeHash and
+// therefore a different signing hash. Used by Escrow flow where the Escrow
+// contract pulls funds from the Buyer (`to` = Escrow contract address).
+
+sol! {
+    #[derive(Debug, PartialEq)]
+    struct ReceiveWithAuthorization {
+        address from;
+        address to;
+        uint256 value;
+        uint256 validAfter;
+        uint256 validBefore;
+        bytes32 nonce;
+    }
+}
+
+/// Sign an EIP-3009 ReceiveWithAuthorization using EIP-712 typed data signing.
+/// Returns base64-encoded 65-byte recoverable signature (`r || s || v`, v ∈ {27,28}).
+pub fn receive_with_authorization_sign(
+    auth: &ReceiveWithAuthorization,
+    domain_params: &Eip3009DomainParams,
+    private_key: &[u8],
+) -> Result<String> {
+    use alloy_sol_types::{eip712_domain, SolStruct};
+
+    let domain = eip712_domain! {
+        name: domain_params.name.clone(),
+        version: domain_params.version.clone(),
+        chain_id: domain_params.chain_id,
+        verifying_contract: domain_params.verifying_contract,
+    };
+
+    let signing_hash = auth.eip712_signing_hash(&domain);
+    let mut sig = secp256k1_sign(private_key, signing_hash.as_ref())?;
+    sig[64] += 27;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&sig))
+}
+
 /// EIP-191 (personal_sign) + Ed25519:
 /// 1. Decode `msg` according to `encoding`:
 ///    - `"hex"`: strip optional "0x" prefix, hex-decode to raw bytes

@@ -326,6 +326,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Leaderboard { command } => format!("leaderboard {}", leaderboard_sub(command)),
         Commands::Tracker { command } => format!("tracker {}", tracker_sub(command)),
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
+        Commands::A2aPay { command } => format!("a2a-pay {}", a2a_pay_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
         Commands::Workflow { command } => format!("workflow {}", workflow_sub(command)),
@@ -546,6 +547,14 @@ fn payment_sub(c: &PaymentCommand) -> &'static str {
     match c {
         PaymentCommand::X402Pay { .. } => "x402-pay",
         PaymentCommand::Eip3009Sign { .. } => "eip3009-sign",
+    }
+}
+
+fn a2a_pay_sub(c: &crate::commands::payment::a2a_pay::A2aPayCommand) -> &'static str {
+    use crate::commands::payment::a2a_pay::A2aPayCommand;
+    match c {
+        A2aPayCommand::Create { .. } => "create",
+        A2aPayCommand::Status { .. } => "status",
     }
 }
 

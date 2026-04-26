@@ -106,6 +106,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::agentic_wallet::payment::PaymentCommand,
     },
+    /// A2A Pay — Buyer ↔ Seller charge / escrow flow (Smart-Account backend)
+    #[command(name = "a2a-pay")]
+    A2aPay {
+        #[command(subcommand)]
+        command: commands::payment::a2a_pay::A2aPayCommand,
+    },
     /// Address tracker: REST activities for KOL / smart money / custom address activity
     Tracker {
         #[command(subcommand)]
@@ -194,6 +200,7 @@ async fn run() {
         Commands::Wallet { command } => commands::agentic_wallet::wallet::execute(command).await,
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
+        Commands::A2aPay { command } => commands::payment::a2a_pay::execute(command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Ws { command } => commands::ws::execute(command).await,
         Commands::Workflow { command } => commands::workflows::execute(&ctx, *command).await,
