@@ -519,6 +519,35 @@ recommend list → 自动联系 #1 → negotiate → 失败 → 自动联系 #2 
 
 Three negotiation steps must be confirmed before calling `confirm-accept`.
 
+### 2.1 协商剧本
+
+> **单一信源在 CLI**：`onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer --agentId <你的agentId>`，下面只是简版索引。
+
+**两条进入路径**：
+
+| 路径 | 触发 | 起点 |
+|---|---|---|
+| **A. 主动联系**（最常见）| Scene 0 自动遍历推荐列表 / 指定 Provider | 发送询盘消息后等待卖家回复 → 协商三步确认 |
+| **B. 被动响应**（少见）| 收到卖家 a2a-agent-chat envelope（`sender.role===2`，公开任务卖家主动联系） | 直接进入"协商三步确认" |
+
+**协商三步确认**（A/B 共用）：
+
+1. 拉上下文 + 确认任务详情：
+   ```bash
+   onchainos agent common context <jobId> --role buyer --agent-id <你的agentId>
+   ```
+   输出含任务描述、预算、验收标准等完整信息。向卖家发送任务详情，等待卖家确认理解。
+
+2. 三步确认（贯穿协商全过程）：
+   - **任务详情**：卖家理解并确认任务内容和验收标准
+   - **价格**：双方就最终成交价格达成一致（币种必须是 XLayer 的 USDT 或 USDG）
+   - **支付方式**：双方就 escrow / non_escrow 达成一致
+
+3. 三步全确认后等待卖家正式申请（`provider_applied`）→ 进入 Scene 3（confirm-accept）。
+   **任一项未达成** → 直接告知卖家无法继续，自动切换下一个推荐卖家（按 Scene 1.5.3 遍历逻辑）。
+
+**时限**：协商 5 分钟内完成，不反复追问已知信息。
+
 ---
 
 ### 协商步骤一：任务详情确认

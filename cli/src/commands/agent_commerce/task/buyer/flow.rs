@@ -69,8 +69,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
     );
     let header_template = &send_to_peer;
 
+    let context_preamble = format!(
+        "📍 你在 sub session（你看到这段 next-action 输出 = 100% 在 sub）。\n\
+         如果不记得本任务协商细节（deliverable / paymentMode / token / 卖家 agentId / 价格），\n\
+         先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 加载上下文。\n\n"
+    );
+
     let event = parse_status_or_event(job_status);
-    match event.clone() {
+    let body = match event.clone() {
         // ─── Scene 0: 任务上链确认，自动联系推荐卖家 ────────────────
         Event::JobCreated => format!(
             "【当前状态】job_created（任务已上链，状态 Open）\n\
@@ -451,5 +457,6 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              2. 如该状态不在预期流程内，等待用户指示\n\
              3. 不要预测/假设其他通知\n"
         ),
-    }
+    };
+    format!("{context_preamble}{body}")
 }

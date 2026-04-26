@@ -1023,6 +1023,15 @@ const server = http.createServer(async (req, res) => {
   // ── Parameterized routes ───────────────────────────────────────────────────
   let m: Record<string, string> | null;
 
+  // POST /priapi/v1/aieco/task/{jobId}/match — 推荐卖家（从 match-services.json 热读）
+  if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/match", path_))) {
+    const { jobId } = m;
+    const matchData = loadJsonFixture<Record<string, unknown>>("match-services.json", { recommendations: [] });
+    console.log(`[mock-api] /match job=${jobId} → ${(matchData.recommendations as any[])?.length ?? 0} providers`);
+    sendOk(res, matchData);
+    return;
+  }
+
   if (method === "GET" && (m = matchPath("/api/v1/task/:jobId/providerConfirmStatus", path_))) {
     const { jobId } = m;
     if (!tasks.has(jobId)) { sendErr(res, 2001, "task not found"); return; }
@@ -1618,7 +1627,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/match", path_))) {
-    if (!tasks.has(m.jobId)) { sendErr(res, 2001, "task not found"); return; }
+    // Allow match for any jobId (CLI debugging convenience)
     sendOk(res, { recommendations: [
       { providerAddress: "0xSeller000000000000000000000000000000001", providerAgentId: "mock-seller-agent-001", matchScore: 92.5, creditScore: 88, capabilitySummary: "专注 Solidity 审计和 DeFi 协议开发，完成率 96%", completedTaskCount: 42 },
       { providerAddress: "0xSeller000000000000000000000000000000002", providerAgentId: "mock-seller-agent-002", matchScore: 85.0, creditScore: 79, capabilitySummary: "全栈区块链开发，擅长 Rust 和 EVM 合约", completedTaskCount: 18 },

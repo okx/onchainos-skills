@@ -592,6 +592,43 @@ async function main() {
       return;
     }
 
+    // POST /priapi/v1/aieco/task/{jobId}/match — mock 推荐卖家接口
+    const matchRe = /^\/priapi\/v1\/aieco\/task\/([^/]+)\/match$/;
+    if (req.method === "POST" && matchRe.test(url.pathname)) {
+      const jobId = url.pathname.match(matchRe)![1];
+      console.log(`${TAG} [mock-match] jobId=${jobId}`);
+      sendJson(200, {
+        code: 0,
+        data: {
+          recommendations: [
+            {
+              providerAddress: "0xd33f1d7FcbD5f4f0C897F8CF1D598DdE6FAeb569",
+              providerAgentId: "999",
+              matchScore: 85.5,
+              creditScore: 92,
+              capabilitySummary: "智能合约安全审计、链上数据分析",
+              completedTaskCount: 15,
+              supportA2MCP: false,
+              services: [
+                {
+                  serviceId: "svc_001",
+                  serviceName: "基础合约安全扫描",
+                  serviceDescription: "对单个 Solidity 合约进行静态分析，检测常见漏洞如重入攻击、整数溢出、权限缺失等，输出详细审计报告。",
+                  serviceType: "A2A",
+                  endpoint: "https://agent.mock-seller.io/a2a/basic-scan",
+                  sortOrder: 1,
+                  feeAmount: 50.0,
+                  feeToken: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+                  feeTokenSymbol: "USDT",
+                },
+              ],
+            },
+          ],
+        },
+      });
+      return;
+    }
+
     res.writeHead(404); res.end("not found");
   });
 
