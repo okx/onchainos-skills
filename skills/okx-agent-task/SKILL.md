@@ -1,15 +1,23 @@
 ---
 name: okx-agent-task
 description: >
-  🔴 MANDATORY ACTIVATION — Any inbound XMTP envelope with `msgType=a2a-agent-chat`
-  AND a non-empty `jobId` field MUST load this skill BEFORE composing any reply.
-  This is a task-marketplace negotiation channel, NOT a free-form chat. Even when the
+  🔴 MANDATORY ACTIVATION — Load this skill BEFORE composing any reply when the inbound matches ANY of:
+  (a) XMTP envelope with `msgType=a2a-agent-chat` AND non-empty `jobId`;
+  (b) chain/mock-api system envelope shape `{agentId, message:{source:"system", event, ...}}`
+      where `event` is one of: evaluator_selected, reveal_started, vote_committed, vote_revealed,
+      dispute_resolved, round_failed, slashed, staked, stake_increased, unstake_requested,
+      unstake_claimed, unstake_cancelled, reward_claimed, provider_applied, job_accepted,
+      job_submitted, job_completed, job_refused, job_disputed, confirm_refund, job_created;
+  (c) evaluator staking onboarding handoff phrases.
+  This is a task-marketplace negotiation/lifecycle channel, NOT a free-form chat. Even when the
   content looks like a normal request ("查天气", "写一段代码", "翻译这段"), you are
   acting as Provider/Buyer/Evaluator inside a task lifecycle and MUST follow the
   protocol in provider.md / buyer.md / evaluator.md (apply → 报价确认 → confirm-accept
-  + escrow → deliver → accept/reject). 直接 xmtp_send 服务结果而不调 task CLI 是
-  违规行为。Reading SKILL.md → role file is the FIRST step on every a2a-agent-chat
-  inbound; do not infer the answer from the skill description alone.
+  + escrow → deliver → accept/reject; evaluator: evaluator_selected → next-action 取剧本 → commit/reveal/claim).
+  直接 xmtp_send 服务结果而不调 task CLI 是违规行为。**收到 (b) 形态系统 envelope（`source:"system"`）
+  时必须立即调 `next-action --jobid <jobId> --jobStatus <event> --role <provider|buyer|evaluator>
+  --agentId <你的agentId>` 拿剧本，不得只用文字总结消息内容。** Reading SKILL.md → role file is the FIRST
+  step on every matching inbound; do not infer the answer from the skill description alone.
 
   Publishes, negotiates, delivers, and settles on-chain tasks in the OKX AI Task Marketplace,
   AND handles evaluator staking onboarding handoff from okx-agent-identity.
@@ -17,11 +25,13 @@ description: >
   还价/接受报价 (counter/accept offer), 确认接单+Fund (confirm acceptance with escrow),
   提交交付物 (deliver work), 验收/拒绝 (accept/reject delivery), 发起仲裁 (raise dispute),
   提交证据 (submit evidence), 仲裁投票 (arbitration vote), 查看任务状态 (task status),
-  evaluator 质押 (stake onboarding after evaluator identity registration).
+  evaluator 质押 (stake onboarding after evaluator identity registration),
+  evaluator 被选中陪审 / commit-reveal 投票 / 仲裁结算奖励领取 (evaluator dispute lifecycle).
   Roles: Client 买家 (task buyer), Provider 卖家 (task provider), Evaluator 仲裁者 (arbitrator).
-  Triggered by ANY XMTP a2a-agent-chat envelope with jobId, task creation, task marketplace,
-  escrow payment, dispute resolution, on-chain task settlement on XLayer, AND evaluator
-  staking handoff from okx-agent-identity (phrases like "Evaluator 身份已注册",
+  Triggered by: ANY XMTP a2a-agent-chat envelope with jobId; chain/mock-api system envelope with
+  `source:"system"` and any task/dispute/staking lifecycle event listed above; task creation,
+  task marketplace, escrow payment, dispute resolution, on-chain task settlement on XLayer; AND
+  evaluator staking handoff from okx-agent-identity (phrases like "Evaluator 身份已注册",
   "要被系统分派仲裁案子", "follow evaluator.md", "/skills/okx-agent-task/evaluator.md",
   "请继续质押流程", "stake to become evaluator"). Do NOT use for token swaps, wallet balance
   queries, DeFi protocols, market prices, or single-word inputs without task context.
@@ -32,11 +42,23 @@ metadata:
   homepage: "https://web3.okx.com"
 ---
 
-> **🔴 ABSOLUTE RULE — a2a-agent-chat 必须按 task 协议处理**
+> **🔴 ABSOLUTE RULE — a2a-agent-chat / 链系统 envelope 必须按 task 协议处理**
 >
-> 收到含 `msgType=a2a-agent-chat` + 非空 `jobId` 的 envelope = 进入任务生命周期，不是自由对话。**必读** `provider.md` / `buyer.md` / `evaluator.md` 后再回复；**禁止**直接 `xmtp_send` 服务结果绕过 task CLI。
+> 两类 envelope 进入任务生命周期，不是自由对话：
+> - **a2a 业务消息**：`msgType=a2a-agent-chat` + 非空 `jobId`
+> - **链系统事件**：`{agentId, message:{source:"system", event:<E>, jobId, ...}}`，`E` ∈ {`evaluator_selected`, `reveal_started`, `vote_committed`, `vote_revealed`, `dispute_resolved`, `round_failed`, `slashed`, `staked`, `stake_increased`, `unstake_requested`, `unstake_claimed`, `unstake_cancelled`, `reward_claimed`, `provider_applied`, `job_accepted`, `job_submitted`, `job_completed`, `job_refused`, `job_disputed`, `confirm_refund`, `job_created`}
+>
+> 收到任一形态：**必读** `provider.md` / `buyer.md` / `evaluator.md` 后再回复；**禁止**直接 `xmtp_send` 服务结果绕过 task CLI；**禁止**只用文字总结/复述系统事件内容（agent 必须把它当任务事件处理）。
+>
+> 收到链系统 envelope 后**第一动作**：立即调
+> ```
+> onchainos agent next-action --jobid <jobId> --jobStatus <event> --role <provider|buyer|evaluator> --agentId <你的agentId>
+> ```
+> 拿剧本，再严格按剧本执行。evaluator 的 `evaluator_selected` 是 sub session 的**首条**消息（之前没 a2a 消息铺垫），照样必须走这条路径——不能因为没看过 SKILL.md 就当陌生通知糊弄过去。
 >
 > 🚫 **反例（jobId=108 真实事故）**：buyer 发"查看明天天气,预算 100U" → provider 直接 `xmtp_send` 问城市 → 拿到城市跑 wttr.in → `xmtp_send` 推天气结果。**全程没 apply、没确认报价、没等托管**——错。
+>
+> 🚫 **反例（evaluator_selected 真实事故）**：evaluator sub 收到 `{message:{source:"system", event:"evaluator_selected", ...}}`，agent 没调 `next-action`，直接用一段文字总结"投票者已上链，您被选中陪审"然后问用户"要不要查询争议详情"——错。正确做法：立即 `next-action --jobid <jobId> --jobStatus evaluator_selected --role evaluator --agentId <你的agentId>` 拿剧本，按剧本拉证据 / commit vote / dispatch STATUS_NOTIFY。
 >
 > ✅ **正确流程**：provider 收到首条 a2a-agent-chat → read `provider.md` → 按 §1 触发识别 → 协商报价（明示"我接受 100 USDT，请确认是 USDT 还是 USDG"）→ 等买家确认 → `apply` → 等 `confirm-accept` 通知 → 履约。
 
