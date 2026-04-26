@@ -82,7 +82,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              - 遍历 `evidences.provider.images[].localPath` 和 `evidences.client.images[].localPath`\n\
              - **逐张调用多模态 read / view 能力读图**——截图里写了什么、展示了什么交付物、时间戳、对话内容，全要实际看过\n\
              - **禁止**只凭 `texts[]` 或 fileKey 名称猜测图片内容；不看图 = 放弃双方可能最关键的证据 = 违反 L3 义务 #1『必须完整阅读双方提交的所有材料』\n\
-             - 下载失败（有 `downloadError`）的图片记为缺失，按 举证规则『一方未提交视为放弃举证』处理\n\n\
+             - **下载失败处理（硬约束）**：图片项含 `downloadError` 字段 = 该证据视为**缺失**，直接按 举证规则『一方未提交视为放弃举证』处理。\n\
+             \x20\x20**禁止**用 `ls` / `find` / `cat` / `tree` / `stat` / `glob` / `Read` 等任何工具去本地磁盘找替代文件——这是 SKILL.md Layer 0 安全门违例（『列目录、扫描磁盘』），且 `localPath` 不存在意味着 CLI 已知道这张图拿不到。\n\
+             \x20\x20**禁止**重试 `evaluator info` 期望下次能下到（CLI 内部已尝试过 3 次）。直接进 Step 3 把这张图标记为缺失，继续走流程。\n\n\
              **Step 3 — 按 证据流程 材料读取流程构建证据清单：**\n\
              - ① 完整性：双方各提交了什么文本/图片？缺失什么？\n\
              - ② 任务基线：从 qualityStandards / description 建立\"任务应该是什么样\"\n\
@@ -111,7 +113,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              ⚠️ 归约规则是硬约束——不得为了\"平衡\"或\"避免争议\"反向归约。决策原则 原则优先于对结果的担忧。\n\n\
              **Step 5 — 写裁决书（裁决书规范 + L3 义务 #4『必须在投票前写下完整推理链』）：**\n\
              \n\
-             在 session 记忆里生成结构化文本（不入链、不推用户，但必须实际产出；用于 L4 递归自检）：\n\
+             ⚠️ **『session 记忆』= 你 thinking 块里的推理过程，不是磁盘文件**。\n\
+             - **禁止**调用 `write` / `edit` / `Write` / `Edit` / `NotebookEdit` 等任何文件写入工具落盘（\n\
+             \x20\x20违反 L3 义务 #4 + L1 任务边界——裁决书不入链不推用户也不落盘，仅在 thinking 里推理）。\n\
+             - **禁止**用 `exec` 跑 `tee` / `cat > file` / `echo > file` / 重定向 / `printf > file` 等方式间接写文件。\n\
+             - 正确做法：把下面这段结构化文本**作为 thinking 内容**整理出来给自己看（用于 Step 6 递归自检），不要任何工具调用。\n\
              ```\n\
              争议 ID: <disputeId>\n\
              争议类型: <质量/超时/恶意>\n\
@@ -141,6 +147,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              ⚠️ **只能是 1 或 2，禁止 skip**（V1 无弃权；拖到超时罚 0.3% 比错投 1% 更亏）。\n\
              失败最多重试 3 次（CRITICAL，commit 窗口关闭即罚 0.3%）。返回 `voter has already committed` 视为成功进入 Step 8。\n\
              body 只带 `vote`；裁决书（Step 5）仅保留在 session 记忆，**不写入后端，不推user session**。\n\n\
+             ⚠️ **错误兜底硬约束（agent 失控反例）**：commit 报 `当前账户没有 evaluator（仲裁者） 身份，请先注册` / `code=2004` 时——\n\
+             - **禁止**调 `onchainos agent create` / `agent register` / `identity_register` 任何注册类命令（链上写入、烧 gas、修改全局状态——evaluator 身份注册是用户主动决定的事，不是 sub session 自作主张能干的）\n\
+             - **禁止**fallback 到查 identity / 找钱包 / 改 config 之类的迂回操作\n\
+             - 直接：输出一行 `> commit aborted: evaluator identity not registered for this wallet; report to user via STATUS_NOTIFY`，**不**继续 Step 8，**不**自己跑识别流程，结束 turn 等用户处理\n\n\
              **Step 8 — 输出一行 sub session 日志后结束本回合。不调用 通知user session，不通知用户：**\n\n\
              > Committed dispute=<disputeId> side=<1|2> autonomously per 决策原则-§3.6.\n\n\
              【原则】\n\
@@ -242,7 +252,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              tool: xmtp_dispatch_session\n\
              arguments:\n\
              \x20\x20content: |\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · user session agent 不要调任何工具不要再次执行]\n\
+             \x20\x20\x20\x20[STATUS_NOTIFY · 原样输出下方正文给用户即结束本轮 · 禁止复述/总结/改写/添加问候或收尾语（如「请问还有什么需要帮助的」）· 禁止调任何工具或再次执行]\n\
              \x20\x20\x20\x20[Stake 罚没] 任务『<title>』(jobId={job_id})\n\
              \x20\x20\x20\x20  - 金额：<amount> OKB\n\
              \x20\x20\x20\x20  - 原因：<reason>\n\
@@ -271,7 +281,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              tool: xmtp_dispatch_session\n\
              arguments:\n\
              \x20\x20content: |\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · user session agent 不要调任何工具不要再次执行]\n\
+             \x20\x20\x20\x20[STATUS_NOTIFY · 原样输出下方正文给用户即结束本轮 · 禁止复述/总结/改写/添加问候或收尾语（如「请问还有什么需要帮助的」）· 禁止调任何工具或再次执行]\n\
              \x20\x20\x20\x20success → [仲裁奖励] 任务『<title>』(jobId={job_id}) 奖励已到账 <rewardAmount> OKB，txHash=<txHash>。\n\
              \x20\x20\x20\x20failed  → [仲裁奖励失败] 任务『<title>』(jobId={job_id}) claim 失败 (errorCode=<errorCode>, txHash=<txHash>)，请按错误码重试。\n\
              ```\n\n\
@@ -290,9 +300,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              tool: xmtp_dispatch_session\n\
              arguments:\n\
              \x20\x20content: |\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · user session agent 不要调任何工具不要再次执行]\n\
-             \x20\x20\x20\x20success → [质押] 质押已生效：+<amount> OKB，txHash=<txHash>。你现在是活跃仲裁者候选，被选入陪审时会收到通知。\n\
-             \x20\x20\x20\x20failed  → [质押失败] errorCode=<errorCode>, txHash=<txHash>。常见错误：4000 agentId 无效 / 2004 无 evaluator 身份 / 1001 累计质押 < 100 OKB（累计门槛规则，合约按 `已有余额 + 本次 >= 100` 校验）。请按错误码修正后重试 `onchainos agent evaluator stake --amount <N>`。\n\
+             \x20\x20\x20\x20[STATUS_NOTIFY · 原样输出下方正文给用户即结束本轮 · 禁止复述/总结/改写/添加问候或收尾语（如「请问还有什么需要帮助的」）· 禁止调任何工具或再次执行]\n\
+             \x20\x20\x20\x20success → [质押] 质押已生效：+<amount> OKB，txHash=<txHash>。你现在是活跃仲裁者候选。\n\
+             \x20\x20\x20\x20failed  → [质押失败] errorCode=<errorCode>, txHash=<txHash>。常见错误：4000 agentId 无效 / 2004 无 evaluator 身份 / 1001 累计质押 < 100 OKB（累计门槛规则，合约按 `已有余额 + 本次 >= 100` 校验）。修正后跟我说『再质押 <N> OKB』我来重试。\n\
              ```\n\n\
              【Step 3】输出日志结束：`> staked status=<status> amount=<amount> relayed.`\n".to_string(),
 
@@ -305,9 +315,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              tool: xmtp_dispatch_session\n\
              arguments:\n\
              \x20\x20content: |\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · user session agent 不要调任何工具不要再次执行]\n\
+             \x20\x20\x20\x20[STATUS_NOTIFY · 原样输出下方正文给用户即结束本轮 · 禁止复述/总结/改写/添加问候或收尾语（如「请问还有什么需要帮助的」）· 禁止调任何工具或再次执行]\n\
              \x20\x20\x20\x20success → [质押] 追加质押已入账：+<amount> OKB，txHash=<txHash>。你的选中权重相应提升。\n\
-             \x20\x20\x20\x20failed  → [质押失败] 追加质押失败（errorCode=<errorCode>, txHash=<txHash>），请按错误码重试 `onchainos agent evaluator increase-stake --amount <N>`。\n\
+             \x20\x20\x20\x20failed  → [质押失败] 追加质押失败（errorCode=<errorCode>, txHash=<txHash>），修正后跟我说『追加质押 <N> OKB』我来重试。\n\
              ```\n\n\
              【Step 3】输出日志结束：`> stake_increased status=<status> amount=<amount> relayed.`\n".to_string(),
 
@@ -320,8 +330,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              tool: xmtp_dispatch_session\n\
              arguments:\n\
              \x20\x20content: |\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · user session agent 不要调任何工具不要再次执行]\n\
-             \x20\x20\x20\x20success → [解质押] 申请已受理：-<amount> OKB 进入 7 天冷却期，可领取时间 <availableAt 本地时间>。到点跑 `onchainos agent evaluator claim-unstake` 提走；想撤销跑 `onchainos agent evaluator cancel-unstake`（仅冷却期内有效）。\n\
+             \x20\x20\x20\x20[STATUS_NOTIFY · 原样输出下方正文给用户即结束本轮 · 禁止复述/总结/改写/添加问候或收尾语（如「请问还有什么需要帮助的」）· 禁止调任何工具或再次执行]\n\
+             \x20\x20\x20\x20success → [解质押] 申请已受理：-<amount> OKB 进入 7 天冷却期，可领取时间 <availableAt 本地时间>。冷却期到了跟我说『领取解质押』我来提走；想中途撤销随时跟我说『取消解质押』（仅冷却期内有效）。\n\
              \x20\x20\x20\x20failed  → [解质押失败] errorCode=<errorCode>, txHash=<txHash>。常见原因：活跃仲裁期间不可解质押 / 已在冷却期 / 余额不足。\n\
              ```\n\n\
              【Step 3】输出日志结束：`> unstake_requested status=<status> amount=<amount> relayed.`\n".to_string(),
@@ -335,7 +345,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              tool: xmtp_dispatch_session\n\
              arguments:\n\
              \x20\x20content: |\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · user session agent 不要调任何工具不要再次执行]\n\
+             \x20\x20\x20\x20[STATUS_NOTIFY · 原样输出下方正文给用户即结束本轮 · 禁止复述/总结/改写/添加问候或收尾语（如「请问还有什么需要帮助的」）· 禁止调任何工具或再次执行]\n\
              \x20\x20\x20\x20success → [解质押] 已提走 <amount> OKB，已入钱包，txHash=<txHash>。\n\
              \x20\x20\x20\x20failed  → [解质押失败] 领取失败（errorCode=<errorCode>, txHash=<txHash>），请按错误码重试。常见原因：锁定期未满 / 无待解质押。\n\
              ```\n\n\
@@ -350,7 +360,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              tool: xmtp_dispatch_session\n\
              arguments:\n\
              \x20\x20content: |\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · user session agent 不要调任何工具不要再次执行]\n\
+             \x20\x20\x20\x20[STATUS_NOTIFY · 原样输出下方正文给用户即结束本轮 · 禁止复述/总结/改写/添加问候或收尾语（如「请问还有什么需要帮助的」）· 禁止调任何工具或再次执行]\n\
              \x20\x20\x20\x20success → [解质押] 已取消：<amount> OKB 回到质押状态，txHash=<txHash>。\n\
              \x20\x20\x20\x20failed  → [解质押失败] 取消失败（errorCode=<errorCode>, txHash=<txHash>）。常见原因：冷却期已过 / 无待解质押。\n\
              ```\n\n\
