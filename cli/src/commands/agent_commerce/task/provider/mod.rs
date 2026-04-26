@@ -5,8 +5,8 @@
 //! - `deliver.rs`           — 提交交付物
 //! - `agreerefund.rs`       — 同意退款
 //! - `dispute_raise.rs`     — 发起仲裁（上链）
-//! - `dispute_evidence.rs`  — 提交证据（上链）
 //! - `dispute_info.rs`      — 查询争议详情
+//! - `provider_claim.rs`    — submit→complete 超时领取（claimAutoComplete）
 //!
 //! 链下证据上传 (`dispute upload`) 由买卖双方共用，
 //! 实现在 `common/dispute_upload.rs`。
@@ -15,12 +15,12 @@ mod agreerefund;
 mod apply;
 pub mod contact_buyer;
 mod deliver;
-mod dispute_evidence;
 mod dispute_info;
 mod dispute_raise;
 pub mod find_jobs;
 pub mod flow;
 pub mod get_payment;
+mod provider_claim;
 pub mod recommend_task;
 
 use anyhow::Result;
@@ -28,7 +28,6 @@ use clap::Subcommand;
 
 use crate::commands::agent_commerce::task::common::dispute_upload;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::signing;
 use crate::commands::Context;
 
 // ─── provider subcommands ─────────────────────────────────────────────────
@@ -57,6 +56,10 @@ pub enum ProviderCommand {
     AgreeRefund {
         job_id: String,
     },
+    /// Provider claims after submit→complete timeout (claimAutoComplete API → sign → broadcast)
+    ClaimAutoComplete {
+        job_id: String,
+    },
 }
 
 // ─── dispute subcommands ──────────────────────────────────────────────────
@@ -69,16 +72,6 @@ pub enum DisputeCommand {
         #[arg(long)]
         reason: String,
     },
-    /// Either party submits evidence during dispute
-    Evidence {
-        job_id: String,
-        #[arg(long)]
-        summary: String,
-        #[arg(long)]
-        file: Option<String>,
-        #[arg(long = "type")]
-        evidence_type: Option<String>,
-    },
     /// Retrieves dispute details
     Info {
         dispute_id: String,
@@ -86,6 +79,10 @@ pub enum DisputeCommand {
     /// Upload offchain evidence (multipart, 1h preparation window only) — 买卖双方共用
     Upload {
         job_id: String,
+        /// 调用方自己的 agentId（buyer 或 provider）。由 next-action 剧本注入，避免
+        /// 客户端再做钱包-角色映射（同一钱包可能注册多个 agentId）
+        #[arg(long = "agent-id")]
+        agent_id: String,
         /// 文本证据（可选，text/images 至少一项）
         #[arg(long)]
         text: Option<String>,
@@ -107,6 +104,8 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
             deliver::handle_deliver(&mut client, &job_id, &file, &message).await,
         ProviderCommand::AgreeRefund { job_id } =>
             agreerefund::handle_agree_refund(&mut client, &job_id).await,
+        ProviderCommand::ClaimAutoComplete { job_id } =>
+            provider_claim::handle_claim_auto_complete(&mut client, &job_id).await,
     }
 }
 
@@ -115,27 +114,11 @@ pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
     match cmd {
         DisputeCommand::Raise { job_id, reason } =>
             dispute_raise::handle_dispute_raise(&mut client, &job_id, &reason).await,
-        DisputeCommand::Evidence { job_id, summary, .. } =>
-            dispute_evidence::handle_dispute_evidence(&mut client, &job_id, &summary).await,
         DisputeCommand::Info { dispute_id } =>
             dispute_info::handle_dispute_info(&mut client, &dispute_id).await,
-        DisputeCommand::Upload { job_id, text, images } => {
-            // 自动识别角色：比对当前钱包地址和 task 的 buyer/provider 地址
-            let (_, address) = signing::resolve_wallet(None, None)?;
-            let resp = client.get(&client.task_path(&job_id)).await?;
-            let task = &resp["task"];
-            let buyer_addr = task["buyerAgentAddress"].as_str().unwrap_or("");
-            let provider_addr = task["providerAgentAddress"].as_str().unwrap_or("");
-            let agent_id = if address.eq_ignore_ascii_case(buyer_addr) {
-                task["buyerAgentId"].as_str().unwrap_or("").to_string()
-            } else if address.eq_ignore_ascii_case(provider_addr) {
-                task["providerAgentId"].as_str().unwrap_or("").to_string()
-            } else {
-                anyhow::bail!("当前钱包 {address} 不是任务 {job_id} 的买家或卖家")
-            };
+        DisputeCommand::Upload { job_id, agent_id, text, images } =>
             dispute_upload::handle_upload_evidence(
                 &mut client, &job_id, &agent_id, text.as_deref(), &images,
-            ).await
-        }
+            ).await,
     }
 }

@@ -549,9 +549,9 @@ fn build_context(
         }
     }
 
-    // ── 可执行操作 ────────────────────────────────────────────────────────
+    // ── 下一步动作 ────────────────────────────────────────────────────────
     let actions = available_actions(role, status_raw, &task.job_id);
-    out.push_str("【你当前可以执行的操作】\n");
+    out.push_str("【下一步动作】（先调 next-action 拿当前 status 的完整剧本，按剧本走，不要绕过 next-action 直接调 CLI）\n");
     for a in &actions {
         out.push_str(&format!("- {a}\n"));
     }

@@ -219,18 +219,18 @@ function buildSystemEnvelope(args: {
   event: string;       // 必填——具体事件
   jobStatus: string;   // 必填——任务真实状态（caller 应从 mock-api 实时拉）
   description?: string;
+  winner?: string;     // 仅 dispute_resolved 用：'provider' | 'buyer'，sub flow.rs 可双读 jobStatus 或 winner
 }): string {
-  return JSON.stringify({
-    agentId: args.agentId,
-    message: {
-      event: args.event,
-      jobStatus: args.jobStatus,
-      description: args.description ?? "",
-      source: "system",
-      jobId: args.jobId,
-      timestamp: Math.floor(Date.now() / 1000),
-    },
-  });
+  const message: Record<string, unknown> = {
+    event: args.event,
+    jobStatus: args.jobStatus,
+    description: args.description ?? "",
+    source: "system",
+    jobId: args.jobId,
+    timestamp: Math.floor(Date.now() / 1000),
+  };
+  if (args.winner) message.winner = args.winner;
+  return JSON.stringify({ agentId: args.agentId, message });
 }
 
 // 实时拉 jobStatus —— 从 mock-api task detail 的 task.statusStr 取
@@ -569,6 +569,7 @@ async function main() {
           jobId?: string;
           event?: string;
           description?: string;
+          winner?: string;  // dispute_resolved 时必传：'provider' | 'buyer'
         };
         if (!body.jobId || !body.event) {
           sendJson(400, { error: "jobId + event required" });
@@ -581,9 +582,24 @@ async function main() {
           });
           return;
         }
-        // 先把 mock-api 状态推到 event 暗示的下一态（mock 测试的 shortcut，
-        // 绕开 buyer/seller agent 真的跑 confirm-accept/deliver/complete CLI 这条真实链路）
-        await advanceTaskStatusViaBroadcast(body.jobId, body.event);
+        // dispute_resolved 没有 bizType 路径，直接 force-status 设到 complete/rejected
+        // （sub agent 只看 envelope.jobStatus 字段判胜负）
+        if (body.event === "dispute_resolved") {
+          const winner = body.winner ?? "provider";
+          const targetStatus = winner === "provider" ? "complete" : "rejected";
+          try {
+            await fetch(`${MOCK_API_URL}/admin/task/${body.jobId}/force-status`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ statusStr: targetStatus }),
+            });
+          } catch (e: any) {
+            console.error(`${TAG} [notify] dispute_resolved force-status 失败:`, e?.message ?? e);
+          }
+        } else {
+          // 其他 event 用 bizType broadcast 推 mock-api 状态（标准链路）
+          await advanceTaskStatusViaBroadcast(body.jobId, body.event);
+        }
         const jobStatus = await fetchJobStatus(body.jobId);
         const message = buildSystemEnvelope({
           agentId: OWN_AGENT_ID || "unknown",
@@ -591,10 +607,11 @@ async function main() {
           event: body.event,
           jobStatus,
           description: body.description,
+          winner: body.winner,  // envelope 冗余带 winner 字段，sub flow.rs 可双读 jobStatus 或 winner
         });
         await callGatewaySessionsSend(sessionKey, message);
         console.log(
-          `${TAG} [notify] ✓ event=${body.event} jobStatus=${jobStatus} jobId=${body.jobId} → ${sessionKey.slice(0, 70)}…`,
+          `${TAG} [notify] ✓ event=${body.event} jobStatus=${jobStatus}${body.winner ? ` winner=${body.winner}` : ""} jobId=${body.jobId} → ${sessionKey.slice(0, 70)}…`,
         );
         sendJson(200, { ok: true, sessionKey, message });
       } catch (e: any) {
@@ -833,6 +850,12 @@ body { font-family: ui-monospace, monospace; background: #0d1117; color: #c9d1d9
             <option value="job_disputed">job_disputed</option>
             <option value="confirm_refund">confirm_refund</option>
             <option value="dispute_resolved">dispute_resolved</option>
+          </select>
+        </label>
+        <label id="notify-winner-label" style="display:none;">winner
+          <select id="notify-winner">
+            <option value="provider">provider 胜（卖家赢，task→complete）</option>
+            <option value="buyer">buyer 胜（买家赢，task→rejected）</option>
           </select>
         </label>
         <button id="btn-notify" type="button">发送通知</button>
@@ -1163,6 +1186,12 @@ async function contactSeller(addr) {
 $("btn-refresh-sellers").addEventListener("click", loadSellers);
 
 // ── 发送系统通知（模拟链事件）─────────────────────────────────────
+// dispute_resolved 时才显示 winner 选择，其他事件隐藏
+$("notify-event").addEventListener("change", function(e) {
+  var lbl = $("notify-winner-label");
+  if (lbl) lbl.style.display = e.target.value === "dispute_resolved" ? "" : "none";
+});
+
 $("btn-notify").addEventListener("click", async () => {
   // jobId 默认来自当前会话 context
   let jobId = $("notify-jobid").value.trim();
@@ -1178,10 +1207,14 @@ $("btn-notify").addEventListener("click", async () => {
   }
   if (!jobId) { alert("请填 jobId 或先选中一个含 jobId 的会话"); return; }
   const event = $("notify-event").value;
+  const payload = { jobId: jobId, event: event };
+  if (event === "dispute_resolved") {
+    payload.winner = $("notify-winner").value;
+  }
   const resp = await fetch("/notify-openclaw", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jobId, event }),
+    body: JSON.stringify(payload),
   });
   const data = await resp.json();
   if (!resp.ok) {

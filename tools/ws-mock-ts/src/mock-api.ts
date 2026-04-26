@@ -743,11 +743,14 @@ async function notifyArbitrationResult(jobId: string, buyerCommAddr: string, buy
                                         sellerCommAddr: string, sellerAgentId: string, winner: string) {
   const convId = `conv-${jobId}-${buyerAgentId}-${sellerAgentId}`;
   const evaluators = await lookupRoleAddrs("EVALUATOR");
+  // jobStatus 字段告知 sub agent 谁赢：provider 赢 → complete；buyer 赢 → rejected。
+  // 状态机 Status::parse 接受 "complete"/"rejected" 别名（spec 用 Completed/Rejected）。
+  const jobStatus = winner === "provider" ? "complete" : "rejected";
   await wsNotify(convId, [CHAIN_ADDR, buyerCommAddr, sellerCommAddr, ...evaluators], {
-    type: "dispute_resolved", jobId, sellerAgentId, buyerAgentId, winner,
+    type: "dispute_resolved", jobId, jobStatus, sellerAgentId, buyerAgentId, winner,
     content: winner === "provider"
-      ? `系统通知：任务 ${jobId} 仲裁完成，卖家 ${sellerAgentId} 胜诉（dispute_resolved）。资金判给卖家。`
-      : `系统通知：任务 ${jobId} 仲裁完成，买家 ${buyerAgentId} 胜诉（dispute_resolved）。资金已退还买家。`,
+      ? `系统通知：任务 ${jobId} 仲裁完成，卖家 ${sellerAgentId} 胜诉（dispute_resolved，jobStatus=complete）。资金判给卖家。`
+      : `系统通知：任务 ${jobId} 仲裁完成，买家 ${buyerAgentId} 胜诉（dispute_resolved，jobStatus=rejected）。资金已退还买家。`,
   });
 }
 

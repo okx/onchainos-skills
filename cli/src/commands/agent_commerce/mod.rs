@@ -401,7 +401,12 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::common::run(c, ctx).await,
 
         AgentCommand::NextAction { job_id, job_status, agent_id, role } => {
-            let warning = check_status_freshness(&job_id, &job_status).await;
+            // 状态脱节 → block 输出剧本（避免 sub 按 stale event 跑老剧本上链）
+            // 只在 PSEUDO_EVENTS / unknown / network failure 时跳过校验，正常情况下严格守门
+            if let Some(w) = check_status_freshness(&job_id, &job_status).await {
+                println!("{w}");
+                return Ok(());
+            }
             let prompt = match role.as_str() {
                 "provider" | "seller" =>
                     task::provider::flow::generate_next_action(&job_id, &job_status, &agent_id),
@@ -411,11 +416,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     task::evaluator::flow::generate_next_action(&job_id, &job_status, &agent_id),
                 other => anyhow::bail!("--role 必须是 provider/buyer/client/evaluator，当前: {other}"),
             };
-            if let Some(w) = warning {
-                println!("{w}{prompt}");
-            } else {
-                println!("{prompt}");
-            }
+            println!("{prompt}");
             Ok(())
         }
 
@@ -489,12 +490,11 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str) -> Opti
         return None;
     }
     Some(format!(
-        "⚠️  状态可能已脱节（next-action 入参与任务真实状态不一致）\n\
+        "🛑 **状态脱节，剧本已 block**（next-action 入参与任务真实状态不一致，不输出步骤防止你按 stale event 上链）\n\n\
          - 你传的 jobStatus/event = `{job_status_or_event}`，对应任务状态应为 `{expected_str}`\n\
-         - 但任务 {job_id} 真实 statusStr = `{actual_str}`\n\
-         - 建议：确认 event 是不是过期通知。若想按真实状态走，重调 next-action 并传 `--jobStatus {actual_str}`\n\
-         - 否则下面剧本里某些 CLI 步骤可能会被 mock-api 用 status 校验拒掉\n\n\
-         ─────────────────────────────────────────────────────────────\n\n",
+         - 但任务 {job_id} 真实 statusStr = `{actual_str}`\n\n\
+         **必须做**：重调 next-action 并传 `--jobStatus {actual_str}`（按真实状态拿剧本），或忽略本条过期通知结束 turn 等下一个真实链事件。\n\
+         **禁止做**：不要硬猜下一步、不要在没拿到剧本前调任何 task CLI、不要把这条警告当 STATUS_NOTIFY 推 user session。\n",
         expected_str = expected.as_str(),
     ))
 }

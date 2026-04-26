@@ -117,25 +117,44 @@ metadata:
 >
 > ### 6) 工具调用（xmtp_send / xmtp_dispatch_session）操作步骤
 >
-> 三种角色（provider / buyer / evaluator）一致遵守：
+> 三种角色（provider / buyer / evaluator）一致遵守。
 >
-> **`xmtp_send` 给 peer（路径 4）—— 两步操作不能跳第 1 步**：
-> 1. 先调 `session_status` 工具拿到当前 sub session 的 `sessionKey` 字段，**等 tool_result 返回**
-> 2. 再调 `xmtp_send`，参数 `sessionKey` = 第 1 步拿到的那串，`content` = 纯自然语言（插件自动包成 a2a-agent-chat envelope，**不要**自己写 `jobId:`/`类型:`/`----` 这种 text-header，不要包 markdown 代码块）
+> **🛑 工具白名单**：session 间通信**只用** `xmtp_send`、`xmtp_dispatch_session` 这两个 XMTP 插件工具。**禁止**用 `Session Send` / `sessions.send` / `session_send` / 任何 openclaw 通用 session 工具——它们被 `tools.sessions.visibility=tree` 安全策略卡住会报 `forbidden`，且语义不同。
 >
-> **`xmtp_dispatch_session` 推 user session（路径 2）**：
+>
+> **路径 4：`xmtp_send` 给 peer（sub ↔ peer sub）—— 两步必做**：
+> 1. 先调 `session_status` 工具拿当前 sub session 的 `sessionKey` 字段，**等 tool_result 返回**
+> 2. 再调 `xmtp_send`，参数 `sessionKey` = 第 1 步那串，`content` = 纯自然语言（插件自动包成 a2a-agent-chat envelope；**不要**自己写 `jobId:`/`类型:`/`----` 这种 text-header，**不要**包 markdown 代码块）
+>
+> **路径 2：`xmtp_dispatch_session` 推 user session（sub → user）—— 省略 sessionKey**：
 > - 仅在 next-action 剧本明文要求那一步才推（见 §4 opt-in 规则）
 > - 调用：`xmtp_dispatch_session`，**省略 `sessionKey` 参数**（省略 = 推到 user session）
 > - `content` 必须以 `[STATUS_NOTIFY ...]` 或 `[USER_DECISION_REQUEST ...]` 前缀方括号那行开头
 >
-> **`xmtp_dispatch_session` relay 回 sub（路径 3，仅 user session agent）**：见 §3 user session agent 状态机「待用户回复」状态
+> **路径 3：`xmtp_dispatch_session` relay 回 sub（user → sub）—— 必须带 sessionKey**：
+> - 仅 user session agent（你的 sessionKey 字面是 `agent:main:main`）在「待用户回复」状态使用
+> - 调用：`xmtp_dispatch_session`，**`sessionKey` 必填** = 从前一条 `[USER_DECISION_REQUEST]` 消息里 `[sub_key: ...]` 行抠出来的整串
+> - `content` 必须严格 `[USER_DECISION_RELAY] 用户决策：<用户原话不解读>` 开头（**不要**简化成 "用户决定：..."、"用户说了 X"、"用户已选择" 等变体——sub 的 provider.md §5 关键词扫描认 `[USER_DECISION_RELAY]` 前缀，无前缀视同没收到）
+> - **省略 sessionKey 是错的**——会派回 user session 自循环（工具返回不含 sub_key 即派错）
+>
+> **路径 2 vs 路径 3 速查**：
+>
+> | 维度 | 路径 2 (sub→user) | 路径 3 (user→sub relay) |
+> |---|---|---|
+> | 谁调 | sub session agent | user session agent（sessionKey=`agent:main:main`） |
+> | sessionKey | **省略** | **必填**（sub_key 整串） |
+> | content 前缀 | `[STATUS_NOTIFY ...]` 或 `[USER_DECISION_REQUEST ...]` | `[USER_DECISION_RELAY] 用户决策：` |
+> | 派发后工具返回 | 不含 sub_key 字符串（派到了 user session） | 含 sub_key 字符串 `agent:...:xmtp:group:...&job=N&...` |
+>
+> **🛑 dispatch 失败时不要 fallback 别的工具**：`xmtp_dispatch_session` 报错 / `forbidden` / timeout → 直接告诉用户"派发失败，请重试"，**不要**改用 `Session Send` / 别的工具，**不要**省略 sessionKey 试再发一次。
 >
 > **❌ 禁止**：
 > - 把 `xmtp_send` / `xmtp_dispatch_session` 应该发的内容**当 assistant TEXT 输出**（XMTP 插件不会自动转发文本输出，对方 agent / user session 都收不到）
 > - 在 `xmtp_send` 之前问用户确认（除非任务明确要求人类裁决，如争议投票）
 > - 调完工具后再在 agent text 复述一遍正文（用户会看到重复）
+> - **编造"任务 X 已[状态] / 已发起仲裁 / 资金已释放" 之类陈述**——sub session 才知道实际进度，relay 完之前 user session 一无所知，**只能**说"已转发，等通知"
 >
-> 违反 = 对方 agent 收不到消息 / 用户看不到通知，流程中断。
+> 违反 = 对方 agent 收不到消息 / 用户看不到通知 / 用户被假状态误导，流程中断。
 >
 > ### 7) 反幻觉规则（最高优先级，所有角色都遵守）
 >

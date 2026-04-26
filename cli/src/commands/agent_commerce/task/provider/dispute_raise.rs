@@ -12,7 +12,9 @@ pub async fn handle_dispute_raise(
 ) -> Result<()> {
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_provider(client, job_id).await?;
-    let body = serde_json::json!({ "reason": reason });
+    // 后端 spec：Request 空 {}，无 reason / evidence 字段（证据纯链下，走 /evidence/upload 多 part）
+    // reason 仅作 user-facing log 文本，不上链
+    let body = serde_json::json!({});
 
     let resp = client.post_with_identity(
         &client.endpoint(job_id, "dispute"), &body, &agent_id,

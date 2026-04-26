@@ -14,15 +14,14 @@ use crate::commands::agent_commerce::task::signing;
 pub async fn handle_deliver(
     client: &mut TaskApiClient,
     job_id: &str,
-    file: &str,
-    message: &str,
+    _file: &str,
+    _message: &str,
 ) -> Result<()> {
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_provider(client, job_id).await?;
-    let body = serde_json::json!({
-        "deliverable": file,
-        "message": message,
-    });
+    // 后端 spec：submit endpoint Request 空（旧 evidenceHash 字段已划掉）
+    // file/message 仅作 CLI 输入预留位，**不上链**——证据走 /evidence/upload 多 part 链下。
+    let body = serde_json::json!({});
 
     let resp = client.post_with_identity(
         &client.endpoint(job_id, "submit"), &body, &agent_id,

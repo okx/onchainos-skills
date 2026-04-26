@@ -57,14 +57,16 @@ pub enum Status {
 impl Status {
     pub fn parse(s: &str) -> Self {
         match s {
-            "open"      => Status::Open,
-            "accepted"  => Status::Accepted,
-            "submitted" => Status::Submitted,
-            "refused"   => Status::Refused,
-            "disputed"  => Status::Disputed,
-            "completed" => Status::Completed,
-            "refunded"  => Status::Refunded,
-            other       => Status::Other(other.to_string()),
+            "open"                  => Status::Open,
+            "accepted"              => Status::Accepted,
+            "submitted"             => Status::Submitted,
+            "refused"               => Status::Refused,
+            "disputed"              => Status::Disputed,
+            // mock-api / 真后端语义对齐：completed/complete 都视为 Completed
+            "completed" | "complete" => Status::Completed,
+            // mock-api 用 "rejected" 表示资金退还买家，状态机里叫 Refunded
+            "refunded" | "rejected"  => Status::Refunded,
+            other                   => Status::Other(other.to_string()),
         }
     }
 
