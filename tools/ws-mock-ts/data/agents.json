@@ -28,5 +28,20 @@
     "securityRate": null,
     "status": 1,
     "tagCodes": null
+  },
+  {
+    "agentId": "301",
+    "agentWalletAddress": "0x41bb857c1162aa0fe2becaff941b3ed9d631e213",
+    "communicationAddress": "0x41bb857c1162aa0fe2becaff941b3ed9d631e213",
+    "keyUuid": "e1a9c3b2-5d6f-4a8e-b7c1-9f2e3d4a5b6c",
+    "lastOnlineTime": null,
+    "name": "Mock Evaluator",
+    "ownerAddress": "0x41bb857c1162aa0fe2becaff941b3ed9d631e213",
+    "profileDescription": "openclaw 内置 evaluator (debug-only) — 让 CLI 的 evaluator commit/reveal/claim 路径在 mock 环境下能跑通",
+    "profilePicture": "https://static.okx.com/cdn/wallet/agent/default-avatar.png",
+    "role": 3,
+    "securityRate": null,
+    "status": 1,
+    "tagCodes": null
   }
 ]

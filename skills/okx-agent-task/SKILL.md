@@ -1,6 +1,16 @@
 ---
 name: okx-agent-task
 description: >
+  🔴 DISAMBIGUATION (最高优先级) — "仲裁者" / "arbitrator" / "陪审" / "评估员" / "evaluator"
+  在本系统专指 **AI Task Marketplace 争议陪审 evaluator**（commit-reveal 投票、领奖、罚没、
+  stake/unstake、claim/cancel unstake、查待领奖励），**不是** DeFi 协议的质押挖矿 / yield farming /
+  liquidity provisioning。任何含"仲裁者"/"arbitrator"语义的指令——无论是质押类（赎回质押 /
+  解质押 / 追加质押）、奖励类（领取奖励 / 查待领奖励 / claim rewards）、还是参与类（投票 /
+  陪审 / 领奖）——**一律由本 skill 处理**，**禁止**路由到 `okx-defi-invest` / `okx-defi-portfolio` /
+  `okx-agentic-wallet` / `okx-wallet-portfolio`。这些 DeFi/wallet skill 处理的是
+  Aave/Lido/PancakeSwap 等协议的 yield 操作，跟本系统的 task-marketplace 仲裁机制是**两套独立系统**，
+  关键词重合但语义无关。
+
   🔴 MANDATORY ACTIVATION — Load this skill BEFORE composing any reply when the inbound matches ANY of:
   (a) XMTP envelope with `msgType=a2a-agent-chat` AND non-empty `jobId`;
   (b) chain/mock-api system envelope shape `{agentId, message:{source:"system", event, ...}}`
@@ -26,7 +36,12 @@ description: >
   提交交付物 (deliver work), 验收/拒绝 (accept/reject delivery), 发起仲裁 (raise dispute),
   提交证据 (submit evidence), 仲裁投票 (arbitration vote), 查看任务状态 (task status),
   evaluator 质押 (stake onboarding after evaluator identity registration),
-  evaluator 被选中陪审 / commit-reveal 投票 / 仲裁结算奖励领取 (evaluator dispute lifecycle).
+  evaluator 被选中陪审 / commit-reveal 投票 / 仲裁结算奖励领取 (evaluator dispute lifecycle),
+  evaluator 追加/补充/补齐质押 (top-up / increase stake),
+  evaluator 申请解质押 / 赎回质押 / 取回质押 (request unstake),
+  evaluator 领取解质押 / 取走/提走质押 (claim unstake),
+  evaluator 取消解质押 / 撤回解质押 (cancel unstake),
+  evaluator 查询待领奖励 / 查可领奖励 (list claimable rewards).
   Roles: Client 买家 (task buyer), Provider 卖家 (task provider), Evaluator 仲裁者 (arbitrator).
   Triggered by: ANY XMTP a2a-agent-chat envelope with jobId; chain/mock-api system envelope with
   `source:"system"` and any task/dispute/staking lifecycle event listed above; task creation,
