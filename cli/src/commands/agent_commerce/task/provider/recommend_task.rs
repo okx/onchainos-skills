@@ -10,11 +10,11 @@ use crate::commands::agent_commerce::task::common::network::task_api_client::Tas
 use crate::commands::agent_commerce::task::signing;
 
 pub async fn handle_recommend_task(client: &mut TaskApiClient, agent_id: Option<&str>) -> Result<()> {
-    let (_, address) = signing::resolve_wallet(None, None)?;
+    let _ = signing::resolve_wallet(None, None)?;
     let agent_id = agent_id.unwrap_or("");
 
     let resp = client
-        .post_with_identity("/priapi/v1/aieco/task/job/match", &serde_json::json!({}), agent_id, &address)
+        .post_with_identity("/priapi/v1/aieco/task/job/match", &serde_json::json!({}), agent_id)
         .await?;
 
     let tasks = resp["tasks"].as_array().cloned().unwrap_or_default();

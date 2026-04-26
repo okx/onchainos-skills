@@ -30,7 +30,7 @@ pub async fn handle_increase_stake(client: &mut TaskApiClient, amount: &str) -> 
     let path = "/priapi/v1/aieco/task/staking/increaseStake";
     let body = serde_json::json!({ "amount": trimmed });
     let resp = client
-        .post_with_identity(path, &body, &agent_id, &address)
+        .post_with_identity(path, &body, &agent_id)
         .await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(

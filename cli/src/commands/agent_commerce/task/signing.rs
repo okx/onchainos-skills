@@ -250,7 +250,7 @@ pub async fn task_dual_sign_and_broadcast(
     biz_context: BizContext,
 ) -> Result<BroadcastResult> {
     // Step 1: POST pre-endpoint with identity headers → digest
-    let pre_resp = client.post_with_identity(pre_endpoint_url, pre_body, agent_id, address).await
+    let pre_resp = client.post_with_identity(pre_endpoint_url, pre_body, agent_id).await
         .map_err(|e| anyhow::anyhow!("pre-sign 请求失败: {e}"))?;
 
     let digest = pre_resp["digest"]
@@ -270,7 +270,7 @@ pub async fn task_dual_sign_and_broadcast(
 
     // Step 3: POST main endpoint with signature → uopData
     let main_body = main_body_builder(&signature);
-    let main_resp = client.post_with_identity(main_endpoint_url, &main_body, agent_id, address).await
+    let main_resp = client.post_with_identity(main_endpoint_url, &main_body, agent_id).await
         .map_err(|e| anyhow::anyhow!("main 请求失败: {e}"))?;
 
     // Step 4: Sign uopHash + broadcast

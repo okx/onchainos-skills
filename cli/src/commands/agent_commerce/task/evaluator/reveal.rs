@@ -57,7 +57,7 @@ pub async fn handle_reveal(
     // or the round already settled. Returns `{ canReveal: bool }`; false → actionable bail.
     let can_reveal_path = client.endpoint(&job_id, "vote/canReveal");
     let can_resp = client
-        .get_with_identity(&can_reveal_path, &agent_id, &address)
+        .get_with_identity(&can_reveal_path, &agent_id)
         .await?;
     match can_resp["canReveal"].as_bool() {
         Some(true) => {}
@@ -73,7 +73,6 @@ pub async fn handle_reveal(
         &reveal_path,
         &serde_json::json!({ "vote": side }),
         &agent_id,
-        &address,
     ).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(

@@ -1,6 +1,6 @@
 //! 发布任务（自定义签名流程）
 //!
-//! 买家动作：发布任务 — onchainos task create
+//! 买家动作：发布任务 — onchainos agent task create
 //!
 //! 身份校验：通过调用身份模块 CLI（`onchainos agent get`）检查当前用户
 //! 是否拥有买家身份（role=1），再执行任务发布流程。
@@ -178,7 +178,11 @@ pub async fn handle_create(
     let submit_secs = parse_duration_secs(&deadline_submit)
         .map_err(|_| anyhow::anyhow!("--deadline-submit 格式错误，例如 48h 或 3600"))?;
 
-    let title_str = title.unwrap_or_else(|| description.chars().take(30).collect());
+    let title_str = match title {
+        Some(t) if t.chars().count() > 30 => t.chars().take(30).collect(),
+        Some(t) => t,
+        None => description.chars().take(30).collect(),
+    };
     let summary = description_summary
         .unwrap_or_else(|| description.chars().take(200).collect());
 
@@ -212,7 +216,6 @@ pub async fn handle_create(
         "description_summary": summary,
         "paymentTokenSymbol": currency.to_uppercase(),
         "paymentTokenAmount": budget.to_string(),
-        "maxPaymentTokenAmount": max_budget_val.to_string(),
         "chainId":            XLAYER_CHAIN_ID,
         "expireConfig": {
             "acceptDeadline":    open_secs,
@@ -222,7 +225,7 @@ pub async fn handle_create(
         "visibility":         0
     });
 
-    let resp = client.post("/priapi/v1/aieco/task/create", &body).await?;
+    let resp = client.post_with_identity("/priapi/v1/aieco/task/create", &body, &buyer_agent_id).await?;
 
     let job_id = resp["jobId"].as_str().unwrap_or("?").to_string();
     let uop_data = &resp["uopData"];
@@ -251,7 +254,7 @@ pub async fn handle_create(
     println!("✓ 签名完成");
 
     // ── Step 3: 广播上链 ──────────
-    let bc_resp = client.post(client.broadcast_path(), &broadcast_body).await?;
+    let bc_resp = client.post_with_identity(client.broadcast_path(), &broadcast_body, &buyer_agent_id).await?;
     let tx_hash = bc_resp[0]["txHash"].as_str().unwrap_or("pending");
     println!("✓ 任务已上链");
     println!("  jobId:  {job_id}");

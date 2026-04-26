@@ -134,7 +134,7 @@ pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
                 anyhow::bail!("当前钱包 {address} 不是任务 {job_id} 的买家或卖家")
             };
             dispute_upload::handle_upload_evidence(
-                &mut client, &job_id, &agent_id, &address, text.as_deref(), &images,
+                &mut client, &job_id, &agent_id, text.as_deref(), &images,
             ).await
         }
     }

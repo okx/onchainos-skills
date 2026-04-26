@@ -18,7 +18,6 @@ pub async fn handle_claim(client: &mut TaskApiClient) -> Result<()> {
         path,
         &serde_json::json!({}),
         &agent_id,
-        &address,
     ).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(

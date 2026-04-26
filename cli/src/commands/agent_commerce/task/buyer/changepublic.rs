@@ -16,7 +16,6 @@ pub async fn handle_set_public(client: &mut TaskApiClient, job_id: &str) -> Resu
         &client.endpoint(job_id, "setVisibility"),
         &serde_json::json!({"visibility": 1}),
         &agent_id,
-        &address,
     ).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(

@@ -56,7 +56,6 @@ pub async fn handle_complete(client: &mut TaskApiClient, job_id: &str) -> Result
             &client.endpoint(job_id, "direct/complete"),
             &serde_json::json!({}),
             &agent_id,
-            &address,
         ).await?;
 
         let tx_hash = signing::sign_uop_and_broadcast(

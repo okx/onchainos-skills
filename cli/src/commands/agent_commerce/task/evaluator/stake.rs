@@ -40,7 +40,7 @@ pub async fn handle_stake(client: &mut TaskApiClient, amount: &str) -> Result<()
     let path = "/priapi/v1/aieco/task/staking/stake";
     let body = serde_json::json!({ "amount": trimmed });
     let resp = client
-        .post_with_identity(path, &body, &agent_id, &address)
+        .post_with_identity(path, &body, &agent_id)
         .await?;
 
     // staking 不关联具体 jobId，用空字符串作 broadcast 的 bizContext.jobId。

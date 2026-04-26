@@ -17,7 +17,7 @@ pub async fn handle_claimable(client: &mut TaskApiClient) -> Result<()> {
         signing::resolve_wallet_and_agent_for_evaluator().await?;
 
     let path = "/priapi/v1/aieco/task/claimable";
-    let resp = client.get_with_identity(path, &agent_id, &address).await?;
+    let resp = client.get_with_identity(path, &agent_id).await?;
 
     let account = resp["account"].as_str().unwrap_or(address.as_str());
     println!("claimable rewards (account={account}, agentId={agent_id})");

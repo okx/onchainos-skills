@@ -17,7 +17,6 @@ pub async fn handle_close(client: &mut TaskApiClient, job_id: &str) -> Result<()
         &client.endpoint(job_id, "close"),
         &serde_json::json!({}),
         &agent_id,
-        &address,
     ).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(
@@ -39,7 +38,6 @@ pub async fn handle_claim(client: &mut TaskApiClient, job_id: &str) -> Result<()
         &client.endpoint(job_id, "claim"),
         &serde_json::json!({ "jobId": job_id }),
         &agent_id,
-        &address,
     ).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(

@@ -31,7 +31,6 @@ pub async fn handle_confirm_accept(
         &client.endpoint(job_id, "setPaymentMode"),
         &serde_json::json!({ "paymentMode": mode_int }),
         &agent_id,
-        &address,
     ).await?;
 
     signing::sign_uop_and_broadcast(
@@ -79,7 +78,6 @@ pub async fn handle_confirm_accept(
                 &client.endpoint(job_id, "direct/accept"),
                 &body,
                 &agent_id,
-                &address,
             ).await?;
 
             let tx_hash = signing::sign_uop_and_broadcast(
@@ -132,7 +130,6 @@ pub async fn handle_confirm_accept(
                 &client.endpoint(job_id, "direct/accept"),
                 &body,
                 &agent_id,
-                &address,
             ).await?;
 
             let tx_hash = signing::sign_uop_and_broadcast(

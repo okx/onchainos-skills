@@ -23,7 +23,6 @@ pub async fn handle_upload_evidence(
     client: &mut TaskApiClient,
     job_id: &str,
     agent_id: &str,
-    address: &str,
     text: Option<&str>,
     image_paths: &[String],
 ) -> Result<()> {
@@ -69,7 +68,7 @@ pub async fn handle_upload_evidence(
     }
 
     let path = client.endpoint(job_id, "evidence/upload");
-    client.multipart_post_with_identity(&path, form, agent_id, address).await?;
+    client.multipart_post_with_identity(&path, form, agent_id).await?;
 
     println!("✓ 证据已上传（链下，1h 准备期内生效）");
     println!("  jobId:  {job_id}");

@@ -28,7 +28,6 @@ pub async fn handle_commit(client: &mut TaskApiClient, dispute_id: &str, side: u
         &path,
         &body,
         &agent_id,
-        &address,
     ).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(

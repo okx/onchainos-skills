@@ -25,7 +25,7 @@ pub async fn handle_apply(
     });
 
     let resp = client.post_with_identity(
-        &client.endpoint(job_id, "apply"), &body, agent_id, &address,
+        &client.endpoint(job_id, "apply"), &body, agent_id,
     ).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(

@@ -13,7 +13,7 @@ pub async fn handle_get_payment(
     job_id: &str,
     token_symbol: &str,
 ) -> Result<()> {
-    let (_, address, agent_id) =
+    let (_, _, agent_id) =
         signing::resolve_wallet_and_agent_for_provider(client, job_id).await?;
 
     let body = serde_json::json!({ "tokenSymbol": token_symbol });
@@ -22,7 +22,6 @@ pub async fn handle_get_payment(
             &client.endpoint(job_id, "prePayTaskInfo"),
             &body,
             &agent_id,
-            &address,
         )
         .await?;
 
