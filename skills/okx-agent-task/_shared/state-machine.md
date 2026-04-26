@@ -59,9 +59,9 @@ stateDiagram-v2
 
 ## 4. 事件广播规则
 
-| 事件 | 发给买家 | 发给卖家 | 发给仲裁者 | 发给主 session |
+| 事件 | 发给买家 | 发给卖家 | 发给仲裁者 | 发给user session |
 |---|---|---|---|---|
-| `job_created` | ✅ | — | — | 由 openclaw runtime 自动路由到 buyer 主 session |
+| `job_created` | ✅ | — | — | 由 openclaw runtime 自动路由到 buyer user session |
 | `provider_applied` | ✅ | ✅ | — | — |
 | `job_accepted` | ✅ | ✅ | — | 由 sub-session agent 通过 `xmtp_dispatch_session`（省略 sessionKey）推送给用户（关键进展）|
 | `job_submitted` | ✅ | ✅ | — | — |

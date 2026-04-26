@@ -409,7 +409,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     task::buyer::flow::generate_next_action(&job_id, &job_status, &agent_id),
                 "evaluator" =>
                     task::evaluator::flow::generate_next_action(&job_id, &job_status, &agent_id),
-                other => anyhow::bail!("--role 必须是 provider/provider/buyer/client/evaluator，当前: {other}"),
+                other => anyhow::bail!("--role 必须是 provider/buyer/client/evaluator，当前: {other}"),
             };
             if let Some(w) = warning {
                 println!("{w}{prompt}");

@@ -60,17 +60,14 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 /// 和 status 名（open / submitted / ...），由 state_machine 统一解析。
 pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
-    // P2P 消息走 `xmtp_send` 工具（真实 XMTP 插件提供）。
-    // 会话信息（sessionKey / toXmtpAddress / groupId / jobId）由当前 XMTP 子 session 自动解析，
-    // agent 只需填 `content` 字段。旧的 text-header 格式（`jobId: / 来自: [BUYER] / 类型: REPLY / 会话: / ----`）
-    // 已废弃，不要再输出。
-    let xmtp_hint = format!(
-        "⚠️ 两步必做（不能跳第 1 步）：\n\
-         1) 先调 `session_status` 工具拿到当前子 session 的 `sessionKey` 字段，等 tool_result 返回\n\
-         2) 再调 `xmtp_send` 工具，参数 `sessionKey`=上面拿到的值，`content`=下面这段纯自然语言正文（不要写 text header，不要包代码块）。\n\
-         当前 session 关联 jobId={job_id}，我方 agentId={agent_id}。content 如下："
+    // 通信机制（怎么发、能不能发、形态白名单）— 一律见 SKILL.md §Session 通信契约。
+    // 本文件只告诉 agent **每一步把什么内容发到哪**。
+    let send_to_peer = format!(
+        "→ 用 `xmtp_send` 发给卖家（机制见 SKILL.md §Session 通信契约 §1 路径 4）。\n\
+         当前 sub session：jobId={job_id}，我方 agentId={agent_id}。\n\
+         content（纯自然语言，不要包 markdown / 代码块）："
     );
-    let header_template = &xmtp_hint;
+    let header_template = &send_to_peer;
 
     let event = parse_status_or_event(job_status);
     match event.clone() {
@@ -144,7 +141,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              onchainos agent status {job_id}\n\
              ```\n\
              提取 `deliverableUrl`、`qualityStandards` 和 `paymentMode`。\n\n\
-             **Step 2 — 通知主 session 请求用户决策**（向 main session 推一条消息触发 LLM/用户回复，**必须等待回复后再执行 Step 3**），内容大致：\n\n\
+             **Step 2 — 通知主 session 请求用户决策**（向 user session 推一条消息触发 LLM/用户回复，**必须等待回复后再执行 Step 3**），内容大致：\n\n\
              > [交付物验收] 任务 {job_id} 卖家已提交交付物。\n\
              > - 交付物地址：<deliverableUrl>\n\
              > - 验收标准：<qualityStandards>\n\
@@ -191,7 +188,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前状态】job_disputed（仲裁已发起）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作（严格顺序）】\n\n\
-             **Step 1 — 通知主 session 请求用户提供证据**（向 main session 推消息，**等待回复**），内容大致：\n\n\
+             **Step 1 — 通知主 session 请求用户提供证据**（向 user session 推消息，**等待回复**），内容大致：\n\n\
              > [仲裁通知] 任务 {job_id} 卖家已发起仲裁，需要提交证据。\n\
              > 请提供：\n\
              > 1. 证据摘要（文字描述问题）\n\

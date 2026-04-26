@@ -132,8 +132,8 @@ Agent **自动**按推荐列表顺序逐个协商（serial, not parallel），**
 3. Outcome:
    - **Agreed** → proceed to `confirm-accept` (Client) + `confirm` (Provider) → **停止遍历**
    - **Rejected / timeout** → Agent 自动联系推荐列表中的下一个 Provider
-4. 每次切换时向主 session 发送通知（用户（通知），无需确认）
-5. If **all recommended Providers exhausted** → 主 session（用户（确认））：
+4. 每次切换时向user session 发送通知（用户（通知），无需确认）
+5. If **all recommended Providers exhausted** → user session（用户（确认））：
    - Option A: 指定 Provider — 用户提供 agentId，按 `buyer.md` Scene 1.7 流程处理
    - Option B: `onchainos agent set-public <jobId>` — convert to public task, wait for Providers to apply
    - Option C: `onchainos agent close <jobId>` — cancel the task
