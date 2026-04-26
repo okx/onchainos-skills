@@ -292,52 +292,59 @@ async function main() {
   const dbDir = `${homedir()}/.xmtp-mock-${ROLE}`;
   mkdirSync(dbDir, { recursive: true });
 
+  const userAccount = createUser(walletKey);
+  let myInboxId = "";
+  let myAddress = userAccount.account.address;
+  let agent: Agent | null = null;
+
+  // XMTP 连接：失败不阻塞 HTTP server 启动
   console.log(`${TAG} 连接 XMTP (env=${env})…`);
-  const user = createUser(walletKey);
-  const signer = createSigner(user);
-  const agent = await Agent.create(signer, {
-    dbPath: (inboxId: string) => `${dbDir}/${inboxId}-${env}.db3`,
-    env,
-  });
-
-  const myInboxId = agent.client.inboxId;
-  const myAddress = user.account.address;
-  console.log(`${TAG} inboxId=${myInboxId} address=${myAddress}`);
-
-  await agent.client.conversations.syncAll();
-
-  agent.on("text", async (ctx) => {
-    const m = ctx.message;
-    if (m.senderInboxId === myInboxId) return;
-    const convId = m.conversationId;
-    const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-    // 尝试解析 a2a-agent-chat envelope，抽出对话上下文缓存起来，供回复 wrap 复用。
-    // UI 不解构 —— 原样 display。
-    try {
-      const parsed = JSON.parse(content);
-      if (parsed && parsed.msgType === "a2a-agent-chat") {
-        const ctxRec = convCtxMap.get(convId) ?? {};
-        if (typeof parsed.fromXmtpAddress === "string") ctxRec.peerAddr = parsed.fromXmtpAddress;
-        if (typeof parsed.groupId === "string")         ctxRec.groupId  = parsed.groupId;
-        if (typeof parsed.jobId === "string")           ctxRec.jobId    = parsed.jobId;
-        convCtxMap.set(convId, ctxRec);
-      }
-    } catch { /* 非 JSON 消息忽略解析，直接展示 raw */ }
-    recordMsg(convId, { dir: "in", content, sender: m.senderInboxId, ts: Date.now() });
-  });
-
-  agent.on("unknownMessage", async (ctx) => {
-    const m = ctx.message;
-    recordMsg(m.conversationId, {
-      dir: "in",
-      content: `[unknown contentType=${m.contentType?.typeId ?? "?"}]`,
-      sender: m.senderInboxId,
-      ts: Date.now(),
+  try {
+    const signer = createSigner(userAccount);
+    agent = await Agent.create(signer, {
+      dbPath: (inboxId: string) => `${dbDir}/${inboxId}-${env}.db3`,
+      env,
     });
-  });
 
-  agent.on("start", () => console.log(`${TAG} agent 已启动`));
-  agent.start().catch((e: unknown) => console.error(`${TAG} agent 异常:`, e));
+    myInboxId = agent.client.inboxId;
+    myAddress = userAccount.account.address;
+    console.log(`${TAG} ✓ 已连接 inboxId=${myInboxId} address=${myAddress}`);
+
+    await agent.client.conversations.syncAll();
+
+    agent.on("text", async (ctx: any) => {
+      const m = ctx.message;
+      if (m.senderInboxId === myInboxId) return;
+      const convId = m.conversationId;
+      const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+      try {
+        const parsed = JSON.parse(content);
+        if (parsed && parsed.msgType === "a2a-agent-chat") {
+          const ctxRec = convCtxMap.get(convId) ?? {};
+          if (typeof parsed.fromXmtpAddress === "string") ctxRec.peerAddr = parsed.fromXmtpAddress;
+          if (typeof parsed.groupId === "string")         ctxRec.groupId  = parsed.groupId;
+          if (typeof parsed.jobId === "string")           ctxRec.jobId    = parsed.jobId;
+          convCtxMap.set(convId, ctxRec);
+        }
+      } catch { /* 非 JSON 消息忽略解析，直接展示 raw */ }
+      recordMsg(convId, { dir: "in", content, sender: m.senderInboxId, ts: Date.now() });
+    });
+
+    agent.on("unknownMessage", async (ctx: any) => {
+      const m = ctx.message;
+      recordMsg(m.conversationId, {
+        dir: "in",
+        content: `[unknown contentType=${m.contentType?.typeId ?? "?"}]`,
+        sender: m.senderInboxId,
+        ts: Date.now(),
+      });
+    });
+
+    agent.on("start", () => console.log(`${TAG} agent 已启动`));
+    agent.start().catch((e: unknown) => console.error(`${TAG} agent 异常:`, e));
+  } catch (e) {
+    console.error(`${TAG} ⚠ XMTP 连接失败（UI 仍可用，但消息收发不可用）:`, (e as Error).message ?? e);
+  }
 
   // ── HTTP server ───────────────────────────────────────────────────
   const server = http.createServer(async (req, res) => {
@@ -405,6 +412,7 @@ async function main() {
     // POST /send {convId, content}  —— content 是用户输入的纯文本，发出前包成 envelope
     if (req.method === "POST" && url.pathname === "/send") {
       try {
+        if (!agent) { sendJson(503, { error: "XMTP not connected" }); return; }
         const body = JSON.parse(await readBody()) as { convId?: string; content?: string };
         if (!body.convId || !body.content) { sendJson(400, { error: "convId + content required" }); return; }
         const conv = await agent.client.conversations.getConversationById(body.convId);
@@ -432,6 +440,7 @@ async function main() {
     // jobId 缺省 → 退化到 DM（适合纯文本调试）
     if (req.method === "POST" && url.pathname === "/new-dm") {
       try {
+        if (!agent) { sendJson(503, { error: "XMTP not connected" }); return; }
         const body = JSON.parse(await readBody()) as { peer?: string; content?: string; jobId?: string };
         if (!body.peer) { sendJson(400, { error: "peer required (address or inboxId)" }); return; }
         const isAddr = body.peer.startsWith("0x") && body.peer.length === 42;
@@ -1111,12 +1120,12 @@ $("btn-notify").addEventListener("click", async () => {
   $("notify-jobid").value = "";
 });
 
-// 仅在 buyer 角色下显示"发布任务"表单和卖家列表
+// buyer 显示"发布任务"表单；两种角色都显示 agent 列表
 function toggleBuyerUI(role) {
   const showBuyer = role === "buyer";
   $("create-task").style.display = showBuyer ? "flex" : "none";
-  $("sellers-section").style.display = showBuyer ? "block" : "none";
-  if (showBuyer) loadSellers();
+  $("sellers-section").style.display = "block";
+  loadSellers();
 }
 </script>
 </body>

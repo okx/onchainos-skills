@@ -512,20 +512,35 @@ async function discoverOpenclawEvalAddr(): Promise<void> {
     return;
   }
   if (!loadGatewayClient()) return;
-  for (const method of ["node.list", "node.describe"]) {
-    try {
-      const result = await callGatewayRpc(method, {}) as unknown;
-      console.log(`[mock-api] [gw] ${method} → ${JSON.stringify(result).slice(0, 400)}`);
-      // 启发式抽 0x… 地址（任意嵌套字段名）
-      const found = JSON.stringify(result).match(/0x[a-fA-F0-9]{40}/);
+  try {
+    // Step 1: node.list to get available nodes
+    const listResult = await callGatewayRpc("node.list", {}) as unknown;
+    const listStr = JSON.stringify(listResult);
+    console.log(`[mock-api] [gw] node.list → ${listStr.slice(0, 400)}`);
+
+    // Try to extract address from node.list first
+    let found = listStr.match(/0x[a-fA-F0-9]{40}/);
+    if (found) {
+      OPENCLAW_EVAL_AGENT_ADDR = found[0].toLowerCase();
+      console.log(`[mock-api] [gw] auto-detected eval addr: ${OPENCLAW_EVAL_AGENT_ADDR}`);
+      return;
+    }
+
+    // Step 2: extract nodeId from list, then call node.describe with it
+    const nodeIdMatch = listStr.match(/"nodeId"\s*:\s*"([^"]+)"/);
+    if (nodeIdMatch) {
+      const descResult = await callGatewayRpc("node.describe", { nodeId: nodeIdMatch[1] }) as unknown;
+      const descStr = JSON.stringify(descResult);
+      console.log(`[mock-api] [gw] node.describe → ${descStr.slice(0, 400)}`);
+      found = descStr.match(/0x[a-fA-F0-9]{40}/);
       if (found) {
         OPENCLAW_EVAL_AGENT_ADDR = found[0].toLowerCase();
         console.log(`[mock-api] [gw] auto-detected eval addr: ${OPENCLAW_EVAL_AGENT_ADDR}`);
         return;
       }
-    } catch (e) {
-      console.log(`[mock-api] [gw] ${method} failed: ${(e as Error).message.slice(0, 200)}`);
     }
+  } catch (e) {
+    console.log(`[mock-api] [gw] node discovery failed: ${(e as Error).message.slice(0, 200)}`);
   }
   console.log(`[mock-api] [gw] eval addr auto-detect inconclusive, keeping placeholder ${OPENCLAW_EVAL_AGENT_ADDR}`);
 }

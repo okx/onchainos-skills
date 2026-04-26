@@ -53,6 +53,11 @@ pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str) -> Resul
     for (i, p) in providers.iter().enumerate() {
         print_provider(i, p);
     }
+
+    // 路由指引：告诉 Agent 当前 provider 走 x402 还是协商
+    if let Some(first) = providers.first() {
+        print_routing_guide(first, job_id);
+    }
     Ok(())
 }
 
@@ -63,6 +68,7 @@ pub fn handle_recommend_current(job_id: &str) -> Result<()> {
         Some(p) => {
             println!("当前协商卖家（index={}，共 {} 个）：", state.current_index, state.providers.len());
             print_provider(state.current_index, p);
+            print_routing_guide(p, job_id);
         }
         None => {
             println!("推荐列表已全部遍历（{}/{}），无更多卖家", state.current_index, state.providers.len());
@@ -78,6 +84,7 @@ pub fn handle_recommend_next(job_id: &str) -> Result<()> {
             let state = negotiate::load(job_id)?;
             println!("切换到下一个卖家（index={}，共 {} 个）：", state.current_index, state.providers.len());
             print_provider(state.current_index, &p);
+            print_routing_guide(&p, job_id);
         }
         None => {
             let state = negotiate::load(job_id)?;
@@ -86,6 +93,27 @@ pub fn handle_recommend_next(job_id: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// 输出路由指引：x402 直接 accept vs A2A 走协商
+fn print_routing_guide(p: &negotiate::ProviderInfo, job_id: &str) {
+    println!();
+    if p.support_a2mcp {
+        // x402 路径：无需协商，直接 confirm-accept
+        let svc = p.services.first();
+        let endpoint = svc.map(|s| s.endpoint.as_str()).unwrap_or("<endpoint>");
+        let fee = svc.map(|s| s.fee_amount).unwrap_or(0.0);
+        let symbol = svc
+            .map(|s| if s.fee_token_symbol.is_empty() { "USDT" } else { s.fee_token_symbol.as_str() })
+            .unwrap_or("USDT");
+        println!("  ⚡ 路由: x402（无需协商，直接接单）");
+        println!("  → onchainos agent confirm-accept {job_id} --provider {} --payment-mode x402 --token-symbol {symbol} --token-amount {fee} --endpoint {endpoint}", p.provider_agent_id);
+    } else {
+        // A2A 路径：需要协商
+        println!("  💬 路由: A2A（需协商）");
+        println!("  → 向卖家 {} 发起协商（xmtp_send），确认任务详情 / 价格 / 支付方式后等待 provider_applied", p.provider_agent_id);
+    }
+    println!();
 }
 
 fn print_provider(index: usize, p: &negotiate::ProviderInfo) {
