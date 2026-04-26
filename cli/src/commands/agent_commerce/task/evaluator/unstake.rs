@@ -65,9 +65,7 @@ pub async fn handle_request_unstake(client: &mut TaskApiClient, amount: &str) ->
     println!("  voter:   {address}");
     println!("  txHash:  {tx_hash}");
     println!(
-        "next: 等待 `unstake_requested` 事件（VoterStaking.UnstakeRequested 上链）。\n\
-         事件 payload 会带 `availableAt`（7 天后），到点后跑 `evaluator claim-unstake` 领取；\n\
-         冷却期内若改主意可跑 `evaluator cancel-unstake` 撤销。"
+        "next: 申请已提交，等待链上确认；确认后进入 7 天冷却期，到时可领取，期间可撤销。"
     );
     Ok(())
 }
@@ -98,7 +96,7 @@ pub async fn handle_claim_unstake(client: &mut TaskApiClient) -> Result<()> {
     println!("claim-unstake submitted (agentId={agent_id})");
     println!("  voter:   {address}");
     println!("  txHash:  {tx_hash}");
-    println!("next: 等待 `unstake_claimed` 事件（VoterStaking.UnstakeClaimed 上链）确认到账。");
+    println!("next: 领取交易已提交，等待链上确认到账。");
     Ok(())
 }
 
@@ -128,6 +126,6 @@ pub async fn handle_cancel_unstake(client: &mut TaskApiClient) -> Result<()> {
     println!("cancel-unstake submitted (agentId={agent_id})");
     println!("  voter:   {address}");
     println!("  txHash:  {tx_hash}");
-    println!("next: 等待 `unstake_cancelled` 事件（VoterStaking.UnstakeCancelled 上链），stake 将恢复。");
+    println!("next: 取消已提交，等待链上确认；确认后质押恢复。");
     Ok(())
 }

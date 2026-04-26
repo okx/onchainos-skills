@@ -46,10 +46,7 @@ pub async fn handle_claimable(client: &mut TaskApiClient) -> Result<()> {
     }
 
     if has_nonzero {
-        println!(
-            "\nnext: 跑 `onchainos agent evaluator claim` 一次性领取所有待领奖励\n\
-             （account 级 pull，无需 jobId）；成功后会收到 `reward_claimed` 事件确认入账。"
-        );
+        println!("\nnext: 有可领奖励 — 跟我说『领取奖励』即可一次性提走，确认上链后入账。");
     } else {
         println!("\n(当前无待领奖励)");
     }

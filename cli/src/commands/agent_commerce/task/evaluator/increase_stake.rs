@@ -47,8 +47,6 @@ pub async fn handle_increase_stake(client: &mut TaskApiClient, amount: &str) -> 
     println!("  amount:  +{trimmed} OKB");
     println!("  voter:   {address}");
     println!("  txHash:  {tx_hash}");
-    println!(
-        "next: 等待 `stake_increased` 事件（VoterStaking.IncreaseStake 上链）确认追加到位。"
-    );
+    println!("next: 追加质押已提交，等待链上确认到位。");
     Ok(())
 }

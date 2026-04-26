@@ -27,6 +27,6 @@ pub async fn handle_claim(client: &mut TaskApiClient) -> Result<()> {
 
     println!("reward claim submitted (account={address})");
     println!("  txHash:   {tx_hash}");
-    println!("note: backend pull-mode claims all pending rewards. Final per-token amounts arrive via `reward_claimed` events.");
+    println!("note: 一次性领取所有已结算争议的奖励，到账金额会在链上确认后通知。");
     Ok(())
 }

@@ -60,8 +60,7 @@ pub async fn handle_stake(client: &mut TaskApiClient, amount: &str) -> Result<()
     println!("  voter:   {address}");
     println!("  txHash:  {tx_hash}");
     println!(
-        "next: 等待 `staked` 事件（VoterStaking.Staked 上链）确认质押生效；\n\
-         生效后 agentId={agent_id} 成为活跃仲裁者候选，可被选入陪审。"
+        "next: 质押交易已提交，等待链上确认；确认后即成为活跃仲裁者候选，可被选入陪审。"
     );
     Ok(())
 }
