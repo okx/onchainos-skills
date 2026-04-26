@@ -93,7 +93,7 @@ metadata:
 > |---|---|---|---|
 > | `{msgType:"a2a-agent-chat", content, jobId, sender:{role}, ...}` | sub ↔ peer sub（同 group） | sub agent（用 `xmtp_send` 工具） | peer sub agent |
 > | `{agentId, message:{event, jobStatus, source:"system", ...}}` | chain → sub | **只有** mock-api / 真后端 / ws-server，**严禁 agent 自造** | sub agent（解析 event 调 `next-action`） |
-> | `[STATUS_NOTIFY · 仅展示给用户 · user session agent 不要调任何工具不要再次执行] ...` | sub → user session | sub agent | user session agent（仅展示） |
+> | `[STATUS_NOTIFY · 原样输出下方正文给用户即结束本轮 · 禁止复述/总结/改写/添加问候或收尾语（如「请问还有什么需要帮助的」）· 禁止调任何工具或再次执行] ...` | sub → user session | sub agent | user session agent（仅展示） |
 > | `[USER_DECISION_REQUEST · 仅询问用户 · user session agent 等用户回复后用 sub_key 反向 dispatch 回 sub，禁止自己执行 task CLI]` `[sub_key: ...]` `[job: N]` `<问题>` | sub → user session | sub agent | user session agent（展示，等用户回复） |
 > | `[USER_DECISION_RELAY] 用户决策：<用户原话>` | user session → sub | user session agent | sub agent（解析关键词调 `next-action --jobStatus <pseudo_event>`） |
 >
@@ -107,7 +107,7 @@ metadata:
 > | 状态 | 触发 | 唯一合法动作 | 禁止 |
 > |---|---|---|---|
 > | **空闲** | session 刚建 / 上轮收尾完 | 等用户输入 / 等 sub dispatch | — |
-> | **展示中** | 收到 sub 来的 `[STATUS_NOTIFY]` 或 `[USER_DECISION_REQUEST]` | 把内容（去前缀那几行）展示给用户。STATUS_NOTIFY 完 → 空闲；USER_DECISION_REQUEST 完 → "待用户回复" | ❌ **任何** `xmtp_dispatch_session`（连 ack、"好的"、短消息都不发——会让 sub 收到双消息，BUG-6）<br>❌ `onchainos agent ...` CLI<br>❌ `web_fetch` / `exec`<br>❌ 重新激活 task skill 走流程 |
+> | **展示中** | 收到 sub 来的 `[STATUS_NOTIFY]` 或 `[USER_DECISION_REQUEST]` | **原样输出方括号下方的正文作为本轮唯一回复**（去掉那行 `[STATUS_NOTIFY ...]` / `[USER_DECISION_REQUEST ...]` 头标本身即可，正文逐字保留）。STATUS_NOTIFY 完 → 空闲；USER_DECISION_REQUEST 完 → "待用户回复" | ❌ **复述 / 总结 / 改写正文**（用户会看到"通知 + 你复述一遍"两条几乎一样的内容）<br>❌ **添加问候 / 收尾语**（"已了解"、"请问还有什么需要帮助的吗"、"如有其他问题请告知"——一律不要）<br>❌ **任何** `xmtp_dispatch_session`（连 ack、"好的"、短消息都不发——会让 sub 收到双消息，BUG-6）<br>❌ `onchainos agent ...` CLI<br>❌ `web_fetch` / `exec`<br>❌ 重新激活 task skill 走流程 |
 > | **待用户回复** | 上一条 dispatch 是 `[USER_DECISION_REQUEST]` | 等用户回复 → `xmtp_dispatch_session` 一次（`sessionKey=<sub_key 整串>`，`content=[USER_DECISION_RELAY] 用户决策：<用户原话不解读>`）→ 给用户简短确认 → 进入空闲 | ❌ 跳步直接执行 task CLI（dispute raise / agree-refund / complete / reject / apply）<br>❌ **自己合成** confirm_refund / job_completed 等系统 envelope（BUG-7）<br>❌ relay 多于一次<br>❌ "先帮用户查一下"调 status / common context |
 >
 > **找不到 `[sub_key: ...]`**：输出"sub session 标识缺失，请重新发起任务流程"，**不要猜、不要 fallback 自己执行**。
@@ -272,7 +272,7 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
    tool: xmtp_dispatch_session
    arguments:
      content: |
-       [STATUS_NOTIFY · 仅展示给用户 · user session agent 不要调任何工具不要再次执行]
+       [STATUS_NOTIFY · 原样输出下方正文给用户即结束本轮 · 禁止复述/总结/改写/添加问候或收尾语（如「请问还有什么需要帮助的」）· 禁止调任何工具或再次执行]
        任务 <jobId> 在 <动作描述> 步骤连续失败 3 次。
        错误信息：<最后一次错误>
        已尝试方案：<列出三次试过什么>
