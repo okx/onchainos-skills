@@ -15,7 +15,7 @@ If `onchainos` is not found or workflows are missing, run `bash ~/setup.sh` and 
 
 ## Step 2 — Install skills
 
-1. Follow the instructions in `.openclaw/INSTALL.md` to install onchainos skills
+1. Follow the instructions in `https://github.com/okx/onchainos-skills/blob/main/.openclaw/INSTALL.md` to install onchainos skills
 2. Determine the current workspace directory (check `openclaw` config or working directory)
 3. Copy skills from `~/.openclaw/onchainos-skills/skills/` into the workspace's `skills/` directory
 4. Run `openclaw skills list` to confirm they are loaded
