@@ -7,7 +7,7 @@ A general-purpose [OpenClaw](https://openclaw.ai) agent template powered by [OKX
 ## Quick start
 
 1. Clone or fork this template
-2. Run `bash setup.sh` — installs the `onchainos` CLI and fetches skills + workflows from the source repo
+2. Run `bash setup.sh` — installs the `onchainos` CLI and workflows
 3. Start an OpenClaw session — log in with your email
 4. Start using workflows and skills
 
