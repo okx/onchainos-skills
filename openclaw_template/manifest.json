@@ -12,7 +12,7 @@
     "slug": "onchainos",
     "category": "blockchain",
     "tags": ["okx", "defi", "trading", "solana", "ethereum", "token-research", "smart-money", "web3", "blockchain", "swap"],
-    "partnerName": "OKX",
+    "authorName": "OKX",
     "authorUrl": "https://web3.okx.com/onchainos",
     "authorLogoUrl": "https://static.okx.com/cdn/web3/assets/imgs/70d223c0-8527-40c1-8292-b3cc10b53d88.png"
   },
@@ -43,11 +43,9 @@
   "tasks": [
     {
       "name": "daily-update",
-      "schedule": { "kind": "cron", "expr": "0 0 * * *" },
-      "payload": {
-        "kind": "agentTurn",
-        "text": "Run bash ~/setup.sh to update onchainos CLI, skills, and workflows. Report the onchainos version and confirm skills/workflows are up to date."
-      }
+      "prompt": "Run bash ~/setup.sh to update onchainos CLI, skills, and workflows. Report the onchainos version and confirm skills/workflows are up to date.",
+      "schedule": "0 0 * * *",
+      "enabled": false
     }
   ]
 }

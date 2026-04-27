@@ -1,4 +1,7 @@
 use serde::Serialize;
+use serde_json::Value;
+
+use crate::payment_notify;
 
 #[derive(Serialize)]
 struct JsonOutput<T: Serialize> {
@@ -7,6 +10,10 @@ struct JsonOutput<T: Serialize> {
     data: Option<T>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    /// Payment / state notifications emitted during the request. See
+    /// `payment_notify` for the event schema. Absent when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    notifications: Vec<Value>,
 }
 
 /// Print a success response: `{ "ok": true }`
@@ -15,6 +22,7 @@ pub fn success_empty() {
         ok: true,
         data: None,
         error: None,
+        notifications: payment_notify::drain_events(),
     };
     println!("{}", serde_json::to_string_pretty(&out).unwrap());
 }
@@ -25,6 +33,7 @@ pub fn success<T: Serialize>(data: T) {
         ok: true,
         data: Some(data),
         error: None,
+        notifications: payment_notify::drain_events(),
     };
     println!("{}", serde_json::to_string_pretty(&out).unwrap());
 }
@@ -35,6 +44,7 @@ pub fn error(msg: &str) {
         ok: false,
         data: None,
         error: Some(msg.to_string()),
+        notifications: payment_notify::drain_events(),
     };
     println!("{}", serde_json::to_string_pretty(&out).unwrap());
 }
@@ -44,8 +54,12 @@ pub fn error(msg: &str) {
 #[derive(Serialize)]
 struct ConfirmingOutput {
     confirming: bool,
+    #[serde(skip_serializing_if = "String::is_empty")]
     message: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     next: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    notifications: Vec<Value>,
 }
 
 /// Print a confirming response:
@@ -59,6 +73,7 @@ pub fn confirming(message: &str, next: &str) {
         confirming: true,
         message: message.to_string(),
         next: next.to_string(),
+        notifications: payment_notify::drain_events(),
     };
     println!("{}", serde_json::to_string_pretty(&out).unwrap());
 }
