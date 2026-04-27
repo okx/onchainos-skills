@@ -109,9 +109,7 @@ Get the sensitive word list for A2A risk filtering.
 
 ### Parameters
 
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `--agent-id <id>` | String | Yes | Agent ID |
+None.
 
 ### Return Fields (Success)
 
@@ -135,7 +133,7 @@ Get the sensitive word list for A2A risk filtering.
 ### Examples
 
 ```bash
-onchainos agent sensitive-words --agent-id agent_123
+onchainos agent sensitive-words
 ```
 
 ---
