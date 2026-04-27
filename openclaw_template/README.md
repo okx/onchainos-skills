@@ -38,10 +38,8 @@ To enable trading, run `onchainos wallet login` inside a session.
 ```
 openclaw_template/
 ├── README.md                     # This file
-├── pinata/                       # Platform-specific deployment files
-│   ├── manifest.json             # Template store manifest
-│   ├── setup.sh                  # Installs onchainos CLI + fetches skills & workflows
-│   └── README.md                 # Deployment guide
+├── manifest.json                 # Template store manifest
+├── setup.sh                      # Build script (calls install.sh)
 └── workspace/
     ├── SOUL.md                   # Agent personality, values, tone, boundaries
     ├── AGENTS.md                 # Workflow routing, skill table, harness rules, session management
@@ -57,12 +55,6 @@ openclaw_template/
 ```
 
 Skills and workflows are fetched from the onchainos-skills source repo at deploy time — always the latest version.
-
-## Platform-specific deployment
-
-| Platform | Guide |
-|----------|-------|
-| [Pinata](https://pinata.cloud/agents) | [`pinata/`](./pinata/) |
 
 ## Optional: OKX API credentials
 

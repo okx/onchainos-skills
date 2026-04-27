@@ -1,5 +1,5 @@
 #!/bin/bash
-# onchainos — Pinata template build script
+# onchainos — OpenClaw template build script
 # Installs the onchainos CLI, skills, and workflows.
 # Runs once during the build phase; no action needed from the user.
 
