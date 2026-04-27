@@ -7,8 +7,8 @@
    - Windows:     `irm https://raw.githubusercontent.com/okx/onchainos-skills/main/install.ps1 | iex`
 
 2. **Run preflight (once per session):**
-   - macOS/Linux: `bash "${CLAUDE_SKILL_DIR}/scripts/preflight.sh" --skill-version=2.3.0`
-   - Windows:     `powershell "$env:CLAUDE_SKILL_DIR\scripts\preflight.ps1" -SkillVersion 2.3.0`
+   - macOS/Linux: `bash scripts/preflight.sh --skill-version=2.5.0`
+   - Windows:     `powershell scripts/preflight.ps1 -SkillVersion 2.5.0`
 
    If the output contains `warn:` lines, relay them to the user verbatim before proceeding.
 
