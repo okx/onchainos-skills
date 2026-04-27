@@ -197,6 +197,8 @@ pub enum AgentCommand {
         group_id: String,
         #[arg(long)]
         direction: String,
+        #[arg(long)]
+        provider_security_rate: String,
     },
 
     /// Get XMTP system config (system account addresses)
@@ -364,6 +366,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             job_id,
             group_id,
             direction,
+            provider_security_rate,
         } => {
             chat::run(
                 chat::ChatCommand::MessageEligible {
@@ -373,6 +376,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     job_id,
                     group_id,
                     direction,
+                    provider_security_rate,
                 },
                 ctx,
             )

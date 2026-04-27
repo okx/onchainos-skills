@@ -55,6 +55,7 @@ pub enum ChatCommand {
         job_id: String,
         group_id: String,
         direction: String,
+        provider_security_rate: String,
     },
     SystemConfig,
     Heartbeat {
@@ -86,6 +87,7 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
             job_id,
             group_id,
             direction,
+            provider_security_rate,
         } => {
             let client = aieco_swimlane_client().await?;
             output::success(
@@ -97,6 +99,7 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
                     &job_id,
                     &group_id,
                     &direction,
+                    &provider_security_rate,
                 )
                 .await?,
             );
@@ -250,6 +253,7 @@ pub async fn fetch_message_eligible(
     job_id: &str,
     group_id: &str,
     direction: &str,
+    provider_security_rate: &str,
 ) -> Result<Value> {
     let headers = agent_commerce_headers(agent_id);
     let resp = client
@@ -261,6 +265,7 @@ pub async fn fetch_message_eligible(
                 ("jobId", job_id),
                 ("groupId", group_id),
                 ("direction", direction),
+                ("providerSecurityRate", provider_security_rate),
             ],
             Some(&headers),
         )
