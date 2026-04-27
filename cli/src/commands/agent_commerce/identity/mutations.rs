@@ -31,8 +31,8 @@ use super::signing::{
 };
 use super::utils::{
     ensure_provider_has_service, normalize_role, parse_agent_unsigned, parse_services,
-    parse_u32_arg, reconstruct_post_url_for_log, redact_token_for_debug, require_non_empty,
-    resolve_agent_id, trim_or_empty, wallet_client,
+    parse_u32_arg, poll_tx_agent_status, reconstruct_post_url_for_log, redact_token_for_debug,
+    require_non_empty, resolve_agent_id, trim_or_empty, wallet_client,
 };
 
 // ─── Public command entry points ──────────────────────────────────────────
@@ -148,7 +148,11 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         args.address.as_deref(),
     )
     .await?;
-    Ok(json!({ "txHash": tx_hash }))
+    let agent_info = poll_tx_agent_status(&mut client, &access_token, &tx_hash).await;
+    match agent_info {
+        Some(agent) => Ok(json!({ "txHash": tx_hash, "agent": agent })),
+        None => Ok(json!({ "txHash": tx_hash })),
+    }
 }
 
 // ─── `agent update` ───────────────────────────────────────────────────────
@@ -227,7 +231,11 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     // 修改，role / keyUuid / sessionSignature 也不在 update 请求体里），所以
     // 整个 erc8004Msg 不写入广播 extraData。
     let tx_hash = sign_and_broadcast_agent_transaction(&access_token, &unsigned, None, None).await?;
-    Ok(json!({ "txHash": tx_hash }))
+    let agent_info = poll_tx_agent_status(&mut client, &access_token, &tx_hash).await;
+    match agent_info {
+        Some(agent) => Ok(json!({ "txHash": tx_hash, "agent": agent })),
+        None => Ok(json!({ "txHash": tx_hash })),
+    }
 }
 
 // ─── `agent activate` / `agent deactivate` ────────────────────────────────

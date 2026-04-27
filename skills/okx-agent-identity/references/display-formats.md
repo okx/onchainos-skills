@@ -8,7 +8,7 @@
 
 **Language matching.** Field labels, status words, and footer hints must match the user's language per `SKILL.md §Language matching`. Every table in every section below shows a Chinese-variant and an English-variant header; render one variant, not both.
 
-**`#<id>` placeholder rule.** All `#<id>` / `#<N>` / `#<target>` in these templates are placeholders — substitute with the actual numeric agent id from the CLI response or from the pre-check `agent get` lookup. If the id is not available (notably: current `create` / `feedback-submit` only return `{txHash}`; the hash→info lookup endpoint is not yet shipped), do **NOT** render a bare `#` with nothing after it. Options, in order of preference:
+**`#<id>` placeholder rule.** All `#<id>` / `#<N>` / `#<target>` in these templates are placeholders — substitute with the actual numeric agent id from the CLI response or from the pre-check `agent get` lookup. If the id is not available (notably: `feedback-submit` only returns `{txHash}`; `create` / `update` may also fall back to `{txHash}` when the internal tx-status poll times out — see `cli-reference.md` §1 return schema), do **NOT** render a bare `#` with nothing after it. Options, in order of preference:
 1. If a prior `agent get` in the same conversation resolved the id, use that value.
 2. Otherwise, omit the id entirely and use wording that doesn't need it — e.g. "身份已注册，agent id 待后续接口返回" / "Agent created; agent id will be available once the hash→info endpoint ships."
 3. Never invent an id. Never render `# `, `#<id>`, or `#?` to the user.
