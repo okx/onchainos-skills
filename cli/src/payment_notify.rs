@@ -35,8 +35,15 @@ const DISPLAY_DECIMALS: usize = 6;
 // into `/config`. Placeholders until the product copy lands.
 pub const BASIC_FREE_QUOTA: u64 = 1000000;
 pub const PREMIUM_FREE_QUOTA: u64 = 100000;
-pub const GRACE_DAYS: u32 = 30;
 pub const DOC_URL: &str = "https://web3.okx.com/onchainos/dev-docs/market/market-api-fee";
+
+/// Whole-day length of the old-user grace window, derived from the two
+/// anchor dates so the displayed copy stays consistent with
+/// `new_user_intro_start_at()` and `grace_expires_at()`. With the
+/// current literals (2026-04-30 → 2026-05-30) this is 30.
+pub fn grace_days() -> u32 {
+    ((grace_expires_at() - new_user_intro_start_at()) / 86_400) as u32
+}
 
 /// Process-global buffer of notification events emitted by `ApiClient`
 /// during a request. Drained by the CLI output layer (`output::success`
@@ -236,11 +243,21 @@ fn format_rfc3339_utc(unix_secs: i64) -> String {
         .unwrap_or_default()
 }
 
-/// Grace expiry for old users: 2026-05-31T00:00:00Z. Global constant —
+/// Grace expiry for old users: 2026-05-30T00:00:00Z. Global constant —
 /// the server doesn't return this, so every old user gets the same
-/// cutoff.
+/// cutoff. Paired with `new_user_intro_start_at()` (2026-04-30) this
+/// gives a clean 30-day grace window via `grace_days()`.
 pub fn grace_expires_at() -> i64 {
-    DateTime::parse_from_rfc3339("2026-05-31T00:00:00Z")
+    DateTime::parse_from_rfc3339("2026-05-30T00:00:00Z")
+        .expect("hardcoded RFC3339 literal")
+        .timestamp()
+}
+
+/// Start of `MARKET_API_NEW_USER_INTRO` emission: 2026-04-30T00:00:00Z.
+/// Before this point the event is suppressed without flipping
+/// `intro_shown`, so the first eligible request after still emits.
+pub fn new_user_intro_start_at() -> i64 {
+    DateTime::parse_from_rfc3339("2026-04-30T00:00:00Z")
         .expect("hardcoded RFC3339 literal")
         .timestamp()
 }
@@ -249,13 +266,13 @@ pub fn grace_expires_at() -> i64 {
 /// Flag)` pairs in print order; caller persists the flags. Copy lives in
 /// the skill — CLI only names the state.
 ///
-/// | User type | Window     | Quota       | Variant                            |
-/// |-----------|------------|-------------|------------------------------------|
-/// | New       | —          | within      | `Event::NewUserIntro`              |
-/// | New       | —          | over (tier) | `Event::NewUserOverQuota`          |
-/// | Old       | in grace   | —           | `Event::OldUserGrace`              |
-/// | Old       | post grace | within      | `Event::OldUserPostGraceIntro`     |
-/// | Old       | post grace | over (tier) | `Event::OldUserPostGraceOverQuota` |
+/// | User type | Window           | Quota       | Variant                            |
+/// |-----------|------------------|-------------|------------------------------------|
+/// | New       | after 2026-04-30 | within      | `Event::NewUserIntro`              |
+/// | New       | —                | over (tier) | `Event::NewUserOverQuota`          |
+/// | Old       | in grace         | —           | `Event::OldUserGrace`              |
+/// | Old       | post grace       | within      | `Event::OldUserPostGraceIntro`     |
+/// | Old       | post grace       | over (tier) | `Event::OldUserPostGraceOverQuota` |
 pub fn compute_events(input: &NotifyInput) -> Vec<(Event, Flag)> {
     let mut events = Vec::new();
     let Some(user_type) = input.user_type else {
@@ -277,7 +294,7 @@ pub fn compute_events(input: &NotifyInput) -> Vec<(Event, Flag)> {
         if !input.grace_shown {
             events.push((
                 Event::OldUserGrace {
-                    grace_days: GRACE_DAYS,
+                    grace_days: grace_days(),
                     grace_expires_at: format_rfc3339_utc(input.grace_expires_at),
                     basic_free_quota: BASIC_FREE_QUOTA,
                     premium_free_quota: PREMIUM_FREE_QUOTA,
@@ -291,19 +308,24 @@ pub fn compute_events(input: &NotifyInput) -> Vec<(Event, Flag)> {
 
     if !input.intro_shown {
         let event = match user_type {
-            UserType::New => Event::NewUserIntro {
+            // Suppressed before the window opens; `intro_shown` stays
+            // false so the first request at/after the cutoff emits.
+            UserType::New if input.now < new_user_intro_start_at() => None,
+            UserType::New => Some(Event::NewUserIntro {
                 basic_free_quota: BASIC_FREE_QUOTA,
                 premium_free_quota: PREMIUM_FREE_QUOTA,
                 doc_url: DOC_URL.to_string(),
-            },
-            UserType::Old => Event::OldUserPostGraceIntro {
-                grace_days: GRACE_DAYS,
+            }),
+            UserType::Old => Some(Event::OldUserPostGraceIntro {
+                grace_days: grace_days(),
                 basic_free_quota: BASIC_FREE_QUOTA,
                 premium_free_quota: PREMIUM_FREE_QUOTA,
                 doc_url: DOC_URL.to_string(),
-            },
+            }),
         };
-        events.push((event, Flag::Intro));
+        if let Some(event) = event {
+            events.push((event, Flag::Intro));
+        }
     }
 
     let over_quota = |tier: PaymentTier| -> Event {
@@ -456,11 +478,13 @@ mod tests {
     use super::*;
 
     // Fixed "now" used by every `base()` test — tests are stable
-    // regardless of wall clock. `grace_expires_at` defaults to
-    // `TEST_NOW + 1y` so the "in grace" path is active by default;
-    // tests that exercise the post-grace path override both fields
-    // with their own relative arithmetic.
-    const TEST_NOW: i64 = 1_700_000_000; // 2023-11-14T22:13:20Z — arbitrary fixed point
+    // regardless of wall clock. Set past `new_user_intro_start_at()`
+    // so the New-user intro gate is open by default; tests for the
+    // gated case override `now` explicitly. `grace_expires_at`
+    // defaults to `TEST_NOW + 1y` so the "in grace" path is active by
+    // default; tests that exercise the post-grace path override both
+    // fields with their own relative arithmetic.
+    const TEST_NOW: i64 = 1_777_593_600; // 2026-05-01T00:00:00Z — past intro gate, pre-grace cutoff
 
     fn base() -> NotifyInput {
         NotifyInput {
@@ -501,13 +525,61 @@ mod tests {
     }
 
     #[test]
-    fn grace_expires_at_is_2026_05_31_utc() {
+    fn grace_expires_at_is_2026_05_30_utc() {
         use chrono::TimeZone;
         let expected = Utc
-            .with_ymd_and_hms(2026, 5, 31, 0, 0, 0)
+            .with_ymd_and_hms(2026, 5, 30, 0, 0, 0)
             .unwrap()
             .timestamp();
         assert_eq!(grace_expires_at(), expected);
+    }
+
+    #[test]
+    fn grace_days_is_thirty_from_anchors() {
+        assert_eq!(grace_days(), 30);
+    }
+
+    #[test]
+    fn new_user_intro_start_at_is_2026_04_30_utc() {
+        use chrono::TimeZone;
+        let expected = Utc
+            .with_ymd_and_hms(2026, 4, 30, 0, 0, 0)
+            .unwrap()
+            .timestamp();
+        assert_eq!(new_user_intro_start_at(), expected);
+    }
+
+    #[test]
+    fn new_user_intro_suppressed_before_start() {
+        let mut i = base();
+        i.user_type = Some(UserType::New);
+        i.now = new_user_intro_start_at() - 1;
+        assert!(compute_events(&i).is_empty());
+    }
+
+    #[test]
+    fn new_user_intro_emits_at_start() {
+        let mut i = base();
+        i.user_type = Some(UserType::New);
+        i.now = new_user_intro_start_at();
+        let events = compute_events(&i);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1, Flag::Intro);
+        assert!(matches!(events[0].0, Event::NewUserIntro { .. }));
+    }
+
+    #[test]
+    fn old_user_post_grace_intro_not_gated_by_new_user_start() {
+        // The cutoff only gates `NewUserIntro`. An Old user past their
+        // grace window must still emit `OldUserPostGraceIntro` even if
+        // `now` predates 2026-04-30.
+        let mut i = base();
+        i.user_type = Some(UserType::Old);
+        i.now = new_user_intro_start_at() - 24 * 3600;
+        i.grace_expires_at = i.now - 24 * 3600;
+        let events = compute_events(&i);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0].0, Event::OldUserPostGraceIntro { .. }));
     }
 
     #[test]
@@ -977,7 +1049,7 @@ mod tests {
             doc_url: DOC_URL.to_string(),
         });
         push_event(Event::OldUserGrace {
-            grace_days: GRACE_DAYS,
+            grace_days: grace_days(),
             grace_expires_at: String::new(),
             basic_free_quota: BASIC_FREE_QUOTA,
             premium_free_quota: PREMIUM_FREE_QUOTA,
