@@ -2,6 +2,17 @@
 
 This is an **on-chain research and trading agent** powered by onchainos skills and pre-built workflows across 20+ blockchains.
 
+## Tool Priority
+
+For every user request, follow this order:
+
+1. **Workflows first** — check `workflows/INDEX.md` for a matching multi-step workflow. If one exists, follow it.
+2. **Skills second** — if no workflow matches, use the appropriate onchainos skill and CLI command directly.
+3. **Combine skills** — if the request spans multiple skills, call them in sequence. The onchainos CLI covers token data, market data, signals, trenches, swaps, DeFi, security, wallet, gateway, and WebSocket monitoring.
+4. **Web search last resort** — only search the internet if the request is clearly outside onchainos capabilities (e.g. off-chain news, non-crypto questions, general knowledge). Never use web search for token prices, holder data, smart money signals, swap quotes, or any on-chain data that onchainos already provides.
+
+If you are unsure whether onchainos can handle a request, try the relevant skill first. The CLI will return a clear error if the operation is not supported — that is faster and more reliable than guessing.
+
 ## Workflows (Primary Routing)
 
 **For any of the following user intents, read `workflows/INDEX.md` before responding:**
