@@ -256,9 +256,44 @@ function eventToBizType(event: string): number | null {
     case "job_completed":  return 9;   // submitted → completed
     case "job_refused":    return 10;  // submitted → refused
     case "job_disputed":   return 2;   // refused → disputed
-    case "job_close":      return 16;  // open → close
+    case "job_close":
+    case "job_closed":     return 16;  // open → close
     default:               return null;
   }
+}
+
+// 判断 event 应投递到哪种 session：
+// - "main"：投递到 openclaw 的 main session（user session），适用于无 sub session 的事件
+// - "sub"：投递到 jobId 对应的 sub session
+function eventSessionTarget(event: string): "main" | "sub" {
+  switch (event) {
+    // 任务刚上链，还没有 sub session
+    case "job_created":
+    // 任务级 housekeeping：都是发给 Client 的 main session
+    case "job_expired":
+    case "job_closed":
+    case "job_visibility_changed":
+    case "job_payment_mode_changed":
+      return "main";
+    default:
+      return "sub";
+  }
+}
+
+// 查找 openclaw 的 main session key（即 user session）
+function findMainSessionKey(): string | null {
+  try {
+    const p = path.join(homedir(), ".openclaw/agents/main/sessions/sessions.json");
+    if (!fs.existsSync(p)) return null;
+    const sessions = JSON.parse(fs.readFileSync(p, "utf8")) as Record<string, unknown>;
+    for (const key of Object.keys(sessions)) {
+      // main session 不含 "okx-xmtp:" scope（sub session 才有）
+      if (!key.includes("okx-xmtp:")) return key;
+    }
+  } catch (err) {
+    console.log(`${TAG} [notify] sessions.json 读取失败:`, (err as Error).message);
+  }
+  return null;
 }
 
 // 走 mock-api `/broadcast` 把任务状态推到 event 暗示的下一态（mock 测试的捷径）。
@@ -561,6 +596,7 @@ async function main() {
     }
 
     // POST /notify-openclaw —— 手动推系统通知到 openclaw agent session
+    // 根据 event 类型自动选择投递目标：main session（user session）或 sub session（per-job）
     if (req.method === "POST" && url.pathname === "/notify-openclaw") {
       try {
         const body = JSON.parse(await readBody()) as {
@@ -572,13 +608,28 @@ async function main() {
           sendJson(400, { error: "jobId + event required" });
           return;
         }
-        const sessionKey = findSessionKeyForJob(body.jobId, myAddress);
-        if (!sessionKey) {
-          sendJson(404, {
-            error: `未找到 jobId=${body.jobId} + my=${myAddress} 对应的 session（openclaw 是否已建 group？）`,
-          });
-          return;
+
+        const target = eventSessionTarget(body.event);
+        let sessionKey: string | null = null;
+
+        if (target === "main") {
+          sessionKey = findMainSessionKey();
+          if (!sessionKey) {
+            sendJson(404, {
+              error: `未找到 openclaw main session（gateway 是否已启动？）`,
+            });
+            return;
+          }
+        } else {
+          sessionKey = findSessionKeyForJob(body.jobId, myAddress);
+          if (!sessionKey) {
+            sendJson(404, {
+              error: `未找到 jobId=${body.jobId} + my=${myAddress} 对应的 sub session（openclaw 是否已建 group？）`,
+            });
+            return;
+          }
         }
+
         // 先把 mock-api 状态推到 event 暗示的下一态（mock 测试 shortcut）
         await advanceTaskStatusViaBroadcast(body.jobId, body.event);
         const jobStatus = await fetchJobStatus(body.jobId);
@@ -591,9 +642,9 @@ async function main() {
         });
         await callGatewaySessionsSend(sessionKey, message);
         console.log(
-          `${TAG} [notify] ✓ event=${body.event} jobStatus=${jobStatus} jobId=${body.jobId} → ${sessionKey.slice(0, 70)}…`,
+          `${TAG} [notify] ✓ event=${body.event} target=${target} jobStatus=${jobStatus} jobId=${body.jobId} → ${sessionKey.slice(0, 70)}…`,
         );
-        sendJson(200, { ok: true, sessionKey, message });
+        sendJson(200, { ok: true, target, sessionKey, message });
       } catch (e: any) {
         console.error(`${TAG} [notify] ✗ failed:`, e?.message ?? e);
         sendJson(500, { error: String(e?.message ?? e) });
@@ -773,14 +824,28 @@ body { font-family: ui-monospace, monospace; background: #0d1117; color: #c9d1d9
         <label>jobId<input id="notify-jobid" type="text" placeholder="auto" /></label>
         <label>event
           <select id="notify-event">
-            <option value="provider_applied">provider_applied</option>
-            <option value="job_accepted">job_accepted</option>
-            <option value="job_submitted">job_submitted</option>
-            <option value="job_completed">job_completed</option>
-            <option value="job_refused">job_refused</option>
-            <option value="job_disputed">job_disputed</option>
-            <option value="confirm_refund">confirm_refund</option>
-            <option value="dispute_resolved">dispute_resolved</option>
+            <optgroup label="── 投递到 main session（买家 user session）──">
+              <option value="job_created">job_created — 任务上链确认</option>
+              <option value="job_expired">job_expired — 任务超时</option>
+              <option value="job_closed">job_closed — 任务已关闭</option>
+              <option value="job_visibility_changed">job_visibility_changed — 可见性切换</option>
+              <option value="job_payment_mode_changed">job_payment_mode_changed — 支付模式切换</option>
+            </optgroup>
+            <optgroup label="── 投递到 sub session（需已建群）──">
+              <option value="provider_applied">provider_applied — 卖家申请接单</option>
+              <option value="job_accepted">job_accepted — 买家确认接单</option>
+              <option value="job_submitted">job_submitted — 卖家提交交付物</option>
+              <option value="job_completed">job_completed — 任务完成</option>
+              <option value="job_refused">job_refused — 买家拒绝交付物</option>
+              <option value="job_disputed">job_disputed — 仲裁已发起</option>
+              <option value="confirm_refund">confirm_refund — 卖家同意退款</option>
+              <option value="dispute_resolved">dispute_resolved — 仲裁裁决</option>
+              <option value="job_refunded">job_refunded — 退款完成</option>
+              <option value="submit_expired">submit_expired — 卖家提交超时</option>
+              <option value="refuse_expired">refuse_expired — 卖家仲裁超时</option>
+              <option value="review_expired">review_expired — 买家验收超时</option>
+              <option value="review_deadline_warn">review_deadline_warn — 验收截止提醒</option>
+            </optgroup>
           </select>
         </label>
         <button id="btn-notify" type="button">发送通知</button>

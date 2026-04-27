@@ -111,7 +111,7 @@ fn print_routing_guide(p: &negotiate::ProviderInfo, job_id: &str) {
     } else {
         // A2A 路径：需要协商
         println!("  💬 路由: A2A（需协商）");
-        println!("  → 向卖家 {} 发起协商（xmtp_send），确认任务详情 / 价格 / 支付方式后等待 provider_applied", p.provider_agent_id);
+        println!("  → 先调 xmtp_start_conversation 与卖家 {} 建群，再通过 xmtp_send 协商任务详情 / 价格 / 支付方式，等待 provider_applied", p.provider_agent_id);
     }
     println!();
 }
