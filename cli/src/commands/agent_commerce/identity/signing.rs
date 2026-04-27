@@ -75,6 +75,36 @@ pub(super) fn load_session_cert() -> Result<String> {
     Ok(session.session_cert)
 }
 
+/// In-memory bundle of every material a single agent identity broadcast needs:
+/// XLayer signing account, session cert, and decrypted signing seed. Built
+/// once at the top of each `*_impl`, threaded down by reference into broadcast.
+/// Must never be serialized, logged, or persisted — `signing_seed` is the
+/// raw secret. Drops with the calling stack frame.
+pub(super) struct AgentSigningSession {
+    pub account_id: String,
+    pub addr_info: AddressInfo,
+    pub session_cert: String,
+    pub signing_seed: [u8; 32],
+}
+
+pub(super) fn load_agent_signing_session(
+    address: Option<&str>,
+) -> Result<AgentSigningSession> {
+    let (account_id, addr_info) = resolve_xlayer_signing_account(address)?;
+    let session = wallet_store::load_session()?
+        .ok_or_else(|| anyhow!("session expired, please login again: onchainos wallet login"))?;
+    let session_key = keyring_store::get("session_key")
+        .map_err(|_| anyhow!("session expired, please login again: onchainos wallet login"))?;
+    let signing_seed =
+        crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &session_key)?;
+    Ok(AgentSigningSession {
+        account_id,
+        addr_info,
+        session_cert: session.session_cert,
+        signing_seed,
+    })
+}
+
 /// 用 signing_seed 对 keyUuid 做 Ed25519 签名，作为 sessionSignature。
 ///
 /// 按产品规范：不套 EIP-191 前缀，不做 Keccak-256 预哈希——直接把 keyUuid 的
@@ -132,23 +162,14 @@ pub(super) async fn sign_and_broadcast_agent_transaction(
     access_token: &str,
     unsigned: &UnsignedInfoResponse,
     extra_data_overlay: Option<Map<String, Value>>,
-    address_override: Option<&str>,
+    session: &AgentSigningSession,
 ) -> Result<String> {
-    let (account_id, addr_info) = resolve_xlayer_signing_account(address_override)?;
-    let session = wallet_store::load_session()?
-        .ok_or_else(|| anyhow!("session expired, please login again: onchainos wallet login"))?;
-    let session_key = keyring_store::get("session_key")
-        .map_err(|_| anyhow!("session expired, please login again: onchainos wallet login"))?;
-    let signing_seed =
-        crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &session_key)?;
-    let session_cert = session.session_cert;
-
     broadcast_unsigned(BroadcastCtx {
         access_token,
-        account_id: &account_id,
-        addr_info: &addr_info,
-        session_cert: &session_cert,
-        signing_seed: &signing_seed,
+        account_id: &session.account_id,
+        addr_info: &session.addr_info,
+        session_cert: &session.session_cert,
+        signing_seed: &session.signing_seed,
         unsigned,
         is_contract_call: true,
         mev_protection: false,
