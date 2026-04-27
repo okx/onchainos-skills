@@ -558,7 +558,7 @@ pub async fn fetch_search(
             .parse()
             .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
         anyhow::ensure!(
-            n >= 1 && n <= 100,
+            (1..=100).contains(&n),
             "--limit must be between 1 and 100, got {n}"
         );
     }
@@ -595,7 +595,7 @@ pub async fn fetch_holders(
             .parse()
             .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
         anyhow::ensure!(
-            n >= 1 && n <= 100,
+            (1..=100).contains(&n),
             "--limit must be between 1 and 100, got {n}"
         );
     }
@@ -755,7 +755,7 @@ pub async fn fetch_hot_tokens(client: &mut ApiClient, params: HotTokensParams) -
             .parse()
             .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
         anyhow::ensure!(
-            n >= 1 && n <= 100,
+            (1..=100).contains(&n),
             "--limit must be between 1 and 100, got {n}"
         );
     }
@@ -897,7 +897,7 @@ pub async fn fetch_top_trader(
             .parse()
             .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
         anyhow::ensure!(
-            n >= 1 && n <= 100,
+            (1..=100).contains(&n),
             "--limit must be between 1 and 100, got {n}"
         );
     }
