@@ -9,21 +9,56 @@ pub const SUPPORTED_CHAIN_INDICES: &[&str] = &[
 
 /// Validate that `chain_index` is a known chain. Returns an error that
 /// includes the original user input (`raw_input`) for a friendlier message.
+///
+/// Resolution order:
+/// 1. Dynamic — trust whatever's in `chain_cache.json` (no TTL, no network).
+///    New chains pushed by the backend become valid here without a CLI release.
+/// 2. Hardcoded — `SUPPORTED_CHAIN_INDICES` whitelist for offline / cold-start.
 pub fn ensure_supported_chain(chain_index: &str, raw_input: &str) -> Result<()> {
-    if !SUPPORTED_CHAIN_INDICES.contains(&chain_index) {
-        anyhow::bail!(
-            "unsupported chain: \"{raw_input}\" (resolved to \"{chain_index}\"). \
-             Use `onchainos swap chains` to list supported chains."
-        );
+    if let Ok(cache) = crate::wallet_store::load_chain_cache() {
+        if cache
+            .chains
+            .iter()
+            .any(|c| chain_index_of(c).as_deref() == Some(chain_index))
+        {
+            return Ok(());
+        }
     }
-    Ok(())
+    if SUPPORTED_CHAIN_INDICES.contains(&chain_index) {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "unsupported chain: \"{raw_input}\" (resolved to \"{chain_index}\"). \
+         Use `onchainos swap chains` to list supported chains."
+    );
 }
 
 /// Resolve a chain name to its OKX chainIndex string.
 /// Accepts both names ("ethereum", "solana") and raw chain IDs ("1", "501").
 /// Returns an owned String since the input may need case conversion.
+///
+/// Resolution order:
+/// 1. Dynamic — match `chainName` (case-insensitive) in `chain_cache.json`.
+/// 2. Hardcoded — alias table for offline / cold-start and common shorthands.
+/// 3. Pass-through — input is likely a numeric chain ID, return as-is.
 pub fn resolve_chain(name: &str) -> String {
-    match name.to_lowercase().as_str() {
+    let lower = name.to_lowercase();
+
+    if let Ok(cache) = crate::wallet_store::load_chain_cache() {
+        for c in &cache.chains {
+            let cn = c
+                .get("chainName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if cn.to_lowercase() == lower {
+                if let Some(idx) = chain_index_of(c) {
+                    return idx;
+                }
+            }
+        }
+    }
+
+    match lower.as_str() {
         "ethereum" | "eth" => "1".to_string(),
         "solana" | "sol" => "501".to_string(),
         "bsc" | "bnb" => "56".to_string(),
@@ -41,9 +76,17 @@ pub fn resolve_chain(name: &str) -> String {
         "scroll" => "534352".to_string(),
         "zksync" => "324".to_string(),
         "tempo" => "4217".to_string(),
-        // If already a numeric chain ID, pass through
         _ => name.to_string(),
     }
+}
+
+/// Extract `chainIndex` from a chain entry, accepting either string or numeric serialization.
+fn chain_index_of(c: &serde_json::Value) -> Option<String> {
+    c.get("chainIndex").and_then(|v| {
+        v.as_str()
+            .map(|s| s.to_string())
+            .or_else(|| v.as_i64().map(|n| n.to_string()))
+    })
 }
 
 /// Resolve comma-separated chain names to comma-separated chainIndex values.

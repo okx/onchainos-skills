@@ -54,6 +54,33 @@ pub(crate) fn resolve_address(
     }
 }
 
+/// Resolve address with a one-shot refresh fallback.
+///
+/// If the initial lookup fails (e.g. wallets.json is missing the chain's address
+/// because a prior `chainUpdated` push failed to persist), call `refresh` once
+/// to fetch the updated wallet state then retry the lookup.
+pub(crate) async fn resolve_address_with_refresh<F, Fut>(
+    wallets: &mut WalletsJson,
+    from: Option<&str>,
+    chain_name: &str,
+    refresh: F,
+) -> Result<(String, AddressInfo)>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<WalletsJson>>,
+{
+    if let Ok(r) = resolve_address(wallets, from, chain_name) {
+        return Ok(r);
+    }
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][resolve_address_with_refresh] first attempt failed, refreshing and retrying"
+        );
+    }
+    *wallets = refresh().await?;
+    resolve_address(wallets, from, chain_name)
+}
+
 // ── sign_and_broadcast ────────────────────────────────────────────────
 
 /// Parameters for the unsignedInfo API call.
@@ -113,10 +140,26 @@ async fn sign_and_broadcast(
         );
     }
 
-    let wallets = wallet_store::load_wallets()?
+    let mut wallets = wallet_store::load_wallets()?
         .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
 
-    let (account_id, addr_info) = resolve_address(&wallets, from, chain_name)?;
+    // Fallback: if local wallets.json is missing this chain's address (e.g. a prior
+    // chainUpdated push failed to persist), force-refresh via account/address/list once and retry.
+    let (account_id, addr_info) =
+        resolve_address_with_refresh(&mut wallets, from, chain_name, || async {
+            let mut refresh_client = WalletApiClient::new()?;
+            let mut fresh = wallet_store::load_wallets()?
+                .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+            super::balance::ensure_wallet_accounts_fresh(
+                &mut refresh_client,
+                &access_token,
+                &mut fresh,
+                true,
+            )
+            .await?;
+            Ok(fresh)
+        })
+        .await?;
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][sign_and_broadcast] Step 3: resolve_address => account_id={}, addr={}",
@@ -567,6 +610,86 @@ mod tests {
         let w = make_test_wallets();
         let result = resolve_address(&w, None, "unknown");
         assert!(result.is_err());
+    }
+
+    // ── resolve_address_with_refresh tests ────────────────────────────
+
+    #[tokio::test]
+    async fn resolve_address_with_refresh_succeeds_on_first_try() {
+        // Initial wallets already has "eth" address — refresh must NOT be invoked.
+        let mut w = make_test_wallets();
+
+        let (acct_id, info) = resolve_address_with_refresh(&mut w, None, "eth", || async {
+            panic!("refresh should not fire on happy path");
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(acct_id, "acc-1");
+        assert_eq!(info.address, "0xAAA");
+    }
+
+    #[tokio::test]
+    async fn resolve_address_with_refresh_retries_after_refresh_injects_address() {
+        // Initial wallets has NO tempo address. Refresh returns a new WalletsJson
+        // containing the tempo address; retry lookup succeeds.
+        let mut w = make_test_wallets();
+        assert!(resolve_address(&w, None, "tempo").is_err());
+
+        let (acct_id, info) =
+            resolve_address_with_refresh(&mut w, None, "tempo", || async {
+                let mut fresh = make_test_wallets();
+                fresh
+                    .accounts_map
+                    .get_mut("acc-1")
+                    .unwrap()
+                    .address_list
+                    .push(AddressInfo {
+                        account_id: "acc-1".to_string(),
+                        address: "0xTempoAddr".to_string(),
+                        chain_index: "4217".to_string(),
+                        chain_name: "tempo".to_string(),
+                        address_type: "eoa".to_string(),
+                        chain_path: "m/44/60/0/0/0".to_string(),
+                    });
+                Ok(fresh)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(acct_id, "acc-1");
+        assert_eq!(info.address, "0xTempoAddr");
+        assert_eq!(info.chain_index, "4217");
+    }
+
+    #[tokio::test]
+    async fn resolve_address_with_refresh_fails_when_refresh_errors() {
+        // If the refresh closure itself fails, the error propagates — no further retry.
+        let mut w = make_test_wallets();
+
+        let result: Result<(String, AddressInfo)> =
+            resolve_address_with_refresh(&mut w, None, "tempo", || async {
+                Err(anyhow::anyhow!("network down"))
+            })
+            .await;
+
+        assert!(result.is_err());
+        assert!(format!("{:#}", result.unwrap_err()).contains("network down"));
+    }
+
+    #[tokio::test]
+    async fn resolve_address_with_refresh_fails_when_retry_still_misses() {
+        // Refresh returns unchanged wallets — final lookup still fails.
+        let mut w = make_test_wallets();
+
+        let result: Result<(String, AddressInfo)> =
+            resolve_address_with_refresh(&mut w, None, "tempo", || async {
+                Ok(make_test_wallets())
+            })
+            .await;
+
+        assert!(result.is_err());
+        assert!(format!("{:#}", result.unwrap_err()).contains("no address for chain=tempo"));
     }
 
     // ── handle_confirming_error tests ─────────────────────────────────

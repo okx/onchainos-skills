@@ -721,6 +721,30 @@ impl WalletApiClient {
         .await
     }
 
+    /// POST /priapi/v5/wallet/agentic/token/get-token-info
+    ///
+    /// Fetch token metadata (decimal/name/symbol/...) via the wallet-side endpoint.
+    /// Use this instead of the DEX `token/basic-info` for chains not covered by DEX
+    /// (e.g. Tempo). `source = 0` (web3).
+    pub async fn get_token_info(
+        &mut self,
+        access_token: &str,
+        chain_index: u64,
+        token_address: &str,
+    ) -> Result<Value> {
+        let body = json!({
+            "chainIndex": chain_index,
+            "tokenAddress": token_address,
+            "source": 0,
+        });
+        self.post_authed(
+            "/priapi/v5/wallet/agentic/token/get-token-info",
+            access_token,
+            &body,
+        )
+        .await
+    }
+
     /// POST /priapi/v5/wallet/agentic/pre-transaction/unsignedInfo
     #[allow(clippy::too_many_arguments)]
     pub async fn pre_transaction_unsigned_info(
