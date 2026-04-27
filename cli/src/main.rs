@@ -12,9 +12,14 @@ mod home;
 mod keyring_store;
 mod mcp;
 mod output;
+mod payment_cache;
+mod payment_notify;
 mod wallet_api;
 mod wallet_store;
 mod watch;
+
+#[cfg(test)]
+mod test_helpers;
 
 use clap::{Parser, Subcommand};
 
@@ -121,6 +126,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::defi::DefiCommand,
     },
+    /// Multi-step workflow commands that chain API calls for complete operations
+    Workflow {
+        #[command(subcommand)]
+        command: Box<commands::workflows::WorkflowCommand>,
+    },
+
     /// Upgrade onchainos to the latest version
     Upgrade(commands::upgrade::UpgradeArgs),
 }
@@ -143,8 +154,7 @@ async fn run() {
 
     let cli = Cli::parse();
 
-    // Propagate --base-url to env so WalletApiClient, ApiClient::new(None),
-    // and refresh_jwt_inline pick it up at runtime.
+    // Propagate --base-url to env so WalletApiClient and refresh_jwt_inline pick it up.
     if let Some(ref url) = cli.base_url {
         std::env::set_var("OKX_BASE_URL", url);
     }
@@ -184,6 +194,7 @@ async fn run() {
         Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Ws { command } => commands::ws::execute(command).await,
+        Commands::Workflow { command } => commands::workflows::execute(&ctx, *command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
     };
 

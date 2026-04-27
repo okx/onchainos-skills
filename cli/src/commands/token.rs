@@ -283,6 +283,18 @@ pub enum TokenCommand {
     },
     /// Get supported chains for holder cluster analysis
     ClusterSupportedChains,
+
+    /// Composite: token info + price-info + advanced-info + security scan in one call.
+    /// Equivalent to running all 4 sub-commands in parallel.
+    /// PRD Section 3.1: onchainos token report
+    Report {
+        /// Token contract address
+        #[arg(long)]
+        address: String,
+        /// Chain (e.g. solana, ethereum). Defaults to global --chain or ethereum.
+        #[arg(long)]
+        chain: Option<String>,
+    },
 }
 
 pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
@@ -522,6 +534,12 @@ pub async fn execute(ctx: &Context, cmd: TokenCommand) -> Result<()> {
             .await?;
         }
         TokenCommand::ClusterSupportedChains => cluster_supported_chains(ctx).await?,
+        TokenCommand::Report { address, chain } => {
+            let chain_index = chain
+                .map(|c| crate::chains::resolve_chain(&c).to_string())
+                .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
+            output::success(fetch_report(&mut client, &address, &chain_index).await?);
+        }
     }
     Ok(())
 }
@@ -539,7 +557,10 @@ pub async fn fetch_search(
         let n: u64 = s
             .parse()
             .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
-        anyhow::ensure!(n >= 1 && n <= 100, "--limit must be between 1 and 100, got {n}");
+        anyhow::ensure!(
+            (1..=100).contains(&n),
+            "--limit must be between 1 and 100, got {n}"
+        );
     }
     let mut params = vec![
         ("chains", resolved_chains.as_str()),
@@ -549,9 +570,7 @@ pub async fn fetch_search(
     if let Some(c) = cursor {
         params.push(("cursor", c));
     }
-    client
-        .get("/api/v6/dex/market/token/search", &params)
-        .await
+    client.get("/api/v6/dex/market/token/search", &params).await
 }
 
 /// POST /api/v6/dex/market/token/basic-info — body is JSON array
@@ -575,7 +594,10 @@ pub async fn fetch_holders(
         let n: u64 = s
             .parse()
             .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
-        anyhow::ensure!(n >= 1 && n <= 100, "--limit must be between 1 and 100, got {n}");
+        anyhow::ensure!(
+            (1..=100).contains(&n),
+            "--limit must be between 1 and 100, got {n}"
+        );
     }
     let tag_str = tag_filter.map(|t| t.to_string()).unwrap_or_default();
     let mut params = vec![
@@ -587,9 +609,7 @@ pub async fn fetch_holders(
     if let Some(c) = cursor {
         params.push(("cursor", c));
     }
-    client
-        .get("/api/v6/dex/market/token/holder", &params)
-        .await
+    client.get("/api/v6/dex/market/token/holder", &params).await
 }
 
 /// GET /api/v6/dex/market/token/top-liquidity — top 5 liquidity pools for a token
@@ -617,6 +637,20 @@ pub async fn fetch_price_info(
 ) -> Result<Value> {
     let body = json!([{"chainIndex": chain_index, "tokenContractAddress": address}]);
     client.post("/api/v6/dex/market/price-info", &body).await
+}
+
+/// POST /api/v6/security/token-scan — single-token scan helper shared by
+/// `token report` and the workflow layer. Any future schema change lands here.
+pub async fn fetch_security(
+    client: &mut ApiClient,
+    address: &str,
+    chain_index: &str,
+) -> Result<Value> {
+    let body = json!({
+        "source": "onchain_os_cli",
+        "tokenList": [{ "chainId": chain_index, "contractAddress": address }]
+    });
+    client.post("/api/v6/security/token-scan", &body).await
 }
 
 /// Parameters for the hot token list query.
@@ -720,7 +754,10 @@ pub async fn fetch_hot_tokens(client: &mut ApiClient, params: HotTokensParams) -
         let n: u64 = s
             .parse()
             .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
-        anyhow::ensure!(n >= 1 && n <= 100, "--limit must be between 1 and 100, got {n}");
+        anyhow::ensure!(
+            (1..=100).contains(&n),
+            "--limit must be between 1 and 100, got {n}"
+        );
     }
     let hot_limit = params.limit.unwrap_or_else(|| "20".to_string());
     let hot_cursor = params.cursor;
@@ -859,7 +896,10 @@ pub async fn fetch_top_trader(
         let n: u64 = s
             .parse()
             .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
-        anyhow::ensure!(n >= 1 && n <= 100, "--limit must be between 1 and 100, got {n}");
+        anyhow::ensure!(
+            (1..=100).contains(&n),
+            "--limit must be between 1 and 100, got {n}"
+        );
     }
     let tag_str = tag_filter.map(|t| t.to_string()).unwrap_or_default();
     let mut params = vec![
@@ -977,6 +1017,53 @@ async fn cluster_top_holders(
         .map(|c| crate::chains::resolve_chain(&c).to_string())
         .unwrap_or_else(|| ctx.chain_index_or("ethereum"));
     let mut client = ctx.client_async().await?;
-    output::success(fetch_cluster_top_holders(&mut client, address, &chain_index, range_filter).await?);
+    output::success(
+        fetch_cluster_top_holders(&mut client, address, &chain_index, range_filter).await?,
+    );
     Ok(())
+}
+
+/// Composite command: runs token info + price-info + advanced-info + security scan.
+/// PRD Section 3.1 — `onchainos token report`
+/// Error handling: single sub-call failure → that field is null, rest continue.
+///                 All sub-calls fail → returns error.
+pub async fn fetch_report(
+    client: &mut ApiClient,
+    address: &str,
+    chain_index: &str,
+) -> Result<serde_json::Value> {
+    // Four clones — each future gets exclusive ownership of its own ApiClient.
+    // tokio::join! polls all four concurrently; HTTP I/O is truly parallel via
+    // the shared reqwest::Client connection pool (Arc-backed).
+    let (mut c1, mut c2, mut c3) = (client.clone(), client.clone(), client.clone());
+
+    let (info, price, advanced, security) = tokio::join!(
+        fetch_info(client, address, chain_index),
+        fetch_price_info(&mut c1, address, chain_index),
+        fetch_advanced_info(&mut c2, address, chain_index),
+        fetch_security(&mut c3, address, chain_index),
+    );
+
+    let info = info.ok();
+    let price = price.ok();
+    let advanced = advanced.ok();
+    let security = security.ok();
+
+    // All failed → return error per PRD spec
+    if info.is_none() && price.is_none() && advanced.is_none() && security.is_none() {
+        anyhow::bail!(
+            "token report: all sub-calls failed for address {} on chain {}",
+            address,
+            chain_index
+        );
+    }
+
+    Ok(serde_json::json!({
+        "address":     address,
+        "chain":       chain_index,
+        "info":        info,
+        "priceInfo":   price,
+        "advancedInfo": advanced,
+        "security":    security,
+    }))
 }

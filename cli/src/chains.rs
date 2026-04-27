@@ -106,6 +106,48 @@ pub fn chain_family(chain_index: &str) -> &str {
     }
 }
 
+/// Full display name for a given chainIndex, used in user-facing strings.
+/// Returns the raw chain_index for unknown chains.
+pub fn chain_display_name(chain_index: &str) -> &str {
+    match chain_index {
+        "1" => "Ethereum",
+        "10" => "Optimism",
+        "56" => "BNB Chain",
+        "137" => "Polygon",
+        "195" => "Tron",
+        "196" => "X Layer",
+        "250" => "Fantom",
+        "324" => "zkSync",
+        "501" => "Solana",
+        "534352" => "Scroll",
+        "607" => "TON",
+        "784" => "Sui",
+        "8453" => "Base",
+        "42161" => "Arbitrum One",
+        "43114" => "Avalanche",
+        "59144" => "Linea",
+        _ => chain_index,
+    }
+}
+
+/// Native token symbol for a given chainIndex, used in user-facing strings.
+/// Falls back to "native token" for unknown chains.
+pub fn native_token_symbol(chain_index: &str) -> &str {
+    match chain_index {
+        "1" | "10" | "324" | "534352" | "8453" | "42161" | "59144" => "ETH",
+        "56" => "BNB",
+        "137" => "MATIC",
+        "195" => "TRX",
+        "196" => "OKB",
+        "250" => "FTM",
+        "43114" => "AVAX",
+        "501" => "SOL",
+        "607" => "TON",
+        "784" => "SUI",
+        _ => "native token",
+    }
+}
+
 /// Native token address for a given chainIndex.
 pub fn native_token_address(chain_index: &str) -> &str {
     match chain_index {
@@ -115,5 +157,63 @@ pub fn native_token_address(chain_index: &str) -> &str {
         "607" => "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c",
         // EVM chains (Ethereum, BSC, Polygon, Arbitrum, Base, etc.)
         _ => "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chain_display_name_covers_gas_station_chains() {
+        assert_eq!(chain_display_name("1"), "Ethereum");
+        assert_eq!(chain_display_name("10"), "Optimism");
+        assert_eq!(chain_display_name("56"), "BNB Chain");
+        assert_eq!(chain_display_name("137"), "Polygon");
+        assert_eq!(chain_display_name("8453"), "Base");
+        assert_eq!(chain_display_name("42161"), "Arbitrum One");
+        assert_eq!(chain_display_name("59144"), "Linea");
+        assert_eq!(chain_display_name("534352"), "Scroll");
+    }
+
+    #[test]
+    fn chain_display_name_falls_back_to_raw_index() {
+        // Unknown chain → return the raw chain_index so output is at least informative.
+        assert_eq!(chain_display_name("99999"), "99999");
+        assert_eq!(chain_display_name(""), "");
+    }
+
+    #[test]
+    fn native_token_symbol_maps_gas_station_chains() {
+        assert_eq!(native_token_symbol("1"), "ETH");
+        assert_eq!(native_token_symbol("10"), "ETH");
+        assert_eq!(native_token_symbol("8453"), "ETH");
+        assert_eq!(native_token_symbol("42161"), "ETH");
+        assert_eq!(native_token_symbol("59144"), "ETH");
+        assert_eq!(native_token_symbol("534352"), "ETH");
+        assert_eq!(native_token_symbol("56"), "BNB");
+        assert_eq!(native_token_symbol("137"), "MATIC");
+    }
+
+    #[test]
+    fn native_token_symbol_non_gas_chains() {
+        assert_eq!(native_token_symbol("501"), "SOL");
+        assert_eq!(native_token_symbol("196"), "OKB");
+        assert_eq!(native_token_symbol("43114"), "AVAX");
+    }
+
+    #[test]
+    fn native_token_symbol_unknown_fallback() {
+        assert_eq!(native_token_symbol("99999"), "native token");
+        assert_eq!(native_token_symbol(""), "native token");
+    }
+
+    #[test]
+    fn resolve_chain_accepts_names_and_numeric_ids() {
+        assert_eq!(resolve_chain("ethereum"), "1");
+        assert_eq!(resolve_chain("ETH"), "1"); // case-insensitive
+        assert_eq!(resolve_chain("bsc"), "56");
+        assert_eq!(resolve_chain("8453"), "8453"); // numeric passthrough
+        assert_eq!(resolve_chain("unknown-chain"), "unknown-chain"); // passthrough
     }
 }

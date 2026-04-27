@@ -106,6 +106,26 @@ pub(crate) async fn force_refresh_chain_cache() {
     }
 }
 
+/// Resolve `showName` for an EVM chain by `realChainIndex`, reading only
+/// from the locally cached chain list. No network I/O and no TTL check —
+/// stale display names are still informative, and the notification path
+/// must not block on a chain-list refresh.
+pub fn show_name_for_real_id_sync(real_chain_id: u64) -> Option<String> {
+    let cached = wallet_store::get_chain_cache(i64::MAX).ok().flatten()?;
+    let target = real_chain_id.to_string();
+    cached.chains.into_iter().find_map(|c| {
+        let real = c.get("realChainIndex").and_then(|v| {
+            v.as_str()
+                .map(String::from)
+                .or_else(|| v.as_i64().map(|n| n.to_string()))
+        })?;
+        if real != target {
+            return None;
+        }
+        c.get("showName").and_then(|v| v.as_str()).map(String::from)
+    })
+}
+
 /// Fetch the supported chain list from the remote API.
 async fn fetch_chains_from_api() -> Result<Vec<Value>> {
     let mut client = WalletApiClient::new()?;

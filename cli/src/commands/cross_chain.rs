@@ -208,8 +208,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             if let Some(ref addr) = receive_address {
                 validate_receive_address(addr, &to_chain_index)?;
             }
-            let from_token =
-                crate::commands::swap::resolve_token_address(&from_chain_index, &from);
+            let from_token = crate::commands::swap::resolve_token_address(&from_chain_index, &from);
             let to_token = crate::commands::swap::resolve_token_address(&to_chain_index, &to);
             output::success(
                 fetch_quote(
@@ -367,11 +366,9 @@ mod tests {
 
     #[test]
     fn solana_addr_to_solana_ok() {
-        assert!(validate_receive_address(
-            "5EDUCQDeVmaGohSAJYQ8mwe4hZMXgDzS4X2Si3Zh3cL5",
-            "501"
-        )
-        .is_ok());
+        assert!(
+            validate_receive_address("5EDUCQDeVmaGohSAJYQ8mwe4hZMXgDzS4X2Si3Zh3cL5", "501").is_ok()
+        );
     }
 
     // ── decimal_to_hex64 ─────────────────────────────────────────
@@ -490,7 +487,6 @@ mod tests {
         }
     }
 }
-
 
 // ── API call functions ──────────────────────────────────────────────
 
@@ -613,7 +609,11 @@ async fn fetch_order_save(
 }
 
 /// POST /order/update — Update order with txHash
-async fn fetch_order_update(client: &mut ApiClient, order_id: &str, tx_hash: &str) -> Result<Value> {
+async fn fetch_order_update(
+    client: &mut ApiClient,
+    order_id: &str,
+    tx_hash: &str,
+) -> Result<Value> {
     let order_id_num: i64 = order_id
         .parse()
         .map_err(|_| anyhow::anyhow!("invalid orderId from /order/save: {order_id}"))?;
@@ -671,9 +671,15 @@ async fn resolve_spender(
         .parse::<i64>()
         .map_err(|_| anyhow::anyhow!("invalid to_chain_index"))?;
 
-    let contract_data =
-        fetch_contract(client, bridge_id, from_chain_id, from_token, to_chain_id, to_token)
-            .await?;
+    let contract_data = fetch_contract(
+        client,
+        bridge_id,
+        from_chain_id,
+        from_token,
+        to_chain_id,
+        to_token,
+    )
+    .await?;
     let approve_addr = contract_data["approve"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing approve field in /contract response"))?;
@@ -687,10 +693,7 @@ async fn resolve_spender(
 fn build_approve_calldata(spender: &str, amount_raw: &str) -> String {
     let spender_clean = spender.trim_start_matches("0x").to_lowercase();
     let amount_hex = decimal_to_hex64(amount_raw);
-    format!(
-        "0x095ea7b3{:0>64}{}",
-        spender_clean, amount_hex
-    )
+    format!("0x095ea7b3{:0>64}{}", spender_clean, amount_hex)
 }
 
 /// Convert a decimal string to a zero-padded 64-char hex string.
@@ -704,7 +707,7 @@ fn decimal_to_hex64(decimal: &str) -> String {
         return format!("{:0>64x}", v);
     }
     // Fallback: manual base conversion for values > u128::MAX
-    let mut bytes = vec![0u8; 32]; // 256 bits
+    let mut bytes = [0u8; 32]; // 256 bits
     let mut dec_digits: Vec<u8> = decimal.bytes().map(|b| b - b'0').collect();
     let mut bit_pos = 0;
     while !dec_digits.is_empty() && bit_pos < 256 {
@@ -749,7 +752,7 @@ async fn wallet_contract_call(
     aa_dex_token_addr: Option<&str>,
     force: bool,
 ) -> Result<Value> {
-    let tx_hash = crate::commands::agentic_wallet::transfer::execute_contract_call(
+    let resp = crate::commands::agentic_wallet::transfer::execute_contract_call(
         to,
         chain,
         amt,
@@ -758,14 +761,19 @@ async fn wallet_contract_call(
         None, // gas_limit
         None, // from
         aa_dex_token_addr,
-        None,      // aa_dex_token_amount
+        None, // aa_dex_token_amount
         mev_protection,
         jito_unsigned_tx,
         force,
         Some("3"), // tx_source: cross-chain bridge
+        None,      // gas_token_address
+        None,      // relayer_id
+        false,     // enable_gas_station
+        Some("cross-chain"), // agent_biz_type
+        None,      // agent_skill_name
     )
     .await?;
-    Ok(json!({ "txHash": tx_hash }))
+    Ok(json!({ "txHash": resp.tx_hash, "orderId": resp.order_id }))
 }
 
 fn extract_tx_hash(data: &Value) -> Result<String> {
@@ -878,7 +886,15 @@ async fn cmd_execute(
     validate_receive_address(receive_wallet, &to_chain_index)?;
 
     // Balance pre-check
-    check_balance(client, wallet, &from_chain_index, &from_token, from, readable_amount).await?;
+    check_balance(
+        client,
+        wallet,
+        &from_chain_index,
+        &from_token,
+        from,
+        readable_amount,
+    )
+    .await?;
 
     // ── 1. Quote ────────────────────────────────────────────────────
     let quote_param = json!({
@@ -923,9 +939,7 @@ async fn cmd_execute(
     let minimum_received = selected_route["minimumReceived"]
         .as_str()
         .unwrap_or("unknown");
-    let total_fee = selected_route["totalFee"]
-        .as_str()
-        .unwrap_or("unknown");
+    let total_fee = selected_route["totalFee"].as_str().unwrap_or("unknown");
     let token_symbol = quote_result["commonDexInfo"]["fromToken"]["tokenSymbol"]
         .as_str()
         .unwrap_or("token");
@@ -1094,7 +1108,10 @@ async fn cmd_execute(
     let order_id = match &order_id_val {
         Value::Number(n) => n.to_string(),
         Value::String(s) => s.clone(),
-        _ => bail!("unexpected orderId format from /order/save: {:?}", order_id_val),
+        _ => bail!(
+            "unexpected orderId format from /order/save: {:?}",
+            order_id_val
+        ),
     };
 
     // Sign & Broadcast by calldataType
@@ -1204,10 +1221,8 @@ async fn cmd_probe(
     let mut seen_pairs: Vec<(String, String)> = Vec::new();
 
     for candidate in &candidates {
-        let from_token =
-            crate::commands::swap::resolve_token_address(&from_chain_index, candidate);
-        let to_token =
-            crate::commands::swap::resolve_token_address(&to_chain_index, candidate);
+        let from_token = crate::commands::swap::resolve_token_address(&from_chain_index, candidate);
+        let to_token = crate::commands::swap::resolve_token_address(&to_chain_index, candidate);
 
         // Skip if token not mapped on either chain (resolve returns original string unchanged)
         if from_token == *candidate || to_token == *candidate {
@@ -1279,14 +1294,18 @@ async fn check_balance(
     token_alias: &str,
     readable_amount: &str,
 ) -> Result<()> {
-    let is_native = token_address.is_empty()
-        || token_address == "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    let is_native =
+        token_address.is_empty() || token_address == "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
     // Query balance via public API
     let balance_result = crate::commands::portfolio::fetch_token_balances(
         client,
         wallet,
-        &format!("{}:{}", chain_index, if is_native { "" } else { token_address }),
+        &format!(
+            "{}:{}",
+            chain_index,
+            if is_native { "" } else { token_address }
+        ),
         None,
     )
     .await;
@@ -1303,9 +1322,7 @@ async fn check_balance(
         'outer: for group in groups {
             if let Some(assets) = group["tokenAssets"].as_array() {
                 for token in assets {
-                    let token_addr = token["tokenContractAddress"]
-                        .as_str()
-                        .unwrap_or("");
+                    let token_addr = token["tokenContractAddress"].as_str().unwrap_or("");
                     let matches = if is_native {
                         token_addr.is_empty()
                             || token_addr == "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
@@ -1313,10 +1330,7 @@ async fn check_balance(
                         token_addr.eq_ignore_ascii_case(token_address)
                     };
                     if matches {
-                        found_balance = token["balance"]
-                            .as_str()
-                            .unwrap_or("0")
-                            .to_string();
+                        found_balance = token["balance"].as_str().unwrap_or("0").to_string();
                         if let Some(s) = token["symbol"].as_str() {
                             found_symbol = s.to_string();
                         }

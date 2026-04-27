@@ -3,6 +3,20 @@ use std::net::{IpAddr, SocketAddr};
 use super::types::{DohCacheEntry, DohMode, DohNode, FailedNode};
 use super::{binary, cache};
 
+/// Per-request DoH failover state.
+///
+/// Clone semantics: each clone carries its own copy of `mode`, `node`,
+/// `retried`, and `resolved_ip`. This enables `ApiClient: Clone` and true
+/// parallel HTTP via `tokio::join!` / `JoinSet` without serialising on a
+/// shared mutex guard.
+///
+/// Trade-off on a cold DoH cache: if the first-run network is unreliable,
+/// N parallel clones may each independently probe for a proxy node before
+/// any of them writes the cache file. The redundancy is bounded — once the
+/// first task writes the cache, subsequent runs skip the probe entirely.
+/// For the current workflow fan-out (≤10 parallel clones) the extra probe
+/// cost is preferable to serialising the entire HTTP path behind a mutex.
+#[derive(Clone)]
 pub struct DohManager {
     domain: String,
     original_base_url: String,
@@ -88,9 +102,7 @@ impl DohManager {
         }
 
         // Ensure binary exists (download if needed)
-        let bin_exists = binary::binary_path()
-            .map(|p| p.exists())
-            .unwrap_or(false);
+        let bin_exists = binary::binary_path().map(|p| p.exists()).unwrap_or(false);
         if !bin_exists && binary::download_binary().await.is_err() {
             self.retried = true;
             return false;
@@ -98,9 +110,7 @@ impl DohManager {
 
         // Call exec_doh_binary with domain + exclude list + user-agent
         let ua = self.doh_user_agent();
-        if let Some(new_node) =
-            binary::exec_doh_binary(&self.domain, &exclude, Some(&ua)).await
-        {
+        if let Some(new_node) = binary::exec_doh_binary(&self.domain, &exclude, Some(&ua)).await {
             let failed_nodes = cache::read_cache(&self.domain)
                 .map(|e| e.failed_nodes)
                 .unwrap_or_default();

@@ -1,6 +1,6 @@
 # onchainos Skills
 
-onchainos skills for AI coding assistants. Provides token search, market data, wallet balance queries, swap execution, transaction broadcasting, leaderboard rankings, and token cluster analysis across 20+ blockchains.
+onchainos skills for AI coding assistants. Provides token search, market data, wallet balance queries, swap execution, transaction broadcasting, leaderboard rankings, token cluster analysis, and direct third-party DApp routing across 20+ blockchains.
 
 ## Available Skills
 
@@ -19,6 +19,7 @@ onchainos skills for AI coding assistants. Provides token search, market data, w
 | `okx-defi-invest` | DeFi product discovery, deposit, withdraw, claim rewards across Aave, Lido, PancakeSwap, Kamino, NAVI and more |
 | `okx-defi-portfolio` | DeFi positions and holdings overview across protocols and chains |
 | `okx-audit-log` | Audit log export and troubleshooting |
+| `okx-dapp-discovery` | Third-party DApp discovery and direct plugin routing — currently supports Polymarket, Aave V3, Hyperliquid, PancakeSwap V3 AMM, Morpho V1 Optimizer |
 
 ## Supported Chains
 
@@ -99,6 +100,37 @@ The skills work together in typical DeFi flows:
 **Leaderboard → Research → Trade**: `okx-dex-signal` (top traders by PnL/win rate) -> `okx-dex-token` (token analytics) -> `okx-dex-swap` (execute trade)
 
 **Follow Smart Money**: `okx-dex-signal` (KOL/smart money buys) -> `okx-dex-token` (token details + holder cluster) -> `okx-dex-market` (price chart) -> `okx-dex-swap` (trade)
+
+## Workflows
+
+Pre-built workflow orchestrations in `workflows/` compose multiple skills into complete operations. The agent reads `workflows/INDEX.md` to route requests, then follows the step-by-step instructions in the matched workflow file.
+
+| Workflow | What it does | CLI command |
+|----------|-------------|-------------|
+| **Token Research** | Price, security, holders, cluster, smart money signals, optional launchpad deep-dive | `onchainos workflow token-research --address <addr>` |
+| **Daily Brief** | Market pulse + smart money + new token activity + portfolio alerts | — |
+| **Smart Money Signals** | SM signal list aggregated by token + per-token due diligence | `onchainos workflow smart-money` |
+| **New Token Screening** | MIGRATED launchpad scan + safety & dev enrichment for top 10 | `onchainos workflow new-tokens` |
+| **Wallet Analysis** | 7d/30d PnL, trading behaviour, recent on-chain activity | `onchainos workflow wallet-analysis --address <addr>` |
+| **Portfolio Check** | Balances, total value, 30d PnL overview | `onchainos workflow portfolio --address <addr>` |
+| **Wallet Monitor** | In-session polling — alert on new trades from watched wallets | — |
+| **Wallet Monitor (WS)** | Background WebSocket session for offline wallet monitoring | — |
+
+### Composite CLI commands
+
+Single commands that replace multiple individual tool calls:
+
+```bash
+# Token report: info + price + advanced-info + security scan (parallel)
+onchainos token report --address <addr> --chain solana
+
+# Full workflow commands
+onchainos workflow token-research --address <addr> [--chain solana]
+onchainos workflow smart-money [--chain solana]
+onchainos workflow new-tokens [--chain solana] [--stage MIGRATED]
+onchainos workflow wallet-analysis --address <addr> [--chain ethereum]
+onchainos workflow portfolio --address <addr> [--chains ethereum,solana]
+```
 
 ## Install CLI
 
