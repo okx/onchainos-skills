@@ -297,16 +297,27 @@ jobs:
           token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
           ref: ${{ github.ref_name }}
 
-      - name: Update skill metadata version (stable releases only)
+      - name: Update skill metadata version (stable releases only) and render preflight
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           IS_BETA: ${{ needs.validate.outputs.is_beta }}
         run: |
           if [ "$IS_BETA" != "true" ]; then
+            # Bump frontmatter version in every SKILL.md (stable only).
             for skill_md in skills/*/SKILL.md; do
               sed -i "s/^  version: .*/  version: \"${VERSION}\"/" "$skill_md"
             done
           fi
+          # Rewrite --skill-version=X.Y.Z(-prerelease)(+build) and -SkillVersion X.Y.Z
+          # literals to the release's version. Idempotent across releases — the Nth
+          # release matches the (N-1)th release's literal and replaces it, so main
+          # always carries a concrete semver. Runs on both stable and beta so each
+          # release artifact carries its own version.
+          for f in skills/*/_shared/preflight.md skills/*/SKILL.md; do
+            [ -f "$f" ] || continue
+            sed -i -E "s/--skill-version=[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?/--skill-version=${VERSION}/g" "$f"
+            sed -i -E "s/-SkillVersion [0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?/-SkillVersion ${VERSION}/g" "$f"
+          done
 
       - name: Commit and tag
         env:
@@ -315,13 +326,24 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if [ "$IS_BETA" != "true" ]; then
-            git add skills/*/SKILL.md
+          if [ "$IS_BETA" = "true" ]; then
+            # Beta: commit preflight render (frontmatter skipped above), tag the
+            # detached commit, push only the tag. HEAD must NOT be pushed to main —
+            # main stays at the latest stable literal so default install.sh users
+            # (stable-only) keep matching baked versions.
+            git add skills/*/SKILL.md skills/*/_shared/preflight.md
+            git diff --cached --quiet || \
+              git commit -m "release: v${VERSION} — beta preflight render (detached)"
+            git tag -a "v${VERSION}" -m "Release v${VERSION}"
+            git push origin "v${VERSION}"
+          else
+            # Stable: commit preflight + frontmatter back to main; push HEAD and tag.
+            git add skills/*/SKILL.md skills/*/_shared/preflight.md
+            git diff --cached --quiet || \
+              git commit -m "release: v${VERSION} — update skill metadata"
+            git tag -a "v${VERSION}" -m "Release v${VERSION}"
+            git push origin HEAD --follow-tags
           fi
-          git diff --cached --quiet && echo "No changes to commit" || \
-            git commit -m "release: v${VERSION} — update skill metadata"
-          git tag -a "v${VERSION}" -m "Release v${VERSION}"
-          git push origin HEAD --follow-tags
 
   # ── Step 5: Create GitHub Release ───────────────────────────
   release:
@@ -336,11 +358,19 @@ jobs:
         with:
           merge-multiple: true
 
+      - name: Package workflows
+        run: |
+          test -d workflows/ || { echo "::error::workflows/ directory missing"; exit 1; }
+          tar -czf workflows.tar.gz workflows/
+
       - name: Generate installer checksums
         run: sha256sum install.sh install.ps1 > installer-checksums.txt
 
+      - name: Generate workflows checksum
+        run: sha256sum workflows.tar.gz > workflows-checksums.txt
+
       - name: List all release artifacts
-        run: ls -lh && echo "---" && cat checksums.txt && echo "---" && cat installer-checksums.txt
+        run: ls -lh && echo "---" && cat checksums.txt && echo "---" && cat installer-checksums.txt && echo "---" && cat workflows-checksums.txt
 
       - uses: softprops/action-gh-release@v2
         with:
@@ -352,3 +382,5 @@ jobs:
             ${{ env.BIN_NAME }}-*
             checksums.txt
             installer-checksums.txt
+            workflows.tar.gz
+            workflows-checksums.txt

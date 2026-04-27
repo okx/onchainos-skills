@@ -1,6 +1,6 @@
 # onchainos Skills
 
-onchainos skills for AI coding assistants. Provides token search, market data, wallet balance queries, swap execution, transaction broadcasting, leaderboard rankings, and token cluster analysis across 20+ blockchains.
+onchainos skills for AI coding assistants. Provides token search, market data, wallet balance queries, swap execution, transaction broadcasting, leaderboard rankings, token cluster analysis, and direct third-party DApp routing across 20+ blockchains.
 
 ## Available Skills
 
@@ -19,6 +19,7 @@ onchainos skills for AI coding assistants. Provides token search, market data, w
 | `okx-defi-invest` | DeFi product discovery, deposit, withdraw, claim rewards across Aave, Lido, PancakeSwap, Kamino, NAVI and more |
 | `okx-defi-portfolio` | DeFi positions and holdings overview across protocols and chains |
 | `okx-audit-log` | Audit log export and troubleshooting |
+| `okx-dapp-discovery` | Third-party DApp discovery and direct plugin routing — currently supports Polymarket, Aave V3, Hyperliquid, PancakeSwap V3 AMM, Morpho V1 Optimizer |
 
 ## Supported Chains
 
