@@ -56,6 +56,7 @@ For script requests, append `--format json` to all CLI commands.
 1. Determine the current workspace directory (check `openclaw` config or working directory)
 2. Copy skills from `~/.openclaw/onchainos-skills/skills/` into the workspace's `skills/` directory
 3. Run `openclaw skills list` again to confirm they are loaded
+4. If still not working, follow `~/.openclaw/onchainos-skills/.openclaw/INSTALL.md`
 
 ---
 

@@ -19,7 +19,7 @@ If `onchainos` is not found or workflows are missing, run `bash ~/setup.sh` and 
 2. Copy skills from `~/.openclaw/onchainos-skills/skills/` into the workspace's `skills/` directory
 3. Run `openclaw skills list` to confirm they are loaded
 
-If onchainos skills do not appear, check that the files were copied to the correct workspace path.
+If onchainos skills do not appear, follow the instructions in `~/.openclaw/onchainos-skills/.openclaw/INSTALL.md`.
 
 ## Step 3 — Login
 
