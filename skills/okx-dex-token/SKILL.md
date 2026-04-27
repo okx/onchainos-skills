@@ -34,11 +34,18 @@ Some endpoints in this skill may require x402 payment after free quota is exhaus
 
 > If the user's query contains Chinese text (中文), read `references/keyword-glossary.md` for keyword-to-command mappings.
 
-## Workflow Integration
+## Related Workflows
 
-> **For comprehensive token research** ("analyze token", "research [address]", "is this token safe"), use the **Token Research** workflow (`workflows/token-research.md`) instead of calling commands here directly.
-> It combines token data, security, on-chain structure, and launchpad data in one coordinated flow.
-> Use this skill directly only for single atomic queries called from within a workflow step.
+When one of the following commands is used, show the related workflow hint after displaying results:
+
+| Command | Workflow | File |
+|---------|----------|------|
+| `token info`, `token price-info`, `token report`, `token holders`, `token cluster-overview`, `token top-trader` | Token Research | `~/.onchainos/workflows/token-research.md` |
+| `token hot-tokens` | Daily Brief | `~/.onchainos/workflows/daily-brief.md` |
+| `token advanced-info` | New Token Screening | `~/.onchainos/workflows/new-token-screening.md` |
+| `token price-info` | Portfolio Check | `~/.onchainos/workflows/portfolio-check.md` |
+
+> Hint format: *"You can also try out our **[workflow name]** workflow for more comprehensive results. Would you like to try it?"*
 
 ## Commands
 

@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use reqwest::Client;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 
 use crate::doh::DohManager;
@@ -72,6 +72,30 @@ where
             other
         ))),
     }
+}
+
+fn nullable_bool<'de, D>(deserializer: D) -> std::result::Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = Value::deserialize(deserializer)?;
+    match v {
+        Value::Null => Ok(false),
+        Value::Bool(b) => Ok(b),
+        other => Err(serde::de::Error::custom(format!(
+            "expected bool or null, got {}",
+            other
+        ))),
+    }
+}
+
+fn nullable_vec<'de, D, T>(deserializer: D) -> std::result::Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let v: Option<Vec<T>> = Option::deserialize(deserializer)?;
+    Ok(v.unwrap_or_default())
 }
 
 /// Build a URL-encoded query string from key-value pairs, filtering out empty values.
@@ -196,6 +220,74 @@ struct AddressListData {
     accounts: Vec<AddressListAccountItem>,
 }
 
+/// Gas Station status enum (mirrors the backend `gasStationStatus` field; see review.md Section 0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GasStationStatus {
+    /// Native-token transfer or unsupported chain — Gas Station is not used for this tx.
+    NotApplicable,
+    /// DB has no record + chain not delegated — user must pick a token to enable for the first time.
+    FirstTimePrompt,
+    /// Chain not delegated — sign 712 + 7702 auth to perform the first-time upgrade.
+    PendingUpgrade,
+    /// DB disabled + chain already delegated — flip the DB flag only; no on-chain action.
+    ReenableOnly,
+    /// DB enabled + chain already delegated — steady-state path; check whether `hash` is empty to decide if the default token covers this tx.
+    ReadyToUse,
+    /// None of the Gas Station stablecoins has enough balance to cover the gas fee.
+    InsufficientAll,
+    /// A pending Gas Station transaction is blocking this one.
+    HasPendingTx,
+    /// Enum value is unknown or empty — compatibility fallback for older backends.
+    Unknown,
+}
+
+impl GasStationStatus {
+    /// Keep as an infallible convenience parser for backward-compat; new code should prefer
+    /// `FromStr` (`s.parse::<GasStationStatus>()` — which also never fails, just maps unknown
+    /// values to `Unknown`).
+    pub fn parse(s: &str) -> Self {
+        s.parse().unwrap_or(Self::Unknown)
+    }
+
+    /// Canonical wire-format string for this variant. Inverse of `FromStr` for known values;
+    /// `Unknown` renders as the empty string.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::NotApplicable => "NOT_APPLICABLE",
+            Self::FirstTimePrompt => "FIRST_TIME_PROMPT",
+            Self::PendingUpgrade => "PENDING_UPGRADE",
+            Self::ReenableOnly => "REENABLE_ONLY",
+            Self::ReadyToUse => "READY_TO_USE",
+            Self::InsufficientAll => "INSUFFICIENT_ALL",
+            Self::HasPendingTx => "HAS_PENDING_TX",
+            Self::Unknown => "",
+        }
+    }
+}
+
+impl std::str::FromStr for GasStationStatus {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(match s {
+            "NOT_APPLICABLE" => Self::NotApplicable,
+            "FIRST_TIME_PROMPT" => Self::FirstTimePrompt,
+            "PENDING_UPGRADE" => Self::PendingUpgrade,
+            "REENABLE_ONLY" => Self::ReenableOnly,
+            "READY_TO_USE" => Self::ReadyToUse,
+            "INSUFFICIENT_ALL" => Self::InsufficientAll,
+            "HAS_PENDING_TX" => Self::HasPendingTx,
+            _ => Self::Unknown,
+        })
+    }
+}
+
+impl std::fmt::Display for GasStationStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnsignedInfoResponse {
@@ -223,6 +315,128 @@ pub struct UnsignedInfoResponse {
     pub encoding: String,
     #[serde(default, deserialize_with = "nullable_string")]
     pub jito_unsigned_tx: String,
+    /// backend 返的 712 message hash（contract-call 等场景）；非空时客户端需 ed25519_sign_encoded 算 sessionSignature
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub eip712_message_hash: String,
+    // ── Gas Station fields ──
+    #[serde(default, deserialize_with = "nullable_bool")]
+    pub gas_station_used: bool,
+    #[serde(default, deserialize_with = "nullable_bool")]
+    pub gas_station_first_time_prompt: bool,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub service_charge: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub service_charge_symbol: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub service_charge_fee_token_address: String,
+    #[serde(default, deserialize_with = "nullable_bool")]
+    pub need_update7702: bool,
+    #[serde(default, deserialize_with = "nullable_vec")]
+    pub gas_station_token_list: Vec<GasStationToken>,
+    #[serde(default, deserialize_with = "nullable_bool")]
+    pub has_pending_tx: bool,
+    #[serde(default, deserialize_with = "nullable_bool")]
+    pub insufficient_all: bool,
+    #[serde(default, deserialize_with = "nullable_bool")]
+    pub auto_selected_token: bool,
+    #[serde(default, deserialize_with = "nullable_bool")]
+    pub gas_station_disabled: bool,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub gas_station_status: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub contract_nonce: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub eoa_nonce: String,
+    #[serde(default)]
+    pub user712_data: Value,
+    #[serde(default)]
+    pub user7702_data: Value,
+    /// User's default gas token address on this chain (Phase 1 response; may be empty).
+    /// CLI matches it against `gas_station_token_list`: hit + sufficient -> Scene B (auto
+    /// Phase 2); otherwise -> Scene C (user picks a token).
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub default_gas_token_address: String,
+}
+
+impl UnsignedInfoResponse {
+    /// 解析后端返回的 gasStationStatus 字符串为枚举
+    pub fn gs_status(&self) -> GasStationStatus {
+        GasStationStatus::parse(&self.gas_station_status)
+    }
+
+    /// Find the entry in `gas_station_token_list` whose `fee_token_address` matches
+    /// `default_gas_token_address` AND has `sufficient=true`. Returns a reference on hit so
+    /// the CLI can run Scene B auto Phase 2 with that token.
+    pub fn match_default_sufficient_token(&self) -> Option<&GasStationToken> {
+        if self.default_gas_token_address.is_empty() {
+            return None;
+        }
+        self.gas_station_token_list.iter().find(|t| {
+            t.sufficient
+                && t.fee_token_address.eq_ignore_ascii_case(&self.default_gas_token_address)
+        })
+    }
+
+    /// When there is no default token but `gas_station_token_list` has exactly one
+    /// `sufficient=true` entry, return it. Used as Scene B's "unambiguous fallback": the
+    /// user has no other choice, so a manual pick would produce the same result. Skipping
+    /// the Confirming round trip also lets downstream callers that don't understand
+    /// `CliConfirming` (e.g. third-party plugins) complete successfully.
+    ///
+    /// Callers should only invoke this when `default_gas_token_address` is empty (see
+    /// `auto_pick_gas_token`). Returns `None` (continue to Scene C and ask the user) when:
+    ///   - 0 sufficient entries (already handled as insufficient_all upstream)
+    ///   - 2+ sufficient entries (user must choose; we won't decide for them)
+    pub fn only_sufficient_token(&self) -> Option<&GasStationToken> {
+        let mut iter = self.gas_station_token_list.iter().filter(|t| t.sufficient);
+        let first = iter.next()?;
+        if iter.next().is_none() {
+            Some(first)
+        } else {
+            None
+        }
+    }
+
+    /// Unified entry point for Scene B auto token selection. Auto-selects in two
+    /// unambiguous cases:
+    ///   1. A default is set AND it hits the token list AND is sufficient (original Scene B).
+    ///   2. **No default** AND exactly one sufficient token (plugin-compat fallback; no
+    ///      default = no user preference).
+    ///
+    /// Explicitly excludes Scene 2a (default present but insufficient) — when a default is
+    /// set, it represents an explicit user preference. Even if only one alternative is
+    /// sufficient, route to Scene C so the user is told "your default is short, can we use
+    /// XXX instead?"; do not silently override the preference.
+    pub fn auto_pick_gas_token(&self) -> Option<&GasStationToken> {
+        if self.default_gas_token_address.is_empty() {
+            // No default → no user preference; safely auto-pick when there's exactly one option.
+            self.only_sufficient_token()
+        } else {
+            // Default set → either hit & sufficient (Scene B), or route to Scene C (never silent override).
+            self.match_default_sufficient_token()
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GasStationToken {
+    #[serde(default)]
+    pub fee_coin_id: u64,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub symbol: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub fee_token_address: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub service_charge: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub balance: String,
+    #[serde(default, deserialize_with = "nullable_bool")]
+    pub sufficient: bool,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub relayer_id: String,
+    #[serde(default, deserialize_with = "nullable_string")]
+    pub context: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -438,13 +652,13 @@ impl WalletApiClient {
 
     async fn handle_response(&self, resp: reqwest::Response) -> Result<Value> {
         let status = resp.status();
+        let raw_text = resp.text().await.context("failed to read response body")?;
+
         if status.as_u16() >= 500 {
-            bail!("Wallet API server error (HTTP {})", status.as_u16());
+            bail!("Wallet API server error (HTTP {}): {}", status.as_u16(), &raw_text);
         }
 
-        let body: Value = resp
-            .json()
-            .await
+        let body: Value = serde_json::from_str(&raw_text)
             .context("failed to parse wallet API response")?;
 
         // Handle code as either string "0" or number 0
@@ -738,6 +952,10 @@ impl WalletApiClient {
         aa_dex_token_amount: Option<&str>,
         jito_unsigned_tx: Option<&str>,
         trace_headers: Option<&[(&str, &str)]>,
+        // Gas Station params
+        enable_gas_station: Option<bool>,
+        gas_token_address: Option<&str>,
+        relayer_id: Option<&str>,
     ) -> Result<UnsignedInfoResponse> {
         let mut body = json!({
             "chainPath": chain_path,
@@ -767,6 +985,16 @@ impl WalletApiClient {
         }
         if let Some(jito_tx) = jito_unsigned_tx {
             body["jitoUnsignedTx"] = Value::String(jito_tx.to_string());
+        }
+        // Gas Station params
+        if let Some(true) = enable_gas_station {
+            body["enableGasStation"] = json!(true);
+        }
+        if let Some(addr) = gas_token_address {
+            body["gasTokenAddress"] = Value::String(addr.to_string());
+        }
+        if let Some(rid) = relayer_id {
+            body["relayerId"] = Value::String(rid.to_string());
         }
         let data = self
             .post_authed_with_headers(
@@ -833,6 +1061,56 @@ impl WalletApiClient {
         let resp: BroadcastResponse =
             serde_json::from_value(item.clone()).context("broadcast: failed to parse response")?;
         Ok(resp)
+    }
+
+    // ── Gas Station management APIs ────────────────────────────────
+
+    /// POST /priapi/v5/wallet/agentic/gas-station/update-default-token
+    pub async fn gas_station_update_default_token(
+        &mut self,
+        access_token: &str,
+        chain_index: &str,
+        gas_token_address: &str,
+        from_addr: &str,
+    ) -> Result<Value> {
+        let body = json!({
+            "chainIndex": chain_index,
+            "gasTokenAddress": gas_token_address,
+            "fromAddr": from_addr,
+        });
+        self.post_authed(
+            "/priapi/v5/wallet/agentic/gas-station/update-default-token",
+            access_token,
+            &body,
+        )
+        .await
+    }
+
+    /// POST /priapi/v5/wallet/agentic/gas-station/update
+    /// Flip Gas Station DB flag (enabled=true / false), no on-chain action.
+    /// `from_addr` is required by backend when `enabled=true`; disable (`enabled=false`)
+    /// does not need it. On-chain 7702 delegation is preserved on disable; re-enable
+    /// requires 7702 already present (backend returns msg in body if not).
+    pub async fn gas_station_update(
+        &mut self,
+        access_token: &str,
+        chain_index: &str,
+        enable: bool,
+        from_addr: Option<&str>,
+    ) -> Result<Value> {
+        let mut body = json!({
+            "chainIndex": chain_index,
+            "enabled": enable,
+        });
+        if let Some(addr) = from_addr {
+            body["fromAddr"] = Value::String(addr.to_string());
+        }
+        self.post_authed(
+            "/priapi/v5/wallet/agentic/gas-station/update",
+            access_token,
+            &body,
+        )
+        .await
     }
 }
 
@@ -1183,5 +1461,214 @@ mod tests {
         assert_eq!(resp.accounts[1].addresses.len(), 2);
         assert_eq!(resp.accounts[1].addresses[0].chain_index, "56");
         assert_eq!(resp.accounts[1].addresses[1].chain_index, "501");
+    }
+
+    // ── Gas Station routing: GasStationStatus::parse ───────────────
+
+    #[test]
+    fn gas_station_status_parses_all_known_values() {
+        assert_eq!(GasStationStatus::parse("NOT_APPLICABLE"), GasStationStatus::NotApplicable);
+        assert_eq!(GasStationStatus::parse("FIRST_TIME_PROMPT"), GasStationStatus::FirstTimePrompt);
+        assert_eq!(GasStationStatus::parse("PENDING_UPGRADE"), GasStationStatus::PendingUpgrade);
+        assert_eq!(GasStationStatus::parse("REENABLE_ONLY"), GasStationStatus::ReenableOnly);
+        assert_eq!(GasStationStatus::parse("READY_TO_USE"), GasStationStatus::ReadyToUse);
+        assert_eq!(GasStationStatus::parse("INSUFFICIENT_ALL"), GasStationStatus::InsufficientAll);
+        assert_eq!(GasStationStatus::parse("HAS_PENDING_TX"), GasStationStatus::HasPendingTx);
+    }
+
+    #[test]
+    fn gas_station_status_unknown_values_map_to_unknown() {
+        assert_eq!(GasStationStatus::parse(""), GasStationStatus::Unknown);
+        assert_eq!(GasStationStatus::parse("not_applicable"), GasStationStatus::Unknown); // case-sensitive
+        assert_eq!(GasStationStatus::parse("UNKNOWN"), GasStationStatus::Unknown);
+        assert_eq!(GasStationStatus::parse("garbage"), GasStationStatus::Unknown);
+    }
+
+    #[test]
+    fn unsigned_gs_status_dispatches_to_enum() {
+        let json = r#"{"gasStationStatus": "READY_TO_USE"}"#;
+        let resp: UnsignedInfoResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.gs_status(), GasStationStatus::ReadyToUse);
+
+        let empty: UnsignedInfoResponse = serde_json::from_str("{}").unwrap();
+        assert_eq!(empty.gs_status(), GasStationStatus::Unknown);
+    }
+
+    // ── Gas Station routing: match_default_sufficient_token ────────
+
+    use crate::test_helpers::gas_station::{make_token, make_unsigned_with_tokens};
+
+    #[test]
+    fn match_default_returns_none_when_default_empty() {
+        let resp = make_unsigned_with_tokens("", vec![make_token("USDT", "0xaaa", true)]);
+        assert!(resp.match_default_sufficient_token().is_none());
+    }
+
+    #[test]
+    fn match_default_returns_some_on_hit_and_sufficient() {
+        let resp = make_unsigned_with_tokens(
+            "0xaaa",
+            vec![
+                make_token("USDT", "0xaaa", true),
+                make_token("USDC", "0xbbb", true),
+            ],
+        );
+        let matched = resp.match_default_sufficient_token().unwrap();
+        assert_eq!(matched.symbol, "USDT");
+    }
+
+    #[test]
+    fn match_default_is_case_insensitive_on_address() {
+        let resp = make_unsigned_with_tokens(
+            "0xAAA",
+            vec![make_token("USDT", "0xaaa", true)],
+        );
+        assert!(resp.match_default_sufficient_token().is_some());
+    }
+
+    #[test]
+    fn match_default_returns_none_when_default_hits_but_insufficient() {
+        let resp = make_unsigned_with_tokens(
+            "0xaaa",
+            vec![
+                make_token("USDT", "0xaaa", false),
+                make_token("USDC", "0xbbb", true),
+            ],
+        );
+        assert!(resp.match_default_sufficient_token().is_none());
+    }
+
+    #[test]
+    fn match_default_returns_none_when_default_not_in_list() {
+        let resp = make_unsigned_with_tokens(
+            "0xdeadbeef",
+            vec![make_token("USDT", "0xaaa", true)],
+        );
+        assert!(resp.match_default_sufficient_token().is_none());
+    }
+
+    // ── Gas Station routing: only_sufficient_token ─────────────────
+
+    #[test]
+    fn only_sufficient_returns_none_when_no_sufficient() {
+        let resp = make_unsigned_with_tokens(
+            "",
+            vec![
+                make_token("USDT", "0xaaa", false),
+                make_token("USDC", "0xbbb", false),
+            ],
+        );
+        assert!(resp.only_sufficient_token().is_none());
+    }
+
+    #[test]
+    fn only_sufficient_returns_the_single_sufficient_token() {
+        let resp = make_unsigned_with_tokens(
+            "",
+            vec![
+                make_token("USDT", "0xaaa", false),
+                make_token("USDC", "0xbbb", true),
+                make_token("USDG", "0xccc", false),
+            ],
+        );
+        let token = resp.only_sufficient_token().unwrap();
+        assert_eq!(token.symbol, "USDC");
+    }
+
+    #[test]
+    fn only_sufficient_returns_none_when_multiple_sufficient() {
+        let resp = make_unsigned_with_tokens(
+            "",
+            vec![
+                make_token("USDT", "0xaaa", true),
+                make_token("USDC", "0xbbb", true),
+            ],
+        );
+        assert!(resp.only_sufficient_token().is_none());
+    }
+
+    #[test]
+    fn only_sufficient_returns_none_on_empty_list() {
+        let resp = make_unsigned_with_tokens("", vec![]);
+        assert!(resp.only_sufficient_token().is_none());
+    }
+
+    // ── Gas Station routing: auto_pick_gas_token ───────────────────
+
+    #[test]
+    fn auto_pick_default_sufficient_scene_b() {
+        // Scene B classic: default present, hits list, sufficient.
+        let resp = make_unsigned_with_tokens(
+            "0xaaa",
+            vec![
+                make_token("USDT", "0xaaa", true),
+                make_token("USDC", "0xbbb", true),
+            ],
+        );
+        assert_eq!(resp.auto_pick_gas_token().unwrap().symbol, "USDT");
+    }
+
+    #[test]
+    fn auto_pick_no_default_single_sufficient_plugin_fallback() {
+        // Plugin-compat fallback: no default, exactly one sufficient.
+        let resp = make_unsigned_with_tokens(
+            "",
+            vec![
+                make_token("USDT", "0xaaa", false),
+                make_token("USDC", "0xbbb", true),
+            ],
+        );
+        assert_eq!(resp.auto_pick_gas_token().unwrap().symbol, "USDC");
+    }
+
+    #[test]
+    fn auto_pick_excludes_scene_2a_default_present_but_insufficient() {
+        // Critical invariant: default is set (user preference), default is short, but
+        // another token is sufficient — MUST return None so Scene C asks the user before
+        // silently overriding the user's pinned default.
+        let resp = make_unsigned_with_tokens(
+            "0xaaa",
+            vec![
+                make_token("USDT", "0xaaa", false), // default, insufficient
+                make_token("USDC", "0xbbb", true),  // alt, sufficient
+            ],
+        );
+        assert!(resp.auto_pick_gas_token().is_none());
+    }
+
+    #[test]
+    fn auto_pick_no_default_multiple_sufficient_scene_c() {
+        // Multiple sufficient + no default → Scene C (user picks).
+        let resp = make_unsigned_with_tokens(
+            "",
+            vec![
+                make_token("USDT", "0xaaa", true),
+                make_token("USDC", "0xbbb", true),
+            ],
+        );
+        assert!(resp.auto_pick_gas_token().is_none());
+    }
+
+    #[test]
+    fn auto_pick_none_when_default_not_in_list_even_if_others_sufficient() {
+        // Default points at a token not in list (unusual), one other is sufficient.
+        // Must still return None (Scene C) — the default being set is user preference.
+        let resp = make_unsigned_with_tokens(
+            "0xdeadbeef",
+            vec![make_token("USDC", "0xbbb", true)],
+        );
+        assert!(resp.auto_pick_gas_token().is_none());
+    }
+
+    #[test]
+    fn auto_pick_none_on_insufficient_all() {
+        let resp = make_unsigned_with_tokens(
+            "",
+            vec![
+                make_token("USDT", "0xaaa", false),
+                make_token("USDC", "0xbbb", false),
+            ],
+        );
+        assert!(resp.auto_pick_gas_token().is_none());
     }
 }

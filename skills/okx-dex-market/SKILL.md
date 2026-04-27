@@ -1,10 +1,10 @@
 ---
 name: okx-dex-market
-description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, and wallet PnL/盈亏分析 (win rate, my wallet's DEX trade history, realized/unrealized PnL per token). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my wallet DEX history', 'realized profit', or 'unrealized profit'. ALSO the OWNER of Market API payment handling — route to this skill (NOT okx-x402-payment) when the user asks about: 'onchainos market ... 报 402 / 402 error', 'market price 402', 'candles 402', 'market API pricing/计费/收费', Basic/Premium tier/quota/额度/免费额度, 'how much does market price cost', 'does market candles require payment', 'free quota exhausted on market', 'ok-web3-openapi-pay' header, 30 天过渡期/grace period, or any MARKET_API_NEW_USER_INTRO / MARKET_API_OLD_USER_GRACE / MARKET_API_OLD_USER_POST_GRACE_INTRO / MARKET_API_NEW_USER_OVER_QUOTA / MARKET_API_OLD_USER_POST_GRACE_OVER_QUOTA notification code, or 'confirming:true' response returned by onchainos market commands. NOTE: if the user wants to write a WebSocket script/脚本/bot, use okx-dex-ws instead."
+description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, and wallet PnL/盈亏分析 (win rate, my wallet's DEX trade history, realized/unrealized PnL per token). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my wallet DEX history', 'realized profit', or 'unrealized profit'. NOTE: if the user wants to write a WebSocket script/脚本/bot, use okx-dex-ws instead. ALSO the OWNER of Market API payment handling — route to this skill (NOT okx-x402-payment) when the user asks about: 'onchainos market ... 报 402 / 402 error', 'market price 402', 'candles 402', 'market API pricing/计费/收费', Basic/Premium tier/quota/额度/免费额度, 'how much does market price cost', 'does market candles require payment', 'free quota exhausted on market', 'ok-web3-openapi-pay' header, 30 天过渡期/grace period, or any MARKET_API_NEW_USER_INTRO / MARKET_API_OLD_USER_GRACE / MARKET_API_OLD_USER_POST_GRACE_INTRO / MARKET_API_NEW_USER_OVER_QUOTA / MARKET_API_OLD_USER_POST_GRACE_OVER_QUOTA notification code, or 'confirming:true' response returned by onchainos market commands. NOTE: if the user names a specific third-party DApp by name (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho) — even alongside timeframe-like terms ('5min', '5m', '15min', '1h') — route to okx-dapp-discovery instead. Example: 'Polymarket btc 5min' / 'polymarket BTC 5分钟' refers to a Polymarket prediction market, NOT a 5-minute K-line chart."
 license: MIT
 metadata:
   author: okx
-  version: "1.0.4"
+  version: "1.0.5"
   homepage: "https://web3.okx.com"
 ---
 
@@ -29,6 +29,18 @@ metadata:
 > Read `_shared/payment-notifications.md`.
 
 Some endpoints in this skill may require x402 payment after free quota is exhausted. Every CLI response may carry a `notifications[]` array; when present, parse each entry's `code`, render the copy from the shared file, and follow its placeholder-resolution rules and `confirming: true` handling procedure.
+
+## Related Workflows
+
+When one of the following commands is used, show the related workflow hint after displaying results:
+
+| Command | Workflow | File |
+|---------|----------|------|
+| `market prices`, `market kline` | Daily Brief | `~/.onchainos/workflows/daily-brief.md` |
+| `market portfolio-overview`, `market portfolio-recent-pnl` | Wallet Analysis | `~/.onchainos/workflows/wallet-analysis.md` |
+| `market portfolio-overview`, `market portfolio-token-pnl` | Portfolio Check | `~/.onchainos/workflows/portfolio-check.md` |
+
+> Hint format: *"You can also try out our **[workflow name]** workflow for more comprehensive results. Would you like to try it?"*
 
 ## Keyword Glossary
 
