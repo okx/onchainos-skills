@@ -1,7 +1,7 @@
 #!/bin/bash
 # onchainos — OpenClaw template build script
 # 1. Installs the onchainos CLI + workflows (via install.sh)
-# 2. Installs skills (follows .openclaw/INSTALL.md)
+# 2. Installs skills into the workspace
 # Runs once during the build phase; no action needed from the user.
 
 set -e
@@ -13,10 +13,12 @@ curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh
 # Ensure onchainos is on PATH for the current session
 [ -f "$HOME/.profile" ] && source "$HOME/.profile"
 
-# ── 2. Install skills (from .openclaw/INSTALL.md) ───────────────────────────
-# Clone the repo and symlink skills into OpenClaw's discovery path.
+# ── 2. Install skills into workspace ─────────────────────────────────────────
+# Clone/update the repo, then copy skills into ~/clawd/workspace/skills/
+# so OpenClaw discovers them at runtime.
 
 REPO_DIR="$HOME/.openclaw/onchainos-skills"
+WORKSPACE_SKILLS="$HOME/clawd/workspace/skills"
 
 if command -v git &>/dev/null; then
   if [ -d "$REPO_DIR/.git" ]; then
@@ -32,7 +34,8 @@ else
     | tar xz --strip-components=1 -C "$REPO_DIR"
 fi
 
-mkdir -p "$HOME/.agents/skills"
-ln -sf "$REPO_DIR/skills" "$HOME/.agents/skills/onchainos-skills"
+# Copy skills into workspace (not symlink — OpenClaw reads from workspace)
+mkdir -p "$WORKSPACE_SKILLS"
+cp -r "$REPO_DIR/skills/"* "$WORKSPACE_SKILLS/"
 
-echo "[onchainos] Skills linked → ~/.agents/skills/onchainos-skills"
+echo "[onchainos] Skills installed → $WORKSPACE_SKILLS"
