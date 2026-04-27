@@ -25,7 +25,6 @@ use crate::wallet_api::WalletApiClient;
 use crate::{keyring_store, wallet_store};
 
 // ── Constants ────────────────────────────────────────────────────────────
-const DEFAULT_EXPIRES_IN: u64 = 1800;
 const DEFAULT_VALID_BEFORE_SEC: u64 = 3600;
 
 // ── Clap arg structs ─────────────────────────────────────────────────────
@@ -43,12 +42,12 @@ pub struct CreateArgs {
     /// ERC-20 token symbol (e.g. "USDT")
     #[arg(long)]
     pub symbol: String,
-    /// Human-readable description shown to the Buyer.
+    /// Human-readable description shown to the Buyer. Optional.
     #[arg(long)]
-    pub description: String,
-    /// Realm — Seller / provider domain (e.g. "provider.example.com").
+    pub description: Option<String>,
+    /// Realm — Seller / provider domain (e.g. "provider.example.com"). Optional.
     #[arg(long)]
-    pub realm: String,
+    pub realm: Option<String>,
     /// Optional external business id (e.g. task id).
     #[arg(long = "external-id")]
     pub external_id: Option<String>,
@@ -169,22 +168,23 @@ pub async fn execute(cmd: A2aPayCommand) -> Result<()> {
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChargeParams {
-    #[serde(rename = "type")]
-    pub r#type: &'static str,
     pub amount: String,
     pub symbol: String,
     pub recipient: String,
-    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub external_id: Option<String>,
-    pub expires_in: u64,
-    pub realm: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_in: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub realm: Option<String>,
 }
 
 impl TryFrom<CreateArgs> for ChargeParams {
     type Error = anyhow::Error;
     fn try_from(a: CreateArgs) -> Result<Self> {
         Ok(Self {
-            r#type: "charge",
             amount: a.amount,
             symbol: a.symbol,
             recipient: a
@@ -192,7 +192,7 @@ impl TryFrom<CreateArgs> for ChargeParams {
                 .ok_or_else(|| anyhow!("--recipient is required for --type charge"))?,
             description: a.description,
             external_id: a.external_id,
-            expires_in: a.expires_in.unwrap_or(DEFAULT_EXPIRES_IN),
+            expires_in: a.expires_in,
             realm: a.realm,
         })
     }
@@ -220,6 +220,7 @@ pub async fn create_payment_charge(params: ChargeParams) -> Result<CreatePayment
 
     let mut payment_client = PaymentApiClient::new();
     let mut value = serde_json::to_value(&params).context("serialize charge params")?;
+    value["type"] = json!("charge");
     value["deliveries"] = json!({ "includeUrl": true });
     let resp: Value = payment_client
         .create(&value)
@@ -282,14 +283,16 @@ pub struct EscrowDetails {
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EscrowParams {
-    #[serde(rename = "type")]
-    pub r#type: &'static str,
     pub amount: String,
     pub symbol: String,
-    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub external_id: Option<String>,
-    pub expires_in: u64,
-    pub realm: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_in: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub realm: Option<String>,
     pub escrow: EscrowDetails,
 }
 
@@ -336,12 +339,11 @@ impl TryFrom<CreateArgs> for EscrowParams {
         };
 
         Ok(Self {
-            r#type: "escrow",
             amount: a.amount,
             symbol: a.symbol,
             description: a.description,
             external_id: a.external_id,
-            expires_in: a.expires_in.unwrap_or(DEFAULT_EXPIRES_IN),
+            expires_in: a.expires_in,
             realm: a.realm,
             escrow: EscrowDetails {
                 escrow_contract,
@@ -383,6 +385,7 @@ pub async fn create_payment_escrow(params: EscrowParams) -> Result<CreatePayment
 
     let mut payment_client = PaymentApiClient::new();
     let mut value = serde_json::to_value(&params).context("serialize escrow params")?;
+    value["type"] = json!("escrow");
     value["deliveries"] = json!({ "includeUrl": true });
     let resp: Value = payment_client
         .create(&value)
