@@ -56,7 +56,6 @@ openclaw_template/
 
 Skills and workflows are fetched from the onchainos-skills source repo at deploy time — always the latest version.
 
-
 ## Optional: OKX API credentials
 
 The agent uses built-in sandbox keys by default (rate-limited). For production-grade rate limits, set these environment variables:
