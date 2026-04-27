@@ -29,9 +29,7 @@ pub enum ChatCommand {
         agent_id: String,
         output: String,
     },
-    SensitiveWords {
-        agent_id: String,
-    },
+    SensitiveWords,
     MessageEligible {
         agent_id: String,
         client_agent_id: String,
@@ -39,10 +37,9 @@ pub enum ChatCommand {
         job_id: String,
         group_id: String,
         direction: String,
+        provider_security_rate: String,
     },
-    SystemConfig {
-        agent_id: String,
-    },
+    SystemConfig,
     Heartbeat {
         chain_index: u64,
     },
@@ -60,9 +57,9 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
             agent_id,
             output: output_path,
         } => cmd_download(ctx, &file_key, &agent_id, &output_path).await,
-        ChatCommand::SensitiveWords { agent_id } => {
+        ChatCommand::SensitiveWords => {
             let client = ctx.client_async().await?;
-            output::success(fetch_sensitive_words(&client, &agent_id).await?);
+            output::success(fetch_sensitive_words(&client).await?);
             Ok(())
         }
         ChatCommand::MessageEligible {
@@ -72,6 +69,7 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
             job_id,
             group_id,
             direction,
+            provider_security_rate,
         } => {
             let client = ctx.client_async().await?;
             output::success(
@@ -83,14 +81,15 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
                     &job_id,
                     &group_id,
                     &direction,
+                    &provider_security_rate,
                 )
                 .await?,
             );
             Ok(())
         }
-        ChatCommand::SystemConfig { agent_id } => {
+        ChatCommand::SystemConfig => {
             let client = ctx.client_async().await?;
-            output::success(fetch_system_config(&client, &agent_id).await?);
+            output::success(fetch_system_config(&client).await?);
             Ok(())
         }
         ChatCommand::Heartbeat { chain_index } => {
@@ -210,9 +209,9 @@ async fn cmd_download(
 /// GET /priapi/v1/aieco/im/risk/a2a/sensitive/word/list
 ///
 /// Returns the sensitive word checklist for A2A risk filtering.
-/// agenticId sent as header.
-pub async fn fetch_sensitive_words(client: &ApiClient, agent_id: &str) -> Result<Value> {
-    let headers = agent_commerce_headers(agent_id);
+/// No agenticId header — endpoint is agent-agnostic.
+pub async fn fetch_sensitive_words(client: &ApiClient) -> Result<Value> {
+    let headers = [("User-Agent", "onchainos-cli")];
     let resp = client
         .get_with_headers_raw(SENSITIVE_WORDS_PATH, &[], Some(&headers))
         .await?;
@@ -234,6 +233,7 @@ pub async fn fetch_message_eligible(
     job_id: &str,
     group_id: &str,
     direction: &str,
+    provider_security_rate: &str,
 ) -> Result<Value> {
     let headers = agent_commerce_headers(agent_id);
     let resp = client
@@ -245,6 +245,7 @@ pub async fn fetch_message_eligible(
                 ("jobId", job_id),
                 ("groupId", group_id),
                 ("direction", direction),
+                ("providerSecurityRate", provider_security_rate),
             ],
             Some(&headers),
         )
@@ -257,9 +258,9 @@ pub async fn fetch_message_eligible(
 /// GET /priapi/v1/aieco/im/xmtp/system-config
 ///
 /// Returns XMTP system config including system account sender addresses.
-/// agenticId sent as header.
-pub async fn fetch_system_config(client: &ApiClient, agent_id: &str) -> Result<Value> {
-    let headers = agent_commerce_headers(agent_id);
+/// No agenticId header — endpoint is agent-agnostic.
+pub async fn fetch_system_config(client: &ApiClient) -> Result<Value> {
+    let headers = [("User-Agent", "onchainos-cli")];
     let resp = client
         .get_with_headers_raw(SYSTEM_CONFIG_PATH, &[], Some(&headers))
         .await?;
