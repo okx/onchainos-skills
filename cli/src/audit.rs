@@ -484,9 +484,15 @@ fn security_sub(c: &SecurityCommand) -> &'static str {
 }
 
 fn payment_sub(c: &PaymentCommand) -> &'static str {
+    use crate::commands::agentic_wallet::payment::DefaultAction;
     match c {
         PaymentCommand::X402Pay { .. } => "x402-pay",
         PaymentCommand::Eip3009Sign { .. } => "eip3009-sign",
+        PaymentCommand::Default { action } => match action {
+            DefaultAction::Set { .. } => "default-set",
+            DefaultAction::Get => "default-get",
+            DefaultAction::Unset => "default-unset",
+        },
     }
 }
 
