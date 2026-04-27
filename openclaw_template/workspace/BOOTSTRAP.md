@@ -27,7 +27,7 @@ Run `onchainos wallet status`.
 
 > Welcome to onchainos ⛓️
 >
-> Everything is installed and ready. To get started, log in with your OKX account:
+> Everything is installed and ready. To get started, log in with your email:
 >
 > - **Email login**: tell me your email and I'll send a verification code
 > - **API Key**: set `OKX_API_KEY` in secrets and it works automatically

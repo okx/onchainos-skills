@@ -8,7 +8,7 @@ A general-purpose [OpenClaw](https://openclaw.ai) agent template powered by [OKX
 
 1. Clone or fork this template
 2. Run `bash setup.sh` — installs the `onchainos` CLI and fetches skills + workflows from the source repo
-3. Start an OpenClaw session — log in with your OKX account (email + OTP or API key)
+3. Start an OpenClaw session — log in with your email
 4. Start using workflows and skills
 
 ## What you can do
