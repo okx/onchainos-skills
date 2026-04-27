@@ -1,10 +1,10 @@
 ---
 name: okx-dex-market
-description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, and wallet PnL/盈亏分析 (win rate, my wallet's DEX trade history, realized/unrealized PnL per token). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my wallet DEX history', 'realized profit', or 'unrealized profit'. NOTE: if the user wants to write a WebSocket script/脚本/bot, use okx-dex-ws instead."
+description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, and wallet PnL/盈亏分析 (win rate, my wallet's DEX trade history, realized/unrealized PnL per token). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my wallet DEX history', 'realized profit', or 'unrealized profit'. NOTE: if the user wants to write a WebSocket script/脚本/bot, use okx-dex-ws instead. NOTE: if the user names a specific third-party DApp by name (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho) — even alongside timeframe-like terms ('5min', '5m', '15min', '1h') — route to okx-dapp-discovery instead. Example: 'Polymarket btc 5min' / 'polymarket BTC 5分钟' refers to a Polymarket prediction market, NOT a 5-minute K-line chart."
 license: MIT
 metadata:
   author: okx
-  version: "1.0.4"
+  version: "1.0.5"
   homepage: "https://web3.okx.com"
 ---
 
