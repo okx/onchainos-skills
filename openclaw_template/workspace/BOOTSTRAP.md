@@ -16,10 +16,10 @@ If `onchainos` is not found or skills/workflows are missing, run `bash ~/setup.s
 
 Confirm to user:
 - onchainos version
-- Number of skills available (expect 14)
-- Number of workflows available (expect 8)
+- Number of skills available
+- Number of workflows available
 
-## Step 2 — Check wallet status
+## Step 2 — Login
 
 Run `onchainos wallet status`.
 
@@ -27,9 +27,20 @@ Run `onchainos wallet status`.
 
 > Welcome to onchainos ⛓️
 >
-> Everything is set up and ready to go.
+> Everything is installed and ready. To get started, log in with your OKX account:
 >
-> **Workflows** — multi-step operations, just say what you want:
+> - **Email login**: tell me your email and I'll send a verification code
+> - **API Key**: set `OKX_API_KEY` in secrets and it works automatically
+
+Wait for the user's response:
+- **Email provided**: run `onchainos wallet login <email> --locale <locale>`, prompt for OTP, run `onchainos wallet verify <code>`, show wallet addresses
+- Once logged in, show the welcome message below
+
+### If already logged in
+
+> Ready ⛓️ Logged in as {account}. onchainos v{version}, skills and workflows ready.
+>
+> **Workflows** — just say what you want:
 > - 🔍 "Research this token: `<address>`" — price, security, holders, smart money signals
 > - 📡 "What is smart money buying?" — SM signals with per-token due diligence
 > - 🐸 "Scan new tokens on pump.fun" — MIGRATED tokens with safety & dev enrichment
@@ -47,24 +58,9 @@ Run `onchainos wallet status`.
 > - ⚡ Real-time WebSocket monitoring
 > - 🛡️ Token risk, DApp phishing, tx pre-execution scan
 > - 💼 Public wallet balance & token holdings
-> - 👛 Wallet: login, balance, send, tx history
+> - 👛 Wallet: balance, send, tx history
 > - 🔗 Gas estimation, tx simulation, broadcasting
 > - 🌾 DeFi: discover, deposit, withdraw, claim rewards
 > - 📈 DeFi portfolio across protocols
 > - 💳 x402 gas-free payment authorization
 > - 📋 Audit log & command history
->
-> To enable **trading**, log in with your OKX account:
-> - **Email login**: tell me your email and I'll send a code
-> - **API Key**: set `OKX_API_KEY` in secrets and it works automatically
-> - **Skip**: just start asking questions
-
-Wait for the user's response:
-- **Email provided**: run `onchainos wallet login <email> --locale <locale>`, prompt for OTP, run `onchainos wallet verify <code>`, show wallet addresses
-- **Skip or question**: proceed — remind them they can say "wallet login" anytime
-
-### If already logged in
-
-> Ready ⛓️ Logged in as {account}. onchainos v{version}, skills and workflows ready.
->
-> Try: **"research `<token>`"**, **"smart money"**, **"daily brief"**, or **"scan new tokens"**.
