@@ -707,7 +707,7 @@ fn decimal_to_hex64(decimal: &str) -> String {
         return format!("{:0>64x}", v);
     }
     // Fallback: manual base conversion for values > u128::MAX
-    let mut bytes = vec![0u8; 32]; // 256 bits
+    let mut bytes = [0u8; 32]; // 256 bits
     let mut dec_digits: Vec<u8> = decimal.bytes().map(|b| b - b'0').collect();
     let mut bit_pos = 0;
     while !dec_digits.is_empty() && bit_pos < 256 {
