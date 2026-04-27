@@ -14,31 +14,18 @@ ls workspace/workflows/
 
 If `onchainos` is not found or skills/workflows are missing, run `bash ~/setup.sh` and verify again.
 
-Confirm to user:
-- onchainos version
-- Number of skills available
-- Number of workflows available
-
 ## Step 2 — Login
 
-Run `onchainos wallet status`.
+Run `onchainos wallet status`. If not logged in, prompt the user:
 
-### If NOT logged in
+> To get started, log in with your email — I'll send a verification code.
 
-> Welcome to onchainos ⛓️
->
-> Everything is installed and ready. To get started, log in with your email:
->
-> - **Email login**: tell me your email and I'll send a verification code
-> - **API Key**: set `OKX_API_KEY` in secrets and it works automatically
-
-Wait for the user's response:
 - **Email provided**: run `onchainos wallet login <email> --locale <locale>`, prompt for OTP, run `onchainos wallet verify <code>`, show wallet addresses
-- Once logged in, show the welcome message below
+- **API Key**: if `OKX_API_KEY` is set in secrets, it works automatically
 
-### If already logged in
+## Step 3 — Welcome
 
-> Ready ⛓️ Logged in as {account}. onchainos v{version}, skills and workflows ready.
+> Welcome to onchainos ⛓️ Logged in as {account}. Skills and workflows ready.
 >
 > **Workflows** — just say what you want:
 > - 🔍 "Research this token: `<address>`" — price, security, holders, smart money signals
