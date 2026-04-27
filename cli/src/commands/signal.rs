@@ -126,7 +126,7 @@ pub async fn fetch_list(
             .parse()
             .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
         anyhow::ensure!(
-            (1..=100).contains(&n),
+            n >= 1 && n <= 100,
             "--limit must be between 1 and 100, got {n}"
         );
     }

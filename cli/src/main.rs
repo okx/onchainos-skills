@@ -132,11 +132,6 @@ pub enum Commands {
 
     /// Upgrade onchainos to the latest version
     Upgrade(commands::upgrade::UpgradeArgs),
-    /// Skill utilities (version drift check)
-    Skills {
-        #[command(subcommand)]
-        command: commands::skills::SkillsCommand,
-    },
 }
 
 fn main() {
@@ -199,7 +194,6 @@ async fn run() {
         Commands::Ws { command } => commands::ws::execute(command).await,
         Commands::Workflow { command } => commands::workflows::execute(&ctx, *command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
-        Commands::Skills { command } => commands::skills::execute(command).await,
     };
 
     let elapsed = start.elapsed();
