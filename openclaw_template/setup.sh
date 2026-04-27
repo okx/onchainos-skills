@@ -14,11 +14,12 @@ curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh
 [ -f "$HOME/.profile" ] && source "$HOME/.profile"
 
 # ── 2. Install skills into workspace ─────────────────────────────────────────
-# Clone/update the repo, then copy skills into ~/clawd/workspace/skills/
+# Clone/update the repo, then copy skills into the workspace skills/ directory
 # so OpenClaw discovers them at runtime.
 
 REPO_DIR="$HOME/.openclaw/onchainos-skills"
-WORKSPACE_SKILLS="$HOME/clawd/workspace/skills"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WORKSPACE_SKILLS="${OPENCLAW_WORKSPACE_DIR:-$SCRIPT_DIR/workspace}/skills"
 
 if command -v git &>/dev/null; then
   if [ -d "$REPO_DIR/.git" ]; then
