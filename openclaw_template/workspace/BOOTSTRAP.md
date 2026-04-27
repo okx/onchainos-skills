@@ -25,7 +25,7 @@ Run `onchainos wallet status`. If not logged in, prompt the user:
 
 ## Step 3 — Welcome
 
-> Welcome to onchainos ⛓️ Logged in as {account}. Skills and workflows ready.
+> Welcome to onchainos ⛓️
 >
 > **Workflows** — just say what you want:
 > - 🔍 "Research this token: `<address>`" — price, security, holders, smart money signals
