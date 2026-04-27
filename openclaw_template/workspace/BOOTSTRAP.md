@@ -2,19 +2,29 @@
 
 First-run setup guide. This file self-deletes after initial onboarding is complete.
 
-## Step 1 — Verify installation
+## Step 1 — Verify CLI and workflows
 
-Run silently:
+Run:
 
 ```bash
 onchainos --version
-ls ~/.agents/skills/onchainos-skills/
-ls workspace/workflows/
+ls ~/.onchainos/workflows/
 ```
 
-If `onchainos` is not found or skills/workflows are missing, run `bash ~/setup.sh` and verify again.
+If `onchainos` is not found or workflows are missing, run `bash ~/setup.sh` and verify again.
 
-## Step 2 — Login
+## Step 2 — Install skills into workspace
+
+Copy skills from the downloaded repo into the OpenClaw workspace, then verify:
+
+```bash
+cp -r ~/.openclaw/onchainos-skills/skills/* workspace/skills/
+openclaw skills list
+```
+
+If `openclaw skills list` does not show the onchainos skills, check that the files were copied correctly.
+
+## Step 3 — Login
 
 Run `onchainos wallet status`. If not logged in, prompt the user:
 
@@ -23,7 +33,7 @@ Run `onchainos wallet status`. If not logged in, prompt the user:
 - **Email provided**: run `onchainos wallet login <email> --locale <locale>`, prompt for OTP, run `onchainos wallet verify <code>`, show wallet addresses
 - **API Key**: if `OKX_API_KEY` is set in secrets, it works automatically
 
-## Step 3 — Welcome
+## Step 4 — Welcome
 
 > Welcome to onchainos ⛓️
 >
