@@ -20,7 +20,7 @@ A general-purpose [OpenClaw](https://openclaw.ai) agent template powered by [OKX
 | "Scan new tokens on pump.fun" | MIGRATED token list with safety, dev reputation, and bundle analysis |
 | "Analyse this wallet: `<address>`" | 7d/30d PnL, trading behaviour, recent on-chain activity |
 | "Daily brief" | Market prices, hot tokens, SM activity, new launches |
-| "Check my portfolio: `<address>`" | Balances, total value, PnL overview |
+| "Check my portfolio" | Balances, total value, PnL overview |
 | "Buy 0.1 SOL of BONK" | Pre-trade risk detection → quote → confirm → MEV-protected execution |
 
 ## Infrastructure

@@ -32,7 +32,7 @@ Run `onchainos wallet status`. If not logged in, prompt the user:
 > - 📡 "What is smart money buying?" — SM signals with per-token due diligence
 > - 🐸 "Scan new tokens on pump.fun" — MIGRATED tokens with safety & dev enrichment
 > - 👛 "Analyse this wallet: `<address>`" — 7d/30d PnL, trading behaviour, activity
-> - 📊 "Check my portfolio: `<address>`" — balances, total value, PnL overview
+> - 📊 "Check my portfolio" — balances, total value, PnL overview
 > - 📰 "Give me a daily brief" — market prices + hot tokens + smart money + new launches
 > - 👁 "Watch this wallet: `<address>`" — alert me when it trades
 >
