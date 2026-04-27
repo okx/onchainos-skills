@@ -26,7 +26,7 @@ use super::args::{
 };
 use super::models::{AgentCard, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_INDEX_NUM};
 use super::signing::{
-    build_erc8004_overlay, load_session_cert, load_signing_seed, resolve_xlayer_signing_account,
+    build_erc8004_overlay, load_agent_signing_session, load_session_cert, load_signing_seed,
     sign_and_broadcast_agent_transaction, sign_key_uuid,
 };
 use super::utils::{
@@ -79,12 +79,10 @@ pub async fn xmtp_sign(args: XmtpSignArgs, ctx: &Context) -> Result<()> {
 async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
-    let (_account_id, addr_info) = resolve_xlayer_signing_account(args.address.as_deref())?;
-    let from_addr = addr_info.address.clone();
-    let signing_seed = load_signing_seed()?;
-    let session_cert = load_session_cert()?;
+    let signing_session = load_agent_signing_session(args.address.as_deref())?;
+    let from_addr = signing_session.addr_info.address.clone();
     let key_uuid = Uuid::new_v4().to_string();
-    let session_signature = sign_key_uuid(&key_uuid, &signing_seed)?;
+    let session_signature = sign_key_uuid(&key_uuid, &signing_session.signing_seed)?;
     let normalized_role = normalize_role(require_non_empty(args.role.as_deref(), "--role")?)?;
     let card = AgentCard {
         role: normalized_role.clone(),
@@ -101,7 +99,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         "fromAddr": from_addr,
         "keyUuid": key_uuid.clone(),
         "sessionSignature": session_signature,
-        "sessionCert": session_cert,
+        "sessionCert": &signing_session.session_cert,
         "cardJson": serde_json::to_string(&card).context("failed to serialize cardJson")?,
     });
     eprintln!(
@@ -145,7 +143,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         &access_token,
         &unsigned,
         overlay,
-        args.address.as_deref(),
+        &signing_session,
     )
     .await?;
     let agent_info = poll_tx_agent_status(&mut client, &access_token, &tx_hash).await;
@@ -161,7 +159,7 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
     let agent_id = resolve_agent_id(&args.agent_id, &args.agent_id_flag)?;
-    let session_cert = load_session_cert()?;
+    let signing_session = load_agent_signing_session(None)?;
 
     // 产品规范：update 不允许修改 role / CommunicationAddress，所以都不写进
     // cardJson。其它字段只写用户本次传进来的——没传就不带；是否保留旧值由
@@ -196,7 +194,7 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
 
     let body = json!({
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,
-        "sessionCert": session_cert,
+        "sessionCert": &signing_session.session_cert,
         "cardJson": serde_json::to_string(&Value::Object(card))
             .context("failed to serialize cardJson")?,
     });
@@ -230,7 +228,9 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     // 产品规范：update 客户端没有 erc8004Msg 子字段（communicationAddress 不可
     // 修改，role / keyUuid / sessionSignature 也不在 update 请求体里），所以
     // 整个 erc8004Msg 不写入广播 extraData。
-    let tx_hash = sign_and_broadcast_agent_transaction(&access_token, &unsigned, None, None).await?;
+    let tx_hash =
+        sign_and_broadcast_agent_transaction(&access_token, &unsigned, None, &signing_session)
+            .await?;
     let agent_info = poll_tx_agent_status(&mut client, &access_token, &tx_hash).await;
     match agent_info {
         Some(agent) => Ok(json!({ "txHash": tx_hash, "agent": agent })),
@@ -367,7 +367,7 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
     )?;
     let feedback_desc = trim_or_empty(args.description.as_deref());
     let task_id = trim_or_empty(args.task_id.as_deref());
-    let session_cert = load_session_cert()?;
+    let signing_session = load_agent_signing_session(None)?;
 
     // 请求体：create-comment 需要 chainIndex + sessionCert + feedBackAgentId +
     // comment（fromAddr 已不再带）。feedBackAgentId 是评价发起方的 agent id，与
@@ -383,7 +383,7 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
     });
     let body = json!({
         "chainIndex": XLAYER_CHAIN_INDEX_NUM,
-        "sessionCert": session_cert,
+        "sessionCert": &signing_session.session_cert,
         "feedBackAgentId": creator_id,
         "comment": serde_json::to_string(&comment).context("failed to serialize comment")?,
     });
@@ -429,7 +429,7 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
         &access_token,
         &unsigned,
         overlay,
-        None,
+        &signing_session,
     )
     .await?;
     Ok(json!({ "txHash": tx_hash }))
