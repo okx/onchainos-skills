@@ -143,6 +143,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20⚠️ 调用前输出：`[buyer-xmtp] xmtp_start_conversation: myAgentId={agent_id}, toAgentId=<providerAgentId>, jobId={job_id}`\n\
              \x20\x20⚠️ 调用后输出：`[buyer-xmtp] xmtp_start_conversation result: sessionKey=<返回值>, xmtpGroupId=<返回值>`\n\n\
              **B-Step 2 — 自动协商（买家 Agent ↔ 卖家 Agent 在 sub session 中多轮交互）：**\n\
+             ⚠️ B-Step 1 建群后，你仍在主 session。用 xmtp_dispatch_session（带 sessionKey）发送第一条消息进入 sub session。\n\
+             后续协商在 sub session 中进行，使用 xmtp_send（带 sessionKey）发送消息。\n\n\
              协商目标：就以下结构化字段达成一致——\n\
              \x20\x20- deliverable：交付物描述（具体要做什么）\n\
              \x20\x20- qualityStandards：验收标准\n\
@@ -151,12 +153,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20- tokenAmount：支付金额\n\
              \x20\x20- deadline：交付截止时间\n\n\
              ⏱ 超时规则：每轮等待卖家回复最多 5 分钟。超时未回复 → 结束当前 sub session，切换下一个卖家。\n\n\
-             协商步骤（通过 xmtp_send 多轮消息）：\n\
-             1. 买家发送任务详情（描述、预算、期望交付物）→ 等待卖家回复（5 分钟超时）\n\
-             2. 卖家回复报价（金额、代币、支付方式偏好、预计交付时间）\n\
-             3. 双方就价格/条件进行调整（可能多轮，每轮 5 分钟超时）\n\
-             4. 达成一致后，买家发送结构化确认消息：\n\
-             {header_template}\n\
+             协商步骤：\n\
+             1. （主 session → sub session）调用 xmtp_dispatch_session 发送第一条消息：\n\
+             \x20\x20参数：sessionKey=<B-Step 1 返回的 sessionKey>，content=<任务详情（描述、预算、期望交付物）>\n\
+             \x20\x20→ 等待卖家回复（5 分钟超时）\n\
+             2. （sub session 内）卖家回复报价（金额、代币、支付方式偏好、预计交付时间）\n\
+             3. （sub session 内）双方就价格/条件进行调整（可能多轮，每轮 5 分钟超时）\n\
+             \x20\x20每轮调用 xmtp_send，参数：sessionKey=<同上>，content=<协商内容>\n\
+             4. 达成一致后，调用 xmtp_send 发送结构化确认消息：\n\
+             \x20\x20参数：sessionKey=<同上>，content=\n\
              [协商确认] 请确认以下协商结果：\n\
              任务：{job_id}\n\
              交付物：<deliverable>\n\
@@ -420,11 +425,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20参数：myAgentId={agent_id}，toAgentId=<pending list 第一个卖家的 agentId>，jobId={job_id}\n\
              \x20\x20⚠️ 调用前输出：`[buyer-xmtp] xmtp_start_conversation: myAgentId={agent_id}, toAgentId=<agentId>, jobId={job_id}`\n\
              \x20\x20⚠️ 调用后输出：`[buyer-xmtp] xmtp_start_conversation result: sessionKey=<返回值>, xmtpGroupId=<返回值>`\n\n\
-             A-Step 2：调用 xmtp_send 工具向卖家发起协商（参照 buyer.md §2.1 协商剧本三步确认）：\n\
+             A-Step 2：调用 xmtp_dispatch_session 向卖家发起协商（参照 buyer.md §2.1 协商剧本三步确认）：\n\
+             \x20\x20⚠️ 你当前在主 session，不能直接 xmtp_send 到 sub session（会被 visibility=tree 拦截）。\n\
              \x20\x20参数：sessionKey=<A-Step 1 返回的 sessionKey>，content=<下方消息内容>\n\
-             \x20\x20⚠️ 调用前输出：`[buyer-xmtp] xmtp_send: sessionKey=<sessionKey>, content=<消息内容前50字>`\n\
-             {header_template}\n\
-             你好，我有一个任务（jobId: {job_id}）想请你来完成，请问你感兴趣吗？\n\n\
+             \x20\x20⚠️ 调用前输出：`[buyer-xmtp] xmtp_dispatch_session: sessionKey=<sessionKey>, content=<消息内容前50字>`\n\
+             \x20\x20content: 你好，我有一个任务（jobId: {job_id}）想请你来完成，请问你感兴趣吗？\n\n\
              A-Step 3：协商成功 → 卖家 apply 上链 → 等待 provider_applied 事件（进入场景 6）\n\n\
              ━━━━━━━━━ 分支 B：用户不接受 / 协商失败 → 尝试下一个卖家 ━━━━━━━━━\n\n\
              B-Step 1：重新调用 xmtp_get_pending_list 获取最新待沟通列表。\n\
