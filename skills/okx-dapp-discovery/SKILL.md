@@ -102,6 +102,17 @@ echo "$SKILLS_LIST" | grep -qE '(^|\s|/)morpho-plugin(\s|$)'         && MORPHO_I
 
 ## Step 2 — Apply routing rules
 
+> **User-facing language — IMPORTANT.** The confidence tiers and scores in Step 1 and the rules below are *internal* decision logic. **Do NOT mention scores, tiers, "confidence", or this routing framework to the user** in your response. Use natural conversational language for any visible commentary. Examples:
+> - ✅ "I can set up Polymarket for that — installing now."
+> - ✅ "Sounds like Aave V3 is the right fit. Let me load it up."
+> - ✅ "That looks like a Hyperliquid use case — getting the plugin ready."
+> - ✅ "Were you thinking Aave or Morpho for this? They both fit." *(for clarify-tier cases)*
+> - ❌ "I scored your message at confidence 95 for Polymarket, so I'm installing the plugin."
+> - ❌ "Polymarket matches at tier 1 (95-100), routing directly."
+> - ❌ "The confidence framework picked PancakeSwap."
+>
+> Rule 1's "do not show an install banner or onboarding table" extends to the scoring vocabulary itself — the user only sees the *outcome* (a suggestion, an install, a clarifying question, or a discovery table), not the *mechanism*.
+
 **Rule 1 — Already installed, score ≥ 75:**
 Do **not** re-install. Read the plugin's instructions and execute the user's request:
 
