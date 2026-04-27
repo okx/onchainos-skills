@@ -54,15 +54,28 @@ onchainos agent create \
 
 **Return (JSON):**
 ```json
+// On internal poll success (within ~5 s)
 {
-  "agentId": 99,
   "txHash": "0xabc...",
-  "role": "provider",
-  "name": "DeFi Analyzer",
-  "status": "inactive",
-  "services": [ { "ServiceName": "TVL Query", ... } ]
+  "agent": {
+    "status": "SUCCESS",
+    "agentId": "123",
+    "chainIndex": 196,
+    "name": "DeFi Analyzer",
+    "profilePicture": "https://...",
+    "profileDescription": "...",
+    "ownerAddress": "0x...",
+    "agentWalletAddress": "0x...",
+    "categoryCode": "DEFI",
+    "securityRate": "85"
+  }
 }
+
+// On poll timeout / non-success — fall back to:
+{ "txHash": "0xabc..." }
 ```
+
+The CLI internally polls `/priapi/v5/wallet/agentic/tx-agent-status` with the broadcast `txHash` for up to ~5 s. When it resolves `SUCCESS` the verbose `agent` block is included verbatim from the backend; on timeout the response degrades to `{ txHash }` only and the skill should render per `display-formats.md` §2's `Agent ID` placeholder rule (omit the row instead of inventing an id).
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match). Do not duplicate the list here — `troubleshooting.md` is the single source of truth.
 
@@ -92,7 +105,7 @@ onchainos agent update 42 --description "Updated: now also covers cross-chain TV
 onchainos agent update 42 --picture "https://cdn.example.com/u/new.png"
 ```
 
-**Return (JSON):** same shape as `agent get` detail for the updated agent.
+**Return (JSON):** same `{ txHash, agent? }` envelope as `create` (§1) — `agent` is the resolved tx-status row when the internal poll succeeds, or absent when it times out. Field set differs from the `agent get` detail schema in §3 (no `services` / `reputation` here — those still require a `agent get --agent-ids`).
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact), §2 (backend-originated, keyword match), and §3 (skill-side guards). Note: "At least one field must change on update" is a skill-side guard, not a CLI error.
 

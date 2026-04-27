@@ -3,13 +3,16 @@
 //! agent service / role parsing. No network calls, no signing. Functions
 //! here are deliberately small and dependency-light.
 
+use std::time::{Duration, Instant};
+
 use anyhow::{anyhow, bail, Context as _, Result};
 use serde_json::Value;
+use tokio::time::sleep;
 
 use crate::commands::Context;
 use crate::wallet_api::{UnsignedInfoResponse, WalletApiClient};
 
-use super::models::{AgentCard, AgentService};
+use super::models::{AgentCard, AgentService, XLAYER_CHAIN_INDEX};
 
 // ─── HTTP client ──────────────────────────────────────────────────────────
 
@@ -76,6 +79,67 @@ pub(super) fn push_multi_query(query: &mut Vec<(String, String)>, key: &str, val
         if !value.trim().is_empty() {
             query.push((key.to_string(), value.trim().to_string()));
         }
+    }
+}
+
+// ─── Tx status polling ────────────────────────────────────────────────────
+
+/// Poll `/priapi/v5/wallet/agentic/tx-agent-status` until `data[0].status
+/// == "SUCCESS"`. Polling window: 5 s deadline measured between attempts
+/// (1 s sleep between retries); a slow in-flight request can extend the
+/// total wall-clock past 5 s. Returns the first element of `data` on
+/// success, or `None` on timeout / non-success / error (each attempt's
+/// outcome is logged but never aborts the loop).
+pub(super) async fn poll_tx_agent_status(
+    client: &mut WalletApiClient,
+    access_token: &str,
+    tx_hash: &str,
+) -> Option<Value> {
+    const TOTAL_MS: u64 = 5_000;
+    const INTERVAL_MS: u64 = 1_000;
+
+    let deadline = Instant::now() + Duration::from_millis(TOTAL_MS);
+    let mut attempt: u32 = 0;
+    loop {
+        attempt += 1;
+        let query: [(&str, &str); 2] = [("txHash", tx_hash), ("chainIndex", XLAYER_CHAIN_INDEX)];
+        match client
+            .get_authed(
+                "/priapi/v5/wallet/agentic/tx-agent-status",
+                access_token,
+                &query,
+            )
+            .await
+        {
+            Ok(data) => {
+                if let Some(first) = data.as_array().and_then(|arr| arr.first()) {
+                    if first.get("status").and_then(Value::as_str) == Some("SUCCESS") {
+                        eprintln!("[agent-identity] tx-status poll attempt {attempt}: SUCCESS");
+                        return Some(first.clone());
+                    }
+                    eprintln!(
+                        "[agent-identity] tx-status poll attempt {attempt}: status={}",
+                        first.get("status").and_then(Value::as_str).unwrap_or("?")
+                    );
+                } else {
+                    eprintln!(
+                        "[agent-identity] tx-status poll attempt {attempt}: empty data"
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "[agent-identity] tx-status poll attempt {attempt}: err={e:#}"
+                );
+            }
+        }
+        if Instant::now() >= deadline {
+            eprintln!(
+                "[agent-identity] tx-status poll: timeout after {attempt} attempts, returning txHash only"
+            );
+            return None;
+        }
+        sleep(Duration::from_millis(INTERVAL_MS)).await;
     }
 }
 
