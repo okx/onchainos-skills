@@ -77,6 +77,7 @@ This document uses tagged blocks to indicate rule severity. In case of conflict,
 | A6 | `onchainos wallet logout` | Logout and clear all stored credentials                                | No            |
 | A7 | `onchainos wallet chains` | List all supported chains with names and IDs | No |
 | A8 | `onchainos wallet addresses [--chain <chain>]` | Show wallet addresses grouped by chain category (X Layer, EVM, Solana) | No            |
+| A9 | `onchainos wallet qrcode --address <addr>` | Render a Unicode-block QR code for the given address (encoded verbatim) | No            |
 
 ### B — Authenticated Balance
 

@@ -461,6 +461,7 @@ fn wallet_sub(c: &WalletCommand) -> &'static str {
         WalletCommand::Switch { .. } => "switch",
         WalletCommand::Status => "status",
         WalletCommand::Addresses { .. } => "addresses",
+        WalletCommand::Qrcode { .. } => "qrcode",
         WalletCommand::Logout => "logout",
         WalletCommand::Chains => "chains",
         WalletCommand::Balance { .. } => "balance",

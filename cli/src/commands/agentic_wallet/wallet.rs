@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 use clap::Subcommand;
+use qrcode::{render::unicode, QrCode};
 
 #[derive(Subcommand)]
 pub enum WalletCommand {
@@ -33,6 +34,12 @@ pub enum WalletCommand {
         /// Chain name or ID (e.g. "ethereum" or "1", "solana" or "501", "xlayer" or "196")
         #[arg(long)]
         chain: Option<String>,
+    },
+    /// Render a Unicode-block QR code for an address (or any string)
+    Qrcode {
+        /// Address (or arbitrary string) to encode verbatim into the QR
+        #[arg(long)]
+        address: String,
     },
     /// Logout and clear all stored credentials
     Logout,
@@ -272,6 +279,23 @@ async fn resolve_send_amount(
     bail!("Either --amt or --readable-amount is required")
 }
 
+fn cmd_qrcode(address: &str) -> Result<()> {
+    let trimmed = address.trim();
+    if trimmed.is_empty() {
+        bail!("--address must not be empty");
+    }
+    let code = QrCode::new(trimmed.as_bytes())
+        .map_err(|e| anyhow::anyhow!("Failed to encode QR for {}: {}", trimmed, e))?;
+    let rendered = code
+        .render::<unicode::Dense1x2>()
+        .dark_color(unicode::Dense1x2::Light)
+        .light_color(unicode::Dense1x2::Dark)
+        .quiet_zone(true)
+        .build();
+    println!("{}", rendered);
+    Ok(())
+}
+
 pub async fn execute(command: WalletCommand) -> Result<()> {
     match command {
         WalletCommand::Login {
@@ -284,6 +308,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
         WalletCommand::Switch { account_id } => super::account::cmd_switch(&account_id).await,
         WalletCommand::Status => super::account::cmd_status().await,
         WalletCommand::Addresses { chain } => super::account::cmd_addresses(chain.as_deref()).await,
+        WalletCommand::Qrcode { address } => cmd_qrcode(&address),
         WalletCommand::Logout => super::auth::cmd_logout().await,
         WalletCommand::Chains => super::chain::execute(super::chain::ChainCommand::List).await,
         WalletCommand::Balance {
