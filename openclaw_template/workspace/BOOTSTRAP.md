@@ -95,13 +95,12 @@ Run `onchainos wallet status`. If not logged in, prompt the user:
 
 ## Step 4 — Welcome
 
-**This step is controlled by Gate 2.** If Gate 2 said MISSING or stale date, you MUST show the welcome message below and then write the flag:
+**This step is controlled by Gate 2.** If Gate 2 said MISSING or stale date, you MUST:
+1. Output the **exact** welcome message below — do not paraphrase, summarise, or improvise your own version
+2. Write the flag: `echo "$(date +%Y-%m-%d)" > ~/.onchainos/welcome_shown`
+3. Only then respond to the user's query
 
-```bash
-echo "$(date +%Y-%m-%d)" > ~/.onchainos/welcome_shown
-```
-
-**Do not respond to the user's query until the welcome message has been shown and the flag has been written.**
+**Copy this message verbatim:**
 
 > Welcome to onchainos ⛓️
 >
