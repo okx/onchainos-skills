@@ -194,10 +194,6 @@ impl TryFrom<CreateArgs> for ChargeParams {
 #[derive(serde::Serialize)]
 pub struct CreatePaymentOutput {
     pub payment_id: String,
-    /// Amount in minimal units (e.g. "10000" for 0.01 USDT).
-    pub amount: String,
-    /// ERC-20 contract address for the requested symbol.
-    pub currency: String,
     pub deliveries: Option<Value>,
 }
 
@@ -406,27 +402,8 @@ fn parse_create_payment_response(resp: Value) -> Result<CreatePaymentOutput> {
         .as_str()
         .ok_or_else(|| anyhow!("missing 'paymentId' in /payment/create response"))?
         .to_string();
-    let request = resp
-        .pointer("/challenge/data/request")
-        .ok_or_else(|| anyhow!("missing 'challenge.data.request' in /payment/create response"))?;
-    let amount = request
-        .get("amount")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            anyhow!("missing 'challenge.data.request.amount' in /payment/create response")
-        })?
-        .to_string();
-    let currency = request
-        .get("currency")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            anyhow!("missing 'challenge.data.request.currency' in /payment/create response")
-        })?
-        .to_string();
     Ok(CreatePaymentOutput {
         payment_id,
-        amount,
-        currency,
         deliveries: resp.get("deliveries").cloned(),
     })
 }
