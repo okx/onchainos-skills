@@ -469,6 +469,16 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("challenge.data.intent missing"))?
         .to_string();
+    let expires_str = data
+        .get("expires")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("challenge.data.expires missing"))?;
+    let expires_at = chrono::DateTime::parse_from_rfc3339(expires_str)
+        .with_context(|| format!("challenge.data.expires '{expires_str}' is not RFC3339"))?
+        .with_timezone(&chrono::Utc);
+    if expires_at <= chrono::Utc::now() {
+        bail!("challenge expired at {expires_str}");
+    }
     let request = data
         .get("request")
         .ok_or_else(|| anyhow!("challenge.data.request missing"))?;
@@ -494,6 +504,11 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .get("chainId")
         .and_then(Value::as_u64)
         .ok_or_else(|| anyhow!("methodDetails.chainId missing"))?;
+    let authorization_scheme = method_details
+        .get("authorizationType")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("methodDetails.authorizationType missing"))?
+        .to_string();
 
     // Pre-sign safety check: caller's declared amount / symbol / recipient must match
     // the on-server challenge byte-for-byte (recipient is case-insensitive). Bail
@@ -687,7 +702,7 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
             "type": "transaction",
             "signature": signature_hex,
             "authorization": {
-                "type": "eip-3009",
+                "type": authorization_scheme,
                 "from": from_addr_str,
                 "to": recipient,
                 "value": amount,
