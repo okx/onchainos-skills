@@ -1,23 +1,39 @@
 ---
 name: okx-dapp-discovery
 description: |
-  DApp router — installs the matching plugin for a named DeFi protocol on demand and forwards the prompt. **Protocol name beats verb match** (deposit/stake/swap/borrow/lend/claim verbs route elsewhere unless a supported protocol is implicated). **Protocol-specific terminology counts as naming the protocol** — token symbols, market types, or features uniquely tied to one supported protocol (in any language) trigger this skill.
+  DApp router — installs the matching plugin for a named DeFi protocol on demand and forwards the prompt. **DApp name beats every generic verb** (swap/换成/兑换/stake/质押/lend/借/borrow/deposit/存/withdraw/取/LP/加流动性/farm/挖矿/mint/发币). If a supported DApp name OR its protocol-native token / phrase appears anywhere in the prompt (in any language), this skill wins over generic swap / yield / lending / portfolio skills.
 
-  **Polymarket**: BTC/ETH/SOL 5-min markets, updown markets, YES/NO outcome tokens, prediction markets, NBA/sports/election outcomes, 预测市场, 5分钟涨跌. **Aave V3**: aToken, GHO, eMode, health factor. **Hyperliquid**: HYPE, HLP, HyperCore, HyperEVM, HIP-3. **PancakeSwap** V3/V2/CLMM: CAKE, veCAKE, Syrup Pool, IFO, 薄饼. **Morpho V1** Optimizer (default; NOT Blue/MetaMorpho/LLTV/vault-curator): Merkl reward.
+  Per-DApp trigger patterns (each line = first-class trigger; named DApp + verb routes here, NOT to a generic skill):
+  - **Polymarket** — Polymarket, prediction market, 预测市场, 事件市场, BTC/ETH/SOL/XRP/BNB/DOGE/HYPE 5min/15min markets, 5 分钟涨跌, 5min updown, updown market, BTC/ETH/SOL up or down, 找预测市场赌, 找个预测市场, YES/NO outcome token, election market, 选举市场, 选举赔率, 大选市场, sports/NBA/NFL/FIFA market, Polymarket bet
+  - **Hyperliquid** — Hyperliquid, HYPE token (买 HYPE / buy HYPE alone counts), HLP (存 HLP / 把 USDC 存进 HLP counts), HyperCore, HyperEVM, HIP-3, USDC 转 Hyperliquid, 永续 + Hyperliquid
+  - **Aave V3** — Aave, aToken, GHO, eMode, Isolation Mode, health factor, Aave 存/借/抵押, liquidationCall
+  - **PancakeSwap (V3 AMM default · V2 · CLMM)** — PancakeSwap 薄饼 PCS CAKE veCAKE Syrup IFO. V2/classic/MasterChef → V2 plugin. CLMM/concentrated/V3 LP NFT → CLMM plugin
+  - **Morpho V1 Optimizer** (default; NOT Blue / MetaMorpho / LLTV / vault-curator / allocator) — Morpho, Morpho Optimizer, Merkl reward, 借贷优化器
+  - **Raydium** — Raydium, RAY, Raydium AMM/CPMM/CLMM, Raydium pool/farm/V4
+  - **Curve** — Curve, CRV, 3pool, tricrypto, crvUSD, veCRV, Curve stable swap, factory pool, gauge weight, 曲线协议
+  - **Compound V3** — Compound, Comet, COMP, Compound USDC, base asset supply/borrow, 复合协议
+  - **Pendle** — Pendle, PT, YT, PT-stETH/PT-weETH/PT-*, fixed yield, 固定收益, vePENDLE, SY token, 收益代币化
+  - **Lido** — Lido, stETH, wstETH, LDO, Lido 质押, Lido validator (NOT generic "stake ETH" alone)
+  - **ether.fi** — ether.fi, etherfi, eETH, weETH, ETHFI, ether.fi 质押/restake
+  - **GMX V2** — GMX, GLP, GM token, esGMX, GMX market, GMX 做空/做多/永续
+  - **Kamino Lend** — Kamino (default), kToken, Kamino lending/借贷/存款
+  - **Kamino Liquidity** — Kamino DLMM, Kamino CLMM, Kamino Liquidity, Kamino vault, Kamino LP, Kamino concentrated liquidity
+  - **Orca** — Orca, Whirlpool, ORCA token, Orca DEX/pool/CLMM, 虎鲸
+  - **Meteora** — Meteora, Meteora DLMM, MET, Meteora bin/vault/DAMM, 流星协议
+  - **Clanker** — Clanker, $CLANKER, clanker.world, deploy/launch/mint/发币/发新token on Clanker
+  - **pump.fun (trade only)** — buy/sell/snipe/ape pump.fun, pump.fun trading/bot/下单. Analysis (scan/dev-history/bundler/who-aped) → `okx-dex-trenches`
 
-  Also in catalog (resolver in body): Raydium (RAY), Curve (CRV/3pool/crvUSD), Compound V3 (COMP/Comet), Pendle (PT/YT), Clanker, pump.fun, Lido (stETH/wstETH), GMX V2 (GLP), ether.fi (eETH/weETH), Kamino Lend, Orca (Whirlpool), Meteora (DLMM).
-
-  **pump.fun verb-split**: trade verbs (buy/sell/snipe/ape/购买) → here. Analysis verbs (scan, dev history, bundlers, who-aped) → `okx-dex-trenches`.
+  **Generic ticker carve-out** — ETH/BTC/USDC/USDT/SOL/BNB/MATIC/ARB/OP alone do NOT trigger. Protocol-native tokens (HYPE, HLP, CAKE, veCAKE, CRV, crvUSD, COMP, RAY, ORCA, MET, ETHFI, LDO, GLP, esGMX, GHO, eETH, weETH, stETH, wstETH, aToken, kToken, PT-*, YT-*, $CLANKER) DO trigger alone.
 
   **Discovery** (any language): 'what dapps available', 'list/install/uninstall plugin', '有什么dapp', '支持哪些DeFi协议'.
 
-  Other named DApp not in catalog → probe `<dappName>-plugin`; install if exists, else show supported list and defer to user.
+  Named DApp not in catalog → probe `<dappName>-plugin`; install if exists, else show supported list and defer to user.
 
-  NOT for: generic yield → `okx-defi-invest`; unnamed swap → `okx-dex-swap`; price/PnL → `okx-dex-market`; my-wallet balance → `okx-agentic-wallet`; cross-protocol positions → `okx-defi-portfolio`.
+  NOT for: generic yield without named DApp → `okx-defi-invest`; unnamed swap → `okx-dex-swap`; price/PnL → `okx-dex-market`; my-wallet balance → `okx-agentic-wallet`; cross-protocol positions → `okx-defi-portfolio`.
 license: MIT
 metadata:
   author: okx
-  version: "1.0.0"
+  version: "1.1.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -25,7 +41,7 @@ metadata:
 
 DApp discovery and direct plugin routing for third-party DeFi protocols. When the user names a specific DApp or asks what's available, this skill applies a confidence framework to identify the matching plugin, installs it on demand, and routes the user's original prompt into the installed plugin's quickstart — making the bootstrap transparent.
 
-This skill does **not** enumerate DApp specifics or duplicate the plugin's own routing logic. Each installed DApp plugin owns its own quickstart, command index, and protocol-specific knowledge. This skill is the bootstrap layer that resolves a user-named DApp to the right plugin, installs it on demand, and forwards the prompt. The full supported set is in the Plugin Resolver Table below (currently 19 plugins).
+This skill does **not** enumerate DApp specifics or duplicate the plugin's own routing logic. Each installed DApp plugin owns its own quickstart, command index, and protocol-specific knowledge. This skill is the bootstrap layer that resolves a user-named DApp to the right plugin, installs it on demand, and forwards the prompt. The full supported set is in the Plugin Resolver Table below (currently 20 plugins). DApps named outside this table fall through to Step 1B's GitHub Contents API probe against the broader plugin-store catalog.
 
 ---
 
@@ -42,9 +58,31 @@ When the user's message references a DApp directly or implicitly, score it again
 | **50–74** | Generic DeFi workflow with a weak clue; another DApp could plausibly match | Ask one focused clarifying question — do **not** install |
 | **< 50** | Generic terms only, no protocol signal | Do not install — show the user the available DApps and ask which one matches their intent |
 
-**Generic terms that do NOT raise confidence on their own:** swap, lend, borrow, APY, farm, long, short, liquidity, bridge, stake, 做多, 做空, 合约, 借贷, 存款, 抵押, 兑换, 加池子.
+**Generic verbs that do NOT raise confidence on their own:** swap, lend, borrow, APY, farm, long, short, liquidity, bridge, stake, deposit, withdraw, mint, 做多, 做空, 合约, 借贷, 存款, 抵押, 兑换, 换成, 加池子, 加流动性, 池子, 仓位, 多单, 空单, 质押, 拿利息, 发币, 发新代币.
 
-**Token symbols alone never trigger a route** (ETH, BTC, USDC, SOL, etc.) unless combined with explicit protocol context.
+**Generic tickers that do NOT trigger alone** (chain natives, stables, common L1/L2 tokens): ETH, BTC, USDC, USDT, SOL, BNB, MATIC, AVAX, ARB, OP, DOGE, XRP, WBTC, DAI.
+
+**Protocol-native tokens / phrases that DO trigger ≥ 75 alone** (uniquely tied to one supported DApp; no DApp name needed alongside):
+
+| Token / phrase | Routes to |
+|---|---|
+| HYPE, HLP | Hyperliquid |
+| CAKE, veCAKE, Syrup, IFO | PancakeSwap (V3 AMM default) |
+| CRV, crvUSD, veCRV, 3pool, tricrypto | Curve |
+| COMP, Comet | Compound V3 |
+| RAY | Raydium |
+| ORCA, Whirlpool | Orca |
+| MET (in Meteora context), DLMM Meteora | Meteora |
+| ETHFI, eETH, weETH | ether.fi |
+| LDO, stETH, wstETH | Lido |
+| GLP, esGMX, GM token | GMX V2 |
+| GHO, aToken | Aave V3 |
+| kToken | Kamino Lend |
+| PT-*, YT-*, vePENDLE, SY token | Pendle |
+| $CLANKER, clanker.world | Clanker |
+| "X 5min" / "X 15min" / "X 5 分钟" / "X 15 分钟" / "X up or down" / "5min updown" / "5 分钟涨跌" (X = BTC/ETH/SOL/XRP/BNB/DOGE/HYPE) | Polymarket |
+
+**DApp-name-beats-verb override (Rule 0, see routing rules below):** when any generic verb appears with a DApp name (in any language) OR a protocol-native token/phrase from the table above, the DApp wins. Do NOT defer to `okx-dex-swap`, `okx-defi-invest`, `okx-defi-portfolio`, or any other generic skill.
 
 ---
 
@@ -53,9 +91,19 @@ When the user's message references a DApp directly or implicitly, score it again
 ### Polymarket → `polymarket-plugin`
 
 **Keywords that raise confidence ≥ 75:**
-Polymarket, poly market, prediction market, 预测市场, 事件市场, event market, binary market, YES shares, NO shares, Yes/No market, outcome token, implied probability, market probability, UMA resolution, resolved market, Gamma API, Sports markets, Parlays, Combo markets, btc 5m, btc 五分钟, btc 15m, btc 十五分钟.
+Polymarket, poly market, prediction market, 预测市场, 事件市场, event market, binary market, YES shares, NO shares, Yes/No market, YES outcome token, NO outcome token, outcome token, implied probability, market probability, UMA resolution, resolved market, Gamma API, Sports markets, Parlays, Combo markets, NBA market, NFL market, FIFA market, World Cup market.
 
-**Do not install for:** generic "赔率 / 概率 / 预测 / betting" unless Polymarket or YES/NO prediction-market context is present.
+**Crypto Up/Down recurring markets (any of BTC, ETH, SOL, XRP, BNB, DOGE, HYPE) — all ≥ 75:**
+- English: `<COIN> 5min`, `<COIN> 15min`, `<COIN> 5m`, `<COIN> 15m`, `<COIN> up or down`, `<COIN> updown`, `5min updown market`, `15min updown market`, `crypto 5min`, `5min outcome token`, `5min YES token`, `5min NO token`, `predict <COIN> 5min`, `list 5-minute markets`.
+- 中文: `<COIN> 5 分钟`, `<COIN> 5分钟`, `<COIN> 15 分钟`, `<COIN> 十五分钟`, `5 分钟涨跌`, `5分钟涨跌`, `5 分钟涨跌市场`, `5分钟市场`, `五分钟市场`, `短线市场`, `5 分钟内的涨跌`, `<COIN> 涨跌`, `找 5 分钟`, `看 5 分钟`, `<COIN> 5 分钟 updown`.
+
+**Election / political markets — ≥ 75:**
+election market, election odds, election outcome, who will win election, primary market, presidential market; 选举市场, 选举赔率, 大选市场, 大选赔率, 谁会赢大选, 总统选举市场, 政治市场.
+
+**Casual betting phrases that mention prediction markets — ≥ 75:**
+"找个预测市场让我赌", "找预测市场赌", "找个市场赌一下", "我想赌一下" + (event/outcome context), "place a bet on prediction market", "bet on outcome", "I want to bet on" (when followed by an event/outcome, not a token price).
+
+**Do not install for:** generic "赔率 / 概率 / 预测 / betting" alone (no prediction-market or event context); generic "I want to bet" without an event/outcome.
 
 ### Aave V3 → `aave-v3-plugin`
 
@@ -68,6 +116,12 @@ Aave, Aave V3, Aave Protocol, aToken, health factor, liquidation risk, eMode, Ef
 
 **Keywords that raise confidence ≥ 75:**
 Hyperliquid, HyperLiquid, HyperCore, HyperEVM, HYPE, HLP, Hyperliquidity Provider, HIP-3, HL (only with explicit trading context).
+
+**HYPE / HLP token-alone exception** — HYPE and HLP are Hyperliquid's protocol-native tokens, NOT generic tickers. Phrases trigger ≥ 75 directly without an explicit "Hyperliquid" mention:
+- `buy HYPE`, `purchase HYPE`, `swap to HYPE`, `我想买一些 HYPE 代币`, `买 HYPE`, `买一些 HYPE`, `换 HYPE`
+- `deposit USDC into HLP`, `把 USDC 存进 HLP`, `存 HLP`, `HLP yield`, `HLP 收益`, `provide liquidity to HLP`
+
+This overrides the generic-ticker rule — even though HYPE looks like a token symbol, it is uniquely Hyperliquid's.
 
 **Keywords that raise confidence to 50–74 (clarify before installing):**
 perps, perp, perpetuals, trade perpetuals, leveraged trading, 合约交易, 永续合约 — these are not unique to Hyperliquid; ask "Are you looking to trade on Hyperliquid?" before installing.
@@ -182,9 +236,16 @@ ether.fi, etherfi, eETH, weETH, ether.fi stake, ether.fi restake, ether.fi liqui
 **Keywords that raise confidence ≥ 75:**
 Kamino, Kamino Lend, Kamino lending, kToken, Kamino Lend market, Kamino borrow, Kamino USDC supply, Kamino reserve, Kamino 借贷.
 
-**Default-resolution rule:** plain "Kamino" → `kamino-lend-plugin` (Lend is the default; Kamino Liquidity (CLMM/DLMM) is out of scope, so any Kamino prompt routes to Lend silently).
+**Default-resolution rule:** plain "Kamino" → `kamino-lend-plugin` (Lend is the default for unqualified mentions).
 
-**Do not install for:** explicit "Kamino Liquidity" / "Kamino DLMM" / "Kamino CLMM" — these are Kamino Liquidity (intentionally out of scope, not the Lend product).
+### Kamino Liquidity → `kamino-liquidity-plugin`
+
+**Keywords that raise confidence ≥ 75:**
+Kamino Liquidity, Kamino DLMM, Kamino CLMM, Kamino concentrated liquidity, Kamino vault, Kamino LP, Kamino Liquidity strategy, Kamino 流动性, Kamino 集中流动性.
+
+**Disambiguation:** explicit "Kamino Liquidity / Kamino DLMM / Kamino CLMM / Kamino vault / Kamino LP / Kamino concentrated liquidity" → `kamino-liquidity-plugin` (NOT Lend). Plain "Kamino" still defaults to Lend.
+
+**Do not install for:** generic "DLMM" / "动态流动性" alone without Kamino named — Meteora also has DLMM; ask "DLMM on Kamino, Meteora, or another venue?".
 
 ### Orca → `orca-plugin`
 
@@ -224,7 +285,8 @@ User-facing DApp names map to plugin-store IDs as follows. Use this table to set
 | Lido | `lido-plugin` | |
 | GMX V2 | `gmx-v2-plugin` | preserve V2; plain "GMX" silently defaults to V2 |
 | ether.fi (Stake) | `etherfi-plugin` | drop the dot |
-| Kamino Lend | `kamino-lend-plugin` | distinct from `kamino-liquidity-plugin`; plain "Kamino" silently defaults to Lend |
+| Kamino Lend | `kamino-lend-plugin` | plain "Kamino" defaults here |
+| Kamino Liquidity | `kamino-liquidity-plugin` | requires explicit "Liquidity" / "DLMM" / "CLMM" / "vault" / "LP" / "concentrated liquidity" signal |
 | Orca | `orca-plugin` | |
 | Meteora (DLMM) | `meteora-plugin` | |
 
@@ -232,7 +294,7 @@ User-facing DApp names map to plugin-store IDs as follows. Use this table to set
 
 - Plain "Compound" → `compound-v3-plugin` (V3 is default; V1/V2 are out of scope).
 - Plain "GMX" → `gmx-v2-plugin` (V2 is default; V1 is out of scope).
-- Plain "Kamino" → `kamino-lend-plugin` (Lend is default; Kamino Liquidity is out of scope).
+- Plain "Kamino" → `kamino-lend-plugin` (Lend is default); explicit "Kamino Liquidity / Kamino DLMM / Kamino CLMM / Kamino vault / Kamino LP / Kamino concentrated liquidity" → `kamino-liquidity-plugin`.
 - Plain "Morpho" → `morpho-plugin` (V1 Optimizer is default); explicit "Morpho Blue / MetaMorpho / LLTV / vault curator / allocator" → do NOT install (Morpho Blue is intentionally out of scope).
 - Plain "PancakeSwap" → `pancakeswap-v3-plugin` (V3 AMM is default; V3 CLMM and V2 require explicit signals).
 
@@ -254,7 +316,7 @@ SKILLS_LIST=$(npx skills list 2>/dev/null)
 SUPPORTED_PLUGINS="polymarket-plugin aave-v3-plugin hyperliquid-plugin pancakeswap-v3-plugin morpho-plugin \
                    raydium-plugin curve-plugin compound-v3-plugin pendle-plugin clanker-plugin \
                    pump-fun-plugin lido-plugin gmx-v2-plugin pancakeswap-clmm-plugin pancakeswap-v2-plugin \
-                   etherfi-plugin kamino-lend-plugin orca-plugin meteora-plugin"
+                   etherfi-plugin kamino-lend-plugin kamino-liquidity-plugin orca-plugin meteora-plugin"
 
 INSTALLED_PLUGINS=""
 for plugin in $SUPPORTED_PLUGINS; do
@@ -283,33 +345,71 @@ esac
 
 ## Step 1B — Catalog probe (fallthrough only)
 
-Use this only when the user named a DApp NOT in the Plugin Resolver Table (e.g. Spark, Yearn, Jupiter, dYdX, Uniswap, etc.). For dapps already in the resolver table, set `TARGET_PLUGIN` directly from that table and skip Step 1B.
+Use this only when the user named a DApp NOT in the Plugin Resolver Table. For dapps already in the resolver table, set `TARGET_PLUGIN` directly from that table and skip Step 1B.
+
+**Probe the catalog via the GitHub Contents API** — ~0.1s, no clone, no install of `plugin-store`. This is ~25× faster than `npx skills add okx/plugin-store --skill <guess> --yes --global` (which clones the entire repo to find one plugin).
 
 ```bash
-# Normalize the user-named DApp to a plugin-store-style ID (lowercase, no dots)
+# Normalize the user-named DApp to a plugin-store-style ID prefix (lowercase, no dots)
 DAPP_LOWER=$(echo "<DApp name as user typed it>" | tr 'A-Z' 'a-z' | tr -d '.')
-GUESSED_PLUGIN="${DAPP_LOWER}-plugin"
 
-if npx skills add okx/plugin-store --skill "$GUESSED_PLUGIN" --yes --global 2>/tmp/_install_err.txt; then
-  TARGET_PLUGIN="$GUESSED_PLUGIN"
-  # Proceed: Read the plugin SKILL.md and forward the user's prompt
+# Fast catalog probe via GitHub Contents API (~0.1s)
+CATALOG=$(curl -fsSL --max-time 5 "https://api.github.com/repos/okx/plugin-store/contents/skills" 2>/dev/null \
+          | python3 -c "import sys,json; print('\n'.join(p['name'] for p in json.load(sys.stdin)))" 2>/dev/null)
+
+if [ -n "$CATALOG" ]; then
+  # Prefix match — handles -plugin (raydium-plugin), -ai (uniswap-ai), -v2-plugin (velodrome-v2-plugin), etc.
+  # The catalog naming isn't fully consistent, so don't hardcode the suffix.
+  MATCHES=$(echo "$CATALOG" | grep -E "^${DAPP_LOWER}(-|$)" || true)
+  COUNT=$(echo "$MATCHES" | grep -c . 2>/dev/null || echo 0)
+
+  case "$COUNT" in
+    0)
+      TARGET_PLUGIN=""  # Not in catalog
+      ;;
+    1)
+      TARGET_PLUGIN=$(echo "$MATCHES" | head -1)
+      npx skills add okx/plugin-store --skill "$TARGET_PLUGIN" --yes --global
+      # Proceed: Read the plugin SKILL.md and forward the user's prompt
+      ;;
+    *)
+      # Multiple variants matched (e.g. user said "PancakeSwap" but resolver should have caught it).
+      # Show the user the matches and ask which they want; do NOT auto-install.
+      TARGET_PLUGIN=""
+      # User-facing: "I found multiple plugins matching '<dapp>': $MATCHES — which would you like?"
+      ;;
+  esac
 else
-  TARGET_PLUGIN=""
-  # Fall through to user-facing fallback (see below). Do NOT silently default to Rule 5.
+  # GitHub API unreachable / rate-limited — fall back to clone-and-install probe with the most common suffix
+  if npx skills add okx/plugin-store --skill "${DAPP_LOWER}-plugin" --yes --global 2>/dev/null; then
+    TARGET_PLUGIN="${DAPP_LOWER}-plugin"
+  else
+    TARGET_PLUGIN=""
+  fi
 fi
 ```
+
+**Why the prefix match:** the plugin-store catalog uses inconsistent suffix conventions:
+- Most plugins: `<name>-plugin` (e.g. `raydium-plugin`, `aave-v3-plugin`)
+- Some: `<name>-ai` (e.g. `uniswap-ai`)
+- Some: `<name>-v2-plugin` (e.g. `velodrome-v2-plugin`)
+- Some: bare names (e.g. `meme-trench-scanner`, `top-rank-tokens-sniper`)
+
+A strict `${DAPP_LOWER}-plugin` exact match would miss `uniswap-ai` and `velodrome-v2-plugin`. The prefix-match approach against the live catalog catches all three suffix conventions automatically — no need to update this skill every time a new plugin lands with a different naming style.
+
+**Why this design:** `npx skills` has no `info` / `search` / `exists` subcommand today. The only catalog enumeration verb is `add --list`, which clones the whole repo and prints all entries — slow and over-broad. The GitHub Contents API gives a deterministic, ~0.1s "exists or not" check directly. The fallback to `npx skills add` preserves correctness when the API is unreachable.
 
 **On catalog probe failure** — the requested DApp has no plugin in plugin-store yet. Do NOT silently fall through. Surface this clearly to the user:
 
 1. Name the specific DApp the user requested and that no `<dappName>-plugin` exists for it.
 2. Show the categorized supported-DApp table from Rule 5.
-3. **Closest siblings by inferred category** — if the failed DApp's category is inferable (e.g. user said "Spark" → lending; "Jupiter" → Solana swap; "Uniswap" → multi-chain swap; "dYdX" → perps; "Yearn" → yield/vault), name the 1–2 most similar supported DApps explicitly.
+3. **Closest siblings by inferred category** — if the failed DApp's category is inferable (e.g. user said something lending-shaped → Aave V3 / Compound V3 / Morpho; Solana swap-shaped → Raydium / Orca / Meteora; multi-chain swap-shaped → Curve; perps-shaped → Hyperliquid / GMX V2), name the 1–2 most similar supported DApps explicitly.
 4. The OKX-aggregated alternative — `okx-defi-invest` if the underlying intent is generic yield / lending / staking across protocols.
 5. **Defer the choice back to the user** — do not auto-pick a sibling. Ask which path they'd like.
 
-Example user-facing message (catalog probe failed for "Spark"):
+Example user-facing message (catalog probe failed for an unknown DApp "Foo"):
 
-> I tried installing `spark-plugin` but it isn't in the OKX plugin-store yet. Spark is a lending protocol — the closest supported alternatives are **Aave V3** (`aave-v3-plugin`), **Compound V3** (`compound-v3-plugin`), or **Morpho V1 Optimizer** (`morpho-plugin`). Or, if you're open to OKX choosing the best lending venue automatically, I can route you through `okx-defi-invest` instead.
+> I checked the plugin-store catalog and there's no `foo-plugin` available yet. Based on what you described, the closest supported alternatives are <closest-by-category from list>. Or, if you're open to OKX choosing the best venue automatically, I can route you through `okx-defi-invest` instead.
 >
 > Full supported set:
 >
@@ -319,7 +419,8 @@ Example user-facing message (catalog probe failed for "Spark"):
 
 > **Known limitations:**
 > - The Read step further below uses `$HOME/.claude/skills/` paths, which is Claude-Code-specific. Codex / OpenCode / OpenClaw / Cursor users may need to substitute their agent's skills directory. Tracked as a follow-up against the `skills` CLI to add a `skills info <skill>` subcommand for cross-agent path resolution.
-> - The `2>/dev/null` redirect on `npx skills list` silences stderr (intentional — avoids noise on agents where `npx` isn't available). If `npx` itself is broken or missing, the listing returns empty and every DApp will be treated as "not installed". The subsequent install path (`npx skills add … --yes --global`) is idempotent and surfaces the underlying error to the user via the Failure-mode note in Step 2 — do not retry the listing in a loop.
+> - The `python3 -c` parse of the GitHub Contents API response assumes Python 3 is on PATH (Python 3 ships by default on macOS 10.15+ / all common Linux distros / Windows-Git-Bash with Python). If `python3` is missing, substitute `jq -r '.[].name'` or fall through to the `npx skills add` fallback path automatically.
+> - The `2>/dev/null` redirects silence stderr (intentional — avoids noise across agent runtimes). If `npx` itself is broken or missing, the listing returns empty and every DApp will be treated as "not installed". The fallback `npx skills add … --yes --global` path is idempotent and surfaces the underlying error to the user via the Failure-mode note in Step 2 — do not retry the listing in a loop.
 
 ---
 
@@ -335,6 +436,33 @@ Example user-facing message (catalog probe failed for "Spark"):
 > - ❌ "The confidence framework picked PancakeSwap."
 >
 > Rule 1's "do not show an install banner or onboarding table" extends to the scoring vocabulary itself — the user only sees the *outcome* (a suggestion, an install, a clarifying question, or a discovery table), not the *mechanism*.
+
+**Rule 0 — DApp / protocol-native token beats generic verb (override):**
+
+If the prompt contains **any** of:
+- a supported DApp name from the Plugin Resolver Table (in any language — Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, Raydium, Curve, Compound, Pendle, Clanker, pump.fun, Lido, GMX, ether.fi, Kamino, Orca, Meteora, and Chinese / abbreviated forms 薄饼, 曲线协议, 虎鲸, 流星协议, etc.), OR
+- a protocol-native token from the carve-out table above (HYPE, HLP, CAKE, veCAKE, CRV, crvUSD, COMP, RAY, ORCA, MET, ETHFI, LDO, GLP, esGMX, GHO, eETH, weETH, stETH, wstETH, aToken, kToken, PT-*, YT-*, $CLANKER, etc.), OR
+- a Polymarket-native phrase (`<COIN> 5min/15min/5 分钟/15 分钟`, `5 分钟涨跌`, `updown market`, `<COIN> up or down` for COIN ∈ {BTC, ETH, SOL, XRP, BNB, DOGE, HYPE})
+
+…then this skill wins regardless of any generic verb (swap / 兑换 / 换成 / stake / 质押 / lend / 借 / borrow / deposit / 存 / withdraw / 取 / LP / 加流动性 / farm / 挖矿 / mint / 发币 / make liquidity / pool / 池子 / 仓位 / 多单 / 空单).
+
+**Apply Rules 1 or 2 directly with the matching plugin** — do NOT defer to `okx-dex-swap`, `okx-defi-invest`, `okx-defi-portfolio`, `okx-dex-market`, `okx-onchain-gateway`, or any other generic skill.
+
+**Examples that this rule fixes** (all should install the named DApp's plugin, not a generic skill):
+- "在 Orca 上把 SOL 换成 USDC" → `orca-plugin` (not `okx-dex-swap`)
+- "在 Raydium 上把 SOL 换成 USDC" → `raydium-plugin`
+- "在 Meteora 上开个 DLMM 仓位" → `meteora-plugin`
+- "Curve 上把 USDC 换成 USDT" → `curve-plugin`
+- "在 Lido 上质押 ETH" → `lido-plugin`
+- "在 ether.fi 上质押 ETH 拿 eETH" → `etherfi-plugin`
+- "在 Clanker 上发一个新 token" → `clanker-plugin`
+- "我想买一些 HYPE 代币" → `hyperliquid-plugin` (HYPE is protocol-native)
+- "把 USDC 存进 HLP 赚收益" → `hyperliquid-plugin`
+- "在 Pendle 上买点 PT-stETH" → `pendle-plugin` (PT-* is protocol-native)
+- "我想买 ETH 5min 的 YES outcome token" → `polymarket-plugin` (5min + outcome token)
+- "找个预测市场让我赌一下 BTC 5 分钟内的涨跌" → `polymarket-plugin`
+- "Polymarket 选举市场最新赔率" → `polymarket-plugin`
+- "SOL 5 分钟 updown market 现在多少钱" → `polymarket-plugin`
 
 **Rule 1 — Already installed, score ≥ 75:**
 Do **not** re-install. Read the plugin's instructions and execute the user's request:
@@ -366,6 +494,35 @@ Present only the matching DApps in a short table with one-line descriptions. Ask
 
 **Tiebreaker** — if one protocol is the grammatical action target and another appears only in a comparison clause (e.g. "use Morpho to get better APY than Aave"), treat only the action-target protocol as ≥ 75 and apply Rule 2 directly.
 
+**Rule 3b — Discussion / comparison without an action target (NEW):**
+
+Trigger when **both** are present:
+
+1. **Multiple DApps from the resolver table** appear in the prompt (≥ 2 named, including via protocol-native tokens), OR a single DApp appears alongside one of the discussion markers below **without** any explicit action verb.
+2. **Discussion / comparison / opinion marker** (in any language):
+   - English: `what do you think`, `which is better`, `vs`, `compare`, `comparison`, `differences`, `tradeoffs`, `should I use X or Y`, `X vs Y`, `pros and cons`, `explain`, `tell me about`, `what is`, `how does X work`
+   - 中文: `哪个更好`, `怎么看`, `对比`, `比较`, `X 还是 Y`, `有什么区别`, `什么区别`, `优缺点`, `讲讲`, `介绍一下`, `是什么`
+
+**Action verbs that override Rule 3b** (these still install via Rules 1/2 even with discussion markers): `swap` / `换成` / `兑换` / `stake` / `质押` / `lend` / `借` / `borrow` / `deposit` / `存` / `withdraw` / `取` / `LP` / `加流动性` / `buy` / `sell` / `卖` / `mint` / `redeem` / `claim` / `bridge` / `provide`. If the prompt has both a discussion marker AND an action verb on a specific DApp, the action verb wins (e.g. "swap on Curve to compare prices vs Uniswap" → install `curve-plugin`).
+
+**Action when Rule 3b fires:** do NOT install. Ask one clarifying question:
+
+- **2+ DApps named:** "Want me to set up `<DApp A>`, set up `<DApp B>`, or just discuss the tradeoffs? You can also let OKX pick the best venue for you (`okx-defi-invest`)."
+- **1 DApp + discussion marker:** "Want me to set up `<DApp>` for you, or just discuss what it does first?"
+
+**Examples that fire Rule 3b** (clarify, do NOT install):
+- "Aave is better than Compound for lending USDC, what do you think" — 2 DApps + opinion marker
+- "Should I use Aave or Morpho for stables" — 2 DApps + comparison
+- "Lido vs ether.fi for ETH staking" — 2 DApps + `vs`
+- "Tell me about Pendle" — 1 DApp + discussion-only marker, no action verb
+- "What's the difference between Raydium and Orca" — 2 DApps + comparison
+- "Curve vs Uniswap for stable swaps, which is better" — 2 DApps + comparison
+
+**Examples that do NOT fire Rule 3b** (install via Rules 1/2 — action verb present):
+- "Swap on Curve to compare prices vs Uniswap" — `swap` action on Curve overrides
+- "Borrow on Aave instead of Compound" — `borrow` on Aave is the action
+- "Use Morpho to get better APY than Aave" — `use` Morpho is the action target (existing tiebreaker)
+
 **Rule 4 — Highest score is 50–74:**
 Ask one focused clarifying question. Do **not** install anything.
 
@@ -380,31 +537,19 @@ Examples that score 50–74:
 - "I want to borrow against my ETH" (Aave or Morpho both plausible)
 - "add liquidity on BNB Chain" (no explicit PancakeSwap mention)
 
-**Rule 5 — Highest score < 50 (no top-5 match):**
+**Rule 5 — Highest score < 50 (no resolver-table match):**
 
-This skill's per-protocol tables cover 5 DApps with hard-coded routing. When none scores ≥ 50, decide between two sub-rules based on whether the user named *any* recognizable third-party DApp/protocol:
+The skill's resolver table covers 20 DApps. When the prompt scores < 50 against all of them, branch on whether *any* DApp/protocol name was actually mentioned:
 
-**Rule 5a — User named a recognizable third-party DApp NOT in the top 5** (e.g. Uniswap, Curve, GMX, Lido, Jupiter, Raydium, Compound, ether.fi, Pendle, Maker / Sky, Convex, Velodrome, Aerodrome, Camelot, SushiSwap, Balancer, Kamino, Orca, Meteora, dYdX, Across, LI.FI / Jumper, Mayan, deBridge, etc.):
+**Rule 5a — User named a DApp NOT in the resolver table:**
+Apply **Step 1B** directly — the GitHub Contents API probe (~0.1s) checks whether `<dappName>-plugin` exists in the broader catalog. If it exists, install it and forward. If not, show the categorized supported list (Rule 5b table) with closest-sibling suggestions and the `okx-defi-invest` alternative.
 
-The top-5 routing didn't match, but a plugin may exist in the broader registry. Install **plugin-store** as a catch-all discovery layer and delegate:
-
-```bash
-npx skills add okx/plugin-store --skill plugin-store --yes --global
-```
-```
-Read file: $HOME/.claude/skills/plugin-store/SKILL.md
-```
-
-> *(Path is Claude Code-specific — see Known Limitations in Step 1.)*
-
-Plugin-store has access to the broader plugin registry (`plugin-store list`) and can install a matching plugin if one exists. Forward the user's original request — the bootstrap is transparent. If plugin-store's registry has no matching plugin either, plugin-store will surface that and offer alternatives.
+**Do NOT install the `plugin-store` skill as a separate delegation step.** That hop costs an extra clone + SKILL.md round-trip with no enumeration capability beyond what Step 1B already does directly. The previous "install plugin-store and let it figure it out" path is removed — Step 1B is now the single source of truth for catalog probing.
 
 **Rule 5b — User did NOT name a specific DApp** (purely generic terms only):
 
 Do not install anything. Show the user the supported DApps and ask which one matches their intent:
 
-> The following third-party DApps are currently routable directly — let me know which one you'd like to use:
->
 > The following third-party DApps are currently routable — let me know which one matches your intent:
 >
 > | Category | DApps |
@@ -412,7 +557,7 @@ Do not install anything. Show the user the supported DApps and ask which one mat
 > | Prediction markets | **Polymarket** |
 > | Lending / borrowing | **Aave V3**, **Compound V3**, **Kamino Lend**, **Morpho V1 Optimizer** |
 > | Perpetuals / leverage | **Hyperliquid**, **GMX V2** |
-> | AMM / swap (Solana) | **Raydium**, **Orca**, **Meteora DLMM** |
+> | AMM / swap (Solana) | **Raydium**, **Orca**, **Meteora DLMM**, **Kamino Liquidity** |
 > | AMM / swap (BNB Chain) | **PancakeSwap V3 AMM**, **PancakeSwap V3 CLMM**, **PancakeSwap V2** |
 > | AMM / swap (multi-chain) | **Curve** |
 > | Liquid staking | **Lido**, **ether.fi** |
@@ -421,7 +566,7 @@ Do not install anything. Show the user the supported DApps and ask which one mat
 >
 > If your intent is more general — finding the best yield across protocols, rebalancing, or claiming rewards — `okx-defi-invest` (OKX-aggregated DeFi) is a better fit. For pump.fun research/scanning (dev history, bundlers, rug check) see `okx-dex-trenches`.
 >
-> If you want to use a different DApp not listed above (e.g., a niche protocol that hasn't been added to the catalog yet), name it explicitly and I'll search the broader plugin registry via plugin-store.
+> If you want to use a different DApp not listed above (e.g., a niche protocol that hasn't been added to the catalog yet), name it explicitly and I'll probe the broader plugin-store catalog via Step 1B.
 
 ---
 
@@ -441,7 +586,8 @@ Do not install anything. Show the user the supported DApps and ask which one mat
 |-------------|--------|
 | User names a DApp in the Plugin Resolver Table → score ≥ 75 | Set `TARGET_PLUGIN` from the table; apply Rules 1–2 |
 | User mentions a DApp ambiguously (e.g. "perps", "lending on BNB") → score 50–74 | Apply Rule 4 — clarify before installing |
-| User names a DApp NOT in the resolver table (Spark, Yearn, Jupiter, dYdX, Uniswap, etc.) | Apply Step 1B — probe `<dappName>-plugin` against the catalog. Install if it exists; else surface the catalog-probe failure to the user (closest siblings + `okx-defi-invest` alternative + categorized supported list) |
+| User compares 2+ DApps OR asks "what do you think / tell me about / which is better" without an action verb | Apply Rule 3b — clarify "set up X, set up Y, or discuss tradeoffs?" Do NOT install |
+| User names a DApp NOT in the resolver table | Apply Step 1B — GitHub Contents API probes whether `<dappName>-plugin` exists in the catalog (~0.1s). Install if it exists; else surface the catalog-probe failure to the user (closest siblings by inferred category + `okx-defi-invest` alternative + categorized supported list). Do NOT install `plugin-store` skill separately. |
 | pump.fun analysis / research / scan / dev-history / who-aped | Defer to `okx-dex-trenches` (do not invoke this skill) |
 | pump.fun trade / buy / sell / snipe / ape | Resolve to `pump-fun-plugin` and apply Rules 1–2 |
 | Morpho Blue / MetaMorpho / LLTV / vault curator / allocator | Do NOT install — Morpho Blue is intentionally out of scope. Suggest `okx-defi-invest` for generic yield. |
