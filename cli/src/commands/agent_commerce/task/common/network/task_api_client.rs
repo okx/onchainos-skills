@@ -67,21 +67,24 @@ impl TaskApiClient {
     }
 
     fn build(base_url_override: Option<String>) -> Self {
-        let effective_url = base_url_override.clone().unwrap_or_else(|| {
-            std::env::var("TASK_BASE_URL")
-                .ok()
-                .unwrap_or_else(|| TASK_BASE_URL.to_string())
-        });
-        let wallet = WalletApiClient::with_base_url(Some(effective_url.as_str()))
+        // base_url 解析 —— 跟 WalletApiClient::with_base_url 的优先级保持一致，
+        // 这样 eprintln 里展示的 URL 跟 wallet 实际发请求的 URL 不会撕裂。
+        // 优先级：OKX_BASE_URL env > 编译时 OKX_BASE_URL > 显式 override > TASK_BASE_URL env > 常量
+        let base_url = std::env::var("OKX_BASE_URL")
+            .ok()
+            .or_else(|| option_env!("OKX_BASE_URL").map(str::to_string))
+            .or(base_url_override)
+            .or_else(|| std::env::var("TASK_BASE_URL").ok())
+            .unwrap_or_else(|| TASK_BASE_URL.to_string());
+
+        let wallet = WalletApiClient::with_base_url(Some(base_url.as_str()))
             .expect("failed to create WalletApiClient");
 
-        let base_url = base_url_override.unwrap_or_else(|| {
-            std::env::var("TASK_BASE_URL")
-                .ok()
-                .unwrap_or_else(|| TASK_BASE_URL.to_string())
-        });
-
-        Self { wallet, raw_http: reqwest::Client::new(), base_url }
+        Self {
+            wallet,
+            raw_http: reqwest::Client::new(),
+            base_url,
+        }
     }
 
     // ─── URL / path 辅助 ─────────────────────────────────────────────────
