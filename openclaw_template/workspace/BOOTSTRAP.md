@@ -65,6 +65,8 @@ Run `onchainos wallet status`. If not logged in, prompt the user:
 
 ## Step 4 — Welcome
 
+**Always show this welcome message on the first message of every session, after all previous steps pass.**
+
 > Welcome to onchainos ⛓️
 >
 > **Workflows** — just say what you want:
