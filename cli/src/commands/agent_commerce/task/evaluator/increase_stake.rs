@@ -40,6 +40,7 @@ pub async fn handle_increase_stake(client: &mut TaskApiClient, amount: &str) -> 
         &address,
         "",
         signing::BizContext::StakeIncrease,
+        &agent_id,
     )
     .await?;
 

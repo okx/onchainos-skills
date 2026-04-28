@@ -10,11 +10,25 @@ use anyhow::Result;
 
 use super::negotiate;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::signing;
 
 /// 查询推荐卖家（默认模式：调用 API + 缓存）
-pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str) -> Result<()> {
+pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str, agent_id: &str) -> Result<()> {
+    // --agent-id 未传时，从本地身份列表解析 buyer agentId（不查任务详情）
+    let resolved;
+    let agent_id = if agent_id.is_empty() {
+        use crate::commands::agent_commerce::task::common::AGENT_ROLE_BUYER;
+        resolved = signing::resolve_agent_id_by_role(AGENT_ROLE_BUYER).await?;
+        if resolved.is_empty() {
+            anyhow::bail!("未传 --agent-id 且本地无 buyer 身份，请先注册或传入 --agent-id");
+        }
+        &resolved
+    } else {
+        agent_id
+    };
+
     let url = client.endpoint(job_id, "match");
-    let resp = client.post(&url, &serde_json::json!({})).await?;
+    let resp = client.post_with_identity(&url, &serde_json::json!({}), agent_id).await?;
     let recs = resp["recommendations"].as_array()
         .cloned().unwrap_or_default();
 

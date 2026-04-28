@@ -15,7 +15,8 @@ use tokio::process::Command;
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{
-    AGENT_ROLE_EVALUATOR, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
+    AGENT_ROLE_BUYER, AGENT_ROLE_EVALUATOR, AGENT_ROLE_PROVIDER,
+    XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
 };
 use crate::wallet_api::UnsignedInfoResponse;
 
@@ -82,7 +83,13 @@ pub async fn resolve_wallet_and_agent_for_task(
     client: &mut TaskApiClient,
     job_id: &str,
 ) -> Result<(String, String, String)> {
-    let resp = client.get(&client.task_path(job_id)).await?;
+    // 先通过本地身份列表拿 buyer agentId，用于 GET 请求带 agenticId header
+    let local_agent_id = resolve_agent_by_role(AGENT_ROLE_BUYER, "buyer（买家）")
+        .await
+        .map(|(id, _)| id)
+        .unwrap_or_default();
+
+    let resp = client.get_with_identity(&client.task_path(job_id), &local_agent_id).await?;
 
     let task = &resp["task"];
     let buyer_address = task["buyerAgentAddress"]
@@ -105,7 +112,13 @@ pub async fn resolve_wallet_and_agent_for_provider(
     client: &mut TaskApiClient,
     job_id: &str,
 ) -> Result<(String, String, String)> {
-    let resp = client.get(&client.task_path(job_id)).await?;
+    // 先通过本地身份列表拿 provider agentId，用于 GET 请求带 agenticId header
+    let local_agent_id = resolve_agent_by_role(AGENT_ROLE_PROVIDER, "provider（卖家）")
+        .await
+        .map(|(id, _)| id)
+        .unwrap_or_default();
+
+    let resp = client.get_with_identity(&client.task_path(job_id), &local_agent_id).await?;
 
     let task = &resp["task"];
     let provider_agent_id = task["providerAgentId"]
@@ -185,6 +198,21 @@ pub async fn resolve_wallet_and_agent_for_evaluator() -> Result<(String, String,
     Ok((account_id, address, agent_id))
 }
 
+/// 仅解析 agentId（不解析 wallet），用于只读查询命令 fallback。
+/// 失败返回 Ok(String::new())，不阻断调用方。
+pub async fn resolve_agent_id_by_role(role_code: i64) -> Result<String> {
+    let label = match role_code {
+        1 => "buyer（买家）",
+        2 => "provider（卖家）",
+        3 => "evaluator（仲裁者）",
+        _ => "unknown",
+    };
+    Ok(resolve_agent_by_role(role_code, label)
+        .await
+        .map(|(id, _)| id)
+        .unwrap_or_default())
+}
+
 /// 签名 uopData + 广播上链（纯签名广播，不含 API 请求）
 ///
 /// 接收后端返回的 `uopData`，签名后通过 `TaskApiClient` 广播到链上，返回 txHash。
@@ -198,6 +226,7 @@ pub async fn sign_uop_and_broadcast(
     address: &str,
     job_id: &str,
     biz_context: BizContext,
+    agent_id: &str,
 ) -> Result<String> {
     if uop_data.is_null() {
         bail!("后端未返回 uopData，无法签名上链");
@@ -221,7 +250,7 @@ pub async fn sign_uop_and_broadcast(
         "bizType": biz_context as i32,
     });
 
-    let bc_resp = client.post(client.broadcast_path(), &broadcast_body).await
+    let bc_resp = client.post_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
         .map_err(|e| anyhow::anyhow!("广播失败: {e}"))?;
 
     Ok(bc_resp[0]["txHash"]
@@ -275,7 +304,7 @@ pub async fn task_dual_sign_and_broadcast(
 
     // Step 4: Sign uopHash + broadcast
     let tx_hash = sign_uop_and_broadcast(
-        client, &main_resp["uopData"], account_id, address, job_id, biz_context,
+        client, &main_resp["uopData"], account_id, address, job_id, biz_context, agent_id,
     ).await?;
 
     Ok(BroadcastResult { api_response: main_resp, tx_hash })

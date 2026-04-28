@@ -75,6 +75,8 @@ pub enum DisputeCommand {
     /// Retrieves dispute details
     Info {
         dispute_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
     },
     /// Upload offchain evidence (multipart, 1h preparation window only) — 买卖双方共用
     Upload {
@@ -114,8 +116,8 @@ pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
     match cmd {
         DisputeCommand::Raise { job_id, reason } =>
             dispute_raise::handle_dispute_raise(&mut client, &job_id, &reason).await,
-        DisputeCommand::Info { dispute_id } =>
-            dispute_info::handle_dispute_info(&mut client, &dispute_id).await,
+        DisputeCommand::Info { dispute_id, agent_id } =>
+            dispute_info::handle_dispute_info(&mut client, &dispute_id, agent_id.as_deref().unwrap_or("")).await,
         DisputeCommand::Upload { job_id, agent_id, text, images } =>
             dispute_upload::handle_upload_evidence(
                 &mut client, &job_id, &agent_id, text.as_deref(), &images,

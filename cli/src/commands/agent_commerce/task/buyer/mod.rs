@@ -61,6 +61,9 @@ pub enum TaskCommand {
     /// Get recommended providers for a task
     Recommend {
         job_id: String,
+        /// Agent identity (agenticId header)
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
         /// Show next provider (advance index) from cached list
         #[arg(long)]
         next: bool,
@@ -71,6 +74,8 @@ pub enum TaskCommand {
     /// Get current task status
     Status {
         job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
     },
     /// List tasks
     List {
@@ -82,6 +87,8 @@ pub enum TaskCommand {
         page: u32,
         #[arg(long, default_value = "20")]
         limit: u32,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
     },
     /// Client confirms provider and stakes funds into escrow
     ConfirmAccept {
@@ -123,10 +130,14 @@ pub enum TaskCommand {
     /// Provider generates payment invoice after provider_applied
     Payment {
         job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
     },
     /// Client manually transfers payment to provider (non-escrow mode)
     Pay {
         job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
     },
     /// Client claims refund/reward after arbitration
     Claim {
@@ -164,13 +175,13 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         // ── 买家动作 ─────────────────────────────────────────────
         TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title } =>
             create::handle_create(&mut client, description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title).await,
-        TaskCommand::Recommend { job_id, next, current } => {
+        TaskCommand::Recommend { job_id, agent_id, next, current } => {
             if next {
                 recommend::handle_recommend_next(&job_id)
             } else if current {
                 recommend::handle_recommend_current(&job_id)
             } else {
-                recommend::handle_recommend(&mut client, &job_id).await
+                recommend::handle_recommend(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await
             }
         }
         TaskCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id } =>
@@ -191,14 +202,14 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             judge::handle_judge(&mut client, &job_id).await,
 
         // ── 只读查询 ─────────────────────────────────────────────
-        TaskCommand::Status { job_id } =>
-            query::handle_status(&mut client, &job_id).await,
-        TaskCommand::List { role, status, page, limit } =>
-            query::handle_list(&mut client, role.as_deref(), status.as_deref(), page, limit).await,
-        TaskCommand::Payment { job_id } =>
-            query::handle_payment(&mut client, &job_id).await,
-        TaskCommand::Pay { job_id } =>
-            query::handle_pay(&mut client, &job_id).await,
+        TaskCommand::Status { job_id, agent_id } =>
+            query::handle_status(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await,
+        TaskCommand::List { role, status, page, limit, agent_id } =>
+            query::handle_list(&mut client, role.as_deref(), status.as_deref(), page, limit, agent_id.as_deref().unwrap_or("")).await,
+        TaskCommand::Payment { job_id, agent_id } =>
+            query::handle_payment(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await,
+        TaskCommand::Pay { job_id, agent_id } =>
+            query::handle_pay(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await,
 
         // ── 占位实现 ─────────────────────────────────────────────
         TaskCommand::RejectApply { job_id, provider, reason } => {

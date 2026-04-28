@@ -376,7 +376,7 @@ async fn run_context(
     // 调用后端获取任务详情
     let mut client = network::task_api_client::TaskApiClient::with_base_url(api_url.to_string());
     let resp_val = client
-        .get(&client.task_path(job_id))
+        .get_with_identity(&client.task_path(job_id), agent_id.unwrap_or(""))
         .await
         .map_err(|e| anyhow::anyhow!("无法获取任务详情（{api_url}）: {e}"))?;
 

@@ -22,7 +22,7 @@ pub async fn handle_claim(client: &mut TaskApiClient) -> Result<()> {
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
-        "", signing::BizContext::ClaimRewards,
+        "", signing::BizContext::ClaimRewards, &agent_id,
     ).await?;
 
     println!("reward claim submitted (account={address})");

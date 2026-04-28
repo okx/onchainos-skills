@@ -116,12 +116,16 @@ impl TaskApiClient {
 
     // ─── 请求方法（接收 path，非完整 URL）────────────────────────────────
 
-    /// GET + JWT → 返回 data
+    /// GET + JWT → 返回 data（自动注入 sessionCert query param）
     pub async fn get(&mut self, path: &str) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
         let token = get_access_token().await;
+        let cert = get_session_cert();
+        let query: Vec<(&str, &str)> = cert.as_deref()
+            .map(|c| vec![("sessionCert", c)])
+            .unwrap_or_default();
         eprintln!("[TaskAPI] GET {url} | headers: Authorization=Bearer(len={})", token.len());
-        let result = self.wallet.get_authed(path, &token, &[]).await;
+        let result = self.wallet.get_authed(path, &token, &query).await;
         match &result {
             Ok(data) => eprintln!("[TaskAPI] GET {url} ← {data}"),
             Err(e) => eprintln!("[TaskAPI] GET {url} ← ERROR: {e}"),
@@ -129,8 +133,7 @@ impl TaskApiClient {
         result
     }
 
-    /// GET + JWT + 身份头（agenticId）→ 返回 data。
-    /// 用于需要 evaluator 身份的 GET 端点（canReveal / claimable 等）。
+    /// GET + JWT + 身份头（agenticId）→ 返回 data（自动注入 sessionCert query param）。
     pub async fn get_with_identity(
         &mut self,
         path: &str,
@@ -138,10 +141,14 @@ impl TaskApiClient {
     ) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
         let token = get_access_token().await;
+        let cert = get_session_cert();
+        let query: Vec<(&str, &str)> = cert.as_deref()
+            .map(|c| vec![("sessionCert", c)])
+            .unwrap_or_default();
         eprintln!("[TaskAPI] GET {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}", token.len());
         let headers = [("agenticId", agent_id)];
         let result = self.wallet
-            .get_authed_with_headers(path, &token, &[], Some(&headers))
+            .get_authed_with_headers(path, &token, &query, Some(&headers))
             .await;
         match &result {
             Ok(data) => eprintln!("[TaskAPI] GET {url} ← {data}"),

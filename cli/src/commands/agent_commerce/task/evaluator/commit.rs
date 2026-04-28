@@ -32,7 +32,7 @@ pub async fn handle_commit(client: &mut TaskApiClient, dispute_id: &str, side: u
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
-        &job_id, signing::BizContext::VoteCommit,
+        &job_id, signing::BizContext::VoteCommit, &agent_id,
     ).await?;
 
     let side_label = if side == 1 { "Provider wins (Approve)" } else { "Client wins (Reject)" };

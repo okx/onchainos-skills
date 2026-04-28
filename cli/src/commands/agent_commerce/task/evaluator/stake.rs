@@ -52,6 +52,7 @@ pub async fn handle_stake(client: &mut TaskApiClient, amount: &str) -> Result<()
         &address,
         "",
         signing::BizContext::Stake,
+        &agent_id,
     )
     .await?;
 

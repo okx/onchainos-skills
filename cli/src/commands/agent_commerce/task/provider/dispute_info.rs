@@ -4,9 +4,20 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::signing;
 
-pub async fn handle_dispute_info(client: &mut TaskApiClient, dispute_id: &str) -> Result<()> {
-    let resp = client.get(&format!("/priapi/v1/aieco/task/dispute/{dispute_id}")).await?;
+pub async fn handle_dispute_info(client: &mut TaskApiClient, dispute_id: &str, agent_id: &str) -> Result<()> {
+    let agent_id = if agent_id.is_empty() {
+        // dispute 可能是 buyer 或 provider 查看，尝试 buyer 再 provider
+        use crate::commands::agent_commerce::task::common::{AGENT_ROLE_BUYER, AGENT_ROLE_PROVIDER};
+        let id = signing::resolve_agent_id_by_role(AGENT_ROLE_BUYER).await.unwrap_or_default();
+        if id.is_empty() {
+            signing::resolve_agent_id_by_role(AGENT_ROLE_PROVIDER).await.unwrap_or_default()
+        } else { id }
+    } else {
+        agent_id.to_string()
+    };
+    let resp = client.get_with_identity(&format!("/priapi/v1/aieco/task/dispute/{dispute_id}"), &agent_id).await?;
     print_dispute_info(dispute_id, &resp);
     Ok(())
 }

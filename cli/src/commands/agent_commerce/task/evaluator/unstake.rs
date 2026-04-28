@@ -57,6 +57,7 @@ pub async fn handle_request_unstake(client: &mut TaskApiClient, amount: &str) ->
         &address,
         "",
         signing::BizContext::UnstakeRequest,
+        &agent_id,
     )
     .await?;
 
@@ -90,6 +91,7 @@ pub async fn handle_claim_unstake(client: &mut TaskApiClient) -> Result<()> {
         &address,
         "",
         signing::BizContext::UnstakeClaim,
+        &agent_id,
     )
     .await?;
 
@@ -120,6 +122,7 @@ pub async fn handle_cancel_unstake(client: &mut TaskApiClient) -> Result<()> {
         &address,
         "",
         signing::BizContext::UnstakeCancel,
+        &agent_id,
     )
     .await?;
 

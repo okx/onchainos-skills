@@ -29,7 +29,7 @@ pub async fn handle_deliver(
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
-        job_id, signing::BizContext::JobSubmit,
+        job_id, signing::BizContext::JobSubmit, &agent_id,
     ).await?;
 
     println!("✓ 交付物已提交，等待链上确认（job_submitted）");

@@ -47,7 +47,7 @@ pub async fn handle_confirm_accept(
 
     signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
-        job_id, signing::BizContext::JobSetPaymentMode,
+        job_id, signing::BizContext::JobSetPaymentMode, &agent_id,
     ).await?;
     println!("✓ 支付方式已设置: {payment_mode} ({mode_int})");
 
@@ -60,7 +60,7 @@ pub async fn handle_confirm_accept(
             })?;
 
             // 从任务详情获取金额和币种
-            let task_resp = client.get(&client.task_path(job_id)).await?;
+            let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
             let task = &task_resp["task"];
             let amount = task["tokenAmount"].as_str().unwrap_or("0").to_string();
             let symbol = task["paymentTokenSymbol"].as_str().unwrap_or("USDT").to_string();
@@ -124,7 +124,7 @@ pub async fn handle_confirm_accept(
 
             let tx_hash = signing::sign_uop_and_broadcast(
                 client, &resp["uopData"], &account_id, &address,
-                job_id, signing::BizContext::JobAccept,
+                job_id, signing::BizContext::JobAccept, &agent_id,
             ).await?;
             println!("✓ 已接受卖家 {provider}（担保支付），资金已托管");
             println!("  txHash: {tx_hash}");
@@ -136,7 +136,7 @@ pub async fn handle_confirm_accept(
             })?;
 
             // 从任务详情获取金额、币种和卖家地址
-            let task_resp = client.get(&client.task_path(job_id)).await?;
+            let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
             let task = &task_resp["task"];
             let amount = task["tokenAmount"].as_str().unwrap_or("0").to_string();
             let symbol = task["paymentTokenSymbol"].as_str().unwrap_or("USDT").to_string();
@@ -179,7 +179,7 @@ pub async fn handle_confirm_accept(
 
             let tx_hash = signing::sign_uop_and_broadcast(
                 client, &resp["uopData"], &account_id, &address,
-                job_id, signing::BizContext::JobAccept,
+                job_id, signing::BizContext::JobAccept, &agent_id,
             ).await?;
             println!("✓ 已接受卖家 {provider}（非担保支付），状态 → accepted");
             println!("  txHash: {tx_hash}");
@@ -205,7 +205,7 @@ pub async fn handle_confirm_accept(
             }
 
             // 检查 feeTokenSymbol 与任务创建时 currency 是否一致
-            let task_resp = client.get(&client.task_path(job_id)).await?;
+            let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
             let task_currency = task_resp["task"]["paymentTokenSymbol"]
                 .as_str().unwrap_or("");
             if !task_currency.is_empty() && !task_currency.eq_ignore_ascii_case(sym) {
@@ -231,7 +231,7 @@ pub async fn handle_confirm_accept(
 
             let tx_hash = signing::sign_uop_and_broadcast(
                 client, &resp["uopData"], &account_id, &address,
-                job_id, signing::BizContext::JobAccept,
+                job_id, signing::BizContext::JobAccept, &agent_id,
             ).await?;
             println!("✓ 已接受卖家 {provider}（x402 支付），金额: {amt} {sym}");
             println!("  txHash: {tx_hash}");

@@ -65,12 +65,16 @@ pub enum AgentCommand {
     /// Get recommended providers for a task
     Recommend {
         job_id: String,
+        #[arg(long = "agent-id")] agent_id: Option<String>,
         #[arg(long)] next: bool,
         #[arg(long)] current: bool,
     },
 
     /// Get current task status
-    Status { job_id: String },
+    Status {
+        job_id: String,
+        #[arg(long = "agent-id")] agent_id: Option<String>,
+    },
 
     /// List tasks
     List {
@@ -78,6 +82,7 @@ pub enum AgentCommand {
         #[arg(long)] status: Option<String>,
         #[arg(long, default_value = "1")]  page: u32,
         #[arg(long, default_value = "20")] limit: u32,
+        #[arg(long = "agent-id")] agent_id: Option<String>,
     },
 
     /// Client confirms provider and stakes funds into escrow
@@ -115,10 +120,16 @@ pub enum AgentCommand {
     SetPublic { job_id: String },
 
     /// Provider generates payment invoice after provider_applied
-    Payment { job_id: String },
+    Payment {
+        job_id: String,
+        #[arg(long = "agent-id")] agent_id: Option<String>,
+    },
 
     /// Client manually transfers payment to provider (non-escrow mode)
-    Pay { job_id: String },
+    Pay {
+        job_id: String,
+        #[arg(long = "agent-id")] agent_id: Option<String>,
+    },
 
     /// Client claims refund/reward after arbitration
     Claim { job_id: String },
@@ -322,14 +333,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }, ctx,
         ).await,
 
-        AgentCommand::Recommend { job_id, next, current } =>
-            task::buyer::run_task(T::Recommend { job_id, next, current }, ctx).await,
+        AgentCommand::Recommend { job_id, agent_id, next, current } =>
+            task::buyer::run_task(T::Recommend { job_id, agent_id, next, current }, ctx).await,
 
-        AgentCommand::Status { job_id } =>
-            task::buyer::run_task(T::Status { job_id }, ctx).await,
+        AgentCommand::Status { job_id, agent_id } =>
+            task::buyer::run_task(T::Status { job_id, agent_id }, ctx).await,
 
-        AgentCommand::List { role, status, page, limit } =>
-            task::buyer::run_task(T::List { role, status, page, limit }, ctx).await,
+        AgentCommand::List { role, status, page, limit, agent_id } =>
+            task::buyer::run_task(T::List { role, status, page, limit, agent_id }, ctx).await,
 
         AgentCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id } =>
             task::buyer::run_task(T::ConfirmAccept { job_id, provider, payment_mode, payment_id }, ctx).await,
@@ -349,11 +360,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::SetPublic { job_id } =>
             task::buyer::run_task(T::SetPublic { job_id }, ctx).await,
 
-        AgentCommand::Payment { job_id } =>
-            task::buyer::run_task(T::Payment { job_id }, ctx).await,
+        AgentCommand::Payment { job_id, agent_id } =>
+            task::buyer::run_task(T::Payment { job_id, agent_id }, ctx).await,
 
-        AgentCommand::Pay { job_id } =>
-            task::buyer::run_task(T::Pay { job_id }, ctx).await,
+        AgentCommand::Pay { job_id, agent_id } =>
+            task::buyer::run_task(T::Pay { job_id, agent_id }, ctx).await,
 
         AgentCommand::Claim { job_id } =>
             task::buyer::run_task(T::Claim { job_id }, ctx).await,

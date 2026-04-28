@@ -25,7 +25,7 @@ pub async fn handle_agree_refund(
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
-        job_id, signing::BizContext::JobRefuse,
+        job_id, signing::BizContext::JobRefuse, &agent_id,
     ).await?;
 
     println!("✓ 已同意退款，等待链上确认（confirm_refund）");

@@ -77,7 +77,7 @@ pub async fn handle_reveal(
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
-        &job_id, signing::BizContext::VoteReveal,
+        &job_id, signing::BizContext::VoteReveal, &agent_id,
     ).await?;
 
     println!("vote revealed (disputeId={dispute_id})");
