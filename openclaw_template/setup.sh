@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # onchainos — OpenClaw template build script
 # Installs the onchainos CLI + workflows (via install.sh)
 # Skills are installed separately by the agent — see https://github.com/okx/onchainos-skills/blob/main/.openclaw/INSTALL.md
