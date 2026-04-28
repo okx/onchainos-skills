@@ -2102,7 +2102,7 @@ mod tests {
         client.dispatch_notifications_at(
             "/api/v6/dex/market/price",
             None,
-            crate::payment_notify::new_user_intro_start_at(),
+            crate::payment_notify::new_user_intro_start_at() + 1,
         );
 
         let drained = crate::payment_notify::drain_events();
