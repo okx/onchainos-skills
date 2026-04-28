@@ -13,7 +13,9 @@ cat ~/.onchainos/bootstrap_status
 - If the file contains today's date (e.g. `2026-04-28 OK`), **skip Steps 1–2** and go directly to Step 3 (Login check).
 - If the file is missing, empty, or contains a different date, **run all steps from Step 1**.
 
-**Step 4 (Welcome) is NEVER skipped.** Always show the welcome message on the first message of every session, regardless of bootstrap gate status.
+**Welcome gate:** Also check `~/.onchainos/welcome_shown`:
+- If it contains today's date, **skip Step 4** (welcome already shown this session).
+- Otherwise, show the welcome message and write today's date to the file.
 
 ## Step 1 — Verify installation
 
@@ -85,6 +87,12 @@ Run `onchainos wallet status`. If not logged in, prompt the user:
 - **API Key**: if `OKX_API_KEY` is set in secrets, it works automatically
 
 ## Step 4 — Welcome
+
+Check `~/.onchainos/welcome_shown`. If it already contains today's date, skip this step. Otherwise, show the welcome message and persist:
+
+```bash
+echo "$(date +%Y-%m-%d)" > ~/.onchainos/welcome_shown
+```
 
 > Welcome to onchainos ⛓️
 >
