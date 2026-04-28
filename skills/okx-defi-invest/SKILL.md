@@ -196,7 +196,8 @@ onchainos wallet contract-call \
   --to <dataList[N].to> \
   --chain <chainIndex> \
   --input-data <dataList[N].serializedData> \
-  --value <value_in_UI_units>
+  --value <value_in_UI_units> \
+  --biz-type defi
 ```
 
 EVM (XLayer):
@@ -205,7 +206,8 @@ onchainos wallet contract-call \
   --to <dataList[N].to> \
   --chain 196 \
   --input-data <dataList[N].serializedData> \
-  --value <value_in_UI_units>
+  --value <value_in_UI_units> \
+  --biz-type defi
 ```
 
 Solana:
@@ -213,7 +215,8 @@ Solana:
 onchainos wallet contract-call \
   --to <dataList[N].to> \
   --chain 501 \
-  --unsigned-tx <dataList[N].serializedData>
+  --unsigned-tx <dataList[N].serializedData> \
+  --biz-type defi
 ```
 
 `contract-call` handles TEE signing and broadcasting internally — no separate broadcast step needed.
