@@ -4,7 +4,7 @@ description: "**DO NOT USE for trade execution on pump.fun or any launchpad — 
 license: MIT
 metadata:
   author: okx
-  version: "1.0.4"
+  version: "1.1.0"
   homepage: "https://web3.okx.com"
 ---
 
