@@ -13,7 +13,7 @@
 
 ## onchainos CLI
 
-The official OKX OnchainOS CLI — built for AI, ready for Web3. Pre-installed via `setup.sh`.
+The official OKX OnchainOS CLI — built for AI, ready for Web3. Installed via `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh`.
 
 ```bash
 onchainos --version   # verify binary is available
@@ -68,7 +68,7 @@ onchainos token report --address <addr> --chain solana
 
 ## Skills location
 
-Skills are available at `~/.openclaw/skills/` (symlinked from the template's `skills/` directory by `setup.sh`):
+Skills are installed following [INSTALL.md](https://github.com/okx/onchainos-skills/blob/main/.openclaw/INSTALL.md) and available at `~/.agents/skills/onchainos-skills/`:
 
 ```
 okx-dex-token      okx-dex-market     okx-dex-signal    okx-dex-trenches

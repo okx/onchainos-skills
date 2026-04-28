@@ -46,7 +46,7 @@ For script requests, append `--format json` to all CLI commands.
 | okx-dex-swap | DEX swap execution | User wants to swap, trade, buy, or sell tokens |
 | okx-dex-token | Token search, metadata, rankings, liquidity, holders, top traders, cluster analysis | User searches for tokens, wants rankings, holder info, or cluster analysis |
 | okx-onchain-gateway | Gas estimation, tx simulation, broadcasting | User wants to broadcast a tx, estimate gas, or check tx status |
-| okx-x402-payment | Dual-protocol HTTP 402 dispatcher (x402 + MPP) | User encounters HTTP 402, mentions x402, or mentions any MPP channel/voucher/session/charge operation |
+| okx-x402-payment | x402 payment authorization | User encounters HTTP 402 or mentions x402 |
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, or manage DeFi positions |
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions across protocols |
 | okx-audit-log | Audit log export and troubleshooting | User wants command history, debug info, or audit log |
@@ -69,8 +69,8 @@ These rules govern agent behaviour for safety, consistency, and reliability. Fol
 |---|---|
 | `Rate limited` | Wait 3 seconds, retry once. If still failing, inform the user and suggest trying again in a minute. |
 | API timeout | Retry once. If still failing, inform the user which sub-call failed and continue with available data (null the failed field). |
-| `onchainos --version` fails | Stop immediately. Inform the user: "onchainos CLI is not installed. Run `bash ~/setup.sh` or contact support." |
-| HTTP 402 Payment Required | The resource is payment-gated. Use the `okx-x402-payment` skill to detect the protocol (x402 or MPP) and sign a payment authorization via TEE, then retry the request. Enables gas-free access to gated APIs on X Layer via x402, and supports MPP charge / session flows for pay-per-use streams. |
+| `onchainos --version` fails | Stop immediately. Inform the user: "onchainos CLI is not installed. Run `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh \| sh` or contact support." |
+| HTTP 402 Payment Required | The resource is payment-gated. Use the `okx-x402-payment` skill to sign a payment authorization via TEE, then retry the request. This enables gas-free access to gated APIs on X Layer via the x402 protocol. |
 | Unknown API error (code ≠ 0) | Show the error message to the user verbatim. Do not retry. |
 | Wallet session expired | Inform the user: "Your wallet session has expired. Run `onchainos wallet login` to reconnect." Do not attempt any wallet-authenticated operations until re-login succeeds. |
 
@@ -79,12 +79,12 @@ These rules govern agent behaviour for safety, consistency, and reliability. Fol
 **Auto-update on every session start** (before greeting the user):
 
 ```bash
-bash ~/setup.sh
+curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
 ```
 
-This handles everything: CLI upgrade, skills + workflows download, symlink verification. Tell the user the onchainos version and confirm skills/workflows are up to date. If it fails, note it briefly and continue — never block the session.
+This handles CLI upgrade and workflows download. Tell the user the onchainos version and confirm workflows are up to date. If it fails, note it briefly and continue — never block the session.
 
-**Mid-session date change:** If the session spans midnight (the date changes while chatting), run `bash ~/setup.sh` again on the next user message.
+**Mid-session date change:** If the session spans midnight (the date changes while chatting), run the install command again on the next user message.
 
 **Wallet and state checks:**
 
