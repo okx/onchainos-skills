@@ -13,11 +13,7 @@ All steps are idempotent — re-running this flow is safe.
 | 3 | `npm list -g openclaw-a2a-chat-extension --depth=0` | Check if the XMTP plugin is installed |
 | 4.1 | `openclaw gateway stop` | Stop the gateway before installation |
 | 4.2 | `npm install -g openclaw-a2a-chat-extension@latest` | Install the latest version |
-| 5.1 | `openclaw config set plugins.allow …` | Add `xmtp` to the plugin allow-list |
-| 5.2 | `openclaw config set plugins.entries.xmtp.enabled true` | Enable the xmtp plugin entry |
-| 5.3 | `openclaw config set tools.alsoAllow …` | Expose plugin tools to the LLM |
-| 5.4 | `openclaw config set session.dmScope …` | Set per-channel-peer session isolation |
-| 6 | `openclaw gateway start` (or `stop && start`) | Start / restart the gateway |
+| 5 | Config injection + gateway restart (single block) | Inject 4 config entries, then start/restart gateway as needed |
 
 ## Why Gateway Restart Is Required
 
@@ -96,74 +92,64 @@ If installation fails:
   ```
 - Do not proceed to Step 5.
 
-### Step 5: Inject OpenClaw config
+### Step 5: Inject OpenClaw config and restart gateway
 
 <MUST>
-All four entries are required for the XMTP plugin to load and expose its tools. Each sub-step is idempotent — safe to re-run if an earlier attempt left the config in a partial state.
+All four config entries are required for the XMTP plugin to load and expose its tools. Each sub-step is idempotent — safe to re-run if an earlier attempt left the config in a partial state. The entire block MUST run in a single shell invocation so that the `CONFIG_CHANGED` flag persists through to the gateway restart decision.
 </MUST>
 
-Initialize a change-tracking flag before running 5.1–5.4:
+Run this entire block as **one command** (do not split into separate shell invocations):
+
 ```bash
 CONFIG_CHANGED=0
-```
 
-Each sub-step below sets `CONFIG_CHANGED=1` only when it actually mutates config. Step 6 uses this flag to decide whether a gateway restart is needed on the already-installed path.
-
-**5.1 — Add `xmtp` to the plugin allow-list** (idempotent JSON-array append)
-```bash
+# 5.1 — Add xmtp to the plugin allow-list (idempotent JSON-array append)
 CURRENT=$(openclaw config get plugins.allow 2>/dev/null || echo '[]')
 if ! echo "$CURRENT" | grep -q '"xmtp"'; then
-  openclaw config set plugins.allow --strict-json "$(echo "$CURRENT" | python3 -c "import json,sys; a=json.load(sys.stdin); a.append('xmtp'); print(json.dumps(a))")" 2>&1
+  UPDATED=$(node -e "const a=JSON.parse(process.argv[1]); a.push('xmtp'); console.log(JSON.stringify(a))" "$CURRENT")
+  openclaw config set plugins.allow --strict-json "$UPDATED" 2>&1
   CONFIG_CHANGED=1
 fi
-```
 
-**5.2 — Enable the plugin entry** (set-if-different)
-```bash
+# 5.2 — Enable the plugin entry (set-if-different)
 CURRENT=$(openclaw config get plugins.entries.xmtp.enabled 2>/dev/null || echo '')
 if [ "$CURRENT" != "true" ]; then
   openclaw config set plugins.entries.xmtp.enabled true --strict-json 2>&1
   CONFIG_CHANGED=1
 fi
-```
 
-**5.3 — Expose plugin tools to the LLM** (idempotent JSON-array append — preserves any existing entries)
-```bash
+# 5.3 — Expose plugin tools to the LLM (idempotent JSON-array append)
 CURRENT=$(openclaw config get tools.alsoAllow 2>/dev/null || echo '[]')
 if ! echo "$CURRENT" | grep -q '"group:plugins"'; then
-  openclaw config set tools.alsoAllow --strict-json "$(echo "$CURRENT" | python3 -c "import json,sys; a=json.load(sys.stdin); a.append('group:plugins'); print(json.dumps(a))")" 2>&1
+  UPDATED=$(node -e "const a=JSON.parse(process.argv[1]); a.push('group:plugins'); console.log(JSON.stringify(a))" "$CURRENT")
+  openclaw config set tools.alsoAllow --strict-json "$UPDATED" 2>&1
   CONFIG_CHANGED=1
 fi
-```
 
-**5.4 — Set session isolation policy** (set-if-different)
-```bash
+# 5.4 — Set session isolation policy (set-if-different)
 CURRENT=$(openclaw config get session.dmScope 2>/dev/null || echo '')
 if [ "$CURRENT" != '"per-channel-peer"' ]; then
   openclaw config set session.dmScope '"per-channel-peer"' --strict-json 2>&1
   CONFIG_CHANGED=1
 fi
+
+# 6 — Gateway restart decision
+if [ "$FRESH_INSTALL" = "1" ]; then
+  # Gateway was stopped in Step 4 — start it
+  openclaw gateway start
+  echo "openclaw gateway started."
+elif [ "$CONFIG_CHANGED" = "1" ]; then
+  # Config mutated on an already-installed setup — full restart needed
+  openclaw gateway stop && openclaw gateway start
+  echo "openclaw gateway restarted to apply config changes."
+else
+  echo "XMTP plugin already installed and configured — no restart needed."
+fi
 ```
 
-### Step 6: Restart / start the gateway
+Before running this block, set `FRESH_INSTALL=1` if Step 4 was executed (fresh install path), or `FRESH_INSTALL=0` if Step 4 was skipped (already installed).
 
-Three branches depending on what happened earlier:
-
-- **Fresh-install path (Step 4 ran):** the gateway was stopped in Step 4 — start it:
-  ```bash
-  openclaw gateway start
-  ```
-  Inform the user: "openclaw gateway started."
-
-- **Already-installed path (Step 4 skipped) with `CONFIG_CHANGED=1`:** gateway is running but needs a full restart cycle to pick up new config:
-  ```bash
-  openclaw gateway stop && openclaw gateway start
-  ```
-  Inform the user: "openclaw gateway restarted to apply config changes."
-
-- **Already-installed path (Step 4 skipped) with `CONFIG_CHANGED=0`:** no action. Gateway is already running with correct config. Inform the user: "XMTP plugin already installed and configured — no restart needed."
-
-### Step 7: Proceed to version check
+### Step 6: Proceed to version check
 
 After the plugin is installed and config is in place, automatically load and follow `check-version.md` to check for available updates.
 
