@@ -86,4 +86,8 @@ mkdir -p "$SKILLS_DIR"
 cp -r "$REPO_DIR/skills/"* "$SKILLS_DIR/" 2>/dev/null || true
 
 echo "[onchainos] Skills installed to $SKILLS_DIR/"
+
+# ── 3. Write bootstrap status ───────────────────────────────
+echo "$(date +%Y-%m-%d) OK" > "$HOME/.onchainos/bootstrap_status"
+
 echo "[onchainos] Setup complete."

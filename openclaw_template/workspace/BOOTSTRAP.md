@@ -71,13 +71,7 @@ Check the output and confirm that onchainos skills are present (e.g. `okx-dex-to
 
 **Do not proceed until onchainos skills are confirmed in `openclaw skills list`.**
 
-**After Steps 1–2 pass**, persist the bootstrap status:
-
-```bash
-echo "$(date +%Y-%m-%d) OK" > ~/.onchainos/bootstrap_status
-```
-
-This prevents re-running installation and PATH setup on subsequent messages in the same session.
+Note: `setup.sh` writes `~/.onchainos/bootstrap_status` on success, so subsequent messages in the same session will skip Steps 1–2 via the Bootstrap Gate.
 
 ## Step 3 — Login
 
