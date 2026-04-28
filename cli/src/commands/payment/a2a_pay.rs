@@ -16,6 +16,7 @@ use zeroize::Zeroize;
 
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
 use crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN;
+use crate::output;
 use crate::wallet_api::WalletApiClient;
 use crate::{keyring_store, wallet_store};
 
@@ -84,7 +85,7 @@ pub async fn execute(cmd: A2aPayCommand) -> Result<()> {
         A2aPayCommand::Create(args) => {
             let params = ChargeParams::from(*args);
             let out = create_payment_charge(params).await?;
-            println!("{}", serde_json::to_string_pretty(&out)?);
+            output::success(out);
             Ok(())
         }
         A2aPayCommand::Pay(args) => {
@@ -95,12 +96,12 @@ pub async fn execute(cmd: A2aPayCommand) -> Result<()> {
                 recipient_address: args.recipient_address,
             };
             let out = pay(params).await?;
-            println!("{}", serde_json::to_string_pretty(&out)?);
+            output::success(out);
             Ok(())
         }
         A2aPayCommand::Status { payment_id } => {
             let out = status(payment_id).await?;
-            println!("{}", serde_json::to_string_pretty(&out)?);
+            output::success(out);
             Ok(())
         }
     }
@@ -232,6 +233,21 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .context("Smart-Account GET /p/{id} failed")?;
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG][a2a-pay] GET /p/{} response={resp}", p.payment_id);
+    }
+    if resp.get("available").and_then(Value::as_bool) == Some(false) {
+        let reason = resp
+            .get("errorReason")
+            .and_then(Value::as_str)
+            .unwrap_or("unavailable");
+        let detail = resp
+            .get("errorMessage")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let status = resp
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        bail!("payment {} not payable (status={status}, reason={reason}): {detail}", p.payment_id);
     }
     let challenge = resp
         .get("challenge")
