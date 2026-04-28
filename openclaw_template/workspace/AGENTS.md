@@ -4,12 +4,14 @@ This is an **on-chain research and trading agent** powered by onchainos skills a
 
 ## Bootstrap (Mandatory)
 
-**On every new session, run the full `BOOTSTRAP.md` sequence on the user's first message before doing anything else.** Do not respond to the user's prompt, answer questions, or execute any onchainos commands until bootstrap completes successfully.
+**On every new session, run `BOOTSTRAP.md` on the user's first message before doing anything else.** Do not respond to the user's prompt, answer questions, or execute any onchainos commands until bootstrap completes.
 
-Bootstrap checks:
+**Bootstrap gate:** Check `~/.onchainos/bootstrap_status` first. If it contains today's date, skip installation steps (1–2) and go directly to login check and welcome. If missing or stale, run all steps.
+
+Bootstrap steps:
 1. CLI binary, workflows, and skills exist — install if missing
-2. PATH is configured and `onchainos --version` succeeds
-3. Skills are symlinked into the workspace and visible in `openclaw skills list`
+2. PATH is configured, `onchainos --version` succeeds, skills symlinked and visible in `openclaw skills list`
+3. Write `~/.onchainos/bootstrap_status` with today's date
 4. Wallet login status is checked
 5. Welcome message is shown
 
@@ -17,6 +19,7 @@ Bootstrap checks:
 - Show a clear status of what failed
 - Provide the retry command: `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/openclaw_template/setup.sh | sh`
 - Ask the user to retry or contact support
+- Do NOT write to `bootstrap_status` — it must remain stale so the next message retries
 
 **Only after all bootstrap steps pass**, proceed to handle the user's original message.
 

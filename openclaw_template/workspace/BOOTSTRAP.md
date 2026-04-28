@@ -2,6 +2,17 @@
 
 **On the user's first message in every session, run ALL steps below before responding.** This file self-deletes after initial onboarding is complete.
 
+## Bootstrap Gate
+
+Before running any steps, check if bootstrap has already completed this session:
+
+```bash
+cat ~/.onchainos/bootstrap_status
+```
+
+- If the file contains today's date (e.g. `2026-04-28 OK`), **skip Steps 1–2** and go directly to Step 3 (Login check) and Step 4 (Welcome).
+- If the file is missing, empty, or contains a different date, **run all steps from Step 1**.
+
 ## Step 1 — Verify installation
 
 Check that the CLI binary, workflows, and skills exist:
@@ -53,6 +64,14 @@ openclaw skills list
 ```
 
 All onchainos skills must appear in the output. If they do not, check that the symlinks exist in `skills/` and that `~/.onchainos/skills/` is populated.
+
+**After Steps 1–2 pass**, persist the bootstrap status:
+
+```bash
+echo "$(date +%Y-%m-%d) OK" > ~/.onchainos/bootstrap_status
+```
+
+This prevents re-running installation and PATH setup on subsequent messages in the same session.
 
 ## Step 3 — Login
 
