@@ -7,17 +7,28 @@ set -e
 
 curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
 
-# ── Ensure $HOME/.local/bin is on PATH ───────────────────────
+# ── Ensure onchainos is on PATH ──────────────────────────────
 INSTALL_DIR="$HOME/.local/bin"
-EXPORT_LINE='export PATH="$HOME/.local/bin:$PATH"'
 
-# Add to PATH for the current session
+# Symlink to a directory that's already on PATH (works in sandboxes
+# where shell profiles aren't sourced)
+if [ -f "$INSTALL_DIR/onchainos" ]; then
+  for bin_dir in /usr/local/bin /usr/bin; do
+    if [ -d "$bin_dir" ] && [ -w "$bin_dir" ]; then
+      ln -sf "$INSTALL_DIR/onchainos" "$bin_dir/onchainos"
+      break
+    fi
+  done
+fi
+
+# Also add to PATH for the current session
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
   *) export PATH="$INSTALL_DIR:$PATH" ;;
 esac
 
-# Persist to all common shell profiles so new terminals pick it up
+# Persist to shell profiles for environments that do source them
+EXPORT_LINE='export PATH="$HOME/.local/bin:$PATH"'
 for profile in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
   if [ -f "$profile" ] || [ "$profile" = "$HOME/.profile" ]; then
     if ! grep -qF '.local/bin' "$profile" 2>/dev/null; then
@@ -32,7 +43,7 @@ done
 if command -v onchainos >/dev/null 2>&1; then
   echo "onchainos $(onchainos --version) is ready"
 else
-  echo "WARNING: onchainos installed to $INSTALL_DIR but still not on PATH."
+  echo "WARNING: onchainos installed to $INSTALL_DIR but not found on PATH."
   echo "Run: export PATH=\"$INSTALL_DIR:\$PATH\""
   exit 1
 fi
