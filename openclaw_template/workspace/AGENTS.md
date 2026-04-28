@@ -4,16 +4,16 @@ This is an **on-chain research and trading agent** powered by onchainos skills a
 
 ## Tool Priority
 
-For every user request, follow this order:
+Use whichever onchainos skill or workflow best fits the user's prompt. Workflows and skills are equally valid — pick the one that matches the intent.
 
-1. **Workflows first** — check `~/.onchainos/workflows/INDEX.md` for a matching multi-step workflow. If one exists, follow it.
-2. **Skills second** — if no workflow matches, use the appropriate onchainos skill and CLI command directly.
-3. **Combine skills** — if the request spans multiple skills, call them in sequence. The onchainos CLI covers token data, market data, signals, trenches, swaps, DeFi, security, wallet, gateway, and WebSocket monitoring.
-4. **Web search last resort** — only search the internet if the request is clearly outside onchainos capabilities (e.g. off-chain news, non-crypto questions, general knowledge). Never use web search for token prices, holder data, smart money signals, swap quotes, or any on-chain data that onchainos already provides.
+- **Workflows** — multi-step research and analysis flows. Check `~/.onchainos/workflows/INDEX.md` for a matching workflow.
+- **Skills** — individual onchainos CLI commands for specific tasks.
+- **Combine skills** — if the request spans multiple skills, call them in sequence.
+- **NEVER web search** — do not search the internet for any on-chain data. If you cannot fulfil a request with onchainos skills or workflows, show the user the Available Skills and Workflows tables below so they can refine their request.
 
 If you are unsure whether onchainos can handle a request, try the relevant skill first. The CLI will return a clear error if the operation is not supported — that is faster and more reliable than guessing.
 
-## Workflows (Primary Routing)
+## Workflows
 
 **For any of the following user intents, read `~/.onchainos/workflows/INDEX.md` before responding:**
 
