@@ -1,35 +1,19 @@
 ---
 name: okx-dapp-discovery
 description: |
-  DApp router — installs the matching plugin for a named DeFi protocol on demand and forwards the prompt. **DApp name beats every generic verb** (swap/换成/兑换/stake/质押/lend/借/borrow/deposit/存/withdraw/取/LP/加流动性/farm/挖矿/mint/发币). If a supported DApp name OR its protocol-native token / phrase appears anywhere in the prompt (in any language), this skill wins over generic swap / yield / lending / portfolio skills.
+  DApp router — installs the matching plugin for a named DeFi protocol on demand.
 
-  Per-DApp trigger patterns (each line = first-class trigger; named DApp + verb routes here, NOT to a generic skill):
-  - **Polymarket** — Polymarket, prediction market, 预测市场, 事件市场, BTC/ETH/SOL/XRP/BNB/DOGE/HYPE 5min/15min markets, 5 分钟涨跌, 5min updown, updown market, BTC/ETH/SOL up or down, 找预测市场赌, 找个预测市场, YES/NO outcome token, election market, 选举市场, 选举赔率, 大选市场, sports/NBA/NFL/FIFA market, Polymarket bet
-  - **Hyperliquid** — Hyperliquid, HYPE token (买 HYPE / buy HYPE alone counts), HLP (存 HLP / 把 USDC 存进 HLP counts), HyperCore, HyperEVM, HIP-3, USDC 转 Hyperliquid, 永续 + Hyperliquid
-  - **Aave V3** — Aave, aToken, GHO, eMode, Isolation Mode, health factor, Aave 存/借/抵押, liquidationCall
-  - **PancakeSwap (V3 AMM default · V2 · CLMM)** — PancakeSwap 薄饼 PCS CAKE veCAKE Syrup IFO. V2/classic/MasterChef → V2 plugin. CLMM/concentrated/V3 LP NFT → CLMM plugin
-  - **Morpho V1 Optimizer** (default; NOT Blue / MetaMorpho / LLTV / vault-curator / allocator) — Morpho, Morpho Optimizer, Merkl reward, 借贷优化器
-  - **Raydium** — Raydium, RAY, Raydium AMM/CPMM/CLMM, Raydium pool/farm/V4
-  - **Curve** — Curve, CRV, 3pool, tricrypto, crvUSD, veCRV, Curve stable swap, factory pool, gauge weight, 曲线协议
-  - **Compound V3** — Compound, Comet, COMP, Compound USDC, base asset supply/borrow, 复合协议
-  - **Pendle** — Pendle, PT, YT, PT-stETH/PT-weETH/PT-*, fixed yield, 固定收益, vePENDLE, SY token, 收益代币化
-  - **Lido** — Lido, stETH, wstETH, LDO, Lido 质押, Lido validator (NOT generic "stake ETH" alone)
-  - **ether.fi** — ether.fi, etherfi, eETH, weETH, ETHFI, ether.fi 质押/restake
-  - **GMX V2** — GMX, GLP, GM token, esGMX, GMX market, GMX 做空/做多/永续
-  - **Kamino Lend** — Kamino (default), kToken, Kamino lending/借贷/存款
-  - **Kamino Liquidity** — Kamino DLMM, Kamino CLMM, Kamino Liquidity, Kamino vault, Kamino LP, Kamino concentrated liquidity
-  - **Orca** — Orca, Whirlpool, ORCA token, Orca DEX/pool/CLMM, 虎鲸
-  - **Meteora** — Meteora, Meteora DLMM, MET, Meteora bin/vault/DAMM, 流星协议
-  - **Clanker** — Clanker, $CLANKER, clanker.world, deploy/launch/mint/发币/发新token on Clanker
-  - **pump.fun (trade only)** — buy/sell/snipe/ape pump.fun, pump.fun trading/bot/下单. Analysis (scan/dev-history/bundler/who-aped) → `okx-dex-trenches`
+  **TRIGGER when** prompt names a supported DApp OR a protocol-native phrase below.
 
-  **Generic ticker carve-out** — ETH/BTC/USDC/USDT/SOL/BNB/MATIC/ARB/OP alone do NOT trigger. Protocol-native tokens (HYPE, HLP, CAKE, veCAKE, CRV, crvUSD, COMP, RAY, ORCA, MET, ETHFI, LDO, GLP, esGMX, GHO, eETH, weETH, stETH, wstETH, aToken, kToken, PT-*, YT-*, $CLANKER) DO trigger alone.
+  **DApps (20):** Polymarket, Aave V3, Hyperliquid, PancakeSwap (V3 AMM/V2/CLMM), Morpho V1 Optimizer, Raydium, Curve, Compound V3, Pendle, Lido, ether.fi, GMX V2, Kamino Lend, Kamino Liquidity, Orca, Meteora, Clanker, pump.fun (trade verbs only — buy/sell/snipe/ape/swap, 买/卖/购买/狙击/帮我买/买最火的币; analysis → okx-dex-trenches).
 
-  **Discovery** (any language): 'what dapps available', 'list/install/uninstall plugin', '有什么dapp', '支持哪些DeFi协议'.
+  **Protocol-native triggers:** HYPE/HLP (Hyperliquid) · CAKE/veCAKE (PancakeSwap) · CRV/3pool/crvUSD (Curve) · COMP (Compound) · RAY (Raydium) · Whirlpool (Orca) · ETHFI/eETH/weETH (ether.fi) · LDO/stETH/wstETH (Lido) · GLP (GMX) · GHO (Aave) · kToken (Kamino) · PT-*/YT-*/`PT <token>` (Pendle) · $CLANKER. **Polymarket UpDown:** `<COIN> 5min/15min/5 分钟/15 分钟/涨跌/涨跌市场/updown/up or down` (BTC/ETH/SOL/XRP/BNB/DOGE/HYPE) · prediction market · 预测市场 · election market · 选举市场.
 
-  Named DApp not in catalog → probe `<dappName>-plugin`; install if exists, else show supported list and defer to user.
+  **DO NOT defer to `okx-dex-market`** when `<COIN> 涨跌`, `5 分钟涨跌市场`, `updown market`, `预测市场`, or `选举市场` appears — these are Polymarket prediction-market intent, NOT price/chart queries.
 
-  NOT for: generic yield without named DApp → `okx-defi-invest`; unnamed swap → `okx-dex-swap`; price/PnL → `okx-dex-market`; my-wallet balance → `okx-agentic-wallet`; cross-protocol positions → `okx-defi-portfolio`.
+  **Carve-outs:** (a) "swap X for `<native-token>`" with NO DApp named → `okx-dex-swap`. (b) Comparison/discussion no action verb → clarify. (c) Generic tickers ETH/BTC/USDC/SOL/BNB alone don't trigger.
+
+  **NOT for:** unnamed swap → `okx-dex-swap`; generic yield → `okx-defi-invest`; price/PnL → `okx-dex-market`; wallet → `okx-agentic-wallet`; positions → `okx-defi-portfolio`; pump.fun analysis → `okx-dex-trenches`.
 license: MIT
 metadata:
   author: okx
@@ -72,13 +56,13 @@ When the user's message references a DApp directly or implicitly, score it again
 | COMP, Comet | Compound V3 |
 | RAY | Raydium |
 | ORCA, Whirlpool | Orca |
-| MET (in Meteora context), DLMM Meteora | Meteora |
+| Meteora DLMM, Meteora bin/vault/DAMM (`MET` alone is too generic — requires "Meteora" context) | Meteora |
 | ETHFI, eETH, weETH | ether.fi |
 | LDO, stETH, wstETH | Lido |
 | GLP, esGMX, GM token | GMX V2 |
 | GHO, aToken | Aave V3 |
 | kToken | Kamino Lend |
-| PT-*, YT-*, vePENDLE, SY token | Pendle |
+| PT-*, YT-*, "PT <token>", "YT <token>" (e.g. "PT stETH", "YT weETH" — space-separated), vePENDLE, SY token | Pendle |
 | $CLANKER, clanker.world | Clanker |
 | "X 5min" / "X 15min" / "X 5 分钟" / "X 15 分钟" / "X up or down" / "5min updown" / "5 分钟涨跌" (X = BTC/ETH/SOL/XRP/BNB/DOGE/HYPE) | Polymarket |
 
@@ -419,7 +403,14 @@ Example user-facing message (catalog probe failed for an unknown DApp "Foo"):
 
 > **Known limitations:**
 > - The Read step further below uses `$HOME/.claude/skills/` paths, which is Claude-Code-specific. Codex / OpenCode / OpenClaw / Cursor users may need to substitute their agent's skills directory. Tracked as a follow-up against the `skills` CLI to add a `skills info <skill>` subcommand for cross-agent path resolution.
-> - The `python3 -c` parse of the GitHub Contents API response assumes Python 3 is on PATH (Python 3 ships by default on macOS 10.15+ / all common Linux distros / Windows-Git-Bash with Python). If `python3` is missing, substitute `jq -r '.[].name'` or fall through to the `npx skills add` fallback path automatically.
+> - The `python3 -c` parse of the GitHub Contents API response assumes Python 3 is on PATH (Python 3 ships by default on macOS 10.15+ / all common Linux distros / Windows-Git-Bash with Python). If `python3` is missing, substitute `jq` — full one-liner:
+>
+>   ```bash
+>   CATALOG=$(curl -fsSL --max-time 5 "https://api.github.com/repos/okx/plugin-store/contents/skills" 2>/dev/null \
+>             | jq -r '.[].name' 2>/dev/null)
+>   ```
+>
+>   If neither `python3` nor `jq` is available, fall through to the `npx skills add` clone-and-install fallback path automatically.
 > - The `2>/dev/null` redirects silence stderr (intentional — avoids noise across agent runtimes). If `npx` itself is broken or missing, the listing returns empty and every DApp will be treated as "not installed". The fallback `npx skills add … --yes --global` path is idempotent and surfaces the underlying error to the user via the Failure-mode note in Step 2 — do not retry the listing in a loop.
 
 ---
@@ -447,6 +438,21 @@ If the prompt contains **any** of:
 …then this skill wins regardless of any generic verb (swap / 兑换 / 换成 / stake / 质押 / lend / 借 / borrow / deposit / 存 / withdraw / 取 / LP / 加流动性 / farm / 挖矿 / mint / 发币 / make liquidity / pool / 池子 / 仓位 / 多单 / 空单).
 
 **Apply Rules 1 or 2 directly with the matching plugin** — do NOT defer to `okx-dex-swap`, `okx-defi-invest`, `okx-defi-portfolio`, `okx-dex-market`, `okx-onchain-gateway`, or any other generic skill.
+
+**Swap-destination carve-out (Rule 0 exception):** when the verb is `swap` / `exchange` / `换成` / `兑换` (DEX-style verbs) AND a protocol-native token appears as the swap *destination* (the token the user wants to receive), defer to `okx-dex-swap` instead of installing the native protocol's plugin. The user wants the token in their wallet, not the protocol's stake/mint/deposit flow.
+
+| Goes to `okx-dex-swap` (not Rule 0) | Goes to Rule 0 (use the protocol) |
+|---|---|
+| "swap USDC for stETH" | "stake ETH for stETH" / "stake on Lido" |
+| "swap to wstETH" | "wrap stETH into wstETH" |
+| "swap 100 USDC for HYPE" | "deposit USDC into HLP" / "open ETH long on Hyperliquid" |
+| "swap SOL to RAY" | "provide liquidity in RAY/SOL pool on Raydium" |
+| "swap BNB for CAKE" | "stake CAKE on PancakeSwap" / "use Syrup Pool" |
+| "swap USDC for crvUSD" | "deposit into 3pool on Curve" |
+
+**Heuristic:** if the user's intent is *acquiring* the token, route to swap. If the intent is *using* the token's protocol functionality (stake / mint / deposit / borrow / LP / open position / wrap), route to Rule 0.
+
+**Rule 0 vs Rule 3b precedence:** Rule 3b (discussion / comparison without action verb) takes precedence over Rule 0 when no action verb is present in the prompt. So "Tell me about Pendle" → Rule 3b clarify, NOT Rule 0 install. "Buy PT-stETH on Pendle" → Rule 0 install (action verb present).
 
 **Examples that this rule fixes** (all should install the named DApp's plugin, not a generic skill):
 - "在 Orca 上把 SOL 换成 USDC" → `orca-plugin` (not `okx-dex-swap`)
@@ -567,6 +573,56 @@ Do not install anything. Show the user the supported DApps and ask which one mat
 > If your intent is more general — finding the best yield across protocols, rebalancing, or claiming rewards — `okx-defi-invest` (OKX-aggregated DeFi) is a better fit. For pump.fun research/scanning (dev history, bundlers, rug check) see `okx-dex-trenches`.
 >
 > If you want to use a different DApp not listed above (e.g., a niche protocol that hasn't been added to the catalog yet), name it explicitly and I'll probe the broader plugin-store catalog via Step 1B.
+
+---
+
+## Binary Consent Gate
+
+Apply this gate **after reading a plugin's SKILL.md, before executing any pre-flight dependency steps from it.** Plugin SKILL.md files in `okx/plugin-store` typically include a "Pre-flight Dependencies" section that downloads pre-compiled binaries and shell scripts from `github.com/okx/plugin-store/releases` into `~/.local/bin/`. Running these silently bypasses the user's informed-consent expectation and can be blocked by environment security guardrails (causing silent failure).
+
+### Step A — Detect binary downloads
+
+Scan the loaded plugin SKILL.md for any of these patterns:
+- `# BINARY_INSTALL:` marker comment (preferred — exact detection)
+- `curl … github.com/.*/releases/` — pre-compiled binary from GitHub Releases
+- Downloads of `launcher.sh` or `update-checker.py` from `raw.githubusercontent.com`
+- `chmod +x` applied to a downloaded file
+- `ln -sf` into `~/.local/bin/` or any other PATH-visible directory
+
+Extract from the SKILL.md for the warning:
+- Plugin name and version (from `name:` / `version:` frontmatter)
+- Binary download URL (the `curl … releases/` line)
+- Shell scripts to be downloaded (e.g. `launcher.sh`, `update-checker.py`)
+- Install path (e.g. `~/.local/bin/.<plugin-name>-core`)
+
+### Step B — Gate on user consent
+
+If any binary download pattern is detected, do **NOT** run `curl`, `chmod`, `ln`, or `mkdir` commands from the pre-flight section. Surface this to the user **before** running anything:
+
+> This plugin needs to download and install a pre-compiled binary.
+>
+> Plugin:         `<name>` v`<version>`
+> Binary:         `<binary-download-URL>`
+> Shell scripts:  `launcher.sh`, `update-checker.py` (from `raw.githubusercontent.com/okx/plugin-store`)
+> Installs to:    `~/.local/bin/.<plugin-name>-core` (added to PATH via symlink)
+>
+> Security note: pre-compiled binary and shell scripts from an external GitHub repository (`okx/plugin-store`). They run with full agent permissions.
+>
+> To approve:  reply "yes, install `<plugin-name>`" — I will run the pre-flight steps and continue with your request.
+> To skip:     reply "skip install" — read-only commands (e.g. positions, quickstart) may still work; write operations will fail.
+> To allow permanently: add a Bash permission rule in Claude Code settings for `curl … github.com/okx/plugin-store/releases`.
+
+**Wait for the user's explicit reply before proceeding.** Do not retry, do not loop. If the user declines, surface that the plugin's read-only commands may still work and let them decide whether to attempt them.
+
+If no binary download pattern is detected, proceed without interrupting the user.
+
+### Rules 1 / 2 update
+
+Rules 1 and 2 above describe loading the plugin's SKILL.md and forwarding the user's request. Insert this gate **between** "Read plugin SKILL.md" and "execute pre-flight" — the flow becomes:
+
+1. Read plugin SKILL.md (unchanged).
+2. Apply this Binary Consent Gate (Step A scan + Step B prompt if needed).
+3. Only after consent is resolved (user replied "yes, install" OR no binary detected), forward the user's original request.
 
 ---
 
