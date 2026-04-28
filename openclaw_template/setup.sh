@@ -5,7 +5,12 @@
 
 set -e
 
+echo "[onchainos] Starting setup..."
+echo "[onchainos] Installing CLI + workflows..."
+
 curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
+
+echo "[onchainos] Install script completed."
 
 # ── Ensure onchainos is on PATH ──────────────────────────────
 INSTALL_DIR="$HOME/.local/bin"
@@ -16,6 +21,7 @@ if [ -f "$INSTALL_DIR/onchainos" ]; then
   for bin_dir in /usr/local/bin /usr/bin; do
     if [ -d "$bin_dir" ] && [ -w "$bin_dir" ]; then
       ln -sf "$INSTALL_DIR/onchainos" "$bin_dir/onchainos"
+      echo "[onchainos] Symlinked to $bin_dir/onchainos"
       break
     fi
   done
@@ -24,7 +30,8 @@ fi
 # Also add to PATH for the current session
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
-  *) export PATH="$INSTALL_DIR:$PATH" ;;
+  *) export PATH="$INSTALL_DIR:$PATH"
+     echo "[onchainos] Added $INSTALL_DIR to PATH" ;;
 esac
 
 # Persist to shell profiles for environments that do source them
@@ -35,15 +42,18 @@ for profile in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
       echo "" >> "$profile"
       echo "# Added by onchainos setup" >> "$profile"
       echo "$EXPORT_LINE" >> "$profile"
+      echo "[onchainos] Added PATH to $profile"
     fi
   fi
 done
 
 # ── Verify ───────────────────────────────────────────────────
 if command -v onchainos >/dev/null 2>&1; then
-  echo "onchainos $(onchainos --version) is ready"
+  echo "[onchainos] $(onchainos --version) is ready"
 else
-  echo "WARNING: onchainos installed to $INSTALL_DIR but not found on PATH."
-  echo "Run: export PATH=\"$INSTALL_DIR:\$PATH\""
+  echo "[onchainos] WARNING: installed to $INSTALL_DIR but not found on PATH."
+  echo "[onchainos] Run: export PATH=\"$INSTALL_DIR:\$PATH\""
   exit 1
 fi
+
+echo "[onchainos] Setup complete."
