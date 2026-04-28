@@ -2,19 +2,59 @@
 
 First-run setup guide. This file self-deletes after initial onboarding is complete.
 
-## Step 1 — Verify CLI, workflows, and skills
+## Step 1 — Verify installation
 
-Run:
+Check that the CLI binary, workflows, and skills exist:
 
 ```bash
-onchainos --version
+ls ~/.local/bin/onchainos
 ls ~/.onchainos/workflows/
 ls ~/.onchainos/skills/
 ```
 
-If `onchainos` is not found, workflows are missing, or skills are empty, run `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/openclaw_template/setup.sh | sh` and verify again.
+If **any** of these are missing, run the setup script to install everything:
 
-## Step 2 — Login
+```bash
+curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/openclaw_template/setup.sh | sh
+```
+
+Then verify all three paths again before proceeding.
+
+## Step 2 — Configure PATH and skills
+
+**This step is mandatory. Do not skip it.**
+
+1. Add the onchainos binary to PATH so it can be invoked by name:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+2. Verify PATH is set correctly:
+
+```bash
+onchainos --version
+echo "PATH configured: $(which onchainos)"
+```
+
+If `onchainos` is still not found, the binary was not installed correctly. Re-run the setup script from Step 1.
+
+3. Symlink the skills directory into the workspace so OpenClaw can discover them:
+
+```bash
+mkdir -p skills
+ln -sf ~/.onchainos/skills/* skills/
+```
+
+4. Verify skills are loaded:
+
+```bash
+openclaw skills list
+```
+
+All onchainos skills must appear in the output. If they do not, check that the symlinks exist in `skills/` and that `~/.onchainos/skills/` is populated.
+
+## Step 3 — Login
 
 Run `onchainos wallet status`. If not logged in, prompt the user:
 
@@ -23,7 +63,7 @@ Run `onchainos wallet status`. If not logged in, prompt the user:
 - **Email provided**: run `onchainos wallet login <email> --locale <locale>`, prompt for OTP, run `onchainos wallet verify <code>`, show wallet addresses
 - **API Key**: if `OKX_API_KEY` is set in secrets, it works automatically
 
-## Step 3 — Welcome
+## Step 4 — Welcome
 
 > Welcome to onchainos ⛓️
 >
