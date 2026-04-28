@@ -76,14 +76,14 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")] agent_id: Option<String>,
     },
 
-    /// List tasks
+    /// List my tasks
     List {
-        #[arg(long)] role: Option<String>,
         #[arg(long)] status: Option<String>,
         #[arg(long, default_value = "1")]  page: u32,
         #[arg(long, default_value = "20")] limit: u32,
         #[arg(long = "agent-id")] agent_id: Option<String>,
     },
+
 
     /// Client confirms provider and stakes funds into escrow
     #[command(name = "confirm-accept")]
@@ -339,8 +339,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Status { job_id, agent_id } =>
             task::buyer::run_task(T::Status { job_id, agent_id }, ctx).await,
 
-        AgentCommand::List { role, status, page, limit, agent_id } =>
-            task::buyer::run_task(T::List { role, status, page, limit, agent_id }, ctx).await,
+        AgentCommand::List { status, page, limit, agent_id } =>
+            task::buyer::run_task(T::List { status, page, limit, agent_id }, ctx).await,
+
 
         AgentCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id } =>
             task::buyer::run_task(T::ConfirmAccept { job_id, provider, payment_mode, payment_id }, ctx).await,

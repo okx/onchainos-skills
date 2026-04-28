@@ -24,7 +24,7 @@ pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &
     let agent_id = resolve_agent_id(client, Some(job_id), agent_id).await;
     let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
 
-    let t = &resp["task"];
+    let t = &resp;
     let token_sym = t["paymentTokenSymbol"].as_str().unwrap_or("USDT");
     println!("任务状态: {}", t["statusStr"].as_str().unwrap_or("?"));
     println!("  jobId:    {job_id}");
@@ -41,21 +41,14 @@ pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &
 /// 任务列表
 pub async fn handle_list(
     client: &mut TaskApiClient,
-    role: Option<&str>,
     status: Option<&str>,
     page: u32,
     limit: u32,
     agent_id: &str,
 ) -> Result<()> {
     let agent_id = resolve_agent_id(client, None, agent_id).await;
-    let path = if role == Some("provider") || role == Some("client") {
-        let r = role.unwrap_or("client");
-        format!("/priapi/v1/aieco/task/my?role={r}&page={page}&page_size={limit}")
-    } else {
-        let mut p = format!("/priapi/v1/aieco/task/list?page={page}&page_size={limit}");
-        if let Some(s) = status { p.push_str(&format!("&status={s}")); }
-        p
-    };
+    let mut path = format!("/priapi/v1/aieco/task/my?page={page}&page_size={limit}");
+    if let Some(s) = status { path.push_str(&format!("&status={s}")); }
 
     let resp = client.get_with_identity(&path, &agent_id).await?;
     let tasks = resp["list"].as_array().cloned().unwrap_or_default();
@@ -79,7 +72,7 @@ pub async fn handle_payment(client: &mut TaskApiClient, job_id: &str, agent_id: 
     let agent_id = resolve_agent_id(client, Some(job_id), agent_id).await;
     let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
 
-    let task = &resp["task"];
+    let task = &resp;
     let amount = task["tokenAmount"].as_str().unwrap_or("?");
     let token_symbol = task["paymentTokenSymbol"].as_str().unwrap_or("USDT");
     let provider_addr = task["providerAgentAddress"].as_str().unwrap_or("?");
@@ -105,7 +98,7 @@ pub async fn handle_pay(client: &mut TaskApiClient, job_id: &str, agent_id: &str
     let agent_id = resolve_agent_id(client, Some(job_id), agent_id).await;
     let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
 
-    let task = &resp["task"];
+    let task = &resp;
     let status = task["statusStr"].as_str().unwrap_or("");
     if status != "complete" {
         bail!("任务状态为 {status}，仅 complete 状态可执行 pay");

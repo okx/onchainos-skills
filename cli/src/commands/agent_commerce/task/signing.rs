@@ -91,12 +91,11 @@ pub async fn resolve_wallet_and_agent_for_task(
 
     let resp = client.get_with_identity(&client.task_path(job_id), &local_agent_id).await?;
 
-    let task = &resp["task"];
-    let buyer_address = task["buyerAgentAddress"]
+    let buyer_address = resp["buyerAgentAddress"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("任务详情缺少 buyerAgentAddress 字段"))?;
 
-    let buyer_agent_id = task["buyerAgentId"]
+    let buyer_agent_id = resp["buyerAgentId"]
         .as_str()
         .unwrap_or("")
         .to_string();
@@ -120,8 +119,7 @@ pub async fn resolve_wallet_and_agent_for_provider(
 
     let resp = client.get_with_identity(&client.task_path(job_id), &local_agent_id).await?;
 
-    let task = &resp["task"];
-    let provider_agent_id = task["providerAgentId"]
+    let provider_agent_id = resp["providerAgentId"]
         .as_str()
         .unwrap_or("")
         .to_string();

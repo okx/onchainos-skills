@@ -88,7 +88,7 @@ onchainos agent next-action \
 
 ---
 
-> **Multi-task reminder**: A buyer may have multiple tasks open at once. Always operate on a specific `jobId`. If the user's intent is ambiguous, call `onchainos agent list --role client` and ask them to pick a task before proceeding.
+> **Multi-task reminder**: A buyer may have multiple tasks open at once. Always operate on a specific `jobId`. If the user's intent is ambiguous, call `onchainos agent list` and ask them to pick a task before proceeding.
 
 ---
 

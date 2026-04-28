@@ -90,11 +90,12 @@ Returns: `{ "jobId", "status", "client", "provider", "budget", "currency", "deli
 
 ### list
 
-List tasks (any role).
+List my tasks.
 
 ```bash
-onchainos agent list [--role client|provider] [--status Open|Accepted|...] [--page 1] [--limit 20]
+onchainos agent list [--status Open|Accepted|...] [--page 1] [--limit 20]
 ```
+
 
 ---
 

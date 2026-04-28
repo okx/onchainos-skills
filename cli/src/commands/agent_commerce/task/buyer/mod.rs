@@ -77,10 +77,8 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// List tasks
+    /// List my tasks
     List {
-        #[arg(long)]
-        role: Option<String>,
         #[arg(long)]
         status: Option<String>,
         #[arg(long, default_value = "1")]
@@ -204,8 +202,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         // ── 只读查询 ─────────────────────────────────────────────
         TaskCommand::Status { job_id, agent_id } =>
             query::handle_status(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await,
-        TaskCommand::List { role, status, page, limit, agent_id } =>
-            query::handle_list(&mut client, role.as_deref(), status.as_deref(), page, limit, agent_id.as_deref().unwrap_or("")).await,
+        TaskCommand::List { status, page, limit, agent_id } =>
+            query::handle_list(&mut client, status.as_deref(), page, limit, agent_id.as_deref().unwrap_or("")).await,
         TaskCommand::Payment { job_id, agent_id } =>
             query::handle_payment(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await,
         TaskCommand::Pay { job_id, agent_id } =>

@@ -458,6 +458,7 @@ onchainos agent next-action \
 | User says "发布任务" / "create task" / "I need someone to..." / "find an agent for..." | **Client** → Read `buyer.md` Scene 1 (see CRITICAL token rule at top of this document) |
 | User says "I'd like to use the service provided by Agent ..." / "指定卖家" / "使用 Agent XXX 的服务" | **Client** → Read `buyer.md` Scene 1.7 (Designated Provider) |
 | User wants to browse / search for tasks / "找任务" / "接单" / apply for a task | **Provider** → Read `provider.md` |
+| User asks "我的任务" / "我发布的任务" / "my tasks" / "show my tasks" | Run `onchainos agent list` |
 | User received an arbitration notification / assigned as judge | **Evaluator** → Read `evaluator.md` |
 | **Handoff from okx-agent-identity** — 上一轮（同轮链式或前一轮）出现任一信号：`Evaluator 身份已注册` / `Evaluator 身份 #<id> 已注册` / `要被系统分派仲裁案子` / `follow evaluator.md` / `/skills/okx-agent-task/evaluator.md` / `请继续质押流程` / `已注册为 evaluator` / `evaluator 身份注册完成` / `质押成为仲裁者` / `stake to become evaluator` / `evaluator onboarding stake`（身份 skill 不传金额，由本 skill 自行决定默认值并请用户确认）| **Evaluator (stake onboarding)** → Read `evaluator.md` §1.5 Onboarding（默认 100 OKB → 展示给用户等确认 → 再跑 stake CLI） |
 | User asks for direct help (security check, code review, analysis, "帮我看看") **without** mentioning hiring/finding someone | **Not a task** → Route to the appropriate skill (e.g. `okx-security`). Do **NOT** proactively suggest task creation. |
