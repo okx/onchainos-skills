@@ -166,12 +166,21 @@ pub enum AgentCommand {
     #[command(name = "agree-refund")]
     AgreeRefund { job_id: String },
 
-    /// Provider fetches on-chain payment pre-info after provider_applied
+    /// Provider fetches prePayTaskInfo, then calls a2a-pay create to mint a payment_id.
+    /// Both escrow and non_escrow go through this command — `--payment-mode` decides
+    /// which a2a-pay branch (`charge` for non_escrow, `escrow` otherwise). The
+    /// returned `paymentId` is meant to be xmtp-sent to the buyer.
     #[command(name = "get-payment")]
     GetPayment {
         job_id: String,
         #[arg(long = "token-symbol", default_value = "USDT")]
         token_symbol: String,
+        /// 协商价格（whole tokens, 如 "50" 表示 50 USDT）。escrow 锁仓金额 / non_escrow 直转金额。
+        #[arg(long = "token-amount")]
+        token_amount: String,
+        /// `escrow` 或 `non_escrow`（必填，弄错支付方式 → paymentId 会落到错的合约 / 流程）
+        #[arg(long = "payment-mode")]
+        payment_mode: String,
     },
 
     /// Client claims auto-refund after provider timeout
@@ -382,9 +391,16 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 task::provider::ProviderCommand::AgreeRefund { job_id }, ctx,
             ).await,
 
-        AgentCommand::GetPayment { job_id, token_symbol } => {
+        AgentCommand::GetPayment { job_id, token_symbol, token_amount, payment_mode } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::provider::get_payment::handle_get_payment(&mut c, &job_id, &token_symbol).await
+            task::provider::get_payment::handle_get_payment(
+                &mut c,
+                &job_id,
+                &token_symbol,
+                &token_amount,
+                &payment_mode,
+            )
+            .await
         }
 
         // ── Sub-groups ──────────────────────────────────────────────

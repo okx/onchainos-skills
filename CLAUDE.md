@@ -106,15 +106,11 @@ All mock components are TypeScript (Node.js). No Rust build needed.
 |---|---|---|---|
 | ws-mock server | `cd tools/ws-mock-ts && node dist/server.js` | ws://9000 | XMTP simulator, WS message router |
 | mock-api | `cd tools/ws-mock-ts && node dist/mock-api.js` | http://9001 | Task REST backend + dashboard, sends WS system notifications |
-| mock-seller | `cd tools/mock-seller && npm start` | — | Headless provider: auto-negotiates price from task budget, auto-applies, auto-delivers |
-| mock-seller-ui | `cd tools/mock-seller && npm run ui` | http://9002 | Provider with web UI (manual control) — cannot run alongside headless |
-| mock-buyer | `cd tools/mock-buyer && npm start` | — | Headless buyer: waits for TASK_CONFIRMED, auto-negotiates, auto-accepts, auto-completes |
-| mock-buyer-ui | `cd tools/mock-buyer && npm run ui` | http://9003 | Buyer with web UI — cannot run alongside headless |
 | mock-evaluator | `cd tools/mock-evaluator && npm start` | — | Headless evaluator: receives TASK_DISPUTED, resolves buyer-wins after 5s |
 | mock-evaluator-ui | `cd tools/mock-evaluator && npm run ui` | http://9004 | Evaluator with web UI (manual vote) — cannot run alongside headless |
 | openclaw gateway | `launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway` | http://18789 | AI buyer agent (connects via XMTP channel, not ws-mock) |
 
-> **Headless vs UI**: Each mock registers the same identity address. Running both at once causes the server to route all messages to whichever connected last. Use one or the other.
+> **Headless vs UI**: mock-evaluator headless and UI variants share one identity — run only one at a time.
 
 ### Key Paths
 
@@ -130,8 +126,6 @@ CLI binary:       ~/.local/bin/onchainos
 
 ```bash
 cd tools/ws-mock-ts  && npm install && npm run build
-cd tools/mock-seller && npm install && npm run build
-cd tools/mock-buyer  && npm install && npm run build
 cd tools/mock-evaluator && npm install && npm run build
 ```
 
@@ -185,54 +179,10 @@ console.log('removed', n, 'sessions');
 "
 ```
 
-### Full E2E Test: mock-only (no openclaw)
-
-Tests the complete buyer↔seller↔evaluator flow without the AI agent.
-
-```bash
-# 1. Start infrastructure
-cd tools/ws-mock-ts
-node dist/server.js   > /tmp/ws-server.log  2>&1 &
-node dist/mock-api.js > /tmp/ws-api.log     2>&1 &
-
-# 2. Start headless mocks
-cd tools/mock-seller     && node dist/mock-seller.js         > /tmp/mock-seller.log 2>&1 &
-cd tools/mock-buyer      && node dist/mock-buyer.js          > /tmp/mock-buyer.log  2>&1 &
-cd tools/mock-evaluator && node dist/mock-evaluator.js > /tmp/mock-arb.log    2>&1 &
-
-# 3. Verify registrations
-sleep 2
-grep "身份已注册" /tmp/mock-seller.log /tmp/mock-buyer.log /tmp/mock-arb.log
-
-# 4. Create task (data persists across restarts, jobId auto-increments)
-curl -s -X POST http://127.0.0.1:9001/api/v1/task/create \
-  -H "Content-Type: application/json" \
-  -d '{"title":"测试任务","description":"...","descriptionSummary":"...","tokenAddress":"0xUSDT","tokenAmount":"50","paymentType":0,"openType":1,"chainId":1,"minCreditScore":0,"buyerAgentId":"mock-buyer-agent-001","buyerAgentAddress":"0xBuyer000000000000000000000000000000001","expireConfig":{"openExpireSec":86400,"acceptedExpireSec":86400}}'
-
-# 5. Watch: TASK_CONFIRMED fires after 8s, then auto-negotiation begins
-tail -f /tmp/mock-buyer.log
-```
-
-**Happy path timeline** (~30s total):
-```
-+0s   task created
-+8s   TASK_CONFIRMED → mock-buyer starts negotiation
-+10s  TASK_INQUIRE → seller asks for details
-+13s  buyer sends task details → seller quotes budget price (escrow)
-+16s  buyer accepts → seller confirms payment mode
-+18s  buyer confirms → seller sends TASK_APPLY + calls apply API
-+20s  TASK_APPLIED → TASK_ACCEPTED (chain notifications)
-+25s  seller sends TASK_DELIVER + calls submit API → TASK_SUBMITTED
-+26s  buyer calls complete API → status = complete ✅
-```
-
 ### Known Issues / Notes
 
-- Headless + UI versions of the same mock share one identity — run only one at a time
 - `sendText: missing conversationId` in gateway log — non-blocking, doesn't affect flow
 - mock-api data persists across restarts (saved to `tools/ws-mock-ts/dist/mock-tasks.json`), jobId auto-increments from max existing; optional full reset: `curl -X DELETE http://127.0.0.1:9001/api/v1/reset`
-- TASK_CONFIRMED fires 8s after `create-task` — intentional delay for agent turn to finish
-- mock-seller quotes the task's `tokenAmount` (parsed from buyer's detail message); defaults to 50 USDT if parsing fails
 - Gateway re-registers tools on every agent turn — normal openclaw behavior, not a bug
 
 ---
@@ -303,11 +253,6 @@ cd ~/xmtp-mocks/xmtp-mock-seller && node --env-file=.env dist/index-ui.js
 - `Agent.create(signer, { dbPath, env })` 首次在某个 dbPath 下启动 = 向 XMTP 网络 **注册一个新 installation**
 - XMTP dev 网络对单一 identity 限 **5 个 installations**；满了要 revoke 旧的
 - 频繁清 `~/.xmtp-mock-<role>/` 下 DB 会快速逼近上限 —— 开发时别没事就删
-
-### 和 ws-mock 系的区别
-
-这套 XMTP mock **只走真实 XMTP 网络**，跟 openclaw XMTP 插件对接。
-`tools/mock-buyer/` / `tools/mock-seller/`（ws-channel 时代的老 mock）仍在，互不影响，但 **ws-channel 插件已删**，它们现在只能给老的 mock-api dashboard 测试用，不能再跟 openclaw 通讯。
 
 ### 故障排查
 

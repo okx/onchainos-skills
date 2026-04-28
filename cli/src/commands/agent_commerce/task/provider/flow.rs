@@ -20,7 +20,8 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         Status::Open => vec![
             next_action("job_created"),
             ref_header,
-            format!("  onchainos agent apply {job_id} --token-amount <price> --token-symbol USDT --agent-id <agentId>  # 申请接单（协商完成后才上链）"),
+            format!("  onchainos agent apply {job_id} --token-amount <price> --token-symbol USDT --agent-id <agentId>  # 申请接单（**仅 escrow 担保交易**才需要；non_escrow 不要 apply）"),
+            format!("  onchainos agent get-payment {job_id} --token-symbol <USDT|USDG> --token-amount <price> --payment-mode <escrow|non_escrow>  # 拉 prePayTaskInfo + 创建 a2a-pay 付款单，输出 paymentId"),
         ],
         Status::Accepted => vec![
             next_action("job_accepted"),
@@ -89,29 +90,28 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 
     let event = parse_status_or_event(job_status);
     let body = match event {
-        // ─── Scene 3: 接单申请已上链，生成付款单给买家 ────────────────
+        // ─── Scene 3: 接单申请已上链，生成付款单给买家（escrow 路径） ──
         Event::ProviderApplied => format!(
-            "【当前状态】provider_applied（链上已确认接单申请）\n\
+            "【当前状态】provider_applied（链上已确认接单申请，escrow 担保路径）\n\
              【角色】卖家（Provider）\n\n\
-             【你的下一步动作】\n\n\
-             **Step 1 — 调用 CLI 拉取链上支付预信息（从任务详情确定 tokenSymbol：USDT 或 USDG）：**\n\
+             【你的下一步动作（严格顺序）】\n\n\
+             **Step 1 — 调用 CLI 创建 a2a-pay 付款单**（CLI 内部：先拉 prePayTaskInfo 拿链上参数，再调 a2a-pay `create_payment_escrow`）：\n\
              ```bash\n\
-             onchainos agent get-payment {job_id} --token-symbol <USDT|USDG>\n\
+             onchainos agent get-payment {job_id} --token-symbol <USDT|USDG> --token-amount <协商价格 whole tokens, 如 50> --payment-mode escrow\n\
              ```\n\
-             返回字段（节选）：currency（token 地址）、recipient（你的钱包地址）、evaluator、submitWindow、disputeWindow、hook、salt、expiredAt。\n\n\
-             **Step 2 — 调用 `xmtp_send` 工具发送消息，把付款单发给买家（纯文本，不加 markdown/代码块）：**\n\n\
-             {header_template}\n\
-             接单申请已上链确认（provider_applied）。以下是付款单：\n\
-             金额：<tokenAmount> <tokenSymbol>（从 common context 或任务详情获取）\n\
-             支付代币合约：<currency>\n\
-             收款地址：<recipient>\n\
-             仲裁者：<evaluator>\n\
-             提交期：<submitWindow>s  仲裁期：<disputeWindow>s\n\
-             salt：<salt>  有效期至：<expiredAt>\n\
-             请确认接受并完成付款。\n\n\
+             - tokenSymbol 从任务详情确定（USDT / USDG）\n\
+             - tokenAmount 用协商敲定的价格，单位是整数 token（如 50 表示 50 USDT，后端按 decimals 换算）\n\
+             - stdout 输出形如 `{{ \"paymentId\": \"a2a_xxx\", \"deliveries\": ... }}`，其中 paymentId 是要发给买家的唯一信息\n\n\
+             **Step 2 — 调用 `xmtp_send` 把 paymentId 发给买家**：\n\
+             - 只发 paymentId 一项，买家会用它直接调 pay() 走 EIP-3009 签名 + credential 提交\n\
+             - content 模板（纯自然语言，不要包 markdown / 代码块）：\n\
+             \x20\x20```\n\
+             \x20\x20我已提交接单申请，付款单已创建。请用此 paymentId 完成支付：<a2a_xxx>\n\
+             \x20\x20```\n\
+             - 不要把整段 JSON 或 deliveries 数组贴过去，买家用 paymentId 反查 challenge 即可\n\
+             - 不要加 text-header（如 `jobId: / 来自: ... / 类型:`），XMTP 插件会自动包装 a2a-agent-chat envelope\n\n\
              【后续事件】\n\
-             - job_accepted → 买家已确认，开始执行任务\n\
-             - 若 get-payment 命令不可用，可从 `onchainos agent status {job_id}` 手动组织付款单（退化模式）。\n"
+             - job_accepted → 买家已用 paymentId 完成支付 + confirm-accept，开始执行任务\n"
         ),
 
         // ─── Scene 4: 买家已确认接单，执行任务并交付 ─────────────────
@@ -367,16 +367,32 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              2) 价格可接受（币种必须是 XLayer 的 USDT 或 USDG，看任务详情里的 token 字段）\n\
              3) 支付方式可接受（escrow / non_escrow，由买家在 confirm-accept 时定）\n\
              → 用 `xmtp_send` 给买家发提问（机制见 SKILL.md §Session 通信契约 §6 路径 4）。\n\n\
-             **Step 4 — 三项全部确认后（且仅在此时）才调 apply：**\n\
+             **Step 4 — 三项全部确认后，按双方约定的支付方式分流：**\n\n\
+             ━━━━━ 分支 A：支付方式 = escrow（担保交易）→ 必须 apply 上链 ━━━━━\n\n\
              ```bash\n\
              onchainos agent apply {job_id} --token-amount <协商价格> --token-symbol <USDT|USDG> --agent-id {agent_id}\n\
              ```\n\
              apply 是上链签名动作，CLI 内部完成 unsigned info → sign → broadcast，等链上 provider_applied 通知。\n\n\
              ⚠️ **apply 跑完直接结束 turn，禁止 `xmtp_dispatch_session` 推 STATUS_NOTIFY 到 user session**——『已提交接单申请 / txHash / 等 provider_applied』是过场状态，对用户没信息量。等链上 `provider_applied` 通知到达后 next-action 那时才有值得推的。这条命令再说一遍是因为 sub 容易在 tx broadcast 后本能想『通知用户』——不要。\n\n\
+             ━━━━━ 分支 B：支付方式 = non_escrow（非担保交易）→ **不要** apply，但要建 a2a-pay 付款单 ━━━━━\n\n\
+             非担保交易不在链上托管资金，provider 端**禁止**调 `onchainos agent apply`：\n\
+             - non_escrow 的链上 provider_applied 不会触发，调了 apply 会在 escrow 合约里多一笔无用上链\n\n\
+             但卖家仍要为买家创建一张 a2a-pay charge 付款单：\n\n\
+             ```bash\n\
+             onchainos agent get-payment {job_id} --token-symbol <USDT|USDG> --token-amount <协商价格 whole tokens> --payment-mode non_escrow\n\
+             ```\n\
+             stdout 输出 `{{ \"paymentId\": \"a2a_xxx\", \"deliveries\": ... }}`。\n\n\
+             跑完后 `xmtp_send` 把 paymentId 发给买家（content 纯自然语言，不要贴整段 JSON）：\n\
+             \x20\x20```\n\
+             \x20\x20协商达成（非担保）。请用此 paymentId 完成支付：<a2a_xxx>\n\
+             \x20\x20```\n\
+             买家拿到 paymentId 后会调 `pay()` 完成 EIP-3009 单签 + credential 提交，然后再 confirm-accept 走 direct/accept 进入 accepted 状态。\n\n\
+             跑完 get-payment + xmtp_send 后**直接结束本轮 turn**，等下一条系统通知（如 `job_accepted`）再调 next-action。\n\n\
              **任一项未达成** → 调 `xmtp_send` 回复\"很抱歉，无法接受当前条件\"（纯自然语言），结束。\n\n\
              【时限】整个协商在 5 分钟内完成；不要反复追问已经知道的信息。\n\n\
              【后续事件】\n\
-             - apply 上链成功 → 收到 `provider_applied` 系统通知 → 再次调 next-action 拿 Scene 3 剧本\n"
+             - 分支 A apply 上链成功 → 收到 `provider_applied` 系统通知 → 再次调 next-action 拿 Scene 3 剧本\n\
+             - 分支 B 等买家 confirm-accept → 收到 `job_accepted` 系统通知 → 再次调 next-action\n"
         ),
         // ─── buyer 主导的 housekeeping 事件，provider 端基本无需动作 ─────
         Event::JobExpired
