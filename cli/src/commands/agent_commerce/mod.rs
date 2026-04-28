@@ -86,6 +86,8 @@ pub enum AgentCommand {
         job_id: String,
         #[arg(long)] provider: String,
         #[arg(long = "payment-mode", default_value = "escrow")] payment_mode: String,
+        /// a2a_pay payment_id（卖家通过 XMTP 传递，escrow/non_escrow 必填）
+        #[arg(long = "payment-id")] payment_id: Option<String>,
     },
 
     /// Client rejects provider application
@@ -329,8 +331,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::List { role, status, page, limit } =>
             task::buyer::run_task(T::List { role, status, page, limit }, ctx).await,
 
-        AgentCommand::ConfirmAccept { job_id, provider, payment_mode } =>
-            task::buyer::run_task(T::ConfirmAccept { job_id, provider, payment_mode }, ctx).await,
+        AgentCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id } =>
+            task::buyer::run_task(T::ConfirmAccept { job_id, provider, payment_mode, payment_id }, ctx).await,
 
         AgentCommand::RejectApply { job_id, provider, reason } =>
             task::buyer::run_task(T::RejectApply { job_id, provider, reason }, ctx).await,

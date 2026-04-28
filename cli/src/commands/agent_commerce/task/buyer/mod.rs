@@ -90,6 +90,9 @@ pub enum TaskCommand {
         provider: String,
         #[arg(long = "payment-mode", default_value = PAYMENT_MODE_ESCROW)]
         payment_mode: String,
+        /// a2a_pay payment_id（卖家通过 XMTP 传递，escrow/non_escrow 必填）
+        #[arg(long = "payment-id")]
+        payment_id: Option<String>,
     },
     /// Client rejects provider application
     RejectApply {
@@ -170,8 +173,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 recommend::handle_recommend(&mut client, &job_id).await
             }
         }
-        TaskCommand::ConfirmAccept { job_id, provider, payment_mode } =>
-            accept::handle_confirm_accept(&mut client, &job_id, &provider, &payment_mode).await,
+        TaskCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id } =>
+            accept::handle_confirm_accept(&mut client, &job_id, &provider, &payment_mode, payment_id.as_deref()).await,
         TaskCommand::Complete { job_id } =>
             complete::handle_complete(&mut client, &job_id).await,
         TaskCommand::Reject { job_id, reason } =>
