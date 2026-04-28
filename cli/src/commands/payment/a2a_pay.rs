@@ -95,20 +95,15 @@ pub struct CreateArgs {
 pub struct PayArgs {
     #[arg(long = "payment-id")]
     pub payment_id: String,
-    /// EIP-3009 validAfter (unix seconds). Default: 0.
-    #[arg(long = "valid-after")]
-    pub valid_after: Option<u64>,
-    /// EIP-3009 validBefore (unix seconds). Default: now + 3600.
-    #[arg(long = "valid-before")]
-    pub valid_before: Option<u64>,
-    /// Charge: expected amount (must match `challenge.data.request.amount` byte-for-byte).
-    /// Required for charge intent; ignored for escrow.
+    /// Expected amount.
     #[arg(long)]
-    pub amount: Option<String>,
-    /// Charge: expected recipient address (case-insensitive match against
-    /// `challenge.data.request.recipient`). Required for charge intent.
+    pub amount: String,
+    /// Expected token symbol
+    #[arg(long)]
+    pub symbol: String,
+    /// Expected recipient address
     #[arg(long = "recipient-address")]
-    pub recipient_address: Option<String>,
+    pub recipient_address: String,
 }
 
 #[derive(Subcommand)]
@@ -144,9 +139,8 @@ pub async fn execute(cmd: A2aPayCommand) -> Result<()> {
         A2aPayCommand::Pay(args) => {
             let params = PayParams {
                 payment_id: args.payment_id,
-                valid_after: args.valid_after,
-                valid_before: args.valid_before,
                 amount: args.amount,
+                symbol: args.symbol,
                 recipient_address: args.recipient_address,
             };
             let out = pay(params).await?;
@@ -409,14 +403,12 @@ fn parse_create_payment_response(resp: Value) -> Result<CreatePaymentOutput> {
 
 pub struct PayParams {
     pub payment_id: String,
-    pub valid_after: Option<u64>,
-    pub valid_before: Option<u64>,
-    /// Charge mode: expected amount (as it appears in `challenge.data.request.amount`,
-    /// i.e. minimal units). Compared verbatim against the on-server challenge before signing.
-    pub amount: Option<String>,
-    /// Charge mode: expected recipient address (case-insensitive compare against
-    /// `challenge.data.request.recipient`).
-    pub recipient_address: Option<String>,
+    /// Expected amount
+    pub amount: String,
+    /// Expected token symbol
+    pub symbol: String,
+    /// Expected recipient address
+    pub recipient_address: String,
 }
 
 #[derive(serde::Serialize)]
@@ -424,8 +416,8 @@ pub struct PayOutput {
     pub payment_id: String,
     pub status: String,
     pub tx_hash: Option<String>,
-    pub tracking_url: Option<String>,
-    pub order_id: Option<String>,
+    pub valid_after: u64,
+    pub valid_before: u64,
 }
 
 /// Buyer side:
@@ -472,6 +464,11 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("challenge.data.request.amount missing"))?
         .to_string();
+    let symbol = request
+        .get("symbol")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("challenge.data.request.symbol missing"))?
+        .to_string();
     let currency = request
         .get("currency")
         .and_then(Value::as_str)
@@ -490,29 +487,27 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .and_then(Value::as_u64)
         .ok_or_else(|| anyhow!("methodDetails.chainId missing"))?;
 
-    // Charge-mode pre-sign safety check: caller must declare expected amount /
-    // recipient and they must match the on-server challenge byte-for-byte. Bail
-    // before signing anything if the seller's challenge disagrees with what the
-    // buyer thinks they're paying for.
-    if intent == "charge" {
-        let expected_amount = p
-            .amount
-            .as_ref()
-            .ok_or_else(|| anyhow!("--amount is required for charge intent"))?;
-        let expected_recipient = p
-            .recipient_address
-            .as_ref()
-            .ok_or_else(|| anyhow!("--recipient-address is required for charge intent"))?;
-        if expected_amount != &amount {
-            bail!(
-                "amount mismatch: expected {expected_amount}, challenge has {amount}"
-            );
-        }
-        if !expected_recipient.eq_ignore_ascii_case(&recipient) {
-            bail!(
-                "recipient address mismatch: expected {expected_recipient}, challenge has {recipient}"
-            );
-        }
+    // Pre-sign safety check: caller's declared amount / symbol / recipient must match
+    // the on-server challenge byte-for-byte (recipient is case-insensitive). Bail
+    // before signing if the seller's challenge disagrees with what the buyer thinks
+    // they're paying for.
+    if p.amount != amount {
+        bail!(
+            "amount mismatch: expected {}, challenge has {amount}",
+            p.amount
+        );
+    }
+    if p.symbol != symbol {
+        bail!(
+            "symbol mismatch: expected {}, challenge has {symbol}",
+            p.symbol
+        );
+    }
+    if !p.recipient_address.eq_ignore_ascii_case(&recipient) {
+        bail!(
+            "recipient address mismatch: expected {}, challenge has {recipient}",
+            p.recipient_address
+        );
     }
 
     // ── 2. Resolve buyer wallet on target chain ──────────────────────
@@ -538,13 +533,10 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
 
     // ── 3. Pick timing ───────────────────────────────────────────────
     let now = unix_now()?;
-    let valid_after = p.valid_after.unwrap_or(0);
-    let valid_before = match p.valid_before {
-        Some(v) => v,
-        None => now
-            .checked_add(DEFAULT_VALID_BEFORE_SEC)
-            .ok_or_else(|| anyhow!("validBefore overflow"))?,
-    };
+    let valid_after = 0u64;
+    let valid_before = now
+        .checked_add(DEFAULT_VALID_BEFORE_SEC)
+        .ok_or_else(|| anyhow!("validBefore overflow"))?;
 
     // ── 4. Compute nonce (intent-specific) + build authorization ─────
     let (nonce_hex, authorization_type) = match intent.as_str() {
@@ -699,9 +691,9 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
             .as_str()
             .unwrap_or("unknown")
             .to_string(),
+        valid_after,
+        valid_before,
         tx_hash: cred_resp["txHash"].as_str().map(|s| s.to_string()),
-        tracking_url: cred_resp["trackingUrl"].as_str().map(|s| s.to_string()),
-        order_id: cred_resp["orderId"].as_str().map(|s| s.to_string()),
     })
 }
 
