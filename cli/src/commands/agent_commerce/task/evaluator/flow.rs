@@ -16,17 +16,38 @@
 //! 判决过程不通知用户；用户感知由后续 dispute_resolved → reward_claimed / slashed 负责。
 //! 评估者规范 L2 + §3.7：用户偏好会引入社会压力/贿赂风险，必须隔离。
 //! 证据上传是链下操作（doc §7.8：No chain event for evidence），不再等"证据封期"信号。
-//
-// TODO(backend-config): 本文件生成的文案里包含多处硬编码经济参数（评估者规范 附录 A）：
-//   - evaluator_selected arm: 超时罚 0.3%（TIMEOUT_PENALTY_RATE）
-//   - dispute_resolved arm:   少数方罚 1%（MINORITY_PENALTY_RATE）/ 超时罚 0.3%
-//   - staked arm:             首次最低 100 OKB、errorCode 1001
-//   - unstake_requested arm:  7 天冷却期
-// `/staking/config` 后端端点上线后，这些数字应改由注入的配置值替换，模板用
-// `{slashTimeoutBps/100}%` / `{firstStakeMinOkb} OKB` / `{unstakeCooldownSeconds/86400} 天` 等。
-// 参见 skills/okx-agent-task/evaluator.md §13 完整清单。
+//!
+//! 文案中的经济参数（罚金比例、最低质押、冷却期）由调用方从 `/staking/config`
+//! best-effort 拉取并以 `Option<&StakingConfig>` 传入；拉取失败时回退到合约/规范
+//! 当前默认值（见 `cfg_defaults` 常量），避免 sub session 因网络抖动跑不出剧本。
 
+use crate::commands::agent_commerce::task::common::network::task_api_client::StakingConfig;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
+
+/// 拉不到 `/staking/config` 时的兜底默认值（与文档当前默认值一致）。
+mod cfg_defaults {
+    pub const SLASH_TIMEOUT_BPS: &str = "0.3%";
+    pub const SLASH_MINORITY_BPS: &str = "1%";
+    pub const MIN_CUMULATIVE_STAKE_OKB: &str = "100";
+    pub const UNSTAKE_COOLDOWN_DAYS: u64 = 7;
+}
+
+fn slash_timeout_bps(cfg: Option<&StakingConfig>) -> &str {
+    cfg.map(|c| c.slash_timeout_bps.as_str()).unwrap_or(cfg_defaults::SLASH_TIMEOUT_BPS)
+}
+
+fn slash_minority_bps(cfg: Option<&StakingConfig>) -> &str {
+    cfg.map(|c| c.slash_minority_bps.as_str()).unwrap_or(cfg_defaults::SLASH_MINORITY_BPS)
+}
+
+fn min_cumulative_stake_okb(cfg: Option<&StakingConfig>) -> &str {
+    cfg.map(|c| c.min_cumulative_stake_okb.as_str())
+        .unwrap_or(cfg_defaults::MIN_CUMULATIVE_STAKE_OKB)
+}
+
+fn unstake_cooldown_days(cfg: Option<&StakingConfig>) -> u64 {
+    cfg.map(StakingConfig::unstake_cooldown_days).unwrap_or(cfg_defaults::UNSTAKE_COOLDOWN_DAYS)
+}
 
 /// Evaluator 在某 status 下可执行的 CLI 命令清单（用于 `agent common context` 菜单）。
 ///
@@ -56,8 +77,19 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
     }
 }
 
-/// 根据 jobStatus 生成 evaluator 下一步动作的结构化提示词
-pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> String {
+/// 根据 jobStatus 生成 evaluator 下一步动作的结构化提示词。
+///
+/// `staking_cfg` 由调用方 best-effort 从 `/staking/config` 拉取，None 时使用 `cfg_defaults`。
+pub fn generate_next_action(
+    job_id: &str,
+    job_status: &str,
+    _agent_id: &str,
+    staking_cfg: Option<&StakingConfig>,
+) -> String {
+    let timeout_bps = slash_timeout_bps(staking_cfg);
+    let minority_bps = slash_minority_bps(staking_cfg);
+    let min_stake_okb = min_cumulative_stake_okb(staking_cfg);
+    let cooldown_days = unstake_cooldown_days(staking_cfg);
     match job_status {
         // ─── 入口：本轮陪审选出，CommitPhase 已开（sub session 侧，agent 自主闭环） ──
         // 判决方法论严格对齐评估者规范（誓约 + 决策原则 + Rubric + 证据等级 + 裁决书规范）。
@@ -144,8 +176,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              ```bash\n\
              onchainos agent evaluator commit <disputeId> --side <1|2>\n\
              ```\n\
-             ⚠️ **只能是 1 或 2，禁止 skip**（V1 无弃权；拖到超时罚 0.3% 比错投 1% 更亏）。\n\
-             失败最多重试 3 次（CRITICAL，commit 窗口关闭即罚 0.3%）。返回 `voter has already committed` 视为成功进入 Step 8。\n\
+             ⚠️ **只能是 1 或 2，禁止 skip**（V1 无弃权；拖到超时罚 {timeout_bps} 比错投 {minority_bps} 更亏）。\n\
+             失败最多重试 3 次（CRITICAL，commit 窗口关闭即罚 {timeout_bps}）。返回 `voter has already committed` 视为成功进入 Step 8。\n\
              body 只带 `vote`；裁决书（Step 5）仅保留在 session 记忆，**不写入后端，不推user session**。\n\n\
              ⚠️ **错误兜底硬约束（agent 失控反例）**：commit 报 `当前账户没有 evaluator（仲裁者） 身份，请先注册` / `code=2004` 时——\n\
              - **禁止**调 `onchainos agent create` / `agent register` / `identity_register` 任何注册类命令（链上写入、烧 gas、修改全局状态——evaluator 身份注册是用户主动决定的事，不是 sub session 自作主张能干的）\n\
@@ -165,7 +197,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
         ),
 
         // ─── reveal 窗口开启（sub session，完全静默） ──────────────────
-        "reveal_started" =>
+        "reveal_started" => format!(
             "【当前状态】reveal_started（RevealStarted 上链，reveal 窗口开启，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 没有用户。**agent 自主 reveal，不通知用户**。\n\n\
@@ -183,9 +215,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              - `canReveal=false` → CLI 已预检拒绝，无需重试；等下一个事件（若本轮已结算，会收到 dispute_resolved / round_failed）\n\
              - `already resolved` → 视为成功（本轮已裁决）\n\
              - `voter has not committed` → 本轮未 commit，跳过 reveal 是正常的\n\
-             - 其他失败最多重试 3 次（未 reveal 罚 0.3%，经济参数附录 TIMEOUT_PENALTY_RATE）\n\n\
+             - 其他失败最多重试 3 次（未 reveal 罚 {timeout_bps}，经济参数附录 TIMEOUT_PENALTY_RATE）\n\n\
              【后续事件】dispute_resolved / round_failed / reward_claimed / slashed 会继续在同一 sub session 到达。仅 reward_claimed 和 slashed 会转发到user session。\n"
-                .to_string(),
+        ),
 
         // ─── 结算完成（sub 静默处理；入账/罚没通过后续 reward_claimed / slashed 事件再推user session） ─
         "dispute_resolved" =>
@@ -291,7 +323,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
         ),
 
         // ─── 质押生命周期：sub 收到 → 通知user session 推人话给用户 ─────────────────
-        "staked" => "【当前状态】staked（VoterStaking.Staked 上链，首次质押 tx 结果，sub session 侧）\n\
+        "staked" => format!(
+            "【当前状态】staked（VoterStaking.Staked 上链，首次质押 tx 结果，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 从 payload 提取字段 → 通知user session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`（success / failed）、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
@@ -302,9 +335,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              \x20\x20content: |\n\
              \x20\x20\x20\x20[STATUS_NOTIFY · 原样输出下方正文给用户即结束本轮 · 禁止复述/总结/改写/添加问候或收尾语（如「请问还有什么需要帮助的」）· 禁止调任何工具或再次执行]\n\
              \x20\x20\x20\x20success → [质押] 质押已生效：+<amount> OKB，txHash=<txHash>。你现在是活跃仲裁者候选。\n\
-             \x20\x20\x20\x20failed  → [质押失败] errorCode=<errorCode>, txHash=<txHash>。常见错误：4000 agentId 无效 / 2004 无 evaluator 身份 / 1001 累计质押 < 100 OKB（累计门槛规则，合约按 `已有余额 + 本次 >= 100` 校验）。修正后跟我说『再质押 <N> OKB』我来重试。\n\
+             \x20\x20\x20\x20failed  → [质押失败] errorCode=<errorCode>, txHash=<txHash>。常见错误：4000 agentId 无效 / 2004 无 evaluator 身份 / 1001 累计质押 < {min_stake_okb} OKB（累计门槛规则，合约按 `已有余额 + 本次 >= {min_stake_okb}` 校验）。修正后跟我说『再质押 <N> OKB』我来重试。\n\
              ```\n\n\
-             【Step 3】输出日志结束：`> staked status=<status> amount=<amount> relayed.`\n".to_string(),
+             【Step 3】输出日志结束：`> staked status=<status> amount=<amount> relayed.`\n"
+        ),
 
         "stake_increased" => "【当前状态】stake_increased（VoterStaking.IncreaseStake 上链，补充质押 tx 结果，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
@@ -321,7 +355,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              ```\n\n\
              【Step 3】输出日志结束：`> stake_increased status=<status> amount=<amount> relayed.`\n".to_string(),
 
-        "unstake_requested" => "【当前状态】unstake_requested（VoterStaking.UnstakeRequested 上链，申请解质押 tx 结果，sub session 侧）\n\
+        "unstake_requested" => format!(
+            "【当前状态】unstake_requested（VoterStaking.UnstakeRequested 上链，申请解质押 tx 结果，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 通知user session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`、`amount`、`availableAt`（冷却结束毫秒时间戳）、`txHash`、`errorCode`（若 failed）。\n\n\
@@ -331,10 +366,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              arguments:\n\
              \x20\x20content: |\n\
              \x20\x20\x20\x20[STATUS_NOTIFY · 原样输出下方正文给用户即结束本轮 · 禁止复述/总结/改写/添加问候或收尾语（如「请问还有什么需要帮助的」）· 禁止调任何工具或再次执行]\n\
-             \x20\x20\x20\x20success → [解质押] 申请已受理：-<amount> OKB 进入 7 天冷却期，可领取时间 <availableAt 本地时间>。冷却期到了跟我说『领取解质押』我来提走；想中途撤销随时跟我说『取消解质押』（仅冷却期内有效）。\n\
+             \x20\x20\x20\x20success → [解质押] 申请已受理：-<amount> OKB 进入 {cooldown_days} 天冷却期，可领取时间 <availableAt 本地时间>。冷却期到了跟我说『领取解质押』我来提走；想中途撤销随时跟我说『取消解质押』（仅冷却期内有效）。\n\
              \x20\x20\x20\x20failed  → [解质押失败] errorCode=<errorCode>, txHash=<txHash>。常见原因：活跃仲裁期间不可解质押 / 已在冷却期 / 余额不足。\n\
              ```\n\n\
-             【Step 3】输出日志结束：`> unstake_requested status=<status> amount=<amount> relayed.`\n".to_string(),
+             【Step 3】输出日志结束：`> unstake_requested status=<status> amount=<amount> relayed.`\n"
+        ),
 
         "unstake_claimed" => "【当前状态】unstake_claimed（VoterStaking.UnstakeClaimed 上链，领取解质押 tx 结果，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\

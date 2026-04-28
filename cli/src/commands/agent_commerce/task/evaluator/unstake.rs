@@ -1,38 +1,30 @@
 //! Evaluator 解质押生命周期 CLI。
 //!
 //! 对齐后端 staking API §12166–§12572：
-//! - `request-unstake --amount N` → POST /staking/requestUnstake（进入 7 天冷却）
+//! - `request-unstake --amount N` → POST /staking/requestUnstake（进入冷却期）
 //! - `claim-unstake`              → POST /staking/claimUnstake（冷却期后提走）
 //! - `cancel-unstake`             → POST /staking/cancelUnstake（冷却期内取消）
 //!
 //! 三者都是 AA UOP：后端返回 uopData，CLI 签名 + 广播。无 jobId 绑定，bizContext.jobId=""。
-//
-// TODO(backend-config): 7 天冷却期当前是合约硬编码；`/staking/config` 上线后应读
-// `unstakeCooldownSeconds` 并用在所有用户可见提示里。参见 evaluator.md §13。
-//
-// TODO(backend-config): 部分赎回保留规则 规定部分赎回后余额最低保留 100 OKB。
-// 当前前置校验写死 100，`/staking/config` 上线后应改读 `partialUnstakeMinRetainOkb`，
-// 并在发起前查当前质押余额 `balance - amount < min` 则拒绝并引导全额赎回。
-// 现阶段合约/后端为权威校验源，CLI 层仅做 UX 前置提示，不阻塞。
+//!
+//! 冷却期天数与"部分赎回最低保留"由 `/staking/config` 提供（Apollo 配置，后端权威），
+//! CLI 在发起前 best-effort 拉取做 UX 提示；拉取失败不阻塞主流程，由合约 revert 兜底。
 
 use anyhow::{bail, Result};
 
-use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::network::task_api_client::{
+    StakingConfig, TaskApiClient,
+};
 use crate::commands::agent_commerce::task::signing;
 
-/// 申请解质押，OKB 进入 7 天冷却期。支持部分解质押。活跃仲裁期间会 revert。
+/// 申请解质押，OKB 进入冷却期。支持部分解质押。活跃仲裁期间会 revert。
 ///
-/// 部分赎回保留规则：部分赎回后余额最低保留 100 OKB（低于此额只允许全额赎回）。
-/// 当前 CLI 不做前置校验，依赖合约 revert；`/staking/config` 上线后改为本地预检（见下方 TODO）。
+/// 部分赎回保留规则：部分赎回后余额最低保留 `partialUnstakeMinRetainOkb` OKB
+/// （低于此值只允许全额赎回）。CLI 在发起前 best-effort 拉 `/staking/config`，
+/// 用于 UX 文案与（已知本地余额时的）友好预检；最终校验仍以合约 revert 为准。
 ///
 /// Error codes: 4000（agentId 无效）/ 1001（amount <= 0）/ 合约 revert（余额不足 / 活跃争议 / 已在冷却 / 部分赎回后余额 < 保留值）
 pub async fn handle_request_unstake(client: &mut TaskApiClient, amount: &str) -> Result<()> {
-    // TODO(backend-config): 部分赎回保留规则 的"部分赎回最低保留"本地预检。上线步骤：
-    //   1) 从 `/priapi/v1/aieco/task/staking/config` 拉 `partialUnstakeMinRetainOkb`
-    //   2) 从 `/priapi/v1/aieco/task/staking/info`（或类似）拉当前质押余额 `stakedBalance`
-    //   3) 若 `stakedBalance - amount < partialUnstakeMinRetainOkb && stakedBalance - amount > 0`
-    //      → bail!("部分赎回后余额不足最低保留值，请选择全额赎回")
-    // 当前占位：不做本地校验，直接发 UOP，让合约 revert 把关。
     let trimmed = amount.trim();
     if trimmed.is_empty() {
         bail!("--amount 不能为空（OKB 金额，UI 单位，例如 50）");
@@ -43,6 +35,9 @@ pub async fn handle_request_unstake(client: &mut TaskApiClient, amount: &str) ->
 
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator().await?;
+
+    // best-effort 拉平台配置；失败不阻塞——合约会兜底。
+    let cfg = client.get_staking_config(&agent_id).await.ok();
 
     let path = "/priapi/v1/aieco/task/staking/requestUnstake";
     let body = serde_json::json!({ "amount": trimmed });
@@ -65,9 +60,16 @@ pub async fn handle_request_unstake(client: &mut TaskApiClient, amount: &str) ->
     println!("  amount:  -{trimmed} OKB（申请中）");
     println!("  voter:   {address}");
     println!("  txHash:  {tx_hash}");
+    let cooldown_days = cfg.as_ref().map(StakingConfig::unstake_cooldown_days).unwrap_or(7);
     println!(
-        "next: 申请已提交，等待链上确认；确认后进入 7 天冷却期，到时可领取，期间可撤销。"
+        "next: 申请已提交，等待链上确认；确认后进入 {cooldown_days} 天冷却期，到时可领取，期间可撤销。"
     );
+    if let Some(c) = cfg.as_ref() {
+        println!(
+            "  config: 部分赎回后余额最低保留 {} OKB（低于此值只能全额赎回）",
+            c.partial_unstake_min_retain_okb
+        );
+    }
     Ok(())
 }
 

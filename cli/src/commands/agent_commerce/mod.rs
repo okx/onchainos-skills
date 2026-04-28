@@ -437,8 +437,17 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     task::provider::flow::generate_next_action(&job_id, &job_status, &agent_id),
                 "buyer" | "client" =>
                     task::buyer::flow::generate_next_action(&job_id, &job_status, &agent_id),
-                "evaluator" =>
-                    task::evaluator::flow::generate_next_action(&job_id, &job_status, &agent_id),
+                "evaluator" => {
+                    // best-effort 拉平台质押 & 仲裁配置；拉不到回退到 cfg_defaults，
+                    // 避免 sub session 因网络抖动跑不出剧本。
+                    let staking_cfg = task::common::network::task_api_client::TaskApiClient::new()
+                        .get_staking_config(&agent_id)
+                        .await
+                        .ok();
+                    task::evaluator::flow::generate_next_action(
+                        &job_id, &job_status, &agent_id, staking_cfg.as_ref(),
+                    )
+                }
                 other => anyhow::bail!("--role 必须是 provider/buyer/client/evaluator，当前: {other}"),
             };
             println!("{prompt}");

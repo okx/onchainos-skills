@@ -20,12 +20,7 @@ use crate::commands::agent_commerce::task::signing;
 /// Error codes:
 ///   4000 — agentId 无效 / 非 evaluator 身份
 ///   2004 — agentId 无 evaluator 身份 (identity=2)
-///   1001 — 累计质押 < 最低门槛（当前 100 OKB；合约/后端权威）
-///
-// TODO(backend-config): 最低累计质押门槛 100 OKB 当前是合约硬规则；
-// `/staking/config` 上线后读取 `minCumulativeStakeOkb`（字段名待定）替换，
-// 并在 CLI 本地拉 `stakedBalance` 做预检 `stakedBalance + amount < min` → 友好提示。
-// 参见 skills/okx-agent-task/evaluator.md §13。
+///   1001 — 累计质押 < 最低门槛（由 `/staking/config.minCumulativeStakeOkb` 决定，合约/后端权威）
 pub async fn handle_stake(client: &mut TaskApiClient, amount: &str) -> Result<()> {
     let trimmed = amount.trim();
     if trimmed.is_empty() {
@@ -37,6 +32,24 @@ pub async fn handle_stake(client: &mut TaskApiClient, amount: &str) -> Result<()
 
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator().await?;
+
+    // best-effort 拉平台配置，做 UX 友好预检（首次质押天然等价于"本次 >= 最低门槛"）。
+    // 失败 / 余额不可知场景下不阻塞，由合约 1001 兜底。
+    let cfg = client.get_staking_config(&agent_id).await.ok();
+    if let Some(c) = cfg.as_ref() {
+        if let (Ok(amt), Ok(min)) = (
+            trimmed.parse::<f64>(),
+            c.min_cumulative_stake_okb.parse::<f64>(),
+        ) {
+            if amt < min {
+                bail!(
+                    "本次质押 {trimmed} OKB 低于平台最低累计门槛 {} OKB（minCumulativeStakeOkb）；\
+                     首次质押或被罚后补齐都需一次性 >= {} OKB。",
+                    c.min_cumulative_stake_okb, c.min_cumulative_stake_okb
+                );
+            }
+        }
+    }
 
     let path = "/priapi/v1/aieco/task/staking/stake";
     let body = serde_json::json!({ "amount": trimmed });

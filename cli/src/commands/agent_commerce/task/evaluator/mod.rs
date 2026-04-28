@@ -25,8 +25,10 @@ pub mod flow;
 mod helpers;
 mod increase_stake;
 mod info;
+mod my_stake;
 mod reveal;
 mod stake;
+mod staking_config;
 mod unstake;
 
 use anyhow::Result;
@@ -88,6 +90,17 @@ pub enum EvaluatorCommand {
     ClaimUnstake,
     /// Cancel a pending unstake request within the cooldown window; OKB returns to staked state.
     CancelUnstake,
+    /// Read platform staking & arbitration config (Apollo-driven, JWT auth, no body).
+    /// Mirrors GET /priapi/v1/aieco/task/staking/config.
+    #[command(name = "staking-config", visible_alias = "stakingconfig")]
+    StakingConfig,
+    /// Read the current account's on-chain stake state (activeStake / pendingUnstake /
+    /// validStake / activeDisputes / cooldown timestamps / registered flag).
+    /// Mirrors GET /priapi/v1/aieco/task/staking/myStake. JWT auth, no body, no agentId
+    /// header — backend resolves from token. Use this (not wallet balance) for the
+    /// cumulative-stake threshold check in evaluator.md §1.5.
+    #[command(name = "my-stake", visible_alias = "mystake")]
+    MyStake,
 }
 
 pub async fn run(cmd: EvaluatorCommand, _ctx: &Context) -> Result<()> {
@@ -116,5 +129,9 @@ pub async fn run(cmd: EvaluatorCommand, _ctx: &Context) -> Result<()> {
             unstake::handle_claim_unstake(&mut client).await,
         EvaluatorCommand::CancelUnstake =>
             unstake::handle_cancel_unstake(&mut client).await,
+        EvaluatorCommand::StakingConfig =>
+            staking_config::handle_staking_config(&mut client).await,
+        EvaluatorCommand::MyStake =>
+            my_stake::handle_my_stake(&mut client).await,
     }
 }
