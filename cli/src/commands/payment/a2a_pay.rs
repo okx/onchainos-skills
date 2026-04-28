@@ -6,9 +6,9 @@
 //!  - `create` (Seller): POST /payment/create — Seller defines amount / symbol /
 //!    recipient (or escrow params) and gets back `paymentId` + `challenge` to hand
 //!    to the Buyer. No buyer wallet / signing involved.
-//!  - `pay` (Buyer): GET /payment/{id} → reconstruct EIP-3009 authorization from the
-//!    `challenge.data.request`; TEE-sign; POST /payment/{id}/credential.
-//!  - `status`: GET /payment/{id}/status — poll on-chain execution state.
+//!  - `pay` (Buyer): GET /p/{id} → reconstruct EIP-3009 authorization from the
+//!    `challenge.data.request`; TEE-sign; POST /p/{id}/credential.
+//!  - `status`: GET /p/{id}/status — poll on-chain execution state.
 
 use alloy_primitives::{keccak256, Address, FixedBytes, U256};
 use alloy_sol_types::{sol, SolValue};
@@ -20,7 +20,6 @@ use zeroize::Zeroize;
 
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
 use crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN;
-use crate::commands::payment::payment_api_client::PaymentApiClient;
 use crate::wallet_api::WalletApiClient;
 use crate::{keyring_store, wallet_store};
 
@@ -36,7 +35,7 @@ pub struct CreateArgs {
     /// Payment type: `charge` (direct transfer) or `escrow` (lock funds).
     #[arg(long = "type")]
     pub r#type: String,
-    /// Amount in whole tokens (e.g. "50" means 50 USDT)
+    /// Amount in whole tokens; decimals allowed (e.g. "50" or "0.01" USDT).
     #[arg(long)]
     pub amount: String,
     /// ERC-20 token symbol (e.g. "USDT")
@@ -98,9 +97,9 @@ pub struct PayArgs {
     /// Expected amount.
     #[arg(long)]
     pub amount: String,
-    /// Expected token symbol
+    /// Expected ERC-20 token contract address.
     #[arg(long)]
-    pub symbol: String,
+    pub currency: String,
     /// Expected recipient address
     #[arg(long = "recipient-address")]
     pub recipient_address: String,
@@ -140,7 +139,7 @@ pub async fn execute(cmd: A2aPayCommand) -> Result<()> {
             let params = PayParams {
                 payment_id: args.payment_id,
                 amount: args.amount,
-                symbol: args.symbol,
+                currency: args.currency,
                 recipient_address: args.recipient_address,
             };
             let out = pay(params).await?;
@@ -195,6 +194,10 @@ impl TryFrom<CreateArgs> for ChargeParams {
 #[derive(serde::Serialize)]
 pub struct CreatePaymentOutput {
     pub payment_id: String,
+    /// Amount in minimal units (e.g. "10000" for 0.01 USDT).
+    pub amount: String,
+    /// ERC-20 contract address for the requested symbol.
+    pub currency: String,
     pub deliveries: Option<Value>,
 }
 
@@ -203,23 +206,28 @@ pub struct CreatePaymentOutput {
 /// Seller side: POST /payment/create — produces `paymentId` + `challenge` for
 /// the Buyer to consume. No buyer wallet / TEE signing here.
 pub async fn create_payment_charge(params: ChargeParams) -> Result<CreatePaymentOutput> {
-    let parsed_amount: u128 = params
-        .amount
-        .parse()
-        .context("amount must be a non-negative integer (whole tokens)")?;
-    if parsed_amount == 0 {
-        bail!("amount must be greater than zero");
-    }
+    validate_positive_decimal_amount(&params.amount)?;
     require_evm_address(&params.recipient, "recipient")?;
 
-    let mut payment_client = PaymentApiClient::new();
+    let mut wallet_client = WalletApiClient::new()?;
+    let access_token = ensure_tokens_refreshed().await?;
     let mut value = serde_json::to_value(&params).context("serialize charge params")?;
     value["type"] = json!("charge");
     value["deliveries"] = json!({ "includeUrl": true });
-    let resp: Value = payment_client
-        .create(&value)
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][a2a-pay] POST /payment/create (charge) body={}",
+            value
+        );
+    }
+    let resp: Value = wallet_client
+        .post_authed("/api/v6/pay/a2a/payment/create", &access_token, &value)
         .await
+        .map_err(format_api_error)
         .context("Smart-Account /payment/create failed")?;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][a2a-pay] /payment/create response={resp}");
+    }
     parse_create_payment_response(resp)
 }
 
@@ -360,13 +368,7 @@ impl TryFrom<CreateArgs> for EscrowParams {
 /// Seller side: POST /payment/create with escrow params — produces `paymentId`
 /// + `challenge` for the Buyer.
 pub async fn create_payment_escrow(params: EscrowParams) -> Result<CreatePaymentOutput> {
-    let parsed_amount: u128 = params
-        .amount
-        .parse()
-        .context("amount must be a non-negative integer (whole tokens)")?;
-    if parsed_amount == 0 {
-        bail!("amount must be greater than zero");
-    }
+    validate_positive_decimal_amount(&params.amount)?;
     for (label, v) in [
         ("escrow-contract", params.escrow.escrow_contract.as_str()),
         ("provider", params.escrow.provider.as_str()),
@@ -377,14 +379,25 @@ pub async fn create_payment_escrow(params: EscrowParams) -> Result<CreatePayment
         require_evm_address(v, label)?;
     }
 
-    let mut payment_client = PaymentApiClient::new();
+    let mut wallet_client = WalletApiClient::new()?;
+    let access_token = ensure_tokens_refreshed().await?;
     let mut value = serde_json::to_value(&params).context("serialize escrow params")?;
     value["type"] = json!("escrow");
     value["deliveries"] = json!({ "includeUrl": true });
-    let resp: Value = payment_client
-        .create(&value)
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][a2a-pay] POST /payment/create (escrow) body={}",
+            value
+        );
+    }
+    let resp: Value = wallet_client
+        .post_authed("/api/v6/pay/a2a/payment/create", &access_token, &value)
         .await
+        .map_err(format_api_error)
         .context("Smart-Account /payment/create failed")?;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][a2a-pay] /payment/create response={resp}");
+    }
     parse_create_payment_response(resp)
 }
 
@@ -393,8 +406,27 @@ fn parse_create_payment_response(resp: Value) -> Result<CreatePaymentOutput> {
         .as_str()
         .ok_or_else(|| anyhow!("missing 'paymentId' in /payment/create response"))?
         .to_string();
+    let request = resp
+        .pointer("/challenge/data/request")
+        .ok_or_else(|| anyhow!("missing 'challenge.data.request' in /payment/create response"))?;
+    let amount = request
+        .get("amount")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            anyhow!("missing 'challenge.data.request.amount' in /payment/create response")
+        })?
+        .to_string();
+    let currency = request
+        .get("currency")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            anyhow!("missing 'challenge.data.request.currency' in /payment/create response")
+        })?
+        .to_string();
     Ok(CreatePaymentOutput {
         payment_id,
+        amount,
+        currency,
         deliveries: resp.get("deliveries").cloned(),
     })
 }
@@ -403,10 +435,10 @@ fn parse_create_payment_response(resp: Value) -> Result<CreatePaymentOutput> {
 
 pub struct PayParams {
     pub payment_id: String,
-    /// Expected amount
+    /// Expected amount in minimal units (e.g. "10000" for 0.01 USDT)
     pub amount: String,
-    /// Expected token symbol
-    pub symbol: String,
+    /// Expected ERC-20 token contract address
+    pub currency: String,
     /// Expected recipient address
     pub recipient_address: String,
 }
@@ -422,28 +454,31 @@ pub struct PayOutput {
 }
 
 /// Buyer side:
-/// 1. GET /payment/{id} → reconstruct authorization params from `challenge.data.request`.
+/// 1. GET /p/{id} → reconstruct authorization params from `challenge.data.request`.
 /// 2. Resolve Buyer agentic-wallet address on the chain named in `methodDetails.chainId`.
 /// 3. Pick `validAfter` / `validBefore` (CLI override or defaults).
 /// 4. Compute EIP-3009 nonce:
 ///    - `charge` intent → random 32 bytes.
 ///    - `escrow` intent → keccak256(abi.encode(15 fields per Appendix C)).
 /// 5. TEE-sign EIP-3009 (gen-msg-hash → ed25519 sign session → sign-msg).
-/// 6. POST /payment/{id}/credential.
+/// 6. POST /p/{id}/credential.
 #[allow(clippy::too_many_lines)]
 pub async fn pay(p: PayParams) -> Result<PayOutput> {
-    // Two clients on different hosts:
-    //   - payment_client → defi-sa-gateway (A2A_PAY_BASE_URL), serves /api/v6/pay/a2a/payment/*
-    //   - wallet_client  → web3.okx.com (OKX_BASE_URL), serves TEE /priapi/v5/wallet/agentic/pre-transaction/*
-    let mut payment_client = PaymentApiClient::new();
     let mut wallet_client = WalletApiClient::new()?;
     let access_token = ensure_tokens_refreshed().await?;
 
-    // ── 1. GET /payment/{id} ─────────────────────────────────────────
-    let resp: Value = payment_client
-        .get_payment(&p.payment_id)
+    // ── 1. GET /p/{id} (public buyer link, no auth) ──────────────────
+    let payment_path = format!("/api/v6/pay/a2a/p/{}", p.payment_id);
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][a2a-pay] GET {payment_path}");
+    }
+    let resp: Value = wallet_client
+        .get_public(&payment_path, &[])
         .await
-        .context("Smart-Account GET /payment/{id} failed")?;
+        .context("Smart-Account GET /p/{id} failed")?;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][a2a-pay] GET /p/{} response={resp}", p.payment_id);
+    }
     let challenge = resp
         .get("challenge")
         .cloned()
@@ -464,11 +499,6 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .get("amount")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("challenge.data.request.amount missing"))?
-        .to_string();
-    let symbol = request
-        .get("symbol")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("challenge.data.request.symbol missing"))?
         .to_string();
     let currency = request
         .get("currency")
@@ -498,10 +528,10 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
             p.amount
         );
     }
-    if p.symbol != symbol {
+    if !p.currency.eq_ignore_ascii_case(&currency) {
         bail!(
-            "symbol mismatch: expected {}, challenge has {symbol}",
-            p.symbol
+            "currency mismatch: expected {}, challenge has {currency}",
+            p.currency
         );
     }
     if !p.recipient_address.eq_ignore_ascii_case(&recipient) {
@@ -618,6 +648,9 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         base_fields["authorizationType"] = json!(authorization_type);
     }
 
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][a2a-pay] POST gen-msg-hash body={base_fields}");
+    }
     let unsigned_hash_resp: Value = wallet_client
         .post_authed(
             "/priapi/v5/wallet/agentic/pre-transaction/gen-msg-hash",
@@ -627,6 +660,9 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .await
         .map_err(format_api_error)
         .context("a2a-pay: gen-msg-hash failed")?;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][a2a-pay] gen-msg-hash response={unsigned_hash_resp}");
+    }
     let msg_hash = unsigned_hash_resp[0]["msgHash"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'msgHash' in gen-msg-hash response"))?;
@@ -647,6 +683,9 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
     sign_body["sessionCert"] = json!(session.session_cert);
     sign_body["sessionSignature"] = json!(session_signature_b64);
 
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][a2a-pay] POST sign-msg body={sign_body}");
+    }
     let signed_resp: Value = wallet_client
         .post_authed(
             "/priapi/v5/wallet/agentic/pre-transaction/sign-msg",
@@ -656,12 +695,15 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .await
         .map_err(format_api_error)
         .context("a2a-pay: sign-msg failed")?;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][a2a-pay] sign-msg response={signed_resp}");
+    }
     let signature_hex = signed_resp[0]["signature"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'signature' in sign-msg response"))?
         .to_string();
 
-    // ── 6. POST /payment/{id}/credential ─────────────────────────────
+    // ── 6. POST /p/{id}/credential ─────────────────────────────
     // Charge omits `challenge`; escrow includes it (backend rebinds escrow nonce).
     let mut credential_body = json!({
         "payload": {
@@ -681,10 +723,21 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
     if intent == "escrow" {
         credential_body["challenge"] = challenge;
     }
-    let cred_resp: Value = payment_client
-        .submit_credential(&p.payment_id, &credential_body)
+    let credential_path = format!("/api/v6/pay/a2a/p/{}/credential", p.payment_id);
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][a2a-pay] POST {credential_path} body={credential_body}");
+    }
+    let cred_resp: Value = wallet_client
+        .post_authed(&credential_path, &access_token, &credential_body)
         .await
-        .context("Smart-Account /payment/{id}/credential failed")?;
+        .map_err(format_api_error)
+        .context("Smart-Account /p/{id}/credential failed")?;
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][a2a-pay] /p/{}/credential response={cred_resp}",
+            p.payment_id
+        );
+    }
 
     Ok(PayOutput {
         payment_id: p.payment_id,
@@ -712,13 +765,22 @@ pub struct StatusOutput {
     pub fee_bps: Option<u64>,
 }
 
-/// GET /payment/{id}/status — current state.
+/// GET /p/{id}/status — current state.
 pub async fn status(payment_id: String) -> Result<StatusOutput> {
-    let mut payment_client = PaymentApiClient::new();
-    let resp: Value = payment_client
-        .get_status(&payment_id)
+    let mut wallet_client = WalletApiClient::new()?;
+    let access_token = ensure_tokens_refreshed().await?;
+    let path = format!("/api/v6/pay/a2a/p/{}/status", payment_id);
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][a2a-pay] GET {path}");
+    }
+    let resp: Value = wallet_client
+        .get_authed(&path, &access_token, &[])
         .await
-        .context("Smart-Account /payment/{id}/status failed")?;
+        .map_err(format_api_error)
+        .context("Smart-Account /p/{id}/status failed")?;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][a2a-pay] /p/{payment_id}/status response={resp}");
+    }
     Ok(StatusOutput {
         payment_id,
         status: resp["status"].as_str().unwrap_or("unknown").to_string(),
@@ -733,6 +795,30 @@ pub async fn status(payment_id: String) -> Result<StatusOutput> {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
+
+/// Validate that `s` is a positive decimal amount in whole tokens (e.g. "50",
+/// "0.01", ".5"). Rejects empty / non-numeric / signed / scientific-notation /
+/// zero values. The string is passed to the wire unchanged after validation —
+/// minimal-unit conversion is the server's responsibility.
+fn validate_positive_decimal_amount(s: &str) -> Result<()> {
+    let (int_part, frac_part) = match s.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => (s, ""),
+    };
+    if int_part.is_empty() && frac_part.is_empty() {
+        bail!("amount must not be empty");
+    }
+    if !int_part.chars().all(|c| c.is_ascii_digit())
+        || !frac_part.chars().all(|c| c.is_ascii_digit())
+    {
+        bail!("amount must be a non-negative decimal number, got: {s}");
+    }
+    let nonzero = int_part.chars().any(|c| c != '0') || frac_part.chars().any(|c| c != '0');
+    if !nonzero {
+        bail!("amount must be greater than zero");
+    }
+    Ok(())
+}
 
 fn is_valid_evm_address(addr: &str) -> bool {
     addr.starts_with("0x") && addr.len() == 42 && addr[2..].chars().all(|c| c.is_ascii_hexdigit())
@@ -810,6 +896,26 @@ mod tests {
         assert!(!is_valid_evm_address(
             "0xZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
         ));
+    }
+
+    #[test]
+    fn validates_positive_decimal_amount() {
+        assert!(validate_positive_decimal_amount("50").is_ok());
+        assert!(validate_positive_decimal_amount("0.01").is_ok());
+        assert!(validate_positive_decimal_amount("10.5").is_ok());
+        assert!(validate_positive_decimal_amount(".5").is_ok());
+        assert!(validate_positive_decimal_amount("1.").is_ok());
+
+        assert!(validate_positive_decimal_amount("").is_err());
+        assert!(validate_positive_decimal_amount(".").is_err());
+        assert!(validate_positive_decimal_amount("0").is_err());
+        assert!(validate_positive_decimal_amount("0.0").is_err());
+        assert!(validate_positive_decimal_amount("-1").is_err());
+        assert!(validate_positive_decimal_amount("+1").is_err());
+        assert!(validate_positive_decimal_amount("1e2").is_err());
+        assert!(validate_positive_decimal_amount("1.2.3").is_err());
+        assert!(validate_positive_decimal_amount(" 1").is_err());
+        assert!(validate_positive_decimal_amount("abc").is_err());
     }
 
     #[test]

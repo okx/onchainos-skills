@@ -684,6 +684,44 @@ impl WalletApiClient {
         Ok(body["data"].clone())
     }
 
+    /// GET without Authorization header (for public buyer payment links etc).
+    /// Retries once after DoH failover.
+    pub fn get_public<'a>(
+        &'a mut self,
+        path: &'a str,
+        query: &'a [(&'a str, &'a str)],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        Box::pin(async move {
+            let query_string = build_query_string(query);
+            let effective = self.effective_base_url();
+            let url = format!("{}{}{}", effective.trim_end_matches('/'), path, query_string);
+
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][get_public] url_path={}", &url);
+            }
+
+            let resp = match self
+                .http
+                .get(&url)
+                .headers(crate::client::ApiClient::anonymous_headers())
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                        return self.get_public(path, query).await;
+                    }
+                    return Err(e).context("Network unavailable — check your connection and try again");
+                }
+                Err(e) => return Err(e).context("request failed"),
+            };
+            self.doh.cache_direct_if_needed();
+            self.handle_response(resp).await
+        })
+    }
+
     pub fn get_authed<'a>(
         &'a mut self,
         path: &'a str,
