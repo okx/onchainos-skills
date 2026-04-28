@@ -260,10 +260,7 @@ pub enum AgentCommand {
 
     /// Get sensitive word list for A2A risk filtering
     #[command(name = "sensitive-words")]
-    SensitiveWords {
-        #[arg(long)]
-        agent_id: String,
-    },
+    SensitiveWords,
 
     /// Check if a message is eligible to be sent
     #[command(name = "message-eligible")]
@@ -280,14 +277,13 @@ pub enum AgentCommand {
         group_id: String,
         #[arg(long)]
         direction: String,
+        #[arg(long)]
+        provider_security_rate: String,
     },
 
     /// Get XMTP system config (system account addresses)
     #[command(name = "system-config")]
-    SystemConfig {
-        #[arg(long)]
-        agent_id: String,
-    },
+    SystemConfig,
 
     /// Send agent heartbeat to report online status
     Heartbeat {
@@ -449,19 +445,32 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::FileDownload { file_key, agent_id, output } =>
             chat::run(chat::ChatCommand::FileDownload { file_key, agent_id, output }, ctx).await,
 
-        AgentCommand::SensitiveWords { agent_id } =>
-            chat::run(chat::ChatCommand::SensitiveWords { agent_id }, ctx).await,
+        AgentCommand::SensitiveWords =>
+            chat::run(chat::ChatCommand::SensitiveWords, ctx).await,
 
-        AgentCommand::MessageEligible { agent_id, client_agent_id, provider_agent_id, job_id, group_id, direction } =>
-            chat::run(
-                chat::ChatCommand::MessageEligible {
-                    agent_id, client_agent_id, provider_agent_id, job_id, group_id, direction,
-                },
-                ctx,
-            ).await,
+        AgentCommand::MessageEligible {
+            agent_id,
+            client_agent_id,
+            provider_agent_id,
+            job_id,
+            group_id,
+            direction,
+            provider_security_rate,
+        } => chat::run(
+            chat::ChatCommand::MessageEligible {
+                agent_id,
+                client_agent_id,
+                provider_agent_id,
+                job_id,
+                group_id,
+                direction,
+                provider_security_rate,
+            },
+            ctx,
+        ).await,
 
-        AgentCommand::SystemConfig { agent_id } =>
-            chat::run(chat::ChatCommand::SystemConfig { agent_id }, ctx).await,
+        AgentCommand::SystemConfig =>
+            chat::run(chat::ChatCommand::SystemConfig, ctx).await,
 
         AgentCommand::Heartbeat { chain_index } =>
             chat::run(chat::ChatCommand::Heartbeat { chain_index }, ctx).await,

@@ -109,9 +109,7 @@ Get the sensitive word list for A2A risk filtering.
 
 ### Parameters
 
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `--agent-id <id>` | String | Yes | Agent ID |
+None.
 
 ### Return Fields (Success)
 
@@ -135,7 +133,7 @@ Get the sensitive word list for A2A risk filtering.
 ### Examples
 
 ```bash
-onchainos agent sensitive-words --agent-id agent_123
+onchainos agent sensitive-words
 ```
 
 ---
@@ -153,6 +151,7 @@ Check if a message is eligible to be sent between two agents.
 | `--job-id <id>` | String | Yes | Job ID |
 | `--group-id <id>` | String | Yes | Group ID |
 | `--direction <dir>` | String | Yes | `client_to_provider` or `provider_to_client` |
+| `--provider-security-rate <rate>` | String | Yes | Provider's security rate (sent as `providerSecurityRate`) |
 
 ### Return Fields (Success)
 
@@ -168,7 +167,7 @@ Check if a message is eligible to be sent between two agents.
 ### Examples
 
 ```bash
-onchainos agent message-eligible --client-agent-id client_1 --provider-agent-id provider_1 --job-id task_001 --group-id group_1 --direction client_to_provider
+onchainos agent message-eligible --client-agent-id client_1 --provider-agent-id provider_1 --job-id task_001 --group-id group_1 --direction client_to_provider --provider-security-rate 0.95
 ```
 
 ---
