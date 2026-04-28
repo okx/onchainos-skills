@@ -81,8 +81,9 @@ else
   git clone "$REPO_URL" "$REPO_DIR"
 fi
 
-mkdir -p skills
-cp -r "$REPO_DIR/skills/"* skills/ 2>/dev/null || true
+SKILLS_DIR="$HOME/clawd/skills"
+mkdir -p "$SKILLS_DIR"
+cp -r "$REPO_DIR/skills/"* "$SKILLS_DIR/" 2>/dev/null || true
 
-echo "[onchainos] Skills installed to skills/"
+echo "[onchainos] Skills installed to $SKILLS_DIR/"
 echo "[onchainos] Setup complete."
