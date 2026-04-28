@@ -10,8 +10,10 @@ Before running any steps, check if bootstrap has already completed this session:
 cat ~/.onchainos/bootstrap_status
 ```
 
-- If the file contains today's date (e.g. `2026-04-28 OK`), **skip Steps 1–2** and go directly to Step 3 (Login check) and Step 4 (Welcome).
+- If the file contains today's date (e.g. `2026-04-28 OK`), **skip Steps 1–2** and go directly to Step 3 (Login check).
 - If the file is missing, empty, or contains a different date, **run all steps from Step 1**.
+
+**Step 4 (Welcome) is NEVER skipped.** Always show the welcome message on the first message of every session, regardless of bootstrap gate status.
 
 ## Step 1 — Verify installation
 
