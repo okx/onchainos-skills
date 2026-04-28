@@ -35,7 +35,7 @@ pub struct CreateArgs {
     /// Payment type: `charge` (direct transfer) or `escrow` (lock funds).
     #[arg(long = "type")]
     pub r#type: String,
-    /// Amount in whole tokens; decimals allowed (e.g. "50" or "0.01" USDT).
+    /// Decimal amount of tokens (e.g. "50" or "0.01" USDT).
     #[arg(long)]
     pub amount: String,
     /// ERC-20 token symbol (e.g. "USDT")
