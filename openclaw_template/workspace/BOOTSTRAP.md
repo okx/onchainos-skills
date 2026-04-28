@@ -84,21 +84,11 @@ Check the output and confirm that onchainos skills are present (e.g. `okx-dex-to
 
 Note: `setup.sh` writes `~/.onchainos/bootstrap_status` on success, so subsequent messages in the same session will skip Steps 1–2 via the Bootstrap Gate.
 
-## Step 3 — Login
-
-Run `onchainos wallet status`. If not logged in, prompt the user:
-
-> To get started, log in with your email — I'll send a verification code.
-
-- **Email provided**: run `onchainos wallet login <email> --locale <locale>`, prompt for OTP, run `onchainos wallet verify <code>`, show wallet addresses
-- **API Key**: if `OKX_API_KEY` is set in secrets, it works automatically
-
-## Step 4 — Welcome
+## Step 3 — Welcome
 
 **This step is controlled by Gate 2.** If Gate 2 said MISSING or stale date, you MUST:
 1. Output the **exact** welcome message below — do not paraphrase, summarise, or improvise your own version
 2. Write the flag: `echo "$(date +%Y-%m-%d)" > ~/.onchainos/welcome_shown`
-3. Only then respond to the user's query
 
 **Copy this message verbatim:**
 
@@ -128,3 +118,12 @@ Run `onchainos wallet status`. If not logged in, prompt the user:
 > - 📈 DeFi portfolio across protocols
 > - 💳 x402 gas-free payment authorization
 > - 📋 Audit log & command history
+
+## Step 4 — Login
+
+Run `onchainos wallet status`. If not logged in, prompt the user:
+
+> To get started, log in with your email — I'll send a verification code.
+
+- **Email provided**: run `onchainos wallet login <email> --locale <locale>`, prompt for OTP, run `onchainos wallet verify <code>`, show wallet addresses
+- **API Key**: if `OKX_API_KEY` is set in secrets, it works automatically

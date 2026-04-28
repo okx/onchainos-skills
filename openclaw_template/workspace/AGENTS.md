@@ -11,13 +11,13 @@ Two gates control which steps run:
 | Gate | File | Fresh (today's date) | Missing / stale |
 |------|------|---------------------|-----------------|
 | Gate 1 — Bootstrap | `~/.onchainos/bootstrap_status` | Skip Steps 1–2 | Run Steps 1–2 |
-| Gate 2 — Welcome | `~/.onchainos/welcome_shown` | Skip Step 4 | **Must** run Step 4 and write flag |
+| Gate 2 — Welcome | `~/.onchainos/welcome_shown` | Skip Step 3 | **Must** run Step 3 and write flag |
 
 Bootstrap steps:
 1. CLI binary, workflows, and skills exist — install if missing
 2. PATH is configured, `onchainos --version` succeeds, skills symlinked and visible in `openclaw skills list`
-3. Wallet login status is checked
-4. Welcome message is shown and `~/.onchainos/welcome_shown` is written
+3. Welcome message is shown (verbatim) and `~/.onchainos/welcome_shown` is written
+4. Wallet login status is checked
 
 `setup.sh` writes `~/.onchainos/bootstrap_status` on success. The agent writes `~/.onchainos/welcome_shown` after showing the welcome.
 
