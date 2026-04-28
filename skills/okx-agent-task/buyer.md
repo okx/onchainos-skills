@@ -1,7 +1,8 @@
 > **CRITICAL — STOP AND CHECK BEFORE ANY RESPONSE**
 >
-> When the user mentions a budget with "U", "u", "刀", "美元", "美金", "dollar", "USD", or patterns like "100U" / "50u":
-> - These are **ambiguous** — "U" could mean USDT or USDG.
+> If the user **explicitly** wrote "USDT" or "USDG" (e.g. "1 USDT", "100 USDG"), use that token directly — no confirmation needed.
+>
+> Only when the user uses **ambiguous** expressions — "U", "u", "刀", "美元", "美金", "dollar", "USD", or patterns like "100U" / "50u" — without spelling out "USDT" or "USDG":
 > - You **MUST NOT** assume USDT. You **MUST NOT** display "100 USDT" or any token in your response.
 > - You **MUST** immediately ask: **"请确认支付代币：USDT 还是 USDG？"**
 > - You **MUST** wait for the user to explicitly reply "USDT" or "USDG" before proceeding.
@@ -235,7 +236,7 @@ Core judgement: **Are all required fields present and valid?**
 > 确认无误？确认后我立即上链创建任务。
 
 **IMPORTANT**: Always use the Markdown table format above for the confirmation form — do NOT use plain-text key-value pairs or code blocks. Use Chinese field labels (标题/摘要/描述/支付代币/预算/接单截止/交付期限/验收标准) when the conversation is in Chinese, English labels when in English. Keep field labels short (max 4 Chinese characters) so they render on a single line without wrapping.
-**IMPORTANT**: The 支付代币 field MUST come from the user's explicit words "USDT" or "USDG". If the user wrote "U"/"u"/"刀"/"美元"/"美金"/"dollar"/"USD" or amount+U (e.g. "100U"), do NOT fill in any token — ask "请确认支付代币：USDT 还是 USDG？" first.
+**IMPORTANT**: If the user explicitly wrote "USDT" or "USDG", use it directly. Only if the user wrote ambiguous terms — "U"/"u"/"刀"/"美元"/"美金"/"dollar"/"USD" or amount+U (e.g. "100U") — without spelling out "USDT" or "USDG", do NOT fill in any token — ask "请确认支付代币：USDT 还是 USDG？" first.
 
 User confirms → proceed to Step 8.
 
