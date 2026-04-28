@@ -7,14 +7,26 @@ set -e
 
 curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
 
-# ── Ensure onchainos is on PATH for the current session ──────
-# install.sh persists PATH to the shell profile, but the current
-# session won't pick it up until we add it explicitly.
+# ── Ensure $HOME/.local/bin is on PATH ───────────────────────
 INSTALL_DIR="$HOME/.local/bin"
+EXPORT_LINE='export PATH="$HOME/.local/bin:$PATH"'
+
+# Add to PATH for the current session
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
   *) export PATH="$INSTALL_DIR:$PATH" ;;
 esac
+
+# Persist to all common shell profiles so new terminals pick it up
+for profile in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
+  if [ -f "$profile" ] || [ "$profile" = "$HOME/.profile" ]; then
+    if ! grep -qF '.local/bin' "$profile" 2>/dev/null; then
+      echo "" >> "$profile"
+      echo "# Added by onchainos setup" >> "$profile"
+      echo "$EXPORT_LINE" >> "$profile"
+    fi
+  fi
+done
 
 # ── Verify ───────────────────────────────────────────────────
 if command -v onchainos >/dev/null 2>&1; then
