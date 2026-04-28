@@ -406,7 +406,6 @@ onchainos agent evaluator commit <disputeId> --side <1|2>
 | 多数奖励 | 多数票方按质押权重瓜分（仲裁押金 + 少数方被罚 stake） | — |
 | 少数罚没 | 少数票方 stake 的 **1%** | `MINORITY_PENALTY_RATE=1%` |
 | Commit / Reveal 超时罚 | voter stake 的 **0.3%**，踢出 + 替补 + 24h 冷却不被选中 | `TIMEOUT_PENALTY_RATE=0.3%` |
-| 初始陪审 | 5 人（奇数）；若 5 人总质押 < 任务金额 → 递增至 7 / 9 / 11…直到总质押 ≥ 任务金额 | `MIN_EVALUATORS=5` |
 | Commit + Reveal 合计时限 | **24h**（规范写法，后端分 CommitPhase 18h + RevealPhase 6h） | `COMMIT+REVEAL TIMEOUT=24h` |
 
 **任务结算回写**（仲裁系统通知任务系统后的资金流——仲裁者只看自己奖金，此表用于解释完整图景）：
