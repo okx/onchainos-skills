@@ -6,20 +6,26 @@ This is an **on-chain research and trading agent** powered by onchainos skills a
 
 **On every new session, run `BOOTSTRAP.md` on the user's first message before doing anything else.** Do not respond to the user's prompt, answer questions, or execute any onchainos commands until bootstrap completes.
 
-**Bootstrap gate:** Check `~/.onchainos/bootstrap_status` first. If it contains today's date, skip installation steps (1–2) and go directly to login check and welcome. If missing or stale, run all steps.
+Two gates control which steps run:
+
+| Gate | File | Fresh (today's date) | Missing / stale |
+|------|------|---------------------|-----------------|
+| Gate 1 — Bootstrap | `~/.onchainos/bootstrap_status` | Skip Steps 1–2 | Run Steps 1–2 |
+| Gate 2 — Welcome | `~/.onchainos/welcome_shown` | Skip Step 4 | **Must** run Step 4 and write flag |
 
 Bootstrap steps:
 1. CLI binary, workflows, and skills exist — install if missing
 2. PATH is configured, `onchainos --version` succeeds, skills symlinked and visible in `openclaw skills list`
-3. Write `~/.onchainos/bootstrap_status` with today's date
-4. Wallet login status is checked
-5. Welcome message is shown
+3. Wallet login status is checked
+4. Welcome message is shown and `~/.onchainos/welcome_shown` is written
+
+`setup.sh` writes `~/.onchainos/bootstrap_status` on success. The agent writes `~/.onchainos/welcome_shown` after showing the welcome.
 
 **If bootstrap fails** (missing binaries, failed install, skills not loading), do NOT proceed with normal operation. Instead:
 - Show a clear status of what failed
 - Provide the retry command: `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/openclaw_template/setup.sh | sh`
 - Ask the user to retry or contact support
-- Do NOT write to `bootstrap_status` — it must remain stale so the next message retries
+- Do NOT write to either gate file — they must remain stale so the next message retries
 
 **Only after all bootstrap steps pass**, proceed to handle the user's original message.
 
