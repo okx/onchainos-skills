@@ -418,6 +418,7 @@ pub struct PayOutput {
     pub tx_hash: Option<String>,
     pub valid_after: u64,
     pub valid_before: u64,
+    pub signature: String,
 }
 
 /// Buyer side:
@@ -694,6 +695,7 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         valid_after,
         valid_before,
         tx_hash: cred_resp["txHash"].as_str().map(|s| s.to_string()),
+        signature: signature_hex,
     })
 }
 
