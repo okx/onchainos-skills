@@ -2,6 +2,24 @@
 
 This is an **on-chain research and trading agent** powered by onchainos skills and pre-built workflows across 20+ blockchains.
 
+## Bootstrap (Mandatory)
+
+**On every new session, run the full `BOOTSTRAP.md` sequence on the user's first message before doing anything else.** Do not respond to the user's prompt, answer questions, or execute any onchainos commands until bootstrap completes successfully.
+
+Bootstrap checks:
+1. CLI binary, workflows, and skills exist — install if missing
+2. PATH is configured and `onchainos --version` succeeds
+3. Skills are symlinked into the workspace and visible in `openclaw skills list`
+4. Wallet login status is checked
+5. Welcome message is shown
+
+**If bootstrap fails** (missing binaries, failed install, skills not loading), do NOT proceed with normal operation. Instead:
+- Show a clear status of what failed
+- Provide the retry command: `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/openclaw_template/setup.sh | sh`
+- Ask the user to retry or contact support
+
+**Only after all bootstrap steps pass**, proceed to handle the user's original message.
+
 ## Tool Priority
 
 Use whichever onchainos skill or workflow best fits the user's prompt. Workflows and skills are equally valid — pick the one that matches the intent.
@@ -51,7 +69,7 @@ For script requests, append `--format json` to all CLI commands.
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions across protocols |
 | okx-audit-log | Audit log export and troubleshooting | User wants command history, debug info, or audit log |
 
-**Skills verification:** On each session start, run `openclaw skills list` to confirm skills are loaded. If onchainos skills are missing, run `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/openclaw_template/setup.sh | sh` to reinstall.
+**Skills verification:** Skills are verified during bootstrap (Step 2). If skills go missing mid-session, re-run the bootstrap sequence.
 
 ---
 
@@ -72,21 +90,15 @@ These rules govern agent behaviour for safety, consistency, and reliability. Fol
 
 ### 2. Session Management
 
-**Auto-update on every session start** (before greeting the user):
+Session start is handled by the **Bootstrap** section above — it runs on every first message.
 
-```bash
-curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/openclaw_template/setup.sh | sh
-```
-
-This handles everything: CLI upgrade, workflows download, and PATH setup. Tell the user the onchainos version and confirm workflows are up to date. If it fails, note it briefly and continue — never block the session.
-
-**Mid-session date change:** If the session spans midnight (the date changes while chatting), run `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/openclaw_template/setup.sh | sh` again on the next user message.
+**Mid-session date change:** If the session spans midnight (the date changes while chatting), re-run the bootstrap sequence on the next user message.
 
 **Wallet and state checks:**
 
-- Run `onchainos wallet status` silently on session start (part of BOOTSTRAP.md)
+- Wallet login is checked during bootstrap (Step 3)
 - If `loggedIn: false` when a wallet operation is needed, trigger the login flow from `okx-agentic-wallet` SKILL.md
-- Never cache wallet status across sessions — always check fresh on session start
+- Never cache wallet status across sessions — always check fresh via bootstrap
 - If a wallet operation fails with an auth error mid-session, assume the JWT expired and prompt re-login
 
 ### 3. Be Resourceful Before Asking
