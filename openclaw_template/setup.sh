@@ -1,10 +1,14 @@
 #!/bin/sh
 # onchainos — OpenClaw template build script
-# Installs the onchainos CLI + workflows (via install.sh)
-# Skills are installed separately by the agent — see https://github.com/okx/onchainos-skills/blob/main/.openclaw/INSTALL.md
+# 1. Installs the onchainos CLI + workflows (via install.sh)
+# 2. Installs skills into the workspace
 
 set -e
 
+REPO_URL="https://github.com/okx/onchainos-skills"
+REPO_DIR="$HOME/.openclaw/onchainos-skills"
+
+# ── 1. Install CLI + workflows ──────────────────────────────
 echo "[onchainos] Installing CLI + workflows..."
 
 curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
@@ -44,7 +48,7 @@ for profile in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
   fi
 done
 
-# ── Verify ───────────────────────────────────────────────────
+# Verify CLI
 if command -v onchainos >/dev/null 2>&1; then
   echo "[onchainos] $(onchainos --version) is ready"
 else
@@ -53,3 +57,18 @@ else
   echo "[onchainos] PATH = $PATH"
   exit 1
 fi
+
+# ── 2. Install skills ───────────────────────────────────────
+echo "[onchainos] Installing skills..."
+
+if [ -d "$REPO_DIR/.git" ]; then
+  git -C "$REPO_DIR" pull --ff-only || true
+else
+  git clone "$REPO_URL" "$REPO_DIR"
+fi
+
+mkdir -p skills
+cp -r "$REPO_DIR/skills/"* skills/ 2>/dev/null || true
+
+echo "[onchainos] Skills installed to skills/"
+echo "[onchainos] Setup complete."

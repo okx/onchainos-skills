@@ -51,11 +51,7 @@ For script requests, append `--format json` to all CLI commands.
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions across protocols |
 | okx-audit-log | Audit log export and troubleshooting | User wants command history, debug info, or audit log |
 
-**Skills verification:** On each session start, run `openclaw skills list` to confirm skills are loaded. If onchainos skills are missing:
-
-1. Follow the instructions in `https://github.com/okx/onchainos-skills/blob/main/.openclaw/INSTALL.md` to install them
-2. Copy skills from `~/.openclaw/onchainos-skills/skills/` into the workspace's `skills/` directory
-3. Run `openclaw skills list` again to confirm
+**Skills verification:** On each session start, run `openclaw skills list` to confirm skills are loaded. If onchainos skills are missing, run `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/openclaw_template/setup.sh | sh` to reinstall.
 
 ---
 

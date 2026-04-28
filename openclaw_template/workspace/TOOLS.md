@@ -68,7 +68,7 @@ onchainos token report --address <addr> --chain solana
 
 ## Skills location
 
-Skills are installed following [INSTALL.md](https://github.com/okx/onchainos-skills/blob/main/.openclaw/INSTALL.md) and available at `~/.agents/skills/onchainos-skills/`:
+Skills are installed by `setup.sh` into the workspace's `skills/` directory:
 
 ```
 okx-dex-token      okx-dex-market     okx-dex-signal    okx-dex-trenches
