@@ -166,15 +166,15 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
     match cmd {
         PaymentCommand::X402Pay { accepts, from } => {
             let params = parse_payload(&accepts)?;
-            cmd_pay(
-                &params.network,
-                &params.amount,
-                &params.pay_to,
-                &params.asset,
-                from.as_deref(),
-                params.max_timeout_seconds,
-                params.scheme.as_deref(),
-            )
+            cmd_pay(X402PayParams {
+                network: params.network,
+                amount: params.amount,
+                pay_to: params.pay_to,
+                asset: params.asset,
+                from,
+                max_timeout_secs: params.max_timeout_seconds,
+                scheme: params.scheme,
+            })
             .await
         }
         PaymentCommand::Eip3009Sign { accepts } => {
@@ -219,20 +219,63 @@ fn validate_payment_inputs(amount: &str, pay_to: &str, asset: &str) -> Result<u1
     Ok(parsed_amount)
 }
 
-async fn cmd_pay(
-    network: &str,
-    amount: &str,
-    pay_to: &str,
-    asset: &str,
-    from: Option<&str>,
-    max_timeout_secs: u64,
-    scheme: Option<&str>,
-) -> Result<()> {
-    validate_payment_inputs(amount, pay_to, asset)?;
+/// Inputs for `x402_pay`.
+pub struct X402PayParams {
+    /// CAIP-2 network, e.g. "eip155:196".
+    pub network: String,
+    /// Amount in token minimal units, decimal string (e.g. "1000000" for 1 USDC).
+    pub amount: String,
+    /// Recipient address (EIP-3009 `to`).
+    pub pay_to: String,
+    /// ERC-20 contract address (EIP-712 `verifyingContract`).
+    pub asset: String,
+    /// Payer address. `None` → resolve via the selected agentic-wallet account.
+    pub from: Option<String>,
+    /// EIP-3009 validity window in seconds (relative to now). Ignored for `aggr_deferred`.
+    pub max_timeout_secs: u64,
+    /// x402 scheme. `Some("aggr_deferred")` returns session-key signature only;
+    /// anything else (or `None`) runs full TEE EIP-3009 signing.
+    pub scheme: Option<String>,
+}
+
+/// EIP-3009 authorization fields, as returned to the x402 caller.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct X402Authorization {
+    pub from: String,
+    pub to: String,
+    pub value: String,
+    pub valid_after: String,
+    pub valid_before: String,
+    pub nonce: String,
+}
+
+/// Result of `x402_pay`. Mirrors the previous JSON wire format exactly.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct X402PayOutput {
+    pub signature: String,
+    pub authorization: X402Authorization,
+    /// Present only for the `aggr_deferred` scheme.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_cert: Option<String>,
+}
+
+async fn cmd_pay(p: X402PayParams) -> Result<()> {
+    let out = x402_pay(p).await?;
+    output::success(out);
+    Ok(())
+}
+
+/// Same flow as `cmd_pay`, but returns a typed result to the caller instead of
+/// printing it. Used by other modules (e.g. task buyer flow) that need to embed
+/// the x402 payment proof in a wider response.
+pub async fn x402_pay(p: X402PayParams) -> Result<X402PayOutput> {
+    validate_payment_inputs(&p.amount, &p.pay_to, &p.asset)?;
 
     let access_token = ensure_tokens_refreshed().await?;
 
-    let real_chain_id = parse_eip155_chain_id(network)?;
+    let real_chain_id = parse_eip155_chain_id(&p.network)?;
 
     // Resolve realChainIndex → OKX chainIndex
     let chain_entry = crate::commands::agentic_wallet::chain::get_chain_by_real_chain_index(
@@ -252,10 +295,15 @@ async fn cmd_pay(
     // 1. Build EIP-3009 authorization message
     let wallets = wallet_store::load_wallets()?
         .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-    let (_acct_id, addr_info) =
-        crate::commands::agentic_wallet::transfer::resolve_address(&wallets, from, chain_name)?;
+    let (_acct_id, addr_info) = crate::commands::agentic_wallet::transfer::resolve_address(
+        &wallets,
+        p.from.as_deref(),
+        chain_name,
+    )?;
     let payer_addr = &addr_info.address;
-    let is_deferred = scheme
+    let is_deferred = p
+        .scheme
+        .as_deref()
         .map(|s| s.eq_ignore_ascii_case("aggr_deferred"))
         .unwrap_or(false);
     let valid_before = if is_deferred {
@@ -265,7 +313,7 @@ async fn cmd_pay(
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
-        now.checked_add(max_timeout_secs)
+        now.checked_add(p.max_timeout_secs)
             .ok_or_else(|| anyhow!("timeout overflow"))?
             .to_string()
     };
@@ -280,12 +328,12 @@ async fn cmd_pay(
     let base_fields = json!({
         "chainIndex": chain_index,
         "from": payer_addr,
-        "to": pay_to,
-        "value": amount,
+        "to": p.pay_to,
+        "value": p.amount,
         "validAfter": "0",
         "validBefore": valid_before,
         "nonce": nonce,
-        "verifyingContract": asset,
+        "verifyingContract": p.asset,
     });
 
     // 2. Read session data before constructing API client (fail early)
@@ -325,22 +373,22 @@ async fn cmd_pay(
     let session_signature_b64 = B64.encode(&session_signature);
 
     // Return only the standard x402 EIP-3009 authorization fields
-    let authorization = json!({
-        "from": payer_addr,
-        "to": pay_to,
-        "value": amount,
-        "validAfter": "0",
-        "validBefore": valid_before,
-        "nonce": nonce,
-    });
+    let authorization = X402Authorization {
+        from: payer_addr.clone(),
+        to: p.pay_to.clone(),
+        value: p.amount.clone(),
+        valid_after: "0".to_string(),
+        valid_before: valid_before.clone(),
+        nonce: nonce.clone(),
+    };
 
     if is_deferred {
         // aggr_deferred scheme: return session-key signature only, skip EOA signing
-        output::success(json!({
-            "signature": session_signature_b64,
-            "authorization": authorization,
-            "sessionCert": session_cert,
-        }));
+        Ok(X402PayOutput {
+            signature: session_signature_b64,
+            authorization,
+            session_cert: Some(session_cert.clone()),
+        })
     } else {
         // Exact scheme (default): full EIP-3009 signing via TEE
         let mut signed_hash_body = base_fields.clone();
@@ -359,14 +407,15 @@ async fn cmd_pay(
             .context("x402 sign-msg failed")?;
         let eip3009_signature = signed_hash_resp[0]["signature"]
             .as_str()
-            .ok_or_else(|| anyhow!("missing signature in sign-msg response"))?;
+            .ok_or_else(|| anyhow!("missing signature in sign-msg response"))?
+            .to_string();
 
-        output::success(json!({
-            "signature": eip3009_signature,
-            "authorization": authorization,
-        }));
+        Ok(X402PayOutput {
+            signature: eip3009_signature,
+            authorization,
+            session_cert: None,
+        })
     }
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
