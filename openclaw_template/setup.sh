@@ -35,14 +35,24 @@ case ":$PATH:" in
      echo "[onchainos] Added $INSTALL_DIR to PATH" ;;
 esac
 
-# Persist to shell profiles for environments that do source them
-EXPORT_LINE='export PATH="$HOME/.local/bin:$PATH"'
-for profile in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
-  if [ -f "$profile" ] || [ "$profile" = "$HOME/.profile" ]; then
-    if ! grep -qF '.local/bin' "$profile" 2>/dev/null; then
+# Create env file that can be sourced to set PATH
+ENV_DIR="$HOME/.onchainos"
+ENV_FILE="$ENV_DIR/env"
+mkdir -p "$ENV_DIR"
+cat > "$ENV_FILE" <<'ENVEOF'
+# onchainos shell setup
+export PATH="$HOME/.local/bin:$PATH"
+ENVEOF
+
+# Persist to shell profiles — include .zshenv for non-interactive zsh sessions
+SOURCE_LINE=". \"$ENV_FILE\""
+for profile in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.zshenv" "$HOME/.zshrc"; do
+  # Always create .profile and .zshenv; others only if they already exist
+  if [ -f "$profile" ] || [ "$profile" = "$HOME/.profile" ] || [ "$profile" = "$HOME/.zshenv" ]; then
+    if ! grep -qF "$ENV_FILE" "$profile" 2>/dev/null; then
       echo "" >> "$profile"
       echo "# Added by onchainos setup" >> "$profile"
-      echo "$EXPORT_LINE" >> "$profile"
+      echo "$SOURCE_LINE" >> "$profile"
       echo "[onchainos] Added PATH to $profile"
     fi
   fi
