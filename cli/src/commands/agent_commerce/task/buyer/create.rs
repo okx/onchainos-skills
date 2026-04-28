@@ -21,15 +21,19 @@ use crate::wallet_api::UnsignedInfoResponse;
 /// 单次任务预算上限
 const MAX_BUDGET: f64 = 10_000_000.0;
 
-/// 解析 "72h" / "30m" / "3600" → 秒
+/// 解析截止时间 → 秒。裸数字默认为小时（如 `24` → 86400 秒）。
+/// 支持后缀：`h`（小时）、`m`（分钟）、`s`（秒）。
 fn parse_duration_secs(s: &str) -> Result<u64> {
     let s = s.trim();
     if let Some(h) = s.strip_suffix('h') {
         Ok(h.parse::<u64>()? * 3600)
     } else if let Some(m) = s.strip_suffix('m') {
         Ok(m.parse::<u64>()? * 60)
+    } else if let Some(sec) = s.strip_suffix('s') {
+        Ok(sec.parse::<u64>()?)
     } else {
-        Ok(s.parse::<u64>()?)
+        // 裸数字默认按小时
+        Ok(s.parse::<u64>()? * 3600)
     }
 }
 
