@@ -337,6 +337,7 @@ ensure_in_path() {
 
 # ── Main ─────────────────────────────────────────────────────
 main() {
+  echo "onchainos installer — checking for updates..."
   local_ver=$(get_local_version)
 
   if [ "$BETA_MODE" = true ]; then
@@ -344,6 +345,7 @@ main() {
     target_ver=$(get_latest_version_with_beta)
 
     if [ "$local_ver" = "$target_ver" ]; then
+      echo "${BINARY} ${local_ver} is already the latest (beta)."
       # Binary is current — but ensure workflows exist
       if [ ! -d "$CACHE_DIR/workflows" ]; then
         sync_workflows "v${local_ver}"
@@ -356,6 +358,7 @@ main() {
 
     # Fast path: binary exists and was checked recently — skip API call
     if [ -n "$local_ver" ] && is_cache_fresh; then
+      echo "${BINARY} ${local_ver} is up to date (checked recently)."
       # Ensure workflows exist even on cache-hit fast path
       if [ ! -d "$CACHE_DIR/workflows" ]; then
         sync_workflows "v${local_ver}"
@@ -369,6 +372,7 @@ main() {
       # Not installed — install latest stable
       target_ver="$latest_stable"
     elif [ "$local_ver" = "$latest_stable" ]; then
+      echo "${BINARY} ${local_ver} is already the latest stable."
       # Already on exact latest stable — but ensure workflows exist
       if [ ! -d "$CACHE_DIR/workflows" ]; then
         sync_workflows "v${local_ver}"
@@ -381,6 +385,7 @@ main() {
         target_ver="$latest_stable"
       else
         # Local is same or newer (e.g., on a beta ahead of stable)
+        echo "${BINARY} ${local_ver} is up to date."
         if [ ! -d "$CACHE_DIR/workflows" ]; then
           sync_workflows "v${local_ver}"
         fi
