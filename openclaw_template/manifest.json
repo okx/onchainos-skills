@@ -43,7 +43,7 @@
   "tasks": [
     {
       "name": "daily-update",
-      "prompt": "Run `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh` to update onchainos CLI and workflows. Report the onchainos version and confirm workflows are up to date.",
+      "prompt": "Run `bash ~/setup.sh` to update onchainos CLI and workflows. Report the onchainos version and confirm workflows are up to date.",
       "schedule": "0 0 * * *",
       "enabled": false
     }

@@ -13,7 +13,7 @@
 
 ## onchainos CLI
 
-The official OKX OnchainOS CLI — built for AI, ready for Web3. Installed via `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh`.
+The official OKX OnchainOS CLI — built for AI, ready for Web3. Pre-installed via `bash ~/setup.sh`.
 
 ```bash
 onchainos --version   # verify binary is available
