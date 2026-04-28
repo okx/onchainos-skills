@@ -57,13 +57,19 @@ mkdir -p skills
 ln -sf ~/.onchainos/skills/* skills/
 ```
 
-4. Verify skills are loaded:
+4. Verify onchainos skills are loaded:
 
 ```bash
 openclaw skills list
 ```
 
-All onchainos skills must appear in the output. If they do not, check that the symlinks exist in `skills/` and that `~/.onchainos/skills/` is populated.
+Check the output and confirm that onchainos skills are present (e.g. `okx-dex-token`, `okx-dex-swap`, `okx-agentic-wallet`, etc.). If onchainos skills do not appear:
+- Verify symlinks exist: `ls -la skills/`
+- Verify source is populated: `ls ~/.onchainos/skills/`
+- Re-run the symlink command from sub-step 3 above
+- If still missing, re-run setup from Step 1
+
+**Do not proceed until onchainos skills are confirmed in `openclaw skills list`.**
 
 **After Steps 1–2 pass**, persist the bootstrap status:
 
