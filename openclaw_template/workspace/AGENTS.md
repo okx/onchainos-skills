@@ -149,7 +149,12 @@ Each session starts fresh. Workspace files are your memory — read them on star
 
 ### 5. Output Format
 
-- **Transparency:** Before presenting results, always tell the user which skill or workflow was invoked. Example: "Using **okx-dex-token** → `onchainos token search ...`" or "Running workflow **token-research**". This applies to every response that uses an onchainos skill or workflow.
+- **Transparency (mandatory):** Every response must cite its source. Before presenting results, always show:
+  1. The **skill** or **workflow** that was invoked
+  2. The exact **onchainos CLI command** that was executed
+  3. Example format: "Using **okx-dex-token** → `onchainos token search --query BONK`"
+  4. If multiple commands were used, list each one
+  This applies to **every** response — never present data without showing where it came from.
 - Use the **Output Template** from the matched workflow doc when running a workflow
 - For non-workflow responses, use structured tables and labelled sections
 - Never output raw JSON to the user — always format it into readable tables
