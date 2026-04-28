@@ -1308,6 +1308,14 @@ impl ApiClient {
     /// the list itself is never narrowed, and the prompt still blocks —
     /// only `payment default set` advances the tier state.
     fn dispatch_notifications(&self, path: &str, header_accepts: Option<&Value>) {
+        self.dispatch_notifications_at(path, header_accepts, payment_cache::now_secs() as i64);
+    }
+
+    /// `dispatch_notifications` with an injectable clock — the production
+    /// entry point uses wall-clock time, but tests that exercise the
+    /// `NEW_USER_INTRO` rollout gate need to run "as if" the clock is
+    /// past 2026-04-30 regardless of when the suite executes.
+    fn dispatch_notifications_at(&self, path: &str, header_accepts: Option<&Value>, now: i64) {
         let input = {
             let state = self.payment_state();
             // `compute_events` short-circuits when `user_type` is unset, so
@@ -1323,7 +1331,7 @@ impl ApiClient {
             NotifyInput {
                 user_type: state.user_type,
                 grace_expires_at: payment_notify::grace_expires_at(),
-                now: payment_cache::now_secs() as i64,
+                now,
                 basic_state: state.basic_state,
                 premium_state: state.premium_state,
                 intro_shown: state.intro_shown,
@@ -2088,7 +2096,14 @@ mod tests {
         }));
         client.payment_state().user_type = Some(super::UserType::New);
 
-        client.dispatch_notifications("/api/v6/dex/market/price", None);
+        // Pin the clock past the 2026-04-30 NEW_USER_INTRO rollout gate
+        // so this test exercises the post-cutoff path regardless of when
+        // the suite runs.
+        client.dispatch_notifications_at(
+            "/api/v6/dex/market/price",
+            None,
+            crate::payment_notify::new_user_intro_start_at(),
+        );
 
         let drained = crate::payment_notify::drain_events();
         let codes: Vec<&str> = drained.iter().filter_map(|e| e["code"].as_str()).collect();
