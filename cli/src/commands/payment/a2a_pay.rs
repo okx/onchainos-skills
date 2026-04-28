@@ -105,10 +105,10 @@ pub struct PayArgs {
     /// Required for charge intent; ignored for escrow.
     #[arg(long)]
     pub amount: Option<String>,
-    /// Charge: expected receipt address (case-insensitive match against
+    /// Charge: expected recipient address (case-insensitive match against
     /// `challenge.data.request.recipient`). Required for charge intent.
-    #[arg(long = "receipt-address")]
-    pub receipt_address: Option<String>,
+    #[arg(long = "recipient-address")]
+    pub recipient_address: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -147,7 +147,7 @@ pub async fn execute(cmd: A2aPayCommand) -> Result<()> {
                 valid_after: args.valid_after,
                 valid_before: args.valid_before,
                 amount: args.amount,
-                receipt_address: args.receipt_address,
+                recipient_address: args.recipient_address,
             };
             let out = pay(params).await?;
             println!("{}", serde_json::to_string_pretty(&out)?);
@@ -414,9 +414,9 @@ pub struct PayParams {
     /// Charge mode: expected amount (as it appears in `challenge.data.request.amount`,
     /// i.e. minimal units). Compared verbatim against the on-server challenge before signing.
     pub amount: Option<String>,
-    /// Charge mode: expected receipt address (case-insensitive compare against
+    /// Charge mode: expected recipient address (case-insensitive compare against
     /// `challenge.data.request.recipient`).
-    pub receipt_address: Option<String>,
+    pub recipient_address: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -500,9 +500,9 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
             .as_ref()
             .ok_or_else(|| anyhow!("--amount is required for charge intent"))?;
         let expected_recipient = p
-            .receipt_address
+            .recipient_address
             .as_ref()
-            .ok_or_else(|| anyhow!("--receipt-address is required for charge intent"))?;
+            .ok_or_else(|| anyhow!("--recipient-address is required for charge intent"))?;
         if expected_amount != &amount {
             bail!(
                 "amount mismatch: expected {expected_amount}, challenge has {amount}"
@@ -510,7 +510,7 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         }
         if !expected_recipient.eq_ignore_ascii_case(&recipient) {
             bail!(
-                "receipt address mismatch: expected {expected_recipient}, challenge has {recipient}"
+                "recipient address mismatch: expected {expected_recipient}, challenge has {recipient}"
             );
         }
     }
