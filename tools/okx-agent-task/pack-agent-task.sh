@@ -8,8 +8,8 @@ set -euo pipefail
 # Usage:
 #   ./pack-agent-task.sh [output-zip-path]
 #
-# Default output: <repo>/scripts/agent-task.zip
-# (matches the default zip path looked up by install-agent-task.sh)
+# Default output: <script-dir>/agent-task-YYYYMMDDHHmm.zip
+# (pass the produced path to install-agent-task.sh)
 #
 # Output zip layout:
 #   onchainos                        ← debug-built binary
@@ -20,7 +20,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CARGO_DIR="$REPO_DIR/cli"
 SKILL_DIR="$REPO_DIR/skills/okx-agent-task"
-OUT_ZIP="${1:-$SCRIPT_DIR/agent-task.zip}"
+TIMESTAMP="$(date +%Y%m%d%H%M)"
+OUT_ZIP="${1:-$SCRIPT_DIR/agent-task-${TIMESTAMP}.zip}"
 
 [ -d "$CARGO_DIR" ] || { echo "✗ cli/ not found at $CARGO_DIR" >&2; exit 1; }
 [ -d "$SKILL_DIR" ] || { echo "✗ skills/okx-agent-task not found at $SKILL_DIR" >&2; exit 1; }

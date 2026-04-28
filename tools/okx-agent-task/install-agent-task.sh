@@ -8,8 +8,8 @@ set -euo pipefail
 # Usage:
 #   ./install-agent-task.sh [path/to/agent-task.zip]
 #
-# Default zip path: same directory as this script, named
-# `agent-task.zip`.
+# Default zip path: latest `agent-task-YYYYMMDDHHmm.zip` in this
+# script's directory (falls back to plain `agent-task.zip`).
 #
 # Expected zip layout (either form is accepted):
 #   onchainos                  ← binary
@@ -27,11 +27,30 @@ set -euo pipefail
 # ──────────────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ZIP_PATH="${1:-$SCRIPT_DIR/agent-task.zip}"
+
+if [ -n "${1:-}" ]; then
+  ZIP_PATH="$1"
+else
+  # Pick the lexicographically-latest agent-task-*.zip (timestamp
+  # format YYYYMMDDHHmm sorts chronologically).
+  ZIP_PATH=""
+  shopt -s nullglob
+  for candidate in "$SCRIPT_DIR"/agent-task-*.zip; do
+    if [ -z "$ZIP_PATH" ] || [[ "$candidate" > "$ZIP_PATH" ]]; then
+      ZIP_PATH="$candidate"
+    fi
+  done
+  shopt -u nullglob
+  if [ -n "$ZIP_PATH" ]; then
+    echo "→ using latest zip: $ZIP_PATH"
+  else
+    ZIP_PATH="$SCRIPT_DIR/agent-task.zip"
+  fi
+fi
 
 if [ ! -f "$ZIP_PATH" ]; then
   echo "✗ zip not found: $ZIP_PATH" >&2
-  echo "Usage: $0 [path/to/onchainos-prerelease.zip]" >&2
+  echo "Usage: $0 [path/to/agent-task.zip]" >&2
   exit 1
 fi
 
