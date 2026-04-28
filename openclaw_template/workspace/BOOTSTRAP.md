@@ -12,7 +12,11 @@ Run these two checks before anything else:
 cat ~/.onchainos/bootstrap_status 2>/dev/null || echo "MISSING"
 ```
 
-- Contains today's date (e.g. `2026-04-28 OK`) → **skip Steps 1–2**, go to Step 3.
+- Contains today's date (e.g. `2026-04-29 OK`) → **skip Steps 1–2**, but always run this PATH export before continuing:
+  ```bash
+  export PATH="$HOME/.local/bin:$PATH"
+  ```
+  Then go to Step 3.
 - Missing or different date → **run all steps from Step 1**.
 
 ### Gate 2 — Welcome status

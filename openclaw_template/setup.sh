@@ -85,6 +85,13 @@ SKILLS_DIR="$HOME/.onchainos/skills"
 mkdir -p "$SKILLS_DIR"
 cp -r "$REPO_DIR/skills/"* "$SKILLS_DIR/" 2>/dev/null || true
 
+# Verify skills were actually copied
+if [ -z "$(ls -A "$SKILLS_DIR" 2>/dev/null)" ]; then
+  echo "[onchainos] ERROR: no skills installed — $SKILLS_DIR is empty."
+  echo "[onchainos] Check that $REPO_DIR/skills/ exists and is populated."
+  exit 1
+fi
+
 echo "[onchainos] Skills installed to $SKILLS_DIR/"
 
 # ── 3. Write bootstrap status ───────────────────────────────
