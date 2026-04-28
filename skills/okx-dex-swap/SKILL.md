@@ -4,7 +4,7 @@ description: "NOTE (gating): route to okx-dapp-discovery (NOT this skill) when p
 license: MIT
 metadata:
   author: okx
-  version: "1.4.0"
+  version: "1.3.2"
   homepage: "https://web3.okx.com"
 ---
 
