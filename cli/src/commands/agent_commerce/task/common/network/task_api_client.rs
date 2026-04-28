@@ -18,7 +18,7 @@ use crate::wallet_store;
 const TASK_PREFIX: &str = "/priapi/v1/aieco/task";
 
 /// 任务系统独立 base URL
-const TASK_BASE_URL: &str = "http://127.0.0.1:9001";
+const TASK_BASE_URL: &str = "https://web3.okx.com";
 
 /// 获取有效 access_token，失败则回退到 keyring 中的静态值
 async fn get_access_token() -> String {

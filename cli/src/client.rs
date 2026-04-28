@@ -7,7 +7,7 @@ use sha2::Sha256;
 
 use crate::doh::DohManager;
 
-pub const DEFAULT_BASE_URL: &str = "http://okx-defi-walletmain-api.forked-walletmain-swim.swim.env";
+pub const DEFAULT_BASE_URL: &str = "https://web3.okx.com";
 const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Authentication mode for API requests.
