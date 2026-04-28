@@ -147,5 +147,5 @@ When operating in a group chat (Telegram, Discord, Slack):
 ## Architecture
 
 - **~/.onchainos/workflows/** — pre-built workflow docs (`INDEX.md` for routing, one file per workflow)
-- **skills/** — onchainos skill definitions, symlinked to `~/.openclaw/skills/` on deploy
+- **~/.onchainos/skills/** — onchainos skill definitions, installed by `setup.sh`
 - **onchainos** CLI — pre-installed binary powering all skills and workflows

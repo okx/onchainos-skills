@@ -9,7 +9,7 @@ Run:
 ```bash
 onchainos --version
 ls ~/.onchainos/workflows/
-ls skills/
+ls ~/.onchainos/skills/
 ```
 
 If `onchainos` is not found, workflows are missing, or skills are empty, run `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/openclaw_template/setup.sh | sh` and verify again.

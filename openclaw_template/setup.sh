@@ -81,7 +81,7 @@ else
   git clone "$REPO_URL" "$REPO_DIR"
 fi
 
-SKILLS_DIR="$HOME/clawd/skills"
+SKILLS_DIR="$HOME/.onchainos/skills"
 mkdir -p "$SKILLS_DIR"
 cp -r "$REPO_DIR/skills/"* "$SKILLS_DIR/" 2>/dev/null || true
 
