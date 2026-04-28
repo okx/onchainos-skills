@@ -2,20 +2,27 @@
 
 **On the user's first message in every session, run ALL steps below before responding.** This file self-deletes after initial onboarding is complete.
 
-## Bootstrap Gate
+## Gates
 
-Before running any steps, check if bootstrap has already completed this session:
+Run these two checks before anything else:
+
+### Gate 1 — Bootstrap status
 
 ```bash
-cat ~/.onchainos/bootstrap_status
+cat ~/.onchainos/bootstrap_status 2>/dev/null || echo "MISSING"
 ```
 
-- If the file contains today's date (e.g. `2026-04-28 OK`), **skip Steps 1–2** and go directly to Step 3 (Login check).
-- If the file is missing, empty, or contains a different date, **run all steps from Step 1**.
+- Contains today's date (e.g. `2026-04-28 OK`) → **skip Steps 1–2**, go to Step 3.
+- Missing or different date → **run all steps from Step 1**.
 
-**Welcome gate:** Also check `~/.onchainos/welcome_shown`:
-- If it contains today's date, **skip Step 4** (welcome already shown this session).
-- Otherwise, show the welcome message and write today's date to the file.
+### Gate 2 — Welcome status
+
+```bash
+cat ~/.onchainos/welcome_shown 2>/dev/null || echo "MISSING"
+```
+
+- Contains today's date → **skip Step 4**.
+- Missing or different date → **you MUST run Step 4 and write the flag**. Do not skip it.
 
 ## Step 1 — Verify installation
 
@@ -88,11 +95,13 @@ Run `onchainos wallet status`. If not logged in, prompt the user:
 
 ## Step 4 — Welcome
 
-Check `~/.onchainos/welcome_shown`. If it already contains today's date, skip this step. Otherwise, show the welcome message and persist:
+**This step is controlled by Gate 2.** If Gate 2 said MISSING or stale date, you MUST show the welcome message below and then write the flag:
 
 ```bash
 echo "$(date +%Y-%m-%d)" > ~/.onchainos/welcome_shown
 ```
+
+**Do not respond to the user's query until the welcome message has been shown and the flag has been written.**
 
 > Welcome to onchainos ⛓️
 >
