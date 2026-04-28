@@ -10,8 +10,7 @@ use serde_json::Value;
 use crate::client::ApiClient;
 
 /// Default base URL; override at runtime via `A2A_PAY_BASE_URL` or `with_base_url(...)`.
-const PAYMENT_BASE_URL: &str =
-    "http://defi-sa-gateway.forked-okx-test2-dataasset.swim.env";
+const PAYMENT_BASE_URL: &str = "https://web3.okx.com";
 
 pub struct PaymentApiClient {
     api: ApiClient,
