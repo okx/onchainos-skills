@@ -336,11 +336,19 @@ jobs:
         with:
           merge-multiple: true
 
+      - name: Package workflows
+        run: |
+          test -d workflows/ || { echo "::error::workflows/ directory missing"; exit 1; }
+          tar -czf workflows.tar.gz workflows/
+
       - name: Generate installer checksums
         run: sha256sum install.sh install.ps1 > installer-checksums.txt
 
+      - name: Generate workflows checksum
+        run: sha256sum workflows.tar.gz > workflows-checksums.txt
+
       - name: List all release artifacts
-        run: ls -lh && echo "---" && cat checksums.txt && echo "---" && cat installer-checksums.txt
+        run: ls -lh && echo "---" && cat checksums.txt && echo "---" && cat installer-checksums.txt && echo "---" && cat workflows-checksums.txt
 
       - uses: softprops/action-gh-release@v2
         with:
@@ -352,3 +360,5 @@ jobs:
             ${{ env.BIN_NAME }}-*
             checksums.txt
             installer-checksums.txt
+            workflows.tar.gz
+            workflows-checksums.txt

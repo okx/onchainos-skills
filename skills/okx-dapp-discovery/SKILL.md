@@ -88,7 +88,7 @@ Morpho, Morpho V1, Morpho Optimizer, Morpho AaveV3 Optimizer, Morpho AaveV2 Opti
 
 **Default-resolution rule:** plain "Morpho" → `morpho-plugin` (V1 Optimizer is the default).
 
-**Do not install for:** Morpho Blue, MetaMorpho, vault curator, LLTV, market id, allocator, or isolated lending market requests — these are Morpho Blue (intentionally out of scope). Suggest `okx-defi-invest` for generic yield, or fall through to Rule 5.
+**Do not install for:** Morpho Blue, MetaMorpho, vault curator, LLTV, market id, allocator, or isolated lending market requests — these are Morpho Blue (intentionally out of scope). (`MetaMorpho` is the Morpho Blue ERC-4626 vault standard, not a V1 Optimizer concept — it does not belong to `morpho-plugin`'s scope.) Suggest `okx-defi-invest` for generic yield, or fall through to Rule 5.
 
 ### Raydium → `raydium-plugin`
 
@@ -246,7 +246,9 @@ Apply Step 1B (catalog probe). If a `<dappName>-plugin` exists in the plugin-sto
 Use the `skills` CLI for agent-agnostic detection (works on Claude Code, Codex CLI, OpenCode, OpenClaw, Cursor — wherever `npx skills` is available):
 
 ```bash
-npx skills list 2>/dev/null > /tmp/_skills_list.txt
+# Cache the listing in a variable — no temp file required, portable across
+# macOS / Linux / Windows-Git-Bash / sandboxed environments without /tmp.
+SKILLS_LIST=$(npx skills list 2>/dev/null)
 
 # Single source of truth for the supported plugin set (extend when PM adds new dapps)
 SUPPORTED_PLUGINS="polymarket-plugin aave-v3-plugin hyperliquid-plugin pancakeswap-v3-plugin morpho-plugin \
@@ -256,7 +258,7 @@ SUPPORTED_PLUGINS="polymarket-plugin aave-v3-plugin hyperliquid-plugin pancakesw
 
 INSTALLED_PLUGINS=""
 for plugin in $SUPPORTED_PLUGINS; do
-  if grep -qE "(^|[[:space:]]|/)${plugin}([[:space:]]|$)" /tmp/_skills_list.txt; then
+  if echo "$SKILLS_LIST" | grep -qE "(^|[[:space:]]|/)${plugin}([[:space:]]|$)"; then
     INSTALLED_PLUGINS="$INSTALLED_PLUGINS $plugin"
   fi
 done
@@ -315,11 +317,24 @@ Example user-facing message (catalog probe failed for "Spark"):
 >
 > Which would you prefer?
 
-> **Known limitation:** the Read step further below uses `$HOME/.claude/skills/` paths, which is Claude-Code-specific. Codex / OpenCode / OpenClaw / Cursor users may need to substitute their agent's skills directory. Tracked as a follow-up against the `skills` CLI to add a `skills info <skill>` subcommand for cross-agent path resolution.
+> **Known limitations:**
+> - The Read step further below uses `$HOME/.claude/skills/` paths, which is Claude-Code-specific. Codex / OpenCode / OpenClaw / Cursor users may need to substitute their agent's skills directory. Tracked as a follow-up against the `skills` CLI to add a `skills info <skill>` subcommand for cross-agent path resolution.
+> - The `2>/dev/null` redirect on `npx skills list` silences stderr (intentional — avoids noise on agents where `npx` isn't available). If `npx` itself is broken or missing, the listing returns empty and every DApp will be treated as "not installed". The subsequent install path (`npx skills add … --yes --global`) is idempotent and surfaces the underlying error to the user via the Failure-mode note in Step 2 — do not retry the listing in a loop.
 
 ---
 
 ## Step 2 — Apply routing rules
+
+> **User-facing language — IMPORTANT.** The confidence tiers and scores in Step 1 and the rules below are *internal* decision logic. **Do NOT mention scores, tiers, "confidence", or this routing framework to the user** in your response. Use natural conversational language for any visible commentary. Examples:
+> - ✅ "I can set up Polymarket for that — installing now."
+> - ✅ "Sounds like Aave V3 is the right fit. Let me load it up."
+> - ✅ "That looks like a Hyperliquid use case — getting the plugin ready."
+> - ✅ "Were you thinking Aave or Morpho for this? They both fit." *(for clarify-tier cases)*
+> - ❌ "I scored your message at confidence 95 for Polymarket, so I'm installing the plugin."
+> - ❌ "Polymarket matches at tier 1 (95-100), routing directly."
+> - ❌ "The confidence framework picked PancakeSwap."
+>
+> Rule 1's "do not show an install banner or onboarding table" extends to the scoring vocabulary itself — the user only sees the *outcome* (a suggestion, an install, a clarifying question, or a discovery table), not the *mechanism*.
 
 **Rule 1 — Already installed, score ≥ 75:**
 Do **not** re-install. Read the plugin's instructions and execute the user's request:
@@ -327,6 +342,8 @@ Do **not** re-install. Read the plugin's instructions and execute the user's req
 ```
 Read file: $HOME/.claude/skills/<plugin-name>/SKILL.md
 ```
+
+> *(Path is Claude Code-specific — see Known Limitations in Step 1. On Codex / OpenCode / OpenClaw / Cursor, substitute the equivalent skills directory for your agent.)*
 
 Then **immediately re-apply the user's original request** using the plugin's own routing — do not ask the user to repeat themselves. Do not show an install banner or onboarding table.
 
@@ -339,6 +356,8 @@ npx skills add okx/plugin-store --skill <plugin-name> --yes --global
 ```
 Read file: $HOME/.claude/skills/<plugin-name>/SKILL.md
 ```
+
+> *(Path is Claude Code-specific — see Known Limitations in Step 1. On Codex / OpenCode / OpenClaw / Cursor, substitute the equivalent skills directory for your agent.)*
 
 Forward the user's original request to that plugin's instructions. The bootstrap should be transparent — the user sees the response as if the plugin had been loaded from session start.
 
@@ -361,10 +380,30 @@ Examples that score 50–74:
 - "I want to borrow against my ETH" (Aave or Morpho both plausible)
 - "add liquidity on BNB Chain" (no explicit PancakeSwap mention)
 
-**Rule 5 — All scores < 50 (no protocol signal):**
-Do not install. Show the user the supported DApps and ask which one matches their intent:
+**Rule 5 — Highest score < 50 (no top-5 match):**
 
-> The following third-party DApps are currently routable — let me know which one you'd like to use:
+This skill's per-protocol tables cover 5 DApps with hard-coded routing. When none scores ≥ 50, decide between two sub-rules based on whether the user named *any* recognizable third-party DApp/protocol:
+
+**Rule 5a — User named a recognizable third-party DApp NOT in the top 5** (e.g. Uniswap, Curve, GMX, Lido, Jupiter, Raydium, Compound, ether.fi, Pendle, Maker / Sky, Convex, Velodrome, Aerodrome, Camelot, SushiSwap, Balancer, Kamino, Orca, Meteora, dYdX, Across, LI.FI / Jumper, Mayan, deBridge, etc.):
+
+The top-5 routing didn't match, but a plugin may exist in the broader registry. Install **plugin-store** as a catch-all discovery layer and delegate:
+
+```bash
+npx skills add okx/plugin-store --skill plugin-store --yes --global
+```
+```
+Read file: $HOME/.claude/skills/plugin-store/SKILL.md
+```
+
+> *(Path is Claude Code-specific — see Known Limitations in Step 1.)*
+
+Plugin-store has access to the broader plugin registry (`plugin-store list`) and can install a matching plugin if one exists. Forward the user's original request — the bootstrap is transparent. If plugin-store's registry has no matching plugin either, plugin-store will surface that and offer alternatives.
+
+**Rule 5b — User did NOT name a specific DApp** (purely generic terms only):
+
+Do not install anything. Show the user the supported DApps and ask which one matches their intent:
+
+> The following third-party DApps are currently routable directly — let me know which one you'd like to use:
 >
 > The following third-party DApps are currently routable — let me know which one matches your intent:
 >
@@ -381,6 +420,8 @@ Do not install. Show the user the supported DApps and ask which one matches thei
 > | Meme launchpad (trade) | **pump.fun**, **Clanker** |
 >
 > If your intent is more general — finding the best yield across protocols, rebalancing, or claiming rewards — `okx-defi-invest` (OKX-aggregated DeFi) is a better fit. For pump.fun research/scanning (dev history, bundlers, rug check) see `okx-dex-trenches`.
+>
+> If you want to use a different DApp not listed above (e.g., a niche protocol that hasn't been added to the catalog yet), name it explicitly and I'll search the broader plugin registry via plugin-store.
 
 ---
 

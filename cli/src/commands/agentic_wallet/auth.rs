@@ -847,6 +847,11 @@ pub(super) async fn cmd_logout() -> Result<()> {
         eprintln!("[DEBUG] cmd_logout: balance_cache.json deleted");
     }
 
+    crate::payment_cache::PaymentCache::delete()?;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG] cmd_logout: payment_cache.json deleted");
+    }
+
     output::success_empty();
     Ok(())
 }

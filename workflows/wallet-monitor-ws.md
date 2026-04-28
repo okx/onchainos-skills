@@ -110,5 +110,5 @@ To list all sessions:
 
 ## Actions
 
-- → "research [symbol]" — Token Research (`workflows/token-research.md`) (for tokens seen in poll events)
+- → "research [symbol]" — Token Research (`token-research.md`) (for tokens seen in poll events)
 - → "stop monitoring" (`onchainos ws stop --id <session_id>`)
