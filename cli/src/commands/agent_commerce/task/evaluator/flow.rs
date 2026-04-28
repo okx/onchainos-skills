@@ -246,7 +246,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              ```\n\n\
              **Step 3 — 把罚没通知推到 user session（用户那边）**：\n\n\
              ⚠️ 你**当前在 sub session**（sessionKey 含 `&job={job_id}` 字段就一定是 sub），**不是 user session**。\n\
-             必须显式调 `xmtp_dispatch_session` 工具，**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。\n\n\
+             必须显式调 xmtp_dispatch_session 工具，**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。\n\n\
              调用形式：\n\
              ```\n\
              tool: xmtp_dispatch_session\n\
@@ -275,7 +275,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              ```\n\n\
              **Step 3 — 把入账/失败通知推到 user session（用户那边）**：\n\n\
              ⚠️ 你**当前在 sub session**（sessionKey 含 `&job={job_id}` 字段就一定是 sub），**不是 user session**。\n\
-             必须显式调 `xmtp_dispatch_session` 工具，**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。\n\n\
+             必须显式调 xmtp_dispatch_session 工具，**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。\n\n\
              调用形式（按 status 二选一填 content）：\n\
              ```\n\
              tool: xmtp_dispatch_session\n\
@@ -295,7 +295,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 从 payload 提取字段 → 通知user session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`（success / failed）、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】把质押结果推到 user session（用户那边）：⚠️ 当前 sessionKey 含 `&job=` 字段就一定是 sub，必须显式调 `xmtp_dispatch_session` 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。按 status 二选一填 content：\n\n\
+             【Step 2】把质押结果推到 user session（用户那边）：⚠️ 当前 sessionKey 含 `&job=` 字段就一定是 sub，必须显式调 xmtp_dispatch_session 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。按 status 二选一填 content：\n\n\
              ```\n\
              tool: xmtp_dispatch_session\n\
              arguments:\n\
@@ -310,7 +310,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 通知user session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】把追加质押结果推到 user session（用户那边）：⚠️ 必须显式调 `xmtp_dispatch_session` 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。按 status 二选一填 content：\n\n\
+             【Step 2】把追加质押结果推到 user session（用户那边）：⚠️ 必须显式调 xmtp_dispatch_session 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。按 status 二选一填 content：\n\n\
              ```\n\
              tool: xmtp_dispatch_session\n\
              arguments:\n\
@@ -325,7 +325,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 通知user session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`、`amount`、`availableAt`（冷却结束毫秒时间戳）、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】把申请解质押结果推到 user session（用户那边）：⚠️ 必须显式调 `xmtp_dispatch_session` 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）；`availableAt` 转本地时间后再填进 content。按 status 二选一填 content：\n\n\
+             【Step 2】把申请解质押结果推到 user session（用户那边）：⚠️ 必须显式调 xmtp_dispatch_session 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）；`availableAt` 转本地时间后再填进 content。按 status 二选一填 content：\n\n\
              ```\n\
              tool: xmtp_dispatch_session\n\
              arguments:\n\
@@ -340,7 +340,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 通知user session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】把领取解质押结果推到 user session（用户那边）：⚠️ 必须显式调 `xmtp_dispatch_session` 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。按 status 二选一填 content：\n\n\
+             【Step 2】把领取解质押结果推到 user session（用户那边）：⚠️ 必须显式调 xmtp_dispatch_session 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。按 status 二选一填 content：\n\n\
              ```\n\
              tool: xmtp_dispatch_session\n\
              arguments:\n\
@@ -355,7 +355,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 通知user session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】把取消解质押结果推到 user session（用户那边）：⚠️ 必须显式调 `xmtp_dispatch_session` 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。按 status 二选一填 content：\n\n\
+             【Step 2】把取消解质押结果推到 user session（用户那边）：⚠️ 必须显式调 xmtp_dispatch_session 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。按 status 二选一填 content：\n\n\
              ```\n\
              tool: xmtp_dispatch_session\n\
              arguments:\n\
