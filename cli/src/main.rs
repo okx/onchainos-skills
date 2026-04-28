@@ -111,7 +111,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::agentic_wallet::payment::PaymentCommand,
     },
-    /// A2A Pay — Buyer ↔ Seller charge / escrow flow (Smart-Account backend)
+    /// A2A Pay — Buyer ↔ Seller charge flow
     #[command(name = "a2a-pay")]
     A2aPay {
         #[command(subcommand)]

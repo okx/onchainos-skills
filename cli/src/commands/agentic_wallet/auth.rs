@@ -111,7 +111,7 @@ pub(super) fn ensure_tokens() -> Result<(String, String)> {
 ///   3. refresh_token expired         → prompt user, try AK re-login, else anonymous fallback
 ///   4. access_token expired          → call auth_refresh, store new tokens, return new JWT
 ///   5. access_token still valid      → return as-is
-pub(super) async fn ensure_tokens_refreshed() -> Result<String> {
+pub(crate) async fn ensure_tokens_refreshed() -> Result<String> {
     // ── Step 1: session_key guard ────────────────────────────────────
     let session = wallet_store::load_session()?;
     let expire_at = session
@@ -332,7 +332,7 @@ pub(super) fn is_session_key_expired(expire_at: &str) -> bool {
 }
 
 /// Format an API error for propagation.
-pub(super) fn format_api_error(e: anyhow::Error) -> anyhow::Error {
+pub(crate) fn format_api_error(e: anyhow::Error) -> anyhow::Error {
     match e.downcast::<ApiCodeError>() {
         Ok(api_err) => anyhow::anyhow!("{}", api_err.msg),
         Err(e) => e,

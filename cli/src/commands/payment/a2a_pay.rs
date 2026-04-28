@@ -1,17 +1,13 @@
 //! A2A Pay CLI: bridges Buyer & Seller skills to the Smart-Account payment backend.
 //!
-//! Reference: design doc "A2A Payment 协议设计 (Smart-Account 分发方案) v0.2"
-//!
 //! Two-sided flow (sub-commands):
 //!  - `create` (Seller): POST /payment/create — Seller defines amount / symbol /
-//!    recipient (or escrow params) and gets back `paymentId` + `challenge` to hand
-//!    to the Buyer. No buyer wallet / signing involved.
+//!    recipient and gets back `paymentId` + `challenge` to hand to the Buyer.
+//!    No buyer wallet / signing involved.
 //!  - `pay` (Buyer): GET /p/{id} → reconstruct EIP-3009 authorization from the
 //!    `challenge.data.request`; TEE-sign; POST /p/{id}/credential.
 //!  - `status`: GET /p/{id}/status — poll on-chain execution state.
 
-use alloy_primitives::{keccak256, Address, FixedBytes, U256};
-use alloy_sol_types::{sol, SolValue};
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use clap::Subcommand;
@@ -31,16 +27,15 @@ const DEFAULT_VALID_BEFORE_SEC: u64 = 3600;
 /// Seller-side `create` args. Buyer wallet / signing is NOT performed here.
 #[derive(clap::Args)]
 pub struct CreateArgs {
-    // ── Common ───────────────────────────────────────────────────────
-    /// Payment type: `charge` (direct transfer) or `escrow` (lock funds).
-    #[arg(long = "type")]
-    pub r#type: String,
     /// Decimal amount of tokens (e.g. "50" or "0.01" USDT).
     #[arg(long)]
     pub amount: String,
     /// ERC-20 token symbol (e.g. "USDT")
     #[arg(long)]
     pub symbol: String,
+    /// Seller wallet address (= EIP-3009 `to`).
+    #[arg(long)]
+    pub recipient: String,
     /// Human-readable description shown to the Buyer. Optional.
     #[arg(long)]
     pub description: Option<String>,
@@ -53,40 +48,6 @@ pub struct CreateArgs {
     /// Payment-link expiration window in seconds. Default 1800 (30 min).
     #[arg(long = "expires-in")]
     pub expires_in: Option<u64>,
-
-    // ── Charge-only ──────────────────────────────────────────────────
-    /// Seller wallet address (= EIP-3009 `to` for charge mode).
-    #[arg(long)]
-    pub recipient: Option<String>,
-
-    // ── Escrow-only ──────────────────────────────────────────────────
-    #[arg(long = "escrow-contract")]
-    pub escrow_contract: Option<String>,
-    #[arg(long)]
-    pub provider: Option<String>,
-    #[arg(long)]
-    pub receiver: Option<String>,
-    #[arg(long)]
-    pub arbitrator: Option<String>,
-    #[arg(long = "submit-window")]
-    pub submit_window: Option<u32>,
-    #[arg(long = "dispute-window")]
-    pub dispute_window: Option<u32>,
-    #[arg(long = "arbitration-window")]
-    pub arbitration_window: Option<u32>,
-    #[arg(long = "termination-window")]
-    pub termination_window: Option<u32>,
-    /// Business expiry timestamp (RFC 3339), e.g. "2026-05-01T00:00:00Z".
-    #[arg(long = "expired-at")]
-    pub expired_at: Option<String>,
-    #[arg(long)]
-    pub hook: Option<String>,
-    /// Settlement hook calldata (hex, with or without 0x prefix).
-    #[arg(long = "hook-data")]
-    pub hook_data: Option<String>,
-    /// Anti-replay salt (bytes32 hex). Default: random.
-    #[arg(long)]
-    pub salt: Option<String>,
 }
 
 /// Buyer-side `pay` args. Picks up everything else from the on-server challenge.
@@ -120,21 +81,12 @@ pub enum A2aPayCommand {
 
 pub async fn execute(cmd: A2aPayCommand) -> Result<()> {
     match cmd {
-        A2aPayCommand::Create(args) => match args.r#type.as_str() {
-            "charge" => {
-                let params = ChargeParams::try_from(*args)?;
-                let out = create_payment_charge(params).await?;
-                println!("{}", serde_json::to_string_pretty(&out)?);
-                Ok(())
-            }
-            "escrow" => {
-                let params = EscrowParams::try_from(*args)?;
-                let out = create_payment_escrow(params).await?;
-                println!("{}", serde_json::to_string_pretty(&out)?);
-                Ok(())
-            }
-            other => bail!("unknown --type '{other}', expected 'charge' or 'escrow'"),
-        },
+        A2aPayCommand::Create(args) => {
+            let params = ChargeParams::from(*args);
+            let out = create_payment_charge(params).await?;
+            println!("{}", serde_json::to_string_pretty(&out)?);
+            Ok(())
+        }
         A2aPayCommand::Pay(args) => {
             let params = PayParams {
                 payment_id: args.payment_id,
@@ -155,7 +107,7 @@ pub async fn execute(cmd: A2aPayCommand) -> Result<()> {
 }
 
 // ── Param structs (1:1 with /payment/create request shape) ────────────
-// `deliveries` is injected into the wire body inside `create_payment_*`
+// `deliveries` is injected into the wire body inside `create_payment_charge`
 // (always `{includeUrl: true}` for now) and intentionally not exposed here.
 
 #[derive(serde::Serialize)]
@@ -174,20 +126,17 @@ pub struct ChargeParams {
     pub realm: Option<String>,
 }
 
-impl TryFrom<CreateArgs> for ChargeParams {
-    type Error = anyhow::Error;
-    fn try_from(a: CreateArgs) -> Result<Self> {
-        Ok(Self {
+impl From<CreateArgs> for ChargeParams {
+    fn from(a: CreateArgs) -> Self {
+        Self {
             amount: a.amount,
             symbol: a.symbol,
-            recipient: a
-                .recipient
-                .ok_or_else(|| anyhow!("--recipient is required for --type charge"))?,
+            recipient: a.recipient,
             description: a.description,
             external_id: a.external_id,
             expires_in: a.expires_in,
             realm: a.realm,
-        })
+        }
     }
 }
 
@@ -217,176 +166,6 @@ pub async fn create_payment_charge(params: ChargeParams) -> Result<CreatePayment
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][a2a-pay] POST /payment/create (charge) body={}",
-            value
-        );
-    }
-    let resp: Value = wallet_client
-        .post_authed("/api/v6/pay/a2a/payment/create", &access_token, &value)
-        .await
-        .map_err(format_api_error)
-        .context("Smart-Account /payment/create failed")?;
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][a2a-pay] /payment/create response={resp}");
-    }
-    parse_create_payment_response(resp)
-}
-
-// ── Seller side: escrow create (§5) ─────────────────────────────────────
-
-// 15-field tuple per Appendix C. ABI-encoded then keccak256 → nonce.
-// Order is load-bearing: any reorder breaks signature verification.
-sol! {
-    #[derive(Debug)]
-    struct EscrowAuthFields {
-        address provider;
-        address receiver;
-        address arbitrator;
-        address currency;
-        uint256 amount;
-        uint32 submitWindow;
-        uint32 disputeWindow;
-        uint32 arbitrationWindow;
-        uint32 terminationWindow;
-        address hook;
-        bytes hookData;
-        bytes32 salt;
-        address from;
-        uint256 validAfter;
-        uint256 validBefore;
-    }
-}
-
-/// Compute the EIP-3009 nonce for an Escrow authorization.
-pub fn compute_escrow_nonce(fields: &EscrowAuthFields) -> FixedBytes<32> {
-    let encoded = SolValue::abi_encode_params(fields);
-    keccak256(&encoded)
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EscrowDetails {
-    pub escrow_contract: String,
-    pub provider: String,
-    pub receiver: String,
-    pub arbitrator: String,
-    pub submit_window: u32,
-    pub dispute_window: u32,
-    pub arbitration_window: u32,
-    pub termination_window: u32,
-    /// RFC 3339 timestamp.
-    pub expired_at: String,
-    pub hook: String,
-    /// Normalized hex string with `0x` prefix.
-    pub hook_data: String,
-    /// 32-byte salt as `0x`-prefixed hex.
-    pub salt: String,
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EscrowParams {
-    pub amount: String,
-    pub symbol: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub external_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub expires_in: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub realm: Option<String>,
-    pub escrow: EscrowDetails,
-}
-
-impl TryFrom<CreateArgs> for EscrowParams {
-    type Error = anyhow::Error;
-    fn try_from(a: CreateArgs) -> Result<Self> {
-        let provider = a
-            .provider
-            .ok_or_else(|| anyhow!("--provider is required for --type escrow"))?;
-        let escrow_contract = a
-            .escrow_contract
-            .ok_or_else(|| anyhow!("--escrow-contract is required for --type escrow"))?;
-        let receiver = a.receiver.unwrap_or_else(|| provider.clone());
-        let arbitrator = a
-            .arbitrator
-            .ok_or_else(|| anyhow!("--arbitrator is required for --type escrow"))?;
-        let submit_window = a
-            .submit_window
-            .ok_or_else(|| anyhow!("--submit-window is required for --type escrow"))?;
-        let dispute_window = a
-            .dispute_window
-            .ok_or_else(|| anyhow!("--dispute-window is required for --type escrow"))?;
-        let arbitration_window = a
-            .arbitration_window
-            .ok_or_else(|| anyhow!("--arbitration-window is required for --type escrow"))?;
-        let termination_window = a
-            .termination_window
-            .ok_or_else(|| anyhow!("--termination-window is required for --type escrow"))?;
-        let expired_at = a
-            .expired_at
-            .ok_or_else(|| anyhow!("--expired-at is required for --type escrow"))?;
-        let hook = a
-            .hook
-            .ok_or_else(|| anyhow!("--hook is required for --type escrow"))?;
-        let hook_data_raw = a
-            .hook_data
-            .ok_or_else(|| anyhow!("--hook-data is required for --type escrow"))?;
-        let hook_data_bytes = hex::decode(hook_data_raw.trim_start_matches("0x"))
-            .context("hook-data is not valid hex")?;
-        let hook_data = format!("0x{}", hex::encode(&hook_data_bytes));
-        let salt = match a.salt {
-            Some(s) => format!("0x{}", hex::encode(parse_bytes32_hex(&s, "salt")?)),
-            None => format!("0x{}", hex::encode(rand_32())),
-        };
-
-        Ok(Self {
-            amount: a.amount,
-            symbol: a.symbol,
-            description: a.description,
-            external_id: a.external_id,
-            expires_in: a.expires_in,
-            realm: a.realm,
-            escrow: EscrowDetails {
-                escrow_contract,
-                provider,
-                receiver,
-                arbitrator,
-                submit_window,
-                dispute_window,
-                arbitration_window,
-                termination_window,
-                expired_at,
-                hook,
-                hook_data,
-                salt,
-            },
-        })
-    }
-}
-
-/// Seller side: POST /payment/create with escrow params — produces `paymentId`
-/// + `challenge` for the Buyer.
-pub async fn create_payment_escrow(params: EscrowParams) -> Result<CreatePaymentOutput> {
-    validate_positive_decimal_amount(&params.amount)?;
-    for (label, v) in [
-        ("escrow-contract", params.escrow.escrow_contract.as_str()),
-        ("provider", params.escrow.provider.as_str()),
-        ("receiver", params.escrow.receiver.as_str()),
-        ("arbitrator", params.escrow.arbitrator.as_str()),
-        ("hook", params.escrow.hook.as_str()),
-    ] {
-        require_evm_address(v, label)?;
-    }
-
-    let mut wallet_client = WalletApiClient::new()?;
-    let access_token = ensure_tokens_refreshed().await?;
-    let mut value = serde_json::to_value(&params).context("serialize escrow params")?;
-    value["type"] = json!("escrow");
-    value["deliveries"] = json!({ "includeUrl": true });
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][a2a-pay] POST /payment/create (escrow) body={}",
             value
         );
     }
@@ -457,9 +236,7 @@ pub struct PayOutput {
 /// 1. GET /p/{id} → reconstruct authorization params from `challenge.data.request`.
 /// 2. Resolve Buyer agentic-wallet address on the chain named in `methodDetails.chainId`.
 /// 3. Pick `validAfter` / `validBefore` (CLI override or defaults).
-/// 4. Compute EIP-3009 nonce:
-///    - `charge` intent → random 32 bytes.
-///    - `escrow` intent → keccak256(abi.encode(15 fields per Appendix C)).
+/// 4. Compute EIP-3009 nonce as random 32 bytes (charge intent).
 /// 5. TEE-sign EIP-3009 (gen-msg-hash → ed25519 sign session → sign-msg).
 /// 6. POST /p/{id}/credential.
 #[allow(clippy::too_many_lines)]
@@ -492,6 +269,9 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("challenge.data.intent missing"))?
         .to_string();
+    if intent != "charge" {
+        bail!("unsupported challenge intent '{intent}', only 'charge' is supported");
+    }
     let request = data
         .get("request")
         .ok_or_else(|| anyhow!("challenge.data.request missing"))?;
@@ -569,62 +349,12 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .checked_add(DEFAULT_VALID_BEFORE_SEC)
         .ok_or_else(|| anyhow!("validBefore overflow"))?;
 
-    // ── 4. Compute nonce (intent-specific) + build authorization ─────
-    let (nonce_hex, authorization_type) = match intent.as_str() {
-        "charge" => {
-            // random 32 bytes
-            use rand::RngCore;
-            let mut n = [0u8; 32];
-            rand::rngs::OsRng.fill_bytes(&mut n);
-            (format!("0x{}", hex::encode(n)), "TransferWithAuthorization")
-        }
-        "escrow" => {
-            let escrow = method_details
-                .get("escrow")
-                .ok_or_else(|| anyhow!("methodDetails.escrow missing for escrow intent"))?;
-            let parsed_amount: u128 = amount
-                .parse()
-                .context("challenge amount must be a non-negative integer in minimal units")?;
-            let from_addr: Address = from_addr_str
-                .parse()
-                .context("agentic-wallet address is not a valid EVM address")?;
-            let hook_data_str = escrow
-                .get("hookData")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("escrow.hookData missing"))?;
-            let hook_data_bytes = hex::decode(hook_data_str.trim_start_matches("0x"))
-                .context("escrow.hookData not valid hex")?;
-            let salt_str = escrow
-                .get("salt")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("escrow.salt missing"))?;
-            let salt = parse_bytes32_hex(salt_str, "escrow.salt")?;
-            let fields = EscrowAuthFields {
-                provider: parse_addr_field(escrow, "provider")?,
-                receiver: parse_addr_field(escrow, "receiver")?,
-                arbitrator: parse_addr_field(escrow, "arbitrator")?,
-                currency: currency
-                    .parse()
-                    .context("challenge.request.currency parse")?,
-                amount: U256::from(parsed_amount),
-                submitWindow: parse_u32_field(escrow, "submitWindow")?,
-                disputeWindow: parse_u32_field(escrow, "disputeWindow")?,
-                arbitrationWindow: parse_u32_field(escrow, "arbitrationWindow")?,
-                terminationWindow: parse_u32_field(escrow, "terminationWindow")?,
-                hook: parse_addr_field(escrow, "hook")?,
-                hookData: hook_data_bytes.into(),
-                salt,
-                from: from_addr,
-                validAfter: U256::from(valid_after),
-                validBefore: U256::from(valid_before),
-            };
-            let nonce = compute_escrow_nonce(&fields);
-            (
-                format!("0x{}", hex::encode(nonce)),
-                "ReceiveWithAuthorization",
-            )
-        }
-        other => bail!("unknown challenge intent '{other}', expected 'charge' or 'escrow'"),
+    // ── 4. Compute nonce (random 32 bytes for charge) ────────────────
+    let nonce_hex = {
+        use rand::RngCore;
+        let mut n = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut n);
+        format!("0x{}", hex::encode(n))
     };
 
     // ── 5. TEE sign EIP-3009 ─────────────────────────────────────────
@@ -633,7 +363,7 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
     let session_key = keyring_store::get("session_key")
         .map_err(|_| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
 
-    let mut base_fields = json!({
+    let base_fields = json!({
         "chainIndex": chain_index,
         "from": from_addr_str,
         "to": recipient,
@@ -643,10 +373,6 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         "nonce": nonce_hex,
         "verifyingContract": currency,
     });
-    // Charge uses backend default (TransferWithAuthorization); escrow needs the hint.
-    if authorization_type == "ReceiveWithAuthorization" {
-        base_fields["authorizationType"] = json!(authorization_type);
-    }
 
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG][a2a-pay] POST gen-msg-hash body={base_fields}");
@@ -704,8 +430,7 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .to_string();
 
     // ── 6. POST /p/{id}/credential ─────────────────────────────
-    // Charge omits `challenge`; escrow includes it (backend rebinds escrow nonce).
-    let mut credential_body = json!({
+    let credential_body = json!({
         "payload": {
             "type": "transaction",
             "signature": signature_hex,
@@ -720,9 +445,6 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
             },
         },
     });
-    if intent == "escrow" {
-        credential_body["challenge"] = challenge;
-    }
     let credential_path = format!("/api/v6/pay/a2a/p/{}/credential", p.payment_id);
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG][a2a-pay] POST {credential_path} body={credential_body}");
@@ -832,48 +554,6 @@ fn require_evm_address(addr: &str, label: &str) -> Result<()> {
     }
 }
 
-fn parse_bytes32_hex(s: &str, label: &str) -> Result<FixedBytes<32>> {
-    let clean = s.strip_prefix("0x").unwrap_or(s);
-    if clean.len() != 64 {
-        bail!("{label} must be 32 bytes (64 hex chars), got {}", clean.len());
-    }
-    let bytes = hex::decode(clean).with_context(|| format!("{label} is not valid hex"))?;
-    let arr: [u8; 32] = bytes
-        .try_into()
-        .map_err(|_| anyhow!("{label} length mismatch"))?;
-    Ok(FixedBytes::from(arr))
-}
-
-fn parse_addr_field(obj: &Value, key: &str) -> Result<Address> {
-    obj.get(key)
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("escrow.{key} missing"))?
-        .parse()
-        .with_context(|| format!("escrow.{key} parse"))
-}
-
-fn parse_u32_field(obj: &Value, key: &str) -> Result<u32> {
-    let v = obj
-        .get(key)
-        .ok_or_else(|| anyhow!("escrow.{key} missing"))?;
-    if let Some(n) = v.as_u64() {
-        return u32::try_from(n).with_context(|| format!("escrow.{key} out of u32 range"));
-    }
-    if let Some(s) = v.as_str() {
-        return s
-            .parse::<u32>()
-            .with_context(|| format!("escrow.{key} parse u32"));
-    }
-    bail!("escrow.{key} must be a number or numeric string")
-}
-
-fn rand_32() -> [u8; 32] {
-    use rand::RngCore;
-    let mut n = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut n);
-    n
-}
-
 fn unix_now() -> Result<u64> {
     Ok(std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -916,57 +596,5 @@ mod tests {
         assert!(validate_positive_decimal_amount("1.2.3").is_err());
         assert!(validate_positive_decimal_amount(" 1").is_err());
         assert!(validate_positive_decimal_amount("abc").is_err());
-    }
-
-    #[test]
-    fn parses_bytes32_hex() {
-        let s = "0x0000000000000000000000000000000000000000000000000000000000000001";
-        let b = parse_bytes32_hex(s, "test").unwrap();
-        assert_eq!(b.as_slice()[31], 1);
-        let b2 = parse_bytes32_hex(&s[2..], "test").unwrap();
-        assert_eq!(b, b2);
-        assert!(parse_bytes32_hex("0x01", "test").is_err());
-    }
-
-    /// Lock in escrow nonce determinism for fixed input — guards against
-    /// silent ABI-encoding regressions.
-    #[test]
-    fn escrow_nonce_is_deterministic_and_field_sensitive() {
-        let f = EscrowAuthFields {
-            provider: "0x1111111111111111111111111111111111111111".parse().unwrap(),
-            receiver: "0x2222222222222222222222222222222222222222".parse().unwrap(),
-            arbitrator: "0x3333333333333333333333333333333333333333".parse().unwrap(),
-            currency: "0x4444444444444444444444444444444444444444".parse().unwrap(),
-            amount: U256::from(50_000_000u64),
-            submitWindow: 86400,
-            disputeWindow: 86400,
-            arbitrationWindow: 172800,
-            terminationWindow: 86400,
-            hook: "0x5555555555555555555555555555555555555555".parse().unwrap(),
-            hookData: vec![0xde, 0xad, 0xbe, 0xef].into(),
-            salt: parse_bytes32_hex(
-                "0x0000000000000000000000000000000000000000000000000000000000000007",
-                "salt",
-            )
-            .unwrap(),
-            from: "0x6666666666666666666666666666666666666666".parse().unwrap(),
-            validAfter: U256::ZERO,
-            validBefore: U256::from(2_000_000_000u64),
-        };
-        let n1 = compute_escrow_nonce(&f);
-        let n2 = compute_escrow_nonce(&f);
-        assert_eq!(n1, n2, "nonce must be deterministic");
-
-        let mut f2 = f.clone();
-        f2.amount = U256::from(50_000_001u64);
-        assert_ne!(n1, compute_escrow_nonce(&f2), "nonce must depend on amount");
-
-        let mut f3 = f.clone();
-        f3.salt = parse_bytes32_hex(
-            "0x0000000000000000000000000000000000000000000000000000000000000008",
-            "salt",
-        )
-        .unwrap();
-        assert_ne!(n1, compute_escrow_nonce(&f3), "nonce must depend on salt");
     }
 }
