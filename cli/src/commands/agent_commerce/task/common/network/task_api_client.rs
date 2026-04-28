@@ -17,9 +17,6 @@ use crate::wallet_store;
 /// 任务 API 路径前缀
 const TASK_PREFIX: &str = "/priapi/v1/aieco/task";
 
-/// 任务系统独立 base URL
-const TASK_BASE_URL: &str = "https://web3.okx.com";
-
 /// 平台质押 & 仲裁配置（GET /priapi/v1/aieco/task/staking/config 返回结构）。
 /// 后端通过 Apollo `aitask.platform.*` 配置，重启生效。
 ///
@@ -194,15 +191,14 @@ impl TaskApiClient {
     }
 
     fn build(base_url_override: Option<String>) -> Self {
-        // base_url 解析 —— 跟 WalletApiClient::with_base_url 的优先级保持一致，
+        // base_url 解析 —— 与 WalletApiClient::with_base_url 保持一致的优先级，
         // 这样 eprintln 里展示的 URL 跟 wallet 实际发请求的 URL 不会撕裂。
-        // 优先级：OKX_BASE_URL env > 编译时 OKX_BASE_URL > 显式 override > TASK_BASE_URL env > 常量
+        // 优先级：OKX_BASE_URL env > 编译时 OKX_BASE_URL > 显式 override > DEFAULT_BASE_URL
         let base_url = std::env::var("OKX_BASE_URL")
             .ok()
             .or_else(|| option_env!("OKX_BASE_URL").map(str::to_string))
             .or(base_url_override)
-            .or_else(|| std::env::var("TASK_BASE_URL").ok())
-            .unwrap_or_else(|| TASK_BASE_URL.to_string());
+            .unwrap_or_else(|| crate::client::DEFAULT_BASE_URL.to_string());
 
         let wallet = WalletApiClient::with_base_url(Some(base_url.as_str()))
             .expect("failed to create WalletApiClient");
