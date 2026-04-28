@@ -11,7 +11,7 @@ onchainos --version
 ls ~/.onchainos/workflows/
 ```
 
-If `onchainos` is not found or workflows are missing, run `bash ~/setup.sh` and verify again.
+If `onchainos` is not found or workflows are missing, run `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/openclaw_template/setup.sh | bash` and verify again.
 
 ## Step 2 — Install skills
 
