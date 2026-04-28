@@ -7,28 +7,32 @@ set -e
 
 REPO_URL="https://github.com/okx/onchainos-skills"
 REPO_DIR="$HOME/.openclaw/onchainos-skills"
+INSTALL_DIR="$HOME/.local/bin"
 
 # ── 1. Install CLI + workflows ──────────────────────────────
 echo "[onchainos] Installing CLI + workflows..."
 
+# Clear cache if binary is missing — forces install.sh to re-download
+if [ ! -f "$INSTALL_DIR/onchainos" ]; then
+  rm -f "$HOME/.onchainos/last_check"
+fi
+
 curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
 
 # ── Ensure onchainos is on PATH ──────────────────────────────
-INSTALL_DIR="$HOME/.local/bin"
 
-# Symlink to a directory that's already on PATH (works in sandboxes
-# where shell profiles aren't sourced)
+# Copy to a directory already on PATH (most reliable for sandboxes)
 if [ -f "$INSTALL_DIR/onchainos" ]; then
   for bin_dir in /usr/local/bin /usr/bin; do
     if [ -d "$bin_dir" ] && [ -w "$bin_dir" ]; then
-      ln -sf "$INSTALL_DIR/onchainos" "$bin_dir/onchainos"
-      echo "[onchainos] Symlinked to $bin_dir/onchainos"
+      cp -f "$INSTALL_DIR/onchainos" "$bin_dir/onchainos"
+      echo "[onchainos] Copied to $bin_dir/onchainos"
       break
     fi
   done
 fi
 
-# Also add to PATH for the current session
+# Also add to PATH for the current session as fallback
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
   *) export PATH="$INSTALL_DIR:$PATH"
