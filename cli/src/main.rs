@@ -106,7 +106,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::security::SecurityCommand,
     },
-    /// Payment protocols — auto-pay gated APIs (x402, etc.)
+    /// Payment protocols — auto-pay gated APIs (x402, a2a-pay, etc.)
     Payment {
         #[command(subcommand)]
         command: commands::agentic_wallet::payment::PaymentCommand,
