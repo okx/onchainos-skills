@@ -713,7 +713,10 @@ struct CrossChainQuoteParams {
     to_chain: String,
     /// Human-readable amount (e.g. "10" for 10 USDC)
     readable_amount: String,
-    /// Receive address on destination chain (optional, defaults to user wallet)
+    /// Optional destination receive address. The v6 /quote API does not consume
+    /// this — it is validated against the destination chain's address family
+    /// (so EVM↔Solana mismatches fail early) and then dropped. Use it only at
+    /// `cross_chain_execute` time when broadcasting.
     receive_address: Option<String>,
     /// Sort preference: 0=optimal (default), 1=fastest, 2=max output
     sort: Option<String>,
@@ -721,21 +724,29 @@ struct CrossChainQuoteParams {
 
 #[derive(Deserialize, JsonSchema)]
 struct CrossChainStatusParams {
-    /// Source chain transaction hash returned by cross-chain execute
-    tx_hash: String,
+    /// Source chain transaction hash returned by cross-chain execute. Provide this
+    /// OR `order_id` (mutually exclusive).
+    tx_hash: Option<String>,
+    /// Order id from a prior cross_chain_execute (e.g. swapOrderId,
+    /// approveOrderId). Use this OR `tx_hash`. Resolved internally to a tx hash
+    /// via the authenticated wallet `/order/detail` endpoint (login required).
+    order_id: Option<String>,
     /// Bridge id (required by server — returns 50014 if absent). Get it from the
     /// `bridgeId` field of the prior `cross_chain_execute` / `cross_chain_quote`
     /// result, or from `cross_chain_bridges`.
     bridge_id: String,
-    /// Source chain name or chainIndex (e.g. "ethereum" or "1"). Optional but
-    /// recommended for faster server-side lookup.
-    from_chain: Option<String>,
+    /// Source chain name or chainIndex (e.g. "ethereum" or "1"). Required —
+    /// server returns 50014 (chainIndex) without it.
+    from_chain: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
-struct CrossChainListParams {
-    /// Optional chain filter (e.g. "ethereum" or "1"). When omitted, returns the full set.
-    chain: Option<String>,
+struct CrossChainBridgesParams {
+    /// Source chain (independently optional). See tool description for the
+    /// four combinations of from_chain / to_chain.
+    from_chain: Option<String>,
+    /// Destination chain (independently optional).
+    to_chain: Option<String>,
 }
 
 #[derive(Clone)]
@@ -1850,16 +1861,18 @@ impl McpServer {
 
     #[tool(
         name = "cross_chain_tokens",
-        description = "List bridgeable tokens (/supported/tokens). Optionally filter by chain. Returns chainIndex / tokenContractAddress / tokenSymbol / decimals."
+        description = "List bridgeable tokens (/supported/tokens). Both from_chain and to_chain are independently optional: omit both for the full catalog, pass from_chain only for tokens on that source chain, pass to_chain only for tokens that can reach that destination, pass both for tokens on the specific from→to route. Returns chainIndex / tokenContractAddress / tokenSymbol / decimals."
     )]
     async fn cross_chain_tokens(
         &self,
-        Parameters(p): Parameters<CrossChainListParams>,
+        Parameters(p): Parameters<CrossChainBridgesParams>,
     ) -> Result<String, String> {
-        let chain_idx = p.chain.as_deref().map(crate::chains::resolve_chain);
+        let from_idx = p.from_chain.as_deref().map(crate::chains::resolve_chain);
+        let to_idx = p.to_chain.as_deref().map(crate::chains::resolve_chain);
         match cross_chain::fetch_supported_tokens(
             &mut *self.client.lock().await,
-            chain_idx.as_deref(),
+            from_idx.as_deref(),
+            to_idx.as_deref(),
         )
         .await
         {
@@ -1870,16 +1883,18 @@ impl McpServer {
 
     #[tool(
         name = "cross_chain_bridges",
-        description = "List available cross-chain bridge protocols (/supported/bridges). Returns bridgeId / bridgeName / supportedChains[]."
+        description = "List bridge protocols (/supported/bridges). Both from_chain and to_chain are independently optional: omit both for the full catalog, pass from_chain only for bridges on that source chain, pass to_chain only for bridges able to reach that destination, pass both for bridges that connect the specific chain pair. Returns bridgeId / bridgeName / supportedChains[]."
     )]
     async fn cross_chain_bridges(
         &self,
-        Parameters(p): Parameters<CrossChainListParams>,
+        Parameters(p): Parameters<CrossChainBridgesParams>,
     ) -> Result<String, String> {
-        let chain_idx = p.chain.as_deref().map(crate::chains::resolve_chain);
+        let from_idx = p.from_chain.as_deref().map(crate::chains::resolve_chain);
+        let to_idx = p.to_chain.as_deref().map(crate::chains::resolve_chain);
         match cross_chain::fetch_supported_bridges(
             &mut *self.client.lock().await,
-            chain_idx.as_deref(),
+            from_idx.as_deref(),
+            to_idx.as_deref(),
         )
         .await
         {
@@ -1898,6 +1913,13 @@ impl McpServer {
     ) -> Result<String, String> {
         let from_chain_index = crate::chains::resolve_chain(&p.from_chain);
         let to_chain_index = crate::chains::resolve_chain(&p.to_chain);
+        // Validate (but do not forward) receive_address — v6 /quote does not
+        // accept it. Family mismatch fails up front instead of at execute.
+        if let Some(addr) = p.receive_address.as_deref() {
+            if let Err(e) = cross_chain::validate_receive_address(addr, &to_chain_index) {
+                return err(e);
+            }
+        }
         let from_token = crate::commands::swap::resolve_token_address(&from_chain_index, &p.from);
         let to_token = crate::commands::swap::resolve_token_address(&to_chain_index, &p.to);
         let sort = p.sort.as_deref();
@@ -1946,11 +1968,26 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<CrossChainStatusParams>,
     ) -> Result<String, String> {
-        let chain_idx = p.from_chain.as_deref().map(crate::chains::resolve_chain);
+        let chain_idx = crate::chains::resolve_chain(&p.from_chain).to_string();
+        let tx_hash = match (p.tx_hash, p.order_id) {
+            (Some(h), None) => h,
+            (None, Some(oid)) => match cross_chain::resolve_order_id_to_tx_hash(&oid, &chain_idx)
+                .await
+            {
+                Ok(h) => h,
+                Err(e) => return err(e),
+            },
+            (Some(_), Some(_)) => {
+                return Err("provide tx_hash OR order_id, not both".to_string());
+            }
+            (None, None) => {
+                return Err("one of tx_hash or order_id is required".to_string());
+            }
+        };
         match cross_chain::fetch_status(
             &mut *self.client.lock().await,
-            &p.tx_hash,
-            chain_idx.as_deref(),
+            &tx_hash,
+            Some(&chain_idx),
             Some(&p.bridge_id),
         )
         .await

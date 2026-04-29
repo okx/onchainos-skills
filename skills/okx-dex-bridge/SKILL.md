@@ -89,13 +89,13 @@ Only the 7 subcommands listed below exist. The CLI rejects anything else — do 
 
 | # | Command | Description |
 |---|---|---|
-| 1 | `onchainos cross-chain bridges [--chain <X>]` | List available bridge protocols. Returns bridgeId / bridgeName / supportedChains[]. |
-| 2 | `onchainos cross-chain tokens [--chain <X>]` | List bridgeable tokens on a chain. Returns chainIndex / tokenContractAddress / tokenSymbol / decimals. |
-| 3 | `onchainos cross-chain quote --from ... --to ... --from-chain ... --to-chain ... --readable-amount <n> [--slippage <s>] [--wallet <addr> --check-approve] [--bridge-id <id>] [--sort <0\|1\|2>] [--allow-bridges <ids>] [--deny-bridges <ids>]` | Get cross-chain quote. Returns `routerList[]` with bridgeId / needApprove / minimumReceived / estimateTime / crossChainFee. |
+| 1 | `onchainos cross-chain bridges [--from-chain <X>] [--to-chain <Y>]` | List bridge protocols. Both flags independently optional: omit both → full catalog; only `--from-chain` → bridges on that source; only `--to-chain` → bridges able to reach that destination; both → bridges connecting that specific pair. Empty response with both flags = no bridge for that pair. |
+| 2 | `onchainos cross-chain tokens [--from-chain <X>] [--to-chain <Y>]` | List bridgeable from-tokens. Both flags independently optional: omit both → full catalog; only `--from-chain` → from-tokens on that source; only `--to-chain` → from-tokens that can reach that destination; both → from-tokens routable on that specific pair. Returns chainIndex / tokenContractAddress / tokenSymbol / decimals. |
+| 3 | `onchainos cross-chain quote --from ... --to ... --from-chain ... --to-chain ... --readable-amount <n> [--slippage <s>] [--wallet <addr> --check-approve] [--bridge-id <id>] [--sort <0\|1\|2>] [--allow-bridges <ids>] [--deny-bridges <ids>] [--receive-address <addr>]` | Get cross-chain quote. Returns `routerList[]` with bridgeId / needApprove / minimumReceived / estimateTime / crossChainFee. `--receive-address` is accepted for parity with `execute` and validated for address-family match against `--to-chain`, but the server quote endpoint does NOT consume it (CLI drops it before sending). |
 | 4 | `onchainos cross-chain approve --chain ... --token ... --wallet ... --bridge-id ... --readable-amount <n> [--check-allowance]` | Build ERC-20 approve tx for a bridge router (manual use). `readable-amount=0` revokes. |
 | 5 | `onchainos cross-chain swap --from ... --to ... --from-chain ... --to-chain ... --readable-amount <n> --wallet <addr> [--bridge-id <id>] [--sort <0\|1\|2>] [--allow-bridges <ids>] [--deny-bridges <ids>] [--receive-address <addr>]` | Get unsigned cross-chain swap tx (calldata only). Does NOT sign or broadcast. |
 | 6 | `onchainos cross-chain execute --from ... --to ... --from-chain ... --to-chain ... --readable-amount <n> --wallet <addr> [--bridge-id <id>\|--route-index <n>] [--sort <0\|1\|2>] [--receive-address <addr>] [--mev-protection] [--confirm-approve\|--skip-approve] [--force]` | One-shot: quote → approve (if needed) → swap → broadcast. Three modes (default / `--confirm-approve` / `--skip-approve`). Pin a route via `--bridge-id` or `--route-index` (mutually exclusive). |
-| 7 | `onchainos cross-chain status --tx-hash <0x...> --bridge-id <id> [--from-chain <X>]` | Query cross-chain status by **source chain transaction hash**. `--bridge-id` is **required** (server returns 50014 without it). Returns `SUCCESS / PENDING / NOT_FOUND` + toChainIndex / toTxHash / toAmount / bridgeId. |
+| 7 | `onchainos cross-chain status (--tx-hash <0x...> \| --order-id <id>) --bridge-id <id> --from-chain <X>` | Query cross-chain status. Pass either `--tx-hash` or `--order-id` (mutually exclusive). `--order-id` is resolved internally to the underlying tx hash via `wallet /order/detail` (login required). `--bridge-id` and `--from-chain` are **both required** (server returns 50014 without them). Returns `SUCCESS / PENDING / NOT_FOUND` + toChainIndex / toTxHash / toAmount / bridgeId. |
 
 ## Token Address Resolution (Mandatory)
 
@@ -170,22 +170,34 @@ Edge cases:
 Before issuing a quote, **fail fast on chain pairs that no bridge can connect**. This avoids burning quote calls on Sui/Tron/Ton-style pairs and gives a clear early error.
 
 ```bash
-onchainos cross-chain bridges --chain <fromChain>
+onchainos cross-chain bridges --from-chain <fromChain> --to-chain <toChain>
 ```
 
-Then filter the response to entries where `supportedChains[]` contains the resolved `toChainIndex`. Three cases:
+Server returns only bridges that connect this specific pair.
 
-1. **fromChain not in any bridge** — the `--chain <fromChain>` response is empty (e.g. Tron, Sui, Ton on most envs). Run `onchainos cross-chain bridges` (no filter) and reverse-lookup which source chains can reach `toChainIndex`:
+- **Non-empty response** → at least one bridge connects the pair → proceed to Step 4.
+- **Empty response** → no bridge for this pair. Run two diagnostic queries to tell whether `fromChain` itself is unsupported vs. only `toChain` is unreachable:
 
-   > "{fromChain} is not currently supported by any cross-chain bridge. Source chains that can bridge to {toChain}: {comma-separated chain names}. Pick one of these as your source."
+  ```bash
+  # 1. Are there ANY bridges that originate at fromChain?
+  onchainos cross-chain bridges --from-chain <fromChain>
+  # 2. Are there ANY bridges that reach toChain?
+  onchainos cross-chain bridges --to-chain <toChain>
+  ```
 
-2. **fromChain supported but toChain unreachable from it** — the `--chain <fromChain>` response is non-empty but no entry includes `toChainIndex` in `supportedChains[]`. Collect the union of `supportedChains[]` across the response:
+  - **Query 1 empty** → `fromChain` is not in any bridge:
 
-   > "Cannot bridge to {toChain} from {fromChain}. Reachable destinations from {fromChain}: {comma-separated chain names}."
+    > "{fromChain} is not currently supported by any cross-chain bridge. Pick a supported source chain (Ethereum / Arbitrum / Base / Optimism / BSC / Polygon / …)."
 
-3. **Pair has at least one bridge** — proceed to Step 4.
+  - **Query 1 non-empty, query 2 empty** → `toChain` not reachable from anywhere; user picked an unsupported destination:
 
-Skip the quote step entirely on cases 1 and 2.
+    > "{toChain} cannot be reached by any cross-chain bridge. Pick a supported destination."
+
+  - **Both non-empty** → both chains supported individually, but no bridge connects this *specific* pair:
+
+    > "Cannot bridge {fromChain} → {toChain} — no bridge connects this pair. Try a two-hop route via a common chain (Ethereum / Arbitrum)."
+
+Skip the quote step entirely whenever the pair-specific query returns empty.
 
 <IMPORTANT>
 **Caveat — config truthy ≠ service available**. The `bridges` API reports the *configured* bridge set, not real-time service status. A pair can pass this pre-check (e.g. Solana ↔ Arbitrum where Gas Zip + Relay both list 501) yet still fail at quote time on environments where the underlying adapter is offline. That deeper failure is detected in Step 4 / Fallback below — see the all-`82000` with empty `msg` (CLI prints `unknown error`) pattern.
@@ -442,16 +454,28 @@ Interpret `status` field:
 | `PENDING` | "Transfer in progress. Bridge: {bridgeId mapped to name}. Check again shortly. Estimated arrival: ~{originalEstimateTime}." |
 | `NOT_FOUND` | First few seconds after broadcast: "Bridge has not yet indexed your transaction. Wait 10–30s and re-check." Long persistence (>5 min): "Transaction not visible to the bridge monitor yet. The source chain may not have confirmed it. Verify on the source chain explorer: {explorerUrl}." |
 
-**Polling cadence (recommended)**: exponential backoff — 10s → 20s → 40s → 60s → 60s. Stop polling after `SUCCESS` or after `originalEstimateTime × 5` total elapsed (then escalate to support if still NOT_FOUND/PENDING).
+**Polling cadence (recommended)**: exponential backoff — 10s → 20s → 40s → 60s → 60s. Stop polling after `SUCCESS` or after `originalEstimateTime × 5` total elapsed.
+
+<IMPORTANT>
+**Long PENDING — verify destination chain before telling user to keep waiting.** `cross-chain status` is a backend listener over each bridge's callback events; it is NOT a direct read of the destination chain. When `PENDING` exceeds `estimateTime × 2`, **check the destination chain directly** before assuming the transfer is still in flight:
+
+```bash
+onchainos wallet balance --chain <toChain> --force
+```
+
+If the destination balance has increased by ~`minimumReceived` (or the destination explorer shows an incoming transfer from the bridge router), **funds have already arrived**. The `PENDING` is a backend-listener gap (most often seen on ACROSS V3), not a missing fill. Tell the user the funds are already on the destination chain (cite balance / explorer) and stop polling — `status` will reconcile eventually but is not gating fund availability.
+
+See `references/troubleshooting.md` → "`status` stuck at PENDING" for the two-case decision tree.
+</IMPORTANT>
 
 **Escalation to OKX support** — guide the user when:
 - `NOT_FOUND` persists for > 4 hours after broadcast.
-- `PENDING` persists for > original `estimateTime × 10`.
+- `PENDING` persists for > original `estimateTime × 10` AND destination chain shows no fill.
 - Any abnormal state with no progress for > 4 hours.
 
 Always provide: `fromTxHash` + `bridgeName` (looked up via `bridgeId`).
 
-> The status API does not return refund / failure sub-states. For long-stuck transactions, point users to the source-chain explorer and the bridge protocol's own scan page (Stargate / ACROSS / Relay scan) to inspect bridge-side progress.
+> The status API does not return refund / failure sub-states. For long-stuck transactions, point users to the destination chain explorer (or `wallet balance`) first, then the bridge protocol's own scan page (Stargate / ACROSS / Relay scan) for bridge-side progress.
 
 ## Fallback: No Direct Route
 

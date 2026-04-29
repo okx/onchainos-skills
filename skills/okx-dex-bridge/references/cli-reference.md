@@ -4,15 +4,26 @@ Detailed parameter tables, return field schemas, and usage examples for the 7 cr
 
 ## 1. onchainos cross-chain bridges
 
-List available bridge protocols. Optionally filter by chain.
+List bridge protocols. Both flags are independently optional, mapping to `fromChainIndex` / `toChainIndex` query params on the server:
+
+- **Both omitted** → full catalog of every bridge.
+- **`--from-chain` only** → bridges on that source chain.
+- **`--to-chain` only** → bridges able to reach that destination.
+- **Both** → bridges that connect that specific chain pair (the recommended pre-check before `quote` — see SKILL.md Step 3.5).
 
 ```bash
-onchainos cross-chain bridges [--chain <chain>]
+onchainos cross-chain bridges                                      # full catalog
+onchainos cross-chain bridges --from-chain ethereum                # source-side
+onchainos cross-chain bridges --to-chain base                      # destination-side
+onchainos cross-chain bridges --from-chain arbitrum --to-chain base  # specific pair
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `--chain` | No | (all) | Source chain name or chainIndex. Omit to return all bridges. |
+| `--from-chain` | No | — | Source chain name or chainIndex. |
+| `--to-chain` | No | — | Destination chain name or chainIndex. |
+
+**Empty response** with both flags set → no bridge connects that chain pair on this env. Surface to user as "no bridge currently connects {fromChain} ↔ {toChain}" and skip `quote`.
 
 **Return fields** (per bridge entry):
 
@@ -38,15 +49,24 @@ Do NOT include `logo`, `requireOtherNativeFee` (collapse to "Yes/No"), or other 
 
 ## 2. onchainos cross-chain tokens
 
-List bridgeable tokens on a chain.
+List bridgeable from-tokens. Both flags independently optional, mapping to `fromChainIndex` / `toChainIndex` query params:
+
+- **Both omitted** → full catalog.
+- **`--from-chain` only** → all bridgeable from-tokens on that source chain.
+- **`--to-chain` only** → from-tokens that can reach that destination.
+- **Both** → from-tokens routable on that specific from→to pair.
 
 ```bash
-onchainos cross-chain tokens [--chain <chain>]
+onchainos cross-chain tokens                                  # full catalog
+onchainos cross-chain tokens --from-chain ethereum            # tokens on ethereum
+onchainos cross-chain tokens --to-chain base                  # tokens reaching base
+onchainos cross-chain tokens --from-chain arbitrum --to-chain base  # pair-specific
 ```
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `--chain` | No | (all chains) | Source chain name or chainIndex |
+| `--from-chain` | No | — | Source chain name or chainIndex |
+| `--to-chain` | No | — | Destination chain name or chainIndex |
 
 **Return fields** (per token entry):
 
@@ -368,20 +388,21 @@ Returned on swap broadcast completion (default mode with sufficient allowance, o
 
 ## 7. onchainos cross-chain status
 
-Query cross-chain status by source chain transaction hash.
+Query cross-chain status by source chain transaction hash **or** order id.
 
 ```bash
 onchainos cross-chain status \
-  --tx-hash <hash> \
+  ( --tx-hash <hash> | --order-id <id> ) \
   --bridge-id <id> \
-  [--from-chain <chain>]
+  --from-chain <chain>
 ```
 
 | Param | Required | Description |
 |---|---|---|
-| `--tx-hash` | Yes | Source chain transaction hash returned by `execute` |
-| `--bridge-id` | Yes | Bridge id used for the transfer (`bridgeId` from prior `execute` / `quote.routerList[]` / `bridges`). Server returns 50014 if absent. |
-| `--from-chain` | No | Source chain (name or chainIndex). Optional, helps server lookup. |
+| `--tx-hash` | One of | Source chain transaction hash returned by `execute` (`fromTxHash`). Mutually exclusive with `--order-id`. |
+| `--order-id` | One of | Order id returned by `execute` (`swapOrderId` / `approveOrderId`). The CLI resolves it to the underlying tx hash via `wallet /order/detail`. **Login required.** Mutually exclusive with `--tx-hash`. |
+| `--bridge-id` | Yes | Bridge id used for the transfer (`bridgeId` from prior `execute` / `quote.routerList[]` / `bridges`). Server returns 50014 without it. |
+| `--from-chain` | Yes | Source chain (name or chainIndex). Server returns 50014 (chainIndex) without it. |
 
 **Return shape**:
 

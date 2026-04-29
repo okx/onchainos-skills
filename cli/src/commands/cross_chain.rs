@@ -23,26 +23,48 @@ use crate::output;
 
 const V6_PREFIX: &str = "/api/v6/dex/cross-chain";
 
+/// Fetch bridgeable token catalog.
+///
+/// Server contract (per the cross-chain OpenAPI doc, §4.1):
+/// - Both omitted → full catalog (every from-token across every chain).
+/// - `from_chain_index` only → all bridgeable from-tokens on that source chain.
+/// - `to_chain_index` only → all from-tokens that can reach that destination.
+/// - Both supplied → only from-tokens that route from `fromChain` → `toChain`.
 pub async fn fetch_supported_tokens(
     client: &mut ApiClient,
-    chain_index: Option<&str>,
+    from_chain_index: Option<&str>,
+    to_chain_index: Option<&str>,
 ) -> Result<Value> {
     let mut params: Vec<(&str, &str)> = Vec::new();
-    if let Some(c) = chain_index {
-        params.push(("chainIndex", c));
+    if let Some(f) = from_chain_index {
+        params.push(("fromChainIndex", f));
+    }
+    if let Some(t) = to_chain_index {
+        params.push(("toChainIndex", t));
     }
     client
         .get(&format!("{V6_PREFIX}/supported/tokens"), &params)
         .await
 }
 
+/// Fetch bridge support set.
+///
+/// Server contract (per the cross-chain OpenAPI doc, §4.2):
+/// - Both omitted → full catalog of every bridge.
+/// - `from_chain_index` only → bridges on that source chain.
+/// - `to_chain_index` only → bridges able to reach that destination.
+/// - Both supplied → bridges that connect that specific chain pair.
 pub async fn fetch_supported_bridges(
     client: &mut ApiClient,
-    chain_index: Option<&str>,
+    from_chain_index: Option<&str>,
+    to_chain_index: Option<&str>,
 ) -> Result<Value> {
     let mut params: Vec<(&str, &str)> = Vec::new();
-    if let Some(c) = chain_index {
-        params.push(("chainIndex", c));
+    if let Some(f) = from_chain_index {
+        params.push(("fromChainIndex", f));
+    }
+    if let Some(t) = to_chain_index {
+        params.push(("toChainIndex", t));
     }
     client
         .get(&format!("{V6_PREFIX}/supported/bridges"), &params)
@@ -192,24 +214,107 @@ pub async fn fetch_status(
     if let Some(b) = bridge_id {
         params.push(("bridgeId", b));
     }
-    client.get(&format!("{V6_PREFIX}/status"), &params).await
+    let resp = client.get(&format!("{V6_PREFIX}/status"), &params).await?;
+    Ok(annotate_bridge_id_mismatch(resp, bridge_id))
+}
+
+/// Server-side `/status` has been observed to echo a different `bridgeId` than
+/// the one requested (internal-id vs openApiCode mapping inconsistency on the
+/// backend). When that happens, attach a `_warning` to each row so callers
+/// know not to trust the echoed `bridgeId` — they should use the bridge name
+/// from their own `quote` / `execute` record instead.
+pub(crate) fn annotate_bridge_id_mismatch(mut resp: Value, requested: Option<&str>) -> Value {
+    let Some(req) = requested else { return resp };
+    let Some(arr) = resp.as_array_mut() else { return resp };
+    for item in arr {
+        let echoed = item
+            .get("bridgeId")
+            .and_then(|v| v.as_str().map(String::from).or_else(|| v.as_i64().map(|n| n.to_string())));
+        if let Some(e) = echoed {
+            if e != req {
+                if let Some(obj) = item.as_object_mut() {
+                    obj.insert(
+                        "_warning".to_string(),
+                        json!(format!(
+                            "server-side bridgeId mismatch: requested {req}, response echoed {e}. Trust the bridgeName from your own quote/execute record."
+                        )),
+                    );
+                }
+            }
+        }
+    }
+    resp
+}
+
+/// Resolve an `orderId` (e.g. `swapOrderId` / `approveOrderId` returned by
+/// `cross-chain execute`) to the underlying source-chain `txHash` via the
+/// authenticated wallet `/order/detail` endpoint. Login is required.
+pub(crate) async fn resolve_order_id_to_tx_hash(
+    order_id: &str,
+    chain_index: &str,
+) -> Result<String> {
+    let access_token = super::agentic_wallet::auth::ensure_tokens_refreshed().await?;
+    let wallets = crate::wallet_store::load_wallets()?
+        .ok_or_else(|| anyhow::anyhow!(super::agentic_wallet::common::ERR_NOT_LOGGED_IN))?;
+    if wallets.selected_account_id.is_empty() {
+        bail!(super::agentic_wallet::common::ERR_NOT_LOGGED_IN);
+    }
+    let mut client = crate::wallet_api::WalletApiClient::new()?;
+    let query: Vec<(&str, &str)> = vec![
+        ("accountId", &wallets.selected_account_id),
+        ("chainIndex", chain_index),
+        ("orderId", order_id),
+    ];
+    let data = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/order/detail",
+            &access_token,
+            &query,
+        )
+        .await?;
+    let tx_hash = data
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|item| item.get("txHash"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "order-id {} not found on chain {} (no txHash in /order/detail)",
+                order_id,
+                chain_index
+            )
+        })?
+        .to_string();
+    Ok(tx_hash)
 }
 
 // ── Public command surface ─────────────────────────────────────────────────
 
 #[derive(Subcommand)]
 pub enum CrossChainCommand {
-    /// List available bridge protocols
+    /// List bridge protocols. Either flag is independently optional:
+    ///   - both omitted → full catalog
+    ///   - --from-chain only → bridges on that source chain
+    ///   - --to-chain only → bridges able to reach that destination
+    ///   - both → bridges that connect this specific chain pair
     Bridges {
-        /// Source chain (omit to return all bridges)
         #[arg(long)]
-        chain: Option<String>,
+        from_chain: Option<String>,
+        #[arg(long)]
+        to_chain: Option<String>,
     },
 
-    /// List bridgeable tokens on a chain
+    /// List bridgeable tokens. Either flag is independently optional:
+    ///   - both omitted → full catalog
+    ///   - --from-chain only → all bridgeable from-tokens on that chain
+    ///   - --to-chain only → from-tokens that can reach that destination
+    ///   - both → from-tokens that route from --from-chain to --to-chain
     Tokens {
         #[arg(long)]
-        chain: Option<String>,
+        from_chain: Option<String>,
+        #[arg(long)]
+        to_chain: Option<String>,
     },
 
     /// Get cross-chain quote (read-only). routerList may contain multiple bridges.
@@ -253,6 +358,12 @@ pub enum CrossChainCommand {
         /// Denied bridges (comma-separated bridge ids)
         #[arg(long)]
         deny_bridges: Option<String>,
+        /// Optional destination receive address. The v6 quote API does not consume
+        /// this field — the CLI accepts it for symmetry with `execute` and
+        /// validates its family matches `--to-chain` so heterogeneous-pair
+        /// mismatches (e.g. EVM addr → Solana) fail early rather than at execute.
+        #[arg(long)]
+        receive_address: Option<String>,
     },
 
     /// Build ERC-20 approve transaction for a bridge router (manual use)
@@ -360,19 +471,34 @@ pub enum CrossChainCommand {
         force: bool,
     },
 
-    /// Query cross-chain status by source chain transaction hash
+    /// Query cross-chain status. Provide either --tx-hash OR --order-id.
     Status {
-        /// Source chain transaction hash
-        #[arg(long)]
-        tx_hash: String,
+        /// Source chain transaction hash. Use this OR --order-id (mutually exclusive).
+        #[arg(
+            long,
+            required_unless_present = "order_id",
+            conflicts_with = "order_id"
+        )]
+        tx_hash: Option<String>,
+        /// Order id from a prior `cross-chain execute` (e.g. `swapOrderId`,
+        /// `approveOrderId`). The CLI resolves it to the underlying tx hash via
+        /// `wallet /order/detail` (login required). Use --tx-hash for anonymous
+        /// queries.
+        #[arg(
+            long,
+            required_unless_present = "tx_hash",
+            conflicts_with = "tx_hash"
+        )]
+        order_id: Option<String>,
         /// Bridge id used for the swap. Required — server returns 50014 when absent.
         /// Get it from `bridgeId` of the prior `execute` / `quote.routerList[]` /
         /// `bridges` response.
         #[arg(long)]
         bridge_id: String,
-        /// Source chain (optional, helps server lookup). Accepts chain name or chainIndex.
+        /// Source chain. Required — server returns 50014 (chainIndex) when absent.
+        /// Accepts chain name or chainIndex.
         #[arg(long)]
-        from_chain: Option<String>,
+        from_chain: String,
     },
 }
 
@@ -381,17 +507,43 @@ pub enum CrossChainCommand {
 pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
     let mut client = ctx.client_async().await?;
     match cmd {
-        CrossChainCommand::Bridges { chain } => {
-            let chain_idx = chain.map(|c| crate::chains::resolve_chain(&c).to_string());
+        CrossChainCommand::Bridges {
+            from_chain,
+            to_chain,
+        } => {
+            let from_idx = from_chain
+                .as_deref()
+                .map(|c| crate::chains::resolve_chain(c).to_string());
+            let to_idx = to_chain
+                .as_deref()
+                .map(|c| crate::chains::resolve_chain(c).to_string());
             output::success(
-                fetch_supported_bridges(&mut client, chain_idx.as_deref()).await?,
+                fetch_supported_bridges(
+                    &mut client,
+                    from_idx.as_deref(),
+                    to_idx.as_deref(),
+                )
+                .await?,
             );
         }
 
-        CrossChainCommand::Tokens { chain } => {
-            let chain_idx = chain.map(|c| crate::chains::resolve_chain(&c).to_string());
+        CrossChainCommand::Tokens {
+            from_chain,
+            to_chain,
+        } => {
+            let from_idx = from_chain
+                .as_deref()
+                .map(|c| crate::chains::resolve_chain(c).to_string());
+            let to_idx = to_chain
+                .as_deref()
+                .map(|c| crate::chains::resolve_chain(c).to_string());
             output::success(
-                fetch_supported_tokens(&mut client, chain_idx.as_deref()).await?,
+                fetch_supported_tokens(
+                    &mut client,
+                    from_idx.as_deref(),
+                    to_idx.as_deref(),
+                )
+                .await?,
             );
         }
 
@@ -409,11 +561,17 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             sort,
             allow_bridges,
             deny_bridges,
+            receive_address,
         } => {
             let from_idx = crate::chains::resolve_chain(&from_chain).to_string();
             let to_idx = crate::chains::resolve_chain(&to_chain).to_string();
             crate::chains::ensure_supported_chain(&from_idx, &from_chain)?;
             crate::chains::ensure_supported_chain(&to_idx, &to_chain)?;
+            // Validate (but do not forward) receive_address — v6 /quote does not
+            // accept it. Family mismatch fails up front instead of at execute.
+            if let Some(addr) = receive_address.as_deref() {
+                validate_receive_address(addr, &to_idx)?;
+            }
             let from_token = crate::commands::swap::resolve_token_address(&from_idx, &from);
             let to_token = crate::commands::swap::resolve_token_address(&to_idx, &to);
             let raw_amount = crate::commands::swap::resolve_amount_arg(
@@ -567,15 +725,21 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
 
         CrossChainCommand::Status {
             tx_hash,
+            order_id,
             bridge_id,
             from_chain,
         } => {
-            let chain_idx = from_chain.map(|c| crate::chains::resolve_chain(&c).to_string());
+            let chain_idx = crate::chains::resolve_chain(&from_chain).to_string();
+            let resolved_tx_hash = match (tx_hash, order_id) {
+                (Some(h), _) => h,
+                (None, Some(oid)) => resolve_order_id_to_tx_hash(&oid, &chain_idx).await?,
+                (None, None) => unreachable!("clap requires one of tx_hash / order_id"),
+            };
             output::success(
                 fetch_status(
                     &mut client,
-                    &tx_hash,
-                    chain_idx.as_deref(),
+                    &resolved_tx_hash,
+                    Some(&chain_idx),
                     Some(&bridge_id),
                 )
                 .await?,
@@ -956,6 +1120,54 @@ fn extract_tx_hash_and_order_id(data: &Value) -> Result<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── annotate_bridge_id_mismatch ─────────────────────────────────────────
+
+    #[test]
+    fn bridge_id_mismatch_warning_added_when_echoed_differs() {
+        let resp = json!([{
+            "bridgeId": 52,
+            "status": "PENDING",
+            "txHash": "0xabc"
+        }]);
+        let out = annotate_bridge_id_mismatch(resp, Some("636"));
+        let arr = out.as_array().unwrap();
+        let warn = arr[0].get("_warning").and_then(|v| v.as_str()).unwrap();
+        assert!(warn.contains("requested 636"));
+        assert!(warn.contains("echoed 52"));
+    }
+
+    #[test]
+    fn bridge_id_mismatch_no_warning_when_match() {
+        let resp = json!([{
+            "bridgeId": 636,
+            "status": "PENDING",
+            "txHash": "0xabc"
+        }]);
+        let out = annotate_bridge_id_mismatch(resp, Some("636"));
+        assert!(out.as_array().unwrap()[0].get("_warning").is_none());
+    }
+
+    #[test]
+    fn bridge_id_mismatch_match_string_form() {
+        let resp = json!([{ "bridgeId": "636", "status": "PENDING" }]);
+        let out = annotate_bridge_id_mismatch(resp, Some("636"));
+        assert!(out.as_array().unwrap()[0].get("_warning").is_none());
+    }
+
+    #[test]
+    fn bridge_id_mismatch_no_op_when_request_absent() {
+        let resp = json!([{ "bridgeId": 52, "status": "PENDING" }]);
+        let out = annotate_bridge_id_mismatch(resp.clone(), None);
+        assert_eq!(out, resp);
+    }
+
+    #[test]
+    fn bridge_id_mismatch_no_op_when_response_missing_bridge_id() {
+        let resp = json!([{ "status": "NOT_FOUND" }]);
+        let out = annotate_bridge_id_mismatch(resp.clone(), Some("636"));
+        assert_eq!(out, resp);
+    }
 
     #[test]
     fn evm_addr_to_solana_rejected() {

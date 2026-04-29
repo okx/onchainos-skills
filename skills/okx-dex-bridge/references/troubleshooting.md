@@ -75,10 +75,26 @@ Diagnostic Summary:
 - **> 4 hours**: escalate to OKX support with `fromTxHash` + `bridgeName`.
 
 ### `status` stuck at PENDING
-- Bridge has indexed source tx but destination delivery is delayed
-- Check bridge's own scan page for delivery progress
-- Wait up to original `estimateTime × 10` before escalating
-- The status API does not return refund / failure sub-states. If long PENDING with no progress, support escalation is the path.
+
+The `cross-chain status` endpoint is not a direct read of the destination chain. The backend has an internal listener that subscribes to each bridge's callback / fill event (ACROSS fill, Stargate `messageReceived`, Gas Zip deliver, …) and only flips its stored state from `PENDING` to `SUCCESS` after that event is parsed. The chain itself is the source of truth; `status` is a downstream projection of it.
+
+When `status` reports `PENDING`, decide which of the two cases applies before waiting further:
+
+**Case 1 — bridging genuinely in flight (normal)**
+- Source TX confirmed; destination chain has **no** new balance / fill event yet.
+- This is the expected window between source-tx-confirmed and destination-tx-delivered.
+- Wait up to original `estimateTime × 10` before escalating.
+- Check the bridge's own scan page (LayerZero scan, ACROSS scan, Relay scan, Gas Zip scan) for delivery progress.
+
+**Case 2 — destination already filled on-chain, only the listener lagging (abnormal)**
+- Source TX confirmed AND destination chain already shows the fill — verifiable via `wallet balance --chain <toChain>` (balance increased by ~`minimumReceived`) or the destination explorer (incoming transfer from the bridge router).
+- This means the user's funds are already there. The `PENDING` is a backend-listener gap, not a missing fill.
+- **Do NOT make the user keep waiting.** Tell them the funds are already on the destination chain (cite the balance / explorer evidence), and that `status` will eventually reconcile but is not gating fund availability.
+- This pattern has been observed primarily on ACROSS V3 (the listener for that adapter is slower / occasionally not wired up); Gas Zip and Stargate generally reconcile within ETA.
+
+Other notes:
+- The status API does not return refund / failure sub-states. If long PENDING with no progress AND no destination fill is visible on-chain, support escalation is the path.
+- The `bridgeId` field in the `status` response has been observed to disagree with the `--bridge-id` you passed (server-side mapping inconsistency). Trust the bridge name from your own `quote` / `execute` record, not the one echoed by `status`.
 
 ### Cross-chain failure with no `status` resolution
 - Status only emits SUCCESS / PENDING / NOT_FOUND. There's no explicit failure state.
