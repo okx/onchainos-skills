@@ -479,41 +479,50 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
 
         // ─── 卖家主动联系买家（public 任务，卖家找到任务后发起会话）─────
+        // 触发方式：user session 收到自然语言消息（如"有N个卖家待沟通"），
+        // 不再依赖 provider_conversation 系统通知。
         Event::Other(ref s) if s == "provider_conversation" => format!(
-            "【系统通知】provider_conversation（有卖家主动联系你）\n\
+            "【触发】收到「有卖家待沟通」类消息（user session 侧）\n\
              【角色】买家（Client）\n\n\
-             【你的下一步动作（严格顺序）】\n\n\
+             【你的下一步动作（严格顺序，循环遍历 pending list）】\n\n\
              **Step 1 — 获取待沟通卖家列表：**\n\
              调用 xmtp_get_pending_list 工具获取待沟通卖家列表。\n\
              ⚠️ 调用前输出：`[buyer-xmtp] xmtp_get_pending_list`\n\
              ⚠️ 调用后输出：`[buyer-xmtp] xmtp_get_pending_list result: <返回值>`\n\n\
-             如果返回空列表 → 无需处理，结束。\n\n\
-             **Step 2 — 调用 xmtp_prompt_user 请求用户确认是否与卖家协商：**\n\
-             \x20\x20llmContent: 用户接受 → 执行 xmtp_start_conversation 建群并开始协商（A 分支）；用户拒绝 → 尝试 pending list 中下一个卖家（B 分支）。\n\
-             \x20\x20userContent: 有新的卖家请求做你的任务：\n\
-             \x20\x20- jobId: {job_id}\n\
-             \x20\x20- 任务标题：<从 pending list 中提取>\n\
-             \x20\x20- 卖家 AgentID：<pending list 中第一个卖家的 agentId>\n\
-             \x20\x20- 卖家名称：<pending list 中第一个卖家的 name>\n\
-             \x20\x20是否接受并开始协商？\n\n\
+             如果返回空列表 → 通知用户「当前没有待沟通的卖家」，结束。\n\n\
+             **Step 2 — 调用 xmtp_prompt_user 请求用户确认是否与第一个卖家协商：**\n\
+             从 pending list 第一个卖家提取信息，展示给用户：\n\
+             \x20\x20llmContent: 用户接受 → 执行 xmtp_start_conversation 建群并开始协商（A 分支）；用户拒绝 → 调用 xmtp_deny_pending_conversation 拒绝后尝试下一个卖家（B 分支）。\n\
+             \x20\x20userContent:\n\
+             \x20\x20有卖家申请做你的任务，是否接受协商？\n\
+             \x20\x20- 任务 JobId：{job_id}\n\
+             \x20\x20- 任务标题：<pending list 中的 job title>\n\
+             \x20\x20- 卖家 AgentID：<第一个卖家的 agentId>\n\
+             \x20\x20- 卖家名称：<第一个卖家的 name>\n\
+             \x20\x20- 信用分：<第一个卖家的 creditScore>\n\
+             \x20\x20- 完成任务数：<第一个卖家的 completedTaskCount>（如有）\n\
+             \x20\x20请回复「接受」开始协商，或「拒绝」跳过此卖家。\n\n\
              **Step 3 — 等待用户回复，按用户决策分支：**\n\n\
-             ━━━━━━━━━ 分支 A：用户接受 → 与第一个卖家协商 ━━━━━━━━━\n\n\
+             ━━━━━━━━━ 分支 A：用户接受 → 与卖家协商 ━━━━━━━━━\n\n\
              A-Step 1：调 xmtp_start_conversation 工具建群 + 创建 sub session：\n\
-             \x20\x20参数：myAgentId={agent_id}，toAgentId=<pending list 第一个卖家的 agentId>，jobId={job_id}\n\
+             \x20\x20参数：myAgentId={agent_id}，toAgentId=<当前卖家的 agentId>，jobId={job_id}\n\
              \x20\x20⚠️ 调用前输出：`[buyer-xmtp] xmtp_start_conversation: myAgentId={agent_id}, toAgentId=<agentId>, jobId={job_id}`\n\
              \x20\x20⚠️ 调用后输出：`[buyer-xmtp] xmtp_start_conversation result: sessionKey=<返回值>, xmtpGroupId=<返回值>`\n\n\
              A-Step 2：调用 xmtp_dispatch_session 向卖家发起协商（参照 buyer.md §2.1 协商剧本三步确认）：\n\
-             \x20\x20⚠️ 你当前在主 session，不能直接 xmtp_send 到 sub session（会被 visibility=tree 拦截）。\n\
+             \x20\x20⚠️ 你当前在 user session，不能直接 xmtp_send 到 sub session。\n\
              \x20\x20参数：sessionKey=<A-Step 1 返回的 sessionKey>，content=<下方消息内容>\n\
-             \x20\x20⚠️ 调用前输出：`[buyer-xmtp] xmtp_dispatch_session: sessionKey=<sessionKey>, content=<消息内容前50字>`\n\
              \x20\x20content: 你好，我有一个任务（jobId: {job_id}）想请你来完成，请问你感兴趣吗？\n\n\
              A-Step 3：协商成功 → 卖家 apply 上链 → 等待 provider_applied 事件（进入场景 6）\n\n\
-             ━━━━━━━━━ 分支 B：用户不接受 / 协商失败 → 尝试下一个卖家 ━━━━━━━━━\n\n\
-             B-Step 1：重新调用 xmtp_get_pending_list 获取最新待沟通列表。\n\
-             B-Step 2：如果列表不为空 → 通知 user session 下一个卖家信息，等待用户确认后重复分支 A。\n\
-             B-Step 3：如果列表为空 → 调用 xmtp_dispatch_user 通知用户：\n\
+             A-Step 4：协商失败（卖家拒绝 / 超时 / 条件不一致）→ 跳到 B 分支。\n\n\
+             ━━━━━━━━━ 分支 B：用户拒绝 / 协商失败 → 拒绝当前卖家，尝试下一个 ━━━━━━━━━\n\n\
+             B-Step 1：调用 xmtp_deny_pending_conversation 拒绝当前卖家：\n\
+             \x20\x20参数：agentId=<当前卖家的 agentId>，jobId={job_id}\n\
+             \x20\x20⚠️ 调用前输出：`[buyer-xmtp] xmtp_deny_pending_conversation: agentId=<agentId>, jobId={job_id}`\n\n\
+             B-Step 2：重新调用 xmtp_get_pending_list 获取最新待沟通列表。\n\n\
+             B-Step 3：如果列表不为空 → 回到 Step 2，用列表第一个卖家提示用户确认。\n\n\
+             B-Step 4：如果列表为空 → 调用 xmtp_dispatch_user 通知用户：\n\
              \x20\x20content: 任务 {job_id} 当前没有更多待沟通卖家，建议等待新卖家联系或调整任务描述。\n\n\
-             【循环结束条件】xmtp_get_pending_list 返回空列表。\n"
+             【循环结束条件】xmtp_get_pending_list 返回空列表 或 协商成功进入场景 6。\n"
         ),
 
         // ─── 可见性切换结果（setVisibility tx 结果）───────────────────

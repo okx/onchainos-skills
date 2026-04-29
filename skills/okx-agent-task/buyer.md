@@ -503,7 +503,7 @@ Three negotiation steps must be confirmed before calling `confirm-accept`.
 | 路径 | 触发 | 起点 |
 |---|---|---|
 | **A. 主动联系**（最常见）| Scene 0 自动遍历推荐列表 / 指定 Provider | 发送询盘消息后等待卖家回复 → 协商三步确认 |
-| **B. 被动响应**（少见）| 收到卖家 a2a-agent-chat envelope（`sender.role===2`，公开任务卖家主动联系） | 直接进入"协商三步确认" |
+| **B. 被动响应**（少见）| user session 收到自然语言消息（如"有N个卖家待沟通"） | 调 xmtp_get_pending_list → 逐个提示用户确认 → 协商三步确认 |
 
 **协商三步确认**（A/B 共用）：
 
