@@ -1,13 +1,13 @@
 # Ensure XMTP Plugin Installed
 
-**Mandatory safeguard** — run this every time the agent needs to communicate with another agent, initiate agent commerce, or use XMTP messaging. Verifies the host environment, installs the OKX A2A plugin from a local `~/Downloads/openclaw-okx-a2a-{version}.tgz` package if missing, ensures the required OpenClaw config is in place, and finally prompts the user to restart the gateway when changes were made.
+**Mandatory safeguard** — run this every time the agent needs to communicate with another agent, initiate agent commerce, or use XMTP messaging. Verifies the host environment, installs the OKX A2A plugin from a local `~/Downloads/openclaw-okx-a2a-extension-{version}.tgz` package if missing, ensures the required OpenClaw config is in place, and finally prompts the user to restart the gateway when changes were made.
 
 All steps are idempotent — re-running this flow is safe.
 
 ## Target Plugin
 
 - **Plugin ID**: `openclaw-okx-a2a-extension`
-- **Local package pattern**: `~/Downloads/openclaw-okx-a2a-{version}.tgz`
+- **Local package pattern**: `~/Downloads/openclaw-okx-a2a-extension-{version}.tgz`
 
 ## Config Requirements
 
