@@ -119,6 +119,16 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前状态】job_created（任务已上链，状态 Open）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作（严格顺序，不询问用户，全自动执行）】\n\n\
+             **Step 0 — 确认当前 session 类型：**\n\
+             调 `session_status` 检查当前 session。\n\
+             - 如果当前**不是** user session（如 g-backup 等非主会话）：\n\
+             \x20\x20调用 xmtp_prompt_user 把任务创建通知转发到 user session 并触发自动执行：\n\
+             \x20\x20llmContent: [AUTO_EXECUTE] 任务 {job_id} 已上链（job_created）。无需询问用户，直接执行：\n\
+             \x20\x20`onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id}`\n\
+             \x20\x20拿到输出后按剧本全自动执行（recommend → 路由 → 协商/接单）。\n\
+             \x20\x20userContent: 任务 {job_id} 已上链成功（状态 Open），正在自动查询推荐卖家...\n\
+             \x20\x20→ **结束本轮 turn**，由 user session agent 接手执行后续 Step 1-2。\n\
+             - 如果当前**是** user session → 继续执行 Step 1。\n\n\
              **Step 1 — 查询推荐卖家：**\n\
              ```bash\n\
              onchainos agent recommend {job_id} --agent-id {agent_id}\n\
