@@ -372,6 +372,8 @@ Rules:
 
 After `create` / `update` / `activate` / `deactivate` / `feedback-submit`, render the detail card (§2) and exactly **one** next-step suggestion line below it. One. Not a menu. Not two options. The suggestion line must match the user's language.
 
+> **Same-turn handoff exceptions override the "one line + stop" pattern.** For the writes enumerated in `SKILL.md §Step 4: Report Result and Stop` whitelist (`agent create --role evaluator`, `agent create --role requester`, `agent create --role provider`, `agent activate`, `agent deactivate`), the agent renders the detail card + visible line as usual, and then **continues in the same response** by loading the downstream skill file (`okx-agent-task/evaluator.md` or `okx-agent-chat/ensure-installed.md`). The visible line is the same single line specified here — it must NOT be a question, since the handoff does not wait for a user reply. See `SKILL.md §Step 4` for the full whitelist and skip conditions.
+
 Good (Chinese user):
 
 > Provider 身份已创建并默认上架（已上架）。可以 `agent search` 自检曝光，或等匹配来的任务。

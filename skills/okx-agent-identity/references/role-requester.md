@@ -91,19 +91,33 @@ onchainos agent create \
 
 ## Post-success suggestion
 
-Single-line next step, in the user's language. Follow the `#<id>` placeholder rule in `display-formats.md` (top) — if the id is known from pre-check, include it; otherwise omit.
+Render **one visible line** in the user's language (one of the four variants below), then follow the **agent directive** block (internal — not rendered to the user). Follow the `#<id>` placeholder rule in `display-formats.md` (top) — if the id is known from pre-check, include it; otherwise omit.
+
+### Visible line (four variants)
+
+All four variants are **declarative**, never a question — the same-turn handoff below continues without waiting for a user reply, so a question mark would create an unanswerable prompt.
 
 With known id (from pre-check `agent get` lookup), Chinese:
-> 注册完成，买家身份 #<id> 已生效。要不要去 `okx-agent-task` 发布任务？
+> 买家身份 #<id> 已注册。下一步先把通讯能力准备好，之后就能去 `okx-agent-task` 发任务。
 
 Without id (current CLI only returns txHash), Chinese:
-> 买家身份已注册。要不要去 `okx-agent-task` 发布任务？
+> 买家身份已注册。下一步先把通讯能力准备好，之后就能去 `okx-agent-task` 发任务。
 
 English equivalents:
-> Requester identity #<id> is live. Want to head to `okx-agent-task` to publish a task?
-> Requester identity registered. Want to head to `okx-agent-task` to publish a task?
+> Requester identity #<id> is live. Provisioning the messaging layer next; after that you'll head to `okx-agent-task` to publish a task.
+> Requester identity registered. Provisioning the messaging layer next; after that you'll head to `okx-agent-task` to publish a task.
 
-**Do NOT** chase with `agent get` / status poll. See `_shared/no-polling.md`.
+Do NOT mention the `okx-agent-chat/ensure-installed.md` path to the user in the visible line — the same-turn handoff below loads that skill's own prompt, which speaks for itself.
+
+### Agent directive (internal — do NOT render to the user)
+
+After emitting the visible line above, **do not stop the turn**. In the same response, load `/skills/okx-agent-chat/ensure-installed.md` and continue with its `Execution Flow` inside the same response — this provisions the XMTP messaging layer the new requester needs to negotiate and receive task DMs.
+
+**Skip the handoff** (render visible line only, then stop) if the user has already declined chat / messaging setup earlier in this conversation (e.g., "不用聊天 / no chat / skip messaging" or similar). Also skip on the **passive onboarding** path — see §Passive Onboarding `After success`.
+
+This is one of the documented exceptions to `SKILL.md §Step 4`'s "Stop. Wait for the user." rule; see that section's whitelist for the carve-out.
+
+**Do NOT** chase with `agent get` / status poll (that is about querying chain state — different from the same-turn handoff above, which just loads the next skill's prompt). See `_shared/no-polling.md`.
 
 ## Passive Onboarding — entry from `okx-agent-task`
 
@@ -138,6 +152,8 @@ Return control to the caller. The response to the user contains:
    - English: "Requester identity created. Resuming the task-publish flow."
 
 Do NOT ask "要不要发任务" / "want to publish a task?" — the task skill already has the pending intent; it will resume.
+
+Do NOT load `/skills/okx-agent-chat/ensure-installed.md` here — passive mode is contracted to hand strictly back to `okx-agent-task` with the single line above (see `passive-onboarding.md` "No other chatter"). The task skill triggers chat setup itself when its flow needs it.
 
 ### When user already has a requester
 
