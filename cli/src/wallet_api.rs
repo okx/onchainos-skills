@@ -177,9 +177,24 @@ pub struct AkInitResponse {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RefreshAccountItem {
+    pub account_id: String,
+    pub account_name: String,
+    #[serde(default)]
+    pub is_default: bool,
+    #[serde(default)]
+    pub addresses: Vec<VerifyAddressInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RefreshResponse {
     pub refresh_token: String,
     pub access_token: String,
+    #[serde(default)]
+    pub chain_updated: bool,
+    #[serde(default)]
+    pub all_account_address_list: Vec<RefreshAccountItem>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -971,6 +986,30 @@ impl WalletApiClient {
         .await
     }
 
+    /// POST /priapi/v5/wallet/agentic/token/get-token-info
+    ///
+    /// Fetch token metadata (decimal/name/symbol/...) via the wallet-side endpoint.
+    /// Use this instead of the DEX `token/basic-info` for chains not covered by DEX
+    /// (e.g. Tempo). `source = 0` (web3).
+    pub async fn get_token_info(
+        &mut self,
+        access_token: &str,
+        chain_index: u64,
+        token_address: &str,
+    ) -> Result<Value> {
+        let body = json!({
+            "chainIndex": chain_index,
+            "tokenAddress": token_address,
+            "source": 0,
+        });
+        self.post_authed(
+            "/priapi/v5/wallet/agentic/token/get-token-info",
+            access_token,
+            &body,
+        )
+        .await
+    }
+
     /// POST /priapi/v5/wallet/agentic/pre-transaction/unsignedInfo
     #[allow(clippy::too_many_arguments)]
     pub async fn pre_transaction_unsigned_info(
@@ -1205,6 +1244,54 @@ mod tests {
         let resp: RefreshResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.refresh_token, "new_rt");
         assert_eq!(resp.access_token, "new_at");
+        assert!(!resp.chain_updated);
+        assert!(resp.all_account_address_list.is_empty());
+    }
+
+    #[test]
+    fn parse_refresh_response_with_chain_updated() {
+        let json = r#"{
+            "refreshToken": "rt2",
+            "accessToken": "at2",
+            "chainUpdated": true,
+            "allAccountAddressList": [
+                {
+                    "accountId": "acc-1",
+                    "accountName": "Wallet 1",
+                    "isDefault": true,
+                    "addresses": [
+                        {"chainIndex": 4217, "address": "0xabc", "chainName": "tempo", "addressType": "eoa", "chainPath": "m/44/60/0/0"},
+                        {"chainIndex": "1",  "address": "0xdef", "chainName": "eth",   "addressType": "eoa", "chainPath": "m/44/60/0/0"}
+                    ]
+                },
+                {
+                    "accountId": "acc-2",
+                    "accountName": "Wallet 2",
+                    "isDefault": false,
+                    "addresses": []
+                }
+            ]
+        }"#;
+        let resp: RefreshResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.refresh_token, "rt2");
+        assert_eq!(resp.access_token, "at2");
+        assert!(resp.chain_updated);
+        assert_eq!(resp.all_account_address_list.len(), 2);
+
+        let acc1 = &resp.all_account_address_list[0];
+        assert_eq!(acc1.account_id, "acc-1");
+        assert_eq!(acc1.account_name, "Wallet 1");
+        assert!(acc1.is_default);
+        assert_eq!(acc1.addresses.len(), 2);
+        // int chainIndex → String via string_or_number
+        assert_eq!(acc1.addresses[0].chain_index, "4217");
+        assert_eq!(acc1.addresses[0].chain_name, "tempo");
+        // string chainIndex passes through
+        assert_eq!(acc1.addresses[1].chain_index, "1");
+
+        let acc2 = &resp.all_account_address_list[1];
+        assert!(!acc2.is_default);
+        assert!(acc2.addresses.is_empty());
     }
 
     #[test]

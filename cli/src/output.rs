@@ -98,6 +98,47 @@ impl std::fmt::Display for CliConfirming {
 
 impl std::error::Error for CliConfirming {}
 
+// ── SetupRequired (exit code 3) ───────────────────────────────────────
+//
+// Used when a third-party plugin invokes `wallet send` / `wallet contract-call`
+// with `--force` on a chain where Gas Station first-time setup is required.
+// `--force` semantics says "skip all confirmations" — but first-time GS setup
+// is a contractual user-decision gate that cannot be silently auto-confirmed.
+// Instead of returning a Confirming (exit 2 — broken for plugins that bail on
+// non-zero exit), we return a structured error with `errorCode` so the agent
+// can detect the GS setup gap, run `wallet gas-station setup`, then re-invoke
+// the plugin command (which will succeed because GS is now active).
+
+/// Print a setup-required response:
+/// `{ "ok": false, "errorCode": "...", "message": "...", "data": { ... } }`
+pub fn setup_required(error_code: &str, message: &str, data: &serde_json::Value) {
+    let v = serde_json::json!({
+        "ok": false,
+        "errorCode": error_code,
+        "message": message,
+        "data": data,
+    });
+    println!("{}", serde_json::to_string_pretty(&v).unwrap());
+}
+
+/// Structured error type for CLI operations that require Gas Station setup
+/// to be completed before re-attempting. main.rs intercepts via downcast,
+/// prints via `output::setup_required()`, and exits with code 3.
+#[derive(Debug)]
+pub struct CliSetupRequired {
+    pub error_code: String,
+    pub message: String,
+    pub data: serde_json::Value,
+}
+
+impl std::fmt::Display for CliSetupRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "setup-required: {}", self.message)
+    }
+}
+
+impl std::error::Error for CliSetupRequired {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,5 +164,32 @@ mod tests {
         let c = downcasted.unwrap();
         assert_eq!(c.message, "msg");
         assert_eq!(c.next, "next");
+    }
+
+    #[test]
+    fn cli_setup_required_display() {
+        let s = CliSetupRequired {
+            error_code: "GAS_STATION_SETUP_REQUIRED".to_string(),
+            message: "first-time setup needed".to_string(),
+            data: serde_json::json!({}),
+        };
+        assert_eq!(format!("{s}"), "setup-required: first-time setup needed");
+    }
+
+    #[test]
+    fn cli_setup_required_downcast_from_anyhow() {
+        let err: anyhow::Error = CliSetupRequired {
+            error_code: "GAS_STATION_SETUP_REQUIRED".to_string(),
+            message: "msg".to_string(),
+            data: serde_json::json!({"chainId": "42161", "scene": "A"}),
+        }
+        .into();
+        let downcasted = err.downcast_ref::<CliSetupRequired>();
+        assert!(downcasted.is_some());
+        let s = downcasted.unwrap();
+        assert_eq!(s.error_code, "GAS_STATION_SETUP_REQUIRED");
+        assert_eq!(s.message, "msg");
+        assert_eq!(s.data["chainId"], "42161");
+        assert_eq!(s.data["scene"], "A");
     }
 }

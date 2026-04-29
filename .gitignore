@@ -46,6 +46,7 @@ yarn-error.log*
 # Claude Code
 **/settings.local.json
 .mcp.json
+CLAUDE.local.md
 
 # AI Assistant directories (auto-generated)
 .cursor
@@ -57,6 +58,7 @@ yarn-error.log*
 # Superpowers generated docs (local only)
 docs/superpowers/
 
+reports
 
 .zigbuild-cache/
 

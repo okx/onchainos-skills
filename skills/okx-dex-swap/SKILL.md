@@ -59,7 +59,7 @@ If you have already started running commands and only then realise the user name
 | 2 | `onchainos swap liquidity --chain <chain>` | Get available liquidity sources on a chain |
 | 3 | `onchainos swap approve --token ... --amount ... --chain ...` | Get ERC-20 approval transaction data (advanced/manual use) |
 | 4 | `onchainos swap quote --from ... --to ... --readable-amount ... --chain ...` | Get swap quote (read-only price estimate). **No `--slippage` param**. |
-| 5 | `onchainos swap execute --from ... --to ... --readable-amount ... --chain ... --wallet ... [--slippage <pct>] [--gas-level <level>] [--mev-protection]` | **One-shot swap**: quote → approve (if needed) → swap → sign & broadcast → txHash. |
+| 5 | `onchainos swap execute --from ... --to ... --readable-amount ... --chain ... --wallet ... [--slippage <pct>] [--gas-level <level>] [--mev-protection] [--force]` | **One-shot swap**: quote → approve (if needed) → swap → sign & broadcast → txHash. `--force` bypasses backend risk warning 81362 only after explicit user confirmation. |
 | 6 | `onchainos swap swap --from ... --to ... --readable-amount ... --chain ... --wallet ... [--slippage <pct>]` | **Calldata only**: returns unsigned tx data. Does NOT sign or broadcast. |
 
 
@@ -152,7 +152,7 @@ Display: expected output, gas, price impact, routing path. If quote returns `tax
 ### Step 6 — Execute
 
 ```bash
-onchainos swap execute --from <token address from step1> --to <token address from step1> --readable-amount <amount> --chain <chain> --wallet <addr> [--slippage <pct>] [--gas-level <level>] [--mev-protection]
+onchainos swap execute --from <token address from step1> --to <token address from step1> --readable-amount <amount> --chain <chain> --wallet <addr> [--slippage <pct>] [--gas-level <level>] [--mev-protection] [--force]
 ```
 
 CLI handles approve (if needed) + sign + broadcast internally.
@@ -174,7 +174,8 @@ If `swap execute` returns an error, it may be caused by a preceding approval tra
 
 2. **Inform the user**: e.g. "Swap failed, possibly due to a pending approval — waiting for on-chain confirmation before retrying."
 3. **Non-recoverable errors (82000, 51006)**: Token is dead, rugged, or has no liquidity — retrying may not help. Do **not** retry after 5 consecutive errors for the same (wallet, fromToken, toToken). Run `token advanced-info`; warn if `devRugPullTokenCount > 0` or `tokenTags` contains `lowLiquidity`.
-4. **All other errors**: Retry once. If retry also fails, surface the error directly.
+4. **Risk warning (81362)**: backend risk system flagged the broadcast as potentially dangerous (possible honeypot or poisoned contract). Do **not** auto-retry. Warn the user explicitly that forcing execution may cause fund loss; ask for confirmation. If the user explicitly confirms, re-run the **same** `swap execute` command with `--force` appended (this passes `skipWarning: true` to broadcast). Do NOT add `--force` without explicit user confirmation.
+5. **All other errors**: Retry once. If retry also fails, surface the error directly.
 
 #### Silent / Automated Mode
 
@@ -218,6 +219,21 @@ Pre-swap `token-scan` returns a `riskLevel` field representing the overall token
 | Token type not supported | CANNOT | CANNOT | Inform user, suggest alternative |
 
 **Legend**: BLOCK = halt, refuse execution · PAUSE = halt, require explicit yes/no · WARN = display warning, continue · CANNOT = operation impossible · PROCEED = allow with info
+
+### Fund-action Flag Gates
+
+Every flag that broadcasts a transaction or expands the agent's spending authority requires an explicit user-confirmation gate. Do NOT pass any of these flags without a clear user yes/no.
+
+| Flag | Effect | Required user gate |
+|---|---|---|
+| `--wallet <addr>` | All `swap execute` runs broadcast from this wallet. | The wallet must come from `wallet status` (logged-in account) or be explicitly typed by the user. Multi-account → ask user to choose. |
+| `--slippage <pct>` | Looser slippage = larger potential loss on price moves. | Default to autoSlippage; only override when user explicitly says "use X% slippage". |
+| `--mev-protection` / `--tips <sol>` | Enables MEV protection (cost may be higher). | Auto-set by chain threshold rule (see MEV Protection); user override allowed. |
+| `--gas-token-address` / `--relayer-id` / `--enable-gas-station` | Pays gas with a non-native token via Gas Station. | Use only after the user has been informed Gas Station is active or has explicitly opted in. See `okx-agentic-wallet` Gas Station flow for full lifecycle. |
+| `--force` | Bypasses backend risk warning 81362 (potential honeypot / poisoned contract). | After receiving 81362, **must explicitly tell user** the risk is "potential fund loss"; only re-run with `--force` if the user explicitly confirms (yes / continue). |
+| Silent / Automated mode | Skips per-step user yes/no. | Requires **prior explicit opt-in**. BLOCK-level risks still halt and notify. PAUSE-level (HIGH) buy risks still wait for yes/no even in silent mode. |
+
+**Rule**: when in doubt, ask. A delayed confirm is far better than a wrong broadcast.
 
 ### MEV Protection
 
