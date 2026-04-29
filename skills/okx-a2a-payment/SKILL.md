@@ -52,7 +52,7 @@ onchainos wallet status
 **Inputs**:
 
 - **Required**: `--amount` (decimal token amount, e.g. `"0.01"`), `--symbol` (e.g. `"USDT"`), `--recipient` (0x... EVM address — seller wallet)
-- **Optional**: `--description`, `--realm`, `--external-id`, `--expires-in` (seconds, default 1800)
+- **Optional**: `--description`, `--realm`, `--expires-in` (seconds, default 1800)
 
 **Steps**:
 
@@ -61,7 +61,7 @@ onchainos wallet status
    ```bash
    onchainos a2a-pay create \
      --amount <amount> --symbol <symbol> --recipient <recipient> \
-     [--description <text> --realm <domain> --external-id <id> --expires-in <seconds>]
+     [--description <text> --realm <domain> --expires-in <seconds>]
    ```
 3. Parse the response — only `payment_id` and `deliveries.url` (optional) are present. The CLI no longer returns `amount` / `currency`; the skill echoes the seller's input args back for display.
 4. Display to the user:
@@ -190,6 +190,33 @@ Applicable upstream callers: any agent-to-agent task / chat / agent flow that ho
    - cancelled → contact seller out-of-band
 ```
 
+## Upstream Routing — Avoiding `create` Loops
+
+This skill is stateless per call and has no view of the conversation. If the upstream seller agent routes by surface keywords alone (e.g. matches `付款` / `pay` / `payment` and always calls `create`), it will loop:
+
+```
+buyer: "I want to pay"        → seller create → returns paymentId_A
+buyer pays via this skill, then sends:
+buyer: "payment successful"   → seller matches "payment" → create AGAIN → paymentId_B (wrong)
+```
+
+The skill cannot break this loop — the fix lives in the upstream caller's intent router. When you wire this skill into a seller-side agent, enforce the following before calling `create`:
+
+1. **Detect existing paymentId in the incoming message.** If the buyer's message contains an `a2a_...` id (or a `deliveries.url` you previously issued), route to `okx-a2a-payment status` for that id. Do NOT call `create`.
+2. **Disambiguate intent beyond keywords.** Map upstream intents to commands:
+
+   | Buyer says | Intent | Route to |
+   |------------|--------|----------|
+   | "I want to pay" / "请付款" / "怎么付" / "give me a link" | request-invoice | `create` |
+   | "paid" / "payment successful" / "已付" / "已转账" / contains a paymentId or tx hash | payment-receipt | `status` (or no-op if already terminal) |
+   | "cancel" / "refund" | cancel/refund | out of scope for this skill |
+
+   Plain keyword matching on `付款` / `pay` / `payment` is not enough — both request-invoice and payment-receipt utterances contain those tokens.
+3. **Track per-conversation order state upstream.** Once `create` issues a paymentId for a given (buyer, order) context, the upstream agent must remember that paymentId in its own conversation / order state and mark the order as "awaiting payment". Subsequent buyer messages in that context default to `status` against the remembered paymentId until either the payment reaches a terminal state or the user explicitly asks for a new order.
+4. **Idempotency on `create`.** Before issuing a new `create`, the upstream agent must check its own state: if a non-terminal paymentId already exists for the same buyer / order context, reuse it instead of creating a new one.
+
+This guidance is advisory for upstream agent authors — this skill itself will still execute whichever command you call. Routing correctness is the upstream caller's job.
+
 ## Amount Display Rules
 
 When converting `amount` (or `fee.amount`) from minimal units to a decimal display, use the hardcoded decimals table:
@@ -231,7 +258,7 @@ For any symbol not in the table: render `<minimal> <symbol>` and append the warn
 ```bash
 onchainos a2a-pay create \
   --amount <decimal> --symbol <symbol> --recipient <address> \
-  [--description <text>] [--realm <domain>] [--external-id <id>] [--expires-in <seconds>]
+  [--description <text>] [--realm <domain>] [--expires-in <seconds>]
 ```
 
 | Param | Required | Default | Description |
@@ -241,7 +268,6 @@ onchainos a2a-pay create \
 | `--recipient`   | Yes | - | Seller wallet address (= EIP-3009 `to`) |
 | `--description` | No  | - | Human-readable description shown to the buyer |
 | `--realm`       | No  | - | Seller / provider domain (e.g. `provider.example.com`) |
-| `--external-id` | No  | - | External business id (e.g. task id) |
 | `--expires-in`  | No  | 1800 | Payment-link expiration window in seconds |
 
 **Return fields**: `payment_id`, `deliveries` (object containing `url` when issued by the server).

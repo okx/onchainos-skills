@@ -40,9 +40,6 @@ pub struct CreateArgs {
     /// Realm — Seller / provider domain (e.g. "provider.example.com"). Optional.
     #[arg(long)]
     pub realm: Option<String>,
-    /// Optional external business id (e.g. task id).
-    #[arg(long = "external-id")]
-    pub external_id: Option<String>,
     /// Payment-link expiration window in seconds. Default 1800 (30 min).
     #[arg(long = "expires-in")]
     pub expires_in: Option<u64>,
@@ -119,7 +116,7 @@ impl From<CreateArgs> for ChargeParams {
             symbol: a.symbol,
             recipient: a.recipient,
             description: a.description,
-            external_id: a.external_id,
+            external_id: None,
             expires_in: a.expires_in,
             realm: a.realm,
         }
