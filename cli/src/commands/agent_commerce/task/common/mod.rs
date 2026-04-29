@@ -111,9 +111,9 @@ pub enum CommonCommand {
         #[arg(long)]
         address: Option<String>,
 
-        /// mock-api 地址（默认 http://127.0.0.1:9001）
-        #[arg(long, default_value = "http://127.0.0.1:9001")]
-        api_url: String,
+        /// 后端 API 地址（不指定时使用默认后端；调试时可传 http://127.0.0.1:9001 指向 mock-api）
+        #[arg(long)]
+        api_url: Option<String>,
     },
 }
 
@@ -169,7 +169,7 @@ struct AgentProfile {
 /// parse stdout —— 不在这里复刻 token / wallet client / URL 拼装逻辑，
 /// `agent get` 自己的实现以后改了，这里自动跟上。
 /// 拿不到就回退到带 agentId 的占位符（不再写死 "My DeFi Agent"）。
-async fn fetch_agent_profile(agent_id: &str, api_url: &str) -> Option<AgentProfile> {
+async fn fetch_agent_profile(agent_id: &str, api_url: Option<&str>) -> Option<AgentProfile> {
     let fallback = || AgentProfile {
         agent_id: Some(agent_id.to_string()),
         name: Some(format!("Agent {agent_id}")),
@@ -189,11 +189,12 @@ async fn fetch_agent_profile(agent_id: &str, api_url: &str) -> Option<AgentProfi
 
     // 不传 --base-url；改用 OKX_BASE_URL env 注入，wallet_api 解析时优先读这个，
     // 跟父进程实际打到的 URL 完全一致（无论父进程 base_url 来源是 flag 还是 env）。
-    let output = match tokio::process::Command::new(&exe)
-        .args(["agent", "get", "--agent-ids", agent_id])
-        .env("OKX_BASE_URL", api_url)
-        .output()
-        .await
+    let mut cmd = tokio::process::Command::new(&exe);
+    cmd.args(["agent", "get", "--agent-ids", agent_id]);
+    if let Some(url) = api_url {
+        cmd.env("OKX_BASE_URL", url);
+    }
+    let output = match cmd.output().await
     {
         Ok(o) => o,
         Err(e) => {
@@ -295,7 +296,7 @@ pub async fn run(cmd: CommonCommand, _ctx: &Context) -> Result<()> {
     match cmd {
         CommonCommand::Get { ws_url, addr } => run_get(&ws_url, addr.as_deref()).await,
         CommonCommand::Context { job_id, role, agent_id, address, api_url } => {
-            run_context(&job_id, &role, agent_id.as_deref(), address.as_deref(), &api_url).await
+            run_context(&job_id, &role, agent_id.as_deref(), address.as_deref(), api_url.as_deref()).await
         }
     }
 }
@@ -366,7 +367,7 @@ async fn run_context(
     role: &str,
     agent_id: Option<&str>,
     address: Option<&str>,
-    api_url: &str,
+    api_url: Option<&str>,
 ) -> Result<()> {
     // 校验角色
     if !["buyer", "provider", "evaluator"].contains(&role) {
@@ -374,11 +375,14 @@ async fn run_context(
     }
 
     // 调用后端获取任务详情
-    let mut client = network::task_api_client::TaskApiClient::with_base_url(api_url.to_string());
+    let mut client = match api_url {
+        Some(url) => network::task_api_client::TaskApiClient::with_base_url(url.to_string()),
+        None => network::task_api_client::TaskApiClient::new(),
+    };
     let resp_val = client
         .get_with_identity(&client.task_path(job_id), agent_id.unwrap_or(""))
         .await
-        .map_err(|e| anyhow::anyhow!("无法获取任务详情（{api_url}）: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("无法获取任务详情: {e}"))?;
 
     // WalletApiClient 返回 body["data"]，即 {"task": {...}}
     let resp_data: TaskRespData = serde_json::from_value(resp_val)
