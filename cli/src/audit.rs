@@ -500,8 +500,8 @@ fn payment_sub(c: &PaymentCommand) -> &'static str {
 fn a2a_pay_sub(c: &crate::commands::payment::a2a_pay::A2aPayCommand) -> &'static str {
     use crate::commands::payment::a2a_pay::A2aPayCommand;
     match c {
-        A2aPayCommand::Create { .. } => "create",
-        A2aPayCommand::Pay { .. } => "pay",
+        A2aPayCommand::Create(_) => "create",
+        A2aPayCommand::Pay(_) => "pay",
         A2aPayCommand::Status { .. } => "status",
     }
 }
