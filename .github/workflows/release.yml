@@ -23,7 +23,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release
@@ -39,12 +39,16 @@ jobs:
   # ── Step 1: Validate version input ──────────────────────────
   validate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       version: ${{ inputs.version }}
       tag: v${{ inputs.version }}
       is_beta: ${{ steps.detect_beta.outputs.is_beta }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Detect beta release
         id: detect_beta
@@ -88,6 +92,8 @@ jobs:
   build:
     needs: validate
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     env:
       SM_API_KEY: ${{ secrets.SM_API_KEY }}
     strategy:
@@ -115,13 +121,15 @@ jobs:
     name: Build ${{ matrix.target }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable @ 2026-03-27
         with:
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: ${{ env.CARGO_DIR }}
           key: ${{ matrix.target }}
@@ -199,12 +207,16 @@ jobs:
       - name: "Sign Windows binary (DigiCert ONE via jsign)"
         if: runner.os == 'Windows' && env.SM_API_KEY != ''
         shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_CERTIFICATE_ID: ${{ secrets.SM_CERTIFICATE_ID }}
         run: |
-          $storepass = "${{ secrets.SM_API_KEY }}|${{ env.SM_CLIENT_CERT_FILE }}|${{ secrets.SM_CLIENT_CERT_PASSWORD }}"
+          $storepass = "$env:SM_API_KEY|$env:SM_CLIENT_CERT_FILE|$env:SM_CLIENT_CERT_PASSWORD"
           java -jar "${{ runner.temp }}\jsign.jar" `
             --storetype DIGICERTONE `
             --storepass $storepass `
-            --alias "${{ secrets.SM_CERTIFICATE_ID }}" `
+            --alias "$env:SM_CERTIFICATE_ID" `
             --tsaurl "http://timestamp.digicert.com" `
             "${{ env.BIN_NAME }}-${{ matrix.target }}.exe"
 
@@ -219,14 +231,14 @@ jobs:
             Write-Host "::warning::Code signing verification failed with status: $($sig.Status)"
           }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ env.BIN_NAME }}-${{ matrix.target }}
           path: ${{ env.BIN_NAME }}-${{ matrix.target }}*
 
       - name: "Upload gnu-named alias (musl builds only)"
         if: contains(matrix.target, 'musl')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ env.BIN_NAME }}-${{ matrix.target }}-gnu-alias
           path: ${{ env.BIN_NAME }}-*-linux-gnu
@@ -235,13 +247,15 @@ jobs:
   download-signed-macos:
     needs: validate
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       matrix:
         target: [aarch64-apple-darwin, x86_64-apple-darwin]
     steps:
       - name: Generate GitHub App token
         id: app-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
         with:
           app-id: ${{ secrets.GH_APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
@@ -261,7 +275,7 @@ jobs:
           echo "Downloaded signed binary:"
           ls -lh "${BIN_NAME}-${TARGET}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ env.BIN_NAME }}-${{ matrix.target }}
           path: ${{ env.BIN_NAME }}-${{ matrix.target }}
@@ -270,8 +284,10 @@ jobs:
   checksums:
     needs: [build, download-signed-macos]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           merge-multiple: true
 
@@ -281,7 +297,7 @@ jobs:
       - name: List checksums
         run: cat checksums.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: checksums
           path: checksums.txt
@@ -290,8 +306,10 @@ jobs:
   commit-and-tag:
     needs: [validate, checksums]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           # Use RELEASE_PAT if branch protection is enabled, otherwise GITHUB_TOKEN
           token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
@@ -327,12 +345,15 @@ jobs:
   release:
     needs: [validate, commit-and-tag, checksums]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          persist-credentials: false
           ref: v${{ needs.validate.outputs.version }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           merge-multiple: true
 
@@ -350,7 +371,7 @@ jobs:
       - name: List all release artifacts
         run: ls -lh && echo "---" && cat checksums.txt && echo "---" && cat installer-checksums.txt && echo "---" && cat workflows-checksums.txt
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: v${{ needs.validate.outputs.version }}
           name: v${{ needs.validate.outputs.version }}

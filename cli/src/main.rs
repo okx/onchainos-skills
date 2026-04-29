@@ -106,7 +106,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::security::SecurityCommand,
     },
-    /// Payment protocols — auto-pay gated APIs (x402, etc.)
+    /// Payment protocols — auto-pay gated APIs (x402, a2a-pay, etc.)
     Payment {
         #[command(subcommand)]
         command: commands::agentic_wallet::payment::PaymentCommand,
@@ -214,10 +214,16 @@ async fn run() {
                 output::confirming(&c.message, &c.next);
                 std::process::exit(2);
             }
-            Err(e) => {
-                output::error(&format!("{e:#}"));
-                std::process::exit(1);
-            }
+            Err(e) => match e.downcast::<output::CliSetupRequired>() {
+                Ok(s) => {
+                    output::setup_required(&s.error_code, &s.message, &s.data);
+                    std::process::exit(3);
+                }
+                Err(e) => {
+                    output::error(&format!("{e:#}"));
+                    std::process::exit(1);
+                }
+            },
         }
     }
 }

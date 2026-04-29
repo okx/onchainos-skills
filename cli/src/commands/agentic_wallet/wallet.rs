@@ -236,6 +236,36 @@ pub enum GasStationCommand {
         #[arg(long)]
         chain: String,
     },
+    /// Read-only Gas Station readiness check on a chain.
+    /// Used by third-party plugin pre-flight: agent runs this before invoking
+    /// a plugin's on-chain command, branches on the returned `recommendation`.
+    /// Never broadcasts; safe to call repeatedly.
+    Status {
+        /// Chain name or ID (e.g. "ethereum" or "1")
+        #[arg(long)]
+        chain: String,
+        /// Sender address (optional — defaults to selectedAccountId)
+        #[arg(long)]
+        from: Option<String>,
+    },
+    /// Standalone Gas Station first-time activation.
+    /// Decoupled from `wallet send` so the agent can activate GS before
+    /// invoking a third-party plugin (which calls `wallet contract-call --force`).
+    /// Idempotent: re-calling with the same default token returns alreadyActivated=true.
+    Setup {
+        /// Chain name or ID (e.g. "ethereum" or "1")
+        #[arg(long)]
+        chain: String,
+        /// Gas token contract address (picked by the user from Scene A `tokenList`)
+        #[arg(long)]
+        gas_token_address: String,
+        /// Relayer ID (paired with `--gas-token-address` from Scene A `tokenList`)
+        #[arg(long)]
+        relayer_id: String,
+        /// Sender address (optional — defaults to selectedAccountId)
+        #[arg(long)]
+        from: Option<String>,
+    },
 }
 
 /// Resolve the effective raw amount for `wallet send`.
@@ -287,15 +317,19 @@ async fn resolve_send_amount(
                 }
             }
             Some(token_addr) => {
-                // ERC-20 / SPL — fetch decimals from token info API
-                let mut client = crate::client::ApiClient::new(None).map_err(|e| {
+                // ERC-20 / SPL — fetch decimals via wallet-side token info endpoint
+                // (works for chains not covered by the DEX, e.g. Tempo).
+                let access_token = super::auth::ensure_tokens_refreshed().await?;
+                let mut client = crate::wallet_api::WalletApiClient::new()?;
+                let chain_index_str = crate::chains::resolve_chain(chain);
+                let chain_index_num: u64 = chain_index_str.parse().map_err(|_| {
                     anyhow::anyhow!(
-                        "Failed to create API client to fetch token decimals: {}. \
-                         Use --amt with raw minimal units instead.",
-                        e
+                        "chain id '{}' is not a valid number for token-info lookup",
+                        chain_index_str
                     )
                 })?;
-                let info = crate::commands::token::fetch_info(&mut client, token_addr, chain)
+                let info = client
+                    .get_token_info(&access_token, chain_index_num, token_addr)
                     .await
                     .map_err(|e| {
                         anyhow::anyhow!(
@@ -305,15 +339,24 @@ async fn resolve_send_amount(
                             e
                         )
                     })?;
-                let info_arr = info.as_array().filter(|a| !a.is_empty()).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Token not found for address {} on chain {}. \
-                         Verify the address is correct. Use --amt with raw minimal units instead.",
-                        token_addr,
-                        chain
-                    )
-                })?;
-                match &info_arr[0]["decimal"] {
+                if cfg!(feature = "debug-log") {
+                    eprintln!(
+                        "[DEBUG][get_token_info] chainIndex={}, token={}, raw_response={}",
+                        chain_index_num, token_addr, info
+                    );
+                }
+                // Server returns either an array `[{...}]` or a single object;
+                // field name is `decimals` (plural) in practice, `decimal` in older spec.
+                let entry = info
+                    .as_array()
+                    .and_then(|arr| arr.first())
+                    .unwrap_or(&info);
+                let decimal_val = if !entry["decimals"].is_null() {
+                    &entry["decimals"]
+                } else {
+                    &entry["decimal"]
+                };
+                match decimal_val {
                     serde_json::Value::String(s) => s.parse().map_err(|_| {
                         anyhow::anyhow!("Invalid decimal value \"{}\" for token {}", s, token_addr)
                     })?,

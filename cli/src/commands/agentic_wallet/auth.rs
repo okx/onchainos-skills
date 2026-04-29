@@ -111,7 +111,7 @@ pub(super) fn ensure_tokens() -> Result<(String, String)> {
 ///   3. refresh_token expired         → prompt user, try AK re-login, else anonymous fallback
 ///   4. access_token expired          → call auth_refresh, store new tokens, return new JWT
 ///   5. access_token still valid      → return as-is
-pub(super) async fn ensure_tokens_refreshed() -> Result<String> {
+pub(crate) async fn ensure_tokens_refreshed() -> Result<String> {
     // ── Step 1: session_key guard ────────────────────────────────────
     let session = wallet_store::load_session()?;
     let expire_at = session
@@ -240,6 +240,11 @@ pub(super) async fn ensure_tokens_refreshed() -> Result<String> {
             ("refresh_token", &resp.refresh_token),
         ])?;
 
+        if resp.chain_updated && !resp.all_account_address_list.is_empty() {
+            apply_all_account_address_list(&resp.all_account_address_list);
+            super::chain::force_refresh_chain_cache().await;
+        }
+
         return Ok(resp.access_token);
     }
 
@@ -332,7 +337,7 @@ pub(super) fn is_session_key_expired(expire_at: &str) -> bool {
 }
 
 /// Format an API error for propagation.
-pub(super) fn format_api_error(e: anyhow::Error) -> anyhow::Error {
+pub(crate) fn format_api_error(e: anyhow::Error) -> anyhow::Error {
     match e.downcast::<ApiCodeError>() {
         Ok(api_err) => anyhow::anyhow!("{}", api_err.msg),
         Err(e) => e,
@@ -856,6 +861,46 @@ pub(super) async fn cmd_logout() -> Result<()> {
     Ok(())
 }
 
+// ── Chain update helpers ─────────────────────────────────────────────
+
+/// Overwrite `accounts` and `accounts_map` in wallets.json from the refresh response.
+fn apply_all_account_address_list(list: &[crate::wallet_api::RefreshAccountItem]) {
+    let Ok(Some(mut wallets)) = wallet_store::load_wallets() else {
+        return;
+    };
+
+    wallets.accounts = list
+        .iter()
+        .map(|a| wallet_store::AccountInfo {
+            project_id: wallets.project_id.clone(),
+            account_id: a.account_id.clone(),
+            account_name: a.account_name.clone(),
+            is_default: a.is_default,
+        })
+        .collect();
+
+    wallets.accounts_map.clear();
+    for item in list {
+        let address_list = item
+            .addresses
+            .iter()
+            .map(|a| wallet_store::AddressInfo {
+                account_id: item.account_id.clone(),
+                address: a.address.clone(),
+                chain_index: a.chain_index.clone(),
+                chain_name: a.chain_name.clone(),
+                address_type: a.address_type.clone(),
+                chain_path: a.chain_path.clone(),
+            })
+            .collect();
+        wallets
+            .accounts_map
+            .insert(item.account_id.clone(), wallet_store::AccountMapEntry { address_list });
+    }
+
+    let _ = wallet_store::save_wallets(&wallets);
+}
+
 // ── Tests ────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -963,6 +1008,108 @@ mod tests {
         let sig1 = crate::crypto::ed25519_sign_hex(hash, &sk_b64).unwrap();
         let sig2 = crate::crypto::ed25519_sign_hex(hash, &sk_b64).unwrap();
         assert_eq!(sig1, sig2);
+    }
+
+    #[test]
+    fn apply_all_account_address_list_overwrites_accounts_and_map() {
+        use crate::wallet_store::{AccountInfo, AccountMapEntry, AddressInfo, WalletsJson};
+        use std::collections::HashMap;
+
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join("apply_chain_update");
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir).ok();
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+
+        // Seed wallets.json with existing state
+        let mut initial_map = HashMap::new();
+        initial_map.insert(
+            "acc-old".to_string(),
+            AccountMapEntry {
+                address_list: vec![AddressInfo {
+                    account_id: "acc-old".to_string(),
+                    address: "0xold".to_string(),
+                    chain_index: "1".to_string(),
+                    chain_name: "eth".to_string(),
+                    address_type: "eoa".to_string(),
+                    chain_path: "m/44/60".to_string(),
+                }],
+            },
+        );
+        let initial = WalletsJson {
+            email: "user@test.com".to_string(),
+            project_id: "proj-1".to_string(),
+            selected_account_id: "acc-old".to_string(),
+            is_ak: true,
+            accounts: vec![AccountInfo {
+                project_id: "proj-1".to_string(),
+                account_id: "acc-old".to_string(),
+                account_name: "Old Wallet".to_string(),
+                is_default: true,
+            }],
+            accounts_map: initial_map,
+            ..Default::default()
+        };
+        wallet_store::save_wallets(&initial).unwrap();
+
+        // Build the new address list (simulates allAccountAddressList from refresh)
+        let new_list = vec![crate::wallet_api::RefreshAccountItem {
+            account_id: "acc-1".to_string(),
+            account_name: "Wallet 1".to_string(),
+            is_default: true,
+            addresses: vec![
+                crate::wallet_api::VerifyAddressInfo {
+                    account_id: "acc-1".to_string(),
+                    address: "0xabc".to_string(),
+                    chain_index: "4217".to_string(),
+                    chain_name: "tempo".to_string(),
+                    address_type: "eoa".to_string(),
+                    chain_path: "m/44/60/0/0".to_string(),
+                },
+                crate::wallet_api::VerifyAddressInfo {
+                    account_id: "acc-1".to_string(),
+                    address: "0xdef".to_string(),
+                    chain_index: "1".to_string(),
+                    chain_name: "eth".to_string(),
+                    address_type: "eoa".to_string(),
+                    chain_path: "m/44/60/0/0".to_string(),
+                },
+            ],
+        }];
+
+        apply_all_account_address_list(&new_list);
+
+        let saved = wallet_store::load_wallets().unwrap().unwrap();
+
+        // preserved fields unchanged
+        assert_eq!(saved.email, "user@test.com");
+        assert_eq!(saved.project_id, "proj-1");
+        assert_eq!(saved.selected_account_id, "acc-old");
+        assert!(saved.is_ak);
+
+        // accounts overwritten
+        assert_eq!(saved.accounts.len(), 1);
+        assert_eq!(saved.accounts[0].account_id, "acc-1");
+        assert_eq!(saved.accounts[0].account_name, "Wallet 1");
+        assert_eq!(saved.accounts[0].project_id, "proj-1");
+        assert!(saved.accounts[0].is_default);
+
+        // accounts_map overwritten — old entry gone, new entries present
+        assert!(!saved.accounts_map.contains_key("acc-old"));
+        let entry = saved.accounts_map.get("acc-1").unwrap();
+        assert_eq!(entry.address_list.len(), 2);
+        assert_eq!(entry.address_list[0].chain_index, "4217");
+        assert_eq!(entry.address_list[0].chain_name, "tempo");
+        assert_eq!(entry.address_list[1].chain_index, "1");
+
+        std::env::remove_var("ONCHAINOS_HOME");
     }
 
     #[test]

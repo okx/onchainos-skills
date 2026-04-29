@@ -146,6 +146,15 @@ pub struct ApiClient {
     payment: Arc<Mutex<PaymentState>>,
 }
 
+/// Extract the `msg` field from an API error envelope.
+/// Empty / missing / whitespace-only values fall back to `"unknown error"`
+/// so the user-visible string never ends with a dangling colon
+/// (e.g. `API error (code=82000): `).
+fn extract_msg(msg_field: &Value) -> &str {
+    let s = msg_field.as_str().unwrap_or("").trim();
+    if s.is_empty() { "unknown error" } else { s }
+}
+
 impl ApiClient {
     /// Create a client with automatic auth detection:
     /// 1. JWT from keyring  (user is logged in)
@@ -822,7 +831,10 @@ impl ApiClient {
                 Value::Number(n) => n.to_string(),
                 other => other.to_string(),
             };
-            let msg = body["msg"].as_str().unwrap_or("unknown error");
+            // Surface backend `msg` verbatim. Treat missing or empty as "unknown error"
+            // so the user-visible string never ends with a dangling colon
+            // (e.g. `API error (code=82000): `).
+            let msg = extract_msg(&body["msg"]);
             bail!("API error (code={}): {}", code_str, msg);
         }
 
@@ -1308,6 +1320,14 @@ impl ApiClient {
     /// the list itself is never narrowed, and the prompt still blocks —
     /// only `payment default set` advances the tier state.
     fn dispatch_notifications(&self, path: &str, header_accepts: Option<&Value>) {
+        self.dispatch_notifications_at(path, header_accepts, payment_cache::now_secs() as i64);
+    }
+
+    /// `dispatch_notifications` with an injectable clock — the production
+    /// entry point uses wall-clock time, but tests that exercise the
+    /// `NEW_USER_INTRO` rollout gate need to run "as if" the clock is
+    /// past 2026-04-30 regardless of when the suite executes.
+    fn dispatch_notifications_at(&self, path: &str, header_accepts: Option<&Value>, now: i64) {
         let input = {
             let state = self.payment_state();
             // `compute_events` short-circuits when `user_type` is unset, so
@@ -1323,7 +1343,7 @@ impl ApiClient {
             NotifyInput {
                 user_type: state.user_type,
                 grace_expires_at: payment_notify::grace_expires_at(),
-                now: payment_cache::now_secs() as i64,
+                now,
                 basic_state: state.basic_state,
                 premium_state: state.premium_state,
                 intro_shown: state.intro_shown,
@@ -1392,6 +1412,40 @@ impl ApiClient {
 
 #[cfg(test)]
 mod tests {
+    use super::{extract_msg, ApiClient};
+    use serde_json::json;
+
+    // ── extract_msg ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn extract_msg_returns_inner_text_when_present() {
+        let v = json!("no available route");
+        assert_eq!(extract_msg(&v), "no available route");
+    }
+
+    #[test]
+    fn extract_msg_falls_back_when_empty_string() {
+        let v = json!("");
+        assert_eq!(extract_msg(&v), "unknown error");
+    }
+
+    #[test]
+    fn extract_msg_falls_back_when_whitespace_only() {
+        let v = json!("   ");
+        assert_eq!(extract_msg(&v), "unknown error");
+    }
+
+    #[test]
+    fn extract_msg_falls_back_when_missing() {
+        let v = json!(null);
+        assert_eq!(extract_msg(&v), "unknown error");
+    }
+
+    #[test]
+    fn extract_msg_trims_surrounding_whitespace() {
+        let v = json!("  no liquidity  ");
+        assert_eq!(extract_msg(&v), "no liquidity");
+    }
     use super::{ApiClient, PaymentCache, PaymentRequired, PaymentTier, TierState};
     use serde_json::Value;
 
@@ -2088,7 +2142,14 @@ mod tests {
         }));
         client.payment_state().user_type = Some(super::UserType::New);
 
-        client.dispatch_notifications("/api/v6/dex/market/price", None);
+        // Pin the clock past the 2026-04-30 NEW_USER_INTRO rollout gate
+        // so this test exercises the post-cutoff path regardless of when
+        // the suite runs.
+        client.dispatch_notifications_at(
+            "/api/v6/dex/market/price",
+            None,
+            crate::payment_notify::new_user_intro_start_at() + 1,
+        );
 
         let drained = crate::payment_notify::drain_events();
         let codes: Vec<&str> = drained.iter().filter_map(|e| e["code"].as_str()).collect();
