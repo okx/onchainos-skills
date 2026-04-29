@@ -233,6 +233,23 @@ pub async fn sign_uop_and_broadcast(
     let unsigned: UnsignedInfoResponse = serde_json::from_value(uop_data.clone())
         .map_err(|e| anyhow::anyhow!("解析 uopData 失败: {e}"))?;
 
+    // 模拟执行失败兜底：后端返回 uopData 非空但 executeResult=false 表示链上 estimateGas
+    // 已 revert（合约校验不过 / 余额不足 / approve 不够等），此时 hash/uopHash 都是空串，
+    // 继续走 broadcast 只会被下游兜底拒掉、掩盖真实失败原因。这里直接抛 executeErrorMsg。
+    let exec_ok = match &unsigned.execute_result {
+        Value::Bool(b) => *b,
+        Value::Null => true,
+        _ => true,
+    };
+    if !exec_ok {
+        let err_msg = if unsigned.execute_error_msg.is_empty() {
+            "transaction simulation failed".to_string()
+        } else {
+            unsigned.execute_error_msg.clone()
+        };
+        bail!("交易模拟失败（链上 estimateGas revert）: {}", err_msg);
+    }
+
     let mut broadcast_body = build_broadcast_body(
         &unsigned,
         account_id,
