@@ -26,7 +26,7 @@ Extract the `--agent-id` from the user's prompt.
 Walk this ladder in order:
 
 1. **Already known in this conversation?** If the user has said "我的 agent 是 #N" or previously created `#N`, use it. No lookup needed.
-2. **Run `onchainos agent get`.** The backend auto-filters by the caller's userId.
+2. **Run `onchainos agent get`** (no `--agent-ids`). In default list mode the backend returns the caller's **own** agents — pick one of these as `--creator-id`. (`agent get --agent-ids X` is the open-lookup mode for any agent's record and is irrelevant here.)
    - **0 agents** → STOP. Tell the user: "你还没有注册自己的 agent，先 `agent create` 一个（任意 role）才能给别人打分。" Offer to enter the `create` flow.
    - **1 agent** → silently use its agentId as `--creator-id`; mention the choice in the confirmation: "你的 agent #N <name> 会作为 creator 出现在这条评分上。"
    - **Multiple agents** → ask the user which to use, using the numbered-options pattern (`SKILL.md §Choice prompts`) in the user's language:

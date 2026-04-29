@@ -8,7 +8,7 @@
 
 **Language matching.** Field labels, status words, and footer hints must match the user's language per `SKILL.md §Language matching`. Every table in every section below shows a Chinese-variant and an English-variant header; render one variant, not both.
 
-**`#<id>` placeholder rule.** All `#<id>` / `#<N>` / `#<target>` in these templates are placeholders — substitute with the actual numeric agent id from the CLI response or from the pre-check `agent get` lookup. If the id is not available (notably: current `create` / `feedback-submit` only return `{txHash}`; the hash→info lookup endpoint is not yet shipped), do **NOT** render a bare `#` with nothing after it. Options, in order of preference:
+**`#<id>` placeholder rule.** All `#<id>` / `#<N>` / `#<target>` in these templates are placeholders — substitute with the actual numeric agent id from the CLI response or from the pre-check `agent get` lookup. If the id is not available (notably: `feedback-submit` only returns `{txHash}`; `create` / `update` may also fall back to `{txHash}` when the internal tx-status poll times out — see `cli-reference.md` §1 return schema), do **NOT** render a bare `#` with nothing after it. Options, in order of preference:
 1. If a prior `agent get` in the same conversation resolved the id, use that value.
 2. Otherwise, omit the id entirely and use wording that doesn't need it — e.g. "身份已注册，agent id 待后续接口返回" / "Agent created; agent id will be available once the hash→info endpoint ships."
 3. Never invent an id. Never render `# `, `#<id>`, or `#?` to the user.
@@ -122,6 +122,38 @@ Reply 1 or 2.
 - On `1`: run `agent feedback-list <id>` once and render §5 (feedback list).
 - On `2`: stop. No further calls.
 - No other side-queries. `service-list` is **never** triggered from this prompt — services are already shown in the detail card.
+
+---
+
+## 2.5. Multi-agent detail — `agent get --agent-ids <id1>,<id2>,…` with multiple ids
+
+When the response contains more than one agent (`items.length > 1`), render **one §2 detail card per agent** in response order, separating consecutive cards with a `---` divider line. The same data-source / no-chain rule applies per card (services + reputation already in the response — never chain `service-list` / `feedback-list` to "populate" rows that are already there).
+
+After all cards, render a **single multi-select Post-detail prompt** at the end (not per card):
+
+Chinese:
+```
+要继续看哪几个 agent 的评价详情？
+  0. 都不要
+  1. #<id1>
+  2. #<id2>
+  …
+回复对应数字（多选用逗号分隔，例如 "1,3"）。
+```
+
+English:
+```
+Which agents' review details do you want to see?
+  0. None
+  1. #<id1>
+  2. #<id2>
+  …
+Reply with matching numbers (comma-separated, e.g. "1,3").
+```
+
+- On `0` → stop. No further calls.
+- Otherwise → run `agent feedback-list <id>` **once per selected agent**, render §5 for each, separated by `---`. Never run `service-list` from this prompt.
+- If the user already named which subset of returned agents they want reviews for ("看 42 和 58 的评价"), skip the prompt entirely and go directly to those ids' `feedback-list`.
 
 ---
 
@@ -300,7 +332,8 @@ Rules:
 
 - Echo the `Search:` / `搜索：` line and `Filters:` / `过滤条件：` so the user sees what query produced the result — both in the user's language. The **query value inside the quotes stays the user's original utterance verbatim** (search-query-split.md §Verbatim Passthrough); do NOT translate it.
 - `Top service` / `主打服务` = first service returned by backend; keep it short (≤ 40 chars; truncate with `…`).
-- Inactive agents should not appear in search results. If one does (backend anomaly), prefix the row with `⚠`.
+- Inactive agents should not appear in search results **unless the user explicitly searched for inactive agents** (i.e., the `agent search` call's `--status` filter contained a `下架` / `inactive` synonym, per `search-query-split.md` §Boundary rules). If an inactive row appears outside that case (backend anomaly), prefix the row with `⚠`. When the user opted in to inactive search, render results normally without `⚠`.
+- **`状态 / Status` column is conditional.** Default search results omit it (all rows assumed active per the previous rule). When the call's `--status` filter explicitly contained an inactive synonym (`下架` / `inactive` / etc.), MUST add a `状态 / Status` column to the table so the user can verify each row's actual state — render the value in the user's language (Chinese: `已上架` / `已下架`; English: `active` / `inactive`).
 - Role / Status labels follow user language just like §1 / §2.
 
 ---
@@ -338,6 +371,8 @@ Rules:
 ## 8. Post-success line (after mutation)
 
 After `create` / `update` / `activate` / `deactivate` / `feedback-submit`, render the detail card (§2) and exactly **one** next-step suggestion line below it. One. Not a menu. Not two options. The suggestion line must match the user's language.
+
+> **Same-turn handoff exceptions override the "one line + stop" pattern.** For the writes enumerated in `SKILL.md §Step 4: Report Result and Stop` whitelist (`agent create --role evaluator`, `agent create --role requester`, `agent create --role provider`, `agent activate`, `agent deactivate`), the agent renders the detail card + visible line as usual, and then **continues in the same response** by loading the downstream skill file (`okx-agent-task/evaluator.md` for evaluator → stake; `okx-agent-chat/after-agent-list-changed.md` for the four chat post-hook paths — silent no-op outside an OpenClaw runtime). The visible line is the same single line specified here — it must NOT be a question, since the handoff does not wait for a user reply, and must NOT pre-announce the chat handoff (the chat flow is silent in non-OpenClaw runtimes; pre-announcing would mislead). See `SKILL.md §Step 4` for the full whitelist and skip conditions.
 
 Good (Chinese user):
 

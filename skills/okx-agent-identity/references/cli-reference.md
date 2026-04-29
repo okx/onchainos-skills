@@ -54,15 +54,28 @@ onchainos agent create \
 
 **Return (JSON):**
 ```json
+// On internal poll success (within ~5 s)
 {
-  "agentId": 99,
   "txHash": "0xabc...",
-  "role": "provider",
-  "name": "DeFi Analyzer",
-  "status": "inactive",
-  "services": [ { "ServiceName": "TVL Query", ... } ]
+  "agent": {
+    "status": "SUCCESS",
+    "agentId": "123",
+    "chainIndex": 196,
+    "name": "DeFi Analyzer",
+    "profilePicture": "https://...",
+    "profileDescription": "...",
+    "ownerAddress": "0x...",
+    "agentWalletAddress": "0x...",
+    "categoryCode": "DEFI",
+    "securityRate": "85"
+  }
 }
+
+// On poll timeout / non-success — fall back to:
+{ "txHash": "0xabc..." }
 ```
+
+The CLI internally polls `/priapi/v5/wallet/agentic/tx-agent-status` with the broadcast `txHash` for up to ~5 s. When it resolves `SUCCESS` the verbose `agent` block is included verbatim from the backend; on timeout the response degrades to `{ txHash }` only and the skill should render per `display-formats.md` §2's `Agent ID` placeholder rule (omit the row instead of inventing an id).
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match). Do not duplicate the list here — `troubleshooting.md` is the single source of truth.
 
@@ -92,7 +105,7 @@ onchainos agent update 42 --description "Updated: now also covers cross-chain TV
 onchainos agent update 42 --picture "https://cdn.example.com/u/new.png"
 ```
 
-**Return (JSON):** same shape as `agent get` detail for the updated agent.
+**Return (JSON):** same `{ txHash, agent? }` envelope as `create` (§1) — `agent` is the resolved tx-status row when the internal poll succeeds, or absent when it times out. Field set differs from the `agent get` detail schema in §3 (no `services` / `reputation` here — those still require a `agent get --agent-ids`).
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact), §2 (backend-originated, keyword match), and §3 (skill-side guards). Note: "At least one field must change on update" is a skill-side guard, not a CLI error.
 
@@ -100,19 +113,24 @@ onchainos agent update 42 --picture "https://cdn.example.com/u/new.png"
 
 ## 3. `onchainos agent get`
 
-List agents visible to the current user. The backend auto-filters by `userId` from the access token, so the list returned is the caller's own agents.
+Two modes:
+
+- **Default (no `--agent-ids`)** — list the caller's **own** agents (paged). The backend filters by the caller's identity via the JWT in this mode.
+- **With `--agent-ids`** — fetch the specified agent(s) by id. **Open lookup**: the ids may belong to the caller or to anyone else; the backend does not require ownership for id-based queries.
+
+For routing between `get` and `search` see `SKILL.md` §"Disambiguation: search vs get".
 
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
-| `--agent-ids` | ✗ | comma-separated integers | Fetch one or more by id. |
-| `--page` | ✗ | integer (default 1) | |
-| `--page-size` | ✗ | integer (default 20) | |
+| `--agent-ids` | ✗ | comma-separated integers | Fetch one or more by id. Any id is accepted — own or someone else's. |
+| `--page` | ✗ | integer | 未传时不上送，由后端取默认。Only meaningful in default-list mode. |
+| `--page-size` | ✗ | integer | 未传时不上送，由后端取默认。Only meaningful in default-list mode. |
 
 **Examples:**
 ```bash
-onchainos agent get                   # all my agents (paged)
-onchainos agent get --agent-ids 42    # detail for #42
-onchainos agent get --agent-ids 42,58 # batch detail
+onchainos agent get                   # default: list my own agents (paged)
+onchainos agent get --agent-ids 42    # detail for #42 (own or any other agent)
+onchainos agent get --agent-ids 42,58 # batch detail (mixed ownership ok)
 onchainos agent get --page 2 --page-size 50
 ```
 
@@ -196,12 +214,12 @@ Discover agents by semantic query + optional filter dimensions.
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
 | `--query` | ✓ | string | User's full sentence verbatim. CLI does not enforce a length cap (`queries.rs:105-108` only validates non-empty). |
-| `--feedback` | ✗ | `Vec<String>` (comma-separated) | Reputation keywords (e.g., "高分", "好评"). |
-| `--agent-info` | ✗ | `Vec<String>` | Role / domain keywords (e.g., "provider", "数据分析"). |
-| `--status` | ✗ | `Vec<String>` | Activity state; use `active` when user says "只看活跃的". |
-| `--service` | ✗ | `Vec<String>` | Service type keywords (e.g., `A2MCP`, `A2A`, "MCP 服务"). |
-| `--page` | ✗ | integer (default 1) | |
-| `--page-size` | ✗ | integer (default 20) | |
+| `--feedback` | ✗ | `Vec<String>` (comma-separated) | Reputation keywords. **Verbatim** — pass user's wording (e.g., `高分`, `好评`, `highly-rated`); do NOT canonicalize. |
+| `--agent-info` | ✗ | `Vec<String>` | Role / domain keywords. **Verbatim** (e.g., `provider`, `数据分析`, `solidity`); do NOT canonicalize. |
+| `--status` | ✗ | `Vec<String>` | Activity state. **Verbatim** — pass user's wording (e.g., `已上架`, `活跃`, `下架`); do NOT canonicalize to `active` / `inactive`. See `search-query-split.md` §Rules.6. |
+| `--service` | ✗ | `Vec<String>` | Service type / interface tokens. **Verbatim** (e.g., `MCP 服务`, `API`, `A2A`); do NOT canonicalize `MCP 服务` to `A2MCP`. Domain words go to `--agent-info`, not here. |
+| `--page` | ✗ | integer | 未传时不上送，由后端取默认。 |
+| `--page-size` | ✗ | integer | 未传时不上送，由后端取默认。 |
 
 There is **no** `--sort-by` on `agent search`.
 

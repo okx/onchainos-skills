@@ -60,6 +60,7 @@ Single-word inputs (`agent`, `search`, `list`) do NOT auto-route to any sub-comm
 
 - For task lifecycle (publish / accept / deliver / settle / dispute) → `okx-agent-task`
 - For wallet login / balance / transfer / signing → `okx-agentic-wallet`
+- For syncing the local a2a agent list to the OpenClaw runtime (mandatory post-hook after any local agent list mutation) → `okx-agent-chat` — same-turn handoff target after `agent create --role requester|provider`, `agent activate`, `agent deactivate`. Load `after-agent-list-changed.md` and continue with its Execution Flow inside the same response. The flow self-gates on `OPENCLAW_CLI` / `OPENCLAW_SHELL` env vars — silent no-op outside an OpenClaw runtime. See `§Step 4: Report Result and Stop` for the whitelist.
 - For OKB staking (required to **receive dispute assignments** as an evaluator; NOT required to `create` the evaluator agent) → follow `/skills/okx-agent-task/evaluator.md`
 - For counterparty address / contract security check → `okx-security`
 - For broadcasting raw transactions → `okx-onchain-gateway`
@@ -83,7 +84,7 @@ CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provide
 |---|---|
 | 注册 / 上架 agent / register agent | §Core Flow: agent create (role-driven) |
 | 我有哪些 agent / 看我的 agent | `agent get`（列表模式，不带 `--agent-ids`）→ `references/display-formats.md §1` |
-| 看 #N 详情 / detail #N | `agent get --agent-ids <N>` **一次**，渲染 `display-formats.md §2`（响应已含 services + reputation 聚合，**绝不 chain** `service-list` / `feedback-list`），再出 `§Post-detail prompt` 问用户要不要看评价 |
+| 看 #N 详情 / detail #N（id 可以是自己的也可以是别人的） | `agent get --agent-ids <N>` **一次**，渲染 `display-formats.md §2`（响应已含 services + reputation 聚合，**绝不 chain** `service-list` / `feedback-list`），再出 `§Post-detail prompt` 问用户要不要看评价 |
 | 改描述 / 改头像 / 更新 agent | §Update (get → show → confirm → execute) |
 | 下架 agent | `agent deactivate <agentId>` |
 | 上架 agent | `agent activate <agentId>` |
@@ -94,13 +95,21 @@ CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provide
 | 传图做头像 | §Avatar Upload → `references/avatar-upload.md` |
 | (from `okx-agent-task`) `intent=need-requester` | §Passive Onboarding → `references/passive-onboarding.md` |
 
+> **Disambiguation: search vs get.** The two commands overlap on "find/look up an agent". Tie-breaker, in priority order:
+>
+> 1. User names **explicit numeric agent ids** ("#42", "看 42 和 58", "查这几个：12, 33, 47") → `agent get --agent-ids <ids>`. Direct lookup, no scoring. The id-based mode works for any agent (own or someone else's). For multi-id render see `references/display-formats.md §2.5`.
+> 2. **Ownership word + descriptor** ("我那几个做 DeFi 的", "我的 solidity provider", "我的某个做 X 的 agent") — `agent search` has **no owner filter**, so do NOT route here. Instead: run `agent get` (default mode, no `--agent-ids`) to fetch the caller's own agents; the response already contains `description` / `services` / `role` per row. Then **client-side filter** the rendered list to rows matching the descriptor (skill never sends a search call in this branch).
+> 3. **Descriptor + numeric id reference** ("找会写 solidity 的 #42 那种") — genuinely ambiguous. Ask once which the user means: (a) `#42`'s details, or (b) other agents that resemble `#42`. On (a) → `agent get --agent-ids 42`. On (b) → `agent search` with the descriptor; **strip the numeric id tokens from `--query`** before sending (see `references/search-query-split.md` §Rules.9 carve-out).
+> 4. User describes **what kind** of agent they want with natural language (domain words, role words, "找做 X 的", "口碑好的 provider"…) and no ownership word → `agent search` with `--query` + 4-dimension filters per `references/search-query-split.md`. Search does semantic matching across name / description / services / reputation.
+> 5. Pure "看我的 agent" with no descriptors → `agent get` (no `--agent-ids`); default mode lists your own agents.
+
 ## Command Index
 
 | Command | Purpose | Required params | Optional params |
 |---|---|---|---|
 | `onchainos agent create` | Register a new agent | `--role`, `--name`, `--description` (`--service` required for provider) | `--picture`, `--address` |
 | `onchainos agent update <agentId>` | Update an existing agent | `<agentId>` + at least one field to change | `--name`, `--description`, `--picture`, `--service` |
-| `onchainos agent get` | List / view agents (current user auto-filtered) | — | `--agent-ids`, `--page`, `--page-size` |
+| `onchainos agent get` | Default (no `--agent-ids`): list your own agents. With `--agent-ids`: fetch any agent(s) by id (own or others') | — | `--agent-ids`, `--page`, `--page-size` |
 | `onchainos agent activate <agentId>` | Publish (上架) | `<agentId>` | — |
 | `onchainos agent deactivate <agentId>` | Unpublish (下架) | `<agentId>` | — |
 | `onchainos agent upload <file>` | Upload image, returns URL | `<file>` | — |
@@ -169,13 +178,14 @@ Full contract → `references/passive-onboarding.md`.
 
 ## Search
 
+> **Before invoking `agent search`, you MUST read `references/search-query-split.md`.** It owns the verbatim-passthrough red line, the four-dimension keyword tables, and worked examples. Skipping it leads to systematic under-extraction of filters.
+
 - User's full sentence goes **verbatim** into `--query`. No length cap at the CLI level — pass whatever the user said.
-- The skill itself parses the same sentence into four `Vec<String>` filters: `--feedback`, `--agent-info`, `--status`, `--service`. Keywords that do not fit are dropped — never invent filters.
-- `--query` semantic matching is the primary signal; filters are supplementary.
+- The skill itself parses the same sentence into four `Vec<String>` filters: `--feedback`, `--agent-info`, `--status`, `--service`. Filters and `--query` are **co-equal signals** — extract a filter whenever any keyword obviously maps. Drop a keyword only when no dimension fits; never invent a filter value, but do not under-extract either.
+- **If the user named a role / domain / specialty / status / service-type, you MUST emit the corresponding filter.** Example: `找会写 solidity 的 agent` → `--agent-info="solidity"` (even though "solidity" isn't in the example keyword table — domain nouns are open-ended).
+- **Filter values are verbatim substrings of the user's utterance — do NOT canonicalize.** If the user says `已上架`, send `--status "已上架"` (not `active`). If they say `MCP 服务`, send `--service "MCP 服务"` (not `A2MCP`). The backend handles synonym matching; the skill only splits.
 - There is **no** `--sort-by` for `agent search` (that flag only exists on `feedback-list`).
 - **One intent = one `agent search`.** Do not re-call "in English" or "without filters to see more". See `_shared/no-polling.md`.
-
-Full rules and worked examples → `references/search-query-split.md` (read its 🚨 Verbatim Passthrough section before any search call).
 
 ## Update
 
@@ -237,6 +247,7 @@ Do NOT offer the user a chain selection prompt. Do NOT suggest the agent also ex
 | Submit or read agent feedback | ✓ | — |
 | Publish a task / negotiate / deliver / dispute | — | `okx-agent-task` |
 | Wallet login, balance, send, signature | — | `okx-agentic-wallet` |
+| Sync local a2a agent list to the OpenClaw runtime (post-hook after a local agent list mutation) | — | `okx-agent-chat` (`after-agent-list-changed.md` — silent no-op outside OpenClaw) |
 | OKB staking for evaluator role | — | follow `/skills/okx-agent-task/evaluator.md` |
 | Address phishing / contract honeypot check | — | `okx-security` |
 | Broadcast a raw transaction hex | — | `okx-onchain-gateway` |
@@ -253,18 +264,21 @@ Do NOT offer the user a chain selection prompt. Do NOT suggest the agent also ex
 1. okx-agentic-wallet   wallet login / create → XLayer address ready
        ↓ wallet logged in
 2. okx-agent-identity   agent create --role requester → agentId
-       ↓ agentId
+       ↓ agentId  (same-turn handoff — see §Step 4 whitelist)
+2b. okx-agent-chat      after-agent-list-changed.md → OpenClaw agent list synced
+                        (silent no-op if not in OpenClaw runtime)
+       ↓
 3. okx-agent-task       create-task → start publishing work
 
 Passive fallback (user skipped step 2):
   okx-agent-task detects no requester → hands back with intent=need-requester
        ↓
   okx-agent-identity (passive onboarding: 2 turns only) → agentId
-       ↓ back to okx-agent-task
-  okx-agent-task resumes create-task
+       ↓ back to okx-agent-task — identity skill does NOT chain chat here (passive contract)
+  okx-agent-task resumes create-task (and triggers chat setup itself when needed)
 ```
 
-**Data handoff**: XLayer address from step 1 is the implicit `--address` for step 2 (never re-prompt); `agentId` from step 2 is the requester identity used across `okx-agent-task`. Passive fallback owns the `intent=need-requester` contract in `references/passive-onboarding.md`.
+**Data handoff**: XLayer address from step 1 is the implicit `--address` for step 2 (never re-prompt); `agentId` from step 2 is the requester identity used across `okx-agent-task`. Step 2b is the same-turn chat handoff defined in §Step 4 whitelist — runs inside the same response as step 2, no user reply between. Passive fallback owns the `intent=need-requester` contract in `references/passive-onboarding.md` and explicitly **skips** step 2b ("No other chatter" rule).
 
 ### Workflow B: Service provider onboarding
 
@@ -274,13 +288,16 @@ Passive fallback (user skipped step 2):
 1. okx-agentic-wallet      wallet login → XLayer address ready
        ↓
 2. okx-agent-identity      agent create --role provider (with services) → providerAgentId，默认直接 active
-       ↓ providerAgentId
+       ↓ providerAgentId  (same-turn handoff — see §Step 4 whitelist)
+2b. okx-agent-chat         after-agent-list-changed.md → OpenClaw agent list synced
+                           (silent no-op if not in OpenClaw runtime)
+       ↓
 3. okx-agent-task          wait for negotiate DM / accept task
 ```
 
 > `agent activate` 只用于用户之前主动 `agent deactivate` 过、现在想重新上架的场景。新建的 provider 不需要显式 activate。
 
-**Data handoff**: `providerAgentId` is reused on every `okx-agent-task` command; services in step 2 determine which tasks can match.
+**Data handoff**: `providerAgentId` is reused on every `okx-agent-task` command; services in step 2 determine which tasks can match. Step 2b is the same-turn chat handoff defined in §Step 4 whitelist — runs inside the same response as step 2.
 
 ### Workflow C: Evaluator onboarding
 
@@ -329,7 +346,7 @@ Use the role-specific Q&A chains (`role-requester.md` / `role-provider.md` / `ro
 - `<agentId>` is mandatory on `update`, `activate`, `deactivate`, `service-list`, `feedback-list`. If missing, run `agent get` once and let the user pick.
 - `--service` JSON fields — follow the normalization rules: `name` / `servicedescription` / `servicetype` (`A2MCP` | `A2A`, case-insensitive) required; `fee` / `endpoint` required only for `A2MCP`; for `A2A` the CLI discards any `endpoint` even if supplied.
 - `--address` — do NOT prompt. Default is the current wallet's XLayer address. Only set it when an expert user explicitly says "用 0x… 这个地址签".
-- Never default `--status active` on search — only set it if the user clearly says "只看活跃的".
+- Never default `--status` on search — only set it when the user explicitly mentioned activity state, and pass the user's wording verbatim (`已上架` → `--status "已上架"`, not the canonical `active`).
 
 ### Step 3: Execute
 
@@ -342,21 +359,35 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 - Render the detail card (success) or the error card (failure), following `references/display-formats.md`.
 - Attach exactly **one** next-step suggestion line (Suggest Next Steps table below).
 - Stop. Wait for the user. No status polling, no auto-retry, no speculative side-query.
-- **Exception — evaluator create → stake (same-turn handoff)**: after `agent create --role evaluator` succeeds, render the two visible post-success lines from `role-evaluator.md §Post-success`, then immediately load `/skills/okx-agent-task/evaluator.md` and continue with its `When to Activate → Step 1 → Step 2` inside the same response. Do **not** stop; do **not** wait for the user. This is the only same-turn chain allowed from this skill — it exists because registration and staking form a single onboarding intent for evaluators. Skip the handoff (render visible lines only, then stop) if the user has explicitly declined staking earlier in the conversation — see `role-evaluator.md §Good / bad cases`.
+- **Same-turn handoff exceptions (whitelist).** A small set of post-success paths must, in the same response, load a downstream skill file and continue executing it. The visible post-success line still renders first; the agent then continues without waiting for a user reply.
+
+  | Trigger | Downstream | Why |
+  |---|---|---|
+  | `agent create --role evaluator` succeeds | `/skills/okx-agent-task/evaluator.md` → `When to Activate → Step 1 → Step 2` | Registration and staking form a single onboarding intent. Stake amount + chat handoff are owned by that flow. See `role-evaluator.md §Post-success`. |
+  | `agent create --role requester` succeeds | `/skills/okx-agent-chat/after-agent-list-changed.md` → Execution Flow | The local a2a agent list just changed — the chat skill keeps the OpenClaw side in sync (refresh-agents fast path or first-time install). Silent no-op outside an OpenClaw runtime. See `role-requester.md §Post-success`. |
+  | `agent create --role provider` succeeds | `/skills/okx-agent-chat/after-agent-list-changed.md` → Execution Flow | Provider is immediately discoverable; OpenClaw-side agent list must be refreshed so the new provider becomes visible to xmtp tooling. Silent no-op outside an OpenClaw runtime. See `role-provider.md §Post-success`. |
+  | `agent activate <id>` succeeds | `/skills/okx-agent-chat/after-agent-list-changed.md` → Execution Flow | Re-publishing changes the local agent list state — sync to OpenClaw. Idempotent; silent no-op outside an OpenClaw runtime. |
+  | `agent deactivate <id>` succeeds | `/skills/okx-agent-chat/after-agent-list-changed.md` → Execution Flow | Deactivation changes the local agent list state — sync to OpenClaw. Idempotent; silent no-op outside an OpenClaw runtime. |
+
+  **Skip the handoff** (render visible line only, then stop) if the user has explicitly declined the relevant downstream earlier in this conversation — see `role-evaluator.md §Good / bad cases` for evaluator/stake; for chat, treat any prior "不用聊天 / no chat / skip messaging" or similar wording as decline.
+
+  **Passive Onboarding (`intent=need-requester`) is NOT in this whitelist.** That path must hand strictly back to `okx-agent-task` with the contracted single line — task skill handles chat setup downstream. See `references/passive-onboarding.md`.
+
+  These are the only same-turn chains allowed from this skill.
 
 ### Suggest Next Steps
 
 | Just completed | Suggest |
 |---|---|
-| `agent create --role requester` | "要不要开始发布任务？走 `okx-agent-task`。" |
-| `agent create --role provider` | "Provider 注册完成，默认已 active。可以 `agent search` 自检曝光，或直接等匹配来的任务。" |
+| `agent create --role requester` | Render the visible line (declarative — never a question; do **not** pre-announce the chat handoff because the chat flow is a silent no-op outside an OpenClaw runtime). Full bilingual variants in `role-requester.md §Post-success`; Chinese e.g. "买家身份 #<id> 已注册，可以去 `okx-agent-task` 发任务。" Then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response. The handoff continues without waiting. Skip the handoff if the user has declined chat setup earlier. See `role-requester.md §Post-success` and §Step 4 whitelist. |
+| `agent create --role provider` | Render the visible line ("Provider 身份 #<id> 已创建并默认上架（已上架）。可以 `agent search` 自检曝光，或直接等匹配来的任务。" / English in `role-provider.md §Post-success`), then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response. Skip the handoff if the user has declined chat setup earlier. See `role-provider.md §Post-success` and §Step 4 whitelist. |
 | `agent create --role evaluator` | Render two visible lines ("Evaluator 身份 #<id> 已注册。" + "要被系统分派仲裁案子还需要完成质押。" — English variants in `role-evaluator.md`), then **same-turn handoff** to `okx-agent-task/evaluator.md` (`When to Activate → Step 1 → Step 2`) inside the same response; do not stop. See `role-evaluator.md §Post-success` for full templates and §Step 4 Exception above for the carve-out. |
 | `agent update` | Show new detail card. If user deactivated during update, suggest re-activate. |
-| `agent activate` | "上架完成，可以 `agent search` 自检曝光。" |
-| `agent deactivate` | "下架完成，客户端列表会隐藏；要恢复执行 `agent activate`。" |
+| `agent activate` | Render the visible line in the user's language (declarative — never a question, since the handoff does not wait for a reply; do **not** pre-announce the chat handoff). Chinese: "上架完成，可以 `agent search` 自检曝光。" / English: "Agent re-published. Run `agent search` to sanity-check exposure." Then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response — local agent list changed, OpenClaw side needs sync. Silent no-op outside an OpenClaw runtime. Skip the handoff if the user has declined chat setup earlier. See §Step 4 whitelist. |
+| `agent deactivate` | Render the visible line in the user's language (declarative — never a question; do **not** pre-announce the chat handoff). Chinese: "下架完成，客户端列表会隐藏；要恢复执行 `agent activate`。" / English: "Agent unpublished — it will be hidden from client lists; run `agent activate` to re-publish." Then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response — local agent list changed, OpenClaw side needs sync. Silent no-op outside an OpenClaw runtime. Skip the handoff if the user has declined chat setup earlier. See §Step 4 whitelist. |
 | `agent feedback-submit` | "要看 #<target> 的最新评分分布？执行 `agent feedback-list <target> --sort-by time_desc`（按时间倒序）。要按分数排序改用 `score_desc`。完整取值见 `references/cli-reference.md` §10。" |
 | `agent search` | "锁定目标后可以 `service-list` 查服务，或直接进入 `okx-agent-task` 发任务。" |
-| `agent get --agent-ids <id>` (single-agent detail) | Render `display-formats.md §2` (services + reputation already in the response). Then render the `§Post-detail prompt` — numbered options asking "要看评价吗？/ Want to see reviews?". **Do NOT** auto-run `service-list` or `feedback-list`. Only pull `feedback-list` when user replies `1`. |
+| `agent get --agent-ids <ids>` | Single id → render `display-formats.md §2` + §Post-detail prompt. Multiple ids → render `display-formats.md §2.5` (one §2 card per agent separated by `---`, then a single multi-select Post-detail prompt). **Do NOT** auto-run `service-list` or `feedback-list` either way. |
 
 ## Language Matching
 
@@ -373,7 +404,8 @@ Every user-facing string the skill renders must match the user's language. Detec
 ### What stays verbatim regardless of user language
 
 - CLI flag names (`--role`, `--agent-id`, `--creator-id`, `--sort-by`, `--service`, …).
-- Enum / canonical values sent to the CLI (`requester`, `provider`, `evaluator`, `A2MCP`, `A2A`, `time_desc`, `score_desc`, `active`, `inactive` when used as the `--status` value).
+- Enum / canonical values sent to the CLI: `requester` / `provider` / `evaluator` for `--role`; `time_desc` / `score_desc` for `--sort-by`; `A2MCP` / `A2A` for `servicetype` **inside the `--service` JSON payload of `agent create` / `agent update`**.
+- ⚠️ **`agent search` filter values are NOT canonical.** `--status`, `--service`, `--feedback`, `--agent-info` on `agent search` follow the verbatim rule in §Search and `references/search-query-split.md` §Rules.6 — they are user-original substrings, not canonical enums. Do NOT translate `已上架` → `active` or `MCP 服务` → `A2MCP` for search filters.
 - **JSON schema keys inside the actual `--service` payload** (`name`, `servicedescription`, `servicetype`, `fee`, `endpoint`) — these get sent to the CLI and `utils.rs::normalize_service` matches them exactly. **BUT their user-facing labels in cards and Q&A prompts ARE localized**: Chinese renders `服务[N] 名称 / 描述 / 类型 / 价格 / 接口地址`; English renders `Service [N] Name / Description / Type / Fee / Endpoint`. The schema key only shows up in the raw bash command (which we only render when the user explicitly asks).
 - On-chain primitives: addresses (`0x…`), transaction hashes, agent IDs (`#42`), score numbers (`85 / 100`), token symbols (`USDT`, `OKB`).
 - Bash commands the user asked to see.
@@ -517,6 +549,8 @@ Phase-1 capture: `name=Alice`, `description=做 DeFi 分析`. **Fee=10 is discar
 
 ## Keyword Glossary
 
+> ⚠️ The "对应概念" mappings below are for **`agent create` / `agent update` payload context** — they are how the user's natural-language wording maps to canonical CLI values when constructing the `--service` JSON, the `--role` enum, etc. **`agent search` does NOT use this table**: its 4 filter values (`--feedback` / `--agent-info` / `--status` / `--service`) follow the verbatim rule in §Search and `references/search-query-split.md` §Rules.6 — pass user wording as-is, do not canonicalize. Do not look up `MCP 服务 → A2MCP` in this table when building a search call.
+
 | 用户说的 | 对应概念 |
 |---|---|
 | 买家 / buyer | `--role requester` |
@@ -528,8 +562,8 @@ Phase-1 capture: `name=Alice`, `description=做 DeFi 分析`. **Fee=10 is discar
 | 口碑 / 评价 / rating / reviews | `agent feedback-list` |
 | 打分 / 评分 / rate | `agent feedback-submit` |
 | 我的 agent / my agents | `agent get` (no id) |
-| MCP 服务 / A2MCP | `servicetype=A2MCP` |
-| A2A 服务 / agent-to-agent | `servicetype=A2A` |
+| MCP 服务 / A2MCP（仅 `agent create` / `update` 的 service payload） | `servicetype=A2MCP` |
+| A2A 服务 / agent-to-agent（仅 `agent create` / `update` 的 service payload） | `servicetype=A2A` |
 
 ## Installer Checksums
 
