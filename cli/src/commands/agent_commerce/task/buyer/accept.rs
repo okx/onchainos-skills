@@ -16,34 +16,32 @@
 //! 支付设计：https://okg-block.sg.larksuite.com/docx/CwWbd6eCOopgq6x6VwTlWEivgrc
 
 use anyhow::{bail, Result};
-use serde_json::Value;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{
     self, PAYMENT_MODE_ESCROW, PAYMENT_MODE_NON_ESCROW, PAYMENT_MODE_X402,
-    XLAYER_CHAIN_INDEX,
 };
 use crate::commands::agent_commerce::task::signing;
 use crate::commands::payment::a2a_pay::{self, PayParams};
 use super::x402_flow;
 
-/// 通过 token basic-info API 查询 token decimals，返回 (decimals,)。
-async fn fetch_token_decimals(token_address: &str) -> Result<u32> {
-    let mut api_client = crate::client::ApiClient::new_async(None).await
-        .map_err(|e| anyhow::anyhow!("创建 ApiClient 失败: {e}"))?;
-    let info = crate::commands::token::fetch_info(&mut api_client, token_address, XLAYER_CHAIN_INDEX)
-        .await
-        .map_err(|e| anyhow::anyhow!("查询 token decimals 失败 ({token_address}): {e}"))?;
-    let info_arr = info.as_array().filter(|a| !a.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("未查到 token 信息 ({token_address})，无法获取 decimals"))?;
-    match &info_arr[0]["decimal"] {
-        Value::String(s) => s.parse().map_err(|_| anyhow::anyhow!("token decimal 解析失败: {s}")),
-        Value::Number(n) => n.as_u64()
-            .map(|v| v as u32)
-            .ok_or_else(|| anyhow::anyhow!("token decimal 值无效")),
-        _ => bail!("token 信息中缺少 decimal 字段"),
-    }
+/// 通过 tokenDetail API 查询 token 合约地址和精度。
+/// GET /priapi/v1/aieco/task/tokenDetail?symbol=<symbol>
+/// 返回 (token_address, decimals)
+async fn fetch_token_detail(client: &mut TaskApiClient, symbol: &str) -> Result<(String, u32)> {
+    let path = format!("/priapi/v1/aieco/task/tokenDetail?symbol={symbol}");
+    let resp = client.get(&path).await
+        .map_err(|e| anyhow::anyhow!("查询 tokenDetail 失败 (symbol={symbol}): {e}"))?;
+    let address = resp["address"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("tokenDetail 响应缺少 address 字段"))?
+        .to_string();
+    let decimals = resp["decimals"]
+        .as_u64()
+        .ok_or_else(|| anyhow::anyhow!("tokenDetail 响应缺少 decimals 字段"))? as u32;
+    Ok((address, decimals))
 }
+
 
 /// confirm-accept — 确认接受卖家
 #[allow(clippy::too_many_lines)]
@@ -84,31 +82,16 @@ pub async fn handle_confirm_accept(
             let task = &task_resp;
             let amount = task["tokenAmount"].as_str().unwrap_or("0").to_string();
             let symbol = task["paymentTokenSymbol"].as_str().unwrap_or("USDT").to_string();
-            let token_address = task["tokenAddress"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| anyhow::anyhow!("任务详情缺少 tokenAddress，无法完成支付"))?
-                .to_string();
 
-            // 通过 token API 查询 decimals，将人类可读金额转为最小单位
-            let decimals = fetch_token_decimals(&token_address).await?;
+            // 通过 tokenDetail API 查询 token 合约地址和精度
+            let (token_address, decimals) = fetch_token_detail(client, &symbol).await?;
             let amount_minimal = crate::commands::swap::readable_to_minimal_str(&amount, decimals)?;
 
-            // Escrow 模式下 EIP-3009 的 recipient 是 escrow 合约地址（非 provider），
-            // 需通过 prePayTaskInfo 获取正确的 escrowContract 地址。
-            // a2a_pay::pay() 内部会校验 recipient_address 与 challenge 中的 recipient 一致。
-            let pre_pay_body = serde_json::json!({ "tokenSymbol": &symbol });
-            let pre_pay_info = client
-                .post_with_identity(
-                    &client.endpoint(job_id, "prePayTaskInfo"),
-                    &pre_pay_body,
-                    &agent_id,
-                )
-                .await?;
-            let recipient = pre_pay_info["escrowContract"]
+            // Escrow / non-escrow 模式下 recipient 都是卖家钱包地址
+            let recipient = task["providerAgentAddress"]
                 .as_str()
-                .or_else(|| pre_pay_info["recipient"].as_str())
-                .unwrap_or(provider)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("任务详情缺少 providerAgentAddress，无法确定收款地址"))?
                 .to_string();
 
             // Step 2a: a2a_pay::pay() — EIP-3009 支付签名
@@ -173,17 +156,12 @@ pub async fn handle_confirm_accept(
             let task = &task_resp;
             let amount = task["tokenAmount"].as_str().unwrap_or("0").to_string();
             let symbol = task["paymentTokenSymbol"].as_str().unwrap_or("USDT").to_string();
-            let token_address = task["tokenAddress"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| anyhow::anyhow!("任务详情缺少 tokenAddress，无法完成支付"))?
-                .to_string();
 
-            // 通过 token API 查询 decimals，将人类可读金额转为最小单位
-            let decimals = fetch_token_decimals(&token_address).await?;
+            // 通过 tokenDetail API 查询 token 合约地址和精度
+            let (token_address, decimals) = fetch_token_detail(client, &symbol).await?;
             let amount_minimal = crate::commands::swap::readable_to_minimal_str(&amount, decimals)?;
 
-            // Charge 模式 EIP-3009 recipient = 卖家钱包地址（买家协商数据，从任务详情获取）
+            // Charge 模式 EIP-3009 recipient = 卖家钱包地址（从任务详情获取）
             let recipient = task["providerAgentAddress"]
                 .as_str()
                 .filter(|s| !s.is_empty())

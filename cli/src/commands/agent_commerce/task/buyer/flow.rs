@@ -158,8 +158,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20⚠️ 调用前输出：`[buyer-xmtp] xmtp_start_conversation: myAgentId={agent_id}, toAgentId=<providerAgentId>, jobId={job_id}`\n\
              \x20\x20⚠️ 调用后输出：`[buyer-xmtp] xmtp_start_conversation result: sessionKey=<返回值>, xmtpGroupId=<返回值>`\n\n\
              **B-Step 2 — 自动协商（买家 Agent ↔ 卖家 Agent 在 sub session 中多轮交互）：**\n\
-             ⚠️ B-Step 1 建群后，你仍在主 session。用 xmtp_dispatch_session（带 sessionKey）发送第一条消息进入 sub session。\n\
-             后续协商在 sub session 中进行，使用 xmtp_send（带 sessionKey）发送消息。\n\n\
+             ⚠️ B-Step 1 建群后，已进入 sub session。直接用 xmtp_send 发送消息。\n\
+             ⚠️ **禁止**用 xmtp_dispatch_user / xmtp_dispatch_session，建群后统一用 xmtp_send。\n\n\
              协商目标：就以下结构化字段达成一致——\n\
              \x20\x20- deliverable：交付物描述（具体要做什么）\n\
              \x20\x20- qualityStandards：验收标准\n\
@@ -169,8 +169,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20- deadline：交付截止时间\n\n\
              ⏱ 超时规则：每轮等待卖家回复最多 5 分钟。超时未回复 → 结束当前 sub session，切换下一个卖家。\n\n\
              协商步骤：\n\
-             1. （主 session → sub session）调用 xmtp_dispatch_session 发送第一条消息：\n\
-             \x20\x20参数：sessionKey=<B-Step 1 返回的 sessionKey>，content=<任务详情（描述、预算、期望交付物）>\n\
+             1. 调用 xmtp_send 发送第一条询盘消息：\n\
+             \x20\x20content=<任务详情（描述、预算、期望交付物、支付方式）>\n\
              \x20\x20→ 等待卖家回复（5 分钟超时）\n\
              2. （sub session 内）卖家回复报价（金额、代币、支付方式偏好、预计交付时间）\n\
              3. （sub session 内）双方就价格/条件进行调整（可能多轮，每轮 5 分钟超时）\n\
@@ -256,47 +256,83 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - job_submitted → 验收交付物\n"
         ),
 
-        // ─── Scene 7: 卖家提交交付物，验收（区分支付方式） ─────────────
+        // ─── Scene 7: 卖家提交交付物，下载 + 验收（区分支付方式） ─────────
         Event::JobSubmitted => format!(
             "【当前状态】job_submitted（卖家已提交交付物）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作（严格顺序）】\n\n\
-             **Step 1 — 查询交付物详情：**\n\
+             **Step 1 — 查询任务详情，提取交付物和支付方式：**\n\
              ```bash\n\
              onchainos agent status {job_id}\n\
              ```\n\
-             提取 `deliverableUrl`、`qualityStandards` 和 `paymentMode`。\n\n\
-             **Step 2 — 调用 xmtp_prompt_user 把验收决策请求推到 user session 让用户拍板：**\n\n\
+             提取 `deliverableUrl`、`qualityStandards` 和 `paymentMode`（paymentType 整型：1=escrow, 2=non_escrow）。\n\n\
+             **Step 2 — 下载交付物文件（xmtp_file_download）：**\n\
+             从卖家在 sub session 中发送的交付物消息里提取加密元数据，调用 xmtp_file_download 工具：\n\
+             \x20\x20参数：\n\
+             \x20\x20- fileKey：卖家上传时返回的 fileKey\n\
+             \x20\x20- agentId：{agent_id}（买家 agentId）\n\
+             \x20\x20- digest：SHA-256 digest（hex）\n\
+             \x20\x20- salt：加密 salt（base64）\n\
+             \x20\x20- nonce：加密 nonce（base64）\n\
+             \x20\x20- secret：加密 secret（base64）\n\
+             \x20\x20- filename：（可选）保存文件名\n\
+             ⚠️ 调用前输出：`[buyer-xmtp] xmtp_file_download: fileKey=<fileKey>, agentId={agent_id}`\n\
+             ⚠️ 调用后输出：`[buyer-xmtp] xmtp_file_download result: localPath=<返回的本地路径>`\n\n\
+             下载成功后记录 localPath，后续展示给用户。\n\
+             如果下载失败 → 用 deliverableUrl 作为备用展示信息。\n\n\
+             **Step 3 — 调用 xmtp_prompt_user 把交付物和验收决策请求推到 user session：**\n\n\
              先调 `session_status` 拿到本 sub session 的 sessionKey。\n\n\
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}] \
              用户回复「验收通过」→ relay 回 sub session 执行 onchainos agent complete；\
-             回复「拒绝，原因是...」→ relay 回 sub session 执行 onchainos agent reject。禁止 user session agent 自己执行 task CLI。\n\
+             回复「拒绝，原因是...」→ relay 回 sub session 执行 onchainos agent reject（仅 escrow 可拒绝）。\
+             禁止 user session agent 自己执行 task CLI。\n\
              \x20\x20\x20\x20userContent:\n\
-             \x20\x20\x20\x20任务 {job_id} 卖家已提交交付物。\n\
+             \x20\x20\x20\x20任务 {job_id} 卖家已提交交付物，已下载到本地。\n\
+             \x20\x20\x20\x20交付物本地路径：<localPath>（如下载失败则显示 deliverableUrl）\n\
              \x20\x20\x20\x20交付物地址：<deliverableUrl>\n\
              \x20\x20\x20\x20验收标准：<qualityStandards>\n\
-             \x20\x20\x20\x20支付方式：<paymentMode>\n\
+             \x20\x20\x20\x20支付方式：<paymentMode>（escrow=担保 / non_escrow=非担保）\n\
              \x20\x20\x20\x20请选择：\n\
-             \x20\x20\x20\x201. 验收通过 → 回复'验收通过'\n\
-             \x20\x20\x20\x202. 拒绝（仅 escrow）→ 回复'拒绝，原因是<原因>'\n\n\
-             **Step 3 — 等用户回复 relay 回来**：\n\
+             \x20\x20\x20\x201. 验收通过 → 回复「验收通过」\n\
+             \x20\x20\x20\x202. 拒绝（仅担保支付 escrow 可拒绝）→ 回复「拒绝，原因是<原因>」\n\n\
+             **Step 4 — 等用户回复 relay 回来**，按用户决策 + 支付方式分支执行：\n\
              收到 `[USER_DECISION_RELAY] 用户决策：...` 后，按关键词执行：\n\n\
-             ▸ **含『验收通过』：**\n\
+             ━━━━━━━━━ 分支 A：用户验收通过 ━━━━━━━━━\n\n\
+             ▸ **担保支付（escrow, paymentType=1）— 双签流程：**\n\
              ```bash\n\
              onchainos agent complete {job_id}\n\
-             ```\n\n\
-             ▸ **含『拒绝』（仅 escrow 模式有效）：**\n\
+             ```\n\
+             内部流程：\n\
+             \x20\x201. POST /priapi/v1/aieco/task/{job_id}/pre-complete（712 标准，非 uop）→ 获取 digest\n\
+             \x20\x202. ED25519 签名 digest → signature\n\
+             \x20\x203. POST /priapi/v1/aieco/task/{job_id}/complete（body: {{\"signature\": \"<sig>\"}}）→ 获取 uopData\n\
+             \x20\x204. 签名 uopHash → 广播上链\n\
+             \x20\x20→ 任务状态变为 Complete，资金从合约释放给卖家。\n\n\
+             ▸ **非担保支付（non_escrow, paymentType=2）— 单签流程：**\n\
+             ```bash\n\
+             onchainos agent complete {job_id}\n\
+             ```\n\
+             内部流程：\n\
+             \x20\x201. POST /priapi/v1/aieco/task/{job_id}/direct/complete → 获取 uopData\n\
+             \x20\x202. 签名 uopHash → 广播上链\n\
+             \x20\x20→ 任务状态变为 Complete（买家后续需手动转账给卖家）。\n\n\
+             ━━━━━━━━━ 分支 B：用户拒绝交付物（仅 escrow 担保支付可拒绝）━━━━━━━━━\n\n\
+             ⚠️ 非担保支付（non_escrow）不支持拒绝，如果用户要求拒绝 non_escrow 任务，\n\
+             通知用户：「非担保支付任务不支持拒绝交付物，只能验收通过。」\n\n\
+             ▸ **担保支付（escrow）拒绝 — 双签流程：**\n\
              ```bash\n\
              onchainos agent reject {job_id} --reason \"<用户提供的拒绝原因>\"\n\
-             ```\n\n\
-             ▸ **非担保支付（non_escrow）— 只能接受，不能拒绝：**\n\
-             ```bash\n\
-             onchainos agent complete {job_id}\n\
-             ```\n\n\
-             跑完 Step 3 → **结束本轮 turn**，等系统通知。\n\n\
+             ```\n\
+             内部流程：\n\
+             \x20\x201. POST /priapi/v1/aieco/task/{job_id}/pre-refuse（712 标准，非 uop）→ 获取 digest\n\
+             \x20\x202. ED25519 签名 digest → signature\n\
+             \x20\x203. POST /priapi/v1/aieco/task/{job_id}/refuse（body: {{\"signature\": \"<sig>\", \"reason\": \"<reason>\"}}）→ 获取 uopData\n\
+             \x20\x204. 签名 uopHash → 广播上链\n\
+             \x20\x20→ 任务状态变为 Refused，卖家 24h 内可发起仲裁。\n\n\
+             跑完 Step 4 → **结束本轮 turn**，等系统通知。\n\n\
              【后续事件】\n\
-             - job_completed → 任务完成\n\
-             - job_refused → 等待卖家决定（仲裁/退款）（仅 escrow）\n"
+             - job_completed → 任务完成（Scene 8）\n\
+             - job_refused → 等待卖家决定：仲裁（job_disputed）或退款（confirm_refund）（仅 escrow）\n"
         ),
 
         // ─── job_refused: 买家已拒绝，等待卖家决策 ─────────────────
@@ -508,9 +544,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20参数：myAgentId={agent_id}，toAgentId=<当前卖家的 agentId>，jobId={job_id}\n\
              \x20\x20⚠️ 调用前输出：`[buyer-xmtp] xmtp_start_conversation: myAgentId={agent_id}, toAgentId=<agentId>, jobId={job_id}`\n\
              \x20\x20⚠️ 调用后输出：`[buyer-xmtp] xmtp_start_conversation result: sessionKey=<返回值>, xmtpGroupId=<返回值>`\n\n\
-             A-Step 2：调用 xmtp_dispatch_session 向卖家发起协商（参照 buyer.md §2.1 协商剧本三步确认）：\n\
-             \x20\x20⚠️ 你当前在 user session，不能直接 xmtp_send 到 sub session。\n\
-             \x20\x20参数：sessionKey=<A-Step 1 返回的 sessionKey>，content=<下方消息内容>\n\
+             A-Step 2：建群后已进入 sub session，调用 xmtp_send 向卖家发起协商（参照 buyer.md §2.1 协商剧本三步确认）：\n\
+             \x20\x20⚠️ **禁止**用 xmtp_dispatch_user / xmtp_dispatch_session，建群后统一用 xmtp_send。\n\
              \x20\x20content: 你好，我有一个任务（jobId: {job_id}）想请你来完成，请问你感兴趣吗？\n\n\
              A-Step 3：协商成功 → 卖家 apply 上链 → 等待 provider_applied 事件（进入场景 6）\n\n\
              A-Step 4：协商失败（卖家拒绝 / 超时 / 条件不一致）→ 跳到 B 分支。\n\n\
