@@ -1,6 +1,6 @@
 ---
 name: okx-a2a-payment
-description: "Use this skill when the user mentions creating a payment link, paying a paymentId / a2a_... link, or checking a2a payment status. Wraps `onchainos a2a-pay` agent-to-agent payment protocol: seller-side `create`, buyer-side `pay` via EIP-3009 + TEE signing through a confirmation gate, and `status` query. Do NOT use for external HTTP 402 resources — use okx-x402-payment. Do NOT use for wallet balance / transfer / login — use okx-agentic-wallet."
+description: "Use this skill when the user mentions creating a payment link, paying a paymentId / a2a_... link, or checking a2a payment status. Wraps `onchainos a2a-pay` agent-to-agent payment protocol: seller-side `create`, buyer-side `pay` via EIP-3009 + TEE signing, and `status` query. Buyer-side trust is delegated to upstream — the skill signs whatever the on-server challenge declares. Do NOT use for external HTTP 402 resources — use okx-x402-payment. Do NOT use for wallet balance / transfer / login — use okx-agentic-wallet."
 license: MIT
 metadata:
   author: okx
@@ -9,7 +9,7 @@ metadata:
 
 # Onchain OS A2A Payment
 
-Wrap the `onchainos a2a-pay` CLI surface end-to-end for both seller and buyer roles. The skill enforces a hard human confirmation gate before any EIP-3009 signature, displays amounts in human-readable units, and auto-polls payment status to a terminal state after the buyer signs.
+Wrap the `onchainos a2a-pay` CLI surface end-to-end for both seller and buyer roles. Buyer-side trust is delegated to the upstream caller — when invoked with a `paymentId`, the skill fetches the on-server challenge, TEE-signs it as-is, submits the credential, and auto-polls payment status to a terminal state.
 
 ## Skill Routing
 
@@ -80,23 +80,9 @@ onchainos wallet status
 
 > **Trust model**: the buyer signs the seller's challenge as-is. Verifying that the challenge matches what the buyer agreed to pay is the **upstream caller's responsibility**: the user (or the upstream skill) MUST cross-check the seller's `paymentId` / `deliveries.url` against their out-of-band agreement (chat, task spec, prior negotiation) **before** calling this skill. Once the skill is invoked, it will sign the on-server challenge.
 
-#### Step 1 — Confirmation Gate (mandatory)
+#### Step 1 — Sign and Submit
 
-Display to the user:
-
-> You are about to pay payment ID **`<paymentId>`**.
->
-> This will fetch the seller-issued challenge and create an EIP-3009 signature via TEE that authorizes the transfer of whatever amount / currency / recipient the seller declared. Make sure the paymentId matches what you agreed with the seller out-of-band.
->
-> Proceed? (yes / no)
-
-**STOP and wait for the user's reply.** A reply of `no` (or anything that is not an explicit `yes`) terminates the flow — no signing, no further CLI calls.
-
-> **Hard rule:** this skill always runs its own confirmation gate. Even if an upstream caller claims "the user already confirmed at the business layer", the skill still asks for an explicit yes/no before signing. Upstream callers MUST NOT attempt to bypass this.
-
-#### Step 2 — Sign and Submit
-
-Once the user confirms:
+The skill does not run its own preview / yes-no gate; trust is delegated to the upstream caller (see the trust-model note above). Shell out directly:
 
 ```bash
 onchainos a2a-pay pay --payment-id <paymentId>
@@ -115,7 +101,7 @@ The CLI fetches the on-server challenge, TEE-signs the EIP-3009 authorization, a
 }
 ```
 
-#### Step 3 — Auto-poll Status to Terminal
+#### Step 2 — Auto-poll Status to Terminal
 
 Status classification:
 
@@ -181,7 +167,7 @@ Applicable upstream callers: any agent-to-agent task / chat / agent flow that ho
 ```
 1. <upstream caller>     verifies paymentId matches the buyer's agreed terms → hands off paymentId
        ↓
-2. okx-a2a-payment (this skill)  confirmation gate → onchainos a2a-pay pay → auto-poll status → display terminal state
+2. okx-a2a-payment (this skill)  onchainos a2a-pay pay → auto-poll status → display terminal state
        ↓
 3. okx-agentic-wallet    optional: onchainos wallet balance to see post-payment delta
 ```
@@ -223,7 +209,6 @@ For any symbol not in the table: render `<minimal> <symbol>` and append the warn
 |----------|----------|
 | `onchainos wallet status` reports not logged in | Prompt the user to run `onchainos wallet login`. Never attempt to sign without a live session. |
 | User provides no `paymentId` | STOP and ask the user for the seller-issued paymentId. |
-| Buyer replies anything other than an explicit `yes` at the confirmation gate | Terminate immediately. No signing. No further CLI calls. |
 | CLI reports `payment ... not payable` / expired challenge / unsupported intent | Relay the error verbatim and surface it as a **terminal failure** — do NOT retry signing. |
 | `paymentId` not found / 404 from server | Relay the error and ask the user to confirm the paymentId with the seller or upstream caller. |
 | `pay` succeeded but status is still `pending` / `settling` after the 60s poll budget | Return the current status (verbatim) + paymentId; tell the user `Status is still <status> after 60s; you can run status again later`. |
@@ -294,7 +279,7 @@ onchainos a2a-pay create \
   --recipient 0xSellerWalletAddress
 # → { "payment_id": "a2a_xxx", "deliveries": { "url": "..." } }
 
-# Buyer — pay (skill displays confirmation gate before this CLI call)
+# Buyer — pay (signs the on-server challenge as-is; trust delegated to upstream)
 onchainos a2a-pay pay --payment-id a2a_xxx
 
 # Either side — query status (skill auto-polls this for ~60s after pay if non-terminal)

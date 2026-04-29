@@ -209,7 +209,7 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
     let resp: Value = wallet_client
         .get_public(&payment_path, &[])
         .await
-        .context("Smart-Account GET /p/{id} failed")?;
+        .with_context(|| format!("Smart-Account GET /p/{} failed", p.payment_id))?;
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG][a2a-pay] GET /p/{} response={resp}", p.payment_id);
     }
@@ -231,8 +231,7 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
     let challenge = resp
         .get("challenge")
         .cloned()
-        .or_else(|| resp.get("type").is_some().then(|| resp.clone()))
-        .ok_or_else(|| anyhow!("GET /payment/{} response missing 'challenge'", p.payment_id))?;
+        .ok_or_else(|| anyhow!("GET /p/{} response missing 'challenge'", p.payment_id))?;
     let data = challenge
         .get("data")
         .ok_or_else(|| anyhow!("challenge.data missing"))?;
@@ -419,7 +418,7 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .post_authed(&credential_path, &access_token, &credential_body)
         .await
         .map_err(format_api_error)
-        .context("Smart-Account /p/{id}/credential failed")?;
+        .with_context(|| format!("Smart-Account /p/{}/credential failed", p.payment_id))?;
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][a2a-pay] /p/{}/credential response={cred_resp}",
@@ -465,7 +464,7 @@ pub async fn status(payment_id: String) -> Result<StatusOutput> {
         .get_authed(&path, &access_token, &[])
         .await
         .map_err(format_api_error)
-        .context("Smart-Account /p/{id}/status failed")?;
+        .with_context(|| format!("Smart-Account /p/{}/status failed", payment_id))?;
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG][a2a-pay] /p/{payment_id}/status response={resp}");
     }
