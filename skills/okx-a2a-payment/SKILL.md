@@ -76,28 +76,19 @@ onchainos wallet status
 
 ### Buyer — Pay a Payment Link (`a2a-pay pay`)
 
-**Required inputs (all four MUST be present — STOP and ask the user if any is missing; do NOT probe the server to discover them):**
+**Required input**: `paymentId` only. The CLI fetches the seller-issued challenge from the server and signs whatever amount / currency / recipient the challenge declares.
 
-- `paymentId` — seller-issued, the only field that flows seller → buyer
-- `amount` — minimal units, sourced from the **buyer's own context** (upstream skill state, prior negotiation, agreed task terms — NOT parsed from any seller-provided artifact)
-- `currency` — ERC-20 contract address, same source as `amount`
-- `recipientAddress` — seller's wallet address, same source
-
-> **Trust model**: the latter three fields represent what the buyer *expects* to pay. The CLI then fetches the seller-issued challenge from the server and bails on any byte-for-byte mismatch — this is the cross-check that defends against link tampering or misrouted payments. Sourcing the buyer's expectation from the seller's link / `deliveries.url` would be a circular trust loop and MUST be avoided.
+> **Trust model**: the buyer signs the seller's challenge as-is. Verifying that the challenge matches what the buyer agreed to pay is the **upstream caller's responsibility**: the user (or the upstream skill) MUST cross-check the seller's `paymentId` / `deliveries.url` against their out-of-band agreement (chat, task spec, prior negotiation) **before** calling this skill. Once the skill is invoked, it will sign the on-server challenge.
 
 #### Step 1 — Confirmation Gate (mandatory)
 
-Convert `amount` from minimal units to a decimal display using the hardcoded decimals table (see Amount Display Rules). For symbols not in the table, display the raw minimal-units value with a warning `unknown decimals — please double-check the seller-provided amount` — do NOT block the flow (the CLI's mismatch check is the real safety net).
-
 Display to the user:
 
-> You are about to pay:
-> • Amount: **`<decimal>` `<symbol>`** (`<minimal>` minimal units)
-> • To: `<recipientAddress>`
-> • Currency contract: `<currency>`
-> • Payment ID: `<paymentId>`
+> You are about to pay payment ID **`<paymentId>`**.
 >
-> This will create an EIP-3009 signature via TEE that authorizes the transfer. Proceed? (yes / no)
+> This will fetch the seller-issued challenge and create an EIP-3009 signature via TEE that authorizes the transfer of whatever amount / currency / recipient the seller declared. Make sure the paymentId matches what you agreed with the seller out-of-band.
+>
+> Proceed? (yes / no)
 
 **STOP and wait for the user's reply.** A reply of `no` (or anything that is not an explicit `yes`) terminates the flow — no signing, no further CLI calls.
 
@@ -108,16 +99,10 @@ Display to the user:
 Once the user confirms:
 
 ```bash
-onchainos a2a-pay pay \
-  --payment-id <paymentId> \
-  --amount <minimal> \
-  --currency <currency> \
-  --recipient-address <recipientAddress>
+onchainos a2a-pay pay --payment-id <paymentId>
 ```
 
-The CLI fetches the seller-issued challenge and bails byte-for-byte on any `amount` / `currency` / `recipient` mismatch. If the CLI errors with a mismatch, relay the error verbatim to the user with a **prominent warning**: the seller-issued link does not match what the buyer expected — possible tampering or misrouted link.
-
-The successful response shape:
+The CLI fetches the on-server challenge, TEE-signs the EIP-3009 authorization, and submits the credential. The successful response shape:
 
 ```json
 {
@@ -191,15 +176,10 @@ onchainos a2a-pay status --payment-id <paymentId>
 
 Applicable upstream callers: any agent-to-agent task / chat / agent flow that holds the seller-issued payment information.
 
-**Contract — upstream MUST hand off all four fields** (skill stops and asks the user if any is missing):
-
-- `paymentId` — seller's `create` response `payment_id` (only seller→buyer field)
-- `amount` — minimal units, from the buyer's own context (NOT parsed from a seller-provided artifact)
-- `currency` — ERC-20 contract address, same source as `amount`
-- `recipientAddress` — seller's wallet address, same source
+**Contract — upstream MUST hand off `paymentId`** (skill stops and asks the user if missing). Upstream is also responsible for confirming, before invoking this skill, that the `paymentId` matches the buyer's agreed terms — once invoked, the skill signs whatever the on-server challenge declares.
 
 ```
-1. <upstream caller>     completes business-layer confirmation → hands off the 4 fields
+1. <upstream caller>     verifies paymentId matches the buyer's agreed terms → hands off paymentId
        ↓
 2. okx-a2a-payment (this skill)  confirmation gate → onchainos a2a-pay pay → auto-poll status → display terminal state
        ↓
@@ -211,7 +191,7 @@ Applicable upstream callers: any agent-to-agent task / chat / agent flow that ho
 ```
 1. okx-a2a-payment create   → paymentId + deliveries.url
 2. Seller shares paymentId (and optionally deliveries.url) with the buyer out-of-band (chat / QR / message)
-3. Buyer brings amount(minimal) / currency / recipientAddress from their own context (negotiated terms, upstream skill state) and runs Workflow A starting from step 2 with the received paymentId
+3. Buyer cross-checks the paymentId / deliveries.url against the seller's quoted terms, then runs Workflow A starting from step 2 with the received paymentId
 ```
 
 ### Workflow C — Payment failure triage
@@ -235,16 +215,16 @@ When converting `amount` (or `fee.amount`) from minimal units to a decimal displ
 | USDG  | 6        | 1.00 USDG                    |
 | ETH   | 18       | (`1e18` minimal = 1.00 ETH)  |
 
-For any symbol not in the table: render `<minimal> <symbol>` and append the warning `unknown decimals — please double-check the seller-provided amount`. **Do not block** the flow — the CLI's byte-for-byte mismatch check is the actual safety net.
+For any symbol not in the table: render `<minimal> <symbol>` and append the warning `unknown decimals — please double-check the seller-provided amount`. **Do not block** the flow.
 
 ## Edge Cases
 
 | Scenario | Handling |
 |----------|----------|
 | `onchainos wallet status` reports not logged in | Prompt the user to run `onchainos wallet login`. Never attempt to sign without a live session. |
-| User provides `paymentId` only and is missing `amount` / `currency` / `recipientAddress` | STOP and ask the user. Do NOT call the CLI to discover them. |
+| User provides no `paymentId` | STOP and ask the user for the seller-issued paymentId. |
 | Buyer replies anything other than an explicit `yes` at the confirmation gate | Terminate immediately. No signing. No further CLI calls. |
-| CLI reports `amount mismatch` / `currency mismatch` / `recipient address mismatch` | Relay the error verbatim with a **prominent warning**: the seller-issued challenge does not match the buyer's expectation — possible tampering or misrouted link. |
+| CLI reports `payment ... not payable` / expired challenge / unsupported intent | Relay the error verbatim and surface it as a **terminal failure** — do NOT retry signing. |
 | `paymentId` not found / 404 from server | Relay the error and ask the user to confirm the paymentId with the seller or upstream caller. |
 | `pay` succeeded but status is still `pending` / `settling` after the 60s poll budget | Return the current status (verbatim) + paymentId; tell the user `Status is still <status> after 60s; you can run status again later`. |
 | Server returns a 5xx | Retry once with a short backoff; if it fails again, surface the error. **Do not silently re-sign.** |
@@ -281,21 +261,15 @@ onchainos a2a-pay create \
 
 **Return fields**: `payment_id`, `deliveries` (object containing `url` when issued by the server).
 
-> The CLI does not surface `amount` / `currency` here. This is by design: the buyer's expected `amount` / `currency` / `recipientAddress` MUST come from the buyer's own context, not from the seller's response — see Workflow A's trust model.
-
 ### 2. `onchainos a2a-pay pay`
 
 ```bash
-onchainos a2a-pay pay \
-  --payment-id <id> --amount <minimal> --currency <address> --recipient-address <address>
+onchainos a2a-pay pay --payment-id <id>
 ```
 
 | Param | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `--payment-id`        | Yes | - | Seller-issued paymentId |
-| `--amount`            | Yes | - | Expected amount (minimal units) |
-| `--currency`          | Yes | - | Expected ERC-20 contract address |
-| `--recipient-address` | Yes | - | Expected recipient (seller) wallet address |
+| `--payment-id` | Yes | - | Seller-issued paymentId |
 
 **Return fields**: `payment_id`, `status`, `tx_hash` (optional), `valid_after`, `valid_before`, `signature`.
 
@@ -321,11 +295,7 @@ onchainos a2a-pay create \
 # → { "payment_id": "a2a_xxx", "deliveries": { "url": "..." } }
 
 # Buyer — pay (skill displays confirmation gate before this CLI call)
-onchainos a2a-pay pay \
-  --payment-id a2a_xxx \
-  --amount 10000 \
-  --currency 0xUSDTContractAddress \
-  --recipient-address 0xSellerWalletAddress
+onchainos a2a-pay pay --payment-id a2a_xxx
 
 # Either side — query status (skill auto-polls this for ~60s after pay if non-terminal)
 onchainos a2a-pay status --payment-id a2a_xxx

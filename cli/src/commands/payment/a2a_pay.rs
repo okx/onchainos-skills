@@ -48,20 +48,11 @@ pub struct CreateArgs {
     pub expires_in: Option<u64>,
 }
 
-/// Buyer-side `pay` args. Picks up everything else from the on-server challenge.
+/// Buyer-side `pay` args. Everything else is taken from the on-server challenge.
 #[derive(clap::Args)]
 pub struct PayArgs {
     #[arg(long = "payment-id")]
     pub payment_id: String,
-    /// Expected amount.
-    #[arg(long)]
-    pub amount: String,
-    /// Expected ERC-20 token contract address.
-    #[arg(long)]
-    pub currency: String,
-    /// Expected recipient address
-    #[arg(long = "recipient-address")]
-    pub recipient_address: String,
 }
 
 #[derive(Subcommand)]
@@ -88,9 +79,6 @@ pub async fn execute(cmd: A2aPayCommand) -> Result<()> {
         A2aPayCommand::Pay(args) => {
             let params = PayParams {
                 payment_id: args.payment_id,
-                amount: args.amount,
-                currency: args.currency,
-                recipient_address: args.recipient_address,
             };
             let out = pay(params).await?;
             output::success(out);
@@ -189,12 +177,6 @@ fn parse_create_payment_response(resp: Value) -> Result<CreatePaymentOutput> {
 
 pub struct PayParams {
     pub payment_id: String,
-    /// Expected amount in minimal units (e.g. "10000" for 0.01 USDT)
-    pub amount: String,
-    /// Expected ERC-20 token contract address
-    pub currency: String,
-    /// Expected recipient address
-    pub recipient_address: String,
 }
 
 #[derive(serde::Serialize)]
@@ -302,29 +284,6 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("methodDetails.authorizationType missing"))?
         .to_string();
-
-    // Pre-sign safety check: caller's declared amount / symbol / recipient must match
-    // the on-server challenge byte-for-byte (recipient is case-insensitive). Bail
-    // before signing if the seller's challenge disagrees with what the buyer thinks
-    // they're paying for.
-    if p.amount != amount {
-        bail!(
-            "amount mismatch: expected {}, challenge has {amount}",
-            p.amount
-        );
-    }
-    if !p.currency.eq_ignore_ascii_case(&currency) {
-        bail!(
-            "currency mismatch: expected {}, challenge has {currency}",
-            p.currency
-        );
-    }
-    if !p.recipient_address.eq_ignore_ascii_case(&recipient) {
-        bail!(
-            "recipient address mismatch: expected {}, challenge has {recipient}",
-            p.recipient_address
-        );
-    }
 
     // ── 2. Resolve buyer wallet on target chain ──────────────────────
     let chain_entry = crate::commands::agentic_wallet::chain::get_chain_by_real_chain_index(
