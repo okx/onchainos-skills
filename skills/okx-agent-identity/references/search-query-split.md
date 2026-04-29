@@ -17,11 +17,13 @@ Absolutely forbidden:
 5. **Filters are additive, not substitutive.** The 4-dimension split produces `--feedback` / `--agent-info` / `--status` / `--service`. These are **supplementary** — they live alongside the full `--query`, they never replace it.
 6. **No automatic truncation.** The CLI passes `--query` through verbatim (see `queries.rs:105-108`) and neither the CLI nor any known backend contract imposes a length cap from the skill's perspective. Do NOT silently cut the query to a "safe" length — that contradicts the verbatim rule above. If the backend ever rejects an over-long query, surface that error; do not pre-guess.
 
+**Single operational carve-out:** numeric agent id tokens (`#42`, `#N`, `42 那种`, "查 12, 33") are stripped from `--query`. They are not natural-language descriptors and pollute semantic matching. See Rule 9 below for the operational rule.
+
 ---
 
 ## Rules (do not skip)
 
-1. **Full sentence into `--query`.** Always pass the user's original utterance verbatim. Never paraphrase, summarize, or "clean up" — the backend search relies on the full phrase. No length cap at the CLI level.
+1. **Full sentence into `--query`.** Always pass the user's original utterance verbatim. Never paraphrase, summarize, or "clean up" — the backend search relies on the full phrase. No length cap at the CLI level. (One operational carve-out: numeric agent id tokens — see Rule 9.)
 2. **Skill splits into four filter dimensions — do not ask the user to split.** The user speaks naturally; the skill parses.
 3. **Drop keywords that don't fit — but "fit" is broader than the example tables.** Any token identifiable as a role / domain / specialty / status / service-type belongs in a filter; do **not** drop it just because it isn't listed in §The four dimensions. Discard a keyword only when it truly maps to no dimension (e.g., generic vibe words like `很火`, `最近`, `随便看看`). Do NOT invent a filter value, but equally do NOT under-extract — if the user named *what kind* of agent they want, that descriptor is a filter.
 4. **Filters are `Vec<String>`.** Comma-separated on the CLI; multi-value is fine.
@@ -29,6 +31,7 @@ Absolutely forbidden:
 6. **Filter values are verbatim user tokens — do NOT canonicalize.** If the user says `已上架`, send `--status "已上架"`, not `--status "active"`. If they say `MCP 服务`, send `--service "MCP 服务"`, not `--service "A2MCP"`. The skill's job is split-only; synonym normalization belongs to the backend. This applies to all four filters: `--feedback`, `--agent-info`, `--status`, `--service`.
 7. **No `--sort-by`.** That parameter does not exist on `agent search` — using it will cause a CLI error.
 8. **One intent = one call.** See `_shared/no-polling.md`. Do not re-search "in English too" or "without filters to see more". If the user wants to refine, they will say so.
+9. **Strip numeric agent id tokens from `--query`.** If the user's utterance contains agent id references (`#42`, `#N`, `42 那种`, "查 12, 33, 47"), remove these tokens (and trailing fillers like "那种") **before** assigning to `--query`. Numeric ids are not natural-language descriptors — they don't help semantic matching and can pollute backend scoring. If the ids are the user's primary intent (no descriptor), route to `agent get --agent-ids` per `SKILL.md` §Disambiguation, not search. This is the **only** carve-out to Rule 1 / §Verbatim Passthrough.
 
 ---
 
