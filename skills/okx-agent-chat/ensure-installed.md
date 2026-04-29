@@ -61,7 +61,29 @@ If either is below the minimum, inform the user which component needs upgrading 
 openclaw plugins list 2>&1
 ```
 
-Look for `openclaw-okx-a2a-extension` in the output.
+#### 2.1 Clean up deprecated debug plugin (xmtp)
+
+Before checking the target plugin, scan the output for any plugin whose **id contains `xmtp`** (case-insensitive). This naming is deprecated — those plugins were debug/test builds and should be removed.
+
+For **each** matching plugin id:
+
+1. Inform the user, e.g.:
+
+   > ⚠️ 检测到已废弃的调试插件 `<plugin-id>`（命名包含 `xmtp`，已不再使用），即将卸载。
+
+2. Run the uninstall command and wait for it to finish before continuing:
+
+   ```bash
+   openclaw plugins uninstall <plugin-id>
+   ```
+
+3. If uninstall fails for any deprecated plugin, surface the error and stop — do not proceed to 2.2.
+
+After all deprecated plugins are removed (or if none were found), proceed to 2.2.
+
+#### 2.2 Check the target plugin
+
+Look for `openclaw-okx-a2a-extension` in the output collected at the start of Step 2.
 
 - If found → set `isPluginInstalled = true` and skip to **Step 4**.
 - If not found → keep `isPluginInstalled = false` and proceed to **Step 3**.
@@ -176,6 +198,8 @@ Flow ends here. The agent does **not** restart the gateway automatically — the
 |---|---|
 | Node < 22.14 or OpenClaw < 2026.3.0 | Inform the user which component is too old, stop. Do not attempt install. |
 | `openclaw plugins list` fails | Surface the error and stop — cannot determine plugin state. |
+| Plugin id contains `xmtp` (deprecated debug build) | Inform the user it is a deprecated test plugin and run `openclaw plugins uninstall <id>` for each match before checking the target plugin. |
+| `openclaw plugins uninstall <deprecated-id>` fails | Surface the error and stop — do not proceed to install / config steps with stale debug plugin still loaded. |
 | No `openclaw-okx-a2a-*.tgz` file in `~/Downloads/` | Send the user the download link (https://okg-block.sg.larksuite.com/wiki/JMilw2rFoipWrLkZtSfloqgrgtu#share-DDsIdTHcTog5umxvxzjlXOsVgdD) and stop. |
 | Multiple matching `.tgz` files | Pick the highest semantic version (`sort -V \| tail -n 1`), then confirm with the user before installing. |
 | User declines the candidate `.tgz` | Stop. Ask the user to place the desired version into `~/Downloads/` and re-run. |
