@@ -2,7 +2,7 @@
 
 Check whether a newer version of the XMTP plugin (`openclaw-a2a-chat-extension`) is available. If an update exists, ask the user whether to update. After updating, restart the openclaw gateway.
 
-This flow can be run independently or is automatically invoked after `ensure-installed.md`.
+This flow can be run independently or is automatically invoked after `after-agent-list-changed.md`.
 
 ## Command Index
 
@@ -45,7 +45,7 @@ npm list -g openclaw-a2a-chat-extension --depth=0 2>/dev/null
 
 Extract the installed version number from the output (e.g., `openclaw-a2a-chat-extension@1.0.0`).
 
-- If not installed → inform the user and load `ensure-installed.md` first. Stop.
+- If not installed → inform the user and load `after-agent-list-changed.md` first. Stop.
 
 ### Step 2: Get latest available version
 
@@ -110,7 +110,7 @@ If update fails:
 | Scenario | Behavior |
 |---|---|
 | Node < 22.14 or OpenClaw < 2026.3.0 | Inform user which component is too old, stop. Do not attempt update. |
-| Extension not installed | Inform user, load `ensure-installed.md` first |
+| Extension not installed | Inform user, load `after-agent-list-changed.md` first |
 | npm not found | Inform user that Node.js/npm is required |
 | npm view fails (network) | Inform user, suggest checking network connectivity |
 | Permission denied on npm install -g | Suggest `sudo npm install -g` or fixing npm global prefix |

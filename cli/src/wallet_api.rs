@@ -244,15 +244,27 @@ impl WalletApiClient {
     }
 
     pub fn with_base_url(base_url_override: Option<&str>) -> Result<Self> {
-        let base_url = std::env::var("OKX_BASE_URL")
-            .ok()
-            .or_else(|| option_env!("OKX_BASE_URL").map(|s| s.to_string()))
-            .or_else(|| base_url_override.map(|s| s.to_string()))
-            .unwrap_or_else(|| crate::client::DEFAULT_BASE_URL.to_string());
-
+        let (base_url, source) = if let Ok(v) = std::env::var("OKX_BASE_URL") {
+            (v, "env:OKX_BASE_URL")
+        } else if let Some(v) = option_env!("OKX_BASE_URL") {
+            (v.to_string(), "compile-time:OKX_BASE_URL")
+        } else if let Some(v) = base_url_override {
+            (v.to_string(), "override")
+        } else {
+            (crate::client::DEFAULT_BASE_URL.to_string(), "DEFAULT_BASE_URL")
+        };
+        // DoH proxy 只对 web3.okx.com 域有效；如果 base_url 不指向它，应跳过 DoH，
+        // 否则磁盘里 cache 的 proxy node 会覆盖自定义/泳道 base_url，导致请求悄悄打到线上。
+        let doh_domain = "web3.okx.com";
         let custom = std::env::var("OKX_BASE_URL").is_ok()
-            || option_env!("OKX_BASE_URL").is_some();
-        let mut doh = DohManager::new("web3.okx.com", &base_url, custom);
+            || option_env!("OKX_BASE_URL").is_some()
+            || !base_url.contains(doh_domain);
+        eprintln!(
+            "[wallet_api] base_url = {} (source={}, doh_bypass={})",
+            base_url, source, custom,
+        );
+
+        let mut doh = DohManager::new(doh_domain, &base_url, custom);
         doh.prepare();
 
         let mut builder = Client::builder()
@@ -262,6 +274,11 @@ impl WalletApiClient {
         }
         if doh.is_proxy() {
             builder = builder.user_agent(doh.doh_user_agent());
+        }
+
+        let effective = doh.proxy_base_url().unwrap_or_else(|| base_url.clone());
+        if effective != base_url {
+            eprintln!("[wallet_api] ⚠ DoH proxy active → effective_base_url = {}", effective);
         }
 
         Ok(Self {
@@ -457,6 +474,44 @@ impl WalletApiClient {
         self.handle_response(resp).await
     }
 
+    /// POST multipart/form-data with Bearer accessToken + 可选附加 header
+    /// （例如 task 模块需要的 `X-Agent-Id` / `X-Wallet-Address`）。
+    ///
+    /// extra_headers 在 `Content-Type` 被移除之后合并，避免误覆盖 Authorization。
+    pub async fn post_authed_multipart_with_headers(
+        &self,
+        path: &str,
+        access_token: &str,
+        form: reqwest::multipart::Form,
+        extra_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Value> {
+        let url = format!("{}{}", self.base_url, path);
+
+        let mut headers = crate::client::ApiClient::jwt_headers(access_token);
+        headers.remove(reqwest::header::CONTENT_TYPE);
+
+        if let Some(extra) = extra_headers {
+            for (k, v) in extra {
+                if let (Ok(name), Ok(val)) = (
+                    reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(v),
+                ) {
+                    headers.insert(name, val);
+                }
+            }
+        }
+
+        let resp = self
+            .http
+            .post(&url)
+            .headers(headers)
+            .multipart(form)
+            .send()
+            .await
+            .context("wallet API request failed")?;
+        self.handle_response(resp).await
+    }
+
     async fn handle_response(&self, resp: reqwest::Response) -> Result<Value> {
         let status = resp.status();
         if status.as_u16() >= 500 {
@@ -491,20 +546,26 @@ impl WalletApiClient {
         Ok(body["data"].clone())
     }
 
-    pub fn get_authed<'a>(
+    /// GET without Authorization header (for public buyer payment links etc).
+    /// Retries once after DoH failover.
+    pub fn get_public<'a>(
         &'a mut self,
         path: &'a str,
-        access_token: &'a str,
         query: &'a [(&'a str, &'a str)],
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
         Box::pin(async move {
             let query_string = build_query_string(query);
             let effective = self.effective_base_url();
             let url = format!("{}{}{}", effective.trim_end_matches('/'), path, query_string);
+
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][get_public] url_path={}", &url);
+            }
+
             let resp = match self
                 .http
                 .get(&url)
-                .headers(crate::client::ApiClient::jwt_headers(access_token))
+                .headers(crate::client::ApiClient::anonymous_headers())
                 .send()
                 .await
             {
@@ -512,7 +573,60 @@ impl WalletApiClient {
                 Err(e) if e.is_connect() || e.is_timeout() => {
                     if self.doh.handle_failure().await {
                         self.rebuild_http_client()?;
-                        return self.get_authed(path, access_token, query).await;
+                        return self.get_public(path, query).await;
+                    }
+                    return Err(e).context("Network unavailable — check your connection and try again");
+                }
+                Err(e) => return Err(e).context("request failed"),
+            };
+            self.doh.cache_direct_if_needed();
+            self.handle_response(resp).await
+        })
+    }
+
+    pub fn get_authed<'a>(
+        &'a mut self,
+        path: &'a str,
+        access_token: &'a str,
+        query: &'a [(&'a str, &'a str)],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        self.get_authed_with_headers(path, access_token, query, None)
+    }
+
+    /// GET + JWT + optional extra headers (e.g. X-Agent-Id / X-Wallet-Address).
+    /// Retries once after DoH failover.
+    pub fn get_authed_with_headers<'a>(
+        &'a mut self,
+        path: &'a str,
+        access_token: &'a str,
+        query: &'a [(&'a str, &'a str)],
+        extra_headers: Option<&'a [(&'a str, &'a str)]>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        Box::pin(async move {
+            let query_string = build_query_string(query);
+            let effective = self.effective_base_url();
+            let url = format!("{}{}{}", effective.trim_end_matches('/'), path, query_string);
+
+            let mut headers = crate::client::ApiClient::jwt_headers(access_token);
+            if let Some(extra) = extra_headers {
+                for (k, v) in extra {
+                    if let (Ok(name), Ok(val)) = (
+                        reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                        reqwest::header::HeaderValue::from_str(v),
+                    ) {
+                        headers.insert(name, val);
+                    }
+                }
+            }
+
+            let resp = match self.http.get(&url).headers(headers).send().await {
+                Ok(r) => r,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                        return self
+                            .get_authed_with_headers(path, access_token, query, extra_headers)
+                            .await;
                     }
                     return Err(e).context("Network unavailable — check your connection and try again");
                 }
@@ -1198,5 +1312,56 @@ mod tests {
         assert_eq!(resp.accounts[1].addresses.len(), 2);
         assert_eq!(resp.accounts[1].addresses[0].chain_index, "56");
         assert_eq!(resp.accounts[1].addresses[1].chain_index, "501");
+    }
+
+    #[tokio::test]
+    async fn post_authed_multipart_with_headers_injects_identity_headers() {
+        use std::io::{Read, Write};
+        use std::sync::{Arc, Mutex};
+
+        // 随机端口的本地 TCP listener，捕获一次原始 HTTP 请求
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(false).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let captured = Arc::new(Mutex::new(String::new()));
+        let captured_clone = captured.clone();
+
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = vec![0u8; 16_384];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            *captured_clone.lock().unwrap() = String::from_utf8_lossy(&buf[..n]).to_string();
+            let body = br#"{"code":0,"data":null,"msg":""}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(resp.as_bytes());
+            let _ = stream.write_all(body);
+        });
+
+        // 隔离环境变量：OKX_BASE_URL 优先级最高，测试时要清掉
+        std::env::remove_var("OKX_BASE_URL");
+        let client = WalletApiClient::with_base_url(Some(&format!("http://127.0.0.1:{port}")))
+            .expect("build client");
+        let form = reqwest::multipart::Form::new().text("text", "hello-evidence");
+        let extra = [("X-Agent-Id", "agent-test-1"), ("X-Wallet-Address", "0xDEADBEEF")];
+        let _ = client
+            .post_authed_multipart_with_headers("/priapi/v1/aieco/task/0x1/evidence/upload", "fake_token", form, Some(&extra))
+            .await;
+
+        server.join().expect("listener thread");
+        let req = captured.lock().unwrap().clone();
+        assert!(req.contains("authorization: Bearer fake_token") || req.contains("Authorization: Bearer fake_token"),
+            "missing Authorization header:\n{req}");
+        assert!(req.contains("x-agent-id: agent-test-1") || req.contains("X-Agent-Id: agent-test-1"),
+            "missing X-Agent-Id header:\n{req}");
+        assert!(req.contains("x-wallet-address: 0xDEADBEEF") || req.contains("X-Wallet-Address: 0xDEADBEEF"),
+            "missing X-Wallet-Address header:\n{req}");
+        assert!(req.to_lowercase().contains("multipart/form-data"),
+            "expected multipart/form-data content-type:\n{req}");
+        // json Content-Type 必须已被移除，不能同时出现
+        assert!(!req.to_lowercase().contains("content-type: application/json"),
+            "application/json content-type should have been stripped:\n{req}");
     }
 }

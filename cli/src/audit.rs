@@ -326,6 +326,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Leaderboard { command } => format!("leaderboard {}", leaderboard_sub(command)),
         Commands::Tracker { command } => format!("tracker {}", tracker_sub(command)),
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
+        Commands::A2aPay { command } => format!("a2a-pay {}", a2a_pay_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
         Commands::Workflow { command } => format!("workflow {}", workflow_sub(command)),
@@ -338,34 +339,53 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
 fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
     use crate::commands::agent_commerce::AgentCommand;
     match cmd {
-        AgentCommand::Create { .. } => "create".into(),
-        AgentCommand::Update { .. } => "update".into(),
-        AgentCommand::Get { .. } => "get".into(),
-        AgentCommand::Activate { .. } => "activate".into(),
-        AgentCommand::Deactivate { .. } => "deactivate".into(),
-        AgentCommand::Upload { .. } => "upload".into(),
-        AgentCommand::Search { .. } => "search".into(),
-        AgentCommand::ServiceList { .. } => "service-list".into(),
-        AgentCommand::FeedbackSubmit { .. } => "feedback-submit".into(),
-        AgentCommand::FeedbackList { .. } => "feedback-list".into(),
-        AgentCommand::XmtpSign { .. } => "xmtp-sign".into(),
+        // Identity
+        AgentCommand::Create(_) => "create".into(),
+        AgentCommand::Update(_) => "update".into(),
+        AgentCommand::Get(_) => "get".into(),
+        AgentCommand::Activate(_) => "activate".into(),
+        AgentCommand::Deactivate(_) => "deactivate".into(),
+        AgentCommand::Upload(_) => "upload".into(),
+        AgentCommand::Search(_) => "search".into(),
+        AgentCommand::ServiceList(_) => "service-list".into(),
+        AgentCommand::FeedbackSubmit(_) => "feedback-submit".into(),
+        AgentCommand::FeedbackList(_) => "feedback-list".into(),
+        AgentCommand::XmtpSign(_) => "xmtp-sign".into(),
+
+        // Task (buyer)
         AgentCommand::CreateTask { .. } => "create-task".into(),
         AgentCommand::Recommend { .. } => "recommend".into(),
         AgentCommand::Status { .. } => "status".into(),
         AgentCommand::List { .. } => "list".into(),
         AgentCommand::ConfirmAccept { .. } => "confirm-accept".into(),
         AgentCommand::RejectApply { .. } => "reject-apply".into(),
-        AgentCommand::Confirm { .. } => "confirm".into(),
-        AgentCommand::Deliver { .. } => "deliver".into(),
         AgentCommand::Complete { .. } => "complete".into(),
         AgentCommand::Reject { .. } => "reject".into(),
         AgentCommand::Close { .. } => "close".into(),
         AgentCommand::SetPublic { .. } => "set-public".into(),
-        AgentCommand::AiEvaluate { .. } => "ai-evaluate".into(),
+        AgentCommand::Payment { .. } => "payment".into(),
+        AgentCommand::Pay { .. } => "pay".into(),
+        AgentCommand::Claim { .. } => "claim".into(),
+        AgentCommand::ClaimAutoRefund { .. } => "claim-auto-refund".into(),
+
+        // Task (provider)
+        AgentCommand::RecommendTask { .. } => "recommend-task".into(),
+        AgentCommand::FindJobs => "find-jobs".into(),
+        AgentCommand::ContactBuyer { .. } => "contact-buyer".into(),
+        AgentCommand::Apply { .. } => "apply".into(),
+        AgentCommand::Deliver { .. } => "deliver".into(),
+        AgentCommand::AgreeRefund { .. } => "agree-refund".into(),
+        AgentCommand::GetPayment { .. } => "get-payment".into(),
+
+        // Common
+        AgentCommand::RateAgent { .. } => "rate-agent".into(),
+
+        // Sub-groups
         AgentCommand::Config { .. } => "config".into(),
-        AgentCommand::Negotiate(c) => format!("negotiate {:?}", std::mem::discriminant(c)),
         AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),
+        AgentCommand::Evaluator(c) => format!("evaluator {:?}", std::mem::discriminant(c)),
         AgentCommand::Common(c) => format!("common {:?}", std::mem::discriminant(c)),
+        AgentCommand::NextAction { .. } => "next-action".into(),
         AgentCommand::FileUpload { .. } => "file-upload".into(),
         AgentCommand::FileDownload { .. } => "file-download".into(),
         AgentCommand::SensitiveWords { .. } => "sensitive-words".into(),
@@ -527,6 +547,15 @@ fn payment_sub(c: &PaymentCommand) -> &'static str {
     match c {
         PaymentCommand::X402Pay { .. } => "x402-pay",
         PaymentCommand::Eip3009Sign { .. } => "eip3009-sign",
+    }
+}
+
+fn a2a_pay_sub(c: &crate::commands::payment::a2a_pay::A2aPayCommand) -> &'static str {
+    use crate::commands::payment::a2a_pay::A2aPayCommand;
+    match c {
+        A2aPayCommand::Create { .. } => "create",
+        A2aPayCommand::Pay { .. } => "pay",
+        A2aPayCommand::Status { .. } => "status",
     }
 }
 

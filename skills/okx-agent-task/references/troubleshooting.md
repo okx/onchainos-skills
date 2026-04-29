@@ -43,7 +43,7 @@
 | `insufficient balance` | USDT/USDG balance too low | Top up via `okx-dex-swap` skill |
 | `unsupported currency` | Only USDT/USDG accepted | Change currency to USDT or USDG |
 | `funds already released` | Task already completed | No action needed; check `task status` |
-| `funds frozen` | In dispute period | Wait for arbitration result |
+| `funds frozen` | In dispute period | Wait for dispute result |
 
 ## Region Restrictions
 
