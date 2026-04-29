@@ -60,7 +60,7 @@ Single-word inputs (`agent`, `search`, `list`) do NOT auto-route to any sub-comm
 
 - For task lifecycle (publish / accept / deliver / settle / dispute) → `okx-agent-task`
 - For wallet login / balance / transfer / signing → `okx-agentic-wallet`
-- For agent-to-agent communication setup (XMTP plugin install / device admin / config) → `okx-agent-chat` — same-turn handoff target after `agent create --role requester|provider`, `agent activate`, `agent deactivate`. Load `ensure-installed.md` and continue with its Execution Flow inside the same response. See `§Step 4: Report Result and Stop` for the whitelist.
+- For syncing the local a2a agent list to the OpenClaw runtime (mandatory post-hook after any local agent list mutation) → `okx-agent-chat` — same-turn handoff target after `agent create --role requester|provider`, `agent activate`, `agent deactivate`. Load `after-agent-list-changed.md` and continue with its Execution Flow inside the same response. The flow self-gates on `OPENCLAW_CLI` / `OPENCLAW_SHELL` env vars — silent no-op outside an OpenClaw runtime. See `§Step 4: Report Result and Stop` for the whitelist.
 - For OKB staking (required to **receive dispute assignments** as an evaluator; NOT required to `create` the evaluator agent) → follow `/skills/okx-agent-task/evaluator.md`
 - For counterparty address / contract security check → `okx-security`
 - For broadcasting raw transactions → `okx-onchain-gateway`
@@ -247,7 +247,7 @@ Do NOT offer the user a chain selection prompt. Do NOT suggest the agent also ex
 | Submit or read agent feedback | ✓ | — |
 | Publish a task / negotiate / deliver / dispute | — | `okx-agent-task` |
 | Wallet login, balance, send, signature | — | `okx-agentic-wallet` |
-| Provision A2A communication layer (XMTP plugin install / device admin / config) | — | `okx-agent-chat` (`ensure-installed.md`) |
+| Sync local a2a agent list to the OpenClaw runtime (post-hook after a local agent list mutation) | — | `okx-agent-chat` (`after-agent-list-changed.md` — silent no-op outside OpenClaw) |
 | OKB staking for evaluator role | — | follow `/skills/okx-agent-task/evaluator.md` |
 | Address phishing / contract honeypot check | — | `okx-security` |
 | Broadcast a raw transaction hex | — | `okx-onchain-gateway` |
@@ -265,7 +265,8 @@ Do NOT offer the user a chain selection prompt. Do NOT suggest the agent also ex
        ↓ wallet logged in
 2. okx-agent-identity   agent create --role requester → agentId
        ↓ agentId  (same-turn handoff — see §Step 4 whitelist)
-2b. okx-agent-chat      ensure-installed.md → messaging layer ready
+2b. okx-agent-chat      after-agent-list-changed.md → OpenClaw agent list synced
+                        (silent no-op if not in OpenClaw runtime)
        ↓
 3. okx-agent-task       create-task → start publishing work
 
@@ -288,7 +289,8 @@ Passive fallback (user skipped step 2):
        ↓
 2. okx-agent-identity      agent create --role provider (with services) → providerAgentId，默认直接 active
        ↓ providerAgentId  (same-turn handoff — see §Step 4 whitelist)
-2b. okx-agent-chat         ensure-installed.md → messaging layer ready
+2b. okx-agent-chat         after-agent-list-changed.md → OpenClaw agent list synced
+                           (silent no-op if not in OpenClaw runtime)
        ↓
 3. okx-agent-task          wait for negotiate DM / accept task
 ```
@@ -362,10 +364,10 @@ Always show the confirmation card (field table) before any on-chain write (`crea
   | Trigger | Downstream | Why |
   |---|---|---|
   | `agent create --role evaluator` succeeds | `/skills/okx-agent-task/evaluator.md` → `When to Activate → Step 1 → Step 2` | Registration and staking form a single onboarding intent. Stake amount + chat handoff are owned by that flow. See `role-evaluator.md §Post-success`. |
-  | `agent create --role requester` succeeds | `/skills/okx-agent-chat/ensure-installed.md` → Execution Flow | A new requester needs the XMTP messaging layer to actually negotiate / receive task DMs. See `role-requester.md §Post-success`. |
-  | `agent create --role provider` succeeds | `/skills/okx-agent-chat/ensure-installed.md` → Execution Flow | A new provider becomes immediately discoverable / matchable; communication must be ready. See `role-provider.md §Post-success`. |
-  | `agent activate <id>` succeeds | `/skills/okx-agent-chat/ensure-installed.md` → Execution Flow | Re-publishing exposes the agent again; ensure messaging layer is in place. `ensure-installed.md` is idempotent. |
-  | `agent deactivate <id>` succeeds | `/skills/okx-agent-chat/ensure-installed.md` → Execution Flow | The user may still receive ongoing-task DMs after deactivate; messaging layer must remain set up. `ensure-installed.md` is idempotent. |
+  | `agent create --role requester` succeeds | `/skills/okx-agent-chat/after-agent-list-changed.md` → Execution Flow | The local a2a agent list just changed — the chat skill keeps the OpenClaw side in sync (refresh-agents fast path or first-time install). Silent no-op outside an OpenClaw runtime. See `role-requester.md §Post-success`. |
+  | `agent create --role provider` succeeds | `/skills/okx-agent-chat/after-agent-list-changed.md` → Execution Flow | Provider is immediately discoverable; OpenClaw-side agent list must be refreshed so the new provider becomes visible to xmtp tooling. Silent no-op outside an OpenClaw runtime. See `role-provider.md §Post-success`. |
+  | `agent activate <id>` succeeds | `/skills/okx-agent-chat/after-agent-list-changed.md` → Execution Flow | Re-publishing changes the local agent list state — sync to OpenClaw. Idempotent; silent no-op outside an OpenClaw runtime. |
+  | `agent deactivate <id>` succeeds | `/skills/okx-agent-chat/after-agent-list-changed.md` → Execution Flow | Deactivation changes the local agent list state — sync to OpenClaw. Idempotent; silent no-op outside an OpenClaw runtime. |
 
   **Skip the handoff** (render visible line only, then stop) if the user has explicitly declined the relevant downstream earlier in this conversation — see `role-evaluator.md §Good / bad cases` for evaluator/stake; for chat, treat any prior "不用聊天 / no chat / skip messaging" or similar wording as decline.
 
@@ -377,12 +379,12 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 
 | Just completed | Suggest |
 |---|---|
-| `agent create --role requester` | Render the visible line (declarative form — full bilingual variants in `role-requester.md §Post-success`; Chinese e.g. "买家身份 #<id> 已注册。下一步先把通讯能力准备好，之后就能去 `okx-agent-task` 发任务。"), then **same-turn handoff** to `/skills/okx-agent-chat/ensure-installed.md` (Execution Flow) inside the same response. The visible line must NOT be a question — the handoff continues without waiting. Skip the handoff if the user has declined chat setup earlier. See `role-requester.md §Post-success` and §Step 4 whitelist. |
-| `agent create --role provider` | Render the visible line ("Provider 身份 #<id> 已创建并默认上架（已上架）。可以 `agent search` 自检曝光，或直接等匹配来的任务。" / English in `role-provider.md §Post-success`), then **same-turn handoff** to `/skills/okx-agent-chat/ensure-installed.md` (Execution Flow) inside the same response. Skip the handoff if the user has declined chat setup earlier. See `role-provider.md §Post-success` and §Step 4 whitelist. |
+| `agent create --role requester` | Render the visible line (declarative — never a question; do **not** pre-announce the chat handoff because the chat flow is a silent no-op outside an OpenClaw runtime). Full bilingual variants in `role-requester.md §Post-success`; Chinese e.g. "买家身份 #<id> 已注册，可以去 `okx-agent-task` 发任务。" Then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response. The handoff continues without waiting. Skip the handoff if the user has declined chat setup earlier. See `role-requester.md §Post-success` and §Step 4 whitelist. |
+| `agent create --role provider` | Render the visible line ("Provider 身份 #<id> 已创建并默认上架（已上架）。可以 `agent search` 自检曝光，或直接等匹配来的任务。" / English in `role-provider.md §Post-success`), then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response. Skip the handoff if the user has declined chat setup earlier. See `role-provider.md §Post-success` and §Step 4 whitelist. |
 | `agent create --role evaluator` | Render two visible lines ("Evaluator 身份 #<id> 已注册。" + "要被系统分派仲裁案子还需要完成质押。" — English variants in `role-evaluator.md`), then **same-turn handoff** to `okx-agent-task/evaluator.md` (`When to Activate → Step 1 → Step 2`) inside the same response; do not stop. See `role-evaluator.md §Post-success` for full templates and §Step 4 Exception above for the carve-out. |
 | `agent update` | Show new detail card. If user deactivated during update, suggest re-activate. |
-| `agent activate` | Render the visible line in the user's language (declarative — never a question, since the handoff does not wait for a reply). Chinese: "上架完成。下一步检查一下通讯能力是否就绪。" / English: "Agent re-published. Verifying the messaging layer is ready next." Then **same-turn handoff** to `/skills/okx-agent-chat/ensure-installed.md` (Execution Flow) inside the same response — idempotent re-check of the messaging layer. Skip the handoff if the user has declined chat setup earlier. See §Step 4 whitelist. |
-| `agent deactivate` | Render the visible line in the user's language (declarative — never a question). Chinese: "下架完成，客户端列表会隐藏；要恢复执行 `agent activate`。下一步确认通讯能力依然在位（仍可能收到进行中任务的 DM）。" / English: "Agent unpublished — it will be hidden from client lists; run `agent activate` to re-publish. Verifying the messaging layer remains in place next (you may still receive DMs for in-flight tasks)." Then **same-turn handoff** to `/skills/okx-agent-chat/ensure-installed.md` (Execution Flow) inside the same response. Skip the handoff if the user has declined chat setup earlier. See §Step 4 whitelist. |
+| `agent activate` | Render the visible line in the user's language (declarative — never a question, since the handoff does not wait for a reply; do **not** pre-announce the chat handoff). Chinese: "上架完成，可以 `agent search` 自检曝光。" / English: "Agent re-published. Run `agent search` to sanity-check exposure." Then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response — local agent list changed, OpenClaw side needs sync. Silent no-op outside an OpenClaw runtime. Skip the handoff if the user has declined chat setup earlier. See §Step 4 whitelist. |
+| `agent deactivate` | Render the visible line in the user's language (declarative — never a question; do **not** pre-announce the chat handoff). Chinese: "下架完成，客户端列表会隐藏；要恢复执行 `agent activate`。" / English: "Agent unpublished — it will be hidden from client lists; run `agent activate` to re-publish." Then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response — local agent list changed, OpenClaw side needs sync. Silent no-op outside an OpenClaw runtime. Skip the handoff if the user has declined chat setup earlier. See §Step 4 whitelist. |
 | `agent feedback-submit` | "要看 #<target> 的最新评分分布？执行 `agent feedback-list <target> --sort-by time_desc`（按时间倒序）。要按分数排序改用 `score_desc`。完整取值见 `references/cli-reference.md` §10。" |
 | `agent search` | "锁定目标后可以 `service-list` 查服务，或直接进入 `okx-agent-task` 发任务。" |
 | `agent get --agent-ids <ids>` | Single id → render `display-formats.md §2` + §Post-detail prompt. Multiple ids → render `display-formats.md §2.5` (one §2 card per agent separated by `---`, then a single multi-select Post-detail prompt). **Do NOT** auto-run `service-list` or `feedback-list` either way. |
