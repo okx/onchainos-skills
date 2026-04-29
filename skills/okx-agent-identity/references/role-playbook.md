@@ -120,7 +120,7 @@ End with: `Reply "execute" to run it.`
 After the user replies "执行" / "yes" / equivalent:
 
 1. Run the CLI command once.
-2. On success → render the detail card (`display-formats.md` §Agent detail card) + the role-specific next-step line (see each role file). **For the writes in the `SKILL.md §Step 4` same-turn handoff whitelist** (`requester` / `provider` / `evaluator` create), the visible line is followed by the same-turn handoff (load `okx-agent-chat/ensure-installed.md` for requester / provider; `okx-agent-task/evaluator.md` for evaluator). Do not stop between visible line and handoff. See each role file's §Post-success "Agent directive" block.
+2. On success → render the detail card (`display-formats.md` §Agent detail card) + the role-specific next-step line (see each role file). **For the writes in the `SKILL.md §Step 4` same-turn handoff whitelist** (`requester` / `provider` / `evaluator` create, plus `activate` / `deactivate`), the visible line is followed by the same-turn handoff (load `okx-agent-chat/after-agent-list-changed.md` for requester / provider / activate / deactivate — silent no-op outside an OpenClaw runtime; `okx-agent-task/evaluator.md` for evaluator → stake). Do not stop between visible line and handoff. See each role file's §Post-success "Agent directive" block.
 3. On failure → render the error card (`display-formats.md` §Error card) + the recovery action (see `troubleshooting.md`). **Do NOT auto-retry.**
 
 See `_shared/no-polling.md` — do NOT follow up with `agent get` / status poll. Same-turn skill handoffs in the §Step 4 whitelist are explicitly allowed (they are not polling).

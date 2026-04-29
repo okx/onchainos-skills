@@ -95,23 +95,23 @@ Render **one visible line** in the user's language (one of the four variants bel
 
 ### Visible line (four variants)
 
-All four variants are **declarative**, never a question — the same-turn handoff below continues without waiting for a user reply, so a question mark would create an unanswerable prompt.
+All four variants are **declarative**, never a question — the same-turn handoff below continues without waiting for a user reply, so a question mark would create an unanswerable prompt. Also do **not** pre-announce the chat handoff (e.g. "preparing messaging layer next"): the chat flow is a silent no-op outside an OpenClaw runtime, so any pre-announce would mislead users in Claude Code / Claude Desktop / etc.
 
 With known id (from pre-check `agent get` lookup), Chinese:
-> 买家身份 #<id> 已注册。下一步先把通讯能力准备好，之后就能去 `okx-agent-task` 发任务。
+> 买家身份 #<id> 已注册，可以去 `okx-agent-task` 发任务。
 
 Without id (current CLI only returns txHash), Chinese:
-> 买家身份已注册。下一步先把通讯能力准备好，之后就能去 `okx-agent-task` 发任务。
+> 买家身份已注册，可以去 `okx-agent-task` 发任务。
 
 English equivalents:
-> Requester identity #<id> is live. Provisioning the messaging layer next; after that you'll head to `okx-agent-task` to publish a task.
-> Requester identity registered. Provisioning the messaging layer next; after that you'll head to `okx-agent-task` to publish a task.
+> Requester identity #<id> is live — head to `okx-agent-task` to publish a task.
+> Requester identity registered — head to `okx-agent-task` to publish a task.
 
-Do NOT mention the `okx-agent-chat/ensure-installed.md` path to the user in the visible line — the same-turn handoff below loads that skill's own prompt, which speaks for itself.
+Do NOT mention the `okx-agent-chat/after-agent-list-changed.md` path to the user in the visible line — the same-turn handoff below loads that skill's own prompt, which decides on its own whether to surface anything (silent in non-OpenClaw runtimes).
 
 ### Agent directive (internal — do NOT render to the user)
 
-After emitting the visible line above, **do not stop the turn**. In the same response, load `/skills/okx-agent-chat/ensure-installed.md` and continue with its `Execution Flow` inside the same response — this provisions the XMTP messaging layer the new requester needs to negotiate and receive task DMs.
+After emitting the visible line above, **do not stop the turn**. In the same response, load `/skills/okx-agent-chat/after-agent-list-changed.md` and continue with its `Execution Flow` inside the same response — the local a2a agent list just changed, so the chat skill keeps the OpenClaw runtime side in sync (refresh-agents fast path or first-time install). The flow self-gates on `OPENCLAW_CLI` / `OPENCLAW_SHELL`, so it is a **silent no-op** in non-OpenClaw runtimes; loading it unconditionally is safe and is the documented contract.
 
 **Skip the handoff** (render visible line only, then stop) if the user has already declined chat / messaging setup earlier in this conversation (e.g., "不用聊天 / no chat / skip messaging" or similar). Also skip on the **passive onboarding** path — see §Passive Onboarding `After success`.
 
@@ -153,7 +153,7 @@ Return control to the caller. The response to the user contains:
 
 Do NOT ask "要不要发任务" / "want to publish a task?" — the task skill already has the pending intent; it will resume.
 
-Do NOT load `/skills/okx-agent-chat/ensure-installed.md` here — passive mode is contracted to hand strictly back to `okx-agent-task` with the single line above (see `passive-onboarding.md` "No other chatter"). The task skill triggers chat setup itself when its flow needs it.
+Do NOT load `/skills/okx-agent-chat/after-agent-list-changed.md` here — passive mode is contracted to hand strictly back to `okx-agent-task` with the single line above (see `passive-onboarding.md` "No other chatter"). The task skill triggers the chat post-hook itself when its flow needs it.
 
 ### When user already has a requester
 

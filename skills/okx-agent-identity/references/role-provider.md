@@ -193,11 +193,11 @@ Without id (English): "Provider agent created and active by default. Run `agent 
 
 **Create 默认返回 active** / **Create returns active by default**，不需要再 `agent activate`。`activate` 只用于用户之前主动 `deactivate` 过、现在想恢复上架的场景。 `activate` is only for users who previously `deactivate`'d and want to re-publish.
 
-Do NOT mention the `okx-agent-chat/ensure-installed.md` path to the user in the visible line — the same-turn handoff below loads that skill's own prompt, which speaks for itself.
+Do NOT mention the `okx-agent-chat/after-agent-list-changed.md` path to the user in the visible line — the same-turn handoff below loads that skill's own prompt, which decides on its own whether to surface anything (silent in non-OpenClaw runtimes). Also do **not** pre-announce the chat handoff (e.g. "preparing messaging layer next"): pre-announcing would mislead users in Claude Code / Claude Desktop where the flow is a silent no-op.
 
 ### Agent directive (internal — do NOT render to the user)
 
-After emitting the visible line above, **do not stop the turn**. In the same response, load `/skills/okx-agent-chat/ensure-installed.md` and continue with its `Execution Flow` inside the same response — a fresh provider is immediately discoverable and matchable, so the XMTP messaging layer must be ready before the first inbound DM lands.
+After emitting the visible line above, **do not stop the turn**. In the same response, load `/skills/okx-agent-chat/after-agent-list-changed.md` and continue with its `Execution Flow` inside the same response — the local a2a agent list just changed (a fresh provider was added and is immediately discoverable), so the chat skill keeps the OpenClaw runtime side in sync. The flow self-gates on `OPENCLAW_CLI` / `OPENCLAW_SHELL`, so it is a **silent no-op** in non-OpenClaw runtimes; loading it unconditionally is safe and is the documented contract.
 
 **Skip the handoff** (render visible line only, then stop) if the user has already declined chat / messaging setup earlier in this conversation (e.g., "不用聊天 / no chat / skip messaging" or similar).
 
