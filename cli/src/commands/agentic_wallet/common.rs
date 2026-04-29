@@ -17,9 +17,9 @@ pub(crate) fn is_hex_string(value: &str, length: Option<usize>) -> bool {
 /// Shared error handler for API responses that may require user confirmation.
 ///
 /// - code=81362 and !force → return CliConfirming (needs user confirmation)
-/// - other ApiCodeError → preserve full `Wallet API error (code=N): msg` form so
-///   downstream agents can distinguish 81363 (TEE/broadcast revert) from a bare
-///   on-chain "execution reverted" and route accordingly.
+/// - other ApiCodeError → return the bare backend `msg` (mirrors
+///   `auth::format_api_error`). Downstream consumers that need the numeric code
+///   should `downcast_ref::<ApiCodeError>()` rather than parse the string.
 /// - non-ApiCodeError → pass through
 pub(crate) fn handle_confirming_error(e: anyhow::Error, force: bool) -> anyhow::Error {
     match e.downcast::<crate::wallet_api::ApiCodeError>() {
@@ -31,7 +31,7 @@ pub(crate) fn handle_confirming_error(e: anyhow::Error, force: bool) -> anyhow::
                 }
                 .into()
             } else {
-                anyhow::Error::from(api_err)
+                anyhow::anyhow!("{}", api_err.msg)
             }
         }
         Err(e) => e,

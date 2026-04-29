@@ -305,8 +305,8 @@ async fn sign_and_broadcast(
             && unsigned.eip712_message_hash.is_empty()
             && unsigned.unsigned_tx_hash.is_empty()
         {
-            match classify_gs_phase1(&unsigned) {
-                GsPhase1Decision::FirstTime => {
+            match classify_gas_station_state(&unsigned) {
+                GsScene::FirstTime => {
                     if force {
                         // `--force` + first-time GS: third-party plugin path. Return exit 3
                         // with structured error so plugin's outer caller (agent) can run
@@ -317,7 +317,7 @@ async fn sign_and_broadcast(
                     }
                     return Err(build_gs_first_time_prompt(&addr_info, &unsigned));
                 }
-                GsPhase1Decision::Reenable => {
+                GsScene::Reenable => {
                     if force {
                         return Err(force_setup_required_for_tx_params(
                             true, is_contract_call, chain, from, &tx, &addr_info, &unsigned,
@@ -325,7 +325,7 @@ async fn sign_and_broadcast(
                     }
                     return Err(build_gs_reenable_prompt(&addr_info, &unsigned));
                 }
-                GsPhase1Decision::AutoPick {
+                GsScene::AutoPick {
                     fee_token_address,
                     relayer_id,
                     needs_enable,
@@ -356,7 +356,7 @@ async fn sign_and_broadcast(
                         .map_err(format_api_error)?;
                     unsigned = phase2;
                 }
-                GsPhase1Decision::NeedsUserPick => {
+                GsScene::NeedsUserPick => {
                     return Err(build_gs_token_selection_prompt(&unsigned));
                 }
             }
@@ -645,8 +645,8 @@ pub(super) async fn cmd_send(
             )
             .await;
         }
-        match classify_gs_phase1(&unsigned) {
-            GsPhase1Decision::FirstTime => {
+        match classify_gas_station_state(&unsigned) {
+            GsScene::FirstTime => {
                 if force {
                     return Err(force_setup_required_for_send(
                         false, chain, from, recipient, amt, contract_token,
@@ -655,7 +655,7 @@ pub(super) async fn cmd_send(
                 }
                 return Err(build_gs_first_time_prompt(&addr_info, &unsigned));
             }
-            GsPhase1Decision::Reenable => {
+            GsScene::Reenable => {
                 if force {
                     return Err(force_setup_required_for_send(
                         true, chain, from, recipient, amt, contract_token,
@@ -664,7 +664,7 @@ pub(super) async fn cmd_send(
                 }
                 return Err(build_gs_reenable_prompt(&addr_info, &unsigned));
             }
-            GsPhase1Decision::AutoPick {
+            GsScene::AutoPick {
                 fee_token_address,
                 relayer_id,
                 needs_enable,
@@ -682,7 +682,7 @@ pub(super) async fn cmd_send(
                 )
                 .await;
             }
-            GsPhase1Decision::NeedsUserPick => {
+            GsScene::NeedsUserPick => {
                 return Err(build_gs_token_selection_prompt(&unsigned));
             }
         }
@@ -1326,48 +1326,49 @@ fn build_gs_token_selection_prompt(
     crate::output::CliConfirming { message, next }.into()
 }
 
-// ── Gas Station Phase 1 dispatch ───────────────────────────────────────────
+// ── Gas Station scene dispatch ─────────────────────────────────────────────
 
-/// Outcome of classifying a Phase 1 diagnostic response. Each variant maps to a distinct
-/// Agent/CLI action; see callers for the per-site action (sign_and_broadcast reuses
-/// `unsigned` in-place, cmd_send re-invokes via `gas_station_send`).
+/// Which Gas Station scene applies for the current user × chain, based on the
+/// state probe (`probe_gas_station_state`). Each variant maps to a distinct
+/// Agent/CLI action; callers own the action (sign_and_broadcast reuses
+/// `unsigned` in-place; cmd_send re-invokes via `gas_station_send`).
 #[derive(Debug)]
-enum GsPhase1Decision {
+enum GsScene {
     /// `FIRST_TIME_PROMPT`: first-time enable needs explicit user consent.
     FirstTime,
     /// `REENABLE_ONLY`: user previously disabled; re-enable needs explicit consent.
     Reenable,
-    /// Scene B auto-pick: resume silently with this token. `needs_enable` is true when
+    /// Auto-pick scene: resume silently with this token. `needs_enable` is true when
     /// the chain still requires 7702 activation (PENDING_UPGRADE).
     AutoPick {
         fee_token_address: String,
         relayer_id: String,
         needs_enable: bool,
     },
-    /// Scene C: user must pick a token (default insufficient, or ambiguous fallback).
+    /// User-pick scene: default token insufficient, or ambiguous fallback.
     NeedsUserPick,
 }
 
-/// Classify a Phase 1 diagnostic response into the matching Scene. Callers own the action.
-fn classify_gs_phase1(
+/// Map a Gas Station state probe into the matching `GsScene`. Callers own the action.
+fn classify_gas_station_state(
     unsigned: &crate::wallet_api::UnsignedInfoResponse,
-) -> GsPhase1Decision {
+) -> GsScene {
     use crate::wallet_api::GasStationStatus as GS;
     let status = unsigned.gs_status();
 
     if unsigned.gas_station_first_time_prompt || status == GS::FirstTimePrompt {
-        return GsPhase1Decision::FirstTime;
+        return GsScene::FirstTime;
     }
     if status == GS::ReenableOnly {
-        return GsPhase1Decision::Reenable;
+        return GsScene::Reenable;
     }
     match unsigned.auto_pick_gas_token() {
-        Some(token) => GsPhase1Decision::AutoPick {
+        Some(token) => GsScene::AutoPick {
             fee_token_address: token.fee_token_address.clone(),
             relayer_id: token.relayer_id.clone(),
             needs_enable: status == GS::PendingUpgrade,
         },
-        None => GsPhase1Decision::NeedsUserPick,
+        None => GsScene::NeedsUserPick,
     }
 }
 
@@ -1718,17 +1719,10 @@ mod tests {
         assert!(result
             .downcast_ref::<crate::output::CliConfirming>()
             .is_none());
-        // Preserves the structured ApiCodeError so callers can downcast on `code`.
-        let api_err_back = result
-            .downcast_ref::<crate::wallet_api::ApiCodeError>()
-            .expect("should be ApiCodeError");
-        assert_eq!(api_err_back.code, "81362");
-        assert_eq!(api_err_back.msg, "please confirm");
-        // String form includes the `code=N` prefix so downstream string matching keeps the code.
-        assert_eq!(
-            format!("{}", result),
-            "Wallet API error (code=81362): please confirm"
-        );
+        // The user-facing string is the bare backend `msg` (no `code=` prefix).
+        // Structural code lookup is no longer available here because the wrapper
+        // unwraps ApiCodeError into a plain anyhow::Error carrying just the msg.
+        assert_eq!(format!("{}", result), "please confirm");
     }
 
     #[test]
@@ -1742,23 +1736,16 @@ mod tests {
         assert!(result
             .downcast_ref::<crate::output::CliConfirming>()
             .is_none());
-        let api_err_back = result
-            .downcast_ref::<crate::wallet_api::ApiCodeError>()
-            .expect("should be ApiCodeError");
-        assert_eq!(api_err_back.code, "50000");
-        assert_eq!(api_err_back.msg, "server error");
-        assert_eq!(
-            format!("{}", result),
-            "Wallet API error (code=50000): server error"
-        );
+        assert_eq!(format!("{}", result), "server error");
     }
 
     #[test]
-    fn broadcast_error_81363_preserves_code_for_diagnosis() {
-        // Regression for the cross-chain v6 commit: backend returns code=81363 on TEE
-        // pre-execute / broadcast revert. Earlier the wrapper stripped the code and
-        // surfaced only "execution reverted", which made 81362 / 81363 / on-chain
-        // revert indistinguishable. This test pins the new contract.
+    fn broadcast_error_81363_returns_bare_msg() {
+        // Backend returns code=81363 on TEE pre-execute / broadcast revert.
+        // The wrapper surfaces only the backend `msg` to the user; callers that
+        // need to distinguish 81363 from 81362 / on-chain revert should branch
+        // on the `msg` text or read the code at the source ApiCodeError site
+        // (before this wrapper unwraps it).
         let api_err = crate::wallet_api::ApiCodeError {
             code: "81363".to_string(),
             msg: "execution reverted".to_string(),
@@ -1768,14 +1755,7 @@ mod tests {
         assert!(result
             .downcast_ref::<crate::output::CliConfirming>()
             .is_none());
-        let api_err_back = result
-            .downcast_ref::<crate::wallet_api::ApiCodeError>()
-            .expect("should be ApiCodeError");
-        assert_eq!(api_err_back.code, "81363");
-        assert_eq!(
-            format!("{}", result),
-            "Wallet API error (code=81363): execution reverted"
-        );
+        assert_eq!(format!("{}", result), "execution reverted");
     }
 
     #[test]

@@ -88,9 +88,11 @@ async fn build_gs_context(chain: &str, from: Option<&str>) -> Result<GsContext> 
     })
 }
 
-/// Issue a Phase 1 diagnostic probe (zero-amount native self-transfer). Backend
-/// returns gasStationStatus + gasStationTokenList without broadcasting.
-async fn probe_phase1_diagnostic(
+/// Probe the user's Gas Station state on this chain by issuing a zero-amount
+/// native self-transfer through `/pre-transaction-unsigned-info`. The backend
+/// returns `gasStationStatus` + `gasStationTokenList` without broadcasting,
+/// which lets callers decide which Scene applies (see `GsScene`).
+async fn probe_gas_station_state(
     client: &mut WalletApiClient,
     ctx: &GsContext,
 ) -> Result<crate::wallet_api::UnsignedInfoResponse> {
@@ -116,7 +118,7 @@ async fn probe_phase1_diagnostic(
 async fn cmd_status(chain: &str, from: Option<&str>) -> Result<()> {
     let ctx = build_gs_context(chain, from).await?;
     let mut client = WalletApiClient::new()?;
-    let probe = probe_phase1_diagnostic(&mut client, &ctx).await?;
+    let probe = probe_gas_station_state(&mut client, &ctx).await?;
 
     let recommendation = recommend_from_probe(&probe);
     let token_list_json: Vec<Value> = probe
@@ -156,7 +158,8 @@ async fn cmd_status(chain: &str, from: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Map a Phase 1 probe response to a high-level recommendation enum.
+/// Map a Gas Station state probe response to a high-level recommendation enum
+/// (used by `wallet gas-station status` CLI output).
 fn recommend_from_probe(probe: &crate::wallet_api::UnsignedInfoResponse) -> &'static str {
     if probe.has_pending_tx {
         return "HAS_PENDING_TX";
@@ -204,7 +207,7 @@ async fn cmd_setup(
     let ctx = build_gs_context(chain, from).await?;
     let mut client = WalletApiClient::new()?;
     // Idempotency check: probe first; if GS already active with same default → short-circuit.
-    let probe = probe_phase1_diagnostic(&mut client, &ctx).await?;
+    let probe = probe_gas_station_state(&mut client, &ctx).await?;
 
     let already_active_same_default = matches!(probe.gs_status(), GasStationStatus::ReadyToUse)
         && !probe.default_gas_token_address.is_empty()
