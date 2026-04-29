@@ -1,6 +1,6 @@
-# Ensure XMTP Plugin Installed
+# Ensure A2A openclaw Plugin Installed
 
-**Mandatory safeguard** — run this every time the agent needs to communicate with another agent, initiate agent commerce, or use XMTP messaging. Verifies the host environment, installs the OKX A2A plugin from a local `~/Downloads/openclaw-okx-a2a-extension-{version}.tgz` package if missing, ensures the required OpenClaw config is in place, and finally prompts the user to restart the gateway when changes were made.
+**Mandatory safeguard** — run this every time the agent needs to communicate with another agent, initiate agent commerce, or use agent-to-agent messaging. Verifies the host environment, installs the OKX A2A plugin from a local `~/Downloads/openclaw-okx-a2a-extension-{version}.tgz` package if missing, ensures the required OpenClaw config is in place, and finally prompts the user to restart the gateway when changes were made.
 
 All steps are idempotent — re-running this flow is safe.
 
@@ -29,13 +29,13 @@ Track these two booleans across the run. Both default to `false`.
 |---|---|---|
 | 1 | `node --version` / `openclaw --version` | Verify Node ≥ 22.14 and OpenClaw ≥ 2026.3.0 |
 | 2 | `openclaw plugins list` | Check whether `openclaw-okx-a2a-extension` is installed |
-| 3 | `openclaw plugins install ~/Downloads/openclaw-okx-a2a-<version>.tgz` | Install the highest-versioned local package |
+| 3 | `openclaw plugins install ~/Downloads/openclaw-okx-a2a-extension-<version>.tgz` | Install the highest-versioned local package |
 | 4 | `openclaw config get` / `openclaw config set` | Verify and update `tools.alsoAllow` and `session.dmScope` |
 | 5 | (prompt only) `openclaw gateway restart` | Ask the user to restart the gateway when changes were made |
 
 ## Why Gateway Restart Is Required
 
-The XMTP extension is an **OpenClaw plugin**. It registers a channel, daemon, hooks, skills, and services inside its `register()` method, which only runs at gateway startup. Config under `tools.*` / `session.*` likewise takes effect at startup. So whenever the plugin is freshly loaded or relevant config is mutated, the gateway needs a full restart to apply the change.
+The extension is an **OpenClaw plugin**. It registers a channel, daemon, hooks, skills, and services inside its `register()` method, which only runs at gateway startup. Config under `tools.*` / `session.*` likewise takes effect at startup. So whenever the plugin is freshly loaded or relevant config is mutated, the gateway needs a full restart to apply the change.
 
 ## Execution Flow
 
@@ -61,7 +61,7 @@ If either is below the minimum, inform the user which component needs upgrading 
 openclaw plugins list 2>&1
 ```
 
-#### 2.1 Clean up deprecated debug plugin (xmtp)
+#### 2.1 Clean up deprecated debug plugin
 
 Before checking the target plugin, scan the output for any plugin whose **id contains `xmtp`** (case-insensitive). This naming is deprecated — those plugins were debug/test builds and should be removed.
 
@@ -185,7 +185,7 @@ Decision rule:
 
 Prompt template (translate to the user's language as needed):
 
-> ✅ XMTP plugin and config are ready. Please run the following command to apply the changes:
+> ✅ A2A plugin and config are ready. Please run the following command to apply the changes:
 > ```
 > openclaw gateway restart
 > ```
