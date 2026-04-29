@@ -142,20 +142,11 @@ pub async fn create_payment_charge(params: ChargeParams) -> Result<CreatePayment
     let mut value = serde_json::to_value(&params).context("serialize charge params")?;
     value["type"] = json!("charge");
     value["deliveries"] = json!({ "includeUrl": true });
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][a2a-pay] POST /payment/create (charge) body={}",
-            value
-        );
-    }
     let resp: Value = wallet_client
         .post_authed("/api/v6/pay/a2a/payment/create", &access_token, &value)
         .await
         .map_err(format_api_error)
         .context("a2a-pay POST /payment/create failed")?;
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][a2a-pay] /payment/create response={resp}");
-    }
     parse_create_payment_response(resp)
 }
 
@@ -200,16 +191,10 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
 
     // ── 1. GET /p/{id} (public buyer link, no auth) ──────────────────
     let payment_path = format!("/api/v6/pay/a2a/p/{}", p.payment_id);
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][a2a-pay] GET {payment_path}");
-    }
     let resp: Value = wallet_client
         .get_public(&payment_path, &[])
         .await
         .with_context(|| format!("a2a-pay GET /p/{} failed", p.payment_id))?;
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][a2a-pay] GET /p/{} response={resp}", p.payment_id);
-    }
     if resp.get("available").and_then(Value::as_bool) == Some(false) {
         let reason = resp
             .get("errorReason")
@@ -340,9 +325,6 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         "verifyingContract": currency,
     });
 
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][a2a-pay] POST gen-msg-hash body={base_fields}");
-    }
     let unsigned_hash_resp: Value = wallet_client
         .post_authed(
             "/priapi/v5/wallet/agentic/pre-transaction/gen-msg-hash",
@@ -352,9 +334,6 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .await
         .map_err(format_api_error)
         .context("a2a-pay: gen-msg-hash failed")?;
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][a2a-pay] gen-msg-hash response={unsigned_hash_resp}");
-    }
     let msg_hash = unsigned_hash_resp[0]["msgHash"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'msgHash' in gen-msg-hash response"))?;
@@ -375,9 +354,6 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
     sign_body["sessionCert"] = json!(session.session_cert);
     sign_body["sessionSignature"] = json!(session_signature_b64);
 
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][a2a-pay] POST sign-msg body={sign_body}");
-    }
     let signed_resp: Value = wallet_client
         .post_authed(
             "/priapi/v5/wallet/agentic/pre-transaction/sign-msg",
@@ -387,9 +363,6 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .await
         .map_err(format_api_error)
         .context("a2a-pay: sign-msg failed")?;
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][a2a-pay] sign-msg response={signed_resp}");
-    }
     let signature_hex = signed_resp[0]["signature"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'signature' in sign-msg response"))?
@@ -412,20 +385,11 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         },
     });
     let credential_path = format!("/api/v6/pay/a2a/p/{}/credential", p.payment_id);
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][a2a-pay] POST {credential_path} body={credential_body}");
-    }
     let cred_resp: Value = wallet_client
         .post_authed(&credential_path, &access_token, &credential_body)
         .await
         .map_err(format_api_error)
         .with_context(|| format!("a2a-pay POST /p/{}/credential failed", p.payment_id))?;
-    if cfg!(feature = "debug-log") {
-        eprintln!(
-            "[DEBUG][a2a-pay] /p/{}/credential response={cred_resp}",
-            p.payment_id
-        );
-    }
 
     Ok(PayOutput {
         payment_id: p.payment_id,
@@ -458,17 +422,11 @@ pub async fn status(payment_id: String) -> Result<StatusOutput> {
     let mut wallet_client = WalletApiClient::new()?;
     let access_token = ensure_tokens_refreshed().await?;
     let path = format!("/api/v6/pay/a2a/p/{}/status", payment_id);
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][a2a-pay] GET {path}");
-    }
     let resp: Value = wallet_client
         .get_authed(&path, &access_token, &[])
         .await
         .map_err(format_api_error)
         .with_context(|| format!("a2a-pay GET /p/{}/status failed", payment_id))?;
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][a2a-pay] /p/{payment_id}/status response={resp}");
-    }
     Ok(StatusOutput {
         payment_id,
         status: resp["status"].as_str().unwrap_or("unknown").to_string(),

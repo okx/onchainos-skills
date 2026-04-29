@@ -1,6 +1,6 @@
 ---
 name: okx-a2a-payment
-description: "Use this skill when the user mentions creating a payment link, paying a paymentId / a2a_... link, or checking a2a payment status. Wraps `onchainos a2a-pay` agent-to-agent payment protocol: seller-side `create`, buyer-side `pay` via EIP-3009 + TEE signing, and `status` query. Buyer-side trust is delegated to upstream — the skill signs whatever the on-server challenge declares. Do NOT use for external HTTP 402 resources — use okx-x402-payment. Do NOT use for wallet balance / transfer / login — use okx-agentic-wallet."
+description: "Use this skill when the user mentions creating a payment link, paying a paymentId / a2a_... link, or checking a2a payment status. Wraps `onchainos payment a2a-pay` agent-to-agent payment protocol: seller-side `create`, buyer-side `pay` via EIP-3009 + TEE signing, and `status` query. Buyer-side trust is delegated to upstream — the skill signs whatever the on-server challenge declares. Do NOT use for external HTTP 402 resources — use okx-x402-payment. Do NOT use for wallet balance / transfer / login — use okx-agentic-wallet."
 license: MIT
 metadata:
   author: okx
@@ -9,18 +9,18 @@ metadata:
 
 # Onchain OS A2A Payment
 
-Wrap the `onchainos a2a-pay` CLI surface end-to-end for both seller and buyer roles. Buyer-side trust is delegated to the upstream caller — when invoked with a `paymentId`, the skill fetches the on-server challenge, TEE-signs it as-is, submits the credential, and auto-polls payment status to a terminal state.
+Wrap the `onchainos payment a2a-pay` CLI surface end-to-end for both seller and buyer roles. Buyer-side trust is delegated to the upstream caller — when invoked with a `paymentId`, the skill fetches the on-server challenge, TEE-signs it as-is, submits the credential, and auto-polls payment status to a terminal state.
 
 ## Skill Routing
 
-This skill only covers **internal a2a payments** issued via `onchainos a2a-pay`. If the request fits one of the intents below, route to the corresponding skill instead:
+This skill only covers **internal a2a payments** issued via `onchainos payment a2a-pay`. If the request fits one of the intents below, route to the corresponding skill instead:
 
 | Intent | Use skill |
 |--------|-----------|
 | External HTTP 402 payment-gated resource (any non-onchainos URL) | `okx-x402-payment` |
 | Wallet balance / transfer / login | `okx-agentic-wallet` |
 | Task publish / accept / deliver / verify (business layer) — payment sub-step calls back into this skill via the Workflow A contract | upstream task / agent skill (out of repo) |
-| Internal `onchainos a2a-pay` payment link | **this skill** |
+| Internal `onchainos payment a2a-pay` payment link | **this skill** |
 
 ## Triggers
 
@@ -59,7 +59,7 @@ onchainos wallet status
 1. Run pre-flight (see above) — the CLI requires a live session.
 2. Shell out:
    ```bash
-   onchainos a2a-pay create \
+   onchainos payment a2a-pay create \
      --amount <amount> --symbol <symbol> --recipient <recipient> \
      [--description <text> --realm <domain> --expires-in <seconds>]
    ```
@@ -72,7 +72,7 @@ onchainos wallet status
    > • Recipient: `<recipient input>`
    > • Share with buyer: `<deliveries.url>` (if returned by the server) or `paymentId=<id>`
 
-5. Suggest next: poll status anytime with `onchainos a2a-pay status --payment-id <id>` once the buyer is expected to have paid.
+5. Suggest next: poll status anytime with `onchainos payment a2a-pay status --payment-id <id>` once the buyer is expected to have paid.
 
 ### Buyer — Pay a Payment Link (`a2a-pay pay`)
 
@@ -85,7 +85,7 @@ onchainos wallet status
 The skill does not run its own preview / yes-no gate; trust is delegated to the upstream caller (see the trust-model note above). Shell out directly:
 
 ```bash
-onchainos a2a-pay pay --payment-id <paymentId>
+onchainos payment a2a-pay pay --payment-id <paymentId>
 ```
 
 The CLI fetches the on-server challenge, TEE-signs the EIP-3009 authorization, and submits the credential. The successful response shape:
@@ -113,7 +113,7 @@ If `status` is already terminal → render the result (see table below) and stop
 If non-terminal → poll every **3 seconds**, up to a **60-second** total budget:
 
 ```bash
-onchainos a2a-pay status --payment-id <paymentId>
+onchainos payment a2a-pay status --payment-id <paymentId>
 ```
 
 - As soon as a terminal status is observed → render full result (status + tx_hash + block_number) and stop.
@@ -123,7 +123,7 @@ onchainos a2a-pay status --payment-id <paymentId>
 
 | status | Display |
 |--------|---------|
-| `completed` | "✅ Payment confirmed on-chain. tx: `<tx_hash>` block: `<block_number>`" |
+| `completed` | "✅ Payment confirmed on-chain. tx_hash: `<tx_hash>` block: `<block_number>`" |
 | `failed`    | "❌ Payment failed. (include the server-provided reason if any)" |
 | `expired`   | "⌛ Payment link expired before settlement. Ask the seller for a new one." |
 | `cancelled` | "🚫 Seller cancelled this payment." |
@@ -136,7 +136,7 @@ onchainos a2a-pay status --payment-id <paymentId>
 
 1. Run:
    ```bash
-   onchainos a2a-pay status --payment-id <paymentId>
+   onchainos payment a2a-pay status --payment-id <paymentId>
    ```
 2. Map the returned `status` to a human-readable line:
 
@@ -144,12 +144,12 @@ onchainos a2a-pay status --payment-id <paymentId>
    |--------|---------|---------|
    | `pending`   | Awaiting buyer signature | "⏳ Awaiting buyer signature." |
    | `settling`  | Credential received, settling on-chain | "🔄 Settling on-chain (credential submitted, awaiting confirmation)." |
-   | `completed` | Confirmed on-chain | "✅ Confirmed on-chain. tx: `<tx_hash>` block: `<block_number>` fee: `<decimal> <symbol>`" |
+   | `completed` | Confirmed on-chain | "✅ Confirmed on-chain. tx_hash: `<tx_hash>` block: `<block_number>` fee: `<fee_decimal> <fee_symbol>`" |
    | `failed`    | Payment failed | "❌ Failed. (include the server-provided reason if any)" |
    | `expired`   | Expired before settlement | "⌛ Expired before settlement." |
    | `cancelled` | Seller cancelled | "🚫 Cancelled by seller." |
 
-3. If the response includes `fee.amount`, convert it from minimal units to decimal using the same decimals table as Step 1 of the Buyer flow.
+3. **Rendering the fee.** The CLI returns `fee_amount` as a top-level string in minimal units (and `fee_bps` as the basis-points used). To compute `<fee_decimal>`, look up the token decimals in the table under "Amount Display Rules". For `<fee_symbol>`, reuse the `--symbol` the seller passed to `create` for the same `paymentId` — the upstream caller (or the seller flow that issued the link) is the source of truth for the token symbol; the `status` response itself does not echo it back. If neither is available, display `fee_amount` minimal units as-is.
 
 4. Suggest next:
    - `pending` / `settling` → "Check again in a few moments" or wait briefly and re-run `status`.
@@ -167,7 +167,7 @@ Applicable upstream callers: any agent-to-agent task / chat / agent flow that ho
 ```
 1. <upstream caller>     verifies paymentId matches the buyer's agreed terms → hands off paymentId
        ↓
-2. okx-a2a-payment (this skill)  onchainos a2a-pay pay → auto-poll status → display terminal state
+2. okx-a2a-payment (this skill)  onchainos payment a2a-pay pay → auto-poll status → display terminal state
        ↓
 3. okx-agentic-wallet    optional: onchainos wallet balance to see post-payment delta
 ```
@@ -219,7 +219,7 @@ This guidance is advisory for upstream agent authors — this skill itself will 
 
 ## Amount Display Rules
 
-When converting `amount` (or `fee.amount`) from minimal units to a decimal display, use the hardcoded decimals table:
+When converting `amount` (or `fee_amount`) from minimal units to a decimal display, use the hardcoded decimals table:
 
 | Token | Decimals | "1000000" minimal renders as |
 |-------|----------|------------------------------|
@@ -239,7 +239,7 @@ For any symbol not in the table: render `<minimal> <symbol>` and append the warn
 | CLI reports `payment ... not payable` / expired challenge / unsupported intent | Relay the error verbatim and surface it as a **terminal failure** — do NOT retry signing. |
 | `paymentId` not found / 404 from server | Relay the error and ask the user to confirm the paymentId with the seller or upstream caller. |
 | `pay` succeeded but status is still `pending` / `settling` after the 60s poll budget | Return the current status (verbatim) + paymentId; tell the user `Status is still <status> after 60s; you can run status again later`. |
-| Server returns a 5xx | Retry once with a short backoff; if it fails again, surface the error. **Do not silently re-sign.** |
+| Server returns a 5xx | Surface the status code and any `errorMessage` verbatim. **Do not auto-retry `pay`** — every retry produces a fresh EIP-3009 nonce + signature; let the upstream caller decide whether to re-invoke. `status` is read-only and safe to retry manually. |
 | `--symbol` is not in the hardcoded decimals table | Apply the unknown-decimals fallback (see Amount Display Rules). Do not block. |
 | `--expires-in` was set too short and the link is now past its window | `status` returns `expired`; ask the seller to create a new link. |
 
@@ -247,16 +247,16 @@ For any symbol not in the table: render `<minimal> <symbol>` and append the warn
 
 | # | Command | Role | Purpose |
 |---|---------|------|---------|
-| 1 | `onchainos a2a-pay create` | Seller | Create a payment link, returns paymentId + deliveries |
-| 2 | `onchainos a2a-pay pay`    | Buyer  | Fetch challenge → TEE-sign EIP-3009 → submit credential |
-| 3 | `onchainos a2a-pay status` | Either | Query current status (pending / settling / completed / failed / expired / cancelled) |
+| 1 | `onchainos payment a2a-pay create` | Seller | Create a payment link, returns paymentId + deliveries |
+| 2 | `onchainos payment a2a-pay pay`    | Buyer  | Fetch challenge → TEE-sign EIP-3009 → submit credential |
+| 3 | `onchainos payment a2a-pay status` | Either | Query current status (pending / settling / completed / failed / expired / cancelled) |
 
 ## CLI Command Reference
 
-### 1. `onchainos a2a-pay create`
+### 1. `onchainos payment a2a-pay create`
 
 ```bash
-onchainos a2a-pay create \
+onchainos payment a2a-pay create \
   --amount <decimal> --symbol <symbol> --recipient <address> \
   [--description <text>] [--realm <domain>] [--expires-in <seconds>]
 ```
@@ -272,10 +272,10 @@ onchainos a2a-pay create \
 
 **Return fields**: `payment_id`, `deliveries` (object containing `url` when issued by the server).
 
-### 2. `onchainos a2a-pay pay`
+### 2. `onchainos payment a2a-pay pay`
 
 ```bash
-onchainos a2a-pay pay --payment-id <id>
+onchainos payment a2a-pay pay --payment-id <id>
 ```
 
 | Param | Required | Default | Description |
@@ -284,10 +284,10 @@ onchainos a2a-pay pay --payment-id <id>
 
 **Return fields**: `payment_id`, `status`, `tx_hash` (optional), `valid_after`, `valid_before`, `signature`.
 
-### 3. `onchainos a2a-pay status`
+### 3. `onchainos payment a2a-pay status`
 
 ```bash
-onchainos a2a-pay status --payment-id <id>
+onchainos payment a2a-pay status --payment-id <id>
 ```
 
 | Param | Required | Default | Description |
@@ -300,14 +300,14 @@ onchainos a2a-pay status --payment-id <id>
 
 ```bash
 # Seller — create a payment link
-onchainos a2a-pay create \
+onchainos payment a2a-pay create \
   --amount 0.01 --symbol USDT \
   --recipient 0xSellerWalletAddress
 # → { "payment_id": "a2a_xxx", "deliveries": { "url": "..." } }
 
 # Buyer — pay (signs the on-server challenge as-is; trust delegated to upstream)
-onchainos a2a-pay pay --payment-id a2a_xxx
+onchainos payment a2a-pay pay --payment-id a2a_xxx
 
 # Either side — query status (skill auto-polls this for ~60s after pay if non-terminal)
-onchainos a2a-pay status --payment-id a2a_xxx
+onchainos payment a2a-pay status --payment-id a2a_xxx
 ```

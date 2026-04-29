@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 
 use crate::commands::agentic_wallet::common::is_valid_evm_address;
 use crate::commands::agentic_wallet::payment_flow;
+use crate::commands::payment::a2a_pay::{self, A2aPayCommand};
 use crate::output;
 
 #[derive(Subcommand)]
@@ -32,6 +33,12 @@ pub enum PaymentCommand {
     Default {
         #[command(subcommand)]
         action: DefaultAction,
+    },
+    /// A2A Pay — Buyer ↔ Seller charge flow (create / pay / status)
+    #[command(name = "a2a-pay")]
+    A2aPay {
+        #[command(subcommand)]
+        command: A2aPayCommand,
     },
 }
 
@@ -75,6 +82,7 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
             Ok(())
         }
         PaymentCommand::Default { action } => cmd_default(action),
+        PaymentCommand::A2aPay { command } => a2a_pay::execute(command).await,
     }
 }
 

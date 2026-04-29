@@ -326,7 +326,6 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Leaderboard { command } => format!("leaderboard {}", leaderboard_sub(command)),
         Commands::Tracker { command } => format!("tracker {}", tracker_sub(command)),
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
-        Commands::A2aPay { command } => format!("a2a-pay {}", a2a_pay_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
         Commands::Workflow { command } => format!("workflow {}", workflow_sub(command)),
@@ -484,16 +483,17 @@ fn security_sub(c: &SecurityCommand) -> &'static str {
     }
 }
 
-fn payment_sub(c: &PaymentCommand) -> &'static str {
+fn payment_sub(c: &PaymentCommand) -> String {
     use crate::commands::agentic_wallet::payment::DefaultAction;
     match c {
-        PaymentCommand::X402Pay { .. } => "x402-pay",
-        PaymentCommand::Eip3009Sign { .. } => "eip3009-sign",
+        PaymentCommand::X402Pay { .. } => "x402-pay".to_string(),
+        PaymentCommand::Eip3009Sign { .. } => "eip3009-sign".to_string(),
         PaymentCommand::Default { action } => match action {
-            DefaultAction::Set { .. } => "default-set",
-            DefaultAction::Get => "default-get",
-            DefaultAction::Unset => "default-unset",
+            DefaultAction::Set { .. } => "default-set".to_string(),
+            DefaultAction::Get => "default-get".to_string(),
+            DefaultAction::Unset => "default-unset".to_string(),
         },
+        PaymentCommand::A2aPay { command } => format!("a2a-pay {}", a2a_pay_sub(command)),
     }
 }
 
