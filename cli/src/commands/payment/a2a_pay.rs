@@ -20,9 +20,6 @@ use crate::output;
 use crate::wallet_api::WalletApiClient;
 use crate::{keyring_store, wallet_store};
 
-// ── Constants ────────────────────────────────────────────────────────────
-const DEFAULT_VALID_BEFORE_SEC: u64 = 3600;
-
 // ── Clap arg structs ─────────────────────────────────────────────────────
 
 /// Seller-side `create` args. Buyer wallet / signing is NOT performed here.
@@ -351,11 +348,13 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
     let from_addr_str = addr_info.address.clone();
 
     // ── 3. Pick timing ───────────────────────────────────────────────
-    let now = unix_now()?;
+    // Bind the EIP-3009 window to the seller's challenge expiry so the
+    // signed authorization can't outlive what the seller advertised.
     let valid_after = 0u64;
-    let valid_before = now
-        .checked_add(DEFAULT_VALID_BEFORE_SEC)
-        .ok_or_else(|| anyhow!("validBefore overflow"))?;
+    let valid_before: u64 = expires_at
+        .timestamp()
+        .try_into()
+        .map_err(|_| anyhow!("challenge.data.expires precedes UNIX epoch"))?;
 
     // ── 4. Compute nonce (random 32 bytes for charge) ────────────────
     let nonce_hex = {
@@ -560,12 +559,6 @@ fn require_evm_address(addr: &str, label: &str) -> Result<()> {
     } else {
         bail!("--{label} is not a valid EVM address: {addr}")
     }
-}
-
-fn unix_now() -> Result<u64> {
-    Ok(std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_secs())
 }
 
 #[cfg(test)]
