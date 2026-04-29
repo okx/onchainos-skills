@@ -46,7 +46,7 @@ Diagnostic Summary:
 
 ## Edge Cases
 
-> The `Risk Controls` table in SKILL.md is the source of truth for token-scan, price impact, receive-address, balance, gas, and blacklist action levels. The `Error Handling` section of SKILL.md covers heterogeneous chain pairs, region restriction (50125), and the 81362 risk warning. The cases below are deeper failure modes that require operator-level diagnosis.
+> The `Risk Controls` table in SKILL.md is the source of truth for price impact, receive-address, balance, gas, and blacklist action levels. The `Error Handling` section of SKILL.md covers heterogeneous chain pairs, region restriction (50125), and the 81362 risk warning. The cases below are deeper failure modes that require operator-level diagnosis.
 
 ### Approval transaction failed
 - Check gas balance on source chain
