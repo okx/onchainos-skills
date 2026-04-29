@@ -196,6 +196,11 @@ pub enum AgentCommand {
         /// `escrow` 或 `non_escrow`（必填，弄错支付方式 → paymentId 会落到错的合约 / 流程）
         #[arg(long = "payment-mode")]
         payment_mode: String,
+        /// 卖家 agentId（必填）。non_escrow 路径在 status=open 时就调用，
+        /// task.providerAgentId 此时还没设，没法从任务详情反查；
+        /// escrow 路径也建议显式传，避免本地多 provider agent 时拿错。
+        #[arg(long = "agent-id")]
+        agent_id: String,
     },
 
     /// Client claims auto-refund after provider timeout
@@ -403,7 +408,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 task::provider::ProviderCommand::AgreeRefund { job_id }, ctx,
             ).await,
 
-        AgentCommand::GetPayment { job_id, token_symbol, token_amount, payment_mode } => {
+        AgentCommand::GetPayment { job_id, token_symbol, token_amount, payment_mode, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
             task::provider::get_payment::handle_get_payment(
                 &mut c,
@@ -411,6 +416,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 &token_symbol,
                 &token_amount,
                 &payment_mode,
+                &agent_id,
             )
             .await
         }
@@ -537,7 +543,12 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str) -> Opti
 
     let mut c = TaskApiClient::new();
     let resp = c.get(&c.task_path(job_id)).await.ok()?;
-    let actual_str = resp.get("task")?.get("statusStr")?.as_str()?.to_string();
+    // 兼容旧 mock 的 {"task":{...}} 与 beta 真后端平铺两种形态
+    let task_obj = match resp.get("task") {
+        Some(v) if v.is_object() => v,
+        _ => &resp,
+    };
+    let actual_str = task_obj.get("statusStr")?.as_str()?.to_string();
     let actual = Status::parse(&actual_str);
 
     eprintln!(

@@ -21,7 +21,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             next_action("job_created"),
             ref_header,
             format!("  onchainos agent apply {job_id} --token-amount <price> --token-symbol USDT --agent-id <agentId>  # 申请接单（**仅 escrow 担保交易**才需要；non_escrow 不要 apply）"),
-            format!("  onchainos agent get-payment {job_id} --token-symbol <USDT|USDG> --token-amount <price> --payment-mode <escrow|non_escrow>  # 拉 prePayTaskInfo + 创建 a2a-pay 付款单，输出 paymentId"),
+            format!("  onchainos agent get-payment {job_id} --token-symbol <USDT|USDG> --token-amount <price> --payment-mode <escrow|non_escrow> --agent-id <agentId>  # 拉 prePayTaskInfo + 创建 a2a-pay 付款单，输出 paymentId"),
         ],
         Status::Accepted => vec![
             next_action("job_accepted"),
@@ -90,28 +90,19 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 
     let event = parse_status_or_event(job_status);
     let body = match event {
-        // ─── Scene 3: 接单申请已上链，生成付款单给买家（escrow 路径） ──
+        // ─── Scene 3: 接单申请已上链（escrow 路径，买家方负责生成付款单） ──
         Event::ProviderApplied => format!(
             "【当前状态】provider_applied（链上已确认接单申请，escrow 担保路径）\n\
              【角色】卖家（Provider）\n\n\
-             【你的下一步动作（严格顺序）】\n\n\
-             **Step 1 — 调用 CLI 创建 a2a-pay 付款单**（CLI 内部：先拉 prePayTaskInfo 拿链上参数，再调 a2a-pay `create_payment_escrow`）：\n\
-             ```bash\n\
-             onchainos agent get-payment {job_id} --token-symbol <USDT|USDG> --token-amount <协商价格 whole tokens, 如 50> --payment-mode escrow\n\
-             ```\n\
-             - tokenSymbol 从任务详情确定（USDT / USDG）\n\
-             - tokenAmount 用协商敲定的价格，单位是整数 token（如 50 表示 50 USDT，后端按 decimals 换算）\n\
-             - stdout 输出形如 `{{ \"paymentId\": \"a2a_xxx\", \"deliveries\": ... }}`，其中 paymentId 是要发给买家的唯一信息\n\n\
-             **Step 2 — 调用 `xmtp_send` 把 paymentId 发给买家**：\n\
-             - 只发 paymentId 一项，买家会用它直接调 pay() 走 EIP-3009 签名 + credential 提交\n\
-             - content 模板（纯自然语言，不要包 markdown / 代码块）：\n\
-             \x20\x20```\n\
-             \x20\x20我已提交接单申请，付款单已创建。请用此 paymentId 完成支付：<a2a_xxx>\n\
-             \x20\x20```\n\
-             - 不要把整段 JSON 或 deliveries 数组贴过去，买家用 paymentId 反查 challenge 即可\n\
-             - 不要加 text-header（如 `jobId: / 来自: ... / 类型:`），XMTP 插件会自动包装 a2a-agent-chat envelope\n\n\
+             【你的下一步动作】\n\n\
+             **只发一条 `xmtp_send` 通知买家接单申请已上链，请买家走 confirm-accept**——\n\
+             escrow 路径的付款单由买家在 confirm-accept 时自行生成，**卖家不需要**调 `get-payment`。\n\n\
+             {send_to_peer}\n\
+             已完成接单申请上链（jobId={job_id}，卖家 agentId={agent_id}）。请你执行 confirm-accept 注资托管。\n\n\
+             ⚠️ 不要再调 `onchainos agent get-payment`——那是 non_escrow 路径才用的。\n\n\
+             跑完 xmtp_send → **直接结束本轮 turn**，等买家 confirm-accept 触发的 `job_accepted` 通知再进入 Scene 4。\n\n\
              【后续事件】\n\
-             - job_accepted → 买家已用 paymentId 完成支付 + confirm-accept，开始执行任务\n"
+             - job_accepted → 买家已 confirm-accept，资金托管完成，开始执行任务\n"
         ),
 
         // ─── Scene 4: 买家已确认接单，执行任务并交付 ─────────────────
@@ -379,7 +370,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - non_escrow 的链上 provider_applied 不会触发，调了 apply 会在 escrow 合约里多一笔无用上链\n\n\
              但卖家仍要为买家创建一张 a2a-pay charge 付款单：\n\n\
              ```bash\n\
-             onchainos agent get-payment {job_id} --token-symbol <USDT|USDG> --token-amount <协商价格 whole tokens> --payment-mode non_escrow\n\
+             onchainos agent get-payment {job_id} --token-symbol <USDT|USDG> --token-amount <协商价格 whole tokens> --payment-mode non_escrow --agent-id {agent_id}\n\
              ```\n\
              stdout 输出 `{{ \"paymentId\": \"a2a_xxx\", \"deliveries\": ... }}`。\n\n\
              跑完后 `xmtp_send` 把 paymentId 发给买家（content 纯自然语言，不要贴整段 JSON）：\n\

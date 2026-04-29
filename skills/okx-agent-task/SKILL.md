@@ -419,7 +419,7 @@ onchainos agent next-action \
 **为什么优先 event 而不是 status？**
 - `event` 描述"刚刚发生了什么"（如 `provider_applied` = 卖家申请上链），信息量大、能直接路由到对应剧本 arm。
 - `jobStatus` 只描述"任务此刻处于什么状态"（如 `open`），多个不同事件可能落在同一 status 上（`provider_applied` 不改 status 仍是 open），传 status 会丢失事件区分度。
-- 反例：sub session 收到 `event=provider_applied, jobStatus=open` 的 envelope。如果传 `--jobStatus open`，next-action 会把它路由到 `JobCreated` 剧本（"协商三项确认"），而不是真正期望的 `ProviderApplied` 剧本（"已上链，发付款单"）—— 行为完全错位。
+- 反例：sub session 收到 `event=provider_applied, jobStatus=open` 的 envelope。如果传 `--jobStatus open`，next-action 会把它路由到 `JobCreated` 剧本（"协商三项确认"），而不是真正期望的 `ProviderApplied` 剧本（"已上链，通知买家 confirm-accept"）—— 行为完全错位。
 
 **严格规则**：
 - 收到 system envelope → **先调 next-action**，按输出再决定是否 `session_status` + `xmtp_send` 发消息给对方
