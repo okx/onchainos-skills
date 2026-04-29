@@ -721,8 +721,21 @@ struct CrossChainQuoteParams {
 
 #[derive(Deserialize, JsonSchema)]
 struct CrossChainStatusParams {
-    /// Order ID returned by cross-chain execute
-    order_id: String,
+    /// Source chain transaction hash returned by cross-chain execute
+    tx_hash: String,
+    /// Bridge id (required by server — returns 50014 if absent). Get it from the
+    /// `bridgeId` field of the prior `cross_chain_execute` / `cross_chain_quote`
+    /// result, or from `cross_chain_bridges`.
+    bridge_id: String,
+    /// Source chain name or chainIndex (e.g. "ethereum" or "1"). Optional but
+    /// recommended for faster server-side lookup.
+    from_chain: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CrossChainListParams {
+    /// Optional chain filter (e.g. "ethereum" or "1"). When omitted, returns the full set.
+    chain: Option<String>,
 }
 
 #[derive(Clone)]
@@ -1836,11 +1849,20 @@ impl McpServer {
     // ── Cross-Chain ────────────────────────────────────────────────────
 
     #[tool(
-        name = "cross_chain_chains",
-        description = "Get supported chain pairs for cross-chain bridge swaps"
+        name = "cross_chain_tokens",
+        description = "List bridgeable tokens (/supported/tokens). Optionally filter by chain. Returns chainIndex / tokenContractAddress / tokenSymbol / decimals."
     )]
-    async fn cross_chain_chains(&self) -> Result<String, String> {
-        match cross_chain::fetch_chain_pairs(&mut *self.client.lock().await).await {
+    async fn cross_chain_tokens(
+        &self,
+        Parameters(p): Parameters<CrossChainListParams>,
+    ) -> Result<String, String> {
+        let chain_idx = p.chain.as_deref().map(crate::chains::resolve_chain);
+        match cross_chain::fetch_supported_tokens(
+            &mut *self.client.lock().await,
+            chain_idx.as_deref(),
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1848,10 +1870,19 @@ impl McpServer {
 
     #[tool(
         name = "cross_chain_bridges",
-        description = "Get available bridge protocols for cross-chain swaps"
+        description = "List available cross-chain bridge protocols (/supported/bridges). Returns bridgeId / bridgeName / supportedChains[]."
     )]
-    async fn cross_chain_bridges(&self) -> Result<String, String> {
-        match cross_chain::fetch_bridges(&mut *self.client.lock().await).await {
+    async fn cross_chain_bridges(
+        &self,
+        Parameters(p): Parameters<CrossChainListParams>,
+    ) -> Result<String, String> {
+        let chain_idx = p.chain.as_deref().map(crate::chains::resolve_chain);
+        match cross_chain::fetch_supported_bridges(
+            &mut *self.client.lock().await,
+            chain_idx.as_deref(),
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1859,7 +1890,7 @@ impl McpServer {
 
     #[tool(
         name = "cross_chain_quote",
-        description = "Get cross-chain bridge quote: routes, fees, estimated time, minimum received"
+        description = "Get cross-chain bridge quote (/quote). Returns routerList[] with bridgeId, needApprove, minimumReceived, estimateTime, crossChainFee."
     )]
     async fn cross_chain_quote(
         &self,
@@ -1869,16 +1900,33 @@ impl McpServer {
         let to_chain_index = crate::chains::resolve_chain(&p.to_chain);
         let from_token = crate::commands::swap::resolve_token_address(&from_chain_index, &p.from);
         let to_token = crate::commands::swap::resolve_token_address(&to_chain_index, &p.to);
-        let sort = p.sort.as_deref().unwrap_or("0");
+        let sort = p.sort.as_deref();
+        let raw_amount = match crate::commands::swap::resolve_amount_arg(
+            &mut *self.client.lock().await,
+            None,
+            Some(&p.readable_amount),
+            &from_token,
+            &from_chain_index,
+        )
+        .await
+        {
+            Ok(v) => v,
+            Err(e) => return err(e),
+        };
         match cross_chain::fetch_quote(
             &mut *self.client.lock().await,
             &from_chain_index,
             &to_chain_index,
             &from_token,
             &to_token,
-            &p.readable_amount,
-            p.receive_address.as_deref(),
+            &raw_amount,
+            "0.01",
+            None,
+            false,
+            None,
             sort,
+            None,
+            None,
         )
         .await
         {
@@ -1889,13 +1937,21 @@ impl McpServer {
 
     #[tool(
         name = "cross_chain_status",
-        description = "Query cross-chain order status by order ID"
+        description = "Query cross-chain status by source chain transaction hash (/status). `bridge_id` is REQUIRED — server returns 50014 without it. Returns SUCCESS / PENDING / NOT_FOUND."
     )]
     async fn cross_chain_status(
         &self,
         Parameters(p): Parameters<CrossChainStatusParams>,
     ) -> Result<String, String> {
-        match cross_chain::fetch_order_details(&mut *self.client.lock().await, &p.order_id).await {
+        let chain_idx = p.from_chain.as_deref().map(crate::chains::resolve_chain);
+        match cross_chain::fetch_status(
+            &mut *self.client.lock().await,
+            &p.tx_hash,
+            chain_idx.as_deref(),
+            Some(&p.bridge_id),
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }

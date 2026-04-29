@@ -1,3 +1,12 @@
+//! Cross-chain swap command surface.
+//!
+//! Flow:
+//!   1. /quote (with checkApprove + userWalletAddress) → routerList[]
+//!   2. (if needApprove) /approve-tx → wallet contract-call
+//!      ├─ if needCancelApprove (USDT pattern) → approve 0 first, then full
+//!   3. /swap → wallet contract-call broadcast → fromTxHash
+//!   4. /status by hash → SUCCESS / PENDING / NOT_FOUND
+
 use anyhow::{bail, Result};
 use clap::Subcommand;
 use serde_json::{json, Value};
@@ -6,23 +15,209 @@ use super::Context;
 use crate::client::ApiClient;
 use crate::output;
 
-/// Inner API base path for cross-chain bridge suite.
-const BRIDGE_API_PREFIX: &str = "/priapi/v1/dx/trade/bridge/suite";
+// ── /api/v6/dex/cross-chain HTTP layer ─────────────────────────────────────
+//
+// GET-only endpoints. Each helper builds query params, calls `client.get()`,
+// and returns the `data` payload (the array body returned by
+// `ApiClient::handle_response`).
+
+const V6_PREFIX: &str = "/api/v6/dex/cross-chain";
+
+pub async fn fetch_supported_tokens(
+    client: &mut ApiClient,
+    chain_index: Option<&str>,
+) -> Result<Value> {
+    let mut params: Vec<(&str, &str)> = Vec::new();
+    if let Some(c) = chain_index {
+        params.push(("chainIndex", c));
+    }
+    client
+        .get(&format!("{V6_PREFIX}/supported/tokens"), &params)
+        .await
+}
+
+pub async fn fetch_supported_bridges(
+    client: &mut ApiClient,
+    chain_index: Option<&str>,
+) -> Result<Value> {
+    let mut params: Vec<(&str, &str)> = Vec::new();
+    if let Some(c) = chain_index {
+        params.push(("chainIndex", c));
+    }
+    client
+        .get(&format!("{V6_PREFIX}/supported/bridges"), &params)
+        .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn fetch_quote(
+    client: &mut ApiClient,
+    from_chain: &str,
+    to_chain: &str,
+    from_token: &str,
+    to_token: &str,
+    raw_amount: &str,
+    slippage: &str,
+    wallet: Option<&str>,
+    check_approve: bool,
+    bridge_id: Option<&str>,
+    sort: Option<&str>,
+    allow_bridges: Option<&str>,
+    deny_bridges: Option<&str>,
+) -> Result<Value> {
+    let mut params: Vec<(&str, &str)> = vec![
+        ("fromChainIndex", from_chain),
+        ("toChainIndex", to_chain),
+        ("fromTokenAddress", from_token),
+        ("toTokenAddress", to_token),
+        ("amount", raw_amount),
+        ("slippage", slippage),
+    ];
+    if let Some(w) = wallet {
+        params.push(("userWalletAddress", w));
+    }
+    if check_approve {
+        params.push(("checkApprove", "true"));
+    }
+    if let Some(b) = bridge_id {
+        params.push(("bridgeId", b));
+    }
+    if let Some(s) = sort {
+        params.push(("sort", s));
+    }
+    // allowBridge / denyBridge are Integer[] per spec — server expects repeated
+    // query params, not comma-separated. Split and push each id separately.
+    let allow_ids: Vec<&str> = allow_bridges
+        .map(|s| s.split(',').map(str::trim).filter(|s| !s.is_empty()).collect())
+        .unwrap_or_default();
+    for id in &allow_ids {
+        params.push(("allowBridge", id));
+    }
+    let deny_ids: Vec<&str> = deny_bridges
+        .map(|s| s.split(',').map(str::trim).filter(|s| !s.is_empty()).collect())
+        .unwrap_or_default();
+    for id in &deny_ids {
+        params.push(("denyBridge", id));
+    }
+    client.get(&format!("{V6_PREFIX}/quote"), &params).await
+}
+
+/// `approve_amount` is the raw on-chain amount (smallest token unit, e.g.
+/// "300000" for 0.3 USDC at decimals=6). "0" revokes the existing allowance
+/// (USDT pattern).
+///
+/// Note: an earlier doc claim that this endpoint accepts human-readable amounts
+/// was wrong — server returns 51000 Params error for non-integer values.
+pub async fn fetch_approve_tx(
+    client: &mut ApiClient,
+    chain_index: &str,
+    token: &str,
+    wallet: &str,
+    bridge_id: &str,
+    approve_amount: &str,
+    check_allowance: bool,
+) -> Result<Value> {
+    let mut params: Vec<(&str, &str)> = vec![
+        ("chainIndex", chain_index),
+        ("tokenContractAddress", token),
+        ("userWalletAddress", wallet),
+        ("bridgeId", bridge_id),
+        ("approveAmount", approve_amount),
+    ];
+    if check_allowance {
+        params.push(("checkAllowance", "true"));
+    }
+    client.get(&format!("{V6_PREFIX}/approve-tx"), &params).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn fetch_swap(
+    client: &mut ApiClient,
+    from_chain: &str,
+    to_chain: &str,
+    from_token: &str,
+    to_token: &str,
+    raw_amount: &str,
+    slippage: &str,
+    wallet: &str,
+    receive_address: Option<&str>,
+    bridge_id: Option<&str>,
+    sort: Option<&str>,
+    allow_bridges: Option<&str>,
+    deny_bridges: Option<&str>,
+) -> Result<Value> {
+    let mut params: Vec<(&str, &str)> = vec![
+        ("fromChainIndex", from_chain),
+        ("toChainIndex", to_chain),
+        ("fromTokenAddress", from_token),
+        ("toTokenAddress", to_token),
+        ("amount", raw_amount),
+        ("slippage", slippage),
+        ("userWalletAddress", wallet),
+    ];
+    if let Some(r) = receive_address {
+        params.push(("receiveAddress", r));
+    }
+    if let Some(b) = bridge_id {
+        params.push(("bridgeId", b));
+    }
+    if let Some(s) = sort {
+        params.push(("sort", s));
+    }
+    let allow_ids: Vec<&str> = allow_bridges
+        .map(|s| s.split(',').map(str::trim).filter(|s| !s.is_empty()).collect())
+        .unwrap_or_default();
+    for id in &allow_ids {
+        params.push(("allowBridge", id));
+    }
+    let deny_ids: Vec<&str> = deny_bridges
+        .map(|s| s.split(',').map(str::trim).filter(|s| !s.is_empty()).collect())
+        .unwrap_or_default();
+    for id in &deny_ids {
+        params.push(("denyBridge", id));
+    }
+    client.get(&format!("{V6_PREFIX}/swap"), &params).await
+}
+
+pub async fn fetch_status(
+    client: &mut ApiClient,
+    tx_hash: &str,
+    chain_index: Option<&str>,
+    bridge_id: Option<&str>,
+) -> Result<Value> {
+    let mut params: Vec<(&str, &str)> = vec![("hash", tx_hash)];
+    if let Some(c) = chain_index {
+        params.push(("chainIndex", c));
+    }
+    if let Some(b) = bridge_id {
+        params.push(("bridgeId", b));
+    }
+    client.get(&format!("{V6_PREFIX}/status"), &params).await
+}
+
+// ── Public command surface ─────────────────────────────────────────────────
 
 #[derive(Subcommand)]
 pub enum CrossChainCommand {
-    /// Get supported chain pairs for cross-chain
-    Chains,
+    /// List available bridge protocols
+    Bridges {
+        /// Source chain (omit to return all bridges)
+        #[arg(long)]
+        chain: Option<String>,
+    },
 
-    /// Get available bridge protocols
-    Bridge,
+    /// List bridgeable tokens on a chain
+    Tokens {
+        #[arg(long)]
+        chain: Option<String>,
+    },
 
-    /// Get cross-chain quote (read-only)
+    /// Get cross-chain quote (read-only). routerList may contain multiple bridges.
     Quote {
-        /// Source token contract address or alias
+        /// Source token address or alias
         #[arg(long)]
         from: String,
-        /// Destination token contract address or alias
+        /// Destination token address or alias
         #[arg(long)]
         to: String,
         /// Source chain (e.g. ethereum, arbitrum)
@@ -31,133 +226,369 @@ pub enum CrossChainCommand {
         /// Destination chain (e.g. optimism, base)
         #[arg(long)]
         to_chain: String,
-        /// Human-readable amount (e.g. "10" for 10 USDC, decimal format, do NOT multiply by decimals)
+        /// Human-readable amount (e.g. "1.5"). CLI fetches token decimals.
+        #[arg(long, conflicts_with = "amount")]
+        readable_amount: Option<String>,
+        /// Raw amount in minimal units. Mutually exclusive with --readable-amount.
+        #[arg(long, conflicts_with = "readable_amount")]
+        amount: Option<String>,
+        /// Slippage tolerance (decimal, 0.002–0.5). Default 0.01 (1%).
+        #[arg(long, default_value = "0.01")]
+        slippage: String,
+        /// User wallet address. Required when --check-approve is set.
         #[arg(long)]
-        readable_amount: String,
-        /// Receive address on destination chain (defaults to wallet address)
+        wallet: Option<String>,
+        /// Have server compare on-chain allowance and fill routerList[].needApprove
+        #[arg(long, default_value_t = false)]
+        check_approve: bool,
+        /// Pin a specific bridge id (openApiCode from quote / supported-bridges)
         #[arg(long)]
-        receive_address: Option<String>,
-        /// Sort preference: 0=optimal(default), 1=fastest, 2=max output
-        #[arg(long, default_value = "0")]
-        sort: String,
+        bridge_id: Option<String>,
+        /// Sort preference: 0=optimal (default), 1=fastest, 2=max output
+        #[arg(long)]
+        sort: Option<String>,
+        /// Allowed bridges (comma-separated bridge ids)
+        #[arg(long)]
+        allow_bridges: Option<String>,
+        /// Denied bridges (comma-separated bridge ids)
+        #[arg(long)]
+        deny_bridges: Option<String>,
     },
 
-    /// Execute cross-chain: three modes (default / --confirm-approve / --skip-approve)
-    Execute {
-        /// Source token contract address or alias
+    /// Build ERC-20 approve transaction for a bridge router (manual use)
+    Approve {
         #[arg(long)]
-        from: String,
-        /// Destination token contract address or alias
+        chain: String,
         #[arg(long)]
-        to: String,
-        /// Source chain
-        #[arg(long)]
-        from_chain: String,
-        /// Destination chain
-        #[arg(long)]
-        to_chain: String,
-        /// Human-readable amount (decimal format)
-        #[arg(long)]
-        readable_amount: String,
-        /// User wallet address
+        token: String,
         #[arg(long)]
         wallet: String,
-        /// Receive address on destination chain
+        #[arg(long)]
+        bridge_id: String,
+        /// Approve amount human-readable (e.g. "100" for 100 USDC, "0" to revoke).
+        /// /approve-tx accepts human-readable values, not raw.
+        #[arg(long)]
+        readable_amount: String,
+        /// Skip server allowance check (default: skip; pass --check-allowance to enable)
+        #[arg(long, default_value_t = false)]
+        check_allowance: bool,
+    },
+
+    /// Get unsigned cross-chain swap tx (calldata only, does NOT broadcast)
+    Swap {
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        from_chain: String,
+        #[arg(long)]
+        to_chain: String,
+        #[arg(long, conflicts_with = "amount")]
+        readable_amount: Option<String>,
+        #[arg(long, conflicts_with = "readable_amount")]
+        amount: Option<String>,
+        #[arg(long, default_value = "0.01")]
+        slippage: String,
+        #[arg(long)]
+        wallet: String,
+        /// Receive address on destination chain (required for heterogeneous chain pairs)
         #[arg(long)]
         receive_address: Option<String>,
-        /// Route index from quote result (default: 0 = recommended)
-        #[arg(long, default_value_t = 0)]
-        route_index: usize,
-        /// Enable MEV protection (EVM chains)
+        /// Pin a specific bridge id
+        #[arg(long)]
+        bridge_id: Option<String>,
+        /// Sort preference: 0=optimal (default), 1=fastest, 2=max output
+        #[arg(long)]
+        sort: Option<String>,
+        /// Allowed bridges (comma-separated bridge ids)
+        #[arg(long)]
+        allow_bridges: Option<String>,
+        /// Denied bridges (comma-separated bridge ids)
+        #[arg(long)]
+        deny_bridges: Option<String>,
+    },
+
+    /// Execute cross-chain. Three modes: default / --confirm-approve / --skip-approve.
+    Execute {
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        from_chain: String,
+        #[arg(long)]
+        to_chain: String,
+        #[arg(long, conflicts_with = "amount")]
+        readable_amount: Option<String>,
+        #[arg(long, conflicts_with = "readable_amount")]
+        amount: Option<String>,
+        #[arg(long, default_value = "0.01")]
+        slippage: String,
+        #[arg(long)]
+        wallet: String,
+        #[arg(long)]
+        receive_address: Option<String>,
+        /// Pin a specific bridge id (from quote.routerList[].bridgeId).
+        /// Mutually exclusive with --route-index.
+        #[arg(long, conflicts_with = "route_index")]
+        bridge_id: Option<String>,
+        /// Pick a route by its zero-based index in quote.routerList[].
+        /// Mutually exclusive with --bridge-id.
+        #[arg(long, conflicts_with = "bridge_id")]
+        route_index: Option<usize>,
+        /// Sort preference: 0=optimal (default), 1=fastest, 2=max output
+        #[arg(long)]
+        sort: Option<String>,
+        /// Allowed bridges (comma-separated bridge ids)
+        #[arg(long)]
+        allow_bridges: Option<String>,
+        /// Denied bridges (comma-separated bridge ids)
+        #[arg(long)]
+        deny_bridges: Option<String>,
+        /// Enable MEV protection on the swap broadcast (EVM)
         #[arg(long, default_value_t = false)]
         mev_protection: bool,
-        /// Confirm and execute token approval (after user confirms)
+        /// Confirm and execute approve transaction (after user reviews quote)
         #[arg(long, default_value_t = false, conflicts_with = "skip_approve")]
         confirm_approve: bool,
-        /// Skip allowance check, execute trade directly (after approval confirmed)
+        /// Skip allowance check, go straight to swap (use after approve confirmed)
         #[arg(long, default_value_t = false, conflicts_with = "confirm_approve")]
         skip_approve: bool,
-        /// Force execution: skip backend risk warnings (bypass 81362). Use only after user confirms.
+        /// Force execution: skip backend risk warning 81362. Only after user confirms.
         #[arg(long, default_value_t = false)]
         force: bool,
     },
 
-    /// Get calldata only — does NOT sign or broadcast (for manual use)
-    Calldata {
-        /// Source token contract address or alias
-        #[arg(long)]
-        from: String,
-        /// Destination token contract address or alias
-        #[arg(long)]
-        to: String,
-        /// Source chain
-        #[arg(long)]
-        from_chain: String,
-        /// Destination chain
-        #[arg(long)]
-        to_chain: String,
-        /// Human-readable amount (decimal format)
-        #[arg(long)]
-        readable_amount: String,
-        /// User wallet address
-        #[arg(long)]
-        wallet: String,
-        /// Receive address on destination chain
-        #[arg(long)]
-        receive_address: Option<String>,
-        /// Route index from quote result (default: 0 = recommended)
-        #[arg(long, default_value_t = 0)]
-        route_index: usize,
-    },
-
-    /// Query cross-chain order status
+    /// Query cross-chain status by source chain transaction hash
     Status {
-        /// Order ID returned by execute
+        /// Source chain transaction hash
         #[arg(long)]
-        order_id: String,
-    },
-
-    /// Probe which common tokens (USDC/USDT/native) can be bridged between two chains
-    Probe {
-        /// Source chain (e.g. ethereum, arbitrum)
+        tx_hash: String,
+        /// Bridge id used for the swap. Required — server returns 50014 when absent.
+        /// Get it from `bridgeId` of the prior `execute` / `quote.routerList[]` /
+        /// `bridges` response.
         #[arg(long)]
-        from_chain: String,
-        /// Destination chain (e.g. solana, base)
+        bridge_id: String,
+        /// Source chain (optional, helps server lookup). Accepts chain name or chainIndex.
         #[arg(long)]
-        to_chain: String,
-        /// Human-readable amount for estimation (default: 100)
-        #[arg(long, default_value = "100")]
-        readable_amount: String,
+        from_chain: Option<String>,
     },
 }
 
-// ── Local validation helpers ───────────────────────────────────────
+// ── Dispatcher ─────────────────────────────────────────────────────────────
 
-/// Validate readable-amount is a positive number.
-fn validate_amount(readable_amount: &str) -> Result<()> {
-    let amt: f64 = readable_amount
-        .parse()
-        .map_err(|_| anyhow::anyhow!("invalid readable-amount: \"{}\"", readable_amount))?;
-    if amt <= 0.0 {
-        bail!("readable-amount must be greater than 0");
+pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
+    let mut client = ctx.client_async().await?;
+    match cmd {
+        CrossChainCommand::Bridges { chain } => {
+            let chain_idx = chain.map(|c| crate::chains::resolve_chain(&c).to_string());
+            output::success(
+                fetch_supported_bridges(&mut client, chain_idx.as_deref()).await?,
+            );
+        }
+
+        CrossChainCommand::Tokens { chain } => {
+            let chain_idx = chain.map(|c| crate::chains::resolve_chain(&c).to_string());
+            output::success(
+                fetch_supported_tokens(&mut client, chain_idx.as_deref()).await?,
+            );
+        }
+
+        CrossChainCommand::Quote {
+            from,
+            to,
+            from_chain,
+            to_chain,
+            readable_amount,
+            amount,
+            slippage,
+            wallet,
+            check_approve,
+            bridge_id,
+            sort,
+            allow_bridges,
+            deny_bridges,
+        } => {
+            let from_idx = crate::chains::resolve_chain(&from_chain).to_string();
+            let to_idx = crate::chains::resolve_chain(&to_chain).to_string();
+            crate::chains::ensure_supported_chain(&from_idx, &from_chain)?;
+            crate::chains::ensure_supported_chain(&to_idx, &to_chain)?;
+            let from_token = crate::commands::swap::resolve_token_address(&from_idx, &from);
+            let to_token = crate::commands::swap::resolve_token_address(&to_idx, &to);
+            let raw_amount = crate::commands::swap::resolve_amount_arg(
+                &mut client,
+                amount.as_deref(),
+                readable_amount.as_deref(),
+                &from,
+                &from_idx,
+            )
+            .await?;
+            output::success(
+                fetch_quote(
+                    &mut client,
+                    &from_idx,
+                    &to_idx,
+                    &from_token,
+                    &to_token,
+                    &raw_amount,
+                    &slippage,
+                    wallet.as_deref(),
+                    check_approve,
+                    bridge_id.as_deref(),
+                    sort.as_deref(),
+                    allow_bridges.as_deref(),
+                    deny_bridges.as_deref(),
+                )
+                .await?,
+            );
+        }
+
+        CrossChainCommand::Approve {
+            chain,
+            token,
+            wallet,
+            bridge_id,
+            readable_amount,
+            check_allowance,
+        } => {
+            let chain_idx = crate::chains::resolve_chain(&chain).to_string();
+            crate::chains::ensure_supported_chain(&chain_idx, &chain)?;
+            let resolved_token = crate::commands::swap::resolve_token_address(&chain_idx, &token);
+            output::success(
+                fetch_approve_tx(
+                    &mut client,
+                    &chain_idx,
+                    &resolved_token,
+                    &wallet,
+                    &bridge_id,
+                    &readable_amount,
+                    check_allowance,
+                )
+                .await?,
+            );
+        }
+
+        CrossChainCommand::Swap {
+            from,
+            to,
+            from_chain,
+            to_chain,
+            readable_amount,
+            amount,
+            slippage,
+            wallet,
+            receive_address,
+            bridge_id,
+            sort,
+            allow_bridges,
+            deny_bridges,
+        } => {
+            let from_idx = crate::chains::resolve_chain(&from_chain).to_string();
+            let to_idx = crate::chains::resolve_chain(&to_chain).to_string();
+            crate::chains::ensure_supported_chain(&from_idx, &from_chain)?;
+            crate::chains::ensure_supported_chain(&to_idx, &to_chain)?;
+            let from_token = crate::commands::swap::resolve_token_address(&from_idx, &from);
+            let to_token = crate::commands::swap::resolve_token_address(&to_idx, &to);
+            if let Some(ref addr) = receive_address {
+                validate_receive_address(addr, &to_idx)?;
+            }
+            let raw_amount = crate::commands::swap::resolve_amount_arg(
+                &mut client,
+                amount.as_deref(),
+                readable_amount.as_deref(),
+                &from,
+                &from_idx,
+            )
+            .await?;
+            output::success(
+                fetch_swap(
+                    &mut client,
+                    &from_idx,
+                    &to_idx,
+                    &from_token,
+                    &to_token,
+                    &raw_amount,
+                    &slippage,
+                    &wallet,
+                    receive_address.as_deref(),
+                    bridge_id.as_deref(),
+                    sort.as_deref(),
+                    allow_bridges.as_deref(),
+                    deny_bridges.as_deref(),
+                )
+                .await?,
+            );
+        }
+
+        CrossChainCommand::Execute {
+            from,
+            to,
+            from_chain,
+            to_chain,
+            readable_amount,
+            amount,
+            slippage,
+            wallet,
+            receive_address,
+            bridge_id,
+            route_index,
+            sort,
+            allow_bridges,
+            deny_bridges,
+            mev_protection,
+            confirm_approve,
+            skip_approve,
+            force,
+        } => {
+            cmd_execute(
+                &mut client,
+                &from,
+                &to,
+                &from_chain,
+                &to_chain,
+                amount.as_deref(),
+                readable_amount.as_deref(),
+                &slippage,
+                &wallet,
+                receive_address.as_deref(),
+                bridge_id.as_deref(),
+                route_index,
+                sort.as_deref(),
+                allow_bridges.as_deref(),
+                deny_bridges.as_deref(),
+                mev_protection,
+                confirm_approve,
+                skip_approve,
+                force,
+            )
+            .await?;
+        }
+
+        CrossChainCommand::Status {
+            tx_hash,
+            bridge_id,
+            from_chain,
+        } => {
+            let chain_idx = from_chain.map(|c| crate::chains::resolve_chain(&c).to_string());
+            output::success(
+                fetch_status(
+                    &mut client,
+                    &tx_hash,
+                    chain_idx.as_deref(),
+                    Some(&bridge_id),
+                )
+                .await?,
+            );
+        }
     }
     Ok(())
 }
 
-/// Validate order-id is a non-empty numeric string.
-fn validate_order_id(order_id: &str) -> Result<()> {
-    if order_id.is_empty() || !order_id.chars().all(|c| c.is_ascii_digit()) {
-        bail!(
-            "invalid order-id: \"{}\". Order ID must be a numeric string.",
-            order_id
-        );
-    }
-    Ok(())
-}
+// ── Validation ─────────────────────────────────────────────────────────────
 
-/// Check that receive-address matches the destination chain's address family.
-/// Returns an error if the address format clearly mismatches the chain.
-fn validate_receive_address(receive_address: &str, to_chain_index: &str) -> Result<()> {
+/// Check that `receive_address` matches the destination chain's address family.
+pub(crate) fn validate_receive_address(receive_address: &str, to_chain_index: &str) -> Result<()> {
     let to_family = crate::chains::chain_family(to_chain_index);
     let addr_looks_evm = receive_address.starts_with("0x") && receive_address.len() == 42;
     let addr_looks_solana = !receive_address.starts_with("0x")
@@ -182,563 +613,296 @@ fn validate_receive_address(receive_address: &str, to_chain_index: &str) -> Resu
     }
 }
 
-// ── Public entry point ──────────────────────────────────────────────
+// ── Execute orchestration (4-step flow) ────────────────────────────────────
 
-pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
-    let mut client = ctx.client_async().await?;
-    match cmd {
-        CrossChainCommand::Chains => {
-            output::success(fetch_chain_pairs(&mut client).await?);
-        }
-        CrossChainCommand::Bridge => {
-            output::success(fetch_bridges(&mut client).await?);
-        }
-        CrossChainCommand::Quote {
-            from,
-            to,
-            from_chain,
-            to_chain,
-            readable_amount,
-            receive_address,
-            sort,
-        } => {
-            validate_amount(&readable_amount)?;
-            let from_chain_index = crate::chains::resolve_chain(&from_chain);
-            let to_chain_index = crate::chains::resolve_chain(&to_chain);
-            if let Some(ref addr) = receive_address {
-                validate_receive_address(addr, &to_chain_index)?;
-            }
-            let from_token = crate::commands::swap::resolve_token_address(&from_chain_index, &from);
-            let to_token = crate::commands::swap::resolve_token_address(&to_chain_index, &to);
-            output::success(
-                fetch_quote(
-                    &mut client,
-                    &from_chain_index,
-                    &to_chain_index,
-                    &from_token,
-                    &to_token,
-                    &readable_amount,
-                    receive_address.as_deref(),
-                    &sort,
-                )
-                .await?,
-            );
-        }
-        CrossChainCommand::Execute {
-            from,
-            to,
-            from_chain,
-            to_chain,
-            readable_amount,
-            wallet,
-            receive_address,
-            route_index,
-            mev_protection,
-            confirm_approve,
-            skip_approve,
-            force,
-        } => {
-            cmd_execute(
-                &mut client,
-                &from,
-                &to,
-                &from_chain,
-                &to_chain,
-                &readable_amount,
-                &wallet,
-                receive_address.as_deref(),
-                route_index,
-                mev_protection,
-                confirm_approve,
-                skip_approve,
-                force,
-            )
-            .await?;
-        }
-        CrossChainCommand::Calldata {
-            from,
-            to,
-            from_chain,
-            to_chain,
-            readable_amount,
-            wallet,
-            receive_address,
-            route_index,
-        } => {
-            cmd_calldata(
-                &mut client,
-                &from,
-                &to,
-                &from_chain,
-                &to_chain,
-                &readable_amount,
-                &wallet,
-                receive_address.as_deref(),
-                route_index,
-            )
-            .await?;
-        }
-        CrossChainCommand::Status { order_id } => {
-            validate_order_id(&order_id)?;
-            output::success(fetch_order_details(&mut client, &order_id).await?);
-        }
-        CrossChainCommand::Probe {
-            from_chain,
-            to_chain,
-            readable_amount,
-        } => {
-            cmd_probe(&mut client, &from_chain, &to_chain, &readable_amount).await?;
-        }
+#[allow(clippy::too_many_arguments)]
+async fn cmd_execute(
+    client: &mut ApiClient,
+    from: &str,
+    to: &str,
+    from_chain: &str,
+    to_chain: &str,
+    amount: Option<&str>,
+    readable_amount: Option<&str>,
+    slippage: &str,
+    wallet: &str,
+    receive_address: Option<&str>,
+    bridge_id: Option<&str>,
+    route_index: Option<usize>,
+    sort: Option<&str>,
+    allow_bridges: Option<&str>,
+    deny_bridges: Option<&str>,
+    mev_protection: bool,
+    confirm_approve: bool,
+    skip_approve: bool,
+    force: bool,
+) -> Result<()> {
+    let from_idx = crate::chains::resolve_chain(from_chain).to_string();
+    let to_idx = crate::chains::resolve_chain(to_chain).to_string();
+    crate::chains::ensure_supported_chain(&from_idx, from_chain)?;
+    crate::chains::ensure_supported_chain(&to_idx, to_chain)?;
+
+    let from_token = crate::commands::swap::resolve_token_address(&from_idx, from);
+    let to_token = crate::commands::swap::resolve_token_address(&to_idx, to);
+    if let Some(addr) = receive_address {
+        validate_receive_address(addr, &to_idx)?;
     }
+
+    let raw_amount = crate::commands::swap::resolve_amount_arg(
+        client,
+        amount,
+        readable_amount,
+        from,
+        &from_idx,
+    )
+    .await?;
+
+    let family = crate::chains::chain_family(&from_idx);
+    let native_addr = crate::chains::native_token_address(&from_idx);
+    let is_from_native = from_token.eq_ignore_ascii_case(native_addr);
+
+    // ── Step 1: Quote ──────────────────────────────────────────────────────
+    let quote_data = fetch_quote(
+        client,
+        &from_idx,
+        &to_idx,
+        &from_token,
+        &to_token,
+        &raw_amount,
+        slippage,
+        Some(wallet),
+        true, // checkApprove=true so server fills needApprove from on-chain allowance
+        bridge_id,
+        sort,
+        allow_bridges,
+        deny_bridges,
+    )
+    .await?;
+    let quote_obj = unwrap_data_array(&quote_data);
+    let router_list = quote_obj["routerList"]
+        .as_array()
+        .filter(|a| !a.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("/quote returned empty routerList — no available route"))?;
+    let picked_index = route_index.unwrap_or(0);
+    if picked_index >= router_list.len() {
+        bail!(
+            "--route-index {} out of bounds: routerList has {} entries",
+            picked_index,
+            router_list.len()
+        );
+    }
+    let route = &router_list[picked_index];
+    let resolved_bridge_id = extract_bridge_id(route)?;
+    let need_approve = route["needApprove"].as_bool().unwrap_or(false);
+    // USDT-pattern revoke flag. Defaults false when backend has not yet emitted it.
+    let need_cancel_approve = route["needCancelApprove"].as_bool().unwrap_or(false);
+
+    // ── Step 2: Approve branch ─────────────────────────────────────────────
+    let mut approve_tx_hash: Option<String> = None;
+    let mut approve_order_id: Option<String> = None;
+
+    let needs_approve_branch = family == "evm" && !is_from_native && need_approve && !skip_approve;
+
+    if needs_approve_branch && !confirm_approve {
+        // Default mode: surface action=approve-required and stop.
+        output::success(json!({
+            "action": "approve-required",
+            "tokenAddress": from_token,
+            "tokenSymbol": route["fromToken"]["tokenSymbol"],
+            "approveAmount": raw_amount,
+            "readableAmount": readable_amount.unwrap_or(""),
+            "bridgeId": resolved_bridge_id,
+            "bridgeName": route["bridgeName"],
+            "needCancelApprove": need_cancel_approve,
+            "estimateTime": route["estimateTime"],
+            "minimumReceived": route["minimumReceived"],
+            "toTokenAmount": route["toTokenAmount"],
+            "crossChainFee": route["crossChainFee"],
+        }));
+        return Ok(());
+    }
+
+    if needs_approve_branch && confirm_approve {
+        // USDT pattern: revoke (approve 0) before approving full amount
+        if need_cancel_approve {
+            let revoke_data = fetch_approve_tx(
+                client,
+                &from_idx,
+                &from_token,
+                wallet,
+                &resolved_bridge_id,
+                "0",
+                false,
+            )
+            .await?;
+            let revoke_obj = unwrap_data_array(&revoke_data);
+            if let Some(tx) = revoke_obj["tx"].as_object() {
+                let revoke_calldata = tx
+                    .get("data")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("missing tx.data in revoke approve-tx"))?;
+                let gas_limit = tx.get("gasLimit").and_then(|v| v.as_str());
+                let result = wallet_contract_call(
+                    &from_token,
+                    &from_idx,
+                    "0",
+                    Some(revoke_calldata),
+                    gas_limit,
+                    false,
+                    force,
+                )
+                .await?;
+                // Don't surface revoke txHash separately — only the final approve matters.
+                let _ = extract_tx_hash(&result)?;
+            }
+        }
+
+        // Full approve (server returns the ready-built tx).
+        // Server expects raw on-chain amount (smallest unit) — see
+        // fetch_approve_tx doc.
+        let approve_data = fetch_approve_tx(
+            client,
+            &from_idx,
+            &from_token,
+            wallet,
+            &resolved_bridge_id,
+            &raw_amount,
+            false, // we already know we need it from quote.needApprove
+        )
+        .await?;
+        let approve_obj = unwrap_data_array(&approve_data);
+        let tx_obj = approve_obj["tx"]
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("/approve-tx returned null tx — sanity check failed"))?;
+        let approve_calldata = tx_obj
+            .get("data")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("missing tx.data in approve-tx response"))?;
+        let approve_gas_limit = tx_obj.get("gasLimit").and_then(|v| v.as_str());
+        let result = wallet_contract_call(
+            &from_token,
+            &from_idx,
+            "0",
+            Some(approve_calldata),
+            approve_gas_limit,
+            false,
+            force,
+        )
+        .await?;
+        let (tx_hash, order_id) = extract_tx_hash_and_order_id(&result)?;
+        approve_tx_hash = Some(tx_hash);
+        if !order_id.is_empty() {
+            approve_order_id = Some(order_id);
+        }
+
+        // Mode: --confirm-approve only. Return approveTxHash, do NOT swap.
+        let mut out = json!({
+            "action": "approved",
+            "approveTxHash": approve_tx_hash,
+            "tokenAddress": from_token,
+            "tokenSymbol": route["fromToken"]["tokenSymbol"],
+            "approveAmount": raw_amount,
+            "readableAmount": readable_amount.unwrap_or(""),
+            "bridgeId": resolved_bridge_id,
+            "bridgeName": route["bridgeName"],
+        });
+        if let Some(oid) = approve_order_id {
+            out["approveOrderId"] = json!(oid);
+        }
+        output::success(out);
+        return Ok(());
+    }
+
+    // ── Step 3: Swap ──────────────────────────────────────────────────────
+    let swap_data = fetch_swap(
+        client,
+        &from_idx,
+        &to_idx,
+        &from_token,
+        &to_token,
+        &raw_amount,
+        slippage,
+        wallet,
+        receive_address,
+        Some(&resolved_bridge_id),
+        sort,
+        allow_bridges,
+        deny_bridges,
+    )
+    .await?;
+    let swap_obj = unwrap_data_array(&swap_data);
+    let tx = &swap_obj["tx"];
+    let tx_to = tx["to"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing tx.to in swap response"))?;
+    let tx_data = tx["data"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing tx.data in swap response"))?;
+    let tx_value = tx["value"].as_str().unwrap_or("0");
+    let tx_gas_limit = tx["gasLimit"].as_str();
+
+    let result = wallet_contract_call(
+        tx_to,
+        &from_idx,
+        tx_value,
+        Some(tx_data),
+        tx_gas_limit,
+        mev_protection,
+        force,
+    )
+    .await?;
+    let (swap_tx_hash, swap_order_id) = extract_tx_hash_and_order_id(&result)?;
+
+    // ── Step 4: Output ────────────────────────────────────────────────────
+    let router = &swap_obj["router"];
+    let mut out = json!({
+        "action": "execute",
+        "fromTxHash": swap_tx_hash,
+        "approveTxHash": approve_tx_hash,
+        "selectedRoute": router["bridgeName"],
+        "bridgeId": router["bridgeId"],
+        "fromAmount": swap_obj["fromTokenAmount"],
+        "toAmount": swap_obj["toTokenAmount"],
+        "minimumReceived": swap_obj["minimumReceived"],
+        "estimateTime": router["estimateTime"],
+        "crossChainFee": router["crossChainFee"],
+    });
+    if let Some(oid) = approve_order_id {
+        out["approveOrderId"] = json!(oid);
+    }
+    if !swap_order_id.is_empty() {
+        out["swapOrderId"] = json!(swap_order_id);
+    }
+    output::success(out);
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// ── Helpers ────────────────────────────────────────────────────────────────
 
-    // ── validate_amount ────────────────────────────────────────────
-
-    #[test]
-    fn amount_positive_ok() {
-        assert!(validate_amount("10").is_ok());
-        assert!(validate_amount("0.001").is_ok());
-    }
-
-    #[test]
-    fn amount_zero_rejected() {
-        assert!(validate_amount("0").is_err());
-    }
-
-    #[test]
-    fn amount_negative_rejected() {
-        assert!(validate_amount("-1").is_err());
-    }
-
-    #[test]
-    fn amount_non_numeric_rejected() {
-        assert!(validate_amount("abc").is_err());
-        assert!(validate_amount("").is_err());
-    }
-
-    // ── validate_order_id ────────────────────────────────────────
-
-    #[test]
-    fn order_id_numeric_ok() {
-        assert!(validate_order_id("17109522093792128").is_ok());
-    }
-
-    #[test]
-    fn order_id_non_numeric_rejected() {
-        assert!(validate_order_id("abc-invalid").is_err());
-        assert!(validate_order_id("123abc").is_err());
-        assert!(validate_order_id("").is_err());
-    }
-
-    // ── validate_receive_address ─────────────────────────────────
-
-    #[test]
-    fn evm_addr_to_evm_chain_ok() {
-        assert!(validate_receive_address(
-            "0x896f4edd6601eda7d12f077a35e1cdf2898282ce",
-            "42161" // Arbitrum
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn evm_addr_to_solana_rejected() {
-        assert!(validate_receive_address(
-            "0x896f4edd6601eda7d12f077a35e1cdf2898282ce",
-            "501" // Solana
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn solana_addr_to_evm_rejected() {
-        assert!(validate_receive_address(
-            "5EDUCQDeVmaGohSAJYQ8mwe4hZMXgDzS4X2Si3Zh3cL5",
-            "8453" // Base
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn solana_addr_to_solana_ok() {
-        assert!(
-            validate_receive_address("5EDUCQDeVmaGohSAJYQ8mwe4hZMXgDzS4X2Si3Zh3cL5", "501").is_ok()
-        );
-    }
-
-    // ── decimal_to_hex64 ─────────────────────────────────────────
-
-    #[test]
-    fn hex64_zero() {
-        assert_eq!(decimal_to_hex64("0"), "0".repeat(64));
-    }
-
-    #[test]
-    fn hex64_small_number() {
-        let result = decimal_to_hex64("5500000");
-        assert_eq!(result, format!("{:0>64x}", 5500000u128));
-    }
-
-    #[test]
-    fn hex64_uint256_max() {
-        let max = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
-        let result = decimal_to_hex64(max);
-        assert_eq!(result, "f".repeat(64));
-    }
-
-    // ── Integration tests (manual) ──────────────────────────────
-
-    #[tokio::test]
-    #[ignore = "manual integration test against pre-production order/update"]
-    async fn forged_order_update_returns_error() {
-        let mut client = crate::client::ApiClient::new_async(None)
-            .await
-            .expect("create client");
-
-        let result = fetch_order_update(
-            &mut client,
-            "99999999999999999",
-            "0x1111111111111111111111111111111111111111111111111111111111111111",
-        )
-        .await;
-
-        match result {
-            Ok(value) => panic!("unexpected success: {value}"),
-            Err(err) => {
-                let msg = err.to_string();
-                println!("forged order/update error: {msg}");
-                assert!(
-                    !msg.is_empty(),
-                    "expected forged order/update to return a non-empty error"
-                );
-            }
-        }
-    }
-
-    #[tokio::test]
-    #[ignore = "manual integration test against pre-production order/save + forged order/update"]
-    async fn order_save_then_forged_update_returns_error() {
-        let mut client = crate::client::ApiClient::new_async(None)
-            .await
-            .expect("create client");
-
-        let quote_param = json!({
-            "chainId": "42161",
-            "toChainId": "10",
-            "fromTokenAddress": "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
-            "toTokenAddress": "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
-            "amount": "1",
-            "slippage": "0",
-            "gasDropType": 0,
-            "slippageType": 0,
-            "userWalletAddress": "0xf290d284ef50d6ad0b97dd67221e59c05c97dfbc",
-        });
-
-        let quote_result = client
-            .post(
-                &format!("{}/quote", BRIDGE_API_PREFIX),
-                &json!({ "dexQuoteParam": quote_param, "isOnlineQuote": true }),
-            )
-            .await
-            .expect("quote");
-
-        let selected = quote_result["pathSelectionRouterList"][0].clone();
-        let mut quote_for_order = quote_result.clone();
-        quote_for_order["pathSelectionRouterList"] = json!([selected]);
-
-        let order_id_val = fetch_order_save(
-            &mut client,
-            &quote_param,
-            &quote_for_order,
-            "0xf290d284ef50d6ad0b97dd67221e59c05c97dfbc",
-            "0xf290d284ef50d6ad0b97dd67221e59c05c97dfbc",
-        )
-        .await
-        .expect("order save");
-
-        let order_id = match &order_id_val {
-            Value::Number(n) => n.to_string(),
-            Value::String(s) => s.clone(),
-            _ => panic!("unexpected orderId format: {order_id_val:?}"),
-        };
-
-        let result = fetch_order_update(
-            &mut client,
-            &order_id,
-            "0x2222222222222222222222222222222222222222222222222222222222222222",
-        )
-        .await;
-
-        match result {
-            Ok(value) => panic!("unexpected success for saved order {order_id}: {value}"),
-            Err(err) => {
-                let msg = err.to_string();
-                println!("saved order {order_id} forged update error: {msg}");
-                assert!(
-                    !msg.is_empty(),
-                    "expected forged update after order/save to return a non-empty error"
-                );
-            }
-        }
+/// If the API returns an array, take the first element; otherwise return as-is.
+fn unwrap_data_array(data: &Value) -> Value {
+    if data.is_array() {
+        data.as_array()
+            .and_then(|a| a.first())
+            .cloned()
+            .unwrap_or(Value::Null)
+    } else {
+        data.clone()
     }
 }
 
-// ── API call functions ──────────────────────────────────────────────
-
-/// POST /chainPair/list — Get supported chain pairs
-pub async fn fetch_chain_pairs(client: &mut ApiClient) -> Result<Value> {
-    client
-        .post(&format!("{}/chainPair/list", BRIDGE_API_PREFIX), &json!({}))
-        .await
-}
-
-/// Get active bridge protocols.
-/// Single-call: backend endpoint `/bridge/list` (added 2026-04-21) aggregates
-/// bridges from chainPair cache and returns only configured bridges.
-/// Server-side handles filtering — no client-side join needed.
-pub async fn fetch_bridges(client: &mut ApiClient) -> Result<Value> {
-    client
-        .post(&format!("{}/bridge/list", BRIDGE_API_PREFIX), &json!({}))
-        .await
-}
-
-/// POST /quote — Get cross-chain quote
-#[allow(clippy::too_many_arguments)]
-pub async fn fetch_quote(
-    client: &mut ApiClient,
-    from_chain_index: &str,
-    to_chain_index: &str,
-    from_token: &str,
-    to_token: &str,
-    amount: &str,
-    receive_address: Option<&str>,
-    _sort: &str,
-) -> Result<Value> {
-    let mut dex_quote_param = json!({
-        "chainId": from_chain_index,
-        "toChainId": to_chain_index,
-        "fromTokenAddress": from_token,
-        "toTokenAddress": to_token,
-        "amount": amount,
-        "slippage": "0",
-        "gasDropType": 0,
-        "slippageType": 0,
-    });
-    if let Some(addr) = receive_address {
-        dex_quote_param["userWalletAddress"] = json!(addr);
-        dex_quote_param["receiveWalletAddress"] = json!(addr);
+/// `routerList[].bridgeId` is documented as Integer but tolerate String form too.
+fn extract_bridge_id(route: &Value) -> Result<String> {
+    if let Some(i) = route["bridgeId"].as_i64() {
+        return Ok(i.to_string());
     }
-    // _sort is used at Skill layer to pick route, not sent to API
-
-    client
-        .post(
-            &format!("{}/quote", BRIDGE_API_PREFIX),
-            &json!({ "dexQuoteParam": dex_quote_param, "isOnlineQuote": true }),
-        )
-        .await
-}
-
-/// POST /callData — Get unsigned transaction data
-async fn fetch_call_data(
-    client: &mut ApiClient,
-    quote_param: &Value,
-    quote_result: &Value,
-    user_wallet: &str,
-    receive_wallet: &str,
-) -> Result<Value> {
-    client
-        .post(
-            &format!("{}/callData", BRIDGE_API_PREFIX),
-            &json!({
-                "quoteParam": quote_param,
-                "quoteResult": quote_result,
-                "userWalletAddress": user_wallet,
-                "receiveWalletAddress": receive_wallet,
-            }),
-        )
-        .await
-}
-
-/// POST /contract — Get approve/router contract addresses (fallback when dynamicApproveAddress is null)
-async fn fetch_contract(
-    client: &mut ApiClient,
-    bridge_id: i64,
-    from_chain_id: i64,
-    from_token: &str,
-    to_chain_id: i64,
-    to_token: &str,
-) -> Result<Value> {
-    client
-        .post(
-            &format!("{}/contract", BRIDGE_API_PREFIX),
-            &json!({
-                "bridgeId": bridge_id,
-                "fromChainId": from_chain_id,
-                "fromTokenAddress": from_token,
-                "toChainId": to_chain_id,
-                "toTokenAddress": to_token,
-            }),
-        )
-        .await
-}
-
-/// POST /order/save — Save order, returns orderId
-async fn fetch_order_save(
-    client: &mut ApiClient,
-    quote_param: &Value,
-    quote_result: &Value,
-    user_wallet: &str,
-    receive_wallet: &str,
-) -> Result<Value> {
-    client
-        .post(
-            &format!("{}/order/save", BRIDGE_API_PREFIX),
-            &json!({
-                "quoteParam": quote_param,
-                "quoteResult": quote_result,
-                "userWalletAddress": user_wallet,
-                "receiveWalletAddress": receive_wallet,
-            }),
-        )
-        .await
-}
-
-/// POST /order/update — Update order with txHash
-async fn fetch_order_update(
-    client: &mut ApiClient,
-    order_id: &str,
-    tx_hash: &str,
-) -> Result<Value> {
-    let order_id_num: i64 = order_id
-        .parse()
-        .map_err(|_| anyhow::anyhow!("invalid orderId from /order/save: {order_id}"))?;
-    client
-        .post(
-            &format!("{}/order/update", BRIDGE_API_PREFIX),
-            &json!({
-                "orderId": order_id_num,
-                "txHash": tx_hash,
-            }),
-        )
-        .await
-}
-
-/// GET /order/details — Query order status
-pub async fn fetch_order_details(client: &mut ApiClient, order_id: &str) -> Result<Value> {
-    client
-        .get(
-            &format!("{}/order/details", BRIDGE_API_PREFIX),
-            &[("orderId", order_id)],
-        )
-        .await
-}
-
-// ── Helper: resolve spender address for approve ─────────────────────
-
-/// Get spender address: prefer dynamicApproveAddress from quote, fallback to /contract
-async fn resolve_spender(
-    client: &mut ApiClient,
-    route: &Value,
-    from_chain_index: &str,
-    to_chain_index: &str,
-    from_token: &str,
-    to_token: &str,
-) -> Result<String> {
-    let bridge = &route["bridge"];
-
-    // Try dynamicApproveAddress first
-    if let Some(addr) = bridge["callDataMap"]["dynamicApproveAddress"].as_str() {
-        if !addr.is_empty() {
-            return Ok(addr.to_string());
-        }
+    if let Some(s) = route["bridgeId"].as_str() {
+        return Ok(s.to_string());
     }
-
-    // Fallback: call /contract
-    let bridge_id = bridge["bridgeId"]
-        .as_str()
-        .and_then(|s| s.parse::<i64>().ok())
-        .or_else(|| bridge["bridgeId"].as_i64())
-        .ok_or_else(|| anyhow::anyhow!("missing bridgeId in route"))?;
-    let from_chain_id = from_chain_index
-        .parse::<i64>()
-        .map_err(|_| anyhow::anyhow!("invalid from_chain_index"))?;
-    let to_chain_id = to_chain_index
-        .parse::<i64>()
-        .map_err(|_| anyhow::anyhow!("invalid to_chain_index"))?;
-
-    let contract_data = fetch_contract(
-        client,
-        bridge_id,
-        from_chain_id,
-        from_token,
-        to_chain_id,
-        to_token,
-    )
-    .await?;
-    let approve_addr = contract_data["approve"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("missing approve field in /contract response"))?;
-    Ok(approve_addr.to_string())
+    Err(anyhow::anyhow!(
+        "quote.routerList[0].bridgeId missing or wrong type"
+    ))
 }
-
-// ── Helper: build approve calldata ──────────────────────────────────
-
-/// Construct ERC20 approve(spender, amount) calldata hex.
-/// Handles uint256 range via string-based hex conversion (u128 overflows for MaxUint256).
-fn build_approve_calldata(spender: &str, amount_raw: &str) -> String {
-    let spender_clean = spender.trim_start_matches("0x").to_lowercase();
-    let amount_hex = decimal_to_hex64(amount_raw);
-    format!("0x095ea7b3{:0>64}{}", spender_clean, amount_hex)
-}
-
-/// Convert a decimal string to a zero-padded 64-char hex string.
-/// Supports full uint256 range by iterating digit-by-digit.
-fn decimal_to_hex64(decimal: &str) -> String {
-    if decimal == "0" {
-        return "0".repeat(64);
-    }
-    // Try u128 first (covers most cases)
-    if let Ok(v) = decimal.parse::<u128>() {
-        return format!("{:0>64x}", v);
-    }
-    // Fallback: manual base conversion for values > u128::MAX
-    let mut bytes = vec![0u8; 32]; // 256 bits
-    let mut dec_digits: Vec<u8> = decimal.bytes().map(|b| b - b'0').collect();
-    let mut bit_pos = 0;
-    while !dec_digits.is_empty() && bit_pos < 256 {
-        let remainder = div_decimal_by_2(&mut dec_digits);
-        if remainder == 1 {
-            bytes[31 - bit_pos / 8] |= 1 << (bit_pos % 8);
-        }
-        bit_pos += 1;
-        // Remove leading zeros
-        while dec_digits.first() == Some(&0) && dec_digits.len() > 1 {
-            dec_digits.remove(0);
-        }
-        if dec_digits == [0] {
-            break;
-        }
-    }
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
-}
-
-/// Divide a decimal digit array by 2, return remainder (0 or 1).
-fn div_decimal_by_2(digits: &mut [u8]) -> u8 {
-    let mut carry = 0u8;
-    for d in digits.iter_mut() {
-        let val = carry * 10 + *d;
-        *d = val / 2;
-        carry = val % 2;
-    }
-    carry
-}
-
-// ── Helper: wallet contract-call wrapper ────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
 async fn wallet_contract_call(
@@ -746,10 +910,8 @@ async fn wallet_contract_call(
     chain: &str,
     amt: &str,
     input_data: Option<&str>,
-    unsigned_tx: Option<&str>,
+    gas_limit: Option<&str>,
     mev_protection: bool,
-    jito_unsigned_tx: Option<&str>,
-    aa_dex_token_addr: Option<&str>,
     force: bool,
 ) -> Result<Value> {
     let resp = crate::commands::agentic_wallet::transfer::execute_contract_call(
@@ -757,13 +919,13 @@ async fn wallet_contract_call(
         chain,
         amt,
         input_data,
-        unsigned_tx,
-        None, // gas_limit
-        None, // from
-        aa_dex_token_addr,
+        None, // unsigned_tx (Solana path; cross-chain currently EVM-source)
+        gas_limit,
+        None, // from: use selected account
+        None, // aa_dex_token_addr
         None, // aa_dex_token_amount
         mev_protection,
-        jito_unsigned_tx,
+        None, // jito_unsigned_tx
         force,
         Some("3"), // tx_source: cross-chain bridge
         None,      // gas_token_address
@@ -783,578 +945,85 @@ fn extract_tx_hash(data: &Value) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("missing txHash in contract-call output"))
 }
 
-// ── cmd_calldata: returns calldata only, no sign/broadcast ──────────
-
-#[allow(clippy::too_many_arguments)]
-async fn cmd_calldata(
-    client: &mut ApiClient,
-    from: &str,
-    to: &str,
-    from_chain: &str,
-    to_chain: &str,
-    readable_amount: &str,
-    wallet: &str,
-    receive_address: Option<&str>,
-    route_index: usize,
-) -> Result<()> {
-    validate_amount(readable_amount)?;
-    let from_chain_index = crate::chains::resolve_chain(from_chain);
-    let to_chain_index = crate::chains::resolve_chain(to_chain);
-    let from_token = crate::commands::swap::resolve_token_address(&from_chain_index, from);
-    let to_token = crate::commands::swap::resolve_token_address(&to_chain_index, to);
-    let receive_wallet = receive_address.unwrap_or(wallet);
-    validate_receive_address(receive_wallet, &to_chain_index)?;
-
-    // 1. Quote
-    let quote_param = json!({
-        "chainId": from_chain_index,
-        "toChainId": to_chain_index,
-        "fromTokenAddress": from_token,
-        "toTokenAddress": to_token,
-        "amount": readable_amount,
-        "slippage": "0",
-        "gasDropType": 0,
-        "slippageType": 0,
-        "userWalletAddress": wallet,
-    });
-    let quote_result = client
-        .post(
-            &format!("{}/quote", BRIDGE_API_PREFIX),
-            &json!({ "dexQuoteParam": quote_param, "isOnlineQuote": true }),
-        )
-        .await?;
-
-    // 2. Select route
-    let routes = quote_result["pathSelectionRouterList"]
-        .as_array()
-        .ok_or_else(|| anyhow::anyhow!("no routes returned from /quote"))?;
-    if route_index >= routes.len() {
-        bail!(
-            "route_index {} out of range, only {} routes available",
-            route_index,
-            routes.len()
-        );
-    }
-    let selected = &routes[route_index];
-    let mut quote_for_calldata = quote_result.clone();
-    quote_for_calldata["pathSelectionRouterList"] = json!([selected]);
-
-    // 3. CallData
-    let calldata_result = fetch_call_data(
-        client,
-        &quote_param,
-        &quote_for_calldata,
-        wallet,
-        receive_wallet,
-    )
-    .await?;
-
-    output::success(calldata_result);
-    Ok(())
+fn extract_tx_hash_and_order_id(data: &Value) -> Result<(String, String)> {
+    let tx_hash = extract_tx_hash(data)?;
+    let order_id = data["orderId"].as_str().unwrap_or("").to_string();
+    Ok((tx_hash, order_id))
 }
 
-// ── cmd_execute: three-mode cross-chain flow ─────────────────────────
-//
-// Mode 1 (default):        check allowance → approve-required or execute
-// Mode 2 (--confirm-approve): execute approval → approved
-// Mode 3 (--skip-approve):    skip allowance check → execute trade
+// ── Tests ──────────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_arguments)]
-async fn cmd_execute(
-    client: &mut ApiClient,
-    from: &str,
-    to: &str,
-    from_chain: &str,
-    to_chain: &str,
-    readable_amount: &str,
-    wallet: &str,
-    receive_address: Option<&str>,
-    route_index: usize,
-    mev_protection: bool,
-    confirm_approve: bool,
-    skip_approve: bool,
-    force: bool,
-) -> Result<()> {
-    let from_chain_index = crate::chains::resolve_chain(from_chain);
-    let to_chain_index = crate::chains::resolve_chain(to_chain);
-    let from_token = crate::commands::swap::resolve_token_address(&from_chain_index, from);
-    let to_token = crate::commands::swap::resolve_token_address(&to_chain_index, to);
-    let receive_wallet = receive_address.unwrap_or(wallet);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    // ── 0. Local validation ─────────────────────────────────────────
-    validate_amount(readable_amount)?;
-    validate_receive_address(receive_wallet, &to_chain_index)?;
-
-    // Balance pre-check
-    check_balance(
-        client,
-        wallet,
-        &from_chain_index,
-        &from_token,
-        from,
-        readable_amount,
-    )
-    .await?;
-
-    // ── 1. Quote ────────────────────────────────────────────────────
-    let quote_param = json!({
-        "chainId": from_chain_index,
-        "toChainId": to_chain_index,
-        "fromTokenAddress": from_token,
-        "toTokenAddress": to_token,
-        "amount": readable_amount,
-        "slippage": "0",
-        "gasDropType": 0,
-        "slippageType": 0,
-        "userWalletAddress": wallet,
-    });
-    let quote_result = client
-        .post(
-            &format!("{}/quote", BRIDGE_API_PREFIX),
-            &json!({ "dexQuoteParam": quote_param, "isOnlineQuote": true }),
+    #[test]
+    fn evm_addr_to_solana_rejected() {
+        assert!(validate_receive_address(
+            "0x896f4edd6601eda7d12f077a35e1cdf2898282ce",
+            "501"
         )
-        .await?;
-
-    // Select route
-    let routes = quote_result["pathSelectionRouterList"]
-        .as_array()
-        .ok_or_else(|| anyhow::anyhow!("no routes returned from /quote"))?;
-    if route_index >= routes.len() {
-        bail!(
-            "route_index {} out of range, only {} routes available",
-            route_index,
-            routes.len()
-        );
+        .is_err());
     }
-    let selected_route = &routes[route_index];
-    let bridge_name = selected_route["bridge"]["bridgeName"]
-        .as_str()
-        .unwrap_or("unknown");
-    let estimated_time = selected_route["estimatedTime"]
-        .as_str()
-        .unwrap_or("unknown");
-    let receive_amount = selected_route["receiveAmount"]
-        .as_str()
-        .unwrap_or("unknown");
-    let minimum_received = selected_route["minimumReceived"]
-        .as_str()
-        .unwrap_or("unknown");
-    let total_fee = selected_route["totalFee"].as_str().unwrap_or("unknown");
-    let token_symbol = quote_result["commonDexInfo"]["fromToken"]["tokenSymbol"]
-        .as_str()
-        .unwrap_or("token");
 
-    // Compute required raw amount
-    let decimal: u32 = quote_result["commonDexInfo"]["fromToken"]["decimals"]
-        .as_str()
-        .or_else(|| quote_result["commonDexInfo"]["fromToken"]["decimal"].as_str())
-        .and_then(|s| s.parse().ok())
-        .or_else(|| {
-            quote_result["commonDexInfo"]["fromToken"]["decimals"]
-                .as_u64()
-                .map(|v| v as u32)
-        })
-        .or_else(|| {
-            quote_result["commonDexInfo"]["fromToken"]["decimal"]
-                .as_u64()
-                .map(|v| v as u32)
-        })
-        .unwrap_or(18);
-    let raw_amount = crate::commands::swap::readable_to_minimal_str(readable_amount, decimal)?;
-
-    // ── Mode 2: --confirm-approve (execute approval only) ──────────
-    if confirm_approve {
-        let spender = resolve_spender(
-            client,
-            selected_route,
-            &from_chain_index,
-            &to_chain_index,
-            &from_token,
-            &to_token,
+    #[test]
+    fn solana_addr_to_evm_rejected() {
+        assert!(validate_receive_address(
+            "5EDUCQDeVmaGohSAJYQ8mwe4hZMXgDzS4X2Si3Zh3cL5",
+            "8453"
         )
-        .await?;
-        let token_address = selected_route["bridge"]["dexMultiTokenAllowanceOut"]
-            ["tokenContractAddress"]
-            .as_str()
-            .unwrap_or(&from_token);
-
-        // USDT pattern: revoke first
-        let need_cancel = selected_route["bridge"]["dexMultiTokenAllowanceOut"]
-            ["needCancelApproveToken"]
-            .as_bool()
-            .unwrap_or(false);
-        if need_cancel {
-            let revoke_calldata = build_approve_calldata(&spender, "0");
-            let revoke_result = wallet_contract_call(
-                token_address,
-                &from_chain_index,
-                "0",
-                Some(&revoke_calldata),
-                None,
-                false,
-                None,
-                None,
-                force,
-            )
-            .await?;
-            extract_tx_hash(&revoke_result)?;
-        }
-
-        // Approve with exact transaction amount
-        let approve_calldata = build_approve_calldata(&spender, &raw_amount);
-        let approve_result = wallet_contract_call(
-            token_address,
-            &from_chain_index,
-            "0",
-            Some(&approve_calldata),
-            None,
-            false,
-            None,
-            None,
-            force,
-        )
-        .await?;
-        let approve_tx_hash = extract_tx_hash(&approve_result)?;
-
-        output::success(json!({
-            "action": "approved",
-            "approveTxHash": approve_tx_hash,
-            "spender": spender,
-            "tokenAddress": token_address,
-            "tokenSymbol": token_symbol,
-            "approveAmount": raw_amount,
-            "readableAmount": readable_amount,
-            "bridgeName": bridge_name,
-        }));
-        return Ok(());
+        .is_err());
     }
 
-    // ── Mode 1 (default): check allowance ──────────────────────────
-    if !skip_approve {
-        let allowance_amount = selected_route["bridge"]["dexMultiTokenAllowanceOut"]["amount"]
-            .as_str()
-            .unwrap_or("0");
-        let allowance_insufficient =
-            crate::commands::swap::is_allowance_insufficient(allowance_amount, &raw_amount);
-
-        if allowance_insufficient {
-            let spender = resolve_spender(
-                client,
-                selected_route,
-                &from_chain_index,
-                &to_chain_index,
-                &from_token,
-                &to_token,
-            )
-            .await?;
-            let token_address = selected_route["bridge"]["dexMultiTokenAllowanceOut"]
-                ["tokenContractAddress"]
-                .as_str()
-                .unwrap_or(&from_token);
-            let need_cancel = selected_route["bridge"]["dexMultiTokenAllowanceOut"]
-                ["needCancelApproveToken"]
-                .as_bool()
-                .unwrap_or(false);
-
-            output::success(json!({
-                "action": "approve-required",
-                "spender": spender,
-                "tokenAddress": token_address,
-                "tokenSymbol": token_symbol,
-                "approveAmount": raw_amount,
-                "readableAmount": readable_amount,
-                "currentAllowance": allowance_amount,
-                "bridgeName": bridge_name,
-                "needCancelApprove": need_cancel,
-            }));
-            return Ok(());
-        }
-        // Allowance sufficient → fall through to trade
-    }
-
-    // ── Mode 3 / default (sufficient): execute trade ───────────────
-
-    // CallData
-    let mut quote_for_calldata = quote_result.clone();
-    quote_for_calldata["pathSelectionRouterList"] = json!([selected_route]);
-
-    let calldata_result = fetch_call_data(
-        client,
-        &quote_param,
-        &quote_for_calldata,
-        wallet,
-        receive_wallet,
-    )
-    .await?;
-
-    let calldata_type = calldata_result["calldataType"]
-        .as_i64()
-        .ok_or_else(|| anyhow::anyhow!("missing calldataType in /callData response"))?;
-    let call_data = &calldata_result["callData"];
-    let enable_mev = calldata_result["mevConfig"]["enableMev"]
-        .as_bool()
-        .unwrap_or(false);
-    let effective_mev = mev_protection || enable_mev;
-
-    // Order Save
-    let order_id_val = fetch_order_save(
-        client,
-        &quote_param,
-        &quote_for_calldata,
-        wallet,
-        receive_wallet,
-    )
-    .await?;
-    let order_id = match &order_id_val {
-        Value::Number(n) => n.to_string(),
-        Value::String(s) => s.clone(),
-        _ => bail!(
-            "unexpected orderId format from /order/save: {:?}",
-            order_id_val
-        ),
-    };
-
-    // Sign & Broadcast by calldataType
-    //
-    // Backend guarantees callData.to is always the correct on-chain target:
-    //   100 (contract call): to = router/bridge contract, data = calldata
-    //   101 (native transfer): to = bridge receiver, value = amount, no data
-    //   110 (ERC20 transfer): to = ERC20 contract, data = transfer calldata, value = 0
-    let crosschain_tx_hash = match calldata_type {
-        100 | 110 => {
-            // Contract call or ERC20 transfer — both use to + data + value
-            let to_addr = call_data["to"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("missing callData.to"))?;
-            let input_data = call_data["data"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("missing callData.data"))?;
-            let value_str = if let Some(v) = call_data["value"].as_i64() {
-                v.to_string()
-            } else {
-                call_data["value"].as_str().unwrap_or("0").to_string()
-            };
-            let result = wallet_contract_call(
-                to_addr,
-                &from_chain_index,
-                &value_str,
-                Some(input_data),
-                None,
-                effective_mev,
-                None,
-                None,
-                force,
-            )
-            .await?;
-            extract_tx_hash(&result)?
-        }
-        101 => {
-            // Native transfer — to + value, no data
-            let to_addr = call_data["to"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("missing callData.to for transfer"))?;
-            let value_str = if let Some(v) = call_data["value"].as_i64() {
-                v.to_string()
-            } else {
-                call_data["value"].as_str().unwrap_or("0").to_string()
-            };
-            let result = wallet_contract_call(
-                to_addr,
-                &from_chain_index,
-                &value_str,
-                None,
-                None,
-                effective_mev,
-                None,
-                None,
-                force,
-            )
-            .await?;
-            extract_tx_hash(&result)?
-        }
-        _ => bail!("unsupported calldataType: {}", calldata_type),
-    };
-
-    // Order Update
-    let mut order_update_warning: Option<String> = None;
-    if crosschain_tx_hash != "pending" {
-        if let Err(e) = fetch_order_update(client, &order_id, &crosschain_tx_hash).await {
-            order_update_warning = Some(format!("{e:#}"));
-        }
-    }
-
-    // Output action=execute
-    let mut result = json!({
-        "action": "execute",
-        "orderId": order_id,
-        "crosschainTxHash": crosschain_tx_hash,
-        "selectedRoute": bridge_name,
-        "fromAmount": readable_amount,
-        "estimatedReceiveAmount": receive_amount,
-        "minimumReceived": minimum_received,
-        "totalFee": total_fee,
-        "estimatedTime": estimated_time,
-        "calldataType": calldata_type,
-    });
-    if let Some(warning) = order_update_warning {
-        result["orderUpdateWarning"] = json!(warning);
-    }
-    output::success(result);
-
-    Ok(())
-}
-
-// ── Probe: try common tokens for bridgeability ────────────────────
-
-async fn cmd_probe(
-    client: &mut ApiClient,
-    from_chain: &str,
-    to_chain: &str,
-    readable_amount: &str,
-) -> Result<()> {
-    let from_chain_index = crate::chains::resolve_chain(from_chain);
-    let to_chain_index = crate::chains::resolve_chain(to_chain);
-
-    // Candidate aliases to try — resolve_token_address handles per-chain mapping
-    let candidates = ["usdc", "usdt", "native"];
-    let mut results = Vec::new();
-    let mut seen_pairs: Vec<(String, String)> = Vec::new();
-
-    for candidate in &candidates {
-        let from_token = crate::commands::swap::resolve_token_address(&from_chain_index, candidate);
-        let to_token = crate::commands::swap::resolve_token_address(&to_chain_index, candidate);
-
-        // Skip if token not mapped on either chain (resolve returns original string unchanged)
-        if from_token == *candidate || to_token == *candidate {
-            continue;
-        }
-
-        // Skip duplicate address pairs (e.g. native on both EVM chains = same 0xeee…)
-        let pair = (from_token.clone(), to_token.clone());
-        if seen_pairs.contains(&pair) {
-            continue;
-        }
-        seen_pairs.push(pair);
-
-        // Try quote — silently skip failures
-        match fetch_quote(
-            client,
-            &from_chain_index,
-            &to_chain_index,
-            &from_token,
-            &to_token,
-            readable_amount,
-            None,
-            "0",
-        )
-        .await
-        {
-            Ok(quote) => {
-                if let Some(routes) = quote["pathSelectionRouterList"].as_array() {
-                    if !routes.is_empty() {
-                        let best = &routes[0];
-                        results.push(json!({
-                            "token": candidate,
-                            "fromTokenAddress": from_token,
-                            "toTokenAddress": to_token,
-                            "fromTokenSymbol": quote["commonDexInfo"]["fromToken"]["tokenSymbol"],
-                            "toTokenSymbol": quote["commonDexInfo"]["toToken"]["tokenSymbol"],
-                            "receiveAmount": best["receiveAmount"],
-                            "minimumReceived": best["minimumReceived"],
-                            "totalFee": best["totalFee"],
-                            "estimatedTime": best["estimatedTime"],
-                            "bridgeName": best["bridge"]["bridgeName"],
-                            "routeCount": routes.len(),
-                        }));
-                    }
-                }
-            }
-            Err(_) => continue,
-        }
-    }
-
-    output::success(json!({
-        "fromChain": from_chain_index,
-        "toChain": to_chain_index,
-        "readableAmount": readable_amount,
-        "bridgeableTokens": results,
-    }));
-    Ok(())
-}
-
-// ── Balance pre-check ──────────────────────────────────────────────
-
-/// Check that the wallet has sufficient balance of the source token on the source chain.
-/// Returns Ok(()) if sufficient, or bails with a clear error message.
-async fn check_balance(
-    client: &mut ApiClient,
-    wallet: &str,
-    chain_index: &str,
-    token_address: &str,
-    token_alias: &str,
-    readable_amount: &str,
-) -> Result<()> {
-    let is_native =
-        token_address.is_empty() || token_address == "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
-
-    // Query balance via public API
-    let balance_result = crate::commands::portfolio::fetch_token_balances(
-        client,
-        wallet,
-        &format!(
-            "{}:{}",
-            chain_index,
-            if is_native { "" } else { token_address }
-        ),
-        None,
-    )
-    .await;
-
-    let balance_data = match balance_result {
-        Ok(data) => data,
-        Err(_) => return Ok(()), // If balance query fails, skip check and let downstream handle it
-    };
-
-    // Parse balance from response: data[].tokenAssets[].{ tokenContractAddress, balance, symbol }
-    let mut found_balance = "0".to_string();
-    let mut found_symbol = token_alias.to_uppercase();
-    if let Some(groups) = balance_data.as_array() {
-        'outer: for group in groups {
-            if let Some(assets) = group["tokenAssets"].as_array() {
-                for token in assets {
-                    let token_addr = token["tokenContractAddress"].as_str().unwrap_or("");
-                    let matches = if is_native {
-                        token_addr.is_empty()
-                            || token_addr == "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-                    } else {
-                        token_addr.eq_ignore_ascii_case(token_address)
-                    };
-                    if matches {
-                        found_balance = token["balance"].as_str().unwrap_or("0").to_string();
-                        if let Some(s) = token["symbol"].as_str() {
-                            found_symbol = s.to_string();
-                        }
-                        break 'outer;
-                    }
-                }
-            }
-        }
-    }
-    let (available_balance, symbol) = (found_balance, found_symbol);
-
-    // Compare as f64
-    let available: f64 = available_balance.parse().unwrap_or(0.0);
-    let required: f64 = readable_amount.parse().unwrap_or(0.0);
-
-    if available < required {
-        bail!(
-            "insufficient {} balance on chain {}: available {}, required {}",
-            symbol,
-            chain_index,
-            available_balance,
-            readable_amount
+    #[test]
+    fn solana_addr_to_solana_ok() {
+        assert!(
+            validate_receive_address("5EDUCQDeVmaGohSAJYQ8mwe4hZMXgDzS4X2Si3Zh3cL5", "501").is_ok()
         );
     }
 
-    Ok(())
+    #[test]
+    fn evm_addr_to_evm_ok() {
+        assert!(validate_receive_address(
+            "0x896f4edd6601eda7d12f077a35e1cdf2898282ce",
+            "1"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn extract_bridge_id_integer() {
+        let v = json!({"bridgeId": 636});
+        assert_eq!(extract_bridge_id(&v).unwrap(), "636");
+    }
+
+    #[test]
+    fn extract_bridge_id_string() {
+        let v = json!({"bridgeId": "636"});
+        assert_eq!(extract_bridge_id(&v).unwrap(), "636");
+    }
+
+    #[test]
+    fn extract_bridge_id_missing() {
+        let v = json!({});
+        assert!(extract_bridge_id(&v).is_err());
+    }
+
+    #[test]
+    fn unwrap_data_array_picks_first() {
+        let v = json!([{"a": 1}, {"a": 2}]);
+        assert_eq!(unwrap_data_array(&v), json!({"a": 1}));
+    }
+
+    #[test]
+    fn unwrap_data_array_passthrough_object() {
+        let v = json!({"a": 1});
+        assert_eq!(unwrap_data_array(&v), json!({"a": 1}));
+    }
+
+    #[test]
+    fn unwrap_data_array_empty_returns_null() {
+        let v = json!([]);
+        assert_eq!(unwrap_data_array(&v), Value::Null);
+    }
 }

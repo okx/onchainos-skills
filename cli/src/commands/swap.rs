@@ -151,6 +151,10 @@ pub enum SwapCommand {
         /// Enable Gas Station first-time activation or re-enable. Pins --gas-token-address as default.
         #[arg(long, default_value_t = false)]
         enable_gas_station: bool,
+        /// Force execution: skip backend risk warning 81362 (skipWarning=true on broadcast).
+        /// Use only after explicit user confirmation.
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
 }
 
@@ -278,6 +282,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             gas_token_address,
             relayer_id,
             enable_gas_station,
+            force,
         } => {
             let chain_index = crate::chains::resolve_chain(&chain);
             crate::chains::ensure_supported_chain(&chain_index, &chain)?;
@@ -305,6 +310,7 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
                 gas_token_address.as_deref(),
                 relayer_id.as_deref(),
                 enable_gas_station,
+                force,
             )
             .await?;
         }
@@ -568,7 +574,7 @@ pub(crate) fn readable_to_minimal_str(amount: &str, decimal: u32) -> Result<Stri
 
 /// Resolve the effective raw amount from either --amount (raw) or --readable-amount (human-readable).
 /// If --readable-amount is given, fetches token decimals via token info and converts.
-async fn resolve_amount_arg(
+pub(crate) async fn resolve_amount_arg(
     client: &mut ApiClient,
     amount: Option<&str>,
     readable_amount: Option<&str>,
@@ -1089,6 +1095,7 @@ async fn wallet_contract_call(
     gas_token_address: Option<&str>,
     relayer_id: Option<&str>,
     enable_gas_station: bool,
+    force: bool,
 ) -> Result<Value> {
     let resp = crate::commands::agentic_wallet::transfer::execute_contract_call(
         to,
@@ -1102,7 +1109,7 @@ async fn wallet_contract_call(
         aa_dex_token_amount,
         mev_protection,
         jito_unsigned_tx,
-        false, // force
+        force,
         None,  // tx_source: not cross-chain
         gas_token_address,
         relayer_id,
@@ -1150,6 +1157,7 @@ async fn cmd_execute(
     gas_token_address: Option<&str>,
     relayer_id: Option<&str>,
     enable_gas_station: bool,
+    force: bool,
 ) -> Result<()> {
     use crate::chains;
 
@@ -1246,6 +1254,7 @@ async fn cmd_execute(
                     gas_token_address,
                     relayer_id,
                     gs_enable_this_call,
+                    force,
                 )
                 .await?;
                 // We don't need the revoke txHash in output, just ensure it succeeded
@@ -1271,6 +1280,7 @@ async fn cmd_execute(
                 gas_token_address,
                 relayer_id,
                 gs_enable_this_call,
+                force,
             )
             .await?;
             let (tx_hash, order_id) = extract_tx_hash_and_order_id(&result)?;
@@ -1336,6 +1346,7 @@ async fn cmd_execute(
             gas_token_address,
             relayer_id,
             gs_enable_this_call,
+            force,
         )
         .await?;
         extract_tx_hash_and_order_id(&result)?
@@ -1378,6 +1389,7 @@ async fn cmd_execute(
             gas_token_address,
             relayer_id,
             gs_enable_this_call,
+            force,
         )
         .await?;
         extract_tx_hash_and_order_id(&result)?
@@ -1487,10 +1499,10 @@ mod tests {
         );
         // SOL: 9 decimals
         assert_eq!(readable_to_minimal_str("1", 9).unwrap(), "1000000000");
-        // 超出精度且非零 → error
+        // Excess fractional digits with non-zero content → error
         assert!(readable_to_minimal_str("0.1234567", 6).is_err());
         assert!(readable_to_minimal_str("1.00000002", 2).is_err());
-        // 超出精度但全是零 → ok
+        // Excess fractional digits that are all zero → ok
         assert_eq!(readable_to_minimal_str("1.000", 2).unwrap(), "100");
         assert_eq!(readable_to_minimal_str("0.1230000", 6).unwrap(), "123000");
     }
