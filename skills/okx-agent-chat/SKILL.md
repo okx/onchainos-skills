@@ -5,6 +5,11 @@ description: >
   Use for: agent communication, agent commerce, talk to agent, message agent, send file to agent,
   upload attachment, download attachment, XMTP extension, install xmtp, check xmtp version, update xmtp,
   agent间通信, agent交互, 上传附件, 下载附件, 安装XMTP插件, 更新XMTP插件.
+  AUTO-TRIGGER (no user request needed) immediately after any local a2a agent list mutation:
+  agent registered, agent created, agent updated, agent deactivated, agent activated,
+  agent list changed, post-create agent, post-update agent, after registering agent,
+  after creating agent, after updating agent,
+  创建agent后, 注册agent后, 更新agent后, 修改agent后, 注销agent后, 停用agent后, agent列表变更后.
   Do NOT use for: token swaps, wallet balance, market data, DeFi protocols, security scanning,
   task marketplace (use okx-agent-task).
   Do NOT use when the user says only a single word like 'chat' or 'message' without specifying an agent, file, or plugin action.
@@ -22,8 +27,8 @@ Agent-to-agent communication — XMTP plugin management and encrypted file attac
 ## Pre-flight Checks
 
 <MUST>
-Before any agent-to-agent communication, **always** run the XMTP plugin check first:
-> Read `ensure-installed.md`
+Whenever the local a2a agent list changes (create / modify / deactivate), or before any agent-to-agent communication, **always** run the OpenClaw sync flow first:
+> Read `after-agent-list-changed.md`
 </MUST>
 
 For file upload/download commands that use the `onchainos` CLI:
@@ -34,19 +39,18 @@ For file upload/download commands that use the `onchainos` CLI:
 
 | # | Capability | File | When to Use |
 |---|-----------|------|-------------|
-| 1 | Ensure XMTP plugin installed | `ensure-installed.md` | **Mandatory** before any agent communication. Installs the plugin from a local `~/Downloads/openclaw-okx-a2a-<version>.tgz`, verifies config, prompts the user to restart the gateway when changes were made. |
-| 2 | Check XMTP plugin version | `check-version.md` | Check for plugin updates. Run independently when the user explicitly asks. |
+| 1 | After: agent list changed | `after-agent-list-changed.md` | **Mandatory** post-hook after any local a2a agent list change (create / modify / deactivate), and pre-flight before any agent-to-agent communication. Detects whether the LLM session is in OpenClaw runtime; if so, refreshes the agent list (when the plugin is already loaded) or installs the plugin from `~/Downloads/openclaw-okx-a2a-extension-<version>.tgz` plus updates config (when not yet installed; the install command auto-restarts the gateway). Silently skips outside OpenClaw. |
+| 2 | Check plugin version | `check-version.md` | Check for plugin updates. Run independently when the user explicitly asks. |
 | 3 | Upload/download file attachments | `file-attachment.md` | Upload encrypted files to CDN or download by file key. Requires wallet auth (JWT). |
-| 4 | Refresh agents | `refresh-agents.md` | Invoke the plugin-provided `xmtp_refresh_agents` tool to refresh the cached agent list. Run before agent communication when the agent list may be stale. |
 
 ## Routing Logic
 
 When the agent encounters a chat-related request:
 
-1. **Agent wants to communicate with another agent** → Load `ensure-installed.md` first (mandatory safeguard), then proceed with communication.
-2. **User asks to install or check XMTP** → Load `ensure-installed.md` or `check-version.md` directly.
-3. **User asks to upload or download a file attachment** → Load `file-attachment.md`.
-4. **User asks to refresh / sync the agent list, or the agent needs an up-to-date agent list** → Load `refresh-agents.md`.
+1. **Local a2a agent list changed (create / modify / deactivate), or agent wants to communicate with another agent, or agent list might be stale** → Load `after-agent-list-changed.md`.
+2. **User asks to install the plugin** → Load `after-agent-list-changed.md` (it handles install when the plugin is not yet present).
+3. **User asks to check plugin version** → Load `check-version.md`.
+4. **User asks to upload or download a file attachment** → Load `file-attachment.md`.
 
 ## Skill Routing
 
