@@ -663,7 +663,40 @@ impl ApiClient {
 
 #[cfg(test)]
 mod tests {
-    use super::ApiClient;
+    use super::{extract_msg, ApiClient};
+    use serde_json::json;
+
+    // ── extract_msg ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn extract_msg_returns_inner_text_when_present() {
+        let v = json!("no available route");
+        assert_eq!(extract_msg(&v), "no available route");
+    }
+
+    #[test]
+    fn extract_msg_falls_back_when_empty_string() {
+        let v = json!("");
+        assert_eq!(extract_msg(&v), "unknown error");
+    }
+
+    #[test]
+    fn extract_msg_falls_back_when_whitespace_only() {
+        let v = json!("   ");
+        assert_eq!(extract_msg(&v), "unknown error");
+    }
+
+    #[test]
+    fn extract_msg_falls_back_when_missing() {
+        let v = json!(null);
+        assert_eq!(extract_msg(&v), "unknown error");
+    }
+
+    #[test]
+    fn extract_msg_trims_surrounding_whitespace() {
+        let v = json!("  no liquidity  ");
+        assert_eq!(extract_msg(&v), "no liquidity");
+    }
 
     /// Set AK credential env vars to dummy test values so ApiClient::new() succeeds.
     fn set_test_credentials() {
