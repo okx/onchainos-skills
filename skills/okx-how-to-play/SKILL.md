@@ -4,7 +4,7 @@ description: "Use this skill when the user asks open-ended questions about Oncha
 license: MIT
 metadata:
   author: okx
-  version: "2.0.0"
+  version: "2.6.0"
   homepage: "https://web3.okx.com"
 ---
 
@@ -47,7 +47,7 @@ Negative examples (use the matching skill instead, **not** this one):
 ## Free-Zone Source of Truth — "What is / How to use" Questions
 
 <MUST>
-When the user's opener is asking **what Onchain OS is** or **how to use it** (e.g. "onchainos 是什么", "what is onchain os", "怎么用", "how do I use this", "introduce yourself", "能干啥"), the agent's free-zone answer **must be grounded in fresh content fetched at runtime** from:
+When the user's opener is asking **what Onchain OS is** or **how to use it** (e.g. "what is onchain os", "what does it do", "how do I use this", "how do I play", "introduce yourself", "what can it do"), the agent's free-zone answer **must be grounded in fresh content fetched at runtime** from:
 
 ```
 https://web3.okx.com/onchainos/dev-docs/home/what-is-onchainos
@@ -55,7 +55,7 @@ https://web3.okx.com/onchainos/dev-docs/home/what-is-onchainos
 
 Use the agent's `WebFetch` tool (or environment-equivalent) to retrieve this URL **before composing the free-zone answer**. Summarize / paraphrase the fetched content in the user's language; do NOT rely on training-data knowledge of what Onchain OS is, since the product evolves.
 
-If the fetch fails (network error, 4xx/5xx), fall back to a one-sentence neutral acknowledgement ("Onchain OS 是 OKX 的链上智能操作系统") and continue the flow — do not block on the fetch.
+If the fetch fails (network error, 4xx/5xx), fall back to a one-sentence neutral acknowledgement (e.g. "Onchain OS is OKX's on-chain agentic OS") and continue the flow — do not block on the fetch.
 
 This rule applies **only** to the "what is / how to use" opener. For other openers (e.g. "I just installed it, now what"), skip the fetch — go straight to **Status Check**.
 </MUST>
@@ -164,18 +164,18 @@ Two steps total: (1) one-time heads-up so the user knows what env vars to set an
 
 **Free zone (1–5 sentences):** answer whatever the user actually asked / acknowledged in their opener. Then segue naturally into the heads-up.
 
-**Fixed zone — output verbatim** (translate to the user's language at runtime; canonical text in Chinese below):
+**Fixed zone — output verbatim** (translate to the user's language at runtime; canonical English source-of-truth below):
 
-> 需要先配置 API Key 环境变量才能登录。请提供以下三个信息：
+> Configure your API Key environment variables before logging in. You'll need three values:
 > 1. `OKX_API_KEY` — API Key
 > 2. `OKX_SECRET_KEY` — Secret Key
 > 3. `OKX_PASSPHRASE` — Passphrase
 >
-> 您可以在 https://web3.okx.com/onchainos/dev-portal 找到这些信息。
+> You can find these at https://web3.okx.com/onchainos/dev-portal.
 >
-> ⚠️ 不要把凭证贴到聊天里，请根据开发者平台上的指引在本地配置环境变量。
+> ⚠️ Do not paste credentials into the chat — follow the dev-portal instructions and set them locally.
 
-Then **stop and wait** for the user to confirm they're ready (e.g. "好了 / done / ok / ready").
+Then **stop and wait** for the user to confirm they're ready (e.g. "done / ok / ready").
 
 ### Step 2 — Login
 
@@ -246,18 +246,20 @@ All three states share the same onboarding need (user has no holdings, agent sho
 Output the verbatim copy from `references/welcome-zero-balance.md`. Pull `{evm_address}` and `{solana_address}` from `onchainos wallet addresses` (already returned by `wallet balance`). Never fabricate addresses.
 </MUST>
 
-The welcome includes a flat quick-start menu with options `1`–`5`.
+The welcome includes a flat quick-start menu. The number of options depends on `polymarket_available` from the geoblock check (see `references/welcome-zero-balance.md` Step 2): **5 items** when allowed, **4 items** (no Polymarket, renumbered 1–4) when blocked / unable to confirm allowed (fail-closed).
 
 ## Quick-Start Menu Handling
 
 When the user replies:
 
-- A numbered option (`1`–`5`) → go directly to **Route to Workflow**.
+- A numbered option → go directly to **Route to Workflow** using the variant that was rendered (Variant A: 1–5; Variant B: 1–4).
 - Free-form text instead of a number → answer naturally in free zone, then route via the free-form fallback table in **Route to Workflow**.
 
 ## Route to Workflow
 
-Quick-start picks map to workflow files at `~/.onchainos/workflows/<file>.md`. When a workflow file is the target, the agent **loads that file** and follows its instructions.
+Quick-start picks map to workflow files at `~/.onchainos/workflows/<file>.md`. When a workflow file is the target, the agent **loads that file** and follows its instructions. Use the mapping that matches the menu variant rendered for this user.
+
+### Variant A — `polymarket_available = true` (5 picks)
 
 | Pick | Description | Target |
 |---|---|---|
@@ -266,6 +268,15 @@ Quick-start picks map to workflow files at `~/.onchainos/workflows/<file>.md`. W
 | 3 | Smart money — what whales are buying | `~/.onchainos/workflows/smart-money-signals.md` |
 | 4 | Scan new on-chain tokens | `~/.onchainos/workflows/new-token-screening.md` |
 | 5 | Generate market daily brief | `~/.onchainos/workflows/daily-brief.md` |
+
+### Variant B — `polymarket_available = false` (4 picks, no Polymarket)
+
+| Pick | Description | Target |
+|---|---|---|
+| 1 | "Find me the best strategy" | Strategy advisor (TBD — placeholder; free-play with portfolio + risk profile until shipped) |
+| 2 | Smart money — what whales are buying | `~/.onchainos/workflows/smart-money-signals.md` |
+| 3 | Scan new on-chain tokens | `~/.onchainos/workflows/new-token-screening.md` |
+| 4 | Generate market daily brief | `~/.onchainos/workflows/daily-brief.md` |
 
 **Free-form fallback** — if the user types something other than a numbered pick:
 
@@ -310,8 +321,9 @@ Then stop.
 1. **Correct trigger** — open-ended guidance queries pull up this skill; concrete-intent queries do NOT (they hit the matching skill).
 2. **Branches resolve correctly** — Path A (Logged Out → Login → Branch on isNew × balance) and Path B (Logged In → Balance Branch) both land on the right state.
 3. **Free zone present where required** — **Login Method Choice** and **API Key Login** open with 1–5 sentence agent-authored copy before the fixed zone, not a cold script drop.
-4. **Quick-start menu loads workflows** — picks 3 / 4 / 5 correctly resolve to the workflow file at `~/.onchainos/workflows/`.
-5. **Demo turn budget** — end-to-end ≤ 3 turns for new user, ≤ 2 turns for returning user with balance=0, ≤ 1 turn (Terminal Ack) for active user with balance>0.
+4. **Quick-start menu loads workflows** — numbered picks correctly resolve to the workflow file at `~/.onchainos/workflows/`, using the variant table that matches the rendered menu (Variant A or B).
+5. **Polymarket geoblock honored** — when `https://polymarket.com/api/geoblock` indicates blocked or the check fails, Polymarket is hidden from the menu entirely (Variant B is rendered with picks 1–4); the agent never explains *why* Polymarket is hidden.
+6. **Turn budget** — end-to-end ≤ 3 turns for new user, ≤ 2 turns for returning user with balance=0, ≤ 1 turn (Terminal Ack) for active user with balance>0.
 
 ## Notes / Non-obvious
 
@@ -320,4 +332,5 @@ Then stop.
 - **AK reuses the TEE-bound account_id** — local `wallets.json` is just a cache; after a reinstall, AK login returns the same `accountId`, which is also the semantic source of `isNew=false`.
 - **Path B exists because `isNew` is not re-readable** — once a user is already authenticated at session entry, there's no fresh login response to inspect. Balance is the only signal available.
 - **API Key setup is the user's responsibility** — the agent only emits a one-shot heads-up listing the 3 env vars + dev-portal URL + the "don't paste in chat" warning, then waits for the user to confirm and runs `onchainos wallet login`. No `.env`/`.gitignore` automation, no multi-phase walkthrough.
+- **Polymarket is geoblocked in some jurisdictions (e.g. US)** — before showing the welcome menu, the agent probes `https://polymarket.com/api/geoblock` via Bash `curl` (NOT `WebFetch` — must use the user's local IP) and renders Variant B (no Polymarket) on any non-confirmed-allowed outcome. The decision is silent — never surface region/IP/blocked info to the user.
 - **Workflow files are runtime resources** — at install time they live at `~/.onchainos/workflows/`; in this repo's source they're under `workflows/`. **Route to Workflow** references the runtime path because that's where the agent loads them.
