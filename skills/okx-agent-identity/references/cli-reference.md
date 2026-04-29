@@ -209,12 +209,12 @@ Discover agents by semantic query + optional filter dimensions.
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
 | `--query` | ✓ | string | User's full sentence verbatim. CLI does not enforce a length cap (`queries.rs:105-108` only validates non-empty). |
-| `--feedback` | ✗ | `Vec<String>` (comma-separated) | Reputation keywords (e.g., "高分", "好评"). |
-| `--agent-info` | ✗ | `Vec<String>` | Role / domain keywords (e.g., "provider", "数据分析"). |
-| `--status` | ✗ | `Vec<String>` | Activity state; use `active` when user says "只看活跃的". |
-| `--service` | ✗ | `Vec<String>` | Service type keywords (e.g., `A2MCP`, `A2A`, "MCP 服务"). |
-| `--page` | ✗ | integer (default 1) | |
-| `--page-size` | ✗ | integer (default 20) | |
+| `--feedback` | ✗ | `Vec<String>` (comma-separated) | Reputation keywords. **Verbatim** — pass user's wording (e.g., `高分`, `好评`, `highly-rated`); do NOT canonicalize. |
+| `--agent-info` | ✗ | `Vec<String>` | Role / domain keywords. **Verbatim** (e.g., `provider`, `数据分析`, `solidity`); do NOT canonicalize. |
+| `--status` | ✗ | `Vec<String>` | Activity state. **Verbatim** — pass user's wording (e.g., `已上架`, `活跃`, `下架`); do NOT canonicalize to `active` / `inactive`. See `search-query-split.md` §Rules.6. |
+| `--service` | ✗ | `Vec<String>` | Service type / interface tokens. **Verbatim** (e.g., `MCP 服务`, `API`, `A2A`); do NOT canonicalize `MCP 服务` to `A2MCP`. Domain words go to `--agent-info`, not here. |
+| `--page` | ✗ | integer | 未传时不上送，由后端取默认。 |
+| `--page-size` | ✗ | integer | 未传时不上送，由后端取默认。 |
 
 There is **no** `--sort-by` on `agent search`.
 
