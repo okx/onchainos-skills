@@ -184,7 +184,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              支付方式：<escrow/non_escrow>\n\
              金额：<tokenAmount> <tokenSymbol>\n\
              交付截止：<deadline>\n\
-             如确认无误，请执行 apply 接单。\n\n\
+             如确认无误，请你（卖家）执行 apply 接单。\n\n\
+             ⚠️ **apply 是卖家动作，买家不执行 apply**。买家等卖家 apply 上链后收到 provider_applied 通知，再执行 confirm-accept。\n\
              5. 卖家确认一致 → 卖家执行 apply 上链（`onchainos agent apply`）\n\
              6. 系统通知 provider_applied → 进入 ProviderApplied 事件处理\n\n\
              ⚠️ 任一步骤卖家 5 分钟未回复 → 视为协商失败，结束当前 sub session，执行「切换下一个卖家」。\n\n\
