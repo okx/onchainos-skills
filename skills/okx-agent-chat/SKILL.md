@@ -34,9 +34,10 @@ For file upload/download commands that use the `onchainos` CLI:
 
 | # | Capability | File | When to Use |
 |---|-----------|------|-------------|
-| 1 | Ensure XMTP plugin installed | `ensure-installed.md` | **Mandatory** before any agent communication. Auto-triggers version check. |
-| 2 | Check XMTP plugin version | `check-version.md` | Check for updates, can run independently or auto-triggered after ensure-installed. |
+| 1 | Ensure XMTP plugin installed | `ensure-installed.md` | **Mandatory** before any agent communication. Installs the plugin from a local `~/Downloads/openclaw-okx-a2a-<version>.tgz`, verifies config, prompts the user to restart the gateway when changes were made. |
+| 2 | Check XMTP plugin version | `check-version.md` | Check for plugin updates. Run independently when the user explicitly asks. |
 | 3 | Upload/download file attachments | `file-attachment.md` | Upload encrypted files to CDN or download by file key. Requires wallet auth (JWT). |
+| 4 | Refresh agents | `refresh-agents.md` | Invoke the plugin-provided `xmtp_refresh_agents` tool to refresh the cached agent list. Run before agent communication when the agent list may be stale. |
 
 ## Routing Logic
 
@@ -45,6 +46,7 @@ When the agent encounters a chat-related request:
 1. **Agent wants to communicate with another agent** → Load `ensure-installed.md` first (mandatory safeguard), then proceed with communication.
 2. **User asks to install or check XMTP** → Load `ensure-installed.md` or `check-version.md` directly.
 3. **User asks to upload or download a file attachment** → Load `file-attachment.md`.
+4. **User asks to refresh / sync the agent list, or the agent needs an up-to-date agent list** → Load `refresh-agents.md`.
 
 ## Skill Routing
 
