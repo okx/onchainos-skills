@@ -34,7 +34,7 @@ Diagnostic Summary:
 | 50125 | 200 | Region restriction / no API access to this endpoint | Display generic "Service unavailable in your region" — do NOT show raw code |
 | 51000 | 200 | Param error `{0}` | Surface the offending param name to the user |
 | 81362 | 200 | Backend risk system flagged the broadcast | WARN, ask user to confirm. If they explicitly confirm, retry with `--force` |
-| 82000 | 200 | No liquidity / no available route — **also returned with empty body when the chain pair's bridge adapter is offline on this env** (config-truthy but service-down) | Trigger transit-token fallback (see SKILL.md "Fallback: No Direct Route"). If every transit also returns `82000` with an empty error body, surface "service unavailable on this environment" — do NOT loop further |
+| 82000 | 200 | No liquidity / no available route. **Backend `msg` carries the human-readable reason** (e.g. "no available route for this token pair on this chain"). When the adapter is offline on an env, `msg` may be empty (CLI surfaces it as "unknown error"). | Surface the translated `msg` to the user; do NOT mention "82000". If `msg` is empty / "unknown error", trigger transit-token fallback (see SKILL.md "Fallback: No Direct Route"). When every transit also returns 82000 with empty `msg`, treat as "service unavailable on this environment" — do NOT loop further |
 | 82104 | 200 | Token not supported | Trigger transit-token fallback OR tell user the token isn't supported |
 | 82105 | 200 | Chain not supported | Tell user "This chain pair isn't currently supported by any bridge" — do NOT name protocols |
 | 82106 | 200 | Bridge id not supported / wrong | Re-run `quote` without `--bridge-id` to let server pick |

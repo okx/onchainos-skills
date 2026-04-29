@@ -33,6 +33,15 @@ pub struct ApiClient {
     doh: DohManager,
 }
 
+/// Extract the `msg` field from an API error envelope.
+/// Empty / missing / whitespace-only values fall back to `"unknown error"`
+/// so the user-visible string never ends with a dangling colon
+/// (e.g. `API error (code=82000): `).
+fn extract_msg(msg_field: &Value) -> &str {
+    let s = msg_field.as_str().unwrap_or("").trim();
+    if s.is_empty() { "unknown error" } else { s }
+}
+
 impl ApiClient {
     /// Create a client with automatic auth detection:
     /// 1. JWT from keyring  (user is logged in)
@@ -641,7 +650,10 @@ impl ApiClient {
                 Value::Number(n) => n.to_string(),
                 other => other.to_string(),
             };
-            let msg = body["msg"].as_str().unwrap_or("unknown error");
+            // Surface backend `msg` verbatim. Treat missing or empty as "unknown error"
+            // so the user-visible string never ends with a dangling colon
+            // (e.g. `API error (code=82000): `).
+            let msg = extract_msg(&body["msg"]);
             bail!("API error (code={}): {}", code_str, msg);
         }
 

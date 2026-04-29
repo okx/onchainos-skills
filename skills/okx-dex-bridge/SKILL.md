@@ -173,14 +173,22 @@ Before issuing a quote, **fail fast on chain pairs that no bridge can connect**.
 onchainos cross-chain bridges --chain <fromChain>
 ```
 
-Filter the response to entries where `supportedChains[]` contains both the resolved `fromChainIndex` AND `toChainIndex`. If the filtered list is empty:
+Then filter the response to entries where `supportedChains[]` contains the resolved `toChainIndex`. Three cases:
 
-> "Currently no bridge protocol connects {fromChain} ↔ {toChain}. Supported chain pairs reachable from {fromChain}: {comma-separated list of toChains where at least one bridge is available}."
+1. **fromChain not in any bridge** — the `--chain <fromChain>` response is empty (e.g. Tron, Sui, Ton on most envs). Run `onchainos cross-chain bridges` (no filter) and reverse-lookup which source chains can reach `toChainIndex`:
 
-Skip the quote step entirely.
+   > "{fromChain} is not currently supported by any cross-chain bridge. Source chains that can bridge to {toChain}: {comma-separated chain names}. Pick one of these as your source."
+
+2. **fromChain supported but toChain unreachable from it** — the `--chain <fromChain>` response is non-empty but no entry includes `toChainIndex` in `supportedChains[]`. Collect the union of `supportedChains[]` across the response:
+
+   > "Cannot bridge to {toChain} from {fromChain}. Reachable destinations from {fromChain}: {comma-separated chain names}."
+
+3. **Pair has at least one bridge** — proceed to Step 4.
+
+Skip the quote step entirely on cases 1 and 2.
 
 <IMPORTANT>
-**Caveat — config truthy ≠ service available**. The `bridges` API reports the *configured* bridge set, not real-time service status. A pair can pass this pre-check (e.g. Solana ↔ Arbitrum where Gas Zip + Relay both list 501) yet still fail at quote time on environments where the underlying adapter is offline. That deeper failure is detected in Step 4 / Fallback below — see "all-82000 + empty body" pattern.
+**Caveat — config truthy ≠ service available**. The `bridges` API reports the *configured* bridge set, not real-time service status. A pair can pass this pre-check (e.g. Solana ↔ Arbitrum where Gas Zip + Relay both list 501) yet still fail at quote time on environments where the underlying adapter is offline. That deeper failure is detected in Step 4 / Fallback below — see the all-`82000` with empty `msg` (CLI prints `unknown error`) pattern.
 </IMPORTANT>
 
 ### Step 4 — Quote
@@ -477,12 +485,20 @@ Pick a transit token. Steps:
 3. Swap {transit} → {targetToken} on {toChain} (use okx-dex-swap)
 ```
 
-**If all transits fail** — distinguish two sub-cases by inspecting the responses:
+**If all transits fail** — when surfacing the failure to the user, **always prefer the backend `msg`** (the text after `code=NNNNN:`) over a code-based interpretation. The agent's job here is to translate the server's reason into the user's language, not to invent meanings for codes.
 
-1. **All responses are `code=82000` with an empty error body** (`"error": "API error (code=82000): "` — colon then nothing):
-   > "Bridge service for {fromChain} ↔ {toChain} appears unavailable on this environment. The chain pair is in the routing config but `quote` consistently returns an empty 82000 across the direct route and every transit token. This is typically a server-side / environment issue (the chain's bridge adapter is not wired up here), not a problem with your token or amount. Please retry later, or escalate to OKX support if it persists. Source-chain explorer: {explorerUrl}."
-2. **Mixed responses** (some 82000, some 82104, some other shapes) — truly no path:
+Three sub-cases:
+
+1. **Responses carry a non-empty `msg`** (e.g. `API error (code=82000): no available route for this token pair on this chain`):
+   > Translate the `msg` into the user's language and surface it directly. Add the actionable next step (`{tokenSymbol} can't be bridged from {fromChain} to {toChain}: {translated msg}.`). Do NOT mention the raw code.
+2. **All responses are `code=82000` with no usable `msg`** (CLI prints `API error (code=82000): unknown error` — server returned an empty / missing `msg`):
+   > "Bridge service for {fromChain} ↔ {toChain} appears unavailable on this environment. The chain pair is in the routing config but `quote` returns no reason across the direct route and every transit token. This is typically a server-side / environment issue (the chain's bridge adapter is not wired up here), not a problem with your token or amount. Please retry later, or escalate to OKX support if it persists. Source-chain explorer: {explorerUrl}."
+3. **Mixed responses across direct + transits** — truly no path:
    > "{tokenSymbol} cannot be bridged from {fromChain} to {toChain}. No common transit token (USDC/USDT/native) is bridgeable either."
+
+<IMPORTANT>
+**Never quote the raw error code to the user.** Codes are for the troubleshooting reference and operator diagnostics. The user only sees: (a) the translated `msg` if present, or (b) the case-2 / case-3 fallback above when `msg` is missing.
+</IMPORTANT>
 
 Sort transit results by total fee ascending. Step 3 only shown when the destination target differs from the transit token.
 
