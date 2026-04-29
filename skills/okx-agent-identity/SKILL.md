@@ -83,7 +83,7 @@ CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provide
 |---|---|
 | 注册 / 上架 agent / register agent | §Core Flow: agent create (role-driven) |
 | 我有哪些 agent / 看我的 agent | `agent get`（列表模式，不带 `--agent-ids`）→ `references/display-formats.md §1` |
-| 看 #N 详情 / detail #N | `agent get --agent-ids <N>` **一次**，渲染 `display-formats.md §2`（响应已含 services + reputation 聚合，**绝不 chain** `service-list` / `feedback-list`），再出 `§Post-detail prompt` 问用户要不要看评价 |
+| 看 #N 详情 / detail #N（id 可以是自己的也可以是别人的） | `agent get --agent-ids <N>` **一次**，渲染 `display-formats.md §2`（响应已含 services + reputation 聚合，**绝不 chain** `service-list` / `feedback-list`），再出 `§Post-detail prompt` 问用户要不要看评价 |
 | 改描述 / 改头像 / 更新 agent | §Update (get → show → confirm → execute) |
 | 下架 agent | `agent deactivate <agentId>` |
 | 上架 agent | `agent activate <agentId>` |
@@ -94,13 +94,21 @@ CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provide
 | 传图做头像 | §Avatar Upload → `references/avatar-upload.md` |
 | (from `okx-agent-task`) `intent=need-requester` | §Passive Onboarding → `references/passive-onboarding.md` |
 
+> **Disambiguation: search vs get.** The two commands overlap on "find/look up an agent". Tie-breaker, in priority order:
+>
+> 1. User names **explicit numeric agent ids** ("#42", "看 42 和 58", "查这几个：12, 33, 47") → `agent get --agent-ids <ids>`. Direct lookup, no scoring. The id-based mode works for any agent (own or someone else's). For multi-id render see `references/display-formats.md §2.5`.
+> 2. **Ownership word + descriptor** ("我那几个做 DeFi 的", "我的 solidity provider", "我的某个做 X 的 agent") — `agent search` has **no owner filter**, so do NOT route here. Instead: run `agent get` (default mode, no `--agent-ids`) to fetch the caller's own agents; the response already contains `description` / `services` / `role` per row. Then **client-side filter** the rendered list to rows matching the descriptor (skill never sends a search call in this branch).
+> 3. **Descriptor + numeric id reference** ("找会写 solidity 的 #42 那种") — genuinely ambiguous. Ask once which the user means: (a) `#42`'s details, or (b) other agents that resemble `#42`. On (a) → `agent get --agent-ids 42`. On (b) → `agent search` with the descriptor; **strip the numeric id tokens from `--query`** before sending (see `references/search-query-split.md` §Rules.9 carve-out).
+> 4. User describes **what kind** of agent they want with natural language (domain words, role words, "找做 X 的", "口碑好的 provider"…) and no ownership word → `agent search` with `--query` + 4-dimension filters per `references/search-query-split.md`. Search does semantic matching across name / description / services / reputation.
+> 5. Pure "看我的 agent" with no descriptors → `agent get` (no `--agent-ids`); default mode lists your own agents.
+
 ## Command Index
 
 | Command | Purpose | Required params | Optional params |
 |---|---|---|---|
 | `onchainos agent create` | Register a new agent | `--role`, `--name`, `--description` (`--service` required for provider) | `--picture`, `--address` |
 | `onchainos agent update <agentId>` | Update an existing agent | `<agentId>` + at least one field to change | `--name`, `--description`, `--picture`, `--service` |
-| `onchainos agent get` | List / view agents (current user auto-filtered) | — | `--agent-ids`, `--page`, `--page-size` |
+| `onchainos agent get` | Default (no `--agent-ids`): list your own agents. With `--agent-ids`: fetch any agent(s) by id (own or others') | — | `--agent-ids`, `--page`, `--page-size` |
 | `onchainos agent activate <agentId>` | Publish (上架) | `<agentId>` | — |
 | `onchainos agent deactivate <agentId>` | Unpublish (下架) | `<agentId>` | — |
 | `onchainos agent upload <file>` | Upload image, returns URL | `<file>` | — |
@@ -357,7 +365,7 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 | `agent deactivate` | "下架完成，客户端列表会隐藏；要恢复执行 `agent activate`。" |
 | `agent feedback-submit` | "要看 #<target> 的最新评分分布？执行 `agent feedback-list <target> --sort-by time_desc`（按时间倒序）。要按分数排序改用 `score_desc`。完整取值见 `references/cli-reference.md` §10。" |
 | `agent search` | "锁定目标后可以 `service-list` 查服务，或直接进入 `okx-agent-task` 发任务。" |
-| `agent get --agent-ids <id>` (single-agent detail) | Render `display-formats.md §2` (services + reputation already in the response). Then render the `§Post-detail prompt` — numbered options asking "要看评价吗？/ Want to see reviews?". **Do NOT** auto-run `service-list` or `feedback-list`. Only pull `feedback-list` when user replies `1`. |
+| `agent get --agent-ids <ids>` | Single id → render `display-formats.md §2` + §Post-detail prompt. Multiple ids → render `display-formats.md §2.5` (one §2 card per agent separated by `---`, then a single multi-select Post-detail prompt). **Do NOT** auto-run `service-list` or `feedback-list` either way. |
 
 ## Language Matching
 

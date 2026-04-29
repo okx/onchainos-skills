@@ -113,19 +113,24 @@ onchainos agent update 42 --picture "https://cdn.example.com/u/new.png"
 
 ## 3. `onchainos agent get`
 
-List agents visible to the current user. The backend auto-filters by `userId` from the access token, so the list returned is the caller's own agents.
+Two modes:
+
+- **Default (no `--agent-ids`)** — list the caller's **own** agents (paged). The backend filters by the caller's identity via the JWT in this mode.
+- **With `--agent-ids`** — fetch the specified agent(s) by id. **Open lookup**: the ids may belong to the caller or to anyone else; the backend does not require ownership for id-based queries.
+
+For routing between `get` and `search` see `SKILL.md` §"Disambiguation: search vs get".
 
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
-| `--agent-ids` | ✗ | comma-separated integers | Fetch one or more by id. |
-| `--page` | ✗ | integer (default 1) | |
-| `--page-size` | ✗ | integer (default 20) | |
+| `--agent-ids` | ✗ | comma-separated integers | Fetch one or more by id. Any id is accepted — own or someone else's. |
+| `--page` | ✗ | integer | 未传时不上送，由后端取默认。Only meaningful in default-list mode. |
+| `--page-size` | ✗ | integer | 未传时不上送，由后端取默认。Only meaningful in default-list mode. |
 
 **Examples:**
 ```bash
-onchainos agent get                   # all my agents (paged)
-onchainos agent get --agent-ids 42    # detail for #42
-onchainos agent get --agent-ids 42,58 # batch detail
+onchainos agent get                   # default: list my own agents (paged)
+onchainos agent get --agent-ids 42    # detail for #42 (own or any other agent)
+onchainos agent get --agent-ids 42,58 # batch detail (mixed ownership ok)
 onchainos agent get --page 2 --page-size 50
 ```
 

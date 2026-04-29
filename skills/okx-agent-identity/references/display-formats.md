@@ -125,6 +125,38 @@ Reply 1 or 2.
 
 ---
 
+## 2.5. Multi-agent detail — `agent get --agent-ids <id1>,<id2>,…` with multiple ids
+
+When the response contains more than one agent (`items.length > 1`), render **one §2 detail card per agent** in response order, separating consecutive cards with a `---` divider line. The same data-source / no-chain rule applies per card (services + reputation already in the response — never chain `service-list` / `feedback-list` to "populate" rows that are already there).
+
+After all cards, render a **single multi-select Post-detail prompt** at the end (not per card):
+
+Chinese:
+```
+要继续看哪几个 agent 的评价详情？
+  0. 都不要
+  1. #<id1>
+  2. #<id2>
+  …
+回复对应数字（多选用逗号分隔，例如 "1,3"）。
+```
+
+English:
+```
+Which agents' review details do you want to see?
+  0. None
+  1. #<id1>
+  2. #<id2>
+  …
+Reply with matching numbers (comma-separated, e.g. "1,3").
+```
+
+- On `0` → stop. No further calls.
+- Otherwise → run `agent feedback-list <id>` **once per selected agent**, render §5 for each, separated by `---`. Never run `service-list` from this prompt.
+- If the user already named which subset of returned agents they want reviews for ("看 42 和 58 的评价"), skip the prompt entirely and go directly to those ids' `feedback-list`.
+
+---
+
 ## 3. Create / Update Diff confirmation card
 
 Used before executing any write that modifies fields (`create`, `update`). Three columns on `update`; two columns on `create` (nothing to diff against). Unchanged fields on `update` show `(不变)`.
