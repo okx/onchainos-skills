@@ -167,6 +167,7 @@ pub async fn handle_create(
     deadline_open: String,
     deadline_submit: String,
     title: Option<String>,
+    payment_mode: Option<String>,
 ) -> Result<()> {
     validate_currency(&currency)?;
     validate_budget(budget)?;
@@ -225,7 +226,9 @@ pub async fn handle_create(
             "acceptDeadline":    open_secs,
             "submittedDeadline": submit_secs
         },
-        "paymentMode":        0,
+        "paymentMode":        payment_mode.as_deref()
+                                .map(crate::commands::agent_commerce::task::common::payment_mode_to_int)
+                                .unwrap_or(0),
         "visibility":         0
     });
 

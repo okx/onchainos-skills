@@ -77,11 +77,7 @@ pub async fn handle_payment(client: &mut TaskApiClient, job_id: &str, agent_id: 
     let token_symbol = task["paymentTokenSymbol"].as_str().unwrap_or("USDT");
     let provider_addr = task["providerAgentAddress"].as_str().unwrap_or("?");
     let payment_type = task["paymentType"].as_i64().unwrap_or(0);
-    let payment_mode = match payment_type {
-        1 => "non_escrow",
-        2 => "x402",
-        _ => "escrow",
-    };
+    let payment_mode = crate::commands::agent_commerce::task::common::payment_mode_to_str(payment_type as i32);
 
     println!("付款单（Invoice）");
     println!("  jobId:     {job_id}");

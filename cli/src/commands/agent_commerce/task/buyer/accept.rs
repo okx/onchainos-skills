@@ -73,7 +73,7 @@ pub async fn handle_confirm_accept(
 
     // ── Step 2: 按支付方式分支处理 ──────────────────────────────────
     match payment_mode {
-        PAYMENT_MODE_ESCROW | "0" => {
+        PAYMENT_MODE_ESCROW => {
             // ── 担保支付 (Escrow) ───────────────────────────────────
             let pid = payment_id.ok_or_else(|| {
                 anyhow::anyhow!("担保支付需要 --payment-id（由卖家通过 XMTP 传递）")
@@ -162,7 +162,7 @@ pub async fn handle_confirm_accept(
             println!("✓ 已接受卖家 {provider}（担保支付），资金已托管");
             println!("  txHash: {tx_hash}");
         }
-        PAYMENT_MODE_NON_ESCROW | "direct" | "1" => {
+        PAYMENT_MODE_NON_ESCROW | "direct" => {
             // ── 非担保支付 (Charge / Direct) ────────────────────────
             let pid = payment_id.ok_or_else(|| {
                 anyhow::anyhow!("非担保支付需要 --payment-id（由卖家通过 XMTP 传递）")
@@ -233,7 +233,7 @@ pub async fn handle_confirm_accept(
             println!("✓ 已接受卖家 {provider}（非担保支付），状态 → accepted");
             println!("  txHash: {tx_hash}");
         }
-        PAYMENT_MODE_X402 | "2" => {
+        PAYMENT_MODE_X402 => {
             // ── x402 支付：参数从缓存（/match 接口返回）获取 ────────
             let provider_info = super::negotiate::current(job_id)?
                 .ok_or_else(|| anyhow::anyhow!("x402: 未找到当前 provider，请先执行 recommend"))?;
