@@ -4,7 +4,7 @@ description: "Sign an x402 payment authorization for an EXTERNAL / third-party p
 license: MIT
 metadata:
   author: okx
-  version: "1.0.4"
+  version: "2.6.0"
   homepage: "https://web3.okx.com"
 ---
 
