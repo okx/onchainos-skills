@@ -264,9 +264,58 @@ async fn sign_and_broadcast(
         {
             match classify_gs_phase1(&unsigned) {
                 GsPhase1Decision::FirstTime => {
+                    if force {
+                        // `--force` + first-time GS: third-party plugin path. Return exit 3
+                        // with structured error so plugin's outer caller (agent) can run
+                        // `wallet gas-station setup` then re-invoke the plugin command.
+                        let original_args = serde_json::json!({
+                            "chain": chain,
+                            "from": from,
+                            "toAddr": tx.to_addr,
+                            "value": tx.value,
+                            "contractAddr": tx.contract_addr,
+                            "inputData": tx.input_data,
+                            "force": true,
+                        });
+                        let cmd_name = if is_contract_call {
+                            "wallet contract-call"
+                        } else {
+                            "wallet send"
+                        };
+                        return Err(build_gs_setup_required(
+                            &addr_info,
+                            &unsigned,
+                            false,
+                            cmd_name,
+                            original_args,
+                        ));
+                    }
                     return Err(build_gs_first_time_prompt(&addr_info, &unsigned));
                 }
                 GsPhase1Decision::Reenable => {
+                    if force {
+                        let original_args = serde_json::json!({
+                            "chain": chain,
+                            "from": from,
+                            "toAddr": tx.to_addr,
+                            "value": tx.value,
+                            "contractAddr": tx.contract_addr,
+                            "inputData": tx.input_data,
+                            "force": true,
+                        });
+                        let cmd_name = if is_contract_call {
+                            "wallet contract-call"
+                        } else {
+                            "wallet send"
+                        };
+                        return Err(build_gs_setup_required(
+                            &addr_info,
+                            &unsigned,
+                            true,
+                            cmd_name,
+                            original_args,
+                        ));
+                    }
                     return Err(build_gs_reenable_prompt(&addr_info, &unsigned));
                 }
                 GsPhase1Decision::AutoPick {
@@ -591,9 +640,43 @@ pub(super) async fn cmd_send(
         }
         match classify_gs_phase1(&unsigned) {
             GsPhase1Decision::FirstTime => {
+                if force {
+                    let original_args = serde_json::json!({
+                        "chain": chain,
+                        "from": from,
+                        "recipient": recipient,
+                        "amount": amt,
+                        "contractToken": contract_token,
+                        "force": true,
+                    });
+                    return Err(build_gs_setup_required(
+                        &addr_info,
+                        &unsigned,
+                        false,
+                        "wallet send",
+                        original_args,
+                    ));
+                }
                 return Err(build_gs_first_time_prompt(&addr_info, &unsigned));
             }
             GsPhase1Decision::Reenable => {
+                if force {
+                    let original_args = serde_json::json!({
+                        "chain": chain,
+                        "from": from,
+                        "recipient": recipient,
+                        "amount": amt,
+                        "contractToken": contract_token,
+                        "force": true,
+                    });
+                    return Err(build_gs_setup_required(
+                        &addr_info,
+                        &unsigned,
+                        true,
+                        "wallet send",
+                        original_args,
+                    ));
+                }
                 return Err(build_gs_reenable_prompt(&addr_info, &unsigned));
             }
             GsPhase1Decision::AutoPick {
@@ -1111,6 +1194,80 @@ fn build_gs_reenable_prompt(
         token_list_json(unsigned)
     );
     crate::output::CliConfirming { message, next }.into()
+}
+
+/// `--force` + GS first-time / re-enable required: build a `CliSetupRequired` error
+/// (exit 3, errorCode = `GAS_STATION_SETUP_REQUIRED`). Used when a third-party plugin
+/// invokes `wallet send` / `wallet contract-call` with `--force` and hits a state where
+/// silent auto-enable would violate the user-consent contract.
+///
+/// The error data carries enough info for the agent to:
+///   1. Render Scene A / B' from the bundled tokenList
+///   2. Run `wallet gas-station setup` after user picks
+///   3. Re-invoke the same plugin command (which will now succeed because GS is active)
+fn build_gs_setup_required(
+    addr_info: &crate::wallet_store::AddressInfo,
+    unsigned: &crate::wallet_api::UnsignedInfoResponse,
+    is_reenable: bool,
+    original_command: &str,
+    original_args: serde_json::Value,
+) -> anyhow::Error {
+    let chain_display = crate::chains::chain_display_name(&addr_info.chain_index);
+    let token_list: Vec<serde_json::Value> = unsigned
+        .gas_station_token_list
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "symbol": t.symbol,
+                "feeTokenAddress": t.fee_token_address,
+                "relayerId": t.relayer_id,
+                "balance": t.balance,
+                "serviceCharge": t.service_charge,
+                "sufficient": t.sufficient,
+            })
+        })
+        .collect();
+
+    let scene = if is_reenable { "B'" } else { "A" };
+    // message is self-describing — embeds a concrete executable command so even minimal
+    // plugin error wrapping (e.g. `bail!("...: {}", stdout)`) lets the agent see the
+    // setup command string directly without parsing structured `data`.
+    let setup_hint = format!(
+        "onchainos wallet gas-station setup --chain {} --gas-token-address <picked> --relayer-id <picked>",
+        addr_info.chain_index
+    );
+    let message = format!(
+        "Gas Station first-time setup required on {chain_display}. \
+         Cannot proceed under `--force` because first-time activation needs explicit user consent. \
+         Run `{setup_hint}` first (after rendering Scene {scene} to the user), then re-invoke the same command."
+    );
+
+    // data carries originalRequest + retryGuidance so an agent can recover via fast path.
+    let data = serde_json::json!({
+        "chainId": addr_info.chain_index,
+        "chainName": chain_display,
+        "fromAddress": addr_info.address,
+        "scene": scene,
+        "gasStationStatus": unsigned.gas_station_status,
+        "defaultGasTokenAddress": unsigned.default_gas_token_address,
+        "tokenList": token_list,
+        "originalRequest": {
+            "command": original_command,
+            "args": original_args,
+        },
+        "retryGuidance": [
+            format!("1) Render Scene {} via `skills/okx-agentic-wallet/references/gas-station.md` using `data.tokenList`.", scene),
+            "2) On user pick, run `wallet gas-station setup --chain <chainId> --gas-token-address <picked.feeTokenAddress> --relayer-id <picked.relayerId>`.".to_string(),
+            "3) Re-invoke the original command verbatim (it will succeed because Gas Station is now active).".to_string(),
+        ],
+    });
+
+    crate::output::CliSetupRequired {
+        error_code: "GAS_STATION_SETUP_REQUIRED".to_string(),
+        message,
+        data,
+    }
+    .into()
 }
 
 /// Scene C: READY_TO_USE but user input is needed to pick a token. Covers both "default

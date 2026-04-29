@@ -83,6 +83,47 @@ impl std::fmt::Display for CliConfirming {
 
 impl std::error::Error for CliConfirming {}
 
+// ── SetupRequired (exit code 3) ───────────────────────────────────────
+//
+// Used when a third-party plugin invokes `wallet send` / `wallet contract-call`
+// with `--force` on a chain where Gas Station first-time setup is required.
+// `--force` semantics says "skip all confirmations" — but first-time GS setup
+// is a contractual user-decision gate that cannot be silently auto-confirmed.
+// Instead of returning a Confirming (exit 2 — broken for plugins that bail on
+// non-zero exit), we return a structured error with `errorCode` so the agent
+// can detect the GS setup gap, run `wallet gas-station setup`, then re-invoke
+// the plugin command (which will succeed because GS is now active).
+
+/// Print a setup-required response:
+/// `{ "ok": false, "errorCode": "...", "message": "...", "data": { ... } }`
+pub fn setup_required(error_code: &str, message: &str, data: &serde_json::Value) {
+    let v = serde_json::json!({
+        "ok": false,
+        "errorCode": error_code,
+        "message": message,
+        "data": data,
+    });
+    println!("{}", serde_json::to_string_pretty(&v).unwrap());
+}
+
+/// Structured error type for CLI operations that require Gas Station setup
+/// to be completed before re-attempting. main.rs intercepts via downcast,
+/// prints via `output::setup_required()`, and exits with code 3.
+#[derive(Debug)]
+pub struct CliSetupRequired {
+    pub error_code: String,
+    pub message: String,
+    pub data: serde_json::Value,
+}
+
+impl std::fmt::Display for CliSetupRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "setup-required: {}", self.message)
+    }
+}
+
+impl std::error::Error for CliSetupRequired {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

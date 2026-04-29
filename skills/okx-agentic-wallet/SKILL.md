@@ -128,6 +128,8 @@ Pay gas with stablecoins (USDT/USDC/USDG) when native token is insufficient. Act
 | D-GS1 | `onchainos wallet gas-station update-default-token` | Change the default gas payment token for a chain | Yes |
 | D-GS2 | `onchainos wallet gas-station enable` | Turn Gas Station back on for a chain that previously had it enabled. (Internal: DB flag flip; requires prior on-chain setup. First-time activation still happens through `wallet send`.) | Yes |
 | D-GS3 | `onchainos wallet gas-station disable` | Turn Gas Station off for a chain; the chain reverts to paying gas with native token. (Internal: DB flag flip only, no on-chain action.) | Yes |
+| D-GS4 | `onchainos wallet gas-station status` | Read-only Gas Station readiness check on a chain. Used by **third-party plugin pre-flight**: agent runs this before invoking a plugin's on-chain command, branches on the returned `recommendation` (READY / ENABLE_GAS_STATION / REENABLE_GAS_STATION / PENDING_UPGRADE / INSUFFICIENT_ALL / HAS_PENDING_TX). Never broadcasts. | Yes |
+| D-GS5 | `onchainos wallet gas-station setup` | Standalone first-time activation, decoupled from `wallet send`. Required when a third-party plugin will perform `contract-call` and native gas is insufficient. Idempotent: re-calling with the same default token returns `alreadyActivated=true`; with a different token, switches default. | Yes |
 
 > The "(Internal: ...)" parentheticals above are **Agent-internal background** — they explain the command's mechanism so the Agent can reason about it. **Never paraphrase them into a user-facing reply.** For user-facing reply wording (pre-confirmation prompts and success messages for enable / disable / update-default-token), use the sanctioned templates in `references/gas-station.md` → "User-Facing Reply Templates (Management Commands)".
 
@@ -201,6 +203,53 @@ onchainos wallet send --readable-amount "0.1" --recipient "0xAbc..." --chain 1
 # 2. User confirms → re-run with --force
 onchainos wallet send --readable-amount "0.1" --recipient "0xAbc..." --chain 1 --force
 ```
+
+## Third-Party Plugin Pre-flight
+
+When the user invokes a **third-party DeFi plugin** (e.g. `aave-v3-plugin`, `uniswap-plugin`) that internally calls `onchainos wallet contract-call --force`, the plugin is a **black box** — its error messages may not surface Gas Station issues. The agent MUST proactively pre-flight Gas Station status on the target chain.
+
+### Pre-flight checklist
+
+Before dispatching ANY third-party plugin command that performs an on-chain write (`--confirm` / `execute` / `--broadcast` / etc.), the agent MUST:
+
+1. Resolve `<chain>` and `<from>` from the plugin invocation.
+2. Run:
+   ```bash
+   onchainos wallet gas-station status --chain <chain> [--from <addr>]
+   ```
+3. Branch on `data.recommendation`:
+
+| Recommendation | Action |
+|---|---|
+| `READY` | Proceed directly to plugin invocation. |
+| `ENABLE_GAS_STATION` | Render `references/gas-station.md` Scene A using `data.tokenList`. After user confirms a token pick, run `wallet gas-station setup --chain <C> --gas-token-address <picked> --relayer-id <picked>`. Then proceed to the original plugin command. |
+| `REENABLE_GAS_STATION` | Render Scene B'. After user confirms, `wallet gas-station setup ...`. Then proceed. |
+| `PENDING_UPGRADE` | Render Scene A'. After user confirms, `wallet gas-station setup ...` (carries 7702 material). Then proceed. |
+| `INSUFFICIENT_ALL` | Tell user to top up native or stablecoin. Do NOT invoke plugin. |
+| `HAS_PENDING_TX` | Tell user to wait for the pending tx (or run `wallet gas-station disable --chain <C>` to bypass). Do NOT invoke plugin. |
+
+### Pre-flight skip conditions
+
+- Plugin invocation is dry-run / simulation (no on-chain write)
+- Plugin is a read-only command (e.g. `aave-v3-plugin positions`, `health-factor`, `reserves`, `quickstart`)
+- The agent has already pre-flighted this `(chain, from)` tuple in the current conversation and confirmed `gasStationActivated = true`
+
+### Reactive diagnosis (post-failure fallback)
+
+If a third-party plugin returned a vague error (e.g. `"Pool.supply() failed"`, `"swap failed"`) and the message does NOT clearly explain the cause, the agent SHOULD diagnose:
+
+1. **Fast path — parse plugin's bubbled-up error first**: if the plugin's stderr/stdout contains an onchainos response with `"errorCode": "GAS_STATION_SETUP_REQUIRED"` (which is what onchainos returns from `--force` calls when GS setup is needed, exit code 3), extract `data.tokenList` directly and proceed to Scene A → setup → re-invoke plugin. No additional CLI roundtrip needed.
+2. **Slow path — independent status query**: if the plugin ate stdout / didn't propagate, run `onchainos wallet gas-station status --chain <chain> [--from <addr>]`. If `recommendation` is `ENABLE_GAS_STATION` / `REENABLE_GAS_STATION` / `PENDING_UPGRADE` / `INSUFFICIENT_ALL`: the plugin likely failed because of Gas Station, not a logic error. Follow the pre-flight branch above.
+3. Otherwise: surface the plugin's raw error to the user.
+
+### Exit codes from `wallet contract-call --force` / `wallet send --force`
+
+| Exit | Meaning | Agent action |
+|---|---|---|
+| `0` | Success | Continue |
+| `1` | Real error (logic / chain / etc.) | Surface error to user |
+| `2` | Confirming required (non-`--force` path; should NOT happen with `--force`) | Treat as bug; show message |
+| `3` | `errorCode: GAS_STATION_SETUP_REQUIRED` — `--force` cannot silently auto-enable GS | Render Scene A from `data.tokenList`, run `wallet gas-station setup`, re-invoke same command |
 
 ## User-Facing Message Templates
 

@@ -236,6 +236,36 @@ pub enum GasStationCommand {
         #[arg(long)]
         chain: String,
     },
+    /// Read-only Gas Station readiness check on a chain.
+    /// Used by third-party plugin pre-flight: agent runs this before invoking
+    /// a plugin's on-chain command, branches on the returned `recommendation`.
+    /// Never broadcasts; safe to call repeatedly.
+    Status {
+        /// Chain name or ID (e.g. "ethereum" or "1")
+        #[arg(long)]
+        chain: String,
+        /// Sender address (optional — defaults to selectedAccountId)
+        #[arg(long)]
+        from: Option<String>,
+    },
+    /// Standalone Gas Station first-time activation.
+    /// Decoupled from `wallet send` so the agent can activate GS before
+    /// invoking a third-party plugin (which calls `wallet contract-call --force`).
+    /// Idempotent: re-calling with the same default token returns alreadyActivated=true.
+    Setup {
+        /// Chain name or ID (e.g. "ethereum" or "1")
+        #[arg(long)]
+        chain: String,
+        /// Gas token contract address (picked by the user from Scene A `tokenList`)
+        #[arg(long)]
+        gas_token_address: String,
+        /// Relayer ID (paired with `--gas-token-address` from Scene A `tokenList`)
+        #[arg(long)]
+        relayer_id: String,
+        /// Sender address (optional — defaults to selectedAccountId)
+        #[arg(long)]
+        from: Option<String>,
+    },
 }
 
 /// Resolve the effective raw amount for `wallet send`.
