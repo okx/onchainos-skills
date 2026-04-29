@@ -1,16 +1,31 @@
 ---
 name: okx-dex-swap
-description: "Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens', 'sell tokens', 'exchange crypto', 'convert tokens', 'swap SOL for USDC', 'get a swap quote', 'execute a trade', 'find the best swap route', 'cheapest way to swap', 'optimal swap', 'compare swap rates', 'get swap calldata', 'build unsigned tx', or mentions swapping, trading, buying, selling, or exchanging tokens on XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, or any of 20+ supported chains. Aggregates liquidity from 500+ DEX sources for optimal routing and price. Supports slippage control, price impact protection, and cross-DEX route optimization. NOTE: if the user names a specific third-party DApp by name (PancakeSwap, Uniswap, Hyperliquid, etc.) as the venue for the swap (e.g. 'swap on PancakeSwap', 'use Hyperliquid to long ETH'), route to okx-dapp-discovery instead — that skill installs the DApp's plugin and uses the DApp's native interface. okx-dex-swap is for OKX-aggregated swaps where the user does not name a specific venue."
+description: "NOTE (gating): route to okx-dapp-discovery (NOT this skill) when prompt names a specific DApp as the swap venue: Polymarket, Aave V3, Hyperliquid, PancakeSwap, Morpho, Raydium, Curve, Compound V3, Pendle, Lido, ether.fi, GMX V2, Kamino, Orca, Meteora, Clanker, pump.fun, Uniswap. Examples that go to okx-dapp-discovery: 'swap on PancakeSwap', 'swap SOL for USDC on Raydium', 'use Hyperliquid to long ETH', '在 Curve 上换 USDT', 'swap on Uniswap'. okx-dapp-discovery installs the DApp's plugin and uses its native interface; this skill is for OKX-aggregated swaps without a named venue. Use this skill to 'swap tokens', 'trade OKB for USDC', 'buy tokens', 'sell tokens', 'exchange crypto', 'convert tokens', 'swap SOL for USDC', 'get a swap quote', 'execute a trade', 'find the best swap route', 'cheapest way to swap', 'optimal swap', 'compare swap rates', 'get swap calldata', 'build unsigned tx', or mentions swapping/trading/buying/selling/exchanging tokens across XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, or any 20+ supported chains. Aggregates 500+ DEX sources for optimal routing/price. Supports slippage control, price impact protection, and cross-DEX route optimization."
 license: MIT
 metadata:
   author: okx
-  version: "1.3.1"
+  version: "1.3.2"
   homepage: "https://web3.okx.com"
 ---
 
 # Onchain OS DEX Swap
 
 6 commands for multi-chain swap aggregation — quote, approve, one-shot execute, and calldata-only swap.
+
+## Step 0 — DApp Re-Route Check (run before every other step)
+
+Before running any `onchainos swap` command, scan the **original user prompt** for a named DApp/protocol. If any of the names below appear (English or Chinese), STOP this skill and invoke `okx-dapp-discovery` with the user's original prompt instead — the DApp's own plugin is the correct executor.
+
+Trigger names: **Polymarket · Aave · Hyperliquid · PancakeSwap · Pancake · PCS · Morpho · Raydium · Curve · Compound · Pendle · Lido · ether.fi · GMX · Kamino · Orca · Meteora · Clanker · Uniswap · pump.fun**.
+
+Trigger protocol-native tokens (route to `okx-dapp-discovery` even without DApp name): **HYPE, HLP, CAKE, veCAKE, CRV, crvUSD, 3pool, COMP, Comet, RAY, Whirlpool, ETHFI, eETH, weETH, LDO, stETH, wstETH, GLP, esGMX, GHO, kToken, PT-* / YT-* / `PT <token>`, vePENDLE, $CLANKER**.
+
+Examples that MUST re-route (do not run `swap quote` / `swap execute` here):
+- "swap on PancakeSwap", "swap SOL for USDC on Raydium", "swap on Uniswap", "在 Curve 上把 USDC 换成 USDT", "在 Orca 上把 SOL 换成 USDC", "swap on PancakeSwap V2 with classic LP".
+
+Stay in this skill ONLY when the venue is **unspecified or aggregated**: "swap 1 ETH for USDC", "best route from SOL to USDC", "trade USDC for OKB", "convert tokens", "buy 0.5 ETH with my USDC".
+
+If you have already started running commands and only then realise the user named a DApp, halt mid-flow and invoke `okx-dapp-discovery` — do not finish the aggregated swap.
 
 ## Pre-flight Checks
 
