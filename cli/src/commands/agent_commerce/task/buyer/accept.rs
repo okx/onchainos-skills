@@ -4,13 +4,10 @@
 //!
 //! 流程：
 //! 1. setPaymentMode（单签上链）
-//! 2. 调用 a2a_pay::pay() 完成 EIP-3009 支付签名（escrow / non_escrow）
-//! 3. 按支付方式调用 accept API 获取 calldata → 签名 → 广播上链
-//!
-//! 支付方式差异：
-//! - escrow:      a2a_pay::pay(→signature) → accept(signatureData) → sign uop → broadcast
-//! - non_escrow:  a2a_pay::pay() → direct/accept → sign uop → broadcast
-//! - x402:        direct/accept → sign uop → broadcast → x402_request_sign_replay
+//! 2. 按支付方式分支：
+//!    - escrow:      providerConfirmStatus → a2a_pay::create_escrow(→paymentId) → a2a_pay::pay(→signature) → accept(signatureData) → sign uop → broadcast
+//!    - non_escrow:  a2a_pay::pay() → direct/accept → sign uop → broadcast
+//!    - x402:        direct/accept → sign uop → broadcast → x402_request_sign_replay
 //!
 //! 接口文档：https://okg-block.sg.larksuite.com/wiki/UumqwSyM5i1AuakBNLClJo9igIb
 //! 支付设计：https://okg-block.sg.larksuite.com/docx/CwWbd6eCOopgq6x6VwTlWEivgrc
@@ -20,9 +17,11 @@ use anyhow::{bail, Result};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{
     self, PAYMENT_MODE_ESCROW, PAYMENT_MODE_NON_ESCROW, PAYMENT_MODE_X402,
+    XLAYER_CHAIN_ID,
 };
 use crate::commands::agent_commerce::task::signing;
 use crate::commands::payment::a2a_pay::{self, PayParams};
+use super::negotiate;
 use super::x402_flow;
 
 /// 通过 tokenDetail API 查询 token 合约地址和精度。
@@ -42,6 +41,47 @@ async fn fetch_token_detail(client: &mut TaskApiClient, symbol: &str) -> Result<
     Ok((address, decimals))
 }
 
+/// 查询 Provider 是否已 apply 及报价（escrow 参数）。
+/// GET /priapi/v1/aieco/task/{jobId}/providerConfirmStatus?providerAgentId=xxx&tokenSymbol=xxx&amount=xxx
+async fn fetch_provider_confirm_status(
+    client: &mut TaskApiClient,
+    job_id: &str,
+    provider_agent_id: &str,
+    token_symbol: &str,
+    amount: &str,
+    agent_id: &str,
+) -> Result<serde_json::Value> {
+    let path = format!(
+        "/priapi/v1/aieco/task/{job_id}/providerConfirmStatus\
+         ?providerAgentId={provider_agent_id}\
+         &tokenSymbol={token_symbol}\
+         &amount={amount}"
+    );
+    client.get_with_agent_id(&path, agent_id).await
+        .map_err(|e| anyhow::anyhow!("providerConfirmStatus 查询失败: {e}"))
+}
+
+/// 从 JSON 对象提取字符串字段。
+fn json_str(obj: &serde_json::Value, key: &str) -> Result<String> {
+    obj[key]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("escrow 响应缺少 {key} 字段"))
+        .map(|s| s.to_string())
+}
+
+/// 从 JSON 对象提取 u64 字段（兼容数字和字符串）。
+fn json_u64(obj: &serde_json::Value, key: &str) -> Result<u64> {
+    if let Some(n) = obj[key].as_u64() {
+        return Ok(n);
+    }
+    if let Some(s) = obj[key].as_str() {
+        return s
+            .parse()
+            .map_err(|_| anyhow::anyhow!("escrow.{key} 解析 u64 失败: {s}"));
+    }
+    bail!("escrow 响应缺少 {key} 字段")
+}
+
 
 /// confirm-accept — 确认接受卖家
 #[allow(clippy::too_many_lines)]
@@ -51,6 +91,8 @@ pub async fn handle_confirm_accept(
     provider: &str,
     payment_mode: &str,
     payment_id: Option<&str>,
+    token_symbol: Option<&str>,
+    token_amount: Option<&str>,
 ) -> Result<()> {
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
@@ -73,61 +115,96 @@ pub async fn handle_confirm_accept(
     match payment_mode {
         PAYMENT_MODE_ESCROW => {
             // ── 担保支付 (Escrow) ───────────────────────────────────
-            let pid = payment_id.ok_or_else(|| {
-                anyhow::anyhow!("担保支付需要 --payment-id（由卖家通过 XMTP 传递）")
-            })?;
+            // 流程：providerConfirmStatus → sign_escrow(TEE 签名) → accept → broadcast
 
-            // 从任务详情获取买家确认的金额和币种（协商数据）
-            let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
-            let task = &task_resp;
-            let amount = task["tokenAmount"].as_str().unwrap_or("0").to_string();
-            let symbol = task["paymentTokenSymbol"].as_str().unwrap_or("USDT").to_string();
+            // Step 2a: 从协商结果获取金额和币种
+            // 优先级：CLI flag > 本地协商记录(negotiate-state) > 报错
+            let agreed: Option<(String, String)> = negotiate::load_agreed(job_id)?;
+            let symbol = match token_symbol {
+                Some(s) => s.to_string(),
+                None => match &agreed {
+                    Some((sym, _)) => {
+                        eprintln!("ℹ --token-symbol 未传入，使用本地协商记录: {sym}");
+                        sym.clone()
+                    }
+                    None => bail!("escrow 模式需要 --token-symbol 或先执行 save-agreed 保存协商结果"),
+                },
+            };
+            let amount = match token_amount {
+                Some(a) => a.to_string(),
+                None => match &agreed {
+                    Some((_, amt)) => {
+                        eprintln!("ℹ --token-amount 未传入，使用本地协商记录: {amt}");
+                        amt.clone()
+                    }
+                    None => bail!("escrow 模式需要 --token-amount 或先执行 save-agreed 保存协商结果"),
+                },
+            };
 
-            // 通过 tokenDetail API 查询 token 合约地址和精度
-            let (token_address, decimals) = fetch_token_detail(client, &symbol).await?;
-            let amount_minimal = crate::commands::swap::readable_to_minimal_str(&amount, decimals)?;
-
-            // Escrow / non-escrow 模式下 recipient 都是卖家钱包地址
-            let recipient = task["providerAgentAddress"]
+            // Step 2b: 调用 providerConfirmStatus 确认卖家已 apply 并获取 escrow 参数
+            let confirm_resp = fetch_provider_confirm_status(
+                client, job_id, provider, &symbol, &amount, &agent_id,
+            ).await?;
+            let amount_minimal = confirm_resp["amount"]
                 .as_str()
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| anyhow::anyhow!("任务详情缺少 providerAgentAddress，无法确定收款地址"))?
+                .ok_or_else(|| anyhow::anyhow!("providerConfirmStatus 响应缺少 amount"))?
                 .to_string();
-
-            // Step 2a: a2a_pay::pay() — EIP-3009 支付签名
-            // PayParams.amount = 最小单位（如 "100000" = 0.1 USDT，6 decimals）
-            // PayParams.currency = ERC-20 合约地址（从任务详情 tokenAddress 获取）
-            let pay_result = a2a_pay::pay(PayParams {
-                payment_id: pid.to_string(),
-                amount: amount_minimal,
-                currency: token_address,
-                recipient_address: recipient,
-            }).await?;
-            println!("✓ a2a_pay 支付完成: payment_id={}, status={}", pay_result.payment_id, pay_result.status);
-            if let Some(ref tx) = pay_result.tx_hash {
-                println!("  pay txHash: {tx}");
-            }
-
-            // Step 2b: accept — 直接用 pay_result 中的 EIP-3009 签名
-            // pay() 返回的 signature / valid_after / valid_before 即 ERC-3009 授权签名，
-            // 无需再走 preAccept → sign digest 双签流程。
-            // accept 入参:
-            //   providerAddress:  必填, hex 地址
-            //   providerAgentId:  必填
-            //   signatureData:    必填 { signature, validAfter, validBefore }
-            //   tokenSymbol:      可选
-            //   tokenAmount:      可选
-            let provider_address = task["providerAgentAddress"]
+            let currency = confirm_resp["currency"]
                 .as_str()
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| anyhow::anyhow!("任务详情缺少 providerAgentAddress"))?;
+                .ok_or_else(|| anyhow::anyhow!("providerConfirmStatus 响应缺少 currency"))?
+                .to_string();
+            let escrow = &confirm_resp["escrow"];
+
+            let escrow_contract = json_str(escrow, "escrowContract")?;
+            let provider_addr = json_str(escrow, "provider")?;
+            let arbitrator = json_str(escrow, "arbitrator")?;
+            let receiver = json_str(escrow, "receiver")?;
+            let submit_window = json_u64(escrow, "submitWindow")?;
+            let dispute_window = json_u64(escrow, "disputeWindow")?;
+            let arbitration_window = json_u64(escrow, "arbitrationWindow")?;
+            let termination_window = json_u64(escrow, "terminationWindow")?;
+            // expiredAt 可能是 unix 时间戳（如 "1777736662"）或 RFC 3339，统一转为 RFC 3339
+            let expired_at_raw = json_str(escrow, "expiredAt")?;
+            let expired_at = if let Ok(ts) = expired_at_raw.parse::<i64>() {
+                chrono::DateTime::from_timestamp(ts, 0)
+                    .ok_or_else(|| anyhow::anyhow!("expiredAt unix 时间戳无效: {expired_at_raw}"))?
+                    .to_rfc3339()
+            } else {
+                expired_at_raw
+            };
+            let hook = json_str(escrow, "hook")?;
+            let hook_data = json_str(escrow, "hookData")?;
+            let salt = json_str(escrow, "salt")?;
+            println!("✓ providerConfirmStatus: 卖家已 apply，escrow 参数已获取");
+
+            // Step 2c: sign_escrow — 本地 TEE 签名 EIP-3009 ReceiveWithAuthorization
+            let sign_output = a2a_pay::sign_escrow(a2a_pay::SignEscrowParams {
+                chain_id: XLAYER_CHAIN_ID as u64,
+                provider: provider_addr.clone(),
+                receiver: receiver.clone(),
+                arbitrator,
+                currency,
+                escrow_contract,
+                amount: amount_minimal,
+                submit_window,
+                dispute_window,
+                arbitration_window,
+                termination_window,
+                hook,
+                hook_data,
+                salt,
+                expired_at,
+            }).await?;
+            println!("✓ escrow EIP-3009 签名完成");
+
+            // Step 2d: accept → calldata → 签名 → 广播
             let body = serde_json::json!({
-                "providerAddress": provider_address,
+                "providerAddress": provider_addr,
                 "providerAgentId": provider,
                 "signatureData": {
-                    "signature": pay_result.signature,
-                    "validAfter": pay_result.valid_after,
-                    "validBefore": pay_result.valid_before,
+                    "signature": sign_output.signature,
+                    "validAfter": sign_output.authorization.valid_after,
+                    "validBefore": sign_output.authorization.valid_before,
                 },
                 "tokenSymbol": symbol,
                 "tokenAmount": amount,

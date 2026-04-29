@@ -392,6 +392,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::MessageEligible { .. } => "message-eligible".into(),
         AgentCommand::SystemConfig { .. } => "system-config".into(),
         AgentCommand::Heartbeat { .. } => "heartbeat".into(),
+        AgentCommand::SaveAgreed { .. } => "save-agreed".into(),
     }
 }
 

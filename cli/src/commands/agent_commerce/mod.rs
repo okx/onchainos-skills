@@ -93,8 +93,12 @@ pub enum AgentCommand {
         job_id: String,
         #[arg(long)] provider: String,
         #[arg(long = "payment-mode", default_value = "escrow")] payment_mode: String,
-        /// a2a_pay payment_id（卖家通过 XMTP 传递，escrow/non_escrow 必填）
+        /// a2a_pay payment_id（卖家通过 XMTP 传递，non_escrow 必填；escrow 不需要）
         #[arg(long = "payment-id")] payment_id: Option<String>,
+        /// 协商确定的支付代币符号（如 USDT），escrow 必填
+        #[arg(long = "token-symbol")] token_symbol: Option<String>,
+        /// 协商确定的支付金额（人类可读，如 "50"），escrow 必填
+        #[arg(long = "token-amount")] token_amount: Option<String>,
     },
 
     /// Client rejects provider application
@@ -201,6 +205,16 @@ pub enum AgentCommand {
         /// escrow 路径也建议显式传，避免本地多 provider agent 时拿错。
         #[arg(long = "agent-id")]
         agent_id: String,
+    },
+
+    /// Save negotiated payment params locally (agent calls after negotiation)
+    #[command(name = "save-agreed")]
+    SaveAgreed {
+        job_id: String,
+        #[arg(long = "token-symbol")]
+        token_symbol: String,
+        #[arg(long = "token-amount")]
+        token_amount: String,
     },
 
     /// Client claims auto-refund after provider timeout
@@ -350,8 +364,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::buyer::run_task(T::List { status, page, limit, agent_id }, ctx).await,
 
 
-        AgentCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id } =>
-            task::buyer::run_task(T::ConfirmAccept { job_id, provider, payment_mode, payment_id }, ctx).await,
+        AgentCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount } =>
+            task::buyer::run_task(T::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount }, ctx).await,
 
         AgentCommand::RejectApply { job_id, provider, reason } =>
             task::buyer::run_task(T::RejectApply { job_id, provider, reason }, ctx).await,
@@ -376,6 +390,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::Claim { job_id } =>
             task::buyer::run_task(T::Claim { job_id }, ctx).await,
+
+        AgentCommand::SaveAgreed { job_id, token_symbol, token_amount } =>
+            task::buyer::run_task(T::SaveAgreed { job_id, token_symbol, token_amount }, ctx).await,
 
         AgentCommand::ClaimAutoRefund { job_id } =>
             task::buyer::run_task(T::ClaimAutoRefund { job_id }, ctx).await,

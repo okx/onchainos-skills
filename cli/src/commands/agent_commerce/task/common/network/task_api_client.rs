@@ -304,6 +304,22 @@ impl TaskApiClient {
         result
     }
 
+    /// GET + JWT + agenticId header（不注入 sessionCert）→ 返回 data。
+    /// 用于查询接口（如 providerConfirmStatus）需要 JWT + agenticId 但不需要 sessionCert 的场景。
+    pub async fn get_with_agent_id(&mut self, path: &str, agent_id: &str) -> Result<Value> {
+        let url = format!("{}{}", self.base_url, path);
+        let token = get_access_token().await;
+        let query: Vec<(&str, &str)> = vec![];
+        let headers: Vec<(&str, &str)> = vec![("agenticId", agent_id)];
+        eprintln!("[TaskAPI] GET(jwt+agenticId) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}", token.len());
+        let result = self.wallet.get_authed_with_headers(path, &token, &query, Some(&headers)).await;
+        match &result {
+            Ok(data) => eprintln!("[TaskAPI] GET(jwt+agenticId) {url} ← {data}"),
+            Err(e) => eprintln!("[TaskAPI] GET(jwt+agenticId) {url} ← ERROR: {e}"),
+        }
+        result
+    }
+
     /// GET + JWT + 身份头（agenticId）→ 返回 data（自动注入 sessionCert query param）。
     pub async fn get_with_identity(
         &mut self,

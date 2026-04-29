@@ -20,7 +20,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             next_action("job_created"),
             ref_header,
             format!("  onchainos agent recommend {job_id} --agent-id <agentId>  # 查看推荐卖家"),
-            format!("  onchainos agent confirm-accept {job_id} --provider <addr> --payment-mode <escrow|non_escrow|x402>  # 接受卖家并注资"),
+            format!("  onchainos agent confirm-accept {job_id} --provider <addr> --payment-mode <escrow|non_escrow|x402> --token-symbol <sym> --token-amount <amt>  # 接受卖家并注资"),
             format!("  onchainos agent close {job_id}          # 关闭任务"),
             format!("  onchainos agent set-public {job_id}     # 转为公开任务"),
         ],
@@ -155,7 +155,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode x402 \
              --token-symbol <feeTokenSymbol> --token-amount <feeAmount> --endpoint <endpoint>\n\
              ```\n\
-             （命令内部自动执行：setPaymentMode(2) → direct/accept 签名广播 → x402 支付）\n\n\
+             （命令内部自动执行：setPaymentMode(3) → direct/accept 签名广播 → x402 支付）\n\n\
              2. 完成后任务状态 → accepted。\n\n\
              **A-Step 3 — 调用 xmtp_dispatch_user 通知用户结果：**\n\
              \x20\x20content: 任务 {job_id} 已通过 x402 自动接单。卖家 AgentID=<providerAgentId>，\
@@ -214,24 +214,25 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::ProviderApplied => format!(
             "【当前状态】provider_applied（卖家已链上申请接单）\n\
              【角色】买家（Client）\n\n\
-             【前置】协商阶段已确定支付方式（escrow / non_escrow）和 paymentId，从协商上下文获取：\n\
+             【前置】协商阶段已确定支付方式（escrow / non_escrow）、金额、代币，从协商上下文获取：\n\
              ```bash\n\
              onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
              ```\n\
-             提取协商结果：providerAgentId、paymentMode、tokenAmount、tokenSymbol、paymentId。\n\
-             ⚠️ paymentId 是卖家在协商阶段通过 XMTP 发送的 a2a_xxx 格式 ID，escrow/non_escrow 必须传入。\n\n\
+             提取协商结果：providerAgentId、paymentMode、tokenAmount、tokenSymbol。\n\
+             ⚠️ tokenAmount 和 tokenSymbol 必须从协商结果获取，不是任务详情。\n\
+             ⚠️ non_escrow 还需要 paymentId（卖家通过 XMTP 传递的 a2a_xxx 格式 ID）。\n\n\
              【你的下一步动作】\n\n\
              **Step 1 — 确认接单（按协商确定的支付方式，无需再询问用户）：**\n\n\
              ▸ **担保支付（escrow）：**\n\
              ```bash\n\
-             onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode escrow --payment-id <paymentId>\n\
+             onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode escrow --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
              ```\n\
-             （内部：setPaymentMode(0) → a2a_pay EIP-3009 签名 → accept 获取 calldata → 签名 → 广播，资金托管）\n\n\
+             （内部：setPaymentMode(1) → providerConfirmStatus → sign_escrow TEE 签名 → accept 获取 calldata → 签名 → 广播，资金托管）\n\n\
              ▸ **非担保支付（non_escrow）：**\n\
              ```bash\n\
              onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode non_escrow --payment-id <paymentId>\n\
              ```\n\
-             （内部：setPaymentMode(1) → a2a_pay EIP-3009 签名 → direct/accept 获取 calldata → 签名 → 广播）\n\n\
+             （内部：setPaymentMode(2) → a2a_pay EIP-3009 签名 → direct/accept 获取 calldata → 签名 → 广播）\n\n\
              **Step 2 — 调用 xmtp_send 工具向卖家发送：**\n\n\
              {header_template}\n\
              已确认接单，支付方式：<paymentMode>。等待你开始执行任务。\n\n\

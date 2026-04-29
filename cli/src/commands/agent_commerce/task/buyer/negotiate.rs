@@ -58,6 +58,12 @@ pub struct NegotiateState {
     pub providers: Vec<ProviderInfo>,
     pub current_index: usize,
     pub created_at: String,
+    /// 协商确定的支付币种（如 "USDT"），由 save_agreed 写入
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agreed_token_symbol: Option<String>,
+    /// 协商确定的支付金额（人类可读，如 "0.1"），由 save_agreed 写入
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agreed_token_amount: Option<String>,
 }
 
 // ─── 路径 ────────────────────────────────────────────────────────────
@@ -84,6 +90,8 @@ pub fn save(job_id: &str, providers: Vec<ProviderInfo>) -> Result<()> {
         providers,
         current_index: 0,
         created_at: chrono::Utc::now().to_rfc3339(),
+        agreed_token_symbol: None,
+        agreed_token_amount: None,
     };
 
     let json = serde_json::to_string_pretty(&state)?;
@@ -118,6 +126,44 @@ pub fn next(job_id: &str) -> Result<Option<ProviderInfo>> {
     std::fs::write(state_path(job_id)?, json)?;
 
     Ok(state.providers.get(state.current_index).cloned())
+}
+
+/// 保存协商确定的支付参数（协商完成时由 Agent 调用）
+pub fn save_agreed(job_id: &str, token_symbol: &str, token_amount: &str) -> Result<()> {
+    let mut state = match load(job_id) {
+        Ok(s) => s,
+        Err(_) => {
+            // 没有 negotiate-state（可能是直接指定 provider 场景），创建最小状态
+            let dir = state_dir(job_id)?;
+            std::fs::create_dir_all(&dir)?;
+            NegotiateState {
+                job_id: job_id.to_string(),
+                providers: vec![],
+                current_index: 0,
+                created_at: chrono::Utc::now().to_rfc3339(),
+                agreed_token_symbol: None,
+                agreed_token_amount: None,
+            }
+        }
+    };
+    state.agreed_token_symbol = Some(token_symbol.to_string());
+    state.agreed_token_amount = Some(token_amount.to_string());
+    let json = serde_json::to_string_pretty(&state)?;
+    std::fs::write(state_path(job_id)?, json)?;
+    println!("✓ 协商结果已保存: {token_symbol} {token_amount} (job={job_id})");
+    Ok(())
+}
+
+/// 读取协商确定的支付参数，返回 (token_symbol, token_amount)
+pub fn load_agreed(job_id: &str) -> Result<Option<(String, String)>> {
+    let state = load(job_id);
+    match state {
+        Ok(s) => match (s.agreed_token_symbol, s.agreed_token_amount) {
+            (Some(sym), Some(amt)) => Ok(Some((sym, amt))),
+            _ => Ok(None),
+        },
+        Err(_) => Ok(None),
+    }
 }
 
 /// 清理状态文件（accept 成功后调用）

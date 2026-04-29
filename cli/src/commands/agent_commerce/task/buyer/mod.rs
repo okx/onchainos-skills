@@ -98,9 +98,15 @@ pub enum TaskCommand {
         provider: String,
         #[arg(long = "payment-mode", default_value = PAYMENT_MODE_ESCROW)]
         payment_mode: String,
-        /// a2a_pay payment_id（卖家通过 XMTP 传递，escrow/non_escrow 必填）
+        /// a2a_pay payment_id（卖家通过 XMTP 传递，non_escrow 必填；escrow 不需要）
         #[arg(long = "payment-id")]
         payment_id: Option<String>,
+        /// 协商确定的支付代币符号（如 USDT），escrow 必填
+        #[arg(long = "token-symbol")]
+        token_symbol: Option<String>,
+        /// 协商确定的支付金额（人类可读，如 "50"），escrow 必填
+        #[arg(long = "token-amount")]
+        token_amount: Option<String>,
     },
     /// Client rejects provider application
     RejectApply {
@@ -148,6 +154,14 @@ pub enum TaskCommand {
     ClaimAutoRefund {
         job_id: String,
     },
+    /// Save negotiated payment params locally (agent calls after negotiation)
+    SaveAgreed {
+        job_id: String,
+        #[arg(long = "token-symbol")]
+        token_symbol: String,
+        #[arg(long = "token-amount")]
+        token_amount: String,
+    },
     /// Rate the provider after task completion
     Judge {
         job_id: String,
@@ -185,8 +199,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 recommend::handle_recommend(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await
             }
         }
-        TaskCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id } =>
-            accept::handle_confirm_accept(&mut client, &job_id, &provider, &payment_mode, payment_id.as_deref()).await,
+        TaskCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount } =>
+            accept::handle_confirm_accept(&mut client, &job_id, &provider, &payment_mode, payment_id.as_deref(), token_symbol.as_deref(), token_amount.as_deref()).await,
         TaskCommand::Complete { job_id } =>
             complete::handle_complete(&mut client, &job_id).await,
         TaskCommand::Reject { job_id, reason } =>
@@ -199,6 +213,9 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             close::handle_claim(&mut client, &job_id).await,
         TaskCommand::ClaimAutoRefund { job_id } =>
             claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await,
+        TaskCommand::SaveAgreed { job_id, token_symbol, token_amount } => {
+            negotiate::save_agreed(&job_id, &token_symbol, &token_amount)
+        }
         TaskCommand::Judge { job_id } =>
             judge::handle_judge(&mut client, &job_id).await,
 
