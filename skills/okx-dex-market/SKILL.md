@@ -1,10 +1,10 @@
 ---
 name: okx-dex-market
-description: "Use this skill for on-chain market data: token prices/价格, K-line/OHLC charts, index prices, and wallet PnL/盈亏分析 (win rate, my wallet's DEX trade history, realized/unrealized PnL per token). Use when the user asks for 'token price', 'price chart', 'candlestick', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my wallet DEX history', 'realized profit', or 'unrealized profit'. NOTE: if the user wants to write a WebSocket script/脚本/bot, use okx-dex-ws instead. ALSO the OWNER of Market API payment handling — route to this skill (NOT okx-x402-payment) when the user asks about: 'onchainos market ... 报 402 / 402 error', 'market price 402', 'candles 402', 'market API pricing/计费/收费', Basic/Premium tier/quota/额度/免费额度, 'how much does market price cost', 'does market candles require payment', 'free quota exhausted on market', 'ok-web3-openapi-pay' header, 30 天过渡期/grace period, or any MARKET_API_NEW_USER_INTRO / MARKET_API_OLD_USER_GRACE / MARKET_API_OLD_USER_POST_GRACE_INTRO / MARKET_API_NEW_USER_OVER_QUOTA / MARKET_API_OLD_USER_POST_GRACE_OVER_QUOTA notification code, or 'confirming:true' response returned by onchainos market commands. NOTE: if the user names a specific third-party DApp by name (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho) — even alongside timeframe-like terms ('5min', '5m', '15min', '1h') — route to okx-dapp-discovery instead. Example: 'Polymarket btc 5min' / 'polymarket BTC 5分钟' refers to a Polymarket prediction market, NOT a 5-minute K-line chart."
+description: "HARD BLOCK — NEVER use this skill for prediction-market / Polymarket UpDown queries. Route to okx-dapp-discovery when (a) a named DApp (Polymarket/Aave/Hyperliquid/PancakeSwap/Morpho) appears with any timeframe, OR (b) any 涨跌 / updown / 'up or down' phrase appears for BTC/ETH/SOL/XRP/BNB/DOGE/HYPE (e.g. '<COIN> 涨跌市场', '5 分钟涨跌', 'BTC up or down'). Example: 'BTC 5 分钟涨跌市场' → okx-dapp-discovery (NOT K-line). These are Polymarket prediction markets, not on-chain price queries. Use THIS skill for on-chain market data: token prices/价格, K-line/OHLC/candlestick/K线 charts, index prices, and wallet PnL/盈亏分析 (win rate, my wallet's DEX trade history, realized/unrealized PnL per token). Triggers: 'token price', 'price chart', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my wallet DEX history', 'realized/unrealized profit'. NOTE: WebSocket script/脚本/bot → okx-dex-ws. ALSO the OWNER of Market API payment handling — route here (NOT okx-x402-payment) for: 'onchainos market 报 402', 'market price 402', 'market API pricing/计费/收费', Basic/Premium tier/quota/额度/免费额度, 'ok-web3-openapi-pay' header, 30 天过渡期/grace period, any MARKET_API_* notification code (NEW_USER_INTRO / OLD_USER_GRACE / OLD_USER_POST_GRACE_* / *_OVER_QUOTA), or 'confirming:true' response from onchainos market commands."
 license: MIT
 metadata:
   author: okx
-  version: "1.0.5"
+  version: "1.0.6"
   homepage: "https://web3.okx.com"
 ---
 
@@ -52,7 +52,7 @@ When one of the following commands is used, show the related workflow hint after
 |---|---|---|
 | 1 | `onchainos market price --address <address>` | Single token price (**default for all 行情/price queries**) |
 | 2 | `onchainos market prices --tokens <tokens>` | Batch price query (multiple tokens at once) |
-| 3 | `onchainos market kline --address <address>` | K-line / candlestick chart |
+| 3 | `onchainos market kline --address <address>` | K-line / candlestick chart — **only when user explicitly mentions chart, candle, K线, OHLC, or bar data; a timeframe alone is NOT sufficient** |
 | 4 | `onchainos market index --address <address>` | Index price — **only when user explicitly asks for aggregate/cross-exchange price** |
 | 5 | `onchainos market portfolio-supported-chains` | Check which chains support PnL |
 | 6 | `onchainos market portfolio-overview` | Wallet PnL overview (win rate, realized PnL, top 3 tokens) |
@@ -62,6 +62,8 @@ When one of the following commands is used, show the related workflow hint after
 
 <IMPORTANT>
 **Index price** → `onchainos market index` only when the user explicitly asks for "aggregate price", "index price", "综合价格", "指数价格", or a cross-exchange composite price. For all other price / 行情 / "how much is X" queries → use `onchainos market price`.
+
+**K-line** → `onchainos market kline` only when the user explicitly mentions: "chart", "candle", "candlestick", "K线", "K-line", "OHLC", "bar", "蜡烛图", "走势图". A timeframe alone ("5分钟", "1h", "daily") does NOT trigger kline — default to `onchainos market price` instead. Examples: "BTC 5分钟K线" → kline ✓. "BTC 5分钟涨跌市场" → BLOCKED (Polymarket, see top). "BTC 5分钟价格" → price ✓.
 </IMPORTANT>
 
 ### Step 1: Collect Parameters
