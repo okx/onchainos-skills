@@ -165,6 +165,24 @@ Edge cases:
 - **Bridge selection**: omit `--bridge-id` to let the server pick the optimal route. Pass it only when the user explicitly chose a specific bridge from the quote table.
 - **Wallet**: run `onchainos wallet status`. Not logged in → `onchainos wallet login`. Multiple accounts → list and ask user to choose.
 
+### Step 3.5 — Chain-pair availability pre-check (config-level)
+
+Before issuing a quote, **fail fast on chain pairs that no bridge can connect**. This avoids burning quote calls on Sui/Tron/Ton-style pairs and gives a clear early error.
+
+```bash
+onchainos cross-chain bridges --chain <fromChain>
+```
+
+Filter the response to entries where `supportedChains[]` contains both the resolved `fromChainIndex` AND `toChainIndex`. If the filtered list is empty:
+
+> "Currently no bridge protocol connects {fromChain} ↔ {toChain}. Supported chain pairs reachable from {fromChain}: {comma-separated list of toChains where at least one bridge is available}."
+
+Skip the quote step entirely.
+
+<IMPORTANT>
+**Caveat — config truthy ≠ service available**. The `bridges` API reports the *configured* bridge set, not real-time service status. A pair can pass this pre-check (e.g. Solana ↔ Arbitrum where Gas Zip + Relay both list 501) yet still fail at quote time on environments where the underlying adapter is offline. That deeper failure is detected in Step 4 / Fallback below — see "all-82000 + empty body" pattern.
+</IMPORTANT>
+
 ### Step 4 — Quote
 
 ```bash
@@ -459,8 +477,12 @@ Pick a transit token. Steps:
 3. Swap {transit} → {targetToken} on {toChain} (use okx-dex-swap)
 ```
 
-**If all transits fail** — truly no path:
-> "{tokenSymbol} cannot be bridged from {fromChain} to {toChain}. No common transit token (USDC/USDT/native) is bridgeable either."
+**If all transits fail** — distinguish two sub-cases by inspecting the responses:
+
+1. **All responses are `code=82000` with an empty error body** (`"error": "API error (code=82000): "` — colon then nothing):
+   > "Bridge service for {fromChain} ↔ {toChain} appears unavailable on this environment. The chain pair is in the routing config but `quote` consistently returns an empty 82000 across the direct route and every transit token. This is typically a server-side / environment issue (the chain's bridge adapter is not wired up here), not a problem with your token or amount. Please retry later, or escalate to OKX support if it persists. Source-chain explorer: {explorerUrl}."
+2. **Mixed responses** (some 82000, some 82104, some other shapes) — truly no path:
+   > "{tokenSymbol} cannot be bridged from {fromChain} to {toChain}. No common transit token (USDC/USDT/native) is bridgeable either."
 
 Sort transit results by total fee ascending. Step 3 only shown when the destination target differs from the transit token.
 
