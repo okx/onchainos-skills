@@ -146,6 +146,15 @@ pub struct ApiClient {
     payment: Arc<Mutex<PaymentState>>,
 }
 
+/// Extract the `msg` field from an API error envelope.
+/// Empty / missing / whitespace-only values fall back to `"unknown error"`
+/// so the user-visible string never ends with a dangling colon
+/// (e.g. `API error (code=82000): `).
+fn extract_msg(msg_field: &Value) -> &str {
+    let s = msg_field.as_str().unwrap_or("").trim();
+    if s.is_empty() { "unknown error" } else { s }
+}
+
 impl ApiClient {
     /// Create a client with automatic auth detection:
     /// 1. JWT from keyring  (user is logged in)
@@ -822,7 +831,10 @@ impl ApiClient {
                 Value::Number(n) => n.to_string(),
                 other => other.to_string(),
             };
-            let msg = body["msg"].as_str().unwrap_or("unknown error");
+            // Surface backend `msg` verbatim. Treat missing or empty as "unknown error"
+            // so the user-visible string never ends with a dangling colon
+            // (e.g. `API error (code=82000): `).
+            let msg = extract_msg(&body["msg"]);
             bail!("API error (code={}): {}", code_str, msg);
         }
 
@@ -1392,6 +1404,40 @@ impl ApiClient {
 
 #[cfg(test)]
 mod tests {
+    use super::{extract_msg, ApiClient};
+    use serde_json::json;
+
+    // ── extract_msg ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn extract_msg_returns_inner_text_when_present() {
+        let v = json!("no available route");
+        assert_eq!(extract_msg(&v), "no available route");
+    }
+
+    #[test]
+    fn extract_msg_falls_back_when_empty_string() {
+        let v = json!("");
+        assert_eq!(extract_msg(&v), "unknown error");
+    }
+
+    #[test]
+    fn extract_msg_falls_back_when_whitespace_only() {
+        let v = json!("   ");
+        assert_eq!(extract_msg(&v), "unknown error");
+    }
+
+    #[test]
+    fn extract_msg_falls_back_when_missing() {
+        let v = json!(null);
+        assert_eq!(extract_msg(&v), "unknown error");
+    }
+
+    #[test]
+    fn extract_msg_trims_surrounding_whitespace() {
+        let v = json!("  no liquidity  ");
+        assert_eq!(extract_msg(&v), "no liquidity");
+    }
     use super::{ApiClient, PaymentCache, PaymentRequired, PaymentTier, TierState};
     use serde_json::Value;
 

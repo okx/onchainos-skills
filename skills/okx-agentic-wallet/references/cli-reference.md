@@ -408,6 +408,85 @@ onchainos wallet gas-station disable \
 |---|---|---|---|
 | `--chain` | string | Yes | Chain name or ID (e.g. `ethereum` or `1`) |
 
+### D-GS4. `onchainos wallet gas-station status`
+
+**Read-only Gas Station readiness probe.** Used by **third-party plugin pre-flight** — the agent runs this before invoking a plugin's on-chain command (e.g. `aave-v3-plugin --confirm supply ...`) to decide whether the chain needs first-time GS activation, re-enable, or is already ready. Never broadcasts. Safe to call repeatedly.
+
+Internally probes Phase 1 diagnostic via a 0-amount native self-transfer (the same call the regular `wallet send` would make on its first phase, but here we deliberately don't proceed past it).
+
+```bash
+onchainos wallet gas-station status \
+  --chain <chain> \
+  [--from <address>]
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `--chain` | string | Yes | Chain name or ID |
+| `--from` | string | No | Sender address; defaults to selectedAccountId |
+
+Response:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "chainId": "42161",
+    "chainName": "arb_eth",
+    "fromAddress": "0xd13c...a136",
+    "gasStationActivated": false,
+    "gasStationDefaultToken": null,
+    "gasStationStatus": "FIRST_TIME_PROMPT",
+    "recommendation": "ENABLE_GAS_STATION",
+    "hasPendingTx": false,
+    "insufficientAll": false,
+    "tokenList": [
+      { "symbol": "USDC", "feeTokenAddress": "0xaf88...5831", "relayerId": "fcfc...3c87",
+        "balance": "1.49", "serviceCharge": "0.026", "sufficient": true }
+    ]
+  }
+}
+```
+
+`recommendation` enum:
+
+| Value | Agent action |
+|---|---|
+| `READY` | Chain has sufficient native gas, or GS already active. Proceed directly to plugin invocation. |
+| `ENABLE_GAS_STATION` | First-time. Render Scene A → user picks → run `wallet gas-station setup` → re-invoke plugin. |
+| `REENABLE_GAS_STATION` | User previously disabled GS. Render Scene B' → user picks → `setup` → re-invoke. |
+| `PENDING_UPGRADE` | Chain not yet 7702-delegated. Render Scene A' → user picks → `setup` (carries 7702 material) → re-invoke. |
+| `INSUFFICIENT_ALL` | No stablecoin has enough balance. Tell user to top up. Do NOT invoke plugin. |
+| `HAS_PENDING_TX` | A pending GS tx blocks new ones. Tell user to wait. Do NOT invoke plugin. |
+
+### D-GS5. `onchainos wallet gas-station setup`
+
+**Standalone first-time activation.** Decoupled from `wallet send` so the agent can activate Gas Station *before* invoking a third-party plugin. The plugin (which always passes `--force` internally) will then succeed transparently because GS is already active on the chain.
+
+Internally drives a 1-minimal-unit self-transfer of the picked gas token with `--enable-gas-station --force`. Backend Phase 2 returns 712 hash (and `authHashFor7702` if the chain still needs 7702 upgrade); CLI signs and broadcasts. The carrier transfer is from-self to from-self, so net value movement = 0; only the GS service charge is consumed.
+
+**Pre-condition**: the agent has already obtained user consent via Scene A / B' / A' (see `gas-station.md`). This command does NOT prompt — it executes the activation that the user has already approved.
+
+```bash
+onchainos wallet gas-station setup \
+  --chain <chain> \
+  --gas-token-address <addr> \
+  --relayer-id <relayer_id> \
+  [--from <address>]
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `--chain` | string | Yes | Chain name or ID |
+| `--gas-token-address` | string | Yes | Token address picked by the user from `tokenList` |
+| `--relayer-id` | string | Yes | Relayer ID paired with `--gas-token-address` |
+| `--from` | string | No | Sender address; defaults to selectedAccountId |
+
+Idempotency:
+- Already activated, same default → returns `{gasStationActivated: true, alreadyActivated: true}` without broadcasting.
+- Already activated, different default → switches via `update-default-token` and returns `{alreadyActivated: true, defaultTokenSwitched: true}`.
+- Not yet activated → drives the carrier transfer; on success returns the wallet send response (`{txHash, orderId, gasStationUsed: true, serviceCharge, ...}`).
+
 ---
 
 ## E. History Command (2 modes)

@@ -544,10 +544,27 @@ Users may **input** any equivalent phrasing in any language (e.g., "revoke 7702"
 | Change default gas token | `onchainos wallet gas-station update-default-token --chain <chain> --gas-token-address <addr>` | Takes effect on next Gas Station transaction. |
 | Enable Gas Station | `onchainos wallet gas-station enable --chain <chain>` | DB flag flip only. Requires the chain to have been delegated earlier via a first-time `wallet send` flow. If the chain was never delegated, backend returns a msg — surface the backend msg verbatim, do NOT paraphrase with "7702" / "delegation". |
 | Disable Gas Station | `onchainos wallet gas-station disable --chain <chain>` | DB flag flip only, no on-chain action. On-chain state preserved so re-enabling later is instant. |
+| **Pre-flight (read-only)** | `onchainos wallet gas-station status --chain <chain> [--from <addr>]` | Probes Phase 1 diagnostic via a 0-amount native self-transfer. Returns `recommendation` (READY / ENABLE_GAS_STATION / REENABLE_GAS_STATION / PENDING_UPGRADE / INSUFFICIENT_ALL / HAS_PENDING_TX) + `tokenList` + `gasStationActivated`. Never broadcasts; safe to call repeatedly. **Used by third-party plugin pre-flight** — see `SKILL.md` "Third-Party Plugin Pre-flight". |
+| **Standalone activation** | `onchainos wallet gas-station setup --chain <chain> --gas-token-address <addr> --relayer-id <id>` | Internally drives a 1-minimal-unit self-transfer of the picked gas token with `--enable-gas-station --force` (pre-condition: agent has already obtained user consent via Scene A). Backend returns signing material for both 712 and (when needed) `authHashFor7702`; CLI signs and broadcasts in one tx. Idempotent: same default → `alreadyActivated=true`; different default → switches via `update-default-token`. |
 
 <MUST>
 The "Internal Notes" column is **Agent-internal background only** — it describes why the CLI behaves as it does. **Never copy these notes verbatim into a user-facing reply.** Do NOT mention "DB flag" / "7702" / "delegation" / "on-chain setup" to the user (in any language). Use the user-facing templates below.
 </MUST>
+
+### Activation via standalone `gas-station setup`
+
+When the agent has obtained user consent through Scene A / B' / A' (whether triggered by a direct `wallet send` Confirming OR by third-party plugin pre-flight), it MUST activate Gas Station via:
+
+```bash
+onchainos wallet gas-station setup \
+    --chain <CHAIN> \
+    --gas-token-address <picked tokenList[N-2].feeTokenAddress> \
+    --relayer-id <picked tokenList[N-2].relayerId>
+```
+
+This is the recommended path for activations driven by **third-party plugin pre-flight** (see `SKILL.md` → "Third-Party Plugin Pre-flight"). Activations bundled with `wallet send` (the legacy path that returns a Confirming on FIRST_TIME_PROMPT) continue to work but are reserved for direct user `wallet send` calls.
+
+After successful `setup`, subsequent `wallet send` / `wallet contract-call` (including those issued by third-party plugins) on that chain will transparently use Gas Station — no further user prompts. The third-party plugin will succeed on its very next invocation without any change to its CLI args.
 
 ### User-Facing Reply Templates (Management Commands)
 
