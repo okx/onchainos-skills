@@ -1,3 +1,6 @@
+use anyhow::{bail, Result};
+use tiny_keccak::{Hasher, Keccak};
+
 pub const ERR_NOT_LOGGED_IN: &str = "not logged in";
 
 /// Check whether `value` is a hex string (starts with "0x" followed by only hex digits).
@@ -12,6 +15,54 @@ pub(crate) fn is_hex_string(value: &str, length: Option<usize>) -> bool {
         Some(n) if n > 0 => value.len() == 2 + 2 * n,
         _ => true,
     }
+}
+
+/// Validate that `addr` is a 0x-prefixed 20-byte EVM address. If the input
+/// carries case information (mixed-case letters), it must satisfy the EIP-55
+/// checksum so a typo'd address can't silently route value to the wrong place.
+/// All-lowercase and all-uppercase letter forms are accepted as-is (they
+/// claim no checksum).
+pub(crate) fn is_valid_evm_address(addr: &str) -> bool {
+    if !addr.starts_with("0x") || addr.len() != 42 {
+        return false;
+    }
+    let hex = &addr[2..];
+    if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return false;
+    }
+    let has_lower_letter = hex.bytes().any(|b| b.is_ascii_lowercase());
+    let has_upper_letter = hex.bytes().any(|b| b.is_ascii_uppercase());
+    if !(has_lower_letter && has_upper_letter) {
+        return true;
+    }
+    eip55_checksum_matches(hex)
+}
+
+pub(crate) fn require_evm_address(addr: &str, label: &str) -> Result<()> {
+    if is_valid_evm_address(addr) {
+        Ok(())
+    } else {
+        bail!("{label} is not a valid EVM address: {addr}")
+    }
+}
+
+fn eip55_checksum_matches(hex: &str) -> bool {
+    let lower = hex.to_ascii_lowercase();
+    let mut keccak = Keccak::v256();
+    keccak.update(lower.as_bytes());
+    let mut hash = [0u8; 32];
+    keccak.finalize(&mut hash);
+    for (i, ch) in hex.chars().enumerate() {
+        if !ch.is_ascii_alphabetic() {
+            continue;
+        }
+        let nibble = (hash[i / 2] >> (4 * (1 - (i % 2)))) & 0x0f;
+        let expect_upper = nibble >= 8;
+        if expect_upper != ch.is_ascii_uppercase() {
+            return false;
+        }
+    }
+    true
 }
 
 /// Shared error handler for API responses that may require user confirmation.
@@ -109,5 +160,61 @@ mod tests {
     fn is_hex_string_length_zero_ignored() {
         // JS: length=0 is falsy → skip length check
         assert!(is_hex_string("0xab", Some(0)));
+    }
+
+    // ── is_valid_evm_address (EIP-55) ────────────────────────────────
+
+    #[test]
+    fn evm_addr_eip55_canonical_vectors_pass() {
+        // Canonical EIP-55 test vectors from https://eips.ethereum.org/EIPS/eip-55
+        for addr in [
+            "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+            "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+            "0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB",
+            "0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb",
+        ] {
+            assert!(is_valid_evm_address(addr), "expected EIP-55 valid: {addr}");
+        }
+    }
+
+    #[test]
+    fn evm_addr_all_lowercase_accepted() {
+        // No checksum claimed → treat as opaque hex.
+        assert!(is_valid_evm_address(
+            "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"
+        ));
+    }
+
+    #[test]
+    fn evm_addr_all_uppercase_accepted() {
+        // No checksum claimed → treat as opaque hex.
+        assert!(is_valid_evm_address(
+            "0x5AAEB6053F3E94C9B9A09F33669435E7EF1BEAED"
+        ));
+    }
+
+    #[test]
+    fn evm_addr_mixed_case_with_bad_checksum_rejected() {
+        // Same address, one letter case flipped → fails EIP-55.
+        assert!(!is_valid_evm_address(
+            "0x5AAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
+        ));
+    }
+
+    #[test]
+    fn evm_addr_format_violations_rejected() {
+        assert!(!is_valid_evm_address("0x123"));
+        assert!(!is_valid_evm_address(
+            "5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
+        ));
+        assert!(!is_valid_evm_address(
+            "0xZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+        ));
+    }
+
+    #[test]
+    fn require_evm_address_error_message() {
+        let err = require_evm_address("0xnope", "challenge.request.currency").unwrap_err();
+        assert!(err.to_string().contains("challenge.request.currency"));
     }
 }

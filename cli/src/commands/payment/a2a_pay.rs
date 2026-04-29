@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use zeroize::Zeroize;
 
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
-use crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN;
+use crate::commands::agentic_wallet::common::{require_evm_address, ERR_NOT_LOGGED_IN};
 use crate::output;
 use crate::wallet_api::WalletApiClient;
 use crate::{keyring_store, wallet_store};
@@ -135,7 +135,7 @@ pub struct CreatePaymentOutput {
 /// the Buyer to consume. No buyer wallet / TEE signing here.
 pub async fn create_payment_charge(params: ChargeParams) -> Result<CreatePaymentOutput> {
     validate_positive_decimal_amount(&params.amount)?;
-    require_evm_address(&params.recipient, "recipient")?;
+    require_evm_address(&params.recipient, "--recipient")?;
 
     let mut wallet_client = WalletApiClient::new()?;
     let access_token = ensure_tokens_refreshed().await?;
@@ -268,6 +268,10 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("challenge.data.request.recipient missing"))?
         .to_string();
+    // Reject malformed server-side challenge fields up front so a bad
+    // address doesn't surface as an opaque TEE error after gen-msg-hash.
+    require_evm_address(&currency, "challenge.request.currency")?;
+    require_evm_address(&recipient, "challenge.request.recipient")?;
     let method_details = request
         .get("methodDetails")
         .ok_or_else(|| anyhow!("challenge.data.request.methodDetails missing"))?;
@@ -504,35 +508,9 @@ fn validate_positive_decimal_amount(s: &str) -> Result<()> {
     Ok(())
 }
 
-fn is_valid_evm_address(addr: &str) -> bool {
-    addr.starts_with("0x") && addr.len() == 42 && addr[2..].chars().all(|c| c.is_ascii_hexdigit())
-}
-
-fn require_evm_address(addr: &str, label: &str) -> Result<()> {
-    if is_valid_evm_address(addr) {
-        Ok(())
-    } else {
-        bail!("--{label} is not a valid EVM address: {addr}")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn validates_evm_address() {
-        assert!(is_valid_evm_address(
-            "0x1d4eAbb31AfEd5Aa70E1cCEEf73DEbF4dB164aB7"
-        ));
-        assert!(!is_valid_evm_address("0x123"));
-        assert!(!is_valid_evm_address(
-            "1d4eAbb31AfEd5Aa70E1cCEEf73DEbF4dB164aB7"
-        ));
-        assert!(!is_valid_evm_address(
-            "0xZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
-        ));
-    }
 
     #[test]
     fn validates_positive_decimal_amount() {
