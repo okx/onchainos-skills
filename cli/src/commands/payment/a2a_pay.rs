@@ -1,4 +1,4 @@
-//! A2A Pay CLI: bridges Buyer & Seller skills to the Smart-Account payment backend.
+//! A2A Pay CLI: bridges Buyer & Seller skills to the a2a-pay backend.
 //!
 //! Two-sided flow (sub-commands):
 //!  - `create` (Seller): POST /payment/create — Seller defines amount / symbol /
@@ -152,7 +152,7 @@ pub async fn create_payment_charge(params: ChargeParams) -> Result<CreatePayment
         .post_authed("/api/v6/pay/a2a/payment/create", &access_token, &value)
         .await
         .map_err(format_api_error)
-        .context("Smart-Account /payment/create failed")?;
+        .context("a2a-pay POST /payment/create failed")?;
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG][a2a-pay] /payment/create response={resp}");
     }
@@ -206,7 +206,7 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
     let resp: Value = wallet_client
         .get_public(&payment_path, &[])
         .await
-        .with_context(|| format!("Smart-Account GET /p/{} failed", p.payment_id))?;
+        .with_context(|| format!("a2a-pay GET /p/{} failed", p.payment_id))?;
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG][a2a-pay] GET /p/{} response={resp}", p.payment_id);
     }
@@ -419,7 +419,7 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .post_authed(&credential_path, &access_token, &credential_body)
         .await
         .map_err(format_api_error)
-        .with_context(|| format!("Smart-Account /p/{}/credential failed", p.payment_id))?;
+        .with_context(|| format!("a2a-pay POST /p/{}/credential failed", p.payment_id))?;
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][a2a-pay] /p/{}/credential response={cred_resp}",
@@ -465,7 +465,7 @@ pub async fn status(payment_id: String) -> Result<StatusOutput> {
         .get_authed(&path, &access_token, &[])
         .await
         .map_err(format_api_error)
-        .with_context(|| format!("Smart-Account /p/{}/status failed", payment_id))?;
+        .with_context(|| format!("a2a-pay GET /p/{}/status failed", payment_id))?;
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG][a2a-pay] /p/{payment_id}/status response={resp}");
     }
