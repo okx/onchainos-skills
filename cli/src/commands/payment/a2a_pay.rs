@@ -69,13 +69,13 @@ pub struct CreateArgs {
     #[arg(long)]
     pub arbitrator: Option<String>,
     #[arg(long = "submit-window")]
-    pub submit_window: Option<u32>,
+    pub submit_window: Option<u64>,
     #[arg(long = "dispute-window")]
-    pub dispute_window: Option<u32>,
+    pub dispute_window: Option<u64>,
     #[arg(long = "arbitration-window")]
-    pub arbitration_window: Option<u32>,
+    pub arbitration_window: Option<u64>,
     #[arg(long = "termination-window")]
-    pub termination_window: Option<u32>,
+    pub termination_window: Option<u64>,
     /// Business expiry timestamp (RFC 3339), e.g. "2026-05-01T00:00:00Z".
     #[arg(long = "expired-at")]
     pub expired_at: Option<String>,
@@ -239,10 +239,10 @@ sol! {
         address arbitrator;
         address currency;
         uint256 amount;
-        uint32 submitWindow;
-        uint32 disputeWindow;
-        uint32 arbitrationWindow;
-        uint32 terminationWindow;
+        uint64 submitWindow;
+        uint64 disputeWindow;
+        uint64 arbitrationWindow;
+        uint64 terminationWindow;
         address hook;
         bytes hookData;
         bytes32 salt;
@@ -265,10 +265,10 @@ pub struct EscrowDetails {
     pub provider: String,
     pub receiver: String,
     pub arbitrator: String,
-    pub submit_window: u32,
-    pub dispute_window: u32,
-    pub arbitration_window: u32,
-    pub termination_window: u32,
+    pub submit_window: u64,
+    pub dispute_window: u64,
+    pub arbitration_window: u64,
+    pub termination_window: u64,
     /// RFC 3339 timestamp.
     pub expired_at: String,
     pub hook: String,
@@ -547,11 +547,10 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
     let chain_name = chain_entry["chainName"]
         .as_str()
         .ok_or_else(|| anyhow!("missing chainName in chain entry"))?;
-    let wallets = wallet_store::load_wallets()?
-        .ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
-    let (_acct_id, addr_info) = crate::commands::agentic_wallet::transfer::resolve_address(
-        &wallets, None, chain_name,
-    )?;
+    let wallets =
+        wallet_store::load_wallets()?.ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
+    let (_acct_id, addr_info) =
+        crate::commands::agentic_wallet::transfer::resolve_address(&wallets, None, chain_name)?;
     let from_addr_str = addr_info.address.clone();
 
     // ── 3. Pick timing ───────────────────────────────────────────────
@@ -599,10 +598,10 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
                     .parse()
                     .context("challenge.request.currency parse")?,
                 amount: U256::from(parsed_amount),
-                submitWindow: parse_u32_field(escrow, "submitWindow")?,
-                disputeWindow: parse_u32_field(escrow, "disputeWindow")?,
-                arbitrationWindow: parse_u32_field(escrow, "arbitrationWindow")?,
-                terminationWindow: parse_u32_field(escrow, "terminationWindow")?,
+                submitWindow: parse_u64_field(escrow, "submitWindow")?,
+                disputeWindow: parse_u64_field(escrow, "disputeWindow")?,
+                arbitrationWindow: parse_u64_field(escrow, "arbitrationWindow")?,
+                terminationWindow: parse_u64_field(escrow, "terminationWindow")?,
                 hook: parse_addr_field(escrow, "hook")?,
                 hookData: hook_data_bytes.into(),
                 salt,
@@ -620,10 +619,10 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
     };
 
     // ── 5. TEE sign EIP-3009 ─────────────────────────────────────────
-    let session = wallet_store::load_session()?
-        .ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
-    let session_key = keyring_store::get("session_key")
-        .map_err(|_| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
+    let session =
+        wallet_store::load_session()?.ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
+    let session_key =
+        keyring_store::get("session_key").map_err(|_| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
 
     let mut base_fields = json!({
         "chainIndex": chain_index,
@@ -827,7 +826,10 @@ fn require_evm_address(addr: &str, label: &str) -> Result<()> {
 fn parse_bytes32_hex(s: &str, label: &str) -> Result<FixedBytes<32>> {
     let clean = s.strip_prefix("0x").unwrap_or(s);
     if clean.len() != 64 {
-        bail!("{label} must be 32 bytes (64 hex chars), got {}", clean.len());
+        bail!(
+            "{label} must be 32 bytes (64 hex chars), got {}",
+            clean.len()
+        );
     }
     let bytes = hex::decode(clean).with_context(|| format!("{label} is not valid hex"))?;
     let arr: [u8; 32] = bytes
@@ -844,17 +846,17 @@ fn parse_addr_field(obj: &Value, key: &str) -> Result<Address> {
         .with_context(|| format!("escrow.{key} parse"))
 }
 
-fn parse_u32_field(obj: &Value, key: &str) -> Result<u32> {
+fn parse_u64_field(obj: &Value, key: &str) -> Result<u64> {
     let v = obj
         .get(key)
         .ok_or_else(|| anyhow!("escrow.{key} missing"))?;
     if let Some(n) = v.as_u64() {
-        return u32::try_from(n).with_context(|| format!("escrow.{key} out of u32 range"));
+        return Ok(n);
     }
     if let Some(s) = v.as_str() {
         return s
-            .parse::<u32>()
-            .with_context(|| format!("escrow.{key} parse u32"));
+            .parse::<u64>()
+            .with_context(|| format!("escrow.{key} parse u64"));
     }
     bail!("escrow.{key} must be a number or numeric string")
 }
@@ -925,23 +927,35 @@ mod tests {
     #[test]
     fn escrow_nonce_is_deterministic_and_field_sensitive() {
         let f = EscrowAuthFields {
-            provider: "0x1111111111111111111111111111111111111111".parse().unwrap(),
-            receiver: "0x2222222222222222222222222222222222222222".parse().unwrap(),
-            arbitrator: "0x3333333333333333333333333333333333333333".parse().unwrap(),
-            currency: "0x4444444444444444444444444444444444444444".parse().unwrap(),
+            provider: "0x1111111111111111111111111111111111111111"
+                .parse()
+                .unwrap(),
+            receiver: "0x2222222222222222222222222222222222222222"
+                .parse()
+                .unwrap(),
+            arbitrator: "0x3333333333333333333333333333333333333333"
+                .parse()
+                .unwrap(),
+            currency: "0x4444444444444444444444444444444444444444"
+                .parse()
+                .unwrap(),
             amount: U256::from(50_000_000u64),
             submitWindow: 86400,
             disputeWindow: 86400,
             arbitrationWindow: 172800,
             terminationWindow: 86400,
-            hook: "0x5555555555555555555555555555555555555555".parse().unwrap(),
+            hook: "0x5555555555555555555555555555555555555555"
+                .parse()
+                .unwrap(),
             hookData: vec![0xde, 0xad, 0xbe, 0xef].into(),
             salt: parse_bytes32_hex(
                 "0x0000000000000000000000000000000000000000000000000000000000000007",
                 "salt",
             )
             .unwrap(),
-            from: "0x6666666666666666666666666666666666666666".parse().unwrap(),
+            from: "0x6666666666666666666666666666666666666666"
+                .parse()
+                .unwrap(),
             validAfter: U256::ZERO,
             validBefore: U256::from(2_000_000_000u64),
         };

@@ -72,7 +72,7 @@ pub async fn handle_get_payment(
                 .map(str::to_string)
                 .unwrap_or_else(|| provider.clone());
             let arbitrator = require_str(&pre, "evaluator")?;
-            // 后端 windows 字段是字符串数字（如 "86400"）— 解析为 u32
+            // 后端 windows 字段是字符串数字（如 "86400"）— 解析为 u64
             let submit_window = parse_window(&pre, "submitWindow")?;
             let dispute_window = parse_window(&pre, "disputeWindow")?;
             // 兼容两种命名：arbitrationWindow（规范）/ evaluateWindow（mock 旧名）
@@ -136,15 +136,15 @@ fn require_str(v: &Value, key: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("prePayTaskInfo response missing '{key}'"))
 }
 
-fn parse_window(v: &Value, key: &str) -> Result<u32> {
+fn parse_window(v: &Value, key: &str) -> Result<u64> {
     let raw = v
         .get(key)
         .ok_or_else(|| anyhow!("prePayTaskInfo response missing '{key}'"))?;
     if let Some(n) = raw.as_u64() {
-        return u32::try_from(n).with_context(|| format!("{key} out of u32 range"));
+        return Ok(n);
     }
     if let Some(s) = raw.as_str() {
-        return s.parse::<u32>().with_context(|| format!("{key} parse u32"));
+        return s.parse::<u64>().with_context(|| format!("{key} parse u64"));
     }
     bail!("{key} must be a number or numeric string")
 }
