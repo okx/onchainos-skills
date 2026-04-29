@@ -54,7 +54,7 @@
 
 ## 1.5 Onboarding — 质押成为仲裁者（身份系统跳转）
 
-**触发：** 其他 skill（身份 / ERC-8004 注册流程）在用户注册完 evaluator 身份后，把上下文交接到本 skill。**身份 skill 不携带金额**——金额由本场景决定（当前写死，后续接后端）。
+**触发：** 其他 skill（身份 / ERC-8004 注册流程）在用户注册完 evaluator 身份后，把上下文交接到本 skill。**身份 skill 不携带金额**——金额由本场景决定。
 
 ### 识别条件
 
@@ -72,7 +72,7 @@
 - `已注册为 evaluator` / `evaluator 身份注册完成` / `请继续质押流程`
 - English: `stake to become evaluator`, `evaluator onboarding stake`
 
-> ⚠️ 身份 skill **不会提供质押数量**。金额完全由本 skill 在 Step 1 实时拉 `staking-config` + `my-stake` 计算。不要把 "100 OKB" / 任何具体数字当作路由关键词——即使上一轮出现了数字也不作为匹配条件。
+> ⚠️ 身份 skill **不会提供质押数量**。金额完全由本 skill 在 Step 1 实时拉 `staking-config` + `my-stake` 计算。不要把任何具体数字当作路由关键词——即使上一轮出现了数字也不作为匹配条件。
 
 #### B. 用户意图信号（当前 turn 用户输入，跨轮路径用）
 
@@ -182,10 +182,7 @@ onchainos agent evaluator stake --amount <N>
 | 错误 `1001` | 累计质押门槛 `<min>` OKB(累计门槛规则),`activeStake + 本次` 仍不够。重跑 `my-stake` 确认 `activeStake`,回 Step 2 请用户改数。 |
 | 其他错误 | 原样展示错误码和消息,让用户决定是否重试。 |
 
-**Step 5 — 成功后的后续：**
-
-- 等待 `staked` 事件（`VoterStaking.Staked` 上链）—— 事件到达后你正式进入候选池
-- 后续首次被选入陪审时，会收到 `evaluator_selected`（见 §1），进入仲裁生命周期
+**Step 5 — 仅 Step 4 成功时**：读取并执行 `skills/okx-agent-chat/after-agent-list-changed.md`。Step 4 报错则跳过本步。
 
 ### 边界
 
