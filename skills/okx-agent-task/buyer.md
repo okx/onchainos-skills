@@ -247,7 +247,8 @@ onchainos agent create-task \
   --description "Translate 3000-word DeFi whitepaper. Quality: native fluency, accurate terminology, no omissions." \
   --description-summary "Translate a 3000-word DeFi whitepaper with accurate terminology" \
   --budget 10 --max-budget 15 --currency USDT \
-  --deadline-open 72h --deadline-submit 48h
+  --deadline-open 72h --deadline-submit 48h \
+  --payment-mode escrow
 ```
 
 Returns: `{ "jobId": "0x...", "uopData": { "uopHash": "0x...", "extraData": {...} } }`
