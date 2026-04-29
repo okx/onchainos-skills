@@ -5,10 +5,23 @@
 //! 供大模型（openclaw buyer/provider/evaluator AI）理解当前任务状态。
 
 use anyhow::{bail, Result};
+use chrono::{TimeZone, Utc};
 use clap::Subcommand;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
+
+/// unix 秒 → 展示字符串。0 / 负数当未设置；正常值转 RFC 3339。
+fn fmt_unix_secs(secs: Option<i64>) -> String {
+    match secs {
+        Some(n) if n > 0 => Utc
+            .timestamp_opt(n, 0)
+            .single()
+            .map(|t| t.to_rfc3339())
+            .unwrap_or_else(|| n.to_string()),
+        _ => "—".to_string(),
+    }
+}
 
 pub mod dispute_upload;
 pub mod network;
@@ -119,28 +132,28 @@ pub enum CommonCommand {
     },
 }
 
-// ─── 任务详情响应结构（对应 mock-api / 真实后端响应） ──────────────────────
+// ─── 任务详情响应结构 ──────────────────────────────────────────────────────
+// 字段对齐后端 spec：/priapi/v1/aieco/task/{jobId} 响应 data 字段（平铺）。
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TaskRespData {
-    task: TaskDetail,
-}
-
+/// 对齐 spec：/priapi/v1/aieco/task/{jobId} 响应 data 字段
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TaskDetail {
     job_id: String,
-    task_id: Option<String>,
+    task_id: Option<i64>,
     title: String,
     description: String,
-    description_summary: Option<String>,
+    content_hash: Option<String>,
     token_address: Option<String>,
     token_amount: Option<String>,
-    payment_type: Option<i32>,
-    open_type: Option<i32>,
+    /// 0=escrow / 1=non_escrow / 2=x402（替代旧的 paymentType 命名）
+    payment_mode: Option<i32>,
+    /// 0=私有 / 1=公开（替代旧的 openType 命名）
+    visibility: Option<i32>,
+    /// 0=open / 1=accepted / 2=submitted / 3=refused / 4=disputed / 5=complete / 7=close
     status: Option<i32>,
-    status_str: Option<String>,
+    sensitive_status: Option<i32>,
+    category_codes: Option<Vec<String>>,
     chain_id: Option<i32>,
     min_credit_score: Option<f64>,
     designated_provider: Option<String>,
@@ -150,8 +163,10 @@ struct TaskDetail {
     provider_agent_id: Option<String>,
     group_id: Option<String>,
     expire_config: Option<serde_json::Value>,
-    create_time: Option<String>,
-    update_time: Option<String>,
+    /// unix 秒；0 表示未设置
+    expire_time: Option<i64>,
+    create_time: Option<i64>,
+    update_time: Option<i64>,
 }
 
 // ─── Agent 资料响应结构 ───────────────────────────────────────────────────
@@ -267,8 +282,8 @@ fn status_desc(s: &str) -> &str {
     }
 }
 
-fn payment_type_desc(pt: i32) -> &'static str {
-    match pt {
+fn payment_mode_desc(pm: i32) -> &'static str {
+    match pm {
         0 => "托管支付（Escrow）",
         1 => "非托管支付（Non-Escrow）",
         2 => "x402 按需支付",
@@ -386,11 +401,9 @@ async fn run_context(
         .await
         .map_err(|e| anyhow::anyhow!("无法获取任务详情: {e}"))?;
 
-    // WalletApiClient 返回 body["data"]，即 {"task": {...}}
-    let resp_data: TaskRespData = serde_json::from_value(resp_val)
+    // 后端 spec：响应 data 直接是平铺的 task 对象（WalletApiClient 已剥掉 body["data"]）
+    let task: TaskDetail = serde_json::from_value(resp_val)
         .map_err(|e| anyhow::anyhow!("解析响应失败: {e}"))?;
-
-    let task = resp_data.task;
 
     // 卖家额外拉取 agent 资料（name / profileDescription）
     let profile = if role == "provider" {
@@ -421,8 +434,12 @@ fn build_context(
         _           => role,
     };
 
-    let status_raw = task.status_str.as_deref().unwrap_or("unknown");
-    let status_text = format!("{status_raw} — {}", status_desc(status_raw));
+    // spec 只回 status 整数，本地用 Status::from_int 派生字符串
+    let status_str = task
+        .status
+        .map(|n| state_machine::Status::from_int(n).as_str().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let status_text = format!("{status_str} — {}", status_desc(&status_str));
 
     // ── 角色声明 ──────────────────────────────────────────────────────────
     out.push_str(&format!("你是任务系统中的{role_cn}。\n\n"));
@@ -449,31 +466,24 @@ fn build_context(
     // ── 任务详情 ──────────────────────────────────────────────────────────
     out.push_str("【任务详情】\n");
     out.push_str(&format!("- 任务ID：{}\n", task.job_id));
-    if let Some(tid) = &task.task_id {
-        if tid != &task.job_id {
-            out.push_str(&format!("- 内部ID：{tid}\n"));
-        }
+    if let Some(tid) = task.task_id {
+        out.push_str(&format!("- 内部ID：{tid}\n"));
     }
     out.push_str(&format!("- 标题：{}\n", task.title));
     out.push_str(&format!("- 描述：{}\n", task.description));
-    if let Some(summary) = &task.description_summary {
-        if !summary.is_empty() {
-            out.push_str(&format!("- 摘要：{summary}\n"));
-        }
-    }
 
     let amount = task.token_amount.as_deref().unwrap_or("未设置");
     let token  = task.token_address.as_deref().unwrap_or("");
     out.push_str(&format!("- 预算：{amount} （token: {token}）\n"));
 
-    if let Some(pt) = task.payment_type {
-        out.push_str(&format!("- 支付方式：{}\n", payment_type_desc(pt)));
+    if let Some(pm) = task.payment_mode {
+        out.push_str(&format!("- 支付方式：{}\n", payment_mode_desc(pm)));
     }
-    let open_type = match task.open_type {
+    let visibility = match task.visibility {
         Some(1) => "公开（Public）",
         _       => "私有（Private）",
     };
-    out.push_str(&format!("- 可见性：{open_type}\n"));
+    out.push_str(&format!("- 可见性：{visibility}\n"));
     if let Some(chain) = task.chain_id {
         out.push_str(&format!("- 链：chainId={chain}\n"));
     }
@@ -495,8 +505,8 @@ fn build_context(
             ));
         }
     }
-    out.push_str(&format!("- 创建时间：{}\n", task.create_time.as_deref().unwrap_or("—")));
-    out.push_str(&format!("- 更新时间：{}\n", task.update_time.as_deref().unwrap_or("—")));
+    out.push_str(&format!("- 创建时间：{}\n", fmt_unix_secs(task.create_time)));
+    out.push_str(&format!("- 更新时间：{}\n", fmt_unix_secs(task.update_time)));
     out.push('\n');
 
     // ── 当前状态 ──────────────────────────────────────────────────────────
@@ -532,7 +542,7 @@ fn build_context(
     out.push('\n');
 
     // ── 专业匹配检查（仅卖家 + open 状态 + 有 profile） ───────────────────
-    if role == "provider" && status_raw == "open" {
+    if role == "provider" && status_str == "open" {
         if let Some(p) = profile {
             if let Some(desc) = &p.profile_description {
                 out.push_str("【⚠️ 第一步：专业匹配检查（必做，不得跳过）】\n");
@@ -558,7 +568,7 @@ fn build_context(
         let buyer_id = task.buyer_agent_id.as_deref().unwrap_or("<task.buyerAgentId>");
         let agent_id_hint = profile.and_then(|p| p.agent_id.as_deref()).unwrap_or("<你的agentId>");
         out.push_str("【⚠️ 第二步：按可见性分流（匹配通过才走这里）】\n\n");
-        if task.open_type == Some(1) {
+        if task.visibility == Some(1) {
             // 公开任务 → provider 主动建群
             out.push_str("当前任务**可见性 = 公开（Public）** → 你需要**主动联系买家发起协商**：\n\n");
             out.push_str("1. 调 `xmtp_start_conversation` 工具建群 + 创建 sub session（机制见 SKILL.md §Session 通信契约 §6 路径 7）：\n");
@@ -583,7 +593,7 @@ fn build_context(
     }
 
     // ── 下一步动作 ────────────────────────────────────────────────────────
-    let actions = available_actions(role, status_raw, &task.job_id);
+    let actions = available_actions(role, &status_str, &task.job_id);
     out.push_str("【下一步动作】（先调 next-action 拿当前 status 的完整剧本，按剧本走，不要绕过 next-action 直接调 CLI）\n");
     for a in &actions {
         out.push_str(&format!("- {a}\n"));

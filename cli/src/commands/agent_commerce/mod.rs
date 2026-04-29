@@ -543,13 +543,9 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str) -> Opti
 
     let mut c = TaskApiClient::new();
     let resp = c.get(&c.task_path(job_id)).await.ok()?;
-    // 兼容旧 mock 的 {"task":{...}} 与 beta 真后端平铺两种形态
-    let task_obj = match resp.get("task") {
-        Some(v) if v.is_object() => v,
-        _ => &resp,
-    };
-    let actual_str = task_obj.get("statusStr")?.as_str()?.to_string();
-    let actual = Status::parse(&actual_str);
+    // 后端 spec：响应平铺，status 是 int
+    let actual = Status::from_int(i32::try_from(resp.get("status")?.as_i64()?).ok()?);
+    let actual_str = actual.as_str().to_string();
 
     eprintln!(
         "[check-freshness] job_id={job_id}, event={job_status_or_event}, expected_status={}, actual_status={actual_str}, match={}",

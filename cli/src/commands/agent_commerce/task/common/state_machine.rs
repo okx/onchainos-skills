@@ -40,7 +40,7 @@ impl Role {
 
 // ─── Status ─────────────────────────────────────────────────────────────
 
-/// 任务在状态机里此刻的真实状态（mock-api `task.statusStr`）。
+/// 任务在状态机里此刻的真实状态。后端 spec：响应回 `status: int`，本地用 [`Status::from_int`] 派生。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
     Open,
@@ -55,18 +55,17 @@ pub enum Status {
 }
 
 impl Status {
+    /// 字符串解析（用于 CLI `--jobStatus` 参数 / event 名解析），spec 字段是 int 应走 [`Self::from_int`]。
     pub fn parse(s: &str) -> Self {
         match s {
-            "open"                  => Status::Open,
-            "accepted"              => Status::Accepted,
-            "submitted"             => Status::Submitted,
-            "refused"               => Status::Refused,
-            "disputed"              => Status::Disputed,
-            // mock-api / 真后端语义对齐：completed/complete 都视为 Completed
+            "open"                   => Status::Open,
+            "accepted"               => Status::Accepted,
+            "submitted"              => Status::Submitted,
+            "refused"                => Status::Refused,
+            "disputed"               => Status::Disputed,
             "completed" | "complete" => Status::Completed,
-            // mock-api 用 "rejected" 表示资金退还买家，状态机里叫 Refunded
-            "refunded" | "rejected"  => Status::Refunded,
-            other                   => Status::Other(other.to_string()),
+            "refunded"               => Status::Refunded,
+            other                    => Status::Other(other.to_string()),
         }
     }
 
@@ -80,6 +79,22 @@ impl Status {
             Status::Completed => "completed",
             Status::Refunded  => "refunded",
             Status::Other(s)  => s.as_str(),
+        }
+    }
+
+    /// 后端 spec 的 `status` int 映射：
+    /// 0=open / 1=accepted / 2=submitted / 3=refused / 4=disputed / 5=complete /
+    /// 6=refunded / 7=close。其他取值按 `status_<n>` 兜底。
+    pub fn from_int(n: i32) -> Self {
+        match n {
+            0 => Status::Open,
+            1 => Status::Accepted,
+            2 => Status::Submitted,
+            3 => Status::Refused,
+            4 => Status::Disputed,
+            5 => Status::Completed,
+            6 => Status::Refunded,
+            other => Status::Other(format!("status_{other}")),
         }
     }
 }
@@ -252,7 +267,7 @@ impl Event {
 ///
 /// `provider_applied` 不改变 status —— 它发生在 open 状态下；
 /// `dispute_resolved` 取决于裁决方（buyer-wins → refunded；seller-wins → completed），
-/// 单从 event 不能确定，这里默认返回 `Completed`，调用方应优先用 mock-api 实时拉取的 status。
+/// 单从 event 不能确定，这里默认返回 `Completed`，调用方应优先调 `agent status` 拉取真实 status。
 pub fn status_when_event(e: &Event) -> Status {
     match e {
         // 主流程
