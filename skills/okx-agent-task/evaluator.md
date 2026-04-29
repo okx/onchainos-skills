@@ -30,8 +30,7 @@
 
 | event | 会话 | 含义 |
 |---|---|---|
-| `staked` | **sub** | 首次质押 tx 回执 → `xmtp_dispatch_session` 推质押结果 |
-| `stake_increased` | **sub** | 补充质押 tx 回执 → `xmtp_dispatch_session` 推入账确认 |
+| `staked` | **sub** | 质押 tx 回执（首次质押或追加质押均发此事件） → `xmtp_dispatch_session` 推质押结果 |
 | `unstake_requested` | **sub** | 申请解质押 tx 回执 → `xmtp_dispatch_session` 推冷却期 + `availableAt` |
 | `unstake_claimed` | **sub** | 冷却期结束领取 tx 回执 → `xmtp_dispatch_session` 推到账 |
 | `unstake_cancelled` | **sub** | 冷却期内取消 tx 回执 → `xmtp_dispatch_session` 推回到质押状态 |
@@ -46,7 +45,7 @@
 
 > **决策模型**：仲裁判决（evaluator_selected → commit）由 agent 基于评估者规范自主完成（誓约 L1-L5 + 决策原则 / Rubric / 证据等级 / 裁决书规范）。commit → reveal → settle 全程不通知用户；用户感知仅通过"资金/罚没"类事件出现（reward_claimed / slashed）。设计原因：操控识别协议 + 用户偏好隔离原则明确 evaluator 不得被用户偏好影响（社会压力 / 贿赂面）。
 
-> **会话复用原则**：所有事件都先到 sub。dispute 生命周期的 6 个事件（evaluator_selected / reveal_started / dispute_resolved / round_failed / slashed / reward_claimed）共用一个 `conv-arb-*`——`evaluator_selected` 激活 sub 后，后续事件由 openclaw runtime 命中 active conversation 继续走 sub。质押 5 个事件（staked / stake_increased / unstake_requested / unstake_claimed / unstake_cancelled）到达时也在 sub 被接收并通过 `xmtp_dispatch_session`（省略 sessionKey）转发user session。user session 只看到推上来的人话通知。
+> **会话复用原则**：所有事件都先到 sub。dispute 生命周期的 6 个事件（evaluator_selected / reveal_started / dispute_resolved / round_failed / slashed / reward_claimed）共用一个 `conv-arb-*`——`evaluator_selected` 激活 sub 后，后续事件由 openclaw runtime 命中 active conversation 继续走 sub。质押 4 个事件（staked / unstake_requested / unstake_claimed / unstake_cancelled）到达时也在 sub 被接收并通过 `xmtp_dispatch_session`（省略 sessionKey）转发user session。user session 只看到推上来的人话通知。
 
 从入站消息提取 `jobId` / `disputeId`。⚠️ **禁止默认 disputeId**——缺失时直接中止本轮处理（真后端 `disputeId = keccak256(jobId, roundNumber)`，第 2+ 轮 `d-<jobId>-r1` 一定对不上合约）。
 
@@ -176,13 +175,11 @@ onchainos agent evaluator stake --amount <N>
 
 | CLI 输出 | 告诉用户 |
 |---|---|
-| `stake submitted ... txHash: 0x...` | 质押已提交上链(`<N>` OKB,txHash=`<hash>`),等待 `staked` 事件确认后你将成为活跃仲裁者候选。 |
+| `stake submitted ... txHash: 0x...` | 质押已提交上链(`<N>` OKB,txHash=`<hash>`),等待 `staked` 事件确认后你将成为活跃仲裁者候选。**Same-turn handoff** → `/skills/okx-agent-chat/after-agent-list-changed.md`（Execution Flow）。 |
 | 错误 `4000` | agentId 无效或 session 丢失,请重新登录钱包。 |
 | 错误 `2004` | agentId 还没有 evaluator 身份,需要先回身份 skill 完成注册。 |
 | 错误 `1001` | 累计质押门槛 `<min>` OKB(累计门槛规则),`activeStake + 本次` 仍不够。重跑 `my-stake` 确认 `activeStake`,回 Step 2 请用户改数。 |
 | 其他错误 | 原样展示错误码和消息,让用户决定是否重试。 |
-
-**Step 5 — 仅 Step 4 成功时**：读取并执行 `skills/okx-agent-chat/after-agent-list-changed.md`。Step 4 报错则跳过本步。
 
 ### 边界
 
@@ -512,7 +509,7 @@ onchainos agent evaluator commit <disputeId> --side <1|2>
 
 ### 12.2 事件回调处理
 
-上面四个 CLI 执行完后都会收到对应 tx 回执事件（`stake_increased` / `unstake_requested` / `unstake_claimed` / `unstake_cancelled`）。**所有事件都在 sub session 收到**——按 §1 路由表：
+上面四个 CLI 执行完后都会收到对应 tx 回执事件（`staked` / `unstake_requested` / `unstake_claimed` / `unstake_cancelled`）。**所有事件都在 sub session 收到**——按 §1 路由表：
 
 ```bash
 onchainos agent next-action --jobid <空或jobId> --jobStatus <event> --agentId <你的 agentId> --role evaluator

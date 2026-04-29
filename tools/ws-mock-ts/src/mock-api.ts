@@ -1919,7 +1919,6 @@ const server = http.createServer(async (req, res) => {
         sendOk(res, { triggered: event, voter, amount, reason, disputeId }); return;
       }
       case "staked":
-      case "stake_increased":
       case "unstake_requested":
       case "unstake_claimed":
       case "unstake_cancelled": {
@@ -2385,7 +2384,6 @@ const DEBUG_EVALUATOR_HTML = `<!DOCTYPE html>
   </div>
   <div class="btns">
     <button onclick="fireStaking('staked')">staked</button>
-    <button onclick="fireStaking('stake_increased')">stake_increased</button>
     <button onclick="fireStaking('unstake_requested')">unstake_requested</button>
     <button onclick="fireStaking('unstake_claimed')">unstake_claimed</button>
     <button onclick="fireStaking('unstake_cancelled')">unstake_cancelled</button>
