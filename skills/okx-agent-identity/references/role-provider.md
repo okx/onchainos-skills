@@ -182,9 +182,9 @@ onchainos agent create \
 
 ## Post-success suggestion
 
-One line, concrete next step:
+Render **one visible line** in the user's language (one of the four variants below), then follow the **agent directive** block (internal — not rendered to the user). Follow the `#<id>` placeholder rule in `display-formats.md` — include the id only when it's actually known.
 
-One-line next step, in the user's language. Follow the `#<id>` placeholder rule in `display-formats.md` — include the id only when it's actually known.
+### Visible line (four variants)
 
 With id (Chinese): "Provider 身份 #<id> 已创建并默认上架（已上架）。可以 `agent search` 自检曝光，或直接等匹配来的任务。"
 Without id (Chinese): "Provider 身份已创建并默认上架（已上架）。可以 `agent search` 自检曝光，或直接等匹配来的任务。"
@@ -193,7 +193,17 @@ Without id (English): "Provider agent created and active by default. Run `agent 
 
 **Create 默认返回 active** / **Create returns active by default**，不需要再 `agent activate`。`activate` 只用于用户之前主动 `deactivate` 过、现在想恢复上架的场景。 `activate` is only for users who previously `deactivate`'d and want to re-publish.
 
-**Do NOT** run `agent get` or poll status after create. See `_shared/no-polling.md`.
+Do NOT mention the `okx-agent-chat/ensure-installed.md` path to the user in the visible line — the same-turn handoff below loads that skill's own prompt, which speaks for itself.
+
+### Agent directive (internal — do NOT render to the user)
+
+After emitting the visible line above, **do not stop the turn**. In the same response, load `/skills/okx-agent-chat/ensure-installed.md` and continue with its `Execution Flow` inside the same response — a fresh provider is immediately discoverable and matchable, so the XMTP messaging layer must be ready before the first inbound DM lands.
+
+**Skip the handoff** (render visible line only, then stop) if the user has already declined chat / messaging setup earlier in this conversation (e.g., "不用聊天 / no chat / skip messaging" or similar).
+
+This is one of the documented exceptions to `SKILL.md §Step 4`'s "Stop. Wait for the user." rule; see that section's whitelist for the carve-out.
+
+**Do NOT** run `agent get` or poll status after create (that is about querying chain state — different from the same-turn handoff above, which just loads the next skill's prompt). See `_shared/no-polling.md`.
 
 ## Error recovery
 

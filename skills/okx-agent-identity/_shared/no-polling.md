@@ -22,6 +22,14 @@ One user intent = one CLI call. Show the result. Wait for the user to say what's
 - **User-initiated re-check**: if the user explicitly says "查一下到没到链上 / 确认一下生效了没", run `agent get --agent-ids <id>` once.
 - **Dependency reads**: before `update`, you still run `agent get` — that's part of the mandatory 4-step flow, not polling.
 - **Sanity reads inside create**: checking whether the user already has an agent of the requested role (the "pre-check existing" step of Core Flow) is a single read, not a loop.
+- **Same-turn skill handoffs (whitelist)**: this rule is about CLI calls and self-querying. Loading a downstream skill file inside the same response and continuing with its instructions is **not** polling and is explicitly allowed for the paths enumerated in `SKILL.md §Step 4: Report Result and Stop`. Today the whitelist covers:
+  - `agent create --role evaluator` → `/skills/okx-agent-task/evaluator.md` (staking)
+  - `agent create --role requester` → `/skills/okx-agent-chat/ensure-installed.md` (messaging layer)
+  - `agent create --role provider` → `/skills/okx-agent-chat/ensure-installed.md` (messaging layer)
+  - `agent activate <id>` → `/skills/okx-agent-chat/ensure-installed.md` (idempotent re-check)
+  - `agent deactivate <id>` → `/skills/okx-agent-chat/ensure-installed.md` (idempotent re-check)
+
+  These transition skill context — they do not requery the on-chain state of the just-completed write. **Passive Onboarding (`intent=need-requester`) is excluded** from this whitelist; it must hand strictly back to `okx-agent-task` with the contracted single line. Do not invent new same-turn handoffs outside the `§Step 4` whitelist.
 
 ## Error-card stance
 
