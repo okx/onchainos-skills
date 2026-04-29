@@ -169,13 +169,14 @@ Full contract → `references/passive-onboarding.md`.
 
 ## Search
 
+> **Before invoking `agent search`, you MUST read `references/search-query-split.md`.** It owns the verbatim-passthrough red line, the four-dimension keyword tables, and worked examples. Skipping it leads to systematic under-extraction of filters.
+
 - User's full sentence goes **verbatim** into `--query`. No length cap at the CLI level — pass whatever the user said.
-- The skill itself parses the same sentence into four `Vec<String>` filters: `--feedback`, `--agent-info`, `--status`, `--service`. Keywords that do not fit are dropped — never invent filters.
-- `--query` semantic matching is the primary signal; filters are supplementary.
+- The skill itself parses the same sentence into four `Vec<String>` filters: `--feedback`, `--agent-info`, `--status`, `--service`. Filters and `--query` are **co-equal signals** — extract a filter whenever any keyword obviously maps. Drop a keyword only when no dimension fits; never invent a filter value, but do not under-extract either.
+- **If the user named a role / domain / specialty / status / service-type, you MUST emit the corresponding filter.** Example: `找会写 solidity 的 agent` → `--agent-info="solidity"` (even though "solidity" isn't in the example keyword table — domain nouns are open-ended).
+- **Filter values are verbatim substrings of the user's utterance — do NOT canonicalize.** If the user says `已上架`, send `--status "已上架"` (not `active`). If they say `MCP 服务`, send `--service "MCP 服务"` (not `A2MCP`). The backend handles synonym matching; the skill only splits.
 - There is **no** `--sort-by` for `agent search` (that flag only exists on `feedback-list`).
 - **One intent = one `agent search`.** Do not re-call "in English" or "without filters to see more". See `_shared/no-polling.md`.
-
-Full rules and worked examples → `references/search-query-split.md` (read its 🚨 Verbatim Passthrough section before any search call).
 
 ## Update
 
@@ -329,7 +330,7 @@ Use the role-specific Q&A chains (`role-requester.md` / `role-provider.md` / `ro
 - `<agentId>` is mandatory on `update`, `activate`, `deactivate`, `service-list`, `feedback-list`. If missing, run `agent get` once and let the user pick.
 - `--service` JSON fields — follow the normalization rules: `name` / `servicedescription` / `servicetype` (`A2MCP` | `A2A`, case-insensitive) required; `fee` / `endpoint` required only for `A2MCP`; for `A2A` the CLI discards any `endpoint` even if supplied.
 - `--address` — do NOT prompt. Default is the current wallet's XLayer address. Only set it when an expert user explicitly says "用 0x… 这个地址签".
-- Never default `--status active` on search — only set it if the user clearly says "只看活跃的".
+- Never default `--status` on search — only set it when the user explicitly mentioned activity state, and pass the user's wording verbatim (`已上架` → `--status "已上架"`, not the canonical `active`).
 
 ### Step 3: Execute
 
@@ -373,7 +374,8 @@ Every user-facing string the skill renders must match the user's language. Detec
 ### What stays verbatim regardless of user language
 
 - CLI flag names (`--role`, `--agent-id`, `--creator-id`, `--sort-by`, `--service`, …).
-- Enum / canonical values sent to the CLI (`requester`, `provider`, `evaluator`, `A2MCP`, `A2A`, `time_desc`, `score_desc`, `active`, `inactive` when used as the `--status` value).
+- Enum / canonical values sent to the CLI: `requester` / `provider` / `evaluator` for `--role`; `time_desc` / `score_desc` for `--sort-by`; `A2MCP` / `A2A` for `servicetype` **inside the `--service` JSON payload of `agent create` / `agent update`**.
+- ⚠️ **`agent search` filter values are NOT canonical.** `--status`, `--service`, `--feedback`, `--agent-info` on `agent search` follow the verbatim rule in §Search and `references/search-query-split.md` §Rules.6 — they are user-original substrings, not canonical enums. Do NOT translate `已上架` → `active` or `MCP 服务` → `A2MCP` for search filters.
 - **JSON schema keys inside the actual `--service` payload** (`name`, `servicedescription`, `servicetype`, `fee`, `endpoint`) — these get sent to the CLI and `utils.rs::normalize_service` matches them exactly. **BUT their user-facing labels in cards and Q&A prompts ARE localized**: Chinese renders `服务[N] 名称 / 描述 / 类型 / 价格 / 接口地址`; English renders `Service [N] Name / Description / Type / Fee / Endpoint`. The schema key only shows up in the raw bash command (which we only render when the user explicitly asks).
 - On-chain primitives: addresses (`0x…`), transaction hashes, agent IDs (`#42`), score numbers (`85 / 100`), token symbols (`USDT`, `OKB`).
 - Bash commands the user asked to see.
@@ -517,6 +519,8 @@ Phase-1 capture: `name=Alice`, `description=做 DeFi 分析`. **Fee=10 is discar
 
 ## Keyword Glossary
 
+> ⚠️ The "对应概念" mappings below are for **`agent create` / `agent update` payload context** — they are how the user's natural-language wording maps to canonical CLI values when constructing the `--service` JSON, the `--role` enum, etc. **`agent search` does NOT use this table**: its 4 filter values (`--feedback` / `--agent-info` / `--status` / `--service`) follow the verbatim rule in §Search and `references/search-query-split.md` §Rules.6 — pass user wording as-is, do not canonicalize. Do not look up `MCP 服务 → A2MCP` in this table when building a search call.
+
 | 用户说的 | 对应概念 |
 |---|---|
 | 买家 / buyer | `--role requester` |
@@ -528,8 +532,8 @@ Phase-1 capture: `name=Alice`, `description=做 DeFi 分析`. **Fee=10 is discar
 | 口碑 / 评价 / rating / reviews | `agent feedback-list` |
 | 打分 / 评分 / rate | `agent feedback-submit` |
 | 我的 agent / my agents | `agent get` (no id) |
-| MCP 服务 / A2MCP | `servicetype=A2MCP` |
-| A2A 服务 / agent-to-agent | `servicetype=A2A` |
+| MCP 服务 / A2MCP（仅 `agent create` / `update` 的 service payload） | `servicetype=A2MCP` |
+| A2A 服务 / agent-to-agent（仅 `agent create` / `update` 的 service payload） | `servicetype=A2A` |
 
 ## Installer Checksums
 

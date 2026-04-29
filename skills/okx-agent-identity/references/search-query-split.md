@@ -23,22 +23,29 @@ Absolutely forbidden:
 
 1. **Full sentence into `--query`.** Always pass the user's original utterance verbatim. Never paraphrase, summarize, or "clean up" — the backend search relies on the full phrase. No length cap at the CLI level.
 2. **Skill splits into four filter dimensions — do not ask the user to split.** The user speaks naturally; the skill parses.
-3. **Drop keywords that don't fit.** If a keyword doesn't map into one of the four filters, discard it silently. Do NOT invent a filter value.
+3. **Drop keywords that don't fit — but "fit" is broader than the example tables.** Any token identifiable as a role / domain / specialty / status / service-type belongs in a filter; do **not** drop it just because it isn't listed in §The four dimensions. Discard a keyword only when it truly maps to no dimension (e.g., generic vibe words like `很火`, `最近`, `随便看看`). Do NOT invent a filter value, but equally do NOT under-extract — if the user named *what kind* of agent they want, that descriptor is a filter.
 4. **Filters are `Vec<String>`.** Comma-separated on the CLI; multi-value is fine.
-5. **Never default filters.** Only set a filter when the user explicitly or strongly implies it. Especially `--status`: only set `active` when the user says "只看活跃" / "active only" / similar.
-6. **No `--sort-by`.** That parameter does not exist on `agent search` — using it will cause a CLI error.
-7. **One intent = one call.** See `_shared/no-polling.md`. Do not re-search "in English too" or "without filters to see more". If the user wants to refine, they will say so.
+5. **Never default filters.** Only set a filter when the user explicitly mentioned the dimension. If they didn't name it, leave the filter off — especially `--status`.
+6. **Filter values are verbatim user tokens — do NOT canonicalize.** If the user says `已上架`, send `--status "已上架"`, not `--status "active"`. If they say `MCP 服务`, send `--service "MCP 服务"`, not `--service "A2MCP"`. The skill's job is split-only; synonym normalization belongs to the backend. This applies to all four filters: `--feedback`, `--agent-info`, `--status`, `--service`.
+7. **No `--sort-by`.** That parameter does not exist on `agent search` — using it will cause a CLI error.
+8. **One intent = one call.** See `_shared/no-polling.md`. Do not re-search "in English too" or "without filters to see more". If the user wants to refine, they will say so.
 
 ---
 
 ## The four dimensions
 
-| Filter | Collects | Typical keywords |
+> The keyword lists below show **what kinds of words trigger each dimension**. For `--feedback` / `--agent-info` / `--status`, the lists are **illustrative, not closed** — domain, role, specialty, reputation, and activity-state words are open-ended; do **not** gate extraction on the example list. ⚠️ **`--service` is the exception**: it follows a *closed* list of strict interface / service-type tokens (see the `--service` row note + 🎯 priority block below). Words like `plugin` / `endpoint` / `SDK` / `webhook` etc. that aren't on the explicit list go to `--agent-info`, not `--service`.
+>
+> ⚠️ **Filter values you send to the CLI are verbatim substrings of the user's utterance.** Do **not** canonicalize: don't translate `已上架` → `active`, don't normalize `MCP 服务` → `A2MCP`, don't translate `服务商` → `provider`. The example column shows typical *triggering* vocabulary; the value sent is whatever the user actually said.
+>
+> 🎯 **`--service` vs `--agent-info` — domain wins.** When a token could fit either dimension, default to `--agent-info`. `--service` is the narrow case: it only catches strict interface / service-type tokens from the explicit list above. Domain / specialty words (`链上数据分析`, `行情监控`, `合约审计`, `链游`, etc.) **never** belong in `--service`. Example: `做链上数据分析的 API provider` → `--agent-info="链上数据分析,provider"`, `--service="API"` (not `--service="链上数据分析,API"`).
+
+| Filter | Collects | Example keywords (non-exhaustive) |
 |---|---|---|
-| `--feedback` | Reputation descriptors | `高分`, `好评`, `口碑好`, `差评`, `low rating`, `well-rated` |
-| `--agent-info` | Role + domain descriptors | `provider`, `buyer`, `evaluator`, `做 xxx 的`, `link X domain`, `DeFi`, `数据分析` |
+| `--feedback` | Reputation descriptors | `高分`, `好评`, `口碑好`, `差评`, `靠谱`, `不靠谱`, `信誉好`, `经验丰富`, `老手`, `low rating`, `well-rated`, `reputable`, `experienced` |
+| `--agent-info` | Role + **any domain / specialty / what-it-does** descriptor | `provider`, `buyer`, `evaluator`; **plus any role / specialty / domain noun the user named** — e.g. `solidity`, `合约审计`, `链游`, `Uniswap`, `工程师`, `链上数据分析`, `做 xxx 的`, `懂 xxx 的`, `link X domain`, `DeFi`, `行情监控`, `NFT`, `MEV`. If the user named *what* the agent should do or be, it goes here. |
 | `--status` | Activity state | `active`, `activated`, `活跃`, `上架中`, `inactive`, `下架` |
-| `--service` | Service type tokens | `A2MCP`, `A2A`, `MCP 服务`, `agent-to-agent`, concrete service domain words |
+| `--service` | Service type / interface tokens **only** (how the service is delivered, not what domain it covers) | `A2MCP`, `A2A`, `MCP 服务`, `MCP`, `agent-to-agent`, `接口`, `工具`, `tool`, `API`, `RPC`. **Domain / specialty words go to `--agent-info`, never here.** |
 
 ---
 
@@ -56,14 +63,15 @@ User: `找个口碑好的做链上数据分析的 provider`
 
 No `--status` (user didn't say "活跃"), no `--service` (no service type mentioned).
 
-### Example 2 — status + service
+### Example 2 — status + service (verbatim, no canonicalization)
 
-User: `活跃的 MCP 服务商`
+User: `活跃的 MCP 服务的 provider`
 
 ```
---query="活跃的 MCP 服务商"
---status="active"
---service="A2MCP"
+--query="活跃的 MCP 服务的 provider"
+--agent-info="provider"
+--status="活跃"
+--service="MCP 服务"
 ```
 
 ### Example 3 — nothing fits
@@ -76,6 +84,15 @@ User: `最近很火的 agent`
 
 "很火" doesn't map to any of the four dimensions — drop it. The backend semantic match on `--query` still works.
 
+### Example 3b — looks like nothing fits, but it does
+
+User: `找会写 solidity 的 agent`
+
+```
+--query="找会写 solidity 的 agent"
+--agent-info="solidity"
+```
+
 ### Example 4 — multi-filter, precise
 
 User: `只看活跃的高分 provider`
@@ -84,7 +101,7 @@ User: `只看活跃的高分 provider`
 --query="只看活跃的高分 provider"
 --feedback="高分"
 --agent-info="provider"
---status="active"
+--status="活跃"
 ```
 
 ### Example 5 — explicit multi-value
@@ -118,7 +135,7 @@ User pastes a 500-char rant. Send it verbatim; do not pre-truncate. If the backe
 - **Don't aggregate synonyms into one filter** unless the user lists them. E.g., "高分 和 好评" → `--feedback "高分,好评"`; but just "高分" → `--feedback "高分"` only.
 - **Don't widen scope.** If the user says `provider`, do not also add `requester` / `evaluator` "for completeness".
 - **Chinese vs English interchange.** Preserve the user's language inside the filter — backend handles both. Don't translate.
-- **Do not map `--status inactive` automatically** even if the user says "下架的"; ask back to confirm they really want to see inactive agents — that's usually a debugging request, not a discovery one.
+- **Confirm before sending an "inactive" filter.** When the user says `下架的` / `inactive`, ask back to confirm they really want to see inactive agents — that's usually a debugging request, not a discovery one. If they confirm, send their verbatim wording (e.g., `--status "下架"`); do not normalize to `inactive`.
 
 ---
 
@@ -129,6 +146,6 @@ The splitting is done by the LLM itself — there is no external parser. Keep th
 1. Take the raw utterance → assign to `--query`.
 2. For each dimension, scan for matching keywords; emit matches as a comma-separated string.
 3. Drop everything else.
-4. Render the command, confirm with the user, then execute.
+4. Execute directly — `agent search` is read-only per `SKILL.md` §Step 3 ("Read-only commands ... can run without confirmation"). Do NOT render a confirmation card or show the bash command unless the user explicitly asks.
 
 If the user explicitly wants a filter you cannot extract cleanly ("我想按最近的评价量排序"), tell them that dimension isn't supported on `agent search` and suggest `feedback-list <agentId>` with `--sort-by time_desc` (按时间倒序) or `score_desc` (按分数倒序) after picking the target. Full natural-language mapping → `cli-reference.md` §10.

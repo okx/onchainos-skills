@@ -300,7 +300,8 @@ Rules:
 
 - Echo the `Search:` / `搜索：` line and `Filters:` / `过滤条件：` so the user sees what query produced the result — both in the user's language. The **query value inside the quotes stays the user's original utterance verbatim** (search-query-split.md §Verbatim Passthrough); do NOT translate it.
 - `Top service` / `主打服务` = first service returned by backend; keep it short (≤ 40 chars; truncate with `…`).
-- Inactive agents should not appear in search results. If one does (backend anomaly), prefix the row with `⚠`.
+- Inactive agents should not appear in search results **unless the user explicitly searched for inactive agents** (i.e., the `agent search` call's `--status` filter contained a `下架` / `inactive` synonym, per `search-query-split.md` §Boundary rules). If an inactive row appears outside that case (backend anomaly), prefix the row with `⚠`. When the user opted in to inactive search, render results normally without `⚠`.
+- **`状态 / Status` column is conditional.** Default search results omit it (all rows assumed active per the previous rule). When the call's `--status` filter explicitly contained an inactive synonym (`下架` / `inactive` / etc.), MUST add a `状态 / Status` column to the table so the user can verify each row's actual state — render the value in the user's language (Chinese: `已上架` / `已下架`; English: `active` / `inactive`).
 - Role / Status labels follow user language just like §1 / §2.
 
 ---
