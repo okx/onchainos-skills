@@ -150,10 +150,8 @@ pub enum Event {
     Slashed,
 
     // ── 质押 lifecycle（evaluator）────────────────────────────────────
-    /// VoterStaking.Staked 上链（首次质押；通知发起 stake 的 evaluator）
+    /// VoterStaking.Staked 上链（首次质押或追加质押；通知发起 stake 的 evaluator）
     Staked,
-    /// VoterStaking.IncreaseStake 上链（追加质押；通知发起 increase 的 evaluator）
-    StakeIncreased,
     /// VoterStaking.UnstakeRequested 上链（进入冷却期；通知发起 unstake 的 evaluator）
     UnstakeRequested,
     /// VoterStaking.UnstakeClaimed 上链（冷却期满已提走；通知发起 claim 的 evaluator）
@@ -208,7 +206,7 @@ impl Event {
             "slashed"                   => Event::Slashed,
             // 质押 lifecycle
             "staked"                    => Event::Staked,
-            "stake_increased"           => Event::StakeIncreased,
+            "stake_increased"           => Event::Staked, // legacy alias: backend now only sends "staked"
             "unstake_requested"         => Event::UnstakeRequested,
             "unstake_claimed"           => Event::UnstakeClaimed,
             "unstake_cancelled"         => Event::UnstakeCancelled,
@@ -246,7 +244,6 @@ impl Event {
             Event::RoundFailed            => "round_failed",
             Event::Slashed                => "slashed",
             Event::Staked                 => "staked",
-            Event::StakeIncreased         => "stake_increased",
             Event::UnstakeRequested       => "unstake_requested",
             Event::UnstakeClaimed         => "unstake_claimed",
             Event::UnstakeCancelled       => "unstake_cancelled",
@@ -290,7 +287,7 @@ pub fn status_when_event(e: &Event) -> Status {
         Event::JobExpired | Event::JobClosed
         | Event::JobVisibilityChanged | Event::JobPaymentModeChanged       => Status::Other("housekeeping".to_string()),
         // 质押 / 罚没 / 奖励 lifecycle 跟 task status 解耦
-        Event::Staked | Event::StakeIncreased
+        Event::Staked
         | Event::UnstakeRequested | Event::UnstakeClaimed | Event::UnstakeCancelled
         | Event::RewardClaimed | Event::Slashed                             => Status::Other("staking".to_string()),
         Event::Other(_)                                                     => Status::Other("unknown".to_string()),

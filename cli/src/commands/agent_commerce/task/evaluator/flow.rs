@@ -7,7 +7,7 @@
 //! |---|---|---|
 //! | 仲裁自主闭环（不 通知user session） | evaluator_selected / reveal_started / dispute_resolved / round_failed | sub 里执行 CLI 动作 + 静默结束 |
 //! | 资金/罚没（通知user session 推用户） | reward_claimed / slashed | sub 提取字段 + 通知user session 推人话 |
-//! | 质押 tx 回执（通知user session 推用户） | staked / stake_increased / unstake_requested / unstake_claimed / unstake_cancelled | sub 提取字段 + 通知user session 推人话 |
+//! | 质押 tx 回执（通知user session 推用户） | staked / unstake_requested / unstake_claimed / unstake_cancelled | sub 提取字段 + 通知user session 推人话 |
 //! | 自己的投票 tx 回执 | vote_committed（静默记录）/ vote_revealed（完全忽略） | 都不通知用户 |
 //! | 其他方事件 | job_disputed | 完全忽略 |
 //!
@@ -325,7 +325,7 @@ pub fn generate_next_action(
 
         // ─── 质押生命周期：sub 收到 → 通知user session 推人话给用户 ─────────────────
         "staked" => format!(
-            "【当前状态】staked（VoterStaking.Staked 上链，首次质押 tx 结果，sub session 侧）\n\
+            "【当前状态】staked（VoterStaking.Staked 上链，质押 tx 结果（首次质押或追加质押均发此事件），sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 从 payload 提取字段 → 通知user session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`（success / failed）、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
@@ -340,21 +340,6 @@ pub fn generate_next_action(
              ```\n\n\
              【Step 3】输出日志结束：`> staked status=<status> amount=<amount> relayed.`\n"
         ),
-
-        "stake_increased" => "【当前状态】stake_increased（VoterStaking.IncreaseStake 上链，补充质押 tx 结果，sub session 侧）\n\
-             【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ Sub session — 通知user session 推人话给用户。\n\n\
-             【Step 1】从 payload 提取 `status`、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】把追加质押结果推到 user session（用户那边）：⚠️ 必须显式调 xmtp_dispatch_session 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。按 status 二选一填 content：\n\n\
-             ```\n\
-             tool: xmtp_dispatch_session\n\
-             arguments:\n\
-             \x20\x20content: |\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 原样输出下方正文给用户即结束本轮 · 禁止复述/总结/改写/添加问候或收尾语（如「请问还有什么需要帮助的」）· 禁止调任何工具或再次执行]\n\
-             \x20\x20\x20\x20success → [质押] 追加质押已入账：+<amount> OKB，txHash=<txHash>。你的选中权重相应提升。\n\
-             \x20\x20\x20\x20failed  → [质押失败] 追加质押失败（errorCode=<errorCode>, txHash=<txHash>），修正后跟我说『追加质押 <N> OKB』我来重试。\n\
-             ```\n\n\
-             【Step 3】输出日志结束：`> stake_increased status=<status> amount=<amount> relayed.`\n".to_string(),
 
         "unstake_requested" => format!(
             "【当前状态】unstake_requested（VoterStaking.UnstakeRequested 上链，申请解质押 tx 结果，sub session 侧）\n\

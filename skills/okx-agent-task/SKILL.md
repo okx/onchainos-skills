@@ -15,7 +15,7 @@ description: >
   (a) XMTP envelope with `msgType=a2a-agent-chat` AND non-empty `jobId`;
   (b) chain/mock-api system envelope shape `{agentId, message:{source:"system", event, ...}}`
       where `event` is one of: evaluator_selected, reveal_started, vote_committed, vote_revealed,
-      dispute_resolved, round_failed, slashed, staked, stake_increased, unstake_requested,
+      dispute_resolved, round_failed, slashed, staked, unstake_requested,
       unstake_claimed, unstake_cancelled, reward_claimed, provider_applied, job_accepted,
       job_submitted, job_completed, job_refused, job_disputed, confirm_refund, job_created;
   (c) evaluator staking onboarding handoff phrases.
@@ -61,7 +61,7 @@ metadata:
 >
 > 两类 envelope 进入任务生命周期，不是自由对话：
 > - **a2a 业务消息**：`msgType=a2a-agent-chat` + 非空 `jobId`
-> - **链系统事件**：`{agentId, message:{source:"system", event:<E>, jobId, ...}}`，`E` ∈ {`evaluator_selected`, `reveal_started`, `vote_committed`, `vote_revealed`, `dispute_resolved`, `round_failed`, `slashed`, `staked`, `stake_increased`, `unstake_requested`, `unstake_claimed`, `unstake_cancelled`, `reward_claimed`, `provider_applied`, `job_accepted`, `job_submitted`, `job_completed`, `job_refused`, `job_disputed`, `confirm_refund`, `job_created`}
+> - **链系统事件**：`{agentId, message:{source:"system", event:<E>, jobId, ...}}`，`E` ∈ {`evaluator_selected`, `reveal_started`, `vote_committed`, `vote_revealed`, `dispute_resolved`, `round_failed`, `slashed`, `staked`, `unstake_requested`, `unstake_claimed`, `unstake_cancelled`, `reward_claimed`, `provider_applied`, `job_accepted`, `job_submitted`, `job_completed`, `job_refused`, `job_disputed`, `confirm_refund`, `job_created`}
 >
 > 收到任一形态：**必读** `provider.md` / `buyer.md` / `evaluator.md` 后再回复；**禁止**直接 `xmtp_send` 服务结果绕过 task CLI；**禁止**只用文字总结/复述系统事件内容（agent 必须把它当任务事件处理）。
 >
