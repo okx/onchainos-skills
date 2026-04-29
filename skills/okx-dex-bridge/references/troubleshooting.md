@@ -115,14 +115,18 @@ Retry once. If still fails, generate diagnostic summary and prompt user.
 
 ```bash
 # Exponential backoff (recommended)
-# Note: --bridge-id is REQUIRED (server returns 50014 without it).
-# Use the bridgeId returned by `cross-chain execute` (selectedRoute) or pin from the user's quote choice.
+# Note: --bridge-id and --from-chain are REQUIRED (server returns 50014 without them).
+# Use the bridgeId / fromChainIndex returned by `cross-chain execute` (selectedRoute) or pin from the user's quote choice.
+#
+# zsh trap: do NOT name the variable `status` — `status` is read-only in zsh
+# (equivalent to $?) and assignment will abort the loop with
+# `(eval):1: read-only variable: status`. Use `st` (or any other name).
 DELAYS=(10 20 40 60 60 60 60 60 60 60)
 for delay in "${DELAYS[@]}"; do
   sleep "$delay"
-  RESP=$(onchainos cross-chain status --tx-hash <fromTxHash> --bridge-id <bridgeId> --from-chain <chainIndex>)
-  STATUS=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0]['status'])")
-  case "$STATUS" in
+  resp=$(onchainos cross-chain status --tx-hash <fromTxHash> --bridge-id <bridgeId> --from-chain <chainIndex>)
+  st=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0]['status'])")
+  case "$st" in
     SUCCESS) echo "Cross-chain complete"; break;;
     PENDING) echo "Still bridging...";;
     NOT_FOUND) echo "Bridge has not yet indexed the tx";;

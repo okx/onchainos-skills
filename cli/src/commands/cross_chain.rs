@@ -1068,6 +1068,60 @@ fn extract_bridge_id(route: &Value) -> Result<String> {
     ))
 }
 
+// ── Helper: build approve calldata ──────────────────────────────────
+
+/// Construct ERC20 approve(spender, amount) calldata hex.
+/// Handles uint256 range via string-based hex conversion (u128 overflows for MaxUint256).
+fn build_approve_calldata(spender: &str, amount_raw: &str) -> String {
+    let spender_clean = spender.trim_start_matches("0x").to_lowercase();
+    let amount_hex = decimal_to_hex64(amount_raw);
+    format!("0x095ea7b3{:0>64}{}", spender_clean, amount_hex)
+}
+
+/// Convert a decimal string to a zero-padded 64-char hex string.
+/// Supports full uint256 range by iterating digit-by-digit.
+fn decimal_to_hex64(decimal: &str) -> String {
+    if decimal == "0" {
+        return "0".repeat(64);
+    }
+    // Try u128 first (covers most cases)
+    if let Ok(v) = decimal.parse::<u128>() {
+        return format!("{:0>64x}", v);
+    }
+    // Fallback: manual base conversion for values > u128::MAX
+    let mut bytes = [0u8; 32]; // 256 bits
+    let mut dec_digits: Vec<u8> = decimal.bytes().map(|b| b - b'0').collect();
+    let mut bit_pos = 0;
+    while !dec_digits.is_empty() && bit_pos < 256 {
+        let remainder = div_decimal_by_2(&mut dec_digits);
+        if remainder == 1 {
+            bytes[31 - bit_pos / 8] |= 1 << (bit_pos % 8);
+        }
+        bit_pos += 1;
+        // Remove leading zeros
+        while dec_digits.first() == Some(&0) && dec_digits.len() > 1 {
+            dec_digits.remove(0);
+        }
+        if dec_digits == [0] {
+            break;
+        }
+    }
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Divide a decimal digit array by 2, return remainder (0 or 1).
+fn div_decimal_by_2(digits: &mut [u8]) -> u8 {
+    let mut carry = 0u8;
+    for d in digits.iter_mut() {
+        let val = carry * 10 + *d;
+        *d = val / 2;
+        carry = val % 2;
+    }
+    carry
+}
+
+// ── Helper: wallet contract-call wrapper ────────────────────────────
+
 #[allow(clippy::too_many_arguments)]
 async fn wallet_contract_call(
     to: &str,

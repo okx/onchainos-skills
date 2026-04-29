@@ -778,12 +778,46 @@ impl ServerHandler for McpServer {
 }
 
 fn ok(data: Value) -> Result<String, String> {
-    Ok(serde_json::to_string_pretty(&data)
+    let events = crate::payment_notify::drain_events();
+    let payload = if events.is_empty() {
+        data
+    } else {
+        serde_json::json!({ "data": data, "notifications": events })
+    };
+    Ok(serde_json::to_string_pretty(&payload)
         .unwrap_or_else(|e| format!("failed to serialize response: {e}")))
 }
 
 fn err(e: anyhow::Error) -> Result<String, String> {
-    Err(format!("{e:#}"))
+    // Always drain so events don't leak into the next tool call.
+    let events = crate::payment_notify::drain_events();
+
+    // `CliConfirming` carries structured `message` / `next` fields; surface
+    // them as a JSON payload so the agent can parse them (matches the CLI
+    // `output::confirming` shape). Empty strings are omitted so first-charge
+    // confirmations (which rely on the notifications array for semantics)
+    // stay tidy.
+    if let Some(c) = e.downcast_ref::<crate::output::CliConfirming>() {
+        let mut payload = serde_json::json!({ "confirming": true });
+        if !c.message.is_empty() {
+            payload["message"] = serde_json::Value::String(c.message.clone());
+        }
+        if !c.next.is_empty() {
+            payload["next"] = serde_json::Value::String(c.next.clone());
+        }
+        if !events.is_empty() {
+            payload["notifications"] = serde_json::Value::Array(events);
+        }
+        return Err(serde_json::to_string(&payload).unwrap_or_else(|_| c.message.clone()));
+    }
+
+    let base = format!("{e:#}");
+    if events.is_empty() {
+        Err(base)
+    } else {
+        let payload = serde_json::json!({ "error": base, "notifications": events });
+        Err(serde_json::to_string(&payload).unwrap_or(base))
+    }
 }
 
 #[tool_router]
@@ -2353,7 +2387,10 @@ impl McpServer {
         }
 
         // Direct address path — full workflow
-        let address = p.address.as_deref().unwrap();
+        let address = p
+            .address
+            .as_deref()
+            .expect("address is Some after is_none() early-return guard above");
         match workflows::token_research::fetch_and_assemble(
             &mut *self.client.lock().await,
             address,

@@ -55,7 +55,7 @@ pub(super) fn get_sol_address<'a>(wallets: &'a WalletsJson, account_id: &str) ->
 ///   - Any account in the list is missing from `accounts_map` (incomplete address data)
 ///
 /// On refresh, calls `account/list` + `account/address/list` and persists to wallets.json.
-async fn ensure_wallet_accounts_fresh(
+pub(crate) async fn ensure_wallet_accounts_fresh(
     client: &mut WalletApiClient,
     access_token: &str,
     wallets: &mut WalletsJson,

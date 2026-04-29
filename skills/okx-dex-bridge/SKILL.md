@@ -363,6 +363,7 @@ After `action=approved`, poll the approval transaction status **in the main conv
 **Avoid the "looks-stuck" loop**:
 - **Do NOT** capture all 30 responses into a single variable via `result=$(cmd)` and `echo` them at the end. Bash output is buffered by the Claude Code tool layer until the command exits, so the loop appears stuck. Worse, if the JSON parser misses `txStatus` (e.g. by treating an array as an object), the loop never breaks and runs the full 60 seconds.
 - **Do NOT** put `sleep 2` at the top of the loop body — that wastes 2 seconds before the first check.
+- **Do NOT name the polling variable `status=`** — `status` is a **read-only special parameter in zsh** (equivalent to `$?`). Assigning to it crashes the loop with `(eval):1: read-only variable: status`. Even though the API response is fine (the JSON shows `txStatus: SUCCESS`), the shell aborts before the case branch runs. Use `st=` (or any other name — `tx_status`, `cc_status`); never lowercase `status=`. Uppercase `STATUS=` works but isn't preferred — stick with `st=` for consistency with the reference loop below.
 </NEVER>
 
 <MUST>
@@ -419,11 +420,15 @@ Bridge fee: {crossChainFee} {fromTokenSymbol}
 Estimated time: ~{estimateTime} seconds
 
 Source TX: {fromTxHash}
+Order ID: {swapOrderId}
+Bridge: {bridgeName} (id={bridgeId})
+Source chain: {fromChain} ({fromChainIndex})
 
 To check arrival status, choose either:
   - Tell me in chat with the tx hash, e.g. "check if tx {fromTxHash} has arrived". I will run the command for you.
-  - Run directly in terminal:
+  - Run directly in terminal (either form works; --bridge-id and --from-chain are REQUIRED in both):
     onchainos cross-chain status --tx-hash {fromTxHash} --bridge-id {bridgeId} --from-chain {fromChainIndex}
+    onchainos cross-chain status --order-id {swapOrderId} --bridge-id {bridgeId} --from-chain {fromChainIndex}
 ```
 
 <IMPORTANT>
@@ -436,15 +441,34 @@ Example phrasings to suggest (translate to the user's language at output time, b
 - `did 0xabc... land on {toChain} yet`
 </IMPORTANT>
 
+<IMPORTANT>
+**Status query needs THREE values, not one.** `cross-chain status` requires `(--tx-hash OR --order-id)` PLUS `--bridge-id` AND `--from-chain`. All three are server-required; missing any returns `code=50014` or clap-rejects up front.
+
+**When the user says something vague after broadcast** — e.g. "你查吧", "查一下", "check it", "has it arrived", "查 order xxx" with only the order-id — the agent MUST recall and reuse the **full triple** from the most recent `execute` response in this conversation:
+- `fromTxHash` (or `swapOrderId`)
+- `bridgeId`
+- `fromChainIndex`
+
+**NEVER** call `cross-chain status --order-id <id>` alone — that omits two required args and clap will reject it. Always join the recalled `bridgeId` + `fromChainIndex` from the same execute that produced the order-id.
+
+If the conversation has moved on and you no longer have the triple cached, ask the user to confirm `bridgeId` and `fromChain`, do not guess.
+</IMPORTANT>
+
 Use business-level language. Do NOT say "Transaction confirmed on-chain" or "Cross-chain complete" — broadcast does not guarantee delivery; bridges process asynchronously.
 
 ### Step 9 — Status Tracking
 
-User queries status after estimated arrival time:
+User queries status after estimated arrival time. Either form works (use whichever identifier the user has on hand); the **other two args are not optional**:
 
 ```bash
+# By source-chain tx hash
 onchainos cross-chain status --tx-hash <fromTxHash> --bridge-id <bridgeId> --from-chain <fromChainIndex>
+
+# By order id (resolved internally to tx hash via /order/detail; login required)
+onchainos cross-chain status --order-id <swapOrderId> --bridge-id <bridgeId> --from-chain <fromChainIndex>
 ```
+
+Recall `bridgeId` + `fromChainIndex` from the most recent `execute` response in this conversation. See the IMPORTANT block in Step 8 for the "vague follow-up" rule.
 
 Interpret `status` field:
 
