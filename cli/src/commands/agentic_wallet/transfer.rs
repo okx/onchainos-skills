@@ -1595,7 +1595,17 @@ mod tests {
         assert!(result
             .downcast_ref::<crate::output::CliConfirming>()
             .is_none());
-        assert_eq!(format!("{}", result), "please confirm");
+        // Preserves the structured ApiCodeError so callers can downcast on `code`.
+        let api_err_back = result
+            .downcast_ref::<crate::wallet_api::ApiCodeError>()
+            .expect("should be ApiCodeError");
+        assert_eq!(api_err_back.code, "81362");
+        assert_eq!(api_err_back.msg, "please confirm");
+        // String form includes the `code=N` prefix so downstream string matching keeps the code.
+        assert_eq!(
+            format!("{}", result),
+            "Wallet API error (code=81362): please confirm"
+        );
     }
 
     #[test]
@@ -1609,7 +1619,40 @@ mod tests {
         assert!(result
             .downcast_ref::<crate::output::CliConfirming>()
             .is_none());
-        assert_eq!(format!("{}", result), "server error");
+        let api_err_back = result
+            .downcast_ref::<crate::wallet_api::ApiCodeError>()
+            .expect("should be ApiCodeError");
+        assert_eq!(api_err_back.code, "50000");
+        assert_eq!(api_err_back.msg, "server error");
+        assert_eq!(
+            format!("{}", result),
+            "Wallet API error (code=50000): server error"
+        );
+    }
+
+    #[test]
+    fn broadcast_error_81363_preserves_code_for_diagnosis() {
+        // Regression for the cross-chain v6 commit: backend returns code=81363 on TEE
+        // pre-execute / broadcast revert. Earlier the wrapper stripped the code and
+        // surfaced only "execution reverted", which made 81362 / 81363 / on-chain
+        // revert indistinguishable. This test pins the new contract.
+        let api_err = crate::wallet_api::ApiCodeError {
+            code: "81363".to_string(),
+            msg: "execution reverted".to_string(),
+        };
+        let err: anyhow::Error = api_err.into();
+        let result = handle_confirming_error(err, false);
+        assert!(result
+            .downcast_ref::<crate::output::CliConfirming>()
+            .is_none());
+        let api_err_back = result
+            .downcast_ref::<crate::wallet_api::ApiCodeError>()
+            .expect("should be ApiCodeError");
+        assert_eq!(api_err_back.code, "81363");
+        assert_eq!(
+            format!("{}", result),
+            "Wallet API error (code=81363): execution reverted"
+        );
     }
 
     #[test]
@@ -1823,4 +1866,141 @@ mod tests {
         assert_eq!(format_sufficient_tokens(&unsigned), "");
     }
 
+    // ── Gas Station setup-required (exit 3) builders ──
+
+    fn mk_addr_info(chain_index: &str, address: &str) -> crate::wallet_store::AddressInfo {
+        crate::wallet_store::AddressInfo {
+            account_id: "acct-1".to_string(),
+            address: address.to_string(),
+            chain_index: chain_index.to_string(),
+            chain_name: "eth".to_string(),
+            address_type: "eoa".to_string(),
+            chain_path: "m/44'/60'/0'/0/0".to_string(),
+        }
+    }
+
+    #[test]
+    fn build_gs_setup_required_first_time_carries_scene_a_and_token_list() {
+        let addr = mk_addr_info("42161", "0xaef7");
+        let unsigned = mk_unsigned(
+            "",
+            vec![
+                mk_token("USDC", "0xaaa", "1.50", "0.026", true),
+                mk_token("USDT", "0xbbb", "0", "0.026", false),
+            ],
+        );
+        let original_args = serde_json::json!({"chain": "42161", "force": true});
+        let err = build_gs_setup_required(
+            &addr, &unsigned, /*is_reenable*/ false, "wallet contract-call", original_args,
+        );
+        let setup = err
+            .downcast_ref::<crate::output::CliSetupRequired>()
+            .expect("CliSetupRequired");
+        assert_eq!(setup.error_code, "GAS_STATION_SETUP_REQUIRED");
+        assert_eq!(setup.data["scene"], "A");
+        assert_eq!(setup.data["chainId"], "42161");
+        assert_eq!(setup.data["fromAddress"], "0xaef7");
+        assert_eq!(setup.data["originalRequest"]["command"], "wallet contract-call");
+        assert_eq!(setup.data["originalRequest"]["args"]["chain"], "42161");
+        assert_eq!(setup.data["tokenList"].as_array().unwrap().len(), 2);
+        assert_eq!(setup.data["retryGuidance"].as_array().unwrap().len(), 3);
+        assert!(setup.message.contains("wallet gas-station setup --chain 42161"));
+        assert!(setup.message.contains("Scene A"));
+    }
+
+    #[test]
+    fn build_gs_setup_required_reenable_carries_scene_b_prime() {
+        let addr = mk_addr_info("1", "0xabc");
+        let unsigned = mk_unsigned("0xaaa", vec![mk_token("USDC", "0xaaa", "1", "0.04", true)]);
+        let err = build_gs_setup_required(
+            &addr, &unsigned, /*is_reenable*/ true, "wallet send",
+            serde_json::json!({"force": true}),
+        );
+        let setup = err
+            .downcast_ref::<crate::output::CliSetupRequired>()
+            .expect("CliSetupRequired");
+        assert_eq!(setup.data["scene"], "B'");
+        assert!(setup.message.contains("Scene B'"));
+        assert_eq!(setup.data["originalRequest"]["command"], "wallet send");
+    }
+
+    #[test]
+    fn force_setup_required_for_tx_params_picks_contract_call_command_name() {
+        let addr = mk_addr_info("42161", "0xaef7");
+        let unsigned = mk_unsigned("", vec![mk_token("USDC", "0xaaa", "1", "0.04", true)]);
+        let tx = TxParams {
+            to_addr: "0xpool",
+            value: "0",
+            contract_addr: Some("0xtoken"),
+            input_data: Some("0xdeadbeef"),
+            unsigned_tx: None,
+            gas_limit: None,
+            aa_dex_token_addr: None,
+            aa_dex_token_amount: None,
+            jito_unsigned_tx: None,
+            gas_token_address: None,
+            relayer_id: None,
+            enable_gas_station: false,
+        };
+        let err = force_setup_required_for_tx_params(
+            /*is_reenable*/ false, /*is_contract_call*/ true,
+            "42161", Some("0xaef7"), &tx, &addr, &unsigned,
+        );
+        let setup = err
+            .downcast_ref::<crate::output::CliSetupRequired>()
+            .expect("CliSetupRequired");
+        assert_eq!(setup.data["originalRequest"]["command"], "wallet contract-call");
+        assert_eq!(setup.data["originalRequest"]["args"]["toAddr"], "0xpool");
+        assert_eq!(setup.data["originalRequest"]["args"]["inputData"], "0xdeadbeef");
+        assert_eq!(setup.data["originalRequest"]["args"]["force"], true);
+    }
+
+    #[test]
+    fn force_setup_required_for_tx_params_picks_send_command_name() {
+        let addr = mk_addr_info("42161", "0xaef7");
+        let unsigned = mk_unsigned("", vec![mk_token("USDC", "0xaaa", "1", "0.04", true)]);
+        let tx = TxParams {
+            to_addr: "0xrecipient",
+            value: "0",
+            contract_addr: None,
+            input_data: None,
+            unsigned_tx: None,
+            gas_limit: None,
+            aa_dex_token_addr: None,
+            aa_dex_token_amount: None,
+            jito_unsigned_tx: None,
+            gas_token_address: None,
+            relayer_id: None,
+            enable_gas_station: false,
+        };
+        let err = force_setup_required_for_tx_params(
+            false, /*is_contract_call*/ false,
+            "42161", None, &tx, &addr, &unsigned,
+        );
+        let setup = err
+            .downcast_ref::<crate::output::CliSetupRequired>()
+            .expect("CliSetupRequired");
+        assert_eq!(setup.data["originalRequest"]["command"], "wallet send");
+    }
+
+    #[test]
+    fn force_setup_required_for_send_carries_send_args() {
+        let addr = mk_addr_info("10", "0xaef7");
+        let unsigned = mk_unsigned("", vec![mk_token("USDC", "0xaaa", "1", "0.026", true)]);
+        let err = force_setup_required_for_send(
+            /*is_reenable*/ false,
+            "10", Some("0xaef7"), "0xrecipient", "1000000", Some("0xtoken"),
+            &addr, &unsigned,
+        );
+        let setup = err
+            .downcast_ref::<crate::output::CliSetupRequired>()
+            .expect("CliSetupRequired");
+        assert_eq!(setup.data["originalRequest"]["command"], "wallet send");
+        let args = &setup.data["originalRequest"]["args"];
+        assert_eq!(args["chain"], "10");
+        assert_eq!(args["recipient"], "0xrecipient");
+        assert_eq!(args["amount"], "1000000");
+        assert_eq!(args["contractToken"], "0xtoken");
+        assert_eq!(args["force"], true);
+    }
 }

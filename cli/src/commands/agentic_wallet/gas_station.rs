@@ -339,3 +339,86 @@ pub async fn fetch_update(chain: &str, enable: bool) -> Result<Value> {
         .map_err(format_api_error)?;
     Ok(data)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wallet_api::UnsignedInfoResponse;
+
+    fn unsigned_with_status(status: &str) -> UnsignedInfoResponse {
+        let mut r: UnsignedInfoResponse = serde_json::from_str("{}").unwrap();
+        r.gas_station_status = status.to_string();
+        r
+    }
+
+    #[test]
+    fn recommend_ready_from_ready_to_use() {
+        assert_eq!(
+            recommend_from_probe(&unsigned_with_status("READY_TO_USE")),
+            "READY"
+        );
+    }
+
+    #[test]
+    fn recommend_ready_from_not_applicable() {
+        assert_eq!(
+            recommend_from_probe(&unsigned_with_status("NOT_APPLICABLE")),
+            "READY"
+        );
+    }
+
+    #[test]
+    fn recommend_enable_gas_station_from_first_time_prompt() {
+        assert_eq!(
+            recommend_from_probe(&unsigned_with_status("FIRST_TIME_PROMPT")),
+            "ENABLE_GAS_STATION"
+        );
+    }
+
+    #[test]
+    fn recommend_pending_upgrade_passes_through() {
+        assert_eq!(
+            recommend_from_probe(&unsigned_with_status("PENDING_UPGRADE")),
+            "PENDING_UPGRADE"
+        );
+    }
+
+    #[test]
+    fn recommend_reenable_from_reenable_only() {
+        assert_eq!(
+            recommend_from_probe(&unsigned_with_status("REENABLE_ONLY")),
+            "REENABLE_GAS_STATION"
+        );
+    }
+
+    #[test]
+    fn recommend_insufficient_all_overrides_via_top_level_flag() {
+        // top-level insufficient_all bool wins even when status enum is otherwise.
+        let mut r: UnsignedInfoResponse =
+            serde_json::from_str(r#"{"insufficientAll": true}"#).unwrap();
+        r.gas_station_status = "FIRST_TIME_PROMPT".to_string();
+        assert_eq!(recommend_from_probe(&r), "INSUFFICIENT_ALL");
+    }
+
+    #[test]
+    fn recommend_has_pending_tx_overrides_via_top_level_flag() {
+        let mut r: UnsignedInfoResponse =
+            serde_json::from_str(r#"{"hasPendingTx": true}"#).unwrap();
+        r.gas_station_status = "FIRST_TIME_PROMPT".to_string();
+        assert_eq!(recommend_from_probe(&r), "HAS_PENDING_TX");
+    }
+
+    #[test]
+    fn recommend_unknown_with_gas_station_used_means_enable() {
+        let mut r: UnsignedInfoResponse =
+            serde_json::from_str(r#"{"gasStationUsed": true}"#).unwrap();
+        r.gas_station_status = "SOMETHING_NEW".to_string();
+        assert_eq!(recommend_from_probe(&r), "ENABLE_GAS_STATION");
+    }
+
+    #[test]
+    fn recommend_unknown_without_gas_station_used_falls_back_to_ready() {
+        let r = unsigned_with_status("SOMETHING_NEW");
+        assert_eq!(recommend_from_probe(&r), "READY");
+    }
+}

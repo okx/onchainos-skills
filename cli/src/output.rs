@@ -150,4 +150,31 @@ mod tests {
         assert_eq!(c.message, "msg");
         assert_eq!(c.next, "next");
     }
+
+    #[test]
+    fn cli_setup_required_display() {
+        let s = CliSetupRequired {
+            error_code: "GAS_STATION_SETUP_REQUIRED".to_string(),
+            message: "first-time setup needed".to_string(),
+            data: serde_json::json!({}),
+        };
+        assert_eq!(format!("{s}"), "setup-required: first-time setup needed");
+    }
+
+    #[test]
+    fn cli_setup_required_downcast_from_anyhow() {
+        let err: anyhow::Error = CliSetupRequired {
+            error_code: "GAS_STATION_SETUP_REQUIRED".to_string(),
+            message: "msg".to_string(),
+            data: serde_json::json!({"chainId": "42161", "scene": "A"}),
+        }
+        .into();
+        let downcasted = err.downcast_ref::<CliSetupRequired>();
+        assert!(downcasted.is_some());
+        let s = downcasted.unwrap();
+        assert_eq!(s.error_code, "GAS_STATION_SETUP_REQUIRED");
+        assert_eq!(s.message, "msg");
+        assert_eq!(s.data["chainId"], "42161");
+        assert_eq!(s.data["scene"], "A");
+    }
 }
