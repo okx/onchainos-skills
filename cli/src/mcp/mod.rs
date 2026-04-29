@@ -1901,8 +1901,11 @@ impl McpServer {
         let from_token = crate::commands::swap::resolve_token_address(&from_chain_index, &p.from);
         let to_token = crate::commands::swap::resolve_token_address(&to_chain_index, &p.to);
         let sort = p.sort.as_deref();
+        // Hold a single guard across resolve_amount_arg + fetch_quote so the
+        // pair runs as one atomic unit on the shared ApiClient.
+        let mut client = self.client.lock().await;
         let raw_amount = match crate::commands::swap::resolve_amount_arg(
-            &mut *self.client.lock().await,
+            &mut *client,
             None,
             Some(&p.readable_amount),
             &from_token,
@@ -1914,7 +1917,7 @@ impl McpServer {
             Err(e) => return err(e),
         };
         match cross_chain::fetch_quote(
-            &mut *self.client.lock().await,
+            &mut *client,
             &from_chain_index,
             &to_chain_index,
             &from_token,

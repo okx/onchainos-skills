@@ -45,19 +45,32 @@ pub async fn execute(cmd: GasStationCommand) -> Result<()> {
 /// Implementation: calls `pre_transaction_unsigned_info` with a zero-amount native
 /// self-transfer probe. Backend's `gasStationStatus` enum + `gasStationTokenList` +
 /// `defaultGasTokenAddress` carry everything we need to synthesize a `recommendation`.
-async fn cmd_status(chain: &str, from: Option<&str>) -> Result<()> {
+/// Shared context built once for both `cmd_status` and `cmd_setup`. Extracts the
+/// auth + chain + wallet + session resolution that both flows need before they
+/// can call `pre_transaction_unsigned_info`.
+struct GsContext {
+    access_token: String,
+    addr_info: crate::wallet_store::AddressInfo,
+    chain_name: String,
+    chain_index_resolved: String,
+    chain_index_num: u64,
+    session_cert: String,
+}
+
+async fn build_gs_context(chain: &str, from: Option<&str>) -> Result<GsContext> {
     let access_token = ensure_tokens_refreshed().await?;
-    let chain_index = crate::chains::resolve_chain(chain);
-    let chain_entry = super::chain::get_chain_by_real_chain_index(&chain_index)
+    let chain_index_resolved = crate::chains::resolve_chain(chain).to_string();
+    let chain_entry = super::chain::get_chain_by_real_chain_index(&chain_index_resolved)
         .await?
         .ok_or_else(|| anyhow::anyhow!("unsupported chain: {chain}"))?;
     let chain_name = chain_entry["chainName"]
         .as_str()
-        .ok_or_else(|| anyhow::anyhow!("chain entry missing chainName"))?;
+        .ok_or_else(|| anyhow::anyhow!("chain entry missing chainName"))?
+        .to_string();
 
     let wallets = crate::wallet_store::load_wallets()?
         .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-    let (_account_id, addr_info) = super::transfer::resolve_address(&wallets, from, chain_name)?;
+    let (_account_id, addr_info) = super::transfer::resolve_address(&wallets, from, &chain_name)?;
 
     let session = crate::wallet_store::load_session()?
         .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
@@ -65,26 +78,45 @@ async fn cmd_status(chain: &str, from: Option<&str>) -> Result<()> {
         anyhow::anyhow!("chain id '{}' is not a valid number", addr_info.chain_index)
     })?;
 
-    let mut client = WalletApiClient::new()?;
-    // Probe with a zero-amount native self-transfer. Backend will return Phase 1
-    // diagnostic with gasStationStatus + tokenList without broadcasting.
-    let probe = client
+    Ok(GsContext {
+        access_token,
+        addr_info,
+        chain_name,
+        chain_index_resolved,
+        chain_index_num,
+        session_cert: session.session_cert,
+    })
+}
+
+/// Issue a Phase 1 diagnostic probe (zero-amount native self-transfer). Backend
+/// returns gasStationStatus + gasStationTokenList without broadcasting.
+async fn probe_phase1_diagnostic(
+    client: &mut WalletApiClient,
+    ctx: &GsContext,
+) -> Result<crate::wallet_api::UnsignedInfoResponse> {
+    client
         .pre_transaction_unsigned_info(
-            &access_token,
-            &addr_info.chain_path,
-            chain_index_num,
-            &addr_info.address,
-            &addr_info.address,
+            &ctx.access_token,
+            &ctx.addr_info.chain_path,
+            ctx.chain_index_num,
+            &ctx.addr_info.address,
+            &ctx.addr_info.address,
             "0",
             None,
-            &session.session_cert,
+            &ctx.session_cert,
             Some("0x"),
             None, None, None, None, None,
             None,
             None, None, None,
         )
         .await
-        .map_err(format_api_error)?;
+        .map_err(format_api_error)
+}
+
+async fn cmd_status(chain: &str, from: Option<&str>) -> Result<()> {
+    let ctx = build_gs_context(chain, from).await?;
+    let mut client = WalletApiClient::new()?;
+    let probe = probe_phase1_diagnostic(&mut client, &ctx).await?;
 
     let recommendation = recommend_from_probe(&probe);
     let token_list_json: Vec<Value> = probe
@@ -110,9 +142,9 @@ async fn cmd_status(chain: &str, from: Option<&str>) -> Result<()> {
     };
 
     output::success(json!({
-        "chainId": addr_info.chain_index,
-        "chainName": chain_name,
-        "fromAddress": addr_info.address,
+        "chainId": ctx.addr_info.chain_index,
+        "chainName": ctx.chain_name,
+        "fromAddress": ctx.addr_info.address,
         "gasStationActivated": gs_activated,
         "gasStationDefaultToken": default_gas_token,
         "gasStationStatus": probe.gas_station_status,
@@ -169,45 +201,10 @@ async fn cmd_setup(
     relayer_id: &str,
     from: Option<&str>,
 ) -> Result<()> {
-    let access_token = ensure_tokens_refreshed().await?;
-    let chain_index = crate::chains::resolve_chain(chain);
-    let chain_entry = super::chain::get_chain_by_real_chain_index(&chain_index)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("unsupported chain: {chain}"))?;
-    let chain_name = chain_entry["chainName"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("chain entry missing chainName"))?
-        .to_string();
-
-    let wallets = crate::wallet_store::load_wallets()?
-        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-    let (_account_id, addr_info) =
-        super::transfer::resolve_address(&wallets, from, &chain_name)?;
-    let chain_index_num: u64 = addr_info.chain_index.parse().map_err(|_| {
-        anyhow::anyhow!("chain id '{}' is not a valid number", addr_info.chain_index)
-    })?;
-
-    // Idempotency check: probe first; if GS already active with same default → short-circuit.
-    let session = crate::wallet_store::load_session()?
-        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+    let ctx = build_gs_context(chain, from).await?;
     let mut client = WalletApiClient::new()?;
-    let probe = client
-        .pre_transaction_unsigned_info(
-            &access_token,
-            &addr_info.chain_path,
-            chain_index_num,
-            &addr_info.address,
-            &addr_info.address,
-            "0",
-            None,
-            &session.session_cert,
-            Some("0x"),
-            None, None, None, None, None,
-            None,
-            None, None, None,
-        )
-        .await
-        .map_err(format_api_error)?;
+    // Idempotency check: probe first; if GS already active with same default → short-circuit.
+    let probe = probe_phase1_diagnostic(&mut client, &ctx).await?;
 
     let already_active_same_default = matches!(probe.gs_status(), GasStationStatus::ReadyToUse)
         && !probe.default_gas_token_address.is_empty()
@@ -216,8 +213,8 @@ async fn cmd_setup(
             .eq_ignore_ascii_case(gas_token_address);
     if already_active_same_default {
         output::success(json!({
-            "chainId": addr_info.chain_index,
-            "chainName": chain_name,
+            "chainId": ctx.addr_info.chain_index,
+            "chainName": ctx.chain_name,
             "gasStationActivated": true,
             "alreadyActivated": true,
             "defaultToken": {
@@ -225,6 +222,7 @@ async fn cmd_setup(
             },
             "txHash": Value::Null,
             "needs7702Upgrade": false,
+            "summary": "Gas Station already enabled with the requested default token. No action taken.",
         }));
         return Ok(());
     }
@@ -233,22 +231,23 @@ async fn cmd_setup(
     if matches!(probe.gs_status(), GasStationStatus::ReadyToUse) {
         let _data = client
             .gas_station_update_default_token(
-                &access_token,
-                &addr_info.chain_index,
+                &ctx.access_token,
+                &ctx.addr_info.chain_index,
                 gas_token_address,
-                &addr_info.address,
+                &ctx.addr_info.address,
             )
             .await
             .map_err(format_api_error)?;
         output::success(json!({
-            "chainId": addr_info.chain_index,
-            "chainName": chain_name,
+            "chainId": ctx.addr_info.chain_index,
+            "chainName": ctx.chain_name,
             "gasStationActivated": true,
             "alreadyActivated": true,
             "defaultTokenSwitched": true,
             "defaultToken": { "feeTokenAddress": gas_token_address, "relayerId": relayer_id },
             "txHash": Value::Null,
             "needs7702Upgrade": false,
+            "summary": "Gas Station was already enabled; only the default gas token was switched (server-side flag flip, no on-chain transaction).",
         }));
         return Ok(());
     }
@@ -277,8 +276,8 @@ async fn cmd_setup(
     // the setup result; no additional output wrapping is needed here.
     super::transfer::cmd_send(
         "1",
-        &addr_info.address,
-        &chain_index,
+        &ctx.addr_info.address,
+        &ctx.chain_index_resolved,
         from,
         Some(gas_token_address),
         true,

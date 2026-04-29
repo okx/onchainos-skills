@@ -268,52 +268,16 @@ async fn sign_and_broadcast(
                         // `--force` + first-time GS: third-party plugin path. Return exit 3
                         // with structured error so plugin's outer caller (agent) can run
                         // `wallet gas-station setup` then re-invoke the plugin command.
-                        let original_args = serde_json::json!({
-                            "chain": chain,
-                            "from": from,
-                            "toAddr": tx.to_addr,
-                            "value": tx.value,
-                            "contractAddr": tx.contract_addr,
-                            "inputData": tx.input_data,
-                            "force": true,
-                        });
-                        let cmd_name = if is_contract_call {
-                            "wallet contract-call"
-                        } else {
-                            "wallet send"
-                        };
-                        return Err(build_gs_setup_required(
-                            &addr_info,
-                            &unsigned,
-                            false,
-                            cmd_name,
-                            original_args,
+                        return Err(force_setup_required_for_tx_params(
+                            false, is_contract_call, chain, from, &tx, &addr_info, &unsigned,
                         ));
                     }
                     return Err(build_gs_first_time_prompt(&addr_info, &unsigned));
                 }
                 GsPhase1Decision::Reenable => {
                     if force {
-                        let original_args = serde_json::json!({
-                            "chain": chain,
-                            "from": from,
-                            "toAddr": tx.to_addr,
-                            "value": tx.value,
-                            "contractAddr": tx.contract_addr,
-                            "inputData": tx.input_data,
-                            "force": true,
-                        });
-                        let cmd_name = if is_contract_call {
-                            "wallet contract-call"
-                        } else {
-                            "wallet send"
-                        };
-                        return Err(build_gs_setup_required(
-                            &addr_info,
-                            &unsigned,
-                            true,
-                            cmd_name,
-                            original_args,
+                        return Err(force_setup_required_for_tx_params(
+                            true, is_contract_call, chain, from, &tx, &addr_info, &unsigned,
                         ));
                     }
                     return Err(build_gs_reenable_prompt(&addr_info, &unsigned));
@@ -641,40 +605,18 @@ pub(super) async fn cmd_send(
         match classify_gs_phase1(&unsigned) {
             GsPhase1Decision::FirstTime => {
                 if force {
-                    let original_args = serde_json::json!({
-                        "chain": chain,
-                        "from": from,
-                        "recipient": recipient,
-                        "amount": amt,
-                        "contractToken": contract_token,
-                        "force": true,
-                    });
-                    return Err(build_gs_setup_required(
-                        &addr_info,
-                        &unsigned,
-                        false,
-                        "wallet send",
-                        original_args,
+                    return Err(force_setup_required_for_send(
+                        false, chain, from, recipient, amt, contract_token,
+                        &addr_info, &unsigned,
                     ));
                 }
                 return Err(build_gs_first_time_prompt(&addr_info, &unsigned));
             }
             GsPhase1Decision::Reenable => {
                 if force {
-                    let original_args = serde_json::json!({
-                        "chain": chain,
-                        "from": from,
-                        "recipient": recipient,
-                        "amount": amt,
-                        "contractToken": contract_token,
-                        "force": true,
-                    });
-                    return Err(build_gs_setup_required(
-                        &addr_info,
-                        &unsigned,
-                        true,
-                        "wallet send",
-                        original_args,
+                    return Err(force_setup_required_for_send(
+                        true, chain, from, recipient, amt, contract_token,
+                        &addr_info, &unsigned,
                     ));
                 }
                 return Err(build_gs_reenable_prompt(&addr_info, &unsigned));
@@ -1194,6 +1136,58 @@ fn build_gs_reenable_prompt(
         token_list_json(unsigned)
     );
     crate::output::CliConfirming { message, next }.into()
+}
+
+/// Call-site adapter for the `sign_and_broadcast` (contract-call / send via TxParams)
+/// path: build the `original_args` payload and pick the right command name, then
+/// delegate to `build_gs_setup_required`.
+fn force_setup_required_for_tx_params(
+    is_reenable: bool,
+    is_contract_call: bool,
+    chain: &str,
+    from: Option<&str>,
+    tx: &TxParams<'_>,
+    addr_info: &crate::wallet_store::AddressInfo,
+    unsigned: &crate::wallet_api::UnsignedInfoResponse,
+) -> anyhow::Error {
+    let original_args = serde_json::json!({
+        "chain": chain,
+        "from": from,
+        "toAddr": tx.to_addr,
+        "value": tx.value,
+        "contractAddr": tx.contract_addr,
+        "inputData": tx.input_data,
+        "force": true,
+    });
+    let cmd_name = if is_contract_call {
+        "wallet contract-call"
+    } else {
+        "wallet send"
+    };
+    build_gs_setup_required(addr_info, unsigned, is_reenable, cmd_name, original_args)
+}
+
+/// Call-site adapter for the `cmd_send` path: build the `original_args` payload
+/// from send-style args, then delegate to `build_gs_setup_required`.
+fn force_setup_required_for_send(
+    is_reenable: bool,
+    chain: &str,
+    from: Option<&str>,
+    recipient: &str,
+    amount: &str,
+    contract_token: Option<&str>,
+    addr_info: &crate::wallet_store::AddressInfo,
+    unsigned: &crate::wallet_api::UnsignedInfoResponse,
+) -> anyhow::Error {
+    let original_args = serde_json::json!({
+        "chain": chain,
+        "from": from,
+        "recipient": recipient,
+        "amount": amount,
+        "contractToken": contract_token,
+        "force": true,
+    });
+    build_gs_setup_required(addr_info, unsigned, is_reenable, "wallet send", original_args)
 }
 
 /// `--force` + GS first-time / re-enable required: build a `CliSetupRequired` error

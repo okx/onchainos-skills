@@ -236,11 +236,13 @@ Before dispatching ANY third-party plugin command that performs an on-chain writ
 
 ### Reactive diagnosis (post-failure fallback)
 
-If a third-party plugin returned a vague error (e.g. `"Pool.supply() failed"`, `"swap failed"`) and the message does NOT clearly explain the cause, the agent SHOULD diagnose:
+If a third-party plugin returned a vague error (e.g. `"Pool.supply() failed"`, `"swap failed"`) and the message does NOT clearly explain the cause, follow the canonical recovery flow in `references/gas-station.md` → "Plugin Bail Recovery".
 
-1. **Fast path — parse plugin's bubbled-up error first**: if the plugin's stderr/stdout contains an onchainos response with `"errorCode": "GAS_STATION_SETUP_REQUIRED"` (which is what onchainos returns from `--force` calls when GS setup is needed, exit code 3), extract `data.tokenList` directly and proceed to Scene A → setup → re-invoke plugin. No additional CLI roundtrip needed.
-2. **Slow path — independent status query**: if the plugin ate stdout / didn't propagate, run `onchainos wallet gas-station status --chain <chain> [--from <addr>]`. If `recommendation` is `ENABLE_GAS_STATION` / `REENABLE_GAS_STATION` / `PENDING_UPGRADE` / `INSUFFICIENT_ALL`: the plugin likely failed because of Gas Station, not a logic error. Follow the pre-flight branch above.
-3. Otherwise: surface the plugin's raw error to the user.
+In short, in priority order:
+
+1. **Fast path** — parse the plugin's bubbled-up stderr/stdout for an onchainos response with `"errorCode": "GAS_STATION_SETUP_REQUIRED"` (exit code 3). Extract `data.tokenList` directly and proceed to Scene A → `wallet gas-station setup` → re-invoke plugin. No extra CLI call.
+2. **Slow path** — if the plugin ate stdout, run `onchainos wallet gas-station status --chain <chain> [--from <addr>]` and branch on `recommendation` per the Pre-flight checklist above.
+3. Otherwise — surface the plugin's raw error to the user.
 
 ### Exit codes from `wallet contract-call --force` / `wallet send --force`
 
