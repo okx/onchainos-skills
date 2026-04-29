@@ -118,27 +118,19 @@ onchainos agent evaluator my-stake         # 取 activeStake (OKB) / registered 
 | `activeStake >= minCumulativeStakeOkb` | 已经满足门槛,告诉用户「你已质押 `<X>` OKB,超过门槛 `<min>`,仲裁者候选状态正常,无需再次质押」,结束本场景 |
 | `activeDisputes > 0` 且 `activeStake >= min` | 同上,无需重质押;若用户坚持加质押,引导他用 §12 的 `increase-stake` |
 
-**默认本次金额计算**:
-
-```
-默认 N = max(minCumulativeStakeOkb - activeStake, 0)
-       即: 把已质押补齐到门槛所需的金额
-```
-
-首次质押场景下 `activeStake = 0`,所以 `默认 N = minCumulativeStakeOkb`。
-
 > **累计门槛规则语义**：合约按累计校验 `activeStake + N >= minCumulativeStakeOkb`——首次质押 `activeStake=0` 时 `N >= min`；被 slash 后 `activeStake < min` 时 `N >= min - activeStake` 才能补齐。
 
-**Step 2 — 向用户展示金额、奖罚机制 + 等确认(⚠️ 强制步骤,不允许跳过)。**
+**Step 2 — 向用户展示现状、奖罚机制 + 要求用户给出质押数量(⚠️ 强制步骤,不允许跳过)。**
 
-> ⚠️ 文案里的所有数字都从 Step 1 拉的实时配置注入,**不要写死**。下面用 `<min>` / `<defaultN>` / `<X>`(已质押) / `<feeBps>` / `<minorityBps>` / `<timeoutBps>` / `<cooldownDays>` / `<slashedHours>` 等占位符表达,展示给用户时替换成 Step 1 拉到的真实值。
+> ⚠️ **agent 不替用户决定质押金额**。agent 只展示现状（已质押多少、门槛多少、差额多少），由用户自己说要质押的数量。
+
+> ⚠️ 文案里的所有数字都从 Step 1 拉的实时配置注入,**不要写死**。下面用 `<min>` / `<X>`(已质押) / `<feeBps>` / `<minorityBps>` / `<timeoutBps>` / `<cooldownDays>` / `<slashedHours>` 等占位符表达,展示给用户时替换成 Step 1 拉到的真实值。
 
 用纯文本输出,示例(假设 Step 1 拉到 `min=100`、`activeStake=0`、`feeBps=5%`、`minorityBps=1%`、`timeoutBps=0.3%`、`cooldownDays=7`、`slashedHours=24`):
 
-> 当前你的链上质押:**0 OKB**(钱包余额另行查询,与本次无关)。
-> 平台累计门槛:**100 OKB**(`minCumulativeStakeOkb`,合约权威值)。
->
-> 即将质押 **100 OKB** 把你的质押从 0 → 100 OKB,激活仲裁者候选资格。
+> 当前你的链上质押:**0 OKB**
+> 平台累计门槛:**100 OKB**(`minCumulativeStakeOkb`,合约权威值)
+> 还需至少质押:**100 OKB**（`门槛 - 已质押`）
 >
 > **收益:**
 > - 投中多数方 → 按质押比例分仲裁押金(任务金额的 **5%**)+ 少数方被罚的 stake
@@ -152,26 +144,29 @@ onchainos agent evaluator my-stake         # 取 activeStake (OKB) / registered 
 > - 随时可申请解质押(活跃仲裁期间除外);申请后进入 **7 天冷却期**,到期跑 `claim-unstake` 提走
 > - 冷却期内可跑 `cancel-unstake` 撤回;冷却期内平台仍有权根据过往行为 slash
 >
-> 确认质押 100 OKB 吗?
-> - 回复 **"确认"** / **"yes"** / **"ok"** → 开始质押
-> - 回复其他数字(如 **"500"**) → 用该金额代替(仍需让 `activeStake + N >= 100`)
+> 请告诉我你要质押多少 OKB（至少 **100**，多于门槛也可以提升选中权重）：
+> - 回复**具体数字**（如 **"100"**、**"500"**）→ 用该金额质押
 > - 回复 **"取消"** / **"cancel"** → 放弃质押
 
-**硬性规则**：未收到用户明确确认前,**绝不执行 Step 3 的 CLI**。`evaluator stake` 是上链操作,解质押需冷却期才能取回——静默发起 = 严重违反用户授权。
+**硬性规则**：
+1. **agent 绝不自行决定质押金额**——不从上下文推断、不用公式算默认值、不"帮用户补齐"。金额**只能是用户在 Step 2 展示后的当轮回复中显式给出的数字**。
+2. 未收到用户显式给出数字前,**绝不执行 Step 3 的 CLI**。`evaluator stake` 是上链操作,解质押需冷却期才能取回——静默发起 = 严重违反用户授权。
+3. **同轮链式路径也不能跳过 Step 2**——身份 skill 输出在当前 turn 的先前内容里时,可以直接跑 Step 1,但 Step 2 的展示 + 等用户回复数字是**不可省略的**。
+4. 以下来源的金额**全部禁止用作质押数量**：上下文中的转账金额、注册费用、gas 费、身份 skill 传来的数字、事件 payload 的 amount、会话历史中任何金额。
 
-**Step 3 — 用户确认后执行质押 CLI:**
+**Step 3 — 用户给出数字后执行质押 CLI:**
 
 记 `min = minCumulativeStakeOkb`、`X = activeStake`(都来自 Step 1)。根据用户回复决定最终 `N`:
 
 | 用户回复 | `N` |
 |---|---|
-| 确认 / yes / ok / 同意 | `defaultN`(Step 1 算出来的 `max(min - X, 0)`) |
 | 纯数字 N',使 `X + N' >= min` | 用 `N'` |
 | 纯数字 N',使 `X + N' < min` | 告知「累计门槛 `<min>` OKB,当前已质押 `<X>`,本次至少需 `<min - X>`,请加大数额」,回 Step 2 重新问 |
 | 取消 / cancel / 不 | 回「已取消质押。需要时再来。」然后结束场景 |
-| 其他文本 | 视作问题;简要回答后重新问 Step 2 的确认 |
+| 确认 / yes / ok（没给数字） | 回「请告诉我具体要质押多少 OKB」,回 Step 2 重新问 |
+| 其他文本 | 视作问题;简要回答后重新问 Step 2 |
 
-确认后执行:
+执行:
 
 ```bash
 onchainos agent evaluator stake --amount <N>
@@ -583,6 +578,6 @@ cooldownEndsAt       # 缺席冷却结束时间 (unix秒, 0 = 不在冷却)
 
 **遗留待办**(下一阶段):
 
-- `flow.rs` 里 `staked` / `unstake_requested` / `dispute_resolved` arm 的提示词仍是硬编码文案(100 OKB / 7 天 / 1% / 0.3%),建议在 next-action 入口先拉一次配置注入到 arm 字符串
-- `stake.rs` / `unstake.rs` 的注释里仍有 100 OKB / 7 天 字样,只是说明性,改起来不影响行为
+- ~~`flow.rs` 里 `staked` / `unstake_requested` / `dispute_resolved` arm 的提示词仍是硬编码文案~~ ✅ 已改：删除 `cfg_defaults`，config 拉不到时使用占位符（`<TIMEOUT_PENALTY_RATE>` 等），并在输出头部加 warning 提示 agent 自行调 `staking-config`
+- ~~`stake.rs` / `unstake.rs` 的注释里仍有 100 OKB / 7 天 字样~~ ✅ 已改为引用 `minCumulativeStakeOkb` / `staking-config`
 - 进程级缓存(`once_cell::OnceCell`)避免每个场景重复拉 `staking-config`

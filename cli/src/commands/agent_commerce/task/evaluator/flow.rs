@@ -18,35 +18,30 @@
 //! 证据上传是链下操作（doc §7.8：No chain event for evidence），不再等"证据封期"信号。
 //!
 //! 文案中的经济参数（罚金比例、最低质押、冷却期）由调用方从 `/staking/config`
-//! best-effort 拉取并以 `Option<&StakingConfig>` 传入；拉取失败时回退到合约/规范
-//! 当前默认值（见 `cfg_defaults` 常量），避免 sub session 因网络抖动跑不出剧本。
+//! best-effort 拉取并以 `Option<&StakingConfig>` 传入；拉取失败时使用占位符
+//! （如 `<TIMEOUT_PENALTY_RATE>`），agent 可在运行时自行调 `staking-config` 补全。
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::StakingConfig;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 
-/// 拉不到 `/staking/config` 时的兜底默认值（与文档当前默认值一致）。
-mod cfg_defaults {
-    pub const SLASH_TIMEOUT_BPS: &str = "0.3%";
-    pub const SLASH_MINORITY_BPS: &str = "1%";
-    pub const MIN_CUMULATIVE_STAKE_OKB: &str = "100";
-    pub const UNSTAKE_COOLDOWN_DAYS: u64 = 7;
-}
-
 fn slash_timeout_bps(cfg: Option<&StakingConfig>) -> &str {
-    cfg.map(|c| c.slash_timeout_bps.as_str()).unwrap_or(cfg_defaults::SLASH_TIMEOUT_BPS)
+    cfg.map(|c| c.slash_timeout_bps.as_str())
+        .unwrap_or("<TIMEOUT_PENALTY_RATE>")
 }
 
 fn slash_minority_bps(cfg: Option<&StakingConfig>) -> &str {
-    cfg.map(|c| c.slash_minority_bps.as_str()).unwrap_or(cfg_defaults::SLASH_MINORITY_BPS)
+    cfg.map(|c| c.slash_minority_bps.as_str())
+        .unwrap_or("<MINORITY_PENALTY_RATE>")
 }
 
 fn min_cumulative_stake_okb(cfg: Option<&StakingConfig>) -> &str {
     cfg.map(|c| c.min_cumulative_stake_okb.as_str())
-        .unwrap_or(cfg_defaults::MIN_CUMULATIVE_STAKE_OKB)
+        .unwrap_or("<minCumulativeStakeOkb>")
 }
 
-fn unstake_cooldown_days(cfg: Option<&StakingConfig>) -> u64 {
-    cfg.map(StakingConfig::unstake_cooldown_days).unwrap_or(cfg_defaults::UNSTAKE_COOLDOWN_DAYS)
+fn unstake_cooldown_days(cfg: Option<&StakingConfig>) -> String {
+    cfg.map(|c| c.unstake_cooldown_days().to_string())
+        .unwrap_or_else(|| "<unstakeCooldownDays>".to_string())
 }
 
 /// Evaluator 在某 status 下可执行的 CLI 命令清单（用于 `agent common context` 菜单）。
@@ -90,7 +85,13 @@ pub fn generate_next_action(
     let minority_bps = slash_minority_bps(staking_cfg);
     let min_stake_okb = min_cumulative_stake_okb(staking_cfg);
     let cooldown_days = unstake_cooldown_days(staking_cfg);
-    match job_status {
+    let cfg_warning = if staking_cfg.is_none() {
+        "⚠️ staking-config 未拉取到，下方经济参数使用占位符（<...>）；\
+         agent 应调 `onchainos agent evaluator staking-config` 获取真实值再展示给用户。\n\n"
+    } else {
+        ""
+    };
+    let body = match job_status {
         // ─── 入口：本轮陪审选出，CommitPhase 已开（sub session 侧，agent 自主闭环） ──
         // 判决方法论严格对齐评估者规范（誓约 + 决策原则 + Rubric + 证据等级 + 裁决书规范）。
         // V1 合约只接受 vote ∈ {1, 2}，原生 3 选项按 Step 4.5 归约表压到 1/2。
@@ -425,5 +426,6 @@ pub fn generate_next_action(
              【动作】无——输出一行日志 `> unknown event={other} at jobId={job_id} ignored.` 后结束。\n\
              禁止 通知user session、禁止拉 context、禁止猜测其他通知。\n"
         ),
-    }
+    };
+    format!("{cfg_warning}{body}")
 }

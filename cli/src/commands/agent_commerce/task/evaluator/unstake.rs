@@ -60,10 +60,15 @@ pub async fn handle_request_unstake(client: &mut TaskApiClient, amount: &str) ->
     println!("  amount:  -{trimmed} OKB（申请中）");
     println!("  voter:   {address}");
     println!("  txHash:  {tx_hash}");
-    let cooldown_days = cfg.as_ref().map(StakingConfig::unstake_cooldown_days).unwrap_or(7);
-    println!(
-        "next: 申请已提交，等待链上确认；确认后进入 {cooldown_days} 天冷却期，到时可领取，期间可撤销。"
-    );
+    if let Some(days) = cfg.as_ref().map(StakingConfig::unstake_cooldown_days) {
+        println!(
+            "next: 申请已提交，等待链上确认；确认后进入 {days} 天冷却期，到时可领取，期间可撤销。"
+        );
+    } else {
+        println!(
+            "next: 申请已提交，等待链上确认；确认后进入冷却期（天数见 staking-config），到时可领取，期间可撤销。"
+        );
+    }
     if let Some(c) = cfg.as_ref() {
         println!(
             "  config: 部分赎回后余额最低保留 {} OKB（低于此值只能全额赎回）",
@@ -104,7 +109,7 @@ pub async fn handle_claim_unstake(client: &mut TaskApiClient) -> Result<()> {
     Ok(())
 }
 
-/// 在 7 天冷却期内撤销解质押请求，OKB 回到质押状态。
+/// 在冷却期内撤销解质押请求，OKB 回到质押状态（冷却天数由 staking-config 决定）。
 ///
 /// Error codes: 4000 / 合约 revert（无待解质押 / 冷却期已过）
 pub async fn handle_cancel_unstake(client: &mut TaskApiClient) -> Result<()> {

@@ -67,7 +67,7 @@ pub enum EvaluatorCommand {
     Forget { dispute_id: String },
     /// First-time stake OKB to become an active evaluator (onboarding handoff from identity skill).
     /// Requires the current wallet's agentId to already be registered with evaluator role
-    /// (identity=2). Backend enforces amount >= 100 OKB on first stake.
+    /// (identity=2). Backend enforces amount >= minCumulativeStakeOkb on first stake (see staking-config).
     /// For top-up / 补充质押 use `increase-stake` (backend `/staking/increaseStake`).
     Stake {
         #[arg(long)]
@@ -79,13 +79,13 @@ pub enum EvaluatorCommand {
         #[arg(long)]
         amount: String,
     },
-    /// Request unstake: OKB enters a 7-day cooldown. Partial unstake supported.
+    /// Request unstake: OKB enters cooldown (period from staking-config). Partial unstake supported.
     /// Backend/contract will revert if you have active dispute participation.
     RequestUnstake {
         #[arg(long)]
         amount: String,
     },
-    /// Claim unstaked OKB after the 7-day cooldown. No parameters — contract knows the
+    /// Claim unstaked OKB after the cooldown period. No parameters — contract knows the
     /// pending amount and unlock time.
     ClaimUnstake,
     /// Cancel a pending unstake request within the cooldown window; OKB returns to staked state.

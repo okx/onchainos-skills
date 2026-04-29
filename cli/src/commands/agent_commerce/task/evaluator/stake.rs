@@ -13,9 +13,9 @@ use crate::commands::agent_commerce::task::signing;
 /// - Backend bundles approve(VoterStaking, amount) + stake(amount, agentId) as one
 ///   atomic UOP (AA executeBatch), returns uopData for signing.
 ///
-/// 累计门槛规则语义：合约层按**累计**校验 `当前地址质押金额 + 本次质押金额 >= 100 OKB`，
-/// 不足则 revert。首次质押场景天然等价于"本次 >= 100"；被 slash 后余额低于 100 时
-/// 追加质押也须一次性补齐到 100。
+/// 累计门槛规则语义：合约层按**累计**校验 `当前地址质押金额 + 本次质押金额 >= minCumulativeStakeOkb`，
+/// 不足则 revert。首次质押场景天然等价于"本次 >= min"；被 slash 后余额低于门槛时
+/// 追加质押也须一次性补齐到 minCumulativeStakeOkb（具体值由 staking-config 提供）。
 ///
 /// Error codes:
 ///   4000 — agentId 无效 / 非 evaluator 身份

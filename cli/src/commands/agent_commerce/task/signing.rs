@@ -84,7 +84,7 @@ pub async fn resolve_wallet_and_agent_for_task(
     job_id: &str,
 ) -> Result<(String, String, String)> {
     // 先通过本地身份列表拿 buyer agentId，用于 GET 请求带 agenticId header
-    let local_agent_id = resolve_agent_by_role(AGENT_ROLE_BUYER, "buyer（买家）")
+    let local_agent_id = resolve_agent_by_role(AGENT_ROLE_BUYER, "buyer（买家）", None)
         .await
         .map(|(id, _)| id)
         .unwrap_or_default();
@@ -112,7 +112,7 @@ pub async fn resolve_wallet_and_agent_for_provider(
     job_id: &str,
 ) -> Result<(String, String, String)> {
     // 先通过本地身份列表拿 provider agentId，用于 GET 请求带 agenticId header
-    let local_agent_id = resolve_agent_by_role(AGENT_ROLE_PROVIDER, "provider（卖家）")
+    let local_agent_id = resolve_agent_by_role(AGENT_ROLE_PROVIDER, "provider（卖家）", None)
         .await
         .map(|(id, _)| id)
         .unwrap_or_default();
@@ -128,11 +128,18 @@ pub async fn resolve_wallet_and_agent_for_provider(
     Ok((account_id, address, provider_agent_id))
 }
 
-/// 通过子进程调用 `onchainos agent get` 查询身份列表，挑出首个匹配 `role` 的 Agent。
+/// 通过子进程调用 `onchainos agent get` 查询身份列表，找到匹配 `role` 且属于
+/// 指定钱包地址的 Agent。
 ///
-/// 返回 `(agent_id, owner_address)`。evaluator / 预创建任务的 buyer 等场景在任务详情
-/// 里查不到自己的 agentId 时使用。
-async fn resolve_agent_by_role(role_code: i64, role_label: &str) -> Result<(String, String)> {
+/// - `wallet_address`: 传 `Some(addr)` 则只匹配 `ownerAddress` 一致的身份（大小写不敏感）；
+///   传 `None` 则取首个匹配 role 的（用于只需 agentId header 的只读场景）。
+///
+/// 返回 `(agent_id, owner_address)`。
+async fn resolve_agent_by_role(
+    role_code: i64,
+    role_label: &str,
+    wallet_address: Option<&str>,
+) -> Result<(String, String)> {
     let exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("无法获取当前可执行文件路径: {e}"))?;
 
@@ -170,17 +177,29 @@ async fn resolve_agent_by_role(role_code: i64, role_label: &str) -> Result<(Stri
     .ok_or_else(|| anyhow::anyhow!("未查到任何 Agent 身份，请先注册 {role_label} 身份"))?;
 
     for agent in list {
-        if agent["role"].as_i64() == Some(role_code) {
-            let agent_id = agent["agentId"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("Agent 缺少 agentId 字段"))?
-                .to_string();
-            let owner_address = agent["ownerAddress"].as_str().unwrap_or("").to_string();
-            return Ok((agent_id, owner_address));
+        if agent["role"].as_i64() != Some(role_code) {
+            continue;
         }
+        let owner = agent["ownerAddress"].as_str().unwrap_or("");
+        if let Some(want) = wallet_address {
+            if !owner.eq_ignore_ascii_case(want) {
+                continue;
+            }
+        }
+        let agent_id = agent["agentId"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Agent 缺少 agentId 字段"))?
+            .to_string();
+        return Ok((agent_id, owner.to_string()));
     }
 
-    bail!("当前账户没有 {role_label} 身份，请先注册")
+    if wallet_address.is_some() {
+        bail!(
+            "当前钱包没有 {role_label} 身份（ownerAddress 不匹配），请切换钱包或先注册"
+        )
+    } else {
+        bail!("当前账户没有 {role_label} 身份，请先注册")
+    }
 }
 
 /// Resolve wallet + evaluator agentId for signing.
@@ -190,9 +209,9 @@ async fn resolve_agent_by_role(role_code: i64, role_label: &str) -> Result<(Stri
 ///
 /// Returns `(account_id, address, evaluator_agent_id)`.
 pub async fn resolve_wallet_and_agent_for_evaluator() -> Result<(String, String, String)> {
-    let (agent_id, _owner_address) =
-        resolve_agent_by_role(AGENT_ROLE_EVALUATOR, "evaluator（仲裁者）").await?;
     let (account_id, address) = resolve_wallet(None, None)?;
+    let (agent_id, _) =
+        resolve_agent_by_role(AGENT_ROLE_EVALUATOR, "evaluator（仲裁者）", Some(&address)).await?;
     Ok((account_id, address, agent_id))
 }
 
@@ -205,7 +224,7 @@ pub async fn resolve_agent_id_by_role(role_code: i64) -> Result<String> {
         3 => "evaluator（仲裁者）",
         _ => "unknown",
     };
-    Ok(resolve_agent_by_role(role_code, label)
+    Ok(resolve_agent_by_role(role_code, label, None)
         .await
         .map(|(id, _)| id)
         .unwrap_or_default())
