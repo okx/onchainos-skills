@@ -427,6 +427,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::common::run(c, ctx).await,
 
         AgentCommand::NextAction { job_id, job_status, agent_id, role } => {
+            eprintln!(
+                "[next-action] 收到系统通知: job_id={job_id}, job_status={job_status}, role={role}, agent_id={agent_id}"
+            );
             // 状态脱节 → block 输出剧本（避免 sub 按 stale event 跑老剧本上链）
             // 只在 PSEUDO_EVENTS / unknown / network failure 时跳过校验，正常情况下严格守门
             if let Some(w) = check_status_freshness(&job_id, &job_status).await {
@@ -526,6 +529,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str) -> Opti
     // 如果 event 解析成 Status::Other("unknown")（即未识别的 Event::Other），
     // 也跳过校验（避免对不认识的 event 误报）
     if matches!(expected, Status::Other(ref s) if s == "unknown") {
+        eprintln!("[check-freshness] 跳过校验: 未识别的 event={job_status_or_event}");
         return None;
     }
 
@@ -533,6 +537,12 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str) -> Opti
     let resp = c.get(&c.task_path(job_id)).await.ok()?;
     let actual_str = resp.get("task")?.get("statusStr")?.as_str()?.to_string();
     let actual = Status::parse(&actual_str);
+
+    eprintln!(
+        "[check-freshness] job_id={job_id}, event={job_status_or_event}, expected_status={}, actual_status={actual_str}, match={}",
+        expected.as_str(),
+        actual == expected,
+    );
 
     if actual == expected {
         return None;
