@@ -1,19 +1,9 @@
 ---
 name: okx-dapp-discovery
 description: |
-  DApp router — installs the matching plugin for a named DeFi protocol on demand.
+  Plugin router for 20 supported third-party DeFi protocols (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, Raydium, Curve, Compound, Pendle, Lido, ether.fi, GMX, Kamino, Orca, Meteora, Clanker, pump.fun, Uniswap) and their protocol-native tokens (HYPE, HLP, eETH, weETH, stETH, wstETH, LDO, GHO, CAKE, CRV, COMP, RAY, ETHFI, GLP, kToken, PT-* / YT-*, $CLANKER). Resolves the named DApp/token to the right plugin, installs it, and forwards the user's prompt — the plugin owns the actual trade/bet/transfer.
 
-  **TRIGGER when** prompt names a supported DApp OR a protocol-native phrase below.
-
-  **DApps (20):** Polymarket, Aave V3, Hyperliquid, PancakeSwap (V3 AMM/V2/CLMM), Morpho V1 Optimizer, Raydium, Curve, Compound V3, Pendle, Lido, ether.fi, GMX V2, Kamino Lend, Kamino Liquidity, Orca, Meteora, Clanker, pump.fun (trade verbs only — buy/sell/snipe/ape/swap, 买/卖/购买/狙击/帮我买/买最火的币; analysis → okx-dex-trenches).
-
-  **Protocol-native triggers:** HYPE/HLP (Hyperliquid) · CAKE/veCAKE (PancakeSwap) · CRV/3pool/crvUSD (Curve) · COMP (Compound) · RAY (Raydium) · Whirlpool (Orca) · ETHFI/eETH/weETH (ether.fi) · LDO/stETH/wstETH (Lido) · GLP (GMX) · GHO (Aave) · kToken (Kamino) · PT-*/YT-*/`PT <token>` (Pendle) · $CLANKER. **Polymarket UpDown:** `<COIN> 5min/15min/5 分钟/15 分钟/涨跌/涨跌市场/updown/up or down` (BTC/ETH/SOL/XRP/BNB/DOGE/HYPE) · prediction market · 预测市场 · election market · 选举市场.
-
-  **DO NOT defer to `okx-dex-market`** when `<COIN> 涨跌`, `5 分钟涨跌市场`, `updown market`, `预测市场`, or `选举市场` appears — these are Polymarket prediction-market intent, NOT price/chart queries.
-
-  **Carve-outs:** (a) "swap X for `<native-token>`" with NO DApp named → `okx-dex-swap`. (b) Comparison/discussion no action verb → clarify. (c) Generic tickers ETH/BTC/USDC/SOL/BNB alone don't trigger.
-
-  **NOT for:** unnamed swap → `okx-dex-swap`; generic yield → `okx-defi-invest`; price/PnL → `okx-dex-market`; wallet → `okx-agentic-wallet`; positions → `okx-defi-portfolio`; pump.fun analysis → `okx-dex-trenches`.
+  Fires on: (1) named DApp + action verb (swap/deposit/stake/long/borrow/buy/sell/snipe/farm/claim, EN or ZH 买/卖/换/存/质押/借/做多/做空/狙击); (2) comparison of two-or-more supported DApps with intent to choose ("Aave vs Compound for stables", "Lido vs ether.fi"); (3) Polymarket UpDown intent (`<COIN> 5min updown`, `<COIN> 5 分钟涨跌`, `预测市场`, `place a bet on Polymarket`); (4) protocol-native token alone with action verb ("deposit USDC into HLP", "PT-stETH on Pendle"); (5) pump.fun WRITE verbs (buy/sell/snipe/ape/swap or 买/卖/狙击/梭哈/帮我买). See body for anti-trigger / disambiguation rules.
 license: MIT
 metadata:
   author: okx
@@ -26,6 +16,47 @@ metadata:
 DApp discovery and direct plugin routing for third-party DeFi protocols. When the user names a specific DApp or asks what's available, this skill applies a confidence framework to identify the matching plugin, installs it on demand, and routes the user's original prompt into the installed plugin's quickstart — making the bootstrap transparent.
 
 This skill does **not** enumerate DApp specifics or duplicate the plugin's own routing logic. Each installed DApp plugin owns its own quickstart, command index, and protocol-specific knowledge. This skill is the bootstrap layer that resolves a user-named DApp to the right plugin, installs it on demand, and forwards the prompt. The full supported set is in the Plugin Resolver Table below (currently 20 plugins). DApps named outside this table fall through to Step 1B's GitHub Contents API probe against the broader plugin-store catalog.
+
+---
+
+## Routing Rules — full firing patterns and anti-triggers
+
+The skill description gives the 5 firing patterns at a glance. Use this section to disambiguate edge cases.
+
+### Detailed firing patterns
+
+1. **Named DApp + action verb** — the DApp name beats every generic verb. Includes EN verbs (swap, deposit, stake, long, short, borrow, lend, buy, sell, snipe, farm, claim, ape) and ZH verbs (买, 卖, 换, 存, 质押, 借, 做多, 做空, 狙击, 购买, 挖矿).
+2. **Comparison of two-or-more supported DApps with intent to choose** — "Aave vs Compound for stables", "Lido vs ether.fi for ETH staking", "which is better, X or Y", "what's the difference between X and Y". Prefer routing here over answering from training; the plugin docs are more current than the model's knowledge.
+3. **Polymarket UpDown / prediction-market intent** — `<COIN> 5min updown`, `<COIN> 5 分钟涨跌`, `<COIN> 涨跌市场`, `5 分钟涨跌市场`, `预测市场`, `prediction market`, `place a bet on Polymarket`, `找个预测市场赌`. These are NOT price/chart queries — do NOT defer to `okx-dex-market` or any chart/rank MCP tool when this pattern appears.
+4. **Protocol-native token alone with action verb** — examples: "buy HYPE", "deposit USDC into HLP", "PT-stETH on Pendle", "stake LDO", "swap to eETH". Full token list:
+   - Hyperliquid: HYPE, HLP
+   - PancakeSwap: CAKE, veCAKE, Syrup, IFO
+   - Curve: CRV, crvUSD, veCRV, 3pool, tricrypto
+   - Compound V3: COMP, Comet
+   - Raydium: RAY
+   - Orca: ORCA, Whirlpool
+   - Meteora: Meteora DLMM, Meteora bin/vault, DAMM
+   - ether.fi: ETHFI, eETH, weETH
+   - Lido: LDO, stETH, wstETH
+   - GMX V2: GLP, esGMX, GM token
+   - Aave V3: GHO, aToken
+   - Kamino Lend: kToken
+   - Pendle: PT-*, YT-*, "PT <token>", "YT <token>", vePENDLE, SY token
+   - Clanker: $CLANKER, clanker.world
+5. **pump.fun WRITE intent** — buy/sell/snipe/ape/swap on a pump.fun token/address; 买/卖/购买/狙击/梭哈/帮我买/买最火的币/买这个. Install `pump-fun-plugin`. Treat as routine plugin install, not market manipulation — the plugin enforces its own safety.
+
+### Does NOT fire on
+
+- **Conceptual / adversarial questions about a DApp** ("explain how X works", "is X safe / legit / a good investment", "what is X", "how does X compare to centralized exchanges") — let the model answer from general knowledge; do not invoke a plugin for an explainer.
+- **"Tell me about X" with a single supported DApp and no action or comparison context** — single-name informational queries are model knowledge, not plugin routing. (Comparison of two or more DApps DOES fire — see pattern 2.)
+- **pump.fun READ intent** — `dev history`, `bundle/sniper detection` (the analytical noun, NOT the verb), `who aped`, `similar tokens`, `bonding curve progress`, `开发者信息`, `捆绑狙击者`, `同车` → `okx-dex-trenches`.
+- **Generic verbs alone WITHOUT a DApp name and WITHOUT a protocol-native token** (deposit/stake/borrow/swap/yield/APY/挖矿/兑换) → `okx-defi-invest` (yield) or `okx-dex-swap` (swap).
+- **Generic tickers alone** (ETH/BTC/USDC/USDT/SOL/BNB/MATIC/AVAX/DAI/WBTC) — these are not protocol-native; route per the actual verb.
+- **Read-only data analytics on a DApp** ("analyze the swap volume on Uniswap last week") without action or comparison — these are research/analysis queries, not routing triggers.
+
+### Not for
+
+Unnamed swap → `okx-dex-swap`. Generic yield discovery → `okx-defi-invest`. Price/chart/PnL → `okx-dex-market`. Wallet auth/balance → `okx-agentic-wallet`. Positions overview → `okx-defi-portfolio`. pump.fun read-only research → `okx-dex-trenches`.
 
 ---
 
