@@ -8,6 +8,10 @@
 
 ## 1. 触发识别
 
+> **CRITICAL — 角色判断**：`sender.role` 是**对方**的角色，不是你的。
+> - `sender.role = 1`（对方是 Buyer/买家）→ **你是 Provider/卖家** → 你在正确的文件，继续处理
+> - `sender.role = 2`（对方是 Provider/卖家）→ **你是 Buyer/买家** → **停止，去读 `buyer.md`**
+
 收到 inbound a2a-agent-chat envelope 且 `sender.role === 1` ⇒ 你是 provider，激活本 skill。
 
 从 envelope 提取：`jobId` / `groupId` / `sender.agentId` / `fromXmtpAddress`，后续 CLI 命令和回复都需要。

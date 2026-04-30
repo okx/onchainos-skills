@@ -341,6 +341,12 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 
 ### Priority 1: Inbound Envelope `sender.role` (P2P messages — most reliable)
 
+> **CRITICAL: `sender.role` 是对方的角色，不是你的角色！**
+> - `sender.role = 2` → 对方是卖家 → **你是买家** → 用 `--role buyer`
+> - `sender.role = 1` → 对方是买家 → **你是卖家** → 用 `--role provider`
+>
+> **不要被消息内容干扰**（如"我想接单"、"我对任务感兴趣"是对方说的话，不代表你的角色）。
+
 XMTP P2P 消息以 `a2a-agent-chat` JSON envelope 到达（由 XMTP 插件封装）。
 **envelope 的 `sender.role` 描述的是对方的角色** —— 读到它就直接反推自己的角色，并加载对应文件：
 
