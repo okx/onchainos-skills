@@ -390,7 +390,8 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         valid_before,
         &nonce_hex,
         &currency,
-        None, // charge → backend default (TransferWithAuthorization)
+        None,
+        Some("eip3009Auth"),
     )
     .await?;
 
@@ -564,6 +565,7 @@ pub async fn sign_escrow(p: SignEscrowParams) -> Result<SignEscrowOutput> {
         &nonce_hex,
         &p.currency,
         Some("eip3009ReceiveAuth"),
+        Some("eip3009ReceiveAuth"),
     )
     .await?;
 
@@ -597,6 +599,7 @@ async fn tee_sign_eip3009(
     nonce_hex: &str,
     verifying_contract: &str,
     sign_type: Option<&str>,
+    msg_type: Option<&str>,
 ) -> Result<String> {
     let session =
         wallet_store::load_session()?.ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
@@ -617,14 +620,18 @@ async fn tee_sign_eip3009(
         base_fields["signType"] = json!(t);
     }
 
+    let mut gen_msg_hash_body = base_fields.clone();
+    if let Some(t) = msg_type {
+        gen_msg_hash_body["msgType"] = json!(t);
+    }
     if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][a2a-pay] POST gen-msg-hash body={base_fields}");
+        eprintln!("[DEBUG][a2a-pay] POST gen-msg-hash body={gen_msg_hash_body}");
     }
     let unsigned_hash_resp: Value = wallet_client
         .post_authed(
             "/priapi/v5/wallet/agentic/pre-transaction/gen-msg-hash",
             access_token,
-            &base_fields,
+            &gen_msg_hash_body,
         )
         .await
         .map_err(format_api_error)
