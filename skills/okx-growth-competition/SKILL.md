@@ -35,7 +35,21 @@ CLI reference: `references/cli-reference.md`
 
 ## Output Rules
 
-**Never expose internal IDs to users.** `activityId`, `chainIndex`, `accountId`, and any numeric/hash IDs in API responses are internal — use them only as parameters for subsequent tool calls. Always use human-readable fields (`name`, `shortName`, `chainName`) in user-facing output.
+<NEVER>
+**Never expose internal IDs to users — under ANY circumstance, in ANY format.** This applies to `activityId`, `chainIndex`, `accountId`, and any numeric/hash IDs in API responses. They are for internal tool-call parameters only. Identify activities to the user EXCLUSIVELY by `activityName` (or `shortName` if name is unavailable).
+</NEVER>
+
+**Forbidden patterns** (do NOT produce output like this):
+- ❌ `Agentic Trading Contest (#107)`
+- ❌ `#106 (agenticwallettest1)`
+- ❌ A column titled "ID" / "活动ID" / "#"
+- ❌ Any reference like "活动 #107" / "competition 107" / "id 107"
+
+**Correct pattern**:
+- ✅ `Agentic Trading Contest`
+- ✅ When disambiguating two activities with the same name, append `chainName` (e.g. `Agentic Trading Contest (Solana)`), never the ID.
+
+When the user asks to act on a specific activity (e.g. "claim Agentic Trading Contest"), match by `activityName` from the previous tool result and pass its `activityId` internally.
 
 ## Execution Flow
 

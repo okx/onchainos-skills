@@ -267,13 +267,13 @@ const PROJECT_HEADER: &str = "4d156bf0c61130f2692d097ecb68dbe4";
 
 /// POST /priapi/v5/wallet/agentic/competition/join — requires wallet login
 pub async fn join(
-    client: &mut ApiClient,
+    _client: &mut ApiClient,
     activity_id: &str,
     evm_wallet: &str,
     sol_wallet: &str,
     chain_index: &str,
 ) -> Result<Value> {
-    let account_id = ensure_logged_in().await?;
+    let (account_id, mut auth_client) = ensure_logged_in_client().await?;
     let body = json!({
         "activityId": activity_id,
         "evmAddress": evm_wallet,
@@ -281,7 +281,7 @@ pub async fn join(
         "chainIndex": chain_index,
         "accountId": account_id,
     });
-    client
+    auth_client
         .post_with_headers(
             "/priapi/v5/wallet/agentic/competition/join",
             &body,
@@ -300,19 +300,19 @@ pub async fn join(
 
 /// POST /priapi/v5/wallet/agentic/competition/claim — requires wallet login
 pub async fn claim(
-    client: &mut ApiClient,
+    _client: &mut ApiClient,
     activity_id: &str,
     evm_wallet: &str,
     sol_wallet: &str,
 ) -> Result<Value> {
-    let account_id = ensure_logged_in().await?;
+    let (account_id, mut auth_client) = ensure_logged_in_client().await?;
     let body = json!({
         "activityId": activity_id,
         "evmAddress": evm_wallet,
         "solAddress": sol_wallet,
         "accountId": account_id,
     });
-    client
+    auth_client
         .post_with_headers(
             "/priapi/v5/wallet/agentic/competition/claim",
             &body,
@@ -323,12 +323,18 @@ pub async fn claim(
 
 // ── helpers ───────────────────────────────────────────────────────────
 
-/// Pre-flight login check. Refreshes access token if expired, then returns the selected accountId.
-async fn ensure_logged_in() -> Result<String> {
+/// Pre-flight login check for authenticated competition endpoints.
+///
+/// Long-lived MCP server clients are constructed once via `ApiClient::new()`
+/// (sync) and cache the JWT they had at startup — that token may have expired
+/// by the time `join` / `claim` runs. To avoid sharing a stale token, we
+/// always build a fresh `ApiClient::new_async()` here: it has the full JWT
+/// lifecycle (expiry check + refresh + AK fallback) baked in.
+async fn ensure_logged_in_client() -> Result<(String, ApiClient)> {
     let account_id = match wallet_store::load_wallets() {
         Ok(Some(w)) if !w.selected_account_id.is_empty() => w.selected_account_id.clone(),
         _ => bail!("not logged in — please run: onchainos wallet login"),
     };
-    crate::commands::agentic_wallet::auth::ensure_tokens_refreshed().await?;
-    Ok(account_id)
+    let auth_client = ApiClient::new_async(None).await?;
+    Ok((account_id, auth_client))
 }
