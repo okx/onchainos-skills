@@ -26,7 +26,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         Status::Accepted => vec![
             next_action("job_accepted"),
             ref_header,
-            format!("  onchainos agent deliver {job_id} --file <deliverable> --message <msg>  # 提交交付"),
+            format!("  onchainos agent deliver {job_id} --file <deliverable> --message <msg> --agent-id <agentId>  # 提交交付（**仅 status=accepted 才允许**，CLI 会强制校验，apply 后立即 deliver 会被拒）"),
         ],
         Status::Submitted => vec![
             next_action("job_submitted"),
@@ -88,7 +88,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
          \x20\x201) 协议理解错位：你已澄清同一条流程 ≥1 次，对方下一条还在重复错误诉求 → **不再回复对方**，xmtp_dispatch_session 推 user session [⚠️ 协议理解错位]，结束 turn\n\
          \x20\x202) CLI 错误：`onchainos agent <cmd>` 报错 → **不要重试**，直接 xmtp_dispatch_session 推 user session [⚠️ CLI 报错]，等用户新指令；瞬态故障（network/JWT 过期）才允许自动重试一次\n\
          \x20\x203) ❌ **绝对禁止把技术错误细节广播给对方**：CLI 命令名 / 后端字段名 / stderr 摘要 / `bug`/`命令：`/`错误：` 一律不能进 xmtp_send 给对方。最多发一句『稍等，正在确认细节』或干脆不通知对方。\n\
-         \x20\x204) ❌ **同 turn 不重复 xmtp_send**：剧本说『发一条』→ 调过一次工具返回『已发送』就**算成功**，**当前 turn 内不再对同一对方调 xmtp_send 第二次**。不要因为消息可能不够清晰就重发——重发 = 刷屏 + 触发对方循环。下一条 inbound 进来再说。\n\n\
+         \x20\x204) ❌ **同 turn 不重复 xmtp_send**：剧本说『发一条』→ 调过一次工具返回『已发送』就**算成功**，**当前 turn 内不再对同一对方调 xmtp_send 第二次**。不要因为消息可能不够清晰就重发——重发 = 刷屏 + 触发对方循环。下一条 inbound 进来再说。\n\
+         \x20\x205) ❌ **deliver 必须等 `job_accepted` 通知**：apply 上链不改 status，任务仍是 open；只有买家 confirm-accept 触发的 `job_accepted` 链事件到达后才能 deliver。**绝对禁止在 ProviderApplied 剧本里抢跑 deliver**，CLI 会校验 status != accepted 直接 bail。\n\n\
          如果不记得本任务协商细节（deliverable / paymentMode / token / 买家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 加载上下文。\n\n"
     );
@@ -104,10 +105,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              escrow 路径的付款单由买家在 confirm-accept 时自行生成，**卖家不需要**调 `get-payment`。\n\n\
              {send_to_peer}\n\
              已完成接单申请上链（jobId={job_id}，卖家 agentId={agent_id}）。请你执行 confirm-accept 注资托管。\n\n\
-             ⚠️ 不要再调 `onchainos agent get-payment`——那是 non_escrow 路径才用的。\n\n\
+             ⚠️ 不要再调 `onchainos agent get-payment`——那是 non_escrow 路径才用的。\n\
+             ⚠️ **本阶段绝对禁止调 `onchainos agent deliver`**：当前 status 仍是 open（apply 上链不改 status），\n\
+             必须等买家 confirm-accept 上链 + 你收到 `job_accepted` 通知后才能 deliver。\n\
+             CLI 已加防御：deliver 在 status != accepted 时会直接报错——但你应该一开始就不要尝试。\n\n\
              跑完 xmtp_send → **直接结束本轮 turn**，等买家 confirm-accept 触发的 `job_accepted` 通知再进入 Scene 4。\n\n\
              【后续事件】\n\
-             - job_accepted → 买家已 confirm-accept，资金托管完成，开始执行任务\n"
+             - job_accepted → 买家已 confirm-accept，资金托管完成，**那时才能** deliver\n"
         ),
 
         // ─── Scene 4: 买家已确认接单，执行任务并交付 ─────────────────
@@ -130,8 +134,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              {header_template}\n\
              已收到接单确认（job_accepted），开始执行任务。\n\n\
              **Step 3 — 执行任务，完成后调用 CLI 提交交付物：**\n\
+             ✅ 现在 status 已经是 accepted、买家资金已托管 —— deliver 前置条件**已满足**。\n\
              ```bash\n\
-             onchainos agent deliver {job_id} --file \"\" --message \"任务已完成，请验收\"\n\
+             onchainos agent deliver {job_id} --file \"\" --message \"任务已完成，请验收\" --agent-id {agent_id}\n\
              ```\n\
              CLI 内部：POST submit API → 签名 uopHash → 广播上链。\n\n\
              ⚠️ **跑完 deliver 直接结束 turn，禁止 `xmtp_dispatch_session` 推 STATUS_NOTIFY 到 user session**——『已提交交付物 / 等待 job_submitted』是过场状态。等 `job_submitted` 通知到达再回复买家『请验收』。\n\n\
@@ -432,7 +437,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【你的下一步动作】\n\n\
              如果交付物已准备好，立即调：\n\
              ```bash\n\
-             onchainos agent deliver {job_id} --message \"<交付内容>\"\n\
+             onchainos agent deliver {job_id} --message \"<交付内容>\" --agent-id {agent_id}\n\
              ```\n\
              否则在剩余时间内尽快完成交付，避免被 buyer 调 claimAutoRefund 退款。\n"
         ),

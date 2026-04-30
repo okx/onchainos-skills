@@ -53,6 +53,10 @@ pub enum ProviderCommand {
         file: String,
         #[arg(long, default_value = "任务已完成，请验收")]
         message: String,
+        /// 卖家 agentId（必填）。beta 后端拒空 agenticId header → 3001 auth fail；
+        /// 任务详情里的 providerAgentId 字段可能为 null，不能依赖反查。
+        #[arg(long = "agent-id")]
+        agent_id: String,
     },
     /// Provider agrees to refund (agreeRefund API → sign → broadcast)
     AgreeRefund {
@@ -110,8 +114,8 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
     match cmd {
         ProviderCommand::Apply { job_id, token_amount, token_symbol, agent_id } =>
             apply::handle_apply(&mut client, &job_id, &token_amount, &token_symbol, &agent_id).await,
-        ProviderCommand::Deliver { job_id, file, message } =>
-            deliver::handle_deliver(&mut client, &job_id, &file, &message).await,
+        ProviderCommand::Deliver { job_id, file, message, agent_id } =>
+            deliver::handle_deliver(&mut client, &job_id, &file, &message, &agent_id).await,
         ProviderCommand::AgreeRefund { job_id } =>
             agreerefund::handle_agree_refund(&mut client, &job_id).await,
         ProviderCommand::ClaimAutoComplete { job_id } =>

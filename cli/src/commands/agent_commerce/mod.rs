@@ -181,6 +181,8 @@ pub enum AgentCommand {
         job_id: String,
         #[arg(long, default_value = "")] file: String,
         #[arg(long, default_value = "任务已完成，请验收")] message: String,
+        /// 卖家 agentId（必填）。beta 后端拒空 agenticId header → 3001 auth fail。
+        #[arg(long = "agent-id")] agent_id: String,
     },
 
     /// Provider agrees to refund (agreeRefund API → sign → broadcast)
@@ -418,9 +420,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 ctx,
             ).await,
 
-        AgentCommand::Deliver { job_id, file, message } =>
+        AgentCommand::Deliver { job_id, file, message, agent_id } =>
             task::provider::run_provider(
-                task::provider::ProviderCommand::Deliver { job_id, file, message }, ctx,
+                task::provider::ProviderCommand::Deliver { job_id, file, message, agent_id }, ctx,
             ).await,
 
         AgentCommand::AgreeRefund { job_id } =>
