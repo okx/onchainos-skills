@@ -195,11 +195,16 @@ pub async fn create_payment_charge(params: ChargeParams) -> Result<CreatePayment
 
 // ── Escrow authorization (used by buyer pay for `escrow` intent) ────────
 
-// 15-field tuple per Appendix C. ABI-encoded then keccak256 → nonce.
-// Order is load-bearing: any reorder breaks signature verification.
+// 15-field tuple matching the on-chain Escrow nonce derivation:
+//   keccak256(abi.encode(from, provider, receiver, arbitrator, token, amount,
+//     submitWindow, disputeWindow, arbitrationWindow, terminationWindow,
+//     hook, keccak256(hookData), salt, chainId, escrowAddress))
+// Order and types are load-bearing; `hookData` is pre-hashed so the tuple
+// is all fixed-size and `abi_encode_params` matches Solidity `abi.encode`.
 sol! {
     #[derive(Debug)]
     struct EscrowAuthFields {
+        address from;
         address provider;
         address receiver;
         address arbitrator;
@@ -210,11 +215,10 @@ sol! {
         uint64 arbitrationWindow;
         uint64 terminationWindow;
         address hook;
-        bytes hookData;
+        bytes32 hookDataHash;
         bytes32 salt;
-        address from;
-        uint256 validAfter;
-        uint256 validBefore;
+        uint256 chainId;
+        address escrowAddress;
     }
 }
 
@@ -534,9 +538,14 @@ pub async fn sign_escrow(p: SignEscrowParams) -> Result<SignEscrowOutput> {
         .context("hook_data is not valid hex")?;
     let salt = parse_bytes32_hex(&p.salt, "salt")?;
 
+    let escrow_addr: Address = p
+        .escrow_contract
+        .parse()
+        .context("escrow_contract parse")?;
     let fields = EscrowAuthFields {
-        provider: p.provider.parse().context("provider parse")?,
-        receiver: p.receiver.parse().context("receiver parse")?,
+        from: from_addr,
+        provider: p.hook.parse().context("provider parse")?,
+        receiver: p.hook.parse().context("receiver parse")?,
         arbitrator: p.arbitrator.parse().context("arbitrator parse")?,
         currency: p.currency.parse().context("currency parse")?,
         amount: U256::from(amount_u128),
@@ -545,11 +554,10 @@ pub async fn sign_escrow(p: SignEscrowParams) -> Result<SignEscrowOutput> {
         arbitrationWindow: p.arbitration_window,
         terminationWindow: p.termination_window,
         hook: p.hook.parse().context("hook parse")?,
-        hookData: hook_data_bytes.into(),
+        hookDataHash: keccak256(&hook_data_bytes),
         salt,
-        from: from_addr,
-        validAfter: U256::from(valid_after),
-        validBefore: U256::from(valid_before),
+        chainId: U256::from(p.chain_id),
+        escrowAddress: escrow_addr,
     };
     let nonce_hex = format!("0x{}", hex::encode(compute_escrow_nonce(&fields)));
 
@@ -857,6 +865,9 @@ mod tests {
     #[test]
     fn escrow_nonce_is_deterministic_and_field_sensitive() {
         let f = EscrowAuthFields {
+            from: "0x6666666666666666666666666666666666666666"
+                .parse()
+                .unwrap(),
             provider: "0x1111111111111111111111111111111111111111"
                 .parse()
                 .unwrap(),
@@ -877,17 +888,16 @@ mod tests {
             hook: "0x5555555555555555555555555555555555555555"
                 .parse()
                 .unwrap(),
-            hookData: vec![0xde, 0xad, 0xbe, 0xef].into(),
+            hookDataHash: keccak256([0xde, 0xad, 0xbe, 0xef]),
             salt: parse_bytes32_hex(
                 "0x0000000000000000000000000000000000000000000000000000000000000007",
                 "salt",
             )
             .unwrap(),
-            from: "0x6666666666666666666666666666666666666666"
+            chainId: U256::from(196u64),
+            escrowAddress: "0x7777777777777777777777777777777777777777"
                 .parse()
                 .unwrap(),
-            validAfter: U256::ZERO,
-            validBefore: U256::from(2_000_000_000u64),
         };
         let n1 = compute_escrow_nonce(&f);
         let n2 = compute_escrow_nonce(&f);
