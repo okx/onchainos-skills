@@ -58,11 +58,24 @@ For script requests, append `--format json` to all CLI commands.
 | okx-agent-identity | ERC-8004 on-chain Agent identity: register / update / search / rate / service-list on XLayer | User wants to register/create/update/deactivate/activate/search agents, submit or view feedback, or list agent services |
 | okx-agent-task | Agent task marketplace: publish, accept, deliver, dispute, AI-evaluate jobs | User wants to publish a task / accept a job / deliver work / confirm or reject completion / open a dispute |
 
+## Inbound Message Routing (highest priority — before user intent)
+
+When the inbound message is a structured envelope (not free-form user text), match by shape FIRST:
+
+| Envelope shape | Action |
+|---|---|
+| `msgType: "a2a-agent-chat"` + non-empty `jobId` | **Must** load `skills/okx-agent-task/SKILL.md` → check `sender.role` → load `buyer.md` (if role=2) or `provider.md` (if role=1). This is a task lifecycle message, not a chat. |
+| `{agentId, message: {source: "system", event, jobId, ...}}` | **Must** load `skills/okx-agent-task/SKILL.md` → call `next-action` with the event. This is a chain event notification. |
+| Contains `"Please send a request to this endpoint."` | Route to `okx-x402-payment` skill. |
+
+These envelope-based routes take absolute priority over the user-intent skill table below. Do NOT handle these envelopes with only XMTP tools — the task protocol (buyer.md / provider.md / evaluator.md) defines the required behavior.
+
 ## IMPORTANT: Always Load Skill Before Executing Commands
 
 **Before running ANY `onchainos` CLI command, you MUST first read the corresponding skill's SKILL.md to get the exact command syntax.** Do NOT guess subcommand names — each skill defines its own Command Index with the exact subcommands available. Guessing leads to `unrecognized subcommand` errors.
 
 Routing:
+- Inbound `a2a-agent-chat` with `jobId` → read `skills/okx-agent-task/SKILL.md` first (see Inbound Message Routing above)
 - User mentions bridge/cross-chain/supported chains → read `skills/okx-dex-bridge/SKILL.md` first
 - User mentions swap/buy/sell/trade → read `skills/okx-dex-swap/SKILL.md` first
 - User mentions wallet/balance/transfer/login → read `skills/okx-agentic-wallet/SKILL.md` first
