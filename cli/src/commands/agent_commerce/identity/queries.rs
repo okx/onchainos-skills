@@ -15,8 +15,7 @@ use super::args::{FeedbackListArgs, GetArgs, SearchArgs, ServiceListArgs};
 use super::models::XLAYER_CHAIN_INDEX;
 use super::utils::{
     normalize_singleton_object, parse_u32_arg, push_multi_query, push_optional_query,
-    reconstruct_get_url_for_log, redact_token_for_debug, require_non_empty, resolve_agent_id,
-    wallet_client,
+    reconstruct_get_url_for_log, redact_token_for_debug, require_non_empty, wallet_client,
 };
 
 // ─── Public command entry points ──────────────────────────────────────────
@@ -167,7 +166,7 @@ async fn search_impl(args: &SearchArgs, ctx: &Context) -> Result<Value> {
 async fn service_list_impl(args: &ServiceListArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
-    let agent_id = resolve_agent_id(&args.agent_id, &args.agent_id_flag)?;
+    let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
     let query = [("agentId".to_string(), agent_id.to_string())];
     let query_refs: Vec<(&str, &str)> = query
         .iter()
@@ -211,7 +210,7 @@ async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Va
     // agentId 必填；page / pageSize / sortBy 按文档都是选填，用户没传就不塞，让后端用自身默认
     let mut query = vec![(
         "agentId".to_string(),
-        resolve_agent_id(&args.agent_id, &args.agent_id_flag)?.to_string(),
+        require_non_empty(args.agent_id.as_deref(), "--agent-id")?.to_string(),
     )];
     if let Some(page_raw) = args.page.as_deref() {
         let page = parse_u32_arg(Some(page_raw), "--page", 1, Some(1), None, false)?;

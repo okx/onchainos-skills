@@ -11,22 +11,24 @@ If you encounter a string that isn't in either table, surface the raw message in
 
 ## 1. CLI-emitted `bail!` (verified)
 
+> **Note on ordering:** this table is "if you see error X, do action Y"; it is **NOT** a guarantee that X is the first error a misuse will trigger. The CLI runs `auth refresh → network setup → parameter validation` in that order, so a user who is both unauth'd **and** missing params will see `session expired` first, then `missing required parameter: <flag>` only after they re-login. The skill should normally catch missing params upfront (`SKILL.md §Step 2 — Collect Parameters`) before invoking the CLI, so end users rarely see the CLI-emitted param errors at all; this table is mostly for skill debugging and direct-CLI scripting.
+
 | CLI error (exact) | Source | User-facing translation | Skill action |
 |---|---|---|---|
 | `session expired, please login again: onchainos wallet login` | `signing.rs:66/68/74/139/141` (shared: `agentic_wallet/auth.rs:44/76/285`) | "登录态过期了" | Hand off to `okx-agentic-wallet` → `wallet login`, then retry the original command. |
 | `no XLayer address found in current account` | `signing.rs:33/42` | "当前账号没有 XLayer 地址" | Hand off to `okx-agentic-wallet` → `wallet add` / `wallet switch`. |
-| `missing required parameter: agentId` | `utils.rs:184` | "这个命令必须带 agent id" | Ask the user which agent; run `agent get` if needed. |
-| `missing required parameter: <flag>` | `utils.rs:190` | "参数 `<flag>` 不能留空" | Re-ask that specific field. |
-| `missing required field in --service: name` | `utils.rs:136` | "服务名不能留空" | Return to `role-provider.md` Phase 2 per-service Q1 (`name`). |
-| `missing required field in --service: servicedescription` | `utils.rs:139` | "服务描述不能留空" | Return to `role-provider.md` Phase 2 per-service Q2 (`servicedescription`). |
-| `missing required field in --service for A2MCP: fee` | `utils.rs:148` | "A2MCP 服务必须给 fee（USDT 整数）" | Return to `role-provider.md` Phase 2 per-service Q4 (A2MCP branch). |
-| `missing required field in --service for A2MCP: endpoint` | `utils.rs:151` | "A2MCP 服务必须给 endpoint（HTTPS URL）" | Return to `role-provider.md` Phase 2 per-service Q5 (A2MCP branch). |
-| `invalid servicetype in --service: <value>` | `utils.rs:154` | "服务类型必须是 A2MCP 或 A2A" | Return to `role-provider.md` Phase 2 per-service Q3 (numbered prompt). |
-| `invalid value for --role: <value>` | `utils.rs:165` | "role 只能是 requester / provider / evaluator 之一" | Return to role selection (SKILL.md §Core Flow). |
-| `invalid value for <flag>: expected integer` | `utils.rs:219` | "`<flag>` 要填整数" | Re-ask that field. |
-| `invalid value for <flag>: must be >= <min>` | `utils.rs:222` | "`<flag>` 最小值是 `<min>`" | Re-ask that field. |
-| `invalid value for <flag>: must be <= <max>` | `utils.rs:230` | "`<flag>` 最大值是 `<max>`" | Re-ask that field. |
-| `provider agents require at least one service; provide --service` | `utils.rs:200` | "provider 必须有至少一个 service" | Return to role-playbook `provider` service Q&A loop. |
+| `missing required parameter: <flag>` | `utils.rs:238` | "参数 `<flag>` 不能留空" | Re-ask that specific field. For `--agent-id`, ask the user which agent; run `agent get` if needed. For `--file`, ask for the file path. |
+| `error: unexpected argument '<value>' found` (positional rejected by clap) | clap default | "这个命令需要显式带参数名，不接受裸值" | The user passed something like `agent update 42`; tell them to use `agent update --agent-id 42`. Same for `activate` / `deactivate` / `service-list` / `feedback-list` (`--agent-id`) and `upload` (`--file`). |
+| `missing required field in --service: name` | `utils.rs:200` | "服务名不能留空" | Return to `role-provider.md` Phase 2 per-service Q1 (`name`). |
+| `missing required field in --service: servicedescription` | `utils.rs:203` | "服务描述不能留空" | Return to `role-provider.md` Phase 2 per-service Q2 (`servicedescription`). |
+| `missing required field in --service for A2MCP: fee` | `utils.rs:212` | "A2MCP 服务必须给 fee（USDT 整数）" | Return to `role-provider.md` Phase 2 per-service Q4 (A2MCP branch). |
+| `missing required field in --service for A2MCP: endpoint` | `utils.rs:215` | "A2MCP 服务必须给 endpoint（HTTPS URL）" | Return to `role-provider.md` Phase 2 per-service Q5 (A2MCP branch). |
+| `invalid servicetype in --service: <value>` | `utils.rs:218` | "服务类型必须是 A2MCP 或 A2A" | Return to `role-provider.md` Phase 2 per-service Q3 (numbered prompt). |
+| `invalid value for --role: <value>` | `utils.rs:229` | "role 只能是 requester / provider / evaluator 之一" | Return to role selection (SKILL.md §Core Flow). |
+| `invalid value for <flag>: expected integer` | `utils.rs:267` | "`<flag>` 要填整数" | Re-ask that field. |
+| `invalid value for <flag>: must be >= <min>` | `utils.rs:270` | "`<flag>` 最小值是 `<min>`" | Re-ask that field. |
+| `invalid value for <flag>: must be <= <max>` | `utils.rs:278` | "`<flag>` 最大值是 `<max>`" | Re-ask that field. |
+| `provider agents require at least one service; provide --service` | `utils.rs:248` | "provider 必须有至少一个 service" | Return to role-playbook `provider` service Q&A loop. |
 | `invalid value for --sort-by: <value>` | `queries.rs:234` | "排序值只能是 `time_desc` 或 `score_desc`" | Re-map via `cli-reference.md` §10 natural-language table. |
 | `failed to read file: <path>` | `mutations.rs:286` (`fs::read` context) | "读不到这个文件" | Ask the user to recheck the path; in terminal mode switch to AI-gen / skip (see `avatar-upload.md`). |
 | `upload response missing url` | `mutations.rs:334/337` | "上传成功但后端没返回 URL" | Retry once; if persists, surface and ask. |
