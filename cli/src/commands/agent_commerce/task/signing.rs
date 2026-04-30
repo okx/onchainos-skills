@@ -295,6 +295,7 @@ pub async fn sign_uop_and_broadcast(
 
 /// sign_uop_and_broadcast 的变体，支持在 bizContext 中附加 paymentVerify。
 /// 仅 escrow accept 场景需要。
+#[allow(clippy::too_many_arguments)]
 pub async fn sign_uop_and_broadcast_with_payment(
     client: &mut TaskApiClient,
     uop_data: &Value,
@@ -364,10 +365,23 @@ pub fn sign_digest_with_session_key(digest: &str) -> Result<String> {
     crate::crypto::ed25519_sign_hex(digest, &signing_seed_b64)
 }
 
+/// 对 EIP-712 typedData 进行签名，返回最终的 ECDSA 签名 hex。
+/// 委托给 `agentic_wallet::sign::eip712_sign_raw`（gen-msg-hash → ed25519 → sign-msg）。
+pub async fn sign_typed_data(typed_data: &Value, from_address: &str) -> Result<String> {
+    eprintln!("[debug] sign_typed_data 入参: from={from_address}, typedData primaryType={}", typed_data["primaryType"]);
+    let sig = crate::commands::agentic_wallet::sign::eip712_sign_raw(
+        typed_data,
+        XLAYER_CHAIN_INDEX,
+        from_address,
+    ).await?;
+    eprintln!("[debug] sign_typed_data 返回签名: {sig}");
+    Ok(sig)
+}
+
 /// Dual-sign flow for accept/complete/refuse.
 ///
-/// 1. POST `pre_endpoint_url` with `pre_body` + identity headers → get digest
-/// 2. Sign digest with session key → signature
+/// 1. POST `pre_endpoint_url` with `pre_body` + identity headers → get typedData
+/// 2. Sign typedData via wallet API (gen-msg-hash → ed25519 → sign-msg) → ECDSA signature
 /// 3. POST `main_endpoint_url` with body built by `main_body_builder(signature)` + identity headers → uopData
 /// 4. Sign uopHash + broadcast → tx_hash
 #[allow(clippy::too_many_arguments)]
@@ -383,24 +397,17 @@ pub async fn task_dual_sign_and_broadcast(
     job_id: &str,
     biz_context: BizContext,
 ) -> Result<BroadcastResult> {
-    // Step 1: POST pre-endpoint with identity headers → digest
+    // Step 1: POST pre-endpoint with identity headers → typedData
     let pre_resp = client.post_with_identity(pre_endpoint_url, pre_body, agent_id).await
         .map_err(|e| anyhow::anyhow!("pre-sign 请求失败: {e}"))?;
 
-    let digest = pre_resp["digest"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("pre-sign 未返回 digest 字段"))?;
+    let typed_data = &pre_resp["typedData"];
+    if typed_data.is_null() {
+        bail!("pre-sign 未返回 typedData 字段");
+    }
 
-    // Step 2: Sign digest with session key
-    let session = crate::wallet_store::load_session()?
-        .ok_or_else(|| anyhow::anyhow!("未登录，请先执行 onchainos wallet auth"))?;
-    let session_key = crate::keyring_store::get("session_key")
-        .map_err(|_| anyhow::anyhow!("未登录，请先执行 onchainos wallet auth"))?;
-
-    let signing_seed =
-        crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &session_key)?;
-    let signing_seed_b64 = BASE64_STANDARD.encode(signing_seed);
-    let signature = crate::crypto::ed25519_sign_hex(digest, &signing_seed_b64)?;
+    // Step 2: EIP-712 签名 typedData
+    let signature = sign_typed_data(typed_data, address).await?;
 
     // Step 3: POST main endpoint with signature → uopData
     let main_body = main_body_builder(&signature);

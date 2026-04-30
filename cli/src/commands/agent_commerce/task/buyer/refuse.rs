@@ -21,7 +21,7 @@ pub async fn handle_reject(
     // TODO: deadline 策略待确认，暂时使用当前时间 + 1 小时
     let deadline = chrono::Utc::now().timestamp() + 3600;
 
-    // Step 1: pre-refuse → digest + nonce (712 标准，不需要 sessionCert)
+    // Step 1: pre-refuse → typedData + nonce (712 标准，不需要 sessionCert)
     let pre_body = serde_json::json!({
         "orderId": job_id,
         "deadline": deadline,
@@ -31,18 +31,19 @@ pub async fn handle_reject(
         &pre_body,
         &agent_id,
     ).await?;
-    let digest = pre_resp["digest"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("pre-refuse 未返回 digest"))?;
+    let typed_data = &pre_resp["typedData"];
+    if typed_data.is_null() {
+        anyhow::bail!("pre-refuse 未返回 typedData");
+    }
     // nonce 由后端生成，refuse 请求时需要回传
     let nonce = pre_resp["nonce"]
         .as_str()
         .unwrap_or("");
 
-    // Step 2: session key 签名 digest
-    let signature = signing::sign_digest_with_session_key(digest)?;
+    // Step 2: EIP-712 签名 typedData（gen-msg-hash → ed25519 → sign-msg）
+    let signature = signing::sign_typed_data(typed_data, &address).await?;
 
-    // Step 3: refuse (signatureData + reason + sessionCert)
+    // Step 3: refuse (signatureData + reason + sessionCert，sessionCert 由 post_with_identity 自动注入)
     let main_body = serde_json::json!({
         "signatureData": {
             "signature": signature,

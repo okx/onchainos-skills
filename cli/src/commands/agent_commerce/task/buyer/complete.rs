@@ -27,7 +27,7 @@ pub async fn handle_complete(client: &mut TaskApiClient, job_id: &str) -> Result
         // TODO: deadline 策略待确认，暂时使用当前时间 + 1 小时
         let deadline = chrono::Utc::now().timestamp() + 3600;
 
-        // Step 1: pre-complete → digest (712 标准，不需要 sessionCert)
+        // Step 1: pre-complete → typedData (712 标准，不需要 sessionCert)
         let pre_body = serde_json::json!({
             "orderId": job_id,
             "deadline": deadline,
@@ -37,18 +37,19 @@ pub async fn handle_complete(client: &mut TaskApiClient, job_id: &str) -> Result
             &pre_body,
             &agent_id,
         ).await?;
-        let digest = pre_resp["digest"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("pre-complete 未返回 digest"))?;
+        let typed_data = &pre_resp["typedData"];
+        if typed_data.is_null() {
+            anyhow::bail!("pre-complete 未返回 typedData");
+        }
         let nonce = pre_resp["nonce"]
             .as_str()
             .unwrap_or("")
             .to_string();
 
-        // Step 2: session key 签名 digest
-        let signature = signing::sign_digest_with_session_key(digest)?;
+        // Step 2: EIP-712 签名 typedData（gen-msg-hash → ed25519 → sign-msg）
+        let signature = signing::sign_typed_data(typed_data, &address).await?;
 
-        // Step 3: complete (signatureData + sessionCert)
+        // Step 3: complete (signatureData + sessionCert，sessionCert 由 post_with_identity 自动注入)
         let mut sig_data = serde_json::json!({
             "signature": signature,
             "deadline": deadline,
