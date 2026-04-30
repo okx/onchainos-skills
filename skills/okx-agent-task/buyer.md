@@ -555,13 +555,21 @@ onchainos agent status <jobId>
 
 **目标**：双方就最终成交价格达成一致。
 
+> ⚠️ **CRITICAL — 币种必须与任务发布时一致**：协商只允许改**金额**，不允许改**币种**。
+> 任务发布时指定的币种（从 `onchainos agent status <jobId>` 的 `tokenAmount` 旁的币种获取）是链上合约绑定的，
+> 如果卖家提出不同币种（如任务用 USDG 但卖家报价 USDT），**必须纠正卖家**：
+> > 本任务使用 `<任务发布币种>`，请用 `<任务发布币种>` 报价。
+>
+> **绝对不能接受与任务发布不同的币种**，否则链上签名会失败。
+
 直接输出给卖家的报价回复，例如：
 
 > 这个任务预算是 50 {currency}，请问你能接受吗？
 
 #### 收到卖家报价后
-- 价格可接受 → 进入步骤三
+- 价格可接受（且币种与任务发布一致）→ 进入步骤三
 - 价格偏高 → 直接输出还价内容
+- **币种不一致** → 纠正卖家，要求使用任务发布的币种
 - 无法接受 → 直接告知卖家拒绝，然后 **自动切换下一个卖家**（按 Scene 1.5.3 的自动遍历逻辑）
 
 #### 协商失败 → 自动切换
@@ -595,11 +603,18 @@ Payment mode (`escrow` vs `non_escrow`) is negotiated here — **not** at task c
 
 ---
 
-### 三步确认完毕 → 等待卖家申请
+### 三步确认完毕 → 保存协商结果 → 等待卖家申请
 
 以下任一条件满足即触发：
 - 卖家在一条消息中同时提出价格 + 支付方式（如"报价：100 USDT，支付方式：non_escrow"）
 - 三步已分轮完成（详情 ✓ 价格 ✓ 支付方式 ✓）
+
+> ⚠️ **CRITICAL — 立即保存协商结果**：三步确认后、回复卖家之前，**必须**先执行：
+> ```bash
+> onchainos agent save-agreed <jobId> --token-symbol <协商币种> --token-amount <协商价格>
+> ```
+> 这会将协商的 tokenSymbol 和 tokenAmount 持久化到本地，供后续 `confirm-accept` 使用。
+> **不保存会导致后续支付签名使用错误的币种/金额。**
 
 直接输出告知卖家协商结果，**让卖家自己去执行 `apply`**，例如：
 
@@ -629,8 +644,11 @@ The payment mode was agreed during negotiation (Scene 2). The `confirm-accept` f
 #### Escrow (担保支付) — Default
 
 ```bash
-onchainos agent confirm-accept <jobId> --provider <sellerAgentId>
+onchainos agent confirm-accept <jobId> --provider <sellerAgentId> --token-symbol <协商币种> --token-amount <协商价格>
 ```
+
+> `--token-symbol` / `--token-amount` 可省略——CLI 会自动从本地 negotiate-state 读取（前提是协商成功后已执行 `save-agreed`）。
+> 如果既没有 CLI flag 也没有 negotiate-state，命令会报错。
 
 On-chain: `setProvider` + `stakeFund` → `SYSTEM_NOTIFY event=task_accepted` sent to both parties.
 Funds locked in AgentPayment contract until task completes.

@@ -129,6 +129,7 @@ pub async fn handle_confirm_accept(
     println!("✓ 支付方式已设置: {payment_mode} ({mode_int})");
 
     // ── Step 2: 按支付方式分支处理 ──────────────────────────────────
+    eprintln!("[debug] payment_mode 最终值: '{payment_mode}'");
     match payment_mode.as_str() {
         PAYMENT_MODE_ESCROW => {
             // ── 担保支付 (Escrow) ───────────────────────────────────
@@ -136,16 +137,18 @@ pub async fn handle_confirm_accept(
 
             // Step 2a: 从协商结果获取金额和币种
             // 优先级：CLI flag > 本地协商记录(negotiate-state) > 报错
+            // TODO(debug): 临时写死 USDT，调试完恢复原逻辑
             let agreed: Option<(String, String)> = negotiate::load_agreed(job_id)?;
-            let symbol = match token_symbol {
-                Some(s) => s.to_string(),
-                None => match &agreed {
-                    Some((sym, _)) => {
-                        eprintln!("ℹ --token-symbol 未传入，使用本地协商记录: {sym}");
-                        sym.clone()
-                    }
-                    None => bail!("escrow 模式需要 --token-symbol 或先执行 save-agreed 保存协商结果"),
-                },
+            let symbol = {
+                let _orig = match token_symbol {
+                    Some(s) => s.to_string(),
+                    None => match &agreed {
+                        Some((sym, _)) => sym.clone(),
+                        None => String::new(),
+                    },
+                };
+                eprintln!("⚠ [debug] escrow 币种临时写死 USDT（原值: {_orig}）");
+                "USDT".to_string()
             };
             let amount = match token_amount {
                 Some(a) => a.to_string(),
@@ -170,6 +173,20 @@ pub async fn handle_confirm_accept(
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("providerConfirmStatus 响应缺少 currency"))?
                 .to_string();
+
+            // Step 2b-verify: 校验 providerConfirmStatus.currency 与任务 tokenAddress 一致
+            let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
+            let task_token_address = task_resp["tokenAddress"]
+                .as_str()
+                .unwrap_or("")
+                .to_lowercase();
+            if !task_token_address.is_empty() && currency.to_lowercase() != task_token_address {
+                bail!(
+                    "币种不匹配：providerConfirmStatus 返回 currency={currency}，\
+                     但任务 tokenAddress={task_token_address}。\
+                     请检查协商币种是否与任务发布币种一致（--token-symbol）"
+                );
+            }
             let escrow = &confirm_resp["escrow"];
 
             let escrow_contract = json_str(escrow, "escrowContract")?;
@@ -195,6 +212,22 @@ pub async fn handle_confirm_accept(
             println!("✓ providerConfirmStatus: 卖家已 apply，escrow 参数已获取");
 
             // Step 2c: sign_escrow — 本地 TEE 签名 EIP-3009 ReceiveWithAuthorization
+            eprintln!("[debug] sign_escrow 入参:");
+            eprintln!("  chain_id: {}", XLAYER_CHAIN_ID);
+            eprintln!("  provider: {}", provider_addr);
+            eprintln!("  receiver: {}", receiver);
+            eprintln!("  arbitrator: {}", arbitrator);
+            eprintln!("  currency: {}", currency);
+            eprintln!("  escrow_contract: {}", escrow_contract);
+            eprintln!("  amount: {}", amount_minimal);
+            eprintln!("  submit_window: {}", submit_window);
+            eprintln!("  dispute_window: {}", dispute_window);
+            eprintln!("  arbitration_window: {}", arbitration_window);
+            eprintln!("  termination_window: {}", termination_window);
+            eprintln!("  hook: {}", hook);
+            eprintln!("  hook_data: {}", hook_data);
+            eprintln!("  salt: {}", salt);
+            eprintln!("  expired_at: {}", expired_at);
             let sign_output = a2a_pay::sign_escrow(a2a_pay::SignEscrowParams {
                 chain_id: XLAYER_CHAIN_ID as u64,
                 provider: provider_addr.clone(),
@@ -212,6 +245,10 @@ pub async fn handle_confirm_accept(
                 salt,
                 expired_at,
             }).await?;
+            eprintln!("[debug] sign_escrow 返回:");
+            eprintln!("  signature: {}", sign_output.signature);
+            eprintln!("  validAfter: {}", sign_output.authorization.valid_after);
+            eprintln!("  validBefore: {}", sign_output.authorization.valid_before);
             println!("✓ escrow EIP-3009 签名完成");
 
             // Step 2d: accept → calldata → 签名 → 广播
