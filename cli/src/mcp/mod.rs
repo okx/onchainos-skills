@@ -595,7 +595,7 @@ struct CompetitionListParams {
     page_size: Option<u32>,
     /// Page number starting from 1 (default 1)
     page_num: Option<u32>,
-    /// Status filter: 3=active, 4=ended (omit for all)
+    /// Status filter: 0=active, 1=ended, 2=all (omit for all)
     status: Option<u32>,
 }
 
@@ -619,26 +619,34 @@ struct CompetitionRankParams {
 
 #[derive(Deserialize, JsonSchema)]
 struct CompetitionUserStatusParams {
-    /// Activity ID
-    activity_id: String,
-    /// User wallet address
-    wallet: String,
+    /// Activity ID (omit to check all activities including ended ones)
+    activity_id: Option<String>,
+    /// EVM wallet address
+    evm_wallet: String,
+    /// SOL wallet address
+    sol_wallet: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
 struct CompetitionJoinParams {
     /// Activity ID
     activity_id: String,
-    /// EVM wallet address to register (nickname auto-set to "Agentic....{last4}")
-    wallet: String,
+    /// EVM wallet address to register
+    evm_wallet: String,
+    /// SOL wallet address to register
+    sol_wallet: String,
+    /// Chain ID of the competition chain (e.g. "1" for Ethereum, "501" for Solana)
+    chain_index: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
 struct CompetitionClaimParams {
     /// Activity ID
     activity_id: String,
-    /// Winning wallet address
-    wallet: String,
+    /// EVM wallet address
+    evm_wallet: String,
+    /// SOL wallet address
+    sol_wallet: String,
 }
 
 // ── Gateway ────────────────────────────────────────────────────────────
@@ -2120,11 +2128,14 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<CompetitionListParams>,
     ) -> Result<String, String> {
-        match competition::cmd_list_mcp(
+        match competition::list(
+            &mut *self.client.lock().await,
             p.page_size.unwrap_or(10),
             p.page_num.unwrap_or(1),
             p.status,
-        ) {
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -2138,7 +2149,9 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<CompetitionIdParams>,
     ) -> Result<String, String> {
-        match competition::cmd_detail_mcp(&p.activity_id) {
+        match competition::detail(&mut *self.client.lock().await, &p.activity_id)
+            .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -2152,12 +2165,15 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<CompetitionRankParams>,
     ) -> Result<String, String> {
-        match competition::cmd_rank_mcp(
+        match competition::rank(
+            &mut *self.client.lock().await,
             &p.activity_id,
             &p.wallet,
             p.sort_type.unwrap_or(5),
             p.limit.unwrap_or(20),
-        ) {
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -2165,13 +2181,20 @@ impl McpServer {
 
     #[tool(
         name = "competition_user_status",
-        description = "Check user's competition participation status and reward eligibility (joinStatus, rewardStatus)."
+        description = "Check user's competition participation status and reward eligibility (joinStatus, rewardStatus). Omit activity_id to check all activities including ended ones."
     )]
     async fn competition_user_status(
         &self,
         Parameters(p): Parameters<CompetitionUserStatusParams>,
     ) -> Result<String, String> {
-        match competition::cmd_user_status_mcp(&p.activity_id, &p.wallet) {
+        match competition::user_status_all(
+            &mut *self.client.lock().await,
+            p.activity_id.as_deref(),
+            &p.evm_wallet,
+            &p.sol_wallet,
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -2179,13 +2202,21 @@ impl McpServer {
 
     #[tool(
         name = "competition_join",
-        description = "Register user for a trading competition. Requires wallet login. Nickname auto-set to 'Agentic....{last4 of address}'."
+        description = "Register user for a trading competition. Requires wallet login."
     )]
     async fn competition_join(
         &self,
         Parameters(p): Parameters<CompetitionJoinParams>,
     ) -> Result<String, String> {
-        match competition::cmd_join_mcp(&p.activity_id, &p.wallet) {
+        match competition::join(
+            &mut *self.client.lock().await,
+            &p.activity_id,
+            &p.evm_wallet,
+            &p.sol_wallet,
+            &p.chain_index,
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -2199,7 +2230,14 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<CompetitionClaimParams>,
     ) -> Result<String, String> {
-        match competition::cmd_claim_mcp(&p.activity_id, &p.wallet) {
+        match competition::claim(
+            &mut *self.client.lock().await,
+            &p.activity_id,
+            &p.evm_wallet,
+            &p.sol_wallet,
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }

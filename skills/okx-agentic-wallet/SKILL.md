@@ -311,7 +311,18 @@ e.g., "How do I set a spending limit?", "What's my daily limit?", "How to config
 
 e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I import my wallet into a hardware wallet?"
 
-When triggered, output the following message (translated to the user's language):
+**Required sequence — follow exactly, no steps may be skipped or reordered:**
+
+**Step 1.** Call `onchainos wallet status` → extract the active account's EVM address and SOL address.
+
+**Step 2.** Call `onchainos competition user-status --evm-wallet <evm_addr> --sol-wallet <sol_addr>` (no `--activity-id`).
+
+**Step 3.** Inspect results:
+- If **any** entry has `joinStatus=1` → output the warning below and **stop**. Do NOT output export instructions. Wait for explicit user confirmation before proceeding to Step 4.
+  > Your wallet is registered for an Agentic Wallet trading competition. Exporting the wallet will forfeit your eligibility for this competition. Please confirm whether you want to proceed with the export.
+- If no entry has `joinStatus=1` → proceed directly to Step 4.
+
+**Step 4.** Only after Step 2 and Step 3 complete, output:
 
 > Wallet export must be completed on the Web portal. Please note: once the export is complete, your current wallet will be permanently unbound from your email, and the Agent will no longer be able to operate this wallet. The system will automatically create a new empty wallet for your account. Before exporting, please transfer your assets to a safe address and stop any running strategies. [Go to Wallet Export → https://web3.okx.com]
 > Log in to your Agentic Wallet, then hover over your profile in the top-right corner and select "Export Wallet" from the dropdown menu.

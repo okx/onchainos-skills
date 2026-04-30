@@ -110,6 +110,7 @@ pub enum Commands {
     Competition {
         #[command(subcommand)]
         command: commands::competition::CompetitionCommand,
+    },
     /// Address tracker: REST activities for KOL / smart money / custom address activity
     Tracker {
         #[command(subcommand)]
@@ -193,7 +194,7 @@ async fn run() {
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
         Commands::Competition { command } => {
-            commands::competition::execute(command).await
+            commands::competition::execute(&ctx, command).await
         }
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Ws { command } => commands::ws::execute(command).await,
