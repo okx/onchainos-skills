@@ -249,7 +249,7 @@ pub async fn handle_confirm_accept(
             eprintln!("  signature: {}", sign_output.signature);
             eprintln!("  validAfter: {}", sign_output.authorization.valid_after);
             eprintln!("  validBefore: {}", sign_output.authorization.valid_before);
-            println!("✓ escrow EIP-3009 签名完成");
+            println!("✓ escrow payment签名完成");
 
             // Step 2d: accept → calldata → 签名 → 广播
             let body = serde_json::json!({

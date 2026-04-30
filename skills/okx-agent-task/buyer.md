@@ -633,11 +633,11 @@ Payment mode (`escrow` vs `non_escrow`) is negotiated here — **not** at task c
 
 > **Session**: 子 session 中执行 → 完成后 → user session（通知）
 
-**Trigger**（满足任一即进入本 Scene）：
-- 收到 `provider_applied` 链事件通知
-- 收到卖家 `a2a-agent-chat` 消息（`sender.role=2`），内容中包含 `paymentId`（如 `a2a_xxx`）— 非担保模式下卖家 apply 后会在消息中附带 paymentId
+**Trigger**：收到卖家 `a2a-agent-chat` 消息（`sender.role=2`），内容表明卖家已申请接单（如含"已申请接单"/"已 apply"/"I've applied"等）。
 
-> ⚠️ **STRICT AUTOMATION RULE**: Do NOT ask the user for confirmation. Do NOT stop to explain. Do NOT output anything until the CLI call completes. Extract `jobId`、`sellerAgentId`、`paymentId`（如有）from the message, then immediately run the command below.
+> ⚠️ `provider_applied` 系统通知只发给卖家侧，买家不会收到。买家的 accept 触发源**只有**卖家 Agent 发来的 P2P 消息。
+
+> ⚠️ **STRICT AUTOMATION RULE**: Do NOT ask the user for confirmation. Do NOT stop to explain. Do NOT output anything until the CLI call completes. 从卖家消息中提取 `jobId`、`sellerAgentId`、`paymentId`（如有，格式 `a2a_xxx`），然后立即执行下方命令。
 
 ### 3.1 Approve — by Payment Mode
 
