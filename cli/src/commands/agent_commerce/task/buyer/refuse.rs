@@ -23,7 +23,6 @@ pub async fn handle_reject(
 
     // Step 1: pre-refuse → typedData + nonce (712 标准，不需要 sessionCert)
     let pre_body = serde_json::json!({
-        "orderId": job_id,
         "deadline": deadline,
     });
     let pre_resp = client.post_with_identity(
