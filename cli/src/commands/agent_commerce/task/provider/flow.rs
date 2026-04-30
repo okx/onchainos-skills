@@ -48,7 +48,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "（流程结束）任务完成，资金已释放。子 session 可关闭。".to_string(),
         ],
         Status::Refunded => vec![
-            next_action("confirm_refund"),
+            next_action("job_refunded"),
             "（流程结束）资金已退还买家。子 session 可关闭。".to_string(),
         ],
         Status::Other(s) => vec![
@@ -89,7 +89,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
          \x20\x202) CLI 错误：`onchainos agent <cmd>` 报错 → **不要重试**，直接 xmtp_dispatch_session 推 user session [⚠️ CLI 报错]，等用户新指令；瞬态故障（network/JWT 过期）才允许自动重试一次\n\
          \x20\x203) ❌ **绝对禁止把技术错误细节广播给对方**：CLI 命令名 / 后端字段名 / stderr 摘要 / `bug`/`命令：`/`错误：` 一律不能进 xmtp_send 给对方。最多发一句『稍等，正在确认细节』或干脆不通知对方。\n\
          \x20\x204) ❌ **同 turn 不重复 xmtp_send**：剧本说『发一条』→ 调过一次工具返回『已发送』就**算成功**，**当前 turn 内不再对同一对方调 xmtp_send 第二次**。不要因为消息可能不够清晰就重发——重发 = 刷屏 + 触发对方循环。下一条 inbound 进来再说。\n\
-         \x20\x205) ❌ **deliver 必须等 `job_accepted` 通知**：apply 上链不改 status，任务仍是 open；只有买家 confirm-accept 触发的 `job_accepted` 链事件到达后才能 deliver。**绝对禁止在 ProviderApplied 剧本里抢跑 deliver**，CLI 会校验 status != accepted 直接 bail。\n\n\
+         \x20\x205) ❌ **deliver 必须等 `job_accepted` 通知**：apply 上链不改 status，任务仍是 open；只有买家 confirm-accept 触发的 `job_accepted` 链事件到达后才能 deliver。**绝对禁止在 ProviderApplied 剧本里抢跑 deliver**，CLI 会校验 status != accepted 直接 bail。\n\
+         \x20\x206) ❌ **同 turn 不重复 `session_status`**：sub session 的 sessionKey 在同一 turn 内是稳定的——**调过一次就把结果存住，后续 step 直接复用**。即使剧本多个 step 都提到 sessionKey，也只调一次 session_status。重复调 = 死循环征兆，必须立即停。\n\n\
          如果不记得本任务协商细节（deliverable / paymentMode / token / 买家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 加载上下文。\n\n"
     );
@@ -206,7 +207,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```bash\n\
              onchainos agent dispute raise {job_id} --reason \"<用户提供的理由或默认：已按验收标准完成>\" --agent-id {agent_id}\n\
              ```\n\
-             CLI 内部：POST /approve → uopData → sign uopHash → broadcast。等链上 `dispute_approved` 通知。\n\n\
+             CLI 内部：POST /dispute/approve → uopData → sign uopHash → broadcast。等链上 `dispute_approved` 通知。\n\n\
              ⚠️ **跑完 dispute raise 直接结束 turn**：\n\
              - 禁止给买家发任何 xmtp_send（『已发起仲裁』之类是过场状态，等阶段 2 完成再说）\n\
              - 禁止在同一 turn 内调 `dispute confirm`（必须等链上 dispute_approved 通知到达）\n\n\
@@ -241,7 +242,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\n\
              **Step 2 — 调用 `xmtp_send` 工具向买家发送：**\n\n\
              {header_template}\n\
-             已同意退款，等待链上确认（confirm_refund）。\n\n\
+             已同意退款，等待链上确认（job_refunded）。\n\n\
              跑完 Step 1-2 → **结束本轮 turn，不要 xmtp_dispatch_session 推 main**。\n"
         ),
 
@@ -308,14 +309,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              删除后本 sub session 不再接收任何消息——仲裁流程完整结束。\n"
         ),
 
-        // ─── Scene 6.5b: 卖家同意退款（TODO: 后端尚未定义此 event）───
-        Event::ConfirmRefund => format!(
-            "【当前状态】confirm_refund（卖家已同意退款，资金退还买家）\n\
+        // ─── Scene 6.5b: 卖家同意退款 / 仲裁退款上链 ─────────────────
+        Event::JobRefunded => format!(
+            "【当前状态】job_refunded（资金已退还买家）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 给买家发收尾**：\n\n\
              {header_template}\n\
-             已同意退款（confirm_refund），资金已退还买家。\n\n\
+             已退款上链（job_refunded），资金已退还买家。\n\n\
              **Step 2 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §6 路径 5）：\n\
              1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段\n\
              2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串\n\
@@ -435,7 +436,6 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         | Event::JobPaymentModeChanged
         | Event::SubmitExpired
         | Event::RefuseExpired
-        | Event::ReviewExpired
         | Event::ReviewDeadlineWarn => format!(
             "【系统通知】{event}（buyer 端动作或超时事件）\n\
              【角色】卖家（Provider）\n\n\
@@ -443,6 +443,57 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - 静默观察即可，无需主动 xmtp_send\n\
              - 如需要详细信息，调用 `onchainos agent common context {job_id} --role provider`\n",
             event = event.as_str()
+        ),
+
+        // ─── review_expired: review 窗口超时，卖家主动领货款 ─────────────
+        Event::ReviewExpired => format!(
+            "【系统通知】review_expired（review 窗口超时，买家未在期限内验收）\n\
+             【角色】卖家（Provider）\n\n\
+             ⚠️ **review_expired 只是窗口超时事件，task 状态仍是 submitted，资金未自动释放**。\n\
+             需要你主动调 claimAutoComplete 把资金从托管合约领回，链上确认后才进 completed。\n\n\
+             【你的下一步动作（严格顺序）】\n\n\
+             **Step 1 — 调 CLI 领取货款（上链）：**\n\
+             ```bash\n\
+             onchainos agent claim-auto-complete {job_id} --agent-id {agent_id}\n\
+             ```\n\
+             CLI 内部：POST /claimAutoComplete → uopData → sign uopHash → broadcast。等链上 `job_auto_completed` 通知。\n\n\
+             ⚠️ **跑完 claim-auto-complete 直接结束 turn**：\n\
+             - 禁止给买家发任何 xmtp_send（中间过场，等 job_auto_completed 上链回执到达再说）\n\
+             - 禁止 xmtp_dispatch_session 推 STATUS_NOTIFY 到 user session\n\n\
+             【后续事件】\n\
+             - `job_auto_completed`（status=success） → next-action 拿到账剧本（推 STATUS_NOTIFY + 关闭 sub session）\n\
+             - `job_auto_completed`（status=failed）  → 按 errorCode 重试 claim-auto-complete\n"
+        ),
+
+        // ─── job_auto_completed: claimAutoComplete tx 回执 ────────────────
+        Event::JobAutoCompleted => format!(
+            "【系统通知】job_auto_completed（claimAutoComplete tx 回执）\n\
+             【角色】卖家（Provider）\n\n\
+             ⚠️ **判定 status**：从你刚收到的系统通知 envelope 里读 `message.status` 字段：\n\
+             - `status = \"success\"` → 资金已自动到账，按下方 A 分支收尾\n\
+             - `status = \"failed\"` → 按下方 B 分支按 errorCode 重试\n\n\
+             ━━━━━━━━━ 分支 A：status=success（自动完成成功，资金已到账）━━━━━━━━━\n\n\
+             **A-Step 1 — 给买家发收尾通知**（用 `xmtp_send`）：\n\n\
+             {header_template}\n\
+             review 期已结束，资金已通过 claimAutoComplete 自动结算到卖方钱包。任务流程完整结束。\n\n\
+             **A-Step 2 — 推 STATUS_NOTIFY 到 user session 告知用户到账**（机制见 SKILL.md §Session 通信契约 §6）：\n\n\
+             从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol。\n\
+             content：\n\
+             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · user session agent 不要调任何工具不要再次执行]\n\
+             \x20\x20\x20\x20[任务自动完成 💰] 任务 {job_id}（<title>）review 超时，已通过 claimAutoComplete 自动到账。\n\
+             \x20\x20\x20\x20  - 收入：<tokenAmount> <tokenSymbol>\n\
+             \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
+             \x20\x20\x20\x20本任务流程结束。\n\n\
+             **A-Step 3 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §6 路径 5）：\n\
+             1. 调 `session_status` 拿当前 sub session 的 `sessionKey`\n\
+             2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串\n\n\
+             ━━━━━━━━━ 分支 B：status=failed（claim 失败，按 errorCode 重试）━━━━━━━━━\n\n\
+             从 envelope payload 读 `errorCode` / `errorMessage`，按错误重试：\n\
+             ```bash\n\
+             onchainos agent claim-auto-complete {job_id} --agent-id {agent_id}\n\
+             ```\n\
+             重试前可选先看链上状态：`onchainos agent common context {job_id} --role provider --agent-id {agent_id}`。\n\
+             ⚠️ 失败状态下**不要**给买家 xmtp_send 任何过场信息。\n"
         ),
 
         // ─── provider 自己的截止提醒 ─────────────────────────────────────
@@ -488,26 +539,6 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】卖家（Provider）\n\n\
              【建议】从 payload 提取 status / amount / txHash。如 status=success 表示奖励到账；\n\
              如 status=failed 按 errorCode 重试 `onchainos agent claim {job_id}`。\n"
-        ),
-
-        // job_refunded —— 买家已领取退款（卖家同意退款），任务结束
-        Event::JobRefunded => format!(
-            "【系统通知】job_refunded（退款已完成）\n\
-             【角色】卖家（Provider）\n\n\
-             【说明】买家已领取退款，本任务流程结束。无需执行任何操作。\n"
-        ),
-
-        // job_auto_completed —— claimAutoComplete tx 回执（review 超时后 provider 主动领走资金）
-        Event::JobAutoCompleted => format!(
-            "【系统通知】job_auto_completed（claimAutoComplete tx 回执）\n\
-             【角色】卖家（Provider）\n\n\
-             【你的下一步动作】\n\n\
-             **判断 payload 中的 status：**\n\
-             - `success` → 自动完成成功，资金已到账。任务流程结束。\n\
-             - `failed` → 按 errorCode 重试：\n\
-             ```bash\n\
-             onchainos agent claim-auto-complete {job_id}\n\
-             ```\n"
         ),
 
         // job_auto_refunded —— buyer 端 tx 回执，provider 无关

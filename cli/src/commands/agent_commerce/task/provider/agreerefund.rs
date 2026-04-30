@@ -31,12 +31,12 @@ pub async fn handle_agree_refund(
         job_id, signing::BizContext::JobAgreeRefund, agent_id,
     ).await?;
 
-    println!("✓ 已同意退款，等待链上确认（confirm_refund）");
+    println!("✓ 已同意退款，等待链上确认（job_refunded）");
     println!("  txHash: {tx_hash}");
     println!();
     println!("⚠️  下一步由系统通知驱动，不要主动给买家发消息：");
     println!("    - 禁止立即调 `xmtp_send` 告诉买家 \"已同意退款\" 等文字");
-    println!("    - 链上确认后会收到 `confirm_refund` 系统通知");
-    println!("    - 收到通知后再调 `onchainos agent next-action --jobid {job_id} --jobStatus confirm_refund --role provider`");
+    println!("    - 链上确认后会收到 `job_refunded` 系统通知");
+    println!("    - 收到通知后再调 `onchainos agent next-action --jobid {job_id} --jobStatus job_refunded --role provider`");
     Ok(())
 }

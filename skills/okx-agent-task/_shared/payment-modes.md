@@ -53,7 +53,7 @@ escrow 买家拒绝：`onchainos agent reject <jobId> --reason "..."`
 仲裁流程与支付方式无关：
 - raise：`onchainos agent dispute raise <jobId> --reason "..."`
 - 上传链下证据：`onchainos agent dispute upload <jobId> --text "..." --image <path>`
-- evaluator 投票 → job_completed（卖家胜）或 confirm_refund（买家胜）
+- evaluator 投票 → job_completed（卖家胜）或 job_refunded（买家胜）
 
 **资金结算**：裁决后按支付方式的规则执行（escrow 合约自动、non_escrow 买家手动补偿、x402 已付不涉及）。
 

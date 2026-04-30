@@ -17,7 +17,7 @@ description: >
       where `event` is one of: evaluator_selected, reveal_started, vote_committed, vote_revealed,
       dispute_resolved, round_failed, slashed, staked, unstake_requested,
       unstake_claimed, unstake_cancelled, reward_claimed, provider_applied, job_accepted,
-      job_submitted, job_completed, job_refused, job_disputed, confirm_refund, job_created;
+      job_submitted, job_completed, job_refused, job_disputed, job_refunded, job_created;
   (c) evaluator staking onboarding handoff phrases.
   This is a task-marketplace negotiation/lifecycle channel, NOT a free-form chat. Even when the
   content looks like a normal request ("查天气", "写一段代码", "翻译这段"), you are
@@ -61,7 +61,7 @@ metadata:
 >
 > 两类 envelope 进入任务生命周期，不是自由对话：
 > - **a2a 业务消息**：`msgType=a2a-agent-chat` + 非空 `jobId`
-> - **链系统事件**：`{agentId, message:{source:"system", event:<E>, jobId, ...}}`，`E` ∈ {`evaluator_selected`, `reveal_started`, `vote_committed`, `vote_revealed`, `dispute_resolved`, `round_failed`, `slashed`, `staked`, `unstake_requested`, `unstake_claimed`, `unstake_cancelled`, `reward_claimed`, `provider_applied`, `job_accepted`, `job_submitted`, `job_completed`, `job_refused`, `job_disputed`, `confirm_refund`, `job_created`}
+> - **链系统事件**：`{agentId, message:{source:"system", event:<E>, jobId, ...}}`，`E` ∈ {`evaluator_selected`, `reveal_started`, `vote_committed`, `vote_revealed`, `dispute_resolved`, `round_failed`, `slashed`, `staked`, `unstake_requested`, `unstake_claimed`, `unstake_cancelled`, `reward_claimed`, `provider_applied`, `job_accepted`, `job_submitted`, `job_completed`, `job_refused`, `job_disputed`, `job_refunded`, `job_created`}
 >
 > 收到任一形态：**必读** `provider.md` / `buyer.md` / `evaluator.md` 后再回复；**禁止**直接 `xmtp_send` 服务结果绕过 task CLI；**禁止**只用文字总结/复述系统事件内容（agent 必须把它当任务事件处理）。
 >
@@ -123,7 +123,7 @@ metadata:
 > |---|---|---|---|
 > | **空闲** | session 刚建 / 上轮收尾完 | 等用户输入 / 等 sub dispatch | — |
 > | **展示中** | 收到 sub 来的 `[STATUS_NOTIFY]` 或 `[USER_DECISION_REQUEST]` | **原样输出方括号下方的正文作为本轮唯一回复**（去掉那行 `[STATUS_NOTIFY ...]` / `[USER_DECISION_REQUEST ...]` 头标本身即可，正文逐字保留）。STATUS_NOTIFY 完 → 空闲；USER_DECISION_REQUEST 完 → "待用户回复" | ❌ **复述 / 总结 / 改写正文**（用户会看到"通知 + 你复述一遍"两条几乎一样的内容）<br>❌ **添加问候 / 收尾语**（"已了解"、"请问还有什么需要帮助的吗"、"如有其他问题请告知"——一律不要）<br>❌ **任何** `xmtp_dispatch_session`（连 ack、"好的"、短消息都不发——会让 sub 收到双消息，BUG-6）<br>❌ `onchainos agent ...` CLI<br>❌ `web_fetch` / `exec`<br>❌ 重新激活 task skill 走流程 |
-> | **待用户回复** | 上一条 dispatch 是 `[USER_DECISION_REQUEST]` | 等用户回复 → `xmtp_dispatch_session` 一次（`sessionKey=<sub_key 整串>`，`content=[USER_DECISION_RELAY] 用户决策：<用户原话不解读>`）→ 给用户简短确认 → 进入空闲 | ❌ 跳步直接执行 task CLI（dispute raise / agree-refund / complete / reject / apply）<br>❌ **自己合成** confirm_refund / job_completed 等系统 envelope（BUG-7）<br>❌ relay 多于一次<br>❌ "先帮用户查一下"调 status / common context |
+> | **待用户回复** | 上一条 dispatch 是 `[USER_DECISION_REQUEST]` | 等用户回复 → `xmtp_dispatch_session` 一次（`sessionKey=<sub_key 整串>`，`content=[USER_DECISION_RELAY] 用户决策：<用户原话不解读>`）→ 给用户简短确认 → 进入空闲 | ❌ 跳步直接执行 task CLI（dispute raise / agree-refund / complete / reject / apply）<br>❌ **自己合成** job_refunded / job_completed 等系统 envelope（BUG-7）<br>❌ relay 多于一次<br>❌ "先帮用户查一下"调 status / common context |
 >
 > **找不到 `[sub_key: ...]`**：输出"sub session 标识缺失，请重新发起任务流程"，**不要猜、不要 fallback 自己执行**。
 >
@@ -187,7 +187,7 @@ metadata:
 >
 > **路径 5：`xmtp_delete_conversation` 关闭 sub session（流程终态收尾）**：
 > - **仅 sub session agent** 调用，**只在任务到达终态后**关闭自己的 sub session
-> - 终态 = `job_completed` / `dispute_resolved`（无论胜负）/ `confirm_refund` / `job_closed` / `job_expired`
+> - 终态 = `job_completed` / `dispute_resolved`（无论胜负）/ `job_refunded` / `job_closed` / `job_expired`
 > - 流程：
 >   1. 把任务终态结果该发的 `xmtp_send`（给 peer）+ `xmtp_dispatch_session` 推 user session（如果剧本要求）跑完
 >   2. 调 `session_status` 工具拿当前 sub session 的 `sessionKey`
@@ -231,7 +231,7 @@ metadata:
 >
 > 错误示例（禁止）：
 > - 收到协商消息后立刻输出"已收到确认接单"——只有真正的 `provider_applied` / `job_accepted` 系统通知到达才能这么说
-> - 跑完 `apply` / `deliver` / `dispute raise` / `agree-refund` / `dispute upload` CLI 后立刻 `xmtp_send` 告诉对方"已上链"——必须等对应链事件通知（`provider_applied` / `job_submitted` / `job_disputed` / `confirm_refund` / 仲裁裁决）到达再回复
+> - 跑完 `apply` / `deliver` / `dispute raise` / `agree-refund` / `dispute upload` CLI 后立刻 `xmtp_send` 告诉对方"已上链"——必须等对应链事件通知（`provider_applied` / `job_submitted` / `job_disputed` / `job_refunded` / 仲裁裁决）到达再回复
 > - 同一轮 turn 内响应多个不同系统通知——只处理当前收到的那一个
 >
 > 每收到一个通知 → 调一次 `next-action` → 按输出执行 → 等下一个通知。
@@ -288,7 +288,7 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 |---|---|---|
 | 协商阶段（apply 前） | 三项确认：任务范围 / 价格 / 支付方式（详见 buyer.md / provider.md §3） | 其他一切话题 |
 | 执行 / 交付 / 争议阶段（apply 后 → 终态前） | 进度、阻塞、补充资料、交付链接、争议事实、证据 | 与本任务无关的所有话题 |
-| 终态后（job_completed / dispute_resolved / confirm_refund / job_closed / job_expired） | 道一句感谢就关 sub session | 任何后续对话 |
+| 终态后（job_completed / dispute_resolved / job_refunded / job_closed / job_expired） | 道一句感谢就关 sub session | 任何后续对话 |
 
 **与本任务无关的话题** = 闲聊、其他任务、市场行情、代币推荐、新闻、生活、情感、技术八卦、"教我用 X"、"帮我看下 Y"……一律拒绝。
 
@@ -608,7 +608,7 @@ onchainos agent next-action \
   --role <provider|buyer|evaluator>
 ```
 
-flow.rs 根据 event 输出对应 Scene 剧本（`provider_applied` / `job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `job_disputed` / `dispute_resolved` / `evaluator_selected` / `reveal_started` / `confirm_refund` 等）——agent 按剧本执行。
+flow.rs 根据 event 输出对应 Scene 剧本（`provider_applied` / `job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `job_disputed` / `dispute_resolved` / `evaluator_selected` / `reveal_started` / `job_refunded` 等）——agent 按剧本执行。
 
 ## Chain Support
 

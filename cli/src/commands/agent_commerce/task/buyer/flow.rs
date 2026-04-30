@@ -39,7 +39,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         ],
         Status::Refused => vec![
             next_action("job_refused"),
-            "（被动等待）卖家 24h 内决策：job_disputed → 进入仲裁举证；confirm_refund → 退款".to_string(),
+            "（被动等待）卖家 24h 内决策：job_disputed → 进入仲裁举证；job_refunded → 退款".to_string(),
         ],
         Status::Disputed => vec![
             next_action("job_disputed"),
@@ -52,7 +52,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "（non_escrow）任务支付链路完成，等待卖家提交交付物。".to_string(),
         ],
         Status::Refunded => vec![
-            next_action("confirm_refund"),
+            next_action("job_refunded"),
             "（流程结束）退款已到账。子 session 可关闭。".to_string(),
         ],
         Status::Other(s) => vec![
@@ -96,6 +96,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         "📍 你在 sub session（你看到这段 next-action 输出 = 100% 在 sub）。\n\n\
          🔒 **如果当前 turn 没读过 SKILL.md §Session 通信契约**（envelope 形态白名单 / xmtp_send 两步 / xmtp_dispatch_user·xmtp_prompt_user 推 user session 铁律），\n\
          **先读 `skills/okx-agent-task/SKILL.md`** 再继续——下面步骤会引用它的章节（§3 / §4 / §6 / §7）。\n\n\
+         ⚠️ **同 turn 不重复 `session_status`**：sub session 的 sessionKey 在同一 turn 内是稳定的——**调过一次就把结果存住，后续 step 直接复用**。即使剧本多个 step 都提到 sessionKey，也只调一次 session_status。重复调 = 死循环征兆，必须立即停。\n\n\
          如果不记得本任务协商细节（deliverable / paymentMode / token / 卖家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 加载上下文。\n\n"
     );
@@ -112,8 +113,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             Event::JobRefused => "无 (等待卖家决策)",
             Event::JobDisputed => "xmtp_prompt_user (转发仲裁通知到 user session 请求证据)",
             Event::DisputeResolved => "xmtp_dispatch_user (通知仲裁结果)",
-            Event::ConfirmRefund => "xmtp_dispatch_user (通知退款完成)",
-            Event::JobRefunded => "xmtp_dispatch_user (通知退款到账)",
+            Event::JobRefunded => "xmtp_dispatch_user (通知退款完成)",
             Event::JobAutoRefunded => "xmtp_dispatch_user (claimAutoRefund tx 回执)",
             _ => "无",
         }
@@ -388,14 +388,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【你的下一步动作】\n\n\
              无需执行 CLI 命令。卖家有 24h 决定：\n\
              - 发起仲裁 → 你将收到 job_disputed\n\
-             - 同意退款 → 你将收到 confirm_refund\n\
-             - 24h 超时 → 系统自动退款，你将收到 confirm_refund\n\n\
+             - 同意退款 → 你将收到 job_refunded\n\
+             - 24h 超时 → 系统自动退款，你将收到 job_refunded\n\n\
              调用 xmtp_send 工具向卖家发送：\n\n\
              {header_template}\n\
              交付物已拒绝，等待你的后续处理。\n\n\
              【后续事件】\n\
              - job_disputed → 提交买家证据（Scene 6）\n\
-             - confirm_refund → 退款完成\n"
+             - job_refunded → 退款完成\n"
         ),
 
         // ─── Scene 6: 仲裁已发起，提交买家证据 ─────────────────────
@@ -440,7 +440,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              证据已提交，等待仲裁员裁决。\n\n\
              【后续事件】\n\
              - job_completed → 仲裁卖家胜诉，任务完成\n\
-             - confirm_refund → 仲裁买家胜诉，退款\n\n\
+             - job_refunded → 仲裁买家胜诉，退款\n\n\
              跑完 Step 1-3 → **结束本轮 turn，不要 xmtp_dispatch_user / xmtp_prompt_user 推 main**。\n"
         ),
 
@@ -535,35 +535,19 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              <!-- 删除后本 sub session 不再接收任何消息—— -->仲裁流程完整结束。\n"
         ),
 
-        // ─── 卖家同意退款（TODO: 后端尚未定义此 event，暂用 confirm_refund）
-        Event::ConfirmRefund => format!(
-            "【当前状态】confirm_refund（卖家同意退款，资金退还买家）\n\
+        // ─── 卖家同意退款 / 仲裁退款上链 ─────────────────────────────
+        Event::JobRefunded => format!(
+            "【当前状态】job_refunded（资金已退还买家）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 给卖家发收尾**：\n\n\
              {header_template}\n\
-             卖家已同意退款（confirm_refund），资金已退还。\n\n\
+             退款已上链（job_refunded），资金已返还至我方钱包。\n\n\
              **Step 2 — 调用 xmtp_dispatch_user 通知用户退款完成：**\n\n\
              content：\n\
-             \x20\x20\x20\x20[退款完成] 任务 {job_id} 卖家已同意退款，资金已返还至您的钱包。\n\
+             \x20\x20\x20\x20[退款完成] 任务 {job_id} 退款已上链，资金已返还至您的钱包。\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
              **Step 3 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §6 路径 5）：\n\
-             （debug 模式：暂不关闭 sub session，保留历史信息）\n\
-             <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
-             <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
-             <!-- 删除后本 sub session 不再接收任何消息—— -->退款流程完整结束。\n"
-        ),
-
-        // ─── 退款已上链（claimAutoRefund / agreeRefund 成功）──────────
-        Event::JobRefunded => format!(
-            "【系统通知】job_refunded（退款已到账）\n\
-             【角色】买家（Client）\n\n\
-             【你的下一步动作（严格顺序）】\n\n\
-             **Step 1 — 调用 xmtp_dispatch_user 通知用户退款到账：**\n\n\
-             content：\n\
-             \x20\x20\x20\x20[退款到账 💰] 任务 {job_id} 的托管资金已退还至您的钱包。\n\
-             \x20\x20\x20\x20本任务流程结束。\n\n\
-             **Step 2 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §6 路径 5）：\n\
              （debug 模式：暂不关闭 sub session，保留历史信息）\n\
              <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
              <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
@@ -767,11 +751,16 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              超时后 provider 可调 claimAutoComplete 自动通过。\n"
         ),
 
-        // ─── review_expired: 买家未在期限内验收，provider 已 claimAutoComplete ─────
-        Event::ReviewExpired => "【系统通知】review_expired（验收超时，provider 已自动 complete）\n\
+        // ─── review_expired: review 窗口超时，等 provider 调 claimAutoComplete ─────
+        Event::ReviewExpired => "【系统通知】review_expired（review 窗口超时，task 仍是 submitted）\n\
              【角色】买家（Client）\n\n\
-             【建议】task 已自动进入 completed 状态，资金已释放给 provider。\n\
-             子 session 可关闭。\n".to_string(),
+             【建议】review 期已结束，资金尚未自动释放——需要等 provider 主动调 claimAutoComplete\n\
+             才会进入 completed。本端无需动作，等 `job_auto_completed`（success）通知到达后再做 sub session 收尾。\n".to_string(),
+
+        // ─── job_auto_completed: provider 的 claim 回执，buyer 端只需观察 ─────
+        Event::JobAutoCompleted => "【系统通知】job_auto_completed（provider 已通过 claimAutoComplete 领走资金）\n\
+             【角色】买家（Client）\n\n\
+             【建议】task 已进入 completed 状态，资金已释放给 provider。子 session 可关闭。\n".to_string(),
 
         // ─── provider 的截止提醒 — buyer 端无关 ────────────────────────
         Event::SubmitDeadlineWarn => "【系统通知】submit_deadline_warn（provider 端截止提醒）\n\
@@ -807,12 +796,6 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【系统通知】{event}（evaluator 质押 lifecycle，buyer 无关）\n\
              【建议】忽略即可。\n",
             event = event.as_str()
-        ),
-
-        // ─── job_auto_completed: provider 端 tx 回执，buyer 无关 ─────
-        Event::JobAutoCompleted => format!(
-            "【系统通知】job_auto_completed（provider 端 claimAutoComplete tx 回执，buyer 无关）\n\
-             【建议】忽略即可。任务已自动完成。\n"
         ),
 
         // ─── reward_claimed: buyer 自己的 claim tx 回执（仲裁胜诉退款等） ─────

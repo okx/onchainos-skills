@@ -47,7 +47,7 @@ onchainos agent create-task \
 
 ## 终止规则（入口相关）
 
-- **open 阶段超时** → 自动进入 `rejected`（`confirm_refund`），资金未托管所以不退款
+- **open 阶段超时** → 自动进入 `rejected`（`job_refunded`），资金未托管所以不退款
 - **buyer 主动关闭**（仅 open 阶段）→ `onchainos agent close <jobId>` → `rejected`
 - 一旦进入 `applied` 之后，就必须走状态机后续流程，不能简单关闭
 
