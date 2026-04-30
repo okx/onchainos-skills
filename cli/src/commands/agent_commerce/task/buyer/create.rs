@@ -218,7 +218,7 @@ pub async fn handle_create(
     let body = serde_json::json!({
         "title":              title_str,
         "description":        description,
-        "description_summary": summary,
+        "descriptionSummary": summary,
         "paymentTokenSymbol": currency.to_uppercase(),
         "paymentTokenAmount": budget.to_string(),
         "chainId":            XLAYER_CHAIN_ID,
