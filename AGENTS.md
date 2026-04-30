@@ -36,7 +36,7 @@ For script requests, append `--format json` to all CLI commands.
 | okx-dex-swap | DEX swap execution | User wants to swap, trade, buy, or sell tokens |
 | okx-dex-token | Token search, metadata, rankings, liquidity, holders, top traders, cluster analysis | User searches for tokens, wants rankings, holder info, or cluster analysis |
 | okx-onchain-gateway | Gas estimation, tx simulation, broadcasting | User wants to broadcast a tx, estimate gas, or check tx status |
-| okx-x402-payment | x402 payment authorization | User encounters HTTP 402 or mentions x402 |
+| okx-x402-payment | Dual-protocol HTTP 402 dispatcher (x402 + MPP) | User encounters HTTP 402, mentions x402, or mentions any MPP channel/voucher/session/charge operation |
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, or manage DeFi positions |
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions across protocols |
 | okx-audit-log | Audit log export and troubleshooting | User wants command history, debug info, or audit log |
