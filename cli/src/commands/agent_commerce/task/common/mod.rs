@@ -126,7 +126,7 @@ struct TaskDetail {
     content_hash: Option<String>,
     token_address: Option<String>,
     token_amount: Option<String>,
-    /// 0=escrow / 1=non_escrow / 2=x402（替代旧的 paymentType 命名）
+    /// 0=未设置 / 1=escrow / 2=non_escrow / 3=x402
     payment_mode: Option<i32>,
     /// 0=私有 / 1=公开（替代旧的 openType 命名）
     visibility: Option<i32>,
@@ -260,10 +260,11 @@ fn status_desc(s: &str) -> &str {
 
 fn payment_mode_desc(pm: i32) -> &'static str {
     match pm {
-        0 => "托管支付（Escrow）",
-        1 => "非托管支付（Non-Escrow）",
-        2 => "x402 按需支付",
-        _ => "未设置",
+        PAYMENT_MODE_INT_NONE => "未设置",
+        PAYMENT_MODE_INT_ESCROW => "托管支付（Escrow）",
+        PAYMENT_MODE_INT_DIRECT => "非托管支付（Non-Escrow）",
+        PAYMENT_MODE_INT_X402 => "x402 按需支付",
+        _ => "未知",
     }
 }
 

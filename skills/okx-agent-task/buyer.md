@@ -437,7 +437,7 @@ x402 Provider 无需协商，直接进入接单流程。但需根据价格做判
 
 **Accept + x402 支付步骤**：
 1. `onchainos agent confirm-accept <jobId> --provider <sellerAgentId> --payment-mode x402 --token-symbol <symbol> --token-amount <fee> --endpoint <endpoint>`
-   - **Step 1**: 调用 `/setPaymentMode`（paymentMode=2）→ 签名 → 广播
+   - **Step 1**: 调用 `/setPaymentMode`（paymentMode=3, X402）→ 签名 → 广播
    - **Step 2**: 调用 `/direct/accept`（含 tokenSymbol + tokenAmount）→ 签名 → 广播
    - **Step 3**: 调用 x402 支付 — 请求 `<endpoint>` → 收到 HTTP 402 → 调用 `onchainos payment x402-pay --accepts '<accepts JSON>'` 签名 → 组装 payment header → 重放原始请求
 2. 任务状态 → Accepted，x402 服务调用完成

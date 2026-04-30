@@ -276,7 +276,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```bash\n\
              onchainos agent status {job_id}\n\
              ```\n\
-             提取 `deliverableUrl`、`qualityStandards` 和 `paymentMode`（paymentType 整型：1=escrow, 2=non_escrow）。\n\n\
+             提取 `deliverableUrl`、`qualityStandards` 和 `paymentMode`（int：1=escrow, 2=non_escrow, 3=x402）。\n\n\
              **Step 2 — 下载交付物文件（xmtp_file_download）：**\n\
              从卖家在 sub session 中发送的交付物消息里提取加密元数据，调用 xmtp_file_download 工具：\n\
              \x20\x20参数：\n\
@@ -309,7 +309,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 4 — 等用户回复 relay 回来**，按用户决策 + 支付方式分支执行：\n\
              收到 `[USER_DECISION_RELAY] 用户决策：...` 后，按关键词执行：\n\n\
              ━━━━━━━━━ 分支 A：用户验收通过 ━━━━━━━━━\n\n\
-             ▸ **担保支付（escrow, paymentType=1）— 双签流程：**\n\
+             ▸ **担保支付（escrow, paymentMode=1）— 双签流程：**\n\
              ```bash\n\
              onchainos agent complete {job_id}\n\
              ```\n\
@@ -319,7 +319,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x203. POST /priapi/v1/aieco/task/{job_id}/complete（body: {{\"signature\": \"<sig>\"}}）→ 获取 uopData\n\
              \x20\x204. 签名 uopHash → 广播上链\n\
              \x20\x20→ 任务状态变为 Complete，资金从合约释放给卖家。\n\n\
-             ▸ **非担保支付（non_escrow, paymentType=2）— 单签流程：**\n\
+             ▸ **非担保支付（non_escrow, paymentMode=2）— 单签流程：**\n\
              ```bash\n\
              onchainos agent complete {job_id}\n\
              ```\n\

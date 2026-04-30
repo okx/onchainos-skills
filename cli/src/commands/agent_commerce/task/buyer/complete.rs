@@ -20,7 +20,7 @@ pub async fn handle_complete(client: &mut TaskApiClient, job_id: &str) -> Result
     // 查询任务详情获取 paymentMode
     let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
     let task = &resp;
-    let payment_mode = task["paymentType"].as_i64().unwrap_or(0) as i32;
+    let payment_mode = task["paymentMode"].as_i64().unwrap_or(0) as i32;
 
     if payment_mode == PAYMENT_MODE_INT_ESCROW {
         // ── 担保：双签 pre-complete → complete ──────────────────────
