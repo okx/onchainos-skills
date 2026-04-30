@@ -563,7 +563,7 @@ pub async fn sign_escrow(p: SignEscrowParams) -> Result<SignEscrowOutput> {
         valid_before,
         &nonce_hex,
         &p.currency,
-        Some("ReceiveWithAuthorization"),
+        Some("eip3009ReceiveAuth"),
     )
     .await?;
 
@@ -596,7 +596,7 @@ async fn tee_sign_eip3009(
     valid_before: u64,
     nonce_hex: &str,
     verifying_contract: &str,
-    authorization_type: Option<&str>,
+    sign_type: Option<&str>,
 ) -> Result<String> {
     let session =
         wallet_store::load_session()?.ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
@@ -613,8 +613,8 @@ async fn tee_sign_eip3009(
         "nonce": nonce_hex,
         "verifyingContract": verifying_contract,
     });
-    if let Some(t) = authorization_type {
-        base_fields["authorizationType"] = json!(t);
+    if let Some(t) = sign_type {
+        base_fields["signType"] = json!(t);
     }
 
     if cfg!(feature = "debug-log") {
