@@ -125,6 +125,8 @@ pub enum Event {
     /// **后端无此 event** —— 保留作为内部别名（agree-refund 上链后没专门 event 名，
     /// 状态变更直接通过 broadcast 推到 refunded）。模型/skill 提到时按"卖家退款"语义处理
     ConfirmRefund,
+    /// 退款已上链（claimAutoRefund / agreeRefund 广播成功后系统通知 buyer）
+    JobRefunded,
     /// DisputeSettled 仲裁裁决（status 进入 completed 或 refunded；通知 buyer/provider/voters
     /// 调 /claimable + /claim 领取奖励）
     DisputeResolved,
@@ -195,6 +197,7 @@ impl Event {
             "dispute_approved"          => Event::DisputeApproved,
             "job_disputed"              => Event::JobDisputed,
             "confirm_refund"            => Event::ConfirmRefund,
+            "job_refunded"              => Event::JobRefunded,
             "dispute_resolved"          => Event::DisputeResolved,
             "job_expired"               => Event::JobExpired,
             "job_closed"                => Event::JobClosed,
@@ -236,6 +239,7 @@ impl Event {
             Event::DisputeApproved        => "dispute_approved",
             Event::JobDisputed            => "job_disputed",
             Event::ConfirmRefund          => "confirm_refund",
+            Event::JobRefunded            => "job_refunded",
             Event::DisputeResolved        => "dispute_resolved",
             Event::JobExpired             => "job_expired",
             Event::JobClosed              => "job_closed",
@@ -280,7 +284,7 @@ pub fn status_when_event(e: &Event) -> Status {
         Event::DisputeApproved                                              => Status::Refused,
         Event::JobDisputed                                                  => Status::Disputed,
         Event::JobCompleted | Event::ReviewExpired                          => Status::Completed,
-        Event::ConfirmRefund                                                => Status::Refunded,
+        Event::ConfirmRefund | Event::JobRefunded                              => Status::Refunded,
         Event::DisputeResolved                                              => Status::Completed,
         // 仲裁子状态机：所有事件都发生在 task=disputed 状态下
         Event::EvaluatorSelected | Event::RevealStarted

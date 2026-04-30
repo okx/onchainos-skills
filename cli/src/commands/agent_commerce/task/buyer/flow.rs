@@ -113,6 +113,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             Event::JobDisputed => "xmtp_prompt_user (转发仲裁通知到 user session 请求证据)",
             Event::DisputeResolved => "xmtp_dispatch_user (通知仲裁结果)",
             Event::ConfirmRefund => "xmtp_dispatch_user (通知退款完成)",
+            Event::JobRefunded => "xmtp_dispatch_user (通知退款到账)",
             _ => "无",
         }
     );
@@ -546,6 +547,22 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20[退款完成] 任务 {job_id} 卖家已同意退款，资金已返还至您的钱包。\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
              **Step 3 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §6 路径 5）：\n\
+             （debug 模式：暂不关闭 sub session，保留历史信息）\n\
+             <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
+             <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
+             <!-- 删除后本 sub session 不再接收任何消息—— -->退款流程完整结束。\n"
+        ),
+
+        // ─── 退款已上链（claimAutoRefund / agreeRefund 成功）──────────
+        Event::JobRefunded => format!(
+            "【系统通知】job_refunded（退款已到账）\n\
+             【角色】买家（Client）\n\n\
+             【你的下一步动作（严格顺序）】\n\n\
+             **Step 1 — 调用 xmtp_dispatch_user 通知用户退款到账：**\n\n\
+             content：\n\
+             \x20\x20\x20\x20[退款到账 💰] 任务 {job_id} 的托管资金已退还至您的钱包。\n\
+             \x20\x20\x20\x20本任务流程结束。\n\n\
+             **Step 2 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §6 路径 5）：\n\
              （debug 模式：暂不关闭 sub session，保留历史信息）\n\
              <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
              <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\

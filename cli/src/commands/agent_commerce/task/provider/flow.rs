@@ -488,6 +488,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              如 status=failed 按 errorCode 重试 `onchainos agent claim {job_id}`。\n"
         ),
 
+        // job_refunded —— 买家已领取退款，任务结束
+        Event::JobRefunded => format!(
+            "【系统通知】job_refunded（退款已完成）\n\
+             【角色】卖家（Provider）\n\n\
+             【说明】买家已领取退款，本任务流程结束。无需执行任何操作。\n"
+        ),
+
         Event::Other(ref other) => format!(
             "【未知状态】{other}\n\
              【建议】\n\

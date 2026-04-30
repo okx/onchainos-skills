@@ -21,7 +21,7 @@ pub async fn handle_claim_auto_refund(client: &mut TaskApiClient, job_id: &str) 
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
-        job_id, signing::BizContext::ClaimRewards, &agent_id,
+        job_id, signing::BizContext::JobClaimAutoRefund, &agent_id,
     ).await?;
 
     println!("✓ 超时自动退款已领取，资金将退回账户");
