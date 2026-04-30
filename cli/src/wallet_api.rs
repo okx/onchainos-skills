@@ -535,7 +535,18 @@ impl WalletApiClient {
                 Value::Number(n) => n.to_string(),
                 other => other.to_string(),
             };
-            let msg = body["msg"].as_str().unwrap_or("unknown error").to_string();
+            let msg = body["msg"]
+                .as_str()
+                .or_else(|| body["errorMessage"].as_str())
+                .or_else(|| body["error_message"].as_str())
+                .or_else(|| body["message"].as_str())
+                .or_else(|| body["detailMsg"].as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    eprintln!("[WalletAPI] no msg field in error response (HTTP {}), raw body: {}", status.as_u16(), body);
+                    let s = body.to_string();
+                    if s.len() <= 200 { s } else { format!("{}…", &s[..200]) }
+                });
             return Err(ApiCodeError {
                 code: code_str,
                 msg,
