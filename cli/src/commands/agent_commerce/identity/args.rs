@@ -15,16 +15,12 @@ pub struct CreateArgs {
     pub picture: Option<String>,
     #[arg(long)]
     pub service: Option<String>,
-    #[arg(long)]
-    pub address: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]
 pub struct UpdateArgs {
-    #[arg(value_name = "agentId")]
+    #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
-    #[arg(long = "agent-id", hide = true)]
-    pub agent_id_flag: Option<String>,
     #[arg(long)]
     pub name: Option<String>,
     #[arg(long)]
@@ -47,15 +43,13 @@ pub struct GetArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct AgentStatusArgs {
-    #[arg(value_name = "agentId")]
+    #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
-    #[arg(long = "agent-id", hide = true)]
-    pub agent_id_flag: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]
 pub struct UploadArgs {
-    #[arg(value_name = "file")]
+    #[arg(long)]
     pub file: Option<String>,
 }
 
@@ -79,10 +73,8 @@ pub struct SearchArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct ServiceListArgs {
-    #[arg(value_name = "agentId")]
+    #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
-    #[arg(long = "agent-id", hide = true)]
-    pub agent_id_flag: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -106,10 +98,8 @@ pub struct FeedbackSubmitArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct FeedbackListArgs {
-    #[arg(value_name = "agentId")]
+    #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
-    #[arg(long = "agent-id", hide = true)]
-    pub agent_id_flag: Option<String>,
     #[arg(long)]
     pub page: Option<String>,
     #[arg(long = "page-size")]

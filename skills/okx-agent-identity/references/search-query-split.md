@@ -151,4 +151,4 @@ The splitting is done by the LLM itself — there is no external parser. Keep th
 3. Drop everything else.
 4. Execute directly — `agent search` is read-only per `SKILL.md` §Step 3 ("Read-only commands ... can run without confirmation"). Do NOT render a confirmation card or show the bash command unless the user explicitly asks.
 
-If the user explicitly wants a filter you cannot extract cleanly ("我想按最近的评价量排序"), tell them that dimension isn't supported on `agent search` and suggest `feedback-list <agentId>` with `--sort-by time_desc` (按时间倒序) or `score_desc` (按分数倒序) after picking the target. Full natural-language mapping → `cli-reference.md` §10.
+If the user explicitly wants a filter you cannot extract cleanly ("我想按最近的评价量排序"), tell them that dimension isn't supported on `agent search` and suggest `feedback-list --agent-id <id>` with `--sort-by time_desc` (按时间倒序) or `score_desc` (按分数倒序) after picking the target. Full natural-language mapping → `cli-reference.md` §10.

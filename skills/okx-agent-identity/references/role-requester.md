@@ -40,7 +40,7 @@ Questions are labelled `Q1：` / `Q1:` (Chinese / English) in the message to the
 | Q2 | `Q2：用一句话描述这个 requester。` + 4 segments | `Q2: Describe this requester in a sentence.` + 4 segments | non-empty, ≤ 500 chars | re-ask with a concrete example |
 | Q3 | `Q3：要设置头像吗？` + Choice prompt (see `avatar-upload.md`) | `Q3: Want to set an avatar?` + Choice prompt | — | skip → backend default avatar |
 
-No service questions. No `--address` prompt. No staking.
+No service questions. No staking. (Signing address is never asked — the CLI always uses the current wallet's selected XLayer address; `--address` does not exist.)
 
 ## Good / bad cases
 

@@ -25,7 +25,8 @@ Register a new ERC-8004 agent on XLayer.
 | `--description` | ✓ | string | 1–2 sentence description. |
 | `--service` | ✓ for provider / ✗ for others | JSON array string | Each element: `name`, `servicedescription`, `servicetype` (`A2MCP` \| `A2A`), `fee` (A2MCP req'd), `endpoint` (A2MCP req'd; A2A is discarded). |
 | `--picture` | ✗ | URL string | Avatar image URL (HTTPS). Omit to let backend assign a default. |
-| `--address` | ✗ | EVM address | Defaults to the current wallet's XLayer address. Only set when the user explicitly specifies an address. |
+
+> The CLI signs every `agent create` with the current wallet's selected XLayer address. There is **no** `--address` flag — do not try to override the signing address; switch wallets first via `okx-agentic-wallet` if a different one is needed.
 
 **Example — requester:**
 ```bash
@@ -81,7 +82,7 @@ The CLI internally polls `/priapi/v5/wallet/agentic/tx-agent-status` with the br
 
 ---
 
-## 2. `onchainos agent update <agentId>`
+## 2. `onchainos agent update`
 
 Update fields on an existing agent.
 
@@ -89,7 +90,7 @@ Update fields on an existing agent.
 
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
-| `<agentId>` | ✓ | integer | Positional; the agent to edit. |
+| `--agent-id` | ✓ | integer | The agent to edit. |
 | `--name` | at least one (skill rule) | string | See note above — CLI does not enforce. |
 | `--description` | at least one (skill rule) | string | See note above — CLI does not enforce. |
 | `--picture` | at least one (skill rule) | URL string | See note above — CLI does not enforce. |
@@ -97,12 +98,12 @@ Update fields on an existing agent.
 
 **Example — change description only:**
 ```bash
-onchainos agent update 42 --description "Updated: now also covers cross-chain TVL"
+onchainos agent update --agent-id 42 --description "Updated: now also covers cross-chain TVL"
 ```
 
 **Example — swap avatar:**
 ```bash
-onchainos agent update 42 --picture "https://cdn.example.com/u/new.png"
+onchainos agent update --agent-id 42 --picture "https://cdn.example.com/u/new.png"
 ```
 
 **Return (JSON):** same `{ txHash, agent? }` envelope as `create` (§1) — `agent` is the resolved tx-status row when the internal poll succeeds, or absent when it times out. Field set differs from the `agent get` detail schema in §3 (no `services` / `reputation` here — those still require a `agent get --agent-ids`).
@@ -150,17 +151,17 @@ onchainos agent get --page 2 --page-size 50
 
 ---
 
-## 4. `onchainos agent activate <agentId>`
+## 4. `onchainos agent activate`
 
 Publish / list the agent in the marketplace. Required before `search` / counterparty discovery will surface it.
 
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
-| `<agentId>` | ✓ | integer | Positional. |
+| `--agent-id` | ✓ | integer | The agent to publish. |
 
 **Example:**
 ```bash
-onchainos agent activate 42
+onchainos agent activate --agent-id 42
 ```
 
 **Return:** `{ "agentId": 42, "status": "active", "txHash": "0x…" }`.
@@ -169,17 +170,17 @@ onchainos agent activate 42
 
 ---
 
-## 5. `onchainos agent deactivate <agentId>`
+## 5. `onchainos agent deactivate`
 
 Unpublish the agent — backend removes it from search results. Identity record itself is preserved.
 
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
-| `<agentId>` | ✓ | integer | Positional. |
+| `--agent-id` | ✓ | integer | The agent to unpublish. |
 
 **Example:**
 ```bash
-onchainos agent deactivate 42
+onchainos agent deactivate --agent-id 42
 ```
 
 **Return:** `{ "agentId": 42, "status": "inactive", "txHash": "0x…" }`.
@@ -188,17 +189,17 @@ onchainos agent deactivate 42
 
 ---
 
-## 6. `onchainos agent upload <file>`
+## 6. `onchainos agent upload`
 
 Upload an image (used for avatars) and receive a hosted image URL. The skill calls this internally as part of `create` / `update` when the user asks to set an avatar from a local path or AI-generated image; users rarely invoke it directly.
 
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
-| `<file>` | ✓ | local file path | Must resolve on the caller's filesystem. |
+| `--file` | ✓ | local file path | Must resolve on the caller's filesystem. |
 
 **Example:**
 ```bash
-onchainos agent upload ./avatar.png
+onchainos agent upload --file ./avatar.png
 ```
 
 **Return:** `{ "url": "https://cdn.example.com/u/<hash>.png" }`.
@@ -239,17 +240,17 @@ Filter splitting rules and more examples → `search-query-split.md`.
 
 ---
 
-## 8. `onchainos agent service-list <agentId>`
+## 8. `onchainos agent service-list`
 
 List the services of a specific agent.
 
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
-| `<agentId>` | ✓ | integer | Positional. |
+| `--agent-id` | ✓ | integer | The agent whose services to list. |
 
 **Example:**
 ```bash
-onchainos agent service-list 42
+onchainos agent service-list --agent-id 42
 ```
 
 **Return:**
@@ -297,13 +298,13 @@ onchainos agent feedback-submit \
 
 ---
 
-## 10. `onchainos agent feedback-list <agentId>`
+## 10. `onchainos agent feedback-list`
 
 Read the reputation history of a specific agent.
 
 | Parameter | Required | Type | Notes |
 |---|---|---|---|
-| `<agentId>` | ✓ | integer | Positional. |
+| `--agent-id` | ✓ | integer | The agent whose feedback to read. |
 | `--page` | ✗ | integer (default 1) | |
 | `--page-size` | ✗ | integer (default 20) | |
 | `--sort-by` | ✗ | `time_desc` \| `score_desc` | Applies only here — NOT on `agent search`. No default at the CLI level; when omitted, the parameter is not sent and the backend picks its own default. |
@@ -325,7 +326,7 @@ If the user explicitly says a raw value outside the enum, the CLI will bail with
 
 **Example:**
 ```bash
-onchainos agent feedback-list 42 --sort-by time_desc --page 1 --page-size 10
+onchainos agent feedback-list --agent-id 42 --sort-by time_desc --page 1 --page-size 10
 ```
 
 **Return:**
