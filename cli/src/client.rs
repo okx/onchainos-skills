@@ -1446,7 +1446,7 @@ mod tests {
         let v = json!("  no liquidity  ");
         assert_eq!(extract_msg(&v), "no liquidity");
     }
-    use super::{ApiClient, PaymentCache, PaymentRequired, PaymentTier, TierState};
+    use super::{PaymentCache, PaymentRequired, PaymentTier, TierState};
     use serde_json::Value;
 
     /// Set AK credential env vars to dummy test values so ApiClient::new() succeeds.
