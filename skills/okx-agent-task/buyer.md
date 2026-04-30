@@ -601,9 +601,14 @@ Payment mode (`escrow` vs `non_escrow`) is negotiated here — **not** at task c
 - 卖家在一条消息中同时提出价格 + 支付方式（如"报价：100 USDT，支付方式：non_escrow"）
 - 三步已分轮完成（详情 ✓ 价格 ✓ 支付方式 ✓）
 
-直接输出告知卖家协商结果，请其正式提交申请，例如：
+直接输出告知卖家协商结果，**让卖家自己去执行 `apply`**，例如：
 
-> 我接受报价：`<price>` `<currency>`，支付方式：`<paymentMode>`，交付时间 `<deliveryHours>` 小时。请正式申请接单。
+> 三项已确认：报价 `<price>` `<currency>`，支付方式 `<paymentMode>`，交付时间 `<deliveryHours>` 小时。**请你（卖家）执行 `apply` 提交接单申请**，我等收到 `provider_applied` 系统通知后再调 `confirm-accept` 注资托管。
+
+⚠️ **角色铁律**：
+- `apply`（提交接单申请）是 **provider/卖家** 的链上动作 —— buyer **绝对不能**说"我将提交接单申请"或"我去 apply"
+- buyer 在本场景的动作只有两条：`xmtp_send` 这条确认 + 等 `provider_applied` 通知
+- 不要复述"你将提交"为"我将提交"——主语换了之后协议就错了
 
 等待卖家发送 `provider_applied` → 进入 Scene 3。
 

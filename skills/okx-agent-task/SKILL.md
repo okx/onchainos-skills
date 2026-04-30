@@ -859,7 +859,8 @@ onchainos agent recommend <jobId>
 2. **价格协商**：报出预算；卖家还价在合理范围内直接同意；超出则还价；无法达成切换下一位卖家。每一轮回复都走 `xmtp_send`。
 
 3. **支付方式确认**："escrow"/"担保" → escrow；"直接付款"/"non_escrow" → non_escrow。三步完成后调 `xmtp_send`，`content` = 例如：
-   > 我接受报价：{price} {currency}，支付方式：{paymentMode}，交付时间 {hours} 小时。请正式申请接单。
+   > 三项已确认：报价 {price} {currency}，支付方式 {paymentMode}，交付时间 {hours} 小时。**请你（卖家）执行 `apply` 提交接单申请**，我等 `provider_applied` 通知后调 `confirm-accept`。
+   ⚠️ `apply` 是卖家的动作，buyer 绝不能写成"我将提交接单申请"。
 
 每次 `xmtp_send` 之后，在文字输出里记一句：
 > 通过 XMTP 向当前会话发送消息。sessionKey 取当前会话的 sessionKey，从中解析出通信地址和会话信息。回复内容是：<content>
