@@ -111,12 +111,15 @@ pub enum PaymentCommand {
         /// `--reuse-signature` (no signing performed).
         #[arg(long)]
         cumulative_amount: String,
-        /// Escrow contract address
+        /// Escrow contract address. Required only in TEE-sign mode (the
+        /// EIP-712 voucher domain binds to it). Ignored in reuse mode —
+        /// the existing signature already encodes the original escrow.
         #[arg(long)]
-        escrow: String,
-        /// Chain ID (e.g. 196 for X Layer)
+        escrow: Option<String>,
+        /// Chain ID (e.g. 196 for X Layer). Required only in TEE-sign mode
+        /// (the EIP-712 voucher domain binds to it). Ignored in reuse mode.
         #[arg(long)]
-        chain_id: u64,
+        chain_id: Option<u64>,
         /// Payer address (optional, defaults to selected account)
         #[arg(long)]
         from: Option<String>,
@@ -263,7 +266,7 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
                 &challenge,
                 &channel_id,
                 &cumulative_amount,
-                &escrow,
+                escrow.as_deref(),
                 chain_id,
                 from.as_deref(),
                 reuse_signature.as_deref(),
@@ -838,6 +841,12 @@ fn compute_channel_id(
     let salt_b: B256 = B256::from_slice(&salt_bytes);
     let chain_id_u: U256 = U256::from(chain_id);
 
+    // `abi_encode_params` matches Solidity `abi.encode(a, b, c)` exactly,
+    // staying consistent with the sibling nonce helpers and with the
+    // contract's `keccak256(abi.encode(...))`. For all-static tuples the
+    // bytes coincide with `abi_encode`, but the params form is the
+    // semantically correct encoder and is robust if a dynamic field is
+    // ever added to the channelId derivation.
     let encoded = (
         payer_addr,
         payee_addr,
@@ -847,7 +856,7 @@ fn compute_channel_id(
         escrow_addr,
         chain_id_u,
     )
-        .abi_encode();
+        .abi_encode_params();
 
     use tiny_keccak::{Hasher, Keccak};
     let mut hasher = Keccak::v256();
@@ -1098,7 +1107,7 @@ async fn tee_sign_voucher(
 
 /// Resolve the OKX `chainIndex` and the selected payer address for a given
 /// EVM `chain_id`. Centralises 5 identical chain+wallet lookups across
-/// `cmd_mpp_pay` / `cmd_mpp_session_open` / `cmd_mpp_voucher` /
+/// `cmd_mpp_charge` / `cmd_mpp_session_open` / `cmd_mpp_session_voucher` /
 /// `cmd_mpp_session_topup` / `cmd_mpp_session_close`.
 ///
 /// Returns `(chain_index, payer_addr)` — both already normalised to `String`.
@@ -1172,7 +1181,10 @@ async fn cmd_mpp_charge(
                 "challenge.methodDetails.feePayer=false requires --tx-hash (broadcast transferWithAuthorization yourself first)"
             )
         })?;
-        if !hash.starts_with("0x") || hash.len() != 66 {
+        if !hash.starts_with("0x")
+            || hash.len() != 66
+            || !hash[2..].chars().all(|c| c.is_ascii_hexdigit())
+        {
             bail!("--tx-hash must be 0x + 64 hex chars");
         }
         let credential = json!({
@@ -1381,7 +1393,10 @@ async fn cmd_mpp_session_open(
                 "challenge.methodDetails.feePayer=false requires --tx-hash (broadcast open tx yourself first)"
             )
         })?;
-        if !hash.starts_with("0x") || hash.len() != 66 {
+        if !hash.starts_with("0x")
+            || hash.len() != 66
+            || !hash[2..].chars().all(|c| c.is_ascii_hexdigit())
+        {
             bail!("--tx-hash must be 0x + 64 hex chars");
         }
         // authorizedSigner omitted = payer (both contract and SDK resolve
@@ -1514,8 +1529,8 @@ async fn cmd_mpp_session_voucher(
     challenge_header: &str,
     channel_id: &str,
     cumulative_amount: &str,
-    escrow: &str,
-    chain_id: u64,
+    escrow: Option<&str>,
+    chain_id: Option<u64>,
     from: Option<&str>,
     reuse_signature: Option<&str>,
 ) -> Result<()> {
@@ -1534,6 +1549,15 @@ async fn cmd_mpp_session_voucher(
         };
         (canonical, "reuse")
     } else {
+        // TEE-sign branch: --escrow / --chain-id are required (the EIP-712
+        // voucher domain binds to them). Reuse path skips this entirely.
+        let escrow = escrow.ok_or_else(|| {
+            anyhow!("--escrow is required when not using --reuse-signature")
+        })?;
+        let chain_id = chain_id.ok_or_else(|| {
+            anyhow!("--chain-id is required when not using --reuse-signature")
+        })?;
+
         // Resolve chain + payer (the voucher takes the generic EIP-712 path
         // and needs chainIndex / from).
         let (chain_index, payer_addr) = resolve_chain_and_payer(chain_id, from).await?;
@@ -1597,7 +1621,10 @@ async fn cmd_mpp_session_topup(
     let payer_addr = payer_addr.as_str();
 
     let payload = if let Some(hash) = tx_hash {
-        if !hash.starts_with("0x") || hash.len() != 66 {
+        if !hash.starts_with("0x")
+            || hash.len() != 66
+            || !hash[2..].chars().all(|c| c.is_ascii_hexdigit())
+        {
             bail!("--tx-hash must be 0x + 64 hex chars");
         }
         json!({
@@ -1734,21 +1761,6 @@ async fn cmd_mpp_session_close(
     Ok(())
 }
 
-/// Extract numeric chain ID from a CAIP-2 "eip155:<chainId>" identifier.
-fn parse_eip155_chain_id(network: &str) -> Result<u64> {
-    let id_str = network.strip_prefix("eip155:").ok_or_else(|| {
-        anyhow!(
-            "unsupported network format: expected 'eip155:<chainId>', got '{}'",
-            network
-        )
-    })?;
-    id_str.parse::<u64>().map_err(|_| {
-        anyhow!(
-            "invalid chain ID '{}': must be a valid unsigned integer",
-            id_str
-        )
-    })
-}
 
 // ── Tests ─────────────────────────────────────────────────────────────
 
@@ -2075,8 +2087,13 @@ mod tests {
 
     // ── compute_channel_id (ABI encode + keccak) ──────────────────────
 
-    /// Known-vector test: values hand-picked with deterministic inputs so the expected
-    /// hash can be reproduced by `cast keccak $(cast abi-encode ...)`.
+    /// Known-vector test: deterministic inputs reproducible via
+    /// `cast keccak $(cast abi-encode 'f(address,address,address,bytes32,address,address,uint256)' ...)`.
+    /// `cast abi-encode` produces Solidity `abi.encode(...)` (the params form),
+    /// matching `abi_encode_params()` in this crate.
+    ///
+    /// TODO: cross-check against the on-chain `computeChannelId` view function
+    /// from the EvmPaymentChannel contract for end-to-end protocol parity.
     #[test]
     fn channel_id_abi_encode_roundtrip() {
         // Reproducible 7-tuple
@@ -2090,8 +2107,11 @@ mod tests {
 
         let got = compute_channel_id(payer, payee, token, salt, auth, escrow, chain_id).unwrap();
 
-        // Locked-in value from alloy SolValue::abi_encode((...)) + keccak256.
-        // Guards against silent changes to tuple encoding or hash rules.
+        // Locked-in value from `cast abi-encode` + keccak256 (Solidity
+        // `abi.encode` semantics). Guards against silent changes to tuple
+        // encoding or hash rules. For all-static tuples this also matches
+        // alloy `abi_encode()`, but `abi_encode_params()` is the canonical
+        // form and stays correct if any field becomes dynamic later.
         let expected =
             "0xa38cd33d0b42b9654d5077dccc63849159206c9da56748d8d225a1c79100e2b2";
         assert_eq!(got, expected, "channelId ABI-encoded keccak mismatch");

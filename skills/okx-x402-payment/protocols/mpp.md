@@ -1,26 +1,20 @@
 # MPP Protocol Playbook
 
-Sign MPP (Machine Payments Protocol) authorizations for OKX's payment-channel-based pay-per-use API access. Covers **charge** (one-shot) and **session** (open / voucher / topUp / close) intents in both transaction and hash modes.
+Sign MPP authorizations — **charge** (one-shot) and **session** (open / voucher / topUp / close) in transaction or hash mode.
 
-> **Entry point**: this file is loaded by the dispatcher (`../SKILL.md`) when the 402 response carries a `WWW-Authenticate: Payment ...` header with `method="evm"`. Pre-flight checks, skill routing, chain support, and protocol detection are owned by the dispatcher — start here at "Background".
+> **Entry point**: loaded by `../SKILL.md` when the 402 response has `WWW-Authenticate: Payment ... method="evm"`. Pre-flight, routing, chain support, and protocol detection are the dispatcher's job — start here at Background.
 
-## Background: MPP at a Glance
+> **Talk to users in plain language.** Match the user's language (中文用中文,English uses English). Use action-verb phrasing like "issue a voucher / 签发凭证", "top up your balance / 补充余额", "close the channel / 关闭通道", "your prepaid balance / 通道余额" — don't dump bare jargon (`voucher`, `topUp`, `close`, `escrow`, `cumulativeAmount`) on the user. Technical field names are fine in **state echo** (`📋 Channel ... cum ... sig`) since the user copy-pastes those across sessions.
 
-MPP is OKX's payment protocol for AI agents and machine-to-machine billing. Two intents:
+## Background
 
-| Intent      | Use case                                                           | Flow                                                                                  |
-|-------------|--------------------------------------------------------------------|---------------------------------------------------------------------------------------|
-| **charge**  | One-shot purchase (image, API call, file)                          | Sign once → seller settles on-chain → done                                            |
-| **session** | Multi-request stream (subscriptions, AI inference, pay-per-second) | Open channel + N vouchers + close. Off-chain vouchers, batched on-chain settlement    |
+Two intents: **charge** (one-shot — sign once, seller settles) and **session** (open channel + N vouchers + close — off-chain vouchers, batched on-chain settlement). Authorization header is `Authorization: Payment <base64url>` over the JCS-canonicalised envelope `{challenge, source, payload}`. The CLI returns a ready `authorization_header` — agent just pastes it.
 
-MPP authorization header: `Authorization: Payment <base64url>` (a single envelope `{challenge, source, payload}`, JCS-canonicalised then base64url-encoded). The CLI commands return a complete `authorization_header` string — the agent just pastes it into the request.
+Two delivery modes (per `methodDetails.feePayer` in the 402 challenge):
+- **`feePayer=true` → transaction mode**: CLI TEE-signs EIP-3009; seller broadcasts.
+- **`feePayer=false` → hash mode**: user broadcasts the tx and passes `--tx-hash`; CLI still TEE-signs off-chain pieces (initial voucher etc.).
 
-Two delivery modes per intent (set by `methodDetails.feePayer` in the 402 challenge):
-
-- **`feePayer=true` → transaction mode**: CLI TEE-signs an EIP-3009 `transferWithAuthorization` (or `receiveWithAuthorization` for session escrow); seller broadcasts.
-- **`feePayer=false` → hash mode**: client/user broadcasts the tx themselves and supplies the resulting tx hash to the CLI via `--tx-hash`. The CLI still TEE-signs the off-chain pieces (e.g. initial voucher).
-
-**MPP method check** — verify `method="evm"` in the WWW-Authenticate header (e.g. `Payment ... method="evm", ...`). This playbook only supports EVM-based MPP. If `method` is `"tempo"`, `"svm"`, `"stripe"`, or other → stop and tell the user this playbook cannot handle that method.
+**Method check** — only `method="evm"` is supported here. If `method` is `"tempo"`, `"svm"`, `"stripe"`, etc. → stop and tell the user this playbook cannot handle it.
 
 ## Command Index
 
@@ -32,9 +26,9 @@ Two delivery modes per intent (set by `methodDetails.feePayer` in the 402 challe
 | 4 | `onchainos payment mpp-session-topup`| session | Add more deposit to an open channel (optional)                         |
 | 5 | `onchainos payment mpp-session-close`| session | Close the channel and settle                                           |
 
-All five commands return a JSON object with `authorization_header` field — the value to pass back as `Authorization:` when retrying the original request.
+All five commands return `data.authorization_header` — paste as `Authorization:` when retrying the request.
 
-**`--base-url` (all commands)** — every payment command accepts `--base-url '<URL>'` to override the backend service URL. Use this when the user explicitly asks to point at a staging / forked / testnet environment and provides the URL. **Always require `https://`** — `http://` triggers a 301 redirect that converts POST→GET and silently drops the request body, surfacing as a `30001 incorrect params` error. If `--base-url` is not provided, the CLI uses the configured production endpoint.
+**`--base-url`** (all commands) overrides the backend URL for staging / forked / testnet endpoints. **Always `https://`** — `http://` causes a 301 POST→GET redirect that drops the body, surfacing as `30001 incorrect params`. Omitted = production default.
 
 ---
 
@@ -68,64 +62,50 @@ unitType            optional — "request" | "second" | "byte" etc.
 
 Convert `amount` from base units to human-readable using the token's decimals (typically 6 for USDC/USD₮, 18 for native).
 
-**Challenge expiry check** — if the WWW-Authenticate header carries an `expires=...` ISO-8601 timestamp and the current time is past it, the challenge is dead: re-send the original request to obtain a fresh 402 / challenge before signing. Signing against an expired challenge will fail at the seller with `30001 incorrect params` or similar.
+**Challenge expiry** — if `expires=...` (ISO-8601) is in the past, the challenge is dead: re-send the original request to get a fresh 402 before signing. Stale challenges fail with `30001 incorrect params`.
 
 **MANDATORY STOP — display these details and wait for explicit confirmation:**
 
-> This resource requires MPP payment:
-> - **Intent**: `<charge | session>`
+> This resource requires payment:
+> - **Payment type**: `<one-shot purchase (charge) | streaming session (multi-request)>`
 > - **Network**: `<chain name>` (`eip155:<chainId>`)
 > - **Token**: `<symbol>` (`<currency address>`)
-> - **Amount per unit**: `<human-readable>` (atomic: `<amount>`)
+> - **Amount per request**: `<human-readable>` (atomic: `<amount>`)
 > - **Pay to**: `<recipient>`
-> - **Fee mode**: `<server pays gas (transaction) | client broadcasts (hash)>`
-> - **Splits** (charge only, if present): `<N split recipients>`
-> - **Suggested deposit** (session only, if present): `<human-readable>`
+> - **Who pays gas**: `<server (transaction mode) | you broadcast it yourself (hash mode)>`
+> - **Split recipients** (one-shot only, if present): `<N other parties also receive a share>`
+> - **Suggested prepaid balance** (session only, if present): `<human-readable>`
 >
 > Proceed with payment? (yes / no)
 
 **Do not call `onchainos wallet status` or any other tool until the user confirms.**
 
-- User confirms → proceed to Step 2
-- User declines → stop, no payment made, no wallet check
+Confirm → Step 2; decline → stop, no payment made, no wallet check.
 
 ## Step 2: Check Wallet Status
 
-Now that the user has confirmed, check the wallet:
+After user confirms, run `onchainos wallet status`. Logged in → Step 3. Not logged in → ask:
 
-```bash
-onchainos wallet status
-```
+> You are not logged in. How would you like to authenticate?
+> 1. **Email login** — `onchainos wallet login <email>` (OTP)
+> 2. **API Key login** — `onchainos wallet login` (uses `OKX_API_KEY` / `OKX_SECRET_KEY` / `OKX_PASSPHRASE` env)
+> 3. **Cancel**
 
-- **Logged in** → proceed to Step 3
-- **Not logged in** → ask the user how to log in:
-
-  > You are not logged in. How would you like to authenticate?
-  > 1. **Email login** — `onchainos wallet login <email>` (sends OTP, then verify)
-  > 2. **API Key login** — `onchainos wallet login` (uses `OKX_API_KEY` / `OKX_SECRET_KEY` / `OKX_PASSPHRASE` env vars)
-  > 3. **Cancel** — abort payment
-
-  Wait for user response. **Local private key signing is NOT supported for MPP** (only for x402; MPP requires TEE).
+Wait for the user. **MPP requires TEE** — local private key signing is not supported (only x402 has that fallback).
 
 ## Step 3: Sign and Assemble
 
-Branch by `intent`:
-
-- `charge` → [§ Charge](#charge-flow)
-- `session` → [§ Session](#session-flow)
+Branch by `intent`: `charge` → [§ Charge](#charge-flow); `session` → [§ Session](#session-flow).
 
 ---
 
 # Charge Flow
 
-One-shot payment. The CLI TEE-signs an EIP-3009 authorization (or wraps a client-broadcast tx hash) and returns a complete `authorization_header`.
+One-shot payment. CLI TEE-signs EIP-3009 (or wraps a client-broadcast tx hash) and returns `authorization_header`.
 
 ## Charge Step 1: Decide Mode
 
-Read `methodDetails.feePayer` from the decoded request:
-
-- `feePayer=true` (default) → **transaction mode** (server pays gas)
-- `feePayer=false` → **hash mode** (user must broadcast first)
+`methodDetails.feePayer=true` (default) → transaction mode (server pays gas). `feePayer=false` → hash mode (user broadcasts first).
 
 ## Charge Step 2a (transaction mode): Sign
 
@@ -135,37 +115,17 @@ onchainos payment mpp-charge \
   [--from '<0xPayer>']
 ```
 
-CLI auto-detects `methodDetails.splits[]` — no extra flag needed. Output:
-
-```json
-{
-  "ok": true,
-  "data": {
-    "protocol": "mpp",
-    "action": "mpp_pay",
-    "mode": "transaction",
-    "authorization_header": "Payment eyJjaGFsbGVuZ2UiOnsi...",
-    "wallet": "0x...",
-    "challenge": { "id": "...", "realm": "..." }
-  }
-}
-```
-
-Save `data.authorization_header`. Skip to [Charge Step 3: Replay](#charge-step-3-replay).
+CLI auto-detects `methodDetails.splits[]` — no extra flag needed. Output: `{ ok, data: { authorization_header, wallet, ... } }`. Save `data.authorization_header` and skip to [Charge Step 3: Replay](#charge-step-3-replay).
 
 ## Charge Step 2b (hash mode): Broadcast First, Then Wrap
 
-When `feePayer=false`, the user must broadcast `transferWithAuthorization` themselves first. Ask:
+When `feePayer=false`, user must broadcast `transferWithAuthorization` themselves first. Ask:
 
-> The seller does not pay gas. You need to broadcast the transferWithAuthorization yourself and supply the tx hash. How would you like to broadcast?
-> 1. **Help me broadcast** — switch to `okx-onchain-gateway` skill (recommended)
-> 2. **I'll broadcast manually** — paste the tx hash when ready
+> The seller isn't paying gas, so you need to send the payment transaction on-chain yourself first, then give me the tx hash. How would you like to send it?
+> 1. **Help me send it** — switch to `okx-onchain-gateway` (recommended)
+> 2. **I'll send it manually** — paste the tx hash when ready
 
-For Option 1, delegate to `okx-onchain-gateway` to construct + broadcast the transferWithAuthorization tx. When they return with a tx hash, continue.
-
-For Option 2, wait for the user to provide a 66-char `0x...` hash.
-
-Then:
+Option 1: delegate to `okx-onchain-gateway`, return here with the hash. Option 2: wait for a 66-char `0x...` hash.
 
 ```bash
 onchainos payment mpp-charge \
@@ -174,97 +134,72 @@ onchainos payment mpp-charge \
   [--from '<0xPayer>']
 ```
 
-Output is the same shape as transaction mode but `mode: "hash"`. Save `authorization_header`.
+Output shape same as transaction mode but `mode: "hash"`. Save `authorization_header`.
 
 ## Charge Step 3: Replay
-
-Send the original request with the signed authorization header:
 
 ```
 <original method> <original url>
 Authorization: <authorization_header>
 ```
 
-Expected: `HTTP 200` with the requested content + a `Payment-Receipt` header containing the on-chain tx hash. Charge complete.
-
-If the response is again 402, see [§ Troubleshooting](#troubleshooting) (signature replay / expired challenge).
+Expected: `HTTP 200` with content + `Payment-Receipt` header (on-chain tx hash). Charge complete. Another 402 → see [§ Troubleshooting](#troubleshooting) (replay / expired challenge).
 
 ---
 
 # Session Flow
 
-Multi-step state machine: **open → N vouchers → close** (with optional topUp). Each phase has its own CLI command and Authorization header.
+State machine: **open → N vouchers → close** (optional topUp). Each phase has its own CLI command and `Authorization` header.
 
 ## Session State to Track
 
-The agent MUST maintain the following state across all phases of the session. Save these the moment `mpp-session-open` returns:
+Save these the moment `mpp-session-open` returns and maintain across phases:
 
-| Field              | Source                                  | Used by                              |
-|--------------------|------------------------------------------|--------------------------------------|
-| `channel_id`       | `mpp-session-open` output                | voucher / topup / close              |
-| `escrow`           | open challenge `methodDetails.escrowContract` | voucher / topup / close         |
-| `chain_id`         | open challenge `methodDetails.chainId`   | voucher / topup / close              |
-| `currency`         | open challenge `currency`                | topup (transaction mode)             |
-| `payer_addr`       | open output `wallet`                     | All commands `--from`                |
-| `current_cum`      | highest signed cum so far (open `--initial-cum` or last issued voucher's cum) | reuse decisions, close      |
-| `current_sig`      | last voucher signature (`signature` field of open / voucher / close output) | `--reuse-signature` for next voucher |
-| `estimated_spent`  | sum of `unit_amount` across all served business requests since the last fresh sign | reuse decisions      |
-| `unit_amount`      | latest voucher challenge `amount` (seller is authoritative) | next voucher cum & remaining calc |
-| `deposit`          | open output `deposit` + topup `--additional-deposit` | reuse decisions, close   |
+| Field             | Source                                                                              |
+|-------------------|--------------------------------------------------------------------------------------|
+| `channel_id`      | `mpp-session-open` output                                                            |
+| `escrow`          | open challenge `methodDetails.escrowContract`                                        |
+| `chain_id`        | open challenge `methodDetails.chainId`                                               |
+| `currency`        | open challenge `currency`                                                            |
+| `payer_addr`      | open output `wallet`                                                                 |
+| `current_cum`     | highest signed cum so far (open `--initial-cum` or last issued voucher's cum)        |
+| `current_sig`     | last voucher signature (`signature` field of open / voucher / close output)          |
+| `estimated_spent` | sum of `unit_amount` across all served business requests since the last fresh sign   |
+| `unit_amount`     | latest voucher challenge `amount` (seller is authoritative)                          |
+| `deposit`         | open output `deposit` + topup `--additional-deposit`                                 |
 
-**Tracking strategy** — within a single conversation, track these in your context (e.g., conversation memory). Across conversations, ask the user to provide the channel_id, escrow, current_cum, and current_sig if they want to continue an open session.
+Track in conversation context. Across conversations, ask the user to re-supply `channel_id` / `escrow` / `current_cum` / `current_sig` to continue a session.
 
-**Mandatory state echo** — every time you respond after `mpp-session-open`, after each voucher (sign or reuse), after topup, and immediately before close, **end your message with a one-line state echo**:
+**Mandatory state echo** — after `mpp-session-open`, after each voucher (sign or reuse), after topup, and immediately before close, end your message with one line:
 
 > 📋 Channel `<channel_id>` · chain `<chain_id>` · escrow `<escrow>` · deposit `<human(deposit)>` (`<deposit>`) · cum `<human(current_cum)>` (`<current_cum>`) · spent~`<human(estimated_spent)>` (`<estimated_spent>`) · sig `<current_sig prefix...>`
 
-**All amounts shown to users MUST be in BOTH human-readable form AND atomic units**, in the format `<human> (<atomic>)`. Examples:
-- `0.0004 USDC (400)` — 6 decimals
-- `1.5 ETH (1500000000000000000)` — 18 decimals
-- `10 USD₮ (10000000)`
-
-Compute human-readable using the token's decimals (`amount / 10^decimals`). Decimals come from the challenge's `currency` token — typically 6 for USDC/USD₮, 18 for native, but **never assume**: if uncertain, ask the user or query the token contract via `okx-dex-token`. The token symbol comes from the challenge `currency` field's known address mapping or token metadata; if neither is available, fall back to `units` literally.
-
-**This applies everywhere agent talks numbers to user**: state echo, payment confirmation prompts (Step 1), deposit suggestions (Phase S1), settle / close summaries (Phase S3.4), `current_cum` updates after each voucher. Atomic units alone are unreadable to humans.
-
-This lets the user copy-paste it back if the conversation is interrupted, and protects against agents silently losing channel state mid-session.
+**All user-facing amounts in BOTH human and atomic form** — `<human> (<atomic>)`, e.g. `0.0004 USDC (400)`, `1.5 ETH (1500000000000000000)`. Compute via `amount / 10^decimals` from the challenge `currency` token (typically 6 for USDC/USD₮, 18 for native — **never assume**; query `okx-dex-token` if uncertain). Applies everywhere: state echo, confirmation prompts, deposit suggestions, settle / close summaries.
 
 ## Phase S1: Open Channel
 
-Always the first step in any session. Decide the **deposit** with the user:
+First step of any session. Decide the **deposit** with the user:
 
-> Session requires you to lock up a deposit in the escrow contract. How much would you like to deposit?
-> Suggested: `<human(suggestedDeposit)> (<suggestedDeposit>)` (if present, else suggest `<human(unit_amount × 100)> (<unit_amount × 100>)` or similar — N×100 covers ~100 unit requests)
->
-> Provide either a human amount (e.g. "0.01 USDC", "5") or atomic units. The CLI takes atomic; convert before passing.
->
-> Each voucher consumes from this deposit; you can topUp later or close to refund unused.
+> A streaming session needs you to lock a prepaid balance up front (held in escrow). How much would you like to prepay?
+> Suggested: `<human(suggestedDeposit)> (<suggestedDeposit>)` (or `unit_amount × 100` if no suggestion — enough for ~100 requests).
+> You can give a human amount like `0.01 USDC` or atomic units (the CLI takes atomic — I'll convert).
+> Each request draws from this balance. You can add more later, or close the channel anytime to refund whatever's unused.
 
-Wait for user's deposit amount.
+Wait for user's amount.
 
 ### Optional: Initial Voucher Prepay
 
-By default, opening a channel signs a baseline voucher with `cumulativeAmount=0` (no prepay). The user can opt for a non-zero baseline:
+Opening a channel signs a baseline voucher with `cumulativeAmount=0` by default. To override:
+- `--initial-cum N` — explicit baseline (atomic units).
+- `--prepay-first` — use the unit price from `challenge.amount` (silently falls back to 0 if missing/`"0"`).
 
-- **`--initial-cum N`** → explicit baseline cumulativeAmount (atomic units)
-- **`--prepay-first`** → use one unit price (`challenge.amount`) automatically; falls back silently to 0 if challenge.amount is "0" or missing
-
-Decide based on user intent:
-
-| User says                                         | Use flag                              |
-|---------------------------------------------------|---------------------------------------|
-| "Just open the channel" / no preference           | (no flag, default = 0)                |
-| "Open and pay first request immediately"          | `--prepay-first`                      |
-| "Open and pre-authorize N atomic units"           | `--initial-cum N`                     |
-
-Constraint: `initial_cum ≤ deposit`. The SDK rejects with `70012` if violated.
+Pick from user intent: no preference → no flag; "pay first request immediately" → `--prepay-first`; "pre-authorize N" → `--initial-cum N`. Constraint: `initial_cum ≤ deposit` (SDK rejects with `70012` otherwise).
 
 ### Mode Branch
 
-Read `methodDetails.feePayer`:
+Branch by `methodDetails.feePayer`.
 
-#### Transaction mode (`feePayer=true`)
-
+**Transaction mode (`feePayer=true`):**
 ```bash
 onchainos payment mpp-session-open \
   --challenge '<full WWW-Authenticate header value>' \
@@ -273,34 +208,9 @@ onchainos payment mpp-session-open \
   [--from '<0xPayer>']
 ```
 
-CLI TEE-signs an EIP-3009 `receiveWithAuthorization` to deposit funds into the escrow contract, plus an EIP-712 Voucher (channelId, cumulativeAmount=initial_cum) as the baseline.
+CLI TEE-signs EIP-3009 `receiveWithAuthorization` (deposit into escrow) + EIP-712 baseline Voucher (channelId, cum=initial_cum). Output: `data.{authorization_header, channel_id, escrow, chain_id, deposit, wallet}` — save all to session state. Initial `current_cum` = initial-cum value (default `"0"`).
 
-Output:
-
-```json
-{
-  "ok": true,
-  "data": {
-    "protocol": "mpp",
-    "action": "session_open",
-    "mode": "transaction",
-    "authorization_header": "Payment eyJjaGFsbGVuZ2UiOnsi...",
-    "channel_id": "0x...",
-    "escrow": "0x...",
-    "chain_id": 196,
-    "deposit": "10000",
-    "wallet": "0x..."
-  }
-}
-```
-
-Save `data.channel_id`, `data.escrow`, `data.chain_id`, `data.wallet` to session state. Initial `current_cum` = the initial-cum value (default "0").
-
-#### Hash mode (`feePayer=false`)
-
-User must broadcast the open tx (escrow `openWithAuthorization`) themselves first. Same delegation choice as charge hash mode — offer `okx-onchain-gateway` or manual broadcast.
-
-When you have the tx hash:
+**Hash mode (`feePayer=false`)** — user must send the on-chain "open channel" transaction themselves first (delegate to `okx-onchain-gateway` or manual, same prompt as charge S2b). Then:
 
 ```bash
 onchainos payment mpp-session-open \
@@ -311,7 +221,7 @@ onchainos payment mpp-session-open \
   [--from '<0xPayer>']
 ```
 
-The CLI still TEE-signs the initial voucher (EIP-712); only the on-chain deposit tx is replaced by the hash you supplied.
+CLI still TEE-signs the initial voucher (EIP-712); only the deposit tx is replaced by the supplied hash.
 
 ### Send Open to Seller
 
@@ -320,28 +230,21 @@ The CLI still TEE-signs the initial voucher (EIP-712); only the on-chain deposit
 Authorization: <authorization_header>
 ```
 
-Two possible outcomes:
-
-- **HTTP 200** — channel is open and the response carries the FIRST business response (e.g. the requested resource). Echo the saved session state to the user (channel_id / deposit / current_cum), then for any subsequent request to the same resource, send the request without `Authorization` first; seller will respond with a voucher 402 → enter Phase S2.
-- **HTTP 402 with a fresh `WWW-Authenticate: Payment`** — channel opened but the seller is asking you to sign the first voucher (intent stays `session`, but `cumulativeAmount` is now expected). Proceed directly to Phase S2.
+Outcomes:
+- **HTTP 200** — channel open, response carries the first business result. Echo saved state (channel_id / deposit / current_cum). Subsequent requests to the same resource: send without `Authorization` first; seller responds with a voucher 402 → Phase S2.
+- **HTTP 402 (fresh `WWW-Authenticate: Payment`)** — channel opened but seller wants the first voucher signed. Go straight to Phase S2.
 
 ## Phase S2: Business Request (Voucher Loop)
 
-For **each** business request during the session:
+Run for **each** business request during the session.
 
-> **When to enter this phase**: any of the following user signals while a `channel_id` is active in session state:
-> - "再调一次" / "再发一个请求" / "下一个请求" / "继续" / "next request" / "another request" / "do it again"
-> - User issues a request to the same resource URL and gets a fresh 402
-> - User explicitly says "voucher" / "凭证" / "签一个 voucher"
+**Enter triggers** (when `channel_id` is active): user says "next request" / "again" / "another one" / "再调一次" / "再发一个" / "继续" / "voucher" / "凭证" / "签一个授权"; or user requests the resource again and gets a fresh 402.
 
-### How vouchers actually work (read this once, then internalise)
+### How vouchers actually work
 
-A voucher is a **cumulative authorisation**, not a single-request payment. Once signed, the seller can keep deducting from it until `spent` reaches the signed `cumulativeAmount`. So a single voucher with `cum=50` can fund 50× `unit_amount=1` requests **without re-signing**, as long as the seller supports voucher reuse:
+A voucher is a **cumulative authorization**, not a single-request payment. Once signed, the seller keeps deducting until `spent` reaches the signed `cumulativeAmount`. So one voucher with `cum=50` funds 50× `unit_amount=1` requests **without re-signing** — provided the seller supports reuse (mppx / OKX TS Session / OKX Rust SDK ≥ this version). Legacy OKX Rust SDK treats byte-replay as idempotent retry and skips deduct; force re-sign every request if you suspect this.
 
-- **mppx**, **OKX TS Session**, **OKX Rust SDK ≥ this version** → reuse is supported (resending the same `(cum, signature)` bytes lets the seller keep deducting).
-- **OKX Rust SDK < this version** (legacy) → byte-replay was treated as idempotent network retry and skipped deduct. If you suspect the seller is on legacy SDK, force re-sign every request.
-
-The agent's job per request: pick **reuse** vs **sign** based on remaining balance under the current voucher.
+Per-request job: pick **reuse** vs **sign** based on remaining balance.
 
 ### S2.1: Send the Request
 
@@ -376,13 +279,11 @@ onchainos payment mpp-session-voucher \
   --challenge '<fresh WWW-Authenticate from this 402>' \
   --channel-id '<saved channel_id>' \
   --cumulative-amount '<current_cum>' \
-  --escrow '<saved escrow>' \
-  --chain-id '<saved chain_id>' \
   --reuse-signature '<saved current_sig>' \
   [--from '<saved payer_addr>']
 ```
 
-The CLI skips TEE signing and emits a fresh `authorization_header` that wraps the existing signature bytes verbatim. Output `mode` is `"reuse"`.
+Don't pass `--escrow` / `--chain-id` here — the existing signature already binds them. CLI skips TEE and wraps the existing signature bytes verbatim. `mode = "reuse"`.
 
 ### S2.3b: Sign path (TEE)
 
@@ -396,22 +297,7 @@ onchainos payment mpp-session-voucher \
   [--from '<saved payer_addr>']
 ```
 
-CLI signs an EIP-712 Voucher(channelId, cum_for_this_call) via TEE. Output `mode` is `"sign"`. Both paths return:
-
-```json
-{
-  "ok": true,
-  "data": {
-    "protocol": "mpp",
-    "action": "voucher",
-    "mode": "reuse" | "sign",
-    "authorization_header": "Payment eyJjaGFsbGVuZ2UiOnsi...",
-    "channel_id": "0x...",
-    "cumulative_amount": "<cum_for_this_call>",
-    "signature": "0x<65-byte hex>"
-  }
-}
-```
+CLI signs an EIP-712 Voucher(channelId, cum_for_this_call) via TEE. Output `mode` is `"sign"`. Both paths return: `data.{authorization_header, channel_id, cumulative_amount, signature, mode: "reuse"|"sign"}`.
 
 ### S2.4: Replay the Business Request
 
@@ -420,49 +306,39 @@ CLI signs an EIP-712 Voucher(channelId, cum_for_this_call) via TEE. Output `mode
 Authorization: <authorization_header>
 ```
 
-Expected: `HTTP 200` with content. **Update session state**:
-
-- `current_cum  = cum_for_this_call`
-- `current_sig  = <signature from output>`
-- `estimated_spent = estimated_spent + unit_amount`
-
-(In the reuse path `current_cum` and `current_sig` are unchanged; only `estimated_spent` advances.)
+Expected: `HTTP 200` with content. **Update state**: `current_cum = cum_for_this_call`, `current_sig = <signature>`, `estimated_spent += unit_amount`. (Reuse path: `current_cum` / `current_sig` unchanged; only `estimated_spent` advances.)
 
 ### S2.5: Handle Insufficient-Balance Fallback
 
-When seller rejects a voucher request, **first** extract the human-readable reason via the priority list in [§ Reading Seller Errors](#reading-seller-errors-important-for-ux). If the extracted reason mentions **insufficient balance** (e.g. `reason: "insufficient balance"`, `detail: "voucher exhausted"`, or — when the seller is the OKX Rust SDK — its private SDK code `70015` accompanies the message), the agent's `estimated_spent` drifted (cross-conversation, or another client consumed balance). Recover by:
+When the seller rejects a voucher, extract the reason via [§ Reading Seller Errors](#reading-seller-errors-important-for-ux). If it indicates **insufficient balance** (e.g. `reason: "insufficient balance"`, `detail: "voucher exhausted"`, or OKX Rust SDK private code `70015`), `estimated_spent` drifted. Recover:
 
-1. **Surface the seller's reason to the user** in human form, e.g. `❌ Seller rejected the voucher: insufficient balance — existing voucher exhausted. Signing a new voucher to continue.`
-2. Re-set `estimated_spent = current_cum` (assume the existing voucher is exhausted)
-3. Go back to S2.2 — `remaining` now becomes 0, so the agent picks **SIGN**
-4. Sign a new voucher with `cum = current_cum + unit_amount` and retry
+1. Surface the seller's reason to the user, e.g. `❌ Seller rejected: insufficient balance — your current authorization is fully used. Signing a new one to continue.`
+2. Set `estimated_spent = current_cum` (treat existing voucher as exhausted).
+3. Re-enter S2.2 — `remaining = 0`, so **SIGN** is picked.
+4. Sign a new voucher with `cum = current_cum + unit_amount` and retry.
 
-Do **not** loop reuse-on-insufficient-balance — always escalate to sign.
+**Do NOT loop reuse-on-insufficient-balance** — always escalate to SIGN.
 
-For other voucher rejection reasons (`amount_exceeds_deposit` → topup; `delta_too_small` → raise cum; `invalid_signature` → check seller logs), surface the reason similarly and route per [§ Troubleshooting](#troubleshooting). Always show the user the seller's reason text first, the protocol code in parentheses second.
+Other rejections: `amount_exceeds_deposit` → topup (S2b); `delta_too_small` → raise cum; `invalid_signature` → check seller logs. Always surface the seller's reason text first, code in parens second.
 
 ### S2.6: Loop
 
-For another request to the same resource: repeat S2.1–S2.4. The same voucher can fund many requests as long as `remaining ≥ unit_amount`; a re-sign happens only when balance runs out.
+Repeat S2.1–S2.4 for each request. Same voucher funds many calls while `remaining ≥ unit_amount`; re-sign only when balance runs out.
 
-> **Note**: voucher rejection errors come from **seller-side SDK local validation**, not from a network round-trip to MPP backend. Common ones: `70000 invalid_params` (cum not strictly increasing), `70004 invalid_signature`, `70012 amount_exceeds_deposit`, `70013 voucher_delta_too_small`, plus `InsufficientBalance` (no protocol code — emitted by mppx / OKX TS as a typed error; OKX Rust SDK uses private code `70015`).
+> Voucher rejections come from **seller-SDK local validation**, not a backend round-trip. Common: `70000` (cum not increasing), `70004` (invalid signature), `70012` (amount > deposit), `70013` (delta too small), plus `InsufficientBalance` (mppx/OKX TS typed error; OKX Rust SDK private `70015`).
 
 ## Phase S2b (Optional): TopUp Mid-Session
 
-If `current_cum + unit_amount > deposit`, the channel needs more funds. The seller will typically refuse the next voucher with "70012 amount exceeds deposit" or pre-emptively send a topUp challenge.
+If `current_cum + unit_amount > deposit`, the channel needs more funds (seller will refuse with `70012` or pre-emptively send a topUp challenge).
 
 Ask user:
 
-> The channel deposit is running low. Top up by how much (atomic units)?
-> Current deposit: `<deposit>`
-> Current spent (highest voucher): `<current_cum>`
+> Your prepaid balance is running low. How much would you like to add (atomic units)?
+> Current balance: `<human(deposit)> (<deposit>)` · Used so far: `<human(current_cum)> (<current_cum>)`
 
-### Mode Branch
+Branch by `methodDetails.feePayer` from the topUp challenge (typically same as open).
 
-Read `methodDetails.feePayer` from the topUp challenge (typically same as open).
-
-#### Transaction mode
-
+**Transaction mode:**
 ```bash
 onchainos payment mpp-session-topup \
   --challenge '<WWW-Authenticate for topUp>' \
@@ -474,14 +350,9 @@ onchainos payment mpp-session-topup \
   [--from '<saved payer_addr>']
 ```
 
-CLI TEE-signs `receiveWithAuthorization` for the additional deposit. The EIP-3009 nonce is derived deterministically as `keccak256(abi.encode(channelId, additionalDeposit, from, topUpSalt))` — must match what the on-chain contract expects.
+CLI TEE-signs `receiveWithAuthorization`. EIP-3009 nonce is `keccak256(abi.encode(channelId, additionalDeposit, from, topUpSalt))` — must match the on-chain contract.
 
-Output includes `authorization_header`. Send to seller's topUp endpoint.
-
-#### Hash mode
-
-User broadcasts the topUp tx (escrow `topUpWithAuthorization`) themselves. Then:
-
+**Hash mode** (user sends the on-chain "top-up" transaction themselves first, then):
 ```bash
 onchainos payment mpp-session-topup \
   --challenge '<WWW-Authenticate for topUp>' \
@@ -493,23 +364,17 @@ onchainos payment mpp-session-topup \
   [--from '<saved payer_addr>']
 ```
 
-`--currency` is optional in hash mode (CLI doesn't sign EIP-3009; the on-chain tx already contains everything).
+`--currency` is optional in hash mode (CLI doesn't sign EIP-3009; the on-chain tx already covers it).
 
-### After TopUp
-
-**Update session state**: `deposit = deposit + additional_deposit`. Then resume Phase S2 (voucher loop).
+**After TopUp**: `deposit = deposit + additional_deposit`. Resume Phase S2.
 
 ## Phase S3: Close Channel
 
-When the session is done (user-initiated or after the final business request).
+When the user is done — either says "close the channel / 关闭通道 / end the session", or after the final request. **Always close** when the user is done; otherwise the prepaid balance stays locked on-chain until the seller's timeout (typically 12-24h).
 
 ### S3.1: Decide Final cumulativeAmount
 
-```
-final_cum = current_cum   // = highest voucher cumulativeAmount sent in this session
-```
-
-If you tracked `current_cum` correctly through Phase S2, this is just the last voucher's amount. **Don't add unit_amount here** — close uses the same cum as the last voucher, not a new one (no service is being delivered for close itself).
+`final_cum = current_cum` — the highest voucher cum sent in this session. **Don't add `unit_amount`** — close reuses the last voucher's cum (no new service is being delivered).
 
 ### S3.2: Sign Close Voucher
 
@@ -523,22 +388,7 @@ onchainos payment mpp-session-close \
   [--from '<saved payer_addr>']
 ```
 
-CLI signs an EIP-712 Voucher(channelId, final_cum) via TEE — same signing path as a regular voucher, just used at close time.
-
-Output:
-
-```json
-{
-  "ok": true,
-  "data": {
-    "protocol": "mpp",
-    "action": "session_close",
-    "authorization_header": "Payment eyJjaGFsbGVuZ2UiOnsi...",
-    "channel_id": "0x...",
-    "cumulative_amount": "100"
-  }
-}
-```
+CLI signs an EIP-712 Voucher(channelId, final_cum) via TEE — same signing path as a regular voucher, just used at close time. Output: `data.{authorization_header, channel_id, cumulative_amount}`.
 
 ### S3.3: Send Close to Seller
 
@@ -547,29 +397,12 @@ Output:
 Authorization: <authorization_header>
 ```
 
-Seller settles on-chain (transfers `final_cum` from escrow to merchant, refunds the rest to payer) and returns a final receipt. **Clear session state** — channel is closed.
+Seller settles on-chain (transfers `final_cum` to merchant, refunds the rest to payer) and returns a receipt. **Clear session state** — channel is closed.
 
 ### S3.4: Confirm to User
 
-> ✅ Session closed. Settled `<human(final_cum)> (<final_cum>)` of `<human(deposit)> (<deposit>)`. Refund: `<human(deposit - final_cum)> (<deposit - final_cum>)` returned to your wallet.
+> ✅ Channel closed. Charged `<human(final_cum)> (<final_cum>)` of your `<human(deposit)> (<deposit>)` prepaid balance. Refund of `<human(deposit - final_cum)> (<deposit - final_cum>)` returned to your wallet.
 > On-chain tx: `<reference from response>`
-
----
-
-# Hash Mode Workflow Detail
-
-When `feePayer=false`, the user/agent must broadcast the on-chain transaction themselves. This applies to:
-
-- Charge in hash mode → broadcast `transferWithAuthorization`
-- Session open in hash mode → broadcast escrow `openWithAuthorization`
-- Session topUp in hash mode → broadcast escrow `topUpWithAuthorization`
-- Session close → seller broadcasts; client never broadcasts a close tx
-
-**Recommended path**: delegate to `okx-onchain-gateway` skill — that skill handles tx construction, gas estimation, broadcasting, and waiting for the receipt. Once the user has the tx hash, return here and pass it via `--tx-hash`.
-
-**Manual path**: user broadcasts with their own tooling (e.g. ethers.js, foundry, Metamask). They paste the 66-char `0x...` hash into the next CLI command.
-
-The CLI does NOT verify the tx hash itself — the seller's MPP backend will verify on-chain when the seller submits the credential. If the tx is invalid (wrong contract, wrong sender, wrong amount), the seller will reject with an error code.
 
 ---
 
@@ -587,19 +420,11 @@ When the seller returns an error response (HTTP 4xx / 5xx, or even HTTP 200 with
 7. fallthrough          ← if none of the above, format the whole body and add the HTTP status
 ```
 
-Numeric codes (`70004`, `70013`, etc.) are useful **next to** the human reason, never as a substitute. Format errors to the user as:
+Numeric codes (`70004`, `70013`, etc.) are useful **next to** the human reason, never as a substitute. Format errors as:
 
 > ❌ Seller rejected: `<reason text>` (code `<code if present>`, HTTP `<status>`)
 
-Examples of good vs bad messaging:
-
-| ❌ Don't say | ✅ Say instead |
-|---|---|
-| "Got 70013" | "Seller rejected the voucher: voucher cumulative not strictly increasing (delta ≤ 0). The new cum must be strictly higher than the last accepted voucher." |
-| "Error response: `{...}`" | "Seller returned: insufficient balance — the existing voucher has only 50 units of 400 left. Need to sign a new voucher with higher cum, or topup the channel." |
-| "70015" | "Seller says the channel balance is exhausted. Sign a new voucher with `cum = current_cum + unit_amount` to continue." |
-
-This applies in every error path: voucher submission, settle, close, topup, and the initial 402 challenge response.
+Applies in every error path: voucher submission, settle, close, topup, and the initial 402 challenge response.
 
 ---
 
@@ -625,55 +450,8 @@ This applies in every error path: voucher submission, settle, close, topup, and 
 
 # Security Notes
 
-- **TEE signing is the only supported signing path for MPP** — the private key stays inside the Trusted Execution Environment, not accessible to this CLI, the host OS, or the agent. Local private key signing is **NOT** supported for MPP (only x402 supports the local-key fallback).
-- **Hash mode reveals the tx hash publicly** (standard blockchain behavior). Verify the `to` address (escrow contract for session, recipient for charge) before broadcasting.
-- **Session deposits are escrowed** — if you abandon a session without closing, your deposit remains locked until the seller closes it or the on-chain timeout fires (typically 12-24 hours). **Always close** when done.
-- **`cumulativeAmount` is monotonically increasing per channel** — never reuse or decrease across vouchers in the same session. Each channel has its own counter starting from the initial-cum baseline (default 0).
-- **`channelId` is bytes32, not random** — it's `keccak256(abi.encode(payer, payee, token, salt, authorizedSigner, escrow, chainId))`. Two opens with the same parameters produce the same channelId — the on-chain contract rejects duplicates.
+- **TEE-only signing for MPP** — no local private key path (x402 has one; MPP doesn't).
+- **Always close sessions** — abandoned deposits stay escrowed until seller closes or the on-chain timeout fires (typically 12–24h).
+- **`cumulativeAmount` monotonically increases per channel** — never decrease or reuse across vouchers in the same session.
+- **`channelId` is deterministic** — `keccak256(abi.encode(payer, payee, token, salt, authorizedSigner, escrow, chainId))`; identical parameters produce duplicate channelIds and the contract rejects them.
 
----
-
-# EIP-712 Voucher Signing — Single Source of Truth
-
-For developers integrating with MPP at the protocol level. The voucher EIP-712 typed data is the **single source of truth** shared by client SDK, seller SDK, and on-chain contract:
-
-```
-domain:
-  name: "EVM Payment Channel"
-  version: "1"
-  chainId: <runtime>
-  verifyingContract: <escrow address>
-
-Voucher:
-  bytes32 channelId
-  uint128 cumulativeAmount
-```
-
-The CLI computes this internally for `mpp-session-voucher`, the initial voucher in `mpp-session-open`, and the close voucher in `mpp-session-close`. The seller SDK uses the identical typed data to verify signatures locally — no MPP server round-trip for voucher verification (`/session/voucher` is not part of the protocol).
-
-If the merchant has forked the escrow contract with a different `name` or `version`, they configure the seller SDK via `with_domain_meta(name, version)` to match.
-
----
-
-# Notes on the Open Payload (initial voucher fields)
-
-When the CLI sends `mpp-session-open`, the credential payload carries the initial voucher (`cumulativeAmount` + EIP-712 signature) so the seller SDK can verify and store the baseline locally. **The voucher signature field name is mode-dependent** — there's no `signature` collision in transaction mode because that key is taken by the EIP-3009 deposit signature:
-
-```
-# transaction mode (feePayer=true)
-payload.signature          // EIP-3009 deposit signature — SA needs this
-payload.cumulativeAmount   // initial voucher amount, e.g. "0"  (SDK-only)
-payload.voucherSignature   // EIP-712 voucher signature        (SDK-only)
-
-# hash mode (feePayer=false)
-payload.hash               // tx hash of the on-chain open — SA needs this
-payload.cumulativeAmount   // initial voucher amount, e.g. "0"  (SDK-only)
-payload.signature          // EIP-712 voucher signature        (SDK-only — hash mode has no EIP-3009 sig, so the voucher sig directly occupies `signature`)
-```
-
-The "SDK-only" fields are read by the seller's MPP SDK to verify and store the baseline voucher in its `ChannelRecord`, then **stripped before the credential is forwarded to SA**. The strip set is type-dependent:
-
-- transaction → strip `cumulativeAmount` + `voucherSignature` (keep `signature` because it's the EIP-3009 deposit sig)
-- hash → strip `cumulativeAmount` + `signature` (the entire `signature` is the voucher sig)
-
-Agents and integrators don't need to do anything special; both `--initial-cum N` and `--prepay-first` flags handle this end-to-end.
