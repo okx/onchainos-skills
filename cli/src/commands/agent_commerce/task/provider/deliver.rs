@@ -43,9 +43,12 @@ pub async fn handle_deliver(
     }
 
     let (account_id, address) = signing::resolve_wallet(None, None)?;
-    // 后端 spec：submit endpoint Request 空（旧 evidenceHash 字段已划掉）
-    // file/message 仅作 CLI 输入预留位，**不上链**——证据走 /evidence/upload 多 part 链下。
-    let body = serde_json::json!({});
+    // 后端 spec：submit endpoint 接受 `evidenceHash` 字段，目前传空字符串占位（链下证据由
+    // /evidence/upload 多 part 上传，不在 submit 阶段提供 hash）。file/message 仍只作
+    // CLI 输入预留位，不上链。
+    let body = serde_json::json!({
+        "evidenceHash": "",
+    });
 
     let resp = client.post_with_identity(
         &client.endpoint(job_id, "submit"), &body, &agent_id,
