@@ -313,11 +313,13 @@ pub async fn handle_confirm_accept(
                     .output()
                     .await
                     .map_err(|e| anyhow::anyhow!("调用 agent get --agent-ids {provider} 失败: {e}"))?;
-                let body: serde_json::Value = serde_json::from_slice(&output.stdout)
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let body: serde_json::Value = serde_json::from_str(&stdout)
                     .map_err(|e| anyhow::anyhow!("解析 agent get 输出失败: {e}"))?;
                 body["data"].as_array()
                     .and_then(|arr| arr.first())
                     .and_then(|x| x["list"].as_array())
+                    .or_else(|| body["data"]["list"].as_array())
                     .and_then(|list| list.iter()
                         .find(|a| a["agentId"].as_str() == Some(provider))
                         .and_then(|a| a["ownerAddress"].as_str())
