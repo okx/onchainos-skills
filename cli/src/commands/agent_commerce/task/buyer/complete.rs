@@ -40,16 +40,24 @@ pub async fn handle_complete(client: &mut TaskApiClient, job_id: &str) -> Result
         let digest = pre_resp["digest"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("pre-complete 未返回 digest"))?;
+        let nonce = pre_resp["nonce"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
 
         // Step 2: session key 签名 digest
         let signature = signing::sign_digest_with_session_key(digest)?;
 
         // Step 3: complete (signatureData + sessionCert)
+        let mut sig_data = serde_json::json!({
+            "signature": signature,
+            "deadline": deadline,
+        });
+        if !nonce.is_empty() {
+            sig_data["nonce"] = serde_json::json!(nonce);
+        }
         let main_body = serde_json::json!({
-            "signatureData": {
-                "signature": signature,
-                "deadline": deadline,
-            }
+            "signatureData": sig_data,
         });
         let main_resp = client.post_with_identity(
             &client.endpoint(job_id, "complete"),
