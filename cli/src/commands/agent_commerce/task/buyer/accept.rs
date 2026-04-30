@@ -27,9 +27,9 @@ use super::x402_flow;
 /// 通过 tokenDetail API 查询 token 合约地址和精度。
 /// GET /priapi/v1/aieco/task/tokenDetail?symbol=<symbol>
 /// 返回 (token_address, decimals)
-async fn fetch_token_detail(client: &mut TaskApiClient, symbol: &str) -> Result<(String, u32)> {
+async fn fetch_token_detail(client: &mut TaskApiClient, symbol: &str, agent_id: &str) -> Result<(String, u32)> {
     let path = format!("/priapi/v1/aieco/task/tokenDetail?symbol={symbol}");
-    let resp = client.get(&path).await
+    let resp = client.get_with_agent_id(&path, agent_id).await
         .map_err(|e| anyhow::anyhow!("查询 tokenDetail 失败 (symbol={symbol}): {e}"))?;
     let address = resp["address"]
         .as_str()
@@ -289,7 +289,7 @@ pub async fn handle_confirm_accept(
             let symbol = task["paymentTokenSymbol"].as_str().unwrap_or("USDT").to_string();
 
             // 通过 tokenDetail API 查询 token 合约地址和精度
-            let (token_address, decimals) = fetch_token_detail(client, &symbol).await?;
+            let (token_address, decimals) = fetch_token_detail(client, &symbol, &agent_id).await?;
             let amount_minimal = crate::commands::swap::readable_to_minimal_str(&amount, decimals)?;
 
             // Charge 模式 EIP-3009 recipient = 卖家钱包地址（从任务详情获取）
