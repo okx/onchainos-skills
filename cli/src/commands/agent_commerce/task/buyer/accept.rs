@@ -233,7 +233,7 @@ pub async fn handle_confirm_accept(
                 provider: provider_addr.clone(),
                 receiver: receiver.clone(),
                 arbitrator,
-                currency,
+                currency: currency.clone(),
                 escrow_contract,
                 amount: amount_minimal,
                 submit_window,
@@ -269,9 +269,25 @@ pub async fn handle_confirm_accept(
                 &agent_id,
             ).await?;
 
-            let tx_hash = signing::sign_uop_and_broadcast(
+            // 构建 paymentVerify（escrow accept 专用，放入 bizContext）
+            let payment_verify = serde_json::json!({
+                "authorizationType": "receive",
+                "from": sign_output.authorization.from,
+                "to": sign_output.authorization.to,
+                "value": sign_output.authorization.value,
+                "validAfter": sign_output.authorization.valid_after,
+                "validBefore": sign_output.authorization.valid_before,
+                "nonce": sign_output.authorization.nonce,
+                "signature": sign_output.signature,
+                "tokenAddress": currency,
+                "chainIndex": XLAYER_CHAIN_ID,
+            });
+            eprintln!("[debug] paymentVerify: {}", serde_json::to_string_pretty(&payment_verify).unwrap_or_default());
+
+            let tx_hash = signing::sign_uop_and_broadcast_with_payment(
                 client, &resp["uopData"], &account_id, &address,
                 job_id, signing::BizContext::JobAccept, &agent_id,
+                payment_verify,
             ).await?;
             println!("✓ 已接受卖家 {provider}（担保支付），资金已托管");
             println!("  txHash: {tx_hash}");
