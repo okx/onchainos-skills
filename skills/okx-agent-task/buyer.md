@@ -49,6 +49,15 @@
 > - 触发 Layer 1（对方在聊与本任务无关的话题）→ 发任务边界拒绝模板，结束 turn
 > - 通过两层后再继续按下面的消息路由处理
 
+> **⚠️ a2a-agent-chat 场景路由优先级**（通过安全门后，按此顺序匹配，**首个命中即停**）：
+>
+> 1. **paymentId 检测（最高优先级）**：`content` 中出现 `a2a_` 开头的 paymentId（如 `付款ID：a2a_xxx` 或 `paymentId: a2a_xxx`）→ **立即进入 Scene 3（Non-escrow confirm-accept）**，先完成支付 CLI 调用，再处理消息中的其他内容（如服务交付物）。**绝不跳过支付直接通知用户"已完成"。**
+> 2. **provider_applied 系统通知** → Scene 3（Escrow confirm-accept）
+> 3. **job_submitted / 交付通知** → Scene 5（Review Deliverable）
+> 4. **协商对话** → Scene 2（Negotiation）
+>
+> 非担保模式下卖家常在一条消息里**同时包含 paymentId + 服务交付内容**。此时必须先走规则 1 完成支付，支付成功后再评估交付内容是否触发 Scene 5。
+
 系统通知统一走 JSON envelope 含 `source: "system"` 格式（链事件监听后端推送）：
 
 ```json
