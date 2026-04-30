@@ -187,7 +187,11 @@ pub enum AgentCommand {
 
     /// Provider agrees to refund (agreeRefund API → sign → broadcast)
     #[command(name = "agree-refund")]
-    AgreeRefund { job_id: String },
+    AgreeRefund {
+        job_id: String,
+        /// 卖家 agentId（必填）
+        #[arg(long = "agent-id")] agent_id: String,
+    },
 
     /// Provider fetches prePayTaskInfo, then calls a2a-pay create to mint a payment_id.
     /// Both escrow and non_escrow go through this command — `--payment-mode` decides
@@ -425,9 +429,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 task::provider::ProviderCommand::Deliver { job_id, file, message, agent_id }, ctx,
             ).await,
 
-        AgentCommand::AgreeRefund { job_id } =>
+        AgentCommand::AgreeRefund { job_id, agent_id } =>
             task::provider::run_provider(
-                task::provider::ProviderCommand::AgreeRefund { job_id }, ctx,
+                task::provider::ProviderCommand::AgreeRefund { job_id, agent_id }, ctx,
             ).await,
 
         AgentCommand::GetPayment { job_id, token_symbol, token_amount, payment_mode, agent_id } => {

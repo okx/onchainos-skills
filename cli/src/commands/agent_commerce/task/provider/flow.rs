@@ -35,8 +35,8 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         Status::Refused => vec![
             next_action("job_refused"),
             ref_header,
-            format!("  onchainos agent dispute raise {job_id} --reason <reason>  # 发起仲裁"),
-            format!("  onchainos agent agree-refund {job_id}  # 同意退款"),
+            format!("  onchainos agent dispute raise {job_id} --reason <reason> --agent-id <agentId>  # 发起仲裁"),
+            format!("  onchainos agent agree-refund {job_id} --agent-id <agentId>  # 同意退款"),
         ],
         Status::Disputed => vec![
             next_action("job_disputed"),
@@ -189,7 +189,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ **仲裁是两阶段链上流程**：阶段 1 approve → 等 `dispute_approved` 通知 → 阶段 2 dispute → 等 `job_disputed` 通知。本轮只跑阶段 1。\n\n\
              **Step 1 — 调用 CLI 跑阶段 1 approve（上链）：**\n\
              ```bash\n\
-             onchainos agent dispute raise {job_id} --reason \"<用户提供的理由或默认：已按验收标准完成>\"\n\
+             onchainos agent dispute raise {job_id} --reason \"<用户提供的理由或默认：已按验收标准完成>\" --agent-id {agent_id}\n\
              ```\n\
              CLI 内部：POST /approve → uopData → sign uopHash → broadcast。等链上 `dispute_approved` 通知。\n\n\
              ⚠️ **跑完 dispute raise 直接结束 turn**：\n\
@@ -206,7 +206,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】卖家（Provider）\n\n\
              **Step 1 — 调用 CLI 跑阶段 2 dispute（上链）：**\n\
              ```bash\n\
-             onchainos agent dispute confirm {job_id}\n\
+             onchainos agent dispute confirm {job_id} --agent-id {agent_id}\n\
              ```\n\
              CLI 内部：POST /dispute → uopData → sign uopHash → broadcast。等链上 `job_disputed` 通知。\n\n\
              ⚠️ **跑完 dispute confirm 直接结束 turn**：\n\
@@ -222,7 +222,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】卖家（Provider）\n\n\
              **Step 1 — 调用 CLI（上链）：**\n\
              ```bash\n\
-             onchainos agent agree-refund {job_id}\n\
+             onchainos agent agree-refund {job_id} --agent-id {agent_id}\n\
              ```\n\n\
              **Step 2 — 调用 `xmtp_send` 工具向买家发送：**\n\n\
              {header_template}\n\

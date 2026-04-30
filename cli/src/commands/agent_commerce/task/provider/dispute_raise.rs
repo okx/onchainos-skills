@@ -10,7 +10,7 @@
 //! 拿阶段 2 剧本，**不能在同一 turn 内连续调 dispute confirm**。
 //! reason 仅作 user-facing log，不上链。
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
@@ -19,20 +19,23 @@ pub async fn handle_dispute_raise(
     client: &mut TaskApiClient,
     job_id: &str,
     reason: &str,
+    agent_id: &str,
 ) -> Result<()> {
-    let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_provider(client, job_id).await?;
+    if agent_id.is_empty() {
+        bail!("--agent-id 必填，传卖家自己的 agentId（beta 后端拒空 agenticId header）");
+    }
+    let (account_id, address) = signing::resolve_wallet(None, None)?;
     let body = serde_json::json!({});
 
     // POST /approve → uopData → sign + broadcast
     let approve_resp = client.post_with_identity(
-        &client.endpoint(job_id, "approve"), &body, &agent_id,
+        &client.endpoint(job_id, "approve"), &body, agent_id,
     ).await
         .context("dispute raise (阶段 1): approve 接口请求失败")?;
 
     let approve_tx = signing::sign_uop_and_broadcast(
         client, &approve_resp["uopData"], &account_id, &address,
-        job_id, signing::BizContext::DisputeCreate, &agent_id,
+        job_id, signing::BizContext::DisputeCreate, agent_id,
     ).await
         .context("dispute raise (阶段 1): approve 上链失败")?;
 
