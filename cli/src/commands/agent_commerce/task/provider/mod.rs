@@ -39,7 +39,8 @@ pub enum ProviderCommand {
         job_id: String,
         #[arg(long = "token-amount", default_value = "0")]
         token_amount: String,
-        #[arg(long = "token-symbol", default_value = "USDT")]
+        /// 任务实际币种（USDT / USDG），从任务详情读取，不要假设 USDT
+        #[arg(long = "token-symbol")]
         token_symbol: String,
         #[arg(long = "agent-id")]
         agent_id: String,

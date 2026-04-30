@@ -20,8 +20,8 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         Status::Open => vec![
             next_action("job_created"),
             ref_header,
-            format!("  onchainos agent apply {job_id} --token-amount <price> --token-symbol USDT --agent-id <agentId>  # 申请接单（**仅 escrow 担保交易**才需要；non_escrow 不要 apply）"),
-            format!("  onchainos agent get-payment {job_id} --token-symbol <USDT|USDG> --token-amount <price> --payment-mode <escrow|non_escrow> --agent-id <agentId>  # 拉 prePayTaskInfo + 创建 a2a-pay 付款单，输出 paymentId"),
+            format!("  onchainos agent apply {job_id} --token-amount <price> --token-symbol <USDT|USDG，看任务详情> --agent-id <agentId>  # 申请接单（**仅 escrow 担保交易**才需要；non_escrow 不要 apply）"),
+            format!("  onchainos agent get-payment {job_id} --token-symbol <USDT|USDG，看任务详情> --token-amount <price> --payment-mode <escrow|non_escrow> --agent-id <agentId>  # 拉 prePayTaskInfo + 创建 a2a-pay 付款单，输出 paymentId"),
         ],
         Status::Accepted => vec![
             next_action("job_accepted"),
@@ -358,8 +358,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - 领域匹配 → 进入 Step 3（私有任务等买家先来；公开任务是你 A-Step 2 主动发）\n\
              - 领域不匹配 → 按区块给出的拒绝模板调 `xmtp_send`（纯自然语言），结束\n\n\
              **Step 3 — 协商三项确认（一条 `xmtp_send` 内尽量一次问完）：**\n\
+             ⚠️ **币种必须从任务详情读出**：context 输出里的「预算」字段后括号里的 token 地址就是任务规定的币种 —— XLayer USDT 合约 `0x1e4a5963abfd975d8c9021ce480b42188849d41d` / USDG 合约 `0x4ae46a509f6b1d9056937ba4500cb143933d2dc8`。**禁止假设 USDT** —— 不少任务用 USDG，回复里写错币种会让买家协议混乱。如果 token 地址不能确定，向用户 dispatch 询问，不要瞎猜。\n\
              1) 任务内容和验收标准是否在能力范围内\n\
-             2) 价格可接受（币种必须是 XLayer 的 USDT 或 USDG，看任务详情里的 token 字段）\n\
+             2) 价格可接受（**用任务详情里的实际币种回复，不是默认 USDT**）\n\
              3) 支付方式可接受（escrow / non_escrow，由买家在 confirm-accept 时定）\n\
              → 用 `xmtp_send` 给买家发提问（机制见 SKILL.md §Session 通信契约 §6 路径 4）。\n\n\
              **Step 4 — 三项全部确认后，按双方约定的支付方式分流：**\n\n\
