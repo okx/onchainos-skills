@@ -15,8 +15,6 @@ pub struct CreateArgs {
     pub picture: Option<String>,
     #[arg(long)]
     pub service: Option<String>,
-    #[arg(long)]
-    pub address: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]

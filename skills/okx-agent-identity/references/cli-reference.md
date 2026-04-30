@@ -25,7 +25,8 @@ Register a new ERC-8004 agent on XLayer.
 | `--description` | ✓ | string | 1–2 sentence description. |
 | `--service` | ✓ for provider / ✗ for others | JSON array string | Each element: `name`, `servicedescription`, `servicetype` (`A2MCP` \| `A2A`), `fee` (A2MCP req'd), `endpoint` (A2MCP req'd; A2A is discarded). |
 | `--picture` | ✗ | URL string | Avatar image URL (HTTPS). Omit to let backend assign a default. |
-| `--address` | ✗ | EVM address | Defaults to the current wallet's XLayer address. Only set when the user explicitly specifies an address. |
+
+> The CLI signs every `agent create` with the current wallet's selected XLayer address. There is **no** `--address` flag — do not try to override the signing address; switch wallets first via `okx-agentic-wallet` if a different one is needed.
 
 **Example — requester:**
 ```bash

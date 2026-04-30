@@ -79,7 +79,8 @@ pub async fn xmtp_sign(args: XmtpSignArgs, ctx: &Context) -> Result<()> {
 async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
-    let signing_session = load_agent_signing_session(args.address.as_deref())?;
+    // --address 已从 CLI 去掉；广播走默认 XLayer 地址（当前选中账号）。
+    let signing_session = load_agent_signing_session(None)?;
     let from_addr = signing_session.addr_info.address.clone();
     let key_uuid = Uuid::new_v4().to_string();
     let session_signature = sign_key_uuid(&key_uuid, &signing_session.signing_seed)?;
