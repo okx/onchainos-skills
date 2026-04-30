@@ -53,6 +53,11 @@ pub enum BizContext {
     JobSetVisibility  = 17,
     JobSetPaymentMode = 18,
     StakeIncrease     = 19,
+    JobAgreeRefund        = 20,
+    JobClaimAutoComplete  = 21,
+    JobClaimAutoRefund    = 22,
+    DisputeApprove        = 23,
+    VoterUnstakeStop      = 24,
 }
 
 /// Resolve wallet account_id and address for XLayer.

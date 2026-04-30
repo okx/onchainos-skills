@@ -114,100 +114,42 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
     );
 
     let body = match event.clone() {
-        // ─── Scene 0: 任务上链确认，查询推荐卖家并按支付方式路由 ────────────────
+        // ─── Scene 0: 任务上链确认，仅拉取推荐列表（暂不自动联系卖家） ─────────
         Event::JobCreated => format!(
             "【当前状态】job_created（任务已上链，状态 Open）\n\
              【角色】买家（Client）\n\n\
-             【你的下一步动作（严格顺序，不询问用户，全自动执行）】\n\n\
+             ⚠️ **临时策略：仅拉取推荐列表，不自动联系卖家**。后续是否联系由用户决定，本剧本到 Step 2 结束。\n\n\
+             【你的下一步动作（严格顺序）】\n\n\
              **Step 0 — 确认当前 session 类型：**\n\
              调 `session_status` 检查当前 session。\n\
-             - 如果当前**不是** user session（如 g-backup 等非主会话）：\n\
+             - 如果当前**不是** user session：\n\
              \x20\x20调用 xmtp_prompt_user 把任务创建通知转发到 user session 并触发自动执行：\n\
              \x20\x20llmContent: [AUTO_EXECUTE] 任务 {job_id} 已上链（job_created）。无需询问用户，直接执行：\n\
              \x20\x20`onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id}`\n\
-             \x20\x20拿到输出后按剧本全自动执行（recommend → 路由 → 协商/接单）。\n\
-             \x20\x20userContent: 任务 {job_id} 已上链成功（状态 Open），正在自动查询推荐卖家...\n\
+             \x20\x20拿到输出后按剧本执行（仅 recommend，不联系卖家）。\n\
+             \x20\x20userContent: 任务 {job_id} 已上链成功（状态 Open），正在查询推荐卖家...\n\
              \x20\x20→ **结束本轮 turn**，由 user session agent 接手执行后续 Step 1-2。\n\
              - 如果当前**是** user session → 继续执行 Step 1。\n\n\
              **Step 1 — 查询推荐卖家：**\n\
              ```bash\n\
              onchainos agent recommend {job_id} --agent-id {agent_id}\n\
              ```\n\
-             缓存完整推荐列表，记录 currentProviderIndex = 0。\n\
-             输出末尾有「路由」指引，标明当前卖家是 x402 还是 A2A。\n\n\
-             **Step 2 — 顺序遍历推荐列表，按 supportA2MCP 字段路由：**\n\n\
-             ━━━━━━━━━ 分支 A：supportA2MCP=true → x402（无需协商，直接接单）━━━━━━━━━\n\n\
-             从 recommend 输出中提取当前 provider 的 services[0]：feeAmount、feeTokenSymbol、endpoint。\n\
-             从任务详情提取：tokenAmount（任务预算）、tokenSymbol（任务代币）。\n\n\
-             **A-Step 1 — 价格 & 代币比较：**\n\
-             - 任务预算 >= feeAmount 且 tokenSymbol 与 feeTokenSymbol 一致\n\
-             \x20\x20→ 无需用户确认，直接执行 A-Step 2\n\
-             - 任务预算 < feeAmount 或代币不一致\n\
-             \x20\x20→ 调用 xmtp_prompt_user 请求用户确认：\n\
-             \x20\x20\x20\x20llmContent: 用户确认后执行 A-Step 2 confirm-accept x402；用户拒绝则 recommend --next 切换下一个卖家。\n\
-             \x20\x20\x20\x20userContent: 任务 {job_id} 匹配到 x402 卖家（AgentID=<providerAgentId>），服务费用 <feeAmount> <feeTokenSymbol>，\
-             与任务预算（<tokenAmount> <tokenSymbol>）不一致，是否确认使用该卖家？\n\
-             \x20\x20→ 用户确认 → 执行 A-Step 2\n\
-             \x20\x20→ 用户拒绝 → `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断\n\n\
-             **A-Step 2 — 买家 accept（x402 三步）：**\n\
-             1. 设置支付方式为 x402：\n\
-             ```bash\n\
-             onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode x402 \
-             --token-symbol <feeTokenSymbol> --token-amount <feeAmount> --endpoint <endpoint>\n\
-             ```\n\
-             （命令内部自动执行：setPaymentMode(3) → direct/accept 签名广播 → x402 支付）\n\n\
-             2. 完成后任务状态 → accepted。\n\n\
-             **A-Step 3 — 调用 xmtp_dispatch_user 通知用户结果：**\n\
-             \x20\x20content: 任务 {job_id} 已通过 x402 自动接单。卖家 AgentID=<providerAgentId>，\
-             费用=<feeAmount> <feeTokenSymbol>。等待任务执行。\n\n\
-             ━━━━━━━━━ 分支 B：supportA2MCP=false → A2A（需协商）━━━━━━━━━\n\n\
-             **B-Step 1 — 建群：**\n\
-             调 xmtp_start_conversation 工具建群 + 创建 sub session：\n\
-             \x20\x20参数：myAgentId={agent_id}，toAgentId=<recommend 输出的 providerAgentId>，jobId={job_id}\n\
-             \x20\x20成功返回 sessionKey + xmtpGroupId。\n\
-             \x20\x20⚠️ 调用前输出：`[buyer-xmtp] xmtp_start_conversation: myAgentId={agent_id}, toAgentId=<providerAgentId>, jobId={job_id}`\n\
-             \x20\x20⚠️ 调用后输出：`[buyer-xmtp] xmtp_start_conversation result: sessionKey=<返回值>, xmtpGroupId=<返回值>`\n\n\
-             **B-Step 2 — 自动协商（买家 Agent ↔ 卖家 Agent 在 sub session 中多轮交互）：**\n\
-             ⚠️ B-Step 1 建群后，已进入 sub session。直接用 xmtp_send 发送消息。\n\
-             ⚠️ **禁止**用 xmtp_dispatch_user / xmtp_dispatch_session，建群后统一用 xmtp_send。\n\n\
-             协商目标：就以下结构化字段达成一致——\n\
-             \x20\x20- deliverable：交付物描述（具体要做什么）\n\
-             \x20\x20- qualityStandards：验收标准\n\
-             \x20\x20- paymentMode：支付方式（escrow 或 non_escrow）\n\
-             \x20\x20- tokenSymbol：支付代币\n\
-             \x20\x20- tokenAmount：支付金额\n\
-             \x20\x20- deadline：交付截止时间\n\n\
-             ⏱ 超时规则：每轮等待卖家回复最多 5 分钟。超时未回复 → 结束当前 sub session，切换下一个卖家。\n\n\
-             协商步骤：\n\
-             1. 调用 xmtp_send 发送第一条询盘消息：\n\
-             \x20\x20content=<任务详情（描述、预算、期望交付物、支付方式）>\n\
-             \x20\x20→ 等待卖家回复（5 分钟超时）\n\
-             2. （sub session 内）卖家回复报价（金额、代币、支付方式偏好、预计交付时间）\n\
-             3. （sub session 内）双方就价格/条件进行调整（可能多轮，每轮 5 分钟超时）\n\
-             \x20\x20每轮调用 xmtp_send，参数：sessionKey=<同上>，content=<协商内容>\n\
-             4. 达成一致后，调用 xmtp_send 发送结构化确认消息：\n\
-             \x20\x20参数：sessionKey=<同上>，content=\n\
-             [协商确认] 请确认以下协商结果：\n\
-             任务：{job_id}\n\
-             交付物：<deliverable>\n\
-             验收标准：<qualityStandards>\n\
-             支付方式：<escrow/non_escrow>\n\
-             金额：<tokenAmount> <tokenSymbol>\n\
-             交付截止：<deadline>\n\
-             如确认无误，请你（卖家）执行 apply 接单。\n\n\
-             ⚠️ **apply 是卖家动作，买家不执行 apply**。买家等卖家 apply 上链后收到 provider_applied 通知，再执行 confirm-accept。\n\
-             5. 卖家确认一致 → 卖家执行 apply 上链（`onchainos agent apply`）\n\
-             6. 系统通知 provider_applied → 进入 ProviderApplied 事件处理\n\n\
-             ⚠️ 任一步骤卖家 5 分钟未回复 → 视为协商失败，结束当前 sub session，执行「切换下一个卖家」。\n\n\
-             **B-Step 3 — 调用 xmtp_dispatch_user 通知用户协商进展：**\n\
-             \x20\x20content: 已自动联系推荐卖家（<providerAgentId>），进入协商流程，等待对方回复。\n\n\
-             ━━━━━━━━━ 遍历结束 / 切换下一个卖家 ━━━━━━━━━\n\n\
-             当前卖家超时未回复（5 分钟）或协商失败 → 结束当前 sub session → `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断。\n\
-             推荐列表全部遍历完 → 调用 xmtp_dispatch_user 通知用户：\n\
-             \x20\x20content: 任务 {job_id} 推荐卖家已全部遍历，无合适匹配。建议：调整任务描述或转为公开任务。\n\n\
+             输出包含若干推荐 provider 的 agentId / 服务描述 / 报价 / 路由（x402 / A2A）等信息。\n\n\
+             **Step 2 — 把推荐列表呈现给用户，等用户决策：**\n\
+             调 xmtp_dispatch_user 把推荐结果转发给用户，让用户决定下一步。\n\
+             content：\n\
+             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · user session agent 不要调任何工具不要再次执行]\n\
+             \x20\x20\x20\x20[任务已发布] 任务 {job_id}\n\
+             \x20\x20\x20\x20找到 N 个推荐卖家：\n\
+             \x20\x20\x20\x201) AgentID=<id> 类型=<x402|A2A> 报价=<amount> <symbol>\n\
+             \x20\x20\x20\x202) ...\n\
+             \x20\x20\x20\x20请回复要联系的卖家序号 / agentId，或决定关闭任务 / 转公开。\n\n\
+             ⚠️ **本剧本到此结束**，**不要**调 `xmtp_start_conversation` 主动建群联系卖家。\n\
+             ⚠️ **不要**自动跑 confirm-accept / x402 / 协商三项确认。等用户给具体指令再做。\n\n\
              【后续事件】\n\
-             - x402 → confirm-accept 完成后等待 job_accepted\n\
-             - A2A → 协商完成 → 卖家 apply → provider_applied → 买家 confirm-accept → job_accepted\n"
+             - 用户回复要联系的卖家 → 那时再启动联系流程（暂未在本剧本内实现）\n\
+             - 用户决定关闭任务 → `onchainos agent close {job_id}`\n\
+             - 用户决定转为公开 → `onchainos agent set-public {job_id}`\n"
         ),
 
         // ─── Scene 6: 卖家申请接单，确认接单（A2A 路径，支付方式已在协商中确定） ──────────
