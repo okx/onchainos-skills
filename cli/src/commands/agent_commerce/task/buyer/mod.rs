@@ -32,7 +32,6 @@ use anyhow::Result;
 use clap::Subcommand;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::common::PAYMENT_MODE_ESCROW;
 use crate::commands::Context;
 
 // ─── task subcommands ──────────────────────────────────────────────────────
@@ -96,8 +95,9 @@ pub enum TaskCommand {
         job_id: String,
         #[arg(long)]
         provider: String,
-        #[arg(long = "payment-mode", default_value = PAYMENT_MODE_ESCROW)]
-        payment_mode: String,
+        /// 不指定时自动从任务详情 paymentType 获取
+        #[arg(long = "payment-mode")]
+        payment_mode: Option<String>,
         /// a2a_pay payment_id（卖家通过 XMTP 传递，non_escrow 必填；escrow 不需要）
         #[arg(long = "payment-id")]
         payment_id: Option<String>,
@@ -200,7 +200,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             }
         }
         TaskCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount } =>
-            accept::handle_confirm_accept(&mut client, &job_id, &provider, &payment_mode, payment_id.as_deref(), token_symbol.as_deref(), token_amount.as_deref()).await,
+            accept::handle_confirm_accept(&mut client, &job_id, &provider, payment_mode.as_deref(), payment_id.as_deref(), token_symbol.as_deref(), token_amount.as_deref()).await,
         TaskCommand::Complete { job_id } =>
             complete::handle_complete(&mut client, &job_id).await,
         TaskCommand::Reject { job_id, reason } =>

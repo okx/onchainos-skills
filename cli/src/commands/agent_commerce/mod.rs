@@ -92,7 +92,8 @@ pub enum AgentCommand {
     ConfirmAccept {
         job_id: String,
         #[arg(long)] provider: String,
-        #[arg(long = "payment-mode", default_value = "escrow")] payment_mode: String,
+        /// 不指定时自动从任务详情 paymentType 获取
+        #[arg(long = "payment-mode")] payment_mode: Option<String>,
         /// a2a_pay payment_id（卖家通过 XMTP 传递，non_escrow 必填；escrow 不需要）
         #[arg(long = "payment-id")] payment_id: Option<String>,
         /// 协商确定的支付代币符号（如 USDT），escrow 必填

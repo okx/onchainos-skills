@@ -89,7 +89,7 @@ pub async fn handle_confirm_accept(
     client: &mut TaskApiClient,
     job_id: &str,
     provider: &str,
-    payment_mode: &str,
+    payment_mode: Option<&str>,
     payment_id: Option<&str>,
     token_symbol: Option<&str>,
     token_amount: Option<&str>,
@@ -97,8 +97,25 @@ pub async fn handle_confirm_accept(
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
 
+    // ── 解析支付方式：CLI flag > 任务详情 paymentType ──────────────────
+    let payment_mode = match payment_mode {
+        Some(m) => m.to_string(),
+        None => {
+            let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
+            let payment_type = task_resp["paymentType"].as_i64().unwrap_or(0) as i32;
+            let mode_str = common::payment_mode_to_str(payment_type);
+            if mode_str == "none" || mode_str == "unknown" {
+                eprintln!("⚠ 任务 paymentType={payment_type}，无法识别支付方式，默认使用 escrow");
+                common::PAYMENT_MODE_ESCROW.to_string()
+            } else {
+                eprintln!("ℹ --payment-mode 未传入，使用任务详情 paymentType: {mode_str} ({payment_type})");
+                mode_str.to_string()
+            }
+        }
+    };
+
     // ── Step 1: setPaymentMode（单签 + 广播上链）──────────────────────
-    let mode_int = common::payment_mode_to_int(payment_mode);
+    let mode_int = common::payment_mode_to_int(&payment_mode);
     let resp = client.post_with_identity(
         &client.endpoint(job_id, "setPaymentMode"),
         &serde_json::json!({ "paymentMode": mode_int }),
@@ -112,7 +129,7 @@ pub async fn handle_confirm_accept(
     println!("✓ 支付方式已设置: {payment_mode} ({mode_int})");
 
     // ── Step 2: 按支付方式分支处理 ──────────────────────────────────
-    match payment_mode {
+    match payment_mode.as_str() {
         PAYMENT_MODE_ESCROW => {
             // ── 担保支付 (Escrow) ───────────────────────────────────
             // 流程：providerConfirmStatus → sign_escrow(TEE 签名) → accept → broadcast
