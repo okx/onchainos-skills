@@ -17,7 +17,7 @@ pub enum AgentCommand {
     /// Update Agent identity and services
     Update(identity::UpdateArgs),
 
-    /// Query your Agents / ws-mock identity (legacy)
+    /// Query your Agents / agent details
     Get(identity::GetArgs),
 
     /// Activate an Agent
@@ -532,7 +532,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 /// 不一致时返回一段 warning 文本（用于 prepend 到剧本输出顶部）。
 ///
 /// 触发场景：system event 延迟、之前的 CLI 操作已经把 status 推得更靠前、
-/// 或者 mock 测试中手动选 event 跟实际不一致。
 /// 网络/解析失败时返回 None（不阻塞剧本输出，graceful fallback）。
 async fn check_status_freshness(job_id: &str, job_status_or_event: &str) -> Option<String> {
     use task::common::network::task_api_client::TaskApiClient;

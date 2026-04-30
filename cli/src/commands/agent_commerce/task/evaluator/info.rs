@@ -3,7 +3,7 @@
 //! disputeId 格式: `d-<jobId>-r<round>` — 解析 jobId，GET /evidence，下载双方图片到本地，
 //! 再把 localPath 塞回响应对象，供多模态 agent 直接 open-image 阅读。
 //!
-//! 后端真响应结构（§7）：
+//! 后端响应结构（§7）：
 //! ```json
 //! {
 //!   "jobId":"...", "title":"...", "description":"...", "description_summary":"...",
@@ -13,8 +13,6 @@
 //!   }
 //! }
 //! ```
-//! mock-api 可能仍返回平铺数组（`evidences: [{kind:"image"|"text", name|text}]`），本模块对两种
-//! 形状都兼容处理。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,63 +40,37 @@ pub async fn handle_info(client: &mut TaskApiClient, dispute_id: &str) -> Result
         .join(dispute_id);
     fs::create_dir_all(&tmp_dir)?;
 
-    match data["evidences"].clone() {
-        // 真后端结构：{provider: {texts,images}, client: {texts,images}}
-        Value::Object(mut by_side) => {
-            for side in ["provider", "client"] {
-                if let Some(bucket) = by_side.get_mut(side).and_then(Value::as_object_mut) {
-                    if let Some(images) = bucket.get_mut("images").and_then(Value::as_array_mut) {
-                        for item in images.iter_mut() {
-                            if let Some(file_key) = extract_file_key(item) {
-                                let mut merged = normalize_image_item(item, &file_key);
-                                match download_image(client, &job_id, &file_key, &tmp_dir).await {
-                                    Ok(p) => {
-                                        merged.insert(
-                                            "localPath".into(),
-                                            Value::String(p.to_string_lossy().into()),
-                                        );
-                                    }
-                                    Err(e) => {
-                                        merged.insert(
-                                            "downloadError".into(),
-                                            Value::String(e.to_string()),
-                                        );
-                                    }
+    // 后端结构：evidences 是 {provider: {texts,images}, client: {texts,images}}
+    if let Value::Object(mut by_side) = data["evidences"].clone() {
+        for side in ["provider", "client"] {
+            if let Some(bucket) = by_side.get_mut(side).and_then(Value::as_object_mut) {
+                if let Some(images) = bucket.get_mut("images").and_then(Value::as_array_mut) {
+                    for item in images.iter_mut() {
+                        if let Some(file_key) = extract_file_key(item) {
+                            let mut merged = normalize_image_item(item, &file_key);
+                            match download_image(client, &job_id, &file_key, &tmp_dir).await {
+                                Ok(p) => {
+                                    merged.insert(
+                                        "localPath".into(),
+                                        Value::String(p.to_string_lossy().into()),
+                                    );
                                 }
-                                *item = Value::Object(merged);
+                                Err(e) => {
+                                    merged.insert(
+                                        "downloadError".into(),
+                                        Value::String(e.to_string()),
+                                    );
+                                }
                             }
+                            *item = Value::Object(merged);
                         }
                     }
                 }
             }
-            data["evidences"] = Value::Object(by_side);
         }
-
-        // mock-api 兼容：evidences 是平铺数组，kind=image 的项带 name/fileKey
-        Value::Array(evs) => {
-            let mut enriched = Vec::with_capacity(evs.len());
-            for ev in evs {
-                let mut ev2 = ev.clone();
-                if ev["kind"].as_str() == Some("image") {
-                    if let Some(file_key) = extract_file_key(&ev) {
-                        match download_image(client, &job_id, &file_key, &tmp_dir).await {
-                            Ok(p) => {
-                                ev2["localPath"] =
-                                    Value::String(p.to_string_lossy().into());
-                            }
-                            Err(e) => {
-                                ev2["downloadError"] = Value::String(e.to_string());
-                            }
-                        }
-                    }
-                }
-                enriched.push(ev2);
-            }
-            data["evidences"] = Value::Array(enriched);
-        }
-
-        _ => { /* null / 其他：原样透传 */ }
+        data["evidences"] = Value::Object(by_side);
     }
+    // 其他形态（null / 缺失）：原样透传
 
     println!("{}", serde_json::to_string_pretty(&data)?);
     Ok(())

@@ -7,9 +7,7 @@
 use anyhow::{bail, Result};
 use chrono::{TimeZone, Utc};
 use clap::Subcommand;
-use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 /// unix 秒 → 展示字符串。0 / 负数当未设置；正常值转 RFC 3339。
 fn fmt_unix_secs(secs: Option<i64>) -> String {
@@ -90,26 +88,11 @@ pub fn payment_mode_to_str(mode: i32) -> &'static str {
 
 #[derive(Subcommand)]
 pub enum CommonCommand {
-    /// 查询当前 buyer agent 在 ws-mock 身份系统中的注册信息（ERC-8004）
-    ///
-    /// 示例：
-    ///   onchainos agent get
-    ///   onchainos agent get --ws-url ws://127.0.0.1:9000
-    Get {
-        /// ws-mock server 地址（默认 ws://127.0.0.1:9000）
-        #[arg(long, default_value = "ws://127.0.0.1:9000")]
-        ws_url: String,
-
-        /// 查询指定地址（不传则读 ~/.openclaw/ws-mock-addresses.json 中的 default）
-        #[arg(long)]
-        addr: Option<String>,
-    },
-
     /// 查询任务上下文，输出供大模型使用的结构化自然语言描述
     ///
     /// 示例：
     ///   onchainos agent context task-001 --role buyer
-    ///   onchainos agent context task-001 --role provider --agent-id mock-seller-001
+    ///   onchainos agent context task-001 --role provider --agent-id 1
     Context {
         /// 任务 ID（jobId），如 task-001 或 0x1a2b...
         job_id: String,
@@ -118,17 +101,14 @@ pub enum CommonCommand {
         #[arg(long, default_value = "buyer")]
         role: String,
 
-        /// 调用者的 AgentID（可选，用于标注身份）
+        /// 调用者的 AgentID（**必填**）。beta 后端要求 agenticId header 非空，
+        /// 一个钱包可能有多个 provider agent，调用方必须显式选定，CLI 不自动挑。
         #[arg(long)]
-        agent_id: Option<String>,
+        agent_id: String,
 
         /// 调用者钱包地址（可选）
         #[arg(long)]
         address: Option<String>,
-
-        /// 后端 API 地址（不指定时使用默认后端；调试时可传 http://127.0.0.1:9001 指向 mock-api）
-        #[arg(long)]
-        api_url: Option<String>,
     },
 }
 
@@ -186,7 +166,7 @@ struct AgentProfile {
 /// parse stdout —— 不在这里复刻 token / wallet client / URL 拼装逻辑，
 /// `agent get` 自己的实现以后改了，这里自动跟上。
 /// 拿不到就回退到带 agentId 的占位符（不再写死 "My DeFi Agent"）。
-async fn fetch_agent_profile(agent_id: &str, api_url: Option<&str>) -> Option<AgentProfile> {
+async fn fetch_agent_profile(agent_id: &str) -> Option<AgentProfile> {
     let fallback = || AgentProfile {
         agent_id: Some(agent_id.to_string()),
         name: Some(format!("Agent {agent_id}")),
@@ -204,13 +184,9 @@ async fn fetch_agent_profile(agent_id: &str, api_url: Option<&str>) -> Option<Ag
         }
     };
 
-    // 不传 --base-url；改用 OKX_BASE_URL env 注入，wallet_api 解析时优先读这个，
-    // 跟父进程实际打到的 URL 完全一致（无论父进程 base_url 来源是 flag 还是 env）。
+    // 子进程会继承父进程 env（含 OKX_BASE_URL），跟父进程打的 URL 完全一致。
     let mut cmd = tokio::process::Command::new(&exe);
     cmd.args(["agent", "get", "--agent-ids", agent_id]);
-    if let Some(url) = api_url {
-        cmd.env("OKX_BASE_URL", url);
-    }
     let output = match cmd.output().await
     {
         Ok(o) => o,
@@ -311,93 +287,31 @@ fn available_actions(role: &str, status: &str, job_id: &str) -> Vec<String> {
 
 pub async fn run(cmd: CommonCommand, _ctx: &Context) -> Result<()> {
     match cmd {
-        CommonCommand::Get { ws_url, addr } => run_get(&ws_url, addr.as_deref()).await,
-        CommonCommand::Context { job_id, role, agent_id, address, api_url } => {
-            run_context(&job_id, &role, agent_id.as_deref(), address.as_deref(), api_url.as_deref()).await
+        CommonCommand::Context { job_id, role, agent_id, address } => {
+            run_context(&job_id, &role, &agent_id, address.as_deref()).await
         }
     }
-}
-
-async fn run_get(ws_url: &str, addr_override: Option<&str>) -> Result<()> {
-    // 解析要查询的地址
-    let addr = if let Some(a) = addr_override {
-        a.to_string()
-    } else {
-        // 读 ~/.openclaw/ws-mock-addresses.json → {"default": "0x..."}
-        let path = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("无法获取 HOME 目录"))?
-            .join(".openclaw/ws-mock-addresses.json");
-        let raw = std::fs::read_to_string(&path)
-            .map_err(|e| anyhow::anyhow!("读取 {} 失败: {e}\n提示: 先连接 ws-mock 使 openclaw gateway 注册地址", path.display()))?;
-        let v: serde_json::Value = serde_json::from_str(&raw)?;
-        v["default"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("ws-mock-addresses.json 中未找到 default 字段"))?
-            .to_string()
-    };
-
-    // 连接 ws-mock
-    let (mut ws, _) = connect_async(ws_url)
-        .await
-        .map_err(|e| anyhow::anyhow!("无法连接 {ws_url}: {e}\n提示: 先启动 ws-mock server"))?;
-
-    // 发送 LookupAddr
-    let req = serde_json::json!({ "action": "LookupAddr", "addr": addr });
-    ws.send(Message::Text(req.to_string().into())).await?;
-
-    // 等待 addr_lookup 响应（超时 3s）
-    let result = tokio::time::timeout(std::time::Duration::from_secs(3), async {
-        while let Some(Ok(Message::Text(text))) = ws.next().await {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                if v["type"].as_str() == Some("addr_lookup") {
-                    return Some(v);
-                }
-            }
-        }
-        None
-    })
-    .await
-    .map_err(|_| anyhow::anyhow!("LookupAddr 超时（3s），ws-mock server 无响应"))?;
-
-    let resp = result.ok_or_else(|| anyhow::anyhow!("ws-mock 连接关闭，未收到 addr_lookup 响应"))?;
-
-    // 输出结果
-    match resp.get("identity") {
-        Some(identity) if !identity.is_null() => {
-            println!("{}", serde_json::to_string_pretty(identity)?);
-        }
-        _ => {
-            println!("{}", serde_json::json!({
-                "registered": false,
-                "comm_addr": addr,
-                "msg": "该地址在 ws-mock 身份系统中尚未注册（ERC-8004）"
-            }));
-        }
-    }
-
-    let _ = ws.close(None).await;
-    Ok(())
 }
 
 async fn run_context(
     job_id: &str,
     role: &str,
-    agent_id: Option<&str>,
+    agent_id: &str,
     address: Option<&str>,
-    api_url: Option<&str>,
 ) -> Result<()> {
     // 校验角色
     if !["buyer", "provider", "evaluator"].contains(&role) {
         bail!("--role 必须是 buyer / provider / evaluator");
     }
+    if agent_id.is_empty() {
+        bail!("--agent-id 必填：beta 后端要求 agenticId header 非空");
+    }
 
-    // 调用后端获取任务详情
-    let mut client = match api_url {
-        Some(url) => network::task_api_client::TaskApiClient::with_base_url(url.to_string()),
-        None => network::task_api_client::TaskApiClient::new(),
-    };
+    // 调用后端获取任务详情。base url 由 TaskApiClient::new 内部按
+    // OKX_BASE_URL env > TASK_BASE_URL env > 常量 兜底解析，无需 CLI 显式指定。
+    let mut client = network::task_api_client::TaskApiClient::new();
     let resp_val = client
-        .get_with_identity(&client.task_path(job_id), agent_id.unwrap_or(""))
+        .get_with_identity(&client.task_path(job_id), agent_id)
         .await
         .map_err(|e| anyhow::anyhow!("无法获取任务详情: {e}"))?;
 
@@ -407,7 +321,7 @@ async fn run_context(
 
     // 卖家额外拉取 agent 资料（name / profileDescription）
     let profile = if role == "provider" {
-        fetch_agent_profile(agent_id.unwrap_or(""), api_url).await
+        fetch_agent_profile(agent_id).await
     } else {
         None
     };
@@ -421,7 +335,7 @@ async fn run_context(
 fn build_context(
     task: &TaskDetail,
     role: &str,
-    agent_id: Option<&str>,
+    agent_id: &str,
     address: Option<&str>,
     profile: Option<&AgentProfile>,
 ) -> String {
@@ -447,9 +361,7 @@ fn build_context(
     // ── 身份信息 ──────────────────────────────────────────────────────────
     out.push_str("【你的身份】\n");
     out.push_str(&format!("- 角色：{role_cn}\n"));
-    if let Some(id) = agent_id {
-        out.push_str(&format!("- AgentID：{id}\n"));
-    }
+    out.push_str(&format!("- AgentID：{agent_id}\n"));
     if let Some(addr) = address {
         out.push_str(&format!("- 钱包地址：{addr}\n"));
     }

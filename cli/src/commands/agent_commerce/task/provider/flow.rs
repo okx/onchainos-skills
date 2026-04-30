@@ -128,7 +128,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 2 — 给买家发 P2P 消息确认**：\n\n\
              {header_template}\n\
              已收到接单确认（job_accepted），开始执行任务。\n\n\
-             **Step 3 — 执行任务（mock 环境可直接跳过），完成后调用 CLI 提交交付物：**\n\
+             **Step 3 — 执行任务，完成后调用 CLI 提交交付物：**\n\
              ```bash\n\
              onchainos agent deliver {job_id} --file \"\" --message \"任务已完成，请验收\"\n\
              ```\n\

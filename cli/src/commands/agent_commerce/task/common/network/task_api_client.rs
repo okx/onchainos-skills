@@ -185,7 +185,7 @@ impl TaskApiClient {
         Self::build(None)
     }
 
-    /// 指定自定义 base URL（用于 mock-api 等场景）
+    /// 指定自定义 base URL（最高优先级，盖过 env / 常量）
     pub fn with_base_url(base_url: String) -> Self {
         Self::build(Some(base_url))
     }
