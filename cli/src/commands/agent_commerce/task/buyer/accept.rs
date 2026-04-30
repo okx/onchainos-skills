@@ -126,7 +126,13 @@ pub async fn handle_confirm_accept(
         client, &resp["uopData"], &account_id, &address,
         job_id, signing::BizContext::JobSetPaymentMode, &agent_id,
     ).await?;
-    println!("✓ 支付方式已设置: {payment_mode} ({mode_int})");
+    println!("✓ 支付方式已设置: {payment_mode} ({mode_int})，等待链上确认 (20s)...");
+
+    // ── Step 1.5: 等待 job_payment_mode_changed 链上确认 ─────────────
+    // setPaymentMode 广播后需等链上状态更新（job_payment_mode_changed 通知），
+    // 固定等待 20 秒再继续下一步。
+    tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+    println!("✓ 等待完成，继续执行");
 
     // ── Step 2: 按支付方式分支处理 ──────────────────────────────────
     eprintln!("[debug] payment_mode 最终值: '{payment_mode}'");

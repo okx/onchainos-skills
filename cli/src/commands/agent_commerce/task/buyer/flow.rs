@@ -370,9 +370,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              onchainos agent judge {job_id}\n\
              ```\n\n\
              **B-Step 4 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §6 路径 5）：\n\
-             1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段\n\
-             2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串\n\
-             删除后本 sub session 不再接收任何消息——任务完整结束。\n\n\
+             （debug 模式：暂不关闭 sub session，保留历史信息）\n\
+             <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
+             <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
+             <!-- 删除后本 sub session 不再接收任何消息—— -->任务完整结束。\n\n\
              【后续事件】\n\
              - escrow: job_completed → 任务完成 / job_refused → 等待卖家决定仲裁或退款\n\
              - non_escrow: 流程已结束（本分支已执行评价 + 关闭 session）\n"
@@ -468,9 +469,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              onchainos agent judge {job_id}\n\
              ```\n\n\
              **A-Step 4 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §6 路径 5）：\n\
-             1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段\n\
-             2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串\n\
-             删除后本 sub session 不再接收任何消息——任务完整结束。\n\n\
+             （debug 模式：暂不关闭 sub session，保留历史信息）\n\
+             <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
+             <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
+             <!-- 删除后本 sub session 不再接收任何消息—— -->任务完整结束。\n\n\
              ━━━━━━━━━ 分支 B：non_escrow（非担保）— 支付链路完成，等待卖家交付 ━━━━━━━━━\n\n\
              ⚠️ 非担保模式下 job_completed 意味着支付链路（accept + complete）已完成上链，\n\
              但**卖家尚未提交交付物**。不要关闭 sub session，不要评价。\n\n\
@@ -525,9 +527,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20本任务流程结束。\n\n\
              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n\
              **Step 3（两个分支都要做）— 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §6 路径 5）：\n\
-             1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段\n\
-             2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串\n\
-             删除后本 sub session 不再接收任何消息——仲裁流程完整结束。\n"
+             （debug 模式：暂不关闭 sub session，保留历史信息）\n\
+             <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
+             <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
+             <!-- 删除后本 sub session 不再接收任何消息—— -->仲裁流程完整结束。\n"
         ),
 
         // ─── 卖家同意退款（TODO: 后端尚未定义此 event，暂用 confirm_refund）
@@ -543,9 +546,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20[退款完成] 任务 {job_id} 卖家已同意退款，资金已返还至您的钱包。\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
              **Step 3 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §6 路径 5）：\n\
-             1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段\n\
-             2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串\n\
-             删除后本 sub session 不再接收任何消息——退款流程完整结束。\n"
+             （debug 模式：暂不关闭 sub session，保留历史信息）\n\
+             <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
+             <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
+             <!-- 删除后本 sub session 不再接收任何消息—— -->退款流程完整结束。\n"
         ),
 
         // ─── 任务超时（OPEN→EXPIRED 或 ACCEPTED→EXPIRED）──────────
