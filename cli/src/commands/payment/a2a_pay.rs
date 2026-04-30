@@ -285,6 +285,10 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG][a2a-pay] GET /p/{} response={resp}", p.payment_id);
     }
+    if let Some(err_msg) = resp.get("errorMessage").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+        let status = resp["status"].as_str().unwrap_or("unknown");
+        bail!("payment {} 不可用 (status={status}): {err_msg}", p.payment_id);
+    }
     let challenge = resp
         .get("challenge")
         .cloned()
