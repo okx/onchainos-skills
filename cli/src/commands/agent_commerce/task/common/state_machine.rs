@@ -173,11 +173,23 @@ pub enum Event {
     /// review 超时（provider 提交后买家未确认；通知 provider 调 claimAutoComplete）
     ReviewExpired,
 
+    // ── 自动完成 / 自动退款 tx 回执 ──────────────────────────────────
+    /// Provider 调 claimAutoComplete tx 上链结果（review 超时后 provider 主动领走资金；通知 provider）
+    JobAutoCompleted,
+    /// Buyer 调 claimAutoRefund tx 上链结果（submit/refuse 超时后 buyer 主动领回资金；通知 buyer）
+    JobAutoRefunded,
+
     // ── 截止时间提醒（warn 类，不改 status）────────────────────────────
     /// 担保支付 accept→submit 快超时提醒（通知 provider 发起 submit）
     SubmitDeadlineWarn,
     /// 担保支付 submit→complete 快超时提醒（通知 buyer 发起 complete）
     ReviewDeadlineWarn,
+
+    // ── evaluator 额外 lifecycle ─────────────────────────────────────
+    /// VoterStaking.VoterStakeStopped 上链（退出 voter 池；通知发起 stop 的 evaluator）
+    StakeStopped,
+    /// DisputeManager.VoterCooldownEntered 上链（被动进入冷却期；通知 evaluator）
+    CooldownEntered,
 
     /// 后端发的、当前枚举不认识的事件名（也用来承载 user-instruction 伪 event：
     /// dispute_raise / agree_refund / dispute_evidence / close / set_public）
@@ -221,9 +233,15 @@ impl Event {
             "submit_expired"            => Event::SubmitExpired,
             "refuse_expired"            => Event::RefuseExpired,
             "review_expired"            => Event::ReviewExpired,
+            // 自动完成 / 自动退款 tx 回执
+            "job_auto_completed"        => Event::JobAutoCompleted,
+            "job_auto_refunded"         => Event::JobAutoRefunded,
             // 提醒
             "submit_deadline_warn"      => Event::SubmitDeadlineWarn,
             "review_deadline_warn"      => Event::ReviewDeadlineWarn,
+            // evaluator 额外 lifecycle
+            "stake_stopped"             => Event::StakeStopped,
+            "cooldown_entered"          => Event::CooldownEntered,
             other                       => Event::Other(other.to_string()),
         }
     }
@@ -259,8 +277,12 @@ impl Event {
             Event::SubmitExpired          => "submit_expired",
             Event::RefuseExpired          => "refuse_expired",
             Event::ReviewExpired          => "review_expired",
+            Event::JobAutoCompleted       => "job_auto_completed",
+            Event::JobAutoRefunded        => "job_auto_refunded",
             Event::SubmitDeadlineWarn     => "submit_deadline_warn",
             Event::ReviewDeadlineWarn     => "review_deadline_warn",
+            Event::StakeStopped           => "stake_stopped",
+            Event::CooldownEntered        => "cooldown_entered",
             Event::Other(s)               => s.as_str(),
         }
     }
@@ -279,12 +301,14 @@ pub fn status_when_event(e: &Event) -> Status {
         Event::JobCreated | Event::ProviderApplied                          => Status::Open,
         Event::JobAccepted                                                  => Status::Accepted,
         Event::JobSubmitted                                                 => Status::Submitted,
-        Event::JobRefused | Event::SubmitExpired | Event::RefuseExpired     => Status::Refused,
+        Event::JobRefused | Event::RefuseExpired                             => Status::Refused,
+        // submit_expired: 卖家未提交，status 仍是 accepted（未进入 submitted）
+        Event::SubmitExpired                                                => Status::Accepted,
         // dispute_approved 是过场事件，status 仍为 refused（dispute 阶段 1，未真正进入 disputed）
         Event::DisputeApproved                                              => Status::Refused,
         Event::JobDisputed                                                  => Status::Disputed,
-        Event::JobCompleted | Event::ReviewExpired                          => Status::Completed,
-        Event::ConfirmRefund | Event::JobRefunded                              => Status::Refunded,
+        Event::JobCompleted | Event::ReviewExpired | Event::JobAutoCompleted  => Status::Completed,
+        Event::ConfirmRefund | Event::JobRefunded | Event::JobAutoRefunded    => Status::Refunded,
         Event::DisputeResolved                                              => Status::Completed,
         // 仲裁子状态机：所有事件都发生在 task=disputed 状态下
         Event::EvaluatorSelected | Event::RevealStarted
@@ -299,7 +323,8 @@ pub fn status_when_event(e: &Event) -> Status {
         // 质押 / 罚没 / 奖励 lifecycle 跟 task status 解耦
         Event::Staked
         | Event::UnstakeRequested | Event::UnstakeClaimed | Event::UnstakeCancelled
-        | Event::RewardClaimed | Event::Slashed                             => Status::Other("staking".to_string()),
+        | Event::RewardClaimed | Event::Slashed
+        | Event::StakeStopped | Event::CooldownEntered                      => Status::Other("staking".to_string()),
         Event::Other(_)                                                     => Status::Other("unknown".to_string()),
     }
 }

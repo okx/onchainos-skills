@@ -114,6 +114,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             Event::DisputeResolved => "xmtp_dispatch_user (通知仲裁结果)",
             Event::ConfirmRefund => "xmtp_dispatch_user (通知退款完成)",
             Event::JobRefunded => "xmtp_dispatch_user (通知退款到账)",
+            Event::JobAutoRefunded => "xmtp_dispatch_user (claimAutoRefund tx 回执)",
             _ => "无",
         }
     );
@@ -569,6 +570,28 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              <!-- 删除后本 sub session 不再接收任何消息—— -->退款流程完整结束。\n"
         ),
 
+        // ─── claimAutoRefund tx 回执（submit/refuse 超时后 buyer 主动领回资金）──
+        Event::JobAutoRefunded => format!(
+            "【系统通知】job_auto_refunded（claimAutoRefund tx 回执）\n\
+             【角色】买家（Client）\n\n\
+             【你的下一步动作（严格顺序）】\n\n\
+             **Step 1 — 判断 payload 中的 status：**\n\
+             - `success` → 自动退款成功，资金已到账。执行 Step 2。\n\
+             - `failed` → 按 errorCode 重试：\n\
+             ```bash\n\
+             onchainos agent claim-auto-refund {job_id}\n\
+             ```\n\n\
+             **Step 2 — 调用 xmtp_dispatch_user 通知用户退款到账：**\n\n\
+             content：\n\
+             \x20\x20\x20\x20[自动退款成功 💰] 任务 {job_id} 的托管资金已退还至您的钱包。\n\
+             \x20\x20\x20\x20本任务流程结束。\n\n\
+             **Step 3 — 关闭 sub session**（终态收尾）：\n\
+             （debug 模式：暂不关闭 sub session，保留历史信息）\n\
+             <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
+             <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
+             <!-- 删除后本 sub session 不再接收任何消息—— -->退款流程完整结束。\n"
+        ),
+
         // ─── 任务超时（OPEN→EXPIRED 或 ACCEPTED→EXPIRED）──────────
         Event::JobExpired => format!(
             "【当前状态】job_expired（任务超时，无人接单或卖家未提交）\n\
@@ -778,10 +801,18 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         | Event::UnstakeRequested
         | Event::UnstakeClaimed
         | Event::UnstakeCancelled
-        | Event::Slashed => format!(
+        | Event::Slashed
+        | Event::StakeStopped
+        | Event::CooldownEntered => format!(
             "【系统通知】{event}（evaluator 质押 lifecycle，buyer 无关）\n\
              【建议】忽略即可。\n",
             event = event.as_str()
+        ),
+
+        // ─── job_auto_completed: provider 端 tx 回执，buyer 无关 ─────
+        Event::JobAutoCompleted => format!(
+            "【系统通知】job_auto_completed（provider 端 claimAutoComplete tx 回执，buyer 无关）\n\
+             【建议】忽略即可。任务已自动完成。\n"
         ),
 
         // ─── reward_claimed: buyer 自己的 claim tx 回执（仲裁胜诉退款等） ─────

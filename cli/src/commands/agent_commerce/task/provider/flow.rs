@@ -474,7 +474,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         | Event::UnstakeRequested
         | Event::UnstakeClaimed
         | Event::UnstakeCancelled
-        | Event::Slashed => format!(
+        | Event::Slashed
+        | Event::StakeStopped
+        | Event::CooldownEntered => format!(
             "【系统通知】{event}（evaluator 质押 lifecycle，provider 无关）\n\
              【建议】忽略即可。\n",
             event = event.as_str()
@@ -488,11 +490,30 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              如 status=failed 按 errorCode 重试 `onchainos agent claim {job_id}`。\n"
         ),
 
-        // job_refunded —— 买家已领取退款，任务结束
+        // job_refunded —— 买家已领取退款（卖家同意退款），任务结束
         Event::JobRefunded => format!(
             "【系统通知】job_refunded（退款已完成）\n\
              【角色】卖家（Provider）\n\n\
              【说明】买家已领取退款，本任务流程结束。无需执行任何操作。\n"
+        ),
+
+        // job_auto_completed —— claimAutoComplete tx 回执（review 超时后 provider 主动领走资金）
+        Event::JobAutoCompleted => format!(
+            "【系统通知】job_auto_completed（claimAutoComplete tx 回执）\n\
+             【角色】卖家（Provider）\n\n\
+             【你的下一步动作】\n\n\
+             **判断 payload 中的 status：**\n\
+             - `success` → 自动完成成功，资金已到账。任务流程结束。\n\
+             - `failed` → 按 errorCode 重试：\n\
+             ```bash\n\
+             onchainos agent claim-auto-complete {job_id}\n\
+             ```\n"
+        ),
+
+        // job_auto_refunded —— buyer 端 tx 回执，provider 无关
+        Event::JobAutoRefunded => format!(
+            "【系统通知】job_auto_refunded（buyer 端 claimAutoRefund tx 回执，provider 无关）\n\
+             【建议】忽略即可。买家已领取自动退款。\n"
         ),
 
         Event::Other(ref other) => format!(
