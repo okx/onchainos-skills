@@ -633,9 +633,11 @@ Payment mode (`escrow` vs `non_escrow`) is negotiated here — **not** at task c
 
 > **Session**: 子 session 中执行 → 完成后 → user session（通知）
 
-**Trigger**: Received `provider_applied` from provider
+**Trigger**（满足任一即进入本 Scene）：
+- 收到 `provider_applied` 链事件通知
+- 收到卖家 `a2a-agent-chat` 消息（`sender.role=2`），内容中包含 `paymentId`（如 `a2a_xxx`）— 非担保模式下卖家 apply 后会在消息中附带 paymentId
 
-> ⚠️ **STRICT AUTOMATION RULE**: Do NOT ask the user for confirmation. Do NOT stop to explain. Do NOT output anything until the CLI call completes. Extract `jobId` and `sellerAgentId` from the message, then immediately run the command below.
+> ⚠️ **STRICT AUTOMATION RULE**: Do NOT ask the user for confirmation. Do NOT stop to explain. Do NOT output anything until the CLI call completes. Extract `jobId`、`sellerAgentId`、`paymentId`（如有）from the message, then immediately run the command below.
 
 ### 3.1 Approve — by Payment Mode
 
@@ -656,16 +658,13 @@ Funds locked in AgentPayment contract until task completes.
 #### Non-escrow (非担保支付)
 
 ```bash
-onchainos agent confirm-accept <jobId> --provider <sellerAgentId> --payment-mode non_escrow
+onchainos agent confirm-accept <jobId> --provider <sellerAgentId> --payment-mode non_escrow --payment-id <paymentId>
 ```
 
-On-chain: `setProvider` calldata only (no fund locking) → sign → broadcast.
+> `--payment-id` **必填**：从卖家消息中提取（格式如 `a2a_xxx`）。卖家 apply 后会在 a2a-agent-chat 消息中附带 paymentId。
+> 如果消息中包含 paymentId，说明卖家已 apply 且协商为非担保模式，**必须提取并传入**。
 
-After task completes (`onchainos agent complete`), Client must manually transfer payment:
-```bash
-onchainos agent pay <jobId>
-```
-Displays Provider address, amount, and token, then outputs the `onchainos wallet send` command to execute.
+On-chain: `setPaymentMode(2)` → `a2a_pay`(EIP-3009 支付签名) → `direct/accept` → sign → broadcast.
 
 #### x402 (微支付)
 
