@@ -298,31 +298,46 @@ pub async fn handle_confirm_accept(
                 anyhow::anyhow!("非担保支付需要 --payment-id（由卖家通过 XMTP 传递）")
             })?;
 
-            // 从任务详情获取买家确认的金额、币种和卖家地址（协商数据）
+            // 从任务详情获取金额和币种
             let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
             let task = &task_resp;
             let amount = task["tokenAmount"].as_str().unwrap_or("0").to_string();
             let symbol = task["paymentTokenSymbol"].as_str().unwrap_or("USDT").to_string();
 
+            // 通过 `onchainos agent get --agent-ids` 查询 provider 钱包地址
+            let provider_address = {
+                let exe = std::env::current_exe()
+                    .map_err(|e| anyhow::anyhow!("无法获取可执行文件路径: {e}"))?;
+                let output = tokio::process::Command::new(&exe)
+                    .args(["agent", "get", "--agent-ids", provider])
+                    .output()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("调用 agent get --agent-ids {provider} 失败: {e}"))?;
+                let body: serde_json::Value = serde_json::from_slice(&output.stdout)
+                    .map_err(|e| anyhow::anyhow!("解析 agent get 输出失败: {e}"))?;
+                body["data"].as_array()
+                    .and_then(|arr| arr.first())
+                    .and_then(|x| x["list"].as_array())
+                    .and_then(|list| list.iter()
+                        .find(|a| a["agentId"].as_str() == Some(provider))
+                        .and_then(|a| a["ownerAddress"].as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string()))
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "provider {provider} 的 ownerAddress 为空，无法确定收款地址"
+                    ))?
+            };
+
             // 通过 tokenDetail API 查询 token 合约地址和精度
             let (token_address, decimals) = fetch_token_detail(client, &symbol, &agent_id).await?;
             let amount_minimal = crate::commands::swap::readable_to_minimal_str(&amount, decimals)?;
 
-            // Charge 模式 EIP-3009 recipient = 卖家钱包地址（从任务详情获取）
-            let recipient = task["providerAgentAddress"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| anyhow::anyhow!("任务详情缺少 providerAgentAddress，无法确定收款地址"))?
-                .to_string();
-
             // Step 2a: a2a_pay::pay() — EIP-3009 支付签名
-            // PayParams.amount = 最小单位（如 "100000" = 0.1 USDT，6 decimals）
-            // PayParams.currency = ERC-20 合约地址（从任务详情 tokenAddress 获取）
             let pay_result = a2a_pay::pay(PayParams {
                 payment_id: pid.to_string(),
                 amount: amount_minimal,
                 currency: token_address,
-                recipient_address: recipient,
+                recipient_address: provider_address.clone(),
             }).await?;
             println!("✓ a2a_pay 支付完成: payment_id={}, status={}", pay_result.payment_id, pay_result.status);
             if let Some(ref tx) = pay_result.tx_hash {
@@ -330,15 +345,6 @@ pub async fn handle_confirm_accept(
             }
 
             // Step 2b: direct/accept → calldata(uopData) → 签名 → 广播
-            // direct/accept 入参:
-            //   providerAddress:  必填
-            //   providerAgentId:  必填
-            //   tokenSymbol:      可选
-            //   tokenAmount:      可选 (decimal string, 无小数点)
-            let provider_address = task["providerAgentAddress"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| anyhow::anyhow!("任务详情缺少 providerAgentAddress"))?;
             let body = serde_json::json!({
                 "providerAddress": provider_address,
                 "providerAgentId": provider,
