@@ -293,6 +293,19 @@ pub async fn sign_uop_and_broadcast(
         .to_string())
 }
 
+/// 用 session key 对 EIP-712 digest 进行签名，返回 hex 签名字符串。
+pub fn sign_digest_with_session_key(digest: &str) -> Result<String> {
+    let session = crate::wallet_store::load_session()?
+        .ok_or_else(|| anyhow::anyhow!("未登录，请先执行 onchainos wallet auth"))?;
+    let session_key = crate::keyring_store::get("session_key")
+        .map_err(|_| anyhow::anyhow!("未登录，请先执行 onchainos wallet auth"))?;
+
+    let signing_seed =
+        crate::crypto::hpke_decrypt_session_sk(&session.encrypted_session_sk, &session_key)?;
+    let signing_seed_b64 = BASE64_STANDARD.encode(signing_seed);
+    crate::crypto::ed25519_sign_hex(digest, &signing_seed_b64)
+}
+
 /// Dual-sign flow for accept/complete/refuse.
 ///
 /// 1. POST `pre_endpoint_url` with `pre_body` + identity headers → get digest

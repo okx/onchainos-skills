@@ -3,7 +3,7 @@
 //! 买家动作：确认完成（验收通过，释放付款）— onchainos task complete
 //!
 //! 根据支付方式分流：
-//! - escrow: pre-complete(712) → 签 digest → complete → 签 uopHash → broadcast
+//! - escrow: pre-complete(orderId,deadline) → 签 digest → complete(signatureData) → 签 uopHash → broadcast
 //! - non-escrow: 展示账单 → /direct/complete 单签 → broadcast
 
 use anyhow::Result;
@@ -24,22 +24,47 @@ pub async fn handle_complete(client: &mut TaskApiClient, job_id: &str) -> Result
 
     if payment_mode == PAYMENT_MODE_INT_ESCROW {
         // ── 担保：双签 pre-complete → complete ──────────────────────
-        let result = signing::task_dual_sign_and_broadcast(
-            client,
+        // TODO: deadline 策略待确认，暂时使用当前时间 + 1 小时
+        let deadline = chrono::Utc::now().timestamp() + 3600;
+
+        // Step 1: pre-complete → digest (712 标准，不需要 sessionCert)
+        let pre_body = serde_json::json!({
+            "orderId": job_id,
+            "deadline": deadline,
+        });
+        let pre_resp = client.post_with_identity(
             &client.endpoint(job_id, "pre-complete"),
-            &serde_json::json!({}),
-            &client.endpoint(job_id, "complete"),
-            |signature| serde_json::json!({ "signature": signature }),
-            &account_id,
-            &address,
+            &pre_body,
             &agent_id,
-            job_id,
-            signing::BizContext::JobComplete,
-        )
-        .await?;
+        ).await?;
+        let digest = pre_resp["digest"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("pre-complete 未返回 digest"))?;
+
+        // Step 2: session key 签名 digest
+        let signature = signing::sign_digest_with_session_key(digest)?;
+
+        // Step 3: complete (signatureData + sessionCert)
+        let main_body = serde_json::json!({
+            "signatureData": {
+                "signature": signature,
+                "deadline": deadline,
+            }
+        });
+        let main_resp = client.post_with_identity(
+            &client.endpoint(job_id, "complete"),
+            &main_body,
+            &agent_id,
+        ).await?;
+
+        // Step 4: 签 uopHash + broadcast
+        let tx_hash = signing::sign_uop_and_broadcast(
+            client, &main_resp["uopData"], &account_id, &address,
+            job_id, signing::BizContext::JobComplete, &agent_id,
+        ).await?;
 
         println!("✓ 任务验收通过（担保），状态 → complete，款项已释放");
-        println!("  txHash: {}", result.tx_hash);
+        println!("  txHash: {tx_hash}");
     } else {
         // ── 非担保 / x402：展示账单 → /direct/complete 单签 ────────
         let amount = task["tokenAmount"].as_str().unwrap_or("?");
