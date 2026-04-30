@@ -89,7 +89,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
          \x20\x202) CLI 错误：`onchainos agent <cmd>` 报错 → **不要重试**，直接 xmtp_dispatch_session 推 user session [⚠️ CLI 报错]，等用户新指令；瞬态故障（network/JWT 过期）才允许自动重试一次\n\
          \x20\x203) ❌ **绝对禁止把技术错误细节广播给对方**：CLI 命令名 / 后端字段名 / stderr 摘要 / `bug`/`命令：`/`错误：` 一律不能进 xmtp_send 给对方。最多发一句『稍等，正在确认细节』或干脆不通知对方。\n\
          \x20\x204) ❌ **同 turn 不重复 xmtp_send**：剧本说『发一条』→ 调过一次工具返回『已发送』就**算成功**，**当前 turn 内不再对同一对方调 xmtp_send 第二次**。不要因为消息可能不够清晰就重发——重发 = 刷屏 + 触发对方循环。下一条 inbound 进来再说。\n\
-         \x20\x205) ❌ **deliver 必须等 `job_accepted` 通知**：apply 上链不改 status，任务仍是 open；只有买家 confirm-accept 触发的 `job_accepted` 链事件到达后才能 deliver。**绝对禁止在 ProviderApplied 剧本里抢跑 deliver**，CLI 会校验 status != accepted 直接 bail。\n\n\
+         \x20\x205) ❌ **deliver 必须等 `job_accepted` 通知**：apply 上链不改 status，任务仍是 open；只有买家 confirm-accept 触发的 `job_accepted` 链事件到达后才能 deliver。**绝对禁止在 ProviderApplied 剧本里抢跑 deliver**，CLI 会校验 status != accepted 直接 bail。\n\
+         \x20\x206) ❌ **同 turn 不重复 `session_status`**：sub session 的 sessionKey 在同一 turn 内是稳定的——**调过一次就把结果存住，后续 step 直接复用**。即使剧本多个 step 都提到 sessionKey，也只调一次 session_status。重复调 = 死循环征兆，必须立即停。\n\n\
          如果不记得本任务协商细节（deliverable / paymentMode / token / 买家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 加载上下文。\n\n"
     );

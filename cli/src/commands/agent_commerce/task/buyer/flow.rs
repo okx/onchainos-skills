@@ -92,6 +92,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         "📍 你在 sub session（你看到这段 next-action 输出 = 100% 在 sub）。\n\n\
          🔒 **如果当前 turn 没读过 SKILL.md §Session 通信契约**（envelope 形态白名单 / xmtp_send 两步 / xmtp_dispatch_user·xmtp_prompt_user 推 user session 铁律），\n\
          **先读 `skills/okx-agent-task/SKILL.md`** 再继续——下面步骤会引用它的章节（§3 / §4 / §6 / §7）。\n\n\
+         ⚠️ **同 turn 不重复 `session_status`**：sub session 的 sessionKey 在同一 turn 内是稳定的——**调过一次就把结果存住，后续 step 直接复用**。即使剧本多个 step 都提到 sessionKey，也只调一次 session_status。重复调 = 死循环征兆，必须立即停。\n\n\
          如果不记得本任务协商细节（deliverable / paymentMode / token / 卖家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 加载上下文。\n\n"
     );
