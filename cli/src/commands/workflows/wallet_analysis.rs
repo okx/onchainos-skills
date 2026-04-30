@@ -27,9 +27,9 @@ pub(crate) async fn fetch_and_assemble(
         market::fetch_portfolio_overview(&mut c1, chain_index, address, "4"),
         portfolio::fetch_all_balances(&mut c2, address, chain_index, None, None),
     );
-    let overview_7d  = ok_or_null(overview_7d);
+    let overview_7d = ok_or_null(overview_7d);
     let overview_30d = ok_or_null(overview_30d);
-    let balances     = ok_or_null(balances);
+    let balances = ok_or_null(balances);
 
     // ── Step 2: per-token PnL (sequential) ───────────────────────────
     let recent_pnl = ok_or_null(
@@ -39,9 +39,18 @@ pub(crate) async fn fetch_and_assemble(
     // ── Step 3: recent on-chain activity (sequential) ─────────────────
     let activities = ok_or_null(
         tracker::fetch_activities(
-            client, "multi_address", Some(address),
-            None, Some(chain_index),
-            None, None, None, None, None, None, None,
+            client,
+            "multi_address",
+            Some(address),
+            None,
+            Some(chain_index),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )
         .await,
     );
@@ -100,8 +109,12 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn some_data() -> Value { json!({ "pnl": "100" }) }
-    fn null() -> Value { Value::Null }
+    fn some_data() -> Value {
+        json!({ "pnl": "100" })
+    }
+    fn null() -> Value {
+        Value::Null
+    }
 
     fn full_assemble(
         overview_7d: Value,
@@ -110,7 +123,15 @@ mod tests {
         recent_pnl: Value,
         activities: Value,
     ) -> Value {
-        assemble("0xWALLET", "501", overview_7d, overview_30d, balances, recent_pnl, activities)
+        assemble(
+            "0xWALLET",
+            "501",
+            overview_7d,
+            overview_30d,
+            balances,
+            recent_pnl,
+            activities,
+        )
     }
 
     // ── Output structure ──────────────────────────────────────────────

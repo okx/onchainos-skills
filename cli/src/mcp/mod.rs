@@ -250,6 +250,22 @@ struct DefiCollectParams {
     principal_index: Option<String>,
 }
 
+// ── Gas Station ──────────────────────────────────────────────────────
+
+#[derive(Deserialize, JsonSchema)]
+struct GasStationUpdateDefaultTokenParams {
+    /// Chain name or ID (e.g. "ethereum", "1")
+    chain: String,
+    /// Gas token contract address to set as default (e.g. USDT/USDC/USDG address)
+    gas_token_address: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct GasStationDisableParams {
+    /// Chain name or ID (e.g. "ethereum", "1")
+    chain: String,
+}
+
 // ── Token ──────────────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
 struct TokenSearchParams {
@@ -758,7 +774,10 @@ struct CrossChainQuoteParams {
     to_chain: String,
     /// Human-readable amount (e.g. "10" for 10 USDC)
     readable_amount: String,
-    /// Receive address on destination chain (optional, defaults to user wallet)
+    /// Optional destination receive address. The v6 /quote API does not consume
+    /// this — it is validated against the destination chain's address family
+    /// (so EVM↔Solana mismatches fail early) and then dropped. Use it only at
+    /// `cross_chain_execute` time when broadcasting.
     receive_address: Option<String>,
     /// Sort preference: 0=optimal (default), 1=fastest, 2=max output
     sort: Option<String>,
@@ -766,8 +785,29 @@ struct CrossChainQuoteParams {
 
 #[derive(Deserialize, JsonSchema)]
 struct CrossChainStatusParams {
-    /// Order ID returned by cross-chain execute
-    order_id: String,
+    /// Source chain transaction hash returned by cross-chain execute. Provide this
+    /// OR `order_id` (mutually exclusive).
+    tx_hash: Option<String>,
+    /// Order id from a prior cross_chain_execute (e.g. swapOrderId,
+    /// approveOrderId). Use this OR `tx_hash`. Resolved internally to a tx hash
+    /// via the authenticated wallet `/order/detail` endpoint (login required).
+    order_id: Option<String>,
+    /// Bridge id (required by server — returns 50014 if absent). Get it from the
+    /// `bridgeId` field of the prior `cross_chain_execute` / `cross_chain_quote`
+    /// result, or from `cross_chain_bridges`.
+    bridge_id: String,
+    /// Source chain name or chainIndex (e.g. "ethereum" or "1"). Required —
+    /// server returns 50014 (chainIndex) without it.
+    from_chain: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CrossChainBridgesParams {
+    /// Source chain (independently optional). See tool description for the
+    /// four combinations of from_chain / to_chain.
+    from_chain: Option<String>,
+    /// Destination chain (independently optional).
+    to_chain: Option<String>,
 }
 
 #[derive(Clone)]
@@ -799,12 +839,46 @@ impl ServerHandler for McpServer {
 }
 
 fn ok(data: Value) -> Result<String, String> {
-    Ok(serde_json::to_string_pretty(&data)
+    let events = crate::payment_notify::drain_events();
+    let payload = if events.is_empty() {
+        data
+    } else {
+        serde_json::json!({ "data": data, "notifications": events })
+    };
+    Ok(serde_json::to_string_pretty(&payload)
         .unwrap_or_else(|e| format!("failed to serialize response: {e}")))
 }
 
 fn err(e: anyhow::Error) -> Result<String, String> {
-    Err(format!("{e:#}"))
+    // Always drain so events don't leak into the next tool call.
+    let events = crate::payment_notify::drain_events();
+
+    // `CliConfirming` carries structured `message` / `next` fields; surface
+    // them as a JSON payload so the agent can parse them (matches the CLI
+    // `output::confirming` shape). Empty strings are omitted so first-charge
+    // confirmations (which rely on the notifications array for semantics)
+    // stay tidy.
+    if let Some(c) = e.downcast_ref::<crate::output::CliConfirming>() {
+        let mut payload = serde_json::json!({ "confirming": true });
+        if !c.message.is_empty() {
+            payload["message"] = serde_json::Value::String(c.message.clone());
+        }
+        if !c.next.is_empty() {
+            payload["next"] = serde_json::Value::String(c.next.clone());
+        }
+        if !events.is_empty() {
+            payload["notifications"] = serde_json::Value::Array(events);
+        }
+        return Err(serde_json::to_string(&payload).unwrap_or_else(|_| c.message.clone()));
+    }
+
+    let base = format!("{e:#}");
+    if events.is_empty() {
+        Err(base)
+    } else {
+        let payload = serde_json::json!({ "error": base, "notifications": events });
+        Err(serde_json::to_string(&payload).unwrap_or(base))
+    }
 }
 
 #[tool_router]
@@ -892,7 +966,9 @@ impl McpServer {
             .as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
-        match token::fetch_price_info(&mut *self.client.lock().await, &p.address, &chain_index).await {
+        match token::fetch_price_info(&mut *self.client.lock().await, &p.address, &chain_index)
+            .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -930,7 +1006,8 @@ impl McpServer {
             .as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
-        match market::fetch_prices(&mut *self.client.lock().await, &p.tokens, &default_chain).await {
+        match market::fetch_prices(&mut *self.client.lock().await, &p.tokens, &default_chain).await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -951,7 +1028,15 @@ impl McpServer {
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
         let bar = p.bar.as_deref().unwrap_or("1H");
         let limit = p.limit.unwrap_or(100);
-        match market::fetch_kline(&mut *self.client.lock().await, &p.address, &chain_index, bar, limit).await {
+        match market::fetch_kline(
+            &mut *self.client.lock().await,
+            &p.address,
+            &chain_index,
+            bar,
+            limit,
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1276,7 +1361,14 @@ impl McpServer {
         Parameters(p): Parameters<SwapApproveParams>,
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match swap::fetch_approve(&mut *self.client.lock().await, &chain_index, &p.token, &p.amount).await {
+        match swap::fetch_approve(
+            &mut *self.client.lock().await,
+            &chain_index,
+            &p.token,
+            &p.amount,
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1431,8 +1523,15 @@ impl McpServer {
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let amount = p.amount.as_deref().unwrap_or("0");
-        match gateway::fetch_simulate(&mut *self.client.lock().await, &chain_index, &p.from, &p.to, amount, &p.data)
-            .await
+        match gateway::fetch_simulate(
+            &mut *self.client.lock().await,
+            &chain_index,
+            &p.from,
+            &p.to,
+            amount,
+            &p.data,
+        )
+        .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -1469,7 +1568,14 @@ impl McpServer {
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let oid = p.order_id.as_deref();
-        match gateway::fetch_orders(&mut *self.client.lock().await, &chain_index, &p.address, oid).await {
+        match gateway::fetch_orders(
+            &mut *self.client.lock().await,
+            &chain_index,
+            &p.address,
+            oid,
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1490,7 +1596,8 @@ impl McpServer {
             .as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
-        match token::fetch_liquidity(&mut *self.client.lock().await, &p.address, &chain_index).await {
+        match token::fetch_liquidity(&mut *self.client.lock().await, &p.address, &chain_index).await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1523,7 +1630,9 @@ impl McpServer {
             .as_deref()
             .map(crate::chains::resolve_chain)
             .unwrap_or_else(|| crate::chains::resolve_chain("ethereum").to_string());
-        match token::fetch_advanced_info(&mut *self.client.lock().await, &p.address, &chain_index).await {
+        match token::fetch_advanced_info(&mut *self.client.lock().await, &p.address, &chain_index)
+            .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1580,8 +1689,13 @@ impl McpServer {
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
         let time_frame = p.time_frame.as_deref().unwrap_or("4");
-        match market::fetch_portfolio_overview(&mut *self.client.lock().await, &chain_index, &p.address, time_frame)
-            .await
+        match market::fetch_portfolio_overview(
+            &mut *self.client.lock().await,
+            &chain_index,
+            &p.address,
+            time_frame,
+        )
+        .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -1647,8 +1761,13 @@ impl McpServer {
         Parameters(p): Parameters<PortfolioPnlTokenPnlParams>,
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match market::fetch_portfolio_token_pnl(&mut *self.client.lock().await, &chain_index, &p.address, &p.token)
-            .await
+        match market::fetch_portfolio_token_pnl(
+            &mut *self.client.lock().await,
+            &chain_index,
+            &p.address,
+            &p.token,
+        )
+        .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -1836,11 +1955,22 @@ impl McpServer {
     // ── Cross-Chain ────────────────────────────────────────────────────
 
     #[tool(
-        name = "cross_chain_chains",
-        description = "Get supported chain pairs for cross-chain bridge swaps"
+        name = "cross_chain_tokens",
+        description = "List bridgeable tokens (/supported/tokens). Both from_chain and to_chain are independently optional: omit both for the full catalog, pass from_chain only for tokens on that source chain, pass to_chain only for tokens that can reach that destination, pass both for tokens on the specific from→to route. Returns chainIndex / tokenContractAddress / tokenSymbol / decimals."
     )]
-    async fn cross_chain_chains(&self) -> Result<String, String> {
-        match cross_chain::fetch_chain_pairs(&mut *self.client.lock().await).await {
+    async fn cross_chain_tokens(
+        &self,
+        Parameters(p): Parameters<CrossChainBridgesParams>,
+    ) -> Result<String, String> {
+        let from_idx = p.from_chain.as_deref().map(crate::chains::resolve_chain);
+        let to_idx = p.to_chain.as_deref().map(crate::chains::resolve_chain);
+        match cross_chain::fetch_supported_tokens(
+            &mut *self.client.lock().await,
+            from_idx.as_deref(),
+            to_idx.as_deref(),
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1848,10 +1978,21 @@ impl McpServer {
 
     #[tool(
         name = "cross_chain_bridges",
-        description = "Get available bridge protocols for cross-chain swaps"
+        description = "List bridge protocols (/supported/bridges). Both from_chain and to_chain are independently optional: omit both for the full catalog, pass from_chain only for bridges on that source chain, pass to_chain only for bridges able to reach that destination, pass both for bridges that connect the specific chain pair. Returns bridgeId / bridgeName / supportedChains[]."
     )]
-    async fn cross_chain_bridges(&self) -> Result<String, String> {
-        match cross_chain::fetch_bridges(&mut *self.client.lock().await).await {
+    async fn cross_chain_bridges(
+        &self,
+        Parameters(p): Parameters<CrossChainBridgesParams>,
+    ) -> Result<String, String> {
+        let from_idx = p.from_chain.as_deref().map(crate::chains::resolve_chain);
+        let to_idx = p.to_chain.as_deref().map(crate::chains::resolve_chain);
+        match cross_chain::fetch_supported_bridges(
+            &mut *self.client.lock().await,
+            from_idx.as_deref(),
+            to_idx.as_deref(),
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1859,7 +2000,7 @@ impl McpServer {
 
     #[tool(
         name = "cross_chain_quote",
-        description = "Get cross-chain bridge quote: routes, fees, estimated time, minimum received"
+        description = "Get cross-chain bridge quote (/quote). Returns routerList[] with bridgeId, needApprove, minimumReceived, estimateTime, crossChainFee."
     )]
     async fn cross_chain_quote(
         &self,
@@ -1867,20 +2008,45 @@ impl McpServer {
     ) -> Result<String, String> {
         let from_chain_index = crate::chains::resolve_chain(&p.from_chain);
         let to_chain_index = crate::chains::resolve_chain(&p.to_chain);
-        let from_token =
-            crate::commands::swap::resolve_token_address(&from_chain_index, &p.from);
-        let to_token =
-            crate::commands::swap::resolve_token_address(&to_chain_index, &p.to);
-        let sort = p.sort.as_deref().unwrap_or("0");
+        // Validate (but do not forward) receive_address — v6 /quote does not
+        // accept it. Family mismatch fails up front instead of at execute.
+        if let Some(addr) = p.receive_address.as_deref() {
+            if let Err(e) = cross_chain::validate_receive_address(addr, &to_chain_index) {
+                return err(e);
+            }
+        }
+        let from_token = crate::commands::swap::resolve_token_address(&from_chain_index, &p.from);
+        let to_token = crate::commands::swap::resolve_token_address(&to_chain_index, &p.to);
+        let sort = p.sort.as_deref();
+        // Hold a single guard across resolve_amount_arg + fetch_quote so the
+        // pair runs as one atomic unit on the shared ApiClient.
+        let mut client = self.client.lock().await;
+        let raw_amount = match crate::commands::swap::resolve_amount_arg(
+            &mut *client,
+            None,
+            Some(&p.readable_amount),
+            &from_token,
+            &from_chain_index,
+        )
+        .await
+        {
+            Ok(v) => v,
+            Err(e) => return err(e),
+        };
         match cross_chain::fetch_quote(
-            &mut *self.client.lock().await,
+            &mut *client,
             &from_chain_index,
             &to_chain_index,
             &from_token,
             &to_token,
-            &p.readable_amount,
-            p.receive_address.as_deref(),
+            &raw_amount,
+            "0.01",
+            None,
+            false,
+            None,
             sort,
+            None,
+            None,
         )
         .await
         {
@@ -1891,13 +2057,36 @@ impl McpServer {
 
     #[tool(
         name = "cross_chain_status",
-        description = "Query cross-chain order status by order ID"
+        description = "Query cross-chain status by source chain transaction hash (/status). `bridge_id` is REQUIRED — server returns 50014 without it. Returns SUCCESS / PENDING / NOT_FOUND."
     )]
     async fn cross_chain_status(
         &self,
         Parameters(p): Parameters<CrossChainStatusParams>,
     ) -> Result<String, String> {
-        match cross_chain::fetch_order_details(&mut *self.client.lock().await, &p.order_id).await {
+        let chain_idx = crate::chains::resolve_chain(&p.from_chain).to_string();
+        let tx_hash = match (p.tx_hash, p.order_id) {
+            (Some(h), None) => h,
+            (None, Some(oid)) => match cross_chain::resolve_order_id_to_tx_hash(&oid, &chain_idx)
+                .await
+            {
+                Ok(h) => h,
+                Err(e) => return err(e),
+            },
+            (Some(_), Some(_)) => {
+                return Err("provide tx_hash OR order_id, not both".to_string());
+            }
+            (None, None) => {
+                return Err("one of tx_hash or order_id is required".to_string());
+            }
+        };
+        match cross_chain::fetch_status(
+            &mut *self.client.lock().await,
+            &tx_hash,
+            Some(&chain_idx),
+            Some(&p.bridge_id),
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1934,7 +2123,16 @@ impl McpServer {
         description = "List top DeFi products by APY across all chains (no filters, paginated)"
     )]
     async fn defi_list(&self, Parameters(p): Parameters<DefiListParams>) -> Result<String, String> {
-        match defi::fetch_search(&mut *self.client.lock().await, None, None, None, None, p.page_num).await {
+        match defi::fetch_search(
+            &mut *self.client.lock().await,
+            None,
+            None,
+            None,
+            None,
+            p.page_num,
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1988,7 +2186,12 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<DefiRateChartParams>,
     ) -> Result<String, String> {
-        match defi::fetch_rate_chart(&mut *self.client.lock().await, &p.investment_id, p.time_range.as_deref()).await
+        match defi::fetch_rate_chart(
+            &mut *self.client.lock().await,
+            &p.investment_id,
+            p.time_range.as_deref(),
+        )
+        .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -2003,7 +2206,13 @@ impl McpServer {
         &self,
         Parameters(p): Parameters<DefiTvlChartParams>,
     ) -> Result<String, String> {
-        match defi::fetch_tvl_chart(&mut *self.client.lock().await, &p.investment_id, p.time_range.as_deref()).await {
+        match defi::fetch_tvl_chart(
+            &mut *self.client.lock().await,
+            &p.investment_id,
+            p.time_range.as_deref(),
+        )
+        .await
+        {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -2055,8 +2264,13 @@ impl McpServer {
         Parameters(p): Parameters<DefiPositionDetailParams>,
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain);
-        match defi::fetch_position_detail(&mut *self.client.lock().await, &p.address, &chain_index, &p.platform_id)
-            .await
+        match defi::fetch_position_detail(
+            &mut *self.client.lock().await,
+            &p.address,
+            &chain_index,
+            &p.platform_id,
+        )
+        .await
         {
             Ok(data) => ok(data),
             Err(e) => err(e),
@@ -2268,6 +2482,53 @@ impl McpServer {
         }
     }
 
+    // ── Gas Station ─────────────────────────────────────────────────
+
+    #[tool(
+        name = "gas_station_update_default_token",
+        description = "Update the default Gas Token for Gas Station on a specific chain. Gas Station allows paying gas fees with stablecoins (USDT/USDC/USDG) via a third-party Relayer."
+    )]
+    async fn gas_station_update_default_token(
+        &self,
+        Parameters(p): Parameters<GasStationUpdateDefaultTokenParams>,
+    ) -> Result<String, String> {
+        use crate::commands::agentic_wallet::gas_station;
+        match gas_station::fetch_update_default_token(&p.chain, &p.gas_token_address).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "gas_station_enable",
+        description = "Enable Gas Station for a specific chain (DB flag only, no on-chain action). Requires that 7702 delegation already exists on-chain (set earlier via the first-time Gas Station flow). If the chain was never delegated, backend returns a msg in the response body explaining that a first-time enable via wallet send is required."
+    )]
+    async fn gas_station_enable(
+        &self,
+        Parameters(p): Parameters<GasStationDisableParams>,
+    ) -> Result<String, String> {
+        use crate::commands::agentic_wallet::gas_station;
+        match gas_station::fetch_update(&p.chain, true).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "gas_station_disable",
+        description = "Disable Gas Station for a specific chain (DB flag only, no on-chain action). The 7702 delegation on-chain is preserved, so re-enabling later does not require a new upgrade. To switch default gas token, use gas_station_update_default_token instead."
+    )]
+    async fn gas_station_disable(
+        &self,
+        Parameters(p): Parameters<GasStationDisableParams>,
+    ) -> Result<String, String> {
+        use crate::commands::agentic_wallet::gas_station;
+        match gas_station::fetch_update(&p.chain, false).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
     // ── Workflows ──────────────────────────────────────────────────────────────
 
     #[tool(
@@ -2293,9 +2554,10 @@ impl McpServer {
 
         // Symbol/name search path — return candidates for user selection
         if p.address.is_none() {
-            let query = p.query.as_deref().ok_or_else(|| {
-                "Either 'address' or 'query' is required".to_string()
-            })?;
+            let query = p
+                .query
+                .as_deref()
+                .ok_or_else(|| "Either 'address' or 'query' is required".to_string())?;
             return match workflows::token_research::search_and_select(
                 &mut *self.client.lock().await,
                 query,
@@ -2309,7 +2571,10 @@ impl McpServer {
         }
 
         // Direct address path — full workflow
-        let address = p.address.as_deref().unwrap();
+        let address = p
+            .address
+            .as_deref()
+            .expect("address is Some after is_none() early-return guard above");
         match workflows::token_research::fetch_and_assemble(
             &mut *self.client.lock().await,
             address,
@@ -2421,9 +2686,8 @@ impl McpServer {
         // sent names ("ethereum,solana") or indices — matches CLI output shape.
         // `fetch_and_assemble` derives `primary_chain_index` internally so the
         // MCP and CLI entry points cannot drift.
-        let chains_str = crate::chains::resolve_chains(
-            &p.chains.unwrap_or_else(|| "1,501".to_string()),
-        );
+        let chains_str =
+            crate::chains::resolve_chains(&p.chains.unwrap_or_else(|| "1,501".to_string()));
         match workflows::portfolio::fetch_and_assemble(
             &mut *self.client.lock().await,
             &p.address,

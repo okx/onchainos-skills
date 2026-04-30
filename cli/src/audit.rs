@@ -469,6 +469,7 @@ fn wallet_sub(c: &WalletCommand) -> &'static str {
         WalletCommand::History { .. } => "history",
         WalletCommand::ContractCall { .. } => "contract-call",
         WalletCommand::SignMessage { .. } => "sign-message",
+        WalletCommand::GasStation { .. } => "gas-station",
         WalletCommand::ReportPluginInfo { .. } => "report-plugin-info",
     }
 }
@@ -483,10 +484,26 @@ fn security_sub(c: &SecurityCommand) -> &'static str {
     }
 }
 
-fn payment_sub(c: &PaymentCommand) -> &'static str {
+fn payment_sub(c: &PaymentCommand) -> String {
+    use crate::commands::agentic_wallet::payment::DefaultAction;
     match c {
-        PaymentCommand::X402Pay { .. } => "x402-pay",
-        PaymentCommand::Eip3009Sign { .. } => "eip3009-sign",
+        PaymentCommand::X402Pay { .. } => "x402-pay".to_string(),
+        PaymentCommand::Eip3009Sign { .. } => "eip3009-sign".to_string(),
+        PaymentCommand::Default { action } => match action {
+            DefaultAction::Set { .. } => "default-set".to_string(),
+            DefaultAction::Get => "default-get".to_string(),
+            DefaultAction::Unset => "default-unset".to_string(),
+        },
+        PaymentCommand::A2aPay { command } => format!("a2a-pay {}", a2a_pay_sub(command)),
+    }
+}
+
+fn a2a_pay_sub(c: &crate::commands::payment::a2a_pay::A2aPayCommand) -> &'static str {
+    use crate::commands::payment::a2a_pay::A2aPayCommand;
+    match c {
+        A2aPayCommand::Create(_) => "create",
+        A2aPayCommand::Pay(_) => "pay",
+        A2aPayCommand::Status { .. } => "status",
     }
 }
 

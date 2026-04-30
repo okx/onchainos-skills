@@ -6,6 +6,7 @@ pub mod gateway;
 pub mod leaderboard;
 pub mod market;
 pub mod memepump;
+pub mod payment;
 pub mod portfolio;
 pub mod security;
 pub mod signal;

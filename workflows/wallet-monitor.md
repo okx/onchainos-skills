@@ -24,7 +24,7 @@ okx-dex-signal, okx-dex-token, okx-security
 
 ## CLI
 
-Agent-orchestrated — no single CLI composite. The workflow is a polling loop with conditional per-event enrichment, so a composite command would need streaming output and stateful diffing across ticks. For a background WebSocket session use the ws-based variant (`workflows/wallet-monitor-ws.md`).
+Agent-orchestrated — no single CLI composite. The workflow is a polling loop with conditional per-event enrichment, so a composite command would need streaming output and stateful diffing across ticks. For a background WebSocket session use the ws-based variant (`wallet-monitor-ws.md`).
 
 ## Steps
 
@@ -63,5 +63,5 @@ Exit when user says "stop monitoring".
 
 ## Actions
 
-- → "research [symbol]" — Token Research (`workflows/token-research.md`)
+- → "research [symbol]" — Token Research (`token-research.md`)
 - → "stop monitoring" — exits the loop

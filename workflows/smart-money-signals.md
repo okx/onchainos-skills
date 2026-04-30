@@ -77,4 +77,4 @@ Scanned: {n} signal tokens → Top {m} by SM wallet count
 
 ## Actions
 
-- → "research [symbol]" — Token Research (`workflows/token-research.md`)
+- → "research [symbol]" — Token Research (`token-research.md`)

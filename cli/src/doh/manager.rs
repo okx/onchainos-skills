@@ -102,9 +102,7 @@ impl DohManager {
         }
 
         // Ensure binary exists (download if needed)
-        let bin_exists = binary::binary_path()
-            .map(|p| p.exists())
-            .unwrap_or(false);
+        let bin_exists = binary::binary_path().map(|p| p.exists()).unwrap_or(false);
         if !bin_exists && binary::download_binary().await.is_err() {
             self.retried = true;
             return false;
@@ -112,9 +110,7 @@ impl DohManager {
 
         // Call exec_doh_binary with domain + exclude list + user-agent
         let ua = self.doh_user_agent();
-        if let Some(new_node) =
-            binary::exec_doh_binary(&self.domain, &exclude, Some(&ua)).await
-        {
+        if let Some(new_node) = binary::exec_doh_binary(&self.domain, &exclude, Some(&ua)).await {
             let failed_nodes = cache::read_cache(&self.domain)
                 .map(|e| e.failed_nodes)
                 .unwrap_or_default();

@@ -68,9 +68,11 @@ pub enum WorkflowCommand {
 
 pub async fn execute(ctx: &Context, cmd: WorkflowCommand) -> Result<()> {
     match cmd {
-        WorkflowCommand::TokenResearch { address, query, chain } => {
-            token_research::run(ctx, address.as_deref(), query.as_deref(), chain).await
-        }
+        WorkflowCommand::TokenResearch {
+            address,
+            query,
+            chain,
+        } => token_research::run(ctx, address.as_deref(), query.as_deref(), chain).await,
         WorkflowCommand::SmartMoney { chain } => smart_money::run(ctx, chain).await,
         WorkflowCommand::NewTokens { chain, stage } => new_tokens::run(ctx, chain, stage).await,
         WorkflowCommand::WalletAnalysis { address, chain } => {
@@ -127,10 +129,10 @@ mod tests {
         // `CARGO_MANIFEST_DIR` points at `cli/`, so the docs live one level up.
         let names = [
             "token-research",
-            "smart-money",
-            "new-tokens",
+            "smart-money-signals",
+            "new-token-screening",
             "wallet-analysis",
-            "portfolio",
+            "portfolio-check",
         ];
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
         for name in names {

@@ -63,10 +63,16 @@ pub(crate) async fn fetch_and_assemble(
                 token::fetch_security(&mut c, &addr, &ci),
                 token::fetch_advanced_info(&mut c1, &addr, &ci),
                 memepump::fetch_by_address(
-                    &mut c2, "/api/v6/dex/market/memepump/tokenDevInfo", &addr, &ci,
+                    &mut c2,
+                    "/api/v6/dex/market/memepump/tokenDevInfo",
+                    &addr,
+                    &ci,
                 ),
                 memepump::fetch_by_address(
-                    &mut c3, "/api/v6/dex/market/memepump/tokenBundleInfo", &addr, &ci,
+                    &mut c3,
+                    "/api/v6/dex/market/memepump/tokenBundleInfo",
+                    &addr,
+                    &ci,
                 ),
             );
             let enriched = assemble_token_result(
@@ -100,7 +106,12 @@ pub(crate) async fn fetch_and_assemble(
         })
         .collect();
 
-    Ok(assemble(chain_index, stage_norm.as_str(), token_list, results))
+    Ok(assemble(
+        chain_index,
+        stage_norm.as_str(),
+        token_list,
+        results,
+    ))
 }
 
 pub async fn run(ctx: &Context, chain: Option<String>, stage: Option<String>) -> Result<()> {
@@ -195,15 +206,23 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn some_data() -> Value { json!({ "key": "value" }) }
-    fn null() -> Value { Value::Null }
+    fn some_data() -> Value {
+        json!({ "key": "value" })
+    }
+    fn null() -> Value {
+        Value::Null
+    }
 
     // ── assemble_token_result ─────────────────────────────────────────
 
     #[test]
     fn token_result_has_all_required_fields() {
         let result = assemble_token_result(
-            some_data(), some_data(), some_data(), some_data(), some_data(),
+            some_data(),
+            some_data(),
+            some_data(),
+            some_data(),
+            some_data(),
         );
         assert!(!result["token"].is_null());
         assert!(!result["security"].is_null());
@@ -215,21 +234,24 @@ mod tests {
     #[test]
     fn token_result_null_security_preserved() {
         // security scan failed
-        let result = assemble_token_result(some_data(), null(), some_data(), some_data(), some_data());
+        let result =
+            assemble_token_result(some_data(), null(), some_data(), some_data(), some_data());
         assert!(result["security"].is_null());
         assert!(!result["contract"].is_null());
     }
 
     #[test]
     fn token_result_null_dev_info_preserved() {
-        let result = assemble_token_result(some_data(), some_data(), some_data(), null(), some_data());
+        let result =
+            assemble_token_result(some_data(), some_data(), some_data(), null(), some_data());
         assert!(result["devInfo"].is_null());
         assert!(!result["bundleInfo"].is_null());
     }
 
     #[test]
     fn token_result_null_bundle_info_preserved() {
-        let result = assemble_token_result(some_data(), some_data(), some_data(), some_data(), null());
+        let result =
+            assemble_token_result(some_data(), some_data(), some_data(), some_data(), null());
         assert!(result["bundleInfo"].is_null());
         assert!(!result["devInfo"].is_null());
     }
@@ -247,7 +269,8 @@ mod tests {
 
     #[test]
     fn token_item_data_preserved_in_result() {
-        let token = json!({ "tokenContractAddress": "0xABC", "symbol": "TKN", "marketCap": "500000" });
+        let token =
+            json!({ "tokenContractAddress": "0xABC", "symbol": "TKN", "marketCap": "500000" });
         let result = assemble_token_result(token, null(), null(), null(), null());
         assert_eq!(result["token"]["symbol"], "TKN");
         assert_eq!(result["token"]["marketCap"], "500000");
@@ -385,7 +408,8 @@ mod tests {
 
     #[test]
     fn preserves_full_token_item_in_output() {
-        let list = json!([{ "tokenContractAddress": "0xFULL", "symbol": "TKN", "marketCap": "1000000" }]);
+        let list =
+            json!([{ "tokenContractAddress": "0xFULL", "symbol": "TKN", "marketCap": "1000000" }]);
         let result = extract_top_tokens(&list, 10);
         assert_eq!(result[0].1["symbol"], "TKN");
         assert_eq!(result[0].1["marketCap"], "1000000");

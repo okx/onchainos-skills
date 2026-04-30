@@ -296,7 +296,10 @@ onchainos wallet send \
   --chain <chain> \
   [--from <address>] \
   [--contract-token <address>] \
-  [--force]
+  [--force] \
+  [--gas-token-address <address>] \
+  [--relayer-id <id>] \
+  [--enable-gas-station]
 ```
 
 | Parameter | Type | Required | Description |
@@ -308,20 +311,193 @@ onchainos wallet send \
 | `--from` | string | No | Sender address — defaults to selected account's address on the given chain |
 | `--contract-token` | string | No | Token contract address for ERC-20 / SPL transfers. Omit for native token transfers. |
 | `--force` | bool | No | Skip confirmation prompts from the backend (default false). Use when re-running a command after the user has confirmed a `confirming` response. |
+| `--gas-token-address` | string | No | Gas Station: token contract address to pay gas (from confirming response tokenList). Second-phase call only. |
+| `--relayer-id` | string | No | Gas Station: relayer ID (from confirming response tokenList). Second-phase call only. |
+| `--enable-gas-station` | bool | No | Gas Station: first-time activation flag. When `--gas-token-address` is also given, sets it as default (Scene A option 1). When passed alone, enables without a default (Scene A option 2, backend auto-picks highest-balance token). |
 
-**Return fields:**
+**Return fields (normal):**
 
 | Field | Type | Description |
 |---|---|---|
 | `txHash` | String | Broadcast transaction hash |
 
+**Return fields (Gas Station auto-path — gasStationStatus ∈ {READY_TO_USE / PENDING_UPGRADE / REENABLE_ONLY} with hash non-empty):**
+
+| Field | Type | Description |
+|---|---|---|
+| `txHash` | String | Broadcast transaction hash (may be empty; relayer returns async) |
+| `orderId` | String | Order ID for async status query via `wallet history --chain <chain> --order-id <id>` (routes to `/order/detail`) |
+| `gasStationUsed` | Boolean | `true` |
+| `gasStationStatus` | String | Enum: READY_TO_USE / PENDING_UPGRADE / REENABLE_ONLY |
+| `autoSelectedToken` | Boolean | Backend auto-selected the gas token |
+| `serviceCharge` | String | Gas fee amount (integer, multiplied by token decimal) |
+| `serviceChargeSymbol` | String | Gas fee token symbol (e.g. "USDT") |
+
+**Confirming response (Gas Station FIRST_TIME_PROMPT or READY_TO_USE with default-insufficient — exit code 2):**
+
+When Gas Station needs user input, the CLI returns a confirming response with the available token list in the `next` field. The `message` body distinguishes the two subcases:
+- FIRST_TIME_PROMPT (Scene A) — first-time enable, 3-option decision tree
+- READY_TO_USE with empty hash (Scene C) — default insufficient, 2-question decision tree
+
+See `references/gas-station.md` Step 2 for Agent handling instructions.
+
+**Return fields (Gas Station INSUFFICIENT_ALL):**
+
+| Field | Type | Description |
+|---|---|---|
+| `gasStationUsed` | Boolean | `true` |
+| `gasStationStatus` | String | `"INSUFFICIENT_ALL"` |
+| `insufficientAll` | Boolean | `true` — all gas tokens insufficient |
+| `gasStationTokenList` | Array | All items with `sufficient: false` |
+| `fromAddr` | String | User address for deposit guidance |
+
+**Return fields (Gas Station HAS_PENDING_TX):**
+
+| Field | Type | Description |
+|---|---|---|
+| `gasStationUsed` | Boolean | `true` |
+| `gasStationStatus` | String | `"HAS_PENDING_TX"` |
+| `hasPendingTx` | Boolean | `true` — a previous Gas Station tx is still pending |
+
+**Return fields (not routed through Gas Station — gasStationStatus=NOT_APPLICABLE):**
+
+Same as regular `wallet send` output (`txHash` / `orderId`). `gasStationUsed=false`.
+
+---
+
+## D-GS. Gas Station Management Commands
+
+### D-GS1. `onchainos wallet gas-station update-default-token`
+
+Update the default gas payment token for Gas Station on a specific chain.
+
+```bash
+onchainos wallet gas-station update-default-token \
+  --chain <chain> \
+  --gas-token-address <address>
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `--chain` | string | Yes | Chain name or ID (e.g. `ethereum` or `1`) |
+| `--gas-token-address` | string | Yes | Token contract address to set as default gas payment token |
+
+### D-GS2. `onchainos wallet gas-station enable`
+
+Turn Gas Station back on for a chain that was previously enabled. (Internal: DB flag flip only, no on-chain action. Requires prior on-chain setup — first-time activation happens via `wallet send` which bundles the setup with the first Gas Station broadcast. If the chain has never been activated, backend returns a msg in the response body — relay the backend msg verbatim, do NOT paraphrase with "7702" / "delegation" / "DB".) See `gas-station.md` User-Facing Reply Templates for user-facing wording.
+
+```bash
+onchainos wallet gas-station enable \
+  --chain <chain>
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `--chain` | string | Yes | Chain name or ID (e.g. `ethereum` or `1`) |
+
+### D-GS3. `onchainos wallet gas-station disable`
+
+Turn Gas Station off for a chain; the chain reverts to paying gas with native token. (Internal: DB flag flip only, no on-chain action. On-chain state and `default_gas_token_address` are preserved so re-enabling later is instant.) See `gas-station.md` User-Facing Reply Templates for user-facing wording — **never paraphrase "DB flag" / "7702" / "delegation" into the reply**.
+
+```bash
+onchainos wallet gas-station disable \
+  --chain <chain>
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `--chain` | string | Yes | Chain name or ID (e.g. `ethereum` or `1`) |
+
+### D-GS4. `onchainos wallet gas-station status`
+
+**Read-only Gas Station readiness probe.** Used by **third-party plugin pre-flight** — the agent runs this before invoking a plugin's on-chain command (e.g. `aave-v3-plugin --confirm supply ...`) to decide whether the chain needs first-time GS activation, re-enable, or is already ready. Never broadcasts. Safe to call repeatedly.
+
+Internally probes Phase 1 diagnostic via a 0-amount native self-transfer (the same call the regular `wallet send` would make on its first phase, but here we deliberately don't proceed past it).
+
+```bash
+onchainos wallet gas-station status \
+  --chain <chain> \
+  [--from <address>]
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `--chain` | string | Yes | Chain name or ID |
+| `--from` | string | No | Sender address; defaults to selectedAccountId |
+
+Response:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "chainId": "42161",
+    "chainName": "arb_eth",
+    "fromAddress": "0xd13c...a136",
+    "gasStationActivated": false,
+    "gasStationDefaultToken": null,
+    "gasStationStatus": "FIRST_TIME_PROMPT",
+    "recommendation": "ENABLE_GAS_STATION",
+    "hasPendingTx": false,
+    "insufficientAll": false,
+    "tokenList": [
+      { "symbol": "USDC", "feeTokenAddress": "0xaf88...5831", "relayerId": "fcfc...3c87",
+        "balance": "1.49", "serviceCharge": "0.026", "sufficient": true }
+    ]
+  }
+}
+```
+
+`recommendation` enum:
+
+| Value | Agent action |
+|---|---|
+| `READY` | Chain has sufficient native gas, or GS already active. Proceed directly to plugin invocation. |
+| `ENABLE_GAS_STATION` | First-time. Render Scene A → user picks → run `wallet gas-station setup` → re-invoke plugin. |
+| `REENABLE_GAS_STATION` | User previously disabled GS. Render Scene B' → user picks → `setup` → re-invoke. |
+| `PENDING_UPGRADE` | Chain not yet 7702-delegated. Render Scene A' → user picks → `setup` (carries 7702 material) → re-invoke. |
+| `INSUFFICIENT_ALL` | No stablecoin has enough balance. Tell user to top up. Do NOT invoke plugin. |
+| `HAS_PENDING_TX` | A pending GS tx blocks new ones. Tell user to wait. Do NOT invoke plugin. |
+
+### D-GS5. `onchainos wallet gas-station setup`
+
+**Standalone first-time activation.** Decoupled from `wallet send` so the agent can activate Gas Station *before* invoking a third-party plugin. The plugin (which always passes `--force` internally) will then succeed transparently because GS is already active on the chain.
+
+Internally drives a 1-minimal-unit self-transfer of the picked gas token with `--enable-gas-station --force`. Backend Phase 2 returns 712 hash (and `authHashFor7702` if the chain still needs 7702 upgrade); CLI signs and broadcasts. The carrier transfer is from-self to from-self, so net value movement = 0; only the GS service charge is consumed.
+
+**Pre-condition**: the agent has already obtained user consent via Scene A / B' / A' (see `gas-station.md`). This command does NOT prompt — it executes the activation that the user has already approved.
+
+```bash
+onchainos wallet gas-station setup \
+  --chain <chain> \
+  --gas-token-address <addr> \
+  --relayer-id <relayer_id> \
+  [--from <address>]
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `--chain` | string | Yes | Chain name or ID |
+| `--gas-token-address` | string | Yes | Token address picked by the user from `tokenList` |
+| `--relayer-id` | string | Yes | Relayer ID paired with `--gas-token-address` |
+| `--from` | string | No | Sender address; defaults to selectedAccountId |
+
+Idempotency:
+- Already activated, same default → returns `{gasStationActivated: true, alreadyActivated: true}` without broadcasting.
+- Already activated, different default → switches via `update-default-token` and returns `{alreadyActivated: true, defaultTokenSwitched: true}`.
+- Not yet activated → drives the carrier transfer; on success returns the wallet send response (`{txHash, orderId, gasStationUsed: true, serviceCharge, ...}`).
+
 ---
 
 ## E. History Command (2 modes)
 
-### E1. List Mode (no `--tx-hash`)
+Routing:
+- If any of `--tx-hash` / `--order-id` / `--uop-hash` is provided → **Detail mode** → `/priapi/v5/wallet/agentic/order/detail` (precise single record)
+- Otherwise → **List mode** → `/priapi/v5/wallet/agentic/order/list` (browse paged list)
 
-Browse the transaction order list for the current or specified account.
+### E1. List Mode (browse paged list)
+
+Browse the transaction order list for the current or specified account. Use when the user wants to see recent transactions without knowing a specific identifier.
 
 ```bash
 onchainos wallet history \
@@ -330,9 +506,7 @@ onchainos wallet history \
   [--begin <ms_timestamp>] \
   [--end <ms_timestamp>] \
   [--page-num <cursor>] \
-  [--limit <n>] \
-  [--order-id <id>] \
-  [--uop-hash <hash>]
+  [--limit <n>]
 ```
 
 | Parameter | Type | Required | Description |
@@ -343,8 +517,8 @@ onchainos wallet history \
 | `--end` | string | No | End time filter (millisecond timestamp) |
 | `--page-num` | string | No | Page cursor for pagination |
 | `--limit` | string | No | Number of results per page |
-| `--order-id` | string | No | Filter by specific order ID |
-| `--uop-hash` | string | No | Filter by user operation hash |
+
+> Note: `--order-id` / `--tx-hash` / `--uop-hash` are **not** accepted in list mode — providing any of them routes to detail mode automatically.
 
 **Return fields:**
 
@@ -409,28 +583,41 @@ onchainos wallet history \
 }
 ```
 
-### E2. Detail Mode (with `--tx-hash`)
+### E2. Detail Mode (single order lookup)
 
-Look up a specific transaction by its hash.
+Look up a specific transaction by any of: `--order-id`, `--tx-hash`, or `--uop-hash`. Triggered whenever **any** of those flags is present.
+
+**Preferred for Gas Station**: right after a GS broadcast, the user has the `orderId` but `txHash` is returned asynchronously by the relayer — use `--order-id` to poll status without waiting for the hash.
 
 ```bash
+# Query by orderId (recommended right after broadcast)
 onchainos wallet history \
-  --tx-hash <hash> \
   --chain <chain> \
-  --address <addr> \
-  [--account-id <id>] \
-  [--order-id <id>] \
-  [--uop-hash <hash>]
+  --order-id <id> \
+  [--account-id <id>]
+
+# Query by txHash (once relayer returns hash / for non-GS transactions)
+onchainos wallet history \
+  --chain <chain> \
+  --tx-hash <hash> \
+  [--address <addr>] \
+  [--account-id <id>]
+
+# Query by user-operation hash
+onchainos wallet history \
+  --chain <chain> \
+  --uop-hash <hash> \
+  [--account-id <id>]
 ```
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `--tx-hash` | string | Yes | Transaction hash to look up |
 | `--chain` | string | Yes | Chain name or numeric ID where the transaction occurred (e.g. `ethereum` or `1`, `solana` or `501`) |
-| `--address` | string | Yes | Wallet address that sent/received the transaction |
+| `--order-id` | string | No* | Order ID returned by broadcast. Any one of `--order-id` / `--tx-hash` / `--uop-hash` must be provided to enter detail mode. |
+| `--tx-hash` | string | No* | Transaction hash (may not be available yet for GS transactions — prefer `--order-id` in that case) |
+| `--uop-hash` | string | No* | User operation hash |
+| `--address` | string | No | Wallet address hint (optional; backend filters by identifier above) |
 | `--account-id` | string | No | Account ID. Defaults to the currently selected account. |
-| `--order-id` | string | No | Order ID filter |
-| `--uop-hash` | string | No | User operation hash filter |
 
 **Return fields (detail mode):**
 
@@ -525,22 +712,26 @@ onchainos wallet contract-call \
   [--aa-dex-token-amount <amount>] \
   [--mev-protection] \
   [--jito-unsigned-tx <jito_base58_tx>] \
+  [--biz-type <biz_type>] \
+  [--strategy <strategy>] \
   [--force]
 ```
 
-| Parameter | Type | Required | Description |
+| Parameter | Type | Required | Description                                                                                                                                     |
 |---|---|---|---|
-| `--to` | string | Yes | Contract address to interact with |
-| `--chain` | string | Yes | Chain name or numeric ID (e.g. `ethereum` or `1`, `solana` or `501`, `bsc` or `56`) |
-| `--amt` | string | No | Native token amount in minimal units — whole number, no decimals (default "0"). See SKILL.md `--amt` section for conversion rules. |
-| `--input-data` | string | Conditional | EVM call data (hex-encoded, e.g. "0xa9059cbb..."). **Required for EVM chains.** |
-| `--unsigned-tx` | string | Conditional | Solana unsigned transaction data (base58). **Required for Solana.** |
-| `--gas-limit` | string | No | Gas limit override (EVM only). If omitted, the CLI estimates gas automatically. |
-| `--from` | string | No | Sender address — defaults to the selected account's address on the given chain. |
-| `--aa-dex-token-addr` | string | No | AA DEX token contract address (for AA DEX interactions). |
-| `--aa-dex-token-amount` | string | No | AA DEX token amount (for AA DEX interactions). |
-| `--mev-protection` | bool | No | Enable MEV protection (default false). Supported on Ethereum, BSC, Base, and Solana. On Solana, `--jito-unsigned-tx` is also required. |
-| `--jito-unsigned-tx` | string | No | Jito unsigned transaction data (base58) for Solana MEV protection. **Required when `--mev-protection` is used on Solana.** |
+| `--to` | string | Yes | Contract address to interact with                                                                                                               |
+| `--chain` | string | Yes | Chain name or numeric ID (e.g. `ethereum` or `1`, `solana` or `501`, `bsc` or `56`)                                                             |
+| `--amt` | string | No | Native token amount in minimal units — whole number, no decimals (default "0"). See SKILL.md `--amt` section for conversion rules.              |
+| `--input-data` | string | Conditional | EVM call data (hex-encoded, e.g. "0xa9059cbb..."). **Required for EVM chains.**                                                                 |
+| `--unsigned-tx` | string | Conditional | Solana unsigned transaction data (base58). **Required for Solana.**                                                                             |
+| `--gas-limit` | string | No | Gas limit override (EVM only). If omitted, the CLI estimates gas automatically.                                                                 |
+| `--from` | string | No | Sender address — defaults to the selected account's address on the given chain.                                                                 |
+| `--aa-dex-token-addr` | string | No | AA DEX token contract address (for AA DEX interactions).                                                                                        |
+| `--aa-dex-token-amount` | string | No | AA DEX token amount (for AA DEX interactions).                                                                                                  |
+| `--mev-protection` | bool | No | Enable MEV protection (default false). Supported on Ethereum, BSC, Base, and Solana. On Solana, `--jito-unsigned-tx` is also required.          |
+| `--jito-unsigned-tx` | string | No | Jito unsigned transaction data (base58) for Solana MEV protection. **Required when `--mev-protection` is used on Solana.**                      |
+| `--biz-type` | string | No | Transaction category (`transfer`,`dex`, `defi`, `dapp`)                                                                                         |
+| `--strategy` | string | No | Strategy name                                                                                                                                   |
 | `--force` | bool | No | Skip confirmation prompts from the backend (default false). Use when re-running a command after the user has confirmed a `confirming` response. |
 
 > Either `--input-data` (EVM) or `--unsigned-tx` (Solana) must be provided. The CLI will fail if neither is present.

@@ -12,9 +12,14 @@ mod home;
 mod keyring_store;
 mod mcp;
 mod output;
+mod payment_cache;
+mod payment_notify;
 mod wallet_api;
 mod wallet_store;
 mod watch;
+
+#[cfg(test)]
+mod test_helpers;
 
 use clap::{Parser, Subcommand};
 
@@ -101,7 +106,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::security::SecurityCommand,
     },
-    /// Payment protocols — auto-pay gated APIs (x402, etc.)
+    /// Payment protocols — auto-pay gated APIs (x402, a2a-pay, etc.)
     Payment {
         #[command(subcommand)]
         command: commands::agentic_wallet::payment::PaymentCommand,
@@ -154,8 +159,7 @@ async fn run() {
 
     let cli = Cli::parse();
 
-    // Propagate --base-url to env so WalletApiClient, ApiClient::new(None),
-    // and refresh_jwt_inline pick it up at runtime.
+    // Propagate --base-url to env so WalletApiClient and refresh_jwt_inline pick it up.
     if let Some(ref url) = cli.base_url {
         std::env::set_var("OKX_BASE_URL", url);
     }
@@ -218,10 +222,16 @@ async fn run() {
                 output::confirming(&c.message, &c.next);
                 std::process::exit(2);
             }
-            Err(e) => {
-                output::error(&format!("{e:#}"));
-                std::process::exit(1);
-            }
+            Err(e) => match e.downcast::<output::CliSetupRequired>() {
+                Ok(s) => {
+                    output::setup_required(&s.error_code, &s.message, &s.data);
+                    std::process::exit(3);
+                }
+                Err(e) => {
+                    output::error(&format!("{e:#}"));
+                    std::process::exit(1);
+                }
+            },
         }
     }
 }

@@ -219,7 +219,11 @@ pub async fn execute(ctx: &Context, cmd: MarketCommand) -> Result<()> {
 }
 
 /// POST /api/v6/dex/market/price — body is JSON array
-pub async fn fetch_price(client: &mut ApiClient, address: &str, chain_index: &str) -> Result<Value> {
+pub async fn fetch_price(
+    client: &mut ApiClient,
+    address: &str,
+    chain_index: &str,
+) -> Result<Value> {
     let body = json!([{"chainIndex": chain_index, "tokenContractAddress": address}]);
     client.post("/api/v6/dex/market/price", &body).await
 }
@@ -301,7 +305,11 @@ pub async fn fetch_kline(
 }
 
 /// POST /api/v6/dex/index/current-price — body is JSON array
-pub async fn fetch_index(client: &mut ApiClient, address: &str, chain_index: &str) -> Result<Value> {
+pub async fn fetch_index(
+    client: &mut ApiClient,
+    address: &str,
+    chain_index: &str,
+) -> Result<Value> {
     let body = json!([{"chainIndex": chain_index, "tokenContractAddress": address}]);
     client.post("/api/v6/dex/index/current-price", &body).await
 }
@@ -346,7 +354,9 @@ async fn portfolio_overview(
 ) -> Result<()> {
     let chain_index = crate::chains::resolve_chain(chain);
     let mut client = ctx.client_async().await?;
-    output::success(fetch_portfolio_overview(&mut client, &chain_index, address, time_frame).await?);
+    output::success(
+        fetch_portfolio_overview(&mut client, &chain_index, address, time_frame).await?,
+    );
     Ok(())
 }
 

@@ -1,0 +1,51 @@
+{
+  "version": 1,
+
+  "agent": {
+    "name": "onchainos",
+    "description": "Built for AI. Ready for Web3.\n\nThe official OKX OnchainOS agent — a complete on-chain workstation powered by onchainos skills and pre-built workflows. Research any token in one shot: price, security, holders, smart money signals, dev reputation, and launchpad data. Track smart money whales and KOLs, scan new pump.fun launches, analyse wallets, monitor DeFi positions, and execute swaps across 500+ aggregated DEXs on 60+ networks with sub-100ms response times.\n\nKey capabilities:\n• Token research — price, security scan, holder cluster, top traders, smart money signals\n• Smart money tracking — KOL, whale, and insider wallet activity\n• New token screening — pump.fun/Believe launchpad scanning with dev & bundle analysis\n• Safe swap execution — 500+ DEX sources, MEV protection, pre-trade risk detection\n• DeFi portfolio — positions across Aave, Lido, PancakeSwap, Kamino, and more\n• Agentic wallet — TEE-secured, private keys never exposed, gas-free on X Layer via x402\n\nConnect your OKX agentic wallet for live trading.",
+    "vibe": "on-chain alpha, security-first, 500+ DEXs at your command",
+    "emoji": "⛓️"
+  },
+
+  "template": {
+    "slug": "onchainos",
+    "category": "blockchain",
+    "tags": ["okx", "defi", "trading", "solana", "ethereum", "token-research", "smart-money", "web3", "blockchain", "swap"],
+    "authorName": "OKX",
+    "authorUrl": "https://web3.okx.com/onchainos",
+    "authorLogoUrl": "https://static.okx.com/cdn/web3/assets/imgs/70d223c0-8527-40c1-8292-b3cc10b53d88.png"
+  },
+
+  "secrets": [
+    {
+      "name": "OKX_API_KEY",
+      "description": "OKX Web3 API key for production-grade rate limits. Apply at https://web3.okx.com/onchain-os/dev-portal. Optional: built-in sandbox keys work out of the box.",
+      "required": false
+    },
+    {
+      "name": "OKX_SECRET_KEY",
+      "description": "OKX Web3 API secret key. Required only if OKX_API_KEY is set.",
+      "required": false
+    },
+    {
+      "name": "OKX_PASSPHRASE",
+      "description": "OKX Web3 API passphrase. Required only if OKX_API_KEY is set.",
+      "required": false
+    }
+  ],
+
+  "scripts": {
+    "build": "bash setup.sh",
+    "start": ""
+  },
+
+  "tasks": [
+    {
+      "name": "daily-update",
+      "prompt": "Run bash ~/setup.sh to update onchainos CLI, skills, and workflows. Report the onchainos version and confirm skills/workflows are up to date.",
+      "schedule": "0 0 * * *",
+      "enabled": false
+    }
+  ]
+}
