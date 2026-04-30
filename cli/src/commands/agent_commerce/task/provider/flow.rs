@@ -114,7 +114,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - job_accepted → 买家已 confirm-accept，资金托管完成，**那时才能** deliver\n"
         ),
 
-        // ─── Scene 4: 买家已确认接单，执行任务并交付 ─────────────────
+        // ─── Scene 4: 买家已确认接单，执行任务并交付（按 paymentMode 分流） ──
         Event::JobAccepted => format!(
             "【当前状态】job_accepted（买家已确认接单，资金托管）\n\
              【角色】卖家（Provider）\n\n\
@@ -133,15 +133,30 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 2 — 给买家发 P2P 消息确认**：\n\n\
              {header_template}\n\
              已收到接单确认（job_accepted），开始执行任务。\n\n\
-             **Step 3 — 执行任务，完成后调用 CLI 提交交付物：**\n\
-             ✅ 现在 status 已经是 accepted、买家资金已托管 —— deliver 前置条件**已满足**。\n\
+             **Step 3 — 执行任务**，按交付物准备好。\n\n\
+             **Step 4 — 按支付方式分流交付**（必须先调 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 确认 paymentMode）：\n\n\
+             ━━━━━ 分支 A：paymentMode=escrow（担保交易，1）━━━━━\n\n\
+             先**链上提交**交付物，等链上确认后再发交付物给买家。\n\n\
+             A-Step 1 — 调 CLI 提交交付：\n\
              ```bash\n\
              onchainos agent deliver {job_id} --file \"\" --message \"任务已完成，请验收\" --agent-id {agent_id}\n\
              ```\n\
-             CLI 内部：POST submit API → 签名 uopHash → 广播上链。\n\n\
-             ⚠️ **跑完 deliver 直接结束 turn，禁止 `xmtp_dispatch_session` 推 STATUS_NOTIFY 到 user session**——『已提交交付物 / 等待 job_submitted』是过场状态。等 `job_submitted` 通知到达再回复买家『请验收』。\n\n\
+             CLI 内部：POST submit API → 签名 uopHash → 广播上链（含 evidenceHash 占位）。\n\n\
+             A-Step 2 — **直接结束本轮 turn**，等链上 `job_submitted` 系统通知。\n\
+             ⚠️ 禁止此时给买家 xmtp_send 交付内容——必须等链上确认。\n\
+             ⚠️ 禁止 xmtp_dispatch_session 推 STATUS_NOTIFY 到 user session（『已提交 / 等待 job_submitted』是过场状态）。\n\n\
+             A-Step 3 — 收到 `job_submitted` 通知后再调 next-action（进入 Scene 5），按剧本通过 xmtp_send 把交付物发给买家。\n\n\
+             ━━━━━ 分支 B：paymentMode=non_escrow（非担保交易，2）━━━━━\n\n\
+             非担保不走链上 submit，**直接 xmtp_send 把交付物发给买家**：\n\n\
+             {header_template}\n\
+             任务 {job_id} 已完成。交付物：\n\
+             <这里贴交付内容；如果是 URL/文件则放链接或附件 fileKey>\n\
+             请你验收并调 `onchainos agent complete {job_id}` 释放款项；如有问题调 `onchainos agent reject` 反馈。\n\n\
+             B-Step 后续：等买家 user session 决策 → 若买家完成验收会触发后续事件；non_escrow 卖家这条 turn 跑完一条 xmtp_send 即结束。\n\
+             ⚠️ **禁止 non_escrow 路径调 `onchainos agent deliver`**——deliver 是 escrow 链上动作，non_escrow 调会被后端拒。\n\n\
              【后续事件】\n\
-             - job_submitted → 交付物已上链，再次调用 next-action 获取下一步\n"
+             - 分支 A → job_submitted（链上）→ Scene 5 给买家发交付物\n\
+             - 分支 B → 买家直接验收，无中间链事件\n"
         ),
 
         // ─── Scene 5: 交付物已上链，通知买家验收 ─────────────────────
