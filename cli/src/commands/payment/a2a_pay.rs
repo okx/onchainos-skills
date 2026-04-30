@@ -544,8 +544,8 @@ pub async fn sign_escrow(p: SignEscrowParams) -> Result<SignEscrowOutput> {
         .context("escrow_contract parse")?;
     let fields = EscrowAuthFields {
         from: from_addr,
-        provider: p.hook.parse().context("provider parse")?,
-        receiver: p.hook.parse().context("receiver parse")?,
+        provider: p.hook.parse().context("provider parse")?,  // TODO: use provider or hook?
+        receiver: p.receiver.parse().context("receiver parse")?,
         arbitrator: p.arbitrator.parse().context("arbitrator parse")?,
         currency: p.currency.parse().context("currency parse")?,
         amount: U256::from(amount_u128),
