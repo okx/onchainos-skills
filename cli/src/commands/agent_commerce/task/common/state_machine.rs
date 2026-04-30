@@ -118,6 +118,8 @@ pub enum Event {
     JobCompleted,
     /// 买家 reject 上链（status 进入 refused；通知 provider 决策仲裁/退款）
     JobRefused,
+    /// 仲裁第一阶段（approve）上链（status 仍 refused，过场事件；通知发起的 provider 走第二阶段 dispute confirm）
+    DisputeApproved,
     /// 任一方 dispute raise 上链（status 进入 disputed；通知 buyer + provider 上传证据）
     JobDisputed,
     /// **后端无此 event** —— 保留作为内部别名（agree-refund 上链后没专门 event 名，
@@ -190,6 +192,7 @@ impl Event {
             "job_submitted"             => Event::JobSubmitted,
             "job_completed"             => Event::JobCompleted,
             "job_refused"               => Event::JobRefused,
+            "dispute_approved"          => Event::DisputeApproved,
             "job_disputed"              => Event::JobDisputed,
             "confirm_refund"            => Event::ConfirmRefund,
             "dispute_resolved"          => Event::DisputeResolved,
@@ -230,6 +233,7 @@ impl Event {
             Event::JobSubmitted           => "job_submitted",
             Event::JobCompleted           => "job_completed",
             Event::JobRefused             => "job_refused",
+            Event::DisputeApproved        => "dispute_approved",
             Event::JobDisputed            => "job_disputed",
             Event::ConfirmRefund          => "confirm_refund",
             Event::DisputeResolved        => "dispute_resolved",
@@ -272,6 +276,8 @@ pub fn status_when_event(e: &Event) -> Status {
         Event::JobAccepted                                                  => Status::Accepted,
         Event::JobSubmitted                                                 => Status::Submitted,
         Event::JobRefused | Event::SubmitExpired | Event::RefuseExpired     => Status::Refused,
+        // dispute_approved 是过场事件，status 仍为 refused（dispute 阶段 1，未真正进入 disputed）
+        Event::DisputeApproved                                              => Status::Refused,
         Event::JobDisputed                                                  => Status::Disputed,
         Event::JobCompleted | Event::ReviewExpired                          => Status::Completed,
         Event::ConfirmRefund                                                => Status::Refunded,

@@ -694,6 +694,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             event = event.as_str()
         ),
 
+        // ─── dispute_approved — provider 仲裁阶段 1，buyer 无关 ─────
+        Event::DisputeApproved => format!(
+            "【系统通知】dispute_approved（provider 已上链仲裁阶段 1 approve，buyer 无关）\n\
+             【建议】静默观察即可。等 `job_disputed` 通知到达再 next-action 进入证据准备期。\n"
+        ),
+
         // ─── 质押 / 罚没 lifecycle — buyer 不是 evaluator 时无关 ─────
         Event::Staked
         | Event::UnstakeRequested

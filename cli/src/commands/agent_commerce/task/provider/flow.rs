@@ -87,7 +87,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
          ⚠️ **异常升级硬规则**（任何场景都适用，详见 provider.md §6）：\n\
          \x20\x201) 协议理解错位：你已澄清同一条流程 ≥1 次，对方下一条还在重复错误诉求 → **不再回复对方**，xmtp_dispatch_session 推 user session [⚠️ 协议理解错位]，结束 turn\n\
          \x20\x202) CLI 错误：`onchainos agent <cmd>` 报错 → **不要重试**，直接 xmtp_dispatch_session 推 user session [⚠️ CLI 报错]，等用户新指令；瞬态故障（network/JWT 过期）才允许自动重试一次\n\
-         \x20\x203) ❌ **绝对禁止把技术错误细节广播给对方**：CLI 命令名 / 后端字段名 / stderr 摘要 / `bug`/`命令：`/`错误：` 一律不能进 xmtp_send 给对方。最多发一句『稍等，正在确认细节』或干脆不通知对方。\n\n\
+         \x20\x203) ❌ **绝对禁止把技术错误细节广播给对方**：CLI 命令名 / 后端字段名 / stderr 摘要 / `bug`/`命令：`/`错误：` 一律不能进 xmtp_send 给对方。最多发一句『稍等，正在确认细节』或干脆不通知对方。\n\
+         \x20\x204) ❌ **同 turn 不重复 xmtp_send**：剧本说『发一条』→ 调过一次工具返回『已发送』就**算成功**，**当前 turn 内不再对同一对方调 xmtp_send 第二次**。不要因为消息可能不够清晰就重发——重发 = 刷屏 + 触发对方循环。下一条 inbound 进来再说。\n\n\
          如果不记得本任务协商细节（deliverable / paymentMode / token / 买家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 加载上下文。\n\n"
     );
@@ -178,19 +179,36 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 
         // ─── Scene 6.3: 用户决定发起仲裁（user-instruction 伪 event）───
         Event::Other(ref s) if s == "dispute_raise" => format!(
-            "【当前动作】发起仲裁\n\
+            "【当前动作】发起仲裁 — 阶段 1（approve）\n\
              【角色】卖家（Provider）\n\n\
-             **Step 1 — 调用 CLI 发起仲裁（上链）：**\n\
+             ⚠️ **仲裁是两阶段链上流程**：阶段 1 approve → 等 `dispute_approved` 通知 → 阶段 2 dispute → 等 `job_disputed` 通知。本轮只跑阶段 1。\n\n\
+             **Step 1 — 调用 CLI 跑阶段 1 approve（上链）：**\n\
              ```bash\n\
              onchainos agent dispute raise {job_id} --reason \"<用户提供的理由或默认：已按验收标准完成>\"\n\
-             ```\n\n\
-             **Step 2 — 调用 `xmtp_send` 工具向买家发送：**\n\n\
-             {header_template}\n\
-             已发起仲裁，等待链上确认。\n\n\
+             ```\n\
+             CLI 内部：POST /approve → uopData → sign uopHash → broadcast。等链上 `dispute_approved` 通知。\n\n\
+             ⚠️ **跑完 dispute raise 直接结束 turn**：\n\
+             - 禁止给买家发任何 xmtp_send（『已发起仲裁』之类是过场状态，等阶段 2 完成再说）\n\
+             - 禁止在同一 turn 内调 `dispute confirm`（必须等链上 dispute_approved 通知到达）\n\n\
              【后续事件】\n\
-             - 等收到 `job_disputed` 系统通知 → 进入证据准备期 → next-action 会让你向 main 询问证据内容\n\
-             - 不要在这里直接 `dispute upload`：证据必须由用户提供（截图/摘要），sub 不能凭空编造\n\n\
-             跑完 Step 1-2 → **结束本轮 turn，不要 xmtp_dispatch_session 推 main**。\n"
+             - `dispute_approved` 系统通知 → 调 next-action 拿阶段 2 剧本（dispute confirm）\n\
+             - 之后才会进入 `job_disputed` → 证据准备期\n"
+        ),
+
+        // ─── Scene 6.3.5: 仲裁阶段 1 approve 上链确认 → 跑阶段 2 dispute ─
+        Event::DisputeApproved => format!(
+            "【当前状态】dispute_approved（仲裁阶段 1 approve 已上链，进入阶段 2）\n\
+             【角色】卖家（Provider）\n\n\
+             **Step 1 — 调用 CLI 跑阶段 2 dispute（上链）：**\n\
+             ```bash\n\
+             onchainos agent dispute confirm {job_id}\n\
+             ```\n\
+             CLI 内部：POST /dispute → uopData → sign uopHash → broadcast。等链上 `job_disputed` 通知。\n\n\
+             ⚠️ **跑完 dispute confirm 直接结束 turn**：\n\
+             - 禁止给买家 xmtp_send（仍是过场状态）\n\
+             - 禁止在同一 turn 内提交证据（证据走 dispute upload，要等 `job_disputed` 通知 + 用户提供内容）\n\n\
+             【后续事件】\n\
+             - `job_disputed` 系统通知 → 进入 1 小时证据准备期 → next-action 会让你向 user session 询问证据内容\n"
         ),
 
         // ─── Scene 6.2: 用户决定同意退款（user-instruction 伪 event）───

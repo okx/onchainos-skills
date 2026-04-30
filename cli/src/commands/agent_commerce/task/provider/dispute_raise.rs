@@ -1,6 +1,16 @@
-//! 发起仲裁（卖家）— onchainos agent dispute raise <jobId> --reason "..."
+//! 发起仲裁（卖家）第一步 — onchainos agent dispute raise <jobId> --reason "..."
+//!
+//! 仲裁是两阶段链上流程，每阶段独立 tx + 独立链事件：
+//!   阶段 1（本命令）：POST /aieco/task/{jobId}/approve  → ERC-20 token approve 给 dispute 合约
+//!                     → 等链上 `dispute_approved` 系统通知
+//!   阶段 2（dispute confirm 命令）：POST /aieco/task/{jobId}/dispute → 实际发起仲裁
+//!                     → 等链上 `job_disputed` 系统通知
+//!
+//! 本命令只跑阶段 1。完成后必须等 `dispute_approved` 通知到达，再调 `next-action`
+//! 拿阶段 2 剧本，**不能在同一 turn 内连续调 dispute confirm**。
+//! reason 仅作 user-facing log，不上链。
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
@@ -12,27 +22,29 @@ pub async fn handle_dispute_raise(
 ) -> Result<()> {
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_provider(client, job_id).await?;
-    // 后端 spec：Request 空 {}，无 reason / evidence 字段（证据纯链下，走 /evidence/upload 多 part）
-    // reason 仅作 user-facing log 文本，不上链
     let body = serde_json::json!({});
 
-    let resp = client.post_with_identity(
-        &client.endpoint(job_id, "dispute"), &body, &agent_id,
-    ).await?;
+    // POST /approve → uopData → sign + broadcast
+    let approve_resp = client.post_with_identity(
+        &client.endpoint(job_id, "approve"), &body, &agent_id,
+    ).await
+        .context("dispute raise (阶段 1): approve 接口请求失败")?;
 
-    let tx_hash = signing::sign_uop_and_broadcast(
-        client, &resp["uopData"], &account_id, &address,
+    let approve_tx = signing::sign_uop_and_broadcast(
+        client, &approve_resp["uopData"], &account_id, &address,
         job_id, signing::BizContext::DisputeCreate, &agent_id,
-    ).await?;
+    ).await
+        .context("dispute raise (阶段 1): approve 上链失败")?;
 
-    println!("✓ 已发起仲裁，等待链上确认（job_disputed）");
-    println!("  原因: {reason}");
-    println!("  txHash: {tx_hash}");
+    println!("✓ 仲裁阶段 1: approve 上链 (token 授权给 dispute 合约)");
+    println!("  原因记录: {reason}");
+    println!("  txHash: {approve_tx}");
     println!();
-    println!("⚠️  下一步由系统通知驱动，不要主动给买家发消息：");
-    println!("    - 禁止立即调 `xmtp_send` 告诉买家 \"已发起仲裁\" 等文字");
-    println!("    - 链上确认后会收到 `job_disputed` 系统通知");
-    println!("    - 收到通知后再调 `onchainos agent next-action --jobid {job_id} --jobStatus job_disputed --role provider`，");
-    println!("      按输出提示上传证据 / 通知对方");
+    println!("⚠️  阶段 1 已完成，**结束本轮 turn**，等待链上 `dispute_approved` 系统通知：");
+    println!("    - 禁止立即给买家 xmtp_send 任何「已发起仲裁」消息");
+    println!("    - 禁止在同一 turn 内连续调 `dispute confirm`");
+    println!("    - 收到 `dispute_approved` 通知后调：");
+    println!("      onchainos agent next-action --jobid {job_id} --jobStatus dispute_approved --role provider --agentId {agent_id}");
+    println!("      next-action 会输出阶段 2 剧本（调 dispute confirm 触发实际仲裁）");
     Ok(())
 }

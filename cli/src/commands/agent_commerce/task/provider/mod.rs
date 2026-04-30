@@ -16,6 +16,7 @@ mod apply;
 pub mod contact_buyer;
 mod deliver;
 mod dispute_info;
+mod dispute_confirm;
 mod dispute_raise;
 pub mod find_jobs;
 pub mod flow;
@@ -67,11 +68,17 @@ pub enum ProviderCommand {
 
 #[derive(Subcommand)]
 pub enum DisputeCommand {
-    /// Raise a dispute (dispute API → calldata → sign → broadcast)
+    /// 仲裁阶段 1：调用 approve API 给 dispute 合约 token 授权（calldata → sign → broadcast）。
+    /// 完成后等链上 `dispute_approved` 通知，再走 `dispute confirm` 跑阶段 2。
     Raise {
         job_id: String,
         #[arg(long)]
         reason: String,
+    },
+    /// 仲裁阶段 2：调用 dispute API 实际发起仲裁（calldata → sign → broadcast）。
+    /// 前置必须收到 `dispute_approved` 系统通知。完成后等 `job_disputed` 通知。
+    Confirm {
+        job_id: String,
     },
     /// Retrieves dispute details
     Info {
@@ -117,6 +124,8 @@ pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
     match cmd {
         DisputeCommand::Raise { job_id, reason } =>
             dispute_raise::handle_dispute_raise(&mut client, &job_id, &reason).await,
+        DisputeCommand::Confirm { job_id } =>
+            dispute_confirm::handle_dispute_confirm(&mut client, &job_id).await,
         DisputeCommand::Info { dispute_id, agent_id } =>
             dispute_info::handle_dispute_info(&mut client, &dispute_id, agent_id.as_deref().unwrap_or("")).await,
         DisputeCommand::Upload { job_id, agent_id, text, images } =>
