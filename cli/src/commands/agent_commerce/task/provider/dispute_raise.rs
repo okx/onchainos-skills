@@ -35,7 +35,7 @@ pub async fn handle_dispute_raise(
 
     let approve_tx = signing::sign_uop_and_broadcast(
         client, &approve_resp["uopData"], &account_id, &address,
-        job_id, signing::BizContext::DisputeCreate, agent_id,
+        job_id, signing::BizContext::DisputeApprove, agent_id,
     ).await
         .context("dispute raise (阶段 1): approve 上链失败")?;
 

@@ -74,7 +74,7 @@
 
 **主动联系路径 (B) 起步**：
 ```bash
-onchainos agent common context <jobId> --role provider    # 提取 buyerAgentId
+onchainos agent common context <jobId> --role provider --agent-id <你的agentId>    # 提取 buyerAgentId
 onchainos agent contact-buyer --to <buyerAgentId> --job-id <jobId>
 ```
 
@@ -87,6 +87,7 @@ onchainos agent contact-buyer --to <buyerAgentId> --job-id <jobId>
 链事件通知格式 + next-action 命令模板见 SKILL.md `## System Notification Handling` + `§Session 通信契约 §4 接收链事件`。Provider 角色相关的 `message.event` 取值：
 
 - 链事件：`provider_applied` / `job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `job_disputed` / `confirm_refund` / `dispute_resolved`
+- 链事件（仲裁两阶段过场）：`dispute_approved`（仲裁阶段 1 approve 上链后系统推这个，触发阶段 2 dispute confirm）
 - 伪 event（user session 用户决策 relay 回 sub 后自己调 next-action 用）：`dispute_raise` / `agree_refund` / `dispute_evidence`
 
 每收到一个通知 → 调一次 next-action → 按 flow.rs 输出的 Scene 执行 CLI / xmtp_send / 必要时推 user session。
@@ -99,9 +100,9 @@ onchainos agent contact-buyer --to <buyerAgentId> --job-id <jobId>
 
 | 用户原话关键词 | pseudo event | 后续 task CLI |
 |---|---|---|
-| 含『发起仲裁』/『仲裁』/『dispute』 | `dispute_raise` | `onchainos agent dispute raise <jobId> --reason "<用户原话理由>"` → 等 `job_disputed` |
-| 含『同意退款』/『退款』/『agree refund』 | `agree_refund` | `onchainos agent agree-refund <jobId>` → 等 `confirm_refund` |
-| 含『证据』/『evidence』/『摘要』/『图片』/『screenshot』（仲裁阶段） | `dispute_evidence` | 从 relay 提取摘要+图片路径 → `onchainos agent dispute upload <jobId> --text "<摘要>" --image <路径或省略>` → 等仲裁裁决 |
+| 含『发起仲裁』/『仲裁』/『dispute』 | `dispute_raise` | **阶段 1** `onchainos agent dispute raise <jobId> --reason "<用户原话理由>" --agent-id <你的agentId>` → 等链上 `dispute_approved` 通知 → **阶段 2** `onchainos agent dispute confirm <jobId> --agent-id <你的agentId>` → 等 `job_disputed` |
+| 含『同意退款』/『退款』/『agree refund』 | `agree_refund` | `onchainos agent agree-refund <jobId> --agent-id <你的agentId>` → 等 `confirm_refund` |
+| 含『证据』/『evidence』/『摘要』/『图片』/『screenshot』（仲裁阶段） | `dispute_evidence` | 从 relay 提取摘要+图片路径 → `onchainos agent dispute upload <jobId> --agent-id <你的agentId> --text "<摘要>" --image <路径或省略>` → 等仲裁裁决 |
 | 不识别 | — | 调 **一次** `xmtp_dispatch_session`（省略 sessionKey）回推 user session 提示『决策不明，请重新选择』，**然后停** |
 
 调 next-action 拿剧本：
@@ -199,6 +200,7 @@ agent 每轮 turn **没有记忆**也**没有发送回执反馈**——工具返
 
 | 场景 | 命令 |
 |---|---|
-| 不知道自己是谁 / 任务啥情况 | `onchainos agent common context <jobId> --role provider` |
+| 不知道自己是谁 / 任务啥情况 | `onchainos agent common context <jobId> --role provider --agent-id <你的agentId>` |
 | 查任务状态 | `onchainos agent status <jobId>` |
 | 查争议详情 | `onchainos agent dispute info <disputeId>` |
+| review 超时领货款 | `onchainos agent claim-auto-complete <jobId> --agent-id <你的agentId>` |
