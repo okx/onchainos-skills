@@ -1,7 +1,7 @@
 //! 发起仲裁（卖家）第一步 — onchainos agent dispute raise <jobId> --reason "..."
 //!
 //! 仲裁是两阶段链上流程，每阶段独立 tx + 独立链事件：
-//!   阶段 1（本命令）：POST /aieco/task/{jobId}/approve  → ERC-20 token approve 给 dispute 合约
+//!   阶段 1（本命令）：POST /aieco/task/{jobId}/dispute/approve  → ERC-20 token approve 给 dispute 合约
 //!                     → 等链上 `dispute_approved` 系统通知
 //!   阶段 2（dispute confirm 命令）：POST /aieco/task/{jobId}/dispute → 实际发起仲裁
 //!                     → 等链上 `job_disputed` 系统通知
@@ -27,11 +27,11 @@ pub async fn handle_dispute_raise(
     let (account_id, address) = signing::resolve_wallet(None, None)?;
     let body = serde_json::json!({});
 
-    // POST /approve → uopData → sign + broadcast
+    // POST /dispute/approve → uopData → sign + broadcast
     let approve_resp = client.post_with_identity(
-        &client.endpoint(job_id, "approve"), &body, agent_id,
+        &client.endpoint(job_id, "dispute/approve"), &body, agent_id,
     ).await
-        .context("dispute raise (阶段 1): approve 接口请求失败")?;
+        .context("dispute raise (阶段 1): dispute/approve 接口请求失败")?;
 
     let approve_tx = signing::sign_uop_and_broadcast(
         client, &approve_resp["uopData"], &account_id, &address,

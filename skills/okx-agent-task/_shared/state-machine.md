@@ -38,7 +38,7 @@ stateDiagram-v2
 | `refused` | 买家拒绝交付物，进入 24h 决策期 | `job_refused` |
 | `disputed` | 卖家发起仲裁，进入证据期 | `job_disputed` |
 | `completed` | 终态：任务成功（正常验收或仲裁胜诉） | `job_completed` |
-| `rejected` | 终态：任务失败（退款 / 仲裁败诉 / 超时 / 买家关闭） | `confirm_refund` |
+| `rejected` | 终态：任务失败（退款 / 仲裁败诉 / 超时 / 买家关闭） | `job_refunded` |
 
 ## 3. 每个状态转移由谁触发
 
@@ -68,7 +68,7 @@ stateDiagram-v2
 | `job_completed` | ✅ | ✅ | — | — |
 | `job_refused` | ✅ | ✅ | — | 卖家 sub-session 通过 `xmtp_dispatch_session` 推送决策请求给用户 |
 | `job_disputed` | ✅ | ✅ | — | — |
-| `confirm_refund` | ✅ | ✅ | — | — |
+| `job_refunded` | ✅ | ✅ | — | — |
 | `evaluator_selected` | — | — | ✅（被选中的陪审） | sub session 激活 → `escalate_to_main` 推决策请求 |
 | `reveal_started` | — | — | ✅ | sub 里跑 reveal → `xmtp_dispatch_session` |
 | `dispute_resolved` | ✅ | ✅ | ✅ | sub 里跑 claim + forget → `xmtp_dispatch_session` |
@@ -78,8 +78,8 @@ stateDiagram-v2
 
 ## 5. 各角色关心的事件
 
-- **Provider（卖家）**：a2a-agent-chat 询问 → provider_applied → job_accepted → job_submitted → job_refused / job_completed → job_disputed → job_completed / confirm_refund
-- **Client（买家）**：job_created → provider_applied → job_accepted → job_submitted → job_completed / confirm_refund
+- **Provider（卖家）**：a2a-agent-chat 询问 → provider_applied → job_accepted → job_submitted → job_refused / job_completed → job_disputed → job_completed / job_refunded
+- **Client（买家）**：job_created → provider_applied → job_accepted → job_submitted → job_completed / job_refunded
 - **Evaluator（仲裁者）**：evaluator_selected → reveal_started → dispute_resolved / round_failed → reward_claimed / slashed（事件名对齐后端 event 枚举）
 
 ## 6. 超时规则
