@@ -380,23 +380,32 @@ impl TaskApiClient {
         result
     }
 
-    /// POST multipart/form-data + JWT + 身份头（agenticId）
-    pub async fn multipart_post_with_identity(
+    /// POST 原始 body + 自定义 Content-Type + JWT + 身份头（agenticId）
+    ///
+    /// 用于手写 multipart body 等需要精确控制 wire 格式的场景（curl 兼容）。
+    /// 调用方手写 body bytes 并提供 Content-Type（含 boundary）；
+    /// 比 reqwest 自带的 `multipart::Form` builder 更可控，避免 chunked 传输 / part 头不可控问题。
+    pub async fn raw_post_with_identity(
         &mut self,
         path: &str,
-        form: reqwest::multipart::Form,
+        body: Vec<u8>,
+        content_type: &str,
         agent_id: &str,
     ) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
         let token = get_access_token().await;
-        eprintln!("[TaskAPI] POST(multipart) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}", token.len());
-        let headers = [("agenticId", agent_id)];
+        eprintln!(
+            "[TaskAPI] POST(raw) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}, Content-Type={content_type}, Content-Length={}",
+            token.len(),
+            body.len(),
+        );
+        let extra = [("agenticId", agent_id)];
         let result = self.wallet
-            .post_authed_multipart_with_headers(path, &token, form, Some(&headers))
+            .post_authed_raw_with_headers(path, &token, body, content_type, Some(&extra))
             .await;
         match &result {
-            Ok(data) => eprintln!("[TaskAPI] POST(multipart) {url} ← {data}"),
-            Err(e) => eprintln!("[TaskAPI] POST(multipart) {url} ← ERROR: {e}"),
+            Ok(data) => eprintln!("[TaskAPI] POST(raw) {url} ← {data}"),
+            Err(e) => eprintln!("[TaskAPI] POST(raw) {url} ← ERROR: {e}"),
         }
         result
     }

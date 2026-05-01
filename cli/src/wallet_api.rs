@@ -474,15 +474,18 @@ impl WalletApiClient {
         self.handle_response(resp).await
     }
 
-    /// POST multipart/form-data with Bearer accessToken + 可选附加 header
-    /// （例如 task 模块需要的 `X-Agent-Id` / `X-Wallet-Address`）。
+    /// POST 原始 body bytes + 显式 Content-Type + JWT + 可选附加 header。
     ///
-    /// extra_headers 在 `Content-Type` 被移除之后合并，避免误覆盖 Authorization。
-    pub async fn post_authed_multipart_with_headers(
+    /// 用于手写 multipart body 等需要精确控制 wire 格式的场景（curl 兼容）：
+    /// 调用方负责拼好 body bytes，传 `Content-Type: multipart/form-data; boundary=...`。
+    /// reqwest 自带的 `multipart::Form` builder 会用 chunked transfer 且 part header 不全可控，
+    /// 部分 Spring/Tomcat 配置会因此 1001 拒掉。
+    pub async fn post_authed_raw_with_headers(
         &self,
         path: &str,
         access_token: &str,
-        form: reqwest::multipart::Form,
+        body: Vec<u8>,
+        content_type: &str,
         extra_headers: Option<&[(&str, &str)]>,
     ) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
@@ -501,11 +504,15 @@ impl WalletApiClient {
             }
         }
 
+        // 显式设置 Content-Length（reqwest 默认 multipart 可能用 chunked，部分 Spring/Tomcat 配置不接受）
+        let content_len = body.len();
         let resp = self
             .http
             .post(&url)
             .headers(headers)
-            .multipart(form)
+            .header(reqwest::header::CONTENT_TYPE, content_type)
+            .header(reqwest::header::CONTENT_LENGTH, content_len.to_string())
+            .body(body)
             .send()
             .await
             .context("wallet API request failed")?;
@@ -1326,7 +1333,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_authed_multipart_with_headers_injects_identity_headers() {
+    async fn post_authed_raw_with_headers_injects_identity_headers() {
         use std::io::{Read, Write};
         use std::sync::{Arc, Mutex};
 
@@ -1355,10 +1362,20 @@ mod tests {
         std::env::remove_var("OKX_BASE_URL");
         let client = WalletApiClient::with_base_url(Some(&format!("http://127.0.0.1:{port}")))
             .expect("build client");
-        let form = reqwest::multipart::Form::new().text("text", "hello-evidence");
+        let boundary = "----test-boundary-xyz";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nhello-evidence\r\n--{boundary}--\r\n"
+        ).into_bytes();
+        let content_type = format!("multipart/form-data; boundary={boundary}");
         let extra = [("X-Agent-Id", "agent-test-1"), ("X-Wallet-Address", "0xDEADBEEF")];
         let _ = client
-            .post_authed_multipart_with_headers("/priapi/v1/aieco/task/0x1/evidence/upload", "fake_token", form, Some(&extra))
+            .post_authed_raw_with_headers(
+                "/priapi/v1/aieco/task/0x1/evidence/upload",
+                "fake_token",
+                body,
+                &content_type,
+                Some(&extra),
+            )
             .await;
 
         server.join().expect("listener thread");
