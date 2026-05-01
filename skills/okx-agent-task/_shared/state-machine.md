@@ -63,18 +63,18 @@ stateDiagram-v2
 |---|---|---|---|---|
 | `job_created` | ✅ | — | — | 由 openclaw runtime 自动路由到 buyer user session |
 | `provider_applied` | ✅ | ✅ | — | — |
-| `job_accepted` | ✅ | ✅ | — | 由 sub-session agent 通过 `xmtp_dispatch_session`（省略 sessionKey）推送给用户（关键进展）|
+| `job_accepted` | ✅ | ✅ | — | sub-session agent 用 `xmtp_dispatch_user` 推送给用户（关键进展）|
 | `job_submitted` | ✅ | ✅ | — | — |
 | `job_completed` | ✅ | ✅ | — | — |
-| `job_refused` | ✅ | ✅ | — | 卖家 sub-session 通过 `xmtp_dispatch_session` 推送决策请求给用户 |
-| `job_disputed` | ✅ | ✅ | — | — |
-| `job_refunded` | ✅ | ✅ | — | — |
-| `evaluator_selected` | — | — | ✅（被选中的陪审） | sub session 激活 → `escalate_to_main` 推决策请求 |
-| `reveal_started` | — | — | ✅ | sub 里跑 reveal → `xmtp_dispatch_session` |
-| `dispute_resolved` | ✅ | ✅ | ✅ | sub 里跑 claim + forget → `xmtp_dispatch_session` |
-| `round_failed` | ✅ | ✅ | ✅（本轮陪审） | `xmtp_dispatch_session` 提示等下一轮 |
-| `slashed` | — | — | ✅（被罚方） | `xmtp_dispatch_session` 推罚没原因 |
-| `reward_claimed` | — | — | ✅（领取方） | `xmtp_dispatch_session` 推 tx 入账确认 |
+| `job_refused` | ✅ | ✅ | — | 卖家 sub-session 用 `xmtp_prompt_user` 把决策请求推送给用户（仲裁/退款二选一）|
+| `job_disputed` | ✅ | ✅ | — | 双方 sub-session 用 `xmtp_prompt_user` 让用户提供证据 |
+| `job_refunded` | ✅ | ✅ | — | sub-session 用 `xmtp_dispatch_user` 推退款已到账（终态）|
+| `evaluator_selected` | — | — | ✅（被选中的陪审） | sub session 激活，按剧本拉证据 + commit（不推用户）|
+| `reveal_started` | — | — | ✅ | sub 里跑 reveal（不推用户）|
+| `dispute_resolved` | ✅ | ✅ | ✅ | sub 里 buyer/provider 用 `xmtp_dispatch_user` 推胜负通知；evaluator 跑 claim + forget |
+| `round_failed` | ✅ | ✅ | ✅（本轮陪审） | sub 用 `xmtp_dispatch_user` 提示等下一轮 |
+| `slashed` | — | — | ✅（被罚方） | sub 用 `xmtp_dispatch_user` 推罚没原因 |
+| `reward_claimed` | — | — | ✅（领取方） | sub 用 `xmtp_dispatch_user` 推 tx 入账确认 |
 
 ## 5. 各角色关心的事件
 

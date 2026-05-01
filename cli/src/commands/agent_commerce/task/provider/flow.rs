@@ -67,10 +67,18 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 
     // ──────────────────────────────────────────────────────────────────────
     // 通信机制（怎么发、能不能发、形态白名单）— 一律见 SKILL.md §Session 通信契约。
-    // 本文件只负责告诉 agent **每一步把什么内容发到哪**，不重复解释 xmtp_send /
-    // xmtp_dispatch_session 的用法。下面两个变量是给剧本里的占位符：
-    //   - send_to_peer：表示"用 xmtp_send 发给买家（peer sub session）"
-    //   - send_to_user：表示"用 xmtp_dispatch_session 推到 user session"
+    // 本文件只负责告诉 agent **每一步把什么内容发到哪**，不重复解释工具用法。
+    //
+    // 三种通信工具：
+    //   - xmtp_send：发给买家（peer sub session），参数 sessionKey + content
+    //   - xmtp_dispatch_user：通知用户（无需用户决策），参数：content
+    //   - xmtp_prompt_user：需要用户交互（确认 / 决策），参数：llmContent + userContent
+    //     llmContent = 注入 user session LLM 的指令（用户不可见，含 sub_key 让 user agent
+    //                  把决策 relay 回 sub）
+    //     userContent = 发送给用户的可见消息
+    //
+    // 老的 `xmtp_dispatch_session` 省略 sessionKey + `[STATUS_NOTIFY]` / `[USER_DECISION_REQUEST]`
+    // 包裹形态已被这两个新工具替代——本文件不再使用。
     // ──────────────────────────────────────────────────────────────────────
     let send_to_peer = format!(
         "→ 用 `xmtp_send` 发给买家（机制见 SKILL.md §Session 通信契约 §1 路径 4）。\n\
@@ -82,11 +90,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 
     let context_preamble = format!(
         "📍 你在 sub session（你看到这段 next-action 输出 = 100% 在 sub）。\n\n\
-         🔒 **如果当前 turn 没读过 SKILL.md §Session 通信契约**（envelope 形态白名单 / xmtp_send 两步 / xmtp_dispatch_session 推 user session opt-in 铁律），\n\
-         **先读 `skills/okx-agent-task/SKILL.md`** 再继续——下面步骤会引用它的章节（§3 / §4 / §6 / §7）。\n\n\
+         🔒 **如果当前 turn 没读过 SKILL.md §Session 通信契约**（envelope 形态白名单 / xmtp_send 两步 / xmtp_dispatch_user·xmtp_prompt_user 推 user session 铁律），\n\
+         **先读 `skills/okx-agent-task/SKILL.md`** 再继续——下面步骤会引用它的章节（§3 / §4 / §5 / §6）。\n\n\
          ⚠️ **异常升级硬规则**（任何场景都适用，详见 provider.md §6）：\n\
-         \x20\x201) 协议理解错位：你已澄清同一条流程 ≥1 次，对方下一条还在重复错误诉求 → **不再回复对方**，xmtp_dispatch_session 推 user session [⚠️ 协议理解错位]，结束 turn\n\
-         \x20\x202) CLI 错误：`onchainos agent <cmd>` 报错 → **不要重试**，直接 xmtp_dispatch_session 推 user session [⚠️ CLI 报错]，等用户新指令；瞬态故障（network/JWT 过期）才允许自动重试一次\n\
+         \x20\x201) 协议理解错位：你已澄清同一条流程 ≥1 次，对方下一条还在重复错误诉求 → **不再回复对方**，调 `xmtp_dispatch_user` 推 `[⚠️ 协议理解错位] ...`，结束 turn\n\
+         \x20\x202) CLI 错误：`onchainos agent <cmd>` 报错 → **不要重试**，直接调 `xmtp_dispatch_user` 推 `[⚠️ CLI 报错] ...`，等用户新指令；瞬态故障（network/JWT 过期）才允许自动重试一次\n\
          \x20\x203) ❌ **绝对禁止把技术错误细节广播给对方**：CLI 命令名 / 后端字段名 / stderr 摘要 / `bug`/`命令：`/`错误：` 一律不能进 xmtp_send 给对方。最多发一句『稍等，正在确认细节』或干脆不通知对方。\n\
          \x20\x204) ❌ **同 turn 不重复 xmtp_send**：剧本说『发一条』→ 调过一次工具返回『已发送』就**算成功**，**当前 turn 内不再对同一对方调 xmtp_send 第二次**。不要因为消息可能不够清晰就重发——重发 = 刷屏 + 触发对方循环。下一条 inbound 进来再说。\n\
          \x20\x205) ❌ **deliver 必须等 `job_accepted` 通知**：apply 上链不改 status，任务仍是 open；只有买家 confirm-accept 触发的 `job_accepted` 链事件到达后才能 deliver。**绝对禁止在 ProviderApplied 剧本里抢跑 deliver**，CLI 会校验 status != accepted 直接 bail。\n\
@@ -120,9 +128,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前状态】job_accepted（买家已确认接单，资金托管）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作（严格顺序，不得跳步）】\n\n\
-             **Step 1 — 把接单成功通知推到 user session**（机制见 SKILL.md §Session 通信契约 §1 路径 2 + §2 STATUS_NOTIFY 形态）：\n\n\
-             content：\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · user session agent 不要调任何工具不要再次执行]\n\
+             **Step 1 — 用 `xmtp_dispatch_user` 把接单成功通知推给用户**：\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
              \x20\x20\x20\x20[接单成功通知] 任务 {job_id} 已完成接单\n\
              \x20\x20\x20\x20- 标题：<title>\n\
              \x20\x20\x20\x20- 描述：<description>\n\
@@ -145,7 +153,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              CLI 内部：POST submit API → 签名 uopHash → 广播上链（含 evidenceHash 占位）。\n\n\
              A-Step 2 — **直接结束本轮 turn**，等链上 `job_submitted` 系统通知。\n\
              ⚠️ 禁止此时给买家 xmtp_send 交付内容——必须等链上确认。\n\
-             ⚠️ 禁止 xmtp_dispatch_session 推 STATUS_NOTIFY 到 user session（『已提交 / 等待 job_submitted』是过场状态）。\n\n\
+             ⚠️ 禁止 `xmtp_dispatch_user` 推用户（『已提交 / 等待 job_submitted』是过场状态，没信息量）。\n\n\
              A-Step 3 — 收到 `job_submitted` 通知后再调 next-action（进入 Scene 5），按剧本通过 xmtp_send 把交付物发给买家。\n\n\
              ━━━━━ 分支 B：paymentMode=non_escrow（非担保交易，2）━━━━━\n\n\
              非担保不走链上 submit，**直接 xmtp_send 把交付物发给买家**：\n\n\
@@ -182,15 +190,17 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 1 — 向买家调用 `xmtp_send` 工具发送消息：**\n\n\
              {header_template}\n\
              已收到买家拒绝通知（job_refused）。正在确认后续处理方案，请稍候。\n\n\
-             **Step 2 — 把决策请求推到 user session 让用户拍板**（机制见 SKILL.md §Session 通信契约 §2 USER_DECISION_REQUEST 形态）：\n\n\
-             先调 `session_status` 拿到本 sub session 的 sessionKey，嵌入 `[sub_key: ...]` 行（user session agent 会用它反向 relay 决策回来）。\n\n\
-             content：\n\
-             \x20\x20\x20\x20[USER_DECISION_REQUEST · 仅询问用户 · user session agent 等用户回复后用 sub_key 反向 dispatch 回 sub，禁止自己执行 task CLI]\n\
-             \x20\x20\x20\x20[sub_key: <session_status 拿到的 sessionKey 整串>]\n\
-             \x20\x20\x20\x20[job: {job_id}]\n\
+             **Step 2 — 用 `xmtp_prompt_user` 把决策请求推到用户**：\n\n\
+             先调 `session_status` 拿当前 sub session 的 sessionKey（同 turn 内调一次即可），\n\
+             user session agent 拿到 llmContent 后会按 `sub_key` 把用户决策反向 dispatch 回本 sub。\n\n\
+             tool: xmtp_prompt_user\n\
+             llmContent:\n\
+             \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}] \
+             用户回复决策后，relay 回 sub session 执行 next-action。禁止 user session agent 自己执行 task CLI。24h 内必须决策。\n\
+             userContent:\n\
              \x20\x20\x20\x20任务 {job_id} 被买家拒绝。请选择：\n\
-             \x20\x20\x20\x201. 发起仲裁 → 回复'发起仲裁，理由是<理由>'\n\
-             \x20\x20\x20\x202. 同意退款 → 回复'同意退款'\n\n\
+             \x20\x20\x20\x201. 发起仲裁 → 回复『发起仲裁，理由是<理由>』\n\
+             \x20\x20\x20\x202. 同意退款 → 回复『同意退款』\n\n\
              **Step 3 — 等用户回复 relay 回来**：\n\
              收到 `[USER_DECISION_RELAY] 用户决策：...` 后，按关键词调 next-action：\n\
              - 含『发起仲裁』 → `--jobStatus dispute_raise`\n\
@@ -243,7 +253,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 2 — 调用 `xmtp_send` 工具向买家发送：**\n\n\
              {header_template}\n\
              已同意退款，等待链上确认（job_refunded）。\n\n\
-             跑完 Step 1-2 → **结束本轮 turn，不要 xmtp_dispatch_session 推 main**。\n"
+             跑完 Step 1-2 → **结束本轮 turn，不要 xmtp_dispatch_user 推用户**。\n"
         ),
 
         // ─── Scene 7: 任务完成（验收通过 / 仲裁胜诉） ────────────────
@@ -254,16 +264,16 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 1 — 给买家发完成致谢**：\n\n\
              {header_template}\n\
              任务已完成（job_completed），资金已释放。感谢合作。\n\n\
-             **Step 2 — 推 STATUS_NOTIFY 到 user session 告知用户赚到钱了**（机制见 SKILL.md §Session 通信契约 §6）：\n\n\
+             **Step 2 — 用 `xmtp_dispatch_user` 通知用户赚到钱了**：\n\n\
              从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol。\n\
-             content：\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · user session agent 不要调任何工具不要再次执行]\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
              \x20\x20\x20\x20[任务完成 💰] 任务 {job_id}（<title>）已验收通过，资金已释放到你的钱包。\n\
              \x20\x20\x20\x20  - 收入：<tokenAmount> <tokenSymbol>\n\
              \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
              \x20\x20\x20\x20\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
-             **Step 3 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §6 路径 5）：\n\
+             **Step 3 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §5 路径 5）：\n\
              1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段\n\
              2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串\n\
              删除后本 sub session 不再接收任何消息——任务完整结束。\n"
@@ -282,10 +292,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **A-Step 1 — 给买家发结果**（用 `xmtp_send`）：\n\n\
              {header_template}\n\
              仲裁已裁决（dispute_resolved），裁决支持卖方。资金已释放。\n\n\
-             **A-Step 2 — 推 STATUS_NOTIFY 到 user session**（机制见 SKILL.md §Session 通信契约 §6）：\n\n\
+             **A-Step 2 — 用 `xmtp_dispatch_user` 通知用户胜诉**：\n\n\
              从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol。\n\
-             content：\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · user session agent 不要调任何工具不要再次执行]\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
              \x20\x20\x20\x20[仲裁胜诉 ⚖️💰] 任务 {job_id}（<title>）仲裁完成，**卖方胜诉**。\n\
              \x20\x20\x20\x20  - 收入：<tokenAmount> <tokenSymbol>\n\
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（jobStatus=complete）\n\
@@ -294,16 +304,16 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **B-Step 1 — 给买家发结果**（用 `xmtp_send`）：\n\n\
              {header_template}\n\
              仲裁已裁决（dispute_resolved），裁决支持买方。资金已退还买家。\n\n\
-             **B-Step 2 — 推 STATUS_NOTIFY 到 user session**：\n\n\
+             **B-Step 2 — 用 `xmtp_dispatch_user` 通知用户败诉**：\n\n\
              从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol。\n\
-             content：\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · user session agent 不要调任何工具不要再次执行]\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
              \x20\x20\x20\x20[仲裁败诉 ⚖️⚠️] 任务 {job_id}（<title>）仲裁完成，**买方胜诉**。\n\
              \x20\x20\x20\x20  - 损失：<tokenAmount> <tokenSymbol>（资金已退还买家）\n\
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（jobStatus=rejected）\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n\
-             **Step 3（两个分支都要做）— 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §6 路径 5）：\n\
+             **Step 3（两个分支都要做）— 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §5 路径 5）：\n\
              1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段\n\
              2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串\n\
              删除后本 sub session 不再接收任何消息——仲裁流程完整结束。\n"
@@ -317,7 +327,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 1 — 给买家发收尾**：\n\n\
              {header_template}\n\
              已退款上链（job_refunded），资金已退还买家。\n\n\
-             **Step 2 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §6 路径 5）：\n\
+             **Step 2 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §5 路径 5）：\n\
              1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段\n\
              2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串\n\
              删除后本 sub session 不再接收任何消息——退款流程完整结束。\n"
@@ -333,12 +343,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 1 — 向买家发一条状态告知（用 `xmtp_send` 工具）：**\n\n\
              {header_template}\n\
              仲裁已上链（job_disputed），正在准备证据材料。\n\n\
-             **Step 2 — 把证据决策请求推到 user session 让用户提供内容**（机制见 SKILL.md §Session 通信契约 §2 USER_DECISION_REQUEST 形态）：\n\n\
-             先调 `session_status` 拿到本 sub session 的 sessionKey，嵌入 `[sub_key: ...]` 行。\n\n\
-             content：\n\
-             \x20\x20\x20\x20[USER_DECISION_REQUEST · 仅询问用户 · user session agent 等用户回复后用 sub_key 反向 dispatch 回 sub，禁止自己执行 task CLI]\n\
-             \x20\x20\x20\x20[sub_key: <session_status 拿到的 sessionKey 整串>]\n\
-             \x20\x20\x20\x20[job: {job_id}]\n\
+             **Step 2 — 用 `xmtp_prompt_user` 把证据决策请求推到用户**：\n\n\
+             先调 `session_status` 拿当前 sub session 的 sessionKey（同 turn 内调一次即可），\n\
+             user session agent 拿到 llmContent 后会按 `sub_key` 把用户证据 relay 回本 sub。\n\n\
+             tool: xmtp_prompt_user\n\
+             llmContent:\n\
+             \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}] \
+             用户回复证据后，relay 回 sub session 执行 onchainos agent dispute upload。禁止 user session agent 自己执行 task CLI。1 小时内必须提交。\n\
+             userContent:\n\
              \x20\x20\x20\x20任务 {job_id} 仲裁已上链，需要在 1 小时内提交链下证据。请提供：\n\
              \x20\x20\x20\x20- 文字摘要（必填）：说明你已按验收标准完成的关键证据点\n\
              \x20\x20\x20\x20- 图片路径（可选）：截图、设计稿、聊天记录等本地文件路径\n\
@@ -367,7 +379,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【后续事件】\n\
              - job_completed → 胜诉，资金释放给卖家\n\
              - dispute_resolved → 败诉，资金退还买家\n\n\
-             跑完 Step 1-3 → **结束本轮 turn，不要 xmtp_dispatch_session 推 main**。\n"
+             跑完 Step 1-3 → **结束本轮 turn，不要 xmtp_dispatch_user 推用户**。\n"
         ),
 
         // ─── 未知类型兜底 ─────────────────────────────────────────────
@@ -401,14 +413,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              1) 任务内容和验收标准是否在能力范围内\n\
              2) 价格可接受（**用任务详情里的实际币种回复，不是默认 USDT**）\n\
              3) 支付方式可接受（escrow / non_escrow，由买家在 confirm-accept 时定）\n\
-             → 用 `xmtp_send` 给买家发提问（机制见 SKILL.md §Session 通信契约 §6 路径 4）。\n\n\
+             → 用 `xmtp_send` 给买家发提问（机制见 SKILL.md §Session 通信契约 §5 路径 4）。\n\n\
              **Step 4 — 三项全部确认后，按双方约定的支付方式分流：**\n\n\
              ━━━━━ 分支 A：支付方式 = escrow（担保交易）→ 必须 apply 上链 ━━━━━\n\n\
              ```bash\n\
              onchainos agent apply {job_id} --token-amount <协商价格> --token-symbol <USDT|USDG> --agent-id {agent_id}\n\
              ```\n\
              apply 是上链签名动作，CLI 内部完成 unsigned info → sign → broadcast，等链上 provider_applied 通知。\n\n\
-             ⚠️ **apply 跑完直接结束 turn，禁止 `xmtp_dispatch_session` 推 STATUS_NOTIFY 到 user session**——『已提交接单申请 / txHash / 等 provider_applied』是过场状态，对用户没信息量。等链上 `provider_applied` 通知到达后 next-action 那时才有值得推的。这条命令再说一遍是因为 sub 容易在 tx broadcast 后本能想『通知用户』——不要。\n\n\
+             ⚠️ **apply 跑完直接结束 turn，禁止 `xmtp_dispatch_user` 推用户**——『已提交接单申请 / txHash / 等 provider_applied』是过场状态，对用户没信息量。等链上 `provider_applied` 通知到达后 next-action 那时才有值得推的。这条命令再说一遍是因为 sub 容易在 tx broadcast 后本能想『通知用户』——不要。\n\n\
              ━━━━━ 分支 B：支付方式 = non_escrow（非担保交易）→ **不要** apply，但要建 a2a-pay 付款单 ━━━━━\n\n\
              非担保交易不在链上托管资金，provider 端**禁止**调 `onchainos agent apply`：\n\
              - non_escrow 的链上 provider_applied 不会触发，调了 apply 会在 escrow 合约里多一笔无用上链\n\n\
@@ -459,9 +471,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              CLI 内部：POST /claimAutoComplete → uopData → sign uopHash → broadcast。等链上 `job_auto_completed` 通知。\n\n\
              ⚠️ **跑完 claim-auto-complete 直接结束 turn**：\n\
              - 禁止给买家发任何 xmtp_send（中间过场，等 job_auto_completed 上链回执到达再说）\n\
-             - 禁止 xmtp_dispatch_session 推 STATUS_NOTIFY 到 user session\n\n\
+             - 禁止 `xmtp_dispatch_user` 推用户\n\n\
              【后续事件】\n\
-             - `job_auto_completed`（status=success） → next-action 拿到账剧本（推 STATUS_NOTIFY + 关闭 sub session）\n\
+             - `job_auto_completed`（status=success） → next-action 拿到账剧本（推 user 通知 + 关闭 sub session）\n\
              - `job_auto_completed`（status=failed）  → 按 errorCode 重试 claim-auto-complete\n"
         ),
 
@@ -476,15 +488,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **A-Step 1 — 给买家发收尾通知**（用 `xmtp_send`）：\n\n\
              {header_template}\n\
              review 期已结束，资金已通过 claimAutoComplete 自动结算到卖方钱包。任务流程完整结束。\n\n\
-             **A-Step 2 — 推 STATUS_NOTIFY 到 user session 告知用户到账**（机制见 SKILL.md §Session 通信契约 §6）：\n\n\
+             **A-Step 2 — 用 `xmtp_dispatch_user` 通知用户到账**：\n\n\
              从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol。\n\
-             content：\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 仅展示给用户 · user session agent 不要调任何工具不要再次执行]\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
              \x20\x20\x20\x20[任务自动完成 💰] 任务 {job_id}（<title>）review 超时，已通过 claimAutoComplete 自动到账。\n\
              \x20\x20\x20\x20  - 收入：<tokenAmount> <tokenSymbol>\n\
              \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
-             **A-Step 3 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §6 路径 5）：\n\
+             **A-Step 3 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §5 路径 5）：\n\
              1. 调 `session_status` 拿当前 sub session 的 `sessionKey`\n\
              2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串\n\n\
              ━━━━━━━━━ 分支 B：status=failed（claim 失败，按 errorCode 重试）━━━━━━━━━\n\n\
