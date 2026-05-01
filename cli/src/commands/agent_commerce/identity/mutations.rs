@@ -32,7 +32,7 @@ use super::signing::{
 use super::utils::{
     ensure_provider_has_service, normalize_role, parse_agent_unsigned, parse_services,
     parse_u32_arg, poll_tx_agent_status, reconstruct_post_url_for_log, redact_token_for_debug,
-    require_non_empty, resolve_agent_id, trim_or_empty, wallet_client,
+    require_non_empty, trim_or_empty, wallet_client,
 };
 
 // ─── Public command entry points ──────────────────────────────────────────
@@ -79,7 +79,8 @@ pub async fn xmtp_sign(args: XmtpSignArgs, ctx: &Context) -> Result<()> {
 async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
-    let signing_session = load_agent_signing_session(args.address.as_deref())?;
+    // --address 已从 CLI 去掉；广播走默认 XLayer 地址（当前选中账号）。
+    let signing_session = load_agent_signing_session(None)?;
     let from_addr = signing_session.addr_info.address.clone();
     let key_uuid = Uuid::new_v4().to_string();
     let session_signature = sign_key_uuid(&key_uuid, &signing_session.signing_seed)?;
@@ -158,7 +159,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
 async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
-    let agent_id = resolve_agent_id(&args.agent_id, &args.agent_id_flag)?;
+    let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
     let signing_session = load_agent_signing_session(None)?;
 
     // 产品规范：update 不允许修改 role / CommunicationAddress，所以都不写进
@@ -251,7 +252,7 @@ async fn deactivate_impl(args: &AgentStatusArgs, ctx: &Context) -> Result<()> {
 async fn agent_status_impl(args: &AgentStatusArgs, status: u32, ctx: &Context) -> Result<()> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
-    let agent_id = resolve_agent_id(&args.agent_id, &args.agent_id_flag)?;
+    let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
     let body = json!({
         "agentId": agent_id,
         "chainIndex": XLAYER_CHAIN_INDEX,
@@ -292,7 +293,7 @@ async fn agent_status_impl(args: &AgentStatusArgs, status: u32, ctx: &Context) -
 async fn upload_impl(args: &UploadArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let client = wallet_client(ctx)?;
-    let file = require_non_empty(args.file.as_deref(), "[file]")?;
+    let file = require_non_empty(args.file.as_deref(), "--file")?;
     let bytes = fs::read(file).with_context(|| format!("failed to read file: {file}"))?;
     let filename = std::path::Path::new(file)
         .file_name()

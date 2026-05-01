@@ -232,22 +232,6 @@ pub(super) fn normalize_role(role: &str) -> Result<String> {
 
 // ─── CLI arg helpers ──────────────────────────────────────────────────────
 
-pub(super) fn resolve_agent_id<'a>(
-    agent_id: &'a Option<String>,
-    agent_id_flag: &'a Option<String>,
-) -> Result<&'a str> {
-    if let Some(agent_id) = agent_id.as_deref().filter(|value| !value.trim().is_empty()) {
-        return Ok(agent_id.trim());
-    }
-    if let Some(agent_id) = agent_id_flag
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        return Ok(agent_id.trim());
-    }
-    bail!("missing required parameter: agentId")
-}
-
 pub(super) fn require_non_empty<'a>(value: Option<&'a str>, flag: &str) -> Result<&'a str> {
     match value.map(str::trim).filter(|value| !value.is_empty()) {
         Some(value) => Ok(value),

@@ -1,12 +1,12 @@
 # Avatar Upload — Runtime Decision Matrix
 
-`--picture` on `agent create` / `agent update` takes a URL. To get a URL, you either (a) already have one, or (b) run `onchainos agent upload <file>` to get one from a local image. **The "CDN" / "upload pipeline" are implementation details — never expose these words to the user.** To the user it's simply "发一张图片给我，我帮你上传" / "send me an image, I'll handle the upload".
+`--picture` on `agent create` / `agent update` takes a URL. To get a URL, you either (a) already have one, or (b) run `onchainos agent upload --file <path>` to get one from a local image. **The "CDN" / "upload pipeline" are implementation details — never expose these words to the user.** To the user it's simply "发一张图片给我，我帮你上传" / "send me an image, I'll handle the upload".
 
 The right path depends on the runtime. Do not force the user down a path their environment cannot support.
 
 | Runtime | User provides image | AI-generated image | Skip avatar |
 |---|---|---|---|
-| **Claude Code (desktop / IDE)** | ✓ save attachment to a temp path → `agent upload <path>` → take returned URL | ✓ call the image-gen tool → save to temp path → `agent upload <path>` → URL | ✓ omit `--picture`; backend assigns default |
+| **Claude Code (desktop / IDE)** | ✓ save attachment to a temp path → `agent upload --file <path>` → take returned URL | ✓ call the image-gen tool → save to temp path → `agent upload --file <path>` → URL | ✓ omit `--picture`; backend assigns default |
 | **Plain terminal / CLI chat** | ✗ no file inline — do NOT ask the user to locate a path on disk | ✓ describe the prompt to the image-gen tool (user cannot preview but the URL works) | ✓ omit `--picture` |
 | **User writes the command themselves** | ✓ they pass `--picture <url>` directly | N/A | ✓ they omit `--picture` |
 
@@ -61,7 +61,7 @@ The right path depends on the runtime. Do not force the user down a path their e
 User: "帮我注册 provider，名字 Alice，顺便用这张图做头像" [attaches file]
 Skill:
   1. Save attachment → /tmp/<random>.png
-  2. onchainos agent upload /tmp/<random>.png
+  2. onchainos agent upload --file /tmp/<random>.png
      ← { url: "<url>" }
   3. Run agent create with --picture "<url>"
   4. Clean up the temp file
@@ -80,7 +80,7 @@ User: "用一只戴眼镜的青蛙当头像"
 Skill:
   1. Call image-gen tool with prompt → /tmp/<random>.png
   2. Show the generated image to the user, confirm ("这张 OK 吗？" / "Does this work?")
-  3. onchainos agent upload /tmp/<random>.png → URL
+  3. onchainos agent upload --file /tmp/<random>.png → URL
   4. Proceed with agent create / update
 ```
 

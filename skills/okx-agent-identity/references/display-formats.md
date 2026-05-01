@@ -97,7 +97,7 @@ Rules:
 - Services — one row per service, numbered `[N]`, single-line format. The **name value** (what the user typed, e.g. `TVL Query`) stays verbatim; the following descriptor uses user-language words: Chinese `名称 — 类型, 价格, 接口地址`-style reading order, English `Name — Type, Fee, Endpoint`-style reading order. In practice the single-line format is `<ServiceName> — <Type>, <Fee or 免费/free>, <Endpoint>`. For A2A, use `免费（链外按次计价）` / `free (per-call pricing off-chain)` in the user's language instead of Fee and drop the Endpoint (CLI clears it anyway).
 - `txHash` row present only when the command produced a tx (absent on read-only commands).
 - `Agent ID` row: follow the `#<id>` placeholder rule at the top of this file — omit the row entirely if the id is not available yet (e.g. fresh `create` response), don't render `#` alone.
-- **Single source of data — no chain calls.** All rows above (including Services and Reputation aggregate) come from the **one** `agent get --agent-ids <id>` response (`items[0]` — see `cli-reference.md §3` return schema: `{ agentId, name, role, status, description, picture, address, services: [...], reputation: { score, count } }`). Do **NOT** chain `agent service-list <id>` to "populate" the Services rows — they're already in the response. Do **NOT** chain `agent feedback-list <id>` to "populate" the Reputation row — the aggregate `{ score, count }` is already there; individual review entries belong to a separate, user-triggered request (see §Post-detail prompt below).
+- **Single source of data — no chain calls.** All rows above (including Services and Reputation aggregate) come from the **one** `agent get --agent-ids <id>` response (`items[0]` — see `cli-reference.md §3` return schema: `{ agentId, name, role, status, description, picture, address, services: [...], reputation: { score, count } }`). Do **NOT** chain `agent service-list --agent-id <id>` to "populate" the Services rows — they're already in the response. Do **NOT** chain `agent feedback-list --agent-id <id>` to "populate" the Reputation row — the aggregate `{ score, count }` is already there; individual review entries belong to a separate, user-triggered request (see §Post-detail prompt below).
 
 ### Post-detail prompt (after rendering §2)
 
@@ -119,7 +119,7 @@ Want to see this agent's review details?
 Reply 1 or 2.
 ```
 
-- On `1`: run `agent feedback-list <id>` once and render §5 (feedback list).
+- On `1`: run `agent feedback-list --agent-id <id>` once and render §5 (feedback list).
 - On `2`: stop. No further calls.
 - No other side-queries. `service-list` is **never** triggered from this prompt — services are already shown in the detail card.
 
@@ -152,7 +152,7 @@ Reply with matching numbers (comma-separated, e.g. "1,3").
 ```
 
 - On `0` → stop. No further calls.
-- Otherwise → run `agent feedback-list <id>` **once per selected agent**, render §5 for each, separated by `---`. Never run `service-list` from this prompt.
+- Otherwise → run `agent feedback-list --agent-id <id>` **once per selected agent**, render §5 for each, separated by `---`. Never run `service-list` from this prompt.
 - If the user already named which subset of returned agents they want reviews for ("看 42 和 58 的评价"), skip the prompt entirely and go directly to those ids' `feedback-list`.
 
 ---
@@ -237,7 +237,7 @@ Rules:
 
 ---
 
-## 4. Service list — `agent service-list <agentId>`
+## 4. Service list — `agent service-list --agent-id <id>`
 
 Header blockquote + a single Markdown pipe table, per the top-level table convention. 6 columns: `#` / 名称 / 类型 / 价格 / Endpoint / 描述 (Chinese) or `#` / Name / Type / Fee / Endpoint / Description (English). Pick ONE language variant based on user language; never render bilingual.
 
@@ -274,7 +274,7 @@ Rules:
 
 ---
 
-## 5. Feedback list — `agent feedback-list <agentId>`
+## 5. Feedback list — `agent feedback-list --agent-id <id>`
 
 Header line + one entry per review. Prose-style, not a table — the description can be multi-line.
 
