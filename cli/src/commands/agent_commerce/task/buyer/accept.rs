@@ -114,6 +114,34 @@ pub async fn handle_confirm_accept(
         }
     };
 
+    // ── Step 0: 余额预检（余额不足则阻断）──────────────────────────
+    {
+        let agreed = negotiate::load_agreed(job_id)?;
+        let check_symbol = token_symbol
+            .map(|s| s.to_string())
+            .or_else(|| agreed.as_ref().map(|(sym, _)| sym.clone()));
+        let check_amount = token_amount
+            .and_then(|a| a.parse::<f64>().ok())
+            .or_else(|| agreed.as_ref().and_then(|(_, amt)| amt.parse::<f64>().ok()));
+
+        // CLI/协商记录都没有 → 从任务详情取
+        let (sym, amt) = match (check_symbol, check_amount) {
+            (Some(s), Some(a)) => (s, a),
+            _ => {
+                let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
+                let s = task_resp["paymentTokenSymbol"].as_str().unwrap_or("USDT").to_string();
+                let a = task_resp["tokenAmount"].as_str()
+                    .and_then(|v| v.parse::<f64>().ok())
+                    .or_else(|| task_resp["paymentTokenAmount"].as_str().and_then(|v| v.parse().ok()))
+                    .unwrap_or(0.0);
+                (s, a)
+            }
+        };
+        if amt > 0.0 {
+            common::ensure_sufficient_balance(amt, &sym).await?;
+        }
+    }
+
     // ── Step 1: setPaymentMode（单签 + 广播上链）──────────────────────
     let mode_int = common::payment_mode_to_int(&payment_mode);
     let resp = client.post_with_identity(

@@ -10,8 +10,8 @@ use tokio::process::Command;
 
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
-use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{
+    self, network::task_api_client::TaskApiClient,
     AGENT_ROLE_BUYER, XLAYER_CHAIN_ID, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
 };
 use crate::wallet_api::UnsignedInfoResponse;
@@ -106,54 +106,6 @@ async fn resolve_buyer_agent() -> Result<(String, String)> {
     bail!("当前账户没有买家（requestor）身份，请先执行 onchainos agent create --role requestor 注册");
 }
 
-// ─── 余额预检 ────────────────────────────────────────────────────────────
-
-/// 调用 `onchainos wallet balance` 查询当前账户余额，
-/// 若指定代币余额不足则发出警告（不阻断流程，合约层会做最终校验）。
-async fn warn_if_insufficient_balance(budget: f64, currency: &str) {
-    let exe = match std::env::current_exe() {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    let output = match Command::new(&exe)
-        .args(["wallet", "balance"])
-        .output()
-        .await
-    {
-        Ok(o) if o.status.success() => o,
-        _ => return,
-    };
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: serde_json::Value = match serde_json::from_str(&stdout) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-
-    // 遍历 data.details[].tokenAssets[] 查找匹配代币的余额
-    let currency_upper = currency.to_uppercase();
-    if let Some(details) = parsed["data"]["details"].as_array() {
-        for detail in details {
-            if let Some(assets) = detail["tokenAssets"].as_array() {
-                for asset in assets {
-                    let symbol = asset["tokenSymbol"].as_str().unwrap_or("");
-                    if symbol.to_uppercase() == currency_upper {
-                        let balance_str = asset["balance"].as_str().unwrap_or("0");
-                        let balance: f64 = balance_str.parse().unwrap_or(0.0);
-                        if balance < budget {
-                            eprintln!(
-                                "⚠️  余额不足提醒：当前 {symbol} 余额为 {balance}，任务预算 {budget} {currency_upper}，请确保发布后账户有足够资金完成托管支付"
-                            );
-                        }
-                        return;
-                    }
-                }
-            }
-        }
-    }
-}
-
 // ─── 创建任务 ────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
@@ -201,8 +153,8 @@ pub async fn handle_create(
     let (buyer_agent_id, _buyer_owner_address) = resolve_buyer_agent().await?;
     eprintln!("[task-create] 买家身份校验通过 (agentId: {buyer_agent_id})");
 
-    // ── Step 0.5: 余额预检（警告，不阻断）──────────────
-    warn_if_insufficient_balance(budget, &currency).await;
+    // ── Step 0.5: 余额预检（余额不足则阻断）──────────────
+    common::ensure_sufficient_balance(budget, &currency).await?;
 
     // ── Step 0.6: 解析钱包地址 ───────────────────────────
     let wallets = crate::wallet_store::load_wallets()?

@@ -103,6 +103,65 @@ pub fn payment_mode_to_str(mode: i32) -> &'static str {
     }
 }
 
+// ─── 余额预检（阻断） ──────────────────────────────────────────────────────
+
+/// 调用 `onchainos wallet balance --chain 196` 查询 XLayer 余额，
+/// 若指定代币余额不足则 bail，阻断后续流程。
+pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<()> {
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("无法获取可执行文件路径: {e}"))?;
+
+    let output = tokio::process::Command::new(&exe)
+        .args(["wallet", "balance", "--chain", XLAYER_CHAIN_INDEX])
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("余额查询失败: {e}"))?;
+
+    if !output.status.success() {
+        bail!("余额查询失败（exit {}），请检查登录态", output.status);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|e| anyhow::anyhow!("解析余额查询结果失败: {e}"))?;
+
+    let currency_upper = currency.to_uppercase();
+    let details = parsed["data"]["details"].as_array();
+    if let Some(details) = details {
+        for detail in details {
+            let assets = detail["tokenAssets"]
+                .as_array()
+                .or_else(|| detail["assets"].as_array());
+            if let Some(assets) = assets {
+                for asset in assets {
+                    let symbol = asset["tokenSymbol"]
+                        .as_str()
+                        .or_else(|| asset["symbol"].as_str())
+                        .unwrap_or("");
+                    if symbol.to_uppercase() == currency_upper {
+                        let balance: f64 = asset["balance"]
+                            .as_str()
+                            .and_then(|s| s.parse().ok())
+                            .or_else(|| asset["balance"].as_f64())
+                            .unwrap_or(0.0);
+                        if balance < required {
+                            bail!(
+                                "余额不足：当前 XLayer {symbol} 余额为 {balance}，\
+                                 需要 {required} {currency_upper}。请先充值后再操作"
+                            );
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+
+    bail!(
+        "未查到 XLayer 上的 {currency_upper} 余额，请确认账户已持有该代币并充值后重试"
+    );
+}
+
 // ─── CLI 定义 ──────────────────────────────────────────────────────────────
 
 #[derive(Subcommand)]
