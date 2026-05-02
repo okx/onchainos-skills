@@ -139,7 +139,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20拿到输出后按剧本全自动执行（recommend → 路由 → 协商/接单）。\n\
              \x20\x20userContent: 任务 {job_id} 已上链成功（状态 Open），正在自动查询推荐卖家...\n\
              \x20\x20→ **结束本轮 turn**，由 user session agent 接手执行后续 Step 1-2。\n\
-             - 如果当前**是** user session → 继续执行 Step 1。\n\n\
+             - 如果当前**是** user session → 继续执行 Step 0.5。\n\n\
+             **Step 0.5 — 检查 designatedProvider 缓存（Scene 1.7 指定卖家）：**\n\
+             检查本 turn 上下文中是否有 designatedProvider 缓存（由 buyer.md Scene 1.7 在 create-task 后设置，含 agentId + serviceType）：\n\
+             - **有 designatedProvider** → ⚠️ **跳过 Step 1 recommend**，直接用缓存的 agentId 进入 B-Step 1 建群协商。清除缓存。\n\
+             - **无 designatedProvider**（默认）→ 继续 Step 1。\n\n\
              **Step 1 — 查询推荐卖家：**\n\
              ```bash\n\
              onchainos agent recommend {job_id} --agent-id {agent_id}\n\
@@ -206,6 +210,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              金额：<tokenAmount> <tokenSymbol>\n\
              交付截止：<deadline>\n\n\
              ⚠️ 任一步骤卖家 5 分钟未回复 → 视为协商失败，结束当前 sub session，执行「切换下一个卖家」。\n\n\
+             ⚠️ **币种铁律**：协商只允许改**金额**，不允许改**币种**。任务发布时的币种（从 `onchainos agent common context` 获取）\n\
+             是链上合约绑定的。如果卖家提出不同币种，必须纠正：「本任务使用 <任务币种>，请用 <任务币种> 报价。」\n\n\
+             ⚠️ **三步确认后立即保存协商结果**（在回复卖家之前）：\n\
+             ```bash\n\
+             onchainos agent save-agreed {job_id} --token-symbol <协商币种> --token-amount <协商价格>\n\
+             ```\n\
+             不保存会导致后续 confirm-accept 使用错误的币种/金额。\n\n\
              5. **按协商确定的支付方式分流**：\n\n\
              \x20\x20▸ **escrow（担保）**：\n\
              \x20\x20\x20\x20确认消息末尾加上：如确认无误，请你（卖家）执行 apply 接单。\n\
