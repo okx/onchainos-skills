@@ -68,10 +68,6 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
-    eprintln!(
-        "[buyer-flow] generate_next_action called: job_id={job_id}, job_status={job_status}, agent_id={agent_id}"
-    );
-
     // 通信机制（怎么发、能不能发、形态白名单）— 一律见 SKILL.md §Session 通信契约。
     // 本文件只告诉 agent **每一步把什么内容发到哪**。
     // ──────────────────────────────────────────────────────────────────────
@@ -96,12 +92,21 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         "📍 你在 sub session（你看到这段 next-action 输出 = 100% 在 sub）。\n\n\
          🔒 **如果当前 turn 没读过 SKILL.md §Session 通信契约**（envelope 形态白名单 / xmtp_send 两步 / xmtp_dispatch_user·xmtp_prompt_user 推 user session 铁律），\n\
          **先读 `skills/okx-agent-task/SKILL.md`** 再继续——下面步骤会引用它的章节（§3 / §4 / §5 / §6）。\n\n\
-         ⚠️ **同 turn 不重复 `session_status`**：sub session 的 sessionKey 在同一 turn 内是稳定的——**调过一次就把结果存住，后续 step 直接复用**。即使剧本多个 step 都提到 sessionKey，也只调一次 session_status。重复调 = 死循环征兆，必须立即停。\n\n\
+         ⚠️ **异常升级硬规则**（任何场景都适用，详见 SKILL.md 通讯边界 + buyer.md）：\n\
+         \x20\x201) 协议理解错位：你已澄清同一条流程 ≥1 次，对方下一条还在重复错误诉求 → **不再回复对方**，调 `xmtp_dispatch_user` 推 `[⚠️ 协议理解错位] ...`，结束 turn\n\
+         \x20\x202) CLI 错误：`onchainos agent <cmd>` 报错 → **不要重试**，直接调 `xmtp_dispatch_user` 推 `[⚠️ CLI 报错] ...`，等用户新指令；瞬态故障（network/JWT 过期）才允许自动重试一次\n\
+         \x20\x203) ❌ **绝对禁止把技术错误细节广播给对方**：CLI 命令名 / 后端字段名 / stderr 摘要 / `bug`/`命令：`/`错误：` 一律不能进 xmtp_send 给对方。最多发一句『稍等，正在确认细节』或干脆不通知对方。\n\
+         \x20\x204) ❌ **同 turn 不重复 xmtp_send**：剧本说『发一条』→ 调过一次工具返回『已发送』就**算成功**，**当前 turn 内不再对同一对方调 xmtp_send 第二次**。不要因为消息可能不够清晰就重发——重发 = 刷屏 + 触发对方循环。下一条 inbound 进来再说。\n\
+         \x20\x205) ❌ **apply 是卖家动作**：escrow 路径中 `apply` 由卖家执行，买家绝不能调 `onchainos agent apply`。买家只在收到卖家申请通知后执行 `confirm-accept`。non_escrow 路径需从卖家消息中提取 paymentId 再 confirm-accept。\n\
+         \x20\x206) ❌ **同 turn 不重复 `session_status`**：sub session 的 sessionKey 在同一 turn 内是稳定的——**调过一次就把结果存住，后续 step 直接复用**。即使剧本多个 step 都提到 sessionKey，也只调一次 session_status。重复调 = 死循环征兆，必须立即停。\n\n\
          如果不记得本任务协商细节（deliverable / paymentMode / token / 卖家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 加载上下文。\n\n"
     );
 
     let event = parse_status_or_event(job_status);
+    eprintln!(
+        "[buyer-flow] generate_next_action called: job_id={job_id}, job_status={job_status}, agent_id={agent_id}"
+    );
     eprintln!(
         "[buyer-flow] parsed event: {:?} | xmtp tools involved: {}",
         event,
@@ -119,7 +124,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         }
     );
 
-    let body = match event.clone() {
+    let body = match event {
         // ─── Scene 0: 任务上链确认，查询推荐卖家并按支付方式路由 ────────────────
         Event::JobCreated => format!(
             "【当前状态】job_created（任务已上链，状态 Open）\n\
@@ -780,10 +785,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
 
         // ─── dispute_approved — provider 仲裁阶段 1，buyer 无关 ─────
-        Event::DisputeApproved => format!(
-            "【系统通知】dispute_approved（provider 已上链仲裁阶段 1 approve，buyer 无关）\n\
-             【建议】静默观察即可。等 `job_disputed` 通知到达再 next-action 进入证据准备期。\n"
-        ),
+        Event::DisputeApproved => "【系统通知】dispute_approved（provider 已上链仲裁阶段 1 approve，buyer 无关）\n\
+             【建议】静默观察即可。等 `job_disputed` 通知到达再 next-action 进入证据准备期。\n".to_string(),
 
         // ─── 质押 / 罚没 lifecycle — buyer 不是 evaluator 时无关 ─────
         Event::Staked
@@ -808,7 +811,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
 
         // ─── 未知类型兜底 ───────────────────────────────────────────
-        Event::Other(other) => format!(
+        Event::Other(ref other) => format!(
             "【未知状态】{other}\n\
              【建议】\n\
              1. 调用 `onchainos agent common context {job_id} --role buyer` 查看完整上下文\n\
