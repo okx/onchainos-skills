@@ -344,6 +344,44 @@ impl TaskApiClient {
         result
     }
 
+    /// GET 二进制（证据下载等非 JSON 端点）+ JWT + agenticId header。
+    /// 走裸 `raw_http`（不经 wallet 的 JSON `handle_response`，无 DoH failover），
+    /// 返回原始字节。后端对 evidence/download 也强制鉴权，必须带 Bearer。
+    pub async fn get_bytes_with_identity(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        agent_id: &str,
+    ) -> Result<Vec<u8>> {
+        let token = get_access_token().await;
+        let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
+        let mut headers = crate::client::ApiClient::jwt_headers(&token);
+        if let (Ok(name), Ok(val)) = (
+            reqwest::header::HeaderName::from_bytes(b"agenticId"),
+            reqwest::header::HeaderValue::from_str(agent_id),
+        ) {
+            headers.insert(name, val);
+        }
+        eprintln!(
+            "[TaskAPI] GET(bytes) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}",
+            token.len()
+        );
+        let resp = self
+            .raw_http
+            .get(&url)
+            .headers(headers)
+            .query(query)
+            .send()
+            .await
+            .context("evidence download request failed")?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("evidence download failed ({status}): {url}; body={body}"));
+        }
+        Ok(resp.bytes().await?.to_vec())
+    }
+
     /// POST JSON + JWT → 返回 data（自动注入 sessionCert）
     pub async fn post(&mut self, path: &str, body: &Value) -> Result<Value> {
         let body = inject_session_cert(body);

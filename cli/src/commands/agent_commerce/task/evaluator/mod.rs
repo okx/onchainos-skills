@@ -52,8 +52,8 @@ pub enum EvaluatorCommand {
         agent_id: Option<String>,
     },
     /// Download a single evidence file by (jobId, fileKey). Useful for retry / scripted access
-    /// when `info` already returned the fileKey but a particular download failed. No agent
-    /// identity required — endpoint is keyed by fileKey.
+    /// when `info` already returned the fileKey but a particular download failed. Backend
+    /// requires JWT + agenticId on this endpoint (same auth chain as `info`).
     Download {
         /// Task jobId (top-level `jobId` from `evaluator info` response or envelope).
         job_id: String,
@@ -62,6 +62,9 @@ pub enum EvaluatorCommand {
         /// Output file path. Defaults to `$TMPDIR/onchainos-dispute/<jobId>/<fileKey-tail>`.
         #[arg(long, short = 'o')]
         output: Option<String>,
+        /// Evaluator agentId from inbound system envelope's top-level `agentId` field.
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
     },
     /// Commit a vote (Phase 1 of commit-reveal). vote: 0 = Approve (Client wins), 1 = Reject (Provider wins).
     /// Body sent to backend is only `{ vote }` — reason is NOT part of the API (lives in agent session memory).
@@ -166,8 +169,8 @@ pub async fn run(cmd: EvaluatorCommand, _ctx: &Context) -> Result<()> {
     match cmd {
         EvaluatorCommand::Info { dispute_id, agent_id } =>
             info::handle_info(&mut client, &dispute_id, agent_id.as_deref()).await,
-        EvaluatorCommand::Download { job_id, file_key, output } =>
-            download::handle_download(&client, &job_id, &file_key, output.as_deref()).await,
+        EvaluatorCommand::Download { job_id, file_key, output, agent_id } =>
+            download::handle_download(&client, &job_id, &file_key, output.as_deref(), agent_id.as_deref()).await,
         EvaluatorCommand::Commit { dispute_id, vote, agent_id } =>
             commit::handle_commit(&mut client, &dispute_id, vote, agent_id.as_deref()).await,
         EvaluatorCommand::Reveal { dispute_id, agent_id } =>

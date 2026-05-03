@@ -15,7 +15,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use serde_json::{json, Map, Value};
 
 use super::helpers::parse_job_id;
@@ -52,7 +52,7 @@ pub async fn handle_info(
         for item in images.iter_mut() {
             let Some(file_key) = extract_file_key(item) else { continue };
             let mut merged = normalize_image_item(item, &file_key);
-            match download_image(client, &job_id, &file_key, &tmp_dir).await {
+            match download_image(client, &job_id, &file_key, &tmp_dir, &agent_id).await {
                 Ok(p) => {
                     merged.insert(
                         "localPath".into(),
@@ -102,27 +102,18 @@ fn normalize_image_item(item: &Value, file_key: &str) -> Map<String, Value> {
 }
 
 /// 拉取证据二进制：`GET /priapi/v1/aieco/task/{jobId}/evidence/download?fileKey=<...>`。
-/// 走裸 reqwest（不经 handle_response 的 JSON 解析），返回原始字节。
+/// 后端对该端点强制 JWT + agenticId 鉴权，所以走 TaskApiClient 的
+/// `get_bytes_with_identity`（裸 reqwest + 注入 token / agenticId header）。
 pub(super) async fn fetch_evidence_bytes(
     client: &TaskApiClient,
     job_id: &str,
     file_key: &str,
+    agent_id: &str,
 ) -> Result<Vec<u8>> {
-    let url = format!(
-        "{}{}/evidence/download",
-        client.base_url().trim_end_matches('/'),
-        client.endpoint(job_id, "").trim_end_matches('/'),
-    );
-    let resp = client
-        .http()
-        .get(&url)
-        .query(&[("fileKey", file_key)])
-        .send()
-        .await?;
-    if !resp.status().is_success() {
-        bail!("evidence download failed ({}): {}", resp.status(), url);
-    }
-    Ok(resp.bytes().await?.to_vec())
+    let path = format!("{}/evidence/download", client.task_path(job_id));
+    client
+        .get_bytes_with_identity(&path, &[("fileKey", file_key)], agent_id)
+        .await
 }
 
 /// 把单张证据图下载到 `tmp_dir`，返回本地路径。
@@ -131,8 +122,9 @@ async fn download_image(
     job_id: &str,
     file_key: &str,
     tmp_dir: &Path,
+    agent_id: &str,
 ) -> Result<PathBuf> {
-    let bytes = fetch_evidence_bytes(client, job_id, file_key).await?;
+    let bytes = fetch_evidence_bytes(client, job_id, file_key, agent_id).await?;
     // fileKey 可能含 `/` 或 query-safe 字符；取最后一段做本地文件名
     let filename = file_key.rsplit('/').next().unwrap_or(file_key);
     let path = tmp_dir.join(filename);
