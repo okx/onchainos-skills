@@ -368,6 +368,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Claim { .. } => "claim".into(),
         AgentCommand::ClaimAutoRefund { .. } => "claim-auto-refund".into(),
         AgentCommand::ClaimAutoComplete { .. } => "claim-auto-complete".into(),
+        AgentCommand::ProviderClaimable { .. } => "provider-claimable".into(),
+        AgentCommand::ProviderClaimRewards { .. } => "provider-claim-rewards".into(),
 
         // Task (provider)
         AgentCommand::RecommendTask { .. } => "recommend-task".into(),

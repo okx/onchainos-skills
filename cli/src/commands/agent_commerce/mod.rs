@@ -141,6 +141,18 @@ pub enum AgentCommand {
     /// Client claims refund/reward after arbitration
     Claim { job_id: String },
 
+    /// Provider account-pull 查待领奖励
+    #[command(name = "provider-claimable")]
+    ProviderClaimable {
+        #[arg(long = "agent-id")] agent_id: String,
+    },
+
+    /// Provider account-pull 一次性领取所有可领奖励
+    #[command(name = "provider-claim-rewards")]
+    ProviderClaimRewards {
+        #[arg(long = "agent-id")] agent_id: String,
+    },
+
     // ── Task system (Provider) ──────────────────────────────────────────────
     /// Provider fetches recommended Public tasks matching their skill
     #[command(name = "recommend-task")]
@@ -418,6 +430,16 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::ClaimAutoComplete { job_id, agent_id } =>
             task::provider::run_provider(
                 task::provider::ProviderCommand::ClaimAutoComplete { job_id, agent_id }, ctx,
+            ).await,
+
+        AgentCommand::ProviderClaimable { agent_id } =>
+            task::provider::run_provider(
+                task::provider::ProviderCommand::Claimable { agent_id }, ctx,
+            ).await,
+
+        AgentCommand::ProviderClaimRewards { agent_id } =>
+            task::provider::run_provider(
+                task::provider::ProviderCommand::ClaimRewards { agent_id }, ctx,
             ).await,
 
         // ── Provider task commands ──────────────────────────────────

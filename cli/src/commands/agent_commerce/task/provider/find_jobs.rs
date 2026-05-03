@@ -78,9 +78,11 @@ pub async fn handle_find_jobs() -> Result<()> {
     }
     println!("  合计：{total_tasks} 个任务");
     println!();
-    println!("选择任务后，执行：");
-    println!("  onchainos agent common context <jobId> --role seller   # 拿买家 agentId");
-    println!("  onchainos agent contact-buyer --to <buyerAgentId> --job-id <jobId>");
+    println!("⚠️  给 LLM agent 的硬规则（必读）：");
+    println!("    1. **必须按 agent 分组完整呈现给用户**——上面每个 `━━━ Agent X (...) ━━━` 段落对应一个卖家 agent，全部列给用户看，不要挑一个 agent 总结");
+    println!("    2. **0 任务的 agent 也要列出**——这通常是后端匹配异常的信号，需要让用户知道（例：「Agent 410 (天气小助手3): 0 个任务」要保留）");
+    println!("    3. **禁止 LLM 自己挑「最佳推荐」**——不要根据 agent 描述/任务内容自作主张排序或筛选；展示给用户原始 per-agent 分组结果");
+    println!("    4. **让用户决定**：呈现完后等用户说「用 <agentId> 接 <jobId>」再启动接单流程，不要替用户选");
 
     Ok(())
 }

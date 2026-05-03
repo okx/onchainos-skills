@@ -309,12 +309,28 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【你的下一步动作（按胜负分流）】\n\n\
              ⚠️ 不要给买家 `xmtp_send`「裁决支持 X 方」过场——双方都会收到 `dispute_resolved` 系统事件。\n\n\
              ━━━━━━━━━━━━━ 分支 A：jobStatus=complete（卖家胜诉）━━━━━━━━━━━━━\n\n\
-             **A-Step 1 — 用 `xmtp_dispatch_user` 通知用户胜诉**：\n\n\
+             **A-Step 1 — 检查待领奖励（account-pull）**：\n\
+             ```bash\n\
+             onchainos agent provider-claimable --agent-id {agent_id}\n\
+             ```\n\
+             stdout 含 `•` 标记的行表示该 token 有非 0 待领金额。\n\n\
+             **A-Step 2 — 有非 0 金额时一次性领取**（claimable 输出全 0 则跳过）：\n\
+             ```bash\n\
+             onchainos agent provider-claim-rewards --agent-id {agent_id}\n\
+             ```\n\
+             记录 stdout 的 txHash + 实际领取的金额 / token（用于下一步通知用户）。\n\n\
+             **A-Step 3 — 用 `xmtp_dispatch_user` 通知用户胜诉 + 领取结果**：\n\n\
              从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol。\n\
              tool: xmtp_dispatch_user\n\
-             content:\n\
-             \x20\x20\x20\x20[仲裁胜诉 ⚖️💰] 任务 {job_id}（<title>）仲裁完成，**卖方胜诉**。\n\
-             \x20\x20\x20\x20  - 收入：<tokenAmount> <tokenSymbol>\n\
+             content（按 A-Step 2 是否实际 claim 二选一）：\n\
+             \x20\x20有领取：[仲裁胜诉 ⚖️💰] 任务 {job_id}（<title>）仲裁完成，**卖方胜诉**。\n\
+             \x20\x20\x20\x20  - 任务收入：<tokenAmount> <tokenSymbol>\n\
+             \x20\x20\x20\x20  - 已自动领取账户奖励：<claimed amount> <symbol>（txHash=<hash>）\n\
+             \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（jobStatus=complete）\n\
+             \x20\x20\x20\x20本任务流程结束。\n\
+             \x20\x20无可领：[仲裁胜诉 ⚖️💰] 任务 {job_id}（<title>）仲裁完成，**卖方胜诉**。\n\
+             \x20\x20\x20\x20  - 任务收入：<tokenAmount> <tokenSymbol>\n\
+             \x20\x20\x20\x20  - 账户级待领奖励：无（已检查）\n\
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（jobStatus=complete）\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
              ━━━━━━━━━━━━━ 分支 B：jobStatus=rejected（卖家败诉）━━━━━━━━━━━━━\n\n\

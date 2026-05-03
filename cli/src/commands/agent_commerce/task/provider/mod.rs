@@ -8,6 +8,10 @@
 //! - `dispute_info.rs`      — 查询争议详情
 //! - `provider_claim.rs`    — submit→complete 超时领取（claimAutoComplete）
 //!
+//! account-pull 仲裁奖励（`claim-rewards` / `claimable`）：直接在 dispatch arm
+//! 里 inline 调 `common::claim`，不再为 provider 单独写薄壳——逻辑就是
+//! `signing::resolve_wallet(None, None)` + `common::claim::*`，没有角色专属解析。
+//!
 //! 链下证据上传 (`dispute upload`) 由买卖双方共用，
 //! 实现在 `common/dispute_upload.rs`。
 
@@ -27,8 +31,12 @@ pub mod recommend_task;
 use anyhow::Result;
 use clap::Subcommand;
 
-use crate::commands::agent_commerce::task::common::dispute_upload;
-use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use anyhow::bail;
+
+use crate::commands::agent_commerce::task::common::{
+    claim as common_claim, dispute_upload, network::task_api_client::TaskApiClient,
+};
+use crate::commands::agent_commerce::task::signing;
 use crate::commands::Context;
 
 // ─── provider subcommands ─────────────────────────────────────────────────
@@ -69,6 +77,16 @@ pub enum ProviderCommand {
     ClaimAutoComplete {
         job_id: String,
         /// 卖家 agentId（必填）
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+    /// Account-pull: 查待领奖励（仲裁胜诉等场景累积的余额）
+    Claimable {
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+    /// Account-pull: 一次性领取所有可领奖励
+    ClaimRewards {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
@@ -132,6 +150,36 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
             agreerefund::handle_agree_refund(&mut client, &job_id, &agent_id).await,
         ProviderCommand::ClaimAutoComplete { job_id, agent_id } =>
             provider_claim::handle_claim_auto_complete(&mut client, &job_id, &agent_id).await,
+
+        // account-pull claim 直接 inline 调 common::claim：
+        // provider 没有 role-specific 的 wallet/agent 解析（不像 evaluator），
+        // 不需要单独的 wrapper 文件。
+        ProviderCommand::Claimable { agent_id } => {
+            if agent_id.is_empty() {
+                bail!("--agent-id 必填，传卖家自己的 agentId（beta 后端拒空 agenticId header）");
+            }
+            let (_account_id, address) = signing::resolve_wallet(None, None)?;
+            let has_nonzero =
+                common_claim::fetch_and_print_claimable(&mut client, &agent_id, &address).await?;
+            if has_nonzero {
+                println!("\nnext: 有可领奖励 — 跑 `onchainos agent provider-claim-rewards --agent-id {agent_id}` 一次性提走。");
+            } else {
+                println!("\n(当前无待领奖励)");
+            }
+            Ok(())
+        }
+        ProviderCommand::ClaimRewards { agent_id } => {
+            if agent_id.is_empty() {
+                bail!("--agent-id 必填，传卖家自己的 agentId（beta 后端拒空 agenticId header）");
+            }
+            let (account_id, address) = signing::resolve_wallet(None, None)?;
+            let tx_hash =
+                common_claim::submit_claim_and_broadcast(&mut client, &account_id, &address, &agent_id).await?;
+            println!("✓ reward claim submitted (account={address})");
+            println!("  txHash: {tx_hash}");
+            println!("note: 一次性领取所有已结算争议的奖励，到账金额会在链上确认后通知。");
+            Ok(())
+        }
     }
 }
 
