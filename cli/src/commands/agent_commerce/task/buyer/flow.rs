@@ -130,16 +130,18 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前状态】job_created（任务已上链，状态 Open）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作（严格顺序，不询问用户，全自动执行）】\n\n\
-             **Step 0 — 确认当前 session 类型：**\n\
-             调 `session_status` 检查当前 session。\n\
+             **Step 0 — 防循环短路 + session 路由：**\n\
+             ⚠️ 如果本轮 turn 是由 `[AUTO_EXECUTE]` 触发的（上下文中包含该标记），\n\
+             说明你已经在 user session 中，**直接跳到 Step 0.5**，不要调 session_status，不要调 xmtp_prompt_user。\n\n\
+             否则，调 `session_status` 检查当前 session：\n\
+             - 如果当前**是** user session → 继续执行 Step 0.5。\n\
              - 如果当前**不是** user session（如 g-backup 等非主会话）：\n\
              \x20\x20调用 xmtp_prompt_user 把任务创建通知转发到 user session 并触发自动执行：\n\
              \x20\x20llmContent: [AUTO_EXECUTE] 任务 {job_id} 已上链（job_created）。无需询问用户，直接执行：\n\
              \x20\x20`onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id}`\n\
              \x20\x20拿到输出后按剧本全自动执行（recommend → 路由 → 协商/接单）。\n\
              \x20\x20userContent: 任务 {job_id} 已上链成功（状态 Open），正在自动查询推荐卖家...\n\
-             \x20\x20→ **结束本轮 turn**，由 user session agent 接手执行后续 Step 1-2。\n\
-             - 如果当前**是** user session → 继续执行 Step 0.5。\n\n\
+             \x20\x20→ **结束本轮 turn**，由 user session agent 接手执行后续 Step 1-2。\n\n\
              **Step 0.5 — 检查 designatedProvider 缓存（Scene 1.7 指定卖家）：**\n\
              检查本 turn 上下文中是否有 designatedProvider 缓存（由 buyer.md Scene 1.7 在 create-task 后设置，含 agentId + serviceType）：\n\
              - **有 designatedProvider** → ⚠️ **跳过 Step 1 recommend**，直接用缓存的 agentId 进入 B-Step 1 建群协商。清除缓存。\n\
