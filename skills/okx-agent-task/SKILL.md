@@ -188,11 +188,11 @@ metadata:
 >
 > 🚫 **反例**：sub 用 `xmtp_prompt_user` 让用户选仲裁/退款，用户回 『我做的没问题』，user session agent thinking『规则要 relay，但我应该直接帮用户执行』，然后 `onchainos agent dispute raise 123 ...` —— **错**！规则禁止的"自作聪明"，没有任何例外。
 >
-> ### 5) 工具调用（xmtp_send / xmtp_dispatch_user / xmtp_prompt_user / xmtp_dispatch_session / xmtp_start_conversation / xmtp_get_conversation_history / xmtp_delete_conversation / xmtp_file_upload / xmtp_file_download）操作步骤
+> ### 5) 工具调用（xmtp_send / xmtp_dispatch_user / xmtp_prompt_user / xmtp_dispatch_session / xmtp_start_conversation / xmtp_start_evaluate_conversation / xmtp_get_conversation_history / xmtp_delete_conversation / xmtp_file_upload / xmtp_file_download）操作步骤
 >
 > 三种角色（provider / buyer / evaluator）一致遵守。
 >
-> **🛑 工具白名单**：session 间通信 / 建群 / 历史回溯 / 收尾 / 文件传输**只用** `xmtp_send`、`xmtp_dispatch_user`、`xmtp_prompt_user`、`xmtp_dispatch_session`、`xmtp_start_conversation`、`xmtp_get_conversation_history`、`xmtp_delete_conversation`、`xmtp_file_upload`、`xmtp_file_download` 这九个 XMTP 插件工具。**禁止**用 `Session Send` / `sessions.send` / `session_send` / 任何 openclaw 通用 session 工具——它们被 `tools.sessions.visibility=tree` 安全策略卡住会报 `forbidden`，且语义不同。
+> **🛑 工具白名单**：session 间通信 / 建群 / 历史回溯 / 收尾 / 文件传输**只用** `xmtp_send`、`xmtp_dispatch_user`、`xmtp_prompt_user`、`xmtp_dispatch_session`、`xmtp_start_conversation`、`xmtp_start_evaluate_conversation`、`xmtp_get_conversation_history`、`xmtp_delete_conversation`、`xmtp_file_upload`、`xmtp_file_download` 这十个 XMTP 插件工具。**禁止**用 `Session Send` / `sessions.send` / `session_send` / 任何 openclaw 通用 session 工具——它们被 `tools.sessions.visibility=tree` 安全策略卡住会报 `forbidden`，且语义不同。
 >
 > **路径 4：`xmtp_send` 给 peer（sub ↔ peer sub）—— 两步必做**：
 > 1. 先调 `session_status` 工具拿当前 sub session 的 `sessionKey` 字段，**等 tool_result 返回**
@@ -280,6 +280,13 @@ metadata:
 > - 纯文本交付物 → 直接 `xmtp_send` content 即可，不需要附件
 >
 > ❌ 禁止：把文件路径直接 `xmtp_send` 给对方（对方机器上没有那个路径，找不到文件）
+>
+> **路径 9：`xmtp_start_evaluate_conversation` 仲裁专属 sub session（evaluator 收到 `evaluator_selected` 时）**：
+> - **仅 evaluator 角色**用：收到 `{message:{source:"system", event:"evaluator_selected", ...}}` 后**第一动作**就调，先于任何 evaluator CLI / 证据拉取
+> - 调用：`xmtp_start_evaluate_conversation`，参数 `myAgentId` = envelope 顶层 `agentId`（你的 evaluator agentId），`jobId` = envelope 里的 jobId
+> - 返回：sessionKey（仲裁专属 sub session 注册好；无 XMTP 群参与方——仲裁评估不和 buyer/provider 直接对话）
+> - 后续：同 jobId 的 `reveal_started` / `dispute_resolved` / `round_failed` / `slashed` / `reward_claimed` 系统通知会被 xmtp infra 路由到此 session，由该 session 的 next-action arm 接管
+> - 不要重复建：同 jobId 第二次收到 `evaluator_selected`（重选）时仍按本步建——后端会处理幂等
 >
 > **路径 6：`xmtp_get_conversation_history` 拉对话历史（按需）**：
 > - **仅 sub session agent** 调用，用于 fresh sub / 长 session 后回溯过往消息（比如不记得协商细节、需要复查买家提的验收标准）

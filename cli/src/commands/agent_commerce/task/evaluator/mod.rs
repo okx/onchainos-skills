@@ -2,6 +2,7 @@
 //!
 //! 按仲裁者动作划分文件：
 //! - `info.rs`            — 拉取证据（只读，含图片下载）
+//! - `download.rs`        — 按 (jobId, fileKey) 单独下载一份证据字节
 //! - `commit.rs`          — Commit 投票（commit-reveal 第一阶段）
 //! - `reveal.rs`          — Reveal 投票（第二阶段；后端反查 vote+salt，CLI 不传 side）
 //! - `claim.rs`           — account 级 pull 领取所有已结算奖励
@@ -17,6 +18,7 @@
 mod claim;
 mod claimable;
 mod commit;
+mod download;
 pub mod flow;
 mod helpers;
 mod increase_stake;
@@ -49,12 +51,24 @@ pub enum EvaluatorCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Commit a vote (Phase 1 of commit-reveal). side: 1 = Provider wins (Approve), 2 = Client wins (Reject).
+    /// Download a single evidence file by (jobId, fileKey). Useful for retry / scripted access
+    /// when `info` already returned the fileKey but a particular download failed. No agent
+    /// identity required — endpoint is keyed by fileKey.
+    Download {
+        /// Task jobId (top-level `jobId` from `evaluator info` response or envelope).
+        job_id: String,
+        /// Opaque fileKey returned in `provider.images[]` / `client.images[]`.
+        file_key: String,
+        /// Output file path. Defaults to `$TMPDIR/onchainos-dispute/<jobId>/<fileKey-tail>`.
+        #[arg(long, short = 'o')]
+        output: Option<String>,
+    },
+    /// Commit a vote (Phase 1 of commit-reveal). vote: 0 = Approve (Client wins), 1 = Reject (Provider wins).
     /// Body sent to backend is only `{ vote }` — reason is NOT part of the API (lives in agent session memory).
     Commit {
         dispute_id: String,
         #[arg(long)]
-        side: u8,
+        vote: u8,
         /// Evaluator agentId from inbound system envelope's top-level `agentId` field.
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
@@ -62,7 +76,7 @@ pub enum EvaluatorCommand {
     /// Reveal a previously-committed vote (Phase 2 of commit-reveal). Driven by the
     /// `reveal_started` system event whose envelope carries `disputeId`. CLI sends an
     /// empty body `{}` — backend reads vote+salt from `task_dispute_voter` keyed by
-    /// (disputeId, voter), so no `--side` is required.
+    /// (disputeId, voter), so no `--vote` is required.
     Reveal {
         dispute_id: String,
         /// Evaluator agentId from inbound system envelope's top-level `agentId` field.
@@ -152,8 +166,10 @@ pub async fn run(cmd: EvaluatorCommand, _ctx: &Context) -> Result<()> {
     match cmd {
         EvaluatorCommand::Info { dispute_id, agent_id } =>
             info::handle_info(&mut client, &dispute_id, agent_id.as_deref()).await,
-        EvaluatorCommand::Commit { dispute_id, side, agent_id } =>
-            commit::handle_commit(&mut client, &dispute_id, side, agent_id.as_deref()).await,
+        EvaluatorCommand::Download { job_id, file_key, output } =>
+            download::handle_download(&client, &job_id, &file_key, output.as_deref()).await,
+        EvaluatorCommand::Commit { dispute_id, vote, agent_id } =>
+            commit::handle_commit(&mut client, &dispute_id, vote, agent_id.as_deref()).await,
         EvaluatorCommand::Reveal { dispute_id, agent_id } =>
             reveal::handle_reveal(&mut client, &dispute_id, agent_id.as_deref()).await,
         EvaluatorCommand::Claim { agent_id } =>

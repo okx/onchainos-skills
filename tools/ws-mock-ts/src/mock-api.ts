@@ -43,9 +43,10 @@ interface ProviderConfirm {
 interface DisputeEvidence {
   from: "client" | "provider"; summary: string; url?: string; level: "S"|"A"|"B"|"C"|"D";
 }
-interface DisputeVote { side: 1 | 2; reason: string; voter: string; at: string; }
+// vote semantics (per real API spec): 0 = Approve (Client wins), 1 = Reject (Provider wins)
+interface DisputeVote { side: 0 | 1; reason: string; voter: string; at: string; }
 interface VoterCommit {
-  vote: 1 | 2; salt: string; reason: string;
+  vote: 0 | 1; salt: string; reason: string;
   committedAt: string; revealedAt?: string;
 }
 interface Dispute {
@@ -1069,8 +1070,9 @@ const server = http.createServer(async (req, res) => {
     let usdtReward = 0;
     for (const d of disputes.values()) {
       if (!d.resolvedAt) continue;
-      const winningVote = d.verdict === "provider" ? 1 : d.verdict === "client" ? 2 : null;
-      if (!winningVote) continue;
+      // vote=1 (Reject) → Provider wins; vote=0 (Approve) → Client wins
+      const winningVote: 0 | 1 | null = d.verdict === "provider" ? 1 : d.verdict === "client" ? 0 : null;
+      if (winningVote === null) continue;
       const commit = d.voterCommits[account];
       if (commit?.vote === winningVote) usdtReward += 1;
     }
@@ -1336,8 +1338,8 @@ const server = http.createServer(async (req, res) => {
     if (!dispute.commitPhaseStartedAt) { sendErr(res, 2002, "commit phase not started (voters not yet selected)"); return; }
     const body = await parseBody(req) as Record<string, unknown>;
     const vote = Number(body.vote);
-    if (vote !== 1 && vote !== 2) { sendErr(res, 1001, "vote must be 1 (provider) or 2 (client)"); return; }
-    // 真后端（Lark §11175）commit body 仅 `{ vote }`，reason 不在 API schema。
+    if (vote !== 0 && vote !== 1) { sendErr(res, 1001, "vote must be 0 (Approve, Client wins) or 1 (Reject, Provider wins)"); return; }
+    // 真后端 commit body 仅 `{ vote }`，reason 不在 API schema。
     // mock 这里仍保留字段占位（可选），方便做本地分析/dashboard 显示，但不强制。
     const reason = String(body.reason ?? "");
     // voter 解析：X-Wallet-Address > query voter > agenticId 反查 agents.json > body.voter（老 mock 调用）
@@ -1347,7 +1349,7 @@ const server = http.createServer(async (req, res) => {
     const commitHash = "0x" + crypto.createHash("sha256")
       .update(`${dispute.disputeId}|${vote}|${salt}`).digest("hex");
     dispute.voterCommits[voter] = {
-      vote: vote as 1 | 2, salt, reason, committedAt: nowIso(),
+      vote: vote as 0 | 1, salt, reason, committedAt: nowIso(),
     };
     console.log(`[mock-api] vote committed: disputeId=${dispute.disputeId} voter=${voter} vote=${vote}`);
     // tx 回执:vote_committed 立即推(真后端是 commit tx 上链后)
@@ -1362,7 +1364,9 @@ const server = http.createServer(async (req, res) => {
       const targets = evalAddrs.length > 0 ? evalAddrs : [voter];
       notifyRevealStarted(t2, dispute.disputeId, targets);
     }, REVEAL_WINDOW_DELAY_MS);
-    sendOk(res, { uopData: mockUopData(), disputeId: dispute.disputeId, commitHash }); return;
+    // 真后端 commit 响应同时返回 commitSalt — broadcast bizContext 需要把
+    // commitSalt + vote 一起带上做链上 commitHash 校验。
+    sendOk(res, { uopData: mockUopData(), disputeId: dispute.disputeId, commitHash, commitSalt: salt }); return;
   }
   // Commit-Reveal Phase 2:披露承诺。按真后端 spec（post-2026-05），voter 不必再传 vote——
   // 后端从 task_dispute_voter 反查 vote+salt，组装 revealVote(jobId, vote, salt) calldata。
@@ -1379,8 +1383,8 @@ const server = http.createServer(async (req, res) => {
     // body.vote optional：未传则用 commit 时存的 vote；传了则做兼容性一致性校验。
     if (body.vote !== undefined && body.vote !== null) {
       const revealVote = Number(body.vote);
-      if (revealVote !== 1 && revealVote !== 2) {
-        sendErr(res, 1001, "vote must be 1 (provider) or 2 (client)"); return;
+      if (revealVote !== 0 && revealVote !== 1) {
+        sendErr(res, 1001, "vote must be 0 (Approve, Client wins) or 1 (Reject, Provider wins)"); return;
       }
       if (revealVote !== commit.vote) {
         sendErr(res, 2012, `reveal vote (${revealVote}) does not match commit vote (${commit.vote}); on-chain commitHash would not verify`);
@@ -1398,6 +1402,7 @@ const server = http.createServer(async (req, res) => {
     let settled = false;
     let winner: "buyer" | "seller" | undefined;
     if (allRevealed) {
+      // vote=1 (Reject) → Provider/seller wins; vote=0 (Approve) → Client/buyer wins
       winner = commit.vote === 1 ? "seller" : "buyer";
       dispute.verdict = commit.vote === 1 ? "provider" : "client";
       dispute.resolvedAt = nowIso();

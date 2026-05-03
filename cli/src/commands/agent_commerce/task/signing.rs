@@ -362,6 +362,68 @@ pub async fn sign_uop_and_broadcast(
         .to_string())
 }
 
+/// sign_uop_and_broadcast 的变体，仅 vote/commit 场景使用：
+/// 把后端返回的 `commitSalt` 和 evaluator 选择的 `vote`(0/1) 附加到 bizContext，
+/// 让链上广播能复原 `commitHash = keccak256(disputeId, vote, salt)` 的素材。
+#[allow(clippy::too_many_arguments)]
+pub async fn sign_uop_and_broadcast_with_commit_meta(
+    client: &mut TaskApiClient,
+    uop_data: &Value,
+    account_id: &str,
+    address: &str,
+    job_id: &str,
+    biz_context: BizContext,
+    agent_id: &str,
+    commit_salt: &str,
+    vote: u8,
+) -> Result<String> {
+    if uop_data.is_null() {
+        bail!("后端未返回 uopData，无法签名上链");
+    }
+
+    let unsigned: UnsignedInfoResponse = serde_json::from_value(uop_data.clone())
+        .map_err(|e| anyhow::anyhow!("解析 uopData 失败: {e}"))?;
+
+    let exec_ok = match &unsigned.execute_result {
+        Value::Bool(b) => *b,
+        Value::Null => true,
+        _ => true,
+    };
+    if !exec_ok {
+        let err_msg = if unsigned.execute_error_msg.is_empty() {
+            "transaction simulation failed".to_string()
+        } else {
+            unsigned.execute_error_msg.clone()
+        };
+        bail!("交易模拟失败（链上 estimateGas revert）: {}", err_msg);
+    }
+
+    let mut broadcast_body = build_broadcast_body(
+        &unsigned,
+        account_id,
+        address,
+        XLAYER_CHAIN_INDEX,
+        true,
+        false,
+        false,
+    )
+    .await?;
+    broadcast_body["bizContext"] = serde_json::json!({
+        "jobId": job_id,
+        "bizType": biz_context as i32,
+        "commitSalt": commit_salt,
+        "vote": vote,
+    });
+
+    let bc_resp = client.post_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
+        .map_err(|e| anyhow::anyhow!("广播失败: {e}"))?;
+
+    Ok(bc_resp[0]["txHash"]
+        .as_str()
+        .unwrap_or("pending")
+        .to_string())
+}
+
 /// sign_uop_and_broadcast 的变体，支持在 bizContext 中附加 paymentVerify。
 /// 仅 escrow accept 场景需要。
 #[allow(clippy::too_many_arguments)]

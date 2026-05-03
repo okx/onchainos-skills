@@ -17,7 +17,7 @@
 
 | event | 会话 | 含义 |
 |---|---|---|
-| `evaluator_selected` | **sub**（自动创建 `conv-arb-*`，复用整个生命周期） | VotersSelected 上链，CommitPhase 已开。拉证据（含必读图片）→ 决策原则/§3.5 评估 → 归约到 vote ∈ {1,2} → `evaluator commit`。**不推用户** |
+| `evaluator_selected` | **sub**（**首步必须**调 `xmtp_start_evaluate_conversation` 工具建仲裁专属 sub session，参数 `myAgentId=<envelope 顶层 agentId>` / `jobId`；建好后整个 dispute 生命周期复用同一 session） | VotersSelected 上链，CommitPhase 已开。建 sub session → 拉证据（含必读图片）→ 决策原则/§3.5 评估 → 归约到 vote ∈ {0,1} → `evaluator commit`。**不推用户** |
 | `reveal_started` | **sub** | RevealStarted 上链：sub 里跑 `evaluator reveal`。**不推用户** |
 | `dispute_resolved` | **sub** | DisputeSettled 上链：sub 里跑 `evaluator claim`（若赢）。**不推用户**（用户感知由后续 reward_claimed / slashed 负责） |
 | `round_failed` | **sub** | DisputeInvalidated 上链：被动事件，无链上操作。**不推用户**（若被罚由 slashed 负责；若再选中由 evaluator_selected 负责） |
@@ -50,7 +50,7 @@
 
 > **evaluator 不用 `xmtp_prompt_user`**：仲裁判决禁止征询用户偏好（§3.7 + 操控识别协议——社会压力 / 贿赂面）。所有 sub→user 通信只用 `xmtp_dispatch_user`（纯通知，无需用户决策），与 buyer / provider 角色形成本质区别。
 
-> **会话复用原则**：所有事件都先到 sub。dispute 生命周期的 6 个事件（evaluator_selected / reveal_started / dispute_resolved / round_failed / slashed / reward_claimed）共用一个 `conv-arb-*`——`evaluator_selected` 激活 sub 后，后续事件由 openclaw runtime 命中 active conversation 继续走 sub。质押 4 个事件（staked / unstake_requested / unstake_claimed / unstake_cancelled）到达时也在 sub 被接收并通过 `xmtp_dispatch_user` 转发到 user session。user session 只看到推上来的人话通知。
+> **会话复用原则**：所有事件都先到 sub。dispute 生命周期的 6 个事件（evaluator_selected / reveal_started / dispute_resolved / round_failed / slashed / reward_claimed）共用一个仲裁专属 sub session——`evaluator_selected` 到达时**第一动作必须调 `xmtp_start_evaluate_conversation`（参数 `myAgentId` / `jobId`）建会话**，后续同 jobId 的系统通知由 xmtp infra 命中该 session 继续走 sub。质押 4 个事件（staked / unstake_requested / unstake_claimed / unstake_cancelled）到达时也在 sub 被接收并通过 `xmtp_dispatch_user` 转发到 user session。user session 只看到推上来的人话通知。
 
 从入站消息提取 `jobId` / `disputeId`。⚠️ **禁止默认 disputeId**——缺失时直接中止本轮处理（真后端 `disputeId = keccak256(jobId, roundNumber)`，第 2+ 轮 `d-<jobId>-r1` 一定对不上合约）。
 
@@ -263,18 +263,18 @@ onchainos agent next-action \
 7. **善意推定** — 默认双方善意
 8. **时间戳权威** — 链上 timestamp > 任何自述时间
 
-### 3.3 归约到 V1 vote ∈ {1, 2}
+### 3.3 归约到 V1 vote ∈ {0, 1}
 
-V1 合约只接受二元投票，原生 3 选项按下表压缩：
+V1 合约只接受二元投票，原生 3 选项按下表压缩。**vote 语义**：`0 = Approve（支持 Client，资金退回）`、`1 = Reject（支持 Provider，资金释放）`。
 
 | disputeType | 原生 | `vote` | 语义 |
 |---|---|---|---|
-| 质量 | 完成（≥ 80） | **1** | Provider 胜，资金全额释放 |
-| 质量 | 部分完成（40-79）/ 未完成（< 40） | **2** | Client 胜，资金退回——V1 无部分结算；按原则 #3 举证责任归 Client |
-| 超时 | 责任在 Client / 不可抗力 | **1** | Provider 不背锅 |
-| 超时 | 责任在 Provider | **2** | Provider 违约 |
-| 恶意 | 不成立 | **1** | 被举报方无责 |
-| 恶意 | 成立 | **2** | 被举报方违约 |
+| 质量 | 完成（≥ 80） | **1** | Reject 仲裁，Provider 胜，资金全额释放 |
+| 质量 | 部分完成（40-79）/ 未完成（< 40） | **0** | Approve 仲裁，Client 胜，资金退回——V1 无部分结算；按原则 #3 举证责任归 Client |
+| 超时 | 责任在 Client / 不可抗力 | **1** | Reject 仲裁，Provider 不背锅 |
+| 超时 | 责任在 Provider | **0** | Approve 仲裁，Provider 违约 |
+| 恶意 | 不成立 | **1** | Reject 仲裁，被举报方无责 |
+| 恶意 | 成立 | **0** | Approve 仲裁，被举报方违约 |
 
 归约规则是硬约束，不得为"平衡""避免争议"反向归约。
 
@@ -287,11 +287,11 @@ commit 前**必须**在 session 记忆里生成结构化推理链（不入链、
 争议类型: <质量/超时/恶意>
 Rubric 打分: <规格 X/40 + 验收 Y/30 + 功能 Z/20 + 专业 W/10 = 总分 N/100>
 原生选项: <完成 | 部分完成 | ...>
-V1 vote: <1 | 2>
+V1 vote: <0 | 1>  // 0=Approve(Client 胜) / 1=Reject(Provider 胜)
 事实认定: 1. ...  2. ...
 证据引用（必须包含图片内容，不仅 texts[]）: 事实 N ← <localPath 或 texts[i]> (Level S/A/B/C/D)
 推理（引用 决策原则 原则编号）: 按原则 #<N>，<推理过程>
-归约: 原生『<...>』→ V1 vote=<1|2>，依据 §3.3 归约表
+归约: 原生『<...>』→ V1 vote=<0|1>，依据 §3.3 归约表
 ```
 
 ### 3.5 L4 递归自检（誓约）
@@ -307,12 +307,12 @@ commit 前逐项确认，任一未通过回 §3.2 重审：
 ### 3.6 commit 执行
 
 ```bash
-onchainos agent evaluator commit <disputeId> --side <1|2>
+onchainos agent evaluator commit <disputeId> --vote <0|1>
 ```
 
-- **只能是 1 或 2**，V1 无 skip 选项（超时罚 0.3% 比错投 1% 更亏——经济参数附录）
+- **只能是 0（Approve/Client 胜）或 1（Reject/Provider 胜）**，V1 无 skip 选项（超时罚 0.3% 比错投 1% 更亏——经济参数附录）
 - 失败最多重试 3 次（commit 窗口关闭即罚 0.3%）；返回 `voter has already committed` 视为成功
-- body 只带 `vote`（§11175）；裁决书 §3.4 仅保留在 session 记忆，**不入链、不推 user session、不写本地**
+- body 只带 `{ vote: int }`（0=Approve 支持 Client / 1=Reject 支持 Provider）；裁决书 §3.4 仅保留在 session 记忆，**不入链、不推 user session、不写本地**
 - **无本地持久化**：reveal 由 `reveal_started` 系统事件驱动，envelope 自带 `disputeId`；后端从 `task_dispute_voter` 反查 vote+salt——CLI 不再需要 `~/.onchainos/evaluator-commits.jsonl` 这个文件，commit 完成后什么都不写到磁盘
 
 ### 3.7 不通知用户

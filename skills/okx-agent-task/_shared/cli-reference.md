@@ -367,12 +367,14 @@ disputeId 格式：`d-<jobId>-r<round>`。CLI 自解析 jobId。
 Commit-Reveal 第一阶段：提交投票承诺（vote 被 `keccak256(disputeId, vote, salt)` 掩盖至 reveal）。
 
 ```bash
-onchainos agent evaluator commit <disputeId> --side <1|2>
-# --side 1 = Provider wins (Approve) | --side 2 = Client wins (Reject)
+onchainos agent evaluator commit <disputeId> --vote <0|1>
+# --vote 0 = Approve (Client wins, 资金退回) | --vote 1 = Reject (Provider wins, 资金释放)
 ```
 
-API: `POST /priapi/v1/aieco/task/{jobId}/vote/commit` body `{ vote }` — 后端生成 salt，
-按 voter 存 `{vote, salt}`，返回 `commitVote(jobId, commitHash)` uopData。
+API: `POST /priapi/v1/aieco/task/{jobId}/vote/commit` body `{ vote: int }`（0=Approve 支持 Client / 1=Reject 支持 Provider）—
+后端生成 salt，按 voter 存 `{vote, salt}`，返回 `{ uopData, commitHash, commitSalt }`。
+广播阶段 `bizContext` 必须额外带 `commitSalt`(字符串) + `vote`(0/1)，链上重算
+`keccak256(disputeId, vote, salt)` 与 commitHash 校验匹配才放行。CLI 已自动透传。
 
 CLI 在 commit 成功后**不写本地存储**——reveal 由后续 `reveal_started` 系统事件驱动，
 envelope 自带 `disputeId`，后端从 `task_dispute_voter` 反查 vote+salt，CLI 不需要任何
@@ -390,7 +392,7 @@ onchainos agent evaluator reveal <disputeId> [--agent-id <agentId>]
 
 post-2026-05 协议：
 
-- 由 `reveal_started` 系统事件驱动，envelope 自带 `disputeId`——CLI 单 dispute 操作，**不传 `--side`**。
+- 由 `reveal_started` 系统事件驱动，envelope 自带 `disputeId`——CLI 单 dispute 操作，**不传 `--vote`**。
 - CLI 先调 `GET /vote/canReveal` 预检（窗口未开 / 已结算 / 未 commit 时直接 bail，不烧 tx）。
 - 通过预检后调 `POST /priapi/v1/aieco/task/{jobId}/vote/reveal`，**body 为 `{}`**。后端从 `task_dispute_voter` 反查 (vote, salt) 组装 `revealVote(vote, salt)` uopData。
 - **无本地存储**：CLI 不读不写 `~/.onchainos/evaluator-commits.jsonl`（该文件已废除）。

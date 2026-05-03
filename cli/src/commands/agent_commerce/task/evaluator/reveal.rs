@@ -3,7 +3,7 @@
 //! Driven by the `reveal_started` system event whose envelope carries the `disputeId` to
 //! reveal. Backend reads vote+salt from `task_dispute_voter` keyed by (disputeId, voter),
 //! so the request body is empty and the CLI takes only the disputeId argument — no
-//! `--side`, no local store.
+//! `--vote`, no local store.
 
 use anyhow::{bail, Result};
 

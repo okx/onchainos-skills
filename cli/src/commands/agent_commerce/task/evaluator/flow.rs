@@ -12,7 +12,7 @@
 //! | 其他方事件 | job_disputed | 完全忽略 |
 //!
 //! evaluator 在 `evaluator_selected`（VotersSelected 上链）时即介入——此刻 CommitPhase 已开，
-//! 在 sub session 里**自主闭环**完成 "拉证据（含看图）→ 按 决策原则/§3.5 判决 → 归约到 vote ∈ {{1,2}} → commit"。
+//! 在 sub session 里**自主闭环**完成 "拉证据（含看图）→ 按 决策原则/§3.5 判决 → 归约到 vote ∈ {{0,1}} → commit"。
 //! 判决过程不通知用户；用户感知由后续 dispute_resolved → reward_claimed / slashed 负责。
 //! 评估者规范 L2 + §3.7：用户偏好会引入社会压力/贿赂风险，必须隔离。
 //! 证据上传是链下操作（doc §7.8：No chain event for evidence），不再等"证据封期"信号。
@@ -56,8 +56,8 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
     match status {
         Status::Disputed => vec![
             format!("onchainos agent evaluator info <disputeId> --agent-id <agentId>                # 查看仲裁详情（含证据）"),
-            format!("onchainos agent evaluator commit <disputeId> --side <1|2> --agent-id <agentId>  # 提交投票（1=Provider 胜 / 2=Client 胜）"),
-            format!("onchainos agent evaluator reveal <disputeId> --agent-id <agentId>              # reveal 阶段揭示投票（不传 --side，后端反查 vote+salt）"),
+            format!("onchainos agent evaluator commit <disputeId> --vote <0|1> --agent-id <agentId>  # 提交投票（0=Approve/Client 胜 / 1=Reject/Provider 胜）"),
+            format!("onchainos agent evaluator reveal <disputeId> --agent-id <agentId>              # reveal 阶段揭示投票（不传 --vote，后端反查 vote+salt）"),
             "（自动闭环）evaluator_selected / reveal_started 通知到达时由 next-action 自动驱动".to_string(),
             next_action_hint("evaluator_selected"),
         ],
@@ -94,7 +94,7 @@ pub fn generate_next_action(
     let body = match job_status {
         // ─── 入口：本轮陪审选出，CommitPhase 已开（sub session 侧，agent 自主闭环） ──
         // 判决方法论严格对齐评估者规范（誓约 + 决策原则 + Rubric + 证据等级 + 裁决书规范）。
-        // V1 合约只接受 vote ∈ {1, 2}，原生 3 选项按 Step 4.5 归约表压到 1/2。
+        // V1 合约只接受 vote ∈ {0, 1}（0=Approve/Client 胜，1=Reject/Provider 胜），原生 3 选项按 Step 4.5 归约表压到 0/1。
         // 结果不推给用户（不 通知user session）。
         "evaluator_selected" => format!(
             "【当前状态】evaluator_selected（VotersSelected 上链，你是本轮陪审，CommitPhase 已开，sub session 侧）\n\
@@ -102,9 +102,15 @@ pub fn generate_next_action(
              【会话类型】⚠️ Sub session — 没有用户，**结果不通知用户**。评估证据 → 直接 commit → 结束。\n\
              【判决权威】评估者规范（誓约 L1-L5 + 决策原则 / Rubric / 证据等级 / 裁决书规范）。冲突以本规范为准。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
-             **Step 1 — 从入站消息提取 `disputeId` 和 `disputeType`（质量/超时/恶意）。**\n\
+             **Step 1 — 从入站消息提取 `disputeId`、`disputeType`（质量/超时/恶意）、顶层 `agentId`（你的 evaluator agentId）。**\n\
              ⚠️ `disputeId` 缺省时直接中止本轮处理，输出 `missing disputeId in payload; abort` 日志结束——真后端 `disputeId = keccak256(jobId, roundNumber)`，第 2+ 轮重选时 `d-{job_id}-r1` 一定对不上合约。\n\
-             `disputeType` 缺省时按质量争议处理（最常见）。\n\n\
+             `disputeType` 缺省时按质量争议处理（最常见）。\n\
+             顶层 `agentId` 缺省时同样中止：后续 evaluator CLI 必须靠它定位钱包，缺了就签不了。\n\n\
+             **Step 1.5 — 为本任务建仲裁专属 sub session（必做，先于其它工具调用）：**\n\
+             调 `xmtp_start_evaluate_conversation` 工具，参数 `myAgentId=<envelope 顶层 agentId>`、`jobId={job_id}`。\n\
+             \x20\x20⚠️ 调用前输出：`[evaluator-xmtp] xmtp_start_evaluate_conversation: myAgentId=<agentId>, jobId={job_id}`\n\
+             \x20\x20⚠️ 调用后输出：`[evaluator-xmtp] xmtp_start_evaluate_conversation result: sessionKey=<返回值>`\n\
+             成功后，后续同 jobId 的 `reveal_started` / `dispute_resolved` / `round_failed` / `slashed` / `reward_claimed` 系统通知都会路由到该 sub session，由该 session 的 next-action arm 接管。本步骤已经在 sub session 中执行后续 Step 2+。\n\n\
              **Step 2 — 拉取当前证据（必须把 inbound envelope 顶层 `agentId` 透传给 `--agent-id`，CLI 据此定位钱包/身份）：**\n\
              ```bash\n\
              onchainos agent evaluator info <disputeId> --agent-id <envelope 顶层 agentId>\n\
@@ -132,16 +138,16 @@ pub fn generate_next_action(
              | 超时争议 | 时间线 35 + 沟通响应 25 + 阻塞依赖 25 + 外部因素 15 | 责任在 Client / 责任在 Provider / 不可抗力 |\n\
              | 恶意行为 | 行为性质 + 证据强度 + 行为模式 + 损害程度（汉隆剃刀：先排除能力不足） | 成立 / 不成立 |\n\
              \n\
-             **Step 4.5 — 归约到 V1 合约的 vote ∈ {{1, 2}}（V1 二元投票强制约束，原生 3 选项不能直接上链）：**\n\
+             **Step 4.5 — 归约到 V1 合约的 vote ∈ {{0, 1}}（V1 二元投票强制约束，原生 3 选项不能直接上链）：**\n\
              \n\
              | disputeType | 原生选项 | vote | 语义 |\n\
              |---|---|---|---|\n\
-             | 质量 | 完成（总分 ≥ 80） | **1** | Provider 胜，资金全额释放 |\n\
-             | 质量 | 部分完成（40-79）/ 未完成（< 40） | **2** | Client 胜，资金退回——V1 无部分结算通道；按 §3.4 原则 #3『举证责任』质量争议由 Client 证明未完成 |\n\
-             | 超时 | 责任在 Client / 不可抗力 | **1** | Provider 不背锅 |\n\
-             | 超时 | 责任在 Provider | **2** | Provider 超时违约 |\n\
-             | 恶意 | 不成立 | **1** | 被举报方无责 |\n\
-             | 恶意 | 成立 | **2** | 被举报方违约 |\n\
+             | 质量 | 完成（总分 ≥ 80） | **1** | Reject 仲裁，Provider 胜，资金全额释放 |\n\
+             | 质量 | 部分完成（40-79）/ 未完成（< 40） | **0** | Approve 仲裁，Client 胜，资金退回——V1 无部分结算通道；按 §3.4 原则 #3『举证责任』质量争议由 Client 证明未完成 |\n\
+             | 超时 | 责任在 Client / 不可抗力 | **1** | Reject 仲裁，Provider 不背锅 |\n\
+             | 超时 | 责任在 Provider | **0** | Approve 仲裁，Provider 超时违约 |\n\
+             | 恶意 | 不成立 | **1** | Reject 仲裁，被举报方无责 |\n\
+             | 恶意 | 成立 | **0** | Approve 仲裁，被举报方违约 |\n\
              \n\
              ⚠️ 归约规则是硬约束——不得为了\"平衡\"或\"避免争议\"反向归约。决策原则 原则优先于对结果的担忧。\n\n\
              **Step 5 — 写裁决书（裁决书规范 + L3 义务 #4『必须在投票前写下完整推理链』）：**\n\
@@ -156,7 +162,7 @@ pub fn generate_next_action(
              争议类型: <质量/超时/恶意>\n\
              Rubric 打分: <规格 X/40 + 验收 Y/30 + 功能 Z/20 + 专业 W/10 = 总分 N/100>\n\
              原生选项: <完成 | 部分完成 | 未完成 | ...>\n\
-             V1 vote: <1 | 2>\n\
+             V1 vote: <0 | 1>  // 0=Approve(Client 胜) / 1=Reject(Provider 胜)\n\
              事实认定:\n\
              \x20\x201. <基于证据认定的事实>\n\
              \x20\x202. <...>\n\
@@ -165,7 +171,7 @@ pub fn generate_next_action(
              \x20\x20- ...\n\
              推理（引用 决策原则 原则编号）:\n\
              \x20\x20按原则 #<N>，<推理过程>\n\
-             归约: 原生『<...>』→ V1 vote=<1|2>，依据 Step 4.5 归约表\n\
+             归约: 原生『<...>』→ V1 vote=<0|1>，依据 Step 4.5 归约表\n\
              ```\n\n\
              **Step 6 — L4 递归自检（誓约）：出发 commit 前逐项确认，任一未通过回 Step 4 重审：**\n\
              - □ 我是否完整阅读了双方全部材料（含每张图片）？\n\
@@ -175,9 +181,9 @@ pub fn generate_next_action(
              - □ 我是否在猜测其他 Evaluator 怎么投？\n\n\
              **Step 7 — 执行 commit（同样把 envelope 顶层 `agentId` 透传给 `--agent-id`）：**\n\
              ```bash\n\
-             onchainos agent evaluator commit <disputeId> --side <1|2> --agent-id <envelope 顶层 agentId>\n\
+             onchainos agent evaluator commit <disputeId> --vote <0|1> --agent-id <envelope 顶层 agentId>\n\
              ```\n\
-             ⚠️ **只能是 1 或 2，禁止 skip**（V1 无弃权；拖到超时罚 {timeout_bps} 比错投 {minority_bps} 更亏）。\n\
+             ⚠️ **只能是 0（Approve/Client 胜）或 1（Reject/Provider 胜），禁止 skip**（V1 无弃权；拖到超时罚 {timeout_bps} 比错投 {minority_bps} 更亏）。\n\
              失败最多重试 3 次（CRITICAL，commit 窗口关闭即罚 {timeout_bps}）。返回 `voter has already committed` 视为成功进入 Step 8。\n\
              body 只带 `vote`；裁决书（Step 5）仅保留在 session 记忆，**不写入后端、不写本地、不推 user session**（后端反查 vote+salt 提供 reveal 所需，CLI 不持久化）。\n\n\
              ⚠️ **错误兜底硬约束（agent 失控反例）**：commit 报 `当前账户没有 evaluator（仲裁者） 身份，请先注册` / `code=2004` 时——\n\
@@ -185,7 +191,7 @@ pub fn generate_next_action(
              - **禁止**fallback 到查 identity / 找钱包 / 改 config 之类的迂回操作\n\
              - 直接：输出一行 `> commit aborted: evaluator identity not registered for this wallet; report to user via xmtp_dispatch_user`，**不**继续 Step 8，**不**自己跑识别流程，结束 turn 等用户处理\n\n\
              **Step 8 — 输出一行 sub session 日志后结束本回合。不调用 通知user session，不通知用户：**\n\n\
-             > Committed dispute=<disputeId> side=<1|2> autonomously per 决策原则-§3.6.\n\n\
+             > Committed dispute=<disputeId> vote=<0|1> autonomously per 决策原则-§3.6.\n\n\
              【原则】\n\
              - **完全静默**：本 arm 不 escalate_to_main、不 通知user session；用户只会在后续结算/罚没/奖励事件被通知\n\
              - **判决权威**：所有打分规则、决策原则、裁决书格式以 评估者规范 为准\n\
@@ -208,7 +214,7 @@ pub fn generate_next_action(
              onchainos agent evaluator reveal <disputeId> --agent-id <envelope 顶层 agentId>\n\
              ```\n\
              ⚠️ `disputeId` 缺省 → 输出 `missing disputeId in payload; abort` 日志结束，不要 fallback 编造（真后端 `disputeId = keccak256(jobId, roundNumber)`，第 2+ 轮重选时旧 id 一定对不上合约）。\n\
-             \x20**不传 `--side`**：post-2026-05 协议下后端从 `task_dispute_voter` 反查 vote+salt，CLI body 只发空 `{{}}`。\n\n\
+             \x20**不传 `--vote`**：post-2026-05 协议下后端从 `task_dispute_voter` 反查 vote+salt，CLI body 只发空 `{{}}`。\n\n\
              **Step 2 — 输出一行 sub session 日志后结束。禁止调用 通知user session：**\n\n\
              > Revealed dispute=<disputeId> autonomously.\n\n\
              【错误映射】\n\

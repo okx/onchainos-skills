@@ -3,14 +3,12 @@
 //! disputeId 格式: `d-<jobId>-r<round>` — 解析 jobId，GET /evidence，下载双方图片到本地，
 //! 再把 localPath 塞回响应对象，供多模态 agent 直接 open-image 阅读。
 //!
-//! 后端响应结构（§7）：
+//! 后端响应结构（扁平：provider/client 在顶层，无 `evidences` 包装层）：
 //! ```json
 //! {
-//!   "jobId":"...", "title":"...", "description":"...", "description_summary":"...",
-//!   "evidences": {
-//!     "provider": { "texts":["..."], "images":[ {"fileKey":"..."} | "..." , ...] },
-//!     "client":   { "texts":["..."], "images":[ ... ] }
-//!   }
+//!   "jobId":"...", "title":"...", "description":"...", "descriptionSummary":"...",
+//!   "provider": { "texts":["..."], "images":[ {"fileKey":"..."} | "..." , ...] },
+//!   "client":   { "texts":["..."], "images":[ ... ] }
 //! }
 //! ```
 
@@ -23,6 +21,9 @@ use serde_json::{json, Map, Value};
 use super::helpers::parse_job_id;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
+
+/// 双方证据袋的顶层 key（后端返回扁平结构，provider/client 直接在顶层）。
+const EVIDENCE_SIDES: [&str; 2] = ["provider", "client"];
 
 /// E1: fetch dispute evidence (text + images) for the evaluator. Downloads every referenced image
 /// and adds `localPath` to each image entry so downstream multimodal agents can open the file.
@@ -44,37 +45,27 @@ pub async fn handle_info(
         .join(dispute_id);
     fs::create_dir_all(&tmp_dir)?;
 
-    // 后端结构：evidences 是 {provider: {texts,images}, client: {texts,images}}
-    if let Value::Object(mut by_side) = data["evidences"].clone() {
-        for side in ["provider", "client"] {
-            if let Some(bucket) = by_side.get_mut(side).and_then(Value::as_object_mut) {
-                if let Some(images) = bucket.get_mut("images").and_then(Value::as_array_mut) {
-                    for item in images.iter_mut() {
-                        if let Some(file_key) = extract_file_key(item) {
-                            let mut merged = normalize_image_item(item, &file_key);
-                            match download_image(client, &job_id, &file_key, &tmp_dir).await {
-                                Ok(p) => {
-                                    merged.insert(
-                                        "localPath".into(),
-                                        Value::String(p.to_string_lossy().into()),
-                                    );
-                                }
-                                Err(e) => {
-                                    merged.insert(
-                                        "downloadError".into(),
-                                        Value::String(e.to_string()),
-                                    );
-                                }
-                            }
-                            *item = Value::Object(merged);
-                        }
-                    }
+    // 后端扁平结构：provider/client 直接在顶层（不嵌套在 evidences 下）
+    for side in EVIDENCE_SIDES {
+        let Some(bucket) = data.get_mut(side).and_then(Value::as_object_mut) else { continue };
+        let Some(images) = bucket.get_mut("images").and_then(Value::as_array_mut) else { continue };
+        for item in images.iter_mut() {
+            let Some(file_key) = extract_file_key(item) else { continue };
+            let mut merged = normalize_image_item(item, &file_key);
+            match download_image(client, &job_id, &file_key, &tmp_dir).await {
+                Ok(p) => {
+                    merged.insert(
+                        "localPath".into(),
+                        Value::String(p.to_string_lossy().into()),
+                    );
+                }
+                Err(e) => {
+                    merged.insert("downloadError".into(), Value::String(e.to_string()));
                 }
             }
+            *item = Value::Object(merged);
         }
-        data["evidences"] = Value::Object(by_side);
     }
-    // 其他形态（null / 缺失）：原样透传
 
     println!("{}", serde_json::to_string_pretty(&data)?);
     Ok(())
@@ -110,14 +101,13 @@ fn normalize_image_item(item: &Value, file_key: &str) -> Map<String, Value> {
     }
 }
 
-/// 图片下载走裸 reqwest（二进制流，不能经 handle_response 的 JSON 解析）。
-/// 路径对齐真后端：`GET /priapi/v1/aieco/task/{jobId}/evidence/download?fileKey=<...>`。
-async fn download_image(
+/// 拉取证据二进制：`GET /priapi/v1/aieco/task/{jobId}/evidence/download?fileKey=<...>`。
+/// 走裸 reqwest（不经 handle_response 的 JSON 解析），返回原始字节。
+pub(super) async fn fetch_evidence_bytes(
     client: &TaskApiClient,
     job_id: &str,
     file_key: &str,
-    tmp_dir: &Path,
-) -> Result<PathBuf> {
+) -> Result<Vec<u8>> {
     let url = format!(
         "{}{}/evidence/download",
         client.base_url().trim_end_matches('/'),
@@ -132,7 +122,17 @@ async fn download_image(
     if !resp.status().is_success() {
         bail!("evidence download failed ({}): {}", resp.status(), url);
     }
-    let bytes = resp.bytes().await?;
+    Ok(resp.bytes().await?.to_vec())
+}
+
+/// 把单张证据图下载到 `tmp_dir`，返回本地路径。
+async fn download_image(
+    client: &TaskApiClient,
+    job_id: &str,
+    file_key: &str,
+    tmp_dir: &Path,
+) -> Result<PathBuf> {
+    let bytes = fetch_evidence_bytes(client, job_id, file_key).await?;
     // fileKey 可能含 `/` 或 query-safe 字符；取最后一段做本地文件名
     let filename = file_key.rsplit('/').next().unwrap_or(file_key);
     let path = tmp_dir.join(filename);
