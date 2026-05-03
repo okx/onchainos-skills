@@ -9,9 +9,12 @@ use crate::commands::agent_commerce::task::signing;
 ///
 /// API: `POST /priapi/v1/aieco/task/claim` with empty body. Returns `claimRewards()`
 /// calldata — no per-token / per-job arguments. Not scoped to a single jobId.
-pub async fn handle_claim(client: &mut TaskApiClient) -> Result<()> {
+pub async fn handle_claim(
+    client: &mut TaskApiClient,
+    agent_id_hint: Option<&str>,
+) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator().await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
 
     let path = "/priapi/v1/aieco/task/claim";
     let resp = client.post_with_identity(

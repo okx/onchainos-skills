@@ -8,44 +8,49 @@
 
 事件命名对齐后端 event 枚举。激活本 skill 的消息类型：
 
+> **前置：先确认 `--role evaluator`**
+> 收到 `source:"system"` envelope 时，先按 [SKILL.md → ABSOLUTE RULE → `--role` 选择表](./SKILL.md) 选 role；本表只覆盖 `--role evaluator` 命中的事件。`jobId` 字面值（含 `system_voter_staking` 等系统级 jobId）不参与判定，只看 `event` 字段。
+
 ### 事件路由总览（所有事件都在 sub session 收到）
 
 **仲裁自主闭环——sub 处理 + 不通知用户**：
 
 | event | 会话 | 含义 |
 |---|---|---|
-| `evaluator_selected` | **sub**（自动创建 `conv-arb-*`，复用整个生命周期） | VotersSelected 上链，CommitPhase 已开。拉证据（含必读图片）→ 决策原则/§3.5 评估 → 归约到 vote ∈ {1,2} → `evaluator commit`。**不 xmtp_dispatch_session** |
-| `reveal_started` | **sub** | RevealStarted 上链：sub 里跑 `evaluator reveal`。**不 xmtp_dispatch_session** |
-| `dispute_resolved` | **sub** | DisputeSettled 上链：sub 里跑 `evaluator claim`（若赢）+ `evaluator forget`。**不 xmtp_dispatch_session**（用户感知由后续 reward_claimed / slashed 负责） |
-| `round_failed` | **sub** | DisputeInvalidated 上链：`evaluator forget` 清本地。**不 xmtp_dispatch_session**（若被罚由 slashed 负责；若再选中由 evaluator_selected 负责） |
+| `evaluator_selected` | **sub**（自动创建 `conv-arb-*`，复用整个生命周期） | VotersSelected 上链，CommitPhase 已开。拉证据（含必读图片）→ 决策原则/§3.5 评估 → 归约到 vote ∈ {1,2} → `evaluator commit`。**不推用户** |
+| `reveal_started` | **sub** | RevealStarted 上链：sub 里跑 `evaluator reveal`。**不推用户** |
+| `dispute_resolved` | **sub** | DisputeSettled 上链：sub 里跑 `evaluator claim`（若赢）。**不推用户**（用户感知由后续 reward_claimed / slashed 负责） |
+| `round_failed` | **sub** | DisputeInvalidated 上链：被动事件，无链上操作。**不推用户**（若被罚由 slashed 负责；若再选中由 evaluator_selected 负责） |
 
-**资金/罚没——sub 处理 + xmtp_dispatch_session 推用户**：
-
-| event | 会话 | 含义 |
-|---|---|---|
-| `reward_claimed` | **sub** | claimRewards tx 回执：提取 status / amount / txHash → `xmtp_dispatch_session` 推入账或失败给用户 |
-| `slashed` | **sub** | VoterStaking.Slashed 上链：提取 amount / reason / disputeId → `xmtp_dispatch_session` 推罚没金额 + 原因给用户 |
-
-**质押生命周期——sub 处理 + xmtp_dispatch_session 推用户**：
+**资金/罚没——sub 处理 + `xmtp_dispatch_user` 推用户**：
 
 | event | 会话 | 含义 |
 |---|---|---|
-| `staked` | **sub** | 质押 tx 回执（首次质押或追加质押均发此事件） → `xmtp_dispatch_session` 推质押结果 |
-| `unstake_requested` | **sub** | 申请解质押 tx 回执 → `xmtp_dispatch_session` 推冷却期 + `availableAt` |
-| `unstake_claimed` | **sub** | 冷却期结束领取 tx 回执 → `xmtp_dispatch_session` 推到账 |
-| `unstake_cancelled` | **sub** | 冷却期内取消 tx 回执 → `xmtp_dispatch_session` 推回到质押状态 |
+| `reward_claimed` | **sub** | claimRewards tx 回执：提取 status / amount / txHash → `xmtp_dispatch_user` 推入账或失败给用户 |
+| `slashed` | **sub** | VoterStaking.Slashed 上链：提取 amount / reason / disputeId → `xmtp_dispatch_user` 推罚没金额 + 原因给用户 |
+
+**质押生命周期——sub 处理 + `xmtp_dispatch_user` 推用户**：
+
+| event | 会话 | 含义 |
+|---|---|---|
+| `staked` | **sub** | 质押 tx 回执（首次质押或追加质押均发此事件） → `xmtp_dispatch_user` 推质押结果 |
+| `unstake_requested` | **sub** | 申请解质押 tx 回执 → `xmtp_dispatch_user` 推冷却期 + `availableAt` |
+| `unstake_claimed` | **sub** | 冷却期结束领取 tx 回执 → `xmtp_dispatch_user` 推到账 |
+| `unstake_cancelled` | **sub** | 冷却期内取消 tx 回执 → `xmtp_dispatch_user` 推回到质押状态 |
 
 **仅记录/忽略（都不通知用户）**：
 
 | event | 行为 |
 |---|---|
-| `vote_committed` | sub 里静默记录 tx 成功（不 xmtp_dispatch_session；commit 是内部决策，用户无需感知） |
-| `vote_revealed` | **完全忽略**，连日志都只写一行（不记录、不 xmtp_dispatch_session） |
+| `vote_committed` | sub 里静默记录 tx 成功（不推用户；commit 是内部决策，用户无需感知） |
+| `vote_revealed` | **完全忽略**，连日志都只写一行（不记录、不推用户） |
 | `job_disputed` | 完全忽略（evaluator 不是接收方） |
 
 > **决策模型**：仲裁判决（evaluator_selected → commit）由 agent 基于评估者规范自主完成（誓约 L1-L5 + 决策原则 / Rubric / 证据等级 / 裁决书规范）。commit → reveal → settle 全程不通知用户；用户感知仅通过"资金/罚没"类事件出现（reward_claimed / slashed）。设计原因：操控识别协议 + 用户偏好隔离原则明确 evaluator 不得被用户偏好影响（社会压力 / 贿赂面）。
 
-> **会话复用原则**：所有事件都先到 sub。dispute 生命周期的 6 个事件（evaluator_selected / reveal_started / dispute_resolved / round_failed / slashed / reward_claimed）共用一个 `conv-arb-*`——`evaluator_selected` 激活 sub 后，后续事件由 openclaw runtime 命中 active conversation 继续走 sub。质押 4 个事件（staked / unstake_requested / unstake_claimed / unstake_cancelled）到达时也在 sub 被接收并通过 `xmtp_dispatch_session`（省略 sessionKey）转发user session。user session 只看到推上来的人话通知。
+> **evaluator 不用 `xmtp_prompt_user`**：仲裁判决禁止征询用户偏好（§3.7 + 操控识别协议——社会压力 / 贿赂面）。所有 sub→user 通信只用 `xmtp_dispatch_user`（纯通知，无需用户决策），与 buyer / provider 角色形成本质区别。
+
+> **会话复用原则**：所有事件都先到 sub。dispute 生命周期的 6 个事件（evaluator_selected / reveal_started / dispute_resolved / round_failed / slashed / reward_claimed）共用一个 `conv-arb-*`——`evaluator_selected` 激活 sub 后，后续事件由 openclaw runtime 命中 active conversation 继续走 sub。质押 4 个事件（staked / unstake_requested / unstake_claimed / unstake_cancelled）到达时也在 sub 被接收并通过 `xmtp_dispatch_user` 转发到 user session。user session 只看到推上来的人话通知。
 
 从入站消息提取 `jobId` / `disputeId`。⚠️ **禁止默认 disputeId**——缺失时直接中止本轮处理（真后端 `disputeId = keccak256(jobId, roundNumber)`，第 2+ 轮 `d-<jobId>-r1` 一定对不上合约）。
 
@@ -222,7 +227,7 @@ onchainos agent next-action \
 **按命令输出的提示词严格执行**——它会告诉你：
 - 当前状态解释（sub session，自主闭环）
 - 下一步要跑的 CLI 命令（`evaluator info/commit/reveal/claim`）
-- `xmtp_dispatch_session` 工具调用模板（向用户推结果通知）
+- `xmtp_dispatch_user` 工具调用模板（向用户推结果通知；evaluator 永远不用 `xmtp_prompt_user`，见上文决策模型）
 - 错误映射与重试次数
 - 后续等待哪些事件
 
@@ -307,12 +312,12 @@ onchainos agent evaluator commit <disputeId> --side <1|2>
 
 - **只能是 1 或 2**，V1 无 skip 选项（超时罚 0.3% 比错投 1% 更亏——经济参数附录）
 - 失败最多重试 3 次（commit 窗口关闭即罚 0.3%）；返回 `voter has already committed` 视为成功
-- body 只带 `vote`（§11175）；裁决书 §3.4 仅保留在 session 记忆，**不入链、不推 user session**
-- Side 持久化：`commit` 自动把 `{disputeId, side, voter, commitHash, txHash, committedAt}` 追加到 `~/.onchainos/evaluator-commits.jsonl`；`reveal` 反查该文件取 side；`dispute_resolved` / `round_failed` arm 会自动调 `evaluator forget <disputeId>` 清理
+- body 只带 `vote`（§11175）；裁决书 §3.4 仅保留在 session 记忆，**不入链、不推 user session、不写本地**
+- **无本地持久化**：reveal 由 `reveal_started` 系统事件驱动，envelope 自带 `disputeId`；后端从 `task_dispute_voter` 反查 vote+salt——CLI 不再需要 `~/.onchainos/evaluator-commits.jsonl` 这个文件，commit 完成后什么都不写到磁盘
 
 ### 3.7 不通知用户
 
-本 arm 完成后**不调用** `xmtp_dispatch_session`、**不调用** `escalate_to_main`。用户直到后续 `dispute_resolved` / `slashed` / `reward_claimed` 事件才会被其他 arm 通知到。
+本 arm 完成后**不调用** `xmtp_dispatch_user` / `xmtp_prompt_user`、**不调用** `escalate_to_main`。用户直到后续 `dispute_resolved` / `slashed` / `reward_claimed` 事件才会被其他 arm 通知到。
 
 > **为什么不问用户** —— 操控识别协议 L2 #1-#10 + §3.7：用户偏好会引入社会压力、贿赂、情感操控等操控面；仲裁判决必须**只基于证据 + 标准**。这是机制设计的核心约束，不是交互风格。
 
@@ -481,7 +486,8 @@ onchainos agent evaluator commit <disputeId> --side <1|2>
 | `evaluator info` 失败 | 重试 1 次；仍失败报错中止 |
 | `evaluator commit` 失败 | 重试 3 次（CRITICAL，别让 commit 窗口关闭） |
 | `evaluator reveal` 失败 | 重试 3 次（未 reveal 罚 0.3%，经济参数附录 `TIMEOUT_PENALTY_RATE`） |
-| `evaluator reveal` 报 `canReveal=false` | CLI 已自动预检并拒绝上链：不要重试，等 `reveal_started` 事件到达；若本轮已结算，改跑 `evaluator claim`（无参，account 级 pull 所有奖励） |
+| `evaluator reveal` 报 `canReveal=false` | CLI 已自动预检并拒绝上链：不要重试，等 `dispute_resolved`；若本轮已结算，改跑 `evaluator claim`（account 级 pull 所有奖励） |
+| `evaluator reveal` 报 `voter has not committed` | 本轮未 commit，跳过 reveal 是正常的 |
 | 投票超时临近 | 立即 commit 当前判断，超时罚 0.3% |
 | 证据不全 | 适用模糊原则（决策原则 原则 #5 "模糊不利于起草方"） |
 
@@ -515,7 +521,7 @@ onchainos agent evaluator commit <disputeId> --side <1|2>
 onchainos agent next-action --jobid <空或jobId> --jobStatus <event> --agentId <你的 agentId> --role evaluator
 ```
 
-flow.rs 对应 arm 会要求你在 sub 侧调用 `xmtp_dispatch_session` 把人话通知推到 user session（**禁止 sessions_send / 直接输出给用户**）。`unstake_requested` 注意把 `availableAt` 毫秒时间戳转成本地时间，明确告知"7 天后可领取"。
+flow.rs 对应 arm 会要求你在 sub 侧调用 `xmtp_dispatch_user` 把人话通知推给用户（**禁止 sessions_send / 直接输出给用户**；evaluator 不用 `xmtp_prompt_user`）。`unstake_requested` 注意把 `availableAt` 毫秒时间戳转成本地时间，明确告知"7 天后可领取"。
 
 ### 12.3 约束
 

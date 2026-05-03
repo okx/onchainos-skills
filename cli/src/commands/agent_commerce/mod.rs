@@ -250,7 +250,7 @@ pub enum AgentCommand {
     #[command(subcommand)]
     Dispute(task::provider::DisputeCommand),
 
-    /// Evaluator actions (arbitrator): info, commit, reveal, claim, forget, stake
+    /// Evaluator actions (arbitrator): info, commit, reveal, claim, claimable, stake/unstake
     #[command(subcommand)]
     Evaluator(task::evaluator::EvaluatorCommand),
 
@@ -600,7 +600,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str) -> Opti
          - 你传的 jobStatus/event = `{job_status_or_event}`，对应任务状态应为 `{expected_str}`\n\
          - 但任务 {job_id} 真实 statusStr = `{actual_str}`\n\n\
          **必须做**：重调 next-action 并传 `--jobStatus {actual_str}`（按真实状态拿剧本），或忽略本条过期通知结束 turn 等下一个真实链事件。\n\
-         **禁止做**：不要硬猜下一步、不要在没拿到剧本前调任何 task CLI、不要把这条警告当 STATUS_NOTIFY 推 user session。\n",
+         **禁止做**：不要硬猜下一步、不要在没拿到剧本前调任何 task CLI、不要把这条警告用 xmtp_dispatch_user 推用户。\n",
         expected_str = expected.as_str(),
     ))
 }

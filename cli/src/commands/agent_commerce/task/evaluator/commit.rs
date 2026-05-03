@@ -2,7 +2,6 @@
 
 use anyhow::{bail, Result};
 
-use super::commit_store::{self, StoredCommit};
 use super::helpers::parse_job_id;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
@@ -12,15 +11,25 @@ use crate::commands::agent_commerce::task::signing;
 /// Vote semantics per backend: 1 = Approve (Provider wins), 2 = Reject (Client wins).
 ///
 /// Request body is strictly `{ vote }` per real API spec (§11175). The evaluator's rationale
-/// is NOT part of this API — it lives in agent session memory and is surfaced to the user via
-/// xmtp_dispatch_session（user session 推消息触发 LLM）, not persisted to backend.
-pub async fn handle_commit(client: &mut TaskApiClient, dispute_id: &str, side: u8) -> Result<()> {
+/// is NOT part of this API — it lives in agent thinking / session memory only (per evaluator.md
+/// §3.7: judgments are never pushed to the user; users perceive the result only via later
+/// `reward_claimed` / `slashed` events). Not persisted to backend, not surfaced via xmtp.
+///
+/// No local persistence: reveal is driven by the `reveal_started` system event whose
+/// envelope carries `disputeId`, and backend reads vote+salt from `task_dispute_voter`
+/// at reveal time — neither side nor any other commit metadata needs client-side storage.
+pub async fn handle_commit(
+    client: &mut TaskApiClient,
+    dispute_id: &str,
+    side: u8,
+    agent_id_hint: Option<&str>,
+) -> Result<()> {
     if side != 1 && side != 2 {
         bail!("--side must be 1 (provider wins) or 2 (client wins)");
     }
     let job_id = parse_job_id(dispute_id)?;
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator().await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
 
     let body = serde_json::json!({ "vote": side });
     let path = client.endpoint(&job_id, "vote/commit");
@@ -36,21 +45,7 @@ pub async fn handle_commit(client: &mut TaskApiClient, dispute_id: &str, side: u
     ).await?;
 
     let side_label = if side == 1 { "Provider wins (Approve)" } else { "Client wins (Reject)" };
-    let commit_hash = resp["commitHash"].as_str().unwrap_or("").to_string();
-
-    // Persist to ~/.onchainos/evaluator-commits.jsonl so reveal can auto-resolve side
-    // even after session/agent context is lost. Best-effort: warn on error, do not fail the command.
-    let entry = StoredCommit {
-        dispute_id: dispute_id.to_string(),
-        side,
-        voter: address.clone(),
-        commit_hash: commit_hash.clone(),
-        tx_hash: tx_hash.clone(),
-        committed_at: chrono::Local::now().to_rfc3339(),
-    };
-    if let Err(e) = commit_store::append(&entry) {
-        eprintln!("warning: failed to persist commit record: {e}");
-    }
+    let commit_hash = resp["commitHash"].as_str().unwrap_or("");
 
     println!("vote committed (disputeId={dispute_id})");
     println!("  side:       {side} ({side_label})");
@@ -60,8 +55,8 @@ pub async fn handle_commit(client: &mut TaskApiClient, dispute_id: &str, side: u
     }
     println!("  txHash:     {tx_hash}");
     println!(
-        "next: on reveal_started run `onchainos agent evaluator reveal {dispute_id}` \
-         (CLI auto-resolves side={side} from local store; pass `--side {side}` to override)"
+        "next: on reveal_started run `onchainos agent evaluator reveal <disputeId>` \
+         (no --side; backend reads vote+salt from task_dispute_voter)"
     );
     Ok(())
 }

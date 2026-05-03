@@ -21,7 +21,11 @@ use crate::commands::agent_commerce::task::signing;
 ///   4000 — agentId 无效 / 非 evaluator 身份
 ///   2004 — agentId 无 evaluator 身份 (identity=2)
 ///   1001 — 累计质押 < 最低门槛（由 `/staking/config.minCumulativeStakeOkb` 决定，合约/后端权威）
-pub async fn handle_stake(client: &mut TaskApiClient, amount: &str) -> Result<()> {
+pub async fn handle_stake(
+    client: &mut TaskApiClient,
+    amount: &str,
+    agent_id_hint: Option<&str>,
+) -> Result<()> {
     let trimmed = amount.trim();
     if trimmed.is_empty() {
         bail!("--amount 不能为空（OKB 金额，UI 单位，例如 500）");
@@ -31,7 +35,7 @@ pub async fn handle_stake(client: &mut TaskApiClient, amount: &str) -> Result<()
     }
 
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator().await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
 
     // best-effort 拉平台配置，做 UX 友好预检（首次质押天然等价于"本次 >= 最低门槛"）。
     // 失败 / 余额不可知场景下不阻塞，由合约 1001 兜底。

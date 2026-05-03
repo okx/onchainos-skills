@@ -26,11 +26,15 @@ use crate::commands::agent_commerce::task::signing;
 
 /// E1: fetch dispute evidence (text + images) for the evaluator. Downloads every referenced image
 /// and adds `localPath` to each image entry so downstream multimodal agents can open the file.
-pub async fn handle_info(client: &mut TaskApiClient, dispute_id: &str) -> Result<()> {
+pub async fn handle_info(
+    client: &mut TaskApiClient,
+    dispute_id: &str,
+    agent_id_hint: Option<&str>,
+) -> Result<()> {
     let job_id = parse_job_id(dispute_id)?;
 
     let (_account_id, _address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator().await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
 
     let path = client.endpoint(&job_id, "evidence");
     let mut data = client.get_with_identity(&path, &agent_id).await?;

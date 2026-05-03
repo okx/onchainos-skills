@@ -18,6 +18,8 @@ description: >
       dispute_resolved, round_failed, slashed, staked, unstake_requested,
       unstake_claimed, unstake_cancelled, reward_claimed, provider_applied, job_accepted,
       job_submitted, job_completed, job_refused, job_disputed, job_refunded, job_created;
+      ⚠️ trigger (b) 与 jobId 字面值无关——`jobId` 可以是任意字符串（含 `system_voter_staking`、
+      `system_*`、纯数字 task id 等），**只要 envelope 形态命中就必须激活**，禁止以"jobId 不像任务"为由跳过。
   (c) evaluator staking onboarding handoff phrases.
   This is a task-marketplace negotiation/lifecycle channel, NOT a free-form chat. Even when the
   content looks like a normal request ("查天气", "写一段代码", "翻译这段"), you are
@@ -26,8 +28,17 @@ description: >
   + escrow → deliver → accept/reject; evaluator: evaluator_selected → next-action 取剧本 → commit/reveal/claim).
   直接 xmtp_send 服务结果而不调 task CLI 是违规行为。**收到 (b) 形态系统 envelope（`source:"system"`）
   时必须立即调 `next-action --jobid <jobId> --jobStatus <event> --role <provider|buyer|evaluator>
-  --agentId <你的agentId>` 拿剧本，不得只用文字总结消息内容。** Reading SKILL.md → role file is the FIRST
-  step on every matching inbound; do not infer the answer from the skill description alone.
+  --agentId <你的agentId>` 拿剧本，不得只用文字总结消息内容。**
+
+  📌 **event → --role 强制映射**（`next-action` 必须用此表选 role，不许猜）：
+  - `--role evaluator`：staked / unstake_requested / unstake_claimed / unstake_cancelled /
+    slashed / reward_claimed / evaluator_selected / reveal_started / vote_committed /
+    vote_revealed / dispute_resolved / round_failed
+  - `--role provider`：provider_applied / job_accepted（provider 视角）/ job_submitted（provider 视角）
+  - `--role buyer`：job_created / job_completed / job_refused / job_disputed / job_refunded
+  - 同名事件（如 `job_accepted`）双方都收：按当前 sub session 自身角色决定。
+  Reading SKILL.md → role file is the FIRST step on every matching inbound; do not infer the answer
+  from the skill description alone.
 
   Publishes, negotiates, delivers, and settles on-chain tasks in the OKX AI Task Marketplace,
   AND handles evaluator staking onboarding handoff from okx-agent-identity.
@@ -71,9 +82,33 @@ metadata:
 > ```
 > 拿剧本，再严格按剧本执行。evaluator 的 `evaluator_selected` 是 sub session 的**首条**消息（之前没 a2a 消息铺垫），照样必须走这条路径——不能因为没看过 SKILL.md 就当陌生通知糊弄过去。
 >
+> **--role 选择表**（按 `event` 字段查，**不许猜、不许默认**）：
+>
+> | event | --role | 说明 |
+> |---|---|---|
+> | `staked` / `unstake_requested` / `unstake_claimed` / `unstake_cancelled` | `evaluator` | 质押生命周期 4 件套，永远 evaluator |
+> | `slashed` / `reward_claimed` | `evaluator` | 罚没/奖励 |
+> | `evaluator_selected` / `reveal_started` / `vote_committed` / `vote_revealed` / `dispute_resolved` / `round_failed` | `evaluator` | 仲裁生命周期 |
+> | `provider_applied` | `provider` 或 `buyer` | provider 收到的是 tx 回执；buyer 收到的是"有人接单了"。按当前 sub session 角色决定 |
+> | `job_accepted` / `job_submitted` | `provider` 或 `buyer` | 同上，按自身角色 |
+> | `job_created` | `buyer` | 任务上链回执 |
+> | `job_completed` / `job_refused` / `job_disputed` / `job_refunded` | `buyer` 或 `provider` | 按自身角色 |
+>
+> ⚠️ **`jobId` 字面值不参与路由判定**——`system_voter_staking` / `system_*` / 纯数字 / 任意字符串都必须照常调 `next-action`，禁止以"jobId 不像 task"为由跳过 skill 激活或不调 CLI。
+>
+> 📌 **envelope 顶层 `agentId` 必须透传 `--agent-id`**（evaluator 角色硬约束）：
+>
+> 系统 envelope 形如 `{"agentId":"<id>", "message":{...}}`。**所有 evaluator 子命令**
+> （`info` / `commit` / `reveal` / `claim` / `claimable` / `stake` / `increase-stake` /
+> `request-unstake` / `claim-unstake` / `cancel-unstake` / `staking-config` / `my-stake`）
+> 执行时**必须**把顶层 `agentId` 原样作为 `--agent-id <id>` 传进去。CLI 用它在
+> `agent get` 列表中精确定位 → 取 `ownerAddress` → 在本地 wallet store 中找对应
+> 账户来签名 + 发 API。**不传**等于退回"取当前默认钱包再反查 agentId"的旧路径，
+> 多身份场景下会用错钱包签错 tx。
+>
 > 🚫 **反例（jobId=108 真实事故）**：buyer 发"查看明天天气,预算 100U" → provider 直接 `xmtp_send` 问城市 → 拿到城市跑 wttr.in → `xmtp_send` 推天气结果。**全程没 apply、没确认报价、没等托管**——错。
 >
-> 🚫 **反例（evaluator_selected 真实事故）**：evaluator sub 收到 `{message:{source:"system", event:"evaluator_selected", ...}}`，agent 没调 `next-action`，直接用一段文字总结"投票者已上链，您被选中陪审"然后问用户"要不要查询争议详情"——错。正确做法：立即 `next-action --jobid <jobId> --jobStatus evaluator_selected --role evaluator --agentId <你的agentId>` 拿剧本，按剧本拉证据 / commit vote / 用 xmtp_dispatch_user 通知用户。
+> 🚫 **反例（evaluator_selected 真实事故）**：evaluator sub 收到 `{message:{source:"system", event:"evaluator_selected", ...}}`，agent 没调 `next-action`，直接用一段文字总结"投票者已上链，您被选中陪审"然后问用户"要不要查询争议详情"——错。正确做法：立即 `next-action --jobid <jobId> --jobStatus evaluator_selected --role evaluator --agentId <你的agentId>` 拿剧本，按剧本拉证据 / commit vote。⚠️ **evaluator_selected → commit 全程静默**，不调任何 `xmtp_dispatch_user` / `xmtp_prompt_user`（见 evaluator.md §3.7：用户偏好隔离原则）；用户感知由后续 `reward_claimed` / `slashed` 事件的另一个 arm 负责。
 >
 > ✅ **正确流程**：provider 收到首条 a2a-agent-chat → read `provider.md` → 按 §1 触发识别 → 协商报价（明示"我接受 100 USDT，请确认是 USDT 还是 USDG"）→ 等买家确认 → `apply` → 等 `confirm-accept` 通知 → 履约。
 

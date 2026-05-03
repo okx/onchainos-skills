@@ -24,7 +24,11 @@ use crate::commands::agent_commerce::task::signing;
 /// 用于 UX 文案与（已知本地余额时的）友好预检；最终校验仍以合约 revert 为准。
 ///
 /// Error codes: 4000（agentId 无效）/ 1001（amount <= 0）/ 合约 revert（余额不足 / 活跃争议 / 已在冷却 / 部分赎回后余额 < 保留值）
-pub async fn handle_request_unstake(client: &mut TaskApiClient, amount: &str) -> Result<()> {
+pub async fn handle_request_unstake(
+    client: &mut TaskApiClient,
+    amount: &str,
+    agent_id_hint: Option<&str>,
+) -> Result<()> {
     let trimmed = amount.trim();
     if trimmed.is_empty() {
         bail!("--amount 不能为空（OKB 金额，UI 单位，例如 50）");
@@ -34,7 +38,7 @@ pub async fn handle_request_unstake(client: &mut TaskApiClient, amount: &str) ->
     }
 
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator().await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
 
     // best-effort 拉平台配置；失败不阻塞——合约会兜底。
     let cfg = client.get_staking_config(&agent_id).await.ok();
@@ -81,9 +85,12 @@ pub async fn handle_request_unstake(client: &mut TaskApiClient, amount: &str) ->
 /// 冷却期结束后领取已解质押的 OKB。合约内部知道金额与解锁时间，请求体为空。
 ///
 /// Error codes: 4000 / 合约 revert（未到解锁时间 / 无待解质押）
-pub async fn handle_claim_unstake(client: &mut TaskApiClient) -> Result<()> {
+pub async fn handle_claim_unstake(
+    client: &mut TaskApiClient,
+    agent_id_hint: Option<&str>,
+) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator().await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
 
     let path = "/priapi/v1/aieco/task/staking/claimUnstake";
     let body = serde_json::json!({});
@@ -112,9 +119,12 @@ pub async fn handle_claim_unstake(client: &mut TaskApiClient) -> Result<()> {
 /// 在冷却期内撤销解质押请求，OKB 回到质押状态（冷却天数由 staking-config 决定）。
 ///
 /// Error codes: 4000 / 合约 revert（无待解质押 / 冷却期已过）
-pub async fn handle_cancel_unstake(client: &mut TaskApiClient) -> Result<()> {
+pub async fn handle_cancel_unstake(
+    client: &mut TaskApiClient,
+    agent_id_hint: Option<&str>,
+) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator().await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
 
     let path = "/priapi/v1/aieco/task/staking/cancelUnstake";
     let body = serde_json::json!({});

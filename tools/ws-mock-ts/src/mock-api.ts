@@ -1364,9 +1364,9 @@ const server = http.createServer(async (req, res) => {
     }, REVEAL_WINDOW_DELAY_MS);
     sendOk(res, { uopData: mockUopData(), disputeId: dispute.disputeId, commitHash }); return;
   }
-  // Commit-Reveal Phase 2:披露承诺。按真后端 spec（Lark §11348），voter 传入 vote，
-  // 后端从 task_dispute_voter 读 salt，组装 revealVote(jobId, vote, salt) calldata。
-  // mock 这里做一致性校验：body.vote 必须与 commit 时存的 vote 相同，否则模拟链上 revert。
+  // Commit-Reveal Phase 2:披露承诺。按真后端 spec（post-2026-05），voter 不必再传 vote——
+  // 后端从 task_dispute_voter 反查 vote+salt，组装 revealVote(jobId, vote, salt) calldata。
+  // 兼容旧客户端：若 body.vote 仍传入，则对该值做一致性校验（不一致 = 模拟链上 revert）。
   if (method === "POST" && (m = matchPath("/api/v1/task/:jobId/vote/reveal", path_))) {
     const { jobId } = m;
     const dispute = [...disputes.values()].find(d => d.jobId === jobId && !d.resolvedAt);
@@ -1376,14 +1376,16 @@ const server = http.createServer(async (req, res) => {
     const commit = dispute.voterCommits[voter];
     if (!commit) { sendErr(res, 2002, "voter has not committed"); return; }
     if (commit.revealedAt) { sendErr(res, 2002, "voter has already revealed"); return; }
-    // 校验 reveal vote 与 commit vote 一致（真后端靠链上 commitHash 比对，mock 直接查表）
-    const revealVote = Number(body.vote);
-    if (revealVote !== 1 && revealVote !== 2) {
-      sendErr(res, 1001, "vote must be 1 (provider) or 2 (client)"); return;
-    }
-    if (revealVote !== commit.vote) {
-      sendErr(res, 2012, `reveal vote (${revealVote}) does not match commit vote (${commit.vote}); on-chain commitHash would not verify`);
-      return;
+    // body.vote optional：未传则用 commit 时存的 vote；传了则做兼容性一致性校验。
+    if (body.vote !== undefined && body.vote !== null) {
+      const revealVote = Number(body.vote);
+      if (revealVote !== 1 && revealVote !== 2) {
+        sendErr(res, 1001, "vote must be 1 (provider) or 2 (client)"); return;
+      }
+      if (revealVote !== commit.vote) {
+        sendErr(res, 2012, `reveal vote (${revealVote}) does not match commit vote (${commit.vote}); on-chain commitHash would not verify`);
+        return;
+      }
     }
     commit.revealedAt = nowIso();
     dispute.votes.push({ side: commit.vote, reason: commit.reason, voter, at: commit.revealedAt });

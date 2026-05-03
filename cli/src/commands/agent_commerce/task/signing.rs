@@ -133,18 +133,8 @@ pub async fn resolve_wallet_and_agent_for_provider(
     Ok((account_id, address, provider_agent_id))
 }
 
-/// 通过子进程调用 `onchainos agent get` 查询身份列表，找到匹配 `role` 且属于
-/// 指定钱包地址的 Agent。
-///
-/// - `wallet_address`: 传 `Some(addr)` 则只匹配 `ownerAddress` 一致的身份（大小写不敏感）；
-///   传 `None` 则取首个匹配 role 的（用于只需 agentId header 的只读场景）。
-///
-/// 返回 `(agent_id, owner_address)`。
-async fn resolve_agent_by_role(
-    role_code: i64,
-    role_label: &str,
-    wallet_address: Option<&str>,
-) -> Result<(String, String)> {
+/// 通过子进程调用 `onchainos agent get` 拉取身份列表（调用方再按需筛选）。
+async fn query_agent_list() -> Result<Vec<Value>> {
     let exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("无法获取当前可执行文件路径: {e}"))?;
 
@@ -179,9 +169,26 @@ async fn resolve_agent_by_role(
     } else {
         data["list"].as_array()
     }
-    .ok_or_else(|| anyhow::anyhow!("未查到任何 Agent 身份，请先注册 {role_label} 身份"))?;
+    .ok_or_else(|| anyhow::anyhow!("未查到任何 Agent 身份"))?;
 
-    for agent in list {
+    Ok(list.clone())
+}
+
+/// 在 `onchainos agent get` 列表里按 `role` 筛选，可选限定 `ownerAddress`。
+///
+/// - `wallet_address`: 传 `Some(addr)` 则只匹配 `ownerAddress` 一致的身份（大小写不敏感）；
+///   传 `None` 则取首个匹配 role 的（用于只需 agentId header 的只读场景）。
+///
+/// 返回 `(agent_id, owner_address)`。
+async fn resolve_agent_by_role(
+    role_code: i64,
+    role_label: &str,
+    wallet_address: Option<&str>,
+) -> Result<(String, String)> {
+    let list = query_agent_list().await
+        .map_err(|e| anyhow::anyhow!("{e}（请先注册 {role_label} 身份）"))?;
+
+    for agent in &list {
         if agent["role"].as_i64() != Some(role_code) {
             continue;
         }
@@ -207,13 +214,70 @@ async fn resolve_agent_by_role(
     }
 }
 
+/// 按 `agent_id` 在身份列表里精确定位，并校验 `role` 一致；返回该身份的 `ownerAddress`。
+///
+/// 入参 `agent_id` 来自系统消息 envelope 的顶层 `agentId` 字段——这是真后端识别身份的
+/// 权威来源。CLI 用它反查 `ownerAddress`，再去 wallet store 找对应的本地账户来签名，
+/// 保证多身份场景下"该 agentId 由其名下钱包签名"的对应关系不会错位。
+async fn find_owner_address_by_agent_id(
+    agent_id: &str,
+    role_code: i64,
+    role_label: &str,
+) -> Result<String> {
+    let id = agent_id.trim();
+    if id.is_empty() {
+        bail!("agent_id 不能为空");
+    }
+    let list = query_agent_list().await?;
+    for agent in &list {
+        let this_id = agent["agentId"].as_str().unwrap_or("");
+        if this_id != id {
+            continue;
+        }
+        let role = agent["role"].as_i64().unwrap_or(0);
+        if role != role_code {
+            bail!(
+                "agentId={id} 不是 {role_label} 身份（role={role}），请确认 envelope.agentId 与角色匹配"
+            );
+        }
+        let owner = agent["ownerAddress"].as_str().unwrap_or("").to_string();
+        if owner.is_empty() {
+            bail!("agentId={id} 缺少 ownerAddress 字段，无法定位钱包");
+        }
+        return Ok(owner);
+    }
+    bail!(
+        "`onchainos agent get` 列表中没有 agentId={id} 的身份；请确认该 agentId 属于当前登录账户名下"
+    )
+}
+
 /// Resolve wallet + evaluator agentId for signing.
 ///
-/// 与 `resolve_wallet_and_agent_for_task` / `_for_provider` 对齐 —— evaluator
-/// 不是任务的买卖双方，无法从任务详情读取 agentId，改走子进程 `agent get` 查询。
+/// **优先 agentId 反查钱包**：当 `agent_id_hint = Some(id)` 时（来自系统消息
+/// envelope 的顶层 `agentId`），按该 id 在 `agent get` 列表中精确定位 → 拿
+/// `ownerAddress` → 在 wallet store 中找对应账户。这是多身份场景的正确路径。
+///
+/// 兼容旧路径：`agent_id_hint = None` 时退回"取当前默认钱包，再按 role 反查 agent"。
+/// 仅供本地手动调用（agent 收到系统消息时必须传 hint）。
 ///
 /// Returns `(account_id, address, evaluator_agent_id)`.
-pub async fn resolve_wallet_and_agent_for_evaluator() -> Result<(String, String, String)> {
+pub async fn resolve_wallet_and_agent_for_evaluator(
+    agent_id_hint: Option<&str>,
+) -> Result<(String, String, String)> {
+    if let Some(id) = agent_id_hint.map(str::trim).filter(|s| !s.is_empty()) {
+        let owner = find_owner_address_by_agent_id(
+            id,
+            AGENT_ROLE_EVALUATOR,
+            "evaluator（仲裁者）",
+        )
+        .await?;
+        let (account_id, address) = resolve_wallet(None, Some(&owner))
+            .map_err(|e| anyhow::anyhow!(
+                "agentId={id} 对应钱包 {owner} 不在本地（{e}），请先用对应私钥执行 `onchainos wallet auth`"
+            ))?;
+        return Ok((account_id, address, id.to_string()));
+    }
+
     let (account_id, address) = resolve_wallet(None, None)?;
     let (agent_id, _) =
         resolve_agent_by_role(AGENT_ROLE_EVALUATOR, "evaluator（仲裁者）", Some(&address)).await?;

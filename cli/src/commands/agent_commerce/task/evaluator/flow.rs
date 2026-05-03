@@ -55,14 +55,14 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
     };
     match status {
         Status::Disputed => vec![
-            format!("onchainos agent evaluator info <disputeId>                # 查看仲裁详情（含证据）"),
-            format!("onchainos agent evaluator commit <disputeId> --side <1|2>  # 提交投票（1=Provider 胜 / 2=Client 胜）"),
-            format!("onchainos agent evaluator reveal <disputeId>              # reveal 阶段揭示投票"),
+            format!("onchainos agent evaluator info <disputeId> --agent-id <agentId>                # 查看仲裁详情（含证据）"),
+            format!("onchainos agent evaluator commit <disputeId> --side <1|2> --agent-id <agentId>  # 提交投票（1=Provider 胜 / 2=Client 胜）"),
+            format!("onchainos agent evaluator reveal <disputeId> --agent-id <agentId>              # reveal 阶段揭示投票（不传 --side，后端反查 vote+salt）"),
             "（自动闭环）evaluator_selected / reveal_started 通知到达时由 next-action 自动驱动".to_string(),
             next_action_hint("evaluator_selected"),
         ],
         Status::Completed | Status::Refunded => vec![
-            format!("onchainos agent evaluator claim                            # 领取所有可领取仲裁奖励（account 级 pull）"),
+            format!("onchainos agent evaluator claim --agent-id <agentId>                           # 领取所有可领取仲裁奖励（account 级 pull）"),
             "（流程结束）裁决已上链，奖励/罚没由 reward_claimed / slashed 通知触发".to_string(),
             next_action_hint("dispute_resolved"),
         ],
@@ -105,9 +105,9 @@ pub fn generate_next_action(
              **Step 1 — 从入站消息提取 `disputeId` 和 `disputeType`（质量/超时/恶意）。**\n\
              ⚠️ `disputeId` 缺省时直接中止本轮处理，输出 `missing disputeId in payload; abort` 日志结束——真后端 `disputeId = keccak256(jobId, roundNumber)`，第 2+ 轮重选时 `d-{job_id}-r1` 一定对不上合约。\n\
              `disputeType` 缺省时按质量争议处理（最常见）。\n\n\
-             **Step 2 — 拉取当前证据：**\n\
+             **Step 2 — 拉取当前证据（必须把 inbound envelope 顶层 `agentId` 透传给 `--agent-id`，CLI 据此定位钱包/身份）：**\n\
              ```bash\n\
-             onchainos agent evaluator info <disputeId>\n\
+             onchainos agent evaluator info <disputeId> --agent-id <envelope 顶层 agentId>\n\
              ```\n\
              返回真后端结构 `evidences: {{ provider: {{texts[], images[]}}, client: {{texts[], images[]}} }}`。\n\
              每张 `images[].fileKey` 已由 CLI 下载到本地，`localPath` 是绝对路径。\n\n\
@@ -173,17 +173,17 @@ pub fn generate_next_action(
              - □ 把 Client 和 Provider 角色互换，我会做出同样裁决吗？\n\
              - □ 我是否受到了材料包外的信息影响？\n\
              - □ 我是否在猜测其他 Evaluator 怎么投？\n\n\
-             **Step 7 — 执行 commit：**\n\
+             **Step 7 — 执行 commit（同样把 envelope 顶层 `agentId` 透传给 `--agent-id`）：**\n\
              ```bash\n\
-             onchainos agent evaluator commit <disputeId> --side <1|2>\n\
+             onchainos agent evaluator commit <disputeId> --side <1|2> --agent-id <envelope 顶层 agentId>\n\
              ```\n\
              ⚠️ **只能是 1 或 2，禁止 skip**（V1 无弃权；拖到超时罚 {timeout_bps} 比错投 {minority_bps} 更亏）。\n\
              失败最多重试 3 次（CRITICAL，commit 窗口关闭即罚 {timeout_bps}）。返回 `voter has already committed` 视为成功进入 Step 8。\n\
-             body 只带 `vote`；裁决书（Step 5）仅保留在 session 记忆，**不写入后端，不推user session**。\n\n\
+             body 只带 `vote`；裁决书（Step 5）仅保留在 session 记忆，**不写入后端、不写本地、不推 user session**（后端反查 vote+salt 提供 reveal 所需，CLI 不持久化）。\n\n\
              ⚠️ **错误兜底硬约束（agent 失控反例）**：commit 报 `当前账户没有 evaluator（仲裁者） 身份，请先注册` / `code=2004` 时——\n\
              - **禁止**调 `onchainos agent create` / `agent register` / `identity_register` 任何注册类命令（链上写入、烧 gas、修改全局状态——evaluator 身份注册是用户主动决定的事，不是 sub session 自作主张能干的）\n\
              - **禁止**fallback 到查 identity / 找钱包 / 改 config 之类的迂回操作\n\
-             - 直接：输出一行 `> commit aborted: evaluator identity not registered for this wallet; report to user via STATUS_NOTIFY`，**不**继续 Step 8，**不**自己跑识别流程，结束 turn 等用户处理\n\n\
+             - 直接：输出一行 `> commit aborted: evaluator identity not registered for this wallet; report to user via xmtp_dispatch_user`，**不**继续 Step 8，**不**自己跑识别流程，结束 turn 等用户处理\n\n\
              **Step 8 — 输出一行 sub session 日志后结束本回合。不调用 通知user session，不通知用户：**\n\n\
              > Committed dispute=<disputeId> side=<1|2> autonomously per 决策原则-§3.6.\n\n\
              【原则】\n\
@@ -192,9 +192,9 @@ pub fn generate_next_action(
              - **图片必读**：不读图即违反 L3 义务 #1 + §3.1 举证对称；这是本 arm 最重要的执行要求\n\n\
              【后续事件】\n\
              - vote_committed → sub 里仅记录\n\
-             - reveal_started → sub 里自动 reveal\n\
-             - dispute_resolved → sub 里自动 claim（若赢）+ forget + 通知user session\n\
-             - round_failed → sub 里 forget + 通知user session\n"
+             - reveal_started → sub 里自动 reveal（envelope 带 disputeId）\n\
+             - dispute_resolved → sub 里自动 claim（若赢）+ 通知user session\n\
+             - round_failed → sub 里 通知user session\n"
         ),
 
         // ─── reveal 窗口开启（sub session，完全静默） ──────────────────
@@ -203,18 +203,16 @@ pub fn generate_next_action(
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 没有用户。**agent 自主 reveal，不通知用户**。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
-             **Step 1 — 从 payload 提取 `disputeId`，执行 reveal：**\n\
+             **Step 1 — 从 inbound envelope 提取 `disputeId` 与顶层 `agentId`，执行 reveal：**\n\
              ```bash\n\
-             onchainos agent evaluator reveal <disputeId>\n\
+             onchainos agent evaluator reveal <disputeId> --agent-id <envelope 顶层 agentId>\n\
              ```\n\
-             ⚠️ 不要传 `--side`：CLI 会从 `~/.onchainos/evaluator-commits.jsonl`（commit 时自动写入）查出当时的 side，再发给后端。\n\
-             \x20只有当你明确知道 commit 时投的 side 且 local store 被清空时，才显式传 `--side <1|2>` 覆盖。\n\
-             \x20传错会让链上 commitHash 验签失败 → 合约 revert。\n\n\
+             ⚠️ `disputeId` 缺省 → 输出 `missing disputeId in payload; abort` 日志结束，不要 fallback 编造（真后端 `disputeId = keccak256(jobId, roundNumber)`，第 2+ 轮重选时旧 id 一定对不上合约）。\n\
+             \x20**不传 `--side`**：post-2026-05 协议下后端从 `task_dispute_voter` 反查 vote+salt，CLI body 只发空 `{{}}`。\n\n\
              **Step 2 — 输出一行 sub session 日志后结束。禁止调用 通知user session：**\n\n\
-             > Revealed dispute=<disputeId> side=<1|2> autonomously.\n\n\
+             > Revealed dispute=<disputeId> autonomously.\n\n\
              【错误映射】\n\
-             - `canReveal=false` → CLI 已预检拒绝，无需重试；等下一个事件（若本轮已结算，会收到 dispute_resolved / round_failed）\n\
-             - `already resolved` → 视为成功（本轮已裁决）\n\
+             - `canReveal=false` → CLI 已预检拒绝，无需重试；本轮可能已结算（等 dispute_resolved）或未 commit（正常跳过）\n\
              - `voter has not committed` → 本轮未 commit，跳过 reveal 是正常的\n\
              - 其他失败最多重试 3 次（未 reveal 罚 {timeout_bps}，经济参数附录 TIMEOUT_PENALTY_RATE）\n\n\
              【后续事件】dispute_resolved / round_failed / reward_claimed / slashed 会继续在同一 sub session 到达。仅 reward_claimed 和 slashed 会转发到user session。\n"
@@ -227,39 +225,29 @@ pub fn generate_next_action(
              【会话类型】⚠️ Sub session — 没有用户。**agent 自主 claim + 清理，不通知用户**。用户侧的入账/罚没通知由后续 reward_claimed / slashed arm 负责。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 从 payload 提取 `winningSide` / `yourVote`。**\n\n\
-             **Step 2 — 若 `yourVote` 与 `winningSide` 一致（多数方），立即领取奖励：**\n\
+             **Step 2 — 若 `yourVote` 与 `winningSide` 一致（多数方），立即领取奖励（透传 envelope 顶层 `agentId`）：**\n\
              ```bash\n\
-             onchainos agent evaluator claim\n\
+             onchainos agent evaluator claim --agent-id <envelope 顶层 agentId>\n\
              ```\n\
-             ⚠️ 无参命令：account 级 pull 模式，一次把所有已结算 dispute 的待领奖励一起领出来（后端 `POST /task/claim`，空 body）。\n\
+             ⚠️ account 级 pull 模式：除 `--agent-id` 外不带其它业务参数，一次把所有已结算 dispute 的待领奖励一起领出来（后端 `POST /task/claim`，空 body）。\n\
              失败最多重试 3 次。真正的入账确认会通过稍后到达的 `reward_claimed` 事件告知用户（那个 arm 会 通知user session）。\n\
              若 `yourVote` 与多数不一致 / 为空，跳过 claim（不会有奖励，可能会收到 slashed 事件）。\n\n\
-             **Step 3 — 清理本地 commit 存档（dispute 已终结，{vote, salt} 不再需要）：**\n\
-             ```bash\n\
-             onchainos agent evaluator forget <disputeId>\n\
-             ```\n\
-             幂等——若无记录也只会报 \"already clean\"，不会失败。\n\n\
-             **Step 4 — 输出一行 sub session 日志后结束。禁止调用 通知user session：**\n\n\
-             > Settled dispute=<disputeId> winningSide=<1|2> yourVote=<1|2> claim_submitted={true|false} store_cleaned.\n\n\
+             **Step 3 — 输出一行 sub session 日志后结束。禁止调用 通知user session：**\n\n\
+             > Settled dispute=<disputeId> winningSide=<1|2> yourVote=<1|2> claim_submitted={{true|false}}.\n\n\
              【后续事件】\n\
              - reward_claimed（claim tx 回执）→ 另一个 arm，会 通知user session 推入账/失败给用户\n\
              - slashed（被罚通知）→ 另一个 arm，会 通知user session 推罚没金额+原因给用户\n\
              本 arm 到这里结束，**不抢这两个 arm 的通知职责**。\n"
                 .to_string(),
 
-        // ─── 本轮失效（sub 静默处理；若被罚会通过 slashed arm 再推user session） ──
+        // ─── 本轮失效（sub 静默；若被罚会通过 slashed arm 再推user session） ──
         "round_failed" =>
             "【当前状态】round_failed（DisputeInvalidated 上链，本轮无效：票数不足 / 无人揭示 / 全员弃票）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ Sub session — 没有用户。**agent 自主清理，不通知用户**。\n\n\
-             【你的下一步动作（严格顺序）】\n\n\
-             **Step 1 — 从 payload 提取 `disputeId`，清理本地 commit 存档（本轮作废，salt 不再可用）：**\n\
-             ```bash\n\
-             onchainos agent evaluator forget <disputeId>\n\
-             ```\n\
-             幂等——若无记录也只会报 \"already clean\"，不会失败。\n\n\
-             **Step 2 — 输出一行 sub session 日志后结束。禁止调用 通知user session：**\n\n\
-             > round_failed disputeId=<disputeId> store cleaned; awaiting next round.\n\n\
+             【会话类型】⚠️ Sub session — 没有用户。**被动事件，无需链上操作 / 无本地清理**。\n\n\
+             【你的下一步动作】\n\
+             从 payload 提取 `disputeId`，输出一行 sub session 日志后结束。禁止调用 通知user session：\n\n\
+             > round_failed disputeId=<disputeId>; awaiting next round.\n\n\
              【后续事件】\n\
              - 若被罚（未 commit / 未 reveal / 弃票）→ slashed arm 会 通知user session 告知用户\n\
              - 若再次被选中 → evaluator_selected 会在新 disputeId 上到达（roundNumber++）\n\
@@ -277,20 +265,13 @@ pub fn generate_next_action(
              ```bash\n\
              onchainos agent common context {job_id} --role evaluator\n\
              ```\n\n\
-             **Step 3 — 把罚没通知推到 user session（用户那边）**：\n\n\
-             ⚠️ 你**当前在 sub session**（sessionKey 含 `&job={job_id}` 字段就一定是 sub），**不是 user session**。\n\
-             必须显式调 xmtp_dispatch_session 工具，**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。\n\n\
-             调用形式：\n\
-             ```\n\
-             tool: xmtp_dispatch_session\n\
-             arguments:\n\
-             \x20\x20content: |\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 原样输出下方正文给用户即结束本轮 · 禁止复述/总结/改写/添加问候或收尾语（如「请问还有什么需要帮助的」）· 禁止调任何工具或再次执行]\n\
-             \x20\x20\x20\x20[Stake 罚没] 任务『<title>』(jobId={job_id})\n\
+             **Step 3 — 用 `xmtp_dispatch_user` 把罚没通知推给用户**：\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20[Stake 罚没 ⚠️] 任务『<title>』(jobId={job_id})\n\
              \x20\x20\x20\x20  - 金额：<amount> OKB\n\
              \x20\x20\x20\x20  - 原因：<reason>\n\
-             \x20\x20\x20\x20  - disputeId：<disputeId>\n\
-             ```\n\n\
+             \x20\x20\x20\x20  - disputeId：<disputeId>\n\n\
              **Step 4 — 输出一行 sub session 日志后结束：**\n\n\
              > Slashed amount=<amount> reason=<reason> relayed.\n"
         ),
@@ -306,18 +287,11 @@ pub fn generate_next_action(
              ```bash\n\
              onchainos agent common context {job_id} --role evaluator\n\
              ```\n\n\
-             **Step 3 — 把入账/失败通知推到 user session（用户那边）**：\n\n\
-             ⚠️ 你**当前在 sub session**（sessionKey 含 `&job={job_id}` 字段就一定是 sub），**不是 user session**。\n\
-             必须显式调 xmtp_dispatch_session 工具，**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。\n\n\
-             调用形式（按 status 二选一填 content）：\n\
-             ```\n\
-             tool: xmtp_dispatch_session\n\
-             arguments:\n\
-             \x20\x20content: |\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 原样输出下方正文给用户即结束本轮 · 禁止复述/总结/改写/添加问候或收尾语（如「请问还有什么需要帮助的」）· 禁止调任何工具或再次执行]\n\
-             \x20\x20\x20\x20success → [仲裁奖励] 任务『<title>』(jobId={job_id}) 奖励已到账 <rewardAmount> OKB，txHash=<txHash>。\n\
-             \x20\x20\x20\x20failed  → [仲裁奖励失败] 任务『<title>』(jobId={job_id}) claim 失败 (errorCode=<errorCode>, txHash=<txHash>)，请按错误码重试。\n\
-             ```\n\n\
+             **Step 3 — 用 `xmtp_dispatch_user` 把入账/失败通知推给用户**（按 status 二选一填 content）：\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20success → [仲裁奖励 💰] 任务『<title>』(jobId={job_id}) 奖励已到账 <rewardAmount> OKB，txHash=<txHash>。\n\
+             \x20\x20\x20\x20failed  → [仲裁奖励失败 ⚠️] 任务『<title>』(jobId={job_id}) claim 失败 (errorCode=<errorCode>, txHash=<txHash>)，请按错误码重试。\n\n\
              **Step 4 — 输出一行 sub session 日志后结束：**\n\n\
              > reward_claimed status=<status> amount=<rewardAmount> relayed.\n\n\
              【流程结束】此 disputeId 的 evaluator 生命周期完成；后续事件无需响应。\n"
@@ -329,15 +303,11 @@ pub fn generate_next_action(
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 从 payload 提取字段 → 通知user session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`（success / failed）、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】把质押结果推到 user session（用户那边）：⚠️ 当前 sessionKey 含 `&job=` 字段就一定是 sub，必须显式调 xmtp_dispatch_session 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。按 status 二选一填 content：\n\n\
-             ```\n\
-             tool: xmtp_dispatch_session\n\
-             arguments:\n\
-             \x20\x20content: |\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 原样输出下方正文给用户即结束本轮 · 禁止复述/总结/改写/添加问候或收尾语（如「请问还有什么需要帮助的」）· 禁止调任何工具或再次执行]\n\
-             \x20\x20\x20\x20success → [质押] 质押已生效：+<amount> OKB，txHash=<txHash>。你现在是活跃仲裁者候选。\n\
-             \x20\x20\x20\x20failed  → [质押失败] errorCode=<errorCode>, txHash=<txHash>。常见错误：4000 agentId 无效 / 2004 无 evaluator 身份 / 1001 累计质押 < {min_stake_okb} OKB（累计门槛规则，合约按 `已有余额 + 本次 >= {min_stake_okb}` 校验）。修正后跟我说『再质押 <N> OKB』我来重试。\n\
-             ```\n\n\
+             【Step 2】用 `xmtp_dispatch_user` 把质押结果推给用户（按 status 二选一填 content）：\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20success → [质押 ✅] 质押已生效：+<amount> OKB，txHash=<txHash>。你现在是活跃仲裁者候选。\n\
+             \x20\x20\x20\x20failed  → [质押失败 ⚠️] errorCode=<errorCode>, txHash=<txHash>。常见错误：4000 agentId 无效 / 2004 无 evaluator 身份 / 1001 累计质押 < {min_stake_okb} OKB（累计门槛规则，合约按 `已有余额 + 本次 >= {min_stake_okb}` 校验）。修正后跟我说『再质押 <N> OKB』我来重试。\n\n\
              【Step 3】输出日志结束：`> staked status=<status> amount=<amount> relayed.`\n"
         ),
 
@@ -346,15 +316,11 @@ pub fn generate_next_action(
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 通知user session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`、`amount`、`availableAt`（冷却结束毫秒时间戳）、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】把申请解质押结果推到 user session（用户那边）：⚠️ 必须显式调 xmtp_dispatch_session 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）；`availableAt` 转本地时间后再填进 content。按 status 二选一填 content：\n\n\
-             ```\n\
-             tool: xmtp_dispatch_session\n\
-             arguments:\n\
-             \x20\x20content: |\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 原样输出下方正文给用户即结束本轮 · 禁止复述/总结/改写/添加问候或收尾语（如「请问还有什么需要帮助的」）· 禁止调任何工具或再次执行]\n\
-             \x20\x20\x20\x20success → [解质押] 申请已受理：-<amount> OKB 进入 {cooldown_days} 天冷却期，可领取时间 <availableAt 本地时间>。冷却期到了跟我说『领取解质押』我来提走；想中途撤销随时跟我说『取消解质押』（仅冷却期内有效）。\n\
-             \x20\x20\x20\x20failed  → [解质押失败] errorCode=<errorCode>, txHash=<txHash>。常见原因：活跃仲裁期间不可解质押 / 已在冷却期 / 余额不足。\n\
-             ```\n\n\
+             【Step 2】用 `xmtp_dispatch_user` 把申请解质押结果推给用户（`availableAt` 转本地时间后再填进 content；按 status 二选一填 content）：\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20success → [解质押 ⏳] 申请已受理：-<amount> OKB 进入 {cooldown_days} 天冷却期，可领取时间 <availableAt 本地时间>。冷却期到了跟我说『领取解质押』我来提走；想中途撤销随时跟我说『取消解质押』（仅冷却期内有效）。\n\
+             \x20\x20\x20\x20failed  → [解质押失败 ⚠️] errorCode=<errorCode>, txHash=<txHash>。常见原因：活跃仲裁期间不可解质押 / 已在冷却期 / 余额不足。\n\n\
              【Step 3】输出日志结束：`> unstake_requested status=<status> amount=<amount> relayed.`\n"
         ),
 
@@ -362,30 +328,22 @@ pub fn generate_next_action(
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 通知user session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】把领取解质押结果推到 user session（用户那边）：⚠️ 必须显式调 xmtp_dispatch_session 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。按 status 二选一填 content：\n\n\
-             ```\n\
-             tool: xmtp_dispatch_session\n\
-             arguments:\n\
-             \x20\x20content: |\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 原样输出下方正文给用户即结束本轮 · 禁止复述/总结/改写/添加问候或收尾语（如「请问还有什么需要帮助的」）· 禁止调任何工具或再次执行]\n\
-             \x20\x20\x20\x20success → [解质押] 已提走 <amount> OKB，已入钱包，txHash=<txHash>。\n\
-             \x20\x20\x20\x20failed  → [解质押失败] 领取失败（errorCode=<errorCode>, txHash=<txHash>），请按错误码重试。常见原因：锁定期未满 / 无待解质押。\n\
-             ```\n\n\
+             【Step 2】用 `xmtp_dispatch_user` 把领取解质押结果推给用户（按 status 二选一填 content）：\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20success → [解质押 ✅] 已提走 <amount> OKB，已入钱包，txHash=<txHash>。\n\
+             \x20\x20\x20\x20failed  → [解质押失败 ⚠️] 领取失败（errorCode=<errorCode>, txHash=<txHash>），请按错误码重试。常见原因：锁定期未满 / 无待解质押。\n\n\
              【Step 3】输出日志结束：`> unstake_claimed status=<status> amount=<amount> relayed.`\n".to_string(),
 
         "unstake_cancelled" => "【当前状态】unstake_cancelled（VoterStaking.UnstakeCancelled 上链，取消解质押 tx 结果，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 通知user session 推人话给用户。\n\n\
              【Step 1】从 payload 提取 `status`、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】把取消解质押结果推到 user session（用户那边）：⚠️ 必须显式调 xmtp_dispatch_session 并**省略 sessionKey 参数**（工具描述：『省略 sessionKey 则发送到 user session』）。按 status 二选一填 content：\n\n\
-             ```\n\
-             tool: xmtp_dispatch_session\n\
-             arguments:\n\
-             \x20\x20content: |\n\
-             \x20\x20\x20\x20[STATUS_NOTIFY · 原样输出下方正文给用户即结束本轮 · 禁止复述/总结/改写/添加问候或收尾语（如「请问还有什么需要帮助的」）· 禁止调任何工具或再次执行]\n\
-             \x20\x20\x20\x20success → [解质押] 已取消：<amount> OKB 回到质押状态，txHash=<txHash>。\n\
-             \x20\x20\x20\x20failed  → [解质押失败] 取消失败（errorCode=<errorCode>, txHash=<txHash>）。常见原因：冷却期已过 / 无待解质押。\n\
-             ```\n\n\
+             【Step 2】用 `xmtp_dispatch_user` 把取消解质押结果推给用户（按 status 二选一填 content）：\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20success → [解质押 ✅] 已取消：<amount> OKB 回到质押状态，txHash=<txHash>。\n\
+             \x20\x20\x20\x20failed  → [解质押失败 ⚠️] 取消失败（errorCode=<errorCode>, txHash=<txHash>）。常见原因：冷却期已过 / 无待解质押。\n\n\
              【Step 3】输出日志结束：`> unstake_cancelled status=<status> amount=<amount> relayed.`\n".to_string(),
 
         // ─── 自己的投票 tx 回执 ──────────────────────────────────────────

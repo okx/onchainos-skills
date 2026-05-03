@@ -15,7 +15,11 @@ use crate::commands::agent_commerce::task::signing;
 ///   4000 — agentId 无效
 ///   1001 — amount <= 0
 ///   3001 — 合约 ABI 生成失败
-pub async fn handle_increase_stake(client: &mut TaskApiClient, amount: &str) -> Result<()> {
+pub async fn handle_increase_stake(
+    client: &mut TaskApiClient,
+    amount: &str,
+    agent_id_hint: Option<&str>,
+) -> Result<()> {
     let trimmed = amount.trim();
     if trimmed.is_empty() {
         bail!("--amount 不能为空（OKB 金额，UI 单位，例如 50）");
@@ -25,7 +29,7 @@ pub async fn handle_increase_stake(client: &mut TaskApiClient, amount: &str) -> 
     }
 
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator().await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
 
     let path = "/priapi/v1/aieco/task/staking/increaseStake";
     let body = serde_json::json!({ "amount": trimmed });

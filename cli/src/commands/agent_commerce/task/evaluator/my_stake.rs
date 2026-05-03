@@ -28,9 +28,12 @@ fn fmt_unix_seconds(ts: i64, none_label: &str) -> String {
     }
 }
 
-pub async fn handle_my_stake(client: &mut TaskApiClient) -> Result<()> {
+pub async fn handle_my_stake(
+    client: &mut TaskApiClient,
+    agent_id_hint: Option<&str>,
+) -> Result<()> {
     let (_account_id, _address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator().await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
     let s = client.get_my_stake(&agent_id).await?;
 
     println!("my stake (链上质押状态)");

@@ -9,9 +9,12 @@ use anyhow::Result;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-pub async fn handle_staking_config(client: &mut TaskApiClient) -> Result<()> {
+pub async fn handle_staking_config(
+    client: &mut TaskApiClient,
+    agent_id_hint: Option<&str>,
+) -> Result<()> {
     let (_account_id, _address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator().await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
     let cfg = client.get_staking_config(&agent_id).await?;
     println!("staking & arbitration config");
     println!("  minCumulativeStakeOkb       : {} OKB", cfg.min_cumulative_stake_okb);

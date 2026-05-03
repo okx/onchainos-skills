@@ -71,7 +71,7 @@ stateDiagram-v2
 | `job_refunded` | ✅ | ✅ | — | sub-session 用 `xmtp_dispatch_user` 推退款已到账（终态）|
 | `evaluator_selected` | — | — | ✅（被选中的陪审） | sub session 激活，按剧本拉证据 + commit（不推用户）|
 | `reveal_started` | — | — | ✅ | sub 里跑 reveal（不推用户）|
-| `dispute_resolved` | ✅ | ✅ | ✅ | sub 里 buyer/provider 用 `xmtp_dispatch_user` 推胜负通知；evaluator 跑 claim + forget |
+| `dispute_resolved` | ✅ | ✅ | ✅ | sub 里 buyer/provider 用 `xmtp_dispatch_user` 推胜负通知；evaluator 跑 claim |
 | `round_failed` | ✅ | ✅ | ✅（本轮陪审） | sub 用 `xmtp_dispatch_user` 提示等下一轮 |
 | `slashed` | — | — | ✅（被罚方） | sub 用 `xmtp_dispatch_user` 推罚没原因 |
 | `reward_claimed` | — | — | ✅（领取方） | sub 用 `xmtp_dispatch_user` 推 tx 入账确认 |

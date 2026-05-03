@@ -13,9 +13,12 @@ use crate::commands::agent_commerce::task::signing;
 /// - 0 金额的代币也会出现在列表里（后端返回全量统计）
 ///
 /// 发现有非 0 奖励时，建议用户按 jobId 跑 `evaluator claim <jobId>` 领取。
-pub async fn handle_claimable(client: &mut TaskApiClient) -> Result<()> {
+pub async fn handle_claimable(
+    client: &mut TaskApiClient,
+    agent_id_hint: Option<&str>,
+) -> Result<()> {
     let (_account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator().await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
 
     let path = "/priapi/v1/aieco/task/claimable";
     let resp = client.get_with_identity(path, &agent_id).await?;
