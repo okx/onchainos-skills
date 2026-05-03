@@ -92,10 +92,12 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
     // 主动维持/调整陪审资格。每次调用返回新 Vec（让多个分支都能 extend）。
     let staking_lifecycle = || -> Vec<String> {
         vec![
-            "  onchainos agent evaluator my-stake --agent-id <agentId>                       # 查个人质押状态（active / pendingUnstake / cooldown / activeDisputes）".to_string(),
+            "  # 质押 CLI 决策规则：先 my-stake 看 `registered` —— false → stake，true → increase-stake。`registered=false` 三种成因（任一都需重新走 stake 注册 + 一次性补齐到门槛）：① 从未注册 ② 被 slash 累计跌破 minCumulativeStakeOkb 后合约去注册 ③ 解质押后 claim-unstake 全部领走、stake 清零合约去注册".to_string(),
+            "  # 兜底（registered 读漏 / 链上状态滞后）：stake 报任何错 → **自动用同 amount + 同 agentId 跑一次 increase-stake** 再试；只重试一次，再失败把错误码原样推用户决定".to_string(),
+            "  onchainos agent evaluator my-stake --agent-id <agentId>                       # 【决策入口】查个人质押状态：重点看 `registered`（决定下一步 stake 还是 increase-stake）+ activeStake / pendingUnstake / cooldown / activeDisputes".to_string(),
             "  onchainos agent evaluator staking-config --agent-id <agentId>                 # 查平台门槛（minCumulativeStakeOkb / cooldown / 罚没比例）".to_string(),
-            "  onchainos agent evaluator stake --amount <okb> --agent-id <agentId>            # 首次质押（cumulative ≥ minCumulativeStakeOkb）".to_string(),
-            "  onchainos agent evaluator increase-stake --amount <okb> --agent-id <agentId>   # 追加质押（无最小限制）".to_string(),
+            "  onchainos agent evaluator stake --amount <okb> --agent-id <agentId>            # my-stake.registered=false 时用：注册 + 首次/重新质押（amount ≥ minCumulativeStakeOkb；含 slash 跌破门槛 / 全额 claim-unstake 后的重新质押）。⚠️ 报错 → 自动 fallback 跑一次 increase-stake（同 amount/agentId）再试".to_string(),
+            "  onchainos agent evaluator increase-stake --amount <okb> --agent-id <agentId>   # my-stake.registered=true 时用：追加质押（无最小限制；registered=false 时调本命令会被合约拒）。也作为 stake 的失败兜底".to_string(),
             "  onchainos agent evaluator request-unstake --amount <okb> --agent-id <agentId>  # 申请解质押（进入 cooldown；activeDisputes>0 会被合约 revert）".to_string(),
             "  onchainos agent evaluator claim-unstake --agent-id <agentId>                  # cooldown 结束后领取解质押 OKB".to_string(),
             "  onchainos agent evaluator cancel-unstake --agent-id <agentId>                 # cooldown 期内撤销解质押申请".to_string(),
