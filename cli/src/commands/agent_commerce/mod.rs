@@ -104,14 +104,6 @@ pub enum AgentCommand {
         #[arg(long = "token-amount")] token_amount: Option<String>,
     },
 
-    /// Client rejects provider application
-    #[command(name = "reject-apply")]
-    RejectApply {
-        job_id: String,
-        #[arg(long)] provider: String,
-        #[arg(long)] reason: String,
-    },
-
     /// Client confirms task complete and releases payment
     Complete { job_id: String },
 
@@ -388,9 +380,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount } =>
             task::buyer::run_task(T::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount }, ctx).await,
-
-        AgentCommand::RejectApply { job_id, provider, reason } =>
-            task::buyer::run_task(T::RejectApply { job_id, provider, reason }, ctx).await,
 
         AgentCommand::Complete { job_id } =>
             task::buyer::run_task(T::Complete { job_id }, ctx).await,

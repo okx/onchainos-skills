@@ -9,7 +9,6 @@
 //! - `refuse.rs`       — 拒绝交付物（场景6）
 //! - `close.rs`        — 关单（场景7）+ 领取仲裁奖金
 //! - `changepublic.rs` — 设为 Public（场景8）
-//! - `judge.rs`        — 评价卖家（场景9，身份系统 CLI）
 //!
 //! 通用：
 //! - `query.rs`        — 只读查询（status、list、pay）
@@ -21,7 +20,6 @@ mod close;
 mod complete;
 mod create;
 pub mod flow;
-mod judge;
 mod negotiate;
 mod query;
 mod recommend;
@@ -111,14 +109,6 @@ pub enum TaskCommand {
         #[arg(long = "token-amount")]
         token_amount: Option<String>,
     },
-    /// Client rejects provider application
-    RejectApply {
-        job_id: String,
-        #[arg(long)]
-        provider: String,
-        #[arg(long)]
-        reason: String,
-    },
     /// Client confirms task complete and releases payment
     Complete {
         job_id: String,
@@ -164,10 +154,6 @@ pub enum TaskCommand {
         token_symbol: String,
         #[arg(long = "token-amount")]
         token_amount: String,
-    },
-    /// Rate the provider after task completion
-    Judge {
-        job_id: String,
     },
     /// Initialize config
     Config {
@@ -219,8 +205,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::SaveAgreed { job_id, token_symbol, token_amount } => {
             negotiate::save_agreed(&job_id, &token_symbol, &token_amount)
         }
-        TaskCommand::Judge { job_id } =>
-            judge::handle_judge(&mut client, &job_id).await,
 
         // ── 只读查询 ─────────────────────────────────────────────
         TaskCommand::Status { job_id, agent_id } =>
@@ -232,11 +216,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::Pay { job_id, agent_id } =>
             query::handle_pay(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await,
 
-        // ── 占位实现 ─────────────────────────────────────────────
-        TaskCommand::RejectApply { job_id, provider, reason } => {
-            println!("[TODO] reject-apply {job_id} provider={provider} reason={reason} — 待确认需求");
-            Ok(())
-        }
         TaskCommand::Config { action } => {
             match action {
                 ConfigAction::Init => println!("[stub] task config init"),

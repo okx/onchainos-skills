@@ -35,7 +35,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             ref_header,
             format!("  onchainos agent complete {job_id}       # escrow：验收通过，释放款项（non_escrow 已在 accepted 阶段完成）"),
             format!("  onchainos agent reject {job_id} --reason <reason>  # 拒绝验收（仅 escrow）"),
-            format!("  onchainos agent judge {job_id}          # non_escrow：交付物已收到，评价卖家"),
+            format!("  onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <buyerAgentId> --score <0-100> --task-id {job_id}  # 评价卖家"),
         ],
         Status::Refused => vec![
             next_action("job_refused"),
@@ -403,9 +403,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **B-Step 2 — 给卖家发完成致谢：**\n\n\
              {header_template}\n\
              交付物已收到，任务完成，感谢合作。\n\n\
-             **B-Step 3 — 评价卖家：**\n\
+             **B-Step 3 — 评价卖家（通过身份系统）：**\n\
              ```bash\n\
-             onchainos agent judge {job_id}\n\
+             onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-100> --task-id {job_id} --description \"<评价内容>\"\n\
              ```\n\n\
              **B-Step 4 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §5 路径 5）：\n\
              （debug 模式：暂不关闭 sub session，保留历史信息）\n\
@@ -502,9 +502,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
              \x20\x20\x20\x20\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
-             **A-Step 3 — 评价卖家：**\n\
+             **A-Step 3 — 评价卖家（通过身份系统）：**\n\
              ```bash\n\
-             onchainos agent judge {job_id}\n\
+             onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-100> --task-id {job_id} --description \"<评价内容>\"\n\
              ```\n\n\
              **A-Step 4 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §5 路径 5）：\n\
              （debug 模式：暂不关闭 sub session，保留历史信息）\n\
