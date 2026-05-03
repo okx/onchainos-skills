@@ -115,27 +115,22 @@ pub async fn handle_confirm_accept(
     };
 
     // ── Step 0: 余额预检（余额不足则阻断）──────────────────────────
+    // 优先级与后续 escrow/non_escrow 分支一致：CLI > 协商记录 > bail
     {
         let agreed = negotiate::load_agreed(job_id)?;
-        let check_symbol = token_symbol
-            .map(|s| s.to_string())
-            .or_else(|| agreed.as_ref().map(|(sym, _)| sym.clone()));
-        let check_amount = token_amount
-            .and_then(|a| a.parse::<f64>().ok())
-            .or_else(|| agreed.as_ref().and_then(|(_, amt)| amt.parse::<f64>().ok()));
-
-        // CLI/协商记录都没有 → 从任务详情取
-        let (sym, amt) = match (check_symbol, check_amount) {
-            (Some(s), Some(a)) => (s, a),
-            _ => {
-                let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
-                let s = task_resp["paymentTokenSymbol"].as_str().unwrap_or("USDT").to_string();
-                let a = task_resp["tokenAmount"].as_str()
-                    .and_then(|v| v.parse::<f64>().ok())
-                    .or_else(|| task_resp["paymentTokenAmount"].as_str().and_then(|v| v.parse().ok()))
-                    .unwrap_or(0.0);
-                (s, a)
-            }
+        let sym = match token_symbol {
+            Some(s) => s.to_string(),
+            None => match &agreed {
+                Some((sym, _)) => sym.clone(),
+                None => bail!("需要 --token-symbol 或先执行 save-agreed 保存协商结果"),
+            },
+        };
+        let amt: f64 = match token_amount {
+            Some(a) => a.parse().map_err(|_| anyhow::anyhow!("--token-amount 格式错误"))?,
+            None => match &agreed {
+                Some((_, amt)) => amt.parse().unwrap_or(0.0),
+                None => bail!("需要 --token-amount 或先执行 save-agreed 保存协商结果"),
+            },
         };
         if amt > 0.0 {
             common::ensure_sufficient_balance(amt, &sym).await?;

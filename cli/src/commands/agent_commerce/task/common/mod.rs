@@ -151,7 +151,7 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
                         .or_else(|| asset["symbol"].as_str())
                         .unwrap_or("");
                     let sym_norm = normalize_token_symbol(symbol);
-                    if sym_norm == currency_norm || sym_norm.starts_with(&currency_norm) {
+                    if sym_norm == currency_norm || sym_norm == format!("{currency_norm}0") {
                         let balance: f64 = asset["balance"]
                             .as_str()
                             .and_then(|s| s.parse().ok())
