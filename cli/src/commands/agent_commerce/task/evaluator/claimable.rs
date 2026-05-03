@@ -1,8 +1,13 @@
 //! 仲裁者查询待领奖励（只读）— onchainos agent evaluator claimable
+//!
+//! 实际 API 调用 + 表格输出在 `task::common::claim`（角色无关）。本文件只保留
+//! evaluator 视角的 wallet/agent 解析与"建议下一步"提示文案。
 
 use anyhow::Result;
 
-use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::{
+    claim as common_claim, network::task_api_client::TaskApiClient,
+};
 use crate::commands::agent_commerce::task::signing;
 
 /// 查询当前 evaluator 账户可领取的奖励（跨 dispute 聚合）。
@@ -20,33 +25,8 @@ pub async fn handle_claimable(
     let (_account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
 
-    let path = "/priapi/v1/aieco/task/claimable";
-    let resp = client.get_with_identity(path, &agent_id).await?;
-
-    let account = resp["account"].as_str().unwrap_or(address.as_str());
-    println!("claimable rewards (account={account}, agentId={agent_id})");
-
-    let rewards = resp["rewards"].as_array();
-    let mut has_nonzero = false;
-    match rewards {
-        Some(items) if !items.is_empty() => {
-            for r in items {
-                let symbol = r["symbol"].as_str().unwrap_or("?");
-                let amount = r["amount"].as_str().unwrap_or("0");
-                let token = r["tokenAddress"].as_str().unwrap_or("");
-                let raw = r["rawAmount"].as_str().unwrap_or("0");
-                let nonzero = raw != "0" && !raw.is_empty();
-                if nonzero {
-                    has_nonzero = true;
-                }
-                let marker = if nonzero { "•" } else { " " };
-                println!("  {marker} {symbol:<8} {amount:>30}  (token={token})");
-            }
-        }
-        _ => {
-            println!("  (no rewards)");
-        }
-    }
+    let has_nonzero =
+        common_claim::fetch_and_print_claimable(client, &agent_id, &address).await?;
 
     if has_nonzero {
         println!("\nnext: 有可领奖励 — 跟我说『领取奖励』即可一次性提走，确认上链后入账。");

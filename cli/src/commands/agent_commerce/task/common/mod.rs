@@ -21,6 +21,7 @@ fn fmt_unix_secs(secs: Option<i64>) -> String {
     }
 }
 
+pub mod claim;
 pub mod dispute_upload;
 pub mod network;
 pub mod rate_agent;
