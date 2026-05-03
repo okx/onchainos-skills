@@ -7,7 +7,7 @@
 //! 2. 按支付方式分支：
 //!    - escrow:      providerConfirmStatus → a2a_pay::create_escrow(→paymentId) → a2a_pay::pay(→signature) → accept(signatureData) → sign uop → broadcast
 //!    - non_escrow:  a2a_pay::pay() → direct/accept → sign uop → broadcast
-//!    - x402:        direct/accept → sign uop → broadcast → x402_request_sign_replay
+//!    - x402:        direct/accept → sign+broadcast → x402_request_sign_replay → direct/complete → sign+broadcast
 //!
 //! 接口文档：https://okg-block.sg.larksuite.com/wiki/UumqwSyM5i1AuakBNLClJo9igIb
 //! 支付设计：https://okg-block.sg.larksuite.com/docx/CwWbd6eCOopgq6x6VwTlWEivgrc
@@ -115,25 +115,37 @@ pub async fn handle_confirm_accept(
     };
 
     // ── Step 0: 余额预检（余额不足则阻断）──────────────────────────
-    // 优先级与后续 escrow/non_escrow 分支一致：CLI > 协商记录 > bail
     {
-        let agreed = negotiate::load_agreed(job_id)?;
-        let sym = match token_symbol {
-            Some(s) => s.to_string(),
-            None => match &agreed {
-                Some((sym, _)) => sym.clone(),
-                None => bail!("需要 --token-symbol 或先执行 save-agreed 保存协商结果"),
-            },
-        };
-        let amt: f64 = match token_amount {
-            Some(a) => a.parse().map_err(|_| anyhow::anyhow!("--token-amount 格式错误"))?,
-            None => match &agreed {
-                Some((_, amt)) => amt.parse().unwrap_or(0.0),
-                None => bail!("需要 --token-amount 或先执行 save-agreed 保存协商结果"),
-            },
-        };
-        if amt > 0.0 {
-            common::ensure_sufficient_balance(amt, &sym).await?;
+        let pm = payment_mode.as_str();
+        if pm == PAYMENT_MODE_X402 {
+            // x402: 无协商，从 recommend 缓存取 provider fee
+            let pi = super::negotiate::current(job_id)?
+                .ok_or_else(|| anyhow::anyhow!("x402 余额预检: 未找到当前 provider，请先执行 recommend"))?;
+            if let Some(svc) = pi.services.first() {
+                if svc.fee_amount > 0.0 && !svc.fee_token_symbol.is_empty() {
+                    common::ensure_sufficient_balance(svc.fee_amount, &svc.fee_token_symbol).await?;
+                }
+            }
+        } else {
+            // escrow / non_escrow: CLI > 协商记录 > bail
+            let agreed = negotiate::load_agreed(job_id)?;
+            let sym = match token_symbol {
+                Some(s) => s.to_string(),
+                None => match &agreed {
+                    Some((sym, _)) => sym.clone(),
+                    None => bail!("需要 --token-symbol 或先执行 save-agreed 保存协商结果"),
+                },
+            };
+            let amt: f64 = match token_amount {
+                Some(a) => a.parse().map_err(|_| anyhow::anyhow!("--token-amount 格式错误"))?,
+                None => match &agreed {
+                    Some((_, amt)) => amt.parse().unwrap_or(0.0),
+                    None => bail!("需要 --token-amount 或先执行 save-agreed 保存协商结果"),
+                },
+            };
+            if amt > 0.0 {
+                common::ensure_sufficient_balance(amt, &sym).await?;
+            }
         }
     }
 
@@ -411,7 +423,7 @@ pub async fn handle_confirm_accept(
             println!("  txHash: {tx_hash}");
         }
         PAYMENT_MODE_X402 => {
-            // ── x402 支付：参数从缓存（/match 接口返回）获取 ────────
+            // ── x402 支付：参数从 recommend 缓存获取，无协商 ────────
             let provider_info = super::negotiate::current(job_id)?
                 .ok_or_else(|| anyhow::anyhow!("x402: 未找到当前 provider，请先执行 recommend"))?;
             let svc = provider_info.services.first()
@@ -430,21 +442,9 @@ pub async fn handle_confirm_accept(
                 bail!("x402: 服务信息中 endpoint 为空");
             }
 
-            // 检查 feeTokenSymbol 与任务创建时 currency 是否一致
-            let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
-            let task_currency = task_resp["paymentTokenSymbol"]
-                .as_str().unwrap_or("");
-            if !task_currency.is_empty() && !task_currency.eq_ignore_ascii_case(sym) {
-                println!("⚠ 注意：Provider 要求的支付币种 ({sym}) 与任务发布时的币种 ({task_currency}) 不同");
-                println!("  将以 Provider 要求的 {sym} 进行支付，金额: {amt} {sym}");
-                println!("  如需取消，请 Ctrl+C 终止");
-                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-            }
-
-            // x402 Step 1-2：direct/accept 单签（paymentMode=2 时走 direct/accept）
+            // x402 Step 1: direct/accept（sessionCert 由 TaskApiClient 自动注入）
             let amt_str = format!("{amt}");
             let body = serde_json::json!({
-                "providerAddress": &provider_info.provider_address,
                 "providerAgentId": provider,
                 "tokenSymbol": sym,
                 "tokenAmount": amt_str,
@@ -455,6 +455,7 @@ pub async fn handle_confirm_accept(
                 &agent_id,
             ).await?;
 
+            // x402 Step 2: 签名 uopData + 广播上链
             let tx_hash = signing::sign_uop_and_broadcast(
                 client, &resp["uopData"], &account_id, &address,
                 job_id, signing::BizContext::JobAccept, &agent_id,
@@ -462,21 +463,29 @@ pub async fn handle_confirm_accept(
             println!("✓ 已接受卖家 {provider}（x402 支付），金额: {amt} {sym}");
             println!("  txHash: {tx_hash}");
 
-            // x402 Step 3：调用 x402 支付（请求 endpoint → 402 → 签名 → 重放）
-            println!("  x402: 开始调用 Provider endpoint 完成支付 ...");
-            let flow_result = x402_flow::x402_request_sign_replay(
+            // x402 Step 3: 调用 Provider endpoint 完成 x402 支付
+            println!("  x402: 开始调用 Provider endpoint ...");
+            let _flow_result = x402_flow::x402_request_sign_replay(
                 client.http(),
                 ep,
                 Some(&address),
             ).await?;
+            println!("✓ x402 endpoint 调用完成");
 
-            println!("✓ x402 支付完成");
-            println!("  endpoint:  {ep}");
-            println!("  HTTP 状态: {}", flow_result.response_status);
-            if flow_result.response_status == 200 {
-                println!("  服务响应: {}", serde_json::to_string_pretty(&flow_result.response_body)
-                    .unwrap_or_else(|_| "ok".to_string()));
-            }
+            // x402 Step 4: direct/complete（x402 不会收到 job_accepted 通知，直接 complete）
+            let complete_resp = client.post_with_identity(
+                &client.endpoint(job_id, "direct/complete"),
+                &serde_json::json!({}),
+                &agent_id,
+            ).await?;
+
+            let complete_tx = signing::sign_uop_and_broadcast(
+                client, &complete_resp["uopData"], &account_id, &address,
+                job_id, signing::BizContext::JobComplete, &agent_id,
+            ).await?;
+            println!("✓ 任务已完成（x402），金额: {amt} {sym}");
+            println!("  accept txHash:   {tx_hash}");
+            println!("  complete txHash: {complete_tx}");
         }
         other => {
             bail!("不支持的支付方式: {other}，可选: escrow / non_escrow / x402");

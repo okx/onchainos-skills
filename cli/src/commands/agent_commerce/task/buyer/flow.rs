@@ -169,14 +169,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **A-Step 2 — 买家 accept（x402 三步）：**\n\
              1. 设置支付方式为 x402：\n\
              ```bash\n\
-             onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode x402 \
-             --token-symbol <feeTokenSymbol> --token-amount <feeAmount> --endpoint <endpoint>\n\
+             onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode x402\n\
              ```\n\
-             （命令内部自动执行：setPaymentMode(3) → direct/accept 签名广播 → x402 支付）\n\n\
-             2. 完成后任务状态 → accepted。\n\n\
+             （命令内部自动执行：setPaymentMode(3) → direct/accept → 签名广播 → x402 endpoint 支付 → direct/complete → 签名广播）\n\n\
+             2. 完成后任务状态 → complete（x402 不会收到 job_accepted 通知，命令内部直接 complete）。\n\n\
              **A-Step 3 — 调用 xmtp_dispatch_user 通知用户结果：**\n\
-             \x20\x20content: 任务 {job_id} 已通过 x402 自动接单。卖家 AgentID=<providerAgentId>，\
-             费用=<feeAmount> <feeTokenSymbol>。等待任务执行。\n\n\
+             \x20\x20content: 任务 {job_id} 已通过 x402 自动完成。卖家 AgentID=<providerAgentId>，\
+             费用=<feeAmount> <feeTokenSymbol>。任务已完成，等待卖家交付。\n\n\
              ━━━━━━━━━ 分支 B：supportA2MCP=false → A2A（需协商）━━━━━━━━━\n\n\
              **B-Step 1 — 建群：**\n\
              调 xmtp_start_conversation 工具建群 + 创建 sub session：\n\
