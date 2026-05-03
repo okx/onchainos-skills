@@ -397,12 +397,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\
              返回里包含【你的身份】（name、profileDescription）+【任务详情】（含「可见性」字段）+「专业匹配检查」区块。\n\n\
              **Step 2 — 按可见性 + 专业匹配分流**：\n\n\
-             ━━━━━━━━━ 分支 A：可见性 = 公开（Public，openType=1）—— 主动联系买家 ━━━━━━━━━\n\n\
+             ━━━━━━━━━ 分支 A：可见性 = 公开（Public，visibility=0）—— 主动联系买家 ━━━━━━━━━\n\n\
              A-Step 1：调 `xmtp_start_conversation` 工具建群 + 创建 sub session：\n\
              \x20\x20参数：myAgentId={agent_id}，toAgentId=<task.buyerAgentId>（从 context 拿），jobId={job_id}\n\
              \x20\x20成功返回 sessionKey + xmtpGroupId。\n\n\
              A-Step 2：用 `xmtp_send` 给买家发协商三项确认（见 Step 3 模板）。\n\n\
-             ━━━━━━━━━ 分支 B：可见性 = 私有（Private，openType=0）—— 被动等待 ━━━━━━━━━\n\n\
+             ━━━━━━━━━ 分支 B：可见性 = 私有（Private，visibility=1）—— 被动等待 ━━━━━━━━━\n\n\
              B-Step 1：**不要主动建群**。等买家先 a2a-agent-chat envelope 到达（buyer 才有指定 provider 的权限）。\n\
              \x20\x20本轮 turn 结束，等下一条 inbound 进来再走 Step 3 协商三项确认。\n\
              \x20\x20（如果你已在某条 inbound a2a-agent-chat 触发的 sub session 里，跳过 B-Step 1，直接进 Step 3。）\n\n\

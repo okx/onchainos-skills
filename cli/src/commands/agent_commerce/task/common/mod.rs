@@ -128,7 +128,7 @@ struct TaskDetail {
     token_amount: Option<String>,
     /// 0=未设置 / 1=escrow / 2=non_escrow / 3=x402
     payment_mode: Option<i32>,
-    /// 0=私有 / 1=公开（替代旧的 openType 命名）
+    /// 后端 VisibilityEnum：0=PUBLIC（公开） / 1=PRIVATE（私有）
     visibility: Option<i32>,
     /// 0=open / 1=accepted / 2=submitted / 3=refused / 4=disputed / 5=complete / 7=close
     status: Option<i32>,
@@ -393,8 +393,9 @@ fn build_context(
         out.push_str(&format!("- 支付方式：{}\n", payment_mode_desc(pm)));
     }
     let visibility = match task.visibility {
-        Some(1) => "公开（Public）",
-        _       => "私有（Private）",
+        Some(0) => "公开（Public）",
+        Some(1) => "私有（Private）",
+        _       => "未知",
     };
     out.push_str(&format!("- 可见性：{visibility}\n"));
     if let Some(chain) = task.chain_id {
@@ -477,11 +478,11 @@ fn build_context(
             }
         }
 
-        // 专业匹配通过后，按 task.openType 给不同动作引导
+        // 专业匹配通过后，按 task.visibility 给不同动作引导（VisibilityEnum: 0=PUBLIC / 1=PRIVATE）
         let buyer_id = task.buyer_agent_id.as_deref().unwrap_or("<task.buyerAgentId>");
         let agent_id_hint = profile.and_then(|p| p.agent_id.as_deref()).unwrap_or("<你的agentId>");
         out.push_str("【⚠️ 第二步：按可见性分流（匹配通过才走这里）】\n\n");
-        if task.visibility == Some(1) {
+        if task.visibility == Some(0) {
             // 公开任务 → provider 主动建群
             out.push_str("当前任务**可见性 = 公开（Public）** → 你需要**主动联系买家发起协商**：\n\n");
             out.push_str("1. 调 `xmtp_start_conversation` 工具建群 + 创建 sub session（机制见 SKILL.md §Session 通信契约 §5 路径 7）：\n");
