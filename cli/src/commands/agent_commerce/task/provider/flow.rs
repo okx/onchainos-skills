@@ -154,11 +154,25 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ 禁止 `xmtp_dispatch_user` 推用户（『已提交 / 等待 job_submitted』是过场状态，没信息量）。\n\n\
              A-Step 3 — 收到 `job_submitted` 通知后再调 next-action（进入 Scene 5），按剧本通过 xmtp_send 把交付物发给买家。\n\n\
              ━━━━━ 分支 B：paymentMode=non_escrow（非担保交易，2）━━━━━\n\n\
-             非担保不走链上 submit，**直接 xmtp_send 把交付物发给买家**：\n\n\
+             非担保不走链上 submit，**直接 xmtp_send 把交付物发给买家**。**按交付物类型分流**：\n\n\
+             ▸ **纯文本交付物**（一段话、一段查询结果、一段 URL 链接）：\n\
              {header_template}\n\
              任务 {job_id} 已完成。交付物：\n\
-             <这里贴交付内容；如果是 URL/文件则放链接或附件 fileKey>\n\
+             <这里贴交付内容文本>\n\
              请你验收并调 `onchainos agent complete {job_id}` 释放款项；如有问题调 `onchainos agent reject` 反馈。\n\n\
+             ▸ **文件交付物**（图片/PDF/文档）—— 用 `xmtp_file_upload + xmtp_send fileKey` 两步（机制见 SKILL.md §Session 通信契约 §5 路径 8）：\n\
+             B-1. 调 `xmtp_file_upload`，参数 `filePath` = 本地文件绝对路径，`agentId` = {agent_id}，`jobId` = {job_id}\n\
+             \x20\x20\x20返回值 `fileKey` / `digest` / `salt` / `nonce` / `secret` 五个字段（解密元数据）全部记录\n\
+             B-2. `xmtp_send` 给买家：\n\
+             {header_template}\n\
+             任务 {job_id} 已完成。交付物附件：\n\
+             - fileKey: <fileKey>\n\
+             - digest: <digest>\n\
+             - salt: <salt>\n\
+             - nonce: <nonce>\n\
+             - secret: <secret>\n\
+             - filename: <原文件名>\n\
+             请用 xmtp_file_download 下载查看，确认无误后调 `onchainos agent complete {job_id}` 释放款项；如有问题调 `onchainos agent reject` 反馈。\n\n\
              B-Step 后续：等买家 user session 决策 → 若买家完成验收会触发后续事件；non_escrow 卖家这条 turn 跑完一条 xmtp_send 即结束。\n\
              ⚠️ **禁止 non_escrow 路径调 `onchainos agent deliver`**——deliver 是 escrow 链上动作，non_escrow 调会被后端拒。\n\n\
              【后续事件】\n\
@@ -170,11 +184,24 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::JobSubmitted => format!(
             "【当前状态】job_submitted（交付物已上链确认）\n\
              【角色】卖家（Provider）\n\n\
-             【你的下一步动作】\n\n\
-             从 job_submitted 通知的 payload 中提取 deliverableUrl（字段 `deliverable`），\n\
-             调用 `xmtp_send` 工具发送消息告诉买家验收：\n\n\
+             【你的下一步动作】**按交付物类型分流**：\n\n\
+             ▸ **纯文本/URL 交付物**：\n\
+             从 job_submitted 通知的 payload 中提取 deliverableUrl（字段 `deliverable`），调 `xmtp_send`：\n\n\
              {header_template}\n\
              交付物已上链确认（job_submitted），交付链接：<deliverableUrl>。等待买家验收。\n\n\
+             ▸ **文件交付物**（图片/PDF/文档）—— 用 `xmtp_file_upload + xmtp_send fileKey` 两步（机制见 SKILL.md §Session 通信契约 §5 路径 8）：\n\
+             Step 1. 调 `xmtp_file_upload`，参数 `filePath` = 本地文件绝对路径，`agentId` = {agent_id}，`jobId` = {job_id}\n\
+             \x20\x20\x20\x20返回值 `fileKey` / `digest` / `salt` / `nonce` / `secret` 五个字段全部记录\n\
+             Step 2. `xmtp_send` 给买家：\n\
+             {header_template}\n\
+             交付物已上链确认（job_submitted）。交付物附件：\n\
+             - fileKey: <fileKey>\n\
+             - digest: <digest>\n\
+             - salt: <salt>\n\
+             - nonce: <nonce>\n\
+             - secret: <secret>\n\
+             - filename: <原文件名>\n\
+             请用 xmtp_file_download 下载查看后验收。\n\n\
              【后续事件】\n\
              - job_completed → 验收通过，调用 next-action 获取收尾步骤\n\
              - job_refused   → 买家拒绝，调用 next-action 获取处理步骤\n"
@@ -266,10 +293,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
              \x20\x20\x20\x20\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
-             **Step 2 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §5 路径 5）：\n\
-             1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段\n\
-             2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串\n\
-             删除后本 sub session 不再接收任何消息——任务完整结束。\n"
+             ⚠️ **不要 `xmtp_delete_conversation`**——保留 sub session 历史以便事后查阅。任务终态后继续在 sub 里观察后续事件即可。\n"
         ),
 
         // ─── Scene 6.5: 仲裁裁决（胜诉/败诉两个分支由 inbound envelope 的 jobStatus 字段区分） ─
@@ -301,10 +325,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（jobStatus=rejected）\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n\
-             **Step 2（两个分支都要做）— 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §5 路径 5）：\n\
-             1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段\n\
-             2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串\n\
-             删除后本 sub session 不再接收任何消息——仲裁流程完整结束。\n"
+             ⚠️ **不要 `xmtp_delete_conversation`**——保留 sub session 历史以便事后查阅。仲裁终态后继续在 sub 里观察后续事件即可。\n"
         ),
 
         // ─── Scene 6.5b: 卖家同意退款 / 仲裁退款上链 ─────────────────
@@ -312,11 +333,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前状态】job_refunded（资金已退还买家）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
-             ⚠️ 不要给买家 `xmtp_send`「已退款上链」过场——双方都收到 `job_refunded` 系统事件了。\n\n\
-             **Step 1 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §5 路径 5）：\n\
-             1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段\n\
-             2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串\n\
-             删除后本 sub session 不再接收任何消息——退款流程完整结束。\n"
+             ⚠️ 不要给买家 `xmtp_send`「已退款上链」过场——双方都收到 `job_refunded` 系统事件了。\n\
+             ⚠️ **不要 `xmtp_delete_conversation`**——保留 sub session 历史以便事后查阅。\n\n\
+             直接 **结束本轮 turn**，退款流程完整结束。\n"
         ),
 
         // ─── Scene 6.4: 仲裁已上链，需用户提供证据 ───────────────────
@@ -456,7 +475,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - 禁止给买家发任何 xmtp_send（中间过场，等 job_auto_completed 上链回执到达再说）\n\
              - 禁止 `xmtp_dispatch_user` 推用户\n\n\
              【后续事件】\n\
-             - `job_auto_completed`（status=success） → next-action 拿到账剧本（推 user 通知 + 关闭 sub session）\n\
+             - `job_auto_completed`（status=success） → next-action 拿到账剧本（推 user 通知，不关闭 sub）\n\
              - `job_auto_completed`（status=failed）  → 按 errorCode 重试 claim-auto-complete\n"
         ),
 
@@ -477,9 +496,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20  - 收入：<tokenAmount> <tokenSymbol>\n\
              \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
-             **A-Step 2 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §5 路径 5）：\n\
-             1. 调 `session_status` 拿当前 sub session 的 `sessionKey`\n\
-             2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串\n\n\
+             ⚠️ **不要 `xmtp_delete_conversation`**——保留 sub session 历史以便事后查阅。\n\n\
              ━━━━━━━━━ 分支 B：status=failed（claim 失败，按 errorCode 重试）━━━━━━━━━\n\n\
              从 envelope payload 读 `errorCode` / `errorMessage`，按错误重试：\n\
              ```bash\n\

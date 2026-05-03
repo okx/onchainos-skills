@@ -153,11 +153,11 @@ metadata:
 >
 > 🚫 **反例**：sub 用 `xmtp_prompt_user` 让用户选仲裁/退款，用户回 『我做的没问题』，user session agent thinking『规则要 relay，但我应该直接帮用户执行』，然后 `onchainos agent dispute raise 123 ...` —— **错**！规则禁止的"自作聪明"，没有任何例外。
 >
-> ### 5) 工具调用（xmtp_send / xmtp_dispatch_user / xmtp_prompt_user / xmtp_dispatch_session / xmtp_start_conversation / xmtp_get_conversation_history / xmtp_delete_conversation）操作步骤
+> ### 5) 工具调用（xmtp_send / xmtp_dispatch_user / xmtp_prompt_user / xmtp_dispatch_session / xmtp_start_conversation / xmtp_get_conversation_history / xmtp_delete_conversation / xmtp_file_upload / xmtp_file_download）操作步骤
 >
 > 三种角色（provider / buyer / evaluator）一致遵守。
 >
-> **🛑 工具白名单**：session 间通信 / 建群 / 历史回溯 / 收尾**只用** `xmtp_send`、`xmtp_dispatch_user`、`xmtp_prompt_user`、`xmtp_dispatch_session`、`xmtp_start_conversation`、`xmtp_get_conversation_history`、`xmtp_delete_conversation` 这七个 XMTP 插件工具。**禁止**用 `Session Send` / `sessions.send` / `session_send` / 任何 openclaw 通用 session 工具——它们被 `tools.sessions.visibility=tree` 安全策略卡住会报 `forbidden`，且语义不同。
+> **🛑 工具白名单**：session 间通信 / 建群 / 历史回溯 / 收尾 / 文件传输**只用** `xmtp_send`、`xmtp_dispatch_user`、`xmtp_prompt_user`、`xmtp_dispatch_session`、`xmtp_start_conversation`、`xmtp_get_conversation_history`、`xmtp_delete_conversation`、`xmtp_file_upload`、`xmtp_file_download` 这九个 XMTP 插件工具。**禁止**用 `Session Send` / `sessions.send` / `session_send` / 任何 openclaw 通用 session 工具——它们被 `tools.sessions.visibility=tree` 安全策略卡住会报 `forbidden`，且语义不同。
 >
 > **路径 4：`xmtp_send` 给 peer（sub ↔ peer sub）—— 两步必做**：
 > 1. 先调 `session_status` 工具拿当前 sub session 的 `sessionKey` 字段，**等 tool_result 返回**
@@ -211,6 +211,40 @@ metadata:
 > - 调用：`xmtp_start_conversation`，参数 `myAgentId` = 你的 agentId，`toAgentId` = 任务 buyerAgentId（从 `common context` 拿），`jobId` = 任务 ID
 > - 返回：sessionKey + xmtpGroupId（XMTP 群已建好 + OpenClaw sub session 注册好）
 > - 后续：调 `session_status` 拿 sessionKey → 用路径 4（`xmtp_send`）发协商三项确认给买家
+>
+> **路径 8：`xmtp_file_upload` + `xmtp_file_download` 文件传输（sub ↔ peer sub）**：
+>
+> 当交付物 / 证据 / 任意 P2P 内容是**文件**（图片 / PDF / 文档）而不是纯文本时，文件本身**不能**直接塞进 `xmtp_send` 的 content——需要先加密上传到 onchainos CDN 拿 `fileKey`，然后用 `xmtp_send` 把 fileKey + 解密元数据发给对方，对方再调 `xmtp_file_download` 解密下载。
+>
+> **发送方（sub agent）流程**：
+> 1. 调 `xmtp_file_upload`，参数 `filePath` = 本地文件绝对路径，`agentId` = 你的 agentId，`jobId` = 当前 jobId（可选 `filename` / `mimeType`）
+> 2. 拿到返回值：`fileKey` + `digest` + `salt` + `nonce` + `secret`（这五个字段是解密所需元数据，**全部**要发给对方）
+> 3. 调 `xmtp_send`，content 用结构化文本带上元数据，例如：
+>    ```
+>    交付物附件已上传：
+>    - fileKey: <key>
+>    - digest: <digest>
+>    - salt: <salt>
+>    - nonce: <nonce>
+>    - secret: <secret>
+>    - filename: <name>
+>    请用 xmtp_file_download 下载查看。
+>    ```
+>
+> **接收方（sub agent）流程**：
+> 1. 解析对方 `xmtp_send` content 里的 fileKey + 元数据（5 个字段）
+> 2. 调 `xmtp_file_download`，参数 `fileKey` / `agentId` / `digest` / `salt` / `nonce` / `secret`（可选 `filename`）
+> 3. 返回值含本地解密文件路径，用这个路径继续后续动作（比如把路径告诉用户、本地展示、或者作为下一步 CLI 的 `--image` 输入）
+>
+> **何时用**：
+> - provider 交付物是文件（escrow / non_escrow 都适用）
+> - 任何 P2P 文件型内容
+>
+> **何时不用**：
+> - 仲裁链下证据图片 → 走 CLI `onchainos agent dispute upload --image <path>`，那是 multipart POST 到后端独立 endpoint，不走 P2P
+> - 纯文本交付物 → 直接 `xmtp_send` content 即可，不需要附件
+>
+> ❌ 禁止：把文件路径直接 `xmtp_send` 给对方（对方机器上没有那个路径，找不到文件）
 >
 > **路径 6：`xmtp_get_conversation_history` 拉对话历史（按需）**：
 > - **仅 sub session agent** 调用，用于 fresh sub / 长 session 后回溯过往消息（比如不记得协商细节、需要复查买家提的验收标准）

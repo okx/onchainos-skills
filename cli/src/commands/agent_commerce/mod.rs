@@ -230,6 +230,15 @@ pub enum AgentCommand {
     #[command(name = "claim-auto-refund")]
     ClaimAutoRefund { job_id: String },
 
+    /// Provider claims auto-complete after buyer review timeout (review_expired)
+    #[command(name = "claim-auto-complete")]
+    ClaimAutoComplete {
+        job_id: String,
+        /// Provider's own agentId
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+
     // ── Task system (sub-groups) ────────────────────────────────────────────
     /// Task config: init | show
     Config {
@@ -405,6 +414,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::ClaimAutoRefund { job_id } =>
             task::buyer::run_task(T::ClaimAutoRefund { job_id }, ctx).await,
+
+        AgentCommand::ClaimAutoComplete { job_id, agent_id } =>
+            task::provider::run_provider(
+                task::provider::ProviderCommand::ClaimAutoComplete { job_id, agent_id }, ctx,
+            ).await,
 
         // ── Provider task commands ──────────────────────────────────
         AgentCommand::RecommendTask { agent_id } => {
