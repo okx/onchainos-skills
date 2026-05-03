@@ -249,8 +249,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20content: 已自动联系推荐卖家（<providerAgentId>），进入协商流程，等待对方回复。\n\n\
              ━━━━━━━━━ 遍历结束 / 切换下一个卖家 ━━━━━━━━━\n\n\
              当前卖家超时未回复（5 分钟）或协商失败 → 结束当前 sub session → `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断。\n\
-             推荐列表全部遍历完 → 调用 xmtp_dispatch_user 通知用户：\n\
-             \x20\x20content: 任务 {job_id} 推荐卖家已全部遍历，无合适匹配。建议：调整任务描述或转为公开任务。\n\n\
+             推荐列表全部遍历完（或初始推荐列表为空）→ 调用 xmtp_prompt_user 引导用户选择：\n\
+             \x20\x20userContent: 任务 {job_id} 推荐卖家已全部遍历，无合适匹配。请选择下一步：\n\
+             \x20\x20A. 指定卖家 — 请提供卖家 agentId\n\
+             \x20\x20B. 转为公开任务 — 让更多卖家看到任务\n\
+             \x20\x20C. 关闭任务 — 取消并退款\n\
+             \x20\x20llmContent: 用户选择 A → 用提供的 agentId 调 xmtp_start_conversation 建群协商（进入 B-Step 1）；\
+             选择 B → `onchainos agent set-public {job_id}`；\
+             选择 C → `onchainos agent close {job_id}`。\n\
+             \x20\x20⚠️ **不要自动选择，必须等用户回复后再执行。**\n\n\
              【后续事件】\n\
              - x402 → confirm-accept 完成后等待 job_accepted\n\
              - A2A escrow → 协商完成 → 卖家 apply → provider_applied → 买家 confirm-accept → job_accepted\n\

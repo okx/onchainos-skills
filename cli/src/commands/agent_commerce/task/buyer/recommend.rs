@@ -62,6 +62,12 @@ pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str, agent_id
 
     negotiate::save(job_id, providers.clone())?;
 
+    if providers.is_empty() {
+        println!("推荐卖家列表为空，无匹配卖家。");
+        print_empty_guidance(job_id);
+        return Ok(());
+    }
+
     // 输出列表
     println!("推荐卖家列表（共 {} 个，已缓存，当前 index=0）：", providers.len());
     for (i, p) in providers.iter().enumerate() {
@@ -86,6 +92,7 @@ pub fn handle_recommend_current(job_id: &str) -> Result<()> {
         }
         None => {
             println!("推荐列表已全部遍历（{}/{}），无更多卖家", state.current_index, state.providers.len());
+            print_empty_guidance(job_id);
         }
     }
     Ok(())
@@ -103,7 +110,7 @@ pub fn handle_recommend_next(job_id: &str) -> Result<()> {
         None => {
             let state = negotiate::load(job_id)?;
             println!("推荐列表已全部遍历（{}/{}），无更多卖家", state.current_index, state.providers.len());
-            println!("建议：onchainos agent set-public {job_id} 或 onchainos agent close {job_id}");
+            print_empty_guidance(job_id);
         }
     }
     Ok(())
@@ -152,4 +159,11 @@ fn print_provider(index: usize, p: &negotiate::ProviderInfo) {
             println!("         endpoint: {}", svc.endpoint);
         }
     }
+}
+
+fn print_empty_guidance(job_id: &str) {
+    println!("请选择下一步操作：");
+    println!("  A. 指定卖家      → 提供卖家 agentId，将与其建群协商");
+    println!("  B. 转为公开任务  → onchainos agent set-public {job_id}");
+    println!("  C. 关闭任务      → onchainos agent close {job_id}");
 }
