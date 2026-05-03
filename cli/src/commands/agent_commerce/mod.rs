@@ -62,6 +62,8 @@ pub enum AgentCommand {
         #[arg(long)] title: Option<String>,
         /// 支付方式: escrow / non_escrow / x402（不指定则为"未设置"）
         #[arg(long = "payment-mode")] payment_mode: Option<String>,
+        /// Buyer agent ID（多 buyer 时必传，单 buyer 时自动选择）
+        #[arg(long = "agent-id")] agent_id: Option<String>,
     },
 
     /// Get recommended providers for a task
@@ -366,11 +368,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         // ── Client (buyer) task commands ────────────────────────────
         AgentCommand::CreateTask {
             description, description_summary, budget, max_budget, currency,
-            deadline_open, deadline_submit, title, payment_mode,
+            deadline_open, deadline_submit, title, payment_mode, agent_id,
         } => task::buyer::run_task(
             T::Create {
                 description, description_summary, budget, max_budget, currency,
-                deadline_open, deadline_submit, title, payment_mode,
+                deadline_open, deadline_submit, title, payment_mode, agent_id,
             }, ctx,
         ).await,
 

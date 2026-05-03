@@ -59,6 +59,9 @@ pub enum TaskCommand {
         /// 支付方式: escrow(担保) / non_escrow(非担保) / x402（不指定则为"未设置"）
         #[arg(long = "payment-mode")]
         payment_mode: Option<String>,
+        /// Buyer agent ID（多 buyer 时必传，单 buyer 时自动选择）
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
     },
     /// Get recommended providers for a task
     Recommend {
@@ -188,8 +191,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
     match cmd {
         // ── 买家动作 ─────────────────────────────────────────────
-        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, payment_mode } =>
-            create::handle_create(&mut client, description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, payment_mode).await,
+        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, payment_mode, agent_id } =>
+            create::handle_create(&mut client, description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, payment_mode, agent_id).await,
         TaskCommand::Recommend { job_id, agent_id, next, current } => {
             if next {
                 recommend::handle_recommend_next(&job_id)

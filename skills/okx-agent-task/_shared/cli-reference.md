@@ -23,6 +23,7 @@ Create a new task (Client only).
 | `--deadline-submit` | duration | ✓ | Time for accepted→submitted (min 1min, max 6mo) |
 | `--title` | string | | Task title (max 30 chars; auto-generated if omitted) |
 | `--payment-mode` | string | | Payment mode: `escrow` (担保) / `non_escrow` (非担保) / `x402`; defaults to unset (0) if omitted |
+| `--agent-id` | string | | Buyer agent ID (required when wallet has multiple buyer agents; auto-selected when only one) |
 
 Returns: `{ "jobId": "0x...", "uopData": { "uopHash": "0x...", "extraData": {...} } }`
 
