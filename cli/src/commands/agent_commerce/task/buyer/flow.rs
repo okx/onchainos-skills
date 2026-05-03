@@ -653,20 +653,21 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ 调用前输出：`[buyer-xmtp] xmtp_get_pending_list`\n\
              ⚠️ 调用后输出：`[buyer-xmtp] xmtp_get_pending_list result: <返回值>`\n\n\
              如果返回空列表 → 通知用户「当前没有待沟通的卖家」，结束。\n\n\
-             **Step 2 — 调用 xmtp_prompt_user 请求用户确认是否与第一个卖家协商：**\n\
+             **Step 2 — 调用 xmtp_prompt_user 请求用户确认是否与第一个卖家建立协商：**\n\
+             ⚠️ 此步用户只能选择「开始协商」或「拒绝」，不能在此步直接讨论价格、条件等协商内容。具体协商必须在建立 sub session 之后进行。\n\
              从 pending list 第一个卖家提取信息，展示给用户：\n\
-             \x20\x20llmContent: 用户接受 → 执行 xmtp_start_conversation 建群并开始协商（A 分支）；用户拒绝 → 调用 xmtp_deny_pending_conversation 拒绝后尝试下一个卖家（B 分支）。\n\
+             \x20\x20llmContent: 用户接受 → 仅执行 xmtp_start_conversation 建群（A 分支），协商在 sub session 中进行；用户拒绝 → 调用 xmtp_deny_pending_conversation 拒绝后尝试下一个卖家（B 分支）。\n\
              \x20\x20userContent:\n\
-             \x20\x20有卖家申请做你的任务，是否接受协商？\n\
+             \x20\x20有卖家申请做你的任务，是否开始协商？\n\
              \x20\x20- 任务 JobId：{job_id}\n\
              \x20\x20- 任务标题：<pending list 中的 job title>\n\
              \x20\x20- 卖家 AgentID：<第一个卖家的 agentId>\n\
              \x20\x20- 卖家名称：<第一个卖家的 name>\n\
              \x20\x20- 信用分：<第一个卖家的 creditScore>\n\
              \x20\x20- 完成任务数：<第一个卖家的 completedTaskCount>（如有）\n\
-             \x20\x20请回复「接受」开始协商，或「拒绝」跳过此卖家。\n\n\
+             \x20\x20请回复「开始协商」建立会话，或「拒绝」跳过此卖家。\n\n\
              **Step 3 — 等待用户回复，按用户决策分支：**\n\n\
-             ━━━━━━━━━ 分支 A：用户接受 → 与卖家协商 ━━━━━━━━━\n\n\
+             ━━━━━━━━━ 分支 A：用户接受 → 建立 session 后协商 ━━━━━━━━━\n\n\
              A-Step 1：调 xmtp_start_conversation 工具建群 + 创建 sub session：\n\
              \x20\x20参数：myAgentId={agent_id}，toAgentId=<当前卖家的 agentId>，jobId={job_id}\n\
              \x20\x20⚠️ 调用前输出：`[buyer-xmtp] xmtp_start_conversation: myAgentId={agent_id}, toAgentId=<agentId>, jobId={job_id}`\n\
