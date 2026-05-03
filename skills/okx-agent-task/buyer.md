@@ -210,7 +210,7 @@ onchainos agent create-task \
    ⚠️ **不保存会导致后续 confirm-accept 使用错误的币种/金额。**
 
 4. 按支付方式分流通知卖家：
-   - **escrow**：告知卖家「请你（卖家）执行 apply 接单」→ 等 `provider_applied`
+   - **escrow**：告知卖家「请你（卖家）执行 apply 接单」→ 等卖家 agent 通过 a2a-agent-chat 消息告知已 apply
    - **non_escrow**：告知卖家「请生成付款单（create_payment_charge）把 paymentId 发给我」→ 等 paymentId
 
    **任一项未达成** → 直接告知卖家无法继续，自动切换下一个推荐卖家。
@@ -281,7 +281,7 @@ Please initiate a direct conversation with this provider to discuss the task det
 链事件通知格式 + next-action 命令模板见 SKILL.md `## System Notification Handling` + `§Session 通信契约 §4 接收链事件`。Buyer 角色相关的 `message.event` 取值：
 
 - 链事件：`job_created` / `job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `job_disputed` / `job_refunded` / `dispute_resolved`
-- P2P 转发事件：`provider_applied`（⚠️ 后端只通知 Provider 自己；buyer 通过卖家 Agent P2P 消息得知已 apply，不是后端直推系统通知）
+- P2P 事件：`provider_applied`（⚠️ 后端**不会**给 buyer 发系统通知；buyer 通过卖家 agent 的 a2a-agent-chat 消息得知已 apply，收到后直接执行 confirm-accept）
 - 超时事件：`job_expired` / `submit_expired` / `refuse_expired` / `review_expired` / `review_deadline_warn`
 - Lifecycle 事件：`job_closed` / `job_auto_refunded` / `job_auto_completed` / `job_visibility_changed` / `job_payment_mode_changed`
 

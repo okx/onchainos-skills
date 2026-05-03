@@ -37,11 +37,17 @@ fn parse_duration_secs(s: &str) -> Result<u64> {
     }
 }
 
-/// 校验货币符号
-pub fn validate_currency(currency: &str) -> Result<()> {
-    match currency.to_uppercase().as_str() {
-        "USDT" | "USDG" => Ok(()),
-        other => bail!("不支持的代币: {other}，仅支持 USDT 和 USDG"),
+/// 归一化并校验货币符号。
+/// 接受 USDT / USD₮0（链上实际 symbol）/ USDG，返回后端标准符号。
+pub fn normalize_currency(currency: &str) -> Result<String> {
+    let normalized: String = currency.chars()
+        .map(|c| if c == '₮' { 'T' } else { c })
+        .collect::<String>()
+        .to_uppercase();
+    match normalized.as_str() {
+        "USDT" | "USDT0" => Ok("USDT".to_string()),
+        "USDG" => Ok("USDG".to_string()),
+        _ => bail!("不支持的代币: {currency}，仅支持 USDT（USD₮0）和 USDG"),
     }
 }
 
@@ -147,7 +153,7 @@ pub async fn handle_create(
     payment_mode: Option<String>,
     agent_id: Option<String>,
 ) -> Result<()> {
-    validate_currency(&currency)?;
+    let currency = normalize_currency(&currency)?;
     validate_budget(budget)?;
 
     let max_budget_val = max_budget.unwrap_or(budget);

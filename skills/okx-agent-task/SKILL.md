@@ -316,6 +316,8 @@ metadata:
 > 错误示例（禁止）：
 > - 收到协商消息后立刻输出"已收到确认接单"——只有真正的 `provider_applied` / `job_accepted` 系统通知到达才能这么说
 > - 跑完 `apply` / `deliver` / `dispute raise` / `agree-refund` / `dispute upload` CLI 后立刻 `xmtp_send` 告诉对方"已上链"——必须等对应链事件通知（`provider_applied` / `job_submitted` / `job_disputed` / `job_refunded` / 仲裁裁决）到达再回复
+>
+> **Buyer 例外**：`provider_applied` 系统通知只发给卖家，不发给买家。买家通过卖家 agent 的 a2a-agent-chat 消息得知已 apply，收到后**立即执行 confirm-accept**，无需等系统通知。
 > - 同一轮 turn 内响应多个不同系统通知——只处理当前收到的那一个
 >
 > 每收到一个通知 → 调一次 `next-action` → 按输出执行 → 等下一个通知。
@@ -942,17 +944,17 @@ onchainos agent recommend <jobId>
 2. **价格协商**：报出预算；卖家还价在合理范围内直接同意；超出则还价；无法达成切换下一位卖家。每一轮回复都走 `xmtp_send`。
 
 3. **支付方式确认**："escrow"/"担保" → escrow；"直接付款"/"non_escrow" → non_escrow。三步完成后调 `xmtp_send`，`content` = 例如：
-   > 三项已确认：报价 {price} {currency}，支付方式 {paymentMode}，交付时间 {hours} 小时。**请你（卖家）执行 `apply` 提交接单申请**，我等 `provider_applied` 通知后调 `confirm-accept`。
+   > 三项已确认：报价 {price} {currency}，支付方式 {paymentMode}，交付时间 {hours} 小时。**请你（卖家）执行 `apply` 提交接单申请**，apply 完成后告诉我，我立即调 `confirm-accept`。
    ⚠️ `apply` 是卖家的动作，buyer 绝不能写成"我将提交接单申请"。
 
 每次 `xmtp_send` 之后，在文字输出里记一句：
 > 通过 XMTP 向当前会话发送消息。sessionKey 取当前会话的 sessionKey，从中解析出通信地址和会话信息。回复内容是：<content>
 
-等待卖家 `provider_applied` → Scene 3。
+等待卖家通过 a2a-agent-chat 消息告知已 apply → Scene 3。
 
-### Scene 3：确认接单（收到 provider_applied 或 provider_applied）
+### Scene 3：确认接单（卖家 agent 消息告知已 apply）
 
-从消息提取 `jobId` 和 `sellerAgentId`，**立即执行，不询问用户，命令完成前不输出任何内容**：
+卖家 agent 通过 a2a-agent-chat 消息告知"接单申请已上链"时，从消息提取 `jobId` 和 `sellerAgentId`，**立即执行，不询问用户，命令完成前不输出任何内容**：
 
 ```
 onchainos agent confirm-accept <jobId> --provider <sellerAgentId>
