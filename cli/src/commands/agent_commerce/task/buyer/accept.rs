@@ -171,18 +171,16 @@ pub async fn handle_confirm_accept(
 
             // Step 2a: 从协商结果获取金额和币种
             // 优先级：CLI flag > 本地协商记录(negotiate-state) > 报错
-            // TODO(debug): 临时写死 USDT，调试完恢复原逻辑
             let agreed: Option<(String, String)> = negotiate::load_agreed(job_id)?;
-            let symbol = {
-                let _orig = match token_symbol {
-                    Some(s) => s.to_string(),
-                    None => match &agreed {
-                        Some((sym, _)) => sym.clone(),
-                        None => String::new(),
-                    },
-                };
-                eprintln!("⚠ [debug] escrow 币种临时写死 USDT（原值: {_orig}）");
-                "USDT".to_string()
+            let symbol = match token_symbol {
+                Some(s) => s.to_string(),
+                None => match &agreed {
+                    Some((sym, _)) => {
+                        eprintln!("ℹ --token-symbol 未传入，使用本地协商记录: {sym}");
+                        sym.clone()
+                    }
+                    None => bail!("escrow 模式需要 --token-symbol 或先执行 save-agreed 保存协商结果"),
+                },
             };
             let amount = match token_amount {
                 Some(a) => a.to_string(),
@@ -332,11 +330,28 @@ pub async fn handle_confirm_accept(
                 anyhow::anyhow!("非担保支付需要 --payment-id（由卖家通过 XMTP 传递）")
             })?;
 
-            // 从任务详情获取金额和币种
-            let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
-            let task = &task_resp;
-            let amount = task["tokenAmount"].as_str().unwrap_or("0").to_string();
-            let symbol = task["paymentTokenSymbol"].as_str().unwrap_or("USDT").to_string();
+            // 获取金额和币种：CLI flag > 本地协商记录 > 报错
+            let agreed: Option<(String, String)> = negotiate::load_agreed(job_id)?;
+            let symbol = match token_symbol {
+                Some(s) => s.to_string(),
+                None => match &agreed {
+                    Some((sym, _)) => {
+                        eprintln!("ℹ --token-symbol 未传入，使用本地协商记录: {sym}");
+                        sym.clone()
+                    }
+                    None => bail!("non_escrow 模式需要 --token-symbol 或先执行 save-agreed 保存协商结果"),
+                },
+            };
+            let amount = match token_amount {
+                Some(a) => a.to_string(),
+                None => match &agreed {
+                    Some((_, amt)) => {
+                        eprintln!("ℹ --token-amount 未传入，使用本地协商记录: {amt}");
+                        amt.clone()
+                    }
+                    None => bail!("non_escrow 模式需要 --token-amount 或先执行 save-agreed 保存协商结果"),
+                },
+            };
 
             // 通过 `onchainos agent get --agent-ids` 查询 provider 钱包地址
             let provider_address = {

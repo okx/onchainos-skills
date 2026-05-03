@@ -107,6 +107,18 @@ pub fn payment_mode_to_str(mode: i32) -> &'static str {
 
 /// 调用 `onchainos wallet balance --chain 196` 查询 XLayer 余额，
 /// 若指定代币余额不足则 bail，阻断后续流程。
+/// 归一化 token symbol：Unicode 货币符号 → ASCII 等价字母，然后转大写。
+/// 例：`USD₮0` → `USDT0`（₮ U+20AE → T）
+fn normalize_token_symbol(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '₮' => 'T', // U+20AE TUGRIK SIGN → T
+            _ => c,
+        })
+        .collect::<String>()
+        .to_uppercase()
+}
+
 pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<()> {
     let exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("无法获取可执行文件路径: {e}"))?;
@@ -125,7 +137,7 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
     let parsed: serde_json::Value = serde_json::from_str(&stdout)
         .map_err(|e| anyhow::anyhow!("解析余额查询结果失败: {e}"))?;
 
-    let currency_upper = currency.to_uppercase();
+    let currency_norm = normalize_token_symbol(currency);
     let details = parsed["data"]["details"].as_array();
     if let Some(details) = details {
         for detail in details {
@@ -138,7 +150,8 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
                         .as_str()
                         .or_else(|| asset["symbol"].as_str())
                         .unwrap_or("");
-                    if symbol.to_uppercase() == currency_upper {
+                    let sym_norm = normalize_token_symbol(symbol);
+                    if sym_norm == currency_norm || sym_norm.starts_with(&currency_norm) {
                         let balance: f64 = asset["balance"]
                             .as_str()
                             .and_then(|s| s.parse().ok())
@@ -147,7 +160,7 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
                         if balance < required {
                             bail!(
                                 "余额不足：当前 XLayer {symbol} 余额为 {balance}，\
-                                 需要 {required} {currency_upper}。请先充值后再操作"
+                                 需要 {required} {currency}。请先充值后再操作"
                             );
                         }
                         return Ok(());
@@ -158,7 +171,7 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
     }
 
     bail!(
-        "未查到 XLayer 上的 {currency_upper} 余额，请确认账户已持有该代币并充值后重试"
+        "未查到 XLayer 上的 {currency} 余额，请确认账户已持有该代币并充值后重试"
     );
 }
 
