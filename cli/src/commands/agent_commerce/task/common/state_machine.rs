@@ -205,7 +205,6 @@ impl Event {
             "dispute_approved"          => Event::DisputeApproved,
             "job_disputed"              => Event::JobDisputed,
             "job_refunded"              => Event::JobRefunded,
-            "confirm_refund"            => Event::JobRefunded, // legacy alias from earlier placeholder name
             "dispute_resolved"          => Event::DisputeResolved,
             "job_expired"               => Event::JobExpired,
             "job_closed"                => Event::JobClosed,

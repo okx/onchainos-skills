@@ -29,7 +29,7 @@ pub async fn handle_rate_agent(
     }
     let score_val: i32 = score
         .parse()
-        .map_err(|_| anyhow::anyhow!("--score 必须是 0-100 之间的整数（当前: {score}）"))?;
+        .map_err(|_| anyhow::anyhow!("--score 必须是整数（当前: {score}）"))?;
     if !(0..=100).contains(&score_val) {
         bail!("--score 必须在 0-100 之间（当前: {score_val}）");
     }

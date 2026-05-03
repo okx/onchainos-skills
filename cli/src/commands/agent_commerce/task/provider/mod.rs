@@ -17,7 +17,6 @@
 
 mod agreerefund;
 mod apply;
-pub mod contact_buyer;
 mod deliver;
 mod dispute_info;
 mod dispute_confirm;
@@ -117,8 +116,10 @@ pub enum DisputeCommand {
     /// Retrieves dispute details
     Info {
         dispute_id: String,
+        /// 调用方自己的 agentId（必填）。beta 后端拒空 agenticId header；
+        /// dispute 既可能 buyer 也可能 provider 查看，由 next-action 剧本明确传入。
         #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        agent_id: String,
     },
     /// Upload offchain evidence (multipart, 1h preparation window only) — 买卖双方共用
     Upload {
@@ -191,7 +192,7 @@ pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
         DisputeCommand::Confirm { job_id, agent_id } =>
             dispute_confirm::handle_dispute_confirm(&mut client, &job_id, &agent_id).await,
         DisputeCommand::Info { dispute_id, agent_id } =>
-            dispute_info::handle_dispute_info(&mut client, &dispute_id, agent_id.as_deref().unwrap_or("")).await,
+            dispute_info::handle_dispute_info(&mut client, &dispute_id, &agent_id).await,
         DisputeCommand::Upload { job_id, agent_id, text, images } =>
             dispute_upload::handle_upload_evidence(
                 &mut client, &job_id, &agent_id, text.as_deref(), &images,

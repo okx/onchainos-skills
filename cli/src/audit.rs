@@ -374,7 +374,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         // Task (provider)
         AgentCommand::RecommendTask { .. } => "recommend-task".into(),
         AgentCommand::FindJobs => "find-jobs".into(),
-        AgentCommand::ContactBuyer { .. } => "contact-buyer".into(),
         AgentCommand::Apply { .. } => "apply".into(),
         AgentCommand::Deliver { .. } => "deliver".into(),
         AgentCommand::AgreeRefund { .. } => "agree-refund".into(),

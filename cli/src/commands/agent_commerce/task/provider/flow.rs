@@ -77,8 +77,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
     //                  把决策 relay 回 sub）
     //     userContent = 发送给用户的可见消息
     //
-    // 老的 `xmtp_dispatch_session` 省略 sessionKey + `[STATUS_NOTIFY]` / `[USER_DECISION_REQUEST]`
-    // 包裹形态已被这两个新工具替代——本文件不再使用。
+    // 老的 `xmtp_dispatch_session` 省略 sessionKey + `[STATUS_NOTIFY]` 包裹形态已被
+    // `xmtp_dispatch_user` / `xmtp_prompt_user` 替代——本文件不再用 dispatch_session 推用户。
+    // 注：`[USER_DECISION_REQUEST]` 标记仍出现在 `xmtp_prompt_user` 的 llmContent 里，
+    // 这是给 user agent 识别"待用户决策"用的内联 tag，不是老的 envelope wrapper——
+    // user agent 拿 sub_key 后通过 path 3 (`xmtp_dispatch_session(sessionKey=<sub>, [USER_DECISION_RELAY] ...)`) 反推回 sub。
     // ──────────────────────────────────────────────────────────────────────
     let send_to_peer = format!(
         "→ 用 `xmtp_send` 发给买家（机制见 SKILL.md §Session 通信契约 §1 路径 4）。\n\
@@ -143,16 +146,41 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 2 — 执行任务**，按交付物准备好。\n\n\
              **Step 3 — 按支付方式分流交付**（必须先调 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 确认 paymentMode）：\n\n\
              ━━━━━ 分支 A：paymentMode=escrow（担保交易，1）━━━━━\n\n\
-             先**链上提交**交付物，等链上确认后再发交付物给买家。\n\n\
-             A-Step 1 — 调 CLI 提交交付：\n\
+             ⚠️ **顺序很重要**：先把交付物 xmtp_send 给买家，再 deliver 上链。\n\
+             之前的设计是 deliver 先上链等 `job_submitted` 通知再 xmtp_send，但 `job_submitted` 系统事件不是 100% 可达；\n\
+             买家拿不到交付物会直接 reject，浪费仲裁押金。所以现在改成「**先发交付物 → 再上链**」，\n\
+             链上确认只是把 task 状态推到 submitted（让买家有 complete/reject 入口），交付物本身已经送到了。\n\n\
+             **A-Step 1 — 准备交付物（按类型分流）**：\n\n\
+             ▸ **纯文本/URL 交付物**：直接组好文字内容，跳过 xmtp_file_upload，进入 A-Step 2\n\n\
+             ▸ **文件交付物**（图片/PDF/文档）：调 `xmtp_file_upload`（机制见 SKILL.md §Session 通信契约 §5 路径 8）：\n\
+             \x20\x20参数 `filePath` = 本地文件绝对路径，`agentId` = {agent_id}，`jobId` = {job_id}\n\
+             \x20\x20返回值 `fileKey` / `digest` / `salt` / `nonce` / `secret` 五个字段（解密元数据）全部记录\n\n\
+             **A-Step 2 — `xmtp_send` 把交付物发给买家**（同 turn 内紧接着 A-Step 1 跑）：\n\n\
+             文本交付物 content：\n\
+             {header_template}\n\
+             任务 {job_id} 已完成。交付物：\n\
+             <这里贴交付内容文本>\n\
+             请你验收并调 `onchainos agent complete {job_id}` 释放款项；如有问题调 `onchainos agent reject` 反馈。\n\n\
+             文件交付物 content（5 个字段原样塞）：\n\
+             {header_template}\n\
+             任务 {job_id} 已完成。以下是交付信息：\n\
+             - fileKey: <A-Step 1 返回的 fileKey 完整字符串>\n\
+             - digest: <A-Step 1 返回的 digest>\n\
+             - salt: <A-Step 1 返回的 salt>\n\
+             - nonce: <A-Step 1 返回的 nonce>\n\
+             - secret: <A-Step 1 返回的 secret>\n\
+             - filename: <A-Step 1 返回的 filename>\n\
+             请用 xmtp_file_download 下载查看，确认无误后调 `onchainos agent complete {job_id}` 释放款项。\n\n\
+             **A-Step 3 — `deliver` CLI 上链**（把 task 状态推到 submitted，让买家拿到 complete 入口）：\n\
              ```bash\n\
              onchainos agent deliver {job_id} --file \"\" --message \"任务已完成，请验收\" --agent-id {agent_id}\n\
              ```\n\
-             CLI 内部：POST submit API → 签名 uopHash → 广播上链（含 evidenceHash 占位）。\n\n\
-             A-Step 2 — **直接结束本轮 turn**，等链上 `job_submitted` 系统通知。\n\
-             ⚠️ 禁止此时给买家 xmtp_send 交付内容——必须等链上确认。\n\
-             ⚠️ 禁止 `xmtp_dispatch_user` 推用户（『已提交 / 等待 job_submitted』是过场状态，没信息量）。\n\n\
-             A-Step 3 — 收到 `job_submitted` 通知后再调 next-action（进入 Scene 5），按剧本通过 xmtp_send 把交付物发给买家。\n\n\
+             CLI 内部：POST submit API → 签名 uopHash → 广播上链。\n\n\
+             **A-Step 4 — 跑完 A-Step 3 直接结束本轮 turn**：\n\
+             ⚠️ 不需要等 `job_submitted` 通知——交付物已经在 A-Step 2 送到买家了。\n\
+             ⚠️ 禁止此时再给买家 xmtp_send 任何过场（『已上链请验收』之类）。\n\
+             ⚠️ 禁止 `xmtp_dispatch_user` 推用户。\n\
+             ⚠️ Scene 5 (`job_submitted`) 收到时只观察、不再 xmtp_send（避免给买家发双消息）。\n\n\
              ━━━━━ 分支 B：paymentMode=non_escrow（非担保交易，2）━━━━━\n\n\
              非担保不走链上 submit，**直接 xmtp_send 把交付物发给买家**。**按交付物类型分流**：\n\n\
              ▸ **纯文本交付物**（一段话、一段查询结果、一段 URL 链接）：\n\
@@ -177,36 +205,23 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              B-Step 后续：等买家 user session 决策 → 若买家完成验收会触发后续事件；non_escrow 卖家这条 turn 跑完一条 xmtp_send 即结束。\n\
              ⚠️ **禁止 non_escrow 路径调 `onchainos agent deliver`**——deliver 是 escrow 链上动作，non_escrow 调会被后端拒。\n\n\
              【后续事件】\n\
-             - 分支 A → job_submitted（链上）→ Scene 5 给买家发交付物\n\
+             - 分支 A → 链上 task 状态进 submitted（job_submitted 系统事件可能到达，仅观察不动作）→ 等 buyer complete/reject\n\
              - 分支 B → 买家直接验收，无中间链事件\n"
         ),
 
-        // ─── Scene 5: 交付物已上链，通知买家验收 ─────────────────────
+        // ─── Scene 5: 交付物已上链（observer-only） ──────────────────
+        // 新流程下交付物已经在 Scene 4 A-Step 2 用 xmtp_send 发给买家了，job_submitted
+        // 系统事件到达本 sub 时不需要再 xmtp_send，避免买家收双消息。
         Event::JobSubmitted => format!(
-            "【当前状态】job_submitted（交付物已上链确认）\n\
+            "【系统通知】job_submitted（交付物已上链确认，task 状态进入 submitted）\n\
              【角色】卖家（Provider）\n\n\
-             【你的下一步动作】**按交付物类型分流**：\n\n\
-             ▸ **纯文本/URL 交付物**：\n\
-             从 job_submitted 通知的 payload 中提取 deliverableUrl（字段 `deliverable`），调 `xmtp_send`：\n\n\
-             {header_template}\n\
-             交付物已上链确认（job_submitted），交付链接：<deliverableUrl>。等待买家验收。\n\n\
-             ▸ **文件交付物**（图片/PDF/文档）—— 用 `xmtp_file_upload + xmtp_send fileKey` 两步（机制见 SKILL.md §Session 通信契约 §5 路径 8）：\n\
-             ⚠️ **Step 1 和 Step 2 必须同 turn 内连续执行**——上传完拿到返回值立即接着 xmtp_send，不要把 turn 切断。上传完不发 fileKey = 买家收不到交付物。\n\
-             Step 1. 调 `xmtp_file_upload`，参数 `filePath` = 本地文件绝对路径，`agentId` = {agent_id}，`jobId` = {job_id}\n\
-             \x20\x20\x20\x20返回值 `fileKey` / `digest` / `salt` / `nonce` / `secret` 五个字段全部记录\n\
-             Step 2. **同 turn 内**继续调 `xmtp_send` 给买家（5 个字段原样塞进 content）：\n\
-             {header_template}\n\
-             交付物已上链确认（job_submitted）。以下是交付信息：\n\
-             - fileKey: <Step 1 返回的 fileKey 完整字符串>\n\
-             - digest: <Step 1 返回的 digest>\n\
-             - salt: <Step 1 返回的 salt>\n\
-             - nonce: <Step 1 返回的 nonce>\n\
-             - secret: <Step 1 返回的 secret>\n\
-             - filename: <Step 1 返回的 filename>\n\
-             请用 xmtp_file_download 下载查看后验收。\n\n\
+             ⚠️ **observer-only**：交付物已经在 Scene 4 A-Step 2（escrow 路径）或 Scene 4 分支 B（non_escrow 路径）发给买家了，本事件**不需要再 xmtp_send 第二次**——重复发会让买家 sub 收到双消息触发循环。\n\n\
+             【你的下一步动作】\n\
+             - **静默观察即可**，不要 xmtp_send / xmtp_file_upload / xmtp_dispatch_user / xmtp_prompt_user\n\
+             - **直接结束本轮 turn**，等买家 complete/reject 触发后续事件\n\n\
              【后续事件】\n\
-             - job_completed → 验收通过，调用 next-action 获取收尾步骤\n\
-             - job_refused   → 买家拒绝，调用 next-action 获取处理步骤\n"
+             - job_completed → 验收通过，调用 next-action 进 Scene 7 收尾\n\
+             - job_refused   → 买家拒绝，调用 next-action 进 Scene 6 决策\n"
         ),
 
         // ─── Scene 6: 买家拒绝交付物 ─────────────────────────────────
@@ -566,7 +581,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【系统通知】reward_claimed（claimRewards tx 回执）\n\
              【角色】卖家（Provider）\n\n\
              【建议】从 payload 提取 status / amount / txHash。如 status=success 表示奖励到账；\n\
-             如 status=failed 按 errorCode 重试 `onchainos agent claim {job_id}`。\n"
+             如 status=failed 按 errorCode 重试 `onchainos agent provider-claim-rewards --agent-id {agent_id}`。\n"
         ),
 
         // job_auto_refunded —— buyer 端 tx 回执，provider 无关

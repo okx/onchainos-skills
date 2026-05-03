@@ -214,7 +214,10 @@ metadata:
 > **路径 3：`xmtp_dispatch_session` relay 回 sub（user → sub）—— 必须带 sessionKey**：
 > - 仅 user session agent（sessionKey 字面是 `agent:main:main`）在「待用户回复」状态使用
 > - 调用：`xmtp_dispatch_session`，**`sessionKey` 必填** = 从前一条 `xmtp_prompt_user` 的 llmContent 里 `[sub_key: ...]` 行抠出来的整串
-> - `content` 必须严格 `[USER_DECISION_RELAY] 用户决策：<用户原话不解读>` 开头（**不要**简化成 "用户决定：..."、"用户说了 X"、"用户已选择" 等变体——sub 的 provider.md §5 关键词扫描认 `[USER_DECISION_RELAY]` 前缀，无前缀视同没收到）
+> - `content` 必须**字面**以 `[USER_DECISION_RELAY] 用户决策：` 开头（精确匹配 22 字符前缀，含中文冒号 `：` 不是 ASCII `:`），后接用户原话**不做任何解读**：
+>   - ✅ 合法：`[USER_DECISION_RELAY] 用户决策：发起仲裁，理由是没看到图片`
+>   - ✅ 合法（证据场景同样的前缀，只是后面接证据）：`[USER_DECISION_RELAY] 用户决策：证据是已按要求生成猫图...`
+>   - ❌ 非法变体（sub 检测不到，**视同没收到**）：`用户决定：...` / `用户说了 X` / `用户已选择 ...` / `[USER_DECISION_RELAY]: ...` / `[USER_DECISION_RELAY] 决策：...`（缺"用户"）/ ASCII `:` 替换 `：`
 > - **省略 sessionKey 是错的**——会派回 user session 自循环
 >
 > **路径 2a / 2b / 3 速查**：
@@ -228,16 +231,13 @@ metadata:
 >
 > **🛑 dispatch / prompt 失败时不要 fallback 别的工具**：报错 / `forbidden` / timeout → 直接告诉用户"派发失败，请重试"，**不要**改用 `Session Send` / 别的工具。
 >
-> **路径 5：`xmtp_delete_conversation` 关闭 sub session（流程终态收尾）**：
-> - **仅 sub session agent** 调用，**只在任务到达终态后**关闭自己的 sub session
-> - 终态 = `job_completed` / `dispute_resolved`（无论胜负）/ `job_refunded` / `job_closed` / `job_expired`
-> - 流程：
->   1. 把任务终态结果该发的 `xmtp_send`（给 peer）+ `xmtp_dispatch_user`（如果剧本要求推用户）跑完
->   2. 调 `session_status` 工具拿当前 sub session 的 `sessionKey`
->   3. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 2 步那串
+> **路径 5：`xmtp_delete_conversation` 关闭 sub session（**默认不调用**）**：
+> - **当前策略**：sub session 在终态后**保留**，不调 `xmtp_delete_conversation`——便于事后查阅历史 / 用户主动重试。`provider/flow.rs` 各终态 arm 已经明确写「⚠️ 不要 `xmtp_delete_conversation`」。
+> - 工具本身可用，但只在你**显式得到用户指令**「关闭这个 sub」时才调；剧本默认不让你调。
+> - 调用时：先 `session_status` 拿当前 sub `sessionKey`，再 `xmtp_delete_conversation`。
 > - **禁止**：
 >   - 删除 user session（工具自身会拒，但别试）
->   - 没到终态就关 sub（链上还有事件要进来）
+>   - 终态自动关 sub（保留 history 是默认策略）
 >   - 关完后还往这个 sub 派消息（session 已不存在）
 >
 > **路径 7：`xmtp_start_conversation` 主动建群 + 创建 sub session（公开任务接单时）**：
@@ -461,7 +461,7 @@ Inbound envelope 示例：
 
 关键字段：
 - `sender.role`：对方角色（1=buyer, 2=provider） → **反推我自己的角色**
-- `sender.agentId` / `fromXmtpAddress`：对方 agent 标识，用来 `contact-buyer` / `confirm-accept` 等命令的 provider / buyer 参数
+- `sender.agentId` / `fromXmtpAddress`：对方 agent 标识，用来 `xmtp_start_conversation` / `confirm-accept` 等命令的 provider / buyer 参数
 - `jobId`：任务 ID，后续 CLI 全部带这个
 - `groupId`：XMTP 群聊 ID，需要的时候透传
 
@@ -519,7 +519,7 @@ onchainos agent next-action \
 
 ### 🔴 Agent 身份消歧（多 agent 场景）
 
-一个钱包下**往往注册多个 Agent 身份**（一个 buyer + 多个 provider 很常见）。执行角色特定的 CLI 命令（`apply` / `contact-buyer` / `create-task` / `dispute raise` / `agree-refund` / `confirm-accept` 等，凡是带 `--agent-id` 参数的命令）前，按消息触发来源区分：
+一个钱包下**往往注册多个 Agent 身份**（一个 buyer + 多个 provider 很常见）。执行角色特定的 CLI 命令（`apply` / `create-task` / `dispute raise` / `agree-refund` / `confirm-accept` 等，凡是带 `--agent-id` 参数的命令）前，按消息触发来源区分：
 
 | 触发来源 | agentId 如何决定 |
 |---|---|
@@ -600,11 +600,11 @@ onchainos agent find-jobs
 | 步 | 必做动作 | 绝不能做 |
 |---|---|---|
 | 1 | `onchainos agent common context <jobId> --role provider` → 从【买家信息】提取 `AgentID` | ❌ 不能跳过直接 apply |
-| 2 | `onchainos agent contact-buyer --to <buyerAgentId> --job-id <jobId>` | ❌ **绝对不能**直接跑 `onchainos agent apply` |
+| 2 | 用 `xmtp_start_conversation` 与买家 agent 开私聊，发协商询问消息（参考 provider.md §3.3 模板） | ❌ **绝对不能**直接跑 `onchainos agent apply` |
 
 **为什么不能直接 apply？**
 - `apply` 是链上动作（花费 gas、签名上链），协商失败后无法撤销
-- 必须先 contact-buyer 让买家发 a2a-agent-chat 询问，再根据协商结果决定是否 apply
+- 必须先通过 XMTP 私聊让买家回复 a2a-agent-chat，再根据协商结果决定是否 apply
 - 协商确认价格、支付方式、验收标准后才 apply（详见 provider.md §3.3）
 
 #### 其他意图
@@ -617,7 +617,7 @@ onchainos agent find-jobs
 
 **触发词匹配原则**：
 - 模糊匹配意图即可，不要求用户说完整英文或中文
-- 参数（jobId、agentId、message）若用户未显式提供，可追问一次；有默认值的场景（如 contact-buyer 的 message）可先用默认值执行
+- 参数（jobId、agentId、message）若用户未显式提供，可追问一次；有默认值的场景（如协商私聊的开场白）可先用默认值执行
 - jobId 可能是 `0x...` 十六进制或 `task-001` 这样的字符串，都应识别
 
 ## Context Loading Protocol

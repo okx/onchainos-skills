@@ -11,6 +11,7 @@ use serde_json::Value;
 use tokio::process::Command;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::token_symbol_from_address;
 use crate::commands::agent_commerce::task::signing;
 
 /// Provider 角色值（后端约定：1=buyer, 2=provider, 3=evaluator）
@@ -115,17 +116,14 @@ async fn invoke_agent_get() -> Result<Vec<Value>> {
         );
     }
 
-    // data 可能是 { list: [...] } 或数组 [{ list: [...] }]（后端兼容格式）
-    let data = &parsed["data"];
-    let list = if data.is_array() {
-        data.get(0)
-            .and_then(|v| v.get("list"))
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default()
-    } else {
-        data["list"].as_array().cloned().unwrap_or_default()
-    };
+    // backend shape: data = [{ list, page, pageSize, total }]
+    let list = parsed["data"]
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|v| v.get("list"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
     Ok(list)
 }
 
@@ -148,12 +146,14 @@ fn print_tasks(tasks: &[Value]) {
     for (i, t) in tasks.iter().enumerate() {
         let token_amount = t["tokenAmount"].as_str().unwrap_or("?");
         let token_addr = t["tokenAddress"].as_str().unwrap_or("");
+        let token_sym = token_symbol_from_address(token_addr).unwrap_or("UNKNOWN");
         println!(
-            "  {}. jobId={} | {} | 预算 {} (token: {})",
+            "  {}. jobId={} | {} | 预算 {} {} (token: {})",
             i + 1,
             t["jobId"].as_str().unwrap_or("?"),
             t["title"].as_str().unwrap_or("?"),
             token_amount,
+            token_sym,
             token_addr,
         );
     }

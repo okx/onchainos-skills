@@ -1,23 +1,15 @@
 //! 查询争议详情（只读）— onchainos agent dispute info <disputeId>
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use serde_json::Value;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::signing;
 
 pub async fn handle_dispute_info(client: &mut TaskApiClient, dispute_id: &str, agent_id: &str) -> Result<()> {
-    let agent_id = if agent_id.is_empty() {
-        // dispute 可能是 buyer 或 provider 查看，尝试 buyer 再 provider
-        use crate::commands::agent_commerce::task::common::{AGENT_ROLE_BUYER, AGENT_ROLE_PROVIDER};
-        let id = signing::resolve_agent_id_by_role(AGENT_ROLE_BUYER).await.unwrap_or_default();
-        if id.is_empty() {
-            signing::resolve_agent_id_by_role(AGENT_ROLE_PROVIDER).await.unwrap_or_default()
-        } else { id }
-    } else {
-        agent_id.to_string()
-    };
-    let resp = client.get_with_identity(&format!("/priapi/v1/aieco/task/dispute/{dispute_id}"), &agent_id).await?;
+    if agent_id.is_empty() {
+        bail!("--agent-id 必填（调用方自己的 agentId，buyer 或 provider 都行；beta 后端拒空 agenticId header）");
+    }
+    let resp = client.get_with_identity(&format!("/priapi/v1/aieco/task/dispute/{dispute_id}"), agent_id).await?;
     print_dispute_info(dispute_id, &resp);
     Ok(())
 }

@@ -38,6 +38,24 @@ pub const XLAYER_CHAIN_INDEX: &str = "196";
 /// XLayer chain name（用于 wallet_store 地址查找，wallets.json 中 chainIndex=196 的 chainName）
 pub const XLAYER_CHAIN_NAME: &str = "okb";
 
+// ─── XLayer 任务系统支持的支付代币地址 → 符号 ────────────────────────────
+// 后端 task 列表 / 详情已经不再返回 paymentTokenSymbol，需要客户端从地址反查。
+
+/// XLayer USDT 合约地址（小写）
+pub const XLAYER_USDT_ADDRESS: &str = "0x1e4a5963abfd975d8c9021ce480b42188849d41d";
+/// XLayer USDG 合约地址（小写）
+pub const XLAYER_USDG_ADDRESS: &str = "0x4ae46a509f6b1d9056937ba4500cb143933d2dc8";
+
+/// 把 token 合约地址映射成展示符号（USDT / USDG）。
+/// 未知地址返回 None，调用方自行决定回退（一般直接显示 hex 地址）。
+pub fn token_symbol_from_address(addr: &str) -> Option<&'static str> {
+    match addr.to_ascii_lowercase().as_str() {
+        XLAYER_USDT_ADDRESS => Some("USDT"),
+        XLAYER_USDG_ADDRESS => Some("USDG"),
+        _ => None,
+    }
+}
+
 // ─── Agent 角色常量（身份模块 API role 字段值）────────────────────────────
 
 /// 买家 / 需求方（requestor）
@@ -217,14 +235,18 @@ async fn fetch_agent_profile(agent_id: &str) -> Option<AgentProfile> {
     }
     let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
 
-    // data 是后端真实 shape：[{list, page, pageSize, total}]；
-    // 极少数被 normalize 成单 object 的情况也兼容。
-    let list_val = if let Some(arr) = data.as_array() {
-        arr.first().and_then(|x| x.get("list")).cloned()
-    } else {
-        data.get("list").cloned()
-    };
+    // backend shape: data = [{ list, page, pageSize, total }]
+    let list_val = data
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|x| x.get("list"))
+        .cloned();
     let list_arr = list_val.as_ref().and_then(|v| v.as_array());
+    if list_arr.is_none() {
+        eprintln!(
+            "[fetch_agent_profile] `agent get` 返回不含 data[0].list 字段，shape 异常；fallback (agentId={agent_id})"
+        );
+    }
 
     let matched = list_arr.and_then(|arr| {
         arr.iter()
@@ -238,6 +260,11 @@ async fn fetch_agent_profile(agent_id: &str) -> Option<AgentProfile> {
                     .map(String::from),
             })
     });
+    if list_arr.is_some() && matched.is_none() {
+        eprintln!(
+            "[fetch_agent_profile] agentId={agent_id} 不在 `agent get` 返回列表中；fallback"
+        );
+    }
     Some(matched.unwrap_or_else(fallback))
 }
 
@@ -388,7 +415,8 @@ fn build_context(
 
     let amount = task.token_amount.as_deref().unwrap_or("未设置");
     let token  = task.token_address.as_deref().unwrap_or("");
-    out.push_str(&format!("- 预算：{amount} （token: {token}）\n"));
+    let symbol = token_symbol_from_address(token).unwrap_or("UNKNOWN");
+    out.push_str(&format!("- 预算：{amount} {symbol} （token: {token}）\n"));
 
     if let Some(pm) = task.payment_mode {
         out.push_str(&format!("- 支付方式：{}\n", payment_mode_desc(pm)));

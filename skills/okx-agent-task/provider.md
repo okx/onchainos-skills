@@ -51,7 +51,7 @@
 | 路径 | 触发 | 起点 |
 |---|---|---|
 | **A. 被动响应**（最常见）| 收到买家 a2a-agent-chat envelope（`sender.role===1`） | 直接进入"协商三项确认" |
-| **B. 主动联系**（少见）| 用户说"联系 jobX 的买家" | 先 `contact-buyer` → 等买家回复 → 协商三项确认 |
+| **B. 主动联系**（公开任务，visibility=0）| 用户说"联系 jobX 的买家"，或 sub 自己跑 `find-jobs` 后用户挑了任务 | `xmtp_start_conversation`（XMTP plugin 工具，不是 CLI 命令）建群 → 等买家回复 → 协商三项确认 |
 
 **协商三项确认**（A/B 共用）：
 
@@ -72,11 +72,18 @@
    ```
    **任一项未达成** → `xmtp_send` 回复"很抱歉，无法接受当前条件"，结束。
 
-**主动联系路径 (B) 起步**：
+**主动联系路径 (B) 起步**（公开任务，visibility=0）：
 ```bash
 onchainos agent common context <jobId> --role provider --agent-id <你的agentId>    # 提取 buyerAgentId
-onchainos agent contact-buyer --to <buyerAgentId> --job-id <jobId>
 ```
+然后调 XMTP 插件工具 `xmtp_start_conversation`（不是 CLI 命令）：
+```
+tool: xmtp_start_conversation
+myAgentId: <你的agentId>
+toAgentId: <task.buyerAgentId>
+jobId: <jobId>
+```
+返回 `sessionKey + xmtpGroupId`，sub session 创建好后调 `xmtp_send` 发协商三项确认。
 
 **时限**：协商 5 分钟内完成，不反复追问已知信息。
 
@@ -88,7 +95,7 @@ onchainos agent contact-buyer --to <buyerAgentId> --job-id <jobId>
 
 - 链事件：`provider_applied` / `job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `job_disputed` / `job_refunded` / `dispute_resolved`
 - 链事件（仲裁两阶段过场）：`dispute_approved`（仲裁阶段 1 approve 上链后系统推这个，触发阶段 2 dispute confirm）
-- 伪 event（user session 用户决策 relay 回 sub 后自己调 next-action 用）：`dispute_raise` / `agree_refund` / `dispute_evidence`
+- **pseudo event**（不是后端推的链事件，而是 sub agent 自己解析 `[USER_DECISION_RELAY]` 用户原话关键词后**手动**传给 next-action 的标识）：`dispute_raise` / `agree_refund` / `dispute_evidence`
 
 每收到一个通知 → 调一次 next-action → 按 flow.rs 输出的 Scene 执行 CLI / xmtp_send / 必要时推 user session。
 
@@ -96,7 +103,18 @@ onchainos agent contact-buyer --to <buyerAgentId> --job-id <jobId>
 
 ## 5. 收到 `[USER_DECISION_RELAY]` 消息时（user session 转回来的用户决策）
 
-通用流程见 SKILL.md `§Session 通信契约 §4 接收 user relay`。Provider 特有的关键词→pseudo event 映射：
+通用流程见 SKILL.md `§Session 通信契约 §4 接收 user relay`。
+
+**llmContent 模板**（你（sub agent）调 `xmtp_prompt_user` 让用户决策时，按这个格式构造）：
+
+```
+llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: <jobId>] <relay 指令一句话，告诉 user agent 拿到用户回话后该怎么做>
+userContent: <给用户看的纯自然语言提问，列出选项，例如『请选择：1. 发起仲裁 → 回复"发起仲裁，理由是..." 2. 同意退款 → 回复"同意退款"』>
+```
+
+`[USER_DECISION_REQUEST]` 是给 user agent 识别『这是待决策请求』的内联 tag，不是老的 envelope 包裹形态。`sub_key` 必填——user agent 拿用户回话后用 `xmtp_dispatch_session(sessionKey=<sub_key>)` + `[USER_DECISION_RELAY] 用户决策：<原话>` 反推回本 sub。
+
+Provider 特有的关键词→pseudo event 映射：
 
 | 用户原话关键词 | pseudo event | 后续 task CLI |
 |---|---|---|

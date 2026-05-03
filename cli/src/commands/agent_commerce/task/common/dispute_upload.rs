@@ -20,6 +20,9 @@ use crate::commands::agent_commerce::task::common::network::task_api_client::Tas
 /// 允许的图片扩展名（与后端校验对齐）
 const ALLOWED_IMG_EXTS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp"];
 
+/// text 字段最大字节数（escape 前粗略上限，防止超大 paste 撑爆 multipart body）
+const MAX_TEXT_BYTES: usize = 16 * 1024;
+
 /// 上传链下证据（买卖双方共用入口）
 pub async fn handle_upload_evidence(
     client: &mut TaskApiClient,
@@ -43,6 +46,16 @@ pub async fn handle_upload_evidence(
 
     if text_clean.is_none() && image_paths.is_empty() {
         bail!("必须提供 --text（非空白）或 --image 之一");
+    }
+    // escape 前粗校验长度——比 escape 后再校验更直观，且能 short-circuit 大 paste
+    if let Some(t) = text_clean.as_deref() {
+        if t.len() > MAX_TEXT_BYTES {
+            bail!(
+                "--text 过长：{} 字节，上限 {} 字节",
+                t.len(),
+                MAX_TEXT_BYTES
+            );
+        }
     }
 
     // 收集 image part 元信息（先把文件内容读到内存，方便统一计算 Content-Length）

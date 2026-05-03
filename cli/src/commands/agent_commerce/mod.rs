@@ -157,24 +157,14 @@ pub enum AgentCommand {
     /// Provider fetches recommended Public tasks matching their skill
     #[command(name = "recommend-task")]
     RecommendTask {
+        /// 卖家 agentId（必填）。beta 后端拒空 agenticId header → 3001 auth fail。
         #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        agent_id: String,
     },
 
     /// 开始接单：调 `agent get` 拉所有在线 provider agent，对每个循环 recommend-task
     #[command(name = "find-jobs")]
     FindJobs,
-
-    /// Provider initiates contact with a buyer (xmtp, placeholder)
-    #[command(name = "contact-buyer")]
-    ContactBuyer {
-        #[arg(long = "to")]
-        to_agent_id: String,
-        #[arg(long = "job-id")]
-        job_id: String,
-        #[arg(long)]
-        message: Option<String>,
-    },
 
     /// Provider applies for a task (apply API → sign → broadcast)
     Apply {
@@ -445,14 +435,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         // ── Provider task commands ──────────────────────────────────
         AgentCommand::RecommendTask { agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::provider::recommend_task::handle_recommend_task(&mut c, agent_id.as_deref()).await
+            task::provider::recommend_task::handle_recommend_task(&mut c, &agent_id).await
         }
 
         AgentCommand::FindJobs =>
             task::provider::find_jobs::handle_find_jobs().await,
-
-        AgentCommand::ContactBuyer { to_agent_id, job_id, message } =>
-            task::provider::contact_buyer::handle_contact_buyer(&to_agent_id, &job_id, message.as_deref()).await,
 
         AgentCommand::Apply { job_id, token_amount, token_symbol, agent_id } =>
             task::provider::run_provider(
