@@ -502,7 +502,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             );
             // 状态脱节 → block 输出剧本（避免 sub 按 stale event 跑老剧本上链）
             // 只在 PSEUDO_EVENTS / unknown / network failure 时跳过校验，正常情况下严格守门
-            if let Some(w) = check_status_freshness(&job_id, &job_status).await {
+            if let Some(w) = check_status_freshness(&job_id, &job_status, &agent_id).await {
                 println!("{w}");
                 return Ok(());
             }
@@ -578,7 +578,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 ///
 /// 触发场景：system event 延迟、之前的 CLI 操作已经把 status 推得更靠前、
 /// 网络/解析失败时返回 None（不阻塞剧本输出，graceful fallback）。
-async fn check_status_freshness(job_id: &str, job_status_or_event: &str) -> Option<String> {
+async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_id: &str) -> Option<String> {
     use task::common::network::task_api_client::TaskApiClient;
     use task::common::state_machine::{parse_status_or_event, status_when_event, Status};
 
@@ -603,7 +603,9 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str) -> Opti
     }
 
     let mut c = TaskApiClient::new();
-    let resp = c.get(&c.task_path(job_id)).await.ok()?;
+    // 必须带 agenticId header——beta 后端没 header 就返回 code=3001 auth fail。
+    // next-action 命令本身要求 --agentId 必填，所以这里直接用，不做 empty fallback。
+    let resp = c.get_with_identity(&c.task_path(job_id), agent_id).await.ok()?;
     // 后端 spec：响应平铺，status 是 int
     let actual = Status::from_int(i32::try_from(resp.get("status")?.as_i64()?).ok()?);
     let actual_str = actual.as_str().to_string();
