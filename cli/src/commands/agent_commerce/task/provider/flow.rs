@@ -161,17 +161,18 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              <这里贴交付内容文本>\n\
              请你验收并调 `onchainos agent complete {job_id}` 释放款项；如有问题调 `onchainos agent reject` 反馈。\n\n\
              ▸ **文件交付物**（图片/PDF/文档）—— 用 `xmtp_file_upload + xmtp_send fileKey` 两步（机制见 SKILL.md §Session 通信契约 §5 路径 8）：\n\
+             ⚠️ **B-1 和 B-2 必须同 turn 内连续执行**——`xmtp_file_upload` 调完拿到返回值后**立即**接着调 `xmtp_send`，不要把 turn 切断。上传完不发 fileKey 给买家 = 买家完全收不到交付物。\n\
              B-1. 调 `xmtp_file_upload`，参数 `filePath` = 本地文件绝对路径，`agentId` = {agent_id}，`jobId` = {job_id}\n\
              \x20\x20\x20返回值 `fileKey` / `digest` / `salt` / `nonce` / `secret` 五个字段（解密元数据）全部记录\n\
-             B-2. `xmtp_send` 给买家：\n\
+             B-2. **同 turn 内**继续调 `xmtp_send` 给买家（必须把 B-1 拿到的 5 个字段原样塞进 content）：\n\
              {header_template}\n\
-             任务 {job_id} 已完成。交付物附件：\n\
-             - fileKey: <fileKey>\n\
-             - digest: <digest>\n\
-             - salt: <salt>\n\
-             - nonce: <nonce>\n\
-             - secret: <secret>\n\
-             - filename: <原文件名>\n\
+             任务 {job_id} 已完成。以下是交付信息：\n\
+             - fileKey: <B-1 返回的 fileKey 完整字符串>\n\
+             - digest: <B-1 返回的 digest>\n\
+             - salt: <B-1 返回的 salt>\n\
+             - nonce: <B-1 返回的 nonce>\n\
+             - secret: <B-1 返回的 secret>\n\
+             - filename: <B-1 返回的 filename，例如 task预发.png>\n\
              请用 xmtp_file_download 下载查看，确认无误后调 `onchainos agent complete {job_id}` 释放款项；如有问题调 `onchainos agent reject` 反馈。\n\n\
              B-Step 后续：等买家 user session 决策 → 若买家完成验收会触发后续事件；non_escrow 卖家这条 turn 跑完一条 xmtp_send 即结束。\n\
              ⚠️ **禁止 non_escrow 路径调 `onchainos agent deliver`**——deliver 是 escrow 链上动作，non_escrow 调会被后端拒。\n\n\
@@ -190,17 +191,18 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              {header_template}\n\
              交付物已上链确认（job_submitted），交付链接：<deliverableUrl>。等待买家验收。\n\n\
              ▸ **文件交付物**（图片/PDF/文档）—— 用 `xmtp_file_upload + xmtp_send fileKey` 两步（机制见 SKILL.md §Session 通信契约 §5 路径 8）：\n\
+             ⚠️ **Step 1 和 Step 2 必须同 turn 内连续执行**——上传完拿到返回值立即接着 xmtp_send，不要把 turn 切断。上传完不发 fileKey = 买家收不到交付物。\n\
              Step 1. 调 `xmtp_file_upload`，参数 `filePath` = 本地文件绝对路径，`agentId` = {agent_id}，`jobId` = {job_id}\n\
              \x20\x20\x20\x20返回值 `fileKey` / `digest` / `salt` / `nonce` / `secret` 五个字段全部记录\n\
-             Step 2. `xmtp_send` 给买家：\n\
+             Step 2. **同 turn 内**继续调 `xmtp_send` 给买家（5 个字段原样塞进 content）：\n\
              {header_template}\n\
-             交付物已上链确认（job_submitted）。交付物附件：\n\
-             - fileKey: <fileKey>\n\
-             - digest: <digest>\n\
-             - salt: <salt>\n\
-             - nonce: <nonce>\n\
-             - secret: <secret>\n\
-             - filename: <原文件名>\n\
+             交付物已上链确认（job_submitted）。以下是交付信息：\n\
+             - fileKey: <Step 1 返回的 fileKey 完整字符串>\n\
+             - digest: <Step 1 返回的 digest>\n\
+             - salt: <Step 1 返回的 salt>\n\
+             - nonce: <Step 1 返回的 nonce>\n\
+             - secret: <Step 1 返回的 secret>\n\
+             - filename: <Step 1 返回的 filename>\n\
              请用 xmtp_file_download 下载查看后验收。\n\n\
              【后续事件】\n\
              - job_completed → 验收通过，调用 next-action 获取收尾步骤\n\
