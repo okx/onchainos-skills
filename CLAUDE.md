@@ -1,20 +1,77 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code when working with this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
-This is a **Claude Code plugin** — a collection of onchainos skills for on-chain operations. The project provides skills for token search, market data, wallet balance queries, swap execution, DeFi investment management, and transaction broadcasting across 20+ blockchains. The `onchainos` CLI also works as a native MCP server.
+A **Claude Code plugin** — onchainos skills for on-chain operations (token search, market data, wallet balance, swap execution, DeFi, transaction broadcasting) across 20+ blockchains. The `onchainos` CLI doubles as a native MCP server.
+
+## Build / Test / Lint
+
+All Rust commands run from the `cli/` directory.
+
+```bash
+# Build
+cd cli && cargo build
+
+# Lint (CI uses -D warnings — fix all warnings before pushing)
+cd cli && cargo clippy -- -D warnings
+
+# Format check
+cd cli && cargo fmt --check
+
+# Run all tests (needs OKX API keys in env or .env)
+cd cli && cargo test
+
+# Run a single test
+cd cli && cargo test token_search_by_symbol
+
+# Run tests for one module
+cd cli && cargo test --test cli_token
+
+# Debug build with debug logging
+cd cli && cargo build --features debug-log
+
+# Dependency vulnerability audit
+cd cli && cargo audit
+```
+
+Integration tests live in `cli/tests/` and use `assert_cmd`. They hit real OKX APIs, so `OKX_API_KEY`, `OKX_SECRET_KEY`, and `OKX_PASSPHRASE` must be set. Test helpers are in `cli/tests/common/mod.rs` — provides `onchainos()` command builder, `run_with_retry()` for rate-limit resilience, and `assert_ok_and_extract_data()` to validate the JSON envelope.
+
+## CI / Release
+
+**CI** (`ci.yml`): runs on push/PR across ubuntu, macos, windows — checks `cargo fmt`, `cargo clippy -D warnings`, `cargo test`, and `cargo audit`.
+
+**Release** (`release.yml`): manual `workflow_dispatch` with version input. Builds 9 targets (Linux musl/gnu, Windows MSVC, macOS signed). Version in `Cargo.toml` must match the input. Beta releases use `X.Y.Z-beta.N` format (marked as pre-release on GitHub).
 
 ## Architecture
 
-- **skills/** — 17 onchainos CLI skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference)
-- **workflows/** — Pre-built multi-step workflow docs (`INDEX.md` for routing, `TEMPLATE.md` for authoring guide)
-- **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`, config in `cli/Cargo.toml`
-- **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
-- **.mcp.json.example** — MCP server configuration template for Claude Code
-- **.github/workflows/** — CI/CD pipeline (`release.yml`: tag-triggered build for 9 platforms → GitHub Release)
-- **install.sh** — One-line installer for macOS / Linux (`curl | sh`)
+### Directory Layout
+
+- **skills/** — 18 skill definitions (each is a `SKILL.md` with YAML frontmatter + CLI command reference). Some skills have sub-docs (e.g. `okx-agent-task/` has `buyer.md`, `provider.md`, `evaluator.md` role-specific protocols and `_shared/` for state machine, message types, negotiate protocol).
+- **workflows/** — Multi-step workflow docs (`INDEX.md` routes intents → workflow files, `TEMPLATE.md` for authoring new ones).
+- **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`.
+- **cli/src/mcp/mod.rs** — MCP server implementation (~2200 lines, rmcp v1.1.1, exposes all commands as MCP tools over stdio).
+- **tools/** — Dev/test mock servers (TypeScript): `ws-mock-ts` (WebSocket mock API), `xmtp-mock-buyer`, `xmtp-mock-seller`, `mock-evaluator` for agent-task flow testing.
+- **.claude-plugin/** / **.cursor-plugin/** — Plugin manifests for Claude Code and Cursor.
+
+### CLI Architecture
+
+**Entry point**: `cli/src/main.rs` — parses `clap` CLI args, dispatches to command modules, records every invocation to `~/.onchainos/audit.jsonl`.
+
+**Output protocol**: all commands emit JSON `{ "ok": true, "data": ... }` on success or `{ "ok": false, "error": "..." }` on failure. Exit code 2 means "confirming" (needs user confirmation for next step). Use `output::success()` / `output::error()` / `output::confirming()`.
+
+**Auth cascade** (`client.rs`): `ApiClient` tries JWT (from keyring) → AK env vars (`OKX_API_KEY` / `OKX_SECRET_KEY` / `OKX_PASSPHRASE`) → Anonymous. `client_async()` adds JWT auto-refresh.
+
+**Command context** (`commands/mod.rs`): `Context` struct holds `AppConfig`, base_url/chain overrides, and creates `ApiClient`. Chain names resolve to OKX chainIndex via `chains.rs` (e.g. "ethereum" → "1", "solana" → "501").
+
+**Config**: `~/.onchainos/config.json` (managed by `config.rs`). Credentials loaded from env vars or `~/.onchainos/.env` via dotenvy.
+
+**MCP mode**: `onchainos mcp` starts a JSON-RPC 2.0 server over stdio (configure via `.mcp.json.example`).
+
+### Key Command Modules
+
+Commands map 1:1 to top-level CLI subcommands: `market`, `signal`, `memepump`, `token`, `swap`, `cross-chain`, `gateway`, `portfolio`, `wallet`, `security`, `payment`, `defi`, `ws`, `workflow`, `agent` (identity + task + chat). Each module has an `execute()` async fn dispatched from `main.rs`.
 
 ## Workflows
 
@@ -95,8 +152,10 @@ When a user asks about real-time on-chain data, WebSocket monitoring, or writing
 
 ## Clippy
 
-CI uses `-D warnings` (warnings as errors). Run `cargo clippy` before pushing. Common issues:
+CI uses `-D warnings` (warnings as errors). Run `cd cli && cargo clippy -- -D warnings` before pushing. Common issues:
 
 - `ptr_arg`: use `&[T]` / `&mut [T]` instead of `&Vec<T>` / `&mut Vec<T>` when the function doesn't need Vec-specific methods
 - `too_many_arguments`: add `#[allow(clippy::too_many_arguments)]` or refactor into a params struct
 - `needless_borrow`: don't `&` a value that's already a reference
+
+The release profile uses `lto = true`, `codegen-units = 1`, `strip = true`, `panic = "abort"` — release builds are slow but fully optimized.
