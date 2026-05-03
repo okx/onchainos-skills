@@ -108,6 +108,9 @@ pub enum TaskCommand {
         /// 协商确定的支付金额（人类可读，如 "50"），escrow 必填
         #[arg(long = "token-amount")]
         token_amount: Option<String>,
+        /// x402 服务端点 URL（不指定时从 recommend 缓存或 service-list API 获取）
+        #[arg(long)]
+        endpoint: Option<String>,
     },
     /// Client confirms task complete and releases payment
     Complete {
@@ -188,8 +191,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 recommend::handle_recommend(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await
             }
         }
-        TaskCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount } =>
-            accept::handle_confirm_accept(&mut client, &job_id, &provider, payment_mode.as_deref(), payment_id.as_deref(), token_symbol.as_deref(), token_amount.as_deref()).await,
+        TaskCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount, endpoint } =>
+            accept::handle_confirm_accept(&mut client, &job_id, &provider, payment_mode.as_deref(), payment_id.as_deref(), token_symbol.as_deref(), token_amount.as_deref(), endpoint.as_deref()).await,
         TaskCommand::Complete { job_id } =>
             complete::handle_complete(&mut client, &job_id).await,
         TaskCommand::Reject { job_id, reason } =>

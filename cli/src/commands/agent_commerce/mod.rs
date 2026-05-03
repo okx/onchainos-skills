@@ -102,6 +102,8 @@ pub enum AgentCommand {
         #[arg(long = "token-symbol")] token_symbol: Option<String>,
         /// 协商确定的支付金额（人类可读，如 "50"），escrow 必填
         #[arg(long = "token-amount")] token_amount: Option<String>,
+        /// x402 服务端点 URL（不指定时从 recommend 缓存或 service-list API 获取）
+        #[arg(long)] endpoint: Option<String>,
     },
 
     /// Client confirms task complete and releases payment
@@ -378,8 +380,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::buyer::run_task(T::List { status, page, limit, agent_id }, ctx).await,
 
 
-        AgentCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount } =>
-            task::buyer::run_task(T::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount }, ctx).await,
+        AgentCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount, endpoint } =>
+            task::buyer::run_task(T::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount, endpoint }, ctx).await,
 
         AgentCommand::Complete { job_id } =>
             task::buyer::run_task(T::Complete { job_id }, ctx).await,

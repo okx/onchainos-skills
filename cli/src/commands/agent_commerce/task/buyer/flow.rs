@@ -20,7 +20,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             next_action("job_created"),
             ref_header,
             format!("  onchainos agent recommend {job_id} --agent-id <agentId>  # 查看推荐卖家"),
-            format!("  onchainos agent confirm-accept {job_id} --provider <addr> --payment-mode <escrow|non_escrow|x402> --token-symbol <sym> --token-amount <amt>  # 接受卖家并注资"),
+            format!("  onchainos agent confirm-accept {job_id} --provider <addr> --payment-mode <escrow|non_escrow|x402> --token-symbol <sym> --token-amount <amt> [--endpoint <url>]  # 接受卖家并注资"),
             format!("  onchainos agent close {job_id}          # 关闭任务"),
             format!("  onchainos agent set-public {job_id}     # 转为公开任务"),
         ],
@@ -166,11 +166,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              与任务预算（<tokenAmount> <tokenSymbol>）不一致，是否确认使用该卖家？\n\
              \x20\x20→ 用户确认 → 执行 A-Step 2\n\
              \x20\x20→ 用户拒绝 → `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断\n\n\
-             **A-Step 2 — 买家 accept（x402 三步）：**\n\
-             1. 设置支付方式为 x402：\n\
+             **A-Step 2 — 买家 accept（x402）：**\n\
              ```bash\n\
-             onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode x402\n\
+             onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode x402 --token-symbol <feeTokenSymbol> --token-amount <feeAmount> --endpoint <endpoint>\n\
              ```\n\
+             参数来源：recommend 输出的 services[0] 中的 feeTokenSymbol、feeAmount、endpoint。\n\
+             ⚠️ CLI 内部有三级 fallback（CLI flag > recommend 缓存 > service-list API），但显式传参最可靠。\n\
              （命令内部自动执行：setPaymentMode(3) → direct/accept → 签名广播 → x402 endpoint 支付 → direct/complete → 签名广播）\n\n\
              2. 完成后任务状态 → complete（x402 不会收到 job_accepted 通知，命令内部直接 complete）。\n\n\
              **A-Step 3 — 调用 xmtp_dispatch_user 通知用户结果：**\n\

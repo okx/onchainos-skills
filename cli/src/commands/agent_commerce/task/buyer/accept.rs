@@ -83,8 +83,156 @@ fn json_u64(obj: &serde_json::Value, key: &str) -> Result<u64> {
 }
 
 
+/// x402 三级 fallback 解析结果
+struct X402ServiceParams {
+    endpoint: String,
+    fee_amount: f64,
+    fee_token_symbol: String,
+}
+
+/// 解析 x402 服务参数：CLI flag > recommend 缓存 > identity service-list API > 报错
+async fn resolve_x402_params(
+    job_id: &str,
+    provider_agent_id: &str,
+    cli_endpoint: Option<&str>,
+    cli_token_symbol: Option<&str>,
+    cli_token_amount: Option<&str>,
+) -> Result<X402ServiceParams> {
+    // Tier 1: CLI flags 全部提供
+    if let (Some(ep), Some(sym), Some(amt_str)) = (cli_endpoint, cli_token_symbol, cli_token_amount) {
+        let amt: f64 = amt_str.parse()
+            .map_err(|_| anyhow::anyhow!("--token-amount 格式错误: {amt_str}"))?;
+        eprintln!("ℹ x402: 使用 CLI 参数 endpoint={ep}, token={sym}, amount={amt}");
+        return Ok(X402ServiceParams {
+            endpoint: ep.to_string(),
+            fee_amount: amt,
+            fee_token_symbol: sym.to_string(),
+        });
+    }
+
+    // Tier 2: recommend 缓存
+    match super::negotiate::current(job_id) {
+        Ok(Some(pi)) => {
+            if let Some(svc) = pi.services.first() {
+                if !svc.endpoint.is_empty() && svc.fee_amount > 0.0 && !svc.fee_token_symbol.is_empty() {
+                    eprintln!("ℹ x402: 使用 recommend 缓存 endpoint={}, token={}, amount={}",
+                        svc.endpoint, svc.fee_token_symbol, svc.fee_amount);
+                    return Ok(X402ServiceParams {
+                        endpoint: cli_endpoint.unwrap_or(&svc.endpoint).to_string(),
+                        fee_amount: cli_token_amount
+                            .and_then(|a| a.parse().ok())
+                            .unwrap_or(svc.fee_amount),
+                        fee_token_symbol: cli_token_symbol
+                            .unwrap_or(&svc.fee_token_symbol)
+                            .to_string(),
+                    });
+                }
+            }
+            eprintln!("⚠ x402: recommend 缓存中 services 为空或字段缺失，尝试 service-list API");
+        }
+        Ok(None) => eprintln!("⚠ x402: recommend 缓存无当前 provider，尝试 service-list API"),
+        Err(e) => eprintln!("⚠ x402: 读取 recommend 缓存失败 ({e})，尝试 service-list API"),
+    }
+
+    // Tier 3: identity service-list API
+    let params = fetch_x402_service_from_identity(provider_agent_id).await?;
+    Ok(X402ServiceParams {
+        endpoint: cli_endpoint.unwrap_or(&params.endpoint).to_string(),
+        fee_amount: cli_token_amount
+            .and_then(|a| a.parse().ok())
+            .unwrap_or(params.fee_amount),
+        fee_token_symbol: cli_token_symbol
+            .unwrap_or(&params.fee_token_symbol)
+            .to_string(),
+    })
+}
+
+/// 通过 `onchainos agent service-list` 查询 provider 的 A2MCP 服务信息
+async fn fetch_x402_service_from_identity(provider_agent_id: &str) -> Result<X402ServiceParams> {
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("无法获取可执行文件路径: {e}"))?;
+    let output = tokio::process::Command::new(&exe)
+        .args(["agent", "service-list", "--agent-id", provider_agent_id])
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("调用 agent service-list --agent-id {provider_agent_id} 失败: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("x402 service-list 查询失败 (exit {}): {stderr}", output.status);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let body: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|e| anyhow::anyhow!("解析 service-list 输出失败: {e}"))?;
+
+    let services = body["data"].as_array()
+        .or_else(|| body["data"]["services"].as_array())
+        .or_else(|| body["data"]["list"].as_array())
+        .ok_or_else(|| anyhow::anyhow!(
+            "x402: service-list 响应中未找到 services 数组，provider={provider_agent_id}"
+        ))?;
+
+    let svc = services.iter()
+        .find(|s| {
+            let stype = s["servicetype"].as_str()
+                .or_else(|| s["serviceType"].as_str())
+                .unwrap_or("");
+            stype.eq_ignore_ascii_case("A2MCP")
+        })
+        .ok_or_else(|| anyhow::anyhow!(
+            "x402: provider {provider_agent_id} 无 A2MCP 类型服务"
+        ))?;
+
+    let endpoint = svc["endpoint"].as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("x402: service-list 中 A2MCP 服务 endpoint 为空"))?
+        .to_string();
+
+    let (fee_amount, fee_token_symbol) = if let Some(amt) = svc["feeAmount"].as_f64() {
+        let sym = svc["feeTokenSymbol"].as_str()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("x402: service-list 中 feeAmount 存在但 feeTokenSymbol 缺失，无法确定支付代币"))?
+            .to_string();
+        (amt, sym)
+    } else {
+        let fee_str = svc["fee"].as_str().unwrap_or("");
+        parse_composite_fee(fee_str)?
+    };
+
+    eprintln!("ℹ x402: 从 service-list API 获取 endpoint={endpoint}, token={fee_token_symbol}, amount={fee_amount}");
+    Ok(X402ServiceParams { endpoint, fee_amount, fee_token_symbol })
+}
+
+/// 解析复合 fee 字符串（如 "0.01 USDT"）→ (amount, symbol)
+fn parse_composite_fee(fee: &str) -> Result<(f64, String)> {
+    let fee = fee.trim();
+    if fee.is_empty() {
+        bail!("x402: service fee 字段为空");
+    }
+    let parts: Vec<&str> = fee.split_whitespace().collect();
+    match parts.len() {
+        2 => {
+            let amt: f64 = parts[0].parse()
+                .map_err(|_| anyhow::anyhow!("x402: fee 金额解析失败: {}", parts[0]))?;
+            Ok((amt, parts[1].to_string()))
+        }
+        1 => {
+            let numeric_end = fee.find(|c: char| c.is_alphabetic()).unwrap_or(fee.len());
+            if numeric_end >= fee.len() {
+                bail!("x402: fee 字段只有金额没有币种: {fee}，无法确定支付代币");
+            }
+            let amt: f64 = fee[..numeric_end].parse()
+                .map_err(|_| anyhow::anyhow!("x402: fee 金额解析失败: {fee}"))?;
+            let sym = fee[numeric_end..].to_string();
+            Ok((amt, sym))
+        }
+        _ => bail!("x402: fee 格式无法解析: {fee}"),
+    }
+}
+
 /// confirm-accept — 确认接受卖家
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 pub async fn handle_confirm_accept(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -93,6 +241,7 @@ pub async fn handle_confirm_accept(
     payment_id: Option<&str>,
     token_symbol: Option<&str>,
     token_amount: Option<&str>,
+    endpoint: Option<&str>,
 ) -> Result<()> {
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
@@ -114,17 +263,20 @@ pub async fn handle_confirm_accept(
         }
     };
 
-    // ── Step 0: 余额预检（余额不足则阻断）──────────────────────────
+    // ── Step 0: x402 提前解析服务参数（余额预检 + 执行共用）──────────
+    let x402_resolved = if payment_mode.as_str() == PAYMENT_MODE_X402 {
+        Some(resolve_x402_params(job_id, provider, endpoint, token_symbol, token_amount).await?)
+    } else {
+        None
+    };
+
+    // ── Step 0.5: 余额预检（余额不足则阻断）──────────────────────────
     {
         let pm = payment_mode.as_str();
         if pm == PAYMENT_MODE_X402 {
-            // x402: 无协商，从 recommend 缓存取 provider fee
-            let pi = super::negotiate::current(job_id)?
-                .ok_or_else(|| anyhow::anyhow!("x402 余额预检: 未找到当前 provider，请先执行 recommend"))?;
-            if let Some(svc) = pi.services.first() {
-                if svc.fee_amount > 0.0 && !svc.fee_token_symbol.is_empty() {
-                    common::ensure_sufficient_balance(svc.fee_amount, &svc.fee_token_symbol).await?;
-                }
+            let x402 = x402_resolved.as_ref().unwrap();
+            if x402.fee_amount > 0.0 && !x402.fee_token_symbol.is_empty() {
+                common::ensure_sufficient_balance(x402.fee_amount, &x402.fee_token_symbol).await?;
             }
         } else {
             // escrow / non_escrow: CLI > 协商记录 > bail
@@ -423,21 +575,18 @@ pub async fn handle_confirm_accept(
             println!("  txHash: {tx_hash}");
         }
         PAYMENT_MODE_X402 => {
-            // ── x402 支付：参数从 recommend 缓存获取，无协商 ────────
-            let provider_info = super::negotiate::current(job_id)?
-                .ok_or_else(|| anyhow::anyhow!("x402: 未找到当前 provider，请先执行 recommend"))?;
-            let svc = provider_info.services.first()
-                .ok_or_else(|| anyhow::anyhow!("x402: 当前 provider 无服务信息（services 为空）"))?;
+            // ── x402 支付：参数由三级 fallback 解析（CLI > recommend > service-list）
+            let x402 = x402_resolved.as_ref().unwrap();
 
-            let sym = &svc.fee_token_symbol;
+            let sym = &x402.fee_token_symbol;
             if sym.is_empty() {
                 bail!("x402: 服务信息中 feeTokenSymbol 为空");
             }
-            let amt = svc.fee_amount;
+            let amt = x402.fee_amount;
             if amt <= 0.0 {
                 bail!("x402: 服务信息中 feeAmount 无效 ({amt})");
             }
-            let ep = &svc.endpoint;
+            let ep = &x402.endpoint;
             if ep.is_empty() {
                 bail!("x402: 服务信息中 endpoint 为空");
             }
