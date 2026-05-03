@@ -349,7 +349,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20- filename：（可选）保存文件名\n\
              ⚠️ 调用前输出：`[buyer-xmtp] xmtp_file_download: fileKey=<fileKey>, agentId={agent_id}`\n\
              ⚠️ 调用后输出：`[buyer-xmtp] xmtp_file_download result: localPath=<返回的本地路径>`\n\n\
-             下载成功后记录 localPath，后续展示给用户。\n\
+             下载成功后记录 localPath（完整绝对路径，如 /Users/.../task预发.png），后续展示给用户时必须显示完整路径。\n\
              如果下载失败 → 用 deliverableUrl 作为备用展示信息。\n\n\
              **Step 3 — 按支付方式分流：**\n\n\
              ━━━━━━━━━ 分支 A：escrow（担保）— 需要用户验收决策 ━━━━━━━━━\n\n\
@@ -361,7 +361,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              禁止 user session agent 自己执行 task CLI。\n\
              \x20\x20\x20\x20userContent:\n\
              \x20\x20\x20\x20任务 {job_id} 卖家已提交交付物，已下载到本地。\n\
-             \x20\x20\x20\x20交付物本地路径：<localPath>（如下载失败则显示 deliverableUrl）\n\
+             \x20\x20\x20\x20交付物本地路径：<localPath 完整绝对路径>（如下载失败则显示 deliverableUrl）\n\
              \x20\x20\x20\x20交付物地址：<deliverableUrl>\n\
              \x20\x20\x20\x20验收标准：<qualityStandards>\n\
              \x20\x20\x20\x20支付方式：escrow（担保）\n\
@@ -395,7 +395,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **B-Step 1 — 调用 xmtp_dispatch_user 通知用户收到交付物：**\n\
              \x20\x20content:\n\
              \x20\x20[交付物已收到] 任务 {job_id} 卖家已提交交付物。\n\
-             \x20\x20交付物本地路径：<localPath>（如下载失败则显示 deliverableUrl）\n\
+             \x20\x20交付物本地路径：<localPath 完整绝对路径>（如下载失败则显示 deliverableUrl）\n\
              \x20\x20交付物地址：<deliverableUrl>\n\
              \x20\x20验收标准：<qualityStandards>\n\
              \x20\x20\n\
