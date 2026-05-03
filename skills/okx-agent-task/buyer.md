@@ -103,7 +103,21 @@
 | Submit deadline | `deadline_submit` | Min 1 min, max 6 months. Format: `<n>h` / `<n>m` | <1min → 拒绝; >6mo → 拒绝 |
 | Quality standards | (in `description`) | Free text | 引导用户定义验收标准，追加到 description |
 
-### 3.1.2 Confirmation Form
+### 3.1.2 Intent Pre-validation（字段提取后、展示确认表单前）
+
+字段提取完成后，**立即**执行以下校验，不通过则**阻断**，提示用户修改后重新收集：
+
+1. **代币校验**：如果用户指定了代币（非模糊表达），检测是否为 USDT 或 USDG。
+   - 不是 → 回复用户：**「目前只支持 USDT 和 USDG，请选择其中一个。」**
+   - 不要默认替换为 USDT，必须等用户明确选择。
+
+2. **描述长度校验**：`description` 字段长度 < 10 个字符。
+   - 不足 → 回复用户：**「描述越详细，匹配到的 Provider 越准确。能补充一下具体需求吗？」**
+   - 不要自行补充内容，等用户提供更多细节。
+
+两项均通过后才进入下方确认表单。
+
+### 3.1.3 Confirmation Form
 
 全部字段就绪后 → **身份 & 余额检查**：
 1. 检查当前账户是否有 buyer 身份 → 有则告知用户使用哪个账户
@@ -130,7 +144,7 @@
 **IMPORTANT**: 中文对话用中文字段标签，英文对话用英文。字段标签简短（≤4 中文字符）。
 **IMPORTANT**: 用户明确写 "USDT"/"USDG" → 直接用；模糊表达 → 先问「请确认支付代币：USDT 还是 USDG？」。
 
-### 3.1.3 Create Task
+### 3.1.4 Create Task
 
 用户确认 → 调 CLI：
 
@@ -151,12 +165,12 @@ onchainos agent create-task \
 ⚠️ 不要说"发布成功"——此时尚未上链确认。上链确认由 `job_created` 消息触发，届时系统自动联系卖家。
 ⚠️ **Do NOT call `recommend` here.** 推荐在 `job_created` 收到后自动执行。
 
-### 3.1.4 Error Handling
+### 3.1.5 Error Handling
 
 | Error | Response |
 |---|---|
-| Unsupported token | "Only USDT and USDG are supported." |
-| Description < 10 chars | "请提供更多细节以便匹配卖家。" |
+| Unsupported token | "目前只支持 USDT 和 USDG，请选择其中一个。" |
+| Description < 10 chars | "描述越详细，匹配到的 Provider 越准确。能补充一下具体需求吗？" |
 | Title > 30 chars | Agent 自动重新总结 |
 | Budget decimal > 5 位 | "预算精度限 5 位小数。" |
 | Budget > 10,000,000 | "单次任务预算不超过 10,000,000。" |

@@ -202,30 +202,42 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              2. （sub session 内）卖家回复报价（金额、代币、支付方式偏好、预计交付时间）\n\
              3. （sub session 内）双方就价格/条件进行调整（可能多轮，每轮 5 分钟超时）\n\
              \x20\x20每轮调用 xmtp_send，参数：sessionKey=<同上>，content=<协商内容>\n\
-             4. 达成一致后，调用 xmtp_send 发送结构化确认消息：\n\
-             \x20\x20参数：sessionKey=<同上>，content=\n\
-             [协商确认] 请确认以下协商结果：\n\
-             任务：{job_id}\n\
-             交付物：<deliverable>\n\
-             验收标准：<qualityStandards>\n\
-             支付方式：<escrow/non_escrow>\n\
-             金额：<tokenAmount> <tokenSymbol>\n\
-             交付截止：<deadline>\n\n\
-             ⚠️ 任一步骤卖家 5 分钟未回复 → 视为协商失败，结束当前 sub session，执行「切换下一个卖家」。\n\n\
              ⚠️ **币种铁律**：协商只允许改**金额**，不允许改**币种**。任务发布时的币种（从 `onchainos agent common context` 获取）\n\
              是链上合约绑定的。如果卖家提出不同币种，必须纠正：「本任务使用 <任务币种>，请用 <任务币种> 报价。」\n\n\
-             ⚠️ **三步确认后立即保存协商结果**（在回复卖家之前）：\n\
+             ⚠️ 任一步骤卖家 5 分钟未回复 → 视为协商失败，结束当前 sub session，执行「切换下一个卖家」。\n\n\
+             4. 达成初步一致后，调用 xmtp_send 发送 **[NEGOTIATE_PROPOSE]** 结构化提案（必须严格使用此格式，卖家 Agent 会机器解析）：\n\
+             \x20\x20content=\n\
+             [NEGOTIATE_PROPOSE]\n\
+             jobId: {job_id}\n\
+             deliverable: <交付物描述>\n\
+             qualityStandards: <验收标准>\n\
+             paymentMode: <escrow|non_escrow>\n\
+             tokenSymbol: <USDT|USDG>\n\
+             tokenAmount: <金额>\n\
+             deadline: <交付截止时间>\n\n\
+             5. **等待卖家回复 [NEGOTIATE_ACK] 或 [NEGOTIATE_COUNTER]**（5 分钟超时）：\n\n\
+             \x20\x20▸ 收到 **[NEGOTIATE_ACK]** → 逐字段校验卖家回传的值与你发送的 PROPOSE 完全一致：\n\
+             \x20\x20\x20\x20- 全部一致 → 协商成功，执行 Step 6\n\
+             \x20\x20\x20\x20- 任一字段不一致 → 视为篡改，调 xmtp_send 告知卖家字段不一致并重新发送 [NEGOTIATE_PROPOSE]\n\n\
+             \x20\x20▸ 收到 **[NEGOTIATE_COUNTER]** → 卖家提出反提案：\n\
+             \x20\x20\x20\x20- 检查 tokenSymbol 是否被改动（禁止改币种）→ 如被改动，拒绝并纠正\n\
+             \x20\x20\x20\x20- 评估 tokenAmount / deadline 等调整是否可接受\n\
+             \x20\x20\x20\x20- 可接受 → 用 COUNTER 中的值发新的 [NEGOTIATE_PROPOSE]，回到 Step 5 等 ACK\n\
+             \x20\x20\x20\x20- 不可接受 → 继续协商或终止切换下一个卖家\n\n\
+             \x20\x20▸ 收到的回复**不含** [NEGOTIATE_ACK] 也不含 [NEGOTIATE_COUNTER] 标记 → 视为自然语言讨论，继续协商，重新回到 Step 4\n\n\
+             6. **协商确认完成 → 保存 + 分流**：\n\n\
+             ⚠️ **收到 [NEGOTIATE_ACK] 且校验一致后，立即保存协商结果**：\n\
              ```bash\n\
              onchainos agent save-agreed {job_id} --token-symbol <协商币种> --token-amount <协商价格>\n\
              ```\n\
              不保存会导致后续 confirm-accept 使用错误的币种/金额。\n\n\
-             5. **按协商确定的支付方式分流**：\n\n\
+             **按协商确定的支付方式分流**：\n\n\
              \x20\x20▸ **escrow（担保）**：\n\
-             \x20\x20\x20\x20确认消息末尾加上：如确认无误，请你（卖家）执行 apply 接单。\n\
+             \x20\x20\x20\x20调 xmtp_send 告知卖家：协商已确认，请你（卖家）执行 apply 接单。\n\
              \x20\x20\x20\x20⚠️ apply 是卖家动作，买家不执行 apply。\n\
              \x20\x20\x20\x20卖家确认 → 卖家执行 apply 上链 → 系统通知 provider_applied → 进入 ProviderApplied 事件处理。\n\n\
              \x20\x20▸ **non_escrow（非担保）**：\n\
-             \x20\x20\x20\x20确认消息末尾加上：如确认无误，请你（卖家）生成付款单（create_payment_charge）并把 paymentId 发给我。\n\
+             \x20\x20\x20\x20调 xmtp_send 告知卖家：协商已确认，请你（卖家）生成付款单（create_payment_charge）并把 paymentId 发给我。\n\
              \x20\x20\x20\x20⚠️ 非担保不走 apply，卖家调 create_payment_charge 生成账单后通过 XMTP 把 paymentId 发给买家。\n\
              \x20\x20\x20\x20买家收到 paymentId 后直接执行：\n\
              \x20\x20\x20\x20```bash\n\

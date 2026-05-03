@@ -444,12 +444,50 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - 领域匹配 → 进入 Step 3（私有任务等买家先来；公开任务是你 A-Step 2 主动发）\n\
              - 领域不匹配 → 按区块给出的拒绝模板调 `xmtp_send`（纯自然语言），结束\n\n\
              **Step 3 — 协商三项确认（一条 `xmtp_send` 内尽量一次问完）：**\n\
-             ⚠️ **币种必须从任务详情读出**：context 输出里的「预算」字段后括号里的 token 地址就是任务规定的币种 —— XLayer USDT 合约 `0x1e4a5963abfd975d8c9021ce480b42188849d41d` / USDG 合约 `0x4ae46a509f6b1d9056937ba4500cb143933d2dc8`。**禁止假设 USDT** —— 不少任务用 USDG，回复里写错币种会让买家协议混乱。如果 token 地址不能确定，向用户 dispatch 询问，不要瞎猜。\n\
+             ⚠️ **币种必须从任务详情读出**：context 输出里的「预算」字段后括号里的 token 地址就是任务规定的币种 —— XLayer USDT 合约 `0x779ded0c9e1022225f8e0630b35a9b54be713736` / USDG 合约 `0x4ae46a509f6b1d9056937ba4500cb143933d2dc8`。**禁止假设 USDT** —— 不少任务用 USDG，回复里写错币种会让买家协议混乱。如果 token 地址不能确定，向用户 dispatch 询问，不要瞎猜。\n\
              1) 任务内容和验收标准是否在能力范围内\n\
              2) 价格可接受（**用任务详情里的实际币种回复，不是默认 USDT**）\n\
              3) 支付方式可接受（escrow / non_escrow，由买家在 confirm-accept 时定）\n\
              → 用 `xmtp_send` 给买家发提问（机制见 SKILL.md §Session 通信契约 §5 路径 4）。\n\n\
-             **Step 4 — 三项全部确认后，按双方约定的支付方式分流：**\n\n\
+             **Step 3.5 — 处理买家的 [NEGOTIATE_PROPOSE] 结构化提案：**\n\n\
+             买家协商达成一致后会发送格式化提案：\n\
+             ```\n\
+             [NEGOTIATE_PROPOSE]\n\
+             jobId: ...\n\
+             deliverable: ...\n\
+             qualityStandards: ...\n\
+             paymentMode: ...\n\
+             tokenSymbol: ...\n\
+             tokenAmount: ...\n\
+             deadline: ...\n\
+             ```\n\n\
+             收到 [NEGOTIATE_PROPOSE] 后**逐字段校验**：\n\
+             - tokenSymbol 必须与任务详情一致（不允许改币种）\n\
+             - 其余字段是否与你在协商中达成的一致认知匹配\n\n\
+             ▸ **全部同意** → 调 xmtp_send 回复 **[NEGOTIATE_ACK]**（必须严格使用此格式，原样回传所有字段）：\n\
+             \x20\x20content=\n\
+             \x20\x20[NEGOTIATE_ACK]\n\
+             \x20\x20jobId: <与 PROPOSE 完全相同>\n\
+             \x20\x20deliverable: <与 PROPOSE 完全相同>\n\
+             \x20\x20qualityStandards: <与 PROPOSE 完全相同>\n\
+             \x20\x20paymentMode: <与 PROPOSE 完全相同>\n\
+             \x20\x20tokenSymbol: <与 PROPOSE 完全相同>\n\
+             \x20\x20tokenAmount: <与 PROPOSE 完全相同>\n\
+             \x20\x20deadline: <与 PROPOSE 完全相同>\n\n\
+             ▸ **部分不同意**（如价格偏低）→ 调 xmtp_send 回复 **[NEGOTIATE_COUNTER]**（填入你期望的值）：\n\
+             \x20\x20content=\n\
+             \x20\x20[NEGOTIATE_COUNTER]\n\
+             \x20\x20jobId: <与 PROPOSE 相同>\n\
+             \x20\x20deliverable: <同意则原样，不同意则填你的版本>\n\
+             \x20\x20qualityStandards: <同意则原样，不同意则填你的版本>\n\
+             \x20\x20paymentMode: <同意则原样，不同意则填你的版本>\n\
+             \x20\x20tokenSymbol: <必须与 PROPOSE 相同，禁止改币种>\n\
+             \x20\x20tokenAmount: <你期望的金额>\n\
+             \x20\x20deadline: <你期望的截止时间>\n\
+             \x20\x20reason: <简要说明修改原因>\n\n\
+             ▸ **完全拒绝** → 调 xmtp_send 回复「很抱歉，无法接受当前条件」（纯自然语言），结束。\n\n\
+             ⚠️ 回复 [NEGOTIATE_ACK] 后，等买家调 xmtp_send 通知你执行下一步（apply 或 get-payment）。\n\n\
+             **Step 4 — 收到 [NEGOTIATE_ACK] 确认 或 买家通知后，按双方约定的支付方式分流：**\n\n\
              ━━━━━ 分支 A：支付方式 = escrow（担保交易）→ 必须 apply 上链 ━━━━━\n\n\
              ```bash\n\
              onchainos agent apply {job_id} --token-amount <协商价格> --token-symbol <USDT|USDG> --agent-id {agent_id}\n\
