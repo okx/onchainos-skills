@@ -180,8 +180,7 @@ pub async fn handle_create(
         },
         "paymentMode":        payment_mode.as_deref()
                                 .map(crate::commands::agent_commerce::task::common::payment_mode_to_int)
-                                .unwrap_or(0),
-        "visibility":         0
+                                .unwrap_or(0)
     });
 
     let resp = client.post_with_identity("/priapi/v1/aieco/task/create", &body, &buyer_agent_id).await?;
