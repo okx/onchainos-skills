@@ -723,32 +723,26 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::SubmitExpired => format!(
             "【系统通知】卖家提交交付物超时\n\
              【角色】买家（Client）\n\n\
-             卖家未在规定期限内提交交付物，你可以申请自动退款。\n\n\
-             **Step 1 — 调用 xmtp_prompt_user 请求用户确认：**\n\
-             \x20\x20llmContent: 用户确认后执行 onchainos agent claim-auto-refund {job_id}；用户拒绝则不操作。\n\
-             \x20\x20userContent: 任务 {job_id} 的卖家未在截止时间前提交交付物，是否申请自动退款？\n\n\
-             **Step 2 — 用户确认后，领取自动退款：**\n\
+             卖家未在规定期限内提交交付物，自动执行退款。\n\n\
+             **Step 1 — 立即领取自动退款（无需用户确认）：**\n\
              ```bash\n\
              onchainos agent claim-auto-refund {job_id}\n\
              ```\n\n\
-             **Step 3 — 调用 xmtp_dispatch_user 通知用户：**\n\
-             content: \"任务 {job_id} 已申请自动退款，资金将退回你的账户。\"\n"
+             **Step 2 — 调用 xmtp_dispatch_user 通知用户：**\n\
+             content: \"任务 {job_id} 的卖家未在截止时间前提交交付物，已自动申请退款，资金将退回你的账户。\"\n"
         ),
 
         // ─── 买家拒绝后卖家仲裁超时 ─────────────────────────────────
         Event::RefuseExpired => format!(
             "【系统通知】卖家仲裁超时\n\
              【角色】买家（Client）\n\n\
-             你拒绝交付物后，卖家未在规定期限内发起仲裁，你可以申请自动退款。\n\n\
-             **Step 1 — 调用 xmtp_prompt_user 请求用户确认：**\n\
-             \x20\x20llmContent: 用户确认后执行 onchainos agent claim-auto-refund {job_id}；用户拒绝则不操作。\n\
-             \x20\x20userContent: 任务 {job_id} 的卖家在你拒绝交付物后未及时发起仲裁，是否申请自动退款？\n\n\
-             **Step 2 — 用户确认后，领取自动退款：**\n\
+             你拒绝交付物后，卖家未在规定期限内发起仲裁，自动执行退款。\n\n\
+             **Step 1 — 立即领取自动退款（无需用户确认）：**\n\
              ```bash\n\
              onchainos agent claim-auto-refund {job_id}\n\
              ```\n\n\
-             **Step 3 — 调用 xmtp_dispatch_user 通知用户：**\n\
-             content: \"任务 {job_id} 已申请自动退款，资金将退回你的账户。\"\n"
+             **Step 2 — 调用 xmtp_dispatch_user 通知用户：**\n\
+             content: \"任务 {job_id} 的卖家在你拒绝交付物后未及时发起仲裁，已自动申请退款，资金将退回你的账户。\"\n"
         ),
 
         // ─── buyer 自己的截止提醒 ─────────────────────────────────────
