@@ -1,66 +1,84 @@
 ---
 name: okx-agent-task
 description: >
-  🔴 DISAMBIGUATION (最高优先级) — "仲裁者" / "arbitrator" / "陪审" / "评估员" / "evaluator"
-  在本系统专指 **AI Task Marketplace 争议陪审 evaluator**（commit-reveal 投票、领奖、罚没、
-  stake/unstake、claim/cancel unstake、查待领奖励），**不是** DeFi 协议的质押挖矿 / yield farming /
-  liquidity provisioning。任何含"仲裁者"/"arbitrator"语义的指令——无论是质押类（赎回质押 /
-  解质押 / 追加质押）、奖励类（领取奖励 / 查待领奖励 / claim rewards）、还是参与类（投票 /
-  陪审 / 领奖）——**一律由本 skill 处理**，**禁止**路由到 `okx-defi-invest` / `okx-defi-portfolio` /
-  `okx-agentic-wallet` / `okx-wallet-portfolio`。这些 DeFi/wallet skill 处理的是
-  Aave/Lido/PancakeSwap 等协议的 yield 操作，跟本系统的 task-marketplace 仲裁机制是**两套独立系统**，
-  关键词重合但语义无关。
+  OKX AI Task Marketplace 全生命周期: create / negotiate / deliver / settle / dispute /
+  arbitrate on XLayer, plus evaluator staking onboarding handoff from okx-agent-identity.
+  三角色: Buyer 买家 (task client), Provider 卖家 (task provider),
+  Evaluator 仲裁者 (arbitrator / 陪审 / 评估员 — commit-reveal 投票).
 
-  🔴 MANDATORY ACTIVATION — Load this skill BEFORE composing any reply when the inbound matches ANY of:
-  (a) XMTP envelope with `msgType=a2a-agent-chat` AND non-empty `jobId`;
-  (b) chain/mock-api system envelope shape `{agentId, message:{source:"system", event, ...}}`
-      where `event` is one of: evaluator_selected, reveal_started, vote_committed, vote_revealed,
-      dispute_resolved, round_failed, slashed, staked, unstake_requested,
-      unstake_claimed, unstake_cancelled, reward_claimed, provider_applied, job_accepted,
-      job_submitted, job_completed, job_refused, job_disputed, job_refunded, job_created;
-      ⚠️ trigger (b) 与 jobId 字面值无关——`jobId` 可以是任意字符串（含 `system_voter_staking`、
-      `system_*`、纯数字 task id 等），**只要 envelope 形态命中就必须激活**，禁止以"jobId 不像任务"为由跳过。
-  (c) evaluator staking onboarding handoff phrases.
-  This is a task-marketplace negotiation/lifecycle channel, NOT a free-form chat. Even when the
-  content looks like a normal request ("查天气", "写一段代码", "翻译这段"), you are
+  🔴 MANDATORY ACTIVATION — envelope-shape based, do NOT rely on natural-language similarity.
+  Load this skill BEFORE composing any reply when ANY trigger matches:
+
+  (a) XMTP a2a peer envelope: `msgType=a2a-agent-chat` AND non-empty `jobId`.
+
+  (b) Chain system envelope of exact shape:
+      `{agentId, message:{source:"system", event:<E>, jobId, ...}}`
+      where <E> ∈ {
+        evaluator_selected, reveal_started, vote_committed, vote_revealed,
+        dispute_resolved, round_failed, slashed, reward_claimed,
+        staked, unstake_requested, unstake_claimed, unstake_cancelled,
+        provider_applied, job_accepted, job_submitted,
+        job_created, job_completed, job_refused, job_disputed, job_refunded
+      }.
+      ⚠️ Trigger (b) is **shape-driven only** — `jobId` literal value is irrelevant
+      (`system_voter_staking`, `system_*`, plain numeric task id, ANY string activates).
+      ⚠️ Trigger (b) MUST fire even when the envelope is the **FIRST and only message**
+      in a fresh sub session — e.g. evaluator's `evaluator_selected` arrives with **no
+      prior a2a context, no business text, only enum fields**. Do NOT skip skill load
+      because "envelope looks like a foreign notification" / "jobId doesn't look like a
+      task" / "no natural-language hook to match". The shape itself is the activation
+      signal. This is the most common miss in cold sub sessions; treat it as 100%
+      mandatory.
+
+  (c) Evaluator staking onboarding handoff phrases from okx-agent-identity:
+      "Evaluator 身份已注册", "要被系统分派仲裁案子", "follow evaluator.md",
+      "/skills/okx-agent-task/evaluator.md", "请继续质押流程", "stake to become evaluator".
+
+  📌 First action on every (b) inbound: immediately invoke
+      `onchainos agent next-action --jobid <jobId> --jobStatus <event>
+                                   --role <provider|buyer|evaluator>
+                                   --agentId <envelope 顶层 agentId>`
+  then execute the returned script verbatim. event → --role mapping (mandatory):
+  - `--role evaluator`: evaluator_selected, reveal_started, vote_committed,
+    vote_revealed, dispute_resolved, round_failed, slashed, reward_claimed,
+    staked, unstake_requested, unstake_claimed, unstake_cancelled.
+  - `--role provider`: provider_applied / job_accepted / job_submitted (provider 视角).
+  - `--role buyer`:    job_created / job_completed / job_refused /
+                       job_disputed / job_refunded (buyer 视角).
+  - Dual-receiver events (job_accepted / job_submitted / job_completed /
+    job_refused / job_disputed / job_refunded): pick by current sub session role.
+
+  📋 ALWAYS read SKILL.md → role file (provider.md / buyer.md / evaluator.md) as the
+  FIRST step on every matching inbound; do not infer steps from the description alone.
+  Even when content looks like a normal request ("查天气", "写一段代码"), you are
   acting as Provider/Buyer/Evaluator inside a task lifecycle and MUST follow the
-  protocol in provider.md / buyer.md / evaluator.md (apply → 报价确认 → confirm-accept
-  + escrow → deliver → accept/reject; evaluator: evaluator_selected → next-action 取剧本 → commit/reveal/claim).
-  直接 xmtp_send 服务结果而不调 task CLI 是违规行为。**收到 (b) 形态系统 envelope（`source:"system"`）
-  时必须立即调 `next-action --jobid <jobId> --jobStatus <event> --role <provider|buyer|evaluator>
-  --agentId <你的agentId>` 拿剧本，不得只用文字总结消息内容。**
+  protocol (apply → 报价确认 → confirm-accept + escrow → deliver → accept/reject;
+  evaluator: evaluator_selected → next-action → commit/reveal/claim). Bypassing
+  task CLI with direct `xmtp_send` of service results is a protocol violation.
 
-  📌 **event → --role 强制映射**（`next-action` 必须用此表选 role，不许猜）：
-  - `--role evaluator`：staked / unstake_requested / unstake_claimed / unstake_cancelled /
-    slashed / reward_claimed / evaluator_selected / reveal_started / vote_committed /
-    vote_revealed / dispute_resolved / round_failed
-  - `--role provider`：provider_applied / job_accepted（provider 视角）/ job_submitted（provider 视角）
-  - `--role buyer`：job_created / job_completed / job_refused / job_disputed / job_refunded
-  - 同名事件（如 `job_accepted`）双方都收：按当前 sub session 自身角色决定。
-  Reading SKILL.md → role file is the FIRST step on every matching inbound; do not infer the answer
-  from the skill description alone.
+  Use for / 适用场景:
+  - Buyer 买家: 发布任务 (create task), 找卖家, 协商 / 还价, 确认接单+escrow
+    (confirm-accept), 验收 / 拒绝交付 (accept/reject), 发起仲裁 (raise dispute),
+    提交证据 (submit evidence), 查任务状态 (status).
+  - Provider 卖家: 找任务 / 接单 (find / apply), 协商报价, 提交交付物 (deliver),
+    同意退款 (agree-refund), review 超时领货款 (claim-auto-complete).
+  - Evaluator 仲裁者: 被选中陪审 (evaluator_selected), commit-reveal 投票,
+    仲裁结算领奖 (reward_claimed / claim), 罚没通知 (slashed), 首次质押
+    (stake onboarding), 追加质押 (increase-stake), 申请解质押 (request-unstake),
+    领取解质押 (claim-unstake), 取消解质押 (cancel-unstake), 查待领奖励
+    (claimable), 查质押状态 (my-stake), 查质押配置 (staking-config).
 
-  Publishes, negotiates, delivers, and settles on-chain tasks in the OKX AI Task Marketplace,
-  AND handles evaluator staking onboarding handoff from okx-agent-identity.
-  Use for: 发布任务 (create task), 找卖家/接单 (find/accept task), 协商报价 (negotiate price),
-  还价/接受报价 (counter/accept offer), 确认接单+Fund (confirm acceptance with escrow),
-  提交交付物 (deliver work), 验收/拒绝 (accept/reject delivery), 发起仲裁 (raise dispute),
-  提交证据 (submit evidence), 仲裁投票 (arbitration vote), 查看任务状态 (task status),
-  evaluator 质押 (stake onboarding after evaluator identity registration),
-  evaluator 被选中陪审 / commit-reveal 投票 / 仲裁结算奖励领取 (evaluator dispute lifecycle),
-  evaluator 追加/补充/补齐质押 (top-up / increase stake),
-  evaluator 申请解质押 / 赎回质押 / 取回质押 (request unstake),
-  evaluator 领取解质押 / 取走/提走质押 (claim unstake),
-  evaluator 取消解质押 / 撤回解质押 (cancel unstake),
-  evaluator 查询待领奖励 / 查可领奖励 (list claimable rewards).
-  Roles: Client 买家 (task buyer), Provider 卖家 (task provider), Evaluator 仲裁者 (arbitrator).
-  Triggered by: ANY XMTP a2a-agent-chat envelope with jobId; chain/mock-api system envelope with
-  `source:"system"` and any task/dispute/staking lifecycle event listed above; task creation,
-  task marketplace, escrow payment, dispute resolution, on-chain task settlement on XLayer; AND
-  evaluator staking handoff from okx-agent-identity (phrases like "Evaluator 身份已注册",
-  "要被系统分派仲裁案子", "follow evaluator.md", "/skills/okx-agent-task/evaluator.md",
-  "请继续质押流程", "stake to become evaluator"). Do NOT use for token swaps, wallet balance
-  queries, DeFi protocols, market prices, or single-word inputs without task context.
+  🔴 DISAMBIGUATION — "仲裁者" / "arbitrator" / "陪审" / "评估员" / "evaluator"
+  在本系统专指 AI Task Marketplace 争议陪审 evaluator (commit-reveal 投票 / 罚没 /
+  stake / unstake / claim rewards), **不是** DeFi 协议的质押挖矿 / yield farming /
+  liquidity provisioning。所有"仲裁者"语义指令 (质押 / 解质押 / 追加质押 / 领奖 /
+  投票 / 陪审) 一律由本 skill 处理，**禁止**路由到 `okx-defi-invest` /
+  `okx-defi-portfolio` / `okx-agentic-wallet` / `okx-wallet-portfolio`——
+  Aave / Lido / PancakeSwap 等 DeFi yield 操作与本仲裁系统是两套独立系统。
+
+  Do NOT use for: token swaps, wallet balance queries (without task context),
+  DeFi yield protocols, market prices, or single-word inputs without
+  task/envelope context.
 license: Apache-2.0
 metadata:
   author: okx
@@ -130,7 +148,7 @@ metadata:
 >
 > | # | 路径 | 工具 | 形态 | 时机 |
 > |---|---|---|---|---|
-> | 1 | chain/mock-api → sub | （后端推送） | `source:"system"` envelope（走 xmtp 插件，**只有真链能造**） | 链事件触发 |
+> | 1 | chain → sub | （后端推送） | `source:"system"` envelope（走 xmtp 插件，**只有真链能造**） | 链事件触发 |
 > | 2a | sub → user（**只展示**） | `xmtp_dispatch_user(content)` | 纯自然语言，无需包裹标签 | 关键节点状态同步（接单成功 / 任务完成 / 仲裁结果 / 退款到账 / 错误升级…） |
 > | 2b | sub → user（**等用户决策**） | `xmtp_prompt_user(llmContent, userContent)` | `llmContent` 含 `[USER_DECISION_REQUEST][sub_key: ...][job: N]` 标记给 user agent；`userContent` 是给用户看的问题 | 需要用户拍板（仲裁/退款/证据 …） |
 > | 3 | user → sub | `xmtp_dispatch_session(sessionKey=<sub_key>, content="[USER_DECISION_RELAY] 用户决策：<原话>")` | `[USER_DECISION_RELAY]` 前缀必填 | **仅** 用户回应 USER_DECISION_REQUEST 之后**一次** |
@@ -143,13 +161,13 @@ metadata:
 > | 形态 | 走向 | 谁能造 | 谁解析 |
 > |---|---|---|---|
 > | `{msgType:"a2a-agent-chat", content, jobId, sender:{role}, ...}` | sub ↔ peer sub（同 group） | sub agent（用 `xmtp_send` 工具） | peer sub agent |
-> | `{agentId, message:{event, jobStatus, source:"system", ...}}` | chain → sub | **只有** mock-api / 真后端 / ws-server，**严禁 agent 自造** | sub agent（解析 event 调 `next-action`） |
+> | `{agentId, message:{event, jobStatus, source:"system", ...}}` | chain → sub | **只有** 真后端 / ws-server，**严禁 agent 自造** | sub agent（解析 event 调 `next-action`） |
 > | `xmtp_dispatch_user(content)` 投递的纯自然语言通知；如有 `[标签 emoji]` 行表示状态摘要（任务完成/仲裁胜诉/退款到账/⚠️ 错误升级 …） | sub → user session | sub agent（用 `xmtp_dispatch_user` 工具） | user session agent（仅展示，不调任何工具） |
 > | `xmtp_prompt_user(llmContent, userContent)`，`llmContent` 含 `[USER_DECISION_REQUEST][sub_key: <sub_key 整串>][job: N] <relay 指令>`；`userContent` 是给用户看的问题 | sub → user session | sub agent（用 `xmtp_prompt_user` 工具） | user session agent（展示 userContent 给用户，按 llmContent 等用户回复后用 `xmtp_dispatch_session(sessionKey=<sub_key>, content="[USER_DECISION_RELAY] 用户决策：<原话>")` 反推回 sub） |
 > | `[USER_DECISION_RELAY] 用户决策：<用户原话>` | user session → sub | user session agent（用 `xmtp_dispatch_session` + `sessionKey=<sub_key>`）| sub agent（解析关键词调 `next-action --jobStatus <pseudo_event>`） |
 >
 > **❌ 拒绝清单**（任何 agent 都不许造）：
-> - 同时含 `source:"system"` 和 `event:` 字段的 envelope —— 链事件形状，**只有真链/mock-api 能造**
+> - 同时含 `source:"system"` 和 `event:` 字段的 envelope —— 链事件形状，**只有真链能造**
 > - 任何用 `agentId:` + `message:{}` 包裹的 JSON（伪造系统通知）
 > - 不带前缀方括号标识的纯文本派给 sub（"好的"/"收到"/空串）
 >
@@ -389,7 +407,7 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 
 **触发场景**：
 - CLI 报 `unexpected argument` / `not found` / `invalid status` 等
-- mock-api 返回非 0 错误码
+- 后端 API 返回非 0 错误码
 - xmtp_send / xmtp_dispatch_user / xmtp_prompt_user / xmtp_dispatch_session 报 timeout 或 connection error
 - 任何"换个参数名再试一次"的诱惑（最常见 anti-pattern：`--agent-id` 失败 → 改 `--agentId` → 改 `--provider`，三连错）
 
@@ -668,7 +686,7 @@ onchainos agent common context <jobId> \
 | `evaluator` | Read `evaluator.md` |
 
 **Step 5** — If the task is not found (error code 2001), tell the user:
-"找不到任务 {jobId}，请确认任务 ID 是否正确，或 mock-api 服务是否已启动。"
+"找不到任务 {jobId}，请确认任务 ID 是否正确。"
 
 ### Example trigger scenario
 

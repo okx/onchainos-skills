@@ -1,6 +1,11 @@
 //! Evaluator（仲裁者）端任务流程驱动器
 //!
-//! **所有事件都在 sub session 收到**（openclaw runtime 自动路由到 `conv-arb-*`）。
+//! **链事件优先在仲裁 sub session 处理**（openclaw runtime 自动路由到 `conv-arb-*`）；但首次到达
+//! 可能落在 user session（仲裁 sub 还没 bootstrap、或 sub 被回收/重启），所以 `evaluator_selected`
+//! / `reveal_started` / `dispute_resolved` 三个入口事件的 arm 都先跑 Step 0（idempotent routing）：
+//! 始终调 `xmtp_start_evaluate_conversation` 拿 arb sub key（幂等），再调 `session_status` 拿
+//! 当前 key，两者相等 → 走原剧本；不等 → `xmtp_dispatch_session` 把 envelope **原样**转发到
+//! arb sub 后结束 turn，由 sub agent 接手。
 //! 事件命名对齐后端 event 枚举。
 //!
 //! | 分类 | 事件 | 行为 |
@@ -44,31 +49,90 @@ fn unstake_cooldown_days(cfg: Option<&StakingConfig>) -> String {
         .unwrap_or_else(|| "<unstakeCooldownDays>".to_string())
 }
 
+/// 链事件入口的会话路由公共块：始终先 `xmtp_start_evaluate_conversation` 拿本任务仲裁 sub 的
+/// sessionKey（工具幂等），再用 `session_status` 拿当前 sessionKey，两者一致则继续原剧本，不一致
+/// 则 `xmtp_dispatch_session` 把入站 envelope **原样**转发到 arb sub 并结束 turn。
+///
+/// 比"猜 sub key 形态"更稳——不依赖 `conv-arb-*` 命名约定，直接拿幂等返回值做精确比较。
+///
+/// 适用 arm：`evaluator_selected` / `reveal_started` / `dispute_resolved`——这三个事件首次
+/// 到达可能落在 user session（仲裁 sub 还没 bootstrap、或 sub 被回收/重启），都需要先 bootstrap。
+fn arb_session_routing_step(job_id: &str) -> String {
+    format!(
+        "**Step 0 — 路由到本任务仲裁 sub session（必须最先做，先于其它 CLI / 业务工具调用）：**\n\n\
+         **0.1** 调 `xmtp_start_evaluate_conversation`，参数 `myAgentId=<envelope 顶层 agentId>`、`jobId={job_id}`。\n\
+         \x20\x20- 工具幂等：本任务仲裁 sub 已存在时直接返回原 sessionKey，不会重复建 session；首次调用则建好 sub 后返回新 sessionKey。\n\
+         \x20\x20- 调用前输出：`[evaluator-xmtp] xmtp_start_evaluate_conversation: myAgentId=<agentId>, jobId={job_id}`\n\
+         \x20\x20- 调用后输出：`[evaluator-xmtp] xmtp_start_evaluate_conversation result: sessionKey=<返回值>`\n\
+         \x20\x20→ 把这个 sessionKey 记作 `arbKey`。\n\n\
+         **0.2** 调 `session_status` 工具拿当前 session 的 `sessionKey`，记作 `currentKey`。\n\n\
+         **0.3** 比较两个 key：\n\
+         - `currentKey == arbKey` → 已在仲裁 sub session 内，跳过本 Step，直接进入 Step 1 走原剧本。\n\
+         - `currentKey != arbKey`（含 user session `agent:main:main`、或其他任务/角色的 sub）→ 必须把入站系统通知**原样转发**到 arb sub，本 turn 不要执行后续 Step：\n\
+         \x20\x201) 调 `xmtp_dispatch_session`，参数 `sessionKey=<arbKey>`、`content=<把当前 inbound system envelope 整体序列化为 JSON 字符串原样塞入>`。\n\
+         \x20\x20\x20\x20- ⚠️ **原样转发**：保留 envelope 全部字段（agentId / message.source / message.event / message.jobStatus / 业务 payload），**不要**改写、摘要、加 `[USER_DECISION_RELAY]` / `[STATUS_NOTIFY]` 之类前缀（那些前缀仅 user→sub 决策中继使用）。sub session agent 收到后会按系统通知标准流程重新触发 next-action。\n\
+         \x20\x202) 结束本轮 turn——**禁止**在当前 session 继续执行 Step 1+，由 sub session agent 接手剧本。\n\n\
+         ⚠️ **同 turn 不重复 `xmtp_start_evaluate_conversation` / `session_status`**：这两个工具结果在同 turn 内稳定，调过一次缓存复用；重复调 = 死循环征兆，立即停止。\n\n"
+    )
+}
+
 /// Evaluator 在某 status 下可执行的 CLI 命令清单（用于 `agent common context` 菜单）。
 ///
-/// Evaluator 大部分动作由 `generate_next_action` 在 evaluator-specific 子事件
-/// （evaluator_selected / reveal_started / dispute_resolved / round_failed / staked / ...）
-/// 里驱动，这里只列任务级 status 下用户可手动触发的命令 + 索引指回 next-action。
+/// 结构对齐 buyer/provider：每个分支首行 `next_action` 把 `next-action` 摆在
+/// 「下一步必做」位，紧跟 `ref_header` 把后面的 CLI 标成"参考"。
+/// 非 Disputed 状态下 evaluator 没有任务级动作，但应维持质押资格——所以列出
+/// staking lifecycle 命令（陪审按 active stake 加权随机选取）。
 pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
-    let next_action_hint = |evt: &str| {
-        format!("onchainos agent next-action --jobid {job_id} --jobStatus {evt} --role evaluator --agentId <agentId>  # 完整剧本")
+    let next_action = |evt: &str| {
+        format!("**下一步必做** → `onchainos agent next-action --jobid {job_id} --jobStatus {evt} --role evaluator --agentId <agentId>`（拿当前 status 的完整剧本，**按剧本走**，不要绕过 next-action 直接调下方 CLI）")
     };
+    let ref_header = "（参考·剧本里会用到的相关 CLI；不要直接调，先调 next-action 拿剧本）".to_string();
+
+    // evaluator 在非 Disputed 状态下没有任务级动作，列质押 lifecycle 让 LLM
+    // 主动维持/调整陪审资格。每次调用返回新 Vec（让多个分支都能 extend）。
+    let staking_lifecycle = || -> Vec<String> {
+        vec![
+            "  onchainos agent evaluator my-stake --agent-id <agentId>                       # 查个人质押状态（active / pendingUnstake / cooldown / activeDisputes）".to_string(),
+            "  onchainos agent evaluator staking-config --agent-id <agentId>                 # 查平台门槛（minCumulativeStakeOkb / cooldown / 罚没比例）".to_string(),
+            "  onchainos agent evaluator stake --amount <okb> --agent-id <agentId>            # 首次质押（cumulative ≥ minCumulativeStakeOkb）".to_string(),
+            "  onchainos agent evaluator increase-stake --amount <okb> --agent-id <agentId>   # 追加质押（无最小限制）".to_string(),
+            "  onchainos agent evaluator request-unstake --amount <okb> --agent-id <agentId>  # 申请解质押（进入 cooldown；activeDisputes>0 会被合约 revert）".to_string(),
+            "  onchainos agent evaluator claim-unstake --agent-id <agentId>                  # cooldown 结束后领取解质押 OKB".to_string(),
+            "  onchainos agent evaluator cancel-unstake --agent-id <agentId>                 # cooldown 期内撤销解质押申请".to_string(),
+        ]
+    };
+
     match status {
         Status::Disputed => vec![
-            format!("onchainos agent evaluator info <disputeId> --agent-id <agentId>                # 查看仲裁详情（含证据）"),
-            format!("onchainos agent evaluator commit <disputeId> --vote <0|1> --agent-id <agentId>  # 提交投票（0=Approve/Client 胜 / 1=Reject/Provider 胜）"),
-            format!("onchainos agent evaluator reveal <disputeId> --agent-id <agentId>              # reveal 阶段揭示投票（不传 --vote，后端反查 vote+salt）"),
-            "（自动闭环）evaluator_selected / reveal_started 通知到达时由 next-action 自动驱动".to_string(),
-            next_action_hint("evaluator_selected"),
+            next_action("evaluator_selected"),
+            ref_header,
+            "  onchainos agent evaluator info <disputeId> --agent-id <agentId>                # 查看仲裁详情（含证据；commit 阶段第一步）".to_string(),
+            "  onchainos agent evaluator commit <disputeId> --vote <0|1> --agent-id <agentId>  # 提交投票（0=Approve/Client 胜 / 1=Reject/Provider 胜，commit 阶段）".to_string(),
+            "  onchainos agent evaluator reveal <disputeId> --agent-id <agentId>              # 揭示投票（reveal_started 到达后才能调；不传 --vote，后端反查 vote+salt）".to_string(),
         ],
         Status::Completed | Status::Refunded => vec![
-            format!("onchainos agent evaluator claim --agent-id <agentId>                           # 领取所有可领取仲裁奖励（account 级 pull）"),
+            next_action("dispute_resolved"),
+            ref_header,
+            "  onchainos agent evaluator claim --agent-id <agentId>                           # 领取所有已结算仲裁奖励（account-pull，无 jobId）".to_string(),
             "（流程结束）裁决已上链，奖励/罚没由 reward_claimed / slashed 通知触发".to_string(),
-            next_action_hint("dispute_resolved"),
         ],
-        _ => vec![
-            format!("onchainos agent status {job_id}         # 当前状态对 evaluator 无主动操作；等仲裁通知到达"),
-        ],
+        Status::Open | Status::Accepted | Status::Submitted | Status::Refused => {
+            let label = status.as_str();
+            let mut v = vec![
+                format!("当前任务 status={label} → evaluator 未被选为陪审；任务进入 disputed 后才会触发 evaluator_selected 通知。期间维持质押资格即可（参考下方）。"),
+                ref_header,
+            ];
+            v.extend(staking_lifecycle());
+            v
+        }
+        Status::Other(s) => {
+            let mut v = vec![
+                format!("当前状态 `{s}` 不在标准状态机内 → 先 `onchainos agent status {job_id}` 查最新状态"),
+                ref_header,
+            ];
+            v.extend(staking_lifecycle());
+            v
+        }
     }
 }
 
@@ -85,6 +149,7 @@ pub fn generate_next_action(
     let minority_bps = slash_minority_bps(staking_cfg);
     let min_stake_okb = min_cumulative_stake_okb(staking_cfg);
     let cooldown_days = unstake_cooldown_days(staking_cfg);
+    let step_zero = arb_session_routing_step(job_id);
     let cfg_warning = if staking_cfg.is_none() {
         "⚠️ staking-config 未拉取到，下方经济参数使用占位符（<...>）；\
          agent 应调 `onchainos agent evaluator staking-config` 获取真实值再展示给用户。\n\n"
@@ -97,20 +162,16 @@ pub fn generate_next_action(
         // V1 合约只接受 vote ∈ {0, 1}（0=Approve/Client 胜，1=Reject/Provider 胜），原生 3 选项按 Step 4.5 归约表压到 0/1。
         // 结果不推给用户（不 通知user session）。
         "evaluator_selected" => format!(
-            "【当前状态】evaluator_selected（VotersSelected 上链，你是本轮陪审，CommitPhase 已开，sub session 侧）\n\
+            "【当前状态】evaluator_selected（VotersSelected 上链，你是本轮陪审，CommitPhase 已开）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ Sub session — 没有用户，**结果不通知用户**。评估证据 → 直接 commit → 结束。\n\
+             【会话类型】⚠️ 仲裁 sub session（结果不通知用户）。首次到达可能落在 user session，按 Step 0 路由进 sub 后再走判决流程。\n\
              【判决权威】评估者规范（誓约 L1-L5 + 决策原则 / Rubric / 证据等级 / 裁决书规范）。冲突以本规范为准。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
+             {step_zero}\
              **Step 1 — 从入站消息提取 `disputeId`、`disputeType`（质量/超时/恶意）、顶层 `agentId`（你的 evaluator agentId）。**\n\
              ⚠️ `disputeId` 缺省时直接中止本轮处理，输出 `missing disputeId in payload; abort` 日志结束——真后端 `disputeId = keccak256(jobId, roundNumber)`，第 2+ 轮重选时 `d-{job_id}-r1` 一定对不上合约。\n\
              `disputeType` 缺省时按质量争议处理（最常见）。\n\
              顶层 `agentId` 缺省时同样中止：后续 evaluator CLI 必须靠它定位钱包，缺了就签不了。\n\n\
-             **Step 1.5 — 为本任务建仲裁专属 sub session（必做，先于其它工具调用）：**\n\
-             调 `xmtp_start_evaluate_conversation` 工具，参数 `myAgentId=<envelope 顶层 agentId>`、`jobId={job_id}`。\n\
-             \x20\x20⚠️ 调用前输出：`[evaluator-xmtp] xmtp_start_evaluate_conversation: myAgentId=<agentId>, jobId={job_id}`\n\
-             \x20\x20⚠️ 调用后输出：`[evaluator-xmtp] xmtp_start_evaluate_conversation result: sessionKey=<返回值>`\n\
-             成功后，后续同 jobId 的 `reveal_started` / `dispute_resolved` / `round_failed` / `slashed` / `reward_claimed` 系统通知都会路由到该 sub session，由该 session 的 next-action arm 接管。本步骤已经在 sub session 中执行后续 Step 2+。\n\n\
              **Step 2 — 拉取当前证据（必须把 inbound envelope 顶层 `agentId` 透传给 `--agent-id`，CLI 据此定位钱包/身份）：**\n\
              ```bash\n\
              onchainos agent evaluator info <disputeId> --agent-id <envelope 顶层 agentId>\n\
@@ -205,10 +266,11 @@ pub fn generate_next_action(
 
         // ─── reveal 窗口开启（sub session，完全静默） ──────────────────
         "reveal_started" => format!(
-            "【当前状态】reveal_started（RevealStarted 上链，reveal 窗口开启，sub session 侧）\n\
+            "【当前状态】reveal_started（RevealStarted 上链，reveal 窗口开启）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ Sub session — 没有用户。**agent 自主 reveal，不通知用户**。\n\n\
+             【会话类型】⚠️ 仲裁 sub session（agent 自主 reveal，不通知用户）。首次到达可能落在 user session，按 Step 0 路由进 sub 后再 reveal。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
+             {step_zero}\
              **Step 1 — 从 inbound envelope 提取 `disputeId` 与顶层 `agentId`，执行 reveal：**\n\
              ```bash\n\
              onchainos agent evaluator reveal <disputeId> --agent-id <envelope 顶层 agentId>\n\
@@ -225,11 +287,12 @@ pub fn generate_next_action(
         ),
 
         // ─── 结算完成（sub 静默处理；入账/罚没通过后续 reward_claimed / slashed 事件再推user session） ─
-        "dispute_resolved" =>
-            "【当前状态】dispute_resolved（DisputeSettled 上链，仲裁结算完成，sub session 侧）\n\
+        "dispute_resolved" => format!(
+            "【当前状态】dispute_resolved（DisputeSettled 上链，仲裁结算完成）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ Sub session — 没有用户。**agent 自主 claim + 清理，不通知用户**。用户侧的入账/罚没通知由后续 reward_claimed / slashed arm 负责。\n\n\
+             【会话类型】⚠️ 仲裁 sub session（agent 自主 claim + 清理，不通知用户）。首次到达可能落在 user session，按 Step 0 路由进 sub 后再 claim。用户侧的入账/罚没通知由后续 reward_claimed / slashed arm 负责。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
+             {step_zero}\
              **Step 1 — 从 payload 提取 `winningSide` / `yourVote`。**\n\n\
              **Step 2 — 若 `yourVote` 与 `winningSide` 一致（多数方），立即领取奖励（透传 envelope 顶层 `agentId`）：**\n\
              ```bash\n\
@@ -244,7 +307,7 @@ pub fn generate_next_action(
              - reward_claimed（claim tx 回执）→ 另一个 arm，会 通知user session 推入账/失败给用户\n\
              - slashed（被罚通知）→ 另一个 arm，会 通知user session 推罚没金额+原因给用户\n\
              本 arm 到这里结束，**不抢这两个 arm 的通知职责**。\n"
-                .to_string(),
+        ),
 
         // ─── 本轮失效（sub 静默；若被罚会通过 slashed arm 再推user session） ──
         "round_failed" =>
