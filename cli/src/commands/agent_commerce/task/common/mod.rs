@@ -351,7 +351,7 @@ fn build_context(
     out.push('\n');
 
     // ── 任务详情 ──────────────────────────────────────────────────────────
-    out.push_str("【任务详情】\n"); // todo liyun 增加任务币种 创建任务时的金额币种信息
+    out.push_str("【任务详情】\n");
     out.push_str(&format!("- 任务ID：{}\n", task.job_id));
     if let Some(tid) = task.task_id {
         out.push_str(&format!("- 内部ID：{tid}\n"));
@@ -362,7 +362,7 @@ fn build_context(
     let amount = task.token_amount.as_deref().unwrap_or("未设置");
     let token  = task.token_address.as_deref().unwrap_or("");
     let symbol = task.token_symbol.as_deref().unwrap_or("UNKNOWN");
-    out.push_str(&format!("- 预算：{amount} {symbol} （token: {token}）\n"));
+    out.push_str(&format!("- 创建预算：{amount} {symbol} （token: {token}）\n"));
 
     if let Some(pm) = task.payment_mode {
         out.push_str(&format!("- 支付方式：{}\n", payment_mode_desc(pm)));
