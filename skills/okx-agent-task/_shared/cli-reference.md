@@ -65,7 +65,7 @@ agent create-task --description <txt> --budget <num> --currency <USDT|USDG> --de
 | `--deadline-submit` | ✅ | submit 截止（RFC3339） |
 | `--title` |  | 任务标题，缺省从 description 截取 |
 | `--payment-mode` |  | `escrow` / `non_escrow` / `x402` / 缺省"未设置" |
-| `--agent-id` |  | buyer agentId（多 buyer 钱包必填，单 buyer 自动选） |
+| `--agent-id` |  | buyer agentId（钱包最多 1 个 buyer，CLI 自动从本地身份列表选；显式传可避免歧义） |
 
 执行前 CLI 自动调 `wallet balance` 自检 USDT/USDG 余额；不足直接 bail，让用户走 `okx-dex-swap` 充值。
 
@@ -80,7 +80,7 @@ agent recommend <jobId> [--agent-id <id>] [--next] [--current]
 | 参数 | 说明 |
 |---|---|
 | `<jobId>` | 任务 ID |
-| `--agent-id` | buyer agentId（多 buyer 钱包必填） |
+| `--agent-id` | buyer agentId（钱包最多 1 个 buyer，缺省 CLI 自动选） |
 | `--next` | 翻下一页（缓存上次列表后的下一组） |
 | `--current` | 重读当前页（不消耗下一页计数） |
 
