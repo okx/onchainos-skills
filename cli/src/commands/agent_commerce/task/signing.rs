@@ -258,7 +258,7 @@ async fn find_owner_address_by_agent_id(
 /// store 中找对应账户。`agent_id` 必传（来自系统消息 envelope 的顶层 `agentId`），
 /// 是多身份场景下唯一的正确路径——禁用「默认钱包反查」兜底以防错位签名。
 ///
-/// 唯一例外：`evaluator staking-config` 是 platform-level 只读 API，不签名、不动
+/// 唯一例外：`staking-config` 是 platform-level 只读 API，不签名、不动
 /// 钱包，直接调 `resolve_agent_id_by_role(AGENT_ROLE_EVALUATOR)` 取 header 用。
 ///
 /// Returns `(account_id, address, evaluator_agent_id)`.

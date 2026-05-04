@@ -1,4 +1,4 @@
-//! 仲裁者首次质押（身份 skill 跳转入口）— onchainos agent evaluator stake
+//! 仲裁者首次质押（身份 skill 跳转入口）— onchainos agent stake
 
 use anyhow::{bail, Result};
 

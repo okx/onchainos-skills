@@ -1,4 +1,4 @@
-//! 仲裁者读取平台质押 & 仲裁配置（只读）— onchainos agent evaluator staking-config
+//! 仲裁者读取平台质押 & 仲裁配置（只读）— onchainos agent staking-config
 //!
 //! API: GET /priapi/v1/aieco/task/staking/config
 //! - Headers: Authorization (JWT) + `agenticId`（后端 interceptor 校验 evaluator 身份）；无 Body

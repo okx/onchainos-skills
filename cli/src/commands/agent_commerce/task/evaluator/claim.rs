@@ -1,4 +1,4 @@
-//! 仲裁者领取奖励（account 级 pull，一次到账）— onchainos agent evaluator claim
+//! 仲裁者领取奖励（account 级 pull，一次到账）— onchainos agent arbitration-claim
 //!
 //! 实际 API 调用 + 签名 + broadcast 在 `task::common::claim`（角色无关，
 //! buyer / provider 未来接入时复用）。本文件只保留 evaluator 视角的 wallet/agent

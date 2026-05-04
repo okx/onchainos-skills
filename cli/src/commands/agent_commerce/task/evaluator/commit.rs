@@ -1,4 +1,4 @@
-//! 仲裁者 commit 投票（commit-reveal 第一阶段）— onchainos agent evaluator commit
+//! 仲裁者 commit 投票（commit-reveal 第一阶段）— onchainos agent vote-commit
 
 use anyhow::{bail, Result};
 
@@ -12,7 +12,7 @@ use crate::commands::agent_commerce::task::signing;
 ///
 /// Request body is strictly `{ vote }` per real API spec. The evaluator's rationale
 /// is NOT part of this API — it lives in agent thinking / session memory only (per evaluator.md
-/// §3.7: judgments are never pushed to the user; users perceive the result only via later
+/// references/evaluator-decision-rubric.md 7: judgments are never pushed to the user; users perceive the result only via later
 /// `reward_claimed` / `slashed` events). Not persisted to backend, not surfaced via xmtp.
 ///
 /// No local persistence: reveal is driven by the `reveal_started` system event whose
@@ -64,7 +64,7 @@ pub async fn handle_commit(
     }
     println!("  txHash:     {tx_hash}");
     println!(
-        "next: on reveal_started run `onchainos agent evaluator reveal <disputeId>` \
+        "next: on reveal_started run `onchainos agent vote-reveal <disputeId>` \
          (no --vote; backend reads vote+salt from task_dispute_voter)"
     );
     Ok(())

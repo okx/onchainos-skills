@@ -1,4 +1,4 @@
-//! 仲裁者读取当前账户的链上质押状态（只读）— onchainos agent evaluator my-stake
+//! 仲裁者读取当前账户的链上质押状态（只读）— onchainos agent my-stake
 //!
 //! API: GET /priapi/v1/aieco/task/staking/myStake
 //! - Headers: Authorization (JWT) + `agenticId`（与 staking-config 一致；后端 interceptor

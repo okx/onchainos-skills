@@ -24,7 +24,7 @@
 - 看到 `code != 0` → **第一次失败立即推 user session**，**不要 retry 同命令**
 - 唯一通用例外是 JWT 过期（3001 + 特定 msg）→ 刷新 + 自动重试一次；仍失败再推用户
 - 网络 timeout / connection error 不属于例外——按业务错处理推用户，**不在 sub 里盲重**
-- **Role-specific 例外**：`vote-commit` / `vote-reveal` / `arbitration-claim` 因错过窗口直接罚 0.3% stake，allow sub 内部最多重试 3 次（详见 `references/evaluator-decision-rubric.md` §6）。其他 evaluator 命令仍走 0 retry 规则。Buyer / provider 没有此类例外。
+- **Role-specific 例外**：`vote-commit` / `vote-reveal` / `arbitration-claim` 因错过窗口直接罚 0.3% stake，allow sub 内部最多重试 3 次（详见 `references/evaluator-decision-rubric.md` 第 6 节）。其他 evaluator 命令仍走 0 retry 规则。Buyer / provider 没有此类例外。
 
 > ⚠️ `2004` / `4000` 等子码：本文档下面表里部分错误信息提到 `2004 / 4000`——那是 **`msg` 内嵌的业务子码**（比如 staking 模块自己的 sub-error），不是 class-level code。class-level code 一律来自上表 5 个值。
 
@@ -47,7 +47,7 @@
 | `code=1001` + `msg` 含 `task not found` / `jobId not exists` | jobId 不存在 / 拼错 / 已被清理 | 跑 `agent list` 让用户选；envelope 触发的不可能拼错——这种情况推 user session 报"任务 X 找不到" |
 | `code=1001` + `msg` 含 `invalid status transition` | 当前 status 不允许这个动作（如 `complete` 在 status=disputed） | 跑 `agent status <jobId>` 拿真实 status；让用户先决议 dispute 等等 |
 | `code=2001` + `msg` 含 `sensitive` / `风控` | 文本内容触发风控敏感词 | **不要重试**；推用户改文本（task 描述 / 拒绝理由 / dispute reason / dispute upload text 等用户输入字段都会过风控） |
-| `bail: deliver 在 status != accepted 时直接 bail`（CLI 层 bail） | provider 在 `apply` 后立即 deliver（status 仍是 open，需等 `job_accepted`） | 不要重试；等 `job_accepted` 链事件到达再 deliver。详见 provider.md §6.5 |
+| `bail: deliver 在 status != accepted 时直接 bail`（CLI 层 bail） | provider 在 `apply` 后立即 deliver（status 仍是 open，需等 `job_accepted`） | 不要重试；等 `job_accepted` 链事件到达再 deliver。详见 provider.md 5.1 |
 | `dispute window closed` / `review window closed`（业务子码） | 24h 决策 / 1h 证据准备期已过 | 没法补救；按当前 status 走自动流程（`claim-auto-refund` / `claim-auto-complete` 等） |
 
 ## 3. 付款 / 余额错误
@@ -84,7 +84,7 @@
 
 | 错误码 / 信息 | 触发原因 | 处理 |
 |---|---|---|
-| `forbidden` (任意 XMTP 工具) | 调用了被 `tools.sessions.visibility=tree` 卡住的工具（如 `Session Send` / `sessions.send`） | 切到白名单 10 个 XMTP 工具（见 SKILL.md §Session 通信契约 §5）；**不要 fallback 别的工具** |
+| `forbidden` (任意 XMTP 工具) | 调用了被 `tools.sessions.visibility=tree` 卡住的工具（如 `Session Send` / `sessions.send`） | 切到白名单 10 个 XMTP 工具（见 SKILL.md Session 通信契约 4）；**不要 fallback 别的工具** |
 | `xmtp_dispatch_user` / `xmtp_prompt_user` `timeout` | XMTP infra 抖动 | 推用户"派发失败，请重试"，**不要**改用 `Session Send`（会被拒） |
 | `xmtp_send` 之前没调 `session_status` | 缺 `sessionKey` 参数 | 严格两步：`session_status` → 拿 sessionKey → `xmtp_send`；同 turn 内 `session_status` 不重复调 |
 | `xmtp_file_upload` 文件路径不存在 | `--file` 参数指向用户机器上不存在的文件 | 让用户确认文件路径；不要瞎猜替代路径 |
@@ -106,28 +106,10 @@
 | `apply` 上链后 status 仍是 `open` | apply 是过场事件，**不改 status** | 等买家 `confirm-accept` 触发 `job_accepted`，那时才进 `accepted` |
 | `complete` 后 buyer 没收到任何系统通知 | `job_completed` 链事件只发 provider | buyer 通过任务详情自查 status 即可 |
 | vote-commit 后没收到 reveal_started | reveal 阶段由 commit 窗口关闭后才启动（commit + reveal 合计 24h） | 静默等待，不要 retry commit |
-| 收到 `provider_applied` 但 buyer 没收到 | 后端规则：`provider_applied` 系统通知**只发卖家** | buyer 通过 inbound a2a-agent-chat（卖家发的"已 apply"消息）得知，立即调 `confirm-accept`（详见 SKILL.md §6 反幻觉 Buyer 例外） |
+| 收到 `provider_applied` 但 buyer 没收到 | 后端规则：`provider_applied` 系统通知**只发卖家** | buyer 通过 inbound a2a-agent-chat（卖家发的"已 apply"消息）得知，立即调 `confirm-accept`（详见 SKILL.md 第 6 节 反幻觉 Buyer 例外） |
 | `dispute_approved` 之后 status 还是 `refused` | dispute approve 是过场事件（仲裁阶段 1，未真正 disputed） | 等阶段 2 `dispute confirm` + `job_disputed` 通知 |
 
-## 9. CLI 拼错 / 不存在的命令
-
-agent 容易凭印象拼错命令名，常见误区：
-
-| 错的写法 | 正确 |
-|---|---|
-| `agent contact-buyer` | 已删除——用 `xmtp_start_conversation` 工具建群 |
-| `agent dispute evidence` | 改名 `agent dispute upload` |
-| `agent reject-apply` | 不存在；buyer 拒绝 provider apply 没有专门命令，直接 ignore 或继续协商 |
-| `agent claim <jobId>` 顶层 | 按角色分流：`provider-claim-rewards` / `arbitration-claim` / `claim-auto-refund` / `claim-auto-complete` |
-| `agent confirm <jobId>` | 应该是 `agent confirm-accept <jobId> --provider <providerId>` |
-| `agent negotiate ...` | 协商**没有**专门 CLI；走 XMTP 自然语言 + a2a-agent-chat |
-| `agent config init` / `config show` | 不存在；任务系统不需要本地 config |
-| `agent msg send` | 不存在；P2P 消息走 `xmtp_send` 工具 |
-| `--agentId` / `--agent_id` | clap 接受 `--agent-id`（kebab-case，含连字符） |
-
-完整命令清单见 [`_shared/cli-reference.md`](../_shared/cli-reference.md)。
-
-## 10. 诊断收集
+## 9. 诊断收集
 
 确认问题没法解决时，让用户通过 user session 提供：
 

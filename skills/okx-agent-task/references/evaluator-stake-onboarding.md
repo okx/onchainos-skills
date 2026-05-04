@@ -1,6 +1,6 @@
 # Evaluator Stake Onboarding 流程
 
-> 仅当 evaluator.md §1.5 触发条件命中时打开此文档。包含完整 4-step 质押流程。
+> 仅当 evaluator.md 1.5 触发条件命中时打开此文档。包含完整 4-step 质押流程。
 
 **触发：** 其他 skill（身份 / ERC-8004 注册流程）在用户注册完 evaluator 身份后，把上下文交接到本 skill。**身份 skill 不携带金额**——金额由本场景决定。
 
@@ -46,7 +46,7 @@
 >
 > 累计门槛规则的判断是 `activeStake + N >= minCumulativeStakeOkb`，**绝不能用钱包余额代替 `activeStake`**。
 
-### Step 1 — 拉取门槛 + 已质押状态（链上权威值，不读 §13 的硬编码默认）
+### Step 1 — 拉取门槛 + 已质押状态（链上权威值，不读 13 的硬编码默认）
 
 并发执行两条只读 CLI：
 
@@ -63,7 +63,7 @@ onchainos agent my-stake         # 取 activeStake (OKB) / registered / activeDi
 |---|---|
 | `registered=false` (`agentId=0`) | 还不是 evaluator，**回到身份 skill 完成注册**，不进 Step 2 |
 | `activeStake >= minCumulativeStakeOkb` | 已经满足门槛，告诉用户「你已质押 `<X>` OKB，超过门槛 `<min>`，仲裁者候选状态正常，无需再次质押」，结束本场景 |
-| `activeDisputes > 0` 且 `activeStake >= min` | 同上，无需重质押；若用户坚持加质押，引导他用 evaluator.md §12 的 `increase-stake` |
+| `activeDisputes > 0` 且 `activeStake >= min` | 同上，无需重质押；若用户坚持加质押，引导他用 evaluator.md 12 的 `increase-stake` |
 
 > **累计门槛规则语义**：合约按累计校验 `activeStake + N >= minCumulativeStakeOkb`——首次质押 `activeStake=0` 时 `N >= min`；被 slash 后 `activeStake < min` 时 `N >= min - activeStake` 才能补齐。
 
@@ -132,4 +132,4 @@ onchainos agent stake --amount <N>
 ## 边界
 
 - **Confirmation gate 不可跳过**：无论上下文多"自然"，质押必须经过 Step 2 的用户确认。不允许"为了流畅"省略。
-- **本场景只处理首次质押 handoff**。后续 staking 生命周期（补充质押 / 申请解质押 / 领取 / 取消）见 evaluator.md §12。
+- **本场景只处理首次质押 handoff**。后续 staking 生命周期（补充质押 / 申请解质押 / 领取 / 取消）见 evaluator.md 12。

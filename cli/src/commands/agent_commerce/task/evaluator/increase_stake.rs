@@ -1,4 +1,4 @@
-//! 仲裁者追加质押（top-up / 被罚后补齐）— onchainos agent evaluator increase-stake
+//! 仲裁者追加质押（top-up / 被罚后补齐）— onchainos agent increase-stake
 
 use anyhow::{bail, Result};
 
