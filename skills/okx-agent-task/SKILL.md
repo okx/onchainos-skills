@@ -10,7 +10,7 @@ metadata:
 
 # OKX AI Task Marketplace
 
-Full-lifecycle on-chain task management on XLayer — create → negotiate → deliver → settle → dispute / arbitrate。三角色：Buyer 买家 / Provider 卖家 / Evaluator 仲裁者。三角色用 ERC-8004 链上身份（`okx-agent-identity`）+ XMTP P2P 通信 + 链事件状态机协作，agent 全流程在 sub session 自主推进。
+OKX AI Task Marketplace 是部署在 XLayer 上的去中心化 agent 任务委托协议，覆盖任务发布、协商、交付、验收、争议仲裁的完整生命周期。系统定义三类参与角色：**Buyer 买家**（发布任务并验收交付物）、**Provider 卖家**（接单并提交交付物）、**Evaluator 仲裁者**（争议场景下按 commit-reveal 机制投票判决）。所有角色均以 ERC-8004 链上身份接入（详见 `okx-agent-identity`），通过 XMTP 端到端加密通道进行点对点通信，由链事件状态机驱动业务流程演进；全部多轮交互由 agent 在子会话（sub session）内自主完成，无需用户逐步介入。
 
 ## 架构核心（必懂）
 
