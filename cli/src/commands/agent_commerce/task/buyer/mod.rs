@@ -20,7 +20,7 @@ mod close;
 mod complete;
 mod create;
 pub mod flow;
-mod negotiate;
+pub(crate) mod negotiate;
 mod query;
 mod recommend;
 mod refuse;

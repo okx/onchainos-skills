@@ -15,6 +15,10 @@
 use anyhow::{bail, Result};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::util::{
+    json_str, json_u64, fetch_token_detail, resolve_payment_mode,
+    resolve_x402_params, fetch_provider_address,
+};
 use crate::commands::agent_commerce::task::common::{
     self, PAYMENT_MODE_ESCROW, PAYMENT_MODE_NON_ESCROW, PAYMENT_MODE_X402,
     XLAYER_CHAIN_ID,
@@ -22,23 +26,6 @@ use crate::commands::agent_commerce::task::common::{
 use crate::commands::agent_commerce::task::signing;
 use crate::commands::payment::a2a_pay::{self, PayParams};
 use super::negotiate;
-
-/// 通过 tokenDetail API 查询 token 合约地址和精度。
-/// GET /priapi/v1/aieco/task/tokenDetail?symbol=<symbol>
-/// 返回 (token_address, decimals)
-async fn fetch_token_detail(client: &mut TaskApiClient, symbol: &str, agent_id: &str) -> Result<(String, u32)> {
-    let path = format!("/priapi/v1/aieco/task/tokenDetail?symbol={symbol}");
-    let resp = client.get_with_agent_id(&path, agent_id).await
-        .map_err(|e| anyhow::anyhow!("查询 tokenDetail 失败 (symbol={symbol}): {e}"))?;
-    let address = resp["address"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("tokenDetail 响应缺少 address 字段"))?
-        .to_string();
-    let decimals = resp["decimals"]
-        .as_u64()
-        .ok_or_else(|| anyhow::anyhow!("tokenDetail 响应缺少 decimals 字段"))? as u32;
-    Ok((address, decimals))
-}
 
 /// 查询 Provider 是否已 apply 及报价（escrow 参数）。
 /// GET /priapi/v1/aieco/task/{jobId}/providerConfirmStatus?providerAgentId=xxx&tokenSymbol=xxx&amount=xxx
@@ -58,176 +45,6 @@ async fn fetch_provider_confirm_status(
     );
     client.get_with_agent_id(&path, agent_id).await
         .map_err(|e| anyhow::anyhow!("providerConfirmStatus 查询失败: {e}"))
-}
-//todo liyun 抽离工具类
-/// 从 JSON 对象提取字符串字段。
-fn json_str(obj: &serde_json::Value, key: &str) -> Result<String> {
-    obj[key]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("escrow 响应缺少 {key} 字段"))
-        .map(|s| s.to_string())
-}
-
-/// 从 JSON 对象提取 u64 字段（兼容数字和字符串）。
-fn json_u64(obj: &serde_json::Value, key: &str) -> Result<u64> {
-    if let Some(n) = obj[key].as_u64() {
-        return Ok(n);
-    }
-    if let Some(s) = obj[key].as_str() {
-        return s
-            .parse()
-            .map_err(|_| anyhow::anyhow!("escrow.{key} 解析 u64 失败: {s}"));
-    }
-    bail!("escrow 响应缺少 {key} 字段")
-}
-
-
-/// x402 三级 fallback 解析结果
-struct X402ServiceParams {
-    endpoint: String,
-    fee_amount: f64,
-    fee_token_symbol: String,
-}
-
-/// 解析 x402 服务参数：CLI flag > recommend 缓存 > identity service-list API > 报错
-async fn resolve_x402_params(
-    job_id: &str,
-    provider_agent_id: &str,
-    cli_endpoint: Option<&str>,
-    cli_token_symbol: Option<&str>,
-    cli_token_amount: Option<&str>,
-) -> Result<X402ServiceParams> {
-    // Tier 1: CLI flags 全部提供
-    if let (Some(ep), Some(sym), Some(amt_str)) = (cli_endpoint, cli_token_symbol, cli_token_amount) {
-        let amt: f64 = amt_str.parse()
-            .map_err(|_| anyhow::anyhow!("--token-amount 格式错误: {amt_str}"))?;
-        eprintln!("ℹ x402: 使用 CLI 参数 endpoint={ep}, token={sym}, amount={amt}");
-        return Ok(X402ServiceParams {
-            endpoint: ep.to_string(),
-            fee_amount: amt,
-            fee_token_symbol: sym.to_string(),
-        });
-    }
-
-    // Tier 2: recommend 缓存
-    match super::negotiate::current(job_id) {
-        Ok(Some(pi)) => {
-            if let Some(svc) = pi.services.first() {
-                if !svc.endpoint.is_empty() && svc.fee_amount > 0.0 && !svc.fee_token_symbol.is_empty() {
-                    eprintln!("ℹ x402: 使用 recommend 缓存 endpoint={}, token={}, amount={}",
-                        svc.endpoint, svc.fee_token_symbol, svc.fee_amount);
-                    return Ok(X402ServiceParams {
-                        endpoint: cli_endpoint.unwrap_or(&svc.endpoint).to_string(),
-                        fee_amount: cli_token_amount
-                            .and_then(|a| a.parse().ok())
-                            .unwrap_or(svc.fee_amount),
-                        fee_token_symbol: cli_token_symbol
-                            .unwrap_or(&svc.fee_token_symbol)
-                            .to_string(),
-                    });
-                }
-            }
-            eprintln!("⚠ x402: recommend 缓存中 services 为空或字段缺失，尝试 service-list API");
-        }
-        Ok(None) => eprintln!("⚠ x402: recommend 缓存无当前 provider，尝试 service-list API"),
-        Err(e) => eprintln!("⚠ x402: 读取 recommend 缓存失败 ({e})，尝试 service-list API"),
-    }
-
-    // Tier 3: identity service-list API
-    let params = fetch_x402_service_from_identity(provider_agent_id).await?;
-    Ok(X402ServiceParams {
-        endpoint: cli_endpoint.unwrap_or(&params.endpoint).to_string(),
-        fee_amount: cli_token_amount
-            .and_then(|a| a.parse().ok())
-            .unwrap_or(params.fee_amount),
-        fee_token_symbol: cli_token_symbol
-            .unwrap_or(&params.fee_token_symbol)
-            .to_string(),
-    })
-}
-
-/// 通过 `onchainos agent service-list` 查询 provider 的 A2MCP 服务信息
-async fn fetch_x402_service_from_identity(provider_agent_id: &str) -> Result<X402ServiceParams> {
-    let exe = std::env::current_exe()
-        .map_err(|e| anyhow::anyhow!("无法获取可执行文件路径: {e}"))?;
-    let output = tokio::process::Command::new(&exe)
-        .args(["agent", "service-list", "--agent-id", provider_agent_id])
-        .output()
-        .await
-        .map_err(|e| anyhow::anyhow!("调用 agent service-list --agent-id {provider_agent_id} 失败: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("x402 service-list 查询失败 (exit {}): {stderr}", output.status);
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let body: serde_json::Value = serde_json::from_str(&stdout)
-        .map_err(|e| anyhow::anyhow!("解析 service-list 输出失败: {e}"))?;
-
-    let services = body["data"].as_array()
-        .or_else(|| body["data"]["services"].as_array())
-        .or_else(|| body["data"]["list"].as_array())
-        .ok_or_else(|| anyhow::anyhow!(
-            "x402: service-list 响应中未找到 services 数组，provider={provider_agent_id}"
-        ))?;
-
-    let svc = services.iter()
-        .find(|s| {
-            let stype = s["servicetype"].as_str()
-                .or_else(|| s["serviceType"].as_str())
-                .unwrap_or("");
-            stype.eq_ignore_ascii_case("A2MCP")
-        })
-        .ok_or_else(|| anyhow::anyhow!(
-            "x402: provider {provider_agent_id} 无 A2MCP 类型服务"
-        ))?;
-
-    let endpoint = svc["endpoint"].as_str()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("x402: service-list 中 A2MCP 服务 endpoint 为空"))?
-        .to_string();
-
-    let (fee_amount, fee_token_symbol) = if let Some(amt) = svc["feeAmount"].as_f64() {
-        let sym = svc["feeTokenSymbol"].as_str()
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("x402: service-list 中 feeAmount 存在但 feeTokenSymbol 缺失，无法确定支付代币"))?
-            .to_string();
-        (amt, sym)
-    } else {
-        let fee_str = svc["fee"].as_str().unwrap_or("");
-        parse_composite_fee(fee_str)?
-    };
-
-    eprintln!("ℹ x402: 从 service-list API 获取 endpoint={endpoint}, token={fee_token_symbol}, amount={fee_amount}");
-    Ok(X402ServiceParams { endpoint, fee_amount, fee_token_symbol })
-}
-
-/// 解析复合 fee 字符串（如 "0.01 USDT"）→ (amount, symbol)
-fn parse_composite_fee(fee: &str) -> Result<(f64, String)> {
-    let fee = fee.trim();
-    if fee.is_empty() {
-        bail!("x402: service fee 字段为空");
-    }
-    let parts: Vec<&str> = fee.split_whitespace().collect();
-    match parts.len() {
-        2 => {
-            let amt: f64 = parts[0].parse()
-                .map_err(|_| anyhow::anyhow!("x402: fee 金额解析失败: {}", parts[0]))?;
-            Ok((amt, parts[1].to_string()))
-        }
-        1 => {
-            let numeric_end = fee.find(|c: char| c.is_alphabetic()).unwrap_or(fee.len());
-            if numeric_end >= fee.len() {
-                bail!("x402: fee 字段只有金额没有币种: {fee}，无法确定支付代币");
-            }
-            let amt: f64 = fee[..numeric_end].parse()
-                .map_err(|_| anyhow::anyhow!("x402: fee 金额解析失败: {fee}"))?;
-            let sym = fee[numeric_end..].to_string();
-            Ok((amt, sym))
-        }
-        _ => bail!("x402: fee 格式无法解析: {fee}"),
-    }
 }
 
 //todo liyun 拆分
@@ -314,30 +131,6 @@ pub async fn handle_set_payment_mode(
     );
     crate::output::confirming(&msg, &next);
     Ok(())
-}
-
-/// 解析支付方式：CLI flag > 任务详情 paymentType
-async fn resolve_payment_mode(
-    client: &mut TaskApiClient,
-    payment_mode: Option<&str>,
-    job_id: &str,
-    agent_id: &str,
-) -> Result<String> {
-    match payment_mode {
-        Some(m) => Ok(m.to_string()),
-        None => {
-            let task_resp = client.get_with_identity(&client.task_path(job_id), agent_id).await?;
-            let payment_type = task_resp["paymentType"].as_i64().unwrap_or(0) as i32;
-            let mode_str = common::payment_mode_to_str(payment_type);
-            if mode_str == "none" || mode_str == "unknown" {
-                eprintln!("⚠ 任务 paymentType={payment_type}，无法识别支付方式，默认使用 escrow");
-                Ok(common::PAYMENT_MODE_ESCROW.to_string())
-            } else {
-                eprintln!("ℹ --payment-mode 未传入，使用任务详情 paymentType: {mode_str} ({payment_type})");
-                Ok(mode_str.to_string())
-            }
-        }
-    }
 }
 
 /// confirm-accept — 确认接受卖家（setPaymentMode 已通过 set-payment-mode 独立执行）
@@ -573,31 +366,7 @@ pub async fn handle_confirm_accept(
                 },
             };
 
-            // 通过 `onchainos agent get --agent-ids` 查询 provider 钱包地址
-            let provider_address = {
-                let exe = std::env::current_exe()
-                    .map_err(|e| anyhow::anyhow!("无法获取可执行文件路径: {e}"))?;
-                let output = tokio::process::Command::new(&exe)
-                    .args(["agent", "get", "--agent-ids", provider])
-                    .output()
-                    .await
-                    .map_err(|e| anyhow::anyhow!("调用 agent get --agent-ids {provider} 失败: {e}"))?;
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let body: serde_json::Value = serde_json::from_str(&stdout)
-                    .map_err(|e| anyhow::anyhow!("解析 agent get 输出失败: {e}"))?;
-                body["data"].as_array()
-                    .and_then(|arr| arr.first())
-                    .and_then(|x| x["list"].as_array())
-                    .or_else(|| body["data"]["list"].as_array())
-                    .and_then(|list| list.iter()
-                        .find(|a| a["agentId"].as_str() == Some(provider))
-                        .and_then(|a| a["ownerAddress"].as_str())
-                        .filter(|s| !s.is_empty())
-                        .map(|s| s.to_string()))
-                    .ok_or_else(|| anyhow::anyhow!(
-                        "provider {provider} 的 ownerAddress 为空，无法确定收款地址"
-                    ))?
-            };
+            let provider_address = fetch_provider_address(provider).await?;
 
             // 通过 tokenDetail API 查询 token 合约地址和精度
             let (token_address, decimals) = fetch_token_detail(client, &symbol, &agent_id).await?;
