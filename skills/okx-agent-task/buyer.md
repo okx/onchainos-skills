@@ -26,19 +26,18 @@
 | C6 | Reject offer | 子 session 自然语言 | Price not acceptable |
 | C7 | Confirm accept + Fund (escrow) | `onchainos agent confirm-accept --payment-mode escrow` | 收到卖家 P2P 消息告知已 apply |
 | C8 | Confirm accept + Pay (non_escrow) | `onchainos agent confirm-accept --payment-mode non_escrow --payment-id <a2a_xxx>` | 收到卖家 P2P 消息含 paymentId |
-| C9 | Confirm accept (x402) | `onchainos agent confirm-accept --payment-mode x402 --endpoint <ep>` | recommend 返回 x402 provider |
-| C10 | Reject application | `onchainos agent reject-apply` | Application not suitable |
-| C11 | Confirm complete (escrow) | `onchainos agent complete` | Deliverable is satisfactory |
-| C12 | Complete payment (non_escrow) | `onchainos agent complete` | job_accepted（非担保立即 complete） |
-| C13 | Reject deliverable | `onchainos agent reject` | Deliverable is unsatisfactory |
-| C14 | Submit evidence | `onchainos agent dispute upload` | During dispute（1h 内） |
-| C15 | Close task | `onchainos agent close` | Any time while Open |
-| C16 | Set to Public | `onchainos agent set-public` | All negotiations failed |
-| C17 | Claim auto-refund | `onchainos agent claim-auto-refund` | submit_expired / refuse_expired |
-| C18 | Claim arbitration reward | `onchainos agent claim` | dispute_resolved in buyer's favor |
-| C19 | Judge provider | `onchainos agent judge` | After task complete |
-| C20 | Designate provider (A2A) | Scene 1.7 flow（create-task + 直连指定卖家） | User sends "Please initiate a direct conversation..." |
-| C21 | Designate provider (x402) | 不处理，由 `okx-x402-payment` skill 命中 | User sends "Please send a request to this endpoint." |
+| C9 | Confirm accept (x402) | `onchainos agent confirm-accept --payment-mode x402 --endpoint <ep> --token-symbol <sym> --token-amount <amt>` | recommend 返回 x402 provider |
+| C10 | Confirm complete (escrow) | `onchainos agent complete` | Deliverable is satisfactory |
+| C11 | Complete payment (non_escrow) | `onchainos agent complete` | job_accepted（非担保立即 complete） |
+| C12 | Reject deliverable | `onchainos agent reject` | Deliverable is unsatisfactory |
+| C13 | Submit evidence | `onchainos agent dispute upload` | During dispute（1h 内） |
+| C14 | Close task | `onchainos agent close` | Any time while Open |
+| C15 | Set to Public | `onchainos agent set-public` | All negotiations failed |
+| C16 | Claim auto-refund | `onchainos agent claim-auto-refund` | submit_expired / refuse_expired |
+| C17 | Claim arbitration reward | `onchainos agent claim` | dispute_resolved in buyer's favor |
+| C18 | Rate provider | `onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <yourAgentId> --score <0-100> --task-id <jobId> --description "..."` | After task complete |
+| C19 | Designate provider (A2A) | Scene 1.7 flow（create-task + 直连指定卖家） | User sends "Please initiate a direct conversation..." |
+| C20 | Designate provider (x402) | 不处理，由 `okx-x402-payment` skill 命中 | User sends "Please send a request to this endpoint." |
 
 ---
 
@@ -345,4 +344,4 @@ sub session 的 `sessionKey` 在同一 turn 内是稳定的——调过一次就
 | 仲裁胜诉 → 领取退款 | `onchainos agent claim <jobId>` |
 | 关闭任务 | `onchainos agent close <jobId>` |
 | 转为公开任务 | `onchainos agent set-public <jobId>` |
-| 评价卖家 | `onchainos agent judge <jobId>` |
+| 评价卖家 | `onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <yourAgentId> --score <0-100> --task-id <jobId> --description "..."` |

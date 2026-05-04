@@ -51,7 +51,7 @@
 | 路径 | 触发 | 起点 |
 |---|---|---|
 | **A. 被动响应**（最常见）| 收到买家 a2a-agent-chat envelope（`sender.role===1`） | 直接进入"协商三项确认" |
-| **B. 主动联系**（公开任务，visibility=0）| 用户说"联系 jobX 的买家"，或 sub 自己跑 `find-jobs` 后用户挑了任务 | `xmtp_start_conversation`（XMTP plugin 工具，不是 CLI 命令）建群 → 等买家回复 → 协商三项确认 |
+| **B. 主动联系**（公开任务，openType=0）| 用户说"联系 jobX 的买家"，或 sub 自己跑 `find-jobs` 后用户挑了任务 | `xmtp_start_conversation`（XMTP plugin 工具，不是 CLI 命令）建群 → 等买家回复 → 协商三项确认 |
 
 **协商三项确认**（A/B 共用）：
 
@@ -72,7 +72,7 @@
    ```
    **任一项未达成** → `xmtp_send` 回复"很抱歉，无法接受当前条件"，结束。
 
-**主动联系路径 (B) 起步**（公开任务，visibility=0）：
+**主动联系路径 (B) 起步**（公开任务，openType=0）：
 ```bash
 onchainos agent common context <jobId> --role provider --agent-id <你的agentId>    # 提取 buyerAgentId
 ```
