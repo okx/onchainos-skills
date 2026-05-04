@@ -659,8 +659,19 @@ flow.rs 根据 event 输出对应 Scene 剧本（`provider_applied` / `job_accep
 
 ## Additional Resources
 
-- `_shared/cli-reference.md` — 全 CLI 参数表 / 返回字段 / 示例
-- `_shared/negotiate-protocol.md` — 协商消息类型、状态机、JSON 格式、支付模式规则
-- `_shared/state-machine.md` — Status / Event 枚举权威清单
+**`_shared/`**（跨角色共用协议 / 规则 / 引用）：
+
+- `_shared/cli-reference.md` — 全 CLI 参数表（按 buyer / provider / dispute / evaluator / common 分组，对齐 clap 定义）
+- `_shared/state-machine.md` — Status / Event 枚举权威清单（35 个事件分组列出）
 - `_shared/payment-modes.md` — escrow / non_escrow / x402 三种支付模式细节
+- `_shared/entry-points.md` — 任务入口类型（public / designated / private）+ 创建参数差异
+- `_shared/negotiate-protocol.md` — 协商消息类型、状态机、JSON 格式
+- `_shared/exception-escalation.md` — buyer / provider 共用异常升级规则（4 条通用反模式；buyer.md / provider.md §6 引用）
+- `_shared/preflight.md` — 钱包登录 + Agent 身份 pre-flight check
+- `_shared/message-types.md` — XMTP envelope 形态字段对照
+
+**`references/`**（深度查阅，按需打开）：
+
+- `references/evaluator-decision-rubric.md` — evaluator 判决方法论（输入 / Rubric / 决策原则 / 归约表 / 裁决书 / L4 自检 / 第一性誓约 / 证据等级 S-D / 经济模型 / 操控识别协议）
+- `references/evaluator-stake-onboarding.md` — evaluator 首次质押 4-step 流程（识别条件 / 拉门槛 / 用户确认金额 gate / 上链 + 错误码处理）
 - `references/troubleshooting.md` — 错误码与排查步骤
