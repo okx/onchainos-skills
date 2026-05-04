@@ -35,7 +35,7 @@ pub struct StakingConfig {
     pub slashed_cooldown_seconds: u64,
 }
 
-impl StakingConfig {
+impl StakingConfig {  // todo zhangxin 挪走
     /// 解质押冷却期（天，向上取整以便 UX 文案对齐"≥ N 天"语义）。
     pub fn unstake_cooldown_days(&self) -> u64 {
         self.unstake_cooldown_seconds.div_ceil(86400)
@@ -242,6 +242,7 @@ impl TaskApiClient {
     /// 该接口需 JWT + `agenticId` 头（后端 interceptor 校验 evaluator 身份）；无 Body。
     /// 返回字段含累计质押门槛、解质押冷却、仲裁押金、commit/reveal 时长、罚金比例等。
     /// 所有数值都来自 Apollo 配置，后端权威，CLI 仅用于 UX 提示与本地预检（不替代合约/后端校验）。
+    /// // todo zhangxin 挪走
     pub async fn get_staking_config(&mut self, agent_id: &str) -> Result<StakingConfig> {
         let data = self
             .get_with_identity("/priapi/v1/aieco/task/staking/config", agent_id)
@@ -287,7 +288,7 @@ impl TaskApiClient {
 
     // ─── 请求方法（接收 path，非完整 URL）────────────────────────────────
 
-    /// GET + JWT → 返回 data（自动注入 sessionCert query param）
+    /// GET + JWT → 返回 data（自动注入 sessionCert query param）// todo liyun 删掉
     pub async fn get(&mut self, path: &str) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
         let token = get_access_token().await;
@@ -382,7 +383,7 @@ impl TaskApiClient {
         Ok(resp.bytes().await?.to_vec())
     }
 
-    /// POST JSON + JWT → 返回 data（自动注入 sessionCert）
+    /// POST JSON + JWT → 返回 data（自动注入 sessionCert）// todo liyun 删除
     pub async fn post(&mut self, path: &str, body: &Value) -> Result<Value> {
         let body = inject_session_cert(body);
         let url = format!("{}{}", self.base_url, path);

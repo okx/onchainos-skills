@@ -146,7 +146,7 @@ fn print_tasks(tasks: &[Value]) {
     for (i, t) in tasks.iter().enumerate() {
         let token_amount = t["tokenAmount"].as_str().unwrap_or("?");
         let token_addr = t["tokenAddress"].as_str().unwrap_or("");
-        let token_sym = token_symbol_from_address(token_addr).unwrap_or("UNKNOWN");
+        let token_sym = token_symbol_from_address(token_addr).unwrap_or("UNKNOWN"); // todo ganmingtao 确认一下
         println!(
             "  {}. jobId={} | {} | 预算 {} {} (token: {})",
             i + 1,

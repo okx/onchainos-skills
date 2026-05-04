@@ -31,6 +31,7 @@ pub struct BroadcastResult {
 /// Business context for broadcast — 后端据此区分业务场景做额外校验/记账。
 ///
 /// 枚举值对齐后端接口文档 bizType 定义（bizType=6 不存在，已跳过）。
+/// todo liyun 不用指定，使用后端返回的type
 #[repr(i32)]
 #[derive(Debug, Clone, Copy)]
 pub enum BizContext {

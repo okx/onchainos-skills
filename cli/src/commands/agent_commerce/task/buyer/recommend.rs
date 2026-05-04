@@ -12,6 +12,8 @@ use super::negotiate;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
+// todo liyun 确认是否有处理未读消息（public场景）
+
 /// 查询推荐卖家（默认模式：调用 API + 缓存）
 pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str, agent_id: &str) -> Result<()> { // todo liyun 确认逻辑 用cli实现
     // --agent-id 未传时，从本地身份列表解析 buyer agentId（不查任务详情）

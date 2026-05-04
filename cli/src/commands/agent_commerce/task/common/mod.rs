@@ -10,6 +10,7 @@ use clap::Subcommand;
 use serde::Deserialize;
 
 /// unix 秒 → 展示字符串。0 / 负数当未设置；正常值转 RFC 3339。
+/// // todo ganmingtao 组件
 fn fmt_unix_secs(secs: Option<i64>) -> String {
     match secs {
         Some(n) if n > 0 => Utc
@@ -42,6 +43,7 @@ pub const XLAYER_CHAIN_NAME: &str = "okb";
 // 后端 task 列表 / 详情已经不再返回 paymentTokenSymbol，需要客户端从地址反查。
 
 /// XLayer USDT 合约地址（小写）
+/// todo ganmingtao
 pub const XLAYER_USDT_ADDRESS: &str = "0x1e4a5963abfd975d8c9021ce480b42188849d41d";
 /// XLayer USDG 合约地址（小写）
 pub const XLAYER_USDG_ADDRESS: &str = "0x4ae46a509f6b1d9056937ba4500cb143933d2dc8";
@@ -77,6 +79,7 @@ pub const PAYMENT_MODE_X402: &str = "x402";
 // ─── 支付模式 int ↔ str 映射 ────────────────────────────────────────────
 
 /// 后端 paymentMode int 值: NONE(0), ESCROW(1), DIRECT(2), X402(3)
+/// todo liyun 整理支付方式
 pub const PAYMENT_MODE_INT_NONE: i32 = 0;
 pub const PAYMENT_MODE_INT_ESCROW: i32 = 1;
 pub const PAYMENT_MODE_INT_DIRECT: i32 = 2;
@@ -119,6 +122,7 @@ fn normalize_token_symbol(s: &str) -> String {
         .to_uppercase()
 }
 
+// todo liyun usdt 和 usdt0
 pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<()> {
     let exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("无法获取可执行文件路径: {e}"))?;
@@ -176,7 +180,7 @@ pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<
 }
 
 // ─── CLI 定义 ──────────────────────────────────────────────────────────────
-
+// todo ganmingtao address 删掉
 #[derive(Subcommand)]
 pub enum CommonCommand {
     /// 查询任务上下文，输出供大模型使用的结构化自然语言描述
@@ -257,6 +261,7 @@ struct AgentProfile {
 /// parse stdout —— 不在这里复刻 token / wallet client / URL 拼装逻辑，
 /// `agent get` 自己的实现以后改了，这里自动跟上。
 /// 拿不到就回退到带 agentId 的占位符（不再写死 "My DeFi Agent"）。
+/// todo ganmingtao Option<AgentProfile>
 async fn fetch_agent_profile(agent_id: &str) -> Option<AgentProfile> {
     let fallback = || AgentProfile {
         agent_id: Some(agent_id.to_string()),
@@ -341,7 +346,7 @@ async fn fetch_agent_profile(agent_id: &str) -> Option<AgentProfile> {
 }
 
 // ─── 状态说明 ──────────────────────────────────────────────────────────────
-
+// todo liyun 确认"init" 
 fn status_desc(s: &str) -> &str {
     match s {
         "init"      => "初始化中（等待上链确认）",
@@ -358,6 +363,7 @@ fn status_desc(s: &str) -> &str {
     }
 }
 
+// todo liyun 整理支付方式
 fn payment_mode_desc(pm: i32) -> &'static str {
     match pm {
         PAYMENT_MODE_INT_NONE => "未设置",
@@ -371,6 +377,7 @@ fn payment_mode_desc(pm: i32) -> &'static str {
 /// 根据角色 + 任务状态，列出当前可执行的 CLI 操作
 /// 按 role 路由到对应 flow.rs 的 `available_actions`，
 /// single source of truth 留在 buyer/provider/evaluator 各自模块。
+/// todo ganmingtao 处理others
 fn available_actions(role: &str, status: &str, job_id: &str) -> Vec<String> {
     use state_machine::{Role, Status};
     let status = Status::parse(status);
@@ -551,7 +558,7 @@ fn build_context(
         (Some(id), None) => out.push_str(&format!("- AgentID：{id}\n")),
         _ => out.push_str("- 尚未匹配卖家\n"),
     }
-
+    // todo ganmingtao "open" "provider" 枚举值
     // ── 专业匹配检查（仅卖家 + open 状态 + 有 profile） ───────────────────
     if role == "provider" && status_str == "open" {
         if let Some(p) = profile {

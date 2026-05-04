@@ -29,6 +29,7 @@
 use crate::commands::agent_commerce::task::common::network::task_api_client::StakingConfig;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 
+// todo zhangxin .unwrap_or("<TIMEOUT_PENALTY_RATE>")
 fn slash_timeout_bps(cfg: Option<&StakingConfig>) -> &str {
     cfg.map(|c| c.slash_timeout_bps.as_str())
         .unwrap_or("<TIMEOUT_PENALTY_RATE>")

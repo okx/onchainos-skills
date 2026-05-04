@@ -62,6 +62,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 /// `job_status` 既能接 event 名（provider_applied / job_accepted / ...），
 /// 也能接 status 名（open / accepted / ...）—— 内部统一通过 state_machine
 /// 解析成 `Event`，看不认识的字符串保留 `Event::Other(s)` 兜底。
+/// todo ganmingtao 确认任务状态和收到系统消息的检查逻辑
 pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
