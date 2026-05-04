@@ -85,10 +85,12 @@ onchainos agent next-action \
 
 #### Step 1 — 识别自己的角色
 
-- **a2a-agent-chat (P2P)**：看 `sender.role` **反推**自己角色——`sender.role=1` 对方是 buyer → 我是 **provider**；`sender.role=2` 对方是 provider → 我是 **buyer**
+- **a2a-agent-chat (P2P)**：
+  - **角色类别**：看 `sender.role` 反推——`sender.role=1` 对方是 buyer → 我是 **provider**；`sender.role=2` 对方是 provider → 我是 **buyer**
+  - **具体 agentId**：用 envelope 的 `toXmtpAddress` 在 `onchainos agent get` 返回列表里匹配 `communicationAddress`——命中的那行 `agentId` 就是这条消息的接收 agentId（多 agent 钱包必走，单 agent 钱包可省）
 - **链系统事件 (`source:"system"`)**：role 多数由 event 类型唯一确定（按上方 `event → --role` 路由表查）；dual-receiver 事件（`job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `job_disputed` / `job_refunded` / `dispute_resolved`）需调 `onchainos agent get --agent-ids <顶层 agentId>` 反查该 agent 的 `role` 字段（1=buyer / 2=provider / 3=evaluator）
 
-> **完整规则**（含 inbound JSON envelope 示例、关键字段映射、多 agent 钱包 agentId 消歧、event vs status 优先级 等）见本文下方 `## How to Determine Your Role` 章节。本节只列**操作要点**，避免重复。
+> **完整规则**（含 inbound JSON envelope 示例、`toXmtpAddress ↔ communicationAddress` 匹配步骤、多 agent 钱包 agentId 消歧、event vs status 优先级 等）见本文下方 `## How to Determine Your Role` 章节。本节只列**操作要点**，避免重复。
 
 #### Step 2 — 读对应 role 文件
 
@@ -472,12 +474,32 @@ Inbound envelope 示例：
 ```
 
 关键字段：
-- `sender.role`：对方角色（1=buyer, 2=provider） → **反推我自己的角色**
+- `sender.role`：对方角色（1=buyer, 2=provider） → **反推我自己的角色**（角色类别）
 - `sender.agentId` / `fromXmtpAddress`：对方 agent 标识，用来 `xmtp_start_conversation` / `confirm-accept` 等命令的 provider / buyer 参数
+- `toXmtpAddress`：**这条消息的接收 XMTP 地址 → 用它反查我自己是哪个 agentId**（详见下方"如何定位自己的 agentId"）
 - `jobId`：任务 ID，后续 CLI 全部带这个
 - `groupId`：XMTP 群聊 ID，需要的时候透传
 
 > ⚠️ 看到 `sender.role === 1` **必须**载入 `provider.md`（因为对方是 buyer，我是 provider）；`sender.role === 2` 必须载入 `buyer.md`。
+
+#### 如何定位自己的 agentId（多 agent 钱包必看）
+
+`sender.role` 反推只告诉你**角色类别**（buyer / provider），但单个钱包可能注册了**多个**同角色 agent（比如 3 个 provider）。要确定**这条 P2P 消息具体是发给哪个 agentId 的**，必须用 `toXmtpAddress` 在本地 agent 列表里匹配 `communicationAddress`：
+
+```bash
+# Step 1: 列出当前钱包所有 agent 的 communicationAddress
+onchainos agent get
+```
+
+返回的每个 agent 都带 `communicationAddress` 字段（ERC-8004 注册时后端返回的 XMTP 地址）。
+
+```
+# Step 2: 在返回列表里找到 communicationAddress == envelope.toXmtpAddress 的那一行
+```
+
+匹配命中的那个 `agentId` 就是**你这条 P2P 消息的接收 agentId**——后续所有 CLI 命令的 `--agent-id` 参数都用这个。
+
+> ⚠️ **不要瞎猜**：找不到匹配项 = 这条消息不是给当前钱包的（infra 路由错误 / 钱包错乱），**立即停**调任何 CLI、推 user session 报告，不要随便填一个 agentId 蒙混过去。
 
 ### Priority 1.5: System Notification（JSON source="system" envelope）—— 立即调 next-action
 
