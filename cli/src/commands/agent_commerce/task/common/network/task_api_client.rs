@@ -58,11 +58,6 @@ impl TaskApiClient {
         Self::build(None)
     }
 
-    /// 指定自定义 base URL（最高优先级，盖过 env / 常量）
-    pub fn with_base_url(base_url: String) -> Self {
-        Self::build(Some(base_url))
-    }
-
     fn build(base_url_override: Option<String>) -> Self {
         // base_url 解析 —— 与 WalletApiClient::with_base_url 保持一致的优先级，
         // 这样 eprintln 里展示的 URL 跟 wallet 实际发请求的 URL 不会撕裂。
@@ -85,15 +80,6 @@ impl TaskApiClient {
 
     // ─── URL / path 辅助 ─────────────────────────────────────────────────
 
-    /// 获取裸 reqwest::Client（不含 DoH，用于外部端点如 x402）
-    pub fn http(&self) -> &reqwest::Client {
-        &self.raw_http
-    }
-
-    pub fn base_url(&self) -> &str {
-        &self.base_url
-    }
-
     /// `/priapi/v1/aieco/task/{job_id}`
     pub fn task_path(&self, job_id: &str) -> String {
         format!("{TASK_PREFIX}/{job_id}")
@@ -111,23 +97,6 @@ impl TaskApiClient {
     }
 
     // ─── 请求方法（接收 path，非完整 URL）────────────────────────────────
-
-    /// GET + JWT → 返回 data（自动注入 sessionCert query param）// todo liyun 删掉
-    pub async fn get(&mut self, path: &str) -> Result<Value> {
-        let url = format!("{}{}", self.base_url, path);
-        let token = get_access_token().await;
-        let cert = get_session_cert();
-        let query: Vec<(&str, &str)> = cert.as_deref()
-            .map(|c| vec![("sessionCert", c)])
-            .unwrap_or_default();
-        eprintln!("[TaskAPI] GET {url} | headers: Authorization=Bearer(len={})", token.len());
-        let result = self.wallet.get_authed(path, &token, &query).await;
-        match &result {
-            Ok(data) => eprintln!("[TaskAPI] GET {url} ← {data}"),
-            Err(e) => eprintln!("[TaskAPI] GET {url} ← ERROR: {e}"),
-        }
-        result
-    }
 
     /// GET + JWT + agenticId header（不注入 sessionCert）→ 返回 data。
     /// 用于查询接口（如 providerConfirmStatus）需要 JWT + agenticId 但不需要 sessionCert 的场景。
@@ -205,20 +174,6 @@ impl TaskApiClient {
             return Err(anyhow!("evidence download failed ({status}): {url}; body={body}"));
         }
         Ok(resp.bytes().await?.to_vec())
-    }
-
-    /// POST JSON + JWT → 返回 data（自动注入 sessionCert）// todo liyun 删除
-    pub async fn post(&mut self, path: &str, body: &Value) -> Result<Value> {
-        let body = inject_session_cert(body);
-        let url = format!("{}{}", self.base_url, path);
-        let token = get_access_token().await;
-        eprintln!("[TaskAPI] POST {url} | headers: Authorization=Bearer(len={}) | body: {body}", token.len());
-        let result = self.wallet.post_authed(path, &token, &body).await;
-        match &result {
-            Ok(data) => eprintln!("[TaskAPI] POST {url} ← {data}"),
-            Err(e) => eprintln!("[TaskAPI] POST {url} ← ERROR: {e}"),
-        }
-        result
     }
 
     /// POST JSON + JWT + 身份头 → 返回 data（自动注入 sessionCert）
