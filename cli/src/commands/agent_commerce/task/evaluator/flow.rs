@@ -124,7 +124,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 /// 1) sub session 给 agent 自看的剧本（evaluator_selected / reveal_started）只用作动机性文案，规则不依赖具体数值；
 /// 2) 推 user 的成功通知（staked / unstake_requested success）payload 已带 `amount` / `availableAt` 等关键字段；
 /// 3) 失败通知或需要真值的场合，由 agent 现场调 `onchainos agent staking-config`。
-/// todo 验证系统事件是否也会派发 failed 状态
+/// todo zhangxin 验证系统事件是否也会派发 failed 状态
 pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> String {
     let step_zero = arb_session_routing_step(job_id);
     match job_status {
@@ -338,49 +338,59 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
         ),
 
         // ─── 质押生命周期：sub 收到 → 通知user session 推人话给用户 ─────────────────
-        // 当前剧本只覆盖 success 推送路径；失败分支后续按需补回（届时由 agent 现场调 staking-config 取真值）。
-        // 若会，需要补回 failed 分支的用户通知文案（含 errorCode 解释、最低质押门槛、冷却期等真值）。
-        "staked" => "【当前状态】staked（VoterStaking.Staked 上链，质押 tx 结果（首次质押或追加质押均发此事件），sub session 侧）\n\
+        //
+        // ⚠️ 真后端推送的 envelope.message **仅含 event / jobId / timestamp / source / description**——
+        // **不带 amount / availableAt / txHash / status / errorCode 等业务字段**（jobId 固定为
+        // `system_voter_staking`，不是真任务）。需要播报数值时一律先调 `evaluator my-stake`
+        // 拉链上权威值；禁止从 envelope 读不存在的字段。
+        // 真后端首次质押与追加质押**统一**发 `staked` 事件——CLI 命令层 stake / increase-stake
+        // 仍区分（对应不同后端 API），但事件流只看到一个 `staked`。模板兼顾两种场景：
+        // 用户视角"质押已生效"通用文案；要区分首次/追加只能由 my-stake 看 activeStake 增量决定。
+        "staked" => "【当前状态】staked（VoterStaking.Staked 上链，质押 tx 回执——首次质押与追加质押均发此事件，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ Sub session — 从 payload 提取字段 → 通知user session 推人话给用户。\n\n\
-             【Step 1】从 payload 提取 `amount`、`txHash`（仅处理 success；failed 暂不推送，后续按需扩展）。\n\n\
+             【会话类型】⚠️ Sub session — 通知user session 推人话给用户。\n\n\
+             【Payload 约束】envelope.message 只含 event / jobId / timestamp / source / description，**没有 amount / txHash**，也无法从 event 区分首次/追加。\n\n\
+             【Step 1（可选）】如需播报具体金额或区分首次/追加，先跑 `evaluator my-stake --agent-id <你的 agentId>` 拿 `activeStake`；不需要数字就跳过。\n\n\
              【Step 2】用 `xmtp_dispatch_user` 把质押结果推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20[质押 ✅] 质押已生效：+<amount> OKB，txHash=<txHash>。你现在是活跃仲裁者候选。\n\n\
-             【Step 3】输出日志结束：`> staked amount=<amount> relayed.`\n".to_string(),
+             \x20\x20\x20\x20[质押 ✅] 质押已上链生效。\n\
+             \x20\x20\x20\x20（若已拉到 my-stake，可改成）当前 activeStake=<my-stake.activeStake> OKB。\n\n\
+             【Step 3】输出日志结束：`> staked relayed.`\n".to_string(),
 
-        "unstake_requested" => "【当前状态】unstake_requested（VoterStaking.UnstakeRequested 上链，申请解质押 tx 结果，sub session 侧）\n\
+        "unstake_requested" => "【当前状态】unstake_requested（VoterStaking.UnstakeRequested 上链，申请解质押 tx 回执，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 通知user session 推人话给用户。\n\n\
-             【Step 1】从 payload 提取 `amount`、`availableAt`（冷却结束毫秒时间戳）、`txHash`（仅处理 success；failed 暂不推送，后续按需扩展）。\n\n\
-             【Step 2】用 `xmtp_dispatch_user` 把申请解质押结果推给用户（`availableAt` 转本地时间后再填进 content）：\n\n\
+             【Payload 约束】envelope.message **没有 amount / availableAt / txHash**——必须主动调链才有真值。\n\n\
+             【Step 1（必做）】跑 `evaluator my-stake --agent-id <你的 agentId>`，取 `pendingUnstake`（OKB）和 `unstakeAvailableAt`（unix 秒）。把秒级时间戳转本地时间字符串再填 content。\n\n\
+             【Step 2】用 `xmtp_dispatch_user` 把申请受理通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20[解质押 ⏳] 申请已受理：-<amount> OKB 进入冷却期，可领取时间 <availableAt 本地时间>。冷却期到了跟我说『领取解质押』我来提走；想中途撤销随时跟我说『取消解质押』（仅冷却期内有效）。\n\n\
-             【Step 3】输出日志结束：`> unstake_requested amount=<amount> relayed.`\n".to_string(),
+             \x20\x20\x20\x20[解质押 ⏳] 申请已受理：<my-stake.pendingUnstake> OKB 进入冷却期，可领取时间 <unstakeAvailableAt 本地时间>。冷却期到了跟我说『领取解质押』我来提走；想中途撤销随时跟我说『取消解质押』（仅冷却期内有效）。\n\n\
+             【Step 3】输出日志结束：`> unstake_requested relayed.`\n\n\
+             ⚠️ **禁止**写死『7 天后』之类的天数——冷却期长度由 `staking-config.unstakeCooldownSeconds` 决定（可被 Apollo 动态改），始终用 my-stake 返回的 `unstakeAvailableAt` 真值。\n".to_string(),
 
-        "unstake_claimed" => "【当前状态】unstake_claimed（VoterStaking.UnstakeClaimed 上链，领取解质押 tx 结果，sub session 侧）\n\
+        "unstake_claimed" => "【当前状态】unstake_claimed（VoterStaking.UnstakeClaimed 上链，领取解质押 tx 回执，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 通知user session 推人话给用户。\n\n\
-             【Step 1】从 payload 提取 `status`、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】用 `xmtp_dispatch_user` 把领取解质押结果推给用户（按 status 二选一填 content）：\n\n\
+             【Payload 约束】envelope.message **没有 amount / txHash / status**——到达 sub 即代表 success（failed 不会派发）。\n\n\
+             【Step 1（可选）】如需播报到账金额或最新余额，先跑 `evaluator my-stake --agent-id <你的 agentId>`——`pendingUnstake` 应已归零。\n\n\
+             【Step 2】用 `xmtp_dispatch_user` 把到账通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20success → [解质押 ✅] 已提走 <amount> OKB，已入钱包，txHash=<txHash>。\n\
-             \x20\x20\x20\x20failed  → [解质押失败 ⚠️] 领取失败（errorCode=<errorCode>, txHash=<txHash>），请按错误码重试。常见原因：锁定期未满 / 无待解质押。\n\n\
-             【Step 3】输出日志结束：`> unstake_claimed status=<status> amount=<amount> relayed.`\n".to_string(),
+             \x20\x20\x20\x20[解质押 ✅] 已领取，OKB 已入钱包。\n\n\
+             【Step 3】输出日志结束：`> unstake_claimed relayed.`\n".to_string(),
 
-        "unstake_cancelled" => "【当前状态】unstake_cancelled（VoterStaking.UnstakeCancelled 上链，取消解质押 tx 结果，sub session 侧）\n\
+        "unstake_cancelled" => "【当前状态】unstake_cancelled（VoterStaking.UnstakeCancelled 上链，取消解质押 tx 回执，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 通知user session 推人话给用户。\n\n\
-             【Step 1】从 payload 提取 `status`、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】用 `xmtp_dispatch_user` 把取消解质押结果推给用户（按 status 二选一填 content）：\n\n\
+             【Payload 约束】envelope.message **没有 amount / txHash / status**。\n\n\
+             【Step 1（可选）】如需播报新余额，先跑 `evaluator my-stake --agent-id <你的 agentId>`——`pendingUnstake` 应已归零，`activeStake` 增量。\n\n\
+             【Step 2】用 `xmtp_dispatch_user` 把取消通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20success → [解质押 ✅] 已取消：<amount> OKB 回到质押状态，txHash=<txHash>。\n\
-             \x20\x20\x20\x20failed  → [解质押失败 ⚠️] 取消失败（errorCode=<errorCode>, txHash=<txHash>）。常见原因：冷却期已过 / 无待解质押。\n\n\
-             【Step 3】输出日志结束：`> unstake_cancelled status=<status> amount=<amount> relayed.`\n".to_string(),
+             \x20\x20\x20\x20[解质押 ✅] 已取消：待解 OKB 回到质押状态。\n\n\
+             【Step 3】输出日志结束：`> unstake_cancelled relayed.`\n".to_string(),
 
         // ─── 自己的投票 tx 回执 ──────────────────────────────────────────
         "vote_committed" => "【当前状态】vote_committed（你自己的 commit tx 上链 success，sub session 侧）\n\

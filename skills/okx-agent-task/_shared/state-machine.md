@@ -111,8 +111,7 @@ stateDiagram-v2
 
 | event | 触发对象 | 含义 |
 |---|---|---|
-| `staked` | 发起首次质押的 evaluator | VoterStaking.Staked 上链 |
-| `stake_increased` | 发起追加质押的 evaluator | VoterStaking.IncreaseStake 上链 |
+| `staked` | 发起 stake / increase-stake 的 evaluator | **首次质押 VoterStaking.Staked 与追加质押 VoterStaking.IncreaseStake 上链均发此事件**——真后端不区分；agent 区分首次/追加只能由 `my-stake` 看 `activeStake` 增量决定 |
 | `unstake_requested` | 发起 unstake 的 evaluator | UnstakeRequested 上链；进入冷却期 |
 | `unstake_claimed` | 发起 claim-unstake 的 evaluator | 冷却期满已提走 |
 | `unstake_cancelled` | 发起 cancel-unstake 的 evaluator | 冷却期内取消 |
@@ -140,7 +139,7 @@ stateDiagram-v2
 | `accepted` | 超过 `acceptedExpireSec` 仍未 submit | `submit_expired` | buyer 跑 `claim-auto-refund` → `job_auto_refunded` |
 | `submitted` | 超过 review 窗口（24h）仍未 complete/reject | `review_expired` | provider 跑 `claim-auto-complete` → `job_auto_completed` |
 | `refused` | 24h 卖家未决策仲裁 / 退款 | `refuse_expired` | buyer 跑 `claim-auto-refund` → `job_auto_refunded` |
-| `disputed` | commit / reveal 窗口分别超时 | （无 task-level 事件，evaluator 个别罚 0.3% stake） | 仲裁系统按现有票决 / 重抽 |
+| `disputed` | commit / reveal 窗口分别超时 | （无 task-level 事件，evaluator 个别按 `slashTimeoutBps` 罚 stake，比例从 `staking-config` 拉） | 仲裁系统按现有票决 / 重抽 |
 
 ---
 

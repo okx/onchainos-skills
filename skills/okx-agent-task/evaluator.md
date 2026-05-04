@@ -33,11 +33,10 @@
 
 | event | 会话 | 含义 |
 |---|---|---|
-| `staked` | **sub** | 首次质押 tx 回执（VoterStaking.Staked）→ `xmtp_dispatch_user` 推质押结果 |
-| `stake_increased` | **sub** | 追加质押 tx 回执（VoterStaking.IncreaseStake）→ `xmtp_dispatch_user` 推 "已追加 +<amount> OKB" |
-| `unstake_requested` | **sub** | 申请解质押 tx 回执 → `xmtp_dispatch_user` 推冷却期 + `availableAt` |
-| `unstake_claimed` | **sub** | 冷却期结束领取 tx 回执 → `xmtp_dispatch_user` 推到账 |
-| `unstake_cancelled` | **sub** | 冷却期内取消 tx 回执 → `xmtp_dispatch_user` 推回到质押状态 |
+| `staked` | **sub** | 质押 tx 回执（**首次质押 stake 与追加质押 increaseStake 均发此事件**，真后端不区分）→ `xmtp_dispatch_user` 推 "质押已生效"（数值需先调 `my-stake`，区分首次/追加可看 `activeStake` 增量） |
+| `unstake_requested` | **sub** | 申请解质押 tx 回执 → 必须先 `my-stake` 拿 `pendingUnstake` + `unstakeAvailableAt` 再 `xmtp_dispatch_user` 播报 |
+| `unstake_claimed` | **sub** | 冷却期结束领取 tx 回执 → `xmtp_dispatch_user` 推到账（数值可选 `my-stake` 拉） |
+| `unstake_cancelled` | **sub** | 冷却期内取消 tx 回执 → `xmtp_dispatch_user` 推回到质押状态（数值可选 `my-stake` 拉） |
 | `stake_stopped` | **sub** | 退出 voter 池 tx 回执（VoterStaking.VoterStakeStopped）→ `xmtp_dispatch_user` 推已退出 |
 | `cooldown_entered` | **sub** | 进入冷却期被动事件（DisputeManager.VoterCooldownEntered，无 user tx）→ `xmtp_dispatch_user` 推 cooldownEndAt 时间 |
 
@@ -53,7 +52,7 @@
 
 > **evaluator 不用 `xmtp_prompt_user`**：仲裁判决禁止征询用户偏好（references/evaluator-decision-rubric.md 7 + 11——社会压力 / 贿赂面）。所有 sub→user 通信只用 `xmtp_dispatch_user`（纯通知，无需用户决策），与 buyer / provider 角色形成本质区别。
 
-> **会话复用原则**：所有事件都先到 sub。dispute 生命周期的 6 个事件（evaluator_selected / reveal_started / dispute_resolved / round_failed / slashed / reward_claimed）共用一个仲裁专属 sub session——`evaluator_selected` 到达时**第一动作必须调 `xmtp_start_evaluate_conversation`（参数 `myAgentId` / `jobId`）建会话**，后续同 jobId 的系统通知由 xmtp infra 命中该 session 继续走 sub。质押 7 个事件（staked / stake_increased / unstake_requested / unstake_claimed / unstake_cancelled / stake_stopped / cooldown_entered）到达时也在 sub 被接收并通过 `xmtp_dispatch_user` 转发到 user session。user session 只看到推上来的人话通知。
+> **会话复用原则**：所有事件都先到 sub。dispute 生命周期的 6 个事件（evaluator_selected / reveal_started / dispute_resolved / round_failed / slashed / reward_claimed）共用一个仲裁专属 sub session——`evaluator_selected` 到达时**第一动作必须调 `xmtp_start_evaluate_conversation`（参数 `myAgentId` / `jobId`）建会话**，后续同 jobId 的系统通知由 xmtp infra 命中该 session 继续走 sub。质押 6 个事件（staked / unstake_requested / unstake_claimed / unstake_cancelled / stake_stopped / cooldown_entered，首次质押与追加质押均发 `staked`）到达时也在 sub 被接收并通过 `xmtp_dispatch_user` 转发到 user session。user session 只看到推上来的人话通知。
 
 从入站消息提取 `jobId` / `disputeId`。⚠️ **禁止默认 disputeId**——缺失时直接中止本轮处理（真后端 `disputeId = keccak256(jobId, roundNumber)`，第 2+ 轮 `d-<jobId>-r1` 一定对不上合约）。
 
@@ -88,7 +87,11 @@
 }
 ```
 
-事件特定字段（`disputeId` / `voter` / `amount` / `reason` / `txHash` / `status` / `errorCode` / `availableAt` 等）以扩展键合并进 `message`。
+扩展键按事件类型差异化合并进 `message`：
+
+- **dispute 系列**（`evaluator_selected` / `reveal_started` / `dispute_resolved` / `round_failed`）：必带 `disputeId`，按事件可能附 `voter` / `winner`。
+- **`slashed`**：带 `amount` / `reason`，可选 `disputeId`。
+- **staking lifecycle**（`staked` / `unstake_requested` / `unstake_claimed` / `unstake_cancelled`）：**无任何扩展字段**，`jobId` 固定为 `system_voter_staking`。需要数值/时间一律调 `my-stake` 自取，**不要**在 envelope 上去找 `amount` / `txHash` / `availableAt` / `status` / `errorCode`（这些字段不存在）。⚠️ 真后端首次质押 stake 与追加质押 increaseStake **统一发 `staked`**，不存在独立的 `stake_increased` 事件。
 
 **唯一规则** — 收到后**立即**调：
 
@@ -155,7 +158,7 @@ onchainos agent next-action \
 | 查当前账户链上质押状态（`activeStake` / `validStake` / `activeDisputes` / 冷却期） | `onchainos agent my-stake` |
 | 首次质押 OKB 成为仲裁者（来自身份 skill 跳转） | `onchainos agent stake --amount <OKB数量>` |
 | 补充质押（被罚后补齐 / 提升选中权重） | `onchainos agent increase-stake --amount <OKB数量>` |
-| 申请解质押（进入 7 天冷却） | `onchainos agent request-unstake --amount <OKB数量>` |
+| 申请解质押（进入冷却期，时长由 `staking-config.unstakeCooldownSeconds` 决定，**禁止写死天数**） | `onchainos agent request-unstake --amount <OKB数量>` |
 | 冷却期后领取解质押 | `onchainos agent claim-unstake` |
 | 冷却期内取消解质押 | `onchainos agent cancel-unstake` |
 
@@ -168,10 +171,10 @@ onchainos agent next-action \
 | 证据下载失败 | 重试 3 次；仍失败按剩余证据投 |
 | `evidence-info` 失败 | 重试 1 次；仍失败报错中止 |
 | `vote-commit` 失败 | 重试 3 次（CRITICAL，别让 commit 窗口关闭） |
-| `vote-reveal` 失败 | 重试 3 次（未 reveal 罚 0.3%，经济参数附录 `TIMEOUT_PENALTY_RATE`） |
+| `vote-reveal` 失败 | 重试 3 次（未 reveal 触发 `slashTimeoutBps` 罚没；具体比例从 `staking-config` 拉，**不要写死**） |
 | `vote-reveal` 报 `canReveal=false` | CLI 已自动预检并拒绝上链：不要重试，等 `dispute_resolved`；若本轮已结算，改跑 `arbitration-claim`（account 级 pull 所有奖励） |
 | `vote-reveal` 报 `voter has not committed` | 本轮未 commit，跳过 reveal 是正常的 |
-| 投票超时临近 | 立即 commit 当前判断，超时罚 0.3% |
+| 投票超时临近 | 立即 commit 当前判断（超时按 `slashTimeoutBps` 罚 stake；具体比例从 `staking-config` 拉，**不要写死**） |
 | 证据不全 | 适用模糊原则（决策原则 原则 #5 "模糊不利于起草方"） |
 
 ---
@@ -198,13 +201,19 @@ onchainos agent next-action \
 
 ### 8.2 事件回调处理
 
-上面四个 CLI 执行完后都会收到对应 tx 回执事件（`staked`（首次） / `stake_increased`（追加） / `unstake_requested` / `unstake_claimed` / `unstake_cancelled`，被动还有 `stake_stopped` / `cooldown_entered`）。**所有事件都在 sub session 收到**——按 1 路由表：
+上面四个 CLI 执行完后都会收到对应 tx 回执事件（`staked`（**首次质押 stake 与追加质押 increaseStake 均发此事件**，真后端不区分） / `unstake_requested` / `unstake_claimed` / `unstake_cancelled`，被动还有 `stake_stopped` / `cooldown_entered`）。**所有事件都在 sub session 收到**——按 1 路由表：
 
 ```bash
 onchainos agent next-action --jobid <空或jobId> --jobStatus <event> --agentId <你的 agentId> --role evaluator
 ```
 
-flow.rs 对应 arm 会要求你在 sub 侧调用 `xmtp_dispatch_user` 把人话通知推给用户（**禁止 sessions_send / 直接输出给用户**；evaluator 不用 `xmtp_prompt_user`）。`unstake_requested` 注意把 `availableAt` 毫秒时间戳转成本地时间，明确告知"7 天后可领取"。
+flow.rs 对应 arm 会要求你在 sub 侧调用 `xmtp_dispatch_user` 把人话通知推给用户（**禁止 sessions_send / 直接输出给用户**；evaluator 不用 `xmtp_prompt_user`）。
+
+⚠️ **真后端推送的 envelope.message 只有 `event` / `jobId` / `timestamp` / `source` / `description` 五个字段**（`jobId` 固定为 `system_voter_staking`，不是真任务）——**不带 `amount` / `availableAt` / `txHash` / `status` / `errorCode`**。需要播报数值或时间，必须先调 `my-stake --agent-id <你的 agentId>` 拉权威值再 dispatch：
+
+- `unstake_requested`：先调 `my-stake`，把 `unstakeAvailableAt`（unix 秒）转本地时间字符串告知"<本地时间>可领取"，金额用 `pendingUnstake`。**禁止**写死"7 天后"之类的天数（冷却期长度由 `staking-config.unstakeCooldownSeconds` 决定，可被 Apollo 动态改）。
+- `staked`（首次/追加均发此事件）：如要播报金额或区分首次/追加，调 `my-stake` 取 `activeStake` 增量；不要从 envelope 读 amount（不存在）。
+- `unstake_claimed` / `unstake_cancelled`：如要播报金额，调 `my-stake`（pendingUnstake 应已归零、activeStake 增量）；不要从 envelope 读字段。
 
 ### 8.3 约束
 

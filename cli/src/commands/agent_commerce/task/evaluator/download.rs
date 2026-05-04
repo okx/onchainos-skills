@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
+use super::helpers::evidence_dir;
 use super::info::fetch_evidence_bytes;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
@@ -29,9 +30,7 @@ pub async fn handle_download(
     let path = match output {
         Some(p) => PathBuf::from(p),
         None => {
-            let dir = std::env::temp_dir()
-                .join("onchainos-dispute")
-                .join(job_id);
+            let dir = evidence_dir(job_id, None)?;
             fs::create_dir_all(&dir)
                 .with_context(|| format!("failed to create dir {}", dir.display()))?;
             let filename = file_key.rsplit('/').next().unwrap_or(file_key);

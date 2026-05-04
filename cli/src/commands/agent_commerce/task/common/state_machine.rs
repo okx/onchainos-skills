@@ -151,10 +151,9 @@ pub enum Event {
     Slashed,
 
     // ── 质押 lifecycle（evaluator）────────────────────────────────────
-    /// VoterStaking.Staked 上链（首次质押 stake tx 结果；通知发起 stake 的 evaluator）
+    /// VoterStaking.Staked 上链（**首次质押 stake 与追加质押 increaseStake 均发此事件**；
+    /// 真后端不区分，event 流只有 staked。区分首次/追加只能由 my-stake 看 activeStake 增量决定。）
     Staked,
-    /// VoterStaking.IncreaseStake 上链（追加质押 tx 结果；通知发起 increaseStake 的 evaluator）
-    StakeIncreased,
     /// VoterStaking.UnstakeRequested 上链（进入冷却期；通知发起 unstake 的 evaluator）
     UnstakeRequested,
     /// VoterStaking.UnstakeClaimed 上链（冷却期满已提走；通知发起 claim 的 evaluator）
@@ -219,9 +218,8 @@ impl Event {
             "vote_revealed"             => Event::VoteRevealed,
             "round_failed"              => Event::RoundFailed,
             "slashed"                   => Event::Slashed,
-            // 质押 lifecycle
+            // 质押 lifecycle（首次/追加均映射到 Staked——真后端只发一个 staked 事件）
             "staked"                    => Event::Staked,
-            "stake_increased"           => Event::StakeIncreased,
             "unstake_requested"         => Event::UnstakeRequested,
             "unstake_claimed"           => Event::UnstakeClaimed,
             "unstake_cancelled"         => Event::UnstakeCancelled,
@@ -266,7 +264,6 @@ impl Event {
             Event::RoundFailed            => "round_failed",
             Event::Slashed                => "slashed",
             Event::Staked                 => "staked",
-            Event::StakeIncreased         => "stake_increased",
             Event::UnstakeRequested       => "unstake_requested",
             Event::UnstakeClaimed         => "unstake_claimed",
             Event::UnstakeCancelled       => "unstake_cancelled",
@@ -320,7 +317,7 @@ pub fn status_when_event(e: &Event) -> Status {
         Event::JobExpired | Event::JobClosed
         | Event::JobVisibilityChanged | Event::JobPaymentModeChanged       => Status::Other("housekeeping".to_string()),
         // 质押 / 罚没 / 奖励 lifecycle 跟 task status 解耦
-        Event::Staked | Event::StakeIncreased
+        Event::Staked
         | Event::UnstakeRequested | Event::UnstakeClaimed | Event::UnstakeCancelled
         | Event::RewardClaimed | Event::Slashed
         | Event::StakeStopped | Event::CooldownEntered                      => Status::Other("staking".to_string()),

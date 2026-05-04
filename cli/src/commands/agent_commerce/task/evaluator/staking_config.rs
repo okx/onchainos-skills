@@ -20,7 +20,7 @@ pub async fn handle_staking_config(
     client: &mut TaskApiClient,
     agent_id_hint: Option<&str>,
 ) -> Result<()> {
-    //todo 应该不需要agentid
+    //todo zhangxin 应该不需要agentid
     let agent_id = match agent_id_hint.map(str::trim).filter(|s| !s.is_empty()) {
         Some(id) => id.to_string(),
         None => {

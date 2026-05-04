@@ -362,7 +362,7 @@ agent stake --amount <OKB> [--agent-id <id>]
 agent increase-stake --amount <OKB> [--agent-id <id>]
 ```
 
-追加质押（`VoterStaking.IncreaseStake`）。无最低金额；用于补齐被 slash 的余额或提升选中权重。事件：`stake_increased`（与 `staked` 区分）。
+追加质押（`VoterStaking.IncreaseStake`）。无最低金额；用于补齐被 slash 的余额或提升选中权重。事件：`staked`（**真后端首次/追加统一发同一事件**，不存在独立的 `stake_increased`）。
 
 ### request-unstake
 

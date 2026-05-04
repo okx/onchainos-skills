@@ -257,9 +257,9 @@ pub enum AgentCommand {
     #[command(name = "evidence-info")]
     EvidenceInfo {
         dispute_id: String,
-        /// Evaluator agentId from inbound system envelope's top-level `agentId` field.
+        /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        agent_id: String,
     },
     /// Download a single evidence file by (jobId, fileKey). Useful for retry / scripted access
     /// when `evidence-info` already returned the fileKey but a particular download failed.
@@ -270,12 +270,12 @@ pub enum AgentCommand {
         job_id: String,
         /// Opaque fileKey returned in `provider.images[]` / `client.images[]`.
         file_key: String,
-        /// Output file path. Defaults to `$TMPDIR/onchainos-dispute/<jobId>/<fileKey-tail>`.
+        /// Output file path. Defaults to `~/.onchainos/task/<jobId>/dispute/<fileKey-tail>`.
         #[arg(long, short = 'o')]
         output: Option<String>,
-        /// Evaluator agentId from inbound system envelope's top-level `agentId` field.
+        /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        agent_id: String,
     },
     /// Commit a vote (Phase 1 of commit-reveal). vote: 0 = Approve (Client wins), 1 = Reject (Provider wins).
     /// Body sent to backend is only `{ vote }` — reason is NOT part of the API (lives in agent session memory).
@@ -284,9 +284,9 @@ pub enum AgentCommand {
         dispute_id: String,
         #[arg(long)]
         vote: u8,
-        /// Evaluator agentId from inbound system envelope's top-level `agentId` field.
+        /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        agent_id: String,
     },
     /// Reveal a previously-committed vote (Phase 2 of commit-reveal). Driven by the
     /// `reveal_started` system event whose envelope carries `disputeId`. CLI sends an
@@ -295,26 +295,26 @@ pub enum AgentCommand {
     #[command(name = "vote-reveal")]
     VoteReveal {
         dispute_id: String,
-        /// Evaluator agentId from inbound system envelope's top-level `agentId` field.
+        /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        agent_id: String,
     },
     /// Claim arbitration reward after task/dispute resolved. Account-level pull — one call drains
     /// every pending reward across all settled disputes (POST /task/claim, no jobId).
     /// Distinct from buyer's `claim` (which pulls per-job refund/reward).
     #[command(name = "arbitration-claim")]
     ArbitrationClaim {
-        /// Evaluator agentId from inbound system envelope's top-level `agentId` field.
+        /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        agent_id: String,
     },
     /// List account-level claimable arbitration rewards across all settled disputes
     /// (GET /task/claimable). Read-only; no tx.
     #[command(name = "arbitration-claimable")]
     ArbitrationClaimable {
-        /// Evaluator agentId from inbound system envelope's top-level `agentId` field.
+        /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        agent_id: String,
     },
     /// First-time stake OKB to become an active evaluator (onboarding handoff from identity skill).
     /// Requires the current wallet's agentId to already be registered with evaluator role
@@ -323,9 +323,9 @@ pub enum AgentCommand {
     Stake {
         #[arg(long)]
         amount: String,
-        /// Evaluator agentId from inbound system envelope's top-level `agentId` field.
+        /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        agent_id: String,
     },
     /// Top up an existing stake (no minimum). Used to replenish slashed stake or increase
     /// selection weight. Hits a different backend endpoint than `stake`.
@@ -333,9 +333,9 @@ pub enum AgentCommand {
     IncreaseStake {
         #[arg(long)]
         amount: String,
-        /// Evaluator agentId from inbound system envelope's top-level `agentId` field.
+        /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        agent_id: String,
     },
     /// Request unstake: OKB enters cooldown (period from staking-config). Partial unstake supported.
     /// Backend/contract will revert if you have active dispute participation.
@@ -343,30 +343,32 @@ pub enum AgentCommand {
     RequestUnstake {
         #[arg(long)]
         amount: String,
-        /// Evaluator agentId from inbound system envelope's top-level `agentId` field.
+        /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        agent_id: String,
     },
     /// Claim unstaked OKB after the cooldown period. No parameters — contract knows the
     /// pending amount and unlock time.
     #[command(name = "claim-unstake")]
     ClaimUnstake {
-        /// Evaluator agentId from inbound system envelope's top-level `agentId` field.
+        /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        agent_id: String,
     },
     /// Cancel a pending unstake request within the cooldown window; OKB returns to staked state.
     #[command(name = "cancel-unstake")]
     CancelUnstake {
-        /// Evaluator agentId from inbound system envelope's top-level `agentId` field.
+        /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        agent_id: String,
     },
     /// Read platform staking & arbitration config (Apollo-driven, JWT auth, no body).
     /// Mirrors GET /priapi/v1/aieco/task/staking/config.
+    /// `--agent-id` 在此命令上**可选**——platform-level 只读，缺省时按 evaluator role
+    /// 在本地身份列表里反查首个匹配的 agentId 走 header。
     #[command(name = "staking-config", visible_alias = "stakingconfig")]
     StakingConfig {
-        /// Evaluator agentId from inbound system envelope's top-level `agentId` field.
+        /// Evaluator agentId. Optional — falls back to first local evaluator agent.
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
@@ -375,9 +377,9 @@ pub enum AgentCommand {
     /// Mirrors GET /priapi/v1/aieco/task/staking/myStake.
     #[command(name = "my-stake", visible_alias = "mystake")]
     MyStake {
-        /// Evaluator agentId from inbound system envelope's top-level `agentId` field.
+        /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        agent_id: String,
     },
 
     /// Common queries: context lookup for AI agents
@@ -581,47 +583,47 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         // ── Evaluator (arbitrator) flat dispatch ────────────────────
         AgentCommand::EvidenceInfo { dispute_id, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::info::handle_info(&mut c, &dispute_id, agent_id.as_deref()).await
+            task::evaluator::info::handle_info(&mut c, &dispute_id, &agent_id).await
         }
         AgentCommand::EvidenceDownload { job_id, file_key, output, agent_id } => {
             let c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::download::handle_download(&c, &job_id, &file_key, output.as_deref(), agent_id.as_deref()).await
+            task::evaluator::download::handle_download(&c, &job_id, &file_key, output.as_deref(), &agent_id).await
         }
         AgentCommand::VoteCommit { dispute_id, vote, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::commit::handle_commit(&mut c, &dispute_id, vote, agent_id.as_deref()).await
+            task::evaluator::commit::handle_commit(&mut c, &dispute_id, vote, &agent_id).await
         }
         AgentCommand::VoteReveal { dispute_id, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::reveal::handle_reveal(&mut c, &dispute_id, agent_id.as_deref()).await
+            task::evaluator::reveal::handle_reveal(&mut c, &dispute_id, &agent_id).await
         }
         AgentCommand::ArbitrationClaim { agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::claim::handle_claim(&mut c, agent_id.as_deref()).await
+            task::evaluator::claim::handle_claim(&mut c, &agent_id).await
         }
         AgentCommand::ArbitrationClaimable { agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::claimable::handle_claimable(&mut c, agent_id.as_deref()).await
+            task::evaluator::claimable::handle_claimable(&mut c, &agent_id).await
         }
         AgentCommand::Stake { amount, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::stake::handle_stake(&mut c, &amount, agent_id.as_deref()).await
+            task::evaluator::stake::handle_stake(&mut c, &amount, &agent_id).await
         }
         AgentCommand::IncreaseStake { amount, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::increase_stake::handle_increase_stake(&mut c, &amount, agent_id.as_deref()).await
+            task::evaluator::increase_stake::handle_increase_stake(&mut c, &amount, &agent_id).await
         }
         AgentCommand::RequestUnstake { amount, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::unstake::handle_request_unstake(&mut c, &amount, agent_id.as_deref()).await
+            task::evaluator::unstake::handle_request_unstake(&mut c, &amount, &agent_id).await
         }
         AgentCommand::ClaimUnstake { agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::unstake::handle_claim_unstake(&mut c, agent_id.as_deref()).await
+            task::evaluator::unstake::handle_claim_unstake(&mut c, &agent_id).await
         }
         AgentCommand::CancelUnstake { agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::unstake::handle_cancel_unstake(&mut c, agent_id.as_deref()).await
+            task::evaluator::unstake::handle_cancel_unstake(&mut c, &agent_id).await
         }
         AgentCommand::StakingConfig { agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
@@ -629,7 +631,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         }
         AgentCommand::MyStake { agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::my_stake::handle_my_stake(&mut c, agent_id.as_deref()).await
+            task::evaluator::my_stake::handle_my_stake(&mut c, &agent_id).await
         }
 
         AgentCommand::Common(c) =>
