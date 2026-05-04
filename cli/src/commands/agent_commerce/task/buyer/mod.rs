@@ -181,19 +181,6 @@ pub enum TaskCommand {
         #[arg(long = "token-amount")]
         token_amount: String,
     },
-    /// Initialize config
-    Config {  //todo liyun 查看用法
-        #[command(subcommand)]
-        action: ConfigAction,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum ConfigAction {  //todo liyun 查看用法
-    /// Initialize configuration
-    Init,
-    /// Show current configuration
-    Show,
 }
 
 // ─── 路由分发 ──────────────────────────────────────────────────────────────
@@ -242,13 +229,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::Pay { job_id, agent_id } =>
             query::handle_pay(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await,
 
-        TaskCommand::Config { action } => {
-            match action {
-                ConfigAction::Init => println!("[stub] task config init"),
-                ConfigAction::Show => println!("TASK_API_URL={}", client.base_url()),
-            }
-            Ok(())
-        }
     }
 }
 

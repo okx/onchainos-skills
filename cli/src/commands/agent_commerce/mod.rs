@@ -270,12 +270,6 @@ pub enum AgentCommand {
     },
 
     // ── Task system (sub-groups) ────────────────────────────────────────────
-    /// Task config: init | show
-    Config {
-        #[command(subcommand)]
-        action: task::buyer::ConfigAction,
-    },
-
     /// Dispute actions (provider): raise, evidence, info, upload
     #[command(subcommand)]
     Dispute(task::provider::DisputeCommand),
@@ -616,9 +610,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         }
 
         // ── Sub-groups ──────────────────────────────────────────────
-        AgentCommand::Config { action } =>
-            task::buyer::run_task(T::Config { action }, ctx).await,
-
         AgentCommand::Dispute(c) =>
             task::provider::run_dispute(c, ctx).await,
 

@@ -381,7 +381,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::GetPayment { .. } => "get-payment".into(),
 
         // Sub-groups
-        AgentCommand::Config { .. } => "config".into(),
         AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),
         // Evaluator (flat — 见 agent_commerce/mod.rs)
         AgentCommand::EvidenceInfo { .. } => "evidence-info".into(),
