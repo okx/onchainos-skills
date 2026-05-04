@@ -13,7 +13,7 @@ use crate::commands::agent_commerce::task::common::network::task_api_client::Tas
 use crate::commands::agent_commerce::task::signing;
 
 /// 查询推荐卖家（默认模式：调用 API + 缓存）
-pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str, agent_id: &str) -> Result<()> {
+pub async fn handle_recommend(client: &mut TaskApiClient, job_id: &str, agent_id: &str) -> Result<()> { // todo liyun 确认逻辑 用cli实现
     // --agent-id 未传时，从本地身份列表解析 buyer agentId（不查任务详情）
     let resolved;
     let agent_id = if agent_id.is_empty() {

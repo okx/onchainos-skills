@@ -59,14 +59,14 @@ pub enum TaskCommand {
         payment_mode: Option<String>,
         /// Buyer agent ID（多 buyer 时必传，单 buyer 时自动选择）
         #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        agent_id: Option<String>, //todo liyun
     },
     /// Get recommended providers for a task
     Recommend {
         job_id: String,
         /// Agent identity (agenticId header)
         #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        agent_id: Option<String>, //todo liyun
         /// Show next provider (advance index) from cached list
         #[arg(long)]
         next: bool,
@@ -78,9 +78,9 @@ pub enum TaskCommand {
     Status {
         job_id: String,
         #[arg(long = "agent-id")]
-        agent_id: Option<String>,
+        agent_id: Option<String>, //todo liyun
     },
-    /// List my tasks
+    /// List my tasks  //todo liyun  抽出
     List {
         #[arg(long)]
         status: Option<String>,
@@ -159,14 +159,14 @@ pub enum TaskCommand {
         token_amount: String,
     },
     /// Initialize config
-    Config {
+    Config {  //todo liyun 查看用法
         #[command(subcommand)]
         action: ConfigAction,
     },
 }
 
 #[derive(Subcommand)]
-pub enum ConfigAction {
+pub enum ConfigAction {  //todo liyun 查看用法
     /// Initialize configuration
     Init,
     /// Show current configuration

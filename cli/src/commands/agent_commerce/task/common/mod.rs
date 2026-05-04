@@ -477,7 +477,7 @@ fn build_context(
     out.push('\n');
 
     // ── 任务详情 ──────────────────────────────────────────────────────────
-    out.push_str("【任务详情】\n");
+    out.push_str("【任务详情】\n"); // todo liyun 增加任务币种 创建任务时的金额币种信息
     out.push_str(&format!("- 任务ID：{}\n", task.job_id));
     if let Some(tid) = task.task_id {
         out.push_str(&format!("- 内部ID：{tid}\n"));
@@ -551,10 +551,6 @@ fn build_context(
         (Some(id), None) => out.push_str(&format!("- AgentID：{id}\n")),
         _ => out.push_str("- 尚未匹配卖家\n"),
     }
-    if let Some(gid) = &task.group_id {
-        out.push_str(&format!("- 聊天会话ID：{gid}\n"));
-    }
-    out.push('\n');
 
     // ── 专业匹配检查（仅卖家 + open 状态 + 有 profile） ───────────────────
     if role == "provider" && status_str == "open" {

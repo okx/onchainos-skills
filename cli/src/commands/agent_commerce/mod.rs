@@ -494,7 +494,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 "evaluator" => {
                     // best-effort 拉平台质押 & 仲裁配置；拉不到回退到 cfg_defaults，
                     // 避免 sub session 因网络抖动跑不出剧本。
-                    let staking_cfg = task::common::network::task_api_client::TaskApiClient::new()
+                    let staking_cfg = task::common::network::task_api_client::TaskApiClient::new() // todo zhangxin 
                         .get_staking_config(&agent_id)
                         .await
                         .ok();
