@@ -45,14 +45,16 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         ],
         Status::Completed => vec![
             next_action("job_completed"),
-            "（流程结束）任务完成，资金已释放。子 session 可关闭。".to_string(),
+            "（终态）任务已 COMPLETE，含两条入口路径：".to_string(),
+            "  ▸ 验收通过（job_completed）→ 资金释放给卖家".to_string(),
+            "  ▸ 仲裁退款 / 卖家同意退款（refunded / dispute_resolved buyer-wins）→ 资金退还买家".to_string(),
+            "区分由触发的 event 名承担。子 session 可关闭。".to_string(),
         ],
-        Status::Refunded => vec![
-            next_action("job_refunded"),
-            "（流程结束）资金已退还买家。子 session 可关闭。".to_string(),
+        Status::Close | Status::Expired | Status::AdminStopped | Status::Rejected => vec![
+            "（终态）任务已结束（CLOSE/EXPIRED/ADMINSTOPPED/REJECTED 之一），无后续动作。子 session 可关闭。".to_string(),
         ],
         Status::Other(s) => vec![
-            format!("当前任务 status=`{s}` 不在 provider 关心的状态集（open / accepted / submitted / refused / disputed / completed / refunded）内"),
+            format!("当前任务 status=`{s}` 不在 provider 关心的状态集（open / accepted / submitted / refused / disputed / completed / close / expired / admin_stopped / rejected）内"),
             "→ 本角色无需任何任务级动作，等下一个相关链事件 / 用户决策再处理".to_string(),
             "→ **不要**重复跑 `agent status` / `agent common context`（结果会一样），结束本轮 turn".to_string(),
         ],
