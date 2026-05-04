@@ -692,25 +692,27 @@ async function notifyVoteRevealed(jobId: string, disputeId: string, voter: strin
 // 让 evaluator sub session 在同一个会话里接着跑 "拉 context → claim → notify_main" 流程。
 // 买家/卖家的仲裁结果通知走 notifyArbitrationResult（TASK_COMPLETED / TASK_REJECTED）。
 // dispute_resolved = DisputeSettled 上链；reward_claimed = claimRewards tx 回执（mock 直接一并广播）。
-async function broadcastSettlement(t: Task, winner: "buyer" | "seller", disputeId?: string) {
+//
+// Mock 严格对齐真后端 envelope（仅 5 个基础字段 + dispute 系列必带 disputeId 主键）。
+// agent 需要数额或胜负判断一律调 `arbitration-claimable` 反推。
+async function broadcastSettlement(t: Task, _winner: "buyer" | "seller", disputeId?: string) {
   const evaluators = await lookupEvaluators();
   const evalAddrs = Array.from(new Set(evaluators.map(e => e.comm_addr)));
   const allEvalAddrs = evalAddrs.length > 0 ? evalAddrs : ["0xEvaluator00000000000000000000000000001"];
 
-  const winnerSide = winner === "buyer" ? "Client(2)" : "Provider(1)";
   await notifyEvaluatorOpenclawAll(
     allEvalAddrs,
     "dispute_resolved",
-    `DisputeSettled 上链，仲裁结算完成。winner=${winner}.`,
+    "",
     t.jobId,
-    { disputeId: disputeId ?? null, winner, winningSide: winnerSide },
+    { disputeId: disputeId ?? null },
   );
   await notifyEvaluatorOpenclawAll(
     allEvalAddrs,
     "reward_claimed",
-    `claimRewards tx 回执 — 奖金已入账。`,
+    "",
     t.jobId,
-    { disputeId: disputeId ?? null, status: "success" },
+    {},
   );
 }
 

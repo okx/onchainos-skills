@@ -1,10 +1,3 @@
-//! Evaluator 单文件证据下载 — `onchainos agent evidence-download <jobId> <fileKey>`
-//!
-//! 与 `evidence-info` 不同：info 拉一次 evidence 列表后批量下载所有图片；
-//! download 直接按 (jobId, fileKey) 拉一份字节落盘，用于失败重试或外部脚本场景。
-//!
-//! 后端 endpoint: `GET /priapi/v1/aieco/task/{jobId}/evidence/download?fileKey=<...>`，
-//! 强制 JWT + agenticId 鉴权（同 evidence-info 走的是同一鉴权链路）。
 
 use std::fs;
 use std::path::PathBuf;
@@ -16,6 +9,7 @@ use super::info::fetch_evidence_bytes;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
+//todo zhangxin 测试完成后删除
 pub async fn handle_download(
     client: &TaskApiClient,
     job_id: &str,

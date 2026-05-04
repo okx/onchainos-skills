@@ -322,7 +322,7 @@ agent evidence-download <jobId> <fileKey> [-o <path>] [--agent-id <id>]
 agent vote-commit <disputeId> --vote <0|1> [--agent-id <id>]
 ```
 
-投票第一阶段（commit）。`vote`：`0=Approve（Client 胜）` / `1=Reject（Provider 胜）`，V1 二元投票。
+投票第一阶段（commit）。`vote`：`0=Approve（Client 胜）` / `1=Reject（Provider 胜）`，二元投票。
 
 ### vote-reveal
 

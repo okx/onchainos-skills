@@ -1,8 +1,3 @@
-//! 仲裁者查询待领奖励（只读）— onchainos agent arbitration-claimable
-//!
-//! 实际 API 调用 + 表格输出在 `task::common::claim`（角色无关）。本文件只保留
-//! evaluator 视角的 wallet/agent 解析与"建议下一步"提示文案。
-
 use anyhow::Result;
 
 use crate::commands::agent_commerce::task::common::{
@@ -11,12 +6,7 @@ use crate::commands::agent_commerce::task::common::{
 use crate::commands::agent_commerce::task::signing;
 
 /// 查询当前 evaluator 账户可领取的奖励（跨 dispute 聚合）。
-///
-/// API: GET /priapi/v1/aieco/task/claimable
-/// - Headers: agenticId
-/// - Response data: `{ account, rewards: [{ symbol, tokenAddress, rawAmount, amount }, ...] }`
 /// - 0 金额的代币也会出现在列表里（后端返回全量统计）
-///
 /// 发现有非 0 奖励时，调 `arbitration-claim`（account 级 pull，无 jobId）一次领走全部。
 pub async fn handle_claimable(
     client: &mut TaskApiClient,

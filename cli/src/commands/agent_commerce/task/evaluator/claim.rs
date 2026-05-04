@@ -1,9 +1,3 @@
-//! 仲裁者领取奖励（account 级 pull，一次到账）— onchainos agent arbitration-claim
-//!
-//! 实际 API 调用 + 签名 + broadcast 在 `task::common::claim`（角色无关，
-//! buyer / provider 未来接入时复用）。本文件只保留 evaluator 视角的 wallet/agent
-//! 解析与提示文案。
-
 use anyhow::Result;
 
 use crate::commands::agent_commerce::task::common::{
@@ -11,10 +5,6 @@ use crate::commands::agent_commerce::task::common::{
 };
 use crate::commands::agent_commerce::task::signing;
 
-/// Account-level pull claim: one call drains all pending rewards across every settled dispute.
-///
-/// API: `POST /priapi/v1/aieco/task/claim` with empty body. Returns `claimRewards()`
-/// calldata — no per-token / per-job arguments. Not scoped to a single jobId.
 pub async fn handle_claim(
     client: &mut TaskApiClient,
     agent_id: &str,

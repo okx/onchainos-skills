@@ -1,20 +1,8 @@
-//! 仲裁者追加质押（top-up / 被罚后补齐）— onchainos agent increase-stake
-
 use anyhow::{bail, Result};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-/// Evaluator 补充质押（top-up / 被罚后补齐）。
-///
-/// API: POST /priapi/v1/aieco/task/staking/increaseStake/// - Body: `{ "amount": "<OKB 金额, UI 单位>" }`（agentId 从 header 读）
-/// - 后端打包 approve(VoterStaking, amount) + increaseStake(amount) 为 atomic UOP
-/// - 无最低金额限制（只要 amount > 0）
-///
-/// Error codes:
-///   4000 — agentId 无效
-///   1001 — amount <= 0
-///   3001 — 合约 ABI 生成失败
 pub async fn handle_increase_stake(
     client: &mut TaskApiClient,
     amount: &str,

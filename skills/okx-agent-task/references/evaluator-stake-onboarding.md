@@ -61,11 +61,8 @@ onchainos agent my-stake         # 取 activeStake (OKB) / registered / activeDi
 
 | my-stake 输出 | 处理 |
 |---|---|
-| `registered=false` (`agentId=0`) | 还不是 evaluator，**回到身份 skill 完成注册**，不进 Step 2 |
 | `activeStake >= minCumulativeStakeOkb` | 已经满足门槛，告诉用户「你已质押 `<X>` OKB，超过门槛 `<min>`，仲裁者候选状态正常，无需再次质押」，结束本场景 |
 | `activeDisputes > 0` 且 `activeStake >= min` | 同上，无需重质押；若用户坚持加质押，引导他用 evaluator.md 12 的 `increase-stake` |
-
-> **累计门槛规则语义**：合约按累计校验 `activeStake + N >= minCumulativeStakeOkb`——首次质押 `activeStake=0` 时 `N >= min`；被 slash 后 `activeStake < min` 时 `N >= min - activeStake` 才能补齐。
 
 ### Step 2 — 向用户展示现状、奖罚机制 + 要求用户给出质押数量（⚠️ 强制步骤，不允许跳过）
 
@@ -85,7 +82,7 @@ onchainos agent my-stake         # 取 activeStake (OKB) / registered / activeDi
 > **风险（罚没）：**
 > - 投中少数方 → 罚 stake 的 **1%**
 > - Commit / Reveal 超时 → 罚 stake 的 **0.3%**（`TIMEOUT_PENALTY_RATE`），踢出本轮 + **24 小时**冷却期不被选中
-> - ⚠️ V1 无弃权选项：被选中必须投票，拖到超时即按超时处理
+> - ⚠️ 无弃权选项：被选中必须投票，拖到超时即按超时处理
 >
 > **解质押规则：**
 > - 随时可申请解质押（活跃仲裁期间除外）；申请后进入 **7 天冷却期**，到期跑 `claim-unstake` 提走

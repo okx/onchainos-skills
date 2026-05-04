@@ -1,11 +1,3 @@
-//! Evaluator 本地工具函数
-//!
-//! - disputeId 解析（`parse_job_id`）
-//! - 证据图片落盘目录（`evidence_dir`，对齐 buyer 的 `~/.onchainos/task/<jobId>/` 命名空间）
-//!
-//! 钱包 / agentId 解析统一走 `signing::resolve_wallet` +
-//! `signing::resolve_wallet_and_agent_for_evaluator`。
-
 use std::path::PathBuf;
 
 use anyhow::{bail, Result};
@@ -32,9 +24,6 @@ pub(super) fn parse_job_id(dispute_id: &str) -> Result<String> {
 /// 证据图片落盘目录：
 /// - `~/.onchainos/task/<job_id>/dispute/<dispute_id>/`（`evidence-info` 走这条，按
 ///   round 隔离）
-/// - `~/.onchainos/task/<job_id>/dispute/`（`evidence-download` 没有 disputeId 上下文
-///   时走这条；rare 的手工重试通道）
-///
 /// 命名对齐 buyer 的 `~/.onchainos/task/<jobId>/`，方便集中清理 + 跨重启保留。
 pub(super) fn evidence_dir(job_id: &str, dispute_id: Option<&str>) -> Result<PathBuf> {
     let home = dirs::home_dir()

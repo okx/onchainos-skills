@@ -1,14 +1,3 @@
-//! 仲裁者读取平台质押 & 仲裁配置（只读）— onchainos agent staking-config
-//!
-//! API: GET /priapi/v1/aieco/task/staking/config
-//! - Headers: Authorization (JWT) + `agenticId`（后端 interceptor 校验 evaluator 身份）；无 Body
-//! - 返回 Apollo `aitask.platform.*` 配置，重启生效，CLI/agent 模板都按此渲染
-//!
-//! 唯一允许 `--agent-id` 可选的 evaluator 命令：因为这是 platform-level 只读 API，
-//! 不签名、不动钱包，仅需 agenticId 头过 interceptor。CLI 只解析 agentId（不走
-//! `resolve_wallet_and_agent_for_evaluator`），传 `--agent-id` 直接用，否则按
-//! evaluator role 在本地身份列表里反查首个匹配项。
-
 use anyhow::{bail, Result};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;

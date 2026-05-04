@@ -1,17 +1,3 @@
-//! Evaluator 证据查询
-//!
-//! disputeId 格式: `d-<jobId>-r<round>` — 解析 jobId，GET /evidence，下载双方图片到本地，
-//! 再把 localPath 塞回响应对象，供多模态 agent 直接 open-image 阅读。
-//!
-//! 后端响应结构（扁平：provider/client 在顶层，无 `evidences` 包装层）：
-//! ```json
-//! {
-//!   "jobId":"...", "title":"...", "description":"...", "descriptionSummary":"...",
-//!   "provider": { "texts":["..."], "images":[ {"fileKey":"..."} | "..." , ...] },
-//!   "client":   { "texts":["..."], "images":[ ... ] }
-//! }
-//! ```
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -25,8 +11,6 @@ use crate::commands::agent_commerce::task::signing;
 /// 双方证据袋的顶层 key（后端返回扁平结构，provider/client 直接在顶层）。
 const EVIDENCE_SIDES: [&str; 2] = ["provider", "client"];
 
-/// E1: fetch dispute evidence (text + images) for the evaluator. Downloads every referenced image
-/// and adds `localPath` to each image entry so downstream multimodal agents can open the file.
 pub async fn handle_info(
     client: &mut TaskApiClient,
     dispute_id: &str,
@@ -43,13 +27,14 @@ pub async fn handle_info(
     let tmp_dir = evidence_dir(&job_id, Some(dispute_id))?;
     fs::create_dir_all(&tmp_dir)?;
 
-    // 后端扁平结构：provider/client 直接在顶层（不嵌套在 evidences 下）
+    // 后端扁平结构：provider/client 直接在顶层；images 为 `<jobId>/<idx>/<uuid>` 字符串数组。
     for side in EVIDENCE_SIDES {
         let Some(bucket) = data.get_mut(side).and_then(Value::as_object_mut) else { continue };
         let Some(images) = bucket.get_mut("images").and_then(Value::as_array_mut) else { continue };
         for item in images.iter_mut() {
-            let Some(file_key) = extract_file_key(item) else { continue };
-            let mut merged = normalize_image_item(item, &file_key);
+            let Some(file_key) = item.as_str().map(str::to_string) else { continue };
+            let mut merged = Map::new();
+            merged.insert("fileKey".into(), json!(&file_key));
             match download_image(client, &job_id, &file_key, &tmp_dir, &agent_id).await {
                 Ok(p) => {
                     merged.insert(
@@ -69,39 +54,6 @@ pub async fn handle_info(
     Ok(())
 }
 
-/// 从 image item 里挖 fileKey —— item 可能是裸字符串，也可能是 object with {fileKey|key|name|url}。
-fn extract_file_key(item: &Value) -> Option<String> {
-    if let Some(s) = item.as_str() {
-        return Some(s.to_string());
-    }
-    for k in ["fileKey", "key", "name", "url"] {
-        if let Some(s) = item.get(k).and_then(Value::as_str) {
-            return Some(s.to_string());
-        }
-    }
-    None
-}
-
-/// 规范化 image item 成 object；若原本是裸字符串则升级为 `{fileKey}`。
-fn normalize_image_item(item: &Value, file_key: &str) -> Map<String, Value> {
-    match item {
-        Value::Object(m) => {
-            let mut out = m.clone();
-            out.entry("fileKey".to_string())
-                .or_insert_with(|| Value::String(file_key.to_string()));
-            out
-        }
-        _ => {
-            let mut out = Map::new();
-            out.insert("fileKey".into(), json!(file_key));
-            out
-        }
-    }
-}
-
-/// 拉取证据二进制：`GET /priapi/v1/aieco/task/{jobId}/evidence/download?fileKey=<...>`。
-/// 后端对该端点强制 JWT + agenticId 鉴权，所以走 TaskApiClient 的
-/// `get_bytes_with_identity`（裸 reqwest + 注入 token / agenticId header）。
 pub(super) async fn fetch_evidence_bytes(
     client: &TaskApiClient,
     job_id: &str,
@@ -115,6 +67,8 @@ pub(super) async fn fetch_evidence_bytes(
 }
 
 /// 把单张证据图下载到 `tmp_dir`，返回本地路径。
+/// fileKey 形态 `<jobId>/<idx>/<uuid>` —— 去掉 jobId 前缀后用 `_` 拼成 `<idx>_<uuid>`，
+/// 再按 magic bytes 嗅扩展名（png/jpg/gif/webp），让本地文件能直接被图片预览器打开。
 async fn download_image(
     client: &TaskApiClient,
     job_id: &str,
@@ -123,9 +77,30 @@ async fn download_image(
     agent_id: &str,
 ) -> Result<PathBuf> {
     let bytes = fetch_evidence_bytes(client, job_id, file_key, agent_id).await?;
-    // fileKey 可能含 `/` 或 query-safe 字符；取最后一段做本地文件名
-    let filename = file_key.rsplit('/').next().unwrap_or(file_key);
+    let stem = file_key
+        .split_once('/')
+        .map(|(_, rest)| rest.replace('/', "_"))
+        .unwrap_or_else(|| file_key.to_string());
+    let filename = match sniff_image_ext(&bytes) {
+        Some(ext) => format!("{stem}.{ext}"),
+        None => stem,
+    };
     let path = tmp_dir.join(filename);
     fs::write(&path, &bytes)?;
     Ok(path)
+}
+
+/// 按 magic bytes 嗅常见图片格式，返回不带点的扩展名。未识别返回 None。
+fn sniff_image_ext(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+        Some("png")
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("jpg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("gif")
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("webp")
+    } else {
+        None
+    }
 }
