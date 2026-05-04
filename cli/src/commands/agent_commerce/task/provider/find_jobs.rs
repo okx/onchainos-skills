@@ -11,7 +11,6 @@ use serde_json::Value;
 use tokio::process::Command;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::common::token_symbol_from_address;
 use crate::commands::agent_commerce::task::signing;
 
 /// Provider 角色值（后端约定：1=buyer, 2=provider, 3=evaluator）
@@ -146,7 +145,7 @@ fn print_tasks(tasks: &[Value]) {
     for (i, t) in tasks.iter().enumerate() {
         let token_amount = t["tokenAmount"].as_str().unwrap_or("?");
         let token_addr = t["tokenAddress"].as_str().unwrap_or("");
-        let token_sym = token_symbol_from_address(token_addr).unwrap_or("UNKNOWN"); // todo ganmingtao 确认一下
+        let token_sym = t["tokenSymbol"].as_str().unwrap_or("UNKNOWN");
         println!(
             "  {}. jobId={} | {} | 预算 {} {} (token: {})",
             i + 1,
