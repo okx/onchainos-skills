@@ -30,19 +30,19 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
         "evaluator_selected" => format!(
             "【当前状态】evaluator_selected（本轮你被选为陪审，commit 窗口开启）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ 仲裁 子session（结果不通知用户）。首次到达可能落在 user session，按 Step 0 路由进子session 后再走判决流程。\n\
+             【会话类型】⚠️ 仲裁 子session。\n\
              【判决权威】评估者规范（誓约 L1-L5 + 决策原则 / Rubric / 证据等级 / 裁决书规范）。冲突以本规范为准。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              {step_zero}\
              **Step 1 — 从入站消息提取 `disputeId` 和顶层 `agentId`（你的 evaluator agentId）。**\n\
-             ⚠️ `disputeId` 缺省时直接中止本轮处理，输出 `missing disputeId in payload; abort` 日志结束——真后端 `disputeId = keccak256(jobId, roundNumber)`，第 2+ 轮重选时 `d-{job_id}-r1` 一定对不上合约。\n\
+             ⚠️ `disputeId` 缺省时直接中止本轮处理，输出 `missing disputeId in payload; abort` 日志结束——`disputeId` 由 `(jobId, roundNumber)` 派生，第 2+ 轮重选时旧 id 一定对不上合约，不要 fallback 编造。\n\
              顶层 `agentId` 缺省时同样中止：后续 evaluator CLI 必须靠它定位钱包，缺了就签不了。\n\
              ⚠️ 争议类型在 Step 4 由 agent 从 task 详情 + 双方 `clientReason` / `providerReason` 自行判断（关键词：质量/规格/验收 → 质量；超时/逾期/拖延 → 超时；欺诈/恶意/串谋 → 恶意；判不出按\"质量\"兜底）。\n\n\
              **Step 2 — 拉取当前证据（必须把 inbound envelope 顶层 `agentId` 透传给 `--agent-id`，CLI 据此定位钱包/身份）：**\n\
              ```bash\n\
              onchainos agent evidence-info <disputeId> --agent-id <envelope 顶层 agentId>\n\
              ```\n\
-             返回真后端结构 `evidences: {{ provider: {{texts[], images[]}}, client: {{texts[], images[]}} }}`。\n\
+             返回结构 `evidences: {{ provider: {{texts[], images[]}}, client: {{texts[], images[]}} }}`。\n\
              每张 `images[].fileKey` 已由 CLI 下载到本地，`localPath` 是绝对路径。\n\n\
              **⚠️ Step 2.5 — 必须实际打开每张图片阅读（最重要，禁止跳过）：**\n\
              - 遍历 `evidences.provider.images[].localPath` 和 `evidences.client.images[].localPath`\n\
@@ -112,7 +112,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              ```\n\
              ⚠️ **只能是 0（Approve/Client 胜）或 1（Reject/Provider 胜），禁止 skip**（V1 无弃权；拖到超时被罚没的损失通常大于错投少数票）。\n\
              失败最多重试 3 次（CRITICAL，commit 窗口关闭即触发超时罚没）。返回 `voter has already committed` 视为成功进入 Step 8。\n\
-             body 只带 `vote`；裁决书（Step 5）仅保留在 session 记忆，**不写入后端、不写本地、不推 user session**（后端反查 vote+salt 提供 reveal 所需，CLI 不持久化）。\n\n\
+             body 只带 `vote`；裁决书（Step 5）仅保留在 session 记忆，**不写本地、不推 user session**。\n\n\
              ⚠️ **错误兜底硬约束（agent 失控反例）**：commit 报 `当前账户没有 evaluator（仲裁者） 身份，请先注册` / `code=2004` 时——\n\
              - **禁止**调 `onchainos agent create` / `agent register` / `identity_register` 任何注册类命令（链上写入、烧 gas、修改全局状态——evaluator 身份注册是用户主动决定的事，不是 子session 自作主张能干的）\n\
              - **禁止**fallback 到查 identity / 找钱包 / 改 config 之类的迂回操作\n\
@@ -120,36 +120,29 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              **Step 8 — 输出一行 子session 日志后结束本回合。不调用 通知user session，不通知用户：**\n\n\
              > Committed dispute=<disputeId> vote=<0|1> autonomously per references/evaluator-decision-rubric.md 6 commit 执行.\n\n\
              【原则】\n\
-             - **完全静默**：本 arm 不 escalate_to_main、不 通知user session；用户只会在后续结算/罚没/奖励事件被通知\n\
+             - **完全静默**：本 arm 不 通知user session；用户只会在后续结算/罚没/奖励事件被通知\n\
              - **判决权威**：所有打分规则、决策原则、裁决书格式以 评估者规范 为准\n\
-             - **图片必读**：不读图即违反 L3 义务 #1 + references/evaluator-decision-rubric.md 2 决策原则 #3 举证责任；这是本 arm 最重要的执行要求\n\n\
-             【后续事件】\n\
-             - vote_committed → 子session 里仅记录\n\
-             - reveal_started → 子session 里自动 reveal（envelope 带 disputeId）\n\
-             - dispute_resolved → 子session 里自动 claim（若赢）+ 通知user session\n\
-             - round_failed → 子session 里 通知user session\n"
+             - **图片必读**：不读图即违反 L3 义务 #1 + references/evaluator-decision-rubric.md 2 决策原则 #3 举证责任；这是本 arm 最重要的执行要求\n"
         ),
 
         // ─── reveal 窗口开启（子session，完全静默） ──────────────────
         "reveal_started" => format!(
             "【当前状态】reveal_started（RevealStarted 上链，reveal 窗口开启）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ 仲裁 子session（agent 自主 reveal，不通知用户）。首次到达可能落在 user session，按 Step 0 路由进子session 后再 reveal。\n\n\
+             【会话类型】⚠️ 仲裁 子session。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              {step_zero}\
              **Step 1 — 从 inbound envelope 提取 `disputeId` 与顶层 `agentId`，执行 reveal：**\n\
              ```bash\n\
              onchainos agent vote-reveal <disputeId> --agent-id <envelope 顶层 agentId>\n\
              ```\n\
-             ⚠️ `disputeId` 缺省 → 输出 `missing disputeId in payload; abort` 日志结束，不要 fallback 编造（真后端 `disputeId = keccak256(jobId, roundNumber)`，第 2+ 轮重选时旧 id 一定对不上合约）。\n\
-             \x20**不传 `--vote`**：post-2026-05 协议下后端从 `task_dispute_voter` 反查 vote+salt，CLI body 只发空 `{{}}`。\n\n\
+             ⚠️ `disputeId` 缺省 → 输出 `missing disputeId in payload; abort` 日志结束，不要 fallback 编造（`disputeId` 由 `(jobId, roundNumber)` 派生，第 2+ 轮重选时旧 id 一定对不上合约）。\n\
              **Step 2 — 输出一行 子session 日志后结束。禁止调用 通知user session：**\n\n\
              > Revealed dispute=<disputeId> autonomously.\n\n\
              【错误映射】\n\
              - `canReveal=false` → CLI 已预检拒绝，无需重试；本轮可能已结算（等 dispute_resolved）或未 commit（正常跳过）\n\
              - `voter has not committed` → 本轮未 commit，跳过 reveal 是正常的\n\
-             - 其他失败最多重试 3 次（未 reveal 会触发超时罚没，具体比例见 `staking-config`）\n\n\
-             【后续事件】dispute_resolved / round_failed / reward_claimed / slashed 会继续在同一 子session 到达。仅 reward_claimed 和 slashed 会转发到user session。\n"
+             - 其他失败最多重试 3 次（未 reveal 会触发超时罚没，具体比例见 `staking-config`）\n"
         ),
 
         // ─── 结算完成（子session 静默处理；入账/罚没通过后续 reward_claimed / slashed 事件再推user session） ─
@@ -157,64 +150,52 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
             "【当前状态】dispute_resolved（DisputeSettled 上链，仲裁结算完成）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ 仲裁 子session（agent 自主 claim + 清理，不通知用户）。首次到达可能落在 user session，按 Step 0 路由进子session 后再 claim。用户侧的入账/罚没通知由后续 reward_claimed / slashed arm 负责。\n\n\
-             【Payload 约束】envelope.message 仅含 event / jobId / timestamp / source / description。是否赢得本轮、要不要 claim，统一**用账面反推**（自己投了什么后端会自动结算到账户）。\n\n\
+             【Payload 约束】envelope 不携带胜负/数额。是否赢得本轮、要不要 claim 统一**用账面反推**（结算自动入账，靠 `arbitration-claimable` 反查）。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              {step_zero}\
-             **Step 1 — 从 payload 提取 `disputeId`（必需，缺省 abort）和顶层 `agentId`。**\n\n\
+             **Step 1 — 从 envelope 顶层提取 `agentId` 和 `jobId`。**\n\n\
              **Step 2 — 调 `arbitration-claimable` 看本账户有没有可领奖励（透传 envelope 顶层 `agentId`）：**\n\
              ```bash\n\
              onchainos agent arbitration-claimable --agent-id <envelope 顶层 agentId>\n\
              ```\n\
              返回 `rewards: [{{symbol, tokenAddress, rawAmount, amount}}, ...]`。**任一项 amount > 0** 视为有可领奖励。\n\
-             - **0 项 / 全 0** → 跳过 claim（你这次不是多数方，可能会收到 slashed 事件）\n\
+             - **0 项 / 全 0** → 跳过 Step 3，直接进 Step 4（你这次不是多数方，可能会收到 slashed 事件）\n\
              - **≥ 1 项 amount > 0** → 进入 Step 3 领取\n\n\
              **Step 3 — 立即领取奖励（account 级 pull）：**\n\
              ```bash\n\
              onchainos agent arbitration-claim --agent-id <envelope 顶层 agentId>\n\
              ```\n\
-             ⚠️ account 级 pull 模式：除 `--agent-id` 外不带其它业务参数，一次把所有已结算 dispute 的待领奖励一起领出来（后端 `POST /task/claim`，空 body）。\n\
+             ⚠️ account 级 pull 模式：除 `--agent-id` 外不带其它业务参数，一次把所有已结算 dispute 的待领奖励一起领出来（空 body）。\n\
              失败最多重试 3 次。真正的入账确认会通过稍后到达的 `reward_claimed` 事件告知用户（那个 arm 会 通知user session）。\n\n\
              **Step 4 — 输出一行 子session 日志后结束。禁止调用 通知user session：**\n\n\
-             > Settled dispute=<disputeId> claim_submitted=<true|false>.\n\n\
-             【后续事件】\n\
-             - reward_claimed（claim tx 回执）→ 另一个 arm，会 通知user session 推入账给用户\n\
-             - slashed（被罚通知）→ 另一个 arm，会 通知user session 推罚没金额+原因给用户\n\
-             本 arm 到这里结束，**不抢这两个 arm 的通知职责**。\n"
+             > Settled jobId=<jobId> claim_submitted=<true|false>.\n"
         ),
 
         // ─── 本轮失效（子session 静默；若被罚会通过 slashed arm 再推user session） ──
         "round_failed" =>
             "【当前状态】round_failed（DisputeInvalidated 上链，本轮无效：票数不足 / 无人揭示 / 全员弃票）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ 子session — 没有用户。**被动事件，无需链上操作 / 无本地清理**。\n\n\
+             【会话类型】⚠️ 子session。\n\n\
              【你的下一步动作】\n\
              从 payload 提取 `disputeId`，输出一行 子session 日志后结束。禁止调用 通知user session：\n\n\
-             > round_failed disputeId=<disputeId>; awaiting next round.\n\n\
-             【后续事件】\n\
-             - 若被罚（未 commit / 未 reveal / 弃票）→ slashed arm 会 通知user session 告知用户\n\
-             - 若再次被选中 → evaluator_selected 会在新 disputeId 上到达（roundNumber++）\n\
-             否则本流程对你终止。\n"
+             > round_failed disputeId=<disputeId>; awaiting next round.\n"
                 .to_string(),
 
         // ─── 被罚没（VoterStaking.Slashed） ─────────────────────────────
         "slashed" => format!(
-            "【当前状态】slashed（VoterStaking.Slashed 上链，你的 stake 被罚没，子session 侧）\n\
+            "【当前状态】slashed（VoterStaking.Slashed 上链，你的 stake 被罚没）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ 子session — 无用户。此事件被动触发，无需额外链上操作。\n\n\
+             【会话类型】⚠️ 子session。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 从 payload 提取 `amount`（被罚金额）、`reason`（commit/reveal 超时 / 少数方 / 弃权）、`disputeId`。**\n\n\
-             **Step 2 — 拉任务上下文为通知加标题：**\n\
-             ```bash\n\
-             onchainos agent common context {job_id} --role evaluator\n\
-             ```\n\n\
-             **Step 3 — 用 `xmtp_dispatch_user` 把罚没通知推给用户**：\n\n\
+             **Step 2 — 用 `xmtp_dispatch_user` 把罚没通知推给用户**：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20[Stake 罚没 ⚠️] 任务『<title>』(jobId={job_id})\n\
+             \x20\x20\x20\x20[Stake 罚没 ⚠️] 任务 jobId={job_id}\n\
              \x20\x20\x20\x20  - 金额：<amount> OKB\n\
              \x20\x20\x20\x20  - 原因：<reason>\n\
              \x20\x20\x20\x20  - disputeId：<disputeId>\n\n\
-             **Step 4 — 输出一行 子session 日志后结束：**\n\n\
+             **Step 3 — 输出一行 子session 日志后结束：**\n\n\
              > Slashed amount=<amount> reason=<reason> relayed.\n"
         ),
 
@@ -223,32 +204,27 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
             "【当前状态】reward_claimed（claimRewards tx 上链完成，子session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ 子session。\n\n\
-             【Payload 约束】envelope.message 仅含 event / jobId / timestamp / source / description。到达子session 即代表 success（failed 不会派发到这条事件流）。\n\n\
+             【Payload 约束】到达本 arm 即代表 success（失败不会派发到这条事件流）。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
-             **Step 1（必做）— 拉任务上下文为通知加标题：**\n\
-             ```bash\n\
-             onchainos agent common context {job_id} --role evaluator\n\
-             ```\n\n\
-             **Step 2（可选）— 如需播报具体到账金额，调 `arbitration-claimable` 或 `wallet history` 拉真值；不需要数字就跳过。**\n\
+             **Step 1（可选）— 如需播报具体到账金额，调 `arbitration-claimable` 或 `wallet history` 拉真值；不需要数字就跳过。**\n\
              - `arbitration-claimable` 一般已归零（刚领完），可作为入账完成的旁证\n\
              - 真要数额可拉 `onchainos wallet history --chain xlayer --token-symbol OKB --limit 5` 看最近一笔到账\n\n\
-             **Step 3 — 用 `xmtp_dispatch_user` 把入账通知推给用户：**\n\n\
+             **Step 2 — 用 `xmtp_dispatch_user` 把入账通知推给用户：**\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20[仲裁奖励 💰] 任务『<title>』(jobId={job_id}) 奖励已到账。\n\n\
-             **Step 4 — 输出一行 子session 日志后结束：**\n\n\
-             > reward_claimed relayed.\n\n\
-             【流程结束】此 disputeId 的 evaluator 生命周期完成；后续事件无需响应。\n"
+             \x20\x20\x20\x20[仲裁奖励 💰] 任务 jobId={job_id} 奖励已到账。\n\n\
+             **Step 3 — 输出一行 子session 日志后结束：**\n\n\
+             > reward_claimed relayed.\n"
         ),
 
         // ─── 质押生命周期：子session 收到 → 通知user session 推人话给用户 ─────────────────
         // jobId 固定为 `system_voter_staking`（不是真任务）。
-        // 真后端首次质押与追加质押**统一**发 `staked` 事件——CLI 命令层 stake / increase-stake
-        // 仍区分（对应不同后端 API），但事件流只看到一个 `staked`。
+        // 首次质押与追加质押统一发 `staked` 事件——CLI 命令层 stake / increase-stake 仍区分
+        // 入口，但事件流只看到一个 `staked`。
         "staked" => "【当前状态】staked（VoterStaking.Staked 上链，质押 tx 回执——首次质押与追加质押均发此事件，子session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ 子session — 通知user session 推人话给用户。\n\n\
-             【Step 1（可选）】如需播报具体金额或区分首次/追加，先跑 `evaluator my-stake --agent-id <你的 agentId>` 拿 `activeStake`；不需要数字就跳过。\n\n\
+             【会话类型】⚠️ 子session。\n\n\
+             【Step 1（可选）】如需播报具体金额，先跑 `evaluator my-stake --agent-id <你的 agentId>` 拿 `activeStake`；不需要数字就跳过。\n\n\
              【Step 2】用 `xmtp_dispatch_user` 把质押结果推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
@@ -258,20 +234,19 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
 
         "unstake_requested" => "【当前状态】unstake_requested（VoterStaking.UnstakeRequested 上链，申请解质押 tx 回执，子session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ 子session — 通知user session 推人话给用户。\n\n\
+             【会话类型】⚠️ 子session。\n\n\
              【Step 1（必做）】跑 `evaluator my-stake --agent-id <你的 agentId>`，取 `pendingUnstake`（OKB）和 `unstakeAvailableAt`（unix 秒）。把秒级时间戳转本地时间字符串再填 content。\n\n\
              【Step 2】用 `xmtp_dispatch_user` 把申请受理通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20[解质押 ⏳] 申请已受理：<my-stake.pendingUnstake> OKB 进入冷却期，可领取时间 <unstakeAvailableAt 本地时间>。冷却期到了跟我说『领取解质押』我来提走；想中途撤销随时跟我说『取消解质押』（仅冷却期内有效）。\n\n\
              【Step 3】输出日志结束：`> unstake_requested relayed.`\n\n\
-             ⚠️ **禁止**写死『7 天后』之类的天数——冷却期长度由 `staking-config.unstakeCooldownSeconds` 决定（可被 Apollo 动态改），始终用 my-stake 返回的 `unstakeAvailableAt` 真值。\n".to_string(),
+             ⚠️ **禁止**写死『7 天后』之类的天数——冷却期长度由 `staking-config.unstakeCooldownSeconds` 决定（可动态变化），始终用 my-stake 返回的 `unstakeAvailableAt` 真值。\n".to_string(),
 
         "unstake_claimed" => "【当前状态】unstake_claimed（VoterStaking.UnstakeClaimed 上链，领取解质押 tx 回执，子session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ 子session — 通知user session 推人话给用户。\n\n\
-             【Step 1（可选）】如需播报到账金额或最新余额，先跑 `evaluator my-stake --agent-id <你的 agentId>`——`pendingUnstake` 应已归零。\n\n\
-             【Step 2】用 `xmtp_dispatch_user` 把到账通知推给用户：\n\n\
+             【会话类型】⚠️ 子session。\n\n\
+             【Step 1】用 `xmtp_dispatch_user` 把到账通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20[解质押 ✅] 已领取，OKB 已入钱包。\n\n\
@@ -279,9 +254,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
 
         "unstake_cancelled" => "【当前状态】unstake_cancelled（VoterStaking.UnstakeCancelled 上链，取消解质押 tx 回执，子session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ 子session — 通知user session 推人话给用户。\n\n\
-             【Step 1（可选）】如需播报新余额，先跑 `evaluator my-stake --agent-id <你的 agentId>`——`pendingUnstake` 应已归零，`activeStake` 增量。\n\n\
-             【Step 2】用 `xmtp_dispatch_user` 把取消通知推给用户：\n\n\
+             【会话类型】⚠️ 子session。\n\n\
+             【Step 1】用 `xmtp_dispatch_user` 把取消通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20[解质押 ✅] 已取消：待解 OKB 回到质押状态。\n\n\
@@ -290,21 +264,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
         // ─── 自己的投票 tx 回执 ──────────────────────────────────────────
         "vote_committed" => "【当前状态】vote_committed（你自己的 commit tx 上链 success，子session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ 子session — 无用户。这是**确认通知**，不是动作触发点。\n\n\
-             【动作】仅记录 tx 成功状态；禁止重复 commit（后端会返回 `voter has already committed`）。**不调用 通知user session，不通知用户**——commit 是 agent 内部决策过程，用户感知由后续 dispute_resolved → reward_claimed / slashed 负责。\n\n\
-             【输出】一行日志后结束：`> vote_committed recorded (silent).`\n\n\
-             【后续事件】等 `reveal_started`（开启 reveal 窗口）→ 子session 里跑 `vote-reveal`。\n".to_string(),
+             【会话类型】⚠️ 子session。\n\n\
+             【动作】无；禁止重复 commit（重复调用会被拒：`voter has already committed`）。**不调用 通知user session，不通知用户**\n\n\
+             【输出】一行日志后结束：`> vote_committed recorded (silent).`\n".to_string(),
 
         "vote_revealed" => "【当前状态】vote_revealed（你自己的 reveal tx 上链 success，子session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
-             【会话类型】⚠️ 子session — **完全忽略**，不记录不通知。\n\n\
-             【动作】无——输出一行日志 `> vote_revealed ignored.` 后结束。禁止 通知user session。reveal 成功的用户感知由后续 dispute_resolved → reward_claimed / slashed 负责。\n\n\
-             【后续事件】等 `dispute_resolved` / `round_failed`（结算/失效）→ 子session 里跑对应 arm。\n".to_string(),
+             【会话类型】⚠️ 子session。\n\n\
+             【动作】无——输出一行日志 `> vote_revealed ignored.` 后结束。禁止 通知user session。\n".to_string(),
 
-        // ─── 兜底：未知事件静默丢弃 ─────────────────────────────────
-        // evaluator 事件集由后端 / 链事件枚举闭合，"未知" 只意味着 CLI 没跟上后端枚举——
-        // 此时 agent 也没有逻辑去处理它（拉 context 也帮不上）。直接一行 trace 留痕即可，
-        // 真正的修复是开发者补 arm。
         other => format!(
             "【未知事件】{other}（jobId={job_id}）—— evaluator 不响应。\n\
              【动作】无——输出一行日志 `> unknown event={other} at jobId={job_id} ignored.` 后结束。\n\
