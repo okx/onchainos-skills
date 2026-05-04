@@ -211,7 +211,7 @@ pub async fn handle_create(
             "submittedDeadline": submit_secs
         },
         "paymentMode":        payment_mode.as_deref()
-                                .map(crate::commands::agent_commerce::task::common::payment_mode_to_int)
+                                .map(|m| crate::commands::agent_commerce::task::common::PaymentMode::from_str(m).as_int())
                                 .unwrap_or(0)
     });
 

@@ -15,9 +15,7 @@ use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::common::{
-    PAYMENT_MODE_ESCROW, PAYMENT_MODE_NON_ESCROW,
-};
+use crate::commands::agent_commerce::task::common::PaymentMode;
 use crate::commands::payment::a2a_pay::{
     create_payment_charge, ChargeParams, CreatePaymentOutput,
 };
@@ -35,15 +33,16 @@ pub async fn handle_get_payment(
     }
 
     // escrow 路径已经下线本命令——买家在 confirm-accept 时自己生成付款单
-    if payment_mode == PAYMENT_MODE_ESCROW {
+    let mode = PaymentMode::from_str(payment_mode);
+    if mode == PaymentMode::Escrow {
         bail!(
             "escrow 担保路径不需要 get-payment：买家在 confirm-accept 时自己生成付款单。\n\
              provider_applied 通知到达后，只需 xmtp_send 一条「已接单，请 confirm-accept」消息即可。"
         );
     }
-    if payment_mode != PAYMENT_MODE_NON_ESCROW {
+    if mode != PaymentMode::NonEscrow {
         bail!(
-            "unsupported payment mode '{payment_mode}', expected '{PAYMENT_MODE_NON_ESCROW}'"
+            "unsupported payment mode '{payment_mode}', expected 'non_escrow'"
         );
     }
 

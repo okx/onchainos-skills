@@ -9,7 +9,7 @@
 use anyhow::Result;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::common::PAYMENT_MODE_INT_ESCROW;
+use crate::commands::agent_commerce::task::common::PaymentMode;
 use crate::commands::agent_commerce::task::signing;
 
 /// complete — 验收通过
@@ -20,9 +20,9 @@ pub async fn handle_complete(client: &mut TaskApiClient, job_id: &str) -> Result
     // 查询任务详情获取 paymentMode
     let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
     let task = &resp;
-    let payment_mode = task["paymentMode"].as_i64().unwrap_or(0) as i32;
+    let payment_mode = PaymentMode::from_int(task["paymentMode"].as_i64().unwrap_or(0) as i32);
 
-    if payment_mode == PAYMENT_MODE_INT_ESCROW {
+    if payment_mode == PaymentMode::Escrow {
         // ── 担保：双签 pre-complete → complete ──────────────────────
         // TODO: deadline 策略待确认，暂时使用当前时间 + 1 小时
         let deadline = chrono::Utc::now().timestamp() + 3600;

@@ -7,7 +7,7 @@ use anyhow::{bail, Result};
 use chrono::{TimeZone, Utc};
 
 use super::network::task_api_client::TaskApiClient;
-use super::PAYMENT_MODE_ESCROW;
+use super::{PaymentMode, XLAYER_CHAIN_INDEX};
 
 /// unix 秒 → 展示字符串。0 / 负数当未设置；正常值转 RFC 3339。
 pub fn fmt_unix_secs(secs: Option<i64>) -> String {
@@ -71,19 +71,19 @@ pub async fn resolve_payment_mode(
     payment_mode: Option<&str>,
     job_id: &str,
     agent_id: &str,
-) -> Result<String> {
+) -> Result<PaymentMode> {
     match payment_mode {
-        Some(m) => Ok(m.to_string()),
+        Some(m) => Ok(PaymentMode::from_str(m)),
         None => {
             let task_resp = client.get_with_identity(&client.task_path(job_id), agent_id).await?;
             let payment_type = task_resp["paymentType"].as_i64().unwrap_or(0) as i32;
-            let mode_str = super::payment_mode_to_str(payment_type);
-            if mode_str == "none" || mode_str == "unknown" {
+            let mode = PaymentMode::from_int(payment_type);
+            if mode == PaymentMode::None {
                 eprintln!("⚠ 任务 paymentType={payment_type}，无法识别支付方式，默认使用 escrow");
-                Ok(PAYMENT_MODE_ESCROW.to_string())
+                Ok(PaymentMode::Escrow)
             } else {
-                eprintln!("ℹ --payment-mode 未传入，使用任务详情 paymentType: {mode_str} ({payment_type})");
-                Ok(mode_str.to_string())
+                eprintln!("ℹ --payment-mode 未传入，使用任务详情 paymentType: {} ({payment_type})", mode.as_str());
+                Ok(mode)
             }
         }
     }
@@ -265,4 +265,76 @@ pub async fn fetch_provider_address(provider: &str) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!(
             "provider {provider} 的 ownerAddress 为空，无法确定收款地址"
         ))
+}
+
+// ─── 余额预检 ──────────────────────────────────────────────────────────
+
+/// 归一化 token symbol：Unicode 货币符号 → ASCII 等价字母，然后转大写。
+/// 例：`USD₮0` → `USDT0`（₮ U+20AE → T）
+fn normalize_token_symbol(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '₮' => 'T',
+            _ => c,
+        })
+        .collect::<String>()
+        .to_uppercase()
+}
+
+/// 调用 `onchainos wallet balance --chain 196` 查询 XLayer 余额，
+/// 若指定代币余额不足则 bail，阻断后续流程。
+pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<()> {
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("无法获取可执行文件路径: {e}"))?;
+
+    let output = tokio::process::Command::new(&exe)
+        .args(["wallet", "balance", "--chain", XLAYER_CHAIN_INDEX])
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("余额查询失败: {e}"))?;
+
+    if !output.status.success() {
+        bail!("余额查询失败（exit {}），请检查登录态", output.status);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|e| anyhow::anyhow!("解析余额查询结果失败: {e}"))?;
+
+    let currency_norm = normalize_token_symbol(currency);
+    let details = parsed["data"]["details"].as_array();
+    if let Some(details) = details {
+        for detail in details {
+            let assets = detail["tokenAssets"]
+                .as_array()
+                .or_else(|| detail["assets"].as_array());
+            if let Some(assets) = assets {
+                for asset in assets {
+                    let symbol = asset["tokenSymbol"]
+                        .as_str()
+                        .or_else(|| asset["symbol"].as_str())
+                        .unwrap_or("");
+                    let sym_norm = normalize_token_symbol(symbol);
+                    if sym_norm == currency_norm || sym_norm == format!("{currency_norm}0") {
+                        let balance: f64 = asset["balance"]
+                            .as_str()
+                            .and_then(|s| s.parse().ok())
+                            .or_else(|| asset["balance"].as_f64())
+                            .unwrap_or(0.0);
+                        if balance < required {
+                            bail!(
+                                "余额不足：当前 XLayer {symbol} 余额为 {balance}，\
+                                 需要 {required} {currency}。请先充值后再操作"
+                            );
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+
+    bail!(
+        "未查到 XLayer 上的 {currency} 余额，请确认账户已持有该代币并充值后重试"
+    );
 }

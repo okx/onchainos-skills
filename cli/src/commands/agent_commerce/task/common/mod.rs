@@ -11,6 +11,7 @@ use serde::Deserialize;
 pub mod claim;
 pub mod dispute_upload;
 pub mod network;
+pub mod payment_mode;
 pub mod query;
 pub mod state_machine;
 pub mod util;
@@ -37,117 +38,9 @@ pub const AGENT_ROLE_PROVIDER: i64 = 2;
 /// 仲裁者（evaluator）
 pub const AGENT_ROLE_EVALUATOR: i64 = 3;
 
-// ─── 支付模式常量 ────────────────────────────────────────────────────────
+pub use payment_mode::PaymentMode;
 
-/// 担保支付：资金锁定在合约中
-pub const PAYMENT_MODE_ESCROW: &str = "escrow";
-/// 非担保支付：任务完成后买家手动转账
-pub const PAYMENT_MODE_NON_ESCROW: &str = "non_escrow";
-/// x402 按需微支付
-pub const PAYMENT_MODE_X402: &str = "x402";
-
-// ─── 支付模式 int ↔ str 映射 ────────────────────────────────────────────
-
-/// 后端 paymentMode int 值: NONE(0), ESCROW(1), DIRECT(2), X402(3)
-/// todo liyun 整理支付方式
-pub const PAYMENT_MODE_INT_NONE: i32 = 0;
-pub const PAYMENT_MODE_INT_ESCROW: i32 = 1;
-pub const PAYMENT_MODE_INT_DIRECT: i32 = 2;
-pub const PAYMENT_MODE_INT_X402: i32 = 3;
-
-/// str → int（用于 setPaymentMode 接口）
-pub fn payment_mode_to_int(mode: &str) -> i32 {
-    match mode {
-        PAYMENT_MODE_ESCROW => PAYMENT_MODE_INT_ESCROW,
-        PAYMENT_MODE_NON_ESCROW | "direct" => PAYMENT_MODE_INT_DIRECT,
-        PAYMENT_MODE_X402 => PAYMENT_MODE_INT_X402,
-        _ => PAYMENT_MODE_INT_ESCROW,
-    }
-}
-
-/// int → str（用于展示）
-pub fn payment_mode_to_str(mode: i32) -> &'static str {
-    match mode {
-        PAYMENT_MODE_INT_NONE => "none",
-        PAYMENT_MODE_INT_ESCROW => PAYMENT_MODE_ESCROW,
-        PAYMENT_MODE_INT_DIRECT => PAYMENT_MODE_NON_ESCROW,
-        PAYMENT_MODE_INT_X402 => PAYMENT_MODE_X402,
-        _ => "unknown",
-    }
-}
-
-// ─── 余额预检（阻断） ──────────────────────────────────────────────────────
-
-/// 调用 `onchainos wallet balance --chain 196` 查询 XLayer 余额，
-/// 若指定代币余额不足则 bail，阻断后续流程。
-/// 归一化 token symbol：Unicode 货币符号 → ASCII 等价字母，然后转大写。
-/// 例：`USD₮0` → `USDT0`（₮ U+20AE → T）
-fn normalize_token_symbol(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            '₮' => 'T', // U+20AE TUGRIK SIGN → T
-            _ => c,
-        })
-        .collect::<String>()
-        .to_uppercase()
-}
-
-// todo liyun usdt 和 usdt0
-pub async fn ensure_sufficient_balance(required: f64, currency: &str) -> Result<()> {
-    let exe = std::env::current_exe()
-        .map_err(|e| anyhow::anyhow!("无法获取可执行文件路径: {e}"))?;
-
-    let output = tokio::process::Command::new(&exe)
-        .args(["wallet", "balance", "--chain", XLAYER_CHAIN_INDEX])
-        .output()
-        .await
-        .map_err(|e| anyhow::anyhow!("余额查询失败: {e}"))?;
-
-    if !output.status.success() {
-        bail!("余额查询失败（exit {}），请检查登录态", output.status);
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: serde_json::Value = serde_json::from_str(&stdout)
-        .map_err(|e| anyhow::anyhow!("解析余额查询结果失败: {e}"))?;
-
-    let currency_norm = normalize_token_symbol(currency);
-    let details = parsed["data"]["details"].as_array();
-    if let Some(details) = details {
-        for detail in details {
-            let assets = detail["tokenAssets"]
-                .as_array()
-                .or_else(|| detail["assets"].as_array());
-            if let Some(assets) = assets {
-                for asset in assets {
-                    let symbol = asset["tokenSymbol"]
-                        .as_str()
-                        .or_else(|| asset["symbol"].as_str())
-                        .unwrap_or("");
-                    let sym_norm = normalize_token_symbol(symbol);
-                    if sym_norm == currency_norm || sym_norm == format!("{currency_norm}0") {
-                        let balance: f64 = asset["balance"]
-                            .as_str()
-                            .and_then(|s| s.parse().ok())
-                            .or_else(|| asset["balance"].as_f64())
-                            .unwrap_or(0.0);
-                        if balance < required {
-                            bail!(
-                                "余额不足：当前 XLayer {symbol} 余额为 {balance}，\
-                                 需要 {required} {currency}。请先充值后再操作"
-                            );
-                        }
-                        return Ok(());
-                    }
-                }
-            }
-        }
-    }
-
-    bail!(
-        "未查到 XLayer 上的 {currency} 余额，请确认账户已持有该代币并充值后重试"
-    );
-}
+pub use util::ensure_sufficient_balance;
 
 // ─── CLI 定义 ──────────────────────────────────────────────────────────────
 #[derive(Subcommand)]
@@ -327,7 +220,6 @@ async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
 }
 
 // ─── 状态说明 ──────────────────────────────────────────────────────────────
-// todo liyun 确认"init" 
 fn status_desc(s: &str) -> &str {
     match s {
         "init"      => "初始化中（等待上链确认）",
@@ -345,15 +237,8 @@ fn status_desc(s: &str) -> &str {
     }
 }
 
-// todo liyun 整理支付方式
 fn payment_mode_desc(pm: i32) -> &'static str {
-    match pm {
-        PAYMENT_MODE_INT_NONE => "未设置",
-        PAYMENT_MODE_INT_ESCROW => "托管支付（Escrow）",
-        PAYMENT_MODE_INT_DIRECT => "非托管支付（Non-Escrow）",
-        PAYMENT_MODE_INT_X402 => "x402 按需支付",
-        _ => "未知",
-    }
+    PaymentMode::from_int(pm).desc()
 }
 
 /// 根据角色 + 任务状态，列出当前可执行的 CLI 操作

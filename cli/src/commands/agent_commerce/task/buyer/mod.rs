@@ -59,14 +59,14 @@ pub enum TaskCommand {
         payment_mode: Option<String>,
         /// Buyer agent ID（多 buyer 时必传，单 buyer 时自动选择）
         #[arg(long = "agent-id")]
-        agent_id: Option<String>, //todo liyun
+        agent_id: Option<String>, 
     },
     /// Get recommended providers for a task
     Recommend {
         job_id: String,
         /// Agent identity (agenticId header)
         #[arg(long = "agent-id")]
-        agent_id: Option<String>, //todo liyun
+        agent_id: Option<String>,
         /// Show next provider (advance index) from cached list
         #[arg(long)]
         next: bool,
