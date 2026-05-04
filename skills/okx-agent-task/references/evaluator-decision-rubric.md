@@ -11,7 +11,7 @@
 `next-action --role evaluator --jobStatus evaluator_selected` 生成结构化提示词，要求 agent 按顺序：
 
 1. 提取 `disputeId` 和 `disputeType`（质量 / 超时 / 恶意；缺省按质量处理）
-2. `onchainos agent evaluator info <disputeId>` — 拿真后端结构 `evidences: {provider:{texts[],images[]}, client:{texts[],images[]}}`，以及 `qualityStandards` / `clientReason` / `providerReason` / `deliverableUrl`
+2. `onchainos agent evidence-info <disputeId>` — 拿真后端结构 `evidences: {provider:{texts[],images[]}, client:{texts[],images[]}}`，以及 `qualityStandards` / `clientReason` / `providerReason` / `deliverableUrl`
 3. **必须逐张打开** `evidences.provider.images[].localPath` 和 `evidences.client.images[].localPath` —— 调用多模态 read / view 能力读图。只凭文本猜图违反 §3 L3 义务 #1
 
 ## 2. 按争议类型打分（Rubric）
@@ -77,7 +77,7 @@ commit 前逐项确认，任一未通过回 §2 重审：
 ## 6. commit 执行
 
 ```bash
-onchainos agent evaluator commit <disputeId> --vote <0|1>
+onchainos agent vote-commit <disputeId> --vote <0|1>
 ```
 
 - **只能是 0（Approve/Client 胜）或 1（Reject/Provider 胜）**，V1 无 skip 选项（超时罚 0.3% 比错投 1% 更亏——见 §9 经济模型）
@@ -146,7 +146,7 @@ onchainos agent evaluator commit <disputeId> --vote <0|1>
 
 ## 10. Economic Model（经济参数附录 + 罚没分配规则）
 
-> ⚠️ 下表数字仅为**概念默认值**（来自 `ParamsGovernance` 合约 / 经济参数附录），用于解释机制；具体场景里展示给用户的数字必须通过 `onchainos agent evaluator staking-config` 实时拉取。
+> ⚠️ 下表数字仅为**概念默认值**（来自 `ParamsGovernance` 合约 / 经济参数附录），用于解释机制；具体场景里展示给用户的数字必须通过 `onchainos agent staking-config` 实时拉取。
 
 **质押 / 票权 / 奖励三者关系**：
 

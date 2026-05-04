@@ -15,6 +15,7 @@ use anyhow::Result;
 use chrono::TimeZone;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::evaluator::staking_types;
 use crate::commands::agent_commerce::task::signing;
 
 /// 渲染 unix 秒时间戳。0 表示"不适用"。
@@ -30,11 +31,11 @@ fn fmt_unix_seconds(ts: i64, none_label: &str) -> String {
 
 pub async fn handle_my_stake(
     client: &mut TaskApiClient,
-    agent_id_hint: Option<&str>,
+    agent_id: &str,
 ) -> Result<()> {
     let (_account_id, _address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
-    let s = client.get_my_stake(&agent_id).await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
+    let s = staking_types::get_my_stake(client, &agent_id).await?;
 
     println!("my stake (链上质押状态)");
     println!("  voter address      : {}", s.voter_address);
@@ -43,19 +44,16 @@ pub async fn handle_my_stake(
         s.agent_id, s.registered
     );
     println!(
-        "  activeStake        : {} OKB (wei: {})  # 当前已质押（已扣罚没）",
-        s.active_stake_okb(),
-        s.active_stake_wei
+        "  activeStake        : {} OKB  # 当前已质押（已扣罚没）",
+        s.active_stake_okb
     );
     println!(
-        "  pendingUnstake     : {} OKB (wei: {})  # 冷却期中待解锁",
-        s.pending_unstake_okb(),
-        s.pending_unstake_wei
+        "  pendingUnstake     : {} OKB  # 冷却期中待解锁",
+        s.pending_unstake_okb
     );
     println!(
-        "  validStake         : {} OKB (wei: {})  # 可加权选取 = activeStake - pendingUnstake",
-        s.valid_stake_okb(),
-        s.valid_stake_wei
+        "  validStake         : {} OKB  # 可加权选取 = activeStake - pendingUnstake",
+        s.valid_stake_okb
     );
     println!(
         "  activeDisputes     : {}  # 参与中的仲裁数（>0 时不可全额解质押）",

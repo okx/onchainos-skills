@@ -41,7 +41,7 @@
 
 > ⚠️ **核心概念区分**：本场景里有三个金额，**必须分清，不可混用**：
 > - **钱包余额** (`wallet balance`)：EOA 上可花费的 OKB，用 `onchainos wallet balance` 查
-> - **已质押** (`activeStake`)：已经从余额转入 `VoterStaking` 合约锁仓的 OKB（已扣历史罚没），用 `onchainos agent evaluator my-stake` 查
+> - **已质押** (`activeStake`)：已经从余额转入 `VoterStaking` 合约锁仓的 OKB（已扣历史罚没），用 `onchainos agent my-stake` 查
 > - **本次质押 N**：本次要从余额追加锁仓的 OKB
 >
 > 累计门槛规则的判断是 `activeStake + N >= minCumulativeStakeOkb`，**绝不能用钱包余额代替 `activeStake`**。
@@ -51,8 +51,8 @@
 并发执行两条只读 CLI：
 
 ```bash
-onchainos agent evaluator staking-config   # 取 minCumulativeStakeOkb
-onchainos agent evaluator my-stake         # 取 activeStake (OKB) / registered / activeDisputes
+onchainos agent staking-config   # 取 minCumulativeStakeOkb
+onchainos agent my-stake         # 取 activeStake (OKB) / registered / activeDisputes
 ```
 
 从 `my-stake` 输出抓 `activeStake: <X> OKB` 行的 `<X>`（就是 OKB 字符串，无需自己换 wei）。从 `staking-config` 抓 `minCumulativeStakeOkb`。
@@ -97,7 +97,7 @@ onchainos agent evaluator my-stake         # 取 activeStake (OKB) / registered 
 
 **硬性规则**：
 1. **agent 绝不自行决定质押金额**——不从上下文推断、不用公式算默认值、不"帮用户补齐"。金额**只能是用户在 Step 2 展示后的当轮回复中显式给出的数字**。
-2. 未收到用户显式给出数字前，**绝不执行 Step 3 的 CLI**。`evaluator stake` 是上链操作，解质押需冷却期才能取回——静默发起 = 严重违反用户授权。
+2. 未收到用户显式给出数字前，**绝不执行 Step 3 的 CLI**。`stake` 是上链操作，解质押需冷却期才能取回——静默发起 = 严重违反用户授权。
 3. **同轮链式路径也不能跳过 Step 2**——身份 skill 输出在当前 turn 的先前内容里时，可以直接跑 Step 1，但 Step 2 的展示 + 等用户回复数字是**不可省略的**。
 4. 以下来源的金额**全部禁止用作质押数量**：上下文中的转账金额、注册费用、gas 费、身份 skill 传来的数字、事件 payload 的 amount、会话历史中任何金额。
 
@@ -116,7 +116,7 @@ onchainos agent evaluator my-stake         # 取 activeStake (OKB) / registered 
 执行：
 
 ```bash
-onchainos agent evaluator stake --amount <N>
+onchainos agent stake --amount <N>
 ```
 
 ### Step 4 — 解析返回

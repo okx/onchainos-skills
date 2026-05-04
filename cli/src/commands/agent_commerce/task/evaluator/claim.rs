@@ -17,10 +17,10 @@ use crate::commands::agent_commerce::task::signing;
 /// calldata — no per-token / per-job arguments. Not scoped to a single jobId.
 pub async fn handle_claim(
     client: &mut TaskApiClient,
-    agent_id_hint: Option<&str>,
+    agent_id: &str,
 ) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
     let tx_hash =
         common_claim::submit_claim_and_broadcast(client, &account_id, &address, &agent_id).await?;

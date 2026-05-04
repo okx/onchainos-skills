@@ -254,35 +254,33 @@ async fn find_owner_address_by_agent_id(
 
 /// Resolve wallet + evaluator agentId for signing.
 ///
-/// **优先 agentId 反查钱包**：当 `agent_id_hint = Some(id)` 时（来自系统消息
-/// envelope 的顶层 `agentId`），按该 id 在 `agent get` 列表中精确定位 → 拿
-/// `ownerAddress` → 在 wallet store 中找对应账户。这是多身份场景的正确路径。
+/// 按 `agent_id` 在 `agent get` 列表中精确定位 → 拿 `ownerAddress` → 在 wallet
+/// store 中找对应账户。`agent_id` 必传（来自系统消息 envelope 的顶层 `agentId`），
+/// 是多身份场景下唯一的正确路径——禁用「默认钱包反查」兜底以防错位签名。
 ///
-/// 兼容旧路径：`agent_id_hint = None` 时退回"取当前默认钱包，再按 role 反查 agent"。
-/// 仅供本地手动调用（agent 收到系统消息时必须传 hint）。
+/// 唯一例外：`evaluator staking-config` 是 platform-level 只读 API，不签名、不动
+/// 钱包，直接调 `resolve_agent_id_by_role(AGENT_ROLE_EVALUATOR)` 取 header 用。
 ///
 /// Returns `(account_id, address, evaluator_agent_id)`.
 pub async fn resolve_wallet_and_agent_for_evaluator(
-    agent_id_hint: Option<&str>,
+    agent_id: &str,
 ) -> Result<(String, String, String)> {
-    if let Some(id) = agent_id_hint.map(str::trim).filter(|s| !s.is_empty()) {
-        let owner = find_owner_address_by_agent_id(
-            id,
-            AGENT_ROLE_EVALUATOR,
-            "evaluator（仲裁者）",
-        )
-        .await?;
-        let (account_id, address) = resolve_wallet(None, Some(&owner))
-            .map_err(|e| anyhow::anyhow!(
-                "agentId={id} 对应钱包 {owner} 不在本地（{e}），请先用对应私钥执行 `onchainos wallet auth`"
-            ))?;
-        return Ok((account_id, address, id.to_string()));
+    let id = agent_id.trim();
+    if id.is_empty() {
+        bail!("agent_id 不能为空（必须传 envelope 顶层 agentId）");
     }
-
-    let (account_id, address) = resolve_wallet(None, None)?;
-    let (agent_id, _) =
-        resolve_agent_by_role(AGENT_ROLE_EVALUATOR, "evaluator（仲裁者）", Some(&address)).await?;
-    Ok((account_id, address, agent_id))
+    let owner = find_owner_address_by_agent_id(
+        id,
+        AGENT_ROLE_EVALUATOR,
+        "evaluator（仲裁者）",
+    )
+    .await?;
+    let (account_id, address) = resolve_wallet(None, Some(&owner)).map_err(|e| {
+        anyhow::anyhow!(
+            "agentId={id} 对应钱包 {owner} 不在本地（{e}），请先用对应私钥执行 `onchainos wallet auth`"
+        )
+    })?;
+    Ok((account_id, address, id.to_string()))
 }
 
 /// 仅解析 agentId（不解析 wallet），用于只读查询命令 fallback。

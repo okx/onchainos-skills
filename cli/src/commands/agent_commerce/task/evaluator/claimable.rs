@@ -20,10 +20,10 @@ use crate::commands::agent_commerce::task::signing;
 /// 发现有非 0 奖励时，建议用户按 jobId 跑 `evaluator claim <jobId>` 领取。
 pub async fn handle_claimable(
     client: &mut TaskApiClient,
-    agent_id_hint: Option<&str>,
+    agent_id: &str,
 ) -> Result<()> {
     let (_account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
     let has_nonzero =
         common_claim::fetch_and_print_claimable(client, &agent_id, &address).await?;

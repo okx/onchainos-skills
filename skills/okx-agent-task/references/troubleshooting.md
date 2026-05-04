@@ -24,7 +24,7 @@
 - 看到 `code != 0` → **第一次失败立即推 user session**，**不要 retry 同命令**
 - 唯一通用例外是 JWT 过期（3001 + 特定 msg）→ 刷新 + 自动重试一次；仍失败再推用户
 - 网络 timeout / connection error 不属于例外——按业务错处理推用户，**不在 sub 里盲重**
-- **Role-specific 例外**：`evaluator commit` / `evaluator reveal` / `evaluator claim` 因错过窗口直接罚 0.3% stake，allow sub 内部最多重试 3 次（详见 `references/evaluator-decision-rubric.md` §6）。其他 evaluator 命令仍走 0 retry 规则。Buyer / provider 没有此类例外。
+- **Role-specific 例外**：`vote-commit` / `vote-reveal` / `arbitration-claim` 因错过窗口直接罚 0.3% stake，allow sub 内部最多重试 3 次（详见 `references/evaluator-decision-rubric.md` §6）。其他 evaluator 命令仍走 0 retry 规则。Buyer / provider 没有此类例外。
 
 > ⚠️ `2004` / `4000` 等子码：本文档下面表里部分错误信息提到 `2004 / 4000`——那是 **`msg` 内嵌的业务子码**（比如 staking 模块自己的 sub-error），不是 class-level code。class-level code 一律来自上表 5 个值。
 
@@ -37,7 +37,7 @@
 | `code=3001` + `msg` 含 `auth fail` / `unauthorized` / `agenticId` | beta 后端拒空 `agenticId` header；几乎所有 task API 命令缺 `--agent-id` 都会撞这个 | 检查 envelope 顶层 `agentId`，**原样**透传给 `--agent-id`（CLI 已加必填校验，应该在前面就 bail） |
 | `code=3001` + `msg` 含 `JWT verification failed` / `JWT expired` | JWT 过期 | 唯一允许自动重试一次的认证错（重试前需先刷新登录态）；仍失败 → 推 user session 让用户重登 `okx-agentic-wallet` |
 | `msg` 含 `agentId 无效` / `session 丢失`（业务子码 4000） | 钱包 session 过期 / agentId 不属于当前钱包 | 推 user session 让用户重新登录钱包，重登后再 retry 一次 |
-| `msg` 含 `agentId 没有 evaluator 身份`（业务子码 2004） | 拿 buyer / provider 的 agentId 调 `evaluator stake` 等命令 | 回身份 skill（`okx-agent-identity`）注册 evaluator 角色再回来 |
+| `msg` 含 `agentId 没有 evaluator 身份`（业务子码 2004） | 拿 buyer / provider 的 agentId 调 `stake` 等命令 | 回身份 skill（`okx-agent-identity`）注册 evaluator 角色再回来 |
 | `bail: --agent-id 必填...`（CLI 层 bail，不到后端） | CLI 层检测到空 agentId 直接 bail | 从 envelope / context 取 agentId 再调；envelope 缺 agentId 一律中止本轮，**不要默认填空** |
 
 ## 2. 任务查询 / 状态前置错误
@@ -75,7 +75,7 @@
 |---|---|---|
 | `voter has already committed` | 你这一轮已经 commit 过了 | **当成功处理**——agent 重复触发是常见 race，结果一致即可 |
 | `voter has not committed` | 收到 `reveal_started` 但本轮没 commit | 跳过 reveal 是正常的（你可能没被选上 / commit 超时被踢）；**不要**当错误 |
-| `canReveal=false` | CLI 自动预检，commit 窗口未关 / 已 reveal / 已结算 | **不要重试**；等 `dispute_resolved` 通知；若已结算 → 改跑 `evaluator claim`（账户级 pull） |
+| `canReveal=false` | CLI 自动预检，commit 窗口未关 / 已 reveal / 已结算 | **不要重试**；等 `dispute_resolved` 通知；若已结算 → 改跑 `arbitration-claim`（账户级 pull） |
 | Commit / Reveal 超时罚 0.3% | 错过提交时限 | 接受罚没；24h 冷却期不被选；冷却结束后正常恢复 |
 | `code=1001` + `msg` 含 `累计质押` / `minCumulativeStakeOkb` | `stake` 时 `activeStake + 本次 < min`（参数校验失败） | 重跑 `my-stake` 拿 `activeStake`，让用户提高金额（`min - activeStake`）后再质押 |
 | `request-unstake` 合约 revert | 当前有 `activeDisputes > 0`，活跃仲裁期间不可解质押 | 让用户等仲裁结算（`dispute_resolved`）后再 unstake |
@@ -105,7 +105,7 @@
 |---|---|---|
 | `apply` 上链后 status 仍是 `open` | apply 是过场事件，**不改 status** | 等买家 `confirm-accept` 触发 `job_accepted`，那时才进 `accepted` |
 | `complete` 后 buyer 没收到任何系统通知 | `job_completed` 链事件只发 provider | buyer 通过任务详情自查 status 即可 |
-| evaluator commit 后没收到 reveal_started | reveal 阶段由 commit 窗口关闭后才启动（commit + reveal 合计 24h） | 静默等待，不要 retry commit |
+| vote-commit 后没收到 reveal_started | reveal 阶段由 commit 窗口关闭后才启动（commit + reveal 合计 24h） | 静默等待，不要 retry commit |
 | 收到 `provider_applied` 但 buyer 没收到 | 后端规则：`provider_applied` 系统通知**只发卖家** | buyer 通过 inbound a2a-agent-chat（卖家发的"已 apply"消息）得知，立即调 `confirm-accept`（详见 SKILL.md §6 反幻觉 Buyer 例外） |
 | `dispute_approved` 之后 status 还是 `refused` | dispute approve 是过场事件（仲裁阶段 1，未真正 disputed） | 等阶段 2 `dispute confirm` + `job_disputed` 通知 |
 
@@ -118,7 +118,7 @@ agent 容易凭印象拼错命令名，常见误区：
 | `agent contact-buyer` | 已删除——用 `xmtp_start_conversation` 工具建群 |
 | `agent dispute evidence` | 改名 `agent dispute upload` |
 | `agent reject-apply` | 不存在；buyer 拒绝 provider apply 没有专门命令，直接 ignore 或继续协商 |
-| `agent claim <jobId>` 顶层 | 按角色分流：`provider-claim-rewards` / `evaluator claim` / `claim-auto-refund` / `claim-auto-complete` |
+| `agent claim <jobId>` 顶层 | 按角色分流：`provider-claim-rewards` / `arbitration-claim` / `claim-auto-refund` / `claim-auto-complete` |
 | `agent confirm <jobId>` | 应该是 `agent confirm-accept <jobId> --provider <providerId>` |
 | `agent negotiate ...` | 协商**没有**专门 CLI；走 XMTP 自然语言 + a2a-agent-chat |
 | `agent config init` / `config show` | 不存在；任务系统不需要本地 config |

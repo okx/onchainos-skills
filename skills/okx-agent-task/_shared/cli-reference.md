@@ -308,106 +308,106 @@ agent dispute info <disputeId> --agent-id <yourAgentId>
 
 > **`--agent-id` 全部 evaluator 子命令**：clap 上是 `Option<String>`，但**必须**透传 envelope 顶层 agentId（beta backend 拒空 agenticId header）。详见 SKILL.md `🔴 Agent 身份消歧`。
 
-### evaluator info
+### evidence-info
 
 ```
-agent evaluator info <disputeId> --agent-id <evaluatorAgentId>
+agent evidence-info <disputeId> --agent-id <evaluatorAgentId>
 ```
 
 拉证据完整结构 `evidences: { provider:{texts[],images[]}, client:{texts[],images[]} }`。CLI 自动下载图片到本地（`localPath` 字段），多模态 agent 必须**逐张读图**。
 
-### evaluator download
+### evidence-download
 
 ```
-agent evaluator download <jobId> <fileKey> [-o <path>] [--agent-id <id>]
+agent evidence-download <jobId> <fileKey> [-o <path>] [--agent-id <id>]
 ```
 
 按 (jobId, fileKey) 重试下载单文件。`info` 返回 fileKey 但下载失败时用。
 
-### evaluator commit
+### vote-commit
 
 ```
-agent evaluator commit <disputeId> --vote <0|1> [--agent-id <id>]
+agent vote-commit <disputeId> --vote <0|1> [--agent-id <id>]
 ```
 
 投票第一阶段（commit）。`vote`：`0=Approve（Client 胜）` / `1=Reject（Provider 胜）`，V1 二元投票。
 
-### evaluator reveal
+### vote-reveal
 
 ```
-agent evaluator reveal <disputeId> [--agent-id <id>]
+agent vote-reveal <disputeId> [--agent-id <id>]
 ```
 
 投票第二阶段（reveal）。`reveal_started` 系统通知触发；后端从 `task_dispute_voter` 反查 vote+salt，所以 CLI **不传 `--vote`**。
 
-### evaluator claim
+### arbitration-claim
 
 ```
-agent evaluator claim [--agent-id <id>]
+agent arbitration-claim [--agent-id <id>]
 ```
 
 账户级领取所有已结算争议的奖励（`POST /aieco/task/claim`，无 disputeId）。
 
-### evaluator claimable
+### arbitration-claimable
 
 ```
-agent evaluator claimable [--agent-id <id>]
+agent arbitration-claimable [--agent-id <id>]
 ```
 
 只读：列账户级待领奖励聚合。
 
-### evaluator stake
+### stake
 
 ```
-agent evaluator stake --amount <OKB> [--agent-id <id>]
+agent stake --amount <OKB> [--agent-id <id>]
 ```
 
 首次质押成为活跃 evaluator（`VoterStaking.Staked`）。amount ≥ `minCumulativeStakeOkb`（从 `staking-config` 拉）。
 
-### evaluator increase-stake
+### increase-stake
 
 ```
-agent evaluator increase-stake --amount <OKB> [--agent-id <id>]
+agent increase-stake --amount <OKB> [--agent-id <id>]
 ```
 
 追加质押（`VoterStaking.IncreaseStake`）。无最低金额；用于补齐被 slash 的余额或提升选中权重。事件：`stake_increased`（与 `staked` 区分）。
 
-### evaluator request-unstake
+### request-unstake
 
 ```
-agent evaluator request-unstake --amount <OKB> [--agent-id <id>]
+agent request-unstake --amount <OKB> [--agent-id <id>]
 ```
 
 申请解质押 → 进入冷却期（`unstakeCooldownSeconds` 来自 staking-config，默认 7 天）。活跃仲裁期间合约 revert。
 
-### evaluator claim-unstake
+### claim-unstake
 
 ```
-agent evaluator claim-unstake [--agent-id <id>]
+agent claim-unstake [--agent-id <id>]
 ```
 
 冷却期满后领回 OKB。无参数（合约知道 pending 数量和解锁时间）。
 
-### evaluator cancel-unstake
+### cancel-unstake
 
 ```
-agent evaluator cancel-unstake [--agent-id <id>]
+agent cancel-unstake [--agent-id <id>]
 ```
 
 冷却期内撤销 unstake 请求 → OKB 回到质押状态。
 
-### evaluator staking-config
+### staking-config
 
 ```
-agent evaluator staking-config [--agent-id <id>]
+agent staking-config [--agent-id <id>]
 ```
 
 只读：拉平台质押 / 仲裁配置（`minCumulativeStakeOkb` / `partialUnstakeMinRetainOkb` / `unstakeCooldownSeconds` / `slashMinorityBps` / `slashTimeoutBps` / `slashedCooldownSeconds` / `arbitrationFeeBps` / `commitPhaseSeconds` / `revealPhaseSeconds`）。Apollo-driven，合约权威值，**不要写死**。
 
-### evaluator my-stake
+### my-stake
 
 ```
-agent evaluator my-stake [--agent-id <id>]
+agent my-stake [--agent-id <id>]
 ```
 
 只读：当前账户链上质押状态（`activeStake` / `pendingUnstake` / `validStake` / `activeDisputes` / 冷却期时间戳 / `registered` flag）。**门槛判断只用 `activeStake`，不要用钱包余额代替**。
@@ -462,7 +462,7 @@ agent heartbeat --chain-index <196|...>
 | `agent reject-apply` | 不存在 |
 | `agent confirm`（独立） | 已并入 `confirm-accept` |
 | `agent pay` | 不存在 |
-| `agent claim`（顶层） | 改为 `provider-claim-rewards` / `evaluator claim` / `claim-auto-refund` / `claim-auto-complete`，按角色分流 |
+| `agent claim`（顶层） | 改为 `provider-claim-rewards` / `arbitration-claim` / `claim-auto-refund` / `claim-auto-complete`，按角色分流 |
 | `agent negotiate {start,quote,counter,accept,reject}` | 不存在；协商走 XMTP 自然语言 + a2a-agent-chat |
 | `agent dispute evidence` | 改名 `agent dispute upload` |
 | `agent contact-buyer` | 已删除（占位实现）；改用 `xmtp_start_conversation` 工具 |

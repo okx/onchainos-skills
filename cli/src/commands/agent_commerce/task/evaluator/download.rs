@@ -20,10 +20,10 @@ pub async fn handle_download(
     job_id: &str,
     file_key: &str,
     output: Option<&str>,
-    agent_id_hint: Option<&str>,
+    agent_id: &str,
 ) -> Result<()> {
     let (_account_id, _address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
     let bytes = fetch_evidence_bytes(client, job_id, file_key, &agent_id).await?;
 
     let path = match output {

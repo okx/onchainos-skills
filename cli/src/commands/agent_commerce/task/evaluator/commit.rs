@@ -22,14 +22,14 @@ pub async fn handle_commit(
     client: &mut TaskApiClient,
     dispute_id: &str,
     vote: u8,
-    agent_id_hint: Option<&str>,
+    agent_id: &str,
 ) -> Result<()> {
     if vote != 0 && vote != 1 {
         bail!("--vote must be 0 (Approve, Client wins) or 1 (Reject, Provider wins)");
     }
     let job_id = parse_job_id(dispute_id)?;
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
     let body = serde_json::json!({ "vote": vote });
     let path = client.endpoint(&job_id, "vote/commit");

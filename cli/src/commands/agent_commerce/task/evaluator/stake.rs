@@ -3,6 +3,7 @@
 use anyhow::{bail, Result};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::evaluator::staking_types;
 use crate::commands::agent_commerce::task::signing;
 
 /// Evaluator OKB staking — onboarding handoff from identity skill.
@@ -24,7 +25,7 @@ use crate::commands::agent_commerce::task::signing;
 pub async fn handle_stake(
     client: &mut TaskApiClient,
     amount: &str,
-    agent_id_hint: Option<&str>,
+    agent_id: &str,
 ) -> Result<()> {
     let trimmed = amount.trim();
     if trimmed.is_empty() {
@@ -35,11 +36,11 @@ pub async fn handle_stake(
     }
 
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
     // best-effort 拉平台配置，做 UX 友好预检（首次质押天然等价于"本次 >= 最低门槛"）。
     // 失败 / 余额不可知场景下不阻塞，由合约 1001 兜底。
-    let cfg = client.get_staking_config(&agent_id).await.ok();
+    let cfg = staking_types::get_staking_config(client, &agent_id).await.ok();
     if let Some(c) = cfg.as_ref() {
         if let (Ok(amt), Ok(min)) = (
             trimmed.parse::<f64>(),

@@ -22,33 +22,10 @@
 //! 评估者规范 L2 + §3.7：用户偏好会引入社会压力/贿赂风险，必须隔离。
 //! 证据上传是链下操作（doc §7.8：No chain event for evidence），不再等"证据封期"信号。
 //!
-//! 文案中的经济参数（罚金比例、最低质押、冷却期）由调用方从 `/staking/config`
-//! best-effort 拉取并以 `Option<&StakingConfig>` 传入；拉取失败时使用占位符
-//! （如 `<TIMEOUT_PENALTY_RATE>`），agent 可在运行时自行调 `staking-config` 补全。
+//! 文案中若需要经济参数（罚金比例、最低质押、冷却期）真值，由 agent 自行调
+//! `onchainos agent staking-config` 获取；本模块不再预拉。
 
-use crate::commands::agent_commerce::task::common::network::task_api_client::StakingConfig;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
-
-// todo zhangxin .unwrap_or("<TIMEOUT_PENALTY_RATE>")
-fn slash_timeout_bps(cfg: Option<&StakingConfig>) -> &str {
-    cfg.map(|c| c.slash_timeout_bps.as_str())
-        .unwrap_or("<TIMEOUT_PENALTY_RATE>")
-}
-
-fn slash_minority_bps(cfg: Option<&StakingConfig>) -> &str {
-    cfg.map(|c| c.slash_minority_bps.as_str())
-        .unwrap_or("<MINORITY_PENALTY_RATE>")
-}
-
-fn min_cumulative_stake_okb(cfg: Option<&StakingConfig>) -> &str {
-    cfg.map(|c| c.min_cumulative_stake_okb.as_str())
-        .unwrap_or("<minCumulativeStakeOkb>")
-}
-
-fn unstake_cooldown_days(cfg: Option<&StakingConfig>) -> String {
-    cfg.map(|c| c.unstake_cooldown_days().to_string())
-        .unwrap_or_else(|| "<unstakeCooldownDays>".to_string())
-}
 
 /// 链事件入口的会话路由公共块：始终先 `xmtp_start_evaluate_conversation` 拿本任务仲裁 sub 的
 /// sessionKey（工具幂等），再用 `session_status` 拿当前 sessionKey，两者一致则继续原剧本，不一致
@@ -95,13 +72,13 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         vec![
             "  # 质押 CLI 决策规则：先 my-stake 看 `registered` —— false → stake，true → increase-stake。`registered=false` 三种成因（任一都需重新走 stake 注册 + 一次性补齐到门槛）：① 从未注册 ② 被 slash 累计跌破 minCumulativeStakeOkb 后合约去注册 ③ 解质押后 claim-unstake 全部领走、stake 清零合约去注册".to_string(),
             "  # 兜底（registered 读漏 / 链上状态滞后）：stake 报任何错 → **自动用同 amount + 同 agentId 跑一次 increase-stake** 再试；只重试一次，再失败把错误码原样推用户决定".to_string(),
-            "  onchainos agent evaluator my-stake --agent-id <agentId>                       # 【决策入口】查个人质押状态：重点看 `registered`（决定下一步 stake 还是 increase-stake）+ activeStake / pendingUnstake / cooldown / activeDisputes".to_string(),
-            "  onchainos agent evaluator staking-config --agent-id <agentId>                 # 查平台门槛（minCumulativeStakeOkb / cooldown / 罚没比例）".to_string(),
-            "  onchainos agent evaluator stake --amount <okb> --agent-id <agentId>            # my-stake.registered=false 时用：注册 + 首次/重新质押（amount ≥ minCumulativeStakeOkb；含 slash 跌破门槛 / 全额 claim-unstake 后的重新质押）。⚠️ 报错 → 自动 fallback 跑一次 increase-stake（同 amount/agentId）再试".to_string(),
-            "  onchainos agent evaluator increase-stake --amount <okb> --agent-id <agentId>   # my-stake.registered=true 时用：追加质押（无最小限制；registered=false 时调本命令会被合约拒）。也作为 stake 的失败兜底".to_string(),
-            "  onchainos agent evaluator request-unstake --amount <okb> --agent-id <agentId>  # 申请解质押（进入 cooldown；activeDisputes>0 会被合约 revert）".to_string(),
-            "  onchainos agent evaluator claim-unstake --agent-id <agentId>                  # cooldown 结束后领取解质押 OKB".to_string(),
-            "  onchainos agent evaluator cancel-unstake --agent-id <agentId>                 # cooldown 期内撤销解质押申请".to_string(),
+            "  onchainos agent my-stake --agent-id <agentId>                       # 【决策入口】查个人质押状态：重点看 `registered`（决定下一步 stake 还是 increase-stake）+ activeStake / pendingUnstake / cooldown / activeDisputes".to_string(),
+            "  onchainos agent staking-config --agent-id <agentId>                 # 查平台门槛（minCumulativeStakeOkb / cooldown / 罚没比例）".to_string(),
+            "  onchainos agent stake --amount <okb> --agent-id <agentId>            # my-stake.registered=false 时用：注册 + 首次/重新质押（amount ≥ minCumulativeStakeOkb；含 slash 跌破门槛 / 全额 claim-unstake 后的重新质押）。⚠️ 报错 → 自动 fallback 跑一次 increase-stake（同 amount/agentId）再试".to_string(),
+            "  onchainos agent increase-stake --amount <okb> --agent-id <agentId>   # my-stake.registered=true 时用：追加质押（无最小限制；registered=false 时调本命令会被合约拒）。也作为 stake 的失败兜底".to_string(),
+            "  onchainos agent request-unstake --amount <okb> --agent-id <agentId>  # 申请解质押（进入 cooldown；activeDisputes>0 会被合约 revert）".to_string(),
+            "  onchainos agent claim-unstake --agent-id <agentId>                  # cooldown 结束后领取解质押 OKB".to_string(),
+            "  onchainos agent cancel-unstake --agent-id <agentId>                 # cooldown 期内撤销解质押申请".to_string(),
         ]
     };
 
@@ -109,14 +86,14 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         Status::Disputed => vec![
             next_action("evaluator_selected"),
             ref_header,
-            "  onchainos agent evaluator info <disputeId> --agent-id <agentId>                # 查看仲裁详情（含证据；commit 阶段第一步）".to_string(),
-            "  onchainos agent evaluator commit <disputeId> --vote <0|1> --agent-id <agentId>  # 提交投票（0=Approve/Client 胜 / 1=Reject/Provider 胜，commit 阶段）".to_string(),
-            "  onchainos agent evaluator reveal <disputeId> --agent-id <agentId>              # 揭示投票（reveal_started 到达后才能调；不传 --vote，后端反查 vote+salt）".to_string(),
+            "  onchainos agent evidence-info <disputeId> --agent-id <agentId>                # 查看仲裁详情（含证据；commit 阶段第一步）".to_string(),
+            "  onchainos agent vote-commit <disputeId> --vote <0|1> --agent-id <agentId>     # 提交投票（0=Approve/Client 胜 / 1=Reject/Provider 胜，commit 阶段）".to_string(),
+            "  onchainos agent vote-reveal <disputeId> --agent-id <agentId>                  # 揭示投票（reveal_started 到达后才能调；不传 --vote，后端反查 vote+salt）".to_string(),
         ],
         Status::Completed | Status::Refunded => vec![
             next_action("dispute_resolved"),
             ref_header,
-            "  onchainos agent evaluator claim --agent-id <agentId>                           # 领取所有已结算仲裁奖励（account-pull，无 jobId）".to_string(),
+            "  onchainos agent arbitration-claim --agent-id <agentId>                        # 领取所有已结算仲裁奖励（account-pull，无 jobId）".to_string(),
             "（流程结束）裁决已上链，奖励/罚没由 reward_claimed / slashed 通知触发".to_string(),
         ],
         Status::Open | Status::Accepted | Status::Submitted | Status::Refused => {
@@ -141,25 +118,14 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 
 /// 根据 jobStatus 生成 evaluator 下一步动作的结构化提示词。
 ///
-/// `staking_cfg` 由调用方 best-effort 从 `/staking/config` 拉取，None 时使用 `cfg_defaults`。
-pub fn generate_next_action(
-    job_id: &str,
-    job_status: &str,
-    _agent_id: &str,
-    staking_cfg: Option<&StakingConfig>,
-) -> String {
-    let timeout_bps = slash_timeout_bps(staking_cfg);
-    let minority_bps = slash_minority_bps(staking_cfg);
-    let min_stake_okb = min_cumulative_stake_okb(staking_cfg);
-    let cooldown_days = unstake_cooldown_days(staking_cfg);
+/// 经济参数（罚金比例 / 最低质押 / 冷却期）不在此预拉：
+/// 1) sub session 给 agent 自看的剧本（evaluator_selected / reveal_started）只用作动机性文案，规则不依赖具体数值；
+/// 2) 推 user 的成功通知（staked / unstake_requested success）payload 已带 `amount` / `availableAt` 等关键字段；
+/// 3) 失败通知或需要真值的场合，由 agent 现场调 `onchainos agent staking-config`。
+/// todo 验证系统事件是否也会派发 failed 状态
+pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> String {
     let step_zero = arb_session_routing_step(job_id);
-    let cfg_warning = if staking_cfg.is_none() {
-        "⚠️ staking-config 未拉取到，下方经济参数使用占位符（<...>）；\
-         agent 应调 `onchainos agent evaluator staking-config` 获取真实值再展示给用户。\n\n"
-    } else {
-        ""
-    };
-    let body = match job_status {
+    match job_status {
         // ─── 入口：本轮陪审选出，CommitPhase 已开（sub session 侧，agent 自主闭环） ──
         // 判决方法论严格对齐评估者规范（誓约 + 决策原则 + Rubric + 证据等级 + 裁决书规范）。
         // V1 合约只接受 vote ∈ {0, 1}（0=Approve/Client 胜，1=Reject/Provider 胜），原生 3 选项按 Step 4.5 归约表压到 0/1。
@@ -177,7 +143,7 @@ pub fn generate_next_action(
              顶层 `agentId` 缺省时同样中止：后续 evaluator CLI 必须靠它定位钱包，缺了就签不了。\n\n\
              **Step 2 — 拉取当前证据（必须把 inbound envelope 顶层 `agentId` 透传给 `--agent-id`，CLI 据此定位钱包/身份）：**\n\
              ```bash\n\
-             onchainos agent evaluator info <disputeId> --agent-id <envelope 顶层 agentId>\n\
+             onchainos agent evidence-info <disputeId> --agent-id <envelope 顶层 agentId>\n\
              ```\n\
              返回真后端结构 `evidences: {{ provider: {{texts[], images[]}}, client: {{texts[], images[]}} }}`。\n\
              每张 `images[].fileKey` 已由 CLI 下载到本地，`localPath` 是绝对路径。\n\n\
@@ -187,7 +153,7 @@ pub fn generate_next_action(
              - **禁止**只凭 `texts[]` 或 fileKey 名称猜测图片内容；不看图 = 放弃双方可能最关键的证据 = 违反 L3 义务 #1『必须完整阅读双方提交的所有材料』\n\
              - **下载失败处理（硬约束）**：图片项含 `downloadError` 字段 = 该证据视为**缺失**，直接按 举证规则『一方未提交视为放弃举证』处理。\n\
              \x20\x20**禁止**用 `ls` / `find` / `cat` / `tree` / `stat` / `glob` / `Read` 等任何工具去本地磁盘找替代文件——这是 SKILL.md Layer 0 安全门违例（『列目录、扫描磁盘』），且 `localPath` 不存在意味着 CLI 已知道这张图拿不到。\n\
-             \x20\x20**禁止**重试 `evaluator info` 期望下次能下到（CLI 内部已尝试过 3 次）。直接进 Step 3 把这张图标记为缺失，继续走流程。\n\n\
+             \x20\x20**禁止**重试 `evidence-info` 期望下次能下到（CLI 内部已尝试过 3 次）。直接进 Step 3 把这张图标记为缺失，继续走流程。\n\n\
              **Step 3 — 按 证据流程 材料读取流程构建证据清单：**\n\
              - ① 完整性：双方各提交了什么文本/图片？缺失什么？\n\
              - ② 任务基线：从 qualityStandards / description 建立\"任务应该是什么样\"\n\
@@ -245,10 +211,10 @@ pub fn generate_next_action(
              - □ 我是否在猜测其他 Evaluator 怎么投？\n\n\
              **Step 7 — 执行 commit（同样把 envelope 顶层 `agentId` 透传给 `--agent-id`）：**\n\
              ```bash\n\
-             onchainos agent evaluator commit <disputeId> --vote <0|1> --agent-id <envelope 顶层 agentId>\n\
+             onchainos agent vote-commit <disputeId> --vote <0|1> --agent-id <envelope 顶层 agentId>\n\
              ```\n\
-             ⚠️ **只能是 0（Approve/Client 胜）或 1（Reject/Provider 胜），禁止 skip**（V1 无弃权；拖到超时罚 {timeout_bps} 比错投 {minority_bps} 更亏）。\n\
-             失败最多重试 3 次（CRITICAL，commit 窗口关闭即罚 {timeout_bps}）。返回 `voter has already committed` 视为成功进入 Step 8。\n\
+             ⚠️ **只能是 0（Approve/Client 胜）或 1（Reject/Provider 胜），禁止 skip**（V1 无弃权；拖到超时被罚没的损失通常大于错投少数票）。\n\
+             失败最多重试 3 次（CRITICAL，commit 窗口关闭即触发超时罚没）。返回 `voter has already committed` 视为成功进入 Step 8。\n\
              body 只带 `vote`；裁决书（Step 5）仅保留在 session 记忆，**不写入后端、不写本地、不推 user session**（后端反查 vote+salt 提供 reveal 所需，CLI 不持久化）。\n\n\
              ⚠️ **错误兜底硬约束（agent 失控反例）**：commit 报 `当前账户没有 evaluator（仲裁者） 身份，请先注册` / `code=2004` 时——\n\
              - **禁止**调 `onchainos agent create` / `agent register` / `identity_register` 任何注册类命令（链上写入、烧 gas、修改全局状态——evaluator 身份注册是用户主动决定的事，不是 sub session 自作主张能干的）\n\
@@ -276,7 +242,7 @@ pub fn generate_next_action(
              {step_zero}\
              **Step 1 — 从 inbound envelope 提取 `disputeId` 与顶层 `agentId`，执行 reveal：**\n\
              ```bash\n\
-             onchainos agent evaluator reveal <disputeId> --agent-id <envelope 顶层 agentId>\n\
+             onchainos agent vote-reveal <disputeId> --agent-id <envelope 顶层 agentId>\n\
              ```\n\
              ⚠️ `disputeId` 缺省 → 输出 `missing disputeId in payload; abort` 日志结束，不要 fallback 编造（真后端 `disputeId = keccak256(jobId, roundNumber)`，第 2+ 轮重选时旧 id 一定对不上合约）。\n\
              \x20**不传 `--vote`**：post-2026-05 协议下后端从 `task_dispute_voter` 反查 vote+salt，CLI body 只发空 `{{}}`。\n\n\
@@ -285,7 +251,7 @@ pub fn generate_next_action(
              【错误映射】\n\
              - `canReveal=false` → CLI 已预检拒绝，无需重试；本轮可能已结算（等 dispute_resolved）或未 commit（正常跳过）\n\
              - `voter has not committed` → 本轮未 commit，跳过 reveal 是正常的\n\
-             - 其他失败最多重试 3 次（未 reveal 罚 {timeout_bps}，经济参数附录 TIMEOUT_PENALTY_RATE）\n\n\
+             - 其他失败最多重试 3 次（未 reveal 会触发超时罚没，具体比例见 `staking-config`）\n\n\
              【后续事件】dispute_resolved / round_failed / reward_claimed / slashed 会继续在同一 sub session 到达。仅 reward_claimed 和 slashed 会转发到user session。\n"
         ),
 
@@ -299,7 +265,7 @@ pub fn generate_next_action(
              **Step 1 — 从 payload 提取 `winningSide` / `yourVote`。**\n\n\
              **Step 2 — 若 `yourVote` 与 `winningSide` 一致（多数方），立即领取奖励（透传 envelope 顶层 `agentId`）：**\n\
              ```bash\n\
-             onchainos agent evaluator claim --agent-id <envelope 顶层 agentId>\n\
+             onchainos agent arbitration-claim --agent-id <envelope 顶层 agentId>\n\
              ```\n\
              ⚠️ account 级 pull 模式：除 `--agent-id` 外不带其它业务参数，一次把所有已结算 dispute 的待领奖励一起领出来（后端 `POST /task/claim`，空 body）。\n\
              失败最多重试 3 次。真正的入账确认会通过稍后到达的 `reward_claimed` 事件告知用户（那个 arm 会 通知user session）。\n\
@@ -370,31 +336,27 @@ pub fn generate_next_action(
         ),
 
         // ─── 质押生命周期：sub 收到 → 通知user session 推人话给用户 ─────────────────
-        "staked" => format!(
-            "【当前状态】staked（VoterStaking.Staked 上链，质押 tx 结果（首次质押或追加质押均发此事件），sub session 侧）\n\
+        // 当前剧本只覆盖 success 推送路径；失败分支后续按需补回（届时由 agent 现场调 staking-config 取真值）。
+        // 若会，需要补回 failed 分支的用户通知文案（含 errorCode 解释、最低质押门槛、冷却期等真值）。
+        "staked" => "【当前状态】staked（VoterStaking.Staked 上链，质押 tx 结果（首次质押或追加质押均发此事件），sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 从 payload 提取字段 → 通知user session 推人话给用户。\n\n\
-             【Step 1】从 payload 提取 `status`（success / failed）、`amount`、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】用 `xmtp_dispatch_user` 把质押结果推给用户（按 status 二选一填 content）：\n\n\
+             【Step 1】从 payload 提取 `amount`、`txHash`（仅处理 success；failed 暂不推送，后续按需扩展）。\n\n\
+             【Step 2】用 `xmtp_dispatch_user` 把质押结果推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20success → [质押 ✅] 质押已生效：+<amount> OKB，txHash=<txHash>。你现在是活跃仲裁者候选。\n\
-             \x20\x20\x20\x20failed  → [质押失败 ⚠️] errorCode=<errorCode>, txHash=<txHash>。常见错误：4000 agentId 无效 / 2004 无 evaluator 身份 / 1001 累计质押 < {min_stake_okb} OKB（累计门槛规则，合约按 `已有余额 + 本次 >= {min_stake_okb}` 校验）。修正后跟我说『再质押 <N> OKB』我来重试。\n\n\
-             【Step 3】输出日志结束：`> staked status=<status> amount=<amount> relayed.`\n"
-        ),
+             \x20\x20\x20\x20[质押 ✅] 质押已生效：+<amount> OKB，txHash=<txHash>。你现在是活跃仲裁者候选。\n\n\
+             【Step 3】输出日志结束：`> staked amount=<amount> relayed.`\n".to_string(),
 
-        "unstake_requested" => format!(
-            "【当前状态】unstake_requested（VoterStaking.UnstakeRequested 上链，申请解质押 tx 结果，sub session 侧）\n\
+        "unstake_requested" => "【当前状态】unstake_requested（VoterStaking.UnstakeRequested 上链，申请解质押 tx 结果，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session — 通知user session 推人话给用户。\n\n\
-             【Step 1】从 payload 提取 `status`、`amount`、`availableAt`（冷却结束毫秒时间戳）、`txHash`、`errorCode`（若 failed）。\n\n\
-             【Step 2】用 `xmtp_dispatch_user` 把申请解质押结果推给用户（`availableAt` 转本地时间后再填进 content；按 status 二选一填 content）：\n\n\
+             【Step 1】从 payload 提取 `amount`、`availableAt`（冷却结束毫秒时间戳）、`txHash`（仅处理 success；failed 暂不推送，后续按需扩展）。\n\n\
+             【Step 2】用 `xmtp_dispatch_user` 把申请解质押结果推给用户（`availableAt` 转本地时间后再填进 content）：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20success → [解质押 ⏳] 申请已受理：-<amount> OKB 进入 {cooldown_days} 天冷却期，可领取时间 <availableAt 本地时间>。冷却期到了跟我说『领取解质押』我来提走；想中途撤销随时跟我说『取消解质押』（仅冷却期内有效）。\n\
-             \x20\x20\x20\x20failed  → [解质押失败 ⚠️] errorCode=<errorCode>, txHash=<txHash>。常见原因：活跃仲裁期间不可解质押 / 已在冷却期 / 余额不足。\n\n\
-             【Step 3】输出日志结束：`> unstake_requested status=<status> amount=<amount> relayed.`\n"
-        ),
+             \x20\x20\x20\x20[解质押 ⏳] 申请已受理：-<amount> OKB 进入冷却期，可领取时间 <availableAt 本地时间>。冷却期到了跟我说『领取解质押』我来提走；想中途撤销随时跟我说『取消解质押』（仅冷却期内有效）。\n\n\
+             【Step 3】输出日志结束：`> unstake_requested amount=<amount> relayed.`\n".to_string(),
 
         "unstake_claimed" => "【当前状态】unstake_claimed（VoterStaking.UnstakeClaimed 上链，领取解质押 tx 结果，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
@@ -424,7 +386,7 @@ pub fn generate_next_action(
              【会话类型】⚠️ Sub session — 无用户。这是**确认通知**，不是动作触发点。\n\n\
              【动作】仅记录 tx 成功状态；禁止重复 commit（后端会返回 `voter has already committed`）。**不调用 通知user session，不通知用户**——commit 是 agent 内部决策过程，用户感知由后续 dispute_resolved → reward_claimed / slashed 负责。\n\n\
              【输出】一行日志后结束：`> vote_committed recorded (silent).`\n\n\
-             【后续事件】等 `reveal_started`（开启 reveal 窗口）→ sub 里跑 `evaluator reveal`。\n".to_string(),
+             【后续事件】等 `reveal_started`（开启 reveal 窗口）→ sub 里跑 `vote-reveal`。\n".to_string(),
 
         "vote_revealed" => "【当前状态】vote_revealed（你自己的 reveal tx 上链 success，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
@@ -441,6 +403,5 @@ pub fn generate_next_action(
              【动作】无——输出一行日志 `> unknown event={other} at jobId={job_id} ignored.` 后结束。\n\
              禁止 通知user session、禁止拉 context、禁止猜测其他通知。\n"
         ),
-    };
-    format!("{cfg_warning}{body}")
+    }
 }

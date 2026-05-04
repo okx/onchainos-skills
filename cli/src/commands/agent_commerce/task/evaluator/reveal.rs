@@ -14,11 +14,11 @@ use crate::commands::agent_commerce::task::signing;
 pub async fn handle_reveal(
     client: &mut TaskApiClient,
     dispute_id: &str,
-    agent_id_hint: Option<&str>,
+    agent_id: &str,
 ) -> Result<()> {
     let job_id = parse_job_id(dispute_id)?;
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
     // Pre-check: avoid burning a tx when the reveal window isn't open or the round
     // already settled. Backend returns `{ canReveal: bool, reason?: string }`.
