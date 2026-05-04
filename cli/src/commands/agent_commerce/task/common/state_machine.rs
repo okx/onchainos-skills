@@ -322,11 +322,13 @@ pub fn status_when_event(e: &Event) -> Status {
         Event::JobDisputed                                                  => Status::Disputed,
         // review_expired 只表示 review 窗口结束，task 仍 submitted；要等 provider 调 claimAutoComplete 才进 completed
         Event::ReviewExpired                                                => Status::Submitted,
-        // 后端没有独立的 refunded 状态：仲裁退款 / 正常验收都终结到 Completed (6)。
-        // 区分由 event 字段承担（剧本路由按 Event 不按 Status）。
-        Event::JobCompleted | Event::JobAutoCompleted
-        | Event::JobRefunded | Event::JobAutoRefunded
-        | Event::DisputeResolved                                            => Status::Completed,
+        // 后端 TaskStatusEnum：6=COMPLETE（资金释放给卖家），9=REJECTED（资金退还买家）。
+        // 区分两种终态由 event 直接表达。
+        Event::JobCompleted | Event::JobAutoCompleted                       => Status::Completed,
+        Event::JobRefunded | Event::JobAutoRefunded                         => Status::Rejected,
+        // DisputeResolved 取决于裁决方（buyer-wins → Rejected；seller-wins → Completed）；
+        // 单从 event 不能确定，默认 Completed，调用方应优先调 `agent status` 拉真实 status。
+        Event::DisputeResolved                                              => Status::Completed,
         // 仲裁子状态机：所有事件都发生在 task=disputed 状态下
         Event::EvaluatorSelected | Event::RevealStarted
         | Event::VoteCommitted | Event::VoteRevealed
@@ -347,9 +349,10 @@ pub fn status_when_event(e: &Event) -> Status {
     }
 }
 
-/// 把任务推进到此 status 的**典型**入口事件。注意 Status::Completed 有多个可能入口
-/// （JobCompleted / JobRefunded / JobAutoCompleted / JobAutoRefunded / DisputeResolved），
-/// 这里只返回 happy-path 的 JobCompleted 作为 canonical；其他场景调用方自己按 event 判断。
+/// 把任务推进到此 status 的**典型**入口事件。
+/// - Status::Completed canonical = JobCompleted（happy-path 验收 / 仲裁卖家胜）
+/// - Status::Rejected canonical = JobRefunded（退款 / 仲裁买家胜）
+/// - DisputeResolved 不归属 canonical（同一 event 可能落 Completed 或 Rejected）
 pub fn entry_event(s: &Status) -> Option<Event> {
     match s {
         Status::Open         => Some(Event::JobCreated),
@@ -358,11 +361,11 @@ pub fn entry_event(s: &Status) -> Option<Event> {
         Status::Refused      => Some(Event::JobRefused),
         Status::Disputed     => Some(Event::JobDisputed),
         Status::Completed    => Some(Event::JobCompleted),
+        Status::Rejected     => Some(Event::JobRefunded),
         Status::Close        => Some(Event::JobClosed),
         Status::Expired      => Some(Event::JobExpired),
-        // ADMINSTOPPED / REJECTED 没有客户端可见的入口事件，由后端管理动作触发
+        // ADMINSTOPPED 由后端管理动作触发，无客户端可见入口
         Status::AdminStopped => None,
-        Status::Rejected     => None,
         Status::Other(_)     => None,
     }
 }
@@ -385,12 +388,13 @@ mod tests {
 
     #[test]
     fn status_event_roundtrip() {
-        // 仅校验 entry_event 返回 Some 的 status：通过 entry event 反推 status 应一致。
-        // Status::AdminStopped / Status::Rejected 不在客户端可见的 event 推导路径里（entry_event 返回 None），跳过。
-        // Status::Completed 含多个可能入口事件（JobCompleted / JobRefunded / DisputeResolved 等），entry_event 选 canonical JobCompleted。
+        // entry_event(s) → e ; status_when_event(e) 必须能反推回 s
+        // Status::AdminStopped 无客户端入口事件（entry_event 返回 None），跳过。
+        // Status::Completed → JobCompleted；Status::Rejected → JobRefunded（buyer-wins / 退款）
         for s in [
             Status::Open, Status::Accepted, Status::Submitted, Status::Refused,
-            Status::Disputed, Status::Completed, Status::Close, Status::Expired,
+            Status::Disputed, Status::Completed, Status::Rejected,
+            Status::Close, Status::Expired,
         ] {
             let e = entry_event(&s).expect("status 应该有 entry event");
             assert_eq!(status_when_event(&e), s, "entry_event/status_when_event mismatch for {:?}", s);

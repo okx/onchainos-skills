@@ -113,11 +113,12 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "  onchainos agent evaluator commit <disputeId> --vote <0|1> --agent-id <agentId>  # 提交投票（0=Approve/Client 胜 / 1=Reject/Provider 胜，commit 阶段）".to_string(),
             "  onchainos agent evaluator reveal <disputeId> --agent-id <agentId>              # 揭示投票（reveal_started 到达后才能调；不传 --vote，后端反查 vote+salt）".to_string(),
         ],
-        Status::Completed => vec![
+        Status::Completed | Status::Rejected => vec![
             next_action("dispute_resolved"),
             ref_header,
             "  onchainos agent evaluator claim --agent-id <agentId>                           # 领取所有已结算仲裁奖励（account-pull，无 jobId）".to_string(),
-            "（终态）裁决已上链，奖励/罚没由 reward_claimed / slashed 通知触发。COMPLETE 含 happy-path 验收 / 仲裁退款 / 同意退款，区分看 event 名。".to_string(),
+            "（终态，仲裁裁决已上链）COMPLETE = 资金释放给卖家（卖家胜）；REJECTED = 资金退还买家（买家胜）。".to_string(),
+            "evaluator 奖励 / 罚没由 reward_claimed / slashed 通知触发；只要本轮投票跟多数一致就有奖。".to_string(),
         ],
         Status::Open | Status::Accepted | Status::Submitted | Status::Refused => {
             let label = status.as_str();
@@ -128,12 +129,12 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             v.extend(staking_lifecycle());
             v
         }
-        Status::Close | Status::Expired | Status::AdminStopped | Status::Rejected => vec![
-            "（终态，非仲裁路径）任务已结束（CLOSE/EXPIRED/ADMINSTOPPED/REJECTED 之一），evaluator 无奖励可领。子 session 可关闭。".to_string(),
+        Status::Close | Status::Expired | Status::AdminStopped => vec![
+            "（终态，非仲裁路径）任务已结束（CLOSE/EXPIRED/ADMINSTOPPED 之一），evaluator 无奖励可领。子 session 可关闭。".to_string(),
         ],
         Status::Other(s) => {
             let mut v = vec![
-                format!("当前任务 status=`{s}` 不在 evaluator 关心的状态集（disputed 主动 / completed 终态领奖；open/accepted/submitted/refused 被动等待；close/expired/admin_stopped/rejected 终态无奖）内"),
+                format!("当前任务 status=`{s}` 不在 evaluator 关心的状态集（disputed 主动 / completed | rejected 终态领奖；open/accepted/submitted/refused 被动等待；close/expired/admin_stopped 终态无奖）内"),
                 "→ 本角色无需任何任务级动作，等下一个相关链事件再处理".to_string(),
                 "→ **不要**重复跑 `agent status` / `agent common context`（结果会一样），结束本轮 turn".to_string(),
                 ref_header,
