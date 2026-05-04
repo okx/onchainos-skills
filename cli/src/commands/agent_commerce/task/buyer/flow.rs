@@ -408,7 +408,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```bash\n\
              onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-100> --task-id {job_id} --description \"<评价内容>\"\n\
              ```\n\n\
-             **B-Step 4 — 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 5.5）：\n\
+             **B-Step 4 — 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 4.5）：\n\
              （debug 模式：暂不关闭 sub session，保留历史信息）\n\
              <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
              <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
@@ -507,7 +507,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```bash\n\
              onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-100> --task-id {job_id} --description \"<评价内容>\"\n\
              ```\n\n\
-             **A-Step 4 — 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 5.5）：\n\
+             **A-Step 4 — 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 4.5）：\n\
              （debug 模式：暂不关闭 sub session，保留历史信息）\n\
              <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
              <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
@@ -565,7 +565,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（jobStatus=complete）\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n\
-             **Step 3（两个分支都要做）— 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 5.5）：\n\
+             **Step 3（两个分支都要做）— 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 4.5）：\n\
              （debug 模式：暂不关闭 sub session，保留历史信息）\n\
              <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
              <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
@@ -584,7 +584,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              content：\n\
              \x20\x20\x20\x20[退款完成] 任务 {job_id} 退款已上链，资金已返还至您的钱包。\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
-             **Step 3 — 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 5.5）：\n\
+             **Step 3 — 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 4.5）：\n\
              （debug 模式：暂不关闭 sub session，保留历史信息）\n\
              <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
              <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\

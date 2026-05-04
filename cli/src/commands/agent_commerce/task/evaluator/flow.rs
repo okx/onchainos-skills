@@ -69,7 +69,7 @@ fn arb_session_routing_step(job_id: &str) -> String {
          **0.2** 调 `session_status` 工具拿当前 session 的 `sessionKey`，记作 `currentKey`。\n\n\
          **0.3** 比较两个 key：\n\
          - `currentKey == arbKey` → 已在仲裁 sub session 内，跳过本 Step，直接进入 Step 1 走原剧本。\n\
-         - `currentKey != arbKey`（含 user session `agent:main:main`、或其他任务/角色的 sub）→ 必须把入站系统通知**原样转发**到 arb sub，本 turn 不要执行后续 Step：\n\
+         - `currentKey != arbKey`（含 user session——`agent:main:main` 默认入口 / IM 桥接 session 等；或其他任务/角色的 sub）→ 必须把入站系统通知**原样转发**到 arb sub，本 turn 不要执行后续 Step：\n\
          \x20\x201) 调 `xmtp_dispatch_session`，参数 `sessionKey=<arbKey>`、`content=<把当前 inbound system envelope 整体序列化为 JSON 字符串原样塞入>`。\n\
          \x20\x20\x20\x20- ⚠️ **原样转发**：保留 envelope 全部字段（agentId / message.source / message.event / message.jobStatus / 业务 payload），**不要**改写、摘要、加 `[USER_DECISION_RELAY]` / `[STATUS_NOTIFY]` 之类前缀（那些前缀仅 user→sub 决策中继使用）。sub session agent 收到后会按系统通知标准流程重新触发 next-action。\n\
          \x20\x202) 结束本轮 turn——**禁止**在当前 session 继续执行 Step 1+，由 sub session agent 接手剧本。\n\n\

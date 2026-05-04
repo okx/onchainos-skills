@@ -84,7 +84,7 @@
 
 | 错误码 / 信息 | 触发原因 | 处理 |
 |---|---|---|
-| `forbidden` (任意 XMTP 工具) | 调用了被 `tools.sessions.visibility=tree` 卡住的工具（如 `Session Send` / `sessions.send`） | 切到白名单 10 个 XMTP 工具（见 SKILL.md Session 通信契约 5）；**不要 fallback 别的工具** |
+| `forbidden` (任意 XMTP 工具) | 调用了被 `tools.sessions.visibility=tree` 卡住的工具（如 `Session Send` / `sessions.send`） | 切到白名单 10 个 XMTP 工具（见 SKILL.md Session 通信契约 4）；**不要 fallback 别的工具** |
 | `xmtp_dispatch_user` / `xmtp_prompt_user` `timeout` | XMTP infra 抖动 | 推用户"派发失败，请重试"，**不要**改用 `Session Send`（会被拒） |
 | `xmtp_send` 之前没调 `session_status` | 缺 `sessionKey` 参数 | 严格两步：`session_status` → 拿 sessionKey → `xmtp_send`；同 turn 内 `session_status` 不重复调 |
 | `xmtp_file_upload` 文件路径不存在 | `--file` 参数指向用户机器上不存在的文件 | 让用户确认文件路径；不要瞎猜替代路径 |
