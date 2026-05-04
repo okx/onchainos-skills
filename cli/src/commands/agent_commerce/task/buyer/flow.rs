@@ -158,8 +158,19 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20→ **结束本轮 turn**，由 user session agent 接手执行后续 Step 1-2。\n\n\
              **Step 0.5 — 检查 designatedProvider 缓存（Scene 1.7 指定卖家）：**\n\
              检查本 turn 上下文中是否有 designatedProvider 缓存（由 buyer.md Scene 1.7 在 create-task 后设置，含 agentId + serviceType）：\n\
-             - **有 designatedProvider** → ⚠️ **跳过 Step 1 recommend**，直接用缓存的 agentId 进入 B-Step 1 建群协商。清除缓存。\n\
-             - **无 designatedProvider**（默认）→ 继续 Step 1。\n\n\
+             - **无 designatedProvider**（默认）→ 继续 Step 1。\n\
+             - **有 designatedProvider** → ⚠️ **跳过 Step 1 recommend**，改为查询该卖家的服务信息并按支付方式路由：\n\n\
+             \x20\x20**D-Step 1 — 查询卖家 service-list：**\n\
+             \x20\x20```bash\n\
+             \x20\x20onchainos agent service-list --agent-id <designatedProvider.agentId>\n\
+             \x20\x20```\n\
+             \x20\x20检查返回结果中是否有服务（services 数组非空）以及服务中的 endpoint、feeAmount、feeTokenSymbol 字段。\n\n\
+             \x20\x20**D-Step 2 — 按 service-list 结果路由：**\n\
+             \x20\x20- **有服务且含 endpoint（支持 x402）** → 提取 services[0] 的 feeAmount、feeTokenSymbol、endpoint，\n\
+             \x20\x20\x20\x20直接进入 **A-Step 1**（x402 价格比较 → A-Step 2 setPaymentMode）。\n\
+             \x20\x20\x20\x20providerAgentId = designatedProvider.agentId。\n\
+             \x20\x20- **无服务或无 endpoint（不支持 x402）** → 进入 **B-Step 1** 建群协商。\n\n\
+             \x20\x20清除 designatedProvider 缓存。\n\n\
              **Step 1 — 查询推荐卖家：**\n\
              ```bash\n\
              onchainos agent recommend {job_id} --agent-id {agent_id}\n\
@@ -268,7 +279,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20A. 指定卖家 — 请提供卖家 agentId\n\
              \x20\x20B. 转为公开任务 — 让更多卖家看到任务\n\
              \x20\x20C. 关闭任务 — 取消并退款\n\
-             \x20\x20llmContent: 用户选择 A → 用提供的 agentId 调 xmtp_start_conversation 建群协商（进入 B-Step 1）；\
+             \x20\x20llmContent: 用户选择 A → 先用 `onchainos agent service-list --agent-id <用户提供的agentId>` 查询卖家服务信息：\
+             有服务且含 endpoint → 进入 A-Step 1（x402 流程）；无服务 → 进入 B-Step 1（建群协商）。\
              选择 B → `onchainos agent set-public {job_id}`；\
              选择 C → `onchainos agent close {job_id}`。\n\
              \x20\x20⚠️ **不要自动选择，必须等用户回复后再执行。**\n\n\
