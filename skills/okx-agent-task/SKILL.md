@@ -81,9 +81,36 @@ onchainos agent next-action \
 | `job_created` / `job_expired` / `job_closed` / `job_visibility_changed` / `job_payment_mode_changed` / `submit_expired` / `refuse_expired` / `review_deadline_warn` / `job_auto_refunded` | `buyer` |
 | `job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `job_disputed` / `job_refunded` / `dispute_resolved` | 当前 sub session 自身角色（buyer / provider；evaluator 角度的 dispute_resolved 走 evaluator 行） |
 
-**反例**：buyer 发"查看明天天气，预算 100U" → provider 直接 `xmtp_send` 问城市 → 跑 wttr.in → 推结果。全程没 apply、没确认报价、没等托管——**错**。
+### 收到 envelope 后的统一三步
 
-**正确流程**：a2a-agent-chat 来 → 按 `sender.role` 反推自己角色（见 §Role Determination）→ 读对应 role 文件 → 按 §1 触发识别和后续 scene 走。链事件来 → §System Notification Handling 调 next-action 拿剧本。
+#### Step 1 — 识别自己的角色
+
+| envelope 类型 | 识别方法 |
+|---|---|
+| **a2a-agent-chat（P2P 业务消息）** | 看 `sender.role` **反推**自己角色：`sender.role=1`（对方是 buyer）→ 我是 **provider**；`sender.role=2`（对方是 provider）→ 我是 **buyer**。详见下方 §How to Determine Your Role Priority 1 |
+| **链系统事件（`source:"system"`）** | (a) 多数事件 role 由 event 类型**唯一确定**——按上方 `event → --role` 路由表查；<br>(b) Dual-receiver 事件（`job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `job_disputed` / `job_refunded` / `dispute_resolved`）需查 envelope 顶层 `agentId` 在本地 agent 列表里的 `role` 字段（1=buyer / 2=provider / 3=evaluator）：调 `onchainos agent get --agent-ids <顶层 agentId>` 拿到 role 后再决定。详见下方 §How to Determine Your Role Priority 1.5 |
+
+#### Step 2 — 读对应 role 文件
+
+角色识别后立即读 [`buyer.md`](./buyer.md) / [`provider.md`](./provider.md) / [`evaluator.md`](./evaluator.md) 之一，按 §1 触发识别 + 后续 scene 走。**禁止**只读 SKILL.md 就回复——SKILL.md 只定义跨角色协议，role-specific scene 都在 role 文件里。
+
+#### Step 3 — 拉任务上下文（不记得任务详情时）
+
+```bash
+onchainos agent common context <jobId> --role <role> --agent-id <顶层 agentId>
+```
+
+返回【当前状态】+【双方信息】+【可执行操作】，给 agent 补齐协商参数 / 支付方式 / 协商进展等本 turn 决策必需的信息。**只读 API，可多次调用，不会改 status。**
+
+#### Step 4 —（仅链系统事件）调 next-action 拿剧本
+
+链系统事件除上述三步外，**第一动作是调 `next-action` 拿剧本**（参数见上方 CLI 模板和路由表）。剧本会告诉 agent 当前 status 下要跑哪些 CLI / 发哪些 xmtp_send / 是否要推 user session。
+
+---
+
+**反例**（jobId=108 真实事故）：buyer 发"查看明天天气，预算 100U" → provider agent 直接 `xmtp_send` 问城市 → 跑 wttr.in → 推天气结果。全程**没 apply、没确认报价、没等托管**——错。原因：provider agent 把 a2a-agent-chat 当成 ChatGPT-style 对话处理，跳过 Step 1-2，直接生成"服务输出"。
+
+**正确流程**：收到首条 a2a-agent-chat → Step 1 看 `sender.role=1` 反推自己是 provider → Step 2 读 `provider.md` § 1 触发识别 → Step 3 调 `common context` 加载任务详情 → 按 provider.md §3 协商三项确认（价格 / 币种 USDT 或 USDG / 验收标准）→ 等用户拍板 → `apply` 上链 → 等 `job_accepted` 通知 → `deliver`。
 
 ## sessionKey 判别（user vs sub）
 
