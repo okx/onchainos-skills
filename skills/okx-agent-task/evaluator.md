@@ -9,7 +9,7 @@
 事件命名对齐后端 event 枚举。激活本 skill 的消息类型：
 
 > **前置：先确认 `--role evaluator`**
-> 收到 `source:"system"` envelope 时，先按 [SKILL.md → ABSOLUTE RULE → `--role` 选择表](./SKILL.md) 选 role；本表只覆盖 `--role evaluator` 命中的事件。`jobId` 字面值（含 `system_voter_staking` 等系统级 jobId）不参与判定，只看 `event` 字段。
+> 收到 `source:"system"` envelope 时，先按 [SKILL.md → §Activation → `event → --role` 路由表](./SKILL.md) 选 role；本表只覆盖 `--role evaluator` 命中的事件。`jobId` 字面值（含 `system_voter_staking` 等系统级 jobId）不参与判定，只看 `event` 字段。
 
 ### 事件路由总览（所有事件都在 sub session 收到）
 
