@@ -85,10 +85,10 @@ onchainos agent next-action \
 
 #### Step 1 — 识别自己的角色
 
-| envelope 类型 | 识别方法 |
-|---|---|
-| **a2a-agent-chat（P2P 业务消息）** | 看 `sender.role` **反推**自己角色：`sender.role=1`（对方是 buyer）→ 我是 **provider**；`sender.role=2`（对方是 provider）→ 我是 **buyer**。详见下方 §How to Determine Your Role Priority 1 |
-| **链系统事件（`source:"system"`）** | (a) 多数事件 role 由 event 类型**唯一确定**——按上方 `event → --role` 路由表查；<br>(b) Dual-receiver 事件（`job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `job_disputed` / `job_refunded` / `dispute_resolved`）需查 envelope 顶层 `agentId` 在本地 agent 列表里的 `role` 字段（1=buyer / 2=provider / 3=evaluator）：调 `onchainos agent get --agent-ids <顶层 agentId>` 拿到 role 后再决定。详见下方 §How to Determine Your Role Priority 1.5 |
+- **a2a-agent-chat (P2P)**：看 `sender.role` **反推**自己角色——`sender.role=1` 对方是 buyer → 我是 **provider**；`sender.role=2` 对方是 provider → 我是 **buyer**
+- **链系统事件 (`source:"system"`)**：role 多数由 event 类型唯一确定（按上方 `event → --role` 路由表查）；dual-receiver 事件（`job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `job_disputed` / `job_refunded` / `dispute_resolved`）需调 `onchainos agent get --agent-ids <顶层 agentId>` 反查该 agent 的 `role` 字段（1=buyer / 2=provider / 3=evaluator）
+
+> **完整规则**（含 inbound JSON envelope 示例、关键字段映射、多 agent 钱包 agentId 消歧、event vs status 优先级 等）见本文下方 `## How to Determine Your Role` 章节。本节只列**操作要点**，避免重复。
 
 #### Step 2 — 读对应 role 文件
 
