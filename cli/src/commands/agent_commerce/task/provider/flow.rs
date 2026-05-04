@@ -52,7 +52,9 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "（流程结束）资金已退还买家。子 session 可关闭。".to_string(),
         ],
         Status::Other(s) => vec![
-            format!("当前状态 `{s}` 不在标准状态机内 → 先 `onchainos agent status {job_id}` 查最新状态"),
+            format!("当前任务 status=`{s}` 不在 provider 关心的状态集（open / accepted / submitted / refused / disputed / completed / refunded）内"),
+            "→ 本角色无需任何任务级动作，等下一个相关链事件 / 用户决策再处理".to_string(),
+            "→ **不要**重复跑 `agent status` / `agent common context`（结果会一样），结束本轮 turn".to_string(),
         ],
     }
 }
@@ -62,7 +64,6 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 /// `job_status` 既能接 event 名（provider_applied / job_accepted / ...），
 /// 也能接 status 名（open / accepted / ...）—— 内部统一通过 state_machine
 /// 解析成 `Event`，看不认识的字符串保留 `Event::Other(s)` 兜底。
-/// todo ganmingtao 确认任务状态和收到系统消息的检查逻辑
 pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 

@@ -378,9 +378,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::AgreeRefund { .. } => "agree-refund".into(),
         AgentCommand::GetPayment { .. } => "get-payment".into(),
 
-        // Common
-        AgentCommand::RateAgent { .. } => "rate-agent".into(),
-
         // Sub-groups
         AgentCommand::Config { .. } => "config".into(),
         AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),

@@ -130,7 +130,9 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         }
         Status::Other(s) => {
             let mut v = vec![
-                format!("当前状态 `{s}` 不在标准状态机内 → 先 `onchainos agent status {job_id}` 查最新状态"),
+                format!("当前任务 status=`{s}` 不在 evaluator 关心的状态集（disputed / completed / refunded，及任务进行中的 open / accepted / submitted / refused 被动等待）内"),
+                "→ 本角色无需任何任务级动作，等下一个相关链事件再处理".to_string(),
+                "→ **不要**重复跑 `agent status` / `agent common context`（结果会一样），结束本轮 turn".to_string(),
                 ref_header,
             ];
             v.extend(staking_lifecycle());
