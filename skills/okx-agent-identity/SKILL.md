@@ -564,23 +564,3 @@ Phase-1 capture: `name=Alice`, `description=做 DeFi 分析`. **Fee=10 is discar
 | 我的 agent / my agents | `agent get` (no id) |
 | MCP 服务 / A2MCP（仅 `agent create` / `update` 的 service payload） | `servicetype=A2MCP` |
 | A2A 服务 / agent-to-agent（仅 `agent create` / `update` 的 service payload） | `servicetype=A2A` |
-
-## Installer Checksums
-
-<!-- BEGIN_INSTALLER_CHECKSUMS (auto-updated by release workflow — do not edit) -->
-```
-[TBD]  install.sh
-[TBD]  install.ps1
-```
-<!-- END_INSTALLER_CHECKSUMS -->
-
-## Binary Checksums
-
-<!-- BEGIN_CHECKSUMS (auto-updated by release workflow — do not edit) -->
-```
-[TBD]  onchainos-aarch64-apple-darwin
-[TBD]  onchainos-x86_64-apple-darwin
-[TBD]  onchainos-x86_64-unknown-linux-gnu
-[TBD]  onchainos-x86_64-pc-windows-msvc.exe
-```
-<!-- END_CHECKSUMS -->
