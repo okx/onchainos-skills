@@ -111,8 +111,8 @@ Seller formally applies after reaching agreement. Contains final agreed terms.
 }
 ```
 
-**Buyer action on receipt**: → Scene 3: call `onchainos agent confirm-accept` or `reject-apply`.
-On-chain result triggers `SYSTEM_NOTIFY event=task_accepted` to notify provider.
+**Buyer action on receipt**: → Scene 3: call `onchainos agent confirm-accept`（按 escrow / non_escrow / x402 三种 paymentMode 分流）；或不接受让 apply 窗口超时 / 用 `xmtp_send` 礼貌回拒。
+On-chain `confirm-accept` 后触发 `job_accepted` 系统通知给 provider。
 
 ---
 

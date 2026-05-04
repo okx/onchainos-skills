@@ -56,7 +56,7 @@ impl StakingConfig {  // todo zhangxin 挪走
 ///
 /// 与"钱包余额"是两个独立概念：余额在 EOA 上、可花费；`activeStake` 已经从余额转入
 /// `VoterStaking` 合约锁仓，扣过历史罚没。skill 的累计门槛判断必须用 `activeStake`，
-/// 不能拿 wallet balance 顶替（参见 evaluator.md §1.5）。
+/// 不能拿 wallet balance 顶替（参见 evaluator.md 1.5）。
 ///
 /// 金额字段保留后端原始 wei 字符串（最小单位，OKB 18 位精度），通过 `wei_to_okb`
 /// 转 UI 字符串。Unix 秒时间戳为 0 表示"不适用"。

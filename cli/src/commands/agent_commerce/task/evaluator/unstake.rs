@@ -1,6 +1,6 @@
 //! Evaluator 解质押生命周期 CLI。
 //!
-//! 对齐后端 staking API §12166–§12572：
+//! 对齐后端 staking API（spec L12166-L12572）：
 //! - `request-unstake --amount N` → POST /staking/requestUnstake（进入冷却期）
 //! - `claim-unstake`              → POST /staking/claimUnstake（冷却期后提走）
 //! - `cancel-unstake`             → POST /staking/cancelUnstake（冷却期内取消）

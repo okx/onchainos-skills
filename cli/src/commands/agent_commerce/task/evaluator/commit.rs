@@ -12,7 +12,7 @@ use crate::commands::agent_commerce::task::signing;
 ///
 /// Request body is strictly `{ vote }` per real API spec. The evaluator's rationale
 /// is NOT part of this API — it lives in agent thinking / session memory only (per evaluator.md
-/// §3.7: judgments are never pushed to the user; users perceive the result only via later
+/// references/evaluator-decision-rubric.md 7: judgments are never pushed to the user; users perceive the result only via later
 /// `reward_claimed` / `slashed` events). Not persisted to backend, not surfaced via xmtp.
 ///
 /// No local persistence: reveal is driven by the `reveal_started` system event whose

@@ -154,7 +154,7 @@ pub enum EvaluatorCommand {
     /// validStake / activeDisputes / cooldown timestamps / registered flag).
     /// Mirrors GET /priapi/v1/aieco/task/staking/myStake. JWT auth, no body, no agentId
     /// header — backend resolves from token. Use this (not wallet balance) for the
-    /// cumulative-stake threshold check in evaluator.md §1.5.
+    /// cumulative-stake threshold check in evaluator.md 1.5.
     #[command(name = "my-stake", visible_alias = "mystake")]
     MyStake {
         /// Evaluator agentId from inbound system envelope's top-level `agentId` field.

@@ -17,10 +17,10 @@
 //! | 其他方事件 | job_disputed | 完全忽略 |
 //!
 //! evaluator 在 `evaluator_selected`（VotersSelected 上链）时即介入——此刻 CommitPhase 已开，
-//! 在 sub session 里**自主闭环**完成 "拉证据（含看图）→ 按 决策原则/§3.5 判决 → 归约到 vote ∈ {{0,1}} → commit"。
+//! 在 sub session 里**自主闭环**完成 "拉证据（含看图）→ 按 references/evaluator-decision-rubric.md 2(决策原则) + 5(L4 自检) 判决 → 归约到 vote ∈ {{0,1}} → commit"。
 //! 判决过程不通知用户；用户感知由后续 dispute_resolved → reward_claimed / slashed 负责。
-//! 评估者规范 L2 + §3.7：用户偏好会引入社会压力/贿赂风险，必须隔离。
-//! 证据上传是链下操作（doc §7.8：No chain event for evidence），不再等"证据封期"信号。
+//! 评估者规范 L2 + references/evaluator-decision-rubric.md 7：用户偏好会引入社会压力/贿赂风险，必须隔离。
+//! 证据上传是链下操作（task 系统设计 doc 7.8: No chain event for evidence），不再等"证据封期"信号。
 //!
 //! 文案中的经济参数（罚金比例、最低质押、冷却期）由调用方从 `/staking/config`
 //! best-effort 拉取并以 `Option<&StakingConfig>` 传入；拉取失败时使用占位符
@@ -194,7 +194,7 @@ pub fn generate_next_action(
              - ③ 分歧点：对比 clientReason / providerReason 标记双方说法不同的地方\n\
              - ④ 证据关联：每个分歧点对应哪些证据（文本 + 图片），按 证据等级 打等级 S/A/B/C/D\n\
              - ⑤ 链上验证：若证据引用链上记录，做交叉验证（S/A 级直接采信；C/D 级需对方承认或交叉佐证）\n\n\
-             **Step 4 — 按 `disputeType` 选对应 Rubric 打分（Rubric），再按 §3.4 决策原则（优先级从高到低：证据为王 > 规格至上 > 举证责任 > 比例原则 > 模糊不利于起草方 > 沟通义务 > 善意推定 > 时间戳权威）收敛到 原生选项：**\n\
+             **Step 4 — 按 `disputeType` 选对应 Rubric 打分（Rubric），再按 references/evaluator-decision-rubric.md 2 决策原则（优先级从高到低：证据为王 > 规格至上 > 举证责任 > 比例原则 > 模糊不利于起草方 > 沟通义务 > 善意推定 > 时间戳权威）收敛到 原生选项：**\n\
              \n\
              | disputeType | Rubric 权重（满分 100） | 原生选项 |\n\
              |---|---|---|\n\
@@ -207,7 +207,7 @@ pub fn generate_next_action(
              | disputeType | 原生选项 | vote | 语义 |\n\
              |---|---|---|---|\n\
              | 质量 | 完成（总分 ≥ 80） | **1** | Reject 仲裁，Provider 胜，资金全额释放 |\n\
-             | 质量 | 部分完成（40-79）/ 未完成（< 40） | **0** | Approve 仲裁，Client 胜，资金退回——V1 无部分结算通道；按 §3.4 原则 #3『举证责任』质量争议由 Client 证明未完成 |\n\
+             | 质量 | 部分完成（40-79）/ 未完成（< 40） | **0** | Approve 仲裁，Client 胜，资金退回——V1 无部分结算通道；按 references/evaluator-decision-rubric.md 2 决策原则 #3『举证责任』质量争议由 Client 证明未完成 |\n\
              | 超时 | 责任在 Client / 不可抗力 | **1** | Reject 仲裁，Provider 不背锅 |\n\
              | 超时 | 责任在 Provider | **0** | Approve 仲裁，Provider 超时违约 |\n\
              | 恶意 | 不成立 | **1** | Reject 仲裁，被举报方无责 |\n\
@@ -255,11 +255,11 @@ pub fn generate_next_action(
              - **禁止**fallback 到查 identity / 找钱包 / 改 config 之类的迂回操作\n\
              - 直接：输出一行 `> commit aborted: evaluator identity not registered for this wallet; report to user via xmtp_dispatch_user`，**不**继续 Step 8，**不**自己跑识别流程，结束 turn 等用户处理\n\n\
              **Step 8 — 输出一行 sub session 日志后结束本回合。不调用 通知user session，不通知用户：**\n\n\
-             > Committed dispute=<disputeId> vote=<0|1> autonomously per 决策原则-§3.6.\n\n\
+             > Committed dispute=<disputeId> vote=<0|1> autonomously per references/evaluator-decision-rubric.md 6 commit 执行.\n\n\
              【原则】\n\
              - **完全静默**：本 arm 不 escalate_to_main、不 通知user session；用户只会在后续结算/罚没/奖励事件被通知\n\
              - **判决权威**：所有打分规则、决策原则、裁决书格式以 评估者规范 为准\n\
-             - **图片必读**：不读图即违反 L3 义务 #1 + §3.1 举证对称；这是本 arm 最重要的执行要求\n\n\
+             - **图片必读**：不读图即违反 L3 义务 #1 + references/evaluator-decision-rubric.md 2 决策原则 #3 举证责任；这是本 arm 最重要的执行要求\n\n\
              【后续事件】\n\
              - vote_committed → sub 里仅记录\n\
              - reveal_started → sub 里自动 reveal（envelope 带 disputeId）\n\

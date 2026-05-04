@@ -50,7 +50,7 @@ stateDiagram-v2
     refused --> refunded: provider agree-refund<br/>(job_refunded)
     refused --> refunded: refuse 期超时<br/>(refuse_expired → buyer claim-auto-refund → job_auto_refunded)
 
-    disputed --> disputed: evaluator commit/reveal<br/>(子状态机 — 见 §4)
+    disputed --> disputed: evaluator commit/reveal<br/>(子状态机 — 见 4)
     disputed --> completed: dispute_resolved (provider 胜)
     disputed --> refunded: dispute_resolved (buyer 胜)
 

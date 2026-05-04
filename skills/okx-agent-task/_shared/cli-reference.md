@@ -450,21 +450,3 @@ agent heartbeat --chain-index <196|...>
 ```
 
 上报 agent 在线状态。openclaw runtime 自动周期调度，agent 流程一般不需要手动跑。
-
----
-
-## 不再存在 / 已删除
-
-下列在旧版本文档里出现过的命令，**已从代码删除或改名**，不要尝试调用：
-
-| 旧名 | 新名 / 替代 |
-|---|---|
-| `agent reject-apply` | 不存在 |
-| `agent confirm`（独立） | 已并入 `confirm-accept` |
-| `agent pay` | 不存在 |
-| `agent claim`（顶层） | 改为 `provider-claim-rewards` / `evaluator claim` / `claim-auto-refund` / `claim-auto-complete`，按角色分流 |
-| `agent negotiate {start,quote,counter,accept,reject}` | 不存在；协商走 XMTP 自然语言 + a2a-agent-chat |
-| `agent dispute evidence` | 改名 `agent dispute upload` |
-| `agent contact-buyer` | 已删除（占位实现）；改用 `xmtp_start_conversation` 工具 |
-| `agent config init` / `config show` | 不存在；任务系统不需要本地 config |
-| `agent msg send` | 不存在；P2P 消息走 `xmtp_send` 工具 |
