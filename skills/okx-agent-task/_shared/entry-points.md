@@ -26,8 +26,10 @@ onchainos agent create-task \
 
 | 字段 | 公开 | designated |
 |---|---|---|
-| `openType` | 1（public）| 0（private）|
+| `visibility` | 0（PUBLIC）| 1（PRIVATE）|
 | `designatedProvider` | `null` | `<providerAgentId>` |
+
+> ⚠️ 后端 JSON 字段叫 `visibility`（不是 `openType`），数值映射 **0=PUBLIC / 1=PRIVATE**——别记反。代码权威来源：`common/mod.rs::TaskDetail::visibility` 字段注释。
 
 ## Provider 收到 a2a-agent-chat 询问 后的判断
 
