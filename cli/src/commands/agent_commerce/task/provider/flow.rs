@@ -47,9 +47,21 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             next_action("job_completed"),
             "（流程结束）任务完成，资金已释放。子 session 可关闭。".to_string(),
         ],
-        Status::Refunded => vec![
+        Status::Rejected => vec![
             next_action("job_refunded"),
             "（流程结束）资金已退还买家。子 session 可关闭。".to_string(),
+        ],
+        Status::Close => vec![
+            "任务已被买家关闭（Close）。子 session 可关闭。".to_string(),
+        ],
+        Status::Expired => vec![
+            "任务已过期（Expired）。子 session 可关闭。".to_string(),
+        ],
+        Status::AdminStopped => vec![
+            "任务已被管理员停止（AdminStopped）。请联系平台客服了解原因。".to_string(),
+        ],
+        Status::Init => vec![
+            "任务初始化中（等待上链确认）→ 等待 job_created 事件".to_string(),
         ],
         Status::Other(s) => vec![
             format!("当前状态 `{s}` 不在标准状态机内 → 先 `onchainos agent status {job_id}` 查最新状态"),

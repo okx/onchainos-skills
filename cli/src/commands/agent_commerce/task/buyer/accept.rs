@@ -5,9 +5,9 @@
 //! 流程：
 //! 1. setPaymentMode（单签上链）
 //! 2. 按支付方式分支：
-//!    - escrow:      providerConfirmStatus → a2a_pay::create_escrow(→paymentId) → a2a_pay::pay(→signature) → accept(signatureData) → sign uop → broadcast
+//!    - escrow:      providerConfirmStatus → a2a_pay::sign_escrow → accept(signatureData) → sign uop → broadcast
 //!    - non_escrow:  a2a_pay::pay() → direct/accept → sign uop → broadcast
-//!    - x402:        direct/accept → sign+broadcast → x402_request_sign_replay → direct/complete → sign+broadcast
+//!    - x402:        setPaymentMode 后 return（事件驱动：job_payment_mode_changed → Agent 做 x402 endpoint → direct-accept → job_accepted → complete）
 //!
 //! 接口文档：https://okg-block.sg.larksuite.com/wiki/UumqwSyM5i1AuakBNLClJo9igIb
 //! 支付设计：https://okg-block.sg.larksuite.com/docx/CwWbd6eCOopgq6x6VwTlWEivgrc
@@ -22,7 +22,6 @@ use crate::commands::agent_commerce::task::common::{
 use crate::commands::agent_commerce::task::signing;
 use crate::commands::payment::a2a_pay::{self, PayParams};
 use super::negotiate;
-use super::x402_flow;
 
 /// 通过 tokenDetail API 查询 token 合约地址和精度。
 /// GET /priapi/v1/aieco/task/tokenDetail?symbol=<symbol>
@@ -242,6 +241,7 @@ pub async fn handle_confirm_accept(
     token_symbol: Option<&str>,
     token_amount: Option<&str>,
     endpoint: Option<&str>,
+    resume: bool,
 ) -> Result<()> {
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
@@ -302,24 +302,46 @@ pub async fn handle_confirm_accept(
     }
 
     // ── Step 1: setPaymentMode（单签 + 广播上链）──────────────────────
-    let mode_int = common::payment_mode_to_int(&payment_mode);
-    let resp = client.post_with_identity(
-        &client.endpoint(job_id, "setPaymentMode"),
-        &serde_json::json!({ "paymentMode": mode_int }),
-        &agent_id,
-    ).await?;
+    // --resume 跳过 setPaymentMode，由 job_payment_mode_changed 事件触发时使用
+    if resume && payment_mode.as_str() == PAYMENT_MODE_X402 {
+        bail!("x402 不支持 --resume，请用 onchainos agent task-402-pay 执行 x402 阶段 2");
+    }
+    if !resume {
+        let mode_int = common::payment_mode_to_int(&payment_mode);
+        let resp = client.post_with_identity(
+            &client.endpoint(job_id, "setPaymentMode"),
+            &serde_json::json!({ "paymentMode": mode_int }),
+            &agent_id,
+        ).await?;
 
-    signing::sign_uop_and_broadcast(
-        client, &resp["uopData"], &account_id, &address,
-        job_id, signing::BizContext::JobSetPaymentMode, &agent_id,
-    ).await?;
-    println!("✓ 支付方式已设置: {payment_mode} ({mode_int})，等待链上确认 (20s)...");
+        signing::sign_uop_and_broadcast(
+            client, &resp["uopData"], &account_id, &address,
+            job_id, signing::BizContext::JobSetPaymentMode, &agent_id,
+        ).await?;
+        println!("✓ 支付方式已设置: {payment_mode} ({mode_int})，等待链上确认...");
 
-    // ── Step 1.5: 等待 job_payment_mode_changed 链上确认 ─────────────
-    // setPaymentMode 广播后需等链上状态更新（job_payment_mode_changed 通知），
-    // 固定等待 20 秒再继续下一步。
-    tokio::time::sleep(std::time::Duration::from_secs(20)).await;
-    println!("✓ 等待完成，继续执行");
+        if payment_mode.as_str() == PAYMENT_MODE_X402 {
+            let ep = x402_resolved.as_ref().map(|x| x.endpoint.as_str()).unwrap_or("");
+            let sym = x402_resolved.as_ref().map(|x| x.fee_token_symbol.as_str()).unwrap_or("");
+            let amt = x402_resolved.as_ref().map(|x| x.fee_amount).unwrap_or(0.0);
+            let msg = format!(
+                "x402 setPaymentMode 完成。provider={provider}, endpoint={ep}, fee={amt} {sym}",
+            );
+            let next = "等待 job_payment_mode_changed 系统通知 → Agent 执行 x402 endpoint 交互 → onchainos agent direct-accept".to_string();
+            crate::output::confirming(&msg, &next);
+            return Ok(());
+        }
+
+        // escrow / non_escrow: 事件驱动，等待 job_payment_mode_changed 通知后 --resume 继续
+        let msg = format!(
+            "setPaymentMode({payment_mode}) 完成。provider={provider}",
+        );
+        let next = format!(
+            "等待 job_payment_mode_changed 系统通知 → onchainos agent confirm-accept {job_id} --provider {provider} --payment-mode {payment_mode} --resume"
+        );
+        crate::output::confirming(&msg, &next);
+        return Ok(());
+    }
 
     // ── Step 2: 按支付方式分支处理 ──────────────────────────────────
     eprintln!("[debug] payment_mode 最终值: '{payment_mode}'");
@@ -575,66 +597,7 @@ pub async fn handle_confirm_accept(
             println!("  txHash: {tx_hash}");
         }
         PAYMENT_MODE_X402 => {
-            // ── x402 支付：参数由三级 fallback 解析（CLI > recommend > service-list）
-            let x402 = x402_resolved.as_ref().unwrap();
-
-            let sym = &x402.fee_token_symbol;
-            if sym.is_empty() {
-                bail!("x402: 服务信息中 feeTokenSymbol 为空");
-            }
-            let amt = x402.fee_amount;
-            if amt <= 0.0 {
-                bail!("x402: 服务信息中 feeAmount 无效 ({amt})");
-            }
-            let ep = &x402.endpoint;
-            if ep.is_empty() {
-                bail!("x402: 服务信息中 endpoint 为空");
-            }
-
-            // x402 Step 1: direct/accept（sessionCert 由 TaskApiClient 自动注入）
-            let amt_str = format!("{amt}");
-            let body = serde_json::json!({
-                "providerAgentId": provider,
-                "tokenSymbol": sym,
-                "tokenAmount": amt_str,
-            });
-            let resp = client.post_with_identity(
-                &client.endpoint(job_id, "direct/accept"),
-                &body,
-                &agent_id,
-            ).await?;
-
-            // x402 Step 2: 签名 uopData + 广播上链
-            let tx_hash = signing::sign_uop_and_broadcast(
-                client, &resp["uopData"], &account_id, &address,
-                job_id, signing::BizContext::JobAccept, &agent_id,
-            ).await?;
-            println!("✓ 已接受卖家 {provider}（x402 支付），金额: {amt} {sym}");
-            println!("  txHash: {tx_hash}");
-
-            // x402 Step 3: 调用 Provider endpoint 完成 x402 支付
-            println!("  x402: 开始调用 Provider endpoint ...");
-            let _flow_result = x402_flow::x402_request_sign_replay(
-                client.http(),
-                ep,
-                Some(&address),
-            ).await?;
-            println!("✓ x402 endpoint 调用完成");
-
-            // x402 Step 4: direct/complete（x402 不会收到 job_accepted 通知，直接 complete）
-            let complete_resp = client.post_with_identity(
-                &client.endpoint(job_id, "direct/complete"),
-                &serde_json::json!({}),
-                &agent_id,
-            ).await?;
-
-            let complete_tx = signing::sign_uop_and_broadcast(
-                client, &complete_resp["uopData"], &account_id, &address,
-                job_id, signing::BizContext::JobComplete, &agent_id,
-            ).await?;
-            println!("✓ 任务已完成（x402），金额: {amt} {sym}");
-            println!("  accept txHash:   {tx_hash}");
-            println!("  complete txHash: {complete_tx}");
+            bail!("x402 流程在 setPaymentMode 后结束，不应到达此分支；请用 onchainos agent task-402-pay 执行阶段 2");
         }
         other => {
             bail!("不支持的支付方式: {other}，可选: escrow / non_escrow / x402");
@@ -646,5 +609,166 @@ pub async fn handle_confirm_accept(
         eprintln!("⚠ 清理协商状态失败（可忽略）: {e}");
     }
 
+    Ok(())
+}
+
+/// direct-accept — x402 阶段 2b：收到 job_payment_mode_changed 后，Agent 完成 x402 endpoint 交互，
+/// 然后调此命令执行 direct/accept 上链。
+pub async fn handle_direct_accept(
+    client: &mut TaskApiClient,
+    job_id: &str,
+    provider: &str,
+    token_symbol: Option<&str>,
+    token_amount: Option<&str>,
+) -> Result<()> {
+    let (account_id, address, agent_id) =
+        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
+
+    let body = serde_json::json!({
+        "providerAgentId": provider,
+        "tokenSymbol": token_symbol.unwrap_or(""),
+        "tokenAmount": token_amount.unwrap_or(""),
+    });
+    eprintln!("[debug] direct-accept 入参: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
+
+    let resp = client.post_with_identity(
+        &client.endpoint(job_id, "direct/accept"),
+        &body,
+        &agent_id,
+    ).await?;
+
+    let tx_hash = signing::sign_uop_and_broadcast(
+        client, &resp["uopData"], &account_id, &address,
+        job_id, signing::BizContext::JobAccept, &agent_id,
+    ).await?;
+    println!("✓ direct/accept 完成（x402），任务状态 → accepted");
+    println!("  txHash: {tx_hash}");
+    println!("  等待 job_accepted 系统通知后执行 complete");
+
+    Ok(())
+}
+
+/// task-402-pay — x402 阶段 2：签名 + direct/accept + 重放 endpoint。
+///
+/// 流程：
+/// 1. 调用 x402_pay（解析 accepts → TEE/session 签名）→ 得到 Payment Credential
+/// 2. 执行 direct/accept → 签名 uopData → 广播上链
+/// 3. 用 Payment Credential 组装 header，重放 endpoint 获取交付物
+/// 4. 输出 replay 结果 + Payment Credential + txHash
+#[allow(clippy::too_many_arguments)]
+pub async fn handle_task_402_pay(
+    client: &mut TaskApiClient,
+    job_id: &str,
+    provider: &str,
+    accepts: &str,
+    endpoint: &str,
+    token_symbol: Option<&str>,
+    token_amount: Option<&str>,
+    from: Option<&str>,
+) -> Result<()> {
+    use crate::commands::agentic_wallet::payment;
+    use super::x402_flow;
+
+    // ── Step 1: x402_pay 签名 ──────────────────────────────────────
+    eprintln!("[task-402-pay] Step 1: x402_pay 签名");
+    eprintln!("[task-402-pay] accepts: {accepts}");
+    let proof = payment::x402_pay_from_accepts(accepts, from.map(|s| s.to_string())).await?;
+    eprintln!("[task-402-pay] x402_pay 完成: signature={}", proof.signature);
+
+    // ── Step 2: direct/accept 上链 ─────────────────────────────────
+    eprintln!("[task-402-pay] Step 2: direct/accept 上链");
+    let (account_id, address, agent_id) =
+        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
+
+    let body = serde_json::json!({
+        "providerAgentId": provider,
+        "tokenSymbol": token_symbol.unwrap_or(""),
+        "tokenAmount": token_amount.unwrap_or(""),
+    });
+    let resp = client.post_with_identity(
+        &client.endpoint(job_id, "direct/accept"),
+        &body,
+        &agent_id,
+    ).await?;
+
+    let tx_hash = signing::sign_uop_and_broadcast(
+        client, &resp["uopData"], &account_id, &address,
+        job_id, signing::BizContext::JobAccept, &agent_id,
+    ).await?;
+    eprintln!("[task-402-pay] direct/accept 广播完成: txHash={tx_hash}");
+
+    // ── Step 3: GET endpoint → 402 → 组装 header → 重放 ────────────
+    eprintln!("[task-402-pay] Step 3: GET endpoint {endpoint} → 获取完整 402 payload");
+    let http = reqwest::Client::new();
+
+    let initial_resp = http.get(endpoint).send().await
+        .map_err(|e| anyhow::anyhow!("请求 x402 endpoint 失败: {e}"))?;
+    let initial_status = initial_resp.status().as_u16();
+
+    if initial_status != 402 {
+        let body: serde_json::Value = initial_resp.json().await
+            .unwrap_or_else(|_| serde_json::json!({ "raw": "non-json response" }));
+        let success = (200..300).contains(&initial_status);
+        eprintln!("[task-402-pay] endpoint 返回 HTTP {initial_status}（非 402），直接作为结果");
+        crate::output::success(serde_json::json!({
+            "replaySuccess": success,
+            "replayStatus": initial_status,
+            "replayBody": body,
+            "signature": proof.signature,
+            "authorization": proof.authorization,
+            "sessionCert": proof.session_cert,
+            "txHash": tx_hash,
+        }));
+        return Ok(());
+    }
+
+    let resp_headers = initial_resp.headers().clone();
+    let resp_body_text = initial_resp.text().await
+        .map_err(|e| anyhow::anyhow!("读取 402 响应体失败: {e}"))?;
+    let x402_payload = x402_flow::decode_402_response(&resp_headers, &resp_body_text)?;
+    eprintln!("[task-402-pay] 402 payload: x402Version={}, accepts={} 条, resource={}",
+        x402_payload.x402_version, x402_payload.accepts.len(),
+        x402_payload.resource.is_some());
+
+    let x402_proof = x402_flow::X402PaymentProof {
+        signature: proof.signature.clone(),
+        authorization: serde_json::to_value(&proof.authorization)
+            .unwrap_or(serde_json::Value::Null),
+        session_cert: proof.session_cert.clone(),
+    };
+    let (header_name, header_value) = x402_flow::assemble_payment_header(&x402_proof, &x402_payload)?;
+
+    eprintln!("[task-402-pay] 重放 endpoint（{header_name}: ...）");
+    let replay_resp = http
+        .get(endpoint)
+        .header(&header_name, &header_value)
+        .send()
+        .await;
+
+    let (replay_success, replay_status, replay_body) = match replay_resp {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let body: serde_json::Value = resp.json().await
+                .unwrap_or_else(|_| serde_json::json!({ "raw": "non-json response" }));
+            let success = (200..300).contains(&status);
+            eprintln!("[task-402-pay] replay 结果: HTTP {status}, success={success}");
+            (success, status, body)
+        }
+        Err(e) => {
+            eprintln!("[task-402-pay] replay 请求失败: {e}");
+            (false, 0u16, serde_json::json!({ "error": e.to_string() }))
+        }
+    };
+
+    // ── Step 4: 输出完整结果 ───────────────────────────────────────
+    crate::output::success(serde_json::json!({
+        "replaySuccess": replay_success,
+        "replayStatus": replay_status,
+        "replayBody": replay_body,
+        "signature": proof.signature,
+        "authorization": proof.authorization,
+        "sessionCert": proof.session_cert,
+        "txHash": tx_hash,
+    }));
     Ok(())
 }

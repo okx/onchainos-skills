@@ -41,15 +41,23 @@ impl Role {
 // ─── Status ─────────────────────────────────────────────────────────────
 
 /// 任务在状态机里此刻的真实状态。后端 spec：响应回 `status: int`，本地用 [`Status::from_int`] 派生。
+///
+/// 对齐后端 `TaskStatusEnum`：
+/// INIT=-1, OPEN=0, ACCEPTED=1, SUBMITTED=2, REFUSED=3, DISPUTED=4,
+/// ADMINSTOPPED=5, COMPLETE=6, CLOSE=7, EXPIRED=8, REJECTED=9
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
+    Init,
     Open,
     Accepted,
     Submitted,
     Refused,
     Disputed,
+    AdminStopped,
     Completed,
-    Refunded,
+    Close,
+    Expired,
+    Rejected,
     /// 后端返回的、当前枚举不认识的状态字符串（容错保留原值）
     Other(String),
 }
@@ -58,42 +66,54 @@ impl Status {
     /// 字符串解析（用于 CLI `--jobStatus` 参数 / event 名解析），spec 字段是 int 应走 [`Self::from_int`]。
     pub fn parse(s: &str) -> Self {
         match s {
+            "init"                   => Status::Init,
             "open"                   => Status::Open,
             "accepted"               => Status::Accepted,
             "submitted"              => Status::Submitted,
             "refused"                => Status::Refused,
             "disputed"               => Status::Disputed,
+            "admin_stopped"          => Status::AdminStopped,
             "completed" | "complete" => Status::Completed,
-            "refunded"               => Status::Refunded,
+            "close"                  => Status::Close,
+            "expired"                => Status::Expired,
+            "rejected"               => Status::Rejected,
             other                    => Status::Other(other.to_string()),
         }
     }
 
     pub fn as_str(&self) -> &str {
         match self {
-            Status::Open      => "open",
-            Status::Accepted  => "accepted",
-            Status::Submitted => "submitted",
-            Status::Refused   => "refused",
-            Status::Disputed  => "disputed",
-            Status::Completed => "completed",
-            Status::Refunded  => "refunded",
-            Status::Other(s)  => s.as_str(),
+            Status::Init         => "init",
+            Status::Open         => "open",
+            Status::Accepted     => "accepted",
+            Status::Submitted    => "submitted",
+            Status::Refused      => "refused",
+            Status::Disputed     => "disputed",
+            Status::AdminStopped => "admin_stopped",
+            Status::Completed    => "completed",
+            Status::Close        => "close",
+            Status::Expired      => "expired",
+            Status::Rejected     => "rejected",
+            Status::Other(s)     => s.as_str(),
         }
     }
 
-    /// 后端 spec 的 `status` int 映射：
-    /// 0=open / 1=accepted / 2=submitted / 3=refused / 4=disputed / 5=complete /
-    /// 6=refunded / 7=close。其他取值按 `status_<n>` 兜底。
+    /// 后端 `TaskStatusEnum` int 映射：
+    /// -1=init / 0=open / 1=accepted / 2=submitted / 3=refused / 4=disputed /
+    /// 5=admin_stopped / 6=complete / 7=close / 8=expired / 9=rejected。
     pub fn from_int(n: i32) -> Self {
         match n {
-            0 => Status::Open,
-            1 => Status::Accepted,
-            2 => Status::Submitted,
-            3 => Status::Refused,
-            4 => Status::Disputed,
-            5 => Status::Completed,
-            6 => Status::Refunded,
+            -1 => Status::Init,
+             0 => Status::Open,
+             1 => Status::Accepted,
+             2 => Status::Submitted,
+             3 => Status::Refused,
+             4 => Status::Disputed,
+             5 => Status::AdminStopped,
+             6 => Status::Completed,
+             7 => Status::Close,
+             8 => Status::Expired,
+             9 => Status::Rejected,
             other => Status::Other(format!("status_{other}")),
         }
     }
@@ -307,7 +327,7 @@ pub fn status_when_event(e: &Event) -> Status {
         // review_expired 只表示 review 窗口结束，task 仍 submitted；要等 provider 调 claimAutoComplete 才进 completed
         Event::ReviewExpired                                                => Status::Submitted,
         Event::JobCompleted | Event::JobAutoCompleted                       => Status::Completed,
-        Event::JobRefunded | Event::JobAutoRefunded                         => Status::Refunded,
+        Event::JobRefunded | Event::JobAutoRefunded                         => Status::Rejected,
         Event::DisputeResolved                                              => Status::Completed,
         // 仲裁子状态机：所有事件都发生在 task=disputed 状态下
         Event::EvaluatorSelected | Event::RevealStarted
@@ -316,9 +336,10 @@ pub fn status_when_event(e: &Event) -> Status {
         // 提醒类（不改 status，task 还在原状态）
         Event::SubmitDeadlineWarn                                           => Status::Accepted,
         Event::ReviewDeadlineWarn                                           => Status::Submitted,
-        // 任务级 housekeeping 事件没有清晰的状态映射，保守用 Other
-        Event::JobExpired | Event::JobClosed
-        | Event::JobVisibilityChanged | Event::JobPaymentModeChanged       => Status::Other("housekeeping".to_string()),
+        Event::JobExpired                                                   => Status::Expired,
+        Event::JobClosed                                                    => Status::Close,
+        // visibility/paymentMode 是过场事件，不改 status
+        Event::JobVisibilityChanged | Event::JobPaymentModeChanged         => Status::Other("housekeeping".to_string()),
         // 质押 / 罚没 / 奖励 lifecycle 跟 task status 解耦
         Event::Staked | Event::StakeIncreased
         | Event::UnstakeRequested | Event::UnstakeClaimed | Event::UnstakeCancelled
@@ -331,14 +352,18 @@ pub fn status_when_event(e: &Event) -> Status {
 /// 把任务推进到此 status 的入口事件（每个非 Other status 都有唯一 entry event）。
 pub fn entry_event(s: &Status) -> Option<Event> {
     match s {
-        Status::Open      => Some(Event::JobCreated),
-        Status::Accepted  => Some(Event::JobAccepted),
-        Status::Submitted => Some(Event::JobSubmitted),
-        Status::Refused   => Some(Event::JobRefused),
-        Status::Disputed  => Some(Event::JobDisputed),
-        Status::Completed => Some(Event::JobCompleted),
-        Status::Refunded  => Some(Event::JobRefunded),
-        Status::Other(_)  => None,
+        Status::Init         => None,
+        Status::Open         => Some(Event::JobCreated),
+        Status::Accepted     => Some(Event::JobAccepted),
+        Status::Submitted    => Some(Event::JobSubmitted),
+        Status::Refused      => Some(Event::JobRefused),
+        Status::Disputed     => Some(Event::JobDisputed),
+        Status::AdminStopped => None,
+        Status::Completed    => Some(Event::JobCompleted),
+        Status::Close        => Some(Event::JobClosed),
+        Status::Expired      => Some(Event::JobExpired),
+        Status::Rejected     => Some(Event::JobRefunded),
+        Status::Other(_)     => None,
     }
 }
 
@@ -362,10 +387,10 @@ mod tests {
     fn status_event_roundtrip() {
         for s in [
             Status::Open, Status::Accepted, Status::Submitted, Status::Refused,
-            Status::Disputed, Status::Completed, Status::Refunded,
+            Status::Disputed, Status::Completed, Status::Close, Status::Expired,
+            Status::Rejected,
         ] {
             let e = entry_event(&s).expect("non-Other status should have entry event");
-            // entry_event 应该能再反推回相同 status（除 DisputeResolved 这种 default 模糊）
             assert_eq!(status_when_event(&e), s, "entry_event/status_when_event mismatch for {:?}", s);
         }
     }

@@ -20,14 +20,15 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             next_action("job_created"),
             ref_header,
             format!("  onchainos agent recommend {job_id} --agent-id <agentId>  # 查看推荐卖家"),
-            format!("  onchainos agent confirm-accept {job_id} --provider <addr> --payment-mode <escrow|non_escrow|x402> --token-symbol <sym> --token-amount <amt> [--endpoint <url>]  # 接受卖家并注资"),
+            format!("  onchainos agent confirm-accept {job_id} --provider <addr> --payment-mode <escrow|non_escrow|x402> --token-symbol <sym> --token-amount <amt> [--endpoint <url>]  # 接受卖家（x402 只做 setPaymentMode）"),
+            format!("  onchainos agent direct-accept {job_id} --provider <agentId> --token-symbol <sym> --token-amount <amt>  # x402 阶段 2b: endpoint 交互后调用"),
             format!("  onchainos agent close {job_id}          # 关闭任务"),
             format!("  onchainos agent set-public {job_id}     # 转为公开任务"),
         ],
         Status::Accepted => vec![
             next_action("job_accepted"),
             ref_header.clone(),
-            format!("  onchainos agent complete {job_id}       # 非担保：接单后立即 direct/complete 完成支付链路"),
+            format!("  onchainos agent complete {job_id}       # 非担保/x402：接单后立即 direct/complete 完成支付链路"),
             "（escrow 被动等待）卖家执行任务中：job_submitted → 进入验收".to_string(),
         ],
         Status::Submitted => vec![
@@ -51,9 +52,22 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "（escrow 流程结束）任务完成，资金已释放。子 session 可关闭。".to_string(),
             "（non_escrow）任务支付链路完成，等待卖家提交交付物。".to_string(),
         ],
-        Status::Refunded => vec![
+        Status::Rejected => vec![
             next_action("job_refunded"),
             "（流程结束）退款已到账。子 session 可关闭。".to_string(),
+        ],
+        Status::Close => vec![
+            "任务已关闭（Close）。子 session 可关闭。".to_string(),
+        ],
+        Status::Expired => vec![
+            "任务已过期（Expired）。".to_string(),
+            format!("  onchainos agent claim-auto-refund {job_id}  # 领取自动退款"),
+        ],
+        Status::AdminStopped => vec![
+            "任务已被管理员停止（AdminStopped）。请联系平台客服了解原因。".to_string(),
+        ],
+        Status::Init => vec![
+            "任务初始化中（等待上链确认）→ 等待 job_created 事件".to_string(),
         ],
         Status::Other(s) => vec![
             format!("当前状态 `{s}` 不在标准状态机内 → 先 `onchainos agent status {job_id}` 查最新状态"),
@@ -166,17 +180,17 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              与任务预算（<tokenAmount> <tokenSymbol>）不一致，是否确认使用该卖家？\n\
              \x20\x20→ 用户确认 → 执行 A-Step 2\n\
              \x20\x20→ 用户拒绝 → `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断\n\n\
-             **A-Step 2 — 买家 accept（x402）：**\n\
+             **A-Step 2 — setPaymentMode（x402 阶段 1）：**\n\
              ```bash\n\
              onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode x402 --token-symbol <feeTokenSymbol> --token-amount <feeAmount> --endpoint <endpoint>\n\
              ```\n\
              参数来源：recommend 输出的 services[0] 中的 feeTokenSymbol、feeAmount、endpoint。\n\
-             ⚠️ CLI 内部有三级 fallback（CLI flag > recommend 缓存 > service-list API），但显式传参最可靠。\n\
-             （命令内部自动执行：setPaymentMode(3) → direct/accept → 签名广播 → x402 endpoint 支付 → direct/complete → 签名广播）\n\n\
-             2. 完成后任务状态 → complete（x402 不会收到 job_accepted 通知，命令内部直接 complete）。\n\n\
-             **A-Step 3 — 调用 xmtp_dispatch_user 通知用户结果：**\n\
-             \x20\x20content: 任务 {job_id} 已通过 x402 自动完成。卖家 AgentID=<providerAgentId>，\
-             费用=<feeAmount> <feeTokenSymbol>。任务已完成，等待卖家交付。\n\n\
+             命令只执行 setPaymentMode(3) → 签名 → 广播，然后返回（exit code 2, confirming）。\n\
+             ⚠️ 返回的 JSON 中含 provider / endpoint / feeAmount / feeTokenSymbol，后续阶段需要用到。\n\n\
+             **A-Step 3 — 通知用户并等待事件：**\n\
+             调用 xmtp_dispatch_user：\n\
+             \x20\x20content: 任务 {job_id} 支付方式已设置为 x402，正在等待链上确认...\n\n\
+             → **结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知触发阶段 2。\n\n\
              ━━━━━━━━━ 分支 B：supportA2MCP=false → A2A（需协商）━━━━━━━━━\n\n\
              **B-Step 1 — 建群：**\n\
              调 xmtp_start_conversation 工具建群 + 创建 sub session：\n\
@@ -259,7 +273,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              选择 C → `onchainos agent close {job_id}`。\n\
              \x20\x20⚠️ **不要自动选择，必须等用户回复后再执行。**\n\n\
              【后续事件】\n\
-             - x402 → confirm-accept 完成后等待 job_accepted\n\
+             - x402 → setPaymentMode 完成 → job_payment_mode_changed → x402 endpoint 交互 + direct-accept → job_accepted → complete\n\
              - A2A escrow → 协商完成 → 卖家 apply → provider_applied → 买家 confirm-accept → job_accepted\n\
              - A2A non_escrow → 协商完成 → 卖家 create_payment_charge → 发 paymentId → 买家 confirm-accept → job_accepted\n"
         ),
@@ -325,7 +339,36 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              （内部：POST /priapi/v1/aieco/task/{job_id}/direct/complete → 获取 calldata → 签名 uopHash → 广播上链）\n\n\
              **B-Step 2 — 等待 job_completed 系统通知**，不要在此 turn 做更多动作。\n\n\
              【后续事件】\n\
-             - job_completed → 通知 user session，等待卖家提交交付物\n"
+             - job_completed → 通知 user session，等待卖家提交交付物\n\n\
+             ━━━━━━━━━ 分支 C：x402 ━━━━━━━━━\n\n\
+             ⚠️ 先检查上一步 `task-402-pay` 输出中的 `replaySuccess` 字段：\n\n\
+             **C-分支 1：replaySuccess=true（重放成功，交付物已获取）**\n\n\
+             **C-Step 1 — 执行 complete（单签）：**\n\
+             ```bash\n\
+             onchainos agent complete {job_id}\n\
+             ```\n\
+             （内部：POST /priapi/v1/aieco/task/{job_id}/direct/complete → 获取 calldata → 签名 uopHash → 广播上链）\n\n\
+             **C-Step 2 — 通知用户任务已完成（含交付物内容）：**\n\
+             调用 xmtp_dispatch_user：\n\
+             \x20\x20content:\n\
+             \x20\x20[x402 任务完成] 任务 {job_id} 已通过 x402 完成全部流程。\n\
+             \x20\x20卖家 AgentID：<providerAgentId>\n\
+             \x20\x20金额：<tokenAmount> <tokenSymbol>\n\
+             \x20\x20---交付物内容---\n\
+             \x20\x20<replayBody 完整内容，JSON 则格式化输出>\n\
+             \x20\x20---交付物结束---\n\n\
+             **C-分支 2：replaySuccess=false（重放失败，未获取交付物）**\n\n\
+             ⚠️ **不要执行 complete**——买家未收到交付物，不能完成支付。\n\n\
+             **C-Step 1 — 通知用户重放失败：**\n\
+             调用 xmtp_dispatch_user：\n\
+             \x20\x20content:\n\
+             \x20\x20[x402 重放失败] 任务 {job_id} 已接单但 endpoint 重放失败。\n\
+             \x20\x20HTTP 状态：<replayStatus>\n\
+             \x20\x20错误信息：<replayBody>\n\
+             \x20\x20任务已进入 accepted 状态，等待进一步处理。\n\n\
+             【后续事件】\n\
+             - replaySuccess=true: job_completed → 最终确认\n\
+             - replaySuccess=false: 等待用户指示（可重试或关闭任务）\n"
         ),
 
         // ─── Scene 7: 卖家提交交付物，下载 + 验收（区分支付方式） ─────────
@@ -708,11 +751,60 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
              检查 payload 中 status 字段：\n\
-             - success → 支付模式已切换\n\
-             - failed → 切换失败，按 errorCode 重试\n\n\
-             **通知用户：**\n\
+             - failed → 切换失败，按 errorCode 重试\n\
+             - success → 按支付方式分流：\n\n\
+             **Step 1 — 查询当前支付方式：**\n\
+             ```bash\n\
+             onchainos agent status {job_id}\n\
+             ```\n\
+             提取 paymentMode（int：1=escrow, 2=non_escrow, 3=x402）。\n\n\
+             ━━━━━━━━━ escrow / non_escrow — 继续执行 confirm-accept ━━━━━━━━━\n\n\
+             从上一步 confirm-accept 的 confirming 输出中提取 provider、payment-mode。\n\
+             如果上下文中没有，从 recommend 缓存获取：\n\
+             ```bash\n\
+             onchainos agent recommend {job_id} --current\n\
+             ```\n\n\
+             **Step 2 — 调用 confirm-accept --resume 继续执行支付流程：**\n\
+             ```bash\n\
+             onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode <escrow|non_escrow> --token-symbol <sym> --token-amount <amt> --resume\n\
+             ```\n\
+             ⚠️ `--resume` 跳过 setPaymentMode（已完成），直接执行后续的 escrow/non_escrow 支付签名 + accept 上链。\n\
+             ⚠️ non_escrow 还需传 `--payment-id <pid>`（卖家通过 XMTP 传递的 payment_id）。\n\n\
+             **Step 3 — 通知用户：**\n\
              调用 xmtp_dispatch_user：\n\
-             content: \"任务 {job_id} 支付模式已更新。\"\n"
+             \x20\x20content: 任务 {job_id} 支付模式已确认上链，正在执行支付签名...\n\n\
+             → 等待 confirm-accept --resume 执行完成 → 等待 `job_accepted` 系统通知。\n\n\
+             ━━━━━━━━━ x402（paymentMode=3）━━━━━━━━━\n\n\
+             从上一步 confirm-accept 的 confirming 输出中提取 endpoint、feeTokenSymbol、feeAmount、provider。\n\
+             如果上下文中没有，从 recommend 缓存获取：\n\
+             ```bash\n\
+             onchainos agent recommend {job_id} --current\n\
+             ```\n\n\
+             **x402 阶段 2 Step 1 — GET provider endpoint：**\n\
+             GET <endpoint> → 收到 HTTP 402（Payment Challenge，含 accepts 数组）\n\n\
+             **x402 阶段 2 Step 2 — 签名 + direct/accept + 重放 endpoint（原子命令）：**\n\
+             ```bash\n\
+             onchainos agent task-402-pay {job_id} --provider <providerAgentId> --accepts '<402 响应中的 accepts JSON>' --endpoint <endpoint URL> --token-symbol <feeTokenSymbol> --token-amount <feeAmount>\n\
+             ```\n\
+             内部执行：x402_pay 签名 → direct/accept 上链 → 组装 payment header → 重放 endpoint\n\
+             输出：{{ replaySuccess, replayStatus, replayBody, signature, authorization, sessionCert, txHash }}\n\n\
+             **x402 阶段 2 Step 3 — 检查重放结果并通知用户：**\n\
+             - replaySuccess=true → 交付物在 replayBody 中。**立即**调用 xmtp_dispatch_user 将交付物发送给用户：\n\
+             \x20\x20content:\n\
+             \x20\x20[x402 交付物已获取] 任务 {job_id} endpoint 重放成功。\n\
+             \x20\x20卖家 AgentID：<providerAgentId>\n\
+             \x20\x20金额：<tokenAmount> <tokenSymbol>\n\
+             \x20\x20---交付物内容---\n\
+             \x20\x20<replayBody 完整内容，JSON 则格式化输出>\n\
+             \x20\x20---交付物结束---\n\
+             \x20\x20正在等待链上确认（job_accepted），确认后将自动完成任务。\n\n\
+             - replaySuccess=false → 调用 xmtp_dispatch_user 通知用户重放失败：\n\
+             \x20\x20content:\n\
+             \x20\x20[x402 重放失败] 任务 {job_id} 已接单但 endpoint 重放失败。\n\
+             \x20\x20HTTP 状态：<replayStatus>\n\
+             \x20\x20错误信息：<replayBody>\n\
+             \x20\x20等待 `job_accepted` 后**不会自动执行 complete**，需要用户指示。\n\n\
+             → **结束本轮 turn**，等待 `job_accepted` 系统通知。\n"
         ),
 
         // ─── 关闭任务（仅 Open 状态可用，user-instruction 伪 event）─────

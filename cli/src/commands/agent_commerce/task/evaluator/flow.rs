@@ -112,7 +112,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "  onchainos agent evaluator commit <disputeId> --vote <0|1> --agent-id <agentId>  # 提交投票（0=Approve/Client 胜 / 1=Reject/Provider 胜，commit 阶段）".to_string(),
             "  onchainos agent evaluator reveal <disputeId> --agent-id <agentId>              # 揭示投票（reveal_started 到达后才能调；不传 --vote，后端反查 vote+salt）".to_string(),
         ],
-        Status::Completed | Status::Refunded => vec![
+        Status::Completed | Status::Rejected => vec![
             next_action("dispute_resolved"),
             ref_header,
             "  onchainos agent evaluator claim --agent-id <agentId>                           # 领取所有已结算仲裁奖励（account-pull，无 jobId）".to_string(),
@@ -127,6 +127,9 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             v.extend(staking_lifecycle());
             v
         }
+        Status::Close | Status::Expired | Status::AdminStopped | Status::Init => vec![
+            format!("任务 status={} → 非活跃状态，evaluator 无需操作。", status.as_str()),
+        ],
         Status::Other(s) => {
             let mut v = vec![
                 format!("当前状态 `{s}` 不在标准状态机内 → 先 `onchainos agent status {job_id}` 查最新状态"),
