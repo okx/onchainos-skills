@@ -47,7 +47,7 @@
 | `code=1001` + `msg` 含 `task not found` / `jobId not exists` | jobId 不存在 / 拼错 / 已被清理 | 跑 `agent list` 让用户选；envelope 触发的不可能拼错——这种情况推 user session 报"任务 X 找不到" |
 | `code=1001` + `msg` 含 `invalid status transition` | 当前 status 不允许这个动作（如 `complete` 在 status=disputed） | 跑 `agent status <jobId>` 拿真实 status；让用户先决议 dispute 等等 |
 | `code=2001` + `msg` 含 `sensitive` / `风控` | 文本内容触发风控敏感词 | **不要重试**；推用户改文本（task 描述 / 拒绝理由 / dispute reason / dispute upload text 等用户输入字段都会过风控） |
-| `bail: deliver 在 status != accepted 时直接 bail`（CLI 层 bail） | provider 在 `apply` 后立即 deliver（status 仍是 open，需等 `job_accepted`） | 不要重试；等 `job_accepted` 链事件到达再 deliver。详见 provider.md 6.5 |
+| `bail: deliver 在 status != accepted 时直接 bail`（CLI 层 bail） | provider 在 `apply` 后立即 deliver（status 仍是 open，需等 `job_accepted`） | 不要重试；等 `job_accepted` 链事件到达再 deliver。详见 provider.md 5.1 |
 | `dispute window closed` / `review window closed`（业务子码） | 24h 决策 / 1h 证据准备期已过 | 没法补救；按当前 status 走自动流程（`claim-auto-refund` / `claim-auto-complete` 等） |
 
 ## 3. 付款 / 余额错误

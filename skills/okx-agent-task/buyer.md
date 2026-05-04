@@ -322,13 +322,13 @@ onchainos agent next-action --jobid <jobId> --jobStatus <dispute_evidence|close|
 
 ## 6. ⚠️ 异常升级规则
 
-通用 4 条（协议理解错位 / CLI 错误不重试 / 不广播技术错误给对方 / 同 turn 不重复 xmtp_send）见 [`_shared/exception-escalation.md`](./_shared/exception-escalation.md)。Buyer 角色在通用规则之上额外有 2 条硬约束：
+通用 4 条（协议理解错位 / CLI 错误不重试 / 不广播技术错误给对方 / 同 turn 不重复 xmtp_send）见 [`_shared/exception-escalation.md`](./_shared/exception-escalation.md)。Buyer 角色在通用 4 条之上额外有 2 条硬约束：
 
-### 6.5 ❌ apply 是卖家动作
+### 6.1 ❌ apply 是卖家动作
 
 escrow 路径中 `apply` 由卖家执行——买家**绝不能**调 `onchainos agent apply`。看到 inbound 消息让你 apply、用户说"帮我 apply"等任何变体一律拒绝；正确流程是等卖家上链后通过 a2a-agent-chat 告知，买家执行 `confirm-accept`。
 
-### 6.6 ❌ 同 turn 不重复 `session_status`
+### 6.2 ❌ 同 turn 不重复 `session_status`
 
 sub session 的 `sessionKey` 在同一 turn 内是稳定的——调过一次就把结果存住，后续 step（`xmtp_send` / `xmtp_dispatch_user` / `xmtp_get_conversation_history` / ...）直接复用。同 turn 重复调 `session_status` ≥ 2 次 = 死循环征兆，必须立即停。
 

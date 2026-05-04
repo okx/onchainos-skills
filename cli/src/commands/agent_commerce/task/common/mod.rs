@@ -10,7 +10,6 @@ use clap::Subcommand;
 use serde::Deserialize;
 
 /// unix 秒 → 展示字符串。0 / 负数当未设置；正常值转 RFC 3339。
-/// // todo ganmingtao 组件
 fn fmt_unix_secs(secs: Option<i64>) -> String {
     match secs {
         Some(n) if n > 0 => Utc
