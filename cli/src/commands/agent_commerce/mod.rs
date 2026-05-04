@@ -169,9 +169,6 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")] agent_id: Option<String>,
     },
 
-    /// Client claims refund/reward after arbitration
-    Claim { job_id: String },
-
     /// Provider account-pull 查待领奖励
     #[command(name = "provider-claimable")]
     ProviderClaimable {
@@ -554,9 +551,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::Pay { job_id, agent_id } =>
             task::buyer::run_task(T::Pay { job_id, agent_id }, ctx).await,
-
-        AgentCommand::Claim { job_id } =>
-            task::buyer::run_task(T::Claim { job_id }, ctx).await,
 
         AgentCommand::SaveAgreed { job_id, token_symbol, token_amount } =>
             task::buyer::run_task(T::SaveAgreed { job_id, token_symbol, token_amount }, ctx).await,

@@ -155,10 +155,6 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Client claims refund/reward after arbitration
-    Claim {
-        job_id: String,
-    },
     /// Client claims auto-refund after seller timeout (submit_expired / refuse_expired)
     ClaimAutoRefund {
         job_id: String,
@@ -250,8 +246,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             close::handle_close(&mut client, &job_id).await,
         TaskCommand::SetPublic { job_id } =>
             changepublic::handle_set_public(&mut client, &job_id).await,
-        TaskCommand::Claim { job_id } =>
-            close::handle_claim(&mut client, &job_id).await,
         TaskCommand::ClaimAutoRefund { job_id } =>
             claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await,
         TaskCommand::SaveAgreed { job_id, token_symbol, token_amount } => {

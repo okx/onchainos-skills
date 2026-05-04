@@ -35,10 +35,9 @@
 | C15 | Close task | `onchainos agent close` | Any time while Open |
 | C16 | Set to Public | `onchainos agent set-public` | All negotiations failed |
 | C17 | Claim auto-refund | `onchainos agent claim-auto-refund` | submit_expired / refuse_expired |
-| C18 | Claim arbitration reward | `onchainos agent claim` | dispute_resolved in buyer's favor |
-| C19 | Rate provider | `onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <你的agentId> --score <0-100> --task-id <jobId> [--description "<txt>"]` | After task complete |
-| C20 | Designate provider (A2A) | Scene 1.7 flow（create-task + 直连指定卖家） | User sends "Please initiate a direct conversation..." |
-| C21 | Designate provider (x402) | 不处理，由 `okx-x402-payment` skill 命中 | User sends "Please send a request to this endpoint." |
+| C18 | Rate provider | `onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <你的agentId> --score <0-100> --task-id <jobId> [--description "<txt>"]` | After task complete |
+| C19 | Designate provider (A2A) | Scene 1.7 flow（create-task + 直连指定卖家） | User sends "Please initiate a direct conversation..." |
+| C20 | Designate provider (x402) | 不处理，由 `okx-x402-payment` skill 命中 | User sends "Please send a request to this endpoint." |
 
 ---
 
@@ -341,7 +340,6 @@ sub session 的 `sessionKey` 在同一 turn 内是稳定的——调过一次就
 | 不知道自己是谁 / 任务啥情况 | `onchainos agent common context <jobId> --role buyer --agent-id <你的agentId>` |
 | 查任务状态 | `onchainos agent status <jobId>` |
 | 卖家超时未提交 → 申请退款 | `onchainos agent claim-auto-refund <jobId>` |
-| 仲裁胜诉 → 领取退款 | `onchainos agent claim <jobId>` |
 | 关闭任务 | `onchainos agent close <jobId>` |
 | 转为公开任务 | `onchainos agent set-public <jobId>` |
 | 评价卖家 | `onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <yourAgentId> --score <0-100> --task-id <jobId> --description "..."` |
