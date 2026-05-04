@@ -1,6 +1,6 @@
 # Evaluator Stake Onboarding 流程
 
-> 仅当 evaluator.md §1.5 触发条件命中时打开此文档。包含完整 4-step 质押流程。
+> 仅当 evaluator.md 1.5 触发条件命中时打开此文档。包含完整 4-step 质押流程。
 
 **触发：** 其他 skill（身份 / ERC-8004 注册流程）在用户注册完 evaluator 身份后，把上下文交接到本 skill。**身份 skill 不携带金额**——金额由本场景决定。
 
@@ -41,18 +41,18 @@
 
 > ⚠️ **核心概念区分**：本场景里有三个金额，**必须分清，不可混用**：
 > - **钱包余额** (`wallet balance`)：EOA 上可花费的 OKB，用 `onchainos wallet balance` 查
-> - **已质押** (`activeStake`)：已经从余额转入 `VoterStaking` 合约锁仓的 OKB（已扣历史罚没），用 `onchainos agent evaluator my-stake` 查
+> - **已质押** (`activeStake`)：已经从余额转入 `VoterStaking` 合约锁仓的 OKB（已扣历史罚没），用 `onchainos agent my-stake` 查
 > - **本次质押 N**：本次要从余额追加锁仓的 OKB
 >
 > 累计门槛规则的判断是 `activeStake + N >= minCumulativeStakeOkb`，**绝不能用钱包余额代替 `activeStake`**。
 
-### Step 1 — 拉取门槛 + 已质押状态（链上权威值，不读 §13 的硬编码默认）
+### Step 1 — 拉取门槛 + 已质押状态（链上权威值，不读 13 的硬编码默认）
 
 并发执行两条只读 CLI：
 
 ```bash
-onchainos agent evaluator staking-config   # 取 minCumulativeStakeOkb
-onchainos agent evaluator my-stake         # 取 activeStake (OKB) / registered / activeDisputes
+onchainos agent staking-config   # 取 minCumulativeStakeOkb
+onchainos agent my-stake         # 取 activeStake (OKB) / registered / activeDisputes
 ```
 
 从 `my-stake` 输出抓 `activeStake: <X> OKB` 行的 `<X>`（就是 OKB 字符串，无需自己换 wei）。从 `staking-config` 抓 `minCumulativeStakeOkb`。
@@ -63,7 +63,7 @@ onchainos agent evaluator my-stake         # 取 activeStake (OKB) / registered 
 |---|---|
 | `registered=false` (`agentId=0`) | 还不是 evaluator，**回到身份 skill 完成注册**，不进 Step 2 |
 | `activeStake >= minCumulativeStakeOkb` | 已经满足门槛，告诉用户「你已质押 `<X>` OKB，超过门槛 `<min>`，仲裁者候选状态正常，无需再次质押」，结束本场景 |
-| `activeDisputes > 0` 且 `activeStake >= min` | 同上，无需重质押；若用户坚持加质押，引导他用 evaluator.md §12 的 `increase-stake` |
+| `activeDisputes > 0` 且 `activeStake >= min` | 同上，无需重质押；若用户坚持加质押，引导他用 evaluator.md 12 的 `increase-stake` |
 
 > **累计门槛规则语义**：合约按累计校验 `activeStake + N >= minCumulativeStakeOkb`——首次质押 `activeStake=0` 时 `N >= min`；被 slash 后 `activeStake < min` 时 `N >= min - activeStake` 才能补齐。
 
@@ -97,7 +97,7 @@ onchainos agent evaluator my-stake         # 取 activeStake (OKB) / registered 
 
 **硬性规则**：
 1. **agent 绝不自行决定质押金额**——不从上下文推断、不用公式算默认值、不"帮用户补齐"。金额**只能是用户在 Step 2 展示后的当轮回复中显式给出的数字**。
-2. 未收到用户显式给出数字前，**绝不执行 Step 3 的 CLI**。`evaluator stake` 是上链操作，解质押需冷却期才能取回——静默发起 = 严重违反用户授权。
+2. 未收到用户显式给出数字前，**绝不执行 Step 3 的 CLI**。`stake` 是上链操作，解质押需冷却期才能取回——静默发起 = 严重违反用户授权。
 3. **同轮链式路径也不能跳过 Step 2**——身份 skill 输出在当前 turn 的先前内容里时，可以直接跑 Step 1，但 Step 2 的展示 + 等用户回复数字是**不可省略的**。
 4. 以下来源的金额**全部禁止用作质押数量**：上下文中的转账金额、注册费用、gas 费、身份 skill 传来的数字、事件 payload 的 amount、会话历史中任何金额。
 
@@ -116,7 +116,7 @@ onchainos agent evaluator my-stake         # 取 activeStake (OKB) / registered 
 执行：
 
 ```bash
-onchainos agent evaluator stake --amount <N>
+onchainos agent stake --amount <N>
 ```
 
 ### Step 4 — 解析返回
@@ -132,4 +132,4 @@ onchainos agent evaluator stake --amount <N>
 ## 边界
 
 - **Confirmation gate 不可跳过**：无论上下文多"自然"，质押必须经过 Step 2 的用户确认。不允许"为了流畅"省略。
-- **本场景只处理首次质押 handoff**。后续 staking 生命周期（补充质押 / 申请解质押 / 领取 / 取消）见 evaluator.md §12。
+- **本场景只处理首次质押 handoff**。后续 staking 生命周期（补充质押 / 申请解质押 / 领取 / 取消）见 evaluator.md 12。

@@ -37,7 +37,7 @@
     "lastOnlineTime": null,
     "name": "Mock Evaluator",
     "ownerAddress": "0x41bb857c1162aa0fe2becaff941b3ed9d631e213",
-    "profileDescription": "openclaw 内置 evaluator (debug-only) — 让 CLI 的 evaluator commit/reveal/claim 路径在 mock 环境下能跑通",
+    "profileDescription": "openclaw 内置 evaluator (debug-only) — 让 CLI 的 vote-commit / vote-reveal / arbitration-claim 路径在 mock 环境下能跑通",
     "profilePicture": "https://static.okx.com/cdn/wallet/agent/default-avatar.png",
     "role": 3,
     "securityRate": null,

@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use serde_json::{json, Map, Value};
 
-use super::helpers::parse_job_id;
+use super::helpers::{evidence_dir, parse_job_id};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
@@ -30,19 +30,17 @@ const EVIDENCE_SIDES: [&str; 2] = ["provider", "client"];
 pub async fn handle_info(
     client: &mut TaskApiClient,
     dispute_id: &str,
-    agent_id_hint: Option<&str>,
+    agent_id: &str,
 ) -> Result<()> {
     let job_id = parse_job_id(dispute_id)?;
 
     let (_account_id, _address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
     let path = client.endpoint(&job_id, "evidence");
     let mut data = client.get_with_identity(&path, &agent_id).await?;
 
-    let tmp_dir = std::env::temp_dir()
-        .join("onchainos-dispute")
-        .join(dispute_id);
+    let tmp_dir = evidence_dir(&job_id, Some(dispute_id))?;
     fs::create_dir_all(&tmp_dir)?;
 
     // 后端扁平结构：provider/client 直接在顶层（不嵌套在 evidences 下）

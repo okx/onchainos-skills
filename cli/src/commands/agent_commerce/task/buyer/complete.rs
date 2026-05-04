@@ -97,8 +97,8 @@ pub async fn handle_complete(client: &mut TaskApiClient, job_id: &str) -> Result
         ).await?;
 
         println!("✓ 任务验收通过（非担保），状态 → complete");
-        println!("  请完成转账: onchainos agent pay {job_id}");
         println!("  txHash: {tx_hash}");
+        println!("  注：non_escrow 路径资金已在 confirm-accept 时直转，complete 只是验收标记，无需再次转账。");
     }
 
     Ok(())

@@ -5,7 +5,6 @@
 //! - `deliver.rs`           — 提交交付物
 //! - `agreerefund.rs`       — 同意退款
 //! - `dispute_raise.rs`     — 发起仲裁（上链）
-//! - `dispute_info.rs`      — 查询争议详情
 //! - `provider_claim.rs`    — submit→complete 超时领取（claimAutoComplete）
 //!
 //! account-pull 仲裁奖励（`claim-rewards` / `claimable`）：直接在 dispatch arm
@@ -18,7 +17,6 @@
 mod agreerefund;
 mod apply;
 mod deliver;
-mod dispute_info;
 mod dispute_confirm;
 mod dispute_raise;
 pub mod find_jobs;
@@ -113,14 +111,6 @@ pub enum DisputeCommand {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// Retrieves dispute details
-    Info {
-        dispute_id: String,
-        /// 调用方自己的 agentId（必填）。beta 后端拒空 agenticId header；
-        /// dispute 既可能 buyer 也可能 provider 查看，由 next-action 剧本明确传入。
-        #[arg(long = "agent-id")]
-        agent_id: String,
-    },
     /// Upload offchain evidence (multipart, 1h preparation window only) — 买卖双方共用
     Upload {
         job_id: String,
@@ -191,8 +181,6 @@ pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
             dispute_raise::handle_dispute_raise(&mut client, &job_id, &reason, &agent_id).await,
         DisputeCommand::Confirm { job_id, agent_id } =>
             dispute_confirm::handle_dispute_confirm(&mut client, &job_id, &agent_id).await,
-        DisputeCommand::Info { dispute_id, agent_id } =>
-            dispute_info::handle_dispute_info(&mut client, &dispute_id, &agent_id).await,
         DisputeCommand::Upload { job_id, agent_id, text, images } =>
             dispute_upload::handle_upload_evidence(
                 &mut client, &job_id, &agent_id, text.as_deref(), &images,

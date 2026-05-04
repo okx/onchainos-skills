@@ -1,4 +1,4 @@
-//! 仲裁者 reveal 投票（commit-reveal 第二阶段）— onchainos agent evaluator reveal <disputeId>
+//! 仲裁者 reveal 投票（commit-reveal 第二阶段）— onchainos agent vote-reveal <disputeId>
 //!
 //! Driven by the `reveal_started` system event whose envelope carries the `disputeId` to
 //! reveal. Backend reads vote+salt from `task_dispute_voter` keyed by (disputeId, voter),
@@ -14,11 +14,11 @@ use crate::commands::agent_commerce::task::signing;
 pub async fn handle_reveal(
     client: &mut TaskApiClient,
     dispute_id: &str,
-    agent_id_hint: Option<&str>,
+    agent_id: &str,
 ) -> Result<()> {
     let job_id = parse_job_id(dispute_id)?;
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
     // Pre-check: avoid burning a tx when the reveal window isn't open or the round
     // already settled. Backend returns `{ canReveal: bool, reason?: string }`.
@@ -28,7 +28,7 @@ pub async fn handle_reveal(
         Some(true) => {}
         Some(false) => bail!(
             "后端 canReveal=false（disputeId={dispute_id}）：reveal 窗口尚未开启 / 本轮已结算 / 未 commit。\n\
-             收到 `reveal_started` 事件后重试；若本轮已结算，改跑 `evaluator claim`（account 级 pull 所有奖励）。"
+             收到 `reveal_started` 事件后重试；若本轮已结算，改跑 `arbitration-claim`（account 级 pull 所有奖励）。"
         ),
         None => bail!("canReveal 响应缺少布尔字段，后端可能返回异常: {can_resp}"),
     }

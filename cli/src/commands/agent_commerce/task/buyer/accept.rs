@@ -59,7 +59,7 @@ async fn fetch_provider_confirm_status(
     client.get_with_agent_id(&path, agent_id).await
         .map_err(|e| anyhow::anyhow!("providerConfirmStatus 查询失败: {e}"))
 }
-
+//todo liyun 抽离工具类
 /// 从 JSON 对象提取字符串字段。
 fn json_str(obj: &serde_json::Value, key: &str) -> Result<String> {
     obj[key]
@@ -230,6 +230,7 @@ fn parse_composite_fee(fee: &str) -> Result<(f64, String)> {
     }
 }
 
+//todo liyun 拆分
 /// confirm-accept — 确认接受卖家
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 pub async fn handle_confirm_accept(

@@ -20,7 +20,7 @@ async fn resolve_agent_id(_client: &mut TaskApiClient, _job_id: Option<&str>, ag
 }
 
 /// 查询任务状态
-pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &str) -> Result<()> {
+pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &str) -> Result<()> { // todo liyun 确认是否提出公共
     let agent_id = resolve_agent_id(client, Some(job_id), agent_id).await;
     let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
 
@@ -39,7 +39,7 @@ pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &
 }
 
 /// 任务列表
-pub async fn handle_list(
+pub async fn handle_list( // todo liyun 确认是否提出公共
     client: &mut TaskApiClient,
     status: Option<&str>,
     page: u32,
@@ -67,7 +67,8 @@ pub async fn handle_list(
     Ok(())
 }
 
-/// 生成付款单（Provider 在 provider_applied 后发送给买家）
+/// 生成付款单（Provider 在 provider_applied 后发送给买家）  
+/// // todo liyun 确认是否有用
 pub async fn handle_payment(client: &mut TaskApiClient, job_id: &str, agent_id: &str) -> Result<()> {
     let agent_id = resolve_agent_id(client, Some(job_id), agent_id).await;
     let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
@@ -90,6 +91,7 @@ pub async fn handle_payment(client: &mut TaskApiClient, job_id: &str, agent_id: 
 }
 
 /// 非担保模式手动转账（展示转账命令）
+/// // todo liyun 确认是否有用
 pub async fn handle_pay(client: &mut TaskApiClient, job_id: &str, agent_id: &str) -> Result<()> {
     let agent_id = resolve_agent_id(client, Some(job_id), agent_id).await;
     let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;

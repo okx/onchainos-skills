@@ -1,4 +1,4 @@
-//! 仲裁者查询待领奖励（只读）— onchainos agent evaluator claimable
+//! 仲裁者查询待领奖励（只读）— onchainos agent arbitration-claimable
 //!
 //! 实际 API 调用 + 表格输出在 `task::common::claim`（角色无关）。本文件只保留
 //! evaluator 视角的 wallet/agent 解析与"建议下一步"提示文案。
@@ -17,13 +17,13 @@ use crate::commands::agent_commerce::task::signing;
 /// - Response data: `{ account, rewards: [{ symbol, tokenAddress, rawAmount, amount }, ...] }`
 /// - 0 金额的代币也会出现在列表里（后端返回全量统计）
 ///
-/// 发现有非 0 奖励时，建议用户按 jobId 跑 `evaluator claim <jobId>` 领取。
+/// 发现有非 0 奖励时，调 `arbitration-claim`（account 级 pull，无 jobId）一次领走全部。
 pub async fn handle_claimable(
     client: &mut TaskApiClient,
-    agent_id_hint: Option<&str>,
+    agent_id: &str,
 ) -> Result<()> {
     let (_account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator(agent_id_hint).await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
     let has_nonzero =
         common_claim::fetch_and_print_claimable(client, &agent_id, &address).await?;

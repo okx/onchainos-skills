@@ -49,12 +49,18 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         ],
         Status::Completed => vec![
             next_action("job_completed"),
-            "（escrow 流程结束）任务完成，资金已释放。子 session 可关闭。".to_string(),
-            "（non_escrow）任务支付链路完成，等待卖家提交交付物。".to_string(),
+            "（终态）任务已 COMPLETE — **资金已释放给卖家**".to_string(),
+            "  ▸ escrow 验收通过 → 释放托管款给卖家".to_string(),
+            "  ▸ 仲裁卖家胜（dispute_resolved seller-wins）→ 释放托管款给卖家".to_string(),
+            "  ▸ non_escrow 已在 accepted 阶段完成支付链路".to_string(),
+            "子 session 可关闭。".to_string(),
         ],
         Status::Rejected => vec![
             next_action("job_refunded"),
-            "（流程结束）退款已到账。子 session 可关闭。".to_string(),
+            "（终态）任务已 REJECTED — **资金已退还买家**".to_string(),
+            "  ▸ 卖家同意退款（agree-refund）/ 自动退款 → 资金原路返回".to_string(),
+            "  ▸ 仲裁买家胜（dispute_resolved buyer-wins）→ 退款".to_string(),
+            "子 session 可关闭。".to_string(),
         ],
         Status::Close => vec![
             "任务已关闭（Close）。子 session 可关闭。".to_string(),
@@ -70,7 +76,9 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "任务初始化中（等待上链确认）→ 等待 job_created 事件".to_string(),
         ],
         Status::Other(s) => vec![
-            format!("当前状态 `{s}` 不在标准状态机内 → 先 `onchainos agent status {job_id}` 查最新状态"),
+            format!("当前任务 status=`{s}` 不在 buyer 关心的状态集（open / accepted / submitted / refused / disputed / completed / rejected / close / expired / admin_stopped）内"),
+            "→ 本角色无需任何任务级动作，等下一个相关链事件 / 用户决策再处理".to_string(),
+            "→ **不要**重复跑 `agent status` / `agent common context`（结果会一样），结束本轮 turn".to_string(),
         ],
     }
 }
@@ -82,10 +90,10 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
-    // 通信机制（怎么发、能不能发、形态白名单）— 一律见 SKILL.md §Session 通信契约。
+    // 通信机制（怎么发、能不能发、形态白名单）— 一律见 SKILL.md Session 通信契约。
     // 本文件只告诉 agent **每一步把什么内容发到哪**。
     // ──────────────────────────────────────────────────────────────────────
-    // 通信机制（怎么发、能不能发、形态白名单）— 一律见 SKILL.md §Session 通信契约。
+    // 通信机制（怎么发、能不能发、形态白名单）— 一律见 SKILL.md Session 通信契约。
     // 本文件只负责告诉 agent **每一步把什么内容发到哪**，不重复解释工具用法。
     //
     // 三种通信工具：
@@ -96,7 +104,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
     //     userContent = 发送给用户的可见消息
     // ──────────────────────────────────────────────────────────────────────
     let send_to_peer = format!(
-        "→ 用 xmtp_send 发给卖家（机制见 SKILL.md §Session 通信契约 §1 路径 4）。\n\
+        "→ 用 xmtp_send 发给卖家（机制见 SKILL.md Session 通信契约 1.4）。\n\
          当前 sub session：jobId={job_id}，我方 agentId={agent_id}。\n\
          content（纯自然语言，不要包 markdown / 代码块）："
     );
@@ -104,11 +112,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 
     let context_preamble = format!(
         "📍 你在 sub session（你看到这段 next-action 输出 = 100% 在 sub）。\n\n\
-         🔒 **如果当前 turn 没读过 SKILL.md §Session 通信契约**（envelope 形态白名单 / xmtp_send 两步 / xmtp_dispatch_user·xmtp_prompt_user 推 user session 铁律），\n\
-         **先读 `skills/okx-agent-task/SKILL.md`** 再继续——下面步骤会引用它的章节（§3 / §4 / §5 / §6）。\n\n\
+         🔒 **如果当前 turn 没读过 SKILL.md Session 通信契约**（envelope 形态白名单 / xmtp_send 两步 / xmtp_dispatch_user·xmtp_prompt_user 推 user session 铁律），\n\
+         **先读 `skills/okx-agent-task/SKILL.md`** 再继续——下面步骤会引用它的章节（3 / 4 / 5 / 6）。\n\n\
          ⚠️ **异常升级硬规则**（任何场景都适用，详见 SKILL.md 通讯边界 + buyer.md）：\n\
          \x20\x201) 协议理解错位：你已澄清同一条流程 ≥1 次，对方下一条还在重复错误诉求 → **不再回复对方**，调 `xmtp_dispatch_user` 推 `[⚠️ 协议理解错位] ...`，结束 turn\n\
-         \x20\x202) CLI 错误：`onchainos agent <cmd>` 报错 → **不要重试**，直接调 `xmtp_dispatch_user` 推 `[⚠️ CLI 报错] ...`，等用户新指令；瞬态故障（network/JWT 过期）才允许自动重试一次\n\
+         \x20\x202) CLI 错误：`onchainos agent <cmd>` 报错 → **不要重试**，直接调 `xmtp_dispatch_user` 推 `[⚠️ CLI 报错] ...`，等用户新指令。**唯一例外**：JWT 过期（msg 含 `JWT verification failed` / `unauthorized`）刷新登录态后自动重试一次；网络 timeout 也按业务错处理推用户，不在 sub 里盲重\n\
          \x20\x203) ❌ **绝对禁止把技术错误细节广播给对方**：CLI 命令名 / 后端字段名 / stderr 摘要 / `bug`/`命令：`/`错误：` 一律不能进 xmtp_send 给对方。最多发一句『稍等，正在确认细节』或干脆不通知对方。\n\
          \x20\x204) ❌ **同 turn 不重复 xmtp_send**：剧本说『发一条』→ 调过一次工具返回『已发送』就**算成功**，**当前 turn 内不再对同一对方调 xmtp_send 第二次**。不要因为消息可能不够清晰就重发——重发 = 刷屏 + 触发对方循环。下一条 inbound 进来再说。\n\
          \x20\x205) ❌ **apply 是卖家动作**：escrow 路径中 `apply` 由卖家执行，买家绝不能调 `onchainos agent apply`。买家只在收到卖家申请通知后执行 `confirm-accept`。non_escrow 路径需从卖家消息中提取 paymentId 再 confirm-accept。\n\
@@ -463,7 +471,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```bash\n\
              onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-100> --task-id {job_id} --description \"<评价内容>\"\n\
              ```\n\n\
-             **B-Step 4 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §5 路径 5）：\n\
+             **B-Step 4 — 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 4.5）：\n\
              （debug 模式：暂不关闭 sub session，保留历史信息）\n\
              <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
              <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
@@ -562,7 +570,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```bash\n\
              onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-100> --task-id {job_id} --description \"<评价内容>\"\n\
              ```\n\n\
-             **A-Step 4 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §5 路径 5）：\n\
+             **A-Step 4 — 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 4.5）：\n\
              （debug 模式：暂不关闭 sub session，保留历史信息）\n\
              <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
              <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
@@ -620,7 +628,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（jobStatus=complete）\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n\
-             **Step 3（两个分支都要做）— 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §5 路径 5）：\n\
+             **Step 3（两个分支都要做）— 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 4.5）：\n\
              （debug 模式：暂不关闭 sub session，保留历史信息）\n\
              <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
              <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
@@ -639,7 +647,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              content：\n\
              \x20\x20\x20\x20[退款完成] 任务 {job_id} 退款已上链，资金已返还至您的钱包。\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
-             **Step 3 — 关闭 sub session**（终态收尾，机制见 SKILL.md §Session 通信契约 §5 路径 5）：\n\
+             **Step 3 — 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 4.5）：\n\
              （debug 模式：暂不关闭 sub session，保留历史信息）\n\
              <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
              <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
@@ -728,7 +736,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20参数：myAgentId={agent_id}，toAgentId=<当前卖家的 agentId>，jobId={job_id}\n\
              \x20\x20⚠️ 调用前输出：`[buyer-xmtp] xmtp_start_conversation: myAgentId={agent_id}, toAgentId=<agentId>, jobId={job_id}`\n\
              \x20\x20⚠️ 调用后输出：`[buyer-xmtp] xmtp_start_conversation result: sessionKey=<返回值>, xmtpGroupId=<返回值>`\n\n\
-             A-Step 2：建群后已进入 sub session，调用 xmtp_send 向卖家发起协商（参照 buyer.md §2.1 协商剧本三步确认）：\n\
+             A-Step 2：建群后已进入 sub session，调用 xmtp_send 向卖家发起协商（参照 buyer.md 3.2 协商阶段三步确认）：\n\
              \x20\x20⚠️ **禁止**用 xmtp_dispatch_user / xmtp_dispatch_session，建群后统一用 xmtp_send。\n\
              \x20\x20content: 你好，我有一个任务（jobId: {job_id}）想请你来完成，请问你感兴趣吗？\n\n\
              A-Step 3：协商成功 → 卖家 apply 上链 → 等待 provider_applied 事件（进入场景 6）\n\n\
@@ -921,7 +929,6 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 
         // ─── 质押 / 罚没 lifecycle — buyer 不是 evaluator 时无关 ─────
         Event::Staked
-        | Event::StakeIncreased
         | Event::UnstakeRequested
         | Event::UnstakeClaimed
         | Event::UnstakeCancelled

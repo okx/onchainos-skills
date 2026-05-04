@@ -380,13 +380,23 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::AgreeRefund { .. } => "agree-refund".into(),
         AgentCommand::GetPayment { .. } => "get-payment".into(),
 
-        // Common
-        AgentCommand::RateAgent { .. } => "rate-agent".into(),
-
         // Sub-groups
         AgentCommand::Config { .. } => "config".into(),
         AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),
-        AgentCommand::Evaluator(c) => format!("evaluator {:?}", std::mem::discriminant(c)),
+        // Evaluator (flat — 见 agent_commerce/mod.rs)
+        AgentCommand::EvidenceInfo { .. } => "evidence-info".into(),
+        AgentCommand::EvidenceDownload { .. } => "evidence-download".into(),
+        AgentCommand::VoteCommit { .. } => "vote-commit".into(),
+        AgentCommand::VoteReveal { .. } => "vote-reveal".into(),
+        AgentCommand::ArbitrationClaim { .. } => "arbitration-claim".into(),
+        AgentCommand::ArbitrationClaimable { .. } => "arbitration-claimable".into(),
+        AgentCommand::Stake { .. } => "stake".into(),
+        AgentCommand::IncreaseStake { .. } => "increase-stake".into(),
+        AgentCommand::RequestUnstake { .. } => "request-unstake".into(),
+        AgentCommand::ClaimUnstake { .. } => "claim-unstake".into(),
+        AgentCommand::CancelUnstake { .. } => "cancel-unstake".into(),
+        AgentCommand::StakingConfig { .. } => "staking-config".into(),
+        AgentCommand::MyStake { .. } => "my-stake".into(),
         AgentCommand::Common(c) => format!("common {:?}", std::mem::discriminant(c)),
         AgentCommand::NextAction { .. } => "next-action".into(),
         AgentCommand::FileUpload { .. } => "file-upload".into(),

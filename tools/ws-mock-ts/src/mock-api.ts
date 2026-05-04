@@ -739,29 +739,23 @@ async function notifySlashed(voter: string, amount: string, reason: string, disp
   );
 }
 
-interface StakingLifecyclePayload {
-  amount: string;
-  status: "success" | "failed";
-  txHash: string;
-  errorCode?: string;
-  availableAt?: string;
-}
-
-async function notifyStakingLifecycle(eventName: string, voter: string, p: StakingLifecyclePayload) {
-  const fields: EvaluatorEventFields = {
-    voter,
-    amount: p.amount,
-    status: p.status,
-    txHash: p.txHash,
-    ...(p.errorCode ? { errorCode: p.errorCode } : {}),
-    ...(p.availableAt ? { availableAt: p.availableAt } : {}),
-  };
+/// staking lifecycle 事件（staked / unstake_requested / unstake_claimed /
+/// unstake_cancelled）真后端推送的 envelope.message **仅含** `event` / `jobId` /
+/// `timestamp` / `source` / `description`——不带 amount / availableAt / txHash /
+/// status / errorCode 等业务字段。Mock 严格对齐，避免联调时让 agent 误以为可以
+/// 从 envelope 直接读数值；agent 需要数额时必须主动调 `evaluator my-stake` 拉链
+/// 上权威值。jobId 固定为 `system_voter_staking`。
+///
+/// ⚠️ 真后端**首次质押 stake 与追加质押 increaseStake 都发同一个 `staked` 事件**，
+/// 不存在独立的 `stake_increased`——CLI 命令层 stake / increase-stake 走不同后端
+/// API，但事件流只看到一个 staked。
+async function notifyStakingLifecycle(eventName: string, voter: string) {
   await notifyEvaluatorOpenclaw(
     voter,
     eventName,
-    `VoterStaking.${eventName} tx 回执 — amount=${p.amount} status=${p.status}.`,
-    null,
-    fields,
+    "",
+    "system_voter_staking",
+    {},
   );
 }
 
@@ -1929,17 +1923,11 @@ const server = http.createServer(async (req, res) => {
       case "unstake_requested":
       case "unstake_claimed":
       case "unstake_cancelled": {
+        // 真后端 envelope 不带 amount / availableAt / txHash / status / errorCode；
+        // mock 严格对齐，避免联调时 agent 误以为这些字段存在。
         const voter = String(body.voter ?? fallbackEvalAddr);
-        const amount = String(body.amount ?? "100");
-        const status: "success" | "failed" = body.status === "failed" ? "failed" : "success";
-        const txHash = String(body.txHash ?? `0xMockTx${crypto.randomBytes(8).toString("hex")}`);
-        const errorCode = body.errorCode ? String(body.errorCode) : undefined;
-        // unstake_requested 默认 7 天后可领（now + 7d ms）
-        const availableAt = body.availableAt
-          ? String(body.availableAt)
-          : (event === "unstake_requested" ? String(Date.now() + 7 * 86_400_000) : undefined);
-        notifyStakingLifecycle(event, voter, { amount, status, txHash, errorCode, availableAt }).catch(console.error);
-        sendOk(res, { triggered: event, voter, amount, status, txHash, errorCode, availableAt }); return;
+        notifyStakingLifecycle(event, voter).catch(console.error);
+        sendOk(res, { triggered: event, voter }); return;
       }
 
       default:
@@ -2354,49 +2342,27 @@ const DEBUG_EVALUATOR_HTML = `<!DOCTYPE html>
 
 <div class="section">
   <h2>💰 质押生命周期事件（per-evaluator, 共用 sub key &gid=&lt;voter&gt;）</h2>
+  <p class="hint">真后端 envelope.message 仅含 event / jobId / timestamp / source / description——没有 amount / availableAt / txHash / status / errorCode。Mock 严格对齐：staking lifecycle 5 个事件直接 fire 即可，不接受任何字段输入。</p>
   <label>voter / evaluator address</label>
   <input id="staking-voter" type="text" value="0xEvaluator00000000000000000000000000001" />
   <div class="row">
     <div>
-      <label>amount (OKB, UI 单位)</label>
-      <input id="staking-amount" type="text" value="100" />
-    </div>
-    <div>
-      <label>status</label>
-      <select id="staking-status">
-        <option value="success">success</option>
-        <option value="failed">failed</option>
-      </select>
-    </div>
-  </div>
-  <div class="row">
-    <div>
-      <label>txHash（留空自动生成）</label>
-      <input id="staking-tx" type="text" placeholder="auto" />
-    </div>
-    <div>
-      <label>errorCode（status=failed 时填，例如 1001 / 2004 / 4000）</label>
-      <input id="staking-errcode" type="text" placeholder="例如 1001" />
-    </div>
-  </div>
-  <div class="row">
-    <div>
-      <label>availableAt（unstake_requested，毫秒时间戳；留空 = now + 7d）</label>
-      <input id="staking-availableAt" type="text" placeholder="auto" />
-    </div>
-    <div>
       <label>reason（slashed 用）</label>
       <input id="staking-reason" type="text" value="commit_timeout" />
     </div>
+    <div>
+      <label>amount（slashed 用，OKB UI 单位）</label>
+      <input id="staking-amount" type="text" value="0.5" />
+    </div>
   </div>
   <div class="btns">
-    <button onclick="fireStaking('staked')">staked</button>
+    <button onclick="fireStaking('staked')">staked（首次/追加均发此事件）</button>
     <button onclick="fireStaking('unstake_requested')">unstake_requested</button>
     <button onclick="fireStaking('unstake_claimed')">unstake_claimed</button>
     <button onclick="fireStaking('unstake_cancelled')">unstake_cancelled</button>
     <button class="danger" onclick="fireStaking('slashed')">slashed</button>
   </div>
-  <p class="hint">slashed 也可以挂在 jobId / disputeId 下（顶部那栏的 disputeId 会自动捎上）。</p>
+  <p class="hint">slashed 仍然带 amount / reason / disputeId（顶部那栏的 disputeId 会自动捎上）；其它 staking 事件忽略上方输入。</p>
 </div>
 
 <div class="section">
@@ -2441,18 +2407,11 @@ function fireJob(event) {
 }
 function fireStaking(event) {
   const voter = document.getElementById('staking-voter').value.trim();
-  const amount = document.getElementById('staking-amount').value.trim();
-  const status = document.getElementById('staking-status').value;
-  const txHash = document.getElementById('staking-tx').value.trim();
-  const errorCode = document.getElementById('staking-errcode').value.trim();
-  const availableAt = document.getElementById('staking-availableAt').value.trim();
-  const reason = document.getElementById('staking-reason').value.trim();
-  const body = { voter, amount, status };
-  if (txHash) body.txHash = txHash;
-  if (errorCode) body.errorCode = errorCode;
-  if (availableAt) body.availableAt = availableAt;
+  const body = { voter };
   if (event === 'slashed') {
-    body.reason = reason || 'commit_timeout';
+    // slashed 真后端仍带 amount / reason / disputeId（不在本次 staking lifecycle 5 件套对齐范围内）
+    body.amount = document.getElementById('staking-amount').value.trim();
+    body.reason = document.getElementById('staking-reason').value.trim() || 'commit_timeout';
     const did = document.getElementById('dispute-id').value.trim();
     if (did) body.disputeId = did;
   }

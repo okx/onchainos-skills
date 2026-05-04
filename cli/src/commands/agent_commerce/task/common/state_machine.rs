@@ -40,24 +40,25 @@ impl Role {
 
 // ─── Status ─────────────────────────────────────────────────────────────
 
-/// 任务在状态机里此刻的真实状态。后端 spec：响应回 `status: int`，本地用 [`Status::from_int`] 派生。
+/// 任务在状态机里此刻的真实状态。后端 `TaskStatusEnum`：响应回 `status: int`，
+/// 本地用 [`Status::from_int`] 派生。
 ///
 /// 对齐后端 `TaskStatusEnum`：
 /// INIT=-1, OPEN=0, ACCEPTED=1, SUBMITTED=2, REFUSED=3, DISPUTED=4,
 /// ADMINSTOPPED=5, COMPLETE=6, CLOSE=7, EXPIRED=8, REJECTED=9
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
-    Init,
-    Open,
-    Accepted,
-    Submitted,
-    Refused,
-    Disputed,
-    AdminStopped,
-    Completed,
-    Close,
-    Expired,
-    Rejected,
+    Init,         // -1
+    Open,         // 0
+    Accepted,     // 1
+    Submitted,    // 2
+    Refused,      // 3
+    Disputed,     // 4
+    AdminStopped, // 5
+    Completed,    // 6
+    Close,        // 7
+    Expired,      // 8
+    Rejected,     // 9
     /// 后端返回的、当前枚举不认识的状态字符串（容错保留原值）
     Other(String),
 }
@@ -66,18 +67,18 @@ impl Status {
     /// 字符串解析（用于 CLI `--jobStatus` 参数 / event 名解析），spec 字段是 int 应走 [`Self::from_int`]。
     pub fn parse(s: &str) -> Self {
         match s {
-            "init"                   => Status::Init,
-            "open"                   => Status::Open,
-            "accepted"               => Status::Accepted,
-            "submitted"              => Status::Submitted,
-            "refused"                => Status::Refused,
-            "disputed"               => Status::Disputed,
-            "admin_stopped"          => Status::AdminStopped,
-            "completed" | "complete" => Status::Completed,
-            "close"                  => Status::Close,
-            "expired"                => Status::Expired,
-            "rejected"               => Status::Rejected,
-            other                    => Status::Other(other.to_string()),
+            "init"                               => Status::Init,
+            "open"                               => Status::Open,
+            "accepted"                           => Status::Accepted,
+            "submitted"                          => Status::Submitted,
+            "refused"                            => Status::Refused,
+            "disputed"                           => Status::Disputed,
+            "admin_stopped" | "adminstopped"     => Status::AdminStopped,
+            "completed" | "complete"             => Status::Completed,
+            "close" | "closed"                   => Status::Close,
+            "expired"                            => Status::Expired,
+            "rejected"                           => Status::Rejected,
+            other                                => Status::Other(other.to_string()),
         }
     }
 
@@ -99,8 +100,8 @@ impl Status {
     }
 
     /// 后端 `TaskStatusEnum` int 映射：
-    /// -1=init / 0=open / 1=accepted / 2=submitted / 3=refused / 4=disputed /
-    /// 5=admin_stopped / 6=complete / 7=close / 8=expired / 9=rejected。
+    /// -1=INIT / 0=OPEN / 1=ACCEPTED / 2=SUBMITTED / 3=REFUSED / 4=DISPUTED /
+    /// 5=ADMINSTOPPED / 6=COMPLETE / 7=CLOSE / 8=EXPIRED / 9=REJECTED。
     pub fn from_int(n: i32) -> Self {
         match n {
             -1 => Status::Init,
@@ -171,10 +172,9 @@ pub enum Event {
     Slashed,
 
     // ── 质押 lifecycle（evaluator）────────────────────────────────────
-    /// VoterStaking.Staked 上链（首次质押 stake tx 结果；通知发起 stake 的 evaluator）
+    /// VoterStaking.Staked 上链（**首次质押 stake 与追加质押 increaseStake 均发此事件**；
+    /// 真后端不区分，event 流只有 staked。区分首次/追加只能由 my-stake 看 activeStake 增量决定。）
     Staked,
-    /// VoterStaking.IncreaseStake 上链（追加质押 tx 结果；通知发起 increaseStake 的 evaluator）
-    StakeIncreased,
     /// VoterStaking.UnstakeRequested 上链（进入冷却期；通知发起 unstake 的 evaluator）
     UnstakeRequested,
     /// VoterStaking.UnstakeClaimed 上链（冷却期满已提走；通知发起 claim 的 evaluator）
@@ -239,9 +239,8 @@ impl Event {
             "vote_revealed"             => Event::VoteRevealed,
             "round_failed"              => Event::RoundFailed,
             "slashed"                   => Event::Slashed,
-            // 质押 lifecycle
+            // 质押 lifecycle（首次/追加均映射到 Staked——真后端只发一个 staked 事件）
             "staked"                    => Event::Staked,
-            "stake_increased"           => Event::StakeIncreased,
             "unstake_requested"         => Event::UnstakeRequested,
             "unstake_claimed"           => Event::UnstakeClaimed,
             "unstake_cancelled"         => Event::UnstakeCancelled,
@@ -286,7 +285,6 @@ impl Event {
             Event::RoundFailed            => "round_failed",
             Event::Slashed                => "slashed",
             Event::Staked                 => "staked",
-            Event::StakeIncreased         => "stake_increased",
             Event::UnstakeRequested       => "unstake_requested",
             Event::UnstakeClaimed         => "unstake_claimed",
             Event::UnstakeCancelled       => "unstake_cancelled",
@@ -326,8 +324,12 @@ pub fn status_when_event(e: &Event) -> Status {
         Event::JobDisputed                                                  => Status::Disputed,
         // review_expired 只表示 review 窗口结束，task 仍 submitted；要等 provider 调 claimAutoComplete 才进 completed
         Event::ReviewExpired                                                => Status::Submitted,
+        // 后端 TaskStatusEnum：6=COMPLETE（资金释放给卖家），9=REJECTED（资金退还买家）。
+        // 区分两种终态由 event 直接表达。
         Event::JobCompleted | Event::JobAutoCompleted                       => Status::Completed,
         Event::JobRefunded | Event::JobAutoRefunded                         => Status::Rejected,
+        // DisputeResolved 取决于裁决方（buyer-wins → Rejected；seller-wins → Completed）；
+        // 单从 event 不能确定，默认 Completed，调用方应优先调 `agent status` 拉真实 status。
         Event::DisputeResolved                                              => Status::Completed,
         // 仲裁子状态机：所有事件都发生在 task=disputed 状态下
         Event::EvaluatorSelected | Event::RevealStarted
@@ -341,7 +343,7 @@ pub fn status_when_event(e: &Event) -> Status {
         // visibility/paymentMode 是过场事件，不改 status
         Event::JobVisibilityChanged | Event::JobPaymentModeChanged         => Status::Other("housekeeping".to_string()),
         // 质押 / 罚没 / 奖励 lifecycle 跟 task status 解耦
-        Event::Staked | Event::StakeIncreased
+        Event::Staked
         | Event::UnstakeRequested | Event::UnstakeClaimed | Event::UnstakeCancelled
         | Event::RewardClaimed | Event::Slashed
         | Event::StakeStopped | Event::CooldownEntered                      => Status::Other("staking".to_string()),
@@ -349,7 +351,10 @@ pub fn status_when_event(e: &Event) -> Status {
     }
 }
 
-/// 把任务推进到此 status 的入口事件（每个非 Other status 都有唯一 entry event）。
+/// 把任务推进到此 status 的**典型**入口事件。
+/// - Status::Completed canonical = JobCompleted（happy-path 验收 / 仲裁卖家胜）
+/// - Status::Rejected canonical = JobRefunded（退款 / 仲裁买家胜）
+/// - DisputeResolved 不归属 canonical（同一 event 可能落 Completed 或 Rejected）
 pub fn entry_event(s: &Status) -> Option<Event> {
     match s {
         Status::Init         => None,
@@ -385,6 +390,9 @@ mod tests {
 
     #[test]
     fn status_event_roundtrip() {
+        // entry_event(s) → e ; status_when_event(e) 必须能反推回 s
+        // Status::AdminStopped 无客户端入口事件（entry_event 返回 None），跳过。
+        // Status::Completed → JobCompleted；Status::Rejected → JobRefunded（buyer-wins / 退款）
         for s in [
             Status::Open, Status::Accepted, Status::Submitted, Status::Refused,
             Status::Disputed, Status::Completed, Status::Close, Status::Expired,
