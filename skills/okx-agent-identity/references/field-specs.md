@@ -59,8 +59,8 @@ The provider's `--service` is a JSON array whose elements have the fields below.
 
 - **用途** / Purpose: 每次调用的单价。 / Price per call.
 - **可见范围** / Visibility: 上链公开。 / On-chain public.
-- **请注意** / Please note: USDT 整数字符串；`0` 表示免费引流（后续不能再按量收费）；A2A 不需要这个字段。 / Integer USDT string; `0` means free lead-gen (cannot charge per-call later); A2A does not need this.
-- **示例** / Example: `10` / `5` / `0`.
+- **请注意** / Please note: USDT 数字字符串，最多两位小数（如 `1.22` / `10` / `0.5`）；`0` 表示免费引流（后续不能再按量收费）；A2A 不需要这个字段。**校验由 skill 端执行**，CLI 只检查非空。 / USDT numeric string with up to 2 decimal places (e.g., `1.22` / `10` / `0.5`); `0` means free lead-gen (cannot charge per-call later); A2A does not need this. **Validation is enforced skill-side** — the CLI itself only checks non-empty.
+- **示例** / Example: `1.22` / `10` / `0.5` / `0`.
 
 ### endpoint (A2MCP only)
 
