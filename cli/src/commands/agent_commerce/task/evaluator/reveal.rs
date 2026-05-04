@@ -1,10 +1,3 @@
-//! 仲裁者 reveal 投票（commit-reveal 第二阶段）— onchainos agent vote-reveal <disputeId>
-//!
-//! Driven by the `reveal_started` system event whose envelope carries the `disputeId` to
-//! reveal. Backend reads vote+salt from `task_dispute_voter` keyed by (disputeId, voter),
-//! so the request body is empty and the CLI takes only the disputeId argument — no
-//! `--vote`, no local store.
-
 use anyhow::{bail, Result};
 
 use super::helpers::parse_job_id;
@@ -27,8 +20,7 @@ pub async fn handle_reveal(
     match can_resp["canReveal"].as_bool() {
         Some(true) => {}
         Some(false) => bail!(
-            "后端 canReveal=false（disputeId={dispute_id}）：reveal 窗口尚未开启 / 本轮已结算 / 未 commit。\n\
-             收到 `reveal_started` 事件后重试；若本轮已结算，改跑 `arbitration-claim`（account 级 pull 所有奖励）。"
+            "后端 canReveal=false（disputeId={dispute_id}）：reveal 窗口尚未开启 / 本轮已结算 / 未 commit。"
         ),
         None => bail!("canReveal 响应缺少布尔字段，后端可能返回异常: {can_resp}"),
     }
@@ -51,20 +43,6 @@ pub async fn handle_reveal(
     .await?;
 
     println!("vote revealed (disputeId={dispute_id})");
-    if let Some(v) = resp["revealedVote"].as_u64() {
-        let label = if v == 1 { "Provider wins" } else { "Client wins" };
-        println!("  revealedVote: {v} ({label})");
-    }
     println!("  txHash:       {tx_hash}");
-    if resp["settled"] == true {
-        if let Some(w) = resp["winner"].as_str() {
-            println!("  settled:      yes ({w} wins)");
-        }
-        if let Some(v) = resp["verdict"].as_str() {
-            println!("  verdict:      {v}");
-        }
-    } else {
-        println!("  settled:      no (waiting for other voters)");
-    }
     Ok(())
 }

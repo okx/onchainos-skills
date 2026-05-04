@@ -1,15 +1,3 @@
-//! Evaluator 解质押生命周期 CLI。
-//!
-//! 对齐后端 staking API（spec L12166-L12572）：
-//! - `request-unstake --amount N` → POST /staking/requestUnstake（进入冷却期）
-//! - `claim-unstake`              → POST /staking/claimUnstake（冷却期后提走）
-//! - `cancel-unstake`             → POST /staking/cancelUnstake（冷却期内取消）
-//!
-//! 三者都是 AA UOP：后端返回 uopData，CLI 签名 + 广播。无 jobId 绑定，bizContext.jobId=""。
-//!
-//! 冷却期天数与"部分赎回最低保留"由 `/staking/config` 提供（Apollo 配置，后端权威），
-//! CLI 在发起前 best-effort 拉取做 UX 提示；拉取失败不阻塞主流程，由合约 revert 兜底。
-
 use anyhow::{bail, Result};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
@@ -18,13 +6,6 @@ use crate::commands::agent_commerce::task::evaluator::staking_types::{
 };
 use crate::commands::agent_commerce::task::signing;
 
-/// 申请解质押，OKB 进入冷却期。支持部分解质押。活跃仲裁期间会 revert。
-///
-/// 部分赎回保留规则：部分赎回后余额最低保留 `partialUnstakeMinRetainOkb` OKB
-/// （低于此值只允许全额赎回）。CLI 在发起前 best-effort 拉 `/staking/config`，
-/// 用于 UX 文案与（已知本地余额时的）友好预检；最终校验仍以合约 revert 为准。
-///
-/// Error codes: 4000（agentId 无效）/ 1001（amount <= 0）/ 合约 revert（余额不足 / 活跃争议 / 已在冷却 / 部分赎回后余额 < 保留值）
 pub async fn handle_request_unstake(
     client: &mut TaskApiClient,
     amount: &str,
@@ -117,9 +98,6 @@ pub async fn handle_claim_unstake(
     Ok(())
 }
 
-/// 在冷却期内撤销解质押请求，OKB 回到质押状态（冷却天数由 staking-config 决定）。
-///
-/// Error codes: 4000 / 合约 revert（无待解质押 / 冷却期已过）
 pub async fn handle_cancel_unstake(
     client: &mut TaskApiClient,
     agent_id: &str,

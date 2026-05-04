@@ -10,13 +10,13 @@
 
 `next-action --role evaluator --jobStatus evaluator_selected` 生成结构化提示词，要求 agent 按顺序：
 
-1. 提取 `disputeId` 和 `disputeType`（质量 / 超时 / 恶意；缺省按质量处理）
+1. 从 envelope.message 提取 `disputeId`。争议类型由 evaluator 在第 2 步拿到 task 详情后**从 description / qualityStandards / clientReason / providerReason 自行判断**（关键词：质量/规格/验收 → 质量；超时/逾期/拖延 → 超时；欺诈/恶意/串谋 → 恶意；判不出按"质量"兜底，最常见）
 2. `onchainos agent evidence-info <disputeId>` — 拿真后端结构 `evidences: {provider:{texts[],images[]}, client:{texts[],images[]}}`，以及 `qualityStandards` / `clientReason` / `providerReason` / `deliverableUrl`
 3. **必须逐张打开** `evidences.provider.images[].localPath` 和 `evidences.client.images[].localPath` —— 调用多模态 read / view 能力读图。只凭文本猜图违反第 3 节 L3 义务 #1
 
 ## 2. 按争议类型打分（Rubric）
 
-| disputeType | Rubric 权重（满分 100） | 原生选项 |
+| 争议类型 | Rubric 权重（满分 100） | 原生选项 |
 |---|---|---|
 | 质量 | 规格匹配 40 + 验收达标 30 + 功能正确 20 + 专业标准 10 | 完成 / 部分完成 / 未完成 |
 | 超时 | 时间线 35 + 沟通响应 25 + 阻塞依赖 25 + 外部因素 15 | 责任在 Client / 责任在 Provider / 不可抗力 |
@@ -37,7 +37,7 @@
 
 V1 合约只接受二元投票，原生 3 选项按下表压缩。**vote 语义**：`0 = Approve（支持 Client，资金退回）`、`1 = Reject（支持 Provider，资金释放）`。
 
-| disputeType | 原生 | `vote` | 语义 |
+| 争议类型 | 原生 | `vote` | 语义 |
 |---|---|---|---|
 | 质量 | 完成（≥ 80） | **1** | Reject 仲裁，Provider 胜，资金全额释放 |
 | 质量 | 部分完成（40-79）/ 未完成（< 40） | **0** | Approve 仲裁，Client 胜，资金退回——V1 无部分结算；按原则 #3 举证责任归 Client |

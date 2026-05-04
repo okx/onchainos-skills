@@ -277,7 +277,7 @@ pub async fn resolve_wallet_and_agent_for_evaluator(
     .await?;
     let (account_id, address) = resolve_wallet(None, Some(&owner)).map_err(|e| {
         anyhow::anyhow!(
-            "agentId={id} 对应钱包 {owner} 不在本地（{e}），请先用对应私钥执行 `onchainos wallet auth`"
+            "agentId={id} 对应钱包 {owner} 不在本地（{e}），请先执行 `onchainos wallet auth`"
         )
     })?;
     Ok((account_id, address, id.to_string()))

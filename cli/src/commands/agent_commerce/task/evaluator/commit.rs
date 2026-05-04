@@ -1,23 +1,9 @@
-//! 仲裁者 commit 投票（commit-reveal 第一阶段）— onchainos agent vote-commit
-
 use anyhow::{bail, Result};
 
 use super::helpers::parse_job_id;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-/// E2a: commit a vote. Backend generates salt, stores it in task_dispute_voter keyed by voter,
-/// computes commitHash = keccak256(disputeId, vote, salt), and returns commitVote() calldata.
-/// Vote semantics per backend: 0 = Approve (Client wins), 1 = Reject (Provider wins).
-///
-/// Request body is strictly `{ vote }` per real API spec. The evaluator's rationale
-/// is NOT part of this API — it lives in agent thinking / session memory only (per evaluator.md
-/// references/evaluator-decision-rubric.md 7: judgments are never pushed to the user; users perceive the result only via later
-/// `reward_claimed` / `slashed` events). Not persisted to backend, not surfaced via xmtp.
-///
-/// No local persistence: reveal is driven by the `reveal_started` system event whose
-/// envelope carries `disputeId`, and backend reads vote+salt from `task_dispute_voter`
-/// at reveal time — neither vote nor any other commit metadata needs client-side storage.
 pub async fn handle_commit(
     client: &mut TaskApiClient,
     dispute_id: &str,
@@ -39,8 +25,7 @@ pub async fn handle_commit(
         &agent_id,
     ).await?;
 
-    // 后端 commit 响应里返回 `salt` / `commitSalt` 与 `commitHash`，broadcast bizContext
-    // 必须把 commitSalt + vote 一起带上，链上重算 keccak256(disputeId, vote, salt) 才匹配。
+    // 后端 commit 响应里返回 `salt` 与 `commitHash`，broadcast bizContext
     let salt = resp["salt"].as_str()
         .unwrap_or("");
     if salt.is_empty() {
@@ -63,9 +48,5 @@ pub async fn handle_commit(
         println!("  commitHash: {commit_hash}");
     }
     println!("  txHash:     {tx_hash}");
-    println!(
-        "next: on reveal_started run `onchainos agent vote-reveal <disputeId>` \
-         (no --vote; backend reads vote+salt from task_dispute_voter)"
-    );
     Ok(())
 }
