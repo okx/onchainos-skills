@@ -521,7 +521,7 @@ fn build_context(
     match (&task.buyer_agent_id, &task.buyer_agent_address) {
         (Some(id), Some(addr)) => {
             out.push_str(&format!("- AgentID：{id}\n"));
-            out.push_str(&format!("- 地址：{addr}\n"));
+            out.push_str(&format!("- 通信地址：{addr}\n"));
         }
         (Some(id), None) => out.push_str(&format!("- AgentID：{id}\n")),
         _ => out.push_str("- 信息未知\n"),
@@ -533,7 +533,7 @@ fn build_context(
     match (&task.provider_agent_id, &task.provider_agent_address) {
         (Some(id), Some(addr)) => {
             out.push_str(&format!("- AgentID：{id}\n"));
-            out.push_str(&format!("- 地址：{addr}\n"));
+            out.push_str(&format!("- 通信地址：{addr}\n"));
         }
         (Some(id), None) => out.push_str(&format!("- AgentID：{id}\n")),
         _ => out.push_str("- 尚未匹配卖家\n"),
