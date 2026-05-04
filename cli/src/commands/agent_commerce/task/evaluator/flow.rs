@@ -122,9 +122,11 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 ///
 /// 经济参数（罚金比例 / 最低质押 / 冷却期）不在此预拉：
 /// 1) sub session 给 agent 自看的剧本（evaluator_selected / reveal_started）只用作动机性文案，规则不依赖具体数值；
-/// 2) 推 user 的成功通知（staked / unstake_requested success）payload 已带 `amount` / `availableAt` 等关键字段；
-/// 3) 失败通知或需要真值的场合，由 agent 现场调 `onchainos agent staking-config`。
-/// todo zhangxin 验证系统事件是否也会派发 failed 状态
+/// 2) 推 user 通知所需的数值字段（amount / availableAt / txHash / rewardAmount / errorCode 等）
+///    **真后端 envelope 一律不带**——只发 event / jobId / timestamp / source / description；
+///    要播报数值，arm 内已要求 agent 现场调 `my-stake` / `arbitration-claimable` / `staking-config` 拉真值；
+/// 3) `disputeType` / `yourVote` 同样不在 envelope 上，evaluator_selected 由 agent 从 task 详情 + 双方 reason
+///    自行判断争议类型；dispute_resolved 由 `arbitration-claimable` 反推自己赢没赢决定要不要 claim。
 pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> String {
     let step_zero = arb_session_routing_step(job_id);
     match job_status {
@@ -139,9 +141,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              【判决权威】评估者规范（誓约 L1-L5 + 决策原则 / Rubric / 证据等级 / 裁决书规范）。冲突以本规范为准。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              {step_zero}\
-             **Step 1 — 从入站消息提取 `disputeId`、`disputeType`（质量/超时/恶意）、顶层 `agentId`（你的 evaluator agentId）。**\n\
+             **Step 1 — 从入站消息提取 `disputeId` 和顶层 `agentId`（你的 evaluator agentId）。**\n\
+             ⚠️ envelope.message **不下发 `disputeType`**——争议类型由 agent 在 Step 4 从 task 详情 + 双方 `clientReason` / `providerReason` 自行判断（关键词：质量/规格/验收 → 质量；超时/逾期/拖延 → 超时；欺诈/恶意/串谋 → 恶意；判不出按"质量争议"兜底）。\n\
              ⚠️ `disputeId` 缺省时直接中止本轮处理，输出 `missing disputeId in payload; abort` 日志结束——真后端 `disputeId = keccak256(jobId, roundNumber)`，第 2+ 轮重选时 `d-{job_id}-r1` 一定对不上合约。\n\
-             `disputeType` 缺省时按质量争议处理（最常见）。\n\
              顶层 `agentId` 缺省时同样中止：后续 evaluator CLI 必须靠它定位钱包，缺了就签不了。\n\n\
              **Step 2 — 拉取当前证据（必须把 inbound envelope 顶层 `agentId` 透传给 `--agent-id`，CLI 据此定位钱包/身份）：**\n\
              ```bash\n\
@@ -162,7 +164,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              - ③ 分歧点：对比 clientReason / providerReason 标记双方说法不同的地方\n\
              - ④ 证据关联：每个分歧点对应哪些证据（文本 + 图片），按 证据等级 打等级 S/A/B/C/D\n\
              - ⑤ 链上验证：若证据引用链上记录，做交叉验证（S/A 级直接采信；C/D 级需对方承认或交叉佐证）\n\n\
-             **Step 4 — 按 `disputeType` 选对应 Rubric 打分（Rubric），再按 references/evaluator-decision-rubric.md 2 决策原则（优先级从高到低：证据为王 > 规格至上 > 举证责任 > 比例原则 > 模糊不利于起草方 > 沟通义务 > 善意推定 > 时间戳权威）收敛到 原生选项：**\n\
+             **Step 4 — 自行判定 `disputeType`（envelope 不下发）后选对应 Rubric 打分，再按 references/evaluator-decision-rubric.md 2 决策原则（优先级从高到低：证据为王 > 规格至上 > 举证责任 > 比例原则 > 模糊不利于起草方 > 沟通义务 > 善意推定 > 时间戳权威）收敛到 原生选项：**\n\
              \n\
              | disputeType | Rubric 权重（满分 100） | 原生选项 |\n\
              |---|---|---|\n\
@@ -262,20 +264,28 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
             "【当前状态】dispute_resolved（DisputeSettled 上链，仲裁结算完成）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ 仲裁 sub session（agent 自主 claim + 清理，不通知用户）。首次到达可能落在 user session，按 Step 0 路由进 sub 后再 claim。用户侧的入账/罚没通知由后续 reward_claimed / slashed arm 负责。\n\n\
+             【Payload 约束】envelope.message 仅含 event / jobId / timestamp / source / description——\n\
+             **不带 `yourVote` / `winningSide`** 等扩展字段。是否赢得本轮、要不要 claim，统一**用账面反推**（自己投了什么后端会自动结算到账户）。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              {step_zero}\
-             **Step 1 — 从 payload 提取 `winningSide` / `yourVote`。**\n\n\
-             **Step 2 — 若 `yourVote` 与 `winningSide` 一致（多数方），立即领取奖励（透传 envelope 顶层 `agentId`）：**\n\
+             **Step 1 — 从 payload 提取 `disputeId`（必需，缺省 abort）和顶层 `agentId`。**\n\n\
+             **Step 2 — 调 `arbitration-claimable` 看本账户有没有可领奖励（透传 envelope 顶层 `agentId`）：**\n\
+             ```bash\n\
+             onchainos agent arbitration-claimable --agent-id <envelope 顶层 agentId>\n\
+             ```\n\
+             返回 `rewards: [{{symbol, tokenAddress, rawAmount, amount}}, ...]`。**任一项 amount > 0** 视为有可领奖励。\n\
+             - **0 项 / 全 0** → 跳过 claim（你这次不是多数方，可能会收到 slashed 事件）\n\
+             - **≥ 1 项 amount > 0** → 进入 Step 3 领取\n\n\
+             **Step 3 — 立即领取奖励（account 级 pull）：**\n\
              ```bash\n\
              onchainos agent arbitration-claim --agent-id <envelope 顶层 agentId>\n\
              ```\n\
              ⚠️ account 级 pull 模式：除 `--agent-id` 外不带其它业务参数，一次把所有已结算 dispute 的待领奖励一起领出来（后端 `POST /task/claim`，空 body）。\n\
-             失败最多重试 3 次。真正的入账确认会通过稍后到达的 `reward_claimed` 事件告知用户（那个 arm 会 通知user session）。\n\
-             若 `yourVote` 与多数不一致 / 为空，跳过 claim（不会有奖励，可能会收到 slashed 事件）。\n\n\
-             **Step 3 — 输出一行 sub session 日志后结束。禁止调用 通知user session：**\n\n\
-             > Settled dispute=<disputeId> winningSide=<1|2> yourVote=<1|2> claim_submitted={{true|false}}.\n\n\
+             失败最多重试 3 次。真正的入账确认会通过稍后到达的 `reward_claimed` 事件告知用户（那个 arm 会 通知user session）。\n\n\
+             **Step 4 — 输出一行 sub session 日志后结束。禁止调用 通知user session：**\n\n\
+             > Settled dispute=<disputeId> claim_submitted=<true|false>.\n\n\
              【后续事件】\n\
-             - reward_claimed（claim tx 回执）→ 另一个 arm，会 通知user session 推入账/失败给用户\n\
+             - reward_claimed（claim tx 回执）→ 另一个 arm，会 通知user session 推入账给用户\n\
              - slashed（被罚通知）→ 另一个 arm，会 通知user session 推罚没金额+原因给用户\n\
              本 arm 到这里结束，**不抢这两个 arm 的通知职责**。\n"
         ),
@@ -321,19 +331,22 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
             "【当前状态】reward_claimed（claimRewards tx 上链完成，sub session 侧）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ Sub session。\n\n\
+             【Payload 约束】envelope.message 仅含 event / jobId / timestamp / source / description——\n\
+             **不带 `status` / `txHash` / `rewardAmount` / `errorCode`**。到达 sub 即代表 success（failed 不会派发到这条事件流）。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
-             **Step 1 — 从 payload 提取 `status`（success / failed）、`txHash`、`rewardAmount`、`errorCode`（若 failed）。**\n\n\
-             **Step 2 — 拉任务上下文为通知加标题：**\n\
+             **Step 1（必做）— 拉任务上下文为通知加标题：**\n\
              ```bash\n\
              onchainos agent common context {job_id} --role evaluator\n\
              ```\n\n\
-             **Step 3 — 用 `xmtp_dispatch_user` 把入账/失败通知推给用户**（按 status 二选一填 content）：\n\n\
+             **Step 2（可选）— 如需播报具体到账金额，调 `arbitration-claimable` 或 `wallet history` 拉真值；不需要数字就跳过。**\n\
+             - `arbitration-claimable` 一般已归零（刚领完），可作为入账完成的旁证\n\
+             - 真要数额可拉 `onchainos wallet history --chain xlayer --token-symbol OKB --limit 5` 看最近一笔到账\n\n\
+             **Step 3 — 用 `xmtp_dispatch_user` 把入账通知推给用户：**\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20success → [仲裁奖励 💰] 任务『<title>』(jobId={job_id}) 奖励已到账 <rewardAmount> OKB，txHash=<txHash>。\n\
-             \x20\x20\x20\x20failed  → [仲裁奖励失败 ⚠️] 任务『<title>』(jobId={job_id}) claim 失败 (errorCode=<errorCode>, txHash=<txHash>)，请按错误码重试。\n\n\
+             \x20\x20\x20\x20[仲裁奖励 💰] 任务『<title>』(jobId={job_id}) 奖励已到账。\n\n\
              **Step 4 — 输出一行 sub session 日志后结束：**\n\n\
-             > reward_claimed status=<status> amount=<rewardAmount> relayed.\n\n\
+             > reward_claimed relayed.\n\n\
              【流程结束】此 disputeId 的 evaluator 生命周期完成；后续事件无需响应。\n"
         ),
 
