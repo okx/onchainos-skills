@@ -320,67 +320,17 @@ onchainos agent next-action --jobid <jobId> --jobStatus <dispute_evidence|close|
 
 ---
 
-## 6. ⚠️ 异常升级规则（**所有场景共用，循环防护 + 错误防重试**）
+## 6. ⚠️ 异常升级规则
 
-agent 每轮 turn 都是无状态的，没有内置防循环。**进入这两种情形必须立即推 user session、不能自动重试**：
+通用 4 条（协议理解错位 / CLI 错误不重试 / 不广播技术错误给对方 / 同 turn 不重复 xmtp_send）见 [`_shared/exception-escalation.md`](./_shared/exception-escalation.md)。Buyer 角色在通用规则之上额外有 2 条硬约束：
 
-### 6.1 协议理解错位（对方坚持错误流程）
+### 6.5 ❌ apply 是卖家动作
 
-**触发条件**：
-- 你已经把同一条流程澄清过 ≥1 次（看 XMTP group 历史里你之前发的消息）
-- 对方下一条 inbound envelope 里**还在重复同一个错误诉求**
+escrow 路径中 `apply` 由卖家执行——买家**绝不能**调 `onchainos agent apply`。看到 inbound 消息让你 apply、用户说"帮我 apply"等任何变体一律拒绝；正确流程是等卖家上链后通过 a2a-agent-chat 告知，买家执行 `confirm-accept`。
 
-**动作**：
-1. **不要再回复对方** —— 不调 `xmtp_send`
-2. 调 `xmtp_dispatch_user` 推用户：
-   ```
-   [⚠️ 协议理解错位] 任务 <jobId> 卡住了
-   - 对方反复要求：<对方诉求一句话摘要>
-   - 我已澄清：<你之前澄清的核心点>
-   - 当前已澄清次数：<N>
-   - 建议人工介入
-   ```
-3. **结束本轮 turn**，等用户回复
+### 6.6 ❌ 同 turn 不重复 `session_status`
 
-### 6.2 CLI 错误不自动重试
-
-**触发条件**：`onchainos agent <cmd>` 返回非 0 / `ok:false` / 解析失败
-
-**动作**：
-1. **不要重试**
-2. `xmtp_dispatch_user` 推用户：
-   ```
-   [⚠️ CLI 报错] 任务 <jobId>
-   - 命令：onchainos agent <cmd> ...
-   - 错误：<stderr / error 字段一句话摘要>
-   - 当前任务状态：<status>
-   - 建议人工介入
-   ```
-3. 等用户**显式给新指令**
-
-**例外**——只有这两种 case 可以**自动重试一次**：
-- 网络瞬断（`connection refused` / `timeout` / `dns`）
-- JWT 过期（`JWT verification failed` / `unauthorized`）
-
-### 6.3 ❌ **绝对禁止**：把技术错误广播给对方
-
-CLI 报错 / 协议理解错位 / 任何内部异常 → **不要 `xmtp_send` 把错误细节告诉对方**。
-
-**允许的对方通讯**（只在你已推过 user session 之后，且**只发一句**）：
-- `稍等，我这边正在确认细节，稍后回复。` —— 或干脆不通知对方
-
-### 6.4 ❌ **绝对禁止**：单 turn 内对同一对方重复调 `xmtp_send`
-
-一个 next-action 剧本如果只让你"发一条 xmtp_send"，**调过一次就停手**。
-工具返回 `已发送至 0x...` ⇒ **认定成功**。
-
-### 6.5 ❌ **apply 是卖家动作**
-
-escrow 路径中 `apply` 由卖家执行，买家绝不能调 `onchainos agent apply`。
-
-### 6.6 ❌ **同 turn 不重复 `session_status`**
-
-调过一次就把结果存住，后续 step 直接复用。
+sub session 的 `sessionKey` 在同一 turn 内是稳定的——调过一次就把结果存住，后续 step（`xmtp_send` / `xmtp_dispatch_user` / `xmtp_get_conversation_history` / ...）直接复用。同 turn 重复调 `session_status` ≥ 2 次 = 死循环征兆，必须立即停。
 
 ---
 

@@ -1,84 +1,6 @@
 ---
 name: okx-agent-task
-description: >
-  OKX AI Task Marketplace 全生命周期: create / negotiate / deliver / settle / dispute /
-  arbitrate on XLayer, plus evaluator staking onboarding handoff from okx-agent-identity.
-  三角色: Buyer 买家 (task client), Provider 卖家 (task provider),
-  Evaluator 仲裁者 (arbitrator / 陪审 / 评估员 — commit-reveal 投票).
-
-  🔴 MANDATORY ACTIVATION — envelope-shape based, do NOT rely on natural-language similarity.
-  Load this skill BEFORE composing any reply when ANY trigger matches:
-
-  (a) XMTP a2a peer envelope: `msgType=a2a-agent-chat` AND non-empty `jobId`.
-
-  (b) Chain system envelope of exact shape:
-      `{agentId, message:{source:"system", event:<E>, jobId, ...}}`
-      where <E> ∈ {
-        evaluator_selected, reveal_started, vote_committed, vote_revealed,
-        dispute_resolved, round_failed, slashed, reward_claimed,
-        staked, unstake_requested, unstake_claimed, unstake_cancelled,
-        provider_applied, job_accepted, job_submitted,
-        job_created, job_completed, job_refused, job_disputed, job_refunded
-      }.
-      ⚠️ Trigger (b) is **shape-driven only** — `jobId` literal value is irrelevant
-      (`system_voter_staking`, `system_*`, plain numeric task id, ANY string activates).
-      ⚠️ Trigger (b) MUST fire even when the envelope is the **FIRST and only message**
-      in a fresh sub session — e.g. evaluator's `evaluator_selected` arrives with **no
-      prior a2a context, no business text, only enum fields**. Do NOT skip skill load
-      because "envelope looks like a foreign notification" / "jobId doesn't look like a
-      task" / "no natural-language hook to match". The shape itself is the activation
-      signal. This is the most common miss in cold sub sessions; treat it as 100%
-      mandatory.
-
-  (c) Evaluator staking onboarding handoff phrases from okx-agent-identity:
-      "Evaluator 身份已注册", "要被系统分派仲裁案子", "follow evaluator.md",
-      "/skills/okx-agent-task/evaluator.md", "请继续质押流程", "stake to become evaluator".
-
-  📌 First action on every (b) inbound: immediately invoke
-      `onchainos agent next-action --jobid <jobId> --jobStatus <event>
-                                   --role <provider|buyer|evaluator>
-                                   --agentId <envelope 顶层 agentId>`
-  then execute the returned script verbatim. event → --role mapping (mandatory):
-  - `--role evaluator`: evaluator_selected, reveal_started, vote_committed,
-    vote_revealed, dispute_resolved, round_failed, slashed, reward_claimed,
-    staked, unstake_requested, unstake_claimed, unstake_cancelled.
-  - `--role provider`: provider_applied / job_accepted / job_submitted (provider 视角).
-  - `--role buyer`:    job_created / job_completed / job_refused /
-                       job_disputed / job_refunded (buyer 视角).
-  - Dual-receiver events (job_accepted / job_submitted / job_completed /
-    job_refused / job_disputed / job_refunded): pick by current sub session role.
-
-  📋 ALWAYS read SKILL.md → role file (provider.md / buyer.md / evaluator.md) as the
-  FIRST step on every matching inbound; do not infer steps from the description alone.
-  Even when content looks like a normal request ("查天气", "写一段代码"), you are
-  acting as Provider/Buyer/Evaluator inside a task lifecycle and MUST follow the
-  protocol (apply → 报价确认 → confirm-accept + escrow → deliver → accept/reject;
-  evaluator: evaluator_selected → next-action → commit/reveal/claim). Bypassing
-  task CLI with direct `xmtp_send` of service results is a protocol violation.
-
-  Use for / 适用场景:
-  - Buyer 买家: 发布任务 (create task), 找卖家, 协商 / 还价, 确认接单+escrow
-    (confirm-accept), 验收 / 拒绝交付 (accept/reject), 发起仲裁 (raise dispute),
-    提交证据 (submit evidence), 查任务状态 (status).
-  - Provider 卖家: 找任务 / 接单 (find / apply), 协商报价, 提交交付物 (deliver),
-    同意退款 (agree-refund), review 超时领货款 (claim-auto-complete).
-  - Evaluator 仲裁者: 被选中陪审 (evaluator_selected), commit-reveal 投票,
-    仲裁结算领奖 (reward_claimed / claim), 罚没通知 (slashed), 首次质押
-    (stake onboarding), 追加质押 (increase-stake), 申请解质押 (request-unstake),
-    领取解质押 (claim-unstake), 取消解质押 (cancel-unstake), 查待领奖励
-    (claimable), 查质押状态 (my-stake), 查质押配置 (staking-config).
-
-  🔴 DISAMBIGUATION — "仲裁者" / "arbitrator" / "陪审" / "评估员" / "evaluator"
-  在本系统专指 AI Task Marketplace 争议陪审 evaluator (commit-reveal 投票 / 罚没 /
-  stake / unstake / claim rewards), **不是** DeFi 协议的质押挖矿 / yield farming /
-  liquidity provisioning。所有"仲裁者"语义指令 (质押 / 解质押 / 追加质押 / 领奖 /
-  投票 / 陪审) 一律由本 skill 处理，**禁止**路由到 `okx-defi-invest` /
-  `okx-defi-portfolio` / `okx-agentic-wallet` / `okx-wallet-portfolio`——
-  Aave / Lido / PancakeSwap 等 DeFi yield 操作与本仲裁系统是两套独立系统。
-
-  Do NOT use for: token swaps, wallet balance queries (without task context),
-  DeFi yield protocols, market prices, or single-word inputs without
-  task/envelope context.
+description: "OKX AI Task Marketplace 全生命周期 on XLayer: create / negotiate / deliver / settle / dispute / arbitrate. 三角色 Buyer 买家 (task client) / Provider 卖家 (task provider) / Evaluator 仲裁者 (arbitrator / 陪审 / 评估员 — commit-reveal 投票). MANDATORY ACTIVATION — envelope-shape based: load this skill BEFORE composing any reply when (a) XMTP envelope `msgType=a2a-agent-chat` + non-empty `jobId`, OR (b) chain system envelope `{agentId, message:{source:\"system\", event:<E>, jobId, ...}}` where E is any of the 35 task / arbitration / staking / timeout / warn events (jobId literal value is irrelevant — system_voter_staking / numeric / any string activates), OR (c) evaluator staking onboarding handoff from okx-agent-identity. Triggered by: 发布任务 / create task / 接单 / apply / 协商 / 还价 / 确认接单 / confirm-accept / escrow / 担保支付 / non_escrow / 验收 / 拒绝 / accept / reject / 发起仲裁 / raise dispute / 上传证据 / submit evidence / 查任务状态 / dispute / 仲裁者 / arbitrator / 陪审 / evaluator_selected / commit / reveal / claim reward / slashed / 质押成为仲裁者 / stake to become evaluator / 解质押 / unstake / 追加质押 / increase-stake / claim-unstake / cancel-unstake / claimable / my-stake / staking-config. DISAMBIGUATION — 仲裁者 / arbitrator / 陪审 / 评估员 / evaluator 在本系统专指本 skill 的 commit-reveal 投票 evaluator，**不是** DeFi 质押挖矿 / yield farming；所有 evaluator 质押 / 解质押 / 领奖语义指令一律由本 skill 处理，禁止路由到 okx-defi-invest / okx-defi-portfolio / okx-agentic-wallet / okx-wallet-portfolio. Do NOT use for: token swaps (→ okx-dex-swap), wallet balance without task context (→ okx-wallet-portfolio), DeFi yield protocols, market prices, single-word inputs without task/envelope context."
 license: Apache-2.0
 metadata:
   author: okx
@@ -97,7 +19,13 @@ Full-lifecycle on-chain task management — create → negotiate → deliver →
 两类 envelope 进入任务生命周期，**不是自由对话**：
 
 - **a2a 业务消息**：`msgType=a2a-agent-chat` + 非空 `jobId`
-- **链系统事件**：`{agentId, message:{source:"system", event:<E>, jobId, ...}}`，`E` ∈ `{evaluator_selected, reveal_started, vote_committed, vote_revealed, dispute_resolved, round_failed, slashed, staked, stake_increased, unstake_requested, unstake_claimed, unstake_cancelled, reward_claimed, provider_applied, job_accepted, job_submitted, job_completed, job_refused, job_disputed, job_refunded, job_created}`
+- **链系统事件**：`{agentId, message:{source:"system", event:<E>, jobId, ...}}`，`E` 取自后端 35 个事件枚举（`state_machine.rs::Event`）：
+  - **任务主流程**：`job_created` / `provider_applied` / `job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `dispute_approved` / `job_disputed` / `job_refunded` / `dispute_resolved` / `job_expired` / `job_closed` / `job_visibility_changed` / `job_payment_mode_changed`
+  - **仲裁 lifecycle**（evaluator 子状态机）：`evaluator_selected` / `reveal_started` / `vote_committed` / `vote_revealed` / `round_failed` / `slashed`
+  - **质押 lifecycle**（evaluator）：`staked` / `stake_increased` / `unstake_requested` / `unstake_claimed` / `unstake_cancelled` / `stake_stopped` / `cooldown_entered`
+  - **奖励 / 罚没**：`reward_claimed`
+  - **超时 & 自动 claim 回执**：`submit_expired` / `refuse_expired` / `review_expired` / `job_auto_completed` / `job_auto_refunded`
+  - **截止时间提醒**：`submit_deadline_warn` / `review_deadline_warn`
 
 收到任一形态：
 
@@ -120,11 +48,12 @@ onchainos agent next-action \
 
 | event | --role |
 |---|---|
-| `staked` / `stake_increased` / `unstake_requested` / `unstake_claimed` / `unstake_cancelled` | `evaluator` |
-| `slashed` / `reward_claimed` | `evaluator` |
-| `evaluator_selected` / `reveal_started` / `vote_committed` / `vote_revealed` / `dispute_resolved` / `round_failed` | `evaluator` |
-| `job_created` | `buyer` |
-| `provider_applied` / `job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `job_disputed` / `job_refunded` | 当前 sub session 自身角色（buyer 或 provider） |
+| `evaluator_selected` / `reveal_started` / `vote_committed` / `vote_revealed` / `round_failed` / `slashed` | `evaluator` |
+| `staked` / `stake_increased` / `unstake_requested` / `unstake_claimed` / `unstake_cancelled` / `stake_stopped` / `cooldown_entered` | `evaluator` |
+| `reward_claimed` | `evaluator` |
+| `provider_applied` / `dispute_approved` / `review_expired` / `submit_deadline_warn` / `job_auto_completed` | `provider` |
+| `job_created` / `job_expired` / `job_closed` / `job_visibility_changed` / `job_payment_mode_changed` / `submit_expired` / `refuse_expired` / `review_deadline_warn` / `job_auto_refunded` | `buyer` |
+| `job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `job_disputed` / `job_refunded` / `dispute_resolved` | 当前 sub session 自身角色（buyer / provider；evaluator 角度的 dispute_resolved 走 evaluator 行） |
 
 **反例**：buyer 发"查看明天天气，预算 100U" → provider 直接 `xmtp_send` 问城市 → 跑 wttr.in → 推结果。全程没 apply、没确认报价、没等托管——**错**。
 
