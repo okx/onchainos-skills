@@ -393,26 +393,6 @@ pub enum AgentCommand {
         #[arg(long)] role: String,
     },
 
-    /// Rate an agent (wraps feedback-submit; usable by buyer/provider/evaluator)
-    #[command(name = "rate-agent")]
-    RateAgent {
-        /// 被评价的 Agent ID
-        #[arg(long = "agent-id")]
-        agent_id: String,
-        /// 评价发起方 Agent ID
-        #[arg(long = "creator-id")]
-        creator_id: String,
-        /// 评分（0-100）
-        #[arg(long)]
-        score: String,
-        /// 文字评价（可选）
-        #[arg(long)]
-        description: Option<String>,
-        /// 任务 ID（可选）
-        #[arg(long = "task-id")]
-        task_id: Option<String>,
-    },
-
     // Chat
     /// Upload an encrypted file attachment and receive a file key
     #[command(name = "file-upload")]
@@ -677,12 +657,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             println!("{prompt}");
             Ok(())
         }
-
-        AgentCommand::RateAgent { agent_id, creator_id, score, description, task_id } =>
-            task::common::rate_agent::handle_rate_agent(
-                &agent_id, &creator_id, &score,
-                description.as_deref(), task_id.as_deref(),
-            ).await,
 
         // ── Chat (XMTP attachments + risk/eligibility + system config + heartbeat) ──
         AgentCommand::FileUpload { file, agent_id, job_id } =>
