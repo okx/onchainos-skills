@@ -27,25 +27,6 @@ pub const XLAYER_CHAIN_INDEX: &str = "196";
 /// XLayer chain name（用于 wallet_store 地址查找，wallets.json 中 chainIndex=196 的 chainName）
 pub const XLAYER_CHAIN_NAME: &str = "okb";
 
-// ─── XLayer 任务系统支持的支付代币地址 → 符号 ────────────────────────────
-// 后端 task 列表 / 详情已经不再返回 paymentTokenSymbol，需要客户端从地址反查。
-
-/// XLayer USDT 合约地址（小写）
-/// todo ganmingtao
-pub const XLAYER_USDT_ADDRESS: &str = "0x1e4a5963abfd975d8c9021ce480b42188849d41d";
-/// XLayer USDG 合约地址（小写）
-pub const XLAYER_USDG_ADDRESS: &str = "0x4ae46a509f6b1d9056937ba4500cb143933d2dc8";
-
-/// 把 token 合约地址映射成展示符号（USDT / USDG）。
-/// 未知地址返回 None，调用方自行决定回退（一般直接显示 hex 地址）。
-pub fn token_symbol_from_address(addr: &str) -> Option<&'static str> {
-    match addr.to_ascii_lowercase().as_str() {
-        XLAYER_USDT_ADDRESS => Some("USDT"),
-        XLAYER_USDG_ADDRESS => Some("USDG"),
-        _ => None,
-    }
-}
-
 // ─── Agent 角色常量（身份模块 API role 字段值）────────────────────────────
 
 /// 买家 / 需求方（requestor）
@@ -205,6 +186,8 @@ struct TaskDetail {
     description: String,
     content_hash: Option<String>,
     token_address: Option<String>,
+    /// 后端 spec：直接返回的代币符号（USDT / USDG）。
+    token_symbol: Option<String>,
     token_amount: Option<String>,
     /// 0=未设置 / 1=escrow / 2=non_escrow / 3=x402
     payment_mode: Option<i32>,
@@ -491,7 +474,7 @@ fn build_context(
 
     let amount = task.token_amount.as_deref().unwrap_or("未设置");
     let token  = task.token_address.as_deref().unwrap_or("");
-    let symbol = token_symbol_from_address(token).unwrap_or("UNKNOWN");
+    let symbol = task.token_symbol.as_deref().unwrap_or("UNKNOWN");
     out.push_str(&format!("- 预算：{amount} {symbol} （token: {token}）\n"));
 
     if let Some(pm) = task.payment_mode {

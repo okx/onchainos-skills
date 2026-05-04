@@ -45,14 +45,23 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         ],
         Status::Completed => vec![
             next_action("job_completed"),
-            "（流程结束）任务完成，资金已释放。子 session 可关闭。".to_string(),
+            "（终态）任务已 COMPLETE — **资金已释放给你（卖家）**".to_string(),
+            "  ▸ 买家验收通过（job_completed）→ 托管款已释放".to_string(),
+            "  ▸ 仲裁卖家胜（dispute_resolved seller-wins）→ 托管款已释放".to_string(),
+            "子 session 可关闭。".to_string(),
         ],
-        Status::Refunded => vec![
+        Status::Rejected => vec![
             next_action("job_refunded"),
-            "（流程结束）资金已退还买家。子 session 可关闭。".to_string(),
+            "（终态）任务已 REJECTED — **资金已退还买家**".to_string(),
+            "  ▸ 你同意退款（agree-refund）/ 自动退款 → 资金原路返回买家".to_string(),
+            "  ▸ 仲裁买家胜（dispute_resolved buyer-wins）→ 退款".to_string(),
+            "子 session 可关闭。".to_string(),
+        ],
+        Status::Close | Status::Expired | Status::AdminStopped => vec![
+            "（终态）任务已结束（CLOSE/EXPIRED/ADMINSTOPPED 之一），无后续动作。子 session 可关闭。".to_string(),
         ],
         Status::Other(s) => vec![
-            format!("当前任务 status=`{s}` 不在 provider 关心的状态集（open / accepted / submitted / refused / disputed / completed / refunded）内"),
+            format!("当前任务 status=`{s}` 不在 provider 关心的状态集（open / accepted / submitted / refused / disputed / completed / rejected / close / expired / admin_stopped）内"),
             "→ 本角色无需任何任务级动作，等下一个相关链事件 / 用户决策再处理".to_string(),
             "→ **不要**重复跑 `agent status` / `agent common context`（结果会一样），结束本轮 turn".to_string(),
         ],

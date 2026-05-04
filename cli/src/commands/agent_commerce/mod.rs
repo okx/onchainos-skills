@@ -706,7 +706,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 /// 网络/解析失败时返回 None（不阻塞剧本输出，graceful fallback）。
 async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_id: &str) -> Option<String> {
     use task::common::network::task_api_client::TaskApiClient;
-    use task::common::state_machine::{parse_status_or_event, status_when_event, Status};
+    use task::common::state_machine::{parse_status_or_event, status_when_event, Event, Status};
 
     // user-instruction 伪 event 不是链事件，不直接对应 status——它们在某个 status 下被触发
     // 后才会上链改 status。校验它们的"对应 status"会误报，所以这里直接跳过。
@@ -736,13 +736,18 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     let actual = Status::from_int(i32::try_from(resp.get("status")?.as_i64()?).ok()?);
     let actual_str = actual.as_str().to_string();
 
+    // DisputeResolved 特判：仲裁裁决落链时实际 status 可能是 Completed（卖家胜）
+    // 或 Rejected（买家胜），单从 event 推不出确切方向；只要 actual 是这两个之一就算合法。
+    let dispute_resolved_ok = matches!(event, Event::DisputeResolved)
+        && matches!(actual, Status::Completed | Status::Rejected);
+
     eprintln!(
         "[check-freshness] job_id={job_id}, event={job_status_or_event}, expected_status={}, actual_status={actual_str}, match={}",
         expected.as_str(),
-        actual == expected,
+        actual == expected || dispute_resolved_ok,
     );
 
-    if actual == expected {
+    if actual == expected || dispute_resolved_ok {
         return None;
     }
     Some(format!(
