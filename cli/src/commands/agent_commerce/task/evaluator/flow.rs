@@ -261,6 +261,26 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              \x20\x20\x20\x20[解质押 ✅] 已取消：待解 OKB 回到质押状态。\n\n\
              【Step 3】输出日志结束：`> unstake_cancelled relayed.`\n".to_string(),
 
+        "stake_stopped" => "【当前状态】stake_stopped（VoterStaking.VoterStakeStopped 上链，已退出 voter 池，子session 侧）\n\
+             【角色】仲裁者（Evaluator）\n\
+             【会话类型】⚠️ 子session。\n\n\
+             【Step 1】用 `xmtp_dispatch_user` 把退出通知推给用户：\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20[质押 🚪] 已退出 voter 池，不再被选为陪审。\n\n\
+             【Step 2】输出日志结束：`> stake_stopped relayed.`\n".to_string(),
+
+        "cooldown_entered" => "【当前状态】cooldown_entered（DisputeManager.VoterCooldownEntered 上链，进入缺席冷却期，无 user tx，子session 侧）\n\
+             【角色】仲裁者（Evaluator）\n\
+             【会话类型】⚠️ 子session。\n\n\
+             【Step 1（必做）】跑 `evaluator my-stake --agent-id <你的 agentId>`，取 `cooldownEndsAt`（unix 秒）。把秒级时间戳转本地时间字符串再填 content。\n\n\
+             【Step 2】用 `xmtp_dispatch_user` 把进入冷却通知推给用户：\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20[冷却 ⏸️] 已进入缺席冷却期，<my-stake.cooldownEndsAt 本地时间> 前不会被选为陪审。\n\n\
+             【Step 3】输出日志结束：`> cooldown_entered relayed.`\n\n\
+             ⚠️ **禁止**写死冷却时长——长度由 `staking-config.slashedCooldownSeconds` 决定（可动态变化），始终用 my-stake 返回的 `cooldownEndsAt` 真值。\n".to_string(),
+
         // ─── 自己的投票 tx 回执 ──────────────────────────────────────────
         "vote_committed" => "【当前状态】vote_committed（你自己的 commit tx 上链 success，子session 侧）\n\
              【角色】仲裁者（Evaluator）\n\

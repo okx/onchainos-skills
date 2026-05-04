@@ -93,7 +93,7 @@
 
 - **dispute 系列**（`evaluator_selected` / `reveal_started` / `dispute_resolved` / `round_failed`）：必带 `disputeId`，按事件可能附 `voter` / `winner`。
 - **`slashed`**：带 `amount` / `reason`，可选 `disputeId`。
-- **staking lifecycle**（`staked` / `unstake_requested` / `unstake_claimed` / `unstake_cancelled`）：**无任何扩展字段**，需要数值/时间一律调 `my-stake` 自取，**不要**在 envelope 上去找 `amount` / `txHash` / `availableAt` / `status` / `errorCode`（这些字段不存在）。⚠️ 质押 stake 与追加质押 increaseStake **统一发 `staked`**，不存在独立的 `stake_increased` 事件。
+- **staking lifecycle**（`staked` / `unstake_requested` / `unstake_claimed` / `unstake_cancelled` / `stake_stopped` / `cooldown_entered`）：**无任何扩展字段**，需要数值/时间一律调 `my-stake` 自取（`cooldown_entered` 取 `cooldownEndsAt`），**不要**在 envelope 上去找 `amount` / `txHash` / `availableAt` / `status` / `errorCode`（这些字段不存在）。⚠️ 质押 stake 与追加质押 increaseStake **统一发 `staked`**，不存在独立的 `stake_increased` 事件。
 
 **唯一规则** — 收到后**立即**调：
 
