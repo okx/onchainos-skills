@@ -28,37 +28,9 @@ pub struct BroadcastResult {
     pub tx_hash: String,
 }
 
-/// Business context for broadcast — 后端据此区分业务场景做额外校验/记账。
-///
-/// 枚举值对齐后端接口文档 bizType 定义（bizType=6 不存在，已跳过）。
-/// todo liyun 不用指定，使用后端返回的type
-#[repr(i32)]
-#[derive(Debug, Clone, Copy)]
-pub enum BizContext {
-    JobCreate         = 1,
-    DisputeCreate     = 2,
-    VoteCommit        = 3,
-    VoteReveal        = 4,
-    ClaimRewards      = 5,
-    // 6 is skipped in backend spec
-    JobAccept         = 7,
-    JobSubmit         = 8,
-    JobComplete       = 9,
-    JobRefuse         = 10,
-    Stake             = 11,
-    UnstakeRequest    = 12,
-    UnstakeClaim      = 13,
-    UnstakeCancel     = 14,
-    JobApply          = 15,
-    JobClose          = 16,
-    JobSetVisibility  = 17,
-    JobSetPaymentMode = 18,
-    StakeIncrease     = 19,
-    JobAgreeRefund        = 20,
-    JobClaimAutoComplete  = 21,
-    JobClaimAutoRefund    = 22,
-    DisputeApprove        = 23,
-    VoterUnstakeStop      = 24,
+/// 从上一步 API 响应中提取 bizType（数字），原样透传给广播接口。
+pub fn extract_biz_type(resp: &Value) -> i64 {
+    resp["bizType"].as_i64().unwrap_or(0)
 }
 
 /// Resolve wallet account_id and address for XLayer.
@@ -310,7 +282,7 @@ pub async fn sign_uop_and_broadcast(
     account_id: &str,
     address: &str,
     job_id: &str,
-    biz_context: BizContext,
+    biz_type: i64,
     agent_id: &str,
 ) -> Result<String> {
     if uop_data.is_null() {
@@ -349,7 +321,7 @@ pub async fn sign_uop_and_broadcast(
     .await?;
     broadcast_body["bizContext"] = serde_json::json!({
         "jobId": job_id,
-        "bizType": biz_context as i32,
+        "bizType": biz_type,
     });
 
     let bc_resp = client.post_with_identity(client.broadcast_path(), &broadcast_body, agent_id).await
@@ -371,7 +343,7 @@ pub async fn sign_uop_and_broadcast_with_commit_meta(
     account_id: &str,
     address: &str,
     job_id: &str,
-    biz_context: BizContext,
+    biz_type: i64,
     agent_id: &str,
     commit_salt: &str,
     vote: u8,
@@ -409,7 +381,7 @@ pub async fn sign_uop_and_broadcast_with_commit_meta(
     .await?;
     broadcast_body["bizContext"] = serde_json::json!({
         "jobId": job_id,
-        "bizType": biz_context as i32,
+        "bizType": biz_type,
         "commitSalt": commit_salt,
         "vote": vote,
     });
@@ -432,7 +404,7 @@ pub async fn sign_uop_and_broadcast_with_payment(
     account_id: &str,
     address: &str,
     job_id: &str,
-    biz_context: BizContext,
+    biz_type: i64,
     agent_id: &str,
     payment_verify: Value,
 ) -> Result<String> {
@@ -469,7 +441,7 @@ pub async fn sign_uop_and_broadcast_with_payment(
     .await?;
     broadcast_body["bizContext"] = serde_json::json!({
         "jobId": job_id,
-        "bizType": biz_context as i32,
+        "bizType": biz_type,
         "paymentVerify": payment_verify,
     });
 
@@ -525,7 +497,7 @@ pub async fn task_dual_sign_and_broadcast(
     address: &str,
     agent_id: &str,
     job_id: &str,
-    biz_context: BizContext,
+    biz_type: i64,
 ) -> Result<BroadcastResult> {
     // Step 1: POST pre-endpoint with identity headers → typedData
     let pre_resp = client.post_with_identity(pre_endpoint_url, pre_body, agent_id).await
@@ -546,7 +518,7 @@ pub async fn task_dual_sign_and_broadcast(
 
     // Step 4: Sign uopHash + broadcast
     let tx_hash = sign_uop_and_broadcast(
-        client, &main_resp["uopData"], account_id, address, job_id, biz_context, agent_id,
+        client, &main_resp["uopData"], account_id, address, job_id, biz_type, agent_id,
     ).await?;
 
     Ok(BroadcastResult { api_response: main_resp, tx_hash })

@@ -68,7 +68,7 @@ pub async fn handle_complete(client: &mut TaskApiClient, job_id: &str) -> Result
         // Step 4: 签 uopHash + broadcast
         let tx_hash = signing::sign_uop_and_broadcast(
             client, &main_resp["uopData"], &account_id, &address,
-            job_id, signing::BizContext::JobComplete, &agent_id,
+            job_id, signing::extract_biz_type(&main_resp), &agent_id,
         ).await?;
 
         println!("✓ 任务验收通过（担保），状态 → complete，款项已释放");
@@ -93,7 +93,7 @@ pub async fn handle_complete(client: &mut TaskApiClient, job_id: &str) -> Result
 
         let tx_hash = signing::sign_uop_and_broadcast(
             client, &resp["uopData"], &account_id, &address,
-            job_id, signing::BizContext::JobComplete, &agent_id,
+            job_id, signing::extract_biz_type(&resp), &agent_id,
         ).await?;
 
         println!("✓ 任务验收通过（非担保），状态 → complete");

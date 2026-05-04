@@ -45,7 +45,7 @@ pub async fn handle_reveal(
         &account_id,
         &address,
         &job_id,
-        signing::BizContext::VoteReveal,
+        signing::extract_biz_type(&resp),
         &agent_id,
     )
     .await?;

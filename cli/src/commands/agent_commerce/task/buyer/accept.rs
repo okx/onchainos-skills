@@ -122,7 +122,7 @@ pub async fn handle_set_payment_mode(
 
     signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
-        job_id, signing::BizContext::JobSetPaymentMode, &agent_id,
+        job_id, signing::extract_biz_type(&resp), &agent_id,
     ).await?;
     let mode_str = payment_mode.as_str();
     println!("✓ 支付方式已设置: {mode_str} ({mode_int})，等待链上确认...");
@@ -330,7 +330,7 @@ async fn confirm_accept_escrow(
 
     let tx_hash = signing::sign_uop_and_broadcast_with_payment(
         client, &resp["uopData"], account_id, address,
-        job_id, signing::BizContext::JobAccept, agent_id,
+        job_id, signing::extract_biz_type(&resp), agent_id,
         payment_verify,
     ).await?;
     println!("✓ 已接受卖家 {provider}（担保支付），资金已托管");
@@ -389,7 +389,7 @@ async fn confirm_accept_non_escrow(
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], account_id, address,
-        job_id, signing::BizContext::JobAccept, agent_id,
+        job_id, signing::extract_biz_type(&resp), agent_id,
     ).await?;
     println!("✓ 已接受卖家 {provider}（非担保支付），状态 → accepted");
     println!("  txHash: {tx_hash}");
@@ -423,7 +423,7 @@ pub async fn handle_direct_accept(
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
-        job_id, signing::BizContext::JobAccept, &agent_id,
+        job_id, signing::extract_biz_type(&resp), &agent_id,
     ).await?;
     println!("✓ direct/accept 完成（x402），任务状态 → accepted");
     println!("  txHash: {tx_hash}");
@@ -471,7 +471,7 @@ pub async fn handle_task_402_pay(
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
-        job_id, signing::BizContext::JobAccept, &agent_id,
+        job_id, signing::extract_biz_type(&resp), &agent_id,
     ).await?;
     eprintln!("[task-402-pay] direct/accept 广播完成: txHash={tx_hash}");
 

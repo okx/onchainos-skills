@@ -33,7 +33,7 @@ pub async fn handle_claim_auto_complete(
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
-        job_id, signing::BizContext::JobClaimAutoComplete, agent_id,
+        job_id, signing::extract_biz_type(&resp), agent_id,
     ).await?;
 
     println!("✓ 已发起超时领取（claimAutoComplete），等待链上确认（job_completed）");

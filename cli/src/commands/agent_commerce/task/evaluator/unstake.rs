@@ -56,7 +56,7 @@ pub async fn handle_request_unstake(
         &account_id,
         &address,
         "",
-        signing::BizContext::UnstakeRequest,
+        signing::extract_biz_type(&resp),
         &agent_id,
     )
     .await?;
@@ -105,7 +105,7 @@ pub async fn handle_claim_unstake(
         &account_id,
         &address,
         "",
-        signing::BizContext::UnstakeClaim,
+        signing::extract_biz_type(&resp),
         &agent_id,
     )
     .await?;
@@ -139,7 +139,7 @@ pub async fn handle_cancel_unstake(
         &account_id,
         &address,
         "",
-        signing::BizContext::UnstakeCancel,
+        signing::extract_biz_type(&resp),
         &agent_id,
     )
     .await?;

@@ -30,7 +30,7 @@ pub async fn handle_dispute_confirm(
 
     let dispute_tx = signing::sign_uop_and_broadcast(
         client, &dispute_resp["uopData"], &account_id, &address,
-        job_id, signing::BizContext::DisputeCreate, agent_id,
+        job_id, signing::extract_biz_type(&dispute_resp), agent_id,
     ).await
         .context("dispute confirm (阶段 2): dispute 上链失败")?;
 

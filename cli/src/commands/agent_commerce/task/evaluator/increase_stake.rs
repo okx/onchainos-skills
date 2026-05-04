@@ -43,7 +43,7 @@ pub async fn handle_increase_stake(
         &account_id,
         &address,
         "",
-        signing::BizContext::StakeIncrease,
+        signing::extract_biz_type(&resp),
         &agent_id,
     )
     .await?;

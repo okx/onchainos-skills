@@ -60,7 +60,7 @@ pub async fn handle_reject(
     // Step 4: 签 uopHash + broadcast
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &main_resp["uopData"], &account_id, &address,
-        job_id, signing::BizContext::JobRefuse, &agent_id,
+        job_id, signing::extract_biz_type(&main_resp), &agent_id,
     ).await?;
 
     println!("✓ 已拒绝验收（原因：{reason}），状态 → refused");

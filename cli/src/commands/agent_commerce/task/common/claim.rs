@@ -37,7 +37,7 @@ pub async fn submit_claim_and_broadcast(
         account_id,
         address,
         "",
-        signing::BizContext::ClaimRewards,
+        signing::extract_biz_type(&resp),
         agent_id,
     )
     .await

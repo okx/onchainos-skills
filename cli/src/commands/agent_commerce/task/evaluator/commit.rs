@@ -50,7 +50,7 @@ pub async fn handle_commit(
 
     let tx_hash = signing::sign_uop_and_broadcast_with_commit_meta(
         client, &resp["uopData"], &account_id, &address,
-        &job_id, signing::BizContext::VoteCommit, &agent_id,
+        &job_id, signing::extract_biz_type(&resp), &agent_id,
         salt, vote,
     ).await?;
 
