@@ -20,7 +20,8 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             next_action("job_created"),
             ref_header,
             format!("  onchainos agent recommend {job_id} --agent-id <agentId>  # 查看推荐卖家"),
-            format!("  onchainos agent confirm-accept {job_id} --provider <addr> --payment-mode <escrow|non_escrow|x402> --token-symbol <sym> --token-amount <amt> [--endpoint <url>]  # 接受卖家（x402 只做 setPaymentMode）"),
+            format!("  onchainos agent set-payment-mode {job_id} --provider <addr> --payment-mode <escrow|non_escrow|x402> --token-symbol <sym> --token-amount <amt> [--endpoint <url>]  # 设置支付方式"),
+            format!("  onchainos agent confirm-accept {job_id} --provider <addr> --payment-mode <escrow|non_escrow> --token-symbol <sym> --token-amount <amt>  # 确认接单（setPaymentMode 后执行）"),
             format!("  onchainos agent direct-accept {job_id} --provider <agentId> --token-symbol <sym> --token-amount <amt>  # x402 阶段 2b: endpoint 交互后调用"),
             format!("  onchainos agent close {job_id}          # 关闭任务"),
             format!("  onchainos agent set-public {job_id}     # 转为公开任务"),
@@ -119,7 +120,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
          \x20\x202) CLI 错误：`onchainos agent <cmd>` 报错 → **不要重试**，直接调 `xmtp_dispatch_user` 推 `[⚠️ CLI 报错] ...`，等用户新指令。**唯一例外**：JWT 过期（msg 含 `JWT verification failed` / `unauthorized`）刷新登录态后自动重试一次；网络 timeout 也按业务错处理推用户，不在 sub 里盲重\n\
          \x20\x203) ❌ **绝对禁止把技术错误细节广播给对方**：CLI 命令名 / 后端字段名 / stderr 摘要 / `bug`/`命令：`/`错误：` 一律不能进 xmtp_send 给对方。最多发一句『稍等，正在确认细节』或干脆不通知对方。\n\
          \x20\x204) ❌ **同 turn 不重复 xmtp_send**：剧本说『发一条』→ 调过一次工具返回『已发送』就**算成功**，**当前 turn 内不再对同一对方调 xmtp_send 第二次**。不要因为消息可能不够清晰就重发——重发 = 刷屏 + 触发对方循环。下一条 inbound 进来再说。\n\
-         \x20\x205) ❌ **apply 是卖家动作**：escrow 路径中 `apply` 由卖家执行，买家绝不能调 `onchainos agent apply`。买家只在收到卖家申请通知后执行 `confirm-accept`。non_escrow 路径需从卖家消息中提取 paymentId 再 confirm-accept。\n\
+         \x20\x205) ❌ **apply 是卖家动作**：escrow 路径中 `apply` 由卖家执行，买家绝不能调 `onchainos agent apply`。买家先调 `set-payment-mode`，再在收到卖家申请通知后执行 `confirm-accept`。non_escrow 路径需从卖家消息中提取 paymentId 再 confirm-accept。\n\
          \x20\x206) ❌ **同 turn 不重复 `session_status`**：sub session 的 sessionKey 在同一 turn 内是稳定的——**调过一次就把结果存住，后续 step 直接复用**。即使剧本多个 step 都提到 sessionKey，也只调一次 session_status。重复调 = 死循环征兆，必须立即停。\n\n\
          如果不记得本任务协商细节（deliverable / paymentMode / token / 卖家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 加载上下文。\n\n"
@@ -175,7 +176,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20检查返回结果中是否有服务（services 数组非空）以及服务中的 endpoint、feeAmount、feeTokenSymbol 字段。\n\n\
              \x20\x20**D-Step 2 — 按 service-list 结果路由：**\n\
              \x20\x20- **有服务且含 endpoint（支持 x402）** → 提取 services[0] 的 feeAmount、feeTokenSymbol、endpoint，\n\
-             \x20\x20\x20\x20直接进入 **A-Step 1**（x402 价格比较 → A-Step 2 setPaymentMode）。\n\
+             \x20\x20\x20\x20直接进入 **A-Step 1**（x402 价格比较 → A-Step 2 set-payment-mode）。\n\
              \x20\x20\x20\x20providerAgentId = designatedProvider.agentId。\n\
              \x20\x20- **无服务或无 endpoint（不支持 x402）** → 进入 **B-Step 1** 建群协商。\n\n\
              \x20\x20清除 designatedProvider 缓存。\n\n\
@@ -194,17 +195,17 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20→ 无需用户确认，直接执行 A-Step 2\n\
              - 任务预算 < feeAmount 或代币不一致\n\
              \x20\x20→ 调用 xmtp_prompt_user 请求用户确认：\n\
-             \x20\x20\x20\x20llmContent: 用户确认后执行 A-Step 2 confirm-accept x402；用户拒绝则 recommend --next 切换下一个卖家。\n\
+             \x20\x20\x20\x20llmContent: 用户确认后执行 A-Step 2 set-payment-mode x402；用户拒绝则 recommend --next 切换下一个卖家。\n\
              \x20\x20\x20\x20userContent: 任务 {job_id} 匹配到 x402 卖家（AgentID=<providerAgentId>），服务费用 <feeAmount> <feeTokenSymbol>，\
              与任务预算（<tokenAmount> <tokenSymbol>）不一致，是否确认使用该卖家？\n\
              \x20\x20→ 用户确认 → 执行 A-Step 2\n\
              \x20\x20→ 用户拒绝 → `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断\n\n\
              **A-Step 2 — setPaymentMode（x402 阶段 1）：**\n\
              ```bash\n\
-             onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode x402 --token-symbol <feeTokenSymbol> --token-amount <feeAmount> --endpoint <endpoint>\n\
+             onchainos agent set-payment-mode {job_id} --provider <providerAgentId> --payment-mode x402 --token-symbol <feeTokenSymbol> --token-amount <feeAmount> --endpoint <endpoint>\n\
              ```\n\
              参数来源：recommend 输出的 services[0] 中的 feeTokenSymbol、feeAmount、endpoint。\n\
-             命令只执行 setPaymentMode(3) → 签名 → 广播，然后返回（exit code 2, confirming）。\n\
+             命令执行 setPaymentMode(3) → 签名 → 广播，然后返回（exit code 2, confirming）。\n\
              ⚠️ 返回的 JSON 中含 provider / endpoint / feeAmount / feeTokenSymbol，后续阶段需要用到。\n\n\
              **A-Step 3 — 通知用户并等待事件：**\n\
              调用 xmtp_dispatch_user：\n\
@@ -264,20 +265,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              onchainos agent save-agreed {job_id} --token-symbol <协商币种> --token-amount <协商价格>\n\
              ```\n\
              不保存会导致后续 confirm-accept 使用错误的币种/金额。\n\n\
-             **按协商确定的支付方式分流**：\n\n\
-             \x20\x20▸ **escrow（担保）**：\n\
-             \x20\x20\x20\x20调 xmtp_send 告知卖家：协商已确认，请你（卖家）执行 apply 接单。\n\
-             \x20\x20\x20\x20⚠️ apply 是卖家动作，买家不执行 apply。\n\
-             \x20\x20\x20\x20卖家确认 → 卖家执行 apply 上链 → 系统通知 provider_applied → 进入 ProviderApplied 事件处理。\n\n\
-             \x20\x20▸ **non_escrow（非担保）**：\n\
-             \x20\x20\x20\x20调 xmtp_send 告知卖家：协商已确认，请你（卖家）生成付款单（create_payment_charge）并把 paymentId 发给我。\n\
-             \x20\x20\x20\x20⚠️ 非担保不走 apply，卖家调 create_payment_charge 生成账单后通过 XMTP 把 paymentId 发给买家。\n\
-             \x20\x20\x20\x20买家收到 paymentId 后直接执行：\n\
-             \x20\x20\x20\x20```bash\n\
-             \x20\x20\x20\x20onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode non_escrow --payment-id <paymentId>\n\
-             \x20\x20\x20\x20```\n\
-             \x20\x20\x20\x20（内部：setPaymentMode(2) → a2a_pay EIP-3009 签名 → direct/accept 获取 calldata → 签名 → 广播）\n\
-             \x20\x20\x20\x20→ 等待 job_accepted 系统通知。\n\n\
+             **协商完成后统一执行 setPaymentMode**（escrow / non_escrow 共用）：\n\n\
+             ```bash\n\
+             onchainos agent set-payment-mode {job_id} --provider <providerAgentId> --payment-mode <escrow|non_escrow> --token-symbol <协商币种> --token-amount <协商价格>\n\
+             ```\n\
+             ⚠️ 此命令只执行 setPaymentMode → 签名 → 广播，然后返回（exit code 2, confirming）。\n\
+             ⚠️ 不要在此步通知卖家 apply / create_payment_charge，等 job_payment_mode_changed 系统通知到达后再通知卖家。\n\n\
+             → **结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n\n\
              **B-Step 3 — 调用 xmtp_dispatch_user 通知用户协商进展：**\n\
              \x20\x20content: 已自动联系推荐卖家（<providerAgentId>），进入协商流程，等待对方回复。\n\n\
              ━━━━━━━━━ 遍历结束 / 切换下一个卖家 ━━━━━━━━━\n\n\
@@ -293,18 +287,19 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              选择 C → `onchainos agent close {job_id}`。\n\
              \x20\x20⚠️ **不要自动选择，必须等用户回复后再执行。**\n\n\
              【后续事件】\n\
-             - x402 → setPaymentMode 完成 → job_payment_mode_changed → x402 endpoint 交互 + direct-accept → job_accepted → complete\n\
-             - A2A escrow → 协商完成 → 卖家 apply → provider_applied → 买家 confirm-accept → job_accepted\n\
-             - A2A non_escrow → 协商完成 → 卖家 create_payment_charge → 发 paymentId → 买家 confirm-accept → job_accepted\n"
+             - x402 → set-payment-mode → job_payment_mode_changed → x402 endpoint 交互 + direct-accept → job_accepted → complete\n\
+             - escrow → set-payment-mode → job_payment_mode_changed → 通知卖家 apply → provider_applied → confirm-accept → job_accepted\n\
+             - non_escrow → set-payment-mode → job_payment_mode_changed → 通知卖家 create_payment_charge → 收到 paymentId → confirm-accept → job_accepted\n"
         ),
 
         // ─── Scene 6: 卖家申请接单，确认接单（仅 escrow 路径会收到此事件） ──────────
         // ⚠️ 非担保（non_escrow）不走 apply，不会触发 provider_applied。
-        // 非担保的 confirm-accept 在 JobCreated 协商尾部的 non_escrow 分支中直接执行。
+        // setPaymentMode 已通过 set-payment-mode 独立执行。
         Event::ProviderApplied => format!(
             "【当前状态】provider_applied（卖家已链上申请接单 — 仅 escrow 担保支付）\n\
              【角色】买家（Client）\n\n\
-             【前置】协商阶段已确定金额、代币，从协商上下文获取：\n\
+             【前置】setPaymentMode 已通过 set-payment-mode 独立执行（job_payment_mode_changed 已收到）。\n\
+             协商阶段已确定金额、代币，从协商上下文获取：\n\
              ```bash\n\
              onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
              ```\n\
@@ -315,7 +310,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```bash\n\
              onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode escrow --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
              ```\n\
-             （内部：setPaymentMode(1) → providerConfirmStatus → sign_escrow TEE 签名 → accept 获取 calldata → 签名 → 广播，资金托管）\n\n\
+             直接执行 providerConfirmStatus → sign_escrow TEE 签名 → accept → 广播。\n\n\
              **Step 2 — 调用 xmtp_send 工具向卖家发送：**\n\n\
              {header_template}\n\
              已确认接单，支付方式：escrow（担保）。等待你开始执行任务。\n\n\
@@ -778,24 +773,30 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              onchainos agent status {job_id}\n\
              ```\n\
              提取 paymentMode（int：1=escrow, 2=non_escrow, 3=x402）。\n\n\
-             ━━━━━━━━━ escrow / non_escrow — 继续执行 confirm-accept ━━━━━━━━━\n\n\
-             从上一步 confirm-accept 的 confirming 输出中提取 provider、payment-mode。\n\
-             如果上下文中没有，从 recommend 缓存获取：\n\
-             ```bash\n\
-             onchainos agent recommend {job_id} --current\n\
-             ```\n\n\
-             **Step 2 — 调用 confirm-accept --resume 继续执行支付流程：**\n\
-             ```bash\n\
-             onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode <escrow|non_escrow> --token-symbol <sym> --token-amount <amt> --resume\n\
-             ```\n\
-             ⚠️ `--resume` 跳过 setPaymentMode（已完成），直接执行后续的 escrow/non_escrow 支付签名 + accept 上链。\n\
-             ⚠️ non_escrow 还需传 `--payment-id <pid>`（卖家通过 XMTP 传递的 payment_id）。\n\n\
+             ━━━━━━━━━ escrow（paymentMode=1）— 通知卖家 apply ━━━━━━━━━\n\n\
+             **Step 2 — 通知卖家执行 apply 接单：**\n\
+             调用 xmtp_send 向卖家发送：\n\
+             \x20\x20content: 协商已达成，支付模式（escrow 担保）已上链确认。请你执行 apply 接单。\n\n\
+             ⚠️ apply 是卖家动作，买家不执行 apply。\n\n\
              **Step 3 — 通知用户：**\n\
              调用 xmtp_dispatch_user：\n\
-             \x20\x20content: 任务 {job_id} 支付模式已确认上链，正在执行支付签名...\n\n\
-             → 等待 confirm-accept --resume 执行完成 → 等待 `job_accepted` 系统通知。\n\n\
+             \x20\x20content: 任务 {job_id} 支付模式（escrow）已上链确认，已通知卖家执行 apply 接单，等待中...\n\n\
+             → **结束本轮 turn**，等待 `provider_applied` 系统通知。\n\n\
+             ━━━━━━━━━ non_escrow（paymentMode=2）— 通知卖家生成付款单 ━━━━━━━━━\n\n\
+             **Step 2 — 通知卖家生成付款单：**\n\
+             调用 xmtp_send 向卖家发送：\n\
+             \x20\x20content: 协商已达成，支付模式（non_escrow 非担保）已上链确认。请你执行 create_payment_charge 生成付款单，并把 paymentId 发给我。\n\n\
+             **Step 3 — 通知用户：**\n\
+             调用 xmtp_dispatch_user：\n\
+             \x20\x20content: 任务 {job_id} 支付模式（non_escrow）已上链确认，已通知卖家生成付款单，等待卖家发送 paymentId...\n\n\
+             → **结束本轮 turn**，等待卖家通过 XMTP 发送 paymentId。\n\
+             收到 paymentId 后执行：\n\
+             ```bash\n\
+             onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode non_escrow --payment-id <paymentId> --token-symbol <sym> --token-amount <amt>\n\
+             ```\n\
+             直接执行 a2a_pay 签名 + direct/accept 上链。\n\n\
              ━━━━━━━━━ x402（paymentMode=3）━━━━━━━━━\n\n\
-             从上一步 confirm-accept 的 confirming 输出中提取 endpoint、feeTokenSymbol、feeAmount、provider。\n\
+             从上一步 set-payment-mode 的 confirming 输出中提取 endpoint、feeTokenSymbol、feeAmount、provider。\n\
              如果上下文中没有，从 recommend 缓存获取：\n\
              ```bash\n\
              onchainos agent recommend {job_id} --current\n\

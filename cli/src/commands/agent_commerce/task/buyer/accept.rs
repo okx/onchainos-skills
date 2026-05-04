@@ -1,13 +1,13 @@
 //! 确认接单 + Fund
 //!
-//! 买家动作：确认接单（担保 / 非担保 / x402）— onchainos task confirm-accept
-//!
-//! 流程：
-//! 1. setPaymentMode（单签上链）
-//! 2. 按支付方式分支：
-//!    - escrow:      providerConfirmStatus → a2a_pay::sign_escrow → accept(signatureData) → sign uop → broadcast
-//!    - non_escrow:  a2a_pay::pay() → direct/accept → sign uop → broadcast
-//!    - x402:        setPaymentMode 后 return（事件驱动：job_payment_mode_changed → Agent 做 x402 endpoint → direct-accept → job_accepted → complete）
+//! 买家动作：
+//! - set-payment-mode: 设置支付方式（独立命令，单签上链 → 等待 job_payment_mode_changed）
+//! - confirm-accept: 确认接受卖家（setPaymentMode 已完成后执行实际支付）
+//!    - escrow:      providerConfirmStatus → sign_escrow → accept → broadcast
+//!    - non_escrow:  a2a_pay::pay() → direct/accept → broadcast
+//!    - x402:        不走此命令（用 task-402-pay）
+//! - direct-accept: x402 阶段 2b
+//! - task-402-pay: x402 阶段 2（签名 + direct/accept + 重放 endpoint）
 //!
 //! 接口文档：https://okg-block.sg.larksuite.com/wiki/UumqwSyM5i1AuakBNLClJo9igIb
 //! 支付设计：https://okg-block.sg.larksuite.com/docx/CwWbd6eCOopgq6x6VwTlWEivgrc
@@ -231,7 +231,116 @@ fn parse_composite_fee(fee: &str) -> Result<(f64, String)> {
 }
 
 //todo liyun 拆分
-/// confirm-accept — 确认接受卖家
+/// set-payment-mode — 独立设置支付方式（从 confirm-accept 拆分）
+///
+/// 对所有支付方式统一执行：POST setPaymentMode → sign_uop → broadcast
+/// 然后返回 confirming（exit code 2），等待 job_payment_mode_changed 系统通知。
+#[allow(clippy::too_many_arguments)]
+pub async fn handle_set_payment_mode(
+    client: &mut TaskApiClient,
+    job_id: &str,
+    provider: &str,
+    payment_mode: Option<&str>,
+    token_symbol: Option<&str>,
+    token_amount: Option<&str>,
+    endpoint: Option<&str>,
+) -> Result<()> {
+    let (account_id, address, agent_id) =
+        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
+
+    let payment_mode = resolve_payment_mode(client, payment_mode, job_id, &agent_id).await?;
+
+    // x402: 解析服务参数 + 余额预检
+    let x402_resolved = if payment_mode.as_str() == PAYMENT_MODE_X402 {
+        let resolved = resolve_x402_params(job_id, provider, endpoint, token_symbol, token_amount).await?;
+        if resolved.fee_amount > 0.0 && !resolved.fee_token_symbol.is_empty() {
+            common::ensure_sufficient_balance(resolved.fee_amount, &resolved.fee_token_symbol).await?;
+        }
+        Some(resolved)
+    } else {
+        // escrow / non_escrow: 余额预检
+        let agreed = negotiate::load_agreed(job_id)?;
+        let sym = match token_symbol {
+            Some(s) => s.to_string(),
+            None => match &agreed {
+                Some((sym, _)) => sym.clone(),
+                None => bail!("需要 --token-symbol 或先执行 save-agreed 保存协商结果"),
+            },
+        };
+        let amt: f64 = match token_amount {
+            Some(a) => a.parse().map_err(|_| anyhow::anyhow!("--token-amount 格式错误"))?,
+            None => match &agreed {
+                Some((_, amt)) => amt.parse().unwrap_or(0.0),
+                None => bail!("需要 --token-amount 或先执行 save-agreed 保存协商结果"),
+            },
+        };
+        if amt > 0.0 {
+            common::ensure_sufficient_balance(amt, &sym).await?;
+        }
+        None
+    };
+
+    // POST setPaymentMode → sign → broadcast
+    let mode_int = common::payment_mode_to_int(&payment_mode);
+    let resp = client.post_with_identity(
+        &client.endpoint(job_id, "setPaymentMode"),
+        &serde_json::json!({ "paymentMode": mode_int }),
+        &agent_id,
+    ).await?;
+
+    signing::sign_uop_and_broadcast(
+        client, &resp["uopData"], &account_id, &address,
+        job_id, signing::BizContext::JobSetPaymentMode, &agent_id,
+    ).await?;
+    println!("✓ 支付方式已设置: {payment_mode} ({mode_int})，等待链上确认...");
+
+    if payment_mode.as_str() == PAYMENT_MODE_X402 {
+        let ep = x402_resolved.as_ref().map(|x| x.endpoint.as_str()).unwrap_or("");
+        let sym = x402_resolved.as_ref().map(|x| x.fee_token_symbol.as_str()).unwrap_or("");
+        let amt = x402_resolved.as_ref().map(|x| x.fee_amount).unwrap_or(0.0);
+        let msg = format!(
+            "x402 setPaymentMode 完成。provider={provider}, endpoint={ep}, fee={amt} {sym}",
+        );
+        let next = "等待 job_payment_mode_changed 系统通知 → Agent 执行 x402 endpoint 交互 → onchainos agent direct-accept".to_string();
+        crate::output::confirming(&msg, &next);
+        return Ok(());
+    }
+
+    let msg = format!(
+        "setPaymentMode({payment_mode}) 完成。provider={provider}",
+    );
+    let next = format!(
+        "等待 job_payment_mode_changed 系统通知 → onchainos agent confirm-accept {job_id} --provider {provider} --payment-mode {payment_mode}"
+    );
+    crate::output::confirming(&msg, &next);
+    Ok(())
+}
+
+/// 解析支付方式：CLI flag > 任务详情 paymentType
+async fn resolve_payment_mode(
+    client: &mut TaskApiClient,
+    payment_mode: Option<&str>,
+    job_id: &str,
+    agent_id: &str,
+) -> Result<String> {
+    match payment_mode {
+        Some(m) => Ok(m.to_string()),
+        None => {
+            let task_resp = client.get_with_identity(&client.task_path(job_id), agent_id).await?;
+            let payment_type = task_resp["paymentType"].as_i64().unwrap_or(0) as i32;
+            let mode_str = common::payment_mode_to_str(payment_type);
+            if mode_str == "none" || mode_str == "unknown" {
+                eprintln!("⚠ 任务 paymentType={payment_type}，无法识别支付方式，默认使用 escrow");
+                Ok(common::PAYMENT_MODE_ESCROW.to_string())
+            } else {
+                eprintln!("ℹ --payment-mode 未传入，使用任务详情 paymentType: {mode_str} ({payment_type})");
+                Ok(mode_str.to_string())
+            }
+        }
+    }
+}
+
+/// confirm-accept — 确认接受卖家（setPaymentMode 已通过 set-payment-mode 独立执行）
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 pub async fn handle_confirm_accept(
     client: &mut TaskApiClient,
@@ -241,110 +350,39 @@ pub async fn handle_confirm_accept(
     payment_id: Option<&str>,
     token_symbol: Option<&str>,
     token_amount: Option<&str>,
-    endpoint: Option<&str>,
-    resume: bool,
 ) -> Result<()> {
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
 
-    // ── 解析支付方式：CLI flag > 任务详情 paymentType ──────────────────
-    let payment_mode = match payment_mode {
-        Some(m) => m.to_string(),
-        None => {
-            let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
-            let payment_type = task_resp["paymentType"].as_i64().unwrap_or(0) as i32;
-            let mode_str = common::payment_mode_to_str(payment_type);
-            if mode_str == "none" || mode_str == "unknown" {
-                eprintln!("⚠ 任务 paymentType={payment_type}，无法识别支付方式，默认使用 escrow");
-                common::PAYMENT_MODE_ESCROW.to_string()
-            } else {
-                eprintln!("ℹ --payment-mode 未传入，使用任务详情 paymentType: {mode_str} ({payment_type})");
-                mode_str.to_string()
-            }
-        }
-    };
+    let payment_mode = resolve_payment_mode(client, payment_mode, job_id, &agent_id).await?;
 
-    // ── Step 0: x402 提前解析服务参数（余额预检 + 执行共用）──────────
-    let x402_resolved = if payment_mode.as_str() == PAYMENT_MODE_X402 {
-        Some(resolve_x402_params(job_id, provider, endpoint, token_symbol, token_amount).await?)
-    } else {
-        None
-    };
+    if payment_mode.as_str() == PAYMENT_MODE_X402 {
+        bail!("x402 流程请用 onchainos agent set-payment-mode 设置支付方式，再用 onchainos agent task-402-pay 执行阶段 2");
+    }
 
-    // ── Step 0.5: 余额预检（余额不足则阻断）──────────────────────────
+    // ── 余额预检（escrow / non_escrow）──────────────────────────────
     {
-        let pm = payment_mode.as_str();
-        if pm == PAYMENT_MODE_X402 {
-            let x402 = x402_resolved.as_ref().unwrap();
-            if x402.fee_amount > 0.0 && !x402.fee_token_symbol.is_empty() {
-                common::ensure_sufficient_balance(x402.fee_amount, &x402.fee_token_symbol).await?;
-            }
-        } else {
-            // escrow / non_escrow: CLI > 协商记录 > bail
-            let agreed = negotiate::load_agreed(job_id)?;
-            let sym = match token_symbol {
-                Some(s) => s.to_string(),
-                None => match &agreed {
-                    Some((sym, _)) => sym.clone(),
-                    None => bail!("需要 --token-symbol 或先执行 save-agreed 保存协商结果"),
-                },
-            };
-            let amt: f64 = match token_amount {
-                Some(a) => a.parse().map_err(|_| anyhow::anyhow!("--token-amount 格式错误"))?,
-                None => match &agreed {
-                    Some((_, amt)) => amt.parse().unwrap_or(0.0),
-                    None => bail!("需要 --token-amount 或先执行 save-agreed 保存协商结果"),
-                },
-            };
-            if amt > 0.0 {
-                common::ensure_sufficient_balance(amt, &sym).await?;
-            }
+        let agreed = negotiate::load_agreed(job_id)?;
+        let sym = match token_symbol {
+            Some(s) => s.to_string(),
+            None => match &agreed {
+                Some((sym, _)) => sym.clone(),
+                None => bail!("需要 --token-symbol 或先执行 save-agreed 保存协商结果"),
+            },
+        };
+        let amt: f64 = match token_amount {
+            Some(a) => a.parse().map_err(|_| anyhow::anyhow!("--token-amount 格式错误"))?,
+            None => match &agreed {
+                Some((_, amt)) => amt.parse().unwrap_or(0.0),
+                None => bail!("需要 --token-amount 或先执行 save-agreed 保存协商结果"),
+            },
+        };
+        if amt > 0.0 {
+            common::ensure_sufficient_balance(amt, &sym).await?;
         }
     }
 
-    // ── Step 1: setPaymentMode（单签 + 广播上链）──────────────────────
-    // --resume 跳过 setPaymentMode，由 job_payment_mode_changed 事件触发时使用
-    if resume && payment_mode.as_str() == PAYMENT_MODE_X402 {
-        bail!("x402 不支持 --resume，请用 onchainos agent task-402-pay 执行 x402 阶段 2");
-    }
-    if !resume {
-        let mode_int = common::payment_mode_to_int(&payment_mode);
-        let resp = client.post_with_identity(
-            &client.endpoint(job_id, "setPaymentMode"),
-            &serde_json::json!({ "paymentMode": mode_int }),
-            &agent_id,
-        ).await?;
-
-        signing::sign_uop_and_broadcast(
-            client, &resp["uopData"], &account_id, &address,
-            job_id, signing::BizContext::JobSetPaymentMode, &agent_id,
-        ).await?;
-        println!("✓ 支付方式已设置: {payment_mode} ({mode_int})，等待链上确认...");
-
-        if payment_mode.as_str() == PAYMENT_MODE_X402 {
-            let ep = x402_resolved.as_ref().map(|x| x.endpoint.as_str()).unwrap_or("");
-            let sym = x402_resolved.as_ref().map(|x| x.fee_token_symbol.as_str()).unwrap_or("");
-            let amt = x402_resolved.as_ref().map(|x| x.fee_amount).unwrap_or(0.0);
-            let msg = format!(
-                "x402 setPaymentMode 完成。provider={provider}, endpoint={ep}, fee={amt} {sym}",
-            );
-            let next = "等待 job_payment_mode_changed 系统通知 → Agent 执行 x402 endpoint 交互 → onchainos agent direct-accept".to_string();
-            crate::output::confirming(&msg, &next);
-            return Ok(());
-        }
-
-        // escrow / non_escrow: 事件驱动，等待 job_payment_mode_changed 通知后 --resume 继续
-        let msg = format!(
-            "setPaymentMode({payment_mode}) 完成。provider={provider}",
-        );
-        let next = format!(
-            "等待 job_payment_mode_changed 系统通知 → onchainos agent confirm-accept {job_id} --provider {provider} --payment-mode {payment_mode} --resume"
-        );
-        crate::output::confirming(&msg, &next);
-        return Ok(());
-    }
-
-    // ── Step 2: 按支付方式分支处理 ──────────────────────────────────
+    // ── 按支付方式分支处理 ──────────────────────────────────────────
     eprintln!("[debug] payment_mode 最终值: '{payment_mode}'");
     match payment_mode.as_str() {
         PAYMENT_MODE_ESCROW => {

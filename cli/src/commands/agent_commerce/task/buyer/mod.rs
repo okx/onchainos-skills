@@ -91,7 +91,23 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Client confirms provider and stakes funds into escrow
+    /// Set payment mode on-chain (standalone, before confirm-accept)
+    SetPaymentMode {
+        job_id: String,
+        #[arg(long)]
+        provider: String,
+        /// escrow / non_escrow / x402
+        #[arg(long = "payment-mode")]
+        payment_mode: Option<String>,
+        #[arg(long = "token-symbol")]
+        token_symbol: Option<String>,
+        #[arg(long = "token-amount")]
+        token_amount: Option<String>,
+        /// x402 服务端点 URL（不指定时从 recommend 缓存或 service-list API 获取）
+        #[arg(long)]
+        endpoint: Option<String>,
+    },
+    /// Client confirms provider and executes payment (setPaymentMode must be done first)
     ConfirmAccept {
         job_id: String,
         #[arg(long)]
@@ -108,12 +124,6 @@ pub enum TaskCommand {
         /// 协商确定的支付金额（人类可读，如 "50"），escrow 必填
         #[arg(long = "token-amount")]
         token_amount: Option<String>,
-        /// x402 服务端点 URL（不指定时从 recommend 缓存或 service-list API 获取）
-        #[arg(long)]
-        endpoint: Option<String>,
-        /// 跳过 setPaymentMode，直接执行后续支付流程（由 job_payment_mode_changed 事件触发）
-        #[arg(long)]
-        resume: bool,
     },
     /// Client confirms task complete and releases payment
     Complete {
@@ -224,8 +234,10 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 recommend::handle_recommend(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await
             }
         }
-        TaskCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount, endpoint, resume } =>
-            accept::handle_confirm_accept(&mut client, &job_id, &provider, payment_mode.as_deref(), payment_id.as_deref(), token_symbol.as_deref(), token_amount.as_deref(), endpoint.as_deref(), resume).await,
+        TaskCommand::SetPaymentMode { job_id, provider, payment_mode, token_symbol, token_amount, endpoint } =>
+            accept::handle_set_payment_mode(&mut client, &job_id, &provider, payment_mode.as_deref(), token_symbol.as_deref(), token_amount.as_deref(), endpoint.as_deref()).await,
+        TaskCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount } =>
+            accept::handle_confirm_accept(&mut client, &job_id, &provider, payment_mode.as_deref(), payment_id.as_deref(), token_symbol.as_deref(), token_amount.as_deref()).await,
         TaskCommand::DirectAccept { job_id, provider, token_symbol, token_amount } =>
             accept::handle_direct_accept(&mut client, &job_id, &provider, token_symbol.as_deref(), token_amount.as_deref()).await,
         TaskCommand::Task402Pay { job_id, provider, accepts, endpoint, token_symbol, token_amount, from } =>

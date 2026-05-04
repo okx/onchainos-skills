@@ -89,7 +89,20 @@ pub enum AgentCommand {
     },
 
 
-    /// Client confirms provider and stakes funds into escrow
+    /// Set payment mode on-chain (standalone, before confirm-accept)
+    #[command(name = "set-payment-mode")]
+    SetPaymentMode {
+        job_id: String,
+        #[arg(long)] provider: String,
+        /// escrow / non_escrow / x402
+        #[arg(long = "payment-mode")] payment_mode: Option<String>,
+        #[arg(long = "token-symbol")] token_symbol: Option<String>,
+        #[arg(long = "token-amount")] token_amount: Option<String>,
+        /// x402 服务端点 URL
+        #[arg(long)] endpoint: Option<String>,
+    },
+
+    /// Client confirms provider and executes payment (setPaymentMode must be done first)
     #[command(name = "confirm-accept")]
     ConfirmAccept {
         job_id: String,
@@ -102,10 +115,6 @@ pub enum AgentCommand {
         #[arg(long = "token-symbol")] token_symbol: Option<String>,
         /// 协商确定的支付金额（人类可读，如 "50"），escrow 必填
         #[arg(long = "token-amount")] token_amount: Option<String>,
-        /// x402 服务端点 URL（不指定时从 recommend 缓存或 service-list API 获取）
-        #[arg(long)] endpoint: Option<String>,
-        /// 跳过 setPaymentMode，直接执行后续支付流程（由 job_payment_mode_changed 事件触发）
-        #[arg(long)] resume: bool,
     },
 
     /// x402 Phase 2b: direct/accept after job_payment_mode_changed + x402 endpoint interaction
@@ -516,8 +525,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::buyer::run_task(T::List { status, page, limit, agent_id }, ctx).await,
 
 
-        AgentCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount, endpoint, resume } =>
-            task::buyer::run_task(T::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount, endpoint, resume }, ctx).await,
+        AgentCommand::SetPaymentMode { job_id, provider, payment_mode, token_symbol, token_amount, endpoint } =>
+            task::buyer::run_task(T::SetPaymentMode { job_id, provider, payment_mode, token_symbol, token_amount, endpoint }, ctx).await,
+
+        AgentCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount } =>
+            task::buyer::run_task(T::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount }, ctx).await,
 
         AgentCommand::DirectAccept { job_id, provider, token_symbol, token_amount } =>
             task::buyer::run_task(T::DirectAccept { job_id, provider, token_symbol, token_amount }, ctx).await,
