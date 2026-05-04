@@ -11,6 +11,7 @@ use serde::Deserialize;
 pub mod claim;
 pub mod dispute_upload;
 pub mod network;
+pub mod query;
 pub mod state_machine;
 pub mod util;
 

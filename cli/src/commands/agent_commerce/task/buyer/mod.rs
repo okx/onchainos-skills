@@ -75,22 +75,6 @@ pub enum TaskCommand {
         current: bool,
     },
     /// Get current task status
-    Status {
-        job_id: String,
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>, //todo liyun
-    },
-    /// List my tasks  //todo liyun  抽出
-    List {
-        #[arg(long)]
-        status: Option<String>,
-        #[arg(long, default_value = "1")]
-        page: u32,
-        #[arg(long, default_value = "20")]
-        limit: u32,
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-    },
     /// Set payment mode on-chain (standalone, before confirm-accept)
     SetPaymentMode {
         job_id: String,
@@ -253,10 +237,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         }
 
         // ── 只读查询 ─────────────────────────────────────────────
-        TaskCommand::Status { job_id, agent_id } =>
-            query::handle_status(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await,
-        TaskCommand::List { status, page, limit, agent_id } =>
-            query::handle_list(&mut client, status.as_deref(), page, limit, agent_id.as_deref().unwrap_or("")).await,
         TaskCommand::Payment { job_id, agent_id } =>
             query::handle_payment(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await,
         TaskCommand::Pay { job_id, agent_id } =>

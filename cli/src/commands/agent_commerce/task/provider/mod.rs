@@ -77,6 +77,23 @@ pub enum ProviderCommand {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
+    /// Get current task status (provider view)
+    Status {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+    /// List my tasks (provider view)
+    List {
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long, default_value = "1")]
+        page: u32,
+        #[arg(long, default_value = "20")]
+        limit: u32,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
     /// Account-pull: 查待领奖励（仲裁胜诉等场景累积的余额）
     Claimable {
         #[arg(long = "agent-id")]
@@ -141,6 +158,14 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
             agreerefund::handle_agree_refund(&mut client, &job_id, &agent_id).await,
         ProviderCommand::ClaimAutoComplete { job_id, agent_id } =>
             provider_claim::handle_claim_auto_complete(&mut client, &job_id, &agent_id).await,
+        ProviderCommand::Status { job_id, agent_id } => {
+            use crate::commands::agent_commerce::task::common::{query as common_query, AGENT_ROLE_PROVIDER};
+            common_query::handle_status(&mut client, &job_id, agent_id.as_deref().unwrap_or(""), AGENT_ROLE_PROVIDER).await
+        }
+        ProviderCommand::List { status, page, limit, agent_id } => {
+            use crate::commands::agent_commerce::task::common::{query as common_query, AGENT_ROLE_PROVIDER};
+            common_query::handle_list(&mut client, status.as_deref(), page, limit, agent_id.as_deref().unwrap_or(""), AGENT_ROLE_PROVIDER).await
+        }
 
         // account-pull claim 直接 inline 调 common::claim：
         // provider 没有 role-specific 的 wallet/agent 解析（不像 evaluator），

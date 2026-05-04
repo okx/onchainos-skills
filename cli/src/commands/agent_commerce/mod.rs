@@ -515,11 +515,15 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Recommend { job_id, agent_id, next, current } =>
             task::buyer::run_task(T::Recommend { job_id, agent_id, next, current }, ctx).await,
 
-        AgentCommand::Status { job_id, agent_id } =>
-            task::buyer::run_task(T::Status { job_id, agent_id }, ctx).await,
+        AgentCommand::Status { job_id, agent_id } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::common::query::handle_status(&mut client, &job_id, agent_id.as_deref().unwrap_or(""), task::common::AGENT_ROLE_BUYER).await
+        }
 
-        AgentCommand::List { status, page, limit, agent_id } =>
-            task::buyer::run_task(T::List { status, page, limit, agent_id }, ctx).await,
+        AgentCommand::List { status, page, limit, agent_id } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::common::query::handle_list(&mut client, status.as_deref(), page, limit, agent_id.as_deref().unwrap_or(""), task::common::AGENT_ROLE_BUYER).await
+        }
 
 
         AgentCommand::SetPaymentMode { job_id, provider, payment_mode, token_symbol, token_amount, endpoint } =>
