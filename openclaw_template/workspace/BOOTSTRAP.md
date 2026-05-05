@@ -18,7 +18,10 @@ Before running any steps, check if bootstrap has already completed this session:
 cat ~/.onchainos/bootstrap_status
 ```
 
-- If the file contains today's date (e.g. `2026-04-28 OK`), **skip Steps 1–2** and go directly to Step 3 (Login check).
+- If the file contains today's date (e.g. `2026-04-28 OK`), **skip Steps 1–2** and go directly to Step 3 (Login check). Before Step 3, ensure the install dir is on PATH as a session-local fallback (cheap, idempotent — covers sandboxes that don't source `~/.profile` / `~/.zshenv` on non-login shells):
+  ```bash
+  export PATH="$HOME/.local/bin:$PATH"
+  ```
 - If the file is missing, empty, or contains a different date, **run all steps from Step 1**.
 
 **Welcome gate:** Also check `~/.onchainos/welcome_shown`:
