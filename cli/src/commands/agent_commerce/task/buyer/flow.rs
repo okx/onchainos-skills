@@ -727,22 +727,24 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::JobVisibilityChanged => format!(
             "【当前状态】job_visibility_changed（公开/私有切换已上链）\n\
              【角色】买家（Client）\n\n\
-             【你的下一步动作】\n\n\
-             检查 payload 中 status 字段：\n\
-             - success → 公开/私有切换已生效\n\
-             - failed → 切换失败，按 errorCode 重试\n\n\
-             **通知用户：**\n\
-             调用 xmtp_dispatch_user：\n\
-             content: \"任务 {job_id} 可见性已更新。\"\n"
+             🛑 **这不是辅助事件，必须通知用户。**\n\n\
+             【你的下一步动作（严格顺序）】\n\n\
+             **Step 1 — 检查 payload 中 status 字段：**\n\
+             - success → 继续 Step 2\n\
+             - failed → 调用 xmtp_dispatch_user 告知用户切换失败，按 errorCode 重试\n\n\
+             **Step 2 — 调用 xmtp_dispatch_user 通知用户可见性已变更：**\n\
+             content：\n\
+             \x20\x20[可见性变更] 任务 {job_id} 已切换为公开（public），其他卖家现在可以看到并申请此任务。\n"
         ),
 
         // ─── 支付模式切换结果（setPaymentMode tx 结果）────────────────
         Event::JobPaymentModeChanged => format!(
             "【当前状态】job_payment_mode_changed（支付模式切换已上链）\n\
              【角色】买家（Client）\n\n\
+             🛑 **必须通知用户支付模式变更结果。**\n\n\
              【你的下一步动作】\n\n\
              检查 payload 中 status 字段：\n\
-             - failed → 切换失败，按 errorCode 重试\n\
+             - failed → 调用 xmtp_dispatch_user 通知用户切换失败，按 errorCode 重试\n\
              - success → 按支付方式分流：\n\n\
              **Step 1 — 查询当前支付方式：**\n\
              ```bash\n\

@@ -159,7 +159,7 @@ onchainos agent create-task \
 
 成功后告知用户：
 
-> 任务已提交，jobId: `<jobId>`，等待上链确认（约 10 秒）。确认后系统将自动联系推荐卖家。
+> 任务已提交，jobId: `<jobId>`，等待上链确认（约数秒）。确认后系统将自动联系推荐卖家开始协商。
 
 ⚠️ 不要说"发布成功"——此时尚未上链确认。上链确认由 `job_created` 消息触发，届时系统自动联系卖家。
 ⚠️ **Do NOT call `recommend` here.** 推荐在 `job_created` 收到后自动执行。
@@ -187,7 +187,7 @@ onchainos agent create-task \
 | 路径 | 触发 | 起点 |
 |---|---|---|
 | **A. 主动联系**（最常见）| job_created 后自动遍历推荐列表 / 指定 Provider | 发送询盘后等待卖家回复 → 三步确认 |
-| **B. 被动响应**（少见）| 收到"有N个卖家待沟通"消息 | 调 xmtp_get_pending_list → 逐个提示用户确认 → 三步确认 |
+| **B. 被动响应**（少见）| 收到"有N个卖家待沟通"消息 | 调 xmtp_get_pending_list → 🛑 **展示全部卖家列表，由用户选择**（禁止自动 xmtp_start_conversation）→ 三步确认 |
 
 **协商三步确认**（A/B 共用）：
 
