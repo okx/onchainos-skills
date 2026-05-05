@@ -1,18 +1,29 @@
-//! 仲裁者读取平台质押 & 仲裁配置（只读）— onchainos agent evaluator staking-config
-//!
-//! API: GET /priapi/v1/aieco/task/staking/config
-//! - Headers: Authorization (JWT) + `agenticId`（后端 interceptor 校验 evaluator 身份）；无 Body
-//! - 返回 Apollo `aitask.platform.*` 配置，重启生效，CLI/agent 模板都按此渲染
-
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::AGENT_ROLE_EVALUATOR;
+use crate::commands::agent_commerce::task::evaluator::staking_types;
 use crate::commands::agent_commerce::task::signing;
 
-pub async fn handle_staking_config(client: &mut TaskApiClient) -> Result<()> {
-    let (_account_id, _address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator().await?;
-    let cfg = client.get_staking_config(&agent_id).await?;
+pub async fn handle_staking_config(
+    client: &mut TaskApiClient,
+    agent_id_hint: Option<&str>,
+) -> Result<()> {
+    //todo zhangxin 应该不需要agentid
+    let agent_id = match agent_id_hint.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(id) => id.to_string(),
+        None => {
+            let id = signing::resolve_agent_id_by_role(AGENT_ROLE_EVALUATOR).await?;
+            if id.is_empty() {
+                bail!(
+                    "当前账户没有 evaluator 身份，无法查 staking-config；\
+                     请先注册 evaluator 或显式传 --agent-id"
+                );
+            }
+            id
+        }
+    };
+    let cfg = staking_types::get_staking_config(client, &agent_id).await?;
     println!("staking & arbitration config");
     println!("  minCumulativeStakeOkb       : {} OKB", cfg.min_cumulative_stake_okb);
     println!("  partialUnstakeMinRetainOkb  : {} OKB", cfg.partial_unstake_min_retain_okb);

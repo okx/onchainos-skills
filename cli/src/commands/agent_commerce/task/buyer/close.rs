@@ -21,31 +21,10 @@ pub async fn handle_close(client: &mut TaskApiClient, job_id: &str) -> Result<()
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
-        job_id, signing::BizContext::JobClose, &agent_id,
+        job_id, signing::extract_biz_type(&resp), &agent_id,
     ).await?;
 
     println!("✓ 任务已关闭，状态 → close");
-    println!("  txHash: {tx_hash}");
-    Ok(())
-}
-
-/// claim — 仲裁奖金领取
-pub async fn handle_claim(client: &mut TaskApiClient, job_id: &str) -> Result<()> {
-    let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
-
-    let resp = client.post_with_identity(
-        &client.endpoint(job_id, "claim"),
-        &serde_json::json!({ "jobId": job_id }),
-        &agent_id,
-    ).await?;
-
-    let tx_hash = signing::sign_uop_and_broadcast(
-        client, &resp["uopData"], &account_id, &address,
-        job_id, signing::BizContext::ClaimRewards, &agent_id,
-    ).await?;
-
-    println!("✓ 仲裁奖金已领取");
     println!("  txHash: {tx_hash}");
     Ok(())
 }

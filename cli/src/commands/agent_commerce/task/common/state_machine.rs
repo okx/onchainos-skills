@@ -40,46 +40,82 @@ impl Role {
 
 // ─── Status ─────────────────────────────────────────────────────────────
 
-/// 任务在状态机里此刻的真实状态（mock-api `task.statusStr`）。
+/// 任务在状态机里此刻的真实状态。后端 `TaskStatusEnum`：响应回 `status: int`，
+/// 本地用 [`Status::from_int`] 派生。
+///
+/// 对齐后端 `TaskStatusEnum`：
+/// INIT=-1, OPEN=0, ACCEPTED=1, SUBMITTED=2, REFUSED=3, DISPUTED=4,
+/// ADMINSTOPPED=5, COMPLETE=6, CLOSE=7, EXPIRED=8, REJECTED=9
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
-    Open,
-    Accepted,
-    Submitted,
-    Refused,
-    Disputed,
-    Completed,
-    Refunded,
+    Init,         // -1
+    Open,         // 0
+    Accepted,     // 1
+    Submitted,    // 2
+    Refused,      // 3
+    Disputed,     // 4
+    AdminStopped, // 5
+    Completed,    // 6
+    Close,        // 7
+    Expired,      // 8
+    Rejected,     // 9
     /// 后端返回的、当前枚举不认识的状态字符串（容错保留原值）
     Other(String),
 }
 
 impl Status {
+    /// 字符串解析（用于 CLI `--jobStatus` 参数 / event 名解析），spec 字段是 int 应走 [`Self::from_int`]。
     pub fn parse(s: &str) -> Self {
         match s {
-            "open"                  => Status::Open,
-            "accepted"              => Status::Accepted,
-            "submitted"             => Status::Submitted,
-            "refused"               => Status::Refused,
-            "disputed"              => Status::Disputed,
-            // mock-api / 真后端语义对齐：completed/complete 都视为 Completed
-            "completed" | "complete" => Status::Completed,
-            // mock-api 用 "rejected" 表示资金退还买家，状态机里叫 Refunded
-            "refunded" | "rejected"  => Status::Refunded,
-            other                   => Status::Other(other.to_string()),
+            "init"                               => Status::Init,
+            "open"                               => Status::Open,
+            "accepted"                           => Status::Accepted,
+            "submitted"                          => Status::Submitted,
+            "refused"                            => Status::Refused,
+            "disputed"                           => Status::Disputed,
+            "admin_stopped" | "adminstopped"     => Status::AdminStopped,
+            "completed" | "complete"             => Status::Completed,
+            "close" | "closed"                   => Status::Close,
+            "expired"                            => Status::Expired,
+            "rejected"                           => Status::Rejected,
+            other                                => Status::Other(other.to_string()),
         }
     }
 
     pub fn as_str(&self) -> &str {
         match self {
-            Status::Open      => "open",
-            Status::Accepted  => "accepted",
-            Status::Submitted => "submitted",
-            Status::Refused   => "refused",
-            Status::Disputed  => "disputed",
-            Status::Completed => "completed",
-            Status::Refunded  => "refunded",
-            Status::Other(s)  => s.as_str(),
+            Status::Init         => "init",
+            Status::Open         => "open",
+            Status::Accepted     => "accepted",
+            Status::Submitted    => "submitted",
+            Status::Refused      => "refused",
+            Status::Disputed     => "disputed",
+            Status::AdminStopped => "admin_stopped",
+            Status::Completed    => "completed",
+            Status::Close        => "close",
+            Status::Expired      => "expired",
+            Status::Rejected     => "rejected",
+            Status::Other(s)     => s.as_str(),
+        }
+    }
+
+    /// 后端 `TaskStatusEnum` int 映射：
+    /// -1=INIT / 0=OPEN / 1=ACCEPTED / 2=SUBMITTED / 3=REFUSED / 4=DISPUTED /
+    /// 5=ADMINSTOPPED / 6=COMPLETE / 7=CLOSE / 8=EXPIRED / 9=REJECTED。
+    pub fn from_int(n: i32) -> Self {
+        match n {
+            -1 => Status::Init,
+             0 => Status::Open,
+             1 => Status::Accepted,
+             2 => Status::Submitted,
+             3 => Status::Refused,
+             4 => Status::Disputed,
+             5 => Status::AdminStopped,
+             6 => Status::Completed,
+             7 => Status::Close,
+             8 => Status::Expired,
+             9 => Status::Rejected,
+            other => Status::Other(format!("status_{other}")),
         }
     }
 }
@@ -103,11 +139,12 @@ pub enum Event {
     JobCompleted,
     /// 买家 reject 上链（status 进入 refused；通知 provider 决策仲裁/退款）
     JobRefused,
+    /// 仲裁第一阶段（approve）上链（status 仍 refused，过场事件；通知发起的 provider 走第二阶段 dispute confirm）
+    DisputeApproved,
     /// 任一方 dispute raise 上链（status 进入 disputed；通知 buyer + provider 上传证据）
     JobDisputed,
-    /// **后端无此 event** —— 保留作为内部别名（agree-refund 上链后没专门 event 名，
-    /// 状态变更直接通过 broadcast 推到 refunded）。模型/skill 提到时按"卖家退款"语义处理
-    ConfirmRefund,
+    /// 卖家同意退款 / 仲裁买家胜诉退款上链（status 进入 refunded；通知 buyer + provider）
+    JobRefunded,
     /// DisputeSettled 仲裁裁决（status 进入 completed 或 refunded；通知 buyer/provider/voters
     /// 调 /claimable + /claim 领取奖励）
     DisputeResolved,
@@ -135,7 +172,8 @@ pub enum Event {
     Slashed,
 
     // ── 质押 lifecycle（evaluator）────────────────────────────────────
-    /// VoterStaking.Staked 上链（首次质押或追加质押；通知发起 stake 的 evaluator）
+    /// VoterStaking.Staked 上链（**首次质押 stake 与追加质押 increaseStake 均发此事件**；
+    /// 真后端不区分，event 流只有 staked。区分首次/追加只能由 my-stake 看 activeStake 增量决定。）
     Staked,
     /// VoterStaking.UnstakeRequested 上链（进入冷却期；通知发起 unstake 的 evaluator）
     UnstakeRequested,
@@ -153,12 +191,23 @@ pub enum Event {
     RefuseExpired,
     /// review 超时（provider 提交后买家未确认；通知 provider 调 claimAutoComplete）
     ReviewExpired,
+    // ── 自动完成 / 自动退款 tx 回执 ──────────────────────────────────
+    /// Provider 调 claimAutoComplete tx 上链结果（review 超时后 provider 主动领走资金；通知 provider）
+    JobAutoCompleted,
+    /// Buyer 调 claimAutoRefund tx 上链结果（submit/refuse 超时后 buyer 主动领回资金；通知 buyer）
+    JobAutoRefunded,
 
     // ── 截止时间提醒（warn 类，不改 status）────────────────────────────
     /// 担保支付 accept→submit 快超时提醒（通知 provider 发起 submit）
     SubmitDeadlineWarn,
     /// 担保支付 submit→complete 快超时提醒（通知 buyer 发起 complete）
     ReviewDeadlineWarn,
+
+    // ── evaluator 额外 lifecycle ─────────────────────────────────────
+    /// VoterStaking.VoterStakeStopped 上链（退出 voter 池；通知发起 stop 的 evaluator）
+    StakeStopped,
+    /// DisputeManager.VoterCooldownEntered 上链（被动进入冷却期；通知 evaluator）
+    CooldownEntered,
 
     /// 后端发的、当前枚举不认识的事件名（也用来承载 user-instruction 伪 event：
     /// dispute_raise / agree_refund / dispute_evidence / close / set_public）
@@ -175,8 +224,9 @@ impl Event {
             "job_submitted"             => Event::JobSubmitted,
             "job_completed"             => Event::JobCompleted,
             "job_refused"               => Event::JobRefused,
+            "dispute_approved"          => Event::DisputeApproved,
             "job_disputed"              => Event::JobDisputed,
-            "confirm_refund"            => Event::ConfirmRefund,
+            "job_refunded"              => Event::JobRefunded,
             "dispute_resolved"          => Event::DisputeResolved,
             "job_expired"               => Event::JobExpired,
             "job_closed"                => Event::JobClosed,
@@ -189,9 +239,8 @@ impl Event {
             "vote_revealed"             => Event::VoteRevealed,
             "round_failed"              => Event::RoundFailed,
             "slashed"                   => Event::Slashed,
-            // 质押 lifecycle
+            // 质押 lifecycle（首次/追加均映射到 Staked——真后端只发一个 staked 事件）
             "staked"                    => Event::Staked,
-            "stake_increased"           => Event::Staked, // legacy alias: backend now only sends "staked"
             "unstake_requested"         => Event::UnstakeRequested,
             "unstake_claimed"           => Event::UnstakeClaimed,
             "unstake_cancelled"         => Event::UnstakeCancelled,
@@ -200,9 +249,15 @@ impl Event {
             "submit_expired"            => Event::SubmitExpired,
             "refuse_expired"            => Event::RefuseExpired,
             "review_expired"            => Event::ReviewExpired,
+            // 自动完成 / 自动退款 tx 回执
+            "job_auto_completed"        => Event::JobAutoCompleted,
+            "job_auto_refunded"         => Event::JobAutoRefunded,
             // 提醒
             "submit_deadline_warn"      => Event::SubmitDeadlineWarn,
             "review_deadline_warn"      => Event::ReviewDeadlineWarn,
+            // evaluator 额外 lifecycle
+            "stake_stopped"             => Event::StakeStopped,
+            "cooldown_entered"          => Event::CooldownEntered,
             other                       => Event::Other(other.to_string()),
         }
     }
@@ -215,8 +270,9 @@ impl Event {
             Event::JobSubmitted           => "job_submitted",
             Event::JobCompleted           => "job_completed",
             Event::JobRefused             => "job_refused",
+            Event::DisputeApproved        => "dispute_approved",
             Event::JobDisputed            => "job_disputed",
-            Event::ConfirmRefund          => "confirm_refund",
+            Event::JobRefunded            => "job_refunded",
             Event::DisputeResolved        => "dispute_resolved",
             Event::JobExpired             => "job_expired",
             Event::JobClosed              => "job_closed",
@@ -236,8 +292,12 @@ impl Event {
             Event::SubmitExpired          => "submit_expired",
             Event::RefuseExpired          => "refuse_expired",
             Event::ReviewExpired          => "review_expired",
+            Event::JobAutoCompleted       => "job_auto_completed",
+            Event::JobAutoRefunded        => "job_auto_refunded",
             Event::SubmitDeadlineWarn     => "submit_deadline_warn",
             Event::ReviewDeadlineWarn     => "review_deadline_warn",
+            Event::StakeStopped           => "stake_stopped",
+            Event::CooldownEntered        => "cooldown_entered",
             Event::Other(s)               => s.as_str(),
         }
     }
@@ -249,17 +309,27 @@ impl Event {
 ///
 /// `provider_applied` 不改变 status —— 它发生在 open 状态下；
 /// `dispute_resolved` 取决于裁决方（buyer-wins → refunded；seller-wins → completed），
-/// 单从 event 不能确定，这里默认返回 `Completed`，调用方应优先用 mock-api 实时拉取的 status。
+/// 单从 event 不能确定，这里默认返回 `Completed`，调用方应优先调 `agent status` 拉取真实 status。
 pub fn status_when_event(e: &Event) -> Status {
     match e {
         // 主流程
         Event::JobCreated | Event::ProviderApplied                          => Status::Open,
         Event::JobAccepted                                                  => Status::Accepted,
         Event::JobSubmitted                                                 => Status::Submitted,
-        Event::JobRefused | Event::SubmitExpired | Event::RefuseExpired     => Status::Refused,
+        Event::JobRefused | Event::RefuseExpired                             => Status::Refused,
+        // submit_expired: 卖家未提交，status 仍是 accepted（未进入 submitted）
+        Event::SubmitExpired                                                => Status::Accepted,
+        // dispute_approved 是过场事件，status 仍为 refused（dispute 阶段 1，未真正进入 disputed）
+        Event::DisputeApproved                                              => Status::Refused,
         Event::JobDisputed                                                  => Status::Disputed,
-        Event::JobCompleted | Event::ReviewExpired                          => Status::Completed,
-        Event::ConfirmRefund                                                => Status::Refunded,
+        // review_expired 只表示 review 窗口结束，task 仍 submitted；要等 provider 调 claimAutoComplete 才进 completed
+        Event::ReviewExpired                                                => Status::Submitted,
+        // 后端 TaskStatusEnum：6=COMPLETE（资金释放给卖家），9=REJECTED（资金退还买家）。
+        // 区分两种终态由 event 直接表达。
+        Event::JobCompleted | Event::JobAutoCompleted                       => Status::Completed,
+        Event::JobRefunded | Event::JobAutoRefunded                         => Status::Rejected,
+        // DisputeResolved 取决于裁决方（buyer-wins → Rejected；seller-wins → Completed）；
+        // 单从 event 不能确定，默认 Completed，调用方应优先调 `agent status` 拉真实 status。
         Event::DisputeResolved                                              => Status::Completed,
         // 仲裁子状态机：所有事件都发生在 task=disputed 状态下
         Event::EvaluatorSelected | Event::RevealStarted
@@ -268,28 +338,37 @@ pub fn status_when_event(e: &Event) -> Status {
         // 提醒类（不改 status，task 还在原状态）
         Event::SubmitDeadlineWarn                                           => Status::Accepted,
         Event::ReviewDeadlineWarn                                           => Status::Submitted,
-        // 任务级 housekeeping 事件没有清晰的状态映射，保守用 Other
-        Event::JobExpired | Event::JobClosed
-        | Event::JobVisibilityChanged | Event::JobPaymentModeChanged       => Status::Other("housekeeping".to_string()),
+        Event::JobExpired                                                   => Status::Expired,
+        Event::JobClosed                                                    => Status::Close,
+        // visibility/paymentMode 是过场事件，不改 status
+        Event::JobVisibilityChanged | Event::JobPaymentModeChanged         => Status::Other("housekeeping".to_string()),
         // 质押 / 罚没 / 奖励 lifecycle 跟 task status 解耦
         Event::Staked
         | Event::UnstakeRequested | Event::UnstakeClaimed | Event::UnstakeCancelled
-        | Event::RewardClaimed | Event::Slashed                             => Status::Other("staking".to_string()),
+        | Event::RewardClaimed | Event::Slashed
+        | Event::StakeStopped | Event::CooldownEntered                      => Status::Other("staking".to_string()),
         Event::Other(_)                                                     => Status::Other("unknown".to_string()),
     }
 }
 
-/// 把任务推进到此 status 的入口事件（每个非 Other status 都有唯一 entry event）。
+/// 把任务推进到此 status 的**典型**入口事件。
+/// - Status::Completed canonical = JobCompleted（happy-path 验收 / 仲裁卖家胜）
+/// - Status::Rejected canonical = JobRefunded（退款 / 仲裁买家胜）
+/// - DisputeResolved 不归属 canonical（同一 event 可能落 Completed 或 Rejected）
 pub fn entry_event(s: &Status) -> Option<Event> {
     match s {
-        Status::Open      => Some(Event::JobCreated),
-        Status::Accepted  => Some(Event::JobAccepted),
-        Status::Submitted => Some(Event::JobSubmitted),
-        Status::Refused   => Some(Event::JobRefused),
-        Status::Disputed  => Some(Event::JobDisputed),
-        Status::Completed => Some(Event::JobCompleted),
-        Status::Refunded  => Some(Event::ConfirmRefund),
-        Status::Other(_)  => None,
+        Status::Init         => None,
+        Status::Open         => Some(Event::JobCreated),
+        Status::Accepted     => Some(Event::JobAccepted),
+        Status::Submitted    => Some(Event::JobSubmitted),
+        Status::Refused      => Some(Event::JobRefused),
+        Status::Disputed     => Some(Event::JobDisputed),
+        Status::AdminStopped => None,
+        Status::Completed    => Some(Event::JobCompleted),
+        Status::Close        => Some(Event::JobClosed),
+        Status::Expired      => Some(Event::JobExpired),
+        Status::Rejected     => Some(Event::JobRefunded),
+        Status::Other(_)     => None,
     }
 }
 
@@ -311,12 +390,15 @@ mod tests {
 
     #[test]
     fn status_event_roundtrip() {
+        // entry_event(s) → e ; status_when_event(e) 必须能反推回 s
+        // Status::AdminStopped 无客户端入口事件（entry_event 返回 None），跳过。
+        // Status::Completed → JobCompleted；Status::Rejected → JobRefunded（buyer-wins / 退款）
         for s in [
             Status::Open, Status::Accepted, Status::Submitted, Status::Refused,
-            Status::Disputed, Status::Completed, Status::Refunded,
+            Status::Disputed, Status::Completed, Status::Close, Status::Expired,
+            Status::Rejected,
         ] {
             let e = entry_event(&s).expect("non-Other status should have entry event");
-            // entry_event 应该能再反推回相同 status（除 DisputeResolved 这种 default 模糊）
             assert_eq!(status_when_event(&e), s, "entry_event/status_when_event mismatch for {:?}", s);
         }
     }

@@ -1,83 +1,24 @@
-//! 只读查询命令（无链上签名）
+//! 只读查询命令（无链上签名）— buyer 专用
 //!
-//! status, list, payment, pay
+//! payment, pay
 
 use anyhow::{bail, Result};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::common::XLAYER_CHAIN_ID;
-use crate::commands::agent_commerce::task::signing;
-
-/// --agent-id 未传时从本地身份列表解析 buyer agentId（不额外请求后端）
-async fn resolve_agent_id(_client: &mut TaskApiClient, _job_id: Option<&str>, agent_id: &str) -> String {
-    if !agent_id.is_empty() {
-        return agent_id.to_string();
-    }
-    use crate::commands::agent_commerce::task::common::AGENT_ROLE_BUYER;
-    signing::resolve_agent_id_by_role(AGENT_ROLE_BUYER)
-        .await
-        .unwrap_or_default()
-}
-
-/// 查询任务状态
-pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &str) -> Result<()> {
-    let agent_id = resolve_agent_id(client, Some(job_id), agent_id).await;
-    let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
-
-    let t = &resp;
-    let token_sym = t["paymentTokenSymbol"].as_str().unwrap_or("USDT");
-    println!("任务状态: {}", t["statusStr"].as_str().unwrap_or("?"));
-    println!("  jobId:    {job_id}");
-    println!("  标题:     {}", t["title"].as_str().unwrap_or("?"));
-    println!("  预算:     {} {}", t["tokenAmount"].as_str().unwrap_or("?"), token_sym);
-    println!("  买家:     {}", t["buyerAgentId"].as_str().unwrap_or("?"));
-    if let Some(pid) = t["providerAgentId"].as_str() {
-        println!("  卖家:     {pid}");
-    }
-    println!("  更新时间: {}", t["updateTime"].as_str().unwrap_or("?"));
-    Ok(())
-}
-
-/// 任务列表
-pub async fn handle_list(
-    client: &mut TaskApiClient,
-    status: Option<&str>,
-    page: u32,
-    limit: u32,
-    agent_id: &str,
-) -> Result<()> {
-    let agent_id = resolve_agent_id(client, None, agent_id).await;
-    let mut path = format!("/priapi/v1/aieco/task/my?page={page}&page_size={limit}");
-    if let Some(s) = status { path.push_str(&format!("&status={s}")); }
-
-    let resp = client.get_with_identity(&path, &agent_id).await?;
-    let tasks = resp["list"].as_array().cloned().unwrap_or_default();
-    let total = resp["total"].as_u64().unwrap_or(0);
-    println!("任务列表（共 {total} 个，第 {page} 页）：");
-    for t in &tasks {
-        let sym = t["paymentTokenSymbol"].as_str().unwrap_or("USDT");
-        println!("  [{}] {} — {} {}",
-            t["statusStr"].as_str().unwrap_or("?"),
-            t["jobId"].as_str().unwrap_or("?"),
-            t["tokenAmount"].as_str().unwrap_or("?"),
-            sym,
-        );
-        println!("       {}", t["title"].as_str().unwrap_or("?"));
-    }
-    Ok(())
-}
+use crate::commands::agent_commerce::task::common::{query as common_query, AGENT_ROLE_BUYER, XLAYER_CHAIN_ID};
 
 /// 生成付款单（Provider 在 provider_applied 后发送给买家）
 pub async fn handle_payment(client: &mut TaskApiClient, job_id: &str, agent_id: &str) -> Result<()> {
-    let agent_id = resolve_agent_id(client, Some(job_id), agent_id).await;
+    let agent_id = common_query::resolve_agent_id(agent_id, AGENT_ROLE_BUYER).await;
     let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
 
     let task = &resp;
     let amount = task["tokenAmount"].as_str().unwrap_or("?");
     let token_symbol = task["paymentTokenSymbol"].as_str().unwrap_or("USDT");
     let provider_addr = task["providerAgentAddress"].as_str().unwrap_or("?");
-    let payment_type = task["paymentType"].as_i64().unwrap_or(0);
-    let payment_mode = crate::commands::agent_commerce::task::common::payment_mode_to_str(payment_type as i32);
+    let payment_mode_int = task["paymentMode"].as_i64().unwrap_or(0);
+    let payment_mode = crate::commands::agent_commerce::task::common::PaymentMode::from_int(payment_mode_int as i32);
+    let payment_mode = payment_mode.as_str();
 
     println!("付款单（Invoice）");
     println!("  jobId:     {job_id}");
@@ -91,7 +32,7 @@ pub async fn handle_payment(client: &mut TaskApiClient, job_id: &str, agent_id: 
 
 /// 非担保模式手动转账（展示转账命令）
 pub async fn handle_pay(client: &mut TaskApiClient, job_id: &str, agent_id: &str) -> Result<()> {
-    let agent_id = resolve_agent_id(client, Some(job_id), agent_id).await;
+    let agent_id = common_query::resolve_agent_id(agent_id, AGENT_ROLE_BUYER).await;
     let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
 
     let task = &resp;

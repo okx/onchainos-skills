@@ -2,6 +2,8 @@
 //!
 //! 买家动作：卖家未提交交付物超时 / 买家拒绝后卖家仲裁超时
 //! → 领取自动退款 — onchainos agent claim-auto-refund
+//!
+//! Response: `{ jobId, type: 23, uopData: { ... } }`
 
 use anyhow::Result;
 
@@ -21,10 +23,11 @@ pub async fn handle_claim_auto_refund(client: &mut TaskApiClient, job_id: &str) 
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
-        job_id, signing::BizContext::ClaimRewards, &agent_id,
+        job_id, signing::extract_biz_type(&resp), &agent_id,
     ).await?;
 
     println!("✓ 超时自动退款已领取，资金将退回账户");
+    println!("  jobId:  {job_id}");
     println!("  txHash: {tx_hash}");
     Ok(())
 }

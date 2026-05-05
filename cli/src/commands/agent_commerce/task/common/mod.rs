@@ -6,14 +6,17 @@
 
 use anyhow::{bail, Result};
 use clap::Subcommand;
-use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
 
+pub mod claim;
 pub mod dispute_upload;
 pub mod network;
-pub mod rate_agent;
+pub mod payment_mode;
+pub mod query;
 pub mod state_machine;
+pub mod util;
+
+use util::fmt_unix_secs;
 
 use crate::commands::Context;
 
@@ -35,68 +38,18 @@ pub const AGENT_ROLE_PROVIDER: i64 = 2;
 /// 仲裁者（evaluator）
 pub const AGENT_ROLE_EVALUATOR: i64 = 3;
 
-// ─── 支付模式常量 ────────────────────────────────────────────────────────
+pub use payment_mode::PaymentMode;
 
-/// 担保支付：资金锁定在合约中
-pub const PAYMENT_MODE_ESCROW: &str = "escrow";
-/// 非担保支付：任务完成后买家手动转账
-pub const PAYMENT_MODE_NON_ESCROW: &str = "non_escrow";
-/// x402 按需微支付
-pub const PAYMENT_MODE_X402: &str = "x402";
-
-// ─── 支付模式 int ↔ str 映射 ────────────────────────────────────────────
-
-/// 后端 paymentMode int 值: NONE(0), ESCROW(1), DIRECT(2), X402(3)
-pub const PAYMENT_MODE_INT_NONE: i32 = 0;
-pub const PAYMENT_MODE_INT_ESCROW: i32 = 1;
-pub const PAYMENT_MODE_INT_DIRECT: i32 = 2;
-pub const PAYMENT_MODE_INT_X402: i32 = 3;
-
-/// str → int（用于 setPaymentMode 接口）
-pub fn payment_mode_to_int(mode: &str) -> i32 {
-    match mode {
-        PAYMENT_MODE_ESCROW => PAYMENT_MODE_INT_ESCROW,
-        PAYMENT_MODE_NON_ESCROW | "direct" => PAYMENT_MODE_INT_DIRECT,
-        PAYMENT_MODE_X402 => PAYMENT_MODE_INT_X402,
-        _ => PAYMENT_MODE_INT_ESCROW,
-    }
-}
-
-/// int → str（用于展示）
-pub fn payment_mode_to_str(mode: i32) -> &'static str {
-    match mode {
-        PAYMENT_MODE_INT_NONE => "none",
-        PAYMENT_MODE_INT_ESCROW => PAYMENT_MODE_ESCROW,
-        PAYMENT_MODE_INT_DIRECT => PAYMENT_MODE_NON_ESCROW,
-        PAYMENT_MODE_INT_X402 => PAYMENT_MODE_X402,
-        _ => "unknown",
-    }
-}
+pub use util::ensure_sufficient_balance;
 
 // ─── CLI 定义 ──────────────────────────────────────────────────────────────
-
 #[derive(Subcommand)]
 pub enum CommonCommand {
-    /// 查询当前 buyer agent 在 ws-mock 身份系统中的注册信息（ERC-8004）
-    ///
-    /// 示例：
-    ///   onchainos agent get
-    ///   onchainos agent get --ws-url ws://127.0.0.1:9000
-    Get {
-        /// ws-mock server 地址（默认 ws://127.0.0.1:9000）
-        #[arg(long, default_value = "ws://127.0.0.1:9000")]
-        ws_url: String,
-
-        /// 查询指定地址（不传则读 ~/.openclaw/ws-mock-addresses.json 中的 default）
-        #[arg(long)]
-        addr: Option<String>,
-    },
-
     /// 查询任务上下文，输出供大模型使用的结构化自然语言描述
     ///
     /// 示例：
-    ///   onchainos agent context task-001 --role buyer
-    ///   onchainos agent context task-001 --role provider --agent-id mock-seller-001
+    ///   onchainos agent context task-001 --role buyer --agent-id 426
+    ///   onchainos agent context task-001 --role provider --agent-id 558
     Context {
         /// 任务 ID（jobId），如 task-001 或 0x1a2b...
         job_id: String,
@@ -105,42 +58,39 @@ pub enum CommonCommand {
         #[arg(long, default_value = "buyer")]
         role: String,
 
-        /// 调用者的 AgentID（可选，用于标注身份）
+        /// 调用者的 AgentID（**必填**）。beta 后端要求 agenticId header 非空，
+        /// 一个钱包可能有多个 provider agent，调用方必须显式选定，CLI 不自动挑。
+        /// 钱包地址 / 通信地址会通过 `agent get --agent-ids <agent_id>` 自动反查，
+        /// 无需 CLI 传入。
         #[arg(long)]
-        agent_id: Option<String>,
-
-        /// 调用者钱包地址（可选）
-        #[arg(long)]
-        address: Option<String>,
-
-        /// 后端 API 地址（不指定时使用默认后端；调试时可传 http://127.0.0.1:9001 指向 mock-api）
-        #[arg(long)]
-        api_url: Option<String>,
+        agent_id: String,
     },
 }
 
-// ─── 任务详情响应结构（对应 mock-api / 真实后端响应） ──────────────────────
+// ─── 任务详情响应结构 ──────────────────────────────────────────────────────
+// 字段对齐后端 spec：/priapi/v1/aieco/task/{jobId} 响应 data 字段（平铺）。
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TaskRespData {
-    task: TaskDetail,
-}
-
+/// 对齐 spec：/priapi/v1/aieco/task/{jobId} 响应 data 字段
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TaskDetail {
     job_id: String,
-    task_id: Option<String>,
+    task_id: Option<i64>,
     title: String,
     description: String,
-    description_summary: Option<String>,
+    content_hash: Option<String>,
     token_address: Option<String>,
+    /// 后端 spec：直接返回的代币符号（USDT / USDG）。
+    token_symbol: Option<String>,
     token_amount: Option<String>,
-    payment_type: Option<i32>,
-    open_type: Option<i32>,
+    /// 0=未设置 / 1=escrow / 2=non_escrow / 3=x402
+    payment_mode: Option<i32>,
+    /// 后端 VisibilityEnum：0=PUBLIC（公开） / 1=PRIVATE（私有）
+    visibility: Option<i32>,
+    /// 0=open / 1=accepted / 2=submitted / 3=refused / 4=disputed / 5=complete / 7=close
     status: Option<i32>,
-    status_str: Option<String>,
+    sensitive_status: Option<i32>,
+    category_codes: Option<Vec<String>>,
     chain_id: Option<i32>,
     min_credit_score: Option<f64>,
     designated_provider: Option<String>,
@@ -150,8 +100,10 @@ struct TaskDetail {
     provider_agent_id: Option<String>,
     group_id: Option<String>,
     expire_config: Option<serde_json::Value>,
-    create_time: Option<String>,
-    update_time: Option<String>,
+    /// unix 秒；0 表示未设置
+    expire_time: Option<i64>,
+    create_time: Option<i64>,
+    update_time: Option<i64>,
 }
 
 // ─── Agent 资料响应结构 ───────────────────────────────────────────────────
@@ -163,45 +115,46 @@ struct AgentProfile {
     agent_id: Option<String>,
     name: Option<String>,
     profile_description: Option<String>,
+    /// 钱包地址（owner / 部署该 agent 的 EOA）
+    agent_wallet_address: Option<String>,
+    /// XMTP 通信地址（agent 之间 P2P 通讯用）
+    communication_address: Option<String>,
 }
 
-/// 查询指定 agentId 的 agent 资料（name / profileDescription）。
+/// 查询指定 agentId 的 agent 资料（name / profileDescription / 钱包地址 / 通信地址）。
 ///
-/// 直接 spawn `onchainos agent get --agent-ids <id> --base-url <api>` 子进程，
-/// parse stdout —— 不在这里复刻 token / wallet client / URL 拼装逻辑，
-/// `agent get` 自己的实现以后改了，这里自动跟上。
-/// 拿不到就回退到带 agentId 的占位符（不再写死 "My DeFi Agent"）。
-async fn fetch_agent_profile(agent_id: &str, api_url: Option<&str>) -> Option<AgentProfile> {
+/// 直接 spawn `onchainos agent get --agent-ids <id>` 子进程 + parse stdout——
+/// 不复刻 token / wallet client / URL 拼装逻辑，`agent get` 实现以后改了这里自动跟上。
+/// 任何错误路径都回退到带 agentId 的占位符（地址字段为 None），保证返回值非空。
+async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
     let fallback = || AgentProfile {
         agent_id: Some(agent_id.to_string()),
         name: Some(format!("Agent {agent_id}")),
         profile_description: Some("(profile unavailable)".to_string()),
+        agent_wallet_address: None,
+        communication_address: None,
     };
     if agent_id.is_empty() {
-        return Some(fallback());
+        return fallback();
     }
 
     let exe = match std::env::current_exe() {
         Ok(p) => p,
         Err(e) => {
             eprintln!("[fetch_agent_profile] current_exe 失败: {e}; fallback");
-            return Some(fallback());
+            return fallback();
         }
     };
 
-    // 不传 --base-url；改用 OKX_BASE_URL env 注入，wallet_api 解析时优先读这个，
-    // 跟父进程实际打到的 URL 完全一致（无论父进程 base_url 来源是 flag 还是 env）。
+    // 子进程会继承父进程 env（含 OKX_BASE_URL），跟父进程打的 URL 完全一致。
     let mut cmd = tokio::process::Command::new(&exe);
     cmd.args(["agent", "get", "--agent-ids", agent_id]);
-    if let Some(url) = api_url {
-        cmd.env("OKX_BASE_URL", url);
-    }
     let output = match cmd.output().await
     {
         Ok(o) => o,
         Err(e) => {
             eprintln!("[fetch_agent_profile] spawn `agent get` 失败: {e}; fallback");
-            return Some(fallback());
+            return fallback();
         }
     };
 
@@ -212,7 +165,7 @@ async fn fetch_agent_profile(agent_id: &str, api_url: Option<&str>) -> Option<Ag
                 "[fetch_agent_profile] 解析 `agent get` stdout 失败: {e}; raw={}; fallback",
                 String::from_utf8_lossy(&output.stdout)
             );
-            return Some(fallback());
+            return fallback();
         }
     };
 
@@ -221,18 +174,22 @@ async fn fetch_agent_profile(agent_id: &str, api_url: Option<&str>) -> Option<Ag
     if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
         let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error message)");
         eprintln!("[fetch_agent_profile] `agent get` 返回失败: {err}; fallback");
-        return Some(fallback());
+        return fallback();
     }
     let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
 
-    // data 是后端真实 shape：[{list, page, pageSize, total}]；
-    // 极少数被 normalize 成单 object 的情况也兼容。
-    let list_val = if let Some(arr) = data.as_array() {
-        arr.first().and_then(|x| x.get("list")).cloned()
-    } else {
-        data.get("list").cloned()
-    };
+    // backend shape: data = [{ list, page, pageSize, total }]
+    let list_val = data
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|x| x.get("list"))
+        .cloned();
     let list_arr = list_val.as_ref().and_then(|v| v.as_array());
+    if list_arr.is_none() {
+        eprintln!(
+            "[fetch_agent_profile] `agent get` 返回不含 data[0].list 字段，shape 异常；fallback (agentId={agent_id})"
+        );
+    }
 
     let matched = list_arr.and_then(|arr| {
         arr.iter()
@@ -244,13 +201,25 @@ async fn fetch_agent_profile(agent_id: &str, api_url: Option<&str>) -> Option<Ag
                     .get("profileDescription")
                     .and_then(|v| v.as_str())
                     .map(String::from),
+                agent_wallet_address: a
+                    .get("agentWalletAddress")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                communication_address: a
+                    .get("communicationAddress")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
             })
     });
-    Some(matched.unwrap_or_else(fallback))
+    if list_arr.is_some() && matched.is_none() {
+        eprintln!(
+            "[fetch_agent_profile] agentId={agent_id} 不在 `agent get` 返回列表中；fallback"
+        );
+    }
+    matched.unwrap_or_else(fallback)
 }
 
 // ─── 状态说明 ──────────────────────────────────────────────────────────────
-
 fn status_desc(s: &str) -> &str {
     match s {
         "init"      => "初始化中（等待上链确认）",
@@ -258,8 +227,9 @@ fn status_desc(s: &str) -> &str {
         "accepted"  => "已接单，卖家执行中（Accepted）",
         "submitted" => "卖家已提交交付，等待买家验收（Submitted）",
         "refused"   => "买家拒绝验收，冻结期内可申请仲裁（Refused）",
-        "disputed"  => "仲裁进行中（Disputed）",
-        "complete"  => "任务已完成，款项已释放（Complete）",
+        "disputed"      => "仲裁进行中（Disputed）",
+        "admin_stopped" => "管理员已停止任务（AdminStopped）",
+        "completed" | "complete" => "任务已完成，款项已释放（Complete）",
         "rejected"  => "仲裁结束，任务关闭（Rejected）",
         "close"     => "买家主动关闭（Close）",
         "expired"   => "任务已过期（Expired）",
@@ -267,13 +237,8 @@ fn status_desc(s: &str) -> &str {
     }
 }
 
-fn payment_type_desc(pt: i32) -> &'static str {
-    match pt {
-        0 => "托管支付（Escrow）",
-        1 => "非托管支付（Non-Escrow）",
-        2 => "x402 按需支付",
-        _ => "未设置",
-    }
+fn payment_mode_desc(pm: i32) -> &'static str {
+    PaymentMode::from_int(pm).desc()
 }
 
 /// 根据角色 + 任务状态，列出当前可执行的 CLI 操作
@@ -296,111 +261,44 @@ fn available_actions(role: &str, status: &str, job_id: &str) -> Vec<String> {
 
 pub async fn run(cmd: CommonCommand, _ctx: &Context) -> Result<()> {
     match cmd {
-        CommonCommand::Get { ws_url, addr } => run_get(&ws_url, addr.as_deref()).await,
-        CommonCommand::Context { job_id, role, agent_id, address, api_url } => {
-            run_context(&job_id, &role, agent_id.as_deref(), address.as_deref(), api_url.as_deref()).await
+        CommonCommand::Context { job_id, role, agent_id } => {
+            run_context(&job_id, &role, &agent_id).await
         }
     }
-}
-
-async fn run_get(ws_url: &str, addr_override: Option<&str>) -> Result<()> {
-    // 解析要查询的地址
-    let addr = if let Some(a) = addr_override {
-        a.to_string()
-    } else {
-        // 读 ~/.openclaw/ws-mock-addresses.json → {"default": "0x..."}
-        let path = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("无法获取 HOME 目录"))?
-            .join(".openclaw/ws-mock-addresses.json");
-        let raw = std::fs::read_to_string(&path)
-            .map_err(|e| anyhow::anyhow!("读取 {} 失败: {e}\n提示: 先连接 ws-mock 使 openclaw gateway 注册地址", path.display()))?;
-        let v: serde_json::Value = serde_json::from_str(&raw)?;
-        v["default"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("ws-mock-addresses.json 中未找到 default 字段"))?
-            .to_string()
-    };
-
-    // 连接 ws-mock
-    let (mut ws, _) = connect_async(ws_url)
-        .await
-        .map_err(|e| anyhow::anyhow!("无法连接 {ws_url}: {e}\n提示: 先启动 ws-mock server"))?;
-
-    // 发送 LookupAddr
-    let req = serde_json::json!({ "action": "LookupAddr", "addr": addr });
-    ws.send(Message::Text(req.to_string().into())).await?;
-
-    // 等待 addr_lookup 响应（超时 3s）
-    let result = tokio::time::timeout(std::time::Duration::from_secs(3), async {
-        while let Some(Ok(Message::Text(text))) = ws.next().await {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                if v["type"].as_str() == Some("addr_lookup") {
-                    return Some(v);
-                }
-            }
-        }
-        None
-    })
-    .await
-    .map_err(|_| anyhow::anyhow!("LookupAddr 超时（3s），ws-mock server 无响应"))?;
-
-    let resp = result.ok_or_else(|| anyhow::anyhow!("ws-mock 连接关闭，未收到 addr_lookup 响应"))?;
-
-    // 输出结果
-    match resp.get("identity") {
-        Some(identity) if !identity.is_null() => {
-            println!("{}", serde_json::to_string_pretty(identity)?);
-        }
-        _ => {
-            println!("{}", serde_json::json!({
-                "registered": false,
-                "comm_addr": addr,
-                "msg": "该地址在 ws-mock 身份系统中尚未注册（ERC-8004）"
-            }));
-        }
-    }
-
-    let _ = ws.close(None).await;
-    Ok(())
 }
 
 async fn run_context(
     job_id: &str,
     role: &str,
-    agent_id: Option<&str>,
-    address: Option<&str>,
-    api_url: Option<&str>,
+    agent_id: &str,
 ) -> Result<()> {
     // 校验角色
     if !["buyer", "provider", "evaluator"].contains(&role) {
         bail!("--role 必须是 buyer / provider / evaluator");
     }
+    if agent_id.is_empty() {
+        bail!("--agent-id 必填：beta 后端要求 agenticId header 非空");
+    }
 
-    // 调用后端获取任务详情
-    let mut client = match api_url {
-        Some(url) => network::task_api_client::TaskApiClient::with_base_url(url.to_string()),
-        None => network::task_api_client::TaskApiClient::new(),
-    };
+    // 调用后端获取任务详情。base url 由 TaskApiClient::new 内部按
+    // OKX_BASE_URL env > TASK_BASE_URL env > 常量 兜底解析，无需 CLI 显式指定。
+    let mut client = network::task_api_client::TaskApiClient::new();
     let resp_val = client
-        .get_with_identity(&client.task_path(job_id), agent_id.unwrap_or(""))
+        .get_with_identity(&client.task_path(job_id), agent_id)
         .await
         .map_err(|e| anyhow::anyhow!("无法获取任务详情: {e}"))?;
 
-    // WalletApiClient 返回 body["data"]，即 {"task": {...}}
-    let resp_data: TaskRespData = serde_json::from_value(resp_val)
+    // 后端 spec：响应 data 直接是平铺的 task 对象（WalletApiClient 已剥掉 body["data"]）
+    let task: TaskDetail = serde_json::from_value(resp_val)
         .map_err(|e| anyhow::anyhow!("解析响应失败: {e}"))?;
 
-    let task = resp_data.task;
-
-    // 卖家额外拉取 agent 资料（name / profileDescription）
-    let profile = if role == "provider" {
-        fetch_agent_profile(agent_id.unwrap_or(""), api_url).await
-    } else {
-        None
-    };
+    // 拉自己 agent 的资料：name / profileDescription / agentWalletAddress / communicationAddress
+    // 三种角色都需要——【你的身份】块要展示钱包地址 + 通信地址；provider 还会用 description 做专业匹配。
+    // fetch 出错时返回带 agentId 的 fallback，永不为空。
+    let profile = fetch_agent_profile(agent_id).await;
 
     // 生成上下文
-    let ctx_text = build_context(&task, role, agent_id, address, profile.as_ref());
+    let ctx_text = build_context(&task, role, agent_id, &profile);
     println!("{ctx_text}");
     Ok(())
 }
@@ -408,72 +306,73 @@ async fn run_context(
 fn build_context(
     task: &TaskDetail,
     role: &str,
-    agent_id: Option<&str>,
-    address: Option<&str>,
-    profile: Option<&AgentProfile>,
+    agent_id: &str,
+    profile: &AgentProfile,
 ) -> String {
     let mut out = String::with_capacity(1024);
 
-    let role_cn = match role {
-        "buyer"     => "买家（Client）",
-        "provider"    => "卖家（Provider）",
-        "evaluator" => "仲裁者（Evaluator）",
-        _           => role,
+    let role_enum = state_machine::Role::parse(role);
+    let role_cn = match role_enum {
+        Some(state_machine::Role::Buyer)     => "买家（Client）",
+        Some(state_machine::Role::Provider)  => "卖家（Provider）",
+        Some(state_machine::Role::Evaluator) => "仲裁者（Evaluator）",
+        None                                 => role,
     };
 
-    let status_raw = task.status_str.as_deref().unwrap_or("unknown");
-    let status_text = format!("{status_raw} — {}", status_desc(status_raw));
+    // spec 只回 status 整数，本地用 Status::from_int 派生枚举；展示串走 as_str()。
+    let task_status = task
+        .status
+        .map(state_machine::Status::from_int)
+        .unwrap_or_else(|| state_machine::Status::Other("unknown".to_string()));
+    let status_str = task_status.as_str().to_string();
+    let status_text = format!("{status_str} — {}", status_desc(&status_str));
 
     // ── 角色声明 ──────────────────────────────────────────────────────────
     out.push_str(&format!("你是任务系统中的{role_cn}。\n\n"));
 
     // ── 身份信息 ──────────────────────────────────────────────────────────
+    // 钱包地址 / 通信地址来自 `agent get` 反查（fetch_agent_profile）；任务详情里的
+    // buyerAgentAddress / providerAgentAddress 仍用于下方【买家信息】/【卖家信息】块。
     out.push_str("【你的身份】\n");
     out.push_str(&format!("- 角色：{role_cn}\n"));
-    if let Some(id) = agent_id {
-        out.push_str(&format!("- AgentID：{id}\n"));
+    out.push_str(&format!("- AgentID：{agent_id}\n"));
+    if let Some(w) = &profile.agent_wallet_address {
+        out.push_str(&format!("- 钱包地址：{w}\n"));
     }
-    if let Some(addr) = address {
-        out.push_str(&format!("- 钱包地址：{addr}\n"));
+    if let Some(c) = &profile.communication_address {
+        out.push_str(&format!("- 通信地址：{c}\n"));
     }
-    if let Some(p) = profile {
-        if let Some(n) = &p.name {
-            out.push_str(&format!("- 名称：{n}\n"));
-        }
-        if let Some(d) = &p.profile_description {
-            out.push_str(&format!("- Provider 描述：{d}\n"));
-        }
+    if let Some(n) = &profile.name {
+        out.push_str(&format!("- 名称：{n}\n"));
+    }
+    if let Some(d) = &profile.profile_description {
+        out.push_str(&format!("- 描述：{d}\n"));
     }
     out.push('\n');
 
     // ── 任务详情 ──────────────────────────────────────────────────────────
     out.push_str("【任务详情】\n");
     out.push_str(&format!("- 任务ID：{}\n", task.job_id));
-    if let Some(tid) = &task.task_id {
-        if tid != &task.job_id {
-            out.push_str(&format!("- 内部ID：{tid}\n"));
-        }
+    if let Some(tid) = task.task_id {
+        out.push_str(&format!("- 内部ID：{tid}\n"));
     }
     out.push_str(&format!("- 标题：{}\n", task.title));
     out.push_str(&format!("- 描述：{}\n", task.description));
-    if let Some(summary) = &task.description_summary {
-        if !summary.is_empty() {
-            out.push_str(&format!("- 摘要：{summary}\n"));
-        }
-    }
 
     let amount = task.token_amount.as_deref().unwrap_or("未设置");
     let token  = task.token_address.as_deref().unwrap_or("");
-    out.push_str(&format!("- 预算：{amount} （token: {token}）\n"));
+    let symbol = task.token_symbol.as_deref().unwrap_or("UNKNOWN");
+    out.push_str(&format!("- 创建预算：{amount} {symbol} （token: {token}）\n"));
 
-    if let Some(pt) = task.payment_type {
-        out.push_str(&format!("- 支付方式：{}\n", payment_type_desc(pt)));
+    if let Some(pm) = task.payment_mode {
+        out.push_str(&format!("- 支付方式：{}\n", payment_mode_desc(pm)));
     }
-    let open_type = match task.open_type {
-        Some(1) => "公开（Public）",
-        _       => "私有（Private）",
+    let visibility = match task.visibility {
+        Some(0) => "公开（Public）",
+        Some(1) => "私有（Private）",
+        _       => "未知",
     };
-    out.push_str(&format!("- 可见性：{open_type}\n"));
+    out.push_str(&format!("- 可见性：{visibility}\n"));
     if let Some(chain) = task.chain_id {
         out.push_str(&format!("- 链：chainId={chain}\n"));
     }
@@ -495,8 +394,8 @@ fn build_context(
             ));
         }
     }
-    out.push_str(&format!("- 创建时间：{}\n", task.create_time.as_deref().unwrap_or("—")));
-    out.push_str(&format!("- 更新时间：{}\n", task.update_time.as_deref().unwrap_or("—")));
+    out.push_str(&format!("- 创建时间：{}\n", fmt_unix_secs(task.create_time)));
+    out.push_str(&format!("- 更新时间：{}\n", fmt_unix_secs(task.update_time)));
     out.push('\n');
 
     // ── 当前状态 ──────────────────────────────────────────────────────────
@@ -509,7 +408,7 @@ fn build_context(
     match (&task.buyer_agent_id, &task.buyer_agent_address) {
         (Some(id), Some(addr)) => {
             out.push_str(&format!("- AgentID：{id}\n"));
-            out.push_str(&format!("- 地址：{addr}\n"));
+            out.push_str(&format!("- 通信地址：{addr}\n"));
         }
         (Some(id), None) => out.push_str(&format!("- AgentID：{id}\n")),
         _ => out.push_str("- 信息未知\n"),
@@ -521,54 +420,49 @@ fn build_context(
     match (&task.provider_agent_id, &task.provider_agent_address) {
         (Some(id), Some(addr)) => {
             out.push_str(&format!("- AgentID：{id}\n"));
-            out.push_str(&format!("- 地址：{addr}\n"));
+            out.push_str(&format!("- 通信地址：{addr}\n"));
         }
         (Some(id), None) => out.push_str(&format!("- AgentID：{id}\n")),
         _ => out.push_str("- 尚未匹配卖家\n"),
     }
-    if let Some(gid) = &task.group_id {
-        out.push_str(&format!("- 聊天会话ID：{gid}\n"));
-    }
-    out.push('\n');
-
     // ── 专业匹配检查（仅卖家 + open 状态 + 有 profile） ───────────────────
-    if role == "provider" && status_raw == "open" {
-        if let Some(p) = profile {
-            if let Some(desc) = &p.profile_description {
-                out.push_str("【⚠️ 第一步：专业匹配检查（必做，不得跳过）】\n");
-                out.push_str(&format!("- 你的 Provider 描述：{desc}\n"));
-                out.push_str(&format!("- 任务标题：{}\n", task.title));
-                out.push_str(&format!("- 任务描述：{}\n", task.description));
-                out.push('\n');
-                out.push_str("判断：上述「Provider 描述」和「任务领域」是否匹配？\n");
-                out.push_str("- 匹配（同一专业领域）→ 进入下方「按可见性分流」继续协商\n");
-                out.push_str("- 不匹配（领域明显不同，如 DeFi trading vs 合约审计 / 前端 / 文案）→ **必须拒绝**：\n");
-                out.push_str("  1. 调用 `xmtp_send` 工具发送拒绝消息（模板如下）\n");
-                out.push_str("  2. **禁止**执行 onchainos agent apply 或任何后续操作\n\n");
-                out.push_str("拒绝回复模板（通过 `xmtp_send` 工具发送，`content` 字段 = 下方纯自然语言正文）：\n");
-                out.push_str(&format!(
-                    "抱歉，此任务（{}）超出我的专业领域（{}），无法承接。祝您找到合适的卖家。\n\n",
-                    task.title, desc
-                ));
-                out.push_str("注意：`content` 是纯自然语言正文，不要加任何 text header（如 `jobId: / 来自: ... / 类型: REPLY` 之类）。XMTP 插件会自动把 content 包装成 a2a-agent-chat envelope。\n\n");
-            }
+    if role_enum == Some(state_machine::Role::Provider)
+        && task_status == state_machine::Status::Open
+    {
+        if let Some(desc) = &profile.profile_description {
+            out.push_str("【⚠️ 第一步：专业匹配检查（必做，不得跳过）】\n");
+            out.push_str(&format!("- 你的 Provider 描述：{desc}\n"));
+            out.push_str(&format!("- 任务标题：{}\n", task.title));
+            out.push_str(&format!("- 任务描述：{}\n", task.description));
+            out.push('\n');
+            out.push_str("判断：上述「Provider 描述」和「任务领域」是否匹配？\n");
+            out.push_str("- 匹配（同一专业领域）→ 进入下方「按可见性分流」继续协商\n");
+            out.push_str("- 不匹配（领域明显不同，如 DeFi trading vs 合约审计 / 前端 / 文案）→ **必须拒绝**：\n");
+            out.push_str("  1. 调用 `xmtp_send` 工具发送拒绝消息（模板如下）\n");
+            out.push_str("  2. **禁止**执行 onchainos agent apply 或任何后续操作\n\n");
+            out.push_str("拒绝回复模板（通过 `xmtp_send` 工具发送，`content` 字段 = 下方纯自然语言正文）：\n");
+            out.push_str(&format!(
+                "抱歉，此任务（{}）超出我的专业领域（{}），无法承接。祝您找到合适的卖家。\n\n",
+                task.title, desc
+            ));
+            out.push_str("注意：`content` 是纯自然语言正文，不要加任何 text header（如 `jobId: / 来自: ... / 类型: REPLY` 之类）。XMTP 插件会自动把 content 包装成 a2a-agent-chat envelope。\n\n");
         }
 
-        // 专业匹配通过后，按 task.openType 给不同动作引导
+        // 专业匹配通过后，按 task.visibility 给不同动作引导（VisibilityEnum: 0=PUBLIC / 1=PRIVATE）
         let buyer_id = task.buyer_agent_id.as_deref().unwrap_or("<task.buyerAgentId>");
-        let agent_id_hint = profile.and_then(|p| p.agent_id.as_deref()).unwrap_or("<你的agentId>");
+        let agent_id_hint = profile.agent_id.as_deref().unwrap_or("<你的agentId>");
         out.push_str("【⚠️ 第二步：按可见性分流（匹配通过才走这里）】\n\n");
-        if task.open_type == Some(1) {
+        if task.visibility == Some(0) {
             // 公开任务 → provider 主动建群
             out.push_str("当前任务**可见性 = 公开（Public）** → 你需要**主动联系买家发起协商**：\n\n");
-            out.push_str("1. 调 `xmtp_start_conversation` 工具建群 + 创建 sub session（机制见 SKILL.md §Session 通信契约 §6 路径 7）：\n");
+            out.push_str("1. 调 `xmtp_start_conversation` 工具建群 + 创建 sub session（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.7）：\n");
             out.push_str(&format!(
                 "   - 参数：`myAgentId={agent_id_hint}`，`toAgentId={buyer_id}`（买家 agentId），`jobId={}`\n",
                 task.job_id
             ));
-            out.push_str("   - 成功返回 `sessionKey` + `xmtpGroupId`\n");
-            out.push_str("2. 调 `session_status` 拿当前 sub session 的 `sessionKey`\n");
-            out.push_str("3. 调 `xmtp_send`（参数 `sessionKey` = 第 2 步那串，`content` = 协商三项确认提问）\n\n");
+            out.push_str("   - 成功返回 `sessionKey`（新 sub 的 key，下面 step 2 直接用，**不要再调 `session_status`**——bootstrap 阶段 `session_status` 可能返回当前所在 user session 的 key，会拿错）+ `xmtpGroupId`\n");
+            out.push_str("2. 立即调 **`xmtp_send`**（参数 `sessionKey` = step 1 `xmtp_start_conversation` 返回值的 `sessionKey` 字段原值，`content` = 协商三项确认提问）\n\n");
+            out.push_str("🛑 **必须用 `xmtp_send`，禁止用 `xmtp_dispatch_session` / `xmtp_dispatch_user` / `xmtp_prompt_user` 替代**——给 peer agent 发 a2a-agent-chat 业务消息**只有 `xmtp_send` 一种路径**。看到「建立协商通道 / 派发到 sub / dispatch」这种语感**也只能选 `xmtp_send`**，工具名里有 `dispatch` 不代表选 `dispatch_session`。`xmtp_dispatch_session` 是 user→sub `[USER_DECISION_RELAY]` 决策回传专用，content 必字面以 `[USER_DECISION_RELAY] 用户决策：` 开头，跟协商首条 a2a-agent-chat 形态完全不符。\n\n");
             out.push_str("协商三项（一条 `xmtp_send` 一次问完）：\n");
             out.push_str("  1) 任务内容和验收标准是否在能力范围内\n");
             out.push_str("  2) 价格 / 币种 USDT or USDG\n");
@@ -583,7 +477,7 @@ fn build_context(
     }
 
     // ── 下一步动作 ────────────────────────────────────────────────────────
-    let actions = available_actions(role, status_raw, &task.job_id);
+    let actions = available_actions(role, &status_str, &task.job_id);
     out.push_str("【下一步动作】（先调 next-action 拿当前 status 的完整剧本，按剧本走，不要绕过 next-action 直接调 CLI）\n");
     for a in &actions {
         out.push_str(&format!("- {a}\n"));
@@ -600,7 +494,7 @@ fn build_context(
     if !skill_file.is_empty() {
         out.push_str("【⚠️ 必须立即执行】\n");
         out.push_str(&format!(
-            "请立即读取角色指南 {skill_file}（与 SKILL.md 同目录），该文件包含完整的协商规则和接单流程。\n"
+            "请立即读取角色指南 skills/okx-agent-task/{skill_file}（与 skills/okx-agent-task/SKILL.md 同目录），该文件包含完整的协商规则和接单流程。\n"
         ));
     }
 

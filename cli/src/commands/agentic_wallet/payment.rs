@@ -267,10 +267,34 @@ async fn cmd_pay(p: X402PayParams) -> Result<()> {
     Ok(())
 }
 
+/// Parse accepts JSON string and call `x402_pay`. Convenience wrapper for
+/// other modules (e.g. task buyer flow) that receive raw accepts from a 402 response.
+pub async fn x402_pay_from_accepts(accepts: &str, from: Option<String>) -> Result<X402PayOutput> {
+    let params = parse_payload(accepts)?;
+    x402_pay(X402PayParams {
+        network: params.network,
+        amount: params.amount,
+        pay_to: params.pay_to,
+        asset: params.asset,
+        from,
+        max_timeout_secs: params.max_timeout_seconds,
+        scheme: params.scheme,
+    }).await
+}
+
 /// Same flow as `cmd_pay`, but returns a typed result to the caller instead of
 /// printing it. Used by other modules (e.g. task buyer flow) that need to embed
 /// the x402 payment proof in a wider response.
 pub async fn x402_pay(p: X402PayParams) -> Result<X402PayOutput> {
+    eprintln!("[x402_pay] 入参:");
+    eprintln!("  network: {}", p.network);
+    eprintln!("  amount: {}", p.amount);
+    eprintln!("  pay_to: {}", p.pay_to);
+    eprintln!("  asset: {}", p.asset);
+    eprintln!("  from: {:?}", p.from);
+    eprintln!("  max_timeout_secs: {}", p.max_timeout_secs);
+    eprintln!("  scheme: {:?}", p.scheme);
+
     validate_payment_inputs(&p.amount, &p.pay_to, &p.asset)?;
 
     let access_token = ensure_tokens_refreshed().await?;
@@ -382,13 +406,13 @@ pub async fn x402_pay(p: X402PayParams) -> Result<X402PayOutput> {
         nonce: nonce.clone(),
     };
 
-    if is_deferred {
+    let output = if is_deferred {
         // aggr_deferred scheme: return session-key signature only, skip EOA signing
-        Ok(X402PayOutput {
+        X402PayOutput {
             signature: session_signature_b64,
             authorization,
             session_cert: Some(session_cert.clone()),
-        })
+        }
     } else {
         // Exact scheme (default): full EIP-3009 signing via TEE
         let mut signed_hash_body = base_fields.clone();
@@ -410,12 +434,24 @@ pub async fn x402_pay(p: X402PayParams) -> Result<X402PayOutput> {
             .ok_or_else(|| anyhow!("missing signature in sign-msg response"))?
             .to_string();
 
-        Ok(X402PayOutput {
+        X402PayOutput {
             signature: eip3009_signature,
             authorization,
             session_cert: None,
-        })
-    }
+        }
+    };
+
+    eprintln!("[x402_pay] 返回值:");
+    eprintln!("  signature: {}", output.signature);
+    eprintln!("  authorization.from: {}", output.authorization.from);
+    eprintln!("  authorization.to: {}", output.authorization.to);
+    eprintln!("  authorization.value: {}", output.authorization.value);
+    eprintln!("  authorization.valid_after: {}", output.authorization.valid_after);
+    eprintln!("  authorization.valid_before: {}", output.authorization.valid_before);
+    eprintln!("  authorization.nonce: {}", output.authorization.nonce);
+    eprintln!("  session_cert: {:?}", output.session_cert.as_deref().map(|s| &s[..s.len().min(32)]));
+
+    Ok(output)
 }
 
 #[allow(clippy::too_many_arguments)]

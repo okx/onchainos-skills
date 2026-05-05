@@ -357,33 +357,45 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Recommend { .. } => "recommend".into(),
         AgentCommand::Status { .. } => "status".into(),
         AgentCommand::List { .. } => "list".into(),
+        AgentCommand::SetPaymentMode { .. } => "set-payment-mode".into(),
         AgentCommand::ConfirmAccept { .. } => "confirm-accept".into(),
-        AgentCommand::RejectApply { .. } => "reject-apply".into(),
+        AgentCommand::DirectAccept { .. } => "direct-accept".into(),
+        AgentCommand::Task402Pay { .. } => "task-402-pay".into(),
         AgentCommand::Complete { .. } => "complete".into(),
         AgentCommand::Reject { .. } => "reject".into(),
         AgentCommand::Close { .. } => "close".into(),
         AgentCommand::SetPublic { .. } => "set-public".into(),
         AgentCommand::Payment { .. } => "payment".into(),
         AgentCommand::Pay { .. } => "pay".into(),
-        AgentCommand::Claim { .. } => "claim".into(),
         AgentCommand::ClaimAutoRefund { .. } => "claim-auto-refund".into(),
+        AgentCommand::ClaimAutoComplete { .. } => "claim-auto-complete".into(),
+        AgentCommand::ProviderClaimable { .. } => "provider-claimable".into(),
+        AgentCommand::ProviderClaimRewards { .. } => "provider-claim-rewards".into(),
 
         // Task (provider)
         AgentCommand::RecommendTask { .. } => "recommend-task".into(),
         AgentCommand::FindJobs => "find-jobs".into(),
-        AgentCommand::ContactBuyer { .. } => "contact-buyer".into(),
         AgentCommand::Apply { .. } => "apply".into(),
         AgentCommand::Deliver { .. } => "deliver".into(),
         AgentCommand::AgreeRefund { .. } => "agree-refund".into(),
         AgentCommand::GetPayment { .. } => "get-payment".into(),
 
-        // Common
-        AgentCommand::RateAgent { .. } => "rate-agent".into(),
-
         // Sub-groups
-        AgentCommand::Config { .. } => "config".into(),
         AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),
-        AgentCommand::Evaluator(c) => format!("evaluator {:?}", std::mem::discriminant(c)),
+        // Evaluator (flat — 见 agent_commerce/mod.rs)
+        AgentCommand::EvidenceInfo { .. } => "evidence-info".into(),
+        AgentCommand::EvidenceDownload { .. } => "evidence-download".into(),
+        AgentCommand::VoteCommit { .. } => "vote-commit".into(),
+        AgentCommand::VoteReveal { .. } => "vote-reveal".into(),
+        AgentCommand::ArbitrationClaim { .. } => "arbitration-claim".into(),
+        AgentCommand::ArbitrationClaimable { .. } => "arbitration-claimable".into(),
+        AgentCommand::Stake { .. } => "stake".into(),
+        AgentCommand::IncreaseStake { .. } => "increase-stake".into(),
+        AgentCommand::RequestUnstake { .. } => "request-unstake".into(),
+        AgentCommand::ClaimUnstake { .. } => "claim-unstake".into(),
+        AgentCommand::CancelUnstake { .. } => "cancel-unstake".into(),
+        AgentCommand::StakingConfig { .. } => "staking-config".into(),
+        AgentCommand::MyStake { .. } => "my-stake".into(),
         AgentCommand::Common(c) => format!("common {:?}", std::mem::discriminant(c)),
         AgentCommand::NextAction { .. } => "next-action".into(),
         AgentCommand::FileUpload { .. } => "file-upload".into(),
@@ -392,6 +404,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::MessageEligible { .. } => "message-eligible".into(),
         AgentCommand::SystemConfig { .. } => "system-config".into(),
         AgentCommand::Heartbeat { .. } => "heartbeat".into(),
+        AgentCommand::SaveAgreed { .. } => "save-agreed".into(),
     }
 }
 

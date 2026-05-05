@@ -7,7 +7,7 @@
 //! → provider 调本接口（permissionless 链上 claim）
 //! → AP.complete → 状态 complete，资金乐观结算给 provider
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
@@ -19,18 +19,21 @@ use crate::commands::agent_commerce::task::signing;
 pub async fn handle_claim_auto_complete(
     client: &mut TaskApiClient,
     job_id: &str,
+    agent_id: &str,
 ) -> Result<()> {
-    let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_provider(client, job_id).await?;
+    if agent_id.is_empty() {
+        bail!("--agent-id 必填，传卖家自己的 agentId（beta 后端拒空 agenticId header）");
+    }
+    let (account_id, address) = signing::resolve_wallet(None, None)?;
     let body = serde_json::json!({});
 
     let resp = client.post_with_identity(
-        &client.endpoint(job_id, "claimAutoComplete"), &body, &agent_id,
+        &client.endpoint(job_id, "claimAutoComplete"), &body, agent_id,
     ).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client, &resp["uopData"], &account_id, &address,
-        job_id, signing::BizContext::JobComplete, &agent_id,
+        job_id, signing::extract_biz_type(&resp), agent_id,
     ).await?;
 
     println!("✓ 已发起超时领取（claimAutoComplete），等待链上确认（job_completed）");

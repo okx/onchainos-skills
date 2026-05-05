@@ -49,7 +49,8 @@ function buildReason(verdict: "buyer" | "seller"): string {
 async function commitIfPrep(jobId: string): Promise<void> {
   const s = states.get(jobId);
   if (!s || s.phase !== "prep") return;
-  const vote: 1 | 2 = s.verdict === "seller" ? 1 : 2;
+  // vote: 0 = Approve (Client/buyer wins), 1 = Reject (Provider/seller wins)
+  const vote: 0 | 1 = s.verdict === "seller" ? 1 : 0;
   try {
     await callCommitVote(jobId, vote, s.reason);
     s.phase = "committed";
@@ -69,7 +70,7 @@ async function revealIfCommitted(jobId: string): Promise<void> {
   }
 }
 
-async function callCommitVote(jobId: string, vote: 1 | 2, reason: string): Promise<void> {
+async function callCommitVote(jobId: string, vote: 0 | 1, reason: string): Promise<void> {
   const res = await fetch(`${API_BASE_URL}/api/v1/task/${jobId}/vote/commit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

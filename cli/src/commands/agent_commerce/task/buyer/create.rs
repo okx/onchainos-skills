@@ -10,8 +10,8 @@ use tokio::process::Command;
 
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::commands::agentic_wallet::transfer::{build_broadcast_body, resolve_address};
-use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::{
+    self, network::task_api_client::TaskApiClient,
     AGENT_ROLE_BUYER, XLAYER_CHAIN_ID, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME,
 };
 use crate::wallet_api::UnsignedInfoResponse;
@@ -37,11 +37,17 @@ fn parse_duration_secs(s: &str) -> Result<u64> {
     }
 }
 
-/// 校验货币符号
-pub fn validate_currency(currency: &str) -> Result<()> {
-    match currency.to_uppercase().as_str() {
-        "USDT" | "USDG" => Ok(()),
-        other => bail!("不支持的代币: {other}，仅支持 USDT 和 USDG"),
+/// 归一化并校验货币符号。
+/// 接受 USDT / USD₮0（链上实际 symbol）/ USDG，返回后端标准符号。
+pub fn normalize_currency(currency: &str) -> Result<String> {
+    let normalized: String = currency.chars()
+        .map(|c| if c == '₮' { 'T' } else { c })
+        .collect::<String>()
+        .to_uppercase();
+    match normalized.as_str() {
+        "USDT" | "USDT0" => Ok("USDT".to_string()),
+        "USDG" => Ok("USDG".to_string()),
+        _ => bail!("不支持的代币: {currency}，仅支持 USDT（USD₮0）和 USDG"),
     }
 }
 
@@ -59,8 +65,11 @@ fn validate_budget(budget: f64) -> Result<()> {
 // ─── 身份校验 ────────────────────────────────────────────────────────────
 
 /// 调用身份模块 CLI（`onchainos agent get`）获取当前用户的 Agent 列表，
-/// 返回第一个 role=AGENT_ROLE_BUYER（买家/requestor）的 (agentId, ownerAddress)。
-async fn resolve_buyer_agent() -> Result<(String, String)> {
+/// 返回 role=AGENT_ROLE_BUYER（买家/requestor）的 (agentId, ownerAddress)。
+///
+/// - `specified_id = Some("424")` → 校验该 agent 存在且为 buyer，直接使用
+/// - `specified_id = None` → 自动选择：仅一个 buyer 时直接用，多个 buyer 时报错提示指定
+async fn resolve_buyer_agent(specified_id: Option<&str>) -> Result<(String, String)> {
     let exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("无法获取当前可执行文件路径: {e}"))?;
 
@@ -84,74 +93,48 @@ async fn resolve_buyer_agent() -> Result<(String, String)> {
         bail!("身份查询失败: {err_msg}");
     }
 
-    // data.list[] 中查找 role=AGENT_ROLE_BUYER（买家/requestor）的 Agent
     let list = parsed["data"]["list"]
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("未查到任何 Agent 身份，请先执行 onchainos agent create --role requestor 注册买家身份"))?;
 
-    for agent in list {
-        if agent["role"].as_i64() == Some(AGENT_ROLE_BUYER) {
-            let agent_id = agent["agentId"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("Agent 缺少 agentId 字段"))?
-                .to_string();
-            let owner_address = agent["ownerAddress"]
-                .as_str()
-                .unwrap_or("")
-                .to_string();
-            return Ok((agent_id, owner_address));
-        }
+    let buyers: Vec<_> = list.iter()
+        .filter(|a| a["role"].as_i64() == Some(AGENT_ROLE_BUYER))
+        .collect();
+
+    if buyers.is_empty() {
+        bail!("当前账户没有买家（requestor）身份，请先执行 onchainos agent create --role requestor 注册");
     }
 
-    bail!("当前账户没有买家（requestor）身份，请先执行 onchainos agent create --role requestor 注册");
-}
-
-// ─── 余额预检 ────────────────────────────────────────────────────────────
-
-/// 调用 `onchainos wallet balance` 查询当前账户余额，
-/// 若指定代币余额不足则发出警告（不阻断流程，合约层会做最终校验）。
-async fn warn_if_insufficient_balance(budget: f64, currency: &str) {
-    let exe = match std::env::current_exe() {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    let output = match Command::new(&exe)
-        .args(["wallet", "balance"])
-        .output()
-        .await
-    {
-        Ok(o) if o.status.success() => o,
-        _ => return,
-    };
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: serde_json::Value = match serde_json::from_str(&stdout) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-
-    // 遍历 data.details[].tokenAssets[] 查找匹配代币的余额
-    let currency_upper = currency.to_uppercase();
-    if let Some(details) = parsed["data"]["details"].as_array() {
-        for detail in details {
-            if let Some(assets) = detail["tokenAssets"].as_array() {
-                for asset in assets {
-                    let symbol = asset["tokenSymbol"].as_str().unwrap_or("");
-                    if symbol.to_uppercase() == currency_upper {
-                        let balance_str = asset["balance"].as_str().unwrap_or("0");
-                        let balance: f64 = balance_str.parse().unwrap_or(0.0);
-                        if balance < budget {
-                            eprintln!(
-                                "⚠️  余额不足提醒：当前 {symbol} 余额为 {balance}，任务预算 {budget} {currency_upper}，请确保发布后账户有足够资金完成托管支付"
-                            );
-                        }
-                        return;
-                    }
-                }
-            }
-        }
+    if let Some(id) = specified_id {
+        let agent = buyers.iter()
+            .find(|a| a["agentId"].as_str() == Some(id))
+            .ok_or_else(|| anyhow::anyhow!(
+                "指定的 agent-id {id} 不是买家身份或不存在，当前买家 agent: {}",
+                buyers.iter()
+                    .filter_map(|a| a["agentId"].as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))?;
+        let owner_address = agent["ownerAddress"].as_str().unwrap_or("").to_string();
+        return Ok((id.to_string(), owner_address));
     }
+
+    if buyers.len() == 1 {
+        let agent = buyers[0];
+        let agent_id = agent["agentId"].as_str()
+            .ok_or_else(|| anyhow::anyhow!("Agent 缺少 agentId 字段"))?
+            .to_string();
+        let owner_address = agent["ownerAddress"].as_str().unwrap_or("").to_string();
+        return Ok((agent_id, owner_address));
+    }
+
+    let ids: Vec<&str> = buyers.iter()
+        .filter_map(|a| a["agentId"].as_str())
+        .collect();
+    bail!(
+        "当前钱包下有多个买家身份: {}，请通过 --agent-id 指定使用哪个",
+        ids.join(", ")
+    );
 }
 
 // ─── 创建任务 ────────────────────────────────────────────────────────────
@@ -168,8 +151,9 @@ pub async fn handle_create(
     deadline_submit: String,
     title: Option<String>,
     payment_mode: Option<String>,
+    agent_id: Option<String>,
 ) -> Result<()> {
-    validate_currency(&currency)?;
+    let currency = normalize_currency(&currency)?;
     validate_budget(budget)?;
 
     let max_budget_val = max_budget.unwrap_or(budget);
@@ -198,11 +182,11 @@ pub async fn handle_create(
         .map_err(|e| anyhow::anyhow!("登录态已失效，请先执行 onchainos wallet login: {e}"))?;
 
     // ── Step 0: 校验买家身份 ──────────────────────────
-    let (buyer_agent_id, _buyer_owner_address) = resolve_buyer_agent().await?;
+    let (buyer_agent_id, _buyer_owner_address) = resolve_buyer_agent(agent_id.as_deref()).await?;
     eprintln!("[task-create] 买家身份校验通过 (agentId: {buyer_agent_id})");
 
-    // ── Step 0.5: 余额预检（警告，不阻断）──────────────
-    warn_if_insufficient_balance(budget, &currency).await;
+    // ── Step 0.5: 余额预检（余额不足则阻断）──────────────
+    common::ensure_sufficient_balance(budget, &currency).await?;
 
     // ── Step 0.6: 解析钱包地址 ───────────────────────────
     let wallets = crate::wallet_store::load_wallets()?
@@ -218,7 +202,7 @@ pub async fn handle_create(
     let body = serde_json::json!({
         "title":              title_str,
         "description":        description,
-        "description_summary": summary,
+        "descriptionSummary": summary,
         "paymentTokenSymbol": currency.to_uppercase(),
         "paymentTokenAmount": budget.to_string(),
         "chainId":            XLAYER_CHAIN_ID,
@@ -227,9 +211,8 @@ pub async fn handle_create(
             "submittedDeadline": submit_secs
         },
         "paymentMode":        payment_mode.as_deref()
-                                .map(crate::commands::agent_commerce::task::common::payment_mode_to_int)
-                                .unwrap_or(0),
-        "visibility":         0
+                                .map(|m| crate::commands::agent_commerce::task::common::PaymentMode::from_str(m).as_int())
+                                .unwrap_or(0)
     });
 
     let resp = client.post_with_identity("/priapi/v1/aieco/task/create", &body, &buyer_agent_id).await?;

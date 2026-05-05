@@ -1,21 +1,13 @@
-//! 仲裁者追加质押（top-up / 被罚后补齐）— onchainos agent evaluator increase-stake
-
 use anyhow::{bail, Result};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
-/// Evaluator 补充质押（top-up / 被罚后补齐）。
-///
-/// API: POST /priapi/v1/aieco/task/staking/increaseStake/// - Body: `{ "amount": "<OKB 金额, UI 单位>" }`（agentId 从 header 读）
-/// - 后端打包 approve(VoterStaking, amount) + increaseStake(amount) 为 atomic UOP
-/// - 无最低金额限制（只要 amount > 0）
-///
-/// Error codes:
-///   4000 — agentId 无效
-///   1001 — amount <= 0
-///   3001 — 合约 ABI 生成失败
-pub async fn handle_increase_stake(client: &mut TaskApiClient, amount: &str) -> Result<()> {
+pub async fn handle_increase_stake(
+    client: &mut TaskApiClient,
+    amount: &str,
+    agent_id: &str,
+) -> Result<()> {
     let trimmed = amount.trim();
     if trimmed.is_empty() {
         bail!("--amount 不能为空（OKB 金额，UI 单位，例如 50）");
@@ -25,7 +17,7 @@ pub async fn handle_increase_stake(client: &mut TaskApiClient, amount: &str) -> 
     }
 
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_evaluator().await?;
+        signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
     let path = "/priapi/v1/aieco/task/staking/increaseStake";
     let body = serde_json::json!({ "amount": trimmed });
@@ -39,7 +31,7 @@ pub async fn handle_increase_stake(client: &mut TaskApiClient, amount: &str) -> 
         &account_id,
         &address,
         "",
-        signing::BizContext::StakeIncrease,
+        signing::extract_biz_type(&resp),
         &agent_id,
     )
     .await?;

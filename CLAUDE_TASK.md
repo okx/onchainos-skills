@@ -96,77 +96,76 @@ CI uses `-D warnings` (warnings as errors). Run `cargo clippy` before pushing. C
 
 ---
 
-## Task System E2E Testing
+## Local Dev Helpers
 
-All mock components are TypeScript (Node.js). No Rust build needed.
+### Backend env switch
 
-### Component Map
-
-| Component | Start Command | Port | Role |
-|---|---|---|---|
-| ws-mock server | `cd tools/ws-mock-ts && node dist/server.js` | ws://9000 | XMTP simulator, WS message router |
-| mock-api | `cd tools/ws-mock-ts && node dist/mock-api.js` | http://9001 | Task REST backend + dashboard, sends WS system notifications |
-| mock-evaluator | `cd tools/mock-evaluator && npm start` | — | Headless evaluator: receives TASK_DISPUTED, resolves buyer-wins after 5s |
-| mock-evaluator-ui | `cd tools/mock-evaluator && npm run ui` | http://9004 | Evaluator with web UI (manual vote) — cannot run alongside headless |
-| openclaw gateway | `launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway` | http://18789 | AI buyer agent (connects via XMTP channel, not ws-mock) |
-
-> **Headless vs UI**: mock-evaluator headless and UI variants share one identity — run only one at a time.
-
-### Key Paths
-
-```
-Gateway log:      ~/.openclaw/logs/gateway.log
-Sessions dir:     ~/.openclaw/agents/main/sessions/
-WS server src:    tools/ws-mock-ts/src/server.ts
-mock-api src:     tools/ws-mock-ts/src/mock-api.ts
-CLI binary:       ~/.local/bin/onchainos
-```
-
-### First-time Setup (build all TS packages)
+Set `OKX_BASE_URL` (e.g. `https://beta.okex.org` for the pre-release lane) so `wallet_api` / `task_api_client` and any sub-process spawned by the CLI all hit the same target. Unset to fall back to production. Persist in `~/.zshrc` for sticky env.
 
 ```bash
-cd tools/ws-mock-ts  && npm install && npm run build
-cd tools/mock-evaluator && npm install && npm run build
+export OKX_BASE_URL=https://beta.okex.org
 ```
 
-### Permission Rule
+### Permission rule for `~/.openclaw/`
 
-`cp`, `rsync`, Write tool all fail with EPERM on `~/.openclaw/`.
-**Always use `node -e "require('fs').writeFileSync(...)"` to write to those paths.**
+`cp`, `rsync`, the Write tool — all fail with EPERM on `~/.openclaw/` paths. Always use `node -e "require('fs').writeFileSync(...)"` (or other Node fs APIs) to write to those locations.
 
-### Sync Skills After Edit
+### Install CLI binary after build
 
-After editing any file under `skills/okx-agent-task/` (e.g. `buyer.md`, `SKILL.md`):
+Default to **debug build** for fast iteration (~15s incremental / ~3min cold, ~40 MB binary, exact same wire behaviour as release). Reserve `--release` for actual shipping (~3min, ~6.7 MB; the `[profile.release]` in Cargo.toml uses `lto=true` + `codegen-units=1` which serialises codegen — that's why it's slow).
+
+`~/.local/bin` is already in the openclaw gateway's PATH (verified via `launchctl print gui/$(id -u)/ai.openclaw.gateway`), so any sub-process the gateway spawns picks up the freshly installed binary without restart — but the gateway itself caches skills (see Sync skills below).
+
+从仓库根运行（脚本用 `process.cwd()` / `~` 推路径，避免硬编码）：
 
 ```bash
+cargo build --manifest-path cli/Cargo.toml
 node -e "
-const fs = require('fs'), path = require('path');
-const src = '/Users/gan/meili/mingtao.gan_dacs_at_okg.com/121/Documents/RustProjects/OKOnchainOS/skills/okx-agent-task/';
-const dst = process.env.HOME + '/.agents/skills/okx-agent-task/';
-['SKILL.md','buyer.md','provider.md','evaluator.md'].forEach(f => {
-  fs.writeFileSync(dst+f, fs.readFileSync(src+f));
-  console.log('synced', f);
-});
-"
-```
-
-> **Why not `npx skills add`**: creates symlinks that openclaw rejects with `symlink-escape`. Use direct file writes instead.
-> **Gateway restart required after skill sync**: gateway loads skill files into memory at startup. After syncing skills, run `npm run reset:gw` (in `tools/ws-mock-ts`) to restart gateway and clear sessions.
-
-### Install CLI Binary After Build
-
-```bash
-cd cli && cargo build
-node -e "
-const fs = require('fs');
-const src = '/Users/gan/meili/mingtao.gan_dacs_at_okg.com/121/Documents/RustProjects/OKOnchainOS/cli/target/debug/onchainos';
-const dst = '/Users/gan/.local/bin/onchainos';
+const fs = require('fs'), os = require('os');
+const src = process.cwd() + '/cli/target/debug/onchainos';
+const dst = os.homedir() + '/.local/bin/onchainos';
 fs.writeFileSync(dst, fs.readFileSync(src), { mode: 0o755 });
 console.log('installed', fs.statSync(dst).size, 'bytes');
 "
 ```
 
-### Clear Sessions
+For release ship-build: swap `cargo build` → `cargo build --release` and `cli/target/debug/onchainos` → `cli/target/release/onchainos`.
+
+### Sync skills after edit
+
+After editing any file under `skills/okx-agent-{task,chat,identity}/`, mirror the change to `~/.agents/skills/` (where openclaw reads from):
+
+从仓库根运行：
+
+```bash
+node -e "
+const fs = require('fs'), path = require('path'), os = require('os');
+const SRC = process.cwd() + '/skills/';
+const DST = os.homedir() + '/.agents/skills/';
+const targets = {
+  'okx-agent-task': ['SKILL.md','buyer.md','provider.md','evaluator.md'],
+  'okx-agent-chat': ['SKILL.md','ensure-installed.md','check-version.md','file-attachment.md','refresh-agents.md','references/cli-reference.md'],
+  'okx-agent-identity': ['SKILL.md'],
+};
+let n = 0;
+for (const [skill, files] of Object.entries(targets)) {
+  for (const f of files) {
+    const s = SRC + skill + '/' + f;
+    const d = DST + skill + '/' + f;
+    if (!fs.existsSync(s)) continue;
+    fs.mkdirSync(path.dirname(d), { recursive: true });
+    fs.writeFileSync(d, fs.readFileSync(s));
+    n++;
+  }
+}
+console.log('synced', n, 'skill files');
+"
+```
+
+> **Why not `npx skills add`**: creates symlinks that openclaw rejects with `symlink-escape`. Use direct file writes instead.
+> **Gateway restart required after sync**: openclaw loads skill files into memory at startup. Restart the gateway (`launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway`) for changes to take effect.
+
+### Clear sessions
 
 ```bash
 node -e "
@@ -179,17 +178,69 @@ console.log('removed', n, 'sessions');
 "
 ```
 
-### Known Issues / Notes
+### Key paths
 
-- `sendText: missing conversationId` in gateway log — non-blocking, doesn't affect flow
-- mock-api data persists across restarts (saved to `tools/ws-mock-ts/dist/mock-tasks.json`), jobId auto-increments from max existing; optional full reset: `curl -X DELETE http://127.0.0.1:9001/api/v1/reset`
-- Gateway re-registers tools on every agent turn — normal openclaw behavior, not a bug
+```
+Gateway log:      ~/.openclaw/logs/gateway.log
+Sessions dir:     ~/.openclaw/agents/main/sessions/
+Skills sync dir:  ~/.agents/skills/
+CLI binary:       ~/.local/bin/onchainos
+```
+
+### One-shot rebuild + install + sync
+
+从仓库根运行：
+
+```bash
+cargo build --manifest-path cli/Cargo.toml && \
+node -e "
+const fs=require('fs'),os=require('os');
+const dst=os.homedir()+'/.local/bin/onchainos';
+fs.writeFileSync(dst, fs.readFileSync(process.cwd()+'/cli/target/debug/onchainos'), {mode:0o755});
+console.log('cli installed', fs.statSync(dst).size, 'bytes');
+" && \
+node -e "
+const fs=require('fs'),path=require('path'),os=require('os');
+const SRC=process.cwd()+'/skills/';
+const DST=os.homedir()+'/.agents/skills/';
+const targets={
+  'okx-agent-task':['SKILL.md','buyer.md','provider.md','evaluator.md'],
+  'okx-agent-chat':['SKILL.md','ensure-installed.md','check-version.md','file-attachment.md','refresh-agents.md','references/cli-reference.md'],
+  'okx-agent-identity':['SKILL.md'],
+};
+let n=0;
+for (const [skill,files] of Object.entries(targets)) {
+  for (const f of files) {
+    const s=SRC+skill+'/'+f, d=DST+skill+'/'+f;
+    if (!fs.existsSync(s)) continue;
+    fs.mkdirSync(path.dirname(d),{recursive:true});
+    fs.writeFileSync(d,fs.readFileSync(s));
+    n++;
+  }
+}
+console.log('synced',n,'skill files');
+"
+```
+
+After the one-shot finishes, restart gateway only if you actually changed skill files:
+```bash
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
+```
+
+### Why the rules exist (踩过的坑)
+
+- **Don't use `cp` / `rsync` / Write tool** for `~/.openclaw/`: EPERM. All writes go through Node `fs.writeFileSync`.
+- **Don't use `npx skills add`**: creates symlinks that openclaw rejects with `symlink-escape` (it sandbox-checks symlink targets and refuses anything pointing outside the skills dir).
+- **`OKX_BASE_URL` is the single env switch** for all backends: wallet / task / chat clients all derive base URL from this (or from `--base-url` CLI flag, which sets the env at startup). Both runtime env (`~/.zshrc` export) and one-off `OKX_BASE_URL=... onchainos ...` work.
+- **`--agent-id` is required on most task commands**: beta backend rejects empty `agenticId` headers with `auth fail (3001)`. CLI now enforces non-empty for `common context`, `get-payment` etc.
 
 ---
 
-## XMTP Mock Tools
+## Task System E2E Testing — XMTP Mock Tools
 
-两个独立的 **XMTP 客户端**（不走 ws-mock 协议），用于对接 **真实 openclaw XMTP 插件** 做端到端调试。每个跑一条 XMTP 身份（本地私钥），含 CLI 模式 + Web UI 模式（SSE + 内嵌 HTML）。
+**唯一的 task system 端到端测试链路**：两个独立的 XMTP 客户端（直接连真实 XMTP dev 网络对接 openclaw XMTP 插件），跑真后端（`OKX_BASE_URL=https://beta.okex.org`），不再用旧的 ws-mock-ts / mock-api 那套（数据不准，已淘汰）。
+
+每个 mock 跑一条 XMTP 身份（本地私钥），含 CLI 模式 + Web UI 模式（SSE + 内嵌 HTML）：
 
 | 目录 | UI 端口 | 默认角色 | 备注 |
 |---|---|---|---|
@@ -200,11 +251,13 @@ console.log('removed', n, 'sessions');
 
 源码在仓库 `tools/xmtp-mock-*/`，`node_modules` 各 ~335M。**运行时拷到 `~/xmtp-mocks/` 下**，让 `.env`、XMTP DB (`~/.xmtp-mock-<role>/`) 不污染仓库：
 
+从仓库根运行：
+
 ```bash
 node -e "
-const fs=require('fs'),path=require('path');
-const S='/Users/gan/meili/mingtao.gan_dacs_at_okg.com/121/Documents/RustProjects/OKOnchainOS/tools';
-const D=process.env.HOME+'/xmtp-mocks';
+const fs=require('fs'),path=require('path'),os=require('os');
+const S=process.cwd()+'/tools';
+const D=os.homedir()+'/xmtp-mocks';
 for (const p of ['xmtp-mock-buyer','xmtp-mock-seller']) {
   for (const f of fs.readdirSync(path.join(S,p,'src'))) fs.copyFileSync(path.join(S,p,'src',f), path.join(D,p,'src',f));
   for (const f of fs.readdirSync(path.join(S,p,'dist'))) fs.copyFileSync(path.join(S,p,'dist',f), path.join(D,p,'dist',f));
@@ -219,15 +272,14 @@ for (const p of ['xmtp-mock-buyer','xmtp-mock-seller']) {
 ```env
 XMTP_WALLET_KEYS=0x...                         # 必填，viem 从此推导地址
 XMTP_ENV=dev                                   # dev / production / local（默认 dev）
-OWN_AGENT_ID=225                               # 与 data/agents.json 里 agentId 一致
+OWN_AGENT_ID=225                               # 与后端 agentId 一致
 OWN_AGENT_NAME=交易助手
 OWN_AGENT_PROFILE_DESC=帮你看行情和下单
 OWN_AGENT_PROFILE_PICTURE=https://static.okx.com/cdn/wallet/agent/default-avatar.png
 OWN_AGENT_ROLE=1                               # 1=buyer, 2=seller
-MOCK_API_URL=http://127.0.0.1:9001             # 仅 buyer 侧用到（发布任务 / 查卖家）
 ```
 
-**身份三处必须对齐**：私钥推导的 ETH 地址 == `data/agents.json` 里该 agent 的 `communicationAddress` == `.env` OWN_AGENT_* 对应的 agent 档案。不一致 → envelope 发出去 sender.role / agentId 对不上实际地址，openclaw 侧会怀疑或丢弃。
+**身份必须对齐**：私钥推导的 ETH 地址 == 后端注册该 agent 时填的 `communicationAddress` == `.env` `OWN_AGENT_*`。不一致 → envelope 发出去 sender.role / agentId 跟实际地址对不上，openclaw 侧会怀疑或丢弃。
 
 ### 启动
 
@@ -243,7 +295,7 @@ cd ~/xmtp-mocks/xmtp-mock-seller && node --env-file=.env dist/index-ui.js
 
 ### 用法要点
 
-- **buyer UI**：顶栏「发布任务」→ POST `mock-api /api/v1/task/create`；侧栏「可接任务的卖家」→ GET `mock-api agent-list` 过滤 `role=2 && status=1`；点某个卖家 → 自动建 **XMTP Group**（`newGroupWithIdentifiers`，`groupName=a2a-<jobId>`）+ 发 TASK_INQUIRE envelope
+- **buyer UI**：顶栏「发布任务」直接调真后端（`https://beta.okex.org` 或当前 `OKX_BASE_URL` 指向）；侧栏「可接任务的卖家」拉真后端 agent-list 过滤 `role=2 && status=1`；点某个卖家 → 自动建 **XMTP Group**（`newGroupWithIdentifiers`，`groupName=a2a-<jobId>`）+ 发 TASK_INQUIRE envelope
 - **seller UI**：接收 buyer / openclaw 发来的 a2a-agent-chat envelope；UI 展示解析后的 JSON（自动缩进）；输入框敲字回车 → 后端 wrap 成 envelope 经 XMTP group 发出
 - **envelope 格式**：`{ msgType: "a2a-agent-chat", content, fromXmtpAddress, toXmtpAddress, groupId, jobId, sender:{ agentId, name, profileDescription, profilePicture, role }, scheme:{...} }` —— 和 openclaw XMTP 插件的 `buildSendEnvelope` 对齐
 - **Group vs DM**：插件只把 **Group 消息** 走 `JSON.parse + jobId 路由` 进任务流程；DM 只纯文本转发。所以 buyer 主动发首条 **必须是 group**（建 group 需要 `jobId` —— UI 里点"联系卖家"会自动拼）
@@ -262,6 +314,8 @@ cd ~/xmtp-mocks/xmtp-mock-seller && node --env-file=.env dist/index-ui.js
   - 查 `~/.openclaw/agents/main/sessions/sessions.json` 里有没有对应 jobId 的 session key
   - 查 `~/.openclaw/logs/gateway.log` grep `xmtp-sdk` / `<jobId>`
 - **"5 installations exceeded"**：换私钥，或在 XMTP 网络上 revoke 老 installations
+- **后端 `auth fail (3001)`**：JWT 失效，跑 `onchainos wallet login` 重登
+- **`agenticId=` 空导致 auth fail**：beta 后端拒空 agenticId header；CLI 大部分命令的 `--agent-id` 已强制必填
 
 ---
 
