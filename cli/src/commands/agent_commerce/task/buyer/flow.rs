@@ -730,11 +730,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              🛑 **这不是辅助事件，必须通知用户。**\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 检查 payload 中 status 字段：**\n\
-             - success → 继续 Step 2\n\
-             - failed → 调用 xmtp_dispatch_user 告知用户切换失败，按 errorCode 重试\n\n\
-             **Step 2 — 调用 xmtp_dispatch_user 通知用户可见性已变更：**\n\
+             - failed → 调用 xmtp_dispatch_user 告知用户切换失败，按 errorCode 重试，结束\n\
+             - success → 继续 Step 2\n\n\
+             **Step 2 — 从系统通知 envelope 中读取 `visibility` 字段：**\n\
+             - `visibility=0` → 公开（public）\n\
+             - `visibility=1` → 私有（private）\n\n\
+             **Step 3 — 调用 xmtp_dispatch_user 通知用户可见性已变更：**\n\
              content：\n\
-             \x20\x20[可见性变更] 任务 {job_id} 已切换为公开（public），其他卖家现在可以看到并申请此任务。\n"
+             \x20\x20[可见性变更] 任务 {job_id} 已切换为 <visibility=0 时写「公开（public），其他卖家现在可以看到并申请此任务」/ visibility=1 时写「私有（private）」>。\n"
         ),
 
         // ─── 支付模式切换结果（setPaymentMode tx 结果）────────────────
@@ -746,11 +749,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              检查 payload 中 status 字段：\n\
              - failed → 调用 xmtp_dispatch_user 通知用户切换失败，按 errorCode 重试\n\
              - success → 按支付方式分流：\n\n\
-             **Step 1 — 查询当前支付方式：**\n\
-             ```bash\n\
-             onchainos agent status {job_id}\n\
-             ```\n\
-             提取 paymentMode（int：1=escrow, 2=non_escrow, 3=x402）。\n\n\
+             **Step 1 — 从系统通知 envelope 中读取 `paymentMode` 字段：**\n\
+             paymentMode 值映射：1=escrow, 2=non_escrow, 3=x402。\n\
+             ⚠️ 直接使用 envelope 中的 paymentMode，不需要额外查询 API。\n\n\
              ━━━━━━━━━ escrow（paymentMode=1）— 通知卖家 apply ━━━━━━━━━\n\n\
              **Step 2 — 通知卖家执行 apply 接单：**\n\
              调用 xmtp_send 向卖家发送：\n\
