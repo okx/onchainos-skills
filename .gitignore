@@ -67,3 +67,6 @@ run.sh
 test-cases.json
 
 evals/
+
+# Skill quality workspace (local only)
+skills/okx-agent-task-workspace/
