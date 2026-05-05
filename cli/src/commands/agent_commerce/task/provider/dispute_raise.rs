@@ -12,7 +12,7 @@
 
 use anyhow::{bail, Context, Result};
 
-use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::{self, network::task_api_client::TaskApiClient};
 use crate::commands::agent_commerce::task::signing;
 
 pub async fn handle_dispute_raise(
@@ -25,6 +25,28 @@ pub async fn handle_dispute_raise(
         bail!("--agent-id 必填，传卖家自己的 agentId（beta 后端拒空 agenticId header）");
     }
     let (account_id, address) = signing::resolve_wallet(None, None)?;
+
+    // 仲裁保证金预检：钱包对应代币余额需 ≥ 任务金额的 5%。
+    // 不足直接 bail，避免后面 approve / dispute 上链浪费 gas。
+    let task_resp = client
+        .get_with_identity(&client.task_path(job_id), agent_id)
+        .await
+        .context("dispute raise: 拉取任务详情失败（保证金预检前置）")?;
+    let task_amount: f64 = task_resp["tokenAmount"]
+        .as_str()
+        .unwrap_or("0")
+        .parse()
+        .unwrap_or(0.0);
+    let token_symbol = task_resp["tokenSymbol"].as_str().unwrap_or("USDT");
+    if task_amount > 0.0 {
+        let required = task_amount * 0.05;
+        common::ensure_sufficient_balance(required, token_symbol)
+            .await
+            .context(format!(
+                "发起仲裁需要保证金 ≥ 任务金额 5%（{required} {token_symbol}，任务金额 {task_amount} {token_symbol}）"
+            ))?;
+    }
+
     let body = serde_json::json!({});
 
     // POST /dispute/approve → uopData → sign + broadcast
