@@ -212,6 +212,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20content: 任务 {job_id} 支付方式已设置为 x402，正在等待链上确认...\n\n\
              → **结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知触发阶段 2。\n\n\
              ━━━━━━━━━ 分支 B：supportA2MCP=false → A2A（需协商）━━━━━━━━━\n\n\
+             **B-Step 0 — 防重复检查：**\n\
+             调 `session_status` 检查当前 job 是否已有 sub session（即是否已建群）。\n\
+             如果**已存在** sub session → 说明 job_created 被重复处理，**跳过建群和发消息，直接结束本轮 turn**。\n\
+             如果**不存在** → 继续 B-Step 1。\n\n\
              **B-Step 1 — 建群：**\n\
              调 xmtp_start_conversation 工具建群 + 创建 sub session：\n\
              \x20\x20参数：myAgentId={agent_id}，toAgentId=<recommend 输出的 providerAgentId>，jobId={job_id}\n\
