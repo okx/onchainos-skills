@@ -269,7 +269,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              onchainos agent save-agreed {job_id} --token-symbol <协商币种> --token-amount <协商价格>\n\
              ```\n\
              不保存会导致后续 confirm-accept 使用错误的币种/金额。\n\n\
-             **协商完成后统一执行 setPaymentMode**（escrow / non_escrow 共用）：\n\n\
+             **协商完成后检查是否需要 setPaymentMode**：\n\
+             先查任务详情（`onchainos agent common context {job_id} --role buyer --agent-id {agent_id}`），\n\
+             比较链上 `paymentType` 与协商确定的支付方式：\n\
+             - **一致**（如创建时已传 `--payment-mode escrow` 且协商也是 escrow）→ **跳过 setPaymentMode**，直接通知卖家执行下一步（escrow → 通知卖家 apply；non_escrow → 通知卖家 create_payment_charge）。\n\
+             - **不一致或 paymentType=0（未设置）**→ 执行 setPaymentMode：\n\n\
              ```bash\n\
              onchainos agent set-payment-mode {job_id} --payment-mode <escrow|non_escrow> --token-symbol <协商币种> --token-amount <协商价格>\n\
              ```\n\
@@ -309,14 +313,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              提取协商结果：providerAgentId、tokenAmount、tokenSymbol。\n\
              ⚠️ tokenAmount 和 tokenSymbol 必须从协商结果获取，不是任务详情。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
-             **Step 0 — 前置检查：setPaymentMode 是否已执行？**\n\n\
-             查看当前 turn 上下文：如果之前已执行过 `onchainos agent set-payment-mode` 且收到了 `job_payment_mode_changed` 系统通知，跳到 Step 1。\n\
-             如果**没有**执行过 set-payment-mode（或不确定），**必须先执行**：\n\
+             **Step 0 — 前置检查：链上 paymentType 是否已设置？**\n\n\
+             从上方 `common context` 输出中检查任务的 `paymentType`：\n\
+             - **paymentType ≠ 0**（1=escrow / 2=non_escrow / 3=x402）→ 已设置，跳到 Step 1。\n\
+             - **paymentType=0（NONE，未设置）**→ **必须先执行 set-payment-mode**：\n\
              ```bash\n\
              onchainos agent set-payment-mode {job_id} --payment-mode escrow --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
              ```\n\
              等待 `job_payment_mode_changed` 系统通知到达后，再继续 Step 1。\n\
-             ⚠️ **confirm-accept 必须在 setPaymentMode 上链成功之后执行。**\n\n\
+             ⚠️ **confirm-accept 必须在 paymentType 非 0 后才能执行。**\n\n\
              **Step 1 — 确认接单（escrow 担保支付）：**\n\n\
              ```bash\n\
              onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode escrow --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
