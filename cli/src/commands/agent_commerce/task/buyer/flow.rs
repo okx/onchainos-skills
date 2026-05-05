@@ -20,9 +20,9 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             next_action("job_created"),
             ref_header,
             format!("  onchainos agent recommend {job_id} --agent-id <agentId>  # 查看推荐卖家"),
-            format!("  onchainos agent set-payment-mode {job_id} --provider <addr> --payment-mode <escrow|non_escrow|x402> --token-symbol <sym> --token-amount <amt> [--endpoint <url>]  # 设置支付方式"),
-            format!("  onchainos agent confirm-accept {job_id} --provider <addr> --payment-mode <escrow|non_escrow> --token-symbol <sym> --token-amount <amt>  # 确认接单（setPaymentMode 后执行）"),
-            format!("  onchainos agent direct-accept {job_id} --provider <agentId> --token-symbol <sym> --token-amount <amt>  # x402 阶段 2b: endpoint 交互后调用"),
+            format!("  onchainos agent set-payment-mode {job_id} --payment-mode <escrow|non_escrow|x402> --token-symbol <sym> --token-amount <amt> [--endpoint <url>]  # 设置支付方式"),
+            format!("  onchainos agent confirm-accept {job_id} --provider-agent-id <agentId> --payment-mode <escrow|non_escrow> --token-symbol <sym> --token-amount <amt>  # 确认接单（setPaymentMode 后执行）"),
+            format!("  onchainos agent direct-accept {job_id} --provider-agent-id <agentId> --token-symbol <sym> --token-amount <amt>  # x402 阶段 2b: endpoint 交互后调用"),
             format!("  onchainos agent close {job_id}          # 关闭任务"),
             format!("  onchainos agent set-public {job_id}     # 转为公开任务"),
         ],
@@ -202,7 +202,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20→ 用户拒绝 → `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断\n\n\
              **A-Step 2 — setPaymentMode（x402 阶段 1）：**\n\
              ```bash\n\
-             onchainos agent set-payment-mode {job_id} --provider <providerAgentId> --payment-mode x402 --token-symbol <feeTokenSymbol> --token-amount <feeAmount> --endpoint <endpoint>\n\
+             onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <feeTokenSymbol> --token-amount <feeAmount> --endpoint <endpoint>\n\
              ```\n\
              参数来源：recommend 输出的 services[0] 中的 feeTokenSymbol、feeAmount、endpoint。\n\
              命令执行 setPaymentMode(3) → 签名 → 广播，然后返回（exit code 2, confirming）。\n\
@@ -267,7 +267,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              不保存会导致后续 confirm-accept 使用错误的币种/金额。\n\n\
              **协商完成后统一执行 setPaymentMode**（escrow / non_escrow 共用）：\n\n\
              ```bash\n\
-             onchainos agent set-payment-mode {job_id} --provider <providerAgentId> --payment-mode <escrow|non_escrow> --token-symbol <协商币种> --token-amount <协商价格>\n\
+             onchainos agent set-payment-mode {job_id} --payment-mode <escrow|non_escrow> --token-symbol <协商币种> --token-amount <协商价格>\n\
              ```\n\
              ⚠️ 此命令只执行 setPaymentMode → 签名 → 广播，然后返回（exit code 2, confirming）。\n\
              ⚠️ 不要在此步通知卖家 apply / create_payment_charge，等 job_payment_mode_changed 系统通知到达后再通知卖家。\n\n\
@@ -308,7 +308,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【你的下一步动作】\n\n\
              **Step 1 — 确认接单（escrow 担保支付）：**\n\n\
              ```bash\n\
-             onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode escrow --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
+             onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode escrow --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
              ```\n\
              直接执行 providerConfirmStatus → sign_escrow TEE 签名 → accept → 广播。\n\n\
              【后续事件】\n\
@@ -762,7 +762,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              → **结束本轮 turn**，等待卖家通过 XMTP 发送 paymentId。\n\
              收到 paymentId 后执行：\n\
              ```bash\n\
-             onchainos agent confirm-accept {job_id} --provider <providerAgentId> --payment-mode non_escrow --payment-id <paymentId> --token-symbol <sym> --token-amount <amt>\n\
+             onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode non_escrow --payment-id <paymentId> --token-symbol <sym> --token-amount <amt>\n\
              ```\n\
              直接执行 a2a_pay 签名 + direct/accept 上链。\n\n\
              ━━━━━━━━━ x402（paymentMode=3）━━━━━━━━━\n\n\
@@ -775,7 +775,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              GET <endpoint> → 收到 HTTP 402（Payment Challenge，含 accepts 数组）\n\n\
              **x402 阶段 2 Step 2 — 签名 + direct/accept + 重放 endpoint（原子命令）：**\n\
              ```bash\n\
-             onchainos agent task-402-pay {job_id} --provider <providerAgentId> --accepts '<402 响应中的 accepts JSON>' --endpoint <endpoint URL> --token-symbol <feeTokenSymbol> --token-amount <feeAmount>\n\
+             onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<402 响应中的 accepts JSON>' --endpoint <endpoint URL> --token-symbol <feeTokenSymbol> --token-amount <feeAmount>\n\
              ```\n\
              内部执行：x402_pay 签名 → direct/accept 上链 → 组装 payment header → 重放 endpoint\n\
              输出：{{ replaySuccess, replayStatus, replayBody, signature, authorization, sessionCert, txHash }}\n\n\
