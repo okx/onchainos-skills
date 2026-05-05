@@ -78,8 +78,6 @@ pub enum TaskCommand {
     /// Set payment mode on-chain (standalone, before confirm-accept)
     SetPaymentMode {
         job_id: String,
-        #[arg(long)]
-        provider: String,
         /// escrow / non_escrow / x402
         #[arg(long = "payment-mode")]
         payment_mode: Option<String>,
@@ -94,8 +92,8 @@ pub enum TaskCommand {
     /// Client confirms provider and executes payment (setPaymentMode must be done first)
     ConfirmAccept {
         job_id: String,
-        #[arg(long)]
-        provider: String,
+        #[arg(long = "provider-agent-id")]
+        provider_agent_id: String,
         /// 不指定时自动从任务详情 paymentType 获取
         #[arg(long = "payment-mode")]
         payment_mode: Option<String>,
@@ -146,8 +144,8 @@ pub enum TaskCommand {
     /// x402 Phase 2b: direct/accept after job_payment_mode_changed + x402 endpoint interaction
     DirectAccept {
         job_id: String,
-        #[arg(long)]
-        provider: String,
+        #[arg(long = "provider-agent-id")]
+        provider_agent_id: String,
         #[arg(long = "token-symbol")]
         token_symbol: Option<String>,
         #[arg(long = "token-amount")]
@@ -157,8 +155,8 @@ pub enum TaskCommand {
     /// Returns replay result (deliverable) and Payment Credential.
     Task402Pay {
         job_id: String,
-        #[arg(long)]
-        provider: String,
+        #[arg(long = "provider-agent-id")]
+        provider_agent_id: String,
         /// JSON accepts array from the HTTP 402 response
         #[arg(long)]
         accepts: String,
@@ -201,14 +199,14 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 recommend::handle_recommend(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await
             }
         }
-        TaskCommand::SetPaymentMode { job_id, provider, payment_mode, token_symbol, token_amount, endpoint } =>
-            accept::handle_set_payment_mode(&mut client, &job_id, &provider, payment_mode.as_deref(), token_symbol.as_deref(), token_amount.as_deref(), endpoint.as_deref()).await,
-        TaskCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount } =>
-            accept::handle_confirm_accept(&mut client, &job_id, &provider, payment_mode.as_deref(), payment_id.as_deref(), token_symbol.as_deref(), token_amount.as_deref()).await,
-        TaskCommand::DirectAccept { job_id, provider, token_symbol, token_amount } =>
-            accept::handle_direct_accept(&mut client, &job_id, &provider, token_symbol.as_deref(), token_amount.as_deref()).await,
-        TaskCommand::Task402Pay { job_id, provider, accepts, endpoint, token_symbol, token_amount, from } =>
-            accept::handle_task_402_pay(&mut client, &job_id, &provider, &accepts, &endpoint, token_symbol.as_deref(), token_amount.as_deref(), from.as_deref()).await,
+        TaskCommand::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint } =>
+            accept::handle_set_payment_mode(&mut client, &job_id, payment_mode.as_deref(), token_symbol.as_deref(), token_amount.as_deref(), endpoint.as_deref()).await,
+        TaskCommand::ConfirmAccept { job_id, provider_agent_id, payment_mode, payment_id, token_symbol, token_amount } =>
+            accept::handle_confirm_accept(&mut client, &job_id, &provider_agent_id, payment_mode.as_deref(), payment_id.as_deref(), token_symbol.as_deref(), token_amount.as_deref()).await,
+        TaskCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>
+            accept::handle_direct_accept(&mut client, &job_id, &provider_agent_id, token_symbol.as_deref(), token_amount.as_deref()).await,
+        TaskCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from } =>
+            accept::handle_task_402_pay(&mut client, &job_id, &provider_agent_id, &accepts, &endpoint, token_symbol.as_deref(), token_amount.as_deref(), from.as_deref()).await,
         TaskCommand::Complete { job_id } =>
             complete::handle_complete(&mut client, &job_id).await,
         TaskCommand::Reject { job_id, reason } =>

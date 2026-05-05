@@ -93,7 +93,6 @@ pub enum AgentCommand {
     #[command(name = "set-payment-mode")]
     SetPaymentMode {
         job_id: String,
-        #[arg(long)] provider: String,
         /// escrow / non_escrow / x402
         #[arg(long = "payment-mode")] payment_mode: Option<String>,
         #[arg(long = "token-symbol")] token_symbol: Option<String>,
@@ -106,7 +105,7 @@ pub enum AgentCommand {
     #[command(name = "confirm-accept")]
     ConfirmAccept {
         job_id: String,
-        #[arg(long)] provider: String,
+        #[arg(long = "provider-agent-id")] provider_agent_id: String,
         /// 不指定时自动从任务详情 paymentType 获取
         #[arg(long = "payment-mode")] payment_mode: Option<String>,
         /// a2a_pay payment_id（卖家通过 XMTP 传递，non_escrow 必填；escrow 不需要）
@@ -121,7 +120,7 @@ pub enum AgentCommand {
     #[command(name = "direct-accept")]
     DirectAccept {
         job_id: String,
-        #[arg(long)] provider: String,
+        #[arg(long = "provider-agent-id")] provider_agent_id: String,
         #[arg(long = "token-symbol")] token_symbol: Option<String>,
         #[arg(long = "token-amount")] token_amount: Option<String>,
     },
@@ -130,7 +129,7 @@ pub enum AgentCommand {
     #[command(name = "task-402-pay")]
     Task402Pay {
         job_id: String,
-        #[arg(long)] provider: String,
+        #[arg(long = "provider-agent-id")] provider_agent_id: String,
         /// JSON accepts array from the HTTP 402 response
         #[arg(long)] accepts: String,
         /// x402 provider endpoint URL (for replay after signing)
@@ -520,17 +519,17 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         }
 
 
-        AgentCommand::SetPaymentMode { job_id, provider, payment_mode, token_symbol, token_amount, endpoint } =>
-            task::buyer::run_task(T::SetPaymentMode { job_id, provider, payment_mode, token_symbol, token_amount, endpoint }, ctx).await,
+        AgentCommand::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint } =>
+            task::buyer::run_task(T::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint }, ctx).await,
 
-        AgentCommand::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount } =>
-            task::buyer::run_task(T::ConfirmAccept { job_id, provider, payment_mode, payment_id, token_symbol, token_amount }, ctx).await,
+        AgentCommand::ConfirmAccept { job_id, provider_agent_id, payment_mode, payment_id, token_symbol, token_amount } =>
+            task::buyer::run_task(T::ConfirmAccept { job_id, provider_agent_id, payment_mode, payment_id, token_symbol, token_amount }, ctx).await,
 
-        AgentCommand::DirectAccept { job_id, provider, token_symbol, token_amount } =>
-            task::buyer::run_task(T::DirectAccept { job_id, provider, token_symbol, token_amount }, ctx).await,
+        AgentCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>
+            task::buyer::run_task(T::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount }, ctx).await,
 
-        AgentCommand::Task402Pay { job_id, provider, accepts, endpoint, token_symbol, token_amount, from } =>
-            task::buyer::run_task(T::Task402Pay { job_id, provider, accepts, endpoint, token_symbol, token_amount, from }, ctx).await,
+        AgentCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from } =>
+            task::buyer::run_task(T::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from }, ctx).await,
 
         AgentCommand::Complete { job_id } =>
             task::buyer::run_task(T::Complete { job_id }, ctx).await,

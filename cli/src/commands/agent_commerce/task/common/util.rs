@@ -128,7 +128,7 @@ pub struct X402ServiceParams {
 /// 解析 x402 服务参数：CLI flag > recommend 缓存 > identity service-list API > 报错
 pub async fn resolve_x402_params(
     job_id: &str,
-    provider_agent_id: &str,
+    provider_agent_id: Option<&str>,
     cli_endpoint: Option<&str>,
     cli_token_symbol: Option<&str>,
     cli_token_amount: Option<&str>,
@@ -146,8 +146,10 @@ pub async fn resolve_x402_params(
     }
 
     // Tier 2: recommend 缓存
+    let mut cached_provider_agent_id = String::new();
     match crate::commands::agent_commerce::task::buyer::negotiate::current(job_id) {
         Ok(Some(pi)) => {
+            cached_provider_agent_id = pi.provider_agent_id.clone();
             if let Some(svc) = pi.services.first() {
                 if !svc.endpoint.is_empty() && svc.fee_amount > 0.0 && !svc.fee_token_symbol.is_empty() {
                     eprintln!("ℹ x402: 使用 recommend 缓存 endpoint={}, token={}, amount={}",
@@ -169,8 +171,15 @@ pub async fn resolve_x402_params(
         Err(e) => eprintln!("⚠ x402: 读取 recommend 缓存失败 ({e})，尝试 service-list API"),
     }
 
-    // Tier 3: identity service-list API
-    let params = fetch_x402_service_from_identity(provider_agent_id).await?;
+    // Tier 3: identity service-list API（优先入参，其次缓存中的 provider_agent_id）
+    let resolved_id = provider_agent_id
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or(cached_provider_agent_id);
+    if resolved_id.is_empty() {
+        anyhow::bail!("无法确定 provider agentId：recommend 缓存为空且未传入 --provider-agent-id");
+    }
+    let params = fetch_x402_service_from_identity(&resolved_id).await?;
     Ok(X402ServiceParams {
         endpoint: cli_endpoint.unwrap_or(&params.endpoint).to_string(),
         fee_amount: cli_token_amount

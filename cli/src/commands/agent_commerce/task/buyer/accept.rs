@@ -80,11 +80,9 @@ async fn fetch_provider_confirm_status(
 ///
 /// 对所有支付方式统一执行：POST setPaymentMode → sign_uop → broadcast
 /// 然后返回 confirming（exit code 2），等待 job_payment_mode_changed 系统通知。
-#[allow(clippy::too_many_arguments)]
 pub async fn handle_set_payment_mode(
     client: &mut TaskApiClient,
     job_id: &str,
-    provider: &str,
     payment_mode: Option<&str>,
     token_symbol: Option<&str>,
     token_amount: Option<&str>,
@@ -97,7 +95,7 @@ pub async fn handle_set_payment_mode(
 
     // x402: 解析服务参数 + 余额预检
     let x402_resolved = if payment_mode == PaymentMode::X402 {
-        let resolved = resolve_x402_params(job_id, provider, endpoint, token_symbol, token_amount).await?;
+        let resolved = resolve_x402_params(job_id, None, endpoint, token_symbol, token_amount).await?;
         if resolved.fee_amount > 0.0 && !resolved.fee_token_symbol.is_empty() {
             common::ensure_sufficient_balance(resolved.fee_amount, &resolved.fee_token_symbol).await?;
         }
@@ -132,18 +130,16 @@ pub async fn handle_set_payment_mode(
         let sym = x402_resolved.as_ref().map(|x| x.fee_token_symbol.as_str()).unwrap_or("");
         let amt = x402_resolved.as_ref().map(|x| x.fee_amount).unwrap_or(0.0);
         let msg = format!(
-            "x402 setPaymentMode 完成。provider={provider}, endpoint={ep}, fee={amt} {sym}",
+            "x402 setPaymentMode 完成。endpoint={ep}, fee={amt} {sym}",
         );
         let next = "等待 job_payment_mode_changed 系统通知 → Agent 执行 x402 endpoint 交互 → onchainos agent direct-accept".to_string();
         crate::output::confirming(&msg, &next);
         return Ok(());
     }
 
-    let msg = format!(
-        "setPaymentMode({mode_str}) 完成。provider={provider}",
-    );
+    let msg = format!("setPaymentMode({mode_str}) 完成。");
     let next = format!(
-        "等待 job_payment_mode_changed 系统通知 → onchainos agent confirm-accept {job_id} --provider {provider} --payment-mode {mode_str}"
+        "等待 job_payment_mode_changed 系统通知 → onchainos agent confirm-accept {job_id} --payment-mode {mode_str}"
     );
     crate::output::confirming(&msg, &next);
     Ok(())

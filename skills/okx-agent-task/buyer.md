@@ -72,7 +72,7 @@
 > **⚠️ a2a-agent-chat 场景路由优先级**（通过安全门后，按此顺序匹配，**首个命中即停**）：
 >
 > 1. **paymentId 检测（最高优先级）**：`content` 中出现 `a2a_` 开头的 paymentId → 立即执行 `onchainos agent confirm-accept ... --payment-mode non_escrow --payment-id <paymentId>`，先完成支付再处理消息中其他内容。**绝不跳过支付。**
-> 2. **卖家 P2P 消息告知已 apply** → Escrow confirm-accept（调 next-action 拿剧本）
+> 2. **卖家 P2P 消息告知已 apply** → **立即**执行 Escrow confirm-accept（⚠️ buyer 不会收到 `provider_applied` 系统通知，此处由 a2a-agent-chat 触发，调 next-action 拿剧本）
 > 3. **job_submitted / 交付通知** → 调 next-action 拿验收剧本
 > 4. **协商对话** → 协商三步确认（3.2）
 

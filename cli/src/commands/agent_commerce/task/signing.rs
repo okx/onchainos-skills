@@ -30,7 +30,7 @@ pub struct BroadcastResult {
 
 /// 从上一步 API 响应中提取 bizType（数字），原样透传给广播接口。
 pub fn extract_biz_type(resp: &Value) -> i64 {
-    resp["bizType"].as_i64().unwrap_or(0)
+    resp["type"].as_i64().unwrap_or(0)
 }
 
 /// Resolve wallet account_id and address for XLayer.
