@@ -23,6 +23,9 @@ const ALLOWED_IMG_EXTS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp"];
 /// text 字段最大字节数（escape 前粗略上限，防止超大 paste 撑爆 multipart body）
 const MAX_TEXT_BYTES: usize = 16 * 1024;
 
+/// 单张图片最大字节数（与后端 multipart.maxFileSize 对齐；client-side fail-fast 防大文件浪费带宽）
+const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+
 /// 上传链下证据（买卖双方共用入口）
 pub async fn handle_upload_evidence(
     client: &mut TaskApiClient,
@@ -78,6 +81,13 @@ pub async fn handle_upload_evidence(
         let bytes = fs::read(path)
             .await
             .map_err(|e| anyhow::anyhow!("读取文件 {p} 失败: {e}"))?;
+        if bytes.len() > MAX_IMAGE_BYTES {
+            bail!(
+                "图片 {p} 过大：{} 字节 ({:.1} MB)，单文件上限 20 MB",
+                bytes.len(),
+                bytes.len() as f64 / 1_048_576.0
+            );
+        }
         let original_name = path
             .file_name()
             .and_then(|n| n.to_str())
