@@ -52,7 +52,14 @@ link_into() {
   return 0
 }
 
-for d in $(echo "$RUNTIME_PATH" | tr ':' ' '); do
+# Split RUNTIME_PATH on ':' via IFS so directories containing spaces
+# survive the loop intact (unquoted `$(... | tr ':' ' ')` would shred them).
+OLD_IFS="$IFS"
+IFS=':'
+# shellcheck disable=SC2086
+set -- $RUNTIME_PATH
+IFS="$OLD_IFS"
+for d in "$@"; do
   [ -z "$d" ] && continue
   if link_into "$d"; then break; fi
 done
@@ -113,6 +120,14 @@ fi
 
 SKILL_COUNT="$(ls -1 "$SKILLS_DIR" 2>/dev/null | wc -l | tr -d ' ')"
 echo "[onchainos] Installed $SKILL_COUNT skills to $SKILLS_DIR/ (via $INSTALLED_VIA)"
+
+# Hard-fail if no skills installed: prior `|| true` swallows both
+# npx and git failure, leaving an empty skills dir but still writing
+# the bootstrap gate. Catch it here before that happens.
+if [ "$SKILL_COUNT" = "0" ]; then
+  echo "[onchainos] ERROR: no skills installed in $SKILLS_DIR/ (npx + git clone both yielded nothing)"
+  exit 1
+fi
 
 # --- 6. Bootstrap status ------------------------------------
 mkdir -p "$HOME/.onchainos"
