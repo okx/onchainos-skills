@@ -12,7 +12,10 @@ This is an **on-chain research and trading agent** powered by onchainos skills a
 cat ~/.onchainos/bootstrap_status
 ```
 
-- **If the output contains today's date** (e.g. `2026-04-28 OK`): skip Step 1 and Step 2, jump to Step 3.
+- **If the output contains today's date** (e.g. `2026-04-28 OK`): skip Step 1 and Step 2, jump to Step 3. Before Step 3, ensure the install dir is on PATH as a session-local fallback (cheap, idempotent — covers sandboxes that don't source `~/.profile` / `~/.zshenv` on non-login shells):
+  ```bash
+  export PATH="$HOME/.local/bin:$PATH"
+  ```
 - **If missing, empty, or stale**: run all steps from Step 1.
 
 ### Step 1 — Verify install
