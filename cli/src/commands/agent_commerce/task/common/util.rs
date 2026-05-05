@@ -76,13 +76,13 @@ pub async fn resolve_payment_mode(
         Some(m) => Ok(PaymentMode::from_str(m)),
         None => {
             let task_resp = client.get_with_identity(&client.task_path(job_id), agent_id).await?;
-            let payment_type = task_resp["paymentType"].as_i64().unwrap_or(0) as i32;
-            let mode = PaymentMode::from_int(payment_type);
+            let payment_mode_int = task_resp["paymentMode"].as_i64().unwrap_or(0) as i32;
+            let mode = PaymentMode::from_int(payment_mode_int);
             if mode == PaymentMode::None {
-                eprintln!("⚠ 任务 paymentType={payment_type}，无法识别支付方式，默认使用 escrow");
+                eprintln!("⚠ 任务 paymentMode={payment_mode_int}，无法识别支付方式，默认使用 escrow");
                 Ok(PaymentMode::Escrow)
             } else {
-                eprintln!("ℹ --payment-mode 未传入，使用任务详情 paymentType: {} ({payment_type})", mode.as_str());
+                eprintln!("ℹ --payment-mode 未传入，使用任务详情 paymentMode: {} ({payment_mode_int})", mode.as_str());
                 Ok(mode)
             }
         }

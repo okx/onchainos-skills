@@ -173,10 +173,10 @@ pub async fn handle_confirm_accept(
 
     // 前置检查：setPaymentMode 是否已上链
     let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
-    let payment_mode = PaymentMode::from_int(task_resp["paymentType"].as_i64().unwrap_or(0) as i32);
+    let payment_mode = PaymentMode::from_int(task_resp["paymentMode"].as_i64().unwrap_or(0) as i32);
     if payment_mode == PaymentMode::None {
         bail!(
-            "任务尚未设置支付方式（paymentType=0），请先执行：\n  \
+            "任务尚未设置支付方式（paymentMode=0），请先执行：\n  \
              onchainos agent set-payment-mode {job_id} --payment-mode <escrow|non_escrow> --token-symbol <sym> --token-amount <amt>\n\
              等待 job_payment_mode_changed 系统通知后再执行 confirm-accept"
         );

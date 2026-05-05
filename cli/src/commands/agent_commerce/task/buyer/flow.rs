@@ -54,17 +54,17 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "  ▸ escrow 验收通过 → 释放托管款给卖家".to_string(),
             "  ▸ 仲裁卖家胜（dispute_resolved seller-wins）→ 释放托管款给卖家".to_string(),
             "  ▸ non_escrow 已在 accepted 阶段完成支付链路".to_string(),
-            "子 session 可关闭。".to_string(),
+            "⚠️ 保留 sub session（不关闭），便于事后查阅历史。".to_string(),
         ],
         Status::Rejected => vec![
             next_action("job_refunded"),
             "（终态）任务已 REJECTED — **资金已退还买家**".to_string(),
             "  ▸ 卖家同意退款（agree-refund）/ 自动退款 → 资金原路返回".to_string(),
             "  ▸ 仲裁买家胜（dispute_resolved buyer-wins）→ 退款".to_string(),
-            "子 session 可关闭。".to_string(),
+            "⚠️ 保留 sub session（不关闭），便于事后查阅历史。".to_string(),
         ],
         Status::Close => vec![
-            "任务已关闭（Close）。子 session 可关闭。".to_string(),
+            "任务已关闭（Close）。⚠️ 保留 sub session（不关闭），便于事后查阅历史。".to_string(),
         ],
         Status::Expired => vec![
             "任务已过期（Expired）。".to_string(),
@@ -473,14 +473,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```bash\n\
              onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-100> --task-id {job_id} --description \"<评价内容>\"\n\
              ```\n\n\
-             **B-Step 3 — 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 4.5）：\n\
-             （debug 模式：暂不关闭 sub session，保留历史信息）\n\
-             <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
-             <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
-             <!-- 删除后本 sub session 不再接收任何消息—— -->任务完整结束。\n\n\
+             **B-Step 3 — 终态收尾（保留 sub session）：**\n\
+             ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             任务完整结束。\n\n\
              【后续事件】\n\
              - escrow: job_completed → 任务完成 / job_refused → 等待卖家决定仲裁或退款\n\
-             - non_escrow: 流程已结束（本分支已执行评价 + 关闭 session）\n"
+             - non_escrow: 流程已结束（本分支已执行评价）\n"
         ),
 
         // ─── job_refused: 买家已拒绝，等待卖家决策 ─────────────────
@@ -563,11 +561,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```bash\n\
              onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-100> --task-id {job_id} --description \"<评价内容>\"\n\
              ```\n\n\
-             **A-Step 3 — 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 4.5）：\n\
-             （debug 模式：暂不关闭 sub session，保留历史信息）\n\
-             <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
-             <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
-             <!-- 删除后本 sub session 不再接收任何消息—— -->任务完整结束。\n\n\
+             **A-Step 3 — 终态收尾（保留 sub session）：**\n\
+             ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             任务完整结束。\n\n\
              ━━━━━━━━━ 分支 B：non_escrow（非担保）— 支付链路完成，等待卖家交付 ━━━━━━━━━\n\n\
              ⚠️ 非担保模式下 job_completed 意味着支付链路（accept + complete）已完成上链，\n\
              但**卖家尚未提交交付物**。不要关闭 sub session，不要评价。\n\n\
@@ -612,11 +608,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（jobStatus=complete）\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n\
-             **Step 2（两个分支都要做）— 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 4.5）：\n\
-             （debug 模式：暂不关闭 sub session，保留历史信息）\n\
-             <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
-             <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
-             <!-- 删除后本 sub session 不再接收任何消息—— -->仲裁流程完整结束。\n"
+             **Step 2（两个分支都要做）— 终态收尾（保留 sub session）：**\n\
+             ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             仲裁流程完整结束。\n"
         ),
 
         // ─── 卖家同意退款 / 仲裁退款上链 ─────────────────────────────
@@ -628,11 +622,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              content：\n\
              \x20\x20\x20\x20[退款完成] 任务 {job_id} 退款已上链，资金已返还至您的钱包。\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
-             **Step 2 — 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 4.5）：\n\
-             （debug 模式：暂不关闭 sub session，保留历史信息）\n\
-             <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
-             <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
-             <!-- 删除后本 sub session 不再接收任何消息—— -->退款流程完整结束。\n"
+             **Step 2 — 终态收尾（保留 sub session）：**\n\
+             ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             退款流程完整结束。\n"
         ),
 
         // ─── claimAutoRefund tx 回执（submit/refuse 超时后 buyer 主动领回资金）──
@@ -650,11 +642,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              content：\n\
              \x20\x20\x20\x20[自动退款成功 💰] 任务 {job_id} 的托管资金已退还至您的钱包。\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
-             **Step 3 — 关闭 sub session**（终态收尾）：\n\
-             （debug 模式：暂不关闭 sub session，保留历史信息）\n\
-             <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
-             <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
-             <!-- 删除后本 sub session 不再接收任何消息—— -->退款流程完整结束。\n"
+             **Step 3 — 终态收尾（保留 sub session）：**\n\
+             ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             退款流程完整结束。\n"
         ),
 
         // ─── 任务超时（OPEN→EXPIRED 或 ACCEPTED→EXPIRED）──────────
