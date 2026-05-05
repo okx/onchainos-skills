@@ -313,7 +313,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【你的下一步动作（严格顺序）】\n\n\
              ⚠️ 不要给买家 `xmtp_send` 致谢/「已完成」过场——买家自己刚 complete，他知道。\n\n\
              **Step 1 — 用 `xmtp_dispatch_user` 通知用户赚到钱了**：\n\n\
-             从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol。\n\
+             从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol + buyerAgentId。\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20[任务完成 💰] 任务 {job_id}（<title>）已验收通过，资金已释放到你的钱包。\n\
@@ -321,6 +321,16 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
              \x20\x20\x20\x20\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
+             **Step 2 — 评价买家（跨 skill handoff 到 `okx-agent-identity` §Feedback Submit）**：\n\
+             \x20\x20- target `--agent-id` = task.buyerAgentId（Step 1 已从 common context 拿）\n\
+             \x20\x20- `--creator-id` = {agent_id}（你 / provider 自己的 agentId）\n\
+             \x20\x20- `--task-id` = {job_id}\n\
+             \x20\x20- `--score` / `--description`：由 identity skill 提示用户给分（0-100）+ 简短评语\n\n\
+             ```bash\n\
+             onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --task-id {job_id} --score <0-100> --description \"<评价内容>\"\n\
+             ```\n\
+             score 参考：100 = 验收爽快无纠纷 / 80 = 顺利但有小磨合 / 60 = 一般 / 40 以下 = 体验差。\n\
+             由 `okx-agent-identity` 的 §Feedback Submit 流程负责拉评分 + 评语 + 确认卡片 + 上链。\n\n\
              ⚠️ **不要 `xmtp_delete_conversation`**——保留 sub session 历史以便事后查阅。任务终态后继续在 sub 里观察后续事件即可。\n"
         ),
 
@@ -346,7 +356,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\
              记录 stdout 的 txHash + 实际领取的金额 / token（用于下一步通知用户）。\n\n\
              **A-Step 3 — 用 `xmtp_dispatch_user` 通知用户胜诉 + 领取结果**：\n\n\
-             从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol。\n\
+             从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol + buyerAgentId。\n\
              tool: xmtp_dispatch_user\n\
              content（按 A-Step 2 是否实际 claim 二选一）：\n\
              \x20\x20有领取：[仲裁胜诉 ⚖️💰] 任务 {job_id}（<title>）仲裁完成，**卖方胜诉**。\n\
@@ -359,15 +369,25 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20  - 账户级待领奖励：无（已检查）\n\
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（jobStatus=complete）\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
+             **A-Step 4 — 评价买家（跨 skill handoff 到 `okx-agent-identity` §Feedback Submit）**：\n\
+             ```bash\n\
+             onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --task-id {job_id} --score <0-100> --description \"<评价内容>\"\n\
+             ```\n\
+             buyer-wins 仲裁中虽然你赢了，但买家流程合规性仍需评价；score 参考：80 = 沟通顺畅 / 60 = 中性 / 40 以下 = 买家不合理 nitpick。由 identity skill 拉评分 + 上链。\n\n\
              ━━━━━━━━━━━━━ 分支 B：jobStatus=rejected（卖家败诉）━━━━━━━━━━━━━\n\n\
              **B-Step 1 — 用 `xmtp_dispatch_user` 通知用户败诉**：\n\n\
-             从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol。\n\
+             从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol + buyerAgentId。\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20[仲裁败诉 ⚖️⚠️] 任务 {job_id}（<title>）仲裁完成，**买方胜诉**。\n\
              \x20\x20\x20\x20  - 损失：<tokenAmount> <tokenSymbol>（资金已退还买家）\n\
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（jobStatus=rejected）\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
+             **B-Step 2 — 评价买家（跨 skill handoff 到 `okx-agent-identity` §Feedback Submit）**：\n\
+             ```bash\n\
+             onchainos agent feedback-submit --agent-id <buyerAgentId> --creator-id {agent_id} --task-id {job_id} --score <0-100> --description \"<评价内容>\"\n\
+             ```\n\
+             败诉路径下评分常见区间 0-50（结果不利你 + 体感不佳），但应基于事实而非情绪打分；description 简短陈述事实。由 identity skill 拉评分 + 上链。\n\n\
              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n\
              ⚠️ **不要 `xmtp_delete_conversation`**——保留 sub session 历史以便事后查阅。仲裁终态后继续在 sub 里观察后续事件即可。\n"
         ),
