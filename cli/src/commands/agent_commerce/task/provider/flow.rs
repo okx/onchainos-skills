@@ -104,7 +104,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
     // user agent 拿 sub_key 后通过 path 3 (`xmtp_dispatch_session(sessionKey=<sub>, [USER_DECISION_RELAY] ...)`) 反推回 sub。
     // ──────────────────────────────────────────────────────────────────────
     let send_to_peer = format!(
-        "→ 用 `xmtp_send` 发给买家（机制见 SKILL.md Session 通信契约 1.4）。\n\
+        "→ 用 `xmtp_send` 发给买家（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 1.4）。\n\
          当前 sub session：jobId={job_id}，我方 agentId={agent_id}。\n\
          content（纯自然语言，不要包 markdown / 代码块）："
     );
@@ -113,7 +113,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 
     let context_preamble = format!(
         "📍 你在 sub session（你看到这段 next-action 输出 = 100% 在 sub）。\n\n\
-         🔒 **如果当前 turn 没读过 SKILL.md Session 通信契约**（envelope 形态白名单 / xmtp_send 两步 / xmtp_dispatch_user·xmtp_prompt_user 推 user session 铁律），\n\
+         🔒 **如果当前 turn 没读过 skills/okx-agent-task/SKILL.md Session 通信契约**（envelope 形态白名单 / xmtp_send 两步 / xmtp_dispatch_user·xmtp_prompt_user 推 user session 铁律），\n\
          **先读 `skills/okx-agent-task/SKILL.md`** 再继续——下面步骤会引用它的章节（3 / 4 / 5 / 6）。\n\n\
          ⚠️ **异常升级硬规则**（任何场景都适用，详见 _shared/exception-escalation.md + provider.md 5）：\n\
          \x20\x201) 协议理解错位：你已澄清同一条流程 ≥1 次，对方下一条还在重复错误诉求 → **不再回复对方**，调 `xmtp_dispatch_user` 推 `[⚠️ 协议理解错位] ...`，结束 turn\n\
@@ -172,7 +172,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              链上确认只是把 task 状态推到 submitted（让买家有 complete/reject 入口），交付物本身已经送到了。\n\n\
              **A-Step 1 — 准备交付物（按类型分流）**：\n\n\
              ▸ **纯文本/URL 交付物**：直接组好文字内容，跳过 xmtp_file_upload，进入 A-Step 2\n\n\
-             ▸ **文件交付物**（图片/PDF/文档）：调 `xmtp_file_upload`（机制见 SKILL.md Session 通信契约 4.8）：\n\
+             ▸ **文件交付物**（图片/PDF/文档）：调 `xmtp_file_upload`（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.8）：\n\
              \x20\x20参数 `filePath` = 本地文件绝对路径，`agentId` = {agent_id}，`jobId` = {job_id}\n\
              \x20\x20返回值 `fileKey` / `digest` / `salt` / `nonce` / `secret` 五个字段（解密元数据）全部记录\n\n\
              **A-Step 2 — `xmtp_send` 把交付物发给买家**（同 turn 内紧接着 A-Step 1 跑）：\n\n\
@@ -208,7 +208,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              任务 {job_id} 已完成。交付物：\n\
              <这里贴交付内容文本>\n\
              请你验收并调 `onchainos agent complete {job_id}` 释放款项；如有问题调 `onchainos agent reject` 反馈。\n\n\
-             ▸ **文件交付物**（图片/PDF/文档）—— 用 `xmtp_file_upload + xmtp_send fileKey` 两步（机制见 SKILL.md Session 通信契约 4.8）：\n\
+             ▸ **文件交付物**（图片/PDF/文档）—— 用 `xmtp_file_upload + xmtp_send fileKey` 两步（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.8）：\n\
              ⚠️ **B-1 和 B-2 必须同 turn 内连续执行**——`xmtp_file_upload` 调完拿到返回值后**立即**接着调 `xmtp_send`，不要把 turn 切断。上传完不发 fileKey 给买家 = 买家完全收不到交付物。\n\
              B-1. 调 `xmtp_file_upload`，参数 `filePath` = 本地文件绝对路径，`agentId` = {agent_id}，`jobId` = {job_id}\n\
              \x20\x20\x20返回值 `fileKey` / `digest` / `salt` / `nonce` / `secret` 五个字段（解密元数据）全部记录\n\
@@ -319,17 +319,29 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::JobCompleted => format!(
             "【当前状态】job_completed（任务完成，资金已释放给你）\n\
              【角色】卖家（Provider）\n\n\
-             【你的下一步动作（严格顺序）】\n\n\
+             【你的下一步动作】\n\n\
              ⚠️ 不要给买家 `xmtp_send` 致谢/「已完成」过场——买家自己刚 complete，他知道。\n\n\
-             **Step 1 — 用 `xmtp_dispatch_user` 通知用户赚到钱了**：\n\n\
-             从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol。\n\
+             **Step 1 — 拿任务上下文**：\n\
+             ```bash\n\
+             onchainos agent common context {job_id} --role provider --agent-id {agent_id}\n\
+             ```\n\
+             提取 title + tokenAmount + tokenSymbol + buyerAgentId（下一步要用）。\n\n\
+             **Step 2 — 用 `xmtp_dispatch_user` 推用户：通知任务完成 + 触发 user session 走 `okx-agent-identity` §Feedback Submit 评价买家**：\n\n\
+             ⚠️ sub agent **不直接调** `feedback-submit` CLI——评分 / 评语需要用户拍板，sub 没有用户交互通道。改为推一条带评价指令的通知到 user session，由 user session main agent 激活 `okx-agent-identity` 的 §Feedback Submit workflow 完整接管（拉评分 + 评语 + 确认卡片 + 上链）。\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20[任务完成 💰] 任务 {job_id}（<title>）已验收通过，资金已释放到你的钱包。\n\
+             \x20\x20\x20\x20[任务完成 💰⭐] 任务 {job_id}（<title>）已验收通过，资金已释放到你的钱包。\n\
              \x20\x20\x20\x20  - 收入：<tokenAmount> <tokenSymbol>\n\
-             \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
-             \x20\x20\x20\x20\n\
-             \x20\x20\x20\x20本任务流程结束。\n\n\
+             \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\n\
+             \x20\x20\x20\x20⭐ 请给买家 <buyerAgentId> 打个分（0-100）+ 一句简评——我即将调 `okx-agent-identity` §Feedback Submit 接管：\n\
+             \x20\x20\x20\x20\x20\x20- 被评价方 (--agent-id) = <buyerAgentId>\n\
+             \x20\x20\x20\x20\x20\x20- 评价发起方 (--creator-id) = {agent_id}\n\
+             \x20\x20\x20\x20\x20\x20- 任务 ID (--task-id) = {job_id}\n\
+             \x20\x20\x20\x20\x20\x20- score / description：等用户拍板\n\
+             \x20\x20\x20\x20score 参考：100 = 验收爽快无纠纷 / 80 = 顺利但有小磨合 / 60 = 一般 / 40 以下 = 体验差。\n\n\
+             **Step 3 — 推完 user session 立即结束本轮 turn**：\n\
+             - 不要等用户回复再做什么——user session main agent 拿到上面 content 后会自己激活 identity skill 走完 feedback-submit 流程，跟 sub 解耦。\n\
+             - sub 不需要知道评分结果（feedback-submit 是账户级 + 一次性上链 tx，不影响 task sub 状态机）。\n\n\
              ⚠️ **不要 `xmtp_delete_conversation`**——保留 sub session 历史以便事后查阅。任务终态后继续在 sub 里观察后续事件即可。\n"
         ),
 
@@ -355,28 +367,49 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\
              记录 stdout 的 txHash + 实际领取的金额 / token（用于下一步通知用户）。\n\n\
              **A-Step 3 — 用 `xmtp_dispatch_user` 通知用户胜诉 + 领取结果**：\n\n\
-             从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol。\n\
+             从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol + buyerAgentId。\n\
              tool: xmtp_dispatch_user\n\
              content（按 A-Step 2 是否实际 claim 二选一）：\n\
              \x20\x20有领取：[仲裁胜诉 ⚖️💰] 任务 {job_id}（<title>）仲裁完成，**卖方胜诉**。\n\
              \x20\x20\x20\x20  - 任务收入：<tokenAmount> <tokenSymbol>\n\
              \x20\x20\x20\x20  - 已自动领取账户奖励：<claimed amount> <symbol>（txHash=<hash>）\n\
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（jobStatus=complete）\n\
-             \x20\x20\x20\x20本任务流程结束。\n\
+             \x20\x20\x20\x20  - 接下来我会自动给买家打个分（feedback-submit）\n\
              \x20\x20无可领：[仲裁胜诉 ⚖️💰] 任务 {job_id}（<title>）仲裁完成，**卖方胜诉**。\n\
              \x20\x20\x20\x20  - 任务收入：<tokenAmount> <tokenSymbol>\n\
              \x20\x20\x20\x20  - 账户级待领奖励：无（已检查）\n\
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（jobStatus=complete）\n\
-             \x20\x20\x20\x20本任务流程结束。\n\n\
+             \x20\x20\x20\x20  - 接下来我会自动给买家打个分（feedback-submit）\n\n\
+             **A-Step 4 — 把评价请求推到 user session（让 main agent 走 `okx-agent-identity` §Feedback Submit）**：\n\n\
+             ⚠️ sub agent 不直接调 feedback-submit CLI——A-Step 3 的 user 通知 content 末尾**已经包含**了「请给买家打分」的指令 + 参数（buyerAgentId / creator-id / task-id），user session main agent 收到后会自己激活 identity skill 接管。\n\
+             如果 A-Step 3 的 content 没显式写评价指令，**追加一条 xmtp_dispatch_user**：\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20⭐ 任务 {job_id} 仲裁结束（卖方胜诉）。请给买家 <buyerAgentId> 打分（0-100）+ 一句简评——我即将调 `okx-agent-identity` §Feedback Submit：\n\
+             \x20\x20\x20\x20\x20\x20- 被评价方 (--agent-id) = <buyerAgentId>\n\
+             \x20\x20\x20\x20\x20\x20- 评价发起方 (--creator-id) = {agent_id}\n\
+             \x20\x20\x20\x20\x20\x20- 任务 ID (--task-id) = {job_id}\n\
+             \x20\x20\x20\x20score 参考（卖方胜诉路径）：80 = 沟通顺畅 / 60 = 中性 / 40 以下 = 买家不合理 nitpick。\n\n\
+             ⚠️ 推完 user session 立即**结束本轮 turn**——不等回复，user session main agent 自己接管 feedback-submit 流程，跟 sub 解耦。\n\n\
              ━━━━━━━━━━━━━ 分支 B：jobStatus=rejected（卖家败诉）━━━━━━━━━━━━━\n\n\
              **B-Step 1 — 用 `xmtp_dispatch_user` 通知用户败诉**：\n\n\
-             从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol。\n\
+             从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol + buyerAgentId。\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20[仲裁败诉 ⚖️⚠️] 任务 {job_id}（<title>）仲裁完成，**买方胜诉**。\n\
              \x20\x20\x20\x20  - 损失：<tokenAmount> <tokenSymbol>（资金已退还买家）\n\
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（jobStatus=rejected）\n\
-             \x20\x20\x20\x20本任务流程结束。\n\n\
+             \x20\x20\x20\x20  - 接下来我会自动给买家打个分（feedback-submit）\n\n\
+             **B-Step 2 — 把评价请求推到 user session（让 main agent 走 `okx-agent-identity` §Feedback Submit）**：\n\n\
+             ⚠️ sub agent 不直接调 feedback-submit CLI——B-Step 1 的 user 通知 content 末尾**已经包含**了「请给买家打分」指令 + 参数。如果 B-Step 1 没显式写评价指令，**追加一条 xmtp_dispatch_user**：\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20⭐ 任务 {job_id} 仲裁结束（卖方败诉）。请给买家 <buyerAgentId> 打分（0-100）+ 一句简评——我即将调 `okx-agent-identity` §Feedback Submit：\n\
+             \x20\x20\x20\x20\x20\x20- 被评价方 (--agent-id) = <buyerAgentId>\n\
+             \x20\x20\x20\x20\x20\x20- 评价发起方 (--creator-id) = {agent_id}\n\
+             \x20\x20\x20\x20\x20\x20- 任务 ID (--task-id) = {job_id}\n\
+             \x20\x20\x20\x20败诉路径常见区间 0-50（结果不利你 + 体感不佳），但应**基于事实而非情绪打分**；description 简短陈述事实。\n\n\
+             ⚠️ 推完 user session 立即**结束本轮 turn**——不等回复，user session main agent 自己接管 feedback-submit 流程。\n\n\
              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n\
              ⚠️ **不要 `xmtp_delete_conversation`**——保留 sub session 历史以便事后查阅。仲裁终态后继续在 sub 里观察后续事件即可。\n"
         ),
@@ -468,7 +501,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              1) 任务内容和验收标准是否在能力范围内\n\
              2) 价格可接受（**用任务详情里的实际币种回复，不是默认 USDT**）\n\
              3) 支付方式可接受（escrow / non_escrow，由买家在 confirm-accept 时定）\n\
-             → 用 `xmtp_send` 给买家发提问（机制见 SKILL.md Session 通信契约 4.4）。\n\n\
+             → 用 `xmtp_send` 给买家发提问（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.4）。\n\n\
              **Step 3.5 — 处理买家的 [NEGOTIATE_PROPOSE] 结构化提案：**\n\n\
              买家协商达成一致后会发送格式化提案：\n\
              ```\n\
@@ -602,11 +635,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【系统通知】submit_deadline_warn（提交交付物截止时间快到了）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
-             如果交付物已准备好，立即调：\n\
-             ```bash\n\
-             onchainos agent deliver {job_id} --message \"<交付内容>\" --agent-id {agent_id}\n\
-             ```\n\
-             否则在剩余时间内尽快完成交付，避免被 buyer 调 claimAutoRefund 退款。\n"
+             **Step 1 — 调 `xmtp_dispatch_user` 把截止警告推到 user session 通知用户：**\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20[⏰ 截止警告] 任务 {job_id} 提交交付物时限快到了。\n\
+             \x20\x20如果交付物已准备好，请回复『提交交付物』，由我（agent {agent_id}）执行 deliver 上链；\n\
+             \x20\x20否则尽快完成准备——超时后买家可调 `agent claim-auto-refund <jobId>` 强制退款，托管资金会原路返回买家，本任务作废。\n\n\
+             **Step 2 — 结束本轮 turn**：等用户在 user session 决策回复，或等下一个真实链事件（job_submitted / submit_expired）到达再动作。\n\n\
+             ⚠️ **不要在本 turn 自动跑 `onchainos agent deliver`**——是否准备好交付物只有用户知道，agent 不能替用户决定『交付物已就绪』。\n\
+             ⚠️ **不要给买家 `xmtp_send`**——截止警告是 provider 内部的事情，跟买家无关。\n"
         ),
 
         // ─── 仲裁子状态机事件 — provider 关心 dispute_resolved（已有专门 arm），其他 evaluator 内部事件 provider 静默观察 ─────

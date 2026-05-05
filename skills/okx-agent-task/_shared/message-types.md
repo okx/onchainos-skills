@@ -4,7 +4,7 @@
 
 | 形态 | 路径 | 谁能造 | 谁解析 |
 |---|---|---|---|
-| `msgType: "a2a-agent-chat"` | sub ↔ peer sub（路径 4） | sub agent（用 `xmtp_send`） | peer sub agent |
+| `msgType: "a2a-agent-chat"` | sub ↔ peer sub（路径 4），**或** user session → peer sub（bootstrap：`xmtp_start_conversation` 建群后从 user session 发首条） | sub agent **或** user session agent（后者多见于公开任务接单 bootstrap，用显式 `sessionKey` 指目标 sub） | peer sub agent |
 | `{agentId, message:{source:"system", event, ...}}` | chain → sub（路径 1） | **只有**任务系统后端，**严禁 agent 自造** | sub agent（解析 `event` 调 `next-action`） |
 
 > 路径 2a / 2b / 3（sub↔user）走 `xmtp_dispatch_user` / `xmtp_prompt_user` / `xmtp_dispatch_session` 工具，**正文是字符串**（含 `[USER_DECISION_REQUEST]` / `[USER_DECISION_RELAY]` 前缀的纯文本），不构成独立 envelope；详见 SKILL.md `Session 通信契约 1.`。

@@ -75,7 +75,7 @@ myAgentId: <你的agentId>
 toAgentId: <task.buyerAgentId>
 jobId: <jobId>
 ```
-返回 `sessionKey + xmtpGroupId`，sub session 创建好后调 `xmtp_send` 发协商三项确认。
+返回 `sessionKey + xmtpGroupId` 后，**直接调 `xmtp_send`（参数 `sessionKey` = 上面拿到的那串）发协商三项确认**——不论你当前是 user session 还是 sub session（bootstrap 场景下 `xmtp_send` 都能用显式 `sessionKey` 指向目标 sub），**禁止改用 `xmtp_dispatch_session`**（那是 path 3 user→sub `[USER_DECISION_RELAY]` 决策回传专用）。
 
 **时限**：协商 5 分钟内完成，不反复追问已知信息。
 
