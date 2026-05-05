@@ -593,11 +593,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【系统通知】submit_deadline_warn（提交交付物截止时间快到了）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作】\n\n\
-             如果交付物已准备好，立即调：\n\
-             ```bash\n\
-             onchainos agent deliver {job_id} --message \"<交付内容>\" --agent-id {agent_id}\n\
-             ```\n\
-             否则在剩余时间内尽快完成交付，避免被 buyer 调 claimAutoRefund 退款。\n"
+             **Step 1 — 调 `xmtp_dispatch_user` 把截止警告推到 user session 通知用户：**\n\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20[⏰ 截止警告] 任务 {job_id} 提交交付物时限快到了。\n\
+             \x20\x20如果交付物已准备好，请回复『提交交付物』，由我（agent {agent_id}）执行 deliver 上链；\n\
+             \x20\x20否则尽快完成准备——超时后买家可调 `agent claim-auto-refund <jobId>` 强制退款，托管资金会原路返回买家，本任务作废。\n\n\
+             **Step 2 — 结束本轮 turn**：等用户在 user session 决策回复，或等下一个真实链事件（job_submitted / submit_expired）到达再动作。\n\n\
+             ⚠️ **不要在本 turn 自动跑 `onchainos agent deliver`**——是否准备好交付物只有用户知道，agent 不能替用户决定『交付物已就绪』。\n\
+             ⚠️ **不要给买家 `xmtp_send`**——截止警告是 provider 内部的事情，跟买家无关。\n"
         ),
 
         // ─── 仲裁子状态机事件 — provider 关心 dispute_resolved（已有专门 arm），其他 evaluator 内部事件 provider 静默观察 ─────
