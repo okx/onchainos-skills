@@ -504,7 +504,7 @@ Phase-1 capture: `name=Alice`, `description=做 DeFi 分析`. **Fee=10 is discar
 
 ## Amount Display Rules
 
-- Service `fee` is an **integer USDT string** at the CLI layer — always show the user the human-readable form "`N USDT`" (e.g., `10 USDT`). Never show raw minimal token units.
+- Service `fee` is a **USDT numeric string with up to 2 decimal places** (e.g., `1.22`, `10`, `0.5`, `0`) — the **skill** validates this before sending; the CLI itself only checks non-empty. Always show the user the human-readable form "`N USDT`" (e.g., `1.22 USDT`, `10 USDT`). Never show raw minimal token units.
 - Service `fee` is only meaningful for `A2MCP` services. For `A2A`, display "free" or "inline (per-call pricing off-chain)" — the CLI-stored value is informational.
 - Evaluator stake amount is owned by `okx-agent-task` and may change; **never hardcode the amount** in this skill's copy. Just point users to the staking flow at `/skills/okx-agent-task/evaluator.md`.
 - EVM contract / agent addresses must be displayed all lowercase.

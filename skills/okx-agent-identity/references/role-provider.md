@@ -93,7 +93,7 @@ Chinese per-service Q&A (render `接下来是服务[N]：` as a one-line preambl
 | Q1 | `Q1：这个服务叫什么名字？` + 4 segments (see `field-specs.md`) | non-empty, ≤ 64 chars | `name` |
 | Q2 | `Q2：详细介绍一下这项服务。` + 4 segments | non-empty, ≤ 500 chars | `servicedescription` |
 | Q3 | `Q3：这项服务是哪种类型？` + numbered-options (`SKILL.md §Choice prompts`):<br>&nbsp;&nbsp;`1. A2MCP — 标准 MCP 接口，按次付费`<br>&nbsp;&nbsp;`2. A2A — agent-to-agent 协议，链外议价`<br>`回复 1 或 2。`<br>收到数字后**在 skill 层映射** `1→A2MCP` / `2→A2A` 再下发；CLI 没有数字别名，直接传 `1` 会 bail `invalid servicetype`。用户直接写 `A2MCP` / `A2A` 也接受。 | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `servicetype` |
-| Q4 | if `A2MCP` → `Q4：每次调用收多少 USDT？（整数）` + 4 segments ; if `A2A` → skip | integer ≥ 0 | `fee` |
+| Q4 | if `A2MCP` → `Q4：每次调用收多少 USDT？（最多两位小数，例如 1.22 / 10 / 0.5 / 0）` + 4 segments ; if `A2A` → skip | number ≥ 0，最多两位小数（正则 `^\d+(\.\d{1,2})?$`） | `fee` |
 | Q5 | if `A2MCP` → `Q5：MCP 接口地址是什么？必须 https:// 开头。` + 4 segments ; if `A2A` → skip | starts with `https://` | `endpoint` (A2A 即使用户给了 CLI 也会清掉，见 `utils.rs::normalize_service`) |
 | Loop gate | Numbered-options prompt (no `Q` label, it's a flow switch):<br>`还要再加一项服务吗？`<br>&nbsp;&nbsp;`1. 再加一项`<br>&nbsp;&nbsp;`2. 不加了，到此为止`<br>`回复 1 或 2。` | reply 1 or 2 | — |
 
@@ -104,7 +104,7 @@ English per-service Q&A (render `Now service [N]:` as a one-line preamble before
 | Q1 | `Q1: What's the name of this service?` + 4 segments | non-empty, ≤ 64 chars | `name` |
 | Q2 | `Q2: Describe this service.` + 4 segments | non-empty, ≤ 500 chars | `servicedescription` |
 | Q3 | `Q3: Which type is this service?` + numbered-options:<br>&nbsp;&nbsp;`1. A2MCP — standard MCP interface, pay-per-call`<br>&nbsp;&nbsp;`2. A2A — agent-to-agent protocol, off-chain pricing`<br>`Reply 1 or 2.`<br>Once user replies, **map in skill** `1→A2MCP` / `2→A2A` before invoking the CLI — the CLI has no numeric alias and sending raw `1` bails with `invalid servicetype`. Writing `A2MCP` / `A2A` directly is also accepted. | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `servicetype` |
-| Q4 | if A2MCP → `Q4: Price per call in USDT? (integer)` + 4 segments ; if A2A → skip | integer ≥ 0 | `fee` |
+| Q4 | if A2MCP → `Q4: Price per call in USDT? (up to 2 decimal places, e.g., 1.22 / 10 / 0.5 / 0)` + 4 segments ; if A2A → skip | number ≥ 0, ≤ 2 decimal places (regex `^\d+(\.\d{1,2})?$`) | `fee` |
 | Q5 | if A2MCP → `Q5: What's the MCP endpoint URL? Must start with https://.` + 4 segments ; if A2A → skip | starts with `https://` | `endpoint` (for A2A the CLI clears this even if supplied — `utils.rs::normalize_service`) |
 | Loop gate | Numbered-options prompt:<br>`Want to add another service?`<br>&nbsp;&nbsp;`1. Add another`<br>&nbsp;&nbsp;`2. No more, finish here`<br>`Reply 1 or 2.` | reply 1 or 2 | — |
 

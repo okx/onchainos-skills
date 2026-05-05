@@ -21,7 +21,7 @@ If you encounter a string that isn't in either table, surface the raw message in
 | `error: unexpected argument '<value>' found` (positional rejected by clap) | clap default | "这个命令需要显式带参数名，不接受裸值" | The user passed something like `agent update 42`; tell them to use `agent update --agent-id 42`. Same for `activate` / `deactivate` / `service-list` / `feedback-list` (`--agent-id`) and `upload` (`--file`). |
 | `missing required field in --service: name` | `utils.rs:200` | "服务名不能留空" | Return to `role-provider.md` Phase 2 per-service Q1 (`name`). |
 | `missing required field in --service: servicedescription` | `utils.rs:203` | "服务描述不能留空" | Return to `role-provider.md` Phase 2 per-service Q2 (`servicedescription`). |
-| `missing required field in --service for A2MCP: fee` | `utils.rs:212` | "A2MCP 服务必须给 fee（USDT 整数）" | Return to `role-provider.md` Phase 2 per-service Q4 (A2MCP branch). |
+| `missing required field in --service for A2MCP: fee` | `utils.rs:212` | "A2MCP 服务必须给 fee（USDT 数字，最多两位小数）" | Return to `role-provider.md` Phase 2 per-service Q4 (A2MCP branch). |
 | `missing required field in --service for A2MCP: endpoint` | `utils.rs:215` | "A2MCP 服务必须给 endpoint（HTTPS URL）" | Return to `role-provider.md` Phase 2 per-service Q5 (A2MCP branch). |
 | `invalid servicetype in --service: <value>` | `utils.rs:218` | "服务类型必须是 A2MCP 或 A2A" | Return to `role-provider.md` Phase 2 per-service Q3 (numbered prompt). |
 | `invalid value for --role: <value>` | `utils.rs:229` | "role 只能是 requester / provider / evaluator 之一" | Return to role selection (SKILL.md §Core Flow). |
