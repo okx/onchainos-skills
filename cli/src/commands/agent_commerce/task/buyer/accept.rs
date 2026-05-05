@@ -91,6 +91,18 @@ pub async fn handle_set_payment_mode(
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
 
+    // 前置检查：只有 open 状态才允许设置支付方式
+    let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
+    let task_status = common::state_machine::Status::from_int(
+        task_resp["status"].as_i64().unwrap_or(-1) as i32,
+    );
+    if task_status != common::state_machine::Status::Open {
+        bail!(
+            "当前任务状态为 {:?}，只有 open 状态才允许设置支付方式",
+            task_status
+        );
+    }
+
     let payment_mode = resolve_payment_mode(client, payment_mode, job_id, &agent_id).await?;
 
     // x402: 解析服务参数 + 余额预检
@@ -151,7 +163,7 @@ pub async fn handle_confirm_accept(
     client: &mut TaskApiClient,
     job_id: &str,
     provider: &str,
-    payment_mode: Option<&str>,
+    _payment_mode: Option<&str>,
     payment_id: Option<&str>,
     token_symbol: Option<&str>,
     token_amount: Option<&str>,
@@ -159,7 +171,16 @@ pub async fn handle_confirm_accept(
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
 
-    let payment_mode = resolve_payment_mode(client, payment_mode, job_id, &agent_id).await?;
+    // 前置检查：setPaymentMode 是否已上链
+    let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
+    let payment_mode = PaymentMode::from_int(task_resp["paymentType"].as_i64().unwrap_or(0) as i32);
+    if payment_mode == PaymentMode::None {
+        bail!(
+            "任务尚未设置支付方式（paymentType=0），请先执行：\n  \
+             onchainos agent set-payment-mode {job_id} --payment-mode <escrow|non_escrow> --token-symbol <sym> --token-amount <amt>\n\
+             等待 job_payment_mode_changed 系统通知后再执行 confirm-accept"
+        );
+    }
 
     if payment_mode == PaymentMode::X402 {
         bail!("x402 流程请用 onchainos agent set-payment-mode 设置支付方式，再用 onchainos agent task-402-pay 执行阶段 2");

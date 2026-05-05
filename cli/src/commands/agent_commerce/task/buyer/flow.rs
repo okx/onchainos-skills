@@ -298,14 +298,21 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::ProviderApplied => format!(
             "【当前状态】provider_applied（卖家已链上申请接单 — 仅 escrow 担保支付）\n\
              【角色】买家（Client）\n\n\
-             【前置】setPaymentMode 已通过 set-payment-mode 独立执行（job_payment_mode_changed 已收到）。\n\
              协商阶段已确定金额、代币，从协商上下文获取：\n\
              ```bash\n\
              onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
              ```\n\
              提取协商结果：providerAgentId、tokenAmount、tokenSymbol。\n\
              ⚠️ tokenAmount 和 tokenSymbol 必须从协商结果获取，不是任务详情。\n\n\
-             【你的下一步动作】\n\n\
+             【你的下一步动作（严格顺序）】\n\n\
+             **Step 0 — 前置检查：setPaymentMode 是否已执行？**\n\n\
+             查看当前 turn 上下文：如果之前已执行过 `onchainos agent set-payment-mode` 且收到了 `job_payment_mode_changed` 系统通知，跳到 Step 1。\n\
+             如果**没有**执行过 set-payment-mode（或不确定），**必须先执行**：\n\
+             ```bash\n\
+             onchainos agent set-payment-mode {job_id} --payment-mode escrow --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
+             ```\n\
+             等待 `job_payment_mode_changed` 系统通知到达后，再继续 Step 1。\n\
+             ⚠️ **confirm-accept 必须在 setPaymentMode 上链成功之后执行。**\n\n\
              **Step 1 — 确认接单（escrow 担保支付）：**\n\n\
              ```bash\n\
              onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode escrow --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
