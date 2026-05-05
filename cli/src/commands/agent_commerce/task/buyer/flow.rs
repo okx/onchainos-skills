@@ -93,7 +93,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
     //     userContent = 发送给用户的可见消息
     // ──────────────────────────────────────────────────────────────────────
     let send_to_peer = format!(
-        "→ 用 xmtp_send 发给卖家（机制见 SKILL.md Session 通信契约 1.4）。\n\
+        "→ 用 xmtp_send 发给卖家（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 1.4）。\n\
          当前 sub session：jobId={job_id}，我方 agentId={agent_id}。\n\
          content（纯自然语言，不要包 markdown / 代码块）："
     );
@@ -101,9 +101,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 
     let context_preamble = format!(
         "📍 你在 sub session（你看到这段 next-action 输出 = 100% 在 sub）。\n\n\
-         🔒 **如果当前 turn 没读过 SKILL.md Session 通信契约**（envelope 形态白名单 / xmtp_send 两步 / xmtp_dispatch_user·xmtp_prompt_user 推 user session 铁律），\n\
+         🔒 **如果当前 turn 没读过 skills/okx-agent-task/SKILL.md Session 通信契约**（envelope 形态白名单 / xmtp_send 两步 / xmtp_dispatch_user·xmtp_prompt_user 推 user session 铁律），\n\
          **先读 `skills/okx-agent-task/SKILL.md`** 再继续——下面步骤会引用它的章节（3 / 4 / 5 / 6）。\n\n\
-         ⚠️ **异常升级硬规则**（任何场景都适用，详见 SKILL.md 通讯边界 + buyer.md）：\n\
+         ⚠️ **异常升级硬规则**（任何场景都适用，详见 skills/okx-agent-task/SKILL.md 通讯边界 + skills/okx-agent-task/buyer.md）：\n\
          \x20\x201) 协议理解错位：你已澄清同一条流程 ≥1 次，对方下一条还在重复错误诉求 → **不再回复对方**，调 `xmtp_dispatch_user` 推 `[⚠️ 协议理解错位] ...`，结束 turn\n\
          \x20\x202) CLI 错误：`onchainos agent <cmd>` 报错 → **不要重试**，直接调 `xmtp_dispatch_user` 推 `[⚠️ CLI 报错] ...`，等用户新指令。**唯一例外**：JWT 过期（msg 含 `JWT verification failed` / `unauthorized`）刷新登录态后自动重试一次；网络 timeout 也按业务错处理推用户，不在 sub 里盲重\n\
          \x20\x203) ❌ **绝对禁止把技术错误细节广播给对方**：CLI 命令名 / 后端字段名 / stderr 摘要 / `bug`/`命令：`/`错误：` 一律不能进 xmtp_send 给对方。最多发一句『稍等，正在确认细节』或干脆不通知对方。\n\
@@ -419,7 +419,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```bash\n\
              onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-100> --task-id {job_id} --description \"<评价内容>\"\n\
              ```\n\n\
-             **B-Step 4 — 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 4.5）：\n\
+             **B-Step 4 — 关闭 sub session**（终态收尾，机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.5）：\n\
              （debug 模式：暂不关闭 sub session，保留历史信息）\n\
              <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
              <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
@@ -518,7 +518,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```bash\n\
              onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-100> --task-id {job_id} --description \"<评价内容>\"\n\
              ```\n\n\
-             **A-Step 4 — 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 4.5）：\n\
+             **A-Step 4 — 关闭 sub session**（终态收尾，机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.5）：\n\
              （debug 模式：暂不关闭 sub session，保留历史信息）\n\
              <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
              <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
@@ -576,7 +576,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（jobStatus=complete）\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n\
-             **Step 3（两个分支都要做）— 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 4.5）：\n\
+             **Step 3（两个分支都要做）— 关闭 sub session**（终态收尾，机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.5）：\n\
              （debug 模式：暂不关闭 sub session，保留历史信息）\n\
              <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
              <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
@@ -595,7 +595,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              content：\n\
              \x20\x20\x20\x20[退款完成] 任务 {job_id} 退款已上链，资金已返还至您的钱包。\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
-             **Step 3 — 关闭 sub session**（终态收尾，机制见 SKILL.md Session 通信契约 4.5）：\n\
+             **Step 3 — 关闭 sub session**（终态收尾，机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.5）：\n\
              （debug 模式：暂不关闭 sub session，保留历史信息）\n\
              <!-- 1. 调 `session_status` 拿当前 sub session 的 `sessionKey` 字段 -->\n\
              <!-- 2. 调 `xmtp_delete_conversation`，参数 `sessionKey` = 第 1 步那串 -->\n\
