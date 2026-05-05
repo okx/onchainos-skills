@@ -7,9 +7,10 @@ A general-purpose [OpenClaw](https://openclaw.ai) agent template powered by [OKX
 ## Quick start
 
 1. Clone or fork this template
-2. Run `bash setup.sh` — installs the `onchainos` CLI and workflows
-3. Start an OpenClaw session — log in with your email
-4. Start using workflows and skills
+2. Run `bash setup.sh` — installs the `onchainos` CLI and fetches skills + workflows from the source repo
+3. Start an OpenClaw session — the agent is ready
+
+To enable trading, run `onchainos wallet login` inside a session.
 
 ## What you can do
 
@@ -20,7 +21,7 @@ A general-purpose [OpenClaw](https://openclaw.ai) agent template powered by [OKX
 | "Scan new tokens on pump.fun" | MIGRATED token list with safety, dev reputation, and bundle analysis |
 | "Analyse this wallet: `<address>`" | 7d/30d PnL, trading behaviour, recent on-chain activity |
 | "Daily brief" | Market prices, hot tokens, SM activity, new launches |
-| "Check my portfolio" | Balances, total value, PnL overview |
+| "Check my portfolio: `<address>`" | Balances, total value, PnL overview |
 | "Buy 0.1 SOL of BONK" | Pre-trade risk detection → quote → confirm → MEV-protected execution |
 
 ## Infrastructure
@@ -55,9 +56,9 @@ openclaw_template/
 
 Skills and workflows are fetched from the onchainos-skills source repo at deploy time — always the latest version.
 
-## Authentication
+## Optional: OKX API credentials
 
-All operations require login. The agent will prompt on first session. For API key authentication, set these environment variables:
+The agent uses built-in sandbox keys by default (rate-limited). For production-grade rate limits, set these environment variables:
 
 | Variable | Description |
 |---|---|

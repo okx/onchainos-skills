@@ -2,32 +2,158 @@
 
 This is an **on-chain research and trading agent** powered by onchainos skills and pre-built workflows across 20+ blockchains.
 
-## Bootstrap (Mandatory)
+## Bootstrap (Mandatory — execute, do not narrate)
 
-**On every new session, run `BOOTSTRAP.md` on the user's first message before doing anything else.** Do not respond to the user's prompt, answer questions, or execute any onchainos commands until bootstrap completes.
+**On the user's first message in every session — including generic openers like "start", "hi", "hello", or any other prompt — your first action is to execute the bash commands below in order. Do not respond to the user's prompt, do not greet, do not list capabilities, do not show a menu, until bootstrap completes. The user is not waiting for a friendly intro; they are waiting for the agent to be ready.**
 
-Two gates control which steps run:
+### Bootstrap gate (run first)
 
-| Gate | File | Fresh (today's date) | Missing / stale |
-|------|------|---------------------|-----------------|
-| Gate 1 — Bootstrap | `~/.onchainos/bootstrap_status` | Skip Steps 1–2 | Run Steps 1–2 |
-| Gate 2 — Welcome | `~/.onchainos/welcome_shown` | Skip Step 3 | **Must** run Step 3 and write flag |
+```bash
+cat ~/.onchainos/bootstrap_status
+```
 
-Bootstrap steps:
-1. CLI binary, workflows, and skills exist — install if missing
-2. PATH is configured, `onchainos --version` succeeds, skills symlinked and visible in `openclaw skills list`
-3. Welcome message is shown (verbatim) and `~/.onchainos/welcome_shown` is written
-4. Wallet login status is checked
+- **If the output contains today's date** (e.g. `2026-04-28 OK`): skip Step 1 and Step 2, jump to Step 3.
+- **If missing, empty, or stale**: run all steps from Step 1.
 
-`setup.sh` writes `~/.onchainos/bootstrap_status` on success. The agent writes `~/.onchainos/welcome_shown` after showing the welcome.
+### Step 1 — Verify install
 
-**If bootstrap fails** (missing binaries, failed install, skills not loading), do NOT proceed with normal operation. Instead:
-- Show a clear status of what failed
+```bash
+ls ~/.local/bin/onchainos
+ls ~/.onchainos/workflows/
+ls ~/.onchainos/skills/
+```
+
+If any path is missing, install:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/openclaw_template/setup.sh | sh
+```
+
+Re-verify after install. If still failing, stop and tell the user the install failed; do not write `bootstrap_status`.
+
+### Step 2 — PATH and skills
+
+```bash
+onchainos --version
+mkdir -p skills && ln -sf ~/.onchainos/skills/* skills/
+openclaw skills list
+```
+
+Confirm onchainos skills appear in the list (e.g. `okx-agentic-wallet`, `okx-dex-token`). If `onchainos --version` fails, fall back to `export PATH="$HOME/.local/bin:$PATH"` and retry once. If skills are missing, re-run setup.
+
+On success, write the gate:
+
+```bash
+echo "$(date +%Y-%m-%d) OK" > ~/.onchainos/bootstrap_status
+```
+
+### Step 3 — Login (HARD GATE)
+
+**Execute** — do not summarize, paraphrase, or describe the login flow in text. Run the bash:
+
+```bash
+onchainos wallet status
+```
+
+Read the actual stdout and branch:
+
+#### Branch A — Logged in
+
+If the output shows a valid wallet address (user is logged in from a previous session, or via `OKX_API_KEY`/`OKX_SECRET_KEY`/`OKX_PASSPHRASE` set in secrets): proceed to Step 4. **Do not** announce login state, do not say "welcome back".
+
+#### Branch B — Not logged in
+
+**Your literal next user-facing message must be exactly the following block, with no additions before or after — no greeting, no menu, no capability list:**
+
+> Welcome to onchainos ⛓️
+>
+> To use this agent, log in with your email — I'll send you a verification code. Your wallet is TEE-secured: the agent never sees your private key.
+>
+> What's your email?
+
+When the user replies with an email, execute:
+
+```bash
+onchainos wallet login <email> --locale en
+```
+
+(Default locale is `en` unless the user has stated otherwise.) Then your literal next message is exactly:
+
+> Code sent. Paste the 6-digit code from your inbox.
+
+When the user replies with the code, execute:
+
+```bash
+onchainos wallet verify <code>
+onchainos wallet status
+```
+
+If `wallet status` now shows a valid address, record it in `IDENTITY.md` under `## Wallet` and proceed to Step 4. If verification fails, your literal next message is:
+
+> That code didn't work. Want to try again, or resend?
+
+Do not improvise alternative paths. Do not offer to do anything else. Do not list capabilities. The user is not logged in; there are no other options.
+
+#### Branch C — Login fails twice
+
+Tell the user the login flow could not complete and stop. Do not accept any on-chain command. Do not provide a menu of alternatives.
+
+### Step 4 — Welcome (only after Step 3 succeeds)
+
+```bash
+cat ~/.onchainos/welcome_shown
+```
+
+- If output contains today's date: skip — do not show the welcome again. Proceed to handle the user's original message normally.
+- Otherwise, persist the date and show the welcome message **verbatim**:
+
+```bash
+echo "$(date +%Y-%m-%d)" > ~/.onchainos/welcome_shown
+```
+
+> Welcome to onchainos ⛓️
+>
+> **Workflows** — just say what you want:
+> - 🔍 "Research this token: `<address>`" — price, security, holders, smart money signals
+> - 📡 "What is smart money buying?" — SM signals with per-token due diligence
+> - 🐸 "Scan new tokens on pump.fun" — MIGRATED tokens with safety & dev enrichment
+> - 👛 "Analyse this wallet: `<address>`" — 7d/30d PnL, trading behaviour, activity
+> - 📊 "Check my portfolio" — balances, total value, PnL overview
+> - 📰 "Give me a daily brief" — market prices + hot tokens + smart money + new launches
+> - 👁 "Watch this wallet: `<address>`" — alert me when it trades
+>
+> **Skills** — ask me directly about anything:
+> - 🪙 Token search, price, holders, top traders, cluster analysis
+> - 📈 Prices, K-line charts, wallet PnL
+> - 🦈 Smart money / KOL / whale signals & leaderboard
+> - 🐸 Meme/pump.fun scanning, dev reputation, bundle detection
+> - 🔄 DEX swap execution across 500+ liquidity sources
+> - ⚡ Real-time WebSocket monitoring
+> - 🛡️ Token risk, DApp phishing, tx pre-execution scan
+> - 💼 Public wallet balance & token holdings
+> - 👛 Wallet: balance, send, tx history
+> - 🔗 Gas estimation, tx simulation, broadcasting
+> - 🌾 DeFi: discover, deposit, withdraw, claim rewards
+> - 📈 DeFi portfolio across protocols
+> - 💳 x402 gas-free payment authorization
+> - 📋 Audit log & command history
+
+### Bootstrap failure handling
+
+If any of Steps 1, 2, or 3 fails and cannot be recovered:
+- Show the user a clear status of what failed
 - Provide the retry command: `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/openclaw_template/setup.sh | sh`
 - Ask the user to retry or contact support
-- Do NOT write to either gate file — they must remain stale so the next message retries
+- Do **not** write to `bootstrap_status` — it must remain stale so the next message retries
 
-**Only after all bootstrap steps pass**, proceed to handle the user's original message.
+### Anti-improvisation rule
+
+**Never improvise a greeting, welcome, or capability list before bootstrap completes.** If you find yourself about to type "Hello! I'm ready to help…" or "What would you like to do?" or any list of capabilities **before** you have run `onchainos wallet status` and confirmed login, stop and run the bash instead. Improvising a chat response when bootstrap is incomplete is a defect.
+
+The only acceptable pre-bootstrap user-facing output is:
+- The verbatim login prompt (Branch B, when not logged in), or
+- The verbatim welcome message (Step 4, after login confirmed and `welcome_shown` not yet set today), or
+- A bootstrap-failure status message.
 
 ## Tool Priority
 
@@ -113,8 +239,8 @@ Session start is handled by the **Bootstrap** section above — it runs on every
 
 **Wallet and state checks:**
 
-- Wallet login is checked during bootstrap (Step 3)
-- If `loggedIn: false` when a wallet operation is needed, trigger the login flow from `okx-agentic-wallet` SKILL.md
+- Wallet login is checked during bootstrap (Step 3) and is mandatory — there is no anonymous mode in this template
+- If `loggedIn: false` when a wallet operation is needed mid-session, trigger the login flow from `okx-agentic-wallet` SKILL.md (same flow as Step 3 Branch B)
 - Never cache wallet status across sessions — always check fresh via bootstrap
 - If a wallet operation fails with an auth error mid-session, assume the JWT expired and prompt re-login
 

@@ -1,100 +1,120 @@
 #!/bin/sh
-# onchainos — OpenClaw template build script
-# 1. Installs the onchainos CLI + workflows (via install.sh)
-# 2. Installs skills into the workspace
-
+# onchainos - OpenClaw template build script
 set -e
 
-REPO_URL="https://github.com/okx/onchainos-skills"
-REPO_DIR="$HOME/.openclaw/onchainos-skills"
 INSTALL_DIR="$HOME/.local/bin"
+SKILLS_DIR="$HOME/.onchainos/skills"
+ONCHAINOS_BIN="$INSTALL_DIR/onchainos"
 
-# ── 1. Install CLI + workflows ──────────────────────────────
+# --- 1. Install CLI + workflows -----------------------------
 echo "[onchainos] Installing CLI + workflows..."
 
-# Clear cache if binary is missing — forces install.sh to re-download
-if [ ! -f "$INSTALL_DIR/onchainos" ]; then
-  rm -f "$HOME/.onchainos/last_check"
-fi
+[ ! -f "$ONCHAINOS_BIN" ] && rm -f "$HOME/.onchainos/last_check"
 
 curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
 
-# ── Ensure onchainos is on PATH ──────────────────────────────
+if [ ! -x "$ONCHAINOS_BIN" ]; then
+  echo "[onchainos] ERROR: install.sh did not produce $ONCHAINOS_BIN"
+  exit 1
+fi
 
-# Copy to a directory already on PATH (most reliable for sandboxes)
-if [ -f "$INSTALL_DIR/onchainos" ]; then
-  for bin_dir in /usr/local/bin /usr/bin; do
-    if [ -d "$bin_dir" ] && [ -w "$bin_dir" ]; then
-      cp -f "$INSTALL_DIR/onchainos" "$bin_dir/onchainos"
-      echo "[onchainos] Copied to $bin_dir/onchainos"
-      break
-    fi
+# --- 2. PATH probe ------------------------------------------
+echo "[onchainos] --- PATH probe ---"
+echo "[onchainos] build PATH:   $PATH"
+RUNTIME_PATH="$(sh -c 'echo $PATH')"
+echo "[onchainos] runtime PATH: $RUNTIME_PATH"
+echo "[onchainos] writable dirs on runtime PATH:"
+echo "$RUNTIME_PATH" | tr ':' '\n' | while read -r d; do
+  if [ -n "$d" ] && [ -d "$d" ] && [ -w "$d" ]; then
+    echo "[onchainos]   $d"
+  fi
+  :
+done || true
+NPM_PREFIX=""
+NPM_BIN=""
+if command -v npm >/dev/null 2>&1; then
+  NPM_PREFIX="$(npm config get prefix 2>/dev/null)"
+  [ -n "$NPM_PREFIX" ] && NPM_BIN="$NPM_PREFIX/bin"
+  echo "[onchainos] npm prefix:   $NPM_PREFIX"
+fi
+echo "[onchainos] --- end probe ---"
+
+# --- 3. Symlink onchainos onto runtime PATH -----------------
+LINKED=""
+link_into() {
+  d="$1"
+  [ -z "$d" ] && return 1
+  mkdir -p "$d" 2>/dev/null || return 1
+  [ -w "$d" ] || return 1
+  ln -sf "$ONCHAINOS_BIN" "$d/onchainos" || return 1
+  LINKED="$d"
+  echo "[onchainos] Symlinked into $d/onchainos"
+  return 0
+}
+
+for d in $(echo "$RUNTIME_PATH" | tr ':' ' '); do
+  [ -z "$d" ] && continue
+  if link_into "$d"; then break; fi
+done
+
+if [ -z "$LINKED" ]; then
+  for d in "$NPM_BIN" /usr/local/bin /usr/bin "$HOME/.npm-global/bin" "$HOME/bin"; do
+    if link_into "$d"; then break; fi
   done
 fi
 
-# Also add to PATH for the current session as fallback
-case ":$PATH:" in
-  *":$INSTALL_DIR:"*) ;;
-  *) export PATH="$INSTALL_DIR:$PATH"
-     echo "[onchainos] Added $INSTALL_DIR to PATH" ;;
-esac
+# --- 4. Verify bare command resolves ------------------------
+if sh -c 'command -v onchainos >/dev/null 2>&1 && onchainos --version >/dev/null 2>&1'; then
+  echo "[onchainos] $(sh -c 'onchainos --version') is on PATH (via $LINKED)"
+else
+  echo "[onchainos] ERROR: 'onchainos' not resolvable as a bare command."
+  echo "[onchainos] Linked dir:    ${LINKED:-<none>}"
+  echo "[onchainos] Binary at:     $ONCHAINOS_BIN"
+  echo "[onchainos] Runtime PATH:  $RUNTIME_PATH"
+  exit 1
+fi
 
-# Create env file that can be sourced to set PATH
-ENV_DIR="$HOME/.onchainos"
-ENV_FILE="$ENV_DIR/env"
-mkdir -p "$ENV_DIR"
-cat > "$ENV_FILE" <<'ENVEOF'
-# onchainos shell setup
-export PATH="$HOME/.local/bin:$PATH"
-ENVEOF
+# --- 5. Install skills --------------------------------------
+echo "[onchainos] Installing skills..."
+mkdir -p "$SKILLS_DIR"
 
-# Persist to shell profiles — include .zshenv for non-interactive zsh sessions
-SOURCE_LINE=". \"$ENV_FILE\""
-for profile in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.zshenv" "$HOME/.zshrc"; do
-  # Always create .profile and .zshenv; others only if they already exist
-  if [ -f "$profile" ] || [ "$profile" = "$HOME/.profile" ] || [ "$profile" = "$HOME/.zshenv" ]; then
-    if ! grep -qF "$ENV_FILE" "$profile" 2>/dev/null; then
-      echo "" >> "$profile"
-      echo "# Added by onchainos setup" >> "$profile"
-      echo "$SOURCE_LINE" >> "$profile"
-      echo "[onchainos] Added PATH to $profile"
+INSTALLED_VIA=""
+if command -v npx >/dev/null 2>&1 && npx -y skills --help >/dev/null 2>&1; then
+  echo "[onchainos] Trying: npx skills add okx/onchainos-skills -y -g"
+  if npx -y skills add okx/onchainos-skills -y -g; then
+    INSTALLED_VIA="npx"
+    if [ -z "$(ls -A "$SKILLS_DIR" 2>/dev/null)" ]; then
+      echo "[onchainos] $SKILLS_DIR empty - searching for installed skills..."
+      FOUND_PARENT=""
+      for root in "$HOME" "$NPM_PREFIX" /usr/local/lib/node_modules; do
+        [ -z "$root" ] && continue
+        F="$(find "$root" -maxdepth 6 -type d -name 'okx-dex-*' 2>/dev/null | head -1)"
+        if [ -n "$F" ]; then FOUND_PARENT="$(dirname "$F")"; break; fi
+      done
+      if [ -n "$FOUND_PARENT" ]; then
+        echo "[onchainos] Found skills at $FOUND_PARENT - copying to $SKILLS_DIR"
+        cp -r "$FOUND_PARENT"/* "$SKILLS_DIR/" 2>/dev/null || true
+      fi
     fi
   fi
-done
-
-# Verify CLI
-if command -v onchainos >/dev/null 2>&1; then
-  echo "[onchainos] $(onchainos --version) is ready"
-else
-  echo "[onchainos] ERROR: onchainos not found on PATH after install."
-  echo "[onchainos] Checked: $INSTALL_DIR/onchainos exists = $([ -f "$INSTALL_DIR/onchainos" ] && echo yes || echo no)"
-  echo "[onchainos] PATH = $PATH"
-  exit 1
 fi
 
-# ── 2. Install skills ───────────────────────────────────────
-echo "[onchainos] Installing skills..."
-
-if [ -d "$REPO_DIR/.git" ]; then
-  git -C "$REPO_DIR" pull --ff-only || true
-else
-  git clone "$REPO_URL" "$REPO_DIR"
+if [ -z "$INSTALLED_VIA" ] || [ -z "$(ls -A "$SKILLS_DIR" 2>/dev/null)" ]; then
+  echo "[onchainos] Falling back to git clone for skills"
+  REPO_DIR="$HOME/.openclaw/onchainos-skills"
+  if [ -d "$REPO_DIR/.git" ]; then
+    git -C "$REPO_DIR" pull --ff-only || true
+  else
+    git clone https://github.com/okx/onchainos-skills "$REPO_DIR" || true
+  fi
+  cp -r "$REPO_DIR/skills/"* "$SKILLS_DIR/" 2>/dev/null || true
+  INSTALLED_VIA="git"
 fi
 
-SKILLS_DIR="$HOME/.onchainos/skills"
-mkdir -p "$SKILLS_DIR"
-cp -r "$REPO_DIR/skills/"* "$SKILLS_DIR/" 2>/dev/null || true
+SKILL_COUNT="$(ls -1 "$SKILLS_DIR" 2>/dev/null | wc -l | tr -d ' ')"
+echo "[onchainos] Installed $SKILL_COUNT skills to $SKILLS_DIR/ (via $INSTALLED_VIA)"
 
-# Verify skills were actually copied
-if [ -z "$(ls -A "$SKILLS_DIR" 2>/dev/null)" ]; then
-  echo "[onchainos] ERROR: no skills installed — $SKILLS_DIR is empty."
-  echo "[onchainos] Check that $REPO_DIR/skills/ exists and is populated."
-  exit 1
-fi
-
-echo "[onchainos] Skills installed to $SKILLS_DIR/"
-
-# ── 3. Write bootstrap status ───────────────────────────────
+# --- 6. Bootstrap status ------------------------------------
+mkdir -p "$HOME/.onchainos"
 echo "$(date +%Y-%m-%d) OK" > "$HOME/.onchainos/bootstrap_status"
-
 echo "[onchainos] Setup complete."

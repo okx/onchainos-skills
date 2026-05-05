@@ -4,7 +4,7 @@ Available skills and their capabilities are defined in `AGENTS.md`. This file co
 
 ## onchainos CLI
 
-The official OKX OnchainOS CLI — built for AI, ready for Web3. Installed via `setup.sh`.
+The official OKX OnchainOS CLI - built for AI, ready for Web3. Installed via `setup.sh`.
 
 ```bash
 onchainos --version   # verify binary is available
@@ -14,18 +14,26 @@ onchainos --help      # full command reference
 ## CLI conventions
 
 - `--chain` accepts chain names (e.g. `solana`, `ethereum`, `base`, `xlayer`) or chain indexes (e.g. `501`, `1`, `8453`)
-- `--address` always expects a full contract address — never guess; resolve with `onchainos token search` first
-- `--format json` appends raw JSON output to any command — use for scripting
+- `--address` always expects a full contract address - never guess; resolve with `onchainos token search` first
+- `--format json` appends raw JSON output to any command - use for scripting
 - `--readable-amount` handles token decimals automatically for swap commands
 
-## Wallet modes
+## Wallet
 
-| Mode | Setup needed | Capabilities |
-|------|-------------|-------------|
-| Anonymous | None | Read-only: prices, token data, signals, portfolio lookup by address |
-| Agentic wallet | `onchainos wallet login` | Full: swap execution, send tokens, view own portfolio |
+This template requires the **agentic wallet**. Anonymous mode is **not supported** in this configuration - all on-chain operations require login.
 
-**Agentic wallet security:** TEE-secured execution — private keys never exposed. Full OKX Wallet backing.
+| Step | Command | When |
+|------|---------|------|
+| Check state | `onchainos wallet status` | At every session start, before any on-chain command. |
+| Start login | `onchainos wallet login <email> --locale <locale>` | When `wallet status` shows not logged in. Sends OTP to email. |
+| Verify OTP | `onchainos wallet verify <code>` | After the user provides the OTP from email. |
+| API key auth | (automatic, no command) | When `OKX_API_KEY`, `OKX_SECRET_KEY`, `OKX_PASSPHRASE` are set as secrets. |
+
+**Wallet skill:** `okx-agentic-wallet` (installed at `~/.onchainos/skills/okx-agentic-wallet/`). Use this skill for all wallet operations.
+
+**Security:** TEE-secured execution - private keys never exposed. Spending is bounded by an on-chain limit; the agent cannot exceed it without the user's root key re-authorizing.
+
+**Hard rule:** If `onchainos wallet status` does not return a valid address, refuse all on-chain commands and run the login flow defined in `BOOTSTRAP.md` Step 3.
 
 ## Swap infrastructure
 
@@ -60,10 +68,10 @@ onchainos token report --address <addr> --chain solana
 Skills are installed by `setup.sh` into `~/.onchainos/skills/`:
 
 ```
-okx-dex-token      okx-dex-market     okx-dex-signal    okx-dex-trenches
-okx-dex-swap       okx-dex-ws         okx-security       okx-wallet-portfolio
-okx-agentic-wallet okx-onchain-gateway okx-defi-invest   okx-defi-portfolio
-okx-x402-payment   okx-audit-log
+okx-dex-token       okx-dex-market      okx-dex-signal      okx-dex-trenches
+okx-dex-swap        okx-dex-ws          okx-security        okx-wallet-portfolio
+okx-agentic-wallet  okx-onchain-gateway okx-defi-invest     okx-defi-portfolio
+okx-x402-payment    okx-audit-log
 ```
 
 ## MCP server
