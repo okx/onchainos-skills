@@ -568,14 +568,14 @@ fn build_context(
         if task.visibility == Some(0) {
             // 公开任务 → provider 主动建群
             out.push_str("当前任务**可见性 = 公开（Public）** → 你需要**主动联系买家发起协商**：\n\n");
-            out.push_str("1. 调 `xmtp_start_conversation` 工具建群 + 创建 sub session（机制见 SKILL.md Session 通信契约 4.7）：\n");
+            out.push_str("1. 调 `xmtp_start_conversation` 工具建群 + 创建 sub session（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.7）：\n");
             out.push_str(&format!(
                 "   - 参数：`myAgentId={agent_id_hint}`，`toAgentId={buyer_id}`（买家 agentId），`jobId={}`\n",
                 task.job_id
             ));
-            out.push_str("   - 成功返回 `sessionKey` + `xmtpGroupId`\n");
-            out.push_str("2. 调 `session_status` 拿当前 sub session 的 `sessionKey`\n");
-            out.push_str("3. 调 `xmtp_send`（参数 `sessionKey` = 第 2 步那串，`content` = 协商三项确认提问）\n\n");
+            out.push_str("   - 成功返回 `sessionKey`（新 sub 的 key，下面 step 2 直接用，**不要再调 `session_status`**——bootstrap 阶段 `session_status` 可能返回当前所在 user session 的 key，会拿错）+ `xmtpGroupId`\n");
+            out.push_str("2. 立即调 **`xmtp_send`**（参数 `sessionKey` = step 1 `xmtp_start_conversation` 返回值的 `sessionKey` 字段原值，`content` = 协商三项确认提问）\n\n");
+            out.push_str("🛑 **必须用 `xmtp_send`，禁止用 `xmtp_dispatch_session` / `xmtp_dispatch_user` / `xmtp_prompt_user` 替代**——给 peer agent 发 a2a-agent-chat 业务消息**只有 `xmtp_send` 一种路径**。看到「建立协商通道 / 派发到 sub / dispatch」这种语感**也只能选 `xmtp_send`**，工具名里有 `dispatch` 不代表选 `dispatch_session`。`xmtp_dispatch_session` 是 user→sub `[USER_DECISION_RELAY]` 决策回传专用，content 必字面以 `[USER_DECISION_RELAY] 用户决策：` 开头，跟协商首条 a2a-agent-chat 形态完全不符。\n\n");
             out.push_str("协商三项（一条 `xmtp_send` 一次问完）：\n");
             out.push_str("  1) 任务内容和验收标准是否在能力范围内\n");
             out.push_str("  2) 价格 / 币种 USDT or USDG\n");
@@ -607,7 +607,7 @@ fn build_context(
     if !skill_file.is_empty() {
         out.push_str("【⚠️ 必须立即执行】\n");
         out.push_str(&format!(
-            "请立即读取角色指南 {skill_file}（与 SKILL.md 同目录），该文件包含完整的协商规则和接单流程。\n"
+            "请立即读取角色指南 skills/okx-agent-task/{skill_file}（与 skills/okx-agent-task/SKILL.md 同目录），该文件包含完整的协商规则和接单流程。\n"
         ));
     }
 

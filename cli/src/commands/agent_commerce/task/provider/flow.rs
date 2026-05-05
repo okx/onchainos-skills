@@ -95,7 +95,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
     // user agent 拿 sub_key 后通过 path 3 (`xmtp_dispatch_session(sessionKey=<sub>, [USER_DECISION_RELAY] ...)`) 反推回 sub。
     // ──────────────────────────────────────────────────────────────────────
     let send_to_peer = format!(
-        "→ 用 `xmtp_send` 发给买家（机制见 SKILL.md Session 通信契约 1.4）。\n\
+        "→ 用 `xmtp_send` 发给买家（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 1.4）。\n\
          当前 sub session：jobId={job_id}，我方 agentId={agent_id}。\n\
          content（纯自然语言，不要包 markdown / 代码块）："
     );
@@ -104,7 +104,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 
     let context_preamble = format!(
         "📍 你在 sub session（你看到这段 next-action 输出 = 100% 在 sub）。\n\n\
-         🔒 **如果当前 turn 没读过 SKILL.md Session 通信契约**（envelope 形态白名单 / xmtp_send 两步 / xmtp_dispatch_user·xmtp_prompt_user 推 user session 铁律），\n\
+         🔒 **如果当前 turn 没读过 skills/okx-agent-task/SKILL.md Session 通信契约**（envelope 形态白名单 / xmtp_send 两步 / xmtp_dispatch_user·xmtp_prompt_user 推 user session 铁律），\n\
          **先读 `skills/okx-agent-task/SKILL.md`** 再继续——下面步骤会引用它的章节（3 / 4 / 5 / 6）。\n\n\
          ⚠️ **异常升级硬规则**（任何场景都适用，详见 _shared/exception-escalation.md + provider.md 5）：\n\
          \x20\x201) 协议理解错位：你已澄清同一条流程 ≥1 次，对方下一条还在重复错误诉求 → **不再回复对方**，调 `xmtp_dispatch_user` 推 `[⚠️ 协议理解错位] ...`，结束 turn\n\
@@ -163,7 +163,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              链上确认只是把 task 状态推到 submitted（让买家有 complete/reject 入口），交付物本身已经送到了。\n\n\
              **A-Step 1 — 准备交付物（按类型分流）**：\n\n\
              ▸ **纯文本/URL 交付物**：直接组好文字内容，跳过 xmtp_file_upload，进入 A-Step 2\n\n\
-             ▸ **文件交付物**（图片/PDF/文档）：调 `xmtp_file_upload`（机制见 SKILL.md Session 通信契约 4.8）：\n\
+             ▸ **文件交付物**（图片/PDF/文档）：调 `xmtp_file_upload`（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.8）：\n\
              \x20\x20参数 `filePath` = 本地文件绝对路径，`agentId` = {agent_id}，`jobId` = {job_id}\n\
              \x20\x20返回值 `fileKey` / `digest` / `salt` / `nonce` / `secret` 五个字段（解密元数据）全部记录\n\n\
              **A-Step 2 — `xmtp_send` 把交付物发给买家**（同 turn 内紧接着 A-Step 1 跑）：\n\n\
@@ -199,7 +199,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              任务 {job_id} 已完成。交付物：\n\
              <这里贴交付内容文本>\n\
              请你验收并调 `onchainos agent complete {job_id}` 释放款项；如有问题调 `onchainos agent reject` 反馈。\n\n\
-             ▸ **文件交付物**（图片/PDF/文档）—— 用 `xmtp_file_upload + xmtp_send fileKey` 两步（机制见 SKILL.md Session 通信契约 4.8）：\n\
+             ▸ **文件交付物**（图片/PDF/文档）—— 用 `xmtp_file_upload + xmtp_send fileKey` 两步（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.8）：\n\
              ⚠️ **B-1 和 B-2 必须同 turn 内连续执行**——`xmtp_file_upload` 调完拿到返回值后**立即**接着调 `xmtp_send`，不要把 turn 切断。上传完不发 fileKey 给买家 = 买家完全收不到交付物。\n\
              B-1. 调 `xmtp_file_upload`，参数 `filePath` = 本地文件绝对路径，`agentId` = {agent_id}，`jobId` = {job_id}\n\
              \x20\x20\x20返回值 `fileKey` / `digest` / `salt` / `nonce` / `secret` 五个字段（解密元数据）全部记录\n\
@@ -492,7 +492,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              1) 任务内容和验收标准是否在能力范围内\n\
              2) 价格可接受（**用任务详情里的实际币种回复，不是默认 USDT**）\n\
              3) 支付方式可接受（escrow / non_escrow，由买家在 confirm-accept 时定）\n\
-             → 用 `xmtp_send` 给买家发提问（机制见 SKILL.md Session 通信契约 4.4）。\n\n\
+             → 用 `xmtp_send` 给买家发提问（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.4）。\n\n\
              **Step 3.5 — 处理买家的 [NEGOTIATE_PROPOSE] 结构化提案：**\n\n\
              买家协商达成一致后会发送格式化提案：\n\
              ```\n\
