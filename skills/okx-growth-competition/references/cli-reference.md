@@ -91,7 +91,7 @@ onchainos competition rank --activity-id <id> --wallet <addr> --sort-type <type>
 |------|----------|---------|-------------|
 | `--activity-id` | Yes | — | Activity ID |
 | `--wallet` | Yes | — | User wallet address |
-| `--sort-type` | Yes | 5 | 5=volume, 7=realized PnL, 8=boost token volume |
+| `--sort-type` | Yes | 1 | Currently observed: 1=PnL% (realized ROI), 7=PnL (realized profit). Future activities may add more — discover via `competition detail` → `tabConfigs[].rankFieldConfig[].sortValueMap.descend`. |
 | `--limit` | No | 20 | Max entries in `allRankInfos` (max 100; applied client-side) |
 
 **Output:**
@@ -115,7 +115,7 @@ onchainos competition rank --activity-id <id> --wallet <addr> --sort-type <type>
 
 `format`: `1`=number, `2`=percentage, `3`=token amount with unit
 
-`userTotal` meaning by `sort-type`: `5`=trade volume, `7`=realized PnL, `8`=boost token volume
+`userTotal` meaning is dictated by the activity's `tabConfigs[].rankFieldConfig[]` — read `title` (display name) and `key` (internal field) from there. Currently observed metrics: PnL% (`pnl`, sort-type 1), PnL (`realizedProfit`, sort-type 7).
 
 `rankUpdateTime`: milliseconds (13-digit timestamp)
 
@@ -216,13 +216,13 @@ onchainos competition join --activity-id <id> --evm-wallet <evm_addr> --sol-wall
 
 ## competition claim
 
-Fetch reward calldata for on-chain submission. **Requires wallet login.**
+**Atomic** claim flow: pre-checks `rewardStatus`, fetches calldata, signs each entry with the TEE session, broadcasts on-chain, and returns txHash array. **Requires wallet login.**
 
 ```
 onchainos competition claim --activity-id <id> --evm-wallet <evm_addr> --sol-wallet <sol_addr>
 ```
 
-**API**: `POST /priapi/v5/wallet/agentic/competition/claim`
+**API**: `POST /priapi/v5/wallet/agentic/competition/claim` (called internally; output is post-broadcast txHashes, not raw calldata)
 
 **Extra header**: `OK-ACCESS-PROJECT: 4d156bf0c61130f2692d097ecb68dbe4`
 
@@ -232,32 +232,36 @@ onchainos competition claim --activity-id <id> --evm-wallet <evm_addr> --sol-wal
 | `--evm-wallet` | Yes | EVM wallet address |
 | `--sol-wallet` | Yes | Solana wallet address |
 
-**Output:** Array of calldata objects — pass each to `onchainos wallet contract-call`:
+**Output:** aggregate result with reward metadata, successful txHashes, and any per-entry failures:
 
 ```json
 {
   "ok": true,
-  "data": [{
-    "contractAddress": "0x...",
-    "chain": 42161,
-    "input": "0xa9059cbb...",
-    "tokenSymbol": "HIPPO",
-    "tokenAmount": "10000000000000000000000",
-    "tokenAddress": "0x...",
-    "value": "0"
-  }]
+  "data": {
+    "rewardAmount": "460",
+    "rewardUnit": "PYBOBO",
+    "totalEntries": 1,
+    "succeeded": [{
+      "contractAddress": "7KRu...",
+      "chain": "501",
+      "txHash": "5abc...",
+      "orderId": "..."
+    }],
+    "failed": []
+  }
 }
 ```
 
-Submit each entry via `onchainos wallet contract-call`:
-```bash
-onchainos wallet contract-call \
-  --to <contractAddress> \
-  --chain <chain> \
-  --input-data <input> \
-  --amt <value>
-```
-Use `onchainos wallet chains` to map `chainId` (e.g. 42161) to chain name (e.g. "arbitrum").
+Internally the command:
+1. Calls `competition_user_status` to verify `rewardStatus == 1` (won, unclaimed). Bails with a plain error if 0/2/3.
+2. Calls the claim API to fetch unsigned calldata for each entry.
+3. For Solana entries: extracts the unsigned tx bytes from `tx.data` (Buffer JSON shape) and base58-encodes them locally — empirically `base58CallData` is empty in real responses, so this fallback is always taken.
+4. For EVM entries: takes the 0x-prefixed `input` directly.
+5. Pipes each entry through `wallet contract-call` (TEE session signing + broadcast) and collects the resulting txHash.
 
 **Errors:**
 - code 11002 `not eligible for reward` → user did not win
+- code 11003 → activity not found / status mismatch
+- code 11008 → reward already claimed or claim window expired
+- code 1860402 → backend failed to assemble the transaction; retry, then escalate
+- "Sui-chain reward claims are not yet supported" → user must claim from the Sui-compatible wallet UI
