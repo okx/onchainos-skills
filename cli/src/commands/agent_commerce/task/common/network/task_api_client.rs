@@ -17,11 +17,8 @@ use crate::wallet_store;
 /// 任务 API 路径前缀
 const TASK_PREFIX: &str = "/priapi/v1/aieco/task";
 
-/// 获取有效 access_token，失败则回退到 keyring 中的静态值
-async fn get_access_token() -> String {
-    ensure_tokens_refreshed()
-        .await
-        .unwrap_or_else(|_| crate::keyring_store::get_opt("access_token").unwrap_or_default())
+async fn get_access_token() -> Result<String, anyhow::Error> {
+    ensure_tokens_refreshed().await
 }
 
 /// 从本地 session 读取 sessionCert
@@ -102,7 +99,7 @@ impl TaskApiClient {
     /// 用于查询接口（如 providerConfirmStatus）需要 JWT + agenticId 但不需要 sessionCert 的场景。
     pub async fn get_with_agent_id(&mut self, path: &str, agent_id: &str) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
-        let token = get_access_token().await;
+        let token = get_access_token().await?;
         let query: Vec<(&str, &str)> = vec![];
         let headers: Vec<(&str, &str)> = vec![("agenticId", agent_id)];
         eprintln!("[TaskAPI] GET(jwt+agenticId) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}", token.len());
@@ -121,7 +118,7 @@ impl TaskApiClient {
         agent_id: &str,
     ) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
-        let token = get_access_token().await;
+        let token = get_access_token().await?;
         let cert = get_session_cert();
         let query: Vec<(&str, &str)> = cert.as_deref()
             .map(|c| vec![("sessionCert", c)])
@@ -147,7 +144,7 @@ impl TaskApiClient {
         query: &[(&str, &str)],
         agent_id: &str,
     ) -> Result<Vec<u8>> {
-        let token = get_access_token().await;
+        let token = get_access_token().await?;
         let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
         let mut headers = crate::client::ApiClient::jwt_headers(&token);
         if let (Ok(name), Ok(val)) = (
@@ -185,7 +182,7 @@ impl TaskApiClient {
     ) -> Result<Value> {
         let body = inject_session_cert(body);
         let url = format!("{}{}", self.base_url, path);
-        let token = get_access_token().await;
+        let token = get_access_token().await?;
         eprintln!("[TaskAPI] POST {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id} | body: {body}", token.len());
         let headers = [("agenticId", agent_id)];
         let result = self.wallet
@@ -211,7 +208,7 @@ impl TaskApiClient {
         agent_id: &str,
     ) -> Result<Value> {
         let url = format!("{}{}", self.base_url, path);
-        let token = get_access_token().await;
+        let token = get_access_token().await?;
         eprintln!(
             "[TaskAPI] POST(raw) {url} | headers: Authorization=Bearer(len={}), agenticId={agent_id}, Content-Type={content_type}, Content-Length={}",
             token.len(),
