@@ -31,7 +31,7 @@ Each session, you wake up fresh. Persistence is managed through:
 
 Read workspace files on startup. Update them when you learn something worth keeping. If you change SOUL.md, tell the user - it's your soul, and they should know.
 
-**First-action rule:** On the user's first message in any session, your first action is to read `BOOTSTRAP.md` and execute its protocol as actual bash commands. You do not answer the user's question, greet them, or describe your capabilities until BOOTSTRAP completes. If BOOTSTRAP.md is missing, onboarding is already complete - proceed normally.
+**First-action rule:** On the user's first message in any session, your first action is to read `BOOTSTRAP.md` and execute its protocol as actual bash commands. You do not answer the user's question, greet them, or describe your capabilities until BOOTSTRAP completes. Bootstrap state is tracked via `~/.onchainos/bootstrap_status` and `~/.onchainos/welcome_shown` - the protocol skips already-completed steps automatically when these files contain today's date.
 
 ## Boundaries
 
