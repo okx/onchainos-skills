@@ -255,7 +255,16 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              deadline: <交付截止时间>\n\n\
              5. **等待卖家回复 [NEGOTIATE_ACK] 或 [NEGOTIATE_COUNTER]**（5 分钟超时）：\n\n\
              \x20\x20▸ 收到 **[NEGOTIATE_ACK]** → 逐字段校验卖家回传的值与你发送的 PROPOSE 完全一致：\n\
-             \x20\x20\x20\x20- 全部一致 → 协商成功，执行 Step 6\n\
+             \x20\x20\x20\x20- 全部一致 → 调 xmtp_send 回复 **[NEGOTIATE_CONFIRM]** 确认协商达成，然后执行 Step 6：\n\
+             \x20\x20\x20\x20\x20\x20content=\n\
+             \x20\x20\x20\x20\x20\x20[NEGOTIATE_CONFIRM]\n\
+             \x20\x20\x20\x20\x20\x20jobId: <与 ACK 完全相同>\n\
+             \x20\x20\x20\x20\x20\x20deliverable: <与 ACK 完全相同>\n\
+             \x20\x20\x20\x20\x20\x20qualityStandards: <与 ACK 完全相同>\n\
+             \x20\x20\x20\x20\x20\x20paymentMode: <与 ACK 完全相同>\n\
+             \x20\x20\x20\x20\x20\x20tokenSymbol: <与 ACK 完全相同>\n\
+             \x20\x20\x20\x20\x20\x20tokenAmount: <与 ACK 完全相同>\n\
+             \x20\x20\x20\x20\x20\x20deadline: <与 ACK 完全相同>\n\
              \x20\x20\x20\x20- 任一字段不一致 → 视为篡改，调 xmtp_send 告知卖家字段不一致并重新发送 [NEGOTIATE_PROPOSE]\n\n\
              \x20\x20▸ 收到 **[NEGOTIATE_COUNTER]** → 卖家提出反提案：\n\
              \x20\x20\x20\x20- 检查 tokenSymbol 是否被改动（禁止改币种）→ 如被改动，拒绝并纠正\n\
@@ -263,8 +272,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20- 可接受 → 用 COUNTER 中的值发新的 [NEGOTIATE_PROPOSE]，回到 Step 5 等 ACK\n\
              \x20\x20\x20\x20- 不可接受 → 继续协商或终止切换下一个卖家\n\n\
              \x20\x20▸ 收到的回复**不含** [NEGOTIATE_ACK] 也不含 [NEGOTIATE_COUNTER] 标记 → 视为自然语言讨论，继续协商，重新回到 Step 4\n\n\
-             6. **协商确认完成 → 保存 + 分流**：\n\n\
-             ⚠️ **收到 [NEGOTIATE_ACK] 且校验一致后，立即保存协商结果**：\n\
+             6. **协商确认完成 → 保存 + 分流**（已发送 [NEGOTIATE_CONFIRM] 后执行）：\n\n\
+             ⚠️ **发完 [NEGOTIATE_CONFIRM] 后，立即保存协商结果**：\n\
              ```bash\n\
              onchainos agent save-agreed {job_id} --token-symbol <协商币种> --token-amount <协商价格>\n\
              ```\n\
@@ -418,7 +427,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20- filename：（可选）保存文件名\n\
              ⚠️ 调用前输出：`[buyer-xmtp] xmtp_file_download: fileKey=<fileKey>, agentId={agent_id}`\n\
              ⚠️ 调用后输出：`[buyer-xmtp] xmtp_file_download result: localPath=<返回的本地路径>`\n\n\
-             下载成功后记录 localPath（完整绝对路径，如 /Users/.../task预发.png），后续展示给用户时必须显示完整路径。\n\
+             下载成功后记录 localPath，**必须是完整绝对路径**（如 /Users/xxx/Downloads/task预发.png），\n\
+             ⚠️ **严禁只显示文件名**（如 cat-picture.png），用户无法定位文件。后续所有展示给用户的内容必须包含完整路径。\n\
              如果下载失败 → 用 deliverableUrl 作为备用展示信息。\n\n\
              **Step 3 — 按支付方式分流：**\n\n\
              ━━━━━━━━━ 分支 A：escrow（担保）— 需要用户验收决策 ━━━━━━━━━\n\n\
@@ -430,7 +440,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              禁止 user session agent 自己执行 task CLI。\n\
              \x20\x20\x20\x20userContent:\n\
              \x20\x20\x20\x20任务 {job_id} 卖家已提交交付物，已下载到本地。\n\
-             \x20\x20\x20\x20交付物本地路径：<localPath 完整绝对路径>（如下载失败则显示 deliverableUrl）\n\
+             \x20\x20\x20\x20交付物本地路径：<localPath>（⚠️ 必须是完整绝对路径，如 /Users/xxx/Downloads/cat-picture.png，严禁只写文件名）\n\
              \x20\x20\x20\x20交付物地址：<deliverableUrl>\n\
              \x20\x20\x20\x20验收标准：<qualityStandards>\n\
              \x20\x20\x20\x20支付方式：escrow（担保）\n\
@@ -464,7 +474,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **B-Step 1 — 调用 xmtp_dispatch_user 通知用户收到交付物：**\n\
              \x20\x20content:\n\
              \x20\x20[交付物已收到] 任务 {job_id} 卖家已提交交付物。\n\
-             \x20\x20交付物本地路径：<localPath 完整绝对路径>（如下载失败则显示 deliverableUrl）\n\
+             \x20\x20交付物本地路径：<localPath>（⚠️ 必须是完整绝对路径，如 /Users/xxx/Downloads/cat-picture.png，严禁只写文件名）\n\
              \x20\x20交付物地址：<deliverableUrl>\n\
              \x20\x20验收标准：<qualityStandards>\n\
              \x20\x20\n\
