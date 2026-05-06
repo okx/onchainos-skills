@@ -13,7 +13,7 @@
     "category": "blockchain",
     "tags": ["okx", "defi", "trading", "solana", "ethereum", "token-research", "smart-money", "web3", "blockchain", "swap"],
     "authorName": "OKX",
-    "authorUrl": "https://web3.okx.com/onchainos",
+    "authorUrl": "https://web3.okx.com/onchain-os",
     "authorLogoUrl": "https://static.okx.com/cdn/web3/assets/imgs/70d223c0-8527-40c1-8292-b3cc10b53d88.png"
   },
 
@@ -36,7 +36,7 @@
   ],
 
   "scripts": {
-    "build": "bash setup.sh",
+    "build": "sh setup.sh",
     "start": ""
   },
 
