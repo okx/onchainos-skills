@@ -673,7 +673,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              检查 payload 中 status 字段：\n\
              - success → 任务已关闭\n\
              - failed → 关闭失败，按 errorCode 重试\n\n\
-             【流程结束】子 session 可以关闭。\n"
+             **终态收尾（保留 sub session）：**\n\
+             ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             任务关闭流程结束。\n"
         ),
 
         // ─── 卖家主动联系买家（public 任务，卖家找到任务后发起会话）─────
