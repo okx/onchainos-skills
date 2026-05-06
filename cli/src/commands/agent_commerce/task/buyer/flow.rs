@@ -409,6 +409,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::JobSubmitted => format!(
             "【当前状态】job_submitted（卖家已提交交付物）\n\
              【角色】买家（Client）\n\n\
+             🚫 **担保模式严禁自动验收**：escrow 模式下收到交付物后**必须通知 user session，由用户决定验收通过还是拒绝**。\n\
+             Agent 不得替用户做验收决策，即使交付物看起来符合验收标准。\n\
+             ⚠️ non_escrow / x402 模式：资金已支付，只需通知用户交付物内容，用户不能拒绝。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 查询任务详情，提取交付物和支付方式：**\n\
              ```bash\n\
@@ -469,26 +472,21 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x203. POST /priapi/v1/aieco/task/{job_id}/refuse（body: {{\"signature\": \"<sig>\", \"reason\": \"<reason>\"}}）→ 获取 uopData\n\
              \x20\x204. 签名 uopHash → 广播上链\n\
              \x20\x20→ 任务状态变为 Refused，卖家 24h 内可发起仲裁。\n\n\
-             ━━━━━━━━━ 分支 B：non_escrow（非担保）— 交付物通知 + 终态收尾 ━━━━━━━━━\n\n\
-             ⚠️ 非担保流程中 complete 已在 job_accepted 阶段完成，此时收到交付物即为任务真正终态。\n\n\
+             ━━━━━━━━━ 分支 B：non_escrow（非担保）— 通知用户交付物内容（不可拒绝） ━━━━━━━━━\n\n\
+             ⚠️ 非担保流程中资金已在 job_accepted 阶段支付，用户**不能拒绝交付物**，只需通知。\n\n\
              **B-Step 1 — 调用 xmtp_dispatch_user 通知用户收到交付物：**\n\
              \x20\x20content:\n\
-             \x20\x20[交付物已收到] 任务 {job_id} 卖家已提交交付物。\n\
+             \x20\x20[交付物已收到] 任务 {job_id} 卖家已提交交付物（非担保模式，资金已支付）。\n\
              \x20\x20交付物本地路径：<localPath>（⚠️ 必须是完整绝对路径，如 /Users/xxx/Downloads/cat-picture.png，严禁只写文件名）\n\
              \x20\x20交付物地址：<deliverableUrl>\n\
-             \x20\x20验收标准：<qualityStandards>\n\
-             \x20\x20\n\
-             \x20\x20本任务流程结束。\n\n\
-             **B-Step 2 — 评价卖家（通过身份系统）：**\n\
-             ```bash\n\
-             onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-100> --task-id {job_id} --description \"<评价内容>\"\n\
-             ```\n\n\
-             **B-Step 3 — 终态收尾（保留 sub session）：**\n\
+             \x20\x20验收标准：<qualityStandards>\n\n\
+             **B-Step 2 — 终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复评分（0-100）和评价内容。」\n\
              任务完整结束。\n\n\
              【后续事件】\n\
              - escrow: job_completed → 任务完成 / job_refused → 等待卖家决定仲裁或退款\n\
-             - non_escrow: 流程已结束（本分支已执行评价）\n"
+             - non_escrow: 流程已结束\n"
         ),
 
         // ─── job_refused: 买家已拒绝，等待卖家决策 ─────────────────
@@ -567,12 +565,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
              \x20\x20\x20\x20\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
-             **A-Step 2 — 评价卖家（通过身份系统）：**\n\
-             ```bash\n\
-             onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id {agent_id} --score <0-100> --task-id {job_id} --description \"<评价内容>\"\n\
-             ```\n\n\
-             **A-Step 3 — 终态收尾（保留 sub session）：**\n\
+             **A-Step 2 — 终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复评分（0-100）和评价内容。」\n\
              任务完整结束。\n\n\
              ━━━━━━━━━ 分支 B：non_escrow（非担保）— 支付链路完成，等待卖家交付 ━━━━━━━━━\n\n\
              ⚠️ 非担保模式下 job_completed 意味着支付链路（accept + complete）已完成上链，\n\
