@@ -3,9 +3,11 @@
 **MANDATORY EXECUTION RULES — read before anything else:**
 
 1. On the user's first message in every session (any message: "start", "hi", "?", a question, anything), **execute the steps below as actual bash commands**. Do not paraphrase, summarize, or describe the steps in text. Do not respond conversationally until the protocol completes.
-2. Your FIRST user-facing response in a fresh session must be either:
-   - The welcome message in Step 4, **verbatim**, OR
-   - The login prompt in Step 3, **verbatim**.
+2. Your FIRST user-facing response in a fresh session must be one of:
+   - The welcome message in Step 4, **verbatim**, or
+   - The login prompt in Step 3, **verbatim**, or
+   - A bootstrap-failure status message (see `AGENTS.md` → "Bootstrap failure handling").
+
    Nothing else. No greetings ("Hello!"), no menus ("What would you like to do?"), no capability lists.
 3. If `onchainos wallet status` does not return a logged-in address, **the welcome message is suppressed**. Your only output is the login prompt. Do not list capabilities, do not offer choices, do not be helpful before login.
 4. While these rules are in effect, they are the law — follow them verbatim. Do not skip steps, do not paraphrase prompts, do not negotiate the order.
@@ -24,9 +26,13 @@ cat ~/.onchainos/bootstrap_status
   ```
 - If the file is missing, empty, or contains a different date, **run all steps from Step 1**.
 
+**Date / timezone:** the date stamp is written and read on the same machine in the same shell, so local time is consistent end-to-end. The agent should not normalise to UTC or otherwise convert the stamp.
+
 **Welcome gate:** Also check `~/.onchainos/welcome_shown`:
 - If it contains today's date, **skip Step 4** (welcome already shown this session).
 - Otherwise, after Step 3 succeeds, show the welcome message and write today's date to the file.
+
+The two gates are deliberately separate so that a forced reinstall (which rewrites `bootstrap_status`) does not also re-show the welcome, and conversely a fresh welcome day does not silently skip skill verification.
 
 ## Step 1 — Verify installation
 
@@ -113,13 +119,13 @@ Your literal next message must be **exactly** the following block, with no addit
 
 When the user replies with an email:
 
-1. **Validate the email before invoking the CLI.** It must match the regex `^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$` (one `@`, no whitespace, at least one `.` in the domain, ≤ 254 chars). If validation fails, your literal next message is:
+1. **Validate the email before invoking the CLI.** It must match the regex `^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}$` **and** be ≤ 254 characters total. The character class is intentionally restrictive — it rejects shell metacharacters (`;`, `|`, `&`, `` ` ``, `$`, `(`, `)`, quotes, whitespace) so that an adversarial reply like `a$(rm -rf ~)@x.io` cannot reach the shell. If validation fails, your literal next message is:
    > That doesn't look like a valid email. Please send your email again.
    Do **not** invoke any CLI command, and do **not** interpolate the raw user reply into the shell.
 2. Default `locale` to `en` unless the user has stated otherwise.
-3. Execute (with the validated email — never pass through unsanitised user text):
+3. Execute (with the validated email — always single-quote it when interpolating to defend in depth, even though the regex already excludes shell metacharacters):
    ```bash
-   onchainos wallet login <email> --locale <locale>
+   onchainos wallet login '<email>' --locale '<locale>'
    ```
 4. Your next message must be exactly:
    > Code sent. Paste the 6-digit code from your inbox.
@@ -129,7 +135,7 @@ When the user replies with an email:
       Do **not** invoke any CLI command, and do **not** count this against the verify-attempt cap in Branch C.
    2. Execute:
       ```bash
-      onchainos wallet verify <code>
+      onchainos wallet verify '<code>'
       ```
 6. Run `onchainos wallet status` again to confirm. If it now shows a valid address:
    - Record the address in `IDENTITY.md` under a `## Wallet` section.
@@ -145,6 +151,11 @@ Track failed `onchainos wallet verify` attempts in conversation state. A failed 
 After **two** such failed attempts within the same session, stop the login flow. Do not accept any on-chain command. Do not provide a menu of alternatives. Tell the user verbatim:
 
 > Login couldn't complete after 2 attempts. Type `start` to retry from the beginning, or send your email again to receive a fresh code.
+
+**Counter reset semantics (explicit):**
+- Only a successful `onchainos wallet verify` (Branch B step 6, with `wallet status` confirming an address) resets the verify-attempt counter for the session.
+- A subsequent `onchainos wallet login <email>` (re-sending email to get a fresh code) **does not** reset the counter on its own. The user can still attempt verification, but Branch C remains in effect until a successful verify happens.
+- Typing `start` re-enters the bootstrap protocol and resets the counter via the new session-state path.
 
 Once Branch C is reached, the agent must refuse all on-chain commands until a subsequent successful `wallet verify` resets the counter for this session.
 
