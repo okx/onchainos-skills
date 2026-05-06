@@ -140,19 +140,60 @@ old_sha="$(cat "$MARK" 2>/dev/null || true)"
 echo "→ registering skills (npx skills add $SRC_ROOT -g -s '*' --yes)"
 npx skills add "$SRC_ROOT" -g -s '*' --yes
 
-# 2. Install onchainos → $INSTALL_DIR
+# 2. 先把 $INSTALL_DIR 写进 shell rc + 加进当前 PATH —— 这样下面装完 onchainos
+# 立刻能在 PATH 里找到，不依赖用户手动 source。
 mkdir -p "$INSTALL_DIR"
+ensure_in_path
+
+# 3. Install onchainos → $INSTALL_DIR
 echo "→ installing $BINARY → $INSTALL_DIR/$BINARY"
 install -m 0755 "$SRC_BIN" "$INSTALL_DIR/$BINARY"
 
-ensure_in_path
+# macOS：剥掉 com.apple.quarantine xattr —— tgz 从 IM/网盘下载后解压出来的
+# 二进制会带 quarantine 标记，首次执行触发 Gatekeeper 弹窗，用户即使点了允许，
+# 当前脚本也会因 set -e 在下面 --version 检查时直接退出。这里主动清掉避免弹窗。
+if [ "$(uname -s)" = "Darwin" ]; then
+  xattr -dr com.apple.quarantine "$INSTALL_DIR/$BINARY" 2>/dev/null || true
+fi
 
-# 3. Verify
+# 4. 自动迁移老装 —— 老版 install-agent-task.sh 落
+# /usr/local/bin/onchainos（symlink → ~/.onchainos/onchainos），在 macOS 默认 PATH
+# 顺序里排在 ~/.local/bin 前面，会让新装失效。这里直接清掉让 ~/.local/bin 接管。
+# 系统目录的 symlink 需要 sudo（会提示输密码一次），失败就 fallback 给手动指引。
+LEGACY_LINK="/usr/local/bin/$BINARY"
+LEGACY_BIN="$HOME/.onchainos/$BINARY"
+
+# 4a. 用户目录下的二进制副本，直接删
+if [ -e "$LEGACY_BIN" ] || [ -L "$LEGACY_BIN" ]; then
+  echo "→ 清理老装二进制 $LEGACY_BIN"
+  rm -f "$LEGACY_BIN"
+fi
+
+# 4b. 系统目录下的 symlink，要 sudo
+if [ -e "$LEGACY_LINK" ] || [ -L "$LEGACY_LINK" ]; then
+  legacy_real="$(readlink -f "$LEGACY_LINK" 2>/dev/null || echo "$LEGACY_LINK")"
+  target_real="$(readlink -f "$INSTALL_DIR/$BINARY" 2>/dev/null || echo "$INSTALL_DIR/$BINARY")"
+  if [ "$legacy_real" != "$target_real" ]; then
+    echo "→ 清理老装 symlink $LEGACY_LINK（需 sudo 一次性确认）"
+    if ! sudo rm -f "$LEGACY_LINK" 2>/dev/null; then
+      echo "  ⚠ sudo 删除失败/被拒，请手动跑：sudo rm -f $LEGACY_LINK" >&2
+    fi
+  fi
+fi
+
+# 5. Verify
 echo
 echo "→ verifying $BINARY --version"
 if ! version_output="$("$INSTALL_DIR/$BINARY" --version 2>&1)"; then
-  echo "✗ $BINARY failed to run:" >&2
+  echo "✗ $BINARY 启动失败：" >&2
   echo "$version_output" >&2
+  if [ "$(uname -s)" = "Darwin" ]; then
+    echo >&2
+    echo "若 macOS 弹出过『无法验证开发者』/『已被破坏』等弹窗，按以下任一处理：" >&2
+    echo "  a) 打开 系统设置 → 隐私与安全性 → 点『仍要打开』允许 $BINARY" >&2
+    echo "  b) 终端运行: xattr -dr com.apple.quarantine $INSTALL_DIR/$BINARY" >&2
+    echo "  然后重跑本脚本（或直接 $INSTALL_DIR/$BINARY --version 验证）" >&2
+  fi
   exit 1
 fi
 echo "  $version_output"

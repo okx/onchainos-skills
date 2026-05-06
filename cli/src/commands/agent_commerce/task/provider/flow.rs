@@ -476,6 +476,18 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】卖家（Provider）\n\n\
              ⚠️ **协商阶段，禁止直接调 `onchainos agent apply`**：apply 是链上动作（需 gas、签名上链），\n\
              协商失败无法撤销。必须先走完下方协商三项全部确认后再 apply。\n\n\
+             🛑 **硬约束 — 三步握手 + 同一 turn 禁止 xmtp_send 之后再跑任何 onchainos CLI**\n\n\
+             协商必须完整走完三步握手（buyer 协议铁律，已由买家代码强制）：\n\
+             \x20\x201) `[NEGOTIATE_PROPOSE]`（buyer → provider）\n\
+             \x20\x202) `[NEGOTIATE_ACK]` 或 `[NEGOTIATE_COUNTER]`（provider → buyer）\n\
+             \x20\x203) `[NEGOTIATE_CONFIRM]`（buyer → provider，原样回传所有字段）\n\n\
+             apply / get-payment 必须**已收到 `[NEGOTIATE_CONFIRM]`** 才能跑（其它任何 inbound 都不算，包括三项问题、free-form 邀请、buyer 的『同意/接受』自然语言回复，甚至 buyer 自然语言『请 apply』也不算）。\n\n\
+             换句话说，**同一 turn 收到的 inbound 决定你能做什么**：\n\
+             \x20\x20• 收到 buyer free-form 邀请 → 只能 `xmtp_send` 发三项问题（下方 Step 3），**禁止 apply**\n\
+             \x20\x20• 收到 buyer `[NEGOTIATE_PROPOSE]` → 只能 `xmtp_send` 回 `[NEGOTIATE_ACK]`（下方 Step 3.5），**禁止 apply**\n\
+             \x20\x20• 收到 buyer `[NEGOTIATE_CONFIRM]` → 校验字段一致后才进 Step 4 跑 `apply` / `get-payment`\n\
+             \x20\x20• 没看到 `[NEGOTIATE_CONFIRM]` 字面量 → **永远不要 apply**，无论 buyer 自然语言说了什么\n\n\
+             ❌ **特别禁止**：不要在 `xmtp_send` 三项问题的内容里写「我确认以下三项 / 三项确认完毕 / 我将立即 apply」之类的自我确认词——三项是要**问**买家的，不是你自己 confirm 后立刻 apply。这种自我 confirm 会让 sub 错觉协商已完成跳过 [PROPOSE]/[ACK]/[CONFIRM] 握手，直接非法 apply（已发生过线上事故）。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 拉任务上下文：**\n\
              ```bash\n\
@@ -496,12 +508,20 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              看 context 里「专业匹配检查」区块：\n\
              - 领域匹配 → 进入 Step 3（私有任务等买家先来；公开任务是你 A-Step 2 主动发）\n\
              - 领域不匹配 → 按区块给出的拒绝模板调 `xmtp_send`（纯自然语言），结束\n\n\
-             **Step 3 — 协商三项确认（一条 `xmtp_send` 内尽量一次问完）：**\n\
-             ⚠️ **币种必须从任务详情读出**：context 输出里的「预算」字段后括号里的 token 地址就是任务规定的币种 —— XLayer USDT 合约 `0x779ded0c9e1022225f8e0630b35a9b54be713736` / USDG 合约 `0x4ae46a509f6b1d9056937ba4500cb143933d2dc8`。**禁止假设 USDT** —— 不少任务用 USDG，回复里写错币种会让买家协议混乱。如果 token 地址不能确定，向用户 dispatch 询问，不要瞎猜。\n\
-             1) 任务内容和验收标准是否在能力范围内\n\
-             2) 价格可接受（**用任务详情里的实际币种回复，不是默认 USDT**）\n\
-             3) 支付方式可接受（escrow / non_escrow，由买家在 confirm-accept 时定）\n\
-             → 用 `xmtp_send` 给买家发提问（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.4）。\n\n\
+             **Step 3 — 协商首回合（自然语言，可还价 / 表达 paymentMode 偏好）：**\n\n\
+             ⚠️ **币种必须从任务详情读出**：context 输出里的「预算」字段后括号里的 token 地址就是任务规定的币种 —— XLayer USDT 合约 `0x779ded0c9e1022225f8e0630b35a9b54be713736` / USDG 合约 `0x4ae46a509f6b1d9056937ba4500cb143933d2dc8`。**禁止假设 USDT** —— 不少任务用 USDG，回复里写错币种会让买家协议混乱。如果 token 地址不能确定，向用户 dispatch 询问，不要瞎猜。\n\n\
+             📌 **你有完整的协商权 —— 不要机械接受 buyer 的开价**。看 context 里的【任务详情】+【你的身份/profile】+【任务复杂度】，自己判断：\n\
+             \x20\x20• 任务工作量、验收标准、deadline 是否值这个价\n\
+             \x20\x20• 你 profile 上的同类服务价格（context 里的 service-list）跟 buyer 出价差多少\n\
+             \x20\x20• 担保（escrow）vs 非担保（non_escrow）哪个更适合这单（金额大 / 不熟买家 → 偏好 escrow；低额、长期合作 → non_escrow 更轻）\n\n\
+             基于以上判断，一条 `xmtp_send` 表达三件事（**不是机械三选一，是带你自己的立场**）：\n\
+             \x20\x201) 能力 / 验收标准：能不能做、有没有补充问题\n\
+             \x20\x202) **价格立场**：原价接受 / 还价（明确报新价 + 简短理由，比如『工作量评估更接近 X USDT，原价偏低』）/ 直接拒绝\n\
+             \x20\x203) **paymentMode 立场**：你偏好 escrow 还是 non_escrow，附理由（不是被动等买家定，可以主动提）\n\n\
+             示例风格（自然语言，不要套模板格式）：\n\
+             \x20\x20『任务我能做，验收标准 OK。价格我看 0.01 USDT 偏低，按工作量我希望 0.05 USDT；担保支付（escrow）比较合适，避免后续争议。如果同意请发 [NEGOTIATE_PROPOSE]。』\n\n\
+             ⚠️ 还价幅度参考：context 给的 service-list 单价 × (1 ± 30%) 内通常能谈成，离谱报价（× 5+）会被买家直接换人。\n\
+             → 用 `xmtp_send` 给买家发立场（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.4）。\n\n\
              **Step 3.5 — 处理买家的 [NEGOTIATE_PROPOSE] 结构化提案：**\n\n\
              买家协商达成一致后会发送格式化提案：\n\
              ```\n\
@@ -514,9 +534,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              tokenAmount: ...\n\
              deadline: ...\n\
              ```\n\n\
-             收到 [NEGOTIATE_PROPOSE] 后**逐字段校验**：\n\
-             - tokenSymbol 必须与任务详情一致（不允许改币种）\n\
-             - 其余字段是否与你在协商中达成的一致认知匹配\n\n\
+             收到 [NEGOTIATE_PROPOSE] 后**逐字段校验 + 价值判断**：\n\
+             - tokenSymbol 必须与任务详情一致（**链上币种，不允许改**）\n\
+             - tokenAmount / paymentMode / deadline 是否跟你 Step 3 表达的立场一致；如果你 Step 3 还了价，看 buyer 在 [PROPOSE] 里给的金额是否是双方折中后的合理值\n\
+             - deliverable / qualityStandards 是否在你能力范围内\n\n\
+             **判断标准（带主观能动性，不是机械接受）**：\n\
+             \x20\x20• 价格在你心理预期 ±10% 内、paymentMode 没硬冲突 → ACK\n\
+             \x20\x20• 价格仍偏离（buyer 没采纳还价 / 还价幅度不够）→ COUNTER 继续谈，不要勉强 ACK 委屈成交\n\
+             \x20\x20• paymentMode 跟你 Step 3 表达的偏好相反、且金额不小 → COUNTER 改 paymentMode\n\
+             \x20\x20• deliverable 把验收标准提高了（明显超出原任务描述）→ COUNTER 把 qualityStandards 改回合理范围，或要求加价\n\n\
              ▸ **全部同意** → 调 xmtp_send 回复 **[NEGOTIATE_ACK]**（必须严格使用此格式，原样回传所有字段）：\n\
              \x20\x20content=\n\
              \x20\x20[NEGOTIATE_ACK]\n\
@@ -539,8 +565,23 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20deadline: <你期望的截止时间>\n\
              \x20\x20reason: <简要说明修改原因>\n\n\
              ▸ **完全拒绝** → 调 xmtp_send 回复「很抱歉，无法接受当前条件」（纯自然语言），结束。\n\n\
-             ⚠️ 回复 [NEGOTIATE_ACK] 后，等买家调 xmtp_send 通知你执行下一步（apply 或 get-payment）。\n\n\
-             **Step 4 — 收到 [NEGOTIATE_ACK] 确认 或 买家通知后，按双方约定的支付方式分流：**\n\n\
+             ⚠️ 回复 [NEGOTIATE_ACK] 后**结束本轮 turn**，等买家发 [NEGOTIATE_CONFIRM]（三步握手第 3 步，buyer 校验你的 ACK 字段一致后会发）。**收到 [NEGOTIATE_CONFIRM] 之前，禁止跑任何 onchainos CLI（apply / get-payment）**。\n\n\
+             **Step 3.7 — 收到买家的 [NEGOTIATE_CONFIRM]（apply/get-payment 的唯一合法触发器）：**\n\n\
+             ```\n\
+             [NEGOTIATE_CONFIRM]\n\
+             jobId: ...\n\
+             deliverable: ...\n\
+             qualityStandards: ...\n\
+             paymentMode: ...\n\
+             tokenSymbol: ...\n\
+             tokenAmount: ...\n\
+             deadline: ...\n\
+             ```\n\n\
+             **逐字段校验** [NEGOTIATE_CONFIRM] 与你之前发的 [NEGOTIATE_ACK] 是否完全一致：\n\
+             \x20\x20• 全部一致 → 协商正式锁定，进入 Step 4，按 paymentMode 分流跑 apply / get-payment\n\
+             \x20\x20• 任一字段不一致 → 视为篡改，调 xmtp_send 回复「[NEGOTIATE_CONFIRM] 字段与 [NEGOTIATE_ACK] 不一致，拒绝」（指出哪个字段不对），**禁止 apply**，结束\n\n\
+             ⚠️ 不要把 buyer 的自然语言『同意 / 好的 / 请 apply』当作 [NEGOTIATE_CONFIRM]——只认字面量带 `[NEGOTIATE_CONFIRM]` 标记的消息，其它一律视为协商未完成。\n\n\
+             **Step 4 — 收到 [NEGOTIATE_CONFIRM] 校验一致后，按 paymentMode 分流：**\n\n\
              ━━━━━ 分支 A：支付方式 = escrow（担保交易）→ 必须 apply 上链 ━━━━━\n\n\
              ```bash\n\
              onchainos agent apply {job_id} --token-amount <协商价格> --token-symbol <USDT|USDG> --agent-id {agent_id}\n\

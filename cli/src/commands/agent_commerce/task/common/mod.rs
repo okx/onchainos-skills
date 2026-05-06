@@ -461,19 +461,23 @@ fn build_context(
                 task.job_id
             ));
             out.push_str("   - 成功返回 `sessionKey`（新 sub 的 key，下面 step 2 直接用，**不要再调 `session_status`**——bootstrap 阶段 `session_status` 可能返回当前所在 user session 的 key，会拿错）+ `xmtpGroupId`\n");
-            out.push_str("2. 立即调 **`xmtp_send`**（参数 `sessionKey` = step 1 `xmtp_start_conversation` 返回值的 `sessionKey` 字段原值，`content` = 协商三项确认提问）\n\n");
-            out.push_str("🛑 **必须用 `xmtp_send`，禁止用 `xmtp_dispatch_session` / `xmtp_dispatch_user` / `xmtp_prompt_user` 替代**——给 peer agent 发 a2a-agent-chat 业务消息**只有 `xmtp_send` 一种路径**。看到「建立协商通道 / 派发到 sub / dispatch」这种语感**也只能选 `xmtp_send`**，工具名里有 `dispatch` 不代表选 `dispatch_session`。`xmtp_dispatch_session` 是 user→sub `[USER_DECISION_RELAY]` 决策回传专用，content 必字面以 `[USER_DECISION_RELAY] 用户决策：` 开头，跟协商首条 a2a-agent-chat 形态完全不符。\n\n");
-            out.push_str("协商三项（一条 `xmtp_send` 一次问完）：\n");
-            out.push_str("  1) 任务内容和验收标准是否在能力范围内\n");
-            out.push_str("  2) 价格 / 币种 USDT or USDG\n");
-            out.push_str("  3) 支付方式（escrow / non_escrow）\n\n");
+            out.push_str("2. **必须先调 `onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <agentId>` 拿协商首回合剧本**，按剧本输出去 `xmtp_send`——不要凭这里的简版直接发自我确认。\n\n");
+            out.push_str("🛑 **必须用 `xmtp_send`，禁止用 `xmtp_dispatch_session` / `xmtp_dispatch_user` / `xmtp_prompt_user` 替代**——给 peer agent 发 a2a-agent-chat 业务消息**只有 `xmtp_send` 一种路径**。看到「建立协商通道 / 派发到 sub / dispatch」这种语感**也只能选 `xmtp_send`**。`xmtp_dispatch_session` 是 user→sub `[USER_DECISION_RELAY]` 决策回传专用，跟协商首条 a2a-agent-chat 形态完全不符。\n\n");
         } else {
             // 私有任务 → provider 被动等买家先来
             out.push_str("当前任务**可见性 = 私有（Private）** → 你**不要主动建群**：\n\n");
             out.push_str("- 私有任务由买家选定 provider，必须**等买家先发** a2a-agent-chat envelope（你才有联系对方的入口）\n");
-            out.push_str("- 收到买家首条 inquire 后，按上面「专业匹配检查」走，匹配通过则在已有 sub session 里 `xmtp_send` 回协商三项\n");
+            out.push_str("- 收到买家首条 inquire + 专业匹配通过后，**必须先调 `onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <agentId>` 拿协商首回合剧本**，再按剧本输出去 `xmtp_send`——不要凭这里简版自己拼协商内容\n");
             out.push_str("- **禁止**调 `xmtp_start_conversation` 主动建群——私有任务没有这个权限\n\n");
         }
+
+        // 协商首回合提示（公开 / 私有共用）—— 这里只放语义性反提示，
+        // 具体三步握手 + 报价主观判断剧本由 next-action 提供。
+        out.push_str("📌 **协商首回合本质：你是去『问 + 表态』，不是『自我确认』**\n");
+        out.push_str("- 任务能力 / 验收标准：能不能做、有没有补充问题\n");
+        out.push_str("- 价格立场：原价是否合理；偏低就**还价**（明确报新价 + 理由），不要机械接受\n");
+        out.push_str("- paymentMode 立场：你偏好 escrow 还是 non_escrow，附理由（不是被动等买家定）\n\n");
+        out.push_str("❌ **禁止自我 confirm 措辞**：不要在 `xmtp_send` content 里写「我确认以下三项 / 三项确认完毕 / 我接受 / 我将立即 apply / 我将提交接单申请」。三项是要**问**买家的，发完等 buyer 的 `[NEGOTIATE_PROPOSE]` 才进下一步握手——具体三步握手剧本（[PROPOSE] → [ACK] → [CONFIRM]）由 next-action 给出，**这里不能跳过 next-action 直接 apply**（已发生过线上事故）。\n\n");
     }
 
     // ── 下一步动作 ────────────────────────────────────────────────────────
