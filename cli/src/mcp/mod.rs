@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 use crate::client::ApiClient;
 use crate::commands::{
     cross_chain, defi, gateway, leaderboard, market, memepump, portfolio, signal, swap, token,
-    tracker, workflows,
+    tracker, workflows, competition,
 };
 
 // ── DeFi ──────────────────────────────────────────────────────────────
@@ -604,6 +604,77 @@ struct ClusterTopHoldersParams {
     range_filter: String,
 }
 
+// ── Competition ─────────────────────────────────────────────────────────
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionListParams {
+    /// Page size (default 10)
+    page_size: Option<u32>,
+    /// Page number starting from 1 (default 1)
+    page_num: Option<u32>,
+    /// Status filter: 0=active, 1=ended, 2=all (omit for all)
+    status: Option<u32>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionIdParams {
+    /// Activity identifier: either the numeric id from a prior `competition_list`
+    /// response (e.g. "110"), or the activity `name` / `shortName` string (e.g.
+    /// "Agentic Trading Contest" or "agentic5"). The handler auto-resolves names
+    /// to ids via a list lookup, so callers can use whichever they have at hand.
+    activity_id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionRankParams {
+    /// Activity identifier: either the numeric id from a prior `competition_list`
+    /// response, or the activity `name` / `shortName`. Auto-resolved server-side.
+    activity_id: String,
+    /// Optional user wallet address. If omitted, auto-resolves from the currently
+    /// selected account: the activity's chain (Solana vs EVM) determines whether
+    /// the SOL or EVM address is used. Pass an explicit value only when
+    /// querying someone else's rank.
+    wallet: Option<String>,
+    /// Sort type: 1=PnL% (realized ROI), 7=PnL (realized profit). Default 1. The exact values
+    /// for a given competition are returned by `competition_detail` under
+    /// `tabConfigs[].rankFieldConfig[].sortValueMap.descend` — read that array first to know
+    /// which leaderboards this activity exposes; future activities may add more values.
+    sort_type: Option<i32>,
+    /// Max leaderboard entries (default 20, max 100)
+    limit: Option<u32>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionUserStatusParams {
+    /// Activity name from a previous `competition_list` / `competition_user_status` response (omit to check all activities including ended ones)
+    activity_name: Option<String>,
+    /// Optional EVM wallet address. If omitted, the tool auto-resolves the EVM address of the currently selected account.
+    evm_wallet: Option<String>,
+    /// Optional SOL wallet address. If omitted, the tool auto-resolves the SOL address of the currently selected account.
+    sol_wallet: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionJoinParams {
+    /// Activity name from a previous `competition_list` response (the `name` field). Internal id is resolved server-side; do NOT pass numeric ids.
+    activity_name: String,
+    /// Optional EVM wallet address to register. If omitted, auto-resolves from the currently selected account.
+    evm_wallet: Option<String>,
+    /// Optional SOL wallet address to register. If omitted, auto-resolves from the currently selected account.
+    sol_wallet: Option<String>,
+    /// Chain ID of the competition chain (e.g. "1" for Ethereum, "501" for Solana)
+    chain_index: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CompetitionClaimParams {
+    /// Activity name from a previous `competition_list` / `competition_user_status` response. Internal id is resolved server-side; do NOT pass numeric ids.
+    activity_name: String,
+    /// Optional EVM wallet address. If omitted, auto-resolves from the currently selected account.
+    evm_wallet: Option<String>,
+    /// Optional SOL wallet address. If omitted, auto-resolves from the currently selected account.
+    sol_wallet: Option<String>,
+}
+
 // ── Gateway ────────────────────────────────────────────────────────────
 #[derive(Deserialize, JsonSchema)]
 struct GatewayGasLimitParams {
@@ -786,6 +857,42 @@ fn ok(data: Value) -> Result<String, String> {
     };
     Ok(serde_json::to_string_pretty(&payload)
         .unwrap_or_else(|e| format!("failed to serialize response: {e}")))
+}
+
+/// For competition MCP tools: if the AI did not pass `evm_wallet` / `sol_wallet`,
+/// auto-resolve them from the locally logged-in account. The competition skill
+/// has no `wallet_status` MCP tool to chain to, so we read the wallet store
+/// directly here. Unlike the CLI flow (where users explicitly pass addresses),
+/// the MCP-facing tools should "just work" with the active account.
+fn resolve_competition_addresses(
+    evm: &Option<String>,
+    sol: &Option<String>,
+) -> anyhow::Result<(String, String)> {
+    if let (Some(e), Some(s)) = (evm.as_ref(), sol.as_ref()) {
+        return Ok((e.clone(), s.clone()));
+    }
+    let (default_evm, default_sol) = competition::resolve_default_addresses()?;
+    Ok((
+        evm.clone().unwrap_or(default_evm),
+        sol.clone().unwrap_or(default_sol),
+    ))
+}
+
+/// For competition_detail / competition_rank: the AI may pass either the
+/// numeric activity id (from a prior `competition_list` response) or the
+/// activity name / shortName, since other competition tools (join / claim /
+/// user_status) accept names. We accept both here for consistency: if the
+/// input parses as a number we use it directly; otherwise we resolve via
+/// `competition::resolve_activity_id_by_name`. This avoids the wasted
+/// "first call fails with bad request, retry with id" pattern.
+async fn resolve_activity_identifier(
+    client: &mut ApiClient,
+    raw: &str,
+) -> anyhow::Result<String> {
+    if raw.parse::<u64>().is_ok() {
+        return Ok(raw.to_string());
+    }
+    competition::resolve_activity_id_by_name(client, raw).await
 }
 
 fn err(e: anyhow::Error) -> Result<String, String> {
@@ -2265,6 +2372,186 @@ impl McpServer {
             p.slippage.as_deref().unwrap_or("0.01"),
             p.amount.as_deref(),
             p.platform_id.as_deref(),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "competition_list",
+        description = "List Agentic Wallet exclusive trading competitions. After this returns, follow okx-growth-competition SKILL.md Step 1 fixed table template structure (5 columns: Name / Chain / Time / Total Prize Pool / Details), rendered in the user's language (English canonical, or Chinese using 活动名称 / 活动链 / 时间 / 总奖池 / 详情链接). NEVER add an ID column or show activityId. Chain cell MUST hardcode 'Solana, {chainName}' prefix when chainName is not Solana."
+    )]
+    async fn competition_list(
+        &self,
+        Parameters(p): Parameters<CompetitionListParams>,
+    ) -> Result<String, String> {
+        match competition::list_for_mcp(
+            &mut *self.client.lock().await,
+            p.page_size.unwrap_or(10),
+            p.page_num.unwrap_or(1),
+            p.status,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "competition_detail",
+        description = "Get trading competition details: rules, prize pool distribution, participation requirements, timeline. The activity_id parameter accepts EITHER the numeric id from a prior competition_list response OR the activity name / shortName — both are auto-resolved server-side. After this returns, follow okx-growth-competition SKILL.md Step 2 fixed display template structure, rendered in the user's language. Required structure: a Basic-info block (English 'Basic info:' / Chinese '基本信息：') with the chain line using hardcoded 'Solana, {chainName}' prefix, plus a Reward-categories numbered list (1./2./3./4.) with rank-breakdown tables for sections 1 and 2. Sections 3 (Participation Reward / 参与奖) and 4 (Skill Quality Award / Skill 质量奖) have specific required content — preserve meaning in any language. NEVER show activityId or other internal numeric ids to the user."
+    )]
+    async fn competition_detail(
+        &self,
+        Parameters(p): Parameters<CompetitionIdParams>,
+    ) -> Result<String, String> {
+        let mut client = self.client.lock().await;
+        let resolved_id = match resolve_activity_identifier(&mut client, &p.activity_id).await {
+            Ok(id) => id,
+            Err(e) => return err(e),
+        };
+        match competition::detail_for_mcp(&mut client, &resolved_id).await {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "competition_rank",
+        description = "Get one leaderboard for a trading competition: top-N entries plus the user's own rank, estimated reward, and gap to next tier. \
+The activity_id parameter accepts EITHER the numeric id from a prior competition_list response OR the activity name / shortName — both are auto-resolved server-side. \
+A competition can have multiple leaderboards (PnL%, PnL, ...) — this tool returns ONE per call, scoped by `sort_type`. \
+Before answering 'what's my rank?' style questions, call `competition_detail` first, enumerate \
+`tabConfigs[].rankFieldConfig[].sortValueMap.descend`, then call this tool ONCE PER sort_type so you cover every leaderboard. \
+After this returns, follow okx-growth-competition SKILL.md Step 5 fixed CASE 1 / CASE 2 / CASE 3 template structure, rendered in the user's language — never invent a freeform table layout, never collapse multi-leaderboard sections into one."
+    )]
+    async fn competition_rank(
+        &self,
+        Parameters(p): Parameters<CompetitionRankParams>,
+    ) -> Result<String, String> {
+        let mut client = self.client.lock().await;
+        let resolved_id = match resolve_activity_identifier(&mut client, &p.activity_id).await {
+            Ok(id) => id,
+            Err(e) => return err(e),
+        };
+        let wallet = match p.wallet {
+            Some(w) => w,
+            None => match competition::resolve_wallet_for_activity(&mut client, &resolved_id).await {
+                Ok(addr) => addr,
+                Err(e) => return err(e),
+            },
+        };
+        match competition::rank_for_mcp(
+            &mut client,
+            &resolved_id,
+            &wallet,
+            p.sort_type.unwrap_or(1),
+            p.limit.unwrap_or(20),
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "competition_user_status",
+        description = "Check user's competition participation status and reward eligibility (joinStatus, rewardStatus). Omit activity_name to check all activities including ended ones. Identify competitions by activity name in subsequent tool calls — internal numeric ids are intentionally not exposed."
+    )]
+    async fn competition_user_status(
+        &self,
+        Parameters(p): Parameters<CompetitionUserStatusParams>,
+    ) -> Result<String, String> {
+        let mut client = self.client.lock().await;
+        let (evm_wallet, sol_wallet) = match resolve_competition_addresses(&p.evm_wallet, &p.sol_wallet) {
+            Ok(pair) => pair,
+            Err(e) => return err(e),
+        };
+        let activity_id = match p.activity_name.as_deref() {
+            Some(name) => match competition::resolve_activity_id_by_name(&mut client, name).await {
+                Ok(id) => Some(id),
+                Err(e) => return err(e),
+            },
+            None => None,
+        };
+        match competition::user_status_all_for_mcp(
+            &mut client,
+            activity_id.as_deref(),
+            &evm_wallet,
+            &sol_wallet,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "competition_join",
+        description = "Register user for a trading competition. Requires wallet login. Pass activity_name from a prior competition_list result; internal ids are resolved server-side. \
+BEFORE calling this tool, you MUST first call competition_user_status for the same activity to read the current account's joinStatus: \
+- joinStatus=1 → current account already registered, do NOT call this tool, render Scenario A template from SKILL.md Step 3 instead. \
+- joinStatus=0 → safe to call. \
+After this returns `joined: true`, render the SKILL.md Step 3 'Successful registration' fixed template structure (lead phrase + dual-chain sentence + ranking note + closing question + bracketed disclaimer on its own line) in the user's language. \
+On error code=11016 (Participation limit reached) → another account in the same login is registered; render Scenario B template (find the registered account by iterating other accounts in wallet_store and calling competition_user_status until one returns joinStatus=1)."
+    )]
+    async fn competition_join(
+        &self,
+        Parameters(p): Parameters<CompetitionJoinParams>,
+    ) -> Result<String, String> {
+        let mut client = self.client.lock().await;
+        let (evm_wallet, sol_wallet) = match resolve_competition_addresses(&p.evm_wallet, &p.sol_wallet) {
+            Ok(pair) => pair,
+            Err(e) => return err(e),
+        };
+        let activity_id =
+            match competition::resolve_activity_id_by_name(&mut client, &p.activity_name).await {
+                Ok(id) => id,
+                Err(e) => return err(e),
+            };
+        match competition::join(
+            &mut client,
+            &activity_id,
+            &evm_wallet,
+            &sol_wallet,
+            &p.chain_index,
+        )
+        .await
+        {
+            Ok(data) => ok(data),
+            Err(e) => err(e),
+        }
+    }
+
+    #[tool(
+        name = "competition_claim",
+        description = "Atomic competition reward claim: fetch calldata → sign with TEE session → broadcast on-chain → return txHash array. Requires wallet login. Pass activity_name from a prior competition_list / competition_user_status result; internal ids are resolved server-side. Do NOT chain `gateway_broadcast` after this — the on-chain submission already happened inside this tool."
+    )]
+    async fn competition_claim(
+        &self,
+        Parameters(p): Parameters<CompetitionClaimParams>,
+    ) -> Result<String, String> {
+        let mut client = self.client.lock().await;
+        let (evm_wallet, sol_wallet) = match resolve_competition_addresses(&p.evm_wallet, &p.sol_wallet) {
+            Ok(pair) => pair,
+            Err(e) => return err(e),
+        };
+        let activity_id =
+            match competition::resolve_activity_id_by_name(&mut client, &p.activity_name).await {
+                Ok(id) => id,
+                Err(e) => return err(e),
+            };
+        match competition::claim_and_submit(
+            &mut client,
+            &activity_id,
+            &evm_wallet,
+            &sol_wallet,
         )
         .await
         {
