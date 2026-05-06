@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use serde_json::{json, Map, Value};
 
-use super::helpers::{evidence_dir, parse_job_id};
+use super::helpers::evidence_dir;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::signing;
 
@@ -13,18 +13,16 @@ const EVIDENCE_SIDES: [&str; 2] = ["provider", "client"];
 
 pub async fn handle_info(
     client: &mut TaskApiClient,
-    dispute_id: &str,
+    job_id: &str,
     agent_id: &str,
 ) -> Result<()> {
-    let job_id = parse_job_id(dispute_id)?;
-
     let (_account_id, _address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
-    let path = client.endpoint(&job_id, "evidence");
+    let path = client.endpoint(job_id, "evidence");
     let mut data = client.get_with_identity(&path, &agent_id).await?;
 
-    let tmp_dir = evidence_dir(&job_id, Some(dispute_id))?;
+    let tmp_dir = evidence_dir(job_id)?;
     fs::create_dir_all(&tmp_dir)?;
 
     // 后端扁平结构：provider/client 直接在顶层；images 为 `<jobId>/<idx>/<uuid>` 字符串数组。
@@ -35,7 +33,7 @@ pub async fn handle_info(
             let Some(file_key) = item.as_str().map(str::to_string) else { continue };
             let mut merged = Map::new();
             merged.insert("fileKey".into(), json!(&file_key));
-            match download_image(client, &job_id, &file_key, &tmp_dir, &agent_id).await {
+            match download_image(client, job_id, &file_key, &tmp_dir, &agent_id).await {
                 Ok(p) => {
                     merged.insert(
                         "localPath".into(),

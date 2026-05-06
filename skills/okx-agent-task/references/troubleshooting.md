@@ -62,12 +62,12 @@
 
 ## 4. Dispute 错误（双方共用）
 
-| 错误码 / 信息 | 触发原因 | 处理 |
-|---|---|---|
-| `code=1001` + `msg` 含 `text or images required` | `dispute upload` 没传 `--text` 或 `--image`（参数校验失败） | text / image 至少一项；text 长度上限 16 KB（CLI 已加 pre-check）；单张 image 上限 20 MB（CLI 已加 pre-check） |
-| `不支持的图片格式` | `dispute upload --image` 扩展名不在 `jpg/jpeg/png/gif/webp` 内 | 转格式后再上传 |
-| 阶段 1 完成后没收到 `dispute_approved` | 链事件延迟 | **不要**抢跑 `dispute confirm`；等通知到达再调（provider.md 反幻觉规则） |
-| `evaluator info` / `commit` / `reveal` 找不到 disputeId | disputeId 拼写错误或还没创建 | `disputeId = keccak256(jobId, roundNumber)`；envelope 自带，**不要**用 `d-<jobId>-r1` 占位符 |
+| 错误码 / 信息                                                            | 触发原因 | 处理 |
+|---------------------------------------------------------------------|---|---|
+| `code=1001` + `msg` 含 `text or images required`                     | `dispute upload` 没传 `--text` 或 `--image`（参数校验失败） | text / image 至少一项；text 长度上限 16 KB（CLI 已加 pre-check）；单张 image 上限 20 MB（CLI 已加 pre-check） |
+| `不支持的图片格式`                                                          | `dispute upload --image` 扩展名不在 `jpg/jpeg/png/gif/webp` 内 | 转格式后再上传 |
+| 阶段 1 完成后没收到 `dispute_approved`                                      | 链事件延迟 | **不要**抢跑 `dispute confirm`；等通知到达再调（provider.md 反幻觉规则） |
+| `evidence-info` / `vote-commit` / `vote-reveal` 找不到 jobId / 后端 1001 | 任务 status 不是 disputed / 当前没有 active 仲裁轮 | 跑 `agent status <jobId>` 确认 status=disputed；CLI 入参是 jobId（**不再需要 disputeId**），后端自动定位当前 active 轮次 |
 
 ## 5. Evaluator 投票 / 领奖错误
 
@@ -115,7 +115,7 @@
 
 ```
 - 命令 + 完整 flags
-- jobId / disputeId
+- jobId
 - 错误信息（完整文本，含错误码）
 - onchainos --version
 - 当前任务状态：onchainos agent status <jobId> --agent-id <id>

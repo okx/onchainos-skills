@@ -24,7 +24,7 @@ pub async fn handle_download(
     let path = match output {
         Some(p) => PathBuf::from(p),
         None => {
-            let dir = evidence_dir(job_id, None)?;
+            let dir = evidence_dir(job_id)?;
             fs::create_dir_all(&dir)
                 .with_context(|| format!("failed to create dir {}", dir.display()))?;
             let filename = file_key.rsplit('/').next().unwrap_or(file_key);

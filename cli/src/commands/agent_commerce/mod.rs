@@ -278,10 +278,11 @@ pub enum AgentCommand {
     // 对齐展平到顶层。`agent evaluator <sub>` 形式不再支持，各命令对应关系见
     // `evaluator/mod.rs` 文件头注释。
 
-    /// Fetch dispute evidence (text + images downloaded locally so multimodal agents can view them)
+    /// Fetch dispute evidence (text + images downloaded locally so multimodal agents can view them).
+    /// Backend resolves the active dispute round from jobId — CLI does not need disputeId.
     #[command(name = "evidence-info")]
     EvidenceInfo {
-        dispute_id: String,
+        job_id: String,
         /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
         agent_id: String,
@@ -304,9 +305,10 @@ pub enum AgentCommand {
     },
     /// Commit a vote (Phase 1 of commit-reveal). vote: 0 = Approve (Client wins), 1 = Reject (Provider wins).
     /// Body sent to backend is only `{ vote }` — reason is NOT part of the API (lives in agent session memory).
+    /// Backend resolves the active dispute round from jobId.
     #[command(name = "vote-commit")]
     VoteCommit {
-        dispute_id: String,
+        job_id: String,
         #[arg(long)]
         vote: u8,
         /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
@@ -314,12 +316,12 @@ pub enum AgentCommand {
         agent_id: String,
     },
     /// Reveal a previously-committed vote (Phase 2 of commit-reveal). Driven by the
-    /// `reveal_started` system event whose envelope carries `disputeId`. CLI sends an
-    /// empty body `{}` — backend reads vote+salt from `task_dispute_voter` keyed by
-    /// (disputeId, voter), so no `--vote` is required.
+    /// `reveal_started` system event. CLI sends an empty body `{}` — backend reads
+    /// vote+salt from `task_dispute_voter` keyed by (active dispute round, voter),
+    /// so no `--vote` is required.
     #[command(name = "vote-reveal")]
     VoteReveal {
-        dispute_id: String,
+        job_id: String,
         /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
         agent_id: String,
@@ -613,21 +615,21 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::provider::run_dispute(c, ctx).await,
 
         // ── Evaluator (arbitrator) flat dispatch ────────────────────
-        AgentCommand::EvidenceInfo { dispute_id, agent_id } => {
+        AgentCommand::EvidenceInfo { job_id, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::info::handle_info(&mut c, &dispute_id, &agent_id).await
+            task::evaluator::info::handle_info(&mut c, &job_id, &agent_id).await
         }
         AgentCommand::EvidenceDownload { job_id, file_key, output, agent_id } => {
             let c = task::common::network::task_api_client::TaskApiClient::new();
             task::evaluator::download::handle_download(&c, &job_id, &file_key, output.as_deref(), &agent_id).await
         }
-        AgentCommand::VoteCommit { dispute_id, vote, agent_id } => {
+        AgentCommand::VoteCommit { job_id, vote, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::commit::handle_commit(&mut c, &dispute_id, vote, &agent_id).await
+            task::evaluator::commit::handle_commit(&mut c, &job_id, vote, &agent_id).await
         }
-        AgentCommand::VoteReveal { dispute_id, agent_id } => {
+        AgentCommand::VoteReveal { job_id, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::reveal::handle_reveal(&mut c, &dispute_id, &agent_id).await
+            task::evaluator::reveal::handle_reveal(&mut c, &job_id, &agent_id).await
         }
         AgentCommand::ArbitrationClaim { agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();

@@ -12,8 +12,8 @@
 
 `next-action --role evaluator --jobStatus evaluator_selected` 生成结构化提示词，要求 agent 按顺序：
 
-1. 从 envelope.message 提取 `disputeId`。
-2. `onchainos agent evidence-info <disputeId>` — 拿到 `evidences: {provider:{texts[],images[]}, client:{texts[],images[]}}`，以及 `description`
+1. 从 envelope.message 提取 `jobId`（顶层字段）。
+2. `onchainos agent evidence-info <jobId>` — 拿到 `evidences: {provider:{texts[],images[]}, client:{texts[],images[]}}`，以及 `description`。后端按 jobId 自动定位当前 active dispute 轮次。
 3. **必须逐张打开** `evidences.provider.images[].localPath` 和 `evidences.client.images[].localPath` —— 调用多模态 read / view 能力读图。只凭文本猜图违反第 3 节 L3 义务 #1
 
 ## 2. 按争议类型打分（Rubric）
@@ -55,7 +55,7 @@
 commit 前**必须**在 session 记忆里生成结构化推理链（不入链、不推用户，用于 L4 递归自检）：
 
 ```
-争议 ID: <disputeId>
+任务 ID: <jobId>
 争议类型: <质量/超时/恶意>
 Rubric 打分: <规格 X/40 + 验收 Y/30 + 功能 Z/20 + 专业 W/10 = 总分 N/100>
 原生选项: <完成 | 部分完成 | ...>
@@ -79,13 +79,13 @@ commit 前逐项确认，任一未通过回 2 重审：
 ## 6. commit 执行
 
 ```bash
-onchainos agent vote-commit <disputeId> --vote <0|1>
+onchainos agent vote-commit <jobId> --vote <0|1>
 ```
 
 - **只能是 0（Approve/Client 胜）或 1（Reject/Provider 胜）**，合约无 skip 选项（超时罚 `<slashTimeoutBps>` 比错投 `<slashMinorityBps>` 更亏——见 10 经济模型）
 - 失败最多重试 3 次（commit 窗口关闭即按 `<slashTimeoutBps>` 罚没）；返回 `voter has already committed` 视为成功
 - body 只带 `{ vote: int }`（0=Approve 支持 Client / 1=Reject 支持 Provider）；裁决书 4 仅保留在 session 记忆，**不入链、不推 user session、不写本地**
-- **无本地持久化**：reveal 由 `reveal_started` 系统事件驱动，envelope 自带 `disputeId`；后端从 `task_dispute_voter` 反查 vote+salt——CLI 不再需要 `~/.onchainos/evaluator-commits.jsonl` 这个文件，commit 完成后什么都不写到磁盘
+- **无本地持久化**：reveal 由 `reveal_started` 系统事件驱动，CLI 入参是 `<jobId>`；后端按 jobId 自动定位当前 active 轮次，从 `task_dispute_voter` 反查 vote+salt——CLI 不再需要 `~/.onchainos/evaluator-commits.jsonl` 这个文件，commit 完成后什么都不写到磁盘
 
 ## 7. 不通知用户
 

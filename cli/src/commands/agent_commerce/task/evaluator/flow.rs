@@ -34,13 +34,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              【判决权威】评估者规范（誓约 L1-L5 + 决策原则 / Rubric / 证据等级 / 裁决书规范）。冲突以本规范为准。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              {step_zero}\
-             **Step 1 — 从入站消息提取 `disputeId` 和顶层 `agentId`（你的 evaluator agentId）。**\n\
-             ⚠️ `disputeId` 缺省时直接中止本轮处理，输出 `missing disputeId in payload; abort` 日志结束——`disputeId` 由 `(jobId, roundNumber)` 派生，第 2+ 轮重选时旧 id 一定对不上合约，不要 fallback 编造。\n\
+             **Step 1 — 从入站消息提取 `jobId`（envelope 顶层 `jobId` 字段）和顶层 `agentId`（你的 evaluator agentId）。**\n\
+             `jobId` 缺省时直接中止本轮处理，输出 `missing jobId in payload; abort` 日志结束。\n\
              顶层 `agentId` 缺省时同样中止：后续 evaluator CLI 必须靠它定位钱包，缺了就签不了。\n\
              ⚠️ 争议类型在 Step 4 由 agent 从 task 详情 + 双方 `clientReason` / `providerReason` 自行判断（关键词：质量/规格/验收 → 质量；超时/逾期/拖延 → 超时；欺诈/恶意/串谋 → 恶意；判不出按\"质量\"兜底）。\n\n\
              **Step 2 — 拉取当前证据（必须把 inbound envelope 顶层 `agentId` 透传给 `--agent-id`，CLI 据此定位钱包/身份）：**\n\
              ```bash\n\
-             onchainos agent evidence-info <disputeId> --agent-id <envelope 顶层 agentId>\n\
+             onchainos agent evidence-info <jobId> --agent-id <envelope 顶层 agentId>\n\
              ```\n\
              返回结构 `evidences: {{ provider: {{texts[], images[]}}, client: {{texts[], images[]}} }}`。\n\
              每张 `images[].fileKey` 已由 CLI 下载到本地，`localPath` 是绝对路径。\n\n\
@@ -85,7 +85,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              - **禁止**用 `exec` 跑 `tee` / `cat > file` / `echo > file` / 重定向 / `printf > file` 等方式间接写文件。\n\
              - 正确做法：把下面这段结构化文本**作为 thinking 内容**整理出来给自己看（用于 Step 6 递归自检），不要任何工具调用。\n\
              ```\n\
-             争议 ID: <disputeId>\n\
+             任务 ID: <jobId>\n\
              争议类型: <质量/超时/恶意>\n\
              Rubric 打分: <规格 X/40 + 验收 Y/30 + 功能 Z/20 + 专业 W/10 = 总分 N/100>\n\
              原生选项: <完成 | 部分完成 | 未完成 | ...>\n\
@@ -108,7 +108,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              - □ 我是否在猜测其他 Evaluator 怎么投？\n\n\
              **Step 7 — 执行 commit（同样把 envelope 顶层 `agentId` 透传给 `--agent-id`）：**\n\
              ```bash\n\
-             onchainos agent vote-commit <disputeId> --vote <0|1> --agent-id <envelope 顶层 agentId>\n\
+             onchainos agent vote-commit <jobId> --vote <0|1> --agent-id <envelope 顶层 agentId>\n\
              ```\n\
              ⚠️ **只能是 0（Approve/Client 胜）或 1（Reject/Provider 胜），禁止 skip**（V1 无弃权；拖到超时被罚没的损失通常大于错投少数票）。\n\
              失败最多重试 3 次（CRITICAL，commit 窗口关闭即触发超时罚没）。返回 `voter has already committed` 视为成功进入 Step 8。\n\
@@ -118,7 +118,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              - **禁止**fallback 到查 identity / 找钱包 / 改 config 之类的迂回操作\n\
              - 直接：输出一行 `> commit aborted: evaluator identity not registered for this wallet; report to user via xmtp_dispatch_user`，**不**继续 Step 8，**不**自己跑识别流程，结束 turn 等用户处理\n\n\
              **Step 8 — 输出一行 子session 日志后结束本回合。不调用 通知user session，不通知用户：**\n\n\
-             > Committed dispute=<disputeId> vote=<0|1> autonomously per references/evaluator-decision-rubric.md 6 commit 执行.\n\n\
+             > Committed jobId=<jobId> vote=<0|1> autonomously per references/evaluator-decision-rubric.md 6 commit 执行.\n\n\
              【原则】\n\
              - **完全静默**：本 arm 不 通知user session；用户只会在后续结算/罚没/奖励事件被通知\n\
              - **判决权威**：所有打分规则、决策原则、裁决书格式以 评估者规范 为准\n\
@@ -132,13 +132,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              【会话类型】⚠️ 仲裁 子session。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              {step_zero}\
-             **Step 1 — 从 inbound envelope 提取 `disputeId` 与顶层 `agentId`，执行 reveal：**\n\
+             **Step 1 — 从 inbound envelope 提取 `jobId` 与顶层 `agentId`，执行 reveal：**\n\
              ```bash\n\
-             onchainos agent vote-reveal <disputeId> --agent-id <envelope 顶层 agentId>\n\
+             onchainos agent vote-reveal <jobId> --agent-id <envelope 顶层 agentId>\n\
              ```\n\
-             ⚠️ `disputeId` 缺省 → 输出 `missing disputeId in payload; abort` 日志结束，不要 fallback 编造（`disputeId` 由 `(jobId, roundNumber)` 派生，第 2+ 轮重选时旧 id 一定对不上合约）。\n\
+             ⚠️ `jobId` 缺省 → 输出 `missing jobId in payload; abort` 日志结束。\n\
              **Step 2 — 输出一行 子session 日志后结束。禁止调用 通知user session：**\n\n\
-             > Revealed dispute=<disputeId> autonomously.\n\n\
+             > Revealed jobId=<jobId> autonomously.\n\n\
              【错误映射】\n\
              - `canReveal=false` → CLI 已预检拒绝，无需重试；本轮可能已结算（等 dispute_resolved）或未 commit（正常跳过）\n\
              - `voter has not committed` → 本轮未 commit，跳过 reveal 是正常的\n\
@@ -177,8 +177,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ 子session。\n\n\
              【你的下一步动作】\n\
-             从 payload 提取 `disputeId`，输出一行 子session 日志后结束。禁止调用 通知user session：\n\n\
-             > round_failed disputeId=<disputeId>; awaiting next round.\n"
+             从 payload 提取 `jobId`，输出一行 子session 日志后结束。禁止调用 通知user session：\n\n\
+             > round_failed jobId=<jobId>; awaiting next round.\n"
                 .to_string(),
 
         // ─── 被罚没（VoterStaking.Slashed） ─────────────────────────────
@@ -187,14 +187,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ 子session。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
-             **Step 1 — 从 payload 提取 `amount`（被罚金额）、`reason`（commit/reveal 超时 / 少数方 / 弃权）、`disputeId`。**\n\n\
+             **Step 1 — 从 payload 提取 `amount`（被罚金额）、`reason`（commit/reveal 超时 / 少数方 / 弃权）、`jobId`。**\n\n\
              **Step 2 — 用 `xmtp_dispatch_user` 把罚没通知推给用户**：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20[Stake 罚没 ⚠️] 任务 jobId={job_id}\n\
              \x20\x20\x20\x20  - 金额：<amount> OKB\n\
-             \x20\x20\x20\x20  - 原因：<reason>\n\
-             \x20\x20\x20\x20  - disputeId：<disputeId>\n\n\
+             \x20\x20\x20\x20  - 原因：<reason>\n\n\
              **Step 3 — 输出一行 子session 日志后结束：**\n\n\
              > Slashed amount=<amount> reason=<reason> relayed.\n"
         ),

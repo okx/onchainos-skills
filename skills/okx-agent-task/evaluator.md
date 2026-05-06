@@ -29,7 +29,7 @@
 | event | 会话 | 含义 |
 |---|---|---|
 | `reward_claimed` | **sub** | claimRewards tx 回执：提取 status / amount / txHash → `xmtp_dispatch_user` 推入账或失败给用户 |
-| `slashed` | **sub** | VoterStaking.Slashed 上链：提取 amount / reason / disputeId → `xmtp_dispatch_user` 推罚没金额 + 原因给用户 |
+| `slashed` | **sub** | VoterStaking.Slashed 上链：提取 amount / reason / jobId → `xmtp_dispatch_user` 推罚没金额 + 原因给用户 |
 
 **质押生命周期——sub 处理 + `xmtp_dispatch_user` 推用户**：
 
@@ -56,7 +56,7 @@
 
 > **会话复用原则**：所有事件都先到 sub。dispute 生命周期的 6 个事件（evaluator_selected / reveal_started / dispute_resolved / round_failed / slashed / reward_claimed）共用一个仲裁专属 sub session——`evaluator_selected` 到达时**第一动作必须调 `xmtp_start_evaluate_conversation`（参数 `myAgentId` / `jobId`）建会话**，后续同 jobId 的系统通知由 xmtp infra 命中该 session 继续走 sub。质押 6 个事件（staked / unstake_requested / unstake_claimed / unstake_cancelled / stake_stopped / cooldown_entered，首次质押与追加质押均发 `staked`）到达时也在 sub 被接收并通过 `xmtp_dispatch_user` 转发到 user session。user session 只看到推上来的人话通知。
 
-从入站消息提取 `jobId` / `disputeId`。⚠️ **禁止默认 disputeId**——缺失时直接中止本轮处理（disputeId与轮数有关，第 2+ 轮 `d-<jobId>-r1` 一定对不上合约）。
+从入站消息提取 `jobId`（envelope 顶层字段）。⚠️ **缺失时直接中止本轮处理**，不要 fallback 默认值——后端 evaluator CLI（vote-commit / vote-reveal / evidence-info）都按 jobId 定位当前 active dispute 轮次，没有 jobId 就签不了。
 
 ---
 
@@ -83,16 +83,15 @@
     "description": "VotersSelected 上链，CommitPhase 已开，evaluator 进入本轮陪审。",
     "source": "system",
     "jobId": "42",
-    "timestamp": 1712757000,
-    "disputeId": "d-42-r1"
+    "timestamp": 1712757000
   }
 }
 ```
 
 扩展键按事件类型差异化合并进 `message`：
 
-- **dispute 系列**（`evaluator_selected` / `reveal_started` / `dispute_resolved` / `round_failed`）：必带 `disputeId`，按事件可能附 `voter` / `winner`。
-- **`slashed`**：带 `amount` / `reason`，可选 `disputeId`。
+- **dispute 系列**（`evaluator_selected` / `reveal_started` / `dispute_resolved` / `round_failed`）：基础 5 字段；按事件可能附 `voter` / `winner`。CLI 入参一律是 `jobId`，后端按 jobId 自动定位当前 active 轮次——agent 不需要也不应依赖 envelope 上的 `disputeId`（即便后端附带）。
+- **`slashed`**：带 `amount` / `reason`，agent 推用户通知用 `jobId` 即可。
 - **staking lifecycle**（`staked` / `unstake_requested` / `unstake_claimed` / `unstake_cancelled` / `stake_stopped` / `cooldown_entered`）：**无任何扩展字段**，需要数值/时间一律调 `my-stake` 自取（`cooldown_entered` 取 `cooldownEndsAt`），**不要**在 envelope 上去找 `amount` / `txHash` / `availableAt` / `status` / `errorCode`（这些字段不存在）。⚠️ 质押 stake 与追加质押 increaseStake **统一发 `staked`**，不存在独立的 `stake_increased` 事件。
 
 **唯一规则** — 收到后**立即**调：
@@ -136,7 +135,7 @@ onchainos agent next-action \
 - 每收到一个通知 → 调一次 `next-action` → 照做 → 等下一个通知
 - Sub session 里 **允许**直接跑 `vote-commit`（evaluator_selected arm）和 `vote-reveal`（reveal_started arm）——这是 agent 自主闭环
 - **禁止**在 sub session 用 `xmtp_dispatch_user` 推仲裁决策；判决由 agent 独立产出
-- 禁止对 payload 里没出现的 disputeId 操作
+- 禁止对 payload 里没出现的 jobId 操作（payload 缺 jobId 一律中止本轮，不要 fallback 编造）
 
 ---
 
@@ -153,7 +152,7 @@ onchainos agent next-action \
 | 场景 | 命令 |
 |---|---|
 | 不知道自己是谁 / 任务啥情况 | `onchainos agent common context <jobId> --role evaluator` |
-| 查仲裁详情（证据 + 标准） | `onchainos agent evidence-info <disputeId>` |
+| 查仲裁详情（证据 + 标准） | `onchainos agent evidence-info <jobId>` |
 | 查任务原始信息 | `onchainos agent status <jobId>` |
 | 查账户级待领奖励（跨 dispute 聚合） | `onchainos agent arbitration-claimable` |
 | 查平台质押 & 仲裁配置（门槛 / 冷却期 / 罚比） | `onchainos agent staking-config` |
