@@ -586,35 +586,36 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::DisputeResolved => format!(
             "【当前状态】dispute_resolved（仲裁已裁决）\n\
              【角色】买家（Client）\n\n\
-             ⚠️ **判定胜负**：从你刚收到的系统通知 envelope 里读 `message.jobStatus` 字段：\n\
-             - `jobStatus = \"rejected\"` → **你（buyer）胜诉**，资金已退还给你\n\
-             - `jobStatus = \"complete\"` → **你（buyer）败诉**，资金已释放给卖家\n\
-             （另有 `message.winner` 字段冗余可对照：`buyer`=你赢；`provider`=对方赢）\n\n\
-             【你的下一步动作（按胜负分流）】\n\n\
-             ━━━━━━━━━━━━━ 分支 A：jobStatus=rejected（买家胜诉）━━━━━━━━━━━━━\n\n\
-             **A-Step 1 — 领取退款：**\n\
+             **Step 1 — 判定胜负**：从系统通知 envelope 里读 `message.jobStatus` 字段：\n\
+             - `jobStatus = \"rejected\"` → **买家胜诉**\n\
+             - `jobStatus = \"complete\"` → **买家败诉**\n\
+             - 其他值（如 `disputed`）→ 无法直接判定，执行 Step 1.5 查询任务详情\n\n\
+             **Step 1.5（仅 jobStatus 非 rejected/complete 时）— 查询任务详情获取实际状态：**\n\
              ```bash\n\
-             onchainos agent claim {job_id}\n\
+             onchainos agent status {job_id}\n\
              ```\n\
-             签名 claim calldata → 广播，退款到账。\n\n\
-             **A-Step 2 — 调用 xmtp_dispatch_user 通知用户仲裁结果：**\n\n\
-             从 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol。\n\
+             从返回的 `jobStatus` 字段判断：`rejected` = 买家胜诉，`complete` = 买家败诉。\n\n\
+             **Step 2 — 获取任务信息：**\n\
+             ```bash\n\
+             onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
+             ```\n\
+             提取 title、tokenAmount、tokenSymbol。\n\n\
+             **Step 3 — 调用 xmtp_dispatch_user 通知用户仲裁结果（按胜负分流）：**\n\n\
+             ━━━━━━━━━━━━━ 买家胜诉（jobStatus=rejected）━━━━━━━━━━━━━\n\
              content：\n\
              \x20\x20\x20\x20[仲裁胜诉] 任务 {job_id}（<title>）仲裁完成，买方胜诉。\n\
              \x20\x20\x20\x20  - 退款：<tokenAmount> <tokenSymbol>\n\
-             \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（jobStatus=rejected）\n\
-             \x20\x20\x20\x20本任务流程结束。\n\n\
-             ━━━━━━━━━━━━━ 分支 B：jobStatus=complete（买家败诉）━━━━━━━━━━━━━\n\n\
-             **B-Step 1 — 调用 xmtp_dispatch_user 通知用户仲裁结果：**\n\n\
-             从 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol。\n\
+             \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（买家胜诉）\n\
+             \x20\x20\x20\x20本任务流程结束。如需评价卖家，请回复评分（0-100）和评价内容。\n\n\
+             ━━━━━━━━━━━━━ 买家败诉（jobStatus=complete）━━━━━━━━━━━━━\n\
              content：\n\
              \x20\x20\x20\x20[仲裁败诉] 任务 {job_id}（<title>）仲裁完成，卖方胜诉。\n\
              \x20\x20\x20\x20  - 损失：<tokenAmount> <tokenSymbol>（资金已释放给卖家）\n\
-             \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（jobStatus=complete）\n\
-             \x20\x20\x20\x20本任务流程结束。\n\n\
-             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n\
-             **Step 2（两个分支都要做）— 终态收尾（保留 sub session）：**\n\
+             \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（买家败诉）\n\
+             \x20\x20\x20\x20本任务流程结束。如需评价卖家，请回复评分（0-100）和评价内容。\n\n\
+             **Step 4 — 终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             ⚠️ **不要自动评价**。\n\
              仲裁流程完整结束。\n"
         ),
 
