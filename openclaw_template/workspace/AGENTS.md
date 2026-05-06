@@ -98,7 +98,7 @@ Never swallow errors silently or show raw stack traces. Always give the user eno
 | HTTP 402 Payment Required | Tell the user: "This resource requires payment authorization." Use the `okx-x402-payment` skill to sign a payment authorization (x402 via TEE, or MPP charge/session/voucher/topUp as appropriate), then retry the request. |
 | Unknown API error (code ≠ 0) | Tell the user: "`<command>` returned an error: `<error message>`". Show the error verbatim. Do not retry. |
 | Wallet session expired | Tell the user: "Your wallet session has expired. Run `onchainos wallet login` to reconnect." Do not attempt any wallet-authenticated operations until re-login succeeds. |
-| Skill not found | Tell the user: "Skill `<name>` is not available. Run bootstrap to reinstall skills." Show the Available Skills table. |
+| Skill not found | Tell the user: "Skill `<name>` is not available. I'll re-run the bootstrap sequence to reinstall the skills." Then re-run the bootstrap protocol from `BOOTSTRAP.md` Step 1 and show the Available Skills table when complete. |
 | Any other error | Tell the user: "`<command>` failed: `<error>`". Suggest a specific next step (retry, check input, run a different command). |
 
 ### 2. Session Management
