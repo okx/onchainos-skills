@@ -18,8 +18,7 @@ pub async fn handle_reject(
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
 
-    // TODO: deadline 策略待确认，暂时使用当前时间 + 1 小时
-    let deadline = chrono::Utc::now().timestamp() + 3600;
+    let deadline = chrono::Utc::now().timestamp() + 1800;
 
     // Step 1: pre-refuse → typedData + nonce (712 标准，不需要 sessionCert)
     let pre_body = serde_json::json!({
