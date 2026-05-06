@@ -8,7 +8,7 @@
    - The login prompt in Step 3, **verbatim**.
    Nothing else. No greetings ("Hello!"), no menus ("What would you like to do?"), no capability lists.
 3. If `onchainos wallet status` does not return a logged-in address, **the welcome message is suppressed**. Your only output is the login prompt. Do not list capabilities, do not offer choices, do not be helpful before login.
-4. This file self-deletes after onboarding. While it exists, it is the law.
+4. While these rules are in effect, they are the law — follow them verbatim. Do not skip steps, do not paraphrase prompts, do not negotiate the order.
 
 ## Bootstrap Gate
 
@@ -113,27 +113,40 @@ Your literal next message must be **exactly** the following block, with no addit
 
 When the user replies with an email:
 
-1. Default `locale` to `en` unless the user has stated otherwise.
-2. Execute:
+1. **Validate the email before invoking the CLI.** It must match the regex `^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$` (one `@`, no whitespace, at least one `.` in the domain, ≤ 254 chars). If validation fails, your literal next message is:
+   > That doesn't look like a valid email. Please send your email again.
+   Do **not** invoke any CLI command, and do **not** interpolate the raw user reply into the shell.
+2. Default `locale` to `en` unless the user has stated otherwise.
+3. Execute (with the validated email — never pass through unsanitised user text):
    ```bash
    onchainos wallet login <email> --locale <locale>
    ```
-3. Your next message must be exactly:
+4. Your next message must be exactly:
    > Code sent. Paste the 6-digit code from your inbox.
-4. When the user replies with the code, execute:
-   ```bash
-   onchainos wallet verify <code>
-   ```
-5. Run `onchainos wallet status` again to confirm. If it now shows a valid address:
+5. When the user replies with the code:
+   1. **Validate the code before invoking the CLI.** It must match the regex `^[0-9]{6}$` — exactly six ASCII digits, nothing else (no spaces, no separators, no shell metacharacters). If validation fails, your literal next message is:
+      > That doesn't look like a 6-digit code. Please paste the code again.
+      Do **not** invoke any CLI command, and do **not** count this against the verify-attempt cap in Branch C.
+   2. Execute:
+      ```bash
+      onchainos wallet verify <code>
+      ```
+6. Run `onchainos wallet status` again to confirm. If it now shows a valid address:
    - Record the address in `IDENTITY.md` under a `## Wallet` section.
    - Proceed to Step 4.
-6. If verification fails, your next message is exactly:
+7. If verification fails, your next message is exactly:
    > That code didn't work. Want to try again, or resend?
    Do not improvise alternative paths.
 
-### Branch C — Login fails twice
+### Branch C — Two failed `wallet verify` attempts in this session
 
-Tell the user the login flow could not complete and stop. Do not accept any on-chain command. Do not provide a menu of alternatives.
+Track failed `onchainos wallet verify` attempts in conversation state. A failed attempt is one where the user-supplied code passed the Step 5.1 regex check **and** `wallet verify` returned a non-zero/error status. Codes that fail the regex check are not counted (the user is re-prompted instead).
+
+After **two** such failed attempts within the same session, stop the login flow. Do not accept any on-chain command. Do not provide a menu of alternatives. Tell the user verbatim:
+
+> Login couldn't complete after 2 attempts. Type `start` to retry from the beginning, or send your email again to receive a fresh code.
+
+Once Branch C is reached, the agent must refuse all on-chain commands until a subsequent successful `wallet verify` resets the counter for this session.
 
 ### API key path (automatic — no user action)
 
@@ -171,5 +184,5 @@ echo "$(date +%Y-%m-%d)" > ~/.onchainos/welcome_shown
 > - 🔗 Gas estimation, tx simulation, broadcasting
 > - 🌾 DeFi: discover, deposit, withdraw, claim rewards
 > - 📈 DeFi portfolio across protocols
-> - 💳 x402 gas-free payment authorization
+> - 💳 x402 / MPP gas-free payment authorization
 > - 📋 Audit log & command history
