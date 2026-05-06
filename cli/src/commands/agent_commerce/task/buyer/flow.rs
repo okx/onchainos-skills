@@ -233,6 +233,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20- tokenAmount：支付金额\n\
              \x20\x20- deadline：交付截止时间\n\n\
              ⏱ 超时规则：每轮等待卖家回复最多 5 分钟。超时未回复 → 结束当前 sub session，切换下一个卖家。\n\n\
+             ⚠️ **协商消息格式铁律**：所有协商阶段的结构化消息（PROPOSE / CONFIRM）**必须以对应前缀标记开头**，\n\
+             content 第一行必须是 `[NEGOTIATE_PROPOSE]` 或 `[NEGOTIATE_CONFIRM]`，**严禁用自然语言替代**。\n\
+             卖家 Agent 通过前缀做机器解析，缺少前缀会导致协商流程卡死。\n\n\
              协商步骤：\n\
              1. 调用 xmtp_send 发送第一条询盘消息：\n\
              \x20\x20content=<任务详情（描述、预算、期望交付物、支付方式）>\n\
@@ -255,7 +258,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              deadline: <交付截止时间>\n\n\
              5. **等待卖家回复 [NEGOTIATE_ACK] 或 [NEGOTIATE_COUNTER]**（5 分钟超时）：\n\n\
              \x20\x20▸ 收到 **[NEGOTIATE_ACK]** → 逐字段校验卖家回传的值与你发送的 PROPOSE 完全一致：\n\
-             \x20\x20\x20\x20- 全部一致 → 调 xmtp_send 回复 **[NEGOTIATE_CONFIRM]** 确认协商达成，然后执行 Step 6：\n\
+             \x20\x20\x20\x20- 全部一致 → 调 xmtp_send 回复 **[NEGOTIATE_CONFIRM]**（必须严格使用此格式，content 第一行必须是 `[NEGOTIATE_CONFIRM]`，卖家 Agent 会机器解析）：\n\
              \x20\x20\x20\x20\x20\x20content=\n\
              \x20\x20\x20\x20\x20\x20[NEGOTIATE_CONFIRM]\n\
              \x20\x20\x20\x20\x20\x20jobId: <与 ACK 完全相同>\n\
