@@ -495,6 +495,11 @@ fn payment_sub(c: &PaymentCommand) -> String {
             DefaultAction::Unset => "default-unset".to_string(),
         },
         PaymentCommand::A2aPay { command } => format!("a2a-pay {}", a2a_pay_sub(command)),
+        PaymentCommand::MppCharge { .. } => "mpp-charge".to_string(),
+        PaymentCommand::MppSessionOpen { .. } => "mpp-session-open".to_string(),
+        PaymentCommand::MppSessionVoucher { .. } => "mpp-session-voucher".to_string(),
+        PaymentCommand::MppSessionTopUp { .. } => "mpp-session-topup".to_string(),
+        PaymentCommand::MppSessionClose { .. } => "mpp-session-close".to_string(),
     }
 }
 
