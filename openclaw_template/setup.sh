@@ -33,7 +33,8 @@ done
 NPM_PREFIX=""
 NPM_BIN=""
 if command -v npm >/dev/null 2>&1; then
-  NPM_PREFIX="$(npm config get prefix 2>/dev/null)"
+  # `|| NPM_PREFIX=""` keeps `set -e` happy if npm config exits non-zero.
+  NPM_PREFIX="$(npm config get prefix 2>/dev/null)" || NPM_PREFIX=""
   [ -n "$NPM_PREFIX" ] && NPM_BIN="$NPM_PREFIX/bin"
   echo "[onchainos] npm prefix:   $NPM_PREFIX"
 fi
@@ -92,17 +93,24 @@ if command -v npx >/dev/null 2>&1 && npx -y skills --help >/dev/null 2>&1; then
     INSTALLED_VIA="npx"
     if [ -z "$(ls -A "$SKILLS_DIR" 2>/dev/null)" ]; then
       echo "[onchainos] $SKILLS_DIR empty - searching known node-module roots for installed skills..."
+      # Discover skill location by finding any okx-*/SKILL.md under known
+      # node_modules roots; this works for the full okx-* skill set, not just
+      # okx-dex-*. Take the parent of the parent to land on the skills root.
       FOUND_PARENT=""
       NPX_CACHE="$HOME/.npm/_npx"
       for root in "$NPM_PREFIX/lib/node_modules" "$NPX_CACHE" /usr/local/lib/node_modules; do
         [ -z "$root" ] && continue
         [ -d "$root" ] || continue
-        F="$(find "$root" -maxdepth 6 -type d -name 'okx-dex-*' 2>/dev/null | head -1)"
-        if [ -n "$F" ]; then FOUND_PARENT="$(dirname "$F")"; break; fi
+        F="$(find "$root" -maxdepth 6 -type f -name 'SKILL.md' -path '*/okx-*/SKILL.md' 2>/dev/null | head -1)"
+        if [ -n "$F" ]; then FOUND_PARENT="$(dirname "$(dirname "$F")")"; break; fi
       done
       if [ -n "$FOUND_PARENT" ]; then
-        echo "[onchainos] Found skills at $FOUND_PARENT - copying to $SKILLS_DIR"
-        cp -r "$FOUND_PARENT"/* "$SKILLS_DIR/" 2>/dev/null || true
+        echo "[onchainos] Found skills at $FOUND_PARENT - copying okx-* dirs to $SKILLS_DIR"
+        # Copy only okx-* skill dirs to avoid sweeping in node_modules,
+        # READMEs, fixtures, or other package siblings.
+        cp_status=0
+        cp -r "$FOUND_PARENT"/okx-* "$SKILLS_DIR/" 2>/dev/null || cp_status=$?
+        [ "$cp_status" != "0" ] && echo "[onchainos] cp exited with status $cp_status (some files may have been skipped)"
       fi
     fi
   fi
@@ -110,13 +118,15 @@ fi
 
 if [ -z "$INSTALLED_VIA" ] || [ -z "$(ls -A "$SKILLS_DIR" 2>/dev/null)" ]; then
   echo "[onchainos] Falling back to git clone for skills"
-  REPO_DIR="$HOME/.openclaw/onchainos-skills"
+  REPO_DIR="$HOME/.onchainos/_repo"
   if [ -d "$REPO_DIR/.git" ]; then
     git -C "$REPO_DIR" pull --ff-only || true
   else
     git clone https://github.com/okx/onchainos-skills "$REPO_DIR" || true
   fi
-  cp -r "$REPO_DIR/skills/"* "$SKILLS_DIR/" 2>/dev/null || true
+  cp_status=0
+  cp -r "$REPO_DIR/skills/"* "$SKILLS_DIR/" 2>/dev/null || cp_status=$?
+  [ "$cp_status" != "0" ] && echo "[onchainos] cp (git fallback) exited with status $cp_status"
   INSTALLED_VIA="git"
 fi
 
@@ -132,6 +142,8 @@ if [ "$SKILL_COUNT" = "0" ]; then
 fi
 
 # --- 6. Bootstrap status ------------------------------------
+# Use local time for the date stamp; the same script writes and the bootstrap
+# gate reads on the same machine, so timezone is consistent end-to-end.
 mkdir -p "$HOME/.onchainos"
 echo "$(date +%Y-%m-%d) OK" > "$HOME/.onchainos/bootstrap_status"
 echo "[onchainos] Setup complete."
