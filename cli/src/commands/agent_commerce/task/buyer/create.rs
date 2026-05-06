@@ -164,8 +164,25 @@ pub async fn handle_create(
 
     let open_secs = parse_duration_secs(&deadline_open)
         .map_err(|e| anyhow::anyhow!("--deadline-open {e}"))?;
+    const ACCEPT_MIN: u64 = 10 * 60;       // 10 分钟
+    const ACCEPT_MAX: u64 = 180 * 86400;   // 6 个月
+    if open_secs < ACCEPT_MIN {
+        bail!("--deadline-open 不能少于 10m（10 分钟），当前值 {deadline_open}，允许范围 10m ~ 180d");
+    }
+    if open_secs > ACCEPT_MAX {
+        bail!("--deadline-open 不能超过 180d（6 个月），当前值 {deadline_open}，允许范围 10m ~ 180d");
+    }
+
     let submit_secs = parse_duration_secs(&deadline_submit)
         .map_err(|e| anyhow::anyhow!("--deadline-submit {e}"))?;
+    const SUBMIT_MIN: u64 = 60;            // 1 分钟
+    const SUBMIT_MAX: u64 = 180 * 86400;   // 6 个月
+    if submit_secs < SUBMIT_MIN {
+        bail!("--deadline-submit 不能少于 1m（1 分钟），当前值 {deadline_submit}，允许范围 1m ~ 180d");
+    }
+    if submit_secs > SUBMIT_MAX {
+        bail!("--deadline-submit 不能超过 180d（6 个月），当前值 {deadline_submit}，允许范围 1m ~ 180d");
+    }
 
     let title_str = match title {
         Some(t) if t.chars().count() > 30 => t.chars().take(30).collect(),
