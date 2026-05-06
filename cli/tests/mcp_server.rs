@@ -209,10 +209,10 @@ fn mcp_tools_list_returns_all_tools() {
     let mut client = McpClient::start();
     let tools = client.list_tools();
 
-    // Verify minimum tool count (includes 5 workflow tools added in feat/workflows)
+    // Verify minimum tool count (includes 5 workflow tools + 9 social tools)
     assert!(
-        tools.len() >= 53,
-        "expected at least 53 tools, got {}: {:?}",
+        tools.len() >= 62,
+        "expected at least 62 tools, got {}: {:?}",
         tools.len(),
         tools
     );
@@ -243,6 +243,16 @@ fn mcp_tools_list_returns_all_tools() {
         "workflow_new_tokens",
         "workflow_wallet_analysis",
         "workflow_portfolio",
+        // Social tools (DEXMARKET-7736)
+        "social_news_latest",
+        "social_news_by_coin",
+        "social_news_search",
+        "social_news_detail",
+        "social_news_platforms",
+        "social_sentiment_ranking",
+        "social_coin_sentiment",
+        "social_token_vibe_timeline",
+        "social_token_top_kols",
     ];
     for name in expected {
         assert!(
@@ -751,4 +761,194 @@ fn mcp_workflow_portfolio_has_discriminator_and_required_fields() {
     assert!(data.get("balances").is_some(), "balances field missing");
     assert!(data.get("totalValue").is_some(), "totalValue field missing");
     assert!(data.get("overview").is_some(), "overview field missing");
+}
+
+// ── Social tools (DEXMARKET-7736) ──────────────────────────────────────
+
+/// Walks the JSON tree and asserts no `text` / `content` / `translatedContent`
+/// field appears anywhere — PRD §3.6 / §6.3 compliance red line for DEX vibe.
+fn assert_no_tweet_bodies(v: &Value) {
+    match v {
+        Value::Object(map) => {
+            for forbidden in &["text", "content", "translatedContent"] {
+                assert!(
+                    !map.contains_key(*forbidden),
+                    "compliance violation: forbidden field '{forbidden}' present: {v}"
+                );
+            }
+            for child in map.values() {
+                assert_no_tweet_bodies(child);
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr {
+                assert_no_tweet_bodies(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
+fn mcp_social_news_latest() {
+    let mut client = McpClient::start();
+    let result = client.call_tool("social_news_latest", json!({"limit": "5"}));
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    assert!(
+        data.get("articles").is_some(),
+        "expected 'articles' field: {data}"
+    );
+}
+
+#[test]
+#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
+fn mcp_social_news_by_coin() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "social_news_by_coin",
+        json!({"coins": "ETH", "limit": "5"}),
+    );
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    assert!(
+        data.get("articles").is_some(),
+        "expected 'articles' field: {data}"
+    );
+}
+
+#[test]
+#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
+fn mcp_social_news_search() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "social_news_search",
+        json!({"keyword": "ethereum", "limit": "5"}),
+    );
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    assert!(
+        data.get("articles").is_some(),
+        "expected 'articles' field: {data}"
+    );
+}
+
+#[test]
+#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
+fn mcp_social_news_platforms() {
+    let mut client = McpClient::start();
+    let result = client.call_tool("social_news_platforms", json!({}));
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    let platforms = data
+        .get("platforms")
+        .and_then(|v| v.as_array())
+        .unwrap_or_else(|| panic!("expected 'platforms' array: {data}"));
+    assert!(!platforms.is_empty(), "platforms list should not be empty");
+}
+
+#[test]
+#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
+fn mcp_social_sentiment_ranking() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "social_sentiment_ranking",
+        json!({"period": "1", "limit": "5"}),
+    );
+    if result.is_rate_limited() {
+        return;
+    }
+    assert!(
+        !result.is_error,
+        "social_sentiment_ranking failed: {}",
+        result.content
+    );
+}
+
+#[test]
+#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
+fn mcp_social_coin_sentiment_snapshot() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "social_coin_sentiment",
+        json!({"coins": "BTC", "period": "1"}),
+    );
+    if result.is_rate_limited() {
+        return;
+    }
+    assert!(
+        !result.is_error,
+        "social_coin_sentiment failed: {}",
+        result.content
+    );
+}
+
+#[test]
+#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
+fn mcp_social_coin_sentiment_trend_mode() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "social_coin_sentiment",
+        json!({"coins": "BTC", "period": "1", "trend_points": "8"}),
+    );
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    if let Some(details) = data.get("details").and_then(|v| v.as_array()) {
+        if let Some(first) = details.first() {
+            assert!(
+                first.get("trend").is_some(),
+                "trend mode should populate 'trend' field: {first}"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
+fn mcp_social_token_vibe_timeline_strips_tweet_bodies() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "social_token_vibe_timeline",
+        json!({
+            "chain": "solana",
+            "token_address": common::tokens::SOL_WSOL,
+            "period": "1"
+        }),
+    );
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    assert_no_tweet_bodies(&data);
+}
+
+#[test]
+#[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
+fn mcp_social_token_top_kols_strips_tweet_bodies() {
+    let mut client = McpClient::start();
+    let result = client.call_tool(
+        "social_token_top_kols",
+        json!({
+            "chain": "solana",
+            "token_address": common::tokens::SOL_WSOL,
+            "period": "1",
+            "limit": "5"
+        }),
+    );
+    if result.is_rate_limited() {
+        return;
+    }
+    let data = result.api_data();
+    assert_no_tweet_bodies(&data);
 }
