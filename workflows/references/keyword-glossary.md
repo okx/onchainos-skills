@@ -13,8 +13,11 @@ Users may use Chinese crypto slang or platform-specific terms. Map them to the m
 | 帮我盯着这个钱包 / 监控地址 / 盯着 [address] | watch wallet, monitor this wallet | Wallet Monitor |
 | 后台监控 / 挂ws盯着 / 离线监控 / 挂一个ws盯着 / 长期盯着这个钱包 | background monitor, offline monitor, WebSocket monitor | Wallet Monitor (WS) |
 | 看聚类列表 / 看同车钱包 | show cluster list, show co-invested wallets | Token Research → Step 2 |
-| 查 dev 其他项目 / dev 跑路记录 | show dev projects, dev rug history | Token Research → Step 3 |
+| 查 dev 其他项目 / dev 跑路记录 | show dev projects, dev rug history | Token Research → Step 4 |
 | 停止监控 | stop monitoring | Wallet Monitor (exit) |
 | 盯着这个币 | watch this token | Wallet Monitor |
 | 看看我的持仓 | check my portfolio | Portfolio Check |
 | 看看 [symbol] | research [symbol] | Token Research |
+| 最新加密新闻 / BTC新闻 / 新闻头条 / 搜新闻 | latest crypto news, news for [coin], news search, headlines | `okx-dex-social` (no dedicated workflow) |
+| 市场情绪 / 情绪排行 / 看多看空比 / 热度 | market sentiment, sentiment ranking, bullish/bearish, hotness | `okx-dex-social` (no dedicated workflow) |
+| KOL榜 / 谁在讨论 / vibe / 首发提及 | top KOLs, who's discussing this token, vibe score, first mention | `okx-dex-social` (no dedicated workflow) |

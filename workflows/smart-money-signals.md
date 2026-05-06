@@ -12,7 +12,7 @@
 
 ## Required Skills
 
-okx-dex-signal, okx-dex-token, okx-dex-trenches, okx-security
+okx-dex-signal, okx-dex-token, okx-dex-trenches, okx-security, okx-dex-social
 
 ## Input
 
@@ -57,7 +57,13 @@ onchainos memepump token-dev-info --address <token> --chain <chain>
 onchainos memepump token-bundle-info --address <token> --chain <chain>
 ```
 
-Present: per token — price, mcap, mint/freeze, honeypot, tax flags, dev rug history, bundle rate
+Optional — pull KOL chatter context (run in parallel with the calls above):
+
+```
+onchainos social token-top-kols --chain <chain> --token-address <token> --sort-by 1 --period 1 --limit 5
+```
+
+Present: per token — price, mcap, mint/freeze, honeypot, tax flags, dev rug history, bundle rate, top 5 KOLs by 24h engagement (when available)
 
 ## Output Template
 

@@ -54,6 +54,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::signal::SignalCommand,
     },
+    /// Social signals: crypto news, market sentiment, vibe / KOL chatter
+    Social {
+        #[command(subcommand)]
+        command: commands::social::SocialCommand,
+    },
     /// Meme / pump.fun token scanning and analysis
     Memepump {
         #[command(subcommand)]
@@ -180,6 +185,7 @@ async fn run() {
     let result = match cli.command {
         Commands::Market { command } => commands::market::execute(&ctx, *command).await,
         Commands::Signal { command } => commands::signal::execute(&ctx, command).await,
+        Commands::Social { command } => commands::social::execute(&ctx, command).await,
         Commands::Memepump { command } => commands::memepump::execute(&ctx, *command).await,
         Commands::Leaderboard { command } => commands::leaderboard::execute(&ctx, command).await,
         Commands::Tracker { command } => commands::tracker::execute(&ctx, command).await,

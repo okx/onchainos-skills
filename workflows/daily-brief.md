@@ -12,7 +12,7 @@
 
 ## Required Skills
 
-okx-dex-token, okx-dex-market, okx-dex-signal, okx-dex-trenches, okx-wallet-portfolio
+okx-dex-token, okx-dex-market, okx-dex-signal, okx-dex-trenches, okx-wallet-portfolio, okx-dex-social
 
 ## Input
 
@@ -60,7 +60,18 @@ onchainos memepump tokens --chain <chain> --stage MIGRATED
 
 Present: recently migrated tokens with holder count, volume, SM count
 
-### Step 4 — Portfolio alerts [recommended] (conditional: wallet_address provided)
+### Step 4 — Social pulse [recommended] (parallel)
+
+```
+onchainos social sentiment-ranking --period 1 --limit 10
+onchainos social news-latest --importance 1 --limit 5
+```
+
+> `sentiment-ranking` returns top coins by 24h chatter; `news-latest --importance 1` returns the day's high-importance headlines. Skip silently if either errors.
+
+Present: top 10 coins by mention count with bullish/bearish ratios, top 5 high-importance headlines
+
+### Step 5 — Portfolio alerts [recommended] (conditional: wallet_address provided)
 
 ```
 onchainos portfolio all-balances --address <wallet> --chains <chain>
@@ -91,6 +102,15 @@ Notable: {addr} bought ${x} of {sym}
 NEW TOKENS
 Token    MCap     Holders  SM
 {sym}    ${x}     {n}      {n}
+...
+
+SOCIAL PULSE
+Top by chatter:
+#  Symbol  Mentions  Bull%  Bear%  Label
+1  {sym}   {n}       {x}%   {x}%   {bullish/bearish/neutral}
+...
+Headlines (high importance):
+- {timestamp}  {title}  ({source})
 ...
 
 [If wallet provided]

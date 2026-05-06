@@ -12,7 +12,7 @@
 
 ## Required Skills
 
-okx-dex-token, okx-security, okx-dex-signal, okx-dex-trenches
+okx-dex-token, okx-security, okx-dex-signal, okx-dex-trenches, okx-dex-social
 
 ## Input
 
@@ -84,7 +84,25 @@ onchainos signal list --chain <chain> --token-address <addr>
 
 Present: holder count, Top 10 holding %, tag distribution (SM / Whale / Insider), linked cluster groups + supply %, top trader PnL breakdown (profitable / losing / holding / exited), SM signal wallet count
 
-### Step 3 — Launchpad supplement [recommended] (conditional: `contract.protocolId` from Step 1 is non-empty)
+### Step 3 — Social signals [recommended] (parallel)
+
+```
+onchainos social token-vibe-timeline --chain <chain> --token-address <addr> --period 1
+onchainos social token-top-kols --chain <chain> --token-address <addr> --sort-by 1 --period 1 --limit 10
+```
+
+> Vibe is keyed by chain + contract address (already known from Step 1). Skip gracefully if either returns empty (cold token / no KOL chatter yet).
+>
+> If the token is a major-cap coin with a well-known symbol (BTC / ETH / SOL / etc.), also pull symbol-level news + sentiment in parallel:
+>
+> ```
+> onchainos social coin-sentiment --coins <symbol> --period 1
+> onchainos social news-by-coin --coins <symbol> --sort-by 2 --limit 5
+> ```
+
+Present: vibe score + 24h change rate, top 10 KOLs by engagement (with first-mention links if present), bullish/bearish ratio, top 5 hot headlines (when symbol-level data is pulled)
+
+### Step 4 — Launchpad supplement [recommended] (conditional: `contract.protocolId` from Step 1 is non-empty)
 
 ```
 onchainos memepump token-details --address <addr> --chain <chain>
@@ -127,6 +145,13 @@ Avg PnL: {x}%  |  Best: +{x}%  |  Worst: {x}%
 
 --- SMART MONEY ---
 SM Buy Signals (24h): {n} wallets
+
+--- SOCIAL ---
+Vibe (24h): {x}/100 ({+/-x}% vs prev)
+Mentions: {n} ({+/-x}%)  |  Engagement: {n} ({+/-x}%)
+Top KOLs: @{handle1} ({n}k followers), @{handle2} ({n}k), ...
+[If symbol-level data pulled]
+Sentiment: {bull%}/{bear%}  |  Recent headlines: {n}
 
 [If protocolId non-empty]
 --- DEV / LAUNCHPAD ---

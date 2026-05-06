@@ -14,6 +14,7 @@ onchainos skills for AI coding assistants. Provides token search, market data, w
 | `okx-dex-trenches` | Meme pump/trenches token scanning, dev reputation, bundle detection, aped wallets |
 | `okx-dex-swap` | Token swap via DEX aggregation (500+ liquidity sources) |
 | `okx-dex-token` | Token search, metadata, market cap, rankings, liquidity pools, hot tokens, advanced info, holder analysis, top traders, trade history, holder cluster analysis |
+| `okx-dex-social` | Crypto news (latest, by symbol, search, detail, source platforms), market-wide sentiment ranking + per-coin sentiment with trend, per-token vibe timeline + TOP50 KOL leaderboard |
 | `okx-onchain-gateway` | Gas estimation, transaction simulation, broadcasting, order tracking |
 | `okx-x402-payment` | Dual-protocol HTTP 402 dispatcher (x402 + MPP); auto-detects from headers, covers x402 v1/v2 (TEE or local-key sign) and MPP charge + session (open / voucher / topUp / close) with transaction/hash modes |
 | `okx-defi-invest` | DeFi product discovery, deposit, withdraw, claim rewards across Aave, Lido, PancakeSwap, Kamino, NAVI and more |

@@ -48,6 +48,7 @@ You should see the skill directories: `okx-wallet-portfolio`, `okx-dex-market`, 
 | `okx-dex-market`       | Token prices, K-line charts, trade history                           |
 | `okx-dex-swap`         | Swap / trade / buy / sell tokens on-chain                            |
 | `okx-dex-token`        | Token search, rankings, holder distribution                          |
+| `okx-dex-social`       | Crypto news, sentiment ranking, vibe / KOL chatter                   |
 | `okx-onchain-gateway`  | Gas estimation, transaction simulation, broadcasting, order tracking |
 
 ## Updating

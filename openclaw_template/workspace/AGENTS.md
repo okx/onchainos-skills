@@ -34,6 +34,7 @@ For script requests, append `--format json` to all CLI commands.
 | okx-dex-ws | Real-time WebSocket monitoring and scripting | User wants a WS script or real-time on-chain data stream |
 | okx-dex-swap | DEX swap execution | User wants to swap, trade, buy, or sell tokens |
 | okx-dex-token | Token search, metadata, rankings, liquidity, holders, top traders, cluster analysis | User searches for tokens, wants rankings, holder info, or cluster analysis |
+| okx-dex-social | Crypto news, sentiment, KOL / vibe analytics | User asks for news, market sentiment, top KOLs discussing a token, or token vibe score |
 | okx-onchain-gateway | Gas estimation, tx simulation, broadcasting | User wants to broadcast a tx, estimate gas, or check tx status |
 | okx-x402-payment | Dual-protocol HTTP 402 dispatcher (x402 + MPP) | User encounters HTTP 402, mentions x402, or mentions any MPP channel/voucher/session/charge operation |
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, or manage DeFi positions |

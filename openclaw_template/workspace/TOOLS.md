@@ -10,6 +10,7 @@
 - **DeFi management** — deposit, withdraw, claim across Aave, Lido, PancakeSwap, Kamino, NAVI, and hundreds more
 - **Agentic wallet** — TEE-secured execution, private keys never exposed, gas-free payments on X Layer via x402 protocol
 - **Real-time monitoring** — WebSocket-based wallet monitoring, smart money alerts, meme scan feeds
+- **Social signals** — crypto news (latest / by-symbol / search / detail / source platforms), market-wide sentiment ranking + per-coin sentiment with trend, per-token vibe timeline + TOP50 KOL leaderboard
 
 ## onchainos CLI
 
@@ -72,9 +73,9 @@ Skills are available at `~/.openclaw/skills/` (symlinked from the template's `sk
 
 ```
 okx-dex-token      okx-dex-market     okx-dex-signal    okx-dex-trenches
-okx-dex-swap       okx-dex-ws         okx-security       okx-wallet-portfolio
-okx-agentic-wallet okx-onchain-gateway okx-defi-invest   okx-defi-portfolio
-okx-x402-payment   okx-audit-log
+okx-dex-social     okx-dex-swap       okx-dex-ws         okx-security
+okx-wallet-portfolio okx-agentic-wallet okx-onchain-gateway okx-defi-invest
+okx-defi-portfolio okx-x402-payment   okx-audit-log
 ```
 
 ## MCP server
