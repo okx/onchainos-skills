@@ -9,6 +9,8 @@ ONCHAINOS_BIN="$INSTALL_DIR/onchainos"
 # --- 1. Install CLI + workflows -----------------------------
 echo "[onchainos] Installing CLI + workflows..."
 
+# Force install.sh to do a fresh check on the first install: with no existing
+# binary, a stale `last_check` would cause the upstream installer to skip.
 [ ! -f "$ONCHAINOS_BIN" ] && rm -f "$HOME/.onchainos/last_check"
 
 curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/install.sh | sh
@@ -20,16 +22,14 @@ fi
 
 # --- 2. PATH probe ------------------------------------------
 echo "[onchainos] --- PATH probe ---"
-echo "[onchainos] build PATH:   $PATH"
-RUNTIME_PATH="$(sh -c 'echo $PATH')"
-echo "[onchainos] runtime PATH: $RUNTIME_PATH"
-echo "[onchainos] writable dirs on runtime PATH:"
+RUNTIME_PATH="$PATH"
+echo "[onchainos] PATH: $RUNTIME_PATH"
+echo "[onchainos] writable dirs on PATH:"
 echo "$RUNTIME_PATH" | tr ':' '\n' | while read -r d; do
   if [ -n "$d" ] && [ -d "$d" ] && [ -w "$d" ]; then
     echo "[onchainos]   $d"
   fi
-  :
-done || true
+done
 NPM_PREFIX=""
 NPM_BIN=""
 if command -v npm >/dev/null 2>&1; then
@@ -71,8 +71,8 @@ if [ -z "$LINKED" ]; then
 fi
 
 # --- 4. Verify bare command resolves ------------------------
-if sh -c 'command -v onchainos >/dev/null 2>&1 && onchainos --version >/dev/null 2>&1'; then
-  echo "[onchainos] $(sh -c 'onchainos --version') is on PATH (via $LINKED)"
+if VER="$(onchainos --version 2>/dev/null)"; then
+  echo "[onchainos] $VER is on PATH (via $LINKED)"
 else
   echo "[onchainos] ERROR: 'onchainos' not resolvable as a bare command."
   echo "[onchainos] Linked dir:    ${LINKED:-<none>}"
@@ -91,10 +91,12 @@ if command -v npx >/dev/null 2>&1 && npx -y skills --help >/dev/null 2>&1; then
   if npx -y skills add okx/onchainos-skills -y -g; then
     INSTALLED_VIA="npx"
     if [ -z "$(ls -A "$SKILLS_DIR" 2>/dev/null)" ]; then
-      echo "[onchainos] $SKILLS_DIR empty - searching for installed skills..."
+      echo "[onchainos] $SKILLS_DIR empty - searching known node-module roots for installed skills..."
       FOUND_PARENT=""
-      for root in "$HOME" "$NPM_PREFIX" /usr/local/lib/node_modules; do
+      NPX_CACHE="$HOME/.npm/_npx"
+      for root in "$NPM_PREFIX/lib/node_modules" "$NPX_CACHE" /usr/local/lib/node_modules; do
         [ -z "$root" ] && continue
+        [ -d "$root" ] || continue
         F="$(find "$root" -maxdepth 6 -type d -name 'okx-dex-*' 2>/dev/null | head -1)"
         if [ -n "$F" ]; then FOUND_PARENT="$(dirname "$F")"; break; fi
       done
