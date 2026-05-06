@@ -14,5 +14,3 @@
 | "background monitor", "offline monitor", "WebSocket monitor" | Wallet Monitor (WS) | `wallet-monitor-ws.md` |
 
 If no workflow matches, fall back to individual skills.
-
-> **News / sentiment / KOL chatter** ("latest crypto news", "BTC headlines", "market sentiment", "who's tweeting about [token]", "vibe score") do not have a dedicated workflow yet — fall back to the `okx-dex-social` skill directly. The Daily Brief and Token Research workflows pull in social signals where useful.
