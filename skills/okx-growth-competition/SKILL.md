@@ -1,6 +1,6 @@
 ---
 name: okx-growth-competition
-description: "Agentic Wallet exclusive trading competitions. Full lifecycle: discover → view rules → join → trade → check rank → claim reward. Triggers (EN): 'list trading competitions', 'view competition details', 'register for competition', 'check my competition status', 'view leaderboard', 'check my ranking', 'claim competition reward', 'winners list'. Triggers (ZH): '查看交易赛', '查看活动详情', '有哪些交易赛', '报名交易赛', '查看排行榜', '领取奖励', '中奖名单'. Do NOT use for: general DEX swaps (use okx-dex-swap); portfolio / PnL queries outside a competition (use okx-wallet-portfolio or okx-dex-market); wallet login or tx history (use okx-agentic-wallet); any non-competition trading activity. Do NOT use when the user says only a single word like 'competition', 'rank', or 'claim' without naming a specific competition."
+description: "Agentic Wallet exclusive trading competitions. Full lifecycle: discover → view rules → join → trade → check rank → claim reward. Triggers: 'list trading competitions', 'show available competitions', 'view competition details', 'show competition rules', 'show prize pool', 'register for competition', 'join trading contest', 'check my competition status', 'view leaderboard', 'check my ranking', 'claim competition reward', 'did I win', 'winners list', 'show registered wallet', 'export wallet'. Do NOT use for: general DEX swaps (use okx-dex-swap); portfolio / PnL queries outside a competition (use okx-wallet-portfolio or okx-dex-market); wallet login or tx history (use okx-agentic-wallet); any non-competition trading activity. Do NOT use when the user says only a single word like 'competition', 'rank', or 'claim' without naming a specific competition."
 license: MIT
 metadata:
   author: okx
@@ -26,12 +26,7 @@ Treat the following as **factual ground truth** when the user asks about how a c
 4. The competition `--wallet` argument used in `competition_rank` is the chain-appropriate address: SOL for Solana-primary activities, EVM for EVM-primary activities. The address you pass is just a query lens — trades on the OTHER chain still count toward the same ranking.
 5. The shape of point 1–4 may change in the future when backend exposes the full supported-chain list. Until then, NEVER answer "Does Solana count for this competition?" with anything other than YES.
 
-When the user asks any of:
-- "Solana 上的交易能参加吗 / 计入排名吗"
-- "Does my Solana trade count for this competition?"
-- "我应该在哪条链上交易"
-
-→ Answer based on this section, not from `chainName` alone.
+When the user asks anything like "Does my Solana trade count for this competition?" or "Which chain should I trade on?", answer based on this section, not from `chainName` alone.
 
 ## ⚠️ Mandatory reading order
 
@@ -40,16 +35,16 @@ When the user asks any of:
 
 The template **structure is fixed**; the **language follows the user** — see the `## Output Language` rule above. When the user writes Chinese, translate the template strings to natural Chinese. When the user writes English, use English as written. Placeholders and `Solana` literal stay as-is.
 
-Quick router (user intent → template section). Trigger phrases are listed bilingually for intent matching only; the user-facing OUTPUT is rendered in the user's language per `## Output Language`.
+Quick router (user intent → template section):
 
-- "list competitions / 查看交易赛 / 有哪些活动" → **Step 1** (table, optionally split by Active / Ended)
-- "show details / 查看活动详情 / 查看规则 / 查看奖池" → **Step 2** (Basic info block + 4 reward sections, with hardcoded `Solana, {chainName}` and required participation/Skill copy)
-- "register / join / 报名 / 参加" → **Step 3** (registration success fixed template + disclaimer)
-- "trade for me / 查询交易 / 帮我交易" → **Step 4** (delegate to okx-dex-swap)
-- "leaderboard / ranking / 查看排名 / 排行榜" → **Step 5**
-- "claim reward / 领取奖励 / 帮我领奖" → **Step 6** (use `competition_claim` MCP, atomic)
-- "show registered wallet / 查询报名地址" → Additional Flows / Query Registered Wallet
-- "export wallet / 导出钱包" → Additional Flows / Wallet Export Guard
+- "list competitions / show available competitions" → **Step 1** (table, optionally split by Active / Ended)
+- "show details / show rules / show prize pool" → **Step 2** (Basic info block + 4 reward sections, with hardcoded `Solana, {chainName}` and required participation / Skill copy)
+- "register / join" → **Step 3** (registration success fixed template + disclaimer)
+- "trade for me" → **Step 4** (delegate to okx-dex-swap)
+- "leaderboard / ranking" → **Step 5**
+- "claim reward" → **Step 6** (use `competition_claim` MCP, atomic)
+- "show registered wallet" → Additional Flows / Query Registered Wallet
+- "export wallet" → Additional Flows / Wallet Export Guard
 
 If the user's intent does not clearly map to one of the above, ask which they meant before responding — do **not** invent a freeform format.
 </MUST>
@@ -84,8 +79,8 @@ If the user's intent does not clearly map to one of the above, ask which they me
 **Forbidden user-visible patterns** (do NOT produce output like this):
 - ❌ `Agentic Trading Contest (#107)`
 - ❌ `#106 (agenticwallettest1)`
-- ❌ A column titled "ID" / "活动ID" / "#"
-- ❌ Any reference like "活动 #107" / "competition 107" / "id 107"
+- ❌ A column titled "ID" or "#"
+- ❌ Any reference like "competition 107" or "id 107"
 
 **Correct user-visible pattern**:
 - ✅ `Agentic Trading Contest`
@@ -100,11 +95,7 @@ When the user asks to act on a specific activity (e.g. "claim Agentic Trading Co
 ## Output Language
 
 <MUST>
-**Render every fixed template in the user's conversation language.** The template structure (sections, ordering, numbered items, table column count, placeholder positions, hardcoded literal phrases like `Solana, {chainName}` and the `[Disclaimer: ...]` block) is fixed and must NOT change. Only the natural-language text inside is translated.
-
-- Chinese-speaking user (writes in 简体 or 繁体, or asks in Chinese) → translate template strings to natural Chinese
-- English-speaking user → use the English template as written
-- Other languages (Japanese, Spanish, etc.) → translate to that language naturally
+**Render every fixed template in the user's conversation language.** The template structure (sections, ordering, numbered items, table column count, placeholder positions, hardcoded literal phrases like `Solana, {chainName}` and the `[Disclaimer: ...]` block) is fixed and must NOT change. Only the natural-language text inside is translated to the user's language naturally.
 
 **Placeholders are never translated.** `{chainName}`, `{rewardUnit}`, `{txHash}`, `{accountName}`, etc. are filled with API values verbatim — do not localize them. `Solana` (the hardcoded second-chain name) also stays as-is in every language.
 </MUST>
@@ -119,16 +110,16 @@ Decide which `status` to pass based on the user's intent:
 
 | User intent | Pass `status` | Returned `activityStatus` values |
 |---|---|---|
-| Generic listing ("show competitions" / "查看交易赛" / "有哪些交易赛") | `2` (all) | mix of 3 (active) and 4 (ended) |
-| Active only ("which can I join now" / "查看进行中的交易赛") | `0` (active filter) | only 3 |
-| Ended only ("winners list" / "查看已结束的交易赛" / "中奖名单") | `1` (ended filter) | only 4 |
+| Generic listing ("show competitions") | `2` (all) | mix of 3 (active) and 4 (ended) |
+| Active only ("which can I join now") | `0` (active filter) | only 3 |
+| Ended only ("winners list") | `1` (ended filter) | only 4 |
 
 When in doubt, prefer `status=2` so the user can see the full picture and pick.
 
 <MUST>
 **Display the result as markdown tables — one row per competition. Do not use a numbered prose list, do not collapse fields into a single sentence.**
 
-When the result contains BOTH active (`activityStatus=3`) and ended (`activityStatus=4`) entries, **split into two separate tables under bold subheadings — "Active" / "Ended" in English, "进行中" / "已结束" when rendering for a Chinese-speaking user, etc. — in that order**. When only one status is present, render a single table without a subheading.
+When the result contains BOTH active (`activityStatus=3`) and ended (`activityStatus=4`) entries, **split into two separate tables under bold subheadings (`**Active**` / `**Ended**`, translated to the user's language), in that order**. When only one status is present, render a single table without a subheading.
 </MUST>
 
 #### Fixed table template (English canonical; translate cells when user is non-English)
@@ -149,7 +140,7 @@ When the result contains BOTH active (`activityStatus=3`) and ended (`activitySt
 | ... | ... | ... | ... | ... |
 ```
 
-For Chinese-speaking users, the column headers become `活动名称 / 活动链 / 时间 / 总奖池 / 详情链接`, the section headers become `**进行中**` / `**已结束**`, and the link text becomes `查看详情`. The structure (column count, ordering, `Solana, {chainName}` literal) does not change.
+For non-English users, translate the column headers, section headers, and link text naturally. The structure (column count, ordering, `Solana, {chainName}` literal) does not change.
 
 #### Field-mapping rules
 
@@ -189,17 +180,12 @@ onchainos competition detail --activity-id <id>
 ```
 
 <MUST>
-**Display competition / reward info using the fixed template below.** The structure (sections, ordering, numbered list, placeholder positions, the hardcoded `Solana, {chainName}` chain prefix) is fixed.
+**Display competition / reward info using the fixed English template below.** The structure (sections, ordering, numbered list, placeholder positions, the hardcoded `Solana, {chainName}` chain prefix) is fixed. Copy the template character-for-character; only fill in placeholders. Do not paraphrase, abbreviate, or substitute synonyms.
 
-**Two-tier rendering rule:**
-1. **Chinese-speaking user**: copy the Chinese rendering block below CHARACTER-FOR-CHARACTER. Only fill in placeholders. Do not paraphrase, abbreviate, or substitute synonyms (e.g. `名次` ≠ `排名`; `合计` row is REQUIRED; `已实现收益率奖池` is the tab name, NOT `PnL% 排名奖`).
-2. **English-speaking user**: copy the English canonical block CHARACTER-FOR-CHARACTER. Same constraint.
-3. **Other languages** (Japanese, Korean, Spanish, etc.): translate the English version, but **every required content invariant** listed under each section MUST appear in the translation.
-
-Do not reorder, omit, or merge sections.
+When the user's language is not English, translate the natural-language strings to the user's language while preserving the structure, the placeholders, and every required content invariant listed below. Do not reorder, omit, or merge sections.
 </MUST>
 
-#### Fixed display template (English canonical; for Chinese-speaking users translate to the Chinese version below)
+#### Fixed display template
 
 ```
 Basic info:
@@ -223,33 +209,6 @@ During the competition, registered users with cumulative trading volume of $100 
 The Skill Quality Award is an independent judging category. During the competition, participants may submit their own Agent Skills via the activity page, including but not limited to on-chain autonomous yield strategies, trade analysis, and trading signal monitoring.
 All submitted Agent Skills will be evaluated through a dual-rating mechanism of AI initial screening and human review. The top {skillTopN} Skill creators by score will each receive {skillPerCreatorReward}.
 ```
-
-##### Chinese rendering (when the user's language is Chinese)
-
-```
-基本信息：
-活动链：Solana, {chainName}
-时间：{startTime} ~ {endTime}
-总奖池：{totalPrizePool}
-
-奖励分类：
-1. 已实现收益率奖池 （{roiPoolAmount})
-按比赛期间钱包账户的已实现收益率由高到低排名
-{roiRankTable}
-
-2. 已实现收益额奖池 （{pnlPoolAmount})
-按比赛期间钱包账户的已实现收益额由高到低排名
-{pnlRankTable}
-
-3. 参与奖 （{participationPoolAmount})
-比赛期间，已报名用户通过 Agentic Wallet 累计交易量达 $100 及以上，且钱包总资产全程维持 $100 及以上，即可平分 {participationPoolAmount} 参与奖奖池。我们将在比赛期间进行不定时资产快照以核验资格
-
-4. Skill 质量奖 （{skillPoolAmount})
-Skill 质量奖为独立评选奖项。比赛期间，参赛者可通过活动页面提交自己的 Agent Skill，内容涵盖但不限于链上自主收益策略、交易分析、交易信号监控等。
-所有提交的 Agent Skill 将经由 AI 初筛与人工评审双重评分机制进行综合评估，评分排名前 {skillTopN} 的 Skill 创作者每人将获得 {skillPerCreatorReward} 奖励。
-```
-
-For other languages (Japanese, Spanish, etc.), translate the English version naturally while preserving the structure, placeholders, and the `Solana, {chainName}` literal.
 
 #### Field-mapping rules
 
@@ -275,51 +234,47 @@ For other languages (Japanese, Spanish, etc.), translate the English version nat
   | Total | <totalReward> {rewardUnit} |
   ```
 
-  Chinese version: headers `名次 / 奖励`, total row label `合计`.
-
   Interval / reward formatting per row:
-  - Single rank (`interval = "1"`) → Rank cell `Rank 1` (Chinese: `第 1 名`), Reward cell `<reward> <rewardUnit>` (no `each` / `各` prefix)
-  - Range (`interval = "2-6"`) → Rank cell `Ranks 2-6` (Chinese: `第 2-6 名`), Reward cell `<reward> <rewardUnit> each` (Chinese: `各 <reward> <rewardUnit>`)
+  - Single rank (`interval = "1"`) → Rank cell `Rank 1`, Reward cell `<reward> <rewardUnit>` (no `each` prefix)
+  - Range (`interval = "2-6"`) → Rank cell `Ranks 2-6`, Reward cell `<reward> <rewardUnit> each`
   - Always end with a totals row whose Reward cell is the tab's `totalReward` + `rewardUnit`.
 
 If any of the four pools is absent for a particular activity, omit just that section (keep the others as-is).
 
 #### Required content invariants (per section)
 
-**Section 1 — 已实现收益率奖池 / Realized ROI Pool**
-- Title MUST be exactly `已实现收益率奖池` (Chinese) or `Realized ROI Pool` (English). Do NOT substitute with `PnL% 排名奖` / `ROI Ranking Award` / similar.
+**Section 1 — Realized ROI Pool**
+- Title MUST be exactly `Realized ROI Pool` (or its faithful translation in the user's language). Do NOT substitute with `PnL% Ranking Award` / `ROI Ranking Award` / similar.
 - Description MUST mention: ranking by realized ROI, high to low, during the competition period.
-- Rank table MUST have headers `名次 / 奖励` (Chinese) or `Rank / Reward` (English) and end with a `合计` / `Total` row.
+- Rank table MUST have headers `Rank / Reward` and end with a `Total` row.
 
-**Section 2 — 已实现收益额奖池 / Realized PnL Pool**
-- Title MUST be exactly `已实现收益额奖池` / `Realized PnL Pool`. Do NOT substitute with `PnL 排名奖`.
+**Section 2 — Realized PnL Pool**
+- Title MUST be exactly `Realized PnL Pool`. Do NOT substitute with `PnL Ranking Award`.
 - Description MUST mention: ranking by realized PnL, high to low.
 - Rank table MUST follow the same format as Section 1.
 
-**Section 3 — 参与奖 / Participation Reward** (PRODUCT-MANDATED COPY)
-- Title MUST be exactly `参与奖` / `Participation Reward`.
+**Section 3 — Participation Reward** (PRODUCT-MANDATED COPY)
+- Title MUST be exactly `Participation Reward`.
 - The description body MUST include all of these specific terms:
   - `Agentic Wallet`
   - cumulative trading volume threshold of `$100`
   - wallet total assets maintained at `$100` throughout
-  - sharing the participation pool (`平分 ... 参与奖奖池` / `share the participation reward pool`)
-  - asset snapshots to verify eligibility (`资产快照以核验资格` / `asset snapshots ... to verify eligibility`)
-- For Chinese-speaking users, copy the Chinese rendering verbatim — that is the exact product-approved copy.
+  - sharing the participation pool
+  - asset snapshots to verify eligibility
 
-**Section 4 — Skill 质量奖 / Skill Quality Award** (PRODUCT-MANDATED COPY)
-- Title MUST be exactly `Skill 质量奖` / `Skill Quality Award`.
+**Section 4 — Skill Quality Award** (PRODUCT-MANDATED COPY)
+- Title MUST be exactly `Skill Quality Award`.
 - The description body MUST include all of these specific terms:
   - submission of Agent Skill via the activity page
   - examples of skill content (on-chain yield strategies, trade analysis, signal monitoring)
-  - `AI 初筛与人工评审双重评分机制` / `dual-rating mechanism of AI initial screening and human review`
-  - `评分排名前 {skillTopN} 的 Skill 创作者每人将获得 {skillPerCreatorReward}` / `top {skillTopN} Skill creators ... each receive {skillPerCreatorReward}`
-- For Chinese-speaking users, copy the Chinese rendering verbatim. Do NOT invent rules like "排名前 51 名各获 1 DJT" by dividing pool by some arbitrary count.
+  - dual-rating mechanism of AI initial screening and human review
+  - `top {skillTopN} Skill creators ... each receive {skillPerCreatorReward}`
 
 <NEVER>
 - ❌ Do NOT drop the trailing `, Solana` from the chain line, even if the backend's `chainName` is already an EVM chain like XLayer / Arbitrum.
 - ❌ Do NOT reorder or merge the four reward sections — they must appear in the order 1 → 2 → 3 → 4.
 - ❌ Do NOT add ID columns or expose any internal numeric id (`activityId`, etc.) anywhere in the output.
-- ❌ Do NOT paraphrase, abbreviate, or substitute synonyms in Sections 3 and 4. These are product-mandated copy. For Chinese-speaking users, the text MUST match the Chinese rendering block character-for-character (placeholders aside).
+- ❌ Do NOT paraphrase, abbreviate, or substitute synonyms in Sections 3 and 4. These are product-mandated copy.
 - ❌ Do NOT invent rank-distribution rules from the pool amount. The actual rules come from `prizePoolDistribution[].rules[]` — read them; do not divide.
 - ❌ Do NOT use bullet markers (`-`) inside the four numbered sections — the structure is `1. Title (amount)\n description text` then the rank table; not a bullet list.
 </NEVER>
@@ -353,48 +308,36 @@ If the user is not logged in, the tool returns `not logged in — please run: on
 
 ##### Scenario A — current wallet already registered
 
-English canonical:
+Template:
 
 ```
 Your current wallet account [accountName] is already registered for [activityName]. No need to register again. Would you like me to walk you through the rules in detail, or start trading directly?
 ```
 
-Chinese rendering (when the user's language is Chinese):
-
-```
-您当前钱包账户 [账户名] 已报名参加 [活动名]，无需重复报名，需要我帮你查看详细的比赛规则吗？或直接开始交易。
-```
-
 Field-mapping:
-- `[accountName]` / `[账户名]` ← `accountName` of the currently selected account (read from `wallet_store` / `wallet status`, e.g. `Account 1`)
-- `[activityName]` / `[活动名]` ← `activityName` from the prior `competition_user_status` / `competition_list` response
+- `[accountName]` ← `accountName` of the currently selected account (read from `wallet_store` / `wallet status`, e.g. `Account 1`)
+- `[activityName]` ← `activityName` from the prior `competition_user_status` / `competition_list` response
 
 ##### Scenario B — same login, different account already registered
 
 Triggered when `competition_join` returns `code=11016 Participation limit reached`.
 
-English canonical:
+Template:
 
 ```
 Registration failed. Your wallet account [registeredAccountName] is already registered. You cannot register again. Please switch to your registered account to trade.
 ```
 
-Chinese rendering:
-
-```
-报名失败，您的钱包账户 [已报名账户名] 已经报名成功，无法重复报名，请切换至您的参赛账户进行交易。
-```
-
 Field-mapping:
-- `[registeredAccountName]` / `[已报名账户名]` ← name of the OTHER account in the same login that holds the registration. To find it, iterate every account from `wallet_store` other than the current one and call `competition_user_status` for the activity, picking the one whose `joinStatus=1`. If no account is found (rare race), fall back to a generic phrase like `another of your wallet accounts is already registered` (Chinese: `您的某个钱包账户已经报名成功`) and ask the user to check `onchainos wallet status` themselves.
+- `[registeredAccountName]` ← name of the OTHER account in the same login that holds the registration. To find it, iterate every account from `wallet_store` other than the current one and call `competition_user_status` for the activity, picking the one whose `joinStatus=1`. If no account is found (rare race), fall back to a generic phrase like `another of your wallet accounts is already registered` and ask the user to check `onchainos wallet status` themselves.
 
 #### Successful registration
 
 <MUST>
-**On every successful `competition_join` call (the tool returns `joined: true`), output the fixed template below.** Structure (the lead phrase + the dual-chain sentence + the closing question + the bracketed disclaimer on its own line) is fixed; render in the user's language. Solana literal is hardcoded; `{chainName}` and `{totalPrizePool}` are filled from `competition_detail` (call it before formatting if you don't have it cached).
+**On every successful `competition_join` call (the tool returns `joined: true`), output the fixed template below.** Structure (the lead phrase + the dual-chain sentence + the closing question + the bracketed disclaimer on its own line) is fixed. Solana literal is hardcoded; `{chainName}` and `{totalPrizePool}` are filled from `competition_detail` (call it before formatting if you don't have it cached). Translate the natural-language strings to the user's language while preserving structure, placeholders, and the `Solana` literal.
 </MUST>
 
-English canonical:
+Template:
 
 ```
 Registered successfully! This competition runs simultaneously on {chainName} and Solana, with a total prize pool of {totalPrizePool}. The trading contest ranks players by both PnL% and realized PnL, with additional Participation and Skill Quality Awards. Would you like me to walk you through the detailed rules, or help you initiate a trade on {chainName} or Solana?
@@ -402,17 +345,9 @@ Registered successfully! This competition runs simultaneously on {chainName} and
 [Disclaimer: Digital asset trading involves risk. Prices can be highly volatile. Please understand the risks fully and do your own research before trading.]
 ```
 
-Chinese rendering:
-
-```
-报名成功！本次交易赛同时在 {chainName} 和 Solana 两条链上进行，奖励池共 {totalPrizePool}，交易竞技按 PnL% 和 realized PnL 双维度排名，另设有参与奖和 Skill 质量奖。需要我帮你查看详细参赛规则吗？或者帮你在 {chainName} 或 Solana 链上发起交易
-
-[免责声明：请注意，数字资产交易存在风险，价格可能波动较大，交易前请充分了解相关风险并做好研究]
-```
-
 **Field-mapping rules**
 
-- `{chainName}` ← backend `chainName` from `competition_detail` (e.g. `XLayer`). Special case: if backend `chainName` is already Solana, the activity is single-chain — collapse the sentence to `This competition runs on Solana` (Chinese: `本次交易赛在 Solana 链上进行`) and the trailing question to `Would you like me to walk you through the detailed rules, or help you initiate a trade on Solana?` (Chinese: `需要我帮你查看详细参赛规则吗？或者帮你在 Solana 链上发起交易`). The disclaimer line still appears at the end either way.
+- `{chainName}` ← backend `chainName` from `competition_detail` (e.g. `XLayer`). Special case: if backend `chainName` is already Solana, the activity is single-chain — collapse the sentence to `This competition runs on Solana` and the trailing question to `Would you like me to walk you through the detailed rules, or help you initiate a trade on Solana?`. The disclaimer line still appears at the end either way.
 - `{totalPrizePool}` ← total reward pool (sum of all `prizePoolDistribution[].totalReward` + `rewardUnit`, e.g. `500 DJT`).
 
 <NEVER>
@@ -467,7 +402,7 @@ Display: join status, join time, reward status, reward amount.
 #### Check leaderboard (full board)
 
 <MUST>
-When the user says "view leaderboard" / "查看排行榜" without specifying which leaderboard, you MUST:
+When the user says "view leaderboard" without specifying which one, you MUST:
 
 1. Call `competition_detail` for the activity and enumerate `tabConfigs[].rankFieldConfig[].sortValueMap.descend` — this is the full set of leaderboards the activity exposes.
 2. Call `competition_rank` ONCE PER `sort_type` (one HTTP call per leaderboard) so you have data for every leaderboard.
@@ -518,7 +453,7 @@ A user can simultaneously appear on multiple leaderboards (e.g. PnL% AND PnL). W
 
 ##### CASE 1 — ranked on both PnL and PnL%
 
-English canonical:
+Template:
 
 ```
 Realized PnL ranking:
@@ -535,30 +470,13 @@ You are currently ranked #{roiRank}, estimated reward {roiReward} {rewardUnit}!
 Your total estimated reward across both rankings: {totalReward} {rewardUnit} (sum of the two)
 ```
 
-Chinese rendering:
-
-```
-已实现收益额排名：
-你目前排名第 {pnlRank}，预计获得 {pnlReward} {rewardUnit} 奖励！
-
-已实现收益率排名：
-你目前排名第 {roiRank}，预计获得 {roiReward} {rewardUnit} 奖励！
-
-| 榜单 | 我的排名 | 预估奖金 |
-|------|---------|---------|
-| 已实现收益额 | 第 {pnlRank} 名 | {pnlReward} {rewardUnit} |
-| 已实现收益率 | 第 {roiRank} 名 | {roiReward} {rewardUnit} |
-
-你当前排名情况的总奖励为：{totalReward} {rewardUnit}（两个相加）
-```
-
 ##### CASE 2 — ranked on one leaderboard, off the other
 
 There are two symmetric sub-cases. The structure is identical: the ranked leaderboard goes first ("ranked #N, estimated reward X"), then the unranked one ("not on the leaderboard, current value Y, threshold Z"). Each sub-case has its own pinned template — do NOT improvise the unranked-section unit (`%` for PnL%, currency `$` for PnL).
 
 ###### CASE 2-A — on PnL, off PnL% (currentRank for sort_type=7 > 0; sort_type=1 == 0)
 
-English canonical:
+Template:
 
 ```
 Realized PnL ranking:
@@ -568,19 +486,9 @@ Realized ROI ranking:
 Not on the leaderboard yet. Your current realized ROI is {currentRoi}%. You need at least {minRoi}% (the current leaderboard minimum) to qualify.
 ```
 
-Chinese rendering:
-
-```
-已实现收益额排名：
-你目前排名第 {pnlRank}，预计获得 {pnlReward} {rewardUnit} 奖励！
-
-已实现收益率排名：
-未上榜，您当前已实现收益率为 {currentRoi}%。已实现收益率至少要达到 {minRoi}%（榜单 min PNL%）才能上榜
-```
-
 ###### CASE 2-B — on PnL%, off PnL (currentRank for sort_type=1 > 0; sort_type=7 == 0)
 
-English canonical:
+Template:
 
 ```
 Realized ROI ranking:
@@ -590,34 +498,17 @@ Realized PnL ranking:
 Not on the leaderboard yet. Your current realized PnL is ${currentPnl}. You need at least ${minPnl} (the current leaderboard minimum) to qualify.
 ```
 
-Chinese rendering:
-
-```
-已实现收益率排名：
-你目前排名第 {roiRank}，预计获得 {roiReward} {rewardUnit} 奖励！
-
-已实现收益额排名：
-未上榜，您当前已实现收益额为 ${currentPnl}。已实现收益额至少要达到 ${minPnl}（榜单 min PNL）才能上榜
-```
-
-**Section ordering rule**: the leaderboard the user **IS** ranked on ALWAYS goes first. Don't put the "未上榜" / "Not on the leaderboard" section before the ranked one.
+**Section ordering rule**: the leaderboard the user **IS** ranked on ALWAYS goes first. Don't put the "Not on the leaderboard" section before the ranked one.
 
 **Unit rule**: PnL% uses `%` suffix (no currency symbol); PnL uses `$` prefix (or the appropriate currency unit). Do NOT mix them up — the user's threshold for PnL is a dollar amount, not a percentage.
 
 ##### CASE 3 — off both leaderboards
 
-English canonical:
+Template:
 
 ```
 Your address is not on any leaderboard. Your current realized PnL is ${currentPnl}, realized ROI {currentRoi}%.
 The current minimum to qualify: realized PnL ${minPnl}, realized ROI {minRoi}%.
-```
-
-Chinese rendering:
-
-```
-您的地址未上榜，您的当前已实现收益额为 ${currentPnl}，收益率为 {currentRoi}%。
-当前上榜最低已实现收益额为 ${minPnl}，收益率为 {minRoi}%。
 ```
 
 ##### Field-mapping rules
@@ -675,7 +566,7 @@ Result shape (both paths):
 ```
 
 **How to report to the user:**
-- All succeeded (`failed: []`): "已领取 {rewardAmount} {rewardUnit}，交易哈希: {txHash}"
+- All succeeded (`failed: []`): "Claimed {rewardAmount} {rewardUnit}, tx hash: {txHash}"
 - Partial success (some `failed`): list each succeeded txHash, then list the failed entries with their `error`, then append the **fixed failure-suggestion block** (template below). **Do NOT re-run claim blindly** — succeeded entries already landed; another call will hit the "reward already claimed" guard.
 - All failed: the tool returns an error, not this shape — surface the error message verbatim, then append the **fixed failure-suggestion block**.
 
@@ -684,25 +575,16 @@ The flow blocks before signing if `rewardStatus` is 0 (not eligible), 2 (already
 ##### Fixed failure-suggestion block
 
 <MUST>
-For runtime failures (signing/broadcast/simulation errors, network errors, unknown errors), append this block after the error description. Render in the user's language; the structure (heading + 3 bullet items in this order) is fixed. Do NOT add or remove items.
+For runtime failures (signing/broadcast/simulation errors, network errors, unknown errors), append this block after the error description. Translate to the user's language while preserving the heading + 3 bullet items in this order. Do NOT add or remove items.
 </MUST>
 
-English canonical:
+Template:
 
 ```
 Suggestions:
 - The claim process requires Gas. Please make sure your Gas is sufficient.
 - Try again later — this may be a transient network issue.
 - If it fails repeatedly, please contact customer support.
-```
-
-Chinese rendering:
-
-```
-建议：
-领取过程需要支付Gas，请确认Gas是否充足
-稍后再试一次（可能是暂时性网络问题）
-如果多次失败，请联系客服处理
 ```
 
 <NEVER>
@@ -713,7 +595,7 @@ Chinese rendering:
 <NEVER>
 - ❌ Do NOT chain `gateway_broadcast` after a claim call — the on-chain submission already happened inside the tool.
 - ❌ Do NOT manually construct, encode, or sign a transaction (no Python base58 encoding, no manual hex assembly). The TEE-managed wallet key is the only valid signer.
-- ❌ Do NOT inspect the result for an empty `base58CallData` and conclude "CLI 无法签名 Solana 领奖" — that field is empirically empty for Solana; the CLI/MCP code internally falls back to encoding `tx.data` byte array via base58 and proceeds. Just trust the `succeeded[]` and `failed[]` arrays.
+- ❌ Do NOT inspect the result for an empty `base58CallData` and conclude the CLI cannot sign a Solana claim — that field is empirically empty for Solana; the CLI/MCP code internally falls back to encoding `tx.data` byte array via base58 and proceeds. Just trust the `succeeded[]` and `failed[]` arrays.
 - ❌ Do NOT split into a two-step "fetch calldata then wallet contract-call" flow — that mode no longer exists; the claim command is atomic.
 </NEVER>
 
