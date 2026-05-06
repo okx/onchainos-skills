@@ -21,19 +21,19 @@ use crate::wallet_api::UnsignedInfoResponse;
 /// 单次任务预算上限
 const MAX_BUDGET: f64 = 10_000_000.0;
 
-/// 解析截止时间 → 秒。裸数字默认为小时（如 `24` → 86400 秒）。
-/// 支持后缀：`h`（小时）、`m`（分钟）、`s`（秒）。
+/// 解析截止时间 → 秒。必须带单位后缀：`d`（天）、`h`（小时）、`m`（分钟）、`s`（秒）。
 fn parse_duration_secs(s: &str) -> Result<u64> {
     let s = s.trim();
-    if let Some(h) = s.strip_suffix('h') {
+    if let Some(d) = s.strip_suffix('d') {
+        Ok(d.parse::<u64>()? * 86400)
+    } else if let Some(h) = s.strip_suffix('h') {
         Ok(h.parse::<u64>()? * 3600)
     } else if let Some(m) = s.strip_suffix('m') {
         Ok(m.parse::<u64>()? * 60)
     } else if let Some(sec) = s.strip_suffix('s') {
         Ok(sec.parse::<u64>()?)
     } else {
-        // 裸数字默认按小时
-        Ok(s.parse::<u64>()? * 3600)
+        bail!("请指定时间单位，例如 3d（天）、72h（小时）、30m（分钟）、3600s（秒）")
     }
 }
 
@@ -163,9 +163,9 @@ pub async fn handle_create(
     validate_budget(max_budget_val)?;
 
     let open_secs = parse_duration_secs(&deadline_open)
-        .map_err(|_| anyhow::anyhow!("--deadline-open 格式错误，例如 72h 或 3600"))?;
+        .map_err(|e| anyhow::anyhow!("--deadline-open {e}"))?;
     let submit_secs = parse_duration_secs(&deadline_submit)
-        .map_err(|_| anyhow::anyhow!("--deadline-submit 格式错误，例如 48h 或 3600"))?;
+        .map_err(|e| anyhow::anyhow!("--deadline-submit {e}"))?;
 
     let title_str = match title {
         Some(t) if t.chars().count() > 30 => t.chars().take(30).collect(),
