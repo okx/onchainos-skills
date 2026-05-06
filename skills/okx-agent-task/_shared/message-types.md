@@ -169,6 +169,49 @@ onchainos agent next-action \
 
 ---
 
+### 3.1.1 🛑 反模式 — 不要把 `[USER_DECISION_REQUEST]` 当成「用户已经回复」
+
+**这是已发生过的真实事故**：user-session agent 收到 `xmtp_prompt_user` 推来的 `llmContent`（含 `[USER_DECISION_REQUEST]`）后，**误以为用户已经选好了**，立刻 `xmtp_dispatch_session` 编造一条 `[USER_DECISION_RELAY] 用户决策：同意` / `用户决策：验收通过` 派回 sub —— 用户从头到尾**没说过一个字**，结果链上动作（confirm-accept / agree-refund 等）就基于这个伪造决策真上链了。**这是数据完整性事故，必须杜绝**。
+
+**正确心智模型**（user-session agent 必读）：
+
+| 阶段 | 你看到的输入 | 它是什么 | 你该做什么 |
+|---|---|---|---|
+| ① | `[USER_DECISION_REQUEST]` 进入你的会话 | **系统通知**：「sub 发了一个待用户拍板的请求」 | 用 `userContent` 展示问题给用户，**结束本轮 turn 等用户输入**。**禁止**立即调任何工具 |
+| ② | 用户在终端打字回复（如 "拒绝，原因 X"） | **用户真实决策** | 调 `xmtp_dispatch_session(sessionKey=<sub_key 整串>, content="[USER_DECISION_RELAY] 用户决策：拒绝，原因 X")`，原话不解读 |
+
+**❌ 错误流程**：
+```
+sub → xmtp_prompt_user(llmContent=[USER_DECISION_REQUEST]...)
+user agent → 〈思考: "哦, 用户应该是要同意"〉  ← 幻觉
+user agent → xmtp_dispatch_session([USER_DECISION_RELAY] 用户决策：同意)  ← 伪造
+sub → 调用 confirm-accept 上链  ← 用户其实没同意, 资金被错误释放
+```
+
+**✅ 正确流程**：
+```
+sub → xmtp_prompt_user(llmContent=[USER_DECISION_REQUEST]..., userContent="...请回复…")
+user agent → 把 userContent 渲染给用户 → 〈结束 turn 等输入〉
+... 等待 ...
+user → 输入 "拒绝, 因为 X"
+user agent → xmtp_dispatch_session([USER_DECISION_RELAY] 用户决策：拒绝，因为 X)
+sub → 按用户原话路由到 reject 流程
+```
+
+**判别规则**（一行总结）：
+> `[USER_DECISION_REQUEST]` 是**问题**，不是**答案**；问题进来要**等用户口头答**，不能自己脑补一个答案派回去。
+
+**绝对禁止的话术**（user agent LLM 内心活动）：
+- 「用户应该会选 X」 / 「按常理用户会同意」 / 「上下文看起来用户倾向 X」 → 全部禁止；这些都是幻觉
+- 「sub 在等回复，我先帮用户回 X」 → 禁止；sub 等的就是真实用户输入，不是你代答
+- 「用户上次说过 Y，所以这次 relay Y」 → 禁止；每次 USER_DECISION_REQUEST 必须配一次实时用户回复，旧记忆不能复用
+
+**调试自查**：如果你（user agent LLM）正要调 `xmtp_dispatch_session`，先确认一遍：
+1. 本轮 turn 是不是**用户的输入触发**的？如果是 sub 推过来的 envelope 触发的 → **禁止**调，应该等用户输入
+2. 你要 relay 的内容是不是**用户在本轮 turn 真的打出来的**？而不是你从 [USER_DECISION_REQUEST] 文本里推断的？
+
+---
+
 ### 3.2 `[USER_DECISION_RELAY]` —— path 3 user → sub 的用户决策回传
 
 由 user-session agent 调 `xmtp_dispatch_session` 时填入 `content` 参数，把用户原话**不解读**地回传给 sub session。

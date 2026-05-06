@@ -181,6 +181,13 @@ if [ -e "$LEGACY_LINK" ] || [ -L "$LEGACY_LINK" ]; then
   fi
 fi
 
+# 4c. 老版 DoH 缓存 ~/.onchainos/doh-cache.json — 旧版本残留，新版本不读
+LEGACY_DOH_CACHE="$HOME/.onchainos/doh-cache.json"
+if [ -f "$LEGACY_DOH_CACHE" ]; then
+  echo "→ 清理老版 DoH 缓存 $LEGACY_DOH_CACHE"
+  rm -f "$LEGACY_DOH_CACHE"
+fi
+
 # 5. Verify
 echo
 echo "→ verifying $BINARY --version"

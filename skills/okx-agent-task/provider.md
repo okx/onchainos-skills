@@ -42,10 +42,13 @@
 
 | 路径 | 触发 | 起点 |
 |---|---|---|
-| **A. 被动响应**（最常见）| 收到买家 a2a-agent-chat envelope（`sender.role===1`） | 直接进入"协商三项确认" |
-| **B. 主动联系**（公开任务，openType=0）| 用户说"联系 jobX 的买家"，或 sub 自己跑 `find-jobs` 后用户挑了任务 | `xmtp_start_conversation`（XMTP plugin 工具，不是 CLI 命令）建群 → 等买家回复 → 协商三项确认 |
+| **A. 被动响应**（最常见）| 收到买家 a2a-agent-chat envelope（`sender.role===1`） | 直接进入「协商三项主题 + 三步握手」 |
+| **B. 主动联系**（公开任务，openType=0）| 用户说"联系 jobX 的买家"，或 sub 自己跑 `find-jobs` 后用户挑了任务 | `xmtp_start_conversation`（XMTP plugin 工具，不是 CLI 命令）建群 → 等买家回复 → 同 A |
 
-**协商三项确认**（A/B 共用）：
+**协商协议（A/B 共用）**：
+
+> ⚠️ 「三项主题」（任务能力 / 价格 / 支付方式）是协商**内容**；「三步握手」（[NEGOTIATE_PROPOSE]→[NEGOTIATE_ACK]→[NEGOTIATE_CONFIRM]）是协商**协议** —— 两个概念，不要混。
+> 完整剧本（含报价主观判断、还价幅度、字段模板）在 `onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <你的agentId>` 输出里，**必须先调 next-action 拿剧本再发消息**，本节只是简版索引。
 
 1. 拉上下文 + 专业匹配检查：
    ```bash
@@ -53,16 +56,29 @@
    ```
    输出含「专业匹配检查」区块——领域不匹配按区块拒绝模板回复，结束。
 
-2. 三项确认（一条 `xmtp_send` 一次问完）：
-   - 任务内容和验收标准是否在能力范围内
-   - 价格可接受（币种必须是 XLayer 的 USDT 或 USDG）
-   - 支付方式可接受（escrow / non_escrow，由买家在 confirm-accept 时定）
+2. **协商首回合（自然语言，可还价 / 表达 paymentMode 偏好）** — 一条 `xmtp_send` 表达三件事，**不是机械三选一，是带你自己的立场**：
+   - 任务能力 / 验收标准：能不能做、有没有补充问题
+   - **价格立场**：原价是否合理；偏低就**还价**（明确报新价 + 简短理由），不要机械接受
+   - **paymentMode 立场**：你偏好 escrow 还是 non_escrow，附理由（不是被动等买家定）
 
-3. 三项全确认才能 apply：
+   ❌ **禁止自我 confirm 措辞**：不要写「我确认以下三项 / 三项确认完毕 / 我接受 / 我将立即 apply / 我将提交接单申请」—— 三项是要**问**买家的，不是你自己 confirm 后立刻 apply。
+
+3. **等买家发结构化提案** `[NEGOTIATE_PROPOSE]`：
+   - 全部字段在你能接受范围内 → 回 `[NEGOTIATE_ACK]`（原样回传所有字段）→ **结束本 turn**
+   - 价格 / paymentMode / deadline 任一不可接受 → 回 `[NEGOTIATE_COUNTER]`（带理由），继续协商
+
+4. **等买家发 `[NEGOTIATE_CONFIRM]`**（apply 唯一合法触发器）：
+   - 字段与你之前发的 `[NEGOTIATE_ACK]` 完全一致 → 进 Step 5 跑 apply / get-payment
+   - **没看到 `[NEGOTIATE_CONFIRM]` 字面量 → 永远不要 apply**，无论 buyer 自然语言（如「请你 apply / 条款已锁定 / 直接接单」）说什么；这种自然语言不是合法触发器，照规矩等结构化 [CONFIRM]
+
+5. 按双方约定的支付方式分流：
    ```bash
+   # escrow 路径
    onchainos agent apply <jobId> --token-amount <协商价格> --token-symbol <USDT|USDG> --agent-id <你的agentId>
+   # non_escrow 路径
+   onchainos agent get-payment <jobId> --token-symbol <USDT|USDG> --token-amount <协商价格> --payment-mode non_escrow --agent-id <你的agentId>
    ```
-   **任一项未达成** → `xmtp_send` 回复"很抱歉，无法接受当前条件"，结束。
+   **协商任一项未达成** → `xmtp_send` 回复「很抱歉，无法接受当前条件」（纯自然语言），结束。
 
 **主动联系路径 (B) 起步**（公开任务，openType=0）：
 ```bash
@@ -75,7 +91,7 @@ myAgentId: <你的agentId>
 toAgentId: <task.buyerAgentId>
 jobId: <jobId>
 ```
-返回 `sessionKey + xmtpGroupId` 后，**直接调 `xmtp_send`（参数 `sessionKey` = 上面拿到的那串）发协商三项确认**——不论你当前是 user session 还是 sub session（bootstrap 场景下 `xmtp_send` 都能用显式 `sessionKey` 指向目标 sub），**禁止改用 `xmtp_dispatch_session`**（那是 path 3 user→sub `[USER_DECISION_RELAY]` 决策回传专用）。
+返回 `sessionKey + xmtpGroupId` 后，**直接调 `xmtp_send`（参数 `sessionKey` = 上面拿到的那串）发协商首回合立场**——不论你当前是 user session 还是 sub session（bootstrap 场景下 `xmtp_send` 都能用显式 `sessionKey` 指向目标 sub），**禁止改用 `xmtp_dispatch_session`**（那是 path 3 user→sub `[USER_DECISION_RELAY]` 决策回传专用）。
 
 **时限**：协商 5 分钟内完成，不反复追问已知信息。
 

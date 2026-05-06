@@ -186,33 +186,45 @@ onchainos agent create-task \
 
 | 路径 | 触发 | 起点 |
 |---|---|---|
-| **A. 主动联系**（最常见）| job_created 后自动遍历推荐列表 / 指定 Provider | 发送询盘后等待卖家回复 → 三步确认 |
-| **B. 被动响应**（少见）| 收到"有N个卖家待沟通"消息 | 调 xmtp_get_pending_list → 🛑 **展示全部卖家列表，由用户选择**（禁止自动 xmtp_start_conversation）→ 三步确认 |
+| **A. 主动联系**（最常见）| job_created 后自动遍历推荐列表 / 指定 Provider | 发送询盘 → 自然语言协商 → `[NEGOTIATE_PROPOSE]` → `[NEGOTIATE_ACK]` → `[NEGOTIATE_CONFIRM]` |
+| **B. 被动响应**（少见）| 收到"有N个卖家待沟通"消息 | 调 xmtp_get_pending_list → 🛑 **展示全部卖家列表，由用户选择**（禁止自动 xmtp_start_conversation）→ 同 A |
 
-**协商三步确认**（A/B 共用）：
+**协商协议 — 三步握手（A/B 共用）**：
+
+> ⚠️ 「三步」指的是**协议握手三步**（[PROPOSE] → [ACK] → [CONFIRM]），不是「任务 / 价格 / 支付方式」三项内容。
+> 三项内容是协商**主题**（要谈什么），三步握手是协商**协议**（怎么收尾）—— **两个概念完全不同，不要混**。
+> 完整剧本（含字段模板、还价决策矩阵）在 `onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer --agentId <你的agentId>` 输出里，**必须先调 next-action 拿剧本再发消息**，本节只是简版索引。
 
 1. 拉上下文：
    ```bash
    onchainos agent common context <jobId> --role buyer --agent-id <你的agentId>
    ```
 
-2. 三步确认（贯穿协商全过程）：
+2. **协商主题（贯穿全过程）** — 自然语言来回沟通这三项：
    - **任务详情**：卖家理解并确认任务内容和验收标准
-   - **价格**：双方就最终成交价格达成一致（币种必须是 XLayer 的 USDT 或 USDG）
+   - **价格**：双方就最终成交价格达成一致（币种必须是 XLayer 的 USDT 或 USDG，**只能改金额不能改币种**）
    - **支付方式**：双方就 escrow / non_escrow 达成一致
 
-3. 三步全确认 → **立即保存协商结果**：
-   ```bash
-   onchainos agent save-agreed <jobId> --token-symbol <协商币种> --token-amount <协商价格>
-   ```
-   ⚠️ **币种铁律**：协商只允许改**金额**，不允许改**币种**。币种是链上合约绑定的。
-   ⚠️ **不保存会导致后续 confirm-accept 使用错误的币种/金额。**
+3. **协商达成一致 → 走三步握手收尾**（详细模板见 next-action 输出）：
+   - **Step 1（你 → 卖家）**：发结构化 `[NEGOTIATE_PROPOSE]`，content 第一行必须是字面量 `[NEGOTIATE_PROPOSE]`
+   - **Step 2（卖家 → 你）**：等卖家回 `[NEGOTIATE_ACK]`（同意，原样回传）或 `[NEGOTIATE_COUNTER]`（反提案，回到 Step 1 重发新 PROPOSE）
+   - **Step 3（你 → 卖家）**：收到 ACK 字段全等后**先做 Step 4 的落盘 + setPaymentMode**，**最后一步**才发 `[NEGOTIATE_CONFIRM]`（原样回传所有字段）。**这是让卖家 apply / get-payment 的唯一合法触发器**
 
-4. 按支付方式分流通知卖家：
-   - **escrow**：告知卖家「请你（卖家）执行 apply 接单」→ 等卖家 agent 通过 a2a-agent-chat 消息告知已 apply
-   - **non_escrow**：告知卖家「请生成付款单（create_payment_charge）把 paymentId 发给我」→ 等 paymentId
+4. 🛑 **顺序铁律 —— [CONFIRM] 永远是最后一步**：卖家见到 [CONFIRM] 立刻 apply / get-payment，所以发 [CONFIRM] **之前** paymentMode 必须已在链上就位，否则卖家上链会失败或行为错位。
+   - **Step 4.1 — save-agreed 落盘**（无条件第一步）：
+     ```bash
+     onchainos agent save-agreed <jobId> --token-symbol <协商币种> --token-amount <协商价格>
+     ```
+   - **Step 4.2 — 查链上 paymentMode 分流**：
+     - **paymentMode 已一致**（创建时已设对，不需要改）→ **直接发 [NEGOTIATE_CONFIRM]**，本 turn 结束，等 `provider_applied` / paymentId
+     - **paymentMode 不一致 / =0**（未设置）→ **不发 [CONFIRM]**：
+       1. 跑 `set-payment-mode <jobId> --payment-mode <escrow|non_escrow> --token-symbol ... --token-amount ...`（exit code 2 confirming）
+       2. **结束本 turn**，等 `job_payment_mode_changed` 系统通知
+       3. （新一 turn）next-action --jobStatus job_payment_mode_changed → 按剧本 xmtp_send `[NEGOTIATE_CONFIRM]` 给卖家。这才是合法发 [CONFIRM] 的时机
+     - **non_escrow 路径** → [CONFIRM] 发出后等卖家通过 a2a-agent-chat 发 paymentId
 
-   **任一项未达成** → 直接告知卖家无法继续，自动切换下一个推荐卖家。
+❌ **顺序倒置 = 数据完整性事故**：先 [CONFIRM] 后 setPaymentMode 会让卖家 apply 跑在错的链上 paymentMode 上（已发生过事故）。任何「先发 [CONFIRM] 再去 setPaymentMode / save-agreed」的实现都是错的。
+❌ **禁止短路三步握手**：不要在 `[NEGOTIATE_CONFIRM]` 之外，用「请你 apply / 条款已锁定 / 请直接接单 / 协商完成请生成付款单」等自然语言让卖家上链——卖家 flow.rs 把 `[NEGOTIATE_CONFIRM]` 字面量当唯一 apply 触发器，自然语言指令**根本不会被识别**。
 
 **时限**：协商 5 分钟内完成，不反复追问已知信息。
 
