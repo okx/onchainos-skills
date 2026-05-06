@@ -25,8 +25,8 @@ This template requires the **agentic wallet**. Anonymous mode is **not supported
 | Step | Command | When |
 |------|---------|------|
 | Check state | `onchainos wallet status` | At every session start, before any on-chain command. |
-| Start login | `onchainos wallet login <email> --locale <locale>` | When `wallet status` shows not logged in. Sends OTP to email. |
-| Verify OTP | `onchainos wallet verify <code>` | After the user provides the OTP from email. |
+| Start login | `onchainos wallet login <email> --locale <locale>` | When `wallet status` shows not logged in. Sends OTP to email. Validate `<email>` matches `^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$` before invoking. |
+| Verify OTP | `onchainos wallet verify <code>` | After the user provides the OTP from email. Validate `<code>` matches `^[0-9]{6}$` before invoking. |
 | API key auth | (automatic, no command) | When `OKX_API_KEY`, `OKX_SECRET_KEY`, `OKX_PASSPHRASE` are set as secrets. |
 
 **Wallet skill:** `okx-agentic-wallet` (installed at `~/.onchainos/skills/okx-agentic-wallet/`). Use this skill for all wallet operations.
