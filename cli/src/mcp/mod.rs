@@ -617,13 +617,17 @@ struct CompetitionListParams {
 
 #[derive(Deserialize, JsonSchema)]
 struct CompetitionIdParams {
-    /// Activity ID
+    /// Activity identifier: either the numeric id from a prior `competition_list`
+    /// response (e.g. "110"), or the activity `name` / `shortName` string (e.g.
+    /// "Agentic Trading Contest" or "agentic5"). The handler auto-resolves names
+    /// to ids via a list lookup, so callers can use whichever they have at hand.
     activity_id: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
 struct CompetitionRankParams {
-    /// Activity ID
+    /// Activity identifier: either the numeric id from a prior `competition_list`
+    /// response, or the activity `name` / `shortName`. Auto-resolved server-side.
     activity_id: String,
     /// Optional user wallet address. If omitted, auto-resolves from the currently
     /// selected account: the activity's chain (Solana vs EVM) determines whether
@@ -872,6 +876,23 @@ fn resolve_competition_addresses(
         evm.clone().unwrap_or(default_evm),
         sol.clone().unwrap_or(default_sol),
     ))
+}
+
+/// For competition_detail / competition_rank: the AI may pass either the
+/// numeric activity id (from a prior `competition_list` response) or the
+/// activity name / shortName, since other competition tools (join / claim /
+/// user_status) accept names. We accept both here for consistency: if the
+/// input parses as a number we use it directly; otherwise we resolve via
+/// `competition::resolve_activity_id_by_name`. This avoids the wasted
+/// "first call fails with bad request, retry with id" pattern.
+async fn resolve_activity_identifier(
+    client: &mut ApiClient,
+    raw: &str,
+) -> anyhow::Result<String> {
+    if raw.parse::<u64>().is_ok() {
+        return Ok(raw.to_string());
+    }
+    competition::resolve_activity_id_by_name(client, raw).await
 }
 
 fn err(e: anyhow::Error) -> Result<String, String> {
@@ -2382,15 +2403,18 @@ impl McpServer {
 
     #[tool(
         name = "competition_detail",
-        description = "Get trading competition details: rules, prize pool distribution, participation requirements, timeline. After this returns, follow okx-growth-competition SKILL.md Step 2 fixed display template structure, rendered in the user's language. Required structure: a Basic-info block (English 'Basic info:' / Chinese '基本信息：') with the chain line using hardcoded 'Solana, {chainName}' prefix, plus a Reward-categories numbered list (1./2./3./4.) with rank-breakdown tables for sections 1 and 2. Sections 3 (Participation Reward / 参与奖) and 4 (Skill Quality Award / Skill 质量奖) have specific required content — preserve meaning in any language. NEVER show activityId or other internal numeric ids to the user."
+        description = "Get trading competition details: rules, prize pool distribution, participation requirements, timeline. The activity_id parameter accepts EITHER the numeric id from a prior competition_list response OR the activity name / shortName — both are auto-resolved server-side. After this returns, follow okx-growth-competition SKILL.md Step 2 fixed display template structure, rendered in the user's language. Required structure: a Basic-info block (English 'Basic info:' / Chinese '基本信息：') with the chain line using hardcoded 'Solana, {chainName}' prefix, plus a Reward-categories numbered list (1./2./3./4.) with rank-breakdown tables for sections 1 and 2. Sections 3 (Participation Reward / 参与奖) and 4 (Skill Quality Award / Skill 质量奖) have specific required content — preserve meaning in any language. NEVER show activityId or other internal numeric ids to the user."
     )]
     async fn competition_detail(
         &self,
         Parameters(p): Parameters<CompetitionIdParams>,
     ) -> Result<String, String> {
-        match competition::detail_for_mcp(&mut *self.client.lock().await, &p.activity_id)
-            .await
-        {
+        let mut client = self.client.lock().await;
+        let resolved_id = match resolve_activity_identifier(&mut client, &p.activity_id).await {
+            Ok(id) => id,
+            Err(e) => return err(e),
+        };
+        match competition::detail_for_mcp(&mut client, &resolved_id).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -2399,6 +2423,7 @@ impl McpServer {
     #[tool(
         name = "competition_rank",
         description = "Get one leaderboard for a trading competition: top-N entries plus the user's own rank, estimated reward, and gap to next tier. \
+The activity_id parameter accepts EITHER the numeric id from a prior competition_list response OR the activity name / shortName — both are auto-resolved server-side. \
 A competition can have multiple leaderboards (PnL%, PnL, ...) — this tool returns ONE per call, scoped by `sort_type`. \
 Before answering 'what's my rank?' style questions, call `competition_detail` first, enumerate \
 `tabConfigs[].rankFieldConfig[].sortValueMap.descend`, then call this tool ONCE PER sort_type so you cover every leaderboard. \
@@ -2409,16 +2434,20 @@ After this returns, follow okx-growth-competition SKILL.md Step 5 fixed CASE 1 /
         Parameters(p): Parameters<CompetitionRankParams>,
     ) -> Result<String, String> {
         let mut client = self.client.lock().await;
+        let resolved_id = match resolve_activity_identifier(&mut client, &p.activity_id).await {
+            Ok(id) => id,
+            Err(e) => return err(e),
+        };
         let wallet = match p.wallet {
             Some(w) => w,
-            None => match competition::resolve_wallet_for_activity(&mut client, &p.activity_id).await {
+            None => match competition::resolve_wallet_for_activity(&mut client, &resolved_id).await {
                 Ok(addr) => addr,
                 Err(e) => return err(e),
             },
         };
         match competition::rank_for_mcp(
             &mut client,
-            &p.activity_id,
+            &resolved_id,
             &wallet,
             p.sort_type.unwrap_or(1),
             p.limit.unwrap_or(20),

@@ -384,16 +384,18 @@ pub async fn detail_for_mcp(client: &mut ApiClient, activity_id: &str) -> Result
     let mut data = detail(client, activity_id).await?;
     inject_render_hint(
         &mut data,
-        "User-facing message MUST follow okx-growth-competition SKILL.md Step 2 fixed display template \
-         structure, rendered in the user's language. Required structure: a Basic-info block \
-         (English 'Basic info:' / Chinese '基本信息：') with the chain line using the hardcoded \
-         'Solana, {chainName}' prefix unless chainName is Solana, plus a numbered Reward-categories \
-         list (English 'Reward categories:' / Chinese '奖励分类：') with items 1./2./3./4. \
-         Sections 3 (Participation Reward / 参与奖) and 4 (Skill Quality Award / Skill 质量奖) have \
-         specific required content (eligibility threshold, judging mechanism, top-N reward) — preserve \
-         that meaning in any language. Sections 1 and 2 must include the rank breakdown markdown table \
-         built from prizePoolDistribution[].rules[]. NEVER show activityId, chainIndex, or any internal \
-         numeric id to the user.",
+        "User-facing message MUST follow okx-growth-competition SKILL.md Step 2 fixed display template. \
+         For Chinese-speaking users: copy the Chinese rendering block character-for-character (only fill placeholders); for English: copy the English block. \
+         For other languages: translate while preserving required content invariants. \
+         REQUIRED structure: '基本信息：'/'Basic info:' block with chain line using hardcoded 'Solana, {chainName}' prefix; \
+         numbered '奖励分类：'/'Reward categories:' list 1./2./3./4. \
+         Section titles MUST be exact: 已实现收益率奖池/Realized ROI Pool, 已实现收益额奖池/Realized PnL Pool, 参与奖/Participation Reward, Skill 质量奖/Skill Quality Award (DO NOT substitute synonyms like 'PnL% 排名奖'). \
+         Sections 1 and 2 rank tables headers MUST be 名次/奖励 (Chinese) or Rank/Reward (English), end with a 合计/Total row. \
+         Section 3 description MUST include 'Agentic Wallet', '$100 累计交易量', '$100 总资产', '资产快照'. \
+         Section 4 description MUST include 'AI 初筛 + 人工评审' (双评分机制) and 'top {skillTopN} 每人获得 {skillPerCreatorReward}' — DO NOT invent rank rules by dividing pool. \
+         Read actual rank distribution from prizePoolDistribution[].rules[]. \
+         NEVER show activityId, chainIndex, or any internal numeric id to the user. \
+         NEVER use '-' bullet markers inside the numbered sections.",
     );
     Ok(data)
 }
@@ -553,7 +555,19 @@ pub async fn claim_and_submit(
     }
 
     // ── Step 2: fetch unsigned calldata ─────────────────────────────────
-    let calldata = claim(client, activity_id, evm_wallet, sol_wallet).await?;
+    // Authenticated endpoint — handles backend-side token revocation:
+    // if the call comes back with `Invalid access token` (code=10008), force a
+    // refresh (bypassing local exp check) and retry once. This covers the
+    // edge where local JWT exp is still in the future but the token has been
+    // revoked server-side (e.g. re-login on another device).
+    let calldata = match claim(client, activity_id, evm_wallet, sol_wallet).await {
+        Ok(v) => v,
+        Err(e) if is_invalid_token_error(&e) => {
+            force_refresh_access_token_for_competition().await?;
+            claim(client, activity_id, evm_wallet, sol_wallet).await?
+        }
+        Err(e) => return Err(e),
+    };
     let entries = calldata.as_array().cloned().unwrap_or_default();
     if entries.is_empty() {
         bail!("claim API returned no calldata to submit");
@@ -751,6 +765,53 @@ fn entry_chain_string(entry: &Value) -> String {
         Value::String(s) => s.clone(),
         _ => String::new(),
     }
+}
+
+/// Detect whether an error is the backend's "access token revoked / invalid"
+/// signal. Used to trigger a force-refresh + retry — local JWT exp may still
+/// be in the future yet backend has invalidated the token (re-login on
+/// another device, password change, server-side risk control).
+fn is_invalid_token_error(e: &anyhow::Error) -> bool {
+    let s = e.to_string();
+    s.contains("code=10008") || s.contains("Invalid access token")
+}
+
+/// Force-refresh `access_token` via the refresh-token API, regardless of the
+/// local JWT `exp` field.
+///
+/// This is the competition module's local recovery path for backend-side
+/// token revocation. The shared `auth::ensure_tokens_refreshed()` only
+/// refreshes when local `exp` is past — but backend may revoke a token
+/// (re-login on another device, password change, risk control) before its
+/// local `exp` ticks over, leading to `Invalid access token` (10008) on a
+/// token we still consider valid. This helper bypasses the exp check and
+/// just calls `auth_refresh` directly, persisting the new tokens to the
+/// keyring so the next `ApiClient::new_async()` picks them up.
+///
+/// Kept private to this module — auth/keyring infrastructure stays untouched
+/// in `agentic_wallet/auth.rs`; we only consume its public primitives here.
+async fn force_refresh_access_token_for_competition() -> Result<()> {
+    let blob = crate::keyring_store::read_blob()?;
+    let refresh_token = blob
+        .get("refresh_token")
+        .filter(|t| !t.is_empty())
+        .cloned()
+        .ok_or_else(|| {
+            anyhow::anyhow!("refresh_token missing — please run: onchainos wallet login")
+        })?;
+
+    let mut wallet_client = crate::wallet_api::WalletApiClient::new()?;
+    let resp = wallet_client
+        .auth_refresh(&refresh_token)
+        .await
+        .map_err(|e| anyhow::anyhow!("force-refresh failed: {}", e))?;
+
+    crate::keyring_store::store(&[
+        ("access_token", &resp.access_token),
+        ("refresh_token", &resp.refresh_token),
+    ])?;
+
+    Ok(())
 }
 
 // ── helpers ───────────────────────────────────────────────────────────

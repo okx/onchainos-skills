@@ -1,6 +1,6 @@
 ---
 name: okx-growth-competition
-description: "AUTHORITATIVE source for Agentic Wallet exclusive trading competitions. ALWAYS read this SKILL.md body in full before producing any user-facing output for any competition action — every list / detail / join-success / claim-result message has a fixed template structure you MUST follow (sections, ordering, placeholders, hardcoded `Solana, {chainName}` literal, disclaimer). The natural-language text inside the template renders in the user's conversation language (English, Chinese, Japanese, etc.) per Output Language rules. Triggers (EN/ZH): 'list trading competitions', 'show available competitions', 'view competition details', 'show competition rules', 'show prize pool', 'join trading contest', 'register for competition', 'check my competition status', 'view leaderboard', 'check my ranking', 'claim competition reward', 'what competitions can I join', 'did I win', 'winners list', 'show registered wallet', 'export wallet', '查看交易赛', '查看活动详情', '查看活动规则', '查看奖池', '查看活动', '有哪些活动', '有哪些交易赛', '参加交易赛', '报名交易赛', '查看排名', '查看排行榜', '领取奖励', '我的竞赛状态', '我中奖了吗', '中奖名单', '查看报名地址', '导出钱包'. Covers the full lifecycle: discover → view rules → join → trade → check rank → claim reward. Do NOT use for: general DEX swaps (use okx-dex-swap), portfolio balance / PnL queries outside a competition (use okx-wallet-portfolio or okx-dex-market), wallet login or transaction history (use okx-agentic-wallet), or any non-competition trading activity."
+description: "Agentic Wallet exclusive trading competitions. Full lifecycle: discover → view rules → join → trade → check rank → claim reward. Triggers (EN): 'list trading competitions', 'view competition details', 'register for competition', 'check my competition status', 'view leaderboard', 'check my ranking', 'claim competition reward', 'winners list'. Triggers (ZH): '查看交易赛', '查看活动详情', '有哪些交易赛', '报名交易赛', '查看排行榜', '领取奖励', '中奖名单'. Do NOT use for: general DEX swaps (use okx-dex-swap); portfolio / PnL queries outside a competition (use okx-wallet-portfolio or okx-dex-market); wallet login or tx history (use okx-agentic-wallet); any non-competition trading activity. Do NOT use when the user says only a single word like 'competition', 'rank', or 'claim' without naming a specific competition."
 license: MIT
 metadata:
   author: okx
@@ -189,7 +189,14 @@ onchainos competition detail --activity-id <id>
 ```
 
 <MUST>
-**Display competition / reward info using the fixed template below.** The structure (sections, ordering, numbered list, placeholder positions, the hardcoded `Solana, {chainName}` chain prefix) is fixed. The natural-language text inside is rendered in the user's language — see `## Output Language`. Do not reorder, omit, or merge sections.
+**Display competition / reward info using the fixed template below.** The structure (sections, ordering, numbered list, placeholder positions, the hardcoded `Solana, {chainName}` chain prefix) is fixed.
+
+**Two-tier rendering rule:**
+1. **Chinese-speaking user**: copy the Chinese rendering block below CHARACTER-FOR-CHARACTER. Only fill in placeholders. Do not paraphrase, abbreviate, or substitute synonyms (e.g. `名次` ≠ `排名`; `合计` row is REQUIRED; `已实现收益率奖池` is the tab name, NOT `PnL% 排名奖`).
+2. **English-speaking user**: copy the English canonical block CHARACTER-FOR-CHARACTER. Same constraint.
+3. **Other languages** (Japanese, Korean, Spanish, etc.): translate the English version, but **every required content invariant** listed under each section MUST appear in the translation.
+
+Do not reorder, omit, or merge sections.
 </MUST>
 
 #### Fixed display template (English canonical; for Chinese-speaking users translate to the Chinese version below)
@@ -277,10 +284,44 @@ For other languages (Japanese, Spanish, etc.), translate the English version nat
 
 If any of the four pools is absent for a particular activity, omit just that section (keep the others as-is).
 
+#### Required content invariants (per section)
+
+**Section 1 — 已实现收益率奖池 / Realized ROI Pool**
+- Title MUST be exactly `已实现收益率奖池` (Chinese) or `Realized ROI Pool` (English). Do NOT substitute with `PnL% 排名奖` / `ROI Ranking Award` / similar.
+- Description MUST mention: ranking by realized ROI, high to low, during the competition period.
+- Rank table MUST have headers `名次 / 奖励` (Chinese) or `Rank / Reward` (English) and end with a `合计` / `Total` row.
+
+**Section 2 — 已实现收益额奖池 / Realized PnL Pool**
+- Title MUST be exactly `已实现收益额奖池` / `Realized PnL Pool`. Do NOT substitute with `PnL 排名奖`.
+- Description MUST mention: ranking by realized PnL, high to low.
+- Rank table MUST follow the same format as Section 1.
+
+**Section 3 — 参与奖 / Participation Reward** (PRODUCT-MANDATED COPY)
+- Title MUST be exactly `参与奖` / `Participation Reward`.
+- The description body MUST include all of these specific terms:
+  - `Agentic Wallet`
+  - cumulative trading volume threshold of `$100`
+  - wallet total assets maintained at `$100` throughout
+  - sharing the participation pool (`平分 ... 参与奖奖池` / `share the participation reward pool`)
+  - asset snapshots to verify eligibility (`资产快照以核验资格` / `asset snapshots ... to verify eligibility`)
+- For Chinese-speaking users, copy the Chinese rendering verbatim — that is the exact product-approved copy.
+
+**Section 4 — Skill 质量奖 / Skill Quality Award** (PRODUCT-MANDATED COPY)
+- Title MUST be exactly `Skill 质量奖` / `Skill Quality Award`.
+- The description body MUST include all of these specific terms:
+  - submission of Agent Skill via the activity page
+  - examples of skill content (on-chain yield strategies, trade analysis, signal monitoring)
+  - `AI 初筛与人工评审双重评分机制` / `dual-rating mechanism of AI initial screening and human review`
+  - `评分排名前 {skillTopN} 的 Skill 创作者每人将获得 {skillPerCreatorReward}` / `top {skillTopN} Skill creators ... each receive {skillPerCreatorReward}`
+- For Chinese-speaking users, copy the Chinese rendering verbatim. Do NOT invent rules like "排名前 51 名各获 1 DJT" by dividing pool by some arbitrary count.
+
 <NEVER>
 - ❌ Do NOT drop the trailing `, Solana` from the chain line, even if the backend's `chainName` is already an EVM chain like XLayer / Arbitrum.
 - ❌ Do NOT reorder or merge the four reward sections — they must appear in the order 1 → 2 → 3 → 4.
 - ❌ Do NOT add ID columns or expose any internal numeric id (`activityId`, etc.) anywhere in the output.
+- ❌ Do NOT paraphrase, abbreviate, or substitute synonyms in Sections 3 and 4. These are product-mandated copy. For Chinese-speaking users, the text MUST match the Chinese rendering block character-for-character (placeholders aside).
+- ❌ Do NOT invent rank-distribution rules from the pool amount. The actual rules come from `prizePoolDistribution[].rules[]` — read them; do not divide.
+- ❌ Do NOT use bullet markers (`-`) inside the four numbered sections — the structure is `1. Title (amount)\n description text` then the rank table; not a bullet list.
 </NEVER>
 
 After printing the template, ask: `Would you like me to register you for this competition?`
@@ -395,7 +436,7 @@ When user asks to trade per competition rules:
 **Case A — User does NOT provide a CA (only token name/symbol):**
 1. Resolve the CA via the `token_search` MCP tool (CLI: `onchainos token search`).
 2. Confirm with user before proceeding:
-   > Just to confirm, the CA for token ** is ***. Is that correct?
+   > Just to confirm, the CA for token "{tokenSymbol}" is "{contractAddress}". Is that correct?
 3. Wait for user to confirm. Only proceed after explicit "yes".
 4. Then follow **Case B** below.
 
@@ -511,7 +552,11 @@ Chinese rendering:
 你当前排名情况的总奖励为：{totalReward} {rewardUnit}（两个相加）
 ```
 
-##### CASE 2 — ranked on one, off the other (example assumes user is OFF PnL%)
+##### CASE 2 — ranked on one leaderboard, off the other
+
+There are two symmetric sub-cases. The structure is identical: the ranked leaderboard goes first ("ranked #N, estimated reward X"), then the unranked one ("not on the leaderboard, current value Y, threshold Z"). Each sub-case has its own pinned template — do NOT improvise the unranked-section unit (`%` for PnL%, currency `$` for PnL).
+
+###### CASE 2-A — on PnL, off PnL% (currentRank for sort_type=7 > 0; sort_type=1 == 0)
 
 English canonical:
 
@@ -533,7 +578,31 @@ Chinese rendering:
 未上榜，您当前已实现收益率为 {currentRoi}%。已实现收益率至少要达到 {minRoi}%（榜单 min PNL%）才能上榜
 ```
 
-If the situation is reversed (ranked on PnL% but off PnL), swap the section order accordingly.
+###### CASE 2-B — on PnL%, off PnL (currentRank for sort_type=1 > 0; sort_type=7 == 0)
+
+English canonical:
+
+```
+Realized ROI ranking:
+You are currently ranked #{roiRank}, estimated reward {roiReward} {rewardUnit}!
+
+Realized PnL ranking:
+Not on the leaderboard yet. Your current realized PnL is ${currentPnl}. You need at least ${minPnl} (the current leaderboard minimum) to qualify.
+```
+
+Chinese rendering:
+
+```
+已实现收益率排名：
+你目前排名第 {roiRank}，预计获得 {roiReward} {rewardUnit} 奖励！
+
+已实现收益额排名：
+未上榜，您当前已实现收益额为 ${currentPnl}。已实现收益额至少要达到 ${minPnl}（榜单 min PNL）才能上榜
+```
+
+**Section ordering rule**: the leaderboard the user **IS** ranked on ALWAYS goes first. Don't put the "未上榜" / "Not on the leaderboard" section before the ranked one.
+
+**Unit rule**: PnL% uses `%` suffix (no currency symbol); PnL uses `$` prefix (or the appropriate currency unit). Do NOT mix them up — the user's threshold for PnL is a dollar amount, not a percentage.
 
 ##### CASE 3 — off both leaderboards
 
@@ -719,7 +788,3 @@ When the user requests to export the Agentic Wallet:
 | `Sui-chain reward claims are not yet supported` | Sui rewards must be claimed from the Sui-compatible wallet UI (this client only signs EVM and Solana) |
 | `region` / `not available in your region` | Registration failed: service is not available in your region. Please switch to a supported region and try again. |
 | Any other error | Operation failed. Please contact customer support. |
-
-## Output Language
-
-Respond in the user's language (Chinese if Chinese, English otherwise). CLI output is always JSON — translate field values when presenting to user.
