@@ -21,6 +21,7 @@ use crate::wallet_api::UnsignedInfoResponse;
 /// 单次任务预算上限
 const MAX_BUDGET: f64 = 10_000_000.0;
 /// 任务描述字符上限
+const MIN_DESCRIPTION_CHARS: usize = 20;
 const MAX_DESCRIPTION_CHARS: usize = 2000;
 
 /// 解析截止时间 → 秒。必须带单位后缀：`d`（天）、`h`（小时）、`m`（分钟）、`s`（秒）。
@@ -156,10 +157,13 @@ pub async fn handle_create(
     agent_id: Option<String>,
 ) -> Result<()> {
     let desc_len = description.chars().count();
+    if desc_len < MIN_DESCRIPTION_CHARS {
+        bail!("描述太短，请补充需求细节（至少 {MIN_DESCRIPTION_CHARS} 字符，当前 {desc_len} 字符）");
+    }
     if desc_len > MAX_DESCRIPTION_CHARS {
         bail!(
-            "任务描述不能超过 {} 字符，当前 {} 字符",
-            MAX_DESCRIPTION_CHARS, desc_len
+            "任务描述不能超过 {MAX_DESCRIPTION_CHARS} 字符（当前 {desc_len} 字符），\
+            你可以让 AI 帮你提炼精简，或手动缩减描述内容后重试。"
         );
     }
 
