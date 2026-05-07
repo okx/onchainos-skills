@@ -794,6 +794,9 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     const PSEUDO_EVENTS: &[&str] = &[
         "dispute_raise", "agree_refund", "dispute_evidence",
         "close", "set_public",
+        "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",
+        "evaluator_selected", "vote_committed", "reveal_started", "vote_revealed", "dispute_resolved", "slashed", "cooldown_entered", "round_failed",
+        "reward_claimed",
         "wakeup_notify",
     ];
     if PSEUDO_EVENTS.contains(&job_status_or_event) {

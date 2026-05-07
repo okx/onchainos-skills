@@ -344,11 +344,11 @@ pub fn status_when_event(e: &Event) -> Status {
         Event::JobRefunded | Event::JobAutoRefunded                         => Status::Rejected,
         // DisputeResolved 取决于裁决方（buyer-wins → Rejected；seller-wins → Completed）；
         // 单从 event 不能确定，默认 Completed，调用方应优先调 `agent status` 拉真实 status。
-        Event::DisputeResolved                                              => Status::Completed,
+        Event::DisputeResolved  => Status::Completed,
         // 仲裁子状态机：所有事件都发生在 task=disputed 状态下
-        Event::EvaluatorSelected | Event::RevealStarted
-        | Event::VoteCommitted | Event::VoteRevealed
-        | Event::RoundFailed                                                => Status::Disputed,
+        Event::EvaluatorSelected | Event::VoteCommitted
+        | Event::RevealStarted | Event::VoteRevealed
+        | Event::Slashed | Event::CooldownEntered | Event::RoundFailed      => Status::Disputed,
         // 提醒类（不改 status，task 还在原状态）
         Event::SubmitDeadlineWarn                                           => Status::Accepted,
         Event::ReviewDeadlineWarn                                           => Status::Submitted,
@@ -359,8 +359,8 @@ pub fn status_when_event(e: &Event) -> Status {
         // 质押 / 罚没 / 奖励 lifecycle 跟 task status 解耦
         Event::Staked
         | Event::UnstakeRequested | Event::UnstakeClaimed | Event::UnstakeCancelled
-        | Event::RewardClaimed | Event::Slashed
-        | Event::StakeStopped | Event::CooldownEntered                      => Status::Other("staking".to_string()),
+        | Event::StakeStopped                                               => Status::Other("staking".to_string()),
+        Event::RewardClaimed                                                     => Status::Other("reward_claimed".to_string()),
         // wake-up 是过场事件,真实 status 在 envelope.message.jobStatus 字段;
         // 这里返回占位 status,agent 不应该用 wakeup_notify 走 next-action
         Event::WakeupNotify                                                 => Status::Other("wakeup".to_string()),
