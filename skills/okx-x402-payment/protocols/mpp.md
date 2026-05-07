@@ -138,9 +138,11 @@ Output shape same as transaction mode but `mode: "hash"`. Save `authorization_he
 
 ## Charge Step 3: Replay
 
+Resend to the **original business URL** (same URL that returned the 402):
+
 ```
-<original method> <original url>
-Authorization: <authorization_header>
+<original method> <original business URL>
+Authorization: Payment <authorization_header>
 ```
 
 Expected: `HTTP 200` with content + `Payment-Receipt` header (on-chain tx hash). Charge complete. Another 402 → see [§ Troubleshooting](#troubleshooting) (replay / expired challenge).
@@ -150,6 +152,32 @@ Expected: `HTTP 200` with content + `Payment-Receipt` header (on-chain tx hash).
 # Session Flow
 
 State machine: **open → N vouchers → close** (optional topUp). Each phase has its own CLI command and `Authorization` header.
+
+> **🔑 Action-first, URL-stays-the-same** — When a user asks for ANY
+> session operation ("open / 开通道", "buy a translation", "top up /
+> 充值", "close / 关闭"), the action lives in the credential
+> `payload.action`, NOT in the URL path. The URL is **always the
+> original business URL** — the same one the user asked to access.
+>
+> | User intent (any language) | `payload.action` | CLI command |
+> |---|---|---|
+> | open / 开通道 / start session | `open` | `mpp-session-open` |
+> | buy / call / 调用 / use service | `voucher` | `mpp-session-voucher` |
+> | top up / 充值 / add deposit | `topUp` | `mpp-session-topup` |
+> | close / 关闭 / end session / settle | `close` | `mpp-session-close` |
+>
+> All four flows share ONE URL and ONE pattern:
+> 1. Re-issue the **original business URL** with no `Authorization` →
+>    seller responds `402 + WWW-Authenticate: Payment ... intent="session"`.
+> 2. Pick the right CLI command above and pass the WWW-Authenticate as
+>    `--challenge`. The CLI sets `payload.action` for you.
+> 3. Resend to the **same original business URL** with
+>    `Authorization: Payment <authorization_header>`.
+>
+> **Never probe** for `/open`, `/voucher`, `/topup`, `/close`,
+> `/<resource>/topup`, etc. — they don't exist. If you can't think of
+> a URL, the answer is always "the original business URL the user
+> asked about".
 
 ## Session State to Track
 
@@ -210,24 +238,39 @@ onchainos payment mpp-session-open \
 
 CLI TEE-signs EIP-3009 `receiveWithAuthorization` (deposit into escrow) + EIP-712 baseline Voucher (channelId, cum=initial_cum). Output: `data.{authorization_header, channel_id, escrow, chain_id, deposit, wallet}` — save all to session state. Initial `current_cum` = initial-cum value (default `"0"`).
 
-**Hash mode (`feePayer=false`)** — user must send the on-chain "open channel" transaction themselves first (delegate to `okx-onchain-gateway` or manual, same prompt as charge S2b). Then:
+**Hash mode (`feePayer=false`)** — user must broadcast `escrow.open(payee, token, deposit, SALT, ...)` themselves first AND **keep the 32-byte `SALT`** they used. The salt enters `channelId = keccak256(payer, payee, token, salt, authorizedSigner, escrow, chainId)`, so a different value on the CLI side yields a different `channelId` than the contract recorded — the seller will reject the open with a channelId mismatch.
+
+Delegate the broadcast to `okx-onchain-gateway` or manual; same prompt as charge S2b, but ALSO collect the salt:
+
+> The seller isn't paying gas, so you need to broadcast `escrow.open(...)` yourself. I need TWO things back:
+> 1. The 32-byte **salt** you passed to `open(...)` (same value, 0x + 64 hex chars).
+> 2. The resulting **tx hash** (0x + 64 hex chars).
+>
+> How would you like to send it?
+>   1. **Help me send it** — switch to `okx-onchain-gateway` (it'll generate the salt and return both values)
+>   2. **I'll send it manually** — paste salt + tx hash when ready
+
+Then:
 
 ```bash
 onchainos payment mpp-session-open \
   --challenge '<full WWW-Authenticate header value>' \
   --deposit '<atomic units>' \
   --tx-hash '0x<64-char hex>' \
+  --salt    '0x<64-char hex>' \
   [--initial-cum '<atomic>' | --prepay-first] \
   [--from '<0xPayer>']
 ```
 
-CLI still TEE-signs the initial voucher (EIP-712); only the deposit tx is replaced by the supplied hash.
+CLI still TEE-signs the initial voucher (EIP-712); the deposit tx and channel salt come from the user's on-chain `open` call.
 
 ### Send Open to Seller
 
+Send the `authorization_header` back to the **original business URL** (same one that returned the open challenge):
+
 ```
-<original method> <original url>
-Authorization: <authorization_header>
+<original method> <original business URL>
+Authorization: Payment <authorization_header>
 ```
 
 Outcomes:
@@ -301,9 +344,11 @@ CLI signs an EIP-712 Voucher(channelId, cum_for_this_call) via TEE. Output `mode
 
 ### S2.4: Replay the Business Request
 
+Send the voucher credential back to the **original business URL** (the very same URL the user is trying to access):
+
 ```
-<original method> <original url>
-Authorization: <authorization_header>
+<original method> <original business URL>
+Authorization: Payment <authorization_header>
 ```
 
 Expected: `HTTP 200` with content. **Update state**: `current_cum = cum_for_this_call`, `current_sig = <signature>`, `estimated_spent += unit_amount`. (Reuse path: `current_cum` / `current_sig` unchanged; only `estimated_spent` advances.)
@@ -336,12 +381,18 @@ Ask user:
 > Your prepaid balance is running low. How much would you like to add (atomic units)?
 > Current balance: `<human(deposit)> (<deposit>)` · Used so far: `<human(current_cum)> (<current_cum>)`
 
+### S2b.0: Get the TopUp Challenge
+
+Per the [Action-first, URL-stays-the-same](#session-flow) rule: re-issue the **original business URL** with no `Authorization` header → seller responds `402 + WWW-Authenticate: Payment ... intent="session"`. Use that header as `--challenge` below.
+
+### S2b.1: Sign the TopUp Credential
+
 Branch by `methodDetails.feePayer` from the topUp challenge (typically same as open).
 
 **Transaction mode:**
 ```bash
 onchainos payment mpp-session-topup \
-  --challenge '<WWW-Authenticate for topUp>' \
+  --challenge '<WWW-Authenticate header from S2b.0>' \
   --channel-id '<saved channel_id>' \
   --additional-deposit '<atomic units>' \
   --escrow '<saved escrow>' \
@@ -355,7 +406,7 @@ CLI TEE-signs `receiveWithAuthorization`. EIP-3009 nonce is `keccak256(abi.encod
 **Hash mode** (user sends the on-chain "top-up" transaction themselves first, then):
 ```bash
 onchainos payment mpp-session-topup \
-  --challenge '<WWW-Authenticate for topUp>' \
+  --challenge '<WWW-Authenticate header from S2b.0>' \
   --channel-id '<saved channel_id>' \
   --additional-deposit '<atomic units>' \
   --escrow '<saved escrow>' \
@@ -364,9 +415,20 @@ onchainos payment mpp-session-topup \
   [--from '<saved payer_addr>']
 ```
 
-`--currency` is optional in hash mode (CLI doesn't sign EIP-3009; the on-chain tx already covers it).
+`--currency` is optional in hash mode (CLI doesn't sign EIP-3009; the on-chain tx already covers it). **Note**: hash-mode topUp does NOT need `--salt` — the on-chain `topUp(channelId, ...)` call references the existing channel by ID, no new channelId hashing happens.
 
-**After TopUp**: `deposit = deposit + additional_deposit`. Resume Phase S2.
+### S2b.2: Send TopUp to Seller
+
+Send the `authorization_header` back to the **original business URL** — same place voucher credentials go. The seller routes by `payload.action="topUp"`.
+
+```
+<original method> <original business URL>
+Authorization: Payment <authorization_header>
+```
+
+Expected: `HTTP 200` with management body (`{"action": "topUp", "status": "ok", ...}`).
+
+**After TopUp**: update saved state — `deposit = deposit + additional_deposit`. Resume Phase S2 (voucher loop).
 
 ## Phase S3: Close Channel
 
@@ -392,9 +454,11 @@ CLI signs an EIP-712 Voucher(channelId, final_cum) via TEE — same signing path
 
 ### S3.3: Send Close to Seller
 
+Send the `authorization_header` back to the **original business URL** — the seller routes by `payload.action="close"`.
+
 ```
-<original method> <original url>     # typically a dedicated close endpoint, e.g. /session/manage
-Authorization: <authorization_header>
+<original method> <original business URL>
+Authorization: Payment <authorization_header>
 ```
 
 Seller settles on-chain (transfers `final_cum` to merchant, refunds the rest to payer) and returns a receipt. **Clear session state** — channel is closed.
@@ -439,6 +503,7 @@ Applies in every error path: voucher submission, settle, close, topup, and the i
 | Voucher rejected: `InsufficientBalance` (HTTP 402; OKX Rust SDK private code `70015`) | seller's spent + new_amount > highest_voucher (often hit during reuse when `estimated_spent` drifted) | Set `estimated_spent = current_cum`, fall through to SIGN path with `cum = current_cum + unit_amount` (S2.5) |
 | Open fails: `chain not found`                        | Unsupported chainId or chain entry missing     | `onchainos wallet chains` to list supported chains             |
 | `--tx-hash` rejected: `must be 0x + 64 hex chars`    | Malformed hash                                 | Copy full 66-char hash (with `0x` prefix)                      |
+| Hash-mode open rejected: `channelId mismatch` / `8000` | `--salt` not the one used in the on-chain `open` call | Re-run `escrow.open(...)` with a fresh salt and pass that exact salt back via `--salt` |
 | Session 402 keeps repeating after voucher sent       | channel_id / escrow / chain_id mismatch        | Re-check saved session state; all three must match the open    |
 | `30001 incorrect params`                             | Wrong field set, wrong base URL, http→https redirect | Verify `MPP_SA_URL` is `https://...` (not `http://`)      |
 | `70004 invalid signature`                            | EIP-3009 typename mismatch, wrong nonce, wrong domain | Check seller logs; usually means CLI is older than spec   |
