@@ -219,6 +219,76 @@ async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
     matched.unwrap_or_else(fallback)
 }
 
+/// 卖家自我能力匹配的真相来源：service-list（agent 主动注册的服务列表）。
+#[derive(Debug, Default)]
+struct AgentService {
+    name: Option<String>,
+    description: Option<String>,
+    service_type: Option<String>,
+}
+
+/// 子进程调 `onchainos agent service-list --agent-id <id>` 拿服务列表。
+/// 失败 / 空列表都回 vec![]，调用方按空处理。
+async fn fetch_agent_services(agent_id: &str) -> Vec<AgentService> {
+    if agent_id.is_empty() {
+        return vec![];
+    }
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[fetch_agent_services] current_exe 失败: {e}");
+            return vec![];
+        }
+    };
+    let mut cmd = tokio::process::Command::new(&exe);
+    cmd.args(["agent", "service-list", "--agent-id", agent_id]);
+    let output = match cmd.output().await {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("[fetch_agent_services] spawn `agent service-list` 失败: {e}");
+            return vec![];
+        }
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!(
+                "[fetch_agent_services] 解析 stdout 失败: {e}; raw={}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return vec![];
+        }
+    };
+    if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("(no error)");
+        eprintln!("[fetch_agent_services] CLI 返回失败: {err}");
+        return vec![];
+    }
+    let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
+    let list = data
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|x| x.get("list"))
+        .and_then(|v| v.as_array())
+        .cloned();
+    let Some(list) = list else {
+        eprintln!(
+            "[fetch_agent_services] data[0].list 字段缺失，shape 异常 (agentId={agent_id})"
+        );
+        return vec![];
+    };
+    list.iter()
+        .map(|s| AgentService {
+            name: s.get("serviceName").and_then(|v| v.as_str()).map(String::from),
+            description: s
+                .get("serviceDescription")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            service_type: s.get("serviceType").and_then(|v| v.as_str()).map(String::from),
+        })
+        .collect()
+}
+
 // ─── 状态说明 ──────────────────────────────────────────────────────────────
 fn status_desc(s: &str) -> &str {
     match s {
@@ -298,12 +368,12 @@ async fn run_context(
     let profile = fetch_agent_profile(agent_id).await;
 
     // 生成上下文
-    let ctx_text = build_context(&task, role, agent_id, &profile);
+    let ctx_text = build_context(&task, role, agent_id, &profile).await;
     println!("{ctx_text}");
     Ok(())
 }
 
-fn build_context(
+async fn build_context(
     task: &TaskDetail,
     role: &str,
     agent_id: &str,
@@ -428,28 +498,58 @@ fn build_context(
         (Some(id), None) => out.push_str(&format!("- AgentID：{id}\n")),
         _ => out.push_str("- 尚未匹配卖家\n"),
     }
-    // ── 专业匹配检查（仅卖家 + open 状态 + 有 profile） ───────────────────
+    // ── 专业匹配检查（仅卖家 + open 状态） ────────────────────────────────
+    // 真相来源：service-list（agent 注册的服务清单）。**只要任意一项服务**和任务领域
+    // 匹配就算通过；只有**全部**服务都对不上才判定为不匹配。profileDescription 仅做
+    // 兜底参考，不作为唯一判断依据（描述是泛泛的自我介绍，service-list 才是实际能力）。
     if role_enum == Some(state_machine::Role::Provider)
         && task_status == state_machine::Status::Open
     {
-        if let Some(desc) = &profile.profile_description {
-            out.push_str("【⚠️ 第一步：专业匹配检查（必做，不得跳过）】\n");
-            out.push_str(&format!("- 你的 Provider 描述：{desc}\n"));
-            out.push_str(&format!("- 任务标题：{}\n", task.title));
-            out.push_str(&format!("- 任务描述：{}\n", task.description));
-            out.push('\n');
-            out.push_str("判断：上述「Provider 描述」和「任务领域」是否匹配？\n");
-            out.push_str("- 匹配（同一专业领域）→ 进入下方「按可见性分流」继续协商\n");
-            out.push_str("- 不匹配（领域明显不同，如 DeFi trading vs 合约审计 / 前端 / 文案）→ **必须拒绝**：\n");
-            out.push_str("  1. 调用 `xmtp_send` 工具发送拒绝消息（模板如下）\n");
-            out.push_str("  2. **禁止**执行 onchainos agent apply 或任何后续操作\n\n");
-            out.push_str("拒绝回复模板（通过 `xmtp_send` 工具发送，`content` 字段 = 下方纯自然语言正文）：\n");
-            out.push_str(&format!(
-                "抱歉，此任务（{}）超出我的专业领域（{}），无法承接。祝您找到合适的卖家。\n\n",
-                task.title, desc
-            ));
-            out.push_str("注意：`content` 是纯自然语言正文，不要加任何 text header（如 `jobId: / 来自: ... / 类型: REPLY` 之类）。XMTP 插件会自动把 content 包装成 a2a-agent-chat envelope。\n\n");
+        let services = fetch_agent_services(profile.agent_id.as_deref().unwrap_or("")).await;
+        out.push_str("【⚠️ 第一步：专业匹配检查（必做，不得跳过）】\n");
+        if services.is_empty() {
+            out.push_str("- 你的服务列表（service-list）：**空** —— 没有注册任何服务\n");
+            if let Some(desc) = &profile.profile_description {
+                out.push_str(&format!("- 备用参考·Provider 描述：{desc}\n"));
+            }
+        } else {
+            out.push_str("- 你的服务列表（service-list，**专业匹配的真相来源**）：\n");
+            for (i, svc) in services.iter().enumerate() {
+                let name = svc.name.as_deref().unwrap_or("(no name)");
+                let desc = svc.description.as_deref().unwrap_or("(no description)");
+                let stype = svc.service_type.as_deref().unwrap_or("?");
+                out.push_str(&format!("  {}. [{stype}] {name}: {desc}\n", i + 1));
+            }
+            if let Some(desc) = &profile.profile_description {
+                out.push_str(&format!("- 备用参考·Provider 描述：{desc}\n"));
+            }
         }
+        out.push_str(&format!("- 任务标题：{}\n", task.title));
+        out.push_str(&format!("- 任务描述：{}\n", task.description));
+        out.push('\n');
+        out.push_str("判断规则（**只要任意一项服务**和任务领域吻合就算匹配；只有**所有**服务都对不上才判定不匹配）：\n");
+        out.push_str("- ✅ 服务列表里**任意一项**和任务领域吻合 → 匹配，进入下方「按可见性分流」继续协商\n");
+        out.push_str("- ❌ 服务列表为空 / 所有服务都和任务领域明显不符（如全是猫图生成 vs 任务是合约审计）→ **必须拒绝**：\n");
+        out.push_str("  1. 调用 `xmtp_send` 工具发送拒绝消息（模板如下）\n");
+        out.push_str("  2. **禁止**执行 onchainos agent apply 或任何后续操作\n\n");
+        out.push_str("拒绝回复模板（通过 `xmtp_send` 工具发送，`content` 字段 = 下方纯自然语言正文）：\n");
+        let summary = if services.is_empty() {
+            profile
+                .profile_description
+                .clone()
+                .unwrap_or_else(|| "未注册任何服务".to_string())
+        } else {
+            services
+                .iter()
+                .filter_map(|s| s.name.as_deref())
+                .collect::<Vec<_>>()
+                .join(" / ")
+        };
+        out.push_str(&format!(
+            "抱歉，此任务（{}）不在我目前提供的服务范围（{}）内，无法承接。祝您找到合适的卖家。\n\n",
+            task.title, summary
+        ));
+        out.push_str("注意：`content` 是纯自然语言正文，不要加任何 text header（如 `jobId: / 来自: ... / 类型: REPLY` 之类）。XMTP 插件会自动把 content 包装成 a2a-agent-chat envelope。\n\n");
 
         // 专业匹配通过后，按 task.visibility 给不同动作引导（VisibilityEnum: 0=PUBLIC / 1=PRIVATE）
         let buyer_id = task.buyer_agent_id.as_deref().unwrap_or("<task.buyerAgentId>");

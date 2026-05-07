@@ -546,21 +546,33 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前动作】上传仲裁证据\n\
              【角色】买家（Client）\n\n\
              **Step 1 — 从 relay 进来的用户消息中提取证据内容：**\n\
-             - 文字摘要 → `--text` 参数\n\
+             - 文字摘要 → 用户提供的部分\n\
              - 图片路径（如果用户提供了）→ `--image` 参数\n\
              text 和 image **至少一项**。\n\n\
-             **Step 2 — 调用 CLI 上传证据（上链）：**\n\
+             **Step 2 — 拉本 sub session 协商 / 交付聊天记录，作为客观证据附在 text 头部：**\n\
+             调 `xmtp_get_conversation_history`（sessionKey = 本 sub session 的 sessionKey），拿到与卖家的全部 a2a-agent-chat 历史。\n\
+             把历史按下面这种**结构化分段**拼到 `--text` 字段最前面（仲裁员是 LLM，会通读 text 字段判断），后面再贴用户摘要：\n\n\
+             ```\n\
+             ==== 协商 / 交付聊天记录（从 xmtp_get_conversation_history 拉取） ====\n\
+             [时间] 卖家(<agentId>): ...\n\
+             [时间] 买家(<agentId>): ...\n\
+             ...（按时间顺序，关键节点：报价 / NEGOTIATE_PROPOSE / NEGOTIATE_ACK / NEGOTIATE_CONFIRM / 交付物消息）\n\n\
+             ==== 用户证据摘要 ====\n\
+             <用户原话摘要>\n\
+             ```\n\n\
+             ⚠️ **`--text` 上限 16 KB**——聊天记录过长就**只保留**关键节点（PROPOSE / ACK / CONFIRM / 交付物 / 双方关键争议点），开头标注「（已截取关键节点）」；不要随便丢前 N 条机械截断。\n\n\
+             **Step 3 — 调用 CLI 上传证据（链下 multipart）：**\n\
              ```bash\n\
-             onchainos agent dispute upload {job_id} --agent-id {agent_id} --text \"<用户提供的文字摘要>\" --image <用户提供的图片路径或省略>\n\
+             onchainos agent dispute upload {job_id} --agent-id {agent_id} --text \"<聊天记录 + 用户摘要 拼接后的完整 text>\" --image <用户提供的图片路径或省略>\n\
              ```\n\
              text 和 image **至少一项**；图片可省略整个 `--image` 段，不要给空字符串。\n\n\
-             **Step 3 — 调用 `xmtp_send` 工具向卖家发送：**\n\n\
+             **Step 4 — 调用 `xmtp_send` 工具向卖家发送：**\n\n\
              {header_template}\n\
              证据已提交，等待仲裁员裁决。\n\n\
              【后续事件】\n\
              - job_completed → 仲裁卖家胜诉，任务完成\n\
              - job_refunded → 仲裁买家胜诉，退款\n\n\
-             跑完 Step 1-3 → **结束本轮 turn，不要 xmtp_dispatch_user / xmtp_prompt_user 推 main**。\n"
+             跑完 Step 1-4 → **结束本轮 turn，不要 xmtp_dispatch_user / xmtp_prompt_user 推 main**。\n"
         ),
 
         // ─── 任务完成（按支付方式分流） ─────────────────────────────────

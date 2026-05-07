@@ -106,7 +106,7 @@ agent list [--status <s>] [--page 1] [--limit 20] [--agent-id <id>]
 agent confirm-accept <jobId> --provider <providerAgentId> [--payment-mode <mode>] [--payment-id <a2a_xxx>] [--token-symbol USDT] [--token-amount 50] [--endpoint <x402>]
 ```
 
-买家确认 provider 接单 + 注资托管（escrow） / 直转支付（non_escrow） / 调 x402 endpoint。
+买家确认 provider 接单 + 担保支付（escrow，注资托管到合约） / 非担保支付（non_escrow，直转） / 调 x402 endpoint。
 
 | 参数 | 何时填 |
 |---|---|
