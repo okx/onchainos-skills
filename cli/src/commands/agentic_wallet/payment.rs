@@ -1376,7 +1376,16 @@ async fn cmd_mpp_session_open(
             "hash mode (feePayer=false) requires --salt: the same bytes32 you \
              passed to your on-chain `escrow.open(...)` call (0x + 64 hex chars)"
         ),
-        (true, _) => {
+        // Symmetric with the `tx_hash.is_some() && fee_payer` guard a few
+        // blocks below: a flag passed in the wrong mode almost always
+        // signals the user misread methodDetails.feePayer — fail loudly
+        // rather than silently substitute a random salt.
+        (true, Some(_)) => bail!(
+            "--salt is only valid when challenge.methodDetails.feePayer=false \
+             (hash mode); transaction mode generates its own salt during \
+             `escrow.openWithAuthorization(...)`. Drop --salt or switch modes."
+        ),
+        (true, None) => {
             use rand::RngCore;
             let mut s = [0u8; 32];
             rand::rngs::OsRng.fill_bytes(&mut s);
@@ -1427,12 +1436,7 @@ async fn cmd_mpp_session_open(
                  `escrow.open(...)` yourself first)"
             )
         })?;
-        if !hash.starts_with("0x")
-            || hash.len() != 66
-            || !hash[2..].chars().all(|c| c.is_ascii_hexdigit())
-        {
-            bail!("--tx-hash must be 0x + 64 hex chars");
-        }
+        let hash = normalize_bytes32_hex(hash, "--tx-hash")?;
         // authorizedSigner omitted = payer (both contract and SDK resolve
         // 0x0 / omitted to payer; channelId derivation matches).
         //

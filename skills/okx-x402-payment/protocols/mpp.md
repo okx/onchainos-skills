@@ -142,7 +142,7 @@ Resend to the **original business URL** (same URL that returned the 402):
 
 ```
 <original method> <original business URL>
-Authorization: Payment <authorization_header>
+Authorization: <authorization_header>
 ```
 
 Expected: `HTTP 200` with content + `Payment-Receipt` header (on-chain tx hash). Charge complete. Another 402 → see [§ Troubleshooting](#troubleshooting) (replay / expired challenge).
@@ -172,7 +172,13 @@ State machine: **open → N vouchers → close** (optional topUp). Each phase ha
 > 2. Pick the right CLI command above and pass the WWW-Authenticate as
 >    `--challenge`. The CLI sets `payload.action` for you.
 > 3. Resend to the **same original business URL** with
->    `Authorization: Payment <authorization_header>`.
+>    `Authorization: <authorization_header>`.
+>
+> **`<authorization_header>` already includes the `Payment ` scheme
+> prefix** — paste the CLI's `data.authorization_header` value verbatim
+> into the `Authorization` header. **Do NOT** prepend another `Payment `
+> yourself; that would produce `Payment Payment <b64>` and the seller
+> will reject it.
 >
 > **Never probe** for `/open`, `/voucher`, `/topup`, `/close`,
 > `/<resource>/topup`, etc. — they don't exist. If you can't think of
@@ -270,7 +276,7 @@ Send the `authorization_header` back to the **original business URL** (same one 
 
 ```
 <original method> <original business URL>
-Authorization: Payment <authorization_header>
+Authorization: <authorization_header>
 ```
 
 Outcomes:
@@ -348,7 +354,7 @@ Send the voucher credential back to the **original business URL** (the very same
 
 ```
 <original method> <original business URL>
-Authorization: Payment <authorization_header>
+Authorization: <authorization_header>
 ```
 
 Expected: `HTTP 200` with content. **Update state**: `current_cum = cum_for_this_call`, `current_sig = <signature>`, `estimated_spent += unit_amount`. (Reuse path: `current_cum` / `current_sig` unchanged; only `estimated_spent` advances.)
@@ -423,7 +429,7 @@ Send the `authorization_header` back to the **original business URL** — same p
 
 ```
 <original method> <original business URL>
-Authorization: Payment <authorization_header>
+Authorization: <authorization_header>
 ```
 
 Expected: `HTTP 200` with management body (`{"action": "topUp", "status": "ok", ...}`).
@@ -458,7 +464,7 @@ Send the `authorization_header` back to the **original business URL** — the se
 
 ```
 <original method> <original business URL>
-Authorization: Payment <authorization_header>
+Authorization: <authorization_header>
 ```
 
 Seller settles on-chain (transfers `final_cum` to merchant, refunds the rest to payer) and returns a receipt. **Clear session state** — channel is closed.
