@@ -73,6 +73,7 @@ For script requests, append `--format json` to all CLI commands.
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, or manage DeFi positions |
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions across protocols |
 | okx-audit-log | Audit log export and troubleshooting | User wants command history, debug info, or audit log |
+| okx-growth-competition | Agentic Wallet exclusive trading competitions: list, join, rank, claim rewards | User asks about trading competitions, wants to join/register for a competition, check leaderboard ranking, or claim competition rewards |
 
 **Skills verification:** Skills are verified during bootstrap (Step 2 of `BOOTSTRAP.md`). If skills go missing mid-session, re-run the bootstrap sequence.
 

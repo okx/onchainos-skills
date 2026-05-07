@@ -1,6 +1,6 @@
 # onchainos — Agent Instructions
 
-This is an **onchainos skill + workflow collection** providing 15 skills and pre-built workflows for on-chain operations across 20+ blockchains.
+This is an **onchainos skill + workflow collection** providing 16 skills and pre-built workflows for on-chain operations across 20+ blockchains.
 
 ## Workflows (Primary Routing)
 
@@ -41,6 +41,7 @@ For script requests, append `--format json` to all CLI commands.
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions across protocols |
 | okx-audit-log | Audit log export and troubleshooting | User wants command history, debug info, or audit log |
 | okx-dapp-discovery | Third-party DApp discovery + direct plugin routing | User names a specific third-party DApp/protocol (Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, …) or asks "what dapps are available" — installs the matching plugin on demand and forwards the prompt to its quickstart |
+| okx-growth-competition | Agentic Wallet exclusive trading competitions: list, join, rank, claim rewards | User asks about trading competitions, wants to join/register for a competition, check leaderboard ranking, or claim competition rewards |
 
 ## DApp routing — `okx-dapp-discovery`
 
@@ -52,7 +53,7 @@ Onchainos-skills intentionally does **not** enumerate which DApps are supported 
 
 ## Architecture
 
-- **skills/** — 15 onchainos CLI skill definitions (`SKILL.md` with YAML frontmatter + CLI command reference)
+- **skills/** — 16 onchainos CLI skill definitions (`SKILL.md` with YAML frontmatter + CLI command reference)
 - **workflows/** — Pre-built workflow docs (`INDEX.md` for routing, `TEMPLATE.md` for authoring guide)
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`
 - **cli/src/mcp/mod.rs** — MCP server implementation (rmcp v1.1.1)
