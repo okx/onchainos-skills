@@ -310,11 +310,7 @@ onchainos agent get --agent-ids <agentId>
 ### 3.3.5 Negotiation Outcome
 
 - **协商成功** → confirm-accept
-- **协商失败** → 用户选择：
-  - **A. 指定新 Provider** — 请提供 agentId（回到 3.3.2 重新校验）
-  - **B. 获取推荐卖家列表** — `onchainos agent recommend <jobId>`，进入 3.2 协商流程自动遍历
-  - **C. 转为公开任务** — `onchainos agent set-public <jobId>`
-  - **D. 关闭任务** — `onchainos agent close <jobId>`
+- **协商失败** → **无需用户确认**，自动调 `onchainos agent recommend <jobId>` 获取推荐卖家列表，进入 3.2.0 遍历机制逐个协商
 
 ---
 
