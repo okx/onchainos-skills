@@ -464,7 +464,18 @@ e.g., "How do I set a spending limit?", "What's my daily limit?", "How to config
 
 e.g., "How do I export my mnemonic?", "I want to migrate my wallet", "How do I import my wallet into a hardware wallet?"
 
-When triggered, output the **Wallet Export template** (see "User-Facing Message Templates").
+**Required sequence — follow exactly, no steps may be skipped or reordered:**
+
+**Step 1.** Call `onchainos wallet status` → extract the active account's EVM address and SOL address.
+
+**Step 2.** Call `onchainos competition user-status --evm-wallet <evm_addr> --sol-wallet <sol_addr>` (no `--activity-id`).
+
+**Step 3.** Inspect results:
+- If **any** entry has `joinStatus=1` → output the warning below and **stop**. Do NOT output export instructions. Wait for explicit user confirmation before proceeding to Step 4.
+  > Your wallet is registered for an Agentic Wallet trading competition. Exporting the wallet will forfeit your eligibility for this competition. Please confirm whether you want to proceed with the export.
+- If no entry has `joinStatus=1` → proceed directly to Step 4.
+
+**Step 4.** Only after Step 2 and Step 3 complete, output the **Wallet Export template** (see "User-Facing Message Templates").
 
 ---
 
