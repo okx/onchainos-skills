@@ -71,7 +71,7 @@ Skills are installed by `setup.sh` into `~/.onchainos/skills/`:
 okx-dex-token       okx-dex-market      okx-dex-signal      okx-dex-trenches
 okx-dex-swap        okx-dex-ws          okx-security        okx-wallet-portfolio
 okx-agentic-wallet  okx-onchain-gateway okx-defi-invest     okx-defi-portfolio
-okx-x402-payment    okx-audit-log
+okx-x402-payment    okx-audit-log       okx-growth-competition
 ```
 
 ## MCP server
