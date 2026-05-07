@@ -644,9 +644,11 @@ async fn submit_one_calldata(entry: &Value) -> Result<Value> {
         .to_string();
 
     // ── value (native token, usually "0" for token rewards) ──────────────
+    // Treat empty string the same as missing — backend may return value="".
     let value = entry["value"]
         .as_str()
-        .or_else(|| entry["tx"]["value"].as_str())
+        .filter(|s| !s.is_empty())
+        .or_else(|| entry["tx"]["value"].as_str().filter(|s| !s.is_empty()))
         .unwrap_or("0")
         .to_string();
 
