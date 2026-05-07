@@ -196,12 +196,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - 任务预算 >= feeAmount 且 tokenSymbol 与 feeTokenSymbol 一致\n\
              \x20\x20→ 无需用户确认，直接执行 A-Step 2\n\
              - 任务预算 < feeAmount 或代币不一致\n\
-             \x20\x20→ 调用 xmtp_prompt_user 请求用户确认：\n\
-             \x20\x20\x20\x20llmContent: 用户确认后执行 A-Step 2 set-payment-mode x402；用户拒绝则 recommend --next 切换下一个卖家。\n\
+             \x20\x20→ 先调 `session_status` 拿到本 sub session 的 sessionKey，再调用 xmtp_prompt_user 请求用户确认：\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}] \
+             用户回复「确认」→ relay 回 sub session 执行 A-Step 2 set-payment-mode x402；\
+             用户回复「拒绝」→ relay 回 sub session 执行 recommend --next 切换下一个卖家。\
+             禁止 user session agent 自己执行 task CLI。\n\
              \x20\x20\x20\x20userContent: 任务 {job_id} 匹配到 x402 卖家（AgentID=<providerAgentId>），服务费用 <feeAmount> <feeTokenSymbol>，\
              与任务预算（<tokenAmount> <tokenSymbol>）不一致，是否确认使用该卖家？\n\
-             \x20\x20→ 用户确认 → 执行 A-Step 2\n\
-             \x20\x20→ 用户拒绝 → `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断\n\n\
+             \x20\x20→ **结束本轮 turn**，等用户回复 relay 回来后继续执行。\n\n\
              **A-Step 2 — setPaymentMode（x402 阶段 1）：**\n\
              ```bash\n\
              onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <feeTokenSymbol> --token-amount <feeAmount> --endpoint <endpoint>\n\
@@ -250,7 +252,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              2. （sub session 内）卖家回复报价（金额、代币、支付方式偏好、预计交付时间）\n\
              3. （sub session 内）双方就价格/条件进行调整（可能多轮，每轮 5 分钟超时）\n\
              \x20\x20每轮调用 xmtp_send，参数：sessionKey=<同上>，content=<协商内容>\n\
-             \x20\x20⚠️ **不要机械接受卖家加价**：以**任务的 max_budget（最高预算）为绝对上限**——超过 max_budget 一律拒绝，不论差多少；max_budget 在你 create-task 时由 user 设定（`--max-budget`），如果你**忘了**就回看本 sub session 的第一条 inquiry（你之前发给卖家的内容里通常会包含『最高 X』），仍找不到就 `xmtp_dispatch_user` 询问 user。`budget < 卖家价 ≤ max_budget` 区间内可谈，可以原价接受或继续还价；卖家价 ≤ budget 直接接受。\n\
+             \x20\x20⚠️ **不要机械接受卖家加价**：以**任务的 max_budget（最高预算）为绝对上限**——超过 max_budget 一律拒绝，不论差多少；max_budget 在你 create-task 时由 user 设定（`--max-budget`），如果你**忘了**就回看本 sub session 第一条 inquiry（你之前发给卖家的内容里通常会包含『最高 X』），仍找不到就 `xmtp_prompt_user` 询问 user（llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}] 用户回复最高预算后 relay 回 sub session 继续协商。禁止 user session agent 自己执行 task CLI。userContent: 任务 {job_id} 协商中——请问你的最高预算是多少？）。`budget < 卖家价 ≤ max_budget` 区间内可谈，可以原价接受或继续还价；卖家价 ≤ budget 直接接受。\n\
              ⚠️ **币种铁律**：协商只允许改**金额**，不允许改**币种**。任务发布时的币种（从 `onchainos agent common context` 获取）\n\
              是链上合约绑定的。如果卖家提出不同币种，必须纠正：「本任务使用 <任务币种>，请用 <任务币种> 报价。」\n\n\
              ⚠️ 任一步骤卖家 5 分钟未回复 → 视为协商失败，结束当前 sub session，执行「切换下一个卖家」。\n\n\
@@ -295,7 +297,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20\x20\x20· COUNTER 价 ≤ 任务 budget（原预算）→ 可接受，用 COUNTER 值发新 [NEGOTIATE_PROPOSE]\n\
              \x20\x20\x20\x20\x20\x20· budget < COUNTER 价 ≤ max_budget（最高预算）→ 可接受，或继续还价取折中（带理由发新 [NEGOTIATE_PROPOSE]）\n\
              \x20\x20\x20\x20\x20\x20· COUNTER 价 > max_budget → **拒绝并切换下一个卖家**，不管超多少（哪怕只超 1 wei）；可 xmtp_send 简短说明「超出我的最高预算 X」然后 5 分钟 timeout 自然切换\n\
-             \x20\x20\x20\x20\x20\x20· max_budget 不知道 → 优先回看本 sub session 第一条 inquiry（你发给卖家的内容里通常包含『最高 X』）；仍找不到 → `xmtp_dispatch_user` 询问 user 你的最高预算\n\
+             \x20\x20\x20\x20\x20\x20· max_budget 不知道 → 优先回看本 sub session 第一条 inquiry（你发给卖家的内容里通常包含『最高 X』）；仍找不到 → `xmtp_prompt_user` 询问 user（同上方 max_budget 询问模板）\n\
              \x20\x20\x20\x20- 评估 paymentMode 改动：卖家把 escrow 改成 non_escrow 且任务金额不小 → 拒绝，坚持 escrow\n\
              \x20\x20\x20\x20- 评估 deadline 改动：卖家拉长是否影响你交付计划 → 不可接受就还价或切换\n\
              \x20\x20\x20\x20- 全部可接受 → 用 COUNTER 中的值发新的 [NEGOTIATE_PROPOSE]，回到 Step 5 等 ACK\n\n\
@@ -318,16 +320,17 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              （新一 turn）收到 `job_payment_mode_changed` → 调 next-action --jobStatus job_payment_mode_changed → 按剧本 xmtp_send [NEGOTIATE_CONFIRM] 给卖家。卖家此时见 CONFIRM → apply（escrow）或 create_payment_charge（non_escrow），链上 paymentMode 已就位。\n\n\
              ━━━━━━━━━ 遍历结束 / 切换下一个卖家 ━━━━━━━━━\n\n\
              当前卖家超时未回复（5 分钟）或协商失败 → 结束当前 sub session → `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断。\n\
-             推荐列表全部遍历完（或初始推荐列表为空）→ 调用 xmtp_prompt_user 引导用户选择：\n\
+             推荐列表全部遍历完（或初始推荐列表为空）→ 先调 `session_status` 拿到 sessionKey，再调用 xmtp_prompt_user 引导用户选择：\n\
+             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}] \
+             用户选择 A 并提供 agentId → relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
+             用户选择 B → relay 回 sub session 执行 set-public；\
+             用户选择 C → relay 回 sub session 执行 close。\
+             禁止 user session agent 自己执行 task CLI。\n\
              \x20\x20userContent: 任务 {job_id} 推荐卖家已全部遍历，无合适匹配。请选择下一步：\n\
              \x20\x20A. 指定卖家 — 请提供卖家 agentId\n\
              \x20\x20B. 转为公开任务 — 让更多卖家看到任务\n\
              \x20\x20C. 关闭任务 — 取消并退款\n\
-             \x20\x20llmContent: 用户选择 A → 先用 `onchainos agent service-list --agent-id <用户提供的agentId>` 查询卖家服务信息：\
-             有服务且含 endpoint → 进入 A-Step 1（x402 流程）；无服务 → 进入 B-Step 1（建群协商）。\
-             选择 B → `onchainos agent set-public {job_id}`；\
-             选择 C → `onchainos agent close {job_id}`。\n\
-             \x20\x20⚠️ **不要自动选择，必须等用户回复后再执行。**\n\n\
+             \x20\x20→ **结束本轮 turn**，等用户回复 relay 回来后继续执行。\n\n\
              【后续事件】\n\
              - x402 → set-payment-mode → job_payment_mode_changed → x402 endpoint 交互 + direct-accept → job_accepted → complete\n\
              - escrow → set-payment-mode → job_payment_mode_changed → 通知卖家 apply → provider_applied → confirm-accept → job_accepted\n\
@@ -688,9 +691,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
              **Step 1 — 调用 xmtp_prompt_user 请求用户确认是否关闭：**\n\
-             \x20\x20llmContent: 用户确认后执行 onchainos agent close {job_id} 关闭任务回收资金；用户拒绝则不操作。\n\
+             先调 `session_status` 拿到本 sub session 的 sessionKey。\n\n\
+             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}] \
+             用户回复「确认」→ relay 回 sub session 执行 onchainos agent close {job_id}；\
+             用户回复「不关闭」→ relay 回 sub session，不操作。\
+             禁止 user session agent 自己执行 task CLI。\n\
              \x20\x20userContent: 任务 {job_id} 已超时（accept 截止前未接单 或 submit 截止前未提交），是否关闭任务回收资金？\n\n\
-             **Step 2 — 用户确认后，关闭任务回收资金：**\n\
+             → **结束本轮 turn**，等用户回复 relay 回来后执行 close。\n\n\
+             **Step 2（收到 relay）— 关闭任务回收资金：**\n\
              ```bash\n\
              onchainos agent close {job_id}\n\
              ```\n\n\
@@ -729,8 +737,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              如果返回空列表 → 通知用户「当前没有待沟通的卖家」，结束。\n\n\
              **Step 2 — 调用 xmtp_prompt_user 展示所有待沟通卖家，让用户选择：**\n\
              🛑 **必须等用户选择**，不能替用户做决定。\n\
+             先调 `session_status` 拿到本 sub session 的 sessionKey。\n\
              将 pending list 中**所有卖家**逐一列出，让用户挑选：\n\
-             \x20\x20llmContent: 用户选择某个卖家 → 用选中的 agentId 执行 xmtp_start_conversation 建群（A 分支）；用户全部拒绝 → 结束。\n\
+             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}] \
+             用户选择某个卖家（回复序号）→ relay 回 sub session，sub agent 用选中的 agentId 执行 xmtp_start_conversation 建群；\
+             用户回复「全部跳过」→ relay 回 sub session，结束。\
+             禁止 user session agent 自己执行建群或 task CLI。\n\
              \x20\x20userContent:\n\
              \x20\x20任务 {job_id} 有以下卖家主动联系你，请选择一个开始协商：\n\
              \x20\x20\n\
