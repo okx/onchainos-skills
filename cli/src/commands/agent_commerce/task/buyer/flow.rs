@@ -163,18 +163,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20• 任何形式的「替代握手」短路——卖家 flow 里把 `[NEGOTIATE_CONFIRM]` 字面量当作 apply 唯一触发器，你发自然语言『请 apply』根本不会被识别，卖家只能继续等 [PROPOSE]\n\n\
              正确做法：协商达成一致后，**严格用** `[NEGOTIATE_PROPOSE]` 模板（见下方 B-Step 2 Step 4），让握手机器解析跑通。**协商再短也要走完三步**——哪怕是「能做、原价 OK、escrow OK」三连答，也要把它变成 [NEGOTIATE_PROPOSE] 发出去，绝不省略。\n\n\
              【你的下一步动作（严格顺序，不询问用户，全自动执行）】\n\n\
-             **Step 0 — 防循环短路 + session 路由：**\n\
-             ⚠️ 如果本轮 turn 是由 `[AUTO_EXECUTE]` 触发的（上下文中包含该标记），\n\
-             说明你已经在 user session 中，**直接跳到 Step 0.5**，不要调 session_status，不要调 xmtp_prompt_user。\n\n\
-             否则，调 `session_status` 检查当前 session：\n\
-             - 如果当前**是** user session → 继续执行 Step 0.5。\n\
-             - 如果当前**不是** user session（如 g-backup 等非主会话）：\n\
-             \x20\x20调用 xmtp_prompt_user 把任务创建通知转发到 user session 并触发自动执行：\n\
-             \x20\x20llmContent: [AUTO_EXECUTE] 任务 {job_id} 已上链（job_created）。无需询问用户，直接执行：\n\
-             \x20\x20`onchainos agent next-action --jobid {job_id} --jobStatus job_created --role buyer --agentId {agent_id}`\n\
-             \x20\x20拿到输出后按剧本全自动执行（recommend → 路由 → 协商/接单）。\n\
-             \x20\x20userContent: 任务 {job_id} 已上链成功（状态 Open），正在自动查询推荐卖家...\n\
-             \x20\x20→ **结束本轮 turn**，由 user session agent 接手执行后续 Step 1-2。\n\n\
+             **Step 0 — 通知 user session + 在当前 sub session 继续执行：**\n\
+             调用 xmtp_dispatch_user 通知用户任务已上链（纯通知，不触发 LLM 思考）：\n\
+             \x20\x20content: 任务 {job_id} 已上链成功（状态 Open），正在自动查询推荐卖家...\n\n\
+             ⚠️ 后续 recommend → 路由 → 协商/接单 全部在**当前 sub session** 中执行，不要转到 user session。\n\n\
              **Step 0.5 — 检查 designatedProvider 缓存（Scene 1.7 指定卖家）：**\n\
              检查本 turn 上下文中是否有 designatedProvider 缓存（由 buyer.md Scene 1.7 在 create-task 后设置，含 agentId + serviceType）：\n\
              - **无 designatedProvider**（默认）→ 继续 Step 1。\n\
@@ -308,28 +300,22 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20- 评估 deadline 改动：卖家拉长是否影响你交付计划 → 不可接受就还价或切换\n\
              \x20\x20\x20\x20- 全部可接受 → 用 COUNTER 中的值发新的 [NEGOTIATE_PROPOSE]，回到 Step 5 等 ACK\n\n\
              \x20\x20▸ 收到的回复**不含** [NEGOTIATE_ACK] 也不含 [NEGOTIATE_COUNTER] 标记 → 视为自然语言讨论，继续协商，重新回到 Step 4\n\n\
-             6. **收到 [NEGOTIATE_ACK] 全等 → 落盘 + 视情况 setPaymentMode → 最后才发 [NEGOTIATE_CONFIRM]**：\n\n\
+             6. **收到 [NEGOTIATE_ACK] 全等 → 落盘 + setPaymentMode → 最后才发 [NEGOTIATE_CONFIRM]**：\n\n\
              🛑 **顺序铁律（[CONFIRM] 是卖家 apply 的唯一触发器，必须 paymentMode 在链上就位后才发，否则卖家 apply 会基于错的支付状态）**：\n\n\
              **Step 6.1 — save-agreed 落盘**（无条件第一步）：\n\
              ```bash\n\
              onchainos agent save-agreed {job_id} --token-symbol <协商币种> --token-amount <协商价格>\n\
              ```\n\
              不保存会导致后续 confirm-accept 使用错误的币种/金额。\n\n\
-             **Step 6.2 — 查链上 paymentMode 决定分流**：\n\
-             先查任务详情（`onchainos agent common context {job_id} --role buyer --agent-id {agent_id}`），比较链上 `paymentType` 与协商确定的支付方式：\n\n\
-             ━━━━━ 分支 A：paymentMode 已一致（创建时已设对、不需要改） ━━━━━\n\n\
-             跳过 setPaymentMode，**直接 xmtp_send 发 [NEGOTIATE_CONFIRM]**（用 Step 5 准备好的模板）。卖家见 CONFIRM → 立即 apply（escrow）或 create_payment_charge（non_escrow）。本 turn 结束等 `provider_applied` / paymentId。\n\n\
-             ━━━━━ 分支 B：paymentMode 不一致 / paymentType=0（未设置） ━━━━━\n\n\
-             1) 跑 setPaymentMode（**此时不要发 [CONFIRM]**）：\n\
-             \x20\x20\x20```bash\n\
-             \x20\x20\x20onchainos agent set-payment-mode {job_id} --payment-mode <escrow|non_escrow> --token-symbol <协商币种> --token-amount <协商价格>\n\
-             \x20\x20\x20```\n\
-             \x20\x20\x20⚠️ 此命令只执行 setPaymentMode → 签名 → 广播，然后返回 exit code 2 (confirming)。\n\
-             \x20\x20\x20⚠️ **绝对不要**在此 turn 内 xmtp_send [NEGOTIATE_CONFIRM]——卖家见 [CONFIRM] 会立刻 apply，但链上 paymentMode 还在 mempool / 没确认，apply 会失败或行为错位。[CONFIRM] 必须等 `job_payment_mode_changed` 事件确认 paymentMode 上链后再发。\n\n\
-             2) **结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n\n\
-             3) （新一 turn）收到 `job_payment_mode_changed` → 调 next-action --jobStatus job_payment_mode_changed → 按剧本 xmtp_send [NEGOTIATE_CONFIRM] 给卖家。卖家此时见 CONFIRM → apply（链上 paymentMode 已就位 → apply 成功）。\n\n\
-             **B-Step 3 — 调用 xmtp_dispatch_user 通知用户协商进展：**\n\
-             \x20\x20content: 已自动联系推荐卖家（<providerAgentId>），进入协商流程，等待对方回复。\n\n\
+             **Step 6.2 — 执行 setPaymentMode（无条件，不判断当前链上值）**：\n\
+             ⚠️ **不论链上 paymentType 当前是什么值（0 / 1 / 2），都必须执行 set-payment-mode。** 不要查 common context 比较——直接调：\n\n\
+             ```bash\n\
+             onchainos agent set-payment-mode {job_id} --payment-mode <escrow|non_escrow> --token-symbol <协商币种> --token-amount <协商价格>\n\
+             ```\n\
+             此命令执行 setPaymentMode → 签名 → 广播，然后返回 exit code 2 (confirming)。\n\
+             ⚠️ **绝对不要**在此 turn 内 xmtp_send [NEGOTIATE_CONFIRM]——卖家见 [CONFIRM] 会立刻 apply，但链上 paymentMode 还在 mempool / 没确认，apply 会失败或行为错位。[CONFIRM] 必须等 `job_payment_mode_changed` 事件确认 paymentMode 上链后再发。\n\n\
+             **Step 6.3 — 结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n\n\
+             （新一 turn）收到 `job_payment_mode_changed` → 调 next-action --jobStatus job_payment_mode_changed → 按剧本 xmtp_send [NEGOTIATE_CONFIRM] 给卖家。卖家此时见 CONFIRM → apply（escrow）或 create_payment_charge（non_escrow），链上 paymentMode 已就位。\n\n\
              ━━━━━━━━━ 遍历结束 / 切换下一个卖家 ━━━━━━━━━\n\n\
              当前卖家超时未回复（5 分钟）或协商失败 → 结束当前 sub session → `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断。\n\
              推荐列表全部遍历完（或初始推荐列表为空）→ 调用 xmtp_prompt_user 引导用户选择：\n\
@@ -361,15 +347,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              提取协商结果：providerAgentId、tokenAmount、tokenSymbol。\n\
              ⚠️ tokenAmount 和 tokenSymbol 必须从协商结果获取，不是任务详情。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
-             **Step 0 — 前置检查：链上 paymentType 是否已设置？**\n\n\
-             从上方 `common context` 输出中检查任务的 `paymentType`：\n\
-             - **paymentType ≠ 0**（1=escrow / 2=non_escrow / 3=x402）→ 已设置，跳到 Step 1。\n\
-             - **paymentType=0（NONE，未设置）**→ **必须先执行 set-payment-mode**：\n\
-             ```bash\n\
-             onchainos agent set-payment-mode {job_id} --payment-mode escrow --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
-             ```\n\
-             等待 `job_payment_mode_changed` 系统通知到达后，再继续 Step 1。\n\
-             ⚠️ **confirm-accept 必须在 paymentType 非 0 后才能执行。**\n\n\
+             ⚠️ 协商阶段已无条件执行过 set-payment-mode（Step 6.2），此处 paymentMode 应已上链。直接执行 confirm-accept。\n\n\
              **Step 1 — 确认接单（escrow 担保支付）：**\n\n\
              ```bash\n\
              onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode escrow --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\

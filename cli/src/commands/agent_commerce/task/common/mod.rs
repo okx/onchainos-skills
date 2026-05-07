@@ -364,9 +364,12 @@ fn build_context(
     let symbol = task.token_symbol.as_deref().unwrap_or("UNKNOWN");
     out.push_str(&format!("- 创建预算：{amount} {symbol} （token: {token}）\n"));
 
-    if let Some(pm) = task.payment_mode {
-        out.push_str(&format!("- 支付方式：{}\n", payment_mode_desc(pm)));
-    }
+    let pm = task.payment_mode.unwrap_or(0);
+    out.push_str(&format!(
+        "- 支付方式（paymentType={}）：{}\n",
+        pm,
+        payment_mode_desc(pm)
+    ));
     let visibility = match task.visibility {
         Some(0) => "公开（Public）",
         Some(1) => "私有（Private）",
