@@ -4,7 +4,7 @@ description: "Use this skill to 'check my DeFi positions', 'view DeFi holdings',
 license: MIT
 metadata:
   author: okx
-  version: "3.0.0"
+  version: "3.1.0"
   homepage: "https://web3.okx.com"
 ---
 
