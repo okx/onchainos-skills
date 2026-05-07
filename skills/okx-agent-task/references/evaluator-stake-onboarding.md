@@ -46,7 +46,7 @@
 >
 > 累计门槛规则的判断是 `activeStake + N >= minCumulativeStakeOkb`，**绝不能用钱包余额代替 `activeStake`**。
 
-### Step 1 — 拉取门槛 + 已质押状态（链上权威值，不读 13 的硬编码默认）
+### Step 1 — 拉取门槛 + 已质押状态（链上权威值，不读 evaluator.md §5 的硬编码默认）
 
 并发执行两条只读 CLI：
 
@@ -62,7 +62,7 @@ onchainos agent my-stake         # 取 activeStake (OKB) / registered / activeDi
 | my-stake 输出 | 处理 |
 |---|---|
 | `activeStake >= minCumulativeStakeOkb` | 已经满足门槛，告诉用户「你已质押 `<X>` OKB，超过门槛 `<min>`，仲裁者候选状态正常，无需再次质押」，结束本场景 |
-| `activeDisputes > 0` 且 `activeStake >= min` | 同上，无需重质押；若用户坚持加质押，引导他用 evaluator.md 12 的 `increase-stake` |
+| `activeDisputes > 0` 且 `activeStake >= min` | 同上，无需重质押；若用户坚持加质押，引导他用 evaluator.md §5 的 `increase-stake` |
 
 ### Step 2 — 向用户展示现状、奖罚机制 + 要求用户给出质押数量（⚠️ 强制步骤，不允许跳过）
 
@@ -129,4 +129,4 @@ onchainos agent stake --amount <N>
 ## 边界
 
 - **Confirmation gate 不可跳过**：无论上下文多"自然"，质押必须经过 Step 2 的用户确认。不允许"为了流畅"省略。
-- **本场景只处理首次质押 handoff**。后续 staking 生命周期（补充质押 / 申请解质押 / 领取 / 取消）见 evaluator.md 12。
+- **本场景只处理首次质押 handoff**。后续 staking 生命周期（补充质押 / 申请解质押 / 领取 / 取消）见 evaluator.md §5。

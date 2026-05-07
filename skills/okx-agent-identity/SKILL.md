@@ -309,8 +309,8 @@ Passive fallback (user skipped step 2):
 2. okx-agent-identity             collect name + description → confirm → execute
                                   create --role evaluator → evaluatorAgentId
        ↓ (same turn — no user reply between 2 and 3)
-3. okx-agent-task                 load evaluator.md in the same response
-                                  → When to Activate → Step 1 → Step 2
+3. okx-agent-task                 load evaluator.md §1.5 in the same response
+                                  → references/evaluator-stake-onboarding.md Step 1 → Step 2
                                   → render stake confirmation inline
        ↓
 4. okx-agent-task                 user confirms stake next turn → eligible for assignment
@@ -363,7 +363,7 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 
   | Trigger | Downstream | Why |
   |---|---|---|
-  | `agent create --role evaluator` succeeds | `/skills/okx-agent-task/evaluator.md` → `When to Activate → Step 1 → Step 2` | Registration and staking form a single onboarding intent. Stake amount + chat handoff are owned by that flow. See `role-evaluator.md §Post-success`. |
+  | `agent create --role evaluator` succeeds | `/skills/okx-agent-task/evaluator.md` §1.5 → `references/evaluator-stake-onboarding.md` Step 1 → Step 2 | Registration and staking form a single onboarding intent. Stake amount + chat handoff are owned by that flow. See `role-evaluator.md §Post-success`. |
   | `agent create --role requester` succeeds | `/skills/okx-agent-chat/after-agent-list-changed.md` → Execution Flow | The local a2a agent list just changed — the chat skill keeps the OpenClaw side in sync (refresh-agents fast path or first-time install). Silent no-op outside an OpenClaw runtime. See `role-requester.md §Post-success`. |
   | `agent create --role provider` succeeds | `/skills/okx-agent-chat/after-agent-list-changed.md` → Execution Flow | Provider is immediately discoverable; OpenClaw-side agent list must be refreshed so the new provider becomes visible to xmtp tooling. Silent no-op outside an OpenClaw runtime. See `role-provider.md §Post-success`. |
   | `agent activate --agent-id <id>` succeeds | `/skills/okx-agent-chat/after-agent-list-changed.md` → Execution Flow | Re-publishing changes the local agent list state — sync to OpenClaw. Idempotent; silent no-op outside an OpenClaw runtime. |
@@ -381,7 +381,7 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 |---|---|
 | `agent create --role requester` | Render the visible line (declarative — never a question; do **not** pre-announce the chat handoff because the chat flow is a silent no-op outside an OpenClaw runtime). Full bilingual variants in `role-requester.md §Post-success`; Chinese e.g. "买家身份 #<id> 已注册，可以去 `okx-agent-task` 发任务。" Then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response. The handoff continues without waiting. Skip the handoff if the user has declined chat setup earlier. See `role-requester.md §Post-success` and §Step 4 whitelist. |
 | `agent create --role provider` | Render the visible line ("Provider 身份 #<id> 已创建并默认上架（已上架）。可以 `agent search` 自检曝光，或直接等匹配来的任务。" / English in `role-provider.md §Post-success`), then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response. Skip the handoff if the user has declined chat setup earlier. See `role-provider.md §Post-success` and §Step 4 whitelist. |
-| `agent create --role evaluator` | Render two visible lines ("Evaluator 身份 #<id> 已注册。" + "要被系统分派仲裁案子还需要完成质押。" — English variants in `role-evaluator.md`), then **same-turn handoff** to `okx-agent-task/evaluator.md` (`When to Activate → Step 1 → Step 2`) inside the same response; do not stop. See `role-evaluator.md §Post-success` for full templates and §Step 4 Exception above for the carve-out. |
+| `agent create --role evaluator` | Render two visible lines ("Evaluator 身份 #<id> 已注册。" + "要被系统分派仲裁案子还需要完成质押。" — English variants in `role-evaluator.md`), then **same-turn handoff** to `okx-agent-task/evaluator.md` §1.5 → `references/evaluator-stake-onboarding.md` Step 1 → Step 2 inside the same response; do not stop. See `role-evaluator.md §Post-success` for full templates and §Step 4 Exception above for the carve-out. |
 | `agent update` | Show new detail card. If user deactivated during update, suggest re-activate. |
 | `agent activate` | Render the visible line in the user's language (declarative — never a question, since the handoff does not wait for a reply; do **not** pre-announce the chat handoff). Chinese: "上架完成，可以 `agent search` 自检曝光。" / English: "Agent re-published. Run `agent search` to sanity-check exposure." Then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response — local agent list changed, OpenClaw side needs sync. Silent no-op outside an OpenClaw runtime. Skip the handoff if the user has declined chat setup earlier. See §Step 4 whitelist. |
 | `agent deactivate` | Render the visible line in the user's language (declarative — never a question; do **not** pre-announce the chat handoff). Chinese: "下架完成，客户端列表会隐藏；要恢复执行 `agent activate`。" / English: "Agent unpublished — it will be hidden from client lists; run `agent activate` to re-publish." Then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response — local agent list changed, OpenClaw side needs sync. Silent no-op outside an OpenClaw runtime. Skip the handoff if the user has declined chat setup earlier. See §Step 4 whitelist. |

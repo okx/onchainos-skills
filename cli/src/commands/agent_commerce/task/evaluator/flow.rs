@@ -17,21 +17,21 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 
 pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> String {
     let step_zero = format!(
-        "**Step 0 — 路由到本任务的仲裁子session（必须最先做，先于其它工具调用）：**\n\n\
-         仲裁全流程必须在专属仲裁子session 内执行（结果不通知用户）。系统事件首次到达可能落在其他 session，需手动转发后再继续。\n\n\
+        "**Step 0 — 必须最先做，先于其它工具调用：**\n\n\
+         仲裁全流程必须在专属仲裁子session 内执行。系统事件首次到达可能落在其他 session，需转发后再继续。\n\n\
          **0.1** 调 `xmtp_start_evaluate_conversation`，参数 `myAgentId=<envelope 顶层 agentId>`、`jobId={job_id}` —— 返回值 `sessionKey` 即仲裁子session 的目标 key（下称 `arbKey`）。\n\n\
          **0.2** 调 `session_status` 拿当前所在 session 的 `sessionKey`（下称 `currentKey`）。\n\n\
          **0.3** 比较：\n\
          - `currentKey == arbKey` → 已在仲裁子session 内，进入 Step 1。\n\
-         - `currentKey != arbKey` → 调 `xmtp_dispatch_session`（`sessionKey=arbKey`，`content=<当前 inbound envelope 整体 JSON 字符串>`，**全字段原样塞入禁止改写**），然后**结束本轮 turn**。子session agent 收到后会按标准系统通知流程重新触发 next-action。\n\n\
-         ⚠️ **同 turn 内 `xmtp_start_evaluate_conversation` / `session_status` 各最多调一次**：结果稳定可缓存复用；重复调 = 死循环征兆，立即停止。\n\n"
+         - `currentKey != arbKey` → 调 `xmtp_dispatch_session`（`sessionKey=arbKey`，`content=<当前 inbound envelope 整体 JSON 字符串>`，**全字段原样塞入禁止改写**），然后**结束本轮 turn**。\n\n\
+         ⚠️ **同 turn 内 `xmtp_start_evaluate_conversation` / `session_status` 各最多调一次**, 重复调 = 死循环征兆，立即停止。\n\n"
     );
     match job_status {
         "evaluator_selected" => format!(
             "【当前状态】evaluator_selected（本轮你被选为陪审，commit 窗口开启）\n\
              【角色】仲裁者（Evaluator）\n\
              【会话类型】⚠️ 仲裁 子session。\n\
-             【判决权威】评估者规范（誓约 L1-L5 + 决策原则 / Rubric / 证据等级 / 裁决书规范）。冲突以本规范为准。\n\n\
+             【判决权威】评估者规范（誓约 L2-L4 + 决策原则 / Rubric / 证据等级 / 裁决书规范）。冲突以本规范为准。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              {step_zero}\
              **Step 1 — 从入站消息提取 `jobId`（envelope 顶层 `jobId` 字段）和顶层 `agentId`（你的 evaluator agentId）。**\n\
@@ -81,7 +81,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              \n\
              ⚠️ **『session 记忆』= 你 thinking 块里的推理过程，不是磁盘文件**。\n\
              - **禁止**调用 `write` / `edit` / `Write` / `Edit` / `NotebookEdit` 等任何文件写入工具落盘（\n\
-             \x20\x20违反 L3 义务 #4 + L1 任务边界——裁决书不入链不推用户也不落盘，仅在 thinking 里推理）。\n\
+             \x20\x20违反 L3 义务 #4——裁决书不入链不推用户也不落盘，仅在 thinking 里推理）。\n\
              - **禁止**用 `exec` 跑 `tee` / `cat > file` / `echo > file` / 重定向 / `printf > file` 等方式间接写文件。\n\
              - 正确做法：把下面这段结构化文本**作为 thinking 内容**整理出来给自己看（用于 Step 6 递归自检），不要任何工具调用。\n\
              ```\n\
@@ -216,7 +216,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              > reward_claimed relayed.\n"
         ),
 
-        // ─── 质押生命周期：子session 收到 → 通知user session 推人话给用户 ─────────────────
+        // ─── 质押生命周期：子session 收到 → 通知user session 推给用户 ─────────────────
         // jobId 固定为 `system_voter_staking`（不是真任务）。
         // 首次质押与追加质押统一发 `staked` 事件——CLI 命令层 stake / increase-stake 仍区分
         // 入口，但事件流只看到一个 `staked`。

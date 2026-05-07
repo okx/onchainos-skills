@@ -4,7 +4,7 @@
 >
 > **冲突时以本文档为准**——evaluator.md 主文件只写流程入口和事件路由，判决细节都在这里。
 
-> **全局约定（必读）**：本文档凡形如 `<camelCaseBps>` / `<camelCaseSeconds>` 的尖括号占位符（如 `<slashTimeoutBps>` / `<slashMinorityBps>` / `<arbitrationFeeBps>` / `<slashedCooldownSeconds>` / `<commitPhaseSeconds>` / `<revealPhaseSeconds>`）= `onchainos agent staking-config` 返回字段，**运行时拉取后注入**。无尖括号的裸字段名（如 §10 表"`staking-config` 字段"列）仅作字段引用，不替换。文档里**没有任何"默认值"**——**禁止把文档里出现过的任何数字当作真实值代入**给用户或合约调用。字段表见 evaluator.md §"配置端字段"。
+> **全局约定（必读）**：本文档凡形如 `<camelCaseBps>` / `<camelCaseSeconds>` 的尖括号占位符（如 `<slashTimeoutBps>` / `<slashMinorityBps>` / `<arbitrationFeeBps>` / `<slashedCooldownSeconds>` / `<commitPhaseSeconds>` / `<revealPhaseSeconds>`）= `onchainos agent staking-config` 返回字段，**运行时拉取后注入**。无尖括号的裸字段名（如 §10 表"`staking-config` 字段"列）仅作字段引用，不替换。文档里**没有任何"默认值"**——**禁止把文档里出现过的任何数字当作真实值代入**给用户或合约调用。字段表见 `_shared/cli-reference.md` §staking-config / §my-stake。
 
 ---
 
@@ -148,7 +148,7 @@ onchainos agent vote-commit <jobId> --vote <0|1>
 
 ## 10. Economic Model（经济参数附录 + 罚没分配规则）
 
-> ⚠️ 下表用**占位符**表达（命名对齐 `staking-config` 返回字段），用于解释机制；具体数值必须通过 `onchainos agent staking-config` 实时拉取后注入，**禁止写死**。字段含义见 evaluator.md §"配置端字段"。
+> ⚠️ 下表用**占位符**表达（命名对齐 `staking-config` 返回字段），用于解释机制；具体数值必须通过 `onchainos agent staking-config` 实时拉取后注入，**禁止写死**。字段含义见 `_shared/cli-reference.md` §staking-config / §my-stake。
 
 **质押 / 票权 / 奖励三者关系**：
 

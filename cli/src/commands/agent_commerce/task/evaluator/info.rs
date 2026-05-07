@@ -22,7 +22,7 @@ pub async fn handle_info(
     let path = client.endpoint(job_id, "evidence");
     let mut data = client.get_with_identity(&path, &agent_id).await?;
 
-    let tmp_dir = evidence_dir(job_id)?;
+    let tmp_dir = evidence_dir(job_id, &agent_id)?;
     fs::create_dir_all(&tmp_dir)?;
 
     // 后端扁平结构：provider/client 直接在顶层；images 为 `<jobId>/<idx>/<uuid>` 字符串数组。
