@@ -762,7 +762,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - `visibility=1` → 私有（private）\n\n\
              **Step 3 — 调用 xmtp_dispatch_user 通知用户可见性已变更：**\n\
              content：\n\
-             \x20\x20[可见性变更] 任务 {job_id} 已切换为 <visibility=0 时写「公开（public），其他卖家现在可以看到并申请此任务」/ visibility=1 时写「私有（private）」>。\n"
+             \x20\x20- visibility=0 → [可见性变更] 任务 {job_id} 已切换为公开（public），等待卖家主动联系。\n\
+             \x20\x20- visibility=1 → [可见性变更] 任务 {job_id} 已切换为私有（private）。\n\n\
+             ⚠️ 切换为 public 后，**不要**请求推荐卖家列表（recommend），买家只需等待卖家主动找过来。\n\
+             → **结束本轮 turn**。\n"
         ),
 
         // ─── 支付模式切换结果（setPaymentMode tx 结果）────────────────
