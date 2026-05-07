@@ -118,7 +118,7 @@ Do NOT mention the `okx-agent-task/evaluator.md` path to the user in the visible
 
 ### Agent directive (internal — do NOT render to the user)
 
-After emitting the two visible lines above, **do not stop the turn**. In the same response, load `/skills/okx-agent-task/evaluator.md` §1.5 and continue with `references/evaluator-stake-onboarding.md` Step 1 → Step 2; render its staking confirmation card as the next part of the same response. The stake amount is owned by that skill — the identity skill does not pass one.
+After emitting the two visible lines above, **do not stop the turn**. In the same response, load `/skills/okx-agent-task/references/evaluator-staking.md` §2 and continue with Step 1 → Step 2; render its staking confirmation card as the next part of the same response. The stake amount is owned by that skill — the identity skill does not pass one.
 
 **Skip the handoff** (render visible lines only, then stop) if the user has already declined staking in this conversation — see §Good / bad cases row "不想质押".
 

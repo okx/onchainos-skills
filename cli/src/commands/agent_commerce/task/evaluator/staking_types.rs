@@ -79,7 +79,7 @@ impl StakingConfig {
 ///
 /// 与"钱包余额"是两个独立概念：余额在 EOA 上、可花费；`activeStake` 已经从余额转入
 /// `VoterStaking` 合约锁仓，扣过历史罚没。skill 的累计门槛判断必须用 `activeStake`，
-/// 不能拿 wallet balance 顶替（参见 evaluator.md §1.5）。
+/// 不能拿 wallet balance 顶替（参见 references/evaluator-staking.md §1.1）。
 ///
 /// 示例响应：
 /// ```json

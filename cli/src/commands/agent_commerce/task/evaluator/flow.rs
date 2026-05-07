@@ -35,14 +35,16 @@ fn staking_next_action(_job_id: &str, job_status: &str, _agent_id: &str) -> Opti
              【Step 2】用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20[质押 ✅] 当前 activeStake=<my-stake.activeStake> OKB。\n".to_string(),
+             \x20\x20\x20\x20[质押 ✅] 当前 activeStake=<my-stake.activeStake> OKB。\n\n\
+             【my-stake 失败兜底】丢掉数字字段，降级推 `[质押 ✅] 质押已上链生效。`\n".to_string(),
 
         "unstake_requested" => "【当前状态】unstake_requested\n\n\
              【Step 1】跑 `evaluator my-stake --agent-id <你的 agentId>` 拿 `pendingUnstake`、`unstakeAvailableAt`（已含本地时间）。\n\
              【Step 2】用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20[解质押 ⏳] 当前累计待解 <my-stake.pendingUnstake> OKB；最后一次 unstake 的可领取时间 <unstakeAvailableAt 本地时间>。冷却期到了说『领取解质押』；中途撤销说『取消解质押』。\n".to_string(),
+             \x20\x20\x20\x20[解质押 ⏳] 当前累计待解 <my-stake.pendingUnstake> OKB；最后一次 unstake 的可领取时间 <unstakeAvailableAt 本地时间>。冷却期到了说『领取解质押』；中途撤销说『取消解质押』。\n\n\
+             【my-stake 失败兜底】丢掉数字字段，降级推 `[解质押 ⏳] 已进入冷却期。冷却期到了说『领取解质押』；中途撤销说『取消解质押』。`\n".to_string(),
 
         "unstake_claimed" => "【当前状态】unstake_claimed\n\n\
              用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
@@ -180,7 +182,7 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
              【错误映射】\n\
              - `canReveal=false` → CLI 已预检拒绝，无需重试；本轮可能已结算（等 dispute_resolved）或未 commit（正常跳过）\n\
              - `voter has not committed` → 本轮未 commit，跳过 reveal 是正常的\n\
-             - 其他失败最多重试 3 次（未 reveal 会触发超时罚没，具体比例见 `staking-config`）\n".to_string(),
+             - 其他失败最多重试 3 次\n".to_string(),
 
         "vote_revealed" => "【当前状态】vote_revealed\n\n\
              【动作】无；不通知用户。\n".to_string(),
@@ -209,7 +211,8 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
              【Step 2】用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20[Stake 罚没 ⚠️] 任务 jobId={job_id}，stake 已被扣罚；剩余 activeStake=<my-stake.activeStake> OKB。\n"
+             \x20\x20\x20\x20[Stake 罚没 ⚠️] 任务 jobId={job_id}，stake 已被扣罚；剩余 activeStake=<my-stake.activeStake> OKB。\n\n\
+             【my-stake 失败兜底】丢掉数字字段，降级推 `[Stake 罚没 ⚠️] 任务 jobId={job_id}，stake 已被扣罚。`\n"
         ),
 
         "cooldown_entered" => "【当前状态】cooldown_entered\n\n\
@@ -217,7 +220,8 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
              【Step 2】用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20[冷却 ⏸️] 已进入缺席冷却期，<my-stake.cooldownEndsAt 本地时间> 前不会被选为陪审。\n".to_string(),
+             \x20\x20\x20\x20[冷却 ⏸️] 已进入缺席冷却期，<my-stake.cooldownEndsAt 本地时间> 前不会被选为陪审。\n\n\
+             【my-stake 失败兜底】丢掉数字字段，降级推 `[冷却 ⏸️] 已进入缺席冷却期，期间不会被选为陪审。`\n".to_string(),
 
         "round_failed" =>
             "【当前状态】round_failed\n\n\
