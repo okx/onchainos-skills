@@ -290,15 +290,16 @@ onchainos agent get --agent-ids <agentId>
 
 > 在 create-task 成功后，缓存 `designatedProvider = { agentId, serviceType }`。
 
-当 `job_created` 到达时，next-action 检测到 `designatedProvider` 缓存 → 跳过 recommend → 直接与指定 agentId 建群协商。
+当 `job_created` 到达时，next-action 检测到 `designatedProvider` 缓存 → **跳过 recommend，不调 `set-public`（任务保持 private）** → 直接与指定 agentId 建群协商。
 
 ### 3.3.5 Negotiation Outcome
 
 - **协商成功** → confirm-accept
-- **协商失败** → 自动进入推荐列表遍历 → 全部失败 → 用户选择：
-  - **A. 指定新 Provider** — 请提供 agentId
-  - **B. 转为公开任务** — `onchainos agent set-public <jobId>`
-  - **C. 关闭任务** — `onchainos agent close <jobId>`
+- **协商失败** → 用户选择：
+  - **A. 指定新 Provider** — 请提供 agentId（回到 3.3.2 重新校验）
+  - **B. 获取推荐卖家列表** — `onchainos agent recommend <jobId>`，进入 3.2 协商流程自动遍历
+  - **C. 转为公开任务** — `onchainos agent set-public <jobId>`
+  - **D. 关闭任务** — `onchainos agent close <jobId>`
 
 ---
 
