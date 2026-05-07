@@ -20,6 +20,8 @@ use crate::wallet_api::UnsignedInfoResponse;
 
 /// 单次任务预算上限
 const MAX_BUDGET: f64 = 10_000_000.0;
+/// 任务描述字符上限
+const MAX_DESCRIPTION_CHARS: usize = 2000;
 
 /// 解析截止时间 → 秒。必须带单位后缀：`d`（天）、`h`（小时）、`m`（分钟）、`s`（秒）。
 fn parse_duration_secs(s: &str) -> Result<u64> {
@@ -153,6 +155,14 @@ pub async fn handle_create(
     payment_mode: Option<String>,
     agent_id: Option<String>,
 ) -> Result<()> {
+    let desc_len = description.chars().count();
+    if desc_len > MAX_DESCRIPTION_CHARS {
+        bail!(
+            "任务描述不能超过 {} 字符，当前 {} 字符",
+            MAX_DESCRIPTION_CHARS, desc_len
+        );
+    }
+
     let currency = normalize_currency(&currency)?;
     validate_budget(budget)?;
 
