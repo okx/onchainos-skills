@@ -784,10 +784,8 @@ struct CrossChainQuoteParams {
     to_chain: String,
     /// Human-readable amount (e.g. "10" for 10 USDC)
     readable_amount: String,
-    /// Optional destination receive address. The v6 /quote API does not consume
-    /// this — it is validated against the destination chain's address family
-    /// (so EVM↔Solana mismatches fail early) and then dropped. Use it only at
-    /// `cross_chain_execute` time when broadcasting.
+    /// Destination receive address. Required for heterogeneous bridges
+    /// (EVM ⇌ non-EVM, e.g. EVM → Solana); family must match `to_chain`.
     receive_address: Option<String>,
     /// Sort preference: 0=optimal (default), 1=fastest, 2=max output
     sort: Option<String>,
@@ -2054,8 +2052,6 @@ impl McpServer {
     ) -> Result<String, String> {
         let from_chain_index = crate::chains::resolve_chain(&p.from_chain);
         let to_chain_index = crate::chains::resolve_chain(&p.to_chain);
-        // Validate (but do not forward) receive_address — v6 /quote does not
-        // accept it. Family mismatch fails up front instead of at execute.
         if let Some(addr) = p.receive_address.as_deref() {
             if let Err(e) = cross_chain::validate_receive_address(addr, &to_chain_index) {
                 return err(e);
@@ -2093,6 +2089,7 @@ impl McpServer {
             sort,
             None,
             None,
+            p.receive_address.as_deref(),
         )
         .await
         {

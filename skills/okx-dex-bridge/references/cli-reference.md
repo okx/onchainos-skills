@@ -91,6 +91,7 @@ onchainos cross-chain quote \
   --readable-amount <amount> \
   [--slippage <s>] \
   [--wallet <addr>] [--check-approve] \
+  [--receive-address <addr>] \
   [--bridge-id <id>] \
   [--sort <0|1|2>] \
   [--allow-bridges <ids>] [--deny-bridges <ids>]
@@ -107,6 +108,7 @@ onchainos cross-chain quote \
 | `--slippage` | No | `0.01` | Decimal slippage (range `0.002` – `0.5`, i.e. 0.2% – 50%) |
 | `--wallet` | No | — | User wallet address. Required when `--check-approve` is set. |
 | `--check-approve` | No | false | Have server compare on-chain allowance and fill `routerList[].needApprove` |
+| `--receive-address` | Optional (CLI) / always-pass (skill) | sender wallet | Destination receiver. The CLI does not enforce it; the server requires it for heterogeneous (EVM ⇌ non-EVM) bridges and returns 82202 when missing. **Skill rule:** always pass — default to `--wallet` for same-family pairs; collect a destination-format address from the user for heterogeneous pairs. When supplied, address family must match `--to-chain`. |
 | `--bridge-id` | No | — | Pin a specific bridge id (openApiCode from `bridges` or previous quote) |
 | `--sort` | No | server default (0=optimal) | 0=optimal, 1=fastest, 2=max output |
 | `--allow-bridges` | No | — | Comma-separated bridge ids to whitelist |
@@ -258,7 +260,7 @@ onchainos cross-chain swap \
 | `--readable-amount` / `--amount` | One of | — | Same semantics as `quote` |
 | `--slippage` | No | `0.01` | Decimal slippage |
 | `--wallet` | Yes | — | User wallet address (sender) |
-| `--receive-address` | No | sender wallet | Destination receiver. Required for heterogeneous (EVM↔non-EVM) — currently unsupported by bridges. |
+| `--receive-address` | Optional (CLI) / always-pass (skill) | sender wallet | Destination receiver. The CLI does not enforce it; the server requires it for heterogeneous (EVM ⇌ non-EVM) bridges and returns 82202 when missing. **Skill rule:** always pass — default to `--wallet` for same-family pairs; collect a destination-format address from the user for heterogeneous pairs. When supplied, address family must match `--to-chain`. |
 | `--bridge-id` | No | — | Pin a specific bridge (must match the one used in approve to ensure spender alignment) |
 | `--sort` | No | server default (0=optimal) | 0=optimal, 1=fastest, 2=max output |
 | `--allow-bridges` | No | — | Comma-separated bridge ids to whitelist |
@@ -322,7 +324,7 @@ onchainos cross-chain execute \
 | `--from` / `--to` / `--from-chain` / `--to-chain` / `--readable-amount` / `--amount` | Yes / one of | — | Same as `quote` / `swap` |
 | `--slippage` | No | `0.01` | Decimal slippage |
 | `--wallet` | Yes | — | User wallet address |
-| `--receive-address` | No | sender wallet | Destination receiver |
+| `--receive-address` | Optional (CLI) / always-pass (skill) | sender wallet | Destination receiver. The CLI does not enforce it; the server requires it for heterogeneous (EVM ⇌ non-EVM) bridges and returns 82202 when missing. **Skill rule:** always pass — default to `--wallet` for same-family pairs; collect a destination-format address from the user for heterogeneous pairs. When supplied, address family must match `--to-chain`. |
 | `--bridge-id` | No | server picks | Pin a specific bridge id (openApiCode). Mutually exclusive with `--route-index`. |
 | `--route-index` | No | 0 | Pick a route by zero-based index in `quote.routerList[]`. Mutually exclusive with `--bridge-id`. |
 | `--sort` | No | server default (0=optimal) | 0=optimal, 1=fastest, 2=max output |
