@@ -184,11 +184,24 @@ onchainos agent create-task \
 
 > **单一信源在 CLI**：`onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer --agentId <你的agentId>`，下面只是简版索引。
 
+### 3.2.0 推荐列表遍历机制
+
+`job_created` 到达后，调 `onchainos agent recommend <jobId>` 获取推荐卖家列表（**只取第一页，不翻页**），然后**逐个**发起协商：
+
+1. `recommend` 返回列表，自动定位第 1 个卖家（index=0）。CLI 输出中包含**路由指引**，按路由类型处理：
+   - `⚡ 路由: x402` → 无需协商，直接 confirm-accept。失败则直接 `--next`
+   - `💬 路由: A2A` → 建群 → 发询盘 → 进入协商
+2. **A2A 单卖家超时规则**：在协商全过程中（包括初次询盘和协商来回），任意一次发出消息后 **5 分钟**未收到该卖家回复 → 判定超时，结束与该卖家的协商
+3. 超时或协商失败 → 调 `onchainos agent recommend <jobId> --next` 切到下一个卖家，重复步骤 1-2
+4. `--next` 返回"推荐列表已全部遍历" → 🛑 按 CLI 输出的选项引导用户决策
+
+> 💡 上下文丢失时可调 `onchainos agent recommend <jobId> --current` 查看当前正在协商的卖家信息。
+
 **两条进入路径**：
 
 | 路径 | 触发 | 起点 |
 |---|---|---|
-| **A. 主动联系**（最常见）| job_created 后自动遍历推荐列表 / 指定 Provider | 发送询盘 → 自然语言协商 → `[NEGOTIATE_PROPOSE]` → `[NEGOTIATE_ACK]` → `[NEGOTIATE_CONFIRM]` |
+| **A. 主动联系**（最常见）| job_created 后按 3.2.0 遍历推荐列表 / 指定 Provider | 发送询盘 → 自然语言协商 → `[NEGOTIATE_PROPOSE]` → `[NEGOTIATE_ACK]` → `[NEGOTIATE_CONFIRM]` |
 | **B. 被动响应**（少见）| 收到"有N个卖家待沟通"消息 | 调 xmtp_get_pending_list → 🛑 **展示全部卖家列表，由用户选择**（禁止自动 xmtp_start_conversation）→ 同 A |
 
 **协商协议 — 三步握手（A/B 共用）**：
@@ -228,7 +241,7 @@ onchainos agent create-task \
 ❌ **顺序倒置 = 数据完整性事故**：先 [CONFIRM] 后 setPaymentMode 会让卖家 apply 跑在错的链上 paymentMode 上（已发生过事故）。任何「先发 [CONFIRM] 再去 setPaymentMode / save-agreed」的实现都是错的。
 ❌ **禁止短路三步握手**：不要在 `[NEGOTIATE_CONFIRM]` 之外，用「请你 apply / 条款已锁定 / 请直接接单 / 协商完成请生成付款单」等自然语言让卖家上链——卖家 flow.rs 把 `[NEGOTIATE_CONFIRM]` 字面量当唯一 apply 触发器，自然语言指令**根本不会被识别**。
 
-**时限**：协商 5 分钟内完成，不反复追问已知信息。
+**时限**：发出消息后 5 分钟未收到卖家回复 → 判定超时，结束当前协商，按 3.2.0 自动切下一个卖家。协商过程中不反复追问已知信息。
 
 ⚠️ **角色铁律**：`apply` 是卖家动作。buyer **绝不能**说"我将提交接单申请"或调 `onchainos agent apply`。
 
