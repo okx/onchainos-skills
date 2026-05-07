@@ -4,7 +4,7 @@ description: "Agentic Wallet exclusive trading competitions. Full lifecycle: dis
 license: MIT
 metadata:
   author: okx
-  version: "3.1.0"
+  version: "3.1.2"
   homepage: "https://web3.okx.com"
 ---
 

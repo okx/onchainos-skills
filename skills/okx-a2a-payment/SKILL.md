@@ -4,7 +4,7 @@ description: "Use this skill when the user mentions creating a payment link, pay
 license: MIT
 metadata:
   author: okx
-  version: "3.1.0"
+  version: "3.1.2"
 ---
 
 # Onchain OS A2A Payment
