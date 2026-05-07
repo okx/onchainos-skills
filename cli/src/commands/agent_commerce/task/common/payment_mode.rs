@@ -52,9 +52,9 @@ impl PaymentMode {
     pub fn desc(&self) -> &'static str {
         match self {
             Self::None => "未设置",
-            Self::Escrow => "托管支付（Escrow）",
-            Self::NonEscrow => "非托管支付（Non-Escrow）",
-            Self::X402 => "x402 按需支付",
+            Self::Escrow => "担保支付（Escrow）",
+            Self::NonEscrow => "非担保支付（Non-Escrow）",
+            Self::X402 => "x402 按需微支付",
         }
     }
 }

@@ -46,8 +46,8 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         Status::Completed => vec![
             next_action("job_completed"),
             "（终态）任务已 COMPLETE — **资金已释放给你（卖家）**".to_string(),
-            "  ▸ 买家验收通过（job_completed）→ 托管款已释放".to_string(),
-            "  ▸ 仲裁卖家胜（dispute_resolved seller-wins）→ 托管款已释放".to_string(),
+            "  ▸ 买家验收通过（job_completed）→ 担保款已释放".to_string(),
+            "  ▸ 仲裁卖家胜（dispute_resolved seller-wins）→ 担保款已释放".to_string(),
             "子 session 可关闭。".to_string(),
         ],
         Status::Rejected => vec![
@@ -143,12 +143,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              CLI 已加防御：deliver 在 status != accepted 时会直接报错——但你应该一开始就不要尝试。\n\n\
              跑完 xmtp_send → **直接结束本轮 turn**，等买家 confirm-accept 触发的 `job_accepted` 通知再进入 Scene 4。\n\n\
              【后续事件】\n\
-             - job_accepted → 买家已 confirm-accept，资金托管完成，**那时才能** deliver\n"
+             - job_accepted → 买家已 confirm-accept，资金担保完成，**那时才能** deliver\n"
         ),
 
         // ─── Scene 4: 买家已确认接单，执行任务并交付（按 paymentMode 分流） ──
         Event::JobAccepted => format!(
-            "【当前状态】job_accepted（买家已确认接单，资金托管）\n\
+            "【当前状态】job_accepted（买家已确认接单，资金担保）\n\
              【角色】卖家（Provider）\n\n\
              【你的下一步动作（严格顺序，不得跳步）】\n\n\
              **Step 1 — 用 `xmtp_dispatch_user` 把接单成功通知推给用户**：\n\n\
@@ -601,8 +601,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              apply 是上链签名动作，CLI 内部完成 unsigned info → sign → broadcast，等链上 provider_applied 通知。\n\n\
              ⚠️ **apply 跑完直接结束 turn，禁止 `xmtp_dispatch_user` 推用户**——『已提交接单申请 / txHash / 等 provider_applied』是过场状态，对用户没信息量。等链上 `provider_applied` 通知到达后 next-action 那时才有值得推的。这条命令再说一遍是因为 sub 容易在 tx broadcast 后本能想『通知用户』——不要。\n\n\
              ━━━━━ 分支 B：支付方式 = non_escrow（非担保交易）→ **不要** apply，但要建 a2a-pay 付款单 ━━━━━\n\n\
-             非担保交易不在链上托管资金，provider 端**禁止**调 `onchainos agent apply`：\n\
+             非担保交易不在链上担保资金，provider 端**禁止**调 `onchainos agent apply`：\n\
              - non_escrow 的链上 provider_applied 不会触发，调了 apply 会在 escrow 合约里多一笔无用上链\n\n\
+             ❌ **严禁把 non_escrow 和 x402 混为一谈**：\n\
+             \x20\x20• non_escrow（paymentMode=2）= a2a-pay 付款单（你这里要建的），出 `paymentId: a2a_xxx`，买家用 paymentId 调 `confirm-accept`\n\
+             \x20\x20• x402（paymentMode=3）= HTTP 402 challenge / response，**没有 paymentId**，买家直接打你的 service-list endpoint 拿 402 响应，签 x402_pay 后重放\n\
+             \x20\x20两个是**独立支付方式**，只是底层都用 EIP-3009 单签做支付凭证。给买家发的 xmtp_send content 里**禁止**写「非担保 x402 / non_escrow x402 / 非担保（x402）」之类的混合标签——本路径就只是 non_escrow，跟 x402 完全无关。\n\n\
              但卖家仍要为买家创建一张 a2a-pay charge 付款单：\n\n\
              ```bash\n\
              onchainos agent get-payment {job_id} --token-symbol <USDT|USDG> --token-amount <协商价格 whole tokens> --payment-mode non_escrow --agent-id {agent_id}\n\
@@ -610,8 +614,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              stdout 输出 `{{ \"paymentId\": \"a2a_xxx\", \"deliveries\": ... }}`。\n\n\
              跑完后 `xmtp_send` 把 paymentId 发给买家（content 纯自然语言，不要贴整段 JSON）：\n\
              \x20\x20```\n\
-             \x20\x20协商达成（非担保）。请用此 paymentId 完成支付：<a2a_xxx>\n\
+             \x20\x20协商达成（非担保支付，non_escrow）。请用此 paymentId 完成支付：<a2a_xxx>\n\
              \x20\x20```\n\
+             ⚠️ 标签只写「非担保支付 / non_escrow」二选一，**不要带 x402 字样**。\n\
              买家拿到 paymentId 后会调 `pay()` 完成 EIP-3009 单签 + credential 提交，然后再 confirm-accept 走 direct/accept 进入 accepted 状态。\n\n\
              跑完 get-payment + xmtp_send 后**直接结束本轮 turn**，等下一条系统通知（如 `job_accepted`）再调 next-action。\n\n\
              **任一项未达成** → 调 `xmtp_send` 回复\"很抱歉，无法接受当前条件\"（纯自然语言），结束。\n\n\
@@ -641,7 +646,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【系统通知】review_expired（review 窗口超时，买家未在期限内验收）\n\
              【角色】卖家（Provider）\n\n\
              ⚠️ **review_expired 只是窗口超时事件，task 状态仍是 submitted，资金未自动释放**。\n\
-             需要你主动调 claimAutoComplete 把资金从托管合约领回，链上确认后才进 completed。\n\n\
+             需要你主动调 claimAutoComplete 把资金从担保合约领回，链上确认后才进 completed。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 调 CLI 领取货款（上链）：**\n\
              ```bash\n\
@@ -693,7 +698,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              content:\n\
              \x20\x20[⏰ 截止警告] 任务 {job_id} 提交交付物时限快到了。\n\
              \x20\x20如果交付物已准备好，请回复『提交交付物』，由我（agent {agent_id}）执行 deliver 上链；\n\
-             \x20\x20否则尽快完成准备——超时后买家可调 `agent claim-auto-refund <jobId>` 强制退款，托管资金会原路返回买家，本任务作废。\n\n\
+             \x20\x20否则尽快完成准备——超时后买家可调 `agent claim-auto-refund <jobId>` 强制退款，担保资金会原路返回买家，本任务作废。\n\n\
              **Step 2 — 结束本轮 turn**：等用户在 user session 决策回复，或等下一个真实链事件（job_submitted / submit_expired）到达再动作。\n\n\
              ⚠️ **不要在本 turn 自动跑 `onchainos agent deliver`**——是否准备好交付物只有用户知道，agent 不能替用户决定『交付物已就绪』。\n\
              ⚠️ **不要给买家 `xmtp_send`**——截止警告是 provider 内部的事情，跟买家无关。\n"

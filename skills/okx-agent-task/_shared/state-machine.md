@@ -15,7 +15,7 @@
 | int | string | 枚举 | 含义 | 入口事件 |
 |---|---|---|---|---|
 | `0` | `open` | `Status::Open` | 任务已上链、等待接单 | `job_created` |
-| `1` | `accepted` | `Status::Accepted` | 买家已确认接单（资金托管或 paymentId 已给） | `job_accepted` |
+| `1` | `accepted` | `Status::Accepted` | 买家已确认接单（资金担保或 paymentId 已给） | `job_accepted` |
 | `2` | `submitted` | `Status::Submitted` | 卖家交付物已上链 | `job_submitted` |
 | `3` | `refused` | `Status::Refused` | 买家拒绝验收，24h 决策期（仲裁 / 同意退款） | `job_refused` |
 | `4` | `disputed` | `Status::Disputed` | 仲裁进行中（含证据期 + commit/reveal） | `job_disputed` |

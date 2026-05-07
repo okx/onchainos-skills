@@ -51,8 +51,8 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         Status::Completed => vec![
             next_action("job_completed"),
             "（终态）任务已 COMPLETE — **资金已释放给卖家**".to_string(),
-            "  ▸ escrow 验收通过 → 释放托管款给卖家".to_string(),
-            "  ▸ 仲裁卖家胜（dispute_resolved seller-wins）→ 释放托管款给卖家".to_string(),
+            "  ▸ escrow 验收通过 → 释放担保款给卖家".to_string(),
+            "  ▸ 仲裁卖家胜（dispute_resolved seller-wins）→ 释放担保款给卖家".to_string(),
             "  ▸ non_escrow 已在 accepted 阶段完成支付链路".to_string(),
             "⚠️ 保留 sub session（不关闭），便于事后查阅历史。".to_string(),
         ],
@@ -675,7 +675,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\n\
              **Step 2 — 调用 xmtp_dispatch_user 通知用户退款到账：**\n\n\
              content：\n\
-             \x20\x20\x20\x20[自动退款成功 💰] 任务 {job_id} 的托管资金已退还至您的钱包。\n\
+             \x20\x20\x20\x20[自动退款成功 💰] 任务 {job_id} 的担保资金已退还至您的钱包。\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
              **Step 3 — 终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\

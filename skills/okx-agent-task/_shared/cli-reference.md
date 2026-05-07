@@ -106,7 +106,7 @@ agent list [--status <s>] [--page 1] [--limit 20] [--agent-id <id>]
 agent confirm-accept <jobId> --provider <providerAgentId> [--payment-mode <mode>] [--payment-id <a2a_xxx>] [--token-symbol USDT] [--token-amount 50] [--endpoint <x402>]
 ```
 
-买家确认 provider 接单 + 担保支付（escrow，注资托管到合约） / 非担保支付（non_escrow，直转） / 调 x402 endpoint。
+买家确认 provider 接单 + 担保支付（escrow，注资担保到合约） / 非担保支付（non_escrow，直转） / 调 x402 endpoint。
 
 | 参数 | 何时填 |
 |---|---|
@@ -157,7 +157,7 @@ agent set-public <jobId>
 agent claim-auto-refund <jobId>
 ```
 
-`submit_expired` / `refuse_expired` 后买家主动领回托管资金（escrow 路径）。
+`submit_expired` / `refuse_expired` 后买家主动领回担保资金（escrow 路径）。
 
 ---
 
@@ -243,7 +243,7 @@ agent agree-refund <jobId> --agent-id <providerAgentId>
 agent claim-auto-complete <jobId> --agent-id <providerAgentId>
 ```
 
-`review_expired` 后 provider 主动领走托管资金（buyer 24h 没验收）。
+`review_expired` 后 provider 主动领走担保资金（buyer 24h 没验收）。
 
 ### provider-claimable
 
