@@ -54,6 +54,9 @@ pub fn normalize_currency(currency: &str) -> Result<String> {
     }
 }
 
+/// 预算小数位数上限
+const MAX_BUDGET_DECIMALS: usize = 5;
+
 /// 校验预算金额
 fn validate_budget(budget: f64) -> Result<()> {
     if budget <= 0.0 {
@@ -61,6 +64,22 @@ fn validate_budget(budget: f64) -> Result<()> {
     }
     if budget > MAX_BUDGET {
         bail!("单次任务预算不得超过 {} USDT/USDG", MAX_BUDGET as u64);
+    }
+    Ok(())
+}
+
+/// 校验预算小数位数（≤5 位）。
+/// f64 转字符串后去尾零再数小数位数。
+fn validate_budget_decimals(budget: f64) -> Result<()> {
+    let s = format!("{budget}");
+    if let Some(dot_pos) = s.find('.') {
+        let frac = s[dot_pos + 1..].trim_end_matches('0');
+        if frac.len() > MAX_BUDGET_DECIMALS {
+            bail!(
+                "预算精度限 {MAX_BUDGET_DECIMALS} 位小数，当前 {} 位",
+                frac.len()
+            );
+        }
     }
     Ok(())
 }
@@ -169,12 +188,14 @@ pub async fn handle_create(
 
     let currency = normalize_currency(&currency)?;
     validate_budget(budget)?;
+    validate_budget_decimals(budget)?;
 
     let max_budget_val = max_budget.unwrap_or(budget);
     if max_budget_val < budget {
         bail!("--max-budget ({max_budget_val}) 不能小于 --budget ({budget})");
     }
     validate_budget(max_budget_val)?;
+    validate_budget_decimals(max_budget_val)?;
 
     let open_secs = parse_duration_secs(&deadline_open)
         .map_err(|e| anyhow::anyhow!("--deadline-open {e}"))?;
