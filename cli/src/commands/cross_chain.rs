@@ -1,7 +1,8 @@
 //! Cross-chain swap command surface.
 //!
 //! Flow:
-//!   1. /quote (with checkApprove + userWalletAddress) → routerList[]
+//!   1. /quote (with checkApprove + userWalletAddress, + receiveAddress for
+//!      heterogeneous EVM↔non-EVM pairs) → routerList[]
 //!   2. (if needApprove) /approve-tx → wallet contract-call
 //!      ├─ if needCancelApprove (USDT pattern) → approve 0 first, then full
 //!   3. /swap → wallet contract-call broadcast → fromTxHash
@@ -86,6 +87,7 @@ pub async fn fetch_quote(
     sort: Option<&str>,
     allow_bridges: Option<&str>,
     deny_bridges: Option<&str>,
+    receive_address: Option<&str>,
 ) -> Result<Value> {
     let mut params: Vec<(&str, &str)> = vec![
         ("fromChainIndex", from_chain),
@@ -97,6 +99,9 @@ pub async fn fetch_quote(
     ];
     if let Some(w) = wallet {
         params.push(("userWalletAddress", w));
+    }
+    if let Some(r) = receive_address {
+        params.push(("receiveAddress", r));
     }
     if check_approve {
         params.push(("checkApprove", "true"));
@@ -358,10 +363,9 @@ pub enum CrossChainCommand {
         /// Denied bridges (comma-separated bridge ids)
         #[arg(long)]
         deny_bridges: Option<String>,
-        /// Optional destination receive address. The v6 quote API does not consume
-        /// this field — the CLI accepts it for symmetry with `execute` and
-        /// validates its family matches `--to-chain` so heterogeneous-pair
-        /// mismatches (e.g. EVM addr → Solana) fail early rather than at execute.
+        /// Destination receive address. Optional from the CLI; the server
+        /// requires it for heterogeneous (EVM ⇌ non-EVM) bridges and returns
+        /// 82202 when missing. When supplied, family must match `--to-chain`.
         #[arg(long)]
         receive_address: Option<String>,
     },
@@ -567,8 +571,6 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
             let to_idx = crate::chains::resolve_chain(&to_chain).to_string();
             crate::chains::ensure_supported_chain(&from_idx, &from_chain)?;
             crate::chains::ensure_supported_chain(&to_idx, &to_chain)?;
-            // Validate (but do not forward) receive_address — v6 /quote does not
-            // accept it. Family mismatch fails up front instead of at execute.
             if let Some(addr) = receive_address.as_deref() {
                 validate_receive_address(addr, &to_idx)?;
             }
@@ -597,6 +599,7 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
                     sort.as_deref(),
                     allow_bridges.as_deref(),
                     deny_bridges.as_deref(),
+                    receive_address.as_deref(),
                 )
                 .await?,
             );
@@ -752,6 +755,10 @@ pub async fn execute(ctx: &Context, cmd: CrossChainCommand) -> Result<()> {
 // ── Validation ─────────────────────────────────────────────────────────────
 
 /// Check that `receive_address` matches the destination chain's address family.
+/// `--receive-address` itself is optional from the CLI; per the v6 OpenAPI spec
+/// (§4.3 / §4.5) the server requires it for heterogeneous (EVM ⇌ non-EVM)
+/// bridges and returns 82202 when missing — the CLI does not duplicate that
+/// check, so direct callers can omit and rely on the server response.
 pub(crate) fn validate_receive_address(receive_address: &str, to_chain_index: &str) -> Result<()> {
     let to_family = crate::chains::chain_family(to_chain_index);
     let addr_looks_evm = receive_address.starts_with("0x") && receive_address.len() == 42;
@@ -840,6 +847,7 @@ async fn cmd_execute(
         sort,
         allow_bridges,
         deny_bridges,
+        receive_address,
     )
     .await?;
     let quote_obj = unwrap_data_array(&quote_data);
