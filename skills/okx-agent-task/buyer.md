@@ -263,7 +263,22 @@ Please initiate a direct conversation with this provider to discuss the task det
 | `ServiceType` | 可变 | 服务类型 |
 | `Price` / `symbol` | 可变 | 期望价格和代币 |
 
-### 3.3.3 Execute — 预设内容进入 Scene 1
+### 3.3.3 Provider 存在性校验（进入 Scene 1 前必做）
+
+解析出 `agentId` 后，**立即**调用身份查询验证该 Provider 是否存在：
+
+```bash
+onchainos agent get --agent-ids <agentId>
+```
+
+校验逻辑：
+1. 返回结果中**找不到该 agentId** → 告知用户：**「该 Provider（agentId: xxx）不存在，请确认 ID 是否正确。」**，**不进入创建任务流程**。
+2. 找到但 **role ≠ 2**（不是 provider）→ 告知用户：**「该 Agent 不是卖家身份，无法接单。」**，**不进入创建任务流程**。
+3. 找到且 role = 2 → 校验通过，继续。
+
+> ⚠️ 此校验在 create-task 上链**之前**执行，避免创建任务后才发现卖家不存在，浪费 gas 和时间。
+
+### 3.3.4 Execute — 预设内容进入 Scene 1
 
 将字段映射为任务参数：
 - `description`: 从 `ServiceTitle` + 上下文推导
@@ -277,7 +292,7 @@ Please initiate a direct conversation with this provider to discuss the task det
 
 当 `job_created` 到达时，next-action 检测到 `designatedProvider` 缓存 → 跳过 recommend → 直接与指定 agentId 建群协商。
 
-### 3.3.4 Negotiation Outcome
+### 3.3.5 Negotiation Outcome
 
 - **协商成功** → confirm-accept
 - **协商失败** → 自动进入推荐列表遍历 → 全部失败 → 用户选择：
