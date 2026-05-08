@@ -207,29 +207,56 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ 禁止此时再给买家 xmtp_send 任何过场（『已上链请验收』之类）。\n\
              ⚠️ 禁止 `xmtp_dispatch_user` 推用户。\n\
              ⚠️ Scene 5 (`job_submitted`) 收到时只观察、不再 xmtp_send（避免给买家发双消息）。\n\n\
-             ━━━━━ 分支 B：paymentMode=non_escrow（非担保交易，2）━━━━━\n\n\
-             非担保不走链上 submit，**直接 xmtp_send 把交付物发给买家**。**按交付物类型分流**：\n\n\
-             ▸ **纯文本交付物**（一段话、一段查询结果、一段 URL 链接）：\n\
+             ━━━━━ 分支 B：paymentMode=non_escrow（非担保 / 先收后付，2）━━━━━\n\n\
+             ⚠️ **新版 non_escrow 是「先收后付」**——本剧本 Step A → Step D **一气呵成在同一 turn 内执行完**:\n\
+             通知用户接单 → 自主干活 → 创建付款单 → xmtp_send (交付物 + paymentId 同一条) 给买家。\n\
+             不依赖任何 user session 介入触发,不需要 work_done 伪 event,不需要等用户说「交付」。\n\n\
+             ❌ **禁止 non_escrow 路径调 `onchainos agent deliver`**——deliver 是 escrow 链上动作,non_escrow 走 P2P xmtp_send 不上链\n\n\
+             **B-Step A — 通知用户接单成功**:\n\
+             tool: xmtp_dispatch_user\n\
+             content:\n\
+             \x20\x20\x20\x20[接单成功通知] 任务 {job_id} 已完成接单(非担保模式,先收后付)\n\
+             \x20\x20\x20\x20- 标题: <title>\n\
+             \x20\x20\x20\x20- 协商价格: <amount> <tokenSymbol>\n\
+             \x20\x20\x20\x20- 卖家 AgentID: {agent_id}\n\
+             \x20\x20\x20\x20正在自主执行任务,完成后会自动把交付物 + 付款单发给买家。\n\n\
+             字段值从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 输出中提取。\n\n\
+             **B-Step B — 自主执行任务(同 turn 内连续做完)**:\n\
+             根据任务内容选合适的工具/能力完成工作。例如:\n\
+             \x20\x20• 「生成猫图」→ 调用图片生成工具,拿本地图片路径\n\
+             \x20\x20• 「查天气」→ 调用 wttr.in / 天气 API,拿文字结果\n\
+             \x20\x20• 「合约审计」→ 读代码,产出审计报告文本\n\
+             具体工具选择不在本剧本规定范围,agent 自主决定。\n\
+             ⚠️ B-Step B 跟 B-Step C / D **必须同 turn 内连续执行**——不要为了「等用户检查」中断 turn。\n\n\
+             **B-Step C — 工作完成后跑 get-payment 拿 paymentId**:\n\
+             ```bash\n\
+             onchainos agent get-payment {job_id} --token-symbol <USDT|USDG> --token-amount <协商价格 whole tokens> --payment-mode non_escrow --agent-id {agent_id}\n\
+             ```\n\
+             stdout 输出 `{{ \"paymentId\": \"a2a_xxx\", \"deliveries\": ... }}`,记下 `a2a_xxx`。\n\n\
+             **B-Step D — 同条 xmtp_send 把「交付物 + paymentId」 一起发给买家**(关键步骤):\n\
+             按交付物类型分:\n\n\
+             ▸ **纯文本/URL 交付物**:\n\
              {header_template}\n\
-             任务 {job_id} 已完成。交付物：\n\
-             <这里贴交付内容文本>\n\
-             请你验收并调 `onchainos agent complete {job_id}` 释放款项；如有问题调 `onchainos agent reject` 反馈。\n\n\
-             ▸ **文件交付物**（图片/PDF/文档）—— 用 `xmtp_file_upload + xmtp_send fileKey` 两步（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.8）：\n\
-             ⚠️ **B-1 和 B-2 必须同 turn 内连续执行**——`xmtp_file_upload` 调完拿到返回值后**立即**接着调 `xmtp_send`，不要把 turn 切断。上传完不发 fileKey 给买家 = 买家完全收不到交付物。\n\
-             B-1. 调 `xmtp_file_upload`，参数 `filePath` = 本地文件绝对路径，`agentId` = {agent_id}，`jobId` = {job_id}\n\
-             \x20\x20\x20返回值 `fileKey` / `digest` / `salt` / `nonce` / `secret` 五个字段（解密元数据）全部记录\n\
-             B-2. **同 turn 内**继续调 `xmtp_send` 给买家（必须把 B-1 拿到的 5 个字段原样塞进 content）：\n\
+             任务 {job_id} 已完成。交付物:\n\
+             <这里贴交付内容文本(完整,不截断)>\n\
+             请用此 paymentId 完成支付: <a2a_xxx>\n\n\
+             ▸ **文件交付物**(图片/PDF/文档)—— 用 `xmtp_file_upload + xmtp_send fileKey` 两步(机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.8):\n\
+             D-1. 调 `xmtp_file_upload`,参数 `filePath` = 本地文件绝对路径,`agentId` = {agent_id},`jobId` = {job_id}\n\
+             \x20\x20\x20返回值 `fileKey` / `digest` / `salt` / `nonce` / `secret` 五个字段(解密元数据)全部记录\n\
+             D-2. **同 turn 内**调 `xmtp_send` 给买家(把 5 个字段 + paymentId **同条**塞进 content):\n\
              {header_template}\n\
-             任务 {job_id} 已完成。以下是交付信息：\n\
-             - fileKey: <B-1 返回的 fileKey 完整字符串>\n\
-             - digest: <B-1 返回的 digest>\n\
-             - salt: <B-1 返回的 salt>\n\
-             - nonce: <B-1 返回的 nonce>\n\
-             - secret: <B-1 返回的 secret>\n\
-             - filename: <B-1 返回的 filename，例如 task预发.png>\n\
-             请用 xmtp_file_download 下载查看，确认无误后调 `onchainos agent complete {job_id}` 释放款项；如有问题调 `onchainos agent reject` 反馈。\n\n\
-             B-Step 后续：等买家 user session 决策 → 若买家完成验收会触发后续事件；non_escrow 卖家这条 turn 跑完一条 xmtp_send 即结束。\n\
-             ⚠️ **禁止 non_escrow 路径调 `onchainos agent deliver`**——deliver 是 escrow 链上动作，non_escrow 调会被后端拒。\n\n\
+             任务 {job_id} 已完成。以下是交付信息:\n\
+             - fileKey: <D-1 返回的 fileKey>\n\
+             - digest: <D-1 返回的 digest>\n\
+             - salt: <D-1 返回的 salt>\n\
+             - nonce: <D-1 返回的 nonce>\n\
+             - secret: <D-1 返回的 secret>\n\
+             - filename: <D-1 返回的 filename>\n\
+             请用 xmtp_file_download 下载查看,然后用此 paymentId 完成支付: <a2a_xxx>\n\n\
+             ⚠️ **paymentId 必须跟交付物在同一条 xmtp_send 里发**——拆两条会导致买家路由识别问题(看到孤立 paymentId 不知道关联哪个交付物)。\n\n\
+             **B-Step E — 跑完 D 直接结束本轮 turn,等 job_completed 通知**:\n\
+             ⚠️ 不要再 xmtp_dispatch_user 推「已发送交付物给买家」——过场状态,等链上 job_completed 落地再说。\n\
+             ⚠️ 不要给买家 xmtp_send 第二条催付。买家收到 a2a_xxx 后会自动 complete 完成支付。\n\n\
              【后续事件】\n\
              - 分支 A → 链上 task 状态进 submitted（job_submitted 系统事件可能到达，仅观察不动作）→ 等 buyer complete/reject\n\
              - 分支 B → 买家直接验收，无中间链事件\n"
@@ -323,8 +350,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 
         // ─── Scene 7: 任务完成（验收通过 / 仲裁胜诉） ────────────────
         Event::JobCompleted => format!(
-            "【当前状态】job_completed（任务完成，资金已释放给你）\n\
+            "【当前状态】job_completed（任务完成，资金已到账）\n\
              【角色】卖家（Provider）\n\n\
+             ⚠️ 资金到账路径区别(供 agent 自己理解,不必啰嗦给用户):\n\
+             \x20\x20• escrow → 担保合约自动释放 stake 到你的钱包\n\
+             \x20\x20• non_escrow → 买家 complete 时通过 a2a_pay (EIP-3009 单签) 直接转账到你的 ownerAddress\n\
+             两种路径都意味着钱已经到账,通知用户时统一描述「资金已到账」即可。\n\n\
              【你的下一步动作】\n\n\
              ⚠️ 不要给买家 `xmtp_send` 致谢/「已完成」过场——买家自己刚 complete，他知道。\n\n\
              **Step 1 — 拿任务上下文**：\n\
@@ -606,30 +637,25 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\
              apply 是上链签名动作，CLI 内部完成 unsigned info → sign → broadcast，等链上 provider_applied 通知。\n\n\
              ⚠️ **apply 跑完直接结束 turn，禁止 `xmtp_dispatch_user` 推用户**——『已提交接单申请 / txHash / 等 provider_applied』是过场状态，对用户没信息量。等链上 `provider_applied` 通知到达后 next-action 那时才有值得推的。这条命令再说一遍是因为 sub 容易在 tx broadcast 后本能想『通知用户』——不要。\n\n\
-             ━━━━━ 分支 B：支付方式 = non_escrow（非担保交易）→ **不要** apply，但要建 a2a-pay 付款单 ━━━━━\n\n\
-             非担保交易不在链上担保资金，provider 端**禁止**调 `onchainos agent apply`：\n\
-             - non_escrow 的链上 provider_applied 不会触发，调了 apply 会在 escrow 合约里多一笔无用上链\n\n\
-             ❌ **严禁把 non_escrow 和 x402 混为一谈**：\n\
-             \x20\x20• non_escrow（paymentMode=2）= a2a-pay 付款单（你这里要建的），出 `paymentId: a2a_xxx`，买家用 paymentId 调 `confirm-accept`\n\
-             \x20\x20• x402（paymentMode=3）= HTTP 402 challenge / response，**没有 paymentId**，买家直接打你的 service-list endpoint 拿 402 响应，签 x402_pay 后重放\n\
-             \x20\x20两个是**独立支付方式**，只是底层都用 EIP-3009 单签做支付凭证。给买家发的 xmtp_send content 里**禁止**写「非担保 x402 / non_escrow x402 / 非担保（x402）」之类的混合标签——本路径就只是 non_escrow，跟 x402 完全无关。\n\n\
-             但卖家仍要为买家创建一张 a2a-pay charge 付款单：\n\n\
-             ```bash\n\
-             onchainos agent get-payment {job_id} --token-symbol <USDT|USDG> --token-amount <协商价格 whole tokens> --payment-mode non_escrow --agent-id {agent_id}\n\
-             ```\n\
-             stdout 输出 `{{ \"paymentId\": \"a2a_xxx\", \"deliveries\": ... }}`。\n\n\
-             跑完后 `xmtp_send` 把 paymentId 发给买家（content 纯自然语言，不要贴整段 JSON）：\n\
-             \x20\x20```\n\
-             \x20\x20协商达成（非担保支付，non_escrow）。请用此 paymentId 完成支付：<a2a_xxx>\n\
-             \x20\x20```\n\
-             ⚠️ 标签只写「非担保支付 / non_escrow」二选一，**不要带 x402 字样**。\n\
-             买家拿到 paymentId 后会调 `pay()` 完成 EIP-3009 单签 + credential 提交，然后再 confirm-accept 走 direct/accept 进入 accepted 状态。\n\n\
-             跑完 get-payment + xmtp_send 后**直接结束本轮 turn**，等下一条系统通知（如 `job_accepted`）再调 next-action。\n\n\
-             **任一项未达成** → 调 `xmtp_send` 回复\"很抱歉，无法接受当前条件\"（纯自然语言），结束。\n\n\
-             【时限】整个协商在 5 分钟内完成；不要反复追问已经知道的信息。\n\n\
+             ━━━━━ 分支 B：支付方式 = non_escrow（非担保 / 先收后付）→ **静默等 job_accepted** ━━━━━\n\n\
+             ⚠️ **新版 non_escrow 是「先收后付」(deliver-then-pay)**——买家先把任务推进到 accepted 状态(不付款),\n\
+             你做完工作后才生成付款单连同交付物一起发给买家,买家拿到交付物后才用 paymentId 完成支付。\n\n\
+             【你的下一步动作（严格顺序）】\n\n\
+             **Step 1 — 校验 [NEGOTIATE_CONFIRM] 字段**:逐字段对照你刚才发的 [NEGOTIATE_ACK],\n\
+             全部一致 → 协商正式锁定;任一字段不一致 → 视为篡改,xmtp_send 回复字段不一致并拒绝,结束。\n\n\
+             **Step 2 — 字段一致 → 静默等 job_accepted 系统通知**:\n\
+             ❌ **不要**调 `onchainos agent apply`(那是 escrow 路径)\n\
+             ❌ **不要**调 `onchainos agent get-payment`(get-payment 推迟到工作完成后,见 JobAccepted 剧本 Step C)\n\
+             ❌ **不要** xmtp_send 任何 ACK / 回执给买家(买家此时会立即跑 confirm-accept,不等你 ACK)\n\
+             ✅ **直接结束本轮 turn**——等收到 `job_accepted` 系统通知再调 next-action 进入 JobAccepted 剧本\n\n\
+             ❌ **严禁把 non_escrow 和 x402 混为一谈**:\n\
+             \x20\x20• non_escrow(paymentMode=2)= a2a-pay 付款单,出 `paymentId: a2a_xxx`,买家用 paymentId 调 `complete`(注意:新版是 complete 不是 confirm-accept)\n\
+             \x20\x20• x402(paymentMode=3)= HTTP 402 challenge / response,**没有 paymentId**,买家直接打你的 service-list endpoint 拿 402 响应,签 x402_pay 后重放\n\
+             \x20\x20两个是**独立支付方式**,只是底层都用 EIP-3009 单签做支付凭证。**禁止**在 xmtp_send 里写「非担保 x402 / non_escrow x402 / 非担保(x402)」之类的混合标签。\n\n\
+             **任一项未达成** → 调 `xmtp_send` 回复「很抱歉,无法接受当前条件」(纯自然语言),结束。\n\n\
              【后续事件】\n\
              - 分支 A apply 上链成功 → 收到 `provider_applied` 系统通知 → 再次调 next-action 拿 Scene 3 剧本\n\
-             - 分支 B 等买家 confirm-accept → 收到 `job_accepted` 系统通知 → 再次调 next-action\n"
+             - 分支 B 等买家 confirm-accept → 收到 `job_accepted` 系统通知 → 进入 JobAccepted 剧本 Step A-D 完成「接单 → 干活 → 创建付款单 → 同条 xmtp_send 交付物+paymentId」 一气呵成\n"
         ),
         // ─── buyer 主导的 housekeeping 事件，provider 端基本无需动作 ─────
         Event::JobExpired
