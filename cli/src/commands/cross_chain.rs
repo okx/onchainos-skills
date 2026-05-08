@@ -1140,13 +1140,26 @@ async fn wallet_contract_call(
     mev_protection: bool,
     force: bool,
 ) -> Result<Value> {
+    // Cross-chain `/swap` returns `tx.data` in the source chain's encoding —
+    // EVM gets ABI-encoded contract input, Solana gets a base58-serialized
+    // unsigned transaction. The Agentic Wallet `unsignedInfo` API is encoding-
+    // aware: EVM goes through `inputData`, Solana through `unsignedTx`. Routing
+    // the wrong one through `inputData` (the historical default) makes backend
+    // return code=50001 "Service temporarily unavailable" because the request
+    // structure does not match the chain family. Dispatch by family here.
+    let (effective_input_data, effective_unsigned_tx, effective_amt, effective_gas_limit) =
+        if crate::chains::chain_family(chain) == "solana" {
+            (None, input_data, "0", None)
+        } else {
+            (input_data, None, amt, gas_limit)
+        };
     let resp = crate::commands::agentic_wallet::transfer::execute_contract_call(
         to,
         chain,
-        amt,
-        input_data,
-        None, // unsigned_tx (Solana path; cross-chain currently EVM-source)
-        gas_limit,
+        effective_amt,
+        effective_input_data,
+        effective_unsigned_tx,
+        effective_gas_limit,
         None, // from: use selected account
         None, // aa_dex_token_addr
         None, // aa_dex_token_amount
