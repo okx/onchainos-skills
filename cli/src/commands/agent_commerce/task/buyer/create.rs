@@ -91,7 +91,7 @@ fn validate_budget_decimals(budget: f64) -> Result<()> {
 ///
 /// - `specified_id = Some("424")` → 校验该 agent 存在且为 buyer，直接使用
 /// - `specified_id = None` → 自动选择：仅一个 buyer 时直接用，多个 buyer 时报错提示指定
-async fn resolve_buyer_agent(specified_id: Option<&str>) -> Result<(String, String)> {
+pub(crate) async fn resolve_buyer_agent(specified_id: Option<&str>) -> Result<(String, String)> {
     let exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("无法获取当前可执行文件路径: {e}"))?;
 
@@ -167,7 +167,7 @@ pub async fn handle_create(
     description: String,
     description_summary: Option<String>,
     budget: f64,
-    max_budget: Option<f64>,
+    max_budget: f64,
     currency: String,
     deadline_open: String,
     deadline_submit: String,
@@ -190,12 +190,11 @@ pub async fn handle_create(
     validate_budget(budget)?;
     validate_budget_decimals(budget)?;
 
-    let max_budget_val = max_budget.unwrap_or(budget);
-    if max_budget_val < budget {
-        bail!("--max-budget ({max_budget_val}) 不能小于 --budget ({budget})");
+    if max_budget < budget {
+        bail!("--max-budget ({max_budget}) 不能小于 --budget ({budget})");
     }
-    validate_budget(max_budget_val)?;
-    validate_budget_decimals(max_budget_val)?;
+    validate_budget(max_budget)?;
+    validate_budget_decimals(max_budget)?;
 
     let open_secs = parse_duration_secs(&deadline_open)
         .map_err(|e| anyhow::anyhow!("--deadline-open {e}"))?;
@@ -257,6 +256,7 @@ pub async fn handle_create(
         "descriptionSummary": summary,
         "paymentTokenSymbol": currency.to_uppercase(),
         "paymentTokenAmount": budget.to_string(),
+        "paymentMostTokenAmount": max_budget.to_string(),
         "chainId":            XLAYER_CHAIN_ID,
         "expireConfig": {
             "acceptDeadline":    open_secs,

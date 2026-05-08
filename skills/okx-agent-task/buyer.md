@@ -101,7 +101,7 @@
 | Summary | `description_summary` | Max **200** chars | Agent 总结。>200 → 缩短 |
 | Payment token | `currency` | Only **USDT** / **USDG** | 仅接受明确拼写。模糊（"U"/"刀"等）→ 先问用户 |
 | Budget | `budget` | Numeric; decimal ≤5 位; max 10,000,000 | 提取数字。"U"/"u" 后缀只取数字，currency 留空 |
-| Max budget | `max_budget` | Optional; ≥ budget | 未提供 → 默认等于 budget |
+| Max budget | `max_budget` | **Required**; ≥ budget; decimal ≤5 位; max 10,000,000 | 协商价格上限，卖家报价不得超过此值。**必须明确询问用户** |
 | 接单时限 | `deadline_open` | Min 10 min, max 6 months. Format: `<n>h` / `<n>m` | 任务发布后多久无 Agent 接单则自动关闭。<10min → 拒绝; >6mo → 拒绝 |
 | 交付时限 | `deadline_submit` | Min 1 min, max 6 months. Format: `<n>h` / `<n>m` | 接单后多久内必须完成交付。<1min → 拒绝; >6mo → 拒绝 |
 | Quality standards | (in `description`) | Free text | 引导用户定义验收标准，追加到 description |
@@ -137,7 +137,7 @@
 | **描述** | [full conversation content] |
 | **支付代币** | ⚠️ 必须由用户明确指定 USDT 或 USDG |
 | **预算** | 10 |
-| **最高预算** | 15 |
+| **最高预算** | 15（协商价格上限，卖家报价不得超过此值） |
 | **接单时限** | 72h（发布后 72 小时无人接单则自动关闭） |
 | **交付时限** | 48h（接单后 48 小时内须完成交付） |
 | **验收标准** | Native-level fluency, accurate DeFi terminology, no omissions |
@@ -175,6 +175,8 @@ onchainos agent create-task \
 | Unsupported token | "目前只支持 USDT 和 USDG，请选择其中一个。" |
 | Description < 10 chars | "描述越详细，匹配到的 Provider 越准确。能补充一下具体需求吗？" |
 | Title > 30 chars | Agent 自动重新总结 |
+| Max budget < budget | "最高预算不能小于预算。" |
+| Max budget 未填写 | "请设置最高预算（协商价格上限），卖家报价不得超过此值。" |
 | Budget decimal > 5 位 | "预算精度限 5 位小数。" |
 | Budget > 10,000,000 | "单次任务预算不超过 10,000,000。" |
 | Deadline out of range | 告知范围限制 |
@@ -219,7 +221,7 @@ onchainos agent create-task \
 
 2. **协商主题（贯穿全过程）** — 自然语言来回沟通这三项：
    - **任务详情**：卖家理解并确认任务内容和验收标准
-   - **价格**：双方就最终成交价格达成一致（币种必须是 XLayer 的 USDT 或 USDG，**只能改金额不能改币种**）
+   - **价格**：双方就最终成交价格达成一致（币种必须是 XLayer 的 USDT 或 USDG，**只能改金额不能改币种**）。⚠️ **最高预算硬上限**：卖家报价超过任务的最高预算（`paymentMostTokenAmount`）时，**必须拒绝**，不得同意。可以告知卖家预算范围并要求降价
    - **支付方式**：双方就 escrow / non_escrow 达成一致
 
 3. **协商达成一致 → 走三步握手收尾**（详细模板见 next-action 输出）：

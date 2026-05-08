@@ -45,7 +45,7 @@ pub enum TaskCommand {
         #[arg(long)]
         budget: f64,
         #[arg(long = "max-budget")]
-        max_budget: Option<f64>,
+        max_budget: f64,
         #[arg(long)]
         currency: String,
         #[arg(long = "deadline-open")]
@@ -228,7 +228,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::ClaimAutoRefund { job_id } =>
             claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await,
         TaskCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount } => {
-            negotiate::save_agreed(&job_id, &provider_agent_id, &token_symbol, &token_amount)
+            negotiate::save_agreed(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount).await
         }
 
         // ── 只读查询 ─────────────────────────────────────────────

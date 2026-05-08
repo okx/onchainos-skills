@@ -139,7 +139,37 @@ pub fn next(job_id: &str) -> Result<Option<ProviderInfo>> {
 }
 
 /// 保存协商确定的支付参数（协商完成时由 Agent 调用）
-pub fn save_agreed(job_id: &str, provider_agent_id: &str, token_symbol: &str, token_amount: &str) -> Result<()> {
+///
+/// 会查询任务详情获取 `paymentMostTokenAmount`（最高预算），
+/// 若协商金额超过最高预算则拒绝保存。
+pub async fn save_agreed(
+    client: &mut crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient,
+    job_id: &str,
+    provider_agent_id: &str,
+    token_symbol: &str,
+    token_amount: &str,
+) -> Result<()> {
+    // 查询任务详情获取最高预算
+    let agent_id = super::create::resolve_buyer_agent(None)
+        .await
+        .map(|(id, _)| id)
+        .unwrap_or_default();
+    let task_path = format!("/priapi/v1/aieco/task/{job_id}");
+    let task_detail = client.get_with_identity(&task_path, &agent_id).await;
+
+    if let Ok(detail) = &task_detail {
+        let max_amount_str = detail["paymentMostTokenAmount"].as_str().unwrap_or("");
+        if !max_amount_str.is_empty() {
+            let agreed: f64 = token_amount.parse().unwrap_or(0.0);
+            let max_budget: f64 = max_amount_str.parse().unwrap_or(0.0);
+            if max_budget > 0.0 && agreed > max_budget {
+                bail!(
+                    "协商金额 {token_amount} {token_symbol} 超过任务最高预算 {max_amount_str} {token_symbol}，不能接受此报价"
+                );
+            }
+        }
+    }
+
     let mut state = match load(job_id) {
         Ok(s) => s,
         Err(_) => {

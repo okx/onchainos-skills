@@ -59,7 +59,7 @@ agent create-task --description <txt> --budget <num> --currency <USDT|USDG> --de
 | `--description` | ✅ | 任务描述 |
 | `--description-summary` |  | 短摘要（list/recommend 展示用） |
 | `--budget` | ✅ | 预算（whole tokens，如 `100`） |
-| `--max-budget` |  | 最高预算（协商上限） |
+| `--max-budget` | ✅ | 最高预算（协商价格硬上限，卖家报价不得超过此值） |
 | `--currency` | ✅ | `USDT` 或 `USDG`，其他币种会被 bail |
 | `--deadline-open` | ✅ | accept 截止（RFC3339） |
 | `--deadline-submit` | ✅ | submit 截止（RFC3339） |
@@ -213,6 +213,7 @@ agent save-agreed <jobId> --token-symbol <s> --token-amount <a>
 ```
 
 把协商三项（币种 / 价格）写入本地缓存（`~/.onchainos/agent-task/<jobId>.json`），confirm-accept 时 buyer 端读取。
+⚠️ 会查询任务详情校验 `paymentMostTokenAmount`（最高预算），协商金额超过最高预算时 **报错拒绝保存**。
 
 ### deliver
 
