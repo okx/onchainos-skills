@@ -233,81 +233,41 @@ pub async fn check_x402_endpoint(endpoint: &str) -> Result<X402EndpointCheck> {
 
 // ─── 代币解析 & 金额转换 ──────────────────────────────────────────────
 
-/// 通过 `onchainos token info` 按合约地址解析代币符号和精度
-pub async fn resolve_token_by_asset(asset: &str, network: &str) -> Result<(String, u8)> {
-    let chain_id_str = network.strip_prefix("eip155:")
-        .ok_or_else(|| anyhow!("不支持的 network 格式: {network}，期望 eip155:<chainId>"))?;
+/// 通过任务系统 tokenDetail 接口查询代币信息。
+/// 遍历支持的 token（USDT、USDG），匹配合约地址返回 (symbol, decimals)。
+pub async fn resolve_token_by_asset(asset: &str, _network: &str) -> Result<(String, u8)> {
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 
-    let chain_entry = crate::commands::agentic_wallet::chain::get_chain_by_real_chain_index(chain_id_str)
-        .await?
-        .ok_or_else(|| anyhow!("未找到 chainId {chain_id_str} 对应的链"))?;
-    let chain_index = chain_entry["chainIndex"]
-        .as_str()
-        .map(|s| s.to_string())
-        .or_else(|| chain_entry["chainIndex"].as_u64().map(|n| n.to_string()))
-        .ok_or_else(|| anyhow!("链信息中缺少 chainIndex"))?;
-    eprintln!("[resolve_token_by_asset] chain mapping: eip155:{chain_id_str} → chainIndex={chain_index}");
+    let client = TaskApiClient::new();
+    let asset_lower = asset.to_lowercase();
 
-    let exe = std::env::current_exe().context("无法获取可执行文件路径")?;
-    eprintln!("[resolve_token_by_asset] 执行: token info --address {asset} --chain {chain_index}");
-    let output = tokio::process::Command::new(&exe)
-        .args(["token", "info", "--address", asset, "--chain", &chain_index])
-        .env("ONCHAINOS_OUTPUT", "json")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
-        .await
-        .context("token info 子进程启动失败")?;
+    for symbol in &["USDT", "USDG"] {
+        let url = format!("{}/priapi/v1/aieco/task/tokenDetail?symbol={}", client.base_url, symbol);
+        eprintln!("[resolve_token_by_asset] GET {url}");
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("token info 查询失败 (exit {}): {stderr}", output.status);
-    }
+        let resp = client.raw_http.get(&url).send().await
+            .context("tokenDetail 请求失败")?;
+        let body: serde_json::Value = resp.json().await
+            .context("tokenDetail 响应解析失败")?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let sub_stderr = String::from_utf8_lossy(&output.stderr);
-    eprintln!("[resolve_token_by_asset] token info stdout: {stdout}");
-    if !sub_stderr.is_empty() {
-        eprintln!("[resolve_token_by_asset] token info stderr: {sub_stderr}");
-    }
-    let parsed: serde_json::Value = serde_json::from_str(&stdout)
-        .context("解析 token info 输出失败")?;
+        eprintln!("[resolve_token_by_asset] tokenDetail({symbol}) → {body}");
 
-    let token_data = &parsed["data"];
-    let token_list = token_data.as_array()
-        .or_else(|| token_data["tokenList"].as_array());
+        if body["code"].as_i64() != Some(0) {
+            continue;
+        }
 
-    if let Some(tokens) = token_list {
-        let asset_lower = asset.to_lowercase();
-        for token in tokens {
-            let addr = token["tokenContractAddress"].as_str()
-                .or_else(|| token["address"].as_str())
-                .unwrap_or("");
-            if addr.to_lowercase() == asset_lower {
-                let symbol = token["tokenSymbol"].as_str()
-                    .or_else(|| token["symbol"].as_str())
-                    .unwrap_or("UNKNOWN")
-                    .to_string();
-                let decimals = token["decimals"].as_str()
-                    .and_then(|s| s.parse::<u8>().ok())
-                    .or_else(|| token["decimals"].as_u64().and_then(|n| u8::try_from(n).ok()))
-                    .ok_or_else(|| anyhow!("token info 响应中 {} 缺少 decimals 字段", asset))?;
-                return Ok((symbol, decimals));
-            }
+        let data = &body["data"];
+        let addr = data["address"].as_str().unwrap_or("");
+        if addr.to_lowercase() == asset_lower {
+            let decimals = data["decimals"].as_u64()
+                .or_else(|| data["decimals"].as_str().and_then(|s| s.parse().ok()))
+                .and_then(|n| u8::try_from(n).ok())
+                .ok_or_else(|| anyhow!("tokenDetail 响应中 {symbol} 缺少 decimals 字段"))?;
+            return Ok((symbol.to_string(), decimals));
         }
     }
 
-    // 兜底：直接取 data 根级字段（单 token 响应）
-    let symbol = token_data["tokenSymbol"].as_str()
-        .or_else(|| token_data["symbol"].as_str());
-    let decimals = token_data["decimals"].as_str()
-        .and_then(|s| s.parse::<u8>().ok())
-        .or_else(|| token_data["decimals"].as_u64().and_then(|n| u8::try_from(n).ok()));
-    if let (Some(sym), Some(dec)) = (symbol, decimals) {
-        return Ok((sym.to_string(), dec));
-    }
-
-    bail!("无法解析 asset {asset} 的代币信息（chain={network}）")
+    bail!("asset {asset} 不在任务系统支持的代币列表中（已查 USDT、USDG）")
 }
 
 /// 将最小单位金额转为人类可读金额（纯字符串插入小数点，再 parse f64 用于展示）

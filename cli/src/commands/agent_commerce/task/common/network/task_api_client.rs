@@ -46,8 +46,8 @@ fn inject_session_cert(body: &Value) -> Value {
 /// 任务后端 API 客户端（DoH-enabled，委托 WalletApiClient）
 pub struct TaskApiClient {
     wallet: WalletApiClient,
-    raw_http: reqwest::Client,
-    base_url: String,
+    pub(crate) raw_http: reqwest::Client,
+    pub(crate) base_url: String,
 }
 
 impl TaskApiClient {
