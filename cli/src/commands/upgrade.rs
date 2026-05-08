@@ -348,13 +348,13 @@ pub async fn execute(args: UpgradeArgs) -> Result<()> {
 
     let current = CURRENT_VERSION;
 
-    let latest = if args.beta {
-        get_latest_with_beta(&client).await?
-    } else {
-        get_latest_stable(&client).await?
-    };
-
+    // --check requires the latest version; bail if unreachable.
     if args.check {
+        let latest = if args.beta {
+            get_latest_with_beta(&client).await?
+        } else {
+            get_latest_stable(&client).await?
+        };
         let update_available = semver_gt(&latest, current);
         output::success(json!({
             "currentVersion": current,
@@ -365,13 +365,34 @@ pub async fn execute(args: UpgradeArgs) -> Result<()> {
         return Ok(());
     }
 
-    let needs_upgrade = args.force || semver_gt(&latest, current);
-    let binary_status = if needs_upgrade {
-        eprintln!("Upgrading onchainos: {} → {}", current, latest);
-        download_and_install(&client, &latest).await?;
-        "upgraded"
+    // For a full upgrade, try the GitHub API but degrade gracefully — skill
+    // checkouts can still fast-forward via their own git remotes even when
+    // api.github.com is unreachable.
+    let latest_result = if args.beta {
+        get_latest_with_beta(&client).await
     } else {
-        "already_latest"
+        get_latest_stable(&client).await
+    };
+
+    let (installed_version, binary_status) = match latest_result {
+        Ok(latest) => {
+            let needs_upgrade = args.force || semver_gt(&latest, current);
+            if needs_upgrade {
+                eprintln!("Upgrading onchainos: {} → {}", current, latest);
+                download_and_install(&client, &latest).await?;
+                (latest, "upgraded")
+            } else {
+                (latest, "already_latest")
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "Warning: could not check for CLI binary updates: {}",
+                e.root_cause()
+            );
+            eprintln!("Proceeding with skill checkout updates.");
+            (current.to_string(), "binary_check_failed")
+        }
     };
 
     let skills = if args.skip_skills {
@@ -382,7 +403,7 @@ pub async fn execute(args: UpgradeArgs) -> Result<()> {
 
     output::success(json!({
         "previousVersion": current,
-        "installedVersion": latest,
+        "installedVersion": installed_version,
         "status": binary_status,
         "skills": skills,
     }));
