@@ -37,7 +37,7 @@
 | C17 | Claim auto-refund | `onchainos agent claim-auto-refund` | submit_expired / refuse_expired |
 | C18 | Rate provider | `onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <你的agentId> --score <0-100> --task-id <jobId> [--description "<txt>"]` | After task complete |
 | C19 | Designate provider (A2A) | Scene 1.7 flow（create-task + 直连指定卖家） | User sends "Please initiate a direct conversation..." |
-| C20 | Designate provider (x402) | 不处理，由 `okx-x402-payment` skill 命中 | User sends "Please send a request to this endpoint." |
+| C20 | Designate provider (x402) | Scene 3.4 flow（x402-check → 用户确认 → task-402-pay） | User sends "Please use onchainos to send a request to this endpoint" |
 
 ---
 
@@ -47,7 +47,9 @@
 > - `sender.role = 2`（对方是 Provider/卖家）→ **你是 Buyer/买家** → 你在正确的文件，继续处理
 > - `sender.role = 1`（对方是 Buyer/买家）→ **你是 Provider/卖家** → **停止，去读 `provider.md`**
 
-> **⚡ 快速排除 — x402 直接调用**：如果用户消息包含 "Please send a request to this endpoint."，**不属于本 Skill**，由 `okx-x402-payment` skill 处理。**立即停止**。
+> **⚡ x402 路由分流**：
+> - 用户消息包含 "Please **use onchainos to** send a request to this endpoint" → **属于本 Skill**（Scene 3.4 x402 指定卖家），继续处理。
+> - 用户消息包含 "Please send a request to this endpoint." **但不含** "use onchainos" → **不属于本 Skill**，由 `okx-x402-payment` skill 处理。**立即停止**。
 
 收到 inbound a2a-agent-chat envelope 且 `sender.role === 2` ⇒ 你是 buyer，激活本 skill。
 
@@ -99,9 +101,9 @@
 | Summary | `description_summary` | Max **200** chars | Agent 总结。>200 → 缩短 |
 | Payment token | `currency` | Only **USDT** / **USDG** | 仅接受明确拼写。模糊（"U"/"刀"等）→ 先问用户 |
 | Budget | `budget` | Numeric; decimal ≤5 位; max 10,000,000 | 提取数字。"U"/"u" 后缀只取数字，currency 留空 |
-| Max budget | `max_budget` | Optional; ≥ budget | 未提供 → 默认等于 budget |
-| Accept deadline | `deadline_open` | Min 10 min, max 6 months. Format: `<n>h` / `<n>m` | <10min → 拒绝; >6mo → 拒绝 |
-| Submit deadline | `deadline_submit` | Min 1 min, max 6 months. Format: `<n>h` / `<n>m` | <1min → 拒绝; >6mo → 拒绝 |
+| Max budget | `max_budget` | **Required**; ≥ budget; decimal ≤5 位; max 10,000,000 | 协商价格上限，卖家报价不得超过此值。**必须明确询问用户** |
+| 接单时限 | `deadline_open` | Min 10 min, max 6 months. Format: `<n>h` / `<n>m` | 任务发布后多久无 Agent 接单则自动关闭。<10min → 拒绝; >6mo → 拒绝 |
+| 交付时限 | `deadline_submit` | Min 1 min, max 6 months. Format: `<n>h` / `<n>m` | 接单后多久内必须完成交付。<1min → 拒绝; >6mo → 拒绝 |
 | Quality standards | (in `description`) | Free text | 引导用户定义验收标准，追加到 description |
 
 ### 3.1.2 Intent Pre-validation（字段提取后、展示确认表单前）
@@ -135,9 +137,9 @@
 | **描述** | [full conversation content] |
 | **支付代币** | ⚠️ 必须由用户明确指定 USDT 或 USDG |
 | **预算** | 10 |
-| **最高预算** | 15 |
-| **接单截止** | 72h |
-| **交付期限** | 48h |
+| **最高预算** | 15（协商价格上限，卖家报价不得超过此值） |
+| **接单时限** | 72h（发布后 72 小时无人接单则自动关闭） |
+| **交付时限** | 48h（接单后 48 小时内须完成交付） |
 | **验收标准** | Native-level fluency, accurate DeFi terminology, no omissions |
 
 > 确认无误？确认后我立即上链创建任务。
@@ -173,6 +175,8 @@ onchainos agent create-task \
 | Unsupported token | "目前只支持 USDT 和 USDG，请选择其中一个。" |
 | Description < 10 chars | "描述越详细，匹配到的 Provider 越准确。能补充一下具体需求吗？" |
 | Title > 30 chars | Agent 自动重新总结 |
+| Max budget < budget | "最高预算不能小于预算。" |
+| Max budget 未填写 | "请设置最高预算（协商价格上限），卖家报价不得超过此值。" |
 | Budget decimal > 5 位 | "预算精度限 5 位小数。" |
 | Budget > 10,000,000 | "单次任务预算不超过 10,000,000。" |
 | Deadline out of range | 告知范围限制 |
@@ -217,7 +221,7 @@ onchainos agent create-task \
 
 2. **协商主题（贯穿全过程）** — 自然语言来回沟通这三项：
    - **任务详情**：卖家理解并确认任务内容和验收标准
-   - **价格**：双方就最终成交价格达成一致（币种必须是 XLayer 的 USDT 或 USDG，**只能改金额不能改币种**）
+   - **价格**：双方就最终成交价格达成一致（币种必须是 XLayer 的 USDT 或 USDG，**只能改金额不能改币种**）。⚠️ **最高预算硬上限**：卖家报价超过任务的最高预算（`paymentMostTokenAmount`）时，**必须拒绝**，不得同意。可以告知卖家预算范围并要求降价
    - **支付方式**：双方就 escrow / non_escrow 达成一致
 
 3. **协商达成一致 → 走三步握手收尾**（详细模板见 next-action 输出）：
@@ -255,7 +259,8 @@ onchainos agent create-task \
 
 **Trigger**: 用户发送包含 "Please initiate a direct conversation with this provider to discuss the task details." 的消息。
 
-> ⚠️ 含 "Please send a request to this endpoint." 的消息是 x402，**不属于本 Skill**。
+> ⚠️ 含 "Please send a request to this endpoint." **但不含** "use onchainos" 的消息是独立 x402 调用，**不属于本 Skill**。
+> 含 "Please use onchainos to send a request to this endpoint" 的消息是 x402 指定卖家，走 **Scene 3.4**。
 
 ### 3.3.1 Intent Recognition
 
@@ -311,6 +316,127 @@ onchainos agent get --agent-ids <agentId>
 
 - **协商成功** → confirm-accept
 - **协商失败** → **无需用户确认**，自动调 `onchainos agent recommend <jobId>` 获取推荐卖家列表，进入 3.2.0 遍历机制逐个协商
+
+---
+
+## 3.4 指定 Provider x402 流程（Scene 3.4）— user session 交互
+
+> **Session**: user session
+
+**Goal**: 买家粘贴了卖家的 x402 服务信息，验证 endpoint 有效性和定价后完成支付，无需协商。
+
+**Trigger**: 用户发送包含 "Please use onchainos to send a request to this endpoint" 的消息。
+
+### 3.4.1 Intent Recognition
+
+```
+I'd like to use the service provided by Agent <agentId>：
+
+ServiceTitle: <ServiceTitle>
+ServiceType: <A2A｜A2MCP>
+Endpoint: <endpoint>
+
+Please use onchainos to send a request to this endpoint
+```
+
+### 3.4.2 Intent Parsing
+
+| 字段 | 必需 | 说明 |
+|------|------|------|
+| `agentId` | ✅ | 指定卖家的 Agent ID |
+| `ServiceTitle` | ✅ | 服务标题，作为任务 description 素材 |
+| `ServiceType` | ✅ | 服务类型（A2A / A2MCP） |
+| `endpoint` | ✅ | x402 服务地址 |
+
+> ⚠️ 此格式**没有** Price 字段——价格从 endpoint 的 402 响应中获取。
+
+### 3.4.3 Provider 存在性校验（同 Scene 1.7）
+
+```bash
+onchainos agent get --agent-ids <agentId>
+```
+
+校验逻辑同 3.3.3：不存在 → 告知用户；role ≠ 2 → 告知非卖家；通过 → 继续。
+
+### 3.4.4 Endpoint 验证 & 获取定价
+
+```bash
+onchainos agent x402-check --endpoint <endpoint>
+```
+
+**处理逻辑**：
+- `valid=false` → 告知用户：**「该 endpoint 不是有效的 x402 服务（HTTP 状态码 <statusCode>），请确认地址是否正确。」**，**不进入任务流程**。
+- `valid=true` → 从输出提取定价信息：`amountHuman`、`tokenSymbol`、`acceptsJson`。
+- **代币检查**：`tokenSymbol` 不是 USDT 或 USDG → 告知用户：**「该服务收费代币为 `<tokenSymbol>`，目前任务系统仅支持 USDT 和 USDG。」**，**不进入任务流程**。
+- 通过 → 继续。
+
+### 3.4.5 用户确认定价
+
+展示定价信息让用户确认（**必须用 Markdown table**）：
+
+| 字段 | 值 |
+|:--|:--|
+| **卖家** | Agent `<agentId>` |
+| **服务** | `<ServiceTitle>` |
+| **Endpoint** | `<endpoint>` |
+| **费用** | `<amountHuman>` `<tokenSymbol>` |
+
+> 确认支付？确认后我将创建任务并完成 x402 支付。
+
+**用户拒绝** → 结束，不创建任务。
+**用户确认** → 继续 3.4.6。
+
+### 3.4.6 Create Task + x402 支付
+
+**Step 1 — 创建任务**（复用 3.1 的字段规则，但预填字段）：
+
+字段映射：
+- `description`: 从 `ServiceTitle` 推导
+- `budget` / `max_budget`: `amountHuman`
+- `currency`: `tokenSymbol`（仅 USDT/USDG）
+- `deadline_open` / `deadline_submit`: 使用合理默认值（如 1h / 24h）
+
+```bash
+onchainos agent create-task \
+  --description "<description>" \
+  --description-summary "<summary>" \
+  --budget <amountHuman> --max-budget <amountHuman> --currency <tokenSymbol> \
+  --deadline-open 1h --deadline-submit 24h
+```
+
+> ⚠️ 跳过 3.1.3 确认表单——用户在 3.4.5 已确认过定价和卖家。
+
+**Step 2** — → **结束本 turn**，等 `job_created` 系统通知。收到后缓存 `designatedProvider = { agentId, serviceType, endpoint, acceptsJson, amountHuman, tokenSymbol }`。
+
+**Step 3 — set-payment-mode**（新 turn，`job_created` 触发）：
+
+```bash
+onchainos agent set-payment-mode <jobId> --payment-mode x402 --token-symbol <tokenSymbol> --token-amount <amountHuman> --endpoint <endpoint>
+```
+
+→ **结束本 turn**，等 `job_payment_mode_changed` 系统通知。
+
+**Step 4 — task-402-pay**（新 turn，`job_payment_mode_changed` 触发）：
+
+```bash
+onchainos agent task-402-pay <jobId> --provider-agent-id <agentId> --accepts '<acceptsJson>' --endpoint <endpoint> --token-symbol <tokenSymbol> --token-amount <amountHuman>
+```
+
+**Step 5 — 处理重放结果**：
+- `replaySuccess=true` → 调用 `xmtp_dispatch_user` 通知用户交付物内容 + "正在等待链上确认"
+- `replaySuccess=false` → 调用 `xmtp_dispatch_user` 通知用户重放失败，等待用户指示
+
+→ **结束本 turn**，等 `job_accepted` 系统通知。收到后自动 `onchainos agent complete <jobId>` 完成任务。
+
+### 3.4.7 Error Handling
+
+| Error | Response |
+|---|---|
+| Provider 不存在 | "该 Provider（agentId: xxx）不存在，请确认 ID 是否正确。" |
+| Endpoint 无效 | "该 endpoint 不是有效的 x402 服务，请确认地址是否正确。" |
+| tokenSymbol 非 USDT/USDG | "该服务收费代币为 <symbol>，目前任务系统仅支持 USDT 和 USDG。" |
+| 创建任务失败 | 检查 gas 余额和网络，引导重试 |
+| 支付签名失败 | 检查钱包余额是否足够，引导重试 |
 
 ---
 

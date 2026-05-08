@@ -45,7 +45,7 @@ pub enum TaskCommand {
         #[arg(long)]
         budget: f64,
         #[arg(long = "max-budget")]
-        max_budget: Option<f64>,
+        max_budget: f64,
         #[arg(long)]
         currency: String,
         #[arg(long = "deadline-open")]
@@ -164,16 +164,24 @@ pub enum TaskCommand {
         #[arg(long)]
         endpoint: String,
         #[arg(long = "token-symbol")]
-        token_symbol: Option<String>,
+        token_symbol: String,
         #[arg(long = "token-amount")]
-        token_amount: Option<String>,
+        token_amount: String,
         /// Payer address (optional, defaults to selected account)
         #[arg(long)]
         from: Option<String>,
     },
+    /// Validate an x402 endpoint and extract pricing info
+    X402Check {
+        /// x402 provider endpoint URL
+        #[arg(long)]
+        endpoint: String,
+    },
     /// Save negotiated payment params locally (agent calls after negotiation)
     SaveAgreed {
         job_id: String,
+        #[arg(long = "provider")]
+        provider_agent_id: String,
         #[arg(long = "token-symbol")]
         token_symbol: String,
         #[arg(long = "token-amount")]
@@ -206,7 +214,9 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>
             accept::handle_direct_accept(&mut client, &job_id, &provider_agent_id, token_symbol.as_deref(), token_amount.as_deref()).await,
         TaskCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from } =>
-            accept::handle_task_402_pay(&mut client, &job_id, &provider_agent_id, &accepts, &endpoint, token_symbol.as_deref(), token_amount.as_deref(), from.as_deref()).await,
+            accept::handle_task_402_pay(&mut client, &job_id, &provider_agent_id, &accepts, &endpoint, &token_symbol, &token_amount, from.as_deref()).await,
+        TaskCommand::X402Check { endpoint } =>
+            accept::handle_x402_check(&endpoint).await,
         TaskCommand::Complete { job_id } =>
             complete::handle_complete(&mut client, &job_id).await,
         TaskCommand::Reject { job_id, reason } =>
@@ -217,8 +227,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             changepublic::handle_set_public(&mut client, &job_id).await,
         TaskCommand::ClaimAutoRefund { job_id } =>
             claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await,
-        TaskCommand::SaveAgreed { job_id, token_symbol, token_amount } => {
-            negotiate::save_agreed(&job_id, &token_symbol, &token_amount)
+        TaskCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount } => {
+            negotiate::save_agreed(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount).await
         }
 
         // ── 只读查询 ─────────────────────────────────────────────
