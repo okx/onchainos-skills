@@ -755,20 +755,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前状态】job_expired（任务超时，无人接单或卖家未提交）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
-             **Step 1 — 调用 xmtp_prompt_user 请求用户确认是否关闭：**\n\
-             先调 `session_status` 拿到本 sub session 的 sessionKey。\n\n\
-             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}] \
-             用户回复「确认」→ relay 回 sub session 执行 onchainos agent close {job_id}；\
-             用户回复「不关闭」→ relay 回 sub session，不操作。\
-             禁止 user session agent 自己执行 task CLI。\n\
-             \x20\x20userContent: 任务 {job_id} 已超时（accept 截止前未接单 或 submit 截止前未提交），是否关闭任务回收资金？\n\n\
-             → **结束本轮 turn**，等用户回复 relay 回来后执行 close。\n\n\
-             **Step 2（收到 relay）— 关闭任务回收资金：**\n\
-             ```bash\n\
-             onchainos agent close {job_id}\n\
-             ```\n\n\
-             【后续事件】\n\
-             - job_closed → 关闭完成，资金已回收\n"
+             **Step 1 — 调用 xmtp_dispatch_user 通知用户任务已超时：**\n\
+             \x20\x20content: 任务 {job_id} 已超时（accept 截止前未接单 或 submit 截止前未提交），任务已结束。\n\n\
+             本任务已到达终态，流程结束。\n"
         ),
 
         // ─── 任务已关闭（close tx 结果）─────────────────────────────
