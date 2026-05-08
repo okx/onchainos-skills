@@ -12,6 +12,7 @@ pub mod claim;
 pub mod dispute_upload;
 pub mod network;
 pub mod payment_mode;
+pub mod pending;
 pub mod query;
 pub mod state_machine;
 pub mod util;

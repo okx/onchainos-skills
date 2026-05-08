@@ -4,6 +4,7 @@
 //! 目的：把散落在 provider.md 里的 Scene 步骤集中到代码里，让 agent 只需
 //! `exec onchainos agent next-action ...` 拿提示词直接执行，不用推理整份文档。
 
+use crate::commands::agent_commerce::task::common::pending::short_job_id;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 
 /// Provider 在某 status 下应该执行的下一步（用于 `agent common context` 输出末尾的菜单）。
@@ -85,6 +86,10 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
+    // 短 jobId,用在 xmtp_prompt_user 的 userContent 第一行 `[任务 <短ID> 你作为卖家]` 前缀,
+    // 多 prompt 并发时给用户和 user agent 双重消歧锚。详见 SKILL.md Session 通信契约 5.
+    let short_id = short_job_id(job_id);
+
     // ──────────────────────────────────────────────────────────────────────
     // 通信机制（怎么发、能不能发、形态白名单）— 一律见 SKILL.md Session 通信契约。
     // 本文件只负责告诉 agent **每一步把什么内容发到哪**，不重复解释工具用法。
@@ -121,7 +126,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
          \x20\x203) ❌ **绝对禁止把技术错误细节广播给对方**：CLI 命令名 / 后端字段名 / stderr 摘要 / `bug`/`命令：`/`错误：` 一律不能进 xmtp_send 给对方。最多发一句『稍等，正在确认细节』或干脆不通知对方。\n\
          \x20\x204) ❌ **同 turn 不重复 xmtp_send**：剧本说『发一条』→ 调过一次工具返回『已发送』就**算成功**，**当前 turn 内不再对同一对方调 xmtp_send 第二次**。不要因为消息可能不够清晰就重发——重发 = 刷屏 + 触发对方循环。下一条 inbound 进来再说。\n\
          \x20\x205) ❌ **deliver 必须等 `job_accepted` 通知**：apply 上链不改 status，任务仍是 open；只有买家 confirm-accept 触发的 `job_accepted` 链事件到达后才能 deliver。**绝对禁止在 ProviderApplied 剧本里抢跑 deliver**，CLI 会校验 status != accepted 直接 bail。\n\
-         \x20\x206) ❌ **同 turn 不重复 `session_status`**：sub session 的 sessionKey 在同一 turn 内是稳定的——**调过一次就把结果存住，后续 step 直接复用**。即使剧本多个 step 都提到 sessionKey，也只调一次 session_status。重复调 = 死循环征兆，必须立即停。\n\n\
+         \x20\x206) ❌ **同 turn 不重复 `session_status`**：sub session 的 sessionKey 在同一 turn 内是稳定的——**调过一次就把结果存住，后续 step 直接复用**。即使剧本多个 step 都提到 sessionKey，也只调一次 session_status。重复调 = 死循环征兆，必须立即停。\n\
+         \x20\x207) ❌ **`xmtp_prompt_user` 必须配对 `pending-decisions add`**：调 `xmtp_prompt_user` **之前**先调 `onchainos agent pending-decisions add --sub-key <session_status 拿到的 sessionKey 整串> --job-id {job_id} --role provider --agent-id {agent_id} --summary \"<userContent 第一行任务前缀后的简述>\" --user-content \"<userContent 完整原文,跟即将传给 xmtp_prompt_user 的 userContent 同一字符串>\"`；解析 `[USER_DECISION_RELAY]` **之后、调 next-action 之前**调 `onchainos agent pending-decisions remove --job-id {job_id} --role provider --agent-id {agent_id}`。漏调会让 user session agent 看不到这条 / 看到僵尸条目，多 prompt 时误派 sub。唯一键是 `(job_id, role, agent_id)` 三元组(单钱包多 provider agent 时同 jobId 同 role 不同 agent 各占一条不互覆)。规则源 `SKILL.md Session 通信契约 5`。\n\n\
          如果不记得本任务协商细节（deliverable / paymentMode / token / 买家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 加载上下文。\n\n"
     );
@@ -251,14 +257,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【你的下一步动作（严格顺序）】\n\n\
              ⚠️ 不要给买家 `xmtp_send`「已收到拒绝通知」过场——买家自己刚 reject，他知道。直接进入用户决策流程。\n\n\
              **Step 1 — 用 `xmtp_prompt_user` 把决策请求推到用户**：\n\n\
-             先调 `session_status` 拿当前 sub session 的 sessionKey（同 turn 内调一次即可），\n\
+             先调 `session_status` 拿当前 sub session 的 sessionKey（同 turn 内调一次即可）；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7)。\n\
              user session agent 拿到 llmContent 后会按 `sub_key` 把用户决策反向 dispatch 回本 sub。\n\n\
              tool: xmtp_prompt_user\n\
              llmContent:\n\
-             \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}] \
+             \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: provider] \
              用户回复决策后，relay 回 sub session 执行 next-action。禁止 user session agent 自己执行 task CLI。24h 内必须决策。\n\
              userContent:\n\
-             \x20\x20\x20\x20任务 {job_id} 被买家拒绝。请选择：\n\
+             \x20\x20\x20\x20[任务 {short_id} 你作为卖家] 任务被买家拒绝。请选择：\n\
              \x20\x20\x20\x201. 发起仲裁 → 回复『发起仲裁，理由是<理由>』\n\
              \x20\x20\x20\x202. 同意退款 → 回复『同意退款』\n\n\
              **Step 2 — 等用户回复 relay 回来**：\n\
@@ -433,14 +439,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【你的下一步动作（严格顺序）】\n\n\
              ⚠️ 不要给买家 `xmtp_send`「仲裁已上链，正在准备证据」过场——双方都收到 `job_disputed` 系统事件了。\n\n\
              **Step 1 — 用 `xmtp_prompt_user` 把证据决策请求推到用户**：\n\n\
-             先调 `session_status` 拿当前 sub session 的 sessionKey（同 turn 内调一次即可），\n\
+             先调 `session_status` 拿当前 sub session 的 sessionKey（同 turn 内调一次即可）；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7)。\n\
              user session agent 拿到 llmContent 后会按 `sub_key` 把用户证据 relay 回本 sub。\n\n\
              tool: xmtp_prompt_user\n\
              llmContent:\n\
-             \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}] \
+             \x20\x20\x20\x20[USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: provider] \
              用户回复证据后，relay 回 sub session 执行 onchainos agent dispute upload。禁止 user session agent 自己执行 task CLI。1 小时内必须提交。\n\
              userContent:\n\
-             \x20\x20\x20\x20任务 {job_id} 仲裁已上链，需要在 1 小时内提交链下证据。请提供：\n\
+             \x20\x20\x20\x20[任务 {short_id} 你作为卖家] 仲裁已上链，需要在 1 小时内提交链下证据。请提供：\n\
              \x20\x20\x20\x20- 文字摘要（必填）：说明你已按验收标准完成的关键证据点\n\
              \x20\x20\x20\x20- 图片路径（可选）：截图、设计稿、聊天记录等本地文件路径\n\
              \x20\x20\x20\x20回复格式示例：『证据：已按需求完成 X/Y/Z；图片：/path/to/screenshot.png』\n\n\

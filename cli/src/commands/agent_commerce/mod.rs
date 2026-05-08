@@ -273,6 +273,13 @@ pub enum AgentCommand {
     #[command(subcommand)]
     Dispute(task::provider::DisputeCommand),
 
+    /// Pending user decisions registry — sub agent calls `add` before
+    /// `xmtp_prompt_user` and `remove` after parsing `[USER_DECISION_RELAY]`;
+    /// user session agent calls `list` before rendering. See SKILL.md
+    /// `Session 通信契约 5. pending-decisions`.
+    #[command(name = "pending-decisions", subcommand)]
+    PendingDecisions(task::common::pending::PendingDecisionsCommand),
+
     // ── Task system (Evaluator / arbitrator) ─────────────────────────────────
     // 历史上有过 `Evaluator(EvaluatorCommand)` 包装，2026-05 与 buyer/provider 风格
     // 对齐展平到顶层。`agent evaluator <sub>` 形式不再支持，各命令对应关系见
@@ -613,6 +620,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         // ── Sub-groups ──────────────────────────────────────────────
         AgentCommand::Dispute(c) =>
             task::provider::run_dispute(c, ctx).await,
+
+        AgentCommand::PendingDecisions(c) =>
+            task::common::pending::run(c).await,
 
         // ── Evaluator (arbitrator) flat dispatch ────────────────────
         AgentCommand::EvidenceInfo { job_id, agent_id } => {

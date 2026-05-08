@@ -4,6 +4,7 @@
 //! 对应 provider/flow.rs 的买家版本，让 agent 只需
 //! `exec onchainos agent next-action --role buyer ...` 拿提示词直接执行。
 
+use crate::commands::agent_commerce::task::common::pending::short_job_id;
 use crate::commands::agent_commerce::task::common::state_machine::Status;
 
 /// Buyer 在某 status 下可执行的 CLI 命令清单（用于 `agent common context` 输出末尾的菜单）。
@@ -91,6 +92,10 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
+    // 短 jobId,用在 xmtp_prompt_user 的 userContent 第一行 `[任务 <短ID> 你作为买家]` 前缀,
+    // 多 prompt 并发时给用户和 user agent 双重消歧锚。详见 SKILL.md Session 通信契约 5.
+    let short_id = short_job_id(job_id);
+
     // 通信机制（怎么发、能不能发、形态白名单）— 一律见 SKILL.md Session 通信契约。
     // 本文件只告诉 agent **每一步把什么内容发到哪**。
     // ──────────────────────────────────────────────────────────────────────
@@ -121,7 +126,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
          \x20\x203) ❌ **绝对禁止把技术错误细节广播给对方**：CLI 命令名 / 后端字段名 / stderr 摘要 / `bug`/`命令：`/`错误：` 一律不能进 xmtp_send 给对方。最多发一句『稍等，正在确认细节』或干脆不通知对方。\n\
          \x20\x204) ❌ **同 turn 不重复 xmtp_send**：剧本说『发一条』→ 调过一次工具返回『已发送』就**算成功**，**当前 turn 内不再对同一对方调 xmtp_send 第二次**。不要因为消息可能不够清晰就重发——重发 = 刷屏 + 触发对方循环。下一条 inbound 进来再说。\n\
          \x20\x205) ❌ **apply 是卖家动作**：escrow 路径中 `apply` 由卖家执行，买家绝不能调 `onchainos agent apply`。买家先调 `set-payment-mode`，再在收到卖家申请通知后执行 `confirm-accept`。non_escrow 路径需从卖家消息中提取 paymentId 再 confirm-accept。\n\
-         \x20\x206) ❌ **同 turn 不重复 `session_status`**：sub session 的 sessionKey 在同一 turn 内是稳定的——**调过一次就把结果存住，后续 step 直接复用**。即使剧本多个 step 都提到 sessionKey，也只调一次 session_status。重复调 = 死循环征兆，必须立即停。\n\n\
+         \x20\x206) ❌ **同 turn 不重复 `session_status`**：sub session 的 sessionKey 在同一 turn 内是稳定的——**调过一次就把结果存住，后续 step 直接复用**。即使剧本多个 step 都提到 sessionKey，也只调一次 session_status。重复调 = 死循环征兆，必须立即停。\n\
+         \x20\x207) ❌ **`xmtp_prompt_user` 必须配对 `pending-decisions add`**：调 `xmtp_prompt_user` **之前**先调 `onchainos agent pending-decisions add --sub-key <session_status 拿到的 sessionKey 整串> --job-id {job_id} --role buyer --agent-id {agent_id} --summary \"<userContent 第一行任务前缀后的简述>\" --user-content \"<userContent 完整原文,跟即将传给 xmtp_prompt_user 的 userContent 同一字符串>\"`；解析 `[USER_DECISION_RELAY]` **之后、调 next-action 之前**调 `onchainos agent pending-decisions remove --job-id {job_id} --role buyer --agent-id {agent_id}`。漏调会让 user session agent 看不到这条 / 看到僵尸条目，多 prompt 时误派 sub。唯一键是 `(job_id, role, agent_id)` 三元组(单钱包多 provider agent 时同 jobId 同 role 不同 agent 各占一条不互覆)。规则源 `SKILL.md Session 通信契约 5`。\n\n\
          如果不记得本任务协商细节（deliverable / paymentMode / token / 卖家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 加载上下文。\n\n"
     );
@@ -196,12 +202,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - 任务预算 >= feeAmount 且 tokenSymbol 与 feeTokenSymbol 一致\n\
              \x20\x20→ 无需用户确认，直接执行 A-Step 2\n\
              - 任务预算 < feeAmount 或代币不一致\n\
-             \x20\x20→ 先调 `session_status` 拿到本 sub session 的 sessionKey，再调用 xmtp_prompt_user 请求用户确认：\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}] \
+             \x20\x20→ 先调 `session_status` 拿到本 sub session 的 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`（见硬规则 7），再请求用户确认：\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] \
              用户回复「确认」→ relay 回 sub session 执行 A-Step 2 set-payment-mode x402；\
              用户回复「拒绝」→ relay 回 sub session 执行 recommend --next 切换下一个卖家。\
              禁止 user session agent 自己执行 task CLI。\n\
-             \x20\x20\x20\x20userContent: 任务 {job_id} 匹配到 x402 卖家（AgentID=<providerAgentId>），服务费用 <feeAmount> <feeTokenSymbol>，\
+             \x20\x20\x20\x20userContent: [任务 {short_id} 你作为买家] 匹配到 x402 卖家（AgentID=<providerAgentId>），服务费用 <feeAmount> <feeTokenSymbol>，\
              与任务预算（<tokenAmount> <tokenSymbol>）不一致，是否确认使用该卖家？\n\
              \x20\x20→ **结束本轮 turn**，等用户回复 relay 回来后继续执行。\n\n\
              **A-Step 2 — setPaymentMode（x402 阶段 1）：**\n\
@@ -252,7 +258,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              2. （sub session 内）卖家回复报价（金额、代币、支付方式偏好、预计交付时间）\n\
              3. （sub session 内）双方就价格/条件进行调整（可能多轮，每轮 5 分钟超时）\n\
              \x20\x20每轮调用 xmtp_send，参数：sessionKey=<同上>，content=<协商内容>\n\
-             \x20\x20⚠️ **不要机械接受卖家加价**：以**任务的 max_budget（最高预算）为绝对上限**——超过 max_budget 一律拒绝，不论差多少；max_budget 在你 create-task 时由 user 设定（`--max-budget`），如果你**忘了**就回看本 sub session 第一条 inquiry（你之前发给卖家的内容里通常会包含『最高 X』），仍找不到就 `xmtp_prompt_user` 询问 user（llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}] 用户回复最高预算后 relay 回 sub session 继续协商。禁止 user session agent 自己执行 task CLI。userContent: 任务 {job_id} 协商中——请问你的最高预算是多少？）。`budget < 卖家价 ≤ max_budget` 区间内可谈，可以原价接受或继续还价；卖家价 ≤ budget 直接接受。\n\
+             \x20\x20⚠️ **不要机械接受卖家加价**：以**任务的 max_budget（最高预算）为绝对上限**——超过 max_budget 一律拒绝，不论差多少；max_budget 在你 create-task 时由 user 设定（`--max-budget`），如果你**忘了**就回看本 sub session 第一条 inquiry（你之前发给卖家的内容里通常会包含『最高 X』），仍找不到就 `xmtp_prompt_user` 询问 user（**调 xmtp_prompt_user 之前先调 `pending-decisions add`,见硬规则 7**。llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] 用户回复最高预算后,先调 pending-decisions list 命中本条再 relay 回 sub session 继续协商。禁止 user session agent 自己执行 task CLI。userContent: [任务 {short_id} 你作为买家] 协商中——请问你的最高预算是多少？）。`budget < 卖家价 ≤ max_budget` 区间内可谈，可以原价接受或继续还价；卖家价 ≤ budget 直接接受。\n\
              ⚠️ **币种铁律**：协商只允许改**金额**，不允许改**币种**。任务发布时的币种（从 `onchainos agent common context` 获取）\n\
              是链上合约绑定的。如果卖家提出不同币种，必须纠正：「本任务使用 <任务币种>，请用 <任务币种> 报价。」\n\n\
              ⚠️ 任一步骤卖家 5 分钟未回复 → 视为协商失败，结束当前 sub session，执行「切换下一个卖家」。\n\n\
@@ -320,13 +326,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              （新一 turn）收到 `job_payment_mode_changed` → 调 next-action --jobStatus job_payment_mode_changed → 按剧本 xmtp_send [NEGOTIATE_CONFIRM] 给卖家。卖家此时见 CONFIRM → apply（escrow）或 create_payment_charge（non_escrow），链上 paymentMode 已就位。\n\n\
              ━━━━━━━━━ 遍历结束 / 切换下一个卖家 ━━━━━━━━━\n\n\
              当前卖家超时未回复（5 分钟）或协商失败 → 结束当前 sub session → `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断。\n\
-             推荐列表全部遍历完（或初始推荐列表为空）→ 先调 `session_status` 拿到 sessionKey，再调用 xmtp_prompt_user 引导用户选择：\n\
-             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}] \
+             推荐列表全部遍历完（或初始推荐列表为空）→ 先调 `session_status` 拿 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7);再调用 xmtp_prompt_user 引导用户选择：\n\
+             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] \
              用户选择 A 并提供 agentId → relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
              用户选择 B → relay 回 sub session 执行 set-public；\
              用户选择 C → relay 回 sub session 执行 close。\
              禁止 user session agent 自己执行 task CLI。\n\
-             \x20\x20userContent: 任务 {job_id} 推荐卖家已全部遍历，无合适匹配。请选择下一步：\n\
+             \x20\x20userContent: [任务 {short_id} 你作为买家] 推荐卖家已全部遍历，无合适匹配。请选择下一步：\n\
              \x20\x20A. 指定卖家 — 请提供卖家 agentId\n\
              \x20\x20B. 转为公开任务 — 让更多卖家看到任务\n\
              \x20\x20C. 关闭任务 — 取消并退款\n\
@@ -456,13 +462,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 3 — 按支付方式分流：**\n\n\
              ━━━━━━━━━ 分支 A：escrow（担保）— 需要用户验收决策 ━━━━━━━━━\n\n\
              调用 xmtp_prompt_user 把交付物和验收决策请求推到 user session：\n\n\
-             先调 `session_status` 拿到本 sub session 的 sessionKey。\n\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}] \
+             先调 `session_status` 拿到本 sub session 的 sessionKey;调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7)。\n\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
              用户回复「验收通过」→ relay 回 sub session 执行 onchainos agent complete；\
              回复「拒绝，原因是...」→ relay 回 sub session 执行 onchainos agent reject。\
              禁止 user session agent 自己执行 task CLI。\n\
              \x20\x20\x20\x20userContent:\n\
-             \x20\x20\x20\x20任务 {job_id} 卖家已提交交付物，已下载到本地。\n\
+             \x20\x20\x20\x20[任务 {short_id} 你作为买家] 卖家已提交交付物，已下载到本地。\n\
              \x20\x20\x20\x20交付物本地路径：<localPath>（⚠️ 必须是完整绝对路径，如 /Users/xxx/Downloads/cat-picture.png，严禁只写文件名）\n\
              \x20\x20\x20\x20交付物地址：<deliverableUrl>\n\
              \x20\x20\x20\x20验收标准：<qualityStandards>\n\
@@ -531,11 +537,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              不要凭空编造证据摘要直接调 `dispute upload`。**先把决策请求推到 user session 让用户拍板**。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 调用 xmtp_prompt_user 把证据决策请求推到 user session 让用户提供内容：**\n\n\
-             先调 `session_status` 拿到本 sub session 的 sessionKey。\n\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}] \
+             先调 `session_status` 拿到本 sub session 的 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7)。\n\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
              用户回复证据后，relay 回 sub session 执行 onchainos agent dispute upload。禁止 user session agent 自己执行 task CLI。1 小时内必须提交。\n\
              \x20\x20\x20\x20userContent:\n\
-             \x20\x20\x20\x20任务 {job_id} 仲裁已上链，需要在 1 小时内提交链下证据。请提供：\n\
+             \x20\x20\x20\x20[任务 {short_id} 你作为买家] 仲裁已上链，需要在 1 小时内提交链下证据。请提供：\n\
              \x20\x20\x20\x20- 文字摘要（必填）：说明交付物不达标的关键证据点\n\
              \x20\x20\x20\x20- 图片路径（可选）：截图、聊天记录等本地文件路径\n\
              \x20\x20\x20\x20回复格式示例：『证据：交付物缺少 X/Y/Z；图片：/path/to/screenshot.png』\n\n\
@@ -691,12 +697,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
              **Step 1 — 调用 xmtp_prompt_user 请求用户确认是否关闭：**\n\
-             先调 `session_status` 拿到本 sub session 的 sessionKey。\n\n\
-             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}] \
+             先调 `session_status` 拿到本 sub session 的 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7)。\n\n\
+             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] \
              用户回复「确认」→ relay 回 sub session 执行 onchainos agent close {job_id}；\
              用户回复「不关闭」→ relay 回 sub session，不操作。\
              禁止 user session agent 自己执行 task CLI。\n\
-             \x20\x20userContent: 任务 {job_id} 已超时（accept 截止前未接单 或 submit 截止前未提交），是否关闭任务回收资金？\n\n\
+             \x20\x20userContent: [任务 {short_id} 你作为买家] 任务已超时（accept 截止前未接单 或 submit 截止前未提交），是否关闭任务回收资金？\n\n\
              → **结束本轮 turn**，等用户回复 relay 回来后执行 close。\n\n\
              **Step 2（收到 relay）— 关闭任务回收资金：**\n\
              ```bash\n\
@@ -737,14 +743,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              如果返回空列表 → 通知用户「当前没有待沟通的卖家」，结束。\n\n\
              **Step 2 — 调用 xmtp_prompt_user 展示所有待沟通卖家，让用户选择：**\n\
              🛑 **必须等用户选择**，不能替用户做决定。\n\
-             先调 `session_status` 拿到本 sub session 的 sessionKey。\n\
+             先调 `session_status` 拿到本 sub session 的 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7)。\n\
              将 pending list 中**所有卖家**逐一列出，让用户挑选：\n\
-             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}] \
+             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] \
              用户选择某个卖家（回复序号）→ relay 回 sub session，sub agent 用选中的 agentId 执行 xmtp_start_conversation 建群；\
              用户回复「全部跳过」→ relay 回 sub session，结束。\
              禁止 user session agent 自己执行建群或 task CLI。\n\
              \x20\x20userContent:\n\
-             \x20\x20任务 {job_id} 有以下卖家主动联系你，请选择一个开始协商：\n\
+             \x20\x20[任务 {short_id} 你作为买家] 有以下卖家主动联系你，请选择一个开始协商：\n\
              \x20\x20\n\
              \x20\x20[遍历 pending list 每个卖家，格式：]\n\
              \x20\x20<序号>. 卖家 AgentID：<agentId> | 名称：<name> | 信用分：<creditScore> | 完成任务数：<completedTaskCount>\n\

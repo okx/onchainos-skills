@@ -134,19 +134,21 @@ onchainos agent next-action \
 **字段语法**：
 
 ```
-[USER_DECISION_REQUEST][sub_key: <发起 prompt 的 sub session 完整 sessionKey>][job: <jobId>] <relay 指令文本>
+[USER_DECISION_REQUEST][sub_key: <发起 prompt 的 sub session 完整 sessionKey>][job: <jobId>][role: <buyer|provider|evaluator>] <relay 指令文本>
 ```
 
 **真实样例**（仲裁/退款决策）：
 
 ```
-[USER_DECISION_REQUEST][sub_key: agent:main:xmtp:group:okx-xmtp:my=0xe8c7...&to=0x0ccd...&job=0x1b76dabd...&gid=5a1a258d][job: 0x1b76dabd3bf884626184e3b36b7c65b54929a827a8a26e223c4b8aa868d41be1] 收到用户决策后用 xmtp_dispatch_session 把 [USER_DECISION_RELAY] 用户决策：<原话> 派回 sub_key 对应的 sub session。
+[USER_DECISION_REQUEST][sub_key: agent:main:xmtp:group:okx-xmtp:my=0xe8c7...&to=0x0ccd...&job=0x1b76dabd...&gid=5a1a258d][job: 0x1b76dabd3bf884626184e3b36b7c65b54929a827a8a26e223c4b8aa868d41be1][role: buyer] 收到用户决策后,先调 `onchainos agent pending-decisions list` 拿当前 pending,按 jobId/role hint 在列表里命中本条 → `xmtp_dispatch_session(sessionKey=<本条 sub_key>, content="[USER_DECISION_RELAY] 用户决策：<原话>")` 派回 sub。多条 pending 无 hint 则反问用户消歧。详见 SKILL.md `Session 通信契约 5. pending-decisions`。
 ```
 
 **搭档 `userContent` 样例**（用户实际看到的内容，与 `llmContent` 同一次 `xmtp_prompt_user` 调用）：
 
+> ⚠️ `userContent` 第一行**必须**以 `[任务 <短jobId> 你作为<角色>]` 开头(短 jobId = 前 6 + … + 后 4 字符,角色 ∈ {买家, 卖家, 仲裁者})。这是给用户和 user agent 的双重消歧锚——多 pending 时用户能扫一眼分清是哪个任务,user agent 在反问聚合模板里也复用这套格式。
+
 ```
-任务 0x1b76…41be1（生成一张小猫图片）卖家提交的交付物你不满意，下一步可以：
+[任务 0x1b76…41be1 你作为买家] 卖家提交的交付物你不满意,下一步可以：
 1. 同意退款（资金原路退回，不扣费）
 2. 发起仲裁（押金 5 USDT，由 evaluator 判决）
 3. 接受交付（按原报价支付）
@@ -159,8 +161,9 @@ onchainos agent next-action \
 |---|---|---|
 | `[USER_DECISION_REQUEST]` 字面 | 固定字符串 | 前缀标识，**精确字面匹配**——大小写、方括号、下划线一字不差 |
 | `[sub_key: <整串>]` | 内嵌字段 | 发起 prompt 的 sub session 完整 sessionKey；user agent 后续 `xmtp_dispatch_session` 必须**完整**回填这串到 `sessionKey` 参数（含 `agent:main:xmtp:group:okx-xmtp:my=...&to=...&job=...&gid=...` 全段） |
-| `[job: <jobId>]` | 内嵌字段 | 任务 ID（让 user agent 给用户回显时能引用具体任务） |
-| `<relay 指令文本>` | 自然语言 | 给 user agent LLM 的执行说明，告诉它怎么把用户回复 relay 回 sub |
+| `[job: <jobId>]` | 内嵌字段 | 任务 ID（让 user agent 给用户回显时能引用具体任务，也作为 `pending-decisions list` 匹配键） |
+| `[role: <buyer\|provider\|evaluator>]` | 内嵌字段 | sub session 自身角色，多 pending 消歧用：用户输入"买家任务"/"卖家任务" 等且对应角色仅一条时直接命中 |
+| `<relay 指令文本>` | 自然语言 | 给 user agent LLM 的执行说明，告诉它怎么把用户回复 relay 回 sub（含先 `pending-decisions list` 匹配再 dispatch 的步骤）|
 
 **❌ 接收侧错误模式**：
 - 找不到 `[sub_key: ...]` → user agent 必须输出"sub session 标识缺失，请重新发起任务流程"，**不要**猜、**不要** fallback 自己执行 task CLI
