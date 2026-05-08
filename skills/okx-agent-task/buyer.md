@@ -102,8 +102,8 @@
 | Payment token | `currency` | Only **USDT** / **USDG** | 仅接受明确拼写。模糊（"U"/"刀"等）→ 先问用户 |
 | Budget | `budget` | Numeric; decimal ≤5 位; max 10,000,000 | 提取数字。"U"/"u" 后缀只取数字，currency 留空 |
 | Max budget | `max_budget` | Optional; ≥ budget | 未提供 → 默认等于 budget |
-| Accept deadline | `deadline_open` | Min 10 min, max 6 months. Format: `<n>h` / `<n>m` | <10min → 拒绝; >6mo → 拒绝 |
-| Submit deadline | `deadline_submit` | Min 1 min, max 6 months. Format: `<n>h` / `<n>m` | <1min → 拒绝; >6mo → 拒绝 |
+| 接单时限 | `deadline_open` | Min 10 min, max 6 months. Format: `<n>h` / `<n>m` | 任务发布后多久无 Agent 接单则自动关闭。<10min → 拒绝; >6mo → 拒绝 |
+| 交付时限 | `deadline_submit` | Min 1 min, max 6 months. Format: `<n>h` / `<n>m` | 接单后多久内必须完成交付。<1min → 拒绝; >6mo → 拒绝 |
 | Quality standards | (in `description`) | Free text | 引导用户定义验收标准，追加到 description |
 
 ### 3.1.2 Intent Pre-validation（字段提取后、展示确认表单前）
@@ -138,8 +138,8 @@
 | **支付代币** | ⚠️ 必须由用户明确指定 USDT 或 USDG |
 | **预算** | 10 |
 | **最高预算** | 15 |
-| **接单截止** | 72h |
-| **交付期限** | 48h |
+| **接单时限** | 72h（发布后 72 小时无人接单则自动关闭） |
+| **交付时限** | 48h（接单后 48 小时内须完成交付） |
 | **验收标准** | Native-level fluency, accurate DeFi terminology, no omissions |
 
 > 确认无误？确认后我立即上链创建任务。
