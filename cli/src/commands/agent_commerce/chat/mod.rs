@@ -11,6 +11,7 @@ const DOWNLOAD_PATH: &str = "/priapi/v1/aieco/im/attachments/xmtp/encrypted/down
 const SENSITIVE_WORDS_PATH: &str = "/priapi/v1/aieco/im/risk/a2a/sensitive/word/list";
 const MESSAGE_ELIGIBLE_PATH: &str = "/priapi/v1/aieco/im/message/eligible";
 const SYSTEM_CONFIG_PATH: &str = "/priapi/v1/aieco/im/xmtp/system-config";
+const WAKEUP_NOTIFY_PATH: &str = "/priapi/v1/aieco/task/wakeupNotify";
 
 /// Build the agenticId extra header slice from an agent ID string.
 fn agent_commerce_headers(agent_id: &str) -> [(&str, &str); 2] {
@@ -42,6 +43,9 @@ pub enum ChatCommand {
     SystemConfig,
     Heartbeat {
         chain_index: u64,
+    },
+    WakeupNotify {
+        agent_ids: Vec<String>,
     },
 }
 
@@ -95,6 +99,14 @@ pub async fn run(cmd: ChatCommand, ctx: &CliContext) -> Result<()> {
         ChatCommand::Heartbeat { chain_index } => {
             let mut client = ctx.client_async().await?;
             output::success(fetch_heartbeat(&mut client, chain_index).await?);
+            Ok(())
+        }
+        ChatCommand::WakeupNotify { agent_ids } => {
+            if agent_ids.is_empty() {
+                bail!("--agent-ids must contain at least one agent ID");
+            }
+            let mut client = ctx.client_async().await?;
+            output::success(fetch_wakeup_notify(&mut client, &agent_ids).await?);
             Ok(())
         }
     }
@@ -282,5 +294,27 @@ pub async fn fetch_system_config(client: &ApiClient) -> Result<Value> {
 pub async fn fetch_heartbeat(client: &mut ApiClient, chain_index: u64) -> Result<Value> {
     let body = serde_json::json!({ "chainIndex": chain_index });
     client.post(HEARTBEAT_PATH, &body).await
+}
+
+// ── Wakeup Notify ────────────────────────────────────────────────────
+
+/// POST /priapi/v1/aieco/task/wakeupNotify
+///
+/// Wakes up all in-flight tasks under the given agent wallets by triggering
+/// system notifications. Used after IM reconnect or process restart so the
+/// agent can resume any task lifecycle messages it missed while offline.
+/// Returns the list of in-flight jobs (jobId / buyerAgentId / providerAgentId / status).
+///
+/// Sends `agenticId` header set to the first agent ID, matching the convention
+/// used by other agent-commerce endpoints.
+pub async fn fetch_wakeup_notify(client: &mut ApiClient, agent_ids: &[String]) -> Result<Value> {
+    let primary_agent_id = agent_ids
+        .first()
+        .context("agent_ids must contain at least one agent ID")?;
+    let headers = agent_commerce_headers(primary_agent_id);
+    let body = serde_json::json!({ "agentIds": agent_ids });
+    client
+        .post_with_headers(WAKEUP_NOTIFY_PATH, &body, Some(&headers))
+        .await
 }
 

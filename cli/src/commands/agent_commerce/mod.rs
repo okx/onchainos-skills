@@ -481,6 +481,14 @@ pub enum AgentCommand {
         #[arg(long)]
         chain_index: u64,
     },
+
+    /// Wake up all in-flight tasks under the given agent wallets (system notify)
+    #[command(name = "wakeup-notify")]
+    WakeupNotify {
+        /// Agent IDs to notify (comma-separated, or pass --agent-ids multiple times)
+        #[arg(long, value_delimiter = ',')]
+        agent_ids: Vec<String>,
+    },
 }
 
 pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
@@ -734,6 +742,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::Heartbeat { chain_index } =>
             chat::run(chat::ChatCommand::Heartbeat { chain_index }, ctx).await,
+
+        AgentCommand::WakeupNotify { agent_ids } =>
+            chat::run(chat::ChatCommand::WakeupNotify { agent_ids }, ctx).await,
     }
 }
 
