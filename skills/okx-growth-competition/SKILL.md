@@ -92,6 +92,43 @@ If the user's intent does not clearly map to one of the above, ask which they me
 
 When the user asks to act on a specific activity (e.g. "claim Agentic Trading Contest"), the MCP tools `competition_claim` / `competition_join` accept `activity_name` and resolve the id server-side, so you can also use names directly without doing your own lookup.
 
+## Time Formatting (MANDATORY)
+
+<MUST>
+All timestamps from competition APIs MUST be rendered using these exact rules. Do NOT free-style time conversions.
+</MUST>
+
+**Field types — these are NOT interchangeable:**
+
+| Field | Format | Example raw | Notes |
+|-------|--------|-------------|-------|
+| `startTime`, `endTime`, `joinTime`, `claimTime` | **10-digit Unix seconds** | `1778148000` | Multiply by 1000 only if the runtime expects ms |
+| `rankUpdateTime` | **13-digit Unix milliseconds** | `1774359000638` | Divide by 1000 to convert to seconds first |
+
+If you see a 13-digit value where a 10-digit is documented (or vice versa), do NOT silently coerce — flag it as a backend anomaly.
+
+**Display format — exact, no improvisation:**
+
+- Date-time fields (`startTime`, `endTime`): `YYYY-MM-DD HH:mm (UTC+8)` — example: `2026-05-07 18:00 (UTC+8)`
+- Date-only contexts (e.g. compact list table): `YYYY-MM-DD ~ YYYY-MM-DD` (UTC+8 day boundary) — example: `2026-05-07 ~ 2026-05-21`
+- `joinTime` / `claimTime` displayed in user-facing context: `YYYY-MM-DD HH:mm (UTC+8)`
+- `rankUpdateTime` (last refresh marker): `YYYY-MM-DD HH:mm:ss (UTC+8)`
+
+**Timezone rule:** ALL competition times displayed to the user are converted to **UTC+8** (China Standard Time). The competition product is operated in UTC+8; never display raw UTC, never use the user's local timezone.
+
+**Step-by-step conversion:**
+1. Identify the field's documented unit (seconds or milliseconds — see table above).
+2. Convert to a Date object using the correct unit.
+3. Format as a UTC+8 wall-clock string per the format above.
+4. Always append the `(UTC+8)` suffix on date-time displays so the user can verify.
+
+<NEVER>
+- ❌ Do NOT mentally compute the date from a timestamp using your training-data sense of "current date" — always do the explicit numeric conversion.
+- ❌ Do NOT mix seconds and milliseconds — a 13-digit value treated as seconds lands in year ~58000; a 10-digit value treated as ms lands in 1970.
+- ❌ Do NOT drop the `(UTC+8)` suffix on date-time strings.
+- ❌ Do NOT use the user's local timezone — even if the user is overseas, competition times are operated in UTC+8.
+</NEVER>
+
 ## Output Language
 
 <MUST>
@@ -150,7 +187,7 @@ For non-English users, translate the column headers, section headers, and link t
   - If `chainName` is Solana → write just `Solana`
   - Otherwise → write `Solana, {chainName}` (e.g. `Solana, XLayer`)
   - Temporary until backend returns a full supported-chain list.
-- Time column ← `startTime` ~ `endTime` (human-readable, e.g. `2025-04-01 ~ 2025-04-30`)
+- Time column ← `startTime` ~ `endTime` formatted per **Time Formatting** rules above. List-table compact form: `YYYY-MM-DD ~ YYYY-MM-DD` in UTC+8 (e.g. `2026-05-07 ~ 2026-05-21`). Do NOT include time-of-day in the compact list to keep the column narrow — full time-of-day is shown in Step 2 detail view only.
 - Total Prize Pool column ← `rewards` field (already a formatted string like `50,000 USDC`)
 - Details column ← `https://web3.okx.com/boost/trading-competition/<shortName>` as a markdown link
 
@@ -188,26 +225,25 @@ When the user's language is not English, translate the natural-language strings 
 #### Fixed display template
 
 ```
-Basic info:
-Chain: Solana, {chainName}
-Time: {startTime} ~ {endTime}
-Total prize pool: {totalPrizePool}
+Basic Information
+Supported chain: Solana, {chainName}
+Duration: {startTime} ~ {endTime}
+Total Prize Pool: {totalPrizePool}
 
-Reward categories:
-1. Realized ROI Pool ({roiPoolAmount})
-Ranked by realized ROI of the wallet account during the competition, high to low
+Prize Categories:
+Realized PNL% Prize Pool ({roiPoolAmount})
+Ranked from highest to lowest by realized PNL%.
 {roiRankTable}
 
-2. Realized PnL Pool ({pnlPoolAmount})
-Ranked by realized PnL of the wallet account during the competition, high to low
+Realized PnL Prize Pool ({pnlPoolAmount})
+Ranked from highest to lowest by realized PNL amount.
 {pnlRankTable}
 
-3. Participation Reward ({participationPoolAmount})
-During the competition, registered users with cumulative trading volume of $100 or more via Agentic Wallet, and wallet total assets maintained at $100 or more throughout, will share the {participationPoolAmount} participation reward pool. We will perform unscheduled asset snapshots during the competition to verify eligibility.
+Participation Prize ({participationPoolAmount})
+Registered users who accumulate $100 or more in total trading volume via Agentic Wallet and maintain a total wallet balance of $100 or above throughout the competition period, will share the {participationPoolAmount} participation prize pool equally. Random asset snapshots will be taken during the competition period to verify eligibility.
 
-4. Skill Quality Award ({skillPoolAmount})
-The Skill Quality Award is an independent judging category. During the competition, participants may submit their own Agent Skills via the activity page, including but not limited to on-chain autonomous yield strategies, trade analysis, and trading signal monitoring.
-All submitted Agent Skills will be evaluated through a dual-rating mechanism of AI initial screening and human review. The top {skillTopN} Skill creators by score will each receive {skillPerCreatorReward}.
+Skill Quality Prize ({skillPoolAmount})
+The Skill Quality Prize is an independently judged award. During the competition period, participants may submit their Agent Skills through the event landing page. Eligible submissions include, but are not limited to, on-chain autonomous yield strategies, trading analysis, and trading signal monitoring. All submitted Agent Skills will be evaluated through a dual-review process combining AI pre-screening and manual judging. The top {skillTopN} Skill creators by score will each receive a reward of {skillPerCreatorReward}.
 ```
 
 #### Field-mapping rules
@@ -216,7 +252,7 @@ All submitted Agent Skills will be evaluated through a dual-rating mechanism of 
   - If `chainName` already is Solana → write just `Solana`
   - Otherwise → write `Solana, {chainName}` (e.g. `Solana, XLayer`)
   - This is a temporary hardcoding because the backend currently returns only the primary chain. A future backend release will return the full supported-chain list as a separate field; remove this hardcoding then.
-- `{startTime}` / `{endTime}` ← human-readable timestamps.
+- `{startTime}` / `{endTime}` ← formatted per **Time Formatting** rules above. Detail view uses the full form `YYYY-MM-DD HH:mm (UTC+8)` (e.g. `2026-05-07 18:00 (UTC+8)`) — always append `(UTC+8)`.
 - `{totalPrizePool}` ← sum of all `prizePoolDistribution[].totalReward` plus `rewardUnit` (e.g. `50,000 USDC`).
 - `{roiPoolAmount}` ← totalReward of the realized-ROI tab.
 - `{pnlPoolAmount}` ← totalReward of the realized-PnL tab.
@@ -243,32 +279,33 @@ If any of the four pools is absent for a particular activity, omit just that sec
 
 #### Required content invariants (per section)
 
-**Section 1 — Realized ROI Pool**
-- Title MUST be exactly `Realized ROI Pool` (or its faithful translation in the user's language). Do NOT substitute with `PnL% Ranking Award` / `ROI Ranking Award` / similar.
-- Description MUST mention: ranking by realized ROI, high to low, during the competition period.
+**Section 1 — Realized PNL% Prize Pool**
+- Title MUST be exactly `Realized PNL% Prize Pool` (or its faithful translation in the user's language). Do NOT substitute with `PnL% Ranking Award` / `ROI Ranking Award` / `Realized ROI Pool`.
+- Description MUST mention: ranking by realized PNL%, highest to lowest.
 - Rank table MUST have headers `Rank / Reward` and end with a `Total` row.
 
-**Section 2 — Realized PnL Pool**
-- Title MUST be exactly `Realized PnL Pool`. Do NOT substitute with `PnL Ranking Award`.
-- Description MUST mention: ranking by realized PnL, high to low.
+**Section 2 — Realized PnL Prize Pool**
+- Title MUST be exactly `Realized PnL Prize Pool`. Do NOT substitute with `PnL Ranking Award` / `Realized PnL Pool`.
+- Description MUST mention: ranking by realized PNL amount, highest to lowest.
 - Rank table MUST follow the same format as Section 1.
 
-**Section 3 — Participation Reward** (PRODUCT-MANDATED COPY)
-- Title MUST be exactly `Participation Reward`.
+**Section 3 — Participation Prize** (PRODUCT-MANDATED COPY)
+- Title MUST be exactly `Participation Prize`.
 - The description body MUST include all of these specific terms:
   - `Agentic Wallet`
-  - cumulative trading volume threshold of `$100`
-  - wallet total assets maintained at `$100` throughout
-  - sharing the participation pool
-  - asset snapshots to verify eligibility
+  - accumulate `$100` or more in total trading volume
+  - maintain a total wallet balance of `$100` or above throughout the competition period
+  - share the participation prize pool equally
+  - random asset snapshots to verify eligibility
 
-**Section 4 — Skill Quality Award** (PRODUCT-MANDATED COPY)
-- Title MUST be exactly `Skill Quality Award`.
+**Section 4 — Skill Quality Prize** (PRODUCT-MANDATED COPY)
+- Title MUST be exactly `Skill Quality Prize`.
 - The description body MUST include all of these specific terms:
-  - submission of Agent Skill via the activity page
-  - examples of skill content (on-chain yield strategies, trade analysis, signal monitoring)
-  - dual-rating mechanism of AI initial screening and human review
-  - `top {skillTopN} Skill creators ... each receive {skillPerCreatorReward}`
+  - independently judged award
+  - submission of Agent Skills through the event landing page
+  - examples of eligible submissions (on-chain autonomous yield strategies, trading analysis, trading signal monitoring)
+  - dual-review process combining AI pre-screening and manual judging
+  - `top {skillTopN} Skill creators ... each receive a reward of {skillPerCreatorReward}`
 
 <NEVER>
 - ❌ Do NOT drop the trailing `, Solana` from the chain line, even if the backend's `chainName` is already an EVM chain like XLayer / Arbitrum.
@@ -340,7 +377,7 @@ Field-mapping:
 Template:
 
 ```
-Registered successfully! This competition runs simultaneously on {chainName} and Solana, with a total prize pool of {totalPrizePool}. The trading contest ranks players by both PnL% and realized PnL, with additional Participation and Skill Quality Awards. Would you like me to walk you through the detailed rules, or help you initiate a trade on {chainName} or Solana?
+Registered successfully! This competition runs simultaneously on {chainName} and Solana, with a total prize pool of {totalPrizePool}. The trading contest ranks players by both PnL% and realized PnL, with additional Participation and Skill Quality Prizes. Would you like me to walk you through the detailed rules, or help you initiate a trade on {chainName} or Solana?
 
 [Disclaimer: Digital asset trading involves risk. Prices can be highly volatile. Please understand the risks fully and do your own research before trading.]
 ```
@@ -352,7 +389,7 @@ Registered successfully! This competition runs simultaneously on {chainName} and
 
 <NEVER>
 - ❌ Do NOT drop the hardcoded `Solana` mention even when the backend's primary chain is already an EVM chain — the activity actually runs on both chains.
-- ❌ Do NOT drop or merge the four key phrases of the lead sentence: (1) which two chains it runs on, (2) the total prize pool, (3) the dual-axis PnL%/realized PnL ranking, (4) the existence of Participation and Skill Quality Awards. These are required content; the wording can be localized but the four pieces must all appear.
+- ❌ Do NOT drop or merge the four key phrases of the lead sentence: (1) which two chains it runs on, (2) the total prize pool, (3) the dual-axis PnL%/realized PnL ranking, (4) the existence of Participation and Skill Quality Prizes. These are required content; the wording can be localized but the four pieces must all appear.
 - ❌ Do NOT drop the bracketed disclaimer line — it must appear on its own line at the end of the message, in the user's language.
 </NEVER>
 
