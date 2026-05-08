@@ -21,6 +21,7 @@ onchainos skills for AI coding assistants. Provides token search, market data, w
 | `okx-defi-portfolio` | DeFi positions and holdings overview across protocols and chains |
 | `okx-audit-log` | Audit log export and troubleshooting |
 | `okx-dapp-discovery` | Third-party DApp discovery and direct plugin routing — currently supports Polymarket, Aave V3, Hyperliquid, PancakeSwap V3 AMM, Morpho V1 Optimizer |
+| `okx-growth-competition` | Agentic Wallet exclusive trading competitions: list, join, view leaderboard, claim rewards |
 
 ## Supported Chains
 

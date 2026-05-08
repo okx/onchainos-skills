@@ -1,47 +1,43 @@
 # Tools
 
-## Capabilities
-
-- **Token research** — price, security scan (honeypot/tax/mint/freeze), holder cluster analysis, top traders, smart money signals
-- **Smart money tracking** — real-time KOL, whale, and insider wallet activity via signal aggregation
-- **New token screening** — pump.fun/Believe/Trenches launchpad scanning with dev reputation and bundle detection
-- **Market data** — prices, K-line charts, index prices, wallet PnL across chains
-- **Safe swap execution** — 500+ DEX liquidity sources, MEV protection (Jito/Flashbots), pre-trade security checks
-- **DeFi management** — deposit, withdraw, claim across Aave, Lido, PancakeSwap, Kamino, NAVI, and hundreds more
-- **Agentic wallet** — TEE-secured execution, private keys never exposed, gas-free payments on X Layer via x402 protocol
-- **Real-time monitoring** — WebSocket-based wallet monitoring, smart money alerts, meme scan feeds
-- **Social signals** — crypto news (latest / by-symbol / search / detail / source platforms), market-wide sentiment ranking + per-coin sentiment with trend, per-token vibe timeline + TOP50 KOL leaderboard
+Available skills and their capabilities are defined in `AGENTS.md`. This file covers CLI usage, conventions, and infrastructure.
 
 ## onchainos CLI
 
-The official OKX OnchainOS CLI — built for AI, ready for Web3. Pre-installed via `setup.sh`.
+The official OKX OnchainOS CLI - built for AI, ready for Web3. Installed via `setup.sh`.
 
 ```bash
 onchainos --version   # verify binary is available
 onchainos --help      # full command reference
 ```
 
-**Infrastructure:** Sub-100ms average response times · 99.9% uptime · 130+ networks
-
 ## CLI conventions
 
 - `--chain` accepts chain names (e.g. `solana`, `ethereum`, `base`, `xlayer`) or chain indexes (e.g. `501`, `1`, `8453`)
-- `--address` always expects a full contract address — never guess; resolve with `onchainos token search` first
-- `--format json` appends raw JSON output to any command — use for scripting
+- `--address` always expects a full contract address - never guess; resolve with `onchainos token search` first
+- `--format json` appends raw JSON output to any command - use for scripting
 - `--readable-amount` handles token decimals automatically for swap commands
 
-## Wallet modes
+## Wallet
 
-| Mode | Setup needed | Capabilities |
-|------|-------------|-------------|
-| Anonymous | None | Read-only: prices, token data, signals, portfolio lookup by address |
-| Agentic wallet | `onchainos wallet login` | Full: swap execution, send tokens, view own portfolio |
+This template requires the **agentic wallet**. Anonymous mode is **not supported** in this configuration - all on-chain operations require login.
 
-**Agentic wallet security:** TEE-secured execution — private keys never exposed. Supports 17+ networks with full OKX Wallet backing.
+| Step | Command | When |
+|------|---------|------|
+| Check state | `onchainos wallet status` | At every session start, before any on-chain command. |
+| Start login | `onchainos wallet login <email> --locale <locale>` | When `wallet status` shows not logged in. Sends OTP to email. Validate `<email>` matches `^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$` before invoking. |
+| Verify OTP | `onchainos wallet verify <code>` | After the user provides the OTP from email. Validate `<code>` matches `^[0-9]{6}$` before invoking. |
+| API key auth | (automatic, no command) | When `OKX_API_KEY`, `OKX_SECRET_KEY`, `OKX_PASSPHRASE` are set as secrets. |
+
+**Wallet skill:** `okx-agentic-wallet` (installed at `~/.onchainos/skills/okx-agentic-wallet/`). Use this skill for all wallet operations.
+
+**Security:** TEE-secured execution - private keys never exposed. Spending is bounded by an on-chain limit; the agent cannot exceed it without the user's root key re-authorizing.
+
+**Hard rule:** If `onchainos wallet status` does not return a valid address, refuse all on-chain commands and run the login flow defined in `BOOTSTRAP.md` Step 3.
 
 ## Swap infrastructure
 
-- **500+ DEX sources** aggregated for best price
+- **Aggregated DEX sources** for best price
 - **MEV protection**: Solana via Jito (`--tips`), EVM via Flashbots (`--mev-protection`)
 - **Pre-trade safety**: honeypot detection, tax scan, mint/freeze authority check
 - **Gas-free on X Layer** via x402 protocol (`okx-x402-payment` skill)
@@ -69,13 +65,13 @@ onchainos token report --address <addr> --chain solana
 
 ## Skills location
 
-Skills are available at `~/.openclaw/skills/` (symlinked from the template's `skills/` directory by `setup.sh`):
+Skills are installed by `setup.sh` into `~/.onchainos/skills/`:
 
 ```
-okx-dex-token      okx-dex-market     okx-dex-signal    okx-dex-trenches
-okx-dex-social     okx-dex-swap       okx-dex-ws         okx-security
+okx-dex-token       okx-dex-market      okx-dex-signal      okx-dex-trenches
+okx-dex-social      okx-dex-swap        okx-dex-ws          okx-security
 okx-wallet-portfolio okx-agentic-wallet okx-onchain-gateway okx-defi-invest
-okx-defi-portfolio okx-x402-payment   okx-audit-log
+okx-defi-portfolio  okx-x402-payment    okx-audit-log       okx-growth-competition
 ```
 
 ## MCP server

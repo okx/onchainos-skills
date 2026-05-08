@@ -63,6 +63,7 @@ You should see the Onchain OS skill set, including categories such as:
 - `okx-onchain-gateway`
 - `okx-defi-invest`
 - `okx-defi-portfolio`
+- `okx-growth-competition`
 
 ## Optional CLI Install
 

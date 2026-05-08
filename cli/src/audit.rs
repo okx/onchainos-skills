@@ -327,6 +327,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Leaderboard { command } => format!("leaderboard {}", leaderboard_sub(command)),
         Commands::Tracker { command } => format!("tracker {}", tracker_sub(command)),
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
+        Commands::Competition { command } => format!("competition {}", competition_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
         Commands::Workflow { command } => format!("workflow {}", workflow_sub(command)),
@@ -340,8 +341,8 @@ use crate::commands::agentic_wallet::wallet::WalletCommand;
 use crate::commands::{
     defi::DefiCommand, gateway::GatewayCommand, leaderboard::LeaderboardCommand,
     market::MarketCommand, memepump::MemepumpCommand, portfolio::PortfolioCommand,
-    security::SecurityCommand, signal::SignalCommand, social::SocialCommand, swap::SwapCommand,
-    token::TokenCommand, tracker::TrackerCommand,
+    competition::CompetitionCommand, security::SecurityCommand, signal::SignalCommand,
+    social::SocialCommand, swap::SwapCommand, token::TokenCommand, tracker::TrackerCommand,
 };
 
 fn market_sub(c: &MarketCommand) -> &'static str {
@@ -557,6 +558,17 @@ fn defi_sub(c: &DefiCommand) -> &'static str {
         DefiCommand::Collect { .. } => "collect",
         DefiCommand::Positions { .. } => "positions",
         DefiCommand::PositionDetail { .. } => "position-detail",
+    }
+}
+
+fn competition_sub(c: &CompetitionCommand) -> &'static str {
+    match c {
+        CompetitionCommand::List { .. } => "list",
+        CompetitionCommand::Detail { .. } => "detail",
+        CompetitionCommand::Rank { .. } => "rank",
+        CompetitionCommand::UserStatus { .. } => "user-status",
+        CompetitionCommand::Join { .. } => "join",
+        CompetitionCommand::Claim { .. } => "claim",
     }
 }
 
