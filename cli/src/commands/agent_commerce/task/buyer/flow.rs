@@ -434,17 +434,18 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20支付方式：non_escrow（先交付后支付）\n\
              \x20\x20金额：<tokenAmount> <tokenSymbol>\n\
              \x20\x20卖家交付后会发送 paymentId，届时自动完成支付。\n\n\
-             **B-Step 2 — 等待卖家在 XMTP sub session 中发送交付物 + paymentId**：\n\
              ⚠️ **不要在此 turn 执行 complete**——买家尚未收到交付物和 paymentId。\n\
-             当卖家在 sub session 中发送消息包含 paymentId（格式：`paymentId: a2a_xxx` 或消息中含 `a2a_` 前缀的 ID）时：\n\
-             \x20\x201. 提取 paymentId\n\
-             \x20\x202. 提取交付物内容（卖家发送的文件 / 文字）\n\
-             \x20\x203. 执行支付 + complete：\n\
+             → **结束本轮 turn**，等待卖家 XMTP 消息。\n\n\
+             **B-Step 2 — （下一 turn）收到卖家 XMTP 交付物 + paymentId 后执行：**\n\
+             卖家会通过 sub session 发送消息，包含 paymentId（格式：`paymentId: a2a_xxx` 或消息中含 `a2a_` 前缀的 ID）+ 交付物内容。\n\
+             收到后：\n\
+             \x20\x201. 提取 paymentId 和交付物内容\n\
+             \x20\x202. 执行支付 + complete：\n\
              \x20\x20```bash\n\
              \x20\x20onchainos agent complete {job_id} --payment-id <paymentId> --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
              \x20\x20```\n\
              \x20\x20（内部：a2a_pay 支付 → direct/complete → 签名 → 广播）\n\
-             \x20\x204. 支付成功后调用 xmtp_dispatch_user 通知用户：\n\
+             \x20\x203. 支付成功后调用 xmtp_dispatch_user 通知用户：\n\
              \x20\x20content:\n\
              \x20\x20[支付完成] 任务 {job_id} 已收到交付物并完成支付。\n\
              \x20\x20---交付物内容---\n\
@@ -452,7 +453,6 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20---交付物结束---\n\
              \x20\x20支出：<tokenAmount> <tokenSymbol>\n\
              \x20\x20本任务流程结束。如需评价卖家，请回复评分（0-100）和评价内容。\n\n\
-             → **结束本轮 turn**，等待卖家 XMTP 消息。\n\n\
              【后续事件】\n\
              - 卖家发送交付物 + paymentId（XMTP 消息）→ 买家支付 + complete → job_completed\n\n\
              ━━━━━━━━━ 分支 C：x402 ━━━━━━━━━\n\n\
@@ -923,6 +923,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20content: 任务 {job_id} 更新支付方式成功，设置卖家 <providerName>（<providerAgentId>）接单中...\n\n\
              → **结束本轮 turn**，等待 `provider_applied` 系统通知。\n\n\
              ━━━━━━━━━ non_escrow（paymentMode=2）— 发 [NEGOTIATE_CONFIRM] + 直接 confirm-accept ━━━━━━━━━\n\n\
+             ⚠️ 与 escrow 不同，non_escrow 可以同 turn 发 [CONFIRM] + confirm-accept：\n\
+             卖家收到 [CONFIRM] 后**不需要先执行链上操作**（escrow 需要 apply），只是静默等 job_accepted。\n\
+             因此不存在竞争窗口。\n\n\
              **Step 2 — 发 [NEGOTIATE_CONFIRM]**：\n\
              链上 paymentMode 已就位，现在发 [CONFIRM] 通知卖家协商已锁定。\n\n\
              调用 xmtp_send：\n\
