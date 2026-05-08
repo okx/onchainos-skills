@@ -17,7 +17,7 @@ const SKILL_INSTALL_PATHS: &[&str] = &[
     ".codex/onchainos-skills",
     ".openclaw/onchainos-skills",
     ".cursor/onchainos-skills",
-    ".opencode/onchainos-skills",
+    ".config/opencode/onchainos-skills",
 ];
 
 #[derive(clap::Args)]
@@ -386,6 +386,11 @@ pub async fn execute(args: UpgradeArgs) -> Result<()> {
             }
         }
         Err(e) => {
+            if args.force {
+                return Err(e.context(
+                    "--force requires a reachable GitHub API to resolve the target version",
+                ));
+            }
             eprintln!(
                 "Warning: could not check for CLI binary updates: {}",
                 e.root_cause()
@@ -401,12 +406,19 @@ pub async fn execute(args: UpgradeArgs) -> Result<()> {
         update_skill_checkouts()
     };
 
-    output::success(json!({
-        "previousVersion": current,
-        "installedVersion": installed_version,
+    let mut payload = json!({
+        "currentVersion": current,
         "status": binary_status,
         "skills": skills,
-    }));
+    });
+    if binary_status != "binary_check_failed" {
+        payload["latestVersion"] = json!(installed_version);
+    }
+    if binary_status == "upgraded" {
+        payload["previousVersion"] = json!(current);
+        payload["installedVersion"] = json!(installed_version);
+    }
+    output::success(payload);
 
     Ok(())
 }
