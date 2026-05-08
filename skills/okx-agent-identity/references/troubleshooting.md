@@ -21,7 +21,7 @@ If you encounter a string that isn't in either table, surface the raw message in
 | `error: unexpected argument '<value>' found` (positional rejected by clap) | clap default | "这个命令需要显式带参数名，不接受裸值" | The user passed something like `agent update 42`; tell them to use `agent update --agent-id 42`. Same for `activate` / `deactivate` / `service-list` / `feedback-list` (`--agent-id`) and `upload` (`--file`). |
 | `missing required field in --service: name` | `utils.rs:200` | "服务名不能留空" | Return to `role-provider.md` Phase 2 per-service Q1 (`name`). |
 | `missing required field in --service: servicedescription` | `utils.rs:203` | "服务描述不能留空" | Return to `role-provider.md` Phase 2 per-service Q2 (`servicedescription`). |
-| `missing required field in --service for A2MCP: fee` | `utils.rs:212` | "A2MCP 服务必须给 fee（USDT 数字，最多两位小数）" | Return to `role-provider.md` Phase 2 per-service Q4 (A2MCP branch). |
+| `missing required field in --service for A2MCP: fee` | `utils.rs:212` | "A2MCP 服务必须给 fee（USDT 数字，最多六位小数）" | Return to `role-provider.md` Phase 2 per-service Q4 (A2MCP branch). |
 | `missing required field in --service for A2MCP: endpoint` | `utils.rs:215` | "A2MCP 服务必须给 endpoint（HTTPS URL）" | Return to `role-provider.md` Phase 2 per-service Q5 (A2MCP branch). |
 | `invalid servicetype in --service: <value>` | `utils.rs:218` | "服务类型必须是 A2MCP 或 A2A" | Return to `role-provider.md` Phase 2 per-service Q3 (numbered prompt). |
 | `invalid value for --role: <value>` | `utils.rs:229` | "role 只能是 requester / provider / evaluator 之一" | Return to role selection (SKILL.md §Core Flow). |
@@ -65,7 +65,7 @@ Some conditions the user might hit are enforced by the **skill itself** before t
 | "At least one field must change on update" | User submitted nothing / every field unchanged | Refuse to call `onchainos agent update`; render `没有需要提交的更改` and re-enter update Q&A. The CLI (`mutations.rs:156-228`) does NOT validate this. See `cli-reference.md` §2. |
 | "Query must be non-empty" | `agent search` with empty query | The CLI will bail with `missing required parameter: --query` (§1 above); the skill should catch it first and ask. |
 | Score outside 0-100 | `feedback-submit` with bad score | Skill validates before sending (see `feedback-guide.md` step 3). The backend also rejects (§2 above) as a safety net. |
-| A2A `fee` not matching `^\d+(\.\d{1,2})?$` | User answered Q4 on an A2A service with something other than empty / number-with-≤2-decimals (e.g. `5 USDT`, `约 10`, `-1`) | Reject with "A2A 价格选填，要么留空，要么填 USDT 数字最多两位小数（例如 `1.22` / `10` / `0.5`）" / "A2A fee is optional — leave it empty or supply a USDT number with up to 2 decimal places". Re-ask Q4 (A2A branch). The CLI (`utils.rs::normalize_service` A2A arm) does NOT validate the fee format on A2A — this is skill-side only. |
+| A2A `fee` not matching the internal validation pattern (**internal pattern, never echoed to user**: `^\d+(\.\d{1,6})?$`) | User answered Q4 on an A2A service with something other than empty / number-with-≤6-decimals (e.g. `5 USDT`, `约 10`, `-1`) | Reject with "A2A 价格选填，要么留空，要么填 USDT 数字最多六位小数（例如 `1.234567` / `10` / `0.5`）" / "A2A fee is optional — leave it empty or supply a USDT number with up to 6 decimal places". Re-ask Q4 (A2A branch). The CLI (`utils.rs::normalize_service` A2A arm) does NOT validate the fee format on A2A — this is skill-side only. |
 
 ---
 
