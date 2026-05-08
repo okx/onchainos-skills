@@ -607,8 +607,9 @@ pub async fn handle_task_402_pay(
     let initial_status = initial_resp.status().as_u16();
 
     if initial_status != 402 {
-        let body: serde_json::Value = initial_resp.json().await
-            .unwrap_or_else(|_| serde_json::json!({ "raw": "non-json response" }));
+        let raw_text = initial_resp.text().await.unwrap_or_default();
+        let body: serde_json::Value = serde_json::from_str(&raw_text)
+            .unwrap_or_else(|_| serde_json::json!({ "raw": raw_text }));
         let success = (200..300).contains(&initial_status);
         eprintln!("[task-402-pay] endpoint 返回 HTTP {initial_status}（非 402），直接作为结果");
         crate::output::success(serde_json::json!({
@@ -649,8 +650,9 @@ pub async fn handle_task_402_pay(
     let (replay_success, replay_status, replay_body) = match replay_resp {
         Ok(resp) => {
             let status = resp.status().as_u16();
-            let body: serde_json::Value = resp.json().await
-                .unwrap_or_else(|_| serde_json::json!({ "raw": "non-json response" }));
+            let raw_text = resp.text().await.unwrap_or_default();
+            let body: serde_json::Value = serde_json::from_str(&raw_text)
+                .unwrap_or_else(|_| serde_json::json!({ "raw": raw_text }));
             let success = (200..300).contains(&status);
             eprintln!("[task-402-pay] replay 结果: HTTP {status}, success={success}");
             (success, status, body)
