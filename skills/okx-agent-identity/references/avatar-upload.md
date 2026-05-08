@@ -23,7 +23,7 @@ The right path depends on the runtime. Do not force the user down a path their e
        要设置头像吗？
          1. 发一张图片给我，我帮你上传（推荐 1:1 方图，PNG/JPEG/WebP）
          2. 用关键词让我生成一张
-         3. 跳过，用默认图
+         3. 跳过（用默认头像）
        回复 1/2/3。
        ```
      - English:
@@ -31,7 +31,7 @@ The right path depends on the runtime. Do not force the user down a path their e
        Want to set an avatar?
          1. Send me an image and I'll handle the upload (1:1 square recommended, PNG/JPEG/WebP)
          2. Generate one from keywords
-         3. Skip, use the default
+         3. Skip (use the default avatar)
        Reply 1/2/3.
        ```
    - Terminal (no attachments) — only 2 options (local upload won't work here):
@@ -39,14 +39,14 @@ The right path depends on the runtime. Do not force the user down a path their e
        ```
        当前环境没法直接收图。你可以：
          1. 用关键词让我生成一张（推荐 1:1 方图）
-         2. 跳过，用默认图
+         2. 跳过（用默认头像）
        回复 1 或 2。
        ```
      - English:
        ```
        I can't receive attachments in this environment. You can:
          1. Generate one from keywords (1:1 square recommended)
-         2. Skip, use the default
+         2. Skip (use the default avatar)
        Reply 1 or 2.
        ```
 4. **AI-generation requires explicit prompt.** Do not invent image content. Ask the user in their language: "你希望头像长什么样？几个关键词就够。" / "Describe the avatar — a few keywords is enough."

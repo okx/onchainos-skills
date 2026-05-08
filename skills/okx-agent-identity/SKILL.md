@@ -344,7 +344,7 @@ Use the role-specific Q&A chains (`role-requester.md` / `role-provider.md` / `ro
 
 - `--role` is mandatory on `create`; ask if missing.
 - `--agent-id` is mandatory on `update`, `activate`, `deactivate`, `service-list`, `feedback-list`. If missing, run `agent get` once and let the user pick.
-- `--service` JSON fields — follow the normalization rules: `name` / `servicedescription` / `servicetype` (`A2MCP` | `A2A`, case-insensitive) required; `fee` / `endpoint` required only for `A2MCP`; for `A2A` the CLI discards any `endpoint` even if supplied.
+- `--service` JSON fields — follow the normalization rules: `name` / `servicedescription` / `servicetype` (`A2MCP` | `A2A`, case-insensitive) required; `endpoint` required only for `A2MCP`; `fee` required for `A2MCP` and **optional for `A2A`** (when the user skips on A2A, send `"fee": ""` — the wire payload always carries the key because `cli/src/commands/agent_commerce/identity/models.rs:21` declares `fee: String` without `skip_serializing_if`. The skill's render layer treats an empty string as "not specified"; backend semantics for empty-vs-absent are out of scope for this repo and need to be confirmed via product spec when relevant); for `A2A` the CLI discards any `endpoint` even if supplied.
 - Signing address — never prompt. The CLI has no `--address` flag; `agent create` always signs with the current wallet's selected XLayer address. If the user wants a different address, switch wallets first via `okx-agentic-wallet`.
 - Never default `--status` on search — only set it when the user explicitly mentioned activity state, and pass the user's wording verbatim (`已上架` → `--status "已上架"`, not the canonical `active`).
 
@@ -505,7 +505,7 @@ Phase-1 capture: `name=Alice`, `description=做 DeFi 分析`. **Fee=10 is discar
 ## Amount Display Rules
 
 - Service `fee` is a **USDT numeric string with up to 2 decimal places** (e.g., `1.22`, `10`, `0.5`, `0`) — the **skill** validates this before sending; the CLI itself only checks non-empty. Always show the user the human-readable form "`N USDT`" (e.g., `1.22 USDT`, `10 USDT`). Never show raw minimal token units.
-- Service `fee` is only meaningful for `A2MCP` services. For `A2A`, display "free" or "inline (per-call pricing off-chain)" — the CLI-stored value is informational.
+- Service `fee` is **required for `A2MCP` and optional for `A2A`**. For `A2A` the user may either skip (skill sends `"fee": ""` — see `cli-reference.md` §1's `--service` note for why the key is always present) or supply a USDT reference price following the same format. When rendering an A2A service: if `fee` is non-empty, show it as `<N> USDT` like A2MCP; if empty / absent, show the short form `免费` / `free` in the user's language (Type=A2A on the same row already gives the off-chain-pricing context). For dedicated Fee rows in confirm/diff cards (where space allows), `（未填，链外议价）` / `(skipped — off-chain negotiation)` is also acceptable.
 - Evaluator stake amount is owned by `okx-agent-task` and may change; **never hardcode the amount** in this skill's copy. Just point users to the staking flow at `/skills/okx-agent-task/evaluator.md`.
 - EVM contract / agent addresses must be displayed all lowercase.
 - Scores are integers 0–100; display as "85 / 100".

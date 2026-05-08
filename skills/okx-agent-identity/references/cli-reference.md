@@ -23,7 +23,7 @@ Register a new ERC-8004 agent on XLayer.
 | `--role` | ✓ | `requester` \| `provider` \| `evaluator` | Aliases `1` / `buyer` / `requestor` → requester; `2` → provider; `3` → evaluator. Always emit canonical lowercase. |
 | `--name` | ✓ | string | User-visible display name. |
 | `--description` | ✓ | string | 1–2 sentence description. |
-| `--service` | ✓ for provider / ✗ for others | JSON array string | Each element: `name`, `servicedescription`, `servicetype` (`A2MCP` \| `A2A`), `fee` (A2MCP req'd; **USDT numeric string with up to 2 decimal places**, e.g. `1.22` / `10` / `0.5` / `0` — validated **skill-side**, the CLI itself only checks non-empty), `endpoint` (A2MCP req'd; A2A is discarded). |
+| `--service` | ✓ for provider / ✗ for others | JSON array string | Each element: `name`, `servicedescription`, `servicetype` (`A2MCP` \| `A2A`), `fee` (A2MCP req'd, **A2A optional** — when the user skips on A2A, send an empty string `"fee": ""`; the CLI's `models.rs:21` `fee: String` has no `skip_serializing_if`, so the key is always serialized regardless of intent. **USDT numeric string with up to 2 decimal places**, e.g. `1.22` / `10` / `0.5` / `0` — format validated **skill-side**, the CLI only enforces non-empty for A2MCP), `endpoint` (A2MCP req'd; A2A is discarded by `utils.rs::normalize_service`). |
 | `--picture` | ✗ | URL string | Avatar image URL (HTTPS). Omit to let backend assign a default. |
 
 > The CLI signs every `agent create` with the current wallet's selected XLayer address. There is **no** `--address` flag — do not try to override the signing address; switch wallets first via `okx-agentic-wallet` if a different one is needed.

@@ -60,7 +60,7 @@ Chinese:
   1. 名称
   2. 描述
   3. 类型（A2MCP 或 A2A）
-  4. 价格（仅 A2MCP）
+  4. 价格（A2MCP 必填，A2A 选填，单位 USDT）
   5. 接口地址（仅 A2MCP）
 加完一条后会问是否继续加下一条。可以加一条或多条。
 ```
@@ -71,7 +71,7 @@ Identity info captured. Next we'll add services for this provider. For each serv
   1. Name
   2. Description
   3. Type (A2MCP or A2A)
-  4. Fee (A2MCP only)
+  4. Fee in USDT (A2MCP required, A2A optional)
   5. Endpoint (A2MCP only)
 After each service we'll ask whether to add another. One or more services, your choice.
 ```
@@ -80,7 +80,7 @@ Preview is declarative, not imperative — see `role-playbook.md §STRICT`.
 
 ### Per-service Q&A
 
-For each service, ask the fields in this exact order. The reason: name + description apply to both types, so they come first; type is the branching switch; fee + endpoint are only needed for A2MCP.
+For each service, ask the fields in this exact order. The reason: name + description apply to both types, so they come first; type is the branching switch; fee is required for A2MCP and optional for A2A (when an A2A user skips, the wire payload still carries `"fee": ""` because `cli/src/commands/agent_commerce/identity/models.rs:21` declares `fee: String` without `skip_serializing_if`); endpoint is only needed for A2MCP.
 
 Questions inside each service iteration are labelled `Q1：` / `Q2：` / … / `Q5：` (reset per iteration). The preamble for service `[N]` ("接下来是服务[N]：" / "Now service [N]:") contextualizes which service is being collected. Q6 is the loop gate and uses the numbered-options pattern (not a "Q" label).
 
@@ -92,8 +92,8 @@ Chinese per-service Q&A (render `接下来是服务[N]：` as a one-line preambl
 |---|---|---|---|
 | Q1 | `Q1：这个服务叫什么名字？` + 4 segments (see `field-specs.md`) | non-empty, ≤ 64 chars | `name` |
 | Q2 | `Q2：详细介绍一下这项服务。` + 4 segments | non-empty, ≤ 500 chars | `servicedescription` |
-| Q3 | `Q3：这项服务是哪种类型？` + numbered-options (`SKILL.md §Choice prompts`):<br>&nbsp;&nbsp;`1. A2MCP — 标准 MCP 接口，按次付费`<br>&nbsp;&nbsp;`2. A2A — agent-to-agent 协议，链外议价`<br>`回复 1 或 2。`<br>收到数字后**在 skill 层映射** `1→A2MCP` / `2→A2A` 再下发；CLI 没有数字别名，直接传 `1` 会 bail `invalid servicetype`。用户直接写 `A2MCP` / `A2A` 也接受。 | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `servicetype` |
-| Q4 | if `A2MCP` → `Q4：每次调用收多少 USDT？（最多两位小数，例如 1.22 / 10 / 0.5 / 0）` + 4 segments ; if `A2A` → skip | number ≥ 0，最多两位小数（正则 `^\d+(\.\d{1,2})?$`） | `fee` |
+| Q3 | `Q3：这项服务是哪种类型？` + numbered-options (`SKILL.md §Choice prompts`):<br>&nbsp;&nbsp;`1. A2MCP — 标准 MCP 接口，按次付费`<br>&nbsp;&nbsp;`2. A2A — agent-to-agent 协议，价格默认链外议价（可选填上链参考价）`<br>`回复 1 或 2。`<br>收到数字后**在 skill 层映射** `1→A2MCP` / `2→A2A` 再下发；CLI 没有数字别名，直接传 `1` 会 bail `invalid servicetype`。用户直接写 `A2MCP` / `A2A` 也接受。 | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `servicetype` |
+| Q4 | if `A2MCP` → `Q4：每次调用收多少 USDT？（最多两位小数，例如 1.22 / 10 / 0.5 / 0）` + 4 segments ; if `A2A` → `Q4：这项服务的参考价是多少 USDT？（选填，最多两位小数；不填表示链外按次议价。直接回车 / 回复 "跳过" / "skip" 即可跳过）` + 4 segments | A2MCP: number ≥ 0，最多两位小数（正则 `^\d+(\.\d{1,2})?$`，非空必填）。A2A: 空 或 满足上述正则 | `fee` (A2A 跳过时仍会以 `"fee":""` 进入 wire payload——`models.rs:21` 的 `fee: String` 没有 `skip_serializing_if`。skill 渲染时按 `空 → 免费/free`；后端是否区分"空串 vs 缺失键"由产品 spec 决定，本地代码不可证实) |
 | Q5 | if `A2MCP` → `Q5：MCP 接口地址是什么？必须 https:// 开头。` + 4 segments ; if `A2A` → skip | starts with `https://` | `endpoint` (A2A 即使用户给了 CLI 也会清掉，见 `utils.rs::normalize_service`) |
 | Loop gate | Numbered-options prompt (no `Q` label, it's a flow switch):<br>`还要再加一项服务吗？`<br>&nbsp;&nbsp;`1. 再加一项`<br>&nbsp;&nbsp;`2. 不加了，到此为止`<br>`回复 1 或 2。` | reply 1 or 2 | — |
 
@@ -103,8 +103,8 @@ English per-service Q&A (render `Now service [N]:` as a one-line preamble before
 |---|---|---|---|
 | Q1 | `Q1: What's the name of this service?` + 4 segments | non-empty, ≤ 64 chars | `name` |
 | Q2 | `Q2: Describe this service.` + 4 segments | non-empty, ≤ 500 chars | `servicedescription` |
-| Q3 | `Q3: Which type is this service?` + numbered-options:<br>&nbsp;&nbsp;`1. A2MCP — standard MCP interface, pay-per-call`<br>&nbsp;&nbsp;`2. A2A — agent-to-agent protocol, off-chain pricing`<br>`Reply 1 or 2.`<br>Once user replies, **map in skill** `1→A2MCP` / `2→A2A` before invoking the CLI — the CLI has no numeric alias and sending raw `1` bails with `invalid servicetype`. Writing `A2MCP` / `A2A` directly is also accepted. | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `servicetype` |
-| Q4 | if A2MCP → `Q4: Price per call in USDT? (up to 2 decimal places, e.g., 1.22 / 10 / 0.5 / 0)` + 4 segments ; if A2A → skip | number ≥ 0, ≤ 2 decimal places (regex `^\d+(\.\d{1,2})?$`) | `fee` |
+| Q3 | `Q3: Which type is this service?` + numbered-options:<br>&nbsp;&nbsp;`1. A2MCP — standard MCP interface, pay-per-call`<br>&nbsp;&nbsp;`2. A2A — agent-to-agent protocol, off-chain pricing by default (optional on-chain reference fee)`<br>`Reply 1 or 2.`<br>Once user replies, **map in skill** `1→A2MCP` / `2→A2A` before invoking the CLI — the CLI has no numeric alias and sending raw `1` bails with `invalid servicetype`. Writing `A2MCP` / `A2A` directly is also accepted. | one of `A2MCP` / `A2A` (case-insensitive; skill emits uppercase) | `servicetype` |
+| Q4 | if A2MCP → `Q4: Price per call in USDT? (up to 2 decimal places, e.g., 1.22 / 10 / 0.5 / 0)` + 4 segments ; if A2A → `Q4: Reference price in USDT for this service? (optional, up to 2 decimal places; leave empty to signal off-chain per-call negotiation. Press enter / reply "skip" / "跳过" to skip)` + 4 segments | A2MCP: number ≥ 0, ≤ 2 decimal places (regex `^\d+(\.\d{1,2})?$`, must be non-empty). A2A: empty OR matches the same regex | `fee` (when A2A is left empty, the wire payload still carries `"fee": ""` — `models.rs:21` `fee: String` has no `skip_serializing_if`. The skill renders empty fee as `免费` / `free`; whether the backend distinguishes empty-string from absent-key is governed by the product spec and cannot be verified from this repo) |
 | Q5 | if A2MCP → `Q5: What's the MCP endpoint URL? Must start with https://.` + 4 segments ; if A2A → skip | starts with `https://` | `endpoint` (for A2A the CLI clears this even if supplied — `utils.rs::normalize_service`) |
 | Loop gate | Numbered-options prompt:<br>`Want to add another service?`<br>&nbsp;&nbsp;`1. Add another`<br>&nbsp;&nbsp;`2. No more, finish here`<br>`Reply 1 or 2.` | reply 1 or 2 | — |
 
@@ -144,8 +144,10 @@ Chinese variant:
 | 服务[1] 接口地址 | https://api.example.com/mcp |
 | 服务[2] 名称 | Yield Check |
 | 服务[2] 类型 | A2A |
+| 服务[2] 价格 | （未填，链外议价） |
 
 > 确认无误回复 "执行" 我就下发。
+> A2A 价格行：用户填了的话就照填的值显示（例如 `5 USDT`）；用户跳过的话显示`（未填，链外议价）`。
 
 English variant:
 
@@ -162,8 +164,10 @@ English variant:
 | Service [1] Endpoint | https://api.example.com/mcp |
 | Service [2] Name | Yield Check |
 | Service [2] Type | A2A |
+| Service [2] Fee | (skipped — off-chain negotiation) |
 
 > Reply "execute" to run it.
+> A2A Fee row: when the user supplied a value, show it verbatim (e.g., `5 USDT`); when they skipped, show `(skipped — off-chain negotiation)`.
 
 Service-field **labels in the card** are localized (see mapping table in `display-formats.md §Create/Update Diff`: `名称 / 描述 / 类型 / 价格 / 接口地址` ↔ `Name / Description / Type / Fee / Endpoint`). The **JSON keys actually sent to the CLI** (`name` / `servicedescription` / `servicetype` / `fee` / `endpoint`) are lowercase schema per `models.rs::AgentService` — they only show up in the raw bash command, which we render only if the user explicitly asks.
 
@@ -176,7 +180,7 @@ onchainos agent create \
   --role provider \
   --name "<name>" \
   --description "<description>" \
-  --service '[{"name":"…","servicedescription":"…","servicetype":"A2MCP","fee":"10","endpoint":"https://…"}, …]' \
+  --service '[{"name":"…","servicedescription":"…","servicetype":"A2MCP","fee":"10","endpoint":"https://…"}, {"name":"…","servicedescription":"…","servicetype":"A2A","fee":""}, {"name":"…","servicedescription":"…","servicetype":"A2A","fee":"5"}]' \
   [--picture "<url>"]
 ```
 

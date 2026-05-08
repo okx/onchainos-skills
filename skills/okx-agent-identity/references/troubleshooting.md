@@ -65,6 +65,7 @@ Some conditions the user might hit are enforced by the **skill itself** before t
 | "At least one field must change on update" | User submitted nothing / every field unchanged | Refuse to call `onchainos agent update`; render `没有需要提交的更改` and re-enter update Q&A. The CLI (`mutations.rs:156-228`) does NOT validate this. See `cli-reference.md` §2. |
 | "Query must be non-empty" | `agent search` with empty query | The CLI will bail with `missing required parameter: --query` (§1 above); the skill should catch it first and ask. |
 | Score outside 0-100 | `feedback-submit` with bad score | Skill validates before sending (see `feedback-guide.md` step 3). The backend also rejects (§2 above) as a safety net. |
+| A2A `fee` not matching `^\d+(\.\d{1,2})?$` | User answered Q4 on an A2A service with something other than empty / number-with-≤2-decimals (e.g. `5 USDT`, `约 10`, `-1`) | Reject with "A2A 价格选填，要么留空，要么填 USDT 数字最多两位小数（例如 `1.22` / `10` / `0.5`）" / "A2A fee is optional — leave it empty or supply a USDT number with up to 2 decimal places". Re-ask Q4 (A2A branch). The CLI (`utils.rs::normalize_service` A2A arm) does NOT validate the fee format on A2A — this is skill-side only. |
 
 ---
 
