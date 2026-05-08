@@ -46,6 +46,35 @@ struct ResolvedParams {
     domain_version: Option<String>,
 }
 
+/// Extract the payment amount from a single x402 accepts entry.
+/// Handles both string and numeric forms, falls back to `maxAmountRequired`.
+/// Returns the amount as a decimal string in token minimal units.
+pub fn extract_amount(entry: &serde_json::Value) -> Result<String> {
+    if let Some(s) = entry.get("amount").and_then(|v| v.as_str()) {
+        return Ok(s.to_string());
+    }
+    if let Some(n) = entry.get("amount").and_then(|v| v.as_u64()) {
+        return Ok(n.to_string());
+    }
+    if let Some(s) = entry.get("maxAmountRequired").and_then(|v| v.as_str()) {
+        return Ok(s.to_string());
+    }
+    if let Some(n) = entry.get("maxAmountRequired").and_then(|v| v.as_u64()) {
+        return Ok(n.to_string());
+    }
+    bail!("missing 'amount' or 'maxAmountRequired' in accepts entry");
+}
+
+/// Parse the amount from a raw x402 accepts JSON array string.
+/// Selects the best entry via the same priority as `x402-pay`
+/// ("exact" > "aggr_deferred" > first), then extracts the amount.
+pub fn parse_amount_from_accepts(accepts_json: &str) -> Result<String> {
+    let accepts: Vec<serde_json::Value> = serde_json::from_str(accepts_json)
+        .context("accepts must be a valid JSON array")?;
+    let (entry, _scheme) = select_accept(&accepts)?;
+    extract_amount(&entry)
+}
+
 /// Select the best entry from the accepts array.
 /// Priority: "exact" > "aggr_deferred" > first entry.
 fn select_accept(accepts: &[serde_json::Value]) -> Result<(serde_json::Value, Option<String>)> {
@@ -101,18 +130,7 @@ fn parse_payload_inner(raw: &str, first_only: bool) -> Result<ResolvedParams> {
         .as_str()
         .ok_or_else(|| anyhow!("missing 'network' in selected accepts entry"))?
         .to_string();
-    // Extract amount (handle both string and number), fall back to maxAmountRequired
-    let amount = if let Some(s) = entry.get("amount").and_then(|v| v.as_str()) {
-        s.to_string()
-    } else if let Some(n) = entry.get("amount").and_then(|v| v.as_u64()) {
-        n.to_string()
-    } else if let Some(s) = entry.get("maxAmountRequired").and_then(|v| v.as_str()) {
-        s.to_string()
-    } else if let Some(n) = entry.get("maxAmountRequired").and_then(|v| v.as_u64()) {
-        n.to_string()
-    } else {
-        bail!("missing 'amount' or 'maxAmountRequired' in accepts entry");
-    };
+    let amount = extract_amount(&entry)?;
     let pay_to = entry["payTo"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'payTo' in selected accepts entry"))?
@@ -802,6 +820,57 @@ mod tests {
         let p = parse_payload(json).unwrap();
         assert_eq!(p.domain_name.as_deref(), Some("USD Coin"));
         assert_eq!(p.domain_version.as_deref(), Some("2"));
+    }
+
+    // ── extract_amount / parse_amount_from_accepts ───────────────────
+
+    #[test]
+    fn extract_amount_string() {
+        let entry = serde_json::json!({"amount": "1000000"});
+        assert_eq!(extract_amount(&entry).unwrap(), "1000000");
+    }
+
+    #[test]
+    fn extract_amount_numeric() {
+        let entry = serde_json::json!({"amount": 1500});
+        assert_eq!(extract_amount(&entry).unwrap(), "1500");
+    }
+
+    #[test]
+    fn extract_amount_falls_back_to_max_amount_required() {
+        let entry = serde_json::json!({"maxAmountRequired": "999"});
+        assert_eq!(extract_amount(&entry).unwrap(), "999");
+    }
+
+    #[test]
+    fn extract_amount_missing_fields() {
+        let entry = serde_json::json!({"network": "eip155:1"});
+        assert!(extract_amount(&entry).is_err());
+    }
+
+    #[test]
+    fn parse_amount_from_accepts_prefers_exact() {
+        let json = r#"[
+            {"scheme":"aggr_deferred","amount":"200","network":"eip155:1","payTo":"0xA","asset":"0xB"},
+            {"scheme":"exact","amount":"100","network":"eip155:1","payTo":"0xA","asset":"0xB"}
+        ]"#;
+        assert_eq!(parse_amount_from_accepts(json).unwrap(), "100");
+    }
+
+    #[test]
+    fn parse_amount_from_accepts_max_amount_required() {
+        let json = r#"[{"scheme":"exact","maxAmountRequired":"777","network":"eip155:1","payTo":"0xA","asset":"0xB"}]"#;
+        assert_eq!(parse_amount_from_accepts(json).unwrap(), "777");
+    }
+
+    #[test]
+    fn parse_amount_from_accepts_invalid_json() {
+        assert!(parse_amount_from_accepts("not json").is_err());
+    }
+
+    #[test]
+    fn parse_amount_from_accepts_empty_array() {
+        assert!(parse_amount_from_accepts("[]").is_err());
     }
 
     #[test]
