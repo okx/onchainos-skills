@@ -209,6 +209,17 @@ pub enum Event {
     /// DisputeManager.VoterCooldownEntered 上链（被动进入冷却期；通知 evaluator）
     CooldownEntered,
 
+    // ── 网络/重启恢复事件(过场,不改 status) ─────────────────────────
+    /// 网络/电脑重启后,后端通知 agent 唤起本任务续跑剧本。
+    /// envelope 形态(per-task fan-out):
+    /// `{ agentId, message: { event: "wakeup_notify", source: "system",
+    ///                         jobId: <真 jobId>, jobStatus: <真实 status string>,
+    ///                         paymentMode, visibility, ... } }`
+    /// agent 收到后**不要**用 `wakeup_notify` 调 next-action;
+    /// 应该读 `message.jobStatus` 拿真实 status,以此为 `--jobStatus` 重调 next-action,
+    /// 拿当前 status 对应剧本续跑。详见 flow.rs WakeupNotify arm。
+    WakeupNotify,
+
     /// 后端发的、当前枚举不认识的事件名（也用来承载 user-instruction 伪 event：
     /// dispute_raise / agree_refund / dispute_evidence / close / set_public）
     Other(String),
@@ -258,6 +269,8 @@ impl Event {
             // evaluator 额外 lifecycle
             "stake_stopped"             => Event::StakeStopped,
             "cooldown_entered"          => Event::CooldownEntered,
+            // 网络/重启恢复
+            "wakeup_notify"             => Event::WakeupNotify,
             other                       => Event::Other(other.to_string()),
         }
     }
@@ -298,6 +311,7 @@ impl Event {
             Event::ReviewDeadlineWarn     => "review_deadline_warn",
             Event::StakeStopped           => "stake_stopped",
             Event::CooldownEntered        => "cooldown_entered",
+            Event::WakeupNotify           => "wakeup_notify",
             Event::Other(s)               => s.as_str(),
         }
     }
@@ -347,6 +361,9 @@ pub fn status_when_event(e: &Event) -> Status {
         | Event::UnstakeRequested | Event::UnstakeClaimed | Event::UnstakeCancelled
         | Event::RewardClaimed | Event::Slashed
         | Event::StakeStopped | Event::CooldownEntered                      => Status::Other("staking".to_string()),
+        // wake-up 是过场事件,真实 status 在 envelope.message.jobStatus 字段;
+        // 这里返回占位 status,agent 不应该用 wakeup_notify 走 next-action
+        Event::WakeupNotify                                                 => Status::Other("wakeup".to_string()),
         Event::Other(_)                                                     => Status::Other("unknown".to_string()),
     }
 }

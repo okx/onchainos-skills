@@ -749,6 +749,30 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【建议】忽略即可。买家已领取自动退款。\n"
         ),
 
+        Event::WakeupNotify => format!(
+            "【系统通知】wakeup_notify（网络/电脑重启后任务唤醒）\n\
+             【角色】卖家（Provider）\n\n\
+             ⚠️ 这是 wake-up 心跳事件,**不是**业务驱动事件。真实业务状态在 envelope.message.jobStatus 字段。\n\
+             你不应该用 `wakeup_notify` 作为 --jobStatus 跑剧本——本剧本只是引导。\n\n\
+             【你的下一步动作（严格顺序）】\n\n\
+             **Step 1 — 从 envelope 读真实 status**:\n\
+             从触发本 turn 的 wakeup_notify envelope 里读 `message.jobStatus` 字段（如 `accepted` / `submitted` / `refused` / `disputed` / `completed` / `rejected` 等真实 status string）。\n\n\
+             **Step 2 — 用真实 status 重调 next-action 拿当前剧本**:\n\
+             ```bash\n\
+             onchainos agent next-action --jobid {job_id} --jobStatus <message.jobStatus 字段值> --role provider --agentId {agent_id}\n\
+             ```\n\
+             按返回剧本走当前 status 应做动作。\n\n\
+             **Step 3 — 幂等性自查（避免重复 prompt 用户）**:\n\
+             如果 Step 2 拿到的剧本含 `xmtp_prompt_user` 步骤,**先**调:\n\
+             ```bash\n\
+             onchainos agent pending-decisions list --format json --agent-id {agent_id}\n\
+             ```\n\
+             - 该 jobId 已有 pending 条目（断线前已 prompt 过）→ **跳过本次 xmtp_prompt_user 重发**,改成 `xmtp_dispatch_user` 通知「任务 {job_id} 已恢复,请继续在 user session 处理决策」\n\
+             - 无 pending 条目 → 按 Step 2 剧本正常执行(包括 pending-decisions add + xmtp_prompt_user)\n\n\
+             ⚠️ **不要** xmtp_send 给买家「我重新上线了」之类的过场——对方不关心你的连接状态。\n\
+             ⚠️ Step 2 拿到的剧本如果是被动等待类（如 status=accepted 卖家正在做事 / status=submitted 等买家验收）,只输出「任务恢复」通知后结束 turn,不主动跑业务动作。\n"
+        ),
+
         Event::Other(ref other) => format!(
             "【未知状态】{other}\n\
              【建议】\n\

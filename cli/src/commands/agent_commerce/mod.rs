@@ -770,9 +770,12 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
 
     // user-instruction 伪 event 不是链事件，不直接对应 status——它们在某个 status 下被触发
     // 后才会上链改 status。校验它们的"对应 status"会误报，所以这里直接跳过。
+    // wakeup_notify 是网络/重启恢复事件,真实 status 在 envelope.message.jobStatus 字段;
+    // agent 应该用 message.jobStatus 重调 next-action,这里跳过校验让 WakeupNotify arm 输出引导剧本。
     const PSEUDO_EVENTS: &[&str] = &[
         "dispute_raise", "agree_refund", "dispute_evidence",
         "close", "set_public",
+        "wakeup_notify",
     ];
     if PSEUDO_EVENTS.contains(&job_status_or_event) {
         return None;

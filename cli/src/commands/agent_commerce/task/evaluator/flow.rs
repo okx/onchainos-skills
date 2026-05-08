@@ -292,6 +292,20 @@ pub fn generate_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> 
              【会话类型】⚠️ 子session。\n\n\
              【动作】无——输出一行日志 `> vote_revealed ignored.` 后结束。禁止 通知user session。\n".to_string(),
 
+        "wakeup_notify" => format!(
+            "【系统通知】wakeup_notify（网络/电脑重启后任务唤醒）\n\
+             【角色】仲裁者（Evaluator）\n\n\
+             ⚠️ 这是 wake-up 心跳事件,**不是**业务驱动事件。真实业务状态在 envelope.message.jobStatus 字段。\n\n\
+             【你的下一步动作】\n\n\
+             **Step 1 — 从 envelope 读 `message.jobStatus` 真实 status**(如 `disputed` / `completed` / `rejected`)。\n\n\
+             **Step 2 — 用真实 status 重调 next-action 拿当前剧本**:\n\
+             ```bash\n\
+             onchainos agent next-action --jobid {job_id} --jobStatus <message.jobStatus 字段值> --role evaluator --agentId <agentId>\n\
+             ```\n\n\
+             ⚠️ commit/reveal 时间窗紧迫——如剩余时间 < 1 min,优先按 Step 2 剧本立即上链(罚 stake 风险)。\n\
+             ⚠️ 仲裁内部事件(`vote_committed` / `vote_revealed` / `evaluator_selected`)wake-up 时**不要重复 commit/reveal**——CLI 后端会拒(`voter has already committed`),静默处理。\n"
+        ),
+
         other => format!(
             "【未知事件】{other}（jobId={job_id}）—— evaluator 不响应。\n\
              【动作】无——输出一行日志 `> unknown event={other} at jobId={job_id} ignored.` 后结束。\n\

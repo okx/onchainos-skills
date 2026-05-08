@@ -119,6 +119,12 @@ stateDiagram-v2
 | `cooldown_entered` | 进入冷却期的 evaluator | DisputeManager.VoterCooldownEntered 上链（被动） |
 | `reward_claimed` | 领取人（buyer / provider / evaluator） | claimRewards tx 回执 |
 
+### 3.5 网络/重启恢复事件(过场,不改 status)
+
+| event | 触发对象 | 含义 |
+|---|---|---|
+| `wakeup_notify` | 该 jobId 的角色方(per-task fan-out) | 网络/电脑重启后,后端通知 agent 唤起本任务续跑剧本。envelope 直接带 `message.jobStatus` 真实 status 字段;**agent 读 jobStatus 重调 next-action,不要用 wakeup_notify 当 jobStatus** —— 详见 SKILL.md `## Activation` "wakeup_notify 特殊路由" |
+
 ---
 
 ## 4. 各角色关心的事件（按 happy path）
