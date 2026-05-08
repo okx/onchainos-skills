@@ -48,6 +48,9 @@ pub struct X402Pricing {
     pub scheme: Option<String>,
     /// EIP-3009 超时秒数
     pub max_timeout_seconds: u64,
+    /// 从 accepts entry 直接提取的 decimals（优先于 token info 查询）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_decimals: Option<u8>,
 }
 
 /// x402 endpoint 验证结果
@@ -159,6 +162,13 @@ pub fn extract_x402_pricing(accepts: &[serde_json::Value]) -> Result<X402Pricing
         .to_string();
     let max_timeout = entry["maxTimeoutSeconds"].as_u64().unwrap_or(300);
 
+    // 优先从 extra.decimals 提取，兜底 entry.decimals
+    let extra_decimals = entry["extra"]["decimals"].as_u64()
+        .or_else(|| entry["decimals"].as_u64())
+        .or_else(|| entry["extra"]["decimals"].as_str().and_then(|s| s.parse().ok()))
+        .or_else(|| entry["decimals"].as_str().and_then(|s| s.parse().ok()))
+        .and_then(|n| u8::try_from(n).ok());
+
     Ok(X402Pricing {
         amount_minimal,
         asset,
@@ -166,6 +176,7 @@ pub fn extract_x402_pricing(accepts: &[serde_json::Value]) -> Result<X402Pricing
         network,
         scheme,
         max_timeout_seconds: max_timeout,
+        extra_decimals,
     })
 }
 
@@ -235,8 +246,10 @@ pub async fn resolve_token_by_asset(asset: &str, network: &str) -> Result<(Strin
         .map(|s| s.to_string())
         .or_else(|| chain_entry["chainIndex"].as_u64().map(|n| n.to_string()))
         .ok_or_else(|| anyhow!("链信息中缺少 chainIndex"))?;
+    eprintln!("[resolve_token_by_asset] chain mapping: eip155:{chain_id_str} → chainIndex={chain_index}");
 
     let exe = std::env::current_exe().context("无法获取可执行文件路径")?;
+    eprintln!("[resolve_token_by_asset] 执行: token info --address {asset} --chain {chain_index}");
     let output = tokio::process::Command::new(&exe)
         .args(["token", "info", "--address", asset, "--chain", &chain_index])
         .env("ONCHAINOS_OUTPUT", "json")
@@ -252,6 +265,11 @@ pub async fn resolve_token_by_asset(asset: &str, network: &str) -> Result<(Strin
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let sub_stderr = String::from_utf8_lossy(&output.stderr);
+    eprintln!("[resolve_token_by_asset] token info stdout: {stdout}");
+    if !sub_stderr.is_empty() {
+        eprintln!("[resolve_token_by_asset] token info stderr: {sub_stderr}");
+    }
     let parsed: serde_json::Value = serde_json::from_str(&stdout)
         .context("解析 token info 输出失败")?;
 
@@ -273,7 +291,7 @@ pub async fn resolve_token_by_asset(asset: &str, network: &str) -> Result<(Strin
                 let decimals = token["decimals"].as_str()
                     .and_then(|s| s.parse::<u8>().ok())
                     .or_else(|| token["decimals"].as_u64().and_then(|n| u8::try_from(n).ok()))
-                    .unwrap_or(18);
+                    .ok_or_else(|| anyhow!("token info 响应中 {} 缺少 decimals 字段", asset))?;
                 return Ok((symbol, decimals));
             }
         }
@@ -314,8 +332,37 @@ pub fn human_to_minimal(amount_human: &str, decimals: u8) -> Result<String> {
 }
 
 /// 丰富定价信息：解析代币符号、精度、人类可读金额
+///
+/// decimals 优先级：accepts entry 内联 > token info 查询
 pub async fn enrich_pricing(pricing: &X402Pricing) -> Result<X402PricingResolved> {
-    let (symbol, decimals) = resolve_token_by_asset(&pricing.asset, &pricing.network).await?;
+    eprintln!(
+        "[enrich_pricing] asset={}, network={}, amount_minimal={}, extra_decimals={:?}",
+        pricing.asset, pricing.network, pricing.amount_minimal, pricing.extra_decimals
+    );
+    let token_result = resolve_token_by_asset(&pricing.asset, &pricing.network).await;
+    let (symbol, decimals) = match (&token_result, pricing.extra_decimals) {
+        (Ok((sym, dec)), Some(extra_dec)) => {
+            if *dec != extra_dec {
+                eprintln!(
+                    "⚠ decimals 不一致: accepts entry={extra_dec}, token info={dec}，使用 accepts entry 值"
+                );
+            }
+            (sym.clone(), extra_dec)
+        }
+        (Ok((sym, dec)), None) => (sym.clone(), *dec),
+        (Err(e), Some(extra_dec)) => {
+            eprintln!("⚠ token info 查询失败: {e}，使用 accepts entry decimals={extra_dec}");
+            ("UNKNOWN".to_string(), extra_dec)
+        }
+        (Err(e), None) => {
+            bail!("无法确定代币精度: token info 查询失败 ({e})，且 accepts entry 未提供 decimals 字段");
+        }
+    };
+    eprintln!(
+        "[enrich_pricing] 结果: symbol={symbol}, decimals={decimals}, extra_decimals={:?}, token_info={:?}",
+        pricing.extra_decimals,
+        token_result.as_ref().map(|(_, d)| *d).ok()
+    );
     let amount_human = minimal_to_human(&pricing.amount_minimal, decimals)?;
 
     Ok(X402PricingResolved {
