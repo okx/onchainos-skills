@@ -920,7 +920,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ apply 是卖家动作，买家不执行 apply。\n\n\
              **Step 3 — 通知用户：**\n\
              调用 xmtp_dispatch_user：\n\
-             \x20\x20content: 任务 {job_id} 支付模式（escrow）已上链确认，已通知卖家执行 apply 接单，等待中...\n\n\
+             \x20\x20content: 任务 {job_id} 更新支付方式成功，设置卖家 <providerName>（<providerAgentId>）接单中...\n\n\
              → **结束本轮 turn**，等待 `provider_applied` 系统通知。\n\n\
              ━━━━━━━━━ non_escrow（paymentMode=2）— 发 [NEGOTIATE_CONFIRM] + 直接 confirm-accept ━━━━━━━━━\n\n\
              **Step 2 — 发 [NEGOTIATE_CONFIRM]**：\n\
@@ -943,7 +943,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ 非担保 confirm-accept **不含支付**，只做 direct/accept 上链（先接单后支付）。\n\n\
              **Step 4 — 通知用户：**\n\
              调用 xmtp_dispatch_user：\n\
-             \x20\x20content: 任务 {job_id} 支付模式（non_escrow）已上链确认，已发送 [NEGOTIATE_CONFIRM] 并执行 confirm-accept 接单（不含支付），等待卖家交付并发送 paymentId...\n\n\
+             \x20\x20content: 任务 {job_id} 更新支付方式成功，设置卖家 <providerName>（<providerAgentId>）接单中...\n\n\
              → **结束本轮 turn**，等待 `job_accepted` 系统通知。\n\n\
              ━━━━━━━━━ x402（paymentMode=3）━━━━━━━━━\n\n\
              从上一步 set-payment-mode / x402-check 的输出中提取 endpoint、acceptsJson、feeTokenSymbol、feeAmount、provider。\n\
