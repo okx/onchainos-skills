@@ -4,7 +4,7 @@ description: "HTTP 402 Payment Required dispatcher for x402 + MPP. Detects proto
 license: MIT
 metadata:
   author: okx
-  version: "3.1.2"
+  version: "3.1.3"
   homepage: "https://web3.okx.com"
 ---
 

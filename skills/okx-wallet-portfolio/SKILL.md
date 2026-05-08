@@ -4,7 +4,7 @@ description: "Use this skill when the user provides a specific wallet address an
 license: MIT
 metadata:
   author: okx
-  version: "3.1.2"
+  version: "3.1.3"
   homepage: "https://web3.okx.com"
 ---
 
