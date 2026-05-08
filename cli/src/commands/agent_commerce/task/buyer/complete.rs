@@ -80,8 +80,8 @@ pub async fn handle_complete(
 
         println!("✓ 任务验收通过（担保），状态 → complete，款项已释放");
         println!("  txHash: {tx_hash}");
-    } else {
-        // ── 非担保：a2a_pay 支付 → /direct/complete 单签 ────────
+    } else if payment_mode == PaymentMode::NonEscrow {
+        // ── 非担保：a2a_pay 支付 → /direct/complete 单签（先交付后支付）────────
         let pid = payment_id.ok_or_else(|| {
             anyhow::anyhow!(
                 "非担保 complete 需要 --payment-id（由卖家通过 XMTP 传递）\n  \
@@ -141,6 +141,21 @@ pub async fn handle_complete(
         ).await?;
 
         println!("✓ 非担保支付 + complete 完成，状态 → complete");
+        println!("  txHash: {tx_hash}");
+    } else {
+        // ── x402 等：/direct/complete 单签（资金已在 accept 阶段支付）────────
+        let resp = client.post_with_identity(
+            &client.endpoint(job_id, "direct/complete"),
+            &serde_json::json!({}),
+            &agent_id,
+        ).await?;
+
+        let tx_hash = signing::sign_uop_and_broadcast(
+            client, &resp["uopData"], &account_id, &address,
+            job_id, signing::extract_biz_type(&resp), &agent_id,
+        ).await?;
+
+        println!("✓ 任务 complete 完成（x402），状态 → complete");
         println!("  txHash: {tx_hash}");
     }
 

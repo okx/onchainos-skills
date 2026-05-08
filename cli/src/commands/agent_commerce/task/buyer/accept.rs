@@ -222,7 +222,6 @@ pub async fn handle_confirm_accept(
     job_id: &str,
     provider: &str,
     _payment_mode: Option<&str>,
-    payment_id: Option<&str>,
     token_symbol: Option<&str>,
     token_amount: Option<&str>,
 ) -> Result<()> {
@@ -261,7 +260,7 @@ pub async fn handle_confirm_accept(
         }
         PaymentMode::NonEscrow => {
             confirm_accept_non_escrow(
-                client, job_id, provider, payment_id, token_symbol, token_amount,
+                client, job_id, provider, token_symbol, token_amount,
                 &account_id, &address, &agent_id,
             ).await?;
         }
@@ -419,7 +418,6 @@ async fn confirm_accept_non_escrow(
     client: &mut TaskApiClient,
     job_id: &str,
     provider: &str,
-    _payment_id: Option<&str>,
     token_symbol: Option<&str>,
     token_amount: Option<&str>,
     account_id: &str,

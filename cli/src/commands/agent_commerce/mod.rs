@@ -108,8 +108,6 @@ pub enum AgentCommand {
         #[arg(long = "provider-agent-id")] provider_agent_id: String,
         /// 不指定时自动从任务详情 paymentType 获取
         #[arg(long = "payment-mode")] payment_mode: Option<String>,
-        /// a2a_pay payment_id（卖家通过 XMTP 传递，non_escrow 必填；escrow 不需要）
-        #[arg(long = "payment-id")] payment_id: Option<String>,
         /// 协商确定的支付代币符号（如 USDT），escrow 必填
         #[arg(long = "token-symbol")] token_symbol: Option<String>,
         /// 协商确定的支付金额（人类可读，如 "50"），escrow 必填
@@ -555,8 +553,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint } =>
             task::buyer::run_task(T::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint }, ctx).await,
 
-        AgentCommand::ConfirmAccept { job_id, provider_agent_id, payment_mode, payment_id, token_symbol, token_amount } =>
-            task::buyer::run_task(T::ConfirmAccept { job_id, provider_agent_id, payment_mode, payment_id, token_symbol, token_amount }, ctx).await,
+        AgentCommand::ConfirmAccept { job_id, provider_agent_id, payment_mode, token_symbol, token_amount } =>
+            task::buyer::run_task(T::ConfirmAccept { job_id, provider_agent_id, payment_mode, token_symbol, token_amount }, ctx).await,
 
         AgentCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>
             task::buyer::run_task(T::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount }, ctx).await,
