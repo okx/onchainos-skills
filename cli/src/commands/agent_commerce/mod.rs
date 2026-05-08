@@ -148,7 +148,18 @@ pub enum AgentCommand {
     },
 
     /// Client confirms task complete and releases payment
-    Complete { job_id: String },
+    Complete {
+        job_id: String,
+        /// a2a_pay payment_id（non_escrow 必填，卖家通过 XMTP 传递）
+        #[arg(long = "payment-id")]
+        payment_id: Option<String>,
+        /// 支付代币符号（non_escrow 需要）
+        #[arg(long = "token-symbol")]
+        token_symbol: Option<String>,
+        /// 支付金额（non_escrow 需要，人类可读格式）
+        #[arg(long = "token-amount")]
+        token_amount: Option<String>,
+    },
 
     /// Client rejects deliverable
     Reject {
@@ -556,8 +567,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::X402Check { endpoint } =>
             task::buyer::run_task(T::X402Check { endpoint }, ctx).await,
 
-        AgentCommand::Complete { job_id } =>
-            task::buyer::run_task(T::Complete { job_id }, ctx).await,
+        AgentCommand::Complete { job_id, payment_id, token_symbol, token_amount } =>
+            task::buyer::run_task(T::Complete { job_id, payment_id, token_symbol, token_amount }, ctx).await,
 
         AgentCommand::Reject { job_id, reason } =>
             task::buyer::run_task(T::Reject { job_id, reason }, ctx).await,

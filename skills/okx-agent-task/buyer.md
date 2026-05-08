@@ -98,7 +98,7 @@
 |---|---|---|---|
 | Description | `description` | Max **2000** chars | 整合原始对话。>2000 → 警告并建议精简 |
 | Title | `title` | **Max 30 chars** | Agent 总结。生成后**必须计数**，>30 立即缩短 |
-| Summary | `description_summary` | Max **200** chars | Agent 总结。>200 → 缩短 |
+| Summary | `description_summary` | Max **200** chars | Agent 总结，不超过 200 字符。生成后**必须计数**，>200 立即缩短到 200 以内 |
 | Payment token | `currency` | Only **USDT** / **USDG** | 仅接受明确拼写。模糊（"U"/"刀"等）→ 先问用户 |
 | Budget | `budget` | Numeric; decimal ≤5 位; max 10,000,000 | 提取数字。"U"/"u" 后缀只取数字，currency 留空 |
 | Max budget | `max_budget` | **Required**; ≥ budget; decimal ≤5 位; max 10,000,000 | 协商价格上限，卖家报价不得超过此值。**必须明确询问用户** |

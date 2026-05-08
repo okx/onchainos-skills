@@ -223,8 +223,12 @@ pub async fn handle_create(
         Some(t) => t,
         None => description.chars().take(30).collect(),
     };
-    let summary = description_summary
-        .unwrap_or_else(|| description.chars().take(200).collect());
+    const MAX_SUMMARY_CHARS: usize = 200;
+    let summary = match description_summary {
+        Some(s) if s.chars().count() > MAX_SUMMARY_CHARS => s.chars().take(MAX_SUMMARY_CHARS).collect(),
+        Some(s) => s,
+        None => description.chars().take(MAX_SUMMARY_CHARS).collect(),
+    };
 
     // ── Pre-check: 登录态有效性 ──────────────────────
     // 先在主进程校验一次 token，若已过期立即报错，
