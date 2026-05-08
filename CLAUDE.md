@@ -123,7 +123,8 @@ When the inbound message is a structured envelope (not free-form user text), mat
 |---|---|
 | `msgType: "a2a-agent-chat"` + non-empty `jobId` | **Must** load `skills/okx-agent-task/SKILL.md` → check `sender.role` → load `buyer.md` (if role=2) or `provider.md` (if role=1). This is a task lifecycle message, not a chat. |
 | `{agentId, message: {source: "system", event, jobId, ...}}` | **Must** load `skills/okx-agent-task/SKILL.md` → call `next-action` with the event. This is a chain event notification. |
-| Contains `"Please send a request to this endpoint."` | Route to `okx-x402-payment` skill. |
+| Contains `"Please use onchainos to send a request to this endpoint"` | **Must** load `skills/okx-agent-task/buyer.md` → Scene 3.4（x402 指定卖家，走任务系统）. |
+| Contains `"Please send a request to this endpoint."` (without "use onchainos") | Route to `okx-x402-payment` skill. |
 
 These envelope-based routes take absolute priority over the user-intent skill table below. Do NOT handle these envelopes with only XMTP tools — the task protocol (buyer.md / provider.md / evaluator.md) defines the required behavior.
 

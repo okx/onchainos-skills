@@ -337,7 +337,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              🛑 **顺序铁律（[CONFIRM] 是卖家 apply 的唯一触发器，必须 paymentMode 在链上就位后才发，否则卖家 apply 会基于错的支付状态）**：\n\n\
              **Step 6.1 — save-agreed 落盘**（无条件第一步）：\n\
              ```bash\n\
-             onchainos agent save-agreed {job_id} --token-symbol <协商币种> --token-amount <协商价格>\n\
+             onchainos agent save-agreed {job_id} --provider <当前协商的providerAgentId> --token-symbol <协商币种> --token-amount <协商价格>\n\
              ```\n\
              不保存会导致后续 confirm-accept 使用错误的币种/金额。\n\n\
              **Step 6.2 — 执行 setPaymentMode（无条件，不判断当前链上值）**：\n\
@@ -363,7 +363,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20C. 关闭任务 — 取消并退款\n\
              \x20\x20→ **结束本轮 turn**，等用户回复 relay 回来后继续执行。\n\n\
              【后续事件】\n\
-             - x402 → set-payment-mode → job_payment_mode_changed → x402 endpoint 交互 + direct-accept → job_accepted → complete\n\
+             - x402 → set-payment-mode → job_payment_mode_changed → task-402-pay（签名 + direct/accept + endpoint 重放）→ job_accepted → complete\n\
              - escrow → set-payment-mode → job_payment_mode_changed → 通知卖家 apply → provider_applied → confirm-accept → job_accepted\n\
              - non_escrow → set-payment-mode → job_payment_mode_changed → 通知卖家 create_payment_charge → 收到 paymentId → confirm-accept → job_accepted\n"
         ),
@@ -426,7 +426,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【后续事件】\n\
              - job_completed → 调用 xmtp_dispatch_user 通知用户支付完成，等待卖家提交交付物\n\n\
              ━━━━━━━━━ 分支 C：x402 ━━━━━━━━━\n\n\
-             ⚠️ 先检查上一步 `task-402-pay` 输出中的 `replaySuccess` 字段：\n\n\
+             ⚠️ 回顾本会话上一轮 turn 中 `task-402-pay` 命令的 JSON 输出（该命令在 job_payment_mode_changed 事件处理时执行），\n\
+             从中提取 `replaySuccess`、`replayBody`、`replayStatus` 等字段：\n\n\
              **C-分支 1：replaySuccess=true（重放成功，交付物已获取）**\n\n\
              **C-Step 1 — 执行 complete（单签）：**\n\
              ```bash\n\
@@ -469,8 +470,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              onchainos agent status {job_id}\n\
              ```\n\
              提取 `deliverableUrl`、`qualityStandards` 和 `paymentMode`（int：1=escrow, 2=non_escrow, 3=x402）。\n\n\
-             **Step 2 — 下载交付物文件（xmtp_file_download）：**\n\
-             从卖家在 sub session 中发送的交付物消息里提取加密元数据，调用 xmtp_file_download 工具：\n\
+             **Step 2 — 获取交付物内容（区分文字 vs 文件）：**\n\
+             先调 `session_status` 拿到本 sub session 的 sessionKey（后续 Step 3 复用，同 turn 不再重复调）。\n\
+             再调 `xmtp_get_conversation_history`（sessionKey = 上一步拿到的 sessionKey）拉取与卖家的聊天记录，\n\
+             找到卖家发送的**最近一条交付物消息**（通常是最后一条或倒数几条中包含文件元数据或交付说明的消息），判断交付物类型：\n\n\
+             ━━━ 情况 A：交付物是文件（消息包含 fileKey / digest / salt / nonce / secret 等加密元数据）━━━\n\n\
+             调用 xmtp_file_download 工具下载文件：\n\
              \x20\x20参数：\n\
              \x20\x20- fileKey：卖家上传时返回的 fileKey\n\
              \x20\x20- agentId：{agent_id}（买家 agentId）\n\
@@ -481,20 +486,37 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20- filename：（可选）保存文件名\n\
              ⚠️ 调用前输出：`[buyer-xmtp] xmtp_file_download: fileKey=<fileKey>, agentId={agent_id}`\n\
              ⚠️ 调用后输出：`[buyer-xmtp] xmtp_file_download result: localPath=<返回的本地路径>`\n\n\
-             下载成功后记录 localPath，**必须是完整绝对路径**（如 /Users/xxx/Downloads/task预发.png），\n\
+             下载成功后记录 localPath，**必须是完整绝对路径**（如 /Users/xxx/Downloads/task预发.png）。\n\
              ⚠️ **严禁只显示文件名**（如 cat-picture.png），用户无法定位文件。后续所有展示给用户的内容必须包含完整路径。\n\
-             如果下载失败 → 用 deliverableUrl 作为备用展示信息。\n\n\
+             如果下载失败 → 用 deliverableUrl 作为备用展示信息。\n\
+             ⚠️ 如果卖家消息除文件外还包含文字说明（如「这是交付物，请查收」），一并记录到 deliverableText。\n\
+             交付物展示变量：deliverableType=file, localPath=<完整路径>, deliverableText=<文字说明，无则留空>\n\n\
+             ━━━ 情况 B：交付物是纯文字（消息不含加密元数据，直接是文本内容）━━━\n\n\
+             直接提取卖家消息中的文字内容，**完整保留原文**，不要截断或概括。\n\
+             交付物展示变量：deliverableType=text, deliverableText=<卖家发送的完整文字内容>\n\n\
              **Step 3 — 按支付方式分流：**\n\n\
              ━━━━━━━━━ 分支 A：escrow（担保）— 需要用户验收决策 ━━━━━━━━━\n\n\
-             调用 xmtp_prompt_user 把交付物和验收决策请求推到 user session：\n\n\
-             先调 `session_status` 拿到本 sub session 的 sessionKey。\n\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}] \
+             调用 xmtp_prompt_user 把交付物和验收决策请求推到 user session（sessionKey 复用 Step 2 已获取的值）：\n\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <Step 2 拿到的 sessionKey>][job: {job_id}] \
              用户回复「验收通过」→ relay 回 sub session 执行 onchainos agent complete；\
              回复「拒绝，原因是...」→ relay 回 sub session 执行 onchainos agent reject。\
              禁止 user session agent 自己执行 task CLI。\n\
-             \x20\x20\x20\x20userContent:\n\
-             \x20\x20\x20\x20任务 {job_id} 卖家已提交交付物，已下载到本地。\n\
-             \x20\x20\x20\x20交付物本地路径：<localPath>（⚠️ 必须是完整绝对路径，如 /Users/xxx/Downloads/cat-picture.png，严禁只写文件名）\n\
+             \x20\x20\x20\x20userContent（按 deliverableType 分）：\n\n\
+             \x20\x20\x20\x20▸ deliverableType=file：\n\
+             \x20\x20\x20\x20任务 {job_id} 卖家已提交交付物（文件），已下载到本地。\n\
+             \x20\x20\x20\x20📁 交付物文件路径：<localPath>（⚠️ 必须是完整绝对路径，如 /Users/xxx/Downloads/task预发.png，严禁只写文件名）\n\
+             \x20\x20\x20\x20<如果 deliverableText 非空，追加：卖家说明：<deliverableText>>\n\
+             \x20\x20\x20\x20交付物地址：<deliverableUrl>\n\
+             \x20\x20\x20\x20验收标准：<qualityStandards>\n\
+             \x20\x20\x20\x20支付方式：escrow（担保）\n\
+             \x20\x20\x20\x20请选择：\n\
+             \x20\x20\x20\x201. 验收通过 → 回复「验收通过」\n\
+             \x20\x20\x20\x202. 拒绝 → 回复「拒绝，原因是<原因>」\n\n\
+             \x20\x20\x20\x20▸ deliverableType=text：\n\
+             \x20\x20\x20\x20任务 {job_id} 卖家已提交交付物（文字）。\n\
+             \x20\x20\x20\x20---交付物内容---\n\
+             \x20\x20\x20\x20<deliverableText 完整原文，不截断不概括>\n\
+             \x20\x20\x20\x20---交付物结束---\n\
              \x20\x20\x20\x20交付物地址：<deliverableUrl>\n\
              \x20\x20\x20\x20验收标准：<qualityStandards>\n\
              \x20\x20\x20\x20支付方式：escrow（担保）\n\
@@ -523,12 +545,23 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x203. POST /priapi/v1/aieco/task/{job_id}/refuse（body: {{\"signature\": \"<sig>\", \"reason\": \"<reason>\"}}）→ 获取 uopData\n\
              \x20\x204. 签名 uopHash → 广播上链\n\
              \x20\x20→ 任务状态变为 Refused，卖家 24h 内可发起仲裁。\n\n\
-             ━━━━━━━━━ 分支 B：non_escrow（非担保）— 通知用户交付物内容（不可拒绝） ━━━━━━━━━\n\n\
-             ⚠️ 非担保流程中资金已在 job_accepted 阶段支付，用户**不能拒绝交付物**，只需通知。\n\n\
-             **B-Step 1 — 调用 xmtp_dispatch_user 通知用户收到交付物：**\n\
+             ━━━━━━━━━ 分支 B：non_escrow / x402 — 通知用户交付物内容（不可拒绝） ━━━━━━━━━\n\n\
+             ⚠️ non_escrow 和 x402 流程中资金已在 job_accepted 阶段支付，用户**不能拒绝交付物**，只需通知。\n\
+             ⚠️ 通知时必须显示**实际支付方式名称**：paymentMode=2 显示「非担保支付（Non-Escrow）」，paymentMode=3 显示「x402 按需微支付」。**严禁**把 x402 说成 Non-Escrow。\n\n\
+             **B-Step 1 — 调用 xmtp_dispatch_user 通知用户收到交付物（按 deliverableType 分）：**\n\n\
+             \x20\x20▸ deliverableType=file：\n\
              \x20\x20content:\n\
-             \x20\x20[交付物已收到] 任务 {job_id} 卖家已提交交付物（非担保模式，资金已支付）。\n\
-             \x20\x20交付物本地路径：<localPath>（⚠️ 必须是完整绝对路径，如 /Users/xxx/Downloads/cat-picture.png，严禁只写文件名）\n\
+             \x20\x20[交付物已收到] 任务 {job_id} 卖家已提交交付物（<paymentMode=2 写「非担保模式」/ paymentMode=3 写「x402 模式」>，资金已支付）。\n\
+             \x20\x20📁 交付物文件路径：<localPath>（⚠️ 必须是完整绝对路径，如 /Users/xxx/Downloads/task预发.png，严禁只写文件名）\n\
+             \x20\x20<如果 deliverableText 非空，追加：卖家说明：<deliverableText>>\n\
+             \x20\x20交付物地址：<deliverableUrl>\n\
+             \x20\x20验收标准：<qualityStandards>\n\n\
+             \x20\x20▸ deliverableType=text：\n\
+             \x20\x20content:\n\
+             \x20\x20[交付物已收到] 任务 {job_id} 卖家已提交交付物（<paymentMode=2 写「非担保模式」/ paymentMode=3 写「x402 模式」>，资金已支付）。\n\
+             \x20\x20---交付物内容---\n\
+             \x20\x20<deliverableText 完整原文，不截断不概括>\n\
+             \x20\x20---交付物结束---\n\
              \x20\x20交付物地址：<deliverableUrl>\n\
              \x20\x20验收标准：<qualityStandards>\n\n\
              **B-Step 2 — 终态收尾（保留 sub session）：**\n\
@@ -537,7 +570,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              任务完整结束。\n\n\
              【后续事件】\n\
              - escrow: job_completed → 任务完成 / job_refused → 等待卖家决定仲裁或退款\n\
-             - non_escrow: 流程已结束\n"
+             - non_escrow / x402: 流程已结束\n"
         ),
 
         // ─── job_refused: 买家已拒绝，等待卖家决策 ─────────────────
@@ -632,17 +665,18 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
              ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复评分（0-100）和评价内容。」\n\
              任务完整结束。\n\n\
-             ━━━━━━━━━ 分支 B：non_escrow（非担保）— 支付链路完成，等待卖家交付 ━━━━━━━━━\n\n\
-             ⚠️ 非担保模式下 job_completed 意味着支付链路（accept + complete）已完成上链，\n\
-             但**卖家尚未提交交付物**。不要关闭 sub session，不要评价。\n\n\
+             ━━━━━━━━━ 分支 B：non_escrow / x402 — 支付链路完成，等待卖家交付 ━━━━━━━━━\n\n\
+             ⚠️ non_escrow / x402 模式下 job_completed 意味着支付链路（accept + complete）已完成上链，\n\
+             但**卖家尚未提交交付物**。不要关闭 sub session，不要评价。\n\
+             ⚠️ 通知时必须显示**实际支付方式名称**：paymentMode=2 显示「非担保支付（Non-Escrow）」，paymentMode=3 显示「x402 按需微支付」。**严禁**把 x402 说成 Non-Escrow。\n\n\
              **B-Step 1 — 调用 xmtp_dispatch_user 通知用户：**\n\
              content：\n\
              \x20\x20\x20\x20[支付完成] 任务 {job_id}（<title>）支付链路已完成上链。\n\
              \x20\x20\x20\x20  - 支出：<tokenAmount> <tokenSymbol>\n\
-             \x20\x20\x20\x20  - 支付方式：非担保（non_escrow）\n\
+             \x20\x20\x20\x20  - 支付方式：<paymentMode=2 写「非担保（non_escrow）」/ paymentMode=3 写「x402 按需微支付」>\n\
              \x20\x20\x20\x20等待卖家提交交付物。\n\n\
              【后续事件】\n\
-             - job_submitted → 卖家提交交付物，调用 xmtp_prompt_user（escrow）或 xmtp_dispatch_user（non_escrow）通知用户\n"
+             - job_submitted → 卖家提交交付物，调用 xmtp_prompt_user（escrow）或 xmtp_dispatch_user（non_escrow / x402）通知用户\n"
         ),
 
         // ─── 仲裁结束（DisputeSettled） ─────────────────────────────

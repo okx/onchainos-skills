@@ -5,6 +5,7 @@
 //! 状态文件：~/.onchainos/task/{jobId}/negotiate-state.json
 //! 清理时机：买家执行 confirm-accept 成功后
 
+use std::collections::HashMap;
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
@@ -50,6 +51,14 @@ pub struct ServiceInfo {
     pub fee_token: String,
 }
 
+/// 某个卖家的协商确定条款
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgreedTerms {
+    pub token_symbol: String,
+    pub token_amount: String,
+}
+
 /// 协商状态
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,12 +67,9 @@ pub struct NegotiateState {
     pub providers: Vec<ProviderInfo>,
     pub current_index: usize,
     pub created_at: String,
-    /// 协商确定的支付币种（如 "USDT"），由 save_agreed 写入
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agreed_token_symbol: Option<String>,
-    /// 协商确定的支付金额（人类可读，如 "0.1"），由 save_agreed 写入
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agreed_token_amount: Option<String>,
+    /// 按 provider_agent_id 存储各卖家的协商结果（支持同时与多个卖家协商）
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub agreed: HashMap<String, AgreedTerms>,
 }
 
 // ─── 路径 ────────────────────────────────────────────────────────────
@@ -90,8 +96,7 @@ pub fn save(job_id: &str, providers: Vec<ProviderInfo>) -> Result<()> {
         providers,
         current_index: 0,
         created_at: chrono::Utc::now().to_rfc3339(),
-        agreed_token_symbol: None,
-        agreed_token_amount: None,
+        agreed: HashMap::new(),
     };
 
     let json = serde_json::to_string_pretty(&state)?;
@@ -119,9 +124,14 @@ pub fn current(job_id: &str) -> Result<Option<ProviderInfo>> {
 /// 推进到下一个 provider 并返回；如果列表已遍历完返回 None
 pub fn next(job_id: &str) -> Result<Option<ProviderInfo>> {
     let mut state = load(job_id)?;
+
+    // 清除旧 provider 的协商结果（协商失败才会切换）
+    if let Some(old) = state.providers.get(state.current_index) {
+        state.agreed.remove(&old.provider_agent_id);
+    }
+
     state.current_index += 1;
 
-    // 保存新 index
     let json = serde_json::to_string_pretty(&state)?;
     std::fs::write(state_path(job_id)?, json)?;
 
@@ -129,11 +139,10 @@ pub fn next(job_id: &str) -> Result<Option<ProviderInfo>> {
 }
 
 /// 保存协商确定的支付参数（协商完成时由 Agent 调用）
-pub fn save_agreed(job_id: &str, token_symbol: &str, token_amount: &str) -> Result<()> {
+pub fn save_agreed(job_id: &str, provider_agent_id: &str, token_symbol: &str, token_amount: &str) -> Result<()> {
     let mut state = match load(job_id) {
         Ok(s) => s,
         Err(_) => {
-            // 没有 negotiate-state（可能是直接指定 provider 场景），创建最小状态
             let dir = state_dir(job_id)?;
             std::fs::create_dir_all(&dir)?;
             NegotiateState {
@@ -141,29 +150,36 @@ pub fn save_agreed(job_id: &str, token_symbol: &str, token_amount: &str) -> Resu
                 providers: vec![],
                 current_index: 0,
                 created_at: chrono::Utc::now().to_rfc3339(),
-                agreed_token_symbol: None,
-                agreed_token_amount: None,
+                agreed: HashMap::new(),
             }
         }
     };
-    state.agreed_token_symbol = Some(token_symbol.to_string());
-    state.agreed_token_amount = Some(token_amount.to_string());
+    state.agreed.insert(provider_agent_id.to_string(), AgreedTerms {
+        token_symbol: token_symbol.to_string(),
+        token_amount: token_amount.to_string(),
+    });
     let json = serde_json::to_string_pretty(&state)?;
     std::fs::write(state_path(job_id)?, json)?;
-    println!("✓ 协商结果已保存: {token_symbol} {token_amount} (job={job_id})");
+    println!("✓ 协商结果已保存: provider={provider_agent_id}, {token_symbol} {token_amount} (job={job_id})");
     Ok(())
 }
 
 /// 读取协商确定的支付参数，返回 (token_symbol, token_amount)
-pub fn load_agreed(job_id: &str) -> Result<Option<(String, String)>> {
-    let state = load(job_id);
-    match state {
-        Ok(s) => match (s.agreed_token_symbol, s.agreed_token_amount) {
-            (Some(sym), Some(amt)) => Ok(Some((sym, amt))),
-            _ => Ok(None),
+///
+/// provider_agent_id 为 Some 时精确匹配；为 None 时回退到 current_index 对应的 provider
+pub fn load_agreed(job_id: &str, provider_agent_id: Option<&str>) -> Result<Option<(String, String)>> {
+    let state = match load(job_id) {
+        Ok(s) => s,
+        Err(_) => return Ok(None),
+    };
+    let key = match provider_agent_id {
+        Some(id) => id.to_string(),
+        None => match state.providers.get(state.current_index) {
+            Some(p) => p.provider_agent_id.clone(),
+            None => return Ok(None),
         },
-        Err(_) => Ok(None),
-    }
+    };
+    Ok(state.agreed.get(&key).map(|t| (t.token_symbol.clone(), t.token_amount.clone())))
 }
 
 /// 清理状态文件（accept 成功后调用）

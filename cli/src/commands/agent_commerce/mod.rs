@@ -134,10 +134,17 @@ pub enum AgentCommand {
         #[arg(long)] accepts: String,
         /// x402 provider endpoint URL (for replay after signing)
         #[arg(long)] endpoint: String,
-        #[arg(long = "token-symbol")] token_symbol: Option<String>,
-        #[arg(long = "token-amount")] token_amount: Option<String>,
+        #[arg(long = "token-symbol")] token_symbol: String,
+        #[arg(long = "token-amount")] token_amount: String,
         /// Payer address (optional)
         #[arg(long)] from: Option<String>,
+    },
+
+    /// Validate an x402 endpoint and extract pricing info
+    #[command(name = "x402-check")]
+    X402Check {
+        /// x402 provider endpoint URL
+        #[arg(long)] endpoint: String,
     },
 
     /// Client confirms task complete and releases payment
@@ -249,6 +256,8 @@ pub enum AgentCommand {
     #[command(name = "save-agreed")]
     SaveAgreed {
         job_id: String,
+        #[arg(long)]
+        provider: String,
         #[arg(long = "token-symbol")]
         token_symbol: String,
         #[arg(long = "token-amount")]
@@ -537,6 +546,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from } =>
             task::buyer::run_task(T::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from }, ctx).await,
 
+        AgentCommand::X402Check { endpoint } =>
+            task::buyer::run_task(T::X402Check { endpoint }, ctx).await,
+
         AgentCommand::Complete { job_id } =>
             task::buyer::run_task(T::Complete { job_id }, ctx).await,
 
@@ -555,8 +567,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Pay { job_id, agent_id } =>
             task::buyer::run_task(T::Pay { job_id, agent_id }, ctx).await,
 
-        AgentCommand::SaveAgreed { job_id, token_symbol, token_amount, .. } =>
-            task::buyer::run_task(T::SaveAgreed { job_id, token_symbol, token_amount }, ctx).await,
+        AgentCommand::SaveAgreed { job_id, provider, token_symbol, token_amount } =>
+            task::buyer::run_task(T::SaveAgreed { job_id, provider, token_symbol, token_amount }, ctx).await,
 
         AgentCommand::ClaimAutoRefund { job_id } =>
             task::buyer::run_task(T::ClaimAutoRefund { job_id }, ctx).await,

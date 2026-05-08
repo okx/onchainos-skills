@@ -12,7 +12,7 @@
 //! 接口文档：https://okg-block.sg.larksuite.com/wiki/UumqwSyM5i1AuakBNLClJo9igIb
 //! 支付设计：https://okg-block.sg.larksuite.com/docx/CwWbd6eCOopgq6x6VwTlWEivgrc
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::util::{
@@ -26,14 +26,27 @@ use crate::commands::agent_commerce::task::signing;
 use crate::commands::payment::a2a_pay::{self, PayParams};
 use super::negotiate;
 
+/// 查询代币信息用于金额校验（容错：失败不阻断主流程）
+async fn resolve_token_for_validation(
+    client: &mut TaskApiClient,
+    symbol: &str,
+    agent_id: &str,
+) -> Result<(String, String, u8)> {
+    let (token_address, decimals) = fetch_token_detail(client, symbol, agent_id).await?;
+    let decimals_u8 = u8::try_from(decimals)
+        .map_err(|_| anyhow::anyhow!("decimals {decimals} 超出 u8 范围"))?;
+    Ok((symbol.to_string(), token_address, decimals_u8))
+}
+
 /// 从 CLI flag / 本地协商记录解析 (symbol, amount)
 fn resolve_symbol_and_amount(
     token_symbol: Option<&str>,
     token_amount: Option<&str>,
     job_id: &str,
+    provider_agent_id: Option<&str>,
     mode_label: &str,
 ) -> Result<(String, String)> {
-    let agreed = negotiate::load_agreed(job_id)?;
+    let agreed = negotiate::load_agreed(job_id, provider_agent_id)?;
     let symbol = match token_symbol {
         Some(s) => s.to_string(),
         None => match &agreed {
@@ -137,7 +150,7 @@ pub async fn handle_set_payment_mode(
         Some(resolved)
     } else {
         // escrow / non_escrow: 余额预检
-        let (sym, amt_str) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, "set-payment-mode")?;
+        let (sym, amt_str) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, None, "set-payment-mode")?;
         let amt: f64 = amt_str.parse().unwrap_or(0.0);
         if amt > 0.0 {
             common::ensure_sufficient_balance(amt, &sym).await?;
@@ -232,7 +245,7 @@ pub async fn handle_confirm_accept(
     }
 
     // 余额预检
-    let (sym, amt_str) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, payment_mode.as_str())?;
+    let (sym, amt_str) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, Some(provider), payment_mode.as_str())?;
     let amt: f64 = amt_str.parse().unwrap_or(0.0);
     if amt > 0.0 {
         common::ensure_sufficient_balance(amt, &sym).await?;
@@ -278,7 +291,7 @@ async fn confirm_accept_escrow(
     address: &str,
     agent_id: &str,
 ) -> Result<()> {
-    let (symbol, amount) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, "escrow")?;
+    let (symbol, amount) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, Some(provider), "escrow")?;
 
     // providerConfirmStatus 确认卖家已 apply 并获取 escrow 参数
     let confirm_resp = fetch_provider_confirm_status(
@@ -417,7 +430,7 @@ async fn confirm_accept_non_escrow(
         anyhow::anyhow!("非担保支付需要 --payment-id（由卖家通过 XMTP 传递）")
     })?;
 
-    let (symbol, amount) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, "non_escrow")?;
+    let (symbol, amount) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, Some(provider), "non_escrow")?;
     let provider_address = fetch_provider_address(provider).await?;
 
     // 查询 token 合约地址和精度
@@ -502,12 +515,47 @@ pub async fn handle_task_402_pay(
     provider: &str,
     accepts: &str,
     endpoint: &str,
-    token_symbol: Option<&str>,
-    token_amount: Option<&str>,
+    token_symbol: &str,
+    token_amount: &str,
     from: Option<&str>,
 ) -> Result<()> {
     use crate::commands::agentic_wallet::payment;
     use super::x402_flow;
+
+    let (account_id, address, agent_id) =
+        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
+
+    // Step 0: 金额校验 — 402 accepts 中的 amount 必须与业务协商金额一致
+    let accepts_vec: Vec<serde_json::Value> = serde_json::from_str(accepts)
+        .map_err(|e| anyhow::anyhow!("accepts JSON 解析失败: {e}"))?;
+    let pricing = x402_flow::extract_x402_pricing(&accepts_vec)?;
+
+    let (_, token_address, decimals) = match resolve_token_for_validation(client, token_symbol, &agent_id).await {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[task-402-pay] ⚠ 代币信息查询失败，跳过金额校验: {e}");
+            (String::new(), String::new(), 0u8)
+        }
+    };
+    if decimals > 0 {
+        if !token_address.is_empty()
+            && !pricing.asset.is_empty()
+            && token_address.to_lowercase() != pricing.asset.to_lowercase()
+        {
+            bail!(
+                "x402 代币不匹配: 402 返回 asset={}, 期望 tokenAddress={} ({})",
+                pricing.asset, token_address, token_symbol
+            );
+        }
+        if !x402_flow::amounts_match(&pricing.amount_minimal, token_amount, decimals) {
+            let expected_minimal = x402_flow::human_to_minimal(token_amount, decimals).unwrap_or_else(|_| "?".to_string());
+            bail!(
+                "x402 金额不一致: 402 返回 {} (最小单位), 期望 {} {} ≈ {} (最小单位)",
+                pricing.amount_minimal, token_amount, token_symbol, expected_minimal
+            );
+        }
+        eprintln!("[task-402-pay] ✓ 金额校验通过: {} {} ≈ {} (最小单位)", token_amount, token_symbol, pricing.amount_minimal);
+    }
 
     // Step 1: x402_pay 签名
     eprintln!("[task-402-pay] Step 1: x402_pay 签名");
@@ -517,13 +565,11 @@ pub async fn handle_task_402_pay(
 
     // Step 2: direct/accept 上链（容错：已 accepted 则跳过）
     eprintln!("[task-402-pay] Step 2: direct/accept 上链");
-    let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
 
     let body = serde_json::json!({
         "providerAgentId": provider,
-        "tokenSymbol": token_symbol.unwrap_or(""),
-        "tokenAmount": token_amount.unwrap_or(""),
+        "tokenSymbol": token_symbol,
+        "tokenAmount": token_amount,
     });
     let accept_result: Result<String> = async {
         let resp = client.post_with_identity(
@@ -551,7 +597,10 @@ pub async fn handle_task_402_pay(
 
     // Step 3: GET endpoint → 402 → 组装 header → 重放
     eprintln!("[task-402-pay] Step 3: GET endpoint {endpoint} → 获取完整 402 payload");
-    let http = reqwest::Client::new();
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .context("构建 HTTP client 失败")?;
 
     let initial_resp = http.get(endpoint).send().await
         .map_err(|e| anyhow::anyhow!("请求 x402 endpoint 失败: {e}"))?;
@@ -622,5 +671,56 @@ pub async fn handle_task_402_pay(
         "sessionCert": proof.session_cert,
         "txHash": tx_hash,
     }));
+    Ok(())
+}
+
+/// x402-check — 验证 endpoint 是否是合法的 x402 服务，提取定价信息
+pub async fn handle_x402_check(endpoint: &str) -> Result<()> {
+    use super::x402_flow;
+
+    let check = x402_flow::check_x402_endpoint(endpoint).await?;
+
+    if !check.valid {
+        crate::output::success(serde_json::json!({
+            "valid": false,
+            "statusCode": check.status_code,
+            "reason": if check.status_code == 402 {
+                "402 响应中 accepts 为空，不是合法的 x402 服务".to_string()
+            } else {
+                format!("endpoint 返回 HTTP {}（非 402），不是合法的 x402 服务", check.status_code)
+            },
+        }));
+        return Ok(());
+    }
+
+    let pricing = check.pricing.as_ref().unwrap();
+
+    // 尝试解析代币信息
+    let resolved = x402_flow::enrich_pricing(pricing).await;
+
+    let mut data = serde_json::json!({
+        "valid": true,
+        "amountMinimal": pricing.amount_minimal,
+        "asset": pricing.asset,
+        "payTo": pricing.pay_to,
+        "network": pricing.network,
+        "scheme": pricing.scheme,
+        "acceptsJson": check.accepts_json,
+        "x402Version": check.x402_version,
+    });
+
+    match resolved {
+        Ok(r) => {
+            data["amountHuman"] = serde_json::json!(r.amount_human);
+            data["tokenSymbol"] = serde_json::json!(r.token_symbol);
+            data["decimals"] = serde_json::json!(r.decimals);
+        }
+        Err(e) => {
+            eprintln!("⚠ 代币解析失败（不影响有效性）: {e}");
+            data["tokenResolveError"] = serde_json::json!(e.to_string());
+        }
+    }
+
+    crate::output::success(data);
     Ok(())
 }
