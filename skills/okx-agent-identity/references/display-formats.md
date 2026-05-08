@@ -25,29 +25,29 @@ Never use placeholder / filler phrases like `已上传` / `uploaded` / `已加�
 
 Chinese variant header:
 
-| Agent ID | 名字 | 角色 | 状态 | 信誉 |
+| Agent ID | 名字 | 角色 | 状态 | 评分 |
 |---|---|---|---|---|
-| #42 | DeFi Analyzer | 服务方 | 已上架 | 92 / 100 (18) |
+| #42 | DeFi Analyzer | 服务方 | 已上架 | ★ 4.6 (18) |
 | #58 | MyBuyer | 买家 | 已上架 | — |
-| #99 | Solidity Auditor | 验证者 | 已下架 | 88 / 100 (7) |
+| #99 | Solidity Auditor | 验证者 | 已下架 | ★ 4.4 (7) |
 
 > 共 N 个。查看详情请说 "详情 #42"。
 
 English variant header:
 
-| Agent ID | Name | Role | Status | Reputation |
+| Agent ID | Name | Role | Status | Rating |
 |---|---|---|---|---|
-| #42 | DeFi Analyzer | provider | active | 92 / 100 (18) |
+| #42 | DeFi Analyzer | provider | active | ★ 4.6 (18) |
 | #58 | MyBuyer | requester | active | — |
-| #99 | Solidity Auditor | evaluator | inactive | 88 / 100 (7) |
+| #99 | Solidity Auditor | evaluator | inactive | ★ 4.4 (7) |
 
 > Total N agents. Say "detail #42" to drill in.
 
 Rules:
 
-- Five columns, exactly. The first column header (`Agent ID`) stays in English because "Agent ID" reads as a technical token; the other four adapt to user language (`名字 / 角色 / 状态 / 信誉` ↔ `Name / Role / Status / Reputation`).
+- Five columns, exactly. The first column header (`Agent ID`) stays in English because "Agent ID" reads as a technical token; the other four adapt to user language (`名字 / 角色 / 状态 / 评分` ↔ `Name / Role / Status / Rating`).
 - Truncate `Name` to 20 chars with `…`.
-- `Reputation`: `<average> / 100 (<count>)`. If no feedback yet, render `—`.
+- `Rating`: `★ <average_stars> (<count>)`, where `<average_stars>` = `<backend_score> / 20` rendered to 1 decimal place via the canonical **round-half-up** rule (see `SKILL.md §Amount Display Rules` reputation block). Examples: `92 → 4.6`, `89 → 4.5`, `85 → 4.3`. If no feedback yet, render `—`. **Never expose the raw 0–100 score in user-visible cells** — `92 / 100` is forbidden.
 - `Status` and `Role` use the language-matching label: Chinese users see `已上架 / 已下架` and `买家 / 服务方 / 验证者`; English users see `active / inactive` and `requester / provider / evaluator`. Never render bilingual `active (已上架)`.
 - If total > page size, append the pagination footer in the user's language (`第 <page>/<total_pages> 页，继续翻页说 "下一页"。` ↔ `Page <page>/<total_pages> — say "next page" to continue.`).
 
@@ -69,7 +69,7 @@ Chinese variant:
 | 服务 | [1] TVL Query — A2MCP, 10 USDT, https://api.example.com/mcp |
 | 服务 | [2] Yield Check — A2A, 免费 |
 | 服务 | [3] Whale Alert — A2A, 5 USDT |
-| 信誉 | 92 / 100 (18 条评价) |
+| 评分 | ★ 4.6 (18 条评价) |
 | txHash | 0xabcdef…0f12 |
 
 English variant:
@@ -86,7 +86,7 @@ English variant:
 | Services | [1] TVL Query — A2MCP, 10 USDT, https://api.example.com/mcp |
 | Services | [2] Yield Check — A2A, free |
 | Services | [3] Whale Alert — A2A, 5 USDT |
-| Reputation | 92 / 100 (18 reviews) |
+| Rating | ★ 4.6 (18 reviews) |
 | txHash | 0xabcdef…0f12 |
 
 Rules:
@@ -282,24 +282,24 @@ Rules:
 
 Header line + one entry per review. Prose-style, not a table — the description can be multi-line.
 
-> Agent #42 — DeFi Analyzer (provider) · 92 / 100 (18 reviews)
+> Agent #42 — DeFi Analyzer (provider) · ★ 4.6 (18 reviews)
 
-**#1 · 2026-04-20 · creator #88 (requester MyBuyer) · 95 / 100**
+**#1 · 2026-04-20 · creator #88 (requester MyBuyer) · ★ 5**
 - task: `0xabc…03e8`
 - "交付及时，数据准确"
 
-**#2 · 2026-04-18 · creator #14 (requester CryptoPM) · 90 / 100**
+**#2 · 2026-04-18 · creator #14 (requester CryptoPM) · ★ 5**
 - "Good analysis, but response time could improve."
 
-**#3 · 2026-04-15 · creator #77 (provider DataCo) · 70 / 100**
+**#3 · 2026-04-15 · creator #77 (provider DataCo) · ★ 4**
 - (no comment)
 
 > 第 1/2 页，输入 "下一页" 继续。`--sort-by`: time_desc（按时间倒序）。
 
 Rules:
 
-- Header mirrors the detail card's reputation summary line.
-- Each review: `#<index> · <date> · creator #<id> (<role> <name>) · <score> / 100`.
+- Header mirrors the detail card's rating summary line — `★ <average_stars> (<count> reviews)`, where `<average_stars>` = `<backend_score> / 20` to 1 decimal (e.g. 92 → 4.6).
+- Each review: `#<index> · <date> · creator #<id> (<role> <name>) · ★ <stars>`, where `<stars>` = `round-half-up(<backend_score> / 20)` rendered as integer 0–5 (canonical rule pinned in `SKILL.md §Amount Display Rules` reputation block — `50 → 3`, `70 → 4`, `90 → 5`). Never render the raw 0–100 number.
 - Optional `task:` row shows the jobId in backticks; omit if absent.
 - Description in quotes; render `"(no comment)"` when missing.
 - Footer: page indicator + `--sort-by` used (`time_desc` or `score_desc`; see `cli-reference.md` §10 for the natural-language mapping). If `--sort-by` was omitted, render `未指定，后端默认`.
@@ -313,24 +313,24 @@ Chinese variant:
 > 搜索：`"找个口碑好的做链上数据分析的 provider"`
 > 过滤条件：`--feedback=口碑好`, `--agent-info=provider,链上数据分析`
 
-| Agent ID | 名字 | 角色 | 信誉 | 主打服务 |
+| Agent ID | 名字 | 角色 | 评分 | 主打服务 |
 |---|---|---|---|---|
-| #42 | DeFi Analyzer | 服务方 | 92 / 100 | TVL Query (A2MCP, 10 USDT) |
-| #77 | On-chain Insights | 服务方 | 89 / 100 | Chain Analytics (A2A, 免费) |
+| #42 | DeFi Analyzer | 服务方 | ★ 4.6 | TVL Query (A2MCP, 10 USDT) |
+| #77 | On-chain Insights | 服务方 | ★ 4.5 | Chain Analytics (A2A, 免费) |
 
-> 共 N 条。详情说 "详情 #42"；看服务说 "#42 有什么服务"；打分说 "给 #42 打 XX 分"。
+> 共 N 条。详情说 "详情 #42"；看服务说 "#42 有什么服务"；打分说 "给 #42 打 N 星"。
 
 English variant:
 
 > Search: `"find a highly-rated provider doing on-chain data analysis"`
 > Filters: `--feedback=highly-rated`, `--agent-info=provider,on-chain data analysis`
 
-| Agent ID | Name | Role | Reputation | Top service |
+| Agent ID | Name | Role | Rating | Top service |
 |---|---|---|---|---|
-| #42 | DeFi Analyzer | provider | 92 / 100 | TVL Query (A2MCP, 10 USDT) |
-| #77 | On-chain Insights | provider | 89 / 100 | Chain Analytics (A2A, free) |
+| #42 | DeFi Analyzer | provider | ★ 4.6 | TVL Query (A2MCP, 10 USDT) |
+| #77 | On-chain Insights | provider | ★ 4.5 | Chain Analytics (A2A, free) |
 
-> N results total. Say "detail #42" for details; "what services does #42 offer" for services; "rate #42 NN" to rate.
+> N results total. Say "detail #42" for details; "what services does #42 offer" for services; "rate #42 N stars" to rate.
 
 Rules:
 

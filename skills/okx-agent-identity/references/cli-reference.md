@@ -23,7 +23,7 @@ Register a new ERC-8004 agent on XLayer.
 | `--role` | ✓ | `requester` \| `provider` \| `evaluator` | Aliases `1` / `buyer` / `requestor` → requester; `2` → provider; `3` → evaluator. Always emit canonical lowercase. |
 | `--name` | ✓ | string | User-visible display name. |
 | `--description` | ✓ | string | 1–2 sentence description. |
-| `--service` | ✓ for provider / ✗ for others | JSON array string | Each element: `name`, `servicedescription`, `servicetype` (`A2MCP` \| `A2A`), `fee` (A2MCP req'd, **A2A optional** — when the user skips on A2A, send an empty string `"fee": ""`; the CLI's `models.rs:21` `fee: String` has no `skip_serializing_if`, so the key is always serialized regardless of intent. **USDT numeric string with up to 6 decimal places**, e.g. `1.234567` / `10` / `0.5` / `0` — format validated **skill-side**, the CLI only enforces non-empty for A2MCP), `endpoint` (A2MCP req'd; A2A is discarded by `utils.rs::normalize_service`). |
+| `--service` | ✓ for provider / ✗ for others | JSON array string | Each element: `name`, `servicedescription`, `servicetype` (`A2MCP` \| `A2A`), `fee` (A2MCP req'd, **A2A optional** — when the user skips on A2A, send an empty string `"fee": ""`; the CLI's `models.rs:21` `fee: String` has no `skip_serializing_if`, so the key is always serialized regardless of intent. **USDT numeric string with up to 6 decimal places**, e.g. `1.234567` / `10` / `0.5` / `0` — format validated **skill-side**, the CLI only enforces non-empty for A2MCP), `endpoint` (A2MCP req'd — **HTTPS URL ≤ 512 chars**, length validated **skill-side** with the same proactive-disclosure policy as `fee`: do NOT inline the 512 limit into Q5's prompt, surface it only when the user's input exceeds it (see `troubleshooting.md` §3); CLI does NOT enforce length. A2A: discarded by `utils.rs::normalize_service`). |
 | `--picture` | ✗ | URL string | Avatar image URL (HTTPS). Omit to let backend assign a default. |
 
 > The CLI signs every `agent create` with the current wallet's selected XLayer address. There is **no** `--address` flag — do not try to override the signing address; switch wallets first via `okx-agentic-wallet` if a different one is needed.
@@ -146,6 +146,8 @@ onchainos agent get --page 2 --page-size 50
   ]
 }
 ```
+
+`reputation.score` is the 0–100 wire average. The display layer renders it as `★ <score/20>` to 1 decimal place via the canonical **round-half-up** rule (see `SKILL.md §Amount Display Rules` reputation block — e.g. `92 → ★ 4.6`, `89 → ★ 4.5`, `85 → ★ 4.3`). Never echo the raw 0–100 number in user-visible cells.
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).
 
@@ -276,7 +278,7 @@ Rate another agent. The caller's `--creator-id` is their own agent; the backend 
 |---|---|---|---|
 | `--agent-id` | ✓ | integer | The **target** being rated. |
 | `--creator-id` | ✓ | integer | The caller's **own** agentId. |
-| `--score` | ✓ | integer 0–100 | |
+| `--score` | ✓ | integer 0–100 | **Wire format unchanged** — backend takes 0–100. The skill's user-facing UX is 0–5 stars; skill maps `0★→0`, `1★→20`, `2★→40`, `3★→60`, `4★→80`, `5★→100` before invoking the CLI. Never expose the raw 0–100 number to end users — see `feedback-guide.md` Step 3 and `display-formats.md` rating rules. |
 | `--description` | ✗ | string | 1–3 sentence rationale. |
 | `--task-id` | ✗ | string | Free-form; usually a `jobId` from `okx-agent-task`. |
 
@@ -292,7 +294,7 @@ onchainos agent feedback-submit \
   --task-id "0xabc...03e8"
 ```
 
-**Return:** `{ "agentId": 42, "creatorId": 88, "score": 85, "txHash": "0x…" }`.
+**Return:** `{ "agentId": 42, "creatorId": 88, "score": 85, "txHash": "0x…" }`. The wire `score` is 0–100; user-visible rendering converts to `★ <round-half-up(score/20)>` per the canonical rule in `SKILL.md §Amount Display Rules` (e.g. backend `85` → `★ 4`).
 
 **Errors:** see `troubleshooting.md` §2 (backend-originated, keyword match) and §3 (skill-side guards).
 
@@ -318,8 +320,8 @@ Users never type `time_desc`. The skill translates:
 | User phrasing | `--sort-by` value |
 |---|---|
 | "最新 / 最近 / latest / newest / 按时间排序" | `time_desc` |
-| "最高分 / 分数最高 / 高分优先 / highest score / top rated" | `score_desc` |
-| "最低分 / 分数最低 / lowest / 差评优先" | **Not supported.** Tell the user only `time_desc` / `score_desc` are accepted; offer `score_desc` then let them page to the tail, or leave `--sort-by` off entirely. |
+| "最高分 / 分数最高 / 高分优先 / 高星 / 好评优先 / 五星优先 / highest score / top rated / highest rating / most stars / best reviewed" | `score_desc` |
+| "最低分 / 分数最低 / lowest / 差评优先 / 一星 / 低星" | **Not supported.** Tell the user only `time_desc` / `score_desc` are accepted; offer `score_desc` then let them page to the tail, or leave `--sort-by` off entirely. |
 | Unclear / not mentioned | Omit `--sort-by` — backend picks a default. |
 
 If the user explicitly says a raw value outside the enum, the CLI will bail with `invalid value for --sort-by: <value>`; return to this mapping.
@@ -340,5 +342,7 @@ onchainos agent feedback-list --agent-id 42 --sort-by time_desc --page 1 --page-
   ]
 }
 ```
+
+`average` and per-item `score` are 0–100 wire format. The skill's display layer converts to stars per the canonical **round-half-up** rule pinned in `SKILL.md §Amount Display Rules` reputation block: aggregate `★ <average/20>` to 1 decimal (e.g. backend `89` → `★ 4.5`), per-item `★ <round-half-up(score/20)>` integer (e.g. backend `70` → `★ 4`, `50` → `★ 3`). Never render the raw 0–100 number in user-visible output.
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).
