@@ -204,7 +204,7 @@ Never call `update` without first showing the current state. Never invent fields
 
 `--creator-id` is the **user's own** agent id — it is not `--agent-id` (the target being rated). The user must have at least one registered agent (any role) before they can submit feedback. Full decision tree for 0 / 1 / many creator candidates → `references/feedback-guide.md`.
 
-Score range: integer 0–100. Validate before sending.
+Rating UX is **integer 0–5 stars**. Skill validates the user's input as `0..=5` and maps to the CLI's 0–100 wire format (`0★→0`, `1★→20`, `2★→40`, `3★→60`, `4★→80`, `5★→100`) before invoking `feedback-submit`. Never expose the raw 0–100 number to the user — see `references/feedback-guide.md` Step 3 for the input flow and `references/display-formats.md` for the rendering rules.
 
 `--task-id` is optional; currently accepts any free-form string (will align with `okx-agent-task` jobId format in a later release).
 
@@ -387,7 +387,7 @@ Always show the confirmation card (field table) before any on-chain write (`crea
 | `agent update` | Show new detail card. If user deactivated during update, suggest re-activate. |
 | `agent activate` | Render the visible line in the user's language (declarative — never a question, since the handoff does not wait for a reply; do **not** pre-announce the chat handoff). Chinese: "上架完成，可以 `agent search` 自检曝光。" / English: "Agent re-published. Run `agent search` to sanity-check exposure." Then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response — local agent list changed, OpenClaw side needs sync. Silent no-op outside an OpenClaw runtime. Skip the handoff if the user has declined chat setup earlier. See §Step 4 whitelist. |
 | `agent deactivate` | Render the visible line in the user's language (declarative — never a question; do **not** pre-announce the chat handoff). Chinese: "下架完成，客户端列表会隐藏；要恢复执行 `agent activate`。" / English: "Agent unpublished — it will be hidden from client lists; run `agent activate` to re-publish." Then **same-turn handoff** to `/skills/okx-agent-chat/after-agent-list-changed.md` (Execution Flow) inside the same response — local agent list changed, OpenClaw side needs sync. Silent no-op outside an OpenClaw runtime. Skip the handoff if the user has declined chat setup earlier. See §Step 4 whitelist. |
-| `agent feedback-submit` | "要看 #<target> 的最新评分分布？执行 `agent feedback-list --agent-id <target> --sort-by time_desc`（按时间倒序）。要按分数排序改用 `score_desc`。完整取值见 `references/cli-reference.md` §10。" |
+| `agent feedback-submit` | "要看 #<target> 的最新评价？执行 `agent feedback-list --agent-id <target> --sort-by time_desc`（按时间倒序）。要按评分高低排序改用 `score_desc`。完整取值见 `references/cli-reference.md` §10。" Never echo the raw 0–100 score in the suggestion line — say "评价 / 评分" / "rating / reviews" instead. |
 | `agent search` | "锁定目标后可以 `service-list` 查服务，或直接进入 `okx-agent-task` 发任务。" |
 | `agent get --agent-ids <ids>` | Single id → render `display-formats.md §2` + §Post-detail prompt. Multiple ids → render `display-formats.md §2.5` (one §2 card per agent separated by `---`, then a single multi-select Post-detail prompt). **Do NOT** auto-run `service-list` or `feedback-list` either way. |
 
@@ -397,7 +397,7 @@ Every user-facing string the skill renders must match the user's language. Detec
 
 ### What adapts to the user's language
 
-- Field labels in confirmation cards, detail cards, diff cards, search results, service lists, feedback lists (e.g. `角色 / 名字 / 描述 / 状态 / 地址 / 头像 / 服务 / 信誉 / 交易哈希` vs `Role / Name / Description / Status / Address / Picture / Services / Reputation / txHash`).
+- Field labels in confirmation cards, detail cards, diff cards, search results, service lists, feedback lists (e.g. `角色 / 名字 / 描述 / 状态 / 地址 / 头像 / 服务 / 评分 / 交易哈希` vs `Role / Name / Description / Status / Address / Picture / Services / Rating / txHash`).
 - Status words (`已上架 / 已下架` vs `active / inactive`; `买家 / 服务方 / 验证者` vs `requester / provider / evaluator` only when used as a human-readable label — the CLI value stays English, see below).
 - Field spec segments (`用途 / 可见范围 / 请注意 / 示例` vs `Purpose / Visibility / Please note / Example`).
 - Questions, confirmations, next-step suggestions, error translations, tips, examples.
@@ -409,7 +409,7 @@ Every user-facing string the skill renders must match the user's language. Detec
 - Enum / canonical values sent to the CLI: `requester` / `provider` / `evaluator` for `--role`; `time_desc` / `score_desc` for `--sort-by`; `A2MCP` / `A2A` for `servicetype` **inside the `--service` JSON payload of `agent create` / `agent update`**.
 - ⚠️ **`agent search` filter values are NOT canonical.** `--status`, `--service`, `--feedback`, `--agent-info` on `agent search` follow the verbatim rule in §Search and `references/search-query-split.md` §Rules.6 — they are user-original substrings, not canonical enums. Do NOT translate `已上架` → `active` or `MCP 服务` → `A2MCP` for search filters.
 - **JSON schema keys inside the actual `--service` payload** (`name`, `servicedescription`, `servicetype`, `fee`, `endpoint`) — these get sent to the CLI and `utils.rs::normalize_service` matches them exactly. **BUT their user-facing labels in cards and Q&A prompts ARE localized**: Chinese renders `服务[N] 名称 / 描述 / 类型 / 价格 / 接口地址`; English renders `Service [N] Name / Description / Type / Fee / Endpoint`. The schema key only shows up in the raw bash command (which we only render when the user explicitly asks).
-- On-chain primitives: addresses (`0x…`), transaction hashes, agent IDs (`#42`), score numbers (`85 / 100`), token symbols (`USDT`, `OKB`).
+- On-chain primitives: addresses (`0x…`), transaction hashes, agent IDs (`#42`), star counts (`★ 4` / `★ 4.6`), token symbols (`USDT`, `OKB`). The raw 0–100 score is NOT a user-facing primitive — keep it inside CLI / backend logs only.
 - Bash commands the user asked to see.
 
 ### Bilingual mapping tips
@@ -510,7 +510,13 @@ Phase-1 capture: `name=Alice`, `description=做 DeFi 分析`. **Fee=10 is discar
 - Service `fee` is **required for `A2MCP` and optional for `A2A`**. For `A2A` the user may either skip (skill sends `"fee": ""` — see `cli-reference.md` §1's `--service` note for why the key is always present) or supply a USDT reference price following the same format. When rendering an A2A service: if `fee` is non-empty, show it as `<N> USDT` like A2MCP; if empty / absent, show the short form `免费` / `free` in the user's language (Type=A2A on the same row already gives the off-chain-pricing context). For dedicated Fee rows in confirm/diff cards (where space allows), `（未填，链外议价）` / `(skipped — off-chain negotiation)` is also acceptable.
 - Evaluator stake amount is owned by `okx-agent-task` and may change; **never hardcode the amount** in this skill's copy. Just point users to the staking flow at `/skills/okx-agent-task/evaluator.md`.
 - EVM contract / agent addresses must be displayed all lowercase.
-- Scores are integers 0–100; display as "85 / 100".
+- **Reputation is rendered as 0–5 stars, never as the raw 0–100 score.** The wire format (CLI request, backend response) stays 0–100; the display layer converts.
+  - **Canonical rounding rule (single source of truth).** Every score-to-star integer conversion in this skill uses `round(score / 20)` with **round-half-up** tie-breaking (`50 → 3`, `70 → 4`, `90 → 5`). This applies to **both** display rendering (per-review `★ N`) **and** input normalization (legacy "85 分" → star bucket in `feedback-guide.md` Step 3). The two flows must agree — a backend score of `70` always corresponds to `★ 4` whether it was just submitted or pulled back via `agent feedback-list`. Aggregate rendering uses `score / 20` to 1 decimal **without** further rounding (e.g. `92 → 4.6`).
+  - **Aggregate** (`agent get` / `agent feedback-list` header / `agent search` row): `★ <average/20>` to 1 decimal place, e.g. backend `92` → `★ 4.6`. Append the count when known: `★ 4.6 (18)` / `★ 4.6 (18 评价)` / `★ 4.6 (18 reviews)`.
+  - **Single review** (per-entry in `agent feedback-list`): `★ <round-half-up(score/20)>` rendered as integer 0–5, e.g. backend `95` → `★ 5`, backend `70` → `★ 4`, backend `50` → `★ 3`.
+  - **No data**: render `—`.
+  - **User input collection** (`agent feedback-submit`): ask for integer 0–5 stars; map to `0/20/40/60/80/100` before invoking the CLI. If the user typed a legacy 0–100 number, normalize via the same `round-half-up(score/20)` rule above so input and display agree. See `references/feedback-guide.md` Step 3.
+  - The raw 0–100 number appears only in the maintainer bash block (which is hidden from end users by the "Do NOT show the bash command" rule on confirmation cards) and in CLI/backend logs. **Never** render `92 / 100` / `85 分` in any user-visible cell, post-success line, or error message.
 
 ## Edge Cases
 
