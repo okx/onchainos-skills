@@ -216,7 +216,7 @@ Chinese variant:
 | 头像 | <旧 URL> | **<新 URL>** |
 | 服务[1] 价格 | 10 USDT | (不变) |
 
-> 确认后回复 "执行" 我就下发。`--service` 整体替换，但本次只有 服务[1] 价格 以外的字段保持不变。
+> 确认后回复 "执行" 即可。`--service` 整体替换，但本次只有 服务[1] 价格 以外的字段保持不变。
 
 English variant:
 
@@ -235,7 +235,7 @@ Rules:
 - Changed rows: bold the new-value cell so the diff reads at a glance.
 - For each service entry, always list all sub-fields — easy to spot accidental drops. Localize the service-field labels per the mapping table above.
 - **Do NOT show the bash command in this card.** If the user asks "把命令给我看", render it as a separate code block afterward; otherwise omit.
-- End every diff card with exactly one line: `确认后回复 "执行" 我就下发。`
+- End every diff card with exactly one line: `确认后回复 "执行" 即可。` (English variant: `Reply "execute" to run.`). Do NOT use any verb like "下发" / "dispatch" / "send" in this footer — see `SKILL.md §Step 3 — No narration between confirmation and result` for why.
 
 ---
 

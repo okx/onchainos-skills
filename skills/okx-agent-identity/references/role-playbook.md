@@ -99,7 +99,7 @@ Chinese variant:
 | 头像 | 默认 — 若用户上传了图片或给了链接，这里**直接贴实际 URL**（例：`https://…/abc.png`），不要写 "已上传" / "uploaded" / 提到 "CDN" 等占位词。 |
 | 服务[1] 名称 / 描述 / 类型 / 价格 / 接口地址 | (仅 provider 有) |
 
-End with: `确认无误回复 "执行" 我就下发。`
+End with: `确认无误回复 "执行" 即可。` (English: `Reply "execute" to run.`). Do not promise a verb the model could echo as pre-execution chatter — see `SKILL.md §Step 3 — No narration between confirmation and result`.
 
 English variant:
 

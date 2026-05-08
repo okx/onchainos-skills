@@ -66,6 +66,7 @@ Some conditions the user might hit are enforced by the **skill itself** before t
 | "Query must be non-empty" | `agent search` with empty query | The CLI will bail with `missing required parameter: --query` (§1 above); the skill should catch it first and ask. |
 | Score outside 0-100 | `feedback-submit` with bad score | Skill validates before sending (see `feedback-guide.md` step 3). The backend also rejects (§2 above) as a safety net. |
 | A2A `fee` not matching the internal validation pattern (**internal pattern, never echoed to user**: `^\d+(\.\d{1,6})?$`) | User answered Q4 on an A2A service with something other than empty / number-with-≤6-decimals (e.g. `5 USDT`, `约 10`, `-1`) | Reject with "A2A 价格选填，要么留空，要么填 USDT 数字最多六位小数（例如 `1.234567` / `10` / `0.5`）" / "A2A fee is optional — leave it empty or supply a USDT number with up to 6 decimal places". Re-ask Q4 (A2A branch). The CLI (`utils.rs::normalize_service` A2A arm) does NOT validate the fee format on A2A — this is skill-side only. |
+| A2MCP `endpoint` exceeds the skill-side length limit (> 512 chars) — **the 512 limit is hidden from the Q5 prompt; mention it only here, after the user's input failed** | User Q5 reply on an A2MCP service is longer than 512 chars | Reject with "endpoint 最长 512 字符，这个超了，麻烦换个短点的 URL。" / "The endpoint URL must be at most 512 chars; this one exceeds it. Please use a shorter URL." Re-ask Q5 (A2MCP branch). The CLI (`utils.rs::normalize_service`) does NOT validate endpoint length — this is skill-side only. |
 
 ---
 

@@ -354,6 +354,8 @@ Use the role-specific Q&A chains (`role-requester.md` / `role-provider.md` / `ro
 
 Always show the confirmation card (field table) before any on-chain write (`create`, `update`, `activate`, `deactivate`, `feedback-submit`) and ask for explicit confirmation. Read-only commands (`get`, `search`, `service-list`, `feedback-list`) can run without confirmation. **Never show the bash command** in the confirmation card unless the user explicitly asks.
 
+**No narration between confirmation and result.** When the user replies `执行` / `execute` / `yes` / `好` / `confirm` / similar confirmation tokens, invoke the CLI tool **immediately in the same turn**. Do NOT emit any pre-execution acknowledgment text — including but not limited to `下发`, `下发中`, `好的，正在执行`, `执行中…`, `稍等`, `马上`, `OK`, `on it`, `executing…`, `submitting…`, `sending…`. The first user-visible content for that turn must be the post-CLI rendering (success → detail card per `display-formats.md §2`; failure → error card per `display-formats.md §7`). Confirmation-card footers must therefore be neutral instructions like `回复 "执行" 即可。` / `Reply "execute" to run.` — never promise a verb (`我就下发` / `I'll dispatch`) that the model is then tempted to echo back. Same rule applies to `update` diff cards and feedback-submit confirmations.
+
 ### Step 4: Report Result and Stop
 
 - Render the detail card (success) or the error card (failure), following `references/display-formats.md`.
