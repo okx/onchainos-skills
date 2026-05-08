@@ -31,12 +31,55 @@ pub struct X402PaymentProof {
     pub session_cert: Option<String>,
 }
 
-/// 完整 x402 流程结果
-#[derive(Debug)]
-pub struct X402FlowResult {
-    pub proof: X402PaymentProof,
-    pub response_body: serde_json::Value,
-    pub response_status: u16,
+// ─── x402 验证 & 定价 ──────────────────────────────────────────────────
+
+/// 从 accepts 数组中提取的原始定价信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct X402Pricing {
+    /// 最小单位金额（如 "1000000" = 1 USDC）
+    pub amount_minimal: String,
+    /// ERC-20 合约地址
+    pub asset: String,
+    /// 收款地址
+    pub pay_to: String,
+    /// CAIP-2 网络标识（如 "eip155:196"）
+    pub network: String,
+    /// x402 scheme（exact / aggr_deferred）
+    pub scheme: Option<String>,
+    /// EIP-3009 超时秒数
+    pub max_timeout_seconds: u64,
+    /// 从 accepts entry 直接提取的 decimals（优先于 token info 查询）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_decimals: Option<u8>,
+}
+
+/// x402 endpoint 验证结果
+#[derive(Debug, Clone, Serialize)]
+pub struct X402EndpointCheck {
+    /// 是否是合法的 x402 endpoint
+    pub valid: bool,
+    /// HTTP 状态码
+    pub status_code: u16,
+    /// 定价信息（valid=true 时有值）
+    pub pricing: Option<X402Pricing>,
+    /// 原始 accepts JSON（valid=true 时有值，用于后续传递给 task-402-pay --accepts）
+    pub accepts_json: Option<String>,
+    /// x402 协议版本
+    pub x402_version: Option<i64>,
+}
+
+/// 带人类可读信息的完整定价（代币已解析）
+#[derive(Debug, Clone, Serialize)]
+pub struct X402PricingResolved {
+    pub amount_minimal: String,
+    pub amount_human: f64,
+    pub token_symbol: String,
+    pub decimals: u8,
+    pub asset: String,
+    pub pay_to: String,
+    pub network: String,
+    pub scheme: Option<String>,
+    pub max_timeout_seconds: u64,
 }
 
 // ─── 402 解码 ────────────────────────────────────────────────────────────
@@ -83,43 +126,226 @@ pub fn decode_402_response(
     })
 }
 
-// ─── CLI 子进程签名 ──────────────────────────────────────────────────────
+// ─── scheme 选择 ────────────────────────────────────────────────────────
 
-/// 调用 `onchainos payment x402-pay --accepts '<json>'` 子进程完成签名
+/// 从 accepts 数组选择最佳 scheme entry
+/// 优先级: exact > aggr_deferred > first
+fn select_best_scheme(accepts: &[serde_json::Value]) -> Result<(serde_json::Value, Option<String>)> {
+    if accepts.is_empty() {
+        bail!("accepts array is empty");
+    }
+    if let Some(entry) = accepts.iter().find(|a| a["scheme"].as_str() == Some("exact")) {
+        return Ok((entry.clone(), Some("exact".to_string())));
+    }
+    if let Some(entry) = accepts.iter().find(|a| a["scheme"].as_str() == Some("aggr_deferred")) {
+        return Ok((entry.clone(), Some("aggr_deferred".to_string())));
+    }
+    Ok((accepts[0].clone(), accepts[0]["scheme"].as_str().map(|s| s.to_string())))
+}
+
+// ─── x402 定价提取 ──────────────────────────────────────────────────────
+
+/// 从 accepts 数组提取定价信息（选择最佳 scheme）
+pub fn extract_x402_pricing(accepts: &[serde_json::Value]) -> Result<X402Pricing> {
+    let (entry, scheme) = select_best_scheme(accepts)?;
+
+    let amount_minimal = crate::commands::agentic_wallet::payment::extract_amount(&entry)?;
+
+    let asset = entry["asset"].as_str()
+        .ok_or_else(|| anyhow!("accepts entry 缺少 asset"))?
+        .to_string();
+    let pay_to = entry["payTo"].as_str()
+        .ok_or_else(|| anyhow!("accepts entry 缺少 payTo"))?
+        .to_string();
+    let network = entry["network"].as_str()
+        .ok_or_else(|| anyhow!("accepts entry 缺少 network"))?
+        .to_string();
+    let max_timeout = entry["maxTimeoutSeconds"].as_u64().unwrap_or(300);
+
+    // 优先从 extra.decimals 提取，兜底 entry.decimals
+    let extra_decimals = entry["extra"]["decimals"].as_u64()
+        .or_else(|| entry["decimals"].as_u64())
+        .or_else(|| entry["extra"]["decimals"].as_str().and_then(|s| s.parse().ok()))
+        .or_else(|| entry["decimals"].as_str().and_then(|s| s.parse().ok()))
+        .and_then(|n| u8::try_from(n).ok());
+
+    Ok(X402Pricing {
+        amount_minimal,
+        asset,
+        pay_to,
+        network,
+        scheme,
+        max_timeout_seconds: max_timeout,
+        extra_decimals,
+    })
+}
+
+// ─── x402 endpoint 验证 ────────────────────────────────────────────────
+
+/// 判断 URL 是否是合法的 x402 endpoint
 ///
-/// 复用 agentic_wallet/payment.rs 中的 TEE 签名逻辑，避免重复代码。
-pub async fn sign_via_cli(
-    accepts_json: &str,
-    from: Option<&str>,
-) -> Result<X402PaymentProof> {
-    let exe = std::env::current_exe().context("无法获取当前可执行文件路径")?;
+/// GET endpoint → 402? → 解码 accepts → 提取定价
+pub async fn check_x402_endpoint(endpoint: &str) -> Result<X402EndpointCheck> {
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .context("构建 HTTP client 失败")?;
+    let resp = http.get(endpoint).send().await
+        .map_err(|e| anyhow!("请求 endpoint 失败: {e}"))?;
 
-    let mut cmd = tokio::process::Command::new(&exe);
-    cmd.arg("payment").arg("x402-pay").arg("--accepts").arg(accepts_json);
-    if let Some(addr) = from {
-        cmd.arg("--from").arg(addr);
-    }
-    // 以 JSON 模式输出
-    cmd.env("ONCHAINOS_OUTPUT", "json");
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-
-    let output = cmd.output().await.context("x402-pay 子进程启动失败")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("x402-pay 签名失败: {stderr}");
+    let status = resp.status().as_u16();
+    if status != 402 {
+        return Ok(X402EndpointCheck {
+            valid: false,
+            status_code: status,
+            pricing: None,
+            accepts_json: None,
+            x402_version: None,
+        });
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // CLI 输出可能包含 JSON 前的非 JSON 行，找到第一个 '{' 开始解析
-    let json_start = stdout.find('{').ok_or_else(|| {
-        anyhow!("x402-pay 输出中未找到 JSON: {stdout}")
-    })?;
-    let proof: X402PaymentProof =
-        serde_json::from_str(&stdout[json_start..]).context("解析 x402-pay 输出失败")?;
+    let headers = resp.headers().clone();
+    let body_text = resp.text().await
+        .map_err(|e| anyhow!("读取 402 响应体失败: {e}"))?;
 
-    Ok(proof)
+    let payload = decode_402_response(&headers, &body_text)?;
+    if payload.accepts.is_empty() {
+        return Ok(X402EndpointCheck {
+            valid: false,
+            status_code: 402,
+            pricing: None,
+            accepts_json: None,
+            x402_version: Some(payload.x402_version),
+        });
+    }
+
+    let pricing = extract_x402_pricing(&payload.accepts)?;
+    let accepts_json = serde_json::to_string(&payload.accepts)?;
+
+    Ok(X402EndpointCheck {
+        valid: true,
+        status_code: 402,
+        pricing: Some(pricing),
+        accepts_json: Some(accepts_json),
+        x402_version: Some(payload.x402_version),
+    })
+}
+
+// ─── 代币解析 & 金额转换 ──────────────────────────────────────────────
+
+/// 通过任务系统 tokenDetail 接口查询代币信息。
+/// 遍历支持的 token（USDT、USDG），匹配合约地址返回 (symbol, decimals)。
+pub async fn resolve_token_by_asset(asset: &str, _network: &str) -> Result<(String, u8)> {
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+
+    let client = TaskApiClient::new();
+    let asset_lower = asset.to_lowercase();
+
+    for symbol in &["USDT", "USDG"] {
+        let url = format!("{}/priapi/v1/aieco/task/tokenDetail?symbol={}", client.base_url, symbol);
+        eprintln!("[resolve_token_by_asset] GET {url}");
+
+        let resp = client.raw_http.get(&url).send().await
+            .context("tokenDetail 请求失败")?;
+        let body: serde_json::Value = resp.json().await
+            .context("tokenDetail 响应解析失败")?;
+
+        eprintln!("[resolve_token_by_asset] tokenDetail({symbol}) → {body}");
+
+        if body["code"].as_i64() != Some(0) {
+            continue;
+        }
+
+        let data = &body["data"];
+        let addr = data["address"].as_str().unwrap_or("");
+        if addr.to_lowercase() == asset_lower {
+            let decimals = data["decimals"].as_u64()
+                .or_else(|| data["decimals"].as_str().and_then(|s| s.parse().ok()))
+                .and_then(|n| u8::try_from(n).ok())
+                .ok_or_else(|| anyhow!("tokenDetail 响应中 {symbol} 缺少 decimals 字段"))?;
+            return Ok((symbol.to_string(), decimals));
+        }
+    }
+
+    bail!("asset {asset} 不在任务系统支持的代币列表中（已查 USDT、USDG）")
+}
+
+/// 将最小单位金额转为人类可读金额（纯字符串插入小数点，再 parse f64 用于展示）
+pub fn minimal_to_human(amount_minimal: &str, decimals: u8) -> Result<f64> {
+    let d = decimals as usize;
+    let s = amount_minimal.trim_start_matches('0');
+    let s = if s.is_empty() { "0" } else { s };
+    let human_str = if d == 0 {
+        s.to_string()
+    } else if s.len() <= d {
+        format!("0.{:0>width$}", s, width = d)
+    } else {
+        let split = s.len() - d;
+        format!("{}.{}", &s[..split], &s[split..])
+    };
+    human_str.parse::<f64>().context("minimal → f64 转换失败")
+}
+
+/// 将人类可读金额字符串转为最小单位字符串（复用 swap 的纯字符串实现，零精度损失）
+pub fn human_to_minimal(amount_human: &str, decimals: u8) -> Result<String> {
+    crate::commands::swap::readable_to_minimal_str(amount_human, decimals as u32)
+}
+
+/// 丰富定价信息：解析代币符号、精度、人类可读金额
+///
+/// decimals 优先级：accepts entry 内联 > token info 查询
+pub async fn enrich_pricing(pricing: &X402Pricing) -> Result<X402PricingResolved> {
+    eprintln!(
+        "[enrich_pricing] asset={}, network={}, amount_minimal={}, extra_decimals={:?}",
+        pricing.asset, pricing.network, pricing.amount_minimal, pricing.extra_decimals
+    );
+    let token_result = resolve_token_by_asset(&pricing.asset, &pricing.network).await;
+    let (symbol, decimals) = match (&token_result, pricing.extra_decimals) {
+        (Ok((sym, dec)), Some(extra_dec)) => {
+            if *dec != extra_dec {
+                eprintln!(
+                    "⚠ decimals 不一致: accepts entry={extra_dec}, token info={dec}，使用 accepts entry 值"
+                );
+            }
+            (sym.clone(), extra_dec)
+        }
+        (Ok((sym, dec)), None) => (sym.clone(), *dec),
+        (Err(e), Some(extra_dec)) => {
+            eprintln!("⚠ token info 查询失败: {e}，使用 accepts entry decimals={extra_dec}");
+            ("UNKNOWN".to_string(), extra_dec)
+        }
+        (Err(e), None) => {
+            bail!("无法确定代币精度: token info 查询失败 ({e})，且 accepts entry 未提供 decimals 字段");
+        }
+    };
+    eprintln!(
+        "[enrich_pricing] 结果: symbol={symbol}, decimals={decimals}, extra_decimals={:?}, token_info={:?}",
+        pricing.extra_decimals,
+        token_result.as_ref().map(|(_, d)| *d).ok()
+    );
+    let amount_human = minimal_to_human(&pricing.amount_minimal, decimals)?;
+
+    Ok(X402PricingResolved {
+        amount_minimal: pricing.amount_minimal.clone(),
+        amount_human,
+        token_symbol: symbol,
+        decimals,
+        asset: pricing.asset.clone(),
+        pay_to: pricing.pay_to.clone(),
+        network: pricing.network.clone(),
+        scheme: pricing.scheme.clone(),
+        max_timeout_seconds: pricing.max_timeout_seconds,
+    })
+}
+
+/// 比较 x402 金额（最小单位）与人类可读金额（字符串）是否一致
+///
+/// 允许 1 个最小单位的精度误差
+pub fn amounts_match(x402_amount_minimal: &str, fee_amount_human: &str, decimals: u8) -> bool {
+    let Ok(x402_raw) = x402_amount_minimal.parse::<u128>() else { return false };
+    let Ok(expected_str) = human_to_minimal(fee_amount_human, decimals) else { return false };
+    let Ok(expected_raw) = expected_str.parse::<u128>() else { return false };
+    x402_raw.abs_diff(expected_raw) <= 1
 }
 
 // ─── Header 组装 ─────────────────────────────────────────────────────────
@@ -202,73 +428,3 @@ pub fn assemble_payment_header(
     Ok((header_name.to_string(), header_value))
 }
 
-// ─── 完整流程 ────────────────────────────────────────────────────────────
-
-/// 完整 x402 支付流程：请求 endpoint → 处理 402 → 签名 → 组装 header → 重放
-///
-/// accept 后调用，复用 `onchainos payment x402-pay` CLI 完成签名。
-pub async fn x402_request_sign_replay(
-    http: &reqwest::Client,
-    endpoint: &str,
-    from: Option<&str>,
-) -> Result<X402FlowResult> {
-    // ── Step 1: 请求 endpoint ───────────────────────────────
-    println!("  x402: 请求 endpoint {endpoint} ...");
-    let resp = http
-        .get(endpoint)
-        .send()
-        .await
-        .map_err(|e| anyhow!("请求 x402 endpoint 失败: {e}"))?;
-
-    let status = resp.status().as_u16();
-    if status != 402 {
-        let body: serde_json::Value = resp.json().await.unwrap_or(json!({}));
-        bail!(
-            "endpoint 返回 HTTP {status}（期望 402）: {}",
-            serde_json::to_string_pretty(&body).unwrap_or_default()
-        );
-    }
-
-    let headers = resp.headers().clone();
-    let body_text = resp
-        .text()
-        .await
-        .map_err(|e| anyhow!("读取 402 响应体失败: {e}"))?;
-
-    // ── Step 2: 解码 402 ────────────────────────────────────
-    let payload = decode_402_response(&headers, &body_text)?;
-    if payload.accepts.is_empty() {
-        bail!("402 响应中 accepts 为空");
-    }
-    let accepts_json = serde_json::to_string(&payload.accepts)?;
-    println!("  x402: 已获取 402 payload（{} 个 accepts entry）", payload.accepts.len());
-
-    // ── Step 3: 签名（子进程调用 onchainos payment x402-pay）──
-    println!("  x402: 签名中 ...");
-    let proof = sign_via_cli(&accepts_json, from).await?;
-    println!("  x402: 签名完成");
-
-    // ── Step 4: 组装 header ─────────────────────────────────
-    let (header_name, header_value) = assemble_payment_header(&proof, &payload)?;
-
-    // ── Step 5: 重放 ────────────────────────────────────────
-    println!("  x402: 重放请求 ...");
-    let replay_resp = http
-        .get(endpoint)
-        .header(&header_name, &header_value)
-        .send()
-        .await
-        .map_err(|e| anyhow!("x402 重放请求失败: {e}"))?;
-
-    let replay_status = replay_resp.status().as_u16();
-    let response_body: serde_json::Value = replay_resp
-        .json()
-        .await
-        .unwrap_or_else(|_| json!({ "status": "ok" }));
-
-    Ok(X402FlowResult {
-        proof,
-        response_body,
-        response_status: replay_status,
-    })
-}

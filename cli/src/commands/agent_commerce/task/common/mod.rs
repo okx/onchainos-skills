@@ -462,7 +462,7 @@ async fn build_context(
             ec.get("acceptedExpireSec").and_then(|v| v.as_u64()),
         ) {
             out.push_str(&format!(
-                "- 有效期：接单截止 {}h，提交截止 {}h\n",
+                "- 有效期：接单时限 {}h，交付时限 {}h\n",
                 open_sec / 3600,
                 acc_sec / 3600
             ));

@@ -25,29 +25,29 @@ Never use placeholder / filler phrases like `已上传` / `uploaded` / `已加�
 
 Chinese variant header:
 
-| Agent ID | 名字 | 角色 | 状态 | 信誉 |
+| Agent ID | 名字 | 角色 | 状态 | 评分 |
 |---|---|---|---|---|
-| #42 | DeFi Analyzer | 服务方 | 已上架 | 92 / 100 (18) |
+| #42 | DeFi Analyzer | 服务方 | 已上架 | ★ 4.6 (18) |
 | #58 | MyBuyer | 买家 | 已上架 | — |
-| #99 | Solidity Auditor | 验证者 | 已下架 | 88 / 100 (7) |
+| #99 | Solidity Auditor | 验证者 | 已下架 | ★ 4.4 (7) |
 
 > 共 N 个。查看详情请说 "详情 #42"。
 
 English variant header:
 
-| Agent ID | Name | Role | Status | Reputation |
+| Agent ID | Name | Role | Status | Rating |
 |---|---|---|---|---|
-| #42 | DeFi Analyzer | provider | active | 92 / 100 (18) |
+| #42 | DeFi Analyzer | provider | active | ★ 4.6 (18) |
 | #58 | MyBuyer | requester | active | — |
-| #99 | Solidity Auditor | evaluator | inactive | 88 / 100 (7) |
+| #99 | Solidity Auditor | evaluator | inactive | ★ 4.4 (7) |
 
 > Total N agents. Say "detail #42" to drill in.
 
 Rules:
 
-- Five columns, exactly. The first column header (`Agent ID`) stays in English because "Agent ID" reads as a technical token; the other four adapt to user language (`名字 / 角色 / 状态 / 信誉` ↔ `Name / Role / Status / Reputation`).
+- Five columns, exactly. The first column header (`Agent ID`) stays in English because "Agent ID" reads as a technical token; the other four adapt to user language (`名字 / 角色 / 状态 / 评分` ↔ `Name / Role / Status / Rating`).
 - Truncate `Name` to 20 chars with `…`.
-- `Reputation`: `<average> / 100 (<count>)`. If no feedback yet, render `—`.
+- `Rating`: `★ <average_stars> (<count>)`, where `<average_stars>` = `<backend_score> / 20` rendered to 1 decimal place via the canonical **round-half-up** rule (see `SKILL.md §Amount Display Rules` reputation block). Examples: `92 → 4.6`, `89 → 4.5`, `85 → 4.3`. If no feedback yet, render `—`. **Never expose the raw 0–100 score in user-visible cells** — `92 / 100` is forbidden.
 - `Status` and `Role` use the language-matching label: Chinese users see `已上架 / 已下架` and `买家 / 服务方 / 验证者`; English users see `active / inactive` and `requester / provider / evaluator`. Never render bilingual `active (已上架)`.
 - If total > page size, append the pagination footer in the user's language (`第 <page>/<total_pages> 页，继续翻页说 "下一页"。` ↔ `Page <page>/<total_pages> — say "next page" to continue.`).
 
@@ -67,8 +67,9 @@ Chinese variant:
 | 描述 | 链上数据分析与收益模拟。 |
 | 头像 | <url> |
 | 服务 | [1] TVL Query — A2MCP, 10 USDT, https://api.example.com/mcp |
-| 服务 | [2] Yield Check — A2A, free |
-| 信誉 | 92 / 100 (18 条评价) |
+| 服务 | [2] Yield Check — A2A, 免费 |
+| 服务 | [3] Whale Alert — A2A, 5 USDT |
+| 评分 | ★ 4.6 (18 条评价) |
 | txHash | 0xabcdef…0f12 |
 
 English variant:
@@ -84,7 +85,8 @@ English variant:
 | Picture | <url> |
 | Services | [1] TVL Query — A2MCP, 10 USDT, https://api.example.com/mcp |
 | Services | [2] Yield Check — A2A, free |
-| Reputation | 92 / 100 (18 reviews) |
+| Services | [3] Whale Alert — A2A, 5 USDT |
+| Rating | ★ 4.6 (18 reviews) |
 | txHash | 0xabcdef…0f12 |
 
 Rules:
@@ -94,7 +96,7 @@ Rules:
 - Render `Role` using the user-language label: `买家 / 服务方 / 验证者` ↔ `requester / provider / evaluator`.
 - Render `Status` using the user-language label: `已上架 / 已下架` ↔ `active / inactive`.
 - Short-form address: `0x` + first 4 + `…` + last 4 hex chars. Show the full address only when the user asks.
-- Services — one row per service, numbered `[N]`, single-line format. The **name value** (what the user typed, e.g. `TVL Query`) stays verbatim; the following descriptor uses user-language words: Chinese `名称 — 类型, 价格, 接口地址`-style reading order, English `Name — Type, Fee, Endpoint`-style reading order. In practice the single-line format is `<ServiceName> — <Type>, <Fee or 免费/free>, <Endpoint>`. For A2A, use `免费（链外按次计价）` / `free (per-call pricing off-chain)` in the user's language instead of Fee and drop the Endpoint (CLI clears it anyway).
+- Services — one row per service, numbered `[N]`, single-line format. The **name value** (what the user typed, e.g. `TVL Query`) stays verbatim; the following descriptor uses user-language words: Chinese `名称 — 类型, 价格, 接口地址`-style reading order, English `Name — Type, Fee, Endpoint`-style reading order. In practice the single-line format is `<ServiceName> — <Type>, <Fee or 免费/free>, <Endpoint>`. **A2A fee handling**: if the backend returned a non-empty `fee` for the A2A service, render it as `<N> USDT` exactly like A2MCP; if `fee` is absent / empty, render the short form `免费` / `free` (Type=A2A in the same row already gives readers the off-chain-pricing context, so no parenthetical is needed in this compact row). The Endpoint cell is always dropped for A2A regardless (CLI clears it).
 - `txHash` row present only when the command produced a tx (absent on read-only commands).
 - `Agent ID` row: follow the `#<id>` placeholder rule at the top of this file — omit the row entirely if the id is not available yet (e.g. fresh `create` response), don't render `#` alone.
 - **Single source of data — no chain calls.** All rows above (including Services and Reputation aggregate) come from the **one** `agent get --agent-ids <id>` response (`items[0]` — see `cli-reference.md §3` return schema: `{ agentId, name, role, status, description, picture, address, services: [...], reputation: { score, count } }`). Do **NOT** chain `agent service-list --agent-id <id>` to "populate" the Services rows — they're already in the response. Do **NOT** chain `agent feedback-list --agent-id <id>` to "populate" the Reputation row — the aggregate `{ score, count }` is already there; individual review entries belong to a separate, user-triggered request (see §Post-detail prompt below).
@@ -214,7 +216,7 @@ Chinese variant:
 | 头像 | <旧 URL> | **<新 URL>** |
 | 服务[1] 价格 | 10 USDT | (不变) |
 
-> 确认后回复 "执行" 我就下发。`--service` 整体替换，但本次只有 服务[1] 价格 以外的字段保持不变。
+> 确认后回复 "执行" 即可。`--service` 整体替换，但本次只有 服务[1] 价格 以外的字段保持不变。
 
 English variant:
 
@@ -233,7 +235,7 @@ Rules:
 - Changed rows: bold the new-value cell so the diff reads at a glance.
 - For each service entry, always list all sub-fields — easy to spot accidental drops. Localize the service-field labels per the mapping table above.
 - **Do NOT show the bash command in this card.** If the user asks "把命令给我看", render it as a separate code block afterward; otherwise omit.
-- End every diff card with exactly one line: `确认后回复 "执行" 我就下发。`
+- End every diff card with exactly one line: `确认后回复 "执行" 即可。` (English variant: `Reply "execute" to run.`). Do NOT use any verb like "下发" / "dispatch" / "send" in this footer — see `SKILL.md §Step 3 — No narration between confirmation and result` for why.
 
 ---
 
@@ -249,6 +251,7 @@ Chinese variant:
 |---|---|---|---|---|---|
 | 1 | TVL Query | A2MCP | 10 USDT | `https://api.example.com/mcp` | 按链查询协议 TVL。 |
 | 2 | Yield Check | A2A | 免费 | — | 比较 Aave / Lido / Compound 的收益。 |
+| 3 | Whale Alert | A2A | 5 USDT | — | 大额转账实时推送（A2A 选填了上链参考价）。 |
 
 English variant:
 
@@ -258,13 +261,14 @@ English variant:
 |---|---|---|---|---|---|
 | 1 | TVL Query | A2MCP | 10 USDT | `https://api.example.com/mcp` | Query protocol TVL by chain. |
 | 2 | Yield Check | A2A | free | — | Compare yields across Aave / Lido / Compound. |
+| 3 | Whale Alert | A2A | 5 USDT | — | Real-time large-transfer alerts (A2A with on-chain reference fee supplied). |
 
 Rules:
 
 - **Pipe table, not bullet blocks.** Matches the top-level "every table is a Markdown pipe table" convention (line 5 of this file). The previous bullet-style block format was wrong — switched to pipe table for consistency with §1 / §2 / §6.
 - Number services in the `#` column starting at `1` (no `[N]` brackets — the column header already tells the reader it's an index).
 - Header line before the table: `Agent #<id> — <name> (<role>) 的服务：` / `Agent #<id> — <name> (<role>) services:` as a blockquote. Role label follows `SKILL.md §Language Matching`.
-- **A2A row**: render `免费` / `free` in the `价格` / `Fee` column, and `—` (em dash) in the `Endpoint` column to keep column alignment. The CLI clears A2A endpoints regardless, so there's no real value to show.
+- **A2A row**: in the `价格` / `Fee` column, render `<N> USDT` when the backend returned a non-empty `fee` for the A2A service, otherwise render `免费` / `free`. In the `Endpoint` column always render `—` (em dash) — the CLI clears A2A endpoints regardless.
 - **Values are rendered verbatim from the backend.** If the backend returns non-standard values (e.g. `serviceType: "query"` instead of `A2MCP` / `A2A`; `Fee` in `ETH` rather than `USDT`; endpoints in odd shapes), show them as-is in the table — do not sanitize or normalize to expected enums. Append a footnote blockquote below the table when you notice the shape diverges from the local `--service` schema:
   > 注：此结果字段结构与本地 provider schema 不完全一致（例如 `serviceType=query`、按 ETH 计价），更像后端 demo 或示例数据 — 接入前请人工核验 endpoint 与结算条款。
   > Note: the field shape here diverges from the local `--service` schema (e.g. `serviceType=query`, priced in ETH). This looks like backend demo / example data — verify the endpoint and settlement terms manually before integrating.
@@ -278,24 +282,24 @@ Rules:
 
 Header line + one entry per review. Prose-style, not a table — the description can be multi-line.
 
-> Agent #42 — DeFi Analyzer (provider) · 92 / 100 (18 reviews)
+> Agent #42 — DeFi Analyzer (provider) · ★ 4.6 (18 reviews)
 
-**#1 · 2026-04-20 · creator #88 (requester MyBuyer) · 95 / 100**
+**#1 · 2026-04-20 · creator #88 (requester MyBuyer) · ★ 5**
 - task: `0xabc…03e8`
 - "交付及时，数据准确"
 
-**#2 · 2026-04-18 · creator #14 (requester CryptoPM) · 90 / 100**
+**#2 · 2026-04-18 · creator #14 (requester CryptoPM) · ★ 5**
 - "Good analysis, but response time could improve."
 
-**#3 · 2026-04-15 · creator #77 (provider DataCo) · 70 / 100**
+**#3 · 2026-04-15 · creator #77 (provider DataCo) · ★ 4**
 - (no comment)
 
 > 第 1/2 页，输入 "下一页" 继续。`--sort-by`: time_desc（按时间倒序）。
 
 Rules:
 
-- Header mirrors the detail card's reputation summary line.
-- Each review: `#<index> · <date> · creator #<id> (<role> <name>) · <score> / 100`.
+- Header mirrors the detail card's rating summary line — `★ <average_stars> (<count> reviews)`, where `<average_stars>` = `<backend_score> / 20` to 1 decimal (e.g. 92 → 4.6).
+- Each review: `#<index> · <date> · creator #<id> (<role> <name>) · ★ <stars>`, where `<stars>` = `round-half-up(<backend_score> / 20)` rendered as integer 0–5 (canonical rule pinned in `SKILL.md §Amount Display Rules` reputation block — `50 → 3`, `70 → 4`, `90 → 5`). Never render the raw 0–100 number.
 - Optional `task:` row shows the jobId in backticks; omit if absent.
 - Description in quotes; render `"(no comment)"` when missing.
 - Footer: page indicator + `--sort-by` used (`time_desc` or `score_desc`; see `cli-reference.md` §10 for the natural-language mapping). If `--sort-by` was omitted, render `未指定，后端默认`.
@@ -309,24 +313,24 @@ Chinese variant:
 > 搜索：`"找个口碑好的做链上数据分析的 provider"`
 > 过滤条件：`--feedback=口碑好`, `--agent-info=provider,链上数据分析`
 
-| Agent ID | 名字 | 角色 | 信誉 | 主打服务 |
+| Agent ID | 名字 | 角色 | 评分 | 主打服务 |
 |---|---|---|---|---|
-| #42 | DeFi Analyzer | 服务方 | 92 / 100 | TVL Query (A2MCP, 10 USDT) |
-| #77 | On-chain Insights | 服务方 | 89 / 100 | Chain Analytics (A2A, 免费) |
+| #42 | DeFi Analyzer | 服务方 | ★ 4.6 | TVL Query (A2MCP, 10 USDT) |
+| #77 | On-chain Insights | 服务方 | ★ 4.5 | Chain Analytics (A2A, 免费) |
 
-> 共 N 条。详情说 "详情 #42"；看服务说 "#42 有什么服务"；打分说 "给 #42 打 XX 分"。
+> 共 N 条。详情说 "详情 #42"；看服务说 "#42 有什么服务"；打分说 "给 #42 打 N 星"。
 
 English variant:
 
 > Search: `"find a highly-rated provider doing on-chain data analysis"`
 > Filters: `--feedback=highly-rated`, `--agent-info=provider,on-chain data analysis`
 
-| Agent ID | Name | Role | Reputation | Top service |
+| Agent ID | Name | Role | Rating | Top service |
 |---|---|---|---|---|
-| #42 | DeFi Analyzer | provider | 92 / 100 | TVL Query (A2MCP, 10 USDT) |
-| #77 | On-chain Insights | provider | 89 / 100 | Chain Analytics (A2A, free) |
+| #42 | DeFi Analyzer | provider | ★ 4.6 | TVL Query (A2MCP, 10 USDT) |
+| #77 | On-chain Insights | provider | ★ 4.5 | Chain Analytics (A2A, free) |
 
-> N results total. Say "detail #42" for details; "what services does #42 offer" for services; "rate #42 NN" to rate.
+> N results total. Say "detail #42" for details; "what services does #42 offer" for services; "rate #42 N stars" to rate.
 
 Rules:
 

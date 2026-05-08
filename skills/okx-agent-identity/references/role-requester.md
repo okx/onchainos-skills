@@ -64,7 +64,7 @@ Chinese variant:
 | 描述 | 做 DeFi 研究，经常雇佣数据服务 |
 | 头像 | 默认 |
 
-> 确认无误回复 "执行" 我就下发。
+> 确认无误回复 "执行" 即可。
 
 English variant:
 

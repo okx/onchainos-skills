@@ -21,7 +21,7 @@ If you encounter a string that isn't in either table, surface the raw message in
 | `error: unexpected argument '<value>' found` (positional rejected by clap) | clap default | "这个命令需要显式带参数名，不接受裸值" | The user passed something like `agent update 42`; tell them to use `agent update --agent-id 42`. Same for `activate` / `deactivate` / `service-list` / `feedback-list` (`--agent-id`) and `upload` (`--file`). |
 | `missing required field in --service: name` | `utils.rs:200` | "服务名不能留空" | Return to `role-provider.md` Phase 2 per-service Q1 (`name`). |
 | `missing required field in --service: servicedescription` | `utils.rs:203` | "服务描述不能留空" | Return to `role-provider.md` Phase 2 per-service Q2 (`servicedescription`). |
-| `missing required field in --service for A2MCP: fee` | `utils.rs:212` | "A2MCP 服务必须给 fee（USDT 数字，最多两位小数）" | Return to `role-provider.md` Phase 2 per-service Q4 (A2MCP branch). |
+| `missing required field in --service for A2MCP: fee` | `utils.rs:212` | "A2MCP 服务必须给 fee（USDT 数字，最多六位小数）" | Return to `role-provider.md` Phase 2 per-service Q4 (A2MCP branch). |
 | `missing required field in --service for A2MCP: endpoint` | `utils.rs:215` | "A2MCP 服务必须给 endpoint（HTTPS URL）" | Return to `role-provider.md` Phase 2 per-service Q5 (A2MCP branch). |
 | `invalid servicetype in --service: <value>` | `utils.rs:218` | "服务类型必须是 A2MCP 或 A2A" | Return to `role-provider.md` Phase 2 per-service Q3 (numbered prompt). |
 | `invalid value for --role: <value>` | `utils.rs:229` | "role 只能是 requester / provider / evaluator 之一" | Return to role selection (SKILL.md §Core Flow). |
@@ -47,7 +47,7 @@ If you encounter a string that isn't in either table, surface the raw message in
 | `agent already inactive` | "Agent 已经是 inactive 状态" | No-op; show detail card. |
 | `pending settlements` / `cannot deactivate` | "有未完结的任务引用这个 agent，需要先去 `okx-agent-task` 处理完" | Hand off to `okx-agent-task`. |
 | `stake` / `staking` / `insufficient` / `质押` (**not expected** on `agent create --role evaluator` — `create` doesn't consume the stake; if it ever appears it's a backend anomaly) | "后端返回了和质押相关的报错。这不是正常的 create 失败路径 —— agent 注册本身不需要质押。" | Surface the raw message verbatim in the error card footer; point the user at `/skills/okx-agent-task/evaluator.md` for the staking flow; do NOT cache drafts or invent a resume keyword. |
-| `score out of range` | "分数要在 0-100 之间的整数" | Return to `feedback-guide.md` step 3. |
+| `score out of range` | "评分要在 0–5 星之间的整数" (skill speaks stars; do not echo the raw 0–100 bound from the backend message — see `feedback-guide.md` Step 3) | Return to `feedback-guide.md` step 3. |
 | `self-rating not allowed` | "不能给自己的 agent 打分" | Return to `feedback-guide.md` step 1 (target). |
 | `creator agent not owned by caller` | "`--creator-id` 必须是你自己的 agent id" | Return to `feedback-guide.md` step 2 (re-resolve). |
 | `Wallet API server error (HTTP 500)` | "后端暂时不可用" | Retry once (network-transient policy, §General principles). If persists, surface and move on. |
@@ -64,7 +64,9 @@ Some conditions the user might hit are enforced by the **skill itself** before t
 |---|---|---|
 | "At least one field must change on update" | User submitted nothing / every field unchanged | Refuse to call `onchainos agent update`; render `没有需要提交的更改` and re-enter update Q&A. The CLI (`mutations.rs:156-228`) does NOT validate this. See `cli-reference.md` §2. |
 | "Query must be non-empty" | `agent search` with empty query | The CLI will bail with `missing required parameter: --query` (§1 above); the skill should catch it first and ask. |
-| Score outside 0-100 | `feedback-submit` with bad score | Skill validates before sending (see `feedback-guide.md` step 3). The backend also rejects (§2 above) as a safety net. |
+| Stars outside 0-5 | `feedback-submit` invoked with the user's intended star count outside `0..=5` (or non-integer, decimal, etc.) | Reject with "评分要在 0–5 星之间的整数（例如 `5 星` / `4 星` / `1 星`）" / "Rating must be an integer 0–5 stars". Skill validates before sending and never invokes the CLI in this case. The backend's `score out of range` (§2 above) is the secondary safety net for the 0–100 wire format only. |
+| A2A `fee` not matching the internal validation pattern (**internal pattern, never echoed to user**: `^\d+(\.\d{1,6})?$`) | User answered Q4 on an A2A service with something other than empty / number-with-≤6-decimals (e.g. `5 USDT`, `约 10`, `-1`) | Reject with "A2A 价格选填，要么留空，要么填 USDT 数字最多六位小数（例如 `1.234567` / `10` / `0.5`）" / "A2A fee is optional — leave it empty or supply a USDT number with up to 6 decimal places". Re-ask Q4 (A2A branch). The CLI (`utils.rs::normalize_service` A2A arm) does NOT validate the fee format on A2A — this is skill-side only. |
+| A2MCP `endpoint` exceeds the skill-side length limit (> 512 chars) — **the 512 limit is hidden from the Q5 prompt; mention it only here, after the user's input failed** | User Q5 reply on an A2MCP service is longer than 512 chars | Reject with "endpoint 最长 512 字符，这个超了，麻烦换个短点的 URL。" / "The endpoint URL must be at most 512 chars; this one exceeds it. Please use a shorter URL." Re-ask Q5 (A2MCP branch). The CLI (`utils.rs::normalize_service`) does NOT validate endpoint length — this is skill-side only. |
 
 ---
 
