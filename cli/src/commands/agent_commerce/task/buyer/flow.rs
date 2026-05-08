@@ -178,8 +178,22 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20检查返回结果中是否有服务（services 数组非空）以及服务中的 endpoint、feeAmount、feeTokenSymbol 字段。\n\n\
              \x20\x20**D-Step 2 — 按 service-list 结果路由：**\n\
              \x20\x20- **有服务且含 endpoint（支持 x402）** → 提取 services[0] 的 feeAmount、feeTokenSymbol、endpoint，\n\
-             \x20\x20\x20\x20直接进入 **A-Step 1**（x402 价格比较 → A-Step 2 set-payment-mode）。\n\
-             \x20\x20\x20\x20providerAgentId = designatedProvider.agentId。\n\
+             \x20\x20\x20\x20执行以下指定卖家 x402 流程（不跳到 A-Step 1）：\n\n\
+             \x20\x20\x20\x20**DX-Step 1 — 验证 endpoint：**\n\
+             \x20\x20\x20\x20```bash\n\
+             \x20\x20\x20\x20onchainos agent x402-check --endpoint <endpoint>\n\
+             \x20\x20\x20\x20```\n\
+             \x20\x20\x20\x20- `valid=false` → 调用 xmtp_dispatch_user 通知用户 endpoint 不合法，引导用户换一个卖家。结束 turn。\n\n\
+             \x20\x20\x20\x20**DX-Step 2 — 金额校验：**\n\
+             \x20\x20\x20\x20比较 x402-check 的 `amountHuman` 与 services[0] 的 `feeAmount`：\n\
+             \x20\x20\x20\x20- 不一致（差异 > 1%）→ 调用 xmtp_prompt_user 询问用户是否接受实际价格：\n\
+             \x20\x20\x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}] 用户回复「接受」→ 继续 DX-Step 3；回复「拒绝」→ 引导换卖家。\n\
+             \x20\x20\x20\x20\x20\x20userContent: 任务 {job_id} 指定卖家（AgentID=<agentId>）实际收费 <amountHuman> <tokenSymbol>，与注册费用 <feeAmount> <feeTokenSymbol> 不一致，是否接受？\n\
+             \x20\x20\x20\x20- 一致 → 继续 DX-Step 3。\n\n\
+             \x20\x20\x20\x20**DX-Step 3 — 预算检查：**\n\
+             \x20\x20\x20\x20比较 `amountHuman` 与任务最高预算（tokenAmount）：\n\
+             \x20\x20\x20\x20- 超出 → 调用 xmtp_dispatch_user 通知用户费用超额，引导换卖家。结束 turn。\n\
+             \x20\x20\x20\x20- 未超出 → 进入 **A-Step 3**（set-payment-mode + task-402-pay）。\n\n\
              \x20\x20- **无服务或无 endpoint（不支持 x402）** → 进入 **B-Step 1** 建群协商。\n\n\
              \x20\x20清除 designatedProvider 缓存。\n\n\
              **Step 1 — 查询推荐卖家：**\n\
@@ -191,30 +205,47 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 2 — 顺序遍历推荐列表，按 supportA2MCP 字段路由：**\n\n\
              ━━━━━━━━━ 分支 A：supportA2MCP=true → x402（无需协商，直接接单）━━━━━━━━━\n\n\
              从 recommend 输出中提取当前 provider 的 services[0]：feeAmount、feeTokenSymbol、endpoint。\n\
-             从任务详情提取：tokenAmount（任务预算）、tokenSymbol（任务代币）。\n\n\
-             **A-Step 1 — 价格 & 代币比较：**\n\
-             - 任务预算 >= feeAmount 且 tokenSymbol 与 feeTokenSymbol 一致\n\
-             \x20\x20→ 无需用户确认，直接执行 A-Step 2\n\
-             - 任务预算 < feeAmount 或代币不一致\n\
-             \x20\x20→ 先调 `session_status` 拿到本 sub session 的 sessionKey，再调用 xmtp_prompt_user 请求用户确认：\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}] \
-             用户回复「确认」→ relay 回 sub session 执行 A-Step 2 set-payment-mode x402；\
-             用户回复「拒绝」→ relay 回 sub session 执行 recommend --next 切换下一个卖家。\
-             禁止 user session agent 自己执行 task CLI。\n\
-             \x20\x20\x20\x20userContent: 任务 {job_id} 匹配到 x402 卖家（AgentID=<providerAgentId>），服务费用 <feeAmount> <feeTokenSymbol>，\
-             与任务预算（<tokenAmount> <tokenSymbol>）不一致，是否确认使用该卖家？\n\
-             \x20\x20→ **结束本轮 turn**，等用户回复 relay 回来后继续执行。\n\n\
-             **A-Step 2 — setPaymentMode（x402 阶段 1）：**\n\
+             从任务详情提取：tokenAmount（任务最高预算）、tokenSymbol（任务代币）。\n\n\
+             **A-Step 1 — 验证 endpoint 是否是合法的 x402 服务：**\n\
              ```bash\n\
-             onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <feeTokenSymbol> --token-amount <feeAmount> --endpoint <endpoint>\n\
+             onchainos agent x402-check --endpoint <endpoint>\n\
              ```\n\
-             参数来源：recommend 输出的 services[0] 中的 feeTokenSymbol、feeAmount、endpoint。\n\
-             命令执行 setPaymentMode(3) → 签名 → 广播，然后返回（exit code 2, confirming）。\n\
-             ⚠️ 返回的 JSON 中含 provider / endpoint / feeAmount / feeTokenSymbol，后续阶段需要用到。\n\n\
-             **A-Step 3 — 通知用户并等待事件：**\n\
-             调用 xmtp_dispatch_user：\n\
-             \x20\x20content: 任务 {job_id} 支付方式已设置为 x402，正在等待链上确认...\n\n\
-             → **结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知触发阶段 2。\n\n\
+             - `valid=false` → 跳过该卖家，执行 `recommend --next` 切换下一个。\n\
+             - `valid=true` → 继续 A-Step 2。\n\n\
+             **A-Step 2 — 金额 & 代币校验（三重检查）：**\n\n\
+             从 x402-check 输出提取 `amountHuman`（实际服务金额）、`tokenSymbol`（实际代币）。\n\n\
+             **检查 1 — 402 金额 vs 卖家注册金额：**\n\
+             比较 x402-check 返回的 `amountHuman` 与 recommend 中该卖家 services[0] 的 `feeAmount`（注意单位，两者都是人类可读金额）。\n\
+             - 不一致（差异 > 1%）→ 跳过该卖家，`recommend --next`。\n\n\
+             **检查 2 — 代币一致性：**\n\
+             比较 x402-check 的 `tokenSymbol` 与 services[0] 的 `feeTokenSymbol`。\n\
+             - 不一致 → 跳过该卖家，`recommend --next`。\n\n\
+             **检查 3 — 预算限额：**\n\
+             比较 `amountHuman` 与任务最高预算（tokenAmount）。\n\
+             - 超出预算 → 跳过该卖家，`recommend --next`。\n\n\
+             三项检查全部通过 → 进入 A-Step 3。\n\n\
+             **A-Step 3 — setPaymentMode（x402 阶段 1）：**\n\
+             ```bash\n\
+             onchainos agent set-payment-mode {job_id} --payment-mode x402 --token-symbol <feeTokenSymbol> --token-amount <amountHuman> --endpoint <endpoint>\n\
+             ```\n\
+             → **结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n\n\
+             **A-Step 3b — 支付重放（x402 阶段 2，收到 job_payment_mode_changed 后执行）：**\n\
+             ```bash\n\
+             onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<x402-check 输出的 acceptsJson>' --endpoint <endpoint> --token-symbol <feeTokenSymbol> --token-amount <amountHuman>\n\
+             ```\n\
+             输出：{{ replaySuccess, replayStatus, replayBody, signature, authorization, txHash }}\n\n\
+             **A-Step 4 — 处理重放结果：**\n\
+             - replaySuccess=true → 调用 xmtp_dispatch_user 将交付物发送给用户：\n\
+             \x20\x20content:\n\
+             \x20\x20[x402 交付物已获取] 任务 {job_id} endpoint 重放成功。\n\
+             \x20\x20卖家 AgentID：<providerAgentId>\n\
+             \x20\x20金额：<amountHuman> <tokenSymbol>\n\
+             \x20\x20---交付物内容---\n\
+             \x20\x20<replayBody 完整内容，JSON 则格式化输出>\n\
+             \x20\x20---交付物结束---\n\
+             \x20\x20正在等待链上确认（job_accepted），确认后将自动完成任务。\n\n\
+             - replaySuccess=false → 调用 xmtp_dispatch_user 通知用户重放失败，等待用户指示。\n\n\
+             → **结束本轮 turn**，等待 `job_accepted` 系统通知。\n\n\
              ━━━━━━━━━ 分支 B：supportA2MCP=false → A2A（需协商）━━━━━━━━━\n\n\
              **B-Step 0 — 防重复检查：**\n\
              调 `session_status` 检查当前 job 是否已有 sub session（即是否已建群）。\n\
@@ -357,7 +388,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\
              直接执行 providerConfirmStatus → sign_escrow TEE 签名 → accept → 广播。\n\n\
              【后续事件】\n\
-             - job_accepted → 通知 user session 接单成功，等待卖家交付\n"
+             - job_accepted → 调用 xmtp_dispatch_user 通知用户接单成功，等待卖家交付\n"
         ),
 
         // ─── job_accepted: 按支付方式分流（非担保立即 complete，担保等交付）──────────────────
@@ -393,7 +424,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              （内部：POST /priapi/v1/aieco/task/{job_id}/direct/complete → 获取 calldata → 签名 uopHash → 广播上链）\n\n\
              **B-Step 2 — 等待 job_completed 系统通知**，不要在此 turn 做更多动作。\n\n\
              【后续事件】\n\
-             - job_completed → 通知 user session，等待卖家提交交付物\n\n\
+             - job_completed → 调用 xmtp_dispatch_user 通知用户支付完成，等待卖家提交交付物\n\n\
              ━━━━━━━━━ 分支 C：x402 ━━━━━━━━━\n\n\
              ⚠️ 先检查上一步 `task-402-pay` 输出中的 `replaySuccess` 字段：\n\n\
              **C-分支 1：replaySuccess=true（重放成功，交付物已获取）**\n\n\
@@ -611,7 +642,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20  - 支付方式：非担保（non_escrow）\n\
              \x20\x20\x20\x20等待卖家提交交付物。\n\n\
              【后续事件】\n\
-             - job_submitted → 卖家提交交付物，通知用户\n"
+             - job_submitted → 卖家提交交付物，调用 xmtp_prompt_user（escrow）或 xmtp_dispatch_user（non_escrow）通知用户\n"
         ),
 
         // ─── 仲裁结束（DisputeSettled） ─────────────────────────────
@@ -734,7 +765,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              调用 xmtp_get_pending_list 工具获取待沟通卖家列表。\n\
              ⚠️ 调用前输出：`[buyer-xmtp] xmtp_get_pending_list`\n\
              ⚠️ 调用后输出：`[buyer-xmtp] xmtp_get_pending_list result: <返回值>`\n\n\
-             如果返回空列表 → 通知用户「当前没有待沟通的卖家」，结束。\n\n\
+             如果返回空列表 → 调用 xmtp_dispatch_user 通知用户「当前没有待沟通的卖家」，结束。\n\n\
              **Step 2 — 调用 xmtp_prompt_user 展示所有待沟通卖家，让用户选择：**\n\
              🛑 **必须等用户选择**，不能替用户做决定。\n\
              先调 `session_status` 拿到本 sub session 的 sessionKey。\n\
@@ -848,16 +879,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\
              直接执行 a2a_pay 签名 + direct/accept 上链。\n\n\
              ━━━━━━━━━ x402（paymentMode=3）━━━━━━━━━\n\n\
-             从上一步 set-payment-mode 的 confirming 输出中提取 endpoint、feeTokenSymbol、feeAmount、provider。\n\
-             如果上下文中没有，从 recommend 缓存获取：\n\
+             从上一步 set-payment-mode / x402-check 的输出中提取 endpoint、acceptsJson、feeTokenSymbol、feeAmount、provider。\n\
+             如果上下文中没有 acceptsJson，重新验证：\n\
              ```bash\n\
-             onchainos agent recommend {job_id} --current\n\
-             ```\n\n\
-             **x402 阶段 2 Step 1 — GET provider endpoint：**\n\
-             GET <endpoint> → 收到 HTTP 402（Payment Challenge，含 accepts 数组）\n\n\
-             **x402 阶段 2 Step 2 — 签名 + direct/accept + 重放 endpoint（原子命令）：**\n\
+             onchainos agent x402-check --endpoint <endpoint>\n\
+             ```\n\
+             提取 `acceptsJson`。\n\n\
+             **x402 阶段 2 — 签名 + direct/accept + 重放 endpoint（原子命令）：**\n\
              ```bash\n\
-             onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<402 响应中的 accepts JSON>' --endpoint <endpoint URL> --token-symbol <feeTokenSymbol> --token-amount <feeAmount>\n\
+             onchainos agent task-402-pay {job_id} --provider-agent-id <providerAgentId> --accepts '<acceptsJson>' --endpoint <endpoint URL> --token-symbol <feeTokenSymbol> --token-amount <feeAmount>\n\
              ```\n\
              内部执行：x402_pay 签名 → direct/accept 上链 → 组装 payment header → 重放 endpoint\n\
              输出：{{ replaySuccess, replayStatus, replayBody, signature, authorization, sessionCert, txHash }}\n\n\
@@ -936,28 +966,54 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::ReviewDeadlineWarn => format!(
             "【系统通知】review_deadline_warn（验收截止时间快到了）\n\
              【角色】买家（Client）\n\n\
-             【你的下一步动作】\n\n\
-             如果对交付物满意，立即调：\n\
+             【你的下一步动作（严格顺序）】\n\n\
+             **Step 1 — 调用 xmtp_prompt_user 通知用户验收截止时间即将到期，请求决策：**\n\
+             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}] \
+             用户回复「通过」→ relay 回 sub session 执行 complete；\
+             用户回复「拒绝」+ 原因 → relay 回 sub session 执行 reject。\
+             禁止 user session agent 自己执行 task CLI。\n\
+             \x20\x20userContent:\n\
+             \x20\x20[验收截止提醒] 任务 {job_id} 的验收截止时间即将到期。\n\
+             \x20\x20超时后卖家可自动领取资金（claimAutoComplete）。\n\
+             \x20\x20请尽快决定：\n\
+             \x20\x20A. 通过验收 — 回复「通过」\n\
+             \x20\x20B. 拒绝交付物 — 回复「拒绝」并说明原因\n\n\
+             **Step 2 — 等待用户回复后执行对应命令：**\n\
+             - 用户选择通过：\n\
              ```bash\n\
              onchainos agent complete {job_id}\n\
              ```\n\
-             如果不满意，调：\n\
+             - 用户选择拒绝：\n\
              ```bash\n\
-             onchainos agent reject {job_id} --reason \"<原因>\"\n\
-             ```\n\
-             超时后 provider 可调 claimAutoComplete 自动通过。\n"
+             onchainos agent reject {job_id} --reason \"<用户提供的原因>\"\n\
+             ```\n"
         ),
 
         // ─── review_expired: review 窗口超时，等 provider 调 claimAutoComplete ─────
-        Event::ReviewExpired => "【系统通知】review_expired（review 窗口超时，task 仍是 submitted）\n\
+        Event::ReviewExpired => format!(
+            "【系统通知】review_expired（review 窗口超时，task 仍是 submitted）\n\
              【角色】买家（Client）\n\n\
-             【建议】review 期已结束，资金尚未自动释放——需要等 provider 主动调 claimAutoComplete\n\
-             才会进入 completed。本端无需动作，等 `job_auto_completed`（success）通知到达后再做 sub session 收尾。\n".to_string(),
+             【你的下一步动作】\n\n\
+             **Step 1 — 调用 xmtp_dispatch_user 通知用户验收窗口已过期：**\n\
+             \x20\x20content:\n\
+             \x20\x20[验收超时] 任务 {job_id} 的验收窗口已过期，你未在截止时间前做出验收决定。\n\
+             \x20\x20卖家现在可以调用 claimAutoComplete 自动领取资金。\n\
+             \x20\x20等待卖家操作中...\n\n\
+             **Step 2** — 等待 `job_auto_completed` 系统通知到达后做收尾。\n"
+        ),
 
         // ─── job_auto_completed: provider 的 claim 回执，buyer 端只需观察 ─────
-        Event::JobAutoCompleted => "【系统通知】job_auto_completed（provider 已通过 claimAutoComplete 领走资金）\n\
+        Event::JobAutoCompleted => format!(
+            "【系统通知】job_auto_completed（provider 已通过 claimAutoComplete 领走资金）\n\
              【角色】买家（Client）\n\n\
-             【建议】task 已进入 completed 状态，资金已释放给 provider。子 session 可关闭。\n".to_string(),
+             【你的下一步动作】\n\n\
+             **Step 1 — 调用 xmtp_dispatch_user 通知用户任务已自动完成：**\n\
+             \x20\x20content:\n\
+             \x20\x20[任务自动完成] 任务 {job_id} 因验收超时，卖家已通过 claimAutoComplete 领取资金。\n\
+             \x20\x20任务状态：completed\n\
+             \x20\x20本任务流程结束。\n\n\
+             ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n"
+        ),
 
         // ─── provider 的截止提醒 — buyer 端无关 ────────────────────────
         Event::SubmitDeadlineWarn => "【系统通知】submit_deadline_warn（provider 端截止提醒）\n\
