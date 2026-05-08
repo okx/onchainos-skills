@@ -14,11 +14,11 @@ Match the user's language. Use action-verb phrasing — "issue a voucher / 签�
 
 ## Session state to track
 
-Save the moment `mpp-session-open` returns and maintain across phases:
+Save the moment `payment session open` returns and maintain across phases:
 
 | Field | Source |
 |---|---|
-| `channel_id` | `mpp-session-open` output |
+| `channel_id` | `payment session open` output |
 | `escrow` | open challenge `methodDetails.escrowContract` |
 | `chain_id` | open challenge `methodDetails.chainId` |
 | `currency` | open challenge `currency` |
@@ -31,7 +31,7 @@ Save the moment `mpp-session-open` returns and maintain across phases:
 
 Track in conversation context. Across conversations, ask the user to re-supply `channel_id` / `escrow` / `current_cum` / `current_sig` to continue.
 
-**Mandatory state echo** — after `mpp-session-open`, after each voucher (sign or reuse), after topup, and immediately before close, end your message with one line:
+**Mandatory state echo** — after `payment session open`, after each voucher (sign or reuse), after topup, and immediately before close, end your message with one line:
 
 > 📋 Channel `<channel_id>` · chain `<chain_id>` · escrow `<escrow>` · deposit `<human(deposit)>` (`<deposit>`) · cum `<human(current_cum)>` (`<current_cum>`) · spent~`<human(estimated_spent)>` (`<estimated_spent>`) · sig `<current_sig prefix...>`
 
@@ -64,7 +64,7 @@ Branch by `methodDetails.feePayer`.
 **Transaction mode (`feePayer=true`)**:
 
 ```bash
-onchainos payment mpp-session-open \
+onchainos payment session open \
   --challenge '<full WWW-Authenticate header value>' \
   --deposit '<atomic units>' \
   [--initial-cum '<atomic>' | --prepay-first] \
@@ -76,7 +76,7 @@ CLI TEE-signs EIP-3009 `receiveWithAuthorization` (deposit into escrow) + EIP-71
 **Hash mode (`feePayer=false`)** — user must send the on-chain "open channel" tx themselves first (delegate to `okx-onchain-gateway` or manual). Then:
 
 ```bash
-onchainos payment mpp-session-open \
+onchainos payment session open \
   --challenge '<full WWW-Authenticate header value>' \
   --deposit '<atomic units>' \
   --tx-hash '0x<64-char hex>' \
@@ -140,7 +140,7 @@ if methodDetails.minVoucherDelta is set AND strategy == SIGN:
 ### S2.3a: Reuse path (no TEE)
 
 ```bash
-onchainos payment mpp-session-voucher \
+onchainos payment session voucher \
   --challenge '<fresh WWW-Authenticate from this 402>' \
   --channel-id '<saved channel_id>' \
   --cumulative-amount '<current_cum>' \
@@ -153,7 +153,7 @@ Don't pass `--escrow` / `--chain-id` here — the existing signature already bin
 ### S2.3b: Sign path (TEE)
 
 ```bash
-onchainos payment mpp-session-voucher \
+onchainos payment session voucher \
   --challenge '<fresh WWW-Authenticate from this 402>' \
   --channel-id '<saved channel_id>' \
   --cumulative-amount '<cum_for_this_call>' \
@@ -208,7 +208,7 @@ Branch by `methodDetails.feePayer` from the topUp challenge.
 **Transaction mode**:
 
 ```bash
-onchainos payment mpp-session-topup \
+onchainos payment session topup \
   --challenge '<WWW-Authenticate for topUp>' \
   --channel-id '<saved channel_id>' \
   --additional-deposit '<atomic units>' \
@@ -223,7 +223,7 @@ CLI TEE-signs `receiveWithAuthorization`. EIP-3009 nonce is `keccak256(abi.encod
 **Hash mode** (user broadcasts top-up tx first, then):
 
 ```bash
-onchainos payment mpp-session-topup \
+onchainos payment session topup \
   --challenge '<WWW-Authenticate for topUp>' \
   --channel-id '<saved channel_id>' \
   --additional-deposit '<atomic units>' \
@@ -250,7 +250,7 @@ When the user is done — says "close the channel / 关闭通道 / end the sessi
 ### S3.2: Sign close voucher
 
 ```bash
-onchainos payment mpp-session-close \
+onchainos payment session close \
   --challenge '<WWW-Authenticate for close, or fresh 402 if seller issues one>' \
   --channel-id '<saved channel_id>' \
   --cumulative-amount '<final_cum>' \

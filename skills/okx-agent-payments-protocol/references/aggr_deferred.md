@@ -1,8 +1,8 @@
 # x402 — `aggr_deferred` scheme
 
-> Loaded from `../SKILL.md` after the dispatcher detected x402 (v1 or v2), decoded the payload, walked the user through confirmation, and ran `onchainos payment x402-pay`. **Use this reference when the response includes a `sessionCert` field** — meaning the CLI selected `aggr_deferred` (Session Key Ed25519 signing, EOA signing skipped).
+> Loaded from `../SKILL.md` after the dispatcher detected x402 (v1 or v2), decoded the payload, walked the user through confirmation, and ran `onchainos payment pay`. **Use this reference when the response includes a `sessionCert` field** — meaning the CLI selected `aggr_deferred` (Session Key Ed25519 signing, EOA signing skipped).
 
-The local-key fallback (`onchainos payment eip3009-sign`) does NOT support this scheme — only TEE.
+The local-key fallback (`onchainos payment pay-local`) does NOT support this scheme — only TEE.
 
 ## Sign output
 
@@ -54,10 +54,10 @@ Expected: `HTTP 200`. Return the body to the user.
 
 ## CLI Reference
 
-`aggr_deferred` is selected automatically by `onchainos payment x402-pay` when the 402 `accepts[]` includes it.
+`aggr_deferred` is selected automatically by `onchainos payment pay` when the 402 `accepts[]` includes it.
 
 ```bash
-onchainos payment x402-pay \
+onchainos payment pay \
   --accepts '<accepts array JSON>' \
   [--from <address>]
 ```
@@ -120,7 +120,7 @@ Decoded `PAYMENT-REQUIRED` header:
 **Step 2–3 — sign (CLI selects `aggr_deferred` automatically)**:
 
 ```bash
-onchainos payment x402-pay \
+onchainos payment pay \
   --accepts '<JSON.stringify(decoded.accepts)>'
 # → { "signature": "base64...", "authorization": { ... }, "sessionCert": "..." }
 # sessionCert present → CLI selected aggr_deferred scheme

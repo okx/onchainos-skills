@@ -106,7 +106,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::security::SecurityCommand,
     },
-    /// Payment protocols — auto-pay gated APIs (x402, a2a-pay, etc.)
+    /// Payment protocols — auto-pay gated APIs and agent-to-agent payment links
     Payment {
         #[command(subcommand)]
         command: commands::agentic_wallet::payment::PaymentCommand,
@@ -197,9 +197,7 @@ async fn run() {
         Commands::Wallet { command } => commands::agentic_wallet::wallet::execute(command).await,
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
-        Commands::Competition { command } => {
-            commands::competition::execute(&ctx, command).await
-        }
+        Commands::Competition { command } => commands::competition::execute(&ctx, command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Ws { command } => commands::ws::execute(command).await,
         Commands::Workflow { command } => commands::workflows::execute(&ctx, *command).await,

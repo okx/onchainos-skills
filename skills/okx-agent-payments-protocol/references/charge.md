@@ -16,7 +16,7 @@ One-shot payment. CLI TEE-signs an EIP-3009 authorization (or wraps a client-bro
 ## Transaction mode (sign via TEE)
 
 ```bash
-onchainos payment mpp-charge \
+onchainos payment charge \
   --challenge '<full WWW-Authenticate header value>' \
   [--from '<0xPayer>']
 ```
@@ -42,7 +42,7 @@ Option 1: hand off to `okx-onchain-gateway`, return here with the resulting `0x.
 Then:
 
 ```bash
-onchainos payment mpp-charge \
+onchainos payment charge \
   --challenge '<full WWW-Authenticate header value>' \
   --tx-hash '0x<64-char hex>' \
   [--from '<0xPayer>']
@@ -63,7 +63,7 @@ If a fresh `HTTP 402` returns (stale challenge), re-run the original request to 
 
 ## CLI Reference
 
-`onchainos payment mpp-charge` — sign or wrap a one-shot charge.
+`onchainos payment charge` — sign or wrap a one-shot charge.
 
 | Param | Required | Default | Description |
 |---|---|---|---|

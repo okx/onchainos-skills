@@ -1,7 +1,7 @@
 //! Shared x402 payment signing.
 //!
 //! Used by:
-//! - `onchainos wallet x402-pay` (manual signing, prints JSON proof).
+//! - `onchainos payment pay` (manual signing, prints JSON proof).
 //! - `ApiClient` auto-payment (transparently attaches a signed header to paid
 //!   requests and retries 402 responses).
 //!
@@ -271,7 +271,7 @@ pub(crate) fn prepare_resolved_entry(
 
 /// Variant of `sign_payment` that signs exactly what the caller's
 /// `accepts` says, without consulting the saved default asset. Used by
-/// the manual `onchainos payment x402-pay` command so the user-supplied
+/// the manual `onchainos payment pay` command so the user-supplied
 /// `--accepts` isn't silently reordered by a stored preference.
 pub async fn sign_payment_with_preference(
     accepts: &Value,
@@ -355,7 +355,7 @@ pub async fn sign_payment_with_preference(
         )
         .await
         .map_err(format_api_error)
-        .context("x402 gen-msg-hash failed")?;
+        .context("payment gen-msg-hash failed")?;
     let msg_hash = unsigned_hash_resp[0]["msgHash"]
         .as_str()
         .ok_or_else(|| anyhow!("missing msgHash in gen-msg-hash response"))?;
@@ -403,7 +403,7 @@ pub async fn sign_payment_with_preference(
             )
             .await
             .map_err(format_api_error)
-            .context("x402 sign-msg failed")?;
+            .context("payment sign-msg failed")?;
         let eip3009_signature = signed_hash_resp[0]["signature"]
             .as_str()
             .ok_or_else(|| anyhow!("missing signature in sign-msg response"))?;
@@ -423,8 +423,8 @@ pub async fn sign_payment_with_preference(
 /// (`EVM_PRIVATE_KEY`), without touching the wallet session or TEE.
 ///
 /// Signs exactly what `accepts` carries — does NOT consult the saved
-/// default asset. Used by the manual `payment eip3009-sign` command,
-/// which inherits `x402-pay`'s "sign what --accepts says" contract so
+/// default asset. Used by the manual `payment pay-local` command,
+/// which inherits `payment pay`'s "sign what --accepts says" contract so
 /// the caller's supplied entry isn't silently reordered by a stored
 /// preference.
 ///
@@ -615,7 +615,7 @@ pub async fn sign_payment_auto(
 fn write_local_signing_warning<W: std::io::Write>(w: &mut W) {
     let _ = writeln!(
         w,
-        "[onchainos] x402 signed locally with EVM_PRIVATE_KEY (NOT protected by TEE); \
+        "[onchainos] payment signed locally with EVM_PRIVATE_KEY (NOT protected by TEE); \
          run `onchainos wallet login` for TEE signing."
     );
 }

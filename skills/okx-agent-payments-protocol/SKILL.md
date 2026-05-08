@@ -18,7 +18,7 @@ Unified entry point for three payment families: **x402** (HTTP 402 with `accepts
 >
 > **Rule 2 — Do not narrate internal protocol detection.** The dispatch logic (which header was detected, which reference is being loaded, which scheme/intent was selected, TEE vs local-key path) is internal — keep it internal. The user only needs to see: (a) what is being paid, (b) what they need to confirm, (c) the result.
 >
-> **Rule 3 — Protocol literals stay byte-for-byte exact wherever they are required by the protocol or CLI.** In CLI invocations, request/response JSON, signing payloads, and HTTP headers, the JSON field `x402Version`, the headers `X-PAYMENT` / `PAYMENT-SIGNATURE` / `PAYMENT-REQUIRED` / `WWW-Authenticate: Payment`, the URL `https://x402.org`, and the CLI subcommands `onchainos payment x402-pay`, `onchainos payment mpp-*`, `onchainos payment a2a-pay` MUST keep their exact names — these are externally defined and changing them breaks interop.
+> **Rule 3 — Externally-defined protocol literals stay byte-for-byte exact.** The JSON field `x402Version`, the HTTP headers `X-PAYMENT` / `PAYMENT-SIGNATURE` / `PAYMENT-REQUIRED` / `WWW-Authenticate: Payment`, and the reference URL `https://x402.org` MUST appear verbatim wherever the protocol/server requires them — these are externally defined and changing them breaks interop. CLI subcommand names (`onchainos payment pay` / `pay-local` / `charge` / `session ...` / `a2a-pay ...`) are this CLI's own surface and may evolve; refer to them by their current name in CLI invocations and code, but never speak them to the user (Rule 2).
 >
 > **Example**
 >
@@ -51,7 +51,7 @@ Unified entry point for three payment families: **x402** (HTTP 402 with `accepts
 | Tx broadcasting (MPP `feePayer=false` hash mode) | `okx-onchain-gateway` |
 | Security scanning (token / DApp / tx / signature) | `okx-security` |
 
-**MPP mid-session ops** (close / topup / settle / voucher / refund mentioned with an active `channel_id`, regardless of fresh 402) → stay here, jump straight into `references/session.md` at the matching phase. **Do NOT** search for a separate `close-channel` / `topup-channel` / `settle-channel` tool — they're all `onchainos payment mpp-session-*` variants.
+**MPP mid-session ops** (close / topup / settle / voucher / refund mentioned with an active `channel_id`, regardless of fresh 402) → stay here, jump straight into `references/session.md` at the matching phase. **Do NOT** search for a separate `close-channel` / `topup-channel` / `settle-channel` tool — they're all `onchainos payment session ...` subcommands.
 
 ---
 
@@ -173,14 +173,14 @@ onchainos wallet status
 ```
 
 - **Logged in** → Step A6.
-- **Not logged in (x402)** → ask the user to choose between (1) wallet login (TEE signing) or (2) local private key (`onchainos payment eip3009-sign`, exact scheme only). Don't read files or check env vars until the user picks.
+- **Not logged in (x402)** → ask the user to choose between (1) wallet login (TEE signing) or (2) local private key (`onchainos payment pay-local`, exact scheme only). Don't read files or check env vars until the user picks.
 - **Not logged in (MPP)** → ask the user to log in via email OTP or AK. **MPP requires TEE** — there is no local-key fallback (only x402 has one).
 
 ## Step A6: Hand off to the scheme/intent reference
 
 | Path | Action |
 |---|---|
-| **x402** | Run `onchainos payment x402-pay --accepts '<JSON.stringify(decoded.accepts)>'`. When the response comes back, look at whether `sessionCert` is present:<br>• `sessionCert` present → load **`references/aggr_deferred.md`** for header assembly + replay<br>• `sessionCert` absent → load **`references/exact.md`** for header assembly + replay<br>If the user picked the local-key fallback, run `onchainos payment eip3009-sign` instead and load **`references/exact.md`** (only scheme this fallback supports). |
+| **x402** | Run `onchainos payment pay --accepts '<JSON.stringify(decoded.accepts)>'`. When the response comes back, look at whether `sessionCert` is present:<br>• `sessionCert` present → load **`references/aggr_deferred.md`** for header assembly + replay<br>• `sessionCert` absent → load **`references/exact.md`** for header assembly + replay<br>If the user picked the local-key fallback, run `onchainos payment pay-local` instead and load **`references/exact.md`** (only scheme this fallback supports). |
 | **MPP `intent="charge"`** | Load **`references/charge.md`** at "Decide mode". |
 | **MPP `intent="session"`** | Load **`references/session.md`** at "Phase S1: Open Channel" (or jump to S2 / S2b / S3 if the user is mid-session with an active `channel_id`). |
 

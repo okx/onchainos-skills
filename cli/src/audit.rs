@@ -338,10 +338,10 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
 use crate::commands::agentic_wallet::payment::PaymentCommand;
 use crate::commands::agentic_wallet::wallet::WalletCommand;
 use crate::commands::{
-    defi::DefiCommand, gateway::GatewayCommand, leaderboard::LeaderboardCommand,
-    market::MarketCommand, memepump::MemepumpCommand, portfolio::PortfolioCommand,
-    security::SecurityCommand, signal::SignalCommand, swap::SwapCommand, token::TokenCommand,
-    tracker::TrackerCommand, competition::CompetitionCommand,
+    competition::CompetitionCommand, defi::DefiCommand, gateway::GatewayCommand,
+    leaderboard::LeaderboardCommand, market::MarketCommand, memepump::MemepumpCommand,
+    portfolio::PortfolioCommand, security::SecurityCommand, signal::SignalCommand,
+    swap::SwapCommand, token::TokenCommand, tracker::TrackerCommand,
 };
 
 fn market_sub(c: &MarketCommand) -> &'static str {
@@ -485,21 +485,23 @@ fn security_sub(c: &SecurityCommand) -> &'static str {
 }
 
 fn payment_sub(c: &PaymentCommand) -> String {
-    use crate::commands::agentic_wallet::payment::DefaultAction;
+    use crate::commands::agentic_wallet::payment::{DefaultAction, SessionCommand};
     match c {
-        PaymentCommand::X402Pay { .. } => "x402-pay".to_string(),
-        PaymentCommand::Eip3009Sign { .. } => "eip3009-sign".to_string(),
+        PaymentCommand::X402Pay { .. } => "pay".to_string(),
+        PaymentCommand::Eip3009Sign { .. } => "pay-local".to_string(),
         PaymentCommand::Default { action } => match action {
             DefaultAction::Set { .. } => "default-set".to_string(),
             DefaultAction::Get => "default-get".to_string(),
             DefaultAction::Unset => "default-unset".to_string(),
         },
         PaymentCommand::A2aPay { command } => format!("a2a-pay {}", a2a_pay_sub(command)),
-        PaymentCommand::MppCharge { .. } => "mpp-charge".to_string(),
-        PaymentCommand::MppSessionOpen { .. } => "mpp-session-open".to_string(),
-        PaymentCommand::MppSessionVoucher { .. } => "mpp-session-voucher".to_string(),
-        PaymentCommand::MppSessionTopUp { .. } => "mpp-session-topup".to_string(),
-        PaymentCommand::MppSessionClose { .. } => "mpp-session-close".to_string(),
+        PaymentCommand::MppCharge { .. } => "charge".to_string(),
+        PaymentCommand::Session { command } => match command {
+            SessionCommand::Open { .. } => "session open".to_string(),
+            SessionCommand::Voucher { .. } => "session voucher".to_string(),
+            SessionCommand::TopUp { .. } => "session topup".to_string(),
+            SessionCommand::Close { .. } => "session close".to_string(),
+        },
     }
 }
 
