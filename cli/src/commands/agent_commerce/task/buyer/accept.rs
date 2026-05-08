@@ -602,8 +602,24 @@ pub async fn handle_task_402_pay(
         .build()
         .context("构建 HTTP client 失败")?;
 
-    let initial_resp = http.get(endpoint).send().await
-        .map_err(|e| anyhow::anyhow!("请求 x402 endpoint 失败: {e}"))?;
+    let initial_resp = match http.get(endpoint).send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            eprintln!("[task-402-pay] GET endpoint 失败（签名+上链已完成）: {e}");
+            crate::output::success(serde_json::json!({
+                "replaySuccess": false,
+                "replayStatus": 0,
+                "replayBody": { "error": format!("GET endpoint 失败: {e}") },
+                "signature": proof.signature,
+                "authorization": proof.authorization,
+                "sessionCert": proof.session_cert,
+                "txHash": tx_hash,
+                "endpoint": endpoint,
+                "retryHint": "签名和 direct/accept 已完成，可重试 GET endpoint → 402 → 组装 header → 重放",
+            }));
+            return Ok(());
+        }
+    };
     let initial_status = initial_resp.status().as_u16();
 
     if initial_status != 402 {
@@ -625,9 +641,42 @@ pub async fn handle_task_402_pay(
     }
 
     let resp_headers = initial_resp.headers().clone();
-    let resp_body_text = initial_resp.text().await
-        .map_err(|e| anyhow::anyhow!("读取 402 响应体失败: {e}"))?;
-    let x402_payload = x402_flow::decode_402_response(&resp_headers, &resp_body_text)?;
+    let resp_body_text = match initial_resp.text().await {
+        Ok(text) => text,
+        Err(e) => {
+            eprintln!("[task-402-pay] 读取 402 响应体失败（签名+上链已完成）: {e}");
+            crate::output::success(serde_json::json!({
+                "replaySuccess": false,
+                "replayStatus": 402,
+                "replayBody": { "error": format!("读取 402 响应体失败: {e}") },
+                "signature": proof.signature,
+                "authorization": proof.authorization,
+                "sessionCert": proof.session_cert,
+                "txHash": tx_hash,
+                "endpoint": endpoint,
+                "retryHint": "签名和 direct/accept 已完成，可重试 GET endpoint → 402 → 组装 header → 重放",
+            }));
+            return Ok(());
+        }
+    };
+    let x402_payload = match x402_flow::decode_402_response(&resp_headers, &resp_body_text) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[task-402-pay] 解码 402 响应失败（签名+上链已完成）: {e}");
+            crate::output::success(serde_json::json!({
+                "replaySuccess": false,
+                "replayStatus": 402,
+                "replayBody": { "error": format!("解码 402 响应失败: {e}"), "rawBody": resp_body_text },
+                "signature": proof.signature,
+                "authorization": proof.authorization,
+                "sessionCert": proof.session_cert,
+                "txHash": tx_hash,
+                "endpoint": endpoint,
+                "retryHint": "签名和 direct/accept 已完成，可重试 GET endpoint → 402 → 组装 header → 重放",
+            }));
+            return Ok(());
+        }
+    };
     eprintln!("[task-402-pay] 402 payload: x402Version={}, accepts={} 条, resource={}",
         x402_payload.x402_version, x402_payload.accepts.len(),
         x402_payload.resource.is_some());
@@ -638,7 +687,24 @@ pub async fn handle_task_402_pay(
             .unwrap_or(serde_json::Value::Null),
         session_cert: proof.session_cert.clone(),
     };
-    let (header_name, header_value) = x402_flow::assemble_payment_header(&x402_proof, &x402_payload)?;
+    let (header_name, header_value) = match x402_flow::assemble_payment_header(&x402_proof, &x402_payload) {
+        Ok(hv) => hv,
+        Err(e) => {
+            eprintln!("[task-402-pay] 组装 payment header 失败（签名+上链已完成）: {e}");
+            crate::output::success(serde_json::json!({
+                "replaySuccess": false,
+                "replayStatus": 402,
+                "replayBody": { "error": format!("组装 payment header 失败: {e}") },
+                "signature": proof.signature,
+                "authorization": proof.authorization,
+                "sessionCert": proof.session_cert,
+                "txHash": tx_hash,
+                "endpoint": endpoint,
+                "retryHint": "签名和 direct/accept 已完成，可重试 GET endpoint → 402 → 组装 header → 重放",
+            }));
+            return Ok(());
+        }
+    };
 
     eprintln!("[task-402-pay] 重放 endpoint（{header_name}: ...）");
     let replay_resp = http
