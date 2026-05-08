@@ -2,9 +2,9 @@
 //!
 //! 买家动作：
 //! - set-payment-mode: 设置支付方式（独立命令，单签上链 → 等待 job_payment_mode_changed）
-//! - confirm-accept: 确认接受卖家（setPaymentMode 已完成后执行实际支付）
+//! - confirm-accept: 确认接受卖家（setPaymentMode 已完成后执行）
 //!    - escrow:      providerConfirmStatus → sign_escrow → accept → broadcast
-//!    - non_escrow:  a2a_pay::pay() → direct/accept → broadcast
+//!    - non_escrow:  direct/accept → broadcast（先接单不支付，支付在 complete 阶段）
 //!    - x402:        不走此命令（用 task-402-pay）
 //! - direct-accept: x402 阶段 2b
 //! - task-402-pay: x402 阶段 2（签名 + direct/accept + 重放 endpoint）
@@ -23,7 +23,7 @@ use crate::commands::agent_commerce::task::common::{
     self, PaymentMode, XLAYER_CHAIN_ID,
 };
 use crate::commands::agent_commerce::task::signing;
-use crate::commands::payment::a2a_pay::{self, PayParams};
+use crate::commands::payment::a2a_pay;
 use super::negotiate;
 
 /// 查询代币信息用于金额校验（容错：失败不阻断主流程）
@@ -413,43 +413,23 @@ async fn confirm_accept_escrow(
     Ok(())
 }
 
-/// non_escrow 非担保支付：a2a_pay::pay() → direct/accept → broadcast
+/// non_escrow 非担保接单：direct/accept → broadcast（先接单，不支付；支付在 complete 阶段）
 #[allow(clippy::too_many_arguments)]
 async fn confirm_accept_non_escrow(
     client: &mut TaskApiClient,
     job_id: &str,
     provider: &str,
-    payment_id: Option<&str>,
+    _payment_id: Option<&str>,
     token_symbol: Option<&str>,
     token_amount: Option<&str>,
     account_id: &str,
     address: &str,
     agent_id: &str,
 ) -> Result<()> {
-    let pid = payment_id.ok_or_else(|| {
-        anyhow::anyhow!("非担保支付需要 --payment-id（由卖家通过 XMTP 传递）")
-    })?;
-
     let (symbol, amount) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, Some(provider), "non_escrow")?;
     let provider_address = fetch_provider_address(provider).await?;
 
-    // 查询 token 合约地址和精度
-    let (token_address, decimals) = fetch_token_detail(client, &symbol, agent_id).await?;
-    let amount_minimal = crate::commands::swap::readable_to_minimal_str(&amount, decimals)?;
-
-    // a2a_pay::pay() — EIP-3009 支付签名
-    let pay_result = a2a_pay::pay(PayParams {
-        payment_id: pid.to_string(),
-        amount: amount_minimal,
-        currency: token_address,
-        recipient_address: provider_address.clone(),
-    }).await?;
-    println!("✓ a2a_pay 支付完成: payment_id={}, status={}", pay_result.payment_id, pay_result.status);
-    if let Some(ref tx) = pay_result.tx_hash {
-        println!("  pay txHash: {tx}");
-    }
-
-    // direct/accept → calldata(uopData) → 签名 → 广播
+    // direct/accept → calldata(uopData) → 签名 → 广播（不含支付）
     let body = serde_json::json!({
         "providerAddress": provider_address,
         "providerAgentId": provider,
@@ -466,8 +446,9 @@ async fn confirm_accept_non_escrow(
         client, &resp["uopData"], account_id, address,
         job_id, signing::extract_biz_type(&resp), agent_id,
     ).await?;
-    println!("✓ 已接受卖家 {provider}（非担保支付），状态 → accepted");
+    println!("✓ 已接受卖家 {provider}（非担保），状态 → accepted");
     println!("  txHash: {tx_hash}");
+    println!("  等待卖家交付并发送 paymentId 后，执行 complete 完成支付");
     Ok(())
 }
 

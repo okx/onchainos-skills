@@ -30,13 +30,14 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         Status::Accepted => vec![
             next_action("job_accepted"),
             ref_header.clone(),
-            format!("  onchainos agent complete {job_id}       # 非担保/x402：接单后立即 direct/complete 完成支付链路"),
+            format!("  onchainos agent complete {job_id} --payment-id <paymentId> --token-symbol <sym> --token-amount <amt>  # 非担保：收到交付物+paymentId后支付并完成"),
             "（escrow 被动等待）卖家执行任务中：job_submitted → 进入验收".to_string(),
+            "（non_escrow 被动等待）卖家交付 + 发送 paymentId → 买家支付 + complete".to_string(),
         ],
         Status::Submitted => vec![
             next_action("job_submitted"),
             ref_header,
-            format!("  onchainos agent complete {job_id}       # escrow：验收通过，释放款项（non_escrow 已在 accepted 阶段完成）"),
+            format!("  onchainos agent complete {job_id}       # escrow：验收通过，释放款项"),
             format!("  onchainos agent reject {job_id} --reason <reason>  # 拒绝验收（仅 escrow）"),
             format!("  onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <buyerAgentId> --score <0-100> --task-id {job_id}  # 评价卖家"),
         ],
@@ -54,7 +55,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             "（终态）任务已 COMPLETE — **资金已释放给卖家**".to_string(),
             "  ▸ escrow 验收通过 → 释放担保款给卖家".to_string(),
             "  ▸ 仲裁卖家胜（dispute_resolved seller-wins）→ 释放担保款给卖家".to_string(),
-            "  ▸ non_escrow 已在 accepted 阶段完成支付链路".to_string(),
+            "  ▸ non_escrow 买家收到交付物后支付 + complete".to_string(),
             "⚠️ 保留 sub session（不关闭），便于事后查阅历史。".to_string(),
         ],
         Status::Rejected => vec![
@@ -371,7 +372,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【后续事件】\n\
              - x402 → set-payment-mode → job_payment_mode_changed → task-402-pay（签名 + direct/accept + endpoint 重放）→ job_accepted → complete\n\
              - escrow → set-payment-mode → job_payment_mode_changed → 通知卖家 apply → provider_applied → confirm-accept → job_accepted\n\
-             - non_escrow → set-payment-mode → job_payment_mode_changed → 通知卖家 create_payment_charge → 收到 paymentId → confirm-accept → job_accepted\n"
+             - non_escrow → set-payment-mode → job_payment_mode_changed → [CONFIRM] + confirm-accept（不含支付）→ job_accepted → 等卖家交付 + paymentId → 支付 + complete → job_completed\n"
         ),
 
         // ─── Scene 6: 卖家申请接单，确认接单（仅 escrow 路径会收到此事件） ──────────
@@ -421,16 +422,39 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20等待卖家执行并提交交付物。\n\n\
              【后续事件】\n\
              - job_submitted → 验收交付物\n\n\
-             ━━━━━━━━━ 分支 B：non_escrow（非担保）━━━━━━━━━\n\n\
-             ⚠️ 非担保流程：接单后需**立即执行 complete** 完成支付链路，然后等卖家交付。\n\n\
-             **B-Step 1 — 执行 complete（单签）：**\n\
-             ```bash\n\
-             onchainos agent complete {job_id}\n\
-             ```\n\
-             （内部：POST /priapi/v1/aieco/task/{job_id}/direct/complete → 获取 calldata → 签名 uopHash → 广播上链）\n\n\
-             **B-Step 2 — 等待 job_completed 系统通知**，不要在此 turn 做更多动作。\n\n\
+             ━━━━━━━━━ 分支 B：non_escrow（非担保 — 先交付后支付）━━━━━━━━━\n\n\
+             ⚠️ 非担保流程：接单后**等待卖家交付并发送 paymentId**，买家收到交付物 + paymentId 后才支付。\n\n\
+             **B-Step 1 — 通知用户接单成功，等待卖家交付：**\n\
+             调用 xmtp_dispatch_user：\n\
+             \x20\x20content:\n\
+             \x20\x20[接单成功] 任务 {job_id} 已确认接单（非担保），等待卖家交付。\n\
+             \x20\x20任务标题：<title>\n\
+             \x20\x20交付物：<deliverable>\n\
+             \x20\x20卖家 AgentID：<providerAgentId>\n\
+             \x20\x20支付方式：non_escrow（先交付后支付）\n\
+             \x20\x20金额：<tokenAmount> <tokenSymbol>\n\
+             \x20\x20卖家交付后会发送 paymentId，届时自动完成支付。\n\n\
+             **B-Step 2 — 等待卖家在 XMTP sub session 中发送交付物 + paymentId**：\n\
+             ⚠️ **不要在此 turn 执行 complete**——买家尚未收到交付物和 paymentId。\n\
+             当卖家在 sub session 中发送消息包含 paymentId（格式：`paymentId: a2a_xxx` 或消息中含 `a2a_` 前缀的 ID）时：\n\
+             \x20\x201. 提取 paymentId\n\
+             \x20\x202. 提取交付物内容（卖家发送的文件 / 文字）\n\
+             \x20\x203. 执行支付 + complete：\n\
+             \x20\x20```bash\n\
+             \x20\x20onchainos agent complete {job_id} --payment-id <paymentId> --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
+             \x20\x20```\n\
+             \x20\x20（内部：a2a_pay 支付 → direct/complete → 签名 → 广播）\n\
+             \x20\x204. 支付成功后调用 xmtp_dispatch_user 通知用户：\n\
+             \x20\x20content:\n\
+             \x20\x20[支付完成] 任务 {job_id} 已收到交付物并完成支付。\n\
+             \x20\x20---交付物内容---\n\
+             \x20\x20<交付物完整内容>\n\
+             \x20\x20---交付物结束---\n\
+             \x20\x20支出：<tokenAmount> <tokenSymbol>\n\
+             \x20\x20本任务流程结束。如需评价卖家，请回复评分（0-100）和评价内容。\n\n\
+             → **结束本轮 turn**，等待卖家 XMTP 消息。\n\n\
              【后续事件】\n\
-             - job_completed → 调用 xmtp_dispatch_user 通知用户支付完成，等待卖家提交交付物\n\n\
+             - 卖家发送交付物 + paymentId（XMTP 消息）→ 买家支付 + complete → job_completed\n\n\
              ━━━━━━━━━ 分支 C：x402 ━━━━━━━━━\n\n\
              ⚠️ 回顾本会话上一轮 turn 中 `task-402-pay` 命令的 JSON 输出（该命令在 job_payment_mode_changed 事件处理时执行），\n\
              从中提取 `replaySuccess`、`replayBody`、`replayStatus` 等字段：\n\n\
@@ -551,20 +575,20 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x203. POST /priapi/v1/aieco/task/{job_id}/refuse（body: {{\"signature\": \"<sig>\", \"reason\": \"<reason>\"}}）→ 获取 uopData\n\
              \x20\x204. 签名 uopHash → 广播上链\n\
              \x20\x20→ 任务状态变为 Refused，卖家 24h 内可发起仲裁。\n\n\
-             ━━━━━━━━━ 分支 B：non_escrow / x402 — 通知用户交付物内容（不可拒绝） ━━━━━━━━━\n\n\
-             ⚠️ non_escrow 和 x402 流程中资金已在 job_accepted 阶段支付，用户**不能拒绝交付物**，只需通知。\n\
-             ⚠️ 通知时必须显示**实际支付方式名称**：paymentMode=2 显示「非担保支付（Non-Escrow）」，paymentMode=3 显示「x402 按需微支付」。**严禁**把 x402 说成 Non-Escrow。\n\n\
+             ━━━━━━━━━ 分支 B：x402 — 通知用户交付物内容（不可拒绝） ━━━━━━━━━\n\n\
+             ⚠️ x402 流程中资金已在 job_accepted 阶段支付，用户**不能拒绝交付物**，只需通知。\n\
+             ⚠️ **非担保（non_escrow）不会收到 job_submitted 事件**——非担保的交付物 + paymentId 通过 XMTP 消息在 job_accepted 阶段处理。\n\n\
              **B-Step 1 — 调用 xmtp_dispatch_user 通知用户收到交付物（按 deliverableType 分）：**\n\n\
              \x20\x20▸ deliverableType=file：\n\
              \x20\x20content:\n\
-             \x20\x20[交付物已收到] 任务 {job_id} 卖家已提交交付物（<paymentMode=2 写「非担保模式」/ paymentMode=3 写「x402 模式」>，资金已支付）。\n\
+             \x20\x20[交付物已收到] 任务 {job_id} 卖家已提交交付物（x402 模式，资金已支付）。\n\
              \x20\x20📁 交付物文件路径：<localPath>（⚠️ 必须是完整绝对路径，如 /Users/xxx/Downloads/task预发.png，严禁只写文件名）\n\
              \x20\x20<如果 deliverableText 非空，追加：卖家说明：<deliverableText>>\n\
              \x20\x20交付物地址：<deliverableUrl>\n\
              \x20\x20验收标准：<qualityStandards>\n\n\
              \x20\x20▸ deliverableType=text：\n\
              \x20\x20content:\n\
-             \x20\x20[交付物已收到] 任务 {job_id} 卖家已提交交付物（<paymentMode=2 写「非担保模式」/ paymentMode=3 写「x402 模式」>，资金已支付）。\n\
+             \x20\x20[交付物已收到] 任务 {job_id} 卖家已提交交付物（x402 模式，资金已支付）。\n\
              \x20\x20---交付物内容---\n\
              \x20\x20<deliverableText 完整原文，不截断不概括>\n\
              \x20\x20---交付物结束---\n\
@@ -576,7 +600,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              任务完整结束。\n\n\
              【后续事件】\n\
              - escrow: job_completed → 任务完成 / job_refused → 等待卖家决定仲裁或退款\n\
-             - non_escrow / x402: 流程已结束\n"
+             - x402: 流程已结束\n"
         ),
 
         // ─── job_refused: 买家已拒绝，等待卖家决策 ─────────────────
@@ -671,18 +695,32 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
              ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复评分（0-100）和评价内容。」\n\
              任务完整结束。\n\n\
-             ━━━━━━━━━ 分支 B：non_escrow / x402 — 支付链路完成，等待卖家交付 ━━━━━━━━━\n\n\
-             ⚠️ non_escrow / x402 模式下 job_completed 意味着支付链路（accept + complete）已完成上链，\n\
-             但**卖家尚未提交交付物**。不要关闭 sub session，不要评价。\n\
-             ⚠️ 通知时必须显示**实际支付方式名称**：paymentMode=2 显示「非担保支付（Non-Escrow）」，paymentMode=3 显示「x402 按需微支付」。**严禁**把 x402 说成 Non-Escrow。\n\n\
-             **B-Step 1 — 调用 xmtp_dispatch_user 通知用户：**\n\
+             ━━━━━━━━━ 分支 B：non_escrow（非担保）— 流程结束 ━━━━━━━━━\n\n\
+             ⚠️ 非担保模式下 job_completed 意味着买家已收到交付物并完成支付，任务**已到达终态**。\n\n\
+             **B-Step 1 — 调用 xmtp_dispatch_user 告知用户任务完成：**\n\
+             content：\n\
+             \x20\x20\x20\x20[任务完成] 任务 {job_id}（<title>）已完成，交付物已收到，支付已完成。\n\
+             \x20\x20\x20\x20  - 支出：<tokenAmount> <tokenSymbol>\n\
+             \x20\x20\x20\x20  - 支付方式：非担保（non_escrow）\n\
+             \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
+             \x20\x20\x20\x20\n\
+             \x20\x20\x20\x20本任务流程结束。\n\n\
+             **B-Step 2 — 终态收尾（保留 sub session）：**\n\
+             ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复评分（0-100）和评价内容。」\n\
+             任务完整结束。\n\n\
+             ━━━━━━━━━ 分支 C：x402 — 支付链路完成，等待卖家交付 ━━━━━━━━━\n\n\
+             ⚠️ x402 模式下 job_completed 意味着支付链路（accept + complete）已完成上链，\n\
+             但**卖家尚未提交交付物**。不要关闭 sub session，不要评价。\n\n\
+             **C-Step 1 — 调用 xmtp_dispatch_user 通知用户：**\n\
              content：\n\
              \x20\x20\x20\x20[支付完成] 任务 {job_id}（<title>）支付链路已完成上链。\n\
              \x20\x20\x20\x20  - 支出：<tokenAmount> <tokenSymbol>\n\
-             \x20\x20\x20\x20  - 支付方式：<paymentMode=2 写「非担保（non_escrow）」/ paymentMode=3 写「x402 按需微支付」>\n\
+             \x20\x20\x20\x20  - 支付方式：x402 按需微支付\n\
              \x20\x20\x20\x20等待卖家提交交付物。\n\n\
              【后续事件】\n\
-             - job_submitted → 卖家提交交付物，调用 xmtp_prompt_user（escrow）或 xmtp_dispatch_user（non_escrow / x402）通知用户\n"
+             - escrow / non_escrow: 流程已结束\n\
+             - x402: job_submitted → 卖家提交交付物，调用 xmtp_dispatch_user 通知用户\n"
         ),
 
         // ─── 仲裁结束（DisputeSettled） ─────────────────────────────
@@ -884,9 +922,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              调用 xmtp_dispatch_user：\n\
              \x20\x20content: 任务 {job_id} 支付模式（escrow）已上链确认，已通知卖家执行 apply 接单，等待中...\n\n\
              → **结束本轮 turn**，等待 `provider_applied` 系统通知。\n\n\
-             ━━━━━━━━━ non_escrow（paymentMode=2）— 发 [NEGOTIATE_CONFIRM] 触发卖家 get-payment ━━━━━━━━━\n\n\
-             **Step 2 — 发 [NEGOTIATE_CONFIRM]（卖家 get-payment 的唯一合法触发器）**：\n\
-             链上 paymentMode 已就位，现在可以安全发 [CONFIRM]。卖家见 [CONFIRM] 自动跑 get-payment 创建 a2a-pay 付款单并把 paymentId 发回。\n\n\
+             ━━━━━━━━━ non_escrow（paymentMode=2）— 发 [NEGOTIATE_CONFIRM] + 直接 confirm-accept ━━━━━━━━━\n\n\
+             **Step 2 — 发 [NEGOTIATE_CONFIRM]**：\n\
+             链上 paymentMode 已就位，现在发 [CONFIRM] 通知卖家协商已锁定。\n\n\
              调用 xmtp_send：\n\
              \x20\x20content=\n\
              \x20\x20[NEGOTIATE_CONFIRM]\n\
@@ -897,16 +935,16 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20tokenSymbol: <与 [NEGOTIATE_ACK] 完全相同>\n\
              \x20\x20tokenAmount: <与 [NEGOTIATE_ACK] 完全相同>\n\
              \x20\x20deadline: <与 [NEGOTIATE_ACK] 完全相同>\n\n\
-             ⚠️ **严禁**用自然语言「请生成付款单 / 请创建 charge」绕过——卖家 flow 只识别 [NEGOTIATE_CONFIRM] 字面量。\n\n\
-             **Step 3 — 通知用户：**\n\
-             调用 xmtp_dispatch_user：\n\
-             \x20\x20content: 任务 {job_id} 支付模式（non_escrow）已上链确认，已通知卖家生成付款单，等待卖家发送 paymentId...\n\n\
-             → **结束本轮 turn**，等待卖家通过 XMTP 发送 paymentId。\n\
-             收到 paymentId 后执行：\n\
+             ⚠️ **严禁**用自然语言绕过——卖家 flow 只识别 [NEGOTIATE_CONFIRM] 字面量。\n\n\
+             **Step 3 — 直接执行 confirm-accept（不等卖家回应，协商已一致）**：\n\
              ```bash\n\
-             onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode non_escrow --payment-id <paymentId> --token-symbol <sym> --token-amount <amt>\n\
+             onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode non_escrow --token-symbol <sym> --token-amount <amt>\n\
              ```\n\
-             直接执行 a2a_pay 签名 + direct/accept 上链。\n\n\
+             ⚠️ 非担保 confirm-accept **不含支付**，只做 direct/accept 上链（先接单后支付）。\n\n\
+             **Step 4 — 通知用户：**\n\
+             调用 xmtp_dispatch_user：\n\
+             \x20\x20content: 任务 {job_id} 支付模式（non_escrow）已上链确认，已发送 [NEGOTIATE_CONFIRM] 并执行 confirm-accept 接单（不含支付），等待卖家交付并发送 paymentId...\n\n\
+             → **结束本轮 turn**，等待 `job_accepted` 系统通知。\n\n\
              ━━━━━━━━━ x402（paymentMode=3）━━━━━━━━━\n\n\
              从上一步 set-payment-mode / x402-check 的输出中提取 endpoint、acceptsJson、feeTokenSymbol、feeAmount、provider。\n\
              如果上下文中没有 acceptsJson，重新验证：\n\

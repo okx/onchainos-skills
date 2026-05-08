@@ -110,6 +110,15 @@ pub enum TaskCommand {
     /// Client confirms task complete and releases payment
     Complete {
         job_id: String,
+        /// a2a_pay payment_id（卖家通过 XMTP 传递，non_escrow 必填）
+        #[arg(long = "payment-id")]
+        payment_id: Option<String>,
+        /// 支付代币符号（non_escrow 需要，如 USDT）
+        #[arg(long = "token-symbol")]
+        token_symbol: Option<String>,
+        /// 支付金额（non_escrow 需要，人类可读格式如 "50"）
+        #[arg(long = "token-amount")]
+        token_amount: Option<String>,
     },
     /// Client rejects deliverable
     Reject {
@@ -217,8 +226,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             accept::handle_task_402_pay(&mut client, &job_id, &provider_agent_id, &accepts, &endpoint, &token_symbol, &token_amount, from.as_deref()).await,
         TaskCommand::X402Check { endpoint } =>
             accept::handle_x402_check(&endpoint).await,
-        TaskCommand::Complete { job_id } =>
-            complete::handle_complete(&mut client, &job_id).await,
+        TaskCommand::Complete { job_id, payment_id, token_symbol, token_amount } =>
+            complete::handle_complete(&mut client, &job_id, payment_id.as_deref(), token_symbol.as_deref(), token_amount.as_deref()).await,
         TaskCommand::Reject { job_id, reason } =>
             refuse::handle_reject(&mut client, &job_id, &reason).await,
         TaskCommand::Close { job_id } =>
