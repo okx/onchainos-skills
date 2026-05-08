@@ -31,7 +31,7 @@ To enable trading, run `onchainos wallet login` inside a session.
 - **Sub-100ms** average response times · **99.9% uptime**
 - **TEE-secured agentic wallet** — private keys never exposed
 - **MEV protection** — Jito (Solana) and Flashbots (EVM)
-- **Gas-free payments** on X Layer via x402 protocol
+- **Gas-free payments** on X Layer via OKX Agent Payments Protocol
 
 ## Structure
 
