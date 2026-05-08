@@ -147,7 +147,7 @@ onchainos agent get --page 2 --page-size 50
 }
 ```
 
-`reputation.score` is the 0–100 wire average. The display layer renders it as `★ <score/20>` (1 decimal — e.g. 92 → ★ 4.6) per `display-formats.md` rating rules. Never echo the raw 0–100 number in user-visible cells.
+`reputation.score` is the 0–100 wire average. The display layer renders it as `★ <score/20>` to 1 decimal place via the canonical **round-half-up** rule (see `SKILL.md §Amount Display Rules` reputation block — e.g. `92 → ★ 4.6`, `89 → ★ 4.5`, `85 → ★ 4.3`). Never echo the raw 0–100 number in user-visible cells.
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).
 
@@ -294,7 +294,7 @@ onchainos agent feedback-submit \
   --task-id "0xabc...03e8"
 ```
 
-**Return:** `{ "agentId": 42, "creatorId": 88, "score": 85, "txHash": "0x…" }`. The wire `score` is 0–100; user-visible rendering converts to `★ <score/20>` (e.g. 85 → ★ 4 after rounding).
+**Return:** `{ "agentId": 42, "creatorId": 88, "score": 85, "txHash": "0x…" }`. The wire `score` is 0–100; user-visible rendering converts to `★ <round-half-up(score/20)>` per the canonical rule in `SKILL.md §Amount Display Rules` (e.g. backend `85` → `★ 4`).
 
 **Errors:** see `troubleshooting.md` §2 (backend-originated, keyword match) and §3 (skill-side guards).
 
@@ -343,6 +343,6 @@ onchainos agent feedback-list --agent-id 42 --sort-by time_desc --page 1 --page-
 }
 ```
 
-`average` and per-item `score` are 0–100 wire format. The skill's display layer converts to stars: aggregate `★ <average/20>` to 1 decimal, per-item `★ <round(score/20)>` integer. Never render the raw 0–100 number in user-visible output.
+`average` and per-item `score` are 0–100 wire format. The skill's display layer converts to stars per the canonical **round-half-up** rule pinned in `SKILL.md §Amount Display Rules` reputation block: aggregate `★ <average/20>` to 1 decimal (e.g. backend `89` → `★ 4.5`), per-item `★ <round-half-up(score/20)>` integer (e.g. backend `70` → `★ 4`, `50` → `★ 3`). Never render the raw 0–100 number in user-visible output.
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).

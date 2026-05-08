@@ -47,7 +47,7 @@ Rules:
 
 - Five columns, exactly. The first column header (`Agent ID`) stays in English because "Agent ID" reads as a technical token; the other four adapt to user language (`名字 / 角色 / 状态 / 评分` ↔ `Name / Role / Status / Rating`).
 - Truncate `Name` to 20 chars with `…`.
-- `Rating`: `★ <average_stars> (<count>)`, where `<average_stars>` = `<backend_score> / 20` rendered to 1 decimal place (e.g. `92 → 4.6`). If no feedback yet, render `—`. **Never expose the raw 0–100 score in user-visible cells** — `92 / 100` is forbidden.
+- `Rating`: `★ <average_stars> (<count>)`, where `<average_stars>` = `<backend_score> / 20` rendered to 1 decimal place via the canonical **round-half-up** rule (see `SKILL.md §Amount Display Rules` reputation block). Examples: `92 → 4.6`, `89 → 4.5`, `85 → 4.3`. If no feedback yet, render `—`. **Never expose the raw 0–100 score in user-visible cells** — `92 / 100` is forbidden.
 - `Status` and `Role` use the language-matching label: Chinese users see `已上架 / 已下架` and `买家 / 服务方 / 验证者`; English users see `active / inactive` and `requester / provider / evaluator`. Never render bilingual `active (已上架)`.
 - If total > page size, append the pagination footer in the user's language (`第 <page>/<total_pages> 页，继续翻页说 "下一页"。` ↔ `Page <page>/<total_pages> — say "next page" to continue.`).
 
@@ -299,7 +299,7 @@ Header line + one entry per review. Prose-style, not a table — the description
 Rules:
 
 - Header mirrors the detail card's rating summary line — `★ <average_stars> (<count> reviews)`, where `<average_stars>` = `<backend_score> / 20` to 1 decimal (e.g. 92 → 4.6).
-- Each review: `#<index> · <date> · creator #<id> (<role> <name>) · ★ <stars>`, where `<stars>` = `round(<backend_score> / 20)` rendered as integer 0–5. Never render the raw 0–100 number.
+- Each review: `#<index> · <date> · creator #<id> (<role> <name>) · ★ <stars>`, where `<stars>` = `round-half-up(<backend_score> / 20)` rendered as integer 0–5 (canonical rule pinned in `SKILL.md §Amount Display Rules` reputation block — `50 → 3`, `70 → 4`, `90 → 5`). Never render the raw 0–100 number.
 - Optional `task:` row shows the jobId in backticks; omit if absent.
 - Description in quotes; render `"(no comment)"` when missing.
 - Footer: page indicator + `--sort-by` used (`time_desc` or `score_desc`; see `cli-reference.md` §10 for the natural-language mapping). If `--sort-by` was omitted, render `未指定，后端默认`.
