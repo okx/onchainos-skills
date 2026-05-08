@@ -877,5 +877,5 @@ flow.rs 根据 event 输出对应 Scene 剧本（`provider_applied` / `job_accep
 **`references/`**（深度查阅，按需打开）：
 
 - `references/evaluator-decision-rubric.md` — evaluator 判决方法论（输入 / Rubric / 决策原则 / 归约表 / 裁决书 / L4 自检 / 第一性誓约 / 证据等级 S-D / 经济模型 / 操控识别协议）
-- `references/evaluator-staking.md` — evaluator 全部 staking 流程（§1 共享概念 / §2 首次质押 onboarding 4-step / §3 后续 lifecycle 操作 / §4 错误码）
+- `references/evaluator-staking.md` — evaluator 全部 staking 流程（场景路由 / 首次质押 onboarding / 后续 lifecycle 操作 / 链上事件回执）；错误码统一查 `troubleshooting.md`
 - `references/troubleshooting.md` — 错误码与排查步骤

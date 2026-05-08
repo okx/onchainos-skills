@@ -27,28 +27,12 @@ pub async fn handle_staking_config(
     println!("staking & arbitration config");
     println!("  minCumulativeStakeOkb       : {} OKB", cfg.min_cumulative_stake_okb);
     println!("  partialUnstakeMinRetainOkb  : {} OKB", cfg.partial_unstake_min_retain_okb);
-    println!(
-        "  unstakeCooldownSeconds      : {} ({} 天)",
-        cfg.unstake_cooldown_seconds,
-        cfg.unstake_cooldown_days(),
-    );
+    println!("  unstakeCooldownDays         : {}", cfg.unstake_cooldown_days());
     println!("  arbitrationFeeBps           : {}", cfg.arbitration_fee_bps);
-    println!(
-        "  commitPhaseSeconds          : {} ({} 小时)",
-        cfg.commit_phase_seconds,
-        cfg.commit_phase_hours(),
-    );
-    println!(
-        "  revealPhaseSeconds          : {} ({} 小时)",
-        cfg.reveal_phase_seconds,
-        cfg.reveal_phase_hours(),
-    );
+    println!("  commitPhaseHours            : {}", cfg.commit_phase_hours());
+    println!("  revealPhaseHours            : {}", cfg.reveal_phase_hours());
     println!("  slashMinorityBps            : {}", cfg.slash_minority_bps);
     println!("  slashTimeoutBps             : {}", cfg.slash_timeout_bps);
-    println!(
-        "  slashedCooldownSeconds      : {} ({} 小时)",
-        cfg.slashed_cooldown_seconds,
-        cfg.slashed_cooldown_seconds / 3600,
-    );
+    println!("  slashedCooldownHours        : {}", cfg.slashed_cooldown_hours());
     Ok(())
 }

@@ -419,7 +419,7 @@ agent cancel-unstake [--agent-id <id>]
 agent staking-config [--agent-id <id>]
 ```
 
-只读：拉平台质押 / 仲裁配置（`minCumulativeStakeOkb` / `partialUnstakeMinRetainOkb` / `unstakeCooldownSeconds` / `slashMinorityBps` / `slashTimeoutBps` / `slashedCooldownSeconds` / `arbitrationFeeBps` / `commitPhaseSeconds` / `revealPhaseSeconds`）。Apollo-driven，合约权威值，**不要写死**。
+只读：拉平台质押 / 仲裁配置（`minCumulativeStakeOkb` / `partialUnstakeMinRetainOkb` / `unstakeCooldownDays` / `slashMinorityBps` / `slashTimeoutBps` / `slashedCooldownHours` / `arbitrationFeeBps` / `commitPhaseHours` / `revealPhaseHours`）。Apollo-driven，合约权威值，**不要写死**。
 
 ### my-stake
 

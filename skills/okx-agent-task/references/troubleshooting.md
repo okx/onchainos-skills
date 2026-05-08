@@ -76,7 +76,7 @@
 | `voter has already committed` | 你这一轮已经 commit 过了 | **当成功处理**——agent 重复触发是常见 race，结果一致即可 |
 | `voter has not committed` | 收到 `reveal_started` 但本轮没 commit | 跳过 reveal 是正常的（你可能没被选上 / commit 超时被踢）；**不要**当错误 |
 | `canReveal=false` | CLI 自动预检，commit 窗口未关 / 已 reveal / 已结算 | **不要重试**；等 `dispute_resolved` 通知；若已结算 → 改跑 `arbitration-claim`（账户级 pull） |
-| Commit / Reveal 超时罚（`slashTimeoutBps`） | 错过提交时限 | 接受罚没；按 `slashedCooldownSeconds` 冷却期不被选；冷却结束后正常恢复。**比例 / 时长从 `staking-config` 拉，禁止写死** |
+| Commit / Reveal 超时罚（`slashTimeoutBps`） | 错过提交时限 | 接受罚没；按 `slashedCooldownHours` 小时冷却期不被选；冷却结束后正常恢复。**比例 / 时长从 `staking-config` 拉，禁止写死** |
 | `code=1001` + `msg` 含 `累计质押` / `minCumulativeStakeOkb` | `stake` 时 `activeStake + 本次 < min`（参数校验失败） | 重跑 `my-stake` 拿 `activeStake`，让用户提高金额（`min - activeStake`）后再质押 |
 | `request-unstake` 合约 revert | 当前有 `activeDisputes > 0`，活跃仲裁期间不可解质押 | 让用户等仲裁结算（`dispute_resolved`）后再 unstake |
 
