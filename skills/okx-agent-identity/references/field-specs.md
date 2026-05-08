@@ -24,7 +24,7 @@
 
 - **用途** / Purpose: 头像，出现在 agent 卡片、搜索结果、详情页。 / Avatar shown in agent cards, search results, and detail pages.
 - **可见范围** / Visibility: 和 agent 身份一起保存，卡片和搜索结果里展示。 / Stored with the agent identity; rendered in cards and search results.
-- **请注意** / Please note: 可跳过（后端会给默认图）；有本地图片直接发给我，我帮你上传；推荐 1:1 方图，支持 PNG/JPEG/WebP。 / Optional (backend provides a default); if you have a local image just send it and I'll handle the upload; recommend 1:1 square, PNG/JPEG/WebP.
+- **请注意** / Please note: 可跳过（用默认头像）；有本地图片直接发给我，我帮你上传；推荐 1:1 方图，支持 PNG/JPEG/WebP。 / Optional (a default avatar is used when skipped); if you have a local image just send it and I'll handle the upload; recommend 1:1 square, PNG/JPEG/WebP.
 - **示例** / Example: 用户发来的本地图片 / 已有头像链接。 / A local image the user sends / an existing image link.
 
 ## Service-level fields (provider only)
@@ -50,17 +50,17 @@ The provider's `--service` is a JSON array whose elements have the fields below.
 
 - **用途** / Purpose: 决定结算与调用方式的核心开关。 / Switch that determines settlement and call protocol.
   - `A2MCP`：标准 MCP 接口，买家按次付费调用。 / Standard MCP interface; buyers pay per call.
-  - `A2A`：纯 agent-to-agent 协议，定价在链外谈。 / Pure agent-to-agent protocol; pricing negotiated off-chain.
+  - `A2A`：纯 agent-to-agent 协议，定价默认在链外谈；可选填一个 USDT 参考价上链供搜索 / 匹配参考。 / Pure agent-to-agent protocol; pricing is off-chain by default, with an optional USDT reference price stored on-chain to aid search / matching.
 - **可见范围** / Visibility: 上链公开，影响可被哪类买家发现。 / On-chain public; affects which buyers discover you.
 - **请注意** / Please note: `A2MCP` 或 `A2A`（CLI 大小写不敏感，skill 统一下发大写）。 / Must be `A2MCP` or `A2A` (CLI is case-insensitive; the skill always emits uppercase).
 - **示例** / Example: `A2MCP` / `A2A`.
 
-### fee (A2MCP only)
+### fee
 
 - **用途** / Purpose: 每次调用的单价。 / Price per call.
 - **可见范围** / Visibility: 上链公开。 / On-chain public.
-- **请注意** / Please note: USDT 数字字符串，最多两位小数（如 `1.22` / `10` / `0.5`）；`0` 表示免费引流（后续不能再按量收费）；A2A 不需要这个字段。**校验由 skill 端执行**，CLI 只检查非空。 / USDT numeric string with up to 2 decimal places (e.g., `1.22` / `10` / `0.5`); `0` means free lead-gen (cannot charge per-call later); A2A does not need this. **Validation is enforced skill-side** — the CLI itself only checks non-empty.
-- **示例** / Example: `1.22` / `10` / `0.5` / `0`.
+- **请注意** / Please note: USDT 数字字符串，最多六位小数（如 `1.234567` / `10` / `0.5`）；`0` 表示免费引流（A2MCP 上 `0` 表示后续不能再按量收费）。**A2MCP 必填，A2A 选填**——A2A 跳过时上链 payload 中 `fee` 字段会序列化为空字符串 `""`（model `fee: String` 没有 `skip_serializing_if`，见 `cli/src/commands/agent_commerce/identity/models.rs:21`）；填了的值会作为参考价上链。**skill 渲染端把空字符串当作"未填"**显示为 `免费` / `free`；后端是否同样区分"空串 vs 缺失键"取决于产品 spec，本地代码不可证实，需要时请去查后端契约或 product spec。**格式校验由 skill 端执行**，CLI 只对 A2MCP 检查非空。 / USDT numeric string with up to 6 decimal places (e.g., `1.234567` / `10` / `0.5`); `0` means free lead-gen (on A2MCP, `0` means you cannot charge per-call later). **A2MCP requires it; A2A is optional** — when the user skips on A2A, the wire payload still carries `"fee": ""` (the model's `fee: String` has no `skip_serializing_if`, see `cli/src/commands/agent_commerce/identity/models.rs:21`); a non-empty value is recorded on-chain as a reference price. **The skill's render layer treats empty string as "not specified"** and displays `免费` / `free`; whether the backend also distinguishes "empty string vs absent key" is governed by the product spec, not by anything in this repo — consult the backend contract / product spec when exact semantics matter. **Format validation is enforced skill-side** — the CLI only enforces non-empty for A2MCP.
+- **示例** / Example: `1.22` / `10` / `0.5` / `0` / （A2A 选填留空）/ (empty for A2A optional skip).
 
 ### endpoint (A2MCP only)
 
@@ -68,6 +68,7 @@ The provider's `--service` is a JSON array whose elements have the fields below.
 - **可见范围** / Visibility: 上链公开；需保证 skill 级访问权限。 / On-chain public; ensure skill-level access.
 - **请注意** / Please note: 必须以 `https://` 开头；A2A 即使传了 CLI 也会清掉。 / Must start with `https://`; the CLI discards the value when `servicetype` is A2A.
 - **示例** / Example: `https://api.example.com/mcp` / `https://svc.defi-analyzer.xyz/mcp`.
+- **Internal validation, do NOT inline into user-facing prompt** / **内部校验，不要进入对外提示**: A2MCP endpoint length ≤ 512 chars (skill-side check; CLI does not enforce length). On rejection, surface the 512-char limit verbatim in the error copy (see `troubleshooting.md` §3).
 
 ## How to deliver these in Q&A
 

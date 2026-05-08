@@ -67,7 +67,8 @@ Chinese variant:
 | 描述 | 链上数据分析与收益模拟。 |
 | 头像 | <url> |
 | 服务 | [1] TVL Query — A2MCP, 10 USDT, https://api.example.com/mcp |
-| 服务 | [2] Yield Check — A2A, free |
+| 服务 | [2] Yield Check — A2A, 免费 |
+| 服务 | [3] Whale Alert — A2A, 5 USDT |
 | 信誉 | 92 / 100 (18 条评价) |
 | txHash | 0xabcdef…0f12 |
 
@@ -84,6 +85,7 @@ English variant:
 | Picture | <url> |
 | Services | [1] TVL Query — A2MCP, 10 USDT, https://api.example.com/mcp |
 | Services | [2] Yield Check — A2A, free |
+| Services | [3] Whale Alert — A2A, 5 USDT |
 | Reputation | 92 / 100 (18 reviews) |
 | txHash | 0xabcdef…0f12 |
 
@@ -94,7 +96,7 @@ Rules:
 - Render `Role` using the user-language label: `买家 / 服务方 / 验证者` ↔ `requester / provider / evaluator`.
 - Render `Status` using the user-language label: `已上架 / 已下架` ↔ `active / inactive`.
 - Short-form address: `0x` + first 4 + `…` + last 4 hex chars. Show the full address only when the user asks.
-- Services — one row per service, numbered `[N]`, single-line format. The **name value** (what the user typed, e.g. `TVL Query`) stays verbatim; the following descriptor uses user-language words: Chinese `名称 — 类型, 价格, 接口地址`-style reading order, English `Name — Type, Fee, Endpoint`-style reading order. In practice the single-line format is `<ServiceName> — <Type>, <Fee or 免费/free>, <Endpoint>`. For A2A, use `免费（链外按次计价）` / `free (per-call pricing off-chain)` in the user's language instead of Fee and drop the Endpoint (CLI clears it anyway).
+- Services — one row per service, numbered `[N]`, single-line format. The **name value** (what the user typed, e.g. `TVL Query`) stays verbatim; the following descriptor uses user-language words: Chinese `名称 — 类型, 价格, 接口地址`-style reading order, English `Name — Type, Fee, Endpoint`-style reading order. In practice the single-line format is `<ServiceName> — <Type>, <Fee or 免费/free>, <Endpoint>`. **A2A fee handling**: if the backend returned a non-empty `fee` for the A2A service, render it as `<N> USDT` exactly like A2MCP; if `fee` is absent / empty, render the short form `免费` / `free` (Type=A2A in the same row already gives readers the off-chain-pricing context, so no parenthetical is needed in this compact row). The Endpoint cell is always dropped for A2A regardless (CLI clears it).
 - `txHash` row present only when the command produced a tx (absent on read-only commands).
 - `Agent ID` row: follow the `#<id>` placeholder rule at the top of this file — omit the row entirely if the id is not available yet (e.g. fresh `create` response), don't render `#` alone.
 - **Single source of data — no chain calls.** All rows above (including Services and Reputation aggregate) come from the **one** `agent get --agent-ids <id>` response (`items[0]` — see `cli-reference.md §3` return schema: `{ agentId, name, role, status, description, picture, address, services: [...], reputation: { score, count } }`). Do **NOT** chain `agent service-list --agent-id <id>` to "populate" the Services rows — they're already in the response. Do **NOT** chain `agent feedback-list --agent-id <id>` to "populate" the Reputation row — the aggregate `{ score, count }` is already there; individual review entries belong to a separate, user-triggered request (see §Post-detail prompt below).
@@ -214,7 +216,7 @@ Chinese variant:
 | 头像 | <旧 URL> | **<新 URL>** |
 | 服务[1] 价格 | 10 USDT | (不变) |
 
-> 确认后回复 "执行" 我就下发。`--service` 整体替换，但本次只有 服务[1] 价格 以外的字段保持不变。
+> 确认后回复 "执行" 即可。`--service` 整体替换，但本次只有 服务[1] 价格 以外的字段保持不变。
 
 English variant:
 
@@ -233,7 +235,7 @@ Rules:
 - Changed rows: bold the new-value cell so the diff reads at a glance.
 - For each service entry, always list all sub-fields — easy to spot accidental drops. Localize the service-field labels per the mapping table above.
 - **Do NOT show the bash command in this card.** If the user asks "把命令给我看", render it as a separate code block afterward; otherwise omit.
-- End every diff card with exactly one line: `确认后回复 "执行" 我就下发。`
+- End every diff card with exactly one line: `确认后回复 "执行" 即可。` (English variant: `Reply "execute" to run.`). Do NOT use any verb like "下发" / "dispatch" / "send" in this footer — see `SKILL.md §Step 3 — No narration between confirmation and result` for why.
 
 ---
 
@@ -249,6 +251,7 @@ Chinese variant:
 |---|---|---|---|---|---|
 | 1 | TVL Query | A2MCP | 10 USDT | `https://api.example.com/mcp` | 按链查询协议 TVL。 |
 | 2 | Yield Check | A2A | 免费 | — | 比较 Aave / Lido / Compound 的收益。 |
+| 3 | Whale Alert | A2A | 5 USDT | — | 大额转账实时推送（A2A 选填了上链参考价）。 |
 
 English variant:
 
@@ -258,13 +261,14 @@ English variant:
 |---|---|---|---|---|---|
 | 1 | TVL Query | A2MCP | 10 USDT | `https://api.example.com/mcp` | Query protocol TVL by chain. |
 | 2 | Yield Check | A2A | free | — | Compare yields across Aave / Lido / Compound. |
+| 3 | Whale Alert | A2A | 5 USDT | — | Real-time large-transfer alerts (A2A with on-chain reference fee supplied). |
 
 Rules:
 
 - **Pipe table, not bullet blocks.** Matches the top-level "every table is a Markdown pipe table" convention (line 5 of this file). The previous bullet-style block format was wrong — switched to pipe table for consistency with §1 / §2 / §6.
 - Number services in the `#` column starting at `1` (no `[N]` brackets — the column header already tells the reader it's an index).
 - Header line before the table: `Agent #<id> — <name> (<role>) 的服务：` / `Agent #<id> — <name> (<role>) services:` as a blockquote. Role label follows `SKILL.md §Language Matching`.
-- **A2A row**: render `免费` / `free` in the `价格` / `Fee` column, and `—` (em dash) in the `Endpoint` column to keep column alignment. The CLI clears A2A endpoints regardless, so there's no real value to show.
+- **A2A row**: in the `价格` / `Fee` column, render `<N> USDT` when the backend returned a non-empty `fee` for the A2A service, otherwise render `免费` / `free`. In the `Endpoint` column always render `—` (em dash) — the CLI clears A2A endpoints regardless.
 - **Values are rendered verbatim from the backend.** If the backend returns non-standard values (e.g. `serviceType: "query"` instead of `A2MCP` / `A2A`; `Fee` in `ETH` rather than `USDT`; endpoints in odd shapes), show them as-is in the table — do not sanitize or normalize to expected enums. Append a footnote blockquote below the table when you notice the shape diverges from the local `--service` schema:
   > 注：此结果字段结构与本地 provider schema 不完全一致（例如 `serviceType=query`、按 ETH 计价），更像后端 demo 或示例数据 — 接入前请人工核验 endpoint 与结算条款。
   > Note: the field shape here diverges from the local `--service` schema (e.g. `serviceType=query`, priced in ETH). This looks like backend demo / example data — verify the endpoint and settlement terms manually before integrating.
