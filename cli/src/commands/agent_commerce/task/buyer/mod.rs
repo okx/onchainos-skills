@@ -180,8 +180,8 @@ pub enum TaskCommand {
     /// Save negotiated payment params locally (agent calls after negotiation)
     SaveAgreed {
         job_id: String,
-        #[arg(long)]
-        provider: String,
+        #[arg(long = "provider")]
+        provider_agent_id: String,
         #[arg(long = "token-symbol")]
         token_symbol: String,
         #[arg(long = "token-amount")]
@@ -227,8 +227,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             changepublic::handle_set_public(&mut client, &job_id).await,
         TaskCommand::ClaimAutoRefund { job_id } =>
             claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await,
-        TaskCommand::SaveAgreed { job_id, provider, token_symbol, token_amount } => {
-            negotiate::save_agreed(&job_id, &provider, &token_symbol, &token_amount)
+        TaskCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount } => {
+            negotiate::save_agreed(&job_id, &provider_agent_id, &token_symbol, &token_amount)
         }
 
         // ── 只读查询 ─────────────────────────────────────────────

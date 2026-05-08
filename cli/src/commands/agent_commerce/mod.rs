@@ -256,8 +256,8 @@ pub enum AgentCommand {
     #[command(name = "save-agreed")]
     SaveAgreed {
         job_id: String,
-        #[arg(long)]
-        provider: String,
+        #[arg(long = "provider")]
+        provider_agent_id: String,
         #[arg(long = "token-symbol")]
         token_symbol: String,
         #[arg(long = "token-amount")]
@@ -567,8 +567,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Pay { job_id, agent_id } =>
             task::buyer::run_task(T::Pay { job_id, agent_id }, ctx).await,
 
-        AgentCommand::SaveAgreed { job_id, provider, token_symbol, token_amount } =>
-            task::buyer::run_task(T::SaveAgreed { job_id, provider, token_symbol, token_amount }, ctx).await,
+        AgentCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, .. } =>
+            task::buyer::run_task(T::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount }, ctx).await,
 
         AgentCommand::ClaimAutoRefund { job_id } =>
             task::buyer::run_task(T::ClaimAutoRefund { job_id }, ctx).await,
