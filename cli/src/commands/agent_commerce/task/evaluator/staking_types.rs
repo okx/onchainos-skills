@@ -58,20 +58,46 @@ pub struct StakingConfig {
     pub slashed_cooldown_seconds: u64,
 }
 
+/// 把秒数按目标单位（一天/一小时的秒数）格式化为精确显示字符串：
+/// - 整数倍 → 纯数字（如 `"7"`）
+/// - 分数  → 优先 2 位小数；2 位四舍五入到 0 时递进到 4 位（去尾零）
+/// - 0 秒  → `"0"`
+fn format_fractional_unit(seconds: u64, unit_seconds: u64) -> String {
+    if seconds == 0 {
+        return "0".into();
+    }
+    if seconds.is_multiple_of(unit_seconds) {
+        return (seconds / unit_seconds).to_string();
+    }
+    let value = seconds as f64 / unit_seconds as f64;
+    let two = format!("{value:.2}");
+    let trimmed_two = two.trim_end_matches('0').trim_end_matches('.');
+    if trimmed_two != "0" {
+        return trimmed_two.to_string();
+    }
+    let four = format!("{value:.4}");
+    four.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
 impl StakingConfig {
-    /// 解质押冷却期（天，向上取整以便 UX 文案对齐"≥ N 天"语义）。
-    pub fn unstake_cooldown_days(&self) -> u64 {
-        self.unstake_cooldown_seconds.div_ceil(86400)
+    /// 解质押冷却期（天，精确显示，详见 [`format_fractional_unit`]）。
+    pub fn unstake_cooldown_days(&self) -> String {
+        format_fractional_unit(self.unstake_cooldown_seconds, 86400)
     }
 
-    /// Commit 阶段时长（小时，整数）。
-    pub fn commit_phase_hours(&self) -> u64 {
-        self.commit_phase_seconds / 3600
+    /// Commit 阶段时长（小时，精确显示）。
+    pub fn commit_phase_hours(&self) -> String {
+        format_fractional_unit(self.commit_phase_seconds, 3600)
     }
 
-    /// Reveal 阶段时长（小时，整数）。
-    pub fn reveal_phase_hours(&self) -> u64 {
-        self.reveal_phase_seconds / 3600
+    /// Reveal 阶段时长（小时，精确显示）。
+    pub fn reveal_phase_hours(&self) -> String {
+        format_fractional_unit(self.reveal_phase_seconds, 3600)
+    }
+
+    /// 罚没冷却期（小时，精确显示）。
+    pub fn slashed_cooldown_hours(&self) -> String {
+        format_fractional_unit(self.slashed_cooldown_seconds, 3600)
     }
 }
 
@@ -79,7 +105,7 @@ impl StakingConfig {
 ///
 /// 与"钱包余额"是两个独立概念：余额在 EOA 上、可花费；`activeStake` 已经从余额转入
 /// `VoterStaking` 合约锁仓，扣过历史罚没。skill 的累计门槛判断必须用 `activeStake`，
-/// 不能拿 wallet balance 顶替（参见 evaluator.md §1.5）。
+/// 不能拿 wallet balance 顶替。
 ///
 /// 示例响应：
 /// ```json

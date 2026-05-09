@@ -43,7 +43,7 @@ pub async fn handle_my_stake(
         s.valid_stake_okb
     );
     println!(
-        "  activeDisputes     : {}  # 参与中的仲裁数（>0 时不可全额解质押）",
+        "  activeDisputes     : {}  # 参与中的仲裁数（>0 时不可解质押）",
         s.active_disputes
     );
     println!(

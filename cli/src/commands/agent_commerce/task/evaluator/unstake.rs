@@ -1,10 +1,18 @@
 use anyhow::{bail, Result};
+use chrono::TimeZone;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::evaluator::staking_types::{
-    self, StakingConfig,
-};
+use crate::commands::agent_commerce::task::evaluator::staking_types;
 use crate::commands::agent_commerce::task::signing;
+
+/// 把 unix 秒格式化为「ts（本地时间 YYYY-MM-DD HH:MM:SS TZ）」用于错误提示。
+fn fmt_local_ts(ts: i64) -> String {
+    chrono::Local
+        .timestamp_opt(ts, 0)
+        .single()
+        .map(|d| format!("{ts}（本地时间 {}）", d.format("%Y-%m-%d %H:%M:%S %Z")))
+        .unwrap_or_else(|| ts.to_string())
+}
 
 pub async fn handle_request_unstake(
     client: &mut TaskApiClient,
@@ -18,12 +26,58 @@ pub async fn handle_request_unstake(
     if !trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') {
         bail!("--amount 必须是数字（OKB 金额，UI 单位不带精度），got: {trimmed}");
     }
+    let amt: f64 = trimmed
+        .parse()
+        .map_err(|e| anyhow::anyhow!("--amount 解析失败（格式非法），got: {trimmed}: {e}"))?;
+    if amt <= 0.0 {
+        bail!("--amount 必须 > 0，got: {trimmed}");
+    }
 
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
-    // best-effort 拉平台配置；失败不阻塞——合约会兜底。
-    let cfg = staking_types::get_staking_config(client, &agent_id).await.ok();
+    // 拉 my-stake / staking-config（任一失败 → 直接报错结束，不做 best-effort 猜测）
+    let m = staking_types::get_my_stake(client, &agent_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("my-stake 拉取失败，无法校验 request-unstake 前置条件：{e}"))?;
+
+    // 活跃仲裁阻拦
+    let active_disputes = m.active_disputes.parse::<u64>().unwrap_or(0);
+    if active_disputes > 0 {
+        bail!(
+            "当前有 {active_disputes} 个未结仲裁，期间不允许解质押。请等仲裁结算后再申请。"
+        );
+    }
+
+    // amount 不能 > activeStake
+    let active: f64 = m
+        .active_stake_okb
+        .parse()
+        .map_err(|e| anyhow::anyhow!("activeStake 解析失败 ({}): {e}", m.active_stake_okb))?;
+    if amt > active {
+        bail!(
+            "--amount {trimmed} OKB 超过当前 activeStake {active} OKB；最多可解 {active} OKB（全额赎回）。"
+        );
+    }
+
+    let cfg = staking_types::get_staking_config(client, &agent_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("staking-config 拉取失败，无法校验部分赎回保留：{e}"))?;
+    // 部分赎回后剩余必须 >= partialUnstakeMinRetainOkb（全额赎回 amt == active 不受此限）
+    let retain: f64 = cfg.partial_unstake_min_retain_okb.parse().map_err(|e| {
+        anyhow::anyhow!(
+            "partialUnstakeMinRetainOkb 解析失败 ({}): {e}",
+            cfg.partial_unstake_min_retain_okb
+        )
+    })?;
+    let remaining = active - amt;
+    // 用 1e-9 epsilon 避免 f64 精度抖动把全额赎回误判为部分赎回
+    if remaining > 1e-9 && remaining < retain {
+        bail!(
+            "部分赎回后余额 {remaining} OKB 将低于最低保留 {retain} OKB（partialUnstakeMinRetainOkb）。\
+             请改为全额赎回（金额 = {active} OKB），或减小本次数额使剩余 >= {retain} OKB。"
+        );
+    }
 
     let path = "/priapi/v1/aieco/task/staking/requestUnstake";
     let body = serde_json::json!({ "amount": trimmed });
@@ -46,33 +100,38 @@ pub async fn handle_request_unstake(
     println!("  amount:  -{trimmed} OKB（申请中）");
     println!("  voter:   {address}");
     println!("  txHash:  {tx_hash}");
-    if let Some(days) = cfg.as_ref().map(StakingConfig::unstake_cooldown_days) {
-        println!(
-            "next: 申请已提交，等待链上确认；确认后进入 {days} 天冷却期，到时可领取，期间可撤销。"
-        );
-    } else {
-        println!(
-            "next: 申请已提交，等待链上确认；确认后进入冷却期（天数见 staking-config），到时可领取，期间可撤销。"
-        );
-    }
-    if let Some(c) = cfg.as_ref() {
-        println!(
-            "  config: 部分赎回后余额最低保留 {} OKB（低于此值只能全额赎回）",
-            c.partial_unstake_min_retain_okb
-        );
-    }
+    println!(
+        "next: 申请已提交，等待链上确认；确认后进入 {} 天冷却期，到时可领取，期间可撤销。",
+        cfg.unstake_cooldown_days(),
+    );
+    println!(
+        "  config: 部分赎回后余额最低保留 {} OKB（低于此值只能全额赎回）",
+        cfg.partial_unstake_min_retain_okb,
+    );
     Ok(())
 }
 
 /// 冷却期结束后领取已解质押的 OKB。合约内部知道金额与解锁时间，请求体为空。
-///
-/// Error codes: 4000 / 合约 revert（未到解锁时间 / 无待解质押）
 pub async fn handle_claim_unstake(
     client: &mut TaskApiClient,
     agent_id: &str,
 ) -> Result<()> {
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
+
+    // best-effort pre-check：my-stake 失败 → 跳过预检由合约兜底
+    if let Ok(m) = staking_types::get_my_stake(client, &agent_id).await {
+        if m.unstake_available_at == 0 {
+            bail!("当前没有待领取的解质押申请。请先发起解质押申请。");
+        }
+        let now = chrono::Utc::now().timestamp();
+        if now < m.unstake_available_at {
+            bail!(
+                "解质押冷却期未结束（解锁时间 {}），到期后再领取。",
+                fmt_local_ts(m.unstake_available_at)
+            );
+        }
+    }
 
     let path = "/priapi/v1/aieco/task/staking/claimUnstake";
     let body = serde_json::json!({});
@@ -104,6 +163,19 @@ pub async fn handle_cancel_unstake(
 ) -> Result<()> {
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
+
+    // best-effort pre-check：my-stake 失败 → 跳过预检由合约兜底
+    if let Ok(m) = staking_types::get_my_stake(client, &agent_id).await {
+        if m.unstake_available_at == 0 {
+            bail!("当前没有待撤销的解质押申请。");
+        }
+        let now = chrono::Utc::now().timestamp();
+        if now >= m.unstake_available_at {
+            bail!(
+                "解质押冷却期已结束，已可直接领取，撤销已无效。请改为领取。"
+            );
+        }
+    }
 
     let path = "/priapi/v1/aieco/task/staking/cancelUnstake";
     let body = serde_json::json!({});

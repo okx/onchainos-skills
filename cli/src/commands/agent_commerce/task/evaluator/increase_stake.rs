@@ -1,6 +1,7 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::evaluator::stake;
 use crate::commands::agent_commerce::task::signing;
 
 pub async fn handle_increase_stake(
@@ -8,35 +9,16 @@ pub async fn handle_increase_stake(
     amount: &str,
     agent_id: &str,
 ) -> Result<()> {
-    let trimmed = amount.trim();
-    if trimmed.is_empty() {
-        bail!("--amount 不能为空（OKB 金额，UI 单位，例如 50）");
-    }
-    if !trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') {
-        bail!("--amount 必须是数字（OKB 金额，UI 单位不带精度），got: {trimmed}");
-    }
+    let trimmed = stake::validate_amount(amount, "50")?;
 
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
-    let path = "/priapi/v1/aieco/task/staking/increaseStake";
-    let body = serde_json::json!({ "amount": trimmed });
-    let resp = client
-        .post_with_identity(path, &body, &agent_id)
-        .await?;
+    let (tx_hash, endpoint) =
+        stake::execute_stake_or_increase(client, trimmed, &account_id, &address, &agent_id)
+            .await?;
 
-    let tx_hash = signing::sign_uop_and_broadcast(
-        client,
-        &resp["uopData"],
-        &account_id,
-        &address,
-        "",
-        signing::extract_biz_type(&resp),
-        &agent_id,
-    )
-    .await?;
-
-    println!("increase-stake submitted (agentId={agent_id})");
+    println!("increase-stake submitted (agentId={agent_id}, via={endpoint})");
     println!("  amount:  +{trimmed} OKB");
     println!("  voter:   {address}");
     println!("  txHash:  {tx_hash}");

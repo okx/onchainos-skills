@@ -236,6 +236,13 @@ pub async fn fetch_sensitive_words(client: &ApiClient) -> Result<Value> {
 ///
 /// Checks whether a message is eligible to be sent between agents.
 /// agenticId sent as header.
+///
+/// Uses a command-local response handler (not the generic agent-commerce
+/// handler): when the backend returns HTTP 2xx with a non-zero business
+/// code, the response is reshaped into `{ eligible: false, reason: <msg> }`
+/// so the caller sees a successful CLI invocation (`ok: true`) carrying an
+/// explicit business rejection, rather than a generic CLI failure
+/// indistinguishable from infra issues.
 #[allow(clippy::too_many_arguments)]
 pub async fn fetch_message_eligible(
     client: &ApiClient,
@@ -262,7 +269,97 @@ pub async fn fetch_message_eligible(
             Some(&headers),
         )
         .await?;
-    crate::client::handle_agent_commerce_response(resp).await
+    handle_message_eligible_response(resp).await
+}
+
+/// Reshape backend business rejections (HTTP 2xx + non-zero `code`) into
+/// `{ eligible: false, reason: <msg> }`, while leaving infrastructure
+/// failures (gateway errors, HTTP 5xx, non-JSON bodies, transport errors)
+/// to bail. Mirrors `handle_agent_commerce_response` for the success and
+/// infra branches; only the "HTTP 2xx + code != 0" branch differs.
+async fn handle_message_eligible_response(resp: reqwest::Response) -> Result<Value> {
+    let status = resp.status().as_u16();
+
+    let is_gateway = resp
+        .headers()
+        .get(reqwest::header::SERVER)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| {
+            let s = s.to_lowercase();
+            s.contains("openresty") || s.contains("nginx")
+        })
+        .unwrap_or(false);
+
+    let body_bytes = resp.bytes().await.context("failed to read response body")?;
+    let parsed: Option<Value> = if body_bytes.is_empty() {
+        None
+    } else {
+        serde_json::from_slice(&body_bytes).ok()
+    };
+
+    if (200..300).contains(&status) {
+        if let Some(ref body) = parsed {
+            let code_ok = matches!(&body["code"], Value::String(s) if s == "0")
+                || matches!(&body["code"], Value::Number(n) if n.as_i64() == Some(0));
+            if code_ok {
+                return Ok(body["data"].clone());
+            }
+            // HTTP 2xx + non-zero business code → backend says this
+            // message is not eligible. Surface as a synthetic envelope
+            // so the caller can forward `msg` to the counterparty.
+            let msg = body["msg"].as_str().unwrap_or("");
+            let detail = body["detailMsg"].as_str().unwrap_or("");
+            let reason = if !detail.is_empty() {
+                format!("{} — {}", msg, detail)
+            } else {
+                msg.to_string()
+            };
+            return Ok(serde_json::json!({
+                "eligible": false,
+                "reason": reason,
+            }));
+        }
+    }
+
+    if is_gateway {
+        let reason = match status {
+            413 => "payload too large",
+            429 => "rate limited",
+            502 => "bad gateway (backend unreachable)",
+            503 => "service unavailable",
+            504 => "gateway timeout",
+            _ => "gateway rejected request",
+        };
+        bail!("Gateway error (HTTP {}): {}", status, reason);
+    }
+
+    if let Some(ref body) = parsed {
+        let backend_code = match &body["code"] {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            _ => "null".into(),
+        };
+        let msg = body["msg"].as_str().unwrap_or("unknown error");
+        bail!(
+            "API error (HTTP {}, backend_code={}): {}",
+            status,
+            backend_code,
+            msg
+        );
+    }
+
+    if status == 429 {
+        bail!("Rate limited — retry with backoff (HTTP 429)");
+    }
+    if status >= 500 {
+        bail!("Server error (HTTP {})", status);
+    }
+    if body_bytes.is_empty() {
+        bail!("Empty response body (HTTP {})", status);
+    }
+    let text = String::from_utf8_lossy(&body_bytes);
+    let trimmed: String = text.trim().chars().take(500).collect();
+    bail!("HTTP {}: {}", status, trimmed)
 }
 
 // ── System Config ────────────────────────────────────────────────────
