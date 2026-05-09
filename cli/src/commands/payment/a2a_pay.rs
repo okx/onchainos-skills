@@ -15,8 +15,9 @@ use serde_json::{json, Value};
 use zeroize::Zeroize;
 
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
-use crate::commands::agentic_wallet::common::{
-    parse_recipient_addr, require_evm_address, require_recipient_format, ERR_NOT_LOGGED_IN,
+use crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN;
+use crate::commands::payment::addr::{
+    parse_recipient_addr, require_evm_address, require_recipient_format,
 };
 use crate::output;
 use crate::wallet_api::WalletApiClient;
@@ -213,7 +214,10 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
             .get("status")
             .and_then(Value::as_str)
             .unwrap_or("unknown");
-        bail!("payment {} not payable (status={status}, reason={reason}): {detail}", p.payment_id);
+        bail!(
+            "payment {} not payable (status={status}, reason={reason}): {detail}",
+            p.payment_id
+        );
     }
     let challenge = resp
         .get("challenge")
@@ -271,9 +275,8 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
     // Now that chain_id is known, accept XKO-prefixed recipients on XLayer too.
     // We forward the canonical 0x form to TEE / server (signature + verification
     // both bind to the 20-byte payload, not the prefix).
-    let (recipient, _recipient_display) =
-        parse_recipient_addr(&recipient_in, chain_id)
-            .with_context(|| "challenge.request.recipient")?;
+    let (recipient, _recipient_display) = parse_recipient_addr(&recipient_in, chain_id)
+        .with_context(|| "challenge.request.recipient")?;
     let authorization_scheme = method_details
         .get("authorizationType")
         .and_then(Value::as_str)
@@ -294,11 +297,10 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
     let chain_name = chain_entry["chainName"]
         .as_str()
         .ok_or_else(|| anyhow!("missing chainName in chain entry"))?;
-    let wallets = wallet_store::load_wallets()?
-        .ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
-    let (_acct_id, addr_info) = crate::commands::agentic_wallet::transfer::resolve_address(
-        &wallets, None, chain_name,
-    )?;
+    let wallets =
+        wallet_store::load_wallets()?.ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
+    let (_acct_id, addr_info) =
+        crate::commands::agentic_wallet::transfer::resolve_address(&wallets, None, chain_name)?;
     let from_addr_str = addr_info.address.clone();
 
     // ── 3. Pick timing ───────────────────────────────────────────────
@@ -319,10 +321,10 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
     };
 
     // ── 5. TEE sign EIP-3009 ─────────────────────────────────────────
-    let session = wallet_store::load_session()?
-        .ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
-    let session_key = keyring_store::get("session_key")
-        .map_err(|_| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
+    let session =
+        wallet_store::load_session()?.ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
+    let session_key =
+        keyring_store::get("session_key").map_err(|_| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
 
     let base_fields = json!({
         "chainIndex": chain_index,

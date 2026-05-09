@@ -16,7 +16,8 @@ use serde_json::{json, Value};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
-use crate::commands::agentic_wallet::common::{parse_recipient_addr, ERR_NOT_LOGGED_IN};
+use crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN;
+use crate::commands::payment::addr::parse_recipient_addr;
 use crate::{keyring_store, wallet_api::WalletApiClient, wallet_store};
 
 /// Which pricing tier to sign for. The server's config response groups paths
@@ -197,9 +198,9 @@ fn resolve_amount(entry: &Value, tier: Option<PaymentTier>) -> Result<String> {
 /// Extract the numeric EVM chain id from a CAIP-2 string like `"eip155:196"`.
 /// Returns an error for non-EVM CAIP-2 namespaces or malformed inputs.
 fn caip2_to_evm_chain_id(network: &str) -> Result<u64> {
-    let suffix = network
-        .strip_prefix("eip155:")
-        .ok_or_else(|| anyhow!("network '{network}' is not a CAIP-2 EVM identifier (eip155:<id>)"))?;
+    let suffix = network.strip_prefix("eip155:").ok_or_else(|| {
+        anyhow!("network '{network}' is not a CAIP-2 EVM identifier (eip155:<id>)")
+    })?;
     suffix
         .parse::<u64>()
         .with_context(|| format!("network '{network}' has non-numeric chain id"))
@@ -223,8 +224,8 @@ fn resolve_entry(
     // preserve XKO display here because the proof JSON is consumed by the
     // server-side verifier, not surfaced to end users.
     let chain_id = caip2_to_evm_chain_id(&network)?;
-    let (pay_to, _display) = parse_recipient_addr(pay_to_raw, chain_id)
-        .with_context(|| "accepts.payTo")?;
+    let (pay_to, _display) =
+        parse_recipient_addr(pay_to_raw, chain_id).with_context(|| "accepts.payTo")?;
     let asset = entry["asset"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'asset' in accepts entry"))?

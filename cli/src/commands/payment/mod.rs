@@ -1,4 +1,5 @@
 pub mod a2a_pay;
+pub mod addr;
 pub mod dispatcher;
 pub mod payment_flow;
 

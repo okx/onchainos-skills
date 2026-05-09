@@ -1,7 +1,7 @@
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
-use crate::commands::agentic_wallet::common::{is_valid_evm_address, parse_recipient_addr};
-use crate::commands::payment::payment_flow;
 use crate::commands::payment::a2a_pay::{self, A2aPayCommand};
+use crate::commands::payment::addr::{is_valid_evm_address, parse_recipient_addr};
+use crate::commands::payment::payment_flow;
 use crate::output;
 use crate::wallet_api::WalletApiClient;
 use crate::{keyring_store, wallet_store};
@@ -790,8 +790,8 @@ fn parse_session_splits(
         if !(1..=9999).contains(&b) {
             bail!("splits[{}].bps out of range 1-9999: {}", i, b);
         }
-        let (canonical, _display) = parse_recipient_addr(r, chain_id)
-            .with_context(|| format!("splits[{i}].recipient"))?;
+        let (canonical, _display) =
+            parse_recipient_addr(r, chain_id).with_context(|| format!("splits[{i}].recipient"))?;
         recipients.push(canonical);
         bps.push(b as u16);
     }
@@ -943,8 +943,9 @@ async fn tee_sign_eip3009(
     asset: &str,
 ) -> Result<(String, String)> {
     let access_token = ensure_tokens_refreshed().await?;
-    let session = wallet_store::load_session()?
-        .ok_or_else(|| anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN))?;
+    let session = wallet_store::load_session()?.ok_or_else(|| {
+        anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN)
+    })?;
     let session_key = keyring_store::get("session_key")
         .map_err(|_| anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN))?;
 
@@ -1075,8 +1076,9 @@ async fn tee_sign_voucher(
     chain_id: u64,
 ) -> Result<String> {
     let access_token = ensure_tokens_refreshed().await?;
-    let session = wallet_store::load_session()?
-        .ok_or_else(|| anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN))?;
+    let session = wallet_store::load_session()?.ok_or_else(|| {
+        anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN)
+    })?;
     let session_key = keyring_store::get("session_key")
         .map_err(|_| anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN))?;
 
@@ -1165,8 +1167,9 @@ async fn resolve_chain_and_payer(chain_id: u64, from: Option<&str>) -> Result<(S
     let chain_name = chain_entry["chainName"]
         .as_str()
         .ok_or_else(|| anyhow!("missing chainName"))?;
-    let wallets = wallet_store::load_wallets()?
-        .ok_or_else(|| anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN))?;
+    let wallets = wallet_store::load_wallets()?.ok_or_else(|| {
+        anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN)
+    })?;
     let (_acct_id, addr_info) =
         crate::commands::agentic_wallet::transfer::resolve_address(&wallets, from, chain_name)?;
     Ok((chain_index, addr_info.address.clone()))
@@ -2536,8 +2539,14 @@ mod tests {
         });
         let (_primary, splits) = compute_primary_split_amounts(&req, 196).unwrap();
         assert_eq!(splits.len(), 1);
-        assert_eq!(splits[0].canonical, "0x1111111111111111111111111111111111111111");
-        assert_eq!(splits[0].display, "XKO1111111111111111111111111111111111111111");
+        assert_eq!(
+            splits[0].canonical,
+            "0x1111111111111111111111111111111111111111"
+        );
+        assert_eq!(
+            splits[0].display,
+            "XKO1111111111111111111111111111111111111111"
+        );
     }
 
     #[test]
@@ -2553,11 +2562,7 @@ mod tests {
         // `{:#}` flattens the anyhow context chain so we can match against the
         // inner "only supported on X Layer" reason added by parse_recipient_addr.
         let err = format!("{:#}", compute_primary_split_amounts(&req, 1).unwrap_err());
-        assert!(
-            err.contains("only supported on X Layer"),
-            "got: {}",
-            err
-        );
+        assert!(err.contains("only supported on X Layer"), "got: {}", err);
     }
 
     #[test]
@@ -2569,7 +2574,9 @@ mod tests {
                 { "amount": "100", "recipient": "0x1111111111111111111111111111111111111111" }
             ] }
         });
-        let err = compute_primary_split_amounts(&req, 196).unwrap_err().to_string();
+        let err = compute_primary_split_amounts(&req, 196)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("strictly less than"), "got: {}", err);
     }
 
@@ -2591,7 +2598,9 @@ mod tests {
             "amount": "100",
             "methodDetails": { "splits": [ { "amount": "0", "recipient": "0xabc" } ] }
         });
-        let err = compute_primary_split_amounts(&req, 196).unwrap_err().to_string();
+        let err = compute_primary_split_amounts(&req, 196)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("> 0"), "got: {}", err);
     }
 
@@ -2601,7 +2610,9 @@ mod tests {
             "amount": "100",
             "methodDetails": { "splits": [] }
         });
-        let err = compute_primary_split_amounts(&req, 196).unwrap_err().to_string();
+        let err = compute_primary_split_amounts(&req, 196)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("empty"), "got: {}", err);
     }
 
@@ -2614,7 +2625,9 @@ mod tests {
             "amount": "1000",
             "methodDetails": { "splits": many }
         });
-        let err = compute_primary_split_amounts(&req, 196).unwrap_err().to_string();
+        let err = compute_primary_split_amounts(&req, 196)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("exceeds spec max of 10"), "got: {}", err);
     }
 
