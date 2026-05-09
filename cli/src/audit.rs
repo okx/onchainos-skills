@@ -335,7 +335,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
     }
 }
 
-use crate::commands::agentic_wallet::payment::PaymentCommand;
+use crate::commands::payment::PaymentCommand;
 use crate::commands::agentic_wallet::wallet::WalletCommand;
 use crate::commands::{
     competition::CompetitionCommand, defi::DefiCommand, gateway::GatewayCommand,
@@ -485,7 +485,7 @@ fn security_sub(c: &SecurityCommand) -> &'static str {
 }
 
 fn payment_sub(c: &PaymentCommand) -> String {
-    use crate::commands::agentic_wallet::payment::{DefaultAction, SessionCommand};
+    use crate::commands::payment::{DefaultAction, SessionCommand};
     match c {
         PaymentCommand::X402Pay { .. } => "pay".to_string(),
         PaymentCommand::Eip3009Sign { .. } => "pay-local".to_string(),

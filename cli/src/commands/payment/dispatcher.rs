@@ -1,6 +1,6 @@
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
 use crate::commands::agentic_wallet::common::{is_valid_evm_address, parse_recipient_addr};
-use crate::commands::agentic_wallet::payment_flow;
+use crate::commands::payment::payment_flow;
 use crate::commands::payment::a2a_pay::{self, A2aPayCommand};
 use crate::output;
 use crate::wallet_api::WalletApiClient;
@@ -357,7 +357,7 @@ fn caip2_to_chain_id(caip2: &str) -> String {
 }
 
 fn cmd_default(action: DefaultAction) -> Result<()> {
-    use crate::commands::agentic_wallet::payment_flow::PaymentTier;
+    use crate::commands::payment::payment_flow::PaymentTier;
     use crate::payment_cache::{PaymentCache, PaymentDefault};
     use crate::payment_notify::TierState;
 
@@ -944,9 +944,9 @@ async fn tee_sign_eip3009(
 ) -> Result<(String, String)> {
     let access_token = ensure_tokens_refreshed().await?;
     let session = wallet_store::load_session()?
-        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+        .ok_or_else(|| anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN))?;
     let session_key = keyring_store::get("session_key")
-        .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+        .map_err(|_| anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN))?;
 
     let mut base_fields = json!({
         "chainIndex":        chain_index,
@@ -1076,9 +1076,9 @@ async fn tee_sign_voucher(
 ) -> Result<String> {
     let access_token = ensure_tokens_refreshed().await?;
     let session = wallet_store::load_session()?
-        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+        .ok_or_else(|| anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN))?;
     let session_key = keyring_store::get("session_key")
-        .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+        .map_err(|_| anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN))?;
 
     let typed_data = build_voucher_typed_data(channel_id, cumulative_amount, escrow, chain_id);
 
@@ -1166,7 +1166,7 @@ async fn resolve_chain_and_payer(chain_id: u64, from: Option<&str>) -> Result<(S
         .as_str()
         .ok_or_else(|| anyhow!("missing chainName"))?;
     let wallets = wallet_store::load_wallets()?
-        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+        .ok_or_else(|| anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN))?;
     let (_acct_id, addr_info) =
         crate::commands::agentic_wallet::transfer::resolve_address(&wallets, from, chain_name)?;
     Ok((chain_index, addr_info.address.clone()))
