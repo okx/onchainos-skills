@@ -735,7 +735,7 @@ pub async fn handle_task_402_pay(
 }
 
 /// x402-check — 验证 endpoint 是否是合法的 x402 服务，提取定价信息
-pub async fn handle_x402_check(endpoint: &str) -> Result<()> {
+pub async fn handle_x402_check(client: &mut TaskApiClient, endpoint: &str) -> Result<()> {
     use super::x402_flow;
 
     let check = x402_flow::check_x402_endpoint(endpoint).await?;
@@ -756,7 +756,7 @@ pub async fn handle_x402_check(endpoint: &str) -> Result<()> {
     let pricing = check.pricing.as_ref().unwrap();
 
     // 尝试解析代币信息
-    let resolved = x402_flow::enrich_pricing(pricing).await;
+    let resolved = x402_flow::enrich_pricing(client, pricing, "").await;
 
     let mut data = serde_json::json!({
         "valid": true,

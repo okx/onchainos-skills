@@ -224,7 +224,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from } =>
             accept::handle_task_402_pay(&mut client, &job_id, &provider_agent_id, &accepts, &endpoint, &token_symbol, &token_amount, from.as_deref()).await,
         TaskCommand::X402Check { endpoint } =>
-            accept::handle_x402_check(&endpoint).await,
+            accept::handle_x402_check(&mut client, &endpoint).await,
         TaskCommand::Complete { job_id, payment_id, token_symbol, token_amount } =>
             complete::handle_complete(&mut client, &job_id, payment_id.as_deref(), token_symbol.as_deref(), token_amount.as_deref()).await,
         TaskCommand::Reject { job_id, reason } =>
