@@ -321,9 +321,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 
         // ─── Scene 6.3.5: 仲裁阶段 1 approve 上链确认 → 跑阶段 2 dispute ─
         Event::DisputeApproved => format!(
-            "【当前状态】dispute_approved（仲裁阶段 1 approve 已上链，进入阶段 2）\n\
+            "【当前状态】dispute_approved（dispute approve tx 回执）\n\
              【角色】卖家（Provider）\n\n\
-             **Step 1 — 调用 CLI 跑阶段 2 dispute（上链）：**\n\
+             **Step 1 — 检查 envelope `message.code` 字段：**\n\
+             - `code` 非 0（失败）→ 仲裁发起交易失败，结束 turn。\n\
+             - `code` = 0（成功）→ 继续 Step 2。\n\n\
+             **Step 2 — 调用 CLI 跑阶段 2 dispute（上链）：**\n\
              ```bash\n\
              onchainos agent dispute confirm {job_id} --agent-id {agent_id}\n\
              ```\n\
@@ -695,15 +698,25 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - 分支 A apply 上链成功 → 收到 `provider_applied` 系统通知 → 再次调 next-action 拿 Scene 3 剧本\n\
              - 分支 B 等买家 confirm-accept → 收到 `job_accepted` 系统通知 → 进入 JobAccepted 剧本 Step A-D 完成「接单 → 干活 → 创建付款单 → 同条 xmtp_send 交付物+paymentId」 一气呵成\n"
         ),
-        // ─── buyer 主导的 housekeeping 事件，provider 端基本无需动作 ─────
-        Event::JobExpired
-        | Event::JobClosed
+        // ─── buyer 主导的 tx 结果通知，provider 端无需动作但需确认成功 ─────
+        Event::JobClosed
         | Event::JobVisibilityChanged
-        | Event::JobPaymentModeChanged
+        | Event::JobPaymentModeChanged => format!(
+            "【系统通知】{event}（buyer 端 tx 回执）\n\
+             【角色】卖家（Provider）\n\n\
+             **Step 1 — 检查 envelope `message.code` 字段：**\n\
+             - `code` 非 0（失败）→ buyer 端交易失败，忽略即可。\n\
+             - `code` = 0（成功）→ 静默观察，无需主动 xmtp_send。\n\n\
+             如需详细信息，调用 `onchainos agent common context {job_id} --role provider`\n",
+            event = event.as_str()
+        ),
+
+        // ─── buyer 主导的超时事件，provider 端无需动作 ─────
+        Event::JobExpired
         | Event::SubmitExpired
         | Event::RefuseExpired
         | Event::ReviewDeadlineWarn => format!(
-            "【系统通知】{event}（buyer 端动作或超时事件）\n\
+            "【系统通知】{event}（buyer 端超时事件）\n\
              【角色】卖家（Provider）\n\n\
              【建议】\n\
              - 静默观察即可，无需主动 xmtp_send\n\
@@ -735,27 +748,20 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::JobAutoCompleted => format!(
             "【系统通知】job_auto_completed（claimAutoComplete tx 回执）\n\
              【角色】卖家（Provider）\n\n\
-             ⚠️ **判定 status**：从你刚收到的系统通知 envelope 里读 `message.status` 字段：\n\
-             - `status = \"success\"` → 资金已自动到账，按下方 A 分支收尾\n\
-             - `status = \"failed\"` → 按下方 B 分支按 errorCode 重试\n\n\
-             ━━━━━━━━━ 分支 A：status=success（自动完成成功，资金已到账）━━━━━━━━━\n\n\
-             ⚠️ 不要给买家 `xmtp_send`「review 期已结束 / 资金已自动结算」过场——双方都收到 `job_auto_completed` 系统事件了。\n\n\
-             **A-Step 1 — 用 `xmtp_dispatch_user` 通知用户到账**：\n\n\
+             **Step 1 — 检查 envelope `message.code` 字段：**\n\
+             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
+             \x20\x20content: [自动完成失败] 任务 {job_id} 自动完成交易失败。\n\
+             \x20\x20→ 结束 turn。\n\n\
+             - `code` = 0（成功）→ 继续 Step 2。\n\n\
+             **Step 2 — 用 `xmtp_dispatch_user` 通知用户到账**：\n\n\
              从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 拿任务 title + tokenAmount + tokenSymbol。\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20[任务自动完成 💰] 任务 {job_id}（<title>）review 超时，已通过 claimAutoComplete 自动到账。\n\
+             \x20\x20\x20\x20[任务自动完成] 任务 {job_id}（<title>）review 超时，已通过 claimAutoComplete 自动到账。\n\
              \x20\x20\x20\x20  - 收入：<tokenAmount> <tokenSymbol>\n\
-             \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
-             ⚠️ **不要 `xmtp_delete_conversation`**——保留 sub session 历史以便事后查阅。\n\n\
-             ━━━━━━━━━ 分支 B：status=failed（claim 失败，按 errorCode 重试）━━━━━━━━━\n\n\
-             从 envelope payload 读 `errorCode` / `errorMessage`，按错误重试：\n\
-             ```bash\n\
-             onchainos agent claim-auto-complete {job_id} --agent-id {agent_id}\n\
-             ```\n\
-             重试前可选先看链上状态：`onchainos agent common context {job_id} --role provider --agent-id {agent_id}`。\n\
-             ⚠️ 失败状态下**不要**给买家 xmtp_send 任何过场信息。\n"
+             ⚠️ 不要给买家 `xmtp_send` 过场——双方都收到 `job_auto_completed` 系统事件了。\n\
+             ⚠️ **不要 `xmtp_delete_conversation`**——保留 sub session 历史以便事后查阅。\n"
         ),
 
         // ─── provider 自己的截止提醒 ─────────────────────────────────────
@@ -786,7 +792,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             event = event.as_str()
         ),
 
-        // ─── 质押 / 奖励 / 罚没 lifecycle — provider 不是 evaluator 时无关 ─────
+        // ─── 质押 / 奖励 / 罚没 lifecycle tx 回执 — provider 不是 evaluator 时无关 ─────
         Event::Staked
         | Event::UnstakeRequested
         | Event::UnstakeClaimed
@@ -794,23 +800,34 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         | Event::Slashed
         | Event::StakeStopped
         | Event::CooldownEntered => format!(
-            "【系统通知】{event}（evaluator 质押 lifecycle，provider 无关）\n\
-             【建议】忽略即可。\n",
+            "【系统通知】{event}（evaluator 质押 lifecycle tx 回执，provider 无关）\n\
+             【角色】卖家（Provider）\n\n\
+             **Step 1 — 检查 envelope `message.code` 字段：**\n\
+             - `code` 非 0（失败）→ 忽略即可。\n\
+             - `code` = 0（成功）→ 忽略即可。\n",
             event = event.as_str()
         ),
 
-        // reward_claimed —— 自己的 claim tx 回执（可能 provider 也会 claim 仲裁奖励）
+        // reward_claimed —— 自己的 claim tx 回执（provider 也可能 claim 仲裁奖励）
         Event::RewardClaimed => format!(
             "【系统通知】reward_claimed（claimRewards tx 回执）\n\
              【角色】卖家（Provider）\n\n\
-             【建议】从 payload 提取 status / amount / txHash。如 status=success 表示奖励到账；\n\
-             如 status=failed 按 errorCode 重试 `onchainos agent provider-claim-rewards --agent-id {agent_id}`。\n"
+             **Step 1 — 检查 envelope `message.code` 字段：**\n\
+             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
+             \x20\x20content: [奖励领取失败] 任务 {job_id} 奖励领取交易失败。\n\
+             \x20\x20→ 结束 turn。\n\n\
+             - `code` = 0（成功）→ 继续 Step 2。\n\n\
+             **Step 2 — 调用 xmtp_dispatch_user 通知用户奖励已到账：**\n\
+             \x20\x20content: [奖励已到账] 任务 {job_id} 的奖励已成功领取到您的钱包。\n"
         ),
 
         // job_auto_refunded —— buyer 端 tx 回执，provider 无关
         Event::JobAutoRefunded => format!(
             "【系统通知】job_auto_refunded（buyer 端 claimAutoRefund tx 回执，provider 无关）\n\
-             【建议】忽略即可。买家已领取自动退款。\n"
+             【角色】卖家（Provider）\n\n\
+             **Step 1 — 检查 envelope `message.code` 字段：**\n\
+             - `code` 非 0（失败）→ 忽略即可。\n\
+             - `code` = 0（成功）→ 买家已领取自动退款，忽略即可。\n"
         ),
 
         Event::WakeupNotify => format!(
