@@ -484,7 +484,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】买家（Client）\n\n\
              🚫 **担保模式严禁自动验收**：escrow 模式下收到交付物后**必须通知 user session，由用户决定验收通过还是拒绝**。\n\
              Agent 不得替用户做验收决策，即使交付物看起来符合验收标准。\n\
-             ⚠️ non_escrow / x402 模式：资金已支付，只需通知用户交付物内容，用户不能拒绝。\n\n\
+             ⚠️ non_escrow / x402 模式：资金已支付，只需通知用户交付物内容，用户不能拒绝。\n\
+             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**（如「收到交付物」「正在验收」等过场话），直接执行下述步骤即可。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 查询任务详情，提取交付物和支付方式：**\n\
              ```bash\n\
@@ -599,6 +600,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前状态】job_refused（买家已拒绝交付物，等待卖家决定）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
+             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**，静默等待即可。\n\
              无需执行 CLI 命令。卖家有 24h 决定：\n\
              - 发起仲裁 → 你将收到 job_disputed\n\
              - 同意退款 → 你将收到 job_refunded\n\
@@ -667,6 +669,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::JobCompleted => format!(
             "【当前状态】job_completed（任务支付链路完成）\n\
              【角色】买家（Client）\n\n\
+             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**，只需通知 user session。\n\n\
              **Step 1 — 获取任务信息和支付方式：**\n\
              ```bash\n\
              onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
@@ -719,6 +722,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::DisputeResolved => format!(
             "【当前状态】dispute_resolved（仲裁已裁决）\n\
              【角色】买家（Client）\n\n\
+             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**，只需通知 user session。\n\n\
              **Step 1 — 判定胜负**：从系统通知 envelope 里读 `message.jobStatus` 字段：\n\
              - `jobStatus = \"rejected\"` → **买家胜诉**\n\
              - `jobStatus = \"complete\"` → **买家败诉**\n\
@@ -756,6 +760,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::JobRefunded => format!(
             "【当前状态】job_refunded（资金已退还买家）\n\
              【角色】买家（Client）\n\n\
+             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**，只需通知 user session。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 调用 xmtp_dispatch_user 通知用户退款完成：**\n\n\
              content：\n\
@@ -770,6 +775,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::JobAutoRefunded => format!(
             "【系统通知】job_auto_refunded（claimAutoRefund tx 回执）\n\
              【角色】买家（Client）\n\n\
+             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**，只需通知 user session。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              ⚠️ 通知用户时使用 `<title>（{job_id}）` 格式。title 从上下文取；如不记得，先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 查询。\n\n\
              **Step 1 — 检查 envelope `message.code` 字段：**\n\
