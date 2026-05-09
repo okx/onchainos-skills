@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
-use crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN;
+use crate::commands::agentic_wallet::common::{parse_recipient_addr, ERR_NOT_LOGGED_IN};
 use crate::{keyring_store, wallet_api::WalletApiClient, wallet_store};
 
 /// Which pricing tier to sign for. The server's config response groups paths
@@ -145,6 +145,7 @@ pub fn select_accept_with_preference(
     ))
 }
 
+#[derive(Debug)]
 pub(crate) struct ResolvedEntry {
     pub(crate) network: String,
     pub(crate) amount: String,
@@ -193,6 +194,17 @@ fn resolve_amount(entry: &Value, tier: Option<PaymentTier>) -> Result<String> {
     bail!("missing 'amount' or 'maxAmountRequired' in accepts entry");
 }
 
+/// Extract the numeric EVM chain id from a CAIP-2 string like `"eip155:196"`.
+/// Returns an error for non-EVM CAIP-2 namespaces or malformed inputs.
+fn caip2_to_evm_chain_id(network: &str) -> Result<u64> {
+    let suffix = network
+        .strip_prefix("eip155:")
+        .ok_or_else(|| anyhow!("network '{network}' is not a CAIP-2 EVM identifier (eip155:<id>)"))?;
+    suffix
+        .parse::<u64>()
+        .with_context(|| format!("network '{network}' has non-numeric chain id"))
+}
+
 fn resolve_entry(
     entry: &Value,
     scheme: Option<String>,
@@ -203,10 +215,16 @@ fn resolve_entry(
         .ok_or_else(|| anyhow!("missing 'network' in accepts entry"))?
         .to_string();
     let amount = resolve_amount(entry, tier)?;
-    let pay_to = entry["payTo"]
+    let pay_to_raw = entry["payTo"]
         .as_str()
-        .ok_or_else(|| anyhow!("missing 'payTo' in accepts entry"))?
-        .to_string();
+        .ok_or_else(|| anyhow!("missing 'payTo' in accepts entry"))?;
+    // Normalize XKO/0x to canonical 0x. The canonical 20-byte payload is what
+    // EIP-3009 signing + on-chain verification operate on; we don't need to
+    // preserve XKO display here because the proof JSON is consumed by the
+    // server-side verifier, not surfaced to end users.
+    let chain_id = caip2_to_evm_chain_id(&network)?;
+    let (pay_to, _display) = parse_recipient_addr(pay_to_raw, chain_id)
+        .with_context(|| "accepts.payTo")?;
     let asset = entry["asset"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'asset' in accepts entry"))?
@@ -797,16 +815,52 @@ mod tests {
 
     #[test]
     fn resolve_entry_extracts_amount_from_max_amount_required() {
-        let v = json!({"network":"eip155:1","maxAmountRequired":"999","payTo":"0xA","asset":"0xB"});
+        let v = json!({
+            "network":"eip155:1",
+            "maxAmountRequired":"999",
+            "payTo":"0x1111111111111111111111111111111111111111",
+            "asset":"0xB"
+        });
         let r = resolve_entry(&v, None, None).unwrap();
         assert_eq!(r.amount, "999");
     }
 
     #[test]
     fn resolve_entry_default_timeout() {
-        let v = json!({"network":"eip155:1","amount":"1","payTo":"0xA","asset":"0xB"});
+        let v = json!({
+            "network":"eip155:1",
+            "amount":"1",
+            "payTo":"0x1111111111111111111111111111111111111111",
+            "asset":"0xB"
+        });
         let r = resolve_entry(&v, None, None).unwrap();
         assert_eq!(r.max_timeout_seconds, 300);
+    }
+
+    #[test]
+    fn resolve_entry_xko_pay_to_normalizes_to_0x_on_xlayer() {
+        // payTo arrives as XKO-prefixed on XLayer; ResolvedEntry stores the
+        // canonical 0x form so EIP-3009 signing + on-chain verification work.
+        let v = json!({
+            "network":"eip155:196",
+            "amount":"1",
+            "payTo":"XKO1111111111111111111111111111111111111111",
+            "asset":"0xB"
+        });
+        let r = resolve_entry(&v, None, None).unwrap();
+        assert_eq!(r.pay_to, "0x1111111111111111111111111111111111111111");
+    }
+
+    #[test]
+    fn resolve_entry_xko_pay_to_rejected_off_xlayer() {
+        let v = json!({
+            "network":"eip155:1",
+            "amount":"1",
+            "payTo":"XKO1111111111111111111111111111111111111111",
+            "asset":"0xB"
+        });
+        let err = format!("{:#}", resolve_entry(&v, None, None).unwrap_err());
+        assert!(err.contains("only supported on X Layer"), "got: {}", err);
     }
 
     #[test]
@@ -849,7 +903,7 @@ mod tests {
         let v = json!({
             "network": "eip155:196",
             "amount": {"basic": "100", "premium": "500"},
-            "payTo": "0xA",
+            "payTo": "0x1111111111111111111111111111111111111111",
             "asset": "0xB"
         });
         let r = resolve_entry(&v, None, Some(PaymentTier::Premium)).unwrap();

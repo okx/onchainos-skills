@@ -46,6 +46,73 @@ pub(crate) fn require_evm_address(addr: &str, label: &str) -> Result<()> {
     }
 }
 
+/// XLayer's user-facing address prefix. `XKOaaaa...` carries the same 20-byte
+/// payload as `0xaaaa...`; the prefix is purely cosmetic and only valid on
+/// X Layer (chainId 196).
+pub(crate) const XKO_PREFIX: &str = "XKO";
+const XLAYER_CHAIN_ID: u64 = 196;
+
+/// Parse a recipient address that may be in `0x...` form or `XKO...`
+/// (XLayer-only). Returns `(canonical_0x, display)`:
+/// - `canonical_0x` — always `0x...`, fed into signing / EIP-712 / alloy `Address`.
+/// - `display` — the user/seller's original input string, echoed in CLI output.
+///
+/// `XKO`-prefixed input on a non-XLayer chain is an error so a misrouted
+/// recipient can't silently coerce into a different address space.
+pub(crate) fn parse_recipient_addr(input: &str, chain_id: u64) -> Result<(String, String)> {
+    if let Some(body) = input.strip_prefix(XKO_PREFIX) {
+        if chain_id != XLAYER_CHAIN_ID {
+            bail!(
+                "XKO-prefixed addresses are only supported on X Layer (chainId {}), got {}",
+                XLAYER_CHAIN_ID,
+                chain_id
+            );
+        }
+        let canonical = format!("0x{body}");
+        if !is_valid_evm_address(&canonical) {
+            bail!(
+                "XKO address body must be 40 hex chars (EIP-55 checksummed if mixed case): {input}"
+            );
+        }
+        Ok((canonical, input.to_string()))
+    } else if is_valid_evm_address(input) {
+        Ok((input.to_string(), input.to_string()))
+    } else {
+        bail!("not a valid EVM address (expected `0x...` or XLayer `XKO...`): {input}");
+    }
+}
+
+pub(crate) fn require_recipient_addr(
+    input: &str,
+    chain_id: u64,
+    label: &str,
+) -> Result<(String, String)> {
+    parse_recipient_addr(input, chain_id).map_err(|e| anyhow::anyhow!("{label}: {e}"))
+}
+
+/// Format-only recipient check used when chain context isn't available locally
+/// (e.g. `a2a-pay create` where the server resolves the chain from symbol).
+/// Accepts both `0x...` (any chain) and `XKO...` (XLayer convention) forms and
+/// returns `Ok(())`; the caller forwards the original string verbatim, leaving
+/// chain validation to whichever downstream service has the chain context.
+pub(crate) fn require_recipient_format(input: &str, label: &str) -> Result<()> {
+    if let Some(body) = input.strip_prefix(XKO_PREFIX) {
+        let canonical = format!("0x{body}");
+        if !is_valid_evm_address(&canonical) {
+            bail!(
+                "{label}: XKO address body must be 40 hex chars (EIP-55 if mixed case): {input}"
+            );
+        }
+        Ok(())
+    } else if is_valid_evm_address(input) {
+        Ok(())
+    } else {
+        bail!(
+            "{label} is not a valid EVM address (expected `0x...` or XLayer `XKO...`): {input}"
+        )
+    }
+}
+
 fn eip55_checksum_matches(hex: &str) -> bool {
     let lower = hex.to_ascii_lowercase();
     let mut keccak = Keccak::v256();
@@ -218,5 +285,98 @@ mod tests {
     fn require_evm_address_error_message() {
         let err = require_evm_address("0xnope", "challenge.request.currency").unwrap_err();
         assert!(err.to_string().contains("challenge.request.currency"));
+    }
+
+    // ── parse_recipient_addr ─────────────────────────────────────────
+
+    #[test]
+    fn parse_recipient_0x_passthrough() {
+        let (canonical, display) =
+            parse_recipient_addr("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed", 196).unwrap();
+        assert_eq!(canonical, "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
+        assert_eq!(display, "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
+    }
+
+    #[test]
+    fn parse_recipient_0x_works_on_any_chain() {
+        // 0x form is canonical EVM; valid on any chain.
+        let (c, d) =
+            parse_recipient_addr("0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed", 1).unwrap();
+        assert_eq!(c, d);
+        assert!(c.starts_with("0x"));
+    }
+
+    #[test]
+    fn parse_recipient_xko_on_xlayer() {
+        let (canonical, display) =
+            parse_recipient_addr("XKO5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed", 196).unwrap();
+        assert_eq!(canonical, "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
+        assert_eq!(display, "XKO5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
+    }
+
+    #[test]
+    fn parse_recipient_xko_lowercase_hex_body() {
+        // All-lowercase body claims no checksum — accepted.
+        let (canonical, display) =
+            parse_recipient_addr("XKO5aaeb6053f3e94c9b9a09f33669435e7ef1beaed", 196).unwrap();
+        assert_eq!(canonical, "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed");
+        assert_eq!(display, "XKO5aaeb6053f3e94c9b9a09f33669435e7ef1beaed");
+    }
+
+    #[test]
+    fn parse_recipient_xko_on_non_xlayer_rejected() {
+        let err = parse_recipient_addr("XKO5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed", 1)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("only supported on X Layer"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_recipient_xko_lowercase_prefix_rejected() {
+        // Strict uppercase: only the literal `XKO` prefix is recognized.
+        let err =
+            parse_recipient_addr("xko5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed", 196).unwrap_err();
+        assert!(
+            err.to_string().contains("not a valid EVM address"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_recipient_xko_bad_checksum_rejected() {
+        // Mixed case with one letter case flipped — fails EIP-55.
+        let err = parse_recipient_addr("XKO5AAeb6053F3E94C9b9A09f33669435E7Ef1BeAed", 196)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("EIP-55"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_recipient_xko_wrong_length_rejected() {
+        let err = parse_recipient_addr("XKO123", 196).unwrap_err();
+        assert!(
+            err.to_string().contains("40 hex chars"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_recipient_xko_non_hex_body_rejected() {
+        let err = parse_recipient_addr("XKOZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ", 196)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("40 hex chars"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_recipient_garbage_rejected() {
+        let err = parse_recipient_addr("not-an-address", 196).unwrap_err();
+        assert!(err.to_string().contains("not a valid EVM address"));
     }
 }

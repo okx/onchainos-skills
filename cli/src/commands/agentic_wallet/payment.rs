@@ -1,5 +1,5 @@
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
-use crate::commands::agentic_wallet::common::is_valid_evm_address;
+use crate::commands::agentic_wallet::common::{is_valid_evm_address, parse_recipient_addr};
 use crate::commands::agentic_wallet::payment_flow;
 use crate::commands::payment::a2a_pay::{self, A2aPayCommand};
 use crate::output;
@@ -627,6 +627,20 @@ fn compute_valid_before(challenge: &serde_json::Value, now_unix: u64) -> Result<
     Ok(vb.to_string())
 }
 
+/// One parsed split entry: amount + the recipient in both canonical (for
+/// signing) and display (for echoing back into output JSON) forms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedSplit {
+    /// Decimal amount in minimal units.
+    amount: String,
+    /// Canonical `0x`-form recipient — fed into `tee_sign_eip3009` and any
+    /// other path that hashes the 20-byte payload.
+    canonical: String,
+    /// Display form — same content, original prefix (`XKO...` on XLayer or
+    /// the same `0x...`). Echoed back in the CLI output JSON.
+    display: String,
+}
+
 /// Parse a charge `request` into `(primary_remainder, splits)` with full spec validation.
 ///
 /// Enforces §Split Payments constraints before any TEE signing:
@@ -634,12 +648,15 @@ fn compute_valid_before(challenge: &serde_json::Value, now_unix: u64) -> Result<
 /// - `sum(splits[].amount)` MUST be strictly less than `amount`
 /// - splits MAY be absent; if present, MUST have 1-10 entries
 ///
-/// Returns `(primary_value_decimal_str, [(amount, recipient), ...])` in the
-/// same order as `methodDetails.splits`. When no splits are present, returns
-/// `(amount, vec![])`.
+/// Returns `(primary_value_decimal_str, [ParsedSplit, ...])` in the same
+/// order as `methodDetails.splits`. When no splits are present, returns
+/// `(amount, vec![])`. `chain_id` is used to validate XKO-prefixed split
+/// recipients (XLayer-only) and split them into canonical-for-signing +
+/// display-for-output forms.
 fn compute_primary_split_amounts(
     request: &serde_json::Value,
-) -> Result<(String, Vec<(String, String)>)> {
+    chain_id: u64,
+) -> Result<(String, Vec<ParsedSplit>)> {
     let amount_str = request["amount"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'amount' in challenge request"))?;
@@ -688,7 +705,13 @@ fn compute_primary_split_amounts(
         split_sum = split_sum
             .checked_add(a)
             .ok_or_else(|| anyhow!("splits sum overflow at index {}", i))?;
-        parsed.push((a_str.to_string(), r_str.to_string()));
+        let (canonical, display) = parse_recipient_addr(r_str, chain_id)
+            .with_context(|| format!("splits[{i}].recipient"))?;
+        parsed.push(ParsedSplit {
+            amount: a_str.to_string(),
+            canonical,
+            display,
+        });
     }
 
     if split_sum >= amount {
@@ -743,8 +766,14 @@ fn compute_topup_nonce(
 }
 
 /// Extract `(recipients, bps)` from session challenge
-/// `request.methodDetails.splits[]`. Returns empty vecs when absent.
-fn parse_session_splits(request: &serde_json::Value) -> Result<(Vec<String>, Vec<u16>)> {
+/// `request.methodDetails.splits[]`. Recipients are normalized to canonical
+/// `0x` form (XKO-prefixed XLayer recipients are accepted here too — the
+/// nonce hash + alloy `Address::parse` always need the 20-byte payload, not
+/// the prefix). Returns empty vecs when absent.
+fn parse_session_splits(
+    request: &serde_json::Value,
+    chain_id: u64,
+) -> Result<(Vec<String>, Vec<u16>)> {
     let splits = match request["methodDetails"]["splits"].as_array() {
         Some(a) if !a.is_empty() => a,
         _ => return Ok((vec![], vec![])),
@@ -761,7 +790,9 @@ fn parse_session_splits(request: &serde_json::Value) -> Result<(Vec<String>, Vec
         if !(1..=9999).contains(&b) {
             bail!("splits[{}].bps out of range 1-9999: {}", i, b);
         }
-        recipients.push(r.to_string());
+        let (canonical, _display) = parse_recipient_addr(r, chain_id)
+            .with_context(|| format!("splits[{i}].recipient"))?;
+        recipients.push(canonical);
         bps.push(b as u16);
     }
     Ok((recipients, bps))
@@ -1160,7 +1191,7 @@ async fn cmd_mpp_charge(
     let challenge = parse_www_authenticate(challenge_header)?;
     let request = decode_challenge_request(&challenge)?;
 
-    let recipient = request["recipient"]
+    let recipient_in = request["recipient"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'recipient' in challenge request"))?;
     let amount = request["amount"]
@@ -1176,6 +1207,12 @@ async fn cmd_mpp_charge(
     let fee_payer = request["methodDetails"]["feePayer"]
         .as_bool()
         .unwrap_or(true);
+
+    // XKO/0x dual capture: canonical → signing, display → CLI output JSON.
+    let (recipient, recipient_display) = parse_recipient_addr(recipient_in, chain_id)
+        .with_context(|| "challenge.request.recipient")?;
+    let recipient = recipient.as_str();
+    let recipient_display = recipient_display.as_str();
 
     // Resolve chain index + payer address (needed for both transaction and hash modes for `source` DID)
     let (chain_index, payer_addr) = resolve_chain_and_payer(chain_id, from).await?;
@@ -1224,7 +1261,7 @@ async fn cmd_mpp_charge(
 
     // Validate splits invariants and derive primary `authorization.value` BEFORE any TEE call.
     // Per spec §Split Payments: primary receives `amount - sum(splits[].amount)`.
-    let (primary_value, parsed_splits) = compute_primary_split_amounts(&request)?;
+    let (primary_value, parsed_splits) = compute_primary_split_amounts(&request, chain_id)?;
     // Sanity: `amount` from the request and `primary_value` agree when no splits exist.
     debug_assert!(parsed_splits.is_empty() == (primary_value == amount));
 
@@ -1252,7 +1289,7 @@ async fn cmd_mpp_charge(
     let mut authorization = json!({
         "type": "eip-3009",
         "from": payer_addr,
-        "to": recipient,
+        "to": recipient_display,
         "value": primary_value,
         "validAfter": "0",
         "validBefore": valid_before,
@@ -1262,15 +1299,15 @@ async fn cmd_mpp_charge(
 
     if !parsed_splits.is_empty() {
         let mut signed_splits = Vec::with_capacity(parsed_splits.len());
-        for (i, (split_amount, split_recipient)) in parsed_splits.iter().enumerate() {
+        for (i, split) in parsed_splits.iter().enumerate() {
             let split_nonce = random_nonce_hex();
             // Splits use the same transferWithAuthorization typehash as primary.
             let (split_sig, _) = tee_sign_eip3009(
                 Eip3009AuthType::Transfer,
                 &chain_index,
                 payer_addr,
-                split_recipient,
-                split_amount,
+                &split.canonical,
+                &split.amount,
                 &valid_before,
                 &split_nonce,
                 currency,
@@ -1279,8 +1316,8 @@ async fn cmd_mpp_charge(
             .with_context(|| format!("splits[{}] TEE sign failed", i))?;
             signed_splits.push(json!({
                 "from": payer_addr,
-                "to": split_recipient,
-                "value": split_amount,
+                "to": &split.display,
+                "value": &split.amount,
                 "validAfter": "0",
                 "validBefore": valid_before,
                 "nonce": split_nonce,
@@ -1330,7 +1367,7 @@ async fn cmd_mpp_session_open(
     let challenge = parse_www_authenticate(challenge_header)?;
     let request = decode_challenge_request(&challenge)?;
 
-    let recipient = request["recipient"]
+    let recipient_in = request["recipient"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'recipient'"))?;
     let currency = request["currency"]
@@ -1345,6 +1382,12 @@ async fn cmd_mpp_session_open(
     let fee_payer = request["methodDetails"]["feePayer"]
         .as_bool()
         .unwrap_or(true);
+
+    // XKO/0x normalize: open path only consumes the canonical 0x form (channelId
+    // hash + EIP-3009 nonce); recipient isn't echoed in the CLI output JSON.
+    let (recipient, _recipient_display) = parse_recipient_addr(recipient_in, chain_id)
+        .with_context(|| "challenge.request.recipient")?;
+    let recipient = recipient.as_str();
 
     // Resolve chain + payer
     let (chain_index, payer_addr) = resolve_chain_and_payer(chain_id, from).await?;
@@ -1461,7 +1504,7 @@ async fn cmd_mpp_session_open(
 
     // Parse splits (optional) — needed for nonce derivation. The contract
     // openWithAuthorization validates the EIP-3009 nonce with the same formula.
-    let (split_recipients, split_bps) = parse_session_splits(&request)?;
+    let (split_recipients, split_bps) = parse_session_splits(&request, chain_id)?;
 
     // Contract computeOpenAuthorizationNonce formula:
     //   keccak256(abi.encode(from, payee, token, salt, authorizedSigner,
@@ -2438,7 +2481,7 @@ mod tests {
             "recipient": "0xdef",
             "methodDetails": { "chainId": 196 }
         });
-        let (primary, splits) = compute_primary_split_amounts(&req).unwrap();
+        let (primary, splits) = compute_primary_split_amounts(&req, 196).unwrap();
         assert_eq!(primary, "100");
         assert!(splits.is_empty());
     }
@@ -2456,11 +2499,11 @@ mod tests {
                 ]
             }
         });
-        let (primary, splits) = compute_primary_split_amounts(&req).unwrap();
+        let (primary, splits) = compute_primary_split_amounts(&req, 196).unwrap();
         assert_eq!(primary, "940000");
         assert_eq!(splits.len(), 2);
-        assert_eq!(splits[0].0, "50000");
-        assert_eq!(splits[1].0, "10000");
+        assert_eq!(splits[0].amount, "50000");
+        assert_eq!(splits[1].amount, "10000");
     }
 
     #[test]
@@ -2475,8 +2518,46 @@ mod tests {
                 ]
             }
         });
-        let (primary, _) = compute_primary_split_amounts(&req).unwrap();
+        let (primary, _) = compute_primary_split_amounts(&req, 196).unwrap();
         assert_eq!(primary, "50");
+    }
+
+    #[test]
+    fn primary_split_xko_recipient_normalizes_to_canonical() {
+        // XKO-prefixed split recipient on XLayer maps to canonical 0x for signing,
+        // and preserves the original XKO form in the display column.
+        let req = json!({
+            "amount": "1000",
+            "methodDetails": {
+                "splits": [
+                    { "amount": "100", "recipient": "XKO1111111111111111111111111111111111111111" },
+                ]
+            }
+        });
+        let (_primary, splits) = compute_primary_split_amounts(&req, 196).unwrap();
+        assert_eq!(splits.len(), 1);
+        assert_eq!(splits[0].canonical, "0x1111111111111111111111111111111111111111");
+        assert_eq!(splits[0].display, "XKO1111111111111111111111111111111111111111");
+    }
+
+    #[test]
+    fn primary_split_xko_recipient_rejected_off_xlayer() {
+        let req = json!({
+            "amount": "1000",
+            "methodDetails": {
+                "splits": [
+                    { "amount": "100", "recipient": "XKO1111111111111111111111111111111111111111" },
+                ]
+            }
+        });
+        // `{:#}` flattens the anyhow context chain so we can match against the
+        // inner "only supported on X Layer" reason added by parse_recipient_addr.
+        let err = format!("{:#}", compute_primary_split_amounts(&req, 1).unwrap_err());
+        assert!(
+            err.contains("only supported on X Layer"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]
@@ -2484,9 +2565,11 @@ mod tests {
         // Spec §Constraints: sum MUST be strictly less than amount.
         let req = json!({
             "amount": "100",
-            "methodDetails": { "splits": [ { "amount": "100", "recipient": "0xabc" } ] }
+            "methodDetails": { "splits": [
+                { "amount": "100", "recipient": "0x1111111111111111111111111111111111111111" }
+            ] }
         });
-        let err = compute_primary_split_amounts(&req).unwrap_err().to_string();
+        let err = compute_primary_split_amounts(&req, 196).unwrap_err().to_string();
         assert!(err.contains("strictly less than"), "got: {}", err);
     }
 
@@ -2495,11 +2578,11 @@ mod tests {
         let req = json!({
             "amount": "100",
             "methodDetails": { "splits": [
-                { "amount": "70", "recipient": "0xa" },
-                { "amount": "40", "recipient": "0xb" },
+                { "amount": "70", "recipient": "0x1111111111111111111111111111111111111111" },
+                { "amount": "40", "recipient": "0x2222222222222222222222222222222222222222" },
             ] }
         });
-        assert!(compute_primary_split_amounts(&req).is_err());
+        assert!(compute_primary_split_amounts(&req, 196).is_err());
     }
 
     #[test]
@@ -2508,7 +2591,7 @@ mod tests {
             "amount": "100",
             "methodDetails": { "splits": [ { "amount": "0", "recipient": "0xabc" } ] }
         });
-        let err = compute_primary_split_amounts(&req).unwrap_err().to_string();
+        let err = compute_primary_split_amounts(&req, 196).unwrap_err().to_string();
         assert!(err.contains("> 0"), "got: {}", err);
     }
 
@@ -2518,7 +2601,7 @@ mod tests {
             "amount": "100",
             "methodDetails": { "splits": [] }
         });
-        let err = compute_primary_split_amounts(&req).unwrap_err().to_string();
+        let err = compute_primary_split_amounts(&req, 196).unwrap_err().to_string();
         assert!(err.contains("empty"), "got: {}", err);
     }
 
@@ -2531,7 +2614,7 @@ mod tests {
             "amount": "1000",
             "methodDetails": { "splits": many }
         });
-        let err = compute_primary_split_amounts(&req).unwrap_err().to_string();
+        let err = compute_primary_split_amounts(&req, 196).unwrap_err().to_string();
         assert!(err.contains("exceeds spec max of 10"), "got: {}", err);
     }
 
@@ -2541,7 +2624,7 @@ mod tests {
             "amount": "0x64",
             "methodDetails": { "splits": [ { "amount": "10", "recipient": "0xabc" } ] }
         });
-        assert!(compute_primary_split_amounts(&req).is_err());
+        assert!(compute_primary_split_amounts(&req, 196).is_err());
     }
 
     // ── compute_valid_before ─────────────────────────────────────────
