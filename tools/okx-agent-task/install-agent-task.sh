@@ -174,7 +174,7 @@ if [ -e "$LEGACY_LINK" ] || [ -L "$LEGACY_LINK" ]; then
   legacy_real="$(readlink -f "$LEGACY_LINK" 2>/dev/null || echo "$LEGACY_LINK")"
   target_real="$(readlink -f "$INSTALL_DIR/$BINARY" 2>/dev/null || echo "$INSTALL_DIR/$BINARY")"
   if [ "$legacy_real" != "$target_real" ]; then
-    echo "→ 清理老装 symlink $LEGACY_LINK（需 sudo 一次性确认）"
+    echo "→ 清理老装 symlink ${LEGACY_LINK}（需 sudo 一次性确认）"
     if ! sudo rm -f "$LEGACY_LINK" 2>/dev/null; then
       echo "  ⚠ sudo 删除失败/被拒，请手动跑：sudo rm -f $LEGACY_LINK" >&2
     fi

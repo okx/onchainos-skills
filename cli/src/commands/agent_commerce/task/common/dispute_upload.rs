@@ -122,7 +122,9 @@ pub async fn handle_upload_evidence(
         let escaped = t.replace('\\', "\\\\").replace('"', "\\\"");
         let wrapped = format!("\"{escaped}\"");
         eprintln!(
-            "[dispute_upload] text part: raw_bytes={} wrapped_bytes={}",
+            "[dispute_upload] text part: raw_bytes={} wrapped_bytes={}\n\
+             [dispute_upload] text content (raw):\n{t}\n\
+             [dispute_upload] text content (wrapped, sent on wire):\n{wrapped}",
             t.len(),
             wrapped.len(),
         );
