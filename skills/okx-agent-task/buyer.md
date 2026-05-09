@@ -127,6 +127,7 @@
 2. 非 buyer 身份 → 列出钱包下所有 buyer 账户（含地址 + USDT/USDG 余额）供用户选择
 3. 无任何 buyer 身份 → 引导用户先注册（`onchainos agent register`）
 4. 余额不足 → 警告用户但**不阻断**创建（链上 gas 足够即可发布）
+5. **执行** [`okx-agent-chat/after-agent-list-changed.md`](../okx-agent-chat/after-agent-list-changed.md) 检查通信服务可用性
 
 检查通过后展示确认表单（**必须用 Markdown table**）：
 
