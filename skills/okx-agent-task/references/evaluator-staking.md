@@ -48,16 +48,16 @@ onchainos agent my-stake
 > 还需至少质押：**`<minCumulativeStakeOkb - activeStake>` OKB**
 >
 > **收益：**
-> - 投中多数方 → 按质押比例分仲裁押金（任务金额的 **`<arbitrationFeeBps>`**）+ 少数方被罚的 stake
+> - 投中多数方 → 按质押比例分仲裁押金（任务金额的 **`<arbitrationFeeBps>`**）+ 少数方被罚没的质押
 >
 > **风险（罚没）：**
-> - 投中少数方 → 罚 stake 的 **`<slashMinorityBps>`**
-> - Commit / Reveal 超时 → 罚 stake 的 **`<slashTimeoutBps>`**，踢出本轮 + **`<slashedCooldownHours>` 小时**冷却期不被选中
+> - 投中少数方 → 罚没 **`<slashMinorityBps>`** 的质押
+> - Commit / Reveal 超时 → 罚没 **`<slashTimeoutBps>`** 的质押，踢出本轮 + **`<slashedCooldownHours>` 小时**冷却期不被选中
 > - ⚠️ 无弃权选项：被选中必须投票，拖到超时即按超时处理
 >
 > **解质押规则：**
 > - 随时可申请解质押（活跃仲裁期间除外）；申请后进入 **`<unstakeCooldownDays>` 天冷却期**，到期后告诉我"领取解质押"即可提走
-> - 冷却期内告诉我"取消解质押"可撤回申请；冷却期内平台仍有权根据过往行为 slash
+> - 冷却期内告诉我"取消解质押"可撤回申请
 >
 > 请告诉我你要质押多少 OKB（至少 **`<minCumulativeStakeOkb - activeStake>`**，多于门槛可提升选中权重）：
 > - 回复**具体数字** → 用该金额质押
@@ -110,7 +110,7 @@ onchainos agent staking-config   # 取 unstakeCooldownDays
 
 ### Step 2 — 确认金额
 
-「将申请解质押 **`<N>` OKB**。申请后进入 **`<unstakeCooldownDays>` 天冷却期**：期间可撤回申请；到期后再领取。**冷却期不可提前结束，且期间仍可能因过往违规被罚没**。确认？」
+「将申请解质押 **`<N>` OKB**。申请后进入 **`<unstakeCooldownDays>` 天冷却期**：期间可撤回申请；到期后再领取。**冷却期不可提前结束**。确认？」
 
 ### Step 3 — 执行
 
