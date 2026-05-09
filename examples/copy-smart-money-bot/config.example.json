@@ -1,0 +1,31 @@
+{
+  "wallets": {
+    "ethereum": "0xYourEvmWalletHere",
+    "base": "0xYourEvmWalletHere",
+    "solana": "YourSolanaBase58WalletHere"
+  },
+  "funding_token": "usdc",
+  "trade_size_usd": "20",
+  "chain_index_map": {
+    "1": "ethereum",
+    "501": "solana",
+    "8453": "base",
+    "56": "bsc",
+    "42161": "arbitrum"
+  },
+  "filters": {
+    "tag": "smart_money",
+    "min_quote_amount_usd": 5000,
+    "max_risk_level": "MEDIUM",
+    "skip_quote_tokens": []
+  },
+  "limits": {
+    "cooldown_seconds_per_token": 600,
+    "daily_budget_usd": 200,
+    "max_per_token_per_day": 1
+  },
+  "poll_interval_seconds": 5,
+  "state_file": "state.json",
+  "log_file": "bot.log",
+  "dry_run": true
+}
