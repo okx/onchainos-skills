@@ -33,6 +33,11 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub chain: Option<String>,
 
+    /// 调用方插件版本号；非空时所有 HTTP 请求会带上 `X-Agent-Plugin-Version` header。
+    /// 仅供 openclaw 等上游集成方使用，不在 --help 中展示。
+    #[arg(long, global = true, hide = true)]
+    pub plugin_version: Option<String>,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -165,6 +170,13 @@ async fn run() {
     // and refresh_jwt_inline pick it up at runtime.
     if let Some(ref url) = cli.base_url {
         std::env::set_var("OKX_BASE_URL", url);
+    }
+
+    // openclaw 等上游集成方通过隐藏的 --plugin-version 标识自身版本。
+    // 设进进程级 OnceLock，下游 ApiClient::anonymous_headers() 在每次请求时按需注入
+    // X-Agent-Plugin-Version；不传则不发，行为完全向后兼容。
+    if let Some(ref pv) = cli.plugin_version {
+        client::set_plugin_version(pv);
     }
 
     // MCP server runs indefinitely — skip audit for it (MCP tools log individually).
