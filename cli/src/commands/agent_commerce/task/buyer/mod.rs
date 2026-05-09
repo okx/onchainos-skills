@@ -205,7 +205,10 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
     match cmd {
         // ── 买家动作 ─────────────────────────────────────────────
         TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, payment_mode, agent_id } =>
-            create::handle_create(&mut client, description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, payment_mode, agent_id).await,
+            create::handle_create(&mut client, create::CreateTaskParams {
+                description, description_summary, budget, max_budget, currency,
+                deadline_open, deadline_submit, title, payment_mode, agent_id,
+            }).await,
         TaskCommand::Recommend { job_id, agent_id, next, current } => {
             if next {
                 recommend::handle_recommend_next(&job_id)
