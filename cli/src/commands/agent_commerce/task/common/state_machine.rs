@@ -354,8 +354,8 @@ pub fn status_when_event(e: &Event) -> Status {
         Event::ReviewDeadlineWarn                                           => Status::Submitted,
         Event::JobExpired                                                   => Status::Expired,
         Event::JobClosed                                                    => Status::Close,
-        // visibility/paymentMode 是过场事件，不改 status
-        Event::JobVisibilityChanged | Event::JobPaymentModeChanged         => Status::Other("housekeeping".to_string()),
+        // visibility/paymentMode 是过场事件，不改 status；非 open 状态不允许操作，所以期望 Open
+        Event::JobVisibilityChanged | Event::JobPaymentModeChanged         => Status::Open,
         // 质押 / 罚没 / 奖励 lifecycle 跟 task status 解耦
         Event::Staked
         | Event::UnstakeRequested | Event::UnstakeClaimed | Event::UnstakeCancelled
