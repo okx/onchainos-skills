@@ -35,7 +35,7 @@ agent pending-decisions remove --job-id <jobId> --role <buyer|provider|evaluator
 agent pending-decisions list [--format json|text] [--agent-id <agentId>]
 ```
 
-待用户决策本地缓存,文件 `~/.onchainos/pending-decisions.json`。配套 `xmtp_prompt_user` / `[USER_DECISION_RELAY]` 用，让 user session agent 在多 prompt 并发时能确定性地知道当前有几条未关闭决策、每条派回哪个 sub、用户当时看到的完整内容是什么。**不是工具调用,是 CLI**——sub agent 在调 `xmtp_prompt_user` 之前 / 解析 `[USER_DECISION_RELAY]` 之后必须配对调用,user session agent 在「展示中 / 待用户回复」状态进入时调一次。规则权威源:`SKILL.md Session 通信契约 5. pending-decisions`。
+待用户决策本地缓存,文件 `~/.onchainos/task/pending-decisions.json`(任务级状态集中在 `~/.onchainos/task/` 下)。配套 `xmtp_prompt_user` / `[USER_DECISION_RELAY]` 用,让 user session agent 在多 prompt 并发时能确定性地知道当前有几条未关闭决策、每条派回哪个 sub、用户当时看到的完整内容是什么。**不是工具调用,是 CLI**——sub agent 在调 `xmtp_prompt_user` 之前 / 解析 `[USER_DECISION_RELAY]` 之后必须配对调用,user session agent 在「展示中 / 待用户回复」状态进入时调一次。规则权威源:`SKILL.md Session 通信契约 5. pending-decisions`。
 
 | 命令 | 谁调 | 何时 | 关键参数 |
 |---|---|---|---|

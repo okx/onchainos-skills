@@ -1,6 +1,6 @@
 //! 待用户决策列表（pending-decisions）本地缓存
 //!
-//! 文件：`~/.onchainos/pending-decisions.json`
+//! 文件：`~/.onchainos/task/pending-decisions.json`(任务级状态都集中在 `~/.onchainos/task/` 下)
 //!
 //! 配套 `xmtp_prompt_user` / `[USER_DECISION_RELAY]` 的 sub agent 工具配对规则使用，
 //! 给 user session agent 一个**确定的**「当前有几条 pending」状态源，
@@ -93,7 +93,8 @@ struct PendingFile {
 
 fn pending_path() -> Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("无法获取 HOME 目录"))?;
-    let dir = home.join(".onchainos");
+    // 跟 ~/.onchainos/task/<jobId>/ 下的协商 / 仲裁状态目录对齐,任务级状态都集中在 task/ 下
+    let dir = home.join(".onchainos").join("task");
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("pending-decisions.json"))
 }

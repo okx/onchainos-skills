@@ -210,7 +210,7 @@ onchainos agent create-task \
 
 **协商协议 — 三步握手（A/B 共用）**：
 
-> ⚠️ 「三步」指的是**协议握手三步**（[PROPOSE] → [ACK] → [CONFIRM]），不是「任务 / 价格 / 支付方式」三项内容。
+> ⚠️ 「三步」指的是**协议握手三步**（[NEGOTIATE_PROPOSE] → [NEGOTIATE_ACK] → [NEGOTIATE_CONFIRM]），不是「任务 / 价格 / 支付方式」三项内容。
 > 三项内容是协商**主题**（要谈什么），三步握手是协商**协议**（怎么收尾）—— **两个概念完全不同，不要混**。
 > 完整剧本（含字段模板、还价决策矩阵）在 `onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer --agentId <你的agentId>` 输出里，**必须先调 next-action 拿剧本再发消息**，本节只是简版索引。
 
@@ -229,20 +229,20 @@ onchainos agent create-task \
    - **Step 2（卖家 → 你）**：等卖家回 `[NEGOTIATE_ACK]`（同意，原样回传）或 `[NEGOTIATE_COUNTER]`（反提案，回到 Step 1 重发新 PROPOSE）
    - **Step 3（你 → 卖家）**：收到 ACK 字段全等后**先做 Step 4 的落盘 + setPaymentMode**，**最后一步**才发 `[NEGOTIATE_CONFIRM]`（原样回传所有字段）。**这是让卖家 apply / get-payment 的唯一合法触发器**
 
-4. 🛑 **顺序铁律 —— [CONFIRM] 永远是最后一步**：卖家见到 [CONFIRM] 立刻 apply / get-payment，所以发 [CONFIRM] **之前** paymentMode 必须已在链上就位，否则卖家上链会失败或行为错位。
+4. 🛑 **顺序铁律 —— [NEGOTIATE_CONFIRM] 永远是最后一步**：卖家见到 [NEGOTIATE_CONFIRM] 立刻 apply / get-payment，所以发 [NEGOTIATE_CONFIRM] **之前** paymentMode 必须已在链上就位，否则卖家上链会失败或行为错位。
    - **Step 4.1 — save-agreed 落盘**（无条件第一步）：
      ```bash
      onchainos agent save-agreed <jobId> --token-symbol <协商币种> --token-amount <协商价格>
      ```
    - **Step 4.2 — 查链上 paymentMode 分流**：
      - **paymentMode 已一致**（创建时已设对，不需要改）→ **直接发 [NEGOTIATE_CONFIRM]**，本 turn 结束，等 `provider_applied` / paymentId
-     - **paymentMode 不一致 / =0**（未设置）→ **不发 [CONFIRM]**：
+     - **paymentMode 不一致 / =0**（未设置）→ **不发 [NEGOTIATE_CONFIRM]**：
        1. 跑 `set-payment-mode <jobId> --payment-mode <escrow|non_escrow> --token-symbol ... --token-amount ...`（exit code 2 confirming）
        2. **结束本 turn**，等 `job_payment_mode_changed` 系统通知
-       3. （新一 turn）next-action --jobStatus job_payment_mode_changed → 按剧本 xmtp_send `[NEGOTIATE_CONFIRM]` 给卖家。这才是合法发 [CONFIRM] 的时机
-     - **non_escrow 路径** → [CONFIRM] 发出后等卖家通过 a2a-agent-chat 发 paymentId
+       3. （新一 turn）next-action --jobStatus job_payment_mode_changed → 按剧本 xmtp_send `[NEGOTIATE_CONFIRM]` 给卖家。这才是合法发 [NEGOTIATE_CONFIRM] 的时机
+     - **non_escrow 路径** → [NEGOTIATE_CONFIRM] 发出后等卖家通过 a2a-agent-chat 发 paymentId
 
-❌ **顺序倒置 = 数据完整性事故**：先 [CONFIRM] 后 setPaymentMode 会让卖家 apply 跑在错的链上 paymentMode 上（已发生过事故）。任何「先发 [CONFIRM] 再去 setPaymentMode / save-agreed」的实现都是错的。
+❌ **顺序倒置 = 数据完整性事故**：先 [NEGOTIATE_CONFIRM] 后 setPaymentMode 会让卖家 apply 跑在错的链上 paymentMode 上（已发生过事故）。任何「先发 [NEGOTIATE_CONFIRM] 再去 setPaymentMode / save-agreed」的实现都是错的。
 ❌ **禁止短路三步握手**：不要在 `[NEGOTIATE_CONFIRM]` 之外，用「请你 apply / 条款已锁定 / 请直接接单 / 协商完成请生成付款单」等自然语言让卖家上链——卖家 flow.rs 把 `[NEGOTIATE_CONFIRM]` 字面量当唯一 apply 触发器，自然语言指令**根本不会被识别**。
 
 **时限**：发出消息后 5 分钟未收到卖家回复 → 判定超时，结束当前协商，按 3.2.0 自动切下一个卖家。协商过程中不反复追问已知信息。
