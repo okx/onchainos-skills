@@ -10,11 +10,11 @@ metadata:
 
 # OKX Agent Payments Protocol (Dispatcher)
 
-Unified entry point for three payment families: **x402** (HTTP 402 with `accepts[]`), **MPP** (HTTP 402 with `WWW-Authenticate: Payment`), and **a2a-pay** (paymentId-based agent-to-agent links, no 402 required). This file owns the shared steps — protocol detection, payload decode, user confirmation gate, wallet status check — then dispatches into the right scheme/intent reference.
+Unified entry point for three payment paths, distinguished by HTTP signature: **`accepts`-based 402** (challenge in body for v1 or `PAYMENT-REQUIRED` header for v2), **`WWW-Authenticate: Payment` 402** (channel-capable, with `intent="charge"` or `"session"`), and **a2a-pay** (paymentId-based agent-to-agent links, no 402 required). This file owns the shared steps — protocol detection, payload decode, user confirmation gate, wallet status check — then dispatches into the right scheme/intent reference.
 
 > **User-facing terminology — IMPORTANT**
 >
-> **Rule 1 — Always call it "OKX Agent Payments Protocol".** Use the exact English term **"OKX Agent Payments Protocol"** in user-visible messages regardless of the user's language. Keep it as a fixed English noun phrase even inside otherwise-Chinese sentences. Reserve protocol literals and internal identifiers for CLI invocations, HTTP headers, JSON payloads, and code — never speak them to the user.
+> **Rule 1 — Always call it "OKX Agent Payments Protocol", and always render it bolded.** Use the exact English term **OKX Agent Payments Protocol** in user-visible messages regardless of the user's language, and always wrap it in markdown bold (`**OKX Agent Payments Protocol**`) so the user sees it emphasized. Keep it as a fixed English noun phrase even inside otherwise-Chinese sentences. Reserve protocol literals and internal identifiers for CLI invocations, HTTP headers, JSON payloads, and code — never speak them to the user.
 >
 > **Rule 2 — Do not narrate internal protocol detection.** The dispatch logic (which header was detected, which reference is being loaded, which scheme/intent was selected, TEE vs local-key path) is internal — keep it internal. The user only needs to see: (a) what is being paid, (b) what they need to confirm, (c) the result.
 >
@@ -22,8 +22,22 @@ Unified entry point for three payment families: **x402** (HTTP 402 with `accepts
 >
 > **Example**
 >
-> (中) `准备通过 OKX Agent Payments Protocol 完成本次支付，下面是扣款明细，请确认……`
-> (EN) `Preparing a payment via the OKX Agent Payments Protocol. Here are the charge details — please confirm before I proceed…`
+> (中) `准备通过 **OKX Agent Payments Protocol** 完成本次支付，下面是扣款明细，请确认……`
+> (EN) `Preparing a payment via the **OKX Agent Payments Protocol**. Here are the charge details — please confirm before I proceed…`
+
+> **Progress narration counts as user-visible — Rules 1-3 still apply.**
+>
+> Long-running flows (decode → confirm → wallet check → sign → header assembly → replay) tempt status updates. Every `"正在…"` / `"I'm now…"` line is user-facing. Step labels in this SKILL.md (`Step A3-Accepts`, `Step A3-WWW-Authenticate`) and reference files (`exact` / `aggr_deferred` schemes, `charge` / `session` intents) are internal — do NOT echo them in narration.
+>
+> | ❌ Don't say | ✅ Say |
+> |---|---|
+> | "正在处理 `accepts`-based 流程" / "Processing the `accepts`-based path" | "正在通过 **OKX Agent Payments Protocol** 处理本次支付" / "Processing the payment via the **OKX Agent Payments Protocol**" |
+> | "CLI 自动选择 `exact` 方案" / "CLI selected the `exact` scheme" / "走 `aggr_deferred` 路径" | "签名完成" / "Signing done" |
+> | "组装 `PAYMENT-SIGNATURE` / `X-PAYMENT` 头" / "Assembling the `PAYMENT-SIGNATURE` header" | "正在重放请求" / "Replaying the request" |
+> | "检测到 `WWW-Authenticate: Payment` / `PAYMENT-REQUIRED` 协议" / "Detected the channel-based protocol" | _(silent — go straight to the confirmation prompt)_ |
+> | "加载 `references/exact.md`" / "Loading the `exact` playbook" | _(silent — internal routing)_ |
+> | "进入 `session` 模式 / `charge` 模式" / "Entering `session` intent" | "支付通道已开" / "Channel opened" — describe the user-visible effect, not the internal mode |
+> | "TEE 路径 / 本地 key 路径" / "Using TEE signing path" | _(silent — signing path is internal)_ |
 
 > Read `../okx-agentic-wallet/_shared/preflight.md` before any `onchainos` command. EVM only — CAIP-2 `eip155:<chainId>` (run `onchainos wallet chains` for the list).
 
@@ -31,10 +45,10 @@ Unified entry point for three payment families: **x402** (HTTP 402 with `accepts
 
 | Triggered by | Load |
 |---|---|
-| x402 402, CLI returns no `sessionCert` | `references/exact.md` |
-| x402 402, CLI returns `sessionCert` | `references/aggr_deferred.md` |
-| MPP 402, `intent="charge"` | `references/charge.md` |
-| MPP 402, `intent="session"` (also: any mid-session op on a `channel_id`) | `references/session.md` |
+| 402 with `PAYMENT-REQUIRED` header (v2) or `x402Version` body field (v1), CLI returns no `sessionCert` | `references/exact.md` |
+| 402 with `PAYMENT-REQUIRED` header (v2) or `x402Version` body field (v1), CLI returns `sessionCert` | `references/aggr_deferred.md` |
+| 402 with `WWW-Authenticate: Payment`, `intent="charge"` | `references/charge.md` |
+| 402 with `WWW-Authenticate: Payment`, `intent="session"` (also: any mid-session op on a `channel_id`) | `references/session.md` |
 | User mentions a paymentId / `a2a_...` link / "create payment link" | `references/a2a_charge.md` |
 
 ## Skill Routing
@@ -48,14 +62,14 @@ Unified entry point for three payment families: **x402** (HTTP 402 with `accepts
 | Token swaps / trades / buy / sell | `okx-dex-swap` |
 | Authenticated wallet (balance / send / tx history) | `okx-agentic-wallet` |
 | Public address holdings | `okx-wallet-portfolio` |
-| Tx broadcasting (MPP `feePayer=false` hash mode) | `okx-onchain-gateway` |
+| Tx broadcasting (`feePayer=false` hash mode) | `okx-onchain-gateway` |
 | Security scanning (token / DApp / tx / signature) | `okx-security` |
 
-**MPP mid-session ops** (close / topup / settle / voucher / refund mentioned with an active `channel_id`, regardless of fresh 402) → stay here, jump straight into `references/session.md` at the matching phase. **Do NOT** search for a separate `close-channel` / `topup-channel` / `settle-channel` tool — they're all `onchainos payment session ...` subcommands.
+**Channel mid-session ops** (close / topup / settle / voucher / refund mentioned with an active `channel_id`, regardless of fresh 402) → stay here, jump straight into `references/session.md` at the matching phase. **Do NOT** search for a separate `close-channel` / `topup-channel` / `settle-channel` tool — they're all `onchainos payment session ...` subcommands.
 
 ---
 
-# Path A: HTTP 402 (x402 or MPP)
+# Path A: HTTP 402
 
 ## Step A1: Send the original request
 
@@ -65,15 +79,15 @@ Make the HTTP request the user asked for. If status is **not 402**, return the b
 
 ```
 Priority 1: response.headers['WWW-Authenticate']
-  starts with "Payment "        → MPP        (continue at Step A3-MPP)
+  starts with "Payment "        → continue at Step A3-WWW-Authenticate
 Priority 2: response.headers['PAYMENT-REQUIRED']
-  base64-encoded JSON           → x402 v2    (continue at Step A3-x402)
+  base64-encoded JSON           → continue at Step A3-Accepts (v2)
 Priority 3: response body JSON has "x402Version"
-                                → x402 v1    (continue at Step A3-x402)
+                                → continue at Step A3-Accepts (v1)
 Otherwise                       → not a supported payment protocol, stop
 ```
 
-**Both MPP and x402 indicators present** — STOP and ask the user:
+**Both `WWW-Authenticate: Payment` and `PAYMENT-REQUIRED`/`x402Version` indicators present** — STOP and ask the user:
 
 > The server offers two payment options via the **OKX Agent Payments Protocol**:
 > 1. **One-shot purchase, or streaming session (multi-request)** (recommended)
@@ -81,9 +95,9 @@ Otherwise                       → not a supported payment protocol, stop
 >
 > Which would you like to use?
 
-Internal mapping: option 1 → MPP path, option 2 → x402 path.
+Internal mapping: option 1 → `WWW-Authenticate: Payment` path, option 2 → `PAYMENT-REQUIRED`/`x402Version` path.
 
-## Step A3-x402: Decode
+## Step A3-Accepts: Decode
 
 **v2** — payload is in the `PAYMENT-REQUIRED` response **header** (base64-encoded JSON):
 
@@ -107,7 +121,7 @@ option  = decoded.accepts[0]       // for display only
 
 Save `decoded` for header assembly later — you will need `decoded.x402Version` and `decoded.resource` (v2).
 
-## Step A3-MPP: Decode
+## Step A3-WWW-Authenticate: Decode
 
 Parse the WWW-Authenticate header:
 
@@ -143,7 +157,7 @@ Convert `amount` from base units to human-readable using the token's decimals (t
 
 **⚠️ MANDATORY: Display details and STOP to wait for explicit user confirmation. Do NOT call `onchainos wallet status` or any other tool until the user confirms.**
 
-For **x402**:
+For **`accepts`-based 402** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v1):
 
 > This resource requires payment via the **OKX Agent Payments Protocol**:
 > - **Network**: `<chain name>` (`<option.network>`)
@@ -153,7 +167,7 @@ For **x402**:
 >
 > Proceed with payment? (yes / no)
 
-For **MPP**:
+For **`WWW-Authenticate: Payment` 402**:
 
 > This resource requires payment via the **OKX Agent Payments Protocol**:
 > - **Payment type**: `<one-shot purchase (charge) | streaming session (multi-request)>`
@@ -177,18 +191,18 @@ onchainos wallet status
 ```
 
 - **Logged in** → Step A6.
-- **Not logged in (x402)** → ask the user to choose between (1) wallet login (TEE signing) or (2) local private key (`onchainos payment pay-local`, exact scheme only). Don't read files or check env vars until the user picks.
-- **Not logged in (MPP)** → ask the user to log in via email OTP or AK. **MPP requires TEE** — there is no local-key fallback (only x402 has one).
+- **Not logged in (`accepts`-based path)** → ask the user to choose between (1) wallet login (TEE signing) or (2) local private key (`onchainos payment pay-local`, `exact` scheme only). Don't read files or check env vars until the user picks.
+- **Not logged in (`WWW-Authenticate: Payment` path)** → ask the user to log in via email OTP or AK. **TEE-only — no local-key fallback for this path** (only the `accepts`-based path has one).
 
 ## Step A6: Hand off to the scheme/intent reference
 
 | Path | Action |
 |---|---|
-| **x402** | Run `onchainos payment pay --accepts '<JSON.stringify(decoded.accepts)>'`. When the response comes back, look at whether `sessionCert` is present:<br>• `sessionCert` present → load **`references/aggr_deferred.md`** for header assembly + replay<br>• `sessionCert` absent → load **`references/exact.md`** for header assembly + replay<br>If the user picked the local-key fallback, run `onchainos payment pay-local` instead and load **`references/exact.md`** (only scheme this fallback supports). |
-| **MPP `intent="charge"`** | Load **`references/charge.md`** at "Decide mode". |
-| **MPP `intent="session"`** | Load **`references/session.md`** at "Phase S1: Open Channel" (or jump to S2 / S2b / S3 if the user is mid-session with an active `channel_id`). |
+| **`accepts`-based** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v1) | Run `onchainos payment pay --accepts '<JSON.stringify(decoded.accepts)>'`. When the response comes back, look at whether `sessionCert` is present:<br>• `sessionCert` present → load **`references/aggr_deferred.md`** for header assembly + replay<br>• `sessionCert` absent → load **`references/exact.md`** for header assembly + replay<br>If the user picked the local-key fallback, run `onchainos payment pay-local` instead and load **`references/exact.md`** (only scheme this fallback supports). |
+| **`WWW-Authenticate: Payment`, `intent="charge"`** | Load **`references/charge.md`** at "Decide mode". |
+| **`WWW-Authenticate: Payment`, `intent="session"`** | Load **`references/session.md`** at "Phase S1: Open Channel" (or jump to S2 / S2b / S3 if the user is mid-session with an active `channel_id`). |
 
-After the reference returns the assembled header (x402) or `authorization_header` (MPP), replay the original request and surface the response to the user. Suggest follow-ups conversationally — never expose internal field names or skill IDs.
+After the reference returns the assembled `X-PAYMENT` / `PAYMENT-SIGNATURE` header or `authorization_header`, replay the original request and surface the response to the user. Suggest follow-ups conversationally — never expose internal field names or skill IDs.
 
 ---
 
@@ -221,7 +235,7 @@ The reference contains the full create/pay/status flow including the auto-poll-t
 
 # Cross-cutting
 
-## Reading seller errors (MPP / a2a)
+## Reading seller errors (`WWW-Authenticate: Payment` / a2a-pay)
 
 When the seller rejects, do NOT show raw JSON or just the numeric code. Extract the human-readable explanation in priority order, use the first non-empty match:
 
@@ -256,7 +270,7 @@ After a successful payment + response, suggest conversationally:
 
 | Just completed | Suggest |
 |---|---|
-| Successful x402 / MPP replay | Check balance impact via `okx-agentic-wallet`; or make another request to the same resource |
+| Successful HTTP 402 replay | Check balance impact via `okx-agentic-wallet`; or make another request to the same resource |
 | Successful a2a payment | Verify post-payment balance via `okx-agentic-wallet` |
 | 402 on replay (expired) | Retry with a fresh signature |
-| MPP session in progress | Issue another voucher when the next request arrives; close the channel when done |
+| Channel session in progress | Issue another voucher when the next request arrives; close the channel when done |

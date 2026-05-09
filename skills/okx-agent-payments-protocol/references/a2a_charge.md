@@ -1,6 +1,6 @@
 # a2a_charge — agent-to-agent payment links (`onchainos payment a2a-pay`)
 
-> Loaded from `../SKILL.md` when the user mentions a paymentId, an `a2a_...` link, "create payment link", or asks to check a2a payment status. Unlike x402 / MPP, a2a is **not triggered by an HTTP 402 response** — it's invoked by name, with a paymentId or a seller's create-link request.
+> Loaded from `../SKILL.md` when the user mentions a paymentId, an `a2a_...` link, "create payment link", or asks to check a2a payment status. Unlike the HTTP 402 paths (`accepts`-based and `WWW-Authenticate: Payment`), a2a is **not triggered by an HTTP 402 response** — it's invoked by name, with a paymentId or a seller's create-link request.
 
 Wraps `onchainos payment a2a-pay` end-to-end for both seller and buyer roles. Buyer-side trust is **delegated to the upstream caller** — when invoked with a `paymentId`, the skill fetches the on-server challenge, TEE-signs it as-is, submits the credential, and auto-polls payment status to a terminal state.
 

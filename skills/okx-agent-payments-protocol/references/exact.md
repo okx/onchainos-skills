@@ -1,13 +1,13 @@
-# x402 — `exact` scheme
+# `exact` scheme
 
-> Loaded from `../SKILL.md` after the dispatcher has detected x402 (v1 or v2), decoded the payload, walked the user through confirmation, and run the signing CLI. **Use this reference when the response from `onchainos payment pay` does NOT include `sessionCert`** — meaning the CLI selected the `exact` scheme (full EIP-3009 secp256k1 signing via TEE). Also use this when the local-key fallback (`onchainos payment pay-local`) was taken — that path always returns `exact`-shape data.
+> Loaded from `../SKILL.md` after the dispatcher has detected an `accepts`-based 402 (`PAYMENT-REQUIRED` header v2 or `x402Version` body v1), decoded the payload, walked the user through confirmation, and run the signing CLI. **Use this reference when the response from `onchainos payment pay` does NOT include `sessionCert`** — meaning the CLI selected the `exact` scheme (full EIP-3009 secp256k1 signing via TEE). Also use this when the local-key fallback (`onchainos payment pay-local`) was taken — that path always returns `exact`-shape data.
 
 ## Sign output (TEE — `onchainos payment pay`)
 
 | Field | Type | Description |
 |---|---|---|
 | `signature` | String | EIP-3009 secp256k1 signature (65 bytes, r+s+v, hex) returned by TEE backend |
-| `authorization` | Object | Standard x402 EIP-3009 `transferWithAuthorization` parameters |
+| `authorization` | Object | Standard EIP-3009 `transferWithAuthorization` parameters |
 | `authorization.from` | String | Payer wallet address |
 | `authorization.to` | String | Recipient address (= `payTo`) |
 | `authorization.value` | String | Payment amount in minimal units (= `amount` or `maxAmountRequired` from the 402 payload) |

@@ -1,6 +1,6 @@
-# x402 — `aggr_deferred` scheme
+# `aggr_deferred` scheme
 
-> Loaded from `../SKILL.md` after the dispatcher detected x402 (v1 or v2), decoded the payload, walked the user through confirmation, and ran `onchainos payment pay`. **Use this reference when the response includes a `sessionCert` field** — meaning the CLI selected `aggr_deferred` (Session Key Ed25519 signing, EOA signing skipped).
+> Loaded from `../SKILL.md` after the dispatcher detected an `accepts`-based 402 (`PAYMENT-REQUIRED` header v2 or `x402Version` body v1), decoded the payload, walked the user through confirmation, and ran `onchainos payment pay`. **Use this reference when the response includes a `sessionCert` field** — meaning the CLI selected `aggr_deferred` (Session Key Ed25519 signing, EOA signing skipped).
 
 The local-key fallback (`onchainos payment pay-local`) does NOT support this scheme — only TEE.
 
@@ -9,7 +9,7 @@ The local-key fallback (`onchainos payment pay-local`) does NOT support this sch
 | Field | Type | Description |
 |---|---|---|
 | `signature` | String | Base64-encoded Ed25519 session-key signature (no EOA / EIP-3009 signing) |
-| `authorization` | Object | Standard x402 EIP-3009 `transferWithAuthorization` parameters (same fields as exact) |
+| `authorization` | Object | Standard EIP-3009 `transferWithAuthorization` parameters (same fields as `exact`) |
 | `sessionCert` | String | Session certificate proving the session key's authority over the wallet |
 
 ## Assemble payment header

@@ -1,10 +1,10 @@
-# MPP — `charge` intent (one-shot)
+# `charge` intent (one-shot)
 
 > Loaded from `../SKILL.md` when the dispatcher decoded a `WWW-Authenticate: Payment` 402 challenge with `intent="charge"`. Decode + display + wallet-status check have already happened upstream — start here at "Decide mode".
 
 One-shot payment. CLI TEE-signs an EIP-3009 authorization (or wraps a client-broadcast tx hash) and returns a ready `authorization_header`. Optional `methodDetails.splits[]` (max 10 entries) splits the amount across multiple recipients in a single signed authorization.
 
-**MPP requires TEE** — local private key signing is NOT supported in this scheme. If the wallet session is unavailable and the user can't log in, stop and surface the limitation.
+**TEE-only** — local private key signing is NOT supported on this path. If the wallet session is unavailable and the user can't log in, stop and surface the limitation.
 
 ## Decide mode
 
