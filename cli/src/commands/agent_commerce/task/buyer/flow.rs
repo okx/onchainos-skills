@@ -1106,19 +1106,6 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::DisputeApproved => "【系统通知】dispute_approved（provider 已上链仲裁阶段 1 approve，buyer 无关）\n\
              【建议】静默观察即可。等 `job_disputed` 通知到达再 next-action 进入证据准备期。\n".to_string(),
 
-        // ─── 质押 / 罚没 lifecycle — buyer 不是 evaluator 时无关 ─────
-        Event::Staked
-        | Event::UnstakeRequested
-        | Event::UnstakeClaimed
-        | Event::UnstakeCancelled
-        | Event::Slashed
-        | Event::StakeStopped
-        | Event::CooldownEntered => format!(
-            "【系统通知】{event}（evaluator 质押 lifecycle，buyer 无关）\n\
-             【建议】忽略即可。\n",
-            event = event.as_str()
-        ),
-
         // ─── reward_claimed: buyer 自己的 claim tx 回执（仲裁胜诉退款等） ─────
         Event::RewardClaimed => format!(
             "【系统通知】reward_claimed（claimRewards tx 回执）\n\
@@ -1153,13 +1140,22 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ Step 2 拿到的剧本如果是被动等待类（如 status=accepted 等卖家交付）,只输出「任务恢复」通知后结束 turn,不主动跑业务动作。\n"
         ),
 
+        // ─── 买家不会收到的事件（evaluator 质押 lifecycle）──────────
+        Event::Staked
+        | Event::UnstakeRequested
+        | Event::UnstakeClaimed
+        | Event::UnstakeCancelled
+        | Event::Slashed
+        | Event::StakeStopped
+        | Event::CooldownEntered
         // ─── 未知类型兜底 ───────────────────────────────────────────
-        Event::Other(ref other) => format!(
-            "【未知状态】{other}\n\
+        | Event::Other(_) => format!(
+            "【未知状态】{event}\n\
              【建议】\n\
              1. 调用 `onchainos agent common context {job_id} --role buyer` 查看完整上下文\n\
              2. 如该状态不在预期流程内，等待用户指示\n\
-             3. 不要预测/假设其他通知\n"
+             3. 不要预测/假设其他通知\n",
+            event = event.as_str()
         ),
     };
 
