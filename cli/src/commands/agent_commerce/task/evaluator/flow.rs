@@ -31,35 +31,60 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 fn staking_next_action(_job_id: &str, job_status: &str, _agent_id: &str) -> Option<String> {
     let body = match job_status {
         "staked" => "【当前状态】staked\n\n\
-             【Step 1】跑 `evaluator my-stake --agent-id <你的 agentId>` 拿 `activeStake`。\n\
-             【Step 2】用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
+             **Step 1 — 检查 envelope `message.code` 字段：**\n\
+             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
+             \x20\x20`[质押 ❌] 质押交易失败（code=<code>），请稍后重试。`\n\
+             \x20\x20→ 结束 turn。\n\
+             - `code` = 0（成功）→ 继续 Step 2。\n\n\
+             【Step 2】跑 `evaluator my-stake --agent-id <你的 agentId>` 拿 `activeStake`。\n\
+             【Step 3】用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20[质押 ✅] 当前 activeStake=<my-stake.activeStake> OKB。\n\n\
              【my-stake 失败兜底】丢掉数字字段，降级推 `[质押 ✅] 质押已上链生效。`\n".to_string(),
 
         "unstake_requested" => "【当前状态】unstake_requested\n\n\
-             【Step 1】跑 `evaluator my-stake --agent-id <你的 agentId>` 拿 `pendingUnstake`、`unstakeAvailableAt`（已含本地时间）。\n\
-             【Step 2】用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
+             **Step 1 — 检查 envelope `message.code` 字段：**\n\
+             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
+             \x20\x20`[解质押 ❌] 解质押交易失败（code=<code>），请稍后重试。`\n\
+             \x20\x20→ 结束 turn。\n\
+             - `code` = 0（成功）→ 继续 Step 2。\n\n\
+             【Step 2】跑 `evaluator my-stake --agent-id <你的 agentId>` 拿 `pendingUnstake`、`unstakeAvailableAt`（已含本地时间）。\n\
+             【Step 3】用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20[解质押 ⏳] 当前累计待解 <my-stake.pendingUnstake> OKB；最后一次 unstake 的可领取时间 <unstakeAvailableAt 本地时间>。冷却期到了说『领取解质押』；中途撤销说『取消解质押』。\n\n\
              【my-stake 失败兜底】丢掉数字字段，降级推 `[解质押 ⏳] 已进入冷却期。冷却期到了说『领取解质押』；中途撤销说『取消解质押』。`\n".to_string(),
 
         "unstake_claimed" => "【当前状态】unstake_claimed\n\n\
-             用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
+             **Step 1 — 检查 envelope `message.code` 字段：**\n\
+             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
+             \x20\x20`[解质押领取 ❌] 领取交易失败（code=<code>），请稍后重试。`\n\
+             \x20\x20→ 结束 turn。\n\
+             - `code` = 0（成功）→ 继续 Step 2。\n\n\
+             【Step 2】用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20[解质押 ✅] 已领取，OKB 已入钱包。\n".to_string(),
 
         "unstake_cancelled" => "【当前状态】unstake_cancelled\n\n\
-             用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
+             **Step 1 — 检查 envelope `message.code` 字段：**\n\
+             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
+             \x20\x20`[取消解质押 ❌] 交易失败（code=<code>），请稍后重试。`\n\
+             \x20\x20→ 结束 turn。\n\
+             - `code` = 0（成功）→ 继续 Step 2。\n\n\
+             【Step 2】用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20[解质押 ✅] 已取消：待解 OKB 回到质押状态。\n".to_string(),
 
         "stake_stopped" => "【当前状态】stake_stopped\n\n\
-             用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
+             **Step 1 — 检查 envelope `message.code` 字段：**\n\
+             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
+             \x20\x20`[停止质押 ❌] 交易失败（code=<code>），请稍后重试。`\n\
+             \x20\x20→ 结束 turn。\n\
+             - `code` = 0（成功）→ 继续 Step 2。\n\n\
+             【Step 2】用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20[质押 🚪] 已退出 voter 池，不再被选为陪审。\n".to_string(),
@@ -230,7 +255,12 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
              【动作】无；不通知用户。\n".to_string(),
 
         "reward_claimed" => "【当前状态】reward_claimed（claimRewards tx 上链完成）\n\n\
-             用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
+             **Step 1 — 检查 envelope `message.code` 字段：**\n\
+             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
+             \x20\x20`[奖励领取 ❌] 领取交易失败（code=<code>），请稍后重试。`\n\
+             \x20\x20→ 结束 turn。\n\
+             - `code` = 0（成功）→ 继续 Step 2。\n\n\
+             【Step 2】用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20[奖励 💰] 仲裁奖励已到账。\n".to_string(),
