@@ -1,8 +1,9 @@
 use anyhow::{bail, Result};
 use chrono::TimeZone;
+use std::cmp::Ordering;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::evaluator::staking_types;
+use crate::commands::agent_commerce::task::evaluator::{decimal_str, staking_types};
 use crate::commands::agent_commerce::task::signing;
 
 /// 把 unix 秒格式化为「ts（本地时间 YYYY-MM-DD HH:MM:SS TZ）」用于错误提示。
@@ -26,10 +27,11 @@ pub async fn handle_request_unstake(
     if !trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') {
         bail!("--amount 必须是数字（OKB 金额，UI 单位不带精度），got: {trimmed}");
     }
-    let amt: f64 = trimmed
-        .parse()
-        .map_err(|e| anyhow::anyhow!("--amount 解析失败（格式非法），got: {trimmed}: {e}"))?;
-    if amt <= 0.0 {
+    // > 0 校验：用 cmp 而非 f64，避免 "0.0000000000000000001" 这种被 f64 当成 0 的极端 case
+    if decimal_str::cmp(trimmed, "0")
+        .map_err(|e| anyhow::anyhow!("--amount 解析失败（格式非法），got: {trimmed}: {e}"))?
+        != Ordering::Greater
+    {
         bail!("--amount 必须 > 0，got: {trimmed}");
     }
 
@@ -49,12 +51,12 @@ pub async fn handle_request_unstake(
         );
     }
 
+    let active = &m.active_stake_okb;
     // amount 不能 > activeStake
-    let active: f64 = m
-        .active_stake_okb
-        .parse()
-        .map_err(|e| anyhow::anyhow!("activeStake 解析失败 ({}): {e}", m.active_stake_okb))?;
-    if amt > active {
+    if decimal_str::cmp(trimmed, active).map_err(|e| {
+        anyhow::anyhow!("activeStake 解析失败 ({active}): {e}")
+    })? == Ordering::Greater
+    {
         bail!(
             "--amount {trimmed} OKB 超过当前 activeStake {active} OKB；最多可解 {active} OKB（全额赎回）。"
         );
@@ -63,20 +65,31 @@ pub async fn handle_request_unstake(
     let cfg = staking_types::get_staking_config(client, &agent_id)
         .await
         .map_err(|e| anyhow::anyhow!("staking-config 拉取失败，无法校验部分赎回保留：{e}"))?;
-    // 部分赎回后剩余必须 >= partialUnstakeMinRetainOkb（全额赎回 amt == active 不受此限）
-    let retain: f64 = cfg.partial_unstake_min_retain_okb.parse().map_err(|e| {
+    let retain = &cfg.partial_unstake_min_retain_okb;
+    // 部分赎回后剩余必须 >= partialUnstakeMinRetainOkb（全额赎回 amt == active 不受此限）。
+    // 全部走字符串十进制运算：避免 f64 精度抖动把"恰好达标"误判为"差一点"。
+    //
+    // 真实复现 case（active=0.0012, amt=0.0002, retain=0.001）：
+    //   - f64    : 0.0012_f64 - 0.0002_f64 = 0.0009999999999999998 < 0.001 → 误报"低于最低保留"
+    //   - 字符串 : sub("0.0012", "0.0002") = "0.001"               == 0.001 → 通过
+    let remaining = decimal_str::sub(active, trimmed).map_err(|e| {
         anyhow::anyhow!(
-            "partialUnstakeMinRetainOkb 解析失败 ({}): {e}",
-            cfg.partial_unstake_min_retain_okb
+            "解质押预检：activeStake {active} - amount {trimmed} 计算失败：{e}"
         )
     })?;
-    let remaining = active - amt;
-    // 用 1e-9 epsilon 避免 f64 精度抖动把全额赎回误判为部分赎回
-    if remaining > 1e-9 && remaining < retain {
-        bail!(
-            "部分赎回后余额 {remaining} OKB 将低于最低保留 {retain} OKB（partialUnstakeMinRetainOkb）。\
-             请改为全额赎回（金额 = {active} OKB），或减小本次数额使剩余 >= {retain} OKB。"
-        );
+    let is_full_unstake = decimal_str::cmp(&remaining, "0")
+        .map(|o| o == Ordering::Equal)
+        .unwrap_or(false);
+    if !is_full_unstake {
+        let below_retain = decimal_str::cmp(&remaining, retain)
+            .map_err(|e| anyhow::anyhow!("partialUnstakeMinRetainOkb 解析失败 ({retain}): {e}"))?
+            == Ordering::Less;
+        if below_retain {
+            bail!(
+                "部分赎回后余额 {remaining} OKB 将低于最低保留 {retain} OKB（partialUnstakeMinRetainOkb）。\
+                 请改为全额赎回（金额 = {active} OKB），或减小本次数额使剩余 >= {retain} OKB。"
+            );
+        }
     }
 
     let path = "/priapi/v1/aieco/task/staking/requestUnstake";

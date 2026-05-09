@@ -10,6 +10,7 @@
 pub mod claim;
 pub mod claimable;
 pub mod commit;
+pub mod decimal_str;
 pub mod download;
 pub mod flow;
 pub mod helpers;

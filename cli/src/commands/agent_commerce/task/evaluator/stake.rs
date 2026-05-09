@@ -1,7 +1,8 @@
 use anyhow::{bail, Result};
+use std::cmp::Ordering;
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::evaluator::staking_types;
+use crate::commands::agent_commerce::task::evaluator::{decimal_str, staking_types};
 use crate::commands::agent_commerce::task::signing;
 
 pub async fn handle_stake(
@@ -59,17 +60,20 @@ pub(super) async fn execute_stake_or_increase(
         .map_err(|e| anyhow::anyhow!("staking-config 拉取失败，无法校验累计质押门槛：{e}"))?;
 
     // 累计质押门槛硬校验（无论 registered=true/false）：activeStake + amount >= min
-    if let (Ok(amt), Ok(active), Ok(min)) = (
-        amount.parse::<f64>(),
-        m.active_stake_okb.parse::<f64>(),
-        cfg.min_cumulative_stake_okb.parse::<f64>(),
-    ) {
-        if amt + active < min {
+    // 全部走字符串十进制运算：避免 f64 精度抖动把"恰好达标"误判为"差一点"。
+    // 解析失败（API 异常字段）时静默跳过预检 — 与旧版 f64 行为一致，由后端兜底。
+    let active = &m.active_stake_okb;
+    let min_str = &cfg.min_cumulative_stake_okb;
+    if let Ok(total) = decimal_str::add(amount, active) {
+        if decimal_str::cmp(&total, min_str)
+            .map(|o| o == Ordering::Less)
+            .unwrap_or(false)
+        {
+            // total < min ∧ amount > 0 ⇒ active < min ⇒ min - active 不会 underflow
+            let needed = decimal_str::sub(min_str, active).unwrap_or_else(|_| min_str.clone());
             bail!(
                 "累计质押不足：本次 {amount} OKB + 当前 activeStake {active} OKB < 平台最低门槛 {min_str} OKB（minCumulativeStakeOkb）。\
-                 请提高金额，至少需追加 {} OKB。",
-                min - active,
-                min_str = cfg.min_cumulative_stake_okb,
+                 请提高金额，至少需追加 {needed} OKB。"
             );
         }
     }
