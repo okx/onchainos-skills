@@ -4,8 +4,8 @@
 //! All on-chain write operations go through one of these flows:
 //!
 //! - [`sign_uop_and_broadcast`] — sign uopData + broadcast (caller已拿到 uopData)
-//! - [`task_dual_sign_and_broadcast`] — dual-sign for accept/complete/refuse
-//!   (pre-endpoint → sign digest → main endpoint → sign uopHash → broadcast)
+//! - [`task_dual_sign_and_broadcast`] — dual-sign for complete/refuse
+//!   (pre-endpoint → sign typedData → main endpoint → sign uopHash → broadcast)
 
 use anyhow::{bail, Result};
 use base64::engine::{general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
@@ -480,43 +480,65 @@ pub async fn sign_typed_data(typed_data: &Value, from_address: &str) -> Result<S
     Ok(sig)
 }
 
-/// Dual-sign flow for accept/complete/refuse.
+/// Dual-sign flow for complete/refuse.
 ///
-/// 1. POST `pre_endpoint_url` with `pre_body` + identity headers → get typedData
-/// 2. Sign typedData via wallet API (gen-msg-hash → ed25519 → sign-msg) → ECDSA signature
-/// 3. POST `main_endpoint_url` with body built by `main_body_builder(signature)` + identity headers → uopData
-/// 4. Sign uopHash + broadcast → tx_hash
+/// 1. Compute `deadline = now + 1800`
+/// 2. POST `pre-{action}` with `{ deadline }` + identity headers → typedData + nonce
+/// 3. Sign typedData via wallet API (gen-msg-hash → ed25519 → sign-msg) → ECDSA signature
+/// 4. POST `{action}` with `{ signatureData: { signature, deadline, nonce }, ...extra }` → uopData
+/// 5. Sign uopHash + broadcast → tx_hash
 #[allow(clippy::too_many_arguments)]
 pub async fn task_dual_sign_and_broadcast(
     client: &mut TaskApiClient,
-    pre_endpoint_url: &str,
-    pre_body: &Value,
-    main_endpoint_url: &str,
-    main_body_builder: impl FnOnce(&str) -> Value,
+    job_id: &str,
+    pre_action: &str,
+    main_action: &str,
+    extra_main_fields: Option<&Value>,
     account_id: &str,
     address: &str,
     agent_id: &str,
-    job_id: &str,
-    biz_type: i64,
 ) -> Result<BroadcastResult> {
-    // Step 1: POST pre-endpoint with identity headers → typedData
-    let pre_resp = client.post_with_identity(pre_endpoint_url, pre_body, agent_id).await
-        .map_err(|e| anyhow::anyhow!("pre-sign 请求失败: {e}"))?;
+    let deadline = chrono::Utc::now().timestamp() + 1800;
+
+    // Step 1: POST pre-endpoint → typedData + nonce
+    let pre_url = client.endpoint(job_id, pre_action);
+    let pre_body = serde_json::json!({ "deadline": deadline });
+    let pre_resp = client.post_with_identity(&pre_url, &pre_body, agent_id).await
+        .map_err(|e| anyhow::anyhow!("{pre_action} 请求失败: {e}"))?;
 
     let typed_data = &pre_resp["typedData"];
     if typed_data.is_null() {
-        bail!("pre-sign 未返回 typedData 字段");
+        bail!("{pre_action} 未返回 typedData");
     }
+    let nonce = pre_resp["nonce"].as_str().unwrap_or("");
 
     // Step 2: EIP-712 签名 typedData
     let signature = sign_typed_data(typed_data, address).await?;
 
-    // Step 3: POST main endpoint with signature → uopData
-    let main_body = main_body_builder(&signature);
-    let main_resp = client.post_with_identity(main_endpoint_url, &main_body, agent_id).await
-        .map_err(|e| anyhow::anyhow!("main 请求失败: {e}"))?;
+    // Step 3: 构造 signatureData + merge extra fields → POST main endpoint
+    let mut main_body = serde_json::json!({
+        "signatureData": {
+            "signature": signature,
+            "deadline": deadline,
+            "nonce": nonce,
+        }
+    });
+    if let Some(extra) = extra_main_fields {
+        if let (Some(main_obj), Some(extra_obj)) =
+            (main_body.as_object_mut(), extra.as_object())
+        {
+            for (k, v) in extra_obj {
+                main_obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+
+    let main_url = client.endpoint(job_id, main_action);
+    let main_resp = client.post_with_identity(&main_url, &main_body, agent_id).await
+        .map_err(|e| anyhow::anyhow!("{main_action} 请求失败: {e}"))?;
 
     // Step 4: Sign uopHash + broadcast
+    let biz_type = extract_biz_type(&main_resp);
     let tx_hash = sign_uop_and_broadcast(
         client, &main_resp["uopData"], account_id, address, job_id, biz_type, agent_id,
     ).await?;
