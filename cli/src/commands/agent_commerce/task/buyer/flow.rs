@@ -779,15 +779,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【系统通知】job_auto_refunded（claimAutoRefund tx 回执）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作（严格顺序）】\n\n\
-             **Step 1 — 判断 payload 中的 status：**\n\
-             - `success` → 自动退款成功，资金已到账。执行 Step 2。\n\
-             - `failed` → 按 errorCode 重试：\n\
-             ```bash\n\
-             onchainos agent claim-auto-refund {job_id}\n\
-             ```\n\n\
+             **Step 1 — 检查 envelope `message.code` 字段：**\n\
+             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
+             \x20\x20content: [自动退款失败] 任务 {job_id} 退款交易失败。\n\
+             \x20\x20→ 结束 turn。\n\n\
+             - `code` = 0（成功）→ 继续 Step 2。\n\n\
              **Step 2 — 调用 xmtp_dispatch_user 通知用户退款到账：**\n\n\
              content：\n\
-             \x20\x20\x20\x20[自动退款成功 💰] 任务 {job_id} 的担保资金已退还至您的钱包。\n\
+             \x20\x20\x20\x20[自动退款成功] 任务 {job_id} 的担保资金已退还至您的钱包。\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
              **Step 3 — 终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
@@ -806,14 +805,16 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 
         // ─── 任务已关闭（close tx 结果）─────────────────────────────
         Event::JobClosed => format!(
-            "【当前状态】job_closed（任务已关闭）\n\
+            "【当前状态】job_closed（close tx 结果通知）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
-             **Step 1 — 调用 xmtp_dispatch_user 通知用户：**\n\
+             **Step 1 — 检查 envelope `message.code` 字段：**\n\
+             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
+             \x20\x20content: [关闭失败] 任务 {job_id} 关闭交易失败。\n\
+             \x20\x20→ 结束 turn。\n\n\
+             - `code` = 0（成功）→ 继续 Step 2。\n\n\
+             **Step 2 — 调用 xmtp_dispatch_user 通知用户：**\n\
              \x20\x20content: 任务 {job_id} 已关闭，资金已回收。\n\n\
-             检查 payload 中 status 字段：\n\
-             - success → 任务已关闭\n\
-             - failed → 关闭失败，按 errorCode 重试\n\n\
              **终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
              任务关闭流程结束。\n"
@@ -876,9 +877,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】买家（Client）\n\n\
              🛑 **这不是辅助事件，必须通知用户。**\n\n\
              【你的下一步动作（严格顺序）】\n\n\
-             **Step 1 — 检查 payload 中 status 字段：**\n\
-             - failed → 调用 xmtp_dispatch_user 告知用户切换失败，按 errorCode 重试，结束\n\
-             - success → 继续 Step 2\n\n\
+             **Step 1 — 检查 envelope `message.code` 字段：**\n\
+             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
+             \x20\x20content: [可见性切换失败] 任务 {job_id} 可见性切换交易失败。\n\
+             \x20\x20→ 结束 turn。\n\
+             - `code` = 0（成功）→ 继续 Step 2\n\n\
              **Step 2 — 从系统通知 envelope 中读取 `visibility` 字段：**\n\
              - `visibility=0` → 公开（public）\n\
              - `visibility=1` → 私有（private）\n\n\
@@ -896,14 +899,16 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】买家（Client）\n\n\
              🛑 **必须通知用户支付模式变更结果。**\n\n\
              【你的下一步动作】\n\n\
-             检查 payload 中 status 字段：\n\
-             - failed → 调用 xmtp_dispatch_user 通知用户切换失败，按 errorCode 重试\n\
-             - success → 按支付方式分流：\n\n\
-             **Step 1 — 从系统通知 envelope 中读取 `paymentMode` 字段：**\n\
+             **Step 1 — 检查 envelope `message.code` 字段：**\n\
+             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
+             \x20\x20content: [支付模式切换失败] 任务 {job_id} 设置支付方式失败。\n\
+             \x20\x20→ 结束 turn。\n\n\
+             - `code` = 0（成功）→ 按支付方式分流，继续 Step 2。\n\n\
+             **Step 2 — 从系统通知 envelope 中读取 `paymentMode` 字段：**\n\
              paymentMode 值映射：1=escrow, 2=non_escrow, 3=x402。\n\
              ⚠️ 直接使用 envelope 中的 paymentMode，不需要额外查询 API。\n\n\
              ━━━━━━━━━ escrow（paymentMode=1）— 发 [NEGOTIATE_CONFIRM] 触发卖家 apply ━━━━━━━━━\n\n\
-             **Step 2 — 发 [NEGOTIATE_CONFIRM]（卖家 apply 的唯一合法触发器）**：\n\
+             **Step 3 — 发 [NEGOTIATE_CONFIRM]（卖家 apply 的唯一合法触发器）**：\n\
              链上 paymentMode 已就位，现在可以安全发 [CONFIRM] 让卖家 apply。\n\
              从你之前发的 [NEGOTIATE_PROPOSE] / 收到的 [NEGOTIATE_ACK] **原样取所有字段**（deliverable / qualityStandards / paymentMode / tokenSymbol / tokenAmount / deadline）回看 sub session 历史复制即可：\n\n\
              调用 xmtp_send：\n\
@@ -918,7 +923,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20deadline: <与 [NEGOTIATE_ACK] 完全相同>\n\n\
              ⚠️ **严禁**用自然语言「请你 apply / 请接单」绕过——卖家 flow.rs 把 `[NEGOTIATE_CONFIRM]` 字面量当 apply 唯一触发器，自然语言指令**根本不会被识别**。\n\
              ⚠️ apply 是卖家动作，买家不执行 apply。\n\n\
-             **Step 3 — 通知用户：**\n\
+             **Step 4 — 通知用户：**\n\
              调用 xmtp_dispatch_user：\n\
              \x20\x20content: 任务 {job_id} 更新支付方式成功，设置卖家 <providerName>（<providerAgentId>）接单中...\n\n\
              → **结束本轮 turn**，等待 `provider_applied` 系统通知。\n\n\
@@ -926,7 +931,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ 与 escrow 不同，non_escrow 可以同 turn 发 [CONFIRM] + confirm-accept：\n\
              卖家收到 [CONFIRM] 后**不需要先执行链上操作**（escrow 需要 apply），只是静默等 job_accepted。\n\
              因此不存在竞争窗口。\n\n\
-             **Step 2 — 发 [NEGOTIATE_CONFIRM]**：\n\
+             **Step 3 — 发 [NEGOTIATE_CONFIRM]**：\n\
              链上 paymentMode 已就位，现在发 [CONFIRM] 通知卖家协商已锁定。\n\n\
              调用 xmtp_send：\n\
              \x20\x20content=\n\
@@ -939,12 +944,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20tokenAmount: <与 [NEGOTIATE_ACK] 完全相同>\n\
              \x20\x20deadline: <与 [NEGOTIATE_ACK] 完全相同>\n\n\
              ⚠️ **严禁**用自然语言绕过——卖家 flow 只识别 [NEGOTIATE_CONFIRM] 字面量。\n\n\
-             **Step 3 — 直接执行 confirm-accept（不等卖家回应，协商已一致）**：\n\
+             **Step 4 — 直接执行 confirm-accept（不等卖家回应，协商已一致）**：\n\
              ```bash\n\
              onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode non_escrow --token-symbol <sym> --token-amount <amt>\n\
              ```\n\
              ⚠️ 非担保 confirm-accept **不含支付**，只做 direct/accept 上链（先接单后支付）。\n\n\
-             **Step 4 — 通知用户：**\n\
+             **Step 5 — 通知用户：**\n\
              调用 xmtp_dispatch_user：\n\
              \x20\x20content: 任务 {job_id} 更新支付方式成功，设置卖家 <providerName>（<providerAgentId>）接单中...\n\n\
              → **结束本轮 turn**，等待 `job_accepted` 系统通知。\n\n\
@@ -1074,10 +1079,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 
         // ─── job_auto_completed: provider 的 claim 回执，buyer 端只需观察 ─────
         Event::JobAutoCompleted => format!(
-            "【系统通知】job_auto_completed（provider 已通过 claimAutoComplete 领走资金）\n\
+            "【系统通知】job_auto_completed（claimAutoComplete tx 回执）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
-             **Step 1 — 调用 xmtp_dispatch_user 通知用户任务已自动完成：**\n\
+             **Step 1 — 检查 envelope `message.code` 字段：**\n\
+             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
+             \x20\x20content: [自动完成失败] 任务 {job_id} 自动完成交易失败。\n\
+             \x20\x20→ 结束 turn，等待下一次 job_auto_completed 通知。\n\n\
+             - `code` = 0（成功）→ 继续 Step 2。\n\n\
+             **Step 2 — 调用 xmtp_dispatch_user 通知用户任务已自动完成：**\n\
              \x20\x20content:\n\
              \x20\x20[任务自动完成] 任务 {job_id} 因验收超时，卖家已通过 claimAutoComplete 领取资金。\n\
              \x20\x20任务状态：completed\n\
@@ -1102,17 +1112,18 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             event = event.as_str()
         ),
 
-        // ─── dispute_approved — provider 仲裁阶段 1，buyer 无关 ─────
-        Event::DisputeApproved => "【系统通知】dispute_approved（provider 已上链仲裁阶段 1 approve，buyer 无关）\n\
-             【建议】静默观察即可。等 `job_disputed` 通知到达再 next-action 进入证据准备期。\n".to_string(),
-
         // ─── reward_claimed: buyer 自己的 claim tx 回执（仲裁胜诉退款等） ─────
         Event::RewardClaimed => format!(
             "【系统通知】reward_claimed（claimRewards tx 回执）\n\
              【角色】买家（Client）\n\n\
-             【建议】从 payload 提取 status / amount / txHash。\n\
-             - success → 退款/奖励已到账\n\
-             - failed → 按 errorCode 重试 `onchainos agent claim {job_id}`\n"
+             【你的下一步动作】\n\n\
+             **Step 1 — 检查 envelope `message.code` 字段：**\n\
+             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
+             \x20\x20content: [奖励领取失败] 任务 {job_id} 奖励领取交易失败。\n\
+             \x20\x20→ 结束 turn。\n\n\
+             - `code` = 0（成功）→ 继续 Step 2。\n\n\
+             **Step 2 — 调用 xmtp_dispatch_user 通知用户奖励已到账：**\n\
+             \x20\x20content: [奖励已到账] 任务 {job_id} 的奖励/退款已成功领取到您的钱包。\n"
         ),
 
         // ─── 网络/重启唤醒 ──────────────────────────────────────────
@@ -1148,6 +1159,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         | Event::Slashed
         | Event::StakeStopped
         | Event::CooldownEntered
+        | Event::DisputeApproved
         // ─── 未知类型兜底 ───────────────────────────────────────────
         | Event::Other(_) => format!(
             "【未知状态】{event}\n\
