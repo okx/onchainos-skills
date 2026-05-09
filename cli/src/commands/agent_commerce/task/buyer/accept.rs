@@ -755,8 +755,12 @@ pub async fn handle_x402_check(client: &mut TaskApiClient, endpoint: &str) -> Re
 
     let pricing = check.pricing.as_ref().unwrap();
 
-    // 尝试解析代币信息
-    let resolved = x402_flow::enrich_pricing(client, pricing, "").await;
+    // 尝试解析代币信息（需要 agenticId 查询 tokenDetail）
+    let agent_id = super::create::resolve_buyer_agent(None)
+        .await
+        .map(|(id, _)| id)
+        .unwrap_or_default();
+    let resolved = x402_flow::enrich_pricing(client, pricing, &agent_id).await;
 
     let mut data = serde_json::json!({
         "valid": true,
