@@ -371,7 +371,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【后续事件】\n\
              - x402 → set-payment-mode → job_payment_mode_changed → task-402-pay（签名 + direct/accept + endpoint 重放）→ job_accepted → complete\n\
              - escrow → set-payment-mode → job_payment_mode_changed → 通知卖家 apply → provider_applied → confirm-accept → job_accepted\n\
-             - non_escrow → set-payment-mode → job_payment_mode_changed → [CONFIRM] + confirm-accept（不含支付）→ job_accepted → 等卖家交付 + paymentId → 支付 + complete → job_completed\n"
+             - non_escrow → set-payment-mode → job_payment_mode_changed → [CONFIRM] + confirm-accept（此步只接单不支付）→ job_accepted → 等卖家交付 + paymentId → 支付 + complete → job_completed\n"
         ),
 
         // ─── Scene 6: 卖家申请接单，确认接单（仅 escrow 路径会收到此事件） ──────────
@@ -944,7 +944,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```bash\n\
              onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode non_escrow --token-symbol <sym> --token-amount <amt>\n\
              ```\n\
-             ⚠️ 非担保 confirm-accept **不含支付**，只做 direct/accept 上链（先接单后支付）。\n\n\
+             ⚠️ 此步 confirm-accept **只做接单上链**，支付在 complete 阶段执行（先交付后支付）。\n\n\
              **Step 5 — 通知用户：**\n\
              调用 xmtp_dispatch_user：\n\
              \x20\x20content: <title>（{job_id}）更新支付方式成功，设置卖家 <providerName>（<providerAgentId>）接单中...\n\n\
