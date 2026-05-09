@@ -686,7 +686,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              担保模式下 job_completed 意味着卖家已交付且买家已验收，资金从合约释放给卖家。\n\n\
              **A-Step 1 — 调用 xmtp_dispatch_user 告知用户任务完成：**\n\
              content：\n\
-             \x20\x20\x20\x20[任务完成] 任务 {job_id}（<title>）已验收通过，资金已释放给卖家。\n\
+             \x20\x20\x20\x20[任务完成] <title>（{job_id}）已验收通过，资金已释放给卖家。\n\
              \x20\x20\x20\x20  - 支出：<tokenAmount> <tokenSymbol>\n\
              \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
              \x20\x20\x20\x20\n\
@@ -699,7 +699,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ 非担保模式下 job_completed 意味着买家已收到交付物并完成支付，任务**已到达终态**。\n\n\
              **B-Step 1 — 调用 xmtp_dispatch_user 告知用户任务完成：**\n\
              content：\n\
-             \x20\x20\x20\x20[任务完成] 任务 {job_id}（<title>）已完成，交付物已收到，支付已完成。\n\
+             \x20\x20\x20\x20[任务完成] <title>（{job_id}）已完成，交付物已收到，支付已完成。\n\
              \x20\x20\x20\x20  - 支出：<tokenAmount> <tokenSymbol>\n\
              \x20\x20\x20\x20  - 支付方式：非担保（non_escrow）\n\
              \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
@@ -714,7 +714,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              但**卖家尚未提交交付物**。不要关闭 sub session，不要评价。\n\n\
              **C-Step 1 — 调用 xmtp_dispatch_user 通知用户：**\n\
              content：\n\
-             \x20\x20\x20\x20[支付完成] 任务 {job_id}（<title>）支付链路已完成上链。\n\
+             \x20\x20\x20\x20[支付完成] <title>（{job_id}）支付链路已完成上链。\n\
              \x20\x20\x20\x20  - 支出：<tokenAmount> <tokenSymbol>\n\
              \x20\x20\x20\x20  - 支付方式：x402 按需微支付\n\
              \x20\x20\x20\x20等待卖家提交交付物。\n\n\
@@ -744,13 +744,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 3 — 调用 xmtp_dispatch_user 通知用户仲裁结果（按胜负分流）：**\n\n\
              ━━━━━━━━━━━━━ 买家胜诉（jobStatus=rejected）━━━━━━━━━━━━━\n\
              content：\n\
-             \x20\x20\x20\x20[仲裁胜诉] 任务 {job_id}（<title>）仲裁完成，买方胜诉。\n\
+             \x20\x20\x20\x20[仲裁胜诉] <title>（{job_id}）仲裁完成，买方胜诉。\n\
              \x20\x20\x20\x20  - 退款：<tokenAmount> <tokenSymbol>\n\
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（买家胜诉）\n\
              \x20\x20\x20\x20本任务流程结束。如需评价卖家，请回复评分（0-100）和评价内容。\n\n\
              ━━━━━━━━━━━━━ 买家败诉（jobStatus=complete）━━━━━━━━━━━━━\n\
              content：\n\
-             \x20\x20\x20\x20[仲裁败诉] 任务 {job_id}（<title>）仲裁完成，卖方胜诉。\n\
+             \x20\x20\x20\x20[仲裁败诉] <title>（{job_id}）仲裁完成，卖方胜诉。\n\
              \x20\x20\x20\x20  - 损失：<tokenAmount> <tokenSymbol>（资金已释放给卖家）\n\
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（买家败诉）\n\
              \x20\x20\x20\x20本任务流程结束。如需评价卖家，请回复评分（0-100）和评价内容。\n\n\
@@ -779,14 +779,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【系统通知】job_auto_refunded（claimAutoRefund tx 回执）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作（严格顺序）】\n\n\
+             ⚠️ 通知用户时使用 `<title>（{job_id}）` 格式。title 从上下文取；如不记得，先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 查询。\n\n\
              **Step 1 — 检查 envelope `message.code` 字段：**\n\
              - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
-             \x20\x20content: [自动退款失败] 任务 {job_id} 退款交易失败。\n\
+             \x20\x20content: [自动退款失败] <title>（{job_id}）退款交易失败。\n\
              \x20\x20→ 结束 turn。\n\n\
              - `code` = 0（成功）→ 继续 Step 2。\n\n\
              **Step 2 — 调用 xmtp_dispatch_user 通知用户退款到账：**\n\n\
              content：\n\
-             \x20\x20\x20\x20[自动退款成功] 任务 {job_id} 的担保资金已退还至您的钱包。\n\
+             \x20\x20\x20\x20[自动退款成功] <title>（{job_id}）的担保资金已退还至您的钱包。\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
              **Step 3 — 终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
@@ -808,13 +809,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前状态】job_closed（close tx 结果通知）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
+             ⚠️ 通知用户时使用 `<title>（{job_id}）` 格式。title 从上下文取；如不记得，先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 查询。\n\n\
              **Step 1 — 检查 envelope `message.code` 字段：**\n\
              - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
-             \x20\x20content: [关闭失败] 任务 {job_id} 关闭交易失败。\n\
+             \x20\x20content: [关闭失败] <title>（{job_id}）关闭交易失败。\n\
              \x20\x20→ 结束 turn。\n\n\
              - `code` = 0（成功）→ 继续 Step 2。\n\n\
              **Step 2 — 调用 xmtp_dispatch_user 通知用户：**\n\
-             \x20\x20content: 任务 {job_id} 已关闭，资金已回收。\n\n\
+             \x20\x20content: <title>（{job_id}）已关闭，资金已回收。\n\n\
              **终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
              任务关闭流程结束。\n"
@@ -877,9 +879,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】买家（Client）\n\n\
              🛑 **这不是辅助事件，必须通知用户。**\n\n\
              【你的下一步动作（严格顺序）】\n\n\
+             ⚠️ 通知用户时使用 `<title>（{job_id}）` 格式。title 从上下文取；如不记得，先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 查询。\n\n\
              **Step 1 — 检查 envelope `message.code` 字段：**\n\
              - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
-             \x20\x20content: [可见性切换失败] 任务 {job_id} 可见性切换交易失败。\n\
+             \x20\x20content: [可见性切换失败] <title>（{job_id}）可见性切换交易失败。\n\
              \x20\x20→ 结束 turn。\n\
              - `code` = 0（成功）→ 继续 Step 2\n\n\
              **Step 2 — 从系统通知 envelope 中读取 `visibility` 字段：**\n\
@@ -887,8 +890,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - `visibility=1` → 私有（private）\n\n\
              **Step 3 — 调用 xmtp_dispatch_user 通知用户可见性已变更：**\n\
              content：\n\
-             \x20\x20- visibility=0 → [可见性变更] 任务 {job_id} 已切换为公开（public），等待卖家主动联系。\n\
-             \x20\x20- visibility=1 → [可见性变更] 任务 {job_id} 已切换为私有（private）。\n\n\
+             \x20\x20- visibility=0 → [可见性变更] <title>（{job_id}）已切换为公开（public），等待卖家主动联系。\n\
+             \x20\x20- visibility=1 → [可见性变更] <title>（{job_id}）已切换为私有（private）。\n\n\
              ⚠️ 切换为 public 后，**不要**请求推荐卖家列表（recommend），买家只需等待卖家主动找过来。\n\
              → **结束本轮 turn**。\n"
         ),
@@ -899,9 +902,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】买家（Client）\n\n\
              🛑 **必须通知用户支付模式变更结果。**\n\n\
              【你的下一步动作】\n\n\
+             ⚠️ 通知用户时使用 `<title>（{job_id}）` 格式。title 从上下文或 sub session 历史中获取。\n\n\
              **Step 1 — 检查 envelope `message.code` 字段：**\n\
              - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
-             \x20\x20content: [支付模式切换失败] 任务 {job_id} 设置支付方式失败。\n\
+             \x20\x20content: [支付模式切换失败] <title>（{job_id}）设置支付方式失败。\n\
              \x20\x20→ 结束 turn。\n\n\
              - `code` = 0（成功）→ 按支付方式分流，继续 Step 2。\n\n\
              **Step 2 — 从系统通知 envelope 中读取 `paymentMode` 字段：**\n\
@@ -925,7 +929,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ apply 是卖家动作，买家不执行 apply。\n\n\
              **Step 4 — 通知用户：**\n\
              调用 xmtp_dispatch_user：\n\
-             \x20\x20content: 任务 {job_id} 更新支付方式成功，设置卖家 <providerName>（<providerAgentId>）接单中...\n\n\
+             \x20\x20content: <title>（{job_id}）更新支付方式成功，设置卖家 <providerName>（<providerAgentId>）接单中...\n\n\
              → **结束本轮 turn**，等待 `provider_applied` 系统通知。\n\n\
              ━━━━━━━━━ non_escrow（paymentMode=2）— 发 [NEGOTIATE_CONFIRM] + 直接 confirm-accept ━━━━━━━━━\n\n\
              ⚠️ 与 escrow 不同，non_escrow 可以同 turn 发 [CONFIRM] + confirm-accept：\n\
@@ -951,7 +955,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ 非担保 confirm-accept **不含支付**，只做 direct/accept 上链（先接单后支付）。\n\n\
              **Step 5 — 通知用户：**\n\
              调用 xmtp_dispatch_user：\n\
-             \x20\x20content: 任务 {job_id} 更新支付方式成功，设置卖家 <providerName>（<providerAgentId>）接单中...\n\n\
+             \x20\x20content: <title>（{job_id}）更新支付方式成功，设置卖家 <providerName>（<providerAgentId>）接单中...\n\n\
              → **结束本轮 turn**，等待 `job_accepted` 系统通知。\n\n\
              ━━━━━━━━━ x402（paymentMode=3）━━━━━━━━━\n\n\
              从上一步 set-payment-mode / x402-check 的输出中提取 endpoint、acceptsJson、feeTokenSymbol、feeAmount、provider。\n\
@@ -1082,14 +1086,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【系统通知】job_auto_completed（claimAutoComplete tx 回执）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
+             ⚠️ 通知用户时使用 `<title>（{job_id}）` 格式。title 从上下文取；如不记得，先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 查询。\n\n\
              **Step 1 — 检查 envelope `message.code` 字段：**\n\
              - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
-             \x20\x20content: [自动完成失败] 任务 {job_id} 自动完成交易失败。\n\
+             \x20\x20content: [自动完成失败] <title>（{job_id}）自动完成交易失败。\n\
              \x20\x20→ 结束 turn，等待下一次 job_auto_completed 通知。\n\n\
              - `code` = 0（成功）→ 继续 Step 2。\n\n\
              **Step 2 — 调用 xmtp_dispatch_user 通知用户任务已自动完成：**\n\
              \x20\x20content:\n\
-             \x20\x20[任务自动完成] 任务 {job_id} 因验收超时，卖家已通过 claimAutoComplete 领取资金。\n\
+             \x20\x20[任务自动完成] <title>（{job_id}）因验收超时，卖家已通过 claimAutoComplete 领取资金。\n\
              \x20\x20任务状态：completed\n\
              \x20\x20本任务流程结束。\n\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n"
@@ -1117,13 +1122,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【系统通知】reward_claimed（claimRewards tx 回执）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
+             ⚠️ 通知用户时使用 `<title>（{job_id}）` 格式。title 从上下文取；如不记得，先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 查询。\n\n\
              **Step 1 — 检查 envelope `message.code` 字段：**\n\
              - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
-             \x20\x20content: [奖励领取失败] 任务 {job_id} 奖励领取交易失败。\n\
+             \x20\x20content: [奖励领取失败] <title>（{job_id}）奖励领取交易失败。\n\
              \x20\x20→ 结束 turn。\n\n\
              - `code` = 0（成功）→ 继续 Step 2。\n\n\
              **Step 2 — 调用 xmtp_dispatch_user 通知用户奖励已到账：**\n\
-             \x20\x20content: [奖励已到账] 任务 {job_id} 的奖励/退款已成功领取到您的钱包。\n"
+             \x20\x20content: [奖励已到账] <title>（{job_id}）的奖励/退款已成功领取到您的钱包。\n"
         ),
 
         // ─── 网络/重启唤醒 ──────────────────────────────────────────
