@@ -185,15 +185,15 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
              ```\n\
              ⚠️ **只能是 0（Approve/Client 胜）或 1（Reject/Provider 胜），禁止 skip**（V1 无弃权；拖到超时被罚没的损失通常大于错投少数票）。\n\
              失败最多重试 3 次（CRITICAL，commit 窗口关闭即触发超时罚没）。返回 `voter has already committed` 视为成功进入 Step 9。\n\
-             body 只带 `vote`；裁决书（Step 6）仅保留在 session 记忆，**不写本地、不推 user session**。\n\n\
+             body 只带 `vote`；裁决书（Step 6）仅保留在 session 记忆，**不写本地**。\n\n\
              ⚠️ **错误兜底硬约束（agent 失控反例）**：commit 报 `当前账户没有 evaluator（仲裁者） 身份，请先注册` / `code=2004` 时——\n\
-             - **禁止**调 `onchainos agent create` / `agent register` / `identity_register` 任何注册类命令（链上写入、烧 gas、修改全局状态——evaluator 身份注册是用户主动决定的事，不是 子session 自作主张能干的）\n\
+             - **禁止**调 `onchainos agent create` / `agent register` / `identity_register` 任何注册类命令）\n\
              - **禁止**fallback 到查 identity / 找钱包 / 改 config 之类的迂回操作\n\
              - 直接：输出一行 `> commit aborted: evaluator identity not registered for this wallet; report to user via xmtp_dispatch_user`，**不**继续 Step 9，**不**自己跑识别流程，结束 turn 等用户处理\n\n\
-             **Step 9 — 输出一行 子session 日志后结束本回合。不调用 通知user session，不通知用户：**\n\n\
+             **Step 9 — 输出一行日志后结束本回合：**\n\n\
              > Committed jobId=<jobId> vote=<0|1> autonomously per references/evaluator-decision-rubric.md 6 commit 执行.\n\n\
              【原则】\n\
-             - **完全静默**：本 arm 不 通知user session；用户只会在后续结算/罚没/奖励事件被通知\n\
+             - **完全静默**：用户只会在后续结算/罚没/奖励事件被通知\n\
              - **判决权威**：所有打分规则、决策原则、裁决书格式以 评估者规范 为准\n\
              - **图片必读**：不读图即违反 L3 义务 #1 + references/evaluator-decision-rubric.md 2 决策原则 #3 举证责任；这是本 arm 最重要的执行要求\n"
         ),
@@ -229,7 +229,7 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
              onchainos agent arbitration-claim --agent-id <envelope 顶层 agentId>\n\
              ```\n\
              ⚠️ account 级 pull 模式：除 `--agent-id` 外不带其它业务参数，一次把所有已结算 dispute 的待领奖励一起领出来（空 body）。\n\
-             失败最多重试 3 次。真正的入账确认会通过稍后到达的 `reward_claimed` 事件告知用户（那个 arm 会 通知user session）。\n".to_string(),
+             失败最多重试 3 次。真正的入账确认会通过稍后到达的 `reward_claimed` 事件告知用户。\n".to_string(),
 
         "slashed" => format!(
             "【当前状态】slashed\n\n\
