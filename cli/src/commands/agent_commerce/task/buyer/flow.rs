@@ -244,13 +244,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **A-Step 4 — 处理重放结果：**\n\
              - replaySuccess=true → 调用 xmtp_dispatch_user 将交付物发送给用户：\n\
              \x20\x20content:\n\
-             \x20\x20[x402 交付物已获取] 任务 {job_id} endpoint 重放成功。\n\
+             \x20\x20[x402 交付物预览] 任务 {job_id} endpoint 重放成功，交付物已获取。\n\
              \x20\x20卖家 AgentID：<providerAgentId>\n\
-             \x20\x20金额：<amountHuman> <tokenSymbol>\n\
              \x20\x20---交付物内容---\n\
              \x20\x20<replayBody 完整内容，JSON 则格式化输出>\n\
              \x20\x20---交付物结束---\n\
-             \x20\x20正在等待链上确认（job_accepted），确认后将自动完成任务。\n\n\
+             \x20\x20正在等待链上确认，确认后将自动完成任务。\n\n\
              - replaySuccess=false → 调用 xmtp_dispatch_user 通知用户重放失败，等待用户指示。\n\n\
              → **结束本轮 turn**，等待 `job_accepted` 系统通知。\n\n\
              ━━━━━━━━━ 分支 B：supportA2MCP=false → A2A（需协商）━━━━━━━━━\n\n\
@@ -464,15 +463,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              onchainos agent complete {job_id}\n\
              ```\n\
              （内部：POST /priapi/v1/aieco/task/{job_id}/direct/complete → 获取 calldata → 签名 uopHash → 广播上链）\n\n\
-             **C-Step 2 — 通知用户任务已完成（含交付物内容）：**\n\
-             调用 xmtp_dispatch_user：\n\
-             \x20\x20content:\n\
-             \x20\x20[x402 任务完成] 任务 {job_id} 已通过 x402 完成全部流程。\n\
-             \x20\x20卖家 AgentID：<providerAgentId>\n\
-             \x20\x20金额：<tokenAmount> <tokenSymbol>\n\
-             \x20\x20---交付物内容---\n\
-             \x20\x20<replayBody 完整内容，JSON 则格式化输出>\n\
-             \x20\x20---交付物结束---\n\n\
+             ⚠️ **不要通知用户**——交付物已在 task-402-pay 后（A-Step 4）发送过，最终汇总由 job_completed 事件负责。\n\n\
              **C-分支 2：replaySuccess=false（重放失败，未获取交付物）**\n\n\
              ⚠️ **不要执行 complete**——买家未收到交付物，不能完成支付。\n\n\
              **C-Step 1 — 通知用户重放失败：**\n\
@@ -709,18 +700,19 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
              ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复评分（0-100）和评价内容。」\n\
              任务完整结束。\n\n\
-             ━━━━━━━━━ 分支 C：x402 — 支付链路完成，等待卖家交付 ━━━━━━━━━\n\n\
-             ⚠️ x402 模式下 job_completed 意味着支付链路（accept + complete）已完成上链，\n\
-             但**卖家尚未提交交付物**。不要关闭 sub session，不要评价。\n\n\
-             **C-Step 1 — 调用 xmtp_dispatch_user 通知用户：**\n\
+             ━━━━━━━━━ 分支 C：x402 — 最终汇总 ━━━━━━━━━\n\n\
+             ⚠️ x402 模式下 job_completed 意味着支付链路（accept + complete）已完成上链。\n\
+             交付物已在 task-402-pay 阶段（A-Step 4）发送给用户，此处只做最终汇总。\n\n\
+             **C-Step 1 — 调用 xmtp_dispatch_user 发送最终汇总：**\n\
              content：\n\
-             \x20\x20\x20\x20[支付完成] <title>（{job_id}）支付链路已完成上链。\n\
+             \x20\x20\x20\x20[x402 任务完成] <title>（{job_id}）全部流程已完成。\n\
              \x20\x20\x20\x20  - 支出：<tokenAmount> <tokenSymbol>\n\
-             \x20\x20\x20\x20  - 支付方式：x402 按需微支付\n\
-             \x20\x20\x20\x20等待卖家提交交付物。\n\n\
-             【后续事件】\n\
-             - escrow / non_escrow: 流程已结束\n\
-             - x402: job_submitted → 卖家提交交付物，调用 xmtp_dispatch_user 通知用户\n"
+             \x20\x20\x20\x20  - 支付方式：x402\n\
+             \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
+             \x20\x20\x20\x20如需评价卖家，请回复评分（0-100）和评价内容。\n\n\
+             **C-Step 2 — 终态收尾（保留 sub session）：**\n\
+             ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             任务完整结束。\n"
         ),
 
         // ─── 仲裁结束（DisputeSettled） ─────────────────────────────
