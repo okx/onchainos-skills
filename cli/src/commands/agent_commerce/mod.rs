@@ -271,10 +271,9 @@ pub enum AgentCommand {
         token_symbol: String,
         #[arg(long = "token-amount")]
         token_amount: String,
-        /// 兼容 task 其他命令的 --agent-id 约定。save-agreed 按 jobId 索引本地文件，
-        /// 不需要 agentId；此参数仅吸收 LLM 误传，**值忽略不用**。
-        #[arg(long = "agent-id", hide = true)]
-        _agent_id: Option<String>,
+        /// Buyer agent ID（用于查询任务详情校验预算上限）
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
     },
 
     /// Client claims auto-refund after provider timeout
@@ -583,8 +582,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Pay { job_id, agent_id } =>
             task::buyer::run_task(T::Pay { job_id, agent_id }, ctx).await,
 
-        AgentCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, .. } =>
-            task::buyer::run_task(T::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount }, ctx).await,
+        AgentCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id } =>
+            task::buyer::run_task(T::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id }, ctx).await,
 
         AgentCommand::ClaimAutoRefund { job_id } =>
             task::buyer::run_task(T::ClaimAutoRefund { job_id }, ctx).await,

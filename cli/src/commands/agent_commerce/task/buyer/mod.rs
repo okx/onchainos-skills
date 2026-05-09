@@ -192,6 +192,8 @@ pub enum TaskCommand {
         token_symbol: String,
         #[arg(long = "token-amount")]
         token_amount: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
     },
 }
 
@@ -233,8 +235,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             changepublic::handle_set_public(&mut client, &job_id).await,
         TaskCommand::ClaimAutoRefund { job_id } =>
             claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await,
-        TaskCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount } => {
-            negotiate::save_agreed(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount).await
+        TaskCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id } => {
+            negotiate::save_agreed(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount, agent_id.as_deref()).await
         }
 
         // ── 只读查询 ─────────────────────────────────────────────

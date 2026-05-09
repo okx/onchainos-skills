@@ -198,10 +198,23 @@ pub async fn handle_set_payment_mode(
         let mode_str = payment_mode.as_str();
         if already_set {
             println!("✓ 支付方式已是 {mode_str}，跳过上链");
-            (
-                format!("paymentMode 已是 {mode_str}。"),
-                format!("直接执行 onchainos agent confirm-accept {job_id} --payment-mode {mode_str}"),
-            )
+            if payment_mode == PaymentMode::NonEscrow {
+                (
+                    format!("paymentMode 已是 {mode_str}。"),
+                    format!(
+                        "先发 [NEGOTIATE_CONFIRM] 给卖家，然后直接执行 onchainos agent confirm-accept {job_id} \
+                         --provider-agent-id <providerAgentId> --payment-mode non_escrow \
+                         --token-symbol <sym> --token-amount <amt>。\
+                         ⚠️ 非担保 confirm-accept 不含支付（不需要 --payment-id），只做 direct/accept 上链。\
+                         支付在收到卖家交付物 + paymentId 后通过 onchainos agent complete 执行。"
+                    ),
+                )
+            } else {
+                (
+                    format!("paymentMode 已是 {mode_str}。"),
+                    format!("直接执行 onchainos agent confirm-accept {job_id} --payment-mode {mode_str}"),
+                )
+            }
         } else {
             let mode_int = payment_mode.as_int();
             println!("✓ 支付方式已设置: {mode_str} ({mode_int})，等待链上确认...");

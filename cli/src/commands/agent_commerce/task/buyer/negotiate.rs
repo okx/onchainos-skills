@@ -148,12 +148,17 @@ pub async fn save_agreed(
     provider_agent_id: &str,
     token_symbol: &str,
     token_amount: &str,
+    agent_id: Option<&str>,
 ) -> Result<()> {
     // 查询任务详情获取最高预算
-    let agent_id = super::create::resolve_buyer_agent(None)
-        .await
-        .map(|(id, _)| id)
-        .unwrap_or_default();
+    let agent_id = if let Some(id) = agent_id.filter(|s| !s.is_empty()) {
+        id.to_string()
+    } else {
+        super::create::resolve_buyer_agent(None)
+            .await
+            .map(|(id, _)| id)
+            .unwrap_or_default()
+    };
     let task_path = format!("/priapi/v1/aieco/task/{job_id}");
     let task_detail = client.get_with_identity(&task_path, &agent_id).await;
 
