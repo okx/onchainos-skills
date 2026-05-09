@@ -3,21 +3,23 @@
 //! agent service / role parsing. No network calls, no signing. Functions
 //! here are deliberately small and dependency-light.
 
-use std::time::{Duration, Instant};
-
 use anyhow::{anyhow, bail, Context as _, Result};
 use serde_json::Value;
-use tokio::time::sleep;
 
 use crate::commands::Context;
 use crate::wallet_api::{UnsignedInfoResponse, WalletApiClient};
 
-use super::models::{AgentCard, AgentService, XLAYER_CHAIN_INDEX};
+use super::models::{AgentCard, AgentService};
 
 // ─── HTTP client ──────────────────────────────────────────────────────────
 
-pub(super) fn wallet_client(_ctx: &Context) -> Result<WalletApiClient> {
-    WalletApiClient::new()
+/// Build the wallet HTTP client honoring `--base-url`. Forwards
+/// `ctx.base_url_override` to `WalletApiClient::with_base_url` so the
+/// override is actually applied (precedence inside `with_base_url`:
+/// runtime `OKX_BASE_URL` > compile-time `OKX_BASE_URL` > override >
+/// `DEFAULT_BASE_URL`).
+pub(super) fn wallet_client(ctx: &Context) -> Result<WalletApiClient> {
+    WalletApiClient::with_base_url(ctx.base_url_override.as_deref())
 }
 
 // ─── Logging helpers ──────────────────────────────────────────────────────
@@ -39,6 +41,58 @@ fn resolve_base_url_for_log(ctx: &Context) -> String {
         .map(str::to_string)
         .or_else(|| ctx.base_url_override.clone())
         .unwrap_or_else(|| crate::client::DEFAULT_BASE_URL.to_string())
+}
+
+/// Resolve the identity HTTP base URL using the same precedence as
+/// `WalletApiClient::with_base_url`: runtime `OKX_BASE_URL` >
+/// compile-time `OKX_BASE_URL` > `ctx.base_url_override` >
+/// `DEFAULT_BASE_URL`. Used as the *fallback* for the WS base URL when
+/// no explicit WS override is set (see `identity_ws_base_url`).
+///
+/// Caveat: this returns the *raw* base URL configured on the client.
+/// `WalletApiClient` may internally rewrite outgoing HTTP to a DoH
+/// proxy URL (`wallet_api::WalletApiClient::effective_base_url`); that
+/// rewrite is invisible from outside the wallet module, so the WS
+/// subscription cannot follow it. In DoH-proxy environments HTTP still
+/// works but the WS connect goes to the raw host and falls through the
+/// soft-failure path — `agent` field absent, broadcast still emits and
+/// `agentList` still attempts. The push capability degrades silently
+/// in that mode, which is documented behavior, not a bug to chase here.
+pub(super) fn identity_base_url(ctx: &Context) -> String {
+    if let Ok(v) = std::env::var("OKX_BASE_URL") {
+        return v;
+    }
+    if let Some(v) = option_env!("OKX_BASE_URL") {
+        return v.to_string();
+    }
+    if let Some(v) = &ctx.base_url_override {
+        return v.clone();
+    }
+    crate::client::DEFAULT_BASE_URL.to_string()
+}
+
+/// Resolve the WS base URL for the `wallet-agentic` push service.
+/// Distinct from the HTTP base because in swim-lane / forked envs the
+/// push service runs on a separate host (e.g.
+/// `okx-defi-pushplatform-web.<lane>.swim.env`) from the HTTP API
+/// (`okx-defi-walletmain-api.<lane>.swim.env`). Plain scheme swap on
+/// the HTTP base would land WS on the wrong host and silently degrade
+/// the command to broadcast-only.
+///
+/// Precedence:
+///   1. runtime `OKX_AGENTIC_WS_BASE_URL` — explicit WS host override
+///      (use in swim-lane / cross-host envs; full base, e.g.
+///      `ws://okx-defi-pushplatform-web.<lane>.swim.env` — `socket.rs`
+///      handles scheme→`ws/wss` mapping and forces the `/ws/v5/private`
+///      path).
+///   2. `identity_base_url(ctx)` — fallback for production / single-host
+///      envs where HTTP and WS share a domain.
+pub(super) fn identity_ws_base_url(ctx: &Context) -> String {
+    return "ws://okx-defi-pushplatform-web.forked-walletmain-swim.swim.env".to_string(); // HACK(swim-lane): 提交前删本行
+    if let Ok(v) = std::env::var("OKX_AGENTIC_WS_BASE_URL") {
+        return v;
+    }
+    identity_base_url(ctx)
 }
 
 pub(super) fn reconstruct_post_url_for_log(ctx: &Context, path: &str) -> String {
@@ -79,67 +133,6 @@ pub(super) fn push_multi_query(query: &mut Vec<(String, String)>, key: &str, val
         if !value.trim().is_empty() {
             query.push((key.to_string(), value.trim().to_string()));
         }
-    }
-}
-
-// ─── Tx status polling ────────────────────────────────────────────────────
-
-/// Poll `/priapi/v5/wallet/agentic/tx-agent-status` until `data[0].status
-/// == "SUCCESS"`. Polling window: 5 s deadline measured between attempts
-/// (1 s sleep between retries); a slow in-flight request can extend the
-/// total wall-clock past 5 s. Returns the first element of `data` on
-/// success, or `None` on timeout / non-success / error (each attempt's
-/// outcome is logged but never aborts the loop).
-pub(super) async fn poll_tx_agent_status(
-    client: &mut WalletApiClient,
-    access_token: &str,
-    tx_hash: &str,
-) -> Option<Value> {
-    const TOTAL_MS: u64 = 5_000;
-    const INTERVAL_MS: u64 = 1_000;
-
-    let deadline = Instant::now() + Duration::from_millis(TOTAL_MS);
-    let mut attempt: u32 = 0;
-    loop {
-        attempt += 1;
-        let query: [(&str, &str); 2] = [("txHash", tx_hash), ("chainIndex", XLAYER_CHAIN_INDEX)];
-        match client
-            .get_authed(
-                "/priapi/v5/wallet/agentic/tx-agent-status",
-                access_token,
-                &query,
-            )
-            .await
-        {
-            Ok(data) => {
-                if let Some(first) = data.as_array().and_then(|arr| arr.first()) {
-                    if first.get("status").and_then(Value::as_str) == Some("SUCCESS") {
-                        eprintln!("[agent-identity] tx-status poll attempt {attempt}: SUCCESS");
-                        return Some(first.clone());
-                    }
-                    eprintln!(
-                        "[agent-identity] tx-status poll attempt {attempt}: status={}",
-                        first.get("status").and_then(Value::as_str).unwrap_or("?")
-                    );
-                } else {
-                    eprintln!(
-                        "[agent-identity] tx-status poll attempt {attempt}: empty data"
-                    );
-                }
-            }
-            Err(e) => {
-                eprintln!(
-                    "[agent-identity] tx-status poll attempt {attempt}: err={e:#}"
-                );
-            }
-        }
-        if Instant::now() >= deadline {
-            eprintln!(
-                "[agent-identity] tx-status poll: timeout after {attempt} attempts, returning txHash only"
-            );
-            return None;
-        }
-        sleep(Duration::from_millis(INTERVAL_MS)).await;
     }
 }
 

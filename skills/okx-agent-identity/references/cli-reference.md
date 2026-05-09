@@ -55,28 +55,38 @@ onchainos agent create \
 
 **Return (JSON):**
 ```json
-// On internal poll success (within ~5 s)
+// On WS push match within 30 s of broadcast — agent + agentList both present
 {
   "txHash": "0xabc...",
   "agent": {
-    "status": "SUCCESS",
-    "agentId": "123",
+    "agentId": "12345",
     "chainIndex": 196,
+    "status": "SUCCESS",
     "name": "DeFi Analyzer",
     "profilePicture": "https://...",
     "profileDescription": "...",
-    "ownerAddress": "0x...",
-    "agentWalletAddress": "0x...",
-    "categoryCode": "DEFI",
-    "securityRate": "85"
+    "txHash": "0xabc..."
+  },
+  "agentList": {
+    "total": 3,
+    "items": [
+      { "agentId": 12345, "name": "DeFi Analyzer", "role": "provider", "status": "active", "...": "..." }
+    ]
   }
 }
 
-// On poll timeout / non-success — fall back to:
+// On WS timeout / connect failure — `agent` absent, `agentList` still attempted
+{ "txHash": "0xabc...", "agentList": { "total": 3, "items": [ ... ] } }
+
+// On both WS and agent-list failing — degrades to:
 { "txHash": "0xabc..." }
 ```
 
-The CLI internally polls `/priapi/v5/wallet/agentic/tx-agent-status` with the broadcast `txHash` for up to ~5 s. When it resolves `SUCCESS` the verbose `agent` block is included verbatim from the backend; on timeout the response degrades to `{ txHash }` only and the skill should render per `display-formats.md` §2's `Agent ID` placeholder rule (omit the row instead of inventing an id).
+After broadcasting, the CLI keeps the WS subscription it opened *before* broadcast (`wallet-agentic-identity` channel on `<identity-base-url-as-ws>/ws/v5/private`, scheme matched to the HTTP base — `https`↔`wss`, `http`↔`ws`) and waits up to **30 s** for a push whose top-level `txHash` matches the broadcast hash (case-insensitive, `0x` prefix optional). When matched, the push payload — `{agentId, chainIndex, status, name, profilePicture, profileDescription, txHash}` — is included verbatim under `agent`. After WS resolves (match or timeout), the CLI also pages `GET /agent/agent-list?chainIndex=196&page=N&pageSize=100` until `total` is satisfied (or a 20-page safety cap is hit, in which case the partial aggregate is logged) and attaches the assembled `{ total, items }` under `agentList` — same shape as `agent get` (§3). Both segments are **best-effort and independent**: `agent` is present iff the WS push matched in time; `agentList` is present iff every paginated HTTP call succeeded (any single page failure short-circuits to absent rather than emitting a misleading partial). Either may be absent without affecting the other; both absent degrades to `{ txHash }` only — and in that case the skill should render per `display-formats.md` §2's `Agent ID` placeholder rule (omit the row instead of inventing an id).
+
+**Swim-lane / cross-host envs**: when HTTP and the WS push service live on different domains (e.g. `okx-defi-walletmain-api.<lane>.swim.env` for HTTP vs `okx-defi-pushplatform-web.<lane>.swim.env` for WS), set `OKX_AGENTIC_WS_BASE_URL` to the WS-side base URL. The CLI prefers it over the HTTP base when deriving the WS URL. In production / single-host envs leave it unset and the WS URL is derived from the same precedence as the HTTP base.
+
+**Known limitation — DoH-proxy environments**: when the wallet HTTP client internally rewrites outgoing requests to a DoH proxy URL, the WS connection cannot follow that rewrite (the proxy substitution lives inside `WalletApiClient` and is not surfaced to identity callers). HTTP still works in those environments, but the WS connect lands on the raw identity host and the command falls through the soft-failure path: `agent` absent, broadcast and `agentList` unaffected. The push capability degrades silently in DoH-proxy mode by design.
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match). Do not duplicate the list here — `troubleshooting.md` is the single source of truth.
 
@@ -106,7 +116,7 @@ onchainos agent update --agent-id 42 --description "Updated: now also covers cro
 onchainos agent update --agent-id 42 --picture "https://cdn.example.com/u/new.png"
 ```
 
-**Return (JSON):** same `{ txHash, agent? }` envelope as `create` (§1) — `agent` is the resolved tx-status row when the internal poll succeeds, or absent when it times out. Field set differs from the `agent get` detail schema in §3 (no `services` / `reputation` here — those still require a `agent get --agent-ids`).
+**Return (JSON):** same `{ txHash, agent?, agentList? }` envelope as `create` (§1) — `agent` is the matched `wallet-agentic-identity` push when one arrives within 30 s of broadcast, or absent on timeout / WS failure; `agentList` carries the paginated `{ total, items }` aggregate (same shape as `agent get` in §3) and may also be absent on HTTP failure. Field set on `agent` differs from the `agent get` detail schema in §3 (no `services` / `reputation` here — those still require a `agent get --agent-ids`).
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact), §2 (backend-originated, keyword match), and §3 (skill-side guards). Note: "At least one field must change on update" is a skill-side guard, not a CLI error.
 
