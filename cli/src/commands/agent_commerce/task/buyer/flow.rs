@@ -923,12 +923,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              调用 xmtp_dispatch_user：\n\
              \x20\x20content: <title>（{job_id}）更新支付方式成功，设置卖家 <providerName>（<providerAgentId>）接单中...\n\n\
              → **结束本轮 turn**，等待 `provider_applied` 系统通知。\n\n\
-             ━━━━━━━━━ non_escrow（paymentMode=2）— 发 [NEGOTIATE_CONFIRM] + 直接 confirm-accept ━━━━━━━━━\n\n\
-             ⚠️ 与 escrow 不同，non_escrow 可以同 turn 发 [NEGOTIATE_CONFIRM] + confirm-accept：\n\
+             ━━━━━━━━━ non_escrow（paymentMode=2）— 发 [NEGOTIATE_CONFIRM] + confirm-accept ━━━━━━━━━\n\n\
+             🛑 **non_escrow 以下 Step 3 → Step 4 → Step 5 必须在同一 turn 内连续执行，中间不结束 turn。**\n\
              卖家收到 [NEGOTIATE_CONFIRM] 后**不需要先执行链上操作**（escrow 需要 apply），只是静默等 job_accepted。\n\
              因此不存在竞争窗口。\n\n\
-             **Step 3 — 发 [NEGOTIATE_CONFIRM]**：\n\
-             链上 paymentMode 已就位，现在发 [NEGOTIATE_CONFIRM] 通知卖家协商已锁定。\n\n\
+             **Step 3 — 发 [NEGOTIATE_CONFIRM] 通知卖家协商已锁定**：\n\
              调用 xmtp_send：\n\
              \x20\x20content=\n\
              \x20\x20[NEGOTIATE_CONFIRM]\n\
@@ -940,7 +939,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20tokenAmount: <与 [NEGOTIATE_ACK] 完全相同>\n\
              \x20\x20deadline: <与 [NEGOTIATE_ACK] 完全相同>\n\n\
              ⚠️ **严禁**用自然语言绕过——卖家 flow 只识别 [NEGOTIATE_CONFIRM] 字面量。\n\n\
-             **Step 4 — 直接执行 confirm-accept（不等卖家回应，协商已一致）**：\n\
+             **Step 4 — 紧接着执行 confirm-accept 上链（不结束 turn，不等卖家回应）**：\n\
              ```bash\n\
              onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode non_escrow --token-symbol <sym> --token-amount <amt>\n\
              ```\n\
