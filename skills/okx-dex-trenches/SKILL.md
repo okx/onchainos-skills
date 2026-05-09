@@ -46,7 +46,7 @@ If you have already started running commands and only then realise the user's in
 
 > Read `../okx-dex-market/_shared/payment-notifications.md`.
 
-Some endpoints in this skill may require x402 payment after free quota is exhausted. Every CLI response may carry a `notifications[]` array; when present, parse each entry's `code`, render the copy from the shared file, and follow its placeholder-resolution rules and `confirming: true` handling procedure.
+Some endpoints in this skill may require payment after free quota is exhausted. Every CLI response may carry a `notifications[]` array; when present, parse each entry's `code`, render the copy from the shared file, and follow its placeholder-resolution rules and `confirming: true` handling procedure.
 
 > **User-facing wording**
 > - When telling the user that an endpoint requires payment after the free quota, always describe it as payment via the **OKX Agent Payments Protocol** — keep this exact English term in user-visible messages regardless of the user's language, and use it as a fixed English noun phrase even inside otherwise-Chinese sentences.

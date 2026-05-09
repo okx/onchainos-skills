@@ -73,11 +73,15 @@ Priority 3: response body JSON has "x402Version"
 Otherwise                       → not a supported payment protocol, stop
 ```
 
-**Both MPP and x402 indicators present** — STOP and ask:
+**Both MPP and x402 indicators present** — STOP and ask the user:
 
-> The server offers both MPP and x402 payment protocols. Which would you like to use?
-> 1. **MPP** (newer, supports sessions and streaming, recommended)
-> 2. **x402** (simpler, single-shot)
+> The server offers two payment options via the **OKX Agent Payments Protocol**:
+> 1. **One-shot purchase, or streaming session (multi-request)** (recommended)
+> 2. **One-shot purchase**
+>
+> Which would you like to use?
+
+Internal mapping: option 1 → MPP path, option 2 → x402 path.
 
 ## Step A3-x402: Decode
 
