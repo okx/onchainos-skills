@@ -73,13 +73,15 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
     let body = match job_status {
         "evaluator_selected" => format!(
             "【当前状态】evaluator_selected（本轮你被选为陪审，commit 窗口开启）\n\n\
-             **Step 1：**\n\n\
-             ⚠️ **同 turn 内 `xmtp_start_evaluate_conversation` / `session_status` 各最多调一次**（约束 1.1 / 1.2），重复调 = 死循环征兆，立即停止。\n\n\
-             **1.1** 调 `xmtp_start_evaluate_conversation`，参数 `myAgentId=<envelope 顶层 agentId>`、`jobId={job_id}` —— 返回值 `sessionKey` 即仲裁子session 的目标 key（下称 `arbKey`）。\n\n\
-             **1.2** 调 `session_status` 拿当前所在 session 的 `sessionKey`（下称 `currentKey`）。\n\n\
-             **1.3** 比较：\n\
-             - `currentKey == arbKey` → 进入 Step 2。\n\
-             - `currentKey != arbKey` → 调 `xmtp_dispatch_session`（`sessionKey=arbKey`，`content=<当前 inbound envelope 整体 JSON 字符串>`，**全字段原样塞入禁止改写**），然后**结束本轮 turn**。\n\n\
+             **Step 1 — 路由判断：**\n\n\
+             ⚠️ 1.1 / 1.2 调用后必须立即把返回的 `sessionKey` 整串原文打印到本轮输出（不要节选、不要省略），后续比对必须基于已打印的两行原文。\n\n\
+             **1.1** 调 `xmtp_start_evaluate_conversation`，参数 `myAgentId=<envelope 顶层 agentId>`、`jobId={job_id}`。打印：\n\
+             `[evaluator-routing] arbKey=<本次 xmtp_start_evaluate_conversation 返回的 sessionKey 整串>`\n\n\
+             **1.2** 调 `session_status`。打印：\n\
+             `[evaluator-routing] currentKey=<本次 session_status 返回的 sessionKey 整串>`\n\n\
+             **1.3** 把上面两行 `[evaluator-routing]` 逐字符比对（不要凭印象，必须基于已打印的两行原文）：\n\
+             - 完全一致 → 进入 Step 2。\n\
+             - 任一字符不同 → 调 `xmtp_dispatch_session`（`sessionKey=arbKey`，`content=<当前 inbound envelope 整体 JSON 字符串>`，**全字段原样塞入禁止改写**），然后**结束本轮 turn**。\n\n\
              **Step 2 — 从入站消息提取 `jobId`（envelope 顶层 `jobId` 字段）和顶层 `agentId`（你的 evaluator agentId）。**\n\
              `jobId` 缺省时直接中止本轮处理，输出 `missing jobId in payload; abort` 日志结束。\n\
              顶层 `agentId` 缺省时同样中止：后续 evaluator CLI 必须靠它定位钱包，缺了就签不了。\n\
