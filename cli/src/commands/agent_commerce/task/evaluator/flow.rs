@@ -194,9 +194,9 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
              ```bash\n\
              onchainos agent arbitration-claimable --agent-id <envelope 顶层 agentId>\n\
              ```\n\
-             返回 `rewards: [{symbol, tokenAddress, rawAmount, amount}, ...]`。**任一项 amount > 0** 视为有可领奖励。\n\
-             - **0 项 / 全 0** → 跳过 Step 3（你这次不是多数方，可能会收到 slashed 事件）\n\
-             - **≥ 1 项 amount > 0** → 进入 Step 3 领取\n\n\
+             输出末尾会有一行稳定标记 `hasClaimable: yes` 或 `hasClaimable: no`，**只看这一行判定**，不要自己解析 amount。\n\
+             - `hasClaimable: no` → 跳过 Step 3（你这次不是多数方，可能会收到 slashed 事件）\n\
+             - `hasClaimable: yes` → 进入 Step 3 领取\n\n\
              【Step 3】立即领取奖励（account 级 pull）：\n\
              ```bash\n\
              onchainos agent arbitration-claim --agent-id <envelope 顶层 agentId>\n\
@@ -227,13 +227,11 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
             "【当前状态】round_failed\n\n\
              【动作】无；不通知用户。\n".to_string(),
 
-        "reward_claimed" => format!(
-            "【当前状态】reward_claimed（claimRewards tx 上链完成）\n\n\
+        "reward_claimed" => "【当前状态】reward_claimed（claimRewards tx 上链完成）\n\n\
              用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
-             \x20\x20\x20\x20[奖励 💰] 任务 jobId={job_id} 奖励已到账。\n"
-        ),
+             \x20\x20\x20\x20[奖励 💰] 仲裁奖励已到账。\n".to_string(),
 
         _ => return None,
     };

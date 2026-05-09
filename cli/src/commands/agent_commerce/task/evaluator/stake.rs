@@ -84,9 +84,7 @@ pub(super) async fn execute_stake_or_increase(
     match try_post_and_broadcast(client, primary, amount, account_id, address, agent_id).await {
         Ok(tx) => Ok((tx, primary)),
         Err(primary_err) => {
-            eprintln!(
-                "warning: {primary} 端点调用失败：{primary_err}；fallback 尝试 {fallback}..."
-            );
+            eprintln!("warning: 首次提交失败：{primary_err}；切换路径再试一次...");
             match try_post_and_broadcast(
                 client,
                 fallback,
@@ -99,9 +97,9 @@ pub(super) async fn execute_stake_or_increase(
             {
                 Ok(tx) => Ok((tx, fallback)),
                 Err(fallback_err) => bail!(
-                    "stake / increase-stake 两个端点均失败：\n\
-                     - {primary}: {primary_err}\n\
-                     - {fallback}: {fallback_err}"
+                    "质押失败（两次提交都失败）：\n\
+                     - {primary_err}\n\
+                     - {fallback_err}"
                 ),
             }
         }

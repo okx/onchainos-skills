@@ -40,15 +40,12 @@ pub async fn handle_request_unstake(
     let m = staking_types::get_my_stake(client, &agent_id)
         .await
         .map_err(|e| anyhow::anyhow!("my-stake 拉取失败，无法校验 request-unstake 前置条件：{e}"))?;
-    let cfg = staking_types::get_staking_config(client, &agent_id)
-        .await
-        .map_err(|e| anyhow::anyhow!("staking-config 拉取失败，无法校验部分赎回保留：{e}"))?;
 
     // 活跃仲裁阻拦
     let active_disputes = m.active_disputes.parse::<u64>().unwrap_or(0);
     if active_disputes > 0 {
         bail!(
-            "当前有 {active_disputes} 个未结仲裁，合约不允许此时解质押。请等仲裁结算（dispute_resolved 事件）后再申请。"
+            "当前有 {active_disputes} 个未结仲裁，期间不允许解质押。请等仲裁结算后再申请。"
         );
     }
 
@@ -63,6 +60,9 @@ pub async fn handle_request_unstake(
         );
     }
 
+    let cfg = staking_types::get_staking_config(client, &agent_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("staking-config 拉取失败，无法校验部分赎回保留：{e}"))?;
     // 部分赎回后剩余必须 >= partialUnstakeMinRetainOkb（全额赎回 amt == active 不受此限）
     let retain: f64 = cfg.partial_unstake_min_retain_okb.parse().map_err(|e| {
         anyhow::anyhow!(
@@ -122,7 +122,7 @@ pub async fn handle_claim_unstake(
     // best-effort pre-check：my-stake 失败 → 跳过预检由合约兜底
     if let Ok(m) = staking_types::get_my_stake(client, &agent_id).await {
         if m.unstake_available_at == 0 {
-            bail!("当前没有待领取的解质押申请。请先跑 `request-unstake` 申请解质押。");
+            bail!("当前没有待领取的解质押申请。请先发起解质押申请。");
         }
         let now = chrono::Utc::now().timestamp();
         if now < m.unstake_available_at {
@@ -172,7 +172,7 @@ pub async fn handle_cancel_unstake(
         let now = chrono::Utc::now().timestamp();
         if now >= m.unstake_available_at {
             bail!(
-                "解质押冷却期已结束，链上 unstake 已 claimable，撤不回。请改走 `claim-unstake` 领取。"
+                "解质押冷却期已结束，已可直接领取，撤销已无效。请改为领取。"
             );
         }
     }
