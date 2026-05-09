@@ -108,8 +108,6 @@ pub enum AgentCommand {
         #[arg(long = "provider-agent-id")] provider_agent_id: String,
         /// 不指定时自动从任务详情 paymentType 获取
         #[arg(long = "payment-mode")] payment_mode: Option<String>,
-        /// a2a_pay payment_id（卖家通过 XMTP 传递，non_escrow 必填；escrow 不需要）
-        #[arg(long = "payment-id")] payment_id: Option<String>,
         /// 协商确定的支付代币符号（如 USDT），escrow 必填
         #[arg(long = "token-symbol")] token_symbol: Option<String>,
         /// 协商确定的支付金额（人类可读，如 "50"），escrow 必填
@@ -148,7 +146,18 @@ pub enum AgentCommand {
     },
 
     /// Client confirms task complete and releases payment
-    Complete { job_id: String },
+    Complete {
+        job_id: String,
+        /// a2a_pay payment_id（non_escrow 必填，卖家通过 XMTP 传递）
+        #[arg(long = "payment-id")]
+        payment_id: Option<String>,
+        /// 支付代币符号（non_escrow 需要）
+        #[arg(long = "token-symbol")]
+        token_symbol: Option<String>,
+        /// 支付金额（non_escrow 需要，人类可读格式）
+        #[arg(long = "token-amount")]
+        token_amount: Option<String>,
+    },
 
     /// Client rejects deliverable
     Reject {
@@ -262,10 +271,9 @@ pub enum AgentCommand {
         token_symbol: String,
         #[arg(long = "token-amount")]
         token_amount: String,
-        /// 兼容 task 其他命令的 --agent-id 约定。save-agreed 按 jobId 索引本地文件，
-        /// 不需要 agentId；此参数仅吸收 LLM 误传，**值忽略不用**。
-        #[arg(long = "agent-id", hide = true)]
-        _agent_id: Option<String>,
+        /// Buyer agent ID（用于查询任务详情校验预算上限）
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
     },
 
     /// Client claims auto-refund after provider timeout
@@ -285,6 +293,13 @@ pub enum AgentCommand {
     /// Dispute actions (provider): raise, evidence, info, upload
     #[command(subcommand)]
     Dispute(task::provider::DisputeCommand),
+
+    /// Pending user decisions registry — sub agent calls `add` before
+    /// `xmtp_prompt_user` and `remove` after parsing `[USER_DECISION_RELAY]`;
+    /// user session agent calls `list` before rendering. See SKILL.md
+    /// `Session 通信契约 5. pending-decisions`.
+    #[command(name = "pending-decisions", subcommand)]
+    PendingDecisions(task::common::pending::PendingDecisionsCommand),
 
     // ── Task system (Evaluator / arbitrator) ─────────────────────────────────
     // 历史上有过 `Evaluator(EvaluatorCommand)` 包装，2026-05 与 buyer/provider 风格
@@ -545,8 +560,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint } =>
             task::buyer::run_task(T::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint }, ctx).await,
 
-        AgentCommand::ConfirmAccept { job_id, provider_agent_id, payment_mode, payment_id, token_symbol, token_amount } =>
-            task::buyer::run_task(T::ConfirmAccept { job_id, provider_agent_id, payment_mode, payment_id, token_symbol, token_amount }, ctx).await,
+        AgentCommand::ConfirmAccept { job_id, provider_agent_id, payment_mode, token_symbol, token_amount } =>
+            task::buyer::run_task(T::ConfirmAccept { job_id, provider_agent_id, payment_mode, token_symbol, token_amount }, ctx).await,
 
         AgentCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>
             task::buyer::run_task(T::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount }, ctx).await,
@@ -557,8 +572,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::X402Check { endpoint } =>
             task::buyer::run_task(T::X402Check { endpoint }, ctx).await,
 
-        AgentCommand::Complete { job_id } =>
-            task::buyer::run_task(T::Complete { job_id }, ctx).await,
+        AgentCommand::Complete { job_id, payment_id, token_symbol, token_amount } =>
+            task::buyer::run_task(T::Complete { job_id, payment_id, token_symbol, token_amount }, ctx).await,
 
         AgentCommand::Reject { job_id, reason } =>
             task::buyer::run_task(T::Reject { job_id, reason }, ctx).await,
@@ -575,8 +590,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Pay { job_id, agent_id } =>
             task::buyer::run_task(T::Pay { job_id, agent_id }, ctx).await,
 
-        AgentCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, .. } =>
-            task::buyer::run_task(T::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount }, ctx).await,
+        AgentCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id } =>
+            task::buyer::run_task(T::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id }, ctx).await,
 
         AgentCommand::ClaimAutoRefund { job_id } =>
             task::buyer::run_task(T::ClaimAutoRefund { job_id }, ctx).await,
@@ -637,6 +652,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         // ── Sub-groups ──────────────────────────────────────────────
         AgentCommand::Dispute(c) =>
             task::provider::run_dispute(c, ctx).await,
+
+        AgentCommand::PendingDecisions(c) =>
+            task::common::pending::run(c).await,
 
         // ── Evaluator (arbitrator) flat dispatch ────────────────────
         AgentCommand::EvidenceInfo { job_id, agent_id } => {
@@ -771,9 +789,12 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
 
     // user-instruction 伪 event 不是链事件，不直接对应 status——它们在某个 status 下被触发
     // 后才会上链改 status。校验它们的"对应 status"会误报，所以这里直接跳过。
+    // wakeup_notify 是网络/重启恢复事件,真实 status 在 envelope.message.jobStatus 字段;
+    // agent 应该用 message.jobStatus 重调 next-action,这里跳过校验让 WakeupNotify arm 输出引导剧本。
     const PSEUDO_EVENTS: &[&str] = &[
         "dispute_raise", "agree_refund", "dispute_evidence",
         "close", "set_public",
+        "wakeup_notify",
     ];
     if PSEUDO_EVENTS.contains(&job_status_or_event) {
         return None;

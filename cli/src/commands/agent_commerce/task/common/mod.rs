@@ -12,6 +12,7 @@ pub mod claim;
 pub mod dispute_upload;
 pub mod network;
 pub mod payment_mode;
+pub mod pending;
 pub mod query;
 pub mod state_machine;
 pub mod util;
@@ -580,7 +581,7 @@ async fn build_context(
         out.push_str("- 任务能力 / 验收标准：能不能做、有没有补充问题\n");
         out.push_str("- 价格立场：原价是否合理；偏低就**还价**（明确报新价 + 理由），不要机械接受\n");
         out.push_str("- paymentMode 立场：你偏好 escrow 还是 non_escrow，附理由（不是被动等买家定）\n\n");
-        out.push_str("❌ **禁止自我 confirm 措辞**：不要在 `xmtp_send` content 里写「我确认以下三项 / 三项确认完毕 / 我接受 / 我将立即 apply / 我将提交接单申请」。三项是要**问**买家的，发完等 buyer 的 `[NEGOTIATE_PROPOSE]` 才进下一步握手——具体三步握手剧本（[PROPOSE] → [ACK] → [CONFIRM]）由 next-action 给出，**这里不能跳过 next-action 直接 apply**（已发生过线上事故）。\n\n");
+        out.push_str("❌ **禁止自我 confirm 措辞**：不要在 `xmtp_send` content 里写「我确认以下三项 / 三项确认完毕 / 我接受 / 我将立即 apply / 我将提交接单申请」。三项是要**问**买家的，发完等 buyer 的 `[NEGOTIATE_PROPOSE]` 才进下一步握手——具体三步握手剧本（[NEGOTIATE_PROPOSE] → [NEGOTIATE_ACK] → [NEGOTIATE_CONFIRM]）由 next-action 给出，**这里不能跳过 next-action 直接 apply**（已发生过线上事故）。\n\n");
     }
 
     // ── 下一步动作 ────────────────────────────────────────────────────────

@@ -27,6 +27,30 @@ agent common context <jobId> --role <buyer|provider|evaluator> --agent-id <agent
 | `--agent-id` | required | 调用方 agentId（beta backend 拒空 agenticId header → 3001） |
 | `--address` | optional | 调用方钱包地址，缺省自动解析 |
 
+### pending-decisions add / remove / list
+
+```
+agent pending-decisions add --sub-key <sub_session_key> --job-id <jobId> --role <buyer|provider|evaluator> --agent-id <agentId> --summary "<一句话>" --user-content "<完整 userContent 原文>" [--ttl 86400]
+agent pending-decisions remove --job-id <jobId> --role <buyer|provider|evaluator> --agent-id <agentId>
+agent pending-decisions list [--format json|text] [--agent-id <agentId>]
+```
+
+待用户决策本地缓存,文件 `~/.onchainos/task/pending-decisions.json`(任务级状态集中在 `~/.onchainos/task/` 下)。配套 `xmtp_prompt_user` / `[USER_DECISION_RELAY]` 用,让 user session agent 在多 prompt 并发时能确定性地知道当前有几条未关闭决策、每条派回哪个 sub、用户当时看到的完整内容是什么。**不是工具调用,是 CLI**——sub agent 在调 `xmtp_prompt_user` 之前 / 解析 `[USER_DECISION_RELAY]` 之后必须配对调用,user session agent 在「展示中 / 待用户回复」状态进入时调一次。规则权威源:`SKILL.md Session 通信契约 5. pending-decisions`。
+
+| 命令 | 谁调 | 何时 | 关键参数 |
+|---|---|---|---|
+| `add` | sub agent | 调 `xmtp_prompt_user` **之前** | `--sub-key`(必填,先 `session_status` 拿) / `--job-id`(必填) / `--role`(必填) / `--agent-id`(必填,sub 自身 agentId) / `--summary`(必填,一句话简述) / `--user-content`(必填,userContent 完整原文,场景 2 反问聚合 verbatim) / `--ttl`(默认 86400) |
+| `remove` | sub agent | 解析 `[USER_DECISION_RELAY]` **之后**调 next-action **之前** | `--job-id` / `--role` / `--agent-id` 全部必填(三元组对齐 add 时的唯一键) |
+| `list` | user session agent | 进入「展示中」/「待用户回复」状态时 | `--format json`(默认,数组,包含完整 schema) / `text`(每行 `<idx>. [任务 <短ID> 你作为<角色>(#<agentId>)] <summary>`);`--agent-id <id>` 可选过滤 |
+
+**唯一键** = `(job_id, role, agent_id)` 三元组——单钱包多 provider agent 同时盯同一 public 任务时各占一条不会互覆。重复 add 时按三元组替换旧条(防漏调 remove 后再 add 造成重复)。
+
+**字段语义**:
+- `summary` 一句话——给场景 1(新 prompt 末尾"另有 N 条待决策"简列)用
+- `user_content` userContent 完整原文——给场景 2(反问聚合详细列表)verbatim 渲染,贴近用户当时收到的格式
+
+**TTL**:默认 24h,过期条目下次 `list` 时自动清理 + 写回。文件解析失败时备份到 `pending-decisions.broken-<ts>.json` 后重置(避免无限期卡死)。
+
 ### next-action
 
 ```

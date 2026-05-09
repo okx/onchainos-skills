@@ -97,9 +97,6 @@ pub enum TaskCommand {
         /// 不指定时自动从任务详情 paymentType 获取
         #[arg(long = "payment-mode")]
         payment_mode: Option<String>,
-        /// a2a_pay payment_id（卖家通过 XMTP 传递，non_escrow 必填；escrow 不需要）
-        #[arg(long = "payment-id")]
-        payment_id: Option<String>,
         /// 协商确定的支付代币符号（如 USDT），escrow 必填
         #[arg(long = "token-symbol")]
         token_symbol: Option<String>,
@@ -110,6 +107,15 @@ pub enum TaskCommand {
     /// Client confirms task complete and releases payment
     Complete {
         job_id: String,
+        /// a2a_pay payment_id（卖家通过 XMTP 传递，non_escrow 必填）
+        #[arg(long = "payment-id")]
+        payment_id: Option<String>,
+        /// 支付代币符号（non_escrow 需要，如 USDT）
+        #[arg(long = "token-symbol")]
+        token_symbol: Option<String>,
+        /// 支付金额（non_escrow 需要，人类可读格式如 "50"）
+        #[arg(long = "token-amount")]
+        token_amount: Option<String>,
     },
     /// Client rejects deliverable
     Reject {
@@ -186,6 +192,8 @@ pub enum TaskCommand {
         token_symbol: String,
         #[arg(long = "token-amount")]
         token_amount: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
     },
 }
 
@@ -209,16 +217,16 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         }
         TaskCommand::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint } =>
             accept::handle_set_payment_mode(&mut client, &job_id, payment_mode.as_deref(), token_symbol.as_deref(), token_amount.as_deref(), endpoint.as_deref()).await,
-        TaskCommand::ConfirmAccept { job_id, provider_agent_id, payment_mode, payment_id, token_symbol, token_amount } =>
-            accept::handle_confirm_accept(&mut client, &job_id, &provider_agent_id, payment_mode.as_deref(), payment_id.as_deref(), token_symbol.as_deref(), token_amount.as_deref()).await,
+        TaskCommand::ConfirmAccept { job_id, provider_agent_id, payment_mode, token_symbol, token_amount } =>
+            accept::handle_confirm_accept(&mut client, &job_id, &provider_agent_id, payment_mode.as_deref(), token_symbol.as_deref(), token_amount.as_deref()).await,
         TaskCommand::DirectAccept { job_id, provider_agent_id, token_symbol, token_amount } =>
             accept::handle_direct_accept(&mut client, &job_id, &provider_agent_id, token_symbol.as_deref(), token_amount.as_deref()).await,
         TaskCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from } =>
             accept::handle_task_402_pay(&mut client, &job_id, &provider_agent_id, &accepts, &endpoint, &token_symbol, &token_amount, from.as_deref()).await,
         TaskCommand::X402Check { endpoint } =>
-            accept::handle_x402_check(&endpoint).await,
-        TaskCommand::Complete { job_id } =>
-            complete::handle_complete(&mut client, &job_id).await,
+            accept::handle_x402_check(&mut client, &endpoint).await,
+        TaskCommand::Complete { job_id, payment_id, token_symbol, token_amount } =>
+            complete::handle_complete(&mut client, &job_id, payment_id.as_deref(), token_symbol.as_deref(), token_amount.as_deref()).await,
         TaskCommand::Reject { job_id, reason } =>
             refuse::handle_reject(&mut client, &job_id, &reason).await,
         TaskCommand::Close { job_id } =>
@@ -227,8 +235,8 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             changepublic::handle_set_public(&mut client, &job_id).await,
         TaskCommand::ClaimAutoRefund { job_id } =>
             claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await,
-        TaskCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount } => {
-            negotiate::save_agreed(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount).await
+        TaskCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id } => {
+            negotiate::save_agreed(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount, agent_id.as_deref()).await
         }
 
         // ── 只读查询 ─────────────────────────────────────────────

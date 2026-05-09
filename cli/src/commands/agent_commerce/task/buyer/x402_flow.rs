@@ -235,35 +235,28 @@ pub async fn check_x402_endpoint(endpoint: &str) -> Result<X402EndpointCheck> {
 
 /// 通过任务系统 tokenDetail 接口查询代币信息。
 /// 遍历支持的 token（USDT、USDG），匹配合约地址返回 (symbol, decimals)。
-pub async fn resolve_token_by_asset(asset: &str, _network: &str) -> Result<(String, u8)> {
-    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+pub async fn resolve_token_by_asset(
+    client: &mut crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient,
+    asset: &str,
+    agent_id: &str,
+) -> Result<(String, u8)> {
+    use crate::commands::agent_commerce::task::common::util::fetch_token_detail;
 
-    let client = TaskApiClient::new();
     let asset_lower = asset.to_lowercase();
 
     for symbol in &["USDT", "USDG"] {
-        let url = format!("{}/priapi/v1/aieco/task/tokenDetail?symbol={}", client.base_url, symbol);
-        eprintln!("[resolve_token_by_asset] GET {url}");
-
-        let resp = client.raw_http.get(&url).send().await
-            .context("tokenDetail 请求失败")?;
-        let body: serde_json::Value = resp.json().await
-            .context("tokenDetail 响应解析失败")?;
-
-        eprintln!("[resolve_token_by_asset] tokenDetail({symbol}) → {body}");
-
-        if body["code"].as_i64() != Some(0) {
-            continue;
-        }
-
-        let data = &body["data"];
-        let addr = data["address"].as_str().unwrap_or("");
-        if addr.to_lowercase() == asset_lower {
-            let decimals = data["decimals"].as_u64()
-                .or_else(|| data["decimals"].as_str().and_then(|s| s.parse().ok()))
-                .and_then(|n| u8::try_from(n).ok())
-                .ok_or_else(|| anyhow!("tokenDetail 响应中 {symbol} 缺少 decimals 字段"))?;
-            return Ok((symbol.to_string(), decimals));
+        eprintln!("[resolve_token_by_asset] fetch_token_detail({symbol})");
+        match fetch_token_detail(client, symbol, agent_id).await {
+            Ok((addr, decimals)) => {
+                eprintln!("[resolve_token_by_asset] {symbol} → addr={addr}, decimals={decimals}");
+                if addr.to_lowercase() == asset_lower {
+                    return Ok((symbol.to_string(), decimals as u8));
+                }
+            }
+            Err(e) => {
+                eprintln!("[resolve_token_by_asset] {symbol} 查询失败: {e}");
+                continue;
+            }
         }
     }
 
@@ -294,12 +287,16 @@ pub fn human_to_minimal(amount_human: &str, decimals: u8) -> Result<String> {
 /// 丰富定价信息：解析代币符号、精度、人类可读金额
 ///
 /// decimals 优先级：accepts entry 内联 > token info 查询
-pub async fn enrich_pricing(pricing: &X402Pricing) -> Result<X402PricingResolved> {
+pub async fn enrich_pricing(
+    client: &mut crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient,
+    pricing: &X402Pricing,
+    agent_id: &str,
+) -> Result<X402PricingResolved> {
     eprintln!(
         "[enrich_pricing] asset={}, network={}, amount_minimal={}, extra_decimals={:?}",
         pricing.asset, pricing.network, pricing.amount_minimal, pricing.extra_decimals
     );
-    let token_result = resolve_token_by_asset(&pricing.asset, &pricing.network).await;
+    let token_result = resolve_token_by_asset(client, &pricing.asset, agent_id).await;
     let (symbol, decimals) = match (&token_result, pricing.extra_decimals) {
         (Ok((sym, dec)), Some(extra_dec)) => {
             if *dec != extra_dec {

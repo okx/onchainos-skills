@@ -383,6 +383,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
 
         // Sub-groups
         AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),
+        AgentCommand::PendingDecisions(c) =>
+            format!("pending-decisions {:?}", std::mem::discriminant(c)),
         // Evaluator (flat — 见 agent_commerce/mod.rs)
         AgentCommand::EvidenceInfo { .. } => "evidence-info".into(),
         AgentCommand::EvidenceDownload { .. } => "evidence-download".into(),

@@ -4,16 +4,21 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ZIP="$ROOT/onchainos.zip"
 
 echo "=== Building ==="
-cd "$ROOT/cli" && OKX_BASE_URL=https://beta.okex.org cargo install --path . --force --features debug-log
+cd "$ROOT/cli" && OKX_BASE_URL=https://beta.okex.org cargo build --profile dev-release --features debug-log
 
 echo "=== Packaging ==="
 STAGE=$(mktemp -d)
 trap "rm -rf $STAGE" EXIT
-mkdir -p "$STAGE/skills/okx-agent-task"
-cp "$HOME/.cargo/bin/onchainos" "$STAGE/"
-for f in SKILL.md buyer.md provider.md evaluator.md; do
-  cp "$ROOT/skills/okx-agent-task/$f" "$STAGE/skills/okx-agent-task/"
+
+AGENT_SKILLS=(okx-agent-task okx-agent-identity okx-agentic-wallet okx-agent-task-test okx-agent-chat)
+for skill in "${AGENT_SKILLS[@]}"; do
+  if [ -d "$ROOT/skills/$skill" ]; then
+    mkdir -p "$STAGE/skills/$skill"
+    cp -rf "$ROOT/skills/$skill/"* "$STAGE/skills/$skill/"
+  fi
 done
+
+cp "$ROOT/cli/target/dev-release/onchainos" "$STAGE/"
 
 cat > "$STAGE/install.sh" << 'INSTALL'
 #!/bin/bash
@@ -30,12 +35,15 @@ if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
   echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$RC"
   export PATH="$HOME/.local/bin:$PATH"
 fi
-mkdir -p ~/.agents/skills/okx-agent-task
-cp -f skills/okx-agent-task/*.md ~/.agents/skills/okx-agent-task/
+for skill_dir in skills/*/; do
+  skill_name=$(basename "$skill_dir")
+  mkdir -p "$HOME/.agents/skills/$skill_name"
+  cp -rf "$skill_dir"* "$HOME/.agents/skills/$skill_name/"
+done
 echo ""
 echo "=== install done ==="
 echo "onchainos: $(~/.local/bin/onchainos --version 2>&1)"
-echo "skills:    $(ls ~/.agents/skills/okx-agent-task/)"
+echo "skills:    $(ls ~/.agents/skills/)"
 INSTALL
 
 cd "$STAGE" && rm -f "$ZIP" && zip "$ZIP" -r . --symlinks
