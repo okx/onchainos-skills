@@ -1,5 +1,3 @@
-use std::sync::OnceLock;
-
 use anyhow::{bail, Context, Result};
 use base64::Engine;
 use hmac::{Hmac, Mac};
@@ -11,26 +9,6 @@ use crate::doh::DohManager;
 
 pub const DEFAULT_BASE_URL: &str = "https://web3.okx.com";
 const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// Process-scoped plugin version label.
-///
-/// Set once from `main` when the caller passed `--plugin-version <value>`
-/// (hidden flag, used by openclaw-extension and other integrators). When set,
-/// `anonymous_headers()` injects `X-Agent-Plugin-Version: <value>` into
-/// every outbound request. Unset = no header, fully backward compatible.
-static PLUGIN_VERSION: OnceLock<String> = OnceLock::new();
-
-/// Record the calling integrator's plugin version. Empty / whitespace-only
-/// values are ignored so `--plugin-version ""` behaves like "not provided".
-/// First non-empty call wins; subsequent calls are silently ignored (OnceLock
-/// semantics).
-pub fn set_plugin_version(value: &str) {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return;
-    }
-    let _ = PLUGIN_VERSION.set(trimmed.to_string());
-}
 
 /// Authentication mode for API requests.
 #[derive(Clone)]
@@ -328,13 +306,6 @@ impl ApiClient {
             "Ok-Access-Client-type",
             HeaderValue::from_static("agent-cli"),
         );
-        // 上游集成方（openclaw 等）通过隐藏 CLI 参数 --plugin-version 注入自身版本。
-        // 仅当值非空时塞 header；header 名固定为 X-Agent-Plugin-Version。
-        if let Some(plugin_version) = PLUGIN_VERSION.get() {
-            if let Ok(value) = HeaderValue::from_str(plugin_version) {
-                map.insert("X-Agent-Plugin-Version", value);
-            }
-        }
         map
     }
 
@@ -1278,40 +1249,6 @@ mod tests {
             h.get("ok-access-client-type").unwrap().to_str().unwrap(),
             "agent-cli"
         );
-    }
-
-    /// 未调用 set_plugin_version 时不应注入 X-Agent-Plugin-Version。
-    /// 注意 OnceLock 是进程级的——其他测试若先调了 set_plugin_version，
-    /// 这条 assert 会反过来失效；目前测试套里只有 plugin_version_injects_header
-    /// 一个写入点，且我们刻意不跑它（见下文）以保证默认路径可验证。
-    #[test]
-    fn anonymous_headers_no_plugin_version_when_unset() {
-        let h = ApiClient::anonymous_headers();
-        assert!(h.get("X-Agent-Plugin-Version").is_none());
-    }
-
-    /// 直接验证注入逻辑：set_plugin_version 写入后，anonymous_headers 必带上 header。
-    /// 由于 OnceLock 只能 set 一次且会污染后续测试，这条测试用 #[ignore] 默认跳过，
-    /// 需要本地用 `cargo test plugin_version_injects_header -- --ignored --test-threads=1`
-    /// 单独跑。
-    #[test]
-    #[ignore = "writes process-global OnceLock; run in isolation"]
-    fn plugin_version_injects_header() {
-        super::set_plugin_version("openclaw-extension/1.2.3");
-        let h = ApiClient::anonymous_headers();
-        assert_eq!(
-            h.get("X-Agent-Plugin-Version").unwrap().to_str().unwrap(),
-            "openclaw-extension/1.2.3"
-        );
-    }
-
-    /// 空字符串视为未传，不注入 header；同样因 OnceLock 隔离需要 --ignored 单测。
-    #[test]
-    #[ignore = "writes process-global OnceLock; run in isolation"]
-    fn plugin_version_empty_is_ignored() {
-        super::set_plugin_version("   ");
-        let h = ApiClient::anonymous_headers();
-        assert!(h.get("X-Agent-Plugin-Version").is_none());
     }
 
     #[test]
