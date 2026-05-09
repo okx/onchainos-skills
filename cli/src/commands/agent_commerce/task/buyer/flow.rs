@@ -194,7 +194,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20**DX-Step 2 — 金额校验：**\n\
              \x20\x20\x20\x20比较 x402-check 的 `amountHuman` 与 services[0] 的 `feeAmount`：\n\
              \x20\x20\x20\x20- 不一致（差异 > 1%）→ 调用 xmtp_prompt_user 询问用户是否接受实际价格：\n\
-             \x20\x20\x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}] 用户回复「接受」→ 调用 xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY] 用户决策：接受\") relay 回 sub session 继续 DX-Step 3；回复「拒绝」→ 调用 xmtp_dispatch_session relay 回 sub session 引导换卖家。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
+             \x20\x20\x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][job: {job_id}] 用户回复「接受」→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：接受\") relay 回 sub session 继续 DX-Step 3；回复「拒绝」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：拒绝\") relay 回 sub session 引导换卖家。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
              \x20\x20\x20\x20\x20\x20userContent: 任务 {job_id} 指定卖家（AgentID=<agentId>）实际收费 <amountHuman> <tokenSymbol>，与注册费用 <feeAmount> <feeTokenSymbol> 不一致，是否接受？\n\
              \x20\x20\x20\x20- 一致 → 继续 DX-Step 3。\n\n\
              \x20\x20\x20\x20**DX-Step 3 — 预算检查：**\n\
@@ -289,7 +289,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              2. （sub session 内）卖家回复报价（金额、代币、支付方式偏好、预计交付时间）\n\
              3. （sub session 内）双方就价格/条件进行调整（可能多轮，每轮 5 分钟超时）\n\
              \x20\x20每轮调用 xmtp_send，参数：sessionKey=<同上>，content=<协商内容>\n\
-             \x20\x20⚠️ **不要机械接受卖家加价**：以**任务的 max_budget（最高预算）为绝对上限**——超过 max_budget 一律拒绝，不论差多少；max_budget 在你 create-task 时由 user 设定（`--max-budget`），如果你**忘了**就回看本 sub session 第一条 inquiry（你之前发给卖家的内容里通常会包含『最高 X』），仍找不到就 `xmtp_prompt_user` 询问 user（**调 xmtp_prompt_user 之前先调 `pending-decisions add`,见硬规则 7**。llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] 用户回复最高预算后,调用 xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY] 用户决策：最高预算 <用户回复的金额>\") relay 回 sub session 继续协商。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。userContent: [任务 {short_id} 你作为买家] 协商中——请问你的最高预算是多少？）。`budget < 卖家价 ≤ max_budget` 区间内可谈，可以原价接受或继续还价；卖家价 ≤ budget 直接接受。\n\
+             \x20\x20⚠️ **不要机械接受卖家加价**：以**任务的 max_budget（最高预算）为绝对上限**——超过 max_budget 一律拒绝，不论差多少；max_budget 在你 create-task 时由 user 设定（`--max-budget`），如果你**忘了**就回看本 sub session 第一条 inquiry（你之前发给卖家的内容里通常会包含『最高 X』），仍找不到就 `xmtp_prompt_user` 询问 user（**调 xmtp_prompt_user 之前先调 `pending-decisions add`,见硬规则 7**。llmContent: [USER_DECISION_REQUEST][job: {job_id}][role: buyer] 用户回复最高预算后,调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：最高预算 <用户回复的金额>\") relay 回 sub session 继续协商。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。userContent: [任务 {short_id} 你作为买家] 协商中——请问你的最高预算是多少？）。`budget < 卖家价 ≤ max_budget` 区间内可谈，可以原价接受或继续还价；卖家价 ≤ budget 直接接受。\n\
              ⚠️ **币种铁律**：协商只允许改**金额**，不允许改**币种**。任务发布时的币种（从 `onchainos agent common context` 获取）\n\
              是链上合约绑定的。如果卖家提出不同币种，必须纠正：「本任务使用 <任务币种>，请用 <任务币种> 报价。」\n\n\
              ⚠️ 任一步骤卖家 5 分钟未回复 → 视为协商失败，结束当前 sub session，执行「切换下一个卖家」。\n\n\
@@ -358,10 +358,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ━━━━━━━━━ 遍历结束 / 切换下一个卖家 ━━━━━━━━━\n\n\
              当前卖家超时未回复（5 分钟）或协商失败 → 结束当前 sub session → `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断。\n\
              推荐列表全部遍历完（或初始推荐列表为空）→ 先调 `session_status` 拿 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7);再调用 xmtp_prompt_user 引导用户选择：\n\
-             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] \
-             用户选择 A 并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY] 用户决策：指定卖家 agentId=<用户提供的agentId>\") relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
-             用户选择 B → 调用 xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY] 用户决策：转为公开任务\") relay 回 sub session 执行 set-public；\
-             用户选择 C → 调用 xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY] 用户决策：关闭任务\") relay 回 sub session 执行 close。\
+             \x20\x20llmContent: [USER_DECISION_REQUEST][job: {job_id}][role: buyer] \
+             用户选择 A 并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：指定卖家 agentId=<用户提供的agentId>\") relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
+             用户选择 B → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：转为公开任务\") relay 回 sub session 执行 set-public；\
+             用户选择 C → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：关闭任务\") relay 回 sub session 执行 close。\
              ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
              \x20\x20userContent: [任务 {short_id} 你作为买家] 推荐卖家已全部遍历，无合适匹配。请选择下一步：\n\
              \x20\x20A. 指定卖家 — 请提供卖家 agentId\n\
@@ -518,9 +518,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 3 — 按支付方式分流：**\n\n\
              ━━━━━━━━━ 分支 A：escrow（担保）— 需要用户验收决策 ━━━━━━━━━\n\n\
              调用 xmtp_prompt_user 把交付物和验收决策请求推到 user session（sessionKey 复用 Step 2 已获取的值;调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`,见硬规则 7）：\n\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <Step 2 拿到的 sessionKey>][job: {job_id}][role: buyer] \
-             用户回复「验收通过」→ 调用 xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY] 用户决策：验收通过\") relay 回 sub session 执行 complete；\
-             回复「拒绝，原因是...」→ 调用 xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY] 用户决策：拒绝，原因是<用户原话>\") relay 回 sub session 执行 reject。\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][job: {job_id}][role: buyer] \
+             用户回复「验收通过」→ 调用 xmtp_dispatch_session(sessionKey=\"<Step 2 session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：验收通过\") relay 回 sub session 执行 complete；\
+             回复「拒绝，原因是...」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：拒绝，原因是<用户原话>\") relay 回 sub session 执行 reject。\
              ⚠️ relay 必须使用 xmtp_dispatch_session 工具（不要用 sessions_send，它有 session tree 限制）。禁止 user session agent 自己执行 task CLI。\n\
              \x20\x20\x20\x20userContent（按 deliverableType 分,首行务必带 `[任务 {short_id} 你作为买家]` 前缀）：\n\n\
              \x20\x20\x20\x20▸ deliverableType=file：\n\
@@ -617,8 +617,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 调用 xmtp_prompt_user 把证据决策请求推到 user session 让用户提供内容：**\n\n\
              先调 `session_status` 拿到本 sub session 的 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7)。\n\n\
-             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
-             用户回复证据后，调用 xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY] 用户证据：<用户提供的证据内容>\") relay 回 sub session 执行 dispute upload。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。1 小时内必须提交。\n\
+             \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][job: {job_id}][role: buyer] \
+             用户回复证据后，调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户证据：<用户提供的证据内容>\") relay 回 sub session 执行 dispute upload。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。1 小时内必须提交。\n\
              \x20\x20\x20\x20userContent:\n\
              \x20\x20\x20\x20[任务 {short_id} 你作为买家] 仲裁已上链，需要在 1 小时内提交链下证据。请提供：\n\
              \x20\x20\x20\x20- 文字摘要（必填）：说明交付物不达标的关键证据点\n\
@@ -832,9 +832,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              🛑 **必须等用户选择**，不能替用户做决定。\n\
              先调 `session_status` 拿到本 sub session 的 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7)。\n\
              将 pending list 中**所有卖家**逐一列出，让用户挑选：\n\
-             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}][role: buyer] \
-             用户选择某个卖家（回复序号）→ 调用 xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY] 用户决策：选择卖家序号 <N>，agentId=<对应agentId>\") relay 回 sub session，sub agent 用选中的 agentId 执行 xmtp_start_conversation 建群；\
-             用户回复「全部跳过」→ 调用 xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY] 用户决策：全部跳过\") relay 回 sub session，结束。\
+             \x20\x20llmContent: [USER_DECISION_REQUEST][job: {job_id}][role: buyer] \
+             用户选择某个卖家（回复序号）→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：选择卖家序号 <N>，agentId=<对应agentId>\") relay 回 sub session，sub agent 用选中的 agentId 执行 xmtp_start_conversation 建群；\
+             用户回复「全部跳过」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：全部跳过\") relay 回 sub session，结束。\
              ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行建群或 task CLI。\n\
              \x20\x20userContent:\n\
              \x20\x20[任务 {short_id} 你作为买家] 有以下卖家主动联系你，请选择一个开始协商：\n\
@@ -1038,9 +1038,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】买家（Client）\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 调用 xmtp_prompt_user 通知用户验收截止时间即将到期，请求决策：**\n\
-             \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <sessionKey>][job: {job_id}] \
-             用户回复「通过」→ 调用 xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY] 用户决策：验收通过\") relay 回 sub session 执行 complete；\
-             用户回复「拒绝」+ 原因 → 调用 xmtp_dispatch_session(sessionKey=<sub_key>, content=\"[USER_DECISION_RELAY] 用户决策：拒绝，原因是<用户原话>\") relay 回 sub session 执行 reject。\
+             \x20\x20llmContent: [USER_DECISION_REQUEST][job: {job_id}] \
+             用户回复「通过」→ 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：验收通过\") relay 回 sub session 执行 complete；\
+             用户回复「拒绝」+ 原因 → 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：拒绝，原因是<用户原话>\") relay 回 sub session 执行 reject。\
              ⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。\n\
              \x20\x20userContent:\n\
              \x20\x20[验收截止提醒] 任务 {job_id} 的验收截止时间即将到期。\n\
