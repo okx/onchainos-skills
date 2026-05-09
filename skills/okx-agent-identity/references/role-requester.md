@@ -53,6 +53,8 @@ No service questions. No staking. (Signing address is never asked — the CLI al
 
 ## Confirmation
 
+> ⛔ Mandatory before invoking the CLI. See `SKILL.md §⛔ MANDATORY confirmation gate (non-overridable)` — that section enumerates the rationalizations (`auto-execute` / plan-mode exit / one-shot capture / urgency / "intent obvious") that do **NOT** bypass it.
+
 Show the two-column table (`display-formats.md` §Create/Update Diff → Create variant) in the user's language. Render ONE variant — never bilingual.
 
 Chinese variant:

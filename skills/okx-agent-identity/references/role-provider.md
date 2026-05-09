@@ -127,6 +127,8 @@ After each service is collected, echo back a one-line summary in the user's lang
 
 ## Confirmation
 
+> ⛔ Mandatory before invoking the CLI — applies to both single-service and multi-service provider creates. See `SKILL.md §⛔ MANDATORY confirmation gate (non-overridable)` for the canonical rule + the rationalizations (`auto-execute` / plan-mode exit / one-shot capture / urgency / "intent obvious") that do **NOT** bypass it.
+
 Two-column table (`display-formats.md` §Create/Update Diff), services numbered inline. Render in the user's language — pick ONE variant.
 
 Chinese variant:

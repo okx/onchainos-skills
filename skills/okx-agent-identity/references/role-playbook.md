@@ -87,6 +87,8 @@ The prompt **must match the user's language**. Follow `SKILL.md §Language match
 
 ## Confirmation card
 
+> ⛔ The card is **mandatory before every on-chain write** — `agent create` / `update` / `activate` / `deactivate` / `feedback-submit`. This is enforced by `SKILL.md §⛔ MANDATORY confirmation gate (non-overridable)`; that section is the canonical source. Memory preferences, plan-mode exit, one-shot capture, urgency, and "intent is obvious" all do **NOT** bypass it — see the rationalization list in `SKILL.md §Core Flow` gate 4.
+
 Always a table of fields — never a bash blob. Match the user's language per `SKILL.md §Language matching`. Render field labels and row values in one language only. For the `role` row you may show the CLI value once so the user sees what gets sent. See `display-formats.md` §Create/Update Diff for the full template with both language variants.
 
 Chinese variant:
@@ -116,6 +118,8 @@ End with: `Reply "execute" to run it.`
 **The bash `onchainos agent create ...` command is NOT shown in the confirmation card.** Show it only if the user explicitly says "把命令给我看" / "show me the CLI".
 
 ## Execute
+
+> Before invoking the CLI, run the **pre-execute self-check** defined in `SKILL.md §Step 3: Execute`: the user's most recent turn must contain an explicit confirm token (`执行` / `execute` / `yes` / `好` / `确认` / `go`). If it does not, render the confirmation card instead — do not call the tool.
 
 After the user replies "执行" / "yes" / equivalent:
 
