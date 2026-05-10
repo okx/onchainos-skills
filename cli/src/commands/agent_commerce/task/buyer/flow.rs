@@ -587,7 +587,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
 
         // ─── job_refused: 买家已拒绝，等待卖家决策 ─────────────────
-        Event::JobRefused => format!(
+        Event::JobRefused =>
             "【当前状态】job_refused（买家已拒绝交付物，等待卖家决定）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
@@ -598,8 +598,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - 24h 超时 → 系统自动退款，你将收到 job_refunded\n\n\
              【后续事件】\n\
              - job_disputed → 提交买家证据（Scene 6）\n\
-             - job_refunded → 退款完成\n"
-        ),
+             - job_refunded → 退款完成\n".to_string()
+        ,
 
         // ─── Scene 6: 仲裁已发起，提交买家证据 ─────────────────────
         Event::JobDisputed => format!(
@@ -1150,7 +1150,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
 
         // ─── 发布任务（user session 主动操作，非链事件）────────────────
-        Event::Other(ref s) if s == "create_task" => format!("\
+        Event::Other(ref s) if s == "create_task" => "\
 【当前操作】发布任务（create_task）
 【角色】买家（Client）
 【会话类型】user session（直接与用户对话）
@@ -1225,8 +1225,11 @@ Step 4 — 展示确认表单（格式见 `skills/okx-agent-task/references/disp
 
 ⚠️ 中文对话用中文字段标签，英文对话用英文。
 
+→ **结束本轮 turn**，展示表单后必须停止，等待用户对**本表单**的明确确认回复。
+🛑 之前对话中用户对子问题（如代币确认）的「确认」不算对表单的确认，必须是用户看到表单后的新回复。
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Step 5 — 用户确认后调 CLI
+Step 5 — 用户对表单确认后调 CLI（🛑 禁止与 Step 4 同一轮执行）
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ```bash
@@ -1247,7 +1250,7 @@ onchainos agent create-task \\
 
 ⚠️ 不要说「发布成功」——此时尚未上链确认。上链确认由 job_created 消息触发。
 ⚠️ 不要调 recommend——推荐在 job_created 收到后自动执行。
-"),
+".to_string(),
 
         // ─── 买家不会收到的事件（evaluator 质押 lifecycle）──────────
         Event::Staked

@@ -159,10 +159,14 @@ Native-level fluency, accurate DeFi terminology, no omissions
 
 > 确认无误？确认后我立即上链创建任务。
 
+→ **结束本轮 turn**，展示表单后必须停止，等待用户对**本表单**的明确确认回复。之前对话中用户对子问题（如代币确认）的「确认」不算对表单的确认。
+
 **IMPORTANT**: 中文对话用中文字段标签，英文对话用英文。
 **IMPORTANT**: 用户明确写 "USDT"/"USDG" → 直接用；模糊表达 → 先问「请确认支付代币：USDT 还是 USDG？」。
 
 ### 3.1.4 Create Task
+
+🛑 **禁止与展示表单同一轮执行**——必须是用户看到表单后的新回复。
 
 用户确认 → 调 CLI：
 
