@@ -4,13 +4,14 @@
 //! `txHash` matches the broadcast hash.
 //!
 //! Lifecycle: `open_identity_subscription` connects to
-//! `<identity-base-url-as-wss>/ws/v5/private`, sends the JWT login op,
-//! awaits `event=login,code=0`, then subscribes to
-//! `wallet-agentic-identity` and awaits the subscribe ACK. The caller
-//! broadcasts, then drives `wait_for_match` which streams frames until a
-//! match is found or the deadline fires. Any failure here is a soft
-//! failure — the surrounding command logs and falls through with the
-//! `agent` field absent.
+//! `<identity-base-url-as-wss>/ws/v5/private`, sends the wallet-address
+//! login op (JSON key remains `"token"` per server contract; the value
+//! is the caller's XLayer address, no longer a JWT), awaits
+//! `event=login,code=0`, then subscribes to `wallet-agentic-identity`
+//! and awaits the subscribe ACK. The caller broadcasts, then drives
+//! `wait_for_match` which streams frames until a match is found or the
+//! deadline fires. Any failure here is a soft failure — the surrounding
+//! command logs and falls through with the `agent` field absent.
 
 use std::time::Duration;
 
@@ -19,8 +20,6 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
-
-use super::utils::redact_token_for_debug;
 
 const SUBSCRIBE_CHANNEL: &str = "wallet-agentic-identity";
 /// Hard upper bound on the entire connect → login → subscribe handshake.
@@ -35,7 +34,7 @@ pub(super) struct IdentitySubscription {
     ws: WsStream,
 }
 
-/// Connect → login(JWT) → subscribe(`wallet-agentic-identity`).
+/// Connect → login(wallet address) → subscribe(`wallet-agentic-identity`).
 ///
 /// `base_url` is the WS base URL produced by `identity_ws_base_url(ctx)`:
 /// either an explicit `OKX_AGENTIC_WS_BASE_URL` (swim-lane / cross-host
@@ -43,6 +42,14 @@ pub(super) struct IdentitySubscription {
 /// the raw identity HTTP base URL as a fallback (production /
 /// single-host envs). `derive_ws_url` below maps the scheme
 /// (`http→ws`, `https→wss`) and forces the `/ws/v5/private` path.
+///
+/// `wallet_address` is the caller's XLayer address (the same address
+/// used as `fromAddr` for the create/update broadcast). The push
+/// service identifies the subscriber by this address. The wire JSON
+/// key is still `"token"` for compatibility with the broader push-
+/// platform login contract; only the value semantics changed (was a
+/// JWT, now a wallet address). The address is public, so no redaction
+/// is needed in debug logs.
 ///
 /// Note that `WalletApiClient` may internally rewrite outgoing HTTP to
 /// a DoH proxy URL; that rewrite is invisible from outside the wallet
@@ -57,12 +64,12 @@ pub(super) struct IdentitySubscription {
 /// stall the caller before broadcast. Bubbles up any failure so the
 /// caller can decide whether to fall through.
 pub(super) async fn open_identity_subscription(
-    jwt: &str,
+    wallet_address: &str,
     base_url: &str,
 ) -> Result<IdentitySubscription> {
     let ws_url = derive_ws_url(base_url)?;
     eprintln!("[agent-identity] ws connect: url={ws_url}");
-    match timeout(OPEN_TIMEOUT, open_inner(jwt, &ws_url)).await {
+    match timeout(OPEN_TIMEOUT, open_inner(wallet_address, &ws_url)).await {
         Ok(Ok(sub)) => Ok(sub),
         Ok(Err(e)) => Err(e),
         Err(_) => bail!(
@@ -72,18 +79,18 @@ pub(super) async fn open_identity_subscription(
     }
 }
 
-async fn open_inner(jwt: &str, ws_url: &str) -> Result<IdentitySubscription> {
+async fn open_inner(wallet_address: &str, ws_url: &str) -> Result<IdentitySubscription> {
     let (mut ws, _resp) = connect_async(ws_url)
         .await
         .with_context(|| format!("failed to connect to {ws_url}"))?;
     eprintln!("[agent-identity] ws connected");
 
     // ── login ─────────────────────────────────────────────────────────────
-    let login = json!({ "op": "login", "args": [{ "token": jwt }] }).to_string();
+    // JSON key is "token" per push-platform contract; value is the wallet
+    // address (public on-chain identifier, no redaction needed).
+    let login = json!({ "op": "login", "args": [{ "token": wallet_address }] }).to_string();
     eprintln!(
-        "[agent-identity] ws login request: op=login token_len={} token_prefix={}",
-        jwt.len(),
-        redact_token_for_debug(jwt),
+        "[agent-identity] ws login request: op=login wallet_address={wallet_address}"
     );
     ws.send(Message::Text(login.into()))
         .await
@@ -113,6 +120,15 @@ impl IdentitySubscription {
     /// `tx_hash` (lowercase, ignoring optional `0x` prefix on either
     /// side). Returns `Ok(None)` on timeout. Non-matching frames and
     /// unrecognized shapes are logged and skipped.
+    ///
+    /// Note on hash semantics: the backend's broadcast endpoint returns
+    /// what it calls a "txHash" (in the AA / 4337 flow this is actually
+    /// the user-operation hash, not the underlying L1 tx hash). The push
+    /// payload also carries a "txHash" field. This function only relies
+    /// on those two backend-named fields holding the **same value** —
+    /// it does not reason about whether the value is a uop hash or an
+    /// on-chain tx hash. As long as the backend is consistent across
+    /// the broadcast response and the push payload, matching works.
     pub(super) async fn wait_for_match(
         mut self,
         tx_hash: &str,
@@ -148,10 +164,7 @@ impl IdentitySubscription {
                         "[agent-identity] ws push skipped: txHash={push_hash} target={target}"
                     );
                 } else {
-                    eprintln!(
-                        "[agent-identity] ws frame ignored: {}",
-                        truncate(&text, 200)
-                    );
+                    eprintln!("[agent-identity] ws frame ignored: {text}");
                 }
             }
         })
@@ -176,7 +189,11 @@ impl IdentitySubscription {
 
 // ─── Frame parsing ────────────────────────────────────────────────────────
 
-/// Accept both `{ "arg": {..}, "data": [obj] }` and bare `{ obj }`.
+/// Accept all three observed push shapes:
+///   - `{ "arg": {..}, "data": { obj } }` (single-object data — what the
+///     wallet-agentic-identity push platform actually sends)
+///   - `{ "arg": {..}, "data": [ obj ] }` (legacy / theoretical array form)
+///   - bare `{ obj }` with `txHash` + `agentId` at the top level
 /// Returns the inner push object when shape is recognized; ignores
 /// control frames (`event=login|subscribe|error`) that may race after the
 /// initial ACK drain.
@@ -185,8 +202,13 @@ fn extract_payload(text: &str) -> Option<Value> {
     if v.get("event").is_some() {
         return None;
     }
-    if let Some(arr) = v.get("data").and_then(Value::as_array) {
-        return arr.first().cloned();
+    if let Some(data) = v.get("data") {
+        if let Some(arr) = data.as_array() {
+            return arr.first().cloned();
+        }
+        if data.is_object() {
+            return Some(data.clone());
+        }
     }
     if v.get("txHash").is_some() && v.get("agentId").is_some() {
         return Some(v);
@@ -217,19 +239,33 @@ async fn wait_for_event(ws: &mut WsStream, expected: &str) -> Result<String> {
             Ok(v) => v,
             Err(_) => {
                 eprintln!(
-                    "[agent-identity] ws ack skipped (non-json) while waiting for {expected}: {}",
-                    truncate(&text_str, 200)
+                    "[agent-identity] ws ack skipped (non-json) while waiting for {expected}: {text_str}"
                 );
                 continue;
             }
         };
         match v.get("event").and_then(Value::as_str) {
             Some(e) if e == expected => {
-                let code = v.get("code").and_then(Value::as_str).unwrap_or("0");
-                if code != "0" {
+                // `code` may arrive as string ("0") or number (0); subscribe
+                // ACK in the spec has no `code` field at all. Anything else
+                // (non-zero number, non-"0" string, bool / array / object) is
+                // a rejection — must NOT default to success or we silently
+                // accept e.g. {"event":"login","code":1,...} and then sit
+                // through the 30 s push wait with no real cause surfaced.
+                let code_ok = match v.get("code") {
+                    None | Some(Value::Null) => true,
+                    Some(Value::String(s)) => s == "0",
+                    Some(Value::Number(n)) => n.as_i64() == Some(0),
+                    _ => false,
+                };
+                if !code_ok {
+                    let code_repr = v
+                        .get("code")
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "<missing>".to_string());
                     let msg_field = v.get("msg").and_then(Value::as_str).unwrap_or("");
                     bail!(
-                        "ws {expected} rejected: code={code} msg={msg_field} raw={text_str}"
+                        "ws {expected} rejected: code={code_repr} msg={msg_field} raw={text_str}"
                     );
                 }
                 return Ok(text_str);
@@ -240,9 +276,7 @@ async fn wait_for_event(ws: &mut WsStream, expected: &str) -> Result<String> {
             }
             other => {
                 eprintln!(
-                    "[agent-identity] ws ack skipped (event={:?}) while waiting for {expected}: {}",
-                    other,
-                    truncate(&text_str, 200)
+                    "[agent-identity] ws ack skipped (event={other:?}) while waiting for {expected}: {text_str}"
                 );
                 continue;
             }
@@ -285,15 +319,4 @@ fn normalize_hash(s: &str) -> String {
         .or_else(|| trimmed.strip_prefix("0X"))
         .unwrap_or(trimmed);
     no_prefix.to_ascii_lowercase()
-}
-
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        return s.to_string();
-    }
-    let mut end = max;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}...", &s[..end])
 }

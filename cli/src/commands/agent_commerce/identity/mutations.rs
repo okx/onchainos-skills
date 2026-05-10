@@ -158,9 +158,9 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
     // identity_ws_base_url 优先吃 OKX_AGENTIC_WS_BASE_URL（泳道用，HTTP 与 WS
     // 跨 host），否则回落到 identity HTTP base URL 做 scheme 替换。注：DoH
     // 代理重写不可见，那种环境下 WS 仍走原 host 失败、进软降级，不影响广播
-    // 与 agentList。
+    // 与 agentList。push-platform login 用钱包地址作为 "token" 值（不再是 JWT）。
     let subscription =
-        match open_identity_subscription(&access_token, &identity_ws_base_url(ctx)).await {
+        match open_identity_subscription(&from_addr, &identity_ws_base_url(ctx)).await {
         Ok(s) => Some(s),
         Err(e) => {
             eprintln!(
@@ -263,9 +263,13 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     // identity_ws_base_url 优先吃 OKX_AGENTIC_WS_BASE_URL（泳道用，HTTP 与 WS
     // 跨 host），否则回落到 identity HTTP base URL 做 scheme 替换。注：DoH
     // 代理重写不可见，那种环境下 WS 仍走原 host 失败、进软降级，不影响广播
-    // 与 agentList。
-    let subscription =
-        match open_identity_subscription(&access_token, &identity_ws_base_url(ctx)).await {
+    // 与 agentList。push-platform login 用钱包地址作为 "token" 值（不再是 JWT）。
+    let subscription = match open_identity_subscription(
+        &signing_session.addr_info.address,
+        &identity_ws_base_url(ctx),
+    )
+    .await
+    {
         Ok(s) => Some(s),
         Err(e) => {
             eprintln!(
@@ -577,21 +581,24 @@ async fn wait_for_identity_push(
 /// Best-effort fetch of the caller's full XLayer agent list (struct C).
 /// Pages through `/agent/agent-list?chainIndex=196` with `pageSize=100`
 /// until `total` is satisfied or `AGENT_LIST_MAX_PAGES` is hit. Returns
-/// `{ total, items }` (matching the documented `agent get` shape).
+/// `{ total, list: [...] }`. Note the backend's actual response shape
+/// uses the field name `list` (not `items` — earlier docs claimed
+/// `items`; that was a pre-existing doc bug confirmed empirically on
+/// 2026-05-10).
 ///
 /// Failure modes that short-circuit to `None` so the envelope omits the
 /// field rather than emit a misleading partial:
 ///   - any HTTP error from the client during pagination
 ///   - page 1 missing or non-numeric `total` field (response shape
 ///     anomaly — cannot trust the dataset)
-///   - any page missing or non-array `items` field (same)
+///   - any page missing or non-array `list` field (same)
 ///   - mid-pagination empty page when `total > aggregated` (backend
 ///     says more exist but failed to deliver them)
 ///
 /// The safety-cap exit (page > `AGENT_LIST_MAX_PAGES`) is the only path
 /// that returns a partial aggregate, and it logs the truncation. The
-/// legitimate empty case (`total == 0` and page 1 returned `items: []`)
-/// returns `Some({total: 0, items: []})`.
+/// legitimate empty case (`total == 0` and page 1 returned `list: []`)
+/// returns `Some({total: 0, list: []})`.
 async fn fetch_agent_list(client: &mut WalletApiClient, access_token: &str) -> Option<Value> {
     let mut all_items: Vec<Value> = Vec::new();
     let mut total: u64 = 0;
@@ -619,6 +626,12 @@ async fn fetch_agent_list(client: &mut WalletApiClient, access_token: &str) -> O
             }
         };
 
+        // Keep the raw response for debug logging on shape-mismatch aborts.
+        // Without this, the abort logs only say "shape wrong" with no clue
+        // what the backend actually returned — see the post-mortem on the
+        // 2026-05-10 test where the abort fired but the actual response shape
+        // was unknown.
+        let raw_repr = raw.to_string();
         let normalized = normalize_singleton_object(raw);
 
         // Page 1: total must be present and numeric. Missing/wrong-shape => abort.
@@ -627,19 +640,21 @@ async fn fetch_agent_list(client: &mut WalletApiClient, access_token: &str) -> O
                 Some(t) => t,
                 None => {
                     eprintln!(
-                        "[agent-identity] agent-list page 1 missing or non-numeric `total` field — abort"
+                        "[agent-identity] agent-list page 1 missing or non-numeric `total` field — abort. raw={raw_repr} normalized={normalized}"
                     );
                     return None;
                 }
             };
         }
 
-        // items must be an array on every page. Missing/wrong-shape => abort.
-        let page_items: Vec<Value> = match normalized.get("items").and_then(Value::as_array) {
+        // `list` must be an array on every page. Missing/wrong-shape => abort.
+        // Backend uses the field name `list` (not `items`); see the doc
+        // comment above this function.
+        let page_items: Vec<Value> = match normalized.get("list").and_then(Value::as_array) {
             Some(arr) => arr.clone(),
             None => {
                 eprintln!(
-                    "[agent-identity] agent-list page {page} missing or non-array `items` field — abort"
+                    "[agent-identity] agent-list page {page} missing or non-array `list` field — abort. raw={raw_repr} normalized={normalized}"
                 );
                 return None;
             }
@@ -648,17 +663,17 @@ async fn fetch_agent_list(client: &mut WalletApiClient, access_token: &str) -> O
         all_items.extend(page_items);
 
         // Done: aggregated count satisfies backend's reported total.
-        // Also covers the legitimate empty case: total == 0, page 1 items == [],
+        // Also covers the legitimate empty case: total == 0, page 1 list == [],
         // aggregated (0) >= total (0) on first iteration.
         if (all_items.len() as u64) >= total {
             break;
         }
 
-        // Anomaly: total > aggregated but this page returned 0 items.
+        // Anomaly: total > aggregated but this page returned 0 list entries.
         // Don't return a truncated Some — abort per cli-reference §1 contract.
         if page_count == 0 {
             eprintln!(
-                "[agent-identity] agent-list page {page} returned 0 items but total={} > aggregated={} — abort",
+                "[agent-identity] agent-list page {page} returned 0 list entries but total={} > aggregated={} — abort",
                 total,
                 all_items.len(),
             );
@@ -679,7 +694,7 @@ async fn fetch_agent_list(client: &mut WalletApiClient, access_token: &str) -> O
 
     Some(json!({
         "total": total,
-        "items": all_items,
+        "list": all_items,
     }))
 }
 
