@@ -110,13 +110,6 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
     //     llmContent = 注入 LLM session 的指令（用户不可见）
     //     userContent = 发送给用户的可见消息
     // ──────────────────────────────────────────────────────────────────────
-    let send_to_peer = format!(
-        "→ 用 xmtp_send 发给卖家（机制见 skills/okx-agent-task/SKILL.md Session 通信契约 1.4）。\n\
-         当前 sub session：jobId={job_id}，我方 agentId={agent_id}。\n\
-         content（纯自然语言，不要包 markdown / 代码块）："
-    );
-    let header_template = &send_to_peer;
-
     let context_preamble = format!(
         "📍 你在 sub session（你看到这段 next-action 输出 = 100% 在 sub）。\n\n\
          🔒 **如果当前 turn 没读过 skills/okx-agent-task/SKILL.md Session 通信契约**（envelope 形态白名单 / xmtp_send 两步 / xmtp_dispatch_user·xmtp_prompt_user 推 user session 铁律），\n\
@@ -128,8 +121,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
          \x20\x204) ❌ **同 turn 不重复 xmtp_send**：剧本说『发一条』→ 调过一次工具返回『已发送』就**算成功**，**当前 turn 内不再对同一对方调 xmtp_send 第二次**。不要因为消息可能不够清晰就重发——重发 = 刷屏 + 触发对方循环。下一条 inbound 进来再说。\n\
          \x20\x205) ❌ **apply 是卖家动作**：escrow 路径中 `apply` 由卖家执行，买家绝不能调 `onchainos agent apply`。买家先调 `set-payment-mode`，再在收到卖家申请通知后执行 `confirm-accept`。non_escrow 路径需从卖家消息中提取 paymentId 再 confirm-accept。\n\
          \x20\x206) ❌ **同 turn 不重复 `session_status`**：sub session 的 sessionKey 在同一 turn 内是稳定的——**调过一次就把结果存住，后续 step 直接复用**。即使剧本多个 step 都提到 sessionKey，也只调一次 session_status。重复调 = 死循环征兆，必须立即停。\n\
-         \x20\x208) ❌ **CLI 操作后禁止给卖家发过场消息**：confirm-accept / complete / reject / set-payment-mode 等 CLI 成功后，**不要 xmtp_send 给卖家任何状态通知**（如「资金已托管」「已确认接单」「任务已完成」等）。卖家通过链上事件得知状态变化，买家侧给卖家发的消息**仅限协商阶段的结构化消息**（[NEGOTIATE_PROPOSE]、[NEGOTIATE_CONFIRM]）和争议证据相关交互。\n\
-         \x20\x207) ❌ **`xmtp_prompt_user` 必须配对 `pending-decisions add`**：调 `xmtp_prompt_user` **之前**先调 `onchainos agent pending-decisions add --sub-key <session_status 拿到的 sessionKey 整串> --job-id {job_id} --role buyer --agent-id {agent_id} --summary \"<userContent 第一行任务前缀后的简述>\" --user-content \"<userContent 完整原文,跟即将传给 xmtp_prompt_user 的 userContent 同一字符串>\"`；解析 `[USER_DECISION_RELAY]` **之后、调 next-action 之前**调 `onchainos agent pending-decisions remove --job-id {job_id} --role buyer --agent-id {agent_id}`。漏调会让 user session agent 看不到这条 / 看到僵尸条目，多 prompt 时误派 sub。唯一键是 `(job_id, role, agent_id)` 三元组(单钱包多 provider agent 时同 jobId 同 role 不同 agent 各占一条不互覆)。规则源 `SKILL.md Session 通信契约 5`。\n\n\
+         \x20\x207) ❌ **`xmtp_prompt_user` 必须配对 `pending-decisions add`**：调 `xmtp_prompt_user` **之前**先调 `onchainos agent pending-decisions add --sub-key <session_status 拿到的 sessionKey 整串> --job-id {job_id} --role buyer --agent-id {agent_id} --summary \"<userContent 第一行任务前缀后的简述>\" --user-content \"<userContent 完整原文,跟即将传给 xmtp_prompt_user 的 userContent 同一字符串>\"`；解析 `[USER_DECISION_RELAY]` **之后、调 next-action 之前**调 `onchainos agent pending-decisions remove --job-id {job_id} --role buyer --agent-id {agent_id}`。漏调会让 user session agent 看不到这条 / 看到僵尸条目，多 prompt 时误派 sub。唯一键是 `(job_id, role, agent_id)` 三元组(单钱包多 provider agent 时同 jobId 同 role 不同 agent 各占一条不互覆)。规则源 `SKILL.md Session 通信契约 5`。\n\
+         \x20\x208) ❌ **禁止给卖家发过场消息**：除协商阶段的结构化消息（[NEGOTIATE_PROPOSE]、[NEGOTIATE_CONFIRM]、协商自然语言对话）外，**任何事件处理中都不要 xmtp_send 给卖家**。包括但不限于「已确认接单」「资金已托管」「已验收」「证据已提交」「任务已完成」等状态通知。卖家通过链上事件得知状态变化，买家发过场消息只会造成干扰。\n\n\
          如果不记得本任务协商细节（deliverable / paymentMode / token / 卖家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 加载上下文。\n\n"
     );
@@ -607,6 +600,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::JobDisputed => format!(
             "【当前状态】job_disputed（仲裁已发起，进入 1 小时证据准备期）\n\
              【角色】买家（Client）\n\n\
+             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**，仲裁期间双方通过链上证据交互，不通过消息。\n\
              ⚠️ **证据内容必须由用户决策**——sub agent 不知道用户手上有什么证据（截图、聊天记录、交付物链接等），\n\
              不要凭空编造证据摘要直接调 `dispute upload`。**先把决策请求推到 user session 让用户拍板**。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
@@ -649,13 +643,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              onchainos agent dispute upload {job_id} --agent-id {agent_id} --text \"<聊天记录 + 用户摘要 拼接后的完整 text>\" --image <用户提供的图片路径或省略>\n\
              ```\n\
              text 和 image **至少一项**；图片可省略整个 `--image` 段，不要给空字符串。\n\n\
-             **Step 4 — 调用 `xmtp_send` 工具向卖家发送：**\n\n\
-             {header_template}\n\
-             证据已提交，等待仲裁员裁决。\n\n\
+             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**（如「证据已提交」），卖家通过链上事件得知。\n\n\
              【后续事件】\n\
              - job_completed → 仲裁卖家胜诉，任务完成\n\
              - job_refunded → 仲裁买家胜诉，退款\n\n\
-             跑完 Step 1-4 → **结束本轮 turn，不要 xmtp_dispatch_user / xmtp_prompt_user 推 main**。\n"
+             跑完 Step 1-3 → **结束本轮 turn，不要 xmtp_dispatch_user / xmtp_prompt_user 推 main**。\n"
         ),
 
         // ─── 任务完成（按支付方式分流） ─────────────────────────────────
