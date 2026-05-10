@@ -143,19 +143,21 @@ Keep these:
 
 ### After success
 
-Return control to the caller. The response to the user contains:
+Return control to the caller. The response to the user is **only one line** in the user's language — **no detail card** in passive mode (the user just confirmed all fields a turn ago; rendering the full detail card would be redundant and would break the lean handoff to `okx-agent-task`). Follow the `#<id>` placeholder rule.
 
-1. The detail card of the new requester agent (follow §Language matching + `#<id>` rule — omit the Agent ID row if the id isn't available yet).
-2. One line, in the user's language. With id available:
-   - 中文："已为你创建买家身份 #<id>。现在继续回到发布任务的流程。"
-   - English: "Requester identity #<id> created for you. Resuming the task-publish flow."
-3. One line, without id:
-   - 中文："已为你创建买家身份。现在继续回到发布任务的流程。"
-   - English: "Requester identity created. Resuming the task-publish flow."
+With id available:
+- 中文："已为你创建买家身份 #<id>。现在继续回到发布任务的流程。"
+- English: "Requester identity #<id> created for you. Resuming the task-publish flow."
+
+Without id:
+- 中文："已为你创建买家身份。现在继续回到发布任务的流程。"
+- English: "Requester identity created. Resuming the task-publish flow."
 
 Do NOT ask "要不要发任务" / "want to publish a task?" — the task skill already has the pending intent; it will resume.
 
 Do NOT load `/skills/okx-agent-chat/after-agent-list-changed.md` here — passive mode is contracted to hand strictly back to `okx-agent-task` with the single line above (see `passive-onboarding.md` "No other chatter"). The task skill triggers the chat post-hook itself when its flow needs it.
+
+> **Why no detail card here?** Normal (non-passive) requester onboarding renders a detail card after success per `§Post-success`; passive mode deliberately omits it because (a) the user just saw all fields on the confirmation card one turn earlier, (b) the goal of passive mode is the leanest possible handoff back to `okx-agent-task`, and (c) detail-card-only fields the user might want later (full address, txHash) are always retrievable via `agent get --agent-ids <id>`. If you want to change this, change it in `passive-onboarding.md §Messages to the user` and `SKILL.md §Passive Onboarding` together.
 
 ### When user already has a requester
 
