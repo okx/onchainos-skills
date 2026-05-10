@@ -263,7 +263,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              协商目标：就以下结构化字段达成一致——\n\
              \x20\x20- deliverable：交付物描述（具体要做什么）\n\
              \x20\x20- qualityStandards：验收标准\n\
-             \x20\x20- paymentMode：支付方式（escrow 或 non_escrow）\n\
+             \x20\x20- paymentMode：支付方式（**仅 escrow 或 non_escrow**——A2A 协商会话中禁止 x402，无论卖家是否有 endpoint）\n\
              \x20\x20- tokenSymbol：支付代币\n\
              \x20\x20- tokenAmount：支付金额\n\
              \x20\x20- deadline：交付截止时间\n\n\
@@ -341,7 +341,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\
              不保存会导致后续 confirm-accept 使用错误的币种/金额。\n\n\
              **Step 6.2 — 执行 setPaymentMode（无条件，不判断当前链上值）**：\n\
-             ⚠️ **不论链上 paymentType 当前是什么值（0 / 1 / 2），都必须执行 set-payment-mode。** 不要查 common context 比较——直接调：\n\n\
+             ⚠️ **不论链上 paymentType 当前是什么值（0 / 1 / 2 / 3），都必须执行 set-payment-mode。** 不要查 common context 比较——直接调：\n\
+             ⚠️ **A2A 协商会话中禁止 x402**：无论卖家是否有 endpoint，协商会话中只能选 escrow 或 non_escrow。此处 set-payment-mode 会覆盖链上值。\n\n\
              ```bash\n\
              onchainos agent set-payment-mode {job_id} --payment-mode <escrow|non_escrow> --token-symbol <协商币种> --token-amount <协商价格>\n\
              ```\n\

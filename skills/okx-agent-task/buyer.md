@@ -151,6 +151,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
 > - ❌ **禁止短路三步握手**：不要用自然语言（"请 apply / 条款已锁定 / 请接单"）替代 `[NEGOTIATE_CONFIRM]` 字面量——卖家只识别字面量
 > - ❌ **apply 是卖家动作**：buyer **绝不能**调 `onchainos agent apply`
 > - ❌ **最高预算硬上限**：卖家报价超过 `paymentMostTokenAmount` 时**必须拒绝**，不得同意
+> - ❌ **A2A 协商会话中禁止 x402**：无论卖家是否有 endpoint，协商会话中只能选 escrow 或 non_escrow。卖家提出 x402 时必须拒绝
 
 ---
 
