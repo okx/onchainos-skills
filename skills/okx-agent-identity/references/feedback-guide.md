@@ -79,6 +79,8 @@ Walk this ladder in order:
 
 ### Step 5 — Final confirmation
 
+> ⛔ `feedback-submit` is an on-chain write — the confirmation card is **mandatory** per `SKILL.md §⛔ MANDATORY confirmation gate (non-overridable)`. Auto-execute preferences, prior in-conversation confirmations of other writes, and "the user obviously wants this" do NOT bypass the gate. Render the card.
+
 Render a 2-column table (not a bash blob). Follow `display-formats.md` §Create/Update Diff style:
 
 | Field | Value |
@@ -96,6 +98,8 @@ The rating row shows `★ N` where N is the integer 0–5. Never render `85 / 10
 **Do NOT show the bash command in the confirmation card.** Render it only if the user explicitly asks "把命令给我看".
 
 ### Step 6 — Execute (maintainer reference — not shown to user)
+
+> Before invoking the CLI, run the **pre-execute self-check** in `SKILL.md §Step 3: Execute`: the user's **most recent** turn must contain an explicit confirm token (`执行` / `execute` / `yes` / `好` / `确认` / `go`). A confirmation token from earlier in the conversation, or a confirm of a different write, does NOT count. If the most-recent turn lacks the token, render Step 5's card and wait.
 
 ```bash
 # Skill maps user's 0–5 stars to 0/20/40/60/80/100 before invocation.

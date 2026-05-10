@@ -87,6 +87,8 @@ The prompt **must match the user's language**. Follow `SKILL.md §Language match
 
 ## Confirmation card
 
+> ⛔ The card is **mandatory before every content-creating on-chain write** — `agent create` / `update` / `feedback-submit`. This is enforced by `SKILL.md §⛔ MANDATORY confirmation gate (non-overridable)`; that section is the canonical source. Memory preferences, plan-mode exit, one-shot capture, urgency, and "intent is obvious" all do **NOT** bypass it — see the rationalization list in `SKILL.md §Core Flow` gate 4. State toggles (`agent activate` / `agent deactivate`) are NOT gated and run directly via `SKILL.md §Intent → Sub-flow`.
+
 Always a table of fields — never a bash blob. Match the user's language per `SKILL.md §Language matching`. Render field labels and row values in one language only. For the `role` row you may show the CLI value once so the user sees what gets sent. See `display-formats.md` §Create/Update Diff for the full template with both language variants.
 
 Chinese variant:
@@ -117,10 +119,12 @@ End with: `Reply "execute" to run it.`
 
 ## Execute
 
+> Before invoking the CLI, run the **pre-execute self-check** defined in `SKILL.md §Step 3: Execute`: the user's most recent turn must contain an explicit confirm token (`执行` / `execute` / `yes` / `好` / `确认` / `go`). If it does not, render the confirmation card instead — do not call the tool.
+
 After the user replies "执行" / "yes" / equivalent:
 
 1. Run the CLI command once.
-2. On success → render the detail card (`display-formats.md` §Agent detail card) + the role-specific next-step line (see each role file). **For the writes in the `SKILL.md §Step 4` same-turn handoff whitelist** (`requester` / `provider` / `evaluator` create, plus `activate` / `deactivate`), the visible line is followed by the same-turn handoff (load `okx-agent-chat/after-agent-list-changed.md` for requester / provider / activate / deactivate — silent no-op outside an OpenClaw runtime; `okx-agent-task/evaluator.md` for evaluator → stake). Do not stop between visible line and handoff. See each role file's §Post-success "Agent directive" block.
+2. On success → render the detail card (`display-formats.md` §Agent detail card) + the role-specific next-step line (see each role file). **Exception — passive onboarding** (`intent=need-requester`): render **only one line** and **no detail card** per `passive-onboarding.md §Messages to the user` + `role-requester.md §Passive Onboarding → After success`. **For the writes in the `SKILL.md §Step 4` same-turn handoff whitelist** (`requester` / `provider` / `evaluator` create, plus `activate` / `deactivate`), the visible line is followed by the same-turn handoff (load `okx-agent-chat/after-agent-list-changed.md` for requester / provider / activate / deactivate — silent no-op outside an OpenClaw runtime; `okx-agent-task/evaluator.md` for evaluator → stake). Do not stop between visible line and handoff. See each role file's §Post-success "Agent directive" block. **Passive onboarding does NOT trigger the same-turn chat handoff** either (`role-requester.md §Passive Onboarding` "Do NOT load after-agent-list-changed.md" rule).
 3. On failure → render the error card (`display-formats.md` §Error card) + the recovery action (see `troubleshooting.md`). **Do NOT auto-retry.**
 
 See `_shared/no-polling.md` — do NOT follow up with `agent get` / status poll. Same-turn skill handoffs in the §Step 4 whitelist are explicitly allowed (they are not polling).

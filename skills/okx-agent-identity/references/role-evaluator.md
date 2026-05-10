@@ -54,6 +54,8 @@ No avatar prompt by default (evaluator dashboards rarely show avatars). If the u
 
 ## Phase 2 — confirmation card
 
+> ⛔ Mandatory before invoking the CLI. See `SKILL.md §⛔ MANDATORY confirmation gate (non-overridable)` for the canonical rule + rationalizations (`auto-execute` / plan-mode exit / one-shot capture / urgency / "intent obvious") that do **NOT** bypass it.
+
 Render in the user's language. Pick ONE variant.
 
 Chinese variant:
