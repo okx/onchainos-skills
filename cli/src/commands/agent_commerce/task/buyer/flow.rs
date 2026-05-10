@@ -39,7 +39,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
             ref_header,
             format!("  onchainos agent complete {job_id}       # escrow：验收通过，释放款项"),
             format!("  onchainos agent reject {job_id} --reason <reason>  # 拒绝验收（仅 escrow）"),
-            format!("  onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <buyerAgentId> --score <0-100> --task-id {job_id}  # 评价卖家"),
+            format!("  onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <buyerAgentId> --score <score> --task-id {job_id}  # 评价卖家（用户回复「评价」后再收集评分和内容）"),
         ],
         Status::Refused => vec![
             next_action("job_refused"),
@@ -128,6 +128,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
          \x20\x204) ❌ **同 turn 不重复 xmtp_send**：剧本说『发一条』→ 调过一次工具返回『已发送』就**算成功**，**当前 turn 内不再对同一对方调 xmtp_send 第二次**。不要因为消息可能不够清晰就重发——重发 = 刷屏 + 触发对方循环。下一条 inbound 进来再说。\n\
          \x20\x205) ❌ **apply 是卖家动作**：escrow 路径中 `apply` 由卖家执行，买家绝不能调 `onchainos agent apply`。买家先调 `set-payment-mode`，再在收到卖家申请通知后执行 `confirm-accept`。non_escrow 路径需从卖家消息中提取 paymentId 再 confirm-accept。\n\
          \x20\x206) ❌ **同 turn 不重复 `session_status`**：sub session 的 sessionKey 在同一 turn 内是稳定的——**调过一次就把结果存住，后续 step 直接复用**。即使剧本多个 step 都提到 sessionKey，也只调一次 session_status。重复调 = 死循环征兆，必须立即停。\n\
+         \x20\x208) ❌ **CLI 操作后禁止给卖家发过场消息**：confirm-accept / complete / reject / set-payment-mode 等 CLI 成功后，**不要 xmtp_send 给卖家任何状态通知**（如「资金已托管」「已确认接单」「任务已完成」等）。卖家通过链上事件得知状态变化，买家侧给卖家发的消息**仅限协商阶段的结构化消息**（[NEGOTIATE_PROPOSE]、[NEGOTIATE_CONFIRM]）和争议证据相关交互。\n\
          \x20\x207) ❌ **`xmtp_prompt_user` 必须配对 `pending-decisions add`**：调 `xmtp_prompt_user` **之前**先调 `onchainos agent pending-decisions add --sub-key <session_status 拿到的 sessionKey 整串> --job-id {job_id} --role buyer --agent-id {agent_id} --summary \"<userContent 第一行任务前缀后的简述>\" --user-content \"<userContent 完整原文,跟即将传给 xmtp_prompt_user 的 userContent 同一字符串>\"`；解析 `[USER_DECISION_RELAY]` **之后、调 next-action 之前**调 `onchainos agent pending-decisions remove --job-id {job_id} --role buyer --agent-id {agent_id}`。漏调会让 user session agent 看不到这条 / 看到僵尸条目，多 prompt 时误派 sub。唯一键是 `(job_id, role, agent_id)` 三元组(单钱包多 provider agent 时同 jobId 同 role 不同 agent 各占一条不互覆)。规则源 `SKILL.md Session 通信契约 5`。\n\n\
          如果不记得本任务协商细节（deliverable / paymentMode / token / 卖家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 加载上下文。\n\n"
@@ -389,6 +390,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::JobAccepted => format!(
             "【当前状态】job_accepted（买家已确认接单，任务进入执行阶段）\n\
              【角色】买家（Client）\n\n\
+             ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**（如「已确认接单」「资金已托管」等），卖家通过链上事件得知状态变化。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 获取任务完整信息：**\n\
              ```bash\n\
@@ -439,7 +441,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20<交付物完整内容>\n\
              \x20\x20---交付物结束---\n\
              \x20\x20支出：<tokenAmount> <tokenSymbol>\n\
-             \x20\x20本任务流程结束。如需评价卖家，请回复评分（0-100）和评价内容。\n\n\
+             \x20\x20本任务流程结束。如需评价卖家，请回复「评价」。\n\n\
              【后续事件】\n\
              - 卖家发送交付物 + paymentId（XMTP 消息）→ 买家支付 + complete → job_completed\n\n\
              ━━━━━━━━━ 分支 C：x402 ━━━━━━━━━\n\n\
@@ -579,7 +581,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20验收标准：<qualityStandards>\n\n\
              **B-Step 2 — 终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
-             ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复评分（0-100）和评价内容。」\n\
+             ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复「评价」。」\n\
              任务完整结束。\n\n\
              【后续事件】\n\
              - escrow: job_completed → 任务完成 / job_refused → 等待卖家决定仲裁或退款\n\
@@ -682,7 +684,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20本任务流程结束。\n\n\
              **A-Step 2 — 终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
-             ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复评分（0-100）和评价内容。」\n\
+             ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复「评价」。」\n\
              任务完整结束。\n\n\
              ━━━━━━━━━ 分支 B：non_escrow（非担保）— 流程结束 ━━━━━━━━━\n\n\
              ⚠️ 非担保模式下 job_completed 意味着买家已收到交付物并完成支付，任务**已到达终态**。\n\n\
@@ -696,7 +698,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20本任务流程结束。\n\n\
              **B-Step 2 — 终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
-             ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复评分（0-100）和评价内容。」\n\
+             ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复「评价」。」\n\
              任务完整结束。\n\n\
              ━━━━━━━━━ 分支 C：x402 — 最终汇总 ━━━━━━━━━\n\n\
              ⚠️ x402 模式下 job_completed 意味着支付链路（accept + complete）已完成上链。\n\
@@ -707,7 +709,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20  - 支出：<tokenAmount> <tokenSymbol>\n\
              \x20\x20\x20\x20  - 支付方式：x402\n\
              \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
-             \x20\x20\x20\x20如需评价卖家，请回复评分（0-100）和评价内容。\n\n\
+             \x20\x20\x20\x20如需评价卖家，请回复「评价」。\n\n\
              **C-Step 2 — 终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
              任务完整结束。\n"
@@ -738,13 +740,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20[仲裁胜诉] <title>（{job_id}）仲裁完成，买方胜诉。\n\
              \x20\x20\x20\x20  - 退款：<tokenAmount> <tokenSymbol>\n\
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（买家胜诉）\n\
-             \x20\x20\x20\x20本任务流程结束。如需评价卖家，请回复评分（0-100）和评价内容。\n\n\
+             \x20\x20\x20\x20本任务流程结束。如需评价卖家，请回复「评价」。\n\n\
              ━━━━━━━━━━━━━ 买家败诉（jobStatus=complete）━━━━━━━━━━━━━\n\
              content：\n\
              \x20\x20\x20\x20[仲裁败诉] <title>（{job_id}）仲裁完成，卖方胜诉。\n\
              \x20\x20\x20\x20  - 损失：<tokenAmount> <tokenSymbol>（资金已释放给卖家）\n\
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（买家败诉）\n\
-             \x20\x20\x20\x20本任务流程结束。如需评价卖家，请回复评分（0-100）和评价内容。\n\n\
+             \x20\x20\x20\x20本任务流程结束。如需评价卖家，请回复「评价」。\n\n\
              **Step 4 — 终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
              ⚠️ **不要自动评价**。\n\
