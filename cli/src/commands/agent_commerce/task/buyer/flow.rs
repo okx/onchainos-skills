@@ -520,8 +520,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ━━━━━━━━━ 分支 A：escrow（担保）— 需要用户验收决策 ━━━━━━━━━\n\n\
              调用 xmtp_prompt_user 把交付物和验收决策请求推到 user session（sessionKey 复用 Step 2 已获取的值;调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`,见硬规则 7）：\n\n\
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][job: {job_id}][role: buyer] \
-             用户回复「验收通过」→ 调用 xmtp_dispatch_session(sessionKey=\"<Step 2 session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：验收通过\") relay 回 sub session 执行 complete；\
-             回复「拒绝，原因是...」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：拒绝，原因是<用户原话>\") relay 回 sub session 执行 reject。\
+             如果用户回复「验收通过」→ 调用 xmtp_dispatch_session(sessionKey=\"<Step 2 session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：验收通过\") relay 回 sub session 执行 complete；\
+             如果用户回复「拒绝，原因是...」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：拒绝，原因是<用户原话>\") relay 回 sub session 执行 reject。\
              ⚠️ relay 必须使用 xmtp_dispatch_session 工具（不要用 sessions_send，它有 session tree 限制）。禁止 user session agent 自己执行 task CLI。\n\
              \x20\x20\x20\x20userContent（按 deliverableType 分,首行务必带 `[任务 {short_id} 你作为买家]` 前缀）：\n\n\
              \x20\x20\x20\x20▸ deliverableType=file：\n\
