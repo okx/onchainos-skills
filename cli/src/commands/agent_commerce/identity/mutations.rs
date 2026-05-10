@@ -576,13 +576,22 @@ async fn wait_for_identity_push(
 
 /// Best-effort fetch of the caller's full XLayer agent list (struct C).
 /// Pages through `/agent/agent-list?chainIndex=196` with `pageSize=100`
-/// until either `total` is exhausted, the backend returns an empty
-/// page, or `AGENT_LIST_MAX_PAGES` is hit. Returns `{ total, items }`
-/// (matching the documented `agent get` shape). Any HTTP failure during
-/// pagination short-circuits to `None` so the envelope omits the field
-/// rather than emitting a misleading partial; the safety-cap exit is
-/// the only path that can return a partial aggregate, and it logs the
-/// truncation.
+/// until `total` is satisfied or `AGENT_LIST_MAX_PAGES` is hit. Returns
+/// `{ total, items }` (matching the documented `agent get` shape).
+///
+/// Failure modes that short-circuit to `None` so the envelope omits the
+/// field rather than emit a misleading partial:
+///   - any HTTP error from the client during pagination
+///   - page 1 missing or non-numeric `total` field (response shape
+///     anomaly — cannot trust the dataset)
+///   - any page missing or non-array `items` field (same)
+///   - mid-pagination empty page when `total > aggregated` (backend
+///     says more exist but failed to deliver them)
+///
+/// The safety-cap exit (page > `AGENT_LIST_MAX_PAGES`) is the only path
+/// that returns a partial aggregate, and it logs the truncation. The
+/// legitimate empty case (`total == 0` and page 1 returned `items: []`)
+/// returns `Some({total: 0, items: []})`.
 async fn fetch_agent_list(client: &mut WalletApiClient, access_token: &str) -> Option<Value> {
     let mut all_items: Vec<Value> = Vec::new();
     let mut total: u64 = 0;
@@ -611,20 +620,51 @@ async fn fetch_agent_list(client: &mut WalletApiClient, access_token: &str) -> O
         };
 
         let normalized = normalize_singleton_object(raw);
+
+        // Page 1: total must be present and numeric. Missing/wrong-shape => abort.
         if page == 1 {
-            total = normalized.get("total").and_then(Value::as_u64).unwrap_or(0);
+            total = match normalized.get("total").and_then(Value::as_u64) {
+                Some(t) => t,
+                None => {
+                    eprintln!(
+                        "[agent-identity] agent-list page 1 missing or non-numeric `total` field — abort"
+                    );
+                    return None;
+                }
+            };
         }
-        let page_items: Vec<Value> = normalized
-            .get("items")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+
+        // items must be an array on every page. Missing/wrong-shape => abort.
+        let page_items: Vec<Value> = match normalized.get("items").and_then(Value::as_array) {
+            Some(arr) => arr.clone(),
+            None => {
+                eprintln!(
+                    "[agent-identity] agent-list page {page} missing or non-array `items` field — abort"
+                );
+                return None;
+            }
+        };
         let page_count = page_items.len();
         all_items.extend(page_items);
 
-        if page_count == 0 || (all_items.len() as u64) >= total {
+        // Done: aggregated count satisfies backend's reported total.
+        // Also covers the legitimate empty case: total == 0, page 1 items == [],
+        // aggregated (0) >= total (0) on first iteration.
+        if (all_items.len() as u64) >= total {
             break;
         }
+
+        // Anomaly: total > aggregated but this page returned 0 items.
+        // Don't return a truncated Some — abort per cli-reference §1 contract.
+        if page_count == 0 {
+            eprintln!(
+                "[agent-identity] agent-list page {page} returned 0 items but total={} > aggregated={} — abort",
+                total,
+                all_items.len(),
+            );
+            return None;
+        }
+
         page += 1;
         if page > AGENT_LIST_MAX_PAGES {
             eprintln!(
