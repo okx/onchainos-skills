@@ -668,13 +668,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ txHash：从本 sub session 上下文中找到之前 `onchainos agent complete` CLI 输出的 txHash（格式 0x...）。\n\
              如果上下文中没有（如 auto-complete 等非主动验收场景），省略链上凭证行即可。\n\
              content：\n\
-             \x20\x20\x20\x20[任务完成] <title>（{job_id}）已验收通过，资金已释放给卖家。\n\
-             \x20\x20\x20\x20  - 支出：<tokenAmount> <tokenSymbol>\n\
-             \x20\x20\x20\x20  - 支付方式：escrow（担保支付）\n\
-             \x20\x20\x20\x20  - 链上凭证：<txHash>（来自 complete CLI 输出）\n\
-             \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
-             \x20\x20\x20\x20\n\
-             \x20\x20\x20\x20本任务流程结束。\n\n\
+             \x20\x20\x20\x20✅ 任务完成\n\n\
+             \x20\x20\x20\x20「<title>」验收通过，<tokenAmount> <tokenSymbol> 已释放给卖家。\n\
+             \x20\x20\x20\x20链上凭证：<txHash>\n\n\
+             \x20\x20\x20\x20如需评价卖家，回复「评价」。\n\n\
+             ⚠️ 以上 content 是展示给用户的全部内容——**不要添加 jobId、支付方式、AgentID 等冗余信息**。\n\n\
              **A-Step 2 — 终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
              ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复「评价」。」\n\
@@ -683,12 +681,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ 非担保模式下 job_completed 意味着买家已收到交付物并完成支付，任务**已到达终态**。\n\n\
              **B-Step 1 — 调用 xmtp_dispatch_user 告知用户任务完成：**\n\
              content：\n\
-             \x20\x20\x20\x20[任务完成] <title>（{job_id}）已完成，交付物已收到，支付已完成。\n\
-             \x20\x20\x20\x20  - 支出：<tokenAmount> <tokenSymbol>\n\
-             \x20\x20\x20\x20  - 支付方式：非担保（non_escrow）\n\
-             \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
-             \x20\x20\x20\x20\n\
-             \x20\x20\x20\x20本任务流程结束。\n\n\
+             \x20\x20\x20\x20✅ 任务完成\n\n\
+             \x20\x20\x20\x20「<title>」已完成，<tokenAmount> <tokenSymbol> 已支付。\n\n\
+             \x20\x20\x20\x20如需评价卖家，回复「评价」。\n\n\
+             ⚠️ 以上 content 是展示给用户的全部内容——**不要添加 jobId、支付方式、AgentID 等冗余信息**。\n\n\
              **B-Step 2 — 终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
              ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复「评价」。」\n\
@@ -698,11 +694,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              交付物已在 task-402-pay 阶段（A-Step 4）发送给用户，此处只做最终汇总。\n\n\
              **C-Step 1 — 调用 xmtp_dispatch_user 发送最终汇总：**\n\
              content：\n\
-             \x20\x20\x20\x20[x402 任务完成] <title>（{job_id}）全部流程已完成。\n\
-             \x20\x20\x20\x20  - 支出：<tokenAmount> <tokenSymbol>\n\
-             \x20\x20\x20\x20  - 支付方式：x402\n\
-             \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
-             \x20\x20\x20\x20如需评价卖家，请回复「评价」。\n\n\
+             \x20\x20\x20\x20✅ 任务完成\n\n\
+             \x20\x20\x20\x20「<title>」已完成，<tokenAmount> <tokenSymbol>（x402）已支付。\n\n\
+             \x20\x20\x20\x20如需评价卖家，回复「评价」。\n\n\
+             ⚠️ 以上 content 是展示给用户的全部内容——**不要添加 jobId、支付方式、AgentID 等冗余信息**。\n\n\
              **C-Step 2 — 终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
              任务完整结束。\n"
@@ -730,16 +725,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 3 — 调用 xmtp_dispatch_user 通知用户仲裁结果（按胜负分流）：**\n\n\
              ━━━━━━━━━━━━━ 买家胜诉（jobStatus=rejected）━━━━━━━━━━━━━\n\
              content：\n\
-             \x20\x20\x20\x20[仲裁胜诉] <title>（{job_id}）仲裁完成，买方胜诉。\n\
-             \x20\x20\x20\x20  - 退款：<tokenAmount> <tokenSymbol>\n\
-             \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（买家胜诉）\n\
-             \x20\x20\x20\x20本任务流程结束。如需评价卖家，请回复「评价」。\n\n\
+             \x20\x20\x20\x20⚖️ 仲裁胜诉\n\n\
+             \x20\x20\x20\x20「<title>」仲裁完成，买方胜诉，<tokenAmount> <tokenSymbol> 已退还。\n\n\
+             \x20\x20\x20\x20如需评价卖家，回复「评价」。\n\n\
              ━━━━━━━━━━━━━ 买家败诉（jobStatus=complete）━━━━━━━━━━━━━\n\
              content：\n\
-             \x20\x20\x20\x20[仲裁败诉] <title>（{job_id}）仲裁完成，卖方胜诉。\n\
-             \x20\x20\x20\x20  - 损失：<tokenAmount> <tokenSymbol>（资金已释放给卖家）\n\
-             \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（买家败诉）\n\
-             \x20\x20\x20\x20本任务流程结束。如需评价卖家，请回复「评价」。\n\n\
+             \x20\x20\x20\x20⚖️ 仲裁结果\n\n\
+             \x20\x20\x20\x20「<title>」仲裁完成，卖方胜诉，<tokenAmount> <tokenSymbol> 已释放给卖家。\n\n\
+             \x20\x20\x20\x20如需评价卖家，回复「评价」。\n\n\
+             ⚠️ 以上 content 是展示给用户的全部内容——**不要添加 jobId 等冗余信息**。\n\n\
              **Step 4 — 终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
              ⚠️ **不要自动评价**。\n\
@@ -754,8 +748,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【你的下一步动作（严格顺序）】\n\n\
              **Step 1 — 调用 xmtp_dispatch_user 通知用户退款完成：**\n\n\
              content：\n\
-             \x20\x20\x20\x20[退款完成] 任务 {job_id} 退款已上链，资金已返还至您的钱包。\n\
-             \x20\x20\x20\x20本任务流程结束。\n\n\
+             \x20\x20\x20\x20💸 退款完成\n\n\
+             \x20\x20\x20\x20退款已上链，资金已返还至你的钱包。\n\n\
              **Step 2 — 终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
              退款流程完整结束。\n"
@@ -767,11 +761,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】买家（Client）\n\n\
              ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**，只需通知 user session。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
-             ⚠️ 通知用户时使用 `<title>（{job_id}）` 格式。title 从上下文取；如不记得，先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 查询。\n\n\
+             ⚠️ title 从上下文取；如不记得，先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 查询。\n\n\
              **Step 1 — 调用 xmtp_dispatch_user 通知用户退款到账：**\n\n\
              content：\n\
-             \x20\x20\x20\x20[自动退款成功] <title>（{job_id}）的担保资金已退还至您的钱包。\n\
-             \x20\x20\x20\x20本任务流程结束。\n\n\
+             \x20\x20\x20\x20💸 自动退款完成\n\n\
+             \x20\x20\x20\x20「<title>」担保资金已退还至你的钱包。\n\n\
              **Step 2 — 终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
              退款流程完整结束。\n"
@@ -783,7 +777,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
              **Step 1 — 调用 xmtp_dispatch_user 通知用户任务已超时：**\n\
-             \x20\x20content: 任务 {job_id} 已超时（accept 截止前未接单 或 submit 截止前未提交），任务已结束。\n\n\
+             ⚠️ title 从上下文取；如不记得，先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 查询。\n\
+             \x20\x20content: ⏰ 「<title>」已超时，任务已结束。\n\n\
              本任务已到达终态，流程结束。\n"
         ),
 
@@ -792,9 +787,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             "【当前状态】job_closed（close tx 结果通知）\n\
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
-             ⚠️ 通知用户时使用 `<title>（{job_id}）` 格式。title 从上下文取；如不记得，先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 查询。\n\n\
              **Step 1 — 调用 xmtp_dispatch_user 通知用户：**\n\
-             \x20\x20content: <title>（{job_id}）已关闭，资金已回收。\n\n\
+             ⚠️ title 从上下文取；如不记得，先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 查询。\n\
+             \x20\x20content: 🔒 「<title>」已关闭，资金已回收。\n\n\
              **终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
              任务关闭流程结束。\n"
@@ -1166,25 +1161,18 @@ Step 3 — 身份 & 余额检查
 Step 4 — 展示确认表单（格式见 `skills/okx-agent-task/references/display-formats.md` §3）
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-短字段用 pipe table，长字段（摘要、描述、验收标准）用 prose 展示在表格下方：
+所有字段统一放在一个 pipe table 中（格式见 `skills/okx-agent-task/references/display-formats.md` §3）：
 
 | 字段 | 值 |
 |---|---|
 | 标题 | <agent 总结> |
+| 摘要 | <agent 总结，≤200 字符> |
+| 描述 | <完整内容，用户需验证全文> |
 | 支付代币 | <USDT 或 USDG> |
 | 预算 | <数字> |
 | 最高预算 | <数字>（协商价格上限） |
 | 接单时限 | <Nh>（发布后 N 小时无人接单自动关闭） |
 | 交付时限 | <Nh>（接单后 N 小时内须完成交付） |
-
-**摘要**：
-<agent 总结，≤200 字符>
-
-**描述**：
-<完整内容，用户需验证全文>
-
-**验收标准**：
-<自由文本>
 
 > 确认无误？确认后我立即上链创建任务。
 

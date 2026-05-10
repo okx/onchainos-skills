@@ -4,7 +4,7 @@
 
 **Table convention (matches `okx-agent-identity`):** every table in every output is a **Markdown pipe table** — header row of `|` cells + a separator row of `|---|`. Do not wrap tables in code blocks; do not use Unicode box-drawing characters (`┌ ├ │ └ ─`). They render as a single top line in most clients and look broken.
 
-**Truncation rule:** table cell values **≤ 200 characters**.超过 200 字符用 `…` 截断。长文本字段（描述、验收标准、交付物内容等）在表格外用 prose 格式完整展示（见各模板的 prose 区域）。
+**Truncation rule:** table cell values **≤ 200 characters**.超过 200 字符用 `…` 截断。长文本字段（交付物内容、卖家说明等）在表格外用 prose 格式完整展示（见各模板的 prose 区域）。
 
 **Language matching.** Field labels must match the user's language. Each section below shows Chinese-variant and English-variant; render one variant, not both.
 
@@ -45,15 +45,10 @@ Chinese variant:
 | 可见性 | 私有 (Private) |
 | 接单截止 | 24 小时 |
 | 交付截止 | 24 小时 |
+| 描述 | 请查询江苏省当前天气情况，包括温度、湿度、天气状况等信息，并以清晰易懂的格式返回结果。 |
 | 当前状态 | 🟢 Open — 等待接单 |
 | 买家 | Agent #802 |
 | 卖家 | 尚未匹配 |
-
-**描述**：
-请查询江苏省当前天气情况，包括温度、湿度、天气状况等信息，并以清晰易懂的格式返回结果。
-
-**验收标准**：
-返回温度、湿度、风力、天气状况四项数据，中文输出。
 
 English variant:
 
@@ -61,6 +56,7 @@ English variant:
 |---|---|
 | Task ID | 0xbb31…ba4f (#478) |
 | Title | Query Jiangsu weather |
+| Description | Query the current weather of Jiangsu province... |
 | Budget | 0.1 USDT |
 | Max Budget | 0.15 USDT |
 | Payment | Escrow |
@@ -71,22 +67,15 @@ English variant:
 | Buyer | Agent #802 |
 | Provider | Not matched |
 
-**Description**:
-Query the current weather of Jiangsu province...
-
-**Quality Standards**:
-Return temperature, humidity, wind, weather condition in Chinese.
-
 Rules:
 
-- Two-column table for short fields. **描述** and **验收标准** always in prose below the table — never inside table cells.
+- All fields in a single two-column table — including 描述.
 - `任务 ID`: short-form hash + internal id.
 - `支付方式`: render as user-language label — `担保支付 (Escrow)` / `非担保 (Non-Escrow)` / `x402`.
 - `可见性`: `公开 (Public)` / `私有 (Private)`.
 - `状态`: emoji + status string + one-line description.
 - `买家` / `卖家`: `Agent #<id>`, or `尚未匹配` / `Not matched`.
-- **描述** prose section: full text, no truncation. If absent, omit the section entirely.
-- **验收标准** prose section: full text. If absent, omit.
+- Full text, no truncation. If a field is absent, omit the row.
 
 ---
 
@@ -97,23 +86,13 @@ Chinese variant:
 | 字段 | 值 |
 |---|---|
 | 标题 | 查询江苏天气 |
+| 摘要 | 请查询江苏省当前天气情况，包括温度、湿度等信息。 |
+| 描述 | 请查询江苏省当前天气情况，包括温度、湿度、天气状况等信息，并以清晰易懂的格式返回结果。要求包含以下内容：1. 当前温度和体感温度 2. 湿度和风力 3. 天气状况描述 |
 | 支付代币 | USDT |
 | 预算 | 0.1 |
 | 最高预算 | 0.15 |
 | 接单时限 | 24h |
 | 交付时限 | 24h |
-
-**摘要**：
-请查询江苏省当前天气情况，包括温度、湿度等信息。
-
-**描述**：
-请查询江苏省当前天气情况，包括温度、湿度、天气状况等信息，并以清晰易懂的格式返回结果。要求包含以下内容：
-1. 当前温度和体感温度
-2. 湿度和风力
-3. 天气状况描述
-
-**验收标准**：
-返回温度、湿度、风力、天气状况四项数据，中文输出。
 
 > 确认无误？确认后我立即上链创建任务。
 
@@ -122,27 +101,20 @@ English variant:
 | Field | Value |
 |---|---|
 | Title | Query Jiangsu weather |
+| Summary | Query current weather of Jiangsu province including temperature and humidity. |
+| Description | Query the current weather of Jiangsu province... |
 | Currency | USDT |
 | Budget | 0.1 |
 | Max Budget | 0.15 |
 | Accept Deadline | 24h |
 | Delivery Deadline | 24h |
 
-**Summary**:
-Query current weather of Jiangsu province including temperature and humidity.
-
-**Description**:
-Query the current weather of Jiangsu province...
-
-**Quality Standards**:
-Return temperature, humidity, wind, weather condition in Chinese.
-
 > Confirm? I will submit the task on-chain immediately after confirmation.
 
 Rules:
 
-- Two-column table for short fields only (title, currency, budget, max_budget, deadlines).
-- **摘要**, **描述**, **验收标准**: always in prose below the table — full text, no truncation. User must verify complete content before on-chain submission.
+- All fields in a single two-column table — including 摘要 and 描述.
+- Full text, no truncation. User must verify complete content before on-chain submission.
 - Chinese/English field labels match user language.
 - Footer must be a blockquote asking for confirmation.
 
