@@ -525,10 +525,18 @@ impl WalletApiClient {
             bail!("Wallet API server error (HTTP {})", status.as_u16());
         }
 
-        let body: Value = resp
-            .json()
+        let raw = resp
+            .text()
             .await
-            .context("failed to parse wallet API response")?;
+            .context("failed to read wallet API response body")?;
+        let body: Value = serde_json::from_str(&raw).with_context(|| {
+            let preview = if raw.len() <= 500 { &raw } else { &raw[..500] };
+            format!(
+                "failed to parse wallet API response as JSON (HTTP {}): {}",
+                status.as_u16(),
+                preview
+            )
+        })?;
 
         // Handle code as either string "0" or number 0
         let code_ok = match &body["code"] {
