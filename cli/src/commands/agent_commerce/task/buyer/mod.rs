@@ -126,10 +126,14 @@ pub enum TaskCommand {
     /// Client closes task (only valid while Open)
     Close {
         job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
     },
     /// Client converts private task to public listing
     SetPublic {
         job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
     },
     /// Provider generates payment invoice after provider_applied
     Payment {
@@ -232,10 +236,10 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             complete::handle_complete(&mut client, &job_id, payment_id.as_deref(), token_symbol.as_deref(), token_amount.as_deref()).await,
         TaskCommand::Reject { job_id, reason } =>
             refuse::handle_reject(&mut client, &job_id, &reason).await,
-        TaskCommand::Close { job_id } =>
-            close::handle_close(&mut client, &job_id).await,
-        TaskCommand::SetPublic { job_id } =>
-            changepublic::handle_set_public(&mut client, &job_id).await,
+        TaskCommand::Close { job_id, agent_id } =>
+            close::handle_close(&mut client, &job_id, agent_id.as_deref()).await,
+        TaskCommand::SetPublic { job_id, agent_id } =>
+            changepublic::handle_set_public(&mut client, &job_id, agent_id.as_deref()).await,
         TaskCommand::ClaimAutoRefund { job_id } =>
             claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await,
         TaskCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id } => {

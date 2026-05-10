@@ -167,11 +167,19 @@ pub enum AgentCommand {
     },
 
     /// Client closes task (only valid while Open)
-    Close { job_id: String },
+    Close {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
 
     /// Convert private task to public listing
     #[command(name = "set-public")]
-    SetPublic { job_id: String },
+    SetPublic {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
 
     /// Provider generates payment invoice after provider_applied
     Payment {
@@ -582,11 +590,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Reject { job_id, reason } =>
             task::buyer::run_task(T::Reject { job_id, reason }, ctx).await,
 
-        AgentCommand::Close { job_id } =>
-            task::buyer::run_task(T::Close { job_id }, ctx).await,
+        AgentCommand::Close { job_id, agent_id } =>
+            task::buyer::run_task(T::Close { job_id, agent_id }, ctx).await,
 
-        AgentCommand::SetPublic { job_id } =>
-            task::buyer::run_task(T::SetPublic { job_id }, ctx).await,
+        AgentCommand::SetPublic { job_id, agent_id } =>
+            task::buyer::run_task(T::SetPublic { job_id, agent_id }, ctx).await,
 
         AgentCommand::Payment { job_id, agent_id } =>
             task::buyer::run_task(T::Payment { job_id, agent_id }, ctx).await,

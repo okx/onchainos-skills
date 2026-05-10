@@ -11,9 +11,9 @@ use crate::commands::agent_commerce::task::signing;
 ///
 /// 后端 VisibilityEnum：0=PUBLIC（公开） / 1=PRIVATE（私有）。
 /// 转公开 = visibility=0。
-pub async fn handle_set_public(client: &mut TaskApiClient, job_id: &str) -> Result<()> {
+pub async fn handle_set_public(client: &mut TaskApiClient, job_id: &str, explicit_agent_id: Option<&str>) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
+        signing::resolve_wallet_and_agent_for_task(client, job_id, explicit_agent_id).await?;
 
     let resp = client.post_with_identity(
         &client.endpoint(job_id, "setVisibility"),

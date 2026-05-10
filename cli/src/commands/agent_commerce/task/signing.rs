@@ -56,16 +56,23 @@ pub fn resolve_wallet(
 
 /// Query task detail to resolve the buyer's wallet **and** agentId for signing.
 ///
+/// If `explicit_agent_id` is provided (from `--agent-id` CLI flag), it is used
+/// directly for the GET header instead of auto-detecting via subprocess.
+///
 /// Returns `(account_id, address, buyer_agent_id)`.
 pub async fn resolve_wallet_and_agent_for_task(
     client: &mut TaskApiClient,
     job_id: &str,
+    explicit_agent_id: Option<&str>,
 ) -> Result<(String, String, String)> {
-    // 先通过本地身份列表拿 buyer agentId，用于 GET 请求带 agenticId header
-    let local_agent_id = resolve_agent_by_role(AGENT_ROLE_BUYER, "buyer（买家）", None)
-        .await
-        .map(|(id, _)| id)
-        .unwrap_or_default();
+    let local_agent_id = if let Some(id) = explicit_agent_id {
+        id.to_string()
+    } else {
+        resolve_agent_by_role(AGENT_ROLE_BUYER, "buyer（买家）", None)
+            .await
+            .map(|(id, _)| id)
+            .unwrap_or_default()
+    };
 
     let resp = client.get_with_identity(&client.task_path(job_id), &local_agent_id).await?;
 

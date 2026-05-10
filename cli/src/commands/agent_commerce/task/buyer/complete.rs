@@ -23,7 +23,7 @@ pub async fn handle_complete(
     token_amount: Option<&str>,
 ) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
+        signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
 
     // 查询任务详情获取 paymentMode
     let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;

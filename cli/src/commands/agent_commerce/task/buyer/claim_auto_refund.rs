@@ -13,7 +13,7 @@ use crate::commands::agent_commerce::task::signing;
 /// claimAutoRefund — 超时自动退款
 pub async fn handle_claim_auto_refund(client: &mut TaskApiClient, job_id: &str) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
+        signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
 
     let resp = client.post_with_identity(
         &client.endpoint(job_id, "claimAutoRefund"),

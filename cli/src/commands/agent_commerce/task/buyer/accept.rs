@@ -102,7 +102,7 @@ pub async fn handle_set_payment_mode(
     endpoint: Option<&str>,
 ) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
+        signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
 
     // 前置检查：只有 open 状态才允许设置支付方式（复用 task_resp 避免后续重复请求）
     let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
@@ -239,7 +239,7 @@ pub async fn handle_confirm_accept(
     token_amount: Option<&str>,
 ) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
+        signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
 
     // 前置检查：setPaymentMode 是否已上链
     let task_resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
@@ -473,7 +473,7 @@ pub async fn handle_direct_accept(
     token_amount: Option<&str>,
 ) -> Result<()> {
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
+        signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
 
     let body = serde_json::json!({
         "providerAgentId": provider,
@@ -515,7 +515,7 @@ pub async fn handle_task_402_pay(
     use super::x402_flow;
 
     let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client, job_id).await?;
+        signing::resolve_wallet_and_agent_for_task(client, job_id, None).await?;
 
     // Step 0: 金额校验 — 402 accepts 中的 amount 必须与业务协商金额一致
     let accepts_vec: Vec<serde_json::Value> = serde_json::from_str(accepts)
