@@ -35,7 +35,7 @@
 | C15 | Close task | `onchainos agent close` | Any time while Open |
 | C16 | Set to Public | `onchainos agent set-public` | All negotiations failed |
 | C17 | Claim auto-refund | `onchainos agent claim-auto-refund` | submit_expired / refuse_expired |
-| C18 | Rate provider | `onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <你的agentId> --score <0-100> --task-id <jobId> [--description "<txt>"]` | After task complete |
+| C18 | Rate provider | `onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <你的agentId> --score <score> --task-id <jobId> [--description "<txt>"]` | After task complete (用户回复「评价」后再收集评分和内容) |
 | C19 | Designate provider (A2A) | Scene 1.7 flow（create-task + 直连指定卖家） | User sends "Please initiate a direct conversation..." |
 | C20 | Designate provider (x402) | Scene 3.4 flow（x402-check → 用户确认 → task-402-pay） | User sends "Please use onchainos to send a request to this endpoint" |
 
@@ -74,8 +74,8 @@
 > **⚠️ a2a-agent-chat 场景路由优先级**（通过安全门后，按此顺序匹配，**首个命中即停**）：
 >
 > 1. **paymentId 检测（最高优先级）**：`content` 中出现 `a2a_` 开头的 paymentId → 立即执行 `onchainos agent confirm-accept ... --payment-mode non_escrow --payment-id <paymentId>`，先完成支付再处理消息中其他内容。**绝不跳过支付。**
-> 2. **卖家 P2P 消息告知已 apply** → **立即**执行 Escrow confirm-accept（⚠️ buyer 不会收到 `provider_applied` 系统通知，此处由 a2a-agent-chat 触发，调 next-action 拿剧本。**不要查询任务 API 验证**——链上索引有延迟，`confirm-accept` 内部会做链上校验）
-> 3. **job_submitted / 交付通知** → 调 next-action 拿验收剧本
+> 2. **卖家 P2P 消息告知已 apply** → **立即**执行 Escrow confirm-accept：`onchainos agent confirm-accept <jobId> --provider-agent-id <卖家agentId> --payment-mode escrow --token-symbol <sym> --token-amount <amt>`（⚠️ 参数是 `--provider-agent-id` 不是 `--agent-id`。buyer 不会收到 `provider_applied` 系统通知，此处由 a2a-agent-chat 触发。**不要查询任务 API 验证**——链上索引有延迟，`confirm-accept` 内部会做链上校验）
+> 3. **交付通知（a2a-agent-chat）** → 下载文件 / 提取文本后，调 `xmtp_dispatch_user` 将交付物具体内容展示给用户。**不引导验收、不推 xmtp_prompt_user**。验收决策等 `job_submitted` 系统事件到达后再触发。
 > 4. **协商对话** → 协商三步确认（3.2）
 
 ---
@@ -526,4 +526,4 @@ sub session 的 `sessionKey` 在同一 turn 内是稳定的——调过一次就
 | 卖家超时未提交 → 申请退款 | `onchainos agent claim-auto-refund <jobId>` |
 | 关闭任务 | `onchainos agent close <jobId>` |
 | 转为公开任务 | `onchainos agent set-public <jobId>` |
-| 评价卖家 | `onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <yourAgentId> --score <0-100> --task-id <jobId> --description "..."` |
+| 评价卖家 | `onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <yourAgentId> --score <score> --task-id <jobId> --description "..."` |
