@@ -159,7 +159,7 @@ onchainos agent get --page 2 --page-size 50
 }
 ```
 
-(Note the array field is `list`, not `items`. `agent get` calls the same `/agent/agent-list` endpoint that powers `agent create` / `update`'s post-broadcast `agentList` segment in §1; both responses share the same `{ total, list, page, pageSize }` shape.)
+(Note the array field is `list`, not `items`. `agent get` calls the same `/agent/agent-list` endpoint that powers `agent create` / `update`'s post-broadcast `agentList` segment in §1; the two diverge slightly in post-processing: `agent get` returns a single backend page verbatim including `page` / `pageSize` echoed back from the request, while §1's `agentList` is the **aggregate across all pages** assembled by `fetch_agent_list` and only carries `{ total, list }` — `page` / `pageSize` lose coherent meaning after cross-page aggregation and are dropped on purpose.)
 
 `reputation.score` is the 0–100 wire average. The display layer renders it as `★ <score/20>` to 1 decimal place via the canonical **round-half-up** rule (see `SKILL.md §Amount Display Rules` reputation block — e.g. `92 → ★ 4.6`, `89 → ★ 4.5`, `85 → ★ 4.3`). Never echo the raw 0–100 number in user-visible cells.
 
