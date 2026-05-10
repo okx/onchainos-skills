@@ -149,13 +149,17 @@ onchainos agent get --page 2 --page-size 50
 ```json
 {
   "total": 3,
-  "items": [
+  "list": [
     { "agentId": 42, "name": "DeFi Analyzer", "role": "provider", "status": "active",
       "description": "...", "picture": "https://...", "address": "0x...",
       "services": [...], "reputation": { "score": 92, "count": 18 } }
-  ]
+  ],
+  "page": 1,
+  "pageSize": 100
 }
 ```
+
+(Note the array field is `list`, not `items`. `agent get` calls the same `/agent/agent-list` endpoint that powers `agent create` / `update`'s post-broadcast `agentList` segment in §1; both responses share the same `{ total, list, page, pageSize }` shape.)
 
 `reputation.score` is the 0–100 wire average. The display layer renders it as `★ <score/20>` to 1 decimal place via the canonical **round-half-up** rule (see `SKILL.md §Amount Display Rules` reputation block — e.g. `92 → ★ 4.6`, `89 → ★ 4.5`, `85 → ★ 4.3`). Never echo the raw 0–100 number in user-visible cells.
 
