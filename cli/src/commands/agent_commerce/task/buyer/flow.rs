@@ -142,7 +142,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         event,
         match &event {
             Event::JobCreated => "xmtp_start_conversation (建群) → xmtp_send (发协商消息)",
-            Event::ProviderApplied => "confirm-accept (确认接单)",
+            Event::ProviderApplied => "（无动作）等待 job_accepted",
             Event::JobAccepted => "xmtp_dispatch_user (通知 user session 接单成功)",
             Event::JobSubmitted => "xmtp_prompt_user (转发交付物到 user session 请求验收决策)",
             Event::JobRefused => "无 (等待卖家决策)",
@@ -370,32 +370,20 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20→ **结束本轮 turn**，等用户回复 relay 回来后继续执行。\n\n\
              【后续事件】\n\
              - x402 → set-payment-mode → job_payment_mode_changed → task-402-pay（签名 + direct/accept + endpoint 重放）→ job_accepted → complete\n\
-             - escrow → set-payment-mode → job_payment_mode_changed → 通知卖家 apply → provider_applied → confirm-accept → job_accepted\n\
+             - escrow → set-payment-mode → job_payment_mode_changed → 通知卖家 apply → 卖家 apply 上链 → 卖家 xmtp_send 通知买家 → 买家收到 a2a-agent-chat → confirm-accept → job_accepted\n\
              - non_escrow → set-payment-mode → job_payment_mode_changed → [NEGOTIATE_CONFIRM] + confirm-accept（此步只接单不支付）→ job_accepted → 等卖家交付 + paymentId → 支付 + complete → job_completed\n"
         ),
 
-        // ─── Scene 6: 卖家申请接单，确认接单（仅 escrow 路径会收到此事件） ──────────
+        // ─── provider_applied 系统事件（买家侧无动作） ──────────
+        // confirm-accept 由卖家的 a2a-agent-chat 消息触发，不由此系统事件触发。
         // ⚠️ 非担保（non_escrow）不走 apply，不会触发 provider_applied。
-        // setPaymentMode 已通过 set-payment-mode 独立执行。
-        Event::ProviderApplied => format!(
-            "【当前状态】provider_applied（卖家已链上申请接单 — 仅 escrow 担保支付）\n\
+        Event::ProviderApplied =>
+            "【当前状态】provider_applied（卖家已链上申请接单）\n\
              【角色】买家（Client）\n\n\
-             协商阶段已确定金额、代币，从协商上下文获取：\n\
-             ```bash\n\
-             onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
-             ```\n\
-             提取协商结果：providerAgentId、tokenAmount、tokenSymbol。\n\
-             ⚠️ tokenAmount 和 tokenSymbol 必须从协商结果获取，不是任务详情。\n\n\
-             【你的下一步动作（严格顺序）】\n\n\
-             ⚠️ 协商阶段已无条件执行过 set-payment-mode（Step 6.2），此处 paymentMode 应已上链。直接执行 confirm-accept。\n\n\
-             **Step 1 — 确认接单（escrow 担保支付）：**\n\n\
-             ```bash\n\
-             onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode escrow --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
-             ```\n\
-             直接执行 providerConfirmStatus → sign_escrow TEE 签名 → accept → 广播。\n\n\
-             【后续事件】\n\
-             - job_accepted → 调用 xmtp_dispatch_user 通知用户接单成功，等待卖家交付\n"
-        ),
+             无需任何动作。confirm-accept 由卖家通过 a2a-agent-chat 发来的 apply 通知触发（buyer.md 路由优先级 #2），\n\
+             不由此系统事件触发。此事件到达时 confirm-accept 可能已执行或即将由卖家消息触发。\n\
+             → **结束本轮 turn**，等待 `job_accepted` 系统通知。\n".to_string()
+        ,
 
         // ─── job_accepted: 按支付方式分流（非担保立即 complete，担保等交付）──────────────────
         Event::JobAccepted => format!(
@@ -557,6 +545,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x203. POST /priapi/v1/aieco/task/{job_id}/complete（body: {{\"signature\": \"<sig>\"}}）→ 获取 uopData\n\
              \x20\x204. 签名 uopHash → 广播上链\n\
              \x20\x20→ 任务状态变为 Complete，资金从合约释放给卖家。\n\n\
+             🛑 **complete CLI 成功后禁止 xmtp_dispatch_user / xmtp_prompt_user 通知用户**——\n\
+             链上确认后会收到 `job_completed` 系统事件，由该事件的剧本统一发完成通知，\n\
+             此处提前发会导致用户收到重复卡片。记住 CLI 输出中的 txHash，后续 `job_completed` 剧本会用到。\n\n\
              ▸ 用户拒绝 — 双签流程：\n\
              ```bash\n\
              onchainos agent reject {job_id} --reason \"<用户提供的拒绝原因>\"\n\
@@ -679,9 +670,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ━━━━━━━━━ 分支 A：escrow（担保）— 流程结束 ━━━━━━━━━\n\n\
              担保模式下 job_completed 意味着卖家已交付且买家已验收，资金从合约释放给卖家。\n\n\
              **A-Step 1 — 调用 xmtp_dispatch_user 告知用户任务完成：**\n\
+             ⚠️ txHash：从本 sub session 上下文中找到之前 `onchainos agent complete` CLI 输出的 txHash（格式 0x...）。\n\
+             如果上下文中没有（如 auto-complete 等非主动验收场景），省略链上凭证行即可。\n\
              content：\n\
              \x20\x20\x20\x20[任务完成] <title>（{job_id}）已验收通过，资金已释放给卖家。\n\
              \x20\x20\x20\x20  - 支出：<tokenAmount> <tokenSymbol>\n\
+             \x20\x20\x20\x20  - 支付方式：escrow（担保支付）\n\
+             \x20\x20\x20\x20  - 链上凭证：<txHash>（来自 complete CLI 输出）\n\
              \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
              \x20\x20\x20\x20\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
@@ -1154,6 +1149,106 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ Step 2 拿到的剧本如果是被动等待类（如 status=accepted 等卖家交付）,只输出「任务恢复」通知后结束 turn,不主动跑业务动作。\n"
         ),
 
+        // ─── 发布任务（user session 主动操作，非链事件）────────────────
+        Event::Other(ref s) if s == "create_task" => format!("\
+【当前操作】发布任务（create_task）
+【角色】买家（Client）
+【会话类型】user session（直接与用户对话）
+
+🛑 **禁止跳步**：必须完成全部字段收集 → 展示确认表单 → 用户明确确认后，才能调 CLI。
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Step 1 — 字段收集（通过对话逐步收集，**全部就绪才进 Step 2**）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+| 字段 | CLI 参数 | 约束 | 收集方式 |
+|---|---|---|---|
+| 描述 | --description | 10–2000 字符 | 整合用户原话。<10 → 「描述越详细，匹配到的 Provider 越准确。能补充一下具体需求吗？」 |
+| 标题 | --title | ≤30 字符 | Agent 总结，生成后**必须计数**，>30 缩短 |
+| 摘要 | --description-summary | ≤200 字符 | Agent 总结，生成后**必须计数**，>200 缩短 |
+| 支付代币 | --currency | 仅 USDT / USDG | ⚠️ 见下方代币规则 |
+| 预算 | --budget | 数字; ≤5 位小数; max 10,000,000 | 提取数字 |
+| 最高预算 | --max-budget | **Required**; ≥ budget; ≤5 位小数; max 10,000,000 | ⚠️ **必须明确询问用户**，不可自动填充或猜测。这是协商价格上限，卖家报价不得超过此值 |
+| 接单时限 | --deadline-open | 10 min – 6 months; 格式 `<n>h` / `<n>m` | **必须询问用户**。发布后多久无人接单则自动关闭 |
+| 交付时限 | --deadline-submit | 1 min – 6 months; 格式 `<n>h` / `<n>m` | **必须询问用户**。接单后多久内须完成交付 |
+
+🛑 **代币规则（最高优先级）**：
+- 用户明确写 \"USDT\" 或 \"USDG\" → 直接用，无需确认
+- 用户使用模糊表达（\"U\" / \"u\" / \"刀\" / \"美元\" / \"美金\" / \"dollar\" / \"USD\" / \"100U\" / \"50u\"）→ **必须先问「请确认支付代币：USDT 还是 USDG？」**，等用户明确回复后才填入
+- **禁止默认 USDT**，展示 \"100 USDT\" 当用户只说 \"100U\" 是违规
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Step 2 — 校验（字段全部收集后、展示表单前）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. 代币 ≠ USDT 且 ≠ USDG → 「目前只支持 USDT 和 USDG，请选择其中一个。」
+2. 描述 < 10 字符 → 引导补充
+3. max_budget < budget → 「最高预算不能小于预算。」
+4. max_budget 未填 → 「请设置最高预算（协商价格上限），卖家报价不得超过此值。」
+5. budget > 10,000,000 或小数位 > 5 → 提示限制
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Step 3 — 身份 & 余额检查
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. `onchainos agent get` 检查当前账户是否有 buyer 身份（role=1）
+2. 有 buyer → 告知用户使用哪个账户
+3. 无 buyer → 引导注册 `onchainos agent register`
+4. 余额不足 → 警告但不阻断创建
+5. 执行 `skills/okx-agent-chat/after-agent-list-changed.md` 检查通信服务可用性
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Step 4 — 展示确认表单（格式见 `skills/okx-agent-task/references/display-formats.md` §3）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+短字段用 pipe table，长字段（摘要、描述、验收标准）用 prose 展示在表格下方：
+
+| 字段 | 值 |
+|---|---|
+| 标题 | <agent 总结> |
+| 支付代币 | <USDT 或 USDG> |
+| 预算 | <数字> |
+| 最高预算 | <数字>（协商价格上限） |
+| 接单时限 | <Nh>（发布后 N 小时无人接单自动关闭） |
+| 交付时限 | <Nh>（接单后 N 小时内须完成交付） |
+
+**摘要**：
+<agent 总结，≤200 字符>
+
+**描述**：
+<完整内容，用户需验证全文>
+
+**验收标准**：
+<自由文本>
+
+> 确认无误？确认后我立即上链创建任务。
+
+⚠️ 中文对话用中文字段标签，英文对话用英文。
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Step 5 — 用户确认后调 CLI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+```bash
+onchainos agent create-task \\
+  --description \"<description>\" \\
+  --description-summary \"<summary>\" \\
+  --title \"<title>\" \\
+  --budget <budget> --max-budget <max_budget> \\
+  --currency <USDT|USDG> \\
+  --deadline-open <deadline_open> --deadline-submit <deadline_submit>
+```
+
+🚫 **create-task 只接受以上参数。没有 --content / --period / --visibility / --amount / --token 参数。**
+⚠️ --payment-mode 可选。不传时后端默认 paymentMode=0，协商期间买家偏好担保支付（escrow）。
+
+成功后告知用户：
+> 任务已提交，jobId: <jobId>，等待上链确认（约数秒）。确认后系统将自动联系推荐卖家开始协商。
+
+⚠️ 不要说「发布成功」——此时尚未上链确认。上链确认由 job_created 消息触发。
+⚠️ 不要调 recommend——推荐在 job_created 收到后自动执行。
+"),
+
         // ─── 买家不会收到的事件（evaluator 质押 lifecycle）──────────
         Event::Staked
         | Event::UnstakeRequested
@@ -1174,7 +1269,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         ),
     };
 
-    let result = format!("{context_preamble}{body}");
+    let result = if job_status == "create_task" {
+        body
+    } else {
+        format!("{context_preamble}{body}")
+    };
     eprintln!(
         "[buyer-flow] output length: {} chars | first 200: {}",
         result.len(),
