@@ -9,6 +9,7 @@ use clap::Subcommand;
 use serde::Deserialize;
 
 pub mod claim;
+pub mod config;
 pub mod dispute_upload;
 pub mod network;
 pub mod payment_mode;

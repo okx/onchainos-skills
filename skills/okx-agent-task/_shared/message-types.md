@@ -120,7 +120,7 @@ onchainos agent next-action \
 | 路径 | 工具 | 字符串契约 | 接收方按前缀做什么 |
 |---|---|---|---|
 | 2a | `xmtp_dispatch_user(content)` | **无强制前缀**；纯自然语言通知；可选首行 `[标签 emoji] ...` 摘要头 | user-session agent 仅展示给用户，不调任何工具 |
-| 2b | `xmtp_prompt_user(llmContent, userContent)` | `llmContent` 必含 `[USER_DECISION_REQUEST][sub_key: <整串>][job: <id>] <relay 指令>`；`userContent` 是给用户看的纯自然语言 | user-session agent 用 `userContent` 展示问题，按 `llmContent` 等用户回复后用 `xmtp_dispatch_session` 反推回 sub |
+| 2b | `xmtp_prompt_user(llmContent, userContent)` | `llmContent` 必含 `[USER_DECISION_REQUEST][sub_key: <整串>][job: <id>] <relay 指令>`；`userContent` 是给用户看的纯自然语言 | user-session agent 用 `userContent` 展示问题，按 `llmContent` 等用户回复后调用 `xmtp_dispatch_session(sessionKey=<sub_key>, content="[USER_DECISION_RELAY] ...")` |
 | 3 | `xmtp_dispatch_session(sessionKey, content)` | `content` 必字面以 `[USER_DECISION_RELAY] 用户决策：` 开头（精确 22 字符前缀，含中文冒号 `：`） | sub agent 解析关键词（同意退款 / 发起仲裁 / 证据 / …）→ 调 `next-action --jobStatus <pseudo_event>` |
 
 > 路径 1 / 4（链 → sub / sub ↔ peer sub）走真 envelope，详见上方 §1 / §2。
@@ -140,7 +140,7 @@ onchainos agent next-action \
 **真实样例**（仲裁/退款决策）：
 
 ```
-[USER_DECISION_REQUEST][sub_key: agent:main:xmtp:group:okx-xmtp:my=0xe8c7...&to=0x0ccd...&job=0x1b76dabd...&gid=5a1a258d][job: 0x1b76dabd3bf884626184e3b36b7c65b54929a827a8a26e223c4b8aa868d41be1][role: buyer] 收到用户决策后,先调 `onchainos agent pending-decisions list` 拿当前 pending,按 jobId/role hint 在列表里命中本条 → `xmtp_dispatch_session(sessionKey=<本条 sub_key>, content="[USER_DECISION_RELAY] 用户决策：<原话>")` 派回 sub。多条 pending 无 hint 则反问用户消歧。详见 SKILL.md `Session 通信契约 5. pending-decisions`。
+[USER_DECISION_REQUEST][sub_key: agent:main:xmtp:group:okx-xmtp:my=0xe8c7...&to=0x0ccd...&job=0x1b76dabd...&gid=5a1a258d][job: 0x1b76dabd3bf884626184e3b36b7c65b54929a827a8a26e223c4b8aa868d41be1][role: buyer] 收到用户决策后,先调 `onchainos agent pending-decisions list` 拿当前 pending,按 jobId/role hint 在列表里命中本条 → 调用 `xmtp_dispatch_session(sessionKey=<本条 sub_key>, content="[USER_DECISION_RELAY] 用户决策：<原话>")`。多条 pending 无 hint 则反问用户消歧。详见 SKILL.md `Session 通信契约 5. pending-decisions`。
 ```
 
 **搭档 `userContent` 样例**（用户实际看到的内容，与 `llmContent` 同一次 `xmtp_prompt_user` 调用）：

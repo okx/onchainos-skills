@@ -11,7 +11,7 @@ set -euo pipefail
 # 默认输出: ~/Downloads/agent-task-YYYYMMDDHHmm.tgz
 #
 # tgz 内容:
-#   onchainos                    ← debug 二进制
+#   onchainos                    ← debug 二进制(debug-log feature + OKX_BASE_URL=cnouxyex.org baked-in)
 #   skills/...                   ← 整个 skills/ 目录
 #   install-agent-task.sh        ← 安装脚本
 # ──────────────────────────────────────────────────────────────
@@ -32,12 +32,14 @@ command -v cargo >/dev/null || { echo "✗ missing required command: cargo" >&2;
 command -v tar   >/dev/null || { echo "✗ missing required command: tar" >&2; exit 1; }
 command -v node  >/dev/null || { echo "✗ missing required command: node" >&2; exit 1; }
 
-# 1. Build debug binary
-echo "→ building onchainos (cargo build)"
-( cd "$CARGO_DIR" && cargo build )
+# 1. Build & install onchainos to ~/.cargo/bin (debug profile + debug-log feature,
+#    OKX_BASE_URL 通过 option_env!() 在编译期 baked into binary,运行时无需再设 env)
+#    用 --debug 跳过 release 的 LTO/strip,编译快(~30s vs ~2m),体积大(~11MB vs ~3MB)。
+echo "→ installing onchainos (cargo install --debug, OKX_BASE_URL=cnouxyex.org, features=debug-log)"
+( cd "$CARGO_DIR" && OKX_BASE_URL=https://www.cnouxyex.org cargo install --path . --force --debug --features debug-log )
 
-BIN_PATH="$CARGO_DIR/target/debug/onchainos"
-[ -f "$BIN_PATH" ] || { echo "✗ build did not produce $BIN_PATH" >&2; exit 1; }
+BIN_PATH="$HOME/.cargo/bin/onchainos"
+[ -f "$BIN_PATH" ] || { echo "✗ cargo install did not produce $BIN_PATH" >&2; exit 1; }
 
 # 2. Stage with the layout expected by install-agent-task.sh
 STAGE="$(mktemp -d)"

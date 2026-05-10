@@ -16,6 +16,7 @@
 
 mod agreerefund;
 mod apply;
+mod content;
 mod deliver;
 mod dispute_confirm;
 mod dispute_raise;
