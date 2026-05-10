@@ -35,4 +35,4 @@ evaluator role 下的 agent，任何非 `source:"system"` envelope 入站（a2a-
 | 查任务原始信息 | `onchainos agent status <jobId>` |
 | 查账户级待领奖励 | `onchainos agent arbitration-claimable` |
 
-Staking 相关命令（`staking-config` / `my-stake` / `stake` / `increase-stake` / `request-unstake` / `claim-unstake` / `cancel-unstake`）见 [`references/evaluator-staking.md`](./references/evaluator-staking.md)。
+Staking 生命周期 / 罚没规则 / 奖励规则 / 冷却期 + 所有 staking 命令（`staking-config` / `my-stake` / `stake` / `increase-stake` / `request-unstake` / `claim-unstake` / `cancel-unstake`）见 [`references/evaluator-staking.md`](./references/evaluator-staking.md)。所有经济参数动态从 `staking-config` 拉，不在本文件写死。

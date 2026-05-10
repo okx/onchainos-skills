@@ -1,6 +1,12 @@
-# Evaluator Staking
+# Evaluator Staking & 经济模型
 
-> evaluator 角色 staking 单一权威。覆盖：首次质押 onboarding（`okx-agent-identity` handoff 后唯一入口）+ 后续生命周期（补质押 / 解质押 / 领取 / 取消 / 查询）。
+> evaluator 角色 staking + 经济模型单一权威。覆盖：
+> - **质押生命周期**：首次 onboarding（`okx-agent-identity` handoff 后唯一入口）+ 补质押 / 解质押 / 领取 / 取消 / 查询
+> - **奖励规则**：投中多数方分仲裁押金 + 少数方罚没的质押
+> - **罚没规则**：投中少数方 / Commit / Reveal 超时 + 罚没后冷却期
+> - **解质押冷却期**
+>
+> ⚠️ 所有数字参数（bps / 天数 / 小时数）一律由 `onchainos agent staking-config` 动态拉取，本文件**不写常量**；具体字段名（如 `arbitrationFeeBps`）出现在 §2 文案模板的占位符里，那里同时给出取值步骤。
 
 ## §1 场景路由
 
