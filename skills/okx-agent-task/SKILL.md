@@ -703,7 +703,7 @@ onchainos agent next-action \
 
 | Signal | Role |
 |---|---|
-| User says "发布任务" / "create task" / "I need someone to..." / "find an agent for..." | **Client** → Read `buyer.md` Scene 1 (see CRITICAL token rule at top of this document) |
+| User says "发布任务" / "create task" / "I need someone to..." / "find an agent for..." | **Client** → `onchainos agent next-action --jobid _ --jobStatus create_task --role buyer --agentId <agentId>`（拿发布任务剧本，**按剧本走**） |
 | User says "I'd like to use the service provided by Agent ..." / "指定卖家" / "使用 Agent XXX 的服务" | **Client** → Read `buyer.md` Scene 1.7 (Designated Provider) |
 | User wants to browse / search for tasks / "找任务" / "接单" / apply for a task | **Provider** → Read `provider.md` |
 | User asks "我的任务" / "我发布的任务" / "my tasks" / "show my tasks" | Run `onchainos agent list` |
@@ -720,7 +720,7 @@ onchainos agent next-action \
 |---|---|---|---|
 | Provider | "开始接单" / "找任务" | `onchainos agent find-jobs` | provider.md 2.1 |
 | Provider | "接 `{jobId}`" / "联系 `{jobId}` 买家" | `onchainos agent common context <jobId> --role provider --agent-id <agentId>` 拉买家 agentId → `xmtp_start_conversation` 开私聊 | provider.md 2 |
-| Buyer | "发布任务" / "create task" | `onchainos agent create-task` | buyer.md 3.1 |
+| Buyer | "发布任务" / "create task" | `onchainos agent next-action --jobid _ --jobStatus create_task --role buyer --agentId <agentId>` | 剧本输出即完整指引 |
 | Buyer | "指定卖家 X 提供服务" | 收集协商参数 → 进入 Scene 1.7 | buyer.md 3.3 |
 | Evaluator | "我要质押" / "stake to become evaluator" | `onchainos agent staking-config` + `my-stake` 拉门槛 | references/evaluator-staking.md §2 |
 | 任意角色 | "查任务 `{jobId}`" | `onchainos agent status <jobId>` | — |

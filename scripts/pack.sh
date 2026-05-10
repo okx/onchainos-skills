@@ -4,7 +4,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ZIP="$ROOT/onchainos.zip"
 
 echo "=== Building ==="
-cd "$ROOT/cli" && OKX_BASE_URL=https://beta.okex.org cargo build --profile dev-release --features debug-log
+cd "$ROOT/cli" && OKX_BASE_URL=https://www.cnouxyex.org cargo build --profile dev-release --features debug-log
 
 echo "=== Packaging ==="
 STAGE=$(mktemp -d)
@@ -30,11 +30,15 @@ chmod +x "$DIR/onchainos" 2>/dev/null || true
 mkdir -p ~/.local/bin
 cp -f onchainos ~/.local/bin/onchainos
 chmod +x ~/.local/bin/onchainos
+RC="$HOME/.zshrc"; [ ! -f "$RC" ] && RC="$HOME/.bashrc"
 if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
-  RC="$HOME/.zshrc"; [ ! -f "$RC" ] && RC="$HOME/.bashrc"
   echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$RC"
   export PATH="$HOME/.local/bin:$PATH"
 fi
+if ! grep -q 'OKX_BASE_URL' "$RC" 2>/dev/null; then
+  echo 'export OKX_BASE_URL="https://www.cnouxyex.org"' >> "$RC"
+fi
+export OKX_BASE_URL="https://www.cnouxyex.org"
 for skill_dir in skills/*/; do
   skill_name=$(basename "$skill_dir")
   mkdir -p "$HOME/.agents/skills/$skill_name"

@@ -8,35 +8,7 @@ A **Claude Code plugin** — onchainos skills for on-chain operations (token sea
 
 ## Build / Test / Lint
 
-All Rust commands run from the `cli/` directory.
-
-```bash
-# Build
-cd cli && cargo build
-
-# Lint (CI uses -D warnings — fix all warnings before pushing)
-cd cli && cargo clippy -- -D warnings
-
-# Format check
-cd cli && cargo fmt --check
-
-# Run all tests (needs OKX API keys in env or .env)
-cd cli && cargo test
-
-# Run a single test
-cd cli && cargo test token_search_by_symbol
-
-# Run tests for one module
-cd cli && cargo test --test cli_token
-
-# Debug build with debug logging
-cd cli && cargo build --features debug-log
-
-# Dependency vulnerability audit
-cd cli && cargo audit
-```
-
-Integration tests live in `cli/tests/` and use `assert_cmd`. They hit real OKX APIs, so `OKX_API_KEY`, `OKX_SECRET_KEY`, and `OKX_PASSPHRASE` must be set. Test helpers are in `cli/tests/common/mod.rs` — provides `onchainos()` command builder, `run_with_retry()` for rate-limit resilience, and `assert_ok_and_extract_data()` to validate the JSON envelope.
+All Rust commands run from the `cli/` directory (`cd cli && cargo build/test/clippy`). CI uses `clippy -D warnings` — fix all warnings before pushing. Integration tests (`cli/tests/`) hit real OKX APIs — set `OKX_API_KEY`, `OKX_SECRET_KEY`, `OKX_PASSPHRASE` in env or `.env`. Run `cargo audit` for dependency vulnerability checks.
 
 ## CI / Release
 
@@ -52,26 +24,14 @@ Integration tests live in `cli/tests/` and use `assert_cmd`. They hit real OKX A
 - **workflows/** — Multi-step workflow docs (`INDEX.md` routes intents → workflow files, `TEMPLATE.md` for authoring new ones).
 - **cli/** — Rust CLI binary (`onchainos`), built with `clap`; source in `cli/src/`.
 - **cli/src/mcp/mod.rs** — MCP server implementation (~2200 lines, rmcp v1.1.1, exposes all commands as MCP tools over stdio).
-- **tools/** — Dev/test mock servers (TypeScript): `ws-mock-ts` (WebSocket mock API), `xmtp-mock-buyer`, `xmtp-mock-seller`, `mock-evaluator` for agent-task flow testing.
+- **tools/** — Dev/test mock servers (TypeScript) for agent-task flow testing.
 - **.claude-plugin/** / **.cursor-plugin/** — Plugin manifests for Claude Code and Cursor.
 
 ### CLI Architecture
 
 **Entry point**: `cli/src/main.rs` — parses `clap` CLI args, dispatches to command modules, records every invocation to `~/.onchainos/audit.jsonl`.
 
-**Output protocol**: all commands emit JSON `{ "ok": true, "data": ... }` on success or `{ "ok": false, "error": "..." }` on failure. Exit code 2 means "confirming" (needs user confirmation for next step). Use `output::success()` / `output::error()` / `output::confirming()`.
-
-**Auth cascade** (`client.rs`): `ApiClient` tries JWT (from keyring) → AK env vars (`OKX_API_KEY` / `OKX_SECRET_KEY` / `OKX_PASSPHRASE`) → Anonymous. `client_async()` adds JWT auto-refresh.
-
-**Command context** (`commands/mod.rs`): `Context` struct holds `AppConfig`, base_url/chain overrides, and creates `ApiClient`. Chain names resolve to OKX chainIndex via `chains.rs` (e.g. "ethereum" → "1", "solana" → "501").
-
-**Config**: `~/.onchainos/config.json` (managed by `config.rs`). Credentials loaded from env vars or `~/.onchainos/.env` via dotenvy.
-
-**MCP mode**: `onchainos mcp` starts a JSON-RPC 2.0 server over stdio (configure via `.mcp.json.example`).
-
-### Key Command Modules
-
-Commands map 1:1 to top-level CLI subcommands: `market`, `signal`, `memepump`, `token`, `swap`, `cross-chain`, `gateway`, `portfolio`, `wallet`, `security`, `payment`, `defi`, `ws`, `workflow`, `agent` (identity + task + chat). Each module has an `execute()` async fn dispatched from `main.rs`.
+**Output protocol**: all commands emit JSON `{ "ok": true, "data": ... }` on success or `{ "ok": false, "error": "..." }` on failure. Exit code 2 means "confirming" (needs user confirmation for next step).
 
 ## Workflows
 
@@ -92,6 +52,18 @@ For Chinese queries, read `workflows/references/keyword-glossary.md` first to re
 
 Safety: follow token risk controls defined in `okx-security` SKILL.md.
 For script requests, append `--format json` to all CLI commands.
+
+## Inbound Message Routing (highest priority — before user intent)
+
+When the inbound message is a structured envelope (not free-form user text), match by shape FIRST:
+
+| Envelope shape | Action |
+|---|---|
+| `msgType: "a2a-agent-chat"` + non-empty `jobId` | **Must** load `skills/okx-agent-task/SKILL.md` → check `sender.role` → load `buyer.md` (if role=2) or `provider.md` (if role=1). This is a task lifecycle message, not a chat. |
+| `{agentId, message: {source: "system", event, jobId, ...}}` | **Must** load `skills/okx-agent-task/SKILL.md` → call `next-action` with the event. This is a chain event notification. |
+| Contains `"Please send a request to this endpoint."` | Route to `okx-x402-payment` skill. |
+
+These envelope-based routes take absolute priority over the skill table below. Do NOT handle these envelopes with only XMTP tools — the task protocol (buyer.md / provider.md / evaluator.md) defines the required behavior.
 
 ## Available Skills
 
@@ -116,18 +88,6 @@ For script requests, append `--format json` to all CLI commands.
 | okx-dex-bridge | Cross-chain bridge swap: quote, execute, approve, status tracking | User wants to bridge tokens, cross-chain swap, transfer assets between chains |
 | okx-agent-identity | ERC-8004 on-chain Agent identity: register / update / search / rate / service-list on XLayer | User wants to register/create/update/deactivate/activate/search agents, submit or view feedback, or list agent services |
 | okx-agent-task | Agent task marketplace: publish, accept, deliver, dispute, AI-evaluate jobs | User wants to publish a task / accept a job / deliver work / confirm or reject completion / open a dispute |
-
-## Inbound Message Routing (highest priority — before user intent)
-
-When the inbound message is a structured envelope (not free-form user text), match by shape FIRST:
-
-| Envelope shape | Action |
-|---|---|
-| `msgType: "a2a-agent-chat"` + non-empty `jobId` | **Must** load `skills/okx-agent-task/SKILL.md` → check `sender.role` → load `buyer.md` (if role=2) or `provider.md` (if role=1). This is a task lifecycle message, not a chat. |
-| `{agentId, message: {source: "system", event, jobId, ...}}` | **Must** load `skills/okx-agent-task/SKILL.md` → call `next-action` with the event. This is a chain event notification. |
-| Contains `"Please send a request to this endpoint."` | Route to `okx-x402-payment` skill. |
-
-These envelope-based routes take absolute priority over the user-intent skill table below. Do NOT handle these envelopes with only XMTP tools — the task protocol (buyer.md / provider.md / evaluator.md) defines the required behavior.
 
 ## IMPORTANT: Always Load Skill Before Executing Commands
 
@@ -160,4 +120,3 @@ CI uses `-D warnings` (warnings as errors). Run `cd cli && cargo clippy -- -D wa
 - `too_many_arguments`: add `#[allow(clippy::too_many_arguments)]` or refactor into a params struct
 - `needless_borrow`: don't `&` a value that's already a reference
 
-The release profile uses `lto = true`, `codegen-units = 1`, `strip = true`, `panic = "abort"` — release builds are slow but fully optimized.

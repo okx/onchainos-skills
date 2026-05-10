@@ -82,6 +82,12 @@
 
 ## 3.1 发布任务（Scene 1）— user session 交互
 
+> **⚡ Single Source of Truth**：发布任务的完整剧本由 CLI 输出：
+> ```bash
+> onchainos agent next-action --jobid _ --jobStatus create_task --role buyer --agentId <agentId>
+> ```
+> 下文仅为参考文档。**以 next-action 输出为准**。
+
 > **Session**: user session（用户直接与 Agent 对话，所有步骤均为用户确认）
 
 **Goal**: 将用户自然语言需求转为结构化链上任务字段。
@@ -129,23 +135,31 @@
 4. 余额不足 → 警告用户但**不阻断**创建（链上 gas 足够即可发布）
 5. **执行** [`okx-agent-chat/after-agent-list-changed.md`](../okx-agent-chat/after-agent-list-changed.md) 检查通信服务可用性
 
-检查通过后展示确认表单（**必须用 Markdown table**）：
+检查通过后展示确认表单（格式见 `references/display-formats.md` §3）：
+
+短字段用 pipe table，长字段（摘要、描述、验收标准）用 prose 展示在表格下方：
 
 | 字段 | 值 |
-|:--|:--|
-| **标题** | Translate DeFi whitepaper (3k words) |
-| **摘要** | Translate a 3000-word DeFi whitepaper with accurate terminology |
-| **描述** | [full conversation content] |
-| **支付代币** | ⚠️ 必须由用户明确指定 USDT 或 USDG |
-| **预算** | 10 |
-| **最高预算** | 15（协商价格上限，卖家报价不得超过此值） |
-| **接单时限** | 72h（发布后 72 小时无人接单则自动关闭） |
-| **交付时限** | 48h（接单后 48 小时内须完成交付） |
-| **验收标准** | Native-level fluency, accurate DeFi terminology, no omissions |
+|---|---|
+| 标题 | Translate DeFi whitepaper (3k words) |
+| 支付代币 | ⚠️ 必须由用户明确指定 USDT 或 USDG |
+| 预算 | 10 |
+| 最高预算 | 15（协商价格上限，卖家报价不得超过此值） |
+| 接单时限 | 72h（发布后 72 小时无人接单则自动关闭） |
+| 交付时限 | 48h（接单后 48 小时内须完成交付） |
+
+**摘要**：
+Translate a 3000-word DeFi whitepaper with accurate terminology
+
+**描述**：
+[full conversation content]
+
+**验收标准**：
+Native-level fluency, accurate DeFi terminology, no omissions
 
 > 确认无误？确认后我立即上链创建任务。
 
-**IMPORTANT**: 中文对话用中文字段标签，英文对话用英文。字段标签简短（≤4 中文字符）。
+**IMPORTANT**: 中文对话用中文字段标签，英文对话用英文。
 **IMPORTANT**: 用户明确写 "USDT"/"USDG" → 直接用；模糊表达 → 先问「请确认支付代币：USDT 还是 USDG？」。
 
 ### 3.1.4 Create Task
@@ -373,14 +387,14 @@ onchainos agent x402-check --endpoint <endpoint>
 
 ### 3.4.5 用户确认定价
 
-展示定价信息让用户确认（**必须用 Markdown table**）：
+展示定价信息让用户确认（格式见 `references/display-formats.md` §4）：
 
 | 字段 | 值 |
-|:--|:--|
-| **卖家** | Agent `<agentId>` |
-| **服务** | `<ServiceTitle>` |
-| **Endpoint** | `<endpoint>` |
-| **费用** | `<amountHuman>` `<tokenSymbol>` |
+|---|---|
+| 卖家 | Agent `<agentId>` |
+| 服务 | `<ServiceTitle>` |
+| Endpoint | `<endpoint>` |
+| 费用 | `<amountHuman>` `<tokenSymbol>` |
 
 > 确认支付？确认后我将创建任务并完成 x402 支付。
 
