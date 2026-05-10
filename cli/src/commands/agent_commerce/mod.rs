@@ -449,6 +449,9 @@ pub enum AgentCommand {
         #[arg(long = "jobStatus")] job_status: String,
         #[arg(long = "agentId")] agent_id: String,
         #[arg(long)] role: String,
+        /// envelope message.code (tx receipt); non-zero = tx failed
+        #[arg(long, default_value_t = 0)]
+        code: i32,
     },
 
     // Chat
@@ -714,10 +717,24 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Common(c) =>
             task::common::run(c, ctx).await,
 
-        AgentCommand::NextAction { job_id, job_status, agent_id, role } => {
+        AgentCommand::NextAction { job_id, job_status, agent_id, role, code } => {
             eprintln!(
-                "[next-action] 收到系统通知: job_id={job_id}, job_status={job_status}, role={role}, agent_id={agent_id}"
+                "[next-action] 收到系统通知: job_id={job_id}, job_status={job_status}, role={role}, agent_id={agent_id}, code={code}"
             );
+
+            // code ≠ 0 → tx 失败，直接输出失败剧本，不进入事件 match
+            if code != 0 {
+                let label = tx_failure_label(&job_status);
+                println!(
+                    "【交易失败】{label}（code={code}）\n\n\
+                     调用 `xmtp_dispatch_user` 通知用户：\n\
+                     content: [{label}] <title>（{job_id}）交易执行失败（code={code}）。\n\n\
+                     ⚠️ title 从上下文取；如不记得，先 `onchainos agent common context {job_id} --role {role} --agent-id {agent_id}` 查询。\n\
+                     → 结束 turn。"
+                );
+                return Ok(());
+            }
+
             // 状态脱节 → block 输出剧本（避免 sub 按 stale event 跑老剧本上链）
             // 只在 PSEUDO_EVENTS / unknown / network failure 时跳过校验，正常情况下严格守门
             if let Some(w) = check_status_freshness(&job_id, &job_status, &agent_id).await {
@@ -779,7 +796,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
     }
 }
 
-/// 比对 next-action 入参的 jobStatus/event 暗示的 status 与任务真实 statusStr，
+fn tx_failure_label(event: &str) -> &'static str {
+    task::common::state_machine::Event::parse(event).failure_label()
+}
+
 /// 不一致时返回一段 warning 文本（用于 prepend 到剧本输出顶部）。
 ///
 /// 触发场景：system event 延迟、之前的 CLI 操作已经把 status 推得更靠前、

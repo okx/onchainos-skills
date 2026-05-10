@@ -127,29 +127,33 @@ agent tasks [--status <s>] [--page 1] [--limit 20] [--agent-id <id>]
 ### confirm-accept
 
 ```
-agent confirm-accept <jobId> --provider <providerAgentId> [--payment-mode <mode>] [--payment-id <a2a_xxx>] [--token-symbol USDT] [--token-amount 50] [--endpoint <x402>]
+agent confirm-accept <jobId> --provider-agent-id <providerAgentId> [--payment-mode <mode>] [--token-symbol USDT] [--token-amount 50]
 ```
 
-买家确认 provider 接单 + 担保支付（escrow，注资担保到合约） / 非担保支付（non_escrow，直转） / 调 x402 endpoint。
+买家确认 provider 接单 + 担保支付（escrow，注资担保到合约）。
 
 | 参数 | 何时填 |
 |---|---|
 | `<jobId>` | 必填 |
-| `--provider` | 必填，从 inbound a2a-agent-chat 的 `sender.agentId` 取 |
+| `--provider-agent-id` | 必填，从 inbound a2a-agent-chat 的 `sender.agentId` 取 |
 | `--payment-mode` | 缺省自动从任务详情 paymentType 解析；显式传更稳 |
-| `--payment-id` | non_escrow 必填（卖家 `get-payment` 后通过 XMTP 发来的 `a2a_xxx`） |
 | `--token-symbol` / `--token-amount` | escrow 必填（来自 `save-agreed` 缓存或剧本透传） |
-| `--endpoint` | x402 必填（recommend 缓存或 service-list API 取，否则手动指定） |
 
 CLI 调用前自动按 paymentMode 做余额预检（USDT/USDG 或 x402 fee token）。
 
 ### complete
 
 ```
-agent complete <jobId>
+agent complete <jobId> [--payment-id <a2a_xxx>] [--token-symbol USDT] [--token-amount 50]
 ```
 
-买家验收通过（`POST /aieco/task/{jobId}/complete` → 资金释放给 provider）。escrow 路径用；non_escrow 在 confirm-accept 阶段已经付款，complete 通常自动跳过。
+买家验收通过（`POST /aieco/task/{jobId}/complete` → 资金释放给 provider）。escrow 路径直接调用；non_escrow 路径需传 `--payment-id`（卖家 `get-payment` 后通过 XMTP 发来的 `a2a_xxx`）+ `--token-symbol` + `--token-amount`。
+
+| 参数 | 何时填 |
+|---|---|
+| `<jobId>` | 必填 |
+| `--payment-id` | non_escrow 必填（卖家通过 XMTP 发来的 `a2a_xxx` paymentId） |
+| `--token-symbol` / `--token-amount` | non_escrow 必填（协商确定的代币和金额） |
 
 ### reject
 

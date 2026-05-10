@@ -298,10 +298,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::DisputeApproved => format!(
             "【当前状态】dispute_approved（dispute approve tx 回执）\n\
              【角色】卖家（Provider）\n\n\
-             **Step 1 — 检查 envelope `message.code` 字段：**\n\
-             - `code` 非 0（失败）→ 仲裁发起交易失败，结束 turn。\n\
-             - `code` = 0（成功）→ 继续 Step 2。\n\n\
-             **Step 2 — 调用 CLI 跑阶段 2 dispute（上链）：**\n\
+             **Step 1 — 调用 CLI 跑阶段 2 dispute（上链）：**\n\
              ```bash\n\
              onchainos agent dispute confirm {job_id} --agent-id {agent_id}\n\
              ```\n\
@@ -648,7 +645,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - 分支 A apply 上链成功 → 收到 `provider_applied` 系统通知 → 再次调 next-action 拿剧本\n\
              - 分支 B 等买家 confirm-accept → 收到 `job_accepted` 系统通知 → 进入 JobAccepted 剧本 Step A-D 完成「接单 → 干活 → 创建付款单 → 同条 xmtp_send 交付物+paymentId」 一气呵成\n"
         ),
-        // ─── buyer 主导的 tx 结果通知，provider 端无需动作但需确认成功 ─────
+        // ─── buyer 主导的 tx 结果通知，provider 端无需动作 ─────
         Event::JobClosed
         | Event::JobVisibilityChanged
         | Event::JobPaymentModeChanged => format!(

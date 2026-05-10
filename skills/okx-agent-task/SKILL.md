@@ -669,8 +669,10 @@ onchainos agent next-action \
 - `jobStatus` 只描述"任务此刻处于什么状态"（如 `open`），多个不同事件可能落在同一 status 上（`provider_applied` 不改 status 仍是 open），传 status 会丢失事件区分度。
 - 反例：sub session 收到 `event=provider_applied, jobStatus=open` 的 envelope。如果传 `--jobStatus open`，next-action 会把它路由到 `JobCreated` 剧本（"协商三项确认"），而不是真正期望的 `ProviderApplied` 剧本（"已上链，通知买家 confirm-accept"）—— 行为完全错位。
 
+**`message.code` 透传**：如果 envelope 中存在 `message.code` 字段，调 next-action 时追加 `--code <值>`。CLI 内部会根据 code 值自动路由：code≠0 直接输出失败剧本，code=0 输出正常剧本。不存在 `message.code` 字段时不传 `--code`（默认 0）。
+
 **严格规则**：
-- 收到 system envelope → **先调 next-action**，按输出再决定是否 `session_status` + `xmtp_send` 发消息给对方
+- 收到 system envelope → 调 next-action（如有 `message.code` 则追加 `--code`），按输出再决定是否 `session_status` + `xmtp_send` 发消息给对方
 - `--jobStatus` 参数填的是 **`message.event`**（兼容 status 名也能跑，但优先 event；CLI 内部的 `parse_status_or_event` 会自动分辨）
 - **禁止**把 system envelope 内容直接 xmtp_send 出去（这是给你自己看的通知，不是给对方的消息）
 - **禁止**跳过 next-action 直接写回复文本；每个系统通知都必须走这个 CLI 入口

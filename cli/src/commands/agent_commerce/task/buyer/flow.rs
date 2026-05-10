@@ -767,16 +767,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ **不要通过 xmtp_send 向卖家发送任何消息**，只需通知 user session。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              ⚠️ 通知用户时使用 `<title>（{job_id}）` 格式。title 从上下文取；如不记得，先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 查询。\n\n\
-             **Step 1 — 检查 envelope `message.code` 字段：**\n\
-             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
-             \x20\x20content: [自动退款失败] <title>（{job_id}）退款交易失败。\n\
-             \x20\x20→ 结束 turn。\n\n\
-             - `code` = 0（成功）→ 继续 Step 2。\n\n\
-             **Step 2 — 调用 xmtp_dispatch_user 通知用户退款到账：**\n\n\
+             **Step 1 — 调用 xmtp_dispatch_user 通知用户退款到账：**\n\n\
              content：\n\
              \x20\x20\x20\x20[自动退款成功] <title>（{job_id}）的担保资金已退还至您的钱包。\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
-             **Step 3 — 终态收尾（保留 sub session）：**\n\
+             **Step 2 — 终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
              退款流程完整结束。\n"
         ),
@@ -797,12 +792,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
              ⚠️ 通知用户时使用 `<title>（{job_id}）` 格式。title 从上下文取；如不记得，先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 查询。\n\n\
-             **Step 1 — 检查 envelope `message.code` 字段：**\n\
-             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
-             \x20\x20content: [关闭失败] <title>（{job_id}）关闭交易失败。\n\
-             \x20\x20→ 结束 turn。\n\n\
-             - `code` = 0（成功）→ 继续 Step 2。\n\n\
-             **Step 2 — 调用 xmtp_dispatch_user 通知用户：**\n\
+             **Step 1 — 调用 xmtp_dispatch_user 通知用户：**\n\
              \x20\x20content: <title>（{job_id}）已关闭，资金已回收。\n\n\
              **终态收尾（保留 sub session）：**\n\
              ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
@@ -867,15 +857,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              🛑 **这不是辅助事件，必须通知用户。**\n\n\
              【你的下一步动作（严格顺序）】\n\n\
              ⚠️ 通知用户时使用 `<title>（{job_id}）` 格式。title 从上下文取；如不记得，先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 查询。\n\n\
-             **Step 1 — 检查 envelope `message.code` 字段：**\n\
-             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
-             \x20\x20content: [可见性切换失败] <title>（{job_id}）可见性切换交易失败。\n\
-             \x20\x20→ 结束 turn。\n\
-             - `code` = 0（成功）→ 继续 Step 2\n\n\
-             **Step 2 — 从系统通知 envelope 中读取 `visibility` 字段：**\n\
+             **Step 1 — 从系统通知 envelope 中读取 `visibility` 字段：**\n\
              - `visibility=0` → 公开（public）\n\
              - `visibility=1` → 私有（private）\n\n\
-             **Step 3 — 调用 xmtp_dispatch_user 通知用户可见性已变更：**\n\
+             **Step 2 — 调用 xmtp_dispatch_user 通知用户可见性已变更：**\n\
              content：\n\
              \x20\x20- visibility=0 → [可见性变更] <title>（{job_id}）已切换为公开（public），等待卖家主动联系。\n\
              \x20\x20- visibility=1 → [可见性变更] <title>（{job_id}）已切换为私有（private）。\n\n\
@@ -890,12 +875,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              🛑 **必须通知用户支付模式变更结果。**\n\n\
              【你的下一步动作】\n\n\
              ⚠️ 通知用户时使用 `<title>（{job_id}）` 格式。title 从上下文或 sub session 历史中获取。\n\n\
-             **Step 1 — 检查 envelope `message.code` 字段：**\n\
-             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
-             \x20\x20content: [支付模式切换失败] <title>（{job_id}）设置支付方式失败。\n\
-             \x20\x20→ 结束 turn。\n\n\
-             - `code` = 0（成功）→ 按支付方式分流，继续 Step 2。\n\n\
-             **Step 2 — 从系统通知 envelope 中读取 `paymentMode` 字段：**\n\
+             **Step 1 — 从系统通知 envelope 中读取 `paymentMode` 字段：**\n\
              paymentMode 值映射：1=escrow, 2=non_escrow, 3=x402。\n\
              ⚠️ 直接使用 envelope 中的 paymentMode，不需要额外查询 API。\n\n\
              ━━━━━━━━━ escrow（paymentMode=1）— 发 [NEGOTIATE_CONFIRM] 触发卖家 apply ━━━━━━━━━\n\n\
@@ -1073,12 +1053,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
              ⚠️ 通知用户时使用 `<title>（{job_id}）` 格式。title 从上下文取；如不记得，先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 查询。\n\n\
-             **Step 1 — 检查 envelope `message.code` 字段：**\n\
-             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
-             \x20\x20content: [自动完成失败] <title>（{job_id}）自动完成交易失败。\n\
-             \x20\x20→ 结束 turn，等待下一次 job_auto_completed 通知。\n\n\
-             - `code` = 0（成功）→ 继续 Step 2。\n\n\
-             **Step 2 — 调用 xmtp_dispatch_user 通知用户任务已自动完成：**\n\
+             **Step 1 — 调用 xmtp_dispatch_user 通知用户任务已自动完成：**\n\
              \x20\x20content:\n\
              \x20\x20[任务自动完成] <title>（{job_id}）因验收超时，卖家已通过 claimAutoComplete 领取资金。\n\
              \x20\x20任务状态：completed\n\
@@ -1109,12 +1084,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】买家（Client）\n\n\
              【你的下一步动作】\n\n\
              ⚠️ 通知用户时使用 `<title>（{job_id}）` 格式。title 从上下文取；如不记得，先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 查询。\n\n\
-             **Step 1 — 检查 envelope `message.code` 字段：**\n\
-             - `code` 非 0（失败）→ 调用 xmtp_dispatch_user 通知用户：\n\
-             \x20\x20content: [奖励领取失败] <title>（{job_id}）奖励领取交易失败。\n\
-             \x20\x20→ 结束 turn。\n\n\
-             - `code` = 0（成功）→ 继续 Step 2。\n\n\
-             **Step 2 — 调用 xmtp_dispatch_user 通知用户奖励已到账：**\n\
+             **Step 1 — 调用 xmtp_dispatch_user 通知用户奖励已到账：**\n\
              \x20\x20content: [奖励已到账] <title>（{job_id}）的奖励/退款已成功领取到您的钱包。\n"
         ),
 

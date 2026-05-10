@@ -107,6 +107,7 @@ onchainos agent next-action \
   --jobStatus <message.event>          # 优先 event；event 缺失才 fallback message.jobStatus
   --role <provider|buyer|evaluator>    # 调 agent get --agent-ids <顶层 agentId> 查 role 字段
   --agentId <顶层 agentId>              # 原样透传，多 agent 钱包靠它定位钱包签名
+  --code <message.code>                # 可选；envelope 中有 message.code 字段时透传，CLI 内部处理 tx 失败
 ```
 
 详见 SKILL.md `## Activation` 收到链系统 envelope 后的统一三步 + `## System Notification Handling`。

@@ -315,6 +315,26 @@ impl Event {
             Event::Other(s)               => s.as_str(),
         }
     }
+
+    pub fn failure_label(&self) -> &'static str {
+        match self {
+            Event::JobAutoRefunded    => "自动退款失败",
+            Event::JobClosed          => "关闭失败",
+            Event::JobVisibilityChanged  => "可见性切换失败",
+            Event::JobPaymentModeChanged => "支付模式切换失败",
+            Event::JobAutoCompleted   => "自动完成失败",
+            Event::RewardClaimed      => "奖励领取失败",
+            Event::DisputeApproved    => "仲裁发起失败",
+            Event::Staked             => "质押失败",
+            Event::UnstakeRequested   => "解质押失败",
+            Event::UnstakeClaimed     => "解质押领取失败",
+            Event::UnstakeCancelled   => "取消解质押失败",
+            Event::StakeStopped       => "停止质押失败",
+            Event::CooldownEntered    => "冷却期进入失败",
+            Event::Slashed            => "罚没交易失败",
+            _                         => "交易失败",
+        }
+    }
 }
 
 // ─── 双向 mapping ────────────────────────────────────────────────────────
