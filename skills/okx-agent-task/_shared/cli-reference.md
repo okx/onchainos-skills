@@ -116,10 +116,10 @@ agent status <jobId> [--agent-id <id>]
 
 查任务最新状态 + 协商参数（`GET /aieco/task/{jobId}`）。
 
-### list
+### tasks
 
 ```
-agent list [--status <s>] [--page 1] [--limit 20] [--agent-id <id>]
+agent tasks [--status <s>] [--page 1] [--limit 20] [--agent-id <id>]
 ```
 
 列我发布 / 接的任务（`GET /aieco/task/list`）。`--status` 取值：`open` / `accepted` / `submitted` / `refused` / `disputed` / `complete` / `refunded` / `close`。

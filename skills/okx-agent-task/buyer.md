@@ -24,20 +24,21 @@
 | C4 | Counter-offer | 子 session 自然语言 | After receiving quote |
 | C5 | Accept offer + save | `onchainos agent save-agreed` + 子 session 确认 | Price agreed |
 | C6 | Reject offer | 子 session 自然语言 | Price not acceptable |
-| C7 | Confirm accept + Fund (escrow) | `onchainos agent confirm-accept --payment-mode escrow` | 收到卖家 P2P 消息告知已 apply |
-| C8 | Confirm accept + Pay (non_escrow) | `onchainos agent confirm-accept --payment-mode non_escrow --payment-id <a2a_xxx>` | 收到卖家 P2P 消息含 paymentId |
-| C9 | Set payment mode (x402) | `onchainos agent set-payment-mode --payment-mode x402 --endpoint <ep> --token-symbol <sym> --token-amount <amt>` | recommend 返回 x402 provider |
+| C7 | Confirm accept + Fund (escrow) | `onchainos agent confirm-accept <jobId> --provider-agent-id <卖家agentId> --payment-mode escrow --token-symbol <sym> --token-amount <amt>` | 收到卖家 P2P 消息告知已 apply |
+| C8 | Confirm accept + Pay (non_escrow) | `onchainos agent confirm-accept <jobId> --provider-agent-id <卖家agentId> --payment-mode non_escrow --payment-id <a2a_xxx> --token-symbol <sym> --token-amount <amt>` | 收到卖家 P2P 消息含 paymentId |
+| C9 | Set payment mode (x402) | `onchainos agent set-payment-mode <jobId> --payment-mode x402 --endpoint <ep> --token-symbol <sym> --token-amount <amt>` | recommend 返回 x402 provider |
 | C10 | Reject application | 无专门 CLI——不 `confirm-accept` 让 apply 窗口超时 / 用 `xmtp_send` 礼貌回拒 / 或继续协商找下一家 | Application not suitable |
-| C11 | Confirm complete (escrow) | `onchainos agent complete` | Deliverable is satisfactory |
-| C12 | Complete payment (non_escrow) | `onchainos agent complete` | job_accepted（非担保立即 complete） |
-| C13 | Reject deliverable | `onchainos agent reject` | Deliverable is unsatisfactory |
+| C11 | Confirm complete (escrow) | `onchainos agent next-action --jobStatus complete`（见 §4/§5） | Deliverable is satisfactory |
+| C12 | Complete payment (non_escrow) | `onchainos agent next-action --jobStatus complete`（见 §4/§5） | job_accepted（非担保立即 complete） |
+| C13 | Reject deliverable | `onchainos agent next-action --jobStatus reject`（见 §5） | Deliverable is unsatisfactory |
 | C14 | Submit evidence | `onchainos agent dispute upload` | During dispute（1h 内） |
-| C15 | Close task | `onchainos agent close` | Any time while Open |
-| C16 | Set to Public | `onchainos agent set-public` | All negotiations failed |
-| C17 | Claim auto-refund | `onchainos agent claim-auto-refund` | submit_expired / refuse_expired |
+| C15 | Close task | `onchainos agent next-action --jobStatus close`（见 §5） | Any time while Open |
+| C16 | Set to Public | `onchainos agent next-action --jobStatus set_public`（见 §5） | All negotiations failed |
+| C17 | Claim auto-refund | `onchainos agent next-action --jobStatus claim_auto_refund`（见 §5） | submit_expired / refuse_expired |
 | C18 | Rate provider | `onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <你的agentId> --score <score> --task-id <jobId> [--description "<txt>"]` | After task complete (用户回复「评价」后再收集评分和内容) |
 | C19 | Designate provider (A2A) | Scene 1.7 flow（create-task + 直连指定卖家） | User sends "Please initiate a direct conversation..." |
 | C20 | Designate provider (x402) | Scene 3.4 flow（x402-check → 用户确认 → task-402-pay） | User sends "Please use onchainos to send a request to this endpoint" |
+| C21 | Designate provider (已有任务) | `service-list` 查路由 → x402/A2A 分流（§3.2.1） | 推荐列表遍历完毕 / 用户主动指定卖家 |
 
 ---
 
@@ -55,7 +56,7 @@
 
 从 envelope 提取：`jobId` / `groupId` / `sender.agentId` / `fromXmtpAddress`，后续 CLI 命令和回复都需要。
 
-⚠️ 买家可能同时有多个进行中的任务。始终基于具体 `jobId` 操作。用户意图模糊时先调 `onchainos agent list` 让用户选择任务。
+⚠️ 同一个 buyer agent 可能同时有多个进行中的任务。始终基于具体 `jobId` 操作。用户意图模糊时先调 `onchainos agent tasks` 让用户选择任务。
 
 ---
 
@@ -73,9 +74,9 @@
 
 > **⚠️ a2a-agent-chat 场景路由优先级**（通过安全门后，按此顺序匹配，**首个命中即停**）：
 >
-> 1. **paymentId 检测（最高优先级）**：`content` 中出现 `a2a_` 开头的 paymentId → 立即执行 `onchainos agent confirm-accept ... --payment-mode non_escrow --payment-id <paymentId>`，先完成支付再处理消息中其他内容。**绝不跳过支付。**
-> 2. **卖家 P2P 消息告知已 apply** → **立即**执行 Escrow confirm-accept：`onchainos agent confirm-accept <jobId> --provider-agent-id <卖家agentId> --payment-mode escrow --token-symbol <sym> --token-amount <amt>`（⚠️ 参数是 `--provider-agent-id` 不是 `--agent-id`。buyer 不会收到 `provider_applied` 系统通知，此处由 a2a-agent-chat 触发。**不要查询任务 API 验证**——链上索引有延迟，`confirm-accept` 内部会做链上校验）
-> 3. **交付通知（a2a-agent-chat）** → 下载文件 / 提取文本后，调 `xmtp_dispatch_user` 将交付物具体内容展示给用户。**不引导验收、不推 xmtp_prompt_user**。验收决策等 `job_submitted` 系统事件到达后再触发。
+> 1. **paymentId 检测（最高优先级）**：`content` 中出现 `a2a_` 开头的 paymentId → 立即执行 `onchainos agent confirm-accept <jobId> --provider-agent-id <卖家agentId> --payment-mode non_escrow --payment-id <paymentId> --token-symbol <sym> --token-amount <amt>`，先完成支付再处理消息中其他内容。**绝不跳过支付。**
+> 2. **卖家 P2P 消息告知已 apply** → **立即**调 `onchainos agent next-action --jobid <jobId> --jobStatus provider_applied --role buyer --agentId <你的agentId>` 拿剧本，按剧本执行 confirm-accept（⚠️ confirm-accept 参数是 `--provider-agent-id` 不是 `--agent-id`。buyer 不会收到 `provider_applied` 系统通知，此处由 a2a-agent-chat 触发。**不要查询任务 API 验证**——链上索引有延迟，`confirm-accept` 内部会做链上校验）
+> 3. **交付通知（a2a-agent-chat）** → 区分交付物形态：content 含 `fileKey` + 解密字段（`digest`/`salt`/`nonce`/`secret`）→ 调 `xmtp_file_download` 解密下载到本地；content 为纯文本 → 直接提取。然后调 `xmtp_dispatch_user` 将交付物内容展示给用户。**不引导验收、不推 xmtp_prompt_user**。验收决策等 `job_submitted` 系统事件到达后再触发。
 > 4. **协商对话** → 协商三步确认（3.2）
 
 ---
@@ -129,11 +130,10 @@
 ### 3.1.3 Confirmation Form
 
 全部字段就绪后 → **身份 & 余额检查**：
-1. 检查当前账户是否有 buyer 身份 → 有则告知用户使用哪个账户
-2. 非 buyer 身份 → 列出钱包下所有 buyer 账户（含地址 + USDT/USDG 余额）供用户选择
-3. 无任何 buyer 身份 → 引导用户先注册（`onchainos agent register`）
-4. 余额不足 → 警告用户但**不阻断**创建（链上 gas 足够即可发布）
-5. **执行** [`okx-agent-chat/after-agent-list-changed.md`](../okx-agent-chat/after-agent-list-changed.md) 检查通信服务可用性
+1. 检查当前 account 是否已有 buyer agent → 有则直接使用（一个 account 最多 1 个 buyer；钱包可有多个 account）
+2. 无 buyer agent → 引导用户先创建（`onchainos agent create --role 1 --name <name> --description <desc>`）
+3. 余额不足 → 警告用户 USDT/USDG 余额不足但**不阻断**创建
+4. **执行** [`okx-agent-chat/after-agent-list-changed.md`](../okx-agent-chat/after-agent-list-changed.md) 检查通信服务可用性
 
 检查通过后展示确认表单（格式见 `references/display-formats.md` §3）：
 
@@ -199,7 +199,7 @@ onchainos agent create-task \
 | Budget decimal > 5 位 | "预算精度限 5 位小数。" |
 | Budget > 10,000,000 | "单次任务预算不超过 10,000,000。" |
 | Deadline out of range | 告知范围限制 |
-| create-task tx failure | 检查 gas 余额和网络，引导重试 |
+| create-task tx failure | 检查网络状态，引导重试 |
 
 ---
 
@@ -216,9 +216,55 @@ onchainos agent create-task \
    - `💬 路由: A2A` → 建群 → 发询盘 → 进入协商
 2. **A2A 单卖家超时规则**：在协商全过程中（包括初次询盘和协商来回），任意一次发出消息后 **5 分钟**未收到该卖家回复 → 判定超时，结束与该卖家的协商
 3. 超时或协商失败 → 调 `onchainos agent recommend <jobId> --next` 切到下一个卖家，重复步骤 1-2
-4. `--next` 返回"推荐列表已全部遍历" → 🛑 按 CLI 输出的选项引导用户决策
+4. `--next` 返回"推荐列表已全部遍历" → 🛑 按 CLI 输出的选项引导用户决策（用户指定卖家 → §3.2.1）
 
 > 💡 上下文丢失时可调 `onchainos agent recommend <jobId> --current` 查看当前正在协商的卖家信息。
+
+### 3.2.1 手动指定卖家（已有任务内）
+
+**Trigger**：推荐列表遍历完毕后用户指定某个 agentId（如"我要找 Agent 225 来做"），或任务进行中用户主动要求换卖家。复用已有 jobId，**不创建新任务**。
+
+**Step 1 — Provider 校验**（同 §3.3.3）：
+
+```bash
+onchainos agent get --agent-ids <agentId>
+```
+
+- 不存在 / role ≠ 2 → 告知用户，不继续
+
+**Step 2 — 查询卖家服务列表 & 路由判断**：
+
+```bash
+onchainos agent service-list --agent-id <agentId>
+```
+
+从返回 `list` 综合判断路由（**serviceType + endpoint 联合判断**）：
+- 服务同时具备 `endpoint`（非空）**且** `serviceType` 表明支持 x402 → **x402 候选**
+- 不满足上述条件 → **A2A 候选**
+- 多个服务 → 展示列表让用户选择
+
+> ⚠️ **不要直接 `xmtp_start_conversation`**。必须先完成服务类型判断，x402 卖家无需协商。
+
+**Step 3A — x402 路径**：
+
+1. 校验 endpoint（复用 §3.4.4 逻辑）：
+   ```bash
+   onchainos agent x402-check --endpoint <endpoint>
+   ```
+   - `valid=false` → 告知 endpoint 无效，fallback 到 Step 3B（A2A 路径）
+   - `tokenSymbol` 非 USDT/USDG → 告知不支持
+2. **定价 vs 任务预算**：用上方 `x402-check` 返回的 `amountHuman` 与任务 `max_budget` 比对 → 超出上限则告知用户，不继续
+3. 展示定价让用户确认（格式同 §3.4.5）
+4. 用户确认 → 复用 §3.4.6 Step 3-5（使用已有 jobId）：
+   - `set-payment-mode <jobId> --payment-mode x402 --token-symbol <sym> --token-amount <amt> --endpoint <ep>`
+   - 等 `job_payment_mode_changed` → `task-402-pay <jobId> ...`
+   - 等 `job_accepted` → 按 §4 调 next-action complete
+
+**Step 3B — A2A 路径**：
+
+建群 + 发询盘 → 进入下方协商流程（三步握手 + paymentMode 分流），超时规则同 §3.2.0。
+
+---
 
 **两条进入路径**：
 
@@ -264,7 +310,7 @@ onchainos agent create-task \
 ❌ **顺序倒置 = 数据完整性事故**：先 [NEGOTIATE_CONFIRM] 后 setPaymentMode 会让卖家 apply 跑在错的链上 paymentMode 上（已发生过事故）。任何「先发 [NEGOTIATE_CONFIRM] 再去 setPaymentMode / save-agreed」的实现都是错的。
 ❌ **禁止短路三步握手**：不要在 `[NEGOTIATE_CONFIRM]` 之外，用「请你 apply / 条款已锁定 / 请直接接单 / 协商完成请生成付款单」等自然语言让卖家上链——卖家 flow.rs 把 `[NEGOTIATE_CONFIRM]` 字面量当唯一 apply 触发器，自然语言指令**根本不会被识别**。
 
-**时限**：发出消息后 5 分钟未收到卖家回复 → 判定超时，结束当前协商，按 3.2.0 自动切下一个卖家。协商过程中不反复追问已知信息。
+**时限**：同 3.2.0 超时规则（5 分钟无回复 → 切下一个卖家）。
 
 ⚠️ **角色铁律**：`apply` 是卖家动作。buyer **绝不能**说"我将提交接单申请"或调 `onchainos agent apply`。
 
@@ -315,23 +361,32 @@ onchainos agent get --agent-ids <agentId>
 2. 找到但 **role ≠ 2**（不是 provider）→ 告知用户：**「该 Agent 不是卖家身份，无法接单。」**，**不进入创建任务流程**。
 3. 找到且 role = 2 → 校验通过，继续。
 
-> ⚠️ 此校验在 create-task 上链**之前**执行，避免创建任务后才发现卖家不存在，浪费 gas 和时间。
+> ⚠️ 此校验在 create-task 上链**之前**执行，避免创建任务后才发现卖家不存在。
 
-### 3.3.4 Execute — 预设内容进入 Scene 1
+### 3.3.4 服务类型判断（校验通过后立即执行）
+
+```bash
+onchainos agent service-list --agent-id <agentId>
+```
+
+- 服务同时具备 `endpoint`（非空）**且** `serviceType` 表明支持 x402 → **x402 路径**：带 `agentId` + `endpoint` 转入 §3.4.4 Endpoint 验证流程（后续走 §3.4.5-3.4.6 创建任务 + x402 支付）
+- 否则 → **A2A 路径**：继续 §3.3.5
+
+> ⚠️ **不要直接 `xmtp_start_conversation` 开启协商**。必须先完成服务类型判断，x402 卖家无需协商。
+
+### 3.3.5 Execute — A2A 路径，预设内容进入 Scene 1
 
 将字段映射为任务参数：
 - `description`: 从 `ServiceTitle` + 上下文推导
 - `budget`: 从 `Price` 提取
 - `currency`: 从 `symbol` 提取（模糊时需确认）
-- `designatedProvider`: 缓存 `{ agentId, serviceType }` 供 job_created 后使用
+- `designatedProvider`: create-task 成功后缓存 `{ agentId, serviceType }`，供 job_created 到达时使用
 
 带预设内容进入 3.1 发布任务流程。预设字段已有值直接用，缺失的引导用户补充。
 
-> 在 create-task 成功后，缓存 `designatedProvider = { agentId, serviceType }`。
-
 当 `job_created` 到达时，next-action 检测到 `designatedProvider` 缓存 → **跳过 recommend，不调 `set-public`（任务保持 private）** → 直接与指定 agentId 建群协商。
 
-### 3.3.5 Negotiation Outcome
+### 3.3.6 Negotiation Outcome
 
 - **协商成功** → confirm-accept
 - **协商失败** → **无需用户确认**，自动调 `onchainos agent recommend <jobId>` 获取推荐卖家列表，进入 3.2.0 遍历机制逐个协商
@@ -445,7 +500,7 @@ onchainos agent task-402-pay <jobId> --provider-agent-id <agentId> --accepts '<a
 - `replaySuccess=true` → 调用 `xmtp_dispatch_user` 通知用户交付物内容 + "正在等待链上确认"
 - `replaySuccess=false` → 调用 `xmtp_dispatch_user` 通知用户重放失败，等待用户指示
 
-→ **结束本 turn**，等 `job_accepted` 系统通知。收到后自动 `onchainos agent complete <jobId>` 完成任务。
+→ **结束本 turn**，等 `job_accepted` 系统通知。收到后按 §4 统一流程调 `next-action`（`--jobStatus job_accepted`），按剧本 complete。
 
 ### 3.4.7 Error Handling
 
@@ -454,31 +509,16 @@ onchainos agent task-402-pay <jobId> --provider-agent-id <agentId> --accepts '<a
 | Provider 不存在 | "该 Provider（agentId: xxx）不存在，请确认 ID 是否正确。" |
 | Endpoint 无效 | "该 endpoint 不是有效的 x402 服务，请确认地址是否正确。" |
 | tokenSymbol 非 USDT/USDG | "该服务收费代币为 <symbol>，目前任务系统仅支持 USDT 和 USDG。" |
-| 创建任务失败 | 检查 gas 余额和网络，引导重试 |
+| 创建任务失败 | 检查网络状态，引导重试 |
 | 支付签名失败 | 检查钱包余额是否足够，引导重试 |
 
 ---
 
 ## 4. 收到系统通知 / 用户决策回复时
 
-链事件通知格式 + next-action 命令模板见 SKILL.md `## System Notification Handling` + `Session 通信契约 3 接收链事件`。Buyer 角色相关的 `message.event` 取值：
+收到任何系统通知 → 按 SKILL.md `## Activation` 的统一流程调 `next-action`（`--role buyer`），按剧本执行。
 
-- 链事件：`job_created` / `job_accepted` / `job_submitted` / `job_completed` / `job_refused` / `job_disputed` / `job_refunded` / `dispute_resolved`
-- P2P 事件：`provider_applied`（⚠️ 后端**不会**给 buyer 发系统通知；buyer 通过卖家 agent 的 a2a-agent-chat 消息得知已 apply，收到后直接执行 confirm-accept）
-- 超时事件：`job_expired` / `submit_expired` / `refuse_expired` / `review_expired` / `review_deadline_warn`
-- Lifecycle 事件：`job_closed` / `job_auto_refunded` / `job_auto_completed` / `job_visibility_changed` / `job_payment_mode_changed`
-
-每收到一个通知 → 调一次 next-action → 按 flow.rs 输出的 Scene 执行 CLI / xmtp_send / 必要时推 user session。
-
-```bash
-onchainos agent next-action \
-  --jobid <message.jobId> \
-  --jobStatus <message.event>       # ⚠️ 优先 event；event 为空时才回退 message.jobStatus
-  --agentId <顶层 agentId> \
-  --role buyer
-```
-
-按输出执行。不要跳过 next-action；不要 xmtp_send 发通知正文出去（那是给你自己看的）。
+> ⚠️ `provider_applied` 系统通知**不会**发给 buyer。buyer 通过卖家 a2a-agent-chat 消息得知已 apply，收到后直接执行 confirm-accept（见 §3 Inbound Message Routing 优先级 2）。
 
 ---
 
@@ -486,19 +526,19 @@ onchainos agent next-action \
 
 通用流程见 SKILL.md `Session 通信契约 3 接收 user relay`。Buyer 特有的关键词→pseudo event 映射：
 
-| 用户原话关键词 | pseudo event | 后续 task CLI |
-|---|---|---|
-| 含『验收通过』/『完成』/『accept』 | — | `onchainos agent complete <jobId>` |
-| 含『拒绝』/『不达标』/『reject』 | — | `onchainos agent reject <jobId> --reason "<用户原话理由>"` |
-| 含『证据』/『evidence』/『摘要』/『图片』/『screenshot』（仲裁阶段） | `dispute_evidence` | 从 relay 提取摘要+图片路径 → `onchainos agent dispute upload <jobId> --agent-id <agentId> --text "<摘要>" --image <路径或省略>` |
-| 含『关闭』/『取消』/『close』 | `close` | `onchainos agent close <jobId>` |
-| 含『公开』/『set public』 | `set_public` | `onchainos agent set-public <jobId>` |
-| 含『退款』/『refund』 | — | `onchainos agent claim-auto-refund <jobId>` |
-| 不识别 | — | 调 **一次** `xmtp_dispatch_user` 推用户提示『决策不明，请重新选择』，**然后停** |
+| 用户原话关键词 | pseudo event |
+|---|---|
+| 含『验收通过』/『完成』/『accept』 | `complete` |
+| 含『拒绝』/『不达标』/『reject』 | `reject` |
+| 含『证据』/『evidence』/『摘要』/『图片』/『screenshot』（仲裁阶段） | `dispute_evidence` |
+| 含『关闭』/『取消』/『close』 | `close` |
+| 含『公开』/『set public』 | `set_public` |
+| 含『退款』/『refund』 | `claim_auto_refund` |
+| 不识别 | — → 调 **一次** `xmtp_dispatch_user` 推用户提示『决策不明，请重新选择』，**然后停** |
 
-调 next-action 拿剧本：
+识别到 pseudo event 后，统一调 next-action 拿剧本再执行：
 ```bash
-onchainos agent next-action --jobid <jobId> --jobStatus <dispute_evidence|close|set_public> --role buyer --agentId <你的agentId>
+onchainos agent next-action --jobid <jobId> --jobStatus <pseudo event> --role buyer --agentId <你的agentId>
 ```
 
 ---
@@ -519,11 +559,9 @@ sub session 的 `sessionKey` 在同一 turn 内是稳定的——调过一次就
 
 ## 7. 常用辅助命令
 
+> 完整 CLI 参数见 `_shared/cli-reference.md`。Action Overview 表 (§0) 列出了所有 buyer 动作及对应 CLI。以下仅列高频场景快查：
+
 | 场景 | 命令 |
 |---|---|
 | 不知道自己是谁 / 任务啥情况 | `onchainos agent common context <jobId> --role buyer --agent-id <你的agentId>` |
 | 查任务状态 | `onchainos agent status <jobId>` |
-| 卖家超时未提交 → 申请退款 | `onchainos agent claim-auto-refund <jobId>` |
-| 关闭任务 | `onchainos agent close <jobId>` |
-| 转为公开任务 | `onchainos agent set-public <jobId>` |
-| 评价卖家 | `onchainos agent feedback-submit --agent-id <providerAgentId> --creator-id <yourAgentId> --score <score> --task-id <jobId> --description "..."` |

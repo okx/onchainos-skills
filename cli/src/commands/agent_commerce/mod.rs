@@ -81,7 +81,8 @@ pub enum AgentCommand {
     },
 
     /// List my tasks
-    List {
+    #[command(visible_alias = "list")]
+    Tasks {
         #[arg(long)] status: Option<String>,
         #[arg(long, default_value = "1")]  page: u32,
         #[arg(long, default_value = "20")] limit: u32,
@@ -551,7 +552,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::common::query::handle_status(&mut client, &job_id, agent_id.as_deref().unwrap_or(""), task::common::AGENT_ROLE_BUYER).await
         }
 
-        AgentCommand::List { status, page, limit, agent_id } => {
+        AgentCommand::Tasks { status, page, limit, agent_id } => {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
             task::common::query::handle_list(&mut client, status.as_deref(), page, limit, agent_id.as_deref().unwrap_or(""), task::common::AGENT_ROLE_BUYER).await
         }

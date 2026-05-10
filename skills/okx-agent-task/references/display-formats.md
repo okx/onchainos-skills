@@ -12,7 +12,7 @@
 
 ---
 
-## 1. Task list — `onchainos agent list`
+## 1. Task list — `onchainos agent tasks`
 
 | jobId | 标题 | 预算 | 状态 |
 |---|---|---|---|
