@@ -84,8 +84,39 @@ SRC_ROOT=""
 
 resolve_root_from_dir() {
   local d="$1"
-  if [ -f "$d/onchainos" ] && [ -d "$d/skills" ]; then
-    SRC_BIN="$d/onchainos"
+  # 老版本 tgz: 单一 onchainos 二进制
+  # 新版本 tgz: 4 个 target,按当前平台选
+  local picked=""
+  if [ -f "$d/onchainos" ]; then
+    picked="$d/onchainos"
+  else
+    case "$(uname -s)-$(uname -m)" in
+      Darwin-arm64)
+        [ -f "$d/onchainos-darwin-arm64" ] && picked="$d/onchainos-darwin-arm64"
+        ;;
+      Darwin-x86_64)
+        [ -f "$d/onchainos-darwin-x64" ] && picked="$d/onchainos-darwin-x64"
+        ;;
+      Linux-x86_64|Linux-amd64)
+        [ -f "$d/onchainos-linux-x64" ] && picked="$d/onchainos-linux-x64"
+        ;;
+      Linux-aarch64|Linux-arm64)
+        [ -f "$d/onchainos-linux-arm64" ] && picked="$d/onchainos-linux-arm64"
+        ;;
+      *)
+        echo "✗ 不支持的平台: $(uname -s)-$(uname -m)" >&2
+        echo "  支持: macOS (arm64 / x86_64) / Linux (x86_64 / aarch64)" >&2
+        return 1
+        ;;
+    esac
+    if [ -z "$picked" ]; then
+      echo "✗ tgz 里没找到匹配 $(uname -s)-$(uname -m) 的二进制" >&2
+      echo "  pack 时可能用 --no-* 跳过了你这个平台,请联系打包者重新 pack" >&2
+      return 1
+    fi
+  fi
+  if [ -n "$picked" ] && [ -d "$d/skills" ]; then
+    SRC_BIN="$picked"
     SRC_ROOT="$d"
     return 0
   fi

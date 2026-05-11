@@ -244,6 +244,10 @@ async fn fetch_agent_services(agent_id: &str) -> Vec<AgentService> {
     };
     let mut cmd = tokio::process::Command::new(&exe);
     cmd.args(["agent", "service-list", "--agent-id", agent_id]);
+    eprintln!(
+        "[fetch_agent_services] running: {} agent service-list --agent-id {agent_id}",
+        exe.display()
+    );
     let output = match cmd.output().await {
         Ok(o) => o,
         Err(e) => {
@@ -251,13 +255,22 @@ async fn fetch_agent_services(agent_id: &str) -> Vec<AgentService> {
             return vec![];
         }
     };
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+    let stderr_str = String::from_utf8_lossy(&output.stderr);
+    eprintln!(
+        "[fetch_agent_services] exit_code={:?} stdout_len={} stderr_len={}",
+        output.status.code(),
+        stdout_str.len(),
+        stderr_str.len()
+    );
+    eprintln!("[fetch_agent_services] stdout=\n{stdout_str}");
+    if !stderr_str.is_empty() {
+        eprintln!("[fetch_agent_services] stderr=\n{stderr_str}");
+    }
     let body: serde_json::Value = match serde_json::from_slice(&output.stdout) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!(
-                "[fetch_agent_services] 解析 stdout 失败: {e}; raw={}",
-                String::from_utf8_lossy(&output.stdout)
-            );
+            eprintln!("[fetch_agent_services] 解析 stdout 失败: {e}");
             return vec![];
         }
     };
@@ -267,6 +280,10 @@ async fn fetch_agent_services(agent_id: &str) -> Vec<AgentService> {
         return vec![];
     }
     let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
+    eprintln!(
+        "[fetch_agent_services] body.data 解析前: {}",
+        serde_json::to_string_pretty(&data).unwrap_or_else(|_| "<unprintable>".to_string())
+    );
     let list = data
         .as_array()
         .and_then(|arr| arr.first())
@@ -275,7 +292,7 @@ async fn fetch_agent_services(agent_id: &str) -> Vec<AgentService> {
         .cloned();
     let Some(list) = list else {
         eprintln!(
-            "[fetch_agent_services] data[0].list 字段缺失，shape 异常 (agentId={agent_id})"
+            "[fetch_agent_services] data[0].list 字段缺失，shape 异常 (agentId={agent_id}) — data 完整内容见上一行 body.data 输出"
         );
         return vec![];
     };
