@@ -112,7 +112,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
     // ──────────────────────────────────────────────────────────────────────
     let context_preamble = format!(
         "📍 你在 sub session（你看到这段 next-action 输出 = 100% 在 sub）。\n\n\
-         🔒 **如果当前 turn 没读过 skills/okx-agent-task/SKILL.md Session 通信契约**（envelope 形态白名单 / xmtp_send 两步 / xmtp_dispatch_user·xmtp_prompt_user 推 user session 铁律），\n\
+         🔒 **如果当前 turn 没读过 skills/okx-agent-task/SKILL.md Session 通信契约**（envelope 形态白名单 / xmtp_send 两步 / xmtp_dispatch_user·xmtp_prompt_user 铁律），\n\
          **先读 `skills/okx-agent-task/SKILL.md`** 再继续——下面步骤会引用它的章节（3 / 4 / 5 / 6）。\n\n\
          ⚠️ **异常升级硬规则**（任何场景都适用，详见 skills/okx-agent-task/SKILL.md 通讯边界 + skills/okx-agent-task/buyer.md）：\n\
          \x20\x201) 协议理解错位：你已澄清同一条流程 ≥1 次，对方下一条还在重复错误诉求 → **不再回复对方**，调 `xmtp_dispatch_user` 推 `[⚠️ 协议理解错位] ...`，结束 turn\n\
@@ -137,10 +137,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         match &event {
             Event::JobCreated => "xmtp_start_conversation (建群) → xmtp_send (发协商消息)",
             Event::ProviderApplied => "（无动作）等待 job_accepted",
-            Event::JobAccepted => "xmtp_dispatch_user (通知 user session 接单成功)",
-            Event::JobSubmitted => "xmtp_prompt_user (转发交付物到 user session 请求验收决策)",
+            Event::JobAccepted => "xmtp_dispatch_user (通知接单成功)",
+            Event::JobSubmitted => "xmtp_prompt_user (转发交付物请求验收决策)",
             Event::JobRefused => "无 (等待卖家决策)",
-            Event::JobDisputed => "xmtp_prompt_user (转发仲裁通知到 user session 请求证据)",
+            Event::JobDisputed => "xmtp_prompt_user (转发仲裁通知请求证据)",
             Event::DisputeResolved => "xmtp_dispatch_user (通知仲裁结果)",
             Event::JobRefunded => "xmtp_dispatch_user (通知退款完成)",
             Event::JobAutoRefunded => "xmtp_dispatch_user (claimAutoRefund tx 回执)",
@@ -520,7 +520,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              交付物展示变量：deliverableType=text, deliverableText=<卖家发送的完整文字内容>\n\n\
              **Step 3 — 按支付方式分流：**\n\n\
              ━━━━━━━━━ 分支 A：escrow（担保）— 需要用户验收决策 ━━━━━━━━━\n\n\
-             调用 xmtp_prompt_user 把交付物和验收决策请求推到 user session（sessionKey 复用 Step 2 已获取的值;调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`,见硬规则 7）：\n\n\
+             调用 xmtp_prompt_user 把交付物和验收决策请求推给用户（sessionKey 复用 Step 2 已获取的值;调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`,见硬规则 7）：\n\n\
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
              如果用户回复「验收通过」→ 调用 xmtp_dispatch_session(sessionKey=\"<Step 2 session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：验收通过\") relay 回 sub session 执行 complete；\
              如果用户回复「拒绝，原因是...」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：拒绝，原因是<用户原话>\") relay 回 sub session 执行 reject。\
@@ -623,7 +623,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ⚠️ **证据内容必须由用户决策**——sub agent 不知道用户手上有什么证据（截图、聊天记录、交付物链接等），\n\
              不要凭空编造证据摘要直接调 `dispute upload`。**先把决策请求推到 user session 让用户拍板**。\n\n\
              【你的下一步动作（严格顺序）】\n\n\
-             **Step 1 — 调用 xmtp_prompt_user 把证据决策请求推到 user session 让用户提供内容：**\n\n\
+             **Step 1 — 调用 xmtp_prompt_user 把证据决策请求推给用户：**\n\n\
              先调 `session_status` 拿到本 sub session 的 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7)。\n\n\
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
              用户回复证据后，调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户证据：<用户提供的证据内容>\") relay 回 sub session 执行 dispute upload。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。1 小时内必须提交。\n\
