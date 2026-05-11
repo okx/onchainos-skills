@@ -27,7 +27,7 @@ Chinese:
 ```
 好，开始新 evaluator 的 create 流程。接下来会收集以下基本信息：
   1. 名称
-  2. 描述
+  2. 描述（可选）
 （evaluator 默认不问头像；想设头像直接说。）
 ```
 
@@ -35,7 +35,7 @@ English:
 ```
 Got it — starting a new evaluator create. We'll collect:
   1. Name
-  2. Description
+  2. Description (optional)
 (No avatar prompt by default; just say so if you want to set one.)
 ```
 

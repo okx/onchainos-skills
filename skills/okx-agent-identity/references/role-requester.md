@@ -16,7 +16,7 @@ Chinese:
 ```
 好，开始新 requester 的 create 流程。接下来会收集以下基本信息：
   1. 名称
-  2. 描述
+  2. 描述（可选）
   3. 头像（可选）
 ```
 
@@ -24,7 +24,7 @@ English:
 ```
 Got it — starting a new requester create. We'll collect:
   1. Name
-  2. Description
+  2. Description (optional)
   3. Picture (optional)
 ```
 
