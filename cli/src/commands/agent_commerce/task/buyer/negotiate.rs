@@ -57,6 +57,8 @@ pub struct ServiceInfo {
 pub struct AgreedTerms {
     pub token_symbol: String,
     pub token_amount: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payment_most_token_amount: Option<String>,
 }
 
 /// 协商状态
@@ -162,7 +164,7 @@ pub async fn save_agreed(
     let task_path = format!("/priapi/v1/aieco/task/{job_id}");
     let task_detail = client.get_with_identity(&task_path, &agent_id).await;
 
-    if let Ok(detail) = &task_detail {
+    let max_amount_saved = if let Ok(detail) = &task_detail {
         let max_amount_str = detail["paymentMostTokenAmount"].as_str().unwrap_or("");
         if !max_amount_str.is_empty() {
             let agreed: f64 = token_amount.parse().unwrap_or(0.0);
@@ -172,8 +174,13 @@ pub async fn save_agreed(
                     "协商金额 {token_amount} {token_symbol} 超过任务最高预算 {max_amount_str} {token_symbol}，不能接受此报价"
                 );
             }
+            Some(max_amount_str.to_string())
+        } else {
+            None
         }
-    }
+    } else {
+        None
+    };
 
     let mut state = match load(job_id) {
         Ok(s) => s,
@@ -192,6 +199,7 @@ pub async fn save_agreed(
     state.agreed.insert(provider_agent_id.to_string(), AgreedTerms {
         token_symbol: token_symbol.to_string(),
         token_amount: token_amount.to_string(),
+        payment_most_token_amount: max_amount_saved,
     });
     let json = serde_json::to_string_pretty(&state)?;
     std::fs::write(state_path(job_id)?, json)?;

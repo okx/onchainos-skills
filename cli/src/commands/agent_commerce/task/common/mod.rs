@@ -104,6 +104,7 @@ struct TaskDetail {
     expire_config: Option<serde_json::Value>,
     /// unix 秒；0 表示未设置
     expire_time: Option<i64>,
+    payment_most_token_amount: Option<String>,
     create_time: Option<i64>,
     update_time: Option<i64>,
 }
@@ -452,6 +453,9 @@ async fn build_context(
     let token  = task.token_address.as_deref().unwrap_or("");
     let symbol = task.token_symbol.as_deref().unwrap_or("UNKNOWN");
     out.push_str(&format!("- 创建预算：{amount} {symbol} （token: {token}）\n"));
+    if let Some(max_amt) = &task.payment_most_token_amount {
+        out.push_str(&format!("- 最高预算（paymentMostTokenAmount）：{max_amt} {symbol}\n"));
+    }
 
     let pm = task.payment_mode.unwrap_or(0);
     out.push_str(&format!(
