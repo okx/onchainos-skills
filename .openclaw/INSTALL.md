@@ -38,7 +38,7 @@ ls -la ~/.agents/skills/onchainos-skills
 ```
 
 You should see the skill directories: `okx-wallet-portfolio`, `okx-dex-market`, `okx-dex-swap`, `okx-dex-token`,
-`okx-onchain-gateway`.
+`okx-onchain-gateway`, `okx-growth-competition`.
 
 ## Available Skills
 
@@ -49,6 +49,7 @@ You should see the skill directories: `okx-wallet-portfolio`, `okx-dex-market`, 
 | `okx-dex-swap`         | Swap / trade / buy / sell tokens on-chain                            |
 | `okx-dex-token`        | Token search, rankings, holder distribution                          |
 | `okx-onchain-gateway`  | Gas estimation, transaction simulation, broadcasting, order tracking |
+| `okx-growth-competition` | Agentic Wallet trading competitions: list, join, rank, claim rewards |
 
 ## Updating
 

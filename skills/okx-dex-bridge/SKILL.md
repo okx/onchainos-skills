@@ -91,10 +91,10 @@ Only the 7 subcommands listed below exist. The CLI rejects anything else — do 
 |---|---|---|
 | 1 | `onchainos cross-chain bridges [--from-chain <X>] [--to-chain <Y>]` | List bridge protocols. Both flags independently optional: omit both → full catalog; only `--from-chain` → bridges on that source; only `--to-chain` → bridges able to reach that destination; both → bridges connecting that specific pair. Empty response with both flags = no bridge for that pair. |
 | 2 | `onchainos cross-chain tokens [--from-chain <X>] [--to-chain <Y>]` | List bridgeable from-tokens. Both flags independently optional: omit both → full catalog; only `--from-chain` → from-tokens on that source; only `--to-chain` → from-tokens that can reach that destination; both → from-tokens routable on that specific pair. Returns chainIndex / tokenContractAddress / tokenSymbol / decimals. |
-| 3 | `onchainos cross-chain quote --from ... --to ... --from-chain ... --to-chain ... --readable-amount <n> [--slippage <s>] [--wallet <addr> --check-approve] [--bridge-id <id>] [--sort <0\|1\|2>] [--allow-bridges <ids>] [--deny-bridges <ids>] [--receive-address <addr>]` | Get cross-chain quote. Returns `routerList[]` with bridgeId / needApprove / minimumReceived / estimateTime / crossChainFee. `--receive-address` is accepted for parity with `execute` and validated for address-family match against `--to-chain`, but the server quote endpoint does NOT consume it (CLI drops it before sending). |
+| 3 | `onchainos cross-chain quote --from ... --to ... --from-chain ... --to-chain ... --readable-amount <n> [--slippage <s>] [--wallet <addr> --check-approve] [--bridge-id <id>] [--sort <0\|1\|2>] [--allow-bridges <ids>] [--deny-bridges <ids>] --receive-address <addr>` | Get cross-chain quote. Returns `routerList[]` with bridgeId / needApprove / minimumReceived / estimateTime / crossChainFee. **Always pass `--receive-address` from the skill** (default to the sender wallet for same-family pairs; collect a destination-format address from the user for heterogeneous EVM ⇌ non-EVM pairs — the wallet won't pass family validation there). The CLI keeps the flag optional for direct callers; the server returns 82202 if heterogeneous and missing. |
 | 4 | `onchainos cross-chain approve --chain ... --token ... --wallet ... --bridge-id ... --readable-amount <n> [--check-allowance]` | Build ERC-20 approve tx for a bridge router (manual use). `readable-amount=0` revokes. |
-| 5 | `onchainos cross-chain swap --from ... --to ... --from-chain ... --to-chain ... --readable-amount <n> --wallet <addr> [--bridge-id <id>] [--sort <0\|1\|2>] [--allow-bridges <ids>] [--deny-bridges <ids>] [--receive-address <addr>]` | Get unsigned cross-chain swap tx (calldata only). Does NOT sign or broadcast. |
-| 6 | `onchainos cross-chain execute --from ... --to ... --from-chain ... --to-chain ... --readable-amount <n> --wallet <addr> [--bridge-id <id>\|--route-index <n>] [--sort <0\|1\|2>] [--receive-address <addr>] [--mev-protection] [--confirm-approve\|--skip-approve] [--force]` | One-shot: quote → approve (if needed) → swap → broadcast. Three modes (default / `--confirm-approve` / `--skip-approve`). Pin a route via `--bridge-id` or `--route-index` (mutually exclusive). |
+| 5 | `onchainos cross-chain swap --from ... --to ... --from-chain ... --to-chain ... --readable-amount <n> --wallet <addr> [--bridge-id <id>] [--sort <0\|1\|2>] [--allow-bridges <ids>] [--deny-bridges <ids>] --receive-address <addr>` | Get unsigned cross-chain swap tx (calldata only). Does NOT sign or broadcast. **Always pass `--receive-address` from the skill** (same rule as `quote` row above). |
+| 6 | `onchainos cross-chain execute --from ... --to ... --from-chain ... --to-chain ... --readable-amount <n> --wallet <addr> [--bridge-id <id>\|--route-index <n>] [--sort <0\|1\|2>] --receive-address <addr> [--mev-protection] [--confirm-approve\|--skip-approve] [--force]` | One-shot: quote → approve (if needed) → swap → broadcast. Three modes (default / `--confirm-approve` / `--skip-approve`). Pin a route via `--bridge-id` or `--route-index` (mutually exclusive). **Always pass `--receive-address` from the skill** (same rule as `quote` row above). |
 | 7 | `onchainos cross-chain status (--tx-hash <0x...> \| --order-id <id>) --bridge-id <id> --from-chain <X>` | Query cross-chain status. Pass either `--tx-hash` or `--order-id` (mutually exclusive). `--order-id` is resolved internally to the underlying tx hash via `wallet /order/detail` (login required). `--bridge-id` and `--from-chain` are **both required** (server returns 50014 without them). Returns `SUCCESS / PENDING / NOT_FOUND` + toChainIndex / toTxHash / toAmount / bridgeId. |
 
 ## Token Address Resolution (Mandatory)
@@ -118,38 +118,7 @@ After `token search`, you MUST show results and wait for user confirmation befor
 
 Follow the **Token Address Resolution** section above. Resolve `--from` using `--from-chain` and `--to` using `--to-chain` separately.
 
-### Step 2 — Pre-Bridge Token Security Scan (Mandatory)
-
-Before quoting or executing, **automatically** run `token-scan` on both `--from` and `--to` tokens to detect risks. This step is mandatory and must not be skipped.
-
-> **⚠️ Native token handling**: Exclude native tokens (matching any address in the Native Token Addresses table) — they have no contract address and cannot be scanned.
-> - If one token is native, scan only the non-native side — apply the action for the scanned token's role (buy/sell) as normal.
-> - If both tokens are native (same chain family natives), skip token-scan entirely.
-
-```bash
-# Both non-native:
-onchainos security token-scan --tokens "<fromChainId>:<fromTokenAddress>,<toChainId>:<toTokenAddress>"
-# One native:
-onchainos security token-scan --tokens "<chainId>:<nonNativeTokenAddress>"
-```
-
-> Load `skills/okx-security/references/risk-token-detection.md` for the full risk label catalog and display format.
-
-**Interpret each token's `riskLevel`:**
-
-| `riskLevel` | Buy Action (`--to`) | Sell Action (`--from`) |
-|---|---|---|
-| **CRITICAL** | **BLOCK** — refuse to execute. Display triggered labels. | **WARN** — display labels, allow sell. |
-| **HIGH** | **PAUSE** — display labels, ask "Continue? (yes/no)". Only proceed on explicit "yes". | **WARN** — display labels, allow sell. |
-| **MEDIUM** | **WARN** — display as info, continue. | **WARN** — display as info, continue. |
-| **LOW** | Safe — proceed. | Safe — proceed. |
-
-Edge cases:
-- `isChainSupported: false` → skip detection, warn "This chain does not support token security scanning", continue.
-- API timeout/failure → warn "Token security scan temporarily unavailable, please trade with caution", continue.
-- `riskLevel` missing/null/unrecognized → treat as `HIGH` (cautious default).
-
-### Step 3 — Collect Missing Parameters
+### Step 2 — Collect Missing Parameters
 
 - **Chains**: both `--from-chain` and `--to-chain` must be specified. If either missing, ask the user. Do NOT call quote without both confirmed.
 - **Balance check**: before quote, verify:
@@ -165,7 +134,7 @@ Edge cases:
 - **Bridge selection**: omit `--bridge-id` to let the server pick the optimal route. Pass it only when the user explicitly chose a specific bridge from the quote table.
 - **Wallet**: run `onchainos wallet status`. Not logged in → `onchainos wallet login`. Multiple accounts → list and ask user to choose.
 
-### Step 3.5 — Chain-pair availability pre-check (config-level)
+### Step 2.5 — Chain-pair availability pre-check (config-level)
 
 Before issuing a quote, **fail fast on chain pairs that no bridge can connect**. This avoids burning quote calls on Sui/Tron/Ton-style pairs and gives a clear early error.
 
@@ -175,7 +144,7 @@ onchainos cross-chain bridges --from-chain <fromChain> --to-chain <toChain>
 
 Server returns only bridges that connect this specific pair.
 
-- **Non-empty response** → at least one bridge connects the pair → proceed to Step 4.
+- **Non-empty response** → at least one bridge connects the pair → proceed to Step 3.
 - **Empty response** → no bridge for this pair. Run two diagnostic queries to tell whether `fromChain` itself is unsupported vs. only `toChain` is unreachable:
 
   ```bash
@@ -200,10 +169,10 @@ Server returns only bridges that connect this specific pair.
 Skip the quote step entirely whenever the pair-specific query returns empty.
 
 <IMPORTANT>
-**Caveat — config truthy ≠ service available**. The `bridges` API reports the *configured* bridge set, not real-time service status. A pair can pass this pre-check (e.g. Solana ↔ Arbitrum where Gas Zip + Relay both list 501) yet still fail at quote time on environments where the underlying adapter is offline. That deeper failure is detected in Step 4 / Fallback below — see the all-`82000` with empty `msg` (CLI prints `unknown error`) pattern.
+**Caveat — config truthy ≠ service available**. The `bridges` API reports the *configured* bridge set, not real-time service status. A pair can pass this pre-check (e.g. Solana ↔ Arbitrum where Gas Zip + Relay both list 501) yet still fail at quote time on environments where the underlying adapter is offline. That deeper failure is detected in Step 3 / Fallback below — see the all-`82000` with empty `msg` (CLI prints `unknown error`) pattern.
 </IMPORTANT>
 
-### Step 4 — Quote
+### Step 3 — Quote
 
 ```bash
 onchainos cross-chain quote \
@@ -245,7 +214,7 @@ After displaying the quote table:
 - Let the user confirm or pick a different row. If they pick non-default, capture the chosen `bridgeId` and pass it to `execute --bridge-id <id>`.
 
 <IMPORTANT>
-**`needApprove` caveat**: the server-side `needApprove` flag is based on the backend's cached allowance state and **may disagree with the actual on-chain state** (in practice the backend can take several minutes to reflect a fresh approve). Even when `needApprove=false`, TEE pre-execute can still revert with an insufficient-allowance error. See Step 6 → "`execution reverted` error handling".
+**`needApprove` caveat**: the server-side `needApprove` flag is based on the backend's cached allowance state and **may disagree with the actual on-chain state** (in practice the backend can take several minutes to reflect a fresh approve). Even when `needApprove=false`, TEE pre-execute can still revert with an insufficient-allowance error. See Step 5 → "`execution reverted` error handling".
 </IMPORTANT>
 
 <IMPORTANT>
@@ -259,21 +228,21 @@ If the user's reply after a multi-row quote is **anything else** (a fresh tradin
 Only when the quote table has exactly one row may the agent treat a generic "yes" as confirmation of that single route. With multiple rows, ambiguity defaults to re-prompt, never auto-pick.
 </IMPORTANT>
 
-### Step 5 — User Confirmation
+### Step 4 — User Confirmation
 
 <IMPORTANT>
 Cross-chain transfers are NOT atomic. Once the source chain transaction is broadcast, funds may be in transit for seconds to minutes. Verify all details before confirming.
 </IMPORTANT>
 
 Risk checks (apply before asking for confirmation):
-- Balance / gas already verified in Step 3.
+- Balance / gas already verified in Step 2.
 - `routerList` empty → see **Fallback: No Direct Route** below.
 - `priceImpactPercentage > 10%` → WARN prominently (may be empty string in pre-prod; treat as 0%).
 - `receiveAddress != wallet` → see **Fund-action Flag Gates** for the second-confirmation rule.
 
 **Quote freshness (10-second rule)**: see Global Notes → "Quote freshness (rolling baseline)". In short: if >10 s have passed since the last user-confirmed quote, re-run `quote` and compare `toTokenAmount` against the prior baseline `minimumReceived`; warn + re-confirm when it dropped.
 
-### Step 6 — Execute
+### Step 5 — Execute
 
 #### 6a. First call — default mode (let CLI decide)
 
@@ -290,7 +259,7 @@ onchainos cross-chain execute \
 > Pin a route by either `--bridge-id <id>` (the openApiCode from `quote.routerList[].bridgeId`) or `--route-index <n>` (zero-based index into `quote.routerList[]`). The two flags are mutually exclusive — pass only one.
 
 Three possible outcomes:
-- **action=execute**: allowance was sufficient, swap broadcast completed. Show result (Step 8).
+- **action=execute**: allowance was sufficient, swap broadcast completed. Show result (Step 7).
 - **action=approve-required**: bridge router needs approval. CLI returns:
   ```
   { "action": "approve-required", "tokenAddress", "tokenSymbol",
@@ -305,10 +274,10 @@ Three possible outcomes:
     4. **Net effect**: ~`{minimumReceived}` arriving on the destination chain after `~{estimateTime}s`.
   Then ask "confirm to proceed?".
 
-  If user agrees → Step 6b. If user wants different amount → run `quote` again with that amount (uncommon; default is the trade amount). If declines → stop.
-- **error: "execution reverted" / "transaction simulation failed"**: TEE pre-execute simulation rejected the swap. See "Step 6a — handling `execution reverted`" below.
+  If user agrees → Step 5b. If user wants different amount → run `quote` again with that amount (uncommon; default is the trade amount). If declines → stop.
+- **error: "execution reverted" / "transaction simulation failed"**: TEE pre-execute simulation rejected the swap. See "Step 5a — handling `execution reverted`" below.
 
-#### Step 6a — handling `execution reverted`
+#### Step 5a — handling `execution reverted`
 
 When you receive an `execution reverted` / `transaction simulation failed` error from `execute`:
 
@@ -341,7 +310,7 @@ CLI internally:
 Returns `action=approved` with `approveTxHash`. Display:
 > "Authorization TX submitted: {approveTxHash}"
 
-Proceed to Step 7 (approval polling).
+Proceed to Step 6 (approval polling).
 
 #### 6c. After approval confirmed → execute swap
 
@@ -351,7 +320,7 @@ onchainos cross-chain execute ... --skip-approve
 
 CLI skips the approve check and goes straight to `/swap` → broadcast → returns `action=execute` with `fromTxHash`.
 
-### Step 7 — Approval Polling (in main conversation)
+### Step 6 — Approval Polling (in main conversation)
 
 After `action=approved`, poll the approval transaction status **in the main conversation** with a bash loop. Do NOT use a sub-agent. Do NOT show raw API output to the user.
 
@@ -399,11 +368,11 @@ Report progress to the user (translate to the user's language):
 Stop when `txStatus = SUCCESS` or `FAIL`, or after 30 attempts (60 s timeout).
 
 Handle:
-- **Success** → apply the **Quote freshness (rolling baseline)** rule from Global Notes against the most recent user-confirmed quote (Step 6b re-quote if any, else Step 6a internal quote, else Step 4). If still fresh / acceptable, auto-proceed to Step 6c (`execute --skip-approve`).
+- **Success** → apply the **Quote freshness (rolling baseline)** rule from Global Notes against the most recent user-confirmed quote (Step 5b re-quote if any, else Step 5a internal quote, else Step 3). If still fresh / acceptable, auto-proceed to Step 5c (`execute --skip-approve`).
 - **Failed** → "Approval transaction failed. Check the gas balance on the source chain or retry later."
 - **Timeout (30 attempts)** → "Approval confirmation timed out. The transaction may still be pending. Use `wallet history --order-id {approveOrderId}` to check status manually."
 
-### Step 8 — Report Result
+### Step 7 — Report Result
 
 <MUST>
 When `action=execute` is returned, you MUST use the exact template below. Do NOT use tables, do NOT rearrange fields, do NOT omit any line. Translate to the user's language per the global language rule.
@@ -456,7 +425,7 @@ If the conversation has moved on and you no longer have the triple cached, ask t
 
 Use business-level language. Do NOT say "Transaction confirmed on-chain" or "Cross-chain complete" — broadcast does not guarantee delivery; bridges process asynchronously.
 
-### Step 9 — Status Tracking
+### Step 8 — Status Tracking
 
 User queries status after estimated arrival time. Either form works (use whichever identifier the user has on hand); the **other two args are not optional**:
 
@@ -468,7 +437,7 @@ onchainos cross-chain status --tx-hash <fromTxHash> --bridge-id <bridgeId> --fro
 onchainos cross-chain status --order-id <swapOrderId> --bridge-id <bridgeId> --from-chain <fromChainIndex>
 ```
 
-Recall `bridgeId` + `fromChainIndex` from the most recent `execute` response in this conversation. See the IMPORTANT block in Step 8 for the "vague follow-up" rule.
+Recall `bridgeId` + `fromChainIndex` from the most recent `execute` response in this conversation. See the IMPORTANT block in Step 7 for the "vague follow-up" rule.
 
 Interpret `status` field:
 
@@ -548,13 +517,12 @@ Three sub-cases:
 **Never quote the raw error code to the user.** Codes are for the troubleshooting reference and operator diagnostics. The user only sees: (a) the translated `msg` if present, or (b) the case-2 / case-3 fallback above when `msg` is missing.
 </IMPORTANT>
 
-Sort transit results by total fee ascending. Step 3 only shown when the destination target differs from the transit token.
+Sort transit results by total fee ascending. Step 2 only shown when the destination target differs from the transit token.
 
 ## Risk Controls
 
 | Risk Item | Action | Notes |
 |---|---|---|
-| Token risk via `token-scan` (Step 2) | BLOCK / PAUSE / WARN | See Step 2 matrix |
 | No quote available | FALLBACK | Run transit token discovery (above) |
 | Heterogeneous chain pair (EVM↔non-EVM) | NOT SUPPORTED | Tell user "currently no bridge supports this pair" |
 | Price impact > 10% (`priceImpactPercentage`) | WARN | Pre-prod may return empty; treat as 0% |
@@ -612,7 +580,7 @@ If `fromTokenPrice` is unavailable → enable by default (safe).
 
 - **exactIn only**: cross-chain always uses exactIn mode. User specifies source amount; destination amount is determined by the bridge protocol. Do NOT attempt exactOut.
 - **EVM addresses must be all lowercase** — both in CLI parameters (`--from` / `--to` / `--receive-address`) AND when displaying to the user. Convert mixed-case immediately. Solana addresses are case-sensitive — keep as-is.
-- **Quote freshness (rolling baseline)**: every comparison uses the **last user-confirmed quote** as the baseline (Step 4 → Step 5 re-quote → Step 6a internal quote → Step 6b re-quote → Step 7 re-quote, whichever is most recent). If >10 s pass since that baseline, re-fetch quote and compare new `toTokenAmount` with the baseline's `minimumReceived`. Once user confirms a fresh quote, it becomes the new baseline.
+- **Quote freshness (rolling baseline)**: every comparison uses the **last user-confirmed quote** as the baseline (Step 3 → Step 4 re-quote → Step 5a internal quote → Step 5b re-quote → Step 6 re-quote, whichever is most recent). If >10 s pass since that baseline, re-fetch quote and compare new `toTokenAmount` with the baseline's `minimumReceived`. Once user confirms a fresh quote, it becomes the new baseline.
 - **Non-atomic**: source chain broadcast does not guarantee destination arrival. Funds may be in transit for seconds to minutes. Do not tell the user "transaction complete" until status returns SUCCESS.
 - **API fallback**: if the CLI is unavailable, the OKX DEX cross-chain OpenAPI is documented at https://web3.okx.com/onchainos/dev-docs/trade/cross-chain-api-reference. Prefer CLI when available.
 

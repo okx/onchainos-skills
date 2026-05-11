@@ -106,10 +106,15 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::security::SecurityCommand,
     },
-    /// Payment protocols — auto-pay gated APIs (x402, a2a-pay, etc.)
+    /// Payment protocols — auto-pay gated APIs and agent-to-agent payment links
     Payment {
         #[command(subcommand)]
-        command: commands::agentic_wallet::payment::PaymentCommand,
+        command: commands::payment::PaymentCommand,
+    },
+    /// Trading competition: list, join, rank, claim rewards (Agentic Wallet exclusive)
+    Competition {
+        #[command(subcommand)]
+        command: commands::competition::CompetitionCommand,
     },
     /// Address tracker: REST activities for KOL / smart money / custom address activity
     Tracker {
@@ -191,7 +196,8 @@ async fn run() {
         Commands::Mcp { .. } => unreachable!("handled above"),
         Commands::Wallet { command } => commands::agentic_wallet::wallet::execute(command).await,
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
-        Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
+        Commands::Payment { command } => commands::payment::execute(command).await,
+        Commands::Competition { command } => commands::competition::execute(&ctx, command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Ws { command } => commands::ws::execute(command).await,
         Commands::Workflow { command } => commands::workflows::execute(&ctx, *command).await,

@@ -51,6 +51,7 @@ Verify by asking: `"check my ETH balance"` or `"what's the price of SOL?"`
 | `okx-dex-swap` | Swap/trade/buy/sell tokens on-chain |
 | `okx-dex-token` | Search tokens, trending rankings, holder analysis |
 | `okx-onchain-gateway` | Gas estimation, transaction simulation, broadcasting, order tracking |
+| `okx-growth-competition` | Agentic Wallet trading competitions: list, join, rank, claim rewards |
 
 ### Loading a Skill Manually
 

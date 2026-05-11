@@ -1,21 +1,22 @@
-use anyhow::{anyhow, bail, Context, Result};
+use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
+use crate::commands::payment::a2a_pay::{self, A2aPayCommand};
+use crate::commands::payment::addr::{is_valid_evm_address, parse_recipient_addr};
+use crate::commands::payment::payment_flow;
+use crate::output;
+use crate::wallet_api::WalletApiClient;
+use crate::{keyring_store, wallet_store};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolValue;
+use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use clap::Subcommand;
 use serde_json::{json, Value};
 use zeroize::Zeroize;
-use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
-use crate::commands::agentic_wallet::common::is_valid_evm_address;
-use crate::commands::agentic_wallet::payment_flow;
-use crate::commands::payment::a2a_pay::{self, A2aPayCommand};
-use crate::output;
-use crate::wallet_api::WalletApiClient;
-use crate::{keyring_store, wallet_store};
 
 #[derive(Subcommand)]
 pub enum PaymentCommand {
-    /// Sign an x402 payment and return the payment proof
+    /// Sign a payment authorization for an HTTP 402-gated resource (from `accepts[]`) and return the proof
+    #[command(name = "pay")]
     X402Pay {
         /// JSON accepts array from the 402 response (decoded.accepts).
         /// The CLI selects the best scheme automatically
@@ -27,10 +28,11 @@ pub enum PaymentCommand {
         from: Option<String>,
     },
     /// Sign an EIP-3009 TransferWithAuthorization locally with a hex private key
-    /// (reads EVM_PRIVATE_KEY env var). Accepts the same JSON accepts array as x402-pay;
+    /// (reads EVM_PRIVATE_KEY env var). Accepts the same JSON accepts array as `payment pay`;
     /// domain name/version are read from accepts[].extra.name / extra.version.
+    #[command(name = "pay-local")]
     Eip3009Sign {
-        /// JSON accepts array from the 402 response (same format as x402-pay).
+        /// JSON accepts array from the 402 response (same format as `payment pay`).
         /// domain name/version are extracted from the selected entry's `extra.name` / `extra.version`.
         #[arg(long)]
         accepts: String,
@@ -47,12 +49,11 @@ pub enum PaymentCommand {
         command: A2aPayCommand,
     },
 
-    // ── MPP Commands ────────────────────────────────────────────────
-
-    /// Sign an MPP Charge payment (EIP-3009 via TEE) or wrap a client-broadcast hash.
+    /// Sign a one-shot Charge payment (EIP-3009 via TEE) or wrap a client-broadcast hash.
     /// Returns authorization_header for replaying the request.
     /// When challenge.methodDetails.feePayer == false, --tx-hash is required (hash mode).
     /// Splits are auto-detected from challenge.methodDetails.splits[] (max 10).
+    #[command(name = "charge")]
     MppCharge {
         /// Full WWW-Authenticate header value from 402 response
         #[arg(long)]
@@ -66,10 +67,19 @@ pub enum PaymentCommand {
         tx_hash: Option<String>,
     },
 
-    /// Open an MPP Session payment channel.
+    /// Channel session operations: open / voucher / topup / close.
+    Session {
+        #[command(subcommand)]
+        command: SessionCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SessionCommand {
+    /// Open a payment channel.
     /// - feePayer=true (default): TEE-sign EIP-3009 deposit + initial voucher, emit transaction payload.
     /// - feePayer=false: require --tx-hash AND --salt for the open tx you broadcast; still TEE-sign initial voucher.
-    MppSessionOpen {
+    Open {
         /// Full WWW-Authenticate header value from 402 response
         #[arg(long)]
         challenge: String,
@@ -99,11 +109,10 @@ pub enum PaymentCommand {
         prepay_first: bool,
     },
 
-    /// Sign an MPP Session voucher (EIP-712 cumulative amount via TEE), or
-    /// reuse a previously-signed voucher's bytes (`--reuse-signature`) to
-    /// spend remaining channel balance without invoking TEE.
-    /// Returns authorization_header for replaying business requests.
-    MppSessionVoucher {
+    /// Sign an EIP-712 cumulative-amount voucher via TEE, or reuse a previously-signed
+    /// voucher's bytes (`--reuse-signature`) to spend remaining channel balance without
+    /// invoking TEE. Returns authorization_header for replaying business requests.
+    Voucher {
         /// Full WWW-Authenticate challenge header (for credential echo)
         #[arg(long)]
         challenge: String,
@@ -129,7 +138,7 @@ pub enum PaymentCommand {
         #[arg(long)]
         from: Option<String>,
         /// Reuse a previously-signed voucher: hex 65-byte signature that was
-        /// returned by an earlier `mpp-session-voucher` / `mpp-session-open` call.
+        /// returned by an earlier `payment session voucher` / `payment session open` call.
         /// When provided, the CLI skips TEE signing and emits an
         /// authorization_header that wraps these bytes verbatim. Use to
         /// spend remaining balance under an existing voucher without
@@ -139,14 +148,14 @@ pub enum PaymentCommand {
         reuse_signature: Option<String>,
     },
 
-    /// TopUp an MPP Session payment channel (EIP-3009 to escrow via TEE, or hash-mode wrap).
+    /// TopUp a payment channel (EIP-3009 to escrow via TEE, or hash-mode wrap).
     /// Returns authorization_header for sending topUp to Seller.
-    #[command(name = "mpp-session-topup")]
-    MppSessionTopUp {
+    #[command(name = "topup")]
+    TopUp {
         /// Full WWW-Authenticate challenge header (for credential echo)
         #[arg(long)]
         challenge: String,
-        /// Existing channel ID (from mpp-session-open)
+        /// Existing channel ID (from `payment session open`)
         #[arg(long)]
         channel_id: String,
         /// Additional deposit amount in atomic units
@@ -170,9 +179,9 @@ pub enum PaymentCommand {
         tx_hash: Option<String>,
     },
 
-    /// Close an MPP Session payment channel (sign final voucher via TEE).
+    /// Close a payment channel (sign final voucher via TEE).
     /// Returns authorization_header for sending close to Seller.
-    MppSessionClose {
+    Close {
         /// Channel ID from session open
         #[arg(long)]
         channel_id: String,
@@ -240,86 +249,88 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
             from,
             tx_hash,
         } => cmd_mpp_charge(&challenge, from.as_deref(), tx_hash.as_deref()).await,
-        PaymentCommand::MppSessionOpen {
-            challenge,
-            deposit,
-            from,
-            tx_hash,
-            salt,
-            initial_cum,
-            prepay_first,
-        } => {
-            cmd_mpp_session_open(
-                &challenge,
-                &deposit,
-                from.as_deref(),
-                tx_hash.as_deref(),
-                salt.as_deref(),
-                initial_cum.as_deref(),
+        PaymentCommand::Session { command } => match command {
+            SessionCommand::Open {
+                challenge,
+                deposit,
+                from,
+                tx_hash,
+                salt,
+                initial_cum,
                 prepay_first,
-            )
+            } => {
+                cmd_mpp_session_open(
+                    &challenge,
+                    &deposit,
+                    from.as_deref(),
+                    tx_hash.as_deref(),
+                    salt.as_deref(),
+                    initial_cum.as_deref(),
+                    prepay_first,
+                )
                 .await
-        }
-        PaymentCommand::MppSessionVoucher {
-            challenge,
-            channel_id,
-            cumulative_amount,
-            escrow,
-            chain_id,
-            from,
-            reuse_signature,
-        } => {
-            cmd_mpp_session_voucher(
-                &challenge,
-                &channel_id,
-                &cumulative_amount,
-                escrow.as_deref(),
+            }
+            SessionCommand::Voucher {
+                challenge,
+                channel_id,
+                cumulative_amount,
+                escrow,
                 chain_id,
-                from.as_deref(),
-                reuse_signature.as_deref(),
-            )
+                from,
+                reuse_signature,
+            } => {
+                cmd_mpp_session_voucher(
+                    &challenge,
+                    &channel_id,
+                    &cumulative_amount,
+                    escrow.as_deref(),
+                    chain_id,
+                    from.as_deref(),
+                    reuse_signature.as_deref(),
+                )
                 .await
-        }
-        PaymentCommand::MppSessionTopUp {
-            challenge,
-            channel_id,
-            additional_deposit,
-            escrow,
-            chain_id,
-            currency,
-            from,
-            tx_hash,
-        } => {
-            cmd_mpp_session_topup(
-                &challenge,
-                &channel_id,
-                &additional_deposit,
-                &escrow,
+            }
+            SessionCommand::TopUp {
+                challenge,
+                channel_id,
+                additional_deposit,
+                escrow,
                 chain_id,
-                currency.as_deref(),
-                from.as_deref(),
-                tx_hash.as_deref(),
-            )
+                currency,
+                from,
+                tx_hash,
+            } => {
+                cmd_mpp_session_topup(
+                    &challenge,
+                    &channel_id,
+                    &additional_deposit,
+                    &escrow,
+                    chain_id,
+                    currency.as_deref(),
+                    from.as_deref(),
+                    tx_hash.as_deref(),
+                )
                 .await
-        }
-        PaymentCommand::MppSessionClose {
-            channel_id,
-            cumulative_amount,
-            escrow,
-            chain_id,
-            challenge,
-            from,
-        } => {
-            cmd_mpp_session_close(
-                &channel_id,
-                &cumulative_amount,
-                &escrow,
+            }
+            SessionCommand::Close {
+                channel_id,
+                cumulative_amount,
+                escrow,
                 chain_id,
-                &challenge,
-                from.as_deref(),
-            )
+                challenge,
+                from,
+            } => {
+                cmd_mpp_session_close(
+                    &channel_id,
+                    &cumulative_amount,
+                    &escrow,
+                    chain_id,
+                    &challenge,
+                    from.as_deref(),
+                )
                 .await
-        }
+            }
+        },
     }
 }
 
@@ -353,7 +364,7 @@ fn caip2_to_chain_id(caip2: &str) -> String {
 }
 
 fn cmd_default(action: DefaultAction) -> Result<()> {
-    use crate::commands::agentic_wallet::payment_flow::PaymentTier;
+    use crate::commands::payment::payment_flow::PaymentTier;
     use crate::payment_cache::{PaymentCache, PaymentDefault};
     use crate::payment_notify::TierState;
 
@@ -550,7 +561,7 @@ fn parse_www_authenticate(header: &str) -> Result<serde_json::Value> {
     let method = map.get("method").and_then(|v| v.as_str()).unwrap_or("");
     if method != "evm" {
         bail!(
-            "unsupported MPP method \"{}\"; this CLI only supports method=\"evm\"",
+            "unsupported payment challenge method \"{}\"; this CLI only supports method=\"evm\"",
             method
         );
     }
@@ -623,6 +634,20 @@ fn compute_valid_before(challenge: &serde_json::Value, now_unix: u64) -> Result<
     Ok(vb.to_string())
 }
 
+/// One parsed split entry: amount + the recipient in both canonical (for
+/// signing) and display (for echoing back into output JSON) forms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedSplit {
+    /// Decimal amount in minimal units.
+    amount: String,
+    /// Canonical `0x`-form recipient — fed into `tee_sign_eip3009` and any
+    /// other path that hashes the 20-byte payload.
+    canonical: String,
+    /// Display form — same content, original prefix (`XKO...` on XLayer or
+    /// the same `0x...`). Echoed back in the CLI output JSON.
+    display: String,
+}
+
 /// Parse a charge `request` into `(primary_remainder, splits)` with full spec validation.
 ///
 /// Enforces §Split Payments constraints before any TEE signing:
@@ -630,12 +655,15 @@ fn compute_valid_before(challenge: &serde_json::Value, now_unix: u64) -> Result<
 /// - `sum(splits[].amount)` MUST be strictly less than `amount`
 /// - splits MAY be absent; if present, MUST have 1-10 entries
 ///
-/// Returns `(primary_value_decimal_str, [(amount, recipient), ...])` in the
-/// same order as `methodDetails.splits`. When no splits are present, returns
-/// `(amount, vec![])`.
+/// Returns `(primary_value_decimal_str, [ParsedSplit, ...])` in the same
+/// order as `methodDetails.splits`. When no splits are present, returns
+/// `(amount, vec![])`. `chain_id` is used to validate XKO-prefixed split
+/// recipients (XLayer-only) and split them into canonical-for-signing +
+/// display-for-output forms.
 fn compute_primary_split_amounts(
     request: &serde_json::Value,
-) -> Result<(String, Vec<(String, String)>)> {
+    chain_id: u64,
+) -> Result<(String, Vec<ParsedSplit>)> {
     let amount_str = request["amount"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'amount' in challenge request"))?;
@@ -684,7 +712,13 @@ fn compute_primary_split_amounts(
         split_sum = split_sum
             .checked_add(a)
             .ok_or_else(|| anyhow!("splits sum overflow at index {}", i))?;
-        parsed.push((a_str.to_string(), r_str.to_string()));
+        let (canonical, display) = parse_recipient_addr(r_str, chain_id)
+            .with_context(|| format!("splits[{i}].recipient"))?;
+        parsed.push(ParsedSplit {
+            amount: a_str.to_string(),
+            canonical,
+            display,
+        });
     }
 
     if split_sum >= amount {
@@ -720,8 +754,8 @@ fn compute_topup_nonce(
     let additional: u128 = additional_deposit
         .parse()
         .context("additionalDeposit must be decimal uint128")?;
-    let salt_bytes = hex::decode(top_up_salt_hex.trim_start_matches("0x"))
-        .context("topUpSalt must be hex")?;
+    let salt_bytes =
+        hex::decode(top_up_salt_hex.trim_start_matches("0x")).context("topUpSalt must be hex")?;
     if salt_bytes.len() != 32 {
         bail!("topUpSalt must be 32 bytes (64 hex chars)");
     }
@@ -739,8 +773,14 @@ fn compute_topup_nonce(
 }
 
 /// Extract `(recipients, bps)` from session challenge
-/// `request.methodDetails.splits[]`. Returns empty vecs when absent.
-fn parse_session_splits(request: &serde_json::Value) -> Result<(Vec<String>, Vec<u16>)> {
+/// `request.methodDetails.splits[]`. Recipients are normalized to canonical
+/// `0x` form (XKO-prefixed XLayer recipients are accepted here too — the
+/// nonce hash + alloy `Address::parse` always need the 20-byte payload, not
+/// the prefix). Returns empty vecs when absent.
+fn parse_session_splits(
+    request: &serde_json::Value,
+    chain_id: u64,
+) -> Result<(Vec<String>, Vec<u16>)> {
     let splits = match request["methodDetails"]["splits"].as_array() {
         Some(a) if !a.is_empty() => a,
         _ => return Ok((vec![], vec![])),
@@ -757,7 +797,9 @@ fn parse_session_splits(request: &serde_json::Value) -> Result<(Vec<String>, Vec
         if !(1..=9999).contains(&b) {
             bail!("splits[{}].bps out of range 1-9999: {}", i, b);
         }
-        recipients.push(r.to_string());
+        let (canonical, _display) =
+            parse_recipient_addr(r, chain_id).with_context(|| format!("splits[{i}].recipient"))?;
+        recipients.push(canonical);
         bps.push(b as u16);
     }
     Ok((recipients, bps))
@@ -788,8 +830,7 @@ fn compute_open_nonce(
     let auth_signer_addr: Address = authorized_signer
         .parse()
         .context("invalid authorizedSigner address")?;
-    let salt_bytes = hex::decode(salt_hex.trim_start_matches("0x"))
-        .context("salt must be hex")?;
+    let salt_bytes = hex::decode(salt_hex.trim_start_matches("0x")).context("salt must be hex")?;
     if salt_bytes.len() != 32 {
         bail!("salt must be 32 bytes (64 hex chars)");
     }
@@ -840,8 +881,7 @@ fn compute_channel_id(
         .parse()
         .context("invalid authorizedSigner address")?;
     let escrow_addr: Address = escrow.parse().context("invalid escrow address")?;
-    let salt_bytes = hex::decode(salt_hex.trim_start_matches("0x"))
-        .context("salt must be hex")?;
+    let salt_bytes = hex::decode(salt_hex.trim_start_matches("0x")).context("salt must be hex")?;
     if salt_bytes.len() != 32 {
         bail!("salt must be 32 bytes (64 hex chars)");
     }
@@ -910,10 +950,11 @@ async fn tee_sign_eip3009(
     asset: &str,
 ) -> Result<(String, String)> {
     let access_token = ensure_tokens_refreshed().await?;
-    let session = wallet_store::load_session()?
-        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+    let session = wallet_store::load_session()?.ok_or_else(|| {
+        anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN)
+    })?;
     let session_key = keyring_store::get("session_key")
-        .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+        .map_err(|_| anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN))?;
 
     let mut base_fields = json!({
         "chainIndex":        chain_index,
@@ -1042,10 +1083,11 @@ async fn tee_sign_voucher(
     chain_id: u64,
 ) -> Result<String> {
     let access_token = ensure_tokens_refreshed().await?;
-    let session = wallet_store::load_session()?
-        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+    let session = wallet_store::load_session()?.ok_or_else(|| {
+        anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN)
+    })?;
     let session_key = keyring_store::get("session_key")
-        .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+        .map_err(|_| anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN))?;
 
     let typed_data = build_voucher_typed_data(channel_id, cumulative_amount, escrow, chain_id);
 
@@ -1118,14 +1160,12 @@ async fn tee_sign_voucher(
 /// `cmd_mpp_session_topup` / `cmd_mpp_session_close`.
 ///
 /// Returns `(chain_index, payer_addr)` — both already normalised to `String`.
-async fn resolve_chain_and_payer(
-    chain_id: u64,
-    from: Option<&str>,
-) -> Result<(String, String)> {
-    let chain_entry =
-        crate::commands::agentic_wallet::chain::get_chain_by_real_chain_index(&chain_id.to_string())
-            .await?
-            .ok_or_else(|| anyhow!("chain not found for chainId {}", chain_id))?;
+async fn resolve_chain_and_payer(chain_id: u64, from: Option<&str>) -> Result<(String, String)> {
+    let chain_entry = crate::commands::agentic_wallet::chain::get_chain_by_real_chain_index(
+        &chain_id.to_string(),
+    )
+    .await?
+    .ok_or_else(|| anyhow!("chain not found for chainId {}", chain_id))?;
     let chain_index = chain_entry["chainIndex"]
         .as_str()
         .map(|s| s.to_string())
@@ -1134,8 +1174,9 @@ async fn resolve_chain_and_payer(
     let chain_name = chain_entry["chainName"]
         .as_str()
         .ok_or_else(|| anyhow!("missing chainName"))?;
-    let wallets = wallet_store::load_wallets()?
-        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+    let wallets = wallet_store::load_wallets()?.ok_or_else(|| {
+        anyhow::anyhow!(crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN)
+    })?;
     let (_acct_id, addr_info) =
         crate::commands::agentic_wallet::transfer::resolve_address(&wallets, from, chain_name)?;
     Ok((chain_index, addr_info.address.clone()))
@@ -1163,7 +1204,7 @@ fn normalize_bytes32_hex(value: &str, label: &str) -> Result<String> {
     Ok(format!("0x{}", body.to_ascii_lowercase()))
 }
 
-/// onchainos payment mpp-charge: Charge single payment.
+/// onchainos payment charge: Charge single payment.
 /// - feePayer=true (default): TEE-sign EIP-3009, emit TransactionPayload (+ splits if present).
 /// - feePayer=false: require --tx-hash, emit HashPayload (client self-broadcasts).
 async fn cmd_mpp_charge(
@@ -1174,7 +1215,7 @@ async fn cmd_mpp_charge(
     let challenge = parse_www_authenticate(challenge_header)?;
     let request = decode_challenge_request(&challenge)?;
 
-    let recipient = request["recipient"]
+    let recipient_in = request["recipient"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'recipient' in challenge request"))?;
     let amount = request["amount"]
@@ -1190,6 +1231,12 @@ async fn cmd_mpp_charge(
     let fee_payer = request["methodDetails"]["feePayer"]
         .as_bool()
         .unwrap_or(true);
+
+    // XKO/0x dual capture: canonical → signing, display → CLI output JSON.
+    let (recipient, recipient_display) = parse_recipient_addr(recipient_in, chain_id)
+        .with_context(|| "challenge.request.recipient")?;
+    let recipient = recipient.as_str();
+    let recipient_display = recipient_display.as_str();
 
     // Resolve chain index + payer address (needed for both transaction and hash modes for `source` DID)
     let (chain_index, payer_addr) = resolve_chain_and_payer(chain_id, from).await?;
@@ -1238,7 +1285,7 @@ async fn cmd_mpp_charge(
 
     // Validate splits invariants and derive primary `authorization.value` BEFORE any TEE call.
     // Per spec §Split Payments: primary receives `amount - sum(splits[].amount)`.
-    let (primary_value, parsed_splits) = compute_primary_split_amounts(&request)?;
+    let (primary_value, parsed_splits) = compute_primary_split_amounts(&request, chain_id)?;
     // Sanity: `amount` from the request and `primary_value` agree when no splits exist.
     debug_assert!(parsed_splits.is_empty() == (primary_value == amount));
 
@@ -1261,12 +1308,12 @@ async fn cmd_mpp_charge(
         &nonce,
         currency,
     )
-        .await?;
+    .await?;
 
     let mut authorization = json!({
         "type": "eip-3009",
         "from": payer_addr,
-        "to": recipient,
+        "to": recipient_display,
         "value": primary_value,
         "validAfter": "0",
         "validBefore": valid_before,
@@ -1276,25 +1323,25 @@ async fn cmd_mpp_charge(
 
     if !parsed_splits.is_empty() {
         let mut signed_splits = Vec::with_capacity(parsed_splits.len());
-        for (i, (split_amount, split_recipient)) in parsed_splits.iter().enumerate() {
+        for (i, split) in parsed_splits.iter().enumerate() {
             let split_nonce = random_nonce_hex();
             // Splits use the same transferWithAuthorization typehash as primary.
             let (split_sig, _) = tee_sign_eip3009(
                 Eip3009AuthType::Transfer,
                 &chain_index,
                 payer_addr,
-                split_recipient,
-                split_amount,
+                &split.canonical,
+                &split.amount,
                 &valid_before,
                 &split_nonce,
                 currency,
             )
-                .await
-                .with_context(|| format!("splits[{}] TEE sign failed", i))?;
+            .await
+            .with_context(|| format!("splits[{}] TEE sign failed", i))?;
             signed_splits.push(json!({
                 "from": payer_addr,
-                "to": split_recipient,
-                "value": split_amount,
+                "to": &split.display,
+                "value": &split.amount,
                 "validAfter": "0",
                 "validBefore": valid_before,
                 "nonce": split_nonce,
@@ -1330,11 +1377,12 @@ async fn cmd_mpp_charge(
     Ok(())
 }
 
-/// onchainos payment mpp-session-open: Open payment channel.
+/// onchainos payment session open: Open payment channel.
 /// - feePayer=true (default): TEE-sign EIP-3009 deposit + initial voucher → transaction payload.
 /// - feePayer=false: require --tx-hash AND --salt of the client-broadcast open tx;
 ///   the salt MUST match the one passed to `escrow.open(...)` on-chain so we can
 ///   reproduce the channelId. Initial voucher is still TEE-signed.
+#[allow(clippy::too_many_arguments)]
 async fn cmd_mpp_session_open(
     challenge_header: &str,
     deposit: &str,
@@ -1347,7 +1395,7 @@ async fn cmd_mpp_session_open(
     let challenge = parse_www_authenticate(challenge_header)?;
     let request = decode_challenge_request(&challenge)?;
 
-    let recipient = request["recipient"]
+    let recipient_in = request["recipient"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'recipient'"))?;
     let currency = request["currency"]
@@ -1362,6 +1410,12 @@ async fn cmd_mpp_session_open(
     let fee_payer = request["methodDetails"]["feePayer"]
         .as_bool()
         .unwrap_or(true);
+
+    // XKO/0x normalize: open path only consumes the canonical 0x form (channelId
+    // hash + EIP-3009 nonce); recipient isn't echoed in the CLI output JSON.
+    let (recipient, _recipient_display) = parse_recipient_addr(recipient_in, chain_id)
+        .with_context(|| "challenge.request.recipient")?;
+    let recipient = recipient.as_str();
 
     // Resolve chain + payer
     let (chain_index, payer_addr) = resolve_chain_and_payer(chain_id, from).await?;
@@ -1424,9 +1478,15 @@ async fn cmd_mpp_session_open(
 
     // Sign the initial voucher EIP-712 (channelId, cumulativeAmount=initial_cum).
     // The seller SDK verifies it locally and stores it as the channel baseline.
-    let initial_voucher_sig =
-        tee_sign_voucher(&chain_index, payer_addr, &channel_id, &initial_cum, escrow, chain_id)
-            .await?;
+    let initial_voucher_sig = tee_sign_voucher(
+        &chain_index,
+        payer_addr,
+        &channel_id,
+        &initial_cum,
+        escrow,
+        chain_id,
+    )
+    .await?;
 
     if !fee_payer {
         // Hash mode: client already broadcast the open tx, just wrap the hash
@@ -1486,7 +1546,7 @@ async fn cmd_mpp_session_open(
 
     // Parse splits (optional) — needed for nonce derivation. The contract
     // openWithAuthorization validates the EIP-3009 nonce with the same formula.
-    let (split_recipients, split_bps) = parse_session_splits(&request)?;
+    let (split_recipients, split_bps) = parse_session_splits(&request, chain_id)?;
 
     // Contract computeOpenAuthorizationNonce formula:
     //   keccak256(abi.encode(from, payee, token, salt, authorizedSigner,
@@ -1513,7 +1573,7 @@ async fn cmd_mpp_session_open(
         &nonce,
         currency,
     )
-        .await?;
+    .await?;
 
     // authorizedSigner omitted — equivalent to default=payer (per spec).
     // cumulativeAmount + voucherSignature are SDK-only: the seller SDK
@@ -1560,7 +1620,7 @@ async fn cmd_mpp_session_open(
     Ok(())
 }
 
-/// onchainos payment mpp-session-voucher: sign EIP-712 voucher (or wrap an existing
+/// onchainos payment session voucher: sign EIP-712 voucher (or wrap an existing
 /// signature when `reuse_signature` is supplied).
 /// Returns authorization_header for replaying business requests.
 async fn cmd_mpp_session_voucher(
@@ -1589,12 +1649,10 @@ async fn cmd_mpp_session_voucher(
     } else {
         // TEE-sign branch: --escrow / --chain-id are required (the EIP-712
         // voucher domain binds to them). Reuse path skips this entirely.
-        let escrow = escrow.ok_or_else(|| {
-            anyhow!("--escrow is required when not using --reuse-signature")
-        })?;
-        let chain_id = chain_id.ok_or_else(|| {
-            anyhow!("--chain-id is required when not using --reuse-signature")
-        })?;
+        let escrow = escrow
+            .ok_or_else(|| anyhow!("--escrow is required when not using --reuse-signature"))?;
+        let chain_id = chain_id
+            .ok_or_else(|| anyhow!("--chain-id is required when not using --reuse-signature"))?;
 
         // Resolve chain + payer (the voucher takes the generic EIP-712 path
         // and needs chainIndex / from).
@@ -1608,7 +1666,7 @@ async fn cmd_mpp_session_voucher(
             escrow,
             chain_id,
         )
-            .await?;
+        .await?;
         (sig, "sign")
     };
 
@@ -1638,7 +1696,7 @@ async fn cmd_mpp_session_voucher(
     Ok(())
 }
 
-/// onchainos payment mpp-session-topup: TopUp an existing session channel.
+/// onchainos payment session topup: TopUp an existing session channel.
 /// - Transaction mode (default): TEE-sign EIP-3009 to escrow; --currency required.
 /// - Hash mode (--tx-hash): client has broadcast the topUp tx; --currency not needed.
 #[allow(clippy::too_many_arguments)]
@@ -1694,8 +1752,7 @@ async fn cmd_mpp_session_topup(
         // EIP-3009 nonce must be derived per the contract's
         // computeTopUpAuthorizationNonce formula — random values trigger
         // EIP-3009 nonce mismatch on-chain.
-        let nonce =
-            compute_topup_nonce(payer_addr, channel_id, additional_deposit, &top_up_salt)?;
+        let nonce = compute_topup_nonce(payer_addr, channel_id, additional_deposit, &top_up_salt)?;
 
         // session-topUp: like open — escrow calls token.receiveWithAuthorization → Receive.
         let (signature, _) = tee_sign_eip3009(
@@ -1708,7 +1765,7 @@ async fn cmd_mpp_session_topup(
             &nonce,
             currency,
         )
-            .await?;
+        .await?;
 
         json!({
             "action": "topUp",
@@ -1749,7 +1806,7 @@ async fn cmd_mpp_session_topup(
     Ok(())
 }
 
-/// onchainos payment mpp-session-close: Sign final voucher + build close credential
+/// onchainos payment session close: Sign final voucher + build close credential
 async fn cmd_mpp_session_close(
     channel_id: &str,
     cumulative_amount: &str,
@@ -1772,7 +1829,7 @@ async fn cmd_mpp_session_close(
         escrow,
         chain_id,
     )
-        .await?;
+    .await?;
 
     let credential = json!({
         "challenge": build_challenge_echo(&challenge),
@@ -1784,10 +1841,7 @@ async fn cmd_mpp_session_close(
         }
     });
 
-    let authorization_header = format!(
-        "Payment {}",
-        base64url_encode_json(&credential)?
-    );
+    let authorization_header = format!("Payment {}", base64url_encode_json(&credential)?);
 
     output::success(json!({
         "protocol": "mpp",
@@ -1798,7 +1852,6 @@ async fn cmd_mpp_session_close(
     }));
     Ok(())
 }
-
 
 // ── Tests ─────────────────────────────────────────────────────────────
 
@@ -1879,7 +1932,7 @@ mod tests {
     #[test]
     fn cli_x402_pay_accepts_and_from() {
         let json = r#"[{"scheme":"aggr_deferred","network":"eip155:196","amount":"1000","payTo":"0xA","asset":"0xB"}]"#;
-        let cli = TestCli::parse_from(["test", "x402-pay", "--accepts", json, "--from", "0xPayer"]);
+        let cli = TestCli::parse_from(["test", "pay", "--accepts", json, "--from", "0xPayer"]);
         match cli.command {
             PaymentCommand::X402Pay { accepts, from } => {
                 assert_eq!(accepts, json);
@@ -1892,7 +1945,7 @@ mod tests {
     #[test]
     fn cli_x402_pay_accepts_only() {
         let json = r#"[{"network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}]"#;
-        let cli = TestCli::parse_from(["test", "x402-pay", "--accepts", json]);
+        let cli = TestCli::parse_from(["test", "pay", "--accepts", json]);
         match cli.command {
             PaymentCommand::X402Pay { accepts, from } => {
                 assert_eq!(accepts, json);
@@ -1904,7 +1957,7 @@ mod tests {
 
     #[test]
     fn cli_x402_pay_missing_accepts() {
-        let result = TestCli::try_parse_from(["test", "x402-pay"]);
+        let result = TestCli::try_parse_from(["test", "pay"]);
         assert!(result.is_err());
     }
 
@@ -1913,7 +1966,7 @@ mod tests {
     #[test]
     fn cli_eip3009_sign_accepts_and_from() {
         let json = r#"[{"scheme":"exact","network":"eip155:8453","amount":"1000000","payTo":"0xA","asset":"0xB","extra":{"name":"USD Coin","version":"2"}}]"#;
-        let cli = TestCli::parse_from(["test", "eip3009-sign", "--accepts", json]);
+        let cli = TestCli::parse_from(["test", "pay-local", "--accepts", json]);
         match cli.command {
             PaymentCommand::Eip3009Sign { accepts } => {
                 assert_eq!(accepts, json);
@@ -1925,13 +1978,13 @@ mod tests {
     #[test]
     fn cli_eip3009_sign_no_from_required() {
         let json = r#"[{"network":"eip155:1","amount":"500","payTo":"0xA","asset":"0xB"}]"#;
-        let result = TestCli::try_parse_from(["test", "eip3009-sign", "--accepts", json]);
+        let result = TestCli::try_parse_from(["test", "pay-local", "--accepts", json]);
         assert!(result.is_ok(), "eip3009-sign should parse without --from");
     }
 
     #[test]
     fn cli_eip3009_sign_missing_accepts() {
-        let result = TestCli::try_parse_from(["test", "eip3009-sign", "--from", "0xPayer"]);
+        let result = TestCli::try_parse_from(["test", "pay-local", "--from", "0xPayer"]);
         assert!(result.is_err());
     }
 
@@ -2150,8 +2203,7 @@ mod tests {
         // encoding or hash rules. For all-static tuples this also matches
         // alloy `abi_encode()`, but `abi_encode_params()` is the canonical
         // form and stays correct if any field becomes dynamic later.
-        let expected =
-            "0xa38cd33d0b42b9654d5077dccc63849159206c9da56748d8d225a1c79100e2b2";
+        let expected = "0xa38cd33d0b42b9654d5077dccc63849159206c9da56748d8d225a1c79100e2b2";
         assert_eq!(got, expected, "channelId ABI-encoded keccak mismatch");
     }
 
@@ -2251,7 +2303,8 @@ mod tests {
         // Without --challenge, parsing must fail
         let result = TestCli::try_parse_from([
             "test",
-            "mpp-session-voucher",
+            "session",
+            "voucher",
             "--channel-id",
             "0xabc",
             "--cumulative-amount",
@@ -2268,7 +2321,7 @@ mod tests {
     fn cli_mpp_charge_accepts_tx_hash() {
         let cli = TestCli::parse_from([
             "test",
-            "mpp-charge",
+            "charge",
             "--challenge",
             "Payment id=\"1\", realm=\"r\", method=\"evm\", intent=\"charge\", request=\"e30\"",
             "--tx-hash",
@@ -2286,7 +2339,8 @@ mod tests {
     fn cli_mpp_session_open_accepts_tx_hash() {
         let cli = TestCli::parse_from([
             "test",
-            "mpp-session-open",
+            "session",
+            "open",
             "--challenge",
             "Payment id=\"1\", realm=\"r\", method=\"evm\", intent=\"session\", request=\"e30\"",
             "--deposit",
@@ -2295,10 +2349,12 @@ mod tests {
             "0x2222222222222222222222222222222222222222222222222222222222222222",
         ]);
         match cli.command {
-            PaymentCommand::MppSessionOpen { tx_hash, .. } => {
+            PaymentCommand::Session {
+                command: SessionCommand::Open { tx_hash, .. },
+            } => {
                 assert!(tx_hash.is_some());
             }
-            _ => panic!("expected MppSessionOpen"),
+            _ => panic!("expected Session::Open"),
         }
     }
 
@@ -2306,7 +2362,8 @@ mod tests {
     fn cli_mpp_session_topup_transaction_mode() {
         let cli = TestCli::parse_from([
             "test",
-            "mpp-session-topup",
+            "session",
+            "topup",
             "--challenge",
             "Payment id=\"1\", realm=\"r\", method=\"evm\", intent=\"session\", request=\"e30\"",
             "--channel-id",
@@ -2321,13 +2378,16 @@ mod tests {
             "0xUSDC",
         ]);
         match cli.command {
-            PaymentCommand::MppSessionTopUp {
-                tx_hash, currency, ..
+            PaymentCommand::Session {
+                command:
+                    SessionCommand::TopUp {
+                        tx_hash, currency, ..
+                    },
             } => {
                 assert!(tx_hash.is_none());
                 assert_eq!(currency.as_deref(), Some("0xUSDC"));
             }
-            _ => panic!("expected MppSessionTopUp"),
+            _ => panic!("expected Session::TopUp"),
         }
     }
 
@@ -2335,7 +2395,8 @@ mod tests {
     fn cli_mpp_session_topup_hash_mode() {
         let cli = TestCli::parse_from([
             "test",
-            "mpp-session-topup",
+            "session",
+            "topup",
             "--challenge",
             "Payment id=\"1\", realm=\"r\", method=\"evm\", intent=\"session\", request=\"e30\"",
             "--channel-id",
@@ -2350,10 +2411,12 @@ mod tests {
             "0x3333333333333333333333333333333333333333333333333333333333333333",
         ]);
         match cli.command {
-            PaymentCommand::MppSessionTopUp { tx_hash, .. } => {
+            PaymentCommand::Session {
+                command: SessionCommand::TopUp { tx_hash, .. },
+            } => {
                 assert!(tx_hash.is_some());
             }
-            _ => panic!("expected MppSessionTopUp"),
+            _ => panic!("expected Session::TopUp"),
         }
     }
 
@@ -2362,7 +2425,8 @@ mod tests {
         // missing --channel-id
         let result = TestCli::try_parse_from([
             "test",
-            "mpp-session-topup",
+            "session",
+            "topup",
             "--challenge",
             "Payment id=\"1\", realm=\"r\", method=\"evm\", intent=\"session\", request=\"e30\"",
             "--additional-deposit",
@@ -2396,20 +2460,24 @@ mod tests {
     #[test]
     fn parse_www_authenticate_rejects_non_evm_method() {
         // tempo / svm / stripe etc. must be rejected loudly — this CLI is EVM-only.
-        let tempo = "Payment id=\"a\", realm=\"r\", method=\"tempo\", intent=\"charge\", request=\"e30\"";
+        let tempo =
+            "Payment id=\"a\", realm=\"r\", method=\"tempo\", intent=\"charge\", request=\"e30\"";
         let err = parse_www_authenticate(tempo).unwrap_err();
         assert!(
-            err.to_string().contains("unsupported MPP method")
+            err.to_string()
+                .contains("unsupported payment challenge method")
                 && err.to_string().contains("tempo"),
             "error should name the unsupported method: {}",
             err
         );
 
-        let svm = "Payment id=\"a\", realm=\"r\", method=\"svm\", intent=\"charge\", request=\"e30\"";
+        let svm =
+            "Payment id=\"a\", realm=\"r\", method=\"svm\", intent=\"charge\", request=\"e30\"";
         assert!(parse_www_authenticate(svm).is_err());
 
         // Sanity: evm still accepted.
-        let evm = "Payment id=\"a\", realm=\"r\", method=\"evm\", intent=\"charge\", request=\"e30\"";
+        let evm =
+            "Payment id=\"a\", realm=\"r\", method=\"evm\", intent=\"charge\", request=\"e30\"";
         assert!(parse_www_authenticate(evm).is_ok());
     }
 
@@ -2418,7 +2486,10 @@ mod tests {
         // Embedded comma inside a quoted value must NOT split the pair.
         let header = "Payment id=\"a\", realm=\"r\", method=\"evm\", intent=\"charge\", request=\"e30\", description=\"buy coffee, with sugar\"";
         let parsed = parse_www_authenticate(header).unwrap();
-        assert_eq!(parsed["description"].as_str(), Some("buy coffee, with sugar"));
+        assert_eq!(
+            parsed["description"].as_str(),
+            Some("buy coffee, with sugar")
+        );
         assert_eq!(parsed["request"].as_str(), Some("e30"));
     }
 
@@ -2426,7 +2497,8 @@ mod tests {
     fn parse_www_authenticate_tolerates_extra_whitespace_and_single_space_separator() {
         // Some servers separate pairs with a single space (not double). The parser
         // should still extract every field correctly.
-        let header = "Payment id=\"a\",realm=\"r\", method=\"evm\" ,intent=\"charge\",request=\"e30\"";
+        let header =
+            "Payment id=\"a\",realm=\"r\", method=\"evm\" ,intent=\"charge\",request=\"e30\"";
         let parsed = parse_www_authenticate(header).unwrap();
         assert_eq!(parsed["id"].as_str(), Some("a"));
         assert_eq!(parsed["realm"].as_str(), Some("r"));
@@ -2451,7 +2523,7 @@ mod tests {
             "recipient": "0xdef",
             "methodDetails": { "chainId": 196 }
         });
-        let (primary, splits) = compute_primary_split_amounts(&req).unwrap();
+        let (primary, splits) = compute_primary_split_amounts(&req, 196).unwrap();
         assert_eq!(primary, "100");
         assert!(splits.is_empty());
     }
@@ -2469,11 +2541,11 @@ mod tests {
                 ]
             }
         });
-        let (primary, splits) = compute_primary_split_amounts(&req).unwrap();
+        let (primary, splits) = compute_primary_split_amounts(&req, 196).unwrap();
         assert_eq!(primary, "940000");
         assert_eq!(splits.len(), 2);
-        assert_eq!(splits[0].0, "50000");
-        assert_eq!(splits[1].0, "10000");
+        assert_eq!(splits[0].amount, "50000");
+        assert_eq!(splits[1].amount, "10000");
     }
 
     #[test]
@@ -2488,8 +2560,48 @@ mod tests {
                 ]
             }
         });
-        let (primary, _) = compute_primary_split_amounts(&req).unwrap();
+        let (primary, _) = compute_primary_split_amounts(&req, 196).unwrap();
         assert_eq!(primary, "50");
+    }
+
+    #[test]
+    fn primary_split_xko_recipient_normalizes_to_canonical() {
+        // XKO-prefixed split recipient on XLayer maps to canonical 0x for signing,
+        // and preserves the original XKO form in the display column.
+        let req = json!({
+            "amount": "1000",
+            "methodDetails": {
+                "splits": [
+                    { "amount": "100", "recipient": "XKO1111111111111111111111111111111111111111" },
+                ]
+            }
+        });
+        let (_primary, splits) = compute_primary_split_amounts(&req, 196).unwrap();
+        assert_eq!(splits.len(), 1);
+        assert_eq!(
+            splits[0].canonical,
+            "0x1111111111111111111111111111111111111111"
+        );
+        assert_eq!(
+            splits[0].display,
+            "XKO1111111111111111111111111111111111111111"
+        );
+    }
+
+    #[test]
+    fn primary_split_xko_recipient_rejected_off_xlayer() {
+        let req = json!({
+            "amount": "1000",
+            "methodDetails": {
+                "splits": [
+                    { "amount": "100", "recipient": "XKO1111111111111111111111111111111111111111" },
+                ]
+            }
+        });
+        // `{:#}` flattens the anyhow context chain so we can match against the
+        // inner "only supported on X Layer" reason added by parse_recipient_addr.
+        let err = format!("{:#}", compute_primary_split_amounts(&req, 1).unwrap_err());
+        assert!(err.contains("only supported on X Layer"), "got: {}", err);
     }
 
     #[test]
@@ -2497,9 +2609,13 @@ mod tests {
         // Spec §Constraints: sum MUST be strictly less than amount.
         let req = json!({
             "amount": "100",
-            "methodDetails": { "splits": [ { "amount": "100", "recipient": "0xabc" } ] }
+            "methodDetails": { "splits": [
+                { "amount": "100", "recipient": "0x1111111111111111111111111111111111111111" }
+            ] }
         });
-        let err = compute_primary_split_amounts(&req).unwrap_err().to_string();
+        let err = compute_primary_split_amounts(&req, 196)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("strictly less than"), "got: {}", err);
     }
 
@@ -2508,11 +2624,11 @@ mod tests {
         let req = json!({
             "amount": "100",
             "methodDetails": { "splits": [
-                { "amount": "70", "recipient": "0xa" },
-                { "amount": "40", "recipient": "0xb" },
+                { "amount": "70", "recipient": "0x1111111111111111111111111111111111111111" },
+                { "amount": "40", "recipient": "0x2222222222222222222222222222222222222222" },
             ] }
         });
-        assert!(compute_primary_split_amounts(&req).is_err());
+        assert!(compute_primary_split_amounts(&req, 196).is_err());
     }
 
     #[test]
@@ -2521,7 +2637,9 @@ mod tests {
             "amount": "100",
             "methodDetails": { "splits": [ { "amount": "0", "recipient": "0xabc" } ] }
         });
-        let err = compute_primary_split_amounts(&req).unwrap_err().to_string();
+        let err = compute_primary_split_amounts(&req, 196)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("> 0"), "got: {}", err);
     }
 
@@ -2531,7 +2649,9 @@ mod tests {
             "amount": "100",
             "methodDetails": { "splits": [] }
         });
-        let err = compute_primary_split_amounts(&req).unwrap_err().to_string();
+        let err = compute_primary_split_amounts(&req, 196)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("empty"), "got: {}", err);
     }
 
@@ -2544,7 +2664,9 @@ mod tests {
             "amount": "1000",
             "methodDetails": { "splits": many }
         });
-        let err = compute_primary_split_amounts(&req).unwrap_err().to_string();
+        let err = compute_primary_split_amounts(&req, 196)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("exceeds spec max of 10"), "got: {}", err);
     }
 
@@ -2554,7 +2676,7 @@ mod tests {
             "amount": "0x64",
             "methodDetails": { "splits": [ { "amount": "10", "recipient": "0xabc" } ] }
         });
-        assert!(compute_primary_split_amounts(&req).is_err());
+        assert!(compute_primary_split_amounts(&req, 196).is_err());
     }
 
     // ── compute_valid_before ─────────────────────────────────────────
@@ -2586,7 +2708,9 @@ mod tests {
     #[test]
     fn valid_before_rejects_already_expired_challenge() {
         let ch = json!({ "expires": "2000-01-01T00:00:00Z" });
-        let err = compute_valid_before(&ch, 2_000_000_000).unwrap_err().to_string();
+        let err = compute_valid_before(&ch, 2_000_000_000)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("already in the past"), "got: {}", err);
     }
 
@@ -2669,6 +2793,9 @@ mod tests {
             .iter()
             .map(|f| f["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, vec!["name", "version", "chainId", "verifyingContract"]);
+        assert_eq!(
+            names,
+            vec!["name", "version", "chainId", "verifyingContract"]
+        );
     }
 }
