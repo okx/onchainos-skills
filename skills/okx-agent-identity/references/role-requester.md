@@ -16,7 +16,7 @@ Chinese:
 ```
 好，开始新 requester 的 create 流程。接下来会收集以下基本信息：
   1. 名称
-  2. 描述
+  2. 描述（可选）
   3. 头像（可选）
 ```
 
@@ -24,7 +24,7 @@ English:
 ```
 Got it — starting a new requester create. We'll collect:
   1. Name
-  2. Description
+  2. Description (optional)
   3. Picture (optional)
 ```
 
@@ -37,7 +37,7 @@ Questions are labelled `Q1：` / `Q1:` (Chinese / English) in the message to the
 | Q | Chinese prompt | English prompt | Validation | On failure |
 |---|---|---|---|---|
 | Q1 | `Q1：这个 requester 叫什么名字？` + 4 segments | `Q1: What's the name of this requester?` + 4 segments | non-empty, ≤ 64 chars | re-ask once with a shorter example |
-| Q2 | `Q2：用一句话描述这个 requester。` + 4 segments | `Q2: Describe this requester in a sentence.` + 4 segments | non-empty, ≤ 500 chars | re-ask with a concrete example |
+| Q2 | `Q2：用一句话描述这个 requester（可选，回车 / "跳过" 即不填）。` + 4 segments | `Q2: Describe this requester in a sentence (optional — press enter or reply "skip" to leave blank).` + 4 segments | optional; if supplied then ≤ 500 chars | only re-ask if the supplied value is suspicious; empty / "skip" is accepted as-is |
 | Q3 | `Q3：要设置头像吗？` + Choice prompt (see `avatar-upload.md`) | `Q3: Want to set an avatar?` + Choice prompt | — | skip → backend default avatar |
 
 No service questions. No staking. (Signing address is never asked — the CLI always uses the current wallet's selected XLayer address; `--address` does not exist.)
@@ -67,6 +67,7 @@ Chinese variant:
 | 头像 | 默认 |
 
 > 确认无误回复 "执行" 即可。
+> 用户跳过描述时，「描述」行渲染为 `未填`（不要写空白 / 短横）；CLI 会上链 `ProfileDescription: ""`。
 
 English variant:
 
@@ -78,6 +79,7 @@ English variant:
 | Picture | default |
 
 > Reply "execute" to run it.
+> When the user skips description, render the Description row as `(not set)` (not blank, not a dash); the CLI sends `ProfileDescription: ""` on-chain.
 
 **Do NOT show the bash command** unless the user explicitly asks ("把命令给我看" / "show me the CLI"). Confirmation cards are field-only.
 
@@ -87,7 +89,7 @@ English variant:
 onchainos agent create \
   --role requester \
   --name "<name>" \
-  --description "<description>" \
+  [--description "<description>"] \
   [--picture "<url>"]
 ```
 

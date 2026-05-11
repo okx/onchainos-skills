@@ -19,6 +19,16 @@
 
 Never use placeholder / filler phrases like `已上传` / `uploaded` / `已加好` / `CDN` / `图片已保存`. These leak implementation detail and force the user to click through an extra step to see what avatar is actually set. The URL goes directly in the cell. Diff cards showing a picture change render the old URL in the `当前值` / `Current` column and the new URL in the `新值` / `New` column, both verbatim.
 
+**Description row rule.** In any card that has a `描述` / `Description` row (confirmation card, detail card, diff card), the value column must be one of:
+1. The **actual user-supplied / backend-returned text verbatim** — when the field is non-empty. Render in the user's language; do not paraphrase or summarize.
+2. The literal string `未填` (Chinese) / `(not set)` (English) — when the value is empty / missing. This happens whenever:
+   - A `requester` / `evaluator` skipped Q2 at create time (CLI sends `ProfileDescription: ""` — see `field-specs.md §Description`); or
+   - The backend returns an empty `profileDescription` field for any reason on a detail / list / search render.
+
+Never leave the row blank, render a bare `—`, fabricate placeholder copy ("无描述" / "用户未填写描述" / "TBD"), or omit the row. Diff cards: when the current value is empty (e.g. a `requester` / `evaluator` who never set one), the `当前值` / `Current` column reads `未填` / `(not set)`.
+
+**Update cannot clear an existing description.** `mutations.rs::update_impl` only inserts `ProfileDescription` into the cardJson when the value is non-empty — passing `--description ""` is treated as "leave unchanged", not "clear". Same behavior for `--picture` (`update_impl` skips the `image` key when the value is empty). Skills must therefore refuse a user intent of "把描述清空 / clear my description" — explain the limitation and offer to replace with new content instead. If product spec later requires actual clearing, that's a separate `update_impl` change (distinguish `Option::None` vs `Some("")` and unconditionally insert when the flag was passed).
+
 ---
 
 ## 1. Agent list — `agent get` (no `--agent-ids`)
@@ -298,8 +308,8 @@ Header line + one entry per review. Prose-style, not a table — the description
 
 Rules:
 
-- Header mirrors the detail card's rating summary line — `★ <average_stars> (<count> reviews)`, where `<average_stars>` = `<backend_score> / 20` to 1 decimal (e.g. 92 → 4.6).
-- Each review: `#<index> · <date> · creator #<id> (<role> <name>) · ★ <stars>`, where `<stars>` = `round-half-up(<backend_score> / 20)` rendered as integer 0–5 (canonical rule pinned in `SKILL.md §Amount Display Rules` reputation block — `50 → 3`, `70 → 4`, `90 → 5`). Never render the raw 0–100 number.
+- Header mirrors the detail card's rating summary line — `★ <average> (<count> reviews)`, where `<average>` is the **already-converted 1-decimal star float** returned by `agent feedback-list` (CLI's `utils::convert_feedback_list_scores` maps backend 0–100 → 1-decimal stars before responding; the skill renders directly without dividing again).
+- Each review: `#<index> · <date> · creator #<id> (<role> <name>) · ★ <stars>`, where `<stars>` is the **already-converted integer 0–5** returned in each item's `score` field. Skill renders the integer directly — no `score / 20` arithmetic here. The conversion lives in `utils::convert_feedback_list_scores` per the canonical rule pinned in `SKILL.md §Amount Display Rules` reputation block. Never render the raw 0–100 number.
 - Optional `task:` row shows the jobId in backticks; omit if absent.
 - Description in quotes; render `"(no comment)"` when missing.
 - Footer: page indicator + `--sort-by` used (`time_desc` or `score_desc`; see `cli-reference.md` §10 for the natural-language mapping). If `--sort-by` was omitted, render `未指定，后端默认`.

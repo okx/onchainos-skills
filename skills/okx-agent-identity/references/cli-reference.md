@@ -22,7 +22,7 @@ Register a new ERC-8004 agent on XLayer.
 |---|---|---|---|
 | `--role` | ✓ | `requester` \| `provider` \| `evaluator` | Aliases `1` / `buyer` / `requestor` → requester; `2` → provider; `3` → evaluator. Always emit canonical lowercase. |
 | `--name` | ✓ | string | User-visible display name. |
-| `--description` | ✓ | string | 1–2 sentence description. |
+| `--description` | ✓ for provider / ✗ for others | string | 1–2 sentence description. **CLI enforces non-empty for `--role provider` only** (`mutations.rs::create_impl` role-conditional gate); requester / evaluator may omit it, in which case the wire payload sends `ProfileDescription: ""` (same shape as `picture` when skipped). Skill renders the empty value as `未填` / `(not set)` per `field-specs.md §Description`. |
 | `--service` | ✓ for provider / ✗ for others | JSON array string | Each element: `name`, `servicedescription`, `servicetype` (`A2MCP` \| `A2A`), `fee` (A2MCP req'd, **A2A optional** — when the user skips on A2A, send an empty string `"fee": ""`; the CLI's `models.rs:21` `fee: String` has no `skip_serializing_if`, so the key is always serialized regardless of intent. **USDT numeric string with up to 6 decimal places**, e.g. `1.234567` / `10` / `0.5` / `0` — format validated **skill-side**, the CLI only enforces non-empty for A2MCP), `endpoint` (A2MCP req'd — **HTTPS URL ≤ 512 chars**, length validated **skill-side** with the same proactive-disclosure policy as `fee`: do NOT inline the 512 limit into Q5's prompt, surface it only when the user's input exceeds it (see `troubleshooting.md` §3); CLI does NOT enforce length. A2A: discarded by `utils.rs::normalize_service`). |
 | `--picture` | ✗ | URL string | Avatar image URL (HTTPS). Omit to let backend assign a default. |
 
@@ -292,7 +292,7 @@ Rate another agent. The caller's `--creator-id` is their own agent; the backend 
 |---|---|---|---|
 | `--agent-id` | ✓ | integer | The **target** being rated. |
 | `--creator-id` | ✓ | integer | The caller's **own** agentId. |
-| `--score` | ✓ | integer 0–100 | **Wire format unchanged** — backend takes 0–100. The skill's user-facing UX is 0–5 stars; skill maps `0★→0`, `1★→20`, `2★→40`, `3★→60`, `4★→80`, `5★→100` before invoking the CLI. Never expose the raw 0–100 number to end users — see `feedback-guide.md` Step 3 and `display-formats.md` rating rules. |
+| `--score` | ✓ | integer 0–5 (stars) | CLI accepts 0–5 stars and multiplies by 20 internally to produce the 0–100 backend wire value (`utils::stars_to_score`). Out-of-range / non-integer input rejected by `parse_u32_arg`. The 0–100 wire format is encapsulated by the CLI; callers / skill code pass user stars directly. |
 | `--description` | ✗ | string | 1–3 sentence rationale. |
 | `--task-id` | ✗ | string | Free-form; usually a `jobId` from `okx-agent-task`. |
 
@@ -303,12 +303,12 @@ There is **no** `--tx-hash` parameter (tx hash is returned, not supplied).
 onchainos agent feedback-submit \
   --agent-id 42 \
   --creator-id 88 \
-  --score 85 \
+  --score 4 \
   --description "交付及时、数据准确" \
   --task-id "0xabc...03e8"
 ```
 
-**Return:** `{ "agentId": 42, "creatorId": 88, "score": 85, "txHash": "0x…" }`. The wire `score` is 0–100; user-visible rendering converts to `★ <round-half-up(score/20)>` per the canonical rule in `SKILL.md §Amount Display Rules` (e.g. backend `85` → `★ 4`).
+**Return:** `{ "txHash": "0x…" }`. The submitted star count is not echoed back; if the skill needs to confirm what was just submitted, it should track the user's star input itself.
 
 **Errors:** see `troubleshooting.md` §2 (backend-originated, keyword match) and §3 (skill-side guards).
 
@@ -350,13 +350,13 @@ onchainos agent feedback-list --agent-id 42 --sort-by time_desc --page 1 --page-
 {
   "agentId": 42,
   "total": 18,
-  "average": 92,
+  "average": 4.6,
   "items": [
-    { "creatorId": 88, "score": 95, "description": "...", "taskId": "...", "createdAt": "..." }
+    { "creatorId": 88, "score": 5, "description": "...", "taskId": "...", "createdAt": "..." }
   ]
 }
 ```
 
-`average` and per-item `score` are 0–100 wire format. The skill's display layer converts to stars per the canonical **round-half-up** rule pinned in `SKILL.md §Amount Display Rules` reputation block: aggregate `★ <average/20>` to 1 decimal (e.g. backend `89` → `★ 4.5`), per-item `★ <round-half-up(score/20)>` integer (e.g. backend `70` → `★ 4`, `50` → `★ 3`). Never render the raw 0–100 number in user-visible output.
+`average` and per-item `score` are already in **0–5 stars** when the CLI surfaces them. The CLI applies `utils::convert_feedback_list_scores` to the backend response before returning: `average` becomes a 1-decimal float (e.g. backend `89` → `4.5`) and per-item `score` becomes an integer 0–5 (e.g. backend `70` → `4`). The skill just renders `★ <average>` / `★ <score>` directly. Backend wire format is still 0–100 — encapsulated by `utils::score_to_stars_decimal` / `utils::score_to_stars_int` with the canonical **round-half-up** rule pinned in `SKILL.md §Amount Display Rules`.
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match).

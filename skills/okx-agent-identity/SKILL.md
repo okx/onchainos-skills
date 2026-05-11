@@ -133,7 +133,7 @@ CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provide
 
 | Command | Purpose | Required params | Optional params |
 |---|---|---|---|
-| `onchainos agent create` | Register a new agent | `--role`, `--name`, `--description` (`--service` required for provider) | `--picture` |
+| `onchainos agent create` | Register a new agent | `--role`, `--name`; for `--role provider` also `--description` + `--service` | `--picture`; `--description` (optional for `requester` / `evaluator` — see `references/cli-reference.md §1` for the role-conditional gate) |
 | `onchainos agent update` | Update an existing agent | `--agent-id` + at least one field to change | `--name`, `--description`, `--picture`, `--service` |
 | `onchainos agent get` | Default (no `--agent-ids`): list your own agents. With `--agent-ids`: fetch any agent(s) by id (own or others') | — | `--agent-ids`, `--page`, `--page-size` |
 | `onchainos agent activate` | Publish (上架) | `--agent-id` | — |
@@ -242,7 +242,7 @@ Never call `update` without first showing the current state. Never invent fields
 
 `--creator-id` is the **user's own** agent id — it is not `--agent-id` (the target being rated). The user must have at least one registered agent (any role) before they can submit feedback. Full decision tree for 0 / 1 / many creator candidates → `references/feedback-guide.md`.
 
-Rating UX is **integer 0–5 stars**. Skill validates the user's input as `0..=5` and maps to the CLI's 0–100 wire format (`0★→0`, `1★→20`, `2★→40`, `3★→60`, `4★→80`, `5★→100`) before invoking `feedback-submit`. Never expose the raw 0–100 number to the user — see `references/feedback-guide.md` Step 3 for the input flow and `references/display-formats.md` for the rendering rules.
+Rating UX is **integer 0–5 stars**. The CLI's `--score` now accepts 0–5 directly and multiplies by 20 internally to produce the 0–100 backend wire value (`utils::stars_to_score` is the single source of truth). The skill validates `0..=5` only as a friendlier pre-check; the CLI rejects out-of-range values on its own. Never expose the raw 0–100 number to the user — see `references/feedback-guide.md` Step 3 for the input flow and `references/display-formats.md` for the rendering rules.
 
 `--task-id` is optional; currently accepts any free-form string (will align with `okx-agent-task` jobId format in a later release).
 
@@ -557,13 +557,20 @@ Phase-1 capture: `name=Alice`, `description=做 DeFi 分析`. **Fee=10 is discar
 - Service `fee` is **required for `A2MCP` and optional for `A2A`**. For `A2A` the user may either skip (skill sends `"fee": ""` — see `cli-reference.md` §1's `--service` note for why the key is always present) or supply a USDT reference price following the same format. When rendering an A2A service: if `fee` is non-empty, show it as `<N> USDT` like A2MCP; if empty / absent, show the short form `免费` / `free` in the user's language (Type=A2A on the same row already gives the off-chain-pricing context). For dedicated Fee rows in confirm/diff cards (where space allows), `（未填，链外议价）` / `(skipped — off-chain negotiation)` is also acceptable.
 - Evaluator stake amount is owned by `okx-agent-task` and may change; **never hardcode the amount** in this skill's copy. Just point users to the staking flow at `/skills/okx-agent-task/evaluator.md`.
 - EVM contract / agent addresses must be displayed all lowercase.
-- **Reputation is rendered as 0–5 stars, never as the raw 0–100 score.** The wire format (CLI request, backend response) stays 0–100; the display layer converts.
-  - **Canonical rounding rule (single source of truth).** Every score-to-star conversion in this skill — both integer (single review, input normalization) and 1-decimal (aggregate) — uses `score / 20` followed by **round-half-up** tie-breaking applied at the displayed precision. For integer star buckets that means `round-half-up(score / 20)` (`50 → 3`, `70 → 4`, `90 → 5`). For 1-decimal aggregates it means rounding the second decimal half-up (`92 / 20 = 4.6 → 4.6`, `89 / 20 = 4.45 → 4.5`, `85 / 20 = 4.25 → 4.3`, `30 / 20 = 1.5 → 1.5`). The two flows must agree — a backend score of `70` always corresponds to `★ 4` whether it was just submitted or pulled back via `agent feedback-list`, and an aggregate of `89` always renders as `★ 4.5` whether on the list, detail card, or search row.
-  - **Aggregate** (`agent get` / `agent feedback-list` header / `agent search` row): `★ <average/20>` rounded to 1 decimal place via the canonical rule above, e.g. backend `92` → `★ 4.6`, backend `89` → `★ 4.5`, backend `85` → `★ 4.3`. Append the count when known: `★ 4.6 (18)` / `★ 4.6 (18 评价)` / `★ 4.6 (18 reviews)`.
-  - **Single review** (per-entry in `agent feedback-list`): `★ <round-half-up(score/20)>` rendered as integer 0–5, e.g. backend `95` → `★ 5`, backend `70` → `★ 4`, backend `50` → `★ 3`, backend `10` → `★ 1`.
-  - **No data**: render `—`.
-  - **User input collection** (`agent feedback-submit`): ask for integer 0–5 stars; map to `0/20/40/60/80/100` before invoking the CLI. If the user typed a legacy 0–100 number, normalize via the same `round-half-up(score/20)` rule above so input and display agree. See `references/feedback-guide.md` Step 3.
-  - The raw 0–100 number appears only in the maintainer bash block (which is hidden from end users by the "Do NOT show the bash command" rule on confirmation cards) and in CLI/backend logs. **Never** render `92 / 100` / `85 分` in any user-visible cell, post-success line, or error message.
+- **Reputation is rendered as 0–5 stars, never as the raw 0–100 score.** The backend wire format stays 0–100; whether the **CLI** has already converted to stars before handing the response to the skill depends on the endpoint.
+  - **CLI-converted endpoints** (skill renders the value verbatim — do NOT divide again):
+    - `agent feedback-list` — CLI's `utils::convert_feedback_list_scores` already maps top-level `average` to a 1-decimal star float and each `items[*].score` / `list[*].score` to an integer star bucket. Render directly: `★ <average>` / `★ <score>`.
+    - `agent feedback-submit` (input) — CLI takes 0–5 stars via `--score` and multiplies by 20 internally (`utils::stars_to_score`). Skill passes user stars straight to `--score` — no multiplication on the skill side.
+  - **Not-yet-converted endpoints** (CLI returns raw 0–100, skill still applies the round-half-up rule at render time):
+    - `agent get` — `list[*].reputation.score` is the 0–100 backend aggregate; render as `★ <round-half-up(score / 20) to 1 decimal>`.
+    - `agent search` — same as `agent get`.
+    - These two are tracked for future extension into the CLI; until then the rule below applies skill-side.
+  - **Canonical rounding rule** (used both inside the CLI's converters and by skill-side rendering for the not-yet-converted endpoints): `score / 20` followed by **round-half-up** tie-breaking at the displayed precision.
+    - Integer star buckets (single review): `round-half-up(score / 20)` — `50 → 3`, `70 → 4`, `90 → 5`.
+    - 1-decimal aggregates: round the second decimal half-up — `92 → 4.6`, `89 → 4.5`, `85 → 4.3`, `30 → 1.5`.
+    - A backend score of `70` always corresponds to `★ 4`; aggregate `89` always renders as `★ 4.5` — regardless of which side did the math.
+  - **No-data**: render `—`.
+  - The raw 0–100 number appears only in CLI / backend logs and in the maintainer bash block (hidden from end users by the "Do NOT show the bash command" rule on confirmation cards). **Never** render `92 / 100` / `85 分` in any user-visible cell, post-success line, or error message.
 
 ## Edge Cases
 
