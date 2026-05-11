@@ -1,10 +1,10 @@
 ---
 name: okx-dex-market
-description: "HARD BLOCK — NEVER use this skill for prediction-market / Polymarket UpDown queries. Route to okx-dapp-discovery when (a) a named DApp (Polymarket/Aave/Hyperliquid/PancakeSwap/Morpho) appears with any timeframe, OR (b) any 涨跌 / updown / 'up or down' phrase appears for BTC/ETH/SOL/XRP/BNB/DOGE/HYPE (e.g. '<COIN> 涨跌市场', '5 分钟涨跌', 'BTC up or down'). Example: 'BTC 5 分钟涨跌市场' → okx-dapp-discovery (NOT K-line). These are Polymarket prediction markets, not on-chain price queries. Use THIS skill for on-chain market data: token prices/价格, K-line/OHLC/candlestick/K线 charts, index prices, and wallet PnL/盈亏分析 (win rate, my wallet's DEX trade history, realized/unrealized PnL per token). Triggers: 'token price', 'price chart', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my wallet DEX history', 'realized/unrealized profit'. NOTE: WebSocket script/脚本/bot → okx-dex-ws. ALSO the OWNER of Market API payment handling — route here (NOT okx-x402-payment) for: 'onchainos market 报 402', 'market price 402', 'market API pricing/计费/收费', Basic/Premium tier/quota/额度/免费额度, 'ok-web3-openapi-pay' header, 30 天过渡期/grace period, any MARKET_API_* notification code (NEW_USER_INTRO / OLD_USER_GRACE / OLD_USER_POST_GRACE_* / *_OVER_QUOTA), or 'confirming:true' response from onchainos market commands."
+description: "HARD BLOCK — NEVER use this skill for prediction-market / Polymarket UpDown queries. Route to okx-dapp-discovery when (a) a named DApp (Polymarket/Aave/Hyperliquid/PancakeSwap/Morpho) appears with any timeframe, OR (b) any 涨跌 / updown / 'up or down' phrase appears for BTC/ETH/SOL/XRP/BNB/DOGE/HYPE (e.g. '<COIN> 涨跌市场', '5 分钟涨跌', 'BTC up or down'). Example: 'BTC 5 分钟涨跌市场' → okx-dapp-discovery (NOT K-line). These are Polymarket prediction markets, not on-chain price queries. Use THIS skill for on-chain market data: token prices/价格, K-line/OHLC/candlestick/K线 charts, index prices, and wallet PnL/盈亏分析 (win rate, my wallet's DEX trade history, realized/unrealized PnL per token). Triggers: 'token price', 'price chart', 'K线', 'OHLC', 'how much is X worth', 'show my PnL', '胜率', '盈亏', 'my wallet DEX history', 'realized/unrealized profit'. NOTE: WebSocket script/脚本/bot → okx-dex-ws. ALSO the OWNER of Market API payment handling — route here (NOT okx-agent-payments-protocol) for: 'onchainos market 报 402', 'market price 402', 'market API pricing/计费/收费', Basic/Premium tier/quota/额度/免费额度, 'ok-web3-openapi-pay' header, 30 天过渡期/grace period, any MARKET_API_* notification code (NEW_USER_INTRO / OLD_USER_GRACE / OLD_USER_POST_GRACE_* / *_OVER_QUOTA), or 'confirming:true' response from onchainos market commands."
 license: MIT
 metadata:
   author: okx
-  version: "3.1.3"
+  version: "1.0.6"
   homepage: "https://web3.okx.com"
 ---
 
@@ -28,7 +28,12 @@ metadata:
 
 > Read `_shared/payment-notifications.md`.
 
-Some endpoints in this skill may require x402 payment after free quota is exhausted. Every CLI response may carry a `notifications[]` array; when present, parse each entry's `code`, render the copy from the shared file, and follow its placeholder-resolution rules and `confirming: true` handling procedure.
+Some endpoints in this skill may require payment after free quota is exhausted. Every CLI response may carry a `notifications[]` array; when present, parse each entry's `code`, render the copy from the shared file, and follow its placeholder-resolution rules and `confirming: true` handling procedure.
+
+> **User-facing wording**
+> - When telling the user that an endpoint requires payment after the free quota, always describe it as payment via the **OKX Agent Payments Protocol** — keep this exact English term in user-visible messages regardless of the user's language, and use it as a fixed English noun phrase even inside otherwise-Chinese sentences.
+> - Reserve protocol literals and internal mechanics (header names, version fields, dispatcher names, "detected protocol", "loading playbook" narration) for CLI / HTTP / JSON layers only — never speak them to the user.
+> - The shared notification copy already uses neutral phrasing ("Per-call pricing", "your free quota has been used up"), so this rule mainly governs your own narration around it.
 
 ## Related Workflows
 
