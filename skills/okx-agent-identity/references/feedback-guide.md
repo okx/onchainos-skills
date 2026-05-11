@@ -9,7 +9,7 @@
 
 **Consequence:** a user can only rate others after registering their own agent.
 
-**Rating UX is 0–5 stars (integer).** The CLI / backend wire format remains 0–100 integer; the skill translates between the two. Mapping: `0★→0`, `1★→20`, `2★→40`, `3★→60`, `4★→80`, `5★→100`. Never expose the raw 0–100 score to the user — all user-facing prompts, confirmation cards, post-success lines, error messages, and detail / list / feedback / search renderings use stars only. The 0–100 number appears only in the maintainer bash block (which is hidden from end users) and in CLI / backend logs.
+**Rating UX is 0–5 stars (integer).** The CLI now accepts 0–5 directly via `--score` and does the `* 20` mapping internally (see `cli/src/commands/agent_commerce/identity/utils.rs::stars_to_score`); `agent feedback-list` also divides the backend response by 20 before returning, so the skill sees stars on both sides. The 0–100 backend wire format is fully encapsulated by the CLI. Skill code just passes the user's star count straight to `--score` — no multiplication, no division.
 
 ---
 
@@ -19,7 +19,7 @@
 
 Extract the `--agent-id` from the user's prompt.
 
-- "给 #42 打 4 星" → `--agent-id 42`, internally maps to `--score 80`
+- "给 #42 打 4 星" → `--agent-id 42 --score 4` (CLI handles the * 20 to 80 internally).
 - "给 DeFi Analyzer 打 4 星" → first resolve name to id via `agent search --query "DeFi Analyzer"`, then confirm with the user.
 - Legacy phrasings users may still type (`85 分` / `满分` / `差评`) — accept and translate per Step 3 mapping; never echo the 0–100 number back.
 - Ambiguous → ask back.
@@ -54,21 +54,21 @@ Walk this ladder in order:
 
 ### Step 3 — Validate stars (0–5 integer)
 
-- Integer 0–5. Skill validates before sending; CLI is unaware (it only accepts 0–100).
+- Integer 0–5. CLI enforces this range natively (`parse_u32_arg(..., Some(0), Some(5), false)`) and rejects anything outside; skill should still pre-validate to surface a friendlier error than the raw CLI bail.
 - Reject non-integers, ranges outside 0–5, decimals, "stars" outside the enum.
-- Mapping table (skill applies before invoking the CLI):
+- Pass the user's star count straight to `--score` — CLI does the `* 20` mapping. Examples:
 
-  | User input | Stars | `--score` sent to CLI |
-  |---|---|---|
-  | `5 星` / `满分` / `5 stars` / `top rating` | 5 | 100 |
-  | `4 星` | 4 | 80 |
-  | `3 星` / `及格` / `一般` | 3 | 60 |
-  | `2 星` | 2 | 40 |
-  | `1 星` / `差评` / `最低` | 1 | 20 |
-  | `0 星` (rare; only if user explicitly says zero) | 0 | 0 |
+  | User input | `--score` |
+  |---|---|
+  | `5 星` / `满分` / `5 stars` / `top rating` | `--score 5` |
+  | `4 星` | `--score 4` |
+  | `3 星` / `及格` / `一般` | `--score 3` |
+  | `2 星` | `--score 2` |
+  | `1 星` / `差评` / `最低` | `--score 1` |
+  | `0 星` (rare; only if user explicitly says zero) | `--score 0` |
 
-- Fuzzy phrasings (`满分` / `及格` / `差评`) are accepted, mapped per the table, and confirmed back to the user using stars (`★ N`), never `<score> / 100`.
-- If the user types a raw 0–100 number ("85 分"), translate **silently** into the star bucket via `round(score / 20)` with **round-half-up** tie-breaking — the same rule the display layer uses for per-review rendering, so a single backend score always projects to the same star count regardless of which side of the flow you're on. Examples: `100 → 5`, `90 → 5` (round(4.5)=5), `85 → 4`, `80 → 4`, `75 → 4` (round(3.75)=4), `70 → 4` (round(3.5)=4, **half-up**), `65 → 3` (round(3.25)=3), `50 → 3` (round(2.5)=3, **half-up**), `30 → 2`, `10 → 1` (round(0.5)=1), `0 → 0`. Echo back the star count for confirmation, never the raw number. Canonical rule lives in `SKILL.md §Amount Display Rules` reputation bullet — keep this guide in sync with that source.
+- Fuzzy phrasings (`满分` / `及格` / `差评`) are accepted, mapped per the table, and confirmed back to the user using stars (`★ N`).
+- Legacy phrasings: if the user types a raw 0–100 number ("85 分"), translate to the nearest star bucket via `round(score / 20)` with **round-half-up** tie-breaking, then pass that as `--score`. Examples: `100 → 5`, `90 → 5`, `85 → 4`, `80 → 4`, `70 → 4`, `50 → 3`, `30 → 2`, `10 → 1`, `0 → 0`. Never echo the raw 0–100 number back to the user.
 
 ### Step 4 — Optional fields
 
@@ -102,12 +102,13 @@ The rating row shows `★ N` where N is the integer 0–5. Never render `85 / 10
 > Before invoking the CLI, run the **pre-execute self-check** in `SKILL.md §Step 3: Execute`: the user's **most recent** turn must contain an explicit confirm token (`执行` / `execute` / `yes` / `好` / `确认` / `go`). A confirmation token from earlier in the conversation, or a confirm of a different write, does NOT count. If the most-recent turn lacks the token, render Step 5's card and wait.
 
 ```bash
-# Skill maps user's 0–5 stars to 0/20/40/60/80/100 before invocation.
-# Maintainers running this CLI directly still pass the raw 0–100 integer.
+# --score is 0–5 stars (integer). CLI multiplies by 20 internally before
+# writing the backend `comment.value`; the 0–100 wire format is fully
+# encapsulated by the CLI.
 onchainos agent feedback-submit \
   --agent-id <target> \
   --creator-id <self> \
-  --score <0-100> \
+  --score <0-5> \
   [--description "<text>"] \
   [--task-id "<jobId>"]
 ```

@@ -48,7 +48,7 @@ Questions labelled `Q1：` / `Q1:`. Each Q inlines the four-segment field spec f
 | Q | Chinese prompt | English prompt | Validation |
 |---|---|---|---|
 | Q1 | `Q1：你要注册的 evaluator 叫什么名字？` + 4 segments | `Q1: What's the name of this evaluator?` + 4 segments | non-empty, ≤ 64 chars |
-| Q2 | `Q2：用一句话描述你的仲裁领域或专长。` + 4 segments | `Q2: Describe your arbitration domain or expertise in a sentence.` + 4 segments | non-empty, ≤ 500 chars |
+| Q2 | `Q2：用一句话描述你的仲裁领域或专长（可选，回车 / "跳过" 即不填）。` + 4 segments | `Q2: Describe your arbitration domain or expertise in a sentence (optional — press enter or reply "skip" to leave blank).` + 4 segments | optional; if supplied then ≤ 500 chars |
 
 No avatar prompt by default (evaluator dashboards rarely show avatars). If the user brings it up, branch to `avatar-upload.md`.
 
@@ -68,6 +68,7 @@ Chinese variant:
 | 头像 | 默认 |
 
 > 确认无误回复 "执行"。
+> 用户跳过描述时，「描述」行渲染为 `未填`（不要写空白 / 短横）；CLI 会上链 `ProfileDescription: ""`。
 
 English variant:
 
@@ -79,6 +80,7 @@ English variant:
 | Picture | default |
 
 > Reply "execute" to run it.
+> When the user skips description, render the Description row as `(not set)` (not blank, not a dash); the CLI sends `ProfileDescription: ""` on-chain.
 
 Do **NOT** add a `stake` row here — create does not consume the stake and this skill has no way to verify it. Mentioning stake in the confirmation card implies a gate that does not exist.
 
@@ -90,7 +92,7 @@ Do **NOT** add a `stake` row here — create does not consume the stake and this
 onchainos agent create \
   --role evaluator \
   --name "<name>" \
-  --description "<description>" \
+  [--description "<description>"] \
   [--picture "<url>"]
 ```
 

@@ -17,7 +17,7 @@
 
 - **用途** / Purpose: 出现在搜索结果和详情页，影响被发现的概率与匹配质量。 / Shown in search results and detail pages; affects discoverability and match quality.
 - **可见范围** / Visibility: 上链公开。 / On-chain public.
-- **请注意** / Please note: 非空；≤ 500 字符；写清楚做什么、在哪条链、擅长什么。 / Non-empty; ≤ 500 chars; be specific about what you do, which chain, and your strengths.
+- **请注意** / Please note: **provider 必填；requester / evaluator 选填**——跳过则上链 `ProfileDescription: ""`，渲染端显示为 `未填`。填了一律 ≤ 500 字符；写清楚做什么、在哪条链、擅长什么。 / **Required for provider; optional for requester / evaluator** — when skipped, the wire payload carries `ProfileDescription: ""` and the render layer shows `(not set)`. When supplied, ≤ 500 chars; be specific about what you do, which chain, and your strengths.
 - **示例** / Example: `提供 XLayer 链上数据分析与巨鲸追踪报告，支持按协议切片。` / `On-chain data analysis and yield simulation on XLayer; protocol-level slicing supported.`
 
 ### Picture

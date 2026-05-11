@@ -261,3 +261,73 @@ pub(super) fn parse_u32_arg(
     }
     Ok(parsed)
 }
+
+// ─── Rating: 0–5 stars (CLI surface) ↔ 0–100 score (backend wire) ─────────
+//
+// Single source of truth for the conversion. The CLI takes user input in
+// stars and writes stars in responses; the wire format with the backend
+// remains 0–100 integers. Skills no longer need to do the multiplication
+// themselves (earlier revisions made that the skill's responsibility,
+// which was fragile because skills are prompt-driven; a forgetful prompt
+// would send raw 1–5 to the wire and corrupt the rating).
+//
+// All conversions use **round-half-up** at the displayed precision —
+// consistent with the canonical rule pinned in
+// `skills/okx-agent-identity/SKILL.md` §Amount Display Rules.
+
+/// 0–5 stars → 0–100 backend score (exact, multiplied by 20).
+pub(super) fn stars_to_score(stars: u32) -> u32 {
+    stars.saturating_mul(20).min(100)
+}
+
+/// 0–100 backend score → 0–5 integer stars, round-half-up.
+/// Used for per-review entries where the value is conceptually integer.
+pub(super) fn score_to_stars_int(score: u64) -> u64 {
+    (score.min(100) + 10) / 20
+}
+
+/// 0–100 backend score → 1-decimal star rating (0.0–5.0), round-half-up
+/// at the second decimal. Used for aggregates like `average` /
+/// `reputation.score` where 1 decimal place matches the user-visible
+/// rendering rule (e.g. `92 → 4.6`, `89 → 4.5`, `85 → 4.3`).
+pub(super) fn score_to_stars_decimal(score: u64) -> f64 {
+    let s = score.min(100);
+    // (s * 10 + 10) / 20 with integer truncation = round-half-up at the
+    // second decimal of stars. Examples: 89 → (890+10)/20 = 45 → 4.5;
+    // 85 → (850+10)/20 = 43 → 4.3.
+    ((s * 10 + 10) / 20) as f64 / 10.0
+}
+
+/// In-place convert score-like fields in a feedback-list response from
+/// 0–100 backend ints to 0–5 stars (integer per-entry, 1-decimal aggregate).
+///
+/// Conversions applied (each only when the field exists and is numeric):
+///   - top-level `average` → 1-decimal stars
+///   - `items[*].score`     → integer stars
+///   - `list[*].score`      → integer stars (alternate field name; backend
+///                            is inconsistent across endpoints — see
+///                            `agent-list` which uses `list` — so accept
+///                            either; only one will actually be present)
+pub(super) fn convert_feedback_list_scores(v: &mut Value) {
+    if let Value::Object(map) = v {
+        if let Some(score) = map.get("average").and_then(Value::as_u64) {
+            if let Some(num) = serde_json::Number::from_f64(score_to_stars_decimal(score)) {
+                map.insert("average".to_string(), Value::Number(num));
+            }
+        }
+        for key in ["items", "list"] {
+            if let Some(Value::Array(arr)) = map.get_mut(key) {
+                for entry in arr.iter_mut() {
+                    if let Value::Object(entry_map) = entry {
+                        if let Some(score) = entry_map.get("score").and_then(Value::as_u64) {
+                            entry_map.insert(
+                                "score".to_string(),
+                                Value::Number(score_to_stars_int(score).into()),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

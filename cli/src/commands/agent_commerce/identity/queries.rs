@@ -14,8 +14,9 @@ use crate::output;
 use super::args::{FeedbackListArgs, GetArgs, SearchArgs, ServiceListArgs};
 use super::models::XLAYER_CHAIN_INDEX;
 use super::utils::{
-    normalize_singleton_object, parse_u32_arg, push_multi_query, push_optional_query,
-    reconstruct_get_url_for_log, redact_token_for_debug, require_non_empty, wallet_client,
+    convert_feedback_list_scores, normalize_singleton_object, parse_u32_arg, push_multi_query,
+    push_optional_query, reconstruct_get_url_for_log, redact_token_for_debug, require_non_empty,
+    wallet_client,
 };
 
 // ─── Public command entry points ──────────────────────────────────────────
@@ -264,5 +265,10 @@ async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Va
         Err(e) => eprintln!("[agent-identity] feedback-list response err: {:#}", e),
     }
 
-    Ok(normalize_singleton_object(result?))
+    // Convert backend 0–100 scores to 0–5 stars before surfacing to the
+    // user. `average` becomes a 1-decimal float; per-entry `score` becomes
+    // an integer. Mapping rule: `utils::convert_feedback_list_scores`.
+    let mut out = normalize_singleton_object(result?);
+    convert_feedback_list_scores(&mut out);
+    Ok(out)
 }

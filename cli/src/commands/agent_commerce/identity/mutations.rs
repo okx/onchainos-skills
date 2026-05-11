@@ -35,7 +35,7 @@ use super::socket::{open_identity_subscription, IdentitySubscription};
 use super::utils::{
     ensure_provider_has_service, identity_ws_url, normalize_role, normalize_singleton_object,
     parse_agent_unsigned, parse_services, parse_u32_arg, reconstruct_post_url_for_log,
-    redact_token_for_debug, require_non_empty, trim_or_empty, wallet_client,
+    redact_token_for_debug, require_non_empty, stars_to_score, trim_or_empty, wallet_client,
 };
 
 const PUSH_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -98,12 +98,21 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
     let key_uuid = Uuid::new_v4().to_string();
     let session_signature = sign_key_uuid(&key_uuid, &signing_session.signing_seed)?;
     let normalized_role = normalize_role(require_non_empty(args.role.as_deref(), "--role")?)?;
+    // Description 必填规则按 role 分支：
+    //   - provider（卖家）：被搜索 / 匹配的核心字段 → 必填。
+    //   - requester（买家）/ evaluator（验证者）：选填；未填则上链
+    //     `ProfileDescription: ""`（与 picture 一致），skill 端渲染为
+    //     `未填 / (not set)`，详见 role-requester.md / role-evaluator.md。
+    let profile_description = if normalized_role == "provider" {
+        require_non_empty(args.description.as_deref(), "--description")?.to_string()
+    } else {
+        trim_or_empty(args.description.as_deref())
+    };
     let card = AgentCard {
         role: normalized_role.clone(),
         name: require_non_empty(args.name.as_deref(), "--name")?.to_string(),
         profile_picture: trim_or_empty(args.picture.as_deref()),
-        profile_description: require_non_empty(args.description.as_deref(), "--description")?
-            .to_string(),
+        profile_description,
         communication_address: None,
         services: parse_services(args.service.as_deref())?,
     };
@@ -405,14 +414,21 @@ async fn feedback_submit_impl(args: &FeedbackSubmitArgs, ctx: &Context) -> Resul
     // --agent-id / --creator-id / --score 必填；--description / --task-id 选填。
     let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?.to_string();
     let creator_id = require_non_empty(args.creator_id.as_deref(), "--creator-id")?.to_string();
-    let score = parse_u32_arg(
+    // --score is 0–5 stars; CLI internally multiplies by 20 to produce the
+    // 0–100 backend wire value. Mapping lives in `utils::stars_to_score`
+    // (single source of truth). Earlier revisions made stars→score the
+    // skill's responsibility, which was fragile — skills are prompt-driven
+    // and would occasionally forget the multiplication and corrupt the
+    // rating on chain. CLI is the authoritative boundary now.
+    let stars = parse_u32_arg(
         Some(require_non_empty(args.score.as_deref(), "--score")?),
         "--score",
         0,
         Some(0),
-        Some(100),
+        Some(5),
         false,
     )?;
+    let score = stars_to_score(stars);
     let feedback_desc = trim_or_empty(args.description.as_deref());
     let task_id = trim_or_empty(args.task_id.as_deref());
     let signing_session = load_agent_signing_session(None)?;
