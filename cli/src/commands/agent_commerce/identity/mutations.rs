@@ -33,7 +33,7 @@ use super::signing::{
 };
 use super::socket::{open_identity_subscription, IdentitySubscription};
 use super::utils::{
-    ensure_provider_has_service, identity_ws_base_url, normalize_role, normalize_singleton_object,
+    ensure_provider_has_service, identity_ws_url, normalize_role, normalize_singleton_object,
     parse_agent_unsigned, parse_services, parse_u32_arg, reconstruct_post_url_for_log,
     redact_token_for_debug, require_non_empty, trim_or_empty, wallet_client,
 };
@@ -155,12 +155,11 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
     ]);
 
     // 广播前先建立 wallet-agentic-identity 订阅；任何环节失败都降级，不阻断后续广播。
-    // identity_ws_base_url 优先吃 OKX_AGENTIC_WS_BASE_URL（泳道用，HTTP 与 WS
-    // 跨 host），否则回落到 identity HTTP base URL 做 scheme 替换。注：DoH
-    // 代理重写不可见，那种环境下 WS 仍走原 host 失败、进软降级，不影响广播
-    // 与 agentList。push-platform login 用钱包地址作为 "token" 值（不再是 JWT）。
+    // identity_ws_url() 默认 WS_URL_PROD（wss://wsdex.okx.com/ws/v5/private），
+    // OKX_AGENTIC_WS_URL 环境变量可整 URL 覆盖（dev / pre / debug 用）。
+    // push-platform login 用钱包地址作为 "token" 值（不再是 JWT）。
     let subscription =
-        match open_identity_subscription(&from_addr, &identity_ws_base_url(ctx)).await {
+        match open_identity_subscription(&from_addr, &identity_ws_url()).await {
         Ok(s) => Some(s),
         Err(e) => {
             eprintln!(
@@ -260,13 +259,12 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     // 整个 erc8004Msg 不写入广播 extraData。
 
     // 广播前先建立 wallet-agentic-identity 订阅；任何环节失败都降级，不阻断后续广播。
-    // identity_ws_base_url 优先吃 OKX_AGENTIC_WS_BASE_URL（泳道用，HTTP 与 WS
-    // 跨 host），否则回落到 identity HTTP base URL 做 scheme 替换。注：DoH
-    // 代理重写不可见，那种环境下 WS 仍走原 host 失败、进软降级，不影响广播
-    // 与 agentList。push-platform login 用钱包地址作为 "token" 值（不再是 JWT）。
+    // identity_ws_url() 默认 WS_URL_PROD（wss://wsdex.okx.com/ws/v5/private），
+    // OKX_AGENTIC_WS_URL 环境变量可整 URL 覆盖（dev / pre / debug 用）。
+    // push-platform login 用钱包地址作为 "token" 值（不再是 JWT）。
     let subscription = match open_identity_subscription(
         &signing_session.addr_info.address,
-        &identity_ws_base_url(ctx),
+        &identity_ws_url(),
     )
     .await
     {
@@ -566,9 +564,7 @@ async fn wait_for_identity_push(
     subscription: Option<IdentitySubscription>,
     tx_hash: &str,
 ) -> Option<Value> {
-    let Some(sub) = subscription else {
-        return None;
-    };
+    let sub = subscription?;
     match sub.wait_for_match(tx_hash, PUSH_WAIT_TIMEOUT).await {
         Ok(opt) => opt,
         Err(e) => {

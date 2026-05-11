@@ -3,15 +3,18 @@
 //! after broadcasting, the caller waits up to 30 s for a push whose
 //! `txHash` matches the broadcast hash.
 //!
-//! Lifecycle: `open_identity_subscription` connects to
-//! `<identity-base-url-as-wss>/ws/v5/private`, sends the wallet-address
-//! login op (JSON key remains `"token"` per server contract; the value
-//! is the caller's XLayer address, no longer a JWT), awaits
-//! `event=login,code=0`, then subscribes to `wallet-agentic-identity`
-//! and awaits the subscribe ACK. The caller broadcasts, then drives
-//! `wait_for_match` which streams frames until a match is found or the
-//! deadline fires. Any failure here is a soft failure — the surrounding
-//! command logs and falls through with the `agent` field absent.
+//! Lifecycle: `open_identity_subscription` connects to the full WS URL
+//! the caller passes in (see `super::utils::identity_ws_url` — default
+//! `WS_URL_PROD = wss://wsdex.okx.com/ws/v5/private`, or `OKX_AGENTIC_WS_URL`
+//! env override). No scheme swap or path forcing happens here — the URL
+//! is used verbatim. Then sends the wallet-address login op (JSON key
+//! remains `"token"` per server contract; the value is the caller's
+//! XLayer address, no longer a JWT), awaits `event=login,code=0`, then
+//! subscribes to `wallet-agentic-identity` and awaits the subscribe ACK.
+//! The caller broadcasts, then drives `wait_for_match` which streams
+//! frames until a match is found or the deadline fires. Any failure here
+//! is a soft failure — the surrounding command logs and falls through
+//! with the `agent` field absent.
 
 use std::time::Duration;
 
@@ -36,12 +39,10 @@ pub(super) struct IdentitySubscription {
 
 /// Connect → login(wallet address) → subscribe(`wallet-agentic-identity`).
 ///
-/// `base_url` is the WS base URL produced by `identity_ws_base_url(ctx)`:
-/// either an explicit `OKX_AGENTIC_WS_BASE_URL` (swim-lane / cross-host
-/// envs where the push service runs on a separate domain from HTTP) or
-/// the raw identity HTTP base URL as a fallback (production /
-/// single-host envs). `derive_ws_url` below maps the scheme
-/// (`http→ws`, `https→wss`) and forces the `/ws/v5/private` path.
+/// `ws_url` is the full WS URL produced by `identity_ws_url()`:
+/// either `WS_URL_PROD` (`wss://wsdex.okx.com/ws/v5/private`) or an
+/// explicit `OKX_AGENTIC_WS_URL` override. The caller passes the URL
+/// verbatim — no scheme swap or path forcing happens here.
 ///
 /// `wallet_address` is the caller's XLayer address (the same address
 /// used as `fromAddr` for the create/update broadcast). The push
@@ -51,25 +52,16 @@ pub(super) struct IdentitySubscription {
 /// JWT, now a wallet address). The address is public, so no redaction
 /// is needed in debug logs.
 ///
-/// Note that `WalletApiClient` may internally rewrite outgoing HTTP to
-/// a DoH proxy URL; that rewrite is invisible from outside the wallet
-/// module, so this WS connect cannot follow it. In DoH-proxy
-/// environments the connect will hit the raw host and the caller's
-/// soft-failure path kicks in (agent field absent, broadcast and
-/// agent-list unaffected). Documented limitation, not a bug to chase
-/// here.
-///
 /// The whole handshake is bounded by `OPEN_TIMEOUT` — a single budget
 /// over connect, login, and subscribe — so a black-holed host cannot
 /// stall the caller before broadcast. Bubbles up any failure so the
 /// caller can decide whether to fall through.
 pub(super) async fn open_identity_subscription(
     wallet_address: &str,
-    base_url: &str,
+    ws_url: &str,
 ) -> Result<IdentitySubscription> {
-    let ws_url = derive_ws_url(base_url)?;
     eprintln!("[agent-identity] ws connect: url={ws_url}");
-    match timeout(OPEN_TIMEOUT, open_inner(wallet_address, &ws_url)).await {
+    match timeout(OPEN_TIMEOUT, open_inner(wallet_address, ws_url)).await {
         Ok(Ok(sub)) => Ok(sub),
         Ok(Err(e)) => Err(e),
         Err(_) => bail!(
@@ -194,6 +186,7 @@ impl IdentitySubscription {
 ///     wallet-agentic-identity push platform actually sends)
 ///   - `{ "arg": {..}, "data": [ obj ] }` (legacy / theoretical array form)
 ///   - bare `{ obj }` with `txHash` + `agentId` at the top level
+///
 /// Returns the inner push object when shape is recognized; ignores
 /// control frames (`event=login|subscribe|error`) that may race after the
 /// initial ACK drain.
@@ -285,32 +278,6 @@ async fn wait_for_event(ws: &mut WsStream, expected: &str) -> Result<String> {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
-
-/// Swap the scheme on the identity HTTP base URL to its WS equivalent
-/// (`https`↔`wss`, `http`↔`ws`) and force the path to `/ws/v5/private`.
-/// Preserving TLS-vs-plain matches what HTTP actually uses, so local /
-/// non-TLS dev (`--base-url http://127.0.0.1:...`) goes to `ws://...`
-/// instead of failing a TLS handshake. Any path/query in `base_url` is
-/// discarded — the WS endpoint owns the path.
-fn derive_ws_url(base_url: &str) -> Result<String> {
-    let trimmed = base_url.trim();
-    let (ws_scheme, rest) = if let Some(r) = trimmed.strip_prefix("https://") {
-        ("wss", r)
-    } else if let Some(r) = trimmed.strip_prefix("http://") {
-        ("ws", r)
-    } else if let Some(r) = trimmed.strip_prefix("wss://") {
-        ("wss", r)
-    } else if let Some(r) = trimmed.strip_prefix("ws://") {
-        ("ws", r)
-    } else {
-        bail!("base_url is missing a scheme: {trimmed}");
-    };
-    let host = rest.split('/').next().unwrap_or(rest);
-    if host.is_empty() {
-        bail!("base_url has an empty host: {trimmed}");
-    }
-    Ok(format!("{ws_scheme}://{host}/ws/v5/private"))
-}
 
 fn normalize_hash(s: &str) -> String {
     let trimmed = s.trim();

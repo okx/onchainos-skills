@@ -43,56 +43,44 @@ fn resolve_base_url_for_log(ctx: &Context) -> String {
         .unwrap_or_else(|| crate::client::DEFAULT_BASE_URL.to_string())
 }
 
-/// Resolve the identity HTTP base URL using the same precedence as
-/// `WalletApiClient::with_base_url`: runtime `OKX_BASE_URL` >
-/// compile-time `OKX_BASE_URL` > `ctx.base_url_override` >
-/// `DEFAULT_BASE_URL`. Used as the *fallback* for the WS base URL when
-/// no explicit WS override is set (see `identity_ws_base_url`).
-///
-/// Caveat: this returns the *raw* base URL configured on the client.
-/// `WalletApiClient` may internally rewrite outgoing HTTP to a DoH
-/// proxy URL (`wallet_api::WalletApiClient::effective_base_url`); that
-/// rewrite is invisible from outside the wallet module, so the WS
-/// subscription cannot follow it. In DoH-proxy environments HTTP still
-/// works but the WS connect goes to the raw host and falls through the
-/// soft-failure path — `agent` field absent, broadcast still emits and
-/// `agentList` still attempts. The push capability degrades silently
-/// in that mode, which is documented behavior, not a bug to chase here.
-pub(super) fn identity_base_url(ctx: &Context) -> String {
-    if let Ok(v) = std::env::var("OKX_BASE_URL") {
-        return v;
-    }
-    if let Some(v) = option_env!("OKX_BASE_URL") {
-        return v.to_string();
-    }
-    if let Some(v) = &ctx.base_url_override {
-        return v.clone();
-    }
-    crate::client::DEFAULT_BASE_URL.to_string()
-}
+/// Production WS endpoint for the `wallet-agentic-identity` push channel.
+/// Mirrors the `WS_URL_PROD` / `WS_URL_PRE` + `ONCHAINOS_WS_URL` env-
+/// override pattern in `cli/src/watch/daemon.rs:18-19,134` (same WS
+/// gateway host, different per-service path: `/ws/v5/private` here vs
+/// `/ws/v6/dex` for the watch dex feed). Identity keeps its own
+/// constant rather than importing from `watch/` so identity-side
+/// changes never risk regressing the watch daemon's contract.
+const WS_URL_PROD: &str = "wss://wsdex.okx.com/ws/v5/private";
 
-/// Resolve the WS base URL for the `wallet-agentic` push service.
-/// Distinct from the HTTP base because in swim-lane / forked envs the
-/// push service runs on a separate host (e.g.
-/// `okx-defi-pushplatform-web.<lane>.swim.env`) from the HTTP API
-/// (`okx-defi-walletmain-api.<lane>.swim.env`). Plain scheme swap on
-/// the HTTP base would land WS on the wrong host and silently degrade
-/// the command to broadcast-only.
+/// Resolve the full WS URL for the `wallet-agentic-identity` push
+/// channel. Precedence:
+///   1. runtime `OKX_AGENTIC_WS_URL` — explicit override, full URL
+///      including `/ws/v5/private` path (escape hatch for forked /
+///      pre / debug envs; production leaves it unset).
+///   2. `WS_URL_PROD` constant — production default.
 ///
-/// Precedence:
-///   1. runtime `OKX_AGENTIC_WS_BASE_URL` — explicit WS host override
-///      (use in swim-lane / cross-host envs; full base, e.g.
-///      `ws://okx-defi-pushplatform-web.<lane>.swim.env` — `socket.rs`
-///      handles scheme→`ws/wss` mapping and forces the `/ws/v5/private`
-///      path).
-///   2. `identity_base_url(ctx)` — fallback for production / single-host
-///      envs where HTTP and WS share a domain.
-pub(super) fn identity_ws_base_url(ctx: &Context) -> String {
-    return "ws://okx-defi-pushplatform-web.forked-walletmain-swim.swim.env".to_string(); // HACK(swim-lane): 提交前删本行
-    if let Ok(v) = std::env::var("OKX_AGENTIC_WS_BASE_URL") {
-        return v;
-    }
-    identity_base_url(ctx)
+/// Identity does not derive this URL from the HTTP base — the WS push
+/// service runs on a separate host (`wsdex.okx.com`) from the HTTP API
+/// (`web3.okx.com`), so scheme swap on the HTTP base would land WS on
+/// the wrong host.
+///
+/// **Breaking change vs. earlier revisions**: prior to this refactor the
+/// WS URL was derived from `--base-url` / runtime `OKX_BASE_URL` /
+/// compile-time `OKX_BASE_URL` via scheme swap (`http→ws`, `https→wss`)
+/// with `/ws/v5/private` appended. **That coupling is gone.** Setting
+/// `--base-url` (or either `OKX_BASE_URL` flavor) now only affects HTTP
+/// calls; the WS subscription always uses `WS_URL_PROD` unless
+/// `OKX_AGENTIC_WS_URL` is also set. The failure mode is **silent
+/// degradation**, not an error: if you point HTTP at a pre / forked env
+/// without also pointing `OKX_AGENTIC_WS_URL` at the matching WS host,
+/// `agent create` / `agent update` will still succeed (broadcast +
+/// agentList come from HTTP), but the `agent` field in the response
+/// envelope will be absent because the WS push never lands on the right
+/// host. Migration: when switching HTTP targets, also set
+/// `OKX_AGENTIC_WS_URL` to the corresponding WS endpoint.
+pub(super) fn identity_ws_url() -> String {
+    std::env::var("OKX_AGENTIC_WS_URL")
+        .unwrap_or_else(|_| WS_URL_PROD.to_string())
 }
 
 pub(super) fn reconstruct_post_url_for_log(ctx: &Context, path: &str) -> String {
