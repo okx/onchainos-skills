@@ -18,6 +18,7 @@ mod changepublic;
 mod claim_auto_refund;
 mod close;
 mod complete;
+mod content;
 mod create;
 pub mod flow;
 pub(crate) mod negotiate;

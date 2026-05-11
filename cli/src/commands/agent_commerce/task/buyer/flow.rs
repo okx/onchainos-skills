@@ -97,32 +97,46 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
     // 多 prompt 并发时给用户和 user agent 双重消歧锚。详见 SKILL.md Session 通信契约 5.
     let short_id = short_job_id(job_id);
 
-    // 通信机制（怎么发、能不能发、形态白名单）— 一律见 SKILL.md Session 通信契约。
-    // 本文件只告诉 agent **每一步把什么内容发到哪**。
     // ──────────────────────────────────────────────────────────────────────
     // 通信机制（怎么发、能不能发、形态白名单）— 一律见 SKILL.md Session 通信契约。
     // 本文件只负责告诉 agent **每一步把什么内容发到哪**，不重复解释工具用法。
     //
     // 三种通信工具：
-    //   - xmtp_send：发给卖家（peer sub session）
-    //   - xmtp_dispatch_user：通知用户（无需确认），参数：content
-    //   - xmtp_prompt_user：需要用户交互（需确认/决策），参数：llmContent + userContent
-    //     llmContent = 注入 LLM session 的指令（用户不可见）
+    //   - xmtp_send：发给卖家（peer sub session），参数 sessionKey + content
+    //   - xmtp_dispatch_user：通知用户（无需用户决策），参数：content
+    //   - xmtp_prompt_user：需要用户交互（确认 / 决策），参数：llmContent + userContent
+    //     llmContent = 注入 user session LLM 的指令（用户不可见，含 sub_key 让 user agent
+    //                  把决策 relay 回 sub）
     //     userContent = 发送给用户的可见消息
+    //
+    // 老的 `xmtp_dispatch_session` 省略 sessionKey + `[STATUS_NOTIFY]` 包裹形态已被
+    // `xmtp_dispatch_user` / `xmtp_prompt_user` 替代——本文件不再用 dispatch_session 推用户。
     // ──────────────────────────────────────────────────────────────────────
+    let terminal_session_hint = if crate::commands::agent_commerce::task::common::config::KEEP_CONVERSATION_ON_TERMINAL {
+        "⚠️ **不要 `xmtp_delete_conversation`**——保留会话历史便于事后查阅。"
+    } else {
+        "ℹ️ 任务终态,可调 `xmtp_delete_conversation` 释放会话资源(已无后续事件)。"
+    };
+
+    let escalation_protocol_misread = super::content::escalation_protocol_misread_notify(job_id);
+    let escalation_cli_failed = super::content::escalation_cli_failed_notify(job_id);
+
     let context_preamble = format!(
-        "📍 你在 sub session（你看到这段 next-action 输出 = 100% 在 sub）。\n\n\
-         🔒 **如果当前 turn 没读过 skills/okx-agent-task/SKILL.md Session 通信契约**（envelope 形态白名单 / xmtp_send 两步 / xmtp_dispatch_user·xmtp_prompt_user 铁律），\n\
-         **先读 `skills/okx-agent-task/SKILL.md`** 再继续——下面步骤会引用它的章节（3 / 4 / 5 / 6）。\n\n\
-         ⚠️ **异常升级硬规则**（任何场景都适用，详见 skills/okx-agent-task/SKILL.md 通讯边界 + skills/okx-agent-task/buyer.md）：\n\
-         \x20\x201) 协议理解错位：你已澄清同一条流程 ≥1 次，对方下一条还在重复错误诉求 → **不再回复对方**，调 `xmtp_dispatch_user` 推 `[⚠️ 协议理解错位] ...`，结束 turn\n\
-         \x20\x202) CLI 错误：`onchainos agent <cmd>` 报错 → **不要重试**，直接调 `xmtp_dispatch_user` 推 `[⚠️ CLI 报错] ...`，等用户新指令。**唯一例外**：JWT 过期（msg 含 `JWT verification failed` / `unauthorized`）刷新登录态后自动重试一次；网络 timeout 也按业务错处理推用户，不在 sub 里盲重\n\
+        "🔒 当前 turn 未读 `skills/okx-agent-task/SKILL.md Session 通信契约` → 先读再继续(envelope 白名单 / xmtp_send 两步 / xmtp_dispatch_user·xmtp_prompt_user 推用户 铁律)。下面步骤会引用它的章节(3 / 4 / 5 / 6)。\n\n\
+         ⚠️ **异常升级硬规则**（任何场景都适用，详见 _shared/exception-escalation.md + buyer.md）：\n\
+         \x20\x201) 协议理解错位(同一流程澄清 ≥1 次对方仍重复) → **停回复对方**，调 `xmtp_dispatch_user`，content=`{escalation_protocol_misread}`，结束 turn\n\
+         \x20\x202) 执行报错(`onchainos agent <cmd>` 失败) → **不重试**，调 `xmtp_dispatch_user`，content=`{escalation_cli_failed}`，等用户新指令。**例外**:JWT 失效（msg 含 `JWT verification failed`/`unauthorized`）自动重登一次；网络 timeout 同样推用户,不盲重\n\
          \x20\x203) ❌ **绝对禁止把技术错误细节广播给对方**：CLI 命令名 / 后端字段名 / stderr 摘要 / `bug`/`命令：`/`错误：` 一律不能进 xmtp_send 给对方。最多发一句『稍等，正在确认细节』或干脆不通知对方。\n\
          \x20\x204) ❌ **同 turn 不重复 xmtp_send**：剧本说『发一条』→ 调过一次工具返回『已发送』就**算成功**，**当前 turn 内不再对同一对方调 xmtp_send 第二次**。不要因为消息可能不够清晰就重发——重发 = 刷屏 + 触发对方循环。下一条 inbound 进来再说。\n\
          \x20\x205) ❌ **apply 是卖家动作**：escrow 路径中 `apply` 由卖家执行，买家绝不能调 `onchainos agent apply`。买家先调 `set-payment-mode`，再在收到卖家申请通知后执行 `confirm-accept`。non_escrow 路径需从卖家消息中提取 paymentId 再 confirm-accept。\n\
-         \x20\x206) ❌ **同 turn 不重复 `session_status`**：sub session 的 sessionKey 在同一 turn 内是稳定的——**调过一次就把结果存住，后续 step 直接复用**。即使剧本多个 step 都提到 sessionKey，也只调一次 session_status。重复调 = 死循环征兆，必须立即停。\n\
-         \x20\x207) ❌ **`xmtp_prompt_user` 必须配对 `pending-decisions add`**：调 `xmtp_prompt_user` **之前**先调 `onchainos agent pending-decisions add --sub-key <session_status 拿到的 sessionKey 整串> --job-id {job_id} --role buyer --agent-id {agent_id} --summary \"<userContent 第一行任务前缀后的简述>\" --user-content \"<userContent 完整原文,跟即将传给 xmtp_prompt_user 的 userContent 同一字符串>\"`；解析 `[USER_DECISION_RELAY]` **之后、调 next-action 之前**调 `onchainos agent pending-decisions remove --job-id {job_id} --role buyer --agent-id {agent_id}`。漏调会让 user session agent 看不到这条 / 看到僵尸条目，多 prompt 时误派 sub。唯一键是 `(job_id, role, agent_id)` 三元组(单钱包多 provider agent 时同 jobId 同 role 不同 agent 各占一条不互覆)。规则源 `SKILL.md Session 通信契约 5`。\n\
-         \x20\x208) ❌ **禁止给卖家发过场消息**：除协商阶段的结构化消息（[NEGOTIATE_PROPOSE]、[NEGOTIATE_CONFIRM]、协商自然语言对话）外，**任何事件处理中都不要 xmtp_send 给卖家**。包括但不限于「已确认接单」「资金已托管」「已验收」「证据已提交」「任务已完成」等状态通知。卖家通过链上事件得知状态变化，买家发过场消息只会造成干扰。\n\n\
+         \x20\x206) ❌ **同 turn 只调一次 `session_status`**:sessionKey 在同 turn 内稳定,调过一次结果复用。重复调 = 死循环征兆,立即停。\n\
+         \x20\x207) ❌ **`xmtp_prompt_user` 必前后配对 `pending-decisions`**(唯一键 = jobId+role+agentId 三元组,规则源 `SKILL.md §通信契约 5`):\n\
+         \x20\x20\x20\x20• 调 `xmtp_prompt_user` 前: `onchainos agent pending-decisions add --sub-key <sessionKey> --job-id {job_id} --role buyer --agent-id {agent_id} --summary \"<userContent 首行后简述>\" --user-content \"<userContent 完整原文>\"`\n\
+         \x20\x20\x20\x20• 解析 `[USER_DECISION_RELAY]` 后、调 next-action 前: `onchainos agent pending-decisions remove --job-id {job_id} --role buyer --agent-id {agent_id}`\n\
+         \x20\x20\x20\x20漏 `add` → 用户回复时反查不到本条决策,无法 relay 回本会话;\n\
+         \x20\x20\x20\x20漏 `remove` → 旧条目残留成僵尸,下次再调 `xmtp_prompt_user` 时被误命中,用户回复派给错的会话。\n\
+         \x20\x208) ❌ **用户可见内容禁用技术术语**:`xmtp_dispatch_user` 的 content 和 `xmtp_prompt_user` 的 userContent 都直接给用户看,**禁写** tool 名(`xmtp_*`) / 事件名(`provider_applied`/`job_*`/`dispute_resolved` 等) / 状态名(`open`/`accepted`/`disputed` 等英文枚举) / CLI flag(`--*`) / skill 名(`okx-agent-identity` / `§Feedback Submit` 等) / 状态字段名(`jobStatus`/`paymentMode` 等)——一律用自然中文(担保/非担保/x402,验收期超时,任务已完成,等)。同 turn 内的 `xmtp_send` 给卖家也按此规则。\n\
+         \x20\x209) ❌ **禁止给卖家发过场消息**：除协商阶段的结构化消息（[NEGOTIATE_PROPOSE]、[NEGOTIATE_CONFIRM]、协商自然语言对话）外，**任何事件处理中都不要 xmtp_send 给卖家**。包括但不限于「已确认接单」「资金已托管」「已验收」「证据已提交」「任务已完成」等状态通知。卖家通过链上事件得知状态变化，买家发过场消息只会造成干扰。\n\n\
          如果不记得本任务协商细节（deliverable / paymentMode / token / 卖家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 加载上下文。\n\n"
     );
@@ -592,7 +606,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20交付物地址：<deliverableUrl>\n\
              \x20\x20验收标准：<qualityStandards>\n\n\
              **B-Step 2 — 终态收尾（保留 sub session）：**\n\
-             ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             {terminal_session_hint}\n\
              ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复「评价」。」\n\
              任务完整结束。\n\n\
              【后续事件】\n\
@@ -694,7 +708,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
              **A-Step 2 — 终态收尾（保留 sub session）：**\n\
-             ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             {terminal_session_hint}\n\
              ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复「评价」。」\n\
              任务完整结束。\n\n\
              ━━━━━━━━━ 分支 B：non_escrow（非担保）— 流程结束 ━━━━━━━━━\n\n\
@@ -708,7 +722,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
              **B-Step 2 — 终态收尾（保留 sub session）：**\n\
-             ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             {terminal_session_hint}\n\
              ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复「评价」。」\n\
              任务完整结束。\n\n\
              ━━━━━━━━━ 分支 C：x402 — 最终汇总 ━━━━━━━━━\n\n\
@@ -722,7 +736,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
              \x20\x20\x20\x20如需评价卖家，请回复「评价」。\n\n\
              **C-Step 2 — 终态收尾（保留 sub session）：**\n\
-             ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             {terminal_session_hint}\n\
              任务完整结束。\n"
         ),
 
@@ -759,7 +773,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20  - 仲裁结果：dispute_resolved（买家败诉）\n\
              \x20\x20\x20\x20本任务流程结束。如需评价卖家，请回复「评价」。\n\n\
              **Step 4 — 终态收尾（保留 sub session）：**\n\
-             ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             {terminal_session_hint}\n\
              ⚠️ **不要自动评价**。\n\
              仲裁流程完整结束。\n"
         ),
@@ -775,7 +789,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20[退款完成] 任务 {job_id} 退款已上链，**资金已返还**至您的钱包。\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
              **Step 2 — 终态收尾（保留 sub session）：**\n\
-             ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             {terminal_session_hint}\n\
              退款流程完整结束。\n"
         ),
 
@@ -791,7 +805,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20[自动退款成功] **<title>**（{job_id}）的担保资金已退还至您的钱包。\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
              **Step 2 — 终态收尾（保留 sub session）：**\n\
-             ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             {terminal_session_hint}\n\
              退款流程完整结束。\n"
         ),
 
@@ -814,7 +828,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 1 — 调用 xmtp_dispatch_user 通知用户：**\n\
              \x20\x20content: **<title>**（{job_id}）**已关闭**，资金已回收。\n\n\
              **终态收尾（保留 sub session）：**\n\
-             ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n\
+             {terminal_session_hint}\n\
              任务关闭流程结束。\n"
         ),
 
@@ -1077,7 +1091,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20[任务自动完成] **<title>**（{job_id}）因**验收超时**，卖家已通过 claimAutoComplete 领取资金。\n\
              \x20\x20任务状态：completed\n\
              \x20\x20本任务流程结束。\n\n\
-             ⚠️ **不要调用 `xmtp_delete_conversation`**——保留 sub session 便于事后查阅历史。\n"
+             {terminal_session_hint}\n"
         ),
 
         // ─── provider 的截止提醒 — buyer 端无关 ────────────────────────
