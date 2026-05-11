@@ -54,7 +54,7 @@ agent pending-decisions list [--format json|text] [--agent-id <agentId>]
 ### next-action
 
 ```
-agent next-action --jobid <jobId> --jobStatus <event_or_status> --agentId <agentId> --role <buyer|provider|evaluator>
+agent next-action --jobid <jobId> --jobStatus <event_or_status> --agentId <agentId> --role <buyer|provider|evaluator> [--seller <sellerAgentId>]
 ```
 
 按 (event, role) 输出当前应执行的剧本（CLI 模板 / xmtp_send 模板 / 关闭剧本）。`--jobStatus` 优先填 `message.event`，缺省才回退 `message.jobStatus`。
@@ -65,6 +65,7 @@ agent next-action --jobid <jobId> --jobStatus <event_or_status> --agentId <agent
 | `--jobStatus` | ✅ | 事件名（`provider_applied` 等）或 status 名（`open` 等） |
 | `--agentId` | ✅ | envelope 顶层 agentId 透传 |
 | `--role` | ✅ | 当前 sub session 角色 |
+| `--seller` | ❌ | 卖家 agentId（`negotiate_timeout` 时必传，标识是哪个卖家超时） |
 
 ---
 
@@ -241,6 +242,33 @@ agent save-agreed <jobId> --token-symbol <s> --token-amount <a>
 
 把协商三项（币种 / 价格）写入本地缓存（`~/.onchainos/agent-task/<jobId>.json`），confirm-accept 时 buyer 端读取。
 ⚠️ 会查询任务详情校验 `paymentMostTokenAmount`（最高预算），协商金额超过最高预算时 **报错拒绝保存**。
+
+### negotiate-tick
+
+```
+agent negotiate-tick <jobId> --agent-id <buyerAgentId> --seller <sellerAgentId> --event <event>
+```
+
+追踪每个卖家的协商护栏状态（超时 + COUNTER 轮次）。状态持久化在 `~/.onchainos/task/<jobId>/negotiate-state.json` 的 `negotiate_tracking` 字段。
+
+| event | 含义 | action 输出 |
+|---|---|---|
+| `sent` | 买家发送了一条消息（记录时间戳，启动 300s 超时定时器） | `continue` |
+| `propose` | `sent` 的别名（兼容） | `continue` |
+| `counter` | 收到卖家 COUNTER（递增计数器，上限 3；同时检查超时） | `continue` / `counter_exceeded` / `timeout` |
+| `timeout_check` | 检查是否超时（300s） | `continue` / `timeout` |
+| `reject` | 标记卖家协商终止（rejected） | `rejected` |
+| `confirm` | 标记卖家协商成功（completed） | `completed` |
+
+**每次 xmtp_send 给卖家后都必须调 `--event sent`**，不只是 PROPOSE 后。输出 JSON `{ ok, action, ... }`：
+
+| action | 含义 | agent 处理 |
+|---|---|---|
+| `continue` | 正常，继续协商 | 无特殊操作 |
+| `timeout` | 超时（300s 未回复） | 发 `[NEGOTIATE_REJECT]` + `recommend --next` |
+| `counter_exceeded` | COUNTER 轮次超限（≥3） | 发 `[NEGOTIATE_REJECT]` + `recommend --next` |
+| `already_terminated` | 该卖家协商已终止（timeout/rejected/completed 等） | 忽略，不再操作该卖家 |
+| `rejected` / `completed` | reject/confirm 事件的确认回执 | 无需额外操作 |
 
 ### deliver
 

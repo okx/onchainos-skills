@@ -409,6 +409,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Heartbeat { .. } => "heartbeat".into(),
         AgentCommand::WakeupNotify { .. } => "wakeup-notify".into(),
         AgentCommand::SaveAgreed { .. } => "save-agreed".into(),
+        AgentCommand::NegotiateTick { .. } => "negotiate-tick".into(),
     }
 }
 

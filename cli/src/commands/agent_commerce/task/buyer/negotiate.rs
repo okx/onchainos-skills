@@ -61,6 +61,33 @@ pub struct AgreedTerms {
     pub payment_most_token_amount: Option<String>,
 }
 
+// ─── 协商护栏常量 ────────────────────────────────────────────────────────
+
+pub const MAX_COUNTER_ROUNDS: u32 = 3;
+pub const NEGOTIATE_TIMEOUT_SECS: i64 = 300;
+/// Grace period for `counter` event: seller already replied, but agent processing may lag
+pub const COUNTER_GRACE_SECS: i64 = 30;
+
+/// Per-seller negotiation tracking (timer + counter safeguards)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NegotiateTracking {
+    pub counter_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "lastProposeTs")]
+    pub last_sent_ts: Option<i64>,
+    pub status: String,
+}
+
+impl Default for NegotiateTracking {
+    fn default() -> Self {
+        Self {
+            counter_count: 0,
+            last_sent_ts: None,
+            status: "active".to_string(),
+        }
+    }
+}
+
 /// 协商状态
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,6 +99,9 @@ pub struct NegotiateState {
     /// 按 provider_agent_id 存储各卖家的协商结果（支持同时与多个卖家协商）
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub agreed: HashMap<String, AgreedTerms>,
+    /// Per-seller negotiation tracking: timer + COUNTER limit
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub negotiate_tracking: HashMap<String, NegotiateTracking>,
 }
 
 // ─── 路径 ────────────────────────────────────────────────────────────
@@ -99,6 +129,7 @@ pub fn save(job_id: &str, providers: Vec<ProviderInfo>) -> Result<()> {
         current_index: 0,
         created_at: chrono::Utc::now().to_rfc3339(),
         agreed: HashMap::new(),
+        negotiate_tracking: HashMap::new(),
     };
 
     let json = serde_json::to_string_pretty(&state)?;
@@ -193,6 +224,7 @@ pub async fn save_agreed(
                 current_index: 0,
                 created_at: chrono::Utc::now().to_rfc3339(),
                 agreed: HashMap::new(),
+                negotiate_tracking: HashMap::new(),
             }
         }
     };
@@ -231,5 +263,171 @@ pub fn cleanup(job_id: &str) -> Result<()> {
     if dir.exists() {
         std::fs::remove_dir_all(&dir)?;
     }
+    Ok(())
+}
+
+// ─── negotiate-tick 护栏 ─────────────────────────────────────────────────
+
+fn is_terminated(status: &str) -> bool {
+    matches!(status, "timeout" | "counter_exceeded" | "rejected" | "completed")
+}
+
+pub fn handle_negotiate_tick(
+    job_id: &str,
+    _agent_id: &str,
+    seller_agent_id: &str,
+    event: &str,
+) -> Result<()> {
+    let mut state = match load(job_id) {
+        Ok(s) => s,
+        Err(_) => {
+            if matches!(event, "sent" | "propose" | "counter" | "timeout_check") {
+                println!("{}", serde_json::json!({
+                    "ok": false, "error": "No negotiate state. Run `onchainos agent recommend` first."
+                }));
+            } else {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "ok": true, "action": event
+                }))?);
+            }
+            return Ok(());
+        }
+    };
+
+    let path = state_path(job_id)?;
+    let t = state.negotiate_tracking
+        .entry(seller_agent_id.to_string())
+        .or_default();
+
+
+    match event {
+        "sent" | "propose" => {
+            if is_terminated(&t.status) {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "ok": true,
+                    "action": "already_terminated",
+                    "status": t.status,
+                    "reason": format!("该卖家协商已终止（status={}），不再重置计时器", t.status)
+                }))?);
+                return Ok(());
+            }
+            t.last_sent_ts = Some(chrono::Utc::now().timestamp());
+            t.status = "active".to_string();
+
+            let output = serde_json::json!({
+                "ok": true,
+                "action": "continue",
+                "sellerAgentId": seller_agent_id,
+                "counterCount": t.counter_count,
+                "counterLimit": MAX_COUNTER_ROUNDS,
+                "timeoutSecs": NEGOTIATE_TIMEOUT_SECS
+            });
+            flush_state(&state, &path)?;
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        }
+        "counter" => {
+            if is_terminated(&t.status) {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "ok": true,
+                    "action": "already_terminated",
+                    "status": t.status,
+                    "reason": format!("该卖家协商已终止（status={}），忽略 COUNTER", t.status)
+                }))?);
+                return Ok(());
+            }
+            if let Some(ts) = t.last_sent_ts {
+                let effective_timeout = NEGOTIATE_TIMEOUT_SECS + COUNTER_GRACE_SECS;
+                if chrono::Utc::now().timestamp() - ts >= effective_timeout {
+                    t.status = "timeout".to_string();
+        
+                    let output = serde_json::json!({
+                        "ok": true, "action": "timeout",
+                        "reason": format!("协商超时（{}秒未回复）", NEGOTIATE_TIMEOUT_SECS)
+                    });
+                    flush_state(&state, &path)?;
+                    println!("{}", serde_json::to_string_pretty(&output)?);
+                    return Ok(());
+                }
+            }
+            t.counter_count += 1;
+
+            if t.counter_count >= MAX_COUNTER_ROUNDS {
+                t.status = "counter_exceeded".to_string();
+                let output = serde_json::json!({
+                    "ok": true, "action": "counter_exceeded",
+                    "counterCount": t.counter_count,
+                    "counterLimit": MAX_COUNTER_ROUNDS,
+                    "reason": format!("卖家已发送 {} 次 COUNTER（上限 {}），自动终止协商", t.counter_count, MAX_COUNTER_ROUNDS)
+                });
+                flush_state(&state, &path)?;
+                println!("{}", serde_json::to_string_pretty(&output)?);
+                return Ok(());
+            }
+            let remaining = MAX_COUNTER_ROUNDS - t.counter_count;
+            let count = t.counter_count;
+            let output = serde_json::json!({
+                "ok": true, "action": "continue",
+                "counterCount": count,
+                "counterLimit": MAX_COUNTER_ROUNDS,
+                "remaining": remaining
+            });
+            flush_state(&state, &path)?;
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        }
+        "timeout_check" => {
+            if is_terminated(&t.status) {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "ok": true,
+                    "action": "already_terminated",
+                    "status": t.status,
+                    "reason": format!("该卖家协商已终止（status={}）", t.status)
+                }))?);
+                return Ok(());
+            }
+            let elapsed = t.last_sent_ts
+                .map(|ts| chrono::Utc::now().timestamp() - ts)
+                .unwrap_or(0);
+            if elapsed >= NEGOTIATE_TIMEOUT_SECS {
+                t.status = "timeout".to_string();
+    
+                let output = serde_json::json!({
+                    "ok": true, "action": "timeout",
+                    "elapsedSecs": elapsed,
+                    "timeoutSecs": NEGOTIATE_TIMEOUT_SECS,
+                    "reason": format!("协商超时（已过 {}秒，上限 {}秒）", elapsed, NEGOTIATE_TIMEOUT_SECS)
+                });
+                flush_state(&state, &path)?;
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "ok": true, "action": "continue",
+                    "elapsedSecs": elapsed,
+                    "timeoutSecs": NEGOTIATE_TIMEOUT_SECS,
+                    "remainingSecs": NEGOTIATE_TIMEOUT_SECS - elapsed
+                }))?);
+            }
+        }
+        "reject" | "confirm" => {
+            let status = if event == "reject" { "rejected" } else { "completed" };
+            t.status = status.to_string();
+
+            flush_state(&state, &path)?;
+            println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                "ok": true, "action": status
+            }))?);
+        }
+        other => {
+            println!("{}", serde_json::json!({
+                "ok": false,
+                "error": format!("Unknown event: {other}. Valid: sent, propose, counter, timeout_check, reject, confirm")
+            }));
+        }
+    }
+    Ok(())
+}
+
+fn flush_state(state: &NegotiateState, path: &std::path::Path) -> Result<()> {
+    let json = serde_json::to_string_pretty(state)?;
+    std::fs::write(path, json)?;
     Ok(())
 }

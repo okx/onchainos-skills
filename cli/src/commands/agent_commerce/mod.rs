@@ -283,6 +283,16 @@ pub enum AgentCommand {
         agent_id: Option<String>,
     },
 
+    /// Track per-seller negotiation timer + COUNTER round limits
+    #[command(name = "negotiate-tick")]
+    NegotiateTick {
+        job_id: String,
+        #[arg(long = "agent-id")] agent_id: String,
+        #[arg(long)] seller: String,
+        /// propose | counter | timeout_check | reject | confirm
+        #[arg(long)] event: String,
+    },
+
     /// Client claims auto-refund after provider timeout
     #[command(name = "claim-auto-refund")]
     ClaimAutoRefund { job_id: String },
@@ -461,6 +471,9 @@ pub enum AgentCommand {
         /// envelope message.title (task title from system notification)
         #[arg(long = "jobTitle")]
         job_title: Option<String>,
+        /// seller agentId (for negotiate_timeout: identifies which seller timed out)
+        #[arg(long)]
+        seller: Option<String>,
     },
 
     // Chat
@@ -606,6 +619,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id } =>
             task::buyer::run_task(T::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id }, ctx).await,
 
+        AgentCommand::NegotiateTick { job_id, agent_id, seller, event } =>
+            task::buyer::run_task(T::NegotiateTick { job_id, agent_id, seller, event }, ctx).await,
+
         AgentCommand::ClaimAutoRefund { job_id } =>
             task::buyer::run_task(T::ClaimAutoRefund { job_id }, ctx).await,
 
@@ -726,10 +742,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Common(c) =>
             task::common::run(c, ctx).await,
 
-        AgentCommand::NextAction { job_id, job_status, agent_id, role, code, job_title } => {
+        AgentCommand::NextAction { job_id, job_status, agent_id, role, code, job_title, seller } => {
             eprintln!(
-                "[next-action] 收到系统通知: job_id={job_id}, job_status={job_status}, role={role}, agent_id={agent_id}, code={code}, title={title}",
-                title = job_title.as_deref().unwrap_or("(none)")
+                "[next-action] 收到系统通知: job_id={job_id}, job_status={job_status}, role={role}, agent_id={agent_id}, code={code}, title={title}{seller_part}",
+                title = job_title.as_deref().unwrap_or("(none)"),
+                seller_part = seller.as_deref().map(|s| format!(", seller={s}")).unwrap_or_default()
             );
 
             // code ≠ 0 → tx 失败，直接输出失败剧本，不进入事件 match
@@ -759,7 +776,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 "provider" | "seller" =>
                     task::provider::flow::generate_next_action(&job_id, &job_status, &agent_id),
                 "buyer" | "client" =>
-                    task::buyer::flow::generate_next_action(&job_id, &job_status, &agent_id, title_ref),
+                    task::buyer::flow::generate_next_action(&job_id, &job_status, &agent_id, title_ref, seller.as_deref()),
                 "evaluator" =>
                     task::evaluator::flow::generate_next_action(&job_id, &job_status, &agent_id),
                 other => anyhow::bail!("--role 必须是 provider/buyer/client/evaluator，当前: {other}"),
@@ -829,7 +846,7 @@ async fn check_status_freshness(job_id: &str, job_status_or_event: &str, agent_i
     const PSEUDO_EVENTS: &[&str] = &[
         "create_task",
         "dispute_raise", "agree_refund", "dispute_evidence",
-        "close", "set_public",
+        "close", "set_public", "negotiate_timeout",
         "staked", "unstake_requested", "unstake_claimed", "unstake_cancelled", "stake_stopped",
         "evaluator_selected", "vote_committed", "reveal_started", "vote_revealed", "dispute_resolved", "slashed", "cooldown_entered", "round_failed",
         "reward_claimed",
