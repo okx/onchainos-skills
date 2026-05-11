@@ -12,6 +12,8 @@
 
 本文件只写 buyer 角色**特有**的内容。通用规则（envelope 形态 / 工具用法 / 反幻觉 / 推 user session opt-in / 通讯边界）一律见 SKILL.md。
 
+> **全程免 gas**：buyer 所有链上动作（发任务 / confirm-accept / 验收 / 退款 / 仲裁等）走平台代付通道，**用户钱包不需要任何 gas / native 余额**。**禁止**给用户引导"准备 gas / 留 gas / 余额够不够"，**禁止**把 gas 预留算进金额建议。
+
 任务状态机搬到了 CLI (`onchainos agent next-action`)——**不需要记忆每个状态的步骤**，收到任何系统通知（链事件 / user session 转来的用户决策）调 next-action，按输出执行即可。
 
 ---

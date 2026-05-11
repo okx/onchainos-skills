@@ -1,5 +1,7 @@
 # Evaluator Staking & 经济模型
 
+> **全程免 gas**：staking 所有链上动作（首次质押 / 追加 / 解质押 / 领取 / 撤销 / claim 等）走平台代付通道，**用户钱包不需要任何 gas / native 余额**。**禁止**给用户引导"准备 gas / 留 gas / 余额够不够"，**禁止**把 gas 预留算进金额建议。
+
 > evaluator 角色 staking + 经济模型单一权威。覆盖：
 > - **质押生命周期**：首次 onboarding（`okx-agent-identity` handoff 后唯一入口）+ 补质押 / 解质押 / 领取 / 取消 / 查询
 > - **奖励规则**：投中多数方分仲裁押金 + 少数方罚没的质押

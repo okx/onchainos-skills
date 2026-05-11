@@ -364,14 +364,6 @@ agent evidence-info <jobId> --agent-id <evaluatorAgentId>
 
 拉证据完整结构 `evidences: { provider:{texts[],images[]}, client:{texts[],images[]} }`。CLI 自动下载图片到本地（`localPath` 字段），多模态 agent 必须**逐张读图**。后端按 jobId 自动定位当前 active dispute 轮次，CLI 不需要 disputeId。
 
-### evidence-download
-
-```
-agent evidence-download <jobId> <fileKey> [-o <path>] [--agent-id <id>]
-```
-
-按 (jobId, fileKey) 重试下载单文件。`info` 返回 fileKey 但下载失败时用。
-
 ### vote-commit
 
 ```

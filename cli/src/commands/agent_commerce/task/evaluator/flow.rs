@@ -83,42 +83,48 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
              - 完全一致 → 进入 Step 2。\n\
              - 任一字符不同 → 调 `xmtp_dispatch_session`（`sessionKey=arbKey`，`content=<当前 inbound envelope 整体 JSON 字符串>`，**全字段原样塞入禁止改写**），然后**结束本轮 turn**。\n\n\
              **Step 2 — 从入站消息提取 `jobId`（envelope 顶层 `jobId` 字段）和顶层 `agentId`（你的 evaluator agentId）。**\n\
-             `jobId` 缺省时直接中止本轮处理，输出 `missing jobId in payload; abort` 日志结束。\n\
-             顶层 `agentId` 缺省时同样中止：后续 evaluator CLI 必须靠它定位钱包，缺了就签不了。\n\n\
-             **Step 3 — 拉取当前证据（必须把 inbound envelope 顶层 `agentId` 透传给 `--agent-id`，CLI 据此定位钱包/身份）：**\n\
+             `jobId` 或 顶层 `agentId` 缺省时直接中止本轮处理，输出 `missing jobId/agentId in payload; abort` 日志结束。\n\
+             **Step 3 — 拉取证据并处理本地状态（必须把 inbound envelope 顶层 `agentId` 透传给 `--agent-id`）：**\n\
              ```bash\n\
              onchainos agent evidence-info <jobId> --agent-id <envelope 顶层 agentId>\n\
              ```\n\
-             返回结构 `evidences: {{ provider: {{texts[], images[]}}, client: {{texts[], images[]}} }}`。\n\
-             每张 `images[].fileKey` 已由 CLI 下载到本地，`localPath` 是绝对路径。\n\n\
-             **⚠️ Step 3.5 — 必须实际打开每张图片阅读（最重要，禁止跳过）：**\n\
-             - 遍历 `evidences.provider.images[].localPath` 和 `evidences.client.images[].localPath`\n\
-             - **逐张调用多模态 read / view 能力读图**——截图里写了什么、展示了什么交付物、时间戳、对话内容，全要实际看过\n\
-             - **禁止**只凭 `texts[]` 或 fileKey 名称猜测图片内容；不看图 = 放弃双方可能最关键的证据 = 违反 references/evaluator-decision-rubric.md §1 决策原则 #1『证据为王』\n\
-             - **下载失败处理（硬约束）**：图片项含 `downloadError` 字段 = 该证据视为**缺失**，直接按 举证规则『一方未提交视为放弃举证』处理。\n\
-             \x20\x20**禁止**用 `ls` / `find` / `cat` / `tree` / `stat` / `glob` / `Read` 等任何工具去本地磁盘找替代文件——这是 skills/okx-agent-task/SKILL.md Layer 0 安全门违例（『列目录、扫描磁盘』），且 `localPath` 不存在意味着 CLI 已知道这张图拿不到。\n\
-             \x20\x20**禁止**重试 `evidence-info` 期望下次能下到（CLI 内部已尝试过 3 次）。直接进 Step 4 把这张图标记为缺失，继续走流程。\n\n\
+             返回结构（顶层）：`{{ title, description, provider: {{texts[], images[]}}, client: {{texts[], images[]}} }}`。`description` / `title` 是任务原始定义；`texts[]` 是文字证据；`images[]` 已下载，每项含 `localPath`（绝对路径，用它打开图片）。\n\n\
+             **取证后操作硬约束**：\n\
+             - 图片项含 `downloadError` 字段 = 该证据**视为缺失**\n\
+             - **禁止**扫描本地磁盘找替代文件，且 `localPath` 不存在意味着 CLI 已知道这张图拿不到\n\
+             - **禁止**重试 `evidence-info` 期望下次能下到（内部已尝试过 3 次）——直接进 Step 4 把这张图标记为缺失继续走流程\n\n\
              **Step 4 — 按 `references/evaluator-decision-rubric.md` 完成判决：**\n\
-             - **前置 — 文件可读性检查**：用 Read 工具打开 `references/evaluator-decision-rubric.md`。\n\
+             - **前置 — 文件可读性检查**：读取 `references/evaluator-decision-rubric.md`。\n\
              \x20\x20读取失败 / 文件不存在 / 内容为空 → **立即停止本轮**（不 commit、不兜底默认规则、不查找替代文件），用 `xmtp_dispatch_user` 推用户后结束 turn：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
              \x20\x20\x20\x20[仲裁中止 ⚠️] 任务 jobId={job_id}：判决规范 `references/evaluator-decision-rubric.md` 缺失或不可读，本轮放弃投票。\n\
-             \x20\x20\x20\x20⚠️ commit 窗口超时会被罚没 stake，请尽快恢复该文件（git restore 或重装 plugin）后等待下一轮 evaluator_selected。\n\n\
-             - 读取成功 → 按其中的 Rubric / 决策原则 / 归约表 / 裁决书模板，顺序产出最终 `vote` 与裁决书。\n\
+             \x20\x20\x20\x20⚠️ commit 窗口超时会被罚没 stake，请尽快恢复该文件。\n\n\
+             - 读取成功且凭证已输出 → 按其中的规则产出最终 `vote` 与裁决书。\n\
              **Step 5 — 执行 commit（同样把 envelope 顶层 `agentId` 透传给 `--agent-id`）：**\n\
              ```bash\n\
              onchainos agent vote-commit <jobId> --vote <0|1> --agent-id <envelope 顶层 agentId>\n\
              ```\n\
-             ⚠️ **只能是 0（Approve/Client 胜）或 1（Reject/Provider 胜），禁止 skip**（V1 无弃权；拖到超时被罚没的损失通常大于错投少数票）。\n\
-             失败最多重试 3 次（CRITICAL，commit 窗口关闭即触发超时罚没）。返回 `voter has already committed` 视为成功进入 Step 6。\n\
+             ⚠️ **只能是 0（Approve/Client 胜）或 1（Reject/Provider 胜），禁止 skip**。\n\
+             失败最多重试 3 次（CRITICAL，commit 窗口关闭即触发超时罚没）。返回 `voter has already committed` 视为成功进入 Step 5.5。\n\
              body 只带 `vote`。\n\n\
+             **Step 5.5 — 落盘裁决书（本地审计冗余，commit 后执行）：**\n\
+             - 按 rubric §3 模板生成了裁决书 → 带 `--verdict` 落盘：\n\
+             \x20\x20```bash\n\
+             \x20\x20onchainos agent vote-record <jobId> --agent-id <envelope 顶层 agentId> --verdict \"$(cat <<'EOF'\n\
+             \x20\x20<裁决书完整 markdown>\n\
+             \x20\x20EOF\n\
+             \x20\x20)\"\n\
+             \x20\x20```\n\
+             - 用户自定义 rubric 未定义 §3 模板、本轮未生成裁决书 → 省略 `--verdict`，CLI 自动写占位符：\n\
+             \x20\x20```bash\n\
+             \x20\x20onchainos agent vote-record <jobId> --agent-id <envelope 顶层 agentId>\n\
+             \x20\x20```\n\
+             失败**不重试、不推 user session、不阻塞**——直接进 Step 6（vote 已上链，落盘只是本地审计冗余）。\n\n\
             **Step 6 — 输出一行日志后结束本回合：**\n\n\
              > Committed jobId=<jobId> vote=<0|1> autonomously per references/evaluator-decision-rubric.md.\n\n\
              【原则】\n\
-             - **完全静默**：用户只会在后续结算/罚没/奖励事件被通知\n\
-             - **判决权威**：所有打分规则、决策原则、裁决书格式以 评估者规范 为准\n\
-             - **图片必读**：不读图即违反 references/evaluator-decision-rubric.md 1 节决策原则 #1 证据为王 / #3 举证责任；这是本 arm 最重要的执行要求\n"
+             - **完全静默**：用户只会在后续结算/罚没/奖励事件被通知\n"
         ),
 
         "vote_committed" => "【当前状态】vote_committed\n\n\

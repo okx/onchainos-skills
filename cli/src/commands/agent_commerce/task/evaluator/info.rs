@@ -25,7 +25,7 @@ pub async fn handle_info(
     let tmp_dir = evidence_dir(job_id, &agent_id)?;
     fs::create_dir_all(&tmp_dir)?;
 
-    // 后端扁平结构：provider/client 直接在顶层；images 为 `<jobId>/<idx>/<uuid>` 字符串数组。
+    // 后端扁平结构：顶层有 title/description 任务元数据 + provider/client 两个证据桶
     for side in EVIDENCE_SIDES {
         let Some(bucket) = data.get_mut(side).and_then(Value::as_object_mut) else { continue };
         let Some(images) = bucket.get_mut("images").and_then(Value::as_array_mut) else { continue };

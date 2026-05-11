@@ -10,7 +10,50 @@ pub async fn handle_stake(
     amount: &str,
     agent_id: &str,
 ) -> Result<()> {
-    let trimmed = validate_amount(amount, "500")?;
+    run(
+        client,
+        amount,
+        agent_id,
+        StakeUx {
+            label: "stake",
+            amount_prefix: "",
+            next_hint: "质押交易已提交，等待链上确认；确认后即成为活跃仲裁者候选，可被选入陪审。",
+        },
+    )
+    .await
+}
+
+pub async fn handle_increase_stake(
+    client: &mut TaskApiClient,
+    amount: &str,
+    agent_id: &str,
+) -> Result<()> {
+    run(
+        client,
+        amount,
+        agent_id,
+        StakeUx {
+            label: "increase-stake",
+            amount_prefix: "+",
+            next_hint: "追加质押已提交，等待链上确认。",
+        },
+    )
+    .await
+}
+
+struct StakeUx {
+    label: &'static str,
+    amount_prefix: &'static str,
+    next_hint: &'static str,
+}
+
+async fn run(
+    client: &mut TaskApiClient,
+    amount: &str,
+    agent_id: &str,
+    ux: StakeUx,
+) -> Result<()> {
+    let trimmed = validate_amount(amount)?;
 
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
@@ -18,33 +61,31 @@ pub async fn handle_stake(
     let (tx_hash, endpoint) =
         execute_stake_or_increase(client, trimmed, &account_id, &address, &agent_id).await?;
 
-    println!("stake submitted (agentId={agent_id}, via={endpoint})");
-    println!("  amount:  {trimmed} OKB");
+    println!("{} submitted (agentId={agent_id}, via={endpoint})", ux.label);
+    println!("  amount:  {}{trimmed} OKB", ux.amount_prefix);
     println!("  voter:   {address}");
     println!("  txHash:  {tx_hash}");
-    println!("next: 质押交易已提交，等待链上确认；确认后即成为活跃仲裁者候选，可被选入陪审。");
+    println!("next: {}", ux.next_hint);
     Ok(())
 }
 
-pub(super) fn validate_amount<'a>(amount: &'a str, example: &str) -> Result<&'a str> {
+fn validate_amount(amount: &str) -> Result<&str> {
     let trimmed = amount.trim();
     if trimmed.is_empty() {
-        bail!("--amount 不能为空（OKB 金额，UI 单位，例如 {example}）");
+        bail!("--amount 不能为空（OKB 金额，UI 单位）");
     }
     if !trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') {
-        bail!("--amount 必须是数字（OKB 金额，UI 单位不带精度），got: {trimmed}");
+        bail!("--amount 必须是数字（OKB 金额，UI 单位）；如含小数点请使用 `.`，且不要包含千分位分隔符，got: {trimmed}");
     }
     Ok(trimmed)
 }
 
-/// 阈值校验 + 路由 + fallback：
-/// 1. 拉 my-stake / staking-config（任一失败直接报错结束，不做路由猜测）
+/// 阈值校验 + 路由：
+/// 1. 拉 my-stake / staking-config（任一失败直接报错结束）
 /// 2. 强制 `activeStake + amount >= minCumulativeStakeOkb`（不分 registered 状态）
-/// 3. 按 registered 路由：true → primary=increaseStake / fallback=stake；
-///                       false → primary=stake / fallback=increaseStake
-/// 4. primary 报错 → eprintln warning 后 fallback 一次（覆盖 registered 读漏 / 链上滞后）
+/// 3. 按 registered 路由：true → increaseStake；false → stake
 ///
-/// 返回 (txHash, 实际生效的端点 label)。两个端点都失败时把两边错误一起报出。
+/// 返回 (txHash, 端点 label)。
 pub(super) async fn execute_stake_or_increase(
     client: &mut TaskApiClient,
     amount: &str,
@@ -78,39 +119,12 @@ pub(super) async fn execute_stake_or_increase(
         }
     }
 
-    let registered = m.registered;
-    let (primary, fallback) = if registered {
-        ("increaseStake", "stake")
-    } else {
-        ("stake", "increaseStake")
-    };
-
-    match try_post_and_broadcast(client, primary, amount, account_id, address, agent_id).await {
-        Ok(tx) => Ok((tx, primary)),
-        Err(primary_err) => {
-            eprintln!("warning: 首次提交失败：{primary_err}；切换路径再试一次...");
-            match try_post_and_broadcast(
-                client,
-                fallback,
-                amount,
-                account_id,
-                address,
-                agent_id,
-            )
-            .await
-            {
-                Ok(tx) => Ok((tx, fallback)),
-                Err(fallback_err) => bail!(
-                    "质押失败（两次提交都失败）：\n\
-                     - {primary_err}\n\
-                     - {fallback_err}"
-                ),
-            }
-        }
-    }
+    let endpoint = if m.registered { "increaseStake" } else { "stake" };
+    let tx = post_and_broadcast(client, endpoint, amount, account_id, address, agent_id).await?;
+    Ok((tx, endpoint))
 }
 
-async fn try_post_and_broadcast(
+async fn post_and_broadcast(
     client: &mut TaskApiClient,
     endpoint: &str,
     amount: &str,

@@ -387,8 +387,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
             format!("pending-decisions {:?}", std::mem::discriminant(c)),
         // Evaluator (flat — 见 agent_commerce/mod.rs)
         AgentCommand::EvidenceInfo { .. } => "evidence-info".into(),
-        AgentCommand::EvidenceDownload { .. } => "evidence-download".into(),
         AgentCommand::VoteCommit { .. } => "vote-commit".into(),
+        AgentCommand::VoteRecord { .. } => "vote-record".into(),
         AgentCommand::VoteReveal { .. } => "vote-reveal".into(),
         AgentCommand::ArbitrationClaim { .. } => "arbitration-claim".into(),
         AgentCommand::ArbitrationClaimable { .. } => "arbitration-claimable".into(),

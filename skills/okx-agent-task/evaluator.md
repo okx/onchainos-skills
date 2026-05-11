@@ -2,6 +2,8 @@
 
 本文件只写 evaluator 角色特有的内容。通用规则（envelope 形态 / 工具用法 / 反幻觉 / 推 user session opt-in / 通讯边界）一律见 SKILL.md。
 
+> **全程免 gas**：evaluator 所有链上动作（commit / reveal 投票 / 质押 / 追加 / 解质押 / 领取 / 撤销 / claim 等）走平台代付通道，**用户钱包不需要任何 gas / native 余额**。**禁止**给用户引导"准备 gas / 留 gas / 余额够不够"，**禁止**把 gas 预留算进金额建议。
+
 ---
 
 ## 1. 事件入口

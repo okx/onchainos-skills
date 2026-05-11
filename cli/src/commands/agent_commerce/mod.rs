@@ -332,22 +332,6 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// Download a single evidence file by (jobId, fileKey). Useful for retry / scripted access
-    /// when `evidence-info` already returned the fileKey but a particular download failed.
-    /// Backend requires JWT + agenticId on this endpoint.
-    #[command(name = "evidence-download")]
-    EvidenceDownload {
-        /// Task jobId (top-level `jobId` from `evidence-info` response or envelope).
-        job_id: String,
-        /// Opaque fileKey returned in `provider.images[]` / `client.images[]`.
-        file_key: String,
-        /// Output file path. Defaults to `~/.onchainos/task/<jobId>/dispute/<fileKey-tail>`.
-        #[arg(long, short = 'o')]
-        output: Option<String>,
-        /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
-        #[arg(long = "agent-id")]
-        agent_id: String,
-    },
     /// Commit a vote (Phase 1 of commit-reveal). vote: 0 = Approve (Client wins), 1 = Reject (Provider wins).
     /// Body sent to backend is only `{ vote }` — reason is NOT part of the API (lives in agent session memory).
     /// Backend resolves the active dispute round from jobId.
@@ -359,6 +343,22 @@ pub enum AgentCommand {
         /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
         #[arg(long = "agent-id")]
         agent_id: String,
+    },
+    /// Persist the evaluator's verdict markdown to `<evidence_dir>/verdict.md` as a
+    /// local audit trail. Called AFTER `vote-commit` succeeds; vote is already on-chain.
+    /// Idempotent (overwrites). Failure should be ignored by the caller.
+    /// `--verdict` optional: if omitted (rubric did not define a verdict template), writes a
+    /// placeholder note instead so the audit slot is never empty.
+    /// Hidden from `--help` (internal flow.rs orchestration only; users shouldn't invoke directly).
+    #[command(name = "vote-record", hide = true)]
+    VoteRecord {
+        job_id: String,
+        /// Evaluator agentId from inbound system envelope's top-level `agentId` field. Required.
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        /// Verdict markdown content (multi-line OK; pass via shell heredoc). Optional.
+        #[arg(long = "verdict")]
+        verdict: Option<String>,
     },
     /// Reveal a previously-committed vote (Phase 2 of commit-reveal). Driven by the
     /// `reveal_started` system event. CLI sends an empty body `{}` — backend reads
@@ -690,13 +690,12 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
             task::evaluator::info::handle_info(&mut c, &job_id, &agent_id).await
         }
-        AgentCommand::EvidenceDownload { job_id, file_key, output, agent_id } => {
-            let c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::download::handle_download(&c, &job_id, &file_key, output.as_deref(), &agent_id).await
-        }
         AgentCommand::VoteCommit { job_id, vote, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
             task::evaluator::commit::handle_commit(&mut c, &job_id, vote, &agent_id).await
+        }
+        AgentCommand::VoteRecord { job_id, agent_id, verdict } => {
+            task::evaluator::record::handle_record(&job_id, &agent_id, verdict.as_deref()).await
         }
         AgentCommand::VoteReveal { job_id, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
@@ -716,7 +715,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         }
         AgentCommand::IncreaseStake { amount, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::evaluator::increase_stake::handle_increase_stake(&mut c, &amount, &agent_id).await
+            task::evaluator::stake::handle_increase_stake(&mut c, &amount, &agent_id).await
         }
         AgentCommand::RequestUnstake { amount, agent_id } => {
             let mut c = task::common::network::task_api_client::TaskApiClient::new();
