@@ -57,7 +57,8 @@ yarn-error.log*
 # Superpowers generated docs (local only)
 docs/superpowers/
 
-
+# Zigbuild cache (pack-agent-task.sh 跨编译 Linux 时的 zig 中间产物,
+# 在 macOS TCC 沙箱下重定向到项目目录;详见 tools/okx-agent-task/pack-agent-task.sh)
 .zigbuild-cache/
 
 # Test artifacts (local only)
