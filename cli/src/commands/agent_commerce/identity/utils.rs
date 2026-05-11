@@ -3,21 +3,23 @@
 //! agent service / role parsing. No network calls, no signing. Functions
 //! here are deliberately small and dependency-light.
 
-use std::time::{Duration, Instant};
-
 use anyhow::{anyhow, bail, Context as _, Result};
 use serde_json::Value;
-use tokio::time::sleep;
 
 use crate::commands::Context;
 use crate::wallet_api::{UnsignedInfoResponse, WalletApiClient};
 
-use super::models::{AgentCard, AgentService, XLAYER_CHAIN_INDEX};
+use super::models::{AgentCard, AgentService};
 
 // ─── HTTP client ──────────────────────────────────────────────────────────
 
-pub(super) fn wallet_client(_ctx: &Context) -> Result<WalletApiClient> {
-    WalletApiClient::new()
+/// Build the wallet HTTP client honoring `--base-url`. Forwards
+/// `ctx.base_url_override` to `WalletApiClient::with_base_url` so the
+/// override is actually applied (precedence inside `with_base_url`:
+/// runtime `OKX_BASE_URL` > compile-time `OKX_BASE_URL` > override >
+/// `DEFAULT_BASE_URL`).
+pub(super) fn wallet_client(ctx: &Context) -> Result<WalletApiClient> {
+    WalletApiClient::with_base_url(ctx.base_url_override.as_deref())
 }
 
 // ─── Logging helpers ──────────────────────────────────────────────────────
@@ -39,6 +41,46 @@ fn resolve_base_url_for_log(ctx: &Context) -> String {
         .map(str::to_string)
         .or_else(|| ctx.base_url_override.clone())
         .unwrap_or_else(|| crate::client::DEFAULT_BASE_URL.to_string())
+}
+
+/// Production WS endpoint for the `wallet-agentic-identity` push channel.
+/// Mirrors the `WS_URL_PROD` / `WS_URL_PRE` + `ONCHAINOS_WS_URL` env-
+/// override pattern in `cli/src/watch/daemon.rs:18-19,134` (same WS
+/// gateway host, different per-service path: `/ws/v5/private` here vs
+/// `/ws/v6/dex` for the watch dex feed). Identity keeps its own
+/// constant rather than importing from `watch/` so identity-side
+/// changes never risk regressing the watch daemon's contract.
+const WS_URL_PROD: &str = "wss://wsdex.okx.com:8443/ws/v5/private";
+
+/// Resolve the full WS URL for the `wallet-agentic-identity` push
+/// channel. Precedence:
+///   1. runtime `OKX_AGENTIC_WS_URL` — explicit override, full URL
+///      including `/ws/v5/private` path (escape hatch for forked /
+///      pre / debug envs; production leaves it unset).
+///   2. `WS_URL_PROD` constant — production default.
+///
+/// Identity does not derive this URL from the HTTP base — the WS push
+/// service runs on a separate host (`wsdex.okx.com`) from the HTTP API
+/// (`web3.okx.com`), so scheme swap on the HTTP base would land WS on
+/// the wrong host.
+///
+/// **Breaking change vs. earlier revisions**: prior to this refactor the
+/// WS URL was derived from `--base-url` / runtime `OKX_BASE_URL` /
+/// compile-time `OKX_BASE_URL` via scheme swap (`http→ws`, `https→wss`)
+/// with `/ws/v5/private` appended. **That coupling is gone.** Setting
+/// `--base-url` (or either `OKX_BASE_URL` flavor) now only affects HTTP
+/// calls; the WS subscription always uses `WS_URL_PROD` unless
+/// `OKX_AGENTIC_WS_URL` is also set. The failure mode is **silent
+/// degradation**, not an error: if you point HTTP at a pre / forked env
+/// without also pointing `OKX_AGENTIC_WS_URL` at the matching WS host,
+/// `agent create` / `agent update` will still succeed (broadcast +
+/// agentList come from HTTP), but the `agent` field in the response
+/// envelope will be absent because the WS push never lands on the right
+/// host. Migration: when switching HTTP targets, also set
+/// `OKX_AGENTIC_WS_URL` to the corresponding WS endpoint.
+pub(super) fn identity_ws_url() -> String {
+    std::env::var("OKX_AGENTIC_WS_URL")
+        .unwrap_or_else(|_| WS_URL_PROD.to_string())
 }
 
 pub(super) fn reconstruct_post_url_for_log(ctx: &Context, path: &str) -> String {
@@ -79,67 +121,6 @@ pub(super) fn push_multi_query(query: &mut Vec<(String, String)>, key: &str, val
         if !value.trim().is_empty() {
             query.push((key.to_string(), value.trim().to_string()));
         }
-    }
-}
-
-// ─── Tx status polling ────────────────────────────────────────────────────
-
-/// Poll `/priapi/v5/wallet/agentic/tx-agent-status` until `data[0].status
-/// == "SUCCESS"`. Polling window: 5 s deadline measured between attempts
-/// (1 s sleep between retries); a slow in-flight request can extend the
-/// total wall-clock past 5 s. Returns the first element of `data` on
-/// success, or `None` on timeout / non-success / error (each attempt's
-/// outcome is logged but never aborts the loop).
-pub(super) async fn poll_tx_agent_status(
-    client: &mut WalletApiClient,
-    access_token: &str,
-    tx_hash: &str,
-) -> Option<Value> {
-    const TOTAL_MS: u64 = 5_000;
-    const INTERVAL_MS: u64 = 1_000;
-
-    let deadline = Instant::now() + Duration::from_millis(TOTAL_MS);
-    let mut attempt: u32 = 0;
-    loop {
-        attempt += 1;
-        let query: [(&str, &str); 2] = [("txHash", tx_hash), ("chainIndex", XLAYER_CHAIN_INDEX)];
-        match client
-            .get_authed(
-                "/priapi/v5/wallet/agentic/tx-agent-status",
-                access_token,
-                &query,
-            )
-            .await
-        {
-            Ok(data) => {
-                if let Some(first) = data.as_array().and_then(|arr| arr.first()) {
-                    if first.get("status").and_then(Value::as_str) == Some("SUCCESS") {
-                        eprintln!("[agent-identity] tx-status poll attempt {attempt}: SUCCESS");
-                        return Some(first.clone());
-                    }
-                    eprintln!(
-                        "[agent-identity] tx-status poll attempt {attempt}: status={}",
-                        first.get("status").and_then(Value::as_str).unwrap_or("?")
-                    );
-                } else {
-                    eprintln!(
-                        "[agent-identity] tx-status poll attempt {attempt}: empty data"
-                    );
-                }
-            }
-            Err(e) => {
-                eprintln!(
-                    "[agent-identity] tx-status poll attempt {attempt}: err={e:#}"
-                );
-            }
-        }
-        if Instant::now() >= deadline {
-            eprintln!(
-                "[agent-identity] tx-status poll: timeout after {attempt} attempts, returning txHash only"
-            );
-            return None;
-        }
-        sleep(Duration::from_millis(INTERVAL_MS)).await;
     }
 }
 

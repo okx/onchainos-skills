@@ -12,6 +12,7 @@
 //! lives in `signing.rs`.
 
 use std::fs;
+use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use serde_json::{json, Value};
@@ -20,6 +21,7 @@ use uuid::Uuid;
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
 use crate::commands::Context;
 use crate::output;
+use crate::wallet_api::WalletApiClient;
 
 use super::args::{
     AgentStatusArgs, CreateArgs, FeedbackSubmitArgs, UpdateArgs, UploadArgs, XmtpSignArgs,
@@ -29,11 +31,22 @@ use super::signing::{
     build_erc8004_overlay, load_agent_signing_session, load_session_cert, load_signing_seed,
     sign_and_broadcast_agent_transaction, sign_key_uuid,
 };
+use super::socket::{open_identity_subscription, IdentitySubscription};
 use super::utils::{
-    ensure_provider_has_service, normalize_role, parse_agent_unsigned, parse_services,
-    parse_u32_arg, poll_tx_agent_status, reconstruct_post_url_for_log, redact_token_for_debug,
-    require_non_empty, trim_or_empty, wallet_client,
+    ensure_provider_has_service, identity_ws_url, normalize_role, normalize_singleton_object,
+    parse_agent_unsigned, parse_services, parse_u32_arg, reconstruct_post_url_for_log,
+    redact_token_for_debug, require_non_empty, trim_or_empty, wallet_client,
 };
+
+const PUSH_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Per-page size for the post-broadcast agent-list pagination loop. 100 is
+/// well above any real wallet's agent count and minimizes round trips; the
+/// loop relies on the response's `total` to know when to stop.
+const AGENT_LIST_PAGE_SIZE: usize = 100;
+/// Safety cap so a buggy `total` cannot trap us in an infinite paging loop
+/// — 100 × 20 = 2 000 agents, ample headroom over real-world counts.
+const AGENT_LIST_MAX_PAGES: usize = 20;
 
 // ─── Public command entry points ──────────────────────────────────────────
 
@@ -140,6 +153,22 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         ("role", &normalized_role),
         ("keyUuid", &key_uuid),
     ]);
+
+    // 广播前先建立 wallet-agentic-identity 订阅；任何环节失败都降级，不阻断后续广播。
+    // identity_ws_url() 默认 WS_URL_PROD（wss://wsdex.okx.com:8443/ws/v5/private），
+    // OKX_AGENTIC_WS_URL 环境变量可整 URL 覆盖（dev / pre / debug 用）。
+    // push-platform login 用钱包地址作为 "token" 值（不再是 JWT）。
+    let subscription =
+        match open_identity_subscription(&from_addr, &identity_ws_url()).await {
+        Ok(s) => Some(s),
+        Err(e) => {
+            eprintln!(
+                "[agent-identity] ws subscribe failed, falling through to broadcast-only: {e:#}"
+            );
+            None
+        }
+    };
+
     let tx_hash = sign_and_broadcast_agent_transaction(
         &access_token,
         &unsigned,
@@ -147,11 +176,10 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
         &signing_session,
     )
     .await?;
-    let agent_info = poll_tx_agent_status(&mut client, &access_token, &tx_hash).await;
-    match agent_info {
-        Some(agent) => Ok(json!({ "txHash": tx_hash, "agent": agent })),
-        None => Ok(json!({ "txHash": tx_hash })),
-    }
+
+    let push = wait_for_identity_push(subscription, &tx_hash).await;
+    let agent_list = fetch_agent_list(&mut client, &access_token).await;
+    Ok(assemble_identity_envelope(tx_hash, push, agent_list))
 }
 
 // ─── `agent update` ───────────────────────────────────────────────────────
@@ -229,14 +257,33 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     // 产品规范：update 客户端没有 erc8004Msg 子字段（communicationAddress 不可
     // 修改，role / keyUuid / sessionSignature 也不在 update 请求体里），所以
     // 整个 erc8004Msg 不写入广播 extraData。
+
+    // 广播前先建立 wallet-agentic-identity 订阅；任何环节失败都降级，不阻断后续广播。
+    // identity_ws_url() 默认 WS_URL_PROD（wss://wsdex.okx.com:8443/ws/v5/private），
+    // OKX_AGENTIC_WS_URL 环境变量可整 URL 覆盖（dev / pre / debug 用）。
+    // push-platform login 用钱包地址作为 "token" 值（不再是 JWT）。
+    let subscription = match open_identity_subscription(
+        &signing_session.addr_info.address,
+        &identity_ws_url(),
+    )
+    .await
+    {
+        Ok(s) => Some(s),
+        Err(e) => {
+            eprintln!(
+                "[agent-identity] ws subscribe failed, falling through to broadcast-only: {e:#}"
+            );
+            None
+        }
+    };
+
     let tx_hash =
         sign_and_broadcast_agent_transaction(&access_token, &unsigned, None, &signing_session)
             .await?;
-    let agent_info = poll_tx_agent_status(&mut client, &access_token, &tx_hash).await;
-    match agent_info {
-        Some(agent) => Ok(json!({ "txHash": tx_hash, "agent": agent })),
-        None => Ok(json!({ "txHash": tx_hash })),
-    }
+
+    let push = wait_for_identity_push(subscription, &tx_hash).await;
+    let agent_list = fetch_agent_list(&mut client, &access_token).await;
+    Ok(assemble_identity_envelope(tx_hash, push, agent_list))
 }
 
 // ─── `agent activate` / `agent deactivate` ────────────────────────────────
@@ -506,4 +553,161 @@ async fn xmtp_sign_impl(args: &XmtpSignArgs, ctx: &Context) -> Result<Value> {
         bail!("xmtp-sign response missing signature");
     }
     Ok(first)
+}
+
+// ─── Post-broadcast finalize helpers (create / update) ────────────────────
+
+/// Drain the WS subscription waiting for the matching push. Any failure
+/// (including timeout) collapses to `None`; the surrounding command then
+/// emits `txHash` + `agentList` only.
+async fn wait_for_identity_push(
+    subscription: Option<IdentitySubscription>,
+    tx_hash: &str,
+) -> Option<Value> {
+    let sub = subscription?;
+    match sub.wait_for_match(tx_hash, PUSH_WAIT_TIMEOUT).await {
+        Ok(opt) => opt,
+        Err(e) => {
+            eprintln!("[agent-identity] ws wait failed: {e:#}");
+            None
+        }
+    }
+}
+
+/// Best-effort fetch of the caller's full XLayer agent list (struct C).
+/// Pages through `/agent/agent-list?chainIndex=196` with `pageSize=100`
+/// until `total` is satisfied or `AGENT_LIST_MAX_PAGES` is hit. Returns
+/// `{ total, list: [...] }`. Note the backend's actual response shape
+/// uses the field name `list` (not `items` — earlier docs claimed
+/// `items`; that was a pre-existing doc bug confirmed empirically on
+/// 2026-05-10).
+///
+/// Failure modes that short-circuit to `None` so the envelope omits the
+/// field rather than emit a misleading partial:
+///   - any HTTP error from the client during pagination
+///   - page 1 missing or non-numeric `total` field (response shape
+///     anomaly — cannot trust the dataset)
+///   - any page missing or non-array `list` field (same)
+///   - mid-pagination empty page when `total > aggregated` (backend
+///     says more exist but failed to deliver them)
+///
+/// The safety-cap exit (page > `AGENT_LIST_MAX_PAGES`) is the only path
+/// that returns a partial aggregate, and it logs the truncation. The
+/// legitimate empty case (`total == 0` and page 1 returned `list: []`)
+/// returns `Some({total: 0, list: []})`.
+async fn fetch_agent_list(client: &mut WalletApiClient, access_token: &str) -> Option<Value> {
+    let mut all_items: Vec<Value> = Vec::new();
+    let mut total: u64 = 0;
+    let mut page: usize = 1;
+
+    while page <= AGENT_LIST_MAX_PAGES {
+        let page_str = page.to_string();
+        let page_size_str = AGENT_LIST_PAGE_SIZE.to_string();
+        let raw = match client
+            .get_authed(
+                "/priapi/v5/wallet/agentic/agent/agent-list",
+                access_token,
+                &[
+                    ("chainIndex", XLAYER_CHAIN_INDEX),
+                    ("page", &page_str),
+                    ("pageSize", &page_size_str),
+                ],
+            )
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[agent-identity] agent-list page {page} fetch failed: {e:#}");
+                return None;
+            }
+        };
+
+        // Keep the raw response for debug logging on shape-mismatch aborts.
+        // Without this, the abort logs only say "shape wrong" with no clue
+        // what the backend actually returned — see the post-mortem on the
+        // 2026-05-10 test where the abort fired but the actual response shape
+        // was unknown.
+        let raw_repr = raw.to_string();
+        let normalized = normalize_singleton_object(raw);
+
+        // Page 1: total must be present and numeric. Missing/wrong-shape => abort.
+        if page == 1 {
+            total = match normalized.get("total").and_then(Value::as_u64) {
+                Some(t) => t,
+                None => {
+                    eprintln!(
+                        "[agent-identity] agent-list page 1 missing or non-numeric `total` field — abort. raw={raw_repr} normalized={normalized}"
+                    );
+                    return None;
+                }
+            };
+        }
+
+        // `list` must be an array on every page. Missing/wrong-shape => abort.
+        // Backend uses the field name `list` (not `items`); see the doc
+        // comment above this function.
+        let page_items: Vec<Value> = match normalized.get("list").and_then(Value::as_array) {
+            Some(arr) => arr.clone(),
+            None => {
+                eprintln!(
+                    "[agent-identity] agent-list page {page} missing or non-array `list` field — abort. raw={raw_repr} normalized={normalized}"
+                );
+                return None;
+            }
+        };
+        let page_count = page_items.len();
+        all_items.extend(page_items);
+
+        // Done: aggregated count satisfies backend's reported total.
+        // Also covers the legitimate empty case: total == 0, page 1 list == [],
+        // aggregated (0) >= total (0) on first iteration.
+        if (all_items.len() as u64) >= total {
+            break;
+        }
+
+        // Anomaly: total > aggregated but this page returned 0 list entries.
+        // Don't return a truncated Some — abort per cli-reference §1 contract.
+        if page_count == 0 {
+            eprintln!(
+                "[agent-identity] agent-list page {page} returned 0 list entries but total={} > aggregated={} — abort",
+                total,
+                all_items.len(),
+            );
+            return None;
+        }
+
+        page += 1;
+        if page > AGENT_LIST_MAX_PAGES {
+            eprintln!(
+                "[agent-identity] agent-list paging hit safety cap of {} pages × {} ({} items aggregated, backend total={})",
+                AGENT_LIST_MAX_PAGES,
+                AGENT_LIST_PAGE_SIZE,
+                all_items.len(),
+                total,
+            );
+        }
+    }
+
+    Some(json!({
+        "total": total,
+        "list": all_items,
+    }))
+}
+
+/// Assemble the `{ txHash, agent?, agentList? }` envelope. `agent` and
+/// `agentList` are independent best-effort segments; either may be
+/// missing without affecting the other.
+fn assemble_identity_envelope(
+    tx_hash: String,
+    push: Option<Value>,
+    agent_list: Option<Value>,
+) -> Value {
+    let mut out = json!({ "txHash": tx_hash });
+    if let Some(p) = push {
+        out["agent"] = p;
+    }
+    if let Some(list) = agent_list {
+        out["agentList"] = list;
+    }
+    out
 }

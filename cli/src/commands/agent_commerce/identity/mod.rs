@@ -21,6 +21,7 @@ mod models;
 mod mutations;
 mod queries;
 mod signing;
+mod socket;
 mod utils;
 
 // CLI `Args` structs — kept at the module root for `identity::CreateArgs`.

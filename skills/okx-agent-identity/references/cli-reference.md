@@ -55,28 +55,38 @@ onchainos agent create \
 
 **Return (JSON):**
 ```json
-// On internal poll success (within ~5 s)
+// On WS push match within 30 s of broadcast — agent + agentList both present
 {
   "txHash": "0xabc...",
   "agent": {
-    "status": "SUCCESS",
-    "agentId": "123",
+    "agentId": "12345",
     "chainIndex": 196,
+    "status": "SUCCESS",
     "name": "DeFi Analyzer",
     "profilePicture": "https://...",
     "profileDescription": "...",
-    "ownerAddress": "0x...",
-    "agentWalletAddress": "0x...",
-    "categoryCode": "DEFI",
-    "securityRate": "85"
+    "txHash": "0xabc..."
+  },
+  "agentList": {
+    "total": 3,
+    "list": [
+      { "agentId": 12345, "name": "DeFi Analyzer", "role": "provider", "status": "active", "...": "..." }
+    ]
   }
 }
 
-// On poll timeout / non-success — fall back to:
+// On WS timeout / connect failure — `agent` absent, `agentList` still attempted
+{ "txHash": "0xabc...", "agentList": { "total": 3, "list": [ ... ] } }
+
+// On both WS and agent-list failing — degrades to:
 { "txHash": "0xabc..." }
 ```
 
-The CLI internally polls `/priapi/v5/wallet/agentic/tx-agent-status` with the broadcast `txHash` for up to ~5 s. When it resolves `SUCCESS` the verbose `agent` block is included verbatim from the backend; on timeout the response degrades to `{ txHash }` only and the skill should render per `display-formats.md` §2's `Agent ID` placeholder rule (omit the row instead of inventing an id).
+After broadcasting, the CLI keeps the WS subscription it opened *before* broadcast (`wallet-agentic-identity` channel; default URL `wss://wsdex.okx.com:8443/ws/v5/private`) and waits up to **30 s** for a push whose top-level `txHash` matches the broadcast hash (case-insensitive, `0x` prefix optional). When matched, the push payload — `{agentId, chainIndex, status, name, profilePicture, profileDescription, txHash}` — is included verbatim under `agent`. After WS resolves (match or timeout), the CLI also pages `GET /agent/agent-list?chainIndex=196&page=N&pageSize=100` until `total` is satisfied (or a 20-page safety cap is hit, in which case the partial aggregate is logged) and attaches the assembled `{ total, list }` under `agentList` (note the field is `list`, not `items` — backend's `/agent/agent-list` response uses `list`; this was empirically confirmed on 2026-05-10 after an earlier doc-only mismatch). Both segments are **best-effort and independent**: `agent` is present iff the WS push matched in time; `agentList` is present iff every paginated HTTP call succeeded (any single page failure short-circuits to absent rather than emitting a misleading partial). Either may be absent without affecting the other; both absent degrades to `{ txHash }` only — and in that case the skill should render per `display-formats.md` §2's `Agent ID` placeholder rule (omit the row instead of inventing an id).
+
+**WS URL override**: production uses `WS_URL_PROD = wss://wsdex.okx.com:8443/ws/v5/private` from `cli/src/commands/agent_commerce/identity/utils.rs` (mirrors the `WS_URL_PROD` + `ONCHAINOS_WS_URL` env-override pattern in `cli/src/watch/daemon.rs`). For dev / pre / forked envs, set the `OKX_AGENTIC_WS_URL` env var to the **full** WS URL (including the `/ws/v5/private` path); the CLI uses the env value verbatim, no scheme swap or path forcing.
+
+⚠️ **Breaking change from earlier revisions**: the HTTP base URL (`--base-url`, runtime `OKX_BASE_URL`, or compile-time `OKX_BASE_URL`) **no longer affects the WS connect**. Prior revisions derived the WS URL from the HTTP base via scheme swap + `/ws/v5/private` append; that coupling has been removed. When you switch HTTP targets (`--base-url https://pre.example.com`, etc.), you must **also** set `OKX_AGENTIC_WS_URL` to the corresponding WS endpoint, otherwise the WS subscription still hits `wss://wsdex.okx.com:8443/ws/v5/private` (prod). The failure mode is **silent**: `agent create` / `agent update` still succeed (broadcast + agentList both work via HTTP), but the `agent` field in the response envelope is absent because the WS push never reaches the matching host.
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact) and §2 (backend-originated, keyword match). Do not duplicate the list here — `troubleshooting.md` is the single source of truth.
 
@@ -106,7 +116,7 @@ onchainos agent update --agent-id 42 --description "Updated: now also covers cro
 onchainos agent update --agent-id 42 --picture "https://cdn.example.com/u/new.png"
 ```
 
-**Return (JSON):** same `{ txHash, agent? }` envelope as `create` (§1) — `agent` is the resolved tx-status row when the internal poll succeeds, or absent when it times out. Field set differs from the `agent get` detail schema in §3 (no `services` / `reputation` here — those still require a `agent get --agent-ids`).
+**Return (JSON):** same `{ txHash, agent?, agentList? }` envelope as `create` (§1) — `agent` is the matched `wallet-agentic-identity` push when one arrives within 30 s of broadcast, or absent on timeout / WS failure; `agentList` carries the paginated `{ total, list }` aggregate (note the field is `list`, not `items`) and may also be absent on HTTP failure. Field set on `agent` differs from the `agent get` detail schema in §3 (no `services` / `reputation` here — those still require a `agent get --agent-ids`).
 
 **Errors:** see `troubleshooting.md` §1 (CLI exact), §2 (backend-originated, keyword match), and §3 (skill-side guards). Note: "At least one field must change on update" is a skill-side guard, not a CLI error.
 
@@ -139,13 +149,17 @@ onchainos agent get --page 2 --page-size 50
 ```json
 {
   "total": 3,
-  "items": [
+  "list": [
     { "agentId": 42, "name": "DeFi Analyzer", "role": "provider", "status": "active",
       "description": "...", "picture": "https://...", "address": "0x...",
       "services": [...], "reputation": { "score": 92, "count": 18 } }
-  ]
+  ],
+  "page": 1,
+  "pageSize": 100
 }
 ```
+
+(Note the array field is `list`, not `items`. `agent get` calls the same `/agent/agent-list` endpoint that powers `agent create` / `update`'s post-broadcast `agentList` segment in §1; the two diverge slightly in post-processing: `agent get` returns a single backend page verbatim including `page` / `pageSize` echoed back from the request, while §1's `agentList` is the **aggregate across all pages** assembled by `fetch_agent_list` and only carries `{ total, list }` — `page` / `pageSize` lose coherent meaning after cross-page aggregation and are dropped on purpose.)
 
 `reputation.score` is the 0–100 wire average. The display layer renders it as `★ <score/20>` to 1 decimal place via the canonical **round-half-up** rule (see `SKILL.md §Amount Display Rules` reputation block — e.g. `92 → ★ 4.6`, `89 → ★ 4.5`, `85 → ★ 4.3`). Never echo the raw 0–100 number in user-visible cells.
 
