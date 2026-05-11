@@ -5,7 +5,7 @@
 //!
 //! Lifecycle: `open_identity_subscription` connects to the full WS URL
 //! the caller passes in (see `super::utils::identity_ws_url` — default
-//! `WS_URL_PROD = wss://wsdex.okx.com/ws/v5/private`, or `OKX_AGENTIC_WS_URL`
+//! `WS_URL_PROD = wss://wsdex.okx.com:8443/ws/v5/private`, or `OKX_AGENTIC_WS_URL`
 //! env override). No scheme swap or path forcing happens here — the URL
 //! is used verbatim. Then sends the wallet-address login op (JSON key
 //! remains `"token"` per server contract; the value is the caller's
@@ -40,7 +40,7 @@ pub(super) struct IdentitySubscription {
 /// Connect → login(wallet address) → subscribe(`wallet-agentic-identity`).
 ///
 /// `ws_url` is the full WS URL produced by `identity_ws_url()`:
-/// either `WS_URL_PROD` (`wss://wsdex.okx.com/ws/v5/private`) or an
+/// either `WS_URL_PROD` (`wss://wsdex.okx.com:8443/ws/v5/private`) or an
 /// explicit `OKX_AGENTIC_WS_URL` override. The caller passes the URL
 /// verbatim — no scheme swap or path forcing happens here.
 ///

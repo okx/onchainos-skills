@@ -50,7 +50,7 @@ fn resolve_base_url_for_log(ctx: &Context) -> String {
 /// `/ws/v6/dex` for the watch dex feed). Identity keeps its own
 /// constant rather than importing from `watch/` so identity-side
 /// changes never risk regressing the watch daemon's contract.
-const WS_URL_PROD: &str = "wss://wsdex.okx.com/ws/v5/private";
+const WS_URL_PROD: &str = "wss://wsdex.okx.com:8443/ws/v5/private";
 
 /// Resolve the full WS URL for the `wallet-agentic-identity` push
 /// channel. Precedence:

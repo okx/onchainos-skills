@@ -155,7 +155,7 @@ async fn create_impl(args: &CreateArgs, ctx: &Context) -> Result<Value> {
     ]);
 
     // 广播前先建立 wallet-agentic-identity 订阅；任何环节失败都降级，不阻断后续广播。
-    // identity_ws_url() 默认 WS_URL_PROD（wss://wsdex.okx.com/ws/v5/private），
+    // identity_ws_url() 默认 WS_URL_PROD（wss://wsdex.okx.com:8443/ws/v5/private），
     // OKX_AGENTIC_WS_URL 环境变量可整 URL 覆盖（dev / pre / debug 用）。
     // push-platform login 用钱包地址作为 "token" 值（不再是 JWT）。
     let subscription =
@@ -259,7 +259,7 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
     // 整个 erc8004Msg 不写入广播 extraData。
 
     // 广播前先建立 wallet-agentic-identity 订阅；任何环节失败都降级，不阻断后续广播。
-    // identity_ws_url() 默认 WS_URL_PROD（wss://wsdex.okx.com/ws/v5/private），
+    // identity_ws_url() 默认 WS_URL_PROD（wss://wsdex.okx.com:8443/ws/v5/private），
     // OKX_AGENTIC_WS_URL 环境变量可整 URL 覆盖（dev / pre / debug 用）。
     // push-platform login 用钱包地址作为 "token" 值（不再是 JWT）。
     let subscription = match open_identity_subscription(
