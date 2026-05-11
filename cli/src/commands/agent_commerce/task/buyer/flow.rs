@@ -370,16 +370,27 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              - non_escrow → set-payment-mode → job_payment_mode_changed → [NEGOTIATE_CONFIRM] + confirm-accept（此步只接单不支付）→ job_accepted → 等卖家交付 + paymentId → 支付 + complete → job_completed\n"
         ),
 
-        // ─── provider_applied 系统事件（买家侧无动作） ──────────
-        // confirm-accept 由卖家的 a2a-agent-chat 消息触发，不由此系统事件触发。
-        // ⚠️ 非担保（non_escrow）不走 apply，不会触发 provider_applied。
-        Event::ProviderApplied =>
+        // ─── provider_applied（卖家已 apply）──────────────────
+        // 触发来源：buyer.md 路由优先级 #2（卖家 XMTP 消息告知已 apply）调 next-action --jobStatus provider_applied。
+        // ⚠️ 买家不会收到 provider_applied 系统通知，此剧本仅由 a2a-agent-chat 路由触发。
+        Event::ProviderApplied => format!(
             "【当前状态】provider_applied（卖家已链上申请接单）\n\
              【角色】买家（Client）\n\n\
-             无需任何动作。confirm-accept 由卖家通过 a2a-agent-chat 发来的 apply 通知触发（buyer.md 路由优先级 #2），\n\
-             不由此系统事件触发。此事件到达时 confirm-accept 可能已执行或即将由卖家消息触发。\n\
-             → **结束本轮 turn**，等待 `job_accepted` 系统通知。\n".to_string()
-        ,
+             【你的下一步动作（严格顺序）】\n\n\
+             **Step 1 — 获取任务信息：**\n\
+             ```bash\n\
+             onchainos agent common context {job_id} --role buyer --agent-id {agent_id}\n\
+             ```\n\
+             提取：providerAgentId、paymentMode、tokenSymbol、tokenAmount。\n\
+             ⚠️ paymentMode 此时应为 escrow（1）——non_escrow 不走 apply 流程。\n\n\
+             **Step 2 — 执行 confirm-accept（确认接单上链）：**\n\
+             ```bash\n\
+             onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode escrow --token-symbol <tokenSymbol> --token-amount <tokenAmount>\n\
+             ```\n\
+             ⚠️ 参数是 `--provider-agent-id`，不是 `--agent-id`。\n\
+             ⚠️ **不要查询任务 API 验证卖家是否已 apply**——链上索引有延迟，`confirm-accept` 内部会做链上校验。\n\n\
+             → 执行后**结束本轮 turn**，等待 `job_accepted` 系统通知。\n"
+        ),
 
         // ─── job_accepted: 按支付方式分流（非担保立即 complete，担保等交付）──────────────────
         Event::JobAccepted => format!(
@@ -839,7 +850,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              A-Step 2：建群后已进入 sub session，调用 xmtp_send 向卖家发起协商（参照 buyer.md 3.2 协商阶段三步确认）：\n\
              \x20\x20⚠️ **禁止**用 xmtp_dispatch_user / xmtp_dispatch_session，建群后统一用 xmtp_send。\n\
              \x20\x20content: 你好，我有一个任务（jobId: {job_id}）想请你来完成，请问你感兴趣吗？\n\n\
-             A-Step 3：协商成功 → 卖家 apply 上链 → 等待 provider_applied 事件（进入场景 6）\n\n\
+             A-Step 3：协商成功 → 卖家 apply 上链 → 等待卖家 XMTP 消息告知已 apply（buyer.md 路由 #2 触发 confirm-accept）\n\n\
              A-Step 4：协商失败（卖家拒绝 / 超时 / 条件不一致）→ 跳到 B 分支。\n\n\
              ━━━━━━━━━ 分支 B：用户拒绝当前卖家 / 协商失败 → 拒绝并回到列表 ━━━━━━━━━\n\n\
              B-Step 1：调用 xmtp_deny_pending_conversation 拒绝该卖家：\n\
@@ -899,7 +910,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 4 — 通知用户：**\n\
              调用 xmtp_dispatch_user：\n\
              \x20\x20content: **<title>**（{job_id}）更新支付方式成功，设置卖家 **<providerName>**（<providerAgentId>）接单中...\n\n\
-             → **结束本轮 turn**，等待 `provider_applied` 系统通知。\n\n\
+             → **结束本轮 turn**，等待卖家 XMTP 消息告知已 apply（buyer.md 路由优先级 #2 处理）。\n\n\
              ━━━━━━━━━ non_escrow（paymentMode=2）— 发 [NEGOTIATE_CONFIRM] + confirm-accept ━━━━━━━━━\n\n\
              🛑 **non_escrow 以下 Step 3 → Step 4 → Step 5 必须在同一 turn 内连续执行，中间不结束 turn。**\n\
              卖家收到 [NEGOTIATE_CONFIRM] 后**不需要先执行链上操作**（escrow 需要 apply），只是静默等 job_accepted。\n\
