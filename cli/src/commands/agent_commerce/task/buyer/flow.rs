@@ -1355,10 +1355,11 @@ onchainos agent create-task \\
     } else {
         format!("{context_preamble}{body}")
     };
+    let preview: String = result.chars().take(200).collect();
     eprintln!(
         "[buyer-flow] output length: {} chars | first 200: {}",
         result.len(),
-        &result[..result.len().min(200)]
+        preview
     );
     result
 }
