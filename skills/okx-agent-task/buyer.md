@@ -151,6 +151,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
 > - 🛑 **[NEGOTIATE_CONFIRM] 永远是最后一步**：发之前 `save-agreed` + `set-payment-mode`（如需变更）必须已完成。先 CONFIRM 后 setPaymentMode = 数据完整性事故（已发生过）
 > - ❌ **禁止短路三步握手**：不要用自然语言（"请 apply / 条款已锁定 / 请接单"）替代 `[NEGOTIATE_CONFIRM]` 字面量——卖家只识别字面量
 > - ⚡ **`[NEGOTIATE_REJECT]` 终止协商**：任一方可随时发 `[NEGOTIATE_REJECT]`（含 jobId + reason）显式结束协商。收到后**不再回复**，买家立即切换下一个卖家
+> - ⏱ **协商护栏（CLI 强制执行）**：`negotiate-tick` 命令追踪每个卖家的协商状态——每次发送消息后记录时间戳（300 秒超时），收到 COUNTER 时递增计数器（上限 3 次）。超时或超限 → 自动发 `[NEGOTIATE_REJECT]` 并切换
 > - ❌ **apply 是卖家动作**：buyer **绝不能**调 `onchainos agent apply`
 > - ❌ **最高预算硬上限**：卖家报价超过 `paymentMostTokenAmount` 时**必须拒绝**，不得同意
 > - ❌ **A2A 协商会话中禁止 x402**：无论卖家是否有 endpoint，协商会话中只能选 escrow 或 non_escrow。卖家提出 x402 时必须拒绝

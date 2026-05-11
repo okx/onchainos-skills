@@ -90,7 +90,7 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
 ///
 /// `job_status` 参数同时兼容 event 名（job_created / provider_applied / ...）
 /// 和 status 名（open / submitted / ...），由 state_machine 统一解析。
-pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_title: Option<&str>) -> String {
+pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_title: Option<&str>, seller: Option<&str>) -> String {
     use crate::commands::agent_commerce::task::common::state_machine::{parse_status_or_event, Event};
 
     // 短 jobId,用在 xmtp_prompt_user 的 userContent 第一行 `[任务 <短ID> 你作为买家]` 前缀,
@@ -300,7 +300,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20- tokenSymbol：支付代币\n\
              \x20\x20- tokenAmount：支付金额\n\
              \x20\x20- deadline：交付截止时间\n\n\
-             ⏱ 超时规则：每轮等待卖家回复最多 5 分钟。超时未回复 → 静默切换下一个卖家（**禁止给卖家发任何消息，禁止 xmtp_delete_conversation**）。超时后若再收到该卖家的 a2a-agent-chat 消息，**不回复、不处理**，直接忽略。\n\n\
+             ⏱ **超时规则（negotiate-tick CLI 强制执行）**：**每次 xmtp_send 给卖家之后**，立即调：\n\
+             ```bash\n\
+             onchainos agent negotiate-tick {job_id} --agent-id {agent_id} --seller <卖家agentId> --event sent\n\
+             ```\n\
+             这会记录发送时间戳并返回 `timeoutSecs: 300` 和 `sellerAgentId`。设置 300 秒定时器；若到期卖家未回复，调 `onchainos agent next-action --jobid {job_id} --jobStatus negotiate_timeout --role buyer --agentId {agent_id} --seller <卖家agentId>` 触发超时处理（**--seller 必传**，让超时脚本精确定位是哪个卖家超时）。\n\
+             超时未回复 → 发 [NEGOTIATE_REJECT] 后切换下一个卖家（**禁止 xmtp_delete_conversation**）。超时后若再收到该卖家的 a2a-agent-chat 消息，**不回复、不处理**，直接忽略。\n\
+             🔢 **COUNTER 轮次限制（negotiate-tick CLI 强制执行）**：卖家最多发送 3 次 [NEGOTIATE_COUNTER]。收到 COUNTER 时先调 `negotiate-tick --event counter` 检查，超限后自动发 [NEGOTIATE_REJECT] 并切换下一个卖家。\n\n\
              ⚠️ **协商消息格式铁律**：所有协商阶段的结构化消息（PROPOSE / CONFIRM / REJECT）**必须以对应前缀标记开头**，\n\
              content 第一行必须是 `[NEGOTIATE_PROPOSE]` / `[NEGOTIATE_CONFIRM]` / `[NEGOTIATE_REJECT]`，**严禁用自然语言替代**。\n\
              卖家 Agent 通过前缀做机器解析，缺少前缀会导致协商流程卡死。\n\n\
@@ -308,18 +314,18 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20• 卖家给的价格相对任务工作量是否合理；超过你预算上限就不要勉强答应\n\
              \x20\x20• 卖家 profile / service-list 同类服务单价 vs 当前报价（卖家自己挂的价就是参考锚）\n\
              \x20\x20• 卖家 paymentMode 偏好（escrow / non_escrow）跟你需求是否匹配（金额大 / 不熟卖家 → 坚持 escrow；熟悉/小额 → 可让步 non_escrow）\n\
-             \x20\x20• 多个推荐卖家的话，不要勉强跟某一个谈拢；不合适直接 5 分钟超时切下一个\n\n\
+             \x20\x20• 多个推荐卖家的话，不要勉强跟某一个谈拢；不合适直接切下一个（超时 / COUNTER 超限 / 主动 REJECT 都可以）\n\n\
              协商步骤：\n\
              1. 调用 xmtp_send 发送第一条询盘消息（自然语言，不要把 budget 数字直接抛给卖家——让卖家先给报价，你再判断）：\n\
              \x20\x20content=<任务描述 + 期望交付物 + paymentMode 倾向 + deadline，**先不暴露上限价**>\n\
-             \x20\x20→ 等待卖家回复（5 分钟超时）\n\
+             \x20\x20→ 等待卖家回复（300 秒超时，由 negotiate-tick 管控）\n\
              2. （sub session 内）卖家回复报价（金额、代币、支付方式偏好、预计交付时间）\n\
-             3. （sub session 内）双方就价格/条件进行调整（可能多轮，每轮 5 分钟超时）\n\
+             3. （sub session 内）双方就价格/条件进行调整（可能多轮，每轮 300 秒超时，最多 3 次 COUNTER）\n\
              \x20\x20每轮调用 xmtp_send，参数：sessionKey=<同上>，content=<协商内容>\n\
              \x20\x20⚠️ **不要机械接受卖家加价**：以**任务的 max_budget（最高预算）为绝对上限**——超过 max_budget 一律拒绝，不论差多少。max_budget 从 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 的 `paymentMostTokenAmount` 字段获取。`budget < 卖家价 ≤ max_budget` 区间内可谈，可以原价接受或继续还价；卖家价 ≤ budget 直接接受。\n\
              ⚠️ **币种铁律**：协商只允许改**金额**，不允许改**币种**。任务发布时的币种（从 `onchainos agent common context` 获取）\n\
              是链上合约绑定的。如果卖家提出不同币种，必须纠正：「本任务使用 <任务币种>，请用 <任务币种> 报价。」\n\n\
-             ⚠️ 任一步骤卖家 5 分钟未回复 → 视为协商失败，静默切换下一个卖家（**不给卖家发消息，不删群**）。超时后再收到该卖家消息一律忽略、不回复。\n\n\
+             ⚠️ 任一步骤卖家 300 秒未回复 → negotiate-tick 判定超时，发 [NEGOTIATE_REJECT] 后切换下一个卖家（**不删群**）。超时后再收到该卖家消息一律忽略、不回复。\n\n\
              4. 达成初步一致后，调用 xmtp_send 发送 **[NEGOTIATE_PROPOSE]** 结构化提案（必须严格使用此格式，卖家 Agent 会机器解析）：\n\
              \n\
              📋 **填字段前必做的口头记录自检（防止『记忆穿越』）**：\n\
@@ -337,7 +343,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              tokenSymbol: <USDT|USDG>\n\
              tokenAmount: <金额>\n\
              deadline: <交付截止时间>\n\n\
-             5. **等待卖家回复 [NEGOTIATE_ACK] 或 [NEGOTIATE_COUNTER]**（5 分钟超时）：\n\n\
+             ⚠️ 发完 PROPOSE 后别忘了调 `negotiate-tick --event sent`（上面的超时规则），然后等待卖家回复。\n\n\
+             5. **等待卖家回复 [NEGOTIATE_ACK] 或 [NEGOTIATE_COUNTER]**（300 秒超时，由 negotiate-tick 定时器管控）：\n\n\
              \x20\x20▸ 收到 **[NEGOTIATE_ACK]** → 逐字段校验卖家回传的值与你发送的 PROPOSE 完全一致：\n\
              \x20\x20\x20\x20- 全部一致 → **先做完 Step 6 落盘 + setPaymentMode 后**才发 [NEGOTIATE_CONFIRM]（卖家见 [NEGOTIATE_CONFIRM] 立刻 apply，所以 paymentMode 必须先在链上就位）。模板（**先按此格式准备好 content，但暂不发送**）：\n\
              \x20\x20\x20\x20\x20\x20content=\n\
@@ -351,7 +358,15 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20\x20\x20\x20\x20deadline: <与 ACK 完全相同>\n\
              \x20\x20\x20\x20\x20\x20→ 立即转 Step 6（落盘 + 视情况 setPaymentMode），按 Step 6 分支决定**何时**发 [NEGOTIATE_CONFIRM]\n\
              \x20\x20\x20\x20- 任一字段不一致 → 视为篡改，调 xmtp_send 告知卖家字段不一致并重新发送 [NEGOTIATE_PROPOSE]\n\n\
-             \x20\x20▸ 收到 **[NEGOTIATE_COUNTER]** → 卖家提出反提案，**带价值判断决定接不接，不要机械接受**：\n\
+             \x20\x20▸ 收到 **[NEGOTIATE_COUNTER]** → **先调 negotiate-tick 检查计数器**：\n\
+             \x20\x20\x20\x20```bash\n\
+             \x20\x20\x20\x20onchainos agent negotiate-tick {job_id} --agent-id {agent_id} --seller <卖家agentId> --event counter\n\
+             \x20\x20\x20\x20```\n\
+             \x20\x20\x20\x20检查输出 `action` 字段：\n\
+             \x20\x20\x20\x20- `action: \"counter_exceeded\"` → **不处理 COUNTER 内容**，直接 xmtp_send 发送 `[NEGOTIATE_REJECT]`（reason: 协商轮次超限，已达 3 次 COUNTER），调 `recommend --next` 切换\n\
+             \x20\x20\x20\x20- `action: \"timeout\"` → **不处理 COUNTER 内容**，直接 xmtp_send 发送 `[NEGOTIATE_REJECT]`（reason: 协商超时），调 `recommend --next` 切换\n\
+             \x20\x20\x20\x20- `action: \"continue\"` → 正常处理 COUNTER（`remaining` 字段显示剩余轮次）\n\n\
+             \x20\x20\x20\x20卖家提出反提案，**带价值判断决定接不接，不要机械接受**：\n\
              \x20\x20\x20\x20⚠️ **第 0 步：先回看 sub session 历史，确认你刚才发的 [NEGOTIATE_PROPOSE] 是否填错了**：\n\
              \x20\x20\x20\x20\x20\x20· 回看自然语言协商最后一次明确同意的金额 / paymentMode / deadline\n\
              \x20\x20\x20\x20\x20\x20· 如果 COUNTER 的金额**等于**自然语言里你最后同意的那个数 → **是你 PROPOSE 写错了，不是卖家加价**：直接用 COUNTER 的金额重发新 [NEGOTIATE_PROPOSE]，**不要再讨价还价**也不要嘴硬说『我们之前是 X』，直接修正即可\n\
@@ -389,8 +404,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              **Step 6.3 — 结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n\n\
              （新一 turn）收到 `job_payment_mode_changed` → 调 next-action --jobStatus job_payment_mode_changed → 按剧本 xmtp_send [NEGOTIATE_CONFIRM] 给卖家。卖家此时见 CONFIRM → apply（escrow）或 create_payment_charge（non_escrow），链上 paymentMode 已就位。\n\n\
              ━━━━━━━━━ 遍历结束 / 切换下一个卖家 ━━━━━━━━━\n\n\
-             当前卖家超时未回复（5 分钟）、收到 `[NEGOTIATE_REJECT]`、或协商失败 → 直接调 `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断。\n\
-             ⚠️ **超时切换时禁止给卖家发送任何消息**（不要 xmtp_send 告知超时/结束，不要 xmtp_delete_conversation 删群）——静默切走即可。超时后再收到该卖家消息一律忽略、不回复。\n\
+             当前卖家 negotiate-tick 判定超时 / COUNTER 超限 / 收到 `[NEGOTIATE_REJECT]` / 协商失败 → 先调 `negotiate-tick --event reject` 记录终止状态，再调 `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断。\n\
+             ⚠️ **超时/超限切换时先发 [NEGOTIATE_REJECT] 给卖家**（reason 填超时/超限原因），然后不再发任何消息。不要 xmtp_delete_conversation 删群。超时后再收到该卖家消息一律忽略、不回复。\n\
              推荐列表全部遍历完（或初始推荐列表为空）→ 先调 `session_status` 拿 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7);再调用 xmtp_prompt_user 引导用户选择：\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
              用户选择 A 并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：指定卖家 agentId=<用户提供的agentId>\") relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
@@ -945,6 +960,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20deadline: <与 [NEGOTIATE_ACK] 完全相同>\n\n\
              ⚠️ **严禁**用自然语言「请你 apply / 请接单」绕过——卖家 flow.rs 把 `[NEGOTIATE_CONFIRM]` 字面量当 apply 唯一触发器，自然语言指令**根本不会被识别**。\n\
              ⚠️ apply 是卖家动作，买家不执行 apply。\n\n\
+             **Step 3b — 标记协商完成：**\n\
+             ```bash\n\
+             onchainos agent negotiate-tick {job_id} --agent-id {agent_id} --seller <providerAgentId> --event confirm\n\
+             ```\n\n\
              **Step 4 — 通知用户：**\n\
              调用 xmtp_dispatch_user：\n\
              \x20\x20content: **{title_display}**（{job_id}）更新支付方式成功，设置卖家 **<providerName>**（<providerAgentId>）接单中...\n\n\
@@ -965,6 +984,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20tokenAmount: <与 [NEGOTIATE_ACK] 完全相同>\n\
              \x20\x20deadline: <与 [NEGOTIATE_ACK] 完全相同>\n\n\
              ⚠️ **严禁**用自然语言绕过——卖家 flow 只识别 [NEGOTIATE_CONFIRM] 字面量。\n\n\
+             **Step 3b — 标记协商完成：**\n\
+             ```bash\n\
+             onchainos agent negotiate-tick {job_id} --agent-id {agent_id} --seller <providerAgentId> --event confirm\n\
+             ```\n\n\
              **Step 4 — 紧接着执行 confirm-accept 上链（不结束 turn，不等卖家回应）**：\n\
              ```bash\n\
              onchainos agent confirm-accept {job_id} --provider-agent-id <providerAgentId> --payment-mode non_escrow --token-symbol <sym> --token-amount <amt>\n\
@@ -1257,6 +1280,55 @@ onchainos agent create-task \\
 ⚠️ 不要说「发布成功」——此时尚未上链确认。上链确认由 job_created 消息触发。
 ⚠️ 不要调 recommend——推荐在 job_created 收到后自动执行。
 ".to_string(),
+
+        // ─── negotiate_timeout: 协商超时，自动 REJECT + 切换下一个卖家 ────
+        Event::NegotiateTimeout => {
+            let seller_hint = if let Some(sid) = seller {
+                format!(
+                    "**seller 已由 --seller 参数传入：`{sid}`**（下面用 `<sellerAgentId>` 表示，值为 `{sid}`）。\n\n"
+                )
+            } else {
+                format!(
+                    "**Step 0 — 获取当前协商卖家信息（--seller 未传入，需手动获取）：**\n\
+                     ```bash\n\
+                     onchainos agent recommend {job_id} --current\n\
+                     ```\n\
+                     从输出提取 `providerAgentId`（下面用 `<sellerAgentId>` 表示）。\n\n"
+                )
+            };
+            format!(
+                "【当前状态】negotiate_timeout（协商超时 / COUNTER 轮次超限）\n\
+                 【角色】买家（Client）\n\n\
+                 【你的下一步动作（严格顺序，全自动执行，不询问用户）】\n\n\
+                 {seller_hint}\
+                 **Step 1 — 调 negotiate-tick 确认超时状态：**\n\
+                 ```bash\n\
+                 onchainos agent negotiate-tick {job_id} --agent-id {agent_id} --seller <sellerAgentId> --event timeout_check\n\
+                 ```\n\
+                 检查输出 `action` 字段：\n\
+                 - `action: \"timeout\"` → 确认超时，继续 Step 2\n\
+                 - `action: \"continue\"` → 尚未真正超时（时钟偏差），**不要 REJECT**，结束 turn 继续等待\n\
+                 - `action: \"already_terminated\"` → 该卖家已被处理（rejected/completed），结束 turn\n\n\
+                 **Step 2 — 获取 session 状态并发送 [NEGOTIATE_REJECT]：**\n\
+                 先调 `onchainos agent session-status {job_id} --agent-id {agent_id} --peer <sellerAgentId>` 获取 `sessionKey`。\n\
+                 再调 xmtp_send（需要 sessionKey）发送：\n\
+                 \x20\x20content=\n\
+                 \x20\x20[NEGOTIATE_REJECT]\n\
+                 \x20\x20jobId: {job_id}\n\
+                 \x20\x20reason: 协商超时（300秒未回复）\n\n\
+                 **Step 3 — 记录 reject：**\n\
+                 ```bash\n\
+                 onchainos agent negotiate-tick {job_id} --agent-id {agent_id} --seller <sellerAgentId> --event reject\n\
+                 ```\n\n\
+                 **Step 4 — 切换下一个卖家：**\n\
+                 ```bash\n\
+                 onchainos agent recommend {job_id} --next\n\
+                 ```\n\
+                 回到 job_created 剧本的 Step 2 路由判断。\n\
+                 推荐列表遍历完 → 按 job_created 剧本的「遍历结束」流程引导用户选择。\n\n\
+                 ⚠️ **超时后再收到该卖家消息一律忽略、不回复。**\n"
+            )
+        }
 
         // ─── 买家不会收到的事件（evaluator 质押 lifecycle）──────────
         Event::Staked
