@@ -8,7 +8,7 @@ use reqwest::Client;
 use serde_json::Value;
 use sha2::Sha256;
 
-use crate::commands::agentic_wallet::payment_flow::PaymentTier;
+use crate::commands::payment::payment_flow::PaymentTier;
 use crate::doh::DohManager;
 use crate::output::CliConfirming;
 use crate::payment_cache::{self, PaymentCache, PaymentDefault};
@@ -1498,9 +1498,9 @@ impl ApiClient {
         tier: PaymentTier,
     ) -> Result<(&'static str, String)> {
         let (proof, selected) =
-            crate::commands::agentic_wallet::payment_flow::sign_payment_auto(accepts, Some(tier))
+            crate::commands::payment::payment_flow::sign_payment_auto(accepts, Some(tier))
                 .await?;
-        crate::commands::agentic_wallet::payment_flow::build_payment_header(
+        crate::commands::payment::payment_flow::build_payment_header(
             &proof, &selected, resource,
         )
     }
