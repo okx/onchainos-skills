@@ -78,7 +78,7 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")] agent_id: Option<String>,
     },
 
-    /// List my tasks
+    /// 列出"我已有的"任务（接过的 / 我发布的）。**不要**用它找新单——找新单走 `recommend-task` / `find-jobs`
     #[command(visible_alias = "list")]
     Tasks {
         #[arg(long)] status: Option<String>,

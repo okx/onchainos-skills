@@ -623,6 +623,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20• non_escrow 路径:**什么都不做**,直接结束 turn(等 job_accepted 通知)\n\
              \x20\x20• 买家发完 [NEGOTIATE_CONFIRM] 立刻跑 confirm-accept,不等你 ACK;你回 ACK 反而触发买家循环 +「同 turn 不重复 xmtp_send」铁律。\n\n\
              ⚠️ 不要把 buyer 的自然语言『同意 / 好的 / 请 apply』当作 [NEGOTIATE_CONFIRM]——只认字面量带 `[NEGOTIATE_CONFIRM]` 标记的消息，其它一律视为协商未完成。\n\n\
+             🛑 **协议字面量白名单**：`[NEGOTIATE_*]` 只有 5 个合法值——`[NEGOTIATE_PROPOSE]` / `[NEGOTIATE_ACK]` / `[NEGOTIATE_COUNTER]` / `[NEGOTIATE_CONFIRM]` / `[NEGOTIATE_REJECT]`。**严禁造词**：`[NEGOTIATE_CONFIRM_ACK]` / `[NEGOTIATE_CONFIRM_OK]` / `[NEGOTIATE_DONE]` / `[CONFIRM_ACK]` 等都是幻觉,buyer 代码不识别,发出去等于污染会话历史。`[NEGOTIATE_CONFIRM]` **没有对应 ACK**(不像 PROPOSE→ACK 是对称握手)——收到 CONFIRM 后直接跑 Step 4 业务动作,**不回任何 P2P 消息**。\n\n\
              **Step 4 — 收到 [NEGOTIATE_CONFIRM] 校验一致后，按 paymentMode 分流：**\n\n\
              ━━━━━ 分支 A：支付方式 = escrow（担保交易）→ 必须 apply 上链 ━━━━━\n\n\
              ```bash\n\

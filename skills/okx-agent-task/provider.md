@@ -26,13 +26,30 @@
 
 用户说 "开始接单 / 找任务 / find me tasks" 时：
 
+> 🛑 **命令选择铁律**——找新单**只能**用下面这两个,**严禁**用 `agent tasks`：
+> - ❌ `onchainos agent tasks --agent-id <id>` = 列**自己已有**的任务（接过的 / 我发布的），不是找新单。用错只会得到空列表
+> - ✅ `onchainos agent recommend-task --agent-id <id>` = 拉**该 agent 能接的公开任务**
+> - ✅ `onchainos agent find-jobs` = 并发对所有 provider 跑 `recommend-task` 并汇总
+
 **前置 Agent 身份消歧**（见 SKILL.md「Agent 身份消歧」）：
-- 钱包下只有 1 个 provider → 直接用
-- 多个 provider → 先列候选问用户"用哪个？或 `全部`"
-  - 选具体：`onchainos agent recommend-task --agent-id <agentId>`
-  - 选"全部"：`onchainos agent find-jobs`（并发匹配所有 provider）
+
+- 钱包下只有 1 个 provider → 直接跑：
+  ```bash
+  onchainos agent recommend-task --agent-id <agentId>
+  ```
+- 多个 provider → 先列候选问用户「用哪个？或 `全部`」：
+  - 用户选具体 agentId（如 "936"）→
+    ```bash
+    onchainos agent recommend-task --agent-id 936
+    ```
+  - 用户选「全部」→
+    ```bash
+    onchainos agent find-jobs
+    ```
 
 返回 3-5 个推荐任务给用户选。
+
+> ⚠️ **空列表 = 终态，不要重试**：`recommend-task` / `find-jobs` 返回 `list: []` 或 `total: 0` 说明当前没有匹配该 agent 的公开任务，**立即停**——不要换命令重试（`agent tasks` 也不会有更多）、不要循环重跑、不要换参数试。直接告知用户「暂无匹配任务，稍后再试」并结束本 turn。
 
 ### 2.2 协商剧本
 
@@ -49,6 +66,30 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provi
 |---|---|---|
 | **A. 被动响应**(最常见)| 收到买家 a2a-agent-chat envelope(`sender.role===1`) | 拉上下文 + 专业匹配检查 → 调 next-action 拿协商剧本 → 按剧本发首条 |
 | **B. 主动联系**(public 任务,visibility=0)| 用户说"联系 jobX 的买家",或 sub 跑 `find-jobs` 后用户挑了任务 | `xmtp_start_conversation` 工具建群 → 调 next-action 拿协商剧本 → 按剧本发首条 |
+
+**协议字面量白名单**——`[NEGOTIATE_*]` 只有 **5 个**合法值，**严禁造词**：
+
+| 字面量 | 方向 | 用途 |
+|---|---|---|
+| `[NEGOTIATE_PROPOSE]` | buyer → provider | 三项条款提议 |
+| `[NEGOTIATE_ACK]` | provider → buyer | 回 PROPOSE |
+| `[NEGOTIATE_COUNTER]` | 双向 | 反报价 |
+| `[NEGOTIATE_CONFIRM]` | buyer → provider | 三步握手末步，**apply 唯一触发器** |
+| `[NEGOTIATE_REJECT]` | 双向 | 终止协商 |
+
+❌ 禁止幻觉的字面量包括但不限于：`[NEGOTIATE_CONFIRM_ACK]` / `[NEGOTIATE_CONFIRM_OK]` / `[NEGOTIATE_DONE]` / `[NEGOTIATE_FINAL]` / `[CONFIRM_ACK]` 等——**buyer 代码只匹配上方 5 个字面量**，造词等于发废消息+污染会话历史。
+
+> ⚠️ `[NEGOTIATE_CONFIRM]` **不需要 ACK 回话**（不像 PROPOSE→ACK 是对称握手）。buyer 发完 CONFIRM 直接跑 `confirm-accept` 上链，**不等你回话**。你回 ACK = 幻觉协议字面量 + 触发买家会话循环。
+
+**收到 `[NEGOTIATE_CONFIRM]` 的强制反射**（最容易踩的坑，单列）：
+
+1. **第一动作必须**调 next-action 拿剧本（协商期链上 status 仍是 `job_created`）：
+   ```bash
+   onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <你的agentId>
+   ```
+2. ❌ **禁止**任何对 buyer 的 P2P 回复——包括但不限于："协议生效" / "等待 job_accepted" / "已确认" / 任何 `[NEGOTIATE_*_ACK]` 字面量 / 致谢
+3. 按剧本：校验字段一致 → `escrow` 路径跑 `apply`、`non_escrow` 路径静默等 `job_accepted`，**全程不发 P2P 消息**
+4. apply 跑完直接结束 turn，等下一条系统通知
 
 **关键铁律**(剧本里也会重复,但这里先列警告):
 

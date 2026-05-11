@@ -181,16 +181,25 @@ async fn fetch_agent_profile(agent_id: &str) -> AgentProfile {
     }
     let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
 
-    // backend shape: data = [{ list, page, pageSize, total }]
+    // backend 原始 shape: data = [{ list, page, pageSize, total }]
+    // CLI `agent get` 在 queries.rs:100 走 `normalize_singleton_object`,把单元素数组解包成对象,
+    // 所以这里实际可能拿到两种 shape:
+    //   - 对象 shape (normalize 解包后): { list, page, pageSize, total }
+    //   - 数组 shape (多元素 / 未解包): [{ list, ... }]
+    // 优先按对象取,失败再回退数组。
     let list_val = data
-        .as_array()
-        .and_then(|arr| arr.first())
-        .and_then(|x| x.get("list"))
-        .cloned();
+        .get("list")
+        .cloned()
+        .or_else(|| {
+            data.as_array()
+                .and_then(|arr| arr.first())
+                .and_then(|x| x.get("list"))
+                .cloned()
+        });
     let list_arr = list_val.as_ref().and_then(|v| v.as_array());
     if list_arr.is_none() {
         eprintln!(
-            "[fetch_agent_profile] `agent get` 返回不含 data[0].list 字段，shape 异常；fallback (agentId={agent_id})"
+            "[fetch_agent_profile] `agent get` 返回不含 list 字段（object/array shape 都试过）；fallback (agentId={agent_id})"
         );
     }
 
