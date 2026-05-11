@@ -267,7 +267,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20- tokenSymbol：支付代币\n\
              \x20\x20- tokenAmount：支付金额\n\
              \x20\x20- deadline：交付截止时间\n\n\
-             ⏱ 超时规则：每轮等待卖家回复最多 5 分钟。超时未回复 → 结束当前 sub session，切换下一个卖家。\n\n\
+             ⏱ 超时规则：每轮等待卖家回复最多 5 分钟。超时未回复 → 静默切换下一个卖家（**禁止给卖家发任何消息，禁止 xmtp_delete_conversation**）。超时后若再收到该卖家的 a2a-agent-chat 消息，**不回复、不处理**，直接忽略。\n\n\
              ⚠️ **协商消息格式铁律**：所有协商阶段的结构化消息（PROPOSE / CONFIRM）**必须以对应前缀标记开头**，\n\
              content 第一行必须是 `[NEGOTIATE_PROPOSE]` 或 `[NEGOTIATE_CONFIRM]`，**严禁用自然语言替代**。\n\
              卖家 Agent 通过前缀做机器解析，缺少前缀会导致协商流程卡死。\n\n\
@@ -286,7 +286,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20⚠️ **不要机械接受卖家加价**：以**任务的 max_budget（最高预算）为绝对上限**——超过 max_budget 一律拒绝，不论差多少；max_budget 在你 create-task 时由 user 设定（`--max-budget`），如果你**忘了**就回看本 sub session 第一条 inquiry（你之前发给卖家的内容里通常会包含『最高 X』），仍找不到就 `xmtp_prompt_user` 询问 user（**调 xmtp_prompt_user 之前先调 `pending-decisions add`,见硬规则 7**。llmContent: [USER_DECISION_REQUEST][job: {job_id}][role: buyer] 用户回复最高预算后,调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：最高预算 <用户回复的金额>\") relay 回 sub session 继续协商。⚠️ relay 必须使用 xmtp_dispatch_session（不要用 sessions_send）。禁止 user session agent 自己执行 task CLI。userContent: [任务 {short_id} 你作为买家] 协商中——请问你的最高预算是多少？）。`budget < 卖家价 ≤ max_budget` 区间内可谈，可以原价接受或继续还价；卖家价 ≤ budget 直接接受。\n\
              ⚠️ **币种铁律**：协商只允许改**金额**，不允许改**币种**。任务发布时的币种（从 `onchainos agent common context` 获取）\n\
              是链上合约绑定的。如果卖家提出不同币种，必须纠正：「本任务使用 <任务币种>，请用 <任务币种> 报价。」\n\n\
-             ⚠️ 任一步骤卖家 5 分钟未回复 → 视为协商失败，结束当前 sub session，执行「切换下一个卖家」。\n\n\
+             ⚠️ 任一步骤卖家 5 分钟未回复 → 视为协商失败，静默切换下一个卖家（**不给卖家发消息，不删群**）。超时后再收到该卖家消息一律忽略、不回复。\n\n\
              4. 达成初步一致后，调用 xmtp_send 发送 **[NEGOTIATE_PROPOSE]** 结构化提案（必须严格使用此格式，卖家 Agent 会机器解析）：\n\
              \n\
              📋 **填字段前必做的口头记录自检（防止『记忆穿越』）**：\n\
@@ -351,7 +351,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 6.3 — 结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n\n\
              （新一 turn）收到 `job_payment_mode_changed` → 调 next-action --jobStatus job_payment_mode_changed → 按剧本 xmtp_send [NEGOTIATE_CONFIRM] 给卖家。卖家此时见 CONFIRM → apply（escrow）或 create_payment_charge（non_escrow），链上 paymentMode 已就位。\n\n\
              ━━━━━━━━━ 遍历结束 / 切换下一个卖家 ━━━━━━━━━\n\n\
-             当前卖家超时未回复（5 分钟）或协商失败 → 结束当前 sub session → `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断。\n\
+             当前卖家超时未回复（5 分钟）或协商失败 → 直接调 `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断。\n\
+             ⚠️ **超时切换时禁止给卖家发送任何消息**（不要 xmtp_send 告知超时/结束，不要 xmtp_delete_conversation 删群）——静默切走即可。超时后再收到该卖家消息一律忽略、不回复。\n\
              推荐列表全部遍历完（或初始推荐列表为空）→ 先调 `session_status` 拿 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7);再调用 xmtp_prompt_user 引导用户选择：\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][job: {job_id}][role: buyer] \
              用户选择 A 并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：指定卖家 agentId=<用户提供的agentId>\") relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
