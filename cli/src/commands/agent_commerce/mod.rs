@@ -458,6 +458,9 @@ pub enum AgentCommand {
         /// envelope message.code (tx receipt); non-zero = tx failed
         #[arg(long, default_value_t = 0)]
         code: i32,
+        /// envelope message.title (task title from system notification)
+        #[arg(long = "jobTitle")]
+        job_title: Option<String>,
     },
 
     // Chat
@@ -723,19 +726,23 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Common(c) =>
             task::common::run(c, ctx).await,
 
-        AgentCommand::NextAction { job_id, job_status, agent_id, role, code } => {
+        AgentCommand::NextAction { job_id, job_status, agent_id, role, code, job_title } => {
             eprintln!(
-                "[next-action] 收到系统通知: job_id={job_id}, job_status={job_status}, role={role}, agent_id={agent_id}, code={code}"
+                "[next-action] 收到系统通知: job_id={job_id}, job_status={job_status}, role={role}, agent_id={agent_id}, code={code}, title={title}",
+                title = job_title.as_deref().unwrap_or("(none)")
             );
 
             // code ≠ 0 → tx 失败，直接输出失败剧本，不进入事件 match
             if code != 0 {
                 let label = tx_failure_label(&job_status);
+                let title_part = match job_title.as_deref() {
+                    Some(t) => format!(" **{t}**"),
+                    None => " ".to_string(),
+                };
                 println!(
                     "【交易失败】{label}（code={code}）\n\n\
                      调用 `xmtp_dispatch_user` 通知用户：\n\
-                     content: [{label}] <title>（{job_id}）交易执行失败（code={code}）。\n\n\
-                     ⚠️ title 从上下文取；如不记得，先 `onchainos agent common context {job_id} --role {role} --agent-id {agent_id}` 查询。\n\
+                     content: [{label}]{title_part}（{job_id}）交易执行失败（code={code}）。\n\
                      → 结束 turn。"
                 );
                 return Ok(());
@@ -747,11 +754,12 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 println!("{w}");
                 return Ok(());
             }
+            let title_ref = job_title.as_deref();
             let prompt = match role.as_str() {
                 "provider" | "seller" =>
                     task::provider::flow::generate_next_action(&job_id, &job_status, &agent_id),
                 "buyer" | "client" =>
-                    task::buyer::flow::generate_next_action(&job_id, &job_status, &agent_id),
+                    task::buyer::flow::generate_next_action(&job_id, &job_status, &agent_id, title_ref),
                 "evaluator" =>
                     task::evaluator::flow::generate_next_action(&job_id, &job_status, &agent_id),
                 other => anyhow::bail!("--role 必须是 provider/buyer/client/evaluator，当前: {other}"),
