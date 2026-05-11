@@ -193,7 +193,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20```\n\
              \x20\x20检查返回结果中是否有服务（services 数组非空）以及服务中的 endpoint、feeAmount、feeTokenSymbol 字段。\n\n\
              \x20\x20**D-Step 2 — 按 service-list 结果路由：**\n\
-             \x20\x20- **有服务且含 endpoint（支持 x402）** → 提取 services[0] 的 feeAmount、feeTokenSymbol、endpoint，\n\
+             \x20\x20- **有服务且含 endpoint（支持 x402）** → 提取 services[0] 的 feeAmount、feeTokenSymbol、endpoint。\n\
+             \x20\x20\x20\x20⚠️ **feeAmount 是卖家注册时手动填写的，不一定等于链上实际价格**，须经 DX-Step 1 `x402-check` 验证。展示给用户时注明「注册费用」。\n\
              \x20\x20\x20\x20执行以下指定卖家 x402 流程（不跳到 A-Step 1）：\n\n\
              \x20\x20\x20\x20**DX-Step 1 — 验证 endpoint：**\n\
              \x20\x20\x20\x20```bash\n\
@@ -220,7 +221,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              输出末尾有「路由」指引，标明当前卖家是 x402 还是 A2A。\n\n\
              **Step 2 — 顺序遍历推荐列表，按 supportA2MCP 字段路由：**\n\n\
              ━━━━━━━━━ 分支 A：supportA2MCP=true → x402（无需协商，直接接单）━━━━━━━━━\n\n\
+             🛑 **x402 全自动铁律（以下两条绝对禁止）：**\n\
+             \x20\x201) ❌ **禁止停顿征求用户确认**：x402 路径从 A-Step 1 到 A-Step 3 必须一气呵成自动执行。不要展示卖家信息后等用户说「执行」「确认」再继续——recommend 输出只是 agent 内部决策数据，不是给用户看的确认表单。\n\
+             \x20\x202) ❌ **禁止调 `confirm-accept`**：x402 接单的唯一合法路径是 `set-payment-mode` → 等 `job_payment_mode_changed` → `task-402-pay`。`confirm-accept` 是 escrow/non_escrow 专用命令，x402 调它会导致支付签名缺失、endpoint 重放缺失。\n\n\
              从 recommend 输出中提取当前 provider 的 services[0]：feeAmount、feeTokenSymbol、endpoint。\n\
+             ⚠️ **feeAmount / feeTokenSymbol 是卖家注册身份时手动填写的，不一定等于链上实际最新价格。** 展示给用户时须注明「注册费用」，以 A-Step 1 `x402-check` 返回的 `amountHuman` 为链上实际费用。\n\
              从任务详情提取：tokenAmount（任务最高预算）、tokenSymbol（任务代币）。\n\n\
              **A-Step 1 — 验证 endpoint 是否是合法的 x402 服务：**\n\
              ```bash\n\

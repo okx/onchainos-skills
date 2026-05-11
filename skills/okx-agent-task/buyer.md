@@ -119,7 +119,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
 
 `job_created` 到达后，调 `onchainos agent recommend <jobId>` 获取推荐卖家列表（**只取第一页，不翻页**），**逐个**协商：
 
-1. 按路由类型处理：`⚡ x402` → 直接 confirm-accept，失败则 `--next`；`💬 A2A` → 建群 → 发询盘 → 协商
+1. 按路由类型处理：`⚡ x402` → **全自动**（x402-check → 三重校验 → set-payment-mode → task-402-pay），**禁止停顿征求用户确认，禁止调 confirm-accept**；`💬 A2A` → 建群 → 发询盘 → 协商
 2. **超时规则**：发出消息后 **5 分钟**未收到该卖家回复 → 判定超时
 3. 超时或失败 → `recommend <jobId> --next` 切下一个
 4. 全部遍历完 → 按 CLI 输出引导用户（指定卖家 → §3.2.1）
