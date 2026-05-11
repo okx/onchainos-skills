@@ -4,7 +4,7 @@ description: "Use this skill for token-level data: search tokens, trending/hot t
 license: MIT
 metadata:
   author: okx
-  version: "3.1.3"
+  version: "1.0.4"
   homepage: "https://web3.okx.com"
 ---
 
@@ -28,7 +28,12 @@ metadata:
 
 > Read `../okx-dex-market/_shared/payment-notifications.md`.
 
-Some endpoints in this skill may require x402 payment after free quota is exhausted. Every CLI response may carry a `notifications[]` array; when present, parse each entry's `code`, render the copy from the shared file, and follow its placeholder-resolution rules and `confirming: true` handling procedure.
+Some endpoints in this skill may require payment after free quota is exhausted. Every CLI response may carry a `notifications[]` array; when present, parse each entry's `code`, render the copy from the shared file, and follow its placeholder-resolution rules and `confirming: true` handling procedure.
+
+> **User-facing wording**
+> - When telling the user that an endpoint requires payment after the free quota, always describe it as payment via the **OKX Agent Payments Protocol** — keep this exact English term in user-visible messages regardless of the user's language, and use it as a fixed English noun phrase even inside otherwise-Chinese sentences.
+> - Reserve protocol literals and internal mechanics (header names, version fields, dispatcher names, "detected protocol", "loading playbook" narration) for CLI / HTTP / JSON layers only — never speak them to the user.
+> - The shared notification copy already uses neutral phrasing ("Per-call pricing", "your free quota has been used up"), so this rule mainly governs your own narration around it.
 
 ## Keyword Glossary
 
