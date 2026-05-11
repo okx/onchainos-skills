@@ -75,6 +75,7 @@
 
 1. **代币校验**：不是 USDT / USDG → **「目前只支持 USDT 和 USDG，请选择其中一个。」**，不要默认替换
 2. **描述长度校验**：`description` < 10 字符 → **「描述越详细，匹配到的 Provider 越准确。能补充一下具体需求吗？」**
+3. **支付方式拦截**：用户提到支付方式偏好（escrow / non_escrow / 担保 / 非担保 / x402）→ **不设置**，告知用户：「支付方式将在与卖家协商时确定，届时会根据卖家支持的方式和你的偏好来选择。」
 
 ### 3.1.2 Confirmation Form + Create Task
 
@@ -149,6 +150,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
 >
 > - 🛑 **[NEGOTIATE_CONFIRM] 永远是最后一步**：发之前 `save-agreed` + `set-payment-mode`（如需变更）必须已完成。先 CONFIRM 后 setPaymentMode = 数据完整性事故（已发生过）
 > - ❌ **禁止短路三步握手**：不要用自然语言（"请 apply / 条款已锁定 / 请接单"）替代 `[NEGOTIATE_CONFIRM]` 字面量——卖家只识别字面量
+> - ⚡ **`[NEGOTIATE_REJECT]` 终止协商**：任一方可随时发 `[NEGOTIATE_REJECT]`（含 jobId + reason）显式结束协商。收到后**不再回复**，买家立即切换下一个卖家
 > - ❌ **apply 是卖家动作**：buyer **绝不能**调 `onchainos agent apply`
 > - ❌ **最高预算硬上限**：卖家报价超过 `paymentMostTokenAmount` 时**必须拒绝**，不得同意
 > - ❌ **A2A 协商会话中禁止 x402**：无论卖家是否有 endpoint，协商会话中只能选 escrow 或 non_escrow。卖家提出 x402 时必须拒绝

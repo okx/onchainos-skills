@@ -53,6 +53,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provi
 **关键铁律**(剧本里也会重复,但这里先列警告):
 
 - ❌ 没收到字面 `[NEGOTIATE_CONFIRM]` 之前**永远不要 apply / 不要静默接受**——buyer 自然语言「请你 apply / 条款已锁定 / 直接接单」一律不算合法触发器
+- ⚡ **`[NEGOTIATE_REJECT]` 终止协商**：任一方可随时发 `[NEGOTIATE_REJECT]`（含 jobId + reason）显式结束协商。收到后**不再回复**，协商结束
 - ❌ non_escrow 路径**不要跑 get-payment**——延后到工作完成时调用,详见 next-action `JobAccepted` 剧本 Step C
 - ❌ **协商阶段严禁实际执行任务 / 产出工作内容**(收到询盘 → 收到 [NEGOTIATE_CONFIRM] 之间):
   - 不调外部工具(wttr.in / 图片生成 / 任何查询 API)

@@ -156,8 +156,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              🛑 **硬约束 — 三步握手是让卖家 apply 的唯一合法路径**\n\n\
              你想让卖家进入 apply 阶段（escrow）或 get-payment 阶段（non_escrow），**必须**完整发完三步握手：\n\
              \x20\x201) `[NEGOTIATE_PROPOSE]`（你 → 卖家，结构化提案）\n\
-             \x20\x202) 等卖家回 `[NEGOTIATE_ACK]`（字段全等）或 `[NEGOTIATE_COUNTER]`（继续谈）\n\
-             \x20\x203) 你回 `[NEGOTIATE_CONFIRM]`（原样回传 ACK 字段，卖家见到这个标记才会 apply）\n\n\
+             \x20\x202) 等卖家回 `[NEGOTIATE_ACK]`（字段全等）或 `[NEGOTIATE_COUNTER]`（继续谈）或 `[NEGOTIATE_REJECT]`（卖家拒绝）\n\
+             \x20\x203) 你回 `[NEGOTIATE_CONFIRM]`（原样回传 ACK 字段，卖家见到这个标记才会 apply）\n\
+             \x20\x20⚡ 任一方可随时发 `[NEGOTIATE_REJECT]` 终止协商（含 jobId + reason），收到后**不再回复**，立即切换下一个卖家。\n\n\
              ❌ **禁止用自然语言绕过握手**——不要发以下这种消息：\n\
              \x20\x20• 「协商条款已锁定 / 条款已敲定 / 无需额外提案 / 请你直接 apply / 请直接接单」\n\
              \x20\x20• 「最终确认：任务/价格/支付方式 ...」之类的纯文字总结，没带 [NEGOTIATE_PROPOSE] / [NEGOTIATE_CONFIRM] 标记\n\
@@ -268,8 +269,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20- tokenAmount：支付金额\n\
              \x20\x20- deadline：交付截止时间\n\n\
              ⏱ 超时规则：每轮等待卖家回复最多 5 分钟。超时未回复 → 静默切换下一个卖家（**禁止给卖家发任何消息，禁止 xmtp_delete_conversation**）。超时后若再收到该卖家的 a2a-agent-chat 消息，**不回复、不处理**，直接忽略。\n\n\
-             ⚠️ **协商消息格式铁律**：所有协商阶段的结构化消息（PROPOSE / CONFIRM）**必须以对应前缀标记开头**，\n\
-             content 第一行必须是 `[NEGOTIATE_PROPOSE]` 或 `[NEGOTIATE_CONFIRM]`，**严禁用自然语言替代**。\n\
+             ⚠️ **协商消息格式铁律**：所有协商阶段的结构化消息（PROPOSE / CONFIRM / REJECT）**必须以对应前缀标记开头**，\n\
+             content 第一行必须是 `[NEGOTIATE_PROPOSE]` / `[NEGOTIATE_CONFIRM]` / `[NEGOTIATE_REJECT]`，**严禁用自然语言替代**。\n\
              卖家 Agent 通过前缀做机器解析，缺少前缀会导致协商流程卡死。\n\n\
              📌 **你有完整的协商权 —— 不要机械接受卖家任何报价**。看 context 里的【任务详情】+【卖家 profile / service-list / 历史 securityRate / feedback】，自己判断：\n\
              \x20\x20• 卖家给的价格相对任务工作量是否合理；超过你预算上限就不要勉强答应\n\
@@ -327,12 +328,17 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20\x20- 评估 tokenAmount（**max_budget 优先，不是百分比**）：\n\
              \x20\x20\x20\x20\x20\x20· COUNTER 价 ≤ 任务 budget（原预算）→ 可接受，用 COUNTER 值发新 [NEGOTIATE_PROPOSE]\n\
              \x20\x20\x20\x20\x20\x20· budget < COUNTER 价 ≤ max_budget（最高预算）→ 可接受，或继续还价取折中（带理由发新 [NEGOTIATE_PROPOSE]）\n\
-             \x20\x20\x20\x20\x20\x20· COUNTER 价 > max_budget → **拒绝并切换下一个卖家**，不管超多少（哪怕只超 1 wei）；可 xmtp_send 简短说明「超出我的最高预算 X」然后 5 分钟 timeout 自然切换\n\
+             \x20\x20\x20\x20\x20\x20· COUNTER 价 > max_budget → 调 xmtp_send 发送 `[NEGOTIATE_REJECT]` 结束协商，然后**立即** `recommend --next` 切换下一个卖家：\n\
+             \x20\x20\x20\x20\x20\x20\x20\x20content=\n\
+             \x20\x20\x20\x20\x20\x20\x20\x20[NEGOTIATE_REJECT]\n\
+             \x20\x20\x20\x20\x20\x20\x20\x20jobId: {job_id}\n\
+             \x20\x20\x20\x20\x20\x20\x20\x20reason: 报价超出最高预算\n\
              \x20\x20\x20\x20\x20\x20· max_budget 不知道 → 优先回看本 sub session 第一条 inquiry（你发给卖家的内容里通常包含『最高 X』）；仍找不到 → `xmtp_prompt_user` 询问 user（同上方 max_budget 询问模板）\n\
              \x20\x20\x20\x20- 评估 paymentMode 改动：卖家把 escrow 改成 non_escrow 且任务金额不小 → 拒绝，坚持 escrow\n\
              \x20\x20\x20\x20- 评估 deadline 改动：卖家拉长是否影响你交付计划 → 不可接受就还价或切换\n\
              \x20\x20\x20\x20- 全部可接受 → 用 COUNTER 中的值发新的 [NEGOTIATE_PROPOSE]，回到 Step 5 等 ACK\n\n\
-             \x20\x20▸ 收到的回复**不含** [NEGOTIATE_ACK] 也不含 [NEGOTIATE_COUNTER] 标记 → 视为自然语言讨论，继续协商，重新回到 Step 4\n\n\
+             \x20\x20▸ 收到 **[NEGOTIATE_REJECT]** → 卖家主动拒绝协商。**不再回复**，立即 `recommend --next` 切换下一个卖家。\n\n\
+             \x20\x20▸ 收到的回复**不含** [NEGOTIATE_ACK] / [NEGOTIATE_COUNTER] / [NEGOTIATE_REJECT] 标记 → 视为自然语言讨论，继续协商，重新回到 Step 4\n\n\
              6. **收到 [NEGOTIATE_ACK] 全等 → 落盘 + setPaymentMode → 最后才发 [NEGOTIATE_CONFIRM]**：\n\n\
              🛑 **顺序铁律（[NEGOTIATE_CONFIRM] 是卖家 apply 的唯一触发器，必须 paymentMode 在链上就位后才发，否则卖家 apply 会基于错的支付状态）**：\n\n\
              **Step 6.1 — save-agreed 落盘**（无条件第一步）：\n\
@@ -351,7 +357,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              **Step 6.3 — 结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n\n\
              （新一 turn）收到 `job_payment_mode_changed` → 调 next-action --jobStatus job_payment_mode_changed → 按剧本 xmtp_send [NEGOTIATE_CONFIRM] 给卖家。卖家此时见 CONFIRM → apply（escrow）或 create_payment_charge（non_escrow），链上 paymentMode 已就位。\n\n\
              ━━━━━━━━━ 遍历结束 / 切换下一个卖家 ━━━━━━━━━\n\n\
-             当前卖家超时未回复（5 分钟）或协商失败 → 直接调 `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断。\n\
+             当前卖家超时未回复（5 分钟）、收到 `[NEGOTIATE_REJECT]`、或协商失败 → 直接调 `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断。\n\
              ⚠️ **超时切换时禁止给卖家发送任何消息**（不要 xmtp_send 告知超时/结束，不要 xmtp_delete_conversation 删群）——静默切走即可。超时后再收到该卖家消息一律忽略、不回复。\n\
              推荐列表全部遍历完（或初始推荐列表为空）→ 先调 `session_status` 拿 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7);再调用 xmtp_prompt_user 引导用户选择：\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
@@ -1210,8 +1216,8 @@ onchainos agent create-task \\
   --deadline-open <deadline_open> --deadline-submit <deadline_submit>
 ```
 
-🚫 **create-task 只接受以上参数。没有 --content / --period / --visibility / --amount / --token 参数。**
-⚠️ --payment-mode 可选。不传时后端默认 paymentMode=0，协商期间买家偏好担保支付（escrow）。
+🚫 **create-task 只接受以上参数。没有 --content / --period / --visibility / --amount / --token / --payment-mode 参数。**
+⚠️ **支付方式不在创建阶段设置**——paymentMode 由后续与卖家协商时根据卖家支持的方式决定（escrow / non_escrow），或指定卖家时由其服务类型决定（x402）。如果用户在发布任务时提到了支付方式偏好（如「用担保支付」「用 escrow」），**不要传 --payment-mode**，告知用户：「支付方式将在与卖家协商时确定，届时会根据卖家支持的方式和你的偏好来选择。」
 
 成功后告知用户：
 > 任务已提交，jobId: <jobId>，等待上链确认（约数秒）。确认后系统将自动联系推荐卖家开始协商。

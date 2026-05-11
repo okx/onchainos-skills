@@ -38,7 +38,6 @@ pub struct CreateTaskParams {
     pub deadline_open: String,
     pub deadline_submit: String,
     pub title: Option<String>,
-    pub payment_mode: Option<String>,
     pub agent_id: Option<String>,
 }
 
@@ -259,9 +258,7 @@ pub async fn handle_create(
             "acceptDeadline":    validated.open_secs,
             "submittedDeadline": validated.submit_secs
         },
-        "paymentMode":        params.payment_mode.as_deref()
-                                .map(|m| crate::commands::agent_commerce::task::common::PaymentMode::from_str(m).as_int())
-                                .unwrap_or(0)
+        "paymentMode":        0
     });
 
     let resp = client.post_with_identity("/priapi/v1/aieco/task/create", &body, &buyer_agent_id).await?;
