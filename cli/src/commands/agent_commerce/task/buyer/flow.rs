@@ -358,8 +358,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              3. （sub session 内）双方就价格/条件进行自然语言调整（可能多轮，每轮 5 分钟超时，卖家 COUNTER 上限 3 次）\n\
              \x20\x20每轮调用 xmtp_send，参数：sessionKey=<同上>，content=<协商内容>\n\
              \x20\x20⚠️ **不要机械接受卖家加价**：以**任务的 max_budget（最高预算）为绝对上限**——超过 max_budget 一律拒绝，不论差多少。`budget < 卖家价 ≤ max_budget` 区间内可谈，可以原价接受或继续还价；卖家价 ≤ budget 直接接受。\n\
-             ⚠️ **币种铁律**：协商只允许改**金额**，不允许改**币种**。任务发布时的币种（从 `onchainos agent common context` 获取）\n\
-             是链上合约绑定的。如果卖家提出不同币种，必须纠正：「本任务使用 <任务币种>，请用 <任务币种> 报价。」\n\n\
+             ⚠️ **币种可协商**：tokenSymbol 允许双方协商变更（如 USDT ↔ USDG），但须双方明确同意。协商初始币种从 `onchainos agent common context` 获取。\n\n\
              ⚠️ 任一步骤卖家 5 分钟未回复 → 视为协商超时，先 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason: 协商超时）给卖家，再 `{fallback_cmd}` 切换下一个卖家（**不删群**）。超时后再收到该卖家消息一律忽略、不回复。\n\n\
              4. 达成初步一致后，调用 xmtp_send 发送 **[NEGOTIATE_PROPOSE]** 结构化提案（必须严格使用此格式，卖家 Agent 会机器解析）：\n\
              \n\
@@ -390,7 +389,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20\x20\x20\x20\x20· 回看自然语言协商最后一次明确同意的金额 / paymentMode\n\
              \x20\x20\x20\x20\x20\x20· 如果 COUNTER 的金额**等于**自然语言里你最后同意的那个数 → **是你 PROPOSE 写错了，不是卖家加价**：直接用 COUNTER 的金额重发新 [NEGOTIATE_PROPOSE]，**不要再讨价还价**也不要嘴硬说『我们之前是 X』，直接修正即可\n\
              \x20\x20\x20\x20\x20\x20· 如果 COUNTER 的金额**高于**自然语言里你最后同意的数 → 才是卖家加价，按下方决策矩阵处理\n\n\
-             \x20\x20\x20\x20- 检查 tokenSymbol 是否被改动（禁止改币种）→ 如被改动，拒绝并纠正\n\
+             \x20\x20\x20\x20- 检查 tokenSymbol 改动：卖家提出不同币种时评估是否可接受（须双方明确同意）\n\
              \x20\x20\x20\x20- 评估 tokenAmount（**max_budget 优先，不是百分比**）：\n\
              \x20\x20\x20\x20\x20\x20· COUNTER 价 ≤ 任务 budget（原预算）→ 可接受，用 COUNTER 值发新 [NEGOTIATE_PROPOSE]\n\
              \x20\x20\x20\x20\x20\x20· budget < COUNTER 价 ≤ max_budget（最高预算）→ 可接受，或继续还价取折中（带理由发新 [NEGOTIATE_PROPOSE]）\n\

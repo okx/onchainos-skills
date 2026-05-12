@@ -553,7 +553,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x203. 我打算在 xmtp_send 里发「交付物 / 数据 / 已交付」等内容吗?\n\
              \x20\x20\x20• 是 → ❌ 停下,改成 Step 3 文字协商立场\n\
              \x20\x20\x20• 否 → ✅ 继续\n\n\
-             ⚠️ **币种从任务详情的 tokenSymbol 字段读**(USDT 或 USDG)。**禁止假设 USDT** —— 不少任务用 USDG，写错币种会让买家协议混乱。\n\n\
+             ⚠️ **币种初始值从任务详情的 tokenSymbol 字段读**(USDT 或 USDG)。**禁止假设 USDT** —— 不少任务用 USDG。币种允许协商变更，但须双方明确同意。\n\n\
              📌 **你有完整的协商权 —— 不要机械接受 buyer 的开价**。看 context 里的【任务详情】+【你的身份/profile】+【任务复杂度】，自己判断：\n\
              \x20\x20• 任务工作量是否值这个价\n\
              \x20\x20• 你 profile 上的同类服务价格（context 里的 service-list）跟 buyer 出价差多少\n\
@@ -584,7 +584,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              tokenAmount: ...\n\
              ```\n\n\
              收到 [NEGOTIATE_PROPOSE] 后**逐字段校验 + 价值判断**：\n\
-             - tokenSymbol 必须与任务详情一致（**链上币种，不允许改**）\n\
+             - tokenSymbol 是否与任务详情一致；卖家可提出不同币种，但须双方明确同意\n\
              - tokenAmount / paymentMode 是否跟你 Step 3 表达的立场一致；如果你 Step 3 还了价，看 buyer 在 [NEGOTIATE_PROPOSE] 里给的金额是否是双方折中后的合理值\n\n\
              **判断标准（带主观能动性，不是机械接受）**：\n\
              \x20\x20• 价格在你心理预期 ±10% 内、paymentMode 没硬冲突 → ACK\n\
@@ -602,7 +602,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20[NEGOTIATE_COUNTER]\n\
              \x20\x20jobId: <与 PROPOSE 相同>\n\
              \x20\x20paymentMode: <同意则原样，不同意则填你的版本>\n\
-             \x20\x20tokenSymbol: <必须与 PROPOSE 相同，禁止改币种>\n\
+             \x20\x20tokenSymbol: <同意则原样，不同意则填你期望的币种>\n\
              \x20\x20tokenAmount: <你期望的金额>\n\
              \x20\x20reason: <简要说明修改原因>\n\n\
              ▸ **完全拒绝** → 调 xmtp_send 发送 `[NEGOTIATE_REJECT]` 结束协商：\n\
