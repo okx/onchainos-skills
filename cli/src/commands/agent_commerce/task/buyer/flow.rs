@@ -319,10 +319,27 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              1. 调用 xmtp_send 发送第一条询盘消息（自然语言，不要把 budget 数字直接抛给卖家——让卖家先给报价，你再判断）：\n\
              \x20\x20content=<任务描述 + 期望交付物 + paymentMode 倾向 + deadline，**先不暴露上限价**>\n\
              \x20\x20→ 等待卖家回复（300 秒超时，由 negotiate-tick 管控）\n\
-             2. （sub session 内）卖家回复报价（金额、代币、支付方式偏好、预计交付时间）\n\
-             3. （sub session 内）双方就价格/条件进行调整（可能多轮，每轮 300 秒超时，最多 3 次 COUNTER）\n\
+             2. （sub session 内）卖家回复报价（金额、代币、支付方式偏好、预计交付时间）\n\n\
+             🔴 **Step 2.5 — 卖家首次报价评估（全自动，禁止问用户）**：\n\
+             收到卖家自然语言报价后，**立即**从报价中提取最低价格，与任务 budget / max_budget 做对比。\n\
+             max_budget 从 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 的 `paymentMostTokenAmount` 字段获取。\n\n\
+             \x20\x20| 卖家报价 | 动作 | 说明 |\n\
+             \x20\x20|---|---|---|\n\
+             \x20\x20| ≤ budget | → 价格可接受；继续确认 deliverable/paymentMode/deadline 等条款，全部明确后进 Step 4 | 价格在预算内，但其他条款仍需协商 |\n\
+             \x20\x20| budget < 报价 ≤ max_budget | → 进 Step 3 自然语言还价 | 有谈判空间，自主砍价 |\n\
+             \x20\x20| > max_budget | → **自动 REJECT + 切换**（见下方） | 超出硬上限，不可接受 |\n\n\
+             \x20\x20**报价 > max_budget 的强制动作（全自动执行，不询问用户，不 xmtp_dispatch_user）**：\n\
+             \x20\x20a) xmtp_send 发送 `[NEGOTIATE_REJECT]`：\n\
+             \x20\x20\x20\x20content=\n\
+             \x20\x20\x20\x20[NEGOTIATE_REJECT]\n\
+             \x20\x20\x20\x20jobId: {job_id}\n\
+             \x20\x20\x20\x20reason: 报价超出最高预算\n\
+             \x20\x20b) `onchainos agent negotiate-tick {job_id} --agent-id {agent_id} --seller <卖家agentId> --event reject`\n\
+             \x20\x20c) `onchainos agent recommend {job_id} --next` 切换下一个卖家\n\
+             \x20\x20d) 回到 Step 2 路由判断\n\n\
+             3. （sub session 内）双方就价格/条件进行自然语言调整（可能多轮，每轮 300 秒超时）\n\
              \x20\x20每轮调用 xmtp_send，参数：sessionKey=<同上>，content=<协商内容>\n\
-             \x20\x20⚠️ **不要机械接受卖家加价**：以**任务的 max_budget（最高预算）为绝对上限**——超过 max_budget 一律拒绝，不论差多少。max_budget 从 `onchainos agent common context {job_id} --role buyer --agent-id {agent_id}` 的 `paymentMostTokenAmount` 字段获取。`budget < 卖家价 ≤ max_budget` 区间内可谈，可以原价接受或继续还价；卖家价 ≤ budget 直接接受。\n\
+             \x20\x20⚠️ **不要机械接受卖家加价**：以**任务的 max_budget（最高预算）为绝对上限**——超过 max_budget 一律拒绝，不论差多少。`budget < 卖家价 ≤ max_budget` 区间内可谈，可以原价接受或继续还价；卖家价 ≤ budget 直接接受。\n\
              ⚠️ **币种铁律**：协商只允许改**金额**，不允许改**币种**。任务发布时的币种（从 `onchainos agent common context` 获取）\n\
              是链上合约绑定的。如果卖家提出不同币种，必须纠正：「本任务使用 <任务币种>，请用 <任务币种> 报价。」\n\n\
              ⚠️ 任一步骤卖家 300 秒未回复 → negotiate-tick 判定超时，发 [NEGOTIATE_REJECT] 后切换下一个卖家（**不删群**）。超时后再收到该卖家消息一律忽略、不回复。\n\n\
@@ -465,7 +482,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20任务描述：<description>\n\
              \x20\x20交付物：<deliverable>\n\
              \x20\x20卖家 AgentID：<providerAgentId>\n\
-             \x20\x20支付方式：escrow（担保）\n\
+             \x20\x20支付方式：担保\n\
              \x20\x20金额：<tokenAmount> <tokenSymbol>\n\
              \x20\x20等待卖家执行并提交交付物。\n\n\
              【后续事件】\n\
@@ -479,7 +496,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20任务标题：{title_display}\n\
              \x20\x20交付物：<deliverable>\n\
              \x20\x20卖家 AgentID：<providerAgentId>\n\
-             \x20\x20支付方式：non_escrow（先交付后支付）\n\
+             \x20\x20支付方式：非担保（先交付后支付）\n\
              \x20\x20金额：<tokenAmount> <tokenSymbol>\n\
              \x20\x20卖家交付后会发送 paymentId，届时自动完成支付。\n\n\
              ⚠️ **不要在此 turn 执行 complete**——买家尚未收到交付物和 paymentId。\n\
@@ -581,7 +598,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20\x20\x20📁 交付物文件路径：<localPath>（⚠️ 必须是完整绝对路径，如 /Users/xxx/Downloads/task预发.png，严禁只写文件名）\n\
              \x20\x20\x20\x20<如果 deliverableText 非空，追加：卖家说明：<deliverableText>>\n\
              \x20\x20\x20\x20<如果 qualityStandards 非空，追加：验收标准：<qualityStandards>>\n\
-             \x20\x20\x20\x20支付方式：escrow（担保）\n\
+             \x20\x20\x20\x20支付方式：担保\n\
              \x20\x20\x20\x20请选择：\n\
              \x20\x20\x20\x201. 验收通过 → 回复「验收通过」\n\
              \x20\x20\x20\x202. 拒绝 → 回复「拒绝，原因是<原因>」\n\n\
@@ -591,7 +608,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20\x20\x20<deliverableText 完整原文，不截断不概括>\n\
              \x20\x20\x20\x20---交付物结束---\n\
              \x20\x20\x20\x20<如果 qualityStandards 非空，追加：验收标准：<qualityStandards>>\n\
-             \x20\x20\x20\x20支付方式：escrow（担保）\n\
+             \x20\x20\x20\x20支付方式：担保\n\
              \x20\x20\x20\x20请选择：\n\
              \x20\x20\x20\x201. 验收通过 → 回复「验收通过」\n\
              \x20\x20\x20\x202. 拒绝 → 回复「拒绝，原因是<原因>」\n\n\
@@ -734,7 +751,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              content：\n\
              \x20\x20\x20\x20[任务完成] **{title_display}**（{job_id}）已验收通过，资金已释放给卖家。\n\
              \x20\x20\x20\x20  - 支出：**<tokenAmount> <tokenSymbol>**\n\
-             \x20\x20\x20\x20  - 支付方式：**escrow（担保支付）**\n\
+             \x20\x20\x20\x20  - 支付方式：**担保**\n\
              \x20\x20\x20\x20  - 链上凭证：<txHash>（来自 complete CLI 输出）\n\
              \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
              \x20\x20\x20\x20\n\
@@ -749,7 +766,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              content：\n\
              \x20\x20\x20\x20[任务完成] **{title_display}**（{job_id}）已完成，交付物已收到，支付已完成。\n\
              \x20\x20\x20\x20  - 支出：**<tokenAmount> <tokenSymbol>**\n\
-             \x20\x20\x20\x20  - 支付方式：**非担保（non_escrow）**\n\
+             \x20\x20\x20\x20  - 支付方式：**非担保**\n\
              \x20\x20\x20\x20  - 完成时间：<现在的时间戳>\n\
              \x20\x20\x20\x20\n\
              \x20\x20\x20\x20本任务流程结束。\n\n\
