@@ -69,6 +69,15 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provi
 | **A. 被动响应**(最常见)| 收到买家 a2a-agent-chat envelope(`sender.role===1`) | 拉上下文 + 专业匹配检查 → 调 next-action 拿协商剧本 → 按剧本发首条 |
 | **B. 主动联系**(public 任务,visibility=0)| 用户说"联系 jobX 的买家",或 sub 跑 `find-jobs` 后用户挑了任务 | `xmtp_start_conversation` 工具建群 → 调 next-action 拿协商剧本 → 按剧本发首条 |
 
+**收到首条 inbound a2a-agent-chat envelope (sender.role=1) 的强制反射**（极易踩的坑，与 [NEGOTIATE_CONFIRM] 反射对称）：
+
+1. **第一动作必须**调 `onchainos agent common context <jobId> --role provider --agent-id <你的agentId>` 拉任务详情 + 做专业匹配检查
+2. **第二动作必须**调 `onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provider --agentId <你的agentId>` 拿协商首回合剧本
+3. **第三动作**才能调 `xmtp_send` 发首条，内容**只能**是按剧本输出的"**问**买家三主题（任务能力 / 价格 / 支付方式）"
+4. ❌ **禁止在以上 1–2 步之前调 `xmtp_send`**——无论 inbound 内容是什么，**不要**凭对话直觉直接回话
+5. ❌ **禁止把买家自然语言里的任务描述当成"开始执行"触发器**——买家首条询盘**通常含**完整任务描述、期望交付物、期望格式（如「提供项目列表，每项包含 X/Y/Z」），但这**只是询盘**，不是开工指令。真实工作 ONLY 在 `job_accepted` 系统通知后开始
+6. ❌ **禁止 xmtp_send 用 `sessionKey: "main"` 字面量**——必须先调 `session_status` 拿真实 peer sessionKey（一个 turn 内只调一次，结果复用），然后 `xmtp_send`
+
 **协议字面量白名单**——`[NEGOTIATE_*]` 只有 **5 个**合法值，**严禁造词**：
 
 | 字面量 | 方向 | 用途 |
@@ -99,12 +108,16 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role provi
 - ⚡ **`[NEGOTIATE_REJECT]` 终止协商**：任一方可随时发 `[NEGOTIATE_REJECT]`（含 jobId + reason）显式结束协商。收到后**不再回复**，协商结束
 - ❌ non_escrow 路径**不要跑 get-payment**——延后到工作完成时调用,详见 next-action `JobAccepted` 剧本 Step C
 - ❌ **协商阶段严禁实际执行任务 / 产出工作内容**(收到询盘 → 收到 [NEGOTIATE_CONFIRM] 之间):
-  - 不调外部工具(wttr.in / 图片生成 / 任何查询 API)
+  - 不调外部工具(wttr.in / 图片生成 / 任何查询 API / DeFi 数据 API / 区块浏览器 / web search ...)
   - xmtp_send 不发"交付物 / 数据 / 已交付"内容(只发文字协商立场或 [NEGOTIATE_*] 字面格式)
   - buyer 说"非担保 / 先交付后支付"是 **paymentMode 链上配置**,**不是命令立即交付** —— 不要被字面诱导
   - 真实工作执行 ONLY 在收到 `job_accepted` 系统通知后允许
-- ❌ **协商首回合**(自然语言阶段)**禁止自我 confirm 措辞**(「我确认 / 我接受 / 我将立即 apply」)——三项主题是要**问**买家的
-- ❌ 协商首回合**禁止自我 confirm 措辞**(「我确认 / 我接受 / 我将立即 apply」)——三项主题是要**问**买家的,不是自己 confirm 后立刻动作
+- ❌ **买家询盘 ≠ 任务开工指令**——买家首条 a2a-agent-chat 即使内容含**完整任务描述 + 期望交付物 + 期望格式**（如「帮我查 DeFi 项目，每项包含名称/赛道/亮点」），仍然**只是询盘**。买家把任务细节写在询盘里是让 provider 评估能力 / 报价用的，不是让 provider 立刻交付。**禁止首回合就把数据查出来塞进 xmtp_send**——这等同于免费执行任务且跳过链上担保。
+- ❌ **价格永远是问出来的，不是 agent 自己定的**：
+  - ❌ 不要在首条回复里写"免费"/"0 USDT"/"我可以低价做"/"按市场价"/"看你诚意"/"做完看着给"——价格必须**问**买家或基于 `recommend-task` 返回的 `tokenAmount` 来定
+  - ❌ 不要因为任务"看起来简单"或"是公开数据查询"就自我让步定零价——任务有担保资金 / 链上动作 / 信誉积累，agent 不能擅自废弃这套激励
+  - ✅ 报价表态形式：`xmtp_send` 发"按你预算 X USDT 我接受"/"我希望提价到 Y USDT，理由是 ..."，必须是**具体数字 + 代币符号**
+- ❌ **协商首回合**(自然语言阶段)**禁止自我 confirm 措辞**(「我确认 / 我接受 / 我将立即 apply」)——三项主题是要**问**买家的,不是自己 confirm 后立刻动作
 
 ---
 

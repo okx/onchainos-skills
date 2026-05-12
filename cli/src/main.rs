@@ -159,7 +159,18 @@ fn main() {
 async fn run() {
     dotenvy::dotenv().ok();
 
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+
+    // The agent subsystem runs only on XLayer (chainId=196, chain name "xlayer").
+    // `--chain` is a top-level global flag, and clap 4 has no clean way to hide
+    // a global arg per-subcommand, so we just force-override the chain to "xlayer"
+    // at runtime for any agent subcommand — whatever the user passes (or omits)
+    // is silently ignored. agent_commerce internals already use the constant
+    // XLAYER_CHAIN_INDEX="196"; this just keeps Context::chain_override in sync
+    // so nothing downstream misreads it.
+    if matches!(cli.command, Commands::Agent { .. }) {
+        cli.chain = Some("xlayer".to_string());
+    }
 
     // Propagate --base-url to env so WalletApiClient, ApiClient::new(None),
     // and refresh_jwt_inline pick it up at runtime.

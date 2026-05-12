@@ -461,15 +461,19 @@ pub enum AgentCommand {
     /// Get next-step instruction prompt for current job state
     #[command(name = "next-action")]
     NextAction {
-        #[arg(long = "jobid")] job_id: String,
-        #[arg(long = "jobStatus")] job_status: String,
-        #[arg(long = "agentId")] agent_id: String,
+        /// Accepts both `--jobid` (legacy camelCase) and `--job-id` (kebab)
+        #[arg(long = "jobid", alias = "job-id")] job_id: String,
+        /// Accepts both `--jobStatus` (legacy) and `--job-status` (kebab)
+        #[arg(long = "jobStatus", alias = "job-status")] job_status: String,
+        /// Accepts both `--agentId` (legacy) and `--agent-id` (kebab)
+        #[arg(long = "agentId", alias = "agent-id")] agent_id: String,
         #[arg(long)] role: String,
         /// envelope message.code (tx receipt); non-zero = tx failed
         #[arg(long, default_value_t = 0)]
         code: i32,
-        /// envelope message.title (task title from system notification)
-        #[arg(long = "jobTitle")]
+        /// envelope message.title (task title from system notification);
+        /// accepts both `--jobTitle` (legacy) and `--job-title` (kebab)
+        #[arg(long = "jobTitle", alias = "job-title")]
         job_title: Option<String>,
         /// seller agentId (for negotiate_timeout: identifies which seller timed out)
         #[arg(long)]

@@ -163,10 +163,15 @@ build_cross_target() {
 
       if [ -n "$HAVE_ZIGBUILD" ]; then
         echo "→ [$target] cargo zigbuild (HOME 重定向 → 项目目录,绕 TCC)"
+        # RUSTUP_TOOLCHAIN=stable is required: once HOME is redirected, rustup
+        # stops reading default_toolchain from settings.toml even with RUSTUP_HOME
+        # set, causing "no default is configured" to bail. Pinning the toolchain
+        # explicitly bypasses the default-lookup path entirely.
         ( cd "$CARGO_DIR" && \
             HOME="$_zb_home" \
             CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" \
             RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" \
+            RUSTUP_TOOLCHAIN=stable \
             ZIG_GLOBAL_CACHE_DIR="$_zb_global" \
             ZIG_LOCAL_CACHE_DIR="$_zb_local" \
             TMPDIR="$_zb_tmp" \
