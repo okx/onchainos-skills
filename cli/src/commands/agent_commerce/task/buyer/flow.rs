@@ -540,11 +540,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ```bash\n\
              onchainos agent status {job_id}\n\
              ```\n\
-             提取 `deliverableUrl`、`qualityStandards` 和 `paymentMode`（int：1=escrow, 2=non_escrow, 3=x402）。\n\n\
+             提取 `paymentMode`（int：1=escrow, 2=non_escrow, 3=x402）。\n\
+             ⚠️ status 接口不返回 deliverableUrl / qualityStandards，这两个字段从 Step 2 聊天记录中提取。\n\n\
              **Step 2 — 获取交付物内容（区分文字 vs 文件）：**\n\
              先调 `session_status` 拿到本 sub session 的 sessionKey（后续 Step 3 复用，同 turn 不再重复调）。\n\
-             再调 `xmtp_get_conversation_history`（sessionKey = 上一步拿到的 sessionKey）拉取与卖家的聊天记录，\n\
-             找到卖家发送的**最近一条交付物消息**（通常是最后一条或倒数几条中包含文件元数据或交付说明的消息），判断交付物类型：\n\n\
+             再调 `xmtp_get_conversation_history`（sessionKey = 上一步拿到的 sessionKey）拉取与卖家的聊天记录，完成两件事：\n\
+             \x20\x20a) 从协商消息（[NEGOTIATE_CONFIRM] 或 [NEGOTIATE_ACK]）中提取 `qualityStandards`（验收标准）；如果找不到则留空，后续展示时省略该行。\n\
+             \x20\x20b) 找到卖家发送的**最近一条交付物消息**（通常是最后一条或倒数几条中包含文件元数据或交付说明的消息），判断交付物类型：\n\n\
              ━━━ 情况 A：交付物是文件（消息包含 fileKey / digest / salt / nonce / secret 等加密元数据）━━━\n\n\
              调用 xmtp_file_download 工具下载文件：\n\
              \x20\x20参数：\n\
@@ -559,7 +561,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              ⚠️ 调用后输出：`[buyer-xmtp] xmtp_file_download result: localPath=<返回的本地路径>`\n\n\
              下载成功后记录 localPath，**必须是完整绝对路径**（如 /Users/xxx/Downloads/task预发.png）。\n\
              ⚠️ **严禁只显示文件名**（如 cat-picture.png），用户无法定位文件。后续所有展示给用户的内容必须包含完整路径。\n\
-             如果下载失败 → 用 deliverableUrl 作为备用展示信息。\n\
+             如果下载失败 → 在展示中注明「文件下载失败，请联系卖家重新发送」。\n\
              ⚠️ 如果卖家消息除文件外还包含文字说明（如「这是交付物，请查收」），一并记录到 deliverableText。\n\
              交付物展示变量：deliverableType=file, localPath=<完整路径>, deliverableText=<文字说明，无则留空>\n\n\
              ━━━ 情况 B：交付物是纯文字（消息不含加密元数据，直接是文本内容）━━━\n\n\
@@ -577,8 +579,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20\x20\x20[任务 {short_id} 你作为买家] 卖家已提交交付物（文件），已下载到本地。\n\
              \x20\x20\x20\x20📁 交付物文件路径：<localPath>（⚠️ 必须是完整绝对路径，如 /Users/xxx/Downloads/task预发.png，严禁只写文件名）\n\
              \x20\x20\x20\x20<如果 deliverableText 非空，追加：卖家说明：<deliverableText>>\n\
-             \x20\x20\x20\x20交付物地址：<deliverableUrl>\n\
-             \x20\x20\x20\x20验收标准：<qualityStandards>\n\
+             \x20\x20\x20\x20<如果 qualityStandards 非空，追加：验收标准：<qualityStandards>>\n\
              \x20\x20\x20\x20支付方式：escrow（担保）\n\
              \x20\x20\x20\x20请选择：\n\
              \x20\x20\x20\x201. 验收通过 → 回复「验收通过」\n\
@@ -588,8 +589,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20\x20\x20---交付物内容---\n\
              \x20\x20\x20\x20<deliverableText 完整原文，不截断不概括>\n\
              \x20\x20\x20\x20---交付物结束---\n\
-             \x20\x20\x20\x20交付物地址：<deliverableUrl>\n\
-             \x20\x20\x20\x20验收标准：<qualityStandards>\n\
+             \x20\x20\x20\x20<如果 qualityStandards 非空，追加：验收标准：<qualityStandards>>\n\
              \x20\x20\x20\x20支付方式：escrow（担保）\n\
              \x20\x20\x20\x20请选择：\n\
              \x20\x20\x20\x201. 验收通过 → 回复「验收通过」\n\
@@ -628,16 +628,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20[交付物已收到] 任务 {job_id} 卖家已提交交付物（x402 模式，资金已支付）。\n\
              \x20\x20📁 交付物文件路径：<localPath>（⚠️ 必须是完整绝对路径，如 /Users/xxx/Downloads/task预发.png，严禁只写文件名）\n\
              \x20\x20<如果 deliverableText 非空，追加：卖家说明：<deliverableText>>\n\
-             \x20\x20交付物地址：<deliverableUrl>\n\
-             \x20\x20验收标准：<qualityStandards>\n\n\
+             \x20\x20<如果 qualityStandards 非空，追加：验收标准：<qualityStandards>>\n\n\
              \x20\x20▸ deliverableType=text：\n\
              \x20\x20content:\n\
              \x20\x20[交付物已收到] 任务 {job_id} 卖家已提交交付物（x402 模式，资金已支付）。\n\
              \x20\x20---交付物内容---\n\
              \x20\x20<deliverableText 完整原文，不截断不概括>\n\
              \x20\x20---交付物结束---\n\
-             \x20\x20交付物地址：<deliverableUrl>\n\
-             \x20\x20验收标准：<qualityStandards>\n\n\
+             \x20\x20<如果 qualityStandards 非空，追加：验收标准：<qualityStandards>>\n\n\
              **B-Step 2 — 终态收尾（保留 sub session）：**\n\
              {terminal_session_hint}\n\
              ⚠️ **不要自动评价**——在通知末尾引导用户自行评价：「如需评价卖家，请回复「评价」。」\n\
