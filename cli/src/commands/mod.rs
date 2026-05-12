@@ -1,10 +1,12 @@
 pub mod agentic_wallet;
 pub mod cross_chain;
+pub mod competition;
 pub mod defi;
 pub mod gateway;
 pub mod leaderboard;
 pub mod market;
 pub mod memepump;
+pub mod payment;
 pub mod portfolio;
 pub mod security;
 pub mod signal;

@@ -1,6 +1,6 @@
 # onchainos Skills
 
-onchainos skills for AI coding assistants. Provides token search, market data, wallet balance queries, swap execution, transaction broadcasting, leaderboard rankings, and token cluster analysis across 20+ blockchains.
+onchainos skills for AI coding assistants. Provides token search, market data, wallet balance queries, swap execution, transaction broadcasting, leaderboard rankings, token cluster analysis, and direct third-party DApp routing across 20+ blockchains.
 
 ## Available Skills
 
@@ -15,10 +15,12 @@ onchainos skills for AI coding assistants. Provides token search, market data, w
 | `okx-dex-swap` | Token swap via DEX aggregation (500+ liquidity sources) |
 | `okx-dex-token` | Token search, metadata, market cap, rankings, liquidity pools, hot tokens, advanced info, holder analysis, top traders, trade history, holder cluster analysis |
 | `okx-onchain-gateway` | Gas estimation, transaction simulation, broadcasting, order tracking |
-| `okx-x402-payment` | Sign x402 payment authorization via TEE for payment-gated resources |
+| `okx-agent-payments-protocol` | Unified payment dispatcher across x402 (`exact` / `aggr_deferred` schemes — TEE or local-key sign), MPP (`charge` / `session` intents — open / voucher / topUp / close, transaction or hash mode), and a2a-pay (paymentId-based create / pay / status). Routes to per-scheme/intent references. |
 | `okx-defi-invest` | DeFi product discovery, deposit, withdraw, claim rewards across Aave, Lido, PancakeSwap, Kamino, NAVI and more |
 | `okx-defi-portfolio` | DeFi positions and holdings overview across protocols and chains |
 | `okx-audit-log` | Audit log export and troubleshooting |
+| `okx-dapp-discovery` | Third-party DApp discovery and direct plugin routing — currently supports Polymarket, Aave V3, Hyperliquid, PancakeSwap V3 AMM, Morpho V1 Optimizer |
+| `okx-growth-competition` | Agentic Wallet exclusive trading competitions: list, join, view leaderboard, claim rewards |
 
 ## Supported Chains
 

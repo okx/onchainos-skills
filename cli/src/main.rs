@@ -12,9 +12,14 @@ mod home;
 mod keyring_store;
 mod mcp;
 mod output;
+mod payment_cache;
+mod payment_notify;
 mod wallet_api;
 mod wallet_store;
 mod watch;
+
+#[cfg(test)]
+mod test_helpers;
 
 use clap::{Parser, Subcommand};
 
@@ -101,10 +106,15 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::security::SecurityCommand,
     },
-    /// Payment protocols — auto-pay gated APIs (x402, etc.)
+    /// Payment protocols — auto-pay gated APIs and agent-to-agent payment links
     Payment {
         #[command(subcommand)]
-        command: commands::agentic_wallet::payment::PaymentCommand,
+        command: commands::payment::PaymentCommand,
+    },
+    /// Trading competition: list, join, rank, claim rewards (Agentic Wallet exclusive)
+    Competition {
+        #[command(subcommand)]
+        command: commands::competition::CompetitionCommand,
     },
     /// Address tracker: REST activities for KOL / smart money / custom address activity
     Tracker {
@@ -149,8 +159,7 @@ async fn run() {
 
     let cli = Cli::parse();
 
-    // Propagate --base-url to env so WalletApiClient, ApiClient::new(None),
-    // and refresh_jwt_inline pick it up at runtime.
+    // Propagate --base-url to env so WalletApiClient and refresh_jwt_inline pick it up.
     if let Some(ref url) = cli.base_url {
         std::env::set_var("OKX_BASE_URL", url);
     }
@@ -187,7 +196,8 @@ async fn run() {
         Commands::Mcp { .. } => unreachable!("handled above"),
         Commands::Wallet { command } => commands::agentic_wallet::wallet::execute(command).await,
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
-        Commands::Payment { command } => commands::agentic_wallet::payment::execute(command).await,
+        Commands::Payment { command } => commands::payment::execute(command).await,
+        Commands::Competition { command } => commands::competition::execute(&ctx, command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Ws { command } => commands::ws::execute(command).await,
         Commands::Workflow { command } => commands::workflows::execute(&ctx, *command).await,
@@ -210,10 +220,16 @@ async fn run() {
                 output::confirming(&c.message, &c.next);
                 std::process::exit(2);
             }
-            Err(e) => {
-                output::error(&format!("{e:#}"));
-                std::process::exit(1);
-            }
+            Err(e) => match e.downcast::<output::CliSetupRequired>() {
+                Ok(s) => {
+                    output::setup_required(&s.error_code, &s.message, &s.data);
+                    std::process::exit(3);
+                }
+                Err(e) => {
+                    output::error(&format!("{e:#}"));
+                    std::process::exit(1);
+                }
+            },
         }
     }
 }

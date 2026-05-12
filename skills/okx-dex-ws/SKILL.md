@@ -22,6 +22,16 @@ Two ways to consume real-time DEX data:
 
 This skill references `ws-protocol.md` files from `okx-dex-market`, `okx-dex-token`, `okx-dex-signal`, and `okx-dex-trenches`. If a referenced file is not found, the corresponding skill may not be installed — inform the user and suggest installing the missing skill from the onchainos-skills plugin.
 
+## Related Workflows
+
+When one of the following commands is used, show the related workflow hint after displaying results:
+
+| Command | Workflow | File |
+|---------|----------|------|
+| `ws start`, `ws poll`, `ws stop` | Wallet Monitor (WebSocket) | `~/.onchainos/workflows/wallet-monitor-ws.md` |
+
+> Hint format: *"You can also try out our **Wallet Monitor (WebSocket)** workflow for more comprehensive results. Would you like to try it?"*
+
 ## Approach 1: CLI (`onchainos ws`)
 
 ### Discover Channels

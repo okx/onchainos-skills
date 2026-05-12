@@ -84,6 +84,16 @@ pub enum WalletCommand {
         /// Force execution: skip confirmation prompts from the backend
         #[arg(long, default_value_t = false)]
         force: bool,
+        // ── Gas Station params (second-phase call) ──
+        /// Gas token contract address for Gas Station payment (from tokenList)
+        #[arg(long)]
+        gas_token_address: Option<String>,
+        /// Relayer ID for Gas Station (from tokenList)
+        #[arg(long)]
+        relayer_id: Option<String>,
+        /// Enable Gas Station (first-time activation, sets gasTokenAddress as default)
+        #[arg(long, default_value_t = false)]
+        enable_gas_station: bool,
     },
     /// Query transaction history or detail
     History {
@@ -93,7 +103,7 @@ pub enum WalletCommand {
         /// Chain name or ID (e.g. "ethereum" or "1", "solana" or "501"). Resolved to chainIndex internally.
         #[arg(long)]
         chain: Option<String>,
-        /// Address (required when --tx-hash is present for detail query)
+        /// Address (optional; passed to detail query if provided)
         #[arg(long)]
         address: Option<String>,
         /// Start time filter (ms timestamp)
@@ -108,13 +118,13 @@ pub enum WalletCommand {
         /// Page size limit
         #[arg(long)]
         limit: Option<String>,
-        /// Order ID filter
+        /// Order ID — when present, queries /order/detail by orderId
         #[arg(long)]
         order_id: Option<String>,
-        /// Transaction hash — when present, queries order detail instead of list
+        /// Transaction hash — when present, queries /order/detail by txHash
         #[arg(long)]
         tx_hash: Option<String>,
-        /// User operation hash filter
+        /// User operation hash — when present, queries /order/detail by uopHash
         #[arg(long)]
         uop_hash: Option<String>,
     },
@@ -142,7 +152,10 @@ pub enum WalletCommand {
         #[arg(long)]
         plugin_parameter: String,
     },
-    /// Call a smart contract (EVM inputData or SOL unsigned tx)
+    /// Call a smart contract (EVM inputData or SOL unsigned tx).
+    /// Supports Gas Station: if the account has Gas Station enabled, pass
+    /// `--gas-token-address` + `--relayer-id` (and `--enable-gas-station` for
+    /// first-time activation / re-enable) to pay gas with stablecoins.
     ContractCall {
         /// Contract address to interact with
         #[arg(long)]
@@ -180,6 +193,85 @@ pub enum WalletCommand {
         /// Force execution: skip confirmation prompts from the backend
         #[arg(long, default_value_t = false)]
         force: bool,
+        // ── Gas Station params (Phase 2: execution with chosen token) ──
+        /// Gas token contract address for Gas Station payment (from tokenList)
+        #[arg(long)]
+        gas_token_address: Option<String>,
+        /// Relayer ID for Gas Station (from tokenList)
+        #[arg(long)]
+        relayer_id: Option<String>,
+        /// Enable Gas Station (first-time activation or re-enable, sets gasTokenAddress as default)
+        #[arg(long, default_value_t = false)]
+        enable_gas_station: bool,
+        /// Transaction category for broadcast (agentBizType), e.g. "dex", "defi", "dapp"
+        #[arg(long)]
+        biz_type: Option<String>,
+        /// Strategy / skill name used for this call (agentSkillName)
+        #[arg(long)]
+        strategy: Option<String>,
+    },
+    /// Gas Station management commands
+    GasStation {
+        #[command(subcommand)]
+        command: GasStationCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum GasStationCommand {
+    /// Update the default Gas Token for a chain
+    UpdateDefaultToken {
+        /// Chain name or ID (e.g. "ethereum" or "1")
+        #[arg(long)]
+        chain: String,
+        /// Gas token contract address to set as default
+        #[arg(long)]
+        gas_token_address: String,
+    },
+    /// Enable Gas Station for a chain (DB flag only). Requires 7702 delegation to exist
+    /// on-chain (set earlier via the first-time GS flow). If this chain was never enabled,
+    /// backend returns a msg in the response body.
+    Enable {
+        /// Chain name or ID (e.g. "ethereum" or "1")
+        #[arg(long)]
+        chain: String,
+    },
+    /// Disable Gas Station for a chain (DB flag only, no on-chain action).
+    /// The 7702 delegation remains on-chain, so re-enabling later does NOT require a new upgrade.
+    Disable {
+        /// Chain name or ID (e.g. "ethereum" or "1")
+        #[arg(long)]
+        chain: String,
+    },
+    /// Read-only Gas Station readiness check on a chain.
+    /// Used by third-party plugin pre-flight: agent runs this before invoking
+    /// a plugin's on-chain command, branches on the returned `recommendation`.
+    /// Never broadcasts; safe to call repeatedly.
+    Status {
+        /// Chain name or ID (e.g. "ethereum" or "1")
+        #[arg(long)]
+        chain: String,
+        /// Sender address (optional — defaults to selectedAccountId)
+        #[arg(long)]
+        from: Option<String>,
+    },
+    /// Standalone Gas Station first-time activation.
+    /// Decoupled from `wallet send` so the agent can activate GS before
+    /// invoking a third-party plugin (which calls `wallet contract-call --force`).
+    /// Idempotent: re-calling with the same default token returns alreadyActivated=true.
+    Setup {
+        /// Chain name or ID (e.g. "ethereum" or "1")
+        #[arg(long)]
+        chain: String,
+        /// Gas token contract address (picked by the user from Scene A `tokenList`)
+        #[arg(long)]
+        gas_token_address: String,
+        /// Relayer ID (paired with `--gas-token-address` from Scene A `tokenList`)
+        #[arg(long)]
+        relayer_id: String,
+        /// Sender address (optional — defaults to selectedAccountId)
+        #[arg(long)]
+        from: Option<String>,
     },
 }
 
@@ -232,15 +324,19 @@ async fn resolve_send_amount(
                 }
             }
             Some(token_addr) => {
-                // ERC-20 / SPL — fetch decimals from token info API
-                let mut client = crate::client::ApiClient::new(None).map_err(|e| {
+                // ERC-20 / SPL — fetch decimals via wallet-side token info endpoint
+                // (works for chains not covered by the DEX, e.g. Tempo).
+                let access_token = super::auth::ensure_tokens_refreshed().await?;
+                let mut client = crate::wallet_api::WalletApiClient::new()?;
+                let chain_index_str = crate::chains::resolve_chain(chain);
+                let chain_index_num: u64 = chain_index_str.parse().map_err(|_| {
                     anyhow::anyhow!(
-                        "Failed to create API client to fetch token decimals: {}. \
-                         Use --amt with raw minimal units instead.",
-                        e
+                        "chain id '{}' is not a valid number for token-info lookup",
+                        chain_index_str
                     )
                 })?;
-                let info = crate::commands::token::fetch_info(&mut client, token_addr, chain)
+                let info = client
+                    .get_token_info(&access_token, chain_index_num, token_addr)
                     .await
                     .map_err(|e| {
                         anyhow::anyhow!(
@@ -250,15 +346,24 @@ async fn resolve_send_amount(
                             e
                         )
                     })?;
-                let info_arr = info.as_array().filter(|a| !a.is_empty()).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Token not found for address {} on chain {}. \
-                         Verify the address is correct. Use --amt with raw minimal units instead.",
-                        token_addr,
-                        chain
-                    )
-                })?;
-                match &info_arr[0]["decimal"] {
+                if cfg!(feature = "debug-log") {
+                    eprintln!(
+                        "[DEBUG][get_token_info] chainIndex={}, token={}, raw_response={}",
+                        chain_index_num, token_addr, info
+                    );
+                }
+                // Server returns either an array `[{...}]` or a single object;
+                // field name is `decimals` (plural) in practice, `decimal` in older spec.
+                let entry = info
+                    .as_array()
+                    .and_then(|arr| arr.first())
+                    .unwrap_or(&info);
+                let decimal_val = if !entry["decimals"].is_null() {
+                    &entry["decimals"]
+                } else {
+                    &entry["decimal"]
+                };
+                match decimal_val {
                     serde_json::Value::String(s) => s.parse().map_err(|_| {
                         anyhow::anyhow!("Invalid decimal value \"{}\" for token {}", s, token_addr)
                     })?,
@@ -328,6 +433,9 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             from,
             contract_token,
             force,
+            gas_token_address,
+            relayer_id,
+            enable_gas_station,
         } => {
             let chain = crate::chains::resolve_chain(&chain);
             let raw_amt = resolve_send_amount(
@@ -344,6 +452,9 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                 from.as_deref(),
                 contract_token.as_deref(),
                 force,
+                gas_token_address.as_deref(),
+                relayer_id.as_deref(),
+                enable_gas_station,
             )
             .await
         }
@@ -396,6 +507,11 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             mev_protection,
             jito_unsigned_tx,
             force,
+            gas_token_address,
+            relayer_id,
+            enable_gas_station,
+            biz_type,
+            strategy,
         } => {
             super::transfer::cmd_contract_call(
                 &to,
@@ -410,8 +526,16 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                 mev_protection,
                 jito_unsigned_tx.as_deref(),
                 force,
+                gas_token_address.as_deref(),
+                relayer_id.as_deref(),
+                enable_gas_station,
+                biz_type.as_deref(),
+                strategy.as_deref(),
             )
             .await
+        }
+        WalletCommand::GasStation { command } => {
+            super::gas_station::execute(command).await
         }
     }
 }
