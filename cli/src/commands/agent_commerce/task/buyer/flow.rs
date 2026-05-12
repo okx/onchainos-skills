@@ -591,7 +591,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20\x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
              如果用户回复「验收通过」→ 调用 xmtp_dispatch_session(sessionKey=\"<Step 2 session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：验收通过\") relay 回 sub session 执行 complete；\
              如果用户回复「拒绝，原因是...」→ 调用 xmtp_dispatch_session(sessionKey=\"<同上 sessionKey>\", content=\"[USER_DECISION_RELAY] 用户决策：拒绝，原因是<用户原话>\") relay 回 sub session 执行 reject。\
-             ⚠️ relay 必须使用 xmtp_dispatch_session 工具（不要用 sessions_send，它有 session tree 限制）。禁止 user session agent 自己执行 task CLI。\n\
+             ⚠️ relay 必须使用 xmtp_dispatch_session 工具（不要用 sessions_send，它有 session tree 限制）。禁止 user session agent 自己执行 task CLI。⚠️ xmtp_dispatch_session 只调用**一次**。\n\
              \x20\x20\x20\x20userContent（按 deliverableType 分,首行务必带 `[任务 {short_id} 你作为买家]` 前缀）：\n\n\
              \x20\x20\x20\x20▸ deliverableType=file：\n\
              \x20\x20\x20\x20[任务 {short_id} 你作为买家] 卖家已提交交付物（文件），已下载到本地。\n\
