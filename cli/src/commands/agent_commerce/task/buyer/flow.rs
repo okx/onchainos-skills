@@ -543,6 +543,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              提取 `paymentMode`（int：1=escrow, 2=non_escrow, 3=x402）。\n\
              ⚠️ status 接口不返回 deliverableUrl / qualityStandards，这两个字段从 Step 2 聊天记录中提取。\n\n\
              **Step 2 — 获取交付物内容（区分文字 vs 文件）：**\n\
+             ⚠️ **交付物内容必须在本步骤提取并完整放入 Step 3 的 userContent**——之前收到卖家消息时只发了简短通知（「等待链上确认」），用户尚未看到交付物正文。**禁止省略、概括、或只写「已发送给你」**。\n\
              先调 `session_status` 拿到本 sub session 的 sessionKey（后续 Step 3 复用，同 turn 不再重复调）。\n\
              再调 `xmtp_get_conversation_history`（sessionKey = 上一步拿到的 sessionKey）拉取与卖家的聊天记录，完成两件事：\n\
              \x20\x20a) 从协商消息（[NEGOTIATE_CONFIRM] 或 [NEGOTIATE_ACK]）中提取 `qualityStandards`（验收标准）；如果找不到则留空，后续展示时省略该行。\n\

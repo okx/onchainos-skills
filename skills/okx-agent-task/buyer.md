@@ -50,7 +50,7 @@
 >
 > 1. **paymentId 检测（最高优先级）**：`content` 中出现 `a2a_` 开头的 paymentId → 这是 non_escrow 交付阶段（`job_accepted` 之后），卖家完成工作并发来 paymentId。立即执行 `onchainos agent complete <jobId> --payment-id <paymentId> --token-symbol <sym> --token-amount <amt>`（token 信息从 `common context` 获取）。先完成支付再处理消息中其他内容。**绝不跳过支付。**
 > 2. **卖家 apply 通知**：content 含 `[PROVIDER_APPLIED]` 前缀，或语义表达"已完成接单申请上链"/"请执行 confirm-accept"（兼容无前缀的旧版本卖家） → **立即**调 `onchainos agent next-action --jobid <jobId> --jobStatus provider_applied --role buyer --agentId <你的agentId>` 拿剧本，按剧本执行 confirm-accept（⚠️ confirm-accept 参数是 `--provider-agent-id` 不是 `--agent-id`。buyer 不会收到 `provider_applied` 系统通知，此处由 a2a-agent-chat 触发。**不要查询任务 API 验证**——链上索引有延迟，`confirm-accept` 内部会做链上校验）
-> 3. **交付通知（a2a-agent-chat）** → 区分交付物形态：content 含 `fileKey` + 解密字段（`digest`/`salt`/`nonce`/`secret`）→ 调 `xmtp_file_download` 解密下载到本地；content 为纯文本 → 直接提取。然后调 `xmtp_dispatch_user` 将交付物内容展示给用户。**不引导验收、不推 xmtp_prompt_user**。验收决策等 `job_submitted` 系统事件到达后再触发。
+> 3. **交付通知（a2a-agent-chat）** → 区分交付物形态：content 含 `fileKey` + 解密字段（`digest`/`salt`/`nonce`/`secret`）→ 调 `xmtp_file_download` 解密下载到本地；content 为纯文本 → 直接提取并记录。**只做下载/提取，不展示交付物正文/摘要/概览给用户**——调 `xmtp_dispatch_user` 仅发简短通知：「卖家已发送交付物，等待链上提交确认后进入验收。」**禁止在此通知中包含交付物内容**。完整内容将在 `job_submitted` 系统事件到达后由验收决策卡片统一展示（避免用户看到两个卡片、信息分裂）。
 > 4. **协商对话** → 协商（§3.2）
 
 ---
