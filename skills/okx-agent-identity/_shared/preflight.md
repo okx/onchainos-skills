@@ -52,7 +52,12 @@ Every time before running any `onchainos` command, always follow these steps in 
 Before any `onchainos agent …` command from this skill:
 
 1. **Wallet login** — run `onchainos wallet status` (non-interactive). If not logged in, stop this skill and guide the user to `okx-agentic-wallet` for login. Do NOT attempt to log in from here.
-2. **XLayer address present** — the current wallet must have an XLayer (chainIndex `196`) address. If missing, redirect to `okx-agentic-wallet` (`wallet add` / `wallet switch`).
+2. **XLayer address present + captured** — the current wallet must have an XLayer (chainIndex `196`) address. If missing, redirect to `okx-agentic-wallet` (`wallet add` / `wallet switch`). If present, **capture the exact XLayer address value from this `wallet status` call into session state** — downstream rules use it as `<currently selected XLayer wallet address>` to:
+   - filter `agent get`'s **double-layer envelope** (only the `list[*]` wrapper whose `ownerAddress == <captured address>` is counted for K=1/K≥2 / uniqueness pre-check — see `references/role-playbook.md §Pre-check`);
+   - locate the wrapper for post-create `agentList` envelope diff when recovering a freshly-minted `agentId` (see `references/role-{requester,provider,evaluator}.md §Post-success` source 2 + `references/cli-reference.md §1` "Finding the newly-minted `agentId`");
+   - resolve `--creator-id` candidates in `feedback-guide.md §Step 2` ladder 2.
+
+   The address is stable for the rest of the session **unless** the user explicitly switches wallets via `okx-agentic-wallet` (`wallet switch` / `wallet add` followed by select). If you suspect a mid-session switch happened (user mentions a different account, `wallet status` output looks different), **re-run `wallet status` and refresh the captured address** before applying any of the rules above. Stale capture → wrong-wallet filtering → either over-counts K (treats other wallets' agents as the current wallet's) or fails to find the newly-minted agent in the diff.
 3. **Chain is fixed** — every command in this skill operates on XLayer. Never present the user with a chain-selection prompt. Never mention other chains for identity operations.
 4. **Scope reminder** — this skill only handles ERC-8004 identity (register / update / activate / deactivate / search / feedback / services). Redirect to the correct skill if the user asks for:
    - Task lifecycle (publish / accept / deliver / dispute) → `okx-agent-task`

@@ -7,6 +7,26 @@ description: >
   找 agent / 搜索 / 找做 xxx 的 provider / search / discover agent,
   给 agent 打分 / 评价 / submit feedback / rate agent, 看口碑 / 查评价 / agent reviews,
   服务列表 / agent services. Roles: requester (买家), provider (服务方), evaluator (验证者).
+  ⚠️ Identity-creation triggers ALSO include the role-as-noun, verb-elided phrasings (these
+  are the #1 reason a smaller model misroutes "再建一个买家身份" to wallet account add):
+  "建一个买家身份 / 再建一个买家身份 / 再建一个买家 / 新建买家身份 / 新建买家 /
+   注册一个买家 / 注册买家身份 / 创建买家 / 创建买家身份 / 我要个买家身份 / 我要再开个买家 /
+   建一个卖家身份 / 再建一个卖家 / 新建卖家身份 / 注册卖家身份 / 创建卖家 / 创建服务方身份 /
+   建一个 provider / 新建 provider / 再建一个 provider / 加一个 provider / 多开 provider /
+   建一个 requester / 新建 requester / 再开个 requester / 多开 requester / 再加一个 requester /
+   建一个 evaluator / 新建 evaluator / 注册验证者身份 / 注册仲裁者身份 / 再建一个验证者 /
+   create buyer identity / register buyer identity / new buyer identity / add buyer agent /
+   create seller identity / register seller identity / new seller identity / add seller agent /
+   create requester / register requester / add requester / another requester / one more requester /
+   create provider / register provider / add provider / another provider / one more provider /
+   create evaluator / register evaluator / add evaluator / another evaluator /
+   add another agent / make another agent / set up another buyer / set up another seller".
+  Even when the verb is `加 / add / 再来一个 / 多开 / set up another` — if the **object** is
+  `买家 / 卖家 / requester / provider / evaluator / 身份 / agent / identity`, the request is
+  **ALWAYS** an ERC-8004 agent identity register intent and routes here. NEVER a wallet account
+  add (`wallet add` adds a wallet ACCOUNT i.e. a new private-key holder; it is never the right
+  route for any "身份 / identity / agent / 买家 / 卖家 / requester / provider / evaluator" object —
+  if the object word is any of those, route here regardless of which verb the user chose).
   Triggered by agent registration, discovery, reputation, ERC-8004 identity on XLayer.
   Do NOT use for task lifecycle (创建任务 / 发布任务 / 接任务 / 接单 / 接一单 / 交付 / 验收 / 还价 /
   publish task / accept task / deliver / dispute) — use okx-agent-task.
@@ -34,13 +54,13 @@ This skill enforces **three** non-overridable ⛔ gates around every content-cre
 **Any `agent create`, `agent update`, or `agent feedback-submit` intent — once recognized — requires running the per-row pre-check resolution in the table below as the FIRST outbound activity.** Do not ask any field question, do not enter Q&A, do not route to a role file before that resolution is complete. The exact mechanic differs per command:
 
 - `create` / `update`: a CLI `agent get` call is mandatory (no shortcut — state may have changed since any prior lookup).
-- `feedback-submit`: resolution follows the two-ladder rule in `references/feedback-guide.md §Step 2` — either reuse a `creator-id` already established in this conversation (ladder 1, no CLI call) or run `agent get` to enumerate candidates (ladder 2). "I think I know which agent" without satisfying either ladder is NOT a satisfied gate.
+- `feedback-submit`: resolution follows the two-ladder rule in `references/feedback-guide.md §Step 2` — either reuse a `creator-id` already established in this conversation **AND verified to belong to the currently selected XLayer wallet** (ladder 1, no CLI call; if the cached id's `ownerAddress` is unknown or doesn't match the current wallet, ladder 1 does NOT apply and you must fall through to ladder 2) or run `agent get` to enumerate candidates filtered to the current wallet's wrapper (ladder 2). "I think I know which agent" without satisfying either ladder is NOT a satisfied gate.
 
 | Trigger phrase (any language) | First action — no exceptions |
 |---|---|
 | 注册 / 创建 agent / register / create agent / 上架 agent (when context implies a new identity, not a state toggle) | `onchainos agent get` (default mode, no `--agent-ids`) — list the caller's existing agents |
 | 改 / 更新 / update `#<N>` | `onchainos agent get --agent-ids <N>` — fetch current state of the target agent |
-| 给 #N 打分 / 评价 / rate / submit feedback `#<N>` | Resolve `--creator-id` per `references/feedback-guide.md §Step 2` — **either** reuse a `creator-id` already established in this conversation (ladder 1, no CLI call) **or** run `onchainos agent get` (default mode, no `--agent-ids`) to enumerate candidates (ladder 2). Both ladders satisfy this gate; "I think I know which agent" without satisfying either ladder does not. |
+| 给 #N 打分 / 评价 / rate / submit feedback `#<N>` | Resolve `--creator-id` per `references/feedback-guide.md §Step 2` — **either** reuse a `creator-id` already established in this conversation **AND verified to belong to the currently selected XLayer wallet** (ladder 1, no CLI call; cached id with unknown / mismatched `ownerAddress` does NOT satisfy ladder 1 — fall through to ladder 2) **or** run `onchainos agent get` (default mode, no `--agent-ids`) and narrow to the current wallet's wrapper to enumerate candidates (ladder 2). Both ladders satisfy this gate; "I think I know which agent" without satisfying either ladder does not. |
 
 This rule is **not overridable** by:
 
@@ -107,6 +127,16 @@ This rule is **not overridable** by:
 - "I'll just add one sentence to be helpful" — the documented suggestion line is the only addition allowed.
 
 If the documented template feels wrong for the situation, **render it verbatim anyway** and surface the friction in a feedback issue — do not patch in-flight. The cost of one slightly-awkward response is far below the cost of fragmenting the template surface across thousands of agent invocations.
+
+### ⛔ Sub-rule: post-execute template MUST be for a command that actually ran in this skill
+
+Before rendering any "identity 创建成功 / Requester identity registered / Provider 身份 #N 已创建 / ★ N 已提交" line:
+
+1. **Confirm the CLI that just ran was `onchainos agent <subcommand>`** — not `onchainos wallet add`, not `onchainos wallet switch`, not anything outside this skill's `§Command Index`. If the only CLI you invoked this turn was a non-agent one (wallet, swap, etc.), you MUST NOT render an identity-template line — that is **the** classic "wallet add 成功 → 模型说成『买家身份创建成功』" hallucination and is forbidden.
+2. **Match the role to the template.** `agent create --role requester` → only the requester template in `role-requester.md §Post-success`; `--role provider` → only `role-provider.md §Post-success`; `--role evaluator` → only `role-evaluator.md §Post-success`. Cross-role template substitution ("CLI returned but I'll render the provider line because it reads nicer") is forbidden.
+3. **If no `agent` CLI ran this turn but a smaller model produced an identity success line anyway, treat it as a hallucination and DO NOT confirm it back to the user as success.** Instead, surface the actual state (e.g., "刚才只创建了钱包账户，不是 agent 身份。要现在注册一个买家 agent 身份吗？" / "Only a wallet account was added — not an agent identity. Want to register a buyer agent identity now?") and route into the proper `§Core Flow: agent create (role-driven)` from gate 1.
+
+The "did the right CLI actually run?" check is cheap and catches the most damaging class of post-execute hallucination (claiming an on-chain write happened when it didn't). Always pay the check.
 
 ## Pre-flight Checks
 
@@ -185,7 +215,7 @@ CLI-accepted aliases: `1` / `buyer` / `requestor` → requester; `2` → provide
 |---|---|
 | 注册 / 上架 agent / register agent | §Core Flow: agent create (role-driven) |
 | 我有哪些 agent / 看我的 agent | `agent get`（列表模式，不带 `--agent-ids`）→ `references/display-formats.md §1` |
-| 看 #N 详情 / detail #N（id 可以是自己的也可以是别人的） | `agent get --agent-ids <N>` **一次**，渲染 `display-formats.md §2`（响应已含 services + reputation 聚合，**绝不 chain** `service-list` / `feedback-list`），再出 `§Post-detail prompt` 问用户要不要看评价 |
+| 看 #N 详情 / detail #N（id 可以是自己的也可以是别人的） | `agent get --agent-ids <N>` **一次**，渲染 `display-formats.md §2`（响应已含 services + reputation 聚合，访问路径 `list[0].agentList[0]` —— envelope 是双层，见 `cli-reference.md §3`；**绝不 chain** `service-list` / `feedback-list`），再出 `§Post-detail prompt` 问用户要不要看评价 |
 | 改描述 / 改头像 / 更新 agent | §Update (get → show → confirm → execute) |
 | 下架 agent | `agent deactivate --agent-id <id>` |
 | 上架 agent | `agent activate --agent-id <id>` |
@@ -264,7 +294,7 @@ The yes/no externalization is intentional — humans (and LLMs) reading prose ca
 **Per-command applicability:**
 
 - `agent create` / `agent update` — all three questions apply.
-- `agent feedback-submit` — Q1 reinterprets as "did I resolve `--creator-id` via **either** of `feedback-guide.md §Step 2`'s two ladders — (a) it was already established earlier in this conversation (`§Step 2` ladder 1, no fresh `agent get` needed), **or** (b) I ran `agent get` and picked from the result (ladder 2)?" Either ladder satisfies Q1; an "I think I know which agent" without satisfying *either* ladder does not. Q2 and Q3 apply as-is.
+- `agent feedback-submit` — Q1 reinterprets as "did I resolve `--creator-id` via **either** of `feedback-guide.md §Step 2`'s two ladders — (a) it was already established earlier in this conversation **AND verified to belong to the currently selected XLayer wallet** (ladder 1; a cached id whose `ownerAddress` is unknown or mismatches the current wallet does NOT satisfy ladder 1, regardless of how confident the model is — fall through to ladder 2), **or** (b) I ran `agent get` and picked from the result filtered to the current wallet's wrapper (ladder 2)?" Either ladder satisfies Q1; "I think I know which agent" without satisfying *either* ladder does not, and "I cached it last turn" without the wallet-match check also does not. Q2 and Q3 apply as-is.
 - `agent activate` / `agent deactivate` — these are not in the confirmation gate (state toggles). Q1 applies if `--agent-id` needed resolution; Q2/Q3 N/A.
 
 This check is the active enforcement point for the **three ⛔ gates at the top of this file** (pre-check + confirmation + post-execute, the third triggers immediately after this step).
@@ -334,8 +364,8 @@ Four gates, in order. **Never skip a gate, never combine gates into one message.
    Also accept a written role name as a fallback. CLI accepts `1`/`2`/`3` directly as `--role` aliases, so the numeric reply can be passed through.
 2. **Pre-check existing agents** (skip for passive onboarding). Run `onchainos agent get` once. **This step is the realization of `§⛔ MANDATORY pre-check gate` at the top of this file — it is a hard relay step, not "advisory before the real Q&A starts". Do NOT skip even when the user has supplied every field one-shot.**
    - **requester / evaluator**: unique per address. If the user already has one of this role, do **NOT** offer to create a new one — tell them they already have it and point to `update`. Do not enter the create flow.
-   - **provider**: may have multiple. If pre-check returns **K ≥ 1** existing provider(s), list all of them (id + name) and ask the user to choose: register another new provider, or update one of the existing ones. When K ≥ 2 and the user picks "update", a follow-up numbered question identifies which provider to update.
-   - Full wording for both K=1 and K≥2 variants (both languages), the K≥2 follow-up question, and the passive-onboarding exception in `references/role-playbook.md §Pre-check`.
+   - **provider**: may have multiple. **K is counted only within the wrapper for the currently selected XLayer wallet** (see `role-playbook.md §Pre-check` dual-scope rule — display lists all wrappers, but K=1/K≥2 branching and "list all" only enumerate the matching wrapper's `agentList`). If K ≥ 1 existing provider(s) under the current wallet, list all of them (id + name) and ask the user to choose: register another new provider, or update one of the existing ones. When K ≥ 2 and the user picks "update", a follow-up numbered question identifies which provider to update. Providers in **other** wrappers (other derived wallets under the same email / JWT) do NOT count toward this K and are NOT listed as candidates — they belong to wallets that can't sign this `create` / `update`.
+   - Full wording for both K=1 and K≥2 variants (both languages), the K≥2 follow-up question, the wallet-scoping rationale, and the passive-onboarding exception in `references/role-playbook.md §Pre-check`.
 3. **Role-specific Q&A**, one field per turn. Load the matching file:
    - requester → `references/role-requester.md` (+ Passive Onboarding sub-flow inside)
    - provider → `references/role-provider.md`
@@ -372,9 +402,13 @@ When `okx-agent-task` hands control with context `intent=need-requester`:
 - **Ask** only `name` then `description`, one per turn.
 - **Render the confirmation card** and wait for the user's `执行` / `execute` token. Passive mode does **NOT** bypass the confirmation gate — see `§⛔ MANDATORY confirmation gate` at the top of this file. The card schema is the standard requester confirmation card (`references/role-requester.md` §Confirmation).
 - **Execute** `create --role requester` only after the in-turn confirm token.
-- **Hand back** to `okx-agent-task` with one line: "已为你创建买家身份 #<id>。现在继续发布任务。" No detail card, no follow-up question.
+- **Hand back** to `okx-agent-task` with **exactly one line** in the user's language, following the `#<id>` placeholder rule in `references/display-formats.md` (top) — include `#<id>` only when the post-create response actually surfaced an id (CLI response direct or post-create envelope diff per `role-requester.md §Post-success`); when id is not available (e.g. CLI returned `{txHash}` only and the post-create `agentList` segment is absent / the diff yielded no new candidate), use the **without-id** variant. **Never render `# `, `#<id>`, `#?`, or invent a number.** No detail card, no follow-up question. Canonical variants (verbatim — pick the one matching user language and id availability):
+  - 中文，有 id：「已为你创建买家身份 #<id>。现在继续发布任务。」
+  - 中文，无 id：「已为你创建买家身份。现在继续发布任务。」
+  - English, with id: "Requester identity #<id> created. Resuming the task-publish flow."
+  - English, without id: "Requester identity created. Resuming the task-publish flow."
 
-Full contract → `references/passive-onboarding.md`.
+Full contract → `references/passive-onboarding.md` (single source of truth — if the wording above ever drifts, treat passive-onboarding.md as authoritative and update this SKILL.md inline summary to match, not the other way around).
 
 ### Search
 
@@ -533,8 +567,8 @@ Some users type their whole request in one turn: "注册一个 provider 叫 Alic
     - `agent feedback-list` — CLI's `utils::convert_feedback_list_scores` already maps top-level `average` to a 1-decimal star float and each `items[*].score` / `list[*].score` to an integer star bucket. Render directly: `★ <average>` / `★ <score>`.
     - `agent feedback-submit` (input) — CLI takes 0–5 stars via `--score` and multiplies by 20 internally (`utils::stars_to_score`). Skill passes user stars straight to `--score` — no multiplication on the skill side.
   - **Not-yet-converted endpoints** (CLI returns raw 0–100, skill still applies the round-half-up rule at render time):
-    - `agent get` — `list[*].reputation.score` is the 0–100 backend aggregate; render as `★ <round-half-up(score / 20) to 1 decimal>`.
-    - `agent search` — same as `agent get`.
+    - `agent get` — `list[*].agentList[*].reputation.score` is the 0–100 backend aggregate (note the double-layer envelope: outer `list[*]` is an accountName wrapper, agent rows live one level deeper — see `references/cli-reference.md §3`); render as `★ <round-half-up(score / 20) to 1 decimal>`.
+    - `agent search` — `items[*].reputation.score` (single-layer envelope, and note the array field is `items`, not `list` — backend list-style endpoints are inconsistent here: `agent-list` uses `list`, `agent-search` uses `items`. See `cli-reference.md §7` return schema).
     - These two are tracked for future extension into the CLI; until then the rule below applies skill-side.
   - **Canonical rounding rule** (used both inside the CLI's converters and by skill-side rendering for the not-yet-converted endpoints): `score / 20` followed by **round-half-up** tie-breaking at the displayed precision.
     - Integer star buckets (single review): `round-half-up(score / 20)` — `50 → 3`, `70 → 4`, `90 → 5`.

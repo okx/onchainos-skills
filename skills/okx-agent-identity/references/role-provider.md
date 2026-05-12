@@ -131,6 +131,8 @@ After each service is collected, echo back a one-line summary in the user's lang
 
 Two-column table (`display-formats.md` §Create/Update Diff), services numbered inline. Render in the user's language — pick ONE variant.
 
+> ⛔ The `<user-provided-endpoint>` token in the example below is a **doc-only placeholder** — at runtime substitute it with the **literal URL the user gave you in Phase 2 Q5** (or, on `update`, the new value the user just typed). **Never** copy any `https://api.example.com/...` / `https://cdn.example.com/...` / any other sample URL from these docs into the user's confirmation card. See `display-formats.md` top "URL literals are doc-only" rule.
+
 Chinese variant:
 
 | 字段 | 值 |
@@ -143,7 +145,7 @@ Chinese variant:
 | 服务[1] 描述 | 通过 MCP 按链查询协议 TVL。 |
 | 服务[1] 类型 | A2MCP |
 | 服务[1] 价格 | 10 USDT |
-| 服务[1] 接口地址 | https://api.example.com/mcp |
+| 服务[1] 接口地址 | `<user-provided-endpoint>` |
 | 服务[2] 名称 | Yield Check |
 | 服务[2] 类型 | A2A |
 | 服务[2] 价格 | （未填，链外议价） |
@@ -163,7 +165,7 @@ English variant:
 | Service [1] Description | Query protocol TVL by chain via MCP. |
 | Service [1] Type | A2MCP |
 | Service [1] Fee | 10 USDT |
-| Service [1] Endpoint | https://api.example.com/mcp |
+| Service [1] Endpoint | `<user-provided-endpoint>` |
 | Service [2] Name | Yield Check |
 | Service [2] Type | A2A |
 | Service [2] Fee | (skipped — off-chain negotiation) |
@@ -199,10 +201,12 @@ Pick the variant matching the user's language. Render **one line, declarative, n
 
 **`#<id>` substitution rule** (per `display-formats.md` top, `#<id>` placeholder rule, **with provider-specific carve-out**):
 
-- If the CLI response directly contains the new agent id, substitute it verbatim.
-- If the CLI returned `txHash` only **AND** the pre-check `agent get` lookup returned **zero** existing providers under this address, the new id can be safely **omitted** (fallback line below). Do NOT try to "derive" it from pre-check.
-- ⚠️ **Provider-specific danger zone — pre-check returned ≥ 1 existing provider(s).** Providers are multi-instance per address. The pre-check `agent get` list reflects state **before** this `create` and therefore does NOT contain the newly minted agent id. If the CLI then returns `txHash` only, **DO NOT** pick any id from the pre-check list as `#<id>` — those are *older* providers, not the new one. **Always use the fallback (omit `#<id>`)** in this case. The detail card from a future `agent get` (next user turn or later) will surface the new id authoritatively.
-- If `#<id>` is **unknown** by the rules above, **omit the `#<id> ` substring entirely** — do NOT render `#`, `#<id>`, `# ?`, or invent a number. Fallback lines:
+- The legitimate sources of `#<id>` for this post-success line are, in priority order:
+  1. **CLI response (direct):** the `create` call's response directly contains the new agent id — substitute it verbatim.
+  2. **Post-create envelope diff:** the response envelope is double-layer (see `cli-reference.md §3`), so the filter is **wrapper-level**, not agent-row-level — **two steps, in order**: (a) locate the single wrapper in `envelope.agentList.list[*]` whose `list[*].ownerAddress == <currently selected XLayer wallet address>` (the address that signed this `create`), then (b) inside **that wrapper's** `agentList[*]` only, **diff against the pre-check `agent get` snapshot** captured by §⛔ MANDATORY pre-check gate — pick the agentId that's **newly present** (in the post-create envelope but not in the pre-check snapshot). This works regardless of whether pre-check returned K=0 or K≥1 existing providers; the diff isolates the freshly-minted id either way. ❌ Do NOT write the filter as `agentList[*].ownerAddress == ...` — agent rows have no `ownerAddress` field; that phrasing always misses. See `cli-reference.md §1` "Finding the newly-minted `agentId`" for the canonical algorithm.
+  3. (Future) a follow-up `agent get` in a later turn — irrelevant for this immediate response.
+- ⚠️ **Provider-specific danger zone — DO NOT pick any id directly from the pre-check list as `#<id>`.** Pre-check reflects state *before* this `create`, so its rows are all older providers, never the newly minted one. Source 2 above is **diff-based** (post-create envelope MINUS pre-check snapshot), not "borrow from pre-check"; it picks the id that's in the post-create envelope but **not** in the pre-check snapshot. Conflating the two is a real failure mode — the agent that does "I see provider #88 in pre-check, must be the new one" instead of running the diff will surface an older provider's id as if it were freshly created, which is misleading.
+- If **both** source 1 (CLI direct id) and source 2 (envelope diff) miss — i.e. CLI returned `txHash` only **AND** the post-create `agentList` segment is also absent (WS + HTTP both failed, per `cli-reference.md §1`) **OR** the diff yielded no new candidate under the current wallet — **omit the `#<id> ` substring entirely**: do NOT render `#`, `#<id>`, `# ?`, do NOT invent a number, do NOT borrow from the pre-check list. Fallback lines:
   - Chinese: `Provider 身份已创建并默认上架（已上架）。可以 \`agent search\` 自检曝光，或直接等匹配来的任务。`
   - English: `Provider agent created and active by default. Run \`agent search\` to sanity-check exposure, or wait for matching tasks.`
 

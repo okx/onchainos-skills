@@ -67,7 +67,8 @@ The provider's `--service` is a JSON array whose elements have the fields below.
 - **用途** / Purpose: MCP server URL，买家 agent 直接连这里。 / MCP server URL the buyer's agent connects to.
 - **可见范围** / Visibility: 上链公开；需保证 skill 级访问权限。 / On-chain public; ensure skill-level access.
 - **请注意** / Please note: 必须以 `https://` 开头；A2A 即使传了 CLI 也会清掉。 / Must start with `https://`; the CLI discards the value when `servicetype` is A2A.
-- **示例** / Example: `https://api.example.com/mcp` / `https://svc.defi-analyzer.xyz/mcp`.
+- **示例** / Example: 你部署的 MCP server 公网地址（必须以 `https://` 开头，例如域名 + 路径形式）。 / Your deployed MCP server's public URL (must start with `https://`, typically a domain + path).
+- **⛔ 渲染禁令 / Render constraint**: 写到这条 spec 时**绝对不要**在 `示例 / Example` 段里贴具体的 `https://...` 字面值（包括 `https://api.example.com/...` / `https://svc.example.com/...` / 任何形如 `https://xxx.yyy/zzz` 的占位串）。原因：这些字面值会被 Lark / 飞书 / Slack / 微信等 IM 渲染器自动识别为可点击的超链接，部分用户会真的点过去，而该域名要么不存在要么是错误目标。**只用文字描述**告诉用户「填什么样的链接」，不给 URL 范本。/ When rendering this spec, do **NOT** put a literal `https://...` value inside the `Example` segment (no `https://api.example.com/...`, no `https://svc.example.com/...`, no `https://anything/anything`). IM renderers auto-linkify these and users may accidentally click — the example domains are not real targets. Describe **what kind of URL** in words; never give a URL template.
 - **Internal validation, do NOT inline into user-facing prompt** / **内部校验，不要进入对外提示**: A2MCP endpoint length ≤ 512 chars (skill-side check; CLI does not enforce length). On rejection, surface the 512-char limit verbatim in the error copy (see `troubleshooting.md` §3).
 
 ## How to deliver these in Q&A

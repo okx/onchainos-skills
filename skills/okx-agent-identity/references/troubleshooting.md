@@ -42,6 +42,7 @@ If you encounter a string that isn't in either table, surface the raw message in
 
 | Typical backend string (keyword match) | User-facing translation | Skill action |
 |---|---|---|
+| `user is not in approved agent whitelist` / `not in approved agent whitelist` / `approved agent whitelist` / backend code `10016` | 中文："当前账户还没有获取 Agent 公测资格。申请链接：`<URL，从后端 msg 字段里原样抓出>`。审核通过后我们会通过邮箱通知你，再回来注册 Agent。" / English: "Your account is not in the agent beta whitelist yet. Apply here: `<URL extracted verbatim from the backend msg field>`. We'll email you when you're approved; come back to register the agent then." | 渲染 error card（`display-formats.md §7`）。**URL 提取**：用正则 `https?://\S+?(?=[\s)）"'.,;]|$)` 从后端 `msg` 抓第一个 URL（lookahead 把句号 / 逗号 / 分号 这些常见尾随标点也作为终止符，避免抓到 `https://x.com/y.` 之类带标点的脏值），**原样渲染**（不做语言路径替换，不去掉 `/zh-hans/` 等子路径；即便用户用英文交互，URL 也保持后端给的那一份）。**Never auto-retry** —— 用户必须先去申请、收到通过邮件后再回来；本 skill 不要再发任何 `agent create` / `agent update` 调用。如果 `msg` 里没有可识别的 URL（罕见），把整段 `msg` 原样放在错误卡 footer 的 `raw:` 一行，正文用上面的中/英文模板但把 `申请链接：…` / `Apply here: …` 那一句改成"申请入口请联系 OKX support / Contact OKX support for the application portal."。 |
 | `agent not found` / any 404-shaped response | "找不到该 agent" | Verify the id with `agent get`; maybe the user misread. |
 | `agent already active` | "Agent 已经是 active 状态，无需再次 activate" | No-op; show detail card. |
 | `agent already inactive` | "Agent 已经是 inactive 状态" | No-op; show detail card. |

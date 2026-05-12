@@ -28,11 +28,15 @@ Extract the `--agent-id` from the user's prompt.
 
 Walk this ladder in order:
 
-1. **Already known in this conversation?** If the user has said "我的 agent 是 #N" or previously created `#N`, use it. No lookup needed.
-2. **Run `onchainos agent get`** (no `--agent-ids`). In default list mode the backend returns the caller's **own** agents — pick one of these as `--creator-id`. (`agent get --agent-ids X` is the open-lookup mode for any agent's record and is irrelevant here.)
-   - **0 agents** → STOP. Tell the user: "你还没有注册自己的 agent，先 `agent create` 一个（任意 role）才能给别人打分。" Offer to enter the `create` flow.
-   - **1 agent** → silently use its agentId as `--creator-id`; mention the choice in the confirmation: "你的 agent #N <name> 会作为 creator 出现在这条评分上。"
-   - **Multiple agents** → ask the user which to use, using the numbered-options pattern (`SKILL.md §Choice prompts`) in the user's language:
+1. **Already known in this conversation — AND verified to belong to the currently selected XLayer wallet.** If the user has said "我的 agent 是 #N" or previously created `#N` in this conversation, the cached id is a candidate, but you may only use it **if it belongs to the wallet that will sign this `feedback-submit` tx** (i.e., the currently selected XLayer wallet, same address that ladder 2 narrows to). Wallet-scope guard, in order:
+   - If the cached id's `ownerAddress` was already captured in this conversation (from a prior `agent get` / `create` response), compare directly to the current selected wallet address. Match → use it (no lookup needed). Mismatch → **fall through to ladder 2**; do not silently reuse.
+   - If the cached id was only mentioned by the user (e.g. "我的 agent 是 #N") without any captured `ownerAddress`, **fall through to ladder 2** — the user's mental model may treat the entire email / JWT as "my agents", which includes agents under other derived wallets that cannot sign this tx. Ladder 2's wrapper filter is what disambiguates.
+   - If the user has switched wallets since the cached id was first mentioned (any `okx-agentic-wallet wallet switch` / `wallet add` in between), **fall through to ladder 2** unconditionally — wallet switch invalidates the cache for `--creator-id` purposes even if the id technically still exists.
+   When falling through, do NOT echo "I had #N cached but it doesn't belong to the current wallet" as the user-visible explanation by default — just run ladder 2 and surface the new candidate list. Surface the wallet-mismatch reason only if the user explicitly asks "why didn't you use #N?" or if ladder 2 yields 0 candidates and you need to explain why creating an agent under the current wallet is the next step.
+2. **Run `onchainos agent get`** (no `--agent-ids`). The response is a **double-layer envelope** (`cli-reference.md §3`): outer `list[*]` is an accountName wrapper (one per derived wallet the JWT caller has visibility into), agent rows live at `list[*].agentList[*]`. Since `--creator-id` must be held by the **same XLayer wallet that will sign this `feedback-submit` tx**, the candidate set is **NOT** all `agentList[*]` across all wrappers — narrow to the single wrapper where `wrapper.ownerAddress == <currently selected XLayer wallet address>`, then count agents in that wrapper's `agentList`:
+   - **0 agents under the current wallet** → STOP. Tell the user: "你当前钱包下还没有注册 agent，先 `agent create` 一个（任意 role）才能给别人打分。" Offer to enter the `create` flow. (Other wrappers may have agents — those belong to other derived wallets under the same email / JWT, and **cannot** sign this tx; do not list them as candidates.)
+   - **1 agent under the current wallet** → silently use its agentId as `--creator-id`; mention the choice in the confirmation: "你的 agent #N <name> 会作为 creator 出现在这条评分上。"
+   - **Multiple agents under the current wallet** → ask the user which to use, using the numbered-options pattern (`SKILL.md §Choice prompts`) in the user's language:
 
      Chinese:
      ```
@@ -53,6 +57,18 @@ Walk this ladder in order:
      Do not auto-pick — `creator-id` is public and affects the user's reputation of their own agent.
 
 ### Step 3 — Validate stars (0–5 integer)
+
+> ⛔ **`--score` MUST come from a user reply inside THIS feedback-submit flow** — i.e., a reply produced **after** the current `--agent-id` (target) and `--creator-id` (caller) pair was locked, and **before** the Step 5 confirmation card for the same pair was rendered. **Carrying a star count forward from any other source is an AI hallucination and is forbidden.** Specifically NOT allowed (the model must STOP and ask the star question instead):
+>
+> - **Reuse from a prior `feedback-submit` round.** "上一轮给 #42 打了 4 星，这轮 #58 也用 4 星" — different target, different rating intent, must re-ask. Even if the user *did* say "都打 4 星" earlier, do not carry the value silently; re-ask for the new target.
+> - **Inference from the user's first message.** "给 #42 打个分" / "rate #42" / "给这家伙打分" — the verb "打分 / rate" does NOT contain a star count. Ask Q.
+> - **"Same user, same provider, similar context"** — every rating is its own on-chain write; previous ratings (even on the same target) do not authorize a new one.
+> - **Default values** — no `3 stars` default, no median, no "looks decent so 4 stars". Stars come from the user this turn, full stop.
+> - **One-shot capture caveat.** If the user said "给 #42 打 4 星，理由是交付及时" in a single message during THIS feedback flow, that IS a current-flow user statement of `--score=4` and counts. But once Step 5's confirmation card is rendered and the user replies `执行`, the score is locked; do NOT mutate it.
+>
+> **Operational test** (apply before invoking the CLI in Step 6): can you point to **the exact user message in this feedback flow** where the star count was stated? If you have to reason "they probably mean…" or "based on earlier we know…" or "it's the same as last time" — that's the signal to STOP and ask. The cost of one extra Q ("给 #<target> 打几星？0–5 星整数") is far below the cost of submitting a wrong on-chain rating that publicly affects both the target's reputation and the caller's `creator-id`.
+>
+> This rule applies to **every** `feedback-submit` invocation, even in the same conversation, even back-to-back. There is no "we just asked, skip the question this time" exception.
 
 - Integer 0–5. CLI enforces this range natively (`parse_u32_arg(..., Some(0), Some(5), false)`) and rejects anything outside; skill should still pre-validate to surface a friendlier error than the raw CLI bail.
 - Reject non-integers, ranges outside 0–5, decimals, "stars" outside the enum.
@@ -99,7 +115,7 @@ The rating row shows `★ N` where N is the integer 0–5. Never render `85 / 10
 
 ### Step 6 — Execute (maintainer reference — not shown to user)
 
-> Before invoking the CLI, run the **3-question pre-execute self-check** in `SKILL.md §Step 3: Execute`. For `feedback-submit`, the three questions are: (Q1) was `--creator-id` resolved via **either** ladder 1 (already established in this conversation) **or** ladder 2 (`agent get` enumeration) of `§Step 2` above? (Q2) does the user's **most recent** turn literally contain `执行` / `execute` / `yes` / `好` / `确认` / `go`? (Q3) are all field values in the just-rendered Step 5 card byte-identical to what is about to go to the CLI (target id, creator id, score, description, task-id)? **Any answer ≠ yes → render Step 5's card and wait.** Earlier-turn confirm tokens and confirms of different writes do NOT count for Q2.
+> Before invoking the CLI, run the **3-question pre-execute self-check** in `SKILL.md §Step 3: Execute`. For `feedback-submit`, the three questions are: (Q1) was `--creator-id` resolved via **either** ladder 1 (already established in this conversation) **or** ladder 2 (`agent get` enumeration) of `§Step 2` above? (Q2) does the user's **most recent** turn literally contain `执行` / `execute` / `yes` / `好` / `确认` / `go`? (Q3) are all field values in the just-rendered Step 5 card byte-identical to what is about to go to the CLI (target id, creator id, score, description, task-id) **AND was `--score` produced by a user reply inside THIS feedback flow per `§Step 3`'s "Operational test" — not carried over from a prior round, not inferred from a verb-only "打分 / rate" utterance, not a default**? **Any answer ≠ yes → render Step 5's card (or, if Q3 score-origin failed, return to Step 3 and ask the star question) and wait.** Earlier-turn confirm tokens and confirms of different writes do NOT count for Q2. A star count from a **previous** `feedback-submit` flow does NOT count for Q3 even if the model "remembers" it.
 
 ```bash
 # --score is 0–5 stars (integer). CLI multiplies by 20 internally before
