@@ -96,6 +96,7 @@
 | Error | Response |
 |---|---|
 | Unsupported token | "目前只支持 USDT 和 USDG，请选择其中一个。" |
+| Budget / max-budget 币种不一致 | "预算和最高预算必须使用同一种代币，请确认你要使用 USDT 还是 USDG？" |
 | Description < 10 chars | "描述越详细，匹配到的 Provider 越准确。能补充一下具体需求吗？" |
 | Title > 30 chars | Agent 自动重新总结 |
 | Max budget < budget | "最高预算不能小于预算。" |
