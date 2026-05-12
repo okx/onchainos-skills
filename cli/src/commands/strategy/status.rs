@@ -1,30 +1,12 @@
-//! Order status enum + BE error code classification.
-//!
-//! Both topics share the same shape: integer keyed → typed enum + tests.
-//! Keeping them in one file because:
-//! - Both are referenced by every subcommand handler
-//! - tech-design.md §5.4 / §5.5 lists them as a pair
-//! - Neither is large enough to warrant its own file
-//!
-//! Sources:
-//! - status: `.claude/strategyTrading/api/dex-list-orders.md` (Status enum section)
-//! - errors: `.claude/strategyTrading/tech-design.md` §5.5
+//! Order status enum + BE error code classification + execution-event
+//! terminal-state helper. All integer-keyed; tech-design §5.4 / §5.5.
 
 use anyhow::{anyhow, Result};
 use std::fmt;
 
-// ────────────────────────────────────────────────────────────────────
-// Order status (9 values — TeeSaOpenOrderStatusEnum)
-//
-// SPEEDING_UP (-4) was removed 2026-05-08 — product decision: not surfaced
-// to users and CLI does not advertise it as a filter option. If BE ever
-// emits it, `TryFrom` will return Err and `status_label` will render
-// "unknown(-4)".
-//
-// Why integer-keyed and not string-matched: tech-design.md §5.5 explicitly
-// warns "do NOT match by msg string". The API contract for `status` is a
-// number; matching anything else is brittle.
-// ────────────────────────────────────────────────────────────────────
+// ── Order status (TeeSaOpenOrderStatusEnum, 9 values) ──
+// SPEEDING_UP (-4) removed 2026-05-08: BE shouldn't emit; if it does,
+// TryFrom errors and status_label renders "unknown(-4)".
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
@@ -95,19 +77,17 @@ pub fn status_label(value: i32) -> String {
         .unwrap_or_else(|_| format!("unknown({value})"))
 }
 
-// ────────────────────────────────────────────────────────────────────
-// BE error codes (tech-design §5.5)
-// ────────────────────────────────────────────────────────────────────
+// ── BE error codes (tech-design §5.5) ──
 
-/// Documented BE error codes that the CLI must distinguish.
-///
-/// `UpgradeRequired` (60018) is the **only** code that triggers retry —
-/// see `trader_mode::retry_on_upgrade`. Every other variant is fatal and
-/// bubbled to the user with a tailored message.
+/// Only `UpgradeRequired` (60018) triggers retry — all others are fatal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StrategyError {
     /// 100 — REQUEST_PARAM_ERROR
     RequestParam,
+    /// 10019 — INSUFFICIENT_NATIVE_GAS_BALANCE → wallet's native gas token is
+    /// below the BE-required minimum. The BE msg includes the required amount
+    /// (e.g. `minAmount = 0.001`).
+    InsufficientNativeGas,
     /// 10026 — JWT_TOKEN_VERIFY_FAILED → user must re-login
     JwtVerifyFailed,
     /// 10106 — CHAIN_NOT_SUPPORT_ERROR
@@ -132,6 +112,9 @@ pub enum StrategyError {
     QuotaExceeded,
     /// 100007 — TEE_SIGN_FAILURE
     TeeSignFailure,
+    /// 100010 — ORDER_AMOUNT_TOO_SMALL → order USD value < BE-enforced
+    /// minimum (currently $1 USD).
+    OrderAmountTooSmall,
     /// 100012 — LIMIT_ORDER_INSUFFICIENT_BALANCE
     InsufficientBalance,
     /// Anything else — preserve the integer for diagnostics.
@@ -142,6 +125,7 @@ impl StrategyError {
     pub fn from_code(code: i32) -> Self {
         match code {
             100 => StrategyError::RequestParam,
+            10019 => StrategyError::InsufficientNativeGas,
             10026 => StrategyError::JwtVerifyFailed,
             10106 => StrategyError::ChainNotSupported,
             60002 => StrategyError::NoOrderFound,
@@ -154,6 +138,7 @@ impl StrategyError {
             60018 => StrategyError::UpgradeRequired,
             60030 => StrategyError::QuotaExceeded,
             100007 => StrategyError::TeeSignFailure,
+            100010 => StrategyError::OrderAmountTooSmall,
             100012 => StrategyError::InsufficientBalance,
             other => StrategyError::Unknown(other),
         }
@@ -164,6 +149,11 @@ impl StrategyError {
     pub fn user_message(self) -> &'static str {
         match self {
             StrategyError::RequestParam => "Request parameters are invalid.",
+            StrategyError::InsufficientNativeGas => {
+                "Wallet's native token balance is too low to pay this chain's gas fees. \
+                 Top up the native gas token (deposit, transfer from another account, \
+                 or swap a stablecoin into native via `swap execute`) and retry."
+            }
             StrategyError::JwtVerifyFailed => {
                 "Session expired. Please run `onchainos wallet login` and retry."
             }
@@ -184,19 +174,17 @@ impl StrategyError {
             }
             StrategyError::QuotaExceeded => "Quota exceeded for this account.",
             StrategyError::TeeSignFailure => "TEE signing failed. Try again shortly.",
+            StrategyError::OrderAmountTooSmall => {
+                "Order value is below the minimum of $1 USD. Increase --amount and retry."
+            }
             StrategyError::InsufficientBalance => "Insufficient balance to place this order.",
             StrategyError::Unknown(_) => "Unknown strategy error.",
         }
     }
 }
 
-/// Concrete error returned by `check_response`. Carries the integer `code`,
-/// the BE-supplied `msg`, and the classified `kind`.
-///
-/// Why a struct + impl Error: `retry_on_upgrade` must detect
-/// `UpgradeRequired` to drive SD-A. Returning this through `anyhow::Error`
-/// lets the wrapper `.downcast_ref::<StrategyApiError>()` and inspect
-/// `kind` exactly — no string-matching on display output.
+/// Typed error from `check_response`. Callers downcast for `kind` —
+/// no string-matching needed.
 #[derive(Debug, Clone)]
 pub struct StrategyApiError {
     pub code: i32,
@@ -212,11 +200,7 @@ impl fmt::Display for StrategyApiError {
 
 impl std::error::Error for StrategyApiError {}
 
-/// Inspect a JSON response. If `code != 0`, classify and return an `Err`
-/// carrying a `StrategyApiError`.
-///
-/// Returns `Ok(())` when the response indicates success. Callers chain this
-/// before reading `data` to keep handler bodies linear.
+/// `code == 0` → Ok; otherwise return classified `StrategyApiError`.
 pub fn check_response(value: &serde_json::Value) -> Result<()> {
     let code = value
         .get("code")
@@ -235,17 +219,18 @@ pub fn check_response(value: &serde_json::Value) -> Result<()> {
     Err(StrategyApiError { code, msg, kind }.into())
 }
 
-/// True when `e` is (or wraps) a `StrategyApiError` with `kind == UpgradeRequired`.
-/// Used by `trader_mode::retry_on_upgrade` and the inline retry sites in
-/// `handlers.rs`.
-///
-/// Strategy uses `ApiClient::*_with_headers_raw` and runs `check_response`
-/// itself, so any non-zero BE code arrives as a typed `StrategyApiError` —
-/// no string matching needed.
+/// True if `e` wraps a `StrategyApiError { kind: UpgradeRequired }`.
 pub fn is_upgrade_required(e: &anyhow::Error) -> bool {
     e.downcast_ref::<StrategyApiError>()
         .map(|s| matches!(s.kind, StrategyError::UpgradeRequired))
         .unwrap_or(false)
+}
+
+/// True for execution-event codes (`executionHistoryList[N].code`) that
+/// mean the order will not execute — agent should stop polling. Phase 1
+/// terminal set: 3010 / 3019 / 3020 / 3023 (see references/execution-event-codes.md).
+pub fn is_terminal_event(code: i32) -> bool {
+    matches!(code, 3010 | 3019 | 3020 | 3023)
 }
 
 #[cfg(test)]
@@ -328,6 +313,7 @@ mod tests {
     fn every_documented_code_classifies() {
         let cases = [
             (100, StrategyError::RequestParam),
+            (10019, StrategyError::InsufficientNativeGas),
             (10026, StrategyError::JwtVerifyFailed),
             (10106, StrategyError::ChainNotSupported),
             (60002, StrategyError::NoOrderFound),
@@ -340,6 +326,7 @@ mod tests {
             (60018, StrategyError::UpgradeRequired),
             (60030, StrategyError::QuotaExceeded),
             (100007, StrategyError::TeeSignFailure),
+            (100010, StrategyError::OrderAmountTooSmall),
             (100012, StrategyError::InsufficientBalance),
         ];
         for (code, expected) in cases {
@@ -398,5 +385,32 @@ mod tests {
         assert!(!super::is_upgrade_required(&err));
         let err = anyhow::anyhow!("network down");
         assert!(!super::is_upgrade_required(&err));
+    }
+
+    // ── is_terminal_event ────────────────────────────────────────
+
+    #[test]
+    fn terminal_event_codes_are_recognized() {
+        assert!(super::is_terminal_event(3010), "3010 ImportPriceLevelExpired");
+        assert!(super::is_terminal_event(3019), "3019 riskToken");
+        assert!(super::is_terminal_event(3020), "3020 blackAddress");
+        assert!(super::is_terminal_event(3023), "3023 orderExpired");
+    }
+
+    #[test]
+    fn transient_event_codes_are_not_terminal() {
+        // Engine retries these — agent should keep waiting, not surface.
+        assert!(!super::is_terminal_event(3015), "3015 exceedSlippage");
+        assert!(!super::is_terminal_event(3017), "3017 unableQuote");
+        assert!(!super::is_terminal_event(3018), "3018 mevFail");
+    }
+
+    #[test]
+    fn unknown_event_code_defaults_to_non_terminal() {
+        // Safer default: unknown codes should not stop the agent from
+        // polling — they might be a new transient state we haven't typed yet.
+        assert!(!super::is_terminal_event(0), "0 = tradeSuccessed (not terminal-failure)");
+        assert!(!super::is_terminal_event(9999));
+        assert!(!super::is_terminal_event(-1));
     }
 }

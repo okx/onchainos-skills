@@ -1,17 +1,5 @@
-//! `onchainos strategy` — limit-order strategy trading on Agentic Wallet.
-//!
-//! Phase 1 scope (see `.claude/strategyTrading/tech-design.md`):
-//! 4 P0 subcommands — `create-limit`, `cancel`, `list`, `resume`.
-//! Activation/upgrade is normally transparent via
-//! `trader_mode::activate` (code 60018 → SD-A → retry once).
-//!
-//! ## Module layout
-//! - `handlers` — 4 subcommand handlers + their clap Args
-//! - `api`      — HTTP wrappers for 7 endpoints (5 dex + 2 wallet)
-//! - `types`    — DTOs
-//! - `status`   — OrderStatus enum + StrategyError code map + check_response
-//! - `trader_mode` — intent / sign / SD-A activate / 60018 retry / output formatters
-//! - `session`  — wallet-session loader (cert / seed / accountId / addresses)
+//! `onchainos strategy` — Phase 1 limit orders (4 P0 subcommands).
+//! 60018 is handled transparently via SD-A → retry once.
 
 use anyhow::Result;
 use clap::Subcommand;

@@ -62,14 +62,12 @@ onchainos strategy create-limit \
   --from-token <address> \
   --to-token <address> \
   --amount <decimal-string> \
-  --type <buy_dip|take_profit|stop_loss|chase_high> \
-  [--trigger-price <usd>] \
-  [--trigger-rate <ratio>] \
+  --direction <buy|sell> \
+  --trigger-price <usd> \
+  [--current-price <usd>] \
   [--slippage <value>] \
-  [--direction <buy|sell|all>] \
-  [--mev-protection | --no-mev-protection] \
-  [--expires-in <secs>] \
-  [--format human|json]
+  [--mev-protection <on|off|default>] \
+  [--expires-in <secs>]
 ```
 
 | Flag | Required | Notes |
@@ -78,23 +76,28 @@ onchainos strategy create-limit \
 | `--from-token` | Y | Sell-side token contract address |
 | `--to-token` | Y | Buy-side token contract address |
 | `--amount` | Y | Amount of `from_token` to sell (string, no precision loss) |
-| `--type` | Y | `buy_dip` / `take_profit` / `stop_loss` / `chase_high` (case-insensitive; `-` and `_` interchangeable) |
-| `--trigger-price` | one of two | USD trigger price (Advanced mode) |
-| `--trigger-rate` | one of two | Exchange-rate trigger (mutex with `--trigger-price`) |
+| `--direction` | Y | `buy` or `sell` (case-insensitive). Strategy type is derived from `--direction` + `--trigger-price` + the current market price; the agent does **not** pass a strategy type explicitly. |
+| `--trigger-price` | Y | USD trigger price. Required for strategy type derivation. |
+| `--current-price` | N | Current USD price of the comparison token (to-token for `buy`, from-token for `sell`). When omitted the CLI fetches it via `market price`. Pass it to skip the extra HTTP round-trip when the agent already retrieved the price for the confirmation page. |
 | `--slippage` | N | Slippage tolerance in percent. Default `15` (= 15%). Pass the percent as a plain number — the CLI converts to BE wire format (divides by 100, e.g. `20` → `"0.2"`). When the user says "slippage 20" / "slippage 20%" / "use 20% slippage" — all map to `--slippage 20`. |
-| `--direction` | N | Default derived from `--type` (BUY_DIP / CHASE_HIGH → buy; TAKE_PROFIT / STOP_LOSS → sell) |
-| `--mev-protection` | N | Opt **in** to MEV protection on supported chains. Sends `routerModeType=2` on the BE preset. Mutually exclusive with `--no-mev-protection`. |
-| `--no-mev-protection` | N | Opt **out** of MEV protection (sends `routerModeType=3`). When neither flag is passed, the CLI sends `routerModeType=1` and lets BE pick its default behaviour. |
+| `--mev-protection` | N | Tri-state value: `on` / `off` / `default` (default = `default`). `on` → `routerModeType=2` (MEV protection ON), `off` → `routerModeType=3` (OFF), `default` → `routerModeType=1` (CLI does not opt in or out; BE picks). |
 | `--expires-in` | N | Order TTL in seconds. Default 604800 (7 days) — see §Default order expiry. |
-| `--format` | N | `human` (default) prints a wait-then-requery hint; `json` emits `{ok:true,data:{orderId,status,statusLabel,estimatedWaitTime,eventCursor}}` |
 
-**Output (human):**
-```
-Order created (id=<orderId>). status=<label>. estimatedWaitTime=<n>s.
-After ~<n>s, run: onchainos strategy list --order-id <orderId>
+**Output (JSON, always — the CLI has no human-format mode):**
+```json
+{
+  "ok": true,
+  "data": {
+    "orderId": "<id>",
+    "status": <int>,
+    "statusLabel": "<label>",
+    "estimatedWaitTime": <int|null>,
+    "eventCursor": "<string|null>"
+  }
+}
 ```
 
-**Solana orders return `estimatedWaitTime=0`** — the followup line is suppressed and the order is queryable immediately.
+**Solana orders return `estimatedWaitTime=0`** — the order is queryable immediately; for all other chains the agent follows §Async wait pattern (fixed 3-second sleep before re-querying).
 
 #### Default order expiry
 
@@ -130,26 +133,54 @@ Do NOT proceed to Step 1 confirmation. Do NOT call the CLI. The CLI also defends
 | 4 | STOP_LOSS | SELL (1) | `stop_loss` | Stop Loss | Sell when market price falls to trigger |
 | 5 | CHASE_HIGH | BUY (0) | `chase_high` | Buy Above | Buy when market price rises above trigger |
 
-The CLI maps `--type buy_dip` to `strategyType=2` (BE wire field) internally; the agent never passes the integer, only the `--type` string value. The Display label column is the only user-facing string — see §Display labels & output language for the cross-cutting rule.
+The Display label column is the only user-facing string — see §Display labels & output language for the cross-cutting rule. The agent never sees, computes, or passes the `strategyType` integer; the CLI maps everything internally.
 
-#### Strategy type derivation (Agent must follow)
+#### Strategy type derivation (CLI-owned; agent uses table only for display)
 
-The agent must NOT let the user dictate `strategyType` directly; instead derive it from `(direction, trigger price vs current price)`:
+`strategyType` is **fully derived inside the CLI** from `(--direction, --trigger-price, current market price)`. The agent must NOT pass a strategy type — there is no `--type` flag. The same table is reproduced here so the agent can compute the **Display label** for the Step 1 confirmation page without re-deriving the wire integer.
 
-1. **Decide direction (buy / sell)** — parse user intent ("buy" / "ape in" / "snap up" → buy; "sell" / "take profit" / "stop loss" / "exit" → sell).
-2. **Fetch current price** — call `onchainos market price --chain <chain> --address <token>`, read `data[0].price`. For BUY direction use the to-token's current price; for SELL direction use the from-token's current price.
-3. **Compare trigger vs current** and pick `strategyType` per the table:
+| Direction | trigger vs current | Inferred strategyType | Display label |
+|---|---|---|---|
+| buy  | trigger < current | BUY_DIP    (2) | Buy Dip     |
+| buy  | trigger ≥ current | CHASE_HIGH (5) | Buy Above   |
+| sell | trigger > current | TAKE_PROFIT(3) | Take Profit |
+| sell | trigger ≤ current | STOP_LOSS  (4) | Stop Loss   |
 
-| Direction | trigger vs current | Inferred strategyType | CLI `--type` | Display label |
-|---|---|---|---|---|
-| buy | trigger < current | BUY_DIP (2) | `buy_dip` | Buy Dip |
-| buy | trigger ≥ current | CHASE_HIGH (5) | `chase_high` | Buy Above |
-| sell | trigger > current | TAKE_PROFIT (3) | `take_profit` | Take Profit |
-| sell | trigger ≤ current | STOP_LOSS (4) | `stop_loss` | Stop Loss |
+Equality is folded into the "aggressive" side (CHASE_HIGH / STOP_LOSS) — same rule the CLI enforces.
+
+**Agent flow:**
+
+1. **Parse direction (buy / sell)** from user intent ("buy" / "ape in" / "snap up" → buy; "sell" / "take profit" / "stop loss" / "exit" → sell). Passed verbatim as `--direction <buy|sell>`.
+2. **Fetch current price** — call `onchainos market price --chain <chain> --address <token>`, read `data[0].price`. For BUY direction query the **to-token**'s current price; for SELL direction query the **from-token**'s current price. The agent needs this for (a) Step 0 USD-value pre-flight, (b) the Step 1 confirmation page "Trigger Price vs current", and (c) computing the Display label per the table above.
+3. **Pass `--current-price <usd>` to the CLI** so it does not re-fetch. (If the agent omits it, the CLI fetches the same value itself — correct but one extra round-trip.)
 
 #### Two-step confirmation flow (Agent must follow)
 
 `create-limit` is a write operation. **The agent MUST present a confirmation summary to the user first and only call the CLI after the user explicitly confirms.** The CLI itself does not gate (it calls BE directly); this contract is enforced at the skill layer.
+
+**Step 0 — Minimum order value pre-flight (must run before Step 1):**
+
+BE enforces a minimum order value of **$1 USD** (returns error `100010 ORDER_AMOUNT_TOO_SMALL` otherwise). To avoid wasting a round-trip and a confirmation page on an amount that BE will reject, the agent MUST verify the from-side USD value first.
+
+1. **Fetch the from-token price (USD):**
+   - If from-token is a well-known stablecoin (USDT / USDC / USDG / USDe / DAI / FDUSD / ...): assume `from_price ≈ 1.0` without an HTTP call.
+   - Otherwise: call `onchainos market price --chain <chain> --address <from_token>`, read `data[0].price` as `from_price`.
+2. **Compute USD value:** `usd_value = from_amount × from_price`.
+3. **If `usd_value < 1.0`:**
+   - Compute `min_from_amount = ceil(1.0 ÷ from_price)` rounded up to a reasonable display precision for the token (e.g. whole units when `from_price ≥ 0.1`; 2-4 significant digits otherwise).
+   - Surface **exactly this single canonical line** to the user, with **no extra prose** — no USD-value math, no $1 threshold mention, no echo of the user's original amount, no follow-up sentence, no apology:
+
+     `Minimum order amount: <min_from_amount> <from_symbol>`
+
+     Translate the prefix at output time per §Display labels & output language (e.g. for a Chinese user the agent renders the same fact in Chinese). The structure stays single-line: `<localised prefix> <min_from_amount> <from_symbol>`.
+   - **STOP. Do NOT render Step 1. Do NOT call the CLI.** Wait for the user to provide a larger `--amount`, then re-run Step 0 from the top.
+4. **If `usd_value ≥ 1.0`:** carry `from_price` forward (Step 1's "Value" column reuses it; no need to re-fetch) and proceed to Step 1.
+
+**Example** (user wants to spend 1 OKB on a chain where OKB ≈ $0.10):
+- `from_price = 0.10`, `usd_value = 1 × 0.10 = 0.10 < 1.0` → fail
+- `min_from_amount = ceil(1.0 / 0.10) = 10`
+- Output: `Minimum order amount: 10 OKB`
+- Stop. No Step 1, no extra prose.
 
 **Step 1 — Show the order summary for the user to confirm.** Five top-level categories with sub-items; the agent may freely organise prose at runtime, but **no category may be dropped**:
 
@@ -205,18 +236,19 @@ Reply confirm / change / cancel.
 > 1. **Never call `strategy create-limit` until the user has explicitly confirmed.**
 > 2. `Estimated Amount` / `Value` are agent-side estimates derived from `trigger_price`, **not** BE quotes. The realised fill amount is decided at BE execution time by slippage and aggregator routing; the agent must not present these estimates as "actual fill amounts".
 > 3. `--trigger-price` is a USD price. The agent must make this clear to the user to avoid confusion with "exchange rate = X from-token per 1 to-token".
+> 4. **Never render Step 1 when Step 0's USD-value check fails.** Output the single-line minimum-amount warning instead and stop — the user must restart with a larger `--amount`.
 
 ### 2. `onchainos strategy cancel`
 
 Cancel a single, batch, or all active orders. Pass exactly one of the three flags:
 
 ```
-onchainos strategy cancel --order-id <id>          [--format ...]
-onchainos strategy cancel --order-ids id1,id2,...  [--format ...]
-onchainos strategy cancel --all                    [--format ...]
+onchainos strategy cancel --order-id <id>
+onchainos strategy cancel --order-ids id1,id2,...
+onchainos strategy cancel --all
 ```
 
-**Output (json):** `{ok:true,data:{updateNum:N,estimatedWaitTime:null|n}}`. `updateNum` is the count BE accepted, **not** the count that reached terminal state — re-query with `list` after the wait.
+**Output (JSON):** `{ok:true,data:{updateNum:N,estimatedWaitTime:null|n}}`. `updateNum` is the count BE accepted, **not** the count that reached terminal state — re-query with `list` after the wait.
 
 ### 3. `onchainos strategy list`
 
@@ -228,8 +260,7 @@ onchainos strategy list \
   [--token <address>] \
   [--limit <int>] \
   [--cursor <string>] \
-  [--strategy-mode 7] \
-  [--format human|json]
+  [--strategy-mode 7]
 ```
 
 Two modes:
@@ -295,7 +326,7 @@ User prompts that match this rule include: "show my strategy orders" / "list ord
 
 Steps the agent **must** follow:
 
-1. Run `onchainos strategy list --limit 10 --format json` (no `--status`) — the CLI puts `orderStatusList=[-3, 0, 2, 3, 4]` (non-terminal set) into the request body; BE applies the filter server-side and returns only matching orders. **Always pass `--limit 10`** for general "show my orders" queries; full pagination is opt-in via "next page" follow-up.
+1. Run `onchainos strategy list --limit 10` (no `--status`) — the CLI puts `orderStatusList=[-3, 0, 2, 3, 4]` (non-terminal set) into the request body; BE applies the filter server-side and returns only matching orders. **Always pass `--limit 10`** for general "show my orders" queries; full pagination is opt-in via "next page" follow-up.
 2. Render the response `data.list` as a Markdown table with **exactly these 8 columns** (locked):
 
    | Order id | Order Status | Order Type | Estimated Amount | To Token addr | Value | Trigger price | Expire after |
@@ -360,6 +391,7 @@ The CLI surfaces the BE error code in human-readable form. Map each code to a re
 | Code | Name | What the agent should do |
 |---|---|---|
 | 100 | REQUEST_PARAM_ERROR | Surface the BE message; ask the user to fix the offending flag |
+| 10019 | INSUFFICIENT_NATIVE_GAS_BALANCE | Wallet's native token balance is below the BE-required minimum (the response msg includes `minAmount = <N>`, e.g. `0.001` BNB on BSC). Tell the user their native gas balance is insufficient to pay this chain's gas fees and prompt them to top up — deposit from an exchange, transfer from another account, or swap a stablecoin to native via `onchainos swap execute`. Do NOT auto-retry. |
 | 10026 | JWT_TOKEN_VERIFY_FAILED | Suggest `onchainos wallet login` then retry |
 | 10106 | CHAIN_NOT_SUPPORT_ERROR | Tell the user the chain is not supported; suggest a supported alternative |
 | 60002 | NO_ORDER_FOUND | Cancel/resume target id is wrong or already terminal — suggest `list` |
@@ -373,6 +405,7 @@ The CLI surfaces the BE error code in human-readable form. Map each code to a re
 | 60030 | QUOTA_EXCEEDED | Account-level quota reached |
 | 100005 | WALLET_ADDRESS_BLACKLISTED | Wallet address flagged by risk control; ask the user to contact support — do not retry |
 | 100007 | TEE_SIGN_FAILURE | Transient TEE issue — retry once |
+| 100010 | ORDER_AMOUNT_TOO_SMALL | Order value is below the BE-enforced minimum of $1 USD. Ask the user to increase `--amount` so the order value clears $1, then retry |
 | 100008 | TEE_SERVICE_UNAVAILABLE | TEE service is temporarily unavailable; ask the user to retry later |
 | 100012 | LIMIT_ORDER_INSUFFICIENT_BALANCE | Insufficient balance; suggest checking with `onchainos wallet balance` |
 
@@ -382,7 +415,9 @@ The CLI surfaces the BE error code in human-readable form. Map each code to a re
 
 A separate stream from the BE error codes above. Emitted by the TEE swap-trade engine while it attempts to execute an active order. Read the **latest** entry first; older ones are historical context.
 
-> Full catalog (all 3xxx + legacy 2xxx) lives in `references/execution-event-codes.md` — load it whenever the user inspects a stuck/failed order.
+> **Hard rule (locked):** the agent **MUST** load `references/execution-event-codes.md` *before* answering any user question about a **stuck**, **failed**, **not executing**, **why is my order pending**, or **why did this order get cancelled** situation, even if only the 8 inline "hot" codes seem to match. The inline table below is not exhaustive — BE emits 35+ codes and the full catalog (incl. terminal vs transient classification) lives in the reference file. Failing to load it means the agent will misclassify codes outside the inline 8.
+
+> The CLI also exposes `status::is_terminal_event(code)` (Rust) for typed "should the agent stop polling?" decisions — `true` only for `3010 / 3019 / 3020 / 3023`. Everything else is engine-retried.
 
 Hot codes the agent should recognise inline. Use the **message** column verbatim when surfacing to the user (matches OKX wallet UI wording):
 
@@ -422,16 +457,14 @@ Trader Mode upgrade / re-upgrade is performed transparently by the CLI:
 
 ## Output format conventions
 
-All subcommands accept `--format human` (default) or `--format json`.
-
-`json` mode emits the standard onchainos JSON envelope `{ok: true, data: { ... }}` so an agent can parse the output deterministically. Use `human` for chat-style replies; use `json` when piping to another tool or step.
+All strategy subcommands always emit the standard onchainos JSON envelope `{ok: true, data: { ... }}` on stdout. There is no `--format` flag — strategy CLI is agent-facing, so structured JSON is the only output and the agent renders any user-visible tables (e.g. the §`list` 8-column Markdown table) from that JSON.
 
 ## Phase 1 limitations
 
 | Item | Phase 1 status |
 |---|---|
 | Symbol → address resolution for `--from-token` / `--to-token` | Not in scope; pass token addresses directly |
-| Custom preset (advanced fee tiers, MEV mode, dexId filter) | Default preset only; advanced fields TBC with BE |
+| Custom preset (advanced fee tiers, dexId filter) | Default preset only — Phase 2. MEV protection is already supported via `--mev-protection <on/off/default>` (see §1 flag table). |
 | Events stream / cursor consumption | `eventCursor` is surfaced verbatim; no consumer in Phase 1 |
 | `cancel --all` source-channel filter (KD-009) | Pass-through to BE default; CLI does not pre-filter |
 | Multi-account batch | Out of scope; CLI uses the active account only |

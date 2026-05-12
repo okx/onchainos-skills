@@ -1,13 +1,8 @@
 //! 4 P0 subcommand handlers: create-limit / cancel / list / resume.
-//!
-//! Each handler has its own clap `Args` struct + `execute` async fn.
-//! Common pre-flight (`ctx.client_async()` + `session::load()`) is repeated
-//! in each handler — keeps each entry-point self-contained without an
-//! umbrella init function (mirrors how swap.rs / signal.rs are structured).
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use chrono::{SecondsFormat, Utc};
-use clap::Args;
+use clap::{Args, ValueEnum};
 use serde_json::json;
 
 use crate::client::ApiClient;
@@ -26,29 +21,20 @@ use super::types::{
 };
 
 const DEFAULT_EXPIRES_SECS: i64 = 7 * 24 * 60 * 60; // 7 days
-/// User-facing default for `--slippage`, expressed as a **percent**
-/// (`"15"` = 15% per PRD §5.2). Mirrors the percent convention `swap`
-/// uses, so a user moving between commands sees the same units.
-/// `build_default_preset` divides this by 100 before sending it as
-/// `buyPreset.slippageValue` (the BE wire format is a decimal fraction
-/// — e.g. `"0.15"` for 15%).
+/// `--slippage` default in percent. BE wire is decimal (15 → "0.15").
 const DEFAULT_SLIPPAGE_VALUE: &str = "15";
-/// Router mode bound to `buyPreset.routerModeType` / `sellPreset.routerModeType`.
-/// BE-defined tri-state:
-/// - `1` = default (user did NOT pass `--mev-protection` either way)
-/// - `2` = MEV protection ON  (`--mev-protection`)
-/// - `3` = MEV protection OFF (`--no-mev-protection`)
+/// BE `routerModeType`: 1 = default (BE picks), 2 = MEV ON, 3 = MEV OFF.
 const ROUTER_MODE_DEFAULT: i64 = 1;
 const ROUTER_MODE_MEV_ON: i64 = 2;
 const ROUTER_MODE_MEV_OFF: i64 = 3;
-/// Fixed fee level for limit orders (BE-confirmed 2026-05-08). `limitOrderFeeValue`
-/// is no longer sent — BE derives it server-side.
+/// BE-confirmed 2026-05-08: fee derives from `limitOrderFeeLevel`; `limitOrderFeeValue` not sent.
 const DEFAULT_LIMIT_ORDER_FEE_LEVEL: i64 = 2;
-const ACTIVATE_DEFAULT_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000; // 30 days (PRD §4.2: re-activation always extends to a full 30-day window)
+/// SD-A activation TTL (PRD §4.2: always 30 days).
+const ACTIVATE_DEFAULT_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+/// `sourceType` value for Agentic-Wallet origin (BE-confirmed 2026-05-12).
+const SOURCE_TYPE_AGENTIC: i32 = 4;
 
-// ════════════════════════════════════════════════════════════════════
-// create-limit
-// ════════════════════════════════════════════════════════════════════
+// ── create-limit ──
 
 #[derive(Args, Debug)]
 pub struct CreateLimitArgs {
@@ -68,97 +54,131 @@ pub struct CreateLimitArgs {
     #[arg(long)]
     pub amount: String,
 
-    /// USD trigger price (Advanced mode); mutually exclusive with `--trigger-rate`.
-    #[arg(long, conflicts_with = "trigger_rate")]
-    pub trigger_price: Option<String>,
-
-    /// Exchange-rate trigger; mutually exclusive with `--trigger-price`.
+    /// USD trigger price. Required for strategy type derivation.
     #[arg(long)]
-    pub trigger_rate: Option<String>,
+    pub trigger_price: String,
 
-    /// Slippage tolerance — passed verbatim as `buyPreset.slippageValue`.
-    /// Slippage tolerance in percent. Default `15` per PRD §5.2 (paired with
-    /// the dynamic-tier preset BE expects for limit orders).
-    /// Accepts plain number (`20`) or with `%` suffix (`20%`) — both → wire `"0.20"`.
-    /// Made Option so we can detect user-explicit override and surface the
-    /// percent interpretation in human output.
+    /// Slippage tolerance in percent (e.g. `20` or `20%` → wire `"0.20"`). Default 15.
     #[arg(long)]
     pub slippage: Option<String>,
 
-    /// MEV protection. Tri-state:
-    /// - flag absent → `routerModeType=1` (BE default; CLI does not opt in or out)
-    /// - `--mev-protection` → `routerModeType=2` (MEV protection ON)
-    /// - `--no-mev-protection` → `routerModeType=3` (MEV protection OFF)
-    #[arg(long, overrides_with = "_no_mev_protection")]
-    pub mev_protection: bool,
-    #[arg(long = "no-mev-protection", overrides_with = "mev_protection", hide = true)]
-    pub _no_mev_protection: bool,
+    /// MEV protection: `on` / `off` / `default` (BE picks).
+    #[arg(long, value_enum, default_value_t = MevChoice::Default)]
+    pub mev_protection: MevChoice,
 
-    /// Strategy type — buy_dip / take_profit / stop_loss / chase_high.
-    #[arg(long, value_parser = parse_strategy_type)]
-    pub r#type: i32,
+    /// Trade direction `buy` / `sell` (required). Strategy type is derived
+    /// from direction + trigger vs current price — no explicit `--type`.
+    #[arg(long, value_parser = parse_direction_value)]
+    pub direction: i32,
 
-    /// Direction — buy / sell / all. Default = derived from `--type`.
+    /// Current USD price of the comparison token (to-token for `buy`,
+    /// from-token for `sell`). Optional — CLI fetches via `market price`
+    /// when omitted. Pass it to save one HTTP round-trip.
     #[arg(long)]
-    pub direction: Option<String>,
+    pub current_price: Option<String>,
 
     /// Order TTL in seconds (default 604800 = 7 days).
     #[arg(long, default_value_t = DEFAULT_EXPIRES_SECS)]
     pub expires_in: i64,
-
-    /// Output mode.
-    #[arg(long, default_value = "human")]
-    pub format: String,
 }
 
-fn parse_strategy_type(raw: &str) -> Result<i32, String> {
+fn parse_direction_value(raw: &str) -> Result<i32, String> {
     match raw.to_ascii_lowercase().as_str() {
-        "buy_dip" | "buy-dip" => Ok(strategy_type::BUY_DIP),
-        "take_profit" | "take-profit" => Ok(strategy_type::TAKE_PROFIT),
-        "stop_loss" | "stop-loss" => Ok(strategy_type::STOP_LOSS),
-        "chase_high" | "chase-high" => Ok(strategy_type::CHASE_HIGH),
+        "buy" => Ok(direction::BUY),
+        "sell" => Ok(direction::SELL),
         other => Err(format!(
-            "unknown strategy type `{other}` — expected buy_dip / take_profit / stop_loss / chase_high"
+            "unknown direction `{other}` — expected `buy` or `sell`"
         )),
     }
 }
 
-fn default_direction(strat: i32) -> i32 {
-    match strat {
-        strategy_type::BUY_DIP | strategy_type::CHASE_HIGH => direction::BUY,
-        strategy_type::TAKE_PROFIT | strategy_type::STOP_LOSS => direction::SELL,
-        _ => direction::ALL,
+/// Tri-state MEV preset (clap parses `on` / `off` / `default` lowercase).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+#[clap(rename_all = "lowercase")]
+pub enum MevChoice {
+    On,
+    Off,
+    #[default]
+    Default,
+}
+
+impl MevChoice {
+    /// Map to `build_default_preset`'s `Option<bool>` contract.
+    fn to_opt_bool(self) -> Option<bool> {
+        match self {
+            MevChoice::On => Some(true),
+            MevChoice::Off => Some(false),
+            MevChoice::Default => None,
+        }
     }
 }
 
-fn parse_direction(raw: Option<&str>, strat: i32) -> Result<i32> {
-    match raw {
-        None => Ok(default_direction(strat)),
-        Some(s) => match s.to_ascii_lowercase().as_str() {
-            "buy" => Ok(direction::BUY),
-            "sell" => Ok(direction::SELL),
-            "all" => Ok(direction::ALL),
-            other => Err(anyhow!(
-                "unknown direction `{other}` — expected buy / sell / all"
-            )),
-        },
+/// Phase 1 strategy type derivation. Equality goes to the aggressive side
+/// (`trigger == current` → CHASE_HIGH for buy, STOP_LOSS for sell).
+///
+/// | dir  | trigger vs current | result      |
+/// |------|--------------------|-------------|
+/// | buy  | <                  | BUY_DIP     |
+/// | buy  | ≥                  | CHASE_HIGH  |
+/// | sell | >                  | TAKE_PROFIT |
+/// | sell | ≤                  | STOP_LOSS   |
+fn derive_strategy_type(
+    direction: i32,
+    trigger_price: f64,
+    current_price: f64,
+) -> Result<i32> {
+    match direction {
+        direction::BUY => Ok(if trigger_price < current_price {
+            strategy_type::BUY_DIP
+        } else {
+            strategy_type::CHASE_HIGH
+        }),
+        direction::SELL => Ok(if trigger_price > current_price {
+            strategy_type::TAKE_PROFIT
+        } else {
+            strategy_type::STOP_LOSS
+        }),
+        other => bail!(
+            "unsupported direction integer {other}; expected BUY ({}) or SELL ({})",
+            direction::BUY,
+            direction::SELL
+        ),
     }
+}
+
+/// Fetch USD price via `market::fetch_price`, parse `data[0].price` → f64.
+async fn fetch_token_price(
+    client: &mut ApiClient,
+    address: &str,
+    chain_index: &str,
+) -> Result<f64> {
+    let resp = crate::commands::market::fetch_price(client, address, chain_index)
+        .await
+        .context("market price HTTP call failed")?;
+    let item = resp.get(0).ok_or_else(|| {
+        anyhow!(
+            "market price response empty — got: {}",
+            serde_json::to_string(&resp).unwrap_or_default()
+        )
+    })?;
+    let price_str = item.get("price").and_then(|v| v.as_str()).ok_or_else(|| {
+        anyhow!(
+            "market price item missing `price` — got: {}",
+            serde_json::to_string(item).unwrap_or_default()
+        )
+    })?;
+    price_str
+        .parse::<f64>()
+        .map_err(|e| anyhow!("market price `{price_str}` is not a number: {e}"))
 }
 
 pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
     let mut client = ctx.client_async().await?;
     let session = session::load()?;
 
-    if args.trigger_price.is_none() && args.trigger_rate.is_none() {
-        bail!("must pass either --trigger-price (USD) or --trigger-rate");
-    }
-
-    // Resolve chain alias if given (e.g. "solana" -> "501"). For unknown
-    // strings the helper returns the original — BE will reject if invalid.
+    // Resolve alias → chainIndex, then whitelist-check pre-flight to give
+    // a friendly error instead of round-tripping BE for 10106.
     let resolved_chain = crate::chains::resolve_chain(&args.chain_id);
-    // Validate against the strategy-specific 6-chain whitelist BEFORE calling
-    // BE, so the user gets a friendly error instead of round-tripping to BE
-    // for code 10106 CHAIN_NOT_SUPPORT_ERROR.
     supported_chains::ensure_strategy_chain(&resolved_chain, &args.chain_id)?;
     let user_wallet_address = session.wallet_address_for(&resolved_chain).to_string();
     if user_wallet_address.is_empty() {
@@ -168,12 +188,35 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
         );
     }
 
-    let dir = parse_direction(args.direction.as_deref(), args.r#type)?;
+    let dir = args.direction;
 
-    // 1. Fetch fromToken decimals (one HTTP call) and shift the amount to
-    //    the raw integer representation. The raw integer is only used for the
-    //    `signMsg` line "From Amount(precision adjusted)"; `rule.fromAmount`
-    //    keeps the human-readable form (see comment below).
+    let trigger_price_num: f64 = args.trigger_price.parse().map_err(|e| {
+        anyhow!("--trigger-price `{}` is not a number: {e}", args.trigger_price)
+    })?;
+
+    // Buy compares against to-token price, sell against from-token.
+    let price_query_token = match dir {
+        direction::BUY => &args.to_token,
+        direction::SELL => &args.from_token,
+        _ => unreachable!("clap restricts --direction to buy/sell"),
+    };
+    let current_price_num: f64 = match args.current_price.as_deref() {
+        Some(s) => s
+            .parse()
+            .map_err(|e| anyhow!("--current-price `{s}` is not a number: {e}"))?,
+        None => fetch_token_price(&mut client, price_query_token, &resolved_chain)
+            .await
+            .with_context(|| {
+                format!(
+                    "fetch current price for {} on chain {}",
+                    price_query_token, resolved_chain
+                )
+            })?,
+    };
+    let strat = derive_strategy_type(dir, trigger_price_num, current_price_num)?;
+
+    // Raw amount used only in signMsg "From Amount(precision adjusted)";
+    // rule.fromAmount stays human-readable (BE contract 2026-05-07).
     let from_decimals = fetch_token_decimals(&mut client, &args.from_token, &resolved_chain)
         .await
         .with_context(|| {
@@ -187,29 +230,12 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
     let rule = Rule {
         from_token_address: args.from_token.clone(),
         to_token_address: args.to_token.clone(),
-        // BE contract (2026-05-07): `rule.fromAmount` uses the human-readable
-        // decimal form (e.g. "0.1"); only the `verifySignInfo.signMsg` line
-        // "From Amount(precision adjusted)" uses the raw integer
-        // (amount * 10^decimals).
         from_amount: args.amount.clone(),
-        // U-pegged Phase 1 (strategyMode=7): toAmount + exChangeRate are
-        // SwapMode-only fields, not required by BE — omit. (Confirmed 2026-05-07.)
-        to_amount: None,
-        exchange_rate: None,
-        trigger_price: args.trigger_price.clone(),
-        trigger_market_capacity: None,
-        min_return_amount: None,
+        trigger_price: Some(args.trigger_price.clone()),
     };
 
     let slippage_raw = args.slippage.as_deref().unwrap_or(DEFAULT_SLIPPAGE_VALUE);
-    let mev_choice = if args._no_mev_protection {
-        Some(false)
-    } else if args.mev_protection {
-        Some(true)
-    } else {
-        None
-    };
-    let preset = build_default_preset(slippage_raw, mev_choice, dir);
+    let preset = build_default_preset(slippage_raw, args.mev_protection.to_opt_bool(), dir);
 
     // 2. Build the time fields of the intent: Created At / Expired At /
     //    Timestamp.
@@ -221,8 +247,7 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
         .ok_or_else(|| anyhow!("expire_time {expire_time_ms} ms out of chrono range"))?
         .to_rfc3339_opts(SecondsFormat::Millis, true);
 
-    // `verifySignInfo.chainId` is a Long — non-numeric chain aliases fail
-    // here (a defensive check before sending to BE).
+    // `verifySignInfo.chainId` is Long (numeric); reject non-numeric aliases.
     let chain_id_long: i64 = resolved_chain.parse().map_err(|_| {
         anyhow!(
             "verifySignInfo.chainId requires a numeric chain id, got `{}`",
@@ -230,8 +255,6 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
         )
     })?;
 
-    // 3. Build the `signMsg` (Phase 1 U-pegged template) and sign it with
-    //    the session ed25519 seed.
     let intent_str = trader_mode::build_intent(BuildIntentArgs {
         chain_id: chain_id_long,
         recipient: &user_wallet_address,
@@ -259,13 +282,12 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
         user_wallet_address: user_wallet_address.clone(),
         rule,
         preset,
-        strategy_type: args.r#type,
+        strategy_type: strat,
         strategy_direction: dir,
         verify_sign_info,
         expire_time: Some(expire_time_ms.to_string()),
         service_fee_info: None,
-        // 0 swap / 1 meme / 2 market_condition / 3 advancedMode
-        source_type: Some(2),
+        source_type: Some(SOURCE_TYPE_AGENTIC),
         estimate_gas_fee: None,
         referrer_address: None,
     };
@@ -277,12 +299,7 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
         expire_ms_from_now: ACTIVATE_DEFAULT_TTL_MS,
     };
 
-    // 60018 UpgradeRequired → SD-A → retry once. Inlined here because
-    // `client` is borrowed `&mut`, which conflicts with the `'static`
-    // BoxFuture signature of `trader_mode::retry_on_upgrade`. The semantics
-    // (single-retry, no activation on other errors, no retry on activation
-    // failure) must stay in sync with `trader_mode::retry_on_upgrade` and
-    // its unit tests — treat that helper as the spec.
+    // 60018 → SD-A → retry once. Spec: `trader_mode::retry_on_upgrade` + tests.
     let order = match api::create_order(&mut client, &req).await {
         Err(e) if is_upgrade_required(&e) => {
             trader_mode::activate(&mut client, &activate_ctx).await?;
@@ -293,32 +310,17 @@ pub async fn create_limit(ctx: &Context, args: CreateLimitArgs) -> Result<()> {
     };
 
     let label = status_label(order.status);
-    if args.format == "json" {
-        let payload = json!({
-            "orderId": order.order_id,
-            "status": order.status,
-            "statusLabel": label,
-            "estimatedWaitTime": order.estimated_wait_time,
-            "eventCursor": order.event_cursor,
-        });
-        output::success(payload);
-    } else {
-        println!(
-            "{}",
-            trader_mode::format_create_followup(
-                &order.order_id,
-                &label,
-                order.estimated_wait_time.unwrap_or(0),
-            )
-        );
-    }
+    output::success(json!({
+        "orderId": order.order_id,
+        "status": order.status,
+        "statusLabel": label,
+        "estimatedWaitTime": order.estimated_wait_time,
+        "eventCursor": order.event_cursor,
+    }));
     Ok(())
 }
 
-/// Resolve a token's `decimals` via the existing `/api/v6/dex/market/token/basic-info`
-/// endpoint (wrapped by `token::fetch_info`). This is the CLI equivalent of the
-/// client-side `OKWSecurityBridge shiftValue:shift:` helper, but kept fully
-/// HTTP-driven so no native SDK bridge is required.
+/// Fetch token `decimals` via `token::fetch_info` (basic-info endpoint).
 async fn fetch_token_decimals(
     client: &mut ApiClient,
     address: &str,
@@ -327,8 +329,6 @@ async fn fetch_token_decimals(
     let resp = token::fetch_info(client, address, chain_index)
         .await
         .context("token info HTTP call failed")?;
-    // `ApiClient` already strips the `{code, msg, data}` envelope, so `resp`
-    // is the inner `data` payload — `[{...}]`.
     let item = resp.get(0).ok_or_else(|| {
         anyhow!(
             "token info response empty — got: {}",
@@ -346,12 +346,9 @@ async fn fetch_token_decimals(
         .map_err(|e| anyhow!("token decimal `{decimal_str}` is not a u32: {e}"))
 }
 
-/// Convert a CLI percent string (e.g. `"15"`) into the decimal-fraction
-/// string the BE expects in `slippageValue` (e.g. `"0.15"`). Falls back to
-/// the raw input on parse failure so a malformed user value still surfaces
-/// as a BE-side validation error rather than a silent zero.
+/// CLI percent (`"15"` / `"20%"`) → BE decimal fraction (`"0.15"`).
+/// Bad input falls through unchanged so BE rejects it explicitly.
 fn percent_to_decimal(percent: &str) -> String {
-    // Strip optional trailing '%' so users / Agent can pass "20%" or "20".
     let cleaned = percent.trim().trim_end_matches('%').trim();
     match cleaned.parse::<f64>() {
         Ok(v) => format!("{}", v / 100.0),
@@ -359,29 +356,8 @@ fn percent_to_decimal(percent: &str) -> String {
     }
 }
 
-/// Build the limit-order preset envelope.
-///
-/// Direction-aware key naming: BE expects `buyPreset` for BUY direction
-/// orders (BUY_DIP / CHASE_HIGH) and `sellPreset` for SELL direction
-/// orders (TAKE_PROFIT / STOP_LOSS) — same inner shape, different outer key.
-/// (Confirmed with BE 2026-05-07.) ALL direction (-1) defaults to buyPreset.
-///
-/// Field shape comes from BE-supplied reference (see preset payload in
-/// conversation log / `.claude/strategyTrading/log/...createOrder*.json`):
-/// - `presetType: 1` — selects the structured preset path the BE expects
-///   for limit orders (Phase 1).
-/// - `slippageType: 2` + `slippageLevel: 4` (custom-tier) — fixed for limit
-///   orders today; user controls the magnitude through `--slippage`.
-/// - `slippageValue` — decimal fraction (`"0.15"` for 15%). The CLI flag is
-///   in percent units to match `swap`; we divide by 100 here.
-/// - `dynamicMaxSlippageValue: null` — BE-controlled cap; CLI does not set.
-/// - `routerModeType` — tri-state from CLI flags:
-///   - flag absent → `1` (BE default; CLI passes through, no opt-in)
-///   - `--mev-protection` → `2` (MEV protection ON)
-///   - `--no-mev-protection` → `3` (MEV protection OFF)
-/// - `limitOrderFeeLevel: 2` — fixed (BE-confirmed 2026-05-08). The peer
-///   field `limitOrderFeeValue` is **not sent** — BE derives it server-side
-///   from `limitOrderFeeLevel`.
+/// Build the BE limit-order preset. SELL → `sellPreset`, else `buyPreset`
+/// (BE-confirmed 2026-05-07). Inner shape is identical.
 fn build_default_preset(
     slippage_percent: &str,
     mev_choice: Option<bool>,
@@ -392,18 +368,14 @@ fn build_default_preset(
         Some(true) => ROUTER_MODE_MEV_ON,
         Some(false) => ROUTER_MODE_MEV_OFF,
     };
-    let slippage_decimal = percent_to_decimal(slippage_percent);
     let inner = json!({
         "slippageType": 2,
         "slippageLevel": 4,
-        "slippageValue": slippage_decimal,
+        "slippageValue": percent_to_decimal(slippage_percent),
         "dynamicMaxSlippageValue": serde_json::Value::Null,
         "routerModeType": router_mode,
         "limitOrderFeeLevel": DEFAULT_LIMIT_ORDER_FEE_LEVEL,
     });
-    // BE preset shape: { presetType, name?, buyPreset?, sellPreset? }.
-    // Fill the matching side based on direction (SELL → sellPreset, else buyPreset).
-    // ALL (-1) defaults to buyPreset; can be revisited if BE adds a both-sides mode.
     let preset_key = if direction == direction::SELL {
         "sellPreset"
     } else {
@@ -416,9 +388,7 @@ fn build_default_preset(
 }
 
 
-// ════════════════════════════════════════════════════════════════════
-// cancel
-// ════════════════════════════════════════════════════════════════════
+// ── cancel ──
 
 #[derive(Args, Debug)]
 pub struct CancelArgs {
@@ -433,10 +403,6 @@ pub struct CancelArgs {
     /// Cancel every active order on the active account.
     #[arg(long, conflicts_with_all = ["order_id", "order_ids"])]
     pub all: bool,
-
-    /// Output mode (`human` default; `json` emits the parsed response).
-    #[arg(long, default_value = "human")]
-    pub format: String,
 }
 
 pub async fn cancel(ctx: &Context, args: CancelArgs) -> Result<()> {
@@ -446,18 +412,10 @@ pub async fn cancel(ctx: &Context, args: CancelArgs) -> Result<()> {
     let req = build_cancel_request(&session.account_id, &args)?;
     let resp = api::cancel(&mut client, &req).await?;
 
-    if args.format == "json" {
-        output::success(json!({
-            "updateNum": resp.update_num,
-            "estimatedWaitTime": resp.estimated_wait_time,
-        }));
-    } else {
-        let line = trader_mode::format_cancel_followup(
-            resp.update_num,
-            resp.estimated_wait_time,
-        );
-        println!("{line}");
-    }
+    output::success(json!({
+        "updateNum": resp.update_num,
+        "estimatedWaitTime": resp.estimated_wait_time,
+    }));
     Ok(())
 }
 
@@ -496,9 +454,7 @@ fn build_cancel_request(account_id: &str, args: &CancelArgs) -> Result<CancelReq
     ))
 }
 
-// ════════════════════════════════════════════════════════════════════
-// list
-// ════════════════════════════════════════════════════════════════════
+// ── list ──
 
 #[derive(Args, Debug)]
 pub struct ListArgs {
@@ -530,10 +486,6 @@ pub struct ListArgs {
     /// Strategy mode for openOrderDetail (default 7 = U-pegged Phase 1).
     #[arg(long, default_value_t = 7)]
     pub strategy_mode: i32,
-
-    /// Output mode.
-    #[arg(long, default_value = "human")]
-    pub format: String,
 }
 
 pub async fn list(ctx: &Context, args: ListArgs) -> Result<()> {
@@ -544,14 +496,15 @@ pub async fn list(ctx: &Context, args: ListArgs) -> Result<()> {
         let order =
             api::open_order_detail(&mut client, &session.account_id, id, args.strategy_mode)
                 .await?;
-        return print_orders(&[order], None, &args.format);
+        return print_orders(&[order], None);
     }
 
-    // Resolve every `--chain-id` entry, then validate against the strategy
-    // whitelist (rejects polygon / optimism / linea / etc. before BE call).
-    let chain_id_list = match csv_to_strings(args.chain_id.as_deref()) {
-        None => None,
-        Some(raw_list) => {
+    // Resolve + whitelist each `--chain-id` entry pre-flight.
+    let chain_id_list = {
+        let raw_list = csv_to_strings(args.chain_id.as_deref());
+        if raw_list.is_empty() {
+            None
+        } else {
             let mut resolved = Vec::with_capacity(raw_list.len());
             for raw in raw_list {
                 let idx = crate::chains::resolve_chain(&raw);
@@ -562,9 +515,8 @@ pub async fn list(ctx: &Context, args: ListArgs) -> Result<()> {
         }
     };
 
-    // `--token` accepts a single token address (BE schema 2026-05-09 — see
-    // types.rs::ListOrdersReq.token_address). For multi-token queries,
-    // the agent should call `list` once per token.
+    // BE schema 2026-05-09: `tokenAddress` is single-valued. Agent must
+    // call list once per token to filter multiple.
     let token_address = args
         .token
         .as_deref()
@@ -573,8 +525,7 @@ pub async fn list(ctx: &Context, args: ListArgs) -> Result<()> {
         .map(|s| {
             if s.contains(',') {
                 bail!(
-                    "--token now accepts only a single token address (BE schema 2026-05-09). \
-                     For multiple tokens, run `list` once per token."
+                    "--token accepts only a single address; run `list` once per token."
                 );
             }
             Ok::<String, anyhow::Error>(s.to_string())
@@ -594,58 +545,23 @@ pub async fn list(ctx: &Context, args: ListArgs) -> Result<()> {
         cursor: args.cursor,
     };
     let resp: ListOrdersResp = api::get_open_order(&mut client, &req).await?;
-    print_orders(&resp.list, resp.cursor.as_deref(), &args.format)
+    print_orders(&resp.list, resp.cursor.as_deref())
 }
 
-fn print_orders(
-    list: &[OrderListResp],
-    next_cursor: Option<&str>,
-    format: &str,
-) -> Result<()> {
-    if format == "json" {
-        let mut serialised: Vec<serde_json::Value> = Vec::with_capacity(list.len());
-        for o in list {
-            let mut v = serde_json::to_value(o)
-                .context("serialise OrderListResp for JSON output")?;
-            if let Some(s) = v.get("status").and_then(|s| s.as_i64()) {
-                v["statusLabel"] = json!(status_label(s as i32));
-            }
-            serialised.push(v);
-        }
-        output::success(json!({
-            "list": serialised,
-            "nextCursor": next_cursor,
-        }));
-        return Ok(());
-    }
-
-    if list.is_empty() {
-        println!("No orders found.");
-        return Ok(());
-    }
+fn print_orders(list: &[OrderListResp], next_cursor: Option<&str>) -> Result<()> {
+    let mut serialised: Vec<serde_json::Value> = Vec::with_capacity(list.len());
     for o in list {
-        println!(
-            "id={}  status={} ({})  chain={}  fromAmount={}  triggerInfo={}",
-            o.order_id,
-            o.status,
-            status_label(o.status),
-            o.chain_id.as_deref().unwrap_or("?"),
-            o.from_token
-                .as_ref()
-                .and_then(|v| v.get("amount"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("?"),
-            o.trigger_info
-                .as_ref()
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "{}".into()),
-        );
-    }
-    if let Some(cursor) = next_cursor {
-        if !cursor.is_empty() {
-            println!("\nNext page cursor: {cursor}");
+        let mut v = serde_json::to_value(o)
+            .context("serialise OrderListResp for JSON output")?;
+        if let Some(s) = v.get("status").and_then(|s| s.as_i64()) {
+            v["statusLabel"] = json!(status_label(s as i32));
         }
+        serialised.push(v);
     }
+    output::success(json!({
+        "list": serialised,
+        "nextCursor": next_cursor,
+    }));
     Ok(())
 }
 
@@ -660,33 +576,35 @@ fn collect_wallet_addresses(s: &session::WalletSession) -> Vec<String> {
     v
 }
 
-fn csv_to_strings(s: Option<&str>) -> Option<Vec<String>> {
+/// CSV → trimmed non-empty parts. Empty / whitespace / all-commas input
+/// returns `Vec::new()` — caller checks `.is_empty()` explicitly.
+fn csv_to_strings(s: Option<&str>) -> Vec<String> {
     s.map(|s| {
         s.split(',')
             .map(|x| x.trim().to_string())
             .filter(|x| !x.is_empty())
             .collect()
     })
-    .filter(|v: &Vec<String>| !v.is_empty())
+    .unwrap_or_default()
 }
 
-/// Default `orderStatusList` when the user did not pass `--status`.
-/// Returns the 5 non-terminal codes per BE: CANCELLING(-3), TRADING(0),
-/// CREATING(2), ACTIVE(3), SUSPENDED(4). To see terminal orders
-/// (cancelled / failed / expired / completed) the user must pass
-/// `--status` explicitly. SPEEDING_UP (-4) was removed 2026-05-08.
+/// Default filter when `--status` is omitted: the 5 non-terminal codes
+/// (Cancelling, Trading, Creating, Active, Suspended).
 fn default_non_terminal_status_list() -> Option<Vec<i32>> {
     Some(vec![
-        OrderStatus::Cancelling as i32, // -3
-        OrderStatus::Trading as i32,    //  0
-        OrderStatus::Creating as i32,   //  2
-        OrderStatus::Active as i32,     //  3
-        OrderStatus::Suspended as i32,  //  4
+        OrderStatus::Cancelling as i32,
+        OrderStatus::Trading as i32,
+        OrderStatus::Creating as i32,
+        OrderStatus::Active as i32,
+        OrderStatus::Suspended as i32,
     ])
 }
 
 fn parse_status_filter(s: Option<&str>) -> Option<Vec<i32>> {
-    let parts = csv_to_strings(s)?;
+    let parts = csv_to_strings(s);
+    if parts.is_empty() {
+        return None;
+    }
     let mut out = Vec::with_capacity(parts.len());
     for p in parts {
         if let Ok(n) = p.parse::<i32>() {
@@ -723,9 +641,7 @@ fn string_to_status(label: &str) -> Option<i32> {
         .map(|s| s as i32)
 }
 
-// ════════════════════════════════════════════════════════════════════
-// resume
-// ════════════════════════════════════════════════════════════════════
+// ── resume ──
 
 #[derive(Args, Debug)]
 pub struct ResumeArgs {
@@ -733,10 +649,6 @@ pub struct ResumeArgs {
     /// SUSPENDED + canResume orders on the active wallet.
     #[arg(long)]
     pub order_ids: Option<String>,
-
-    /// Output mode.
-    #[arg(long, default_value = "human")]
-    pub format: String,
 }
 
 pub async fn resume(ctx: &Context, args: ResumeArgs) -> Result<()> {
@@ -753,16 +665,12 @@ pub async fn resume(ctx: &Context, args: ResumeArgs) -> Result<()> {
     };
 
     if order_ids.is_empty() {
-        if args.format == "json" {
-            let empty: Vec<String> = Vec::new();
-            output::success(json!({
-                "successIds": empty,
-                "failIds": empty,
-                "note": "no resumable orders found",
-            }));
-        } else {
-            println!("No suspended orders eligible for resume.");
-        }
+        let empty: Vec<String> = Vec::new();
+        output::success(json!({
+            "successIds": empty,
+            "failIds": empty,
+            "note": "no resumable orders found",
+        }));
         return Ok(());
     }
 
@@ -773,16 +681,13 @@ pub async fn resume(ctx: &Context, args: ResumeArgs) -> Result<()> {
         expire_ms_from_now: ACTIVATE_DEFAULT_TTL_MS,
     };
 
-    // BE only requires `accountId` + `orderIds` for reactivate — no
-    // signature is sent (the reactivate path does not verify a signature).
+    // Reactivate is unsigned; BE only checks accountId + orderIds.
     let req = ReactivateReq {
         account_id: session.account_id.clone(),
         order_ids: order_ids.clone(),
     };
 
-    // 60018 UpgradeRequired → SD-A → retry once. Same single-retry contract
-    // as `create_limit`; see the comment there. The spec lives in
-    // `trader_mode::retry_on_upgrade` and its unit tests.
+    // 60018 → SD-A → retry once. Spec: `trader_mode::retry_on_upgrade`.
     let resp = match api::reactivate(&mut client, &req).await {
         Err(e) if is_upgrade_required(&e) => {
             trader_mode::activate(&mut client, &activate_ctx).await?;
@@ -792,31 +697,14 @@ pub async fn resume(ctx: &Context, args: ResumeArgs) -> Result<()> {
         Ok(r) => r,
     };
 
-    if args.format == "json" {
-        output::success(json!({
-            "successIds": resp.success_ids,
-            "failIds": resp.fail_ids,
-        }));
-    } else {
-        println!(
-            "Resume submitted: {} succeeded, {} failed.",
-            resp.success_ids.len(),
-            resp.fail_ids.len()
-        );
-        if !resp.fail_ids.is_empty() {
-            println!("  failed: {:?}", resp.fail_ids);
-        }
-        if !resp.success_ids.is_empty() {
-            println!(
-                "  Some orders may execute immediately if their trigger condition is already met. Use `strategy list` to confirm."
-            );
-        }
-    }
+    output::success(json!({
+        "successIds": resp.success_ids,
+        "failIds": resp.fail_ids,
+    }));
     Ok(())
 }
 
-/// Run getOpenOrder filtered to status=SUSPENDED, then keep only orders
-/// whose `canResume` flag is true.
+/// List SUSPENDED orders, then keep only those with `canResume=true`.
 async fn discover_resumable(
     client: &mut ApiClient,
     s: &session::WalletSession,
@@ -845,9 +733,7 @@ async fn discover_resumable(
         .collect())
 }
 
-// ════════════════════════════════════════════════════════════════════
-// Tests
-// ════════════════════════════════════════════════════════════════════
+// ── Tests ──
 
 #[cfg(test)]
 mod tests {
@@ -860,7 +746,6 @@ mod tests {
             order_id: None,
             order_ids: None,
             all: false,
-            format: "human".into(),
         }
     }
 
@@ -931,11 +816,11 @@ mod tests {
 
     #[test]
     fn csv_to_strings_normalises() {
-        assert_eq!(csv_to_strings(None), None);
-        assert_eq!(csv_to_strings(Some(" ,, ")), None);
+        assert!(csv_to_strings(None).is_empty());
+        assert!(csv_to_strings(Some(" ,, ")).is_empty());
         assert_eq!(
             csv_to_strings(Some("a, b ,c ")),
-            Some(vec!["a".into(), "b".into(), "c".into()])
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
         );
     }
 
@@ -952,52 +837,90 @@ mod tests {
     // ── create-limit arg parsing ─────────────────────────────────
 
     #[test]
-    fn parse_strategy_type_accepts_documented_aliases() {
-        assert_eq!(parse_strategy_type("buy_dip"), Ok(strategy_type::BUY_DIP));
-        assert_eq!(parse_strategy_type("buy-dip"), Ok(strategy_type::BUY_DIP));
+    fn parse_direction_value_accepts_buy_sell_case_insensitive() {
+        assert_eq!(parse_direction_value("buy"), Ok(direction::BUY));
+        assert_eq!(parse_direction_value("BUY"), Ok(direction::BUY));
+        assert_eq!(parse_direction_value("sell"), Ok(direction::SELL));
+        assert_eq!(parse_direction_value("Sell"), Ok(direction::SELL));
+    }
+
+    #[test]
+    fn parse_direction_value_rejects_all_and_unknown() {
+        // `all` was supported by the legacy `--direction` flag but Phase 1's
+        // CLI surface restricts to buy/sell only (strategy type derivation
+        // has no entry for ALL).
+        assert!(parse_direction_value("all").is_err());
+        assert!(parse_direction_value("hodl").is_err());
+        assert!(parse_direction_value("").is_err());
+    }
+
+    #[test]
+    fn mev_choice_maps_to_opt_bool() {
+        assert_eq!(MevChoice::On.to_opt_bool(), Some(true));
+        assert_eq!(MevChoice::Off.to_opt_bool(), Some(false));
+        assert_eq!(MevChoice::Default.to_opt_bool(), None);
+    }
+
+    // ── derive_strategy_type ─────────────────────────────────────
+
+    #[test]
+    fn derive_buy_below_current_is_buy_dip() {
+        // trigger 0.10 < current 0.15 → BUY_DIP
         assert_eq!(
-            parse_strategy_type("TAKE_PROFIT"),
-            Ok(strategy_type::TAKE_PROFIT)
-        );
-        assert_eq!(parse_strategy_type("stop_loss"), Ok(strategy_type::STOP_LOSS));
-        assert_eq!(
-            parse_strategy_type("chase_high"),
-            Ok(strategy_type::CHASE_HIGH)
+            derive_strategy_type(direction::BUY, 0.10, 0.15).unwrap(),
+            strategy_type::BUY_DIP
         );
     }
 
     #[test]
-    fn parse_strategy_type_rejects_unknown() {
-        assert!(parse_strategy_type("hodl").is_err());
-    }
-
-    #[test]
-    fn default_direction_matches_strategy_intent() {
-        assert_eq!(default_direction(strategy_type::BUY_DIP), direction::BUY);
-        assert_eq!(default_direction(strategy_type::CHASE_HIGH), direction::BUY);
-        assert_eq!(default_direction(strategy_type::TAKE_PROFIT), direction::SELL);
-        assert_eq!(default_direction(strategy_type::STOP_LOSS), direction::SELL);
-    }
-
-    #[test]
-    fn parse_direction_overrides_default_when_explicit() {
+    fn derive_buy_above_current_is_chase_high() {
+        // trigger 0.20 > current 0.15 → CHASE_HIGH
         assert_eq!(
-            parse_direction(Some("buy"), strategy_type::TAKE_PROFIT).unwrap(),
-            direction::BUY
-        );
-        assert_eq!(
-            parse_direction(None, strategy_type::TAKE_PROFIT).unwrap(),
-            direction::SELL
-        );
-        assert_eq!(
-            parse_direction(Some("all"), strategy_type::BUY_DIP).unwrap(),
-            direction::ALL
+            derive_strategy_type(direction::BUY, 0.20, 0.15).unwrap(),
+            strategy_type::CHASE_HIGH
         );
     }
 
     #[test]
-    fn parse_direction_rejects_unknown() {
-        assert!(parse_direction(Some("up"), strategy_type::BUY_DIP).is_err());
+    fn derive_buy_equal_to_current_folds_into_chase_high() {
+        // trigger == current → aggressive side (CHASE_HIGH), per locked rule.
+        assert_eq!(
+            derive_strategy_type(direction::BUY, 0.15, 0.15).unwrap(),
+            strategy_type::CHASE_HIGH
+        );
+    }
+
+    #[test]
+    fn derive_sell_above_current_is_take_profit() {
+        // trigger 0.20 > current 0.15 → TAKE_PROFIT
+        assert_eq!(
+            derive_strategy_type(direction::SELL, 0.20, 0.15).unwrap(),
+            strategy_type::TAKE_PROFIT
+        );
+    }
+
+    #[test]
+    fn derive_sell_below_current_is_stop_loss() {
+        // trigger 0.10 < current 0.15 → STOP_LOSS
+        assert_eq!(
+            derive_strategy_type(direction::SELL, 0.10, 0.15).unwrap(),
+            strategy_type::STOP_LOSS
+        );
+    }
+
+    #[test]
+    fn derive_sell_equal_to_current_folds_into_stop_loss() {
+        // trigger == current → aggressive side (STOP_LOSS), per locked rule.
+        assert_eq!(
+            derive_strategy_type(direction::SELL, 0.15, 0.15).unwrap(),
+            strategy_type::STOP_LOSS
+        );
+    }
+
+    #[test]
+    fn derive_unknown_direction_errors() {
+        assert!(derive_strategy_type(direction::ALL, 0.10, 0.15).is_err());
+        assert!(derive_strategy_type(99, 0.10, 0.15).is_err());
     }
 
     #[test]

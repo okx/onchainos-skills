@@ -1,2 +1,0 @@
-{"type":"device","os":"macos","arch":"aarch64","version":"2.6.0"}
-{"ts":"2026-05-08 +8.0 20:23:24.596","source":"cli","command":"wallet status","ok":true,"duration_ms":1,"args":["/Users/oker/meili/zongyao.yang_dacs_at_okg.com/108/Documents/onchainos-skills/cli/target/release/onchainos","--base-url=https://web3pre.okex.org","wallet","status"]}

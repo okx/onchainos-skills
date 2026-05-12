@@ -1,19 +1,5 @@
-//! Trader Mode (SA / SD-A) flow primitives.
-//!
-//! Everything that participates in placing or resuming a limit order
-//! beyond plain HTTP transport lives here:
-//! - `build_intent` / `sign_intent` — intent plaintext + personal_sign-style
-//!   signature (EVM: EIP-191 + keccak256 + ed25519; Solana: ed25519 over hex
-//!   of the bytes). Mirrors `commands::agentic_wallet::sign::personal_sign`.
-//! - `ActivateCtx` / `activate` — SD-A orchestration (getAttestDocHex →
-//!   ed25519 sign → registerTeeInfo). Failure aborts; no auto-retry of
-//!   activation itself (tech-design §5.1).
-//! - `retry_on_upgrade` — generic 60018 retry wrapper. Currently the
-//!   handlers inline the same pattern; `retry_on_upgrade` is kept as a
-//!   tested specification of the SD-A retry rule. New call sites should
-//!   prefer it.
-//! - `format_create_followup` / `format_cancel_followup` — output helpers
-//!   that print the post-submit "wait then re-query" line.
+//! Trader Mode (SA / SD-A) primitives: intent build/sign, SD-A activation,
+//! and the 60018 retry-once spec.
 
 use anyhow::{anyhow, bail, Result};
 use std::future::Future;
@@ -26,52 +12,35 @@ use super::api;
 use super::status::is_upgrade_required;
 use super::types::RegisterTeeInfoReq;
 
-// ── signMsg construction + signing ─────────────────────────────────────
+// ── signMsg build + sign ──
 
-/// Inputs to build a Phase 1 U-pegged limit-order intent message.
-///
-/// All values are pre-resolved — `build_intent` itself is pure (no clock,
-/// no I/O) so its output is deterministic for tests. Field order in the
-/// output is **byte-stable** because BE verifies the signature against
-/// the exact text.
+/// Pre-resolved inputs. `build_intent` is pure (no clock/IO) → byte-stable
+/// output, which BE verifies the signature against.
 pub struct BuildIntentArgs<'a> {
-    /// `Chain Index` line. BE accepts integer chain id (e.g. 501 for SOL).
     pub chain_id: i64,
-    /// `Recipient` line — the SA wallet address (EVM 0x… or SOL base58).
+    /// SA wallet address (EVM 0x… or SOL base58).
     pub recipient: &'a str,
-    /// `From Token` / `To Token` — token contract addresses.
     pub from_token: &'a str,
     pub to_token: &'a str,
-    /// `From Amount(precision adjusted)` — raw integer string already
-    /// shifted by token decimals (e.g. "10000" for 0.01 USDC at 6 decimals).
+    /// Raw integer string (`amount * 10^decimals`).
     pub from_amount_raw: &'a str,
-    /// ISO 8601 with millisecond precision and trailing `Z`
-    /// (e.g. "2026-05-06T06:41:47.340Z"). Caller passes both so the
-    /// function stays clock-free.
+    /// ISO 8601 ms with trailing `Z` (e.g. `"2026-05-06T06:41:47.340Z"`).
     pub created_at: &'a str,
     pub expired_at: &'a str,
-    /// `Timestamp` line — milliseconds since epoch.
     pub timestamp_ms: i64,
 }
 
-/// Strategy Type string baked into the signed intent. BE accepts this
-/// single value for all 4 P0 strategy types (buy_dip / take_profit /
-/// stop_loss / chase_high) — the per-type semantic lives in `strategyType`
-/// at the request level, not in the intent text.
+/// Phase 1 BE accepts this single name for all 4 strategy types.
 pub const STRATEGY_TYPE_NAME_PHASE_1: &str = "LimitOrderUbased";
 
-/// Header that BE expects at the very start of `signMsg`. A blank line
-/// follows it before the first key/value field.
 const INTENT_HEADER: &str =
     "You will place an order which will be verified and auto-signed by the trusted execution environment.";
 
-/// Build the Phase 1 U-pegged `signMsg` plaintext. Output is byte-stable
-/// (no clock, no rand) so callers control exact reproducibility.
+/// Byte-stable `signMsg` plaintext (LF-separated, no trailing newline):
 ///
-/// Format (LF-separated, no trailing newline):
 /// ```text
 /// <header>
-///                                  ← blank line (single \n separator)
+///
 /// Chain Index: <int>
 /// Strategy Type: LimitOrderUbased
 /// Recipient: <address>
@@ -106,15 +75,8 @@ pub fn build_intent(args: BuildIntentArgs<'_>) -> String {
     )
 }
 
-/// Shift a human-readable decimal amount (e.g. "0.01") by `decimals`
-/// places to produce the raw integer string the BE expects (e.g. "10000"
-/// for 6-decimal USDC).
-///
-/// Pure string manipulation — no `BigDecimal` dependency, supports any
-/// precision. Bails on:
-/// - non-numeric chars
-/// - more than one `.`
-/// - fractional digits exceeding `decimals` (would silently lose precision)
+/// Human decimal → raw integer string (`"0.01"` + 6 → `"10000"`). Bails on
+/// non-numeric, multiple dots, or fractional digits beyond `decimals`.
 pub fn shift_value(amount: &str, decimals: u32) -> Result<String> {
     let trimmed = amount.trim();
     if trimmed.is_empty() {
@@ -148,17 +110,8 @@ pub fn shift_value(amount: &str, decimals: u32) -> Result<String> {
     }
 }
 
-/// Sign `intent` with the session ed25519 seed using `personal_sign` semantics
-/// (mirrors `commands::agentic_wallet::sign::personal_sign`):
-///   - Solana (chain == "501"): hex-encode the UTF-8 bytes, then `ed25519_sign_hex`
-///     — equivalent to raw ed25519 over the bytes.
-///   - EVM (everything else): EIP-191 personal_sign — `\x19Ethereum Signed Message:\n<len>`
-///     prefix + keccak256 + ed25519, fed via `ed25519_sign_eip191(_, _, "utf8")`.
-///
-/// Returns a base64-encoded signature suitable for `verifySignInfo.signature`.
-/// `signMsg` is always sent as UTF-8 plaintext; BE picks the verification path
-/// from `verifySignInfo.chainId`. The legacy `encoding` field was removed
-/// 2026-05-07.
+/// personal_sign semantics — Solana: ed25519 over hex bytes; EVM: EIP-191 +
+/// keccak256 + ed25519. Returns base64 for `verifySignInfo.signature`.
 pub fn sign_intent(intent: &str, chain: &str, session_seed_b64: &str) -> Result<String> {
     if super::supported_chains::is_solana(chain) {
         let hex_msg = hex::encode(intent.as_bytes());
@@ -174,32 +127,18 @@ pub fn sign_intent(intent: &str, chain: &str, session_seed_b64: &str) -> Result<
     }
 }
 
-// ── SD-A activation orchestration ─────────────────────────────────────
+// ── SD-A activation ──
 
-/// Inputs `activate` needs from the wallet session. Subcommand collects
-/// these once at the top of its handler and passes the struct in.
 pub struct ActivateCtx {
     pub account_id: String,
     pub session_cert: String,
-    /// Base64-encoded ed25519 seed (the session private key). Wrapped in
-    /// `Zeroizing` so cloning a session into `ActivateCtx` does not leave a
-    /// stray cleartext copy in memory after the activation finishes.
+    /// Base64 ed25519 seed. `Zeroizing` wipes cloned copies on drop.
     pub session_seed_b64: Zeroizing<String>,
-    /// How long the activation should remain valid, milliseconds. Caller
-    /// chooses; tech-design doesn't pin a default.
+    /// Activation TTL in ms (caller picks).
     pub expire_ms_from_now: i64,
 }
 
-/// Run the SD-A flow once. Prints `Trader Mode activated.` on success.
-///
-/// Two-step flow per tech-design §5.1:
-/// 1. GET getAttestDocHex → returns `attestDocHex` (hex string from SA TEE)
-/// 2. ed25519-sign the hex with the session seed → base64 sessionSig
-/// 3. POST registerTeeInfo with {accountId, timestamp, expireTimestamp,
-///    attestDocHex, sessionCert, sessionSig}
-///
-/// Failure aborts the calling business operation immediately — no retry
-/// of activation itself.
+/// SD-A: getAttestDocHex → ed25519-sign → registerTeeInfo. Fatal on failure.
 pub async fn activate(client: &mut ApiClient, ctx: &ActivateCtx) -> Result<()> {
     let attest_doc_hex = api::get_attest_doc_hex(client).await?;
     let sig = crate::crypto::ed25519_sign_hex(&attest_doc_hex, &ctx.session_seed_b64)?;
@@ -218,20 +157,13 @@ pub async fn activate(client: &mut ApiClient, ctx: &ActivateCtx) -> Result<()> {
     Ok(())
 }
 
-// ── Generic 60018 retry wrapper ───────────────────────────────────────
+// ── 60018 retry wrapper ──
 
-/// Boxed-future closure type. Callers wrap their async expression in
-/// `Box::pin(async move { ... })`. The closure must be re-callable (`Fn`)
-/// because we may invoke it twice on UpgradeRequired.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// Run `op`. If it returns `UpgradeRequired`, run `activate_fn`, then run
-/// `op` once more.
-///
-/// Why pinned-Box closures: async-fn-in-trait is unstable for our toolchain
-/// version, and writing a generic over `Fut` requires `Send`/lifetime
-/// juggling that adds noise at every call site. `Box::pin(async ...)` keeps
-/// call sites readable; the allocation cost is negligible for an HTTP-bound op.
+/// `op`; on `UpgradeRequired` run `activate_fn` then `op` once more.
+/// Spec for the inline retry pattern in `handlers.rs` (which can't use
+/// this helper directly because `client` is `&mut`).
 pub async fn retry_on_upgrade<T, OpF, ActF>(op: OpF, activate_fn: ActF) -> Result<T>
 where
     OpF: Fn() -> BoxFuture<'static, Result<T>>,
@@ -243,44 +175,6 @@ where
             op().await
         }
         other => other,
-    }
-}
-
-// ── Output formatters (post-submit "wait then re-query") ──────────────
-
-/// Format a "wait then re-query" hint following the create-limit response.
-///
-/// Returns a multi-line string ready for direct print. The first line is
-/// always emitted; the second (`After ~Ns ...`) is suppressed when
-/// `wait_secs == 0` (Solana case).
-pub fn format_create_followup(order_id: &str, status: &str, wait_secs: i64) -> String {
-    let head = format!(
-        "Order created (id={order_id}). status={status}. estimatedWaitTime={wait_secs}s."
-    );
-    if wait_secs <= 0 {
-        head
-    } else {
-        format!(
-            "{head}\nAfter ~{wait_secs}s, run: onchainos strategy list --order-id {order_id}"
-        )
-    }
-}
-
-/// Same shape, but for `cancel` — only emits a wait hint when the BE
-/// returns one. tech-design §4.2 says cancel may not always include
-/// `estimatedWaitTime`; pass `None` in that case. `updated` is the
-/// BE-reported count (`updateNum`), kept as `i64` to match the wire type;
-/// negative values would never appear in practice but are surfaced
-/// faithfully rather than wrapping silently.
-pub fn format_cancel_followup(updated: i64, wait_secs: Option<i64>) -> String {
-    let head = format!("Cancelled {updated} order(s).");
-    match wait_secs {
-        Some(n) if n > 0 => format!(
-            "{head} estimatedWaitTime={n}s. Re-query with `strategy list` after the wait."
-        ),
-        _ => format!(
-            "{head} Re-query with `strategy list` after a few seconds; trading orders may finalise as `completed`."
-        ),
     }
 }
 
@@ -565,47 +459,4 @@ mod tests {
         assert_eq!(op_calls.load(Ordering::SeqCst), 1, "second op must NOT run");
     }
 
-    // ── wait_time formatters ─────────────────────────────────────
-
-    #[test]
-    fn solana_zero_wait_omits_followup_line() {
-        let out = format_create_followup("ord-1", "creating", 0);
-        assert!(out.contains("Order created"));
-        assert!(out.contains("estimatedWaitTime=0s"));
-        assert!(
-            !out.contains("After ~"),
-            "SOL=0 must NOT print wait line: {out}"
-        );
-    }
-
-    #[test]
-    fn nonzero_wait_emits_followup_line() {
-        let out = format_create_followup("ord-2", "creating", 12);
-        assert!(out.contains("estimatedWaitTime=12s"));
-        assert!(out.contains("After ~12s"));
-        assert!(out.contains("strategy list --order-id ord-2"));
-    }
-
-    #[test]
-    fn negative_wait_treated_as_zero() {
-        let out = format_create_followup("ord-3", "creating", -3);
-        assert!(!out.contains("After ~"));
-    }
-
-    #[test]
-    fn cancel_with_wait() {
-        let out = format_cancel_followup(2_i64, Some(12));
-        assert!(out.contains("Cancelled 2 order(s)"));
-        assert!(out.contains("12s"));
-    }
-
-    #[test]
-    fn cancel_without_wait_falls_back_to_generic_hint() {
-        let out = format_cancel_followup(1_i64, None);
-        assert!(out.contains("Cancelled 1 order(s)"));
-        assert!(
-            out.to_lowercase().contains("re-query"),
-            "expected fallback hint, got: {out}"
-        );
-    }
 }

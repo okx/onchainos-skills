@@ -1,89 +1,53 @@
-//! DTOs for the limit-order endpoints.
-//!
-//! Source of truth: `.claude/strategyTrading/api/dex-create-order.md`
-//! and `dex-list-orders.md`. Fields mirror BE wire format exactly — every
-//! optional field carries `Option<_>` because BE may omit them depending on
-//! lifecycle stage (e.g. `transactionInfo` is null while pending).
+//! DTOs for limit-order endpoints. Field names mirror BE wire format.
+//! Optional fields reflect BE omission semantics (e.g. `transactionInfo`
+//! is null while order is pending).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 // ── Request bodies ────────────────────────────────────────────────────
 
-/// `rule` JSON object on createOrder (see api/dex-create-order.md §rule).
-///
-/// `to_amount` / `exchange_rate` are SwapMode-only fields. Phase 1 is
-/// U-pegged (`strategyMode=7`), so both stay None and are omitted from the
-/// wire payload — confirmed with BE 2026-05-07.
+/// `rule` JSON on createOrder. Phase 1 (U-pegged) uses 4 fields; SwapMode
+/// fields (`toAmount` / `exChangeRate` / `minReturnAmount` / `triggerMarketCapacity`)
+/// are not modelled until Phase 2.
 #[derive(Debug, Clone, Serialize)]
 pub struct Rule {
     #[serde(rename = "fromTokenAddress")]
     pub from_token_address: String,
     #[serde(rename = "toTokenAddress")]
     pub to_token_address: String,
-    /// `rule.fromAmount` is the **human-readable decimal** form (e.g. `"0.1"`).
-    /// The shifted raw-integer representation (`amount * 10^decimals`) is only
-    /// used inside `verifySignInfo.signMsg`'s `From Amount(precision adjusted)`
-    /// line — never here. Confirmed with BE 2026-05-07.
+    /// Human-readable decimal (e.g. `"0.1"`). The raw-integer form goes only
+    /// in `signMsg`'s `From Amount(precision adjusted)` line (BE 2026-05-07).
     #[serde(rename = "fromAmount")]
     pub from_amount: String,
-    /// SwapMode only — omit for U-pegged strategy orders.
-    #[serde(rename = "toAmount", skip_serializing_if = "Option::is_none")]
-    pub to_amount: Option<String>,
-    /// SwapMode only — omit for U-pegged strategy orders.
-    #[serde(rename = "exChangeRate", skip_serializing_if = "Option::is_none")]
-    pub exchange_rate: Option<String>,
-    /// USD trigger price (Advanced mode).
     #[serde(rename = "triggerPrice", skip_serializing_if = "Option::is_none")]
     pub trigger_price: Option<String>,
-    /// Snapshot only — BE stores but does not enforce.
-    #[serde(
-        rename = "triggerMarketCapacity",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub trigger_market_capacity: Option<String>,
-    /// SwapMode (limit by min-return). Phase 1 leaves it None for U-pegged.
-    #[serde(rename = "minReturnAmount", skip_serializing_if = "Option::is_none")]
-    pub min_return_amount: Option<String>,
 }
 
-/// `preset` JSON object on createOrder (see api/dex-create-order.md §preset).
-///
-/// CLI surface keeps this opaque (`Value`) — the field set is wide and only
-/// matters at the BE integration layer today. Fields can be promoted to typed
-/// members later when the CLI surfaces custom slippage / fee tuning.
+/// `preset` JSON. Kept opaque as `Value` — fields can be typed later when
+/// the CLI surfaces custom slippage / fee tuning.
 pub type Preset = Value;
 
-/// `verifySignInfo` JSON object on createOrder.
-///
-/// The CLI must populate this object in full — BE relies on it for the
-/// KD-002 signature conversion and intent verification. See
-/// api/dex-create-order.md §verifySignInfo for the field-by-field contract.
-///
-/// `signature` is produced by `trader_mode::sign_intent` using personal_sign
-/// semantics: EVM goes through EIP-191 (prefix + keccak256 + ed25519);
-/// Solana uses `ed25519_sign_hex` over the hex-encoded bytes. `signMsg` is
-/// always sent as UTF-8 plaintext — the legacy `encoding` field was dropped
-/// 2026-05-07 once BE agreed to read it as UTF-8 directly.
+/// `verifySignInfo` JSON. BE uses it for KD-002 signature conversion + intent
+/// verification. `signature` is produced by `trader_mode::sign_intent`
+/// (EVM: EIP-191; Solana: ed25519 over hex). `signMsg` is UTF-8 plaintext —
+/// legacy `encoding` field dropped 2026-05-07.
 #[derive(Debug, Clone, Serialize)]
 pub struct VerifySignInfo {
     #[serde(rename = "accountId")]
     pub account_id: String,
     /// SA wallet address — must match the top-level `userWalletAddress`.
     pub address: String,
-    /// Note: this `chainId` is a **Long** (number); the top-level `chainId`
-    /// is a String. The two field types are intentionally different.
+    /// Long (number); top-level `chainId` is String — types are different on purpose.
     #[serde(rename = "chainId")]
     pub chain_id: i64,
-    /// The intent plaintext (the original message signed by the session key).
-    /// Replaces the legacy `intentData` string from earlier BE versions.
+    /// Signed intent plaintext (replaces legacy `intentData`).
     #[serde(rename = "signMsg")]
     pub sign_msg: String,
     pub signature: String,
     #[serde(rename = "sessionCert")]
     pub session_cert: String,
-    /// SA TEE id — added in the BE contract 2026-05-07; sourced from
-    /// `session.json::teeId`.
+    /// SA TEE id (BE contract 2026-05-07); sourced from `session.json::teeId`.
     #[serde(rename = "teeId")]
     pub tee_id: String,
 }
@@ -100,15 +64,14 @@ pub struct CreateOrderReq {
     pub strategy_type: i32,
     #[serde(rename = "strategyDirection")]
     pub strategy_direction: i32,
-    /// Required. Carries `sessionCert`, `accountId`, `signMsg`, and
-    /// `signature` for BE-side intent verification.
     #[serde(rename = "verifySignInfo")]
     pub verify_sign_info: VerifySignInfo,
     #[serde(rename = "expireTime", skip_serializing_if = "Option::is_none")]
     pub expire_time: Option<String>,
     #[serde(rename = "serviceFeeInfo", skip_serializing_if = "Option::is_none")]
     pub service_fee_info: Option<Value>,
-    /// 0 = swap, 1 = meme, 2 = market_condition, 3 = advancedMode.
+    /// 0=swap, 1=meme, 2=market_condition, 3=advancedMode, 4=Agentic
+    /// (BE-confirmed 2026-05-12). Strategy CLI sends 4.
     #[serde(rename = "sourceType", skip_serializing_if = "Option::is_none")]
     pub source_type: Option<i32>,
     #[serde(rename = "estimateGasFee", skip_serializing_if = "Option::is_none")]
@@ -141,12 +104,8 @@ pub struct ListOrdersReq {
     pub order_type_list: Option<Vec<i32>>,
     #[serde(rename = "idList", skip_serializing_if = "Option::is_none")]
     pub id_list: Option<Vec<String>>,
-    /// BE schema 2026-05-09: filter by a SINGLE token address. The previous
-    /// `tokenAddressList: List<String>` was replaced server-side with
-    /// `tokenAddressList: List<TokenInfo{chainId,tokenAddress}>` (multi-token)
-    /// + this `tokenAddress: String` (single). CLI only supports the single
-    /// path; multi-token queries are done by the agent calling `list` once per
-    /// token.
+    /// Single-value filter (BE schema 2026-05-09 replaced the prior
+    /// `tokenAddressList: List<String>`). Multi-token requires multiple calls.
     #[serde(rename = "tokenAddress", skip_serializing_if = "Option::is_none")]
     pub token_address: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -163,15 +122,14 @@ pub struct ReactivateReq {
     pub order_ids: Vec<String>,
 }
 
-/// `registerTeeInfo` body. Field names match api/wallet-register-tee-info.md
-/// — note the BE uses `timestamp` / `expireTimestamp` (not `timestampMs`).
+/// `registerTeeInfo` body. BE uses `timestamp` / `expireTimestamp` (not `timestampMs`).
 #[derive(Debug, Clone, Serialize)]
 pub struct RegisterTeeInfoReq {
     #[serde(rename = "accountId")]
     pub account_id: String,
-    /// Current time, milliseconds.
+    /// Milliseconds.
     pub timestamp: i64,
-    /// Expiry timestamp, milliseconds.
+    /// Milliseconds.
     #[serde(rename = "expireTimestamp")]
     pub expire_timestamp: i64,
     #[serde(rename = "attestDocHex")]
@@ -184,10 +142,8 @@ pub struct RegisterTeeInfoReq {
 
 // ── Response bodies ───────────────────────────────────────────────────
 
-/// Single order DTO returned by createOrder + getOpenOrder + openOrderDetail.
-///
-/// Fields beyond what CLI surfaces today are kept as `Value` so we round-trip
-/// them faithfully — any field BE adds later flows through without code change.
+/// Single order DTO (createOrder / getOpenOrder / openOrderDetail).
+/// Unmodelled fields round-trip via `extra` (flatten) — BE additions don't break us.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderListResp {
     #[serde(rename = "orderId")]
@@ -231,26 +187,23 @@ pub struct OrderListResp {
     pub estimated_wait_time: Option<i64>,
     #[serde(rename = "eventCursor", default)]
     pub event_cursor: Option<String>,
-    /// Catch-all for fields not promoted to typed members.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ListOrdersResp {
-    /// BE field name is `dataList` (not `list`).
+    /// BE name: `dataList`.
     #[serde(rename = "dataList", default)]
     pub list: Vec<OrderListResp>,
-    /// BE field name is `cursor` (not `nextCursor`). An empty string means
-    /// no more pages. The CLI re-exposes this field as `nextCursor` in its
-    /// JSON output for paginated callers.
+    /// BE name: `cursor` (empty string = no more pages). CLI re-exposes as
+    /// `nextCursor` in JSON output.
     #[serde(default)]
     pub cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CancelResp {
-    /// BE field name — count of orders affected.
     #[serde(rename = "updateNum", default)]
     pub update_num: i64,
     #[serde(rename = "estimatedWaitTime", default)]
@@ -265,9 +218,8 @@ pub struct ReactivateResp {
     pub fail_ids: Vec<String>,
 }
 
-// ── Strategy / direction integer constants ────────────────────────────
+// ── BE integer constants ──
 
-/// BUY_DIP / TAKE_PROFIT / STOP_LOSS / CHASE_HIGH from §strategy types.
 pub mod strategy_type {
     pub const BUY_DIP: i32 = 2;
     pub const TAKE_PROFIT: i32 = 3;
@@ -332,12 +284,7 @@ mod tests {
                 from_token_address: "0xA".into(),
                 to_token_address: "0xB".into(),
                 from_amount: "1".into(),
-                // U-pegged Phase 1: SwapMode fields omitted.
-                to_amount: None,
-                exchange_rate: None,
                 trigger_price: None,
-                trigger_market_capacity: None,
-                min_return_amount: None,
             },
             preset: serde_json::json!({}),
             strategy_type: strategy_type::BUY_DIP,

@@ -1,28 +1,17 @@
-//! Strategy-specific chain whitelist.
-//!
-//! Phase 1 BE only supports the 6 chains in `BaseOrderChainInfoEnum`
-//! (`ChainInfoEnum`). We validate the user's `--chain-id` against this
-//! whitelist BEFORE calling BE so the user gets a friendly error instead
-//! of round-tripping to BE for code 10106 `CHAIN_NOT_SUPPORT_ERROR`.
-//!
-//! The global `cli/src/chains.rs` registry (16+ chains) is intentionally
-//! NOT used here — it's superset of what strategy supports. Do not call
-//! `chains::ensure_supported_chain` from strategy code.
+//! Strategy chain whitelist (Phase 1: 6 chains per BE `ChainInfoEnum`).
+//! Validated pre-BE so unsupported chains fail fast instead of round-tripping 10106.
+//! Do NOT fall back to the global `crate::chains` registry — its superset
+//! includes chains BE rejects.
 
 use anyhow::{bail, Result};
 
-/// Chain identifier (numeric chainIndex string) + canonical EN name.
-/// Mirrors BE `BaseOrderChainInfoEnum`(`ChainInfoEnum`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StrategyChain {
     pub chain_index: &'static str,
     pub name: &'static str,
 }
 
-/// 6 chains supported by Phase 1 strategy orders.
-/// Source: BE `ChainInfoEnum.java` (Lark wiki / handed over via screenshot
-/// 2026-05-08). Ordered by `chainIndex` ascending to match the SKILL.md
-/// canonical listing.
+/// Ascending by chainIndex (matches SKILL.md listing).
 pub const SUPPORTED_STRATEGY_CHAINS: &[StrategyChain] = &[
     StrategyChain { chain_index: "1",     name: "Ethereum" },
     StrategyChain { chain_index: "56",    name: "BSC"      },
@@ -32,12 +21,8 @@ pub const SUPPORTED_STRATEGY_CHAINS: &[StrategyChain] = &[
     StrategyChain { chain_index: "42161", name: "Arbitrum" },
 ];
 
-/// Validate `chain_index` (already resolved to numeric string) is one of
-/// the 6 supported strategy chains. Returns `Err` with a friendly message
-/// listing the allowed chains for any other input.
-///
-/// `raw_input` is the original user-typed value (alias or numeric) used
-/// to make the error message clearer.
+/// Bail if `chain_index` isn't in `SUPPORTED_STRATEGY_CHAINS`. `raw_input`
+/// is the user-typed value (echoed in the error message for clarity).
 pub fn ensure_strategy_chain(chain_index: &str, raw_input: &str) -> Result<()> {
     if SUPPORTED_STRATEGY_CHAINS
         .iter()
@@ -56,9 +41,7 @@ pub fn ensure_strategy_chain(chain_index: &str, raw_input: &str) -> Result<()> {
     );
 }
 
-/// Solana branch marker — strategy signing path uses ed25519-over-hex for
-/// Solana and EIP-191 for everything else. Centralise the comparison so
-/// other modules don't hardcode "501" string literals.
+/// Solana branch for the signing path (ed25519-over-hex vs EIP-191).
 pub fn is_solana(chain_index: &str) -> bool {
     chain_index == "501"
 }

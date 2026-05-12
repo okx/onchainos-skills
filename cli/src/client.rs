@@ -155,6 +155,46 @@ fn extract_msg(msg_field: &Value) -> &str {
     if s.is_empty() { "unknown error" } else { s }
 }
 
+/// Apply the `{code, msg, data}` envelope check to a parsed JSON body.
+///
+/// - Bare arrays (no envelope) pass through as the data payload.
+/// - `code == 0` → returns the `data` field.
+/// - `code != 0` → `bail!("API error (code=N): msg")`.
+///
+/// Strategy uses `*_raw` variants and calls its own typed
+/// `status::check_response` instead, so it bypasses this function.
+///
+/// Pure / no state — kept as a module-level free fn since it does not
+/// touch `&self`. Called from `ApiClient::handle_response`.
+fn unwrap_envelope(body: Value) -> Result<Value> {
+    // Some endpoints return bare arrays without the {code, msg, data} envelope.
+    // In that case, pass the array through as the data payload.
+    if body.is_array() {
+        return Ok(body);
+    }
+
+    // Handle code as either string "0" or number 0 (some endpoints return numeric)
+    let code_ok = match &body["code"] {
+        Value::String(s) => s == "0",
+        Value::Number(n) => n.as_i64() == Some(0),
+        _ => false,
+    };
+    if !code_ok {
+        let code_str = match &body["code"] {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            other => other.to_string(),
+        };
+        // Surface backend `msg` verbatim. Treat missing or empty as "unknown error"
+        // so the user-visible string never ends with a dangling colon
+        // (e.g. `API error (code=82000): `).
+        let msg = extract_msg(&body["msg"]);
+        bail!("API error (code={}): {}", code_str, msg);
+    }
+
+    Ok(body["data"].clone())
+}
+
 impl ApiClient {
     /// Create a client with automatic auth detection:
     /// 1. JWT from keyring  (user is logged in)
@@ -892,44 +932,7 @@ impl ApiClient {
         // that want the raw body instead (e.g. strategy endpoints reading
         // `body.code` for typed retry detection) use the `*_raw` variants
         // which short-circuit before this point.
-        Self::unwrap_envelope(body)
-    }
-
-    /// Apply the `{code, msg, data}` envelope check to a parsed JSON body.
-    ///
-    /// - Bare arrays (no envelope) pass through as the data payload.
-    /// - `code == 0` → returns the `data` field.
-    /// - `code != 0` → `bail!("API error (code=N): msg")`.
-    ///
-    /// Strategy uses `*_raw` variants and calls its own typed
-    /// `status::check_response` instead, so it bypasses this function.
-    fn unwrap_envelope(body: Value) -> Result<Value> {
-        // Some endpoints return bare arrays without the {code, msg, data} envelope.
-        // In that case, pass the array through as the data payload.
-        if body.is_array() {
-            return Ok(body);
-        }
-
-        // Handle code as either string "0" or number 0 (some endpoints return numeric)
-        let code_ok = match &body["code"] {
-            Value::String(s) => s == "0",
-            Value::Number(n) => n.as_i64() == Some(0),
-            _ => false,
-        };
-        if !code_ok {
-            let code_str = match &body["code"] {
-                Value::String(s) => s.clone(),
-                Value::Number(n) => n.to_string(),
-                other => other.to_string(),
-            };
-            // Surface backend `msg` verbatim. Treat missing or empty as "unknown error"
-            // so the user-visible string never ends with a dangling colon
-            // (e.g. `API error (code=82000): `).
-            let msg = extract_msg(&body["msg"]);
-            bail!("API error (code={}): {}", code_str, msg);
-        }
-
-        Ok(body["data"].clone())
+        unwrap_envelope(body)
     }
 
     /// Pre-envelope variant of `handle_response`. Performs the same HTTP-level
