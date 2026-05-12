@@ -237,6 +237,10 @@ struct AgentService {
     name: Option<String>,
     description: Option<String>,
     service_type: Option<String>,
+    /// 该服务的注册费用（字符串形式，单位通常 USDT）。
+    /// 空字符串 / "0" / "0.0" 视为未设置——provider 应基于任务工作量定价；
+    /// 非零正值视为该服务的标准价，provider 协商时以此为锚。
+    fee: Option<String>,
 }
 
 /// 子进程调 `onchainos agent service-list --agent-id <id>` 拿服务列表。
@@ -314,8 +318,22 @@ async fn fetch_agent_services(agent_id: &str) -> Vec<AgentService> {
                 .and_then(|v| v.as_str())
                 .map(String::from),
             service_type: s.get("serviceType").and_then(|v| v.as_str()).map(String::from),
+            fee: s.get("fee").and_then(|v| v.as_str()).map(String::from),
         })
         .collect()
+}
+
+/// Treats empty string / "0" / "0.0" / non-numeric junk as unset.
+/// Returns `Some(non_zero_value)` only when `fee` parses as a positive number.
+fn nonzero_fee(fee: &Option<String>) -> Option<&str> {
+    let f = fee.as_deref()?.trim();
+    if f.is_empty() {
+        return None;
+    }
+    match f.parse::<f64>() {
+        Ok(v) if v > 0.0 => Some(f),
+        _ => None,
+    }
 }
 
 // ─── 状态说明 ──────────────────────────────────────────────────────────────
@@ -545,12 +563,17 @@ async fn build_context(
                 out.push_str(&format!("- 备用参考·Provider 描述：{desc}\n"));
             }
         } else {
-            out.push_str("- 你的服务列表（service-list，**专业匹配的真相来源**）：\n");
+            out.push_str("- 你的服务列表（service-list，**专业匹配 + 报价锚的真相来源**）：\n");
             for (i, svc) in services.iter().enumerate() {
                 let name = svc.name.as_deref().unwrap_or("(no name)");
                 let desc = svc.description.as_deref().unwrap_or("(no description)");
                 let stype = svc.service_type.as_deref().unwrap_or("?");
-                out.push_str(&format!("  {}. [{stype}] {name}: {desc}\n", i + 1));
+                // fee 字段:非零正值显示「注册价 X USDT」给协商锚;未设置/0/空 显示「未设置」让 agent 按工作量估
+                let fee_hint = match nonzero_fee(&svc.fee) {
+                    Some(f) => format!("注册价 {f} USDT(协商以此为锚)"),
+                    None => "注册价未设置(按工作量估,不要瞎要价)".to_string(),
+                };
+                out.push_str(&format!("  {}. [{stype}] {name}: {desc} — {fee_hint}\n", i + 1));
             }
             if let Some(desc) = &profile.profile_description {
                 out.push_str(&format!("- 备用参考·Provider 描述：{desc}\n"));
