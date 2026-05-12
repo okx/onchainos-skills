@@ -11,7 +11,7 @@ If you encounter a string that isn't in either table, surface the raw message in
 
 ## 1. CLI-emitted `bail!` (verified)
 
-> **Note on ordering:** this table is "if you see error X, do action Y"; it is **NOT** a guarantee that X is the first error a misuse will trigger. The CLI runs `auth refresh → network setup → parameter validation` in that order, so a user who is both unauth'd **and** missing params will see `session expired` first, then `missing required parameter: <flag>` only after they re-login. The skill should normally catch missing params upfront (`SKILL.md §Step 2 — Collect Parameters`) before invoking the CLI, so end users rarely see the CLI-emitted param errors at all; this table is mostly for skill debugging and direct-CLI scripting.
+> **Note on ordering:** this table is "if you see error X, do action Y"; it is **NOT** a guarantee that X is the first error a misuse will trigger. The CLI runs `auth refresh → network setup → parameter validation` in that order, so a user who is both unauth'd **and** missing params will see `session expired` first, then `missing required parameter: <flag>` only after they re-login. The skill should normally catch missing params upfront (`SKILL.md §Step 2: Collect Parameters`) before invoking the CLI, so end users rarely see the CLI-emitted param errors at all; this table is mostly for skill debugging and direct-CLI scripting.
 
 | CLI error (exact) | Source | User-facing translation | Skill action |
 |---|---|---|---|
@@ -46,7 +46,7 @@ If you encounter a string that isn't in either table, surface the raw message in
 | `agent already active` | "Agent 已经是 active 状态，无需再次 activate" | No-op; show detail card. |
 | `agent already inactive` | "Agent 已经是 inactive 状态" | No-op; show detail card. |
 | `pending settlements` / `cannot deactivate` | "有未完结的任务引用这个 agent，需要先去 `okx-agent-task` 处理完" | Hand off to `okx-agent-task`. |
-| `stake` / `staking` / `insufficient` / `质押` (**not expected** on `agent create --role evaluator` — `create` doesn't consume the stake; if it ever appears it's a backend anomaly) | "后端返回了和质押相关的报错。这不是正常的 create 失败路径 —— agent 注册本身不需要质押。" | Surface the raw message verbatim in the error card footer; point the user at `/skills/okx-agent-task/evaluator.md` for the staking flow; do NOT cache drafts or invent a resume keyword. |
+| `stake` / `staking` / `insufficient` / `质押` (**not expected** on `agent create --role evaluator` — `create` doesn't consume the stake; if it ever appears it's a backend anomaly) | "后端返回了和质押相关的报错。这不是正常的 create 失败路径 —— agent 注册本身不需要质押。" | Surface the raw message verbatim in the error card footer; point the user at `/skills/okx-agent-task/references/evaluator-staking.md` for the staking flow; do NOT cache drafts or invent a resume keyword. |
 | `score out of range` | "评分要在 0–5 星之间的整数" (skill speaks stars; do not echo the raw 0–100 bound from the backend message — see `feedback-guide.md` Step 3) | Return to `feedback-guide.md` step 3. |
 | `self-rating not allowed` | "不能给自己的 agent 打分" | Return to `feedback-guide.md` step 1 (target). |
 | `creator agent not owned by caller` | "`--creator-id` 必须是你自己的 agent id" | Return to `feedback-guide.md` step 2 (re-resolve). |

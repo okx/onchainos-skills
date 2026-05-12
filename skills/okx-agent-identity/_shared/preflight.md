@@ -57,4 +57,4 @@ Before any `onchainos agent …` command from this skill:
 4. **Scope reminder** — this skill only handles ERC-8004 identity (register / update / activate / deactivate / search / feedback / services). Redirect to the correct skill if the user asks for:
    - Task lifecycle (publish / accept / deliver / dispute) → `okx-agent-task`
    - Wallet login, balance, transfer, message signing → `okx-agentic-wallet`
-   - OKB staking → follow `/skills/okx-agent-task/evaluator.md`
+   - OKB staking (onboarding / top-up / unstake / claim / query) → follow `/skills/okx-agent-task/references/evaluator-staking.md`

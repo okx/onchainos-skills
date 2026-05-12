@@ -186,20 +186,47 @@ onchainos agent create \
   [--picture "<url>"]
 ```
 
-## Post-success suggestion
+## ⛔ Post-success — MANDATORY template (do NOT paraphrase)
 
-Render **one visible line** in the user's language (one of the four variants below), then follow the **agent directive** block (internal — not rendered to the user). Follow the `#<id>` placeholder rule in `display-formats.md` — include the id only when it's actually known.
+Render **one visible line** using the template below — **verbatim except for the `#<id>` substitution rule**. Then follow the §Agent directive block (internal — not rendered to the user). Paraphrasing, adding fields (txHash, agentList, activeClients, refresh-agents output), omitting fields, adding follow-up questions, or summarizing the CLI's other JSON output are all violations of `SKILL.md §⛔ MANDATORY post-execute gate`.
 
-### Visible line (four variants)
+### Visible line (template)
 
-With id (Chinese): "Provider 身份 #<id> 已创建并默认上架（已上架）。可以 `agent search` 自检曝光，或直接等匹配来的任务。"
-Without id (Chinese): "Provider 身份已创建并默认上架（已上架）。可以 `agent search` 自检曝光，或直接等匹配来的任务。"
-With id (English): "Provider agent #<id> created and active by default. Run `agent search` to sanity-check exposure, or wait for matching tasks."
-Without id (English): "Provider agent created and active by default. Run `agent search` to sanity-check exposure, or wait for matching tasks."
+Pick the variant matching the user's language. Render **one line, declarative, no question mark, no pre-announcement of the chat handoff** (the chat flow is a silent no-op outside an OpenClaw runtime; pre-announcing would mislead users in Claude Code / Claude Desktop):
 
-**Create 默认返回 active** / **Create returns active by default**，不需要再 `agent activate`。`activate` 只用于用户之前主动 `deactivate` 过、现在想恢复上架的场景。 `activate` is only for users who previously `deactivate`'d and want to re-publish.
+- Chinese: `Provider 身份 #<id> 已创建并默认上架（已上架）。可以 \`agent search\` 自检曝光，或直接等匹配来的任务。`
+- English: `Provider agent #<id> created and active by default. Run \`agent search\` to sanity-check exposure, or wait for matching tasks.`
 
-Do NOT mention the `okx-agent-chat/after-agent-list-changed.md` path to the user in the visible line — the same-turn handoff below loads that skill's own prompt, which decides on its own whether to surface anything (silent in non-OpenClaw runtimes). Also do **not** pre-announce the chat handoff (e.g. "preparing messaging layer next"): pre-announcing would mislead users in Claude Code / Claude Desktop where the flow is a silent no-op.
+**`#<id>` substitution rule** (per `display-formats.md` top, `#<id>` placeholder rule, **with provider-specific carve-out**):
+
+- If the CLI response directly contains the new agent id, substitute it verbatim.
+- If the CLI returned `txHash` only **AND** the pre-check `agent get` lookup returned **zero** existing providers under this address, the new id can be safely **omitted** (fallback line below). Do NOT try to "derive" it from pre-check.
+- ⚠️ **Provider-specific danger zone — pre-check returned ≥ 1 existing provider(s).** Providers are multi-instance per address. The pre-check `agent get` list reflects state **before** this `create` and therefore does NOT contain the newly minted agent id. If the CLI then returns `txHash` only, **DO NOT** pick any id from the pre-check list as `#<id>` — those are *older* providers, not the new one. **Always use the fallback (omit `#<id>`)** in this case. The detail card from a future `agent get` (next user turn or later) will surface the new id authoritatively.
+- If `#<id>` is **unknown** by the rules above, **omit the `#<id> ` substring entirely** — do NOT render `#`, `#<id>`, `# ?`, or invent a number. Fallback lines:
+  - Chinese: `Provider 身份已创建并默认上架（已上架）。可以 \`agent search\` 自检曝光，或直接等匹配来的任务。`
+  - English: `Provider agent created and active by default. Run \`agent search\` to sanity-check exposure, or wait for matching tasks.`
+
+**Create returns active by default** / **Create 默认返回 active** — no need to follow up with `agent activate`. `activate` is only for users who previously ran `deactivate` and now want to re-publish.
+
+Do NOT mention the `okx-agent-chat/after-agent-list-changed.md` path to the user in the visible line — the same-turn handoff below loads that skill's own prompt, which decides on its own whether to surface anything (silent in non-OpenClaw runtimes).
+
+### ❌ Anti-pattern (real incident, jobId=961) → ✅ Correct
+
+❌ Agent paraphrased:
+> "✅ 第二个 provider 已上链 / agentId 961 / 4 个活跃客户端 / 你现在有 4 个 agent"
+
+Why this is a violation of `SKILL.md §⛔ MANDATORY post-execute gate`:
+
+- Not the documented template wording — "已上链" / "第二个 provider" / "4 个活跃客户端" / "你现在有 4 个 agent" are all paraphrases.
+- Mentions `活跃客户端` — that's internal `xmtp_refresh_agents` output, not user-relevant. Internal CLI fields (`agentList`, `activeClients`, refresh-agents counts, the full tx receipt) are NEVER user-facing; the template defines exactly what to expose.
+- Re-renders / counts the agent list (`你现在有 4 个 agent`) — violates the §Agent directive's "do NOT run `agent get`" rule. Even if the count is technically derivable from a prior response, surfacing it on the post-success line is template drift.
+- The template's `可以 \`agent search\` 自检曝光` half is missing — the suggested next action got dropped in favor of the inflated-success preamble.
+
+✅ Correct (with id):
+> Provider 身份 #961 已创建并默认上架（已上架）。可以 `agent search` 自检曝光，或直接等匹配来的任务。
+
+✅ Correct (id unknown, txHash-only return):
+> Provider 身份已创建并默认上架（已上架）。可以 `agent search` 自检曝光，或直接等匹配来的任务。
 
 ### Agent directive (internal — do NOT render to the user)
 

@@ -93,25 +93,46 @@ onchainos agent create \
   [--picture "<url>"]
 ```
 
-## Post-success suggestion
+## ⛔ Post-success — MANDATORY template (do NOT paraphrase)
 
-Render **one visible line** in the user's language (one of the four variants below), then follow the **agent directive** block (internal — not rendered to the user). Follow the `#<id>` placeholder rule in `display-formats.md` (top) — if the id is known from pre-check, include it; otherwise omit.
+Render **one visible line** using the template below — **verbatim except for the `#<id>` substitution rule**. Then follow the §Agent directive block (internal — not rendered to the user). Paraphrasing, adding fields, omitting fields, adding follow-up questions, or summarizing the CLI's other JSON output are all violations of `SKILL.md §⛔ MANDATORY post-execute gate`.
 
-### Visible line (four variants)
+### Visible line (template)
 
-All four variants are **declarative**, never a question — the same-turn handoff below continues without waiting for a user reply, so a question mark would create an unanswerable prompt. Also do **not** pre-announce the chat handoff (e.g. "preparing messaging layer next"): the chat flow is a silent no-op outside an OpenClaw runtime, so any pre-announce would mislead users in Claude Code / Claude Desktop / etc.
+Pick the variant matching the user's language. Render **one line, declarative, no question mark, no pre-announcement of the chat handoff** (the chat flow is a silent no-op outside an OpenClaw runtime; pre-announcing would mislead users in Claude Code / Claude Desktop):
 
-With known id (from pre-check `agent get` lookup), Chinese:
-> 买家身份 #<id> 已注册，可以去 `okx-agent-task` 发任务。
+- Chinese: `买家身份 #<id> 已注册，可以去 \`okx-agent-task\` 发任务。`
+- English: `Requester identity #<id> is live — head to \`okx-agent-task\` to publish a task.`
 
-Without id (current CLI only returns txHash), Chinese:
-> 买家身份已注册，可以去 `okx-agent-task` 发任务。
+**`#<id>` substitution rule** (per `display-formats.md` top, `#<id>` placeholder rule, **requester-specific constraints**):
 
-English equivalents:
-> Requester identity #<id> is live — head to `okx-agent-task` to publish a task.
-> Requester identity registered — head to `okx-agent-task` to publish a task.
+- Requester is **unique per address** (product invariant — see `role-playbook.md §Pre-check requester / evaluator`). If we got here successfully, the pre-check `agent get` lookup by definition returned **zero requesters** under this address — otherwise the pre-check gate would have stopped the flow and redirected to `update`. **Therefore the pre-check list contains NO same-role agent for this create**; any agent ids in that list belong to *other* roles (provider, evaluator) and MUST NOT be used as `#<id>` here.
+- The legitimate sources of `#<id>` for this post-success line are, in priority order:
+  1. The CLI response from this `create` call, if it directly contains the new agent id.
+  2. (Future) a follow-up `agent get` in a later turn — irrelevant for this immediate response.
+- If the CLI returned `txHash` only (no agent id) → **omit the `#<id> ` substring entirely** — do NOT render `#`, `#<id>`, `# ?`, do NOT invent a number, and do NOT borrow an id from the pre-check list. Fallback lines:
+  - Chinese: `买家身份已注册，可以去 \`okx-agent-task\` 发任务。`
+  - English: `Requester identity registered — head to \`okx-agent-task\` to publish a task.`
 
 Do NOT mention the `okx-agent-chat/after-agent-list-changed.md` path to the user in the visible line — the same-turn handoff below loads that skill's own prompt, which decides on its own whether to surface anything (silent in non-OpenClaw runtimes).
+
+### ❌ Anti-pattern → ✅ Correct
+
+❌ Agent paraphrased:
+> "✅ 买家身份已成功上链！agentId 是 #42，区块哈希 0xabc...def。可以去 okx-agent-task 找 provider 帮你做事了。需要我帮你看看有哪些 provider 推荐吗？"
+
+Why this is a violation of `SKILL.md §⛔ MANDATORY post-execute gate`:
+
+- Adds `txHash` to the user-visible line — not in the template (txHash lives in the detail card if rendered, not the suggestion line).
+- Adds a follow-up question (`需要我帮你看看有哪些 provider 推荐吗？`) — turns a declarative line into a question. The same-turn handoff to `after-agent-list-changed.md` does not wait for a reply; a trailing question creates a stuck prompt.
+- Adds reassurance phrasing (`已成功上链！`) not in the template — paraphrasing.
+- The "可以去 okx-agent-task 找 provider 帮你做事了" half is also a paraphrase of `可以去 \`okx-agent-task\` 发任务。` — code-fence and verb both drift.
+
+✅ Correct (with id):
+> 买家身份 #42 已注册，可以去 `okx-agent-task` 发任务。
+
+✅ Correct (id unknown, txHash-only return):
+> 买家身份已注册，可以去 `okx-agent-task` 发任务。
 
 ### Agent directive (internal — do NOT render to the user)
 

@@ -93,13 +93,13 @@ Render a 2-column table (not a bash blob). Follow `display-formats.md` §Create/
 
 > 确认无误回复 "执行" 即可。
 
-The rating row shows `★ N` where N is the integer 0–5. Never render `85 / 100` here. Localize the row label per `SKILL.md §Language matching` — `评分` for Chinese users, `Rating` for English users.
+The rating row shows `★ N` where N is the integer 0–5. Never render `85 / 100` here. Localize the row label per `SKILL.md §Language Matching` — `评分` for Chinese users, `Rating` for English users.
 
 **Do NOT show the bash command in the confirmation card.** Render it only if the user explicitly asks "把命令给我看".
 
 ### Step 6 — Execute (maintainer reference — not shown to user)
 
-> Before invoking the CLI, run the **pre-execute self-check** in `SKILL.md §Step 3: Execute`: the user's **most recent** turn must contain an explicit confirm token (`执行` / `execute` / `yes` / `好` / `确认` / `go`). A confirmation token from earlier in the conversation, or a confirm of a different write, does NOT count. If the most-recent turn lacks the token, render Step 5's card and wait.
+> Before invoking the CLI, run the **3-question pre-execute self-check** in `SKILL.md §Step 3: Execute`. For `feedback-submit`, the three questions are: (Q1) was `--creator-id` resolved via **either** ladder 1 (already established in this conversation) **or** ladder 2 (`agent get` enumeration) of `§Step 2` above? (Q2) does the user's **most recent** turn literally contain `执行` / `execute` / `yes` / `好` / `确认` / `go`? (Q3) are all field values in the just-rendered Step 5 card byte-identical to what is about to go to the CLI (target id, creator id, score, description, task-id)? **Any answer ≠ yes → render Step 5's card and wait.** Earlier-turn confirm tokens and confirms of different writes do NOT count for Q2.
 
 ```bash
 # --score is 0–5 stars (integer). CLI multiplies by 20 internally before
