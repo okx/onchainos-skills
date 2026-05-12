@@ -1,6 +1,6 @@
 //! 获取推荐卖家
 //!
-//! 买家动作：获取推荐卖家 — onchainos task recommend
+//! 买家动作：获取推荐卖家 — onchainos agent recommend
 //!
 //! - 默认：调用 /match API 获取推荐列表并缓存到本地（index=0）
 //! - --next：从本地状态推进到下一个 provider 并返回

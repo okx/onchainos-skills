@@ -31,7 +31,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
 fn staking_next_action(_job_id: &str, job_status: &str, _agent_id: &str) -> Option<String> {
     let body = match job_status {
         "staked" => "【当前状态】staked\n\n\
-             【Step 1】跑 `evaluator my-stake --agent-id <你的 agentId>` 拿 `activeStake`。\n\
+             【Step 1】跑 `onchainos agent my-stake --agent-id <你的 agentId>` 拿 `activeStake`。\n\
              【Step 2】用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
@@ -39,7 +39,7 @@ fn staking_next_action(_job_id: &str, job_status: &str, _agent_id: &str) -> Opti
              【my-stake 失败兜底】丢掉数字字段，降级推 `[质押 ✅] 质押已上链生效。`\n".to_string(),
 
         "unstake_requested" => "【当前状态】unstake_requested\n\n\
-             【Step 1】跑 `evaluator my-stake --agent-id <你的 agentId>` 拿 `pendingUnstake`、`unstakeAvailableAt`（已含本地时间）。\n\
+             【Step 1】跑 `onchainos agent my-stake --agent-id <你的 agentId>` 拿 `pendingUnstake`、`unstakeAvailableAt`（已含本地时间）。\n\
              【Step 2】用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
@@ -163,7 +163,7 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
         "slashed" => format!(
             "【当前状态】slashed\n\n\
              ⚠️ envelope.message 仅含 `event / jobId / timestamp / source / description`——没有 amount / reason，禁止编造或从其它字段猜测。\n\n\
-             【Step 1】跑 `evaluator my-stake --agent-id <你的 agentId>` 拿 post-slash 的 `activeStake`。\n\
+             【Step 1】跑 `onchainos agent my-stake --agent-id <你的 agentId>` 拿 post-slash 的 `activeStake`。\n\
              【Step 2】用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\
@@ -172,7 +172,7 @@ fn dispute_next_action(job_id: &str, job_status: &str, _agent_id: &str) -> Optio
         ),
 
         "cooldown_entered" => "【当前状态】cooldown_entered\n\n\
-             【Step 1】跑 `evaluator my-stake --agent-id <你的 agentId>` 拿 `cooldownEndsAt`（已含本地时间）。\n\
+             【Step 1】跑 `onchainos agent my-stake --agent-id <你的 agentId>` 拿 `cooldownEndsAt`（已含本地时间）。\n\
              【Step 2】用 `xmtp_dispatch_user` 把通知推给用户：\n\n\
              tool: xmtp_dispatch_user\n\
              content:\n\

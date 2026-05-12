@@ -1,6 +1,6 @@
 //! 确认完成
 //!
-//! 买家动作：确认完成 — onchainos task complete
+//! 买家动作：确认完成 — onchainos agent complete
 //!
 //! 根据支付方式分流：
 //! - escrow: pre-complete(orderId,deadline) → 签 digest → complete(signatureData) → 签 uopHash → broadcast（释放担保款）

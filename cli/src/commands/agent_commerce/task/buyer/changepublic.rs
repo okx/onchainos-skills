@@ -1,6 +1,6 @@
 //! 设为 Public
 //!
-//! 买家动作：设为 Public — onchainos task set-public
+//! 买家动作：设为 Public — onchainos agent set-public
 
 use anyhow::Result;
 

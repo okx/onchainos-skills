@@ -1,6 +1,6 @@
 //! 拒绝交付物
 //!
-//! 买家动作：拒绝交付物 — onchainos task reject
+//! 买家动作：拒绝交付物 — onchainos agent reject
 //!
 //! 流程：pre-refuse(orderId,deadline) → 签 digest → refuse(signatureData+reason) → 签 uopHash → broadcast
 

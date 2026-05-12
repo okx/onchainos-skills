@@ -1,6 +1,6 @@
 //! 发布任务（自定义签名流程）
 //!
-//! 买家动作：发布任务 — onchainos agent task create
+//! 买家动作：发布任务 — onchainos agent create-task
 //!
 //! 身份校验：通过调用身份模块 CLI（`onchainos agent get`）检查当前用户
 //! 是否拥有买家身份（role=1），再执行任务发布流程。
