@@ -300,7 +300,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20- tokenSymbol：支付代币\n\
              \x20\x20- tokenAmount：支付金额\n\
              \x20\x20- deadline：交付截止时间\n\n\
-             ⏱ 超时规则：每轮等待卖家回复最多 5 分钟。超时未回复 → 静默切换下一个卖家（**禁止给卖家发任何消息，禁止 xmtp_delete_conversation**）。超时后若再收到该卖家的 a2a-agent-chat 消息，**不回复、不处理**，直接忽略。\n\n\
+             ⏱ 超时规则：每轮等待卖家回复最多 5 分钟。超时未回复 → 先 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason: 协商超时，5 分钟未回复）给卖家，再 `recommend --next` 切换下一个卖家（**禁止 xmtp_delete_conversation 删群**）。超时后若再收到该卖家的 a2a-agent-chat 消息，**不回复、不处理**，直接忽略。\n\n\
              ⚠️ **协商消息格式铁律**：所有协商阶段的结构化消息（PROPOSE / CONFIRM / REJECT）**必须以对应前缀标记开头**，\n\
              content 第一行必须是 `[NEGOTIATE_PROPOSE]` / `[NEGOTIATE_CONFIRM]` / `[NEGOTIATE_REJECT]`，**严禁用自然语言替代**。\n\
              卖家 Agent 通过前缀做机器解析，缺少前缀会导致协商流程卡死。\n\n\
@@ -330,12 +330,12 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20\x20\x20reason: 报价超出最高预算\n\
              \x20\x20b) `onchainos agent recommend {job_id} --next` 切换下一个卖家\n\
              \x20\x20c) 回到 Step 2 路由判断\n\n\
-             3. （sub session 内）双方就价格/条件进行自然语言调整（可能多轮，每轮 5 分钟超时）\n\
+             3. （sub session 内）双方就价格/条件进行自然语言调整（可能多轮，每轮 5 分钟超时，卖家 COUNTER 上限 3 次）\n\
              \x20\x20每轮调用 xmtp_send，参数：sessionKey=<同上>，content=<协商内容>\n\
              \x20\x20⚠️ **不要机械接受卖家加价**：以**任务的 max_budget（最高预算）为绝对上限**——超过 max_budget 一律拒绝，不论差多少。`budget < 卖家价 ≤ max_budget` 区间内可谈，可以原价接受或继续还价；卖家价 ≤ budget 直接接受。\n\
              ⚠️ **币种铁律**：协商只允许改**金额**，不允许改**币种**。任务发布时的币种（从 `onchainos agent common context` 获取）\n\
              是链上合约绑定的。如果卖家提出不同币种，必须纠正：「本任务使用 <任务币种>，请用 <任务币种> 报价。」\n\n\
-             ⚠️ 任一步骤卖家 5 分钟未回复 → 视为协商失败，静默切换下一个卖家（**不给卖家发消息，不删群**）。超时后再收到该卖家消息一律忽略、不回复。\n\n\
+             ⚠️ 任一步骤卖家 5 分钟未回复 → 视为协商超时，先 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason: 协商超时）给卖家，再 `recommend --next` 切换下一个卖家（**不删群**）。超时后再收到该卖家消息一律忽略、不回复。\n\n\
              4. 达成初步一致后，调用 xmtp_send 发送 **[NEGOTIATE_PROPOSE]** 结构化提案（必须严格使用此格式，卖家 Agent 会机器解析）：\n\
              \n\
              📋 **填字段前必做的口头记录自检（防止『记忆穿越』）**：\n\
@@ -367,7 +367,10 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              \x20\x20\x20\x20\x20\x20deadline: <与 ACK 完全相同>\n\
              \x20\x20\x20\x20\x20\x20→ 立即转 Step 6（落盘 + 视情况 setPaymentMode），按 Step 6 分支决定**何时**发 [NEGOTIATE_CONFIRM]\n\
              \x20\x20\x20\x20- 任一字段不一致 → 视为篡改，调 xmtp_send 告知卖家字段不一致并重新发送 [NEGOTIATE_PROPOSE]\n\n\
-             \x20\x20▸ 收到 **[NEGOTIATE_COUNTER]** → 卖家提出反提案，**带价值判断决定接不接，不要机械接受**：\n\
+             \x20\x20▸ 收到 **[NEGOTIATE_COUNTER]** → **先计数**：回看本 sub session 历史，统计卖家已发送的 `[NEGOTIATE_COUNTER]` 总次数（含本次）。\n\
+             \x20\x20\x20\x20🔢 **COUNTER 轮次上限 = 3 次**：如果本次是第 3 次（含）以上 COUNTER，**不处理 COUNTER 内容**，直接 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason: 协商轮次超限，已达 3 次 COUNTER），然后 `recommend --next` 切换下一个卖家。\n\
+             \x20\x20\x20\x20未超限 → 继续下方价值判断：\n\n\
+             \x20\x20\x20\x20卖家提出反提案，**带价值判断决定接不接，不要机械接受**：\n\
              \x20\x20\x20\x20⚠️ **第 0 步：先回看 sub session 历史，确认你刚才发的 [NEGOTIATE_PROPOSE] 是否填错了**：\n\
              \x20\x20\x20\x20\x20\x20· 回看自然语言协商最后一次明确同意的金额 / paymentMode / deadline\n\
              \x20\x20\x20\x20\x20\x20· 如果 COUNTER 的金额**等于**自然语言里你最后同意的那个数 → **是你 PROPOSE 写错了，不是卖家加价**：直接用 COUNTER 的金额重发新 [NEGOTIATE_PROPOSE]，**不要再讨价还价**也不要嘴硬说『我们之前是 X』，直接修正即可\n\
@@ -405,8 +408,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str, job_
              **Step 6.3 — 结束本轮 turn**，等待 `job_payment_mode_changed` 系统通知。\n\n\
              （新一 turn）收到 `job_payment_mode_changed` → 调 next-action --jobStatus job_payment_mode_changed → 按剧本 xmtp_send [NEGOTIATE_CONFIRM] 给卖家。卖家此时见 CONFIRM → apply（escrow）或 create_payment_charge（non_escrow），链上 paymentMode 已就位。\n\n\
              ━━━━━━━━━ 遍历结束 / 切换下一个卖家 ━━━━━━━━━\n\n\
-             当前卖家超时未回复（5 分钟）、收到 `[NEGOTIATE_REJECT]`、或协商失败 → 直接调 `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断。\n\
-             ⚠️ **超时切换时禁止给卖家发送任何消息**（不要 xmtp_send 告知超时/结束，不要 xmtp_delete_conversation 删群）——静默切走即可。超时后再收到该卖家消息一律忽略、不回复。\n\
+             当前卖家超时未回复（5 分钟）/ COUNTER 轮次超限（≥3 次）/ 收到 `[NEGOTIATE_REJECT]` / 协商失败 → 先 xmtp_send 发 `[NEGOTIATE_REJECT]`（reason 填超时/超限/失败原因）给卖家，再调 `onchainos agent recommend {job_id} --next` 切换下一个卖家，重新回到 Step 2 路由判断。\n\
+             ⚠️ **切换时必须先发 [NEGOTIATE_REJECT] 再切走**（让卖家有明确终止信号），但**禁止 xmtp_delete_conversation 删群**。切走后再收到该卖家消息一律忽略、不回复。\n\
              推荐列表全部遍历完（或初始推荐列表为空）→ 先调 `session_status` 拿 sessionKey；调 `xmtp_prompt_user` **之前**先调 `pending-decisions add`(见硬规则 7);再调用 xmtp_prompt_user 引导用户选择：\n\
              \x20\x20llmContent: [USER_DECISION_REQUEST][sub_key: <session_status 拿到的 sessionKey 整串>][job: {job_id}][role: buyer] \
              用户选择 A 并提供 agentId → 调用 xmtp_dispatch_session(sessionKey=\"<session_status 拿到的 sessionKey 整串>\", content=\"[USER_DECISION_RELAY] 用户决策：指定卖家 agentId=<用户提供的agentId>\") relay 回 sub session，sub agent 查 service-list 后路由（x402 或建群协商）；\
