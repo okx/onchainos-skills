@@ -11,9 +11,27 @@
 | "注册 evaluator / 验证者 / 仲裁者 / 我想当仲裁" | `role-evaluator.md` (create-first; staking happens separately via `okx-agent-task`) |
 | Incoming context `intent=need-requester` | `passive-onboarding.md` → `role-requester.md` |
 
-If the user said "注册一个 agent" without specifying a role, ask the three-option question first:
+If the user said "注册一个 agent" without specifying a role, ask the three-option question first using the **numbered-options pattern** (per `SKILL.md §Choice prompts` + `§Core Flow` gate 1) — never the prose `A / B / C` form, which is banned by the choice-prompt rule.
 
-> "你要注册哪种身份？买家 (requester) / 服务方 (provider) / 验证者 (evaluator)？"
+Chinese:
+```
+你要注册哪种身份？
+  1. 买家（requester）— 发任务、付费买服务
+  2. 服务方（provider）— 提供服务、接订单
+  3. 验证者（evaluator）— 仲裁任务争议
+回复数字 1/2/3。
+```
+
+English:
+```
+Which identity do you want to register?
+  1. requester — publishes tasks, pays for services
+  2. provider — offers services, delivers work
+  3. evaluator — arbitrates task disputes
+Reply with a number: 1/2/3.
+```
+
+Also accept a written role name (`requester` / `provider` / `evaluator` / `买家` / `服务方` / `验证者`) as a fallback, but the primary ask is numeric. CLI accepts `1`/`2`/`3` as `--role` aliases (`utils.rs:162-165`), so the numeric reply can pass straight through.
 
 Do NOT default. Do NOT guess from the name / description fields.
 
@@ -59,29 +77,49 @@ Before entering any role flow triggered by the user's own initiative, run `agent
 
 ### provider（可多开）
 
-两条路都允许。用编号选项问（参考 `SKILL.md §Choice prompts`）：
+两条路都允许。用编号选项问（参考 `SKILL.md §Choice prompts`）。**Pre-check 返回 K ≥ 1 个 provider 时，列出所有现有 provider**（用户需要看到他们到底有哪些，才能判断是新开还是改其中之一）：
 
-中文：
+中文（K = 1）：
 ```
-你已经有一个 provider 身份 #<N>（<name>）。这次是：
+你已经有 1 个 provider 身份：#<N1>（<name1>）。这次是：
   1. 再开一个新的 provider（同一个地址可多开）
-  2. 修改现有这个的描述 / 头像 / 服务
+  2. 修改 #<N1> 的描述 / 头像 / 服务
 回复 1 或 2。
 ```
 
-English:
+中文（K ≥ 2，列出所有）：
 ```
-You already have a provider identity #<N> (<name>). What would you like to do?
+你已经有 K 个 provider 身份：#<N1>（<name1>）, #<N2>（<name2>）, …, #<NK>（<nameK>）。这次是：
+  1. 再开一个新的 provider（同一个地址可多开）
+  2. 修改其中某一个
+回复 1 或 2。
+```
+
+若用户选 2 且 K ≥ 2，**再问一次**让用户指定改哪个，使用单独的 numbered-options 提问：「想改哪个？回复编号 1（#<N1>）/ 2（#<N2>）/ … / K（#<NK>）。」
+
+English (K = 1):
+```
+You have 1 existing provider identity: #<N1> (<name1>). What would you like to do?
   1. Register a new provider (multiple providers per address are allowed)
-  2. Update the existing one (description / picture / services)
+  2. Update #<N1> (description / picture / services)
 Reply 1 or 2.
 ```
 
-Do not auto-choose for provider. Don't silently default.
+English (K ≥ 2, list them all):
+```
+You have K existing provider identities: #<N1> (<name1>), #<N2> (<name2>), …, #<NK> (<nameK>). What would you like to do?
+  1. Register a new provider (multiple providers per address are allowed)
+  2. Update one of them
+Reply 1 or 2.
+```
+
+If the user picks 2 and K ≥ 2, ask a follow-up numbered question: "Which one? Reply with a number: 1 (#<N1>) / 2 (#<N2>) / … / K (#<NK>)."
+
+Do not auto-choose for provider. Don't silently default. **Do not collapse the K ≥ 2 case to "one of them" without listing the ids** — the user must see the full list to make an informed pick (and to notice if they have stale providers they forgot about).
 
 ### Language
 
-The prompt **must match the user's language**. Follow `SKILL.md §Language matching`.
+The prompt **must match the user's language**. Follow `SKILL.md §Language Matching`.
 
 **Skip this pre-check entirely for passive onboarding** (`intent=need-requester`) — see `passive-onboarding.md`.
 
@@ -89,7 +127,7 @@ The prompt **must match the user's language**. Follow `SKILL.md §Language match
 
 > ⛔ The card is **mandatory before every content-creating on-chain write** — `agent create` / `update` / `feedback-submit`. This is enforced by `SKILL.md §⛔ MANDATORY confirmation gate (non-overridable)`; that section is the canonical source. Memory preferences, plan-mode exit, one-shot capture, urgency, and "intent is obvious" all do **NOT** bypass it — see the rationalization list in `SKILL.md §Core Flow` gate 4. State toggles (`agent activate` / `agent deactivate`) are NOT gated and run directly via `SKILL.md §Intent → Sub-flow`.
 
-Always a table of fields — never a bash blob. Match the user's language per `SKILL.md §Language matching`. Render field labels and row values in one language only. For the `role` row you may show the CLI value once so the user sees what gets sent. See `display-formats.md` §Create/Update Diff for the full template with both language variants.
+Always a table of fields — never a bash blob. Match the user's language per `SKILL.md §Language Matching`. Render field labels and row values in one language only. For the `role` row you may show the CLI value once so the user sees what gets sent. See `display-formats.md` §Create/Update Diff for the full template with both language variants.
 
 Chinese variant:
 
@@ -119,12 +157,12 @@ End with: `Reply "execute" to run it.`
 
 ## Execute
 
-> Before invoking the CLI, run the **pre-execute self-check** defined in `SKILL.md §Step 3: Execute`: the user's most recent turn must contain an explicit confirm token (`执行` / `execute` / `yes` / `好` / `确认` / `go`). If it does not, render the confirmation card instead — do not call the tool.
+> Before invoking the CLI, run the **3-question pre-execute self-check** defined in `SKILL.md §Step 3: Execute` — externalize your answers (pre-check ran? confirm token in latest turn? card values byte-equal to CLI values?). **If any answer ≠ yes, render the confirmation card and wait — do NOT call the tool.** The canonical wording, command-specific reinterpretations, and full remediation table all live in `SKILL.md §Step 3`; do not maintain a parallel summary here.
 
 After the user replies "执行" / "yes" / equivalent:
 
 1. Run the CLI command once.
-2. On success → render the detail card (`display-formats.md` §Agent detail card) + the role-specific next-step line (see each role file). **Exception — passive onboarding** (`intent=need-requester`): render **only one line** and **no detail card** per `passive-onboarding.md §Messages to the user` + `role-requester.md §Passive Onboarding → After success`. **For the writes in the `SKILL.md §Step 4` same-turn handoff whitelist** (`requester` / `provider` / `evaluator` create, plus `activate` / `deactivate`), the visible line is followed by the same-turn handoff (load `okx-agent-chat/after-agent-list-changed.md` for requester / provider / activate / deactivate — silent no-op outside an OpenClaw runtime; `okx-agent-task/evaluator.md` for evaluator → stake). Do not stop between visible line and handoff. See each role file's §Post-success "Agent directive" block. **Passive onboarding does NOT trigger the same-turn chat handoff** either (`role-requester.md §Passive Onboarding` "Do NOT load after-agent-list-changed.md" rule).
+2. On success → render the detail card (`display-formats.md` §Agent detail card) + the role-specific next-step line (see each role file). **Exception — passive onboarding** (`intent=need-requester`): render **only one line** and **no detail card** per `passive-onboarding.md §Messages to the user` + `role-requester.md §Passive Onboarding → After success`. **For the writes in the `SKILL.md §Step 4` same-turn handoff whitelist** (`requester` / `provider` / `evaluator` create, plus `activate` / `deactivate`), the visible line is followed by the same-turn handoff to the downstream file specified in that whitelist (chat post-hook is a silent no-op outside an OpenClaw runtime). Do not stop between visible line and handoff. See each role file's §Post-success "Agent directive" block. **Passive onboarding does NOT trigger the same-turn chat handoff** either (`role-requester.md §Passive Onboarding` "Do NOT load after-agent-list-changed.md" rule).
 3. On failure → render the error card (`display-formats.md` §Error card) + the recovery action (see `troubleshooting.md`). **Do NOT auto-retry.**
 
 See `_shared/no-polling.md` — do NOT follow up with `agent get` / status poll. Same-turn skill handoffs in the §Step 4 whitelist are explicitly allowed (they are not polling).
