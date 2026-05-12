@@ -45,6 +45,9 @@ pub enum WalletCommand {
     Logout,
     /// List all supported chains (cached locally, refreshes every 10 minutes)
     Chains,
+    /// Check Polymarket geoblock status. Prints `{"blocked":true|false}` on success;
+    /// exits non-zero on any failure (skill should treat that as fail-closed).
+    Geoblock,
     /// Query wallet balances
     Balance {
         /// Query all accounts' assets (uses accountId list)
@@ -416,6 +419,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
         WalletCommand::Qrcode { address } => cmd_qrcode(&address),
         WalletCommand::Logout => super::auth::cmd_logout().await,
         WalletCommand::Chains => super::chain::execute(super::chain::ChainCommand::List).await,
+        WalletCommand::Geoblock => super::geoblock::cmd_check().await,
         WalletCommand::Balance {
             all,
             chain,
