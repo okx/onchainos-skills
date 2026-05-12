@@ -54,6 +54,8 @@ Most user-facing copy in this flow is split into two parts:
 This applies to: **Welcome Banner**, **Login Method Choice**, and **API Key Login** Step 1 heads-up.
 
 <MUST>
+**Match the user's language across BOTH zones.** Fixed-zone copy below is canonical English — at runtime, render it in the user's language (matching the language they wrote in). Keep emojis, placeholders (`{evm_address}` etc.), line breaks, and `**Attention ⚠️:**` disclaimer prefix intact; translate only the prose. Mixed-language output (Chinese free zone + English banner) is a bug.
+
 **Bridging is mandatory.** End the free zone with a transitional half-sentence (e.g. "let me drop the menu" / "here's where to start ↓") — never with a hard period followed by an unrelated fixed-zone line. Self-check before emitting: read the free-zone tail + first fixed-zone line as a single unit; if they feel like two separate posts pasted together, rewrite the free-zone tail.
 </MUST>
 

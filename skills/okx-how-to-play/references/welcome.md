@@ -5,11 +5,19 @@ Two variants by auth state. Both share the same 6-pick (or 5-pick, when Polymark
 - **Logged-out** — no addresses, no balance, includes a "login" hint at the menu trailer.
 - **Logged-in** — addresses + balance shown, no QR codes, no login hint.
 
-## Step 1 — Free zone (1–5 sentences)
+## Step 1 — Free zone (conditional)
 
-Answer the user's actual question or acknowledgement first, in their language. Keep it tight (1–5 sentences). Don't pre-empt the banner's intro — the banner already opens with "Hi, welcome to Onchain OS." plus 3 value-prop sentences. If the user asked "what is onchainos / how to play", give a brief answer but avoid duplicating that copy.
+**Skip the free zone entirely when the opener is one the banner already answers.** The banner header is "Hi, welcome to Onchain OS." + 3 value-prop sentences explaining what Onchain OS is and how it works. Repeating that in a free zone above is pure duplication.
 
-**Bridging into the banner is mandatory.** End the free zone with a transitional half-sentence (e.g. "let me drop the menu" / "here's where to start ↓") — NOT a hard period followed by the banner's first line. Self-check before emitting: read free-zone tail + first banner line as one unit. If they feel like two posts pasted together, rewrite the free-zone tail.
+Specifically:
+
+| User opener | Free zone? |
+|---|---|
+| "what is onchainos / 怎么玩 / how do I play / how to use / what can it do / introduce yourself / tutorial / getting started" | **Skip.** Go straight to the banner. |
+| "I just installed it, now what" / "where do I start" / "I'm new" | 1 short sentence acknowledging, then bridge. |
+| User asked an unrelated concrete question alongside | 1–3 sentences answering it, then bridge. |
+
+**Bridging (only when a free zone is present)**: end with a transitional half-sentence (e.g. "let me drop the menu" / "here's where to start ↓") — NOT a hard period followed by the banner's first line. Self-check: read free-zone tail + first banner line as one unit; if they feel like two separate posts pasted together, rewrite the tail. If they restate what the banner already says, **delete the free zone entirely**.
 
 ## Step 2 — Prepare placeholders (run BEFORE rendering)
 
@@ -47,6 +55,8 @@ Set `polymarket_available` strictly:
 This is **fail-closed**. Do not warn or surface the geoblock decision — silently switch to the geoblocked menu variant.
 
 ## Step 3 — Render the banner
+
+**Language**: the template below is canonical English. Render in the user's language at runtime — translate the prose, keep emojis, placeholders (`{evm_address}` etc.), structure, and `**Attention ⚠️:**` disclaimer prefix intact. Do NOT emit English when the user wrote Chinese (or vice versa).
 
 Output as plain text (no `>` blockquote prefix, no surrounding fence). Order: header → (logged-in only: address block) → menu → trailer → disclaimer.
 
