@@ -1110,7 +1110,7 @@ async fn wallet_contract_call(
         mev_protection,
         jito_unsigned_tx,
         force,
-        None,  // tx_source: not cross-chain
+        None, // tx_source: not cross-chain
         gas_token_address,
         relayer_id,
         enable_gas_station,
@@ -1230,9 +1230,13 @@ async fn cmd_execute(
         }
 
         if is_allowance_insufficient(spendable, amount) {
-            // USDT pattern: non-zero but insufficient → revoke first
+            // USDT-pattern (zero-before-set) is only enforced by a small set of
+            // tokens — for everything else, sending a new `approve` overwrites
+            // the stale allowance directly. Gate the revoke on the whitelist.
             let spendable_nonzero = spendable != "0" && !spendable.is_empty();
-            if spendable_nonzero {
+            let needs_revoke =
+                spendable_nonzero && token_requires_revoke(&chain_index, &from_token);
+            if needs_revoke {
                 if cfg!(feature = "debug-log") {
                     eprintln!("[swap execute] revoking stale approval (USDT pattern)...");
                 }
@@ -1257,8 +1261,11 @@ async fn cmd_execute(
                     force,
                 )
                 .await?;
-                // We don't need the revoke txHash in output, just ensure it succeeded
-                extract_tx_hash(&result)?;
+                let revoke_tx_hash = extract_tx_hash(&result)?;
+                // Approve must wait for revoke to confirm — sending approve
+                // before the revoke is mined leaves the original allowance
+                // in place and the swap will revert.
+                wait_tx_onchain(client, &revoke_tx_hash, &chain_index).await?;
             }
 
             if cfg!(feature = "debug-log") {
@@ -1284,6 +1291,9 @@ async fn cmd_execute(
             )
             .await?;
             let (tx_hash, order_id) = extract_tx_hash_and_order_id(&result)?;
+            // Swap must see the approve on-chain before fetching the swap tx —
+            // otherwise the router quote will reject the route.
+            wait_tx_onchain(client, &tx_hash, &chain_index).await?;
             approve_tx_hash = Some(tx_hash);
             if !order_id.is_empty() {
                 approve_order_id = Some(order_id);
@@ -1447,6 +1457,91 @@ fn extract_approve_calldata(approve_data: &Value) -> Result<String> {
         .as_str()
         .map(|s| s.to_string())
         .ok_or_else(|| anyhow::anyhow!("missing 'data' field in approve response"))
+}
+
+/// Tokens that require revoke-to-zero before re-approval (USDT-pattern
+/// `approve` race-condition guard). Keyed by `chain_index`; values are
+/// lowercase token addresses.
+static REVOKE_REQUIRED_TOKENS: LazyLock<HashMap<&str, &[&str]>> = LazyLock::new(|| {
+    HashMap::from([(
+        // Ethereum
+        "1",
+        &[
+            "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "0x5a98fcbea516cf06857215779fd812ca3bef1b32",
+            "0x1776e1f26f98b1a5df9cd347953a26dd3cb46671",
+            "0xd3e4ba569045546d09cf021ecc5dfe42b1d7f6e4",
+        ][..],
+    )])
+});
+
+/// True if `(chain_index, token)` is a known USDT-pattern token and the caller
+/// must revoke before re-approving.
+fn token_requires_revoke(chain_index: &str, token: &str) -> bool {
+    let token_lc = token.to_lowercase();
+    REVOKE_REQUIRED_TOKENS
+        .get(chain_index)
+        .is_some_and(|addrs| addrs.iter().any(|a| a.to_lowercase() == token_lc))
+}
+
+/// Per-chain confirmation timeout for [`wait_tx_onchain`]. Picked to cover a
+/// typical block time with a small buffer; falls back to a generous default
+/// for unknown chains so the poller still bounds.
+fn tx_confirmation_timeout(chain_index: &str) -> std::time::Duration {
+    use std::time::Duration;
+    match chain_index {
+        // ETH, Linea
+        "1" | "59144" => Duration::from_secs(20),
+        _ => Duration::from_secs(10),
+    }
+}
+
+/// Poll the public DEX tx-history endpoint until the tx confirms on-chain
+/// (`txStatus == "success"`) or the per-chain timeout elapses.
+///
+/// GET `/api/v6/dex/post-transaction/transaction-detail-by-txhash`
+async fn wait_tx_onchain(client: &mut ApiClient, tx_hash: &str, chain_index: &str) -> Result<()> {
+    use std::time::{Duration, Instant};
+
+    let timeout = tx_confirmation_timeout(chain_index);
+    let poll_interval = Duration::from_secs(1);
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        let result = client
+            .get(
+                "/api/v6/dex/post-transaction/transaction-detail-by-txhash",
+                &[("chainIndex", chain_index), ("txHash", tx_hash)],
+            )
+            .await;
+        if cfg!(feature = "debug-log") {
+            eprintln!(
+                "[DEBUG][wait_tx_onchain] tx={} chain={} response={:?}",
+                tx_hash, chain_index, result
+            );
+        }
+
+        if let Ok(data) = result {
+            let detail = unwrap_api_array(&data);
+            let status = detail["txStatus"].as_str().unwrap_or("");
+            if status.eq_ignore_ascii_case("success") {
+                return Ok(());
+            }
+            if status.eq_ignore_ascii_case("fail") {
+                bail!("tx {} failed on-chain (chain={})", tx_hash, chain_index);
+            }
+        }
+
+        if Instant::now() >= deadline {
+            bail!(
+                "tx {} not confirmed on-chain within {}s (chain={})",
+                tx_hash,
+                timeout.as_secs(),
+                chain_index
+            );
+        }
+        tokio::time::sleep(poll_interval).await;
+    }
 }
 
 /// Compare allowance (spendable) against required amount.
