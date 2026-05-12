@@ -39,6 +39,7 @@ pub struct CreateTaskParams {
     pub deadline_submit: String,
     pub title: Option<String>,
     pub agent_id: Option<String>,
+    pub provider: Option<String>,
 }
 
 struct ValidatedParams {
@@ -271,11 +272,22 @@ pub async fn handle_create(
         &job_id, 1, &buyer_agent_id,
     ).await?;
 
+    if let Some(ref provider_id) = params.provider {
+        super::negotiate::save_designated_provider(&job_id, provider_id)?;
+    }
+
     println!("✓ 任务已上链");
     println!("  jobId:  {job_id}");
     println!("  txHash: {tx_hash}");
     println!("  状态:   open（等待 Provider 报名）");
+    if let Some(ref provider_id) = params.provider {
+        println!("  指定卖家: {provider_id}（跳过 recommend，直接路由）");
+    }
     println!();
-    println!("下一步: onchainos agent recommend {job_id}");
+    if params.provider.is_some() {
+        println!("下一步: 等待 job_created 通知，将自动查询指定卖家服务并路由");
+    } else {
+        println!("下一步: onchainos agent recommend {job_id}");
+    }
     Ok(())
 }

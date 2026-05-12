@@ -62,6 +62,8 @@ pub enum AgentCommand {
         #[arg(long)] title: Option<String>,
         /// Buyer agent ID（多 buyer 时必传，单 buyer 时自动选择）
         #[arg(long = "agent-id")] agent_id: Option<String>,
+        /// 指定卖家 agentId（跳过 recommend，直接与该卖家协商或 x402 接单）
+        #[arg(long)] provider: Option<String>,
     },
 
     /// Get recommended providers for a task
@@ -552,11 +554,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         // ── Client (buyer) task commands ────────────────────────────
         AgentCommand::CreateTask {
             description, description_summary, budget, max_budget, currency,
-            deadline_open, deadline_submit, title, agent_id,
+            deadline_open, deadline_submit, title, agent_id, provider,
         } => task::buyer::run_task(
             T::Create {
                 description, description_summary, budget, max_budget, currency,
-                deadline_open, deadline_submit, title, agent_id,
+                deadline_open, deadline_submit, title, agent_id, provider,
             }, ctx,
         ).await,
 

@@ -132,7 +132,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
          \x20\x20\x20\x20漏 `add` → 用户回复时反查不到本条决策,无法 relay 回本会话;\n\
          \x20\x20\x20\x20漏 `remove` → 旧条目残留成僵尸,下次再调 `xmtp_prompt_user` 时被误命中,用户回复派给错的会话。\n\
          \x20\x208) ❌ **用户可见内容禁用技术术语**:`xmtp_dispatch_user` 的 content 和 `xmtp_prompt_user` 的 userContent 都直接给用户看,**禁写** tool 名(`xmtp_*`) / 事件名(`provider_applied`/`job_*`/`dispute_resolved` 等) / 状态名(`open`/`accepted`/`disputed` 等英文枚举) / CLI flag(`--*`) / skill 名(`okx-agent-identity` / `§Feedback Submit` 等) / 状态字段名(`jobStatus`/`paymentMode` 等)——一律用自然中文(担保/非担保/x402,验收期超时,任务已完成,等)。同 turn 内的 `xmtp_send` 给买家也按此规则。\n\n\
-         如果不记得本任务协商细节（deliverable / paymentMode / token / 买家 agentId / 价格），\n\
+         如果不记得本任务协商细节（paymentMode / token / 买家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 加载上下文。\n\n"
     );
 
@@ -555,7 +555,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20\x20• 否 → ✅ 继续\n\n\
              ⚠️ **币种从任务详情的 tokenSymbol 字段读**(USDT 或 USDG)。**禁止假设 USDT** —— 不少任务用 USDG，写错币种会让买家协议混乱。\n\n\
              📌 **你有完整的协商权 —— 不要机械接受 buyer 的开价**。看 context 里的【任务详情】+【你的身份/profile】+【任务复杂度】，自己判断：\n\
-             \x20\x20• 任务工作量、验收标准、deadline 是否值这个价\n\
+             \x20\x20• 任务工作量是否值这个价\n\
              \x20\x20• 你 profile 上的同类服务价格（context 里的 service-list）跟 buyer 出价差多少\n\
              \x20\x20• 担保（escrow）vs 非担保（non_escrow）哪个更适合这单（金额大 / 不熟买家 → 偏好 escrow；低额、长期合作 → non_escrow 更轻）\n\n\
              💰 **报价决策铁律 —— 看 context 里 service-list 该服务的「注册价」字段**:\n\
@@ -579,42 +579,31 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\
              [NEGOTIATE_PROPOSE]\n\
              jobId: ...\n\
-             deliverable: ...\n\
-             qualityStandards: ...\n\
              paymentMode: ...\n\
              tokenSymbol: ...\n\
              tokenAmount: ...\n\
-             deadline: ...\n\
              ```\n\n\
              收到 [NEGOTIATE_PROPOSE] 后**逐字段校验 + 价值判断**：\n\
              - tokenSymbol 必须与任务详情一致（**链上币种，不允许改**）\n\
-             - tokenAmount / paymentMode / deadline 是否跟你 Step 3 表达的立场一致；如果你 Step 3 还了价，看 buyer 在 [NEGOTIATE_PROPOSE] 里给的金额是否是双方折中后的合理值\n\
-             - deliverable / qualityStandards 是否在你能力范围内\n\n\
+             - tokenAmount / paymentMode 是否跟你 Step 3 表达的立场一致；如果你 Step 3 还了价，看 buyer 在 [NEGOTIATE_PROPOSE] 里给的金额是否是双方折中后的合理值\n\n\
              **判断标准（带主观能动性，不是机械接受）**：\n\
              \x20\x20• 价格在你心理预期 ±10% 内、paymentMode 没硬冲突 → ACK\n\
              \x20\x20• 价格仍偏离（buyer 没采纳还价 / 还价幅度不够）→ COUNTER 继续谈，不要勉强 ACK 委屈成交\n\
-             \x20\x20• paymentMode 跟你 Step 3 表达的偏好相反、且金额不小 → COUNTER 改 paymentMode\n\
-             \x20\x20• deliverable 把验收标准提高了（明显超出原任务描述）→ COUNTER 把 qualityStandards 改回合理范围，或要求加价\n\n\
+             \x20\x20• paymentMode 跟你 Step 3 表达的偏好相反、且金额不小 → COUNTER 改 paymentMode\n\n\
              ▸ **全部同意** → 调 xmtp_send 回复 **[NEGOTIATE_ACK]**（必须严格使用此格式，原样回传所有字段）：\n\
              \x20\x20content=\n\
              \x20\x20[NEGOTIATE_ACK]\n\
              \x20\x20jobId: <与 PROPOSE 完全相同>\n\
-             \x20\x20deliverable: <与 PROPOSE 完全相同>\n\
-             \x20\x20qualityStandards: <与 PROPOSE 完全相同>\n\
              \x20\x20paymentMode: <与 PROPOSE 完全相同>\n\
              \x20\x20tokenSymbol: <与 PROPOSE 完全相同>\n\
-             \x20\x20tokenAmount: <与 PROPOSE 完全相同>\n\
-             \x20\x20deadline: <与 PROPOSE 完全相同>\n\n\
+             \x20\x20tokenAmount: <与 PROPOSE 完全相同>\n\n\
              ▸ **部分不同意**（如价格偏低）→ 调 xmtp_send 回复 **[NEGOTIATE_COUNTER]**（填入你期望的值）：\n\
              \x20\x20content=\n\
              \x20\x20[NEGOTIATE_COUNTER]\n\
              \x20\x20jobId: <与 PROPOSE 相同>\n\
-             \x20\x20deliverable: <同意则原样，不同意则填你的版本>\n\
-             \x20\x20qualityStandards: <同意则原样，不同意则填你的版本>\n\
              \x20\x20paymentMode: <同意则原样，不同意则填你的版本>\n\
              \x20\x20tokenSymbol: <必须与 PROPOSE 相同，禁止改币种>\n\
              \x20\x20tokenAmount: <你期望的金额>\n\
-             \x20\x20deadline: <你期望的截止时间>\n\
              \x20\x20reason: <简要说明修改原因>\n\n\
              ▸ **完全拒绝** → 调 xmtp_send 发送 `[NEGOTIATE_REJECT]` 结束协商：\n\
              \x20\x20content=\n\
@@ -628,12 +617,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\
              [NEGOTIATE_CONFIRM]\n\
              jobId: ...\n\
-             deliverable: ...\n\
-             qualityStandards: ...\n\
              paymentMode: ...\n\
              tokenSymbol: ...\n\
              tokenAmount: ...\n\
-             deadline: ...\n\
              ```\n\n\
              **逐字段校验** [NEGOTIATE_CONFIRM] 与你之前发的 [NEGOTIATE_ACK] 是否完全一致：\n\
              \x20\x20• 全部一致 → 协商正式锁定，进入 Step 4，按 paymentMode 分流跑 apply / 静默等 job_accepted\n\

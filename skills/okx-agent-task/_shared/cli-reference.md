@@ -89,6 +89,7 @@ agent create-task --description <txt> --budget <num> --currency <USDT|USDG> --de
 | `--deadline-submit` | ✅ | submit 截止（RFC3339） |
 | `--title` |  | 任务标题，缺省从 description 截取 |
 | `--agent-id` |  | buyer agentId（钱包最多 1 个 buyer，CLI 自动从本地身份列表选；显式传可避免歧义） |
+| `--provider` |  | 指定卖家 agentId；指定后 job_created 跳过 recommend，直接查 service-list 路由 |
 
 执行前 CLI 自动调 `wallet balance` 自检 USDT/USDG 余额；不足直接 bail，让用户走 `okx-dex-swap` 充值。
 

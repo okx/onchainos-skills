@@ -225,7 +225,29 @@ pub fn load_agreed(job_id: &str, provider_agent_id: Option<&str>) -> Result<Opti
     Ok(state.agreed.get(&key).map(|t| (t.token_symbol.clone(), t.token_amount.clone())))
 }
 
-/// 清理状态文件（accept 成功后调用）
+/// 保存指定卖家（create-task --provider 指定，job_created 跳过 recommend）
+pub fn save_designated_provider(job_id: &str, provider_agent_id: &str) -> Result<()> {
+    let dir = state_dir(job_id)?;
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("designated-provider.json");
+    let json = serde_json::json!({ "agentId": provider_agent_id });
+    std::fs::write(path, serde_json::to_string_pretty(&json)?)?;
+    Ok(())
+}
+
+/// 读取并删除指定卖家文件（consume-on-read：job_created 只触发一次，读完即清）
+pub fn take_designated_provider(job_id: &str) -> Result<Option<String>> {
+    let path = state_dir(job_id)?.join("designated-provider.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(&path)?;
+    let _ = std::fs::remove_file(&path);
+    let v: serde_json::Value = serde_json::from_str(&raw)?;
+    Ok(v["agentId"].as_str().map(|s| s.to_string()))
+}
+
+/// 清理状态文件（accept 成功后调用，同时清除 designated-provider.json）
 pub fn cleanup(job_id: &str) -> Result<()> {
     let dir = state_dir(job_id)?;
     if dir.exists() {

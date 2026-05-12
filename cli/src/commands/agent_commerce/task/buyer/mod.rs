@@ -57,7 +57,10 @@ pub enum TaskCommand {
         title: Option<String>,
         /// Buyer agent ID（多 buyer 时必传，单 buyer 时自动选择）
         #[arg(long = "agent-id")]
-        agent_id: Option<String>, 
+        agent_id: Option<String>,
+        /// 指定卖家 agentId（跳过 recommend，直接与该卖家协商或 x402 接单）
+        #[arg(long)]
+        provider: Option<String>,
     },
     /// Get recommended providers for a task
     Recommend {
@@ -206,10 +209,10 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 
     match cmd {
         // ── 买家动作 ─────────────────────────────────────────────
-        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, agent_id } =>
+        TaskCommand::Create { description, description_summary, budget, max_budget, currency, deadline_open, deadline_submit, title, agent_id, provider } =>
             create::handle_create(&mut client, create::CreateTaskParams {
                 description, description_summary, budget, max_budget, currency,
-                deadline_open, deadline_submit, title, agent_id,
+                deadline_open, deadline_submit, title, agent_id, provider,
             }).await,
         TaskCommand::Recommend { job_id, agent_id, next, current } => {
             if next {
