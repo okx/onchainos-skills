@@ -197,17 +197,6 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Track per-seller negotiation timer + COUNTER round limits
-    NegotiateTick {
-        job_id: String,
-        #[arg(long = "agent-id")]
-        agent_id: String,
-        #[arg(long)]
-        seller: String,
-        /// propose | counter | timeout_check | reject | confirm
-        #[arg(long)]
-        event: String,
-    },
 }
 
 // ─── 路由分发 ──────────────────────────────────────────────────────────────
@@ -253,9 +242,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await,
         TaskCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id } => {
             negotiate::save_agreed(&mut client, &job_id, &provider_agent_id, &token_symbol, &token_amount, agent_id.as_deref()).await
-        }
-        TaskCommand::NegotiateTick { job_id, agent_id, seller, event } => {
-            negotiate::handle_negotiate_tick(&job_id, &agent_id, &seller, &event)
         }
 
         // ── 只读查询 ─────────────────────────────────────────────

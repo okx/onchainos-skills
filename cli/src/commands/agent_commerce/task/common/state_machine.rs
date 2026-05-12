@@ -209,12 +209,6 @@ pub enum Event {
     /// DisputeManager.VoterCooldownEntered 上链（被动进入冷却期；通知 evaluator）
     CooldownEntered,
 
-    // ── 协商护栏(pseudo event,由 agent runtime timer 触发) ─────────
-    /// 协商超时或 COUNTER 轮次超限——buyer 最后一次发消息后 300s 内未收到卖家回复，
-    /// 或卖家 COUNTER 已达 3 次上限。agent runtime 定时器到期后调
-    /// `next-action --jobStatus negotiate_timeout` 触发本事件。
-    NegotiateTimeout,
-
     // ── 网络/重启恢复事件(过场,不改 status) ─────────────────────────
     /// 网络/电脑重启后,后端通知 agent 唤起本任务续跑剧本。
     /// envelope 形态(per-task fan-out):
@@ -275,8 +269,6 @@ impl Event {
             // evaluator 额外 lifecycle
             "stake_stopped"             => Event::StakeStopped,
             "cooldown_entered"          => Event::CooldownEntered,
-            // 协商护栏
-            "negotiate_timeout"         => Event::NegotiateTimeout,
             // 网络/重启恢复
             "wakeup_notify"             => Event::WakeupNotify,
             other                       => Event::Other(other.to_string()),
@@ -319,7 +311,6 @@ impl Event {
             Event::ReviewDeadlineWarn     => "review_deadline_warn",
             Event::StakeStopped           => "stake_stopped",
             Event::CooldownEntered        => "cooldown_entered",
-            Event::NegotiateTimeout       => "negotiate_timeout",
             Event::WakeupNotify           => "wakeup_notify",
             Event::Other(s)               => s.as_str(),
         }
@@ -341,7 +332,6 @@ impl Event {
             Event::StakeStopped       => "停止质押失败",
             Event::CooldownEntered    => "冷却期进入失败",
             Event::Slashed            => "罚没交易失败",
-            Event::NegotiateTimeout   => "协商超时",
             _                         => "交易失败",
         }
     }
@@ -391,8 +381,6 @@ pub fn status_when_event(e: &Event) -> Status {
         | Event::UnstakeRequested | Event::UnstakeClaimed | Event::UnstakeCancelled
         | Event::StakeStopped                                               => Status::Other("staking".to_string()),
         Event::RewardClaimed                                                     => Status::Other("reward_claimed".to_string()),
-        // negotiate_timeout 是 pseudo event,发生在 open 状态下(协商阶段 task 仍是 open)
-        Event::NegotiateTimeout                                             => Status::Open,
         // wake-up 是过场事件,真实 status 在 envelope.message.jobStatus 字段;
         // 这里返回占位 status,agent 不应该用 wakeup_notify 走 next-action
         Event::WakeupNotify                                                 => Status::Other("wakeup".to_string()),

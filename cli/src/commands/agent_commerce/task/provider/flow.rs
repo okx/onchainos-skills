@@ -840,11 +840,6 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
             )
         }
 
-        Event::NegotiateTimeout =>
-            "【忽略】negotiate_timeout 是买家侧 pseudo event，卖家无需处理。\n\
-             → 结束 turn。\n"
-            .to_string(),
-
         Event::Other(ref other) => format!(
             "【未知状态】{other}\n\
              【建议】\n\
