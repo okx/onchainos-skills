@@ -82,15 +82,17 @@ onchainos competition detail --activity-id <id>
 Get leaderboard and current user ranking.
 
 ```
-onchainos competition rank --activity-id <id> --wallet <addr> --sort-type <type> [--limit <n>]
+onchainos competition rank --activity-id <id> [--wallet <addr>] --sort-type <type> [--limit <n>]
 ```
 
 **API**: `GET /priapi/v1/dapp/agentic/competition/rank`
 
+> Omit `--wallet` to query your own rank — the command fetches `competition_detail.chainId` and auto-picks the EVM or SOL address from the active account. Pass `--wallet` only to query someone else's rank; the address chain (EVM `0x...` else Solana) must match the activity chain or the command errors out (no silent wrong-chain query).
+
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
 | `--activity-id` | Yes | — | Activity ID |
-| `--wallet` | Yes | — | User wallet address |
+| `--wallet` | No | (active account, chain-matched) | Optional wallet address. Omit for self-rank; pass for someone else (chain-validated against the activity). |
 | `--sort-type` | Yes | 1 | Currently observed: 1=PnL% (realized ROI), 7=PnL (realized profit). Future activities may add more — discover via `competition detail` → `tabConfigs[].rankFieldConfig[].sortValueMap.descend`. |
 | `--limit` | No | 20 | Max entries in `allRankInfos` (max 100; applied client-side) |
 
@@ -126,15 +128,18 @@ onchainos competition rank --activity-id <id> --wallet <addr> --sort-type <type>
 Get user's participation and reward status.
 
 ```
-onchainos competition user-status [--activity-id <id>] --wallet <addr>
+onchainos competition user-status [--activity-id <id>] --evm-wallet <evm_addr> --sol-wallet <sol_addr>
 ```
 
 **API**: `GET /priapi/v1/dapp/agentic/competition/userStatus`
 
+> When `--activity-id` is provided, the CLI fetches `competition_detail.chainId` and picks the chain-appropriate address (EVM or SOL). Both addresses are required so the chain check cannot be bypassed.
+
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--activity-id` | No | Activity ID; omit to check **all** activities (active + ended) |
-| `--wallet` | Yes | User wallet address |
+| `--evm-wallet` | Yes | EVM wallet address |
+| `--sol-wallet` | Yes | Solana wallet address |
 
 When `--activity-id` is omitted, the CLI calls `competition list --status 2` first to get all activity IDs, then queries `userStatus` for each and returns an array with activity metadata merged in.
 
