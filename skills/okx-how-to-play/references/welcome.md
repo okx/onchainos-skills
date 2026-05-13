@@ -1,6 +1,6 @@
 # Welcome Banner
 
-Two variants by auth state. Both share the same 6-pick (or 5-pick, when Polymarket is geoblocked) Quick-start menu.
+Two variants by auth state. Both share the same 5-pick (or 4-pick, when Polymarket is geoblocked) Quick-start menu.
 
 - **Logged-out** — no addresses, no balance, includes a "login" hint at the menu trailer.
 - **Logged-in** — addresses + balance shown, no QR codes, no login hint.
@@ -56,7 +56,7 @@ This is **fail-closed**. Do not warn or surface the geoblock decision — silent
 
 ## Step 3 — Render the banner
 
-**Language**: the template below is canonical English. Render in the user's language at runtime — translate the prose, keep emojis, placeholders (`{evm_address}` etc.), structure, and `**Attention ⚠️:**` disclaimer prefix intact. Do NOT emit English when the user wrote Chinese (or vice versa).
+The template below is canonical English. Render in the user's language at runtime per the global translation rule in `SKILL.md → Authoring Pattern`.
 
 Output as plain text (no `>` blockquote prefix, no surrounding fence). Order: header → (logged-in only: address block) → menu → trailer → disclaimer.
 
@@ -68,7 +68,7 @@ The fenced blocks below are templates inside this spec doc — emit only the tex
 Hi, welcome to Onchain OS.
 I'm your on-chain AI sidekick — just talk to me to trade, check markets, and chase trends.
 Wallet, trading, market data, payments — all in one place, ready out of the box —
-no more juggling a dozen DApps or memorizing contract addresses.
+no more juggling a dozen DApps, re-connecting wallets, or reviewing signatures every time.
 ```
 
 ### 3.2 Address block — logged-in variant only
@@ -82,27 +82,25 @@ Solana: {solana_address}
 Balance: ${balance}
 ```
 
-### 3.3 Menu — Variant A (`polymarket_available = true`, 6 picks)
+### 3.3 Menu — Variant A (`polymarket_available = true`, 5 picks)
 
 ```
 What do you want to try?
 🔥 1 · Polymarket — top 3 markets worth watching today, I'll handpick them
 💰 2 · Don't let your USDC sit idle — let's find the best APY right now
-⚡ 3 · No-code strategy — tell me what you're thinking, I'll wire it up
-🐋 4 · What did the whales just buy? Smart-money signal tracking
-🆕 5 · Fresh tokens on-chain — scan to see which ones are worth boarding
-☕ 6 · One coffee's time to digest today's on-chain market
+🐋 3 · What did the whales just buy? Smart-money signal tracking
+🆕 4 · Fresh tokens on-chain — scan to see which ones are worth boarding
+☕ 5 · One coffee's time to digest today's on-chain market
 ```
 
-### 3.4 Menu — Variant B (`polymarket_available = false`, 5 picks, no Polymarket)
+### 3.4 Menu — Variant B (`polymarket_available = false`, 4 picks, no Polymarket)
 
 ```
 What do you want to try?
 💰 1 · Don't let your USDC sit idle — let's find the best APY right now
-⚡ 2 · No-code strategy — tell me what you're thinking, I'll wire it up
-🐋 3 · What did the whales just buy? Smart-money signal tracking
-🆕 4 · Fresh tokens on-chain — scan to see which ones are worth boarding
-☕ 5 · One coffee's time to digest today's on-chain market
+🐋 2 · What did the whales just buy? Smart-money signal tracking
+🆕 3 · Fresh tokens on-chain — scan to see which ones are worth boarding
+☕ 4 · One coffee's time to digest today's on-chain market
 ```
 
 ### 3.5 Trailer
@@ -136,7 +134,6 @@ Route by pick **description** (not the raw number — the number shifts in Varia
 |---|---|---|
 | 🔥 Polymarket Top 3 | skill | invoke `okx-dapp-discovery` (it routes to / installs `polymarket-plugin`) |
 | 💰 USDC APY | skill | invoke `okx-defi-invest` |
-| ⚡ No-code strategy | skill | install + invoke `starter-coach` (see 4.1) |
 | 🐋 Smart money / whale tracking | workflow | `~/.onchainos/workflows/smart-money-signals.md` |
 | 🆕 New on-chain tokens | workflow | `~/.onchainos/workflows/new-token-screening.md` |
 | ☕ Daily on-chain brief | workflow | `~/.onchainos/workflows/daily-brief.md` |
@@ -147,15 +144,6 @@ The skill itself handles auth where it needs it. Don't pre-block on login.
 
 - **🔥 Polymarket**: invoke `okx-dapp-discovery` skill. One-line bridge ("Handing off Polymarket to dapp-discovery."). Don't pre-explain or pre-route.
 - **💰 USDC APY**: invoke `okx-defi-invest` skill, passing the user's intent ("find best USDC APY").
-- **⚡ No-code strategy (`starter-coach`)** — special install path:
-  1. Output verbatim:
-     ```
-     Installing starter-coach for you — the first download takes a moment, hang tight ⏳
-
-     Running: npx skills add okx/plugin-store --skill starter-coach
-     ```
-  2. Run `npx skills add okx/plugin-store --skill starter-coach` via Bash. The command is idempotent — if `starter-coach` is already installed it's a fast no-op, so always run it.
-  3. After install completes, invoke `starter-coach` skill.
 
 ### 4.2 Workflow picks — login gate by auth state
 

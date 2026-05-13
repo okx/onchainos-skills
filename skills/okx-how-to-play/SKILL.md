@@ -1,6 +1,6 @@
 ---
 name: okx-how-to-play
-description: "Onchain OS entry router for open-ended onboarding questions. Renders a welcome banner with a Quick-start menu and routes the user into the right skill or workflow (Polymarket, DeFi APY, no-code strategy, smart-money signals, new-token screening, daily on-chain brief). Triggers: 'what is onchainos', 'what is onchain os', 'what does this do', 'what can it do', 'what can I do here', 'how do I use this', 'how do I play', 'how to use onchainos', 'how to play onchainos', 'how does this work', 'how do I start', 'getting started', 'how do I get started', 'tutorial', 'onboarding', 'first time', 'I just installed', 'now what', 'what do I do now', 'where do I start', 'who are you', 'what are you', 'introduce yourself', 'introduction', 'introduce onchainos', 'tell me about onchainos', 'I'm new'."
+description: "Onchain OS entry router for open-ended onboarding questions. Renders a welcome banner with a Quick-start menu and routes the user into the right skill or workflow (Polymarket, DeFi APY, smart-money signals, new-token screening, daily on-chain brief). Triggers: 'what is onchainos', 'what is onchain os', 'what does this do', 'what can it do', 'what can I do here', 'how do I use this', 'how do I play', 'how to use onchainos', 'how to play onchainos', 'how does this work', 'how do I start', 'getting started', 'how do I get started', 'tutorial', 'onboarding', 'first time', 'I just installed', 'now what', 'what do I do now', 'where do I start', 'who are you', 'what are you', 'introduce yourself', 'introduction', 'introduce onchainos', 'tell me about onchainos', 'I'm new'."
 license: MIT
 metadata:
   author: okx
@@ -49,13 +49,11 @@ Negative examples (use the matching skill instead, **not** this one):
 Most user-facing copy in this flow is split into two parts:
 
 - **Free zone** — the agent answers the user's actual question or acknowledgement first, in 1–5 sentences, contextually woven. No fixed copy. The user shouldn't feel like they hit a script.
-- **Fixed zone** — the verbatim copy block (welcome banner, login options, API Key heads-up) follows immediately, with a natural segue from the free zone.
+- **Fixed zone** — the canonical English template block (welcome banner, login options, API Key heads-up). Render in the user's language at runtime; keep emojis, `{placeholders}`, `1–N`, code identifiers, and markdown structure literal. Quoted reply tokens like `"login"` are prose too (→ `"登录"` / `"ログイン"`).
 
 This applies to: **Welcome Banner**, **Login Method Choice**, and **API Key Login** Step 1 heads-up.
 
 <MUST>
-**Match the user's language across BOTH zones.** Fixed-zone copy below is canonical English — at runtime, render it in the user's language (matching the language they wrote in). Keep emojis, placeholders (`{evm_address}` etc.), line breaks, and `**Attention ⚠️:**` disclaimer prefix intact; translate only the prose. Mixed-language output (Chinese free zone + English banner) is a bug.
-
 **Bridging is mandatory.** End the free zone with a transitional half-sentence (e.g. "let me drop the menu" / "here's where to start ↓") — never with a hard period followed by an unrelated fixed-zone line. Self-check before emitting: read the free-zone tail + first fixed-zone line as a single unit; if they feel like two separate posts pasted together, rewrite the free-zone tail.
 </MUST>
 
@@ -85,7 +83,7 @@ banner               banner
    ┌────┴───────────────┬─────────────────────┬──────────────────┐
    ▼                    ▼                     ▼                  ▼
 Skill pick           Workflow pick         "login"             Free-form
-(🔥/💰/⚡)            (🐋/🆕/☕)            (logged-out only)   text
+(🔥/💰)              (🐋/🆕/☕)            (logged-out only)   text
    │                    │                     │                  │
    ▼                    ▼                     ▼                  ▼
 Load skill           Logged-in:            Login Method        Answer in
@@ -119,7 +117,7 @@ onchainos wallet status
 # Welcome Banner
 
 <MUST>
-Render the banner from `references/welcome.md` — it covers placeholders (`{evm_address}` / `{solana_address}` / `{balance}` from `wallet balance`; geoblock variant from `wallet geoblock`), the verbatim template, and pick routing (Step 4). Never fabricate addresses or balance.
+Render the banner from `references/welcome.md` — it covers placeholders (`{evm_address}` / `{solana_address}` / `{balance}` from `wallet balance`; geoblock variant from `wallet geoblock`), the template, and pick routing (Step 4). Variant A = 5 picks (Polymarket allowed); Variant B = 4 picks (Polymarket geoblocked). Never fabricate addresses or balance.
 </MUST>
 
 ---
@@ -130,7 +128,7 @@ Reached when the user asks to log in (either by replying `login` to the logged-o
 
 **Free zone (1–5 sentences, agent's own words):** answer whatever the user actually asked / acknowledged. If they came from a workflow pick, briefly explain that login unlocks that workflow. Then segue naturally into the fixed-zone choice below.
 
-**Fixed zone — output verbatim**:
+**Fixed zone — render the template below in the user's language**:
 
 ```
 Welcome to Agentic Wallet — the Onchain OS wallet built for agents. Pick a login method:
@@ -160,7 +158,7 @@ Two steps total: (1) one-time heads-up so the user knows what env vars to set an
 
 **Free zone (1–5 sentences):** if the user has any other question, answer it first. Then segue naturally into the heads-up.
 
-**Fixed zone — output verbatim**:
+**Fixed zone — render the template below in the user's language**:
 
 ```
 You'll need to set three API Key environment variables before logging in:
@@ -227,10 +225,9 @@ If the user picks multiple options at once, execute them in order and bookmark u
 ## Acceptance Criteria
 
 1. **Banner variant matches auth state** — `loggedIn: false` renders the logged-out variant (no addresses, with "login" hint); `loggedIn: true` renders the logged-in variant (addresses + balance, no hint).
-2. **Skill picks load without login gate** — 🔥 / 💰 / ⚡ load even when logged out; each loaded skill handles its own auth.
+2. **Skill picks load without login gate** — 🔥 / 💰 load even when logged out; each loaded skill handles its own auth.
 3. **Workflow picks gate on login** — when logged out, 🐋 / 🆕 / ☕ route through Login Method Choice first, then auto-resume the workflow. User should not have to re-state their pick.
-4. **starter-coach install message emitted on ⚡** — always emit the heads-up before running `npx skills add`, even if already installed (the command is idempotent).
-5. **Turn budget** — ≤ 3 turns end-to-end for a new user; ≤ 2 turns for a returning user picking a workflow + login.
+4. **Turn budget** — ≤ 3 turns end-to-end for a new user; ≤ 2 turns for a returning user picking a workflow + login.
 
 ## Notes / Non-obvious
 
