@@ -155,6 +155,46 @@ fn extract_msg(msg_field: &Value) -> &str {
     if s.is_empty() { "unknown error" } else { s }
 }
 
+/// Apply the `{code, msg, data}` envelope check to a parsed JSON body.
+///
+/// - Bare arrays (no envelope) pass through as the data payload.
+/// - `code == 0` → returns the `data` field.
+/// - `code != 0` → `bail!("API error (code=N): msg")`.
+///
+/// Strategy uses `*_raw` variants and calls its own typed
+/// `status::check_response` instead, so it bypasses this function.
+///
+/// Pure / no state — kept as a module-level free fn since it does not
+/// touch `&self`. Called from `ApiClient::handle_response`.
+fn unwrap_envelope(body: Value) -> Result<Value> {
+    // Some endpoints return bare arrays without the {code, msg, data} envelope.
+    // In that case, pass the array through as the data payload.
+    if body.is_array() {
+        return Ok(body);
+    }
+
+    // Handle code as either string "0" or number 0 (some endpoints return numeric)
+    let code_ok = match &body["code"] {
+        Value::String(s) => s == "0",
+        Value::Number(n) => n.as_i64() == Some(0),
+        _ => false,
+    };
+    if !code_ok {
+        let code_str = match &body["code"] {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            other => other.to_string(),
+        };
+        // Surface backend `msg` verbatim. Treat missing or empty as "unknown error"
+        // so the user-visible string never ends with a dangling colon
+        // (e.g. `API error (code=82000): `).
+        let msg = extract_msg(&body["msg"]);
+        bail!("API error (code={}): {}", code_str, msg);
+    }
+
+    Ok(body["data"].clone())
+}
+
 impl ApiClient {
     /// Create a client with automatic auth detection:
     /// 1. JWT from keyring  (user is logged in)
@@ -640,6 +680,81 @@ impl ApiClient {
         }
     }
 
+    /// Raw GET — same flow as `get_with_headers` except the response body
+    /// is returned **without** the `{code, msg, data}` envelope unwrap. The
+    /// caller receives the full body (`{code, msg, data}` or a bare array)
+    /// and is expected to inspect `body.code` itself.
+    ///
+    /// Use this when you need typed access to the BE error code (e.g. to
+    /// distinguish a retryable code like 60018 from generic errors) instead
+    /// of substring-matching the formatted error message.
+    pub async fn get_with_headers_raw(
+        &mut self,
+        path: &str,
+        query: &[(&str, &str)],
+        extra_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Value> {
+        self.ensure_payment_config().await;
+        let resource = self.resource_url(path);
+        let payment_hdr = self.maybe_sign_payment(path, &resource).await;
+        let result = self
+            .do_get_request_raw(path, query, extra_headers, payment_hdr.as_ref())
+            .await;
+        match result {
+            Ok(data) => Ok(data),
+            Err(e) => match e.downcast::<PaymentRequired>() {
+                Ok(pr) => {
+                    if self.consume_pending_confirmation(path) {
+                        return Err(first_charge_confirming().into());
+                    }
+                    let accepts = self.resolve_retry_accepts(&pr)?;
+                    let tier = self.tier_for_path(path).unwrap_or(PaymentTier::Basic);
+                    let hdr = self
+                        .sign_header_from_accepts(&accepts, &resource, tier)
+                        .await?;
+                    self.do_get_request_raw(path, query, extra_headers, Some(&hdr))
+                        .await
+                }
+                Err(e) => Err(e),
+            },
+        }
+    }
+
+    /// Raw POST — same flow as `post_with_headers` except the response body
+    /// is returned **without** the `{code, msg, data}` envelope unwrap. See
+    /// `get_with_headers_raw` for the rationale.
+    pub async fn post_with_headers_raw(
+        &mut self,
+        path: &str,
+        body: &Value,
+        extra_headers: Option<&[(&str, &str)]>,
+    ) -> Result<Value> {
+        self.ensure_payment_config().await;
+        let resource = self.resource_url(path);
+        let payment_hdr = self.maybe_sign_payment(path, &resource).await;
+        let result = self
+            .do_post_request_raw(path, body, extra_headers, payment_hdr.as_ref())
+            .await;
+        match result {
+            Ok(data) => Ok(data),
+            Err(e) => match e.downcast::<PaymentRequired>() {
+                Ok(pr) => {
+                    if self.consume_pending_confirmation(path) {
+                        return Err(first_charge_confirming().into());
+                    }
+                    let accepts = self.resolve_retry_accepts(&pr)?;
+                    let tier = self.tier_for_path(path).unwrap_or(PaymentTier::Basic);
+                    let hdr = self
+                        .sign_header_from_accepts(&accepts, &resource, tier)
+                        .await?;
+                    self.do_post_request_raw(path, body, extra_headers, Some(&hdr))
+                        .await
+                }
+                Err(e) => Err(e),
+            },
+        }
+    }
+
     /// POST request with no DoH retry — use only for broadcast-transaction.
     /// On network failure, records the failure but does NOT retry, because the
     /// broadcast may have partially reached the server.
@@ -795,8 +910,8 @@ impl ApiClient {
         };
 
         // HTTP 402 — return as a typed error so the request wrapper can sign
-        // and retry. Must run *before* the bare-array short-circuit below:
-        // a paid endpoint that normally returns `[...]` may also return an
+        // and retry. Must run *before* the envelope unwrap below: a paid
+        // endpoint that normally returns `[...]` may also return an
         // array-shaped 402 body, and we'd otherwise silently treat that as
         // success.
         //
@@ -813,32 +928,90 @@ impl ApiClient {
             .into());
         }
 
-        // Some endpoints return bare arrays without the {code, msg, data} envelope.
-        // In that case, pass the array through as the data payload.
-        if body.is_array() {
-            return Ok(body);
-        }
+        // Hand the fully-parsed body to the envelope unwrap step. Callers
+        // that want the raw body instead (e.g. strategy endpoints reading
+        // `body.code` for typed retry detection) use the `*_raw` variants
+        // which short-circuit before this point.
+        unwrap_envelope(body)
+    }
 
-        // Handle code as either string "0" or number 0 (some endpoints return numeric)
-        let code_ok = match &body["code"] {
-            Value::String(s) => s == "0",
-            Value::Number(n) => n.as_i64() == Some(0),
-            _ => false,
-        };
-        if !code_ok {
-            let code_str = match &body["code"] {
-                Value::String(s) => s.clone(),
-                Value::Number(n) => n.to_string(),
-                other => other.to_string(),
+    /// Pre-envelope variant of `handle_response`. Performs the same HTTP-level
+    /// processing (payment state, 429 / 5xx / 402, JSON parse) and returns the
+    /// raw parsed body — `{code, msg, data}` or a bare array, with no envelope
+    /// unwrap applied.
+    ///
+    /// Used by the `*_raw` public methods so callers can read `body.code`
+    /// directly for typed error handling (e.g. strategy's 60018 retry path).
+    async fn handle_response_raw(
+        &mut self,
+        path: &str,
+        resp: reqwest::Response,
+    ) -> Result<Value> {
+        let status = resp.status();
+
+        self.payment_state().pending_over_quota_tiers.clear();
+
+        self.update_payment_state_from_headers(resp.headers());
+        let header_accepts = extract_payment_required_accepts(resp.headers());
+
+        if path != CONFIG_PATH {
+            let needs_config = {
+                let s = self.payment_state();
+                s.endpoints.is_empty()
+                    && (s.basic_state.is_charging() || s.premium_state.is_charging())
             };
-            // Surface backend `msg` verbatim. Treat missing or empty as "unknown error"
-            // so the user-visible string never ends with a dangling colon
-            // (e.g. `API error (code=82000): `).
-            let msg = extract_msg(&body["msg"]);
-            bail!("API error (code={}): {}", code_str, msg);
+            if needs_config {
+                Box::pin(self.ensure_payment_config()).await;
+            }
+            self.dispatch_notifications(path, header_accepts.as_ref());
         }
 
-        Ok(body["data"].clone())
+        if status.as_u16() == 429 {
+            bail!("Rate limited — retry with backoff");
+        }
+        if status.as_u16() >= 500 {
+            bail!("Server error (HTTP {})", status.as_u16());
+        }
+
+        let body_bytes = resp.bytes().await.context("failed to read response body")?;
+        if body_bytes.is_empty() {
+            if status.as_u16() == 402 {
+                return Err(PaymentRequired {
+                    accepts: header_accepts.unwrap_or(Value::Null),
+                    raw_body: Value::Null,
+                }
+                .into());
+            }
+            bail!(
+                "Empty response body (HTTP {}). The requested operation may not be supported for the given parameters.",
+                status.as_u16()
+            );
+        }
+        let body: Value = match serde_json::from_slice(&body_bytes) {
+            Ok(v) => v,
+            Err(_) => {
+                let text = String::from_utf8_lossy(&body_bytes);
+                bail!(
+                    "HTTP {} {}: {}",
+                    status.as_u16(),
+                    status.canonical_reason().unwrap_or("Error"),
+                    text.trim()
+                );
+            }
+        };
+
+        if status.as_u16() == 402 {
+            let accepts = header_accepts
+                .or_else(|| body.get("accepts").cloned())
+                .unwrap_or(Value::Null);
+            return Err(PaymentRequired {
+                accepts,
+                raw_body: body,
+            }
+            .into());
+        }
+
+        Ok(body)
     }
 
     // ── Auto-payment: request helpers ────────────────────────────────────────
@@ -950,6 +1123,100 @@ impl ApiClient {
             };
             self.doh.cache_direct_if_needed();
             return self.handle_response(path, resp).await;
+        }
+    }
+
+    /// Raw variant of `do_get_request` — same DoH retry + auth flow, but
+    /// dispatches to `handle_response_raw` so the caller receives the full
+    /// body (envelope intact) instead of the unwrapped `data` field.
+    async fn do_get_request_raw(
+        &mut self,
+        path: &str,
+        query: &[(&str, &str)],
+        extra_headers: Option<&[(&str, &str)]>,
+        payment_hdr: Option<&(&'static str, String)>,
+    ) -> Result<Value> {
+        loop {
+            let (url, request_path) = self.build_get_url_and_request_path(path, query)?;
+            let req = self.http.get(url);
+            let req = match &self.auth {
+                AuthMode::Jwt(token) => Self::apply_jwt(req, token),
+                AuthMode::Ak {
+                    api_key,
+                    secret_key,
+                    passphrase,
+                } => {
+                    let timestamp =
+                        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                    let sign = Self::hmac_sign(secret_key, &timestamp, "GET", &request_path, "");
+                    Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
+                }
+                AuthMode::Anonymous => Self::apply_anonymous(req),
+            };
+            let req = Self::apply_extra_headers(req, extra_headers);
+            let req = Self::apply_payment_header(req, payment_hdr);
+
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                        continue;
+                    }
+                    return Err(e)
+                        .context("Network unavailable — check your connection and try again");
+                }
+                Err(e) => return Err(e).context("request failed"),
+            };
+            self.doh.cache_direct_if_needed();
+            return self.handle_response_raw(path, resp).await;
+        }
+    }
+
+    /// Raw variant of `do_post_request` — see `do_get_request_raw`.
+    async fn do_post_request_raw(
+        &mut self,
+        path: &str,
+        body: &Value,
+        extra_headers: Option<&[(&str, &str)]>,
+        payment_hdr: Option<&(&'static str, String)>,
+    ) -> Result<Value> {
+        let body_str = serde_json::to_string(body)?;
+        loop {
+            let effective = self.effective_base_url();
+            let url = format!("{}{}", effective.trim_end_matches('/'), path);
+            let req = self.http.post(&url).body(body_str.clone());
+            let req = match &self.auth {
+                AuthMode::Jwt(token) => Self::apply_jwt(req, token),
+                AuthMode::Ak {
+                    api_key,
+                    secret_key,
+                    passphrase,
+                } => {
+                    let timestamp =
+                        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                    let sign = Self::hmac_sign(secret_key, &timestamp, "POST", path, &body_str);
+                    Self::apply_ak(req, api_key, passphrase, &timestamp, &sign)
+                }
+                AuthMode::Anonymous => Self::apply_anonymous(req),
+            };
+            let req = Self::apply_extra_headers(req, extra_headers);
+            let req = Self::apply_payment_header(req, payment_hdr);
+
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                        continue;
+                    }
+                    return Err(e)
+                        .context("Network unavailable — check your connection and try again");
+                }
+                Err(e) => return Err(e).context("request failed"),
+            };
+            self.doh.cache_direct_if_needed();
+            return self.handle_response_raw(path, resp).await;
         }
     }
 
