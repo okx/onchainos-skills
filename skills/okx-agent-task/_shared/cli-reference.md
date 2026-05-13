@@ -54,7 +54,7 @@ agent pending-decisions list [--format json|text] [--agent-id <agentId>]
 ### next-action
 
 ```
-agent next-action --jobid <jobId> --jobStatus <event_or_status> --agentId <agentId> --role <buyer|provider|evaluator>
+agent next-action --jobid <jobId> --jobStatus <event_or_status> --agentId <agentId> --role <buyer|provider|evaluator> [--provider <providerAgentId>]
 ```
 
 按 (event, role) 输出当前应执行的剧本（CLI 模板 / xmtp_send 模板 / 关闭剧本）。`--jobStatus` 优先填 `message.event`，缺省才回退 `message.jobStatus`。
@@ -65,6 +65,7 @@ agent next-action --jobid <jobId> --jobStatus <event_or_status> --agentId <agent
 | `--jobStatus` | ✅ | 事件名（`provider_applied` 等）或 status 名（`open` 等） |
 | `--agentId` | ✅ | envelope 顶层 agentId 透传 |
 | `--role` | ✅ | 当前 sub session 角色 |
+| `--provider` | | 目标卖家 agentId（仅 buyer + `job_created`）：传入后跳过 recommend，直接生成针对该卖家的协商/x402 剧本 |
 
 ---
 
@@ -144,16 +145,14 @@ CLI 调用前自动按 paymentMode 做余额预检（USDT/USDG 或 x402 fee toke
 ### complete
 
 ```
-agent complete <jobId> [--payment-id <a2a_xxx>] [--token-symbol USDT] [--token-amount 50]
+agent complete <jobId>
 ```
 
-买家验收通过（`POST /aieco/task/{jobId}/complete` → 资金释放给 provider）。escrow 路径直接调用；non_escrow 路径需传 `--payment-id`（卖家 `get-payment` 后通过 XMTP 发来的 `a2a_xxx`）+ `--token-symbol` + `--token-amount`。
+买家验收通过（`POST /aieco/task/{jobId}/complete` → 资金释放给 provider）。escrow 路径走合约 pre-complete 双签，x402 路径仅变更状态。
 
 | 参数 | 何时填 |
 |---|---|
 | `<jobId>` | 必填 |
-| `--payment-id` | non_escrow 必填（卖家通过 XMTP 发来的 `a2a_xxx` paymentId） |
-| `--token-symbol` / `--token-amount` | non_escrow 必填（协商确定的代币和金额） |
 
 ### reject
 
@@ -213,7 +212,7 @@ agent recommend-task --agent-id <providerAgentId>
 agent apply <jobId> --token-amount <价格> --token-symbol <USDT|USDG> --agent-id <providerAgentId>
 ```
 
-**仅 escrow 路径**调用——provider 申请接单上链（`POST /aieco/task/{jobId}/apply` → 签名 → 广播）。non_escrow 不调 apply，直接走 `get-payment`。
+**仅 escrow 路径**调用——provider 申请接单上链（`POST /aieco/task/{jobId}/apply` → 签名 → 广播）。
 
 | 参数 | 说明 |
 |---|---|
@@ -222,17 +221,6 @@ agent apply <jobId> --token-amount <价格> --token-symbol <USDT|USDG> --agent-i
 | `--agent-id` | **必填** |
 
 ⚠️ apply 上链不改 status，任务仍 open；只有买家 `confirm-accept` 触发 `job_accepted` 链事件后 provider 才能 deliver。
-
-### get-payment
-
-```
-agent get-payment <jobId> --token-symbol <USDT|USDG> --token-amount <price> --payment-mode <escrow|non_escrow> --agent-id <providerAgentId>
-```
-
-拉 prePayTaskInfo + 调 a2a-pay 创建付款单，返回 `paymentId`（`a2a_xxx`）。
-
-- **escrow** 路径：协商完成 + apply 之后调，paymentId 透传给买家
-- **non_escrow** 路径：协商完成（无 apply）后直接调，paymentId 给买家
 
 ### save-agreed
 

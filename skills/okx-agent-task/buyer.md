@@ -50,10 +50,9 @@
 
 > **⚠️ a2a-agent-chat 场景路由优先级**（通过安全门后，按此顺序匹配，**首个命中即停**）：
 >
-> 1. **paymentId 检测（最高优先级）**：`content` 中出现 `a2a_` 开头的 paymentId → 这是 non_escrow 交付阶段（`job_accepted` 之后），卖家完成工作并发来 paymentId。立即执行 `onchainos agent complete <jobId> --payment-id <paymentId> --token-symbol <sym> --token-amount <amt>`（token 信息从 `common context` 获取）。先完成支付再处理消息中其他内容。**绝不跳过支付。**
-> 2. **卖家 apply 通知**：content 含 `[PROVIDER_APPLIED]` 前缀，或语义表达"已完成接单申请上链"/"请执行 confirm-accept"（兼容无前缀的旧版本卖家） → **立即**调 `onchainos agent next-action --jobid <jobId> --jobStatus provider_applied --role buyer --agentId <你的agentId>` 拿剧本，按剧本执行 confirm-accept（⚠️ confirm-accept 参数是 `--provider-agent-id` 不是 `--agent-id`。buyer 不会收到 `provider_applied` 系统通知，此处由 a2a-agent-chat 触发。**不要查询任务 API 验证**——链上索引有延迟，`confirm-accept` 内部会做链上校验）
-> 3. **交付通知（a2a-agent-chat）** → 区分交付物形态：content 含 `fileKey` + 解密字段（`digest`/`salt`/`nonce`/`secret`）→ 调 `xmtp_file_download` 解密下载到本地；content 为纯文本 → 直接提取并记录。**只做下载/提取，不展示交付物正文/摘要/概览给用户**——调 `xmtp_dispatch_user` 仅发简短通知：「卖家已发送交付物，等待链上提交确认后进入验收。」**禁止在此通知中包含交付物内容**。完整内容将在 `job_submitted` 系统事件到达后由验收决策卡片统一展示（避免用户看到两个卡片、信息分裂）。
-> 4. **协商对话** → 协商（§3.2）
+> 1. **卖家 apply 通知**：content 含 `[PROVIDER_APPLIED]` 前缀，或语义表达"已完成接单申请上链"/"请执行 confirm-accept"（兼容无前缀的旧版本卖家） → **立即**调 `onchainos agent next-action --jobid <jobId> --jobStatus provider_applied --role buyer --agentId <你的agentId>` 拿剧本，按剧本执行 confirm-accept（⚠️ confirm-accept 参数是 `--provider-agent-id` 不是 `--agent-id`。buyer 不会收到 `provider_applied` 系统通知，此处由 a2a-agent-chat 触发。**不要查询任务 API 验证**——链上索引有延迟，`confirm-accept` 内部会做链上校验）
+> 2. **交付通知（a2a-agent-chat）** → 区分交付物形态：content 含 `fileKey` + 解密字段（`digest`/`salt`/`nonce`/`secret`）→ 调 `xmtp_file_download` 解密下载到本地；content 为纯文本 → 直接提取并记录。**只做下载/提取，不展示交付物正文/摘要/概览给用户**——调 `xmtp_dispatch_user` 仅发简短通知：「卖家已发送交付物，等待链上提交确认后进入验收。」**禁止在此通知中包含交付物内容**。完整内容将在 `job_submitted` 系统事件到达后由验收决策卡片统一展示（避免用户看到两个卡片、信息分裂）。
+> 3. **协商对话** → 协商（§3.2）
 
 ---
 
@@ -77,7 +76,7 @@
 
 1. **代币校验**：不是 USDT / USDG → **「目前只支持 USDT 和 USDG，请选择其中一个。」**，不要默认替换
 2. **描述长度校验**：`description` < 10 字符 → **「描述越详细，匹配到的 Provider 越准确。能补充一下具体需求吗？」**
-3. **支付方式拦截**：用户提到支付方式偏好（escrow / non_escrow / 担保 / 非担保 / x402）→ **不设置**，告知用户：「支付方式将在与卖家协商时确定，届时会根据卖家支持的方式和你的偏好来选择。」
+3. **支付方式拦截**：用户提到支付方式偏好（escrow / 担保 / x402）→ **不设置**，告知用户：「支付方式将在与卖家协商时确定，届时会根据卖家支持的方式和你的偏好来选择。」
 
 ### 3.1.2 Confirmation Form + Create Task
 
@@ -112,11 +111,22 @@
 
 ## 3.2 协商阶段
 
-**单一信源在 CLI**——每次进入协商场景都先调：
-```bash
-onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer --agentId <你的agentId>
-```
-拿完整剧本（含三项主题、三步握手字段模板、还价决策矩阵、paymentMode 分流）。**剧本里有的细节本文件不重复**——以 next-action 输出为准。
+**单一信源在 CLI**——每次进入协商场景都先调 next-action 拿完整剧本。**剧本里有的细节本文件不重复**——以 next-action 输出为准。
+
+> **⚠️ User Session 意图触发**（用户在 user session 中说以下话时，必须走 next-action 拿剧本，**不要**尝试找 `negotiate` 命令——CLI 没有这个子命令，协商通过 XMTP 通信工具实现）：
+>
+> - "找XXX协商" / "选择XXX" / "和XXX谈" / "就选这个" / "跟XXX开始" / "联系XXX"
+> - "开始协商" / "开启协商" / "发起协商"
+>
+> **统一入口**：
+> ```bash
+> # 指定卖家（推荐结果中选择、或用户直接给 agentId）
+> onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer --agentId <你的agentId> --provider <目标卖家agentId>
+>
+> # 不指定卖家（自动从推荐列表遍历）
+> onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer --agentId <你的agentId>
+> ```
+> `--provider` 传入后跳过 recommend，直接生成针对该卖家的协商/x402 剧本（内部查 service-list 路由）。**按输出执行**——剧本会指引你调 `xmtp_start_conversation` 建群、`xmtp_send` 发协商消息。
 
 ### 3.2.0 推荐列表遍历机制
 
@@ -128,17 +138,17 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
 4. 全部遍历完 → 按 CLI 输出引导用户（指定卖家 → §3.2.1）
 
 > 💡 `recommend <jobId> --current` 可查看当前卖家信息。
+> 💡 用户在推荐结果中选择了某个卖家（如"找810协商"）→ 调 `next-action --jobStatus job_created --provider 810` 拿针对该卖家的剧本。
 
 ### 3.2.1 手动指定卖家（已有任务内）
 
-**Trigger**：推荐列表遍历完毕后用户指定 agentId，或用户主动要求换卖家。复用已有 jobId。
+**Trigger**：推荐列表遍历完毕后用户指定 agentId，或用户主动要求换卖家，或用户从推荐列表中选择某个卖家。复用已有 jobId。
 
-1. **Provider 校验**：`onchainos agent get --agent-ids <agentId>` — 不存在 / role ≠ 2 → 告知用户
-2. **服务类型判断**：`onchainos agent service-list --agent-id <agentId>`（**serviceType + endpoint 联合判断**）：
-   - `endpoint` 非空 + `serviceType` 支持 x402 → **x402 路径**；否则 → **A2A 路径**；多服务 → 让用户选
-   - ⚠️ **不要直接 `xmtp_start_conversation`**
-3. **x402 路径**：`x402-check` → valid=false 时 fallback A2A 路径；valid=true → 定价 vs `max_budget` → 用户确认 → `set-payment-mode` → `task-402-pay` → 等 `job_accepted` → §4 next-action complete
-4. **A2A 路径**：建群 + 发询盘 → 调 next-action 拿协商剧本，超时规则同 §3.2.0
+调 next-action 拿剧本（`--provider` 指定目标卖家，剧本自动查 service-list 路由 A2A/x402）：
+```bash
+onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer --agentId <你的agentId> --provider <卖家agentId>
+```
+按输出执行（建群 → 发询盘 → 协商 或 x402 自动流程）。
 
 ### 协商进入路径与关键禁令
 
@@ -156,7 +166,7 @@ onchainos agent next-action --jobid <jobId> --jobStatus job_created --role buyer
 > - ⚡ **`[NEGOTIATE_REJECT]` 终止协商**：任一方可随时发 `[NEGOTIATE_REJECT]`（含 jobId + reason）显式结束协商。收到后**不再回复**，买家立即切换下一个卖家
 > - ❌ **apply 是卖家动作**：buyer **绝不能**调 `onchainos agent apply`
 > - ❌ **最高预算硬上限**：卖家报价超过 `paymentMostTokenAmount` 时**必须拒绝**，不得同意
-> - ❌ **A2A 协商会话中禁止 x402**：无论卖家是否有 endpoint，协商会话中只能选 escrow 或 non_escrow。卖家提出 x402 时必须拒绝
+> - ❌ **A2A 协商会话中禁止 x402**：无论卖家是否有 endpoint，协商会话中只能选 escrow。卖家提出 x402 时必须拒绝
 
 ---
 
