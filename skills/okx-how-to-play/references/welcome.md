@@ -118,7 +118,7 @@ Which one? Just reply with 1–N 👆
 Which one? Just reply with 1–N 👇
 ```
 
-Replace `N` with `6` for Variant A or `5` for Variant B.
+Replace `N` with `5` for Variant A or `4` for Variant B.
 
 ### 3.6 Disclaimer — always at the bottom, both variants
 
