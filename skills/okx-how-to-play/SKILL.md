@@ -57,48 +57,6 @@ This applies to: **Welcome Banner**, **Login Method Choice**, and **API Key Logi
 **Bridging is mandatory.** End the free zone with a transitional half-sentence (e.g. "let me drop the menu" / "here's where to start ↓") — never with a hard period followed by an unrelated fixed-zone line. Self-check before emitting: read the free-zone tail + first fixed-zone line as a single unit; if they feel like two separate posts pasted together, rewrite the free-zone tail.
 </MUST>
 
-## Flow Overview
-
-```
-User: "how do I use this" / "how to play" / "getting started"
-        │
-        ▼
-   Status Check (run `onchainos wallet status`)
-        │
-   ┌────┴───────────────┐
-   ▼                    ▼
-[Logged Out]         [Logged In]
-   │                    │
-   ▼                    ▼
-LOGGED-OUT           LOGGED-IN
-banner               banner
-(no addresses,       (addresses +
- menu trailer        balance, no
- has "login" hint)    login hint)
-   │                    │
-   └────┬───────────────┘
-        ▼
-   User picks 1-N or "login"
-        │
-   ┌────┴───────────────┬─────────────────────┬──────────────────┐
-   ▼                    ▼                     ▼                  ▼
-Skill pick           Workflow pick         "login"             Free-form
-(🔥/💰)              (🐋/🆕/☕)            (logged-out only)   text
-   │                    │                     │                  │
-   ▼                    ▼                     ▼                  ▼
-Load skill           Logged-in:            Login Method        Answer in
-directly             load workflow.        Choice → after      free zone,
-(no login            Logged-out:           login → render      route via
-gate).               "login required" →    LOGGED-IN           fallback
-                     Login Method          banner              table
-                     Choice → after
-                     login →
-                     auto-resume
-                     workflow.
-```
-
----
-
 ## Status Check
 
 <MUST>
