@@ -552,6 +552,41 @@ impl WalletApiClient {
         })
     }
 
+    /// GET with NO headers at all (truly anonymous). For endpoints whose gateway
+    /// auth is gated by the presence of any `OK-ACCESS-*` / `Ok-Access-*` header —
+    /// passing those headers triggers `10008 Invalid access token` even when the
+    /// controller is NO_CHECK. Currently used by `/priapi/v5/wallet/agentic/geoblock/check`.
+    /// Reuses the WalletApiClient HTTP + DoH setup for DNS-restricted regions.
+    pub fn get_no_okheaders<'a>(
+        &'a mut self,
+        path: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        Box::pin(async move {
+            let effective = self.effective_base_url();
+            let url = format!("{}{}", effective.trim_end_matches('/'), path);
+
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][get_no_okheaders] url_path={}", &url);
+            }
+
+            let resp = match self.http.get(&url).send().await {
+                Ok(r) => r,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                        return self.get_no_okheaders(path).await;
+                    }
+                    return Err(e).context(
+                        "Network unavailable — check your connection and try again",
+                    );
+                }
+                Err(e) => return Err(e).context("request failed"),
+            };
+            self.doh.cache_direct_if_needed();
+            self.handle_response(resp).await
+        })
+    }
+
     /// Retries once after DoH failover.
     pub async fn post_authed(
         &mut self,
