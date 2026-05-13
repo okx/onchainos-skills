@@ -45,18 +45,18 @@ All three single-address competition tools — `competition_rank`, `competition_
 
 **How to answer "which address did you use?":**
 
-| Activity chain | Address sent | How to phrase |
+| Activity chain | Address sent | How to phrase (translate to user's language) |
 |---|---|---|
-| X Layer / Ethereum / Base / BSC / Arbitrum / … (EVM family) | EVM | "你的 EVM 地址 `0x...` — 因为活动主链是 {chainName} (EVM 家族)" |
-| Solana (`chainId=501`) | SOL | "你的 Solana 地址 `...` — 因为活动主链是 Solana" |
+| X Layer / Ethereum / Base / BSC / Arbitrum / … (EVM family) | EVM | "Your EVM address `0x...` — because the activity's primary chain is {chainName} (EVM family)" |
+| Solana (`chainId=501`) | SOL | "Your Solana address `...` — because the activity's primary chain is Solana" |
 
-**Forbidden answers** (these were observed and are wrong):
+**Forbidden answers** (paraphrase patterns observed and are wrong):
 
-- ❌ "competition_user_status 不区分 EVM 或 Solana 地址" — Wrong. It picks per-activity.
-- ❌ "两个地址都会被自动带入查询" — Wrong. The API receives exactly one.
-- ❌ "我不确定工具内部最终传了哪个" — Wrong. It is deterministic from the activity chainId; always answerable.
+- ❌ "competition_user_status does not distinguish EVM vs Solana addresses" — Wrong. It picks per-activity.
+- ❌ "Both addresses are passed in automatically" — Wrong. The API receives exactly one.
+- ❌ "I'm not sure which one the tool ended up sending" — Wrong. It is deterministic from the activity chainId; always answerable.
 
-For multi-activity queries (e.g. `competition_user_status` with no `activity_name`), the algorithm runs **per activity**: each activity in the result iterated independently picks the chain-appropriate address. So the answer can be a list: "X Layer 活动用了 EVM 地址；Solana 活动用了 SOL 地址".
+For multi-activity queries (e.g. `competition_user_status` with no `activity_name`), the algorithm runs **per activity**: each activity in the result iterated independently picks the chain-appropriate address. So the answer can be a list: "The X Layer activity used the EVM address; the Solana activity used the SOL address".
 
 ## ⚠️ Mandatory reading order
 
