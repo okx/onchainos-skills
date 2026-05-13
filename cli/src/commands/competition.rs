@@ -44,9 +44,12 @@ pub enum CompetitionCommand {
         /// Activity ID
         #[arg(long)]
         activity_id: String,
-        /// User wallet address
+        /// Optional wallet address. Omit to auto-resolve from the active account
+        /// based on the activity's chain. Pass an explicit address only when
+        /// querying someone else's rank — the address chain must match the
+        /// activity chain (validated against `competition_detail.chainId`).
         #[arg(long)]
-        wallet: String,
+        wallet: Option<String>,
         /// Sort type: 1=PnL% (realized ROI), 7=PnL (realized profit). The exact values for a
         /// given competition come from `competition detail` → `tabConfigs[].rankFieldConfig[].sortValueMap.descend`;
         /// future activities may add more. Default 1 matches the typical primary leaderboard.
@@ -113,7 +116,15 @@ pub async fn execute(ctx: &Context, command: CompetitionCommand) -> Result<()> {
             wallet,
             sort_type,
             limit,
-        } => rank(&mut client, &activity_id, &wallet, sort_type, limit).await?,
+        } => {
+            let wallet = resolve_or_validate_wallet_for_activity(
+                &mut client,
+                &activity_id,
+                wallet.as_deref(),
+            )
+            .await?;
+            rank(&mut client, &activity_id, &wallet, sort_type, limit).await?
+        }
         CompetitionCommand::UserStatus {
             activity_id,
             evm_wallet,
@@ -873,7 +884,7 @@ fn bytes_from_buffer_or_array(v: &Value) -> Option<String> {
 }
 
 /// Pick the chain-appropriate wallet address for a single-chain query
-/// (e.g. `competition_rank`). Looks up the activity's `chainName` via
+/// (e.g. `competition_rank`). Looks up the activity's `chainId` via
 /// `competition_detail` and returns the SOL address for Solana activities,
 /// the EVM address otherwise. Both addresses are read from the local
 /// wallet_store via `resolve_default_addresses`.
@@ -881,9 +892,68 @@ pub async fn resolve_wallet_for_activity(
     client: &mut ApiClient,
     activity_id: &str,
 ) -> Result<String> {
-    let detail_data = detail(client, activity_id).await?;
     let (evm, sol) = resolve_default_addresses()?;
-    Ok(if is_solana_entry(&detail_data) { sol } else { evm })
+    pick_wallet_for_activity(client, activity_id, &evm, &sol).await
+}
+
+/// Like `resolve_wallet_for_activity`, but uses caller-provided addresses
+/// instead of reading from local wallet_store. The chainId from
+/// `competition_detail` is **always** the source of truth — the caller
+/// cannot bypass chain checking by passing a single wallet, which prevents
+/// the AI from accidentally querying rank/status with the wrong-chain
+/// address (e.g. SOL address for an X Layer activity).
+pub async fn pick_wallet_for_activity(
+    client: &mut ApiClient,
+    activity_id: &str,
+    evm_wallet: &str,
+    sol_wallet: &str,
+) -> Result<String> {
+    let detail_data = detail(client, activity_id).await?;
+    Ok(if is_solana_entry(&detail_data) {
+        sol_wallet.to_string()
+    } else {
+        evm_wallet.to_string()
+    })
+}
+
+/// Resolve the wallet to use for a single-address competition query
+/// (`competition_rank`, etc.) with chain-safety enforcement.
+///
+/// Two modes, depending on whether the caller passed a wallet:
+///
+/// - **`wallet = Some(addr)`** (e.g. querying someone else's rank): validate
+///   that the address's chain matches the activity's chainId from
+///   `competition_detail`. Address format determines its chain — `0x...` is
+///   EVM, anything else is treated as Solana. If chains mismatch, return an
+///   error rather than silently querying the wrong leaderboard.
+///
+/// - **`wallet = None`** (querying the active user's own rank): auto-resolve
+///   the chain-appropriate address from the local wallet_store (same as
+///   `resolve_wallet_for_activity`).
+pub async fn resolve_or_validate_wallet_for_activity(
+    client: &mut ApiClient,
+    activity_id: &str,
+    wallet: Option<&str>,
+) -> Result<String> {
+    let detail_data = detail(client, activity_id).await?;
+    let activity_is_solana = is_solana_entry(&detail_data);
+
+    if let Some(addr) = wallet {
+        let addr_is_evm = addr.starts_with("0x");
+        let addr_is_solana = !addr_is_evm;
+        if activity_is_solana != addr_is_solana {
+            bail!(
+                "wallet address chain does not match activity chain: \
+                 address looks like {} but activity runs on {}",
+                if addr_is_solana { "Solana" } else { "EVM" },
+                if activity_is_solana { "Solana" } else { "EVM" },
+            );
+        }
+        return Ok(addr.to_string());
+    }
+
+    let (evm, sol) = resolve_default_addresses()?;
+    Ok(if activity_is_solana { sol } else { evm })
 }
 
 /// Resolve the user's default EVM and Solana wallet addresses from the local
