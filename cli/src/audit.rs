@@ -328,6 +328,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
         Commands::Competition { command } => format!("competition {}", competition_sub(command)),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
+        Commands::Strategy { command } => format!("strategy {}", strategy_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),
         Commands::Workflow { command } => format!("workflow {}", workflow_sub(command)),
         Commands::Upgrade(_) => "upgrade".to_string(),
@@ -362,6 +363,16 @@ fn signal_sub(c: &SignalCommand) -> &'static str {
     match c {
         SignalCommand::Chains => "chains",
         SignalCommand::List { .. } => "list",
+    }
+}
+
+fn strategy_sub(c: &crate::commands::strategy::StrategyCommand) -> &'static str {
+    use crate::commands::strategy::StrategyCommand;
+    match c {
+        StrategyCommand::CreateLimit(_) => "create-limit",
+        StrategyCommand::Cancel(_) => "cancel",
+        StrategyCommand::List(_) => "list",
+        StrategyCommand::Resume(_) => "resume",
     }
 }
 
