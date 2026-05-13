@@ -1,7 +1,7 @@
 //! Shared x402 payment signing.
 //!
 //! Used by:
-//! - `onchainos wallet x402-pay` (manual signing, prints JSON proof).
+//! - `onchainos payment pay` (manual signing, prints JSON proof).
 //! - `ApiClient` auto-payment (transparently attaches a signed header to paid
 //!   requests and retries 402 responses).
 //!
@@ -17,6 +17,7 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
 use crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN;
+use crate::commands::payment::addr::parse_recipient_addr;
 use crate::{keyring_store, wallet_api::WalletApiClient, wallet_store};
 
 /// Which pricing tier to sign for. The server's config response groups paths
@@ -145,6 +146,7 @@ pub fn select_accept_with_preference(
     ))
 }
 
+#[derive(Debug)]
 pub(crate) struct ResolvedEntry {
     pub(crate) network: String,
     pub(crate) amount: String,
@@ -193,6 +195,17 @@ fn resolve_amount(entry: &Value, tier: Option<PaymentTier>) -> Result<String> {
     bail!("missing 'amount' or 'maxAmountRequired' in accepts entry");
 }
 
+/// Extract the numeric EVM chain id from a CAIP-2 string like `"eip155:196"`.
+/// Returns an error for non-EVM CAIP-2 namespaces or malformed inputs.
+fn caip2_to_evm_chain_id(network: &str) -> Result<u64> {
+    let suffix = network.strip_prefix("eip155:").ok_or_else(|| {
+        anyhow!("network '{network}' is not a CAIP-2 EVM identifier (eip155:<id>)")
+    })?;
+    suffix
+        .parse::<u64>()
+        .with_context(|| format!("network '{network}' has non-numeric chain id"))
+}
+
 fn resolve_entry(
     entry: &Value,
     scheme: Option<String>,
@@ -203,10 +216,16 @@ fn resolve_entry(
         .ok_or_else(|| anyhow!("missing 'network' in accepts entry"))?
         .to_string();
     let amount = resolve_amount(entry, tier)?;
-    let pay_to = entry["payTo"]
+    let pay_to_raw = entry["payTo"]
         .as_str()
-        .ok_or_else(|| anyhow!("missing 'payTo' in accepts entry"))?
-        .to_string();
+        .ok_or_else(|| anyhow!("missing 'payTo' in accepts entry"))?;
+    // Normalize XKO/0x to canonical 0x. The canonical 20-byte payload is what
+    // EIP-3009 signing + on-chain verification operate on; we don't need to
+    // preserve XKO display here because the proof JSON is consumed by the
+    // server-side verifier, not surfaced to end users.
+    let chain_id = caip2_to_evm_chain_id(&network)?;
+    let (pay_to, _display) =
+        parse_recipient_addr(pay_to_raw, chain_id).with_context(|| "accepts.payTo")?;
     let asset = entry["asset"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'asset' in accepts entry"))?
@@ -271,7 +290,7 @@ pub(crate) fn prepare_resolved_entry(
 
 /// Variant of `sign_payment` that signs exactly what the caller's
 /// `accepts` says, without consulting the saved default asset. Used by
-/// the manual `onchainos payment x402-pay` command so the user-supplied
+/// the manual `onchainos payment pay` command so the user-supplied
 /// `--accepts` isn't silently reordered by a stored preference.
 pub async fn sign_payment_with_preference(
     accepts: &Value,
@@ -355,7 +374,7 @@ pub async fn sign_payment_with_preference(
         )
         .await
         .map_err(format_api_error)
-        .context("x402 gen-msg-hash failed")?;
+        .context("payment gen-msg-hash failed")?;
     let msg_hash = unsigned_hash_resp[0]["msgHash"]
         .as_str()
         .ok_or_else(|| anyhow!("missing msgHash in gen-msg-hash response"))?;
@@ -403,7 +422,7 @@ pub async fn sign_payment_with_preference(
             )
             .await
             .map_err(format_api_error)
-            .context("x402 sign-msg failed")?;
+            .context("payment sign-msg failed")?;
         let eip3009_signature = signed_hash_resp[0]["signature"]
             .as_str()
             .ok_or_else(|| anyhow!("missing signature in sign-msg response"))?;
@@ -423,8 +442,8 @@ pub async fn sign_payment_with_preference(
 /// (`EVM_PRIVATE_KEY`), without touching the wallet session or TEE.
 ///
 /// Signs exactly what `accepts` carries — does NOT consult the saved
-/// default asset. Used by the manual `payment eip3009-sign` command,
-/// which inherits `x402-pay`'s "sign what --accepts says" contract so
+/// default asset. Used by the manual `payment pay-local` command,
+/// which inherits `payment pay`'s "sign what --accepts says" contract so
 /// the caller's supplied entry isn't silently reordered by a stored
 /// preference.
 ///
@@ -615,7 +634,7 @@ pub async fn sign_payment_auto(
 fn write_local_signing_warning<W: std::io::Write>(w: &mut W) {
     let _ = writeln!(
         w,
-        "[onchainos] x402 signed locally with EVM_PRIVATE_KEY (NOT protected by TEE); \
+        "[onchainos] payment signed locally with EVM_PRIVATE_KEY (NOT protected by TEE); \
          run `onchainos wallet login` for TEE signing."
     );
 }
@@ -797,16 +816,52 @@ mod tests {
 
     #[test]
     fn resolve_entry_extracts_amount_from_max_amount_required() {
-        let v = json!({"network":"eip155:1","maxAmountRequired":"999","payTo":"0xA","asset":"0xB"});
+        let v = json!({
+            "network":"eip155:1",
+            "maxAmountRequired":"999",
+            "payTo":"0x1111111111111111111111111111111111111111",
+            "asset":"0xB"
+        });
         let r = resolve_entry(&v, None, None).unwrap();
         assert_eq!(r.amount, "999");
     }
 
     #[test]
     fn resolve_entry_default_timeout() {
-        let v = json!({"network":"eip155:1","amount":"1","payTo":"0xA","asset":"0xB"});
+        let v = json!({
+            "network":"eip155:1",
+            "amount":"1",
+            "payTo":"0x1111111111111111111111111111111111111111",
+            "asset":"0xB"
+        });
         let r = resolve_entry(&v, None, None).unwrap();
         assert_eq!(r.max_timeout_seconds, 300);
+    }
+
+    #[test]
+    fn resolve_entry_xko_pay_to_normalizes_to_0x_on_xlayer() {
+        // payTo arrives as XKO-prefixed on XLayer; ResolvedEntry stores the
+        // canonical 0x form so EIP-3009 signing + on-chain verification work.
+        let v = json!({
+            "network":"eip155:196",
+            "amount":"1",
+            "payTo":"XKO1111111111111111111111111111111111111111",
+            "asset":"0xB"
+        });
+        let r = resolve_entry(&v, None, None).unwrap();
+        assert_eq!(r.pay_to, "0x1111111111111111111111111111111111111111");
+    }
+
+    #[test]
+    fn resolve_entry_xko_pay_to_rejected_off_xlayer() {
+        let v = json!({
+            "network":"eip155:1",
+            "amount":"1",
+            "payTo":"XKO1111111111111111111111111111111111111111",
+            "asset":"0xB"
+        });
+        let err = format!("{:#}", resolve_entry(&v, None, None).unwrap_err());
+        assert!(err.contains("only supported on X Layer"), "got: {}", err);
     }
 
     #[test]
@@ -849,7 +904,7 @@ mod tests {
         let v = json!({
             "network": "eip155:196",
             "amount": {"basic": "100", "premium": "500"},
-            "payTo": "0xA",
+            "payTo": "0x1111111111111111111111111111111111111111",
             "asset": "0xB"
         });
         let r = resolve_entry(&v, None, Some(PaymentTier::Premium)).unwrap();

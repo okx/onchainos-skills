@@ -15,7 +15,10 @@ use serde_json::{json, Value};
 use zeroize::Zeroize;
 
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
-use crate::commands::agentic_wallet::common::{require_evm_address, ERR_NOT_LOGGED_IN};
+use crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN;
+use crate::commands::payment::addr::{
+    parse_recipient_addr, require_evm_address, require_recipient_format,
+};
 use crate::output;
 use crate::wallet_api::WalletApiClient;
 use crate::{keyring_store, wallet_store};
@@ -135,7 +138,10 @@ pub struct CreatePaymentOutput {
 /// the Buyer to consume. No buyer wallet / TEE signing here.
 pub async fn create_payment_charge(params: ChargeParams) -> Result<CreatePaymentOutput> {
     validate_positive_decimal_amount(&params.amount)?;
-    require_evm_address(&params.recipient, "--recipient")?;
+    // `create` doesn't carry the chain locally — the server resolves it from
+    // `symbol`. Validate format only (0x or XLayer-prefix XKO) and forward the
+    // original string; chain enforcement happens server-side.
+    require_recipient_format(&params.recipient, "--recipient")?;
 
     let mut wallet_client = WalletApiClient::new()?;
     let access_token = ensure_tokens_refreshed().await?;
@@ -208,7 +214,10 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
             .get("status")
             .and_then(Value::as_str)
             .unwrap_or("unknown");
-        bail!("payment {} not payable (status={status}, reason={reason}): {detail}", p.payment_id);
+        bail!(
+            "payment {} not payable (status={status}, reason={reason}): {detail}",
+            p.payment_id
+        );
     }
     let challenge = resp
         .get("challenge")
@@ -248,7 +257,7 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("challenge.data.request.currency missing"))?
         .to_string();
-    let recipient = request
+    let recipient_in = request
         .get("recipient")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("challenge.data.request.recipient missing"))?
@@ -256,7 +265,6 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
     // Reject malformed server-side challenge fields up front so a bad
     // address doesn't surface as an opaque TEE error after gen-msg-hash.
     require_evm_address(&currency, "challenge.request.currency")?;
-    require_evm_address(&recipient, "challenge.request.recipient")?;
     let method_details = request
         .get("methodDetails")
         .ok_or_else(|| anyhow!("challenge.data.request.methodDetails missing"))?;
@@ -264,6 +272,11 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         .get("chainId")
         .and_then(Value::as_u64)
         .ok_or_else(|| anyhow!("methodDetails.chainId missing"))?;
+    // Now that chain_id is known, accept XKO-prefixed recipients on XLayer too.
+    // We forward the canonical 0x form to TEE / server (signature + verification
+    // both bind to the 20-byte payload, not the prefix).
+    let (recipient, _recipient_display) = parse_recipient_addr(&recipient_in, chain_id)
+        .with_context(|| "challenge.request.recipient")?;
     let authorization_scheme = method_details
         .get("authorizationType")
         .and_then(Value::as_str)
@@ -284,11 +297,10 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
     let chain_name = chain_entry["chainName"]
         .as_str()
         .ok_or_else(|| anyhow!("missing chainName in chain entry"))?;
-    let wallets = wallet_store::load_wallets()?
-        .ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
-    let (_acct_id, addr_info) = crate::commands::agentic_wallet::transfer::resolve_address(
-        &wallets, None, chain_name,
-    )?;
+    let wallets =
+        wallet_store::load_wallets()?.ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
+    let (_acct_id, addr_info) =
+        crate::commands::agentic_wallet::transfer::resolve_address(&wallets, None, chain_name)?;
     let from_addr_str = addr_info.address.clone();
 
     // ── 3. Pick timing ───────────────────────────────────────────────
@@ -309,10 +321,10 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
     };
 
     // ── 5. TEE sign EIP-3009 ─────────────────────────────────────────
-    let session = wallet_store::load_session()?
-        .ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
-    let session_key = keyring_store::get("session_key")
-        .map_err(|_| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
+    let session =
+        wallet_store::load_session()?.ok_or_else(|| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
+    let session_key =
+        keyring_store::get("session_key").map_err(|_| anyhow::anyhow!(ERR_NOT_LOGGED_IN))?;
 
     let base_fields = json!({
         "chainIndex": chain_index,
