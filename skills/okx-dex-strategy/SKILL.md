@@ -1,6 +1,6 @@
 ---
 name: okx-dex-strategy
-description: "Limit-order strategy trading on OKX Agentic Wallet. Use this skill when the user wants to place a price-triggered limit order (buy a dip, take profit, stop loss, chase a high), cancel one or more pending orders, list active or historical orders, or resume orders that have been suspended by SA TEE upgrades. Distinct from okx-dex-swap (market orders, immediate execution at the best available aggregated price). Strategy orders are stored on the Agentic Wallet TEE and execute automatically when the user-defined trigger fires. Triggers (English): limit order, place limit order, buy at price, sell when price reaches, take profit at, stop loss at, chase high, buy dip, cancel order, cancel all orders, my orders, list orders, active orders, suspended orders, resume orders, recover suspended orders, trader mode, agentic limit order. Triggers (中文): 限价单, 挂单, 触发价, 抄底, 抄底买入, 止盈, 止损, 追涨, 撤单, 取消订单, 取消所有挂单, 查看订单, 我的订单, 活跃订单, 暂停的订单, 恢复挂起, 恢复挂起订单, Trader Mode, Agentic 限价单."
+description: "Limit-order strategy trading on OKX Agentic Wallet. Use this skill when the user wants to place a price-triggered limit order (buy a dip, take profit, stop loss, chase a high), cancel one or more pending orders, list active or historical orders, or resume orders that have been suspended by SA TEE upgrades. Distinct from okx-dex-swap (market orders, immediate execution at the best available aggregated price). Strategy orders are stored on the Agentic Wallet TEE and execute automatically when the user-defined trigger fires. Trigger phrases: limit order, place limit order, buy at price, sell when price reaches, take profit at, stop loss at, chase high, buy dip, cancel order, cancel all orders, my orders, list orders, active orders, suspended orders, resume orders, recover suspended orders, trader mode, agentic limit order."
 license: MIT
 metadata:
   author: okx
@@ -27,16 +27,16 @@ This section is the **canonical rule** for user-facing strings. Every other sect
 | `strategyType` (4 values) | `Buy Dip` / `Take Profit` / `Stop Loss` / `Buy Above` |
 | `status` (9 values) | `Expired` / `Cancelling` / `Cancelled` / `Failed` / `Trading` / `Completed` / `Creating` / `Active` / `Suspended` |
 
-**Translation rule** — match the user's conversation language. Display labels above are canonical English. When the user converses in Chinese (or another language), the agent translates at output time — `Buy Dip → 抄底`, `Active → 挂单中`, `Cancelled → 已取消`, etc.
+**Translation rule** — match the user's conversation language. Display labels above are canonical English. When the user converses in another language, the agent translates the label at output time to match the conversation language.
 
 **Never** (these rules apply everywhere in this skill):
-- mix two languages in one label (e.g. `Buy Dip(抄底)` is forbidden — pick one),
+- mix two languages in one label (pick one — never render the English label and a translation side by side),
 - expose the underlying **enum name** (`BUY_DIP`, `CHASE_HIGH`, `COMPLETED`, …) to the user,
 - expose the underlying **CLI flag value** (`buy_dip`, `chase_high`, `completed`, `cancelled`, …) to the user,
-- pass through the CLI's raw `statusLabel` verbatim when the user is conversing in non-English — translate it.
+- pass through the CLI's raw `statusLabel` verbatim when the user is conversing in a non-English language — translate it.
 
 **Notes:**
-- CHASE_HIGH renders as **`Buy Above`** in English (not "Chase High"); in Chinese as `追涨`.
+- CHASE_HIGH renders as **`Buy Above`** in English (not "Chase High").
 - SPEEDING_UP (-4) was removed 2026-05-08 — not a valid filter or display value.
 
 ## Boundary vs `okx-dex-swap`
@@ -413,27 +413,43 @@ The CLI surfaces the BE error code in human-readable form. Map each code to a re
 
 ## Execution event codes (`executionHistoryList[].code`)
 
-A separate stream from the BE error codes above. Emitted by the TEE swap-trade engine while it attempts to execute an active order. Read the **latest** entry first; older ones are historical context.
+A separate stream from the BE error codes above. Emitted by the TEE swap-trade engine while it attempts to execute an active order. Read the **latest** entry first; older entries are historical context.
 
-> **Hard rule (locked):** the agent **MUST** load `references/execution-event-codes.md` *before* answering any user question about a **stuck**, **failed**, **not executing**, **why is my order pending**, or **why did this order get cancelled** situation, even if only the 8 inline "hot" codes seem to match. The inline table below is not exhaustive — BE emits 35+ codes and the full catalog (incl. terminal vs transient classification) lives in the reference file. Failing to load it means the agent will misclassify codes outside the inline 8.
+**CLI enriches each entry directly** — no sidecar table needed. For every code the CLI recognises (35+ codes covering the 3xxx active series + 2xxx legacy series), `list` and detail responses inject three fields next to the raw `code`:
 
-> The CLI also exposes `status::is_terminal_event(code)` (Rust) for typed "should the agent stop polling?" decisions — `true` only for `3010 / 3019 / 3020 / 3023`. Everything else is engine-retried.
+| Field | Source | Use |
+|---|---|---|
+| `name` | Catalog (`tradeSuccessed` / `noLiquidty` / ...) | Internal label; do NOT surface to the user |
+| `message` | Catalog — matches OKX wallet UI wording | **Surface verbatim** to the user (translate per §Display labels & output language) |
+| `terminal` | Catalog | `true` ⇒ TEE engine will not retry; stop polling and surface. `false` ⇒ engine retries; safe to wait |
 
-Hot codes the agent should recognise inline. Use the **message** column verbatim when surfacing to the user (matches OKX wallet UI wording):
+For codes the CLI does **not** recognise (BE added a new code we haven't catalogued yet), the entry passes through unchanged — `name` / `message` / `terminal` are absent and the agent should surface the raw BE `msg` field if present, or fall back to `"event code <N>"`.
 
-| code | name | message | what the agent should do |
-|---|---|---|---|
-| 0 | tradeSuccessed | Trade successful | report success; surface `txHash` + explorer link |
-| 3013 | insufficientBalance | Insufficient funds in wallet | suggest topping up or recreating with smaller amount |
-| 3014 | insufficientLamports | Insufficient funds for network fee | tell user to fund chain native fee token |
-| 3015 | exceedSlippage | Price exceeded slippage at trade | suggest widening `--slippage` |
-| 3016 | noLiquidty | No quote due to low liquidity | non-transient — suggest different pair, smaller amount, wider trigger, or different chain |
-| 3017 | unableQuote | Unable to fetch a quote | retry; if recurring, treat like 3016 |
-| 3019 | riskToken | Failed to trade due to risky token | terminal — order won't execute |
-| 3020 | blackAddress | Failed to trade due to blocklisted address | terminal — surface explicitly |
-| 3023 | orderExpired | Limit order expired | recreate with longer `--expires-in` |
+### Reading patterns
 
-**Pattern**: when the same code recurs every ~10s without a `txHash` ever appearing, the engine is in a soft retry loop. Surface the latest reason and ask the user whether to wait, cancel, or adjust parameters — don't let it grind silently. Cancel after a few cycles if the cause is non-transient (3016, 3019, 3020, 3023).
+- **Latest entry wins.** Render the most recent `executionHistoryList[]` item; older entries are historical context only.
+- **Repeated same code.** When the same code recurs every ~10s without a `txHash` appearing, the engine is in a soft retry loop. Surface the latest `message`, mention the repeat count ("this is the 5th `No quote due to low liquidity` event"), and ask the user whether to wait, cancel, or adjust parameters.
+- **`terminal=true` codes.** Stop polling immediately and surface to the user; engine will not retry.
+- **`terminal=false` codes that repeat 3+ times.** Treat as user-actionable: suggest changing slippage / amount / pair / chain, or cancelling.
+- **Code `0` with `txHash`.** Trade succeeded; surface `txHash` and explorer link.
+
+### Action hints by hot code
+
+The `message` field is the user-facing string. The agent additionally chooses one of these action hints based on `code`:
+
+| code | what the agent should do |
+|---|---|
+| 0 | report success; surface `txHash` + explorer link |
+| 3013 | suggest topping up the from-token or recreating with smaller amount |
+| 3014 | tell user to fund the chain's native fee token (SOL / ETH / BNB / ...) |
+| 3015 | suggest widening `--slippage` |
+| 3016 | non-transient — suggest different pair, smaller amount, wider trigger, or different chain |
+| 3017 | engine retries; if recurring 3+ times, treat like 3016 |
+| 3019 | terminal — destination token is blocklisted; order will not execute |
+| 3020 | terminal — wallet address is flagged; surface explicitly |
+| 3023 | recreate with longer `--expires-in` |
+
+Codes outside this table: read `terminal` from the CLI output. `terminal=true` ⇒ surface and stop. `terminal=false` ⇒ surface and wait one more cycle.
 
 ## Async wait pattern
 

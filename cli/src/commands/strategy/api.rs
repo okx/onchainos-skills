@@ -158,7 +158,7 @@ pub async fn reactivate(
 // ── Wallet priapi (SD-A) ──
 
 /// GET `getAttestDocHex`. BE-confirmed 2026-05-12: always single-element `["hex..."]`.
-pub async fn get_attest_doc_hex(client: &mut ApiClient) -> Result<String> {
+pub async fn request_attest_doc_hex_from_sa(client: &mut ApiClient) -> Result<String> {
     let resp = client
         .get_with_headers_raw(
             "/priapi/v5/wallet/agentic/strategy/getAttestDocHex",

@@ -12,7 +12,7 @@ use crate::output;
 
 use super::api;
 use super::session;
-use super::status::{is_upgrade_required, status_label, OrderStatus};
+use super::status::{execution_event_for, is_upgrade_required, status_label, OrderStatus};
 use super::supported_chains;
 use super::trader_mode::{self, ActivateCtx, BuildIntentArgs};
 use super::types::{
@@ -556,6 +556,7 @@ fn print_orders(list: &[OrderListResp], next_cursor: Option<&str>) -> Result<()>
         if let Some(s) = v.get("status").and_then(|s| s.as_i64()) {
             v["statusLabel"] = json!(status_label(s as i32));
         }
+        enrich_execution_history(&mut v);
         serialised.push(v);
     }
     output::success(json!({
@@ -563,6 +564,33 @@ fn print_orders(list: &[OrderListResp], next_cursor: Option<&str>) -> Result<()>
         "nextCursor": next_cursor,
     }));
     Ok(())
+}
+
+/// For each `executionHistoryList[].code` we recognise, inject the product-
+/// authored `name` + `message` so the Agent can surface a user-facing string
+/// without consulting a sidecar table. Unknown codes are left untouched —
+/// whatever BE returned passes through verbatim.
+fn enrich_execution_history(order: &mut serde_json::Value) {
+    let Some(history) = order
+        .get_mut("executionHistoryList")
+        .and_then(|h| h.as_array_mut())
+    else {
+        return;
+    };
+    for entry in history.iter_mut() {
+        let Some(code) = entry.get("code").and_then(|c| c.as_i64()) else {
+            continue;
+        };
+        let Some(meta) = execution_event_for(code as i32) else {
+            continue;
+        };
+        let Some(obj) = entry.as_object_mut() else {
+            continue;
+        };
+        obj.insert("name".into(), json!(meta.name));
+        obj.insert("message".into(), json!(meta.message));
+        obj.insert("terminal".into(), json!(meta.is_terminal));
+    }
 }
 
 fn collect_wallet_addresses(s: &session::WalletSession) -> Vec<String> {
@@ -1010,5 +1038,72 @@ mod tests {
         let v = build_default_preset("15", None, direction::ALL);
         assert!(v.get("sellPreset").is_none());
         assert_eq!(v["buyPreset"]["slippageValue"], serde_json::json!("0.15"));
+    }
+
+    // ── enrich_execution_history ────────────────────────────────
+
+    #[test]
+    fn enrich_history_injects_name_message_terminal_for_known_codes() {
+        let mut order = json!({
+            "executionHistoryList": [
+                { "code": 3016, "txHash": null },
+                { "code": 0,    "txHash": "0xabc" },
+            ]
+        });
+        super::enrich_execution_history(&mut order);
+        let h = order["executionHistoryList"].as_array().unwrap();
+        assert_eq!(h[0]["name"], "noLiquidty");
+        assert_eq!(h[0]["message"], "No quote due to low liquidity");
+        assert_eq!(h[0]["terminal"], false);
+        // Existing BE fields untouched.
+        assert!(h[0]["txHash"].is_null());
+
+        assert_eq!(h[1]["name"], "tradeSuccessed");
+        assert_eq!(h[1]["message"], "Trade successful");
+        assert_eq!(h[1]["txHash"], "0xabc");
+    }
+
+    #[test]
+    fn enrich_history_leaves_unknown_codes_untouched() {
+        // Product-design rule: unknown code => pass through whatever BE
+        // returned, including any BE-supplied msg field.
+        let mut order = json!({
+            "executionHistoryList": [
+                { "code": 9999, "msg": "raw be string" }
+            ]
+        });
+        super::enrich_execution_history(&mut order);
+        let entry = &order["executionHistoryList"][0];
+        assert!(entry.get("name").is_none());
+        assert!(entry.get("message").is_none());
+        assert!(entry.get("terminal").is_none());
+        assert_eq!(entry["msg"], "raw be string");
+    }
+
+    #[test]
+    fn enrich_history_skips_missing_or_non_array_history() {
+        // No `executionHistoryList` key — no-op.
+        let mut o1 = json!({ "orderId": "x" });
+        super::enrich_execution_history(&mut o1);
+        assert!(o1.get("executionHistoryList").is_none());
+
+        // Field exists but is not an array — no-op (no panic).
+        let mut o2 = json!({ "executionHistoryList": null });
+        super::enrich_execution_history(&mut o2);
+        assert!(o2["executionHistoryList"].is_null());
+    }
+
+    #[test]
+    fn enrich_history_terminal_codes_are_flagged() {
+        let mut order = json!({
+            "executionHistoryList": [
+                { "code": 3019 }, { "code": 3023 }, { "code": 3015 },
+            ]
+        });
+        super::enrich_execution_history(&mut order);
+        let h = order["executionHistoryList"].as_array().unwrap();
+        assert_eq!(h[0]["terminal"], true);  // 3019 riskToken
+        assert_eq!(h[1]["terminal"], true);  // 3023 orderExpired
+        assert_eq!(h[2]["terminal"], false); // 3015 exceedSlippage retries
     }
 }

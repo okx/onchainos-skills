@@ -140,7 +140,7 @@ pub struct ActivateCtx {
 
 /// SD-A: getAttestDocHex → ed25519-sign → registerTeeInfo. Fatal on failure.
 pub async fn activate(client: &mut ApiClient, ctx: &ActivateCtx) -> Result<()> {
-    let attest_doc_hex = api::get_attest_doc_hex(client).await?;
+    let attest_doc_hex = api::request_attest_doc_hex_from_sa(client).await?;
     let sig = crate::crypto::ed25519_sign_hex(&attest_doc_hex, &ctx.session_seed_b64)?;
 
     let now_ms = chrono::Utc::now().timestamp_millis();

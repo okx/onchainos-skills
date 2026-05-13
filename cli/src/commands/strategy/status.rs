@@ -226,11 +226,65 @@ pub fn is_upgrade_required(e: &anyhow::Error) -> bool {
         .unwrap_or(false)
 }
 
-/// True for execution-event codes (`executionHistoryList[N].code`) that
-/// mean the order will not execute — agent should stop polling. Phase 1
-/// terminal set: 3010 / 3019 / 3020 / 3023 (see references/execution-event-codes.md).
+// ── Execution events (executionHistoryList[].code) ──
+//
+// Catalog of TEE swap-trade engine event codes. The `message` column is the
+// product-authored string that matches the OKX wallet UI; CLI inlines it
+// into each `executionHistoryList` entry so the Agent doesn't need to
+// look it up from a sidecar markdown file. Unknown codes fall through —
+// callers leave whatever BE returned untouched.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecutionEvent {
+    pub code: i32,
+    pub name: &'static str,
+    pub message: &'static str,
+    pub is_terminal: bool,
+}
+
+/// Active series (3xxx, TEE engine) + legacy series (2xxx, old order status).
+/// Source of truth: product design 2026-05-13.
+#[rustfmt::skip]
+const EXECUTION_EVENT_CATALOG: &[ExecutionEvent] = &[
+    ExecutionEvent { code: 0,    name: "tradeSuccessed",        message: "Trade successful",                                                            is_terminal: false },
+    ExecutionEvent { code: 3005, name: "lessThanMinReceive",    message: "Quoted price is below the minimum amount to receive",                        is_terminal: false },
+    ExecutionEvent { code: 3006, name: "preExecutionFailed",    message: "Pre-execution error. Try again",                                              is_terminal: false },
+    ExecutionEvent { code: 3007, name: "signFailed",            message: "Failed to verify signature",                                                  is_terminal: false },
+    ExecutionEvent { code: 3008, name: "broadcastFailed",       message: "Broadcast failed",                                                            is_terminal: false },
+    ExecutionEvent { code: 3010, name: "onchainFailed",         message: "The transaction broadcast was unsuccessful due to an onchain service error", is_terminal: true  },
+    ExecutionEvent { code: 3013, name: "insufficientBalance",   message: "Insufficient funds in wallet",                                                is_terminal: false },
+    ExecutionEvent { code: 3014, name: "insufficientLamports",  message: "Insufficient funds for network fee",                                          is_terminal: false },
+    ExecutionEvent { code: 3015, name: "exceedSlippage",        message: "Price exceeded slippage at trade",                                            is_terminal: false },
+    ExecutionEvent { code: 3016, name: "noLiquidty",            message: "No quote due to low liquidity",                                               is_terminal: false },
+    ExecutionEvent { code: 3017, name: "unableQuote",           message: "Unable to fetch a quote",                                                     is_terminal: false },
+    ExecutionEvent { code: 3018, name: "mevFail",               message: "Anti-MEV provider error",                                                     is_terminal: false },
+    ExecutionEvent { code: 3019, name: "riskToken",             message: "Failed to trade due to risky token",                                          is_terminal: true  },
+    ExecutionEvent { code: 3020, name: "blackAddress",          message: "Failed to trade due to blocklisted address",                                  is_terminal: true  },
+    ExecutionEvent { code: 3023, name: "orderExpired",          message: "Limit order expired",                                                         is_terminal: true  },
+    ExecutionEvent { code: 2001, name: "oldCreated",            message: "Order created",                                                               is_terminal: false },
+    ExecutionEvent { code: 2002, name: "oldFailedToCreate",     message: "Failed to create order",                                                      is_terminal: false },
+    ExecutionEvent { code: 2003, name: "oldEdited",             message: "Order modified",                                                              is_terminal: false },
+    ExecutionEvent { code: 2004, name: "oldFailedToEdit",       message: "Failed to edit order",                                                        is_terminal: false },
+    ExecutionEvent { code: 2005, name: "oldCanceled",           message: "Order canceled",                                                              is_terminal: false },
+    ExecutionEvent { code: 2006, name: "oldFailedToCancel",     message: "Unable to cancel order",                                                      is_terminal: false },
+    ExecutionEvent { code: 2007, name: "oldAutoCanceled",       message: "Order auto-canceled",                                                         is_terminal: false },
+    ExecutionEvent { code: 2008, name: "oldFailedToAutoCancel", message: "Unable to auto-cancel order",                                                 is_terminal: false },
+    ExecutionEvent { code: 2009, name: "oldExpired",            message: "Order expired",                                                               is_terminal: false },
+    ExecutionEvent { code: 2010, name: "oldExceedsSlippage",    message: "Price exceeded slippage at trade",                                            is_terminal: false },
+    ExecutionEvent { code: 2011, name: "oldNoQuoteLowLiquidity",message: "No quote due to low liquidity",                                               is_terminal: false },
+    ExecutionEvent { code: 2012, name: "oldBroadcastFailed",    message: "Broadcast failed",                                                            is_terminal: false },
+    ExecutionEvent { code: 2013, name: "oldSuccessful",         message: "Trade successful",                                                            is_terminal: false },
+];
+
+/// `None` ⇒ unknown code; caller should leave BE's raw fields as-is.
+pub fn execution_event_for(code: i32) -> Option<&'static ExecutionEvent> {
+    EXECUTION_EVENT_CATALOG.iter().find(|e| e.code == code)
+}
+
+/// Terminal = TEE engine will not retry; Agent should stop polling.
+/// Unknown codes default to non-terminal (engine assumed to retry).
 pub fn is_terminal_event(code: i32) -> bool {
-    matches!(code, 3010 | 3019 | 3020 | 3023)
+    execution_event_for(code).map(|e| e.is_terminal).unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -412,5 +466,54 @@ mod tests {
         assert!(!super::is_terminal_event(0), "0 = tradeSuccessed (not terminal-failure)");
         assert!(!super::is_terminal_event(9999));
         assert!(!super::is_terminal_event(-1));
+    }
+
+    // ── ExecutionEvent catalog ───────────────────────────────────
+
+    #[test]
+    fn execution_event_catalog_hot_codes() {
+        let e = super::execution_event_for(3016).expect("3016 in catalog");
+        assert_eq!(e.name, "noLiquidty");
+        assert_eq!(e.message, "No quote due to low liquidity");
+        assert!(!e.is_terminal);
+
+        let e = super::execution_event_for(0).expect("0 in catalog");
+        assert_eq!(e.name, "tradeSuccessed");
+        assert_eq!(e.message, "Trade successful");
+
+        let e = super::execution_event_for(3023).expect("3023 in catalog");
+        assert_eq!(e.message, "Limit order expired");
+        assert!(e.is_terminal);
+    }
+
+    #[test]
+    fn execution_event_unknown_code_passes_through() {
+        // Product-design rule: unknown codes => CLI does NOT fabricate a
+        // message, caller leaves whatever BE returned as-is.
+        assert!(super::execution_event_for(9999).is_none());
+        assert!(super::execution_event_for(-42).is_none());
+    }
+
+    #[test]
+    fn execution_event_terminal_set_matches_is_terminal_event() {
+        // Single source of truth: is_terminal_event delegates to the catalog.
+        for &code in &[3010, 3019, 3020, 3023] {
+            assert!(super::is_terminal_event(code), "{code} should be terminal");
+            assert!(super::execution_event_for(code).unwrap().is_terminal);
+        }
+    }
+
+    #[test]
+    fn execution_event_legacy_2xxx_codes_present() {
+        // Old order-status series should still resolve so older orders'
+        // history doesn't render as raw integers.
+        assert_eq!(
+            super::execution_event_for(2013).unwrap().message,
+            "Trade successful"
+        );
+        assert_eq!(
+            super::execution_event_for(2011).unwrap().message,
+            "No quote due to low liquidity"
+        );
     }
 }
