@@ -415,6 +415,14 @@ static TOKEN_MAP: LazyLock<HashMap<&str, HashMap<&str, &str>>> = LazyLock::new(|
             ("weth", "0x5a77f1443d16ee5761d310e38b62f77f726bc71c"),
             ("wokb", "0xe538905cf8410324e03a5a23c1c177a474d59b2b"),
         ])),
+        // X Layer Testnet (1952)
+        ("1952", HashMap::from([
+            ("okb", "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"),
+            ("native", "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"),
+            ("usdc", "0xcb8bf24c6ce16ad21d707c9505421a17f2bec79d"),
+            ("usdt", "0x9e29b3aada05bf2d2c827af80bd28dc0b9b4fb0c"),
+            ("usdg", "0xa78e2baabaf5c4f36b7fc394725deb68d332eec1"),
+        ])),
         // Linea (59144)
         ("59144", HashMap::from([
             ("eth", "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"),
@@ -1362,9 +1370,9 @@ async fn cmd_execute(
         // Gas limit from swap response
         let gas_limit_str = tx["gas"].as_str();
 
-        // XLayer AA DEX params
+        // XLayer AA DEX params (mainnet 196 + testnet 1952)
         let from_token_amount;
-        let (aa_addr, aa_amount) = if chain_index == "196" {
+        let (aa_addr, aa_amount) = if chain_index == "196" || chain_index == "1952" {
             from_token_amount = swap_result["routerResult"]["fromTokenAmount"]
                 .as_str()
                 .unwrap_or(amount)
