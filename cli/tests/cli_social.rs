@@ -1,8 +1,8 @@
 //! Integration tests for `onchainos social` commands (DEXMARKET-7736).
 //!
-//! Covers the 9 social CLI subcommands: news-latest, news-by-coin, news-search,
-//! news-detail, news-platforms, sentiment-ranking, coin-sentiment,
-//! token-vibe-timeline, token-top-kols.
+//! Covers the 9 social CLI subcommands: news-latest, news-by-symbol, news-search,
+//! news-detail, news-platforms, sentiment-ranking, sentiment-symbol,
+//! vibe-timeline, vibe-top-kols.
 //!
 //! These tests run the compiled binary against the live OKX API, so they
 //! require network access and valid API credentials. Each live call goes
@@ -45,7 +45,7 @@ fn social_news_latest_with_coin_filter() {
     let output = run_with_retry(&[
         "social",
         "news-latest",
-        "--coins",
+        "--token-symbols",
         "BTC",
         "--limit",
         "5",
@@ -57,15 +57,15 @@ fn social_news_latest_with_coin_filter() {
     );
 }
 
-// ─── news-by-coin ───────────────────────────────────────────────────────
+// ─── news-by-symbol ───────────────────────────────────────────────────────
 
 #[test]
 #[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
-fn social_news_by_coin_returns_articles_for_eth() {
+fn social_news_by_symbol_returns_articles_for_eth() {
     let output = run_with_retry(&[
         "social",
-        "news-by-coin",
-        "--coins",
+        "news-by-symbol",
+        "--token-symbols",
         "ETH",
         "--limit",
         "5",
@@ -78,9 +78,9 @@ fn social_news_by_coin_returns_articles_for_eth() {
 }
 
 #[test]
-fn social_news_by_coin_missing_coins_arg_fails() {
+fn social_news_by_symbol_missing_coins_arg_fails() {
     onchainos()
-        .args(["social", "news-by-coin"])
+        .args(["social", "news-by-symbol"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
@@ -164,17 +164,17 @@ fn social_sentiment_ranking_returns_ranked_coins() {
     }
 }
 
-// ─── coin-sentiment ─────────────────────────────────────────────────────
+// ─── sentiment-symbol ─────────────────────────────────────────────────────
 
 #[test]
 #[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
-fn social_coin_sentiment_snapshot_mode() {
+fn social_sentiment_symbol_snapshot_mode() {
     let output = run_with_retry(&[
         "social",
-        "coin-sentiment",
-        "--coins",
+        "sentiment-symbol",
+        "--token-symbols",
         "BTC,ETH",
-        "--period",
+        "--time-frame",
         "1",
     ]);
     let data = assert_ok_and_extract_data(&output);
@@ -186,13 +186,13 @@ fn social_coin_sentiment_snapshot_mode() {
 
 #[test]
 #[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
-fn social_coin_sentiment_trend_mode_includes_trend_array() {
+fn social_sentiment_symbol_trend_mode_includes_trend_array() {
     let output = run_with_retry(&[
         "social",
-        "coin-sentiment",
-        "--coins",
+        "sentiment-symbol",
+        "--token-symbols",
         "BTC",
-        "--period",
+        "--time-frame",
         "1",
         "--trend-points",
         "8",
@@ -213,27 +213,27 @@ fn social_coin_sentiment_trend_mode_includes_trend_array() {
 }
 
 #[test]
-fn social_coin_sentiment_missing_coins_arg_fails() {
+fn social_sentiment_symbol_missing_coins_arg_fails() {
     onchainos()
-        .args(["social", "coin-sentiment"])
+        .args(["social", "sentiment-symbol"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
 }
 
-// ─── token-vibe-timeline ────────────────────────────────────────────────
+// ─── vibe-timeline ────────────────────────────────────────────────
 
 #[test]
 #[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
-fn social_token_vibe_timeline_for_wsol_strips_tweet_bodies() {
+fn social_vibe_timeline_for_wsol_strips_tweet_bodies() {
     let output = run_with_retry(&[
         "social",
-        "token-vibe-timeline",
+        "vibe-timeline",
         "--chain",
         "solana",
         "--token-address",
         tokens::SOL_WSOL,
-        "--period",
+        "--time-frame",
         "1",
     ]);
     let data = assert_ok_and_extract_data(&output);
@@ -241,27 +241,27 @@ fn social_token_vibe_timeline_for_wsol_strips_tweet_bodies() {
 }
 
 #[test]
-fn social_token_vibe_timeline_missing_args_fails() {
+fn social_vibe_timeline_missing_args_fails() {
     onchainos()
-        .args(["social", "token-vibe-timeline"])
+        .args(["social", "vibe-timeline"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
 }
 
-// ─── token-top-kols ─────────────────────────────────────────────────────
+// ─── vibe-top-kols ─────────────────────────────────────────────────────
 
 #[test]
 #[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
-fn social_token_top_kols_for_wsol_strips_tweet_bodies() {
+fn social_vibe_top_kols_for_wsol_strips_tweet_bodies() {
     let output = run_with_retry(&[
         "social",
-        "token-top-kols",
+        "vibe-top-kols",
         "--chain",
         "solana",
         "--token-address",
         tokens::SOL_WSOL,
-        "--period",
+        "--time-frame",
         "1",
         "--limit",
         "5",
@@ -271,9 +271,9 @@ fn social_token_top_kols_for_wsol_strips_tweet_bodies() {
 }
 
 #[test]
-fn social_token_top_kols_missing_args_fails() {
+fn social_vibe_top_kols_missing_args_fails() {
     onchainos()
-        .args(["social", "token-top-kols"])
+        .args(["social", "vibe-top-kols"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));

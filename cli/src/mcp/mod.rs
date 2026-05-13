@@ -1336,7 +1336,7 @@ impl McpServer {
 
     #[tool(
         name = "social_news_latest",
-        description = "Latest crypto news feed (across all coins by default). Optional filters: coins (comma-separated symbols), begin/end (Unix ms), importance (1=high/2=medium/3=low), platform, language. Pagination via limit (default 10, max 50) + cursor. detail_level=2 returns full body."
+        description = "Latest crypto news feed (across all coins by default). Optional filters: token_symbols (comma-separated, e.g. 'BTC,ETH'), begin/end (Unix ms), importance ('1'=High/'2'=Medium/'3'=Low), platform, language ('en_US' default / 'zh_CN'). Pagination via limit (default '10') + cursor. detail_level='2' includes full article body."
     )]
     async fn social_news_latest(
         &self,
@@ -1349,14 +1349,14 @@ impl McpServer {
     }
 
     #[tool(
-        name = "social_news_by_coin",
-        description = "News filtered by coin symbol(s). coins required (comma-separated, e.g. 'BTC,ETH'). sort_by: 1=latest (default), 2=hot. sentiment: 1=bullish/2=bearish/3=neutral. importance: 1=high/2=medium/3=low."
+        name = "social_news_by_symbol",
+        description = "News filtered by coin symbol(s). token_symbols required (comma-separated, e.g. 'BTC,ETH'). sort_by: '1'=Latest (default), '2'=Hot. sentiment: '1'=Bullish/'2'=Bearish/'3'=Neutral. importance: '1'=High/'2'=Medium/'3'=Low."
     )]
-    async fn social_news_by_coin(
+    async fn social_news_by_symbol(
         &self,
-        Parameters(p): Parameters<social::SocialNewsByCoinParams>,
+        Parameters(p): Parameters<social::SocialNewsBySymbolParams>,
     ) -> Result<String, String> {
-        match social::fetch_news_by_coin(&mut *self.client.lock().await, p).await {
+        match social::fetch_news_by_symbol(&mut *self.client.lock().await, p).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
@@ -1364,7 +1364,7 @@ impl McpServer {
 
     #[tool(
         name = "social_news_search",
-        description = "Full-text crypto news search. keyword required. Optional sort_by (1=latest/2=hot), sentiment, importance, platform, coins, begin/end, detail_level, limit/cursor, language."
+        description = "Full-text crypto news search. keyword required. Optional sort_by ('1'=Latest/'2'=Hot), sentiment, importance, platform, token_symbols (additional filter), begin/end (Unix ms), detail_level, limit/cursor, language."
     )]
     async fn social_news_search(
         &self,
@@ -1378,7 +1378,7 @@ impl McpServer {
 
     #[tool(
         name = "social_news_detail",
-        description = "Get the full body of a single news article by id (article ids come from any news list response). Use this when a list call returned only summaries (detail_level=1)."
+        description = "Get the full body of a single news article by id. article_id is required and comes from the `articles[].id` field of any news listing endpoint. Use this when a list call returned only summaries (detail_level='1')."
     )]
     async fn social_news_detail(
         &self,
@@ -1392,7 +1392,7 @@ impl McpServer {
 
     #[tool(
         name = "social_news_platforms",
-        description = "List available news source platforms (e.g. blockbeats, odaily). Use the returned identifiers as the `platform` filter on social_news_latest / social_news_by_coin / social_news_search."
+        description = "List available news source platforms. Use the returned identifiers as the `platform` filter on social_news_latest / social_news_by_symbol / social_news_search."
     )]
     async fn social_news_platforms(&self) -> Result<String, String> {
         match social::fetch_news_platforms(&mut *self.client.lock().await).await {
@@ -1403,7 +1403,7 @@ impl McpServer {
 
     #[tool(
         name = "social_sentiment_ranking",
-        description = "Top coins ranked by social activity (mention count) over a window. period: 1=24h (default), 2=72h, 3=7d, 4=30d. sort_by: 1=hot (only value currently supported). limit default 10, max 50."
+        description = "Top coins ranked by social activity (mention count) over a window. time_frame: '1'=24h (default), '2'=72h, '3'=7 Days, '4'=30 Days. sort_by: '1'=Hot (only value supported). limit default '10'."
     )]
     async fn social_sentiment_ranking(
         &self,
@@ -1416,33 +1416,33 @@ impl McpServer {
     }
 
     #[tool(
-        name = "social_coin_sentiment",
-        description = "Sentiment metrics (mentions, bullish/bearish/neutral counts and ratios) for one or more coins. coins required (comma-separated). period 1/2/3/4. Snapshot mode by default; pass trend_points (>0, max 200) to switch to time-bucketed trend mode."
+        name = "social_sentiment_symbol",
+        description = "Aggregated social sentiment for one or more coins. token_symbols required (comma-separated). time_frame: '1'=24h (default) / '2'=72h / '3'=7d / '4'=30d. Snapshot mode by default; pass trend_points (>0) to switch to time-bucketed trend mode."
     )]
-    async fn social_coin_sentiment(
+    async fn social_sentiment_symbol(
         &self,
-        Parameters(p): Parameters<social::SocialCoinSentimentParams>,
+        Parameters(p): Parameters<social::SocialSentimentSymbolParams>,
     ) -> Result<String, String> {
-        match social::fetch_coin_sentiment(&mut *self.client.lock().await, p).await {
+        match social::fetch_sentiment_symbol(&mut *self.client.lock().await, p).await {
             Ok(data) => ok(data),
             Err(e) => err(e),
         }
     }
 
     #[tool(
-        name = "social_token_vibe_timeline",
-        description = "Token vibe (hotness) summary + time-bucketed timeline + sample KOLs per bucket. Keyed by chain + token_address (NOT symbol — resolve to a contract address first). Tweet bodies are stripped from the response (compliance)."
+        name = "social_vibe_timeline",
+        description = "Token vibe (hotness) summary + time-bucketed timeline + sample KOLs per bucket. Keyed by chain + token_address (NOT symbol — resolve to a contract address first). time_frame: '1'=24h (default) / '2'=72h / '3'=7d / '4'=30d. Tweet bodies are stripped from the response (compliance red line)."
     )]
-    async fn social_token_vibe_timeline(
+    async fn social_vibe_timeline(
         &self,
-        Parameters(p): Parameters<social::SocialTokenVibeTimelineParams>,
+        Parameters(p): Parameters<social::SocialVibeTimelineParams>,
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain).to_string();
-        match social::fetch_token_vibe_timeline(
+        match social::fetch_vibe_timeline(
             &mut *self.client.lock().await,
             &chain_index,
             &p.token_address,
-            p.period.as_deref(),
+            p.time_frame.as_deref(),
         )
         .await
         {
@@ -1452,20 +1452,20 @@ impl McpServer {
     }
 
     #[tool(
-        name = "social_token_top_kols",
-        description = "Top KOLs discussing a token (capped at upstream TOP50). sort_by: 1=engagement (default), 2=mentions, 3=impressions. period 1/2/3/4. Keyed by chain + token_address. Tweet bodies are stripped (compliance); tweet URLs and KOL identity fields pass through."
+        name = "social_vibe_top_kols",
+        description = "Top KOLs discussing a token (capped at upstream TOP50). sort_by: '1'=Engagement (default) / '2'=Mentions / '3'=Impressions. time_frame: '1'/'2'/'3'/'4'. Keyed by chain + token_address. Tweet bodies stripped (compliance); tweet URLs and KOL identity fields pass through."
     )]
-    async fn social_token_top_kols(
+    async fn social_vibe_top_kols(
         &self,
-        Parameters(p): Parameters<social::SocialTokenTopKolsParams>,
+        Parameters(p): Parameters<social::SocialVibeTopKolsParams>,
     ) -> Result<String, String> {
         let chain_index = crate::chains::resolve_chain(&p.chain).to_string();
-        match social::fetch_token_top_kols(
+        match social::fetch_vibe_top_kols(
             &mut *self.client.lock().await,
             &chain_index,
             &p.token_address,
             p.sort_by.as_deref(),
-            p.period.as_deref(),
+            p.time_frame.as_deref(),
             p.limit.as_deref(),
         )
         .await

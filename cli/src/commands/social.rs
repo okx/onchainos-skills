@@ -40,42 +40,42 @@ fn strip_tweet_bodies(v: &mut Value) {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct SocialNewsLatestParams {
-    /// Comma-separated coin symbols (e.g. "BTC,ETH"). Optional — omit for all coins.
-    pub coins: Option<String>,
-    /// Begin timestamp (Unix milliseconds)
+    /// Comma-separated coin symbols to filter on, e.g. "BTC,ETH". Optional.
+    pub token_symbols: Option<String>,
+    /// Start of the time window (Unix milliseconds).
     pub begin: Option<String>,
-    /// End timestamp (Unix milliseconds)
+    /// End of the time window (Unix milliseconds).
     pub end: Option<String>,
-    /// Importance filter: "1"=high, "2"=medium, "3"=low (per upstream codes)
+    /// Article importance filter: "1" (High), "2" (Medium), "3" (Low). Omit to skip.
     pub importance: Option<String>,
-    /// Single platform identifier (e.g. "blockbeats"); see `social_news_platforms`
+    /// News source platform identifier; see `social_news_platforms` for valid values.
     pub platform: Option<String>,
-    /// Page size (default "10", max 50 per PRD §7.1)
+    /// Page size (default "10").
     pub limit: Option<String>,
-    /// Pagination cursor from the previous response
+    /// Pagination cursor returned by the previous page; null on first call.
     pub cursor: Option<String>,
-    /// Article detail level: "1"=summary (default), "2"=full body
+    /// Response detail level: "1" (Summary) or "2" (Full — includes article body). Default "1".
     pub detail_level: Option<String>,
-    /// Locale (default "en_US"; e.g. "zh_CN", "ja_JP")
+    /// Locale of returned text, e.g. "en_US" (default), "zh_CN".
     pub language: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
-pub struct SocialNewsByCoinParams {
-    /// Comma-separated coin symbols (required, e.g. "BTC,ETH")
-    pub coins: String,
-    /// Sort order: "1"=latest (default), "2"=hot
+pub struct SocialNewsBySymbolParams {
+    /// Comma-separated coin symbols (required), e.g. "BTC,ETH".
+    pub token_symbols: String,
+    /// Result ordering: "1" (Latest, default), "2" (Hot by engagement).
     pub sort_by: Option<String>,
-    /// Sentiment filter: "1"=bullish, "2"=bearish, "3"=neutral
+    /// Sentiment filter: "1" (Bullish), "2" (Bearish), "3" (Neutral). Omit to skip.
     pub sentiment: Option<String>,
-    /// Importance filter: "1"=high, "2"=medium, "3"=low
+    /// Importance filter: "1" (High), "2" (Medium), "3" (Low). Omit to skip.
     pub importance: Option<String>,
-    /// Single platform identifier
+    /// News source platform identifier.
     pub platform: Option<String>,
-    /// Page size (default "10", max 50)
+    /// Page size (default "10").
     pub limit: Option<String>,
     pub cursor: Option<String>,
-    /// "1"=summary (default), "2"=full body
+    /// "1" (Summary, default) or "2" (Full).
     pub detail_level: Option<String>,
     pub begin: Option<String>,
     pub end: Option<String>,
@@ -84,20 +84,20 @@ pub struct SocialNewsByCoinParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct SocialNewsSearchParams {
-    /// Search keyword (required)
+    /// Free-text search keyword, e.g. "ethereum upgrade" (required).
     pub keyword: String,
-    /// "1"=latest (default), "2"=hot
+    /// Result ordering: "1" (Latest, default), "2" (Hot).
     pub sort_by: Option<String>,
-    /// "1"=bullish, "2"=bearish, "3"=neutral
+    /// Sentiment filter: "1" / "2" / "3".
     pub sentiment: Option<String>,
-    /// "1"=high, "2"=medium, "3"=low
+    /// Importance filter: "1" / "2" / "3".
     pub importance: Option<String>,
     pub platform: Option<String>,
-    /// Comma-separated coin symbols
-    pub coins: Option<String>,
+    /// Comma-separated coin symbols to additionally restrict results.
+    pub token_symbols: Option<String>,
     pub begin: Option<String>,
     pub end: Option<String>,
-    /// "1"=summary (default), "2"=full body
+    /// "1" (Summary, default) or "2" (Full).
     pub detail_level: Option<String>,
     pub limit: Option<String>,
     pub cursor: Option<String>,
@@ -106,53 +106,53 @@ pub struct SocialNewsSearchParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct SocialNewsDetailParams {
-    /// Article id (from a previous list response)
-    pub id: String,
-    /// Locale (default "en_US")
+    /// News article id (returned by listing endpoints in `articles[].id`).
+    pub article_id: String,
+    /// Locale of returned text (default "en_US").
     pub language: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
 pub struct SocialSentimentRankingParams {
-    /// Window: "1"=24h (default), "2"=72h, "3"=7d, "4"=30d
-    pub period: Option<String>,
-    /// Sort: "1"=hot (only value currently supported)
+    /// Time window: "1" (24h, default), "2" (72h), "3" (7 Days), "4" (30 Days).
+    pub time_frame: Option<String>,
+    /// Ranking criterion: "1" (Hot — by social activity). Default "1".
     pub sort_by: Option<String>,
-    /// Page size (default "10", max 50)
+    /// Page size (default "10").
     pub limit: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
-pub struct SocialCoinSentimentParams {
-    /// Comma-separated coin symbols (required, e.g. "BTC,ETH")
-    pub coins: String,
-    /// Window: "1"=24h (default), "2"=72h, "3"=7d, "4"=30d
-    pub period: Option<String>,
-    /// If > 0, include the `trend` array on each detail with this many buckets (max 200 per PRD §7.1)
+pub struct SocialSentimentSymbolParams {
+    /// Comma-separated coin symbols (required), e.g. "BTC,ETH".
+    pub token_symbols: String,
+    /// Time window: "1" (24h, default), "2" (72h), "3" (7 Days), "4" (30 Days).
+    pub time_frame: Option<String>,
+    /// If > 0, include a `trend` series with this many time buckets per coin.
     pub trend_points: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
-pub struct SocialTokenVibeTimelineParams {
-    /// Chain name (e.g. "ethereum", "solana") or chainIndex (e.g. "1", "501")
+pub struct SocialVibeTimelineParams {
+    /// Chain name (e.g. "ethereum", "solana") or chainIndex ("1", "501", "56").
     pub chain: String,
-    /// Token contract address (EVM addresses lowercase)
+    /// On-chain contract address of the token.
     pub token_address: String,
-    /// Window: "1"=24h (default), "2"=72h, "3"=7d, "4"=30d
-    pub period: Option<String>,
+    /// Time window: "1" (24h, default), "2" (72h), "3" (7 Days), "4" (30 Days).
+    pub time_frame: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
-pub struct SocialTokenTopKolsParams {
-    /// Chain name (e.g. "ethereum", "solana")
+pub struct SocialVibeTopKolsParams {
+    /// Chain name (e.g. "ethereum", "solana") or chainIndex.
     pub chain: String,
-    /// Token contract address
+    /// On-chain contract address of the token.
     pub token_address: String,
-    /// Sort: "1"=engagement (default), "2"=mentions, "3"=impressions
+    /// Ranking criterion: "1" (Engagement, default), "2" (Mentions), "3" (Impressions).
     pub sort_by: Option<String>,
-    /// Window: "1"=24h (default), "2"=72h, "3"=7d, "4"=30d
-    pub period: Option<String>,
-    /// Page size (default "20"); upstream caps at 50
+    /// Time window: "1" (24h, default), "2" (72h), "3" (7 Days), "4" (30 Days).
+    pub time_frame: Option<String>,
+    /// Page size (default "20"); upstream caps at TOP50.
     pub limit: Option<String>,
 }
 
@@ -161,48 +161,48 @@ pub struct SocialTokenTopKolsParams {
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
 pub enum SocialCommand {
-    /// Latest crypto news feed (across all coins by default)
+    /// Latest crypto news feed (across all coins by default).
     NewsLatest {
-        /// Comma-separated coin symbols (e.g. BTC,ETH)
+        /// Comma-separated coin symbols (e.g. BTC,ETH).
         #[arg(long)]
-        coins: Option<String>,
-        /// Begin timestamp (Unix milliseconds)
+        token_symbols: Option<String>,
+        /// Begin timestamp (Unix milliseconds).
         #[arg(long)]
         begin: Option<String>,
-        /// End timestamp (Unix milliseconds)
+        /// End timestamp (Unix milliseconds).
         #[arg(long)]
         end: Option<String>,
-        /// Importance: 1=high, 2=medium, 3=low
+        /// Importance: 1=High, 2=Medium, 3=Low.
         #[arg(long)]
         importance: Option<String>,
-        /// Single platform identifier (see `social news-platforms`)
+        /// Single platform identifier (see `social news-platforms`).
         #[arg(long)]
         platform: Option<String>,
-        /// Page size (default 10, max 50)
+        /// Page size (default 10).
         #[arg(long)]
         limit: Option<String>,
-        /// Pagination cursor from the previous response
+        /// Pagination cursor from the previous response.
         #[arg(long)]
         cursor: Option<String>,
-        /// Article detail level: 1=summary, 2=full body
+        /// Detail level: 1=Summary, 2=Full.
         #[arg(long)]
         detail_level: Option<String>,
-        /// Locale (e.g. en_US, zh_CN)
+        /// Locale (e.g. en_US, zh_CN).
         #[arg(long)]
         language: Option<String>,
     },
-    /// News filtered by coin symbol(s)
-    NewsByCoin {
-        /// Comma-separated coin symbols (required)
+    /// News filtered by coin symbol(s).
+    NewsBySymbol {
+        /// Comma-separated coin symbols (required).
         #[arg(long)]
-        coins: String,
-        /// Sort: 1=latest (default), 2=hot
+        token_symbols: String,
+        /// Sort: 1=Latest (default), 2=Hot.
         #[arg(long)]
         sort_by: Option<String>,
-        /// Sentiment: 1=bullish, 2=bearish, 3=neutral
+        /// Sentiment: 1=Bullish, 2=Bearish, 3=Neutral.
         #[arg(long)]
         sentiment: Option<String>,
-        /// Importance: 1=high, 2=medium, 3=low
+        /// Importance: 1=High, 2=Medium, 3=Low.
         #[arg(long)]
         importance: Option<String>,
         #[arg(long)]
@@ -220,9 +220,9 @@ pub enum SocialCommand {
         #[arg(long)]
         language: Option<String>,
     },
-    /// Full-text news search
+    /// Full-text news search.
     NewsSearch {
-        /// Search keyword (required)
+        /// Search keyword (required).
         #[arg(long)]
         keyword: String,
         #[arg(long)]
@@ -233,8 +233,9 @@ pub enum SocialCommand {
         importance: Option<String>,
         #[arg(long)]
         platform: Option<String>,
+        /// Comma-separated coin symbols (additional filter).
         #[arg(long)]
-        coins: Option<String>,
+        token_symbols: Option<String>,
         #[arg(long)]
         begin: Option<String>,
         #[arg(long)]
@@ -248,63 +249,63 @@ pub enum SocialCommand {
         #[arg(long)]
         language: Option<String>,
     },
-    /// Get the full body of a single article by id
+    /// Get the full body of a single article by id.
     NewsDetail {
-        /// Article id (from a previous list response)
+        /// Article id (from a previous list response's `articles[].id`).
         #[arg(long)]
-        id: String,
+        article_id: String,
         #[arg(long)]
         language: Option<String>,
     },
-    /// List available news source platforms (use as `--platform` filters)
+    /// List available news source platforms (use as `--platform` filters).
     NewsPlatforms,
-    /// Top coins by social activity (mention count) over a window
+    /// Top coins ranked by social activity (mention count) over a window.
     SentimentRanking {
-        /// Window: 1=24h (default), 2=72h, 3=7d, 4=30d
+        /// Time window: 1=24h (default), 2=72h, 3=7d, 4=30d.
         #[arg(long)]
-        period: Option<String>,
-        /// Sort: 1=hot (only value supported)
+        time_frame: Option<String>,
+        /// Sort: 1=Hot (only value supported).
         #[arg(long)]
         sort_by: Option<String>,
         #[arg(long)]
         limit: Option<String>,
     },
-    /// Sentiment metrics for one or more coins (snapshot or time-bucketed trend)
-    CoinSentiment {
-        /// Comma-separated coin symbols (required)
+    /// Sentiment metrics for one or more coins (snapshot or time-bucketed trend).
+    SentimentSymbol {
+        /// Comma-separated coin symbols (required).
         #[arg(long)]
-        coins: String,
-        /// Window: 1=24h (default), 2=72h, 3=7d, 4=30d
+        token_symbols: String,
+        /// Time window: 1=24h (default), 2=72h, 3=7d, 4=30d.
         #[arg(long)]
-        period: Option<String>,
-        /// If > 0, switch to trend mode and return N buckets per coin (max 200)
+        time_frame: Option<String>,
+        /// If > 0, switch to trend mode and return N buckets per coin (max 200).
         #[arg(long)]
         trend_points: Option<String>,
     },
-    /// Token vibe (hotness) summary + timeline + sample KOLs per bucket
-    TokenVibeTimeline {
-        /// Chain name (e.g. ethereum, solana) or chainIndex
+    /// Token vibe (hotness) summary + timeline + sample KOLs per bucket.
+    VibeTimeline {
+        /// Chain name (e.g. ethereum, solana) or chainIndex.
         #[arg(long)]
         chain: String,
-        /// Token contract address
+        /// Token contract address.
         #[arg(long)]
         token_address: String,
-        /// Window: 1=24h (default), 2=72h, 3=7d, 4=30d
+        /// Time window: 1=24h (default), 2=72h, 3=7d, 4=30d.
         #[arg(long)]
-        period: Option<String>,
+        time_frame: Option<String>,
     },
-    /// Top KOLs discussing a token (capped at upstream TOP50)
-    TokenTopKols {
+    /// Top KOLs discussing a token (capped at upstream TOP50).
+    VibeTopKols {
         #[arg(long)]
         chain: String,
         #[arg(long)]
         token_address: String,
-        /// Sort: 1=engagement (default), 2=mentions, 3=impressions
+        /// Sort: 1=Engagement (default), 2=Mentions, 3=Impressions.
         #[arg(long)]
         sort_by: Option<String>,
         #[arg(long)]
-        period: Option<String>,
-        /// Page size (default 20); upstream caps at 50
+        time_frame: Option<String>,
+        /// Page size (default 20); upstream caps at TOP50.
         #[arg(long)]
         limit: Option<String>,
     },
@@ -313,7 +314,7 @@ pub enum SocialCommand {
 pub async fn execute(ctx: &Context, cmd: SocialCommand) -> Result<()> {
     match cmd {
         SocialCommand::NewsLatest {
-            coins,
+            token_symbols,
             begin,
             end,
             importance,
@@ -324,7 +325,7 @@ pub async fn execute(ctx: &Context, cmd: SocialCommand) -> Result<()> {
             language,
         } => {
             let p = SocialNewsLatestParams {
-                coins,
+                token_symbols,
                 begin,
                 end,
                 importance,
@@ -338,8 +339,8 @@ pub async fn execute(ctx: &Context, cmd: SocialCommand) -> Result<()> {
             output::success(fetch_news_latest(&mut client, p).await?);
             Ok(())
         }
-        SocialCommand::NewsByCoin {
-            coins,
+        SocialCommand::NewsBySymbol {
+            token_symbols,
             sort_by,
             sentiment,
             importance,
@@ -351,8 +352,8 @@ pub async fn execute(ctx: &Context, cmd: SocialCommand) -> Result<()> {
             end,
             language,
         } => {
-            let p = SocialNewsByCoinParams {
-                coins,
+            let p = SocialNewsBySymbolParams {
+                token_symbols,
                 sort_by,
                 sentiment,
                 importance,
@@ -365,7 +366,7 @@ pub async fn execute(ctx: &Context, cmd: SocialCommand) -> Result<()> {
                 language,
             };
             let mut client = ctx.client_async().await?;
-            output::success(fetch_news_by_coin(&mut client, p).await?);
+            output::success(fetch_news_by_symbol(&mut client, p).await?);
             Ok(())
         }
         SocialCommand::NewsSearch {
@@ -374,7 +375,7 @@ pub async fn execute(ctx: &Context, cmd: SocialCommand) -> Result<()> {
             sentiment,
             importance,
             platform,
-            coins,
+            token_symbols,
             begin,
             end,
             detail_level,
@@ -388,7 +389,7 @@ pub async fn execute(ctx: &Context, cmd: SocialCommand) -> Result<()> {
                 sentiment,
                 importance,
                 platform,
-                coins,
+                token_symbols,
                 begin,
                 end,
                 detail_level,
@@ -400,8 +401,14 @@ pub async fn execute(ctx: &Context, cmd: SocialCommand) -> Result<()> {
             output::success(fetch_news_search(&mut client, p).await?);
             Ok(())
         }
-        SocialCommand::NewsDetail { id, language } => {
-            let p = SocialNewsDetailParams { id, language };
+        SocialCommand::NewsDetail {
+            article_id,
+            language,
+        } => {
+            let p = SocialNewsDetailParams {
+                article_id,
+                language,
+            };
             let mut client = ctx.client_async().await?;
             output::success(fetch_news_detail(&mut client, p).await?);
             Ok(())
@@ -412,12 +419,12 @@ pub async fn execute(ctx: &Context, cmd: SocialCommand) -> Result<()> {
             Ok(())
         }
         SocialCommand::SentimentRanking {
-            period,
+            time_frame,
             sort_by,
             limit,
         } => {
             let p = SocialSentimentRankingParams {
-                period,
+                time_frame,
                 sort_by,
                 limit,
             };
@@ -425,54 +432,54 @@ pub async fn execute(ctx: &Context, cmd: SocialCommand) -> Result<()> {
             output::success(fetch_sentiment_ranking(&mut client, p).await?);
             Ok(())
         }
-        SocialCommand::CoinSentiment {
-            coins,
-            period,
+        SocialCommand::SentimentSymbol {
+            token_symbols,
+            time_frame,
             trend_points,
         } => {
-            let p = SocialCoinSentimentParams {
-                coins,
-                period,
+            let p = SocialSentimentSymbolParams {
+                token_symbols,
+                time_frame,
                 trend_points,
             };
             let mut client = ctx.client_async().await?;
-            output::success(fetch_coin_sentiment(&mut client, p).await?);
+            output::success(fetch_sentiment_symbol(&mut client, p).await?);
             Ok(())
         }
-        SocialCommand::TokenVibeTimeline {
+        SocialCommand::VibeTimeline {
             chain,
             token_address,
-            period,
+            time_frame,
         } => {
             let chain_index = crate::chains::resolve_chain(&chain).to_string();
             let mut client = ctx.client_async().await?;
             output::success(
-                fetch_token_vibe_timeline(
+                fetch_vibe_timeline(
                     &mut client,
                     &chain_index,
                     &token_address,
-                    period.as_deref(),
+                    time_frame.as_deref(),
                 )
                 .await?,
             );
             Ok(())
         }
-        SocialCommand::TokenTopKols {
+        SocialCommand::VibeTopKols {
             chain,
             token_address,
             sort_by,
-            period,
+            time_frame,
             limit,
         } => {
             let chain_index = crate::chains::resolve_chain(&chain).to_string();
             let mut client = ctx.client_async().await?;
             output::success(
-                fetch_token_top_kols(
+                fetch_vibe_top_kols(
                     &mut client,
                     &chain_index,
                     &token_address,
                     sort_by.as_deref(),
-                    period.as_deref(),
+                    time_frame.as_deref(),
                     limit.as_deref(),
                 )
                 .await?,
@@ -498,7 +505,7 @@ pub async fn fetch_news_latest(
     p: SocialNewsLatestParams,
 ) -> Result<Value> {
     let mut q: Vec<(&str, &str)> = Vec::new();
-    push_if_present(&mut q, "tokenSymbols", p.coins.as_deref());
+    push_if_present(&mut q, "tokenSymbols", p.token_symbols.as_deref());
     push_if_present(&mut q, "begin", p.begin.as_deref());
     push_if_present(&mut q, "end", p.end.as_deref());
     push_if_present(&mut q, "importance", p.importance.as_deref());
@@ -511,11 +518,11 @@ pub async fn fetch_news_latest(
 }
 
 /// GET /api/v6/dex/market/social/news/by-symbol
-pub async fn fetch_news_by_coin(
+pub async fn fetch_news_by_symbol(
     client: &mut ApiClient,
-    p: SocialNewsByCoinParams,
+    p: SocialNewsBySymbolParams,
 ) -> Result<Value> {
-    let mut q: Vec<(&str, &str)> = vec![("tokenSymbols", p.coins.as_str())];
+    let mut q: Vec<(&str, &str)> = vec![("tokenSymbols", p.token_symbols.as_str())];
     push_if_present(&mut q, "sortBy", p.sort_by.as_deref());
     push_if_present(&mut q, "sentiment", p.sentiment.as_deref());
     push_if_present(&mut q, "importance", p.importance.as_deref());
@@ -541,7 +548,7 @@ pub async fn fetch_news_search(
     push_if_present(&mut q, "sentiment", p.sentiment.as_deref());
     push_if_present(&mut q, "importance", p.importance.as_deref());
     push_if_present(&mut q, "platform", p.platform.as_deref());
-    push_if_present(&mut q, "tokenSymbols", p.coins.as_deref());
+    push_if_present(&mut q, "tokenSymbols", p.token_symbols.as_deref());
     push_if_present(&mut q, "begin", p.begin.as_deref());
     push_if_present(&mut q, "end", p.end.as_deref());
     push_if_present(&mut q, "detailLevel", p.detail_level.as_deref());
@@ -556,7 +563,7 @@ pub async fn fetch_news_detail(
     client: &mut ApiClient,
     p: SocialNewsDetailParams,
 ) -> Result<Value> {
-    let mut q: Vec<(&str, &str)> = vec![("id", p.id.as_str())];
+    let mut q: Vec<(&str, &str)> = vec![("articleId", p.article_id.as_str())];
     push_if_present(&mut q, "language", p.language.as_deref());
     client.get("/api/v6/dex/market/social/news/detail", &q).await
 }
@@ -574,7 +581,7 @@ pub async fn fetch_sentiment_ranking(
     p: SocialSentimentRankingParams,
 ) -> Result<Value> {
     let mut q: Vec<(&str, &str)> = Vec::new();
-    push_if_present(&mut q, "period", p.period.as_deref());
+    push_if_present(&mut q, "timeFrame", p.time_frame.as_deref());
     push_if_present(&mut q, "sortBy", p.sort_by.as_deref());
     push_if_present(&mut q, "limit", p.limit.as_deref());
     client
@@ -583,12 +590,12 @@ pub async fn fetch_sentiment_ranking(
 }
 
 /// GET /api/v6/dex/market/social/sentiment/symbol
-pub async fn fetch_coin_sentiment(
+pub async fn fetch_sentiment_symbol(
     client: &mut ApiClient,
-    p: SocialCoinSentimentParams,
+    p: SocialSentimentSymbolParams,
 ) -> Result<Value> {
-    let mut q: Vec<(&str, &str)> = vec![("tokenSymbols", p.coins.as_str())];
-    push_if_present(&mut q, "period", p.period.as_deref());
+    let mut q: Vec<(&str, &str)> = vec![("tokenSymbols", p.token_symbols.as_str())];
+    push_if_present(&mut q, "timeFrame", p.time_frame.as_deref());
     push_if_present(&mut q, "trendPoints", p.trend_points.as_deref());
     client
         .get("/api/v6/dex/market/social/sentiment/symbol", &q)
@@ -599,17 +606,17 @@ pub async fn fetch_coin_sentiment(
 ///
 /// Compliance: any `text` / `content` / `translatedContent` fields anywhere in
 /// the response tree are stripped before returning (PRD §3.6 / §6.3 red line).
-pub async fn fetch_token_vibe_timeline(
+pub async fn fetch_vibe_timeline(
     client: &mut ApiClient,
     chain_index: &str,
     token_address: &str,
-    period: Option<&str>,
+    time_frame: Option<&str>,
 ) -> Result<Value> {
     let mut q: Vec<(&str, &str)> = vec![
         ("chainIndex", chain_index),
         ("tokenAddress", token_address),
     ];
-    push_if_present(&mut q, "period", period);
+    push_if_present(&mut q, "timeFrame", time_frame);
     let mut data = client
         .get("/api/v6/dex/market/social/vibe/timeline", &q)
         .await?;
@@ -619,13 +626,13 @@ pub async fn fetch_token_vibe_timeline(
 
 /// GET /api/v6/dex/market/social/vibe/top-kols
 ///
-/// Compliance: same tweet-body strip as `fetch_token_vibe_timeline`.
-pub async fn fetch_token_top_kols(
+/// Compliance: same tweet-body strip as `fetch_vibe_timeline`.
+pub async fn fetch_vibe_top_kols(
     client: &mut ApiClient,
     chain_index: &str,
     token_address: &str,
     sort_by: Option<&str>,
-    period: Option<&str>,
+    time_frame: Option<&str>,
     limit: Option<&str>,
 ) -> Result<Value> {
     let mut q: Vec<(&str, &str)> = vec![
@@ -633,7 +640,7 @@ pub async fn fetch_token_top_kols(
         ("tokenAddress", token_address),
     ];
     push_if_present(&mut q, "sortBy", sort_by);
-    push_if_present(&mut q, "period", period);
+    push_if_present(&mut q, "timeFrame", time_frame);
     push_if_present(&mut q, "limit", limit);
     let mut data = client
         .get("/api/v6/dex/market/social/vibe/top-kols", &q)

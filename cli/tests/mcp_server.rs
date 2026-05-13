@@ -245,14 +245,14 @@ fn mcp_tools_list_returns_all_tools() {
         "workflow_portfolio",
         // Social tools (DEXMARKET-7736)
         "social_news_latest",
-        "social_news_by_coin",
+        "social_news_by_symbol",
         "social_news_search",
         "social_news_detail",
         "social_news_platforms",
         "social_sentiment_ranking",
-        "social_coin_sentiment",
-        "social_token_vibe_timeline",
-        "social_token_top_kols",
+        "social_sentiment_symbol",
+        "social_vibe_timeline",
+        "social_vibe_top_kols",
     ];
     for name in expected {
         assert!(
@@ -806,11 +806,11 @@ fn mcp_social_news_latest() {
 
 #[test]
 #[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
-fn mcp_social_news_by_coin() {
+fn mcp_social_news_by_symbol() {
     let mut client = McpClient::start();
     let result = client.call_tool(
-        "social_news_by_coin",
-        json!({"coins": "ETH", "limit": "5"}),
+        "social_news_by_symbol",
+        json!({"token_symbols": "ETH", "limit": "5"}),
     );
     if result.is_rate_limited() {
         return;
@@ -862,7 +862,7 @@ fn mcp_social_sentiment_ranking() {
     let mut client = McpClient::start();
     let result = client.call_tool(
         "social_sentiment_ranking",
-        json!({"period": "1", "limit": "5"}),
+        json!({"time_frame": "1", "limit": "5"}),
     );
     if result.is_rate_limited() {
         return;
@@ -876,29 +876,29 @@ fn mcp_social_sentiment_ranking() {
 
 #[test]
 #[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
-fn mcp_social_coin_sentiment_snapshot() {
+fn mcp_social_sentiment_symbol_snapshot() {
     let mut client = McpClient::start();
     let result = client.call_tool(
-        "social_coin_sentiment",
-        json!({"coins": "BTC", "period": "1"}),
+        "social_sentiment_symbol",
+        json!({"token_symbols": "BTC", "time_frame": "1"}),
     );
     if result.is_rate_limited() {
         return;
     }
     assert!(
         !result.is_error,
-        "social_coin_sentiment failed: {}",
+        "social_sentiment_symbol failed: {}",
         result.content
     );
 }
 
 #[test]
 #[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
-fn mcp_social_coin_sentiment_trend_mode() {
+fn mcp_social_sentiment_symbol_trend_mode() {
     let mut client = McpClient::start();
     let result = client.call_tool(
-        "social_coin_sentiment",
-        json!({"coins": "BTC", "period": "1", "trend_points": "8"}),
+        "social_sentiment_symbol",
+        json!({"token_symbols": "BTC", "time_frame": "1", "trend_points": "8"}),
     );
     if result.is_rate_limited() {
         return;
@@ -916,14 +916,14 @@ fn mcp_social_coin_sentiment_trend_mode() {
 
 #[test]
 #[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
-fn mcp_social_token_vibe_timeline_strips_tweet_bodies() {
+fn mcp_social_vibe_timeline_strips_tweet_bodies() {
     let mut client = McpClient::start();
     let result = client.call_tool(
-        "social_token_vibe_timeline",
+        "social_vibe_timeline",
         json!({
             "chain": "solana",
             "token_address": common::tokens::SOL_WSOL,
-            "period": "1"
+            "time_frame": "1"
         }),
     );
     if result.is_rate_limited() {
@@ -935,14 +935,14 @@ fn mcp_social_token_vibe_timeline_strips_tweet_bodies() {
 
 #[test]
 #[ignore = "live API; enable once Orbit + priapi openapi endpoints ship (DEXMARKET-7736 upstream)"]
-fn mcp_social_token_top_kols_strips_tweet_bodies() {
+fn mcp_social_vibe_top_kols_strips_tweet_bodies() {
     let mut client = McpClient::start();
     let result = client.call_tool(
-        "social_token_top_kols",
+        "social_vibe_top_kols",
         json!({
             "chain": "solana",
             "token_address": common::tokens::SOL_WSOL,
-            "period": "1",
+            "time_frame": "1",
             "limit": "5"
         }),
     );

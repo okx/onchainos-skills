@@ -369,14 +369,14 @@ fn signal_sub(c: &SignalCommand) -> &'static str {
 fn social_sub(c: &SocialCommand) -> &'static str {
     match c {
         SocialCommand::NewsLatest { .. } => "news-latest",
-        SocialCommand::NewsByCoin { .. } => "news-by-coin",
+        SocialCommand::NewsBySymbol { .. } => "news-by-symbol",
         SocialCommand::NewsSearch { .. } => "news-search",
         SocialCommand::NewsDetail { .. } => "news-detail",
         SocialCommand::NewsPlatforms => "news-platforms",
         SocialCommand::SentimentRanking { .. } => "sentiment-ranking",
-        SocialCommand::CoinSentiment { .. } => "coin-sentiment",
-        SocialCommand::TokenVibeTimeline { .. } => "token-vibe-timeline",
-        SocialCommand::TokenTopKols { .. } => "token-top-kols",
+        SocialCommand::SentimentSymbol { .. } => "sentiment-symbol",
+        SocialCommand::VibeTimeline { .. } => "vibe-timeline",
+        SocialCommand::VibeTopKols { .. } => "vibe-top-kols",
     }
 }
 
