@@ -4,7 +4,6 @@
 //! - set-payment-mode: 设置支付方式（独立命令，单签上链 → 等待 job_payment_mode_changed）
 //! - confirm-accept: 确认接受卖家（setPaymentMode 已完成后执行）
 //!    - escrow:      providerConfirmStatus → sign_escrow → accept → broadcast
-//!    - non_escrow:  direct/accept → broadcast（先接单不支付，支付在 complete 阶段）
 //!    - x402:        不走此命令（用 task-402-pay）
 //! - direct-accept: x402 阶段 2b
 //! - task-402-pay: x402 阶段 2（签名 + direct/accept + 重放 endpoint）
@@ -17,7 +16,7 @@ use anyhow::{bail, Context, Result};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::util::{
     json_str, json_u64, fetch_token_detail,
-    resolve_x402_params, fetch_provider_address,
+    resolve_x402_params,
 };
 use crate::commands::agent_commerce::task::common::{
     self, PaymentMode, XLAYER_CHAIN_ID,
@@ -149,7 +148,7 @@ pub async fn handle_set_payment_mode(
         }
         Some(resolved)
     } else {
-        // escrow / non_escrow: 余额预检
+        // 余额预检
         let (sym, amt_str) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, None, "set-payment-mode")?;
         let amt: f64 = amt_str.parse().unwrap_or(0.0);
         if amt > 0.0 {
@@ -198,23 +197,10 @@ pub async fn handle_set_payment_mode(
         let mode_str = payment_mode.as_str();
         if already_set {
             println!("✓ 支付方式已是 {mode_str}，跳过上链");
-            if payment_mode == PaymentMode::NonEscrow {
-                (
-                    format!("paymentMode 已是 {mode_str}。"),
-                    format!(
-                        "先发 [NEGOTIATE_CONFIRM] 给卖家，然后直接执行 onchainos agent confirm-accept {job_id} \
-                         --provider-agent-id <providerAgentId> --payment-mode non_escrow \
-                         --token-symbol <sym> --token-amount <amt>。\
-                         ⚠️ 非担保 confirm-accept 不含支付（不需要 --payment-id），只做 direct/accept 上链。\
-                         支付在收到卖家交付物 + paymentId 后通过 onchainos agent complete 执行。"
-                    ),
-                )
-            } else {
-                (
-                    format!("paymentMode 已是 {mode_str}。"),
-                    format!("直接执行 onchainos agent confirm-accept {job_id} --payment-mode {mode_str}"),
-                )
-            }
+            (
+                format!("paymentMode 已是 {mode_str}。"),
+                format!("直接执行 onchainos agent confirm-accept {job_id} --payment-mode {mode_str}"),
+            )
         } else {
             let mode_int = payment_mode.as_int();
             println!("✓ 支付方式已设置: {mode_str} ({mode_int})，等待链上确认...");
@@ -247,13 +233,18 @@ pub async fn handle_confirm_accept(
     if payment_mode == PaymentMode::None {
         bail!(
             "任务尚未设置支付方式（paymentMode=0），请先执行：\n  \
-             onchainos agent set-payment-mode {job_id} --payment-mode <escrow|non_escrow> --token-symbol <sym> --token-amount <amt>\n\
+             onchainos agent set-payment-mode {job_id} --payment-mode <escrow|x402> --token-symbol <sym> --token-amount <amt>\n\
              等待 job_payment_mode_changed 系统通知后再执行 confirm-accept"
         );
     }
 
     if payment_mode == PaymentMode::X402 {
         bail!("x402 流程请用 onchainos agent set-payment-mode 设置支付方式，再用 onchainos agent task-402-pay 执行阶段 2");
+    }
+
+    // escrow 是 confirm-accept 唯一合法路径
+    if payment_mode != PaymentMode::Escrow {
+        bail!("confirm-accept 仅支持 escrow 支付方式，当前 paymentMode={}。x402 请用 task-402-pay。", payment_mode.as_str());
     }
 
     // 余额预检
@@ -264,26 +255,10 @@ pub async fn handle_confirm_accept(
     }
 
     eprintln!("[debug] payment_mode 最终值: '{}'", payment_mode.as_str());
-    match payment_mode {
-        PaymentMode::Escrow => {
-            confirm_accept_escrow(
-                client, job_id, provider, token_symbol, token_amount,
-                &account_id, &address, &agent_id,
-            ).await?;
-        }
-        PaymentMode::NonEscrow => {
-            confirm_accept_non_escrow(
-                client, job_id, provider, token_symbol, token_amount,
-                &account_id, &address, &agent_id,
-            ).await?;
-        }
-        PaymentMode::X402 => {
-            bail!("x402 流程在 setPaymentMode 后结束，不应到达此分支；请用 onchainos agent task-402-pay 执行阶段 2");
-        }
-        _ => {
-            bail!("不支持的支付方式: {}，可选: escrow / non_escrow / x402", payment_mode.as_str());
-        }
-    }
+    confirm_accept_escrow(
+        client, job_id, provider, token_symbol, token_amount,
+        &account_id, &address, &agent_id,
+    ).await?;
 
     if let Err(e) = negotiate::cleanup(job_id) {
         eprintln!("⚠ 清理协商状态失败（可忽略）: {e}");
@@ -422,44 +397,6 @@ async fn confirm_accept_escrow(
     ).await?;
     println!("✓ 已接受卖家 {provider}（担保支付），资金已托管");
     println!("  txHash: {tx_hash}");
-    Ok(())
-}
-
-/// non_escrow 非担保接单：direct/accept → broadcast（先接单，不支付；支付在 complete 阶段）
-#[allow(clippy::too_many_arguments)]
-async fn confirm_accept_non_escrow(
-    client: &mut TaskApiClient,
-    job_id: &str,
-    provider: &str,
-    token_symbol: Option<&str>,
-    token_amount: Option<&str>,
-    account_id: &str,
-    address: &str,
-    agent_id: &str,
-) -> Result<()> {
-    let (symbol, amount) = resolve_symbol_and_amount(token_symbol, token_amount, job_id, Some(provider), "non_escrow")?;
-    let provider_address = fetch_provider_address(provider).await?;
-
-    // direct/accept → calldata(uopData) → 签名 → 广播（不含支付）
-    let body = serde_json::json!({
-        "providerAddress": provider_address,
-        "providerAgentId": provider,
-        "tokenSymbol": symbol,
-        "tokenAmount": amount,
-    });
-    let resp = client.post_with_identity(
-        &client.endpoint(job_id, "direct/accept"),
-        &body,
-        agent_id,
-    ).await?;
-
-    let tx_hash = signing::sign_uop_and_broadcast(
-        client, &resp["uopData"], account_id, address,
-        job_id, signing::extract_biz_type(&resp), agent_id,
-    ).await?;
-    println!("✓ 已接受卖家 {provider}（非担保），状态 → accepted");
-    println!("  txHash: {tx_hash}");
-    println!("  等待卖家交付并发送 paymentId 后，执行 complete 完成支付");
     Ok(())
 }
 

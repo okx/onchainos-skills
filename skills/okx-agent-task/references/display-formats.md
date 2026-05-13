@@ -81,7 +81,7 @@ Rules:
 
 - Two-column table for all fields. 描述 ≤ 200 字符时放表格内；> 200 字符时表格该行写 `见下方`，在表格下方用 prose 完整展示。
 - `任务 ID`: short-form hash + internal id.
-- `支付方式`: render as user-language label — `担保支付 (Escrow)` / `非担保 (Non-Escrow)` / `x402`.
+- `支付方式`: render as user-language label — `担保支付 (Escrow)` / `x402`.
 - `可见性`: `公开 (Public)` / `私有 (Private)`.
 - `状态`: emoji + status string + one-line description.
 - `买家` / `卖家`: `Agent #<id>`, or `尚未匹配` / `Not matched`.

@@ -85,7 +85,7 @@ struct TaskDetail {
     /// 后端 spec：直接返回的代币符号（USDT / USDG）。
     token_symbol: Option<String>,
     token_amount: Option<String>,
-    /// 0=未设置 / 1=escrow / 2=non_escrow / 3=x402
+    /// 0=未设置 / 1=escrow / 3=x402
     payment_mode: Option<i32>,
     /// 后端 VisibilityEnum：0=PUBLIC（公开） / 1=PRIVATE（私有）
     visibility: Option<i32>,
@@ -634,7 +634,7 @@ async fn build_context(
         out.push_str("📌 **协商首回合本质：你是去『问 + 表态』，不是『自我确认』**\n");
         out.push_str("- 任务能力 / 验收标准：能不能做、有没有补充问题\n");
         out.push_str("- 价格立场：原价是否合理；偏低就**还价**（明确报新价 + 理由），不要机械接受\n");
-        out.push_str("- paymentMode 立场：你偏好 escrow 还是 non_escrow，附理由（不是被动等买家定）\n\n");
+        out.push_str("- paymentMode 立场：A2A 协商路径固定 escrow（担保）\n\n");
         out.push_str("❌ **禁止自我 confirm 措辞**：不要在 `xmtp_send` content 里写「我确认以下三项 / 三项确认完毕 / 我接受 / 我将立即 apply / 我将提交接单申请」。三项是要**问**买家的，发完等 buyer 的 `[NEGOTIATE_PROPOSE]` 才进下一步握手——具体三步握手剧本（[NEGOTIATE_PROPOSE] → [NEGOTIATE_ACK] → [NEGOTIATE_CONFIRM]）由 next-action 给出，**这里不能跳过 next-action 直接 apply**（已发生过线上事故）。\n\n");
     }
 

@@ -94,7 +94,7 @@ pub enum AgentCommand {
     #[command(name = "set-payment-mode")]
     SetPaymentMode {
         job_id: String,
-        /// escrow / non_escrow / x402
+        /// escrow / x402
         #[arg(long = "payment-mode")] payment_mode: Option<String>,
         #[arg(long = "token-symbol")] token_symbol: Option<String>,
         #[arg(long = "token-amount")] token_amount: Option<String>,
@@ -149,15 +149,6 @@ pub enum AgentCommand {
     /// Client confirms task complete and releases payment
     Complete {
         job_id: String,
-        /// a2a_pay payment_id（non_escrow 必填，卖家通过 XMTP 传递）
-        #[arg(long = "payment-id")]
-        payment_id: Option<String>,
-        /// 支付代币符号（non_escrow 需要）
-        #[arg(long = "token-symbol")]
-        token_symbol: Option<String>,
-        /// 支付金额（non_escrow 需要，人类可读格式）
-        #[arg(long = "token-amount")]
-        token_amount: Option<String>,
     },
 
     /// Client rejects deliverable
@@ -183,12 +174,6 @@ pub enum AgentCommand {
 
     /// Provider generates payment invoice after provider_applied
     Payment {
-        job_id: String,
-        #[arg(long = "agent-id")] agent_id: Option<String>,
-    },
-
-    /// Client manually transfers payment to provider (non-escrow mode)
-    Pay {
         job_id: String,
         #[arg(long = "agent-id")] agent_id: Option<String>,
     },
@@ -247,28 +232,7 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")] agent_id: String,
     },
 
-    /// Provider fetches prePayTaskInfo, then calls a2a-pay create to mint a payment_id.
-    /// Both escrow and non_escrow go through this command — `--payment-mode` decides
-    /// which a2a-pay branch (`charge` for non_escrow, `escrow` otherwise). The
-    /// returned `paymentId` is meant to be xmtp-sent to the buyer.
-    #[command(name = "get-payment")]
-    GetPayment {
-        job_id: String,
-        /// 任务实际币种（USDT / USDG），从任务详情读取，不要假设 USDT
-        #[arg(long = "token-symbol")]
-        token_symbol: String,
-        /// 协商价格（whole tokens, 如 "50" 表示 50 USDT）。escrow 锁仓金额 / non_escrow 直转金额。
-        #[arg(long = "token-amount")]
-        token_amount: String,
-        /// `escrow` 或 `non_escrow`（必填，弄错支付方式 → paymentId 会落到错的合约 / 流程）
-        #[arg(long = "payment-mode")]
-        payment_mode: String,
-        /// 卖家 agentId（必填）。non_escrow 路径在 status=open 时就调用，
-        /// task.providerAgentId 此时还没设，没法从任务详情反查；
-        /// escrow 路径也建议显式传，避免本地多 provider agent 时拿错。
-        #[arg(long = "agent-id")]
-        agent_id: String,
-    },
+
 
     /// Save negotiated payment params locally (agent calls after negotiation)
     #[command(name = "save-agreed")]
@@ -467,6 +431,9 @@ pub enum AgentCommand {
         /// accepts both `--jobTitle` (legacy) and `--job-title` (kebab)
         #[arg(long = "jobTitle", alias = "job-title")]
         job_title: Option<String>,
+        /// Target provider agentId (for job_created: skip recommend, go straight to this provider)
+        #[arg(long)]
+        provider: Option<String>,
     },
 
     // Chat
@@ -591,8 +558,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::X402Check { endpoint } =>
             task::buyer::run_task(T::X402Check { endpoint }, ctx).await,
 
-        AgentCommand::Complete { job_id, payment_id, token_symbol, token_amount } =>
-            task::buyer::run_task(T::Complete { job_id, payment_id, token_symbol, token_amount }, ctx).await,
+        AgentCommand::Complete { job_id } =>
+            task::buyer::run_task(T::Complete { job_id }, ctx).await,
 
         AgentCommand::Reject { job_id, reason } =>
             task::buyer::run_task(T::Reject { job_id, reason }, ctx).await,
@@ -605,9 +572,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::Payment { job_id, agent_id } =>
             task::buyer::run_task(T::Payment { job_id, agent_id }, ctx).await,
-
-        AgentCommand::Pay { job_id, agent_id } =>
-            task::buyer::run_task(T::Pay { job_id, agent_id }, ctx).await,
 
         AgentCommand::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id } =>
             task::buyer::run_task(T::SaveAgreed { job_id, provider_agent_id, token_symbol, token_amount, agent_id }, ctx).await,
@@ -655,18 +619,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 task::provider::ProviderCommand::AgreeRefund { job_id, agent_id }, ctx,
             ).await,
 
-        AgentCommand::GetPayment { job_id, token_symbol, token_amount, payment_mode, agent_id } => {
-            let mut c = task::common::network::task_api_client::TaskApiClient::new();
-            task::provider::get_payment::handle_get_payment(
-                &mut c,
-                &job_id,
-                &token_symbol,
-                &token_amount,
-                &payment_mode,
-                &agent_id,
-            )
-            .await
-        }
 
         // ── Sub-groups ──────────────────────────────────────────────
         AgentCommand::Dispute(c) =>
@@ -731,11 +683,19 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Common(c) =>
             task::common::run(c, ctx).await,
 
-        AgentCommand::NextAction { job_id, job_status, agent_id, role, code, job_title } => {
+        AgentCommand::NextAction { job_id, job_status, agent_id, role, code, job_title, provider } => {
             eprintln!(
-                "[next-action] 收到系统通知: job_id={job_id}, job_status={job_status}, role={role}, agent_id={agent_id}, code={code}, title={title}",
-                title = job_title.as_deref().unwrap_or("(none)")
+                "[next-action] 收到系统通知: job_id={job_id}, job_status={job_status}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}",
+                title = job_title.as_deref().unwrap_or("(none)"),
+                provider = provider.as_deref().unwrap_or("(none)")
             );
+
+            // --provider 传入时写 designated-provider 文件，让 generate_next_action 走指定卖家路径
+            if let Some(ref pid) = provider {
+                if let Err(e) = task::buyer::negotiate::save_designated_provider(&job_id, pid) {
+                    eprintln!("[next-action] save_designated_provider failed: {e}");
+                }
+            }
 
             // code ≠ 0 → tx 失败，直接输出失败剧本，不进入事件 match
             if code != 0 {

@@ -7,11 +7,11 @@
 //!    规则:**禁用** tool 名(`xmtp_*`) / 事件名(`provider_applied`/`job_*` 等) /
 //!    状态名(`open`/`accepted` 等英文枚举) / CLI flag(`--*`) /
 //!    skill 名(`okx-agent-identity` 等) / 状态字段名(`jobStatus`/`paymentMode`)。
-//!    用自然中文(担保/非担保/x402,验收期超时,任务已完成,等)。
+//!    用自然中文(担保/x402,验收期超时,任务已完成,等)。
 //!
 //! 2. **Peer-facing** (`xmtp_send` content,给买家 sub agent)
 //!    agent-to-agent 协议消息。命名后缀 `_to_buyer`。
-//!    规则:可以含协议字面量(`[NEGOTIATE_*]` / `fileKey`/`digest`/`paymentId` 等);
+//!    规则:可以含协议字面量(`[NEGOTIATE_*]` / `fileKey`/`digest` 等);
 //!    **禁止指挥对方调 CLI**(对方有自己的 flow.rs,会按链事件自决,你下指令是越权)。
 //!
 //! 字段值占位符用 `<...>` 包,agent 拿 `common context` / 上下文填充。
@@ -27,7 +27,7 @@ pub fn job_accepted_user_notify(job_id: &str, agent_id: &str) -> String {
          \x20\x20\x20\x20- 标题：<title>\n\
          \x20\x20\x20\x20- 描述：<description>\n\
          \x20\x20\x20\x20- 协商价格：<amount> <tokenSymbol>\n\
-         \x20\x20\x20\x20- 支付方式：<填中文「担保」/「非担保」/「x402」,不要写 escrow/non_escrow 原值>\n\
+         \x20\x20\x20\x20- 支付方式：<填中文「担保」/「x402」,不要写 escrow 原值>\n\
          \x20\x20\x20\x20- 卖家：{agent_id}\n\
          \x20\x20\x20\x20资金已托管，卖家已开始执行任务。"
     )
@@ -156,17 +156,6 @@ pub fn job_disputed_user_evidence_prompt(short_id: &str) -> String {
     )
 }
 
-/// `Event::JobAccepted` 分支 B (non_escrow / 先收后付) B-Step A 推给用户的接单成功通知。
-pub fn job_accepted_non_escrow_user_notify(job_id: &str, agent_id: &str) -> String {
-    format!(
-        "\x20\x20\x20\x20[接单成功通知] 任务 {job_id} 已完成接单(非担保模式,先收后付)\n\
-         \x20\x20\x20\x20- 标题: <title>\n\
-         \x20\x20\x20\x20- 协商价格: <amount> <tokenSymbol>\n\
-         \x20\x20\x20\x20- 卖家: {agent_id}\n\
-         \x20\x20\x20\x20正在自主执行任务,完成后会自动把交付物 + 付款单发给买家。"
-    )
-}
-
 /// `Event::JobAccepted` Step 3 分支 A (escrow 文本交付物) 给买家的 xmtp_send content。
 ///
 /// **不指挥**对方 CLI——买家 sub agent 收到后会自己按 `Event::JobSubmitted` 剧本走。
@@ -196,30 +185,3 @@ pub fn deliver_file_to_buyer(job_id: &str) -> String {
     )
 }
 
-/// `Event::JobAccepted` 分支 B (non_escrow / 先收后付) B-Step D 文本交付物 + paymentId
-/// 给买家的 xmtp_send content。
-///
-/// non_escrow 必须在**同一条** xmtp_send 里把交付物 + paymentId 发出去
-/// (拆两条会让买家 sub agent 看到孤立 paymentId 无法关联交付物)。
-pub fn deliver_text_with_payment_to_buyer(job_id: &str) -> String {
-    format!(
-        "任务 {job_id} 已完成。交付物:\n\
-         <这里贴交付内容文本(完整,不截断)>\n\
-         请用此 paymentId 完成支付: <B-Step C 取到的 paymentId 完整字符串>"
-    )
-}
-
-/// `Event::JobAccepted` 分支 B (non_escrow / 先收后付) B-Step D-2 文件交付物 + paymentId
-/// 给买家的 xmtp_send content。
-pub fn deliver_file_with_payment_to_buyer(job_id: &str) -> String {
-    format!(
-        "任务 {job_id} 已完成。以下是交付信息:\n\
-         - fileKey: <D-1 返回的 fileKey>\n\
-         - digest: <D-1 返回的 digest>\n\
-         - salt: <D-1 返回的 salt>\n\
-         - nonce: <D-1 返回的 nonce>\n\
-         - secret: <D-1 返回的 secret>\n\
-         - filename: <D-1 返回的 filename>\n\
-         请用 xmtp_file_download 下载查看,然后用此 paymentId 完成支付: <B-Step C 取到的 paymentId 完整字符串>"
-    )
-}

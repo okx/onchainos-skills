@@ -22,7 +22,6 @@ mod dispute_confirm;
 mod dispute_raise;
 pub mod find_jobs;
 pub mod flow;
-pub mod get_payment;
 mod provider_claim;
 pub mod recommend_task;
 

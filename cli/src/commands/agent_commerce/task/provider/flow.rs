@@ -96,7 +96,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
          content:"
     );
 
-    // escrow Step 2 / non_escrow B-Step B 共享的"自主执行任务"指引——具体怎么做不在剧本规定,
+    // escrow Step 2 共享的"自主执行任务"指引——具体怎么做不在剧本规定,
     // 列几个例子让 agent 知道"自己挑工具"是预期行为。
     let execute_task = "根据任务内容选合适的工具/能力完成工作。例如:\n\
         \x20\x20• 「生成猫图」→ 调用图片生成工具,拿本地图片路径\n\
@@ -131,7 +131,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
          \x20\x20\x20\x20• 解析 `[USER_DECISION_RELAY]` 后、调 next-action 前: `onchainos agent pending-decisions remove --job-id {job_id} --role provider --agent-id {agent_id}`\n\
          \x20\x20\x20\x20漏 `add` → 用户回复时反查不到本条决策,无法 relay 回本会话;\n\
          \x20\x20\x20\x20漏 `remove` → 旧条目残留成僵尸,下次再调 `xmtp_prompt_user` 时被误命中,用户回复派给错的会话。\n\
-         \x20\x208) ❌ **用户可见内容禁用技术术语**:`xmtp_dispatch_user` 的 content 和 `xmtp_prompt_user` 的 userContent 都直接给用户看,**禁写** tool 名(`xmtp_*`) / 事件名(`provider_applied`/`job_*`/`dispute_resolved` 等) / 状态名(`open`/`accepted`/`disputed` 等英文枚举) / CLI flag(`--*`) / skill 名(`okx-agent-identity` / `§Feedback Submit` 等) / 状态字段名(`jobStatus`/`paymentMode` 等)——一律用自然中文(担保/非担保/x402,验收期超时,任务已完成,等)。同 turn 内的 `xmtp_send` 给买家也按此规则。\n\n\
+         \x20\x208) ❌ **用户可见内容禁用技术术语**:`xmtp_dispatch_user` 的 content 和 `xmtp_prompt_user` 的 userContent 都直接给用户看,**禁写** tool 名(`xmtp_*`) / 事件名(`provider_applied`/`job_*`/`dispute_resolved` 等) / 状态名(`open`/`accepted`/`disputed` 等英文枚举) / CLI flag(`--*`) / skill 名(`okx-agent-identity` / `§Feedback Submit` 等) / 状态字段名(`jobStatus`/`paymentMode` 等)——一律用自然中文(担保/x402,验收期超时,任务已完成,等)。同 turn 内的 `xmtp_send` 给买家也按此规则。\n\n\
          如果不记得本任务协商细节（paymentMode / token / 买家 agentId / 价格），\n\
          先 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 加载上下文。\n\n"
     );
@@ -156,12 +156,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         // ─── Scene 4: 买家已确认接单，执行任务并交付（按 paymentMode 分流） ──
         Event::JobAccepted => {
             let user_notify = super::content::job_accepted_user_notify(job_id, agent_id);
-            let user_notify_non_escrow =
-                super::content::job_accepted_non_escrow_user_notify(job_id, agent_id);
             let deliver_text = super::content::deliver_text_to_buyer(job_id);
             let deliver_file = super::content::deliver_file_to_buyer(job_id);
-            let deliver_text_pay = super::content::deliver_text_with_payment_to_buyer(job_id);
-            let deliver_file_pay = super::content::deliver_file_with_payment_to_buyer(job_id);
             format!(
             "【当前状态】job_accepted（买家已确认接单，资金担保完成）\n\
              【角色】卖家（Provider）\n\n\
@@ -195,42 +191,8 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ```\n\
              CLI 内部：POST submit API → 签名 uopHash → 广播上链。\n\n\
              **A-Step 4 — 跑完 A-Step 3 直接结束本轮 turn**(交付物已在 A-Step 2 送到买家;后续 `job_submitted` 通知到达时**只观察**,不再 xmtp_send / xmtp_dispatch_user / 任何过场消息)。\n\n\
-             ━━━━━ 分支 B：paymentMode=non_escrow（非担保 / 先收后付，2）━━━━━\n\n\
-             ⚠️ ** non_escrow 是「先收后付」**——本剧本 Step A → Step D **一气呵成在同一 turn 内执行完**:\n\
-             通知用户接单 → 自主干活 → 创建付款单 → xmtp_send (交付物 + paymentId 同一条) 给买家。\n\
-             不依赖用户介入触发,不需要 work_done 伪 event,不需要等用户说「交付」。\n\n\
-             ❌ **禁止 non_escrow 路径调 `onchainos agent deliver`**——deliver 是 escrow 链上动作,non_escrow 走 P2P xmtp_send 不上链\n\n\
-             **B-Step A — 通知用户接单成功**:\n\
-             tool: xmtp_dispatch_user\n\
-             content:\n\
-             {user_notify_non_escrow}\n\n\
-             字段值从 `onchainos agent common context {job_id} --role provider --agent-id {agent_id}` 输出中提取。\n\n\
-             **B-Step B — 自主执行任务(同 turn 内连续做完)**:\n\
-             {execute_task}\n\
-             ⚠️ B-Step B 跟 B-Step C / D **必须同 turn 内连续执行**——不要为了「等用户检查」中断 turn。\n\n\
-             **B-Step C — 工作完成后跑 get-payment 拿 paymentId**:\n\
-             ```bash\n\
-             onchainos agent get-payment {job_id} --token-symbol <USDT|USDG> --token-amount <协商价格 whole tokens> --payment-mode non_escrow --agent-id {agent_id}\n\
-             ```\n\
-             stdout JSON 输出含 `paymentId` 字段(字符串值),按字段名取出来记下。\n\n\
-             **B-Step D — 同条 xmtp_send 把「交付物 + paymentId」 一起发给买家**(关键步骤):\n\
-             按交付物类型分:\n\n\
-             ▸ **纯文本/URL 交付物**:\n\
-             {send_to_peer}\n\
-             {deliver_text_pay}\n\n\
-             ▸ **文件交付物**(图片/PDF/文档)—— 用 `xmtp_file_upload + xmtp_send fileKey` 两步(机制见 skills/okx-agent-task/SKILL.md Session 通信契约 4.8):\n\
-             D-1. 调 `xmtp_file_upload`,参数 `filePath` = 本地文件绝对路径,`agentId` = {agent_id},`jobId` = {job_id}\n\
-             \x20\x20\x20返回值 `fileKey` / `digest` / `salt` / `nonce` / `secret` 五个字段(解密元数据)全部记录\n\
-             D-2. **同 turn 内**调 `xmtp_send` 给买家(把 5 个字段 + paymentId **同条**塞进 content):\n\
-             {send_to_peer}\n\
-             {deliver_file_pay}\n\n\
-             ⚠️ **paymentId 必须跟交付物在同一条 xmtp_send 里发**——拆两条会导致买家路由识别问题(看到孤立 paymentId 不知道关联哪个交付物)。\n\n\
-             **B-Step E — 跑完 D 直接结束本轮 turn,等 job_completed 通知**:\n\
-             ⚠️ 不要再 xmtp_dispatch_user 推「已发送交付物给买家」——过场状态,等链上 job_completed 落地再说。\n\
-             ⚠️ 不要给买家 xmtp_send 第二条催付。买家收到 paymentId 后会自动 complete 完成支付。\n\n\
              【后续事件】\n\
-             - 分支 A → 链上 task 状态进 submitted（job_submitted 系统事件可能到达，仅观察不动作）→ 等 buyer complete/reject\n\
-             - 分支 B → 买家直接验收，无中间链事件\n"
+             - 链上 task 状态进 submitted（job_submitted 系统事件可能到达，仅观察不动作）→ 等 buyer complete/reject\n"
             )
         }
 
@@ -240,7 +202,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
         Event::JobSubmitted => format!(
             "【系统通知】job_submitted（交付物已上链确认，task 状态进入 submitted）\n\
              【角色】卖家（Provider）\n\n\
-             ⚠️ **observer-only**：交付物已经在 `job_accepted` 剧本里发给买家了(escrow 走 A-Step 2,non_escrow 走分支 B),本事件**不再 xmtp_send 第二次**——重复发会让买家收双消息触发循环。\n\n\
+             ⚠️ **observer-only**：交付物已经在 `job_accepted` 剧本里发给买家了(A-Step 2),本事件**不再 xmtp_send 第二次**——重复发会让买家收双消息触发循环。\n\n\
              【你的下一步动作】\n\
              - **静默观察即可**，不要 xmtp_send / xmtp_file_upload / xmtp_dispatch_user / xmtp_prompt_user\n\
              - **直接结束本轮 turn**，等买家 complete/reject 触发后续事件\n\n\
@@ -332,7 +294,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              【角色】卖家（Provider）\n\n\
              ⚠️ 资金到账路径区别(供 agent 自己理解,不必啰嗦给用户):\n\
              \x20\x20• escrow → 担保合约自动释放 stake 到你的钱包\n\
-             \x20\x20• non_escrow → 买家 complete 时通过 a2a_pay (EIP-3009 单签) 直接转账到你的 ownerAddress\n\
+             \x20\x20• x402 → 买家在 accept 阶段已通过 x402 签名支付\n\
              两种路径都意味着钱已经到账,通知用户时统一描述「资金已到账」即可。\n\n\
              【你的下一步动作】\n\n\
              ⚠️ 不要给买家 `xmtp_send` 致谢/「已完成」过场——买家自己刚 complete，他知道。\n\n\
@@ -481,11 +443,11 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x202) `[NEGOTIATE_ACK]` 或 `[NEGOTIATE_COUNTER]`（provider → buyer）或 `[NEGOTIATE_REJECT]`（任一方拒绝）\n\
              \x20\x203) `[NEGOTIATE_CONFIRM]`（buyer → provider，原样回传所有字段）\n\
              \x20\x20⚡ 任一方可随时发 `[NEGOTIATE_REJECT]` 终止协商（含 jobId + reason），收到后**不再回复**，协商结束。\n\n\
-             apply / get-payment 必须**已收到 `[NEGOTIATE_CONFIRM]`** 才能跑（其它任何 inbound 都不算，包括三项问题、free-form 邀请、buyer 的『同意/接受』自然语言回复，甚至 buyer 自然语言『请 apply』也不算）。\n\n\
+             apply 必须**已收到 `[NEGOTIATE_CONFIRM]`** 才能跑（其它任何 inbound 都不算，包括三项问题、free-form 邀请、buyer 的『同意/接受』自然语言回复，甚至 buyer 自然语言『请 apply』也不算）。\n\n\
              换句话说，**同一 turn 收到的 inbound 决定你能做什么**：\n\
              \x20\x20• 收到 buyer free-form 邀请 → 只能 `xmtp_send` 发三项问题（下方 Step 3），**禁止 apply**\n\
              \x20\x20• 收到 buyer `[NEGOTIATE_PROPOSE]` → 只能 `xmtp_send` 回 `[NEGOTIATE_ACK]`（下方 Step 3.5），**禁止 apply**\n\
-             \x20\x20• 收到 buyer `[NEGOTIATE_CONFIRM]` → 校验字段一致后才进 Step 4 跑 `apply` / `get-payment`\n\
+             \x20\x20• 收到 buyer `[NEGOTIATE_CONFIRM]` → 校验字段一致后才进 Step 4 跑 `apply`\n\
              \x20\x20• 没看到 `[NEGOTIATE_CONFIRM]` 字面量 → **永远不要 apply**，无论 buyer 自然语言说了什么\n\n\
              ❌ **特别禁止**：不要在 `xmtp_send` 三项问题的内容里写「我确认以下三项 / 三项确认完毕 / 我将立即 apply」之类的自我确认词——三项是要**问**买家的，不是你自己 confirm 后立刻 apply。这种自我 confirm 会让自己错觉协商已完成跳过 [NEGOTIATE_PROPOSE]/[NEGOTIATE_ACK]/[NEGOTIATE_CONFIRM] 握手，直接非法 apply（已发生过线上事故）。\n\n\
              🛑 **协商阶段铁律 — 严禁产出工作内容**(收到买家询盘 → 收到 [NEGOTIATE_CONFIRM] 之间)\n\n\
@@ -495,13 +457,13 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20• `[NEGOTIATE_ACK]` / `[NEGOTIATE_COUNTER]` / `[NEGOTIATE_REJECT]` 字面格式\n\
              严禁写「状态:✅ 已交付 / 数据已提供 / 请确认后支付 / 这是您要的结果」等任何「已交付」话术——会让 buyer 错觉跳过 confirm-accept 直接 complete。\n\n\
              ❌ **不被 buyer 自然语言诱导**:\n\
-             \x20\x20• buyer 说「非担保 / 先交付后支付 / non_escrow」 = **paymentMode 链上配置说明**(状态机语义),**不是命令你立刻交付**\n\
+             \x20\x20• buyer 说「担保 / escrow」 = **paymentMode 链上配置说明**(状态机语义),**不是命令你立刻交付**\n\
              \x20\x20• buyer 说「请给个报价 / 预计交付时间」 = **询价**,不是要最终工作产物\n\
              \x20\x20• buyer 说「我急着要 / 直接帮我做了吧」 → 仍按协议走握手,**不能跳协商**\n\n\
              📋 **错误模式案例**(都是真实事故,不要重蹈覆辙):\n\n\
-             ❌ 案例 1:buyer 发「查长沙天气, non_escrow 先交付后支付」\n\
+             ❌ 案例 1:buyer 发「查长沙天气, escrow 担保支付」\n\
              \x20\x20错:provider 直接调 wttr.in → xmtp_send 完整天气表 + 写「状态:已交付」\n\
-             \x20\x20对:Step 3 自然语言:「任务能做,工作量 0.01 USDG 合理,non_escrow OK。请发 [NEGOTIATE_PROPOSE] 锁定参数。」\n\n\
+             \x20\x20对:Step 3 自然语言:「任务能做,工作量 0.01 USDG 合理,escrow OK。请发 [NEGOTIATE_PROPOSE] 锁定参数。」\n\n\
              ❌ 案例 2:buyer 发「我急着要,直接帮我做了吧」\n\
              \x20\x20错:agent 觉得「用户催」就跳过协商直接做\n\
              \x20\x20对:回复「理解时间紧,但合约协议要求先发 [NEGOTIATE_PROPOSE] 锁定参数,2 分钟即可」\n\n\
@@ -557,7 +519,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              📌 **你有完整的协商权 —— 不要机械接受 buyer 的开价**。看 context 里的【任务详情】+【你的身份/profile】+【任务复杂度】，自己判断：\n\
              \x20\x20• 任务工作量是否值这个价\n\
              \x20\x20• 你 profile 上的同类服务价格（context 里的 service-list）跟 buyer 出价差多少\n\
-             \x20\x20• 担保（escrow）vs 非担保（non_escrow）哪个更适合这单（金额大 / 不熟买家 → 偏好 escrow；低额、长期合作 → non_escrow 更轻）\n\n\
+             \x20\x20• A2A 协商路径固定 escrow（担保），资金有合约保障\n\n\
              💰 **报价决策铁律 —— 看 context 里 service-list 该服务的「注册价」字段**:\n\
              \x20\x20• 注册价**非零**(如 `注册价 0.01 USDT(协商以此为锚)`)→ **以注册价为锚**,±30% 内还价。低于 50% 注册价直接拒绝,高于 200% 注册价是抢钱。\n\
              \x20\x20• 注册价**未设置**(如 `注册价未设置(按工作量估,不要瞎要价)`)→ 按任务工作量估,**禁止瞎要价**:\n\
@@ -568,7 +530,7 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              基于以上判断，一条 `xmtp_send` 表达三件事（**不是机械三选一，是带你自己的立场**）：\n\
              \x20\x201) 能力 / 验收标准：能不能做、有没有补充问题\n\
              \x20\x202) **价格立场**：原价接受 / 还价（明确报新价 + 简短理由，比如『工作量评估更接近 X USDT，原价偏低』）/ 直接拒绝\n\
-             \x20\x203) **paymentMode 立场**：你偏好 escrow 还是 non_escrow，附理由（不是被动等买家定，可以主动提）\n\n\
+             \x20\x203) **paymentMode 立场**：A2A 协商路径固定 escrow（担保）\n\n\
              示例风格（自然语言，不要套模板格式）：\n\
              \x20\x20『任务我能做，验收标准 OK。价格我看 0.01 USDT 偏低，按工作量我希望 0.05 USDT；担保支付（escrow）比较合适，避免后续争议。如果同意请发 [NEGOTIATE_PROPOSE]。』\n\n\
              ⚠️ 还价幅度参考：context 给的 service-list 单价 × (1 ± 30%) 内通常能谈成，离谱报价（× 5+）会被买家直接换人。\n\n\
@@ -611,9 +573,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              \x20\x20jobId: <与 PROPOSE 相同>\n\
              \x20\x20reason: <简要说明拒绝原因，如「价格低于成本」「无法满足交付时限」>\n\
              \x20\x20发送后**结束本 turn**，不再回复买家后续消息。\n\n\
-             ⚠️ 回复 [NEGOTIATE_ACK] 后**结束本轮 turn**，等买家发 [NEGOTIATE_CONFIRM]（三步握手第 3 步，buyer 校验你的 ACK 字段一致后会发）。**收到 [NEGOTIATE_CONFIRM] 之前，禁止跑任何 onchainos CLI（apply / get-payment）**。\n\
+             ⚠️ 回复 [NEGOTIATE_ACK] 后**结束本轮 turn**，等买家发 [NEGOTIATE_CONFIRM]（三步握手第 3 步，buyer 校验你的 ACK 字段一致后会发）。**收到 [NEGOTIATE_CONFIRM] 之前，禁止跑任何 onchainos CLI（apply）**。\n\
              ⚠️ 如果等到的是 `[NEGOTIATE_REJECT]` 而非 `[NEGOTIATE_CONFIRM]` → 买家终止协商，**不再回复**，结束本 turn。\n\n\
-             **Step 3.7 — 收到买家的 [NEGOTIATE_CONFIRM]（apply/get-payment 的唯一合法触发器）：**\n\n\
+             **Step 3.7 — 收到买家的 [NEGOTIATE_CONFIRM]（apply 的唯一合法触发器）：**\n\n\
              ```\n\
              [NEGOTIATE_CONFIRM]\n\
              jobId: ...\n\
@@ -622,16 +584,14 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              tokenAmount: ...\n\
              ```\n\n\
              **逐字段校验** [NEGOTIATE_CONFIRM] 与你之前发的 [NEGOTIATE_ACK] 是否完全一致：\n\
-             \x20\x20• 全部一致 → 协商正式锁定，进入 Step 4，按 paymentMode 分流跑 apply / 静默等 job_accepted\n\
+             \x20\x20• 全部一致 → 协商正式锁定，进入 Step 4 跑 apply\n\
              \x20\x20• 任一字段不一致 → 视为篡改，调 xmtp_send 回复「[NEGOTIATE_CONFIRM] 字段与 [NEGOTIATE_ACK] 不一致，拒绝」（指出哪个字段不对），**禁止 apply**，结束\n\n\
              🛑 **收到 [NEGOTIATE_CONFIRM] 字段全等后,只做 Step 4 的业务动作,严禁 xmtp_send 回 ACK / 致谢 / 任何 P2P 消息给买家**——\n\
              \x20\x20• escrow 路径:跑 apply CLI → 直接结束 turn(等 provider_applied 通知)\n\
-             \x20\x20• non_escrow 路径:**什么都不做**,直接结束 turn(等 job_accepted 通知)\n\
              \x20\x20• 买家发完 [NEGOTIATE_CONFIRM] 立刻跑 confirm-accept,不等你 ACK;你回 ACK 反而触发买家循环 +「同 turn 不重复 xmtp_send」铁律。\n\n\
              ⚠️ 不要把 buyer 的自然语言『同意 / 好的 / 请 apply』当作 [NEGOTIATE_CONFIRM]——只认字面量带 `[NEGOTIATE_CONFIRM]` 标记的消息，其它一律视为协商未完成。\n\n\
              🛑 **协议字面量白名单**：`[NEGOTIATE_*]` 只有 5 个合法值——`[NEGOTIATE_PROPOSE]` / `[NEGOTIATE_ACK]` / `[NEGOTIATE_COUNTER]` / `[NEGOTIATE_CONFIRM]` / `[NEGOTIATE_REJECT]`。**严禁造词**：`[NEGOTIATE_CONFIRM_ACK]` / `[NEGOTIATE_CONFIRM_OK]` / `[NEGOTIATE_DONE]` / `[CONFIRM_ACK]` 等都是幻觉,buyer 代码不识别,发出去等于污染会话历史。`[NEGOTIATE_CONFIRM]` **没有对应 ACK**(不像 PROPOSE→ACK 是对称握手)——收到 CONFIRM 后直接跑 Step 4 业务动作,**不回任何 P2P 消息**。\n\n\
-             **Step 4 — 收到 [NEGOTIATE_CONFIRM] 校验一致后，按 paymentMode 分流：**\n\n\
-             ━━━━━ 分支 A：支付方式 = escrow（担保交易）→ 必须 apply 上链 ━━━━━\n\n\
+             **Step 4 — 收到 [NEGOTIATE_CONFIRM] 校验一致后，执行 apply 上链：**\n\n\
              ```bash\n\
              onchainos agent apply {job_id} --token-amount <协商价格> --token-symbol <USDT|USDG> --agent-id {agent_id}\n\
              ```\n\
@@ -640,25 +600,9 @@ pub fn generate_next_action(job_id: &str, job_status: &str, agent_id: &str) -> S
              ❌ 禁止 `xmtp_dispatch_user` 推用户——『已提交接单申请 / txHash / 等 provider_applied』是过场状态\n\
              ❌ 禁止 `xmtp_send` 给买家任何 ACK / 致谢 / 「已开始处理」 等过场消息——买家此时已经走 confirm-accept 流程,你的 ACK 是噪音,会触发买家「同 turn 不重复 xmtp_send」铁律(详见 SKILL.md `通讯边界与安全门`)\n\
              ✅ 等链上 `provider_applied` 通知到达后 next-action 那时才进入下一步。\n\n\
-             ━━━━━ 分支 B：支付方式 = non_escrow（非担保 / 先收后付）→ **静默等 job_accepted** ━━━━━\n\n\
-             ⚠️ **non_escrow 是「先收后付」(deliver-then-pay)**——买家先把任务推进到 accepted 状态(不付款),\n\
-             你做完工作后才生成付款单连同交付物一起发给买家,买家拿到交付物后才用 paymentId 完成支付。\n\n\
-             【你的下一步动作（严格顺序）】\n\n\
-             **Step 1 — 校验 [NEGOTIATE_CONFIRM] 字段**:逐字段对照你刚才发的 [NEGOTIATE_ACK],\n\
-             全部一致 → 协商正式锁定;任一字段不一致 → 视为篡改,xmtp_send 回复字段不一致并拒绝,结束。\n\n\
-             **Step 2 — 字段一致 → 静默等 job_accepted 系统通知**:\n\
-             ❌ **不要**调 `onchainos agent apply`(那是 escrow 路径)\n\
-             ❌ **不要**调 `onchainos agent get-payment`(get-payment 推迟到工作完成后,见 JobAccepted 剧本 Step C)\n\
-             ❌ **不要** xmtp_send 任何 ACK / 回执给买家(买家此时会立即跑 confirm-accept,不等你 ACK)\n\
-             ✅ **直接结束本轮 turn**——等收到 `job_accepted` 系统通知再调 next-action 进入 JobAccepted 剧本\n\n\
-             ❌ **严禁把 non_escrow 和 x402 混为一谈**:\n\
-             \x20\x20• non_escrow(paymentMode=2)= a2a-pay 付款单,`get-payment` 输出 `paymentId` 字段,买家用此 paymentId 调 `complete`\n\
-             \x20\x20• x402(paymentMode=3)= HTTP 402 challenge / response,**没有 paymentId**,买家直接打你的 service-list endpoint 拿 402 响应,签 x402_pay 后重放\n\
-             \x20\x20两个是**独立支付方式**。**禁止**在 xmtp_send 里写「非担保 x402 / non_escrow x402 / 非担保(x402)」之类的混合标签。\n\n\
              **任一项未达成** → 调 `xmtp_send(sessionKey=<当前会话 sessionKey,session_status 取>, content=\"很抱歉,无法接受当前条件\")`,结束。\n\n\
              【后续事件】\n\
-             - 分支 A apply 上链成功 → 收到 `provider_applied` 系统通知 → 再次调 next-action 拿剧本\n\
-             - 分支 B 等买家 confirm-accept → 收到 `job_accepted` 系统通知 → 进入 JobAccepted 剧本 Step A-D 完成「接单 → 干活 → 创建付款单 → 同条 xmtp_send 交付物+paymentId」 一气呵成\n"
+             - apply 上链成功 → 收到 `provider_applied` 系统通知 → 再次调 next-action 拿剧本\n"
         ),
         // ─── buyer 主导的 tx 结果通知，provider 端无需动作 ─────
         Event::JobClosed

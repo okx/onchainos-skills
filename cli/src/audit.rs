@@ -367,7 +367,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Close { .. } => "close".into(),
         AgentCommand::SetPublic { .. } => "set-public".into(),
         AgentCommand::Payment { .. } => "payment".into(),
-        AgentCommand::Pay { .. } => "pay".into(),
         AgentCommand::ClaimAutoRefund { .. } => "claim-auto-refund".into(),
         AgentCommand::ClaimAutoComplete { .. } => "claim-auto-complete".into(),
         AgentCommand::ProviderClaimable { .. } => "provider-claimable".into(),
@@ -379,8 +378,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Apply { .. } => "apply".into(),
         AgentCommand::Deliver { .. } => "deliver".into(),
         AgentCommand::AgreeRefund { .. } => "agree-refund".into(),
-        AgentCommand::GetPayment { .. } => "get-payment".into(),
-
         // Sub-groups
         AgentCommand::Dispute(c) => format!("dispute {:?}", std::mem::discriminant(c)),
         AgentCommand::PendingDecisions(c) =>

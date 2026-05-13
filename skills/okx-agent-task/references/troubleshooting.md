@@ -56,7 +56,6 @@
 |---|---|---|
 | `余额不足：当前 XLayer USDT 余额为 X，需要 Y USDT。请先充值后再操作` | `create-task` / `confirm-accept` 等 CLI 在 broadcast 前自动调 `wallet balance` 自检 | 推用户走 `okx-dex-swap` 充 USDT/USDG；不要 retry 同样的 CLI |
 | `unsupported currency` | 用户报价不是 USDT / USDG | 任务系统**只**支持这两种代币，让用户改报价 |
-| `paymentId 缺失` (non_escrow `confirm-accept`) | non_escrow 路径需要卖家 `get-payment` 后通过 XMTP 传来的 `a2a_xxx`，buyer 没拿到 | 让用户等卖家发 paymentId；或重新走协商 |
 | `endpoint 缺失` (x402 `confirm-accept`) | x402 路径需要服务端点 URL | CLI 已有 3 级 fallback（CLI > recommend cache > service-list API）；都失败 → 推用户手动指定 |
 | `Insufficient gas` (XLayer) | XLayer 上 OKB 不足支付 gas | 让用户充 OKB（注意 XLayer chainId=196，**不要在以太坊 / BSC 上充**） |
 

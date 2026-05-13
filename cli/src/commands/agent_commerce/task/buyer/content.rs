@@ -7,11 +7,11 @@
 //!    规则:**禁用** tool 名(`xmtp_*`) / 事件名(`provider_applied`/`job_*` 等) /
 //!    状态名(`open`/`accepted` 等英文枚举) / CLI flag(`--*`) /
 //!    skill 名(`okx-agent-identity` 等) / 状态字段名(`jobStatus`/`paymentMode`)。
-//!    用自然中文(担保/非担保/x402,验收期超时,任务已完成,等)。
+//!    用自然中文(担保/x402,验收期超时,任务已完成,等)。
 //!
 //! 2. **Peer-facing** (`xmtp_send` content,给卖家 sub agent)
 //!    agent-to-agent 协议消息。命名后缀 `_to_seller`。
-//!    规则:可以含协议字面量(`[NEGOTIATE_*]` / `paymentId` 等);
+//!    规则:可以含协议字面量(`[NEGOTIATE_*]` 等);
 //!    **禁止指挥对方调 CLI**(对方有自己的 flow.rs,会按链事件自决,你下指令是越权)。
 //!
 //! 字段值占位符用 `<...>` 包,agent 拿 `common context` / 上下文填充。

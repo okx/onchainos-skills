@@ -248,34 +248,6 @@ async fn fetch_x402_service_from_identity(provider_agent_id: &str) -> Result<X40
     Ok(X402ServiceParams { endpoint, fee_amount, fee_token_symbol })
 }
 
-// ─── Provider 地址查询 ──────────────────────────────────────────────────
-
-/// 通过 `onchainos agent get --agent-ids` 查询 provider 钱包地址
-pub async fn fetch_provider_address(provider: &str) -> Result<String> {
-    let exe = std::env::current_exe()
-        .map_err(|e| anyhow::anyhow!("无法获取可执行文件路径: {e}"))?;
-    let output = tokio::process::Command::new(&exe)
-        .args(["agent", "get", "--agent-ids", provider])
-        .output()
-        .await
-        .map_err(|e| anyhow::anyhow!("调用 agent get --agent-ids {provider} 失败: {e}"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let body: serde_json::Value = serde_json::from_str(&stdout)
-        .map_err(|e| anyhow::anyhow!("解析 agent get 输出失败: {e}"))?;
-    body["data"].as_array()
-        .and_then(|arr| arr.first())
-        .and_then(|x| x["list"].as_array())
-        .or_else(|| body["data"]["list"].as_array())
-        .and_then(|list| list.iter()
-            .find(|a| a["agentId"].as_str() == Some(provider))
-            .and_then(|a| a["ownerAddress"].as_str())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string()))
-        .ok_or_else(|| anyhow::anyhow!(
-            "provider {provider} 的 ownerAddress 为空，无法确定收款地址"
-        ))
-}
-
 // ─── 余额预检 ──────────────────────────────────────────────────────────
 
 /// 归一化 token symbol：Unicode 货币符号 → ASCII 等价字母，然后转大写。
