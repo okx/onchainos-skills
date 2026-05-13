@@ -70,7 +70,7 @@ For script requests, append `--format json` to all CLI commands.
 | okx-dex-token | Token search, metadata, rankings, liquidity, holders, top traders, cluster analysis | User searches for tokens, wants rankings, holder info, or cluster analysis |
 | okx-dex-social | Crypto news, sentiment, KOL / vibe analytics | User asks for news, market sentiment, top KOLs discussing a token, or token vibe score |
 | okx-onchain-gateway | Gas estimation, tx simulation, broadcasting | User wants to broadcast a tx, estimate gas, or check tx status |
-| okx-x402-payment | Dual-protocol HTTP 402 dispatcher: signs x402 (TEE or local-key) and MPP (charge / session open / voucher / topUp / close) | User encounters HTTP 402, mentions x402 / MPP, or pays for streaming/session-based / voucher / top-up payment-gated resources |
+| okx-agent-payments-protocol | Unified payment dispatcher: x402 (`exact` / `aggr_deferred` — TEE or local-key), MPP (`charge` / `session` — open / voucher / topUp / close), and a2a-pay (paymentId-based create / pay / status). | User encounters HTTP 402, mentions x402 / MPP channel/voucher/session, pays for streaming / voucher / top-up payment-gated resources, or works with a paymentId / `a2a_...` link |
 | okx-defi-invest | DeFi product discovery, deposit, withdraw, claim rewards | User wants to earn yield, stake, or manage DeFi positions |
 | okx-defi-portfolio | DeFi positions and holdings overview | User wants to check DeFi positions across protocols |
 | okx-audit-log | Audit log export and troubleshooting | User wants command history, debug info, or audit log |
@@ -97,7 +97,7 @@ Never swallow errors silently or show raw stack traces. Always give the user eno
 | `Rate limited` | Wait 3 seconds, retry once. If still failing, tell the user: "Rate limited on `<command>`. Try again in a minute." |
 | API timeout | Retry once. If still failing, tell the user: "`<command>` timed out. Continuing with partial data." and note which field is missing. |
 | `onchainos --version` fails | Stop immediately. Tell the user: "onchainos CLI is not installed. Run `curl -sSL https://raw.githubusercontent.com/okx/onchainos-skills/main/openclaw_template/setup.sh \| sh` to install, then retry." |
-| HTTP 402 Payment Required | Tell the user: "This resource requires payment authorization." Use the `okx-x402-payment` skill to sign a payment authorization (x402 via TEE, or MPP charge/session/voucher/topUp as appropriate), then retry the request. |
+| HTTP 402 Payment Required | Tell the user: "This resource requires payment authorization." Use the `okx-agent-payments-protocol` skill to sign a payment authorization (x402 via TEE, or MPP charge/session/voucher/topUp as appropriate), then retry the request. |
 | Unknown API error (code ≠ 0) | Tell the user: "`<command>` returned an error: `<error message>`". Show the error verbatim. Do not retry. |
 | Wallet session expired | Tell the user: "Your wallet session has expired. Run `onchainos wallet login` to reconnect." Do not attempt any wallet-authenticated operations until re-login succeeds. |
 | Skill not found | Tell the user: "Skill `<name>` is not available. I'll re-run the bootstrap sequence to reinstall the skills." Then re-run the bootstrap protocol from `BOOTSTRAP.md` Step 1 and show the Available Skills table when complete. |

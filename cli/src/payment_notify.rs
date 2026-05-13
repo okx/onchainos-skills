@@ -16,7 +16,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::commands::agentic_wallet::chain::show_name_for_real_id_sync;
-use crate::commands::agentic_wallet::payment_flow::{parse_eip155_chain_id, PaymentTier};
+use crate::commands::payment::payment_flow::{parse_eip155_chain_id, PaymentTier};
 
 /// Hardcoded fractional precision used to render `amount` as a display
 /// decimal. Placeholder until per-asset decimals land on the `/config`

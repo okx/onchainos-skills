@@ -40,7 +40,7 @@ This template requires the **agentic wallet**. Anonymous mode is **not supported
 - **Aggregated DEX sources** for best price
 - **MEV protection**: Solana via Jito (`--tips`), EVM via Flashbots (`--mev-protection`)
 - **Pre-trade safety**: honeypot detection, tax scan, mint/freeze authority check
-- **Gas-free on X Layer** via x402 protocol (`okx-x402-payment` skill)
+- **Gas-free on X Layer** via OKX Agent Payments Protocol (`okx-agent-payments-protocol` skill)
 
 ## Workflow CLI commands
 
@@ -71,7 +71,8 @@ Skills are installed by `setup.sh` into `~/.onchainos/skills/`:
 okx-dex-token       okx-dex-market      okx-dex-signal      okx-dex-trenches
 okx-dex-social      okx-dex-swap        okx-dex-ws          okx-security
 okx-wallet-portfolio okx-agentic-wallet okx-onchain-gateway okx-defi-invest
-okx-defi-portfolio  okx-x402-payment    okx-audit-log       okx-growth-competition
+okx-defi-portfolio  okx-audit-log       okx-growth-competition
+okx-agent-payments-protocol
 ```
 
 ## MCP server
