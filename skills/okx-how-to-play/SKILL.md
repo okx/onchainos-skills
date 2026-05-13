@@ -49,7 +49,10 @@ Negative examples (use the matching skill instead, **not** this one):
 Most user-facing copy in this flow is split into two parts:
 
 - **Free zone** — the agent answers the user's actual question or acknowledgement first, in 1–5 sentences, contextually woven. No fixed copy. The user shouldn't feel like they hit a script.
-- **Fixed zone** — the canonical English template block (welcome banner, login options, API Key heads-up). Render in the user's language at runtime; keep emojis, `{placeholders}`, `1–N`, code identifiers, and markdown structure literal. Quoted reply tokens like `"login"` are prose too — translate them along with the surrounding sentence.
+- **Fixed zone** — the canonical English template block (welcome banner, login options, API Key heads-up). At runtime:
+  - Render all natural-language prose in the user's language.
+  - **Quoted reply words inside prose (e.g. `"login"`) MUST translate with their sentence.** Leaving an English quoted word inside otherwise-translated Chinese / Japanese / etc. prose is a translation bug — the quotes do NOT make the word a literal trigger.
+  - Keep literal: emojis, `{placeholders}`, `1–N`, code identifiers / commands / URLs, markdown structure.
 
 This applies to: **Welcome Banner**, **Login Method Choice**, and **API Key Login** Step 1 heads-up.
 
