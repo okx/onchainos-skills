@@ -13,7 +13,7 @@ Specifically:
 
 | User opener | Free zone? |
 |---|---|
-| "what is onchainos / 怎么玩 / how do I play / how to use / what can it do / introduce yourself / tutorial / getting started" | **Skip.** Go straight to the banner. |
+| "what is onchainos / how do I play / how to use / what can it do / introduce yourself / tutorial / getting started" | **Skip.** Go straight to the banner. |
 | "I just installed it, now what" / "where do I start" / "I'm new" | 1 short sentence acknowledging, then bridge. |
 | User asked an unrelated concrete question alongside | 1–3 sentences answering it, then bridge. |
 
