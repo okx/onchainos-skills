@@ -283,10 +283,13 @@ async fn sign_and_broadcast(
         bail!("transaction simulation failed: {}", err_msg);
     }
 
-    // Gas Station guard（contract-call 等非 GS 分发路径走这里）：
-    // backend 两阶段协议——Phase 1 诊断只返 gasStationStatus + tokenList，所有 hash 字段为空；
-    // Phase 2 执行（带 enableGasStation=true + gasTokenAddress + relayerId）才返签名材料。
-    // 这里拦住 Phase 1 诊断响应，防止 CLI 用空 msgForSign 发 broadcast 拿到 81358。
+    // Gas Station guard (also reached by contract-call and other non-GS
+    // dispatch paths). Backend uses a two-phase protocol: Phase 1 (diagnosis)
+    // returns only gasStationStatus + tokenList with empty hash fields;
+    // Phase 2 (execution, called with enableGasStation=true + gasTokenAddress
+    // + relayerId) is the call that returns signing material. We intercept
+    // Phase 1 responses here so the CLI does not broadcast with an empty
+    // msgForSign and get 81358 back.
     if unsigned.gas_station_used {
         if unsigned.has_pending_tx {
             bail!(
@@ -428,8 +431,9 @@ async fn sign_and_broadcast(
         msg_for_sign_map.insert("unsignedTxHash".into(), json!(&unsigned.unsigned_tx_hash));
         msg_for_sign_map.insert("sessionSignature".into(), json!(sig));
     }
-    // eip712MessageHash: 712 hash，TEE session 场景。算法跟 unsigned_tx_hash→sessionSignature 一致
-    // （ed25519_sign_encoded），结果写入 sessionSignature 字段。
+    // eip712MessageHash: 712 hash for the TEE session flow. Same signing
+    // algorithm as unsigned_tx_hash → sessionSignature (ed25519_sign_encoded);
+    // the signature is written into the sessionSignature field.
     if !unsigned.eip712_message_hash.is_empty() {
         let sig = crate::crypto::ed25519_sign_encoded(
             &unsigned.eip712_message_hash,
@@ -547,6 +551,309 @@ async fn sign_and_broadcast(
     Ok(broadcast_resp)
 }
 
+// ── batch_sign_and_broadcast ─────────────────────────────────────────
+// EVM only, no Gas Station / 7702 / Jito. Any executeResult=false fails the
+// whole batch (no partial rollback). Broadcast dispatch: response.len==1 →
+// single-tx broadcast (X Layer merge); else → batch broadcast.
+
+/// Pre-validate batch unsignedInfo response.
+///
+/// Backend contract: when any element fails simulation, only that element
+/// carries `executeErrorMsg`; the rest come back with empty signing
+/// materials. So scan `executeResult` across ALL elements first — otherwise
+/// an earlier empty-but-success-flagged element would mask the real failure.
+fn validate_batch_unsigned_responses(
+    unsigned_responses: &[crate::wallet_api::UnsignedInfoResponse],
+) -> Result<()> {
+    // Pass 1: any executeResult == false → bail with that element's errorMsg.
+    for (i, unsigned) in unsigned_responses.iter().enumerate() {
+        let exec_ok = match &unsigned.execute_result {
+            Value::Bool(b) => *b,
+            Value::Null => true,
+            _ => true,
+        };
+        if !exec_ok {
+            let msg = if unsigned.execute_error_msg.is_empty() {
+                "transaction simulation failed".to_string()
+            } else {
+                unsigned.execute_error_msg.clone()
+            };
+            bail!("batch element {i}: {msg}");
+        }
+    }
+    // Pass 2: all elements exec_ok → any missing signing materials is an anomaly.
+    for (i, unsigned) in unsigned_responses.iter().enumerate() {
+        let has_sign_data = !unsigned.hash.is_empty()
+            || !unsigned.eip712_message_hash.is_empty()
+            || !unsigned.unsigned_tx_hash.is_empty()
+            || !unsigned.unsigned_tx.is_empty()
+            || !unsigned.auth_hash_for7702.is_empty();
+        if !has_sign_data {
+            bail!(
+                "batch element {i}: backend returned empty signing materials \
+                 (gasStationStatus={:?})",
+                unsigned.gas_station_status
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Per-element transaction parameters for batch sign + broadcast.
+#[derive(Debug, Clone, Default)]
+pub struct BatchTxParams {
+    pub to_addr: String,
+    pub value: String,
+    pub contract_addr: Option<String>,
+    pub input_data: Option<String>,
+    pub gas_limit: Option<String>,
+    pub aa_dex_token_addr: Option<String>,
+    pub aa_dex_token_amount: Option<String>,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn batch_sign_and_broadcast(
+    chain: &str,
+    from: Option<&str>,
+    txs: &[BatchTxParams],
+    is_contract_call: bool,
+    mev_protection: bool,
+    force: bool,
+    tx_source: Option<&str>,
+    agent_biz_type: Option<&str>,
+    agent_skill_name: Option<&str>,
+) -> Result<Vec<crate::wallet_api::BroadcastResponse>> {
+    if txs.is_empty() {
+        bail!("batch_sign_and_broadcast: empty txs");
+    }
+    if txs.len() > 5 {
+        bail!(
+            "batch_sign_and_broadcast: backend allows up to 5 elements, got {}",
+            txs.len()
+        );
+    }
+
+    let access_token = ensure_tokens_refreshed().await?;
+
+    let chain_entry = super::chain::get_chain_by_real_chain_index(chain)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("unsupported chain: {chain}"))?;
+    let chain_name = chain_entry["chainName"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("chain entry missing chainName for chain {chain}"))?;
+
+    let mut wallets = wallet_store::load_wallets()?
+        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+    let (account_id, addr_info) =
+        resolve_address_with_refresh(&mut wallets, from, chain_name, || async {
+            let mut refresh_client = WalletApiClient::new()?;
+            let mut fresh = wallet_store::load_wallets()?
+                .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+            super::balance::ensure_wallet_accounts_fresh(
+                &mut refresh_client,
+                &access_token,
+                &mut fresh,
+                true,
+            )
+            .await?;
+            Ok(fresh)
+        })
+        .await?;
+
+    let session = wallet_store::load_session()?
+        .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+    let session_cert = session.session_cert;
+    let encrypted_session_sk = session.encrypted_session_sk;
+    let session_key = keyring_store::get("session_key")
+        .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
+
+    let chain_index_num: u64 = addr_info.chain_index.parse().map_err(|_| {
+        anyhow::anyhow!("chain id '{}' is not a valid number", addr_info.chain_index)
+    })?;
+
+    // Per-element validation (mirrors single-tx sign_and_broadcast).
+    let ci = &addr_info.chain_index;
+    for tx in txs {
+        validate_address_for_chain(ci, &tx.to_addr, "to")?;
+        if let Some(ca) = tx.contract_addr.as_deref() {
+            validate_address_for_chain(ci, ca, "contract-token")?;
+        }
+        if let Some(aa_addr) = tx.aa_dex_token_addr.as_deref() {
+            validate_address_for_chain(ci, aa_addr, "aa-dex-token-addr")?;
+        }
+        if let Some(gl) = tx.gas_limit.as_deref() {
+            validate_non_negative_integer(gl, "gas-limit")?;
+        }
+        if let Some(aa_amount) = tx.aa_dex_token_amount.as_deref() {
+            validate_non_negative_integer(aa_amount, "aa-dex-token-amount")?;
+        }
+    }
+
+    let elements: Vec<crate::wallet_api::BatchUnsignedInfoElement> = txs
+        .iter()
+        .map(|tx| crate::wallet_api::BatchUnsignedInfoElement {
+            chain_path: addr_info.chain_path.clone(),
+            chain_index: chain_index_num,
+            from_addr: addr_info.address.clone(),
+            to_addr: tx.to_addr.clone(),
+            amount: tx.value.clone(),
+            contract_addr: tx.contract_addr.clone(),
+            session_cert: session_cert.clone(),
+            input_data: tx.input_data.clone(),
+            unsigned_tx: None,
+            gas_limit: tx.gas_limit.clone(),
+            aa_dex_token_addr: tx.aa_dex_token_addr.clone(),
+            aa_dex_token_amount: tx.aa_dex_token_amount.clone(),
+            transaction_type: None,
+        })
+        .collect();
+
+    let mut client = WalletApiClient::new()?;
+    let unsigned_responses = client
+        .batch_pre_transaction_unsigned_info(&access_token, &elements, None)
+        .await
+        .map_err(format_api_error)?;
+
+    // Response length may be smaller than request length when the backend
+    // merges elements (XLayer EIP-5792 collapses [approve, swap] into a single
+    // unsigned tx). Empty / overflow are still hard errors.
+    if unsigned_responses.is_empty() {
+        bail!("batch unsignedInfo: empty response");
+    }
+    if unsigned_responses.len() > txs.len() {
+        bail!(
+            "batch unsignedInfo: response length {} exceeds request length {}",
+            unsigned_responses.len(),
+            txs.len()
+        );
+    }
+
+    validate_batch_unsigned_responses(&unsigned_responses)?;
+
+    let signing_seed = crate::crypto::hpke_decrypt_session_sk(&encrypted_session_sk, &session_key)?;
+    let signing_seed_b64 = base64::engine::general_purpose::STANDARD.encode(signing_seed);
+
+    let mut broadcast_elements: Vec<crate::wallet_api::BatchBroadcastElement> =
+        Vec::with_capacity(unsigned_responses.len());
+    for unsigned in &unsigned_responses {
+        let mut msg_for_sign_map = serde_json::Map::new();
+
+        if !unsigned.hash.is_empty() {
+            let sig = crate::crypto::ed25519_sign_eip191(&unsigned.hash, &signing_seed, "hex")?;
+            msg_for_sign_map.insert("signature".into(), json!(sig));
+        }
+        if !unsigned.unsigned_tx_hash.is_empty() {
+            let sig = crate::crypto::ed25519_sign_encoded(
+                &unsigned.unsigned_tx_hash,
+                &signing_seed_b64,
+                &unsigned.encoding,
+            )?;
+            msg_for_sign_map.insert("unsignedTxHash".into(), json!(&unsigned.unsigned_tx_hash));
+            msg_for_sign_map.insert("sessionSignature".into(), json!(sig));
+        }
+        if !unsigned.eip712_message_hash.is_empty() {
+            let sig = crate::crypto::ed25519_sign_encoded(
+                &unsigned.eip712_message_hash,
+                &signing_seed_b64,
+                &unsigned.encoding,
+            )?;
+            msg_for_sign_map.insert("sessionSignature".into(), json!(sig));
+        }
+        if !unsigned.unsigned_tx.is_empty() {
+            msg_for_sign_map.insert("unsignedTx".into(), json!(&unsigned.unsigned_tx));
+        }
+        if !session_cert.is_empty() {
+            msg_for_sign_map.insert("sessionCert".into(), json!(session_cert));
+        }
+
+        let msg_for_sign = Value::Object(msg_for_sign_map);
+
+        let mut extra_data_obj = if unsigned.extra_data.is_object() {
+            unsigned.extra_data.clone()
+        } else {
+            json!({})
+        };
+        extra_data_obj["checkBalance"] = json!(true);
+        extra_data_obj["uopHash"] = json!(unsigned.uop_hash);
+        extra_data_obj["encoding"] = json!(unsigned.encoding);
+        extra_data_obj["signType"] = json!(unsigned.sign_type);
+        extra_data_obj["msgForSign"] = json!(msg_for_sign);
+        if !is_contract_call {
+            extra_data_obj["txType"] = json!(2);
+        }
+        if mev_protection {
+            extra_data_obj["isMEV"] = json!(true);
+        }
+        if force {
+            extra_data_obj["skipWarning"] = json!(true);
+        }
+        if let Some(src) = tx_source {
+            extra_data_obj["txSource"] = json!(src);
+        }
+        if let Some(bt) = agent_biz_type {
+            extra_data_obj["agentBizType"] = json!(bt);
+        }
+        if let Some(sk) = agent_skill_name {
+            extra_data_obj["agentSkillName"] = json!(sk);
+        }
+        // Batch broadcast control fields (Lark doc: WalletMain transaction
+        // broadcast & query API, batch broadcast section, Web3 main schema).
+        // DEX must set `extJson.batchBroadcastType=1`; `from7702Address`
+        // defaults to false and same value across the whole batch (vault
+        // uses it to decide split-broadcast vs merged). Same-batch
+        // consistency is a vault contract: every element here gets the
+        // same values.
+        let mut ext_json_obj = if extra_data_obj["extJson"].is_object() {
+            extra_data_obj["extJson"].clone()
+        } else {
+            json!({})
+        };
+        ext_json_obj["batchBroadcastType"] = json!(1);
+        extra_data_obj["extJson"] = ext_json_obj;
+        extra_data_obj["from7702Address"] = json!(false);
+        // `walletMainSaveConfirming=true` is required in batch mode: confirmed
+        // with backend RD. The walletMain side keeps the confirming hook
+        // available even when the batch is dispatched (e.g. for risk-control
+        // / GS-adjacent flows). Single-tx `sign_and_broadcast` does not set
+        // this field — the walletMain default there is fine.
+        extra_data_obj["walletMainSaveConfirming"] = json!(true);
+
+        let extra_data_str =
+            serde_json::to_string(&extra_data_obj).context("failed to serialize extraData")?;
+
+        broadcast_elements.push(crate::wallet_api::BatchBroadcastElement {
+            account_id: account_id.clone(),
+            address: addr_info.address.clone(),
+            chain_index: addr_info.chain_index.clone(),
+            extra_data: extra_data_str,
+        });
+    }
+
+    // Broadcast endpoint dispatch (driven by unsignedInfo response length):
+    //   len == 1 → single broadcast endpoint (X Layer EIP-5792 merge case)
+    //   len > 1  → batch broadcast endpoint
+    if broadcast_elements.len() == 1 {
+        let elem = &broadcast_elements[0];
+        let resp = client
+            .broadcast_transaction(
+                &access_token,
+                &elem.account_id,
+                &elem.address,
+                &elem.chain_index,
+                &elem.extra_data,
+                None,
+            )
+            .await
+            .map_err(|e| handle_confirming_error(e, force))?;
+        Ok(vec![resp])
+    } else {
+        client
+            .batch_broadcast_transaction(&access_token, &broadcast_elements, None)
+            .await
+            .map_err(|e| handle_confirming_error(e, force))
+    }
+}
+
 // ── send ─────────────────────────────────────────────────────────────
 
 /// onchainos wallet send
@@ -627,14 +934,14 @@ pub(super) async fn cmd_send(
     //   - hit + sufficient → Scene B: CLI auto-runs Phase 2 with that token + sign + broadcast
     //   - otherwise → Scene C: return Confirming so the user picks a token
     if unsigned.gas_station_used {
-        // 终结类状态：直接告知用户
+        // Terminal states: report directly to the user, no further action.
         if unsigned.has_pending_tx {
             return emit_gs_pending_tx_state();
         }
         if unsigned.insufficient_all {
             return emit_gs_insufficient_all_state(&unsigned, &addr_info.address);
         }
-        // Phase 2 响应：backend 返了签名材料，直接签广播
+        // Phase 2 response: backend returned signing material — sign and broadcast.
         if !unsigned.hash.is_empty()
             || !unsigned.eip712_message_hash.is_empty()
             || !unsigned.unsigned_tx_hash.is_empty()
@@ -820,8 +1127,10 @@ async fn gas_station_send(
 //   Normal Gas Station — wallet already upgraded to 7702, just executes transaction.
 //   Signs only 712 hash. No nonce/user7702Data/authSignatureFor7702.
 
-/// Gas Station msgForSign: TEE 场景（sessionSignature）+ 7702 升级时附带 authSignatureFor7702。
-/// 不写入 signature（那是 Pay 场景的 EIP-191 签，GS 走 TEE 不走 Pay）。
+/// Gas Station msgForSign: TEE flow (sessionSignature), plus
+/// authSignatureFor7702 when this is a 7702 upgrade. Does NOT write the
+/// `signature` field — that is the EIP-191 signature from the Pay flow;
+/// Gas Station goes through TEE, not Pay.
 fn gs_build_msg_for_sign(
     unsigned: &crate::wallet_api::UnsignedInfoResponse,
     session: &crate::wallet_store::SessionJson,
@@ -832,8 +1141,9 @@ fn gs_build_msg_for_sign(
 
     let signing_seed_b64 = base64::engine::general_purpose::STANDARD.encode(signing_seed);
 
-    // eip712_message_hash 非空 → ed25519_sign_encoded（TEE 场景标准算法，跟 unsigned_tx_hash→sessionSignature 一致），
-    // 结果写入 sessionSignature。
+    // Non-empty eip712_message_hash → ed25519_sign_encoded (standard TEE-flow
+    // algorithm, same as unsigned_tx_hash → sessionSignature); the signature
+    // is written into sessionSignature.
     if !unsigned.eip712_message_hash.is_empty() {
         let session_sig = crate::crypto::ed25519_sign_encoded(
             &unsigned.eip712_message_hash,
@@ -842,7 +1152,8 @@ fn gs_build_msg_for_sign(
         )?;
         m.insert("sessionSignature".into(), json!(session_sig));
     }
-    // 向后兼容旧字段 hash（新后端不再返）
+    // Backward compatibility for the legacy `hash` field (newer backend
+    // no longer returns it).
     if !unsigned.hash.is_empty() && unsigned.eip712_message_hash.is_empty() {
         let session_sig = crate::crypto::ed25519_sign_encoded(
             &unsigned.hash,
@@ -851,7 +1162,7 @@ fn gs_build_msg_for_sign(
         )?;
         m.insert("sessionSignature".into(), json!(session_sig));
     }
-    // 签 authHashFor7702 → authSignatureFor7702（仅 7702 升级流程）
+    // Sign authHashFor7702 → authSignatureFor7702 (only for the 7702 upgrade flow).
     if include_7702 && !unsigned.auth_hash_for7702.is_empty() {
         let sig = crate::crypto::ed25519_sign_hex(&unsigned.auth_hash_for7702, &signing_seed_b64)?;
         m.insert("authSignatureFor7702".into(), json!(sig));
@@ -882,21 +1193,21 @@ fn gs_apply_extra_data_fields(
 ) {
     ed["paymentType"] = json!("token");
 
-    // Gas 手续费
+    // Gas service charge.
     ed["serviceCharge"] = json!(unsigned.service_charge);
     ed["feeTokenAddress"] = json!(unsigned.service_charge_fee_token_address);
-    // 合约 nonce
+    // Contract nonce.
     if !unsigned.contract_nonce.is_empty() {
         ed["contractNonce"] = json!(unsigned.contract_nonce);
     }
-    // relayerId + context: 从 tokenList 中匹配选中的 token
+    // relayerId + context: match against the selected token in tokenList.
     if let Some(selected) = unsigned.gas_station_token_list.iter().find(|t| {
         t.fee_token_address == unsigned.service_charge_fee_token_address
     }) {
         ed["relayerId"] = json!(selected.relayer_id);
         ed["context"] = json!(selected.context);
     }
-    // user712Data: 每次 Gas Station 交易都透传
+    // user712Data: pass through verbatim on every Gas Station transaction.
     if !unsigned.user712_data.is_null() {
         ed["user712Data"] = unsigned.user712_data.clone();
     }
@@ -980,7 +1291,8 @@ fn gs_build_extra_data(
     ed
 }
 
-/// Flow 1: 首次 Gas Station — 升级 7702 + 交易（needUpdate7702=true）
+/// Flow 1: first-time Gas Station — upgrades to 7702 + executes the transaction
+/// (`needUpdate7702=true`).
 #[allow(clippy::too_many_arguments)]
 async fn gs_broadcast_with_7702_upgrade(
     client: &mut crate::wallet_api::WalletApiClient,
@@ -1004,7 +1316,8 @@ async fn gs_broadcast_with_7702_upgrade(
     gs_do_broadcast(client, access_token, account_id, addr_info, &extra_data_obj, force).await
 }
 
-/// Flow 2: 后续 Gas Station 交易（needUpdate7702=false，已升级 7702）
+/// Flow 2: subsequent Gas Station transactions (`needUpdate7702=false`,
+/// wallet already upgraded to 7702).
 #[allow(clippy::too_many_arguments)]
 async fn gs_broadcast_transaction(
     client: &mut crate::wallet_api::WalletApiClient,
@@ -1028,7 +1341,7 @@ async fn gs_broadcast_transaction(
     gs_do_broadcast(client, access_token, account_id, addr_info, &extra_data_obj, force).await
 }
 
-/// Gas Station broadcast 公共发送逻辑 + debug dump
+/// Gas Station broadcast: shared send logic + debug dump.
 async fn gs_do_broadcast(
     client: &mut crate::wallet_api::WalletApiClient,
     access_token: &str,
@@ -1055,7 +1368,7 @@ async fn gs_do_broadcast(
     Ok(broadcast_resp)
 }
 
-/// Gas Station: 根据 needUpdate7702 路由到对应的 broadcast 流程
+/// Gas Station: route to the matching broadcast flow based on `needUpdate7702`.
 #[allow(clippy::too_many_arguments)]
 async fn gas_station_sign_and_broadcast(
     client: &mut crate::wallet_api::WalletApiClient,
@@ -1371,7 +1684,9 @@ fn classify_gs_phase1(
     }
 }
 
-/// PENDING_UPGRADE / REENABLE_ONLY / READY_TO_USE（默认 token 充足）：后端已给 hash，直接签+广播
+/// PENDING_UPGRADE / REENABLE_ONLY / READY_TO_USE (default token has
+/// sufficient balance): backend already returned the hash material — sign
+/// and broadcast directly.
 #[allow(clippy::too_many_arguments)]
 async fn handle_gs_auto_sign_broadcast(
     client: &mut crate::wallet_api::WalletApiClient,
@@ -2125,5 +2440,78 @@ mod tests {
         assert_eq!(args["amount"], "1000000");
         assert_eq!(args["contractToken"], "0xtoken");
         assert_eq!(args["force"], true);
+    }
+
+    /// Build a minimal UnsignedInfoResponse via serde, since the struct has
+    /// many private-ish fields and constructing it field-by-field is brittle.
+    fn unsigned_info_from_json(json: serde_json::Value) -> crate::wallet_api::UnsignedInfoResponse {
+        serde_json::from_value(json).expect("valid UnsignedInfoResponse JSON")
+    }
+
+    #[test]
+    fn validate_batch_all_success_passes() {
+        // Every element executeResult=true AND has signing materials → Ok.
+        let responses = vec![
+            unsigned_info_from_json(serde_json::json!({
+                "executeResult": true,
+                "unsignedTxHash": "0xaa",
+                "encoding": "hex",
+            })),
+            unsigned_info_from_json(serde_json::json!({
+                "executeResult": true,
+                "unsignedTxHash": "0xbb",
+                "encoding": "hex",
+            })),
+        ];
+        assert!(validate_batch_unsigned_responses(&responses).is_ok());
+    }
+
+    #[test]
+    fn validate_batch_surfaces_failing_element_even_when_earlier_one_has_empty_sign_data() {
+        // Backend contract: when element[1] fails simulation, element[0] often
+        // comes back with executeResult=true but every sign-data field empty.
+        // The validator must scan executeResult first and report element[1]'s
+        // executeErrorMsg, not bail on element[0]'s "empty signing materials".
+        let responses = vec![
+            unsigned_info_from_json(serde_json::json!({
+                "executeResult": true,
+                "executeErrorMsg": "",
+                // All sign-data fields empty (the bug condition).
+            })),
+            unsigned_info_from_json(serde_json::json!({
+                "executeResult": false,
+                "executeErrorMsg": "execution reverted: Min return not reached",
+            })),
+        ];
+        let err = validate_batch_unsigned_responses(&responses).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("batch element 1") && msg.contains("Min return not reached"),
+            "expected error to point at element 1 with backend errorMsg, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_batch_reports_empty_signing_materials_when_all_exec_ok() {
+        // All executeResult=true but element[0] has no sign-data fields.
+        // This is a genuine anomaly (not a connected-batch-failure case),
+        // so we should bail on the missing-materials path.
+        let responses = vec![
+            unsigned_info_from_json(serde_json::json!({
+                "executeResult": true,
+                // No sign-data fields.
+            })),
+            unsigned_info_from_json(serde_json::json!({
+                "executeResult": true,
+                "unsignedTxHash": "0xbb",
+                "encoding": "hex",
+            })),
+        ];
+        let err = validate_batch_unsigned_responses(&responses).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("batch element 0") && msg.contains("empty signing materials"),
+            "expected error to point at element 0 missing-materials, got: {msg}"
+        );
     }
 }
