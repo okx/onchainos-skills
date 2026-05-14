@@ -291,7 +291,7 @@ Chinese variant:
 | 服务[1] 价格 | 10 USDT | (不变) |
 
 > 本次会改 描述 和 头像；其它字段保持不变。
-> 预计费用: **0 USDT**（改字段不扣 gas，OKX 一期替你出）。可以撤回: 想退回原值再 update 一次即可；操作随时可逆。
+> 预计费用: **0 USDT**（改字段不扣 gas，OKX 一期替你出）。可以撤回: 想退回原值再更新一次即可；操作随时可逆。
 > 确认后回复 "执行" 即可。
 
 English variant:
@@ -322,7 +322,7 @@ Rules:
     - 中文: `| 能否撤回 | 可以——任何时候说"下架 #N"即可下架；链上 NFT 永久保留，不会丢失记录 |`
     - 英文: `| Reversible? | Yes — say "deactivate #N" anytime; the on-chain NFT is preserved permanently and your history stays intact |`
   - Update variant (3 cols — these two rows use only 1 cell that spans across, so render as plain text below the table instead of as table rows):
-    - 中文: `> 预计费用: **0 USDT**（改字段不扣 gas，OKX 一期替你出）。可以撤回: 想退回原值再 update 一次即可；操作随时可逆。`
+    - 中文: `> 预计费用: **0 USDT**（改字段不扣 gas，OKX 一期替你出）。可以撤回: 想退回原值再更新一次即可；操作随时可逆。`
     - 英文: `> Estimated cost: **0 USDT** (editing fields costs no gas — OKX covers it in phase 1). Reversible: re-run update to revert to the old value at any time.`
 - Source of truth for these costs: `SKILL.md §Cost Disclosure`. ⛔ **Never fabricate other cost items** (no "平台服务费", no "Agent 调度费", no "审核费").
 

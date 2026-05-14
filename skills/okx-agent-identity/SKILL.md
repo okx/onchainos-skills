@@ -673,7 +673,7 @@ Every user-facing string the skill renders must match the user's language. Detec
 
 - When rendering role inline in a detail card, use the single form that matches the user's language: Chinese users see `验证者`, English users see `evaluator`. Do NOT render `evaluator (验证者)` bilingual — that's leftover from an earlier spec.
 - When rendering status, same rule: Chinese `已上架`, English `active`. Never mix.
-- A shared exception: inside the confirmation card for `create`, the `role` row may show the CLI value plus user-language label once (e.g. `role | evaluator` for English; `角色 | 验证者` for Chinese) so the user can see what the CLI will receive.
+- ⛔ **The `role` row follows `references/ux-lexicon.md §Role` asymmetric rule — no exception**: English users see the ERC-8004 native term (`Role | evaluator` / `Role | provider` / `Role | requester` — these happen to equal the CLI value, so the row is single-token and there is nothing extra to show); Chinese users see the localized term ONLY (`角色 | 验证者` / `角色 | 服务方` / `角色 | 买家`) — do **NOT** render the bilingual `角色 | 验证者 (evaluator)` / `角色 | 服务方 (provider)` / `角色 | 买家 (requester)` form, even on the create confirmation card. The CLI value is the AI's internal concern (gets sent as `--role` flag); the user does not need to see it to "verify what the CLI will receive". This rescinds the old "may show CLI value plus user-language label once" carve-out, which was the source of the bilingual leak (`§UX Output Red Lines Red line 4`).
 
 **Do not:**
 
