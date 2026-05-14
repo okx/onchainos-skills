@@ -16,12 +16,12 @@ onchainos social news-latest [options]
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `--token-symbols` | No | - | Comma-separated coin symbols (e.g. `BTC,ETH`) |
-| `--begin` | No | - | Begin timestamp (Unix milliseconds) |
-| `--end` | No | - | End timestamp (Unix milliseconds) |
+| `--token-symbols` | No | - | Comma-separated coin symbols, max 20 (e.g. `BTC,ETH`) |
+| `--begin` | No | now − 72h | Begin timestamp (Unix milliseconds); max lookback 180d |
+| `--end` | No | now | End timestamp (Unix milliseconds) |
 | `--importance` | No | - | `1`=high, `2`=medium, `3`=low |
 | `--platform` | No | - | Single platform identifier (e.g. `blockbeats`); see `news-platforms` |
-| `--limit` | No | `10` | Page size |
+| `--limit` | No | `10` | Page size, range `[1, 50]` |
 | `--cursor` | No | - | Pagination cursor from previous response |
 | `--detail-level` | No | `1` | `1`=summary only, `2`=include full `content` |
 | `--language` | No | `en_US` | Locale (e.g. `en_US`, `zh_CN`, `ja_JP`) |
@@ -74,17 +74,17 @@ onchainos social news-by-symbol --token-symbols <symbols> [options]
 
 | Param | Required | Default | Description |
 |---|---|---|---|
-| `--token-symbols` | Yes | - | Comma-separated coin symbols |
+| `--token-symbols` | Yes | - | Comma-separated coin symbols, max 20 |
 | `--sort-by` | No | `1` | `1`=latest, `2`=hot |
 | `--sentiment` | No | - | `1`=bullish, `2`=bearish, `3`=neutral |
 | `--importance` | No | - | `1`=high, `2`=medium, `3`=low |
 | `--platform` | No | - | Single platform identifier |
-| `--limit` | No | `10` | Page size |
+| `--limit` | No | `10` | Page size, range `[1, 50]` |
 | `--cursor` | No | - | Pagination cursor |
 | `--detail-level` | No | `1` | `1`=summary, `2`=full body |
-| `--begin` | No | - | Begin timestamp (Unix ms) |
-| `--end` | No | - | End timestamp (Unix ms) |
-| `--language` | No | `en_US` | Locale |
+| `--begin` | No | now − 72h | Begin timestamp (Unix ms); max lookback 180d |
+| `--end` | No | now | End timestamp (Unix ms) |
+| `--language` | No | `en_US` | Locale (e.g. `en_US`, `zh_CN`) |
 
 **Return fields**: same shape as `news-latest`.
 
@@ -115,13 +115,13 @@ onchainos social news-search --keyword <keyword> [options]
 | `--sentiment` | No | - | `1`=bullish, `2`=bearish, `3`=neutral |
 | `--importance` | No | - | `1`=high, `2`=medium, `3`=low |
 | `--platform` | No | - | Single platform identifier |
-| `--token-symbols` | No | - | Comma-separated coin symbols |
-| `--begin` | No | - | Begin timestamp (Unix ms) |
-| `--end` | No | - | End timestamp (Unix ms) |
+| `--token-symbols` | No | - | Comma-separated coin symbols, max 20 |
+| `--begin` | No | now − 72h | Begin timestamp (Unix ms); max lookback 180d |
+| `--end` | No | now | End timestamp (Unix ms) |
 | `--detail-level` | No | `1` | `1`=summary, `2`=full body |
-| `--limit` | No | `10` | Page size |
+| `--limit` | No | `10` | Page size, range `[1, 50]` |
 | `--cursor` | No | - | Pagination cursor |
-| `--language` | No | `en_US` | Locale |
+| `--language` | No | `en_US` | Locale (e.g. `en_US`, `zh_CN`) |
 
 **Return fields**: same shape as `news-latest`.
 
@@ -152,7 +152,7 @@ onchainos social news-detail --article-id <id> [options]
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--article-id` | Yes | - | Article id (from a previous list response) |
-| `--language` | No | `en_US` | Locale |
+| `--language` | No | `en_US` | Locale (e.g. `en_US`, `zh_CN`) |
 
 **Return fields**:
 

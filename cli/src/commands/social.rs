@@ -40,17 +40,17 @@ fn strip_tweet_bodies(v: &mut Value) {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct SocialNewsLatestParams {
-    /// Comma-separated coin symbols to filter on, e.g. "BTC,ETH". Optional.
+    /// Comma-separated coin symbols to filter on, e.g. "BTC,ETH". Optional. Max 20 symbols.
     pub token_symbols: Option<String>,
-    /// Start of the time window (Unix milliseconds).
+    /// Start of the time window (Unix milliseconds). Defaults to now − 72h; max lookback 180 days.
     pub begin: Option<String>,
-    /// End of the time window (Unix milliseconds).
+    /// End of the time window (Unix milliseconds). Defaults to now.
     pub end: Option<String>,
     /// Article importance filter: "1" (High), "2" (Medium), "3" (Low). Omit to skip.
     pub importance: Option<String>,
     /// News source platform identifier; see `social_news_platforms` for valid values.
     pub platform: Option<String>,
-    /// Page size (default "10").
+    /// Page size, range [1, 50]. Default "10".
     pub limit: Option<String>,
     /// Pagination cursor returned by the previous page; null on first call.
     pub cursor: Option<String>,
@@ -62,7 +62,7 @@ pub struct SocialNewsLatestParams {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct SocialNewsBySymbolParams {
-    /// Comma-separated coin symbols (required), e.g. "BTC,ETH".
+    /// Comma-separated coin symbols (required), e.g. "BTC,ETH". Max 20 symbols.
     pub token_symbols: String,
     /// Result ordering: "1" (Latest, default), "2" (Hot by engagement).
     pub sort_by: Option<String>,
@@ -72,13 +72,16 @@ pub struct SocialNewsBySymbolParams {
     pub importance: Option<String>,
     /// News source platform identifier.
     pub platform: Option<String>,
-    /// Page size (default "10").
+    /// Page size, range [1, 50]. Default "10".
     pub limit: Option<String>,
     pub cursor: Option<String>,
     /// "1" (Summary, default) or "2" (Full).
     pub detail_level: Option<String>,
+    /// Start of the time window (Unix milliseconds). Defaults to now − 72h; max lookback 180 days.
     pub begin: Option<String>,
+    /// End of the time window (Unix milliseconds). Defaults to now.
     pub end: Option<String>,
+    /// Locale of returned text, e.g. "en_US" (default), "zh_CN".
     pub language: Option<String>,
 }
 
@@ -93,14 +96,18 @@ pub struct SocialNewsSearchParams {
     /// Importance filter: "1" / "2" / "3".
     pub importance: Option<String>,
     pub platform: Option<String>,
-    /// Comma-separated coin symbols to additionally restrict results.
+    /// Comma-separated coin symbols to additionally restrict results. Max 20 symbols.
     pub token_symbols: Option<String>,
+    /// Start of the time window (Unix milliseconds). Defaults to now − 72h; max lookback 180 days.
     pub begin: Option<String>,
+    /// End of the time window (Unix milliseconds). Defaults to now.
     pub end: Option<String>,
     /// "1" (Summary, default) or "2" (Full).
     pub detail_level: Option<String>,
+    /// Page size, range [1, 50]. Default "10".
     pub limit: Option<String>,
     pub cursor: Option<String>,
+    /// Locale of returned text, e.g. "en_US" (default), "zh_CN".
     pub language: Option<String>,
 }
 
@@ -163,13 +170,13 @@ pub struct SocialVibeTopKolsParams {
 pub enum SocialCommand {
     /// Latest crypto news feed (across all coins by default).
     NewsLatest {
-        /// Comma-separated coin symbols (e.g. BTC,ETH).
+        /// Comma-separated coin symbols (e.g. BTC,ETH). Max 20 symbols.
         #[arg(long)]
         token_symbols: Option<String>,
-        /// Begin timestamp (Unix milliseconds).
+        /// Begin timestamp (Unix ms). Defaults to now − 72h; max lookback 180d.
         #[arg(long)]
         begin: Option<String>,
-        /// End timestamp (Unix milliseconds).
+        /// End timestamp (Unix ms). Defaults to now.
         #[arg(long)]
         end: Option<String>,
         /// Importance: 1=High, 2=Medium, 3=Low.
@@ -178,7 +185,7 @@ pub enum SocialCommand {
         /// Single platform identifier (see `social news-platforms`).
         #[arg(long)]
         platform: Option<String>,
-        /// Page size (default 10).
+        /// Page size, range [1, 50] (default 10).
         #[arg(long)]
         limit: Option<String>,
         /// Pagination cursor from the previous response.
@@ -193,7 +200,7 @@ pub enum SocialCommand {
     },
     /// News filtered by coin symbol(s).
     NewsBySymbol {
-        /// Comma-separated coin symbols (required).
+        /// Comma-separated coin symbols (required, max 20).
         #[arg(long)]
         token_symbols: String,
         /// Sort: 1=Latest (default), 2=Hot.
@@ -207,14 +214,17 @@ pub enum SocialCommand {
         importance: Option<String>,
         #[arg(long)]
         platform: Option<String>,
+        /// Page size, range [1, 50] (default 10).
         #[arg(long)]
         limit: Option<String>,
         #[arg(long)]
         cursor: Option<String>,
         #[arg(long)]
         detail_level: Option<String>,
+        /// Begin timestamp (Unix ms). Defaults to now − 72h; max lookback 180d.
         #[arg(long)]
         begin: Option<String>,
+        /// End timestamp (Unix ms). Defaults to now.
         #[arg(long)]
         end: Option<String>,
         #[arg(long)]
@@ -233,15 +243,18 @@ pub enum SocialCommand {
         importance: Option<String>,
         #[arg(long)]
         platform: Option<String>,
-        /// Comma-separated coin symbols (additional filter).
+        /// Comma-separated coin symbols (additional filter, max 20).
         #[arg(long)]
         token_symbols: Option<String>,
+        /// Begin timestamp (Unix ms). Defaults to now − 72h; max lookback 180d.
         #[arg(long)]
         begin: Option<String>,
+        /// End timestamp (Unix ms). Defaults to now.
         #[arg(long)]
         end: Option<String>,
         #[arg(long)]
         detail_level: Option<String>,
+        /// Page size, range [1, 50] (default 10).
         #[arg(long)]
         limit: Option<String>,
         #[arg(long)]

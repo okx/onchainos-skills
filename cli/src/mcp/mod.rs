@@ -1336,7 +1336,7 @@ impl McpServer {
 
     #[tool(
         name = "social_news_latest",
-        description = "Latest crypto news feed (across all coins by default). Optional filters: token_symbols (comma-separated, e.g. 'BTC,ETH'), begin/end (Unix ms), importance ('1'=High/'2'=Medium/'3'=Low), platform, language ('en_US' default / 'zh_CN'). Pagination via limit (default '10') + cursor. detail_level='2' includes full article body."
+        description = "Latest crypto news feed (across all coins by default). Optional filters: token_symbols (comma-separated, max 20), begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback), importance ('1'=High/'2'=Medium/'3'=Low), platform, language ('en_US' default / 'zh_CN'). Pagination via limit range [1, 50] + cursor. detail_level='2' includes full article body."
     )]
     async fn social_news_latest(
         &self,
@@ -1350,7 +1350,7 @@ impl McpServer {
 
     #[tool(
         name = "social_news_by_symbol",
-        description = "News filtered by coin symbol(s). token_symbols required (comma-separated, e.g. 'BTC,ETH'). sort_by: '1'=Latest (default), '2'=Hot. sentiment: '1'=Bullish/'2'=Bearish/'3'=Neutral. importance: '1'=High/'2'=Medium/'3'=Low."
+        description = "News filtered by coin symbol(s). token_symbols required (comma-separated, max 20). sort_by: '1'=Latest (default), '2'=Hot. sentiment: '1'=Bullish/'2'=Bearish/'3'=Neutral. importance: '1'=High/'2'=Medium/'3'=Low. begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback). limit range [1, 50]."
     )]
     async fn social_news_by_symbol(
         &self,
@@ -1364,7 +1364,7 @@ impl McpServer {
 
     #[tool(
         name = "social_news_search",
-        description = "Full-text crypto news search. keyword required. Optional sort_by ('1'=Latest/'2'=Hot), sentiment, importance, platform, token_symbols (additional filter), begin/end (Unix ms), detail_level, limit/cursor, language."
+        description = "Full-text crypto news search. keyword required. Optional sort_by ('1'=Latest/'2'=Hot), sentiment, importance, platform, token_symbols (additional filter, max 20), begin/end (Unix ms; begin defaults to now − 72h, max 180d lookback), detail_level, limit range [1, 50], cursor, language."
     )]
     async fn social_news_search(
         &self,
