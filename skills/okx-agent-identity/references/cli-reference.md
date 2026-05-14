@@ -68,21 +68,43 @@ onchainos agent create \
     "txHash": "0xabc..."
   },
   "agentList": {
-    "total": 3,
+    "total": 2,
     "list": [
-      { "agentId": 12345, "name": "DeFi Analyzer", "role": "provider", "status": "active", "...": "..." }
+      {
+        "ownerAddress": "0xfa3...",
+        "accountName": "wallet-1",
+        "agentList": [
+          { "agentId": 12345, "name": "DeFi Analyzer", "role": "provider", "status": "active", "...": "..." }
+        ]
+      },
+      {
+        "ownerAddress": "0xfa4...",
+        "accountName": "wallet-2",
+        "agentList": [ /* agents owned under this derived wallet */ ]
+      }
     ]
   }
 }
 
 // On WS timeout / connect failure — `agent` absent, `agentList` still attempted
-{ "txHash": "0xabc...", "agentList": { "total": 3, "list": [ ... ] } }
+{ "txHash": "0xabc...", "agentList": { "total": 2, "list": [ /* 2 accountName wrappers */ ] } }
 
 // On both WS and agent-list failing — degrades to:
 { "txHash": "0xabc..." }
 ```
 
 After broadcasting, the CLI keeps the WS subscription it opened *before* broadcast (`wallet-agentic-identity` channel; default URL `wss://wsdex.okx.com:8443/ws/v5/private`) and waits up to **30 s** for a push whose top-level `txHash` matches the broadcast hash (case-insensitive, `0x` prefix optional). When matched, the push payload — `{agentId, chainIndex, status, name, profilePicture, profileDescription, txHash}` — is included verbatim under `agent`. After WS resolves (match or timeout), the CLI also pages `GET /agent/agent-list?chainIndex=196&page=N&pageSize=100` until `total` is satisfied (or a 20-page safety cap is hit, in which case the partial aggregate is logged) and attaches the assembled `{ total, list }` under `agentList` (note the field is `list`, not `items` — backend's `/agent/agent-list` response uses `list`; this was empirically confirmed on 2026-05-10 after an earlier doc-only mismatch). Both segments are **best-effort and independent**: `agent` is present iff the WS push matched in time; `agentList` is present iff every paginated HTTP call succeeded (any single page failure short-circuits to absent rather than emitting a misleading partial). Either may be absent without affecting the other; both absent degrades to `{ txHash }` only — and in that case the skill should render per `display-formats.md` §2's `Agent ID` placeholder rule (omit the row instead of inventing an id).
+
+⚠️ **agentList envelope shape (double-layer).** `agentList.list[*]` is **not** an agent row — it is an **accountName wrapper** `{ownerAddress, accountName, agentList:[agent_row, ...]}` (one wrapper per derived wallet that the JWT caller has visibility into). The actual agent rows are nested one level deeper at `agentList.list[*].agentList[*]`. `agentList.total` counts wrappers (= accountName groups), **not** total agent rows; `fetch_agent_list`'s page-termination compares aggregated wrapper count against this `total`, which is correct as long as the consumer treats `list[*]` as wrappers. Agent-row internal fields (`agentId`, `name`, `role`, `status`, `description`, `picture`, `services`, `reputation`, etc.) are unchanged from prior revisions — only the outer envelope grew the wrapper layer.
+
+**Finding the newly-minted `agentId` from this envelope:** because the envelope is **double-layer** (see ⚠️ above), `ownerAddress` lives on the **wrapper** (`list[*].ownerAddress`), **NOT** on individual agent rows (agent rows under `list[*].agentList[*]` carry `agentId` / `name` / `role` / `status` / `description` / `picture` / `services` / `reputation` — no `ownerAddress` key). The correct filter is therefore **two steps, in this order**:
+
+1. **Wrapper layer (filter):** locate the single wrapper in `agentList.list[*]` whose `list[*].ownerAddress == <currently selected XLayer wallet address>` (the address that signed this `create`). At most one wrapper matches; if none matches, the envelope carries no rows for the signing wallet — skip step 2 and fall back to each role file's omit-`#<id>` branch.
+2. **Agent-row layer (diff):** inside that wrapper's `agentList[*]` only, pick the `agentId` that did **not** exist in the pre-check `agent get` snapshot.
+
+❌ **Common mistake — do NOT write the filter as `agentList[*].ownerAddress == ...`.** That phrasing treats `ownerAddress` as an agent-row field, which it is not; the comparison silently fails for every row, the diff yields no candidate, and the role file's "diff yielded no new candidate" branch fires — i.e. the model omits `#<id>` even when the data is present. The layer matters.
+
+Do **not** cross-account aggregate — other wrappers' `agentList` belong to other derived wallets and must not be conflated with the caller's own.
 
 **WS URL override**: production uses `WS_URL_PROD = wss://wsdex.okx.com:8443/ws/v5/private` from `cli/src/commands/agent_commerce/identity/utils.rs` (mirrors the `WS_URL_PROD` + `ONCHAINOS_WS_URL` env-override pattern in `cli/src/watch/daemon.rs`). For dev / pre / forked envs, set the `OKX_AGENTIC_WS_URL` env var to the **full** WS URL (including the `/ws/v5/private` path); the CLI uses the env value verbatim, no scheme swap or path forcing.
 
@@ -145,19 +167,35 @@ onchainos agent get --agent-ids 42,58 # batch detail (mixed ownership ok)
 onchainos agent get --page 2 --page-size 50
 ```
 
-**Return (JSON):**
+**Return (JSON, double-layer envelope — both list mode and detail mode):**
 ```json
 {
-  "total": 3,
+  "total": 2,
   "list": [
-    { "agentId": 42, "name": "DeFi Analyzer", "role": "provider", "status": "active",
-      "description": "...", "picture": "https://...", "address": "0x...",
-      "services": [...], "reputation": { "score": 92, "count": 18 } }
+    {
+      "ownerAddress": "0xfa3...",
+      "accountName": "wallet-1",
+      "agentList": [
+        { "agentId": 42, "name": "DeFi Analyzer", "role": "provider", "status": "active",
+          "description": "...", "picture": "https://...", "address": "0x...",
+          "services": [...], "reputation": { "score": 92, "count": 18 } },
+        { "agentId": 58, "name": "MyBuyer", "role": "requester", "status": "active", "...": "..." }
+      ]
+    },
+    {
+      "ownerAddress": "0xfa4...",
+      "accountName": "wallet-2",
+      "agentList": [ /* agents under this derived wallet */ ]
+    }
   ],
-  "page": 1,
-  "pageSize": 100
+  "page": 2,
+  "pageSize": 50
 }
 ```
+
+⚠️ **Envelope is double-layer in BOTH modes.** The outer `list[*]` is an **accountName wrapper** (one per derived wallet the JWT caller has visibility into), not an agent row. The actual agent rows live at `list[*].agentList[*]`. `total` counts wrappers (= accountName groups), **not** agent rows. Even in `--agent-ids <N>` (detail) mode the envelope keeps this shape — `list[0].agentList[0]` is typically where the single matched agent sits (the backend still groups by accountName).
+
+**Agent-row internal fields are unchanged** from prior revisions — `agentId`, `name`, `role`, `status`, `description`, `picture`, `address`, `services`, `reputation: { score, count }` keep their semantics and types. This envelope change only adds the outer wrapper layer; nothing inside an agent row was renamed or reshaped.
 
 (Note the array field is `list`, not `items`. `agent get` calls the same `/agent/agent-list` endpoint that powers `agent create` / `update`'s post-broadcast `agentList` segment in §1; the two diverge slightly in post-processing: `agent get` returns a single backend page verbatim including `page` / `pageSize` echoed back from the request, while §1's `agentList` is the **aggregate across all pages** assembled by `fetch_agent_list` and only carries `{ total, list }` — `page` / `pageSize` lose coherent meaning after cross-page aggregation and are dropped on purpose.)
 
